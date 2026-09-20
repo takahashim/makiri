@@ -1,17 +1,13 @@
-//! `Makiri::HTML::Document` and the fragment machinery (glue/ruby_doc.c).
+//! `Makiri::HTML::Document` and the fragment entry points.
 //!
 //!   `Document._parse(source)`, `#root`, `#title`, `#errors`,
 //!   `#internal_subset`, `#quirks_mode`, `#fragment(html, context:)`,
 //!   `#import_node(node, deep = false)`
 //!   `DocumentFragment.parse(html, context:)`, `Node#parse(html)`
 //!
-//! # The Document wrapper, and what other glue modules share
-//!
-//! The Document wrapper type and its `rb_data_type_t` chain, the parsed-handle
-//! accessors, and the fragment pipeline live in the bridge
-//! ([`crate::bridge::wrapper`], [`crate::bridge::doc`]); this module keeps the
-//! Ruby methods, the evaluation guard, and the re-exports its callers already
-//! name here.
+//! The Document wrapper and its parsed handle, and the fragment pipeline, are
+//! the bridge's ([`crate::bridge::wrapper`], [`crate::bridge::doc`],
+//! [`crate::bridge::fragment`]); this module is the Ruby surface on them.
 
 #![forbid(unsafe_code)]
 
@@ -24,11 +20,8 @@ const NODE_TYPE_DOCUMENT_TYPE: u32 = crate::lexbor::adapter::html::TYPE_DOCTYPE;
 
 /* ---- Document.parse ---- */
 
-fn doc_s_parse(ruby: &Ruby, _klass: Value, source: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        let _ = ruby;
-        crate::bridge::doc::parse_document(source)
-    })
+fn doc_s_parse(_klass: Value, source: Value) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| crate::bridge::doc::parse_document(source))
 }
 
 /* ---- read-only accessors ---- */
@@ -111,23 +104,38 @@ fn node_parse(ruby: &Ruby, self_: Value, rb_html: Value) -> Result<Value, Error>
 /// `Document#import_node(node, deep = false)` -> a copy of `node` owned by THIS
 /// document - the DOM importNode, whose `deep` defaults to false.
 fn doc_import_node(_ruby: &Ruby, self_: Value, args: &[Value]) -> Result<Value, Error> {
-    crate::bridge::doc::import_node(self_, args)
+    let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), (), ()>(args)?;
+    /* `deep` is truthiness, anything but nil and false - the DOM default off. */
+    let deep = a.optional.0.is_some_and(|v| v.to_bool());
+    crate::bridge::doc::import_node(self_, a.required.0, deep)
 }
 
 /// `Node#clone_node(deep = false)`: a copy owned by the same document and
 /// detached from any parent - the DOM cloneNode, whose `deep` defaults to false.
-pub fn node_clone_node(rb_self: Value, args: &[Value]) -> Result<Value, Error> {
-    crate::bridge::doc::clone_node(rb_self, args)
+pub fn node_clone_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
+    /* The 0..1 arity by hand: `scan_args` cost about a third of a shallow
+     * clone. The message is the one `rb_scan_args` gives. */
+    let deep = match args {
+        [] => false,
+        /* Truthiness: anything but nil and false. */
+        [v] => v.to_bool(),
+        _ => {
+            return Err(Error::new(
+                ruby.exception_arg_error(),
+                format!(
+                    "wrong number of arguments (given {}, expected 0..1)",
+                    args.len()
+                ),
+            ))
+        }
+    };
+    crate::bridge::doc::clone_node(rb_self, deep)
 }
 
 /* ---- registration ---- */
 
-/// `Init_makiri` calls this where it called the C one.
-///
-/// # Safety
-/// Runs once, from `Init_makiri`, on the Ruby thread.
-pub fn init_document() {
-    let ruby = Ruby::get().expect("init_document runs on the Ruby thread");
+/// The HTML Document surface. From `Init_makiri`, after the classes exist.
+pub fn init_html_doc() {
     let html_doc = magnus::RClass::from_value(crate::init::CLASS_HTML_DOCUMENT.value())
         .expect("Makiri::HTML::Document is a class");
 
@@ -168,6 +176,4 @@ pub fn init_document() {
     node_methods
         .define_method("parse", method!(node_parse, 1))
         .expect("Node#parse");
-
-    let _ = ruby;
 }

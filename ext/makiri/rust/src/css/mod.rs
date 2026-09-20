@@ -84,7 +84,18 @@ impl Build<'_> {
     }
 }
 
-/// Compile `selector` into a freshly allocated AST.
+/// What a compiled selector answers.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Form {
+    /// The matching descendants of the context node, as a node-set: `css`.
+    Select,
+    /// Whether the context node ITSELF matches, as a boolean: `matches?`. The
+    /// selector is walked right to left along the reverse axes, so the answer
+    /// costs the node's depth rather than a search of the document.
+    SelfTest,
+}
+
+/// Compile `selector` into a freshly allocated AST of `form`.
 ///
 /// `Err` with the budget's error slot filled: SYNTAX for a malformed selector or an
 /// unsupported construct (jQuery extensions, pseudo-elements, the case
@@ -95,6 +106,7 @@ pub fn compile_owned(
     gvl: &Gvl,
     selector: VerifiedText,
     ns: &CssNs,
+    form: Form,
     budget: &mut Budget,
 ) -> Result<Box<Ast>, Reported> {
     let err = budget.sink();
@@ -117,18 +129,27 @@ pub fn compile_owned(
         }
     };
 
-    /* Lower each comma-group to a PATH and union them. `parsed` cleans the
-     * parser's arena when it drops, on every path out of this function. Lexbor
-     * rejects an empty selector list before it gets here. */
-    let root = build::fold(
-        &b,
-        Op::Union,
-        parsed.groups().map(|g| {
-            /* Top level: the first compound is a descendant of the context node. */
-            lower::complex(&b, g.first(), false)
-        }),
-        c"empty CSS selector",
-    )?;
+    /* `parsed` cleans the parser's arena when it drops, on every path out of
+     * this function. Lexbor rejects an empty selector list before it gets here. */
+    let root = match form {
+        /* Each comma-group as a PATH, unioned. Top level: the first compound
+         * is a descendant of the context node. */
+        Form::Select => build::fold(
+            &b,
+            Op::Union,
+            parsed
+                .groups()
+                .map(|g| lower::complex(&b, g.first(), false)),
+            c"empty CSS selector",
+        )?,
+        /* Each comma-group as a self-test, OR-ed - and as a boolean even for
+         * one group, whose self-test alone is a node-set. */
+        Form::SelfTest => build::call1(
+            &b,
+            b"boolean",
+            lower::selector_list_selftest(&b, parsed.groups()),
+        )?,
+    };
     /* No peephole or hoisting pass: the lowering emits no `//` pair to fuse and
      * no subtree worth remembering, so its AST is used as built. */
     try_box(Ast::new(root)).map_err(|_| b.oom())

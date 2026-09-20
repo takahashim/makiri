@@ -6,13 +6,17 @@
 //! functions move values through, and CLAUDE.md's "Text-input contract" for
 //! the rules they enforce.
 //!
-//! Mostly primitives the unsafe-free `glue` builds its methods on. The classes
-//! whose Ruby objects ARE a raw structure - `NodeSet`, `XPathContext`, the CSS
-//! and serializer entries that fill a NodeSet or a buffer in place - define
-//! their methods here, beside that structure. A failure comes back as
-//! `Err(magnus::Error)` rather than as a raise: `ruby` holds the few places a
-//! raising C function is still called, and turns each raise into an `Err`
-//! there.
+//! Primitives the unsafe-free `glue` builds every Ruby method on: this layer
+//! defines no method and reads no argument list. Where a Ruby object IS a raw
+//! structure - `NodeSet`, `XPathContext` - the structure lives here with the
+//! operations that must keep its invariants (which nodes may enter a set, what
+//! a running evaluate refuses), and the methods over them are the glue's.
+//! `rake unsafe:boundaries` holds that: no method is defined, and no argument
+//! list scanned, in this layer.
+//!
+//! A failure comes back as `Err(magnus::Error)` rather than as a raise: `ruby`
+//! holds the few places a raising C function is still called, and turns each
+//! raise into an `Err` there.
 
 pub mod alloc;
 
@@ -38,17 +42,9 @@ pub mod xml;
 #[cfg(feature = "lexbor")]
 pub mod doc;
 
-/// `Node#css` / `#at_css` / `#matches?` over the CSS selector engine.
-#[cfg(feature = "lexbor")]
-pub mod selectors;
-
 /// The Ruby-facing fragment entry points (`Document#fragment`, `Node#parse`).
 #[cfg(feature = "lexbor")]
 pub mod fragment;
-
-/// `Node#to_html` / `#inner_html` and the HTML serializer binding.
-#[cfg(feature = "lexbor")]
-pub mod serialize;
 
 /// `Makiri::NodeSet`'s wrapper type (opaque node pointers + a Document
 /// keepalive) and the safe fill handle over it.

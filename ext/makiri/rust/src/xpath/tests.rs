@@ -84,7 +84,13 @@ fn run(
                 default_namespace: false,
             };
             let gvl = crate::gvl::Gvl::exclusive();
-            crate::css::compile_owned(&gvl, source, &ns, &mut parse_budget)
+            crate::css::compile_owned(
+                &gvl,
+                source,
+                &ns,
+                crate::css::Form::Select,
+                &mut parse_budget,
+            )
         }
     };
     let ast = match compiled {

@@ -5,7 +5,7 @@
 //! The arena work is `lexbor`'s; what lives here is the part that must touch
 //! raw Ruby values and Lexbor handles together - copying the source out of a
 //! Ruby String before the wrapper allocation, releasing the GVL for the parse,
-//! and minting the wrapper. Keeping it here is what lets `glue/doc.rs` be
+//! and minting the wrapper. Keeping it here is what lets `glue/html_doc.rs` be
 //! ordinary safe orchestration.
 //!
 //! # Parsing releases the GVL
@@ -122,11 +122,7 @@ pub fn document_errors(rb_doc: Value) -> Value {
 /// Unlike `Node#clone_node` the copy belongs to the receiver, so this is the way
 /// to bring a node across documents (Makiri never moves one between arenas). The
 /// source is untouched and the copy is detached.
-pub fn import_node(rb_self: Value, args: &[Value]) -> Result<Value, Error> {
-    let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), (), ()>(args)?;
-    let (node_v,) = a.required;
-    let deep = a.optional.0.map(|v| v.to_bool()).unwrap_or(false);
-
+pub fn import_node(rb_self: Value, node_v: Value, deep: bool) -> Result<Value, Error> {
     let doc = html_doc_unwrap(rb_self)?;
     /* The copy is made in this document: refused while a handler reads it. */
     ensure_document_mutable(rb_self)?;
@@ -153,24 +149,7 @@ pub fn import_node(rb_self: Value, args: &[Value]) -> Result<Value, Error> {
 /// Built on the same import + `<template>`-content fixup as the fragment parser,
 /// so a deep-cloned `<template>` carries its contents (which `import_node` alone
 /// omits). Fails closed: a null import is an error rather than a partial node.
-pub fn clone_node(rb_self: Value, args: &[Value]) -> Result<Value, Error> {
-    /* The 0..1 arity by hand: `scan_args` cost about a third of a shallow
-     * clone. The message is the one `rb_scan_args` gives. */
-    let deep = match args {
-        [] => false,
-        /* RTEST: anything but nil and false. */
-        [v] => v.to_bool(),
-        _ => {
-            return Err(Error::new(
-                Ruby::get_with(rb_self).exception_arg_error(),
-                format!(
-                    "wrong number of arguments (given {}, expected 0..1)",
-                    args.len()
-                ),
-            ))
-        }
-    };
-
+pub fn clone_node(rb_self: Value, deep: bool) -> Result<Value, Error> {
     let node = html_node_unwrap(rb_self)?;
     let document = keepalive_document(rb_self)?;
     /* The copy is made in this document: refused while a handler reads it. */

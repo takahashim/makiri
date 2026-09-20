@@ -337,8 +337,8 @@ fn lower_pseudo_simple(b: &Build, pc: PseudoClass, test: &NodeTest) -> Built {
 }
 
 /// OR of the compound self-tests over each comma-argument of a selector list,
-/// for `:is` / `:where` / `:not`.
-fn selector_list_selftest(b: &Build, lists: Lists<'_>) -> Built {
+/// for `:is` / `:where` / `:not` - and, over a whole selector, for `matches?`.
+pub(crate) fn selector_list_selftest(b: &Build, lists: Lists<'_>) -> Built {
     /* Lexbor rejects an empty list (`:is()`) before it gets here; answering it
      * anyway keeps every failure reported. */
     build::fold(

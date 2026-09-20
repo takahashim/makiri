@@ -35,7 +35,7 @@ pub fn held(_ruby: &magnus::Ruby) -> Gvl {
 /// `f` must touch no Ruby state and allocate no Ruby object. It must also be
 /// `Send`, which is what keeps a `Ruby` handle and a [`Gvl`] - neither is - out
 /// of it. Its argument is
-/// typically a slice copied out of Ruby before the call, as `glue::doc`'s
+/// typically a slice copied out of Ruby before the call, as `bridge::doc`'s
 /// parse does.
 ///
 /// A panic inside `f` is CAUGHT and re-raised here, after the GVL is back. It

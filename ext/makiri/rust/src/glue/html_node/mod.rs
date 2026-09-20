@@ -1,10 +1,9 @@
-//! The HTML (Lexbor) node representation (glue/ruby_html_node.c).
+//! The HTML (Lexbor) node surface: every method on `Makiri::HTML::NodeMethods`,
+//! in a submodule per kind - `read`, `mutate`, `css`, `serialize`.
 //!
-//! Wrapping an `lxb_dom_node_t` into a `Makiri::HTML::*` leaf, the HTML
-//! node-pointer accessor, and the reader methods that hang off
-//! `Makiri::HTML::NodeMethods`. The XML counterpart is `glue::xml_node`; the
-//! representation-neutral node core - the `rb_data_type_t` chain and the
-//! kind-agnostic accessors - is `glue::node`.
+//! The XML counterpart is `glue::xml_node`; what both share - identity by node
+//! pointer - is `glue::node`, and the wrappers behind that pointer are
+//! `bridge::wrapper`'s.
 //!
 //! # Two functions here are the HTML node's front door
 //!
@@ -22,7 +21,11 @@
 //! and on macOS a hand-written declaration of one of those links to nothing and
 //! becomes a NULL call at run time rather than a link error.
 
+pub mod css;
+
 pub mod read;
+
+pub mod serialize;
 
 pub mod mutate;
 
@@ -48,23 +51,28 @@ pub mod ty {
     };
 }
 
-use crate::glue::doc::node_clone_node;
+use crate::glue::html_doc::node_clone_node;
 use crate::glue::node::{node_equals, node_hash, node_pointer_id};
 use crate::init::{CLASS_HTML_DOCUMENT_TYPE, CLASS_HTML_ELEMENT};
 
 /* The receiver and argument handles, from the Ruby <-> Lexbor seam
- * (`bridge::html`), for the readers and for `glue::doc`. */
+ * (`bridge::html`), for the readers and for `glue::html_doc`. */
 pub use crate::bridge::html::{arg_node, wrap_node, HtmlSelf};
 
 /* ------------------------------------------------------------------ *
  * registration                                                       *
  * ------------------------------------------------------------------ */
 
-/// `init_node` - the HTML node surface.
-///
-/// # Safety
-/// From `Init_makiri`, after the classes exist.
-pub fn init_node() {
+/// The whole HTML node surface. From `Init_makiri`, after the classes exist.
+pub fn init() {
+    init_read();
+    init_mutate();
+    css::init_css();
+    serialize::init_serialize();
+}
+
+/// The readers, identity, and the DocumentType and `<template>` accessors.
+fn init_read() {
     let m = MOD_HTML_NODE_METHODS.module();
 
     m.define_method("name", method!(read::name, 0))
@@ -174,11 +182,8 @@ pub fn init_node() {
         .expect("#content_fragment");
 }
 
-/// `init_mutate` - the HTML node's mutators and the Document factories.
-///
-/// # Safety
-/// From `Init_makiri`, after the classes exist.
-pub fn init_mutate() {
+/// The mutators and the Document factories.
+fn init_mutate() {
     let m = MOD_HTML_NODE_METHODS.module();
     let doc = RClass::from_value(CLASS_HTML_DOCUMENT.value()).expect("HTML::Document");
 

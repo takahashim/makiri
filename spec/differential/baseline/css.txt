@@ -60,9 +60,9 @@ xml|[data-n] = [section#s1.a.b.c section#s2.a]
 html|[data-n] = [section#s1.a.b.c section#s2.a]
 xml@s1|[data-n] = []
 html@s1|[data-n] = []
-xml|[data-n=1] = RAISE Makiri::CSS::SyntaxError: invalid CSS selector
+xml|[data-n=1] = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: [data-n=1]
 html|[data-n=1] = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: [data-n=1]
-xml@s1|[data-n=1] = RAISE Makiri::CSS::SyntaxError: invalid CSS selector
+xml@s1|[data-n=1] = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: [data-n=1]
 html@s1|[data-n=1] = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: [data-n=1]
 xml|[data-n='12'] = [section#s2.a]
 html|[data-n='12'] = [section#s2.a]
@@ -88,9 +88,9 @@ xml|[lang|=en] = [section#s2.a]
 html|[lang|=en] = [section#s2.a]
 xml@s1|[lang|=en] = []
 html@s1|[lang|=en] = []
-xml|[data-n!=1] = RAISE Makiri::CSS::SyntaxError: invalid CSS selector
+xml|[data-n!=1] = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: [data-n!=1]
 html|[data-n!=1] = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: [data-n!=1]
-xml@s1|[data-n!=1] = RAISE Makiri::CSS::SyntaxError: invalid CSS selector
+xml@s1|[data-n!=1] = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: [data-n!=1]
 html@s1|[data-n!=1] = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: [data-n!=1]
 xml|p + p = [p.second.b p]
 html|p + p = [p.second.b p]
@@ -256,57 +256,57 @@ xml|:is(section .b) = [p.second.b span.b]
 html|:is(section .b) = [p.second.b span.b]
 xml@s1|:is(section .b) = [p.second.b span.b]
 html@s1|:is(section .b) = [p.second.b span.b]
-xml|p:-lexbor-contains(one) = RAISE Makiri::CSS::SyntaxError: invalid CSS selector
+xml|p:-lexbor-contains(one) = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: p:-lexbor-contains(one)
 html|p:-lexbor-contains(one) = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: p:-lexbor-contains(one)
-xml@s1|p:-lexbor-contains(one) = RAISE Makiri::CSS::SyntaxError: invalid CSS selector
+xml@s1|p:-lexbor-contains(one) = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: p:-lexbor-contains(one)
 html@s1|p:-lexbor-contains(one) = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: p:-lexbor-contains(one)
-xml|p:-lexbor-contains(ONE) = RAISE Makiri::CSS::SyntaxError: invalid CSS selector
+xml|p:-lexbor-contains(ONE) = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: p:-lexbor-contains(ONE)
 html|p:-lexbor-contains(ONE) = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: p:-lexbor-contains(ONE)
-xml@s1|p:-lexbor-contains(ONE) = RAISE Makiri::CSS::SyntaxError: invalid CSS selector
+xml@s1|p:-lexbor-contains(ONE) = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: p:-lexbor-contains(ONE)
 html@s1|p:-lexbor-contains(ONE) = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: p:-lexbor-contains(ONE)
-xml|p::before = RAISE Makiri::CSS::SyntaxError: invalid CSS selector
+xml|p::before = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: p::before
 html|p::before = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: p::before
-xml@s1|p::before = RAISE Makiri::CSS::SyntaxError: invalid CSS selector
+xml@s1|p::before = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: p::before
 html@s1|p::before = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: p::before
-xml|[data-n=1 i] = RAISE Makiri::CSS::SyntaxError: invalid CSS selector
+xml|[data-n=1 i] = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: [data-n=1 i]
 html|[data-n=1 i] = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: [data-n=1 i]
-xml@s1|[data-n=1 i] = RAISE Makiri::CSS::SyntaxError: invalid CSS selector
+xml@s1|[data-n=1 i] = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: [data-n=1 i]
 html@s1|[data-n=1 i] = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: [data-n=1 i]
-xml|[*|a] = RAISE Makiri::CSS::SyntaxError: invalid CSS selector
+xml|[*|a] = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: [*|a]
 html|[*|a] = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: [*|a]
-xml@s1|[*|a] = RAISE Makiri::CSS::SyntaxError: invalid CSS selector
+xml@s1|[*|a] = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: [*|a]
 html@s1|[*|a] = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: [*|a]
-xml|p:hover = RAISE Makiri::CSS::SyntaxError: unsupported CSS pseudo-class
+xml|p:hover = RAISE Makiri::CSS::SyntaxError: unsupported CSS pseudo-class: p:hover
 html|p:hover = []
-xml@s1|p:hover = RAISE Makiri::CSS::SyntaxError: unsupported CSS pseudo-class
+xml@s1|p:hover = RAISE Makiri::CSS::SyntaxError: unsupported CSS pseudo-class: p:hover
 html@s1|p:hover = []
-xml|p:nth-child(2 of .x) = RAISE Makiri::CSS::SyntaxError: :nth-*(... of S) is not supported
+xml|p:nth-child(2 of .x) = RAISE Makiri::CSS::SyntaxError: :nth-*(... of S) is not supported: p:nth-child(2 of .x)
 html|p:nth-child(2 of .x) = []
-xml@s1|p:nth-child(2 of .x) = RAISE Makiri::CSS::SyntaxError: :nth-*(... of S) is not supported
+xml@s1|p:nth-child(2 of .x) = RAISE Makiri::CSS::SyntaxError: :nth-*(... of S) is not supported: p:nth-child(2 of .x)
 html@s1|p:nth-child(2 of .x) = []
-xml| = RAISE Makiri::CSS::SyntaxError: invalid CSS selector
+xml| = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: 
 html| = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: 
-xml@s1| = RAISE Makiri::CSS::SyntaxError: invalid CSS selector
+xml@s1| = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: 
 html@s1| = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: 
-xml|    = RAISE Makiri::CSS::SyntaxError: invalid CSS selector
+xml|    = RAISE Makiri::CSS::SyntaxError: invalid CSS selector:    
 html|    = RAISE Makiri::CSS::SyntaxError: invalid CSS selector:    
-xml@s1|    = RAISE Makiri::CSS::SyntaxError: invalid CSS selector
+xml@s1|    = RAISE Makiri::CSS::SyntaxError: invalid CSS selector:    
 html@s1|    = RAISE Makiri::CSS::SyntaxError: invalid CSS selector:    
-xml|>>> = RAISE Makiri::CSS::SyntaxError: invalid CSS selector
+xml|>>> = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: >>>
 html|>>> = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: >>>
-xml@s1|>>> = RAISE Makiri::CSS::SyntaxError: invalid CSS selector
+xml@s1|>>> = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: >>>
 html@s1|>>> = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: >>>
-xml|p > = RAISE Makiri::CSS::SyntaxError: invalid CSS selector
+xml|p > = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: p >
 html|p > = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: p >
-xml@s1|p > = RAISE Makiri::CSS::SyntaxError: invalid CSS selector
+xml@s1|p > = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: p >
 html@s1|p > = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: p >
-xml|p[ = RAISE Makiri::CSS::SyntaxError: invalid CSS selector
+xml|p[ = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: p[
 html|p[ = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: p[
-xml@s1|p[ = RAISE Makiri::CSS::SyntaxError: invalid CSS selector
+xml@s1|p[ = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: p[
 html@s1|p[ = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: p[
-xml|p:not( = RAISE Makiri::CSS::SyntaxError: invalid CSS selector
+xml|p:not( = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: p:not(
 html|p:not( = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: p:not(
-xml@s1|p:not( = RAISE Makiri::CSS::SyntaxError: invalid CSS selector
+xml@s1|p:not( = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: p:not(
 html@s1|p:not( = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: p:not(
 xml-ns|p|thing = [p:thing]
 xml-ns|p|thing[p|k] = [p:thing]

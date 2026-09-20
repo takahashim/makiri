@@ -15,10 +15,9 @@ use crate::lexbor::stylesheet::{parse, Decl, Fail, Rule, MAX_DEPTH};
 
 /// The fixed hash keys and `:type` values, interned once per call.
 ///
-/// The C cached these as `ID`s in statics for the same reason: the conversion
-/// loops would otherwise hash-lookup every key again for every declaration. A
-/// per-call struct gets the same effect without process-global mutable state,
-/// and a stylesheet is one call.
+/// Interned once so the conversion loops do not hash-look-up every key again
+/// for every declaration; a per-call struct does that without process-global
+/// mutable state, and a stylesheet is one call.
 struct Keys {
     type_: Symbol,
     selectors: Symbol,
@@ -126,7 +125,13 @@ fn rules_to_ruby(ruby: &Ruby, k: &Keys, rs: &[Rule]) -> Result<RArray, Error> {
     Ok(a)
 }
 
+/// Parses untrusted input, so it runs under `bridge::ruby::entry`: a panic is
+/// `Makiri::InternalError`, not `fatal`.
 fn parse_stylesheet(ruby: &Ruby, text: Value) -> Result<RArray, Error> {
+    crate::bridge::ruby::entry(|| parse_stylesheet_inner(ruby, text))
+}
+
+fn parse_stylesheet_inner(ruby: &Ruby, text: Value) -> Result<RArray, Error> {
     let tv = ruby_verified_text(text, c"CSS stylesheet")?;
     /* `tv` anchors the String for this frame, and `parse` is Lexbor and the
      * allocator only - no Ruby runs that could move or mutate the bytes. */
@@ -153,8 +158,7 @@ fn parse_stylesheet(ruby: &Ruby, text: Value) -> Result<RArray, Error> {
     rules_to_ruby(ruby, &Keys::new(ruby), &parsed)
 }
 
-/// Registration seam: `Init_makiri` calls this where it called the C one. Runs
-/// once, from `Init_makiri`, on the Ruby thread.
+/// `Makiri::Lexbor::CSS.parse_stylesheet`. From `Init_makiri`.
 pub fn init_lexbor_css() {
     let ruby = Ruby::get().expect("init_lexbor_css runs on the Ruby thread");
     let lexbor = magnus::RModule::from_value(MOD_LEXBOR.value())

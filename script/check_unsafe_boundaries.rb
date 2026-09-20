@@ -34,16 +34,14 @@ UNSAFE_ISLANDS = {
   "bridge/fragment.rs" => 6,
   "bridge/gvl.rs" => 4,
   "bridge/html.rs" => 32,
-  "bridge/node_set.rs" => 10,
+  "bridge/node_set.rs" => 9,
   "bridge/ruby.rs" => 24,
-  "bridge/selectors.rs" => 6,
-  "bridge/serialize.rs" => 1,
   "bridge/string.rs" => 30,
   "bridge/typed.rs" => 17,
   "bridge/wrapper.rs" => 16,
   "bridge/xml.rs" => 14,
   "bridge/xml_decode.rs" => 6,
-  "bridge/xpath/context_object.rs" => 6,
+  "bridge/xpath/context_object.rs" => 5,
   "bridge/xpath/handler.rs" => 8,
   "bridge/xpath/mod.rs" => 6,
   "cbuf.rs" => 17,
@@ -53,7 +51,7 @@ UNSAFE_ISLANDS = {
   "falloc/mod.rs" => 1,
   "falloc/raw.rs" => 3,
   "gvl.rs" => 4,
-  "init.rs" => 5,
+  "init.rs" => 4,
   "lexbor/abi.rs" => 4,
   "lexbor/adapter/arena_bytes.rs" => 3,
   "lexbor/adapter/cross_import.rs" => 4,
@@ -88,25 +86,26 @@ FORBID_ROOTS = %w[css/mod.rs glue/mod.rs xml/mod.rs xpath/mod.rs].freeze
 FORBID_FILES = %w[
   css/build.rs css/lower.rs css/mod.rs
   cutf8.rs cutf8/verify.rs falloc/verify.rs
-  glue/doc.rs glue/html_node/mutate.rs glue/html_node/read.rs
+  glue/css.rs glue/html_doc.rs glue/html_node/css.rs
+  glue/html_node/mutate.rs glue/html_node/read.rs glue/html_node/serialize.rs
   glue/mod.rs glue/node.rs glue/node_set.rs
-  glue/xml.rs glue/xml_node/mod.rs glue/xml_node/mutate.rs
-  glue/xml_node/ns.rs glue/xml_node/read.rs glue/xml_node/serialize.rs
-  glue/xml_node/strings.rs glue/xpath.rs lexbor/adapter/dom_index.rs
-  lexbor/adapter/utf8_input.rs limits.rs ptr_table.rs
-  xml/api.rs xml/arena.rs xml/chars.rs
-  xml/index.rs xml/mod.rs xml/model.rs
-  xml/mutate.rs xml/parse.rs xml/qname.rs
-  xml/selftest.rs xml/serialize.rs xml/tree.rs
-  xml/verify.rs xml/xpath.rs xpath/abi.rs
-  xpath/ast.rs xpath/ast_ops.rs xpath/attr_pred.rs
-  xpath/axis.rs xpath/ctx.rs xpath/dom.rs
-  xpath/eval.rs xpath/funcs/ext.rs xpath/funcs/mod.rs
-  xpath/lex.rs xpath/limits.rs xpath/mod.rs
-  xpath/msg.rs xpath/nodetest.rs xpath/number.rs
-  xpath/order.rs xpath/parse.rs xpath/step_index.rs
-  xpath/str_cache.rs xpath/tests.rs xpath/value.rs
-  xpath/verify.rs
+  glue/query.rs glue/xml_doc.rs glue/xml_node/css.rs
+  glue/xml_node/mod.rs glue/xml_node/mutate.rs glue/xml_node/ns.rs
+  glue/xml_node/read.rs glue/xml_node/serialize.rs glue/xml_node/strings.rs
+  glue/xpath_context.rs lexbor/adapter/dom_index.rs lexbor/adapter/utf8_input.rs
+  limits.rs ptr_table.rs xml/api.rs
+  xml/arena.rs xml/chars.rs xml/index.rs
+  xml/mod.rs xml/model.rs xml/mutate.rs
+  xml/parse.rs xml/qname.rs xml/selftest.rs
+  xml/serialize.rs xml/tree.rs xml/verify.rs
+  xml/xpath.rs xpath/abi.rs xpath/ast.rs
+  xpath/ast_ops.rs xpath/attr_pred.rs xpath/axis.rs
+  xpath/ctx.rs xpath/dom.rs xpath/eval.rs
+  xpath/funcs/ext.rs xpath/funcs/mod.rs xpath/lex.rs
+  xpath/limits.rs xpath/mod.rs xpath/msg.rs
+  xpath/nodetest.rs xpath/number.rs xpath/order.rs
+  xpath/parse.rs xpath/step_index.rs xpath/str_cache.rs
+  xpath/tests.rs xpath/value.rs xpath/verify.rs
 ].freeze
 
 UNSAFE_USE = /\bunsafe\s*(?:\{|fn\b|impl\b|trait\b|extern\b)/
@@ -372,6 +371,22 @@ if ruby_layer != RUBY_LAYER_COUNTS
   errors << "Ruby-layer use inside an engine layer changed: #{table_diff(RUBY_LAYER_COUNTS, ruby_layer)}"
 end
 
+# The bridge hands the glue primitives; the Ruby surface - defining a method,
+# scanning its argument list - is the glue's. A method defined in bridge/ is
+# how a feature's Ruby half ends up split across the two layers by where it
+# happened to need an `unsafe`, rather than by what it does.
+RUBY_SURFACE = /\b(?:define_(?:singleton_|private_|module_)?(?:method|function)|scan_args)\b/
+ruby_surface = Hash.new(0)
+Dir.glob(File.join(RUST, "bridge", "**", "*.rs")).sort.each do |path|
+  relative = path.delete_prefix("#{RUST}/")
+  count = comments_removed(File.binread(path)).scan(RUBY_SURFACE).length
+  ruby_surface[relative] = count unless count.zero?
+end
+unless ruby_surface.empty?
+  errors << "Ruby methods defined or argument lists scanned in bridge/ (they are the glue's): " \
+            "#{ruby_surface.inspect}"
+end
+
 if FIX && !errors.empty?
   puts "unsafe-boundaries --fix: NOT rewritten, these record a decision rather than a count:"
   errors.each { |e| puts "  #{e}" }
@@ -389,4 +404,5 @@ puts "unsafe-boundaries: #{forbidding.length} forbid files; " \
      "#{value_from_raw.values.sum} Value::from_raw and " \
      "#{lexbor_abi.values.sum} Lexbor ABI names outside their layer and " \
      "#{lexbor_decls.values.sum} Lexbor declarations outside lexbor/abi.rs; " \
-     "#{ruby_layer.values.sum} Ruby-layer uses inside the engine"
+     "#{ruby_layer.values.sum} Ruby-layer uses inside the engine; " \
+     "#{ruby_surface.values.sum} Ruby methods in bridge/"
