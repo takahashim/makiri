@@ -4,6 +4,18 @@
 
 ### Added
 
+* **`XPathContext.new(node, prefix: uri)` registers the bindings**, as
+  `#xpath` does. They used to be dropped, so the first prefixed expression
+  failed with "unknown namespace prefix".
+
+* **`#css` / `#at_css` / `#matches?` take `(selector, namespaces = nil)` on HTML
+  too**, so one call works on either representation. Lexbor resolves a prefix
+  against the document rather than against bindings, so a non-empty Hash is an
+  ArgumentError pointing at `#xpath` instead of being ignored.
+
+* **A rejected CSS selector is worded the same for both**: `"<reason>:
+  <selector>"`. `Makiri::XML` used to leave the selector out of the message.
+
 * **`#xpath` / `#at_xpath` read one argument list for HTML and XML**:
   `(expr, [namespaces Hash], [handler], namespace_matching:)`, in either order.
   HTML gains per-query namespace bindings (they used to be taken as the handler
