@@ -96,7 +96,8 @@ FORBID_FILES = %w[
   limits.rs ptr_table.rs xml/arena.rs
   xml/chars.rs xml/index.rs xml/mod.rs
   xml/model.rs xml/mutate.rs xml/qname.rs
-  xml/selftest.rs xml/serialize.rs xml/tree.rs
+  xml/selftest.rs xml/serialize/c14n.rs xml/serialize/mod.rs
+  xml/serialize/out.rs xml/serialize/xml.rs xml/tree.rs
   xml/verify.rs xml/xpath.rs xpath/abi.rs
   xpath/ast.rs xpath/ast_ops.rs xpath/attr_pred.rs
   xpath/axis.rs xpath/ctx.rs xpath/dom.rs

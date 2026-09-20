@@ -50,6 +50,9 @@ fn failure_error(f: Failure, verb: &str) -> Error {
         Failure::Output => {
             format!("failed to {verb} XML: output exceeded the size limit or out of memory")
         }
+        Failure::NamespaceBudget => {
+            format!("failed to {verb} XML: namespace planning exceeded its step budget")
+        }
     };
     makiri_error(msg)
 }

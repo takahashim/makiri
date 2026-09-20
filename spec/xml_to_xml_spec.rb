@@ -207,4 +207,41 @@ RSpec.describe "Makiri::XML#to_xml" do
       expect(doc.root.xpath("//a").length).to eq(8000)
     end
   end
+
+  describe "namespace planning scales with the document, not its square" do
+    # The bindings in scope were a chain of per-element links, and resolving one
+    # prefix re-walked it rescanning every ancestor's ATTRIBUTE list, so #to_xml
+    # cost O(depth^2 x attributes): 403 KB of nested prefixed attributes took
+    # 4.88s against 0.097s for the same bytes unprefixed. They are one stack now
+    # (serialize/xml.rs), as the parser has always kept them.
+    def nested_prefixed(depth, attrs)
+      open = (1..depth).map { |i| "<e#{i} " + (1..attrs).map { |j| %(p:a#{j}="v") }.join(" ") + ">" }
+      close = (1..depth).to_a.reverse.map { |i| "</e#{i}>" }
+      %(<r xmlns:p="urn:p">#{open.join}#{close.join}</r>)
+    end
+
+    def seconds
+      t = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      yield
+      Process.clock_gettime(Process::CLOCK_MONOTONIC) - t
+    end
+
+    it "stays linear as depth and attribute count both double" do
+      small = Makiri::XML(nested_prefixed(100, 25))
+      large = Makiri::XML(nested_prefixed(200, 50))   # 4x the attributes
+      small.to_xml # warm
+      ratio = seconds { large.to_xml } / [seconds { small.to_xml }, 1e-6].max
+      # Linear would be ~4; the chain made this ~16 and rising. A loose ceiling
+      # keeps the example about the complexity class, not the machine.
+      expect(ratio).to be < 10
+    end
+
+    it "declares each prefix once, wherever it is bound" do
+      doc = Makiri::XML(nested_prefixed(3, 2))
+      out = doc.to_xml
+      expect(out.scan("xmlns:p=").length).to eq(1)
+      expect(out).to include(%(p:a1="v"))
+      expect(Makiri::XML(out).to_xml).to eq(out) # round-trips
+    end
+  end
 end
