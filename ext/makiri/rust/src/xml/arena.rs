@@ -439,6 +439,7 @@ impl Document {
     /// Append `child` as the last child of `parent`.
     pub(super) fn append_child(&mut self, parent: NodeId, child: NodeId) {
         let (parent, child) = (Link::of(parent), Link::of(child));
+        assert_no_self_link(child, parent, self.node_at(parent).last_child, Link::NONE);
         self.node_at_mut(child).parent = parent;
         let last = self.node_at(parent).last_child;
         if last.is_none() {
@@ -548,6 +549,12 @@ impl Document {
     /// knows the end. An `append_attr` that walked to it existed and turned out
     /// to have no callers left once the tail was threaded through.
     pub(super) fn link_attr(&mut self, el: NodeId, tail: Option<NodeId>, attr: NodeId) {
+        assert_no_self_link(
+            Link::of(attr),
+            Link::of(el),
+            Link::from_option(tail),
+            Link::NONE,
+        );
         self.node_mut(attr).parent = Link::of(el);
         match tail {
             None => self.node_mut(el).attrs = Link::of(attr),
@@ -567,6 +574,7 @@ impl Document {
         let node = Link::of(node);
         let prev = Link::from_option(prev);
         let next = Link::from_option(next);
+        assert_no_self_link(node, container, prev, next);
         {
             let n = self.node_at_mut(node);
             n.parent = container;
@@ -686,6 +694,32 @@ impl Document {
             None => return usize::MAX,
         }
         total
+    }
+}
+
+/// A node may not be its own parent or its own sibling.
+///
+/// Checked in RELEASE at the three places that write a link, which is not the
+/// usual `debug_assert` trade. A cycle here is not a wrong answer that a later
+/// check could catch: `node.next == node` is a ring, and every walk in the
+/// engine follows `next` without a bound, so the first traversal afterwards
+/// hangs the host process with no way out. Two `u32` compares against an
+/// unrecoverable hang is not a close call, and turning a broken invariant into a
+/// panic (which `bridge::ruby::entry` presents as `Makiri::InternalError`) is
+/// what this codebase does with broken invariants everywhere else.
+///
+/// It is also what makes the mutation fuzzer safe to run in CI: a ring cannot be
+/// created, so no generated edit sequence can hang the suite. The bug that
+/// prompted this (`a.add_next_sibling(b)` with b already after a, spliced before
+/// ITSELF) reached exactly here, as `node == next`.
+#[inline]
+#[allow(
+    clippy::panic,
+    reason = "a sibling ring hangs the process; a panic is the recoverable outcome"
+)]
+fn assert_no_self_link(node: Link, container: Link, prev: Link, next: Link) {
+    if node == container || node == prev || node == next {
+        panic!("XML arena: a node cannot be its own parent or sibling");
     }
 }
 

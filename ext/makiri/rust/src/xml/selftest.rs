@@ -994,3 +994,41 @@ fn node_id_tokens_fail_closed_outside_their_document() {
     assert!(a.try_node(NodeId::INVALID).is_none());
     assert!(NodeId::INVALID.is_invalid());
 }
+
+/// A node spliced next to ITSELF is a sibling ring, and the engine follows
+/// `next` without a bound everywhere - so the first traversal afterwards would
+/// hang the host with no way out. `splice_between` refuses instead.
+///
+/// This is the shape a real bug reached: `a.add_next_sibling(b)` with b already
+/// after a, where the insertion anchored on b, detached b, and then spliced b
+/// before what was now itself.
+#[test]
+#[should_panic(expected = "cannot be its own parent or sibling")]
+fn a_node_cannot_be_spliced_next_to_itself() {
+    let (mut doc, r) = detached_element(b"r");
+    let a = doc.new_node(NodeType::Element).expect("a child");
+    doc.splice_between(r, a, None, Some(a));
+}
+
+#[test]
+#[should_panic(expected = "cannot be its own parent or sibling")]
+fn a_node_cannot_be_spliced_after_itself() {
+    let (mut doc, r) = detached_element(b"r");
+    let a = doc.new_node(NodeType::Element).expect("a child");
+    doc.splice_between(r, a, Some(a), None);
+}
+
+#[test]
+#[should_panic(expected = "cannot be its own parent or sibling")]
+fn a_node_cannot_be_its_own_parent() {
+    let (mut doc, r) = detached_element(b"r");
+    doc.splice_between(r, r, None, None);
+}
+
+#[test]
+#[should_panic(expected = "cannot be its own parent or sibling")]
+fn an_attribute_cannot_be_linked_after_itself() {
+    let (mut doc, r) = detached_element(b"r");
+    let at = doc.new_node(NodeType::Attribute).expect("an attribute");
+    doc.link_attr(r, Some(at), at);
+}
