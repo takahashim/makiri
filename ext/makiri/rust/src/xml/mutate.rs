@@ -106,8 +106,7 @@ fn fragment_fits_container(doc: &Document, frag: NodeId, site: Site) -> MutStatu
     if doc.type_(site.container) != Some(NodeType::Document) {
         return MutStatus::Ok;
     }
-    if element_child_count(doc, frag, None)
-        + element_child_count(doc, site.container, site.exclude)
+    if element_child_count(doc, frag, None) + element_child_count(doc, site.container, site.exclude)
         > 1
     {
         return MutStatus::Hierarchy;

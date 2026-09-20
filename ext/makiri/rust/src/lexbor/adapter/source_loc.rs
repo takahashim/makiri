@@ -232,7 +232,11 @@ unsafe fn record(rec: &mut Recorder, token: *const Token) {
                 return;
             }
         };
-        if rec.items.falloc_reserve_exact(want - rec.items.len()).is_err() {
+        if rec
+            .items
+            .falloc_reserve_exact(want - rec.items.len())
+            .is_err()
+        {
             rec.overflow = true; /* fail closed: stop recording */
             return;
         }

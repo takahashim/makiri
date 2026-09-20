@@ -159,7 +159,8 @@ pub fn normalize_newlines(src: &[u8]) -> Result<Option<Vec<u8>>, Status> {
         return Ok(None);
     }
     let mut out: Vec<u8> = Vec::new();
-    out.falloc_reserve_exact(src.len()).map_err(|_| Status::Oom)?;
+    out.falloc_reserve_exact(src.len())
+        .map_err(|_| Status::Oom)?;
     let mut i = 0;
     while i < src.len() {
         let ch = src[i];

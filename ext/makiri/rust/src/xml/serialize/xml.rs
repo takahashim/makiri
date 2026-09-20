@@ -33,7 +33,6 @@ const NS_STEP_MAX: u64 = 64 * 1024 * 1024;
 
 const PREFIX_CAP: usize = 8;
 
-
 /// A namespace prefix: borrowed from the arena when the document supplied it,
 /// owned inline when the serializer invented it.
 #[derive(Clone)]

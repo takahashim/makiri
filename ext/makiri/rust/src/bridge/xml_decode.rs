@@ -82,7 +82,9 @@ unsafe fn effective_encoding(str: VALUE) -> Result<*mut rb_encoding, Error> {
         let raw = anchor.bytes();
         sniff(raw)
     };
-    let bom = bom.map_or(core::ptr::null_mut(), |b| find_encoding(b.name().as_bytes()));
+    let bom = bom.map_or(core::ptr::null_mut(), |b| {
+        find_encoding(b.name().as_bytes())
+    });
     let decl = decl.map_or(core::ptr::null_mut(), |d| find_encoding(d.as_bytes()));
     let is_binary = tag == rb_sys::rb_ascii8bit_encoding();
 

@@ -356,11 +356,9 @@ pub fn parse_xml_document(source: Value, limits: XmlLimits, budget: usize) -> Re
 
     /* Ruby-free from here: only the copied bytes and the limits cross. */
     let (result, status) =
-        crate::bridge::gvl::without_gvl(|| {
-            match tree::parse_ex(src.as_slice(), Some(&limits)) {
-                Ok(doc) => (Box::into_raw(doc), Status::Ok),
-                Err(status) => (core::ptr::null_mut(), status),
-            }
+        crate::bridge::gvl::without_gvl(|| match tree::parse_ex(src.as_slice(), Some(&limits)) {
+            Ok(doc) => (Box::into_raw(doc), Status::Ok),
+            Err(status) => (core::ptr::null_mut(), status),
         });
     drop(src);
 

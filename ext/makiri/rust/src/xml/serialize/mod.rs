@@ -131,7 +131,9 @@ fn unserializable_name(doc: &XmlDoc, root: NodeId) -> Option<Failure> {
     let mut cur = Some(root);
     while let Some(id) = cur {
         match doc.type_(id) {
-            Some(NodeType::Element) if doc.node(id).flags & crate::xml::FLAG_DOM_LOOSE_NAME != 0 => {
+            Some(NodeType::Element)
+                if doc.node(id).flags & crate::xml::FLAG_DOM_LOOSE_NAME != 0 =>
+            {
                 return Some(Failure::DomLooseName)
             }
             Some(NodeType::Pi) if out::field(doc, doc.node(id).local).contains(&b':') => {

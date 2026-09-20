@@ -91,7 +91,14 @@ fn namespaces(doc: &XmlDoc, n: NodeId, is_apex: bool) -> Result<Vec<Ns<'_>>, ()>
     Ok(out)
 }
 
-pub(super) fn node(b: &mut Buf, doc: &XmlDoc, n: NodeId, is_apex: bool, comments: bool, depth: u32) -> W {
+pub(super) fn node(
+    b: &mut Buf,
+    doc: &XmlDoc,
+    n: NodeId,
+    is_apex: bool,
+    comments: bool,
+    depth: u32,
+) -> W {
     match doc.type_(n) {
         Some(NodeType::Element) => {
             if depth as usize >= MAX_DEPTH {

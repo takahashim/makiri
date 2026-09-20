@@ -18,9 +18,9 @@ use crate::bridge::xml::{
     xml_mut_check, xml_mut_result, xml_wrap_rel_value, XmlSelf,
 };
 use crate::init::CLASS_XML_DOCUMENT;
+use crate::xml::dom_name::split_loose_dom_name;
 use crate::xml::model::{NodeId, NodeType};
 use crate::xml::mutate::{self, place, Place};
-use crate::xml::dom_name::split_loose_dom_name;
 
 /* ------------------------------------------------------------------ */
 /* in-place edits                                                     */
@@ -103,7 +103,9 @@ pub fn remove_attribute_ns(
     let lv = verified_text(local, c"attribute local name")?;
     let nv = verified_text_opt(ns, c"namespace")?;
     let (ns, local) = (nv.as_verified().as_bytes(), lv.as_verified().as_bytes());
-    with_arena_mut(this.document, |d| mutate::remove_attribute_ns(d, n, ns, local))?;
+    with_arena_mut(this.document, |d| {
+        mutate::remove_attribute_ns(d, n, ns, local)
+    })?;
     Ok(rb_self)
 }
 
@@ -136,7 +138,9 @@ pub fn set_name(_ruby: &Ruby, this: XmlSelf, name: Value) -> Result<Value, Error
     let n = begin_edit(this)?;
     let nv = verified_text(name, c"node name")?;
     let bytes = nv.as_verified().as_bytes();
-    xml_mut_check(with_arena_mut(this.document, |d| mutate::rename(d, n, bytes))?)?;
+    xml_mut_check(with_arena_mut(this.document, |d| {
+        mutate::rename(d, n, bytes)
+    })?)?;
     Ok(name)
 }
 
@@ -211,7 +215,9 @@ pub fn create_element(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Val
     let (name, text) = (nv.as_verified().as_bytes(), cv.as_verified().as_bytes());
     let el = xml_mut_result(with_arena_mut(rb_self, |d| mutate::new_element(d, name))?)?;
     if !content.is_nil() {
-        xml_mut_check(with_arena_mut(rb_self, |d| mutate::set_content(d, el, text))?)?;
+        xml_mut_check(with_arena_mut(rb_self, |d| {
+            mutate::set_content(d, el, text)
+        })?)?;
     }
     let rb_el = wrap(el, rb_self);
     if let Some(h) = attrs {
@@ -317,7 +323,9 @@ pub fn create_pi(_ruby: &Ruby, rb_self: Value, target: Value, data: Value) -> Re
     let tg = verified_text(target, c"PI target")?;
     let dt = verified_text(data, c"PI data")?;
     let (target, data) = (tg.as_verified().as_bytes(), dt.as_verified().as_bytes());
-    let pi = xml_mut_result(with_arena_mut(rb_self, |d| mutate::new_pi(d, target, data))?)?;
+    let pi = xml_mut_result(with_arena_mut(rb_self, |d| {
+        mutate::new_pi(d, target, data)
+    })?)?;
     Ok(wrap(pi, rb_self))
 }
 

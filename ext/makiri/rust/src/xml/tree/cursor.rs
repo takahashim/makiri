@@ -397,7 +397,11 @@ impl<'a> Cursor<'a> {
     /// so the caller decides whether to keep the body and then advances past
     /// `close.len()`; the two callers that keep it and the two that discard it
     /// were four copies of this loop.
-    pub(super) fn scan_until_close(&mut self, close: &[u8], banned_repeat: Option<u8>) -> R<InSlice> {
+    pub(super) fn scan_until_close(
+        &mut self,
+        close: &[u8],
+        banned_repeat: Option<u8>,
+    ) -> R<InSlice> {
         let lead = close[0];
         let start = self.pos;
         let mut j = self.pos;
