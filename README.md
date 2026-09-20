@@ -139,20 +139,11 @@ doc.at_xpath("//draft").remove
 doc.root.to_xml           # => "<feed xmlns:dc=\"urn:dc\"><post dc:k=\"v\">Bye</post></feed>"
 ```
 
-XML subtrees can be built with `Document#create_element` and related node factory methods,
-then inserted with `#add_child`, `#before`, `#after`, or `#replace`. A factory-built
-node takes its namespace from the context it is first inserted into; one that already
-has a namespace keeps it. A node from another document is **adopted** — brought over
-and removed from the document it came from — and the method returns the node now in
-the tree, which is a different object than the one passed in.
+XML subtrees can be built using `Document#create_element` and other node factory methods,
+then inserted into a document with `#add_child`, `#before`, `#after`, or `#replace`.
 
-`Document#import_node(node, deep = false)` brings a node into a document as a
-detached copy, and works **across representations**: importing a `Makiri::HTML`
-node into a `Makiri::XML::Document` (or vice versa) translates the subtree between
-the two node representations, preserving namespaces (e.g. an inline `<svg>` keeps
-the SVG namespace, HTML elements the XHTML namespace; custom namespaces are
-preserved across both directions). An XML CDATA section has no HTML counterpart,
-so importing one into an HTML document raises.
+When a node is created, it inherits its namespace from the context where it is
+first inserted; if it already has a namespace, that namespace is preserved.
 
 ```ruby
 doc   = Makiri::XML(%(<feed xmlns="urn:a" xmlns:dc="urn:dc"/>))
@@ -190,12 +181,6 @@ Makiri::XML(huge_xml, max_bytes: 512 * 1024 * 1024)   # also Makiri::XML::Docume
 
 ## Non-goals (v1.0)
 
-* Passing a raw markup string straight to an insertion method
-  (`node.add_child("<x/>")`); parse it into a fragment first
-  (`Document#fragment` / `DocumentFragment.parse`). (Building XML from scratch
-  (`XML::Document.new` + `#root=`), the node factories - `Document#create_element`
-  etc. - fragments, node insertion (`#add_child` / `#before` / `#after` /
-  `#replace`), and `#to_xml` serialization ARE supported.)
 * XSLT, DTD / Schema / RelaxNG validation, XPointer, XInclude.
 * Streaming / SAX parsing.
 * Drop-in replacement for every Nokogiri method. Makiri covers the common
@@ -217,7 +202,7 @@ See [NOKOGIRI_DIFFERENCES.md](NOKOGIRI_DIFFERENCES.md).
 
 The XPath engine and XML parser are original code, so their correctness is held by
 differential and standards harnesses in `spec/conformance/`.
-The HTML XPath and CSS suites are differentials against **`Nokogiri::HTML5`**
+The HTML XPath and CSS suites are differentials against `Nokogiri::HTML5`
 (Gumbo / WHATWG, never libxml2's non-conformant HTML4 parser): both sides parse
 HTML5, so the DOM is isomorphic and results are compared node-for-node. HTML
 parsing itself is checked against the WHATWG html5lib-tests corpus, and
@@ -251,15 +236,6 @@ bundle install
 bundle exec rake compile
 bundle exec rake spec
 ```
-
-### Vendored Lexbor version
-
-`vendor/lexbor` is pinned to `3a2d595` (`v3.0.0-25`), an untagged `master`
-commit, for fixes that v3.0.0 lacks: two upstreamed CSS-selector fixes (class/ID
-case-sensitivity in quirks mode, and prefix-less type-selector namespacing), a
-heap-overflow fix in the `:lexbor-contains()` parser, and other post-v3.0.0
-bugfixes. Lexbor stays vanilla; we return to a release tag once one ships after
-v3.0.0. See `CLAUDE.md` for details.
 
 ## License
 
