@@ -131,6 +131,7 @@ files =
 
 stats = Hash.new(0)
 diffs = []
+stale = []
 
 # A fragment test's context is either a bare HTML tag ("td") or a namespaced
 # foreign element ("svg desc", "math mi"). The HTML case goes straight through
@@ -148,6 +149,21 @@ def fragment_context(ctx)
     host.at_xpath("//*[local-name()='#{local}']")
   end
 end
+
+# Tests whose recorded expectation predates a change to the HTML Standard that
+# Lexbor has since implemented. The data is pinned (and html5lib-tests has moved
+# tree-construction to WPT, so it will not gain the new expectation), so the
+# divergence is recorded here with its reason rather than failing the run.
+#
+# Keep this EMPTY unless the spec itself says the new answer is right: the whole
+# point of the suite is that a parse difference is a finding.
+STALE_EXPECTATIONS = {
+  # The HTML Standard added processing-instruction tokens; `<?` at EOF is now
+  # "eof-in-processing-instruction", whose handling is "such processing
+  # instructions are ignored". The pinned data still expects the old bogus
+  # comment `<!-- ? -->`.
+  "tests1.dat#40" => "PI tokens: `<?` at EOF is ignored (HTML Standard), not a comment",
+}.freeze
 
 files.each do |path|
   parse_dat(path).each do |t|
@@ -177,6 +193,9 @@ files.each do |path|
 
     if actual == t.document
       stats[:pass] += 1
+    elsif (reason = STALE_EXPECTATIONS["#{t.file}##{t.index}"])
+      stats[:stale] += 1
+      stale << [t, reason]
     else
       stats[:fail] += 1
       diffs << [t, t.document, actual]
@@ -209,12 +228,14 @@ if !opts[:verbose] && diffs.length > shown
   puts "\n... #{diffs.length - shown} more failure(s) not shown (use --verbose or --max-diffs)"
 end
 
-run = stats[:pass] + stats[:fail] + stats[:error]
+run = stats[:pass] + stats[:fail] + stats[:error] + stats[:stale]
 puts "\n#{'=' * 72}"
 puts "html5lib-tests tree-construction (data @#{DATA_COMMIT[0, 12]})"
 puts "  total tests     : #{stats[:total]}"
 puts "  skipped script  : #{stats[:skip_script]}"
 puts "  unsupported     : #{stats[:unsupported]}"
+puts "  stale data      : #{stats[:stale]}#{stale.empty? ? '' : '  (the pinned expectation predates the spec)'}"
+stale.each { |t, reason| puts "      #{t.file} ##{t.index}: #{reason}" }
 puts "  ran             : #{run}"
 puts "  pass            : #{stats[:pass]}"
 puts "  fail            : #{stats[:fail]}"

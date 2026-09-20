@@ -132,7 +132,7 @@ x2h[comment].deep=true.attrs = []
 x2h[comment].deep=false = Element:"<r></r>"
 x2h[comment].deep=false.ns = ["r", nil]
 x2h[comment].deep=false.attrs = []
-x2h[pi].deep=true = Element:"<r><?tgt some data></r>"
+x2h[pi].deep=true = Element:"<r><?tgt some data?></r>"
 x2h[pi].deep=true.ns = ["r", nil]
 x2h[pi].deep=true.attrs = []
 x2h[pi].deep=false = Element:"<r></r>"

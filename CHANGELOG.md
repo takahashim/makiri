@@ -20,6 +20,18 @@
 
 ### Changed
 
+* Updated vendored Lexbor to `v3.0.0-66`.
+* Parsed `<?php ... ?>` tags in HTML input as `ProcessingInstruction` nodes
+  instead of comments, adhering to the HTML Standard.
+* Vendored Lexbor updated from `v3.0.0-25` to `v3.0.0-66` (`05b5d37`), for an
+  out-of-bounds write in `lxb_dom_character_data_replace` reachable through
+  `#content=`, UTF-16 surrogate rejection, exact `meta` charset matching and
+  buffer-capacity fixes. (v3.0.1 is not usable: it lacks the two CSS-selector
+  fixes Makiri upstreamed.)
+* `<?php ... ?>` in HTML input is now a `ProcessingInstruction` node rather
+  than a Comment, serializes as `<?target data?>`, and `<?` at end of input is
+  ignored - the HTML Standard's processing-instruction tokens, which Lexbor now
+  implements. `Nokogiri::HTML5` still answers with a comment.
 * `Makiri::XML#matches?` tests the node locally via tree walking instead of
   performing a full-document search.
 * `Makiri::XML::Namespace` is now an immutable `Data` object defined in Ruby.

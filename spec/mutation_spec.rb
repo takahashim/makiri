@@ -90,7 +90,7 @@ RSpec.describe "Makiri mutation" do
         pi = doc.create_processing_instruction("php", "echo 1;")
         el = doc.at_css("div") || doc.at_css("body")
         el.add_child(pi)
-        expect(el.to_html).to include("<?php echo 1;>")
+        expect(el.to_html).to include("<?php echo 1;?>")
       end
 
       it "fails closed when the data contains the PI terminator '?>'" do

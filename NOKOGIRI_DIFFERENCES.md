@@ -93,6 +93,15 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
   the property-based differential), including namespaces, prolog/epilog comments
   and PIs, and adjacent-CDATA coalescing.
 
+## HTML parsing
+
+* `<?php ... ?>` in HTML input is a **ProcessingInstruction** node; `#to_html`
+  writes it back as `<?php ... ?>`, and `<?` at end of input is ignored.
+  * The HTML Standard added processing-instruction tokens and tree-construction
+    rules for them; Makiri follows them through Lexbor. `Nokogiri::HTML5` (gumbo)
+    still produces the older bogus comment (`<!--?php ... ?-->`), and
+    `Nokogiri::HTML` (libxml2) its own comment.
+
 ## CSS
 
 * Most jQuery/Nokogiri CSS extensions are not supported (`:gt`, `:lt`, `:eq`, `:first`, ...)
