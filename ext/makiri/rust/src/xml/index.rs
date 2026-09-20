@@ -141,6 +141,11 @@ fn build(doc: &Document) -> Option<Box<NameIndex>> {
     .ok()
 }
 
+/* `impl Document` here rather than in `arena`: the cache is document-owned
+ * state, and this module owns its TYPE. The two blocks are the only ones -
+ * `arena` for storage, this for its one lazy cache - so a reader looking for a
+ * Document method has two places, not five. */
+
 impl Document {
     /// This document's element-name index, built lazily. `None` means the
     /// caller must walk the tree, never that a partially built index can answer

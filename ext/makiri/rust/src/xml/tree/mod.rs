@@ -120,7 +120,7 @@ impl<'a> Parser<'a> {
     /// declared is not a syntax error but a construct Makiri refuses.
     fn expand(&mut self, s: &[u8], mode: ExpandMode) -> R<Span> {
         let r = self.doc.expand(s, mode);
-        if r == Err(Status::Syntax) && self.declared.refs_unexpanded_entity(self.cur.input(), s) {
+        if r == Err(Status::Syntax) && self.declared.refs_unexpanded_entity(&self.cur, s) {
             return self.cur.unsupported();
         }
         self.arena(r)

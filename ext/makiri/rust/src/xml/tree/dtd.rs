@@ -121,7 +121,11 @@ impl Declared {
     /// Whether `s` references a general entity that a DTD declares (or may
     /// declare, in an external subset) - one Makiri does not expand, as opposed
     /// to an undeclared name, which is a well-formedness error.
-    pub(super) fn refs_unexpanded_entity(&self, input: &[u8], s: &[u8]) -> bool {
+    ///
+    /// Takes the cursor rather than the raw input: a declared name is an
+    /// [`InSlice`], and `Cursor::slice` is how every other one is read. Handing
+    /// the whole input out instead was the only reason `Cursor::input` existed.
+    pub(super) fn refs_unexpanded_entity(&self, cur: &Cursor<'_>, s: &[u8]) -> bool {
         let mut i = 0;
         while let Some(at) = find(&s[i..], b'&') {
             i += at + 1;
@@ -133,11 +137,7 @@ impl Declared {
             };
             let name = &s[i..i + end];
             if !matches!(name, b"lt" | b"gt" | b"amp" | b"apos" | b"quot")
-                && (self.external_subset
-                    || self
-                        .names
-                        .iter()
-                        .any(|&n| &input[n.off..n.off + n.len] == name))
+                && (self.external_subset || self.names.iter().any(|&n| cur.slice(n) == name))
             {
                 return true;
             }

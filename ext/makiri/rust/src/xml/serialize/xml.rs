@@ -513,7 +513,9 @@ pub(super) fn write(
     })();
     match r {
         Ok(()) => Ok(()),
-        /* The budget is the more specific cause, so it wins over "no output". */
+        /* Reading the flag after the fact is exact, not a guess: only a lookup
+         * sets it, and a planner that sees it set refuses immediately - so a
+         * write failure always propagates with the flag still clear. */
         Err(()) if binds.exhausted => Err(Failure::NamespaceBudget),
         Err(()) => Err(Failure::Output),
     }

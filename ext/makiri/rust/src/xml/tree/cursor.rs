@@ -46,6 +46,15 @@ pub(super) fn find(h: &[u8], b: u8) -> Option<usize> {
     h.iter().position(|&x| x == b)
 }
 
+/// The input, where the scan has reached, and how the parse ended.
+///
+/// The STATUS is here on purpose, not just the position: it is what lets
+/// [`super::dtd::Subset`] report a failure while holding nothing but a cursor,
+/// which is the whole reason the validator can exist without a document. The
+/// cost is that a couple of READS take `&mut self` ([`Cursor::span`] and
+/// [`Cursor::taken_since`], which refuse a length no `u32` span could hold) -
+/// worth it, because the alternative is every caller deciding what a too-long
+/// slice means.
 pub(super) struct Cursor<'a> {
     input: &'a [u8],
     pos: usize,
@@ -79,10 +88,6 @@ impl<'a> Cursor<'a> {
     #[inline]
     pub(super) fn col(&self) -> u32 {
         self.col
-    }
-    #[inline]
-    pub(super) fn input(&self) -> &'a [u8] {
-        self.input
     }
     #[inline]
     pub(super) fn rest(&self) -> &'a [u8] {
