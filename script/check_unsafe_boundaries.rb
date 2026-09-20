@@ -158,6 +158,19 @@ ENGINE_DIRS = %w[lexbor/ xml/ xpath/ css/].freeze
 RUBY_LAYER = /crate::(?:bridge|glue|init)|magnus::/
 RUBY_LAYER_COUNTS = {}.freeze
 
+# The engine allocates only through `falloc`, so `rake oom` can fail every site
+# and an OOM raises instead of aborting the host. `clippy.toml` bans the
+# infallible `Box::new` / `Vec::with_capacity` / `reserve` / `to_vec` crate-wide,
+# but it CANNOT ban `ToOwned::to_owned`: on a `&str` that is the String of a Ruby
+# exception message, which the glue is right to allocate on a path that is
+# already raising. The rule is per-LAYER, so the per-layer half is here.
+#
+# It is here because three `.to_owned()` calls reached `xml/serialize` unnoticed -
+# the engine's only infallible allocations - and the crate-wide lint that would
+# have caught them fired on five legitimate glue sites too.
+INFALLIBLE_ALLOC = /\.to_owned\(\)|\.to_vec\(\)|String::from\(|\bformat!\(/
+INFALLIBLE_ALLOC_COUNTS = {}.freeze
+
 def rust_code(path)
   File.binread(path).lines.reject { |line| line.match?(%r{\A\s*//}) }.join
 end
@@ -374,6 +387,20 @@ Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
 end
 if ruby_layer != RUBY_LAYER_COUNTS
   errors << "Ruby-layer use inside an engine layer changed: #{table_diff(RUBY_LAYER_COUNTS, ruby_layer)}"
+end
+
+infallible = Hash.new(0)
+Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
+  relative = path.delete_prefix("#{RUST}/")
+  next unless relative.start_with?(*ENGINE_DIRS)
+  next if relative.end_with?("selftest.rs", "verify.rs", "tests.rs")
+
+  count = comments_removed(File.binread(path)).scan(INFALLIBLE_ALLOC).length
+  infallible[relative] = count unless count.zero?
+end
+if infallible != INFALLIBLE_ALLOC_COUNTS
+  errors << "infallible allocation inside an engine layer changed: " \
+            "#{table_diff(INFALLIBLE_ALLOC_COUNTS, infallible)}"
 end
 
 # The bridge hands the glue primitives; the Ruby surface - defining a method,

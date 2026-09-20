@@ -68,15 +68,7 @@ fn splice_site(doc: &Document, target: NodeId, splice: Splice) -> Option<Site> {
     match splice {
         Splice::Child => Some(Site::appending(target)),
         Splice::Before => Some(Site::before(doc.parent(target)?, target)),
-        Splice::After => {
-            let container = doc.parent(target)?;
-            /* Every child lands before whatever follows the target, wherever
-             * the moving insertion point has reached. */
-            Some(match doc.next(target) {
-                Some(next) => Site::before(container, next),
-                None => Site::appending(container),
-            })
-        }
+        Splice::After => Some(Site::after(doc.parent(target)?, target)),
     }
 }
 
@@ -88,7 +80,8 @@ fn fragment_fits_container(doc: &Document, frag: NodeId, site: Site) -> MutStatu
     if doc.type_(site.container) != Some(NodeType::Document) {
         return MutStatus::Ok;
     }
-    if element_child_count(doc, frag, None) + element_child_count(doc, site.container, site.exclude)
+    if element_child_count(doc, frag, None)
+        + element_child_count(doc, site.container, site.excluded())
         > 1
     {
         return MutStatus::Hierarchy;
@@ -142,7 +135,7 @@ fn place_fragment(doc: &mut Document, target: NodeId, frag: NodeId, splice: Spli
     while let Some(c) = doc.first_child(frag) {
         doc.detach(c);
         let here = match splice {
-            Splice::After => Site::after(doc, site.container, last),
+            Splice::After => Site::after(site.container, last),
             _ => site,
         };
         let (prev, next) = here.neighbours(doc);
@@ -183,34 +176,49 @@ fn is_insertable(doc: &Document, node: NodeId) -> bool {
 /// each walked the container's children again - up to four walks for one
 /// insertion at the document node. Here they are one value and [`Site::check`]
 /// is one walk.
+/// Which side of which child an insertion is anchored to.
+///
+/// `After` is NOT the same as `Before(next(target))`, and that mistake cost a
+/// hang: the node being inserted may BE that next sibling, and `insert_at`
+/// detaches it before reading the neighbours - which would leave the anchor
+/// outside the chain and splice the node before ITSELF (`b.next == b`, a
+/// self-referential sibling ring that every later walk loops on). An anchor on
+/// the TARGET survives the detach, because the target is not the node moving.
+#[derive(Clone, Copy)]
+enum Anchor {
+    /// At the end of the container's children.
+    End,
+    /// Immediately before this child.
+    Before(NodeId),
+    /// Immediately after this child.
+    After(NodeId),
+    /// In this child's place; it goes away.
+    Replacing(NodeId),
+}
+
 #[derive(Clone, Copy)]
 struct Site {
     container: NodeId,
-    before: Option<NodeId>,
-    exclude: Option<NodeId>,
+    anchor: Anchor,
 }
 
 impl Site {
     fn appending(container: NodeId) -> Site {
         Site {
             container,
-            before: None,
-            exclude: None,
+            anchor: Anchor::End,
         }
     }
     fn before(container: NodeId, before: NodeId) -> Site {
         Site {
             container,
-            before: Some(before),
-            exclude: None,
+            anchor: Anchor::Before(before),
         }
     }
-    /// Just after `target`, which is "before whatever follows it" - or an
-    /// append when nothing does.
-    fn after(doc: &Document, container: NodeId, target: NodeId) -> Site {
-        match doc.next(target) {
-            Some(next) => Site::before(container, next),
-            None => Site::appending(container),
+    fn after(container: NodeId, target: NodeId) -> Site {
+        Site {
+            container,
+            anchor: Anchor::After(target),
         }
     }
     /// The site a `replace` leaves: `target`'s place, with `target` itself not
@@ -218,26 +226,45 @@ impl Site {
     fn replacing(container: NodeId, target: NodeId) -> Site {
         Site {
             container,
-            before: Some(target),
-            exclude: Some(target),
+            anchor: Anchor::Replacing(target),
+        }
+    }
+
+    /// The child the insertion goes BEFORE, for the position-sensitive rules -
+    /// read while the tree is still whole, before anything is detached.
+    fn insertion_point(&self, doc: &Document) -> Option<NodeId> {
+        match self.anchor {
+            Anchor::End => None,
+            Anchor::Before(r) | Anchor::Replacing(r) => Some(r),
+            Anchor::After(r) => doc.next(r),
+        }
+    }
+
+    /// The child that does not count as already being here: a `replace`'s
+    /// target, which is on its way out.
+    fn excluded(&self) -> Option<NodeId> {
+        match self.anchor {
+            Anchor::Replacing(r) => Some(r),
+            _ => None,
         }
     }
 
     /// The two neighbours a node lands between here.
     ///
-    /// The ONE statement of where an insertion goes. It used to be written
-    /// twice: once as a `(prev, next)` expression in each of the four verbs, and
-    /// once as a three-arm match inside the fragment commit loop.
+    /// The ONE statement of where an insertion goes; it used to be written twice,
+    /// as a `(prev, next)` expression in each of the four verbs and again in the
+    /// fragment commit loop.
     ///
-    /// Must be read AFTER the incoming node is detached - a move can be its own
-    /// neighbour, and then detaching it changes the answer.
+    /// Read AFTER the incoming node is detached - a move can be its own
+    /// neighbour, so the answer depends on the node already being out of the
+    /// chain. Every arm anchors on a node that is NOT the one moving.
     fn neighbours(&self, doc: &Document) -> (Option<NodeId>, Option<NodeId>) {
-        match self.before {
-            /* Appending: after whatever is last, before nothing. */
-            None => (doc.last_child(self.container), None),
-            /* Replacing: the target goes away, so its own next is the far side. */
-            Some(r) if self.exclude == Some(r) => (doc.prev(r), doc.next(r)),
-            Some(r) => (doc.prev(r), Some(r)),
+        match self.anchor {
+            Anchor::End => (doc.last_child(self.container), None),
+            Anchor::Before(r) => (doc.prev(r), Some(r)),
+            Anchor::After(r) => (Some(r), doc.next(r)),
+            /* The target goes away, so its own next is the far side. */
+            Anchor::Replacing(r) => (doc.prev(r), doc.next(r)),
         }
     }
 
@@ -248,13 +275,15 @@ impl Site {
             element_before: false,
             doctype_at_or_after: false,
         };
+        let before = self.insertion_point(doc);
+        let exclude = self.excluded();
         let mut reached = false;
         let mut c = doc.first_child(self.container);
         while let Some(cur) = c {
-            if Some(cur) == self.before {
+            if Some(cur) == before {
                 reached = true;
             }
-            if Some(cur) != self.exclude && cur != node {
+            if Some(cur) != exclude && cur != node {
                 match doc.type_(cur) {
                     Some(NodeType::Element) => {
                         t.elements += 1;
@@ -388,7 +417,7 @@ pub fn insert_after(doc: &mut Document, r: NodeId, node: NodeId) -> MutStatus {
         return MutStatus::Ok;
     }
     match doc.parent(r) {
-        Some(container) => insert_at(doc, Site::after(doc, container, r), node),
+        Some(container) => insert_at(doc, Site::after(container, r), node),
         None => MutStatus::Hierarchy,
     }
 }

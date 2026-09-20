@@ -19,11 +19,14 @@
 # call, and review is what catches a site that skipped them.
 disallowed-methods = [
   { path = "std::boxed::Box::new", reason = "aborts on OOM; use falloc::try_box" },
-  # `to_vec` and `to_owned` on a slice are the same allocation as `Vec::from`
-  # under a friendlier name, and they were the hole this list had: three of them
-  # reached `xml/serialize` unnoticed, where the engine must fail closed.
+  # `to_vec` is the same allocation as `Vec::from` under a friendlier name, and
+  # it was one of the holes this list had. Its sibling `ToOwned::to_owned` is NOT
+  # banned here, because it cannot be: on a `&str` it builds the String of a Ruby
+  # exception message, which the glue is right to allocate infallibly on a path
+  # that is already raising. The rule is per-LAYER and clippy.toml is crate-wide,
+  # so the layer half lives in `script/check_unsafe_boundaries.rb` ("infallible
+  # allocation inside an engine layer"), beside the other per-layer gates.
   { path = "slice::to_vec", reason = "aborts on OOM; use falloc::try_to_vec" },
-  { path = "alloc::borrow::ToOwned::to_owned", reason = "aborts on OOM; use falloc::try_to_vec" },
   { path = "alloc::vec::Vec::with_capacity", reason = "aborts on OOM; use falloc::try_vec_with_capacity" },
   { path = "alloc::vec::Vec::reserve", reason = "aborts on OOM; use Reserve::falloc_reserve" },
   { path = "alloc::vec::Vec::reserve_exact", reason = "aborts on OOM; use Reserve::falloc_reserve_exact" },

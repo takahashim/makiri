@@ -74,6 +74,20 @@ namespace :unsafe do
   end
 end
 
+# The lint gate, with CI's OWN arguments. It exists because a narrower spelling
+# looks like it passes and is not: `cargo clippy --no-default-features --features
+# lexbor` never compiles `bridge/` or `glue/` at all, so five `clippy.toml`
+# violations there went unseen locally and turned CI red. `--all-features` is
+# every configuration the crate has, which is why CI uses it - and why this task
+# does, rather than leaving the arguments to be remembered.
+desc "Clippy and rustfmt exactly as CI runs them (--all-features, warnings are errors)"
+task :lint do
+  Dir.chdir("ext/makiri/rust") do
+    sh "cargo", "clippy", "--all-features", "--", "-D", "warnings"
+    sh "cargo", "fmt", "--all", "--", "--check"
+  end
+end
+
 # `rake spec:valgrind` - run the spec suite under Valgrind memcheck via
 # ruby_memcheck (Linux CI; see .github/workflows/valgrind.yml). The gem ships
 # Ruby's own Valgrind suppression files (matched by Ruby version) and filters

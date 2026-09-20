@@ -113,7 +113,7 @@ module MutateFuzz
 
   def apply(doc, nodes, src, rng)
     t = nodes.sample(random: rng)
-    case rng.rand(22)
+    case rng.rand(23)
     when 0  then t.add_child(make(doc, rng))
     when 1  then t << make(doc, rng)
     when 2  then t.before(make(doc, rng))
@@ -136,6 +136,12 @@ module MutateFuzz
     when 19 then t.add_child(doc.create_cdata(TEXTS.sample(random: rng)))
     when 20 then t.add_child(t.clone_node(rng.rand(2).zero?)) # clone (deep/shallow) reinserted as an independent copy
     when 21 then import_html(doc, rng)                        # HTML->XML import_node incl DOM-loose element names
+    # In-tree moves existed for add_child (13), before (14) and replace (15) and
+    # NOT for after - a one-row hole, and a regression landed exactly in it:
+    # `a.after(b)` where b already followed a spliced b before ITSELF, making a
+    # self-referential sibling ring. `collect` detects rings, so the only thing
+    # missing was a generator that reaches this shape.
+    when 22 then t.after(nodes.sample(random: rng))           # in-tree move as the NEXT sibling
     end
   end
 
