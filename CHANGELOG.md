@@ -4,12 +4,26 @@
 
 ### Added
 
+* **`#xpath` / `#at_xpath` read one argument list for HTML and XML**:
+  `(expr, [namespaces Hash], [handler], namespace_matching:)`, in either order.
+  HTML gains per-query namespace bindings (they used to be taken as the handler
+  and silently ignored), XML gains a custom-function handler (it used to raise
+  TypeError), and keywords other than `namespace_matching:` are prefix bindings,
+  so `xpath("//s:p", s: uri)` works - on XML that keyword used to be registered
+  as a namespace prefix called "namespace_matching".
+
 * **XML nodes have the HTML node readers that share a meaning:**
   `#first_element_child`, `#next_element`, `#previous_element`, `#elements`,
   `#keys`, `#values`, `#tag_name`, `#target`, and the aliases `#attr`,
   `#get_attribute`, `#node_name`, `#node_name=` and `#type`.
 
 ### Changed
+
+* **`Makiri::XML#matches?` tests the node itself**, by walking its ancestors and
+  siblings, instead of selecting across the whole document and testing
+  membership - the question Lexbor answers for HTML. A detached node is now
+  matched against the selector like any other (`fragment.matches?("p")`), and a
+  `select { matches? }` loop no longer costs a document scan per node.
 
 * **`Makiri::XML::Namespace` is a `Data` value object** (frozen, equal by
   `prefix` and `href`), defined in Ruby. `#to_s` is still the URI.

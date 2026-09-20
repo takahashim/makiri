@@ -412,10 +412,16 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            `#![forbid(unsafe_code)]`, which the gate pins), and
                            `rb_sys::`, `Value::from_raw` and raising C calls are
                            0 outside `bridge/`
-    glue/                  Ruby <-> engine surface, one module per feature
-                           (node/doc/node_set/xpath/html_node/xml_node); all
-                           `unsafe`-free, its wrappers and TypedData live in
-                           `bridge/`
+    glue/                  THE Ruby surface: every method Makiri defines, with
+                           its argument reading, its errors and its
+                           registration, one module per feature
+                           (query/html_doc/xml_doc/node_set/xpath_context/
+                           html_node/xml_node, each node module owning its
+                           read/mutate/css/serialize). All `unsafe`-free; the
+                           wrappers, TypedData and the operations that keep a
+                           structure's invariants are `bridge/`'s, and
+                           `rake unsafe:boundaries` fails on a method defined -
+                           or an argument list scanned - in `bridge/`
     xpath/                 native XPath 1.0 engine, generic over a `Dom` trait;
                            `#![forbid(unsafe_code)]` and Lexbor/Ruby-free. The
                            two `Dom` instances live with their layers:
