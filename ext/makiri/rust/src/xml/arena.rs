@@ -469,7 +469,7 @@ impl Document {
                 prev = attr;
                 attr = self.node_at(attr).next;
             }
-            self.clear_links(node_link);
+            self.clear_links_at(node_link);
             return;
         }
         let (prev, next) = (self.node_at(node_link).prev, self.node_at(node_link).next);
@@ -483,15 +483,50 @@ impl Document {
         } else {
             self.node_at_mut(next).prev = prev;
         }
-        self.clear_links(node_link);
+        self.clear_links_at(node_link);
+    }
+
+    /// Forget `node`'s parent and siblings, leaving its CHILDREN alone.
+    ///
+    /// `pub(super)` because `mutate` needs it for the node a `replace` swapped
+    /// out: that node's links were already taken over by the splice, so
+    /// `detach` would unlink the wrong thing. Two callers there open-coded the
+    /// three assignments through `node_mut`, which is the layer this module's
+    /// visibility split exists to close.
+    #[inline]
+    pub(super) fn clear_links(&mut self, node: NodeId) {
+        self.clear_links_at(Link::of(node));
     }
 
     #[inline]
-    fn clear_links(&mut self, node: Link) {
+    fn clear_links_at(&mut self, node: Link) {
         let n = self.node_at_mut(node);
         n.parent = Link::NONE;
         n.prev = Link::NONE;
         n.next = Link::NONE;
+    }
+
+    /// Detach every child of `node` and make `only` its single child (or leave
+    /// it childless when `only` is None).
+    ///
+    /// One arena operation because it is one invariant: every former child ends
+    /// up fully unlinked AND `first_child`/`last_child` agree with what is
+    /// actually there. `set_content` wrote both halves by hand.
+    pub(super) fn replace_children(&mut self, node: NodeId, only: Option<NodeId>) {
+        let mut c = self.first_child(node);
+        while let Some(cur) = c {
+            let next = self.next(cur);
+            self.clear_links(cur);
+            c = next;
+        }
+        {
+            let n = self.node_mut(node);
+            n.first_child = Link::from_option(only);
+            n.last_child = Link::from_option(only);
+        }
+        if let Some(only) = only {
+            self.set_parent(only, Some(node));
+        }
     }
 
     /// Unlink attribute `a` (predecessor `prev`, `None` if head) from `el`.
@@ -501,7 +536,7 @@ impl Document {
             Some(p) => self.node_mut(p).next = next,
             None => self.node_mut(el).attrs = next,
         }
-        self.clear_links(Link::of(a));
+        self.clear_links_at(Link::of(a));
     }
 
     /// Link `attr` onto `el`'s attribute list after `tail`, the list's current

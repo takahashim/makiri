@@ -7,8 +7,8 @@
 
 #![forbid(unsafe_code)]
 
-use super::assign_qname;
 use super::ns::{resolve_ns, Ns, NO_NS};
+use super::{arena, assign_qname};
 use crate::xml::chars::validate_chars;
 use crate::xml::qname::{split_checked, Split};
 use crate::xml::{Document, MutStatus, NodeId, NodeType};
@@ -24,14 +24,12 @@ fn build_attr(
     ns: Ns,
     tail: Option<NodeId>,
 ) -> Result<NodeId, MutStatus> {
-    let attr = doc
-        .new_node(NodeType::Attribute)
-        .map_err(|_| MutStatus::Oom)?;
+    let attr = arena(doc.new_node(NodeType::Attribute))?;
     let st = assign_qname(doc, attr, name, sp);
     if st != MutStatus::Ok {
         return Err(st);
     }
-    doc.set_value_bytes(attr, val).map_err(|_| MutStatus::Oom)?;
+    arena(doc.set_value_bytes(attr, val))?;
     doc.node_mut(attr).ns_uri = ns;
     doc.link_attr(el, tail, attr);
     Ok(attr)
@@ -64,7 +62,7 @@ pub fn set_attribute(
     let mut a = doc.attrs(el);
     while let Some(attr) = a {
         if doc.qname(attr) == name {
-            doc.set_value_bytes(attr, val).map_err(|_| MutStatus::Oom)?;
+            arena(doc.set_value_bytes(attr, val))?;
             doc.node_mut(attr).ns_uri = ns;
             return Ok(attr);
         }
@@ -122,7 +120,7 @@ pub fn set_attribute_ns(
     let mut a = doc.attrs(el);
     while let Some(attr) = a {
         if attr_matches_ns(doc, attr, ns, local) {
-            doc.set_value_bytes(attr, val).map_err(|_| MutStatus::Oom)?;
+            arena(doc.set_value_bytes(attr, val))?;
             return Ok(attr);
         }
         tail = Some(attr);
@@ -132,7 +130,7 @@ pub fn set_attribute_ns(
     let nsv: Ns = if ns.is_empty() {
         NO_NS
     } else {
-        doc.store(ns).map_err(|_| MutStatus::Oom)?
+        arena(doc.store(ns))?
     };
     build_attr(doc, el, name, &sp, val, nsv, tail)
 }

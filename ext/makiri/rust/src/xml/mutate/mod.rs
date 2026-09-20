@@ -20,7 +20,7 @@ pub mod insert;
 pub mod ns;
 
 use crate::xml::qname::Split;
-use crate::xml::{Document, MutStatus, NodeId};
+use crate::xml::{Document, MutStatus, NodeId, Status};
 
 pub use attr::{remove_attribute, remove_attribute_ns, set_attribute, set_attribute_ns};
 pub use copy::{clone_node, copy_node_from, import_subtree};
@@ -40,14 +40,27 @@ pub(super) fn copy_span(bytes: &[u8]) -> Result<Vec<u8>, MutStatus> {
     crate::falloc::try_to_vec(bytes).ok_or(MutStatus::Oom)
 }
 
+/// An arena result as a mutation result, KEEPING the reason.
+///
+/// The one place the two status domains meet. It matters that it is one place:
+/// every site used to write `.map_err(|_| MutStatus::Oom)`, which reported a
+/// document's own `max_bytes`/`max_nodes` refusal as the machine running out of
+/// memory. `tree::Parser::arena` is the same conversion on the parse side, and
+/// it never lost the reason.
+#[inline]
+pub(super) fn arena<T>(r: Result<T, Status>) -> Result<T, MutStatus> {
+    r.map_err(|st| match st {
+        Status::Limit => MutStatus::Limit,
+        /* Syntax and Unsupported are the parser's; an arena call cannot answer
+         * either, so anything else here is an allocation that failed. */
+        _ => MutStatus::Oom,
+    })
+}
+
 #[inline]
 pub(super) fn assign_qname(doc: &mut Document, node: NodeId, name: &[u8], sp: &Split) -> MutStatus {
-    if doc
-        .assign_qname(node, name, sp.prefix_len, sp.local_off, sp.local_len)
-        .is_ok()
-    {
-        MutStatus::Ok
-    } else {
-        MutStatus::Oom
+    match arena(doc.assign_qname(node, name, sp.prefix_len, sp.local_off, sp.local_len)) {
+        Ok(()) => MutStatus::Ok,
+        Err(st) => st,
     }
 }

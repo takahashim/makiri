@@ -143,16 +143,6 @@ pub(super) fn resolve_into(doc: &mut Document, node: NodeId, context: NodeId) ->
     st
 }
 
-/* ---- copying ----
- *
- * A copy READS one arena and WRITES another - or, for `clone_node`, the same
- * one, which Rust cannot express as `(&mut Document, &Document)`. Rather than
- * keep two copies of every routine (one per source), a copy lifts the node's
- * fields OUT of the source first (`CopiedNode::read`) and writes them back
- * (`CopiedNode::write`). The fields had to be owned anyway - a `&mut Document`
- * cannot be held across a read of its own byte store - so the split costs
- * nothing and leaves one body per operation. */
-
 /// Nearest in-scope binding for `prefix` ("" = default) at or above `node`;
 /// [`Span::EMPTY`] when there is none, which callers treat like an empty
 /// binding. Not an `Option<Span>`: `None` leaves the payload undefined, and LLVM

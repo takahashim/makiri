@@ -237,6 +237,14 @@ allows a single root element, and a sibling target must have a parent)"
         }
         MutStatus::BadNsDecl => "cannot bind a namespace prefix to the empty namespace",
         MutStatus::Internal => "internal error mutating XML (no document)",
+        /* The document's own budget, not the machine's memory - so the same
+         * exception a parse raises for the same cause. */
+        MutStatus::Limit => {
+            return Err(Error::new(
+                EXC_XML_LIMIT_EXCEEDED.exception(),
+                "XML document exceeded its byte or node budget",
+            ))
+        }
     };
     Err(makiri_error(msg))
 }

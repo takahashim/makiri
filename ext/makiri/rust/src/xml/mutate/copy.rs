@@ -10,7 +10,7 @@
 
 #![forbid(unsafe_code)]
 
-use super::copy_span;
+use super::{arena, copy_span};
 use crate::falloc::Reserve;
 use crate::xml::qname::Split;
 use crate::xml::{Document, MutStatus, NodeId, NodeType, Span};
@@ -91,29 +91,24 @@ impl CopiedNode {
 
     /// Write these fields as a fresh, detached node in `dst`.
     fn write(&self, dst: &mut Document) -> Result<NodeId, MutStatus> {
-        let n = dst.new_node(self.type_).map_err(|_| MutStatus::Oom)?;
+        let n = arena(dst.new_node(self.type_))?;
         if let Some((name, sp)) = &self.qname {
-            if dst
-                .assign_qname(n, name, sp.prefix_len, sp.local_off, sp.local_len)
-                .is_err()
-            {
-                return Err(MutStatus::Oom);
-            }
+            arena(dst.assign_qname(n, name, sp.prefix_len, sp.local_off, sp.local_len))?;
         } else if let Some(local) = &self.local {
-            let span = dst.store(local).map_err(|_| MutStatus::Oom)?;
+            let span = arena(dst.store(local))?;
             dst.node_mut(n).local = span;
         }
         match &self.value {
             CopiedValue::Absent => {}
             CopiedValue::Empty => dst.node_mut(n).value = Span::EMPTY,
             CopiedValue::Bytes(v) => {
-                let span = dst.store(v).map_err(|_| MutStatus::Oom)?;
+                let span = arena(dst.store(v))?;
                 dst.node_mut(n).value = span;
             }
         }
         dst.node_mut(n).flags = self.flags;
         if let Some(uri) = &self.ns_uri {
-            let span = dst.store(uri).map_err(|_| MutStatus::Oom)?;
+            let span = arena(dst.store(uri))?;
             dst.node_mut(n).ns_uri = span;
         }
         /* attributes, in order */
@@ -209,5 +204,3 @@ pub fn clone_node(doc: &mut Document, src: NodeId, deep: bool) -> Result<NodeId,
         copy_one(doc, None, src)
     }
 }
-
-/* ---- insertion ---- */

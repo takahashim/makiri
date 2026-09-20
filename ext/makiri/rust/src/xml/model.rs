@@ -129,6 +129,16 @@ pub enum MutStatus {
     /// overloaded the parse code `4` here; as its own variant it can no longer
     /// be mistaken for [`MutStatus::UnboundNs`].
     Internal = 9,
+    /// The document's OWN budget refused the allocation - `max_bytes` or
+    /// `max_nodes` - which is not the machine running out of memory.
+    ///
+    /// It exists because without it every arena failure collapsed into
+    /// [`MutStatus::Oom`] at ~30 call sites, so filling a document's byte
+    /// budget told the caller "out of memory mutating XML" on a machine with
+    /// gigabytes free. The parse path always kept them apart
+    /// ([`Status::Limit`] -> `Makiri::XML::LimitExceeded`); mutation now does
+    /// too. `mutate::arena` is the one conversion.
+    Limit = 10,
 }
 
 /* ---- budgets (§4) ---- */

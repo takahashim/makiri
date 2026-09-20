@@ -3,13 +3,11 @@
 
 #![forbid(unsafe_code)]
 
-use super::assign_qname;
 use super::ns::resolve_ns;
+use super::{arena, assign_qname};
 use crate::xml::chars::validate_chars;
 use crate::xml::qname::split_checked;
-use crate::xml::{
-    Document, Link, MutStatus, NodeId, NodeType, FLAG_DOM_LOOSE_NAME, FLAG_NS_RESOLVED,
-};
+use crate::xml::{Document, MutStatus, NodeId, NodeType, FLAG_DOM_LOOSE_NAME, FLAG_NS_RESOLVED};
 
 /// Whether `text` is free of the SEQUENCE its node kind cannot hold: "--" (or
 /// a trailing "-") in a comment, "]]>" in CDATA, "?>" in a PI. Each would close
@@ -73,50 +71,30 @@ pub fn set_content(doc: &mut Document, node: NodeId, text: &[u8]) -> MutStatus {
             if !value_seq_ok(ty, text) {
                 return MutStatus::BadChars;
             }
-            if doc.set_value_bytes(node, text).is_err() {
-                return MutStatus::Oom;
+            match arena(doc.set_value_bytes(node, text)) {
+                Ok(()) => MutStatus::Ok,
+                Err(st) => st,
             }
-            MutStatus::Ok
         }
         Some(NodeType::Element) => {
             /* build the replacement TEXT node FIRST, so an OOM leaves the
              * children intact */
             let mut t: Option<NodeId> = None;
             if !text.is_empty() {
-                let v = match doc.store(text) {
+                let v = match arena(doc.store(text)) {
                     Ok(v) => v,
-                    Err(_) => return MutStatus::Oom,
+                    Err(st) => return st,
                 };
-                let n = match doc.new_node(NodeType::Text) {
+                let n = match arena(doc.new_node(NodeType::Text)) {
                     Ok(n) => n,
-                    Err(_) => return MutStatus::Oom,
+                    Err(st) => return st,
                 };
                 doc.node_mut(n).value = v;
                 t = Some(n);
             }
-            let mut c = doc.first_child(node);
-            while let Some(cur) = c {
-                let nx = doc.next(cur);
-                {
-                    let n = doc.node_mut(cur);
-                    n.parent = Link::NONE;
-                    n.prev = Link::NONE;
-                    n.next = Link::NONE;
-                }
-                c = nx;
-            }
-            {
-                let n = doc.node_mut(node);
-                n.first_child = Link::from_option(t);
-                n.last_child = Link::from_option(t);
-            }
-            if let Some(t) = t {
-                doc.set_parent(t, Some(node));
-            }
+            doc.replace_children(node, t);
             MutStatus::Ok
         }
         _ => MutStatus::Type,
     }
 }
-
-/* ============================ Phase 2: building ============================ */

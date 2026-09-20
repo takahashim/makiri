@@ -9,7 +9,7 @@
 #![forbid(unsafe_code)]
 
 use super::ns::resolve_into;
-use crate::xml::{Document, Link, MutStatus, NodeId, NodeType};
+use crate::xml::{Document, MutStatus, NodeId, NodeType};
 
 /// The three verbs that splice a fragment's children INTO an existing chain.
 /// `Replace` is not one: it swaps the target out, which is
@@ -395,12 +395,9 @@ pub fn replace_node(doc: &mut Document, r: NodeId, node: NodeId) -> MutStatus {
     doc.detach(node);
     let (prev, next) = (doc.prev(r), doc.next(r));
     doc.splice_between(container, node, prev, next);
-    {
-        let n = doc.node_mut(r);
-        n.parent = Link::NONE;
-        n.prev = Link::NONE;
-        n.next = Link::NONE;
-    }
+    /* `r`'s links now belong to `node`, so `detach` would unlink the wrong
+     * node; the swapped-out one just forgets them. */
+    doc.clear_links(r);
     doc.sync_doc_meta(container);
     MutStatus::Ok
 }
