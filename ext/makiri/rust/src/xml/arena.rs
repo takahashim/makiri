@@ -11,6 +11,7 @@
 
 use crate::falloc::{Reserve, VecPush};
 use crate::xml::chars::{expand_into, ExpandErr, ExpandMode};
+use crate::xml::qname::Split;
 use crate::xml::{Document, Link, Node, NodeId, NodeType, Span, Status};
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -258,6 +259,21 @@ impl Document {
         let n = self.node_mut(id);
         n.local = span;
         Ok(())
+    }
+
+    /// The prefix/local split of `id`'s qualified name.
+    ///
+    /// The three name spans all point into ONE arena copy (see
+    /// [`Document::assign_qname`]), so the split is derived from their offsets
+    /// rather than stored - and derived HERE, not at each of the four callers
+    /// that used to recompute `local.off - qname.off` by hand.
+    pub(crate) fn split_of(&self, id: NodeId) -> Split {
+        let n = self.node(id);
+        Split {
+            prefix_len: n.prefix.len,
+            local_off: n.local.off.saturating_sub(n.qname.off),
+            local_len: n.local.len,
+        }
     }
 
     /// Copy a whole QName once, then point qname/prefix/local into that copy.

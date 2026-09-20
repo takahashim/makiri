@@ -503,14 +503,7 @@ fn resolve_node_ns(doc: &mut Document, e: NodeId, connected: bool, commit: bool)
             Ok(v) => v,
             Err(st) => return st,
         };
-        let prefix_len = doc.node(e).prefix.len;
-        let local_off = doc.node(e).local.off.saturating_sub(doc.node(e).qname.off);
-        let local_len = doc.node(e).local.len;
-        let sp = Split {
-            prefix_len,
-            local_off,
-            local_len,
-        };
+        let sp = doc.split_of(e);
         match resolve_ns(doc, Some(e), &name, &sp, false, connected) {
             Ok(ns) => {
                 if commit {
@@ -526,18 +519,7 @@ fn resolve_node_ns(doc: &mut Document, e: NodeId, connected: bool, commit: bool)
             Ok(v) => v,
             Err(st) => return st,
         };
-        let prefix_len = doc.node(attr).prefix.len;
-        let local_off = doc
-            .node(attr)
-            .local
-            .off
-            .saturating_sub(doc.node(attr).qname.off);
-        let local_len = doc.node(attr).local.len;
-        let sp = Split {
-            prefix_len,
-            local_off,
-            local_len,
-        };
+        let sp = doc.split_of(attr);
         match resolve_ns(doc, Some(e), &name, &sp, true, connected) {
             Ok(ns) => {
                 if commit {
@@ -591,167 +573,162 @@ fn resolve_into(doc: &mut Document, node: NodeId, context: NodeId) -> MutStatus 
     st
 }
 
-/// One arena copy of `src` (own fields + attributes, NOT children) from the
-/// SAME document, INCLUDING its resolved namespace URI.
-fn copy_one(doc: &mut Document, src: NodeId) -> Result<NodeId, MutStatus> {
-    let Some(ty) = doc.type_(src) else {
-        return Err(MutStatus::Type);
-    };
-    let n = doc.new_node(ty).map_err(|_| MutStatus::Oom)?;
-    if doc.node(src).qname.len > 0 {
-        let name = copy_span(doc.qname(src))?;
-        let prefix_len = doc.node(src).prefix.len;
-        let local_off = doc
-            .node(src)
-            .local
-            .off
-            .saturating_sub(doc.node(src).qname.off);
-        let local_len = doc.node(src).local.len;
-        if doc
-            .assign_qname(n, &name, prefix_len, local_off, local_len)
-            .is_err()
-        {
-            return Err(MutStatus::Oom);
-        }
-    } else if doc.node(src).local.len > 0 {
-        let t = copy_span(doc.local(src))?;
-        let span = doc.store(&t).map_err(|_| MutStatus::Oom)?;
-        doc.node_mut(n).local = span;
-    }
-    if doc.node(src).value.len > 0 {
-        let v = copy_span(doc.value(src))?;
-        let span = doc.store(&v).map_err(|_| MutStatus::Oom)?;
-        doc.node_mut(n).value = span;
-    } else if !doc.node(src).value.is_absent() {
-        doc.node_mut(n).value = Span::EMPTY;
-    }
-    doc.node_mut(n).flags = doc.node(src).flags;
-    if doc.node(src).ns_uri.len > 0 {
-        let u = copy_span(doc.ns(src))?;
-        let span = doc.store(&u).map_err(|_| MutStatus::Oom)?;
-        doc.node_mut(n).ns_uri = span;
-    }
-    /* copy attributes (each a node), preserving order */
-    let mut tail: Option<NodeId> = None;
-    let mut a = doc.attrs(src);
-    while let Some(attr) = a {
-        let ca = copy_one(doc, attr)?;
-        doc.set_parent(ca, Some(n));
-        match tail {
-            None => doc.node_mut(n).attrs = Link::of(ca),
-            Some(t) => doc.node_mut(t).next = Link::of(ca),
-        }
-        tail = Some(ca);
-        a = doc.next(attr);
-    }
-    Ok(n)
+/* ---- copying ----
+ *
+ * A copy READS one arena and WRITES another - or, for `clone_node`, the same
+ * one, which Rust cannot express as `(&mut Document, &Document)`. Rather than
+ * keep two copies of every routine (one per source), a copy lifts the node's
+ * fields OUT of the source first (`CopiedNode::read`) and writes them back
+ * (`CopiedNode::write`). The fields had to be owned anyway - a `&mut Document`
+ * cannot be held across a read of its own byte store - so the split costs
+ * nothing and leaves one body per operation. */
+
+/// A copied `value` span. XML distinguishes "never set" from "set to empty" - a
+/// doctype's `PUBLIC ""` is present - so a copy has to carry the difference.
+enum CopiedValue {
+    Absent,
+    Empty,
+    Bytes(Vec<u8>),
 }
 
-/// One arena copy of `src` from ANOTHER document (importNode's cross-kind
-/// direction). Same fields as [`copy_one`], reading the source through its own
-/// document and writing into `dst`.
-fn copy_one_from(dst: &mut Document, src_doc: &Document, src: NodeId) -> Result<NodeId, MutStatus> {
-    let Some(ty) = src_doc.type_(src) else {
-        return Err(MutStatus::Type);
-    };
-    let n = dst.new_node(ty).map_err(|_| MutStatus::Oom)?;
-    if src_doc.node(src).qname.len > 0 {
-        let name = copy_span(src_doc.qname(src))?;
-        let prefix_len = src_doc.node(src).prefix.len;
-        let local_off = src_doc
-            .node(src)
-            .local
-            .off
-            .saturating_sub(src_doc.node(src).qname.off);
-        let local_len = src_doc.node(src).local.len;
-        if dst
-            .assign_qname(n, &name, prefix_len, local_off, local_len)
-            .is_err()
-        {
-            return Err(MutStatus::Oom);
-        }
-    } else if src_doc.node(src).local.len > 0 {
-        let t = copy_span(src_doc.local(src))?;
-        let span = dst.store(&t).map_err(|_| MutStatus::Oom)?;
-        dst.node_mut(n).local = span;
-    }
-    if src_doc.node(src).value.len > 0 {
-        let v = copy_span(src_doc.value(src))?;
-        let span = dst.store(&v).map_err(|_| MutStatus::Oom)?;
-        dst.node_mut(n).value = span;
-    } else if !src_doc.node(src).value.is_absent() {
-        dst.node_mut(n).value = Span::EMPTY;
-    }
-    dst.node_mut(n).flags = src_doc.node(src).flags;
-    if src_doc.node(src).ns_uri.len > 0 {
-        let u = copy_span(src_doc.ns(src))?;
-        let span = dst.store(&u).map_err(|_| MutStatus::Oom)?;
-        dst.node_mut(n).ns_uri = span;
-    }
-    let mut tail: Option<NodeId> = None;
-    let mut a = src_doc.attrs(src);
-    while let Some(attr) = a {
-        let ca = copy_one_from(dst, src_doc, attr)?;
-        dst.set_parent(ca, Some(n));
-        match tail {
-            None => dst.node_mut(n).attrs = Link::of(ca),
-            Some(t) => dst.node_mut(t).next = Link::of(ca),
-        }
-        tail = Some(ca);
-        a = src_doc.next(attr);
-    }
-    Ok(n)
+/// One node's own fields, owned, out of any arena. Attributes come with it,
+/// since they are part of the node's identity rather than its children.
+struct CopiedNode {
+    type_: NodeType,
+    /// The qualified name and its split, for a node that has one.
+    qname: Option<(Vec<u8>, Split)>,
+    /// A bare local name (a PI target, a doctype name) on a node with no qname.
+    local: Option<Vec<u8>>,
+    value: CopiedValue,
+    ns_uri: Option<Vec<u8>>,
+    flags: u32,
+    attrs: Vec<CopiedNode>,
 }
 
-/// Deep copy of `src`'s subtree from ANOTHER document (iterative).
-fn deep_copy_from(
-    dst: &mut Document,
-    src_doc: &Document,
-    src: NodeId,
-) -> Result<NodeId, MutStatus> {
-    let root = copy_one_from(dst, src_doc, src)?;
+/// The document a copy reads. `None` means the destination itself, which is
+/// what a same-document [`clone_node`] needs: the caller re-borrows its
+/// `&mut Document` as shared for each read, and this is the one line that says
+/// so instead of a second copy of every routine.
+type ReadFrom<'a> = Option<&'a Document>;
+
+#[inline]
+fn source<'a>(dst: &'a Document, from: ReadFrom<'a>) -> &'a Document {
+    from.unwrap_or(dst)
+}
+
+impl CopiedNode {
+    /// Lift `src`'s own fields and attributes out of `doc`.
+    fn read(doc: &Document, src: NodeId) -> Result<CopiedNode, MutStatus> {
+        let Some(node) = doc.try_node(src) else {
+            return Err(MutStatus::Type);
+        };
+        let (type_, flags) = (node.type_, node.flags);
+        let (qname_span, local_span, value_span, ns_span) =
+            (node.qname, node.local, node.value, node.ns_uri);
+
+        let qname = if qname_span.len > 0 {
+            Some((copy_span(doc.qname(src))?, doc.split_of(src)))
+        } else {
+            None
+        };
+        let local = if qname_span.len == 0 && local_span.len > 0 {
+            Some(copy_span(doc.local(src))?)
+        } else {
+            None
+        };
+        let value = if value_span.len > 0 {
+            CopiedValue::Bytes(copy_span(doc.value(src))?)
+        } else if value_span.is_absent() {
+            CopiedValue::Absent
+        } else {
+            CopiedValue::Empty
+        };
+        let ns_uri = if ns_span.len > 0 {
+            Some(copy_span(doc.ns(src))?)
+        } else {
+            None
+        };
+
+        let mut attrs: Vec<CopiedNode> = Vec::new();
+        let mut a = doc.attrs(src);
+        while let Some(attr) = a {
+            attrs.mkr_reserve(1).map_err(|_| MutStatus::Oom)?;
+            attrs.push(CopiedNode::read(doc, attr)?);
+            a = doc.next(attr);
+        }
+
+        Ok(CopiedNode {
+            type_,
+            qname,
+            local,
+            value,
+            ns_uri,
+            flags,
+            attrs,
+        })
+    }
+
+    /// Write these fields as a fresh, detached node in `dst`.
+    fn write(&self, dst: &mut Document) -> Result<NodeId, MutStatus> {
+        let n = dst.new_node(self.type_).map_err(|_| MutStatus::Oom)?;
+        if let Some((name, sp)) = &self.qname {
+            if dst
+                .assign_qname(n, name, sp.prefix_len, sp.local_off, sp.local_len)
+                .is_err()
+            {
+                return Err(MutStatus::Oom);
+            }
+        } else if let Some(local) = &self.local {
+            let span = dst.store(local).map_err(|_| MutStatus::Oom)?;
+            dst.node_mut(n).local = span;
+        }
+        match &self.value {
+            CopiedValue::Absent => {}
+            CopiedValue::Empty => dst.node_mut(n).value = Span::EMPTY,
+            CopiedValue::Bytes(v) => {
+                let span = dst.store(v).map_err(|_| MutStatus::Oom)?;
+                dst.node_mut(n).value = span;
+            }
+        }
+        dst.node_mut(n).flags = self.flags;
+        if let Some(uri) = &self.ns_uri {
+            let span = dst.store(uri).map_err(|_| MutStatus::Oom)?;
+            dst.node_mut(n).ns_uri = span;
+        }
+        /* attributes, in order */
+        let mut tail: Option<NodeId> = None;
+        for attr in &self.attrs {
+            let ca = attr.write(dst)?;
+            dst.link_attr(n, tail, ca);
+            tail = Some(ca);
+        }
+        Ok(n)
+    }
+}
+
+/// One arena copy of `src` - own fields and attributes, NOT children.
+fn copy_one(dst: &mut Document, from: ReadFrom<'_>, src: NodeId) -> Result<NodeId, MutStatus> {
+    let copied = CopiedNode::read(source(dst, from), src)?;
+    copied.write(dst)
+}
+
+/// Deep copy of `src`'s subtree (iterative; no recursion, so a deep tree cannot
+/// exhaust the stack).
+fn deep_copy(dst: &mut Document, from: ReadFrom<'_>, src: NodeId) -> Result<NodeId, MutStatus> {
+    let root = copy_one(dst, from, src)?;
     let mut stack: Vec<(NodeId, NodeId)> = Vec::new();
-    if stack.mkr_reserve(1).is_err() {
-        return Err(MutStatus::Oom);
-    }
+    stack.mkr_reserve(1).map_err(|_| MutStatus::Oom)?;
     stack.push((src, root));
     while let Some((s, d)) = stack.pop() {
-        let mut sc = src_doc.first_child(s);
+        let mut sc = source(dst, from).first_child(s);
         while let Some(child) = sc {
-            let dc = copy_one_from(dst, src_doc, child)?;
+            let dc = copy_one(dst, from, child)?;
             dst.append_child(d, dc);
-            if src_doc.first_child(child).is_some() {
-                if stack.mkr_reserve(1).is_err() {
-                    return Err(MutStatus::Oom);
-                }
+            if source(dst, from).first_child(child).is_some() {
+                stack.mkr_reserve(1).map_err(|_| MutStatus::Oom)?;
                 stack.push((child, dc));
             }
-            sc = src_doc.next(child);
-        }
-    }
-    Ok(root)
-}
-
-/// Deep copy of `src`'s subtree (iterative; no recursion).
-fn deep_copy(doc: &mut Document, src: NodeId) -> Result<NodeId, MutStatus> {
-    let root = copy_one(doc, src)?;
-    let mut stack: Vec<(NodeId, NodeId)> = Vec::new();
-    if stack.mkr_reserve(1).is_err() {
-        return Err(MutStatus::Oom);
-    }
-    stack.push((src, root));
-    while let Some((s, d)) = stack.pop() {
-        let mut sc = doc.first_child(s);
-        while let Some(child) = sc {
-            let dc = copy_one(doc, child)?;
-            doc.append_child(d, dc);
-            if doc.first_child(child).is_some() {
-                if stack.mkr_reserve(1).is_err() {
-                    return Err(MutStatus::Oom);
-                }
-                stack.push((child, dc));
-            }
-            sc = doc.next(child);
+            sc = source(dst, from).next(child);
         }
     }
     Ok(root)
@@ -774,7 +751,7 @@ pub fn import_subtree(
     src: NodeId,
 ) -> Result<NodeId, MutStatus> {
     debug_assert_distinct(dst, src_doc);
-    deep_copy_from(dst, src_doc, src)
+    deep_copy(dst, Some(src_doc), src)
 }
 
 /// Cross-document `copyNode`: shallow or deep, source in `src_doc`.
@@ -786,17 +763,18 @@ pub fn copy_node_from(
 ) -> Result<NodeId, MutStatus> {
     debug_assert_distinct(dst, src_doc);
     if deep {
-        deep_copy_from(dst, src_doc, src)
+        deep_copy(dst, Some(src_doc), src)
     } else {
-        copy_one_from(dst, src_doc, src)
+        copy_one(dst, Some(src_doc), src)
     }
 }
 
+/// Same-document `cloneNode`: shallow or deep, reading the arena it writes.
 pub fn clone_node(doc: &mut Document, src: NodeId, deep: bool) -> Result<NodeId, MutStatus> {
     if deep {
-        deep_copy(doc, src)
+        deep_copy(doc, None, src)
     } else {
-        copy_one(doc, src)
+        copy_one(doc, None, src)
     }
 }
 
@@ -817,52 +795,126 @@ fn is_insertable(doc: &Document, node: NodeId) -> bool {
     )
 }
 
-/// WHATWG doctype ordering at the document node (fail-closed).
-fn check_doc_child_order(
-    doc: &Document,
+/// Where an insertion goes, as the hierarchy rules see it: into `container`,
+/// just before `before` (None = append), standing in for `exclude` (None = the
+/// insertion replaces nothing, so every existing child counts).
+///
+/// The three used to travel as separate arguments through three predicates that
+/// each walked the container's children again - up to four walks for one
+/// insertion at the document node. Here they are one value and [`Site::check`]
+/// is one walk.
+#[derive(Clone, Copy)]
+struct Site {
     container: NodeId,
-    node: NodeId,
     before: Option<NodeId>,
     exclude: Option<NodeId>,
-) -> MutStatus {
-    if doc.type_(container) != Some(NodeType::Document) {
-        return if doc.type_(node) == Some(NodeType::Doctype) {
-            MutStatus::Hierarchy
-        } else {
-            MutStatus::Ok
+}
+
+/// What the rules need to know about the container's existing children, counted
+/// in one pass. "Before" and "at or after" are relative to [`Site::before`];
+/// with no `before` nothing is ever reached, so every child counts as before it.
+struct Tally {
+    elements: usize,
+    doctypes: usize,
+    /// An element strictly before the insertion point.
+    element_before: bool,
+    /// A doctype at or after the insertion point.
+    doctype_at_or_after: bool,
+}
+
+impl Site {
+    fn appending(container: NodeId) -> Site {
+        Site {
+            container,
+            before: None,
+            exclude: None,
+        }
+    }
+    fn before(container: NodeId, before: NodeId) -> Site {
+        Site {
+            container,
+            before: Some(before),
+            exclude: None,
+        }
+    }
+    /// The site a `replace` leaves: `target`'s place, with `target` itself not
+    /// counting as an existing child.
+    fn replacing(container: NodeId, target: NodeId) -> Site {
+        Site {
+            container,
+            before: Some(target),
+            exclude: Some(target),
+        }
+    }
+
+    fn tally(&self, doc: &Document, node: NodeId) -> Tally {
+        let mut t = Tally {
+            elements: 0,
+            doctypes: 0,
+            element_before: false,
+            doctype_at_or_after: false,
         };
-    }
-    if doc.type_(node) == Some(NodeType::Doctype) {
-        let mut c = doc.first_child(container);
+        let mut reached = false;
+        let mut c = doc.first_child(self.container);
         while let Some(cur) = c {
-            if Some(cur) != exclude && cur != node && doc.type_(cur) == Some(NodeType::Doctype) {
-                return MutStatus::Hierarchy; /* at most one */
+            if Some(cur) == self.before {
+                reached = true;
+            }
+            if Some(cur) != self.exclude && cur != node {
+                match doc.type_(cur) {
+                    Some(NodeType::Element) => {
+                        t.elements += 1;
+                        if !reached {
+                            t.element_before = true;
+                        }
+                    }
+                    Some(NodeType::Doctype) => {
+                        t.doctypes += 1;
+                        if reached {
+                            t.doctype_at_or_after = true;
+                        }
+                    }
+                    _ => {}
+                }
             }
             c = doc.next(cur);
         }
-        /* no element before the doctype */
-        let mut c = doc.first_child(container);
-        while let Some(cur) = c {
-            if c == before {
-                break;
-            }
-            if Some(cur) != exclude && cur != node && doc.type_(cur) == Some(NodeType::Element) {
-                return MutStatus::Hierarchy;
-            }
-            c = doc.next(cur);
-        }
-        return MutStatus::Ok;
+        t
     }
-    if doc.type_(node) == Some(NodeType::Element) {
-        let mut c = before;
-        while let Some(cur) = c {
-            if Some(cur) != exclude && cur != node && doc.type_(cur) == Some(NodeType::Doctype) {
-                return MutStatus::Hierarchy;
+
+    /// The WHATWG document-child rules for `node` entering this site: at most
+    /// one element and one doctype under a Document, the doctype before the
+    /// element, and no doctype anywhere else. Fail-closed.
+    fn check(&self, doc: &Document, node: NodeId) -> MutStatus {
+        let ty = doc.type_(node);
+        if doc.type_(self.container) != Some(NodeType::Document) {
+            /* Only a Document may hold a doctype. */
+            return if ty == Some(NodeType::Doctype) {
+                MutStatus::Hierarchy
+            } else {
+                MutStatus::Ok
+            };
+        }
+        match ty {
+            Some(NodeType::Doctype) => {
+                let t = self.tally(doc, node);
+                if t.doctypes > 0 || t.element_before {
+                    MutStatus::Hierarchy
+                } else {
+                    MutStatus::Ok
+                }
             }
-            c = doc.next(cur);
+            Some(NodeType::Element) => {
+                let t = self.tally(doc, node);
+                if t.elements > 0 || t.doctype_at_or_after {
+                    MutStatus::Hierarchy
+                } else {
+                    MutStatus::Ok
+                }
+            }
+            _ => MutStatus::Ok,
         }
     }
-    MutStatus::Ok
 }
 
 fn would_cycle(doc: &Document, container: NodeId, node: NodeId) -> bool {
@@ -876,54 +928,28 @@ fn would_cycle(doc: &Document, container: NodeId, node: NodeId) -> bool {
     false
 }
 
-fn doc_root_ok(doc: &Document, container: NodeId, node: NodeId, exclude: Option<NodeId>) -> bool {
-    if doc.type_(container) != Some(NodeType::Document)
-        || doc.type_(node) != Some(NodeType::Element)
-    {
-        return true;
-    }
-    let mut c = doc.first_child(container);
-    while let Some(cur) = c {
-        if Some(cur) != exclude && cur != node && doc.type_(cur) == Some(NodeType::Element) {
-            return false;
-        }
-        c = doc.next(cur);
-    }
-    true
-}
-
-/// Validation + namespace resolution for inserting `node` under `container`
-/// before `before` (None = append), replacing `exclude` (or None). No
+/// Validation + namespace resolution for inserting `node` at `site`. No
 /// structural change.
-fn prepare_insert(
-    doc: &mut Document,
-    container: NodeId,
-    node: NodeId,
-    before: Option<NodeId>,
-    exclude: Option<NodeId>,
-) -> MutStatus {
+fn prepare_insert(doc: &mut Document, site: Site, node: NodeId) -> MutStatus {
     if !is_insertable(doc, node) {
         return MutStatus::Hierarchy;
     }
-    let ct = doc.type_(container);
+    let ct = doc.type_(site.container);
     if ct != Some(NodeType::Element) && ct != Some(NodeType::Document) {
         return MutStatus::Hierarchy;
     }
-    if would_cycle(doc, container, node) {
+    if would_cycle(doc, site.container, node) {
         return MutStatus::Cycle;
     }
-    if !doc_root_ok(doc, container, node, exclude) {
-        return MutStatus::Hierarchy;
+    let st = site.check(doc, node);
+    if st != MutStatus::Ok {
+        return st;
     }
-    let dt = check_doc_child_order(doc, container, node, before, exclude);
-    if dt != MutStatus::Ok {
-        return dt;
-    }
-    resolve_into(doc, node, container)
+    resolve_into(doc, node, site.container)
 }
 
 pub fn insert_child(doc: &mut Document, parent: NodeId, node: NodeId) -> MutStatus {
-    let st = prepare_insert(doc, parent, node, None, None);
+    let st = prepare_insert(doc, Site::appending(parent), node);
     if st != MutStatus::Ok {
         return st;
     }
@@ -941,7 +967,7 @@ pub fn insert_before(doc: &mut Document, r: NodeId, node: NodeId) -> MutStatus {
     let Some(container) = doc.parent(r) else {
         return MutStatus::Hierarchy;
     };
-    let st = prepare_insert(doc, container, node, Some(r), None);
+    let st = prepare_insert(doc, Site::before(container, r), node);
     if st != MutStatus::Ok {
         return st;
     }
@@ -960,7 +986,10 @@ pub fn insert_after(doc: &mut Document, r: NodeId, node: NodeId) -> MutStatus {
         return MutStatus::Hierarchy;
     };
     let next = doc.next(r);
-    let st = prepare_insert(doc, container, node, next, None);
+    let st = match next {
+        Some(nx) => prepare_insert(doc, Site::before(container, nx), node),
+        None => prepare_insert(doc, Site::appending(container), node),
+    };
     if st != MutStatus::Ok {
         return st;
     }
@@ -978,7 +1007,7 @@ pub fn replace_node(doc: &mut Document, r: NodeId, node: NodeId) -> MutStatus {
     if node == r {
         return MutStatus::Ok;
     }
-    let st = prepare_insert(doc, container, node, Some(r), Some(r));
+    let st = prepare_insert(doc, Site::replacing(container, r), node);
     if st != MutStatus::Ok {
         return st;
     }
@@ -1042,7 +1071,7 @@ pub fn replace_with_fragment(doc: &mut Document, target: NodeId, frag: NodeId) -
     }
     let mut c = doc.first_child(frag);
     while let Some(cur) = c {
-        let st = prepare_insert(doc, container, cur, Some(target), Some(target));
+        let st = prepare_insert(doc, Site::replacing(container, target), cur);
         if st != MutStatus::Ok {
             return st;
         }
