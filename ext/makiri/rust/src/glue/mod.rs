@@ -31,11 +31,16 @@
 /// `Makiri::Lexbor::CSS.parse_stylesheet` - the Ruby half of `lexbor::stylesheet`.
 pub mod stylesheet;
 
+/// What a rejected CSS selector raises, for both representations.
+pub mod css;
+
 /// `Makiri::HTML::Document` and the HTML fragment entry points.
 pub mod html_doc;
 
+/// The identity methods (`==`, `hash`, `pointer_id`) both representations share.
 pub mod node;
 
+/// `Makiri::NodeSet`.
 pub mod node_set;
 
 /// `#xpath` / `#at_xpath` for both representations, and the query path.
@@ -47,6 +52,8 @@ pub mod xpath_context;
 /// `Makiri::XML::Document` and `DocumentFragment`.
 pub mod xml_doc;
 
+/// The `Makiri::XML::*` node surface.
 pub mod xml_node;
 
+/// The `Makiri::HTML::*` node surface.
 pub mod html_node;

@@ -1,5 +1,5 @@
-//! `Makiri::XML::Document` and `Makiri::XML::DocumentFragment`: the class, the
-//! native parser, and the document-level readers and constructors.
+//! `Makiri::XML::Document` and `Makiri::XML::DocumentFragment`: the native
+//! parser, and the document-level readers and constructors.
 //!
 //!   `Document.parse(source, max_bytes:)` / `Makiri::XML(source)`,
 //!   `Document.new`, `#root`, `#internal_subset`, `#fragment`,
@@ -14,10 +14,10 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{function, method, prelude::*, Error, RArray, RClass, RHash, RModule, Ruby, Value};
+use magnus::{function, method, prelude::*, Error, RArray, RClass, RHash, Ruby, Value};
 
 use crate::bridge::xml::wrap;
-use crate::init::{CLASS_DOCUMENT, CLASS_XML_DOCUMENT_FRAGMENT, MOD_XML, MOD_XML_NODE_METHODS};
+use crate::init::{CLASS_XML_DOCUMENT, CLASS_XML_DOCUMENT_FRAGMENT};
 use crate::xml::model::{Limits as XmlLimits, MAX_BYTES};
 
 /// The optional per-parse budget overrides.
@@ -131,23 +131,10 @@ fn doc_fragment(rb_self: Value, source: Value) -> Result<Value, Error> {
     })
 }
 
-/// Define `Makiri::XML::Document` and register the document surface. From
-/// `Init_makiri`, before anything that reads the XML Document class.
+/// The XML Document surface. From `Init_makiri`; the class itself is defined
+/// with the rest of the hierarchy in `init`.
 pub fn init_xml_doc() {
-    let m_xml = RModule::from_value(MOD_XML.value()).expect("Makiri::XML");
-    let base = RClass::from_value(CLASS_DOCUMENT.value()).expect("Makiri::Document");
-
-    /* A Makiri::Document leaf: is_a?(Makiri::Document) holds, but it carries
-     * no HTML readers - those live on Makiri::HTML, which it does not include. */
-    let doc = m_xml
-        .define_class("Document", base)
-        .expect("Makiri::XML::Document");
-    doc.undef_default_alloc_func(); /* made by the parser and `.new` below only */
-    let node_methods =
-        RModule::from_value(MOD_XML_NODE_METHODS.value()).expect("Makiri::XML::NodeMethods");
-    doc.include_module(node_methods)
-        .expect("include NodeMethods");
-    crate::init::record_xml_document_class(doc);
+    let doc = RClass::from_value(CLASS_XML_DOCUMENT.value()).expect("Makiri::XML::Document");
 
     doc.define_singleton_method("parse", function!(s_parse, -1))
         .expect("Document.parse");

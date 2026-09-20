@@ -94,16 +94,6 @@ impl RbConst {
     }
 }
 
-/// Publish the `Makiri::XML::Document` class as the global the rest of the
-/// extension reads.
-///
-/// Safe wrapper over [`RbConst::set`]: it runs once, from `Init_makiri`, with a
-/// class that lives for the rest of the process.
-pub(crate) fn record_xml_document_class(klass: magnus::RClass) {
-    // SAFETY: a class that lives for the process, set once at init.
-    unsafe { CLASS_XML_DOCUMENT.set(klass.as_raw()) };
-}
-
 macro_rules! exported {
     ($($name:ident),* $(,)?) => {
         $(
@@ -305,10 +295,12 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     let h_doctype = m_html.define_class("DocumentType", doctype)?;
     let h_fragment = m_html.define_class("DocumentFragment", fragment)?;
 
-    /* Makiri::XML - the arena-backed leaves. XML::Document is defined by
-     * init_xml, because it backs a parse handle rather than a node. */
+    /* Makiri::XML - the arena-backed leaves. XML::Document is one of them: it
+     * carries no HTML readers, so `is_a?(Makiri::Document)` holds while the
+     * structural surface comes from the module `seal_leaves` includes below. */
     let xml_methods = m_xml.define_module("NodeMethods")?;
     let x_node = m_xml.define_class("Node", node)?;
+    let x_document = m_xml.define_class("Document", document)?;
     let x_element = m_xml.define_class("Element", element)?;
     let x_attr = m_xml.define_class("Attr", attr)?;
     let x_text = m_xml.define_class("Text", text)?;
@@ -369,6 +361,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         CLASS_HTML_DOCUMENT_FRAGMENT.set(h_fragment.as_raw());
 
         MOD_XML_NODE_METHODS.set(xml_methods.as_raw());
+        CLASS_XML_DOCUMENT.set(x_document.as_raw());
         CLASS_XML_NODE.set(x_node.as_raw());
         CLASS_XML_ELEMENT.set(x_element.as_raw());
         CLASS_XML_ATTR.set(x_attr.as_raw());
@@ -412,6 +405,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
                 CLASS_XML_COMMENT.class(),
                 CLASS_XML_CDATA_SECTION.class(),
                 CLASS_XML_PROCESSING_INSTRUCTION.class(),
+                CLASS_XML_DOCUMENT.class(),
                 CLASS_XML_DOCUMENT_TYPE.class(),
                 CLASS_XML_DOCUMENT_FRAGMENT.class(),
             ],
@@ -438,20 +432,17 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
             base.undef_default_alloc_func();
         }
 
-        /* The per-feature registrations, in the order the C called them: each
-         * defines the methods of one subsystem onto the classes above. */
-        crate::glue::html_node::init_node();
+        /* One registration per feature, each defining its methods onto the
+         * classes above. The order is free: every class and module they touch
+         * exists by now, and no two define the same name. */
+        crate::glue::html_node::init();
         crate::glue::html_doc::init_html_doc();
+        crate::glue::xml_node::init();
+        crate::glue::xml_doc::init_xml_doc();
         crate::glue::node_set::init_node_set();
         crate::glue::xpath_context::init_xpath_context();
         crate::glue::query::init_xpath();
-        crate::glue::html_node::css::init_css();
         crate::glue::stylesheet::init_lexbor_css();
-        crate::glue::html_node::serialize::init_serialize();
-        crate::glue::html_node::init_mutate();
-        crate::glue::xml_doc::init_xml_doc();
-        crate::glue::xml_node::css::init_xml_css();
-        crate::glue::xml_node::init_xml_node();
     }
 
     makiri.define_singleton_method("__alloc_inject?", function!(alloc_inject_p, 0))?;

@@ -27,15 +27,13 @@ fn node_methods() -> RModule {
     RModule::from_value(MOD_XML_NODE_METHODS.value()).expect("Makiri::XML::NodeMethods")
 }
 
-/// The whole XML node surface.
-///
-/// # Safety
-/// From `Init_makiri`, after the classes exist.
-pub fn init_xml_node() {
-    serialize::init_xml_node_serialize();
+/// The whole XML node surface. From `Init_makiri`, after the classes exist.
+pub fn init() {
     init_read();
     init_ns();
     init_mutate();
+    css::init_xml_css();
+    serialize::init_xml_node_serialize();
 }
 
 /// The readers - names, content, navigation, attributes - and identity.

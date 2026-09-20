@@ -15,17 +15,15 @@ use crate::bridge::html::wrap_html_node;
 use crate::bridge::node_set::node_set_from;
 use crate::bridge::ruby::makiri_error;
 use crate::bridge::string::{ruby_verified_text, RubyText};
-use crate::init::{EXC_CSS_SYNTAX_ERROR, MOD_HTML_NODE_METHODS};
+use crate::init::MOD_HTML_NODE_METHODS;
 use crate::lexbor::selectors::{matches_node, select_all, select_first, SelectError};
 use crate::limits::NODE_SET_MAX;
 
 /// An engine failure as the Ruby exception it maps to.
 fn select_error(err: SelectError, selector: Value) -> Error {
     match err {
-        SelectError::Syntax => Error::new(
-            EXC_CSS_SYNTAX_ERROR.exception(),
-            format!("invalid CSS selector: {selector}"),
-        ),
+        /* Lexbor's matcher reports no reason of its own. */
+        SelectError::Syntax => crate::glue::css::syntax_error(selector, None),
         SelectError::Overflow => makiri_error(format!(
             "CSS result set exceeded the node limit ({NODE_SET_MAX})"
         )),

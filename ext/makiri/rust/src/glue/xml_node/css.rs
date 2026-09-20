@@ -17,7 +17,7 @@ use crate::bridge::wrapper::keepalive_document;
 use crate::bridge::xpath::{evaluate_query, xpath_error, Answer, Cx};
 use crate::css::{CssNs, Form, DEFAULT_NS_PREFIX};
 use crate::glue::query::{query_context, run_query, QueryArgs};
-use crate::init::{EXC_CSS_SYNTAX_ERROR, MOD_XML_NODE_METHODS};
+use crate::init::MOD_XML_NODE_METHODS;
 use crate::xpath::ast::Ast;
 use crate::xpath::ctx::XPathValue;
 use crate::xpath::msg::XP_ERR_SYNTAX;
@@ -50,20 +50,18 @@ fn compile(ruby: &Ruby, ctx: &Cx, q: &QueryArgs, form: Form) -> Result<Box<Ast>,
     let gvl = crate::bridge::gvl::held(ruby);
     let ast = crate::css::compile_owned(&gvl, sv.as_verified(), &cns, form, &mut budget);
     drop(sv);
-    ast.map_err(|_| compile_error(&budget.take_error()))
+    ast.map_err(|_| compile_error(q.text, &budget.take_error()))
 }
 
 /// A failed compile as its exception: `Makiri::CSS::SyntaxError` for a selector
-/// that does not parse or lower, the XPath mapping otherwise.
-fn compile_error(error: &crate::xpath::msg::Error) -> Error {
+/// that does not parse or lower - with the lowering's reason, when it gave one -
+/// and the XPath mapping otherwise.
+fn compile_error(selector: Value, error: &crate::xpath::msg::Error) -> Error {
     if error.status != XP_ERR_SYNTAX {
         return xpath_error(error);
     }
-    let msg = error.message().map_or_else(
-        || "invalid CSS selector".to_string(),
-        |m| m.to_string_lossy().into_owned(),
-    );
-    Error::new(EXC_CSS_SYNTAX_ERROR.exception(), msg)
+    let reason = error.message().map(|m| m.to_string_lossy().into_owned());
+    crate::glue::css::syntax_error(selector, reason.as_deref())
 }
 
 fn css_run(ruby: &Ruby, rb_self: Value, q: QueryArgs, answer: Answer) -> Result<Value, Error> {
