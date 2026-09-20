@@ -229,7 +229,7 @@ impl Document {
         }
         self.charge(src.len())?;
         self.bytes
-            .mkr_reserve(src.len())
+            .falloc_reserve(src.len())
             .map_err(|_| self.fail(Status::Oom))?;
         let off = self.bytes.len() as u32;
         self.bytes.extend_from_slice(src);
@@ -314,7 +314,7 @@ impl Document {
         }
         self.charge(NODE_COST)?;
         self.nodes
-            .mkr_reserve(1)
+            .falloc_reserve(1)
             .map_err(|_| self.fail(Status::Oom))?;
         let index = self.nodes.len() as u32;
         let stamp = self.stamp;
@@ -329,7 +329,7 @@ impl Document {
         }
         self.charge(src.len())?;
         self.bytes
-            .mkr_reserve(src.len())
+            .falloc_reserve(src.len())
             .map_err(|_| self.fail(Status::Oom))?;
         let off = self.bytes.len();
         self.bytes.resize(off + src.len(), 0);
@@ -378,8 +378,8 @@ impl Document {
             let (a, b) = (old, span);
             let mut merged: Vec<u8> = Vec::new();
             merged
-                .mkr_extend(self.span(a))
-                .and_then(|()| merged.mkr_extend(self.span(b)))
+                .falloc_extend(self.span(a))
+                .and_then(|()| merged.falloc_extend(self.span(b)))
                 .map_err(|_| self.fail(Status::Oom))?;
             let s = self.store(&merged)?;
             self.node_at_mut(last).value = s;

@@ -19,10 +19,15 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   XPath engine is original. See `NOTICE`.
 - **One language.** The extension is a single Rust crate
   (`ext/makiri/rust`); the only C that ships is vendored Lexbor, which keeps its
-  `lxb_*` names. Nothing of ours carries a C-style prefix any more: the crate
+  `lxb_*` names. No SYMBOL of ours carries a C-style prefix any more: the crate
   exports only `Init_makiri` and `ruby_abi_version`, so every other item is
   named as Rust. (The `mkr_` prefix was the C ABI's symbol convention and went
-  with it.)
+  with it.) The ONE surviving prefix is `falloc`'s extension methods
+  (`falloc_reserve` / `_reserve_exact` / `falloc_push` / `_extend` /
+  `falloc_insert`), and it cannot be dropped: `Vec::try_reserve` and
+  `try_reserve_exact` are inherent std methods, so a trait method by either
+  name would be silently shadowed by the ABORTING one - which is the bug
+  `falloc` exists to prevent. It was `mkr_` and now names the policy instead.
 - **Security-first / fail-closed.** Enforce per-evaluate XPath budgets and
   node-set caps, validate inputs, never return a truncated/wrong result (raise
   instead). **Export only `Init_makiri`** (plus `ruby_abi_version`, which Ruby
@@ -444,7 +449,18 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            joined for the glue by the `Cx` enum in
                            `bridge/xpath.rs`
     xml/                   native XML reader (Ruby/Lexbor-free; own arena), plus
-                           its XPath `Dom` instance
+                           its XPath `Dom` instance. One job per module:
+                           `model`+`arena` (the index arena), `tree/` (the
+                           builder, with `tree/cursor.rs` - the shared input
+                           cursor - and `tree/dtd.rs`, the subset validator that
+                           holds a cursor and so CANNOT reach the tree),
+                           `chars/` (character classes + `chars/expand.rs`, the
+                           reference-expansion engine), `qname` (XML naming) vs
+                           `dom_name` (the WHATWG DOM's looser names, which are
+                           NOT XML naming), `mutate`, `index`, `encoding_sniff`,
+                           and `serialize/` (`out` = buffer + one escape table,
+                           `xml` = plans a prefix per name, `c14n` = renders the
+                           document's own declarations)
     lexbor/                the Lexbor boundary: `abi` - the generated layout and
                            functions (the `_noi` twins included), the ONE place
                            a Lexbor function is declared (a second `extern "C"`
@@ -567,7 +583,7 @@ document's index (`spec/xpath_context_mutation_spec.rb`).
 **text index** (`lexbor/adapter/text_index.rs`). Removes the per-call descendant
 walk from text extraction (the cache-bound cost on Lexbor's 96-byte nodes). One
 lazy build (count, size once, fill; explicit **heap**-stack DFS via
-`grow_capacity` + `mkr_reserve_exact`, no recursion → no stack DoS) records a flat document-order
+`grow_capacity` + `falloc_reserve_exact`, no recursion → no stack DoS) records a flat document-order
 array of every TEXT/CDATA node's **borrowed** `BorrowedText` slice, a
 prefix-sum of their lengths, and a `PtrTable` mapping
 each element/fragment to the `[start,end)` run of slices its subtree owns. A

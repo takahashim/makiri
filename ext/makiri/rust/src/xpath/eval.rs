@@ -652,7 +652,7 @@ fn eval_fncall<'e, 'd, D: Dom<'d>>(
      * here, so every way out - an argument failing part-way included - clears
      * them when `vals` drops. */
     let mut vals: Vec<Val<D::Node>> = Vec::new();
-    if !args.is_empty() && vals.mkr_reserve_exact(args.len()).is_err() {
+    if !args.is_empty() && vals.falloc_reserve_exact(args.len()).is_err() {
         return Err(err_setf!(
             ev.budget.sink(),
             XP_ERR_OOM,
@@ -698,7 +698,7 @@ impl<'e, 'd, D: Dom<'d>> Evaluation<'e, 'd, D> {
             return Ok(None);
         };
         let mut token_args: Vec<Val> = Vec::new();
-        if token_args.mkr_reserve_exact(args.len()).is_err() {
+        if token_args.falloc_reserve_exact(args.len()).is_err() {
             return Err(handler_oom(&mut self.budget));
         }
         for v in args {

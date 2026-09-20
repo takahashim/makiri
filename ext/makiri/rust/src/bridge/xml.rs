@@ -7,7 +7,7 @@
 //!
 //! The rules themselves (name well-formedness, the XML character class,
 //! namespace resolution, what may be a child of what) live in the Ruby-free
-//! `xml/mkr_xml_*`; this layer coerces and verifies arguments, and maps the
+//! `crate::xml`; this layer coerces and verifies arguments, and maps the
 //! resulting status to a Ruby exception.
 //!
 //! **Detach, never destroy.** A removed node is unlinked, not freed, so a live

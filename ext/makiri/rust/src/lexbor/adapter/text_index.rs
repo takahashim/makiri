@@ -125,7 +125,7 @@ impl TextIndex {
 
         /* Both arrays are sized EXACTLY here, so every push below lands in
          * reserved capacity and cannot allocate. That is why they use `push`
-         * rather than falloc's `mkr_push`: a reserve per text node would make
+         * rather than falloc's `falloc_push`: a reserve per text node would make
          * every slice its own injection point in `rake oom` - hundreds of them
          * for one document, all testing the same branch. See clippy.toml on why
          * `push` after a successful reserve is deliberately not banned. */
@@ -190,7 +190,7 @@ impl TextIndex {
                 let slot = t
                     .runs
                     .insert(child.as_raw().cast_const(), Run { start, end: start })?;
-                /* Reserve only when the stack is actually full. `mkr_push`
+                /* Reserve only when the stack is actually full. `falloc_push`
                  * consults the injection counter on EVERY call, so pushing
                  * unconditionally made each of a document's containers its own
                  * injection point - 178 for one `rake oom` scenario, all
@@ -202,7 +202,7 @@ impl TextIndex {
                         stack.len() + 1,
                         core::mem::size_of::<Frame<'_>>(),
                     )?;
-                    stack.mkr_reserve_exact(want - stack.len()).ok()?;
+                    stack.falloc_reserve_exact(want - stack.len()).ok()?;
                 }
                 stack.push(Frame {
                     child: child.first_child(),

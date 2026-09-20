@@ -89,7 +89,7 @@ impl<'d> Bindings<'d> {
     }
 
     fn push(&mut self, prefix: Prefix<'d>, uri: &'d [u8]) -> W {
-        self.stack.mkr_reserve(1).map_err(|_| ())?;
+        self.stack.falloc_reserve(1).map_err(|_| ())?;
         self.stack.push((prefix, uri));
         Ok(())
     }

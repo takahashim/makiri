@@ -72,7 +72,7 @@ fn namespaces(doc: &XmlDoc, n: NodeId, is_apex: bool) -> Result<Vec<Ns<'_>>, ()>
                             }
                         };
                         if keep {
-                            out.mkr_reserve(1)?;
+                            out.falloc_reserve(1)?;
                             out.push(Ns { prefix: p, uri: u });
                         }
                     }
@@ -116,7 +116,7 @@ pub(super) fn node(b: &mut Buf, doc: &XmlDoc, n: NodeId, is_apex: bool, comments
             let mut a = doc.attrs(n);
             while let Some(at) = a {
                 if xmlns_decl(doc, at).is_none() {
-                    attrs.mkr_reserve(1)?;
+                    attrs.falloc_reserve(1)?;
                     attrs.push(at);
                 }
                 a = doc.next(at);

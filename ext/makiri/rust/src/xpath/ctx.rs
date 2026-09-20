@@ -236,7 +236,7 @@ impl<'d, D: Dom<'d>> Context<'d, D> {
             e.uri = copy(uri)?;
             return Ok(());
         }
-        if names.ns.len() >= MAX_NAMESPACES || names.ns.mkr_reserve(1).is_err() {
+        if names.ns.len() >= MAX_NAMESPACES || names.ns.falloc_reserve(1).is_err() {
             return Err(ContextError::Failed);
         }
         let entry = NsEntry {
@@ -259,7 +259,7 @@ impl<'d, D: Dom<'d>> Context<'d, D> {
             e.value = copy(value)?;
             return Ok(());
         }
-        if names.vars.len() >= MAX_VARIABLES || names.vars.mkr_reserve(1).is_err() {
+        if names.vars.len() >= MAX_VARIABLES || names.vars.falloc_reserve(1).is_err() {
             return Err(ContextError::Failed);
         }
         let entry = VarEntry {

@@ -57,7 +57,7 @@ fn fixup_template_content(
     root_clone: BuildingNode<'_>,
 ) -> Result<(), ()> {
     let mut stack: Vec<(HtmlNode<'_>, BuildingNode<'_>)> = Vec::new();
-    stack.mkr_push((root_src, root_clone))?;
+    stack.falloc_push((root_src, root_clone))?;
 
     while let Some((src_root, clone_root)) = stack.pop() {
         let (mut sn, mut cn) = (Some(src_root), Some(clone_root));
@@ -81,7 +81,7 @@ fn fixup_template_content(
                     cc.insert_child(imp);
                     x = child.next();
                 }
-                stack.mkr_push((sc, cc))?;
+                stack.falloc_push((sc, cc))?;
             }
             sn = s.preorder_next(src_root);
             cn = c.preorder_next(clone_root);

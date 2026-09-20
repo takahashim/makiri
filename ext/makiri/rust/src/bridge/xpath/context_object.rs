@@ -282,13 +282,13 @@ fn cached_ast(
     let Ok(ast) = crate::xpath::parse::parse_owned(expr.as_verified(), &mut budget) else {
         return Err(budget.take_error());
     };
-    if cache.0.len() >= AST_CACHE_MAX || cache.0.mkr_reserve(1).is_err() {
+    if cache.0.len() >= AST_CACHE_MAX || cache.0.falloc_reserve(1).is_err() {
         return Ok((&*ast as *const Ast, Some(ast)));
     }
     let Some(owned_key) = try_to_boxed_slice(key) else {
         return Ok((&*ast as *const Ast, Some(ast)));
     };
-    if cache.0.mkr_insert(owned_key, ast).is_err() {
+    if cache.0.falloc_insert(owned_key, ast).is_err() {
         return Err(XPathError::with(
             XP_ERR_OOM,
             format_args!("out of memory caching XPath expression"),

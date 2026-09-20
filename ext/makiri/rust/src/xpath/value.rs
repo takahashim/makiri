@@ -100,7 +100,7 @@ impl<N> NodeSet<N> {
     /// Append `n` within `budget`'s node-set cap.
     pub fn push(&mut self, n: N, budget: &mut Budget) -> Result<(), Reported> {
         budget.check_nodeset_size(self.0.len() + 1)?;
-        if self.0.mkr_reserve(1).is_err() {
+        if self.0.falloc_reserve(1).is_err() {
             return Err(err_setf!(
                 budget.sink(),
                 XP_ERR_OOM,

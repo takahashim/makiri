@@ -77,7 +77,7 @@ fn push<'a, S, D>(stack: &mut Vec<Frame<'a, S, D>>, frame: Frame<'a, S, D>) -> R
             core::mem::size_of::<Frame<'a, S, D>>(),
         )
         .ok_or(())?;
-        stack.mkr_reserve_exact(want - stack.len())?;
+        stack.falloc_reserve_exact(want - stack.len())?;
     }
     stack.push(frame);
     Ok(())

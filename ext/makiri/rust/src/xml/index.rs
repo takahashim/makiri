@@ -116,16 +116,16 @@ fn build(doc: &Document) -> Option<Box<NameIndex>> {
     while let Some(node) = cur {
         if doc.type_(node) == Some(NodeType::Element) {
             let (local, ns) = (doc.local(node), doc.ns(node));
-            key.mkr_reserve(key_len(local, ns)).ok()?;
+            key.falloc_reserve(key_len(local, ns)).ok()?;
             key_into(&mut key, local, ns);
             max_key = max_key.max(key.len());
             match map.get_mut(&key[..]) {
-                Some(nodes) => nodes.mkr_push(node).ok()?,
+                Some(nodes) => nodes.falloc_push(node).ok()?,
                 None => {
                     let key = falloc::try_to_boxed_slice(&key)?;
                     let mut nodes = falloc::try_vec_with_capacity(1)?;
-                    nodes.mkr_push(node).ok()?;
-                    map.mkr_insert(key, nodes).ok()?;
+                    nodes.falloc_push(node).ok()?;
+                    map.falloc_insert(key, nodes).ok()?;
                 }
             }
         }

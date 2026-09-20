@@ -164,7 +164,7 @@ impl<'a> Parser<'a> {
             return self.cur.limit();
         }
         let mut v: Vec<u8> = Vec::new();
-        if v.mkr_reserve_exact(pfx.len()).is_err() || self.binds.mkr_reserve(1).is_err() {
+        if v.falloc_reserve_exact(pfx.len()).is_err() || self.binds.falloc_reserve(1).is_err() {
             return self.cur.fail(Status::Oom);
         }
         v.extend_from_slice(pfx);
@@ -231,7 +231,7 @@ impl<'a> Parser<'a> {
             if self.ratt.len() + 1 > MAX_ATTRS {
                 return self.cur.limit();
             }
-            if self.ratt.mkr_reserve(1).is_err() {
+            if self.ratt.falloc_reserve(1).is_err() {
                 return self.cur.fail(Status::Oom);
             }
             self.ratt.push(RawAttr { name, val });
@@ -601,7 +601,7 @@ impl<'a> Parser<'a> {
             if self.stack.len() + 1 > MAX_DEPTH {
                 return self.cur.limit();
             }
-            if self.stack.mkr_reserve(1).is_err() || self.frame.mkr_reserve(1).is_err() {
+            if self.stack.falloc_reserve(1).is_err() || self.frame.falloc_reserve(1).is_err() {
                 return self.cur.fail(Status::Oom);
             }
             self.stack.push(el);

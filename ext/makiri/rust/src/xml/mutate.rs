@@ -667,7 +667,7 @@ impl CopiedNode {
         let mut attrs: Vec<CopiedNode> = Vec::new();
         let mut a = doc.attrs(src);
         while let Some(attr) = a {
-            attrs.mkr_reserve(1).map_err(|_| MutStatus::Oom)?;
+            attrs.falloc_reserve(1).map_err(|_| MutStatus::Oom)?;
             attrs.push(CopiedNode::read(doc, attr)?);
             a = doc.next(attr);
         }
@@ -732,7 +732,7 @@ fn copy_one(dst: &mut Document, from: ReadFrom<'_>, src: NodeId) -> Result<NodeI
 fn deep_copy(dst: &mut Document, from: ReadFrom<'_>, src: NodeId) -> Result<NodeId, MutStatus> {
     let root = copy_one(dst, from, src)?;
     let mut stack: Vec<(NodeId, NodeId)> = Vec::new();
-    stack.mkr_reserve(1).map_err(|_| MutStatus::Oom)?;
+    stack.falloc_reserve(1).map_err(|_| MutStatus::Oom)?;
     stack.push((src, root));
     while let Some((s, d)) = stack.pop() {
         let mut sc = source(dst, from).first_child(s);
@@ -740,7 +740,7 @@ fn deep_copy(dst: &mut Document, from: ReadFrom<'_>, src: NodeId) -> Result<Node
             let dc = copy_one(dst, from, child)?;
             dst.append_child(d, dc);
             if source(dst, from).first_child(child).is_some() {
-                stack.mkr_reserve(1).map_err(|_| MutStatus::Oom)?;
+                stack.falloc_reserve(1).map_err(|_| MutStatus::Oom)?;
                 stack.push((child, dc));
             }
             sc = source(dst, from).next(child);
