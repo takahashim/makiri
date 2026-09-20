@@ -29,19 +29,15 @@
 #![allow(unsafe_code)]
 
 use crate::falloc::Reserve;
-use core::ffi::{c_long, c_void};
+use core::ffi::c_void;
 use std::cell::RefCell;
 use std::collections::HashSet;
 
-use crate::bridge::ruby::VALUE;
 use magnus::rb_sys::AsRawValue;
 
 use crate::bridge::ruby::makiri_error;
 use magnus::value::{Opaque, ReprValue};
-use magnus::{
-    gc::Marker, method, prelude::*, DataTypeFunctions, Error, RArray, RClass, Ruby, TypedData,
-    Value,
-};
+use magnus::{gc::Marker, prelude::*, DataTypeFunctions, Error, RClass, Ruby, TypedData, Value};
 
 use crate::bridge::html::wrap_html_node;
 use crate::bridge::typed::typed_data_unprotected;
@@ -185,7 +181,7 @@ impl Drop for NodeVec {
 /// Fields that never change after construction belong outside the cell.
 #[derive(TypedData)]
 #[magnus(class = "Makiri::NodeSet", mark, size, free_immediately)]
-struct NodeSet {
+pub struct NodeSet {
     /// The owning Document. `Opaque` is magnus's form for a Ruby value stored
     /// in a Rust struct: it cannot be read back without a `&Ruby` (so never off
     /// a Ruby thread), and it is `Mark`, which is what makes storing it sound -
@@ -244,17 +240,6 @@ impl NodeSet {
             return Err(PushError::Busy);
         };
         nodes.push(node)
-    }
-
-    /// A copy of the node pointers, for the paths that must not hold a borrow:
-    /// `each` yields (the block can push), and the set operators push into a
-    /// result while reading an operand that may be the same object. The copy
-    /// goes through falloc: it is as large as the set, so an OOM must raise
-    /// rather than abort.
-    fn snapshot(&self, ruby: &Ruby) -> Result<(Vec<*mut c_void>, Value, bool), Error> {
-        let nodes = crate::falloc::try_to_vec(self.read()?.as_slice())
-            .ok_or_else(|| makiri_error("out of memory copying a node set"))?;
-        Ok((nodes, self.document(ruby), self.doc_is_xml))
     }
 }
 
@@ -345,166 +330,240 @@ pub fn node_set_with_fill<'a>(document: Value) -> (Value, Fill<'a>) {
     (value, Fill { value, set })
 }
 
-/// # Safety
-/// `rb_set` must be a `Makiri::NodeSet`; `node` a node of its document.
+/// A NodeSet over `document` holding `nodes`, for a caller that owns them.
 ///
-/// The unchecked accessor, for callers that carry the same invariant by other
-/// means (the CSS fill loop, which has to pass the object through `rb_protect`'s
-/// single VALUE slot). Glue-side callers use [`Fill`] instead.
-///
-/// `Err` for the fail-closed refusals: the size cap, a capacity overflow, a busy
-/// set. Growing the array can still raise `NoMemoryError` from Ruby's allocator,
-/// so a caller that owns something needing a drop pushes under `protect`.
-#[inline]
-pub unsafe fn node_set_push(rb_set: VALUE, node: *mut c_void) -> Result<(), PushError> {
-    /* The hot path: one call per node of every CSS and XPath result. It uses
-     * the unprotected accessor deliberately - magnus's `try_convert` costs an
-     * rb_protect (a setjmp) per call, which measured ~26% off `Node#css`. See
-     * the note on `typed_data_unprotected`. */
-    let s: &NodeSet = typed_data_unprotected(rb_set);
-    s.try_push(node)
-}
-
-/* ------------------------------------------------------------------ */
-/* Ruby methods                                                       */
-/* ------------------------------------------------------------------ */
-
-fn length(rb_self: &NodeSet) -> Result<usize, Error> {
-    Ok(rb_self.read()?.len())
-}
-
-/// A new NodeSet over `[beg, beg+len)` of `nodes` (already clamped).
-fn slice_of(
-    nodes: &[*mut c_void],
+/// Built under `protect`: growing the set can raise `NoMemoryError` from Ruby's
+/// allocator, and a longjmp would skip the drop of whatever collection the
+/// caller is iterating. Under `protect` it comes back as `Err` instead, the
+/// collection drops normally, and magnus raises afterwards - one setjmp per set,
+/// not per node.
+pub fn node_set_from(
     document: Value,
-    beg: usize,
-    len: usize,
+    nodes: impl Iterator<Item = *mut c_void>,
 ) -> Result<Value, Error> {
-    let (result, r) = new_result(document);
-    {
-        let mut w = r.write()?;
-        for n in &nodes[beg..beg + len] {
-            w.push(*n)?;
+    let (set, fill) = node_set_with_fill(document);
+    let mut refused = None;
+    crate::bridge::ruby::protect_value(|| {
+        for n in nodes {
+            if let Err(e) = fill.push(n) {
+                refused = Some(e);
+                break;
+            }
         }
+        crate::bridge::ruby::nil().as_raw()
+    })?;
+    match refused {
+        Some(e) => Err(e.into()),
+        None => Ok(set),
     }
-    Ok(result)
 }
 
-/// `set[i]` -> Node or nil (negative counts from the end);
-/// `set[start, length]` and `set[range]` -> a new NodeSet, nil when the start is
-/// out of range. Mirrors `Array#[]`.
-fn aref(ruby: &Ruby, rb_self: &NodeSet, args: &[Value]) -> Result<Value, Error> {
-    let count = rb_self.read()?.len() as c_long;
+/* ------------------------------------------------------------------ */
+/* the set's own operations                                           */
+/* ------------------------------------------------------------------ */
+/* What `glue::node_set`'s Ruby methods are built on. These only move pointers
+ * between sets of one document (or take them from a checked node, in
+ * `node_set_of_nodes`), so none of them can put a foreign pointer where the one
+ * cast in [`wrap`] would read it; new nodes from a walk arrive through [`Fill`]. */
 
-    /* The single-index form is the common one and stays O(1): read the one
-     * pointer under a short borrow, release it, then wrap. Wrapping allocates,
-     * so the borrow must be gone first - not for marking (an immutable borrow
-     * is re-entrant) but because the wrap can run arbitrary Ruby. The slicing
-     * forms copy, since they build a whole new set anyway. */
-    if args.len() == 1 && !args[0].is_kind_of(ruby.class_range()) {
-        let mut i = c_long::try_convert(args[0])?;
-        if i < 0 {
-            i += count;
-        }
-        if i < 0 || i >= count {
-            return Ok(ruby.qnil().as_value());
-        }
-        let node = rb_self.read()?.as_slice()[i as usize];
-        // SAFETY: a node this set stored, so the set's own `doc_is_xml` is the
-        // representation it was stored as, and its document is still rooted.
-        return Ok(unsafe { wrap(node, rb_self.document(ruby), rb_self.doc_is_xml) });
+/// A copy of a set's nodes, detached from its borrow, which wraps them on the
+/// way out: see [`NodeSet::snapshot`].
+pub struct Snapshot {
+    nodes: Vec<*mut c_void>,
+    document: Value,
+    doc_is_xml: bool,
+}
+
+impl Snapshot {
+    /// The nodes as Ruby objects, in the set's order.
+    pub fn wrapped(&self) -> impl Iterator<Item = Value> + '_ {
+        // SAFETY: nodes a set of this document stored, so `doc_is_xml` is the
+        // representation they were stored as, and `document` roots them.
+        self.nodes
+            .iter()
+            .map(|&n| unsafe { wrap(n, self.document, self.doc_is_xml) })
+    }
+}
+
+impl NodeSet {
+    /// The number of nodes.
+    pub fn count(&self) -> Result<usize, Error> {
+        Ok(self.read()?.len())
     }
 
-    let (nodes, document, _doc_is_xml) = rb_self.snapshot(ruby)?;
-
-    if args.len() == 2 {
-        let mut beg = c_long::try_convert(args[0])?;
-        let mut len = c_long::try_convert(args[1])?;
-        if beg < 0 {
-            beg += count;
-        }
-        if beg < 0 || beg > count || len < 0 {
-            return Ok(ruby.qnil().as_value());
-        }
-        if len > count - beg {
-            len = count - beg;
-        }
-        return slice_of(&nodes, document, beg as usize, len as usize);
+    /// The node at `i`, wrapped; nil past the end.
+    ///
+    /// O(1): the one pointer is read under a short borrow that is released
+    /// before the wrap, which allocates and so can run arbitrary Ruby.
+    pub fn at(&self, ruby: &Ruby, i: usize) -> Result<Value, Error> {
+        let node = self.read()?.as_slice().get(i).copied();
+        Ok(match node {
+            // SAFETY: a node this set stored, under its own `doc_is_xml`, and
+            // its document is rooted by the set.
+            Some(n) => unsafe { wrap(n, self.document(ruby), self.doc_is_xml) },
+            None => ruby.qnil().as_value(),
+        })
     }
 
-    if args.len() != 1 {
-        return Err(Error::new(
-            ruby.exception_arg_error(),
-            format!(
-                "wrong number of arguments (given {}, expected 1..2)",
-                args.len()
-            ),
-        ));
-    }
-
-    if args[0].is_kind_of(ruby.class_range()) {
-        /* A start outside the set is nil; a bound too large for a `long` raises,
-         * and that raise must not cross this frame - `nodes` is a live Vec. */
-        let Some((beg, len)) = crate::bridge::ruby::range_beg_len(args[0], count)? else {
+    /// A new set of `len` nodes from `beg`, clamped to the end; nil when `beg`
+    /// is past it.
+    pub fn slice(&self, ruby: &Ruby, beg: usize, len: usize) -> Result<Value, Error> {
+        let mine = self.read()?;
+        let Some(tail) = mine.as_slice().get(beg..) else {
             return Ok(ruby.qnil().as_value());
         };
-        return slice_of(&nodes, document, beg as usize, len as usize);
+        let nodes = &tail[..len.min(tail.len())];
+        let (result, r) = new_result(self.document(ruby));
+        let mut w = r.write()?;
+        for &n in nodes {
+            w.push(n)?;
+        }
+        drop(w);
+        Ok(result)
     }
 
-    /* Only a Range can reach here: the single-index form returned above. */
-    Err(Error::new(
-        ruby.exception_arg_error(),
-        format!(
-            "wrong number of arguments (given {}, expected 1..2)",
-            args.len()
-        ),
-    ))
+    /// See [`Snapshot`]: for iterating while the set may change underneath -
+    /// `each` yields, and the block can push. The copy goes through falloc: it is
+    /// as large as the set, so an OOM must raise rather than abort.
+    pub fn snapshot(&self, ruby: &Ruby) -> Result<Snapshot, Error> {
+        let nodes = crate::falloc::try_to_vec(self.read()?.as_slice())
+            .ok_or_else(|| makiri_error("out of memory copying a node set"))?;
+        Ok(Snapshot {
+            nodes,
+            document: self.document(ruby),
+            doc_is_xml: self.doc_is_xml,
+        })
+    }
+
+    /// `other` as a set that can be combined with this one: a NodeSet, and of
+    /// the same document.
+    ///
+    /// A result set holds exactly one document (the GC keepalive) and one
+    /// representation flag to wrap its nodes, so mixing two documents - which
+    /// also means possibly mixing HTML and XML - would wrap a node under the
+    /// wrong representation and fail to keep its document alive. Fail closed.
+    pub fn operand<'a>(&self, ruby: &Ruby, other: Value) -> Result<&'a NodeSet, Error> {
+        if !other.is_kind_of(node_set_class()) {
+            return Err(Error::new(
+                ruby.exception_type_error(),
+                "expected a Makiri::NodeSet",
+            ));
+        }
+        let o = <&NodeSet>::try_convert(other)?;
+        if !crate::bridge::ruby::same_value(o.document(ruby), self.document(ruby)) {
+            return Err(makiri_error(
+                "cannot combine node sets from different documents",
+            ));
+        }
+        Ok(o)
+    }
+
+    /* The set operators. Results preserve encounter order (self first) and
+     * dedupe by node identity; document order is NOT imposed - that is the
+     * XPath engine's job, and these mirror Nokogiri's operators.
+     *
+     * None of them copies an operand. The borrows are held across the pushes
+     * into the result, which is sound for two reasons: the operands are only
+     * read (two immutable borrows, so `a | a` is fine), and the result is a
+     * fresh object, so its mutable borrow is a different cell. A push can
+     * trigger a GC, and `mark` takes no borrow - see the note on the struct. An
+     * earlier version snapshotted each operand into a Vec to sidestep all this
+     * and measured about half the C's throughput. */
+
+    /// `self | other`: the union, deduped, self first.
+    pub fn union(&self, ruby: &Ruby, other: &NodeSet) -> Result<Value, Error> {
+        let (mine, theirs) = (self.read()?, other.read()?);
+        let (result, r) = new_result(self.document(ruby));
+        let mut w = r.write()?;
+        let mut seen = Index::empty(mine.len() + theirs.len());
+        for &n in mine.as_slice().iter().chain(theirs.as_slice()) {
+            if seen.insert(n, w.as_slice()) {
+                w.push(n)?;
+            }
+        }
+        drop(w);
+        Ok(result)
+    }
+
+    /// `self + other`: the concatenation, duplicates kept.
+    pub fn concat(&self, ruby: &Ruby, other: &NodeSet) -> Result<Value, Error> {
+        let (mine, theirs) = (self.read()?, other.read()?);
+        let (result, r) = new_result(self.document(ruby));
+        let mut w = r.write()?;
+        for &n in mine.as_slice().iter().chain(theirs.as_slice()) {
+            w.push(n)?;
+        }
+        drop(w);
+        Ok(result)
+    }
+
+    /// `&` (`keep_if_in_other`) and `-` (not): each node of self whose
+    /// membership in `other` is `keep_if_in_other`, deduped, in self's order.
+    pub fn filter(
+        &self,
+        ruby: &Ruby,
+        other: &NodeSet,
+        keep_if_in_other: bool,
+    ) -> Result<Value, Error> {
+        let (mine, theirs) = (self.read()?, other.read()?);
+        let theirs_index = Index::build(theirs.as_slice());
+        let (result, r) = new_result(self.document(ruby));
+        let mut w = r.write()?;
+        let mut seen = Index::empty(mine.len());
+        for &n in mine.as_slice() {
+            if theirs_index.contains(n, theirs.as_slice()) != keep_if_in_other {
+                continue;
+            }
+            if seen.insert(n, w.as_slice()) {
+                w.push(n)?;
+            }
+        }
+        drop(w);
+        Ok(result)
+    }
 }
 
-fn each(ruby: &Ruby, rb_self: &NodeSet) -> Result<Value, Error> {
-    let this = crate::bridge::ruby::method_receiver();
-    if !ruby.block_given() {
-        return Ok(this.enumeratorize("each", ()).as_value());
-    }
-    /* Snapshot first: the block can call back into this set (even mutate it
-     * through a query), and holding the borrow across the yield would turn that
-     * into an error for no reason. Iterating a copy is also what makes
-     * concurrent growth harmless rather than a dangling read. */
-    let (nodes, document, doc_is_xml) = rb_self.snapshot(ruby)?;
-    for n in nodes {
-        // SAFETY: the snapshot holds nodes this set stored, so `doc_is_xml` is
-        // the representation they were stored as, and `document` roots them.
-        let wrapped = unsafe { wrap(n, document, doc_is_xml) };
-        let _: Value = ruby.yield_value(wrapped)?;
-    }
-    Ok(this)
-}
-
-/// The receiver as a `Value`.
+/// A new set over `document` holding `nodes`, each of which must be a Makiri
+/// node of that document.
 ///
-/// magnus hands methods a `&NodeSet`, not the object; `each` needs the object
-/// itself both to return and to enumeratorize. The reference points into the
-/// wrapped data, and `rb_typeddata_...` has no inverse, so the object is
-/// recovered from the frame's receiver.
-fn dup(ruby: &Ruby, rb_self: &NodeSet, _args: &[Value]) -> Result<Value, Error> {
-    let document = rb_self.document(ruby);
-    let mine = rb_self.read()?;
-    slice_of(mine.as_slice(), document, 0, mine.len())
+/// The check is the set's invariant, not an argument nicety: a node from
+/// another document or representation would be re-wrapped under the wrong
+/// document and kind - exactly the HTML/XML confusion the set's opaque storage
+/// relies on the document to prevent.
+pub fn node_set_of_nodes(
+    ruby: &Ruby,
+    document: Value,
+    nodes: impl Iterator<Item = Value>,
+) -> Result<Value, Error> {
+    let (set, s) = new_result(document);
+    let mut w = s.write()?;
+    for item in nodes {
+        if !is_kind_of(item, &CLASS_NODE)
+            || !crate::bridge::ruby::same_value(keepalive_document(item)?, document)
+        {
+            return Err(Error::new(
+                ruby.exception_arg_error(),
+                "every node must be a Makiri node belonging to the given document",
+            ));
+        }
+        w.push(node_raw(item)?)?;
+    }
+    drop(w);
+    Ok(set)
 }
 
-/* ---- set operations ----
- *
- * Results preserve encounter order (self first) and dedupe by node identity.
- * Document order is NOT imposed - that is the XPath engine's job; these mirror
- * Nokogiri's operators on the common same-query operands.
- *
- * None of these copies an operand. The borrows are held across the pushes into
- * the result, which is sound for two reasons: the operands are only read (two
- * immutable borrows, so `a | a` is fine), and the result is a fresh object, so
- * its mutable borrow is a different cell. A push can trigger a GC, and `mark`
- * takes no borrow - see the note on the struct. An earlier version snapshotted
- * each operand into a Vec to sidestep all this and measured about half the C's
- * throughput. */
+/// An empty NodeSet over `document`, plus the handle to fill it through.
+///
+/// The reference's lifetime is unconstrained, as magnus's own `try_convert` for
+/// a wrapped type gives: the data lives as long as the Ruby object, which the
+/// returned `Value` keeps rooted on the caller's stack.
+fn new_result<'a>(document: Value) -> (Value, &'a NodeSet) {
+    /* The one unchecked borrow of a fresh set is `node_set_with_fill`'s. */
+    let (set, fill) = node_set_with_fill(document);
+    (set, fill.set)
+}
+
+/* ---- membership, for the operators ---- */
 
 /// Pointer hashing: `ptr_table`'s MurmurHash3 fmix64 finalizer, as a `Hasher`.
 ///
@@ -588,201 +647,4 @@ impl Index {
             Index::Linear => !already.contains(&n),
         }
     }
-}
-
-/// The other operand as a set, required to share `document`.
-///
-/// A result NodeSet borrows exactly one document (the GC keepalive) and one
-/// representation flag to wrap its nodes, so mixing two documents - which also
-/// means possibly mixing HTML and XML - would wrap a node under the wrong
-/// representation and fail to keep its document alive. Fail closed rather than
-/// produce a corrupt set.
-fn other_of<'a>(ruby: &Ruby, document: Value, other: Value) -> Result<&'a NodeSet, Error> {
-    if !other.is_kind_of(node_set_class()) {
-        return Err(Error::new(
-            ruby.exception_type_error(),
-            "expected a Makiri::NodeSet",
-        ));
-    }
-    let o = <&NodeSet>::try_convert(other)?;
-    if o.document(ruby).as_raw() != document.as_raw() {
-        return Err(makiri_error(
-            "cannot combine node sets from different documents",
-        ));
-    }
-    Ok(o)
-}
-
-/// An empty NodeSet over `document`, plus the handle to fill it through.
-///
-/// The reference's lifetime is unconstrained, as magnus's own `try_convert` for
-/// a wrapped type gives: the data lives as long as the Ruby object, which the
-/// returned `Value` keeps rooted on the caller's stack.
-fn new_result<'a>(document: Value) -> (Value, &'a NodeSet) {
-    /* The one unchecked borrow of a fresh set is `node_set_with_fill`'s. */
-    let (set, fill) = node_set_with_fill(document);
-    (set, fill.set)
-}
-
-/// `self | other` -> union, deduped, self first.
-fn op_or(ruby: &Ruby, rb_self: &NodeSet, other: Value) -> Result<Value, Error> {
-    let document = rb_self.document(ruby);
-    let o = other_of(ruby, document, other)?;
-    let mine = rb_self.read()?;
-    let theirs = o.read()?;
-
-    let (result, r) = new_result(document);
-    let mut w = r.write()?;
-    let mut seen = Index::empty(mine.len() + theirs.len());
-    for &n in mine.as_slice().iter().chain(theirs.as_slice().iter()) {
-        if seen.insert(n, w.as_slice()) {
-            w.push(n)?;
-        }
-    }
-    drop(w);
-    Ok(result)
-}
-
-/// `self + other` -> concatenation, duplicates kept.
-fn op_plus(ruby: &Ruby, rb_self: &NodeSet, other: Value) -> Result<Value, Error> {
-    let document = rb_self.document(ruby);
-    let o = other_of(ruby, document, other)?;
-    let mine = rb_self.read()?;
-    let theirs = o.read()?;
-
-    let (result, r) = new_result(document);
-    let mut w = r.write()?;
-    for &n in mine.as_slice().iter().chain(theirs.as_slice().iter()) {
-        w.push(n)?;
-    }
-    drop(w);
-    Ok(result)
-}
-
-/// The shared core of `&` and `-`: keep each node of self whose membership in
-/// other equals `keep_if_in_other`, deduped, in self's order.
-fn op_filter(
-    ruby: &Ruby,
-    rb_self: &NodeSet,
-    other: Value,
-    keep_if_in_other: bool,
-) -> Result<Value, Error> {
-    let document = rb_self.document(ruby);
-    let o = other_of(ruby, document, other)?;
-    let mine = rb_self.read()?;
-    let theirs = o.read()?;
-
-    let theirs_index = Index::build(theirs.as_slice());
-    let (result, r) = new_result(document);
-    let mut w = r.write()?;
-    let mut seen = Index::empty(mine.len());
-    for &n in mine.as_slice() {
-        if theirs_index.contains(n, theirs.as_slice()) != keep_if_in_other {
-            continue;
-        }
-        if seen.insert(n, w.as_slice()) {
-            w.push(n)?;
-        }
-    }
-    drop(w);
-    Ok(result)
-}
-
-fn op_and(ruby: &Ruby, rb_self: &NodeSet, other: Value) -> Result<Value, Error> {
-    op_filter(ruby, rb_self, other, true)
-}
-
-fn op_minus(ruby: &Ruby, rb_self: &NodeSet, other: Value) -> Result<Value, Error> {
-    op_filter(ruby, rb_self, other, false)
-}
-
-/// `NodeSet.new(document_or_node, list = [])`.
-///
-/// Mirrors Nokogiri: the first argument is the owning Document (or any node,
-/// whose document is taken) that the set pins as a GC keepalive; the optional
-/// list seeds it. Every listed node MUST belong to that document - one from
-/// another document or representation would be re-wrapped under the wrong
-/// document and kind, which is exactly the HTML/XML type confusion the set's
-/// opaque storage relies on the document kind to avoid, so it is rejected.
-fn s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
-    let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), (), ()>(args)?;
-    let (ctx,) = a.required;
-    let (list,) = a.optional;
-
-    let document = if is_kind_of(ctx, &CLASS_DOCUMENT) {
-        ctx
-    } else if is_kind_of(ctx, &CLASS_NODE) {
-        keepalive_document(ctx)?
-    } else {
-        return Err(Error::new(
-            ruby.exception_type_error(),
-            "expected a Makiri::Document or Node as the first argument",
-        ));
-    };
-
-    let (set, s) = new_result(document);
-    let Some(list) = list.filter(|v| !v.is_nil()) else {
-        return Ok(set);
-    };
-    let Some(arr) = RArray::from_value(list) else {
-        return Err(Error::new(
-            ruby.exception_type_error(),
-            "expected an Array of nodes as the second argument",
-        ));
-    };
-
-    let mut w = s.write()?;
-    for item in arr.into_iter() {
-        if !is_kind_of(item, &CLASS_NODE)
-            || !crate::bridge::ruby::same_value(keepalive_document(item)?, document)
-        {
-            return Err(Error::new(
-                ruby.exception_arg_error(),
-                "every node must be a Makiri node belonging to the given document",
-            ));
-        }
-        w.push(node_raw(item)?)?;
-    }
-    drop(w);
-    let _ = document;
-    Ok(set)
-}
-
-/// # Safety
-/// Called from `Init_makiri`, with the classes already defined.
-pub fn init_node_set() {
-    let klass = node_set_class();
-
-    /* Nodes come only from C; `.new` seeds through the factory below. */
-    CLASS_NODE_SET.class().undef_default_alloc_func();
-    klass
-        .define_singleton_method("new", magnus::function!(s_new, -1))
-        .expect("NodeSet.new");
-
-    klass
-        .define_method("|", method!(op_or, 1))
-        .expect("NodeSet#|");
-    klass
-        .define_method("+", method!(op_plus, 1))
-        .expect("NodeSet#+");
-    klass
-        .define_method("&", method!(op_and, 1))
-        .expect("NodeSet#&");
-    klass
-        .define_method("-", method!(op_minus, 1))
-        .expect("NodeSet#-");
-
-    klass
-        .define_method("length", method!(length, 0))
-        .expect("NodeSet#length");
-    klass
-        .define_method("[]", method!(aref, -1))
-        .expect("NodeSet#[]");
-    klass
-        .define_method("each", method!(each, 0))
-        .expect("NodeSet#each");
-    klass
-        .define_method("dup", method!(dup, -1))
-        .expect("NodeSet#dup");
-    /* #clone is defined in Ruby (node_set.rb) so it can honour `freeze:`. */
 }

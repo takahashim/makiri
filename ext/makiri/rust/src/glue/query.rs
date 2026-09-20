@@ -21,9 +21,7 @@ use magnus::{method, prelude::*, Error, RArray, RHash, RModule, RString, Ruby, V
 use crate::bridge::ruby::makiri_error;
 use crate::bridge::string::ruby_try_verified_text_pair;
 use crate::bridge::wrapper::keepalive_document;
-use crate::bridge::xpath::{
-    context_for, evaluate_query, ns_matching_lax, parse_query, query_result, Answer, Cx,
-};
+use crate::bridge::xpath::{context_for, evaluate_query, parse_query, query_result, Answer, Cx};
 use crate::init::{MOD_HTML_NODE_METHODS, MOD_XML_NODE_METHODS};
 use crate::xpath::ast::Ast;
 
@@ -99,6 +97,34 @@ impl QueryArgs {
         }
         Ok(q)
     }
+}
+
+/// Resolve the `namespace_matching:` keyword to the unprefixed-lax flag.
+///
+/// `:strict` (the default) resolves an unprefixed name test in the HTML
+/// namespace, which is what browsers do; `:lax` makes it namespace-agnostic.
+/// Only reached when keywords were passed, so the symbol lookups are off the
+/// one-argument path.
+pub fn ns_matching_lax(ruby: &Ruby, opts: RHash) -> Result<bool, Error> {
+    if opts.is_empty() {
+        return Ok(false);
+    }
+    let Some(v) = opts.get(ruby.to_symbol("namespace_matching")) else {
+        return Ok(false);
+    };
+    if v.is_nil() || v.eql(ruby.to_symbol("strict"))? {
+        return Ok(false);
+    }
+    if v.eql(ruby.to_symbol("lax"))? {
+        return Ok(true);
+    }
+    Err(Error::new(
+        ruby.exception_arg_error(),
+        format!(
+            "namespace_matching: must be :strict or :lax, got {}",
+            v.inspect()
+        ),
+    ))
 }
 
 /// `keywords` without its `namespace_matching:` entry.
@@ -187,10 +213,9 @@ fn node_at_xpath(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, E
     crate::bridge::ruby::entry(|| xpath_run(rb_self, QueryArgs::scan(ruby, args)?, Answer::First))
 }
 
-/// `Makiri::XPathContext`, and `#xpath` / `#at_xpath` on both node-method
-/// modules. From `Init_makiri`, after the classes exist.
+/// `#xpath` / `#at_xpath` on both node-method modules. From `Init_makiri`,
+/// after the classes exist.
 pub fn init_xpath() {
-    crate::bridge::xpath::init_xpath_context();
     for module in [&MOD_HTML_NODE_METHODS, &MOD_XML_NODE_METHODS] {
         let m = RModule::from_value(module.value()).expect("a NodeMethods module");
         m.define_method("xpath", method!(node_xpath, -1))

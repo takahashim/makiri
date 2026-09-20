@@ -37,7 +37,7 @@ mod context_object;
 mod handler;
 
 use crate::bridge::ruby::is_kind_of;
-pub use context_object::{init_xpath_context, ns_matching_lax};
+pub use context_object::XPathCtx;
 use handler::Bridge;
 
 /// An engine error as the Ruby exception it maps to.

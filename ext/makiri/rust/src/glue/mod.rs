@@ -41,11 +41,11 @@ pub mod node_set;
 /// `#xpath` / `#at_xpath` for both representations, and the query path.
 pub mod query;
 
+/// `Makiri::XPathContext`.
+pub mod xpath_context;
+
 /// `Makiri::XML::Document` and `DocumentFragment`.
 pub mod xml_doc;
-
-/// CSS over XML, lowered to the XPath engine.
-pub mod xml_css;
 
 pub mod xml_node;
 

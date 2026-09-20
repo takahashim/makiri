@@ -22,7 +22,11 @@
 //! and on macOS a hand-written declaration of one of those links to nothing and
 //! becomes a NULL call at run time rather than a link error.
 
+pub mod css;
+
 pub mod read;
+
+pub mod serialize;
 
 pub mod mutate;
 
