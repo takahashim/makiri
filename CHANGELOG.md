@@ -1,160 +1,93 @@
 # Changelog
 
-## [Unreleased]
+## [0.10.0.rc2] - 2026-09-20
 
 ### Added
 
-* **`XPathContext.new(node, prefix: uri)` registers the bindings**, as
-  `#xpath` does. They used to be dropped, so the first prefixed expression
-  failed with "unknown namespace prefix".
-
-* **`#css` / `#at_css` / `#matches?` take `(selector, namespaces = nil)` on HTML
-  too**, so one call works on either representation. On HTML the bindings are
-  accepted and unused - Lexbor's matcher resolves a prefixed type selector
-  loosely - which is what Nokogiri answers for the same call; `#xpath` is where
-  a prefix resolves against them. See NOKOGIRI_DIFFERENCES.md.
-
-* **A rejected CSS selector is worded the same for both**: `"<reason>:
-  <selector>"`. `Makiri::XML` used to leave the selector out of the message.
-
-* **`#xpath` / `#at_xpath` read one argument list for HTML and XML**:
-  `(expr, [namespaces Hash], [handler], namespace_matching:)`, in either order.
-  HTML gains per-query namespace bindings (they used to be taken as the handler
-  and silently ignored), XML gains a custom-function handler (it used to raise
-  TypeError), and keywords other than `namespace_matching:` are prefix bindings,
-  so `xpath("//s:p", s: uri)` works - on XML that keyword used to be registered
-  as a namespace prefix called "namespace_matching".
-
-* **XML nodes have the HTML node readers that share a meaning:**
-  `#first_element_child`, `#next_element`, `#previous_element`, `#elements`,
-  `#keys`, `#values`, `#tag_name`, `#target`, and the aliases `#attr`,
-  `#get_attribute`, `#node_name`, `#node_name=` and `#type`.
+* `XPathContext.new` now registers namespace bindings passed via
+  `prefix: uri` (previously ignored).
+* `#css`, `#at_css`, and `#matches?` accept `(selector, namespaces = nil)`
+  on HTML documents for consistency with XML.
+* Standardized error message format for rejected CSS selectors across XML
+  and HTML: `"<reason>: <selector>"`.
+* Unified argument handling for `#xpath` and `#at_xpath` between HTML and XML.
+  * HTML supports per-query namespace bindings and keyword prefixes
+    (e.g., `s: uri`).
+  * XML supports custom-function handlers.
+* XML nodes now support HTML-style node readers and aliases
+  (`#first_element_child`, `#next_element`, `#tag_name`, `#attr`,
+  `#node_name`, etc.).
 
 ### Changed
 
-* **`Makiri::XML#matches?` tests the node itself**, by walking its ancestors and
-  siblings, instead of selecting across the whole document and testing
-  membership - the question Lexbor answers for HTML. A detached node is now
-  matched against the selector like any other (`fragment.matches?("p")`), and a
-  `select { matches? }` loop no longer costs a document scan per node.
-
-* **`Makiri::XML::Namespace` is a `Data` value object** (frozen, equal by
-  `prefix` and `href`), defined in Ruby. `#to_s` is still the URI.
-
-* **An XML node's `#value` is its text content**, except an attribute's, which is
-  its value - what the HTML `#value` answers. It was the node's raw value field,
-  so an element answered `""` and a DOCTYPE its SYSTEM id.
-
-* **XPath over HTML follows the browsers on name case and `xmlns`.** A name
-  test now matches an HTML element's name, and its attributes' names, ASCII
-  case-insensitively - `//DiV` finds `<div>` and `//div[@Id]` its `id` - while
-  SVG and MathML names still compare exactly (`//*[@refX]`, not `@refx`). The
-  `xmlns` / `xmlns:*` declarations on an SVG or MathML element are no longer
-  attributes to XPath, so `//*[@xmlns]` and `@*` do not see them; an `xmlns` on
-  an HTML element is still an ordinary attribute. This matches `document.evaluate`
-  in browsers and the WPT `domxpath` suite, and differs from `Nokogiri::HTML5`,
-  which compares names case-sensitively. XML documents are unaffected.
-
-* **`Makiri::XML` checks the internal DTD subset and refuses what it would have
-  to ignore.** The subset used to be skipped, so a malformed one parsed, and a
-  document came back without the attribute defaults its DTD declares - silently
-  wrong. It is now checked for well-formedness (§5.1), and a document whose DTD
-  would change the tree raises `Makiri::XML::SyntaxError` ("unsupported DTD
-  construct"): an attribute default, a non-CDATA attribute type, a
-  parameter-entity reference, or a reference to a declared entity. Declarations
-  that change nothing are still accepted.
-
-* **A `version="1.x"` document is read as XML 1.0**, as XML 1.0 §2.8 says, instead
-  of being rejected.
-
-* **A colon in a processing-instruction target is rejected**, as Namespaces in
-  XML §7 requires (`<?a:b?>`); a PI created with one through the DOM API can no
-  longer be serialized.
+* `Makiri::XML#matches?` tests the node locally via tree walking instead of
+  performing a full-document search.
+* `Makiri::XML::Namespace` is now an immutable `Data` object defined in Ruby.
+* `XML::Node#value` returns its text content (or attribute value for
+  attributes), aligning with HTML node behavior.
+* XPath over HTML now handles element/attribute names case-insensitively
+  and properly handles `xmlns` attributes according to browser specs.
+* `Makiri::XML` checks the internal DTD subset for well-formedness and
+  raises `Makiri::XML::SyntaxError` if unsupported constructs (e.g., attribute
+  defaults, entity references) would alter the document tree.
+* Documents with `version="1.x"` are now accepted and parsed as XML 1.0.
+* Processing instruction (PI) targets containing colons (e.g., `<?a:b?>`)
+  are now rejected per Namespaces in XML specs.
 
 ### Fixed
 
-* **`Makiri::XML::DocumentType#prefix` is nil.** It answered the PUBLIC id.
-
-* **`Makiri::XML` `#last_element_child` returns an element.** It returned the
-  last child of any kind - a comment or a text node, say.
-
-* **`Element#local_name` keeps the DOM's case for SVG and MathML names** -
-  `foreignObject`, not `foreignobject` - as `local-name()` does.
-
-* **`inner_html=` and `outer_html=` are all or nothing.** An allocation failure
-  part-way through importing the new content could leave the old content gone
-  and the new half in; the content is now imported in full before anything is
-  swapped.
-
-* **XPath over HTML gives an attribute its own namespace.** `namespace-uri()`
-  of an attribute returned its element's namespace - the XHTML URI for `id` on
-  a `<div>`, SVG's for `refX` on a `<path>`; it is `""` now, and XLink's for
-  `xlink:href`, as the DOM and XPath's data model say. A prefixed attribute
-  test (`@svg:*`) no longer matches an attribute by its element's namespace.
-
-* **`local-name()` keeps an SVG name's case in HTML**, like the DOM's
-  `localName`: `refX` and `foreignObject`, not `refx` and `foreignobject`. A
-  prefixed test compares that name exactly (`//svg:foreignObject`).
-
-* **`lang()` is decided by the nearest language attribute.** An element whose
-  own `xml:lang` did not match went on to ask its ancestors, so an `en` element
-  inside a `ja` one answered `lang("ja")`.
-
-* **`namespace_matching: :lax` no longer changes XPath over XML.** Lax means
-  "as Nokogiri does", and `Nokogiri::XML` (libxml2) is namespace-strict: `//g`
-  does not find `<p:g>`, nor `//@a` a `p:a`. Makiri's lax matched both by
-  local name - and its `[@a]` shortcut disagreed with `@a` besides. XML now
-  answers the same in either mode; HTML's lax is unchanged.
-
-* **Moving a node to another HTML document updates the one it left.** The
-  source document's text and element indexes still listed the node, so its
-  `#text` and `//tag` kept answering with it; they are dropped now, as they
-  already were for XML.
-
-* **An XPath handler cannot create nodes in the document being evaluated.**
-  The rule that a handler may not modify that document covered the tree edits
-  but not the factories - `create_*`, `clone_node`, `import_node`, `fragment` -
-  and on an XML document those grow the storage the evaluation is reading. They
-  raise `Makiri::Error` now, on both representations.
-
-* **CSS on XML honours the namespace of a universal selector.** `p|*` matched
-  every element, whatever its namespace; it now matches only those in the
-  namespace bound to `p`, and `|*` only those in no namespace. `*|*` and a bare
-  `*` still match every element.
-
-* **CSS on XML refuses the column combinator.** `a || b` was read as the
-  descendant combinator, `a b`; it raises `Makiri::CSS::SyntaxError` now, like
-  the other constructs XPath cannot express.
+* `Makiri::XML::DocumentType#prefix` now returns `nil` instead of
+  the PUBLIC ID.
+* `Makiri::XML#last_element_child` now correctly returns an `Element`
+  instead of arbitrary child nodes (like comments or text).
+* `Element#local_name` and `local-name()` in XPath preserve camelCase
+  for SVG/MathML elements (e.g., `foreignObject`).
+* `inner_html=` and `outer_html=` are now atomic operations to prevent
+  leaving the DOM in a corrupted state on failure.
+* XPath over HTML assigns empty/correct namespaces to attributes instead of
+  inheriting from their parent element.
+* Corrected `lang()` evaluation to check the nearest language attribute
+  hierarchically.
+* Fixed `namespace_matching: :lax` on XML to be strict, aligning with
+  `Nokogiri::XML` / `libxml2` behavior.
+* Moving an HTML node to another document now correctly removes it
+  from the source document's indexes.
+* Prevented XPath custom handlers from creating new nodes on the document
+  being evaluated.
+* Fixed CSS universal selectors (`p|*`, `|*`) on XML to respect namespace
+  boundaries.
+* CSS column combinator (`a || b`) on XML now raises
+  `Makiri::CSS::SyntaxError` instead of being misparsed as descendant selector.
 
 ## [0.10.0.rc1] - 2026-09-19
 
 ### Changed
 
-* **The native extension is rewritten in Rust.** The C glue, the XPath engine,
+* The native extension is rewritten in Rust. The C glue, the XPath engine,
   the XML reader and the CSS lowering are now one Rust crate; the only C left is
   the vendored Lexbor, still unpatched. The Ruby API is unchanged, and answers
   were checked against the C build's recorded output as well as the existing
   differential suites against Nokogiri.
 
-  * **Installing from source needs a Rust toolchain.** `cargo` (stable) and
+  * Installing from source needs a Rust toolchain. `cargo` (stable) and
     libclang are required alongside CMake, and `rb_sys` becomes a runtime
     dependency of the source gem, because its `extconf.rb` runs at install time.
     The precompiled platform gems need none of this and do not depend on
     `rb_sys`.
-  * **Faster.** Makiri now beats both Nokogiri and nokolexbor on every
+  * Faster. Makiri now beats both Nokogiri and nokolexbor on every
     `rake bench` row, parse included - previously ~1.25x slower than nokolexbor.
     Source locations are stamped on the first `#line` or mutation rather than
     during every parse, and the vendored Lexbor is built with link-time
     optimization where the linker supports it (macOS; Linux with clang,
     llvm-ar and lld; not Windows).
-  * **An internal failure is an exception, not a crash.** It used to end the
+  * An internal failure is an exception, not a crash. It used to end the
     host process with SIGABRT. Now it unwinds on the thread that ran the call:
     `ensure` blocks run and the process keeps working. On entry points that
     handle input (parse, XPath, CSS, serialization, text) it is the new
-    **`Makiri::InternalError`**, which descends from `Exception`, not
+    `Makiri::InternalError`, which descends from `Exception`, not
     `StandardError`, so a bare `rescue => e` does not swallow it; elsewhere it
     is Ruby's `fatal`.
-  * **An XPath handler may not modify the document being evaluated.** Every
+  * An XPath handler may not modify the document being evaluated. Every
     mutator on that document raises `Makiri::Error` while an evaluation with a
     handler runs, because the evaluator holds names and values from it for the
     whole walk.
@@ -172,14 +105,14 @@
 
 * `Node#attribute_by_qualified_name(name)` and
   `Node#attribute_value_by_qualified_name(name)`: the attribute whose
-  **qualified** name is exactly `name` — its node, and its value — or nil.
+  qualified name is exactly `name` — its node, and its value — or nil.
   `#[]` cannot answer this: it also finds a prefixed attribute by its local
   name (`svg_a["href"]` returns `xlink:href`), and it lower-cases what it looks
   up (`el["DATA-X"]` finds `data-x`). The new match is byte-exact.
 
 ### Changed
 
-* **`Makiri::XML` follows the DOM namespace model.** A node's namespace URI is
+* `Makiri::XML` follows the DOM namespace model. A node's namespace URI is
   decided once — by the parser, or by the context it is first inserted into —
   and does not change afterwards; the serializer emits whatever xmlns
   declarations the output needs:
@@ -197,24 +130,24 @@
   Nodes from the factories (`create_element` and friends) still take their
   namespace from the context they are first inserted into.
 
-* **Inserting a node from another document adopts it.** `add_child` / `before` /
+* Inserting a node from another document adopts it. `add_child` / `before` /
   `after` / `replace` bring the node over and remove it from the document it
   came from, instead of copying it (`Makiri::XML`) or raising (`Makiri::HTML`).
   A spliced fragment is left empty; a rejected insert leaves the source
   document untouched.
 
-  The node handed back is a **different object** than the one passed in, so use
+  The node handed back is a different object than the one passed in, so use
   the return value afterwards rather than the argument. `Document#import_node`
   is unchanged: it copies and leaves the source alone.
 
-* **XML serialization is capped at the nesting depth the parser accepts.**
+* XML serialization is capped at the nesting depth the parser accepts.
   `#to_xml` and `#canonicalize` raise `Makiri::Error` past it, rather than
   emitting XML that Makiri could not read back. A deeper tree is still fine to
   hold, walk and query.
 
 ### Fixed
 
-* XPath axes from an **attribute** context node on the XML backend now follow
+* XPath axes from an attribute context node on the XML backend now follow
   XPath 1.0 §2.2: `following-sibling` and `preceding-sibling` are empty, and
   `following` / `preceding` exclude attribute nodes. They used to return the
   element's later attributes.
@@ -420,7 +353,7 @@
 
 ### Added
 
-* **Native XML 1.0 reader + in-place editor** - `Makiri::XML::Document.parse(source)`
+* Native XML 1.0 reader + in-place editor - `Makiri::XML::Document.parse(source)`
   / `Makiri::XML(source)`. No libxml2: a strict, fail-closed parser builds its own
   node arena (case- and namespace-preserving), queried by the native XPath engine.
   * Strict & secure: fail-closed decode (bad UTF-8 / NUL -> `XML::SyntaxError`),
@@ -430,9 +363,9 @@
     encoding is a fatal error, not a silent mis-decode.
   * DoS-bounded by a single arena byte ceiling (default 256 MiB; raise per parse
     with `max_bytes:`).
-  * `<!DOCTYPE>` recognized but **not processed** (`#internal_subset` ->
-    `XML::DocumentType`); zero entity/DTD I/O, so **XXE and billion-laughs are
-    structurally impossible**. Kept off the tree, as in libxml2.
+  * `<!DOCTYPE>` recognized but not processed (`#internal_subset` ->
+    `XML::DocumentType`); zero entity/DTD I/O, so XXE and billion-laughs are
+    structurally impossible. Kept off the tree, as in libxml2.
   * Read API mirrors Nokogiri: `#xpath` / `#at_xpath` (`{prefix => uri}`),
     name/namespace readers, `#text`, `#[]`, traversal, and namespace introspection
     (`Makiri::XML::Namespace`); `XPathContext` works over XML nodes too.
@@ -460,7 +393,7 @@
 * `NodeSet#[]` accepts a `Range` or `start, length` (like `Array#[]`).
 * `Node` / `NodeSet` / `Document` `#dup` / `#clone` now return real independent
   copies (`#dup(0)` shallow; `#clone(freeze:)` honoured).
-* A **frozen node is genuinely immutable** - every mutator raises `FrozenError`.
+* A frozen node is genuinely immutable - every mutator raises `FrozenError`.
 
 ### Changed
 
@@ -472,7 +405,7 @@
   added `Node#cdata?`.
 * Text-index range table uses `uint32` bounds (24 -> 16 B/entry; ~27% less retained
   index, byte-identical text).
-* Parsing **honours the input String's encoding** - Shift_JIS / EUC-JP / ... are now
+* Parsing honours the input String's encoding - Shift_JIS / EUC-JP / ... are now
   transcoded to UTF-8 instead of mangled.
 * Parsing skips its UTF-8 validation scan when the String's coderange already proves
   it valid.
@@ -481,7 +414,7 @@
 
 ### Fixed
 
-* **Hardened the HTML/XML representation boundary.** HTML (Lexbor) and XML (arena)
+* Hardened the HTML/XML representation boundary. HTML (Lexbor) and XML (arena)
   nodes are now distinct TypedData types, so the wrong representation raises
   `TypeError` instead of corrupting memory:
   * `Node#==` / `XPathContext#node=` with an XML `Document` no longer aborts the
@@ -560,12 +493,12 @@
 ## [0.1.0] - 2026-06-02
 
 First public release. An HTML5 parser, a native XPath 1.0 query engine, and CSS
-selectors for Ruby - built on vendored [Lexbor](https://lexbor.com/) with **no
-libxml2 / libxslt dependency at any layer**.
+selectors for Ruby - built on vendored [Lexbor](https://lexbor.com/) with no
+libxml2 / libxslt dependency at any layer.
 
 ### Added
 
-**Parsing & DOM**
+Parsing & DOM
 
 * `Makiri::HTML` / `Makiri.parse` - HTML5 parsing via vendored, unpatched Lexbor,
   with browser-compatible UTF-8 decoding (invalid bytes → U+FFFD; parsing never
@@ -580,7 +513,7 @@ libxml2 / libxslt dependency at any layer**.
   quirks_mode,internal_subset,errors}` and `Makiri::DocumentType#{public_id,
   system_id,external_id}`.
 
-**XPath**
+XPath
 
 * Native XPath 1.0 query engine (no libxml2/libxslt): `Node#{xpath,at_xpath}`
   and `Makiri::XPathContext` (`evaluate`, namespace/variable binding, custom
@@ -588,7 +521,7 @@ libxml2 / libxslt dependency at any layer**.
   built-in functions with spec-faithful semantics (XML NCNames including
   non-ASCII, node-set vs node-set comparisons per §3.4, document order per §5.1,
   Unicode-aware `translate`/`substring`).
-* Namespace matching is **strict by default** (HTML5/WHATWG-faithful, like
+* Namespace matching is strict by default (HTML5/WHATWG-faithful, like
   browsers' `document.evaluate` and `Nokogiri::HTML5`); pass
   `namespace_matching: :lax` for the namespace-agnostic, `Nokogiri::HTML`-style
   match.
@@ -596,12 +529,12 @@ libxml2 / libxslt dependency at any layer**.
   (operation / recursion-depth / node-set / string-byte caps) that raise
   `Makiri::XPath::LimitExceeded` on overrun.
 
-**CSS**
+CSS
 
 * `Node#{css,at_css,matches?}` via Lexbor's selector engine (descendant-only,
   document order). Malformed selectors raise `Makiri::CSS::SyntaxError`.
 
-**Mutation & serialization**
+Mutation & serialization
 
 * DOM mutation: `add_child`/`<<`, `add_previous_sibling`/`before`,
   `add_next_sibling`/`after`, `remove`/`unlink`, `replace`; attribute `[]=` and
@@ -620,7 +553,7 @@ libxml2 / libxslt dependency at any layer**.
   `NodeSet#{|,+,&,-,css,xpath,search,at,last,remove}`, and `Element.new` /
   `Text.new`.
 
-**Safety & concurrency**
+Safety & concurrency
 
 * UTF-8 text-input contract: HTML and fragment parsing are lenient (invalid
   bytes → U+FFFD, never reject), while strings passed to the XPath / CSS /
@@ -631,7 +564,7 @@ libxml2 / libxslt dependency at any layer**.
   context across threads cannot corrupt memory. Fail-closed string caps and
   iterative (non-recursive) tree walks resist stack-exhaustion DoS.
 
-**Performance** (`rake bench`, vs Nokogiri/libxml2)
+Performance (`rake bench`, vs Nokogiri/libxml2)
 
 * Meets or beats Nokogiri on every benchmarked operation: parse ~3×, css ~12×,
   at_css ~1000×, serialize ~4×, `//tag` ~3.4×, `[@attr='v']` predicate ~1.5×,
@@ -639,7 +572,7 @@ libxml2 / libxslt dependency at any layer**.
   a document element index (for `//tag`), a direct-attribute predicate fast
   path, and a hashed per-evaluate string-value cache.
 
-**Tooling**
+Tooling
 
 * Vendored Lexbor as a git submodule (pinned v3.0.0, applied without patches).
   Build hardening flags; AddressSanitizer+UBSan build (`rake sanitize`);
