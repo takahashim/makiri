@@ -113,7 +113,20 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
   * Nokogiri (XML and HTML5) mistranslates these to first-/only-child
     (`//*[position()=1]` / `//*[last()=1]`), so it under-matches; Makiri matches
     Lexbor's HTML matcher.
-* Type selectors are ASCII case-insensitive (CSS-correct for HTML; `LI` matches `<li>`)
+* HTML CSS takes a `{prefix => uri}` Hash (`css(selector, ns)`) but does not
+  resolve prefixes against it: Lexbor's matcher matches a prefixed type selector
+  loosely, so `svg|path`, `|path` and `path` all find the SVG element whatever
+  is bound. `Nokogiri::HTML5` honours the binding (a wrong URI finds nothing).
+  * The Hash is accepted and unused rather than refused, so the `css(selector,
+    ns)` a caller writes for both representations works. Use `#xpath`, where a
+    prefix IS resolved against the bindings, when the namespace matters.
+  * `Makiri::XML` resolves CSS prefixes properly - it lowers the selector to the
+    XPath engine, which registers the bindings.
+* `#matches?` answers for a DETACHED node (`document.create_element("p")
+  .matches?("p")` is true, on both representations). Nokogiri raises
+  `NoMethodError` there - it implements `#matches?` as a search from
+  `ancestors.last`, which a detached node does not have.
+* * Type selectors are ASCII case-insensitive (CSS-correct for HTML; `LI` matches `<li>`)
   * `Nokogiri::HTML5` is case-sensitive there.
 
 ## Serialization

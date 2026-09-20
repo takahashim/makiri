@@ -48,10 +48,10 @@ RSpec.describe "XPath query arguments" do
     expect(html.css("path", {}).size).to eq(1)
     expect(html.at_css("path").matches?("path", {})).to be(true)
     expect(xml.css("s|p", { "s" => "urn:s" }).size).to eq(1)
-    # Lexbor resolves a prefix against the document, not against bindings, so
-    # HTML refuses them rather than ignoring them.
-    expect { html.css("path", { "s" => svg }) }
-      .to raise_error(ArgumentError, /not supported by HTML CSS/)
+    # HTML takes the bindings and does not use them (Lexbor matches a prefixed
+    # type selector loosely) - what Nokogiri::HTML5 answers for the same call.
+    expect(html.css("path", { "svg" => svg }).size).to eq(1)
+    expect(html.css("svg|path", { "svg" => svg }).size).to eq(1)
     expect { html.css("path", 5) }.to raise_error(TypeError, /must be a Hash/)
   end
 

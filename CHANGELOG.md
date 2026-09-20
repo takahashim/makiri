@@ -9,9 +9,10 @@
   failed with "unknown namespace prefix".
 
 * **`#css` / `#at_css` / `#matches?` take `(selector, namespaces = nil)` on HTML
-  too**, so one call works on either representation. Lexbor resolves a prefix
-  against the document rather than against bindings, so a non-empty Hash is an
-  ArgumentError pointing at `#xpath` instead of being ignored.
+  too**, so one call works on either representation. On HTML the bindings are
+  accepted and unused - Lexbor's matcher resolves a prefixed type selector
+  loosely - which is what Nokogiri answers for the same call; `#xpath` is where
+  a prefix resolves against them. See NOKOGIRI_DIFFERENCES.md.
 
 * **A rejected CSS selector is worded the same for both**: `"<reason>:
   <selector>"`. `Makiri::XML` used to leave the selector out of the message.

@@ -41,30 +41,24 @@ fn selector_text(selector: Value) -> Result<RubyText, Error> {
 }
 
 /// `(selector, namespaces = nil)`, the argument list `Makiri::XML`'s CSS
-/// methods take - so one call works on either representation.
+/// methods and Nokogiri's take - so one call works on either representation.
 ///
-/// Lexbor's matcher resolves a prefix against the document, not against
-/// caller-supplied bindings, so a non-empty Hash is refused rather than
-/// silently ignored: on HTML, `#xpath` is where per-query prefixes work.
+/// The bindings are ACCEPTED AND UNUSED here: Lexbor's matcher resolves a
+/// selector's names itself, and its prefix handling is loose (`svg|path` and
+/// `path` match the same elements whatever a caller binds). Refusing them
+/// instead would break the common `node.css(selector, ns)` written for both
+/// representations, and would protect nothing - the answer is the same with or
+/// without them. See NOKOGIRI_DIFFERENCES.md; `#xpath` is where a prefix is
+/// resolved against real bindings.
 fn css_args(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
     let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), (), ()>(args)?;
-    let empty = match a.optional.0.filter(|v| !v.is_nil()) {
-        None => true,
-        Some(ns) => RHash::from_value(ns)
-            .ok_or_else(|| {
-                Error::new(
-                    ruby.exception_type_error(),
-                    "namespaces must be a Hash of prefix => uri",
-                )
-            })?
-            .is_empty(),
-    };
-    if !empty {
-        return Err(Error::new(
-            ruby.exception_arg_error(),
-            "namespace bindings are not supported by HTML CSS selectors - \
-             use #xpath for a prefixed query",
-        ));
+    if let Some(ns) = a.optional.0.filter(|v| !v.is_nil()) {
+        if RHash::from_value(ns).is_none() {
+            return Err(Error::new(
+                ruby.exception_type_error(),
+                "namespaces must be a Hash of prefix => uri",
+            ));
+        }
     }
     Ok(a.required.0)
 }
