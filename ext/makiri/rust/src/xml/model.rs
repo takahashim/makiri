@@ -255,15 +255,6 @@ impl Link {
     pub(crate) fn from_option(id: Option<NodeId>) -> Self {
         Link(id.map_or(0, |id| id.index()))
     }
-    /// This link as an `Option`, `None` for [`Link::NONE`].
-    #[inline]
-    pub(crate) fn optional(self) -> Option<Link> {
-        if self.is_none() {
-            None
-        } else {
-            Some(self)
-        }
-    }
     /// The slot index this link names (0 = none).
     #[inline]
     pub(crate) fn index(self) -> u32 {

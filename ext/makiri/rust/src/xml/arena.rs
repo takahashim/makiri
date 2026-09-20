@@ -597,51 +597,6 @@ impl Document {
         self.node_at(top).type_ == NodeType::Document
     }
 
-    /// Nearest in-scope binding for `prefix` ("" = default) at or above `node`;
-    /// [`Span::EMPTY`] when there is none, which callers treat like an empty
-    /// binding. Not an `Option<Span>`: `None` leaves the payload undefined, and
-    /// LLVM folds the caller's `Some(s) if s.len > 0` into one branch that reads
-    /// it - harmless, but Valgrind reports it as an uninitialised-value jump.
-    pub fn resolve_in_scope(&self, node: Option<NodeId>, prefix: &[u8]) -> Span {
-        let mut e = node.map(Link::of);
-        while let Some(id) = e {
-            if self.node_at(id).type_ == NodeType::Element {
-                let mut a = self.node_at(id).attrs;
-                while !a.is_none() {
-                    if let Some(p) =
-                        crate::xml::qname::xmlns_prefix(self.span(self.node_at(a).qname))
-                    {
-                        if p == prefix {
-                            return self.node_at(a).value;
-                        }
-                    }
-                    a = self.node_at(a).next;
-                }
-            }
-            e = self.node_at(id).parent.optional();
-        }
-        Span::EMPTY
-    }
-
-    /// True when two attributes share `(local name, namespace URI)`. Internal:
-    /// unchecked, like [`Document::is_connected`].
-    pub(crate) fn has_duplicate_attributes(&self, element: NodeId) -> bool {
-        let mut a = self.node(element).attrs;
-        while !a.is_none() {
-            let mut b = self.node_at(a).next;
-            while !b.is_none() {
-                if self.span(self.node_at(a).local) == self.span(self.node_at(b).local)
-                    && self.span(self.node_at(a).ns_uri) == self.span(self.node_at(b).ns_uri)
-                {
-                    return true;
-                }
-                b = self.node_at(b).next;
-            }
-            a = self.node_at(a).next;
-        }
-        false
-    }
-
     /* ---- document meta ---- */
 
     #[inline]

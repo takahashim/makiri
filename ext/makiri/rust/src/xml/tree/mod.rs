@@ -325,7 +325,7 @@ impl<'a> Parser<'a> {
             tail = Some(attr);
         }
         /* §9.3: no two attributes share (namespace URI, local name) */
-        if self.doc.has_duplicate_attributes(el) {
+        if has_duplicate_attributes(self.doc, el) {
             return self.cur.syntax();
         }
         Ok(())
@@ -773,6 +773,27 @@ fn parse_fragment_into(
     /* A fragment has no single-root rule. */
     p.run_to_end(false)?;
     Ok(frag)
+}
+
+/// XML §9.3: no two attributes of one element share a `(namespace URI, local
+/// name)`.
+///
+/// A free function here rather than a `Document` method in `arena`: the arena
+/// stores nodes, it does not judge whether they are well-formed. It reads
+/// through the checked accessors, which is what a rule at this layer should do.
+fn has_duplicate_attributes(doc: &Document, element: NodeId) -> bool {
+    let mut a = doc.attrs(element);
+    while let Some(x) = a {
+        let mut b = doc.next(x);
+        while let Some(y) = b {
+            if doc.local(x) == doc.local(y) && doc.ns(x) == doc.ns(y) {
+                return true;
+            }
+            b = doc.next(y);
+        }
+        a = doc.next(x);
+    }
+    false
 }
 
 #[cfg(test)]
