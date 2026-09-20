@@ -137,3 +137,13 @@ pub fn new_document_type(
     }
     Ok(dt)
 }
+
+/// A detached, empty DOCUMENT_FRAGMENT.
+///
+/// It exists because the HTML-to-XML cross-import needs one and everything else
+/// it builds already comes from this module; without it that path reached into
+/// the arena's `new_node` directly, which is the layer the arena's `pub(super)`
+/// now closes off.
+pub fn new_fragment(doc: &mut Document) -> Result<NodeId, MutStatus> {
+    doc.new_node(NodeType::Fragment).map_err(|_| MutStatus::Oom)
+}

@@ -30,7 +30,6 @@ mod xml;
 
 use crate::cbuf::Buf;
 use crate::xml::model::{Document as XmlDoc, NodeId, NodeType};
-use out::{put, W};
 
 /// Why serialization produced no output.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,72 +57,36 @@ pub fn output_cap(doc: &XmlDoc) -> usize {
 
 /// `n` as XML 1.0, indented by `indent` spaces per level (0 for none).
 ///
-/// The Document node gives the XML declaration and then each top-level child
-/// on its own line. The declaration names `encoding` when given, and otherwise
-/// UTF-8 when the parsed document declared an encoding at all.
+/// The declaration names `encoding` when given, and otherwise UTF-8 when the
+/// parsed document declared an encoding at all.
 pub fn to_xml(
     doc: &XmlDoc,
     n: NodeId,
     indent: i32,
     encoding: Option<&[u8]>,
 ) -> Result<Buf, Failure> {
-    if let Some(f) = unserializable_name(doc, n) {
-        return Err(f);
-    }
-    let mut buf = Buf::new(output_cap(doc));
-    let b = &mut buf;
-    xml::with_scope(|binds| {
-        let mut w = xml::Writer::new(b, doc, indent);
-        if doc.type_(n) != Some(NodeType::Document) {
-            return w.node(n, 0, binds);
-        }
-        w.declaration(encoding)?;
-        let mut c = doc.first_child(n);
-        while let Some(cid) = c {
-            w.node(cid, 0, binds)?;
-            w.newline()?;
-            c = doc.next(cid);
-        }
-        Ok(())
-    })?;
-    Ok(buf)
+    write_with(doc, n, |b| xml::write(b, doc, n, indent, encoding))
 }
 
 /// `n` as Inclusive Canonical XML 1.0, with or without comments.
-///
-/// For the Document node that is the root element, plus the top-level PIs (and
-/// comments, when asked for) on their own lines before and after it.
 pub fn canonicalize(doc: &XmlDoc, n: NodeId, comments: bool) -> Result<Buf, Failure> {
+    write_with(doc, n, |b| c14n::write(b, doc, n, comments))
+}
+
+/// The two forms share only this: refuse a name that has no XML spelling at all,
+/// then hand a capped buffer to one writer. Which layout the output takes, and
+/// how namespaces get there, is each writer's own business.
+fn write_with(
+    doc: &XmlDoc,
+    n: NodeId,
+    write: impl FnOnce(&mut Buf) -> Result<(), Failure>,
+) -> Result<Buf, Failure> {
     if let Some(f) = unserializable_name(doc, n) {
         return Err(f);
     }
     let mut buf = Buf::new(output_cap(doc));
-    let b = &mut buf;
-    let rc = (|| -> W {
-        if doc.type_(n) != Some(NodeType::Document) {
-            return c14n::node(b, doc, n, true, comments, 0);
-        }
-        let mut seen_root = false;
-        let mut c = doc.first_child(n);
-        while let Some(cid) = c {
-            let ty = doc.type_(cid);
-            if ty == Some(NodeType::Element) {
-                c14n::node(b, doc, cid, true, comments, 0)?;
-                seen_root = true;
-            } else if ty == Some(NodeType::Pi) || (ty == Some(NodeType::Comment) && comments) {
-                if seen_root {
-                    put(b, b"\n")?;
-                }
-                c14n::node(b, doc, cid, false, comments, 0)?;
-                if !seen_root {
-                    put(b, b"\n")?;
-                }
-            }
-            c = doc.next(cid);
-        }
-        Ok(())
-    })();
-    rc.map(|()| buf).map_err(|()| Failure::Output)
+    write(&mut buf)?;
+    Ok(buf)
 }
 
 /// The first name under `root` that has no namespace-well-formed XML form.

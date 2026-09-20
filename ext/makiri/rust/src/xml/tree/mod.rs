@@ -18,8 +18,8 @@ use crate::xml::{
     Document, Limits, Link, NodeId, NodeType, Span, Status, MAX_ATTRS, MAX_DEPTH, MAX_NS,
     XMLNS_NS_URI, XML_NS_URI,
 };
-use cursor::{is_space, Cursor, ExternalId, InSlice, R};
-use dtd::{Declared, Subset};
+use cursor::{is_space, Cursor, InSlice, R};
+use dtd::{scan_external_id, Declared, ExternalId, Subset};
 
 /* ---- the XML declaration's pseudo-attribute value grammars (§2.8) ----
  *
@@ -510,7 +510,7 @@ impl<'a> Parser<'a> {
         if self.cur.peek().is_some_and(is_space) {
             self.cur.skip_ws();
             if self.cur.starts(b"SYSTEM") || self.cur.starts(b"PUBLIC") {
-                ids = self.cur.scan_external_id(false)?;
+                ids = scan_external_id(&mut self.cur, false)?;
                 self.cur.skip_ws();
             }
         }

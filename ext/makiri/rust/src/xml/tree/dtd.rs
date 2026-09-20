@@ -19,7 +19,87 @@
 use super::cursor::{find, Cursor, InSlice, R};
 use crate::falloc::Reserve;
 use crate::xml::chars::is_reserved_pi_target;
+use crate::xml::chars::validate_name;
 use crate::xml::{Status, MAX_DEPTH};
+
+/// An ExternalID's identifiers (§4.2.2). Either may be absent, and which one is
+/// present is the difference between SYSTEM and PUBLIC, so they are named
+/// rather than positional.
+#[derive(Clone, Copy, Default)]
+pub(super) struct ExternalId {
+    pub public: Option<InSlice>,
+    pub system: Option<InSlice>,
+}
+
+/* ---- the two productions both the DOCTYPE parser and the subset need ---- */
+
+/// ExternalID (§4.2.2), or with `public_only_ok` also NOTATION's PublicID:
+/// 'SYSTEM' S SystemLiteral | 'PUBLIC' S PubidLiteral (S SystemLiteral)?.
+pub(super) fn scan_external_id(cur: &mut Cursor<'_>, public_only_ok: bool) -> R<ExternalId> {
+    if cur.eat_keyword(b"SYSTEM") {
+        cur.require_space()?;
+        return Ok(ExternalId {
+            public: None,
+            system: Some(cur.scan_char_literal()?),
+        });
+    }
+    if !cur.eat_keyword(b"PUBLIC") {
+        return cur.syntax();
+    }
+    cur.require_space()?;
+    let public = Some(cur.scan_pubid_literal()?);
+    let had_space = cur.skip_some_ws();
+    if had_space && matches!(cur.peek(), Some(b'"' | b'\'')) {
+        return Ok(ExternalId {
+            public,
+            system: Some(cur.scan_char_literal()?),
+        });
+    }
+    if public_only_ok {
+        return Ok(ExternalId {
+            public,
+            system: None,
+        });
+    }
+    cur.syntax()
+}
+
+/// An EntityValue / AttValue literal: Chars, with every '&' a well-formed
+/// Reference. An AttValue may not hold '<'; an EntityValue may not hold
+/// '%', since in the internal subset a parameter-entity reference may not
+/// occur inside a declaration (WFC: PEs in Internal Subset). In an AttValue
+/// '%' is an ordinary character.
+pub(super) fn scan_ref_literal(cur: &mut Cursor<'_>, att_value: bool) -> R {
+    let s = cur.scan_char_literal()?;
+    let v = cur.slice(s);
+    let mut i = 0;
+    while i < v.len() {
+        match v[i] {
+            b'%' if !att_value => return cur.syntax(),
+            b'<' if att_value => return cur.syntax(),
+            b'&' => {
+                let Some(end) = find(&v[i..], b';') else {
+                    return cur.syntax();
+                };
+                let body = &v[i + 1..i + end];
+                let ok = match body.strip_prefix(b"#") {
+                    Some(num) => match num.strip_prefix(b"x") {
+                        Some(hex) => !hex.is_empty() && hex.iter().all(u8::is_ascii_hexdigit),
+                        None => !num.is_empty() && num.iter().all(u8::is_ascii_digit),
+                    },
+                    None => validate_name(body),
+                };
+                if !ok {
+                    return cur.syntax();
+                }
+                i += end;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    Ok(())
+}
 
 /// What a DOCTYPE declared that the REST of the parse still has to know: which
 /// general entities exist, so a later reference to one reports as unexpanded
@@ -267,7 +347,7 @@ impl<'c, 'a> Subset<'c, 'a> {
                     if self.cur.eat_keyword(b"#FIXED") {
                         self.cur.require_space()?;
                     }
-                    self.cur.scan_ref_literal(true)?;
+                    scan_ref_literal(self.cur, true)?;
                     true
                 };
             unsupported |= !cdata || defaulted;
@@ -331,9 +411,9 @@ impl<'c, 'a> Subset<'c, 'a> {
         let name = self.cur.scan_ncname()?;
         self.cur.require_space()?;
         if matches!(self.cur.peek(), Some(b'"' | b'\'')) {
-            self.cur.scan_ref_literal(false)?;
+            scan_ref_literal(self.cur, false)?;
         } else {
-            self.cur.scan_external_id(false)?;
+            scan_external_id(self.cur, false)?;
             if !pe {
                 /* NDataDecl ::= S 'NDATA' S Name */
                 if self.cur.skip_some_ws() && self.cur.eat_keyword(b"NDATA") {
@@ -356,7 +436,7 @@ impl<'c, 'a> Subset<'c, 'a> {
     fn notation_decl(&mut self) -> R {
         self.cur.scan_ncname()?;
         self.cur.require_space()?;
-        self.cur.scan_external_id(true)?;
+        scan_external_id(self.cur, true)?;
         self.end_decl()
     }
 }

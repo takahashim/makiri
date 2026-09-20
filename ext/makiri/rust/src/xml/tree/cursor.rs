@@ -12,10 +12,16 @@
 //! a borrow of `input` would conflict with the `&mut self` the cursor needs to
 //! advance. [`Cursor::slice`] turns one back into bytes, which borrow the
 //! INPUT (`'a`), not the cursor.
+//!
+//! What it deliberately does NOT know is any XML PRODUCTION. "A name", "a quoted
+//! literal", "white space" and "everything up to this close" are the vocabulary;
+//! ExternalID and the reference grammar of an EntityValue are rules, and they
+//! live with the rules ([`super::dtd`]) even though both the DOCTYPE parser and
+//! the subset validator need them.
 
 #![forbid(unsafe_code)]
 
-use crate::xml::chars::{decode1, is_name_char, is_name_start, validate_chars, validate_name};
+use crate::xml::chars::{decode1, is_name_char, is_name_start, validate_chars};
 use crate::xml::qname::split_scanned;
 use crate::xml::Status;
 
@@ -28,15 +34,6 @@ pub(super) type R<T = ()> = Result<T, ()>;
 pub(super) struct InSlice {
     pub off: usize,
     pub len: usize,
-}
-
-/// An ExternalID's identifiers (§4.2.2). Either may be absent, and which one is
-/// present is the difference between SYSTEM and PUBLIC, so they are named
-/// rather than positional.
-#[derive(Clone, Copy, Default)]
-pub(super) struct ExternalId {
-    pub public: Option<InSlice>,
-    pub system: Option<InSlice>,
 }
 
 #[inline]
@@ -319,74 +316,6 @@ impl<'a> Cursor<'a> {
             return self.syntax();
         }
         Ok(s)
-    }
-
-    /// ExternalID (§4.2.2), or with `public_only_ok` also NOTATION's PublicID:
-    /// 'SYSTEM' S SystemLiteral | 'PUBLIC' S PubidLiteral (S SystemLiteral)?.
-    pub(super) fn scan_external_id(&mut self, public_only_ok: bool) -> R<ExternalId> {
-        if self.eat_keyword(b"SYSTEM") {
-            self.require_space()?;
-            return Ok(ExternalId {
-                public: None,
-                system: Some(self.scan_char_literal()?),
-            });
-        }
-        if !self.eat_keyword(b"PUBLIC") {
-            return self.syntax();
-        }
-        self.require_space()?;
-        let public = Some(self.scan_pubid_literal()?);
-        let had_space = self.skip_some_ws();
-        if had_space && matches!(self.peek(), Some(b'"' | b'\'')) {
-            return Ok(ExternalId {
-                public,
-                system: Some(self.scan_char_literal()?),
-            });
-        }
-        if public_only_ok {
-            return Ok(ExternalId {
-                public,
-                system: None,
-            });
-        }
-        self.syntax()
-    }
-
-    /// An EntityValue / AttValue literal: Chars, with every '&' a well-formed
-    /// Reference. An AttValue may not hold '<'; an EntityValue may not hold
-    /// '%', since in the internal subset a parameter-entity reference may not
-    /// occur inside a declaration (WFC: PEs in Internal Subset). In an AttValue
-    /// '%' is an ordinary character.
-    pub(super) fn scan_ref_literal(&mut self, att_value: bool) -> R {
-        let s = self.scan_char_literal()?;
-        let v = self.slice(s);
-        let mut i = 0;
-        while i < v.len() {
-            match v[i] {
-                b'%' if !att_value => return self.syntax(),
-                b'<' if att_value => return self.syntax(),
-                b'&' => {
-                    let Some(end) = find(&v[i..], b';') else {
-                        return self.syntax();
-                    };
-                    let body = &v[i + 1..i + end];
-                    let ok = match body.strip_prefix(b"#") {
-                        Some(num) => match num.strip_prefix(b"x") {
-                            Some(hex) => !hex.is_empty() && hex.iter().all(u8::is_ascii_hexdigit),
-                            None => !num.is_empty() && num.iter().all(u8::is_ascii_digit),
-                        },
-                        None => validate_name(body),
-                    };
-                    if !ok {
-                        return self.syntax();
-                    }
-                    i += end;
-                }
-                _ => {}
-            }
-            i += 1;
-        }
-        Ok(())
     }
 
     /// Everything up to the next `close`, which must appear: the ONE scan for

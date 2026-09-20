@@ -965,3 +965,32 @@ fn a_document_takes_only_one_root_element() {
         MutStatus::Hierarchy
     );
 }
+
+#[test]
+fn node_id_tokens_fail_closed_outside_their_document() {
+    // A node-set token is not authenticated, so the checked accessor must
+    // reject anything that does not name a live slot in THIS document: a
+    // foreign document's handle (same index, different stamp), an out-of-range
+    // index, and the null handle.
+    let mut a = Document::create(None, 0).expect("doc a");
+    let mut b = Document::create(None, 0).expect("doc b");
+    let na = a.new_node(NodeType::Element).expect("node a");
+    let nb = b.new_node(NodeType::Element).expect("node b");
+
+    // The handle resolves in its own document.
+    assert_eq!(a.try_node(na).map(|n| n.type_), Some(NodeType::Element));
+    assert_eq!(b.try_node(nb).map(|n| n.type_), Some(NodeType::Element));
+
+    // Same slot index, different document stamp -> rejected.
+    assert_eq!(na.index(), nb.index());
+    assert!(b.try_node(na).is_none());
+    assert!(a.try_node(nb).is_none());
+
+    // Out-of-range index -> rejected, not a panic.
+    let oob = NodeId::new(u32::MAX - 1, na.stamp());
+    assert!(a.try_node(oob).is_none());
+
+    // The null handle -> rejected.
+    assert!(a.try_node(NodeId::INVALID).is_none());
+    assert!(NodeId::INVALID.is_invalid());
+}

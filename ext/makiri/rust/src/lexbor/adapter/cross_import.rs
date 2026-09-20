@@ -232,12 +232,7 @@ fn h2x_make<'a>(
             unchanged(mutate::new_pi(doc, target, data(s)?)?)
         }
 
-        h::FRAGMENT => {
-            let f = doc
-                .new_node(NodeType::Fragment)
-                .map_err(|_| MutStatus::Oom)?;
-            unchanged(f)
-        }
+        h::FRAGMENT => unchanged(mutate::new_fragment(doc)?),
 
         /* An unsupported descendant type is skipped, not an error. */
         _ => unchanged(NodeId::INVALID),

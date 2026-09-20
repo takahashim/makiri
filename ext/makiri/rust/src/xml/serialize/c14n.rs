@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 use super::out::{put, C14N, W};
+use super::Failure;
 use crate::cbuf::Buf;
 use crate::falloc::Reserve;
 use crate::xml::model::{Document as XmlDoc, NodeId, NodeType, MAX_DEPTH};
@@ -91,94 +92,160 @@ fn namespaces(doc: &XmlDoc, n: NodeId, is_apex: bool) -> Result<Vec<Ns<'_>>, ()>
     Ok(out)
 }
 
-pub(super) fn node(
-    b: &mut Buf,
-    doc: &XmlDoc,
-    n: NodeId,
-    is_apex: bool,
+/// The Canonical XML writer: the output buffer, the document it reads, and
+/// whether comments are kept, so only what varies per node travels as an
+/// argument - the same shape `super::xml`'s writer has.
+struct Writer<'d, 'b> {
+    b: &'b mut Buf,
+    doc: &'d XmlDoc,
     comments: bool,
-    depth: u32,
-) -> W {
-    match doc.type_(n) {
-        Some(NodeType::Element) => {
-            if depth as usize >= MAX_DEPTH {
-                return Err(());
-            }
-            put(b, b"<")?;
-            put(b, doc.span(doc.node(n).qname))?;
+}
 
-            for ns in namespaces(doc, n, is_apex)? {
-                if ns.prefix.is_empty() {
-                    put(b, b" xmlns=\"")?;
-                } else {
-                    put(b, b" xmlns:")?;
-                    put(b, ns.prefix)?;
-                    put(b, b"=\"")?;
-                }
-                C14N.write(b, ns.uri, true)?;
-                put(b, b"\"")?;
-            }
-
-            let mut attrs: Vec<NodeId> = Vec::new();
-            let mut a = doc.attrs(n);
-            while let Some(at) = a {
-                if xmlns_decl(doc, at).is_none() {
-                    attrs.falloc_reserve(1)?;
-                    attrs.push(at);
-                }
-                a = doc.next(at);
-            }
-            /* In place (see clippy.toml): an element's attributes are distinct
-             * by (namespace URI, local name), so stability would buy nothing. */
-            attrs.sort_unstable_by(|&x, &y| {
-                doc.span(doc.node(x).ns_uri)
-                    .cmp(doc.span(doc.node(y).ns_uri))
-                    .then_with(|| doc.span(doc.node(x).local).cmp(doc.span(doc.node(y).local)))
-            });
-            for at in attrs {
-                put(b, b" ")?;
-                put(b, doc.span(doc.node(at).qname))?;
-                put(b, b"=\"")?;
-                C14N.write(b, doc.span(doc.node(at).value), true)?;
-                put(b, b"\"")?;
-            }
-
-            put(b, b">")?;
-            let mut c = doc.first_child(n);
-            while let Some(cid) = c {
-                node(b, doc, cid, false, comments, depth + 1)?;
-                c = doc.next(cid);
-            }
-            put(b, b"</")?;
-            put(b, doc.span(doc.node(n).qname))?;
-            put(b, b">")
-        }
-        Some(NodeType::Text | NodeType::CData) => C14N.write(b, doc.span(doc.node(n).value), false),
-        Some(NodeType::Comment) => {
-            if comments {
-                put(b, b"<!--")?;
-                put(b, doc.span(doc.node(n).value))?;
-                put(b, b"-->")?;
-            }
-            Ok(())
-        }
-        Some(NodeType::Pi) => {
-            put(b, b"<?")?;
-            put(b, doc.span(doc.node(n).local))?;
-            if doc.node(n).value.len != 0 {
-                put(b, b" ")?;
-                put(b, doc.span(doc.node(n).value))?;
-            }
-            put(b, b"?>")
-        }
-        Some(NodeType::Fragment) => {
-            let mut c = doc.first_child(n);
-            while let Some(cid) = c {
-                node(b, doc, cid, false, comments, depth)?;
-                c = doc.next(cid);
-            }
-            Ok(())
-        }
-        _ => Ok(()),
+impl<'d> Writer<'d, '_> {
+    fn put(&mut self, bytes: &[u8]) -> W {
+        put(self.b, bytes)
     }
+    fn escape(&mut self, s: &[u8], attr: bool) -> W {
+        C14N.write(self.b, s, attr)
+    }
+    fn qname(&mut self, n: NodeId) -> W {
+        let doc = self.doc;
+        self.put(doc.span(doc.node(n).qname))
+    }
+
+    /// `is_apex` marks the node the canonicalization STARTS at, which renders
+    /// every declaration in scope rather than only its own (§2.2).
+    fn node(&mut self, n: NodeId, is_apex: bool, depth: u32) -> W {
+        let doc = self.doc;
+        match doc.type_(n) {
+            Some(NodeType::Element) => self.element(n, is_apex, depth),
+            Some(NodeType::Text | NodeType::CData) => {
+                self.escape(doc.span(doc.node(n).value), false)
+            }
+            Some(NodeType::Comment) => {
+                if self.comments {
+                    self.put(b"<!--")?;
+                    self.put(doc.span(doc.node(n).value))?;
+                    self.put(b"-->")?;
+                }
+                Ok(())
+            }
+            Some(NodeType::Pi) => {
+                self.put(b"<?")?;
+                self.put(doc.span(doc.node(n).local))?;
+                if doc.node(n).value.len != 0 {
+                    self.put(b" ")?;
+                    self.put(doc.span(doc.node(n).value))?;
+                }
+                self.put(b"?>")
+            }
+            Some(NodeType::Fragment) => self.children(n, depth),
+            _ => Ok(()),
+        }
+    }
+
+    fn children(&mut self, n: NodeId, depth: u32) -> W {
+        let doc = self.doc;
+        let mut c = doc.first_child(n);
+        while let Some(cid) = c {
+            self.node(cid, false, depth)?;
+            c = doc.next(cid);
+        }
+        Ok(())
+    }
+
+    fn element(&mut self, n: NodeId, is_apex: bool, depth: u32) -> W {
+        if depth as usize >= MAX_DEPTH {
+            return Err(());
+        }
+        let doc = self.doc;
+        self.put(b"<")?;
+        self.qname(n)?;
+
+        for ns in namespaces(doc, n, is_apex)? {
+            if ns.prefix.is_empty() {
+                self.put(b" xmlns=\"")?;
+            } else {
+                self.put(b" xmlns:")?;
+                self.put(ns.prefix)?;
+                self.put(b"=\"")?;
+            }
+            self.escape(ns.uri, true)?;
+            self.put(b"\"")?;
+        }
+
+        for at in sorted_attributes(doc, n)? {
+            self.put(b" ")?;
+            self.qname(at)?;
+            self.put(b"=\"")?;
+            self.escape(doc.span(doc.node(at).value), true)?;
+            self.put(b"\"")?;
+        }
+
+        self.put(b">")?;
+        let mut c = doc.first_child(n);
+        while let Some(cid) = c {
+            self.node(cid, false, depth + 1)?;
+            c = doc.next(cid);
+        }
+        self.put(b"</")?;
+        self.qname(n)?;
+        self.put(b">")
+    }
+}
+
+/// §3.3: an element's non-declaration attributes, ordered by namespace URI then
+/// local name.
+fn sorted_attributes(doc: &XmlDoc, n: NodeId) -> Result<Vec<NodeId>, ()> {
+    let mut attrs: Vec<NodeId> = Vec::new();
+    let mut a = doc.attrs(n);
+    while let Some(at) = a {
+        if xmlns_decl(doc, at).is_none() {
+            attrs.falloc_reserve(1)?;
+            attrs.push(at);
+        }
+        a = doc.next(at);
+    }
+    /* In place (see clippy.toml): an element's attributes are distinct by
+     * (namespace URI, local name), so stability would buy nothing. */
+    attrs.sort_unstable_by(|&x, &y| {
+        doc.span(doc.node(x).ns_uri)
+            .cmp(doc.span(doc.node(y).ns_uri))
+            .then_with(|| doc.span(doc.node(x).local).cmp(doc.span(doc.node(y).local)))
+    });
+    Ok(attrs)
+}
+
+/// Write `n` as Inclusive Canonical XML 1.0 into `b`.
+///
+/// The whole of this module's surface. For the Document node that is the root
+/// element plus the top-level PIs (and comments, when asked for) on their own
+/// lines before and after it.
+pub(super) fn write(b: &mut Buf, doc: &XmlDoc, n: NodeId, comments: bool) -> Result<(), Failure> {
+    let mut w = Writer { b, doc, comments };
+    let r = (|| -> W {
+        if doc.type_(n) != Some(NodeType::Document) {
+            return w.node(n, true, 0);
+        }
+        let mut seen_root = false;
+        let mut c = doc.first_child(n);
+        while let Some(cid) = c {
+            let ty = doc.type_(cid);
+            if ty == Some(NodeType::Element) {
+                w.node(cid, true, 0)?;
+                seen_root = true;
+            } else if ty == Some(NodeType::Pi) || (ty == Some(NodeType::Comment) && comments) {
+                if seen_root {
+                    w.put(b"\n")?;
+                }
+                w.node(cid, false, 0)?;
+                if !seen_root {
+                    w.put(b"\n")?;
+                }
+            }
+            c = doc.next(cid);
+        }
+        Ok(())
+    })();
+    r.map_err(|()| Failure::Output)
 }

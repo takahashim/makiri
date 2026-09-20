@@ -25,7 +25,9 @@ use crate::xml::{Document, MutStatus, NodeId};
 pub use attr::{remove_attribute, remove_attribute_ns, set_attribute, set_attribute_ns};
 pub use copy::{clone_node, copy_node_from, import_subtree};
 pub use edit::{rename, set_content};
-pub use factory::{new_chardata, new_document_type, new_element, new_loose_dom_element, new_pi};
+pub use factory::{
+    new_chardata, new_document_type, new_element, new_fragment, new_loose_dom_element, new_pi,
+};
 pub use insert::{
     detach, insert_after, insert_before, insert_child, place, remove, replace_node,
     replace_with_fragment, Place,

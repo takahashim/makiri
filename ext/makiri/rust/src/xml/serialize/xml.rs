@@ -61,7 +61,7 @@ impl Prefix<'_> {
 /// immaterial: a prefix is declared at most once per element (the parser rejects
 /// a duplicate and the DOM replaces it), and an invented prefix is chosen
 /// unbound, so no two entries from the same element share a prefix.
-pub(super) struct Bindings<'d> {
+struct Bindings<'d> {
     stack: Vec<(Prefix<'d>, &'d [u8])>,
     steps: u64,
     /// Latched once the step budget is spent. A lookup then answers `None`,
@@ -271,7 +271,7 @@ fn plan_attr<'d>(
 
 /// The XML 1.0 writer: the output buffer, the document it reads, and the indent
 /// width, so only what actually varies per node travels as an argument.
-pub(super) struct Writer<'d, 'b> {
+struct Writer<'d, 'b> {
     b: &'b mut Buf,
     doc: &'d XmlDoc,
     /// Spaces per nesting level; 0 for no indentation.
@@ -279,7 +279,7 @@ pub(super) struct Writer<'d, 'b> {
 }
 
 impl<'d, 'b> Writer<'d, 'b> {
-    pub(super) fn new(b: &'b mut Buf, doc: &'d XmlDoc, width: i32) -> Self {
+    fn new(b: &'b mut Buf, doc: &'d XmlDoc, width: i32) -> Self {
         Writer { b, doc, width }
     }
 
@@ -288,7 +288,7 @@ impl<'d, 'b> Writer<'d, 'b> {
     }
 
     /// The XML declaration a whole-document serialization opens with.
-    pub(super) fn declaration(&mut self, encoding: Option<&[u8]>) -> W {
+    fn declaration(&mut self, encoding: Option<&[u8]>) -> W {
         if encoding.is_some() || self.doc.has_encoding_decl {
             self.put(b"<?xml version=\"1.0\" encoding=\"")?;
             self.put(encoding.unwrap_or(b"UTF-8"))?;
@@ -297,7 +297,7 @@ impl<'d, 'b> Writer<'d, 'b> {
         self.put(b"<?xml version=\"1.0\"?>\n")
     }
 
-    pub(super) fn newline(&mut self) -> W {
+    fn newline(&mut self) -> W {
         self.put(b"\n")
     }
 
@@ -337,7 +337,7 @@ impl<'d, 'b> Writer<'d, 'b> {
 
     /// Write `n`. `depth` is both the nesting level the indentation uses and the
     /// recursion guard - they were two arguments carrying the same number.
-    pub(super) fn node(&mut self, n: NodeId, depth: u32, binds: &mut Bindings<'d>) -> W {
+    fn node(&mut self, n: NodeId, depth: u32, binds: &mut Bindings<'d>) -> W {
         let doc = self.doc;
         match doc.type_(n) {
             Some(NodeType::Doctype) => self.doctype(n),
@@ -482,13 +482,38 @@ fn has_chardata(doc: &XmlDoc, e: NodeId) -> bool {
     false
 }
 
-/// Run `f` with a fresh, empty scope. The only way to obtain a [`Bindings`],
-/// so a writer cannot start with someone else's scope.
-pub(super) fn with_scope<'d>(f: impl FnOnce(&mut Bindings<'d>) -> W) -> Result<(), Failure> {
+/// Write `n` as XML 1.0 into `b`.
+///
+/// The whole of this module's surface: the scope stack, the writer and the
+/// document-level layout stay inside, so `super` picks a form and maps a failure
+/// and knows nothing of how either is shaped.
+pub(super) fn write(
+    b: &mut Buf,
+    doc: &XmlDoc,
+    n: NodeId,
+    indent: i32,
+    encoding: Option<&[u8]>,
+) -> Result<(), Failure> {
     let mut binds = Bindings::new();
-    let r = f(&mut binds);
+    let r = (|| -> W {
+        let mut w = Writer::new(b, doc, indent);
+        if doc.type_(n) != Some(NodeType::Document) {
+            return w.node(n, 0, &mut binds);
+        }
+        /* The Document node gives the declaration, then each top-level child on
+         * its own line. */
+        w.declaration(encoding)?;
+        let mut c = doc.first_child(n);
+        while let Some(cid) = c {
+            w.node(cid, 0, &mut binds)?;
+            w.newline()?;
+            c = doc.next(cid);
+        }
+        Ok(())
+    })();
     match r {
         Ok(()) => Ok(()),
+        /* The budget is the more specific cause, so it wins over "no output". */
         Err(()) if binds.exhausted => Err(Failure::NamespaceBudget),
         Err(()) => Err(Failure::Output),
     }

@@ -6,6 +6,17 @@
 //! names/values are spans into the byte store. No address is ever exposed, so a
 //! growing `Vec` cannot invalidate a node, and `detach` (which never destroys)
 //! is free to leave a removed node addressable for life.
+//!
+//! # Two visibilities, on purpose
+//!
+//! The READERS are `pub`: a `NodeId` cannot name the wrong document, because
+//! [`Document::try_node`] checks its stamp, so handing them out is safe. The
+//! byte and link SURGERY - `store`, `new_node`, `append_child`, `detach`,
+//! `splice_between`, `sync_doc_meta` and the rest - is `pub(super)`, which from
+//! here means "inside `crate::xml`". It skips every rule `mutate` enforces
+//! (hierarchy, cycles, namespace resolution, index invalidation), so the glue
+//! and the bridge must not be able to reach it; before, it was `pub` like the
+//! readers and only convention kept them apart.
 
 #![forbid(unsafe_code)]
 
@@ -225,7 +236,7 @@ impl Document {
 
     /// Copy `src` into the byte store, returning its span. Empty is the shared
     /// empty span (never an allocation).
-    pub fn store(&mut self, src: &[u8]) -> Result<Span, Status> {
+    pub(super) fn store(&mut self, src: &[u8]) -> Result<Span, Status> {
         if src.is_empty() {
             // A present-but-empty value: offset is the tail, so it is distinct
             // from the `ABSENT` marker (offset u32::MAX).
@@ -247,24 +258,16 @@ impl Document {
     }
 
     /// Set a node's value to a fresh copy of `data`.
-    pub fn set_value_bytes(&mut self, id: NodeId, data: &[u8]) -> Result<(), Status> {
+    pub(super) fn set_value_bytes(&mut self, id: NodeId, data: &[u8]) -> Result<(), Status> {
         let span = self.store(data)?;
         self.node_mut(id).value = span;
         Ok(())
     }
 
     /// Set a node's namespace URI to a fresh copy of `uri`.
-    pub fn set_ns_bytes(&mut self, id: NodeId, uri: &[u8]) -> Result<(), Status> {
+    pub(super) fn set_ns_bytes(&mut self, id: NodeId, uri: &[u8]) -> Result<(), Status> {
         let span = self.store(uri)?;
         self.node_mut(id).ns_uri = span;
-        Ok(())
-    }
-
-    /// Set a leaf's name (PI target) to a fresh copy of `name`.
-    pub fn set_local_bytes(&mut self, id: NodeId, name: &[u8]) -> Result<(), Status> {
-        let span = self.store(name)?;
-        let n = self.node_mut(id);
-        n.local = span;
         Ok(())
     }
 
@@ -285,7 +288,7 @@ impl Document {
 
     /// Copy a whole QName once, then point qname/prefix/local into that copy.
     /// `prefix_len` and `local_off`/`local_len` are offsets into `name`.
-    pub fn assign_qname(
+    pub(super) fn assign_qname(
         &mut self,
         id: NodeId,
         name: &[u8],
@@ -315,7 +318,7 @@ impl Document {
     }
 
     /// Allocate a zeroed node, counted against the node and byte budgets.
-    pub fn new_node(&mut self, type_: NodeType) -> Result<NodeId, Status> {
+    pub(super) fn new_node(&mut self, type_: NodeType) -> Result<NodeId, Status> {
         if self.nodes.len() + 1 > self.max_nodes {
             return Err(self.fail(Status::Limit));
         }
@@ -330,7 +333,7 @@ impl Document {
     }
 
     /// Expand XML references into one byte-store span.
-    pub fn expand(&mut self, src: &[u8], mode: ExpandMode) -> Result<Span, Status> {
+    pub(super) fn expand(&mut self, src: &[u8], mode: ExpandMode) -> Result<Span, Status> {
         if src.is_empty() {
             return Ok(Span::EMPTY);
         }
@@ -362,7 +365,7 @@ impl Document {
 
     /// Append a TEXT/CDATA node, coalescing with a preceding sibling of the
     /// SAME type (as libxml2 / the XPath data model do).
-    pub fn append_chardata(
+    pub(super) fn append_chardata(
         &mut self,
         parent: NodeId,
         type_: NodeType,
@@ -429,12 +432,12 @@ impl Document {
     /* ---- linking ---- */
 
     #[inline]
-    pub fn set_parent(&mut self, id: NodeId, parent: Option<NodeId>) {
+    pub(super) fn set_parent(&mut self, id: NodeId, parent: Option<NodeId>) {
         self.node_mut(id).parent = Link::from_option(parent);
     }
 
     /// Append `child` as the last child of `parent`.
-    pub fn append_child(&mut self, parent: NodeId, child: NodeId) {
+    pub(super) fn append_child(&mut self, parent: NodeId, child: NodeId) {
         let (parent, child) = (Link::of(parent), Link::of(child));
         self.node_at_mut(child).parent = parent;
         let last = self.node_at(parent).last_child;
@@ -449,7 +452,7 @@ impl Document {
 
     /// Unlink `node` from its parent (child chain or attribute chain). No-op
     /// when the node is already detached.
-    pub fn detach(&mut self, node: NodeId) {
+    pub(super) fn detach(&mut self, node: NodeId) {
         let node_link = Link::of(node);
         let parent = self.node_at(node_link).parent;
         if parent.is_none() {
@@ -492,7 +495,7 @@ impl Document {
     }
 
     /// Unlink attribute `a` (predecessor `prev`, `None` if head) from `el`.
-    pub fn unlink_attr(&mut self, el: NodeId, prev: Option<NodeId>, a: NodeId) {
+    pub(super) fn unlink_attr(&mut self, el: NodeId, prev: Option<NodeId>, a: NodeId) {
         let next = self.node(a).next;
         match prev {
             Some(p) => self.node_mut(p).next = next,
@@ -504,10 +507,12 @@ impl Document {
     /// Link `attr` onto `el`'s attribute list after `tail`, the list's current
     /// last entry (`None` when the list is empty).
     ///
-    /// Callers that reach here have just scanned the list - looking for an
-    /// attribute of the same name - so they already know its end; taking it as
-    /// an argument keeps a `set_attribute` to ONE walk instead of two.
-    pub fn link_attr(&mut self, el: NodeId, tail: Option<NodeId>, attr: NodeId) {
+    /// The ONLY way to extend the list, and it takes the tail rather than
+    /// finding it: every caller has just scanned the list - looking for an
+    /// attribute of the same name, or building the list in order - so it already
+    /// knows the end. An `append_attr` that walked to it existed and turned out
+    /// to have no callers left once the tail was threaded through.
+    pub(super) fn link_attr(&mut self, el: NodeId, tail: Option<NodeId>, attr: NodeId) {
         self.node_mut(attr).parent = Link::of(el);
         match tail {
             None => self.node_mut(el).attrs = Link::of(attr),
@@ -515,20 +520,8 @@ impl Document {
         }
     }
 
-    /// Append `attr` to `el`'s attribute list, walking to its end first. For a
-    /// caller that has not already scanned the list.
-    pub fn append_attr(&mut self, el: NodeId, attr: NodeId) {
-        let mut tail = None;
-        let mut a = self.node(el).attrs;
-        while !a.is_none() {
-            tail = Some(self.id_of(a));
-            a = self.node_at(a).next;
-        }
-        self.link_attr(el, tail, attr);
-    }
-
     /// The ONE place the doubly-linked child list is written by insertion.
-    pub fn splice_between(
+    pub(super) fn splice_between(
         &mut self,
         container: NodeId,
         node: NodeId,
@@ -604,7 +597,7 @@ impl Document {
         self.root
     }
     #[inline]
-    pub fn set_root(&mut self, root: Option<NodeId>) {
+    pub(super) fn set_root(&mut self, root: Option<NodeId>) {
         self.root = root;
     }
     #[inline]
@@ -612,7 +605,7 @@ impl Document {
         self.doctype
     }
     #[inline]
-    pub fn set_doctype(&mut self, doctype: Option<NodeId>) {
+    pub(super) fn set_doctype(&mut self, doctype: Option<NodeId>) {
         self.doctype = doctype;
     }
     #[inline]
@@ -620,13 +613,13 @@ impl Document {
         self.doc_node
     }
     #[inline]
-    pub fn mark_encoding_decl(&mut self) {
+    pub(super) fn mark_encoding_decl(&mut self) {
         self.has_encoding_decl = true;
     }
 
     /// Re-derive root / doctype from the tree after a change at the document
     /// node.
-    pub fn sync_doc_meta(&mut self, container: NodeId) {
+    pub(super) fn sync_doc_meta(&mut self, container: NodeId) {
         if container != self.doc_node {
             return;
         }
