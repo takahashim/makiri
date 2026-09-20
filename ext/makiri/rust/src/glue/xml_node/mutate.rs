@@ -20,7 +20,7 @@ use crate::bridge::xml::{
 use crate::init::CLASS_XML_DOCUMENT;
 use crate::xml::model::{NodeId, NodeType};
 use crate::xml::mutate::{self, place, Place};
-use crate::xml::qname::split_loose_dom_name;
+use crate::xml::dom_name::split_loose_dom_name;
 
 /* ------------------------------------------------------------------ */
 /* in-place edits                                                     */

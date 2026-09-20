@@ -9,10 +9,25 @@
 
 use crate::falloc::Reserve;
 use crate::xml::chars::validate_chars;
-use crate::xml::qname::{split_checked, value_seq_ok, xmlns_prefix, Split};
+use crate::xml::qname::{split_checked, xmlns_prefix, Split};
 use crate::xml::{
     Document, Link, MutStatus, NodeId, NodeType, Span, FLAG_DOM_LOOSE_NAME, FLAG_NS_RESOLVED,
 };
+
+/// Whether `text` is free of the SEQUENCE its node kind cannot hold: "--" (or
+/// a trailing "-") in a comment, "]]>" in CDATA, "?>" in a PI. Each would close
+/// the construct early, so the value is refused rather than escaped.
+///
+/// A mutation precondition, not a naming rule: the parser never needs it,
+/// because it finds those sequences structurally while scanning.
+fn value_seq_ok(node_type: NodeType, text: &[u8]) -> bool {
+    match node_type {
+        NodeType::Comment => text.last() != Some(&b'-') && !text.windows(2).any(|w| w == b"--"),
+        NodeType::CData => !text.windows(3).any(|w| w == b"]]>"),
+        NodeType::Pi => !text.windows(2).any(|w| w == b"?>"),
+        _ => true,
+    }
+}
 
 /// A resolved namespace: a byte-store span (empty = no namespace).
 type Ns = Span;

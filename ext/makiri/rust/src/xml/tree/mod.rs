@@ -13,13 +13,35 @@ mod dtd;
 
 use crate::falloc::Reserve;
 use crate::xml::chars::{is_reserved_pi_target, normalize_newlines, ExpandMode};
-use crate::xml::qname::{is_enc_name, is_version_num, is_yes_no, split_scanned, xmlns_prefix, Split};
+use crate::xml::qname::{split_scanned, xmlns_prefix, Split};
 use crate::xml::{
     Document, Limits, Link, NodeId, NodeType, Span, Status, MAX_ATTRS, MAX_DEPTH, MAX_NS,
     XMLNS_NS_URI, XML_NS_URI,
 };
 use cursor::{is_space, Cursor, ExternalId, InSlice, R};
 use dtd::{Declared, Subset};
+
+/* ---- the XML declaration's pseudo-attribute value grammars (§2.8) ----
+ *
+ * Naming rules they are not, so they live with the declaration parser that is
+ * their only consumer rather than in `qname`. */
+
+fn is_version_num(s: &[u8]) -> bool {
+    s.len() >= 3 && s.starts_with(b"1.") && s[2..].iter().all(|b| b.is_ascii_digit())
+}
+
+fn is_enc_name(s: &[u8]) -> bool {
+    match s.first() {
+        Some(c0) if c0.is_ascii_alphabetic() => s[1..]
+            .iter()
+            .all(|&c| c.is_ascii_alphanumeric() || c == b'.' || c == b'_' || c == b'-'),
+        _ => false,
+    }
+}
+
+fn is_yes_no(s: &[u8]) -> bool {
+    s == b"yes" || s == b"no"
+}
 
 /// A namespace binding in scope: prefix ("" = default) -> byte-store span.
 struct Binding {
@@ -687,10 +709,7 @@ pub fn parse(src: &[u8]) -> Result<Box<Document>, Status> {
 /// rejects an over-long source, so the budget is checked in exactly one place.
 pub fn parse_ex(src: &[u8], limits: Option<&Limits>) -> Result<Box<Document>, Status> {
     let mut doc = Document::create(limits.map(|l| l.max_bytes), src.len())?;
-    let norm = match normalize_newlines(src) {
-        Ok(n) => n,
-        Err(()) => return Err(Status::Oom),
-    };
+    let norm = normalize_newlines(src)?;
     let body: &[u8] = match &norm {
         Some(v) => v,
         None => src,
@@ -741,7 +760,7 @@ fn parse_fragment_into(
     inherit_doc_ns: bool,
 ) -> Result<NodeId, Status> {
     let frag = doc.new_node(NodeType::Fragment)?;
-    let norm = normalize_newlines(src).map_err(|_| doc.status)?;
+    let norm = normalize_newlines(src)?;
     let body: &[u8] = match &norm {
         Some(v) => v,
         None => src,
@@ -758,4 +777,22 @@ fn parse_fragment_into(
         return Err(p.status());
     }
     Ok(frag)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_enc_name, is_version_num, is_yes_no};
+
+    /// The declaration grammars, at their boundary forms. They moved here with
+    /// the parser that is their only consumer (was `rust_tests.rs`).
+    #[test]
+    fn declaration_grammars_reject_boundary_forms() {
+        assert!(is_version_num(b"1.0"));
+        assert!(!is_version_num(b"1."));
+        assert!(is_enc_name(b"UTF-8"));
+        assert!(!is_enc_name(b"8UTF"));
+        assert!(is_yes_no(b"yes"));
+        assert!(is_yes_no(b"no"));
+        assert!(!is_yes_no(b"Yes"));
+    }
 }

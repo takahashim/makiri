@@ -10,8 +10,8 @@
 
 use crate::cutf8::{decode1, valid};
 use crate::falloc::grow_capacity;
-use crate::xml::chars::utf8_encode;
-use crate::xml::qname::{is_enc_name, is_version_num, is_yes_no, split_checked, xmlns_prefix};
+use crate::xml::chars::Utf8Char;
+use crate::xml::qname::{split_checked, xmlns_prefix};
 use crate::xpath::number::{extent, from_extent, to_text};
 
 fn decoder_consumes_all(s: &[u8]) -> bool {
@@ -61,10 +61,8 @@ fn utf8_encoder_matches_std_for_every_unicode_scalar() {
         let Some(ch) = char::from_u32(cp) else {
             continue; // surrogate code points are not Unicode scalars.
         };
-        let mut actual = [0u8; 4];
-        let n = utf8_encode(cp, &mut actual);
         assert_eq!(
-            &actual[..n],
+            Utf8Char::encode(cp).as_bytes(),
             ch.encode_utf8(&mut [0; 4]).as_bytes(),
             "U+{cp:04X}"
         );
@@ -149,7 +147,7 @@ fn xpath_number_rendering_has_xpath_boundary_behaviour() {
 }
 
 #[test]
-fn qname_and_declaration_grammars_reject_boundary_forms() {
+fn qname_grammar_rejects_boundary_forms() {
     assert!(split_checked(b"root").is_some());
     assert!(split_checked("p:要素".as_bytes()).is_some());
     for bad in [
@@ -165,13 +163,6 @@ fn qname_and_declaration_grammars_reject_boundary_forms() {
     assert_eq!(xmlns_prefix(b"xmlns"), Some(b"".as_slice()));
     assert_eq!(xmlns_prefix(b"xmlns:svg"), Some(b"svg".as_slice()));
     assert_eq!(xmlns_prefix(b"xmlnsx"), None);
-    assert!(is_version_num(b"1.0"));
-    assert!(!is_version_num(b"1."));
-    assert!(is_enc_name(b"UTF-8"));
-    assert!(!is_enc_name(b"8UTF"));
-    assert!(is_yes_no(b"yes"));
-    assert!(is_yes_no(b"no"));
-    assert!(!is_yes_no(b"Yes"));
 }
 
 #[test]

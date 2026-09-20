@@ -11,6 +11,7 @@ pub use model::*;
 
 pub mod arena;
 pub mod chars;
+pub mod dom_name;
 pub mod encoding_sniff;
 pub mod index;
 pub mod mutate;

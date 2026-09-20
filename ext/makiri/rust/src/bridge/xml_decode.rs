@@ -25,7 +25,7 @@ use rb_sys::{rb_encoding, VALUE};
 use super::ruby::exception_message;
 use super::string::{ruby_bytes_view, text_check};
 use crate::init::{EXC_XML_LIMIT_EXCEEDED, EXC_XML_SYNTAX_ERROR};
-use crate::xml::encoding_sniff::{sniff_bom, sniff_decl};
+use crate::xml::encoding_sniff::sniff;
 
 /// `rb_str_encode` with no replacement flags, so an undefined conversion or an
 /// invalid byte sequence RAISES rather than substituting U+FFFD. Run under
@@ -43,8 +43,21 @@ unsafe extern "C" fn strict_transcode_thunk(str: VALUE) -> VALUE {
 /// `rb_enc_find` for a name the sniffers produced; null for one Ruby does not
 /// know, which is not an error here. May autoload an encoding - a GC point - so
 /// it runs only once every borrow of the input is over.
-unsafe fn find_encoding(name: &core::ffi::CStr) -> *mut rb_encoding {
-    rb_sys::rb_enc_find(name.as_ptr())
+///
+/// `rb_enc_find` wants a C string and a sniffed name is bytes, so the NUL is
+/// added HERE rather than in the sniffer, whose business is byte reading. A name
+/// too long to fit, or holding a NUL, is not an encoding Ruby knows, so it reads
+/// as "none" explicitly instead of being silently truncated at the NUL.
+unsafe fn find_encoding(name: &[u8]) -> *mut rb_encoding {
+    let mut buf = [0u8; 64];
+    if name.is_empty() || name.len() >= buf.len() || name.contains(&0) {
+        return core::ptr::null_mut();
+    }
+    buf[..name.len()].copy_from_slice(name);
+    match core::ffi::CStr::from_bytes_with_nul(&buf[..name.len() + 1]) {
+        Ok(c) => rb_sys::rb_enc_find(c.as_ptr()),
+        Err(_) => core::ptr::null_mut(),
+    }
 }
 
 /// Two encodings agree, for conflict purposes, when identical or when either is
@@ -67,11 +80,10 @@ unsafe fn effective_encoding(str: VALUE) -> Result<*mut rb_encoding, Error> {
     let (bom, decl) = {
         let anchor = ruby_bytes_view(str);
         let raw = anchor.bytes();
-        let (bom, geo) = sniff_bom(raw);
-        (bom, sniff_decl(&raw[geo.bom_len.min(raw.len())..], geo))
+        sniff(raw)
     };
-    let bom = bom.map_or(core::ptr::null_mut(), |b| find_encoding(b.name()));
-    let decl = decl.map_or(core::ptr::null_mut(), |d| find_encoding(d.as_cstr()));
+    let bom = bom.map_or(core::ptr::null_mut(), |b| find_encoding(b.name().as_bytes()));
+    let decl = decl.map_or(core::ptr::null_mut(), |d| find_encoding(d.as_bytes()));
     let is_binary = tag == rb_sys::rb_ascii8bit_encoding();
 
     if !bom.is_null() && !decl.is_null() && !compatible(bom, decl) {
