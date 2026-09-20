@@ -539,7 +539,7 @@ plain[7]Element/body.previous_sibling = Makiri::HTML::Text:#<Makiri::HTML::Text 
 plain[7]Element/body.next_element = nil
 plain[7]Element/body.previous_element = Makiri::HTML::Element:#<Makiri::HTML::Element name="head">
 plain[7]Element/body.child = Makiri::HTML::Text:#<Makiri::HTML::Text name="text">
-plain[7]Element/body.children = NodeSet(11)[Text/text,Element/div,Text/text,Element/div,Text/text,Element/div,Text/text,Comment/comment,Text/text,Comment/comment,Text/text]
+plain[7]Element/body.children = NodeSet(11)[Text/text,Element/div,Text/text,Element/div,Text/text,Element/div,Text/text,Comment/comment,Text/text,ProcessingInstruction/pi-target,Text/text]
 plain[7]Element/body.element_children = NodeSet(3)[Element/div,Element/div,Element/div]
 plain[7]Element/body.elements = NodeSet(3)[Element/div,Element/div,Element/div]
 plain[7]Element/body.first_element_child = Makiri::HTML::Element:#<Makiri::HTML::Element name="div">
@@ -2365,8 +2365,8 @@ plain[32]Text/text.line = nil
 plain[32]Text/text.keys = []
 plain[32]Text/text.values = []
 plain[32]Text/text.parent = Makiri::HTML::Element:#<Makiri::HTML::Element name="body">
-plain[32]Text/text.next = Makiri::HTML::Comment:#<Makiri::HTML::Comment name="comment">
-plain[32]Text/text.next_sibling = Makiri::HTML::Comment:#<Makiri::HTML::Comment name="comment">
+plain[32]Text/text.next = Makiri::HTML::ProcessingInstruction:#<Makiri::HTML::ProcessingInstruction name="pi-target">
+plain[32]Text/text.next_sibling = Makiri::HTML::ProcessingInstruction:#<Makiri::HTML::ProcessingInstruction name="pi-target">
 plain[32]Text/text.previous = Makiri::HTML::Comment:#<Makiri::HTML::Comment name="comment">
 plain[32]Text/text.previous_sibling = Makiri::HTML::Comment:#<Makiri::HTML::Comment name="comment">
 plain[32]Text/text.next_element = nil
@@ -2423,79 +2423,79 @@ plain[32]Text/text.[]("d") = nil
 plain[32]Text/text.key?("d") = FalseClass:false
 plain[32]Text/text.attribute_by_qualified_name("d") = nil
 plain[32]Text/text.attribute_value_by_qualified_name("d") = nil
-plain[33]Comment/comment.name = UTF-8:"comment"
-plain[33]Comment/comment.namespace_uri = nil
-plain[33]Comment/comment.prefix = nil
-plain[33]Comment/comment.local_name = nil
-plain[33]Comment/comment.tag_name = nil
-plain[33]Comment/comment.target = nil
-plain[33]Comment/comment.node_type = Integer:8
-plain[33]Comment/comment.content = UTF-8:"?pi-target pi data?"
-plain[33]Comment/comment.text = UTF-8:"?pi-target pi data?"
-plain[33]Comment/comment.inner_text = UTF-8:"?pi-target pi data?"
-plain[33]Comment/comment.value = UTF-8:"?pi-target pi data?"
-plain[33]Comment/comment.line = nil
-plain[33]Comment/comment.keys = []
-plain[33]Comment/comment.values = []
-plain[33]Comment/comment.parent = Makiri::HTML::Element:#<Makiri::HTML::Element name="body">
-plain[33]Comment/comment.next = Makiri::HTML::Text:#<Makiri::HTML::Text name="text">
-plain[33]Comment/comment.next_sibling = Makiri::HTML::Text:#<Makiri::HTML::Text name="text">
-plain[33]Comment/comment.previous = Makiri::HTML::Text:#<Makiri::HTML::Text name="text">
-plain[33]Comment/comment.previous_sibling = Makiri::HTML::Text:#<Makiri::HTML::Text name="text">
-plain[33]Comment/comment.next_element = nil
-plain[33]Comment/comment.previous_element = Makiri::HTML::Element:#<Makiri::HTML::Element name="div">
-plain[33]Comment/comment.child = nil
-plain[33]Comment/comment.children = NodeSet(0)[]
-plain[33]Comment/comment.element_children = NodeSet(0)[]
-plain[33]Comment/comment.elements = NodeSet(0)[]
-plain[33]Comment/comment.first_element_child = nil
-plain[33]Comment/comment.last_element_child = nil
-plain[33]Comment/comment.ancestors = NodeSet(2)[Element/body,Element/html]
-plain[33]Comment/comment.attribute_nodes = NodeSet(0)[]
-plain[33]Comment/comment.[]("id") = nil
-plain[33]Comment/comment.key?("id") = FalseClass:false
-plain[33]Comment/comment.attribute_by_qualified_name("id") = nil
-plain[33]Comment/comment.attribute_value_by_qualified_name("id") = nil
-plain[33]Comment/comment.[]("class") = nil
-plain[33]Comment/comment.key?("class") = FalseClass:false
-plain[33]Comment/comment.attribute_by_qualified_name("class") = nil
-plain[33]Comment/comment.attribute_value_by_qualified_name("class") = nil
-plain[33]Comment/comment.[]("DATA-X") = nil
-plain[33]Comment/comment.key?("DATA-X") = FalseClass:false
-plain[33]Comment/comment.attribute_by_qualified_name("DATA-X") = nil
-plain[33]Comment/comment.attribute_value_by_qualified_name("DATA-X") = nil
-plain[33]Comment/comment.[]("data-x") = nil
-plain[33]Comment/comment.key?("data-x") = FalseClass:false
-plain[33]Comment/comment.attribute_by_qualified_name("data-x") = nil
-plain[33]Comment/comment.attribute_value_by_qualified_name("data-x") = nil
-plain[33]Comment/comment.[]("href") = nil
-plain[33]Comment/comment.key?("href") = FalseClass:false
-plain[33]Comment/comment.attribute_by_qualified_name("href") = nil
-plain[33]Comment/comment.attribute_value_by_qualified_name("href") = nil
-plain[33]Comment/comment.[]("xlink:href") = nil
-plain[33]Comment/comment.key?("xlink:href") = FalseClass:false
-plain[33]Comment/comment.attribute_by_qualified_name("xlink:href") = nil
-plain[33]Comment/comment.attribute_value_by_qualified_name("xlink:href") = nil
-plain[33]Comment/comment.[]("xml:lang") = nil
-plain[33]Comment/comment.key?("xml:lang") = FalseClass:false
-plain[33]Comment/comment.attribute_by_qualified_name("xml:lang") = nil
-plain[33]Comment/comment.attribute_value_by_qualified_name("xml:lang") = nil
-plain[33]Comment/comment.[]("viewBox") = nil
-plain[33]Comment/comment.key?("viewBox") = FalseClass:false
-plain[33]Comment/comment.attribute_by_qualified_name("viewBox") = nil
-plain[33]Comment/comment.attribute_value_by_qualified_name("viewBox") = nil
-plain[33]Comment/comment.[]("my-attr") = nil
-plain[33]Comment/comment.key?("my-attr") = FalseClass:false
-plain[33]Comment/comment.attribute_by_qualified_name("my-attr") = nil
-plain[33]Comment/comment.attribute_value_by_qualified_name("my-attr") = nil
-plain[33]Comment/comment.[]("missing") = nil
-plain[33]Comment/comment.key?("missing") = FalseClass:false
-plain[33]Comment/comment.attribute_by_qualified_name("missing") = nil
-plain[33]Comment/comment.attribute_value_by_qualified_name("missing") = nil
-plain[33]Comment/comment.[]("d") = nil
-plain[33]Comment/comment.key?("d") = FalseClass:false
-plain[33]Comment/comment.attribute_by_qualified_name("d") = nil
-plain[33]Comment/comment.attribute_value_by_qualified_name("d") = nil
+plain[33]ProcessingInstruction/pi-target.name = UTF-8:"pi-target"
+plain[33]ProcessingInstruction/pi-target.namespace_uri = nil
+plain[33]ProcessingInstruction/pi-target.prefix = nil
+plain[33]ProcessingInstruction/pi-target.local_name = nil
+plain[33]ProcessingInstruction/pi-target.tag_name = nil
+plain[33]ProcessingInstruction/pi-target.target = UTF-8:"pi-target"
+plain[33]ProcessingInstruction/pi-target.node_type = Integer:7
+plain[33]ProcessingInstruction/pi-target.content = UTF-8:"pi data"
+plain[33]ProcessingInstruction/pi-target.text = UTF-8:"pi data"
+plain[33]ProcessingInstruction/pi-target.inner_text = UTF-8:"pi data"
+plain[33]ProcessingInstruction/pi-target.value = UTF-8:"pi data"
+plain[33]ProcessingInstruction/pi-target.line = nil
+plain[33]ProcessingInstruction/pi-target.keys = []
+plain[33]ProcessingInstruction/pi-target.values = []
+plain[33]ProcessingInstruction/pi-target.parent = Makiri::HTML::Element:#<Makiri::HTML::Element name="body">
+plain[33]ProcessingInstruction/pi-target.next = Makiri::HTML::Text:#<Makiri::HTML::Text name="text">
+plain[33]ProcessingInstruction/pi-target.next_sibling = Makiri::HTML::Text:#<Makiri::HTML::Text name="text">
+plain[33]ProcessingInstruction/pi-target.previous = Makiri::HTML::Text:#<Makiri::HTML::Text name="text">
+plain[33]ProcessingInstruction/pi-target.previous_sibling = Makiri::HTML::Text:#<Makiri::HTML::Text name="text">
+plain[33]ProcessingInstruction/pi-target.next_element = nil
+plain[33]ProcessingInstruction/pi-target.previous_element = Makiri::HTML::Element:#<Makiri::HTML::Element name="div">
+plain[33]ProcessingInstruction/pi-target.child = nil
+plain[33]ProcessingInstruction/pi-target.children = NodeSet(0)[]
+plain[33]ProcessingInstruction/pi-target.element_children = NodeSet(0)[]
+plain[33]ProcessingInstruction/pi-target.elements = NodeSet(0)[]
+plain[33]ProcessingInstruction/pi-target.first_element_child = nil
+plain[33]ProcessingInstruction/pi-target.last_element_child = nil
+plain[33]ProcessingInstruction/pi-target.ancestors = NodeSet(2)[Element/body,Element/html]
+plain[33]ProcessingInstruction/pi-target.attribute_nodes = NodeSet(0)[]
+plain[33]ProcessingInstruction/pi-target.[]("id") = nil
+plain[33]ProcessingInstruction/pi-target.key?("id") = FalseClass:false
+plain[33]ProcessingInstruction/pi-target.attribute_by_qualified_name("id") = nil
+plain[33]ProcessingInstruction/pi-target.attribute_value_by_qualified_name("id") = nil
+plain[33]ProcessingInstruction/pi-target.[]("class") = nil
+plain[33]ProcessingInstruction/pi-target.key?("class") = FalseClass:false
+plain[33]ProcessingInstruction/pi-target.attribute_by_qualified_name("class") = nil
+plain[33]ProcessingInstruction/pi-target.attribute_value_by_qualified_name("class") = nil
+plain[33]ProcessingInstruction/pi-target.[]("DATA-X") = nil
+plain[33]ProcessingInstruction/pi-target.key?("DATA-X") = FalseClass:false
+plain[33]ProcessingInstruction/pi-target.attribute_by_qualified_name("DATA-X") = nil
+plain[33]ProcessingInstruction/pi-target.attribute_value_by_qualified_name("DATA-X") = nil
+plain[33]ProcessingInstruction/pi-target.[]("data-x") = nil
+plain[33]ProcessingInstruction/pi-target.key?("data-x") = FalseClass:false
+plain[33]ProcessingInstruction/pi-target.attribute_by_qualified_name("data-x") = nil
+plain[33]ProcessingInstruction/pi-target.attribute_value_by_qualified_name("data-x") = nil
+plain[33]ProcessingInstruction/pi-target.[]("href") = nil
+plain[33]ProcessingInstruction/pi-target.key?("href") = FalseClass:false
+plain[33]ProcessingInstruction/pi-target.attribute_by_qualified_name("href") = nil
+plain[33]ProcessingInstruction/pi-target.attribute_value_by_qualified_name("href") = nil
+plain[33]ProcessingInstruction/pi-target.[]("xlink:href") = nil
+plain[33]ProcessingInstruction/pi-target.key?("xlink:href") = FalseClass:false
+plain[33]ProcessingInstruction/pi-target.attribute_by_qualified_name("xlink:href") = nil
+plain[33]ProcessingInstruction/pi-target.attribute_value_by_qualified_name("xlink:href") = nil
+plain[33]ProcessingInstruction/pi-target.[]("xml:lang") = nil
+plain[33]ProcessingInstruction/pi-target.key?("xml:lang") = FalseClass:false
+plain[33]ProcessingInstruction/pi-target.attribute_by_qualified_name("xml:lang") = nil
+plain[33]ProcessingInstruction/pi-target.attribute_value_by_qualified_name("xml:lang") = nil
+plain[33]ProcessingInstruction/pi-target.[]("viewBox") = nil
+plain[33]ProcessingInstruction/pi-target.key?("viewBox") = FalseClass:false
+plain[33]ProcessingInstruction/pi-target.attribute_by_qualified_name("viewBox") = nil
+plain[33]ProcessingInstruction/pi-target.attribute_value_by_qualified_name("viewBox") = nil
+plain[33]ProcessingInstruction/pi-target.[]("my-attr") = nil
+plain[33]ProcessingInstruction/pi-target.key?("my-attr") = FalseClass:false
+plain[33]ProcessingInstruction/pi-target.attribute_by_qualified_name("my-attr") = nil
+plain[33]ProcessingInstruction/pi-target.attribute_value_by_qualified_name("my-attr") = nil
+plain[33]ProcessingInstruction/pi-target.[]("missing") = nil
+plain[33]ProcessingInstruction/pi-target.key?("missing") = FalseClass:false
+plain[33]ProcessingInstruction/pi-target.attribute_by_qualified_name("missing") = nil
+plain[33]ProcessingInstruction/pi-target.attribute_value_by_qualified_name("missing") = nil
+plain[33]ProcessingInstruction/pi-target.[]("d") = nil
+plain[33]ProcessingInstruction/pi-target.key?("d") = FalseClass:false
+plain[33]ProcessingInstruction/pi-target.attribute_by_qualified_name("d") = nil
+plain[33]ProcessingInstruction/pi-target.attribute_value_by_qualified_name("d") = nil
 plain[34]Text/text.name = UTF-8:"text"
 plain[34]Text/text.namespace_uri = nil
 plain[34]Text/text.prefix = nil
@@ -2513,8 +2513,8 @@ plain[34]Text/text.values = []
 plain[34]Text/text.parent = Makiri::HTML::Element:#<Makiri::HTML::Element name="body">
 plain[34]Text/text.next = nil
 plain[34]Text/text.next_sibling = nil
-plain[34]Text/text.previous = Makiri::HTML::Comment:#<Makiri::HTML::Comment name="comment">
-plain[34]Text/text.previous_sibling = Makiri::HTML::Comment:#<Makiri::HTML::Comment name="comment">
+plain[34]Text/text.previous = Makiri::HTML::ProcessingInstruction:#<Makiri::HTML::ProcessingInstruction name="pi-target">
+plain[34]Text/text.previous_sibling = Makiri::HTML::ProcessingInstruction:#<Makiri::HTML::ProcessingInstruction name="pi-target">
 plain[34]Text/text.next_element = nil
 plain[34]Text/text.previous_element = Makiri::HTML::Element:#<Makiri::HTML::Element name="div">
 plain[34]Text/text.child = nil
@@ -8844,7 +8844,7 @@ attr=13
 bad_utf8=1
 cmp_nil=156
 cmp_nonnil=685
-comment=2
+comment=1
 content_fragment=2
 detached=1
 doctype=4
@@ -8854,7 +8854,7 @@ element=56
 fragment_text=2
 fragment_walk=1
 ns_nonnil=58
-pi=1
+pi=2
 prefixed_prefix=2
 qname_hit=13
 qvalue_hit=13
