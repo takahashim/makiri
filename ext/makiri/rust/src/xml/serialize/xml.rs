@@ -19,7 +19,7 @@
 
 #![forbid(unsafe_code)]
 
-use super::out::{put, W, XML};
+use super::out::{put, put_pi, W, XML};
 use super::Failure;
 use crate::cbuf::Buf;
 use crate::falloc::Reserve;
@@ -353,7 +353,7 @@ impl<'d, 'b> Writer<'d, 'b> {
                 self.put(doc.span(doc.node(n).value))?;
                 self.put(b"-->")
             }
-            Some(NodeType::Pi) => self.pi(n),
+            Some(NodeType::Pi) => put_pi(self.b, doc, n),
             Some(NodeType::Fragment) => {
                 let mut c = doc.first_child(n);
                 while let Some(cid) = c {
@@ -364,17 +364,6 @@ impl<'d, 'b> Writer<'d, 'b> {
             }
             _ => Ok(()),
         }
-    }
-
-    fn pi(&mut self, n: NodeId) -> W {
-        let doc = self.doc;
-        self.put(b"<?")?;
-        self.put(doc.span(doc.node(n).local))?;
-        if doc.node(n).value.len != 0 {
-            self.put(b" ")?;
-            self.put(doc.span(doc.node(n).value))?;
-        }
-        self.put(b"?>")
     }
 
     fn doctype(&mut self, dt: NodeId) -> W {

@@ -9,45 +9,20 @@
 #![forbid(unsafe_code)]
 
 mod cursor;
+mod decl;
 mod dtd;
+mod scope;
 
 use crate::falloc::Reserve;
 use crate::xml::chars::{is_reserved_pi_target, normalize_newlines, ExpandMode};
 use crate::xml::qname::{split_scanned, xmlns_prefix, Split};
 use crate::xml::{
-    Document, Limits, Link, NodeId, NodeType, Span, Status, MAX_ATTRS, MAX_DEPTH, MAX_NS,
-    XMLNS_NS_URI, XML_NS_URI,
+    Document, Limits, Link, NodeId, NodeType, Span, Status, MAX_ATTRS, MAX_DEPTH, XMLNS_NS_URI,
+    XML_NS_URI,
 };
 use cursor::{is_space, Cursor, InSlice, R};
 use dtd::{scan_external_id, Declared, ExternalId, Subset};
-
-/* ---- the XML declaration's pseudo-attribute value grammars (§2.8) ----
- *
- * Naming rules they are not, so they live with the declaration parser that is
- * their only consumer rather than in `qname`. */
-
-fn is_version_num(s: &[u8]) -> bool {
-    s.len() >= 3 && s.starts_with(b"1.") && s[2..].iter().all(|b| b.is_ascii_digit())
-}
-
-fn is_enc_name(s: &[u8]) -> bool {
-    match s.first() {
-        Some(c0) if c0.is_ascii_alphabetic() => s[1..]
-            .iter()
-            .all(|&c| c.is_ascii_alphanumeric() || c == b'.' || c == b'_' || c == b'-'),
-        _ => false,
-    }
-}
-
-fn is_yes_no(s: &[u8]) -> bool {
-    s == b"yes" || s == b"no"
-}
-
-/// A namespace binding in scope: prefix ("" = default) -> byte-store span.
-struct Binding {
-    pfx: Vec<u8>,
-    uri: Span,
-}
+use scope::{Frame, Scope, ScopeFull};
 
 /// One attribute of the current start tag before namespace resolution.
 #[derive(Clone, Copy)]
@@ -60,10 +35,10 @@ pub struct Parser<'a> {
     cur: Cursor<'a>,
     doc: &'a mut Document,
     fragment: Option<NodeId>,
-    binds: Vec<Binding>,
+    scope: Scope,
     ratt: Vec<RawAttr>,
     stack: Vec<NodeId>,
-    frame: Vec<usize>,
+    frames: Vec<Frame>,
     saw_doctype: bool,
     /// What a DOCTYPE declared, which outlives the DOCTYPE: a reference to one
     /// of its entities is refused wherever it occurs, not where it was declared.
@@ -76,10 +51,10 @@ impl<'a> Parser<'a> {
             cur: Cursor::new(input),
             doc,
             fragment,
-            binds: Vec::new(),
+            scope: Scope::default(),
             ratt: Vec::new(),
             stack: Vec::new(),
-            frame: Vec::new(),
+            frames: Vec::new(),
             saw_doctype: false,
             declared: Declared::default(),
         }
@@ -148,28 +123,21 @@ impl<'a> Parser<'a> {
 
     /* ---- namespaces (§7) ---- */
 
+    /// The in-scope URI for `pfx`. `xml` is bound without a declaration, and to
+    /// a URI the DOCUMENT owns, which is why the scope itself cannot answer it.
     fn ns_lookup(&self, pfx: &[u8]) -> Option<Span> {
         if pfx == b"xml" {
             return Some(self.doc.xml_ns_span());
         }
-        self.binds
-            .iter()
-            .rev()
-            .find(|b| b.pfx == pfx)
-            .map(|b| b.uri)
+        self.scope.lookup(pfx)
     }
 
     fn push_binding(&mut self, pfx: &[u8], uri: Span) -> R {
-        if self.binds.len() + 1 > MAX_NS {
-            return self.cur.limit();
+        match self.scope.bind(pfx, uri) {
+            Ok(()) => Ok(()),
+            Err(ScopeFull::Limit) => self.cur.limit(),
+            Err(ScopeFull::Oom) => self.cur.fail(Status::Oom),
         }
-        let mut v: Vec<u8> = Vec::new();
-        if v.falloc_reserve_exact(pfx.len()).is_err() || self.binds.falloc_reserve(1).is_err() {
-            return self.cur.fail(Status::Oom);
-        }
-        v.extend_from_slice(pfx);
-        self.binds.push(Binding { pfx: v, uri });
-        Ok(())
     }
 
     /* ---- start tag: four ordered phases ---- */
@@ -366,64 +334,6 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /* ---- XML declaration (§2.8) ---- */
-
-    fn decl_eq(&mut self) -> R {
-        self.cur.skip_ws();
-        if self.cur.peek() != Some(b'=') {
-            return self.cur.syntax();
-        }
-        self.cur.advance();
-        self.cur.skip_ws();
-        Ok(())
-    }
-
-    fn decl_value(&mut self, ok: fn(&[u8]) -> bool) -> R {
-        let v = self.cur.parse_quoted()?;
-        if !ok(self.cur.slice(v)) {
-            return self.cur.syntax();
-        }
-        Ok(())
-    }
-
-    /// '<?xml' consumed. version (encoding)? (standalone)? S? '?>'
-    fn parse_xml_decl_body(&mut self) -> R {
-        self.cur.require_space()?;
-        if !self.cur.eat_keyword(b"version") {
-            return self.cur.syntax();
-        }
-        self.decl_eq()?;
-        let ver = self.cur.parse_quoted()?;
-        /* §2.8: any 1.x. A 1.0 processor reads a 1.x document as 1.0, so one
-         * that uses a 1.1-only feature fails on that feature, not its label. */
-        if !is_version_num(self.cur.slice(ver)) {
-            return self.cur.syntax();
-        }
-        let (mut saw_enc, mut saw_sd) = (false, false);
-        loop {
-            let had_s = self.cur.skip_some_ws();
-            if self.cur.starts(b"?>") {
-                self.cur.advance_n(2);
-                return Ok(());
-            }
-            if !had_s {
-                return self.cur.syntax();
-            }
-            if !saw_enc && !saw_sd && self.cur.eat_keyword(b"encoding") {
-                saw_enc = true;
-                self.doc.mark_encoding_decl();
-                self.decl_eq()?;
-                self.decl_value(is_enc_name)?;
-            } else if !saw_sd && self.cur.eat_keyword(b"standalone") {
-                saw_sd = true;
-                self.decl_eq()?;
-                self.decl_value(is_yes_no)?;
-            } else {
-                return self.cur.syntax();
-            }
-        }
-    }
-
     /// '<?' processing instruction (cursor at '?').
     fn parse_pi(&mut self, parent: NodeId, at_doc_start: bool) -> R {
         self.cur.advance_n(1);
@@ -433,7 +343,8 @@ impl<'a> Parser<'a> {
             if !at_doc_start || !self.stack.is_empty() {
                 return self.cur.syntax();
             }
-            return self.parse_xml_decl_body();
+            /* `<?xml ...?>` is the declaration, not a PI: no node comes of it. */
+            return decl::parse_body(&mut self.cur, self.doc);
         }
         if is_reserved_pi_target(tgt) {
             return self.cur.syntax(); /* reserved target ("XML"/"xmL"/...) */
@@ -488,8 +399,9 @@ impl<'a> Parser<'a> {
             return self.cur.syntax(); /* mismatched end tag */
         }
         self.stack.pop();
-        let base = self.frame.pop().unwrap_or(0);
-        self.binds.truncate(base); /* pop this element's namespace scope */
+        if let Some(frame) = self.frames.pop() {
+            self.scope.leave(frame);
+        }
         Ok(())
     }
 
@@ -595,19 +507,19 @@ impl<'a> Parser<'a> {
         }
         let parent = self.cur_parent();
         self.doc.append_child(parent, el);
-        let bind_base = self.binds.len();
+        let frame = self.scope.enter();
         let pushed = self.parse_element_body(el)?;
         if pushed {
             if self.stack.len() + 1 > MAX_DEPTH {
                 return self.cur.limit();
             }
-            if self.stack.falloc_reserve(1).is_err() || self.frame.falloc_reserve(1).is_err() {
+            if self.stack.falloc_reserve(1).is_err() || self.frames.falloc_reserve(1).is_err() {
                 return self.cur.fail(Status::Oom);
             }
             self.stack.push(el);
-            self.frame.push(bind_base);
+            self.frames.push(frame);
         } else {
-            self.binds.truncate(bind_base); /* self-closing: pop its scope now */
+            self.scope.leave(frame); /* self-closing: pop its scope now */
         }
         Ok(())
     }
@@ -794,22 +706,4 @@ fn has_duplicate_attributes(doc: &Document, element: NodeId) -> bool {
         a = doc.next(x);
     }
     false
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{is_enc_name, is_version_num, is_yes_no};
-
-    /// The declaration grammars, at their boundary forms. They moved here with
-    /// the parser that is their only consumer (was `rust_tests.rs`).
-    #[test]
-    fn declaration_grammars_reject_boundary_forms() {
-        assert!(is_version_num(b"1.0"));
-        assert!(!is_version_num(b"1."));
-        assert!(is_enc_name(b"UTF-8"));
-        assert!(!is_enc_name(b"8UTF"));
-        assert!(is_yes_no(b"yes"));
-        assert!(is_yes_no(b"no"));
-        assert!(!is_yes_no(b"Yes"));
-    }
 }

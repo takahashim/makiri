@@ -12,12 +12,12 @@
 
 #![forbid(unsafe_code)]
 
-pub mod attr;
-pub mod copy;
-pub mod edit;
-pub mod factory;
-pub mod insert;
-pub mod ns;
+mod attr;
+mod copy;
+mod edit;
+mod factory;
+mod insert;
+mod ns;
 
 use crate::xml::qname::Split;
 use crate::xml::{Document, MutStatus, NodeId, Status};

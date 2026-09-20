@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 
 use crate::cbuf::Buf;
+use crate::xml::model::{Document as XmlDoc, NodeId};
 
 /// A write either succeeded or the output buffer refused it (its ceiling, or
 /// OOM). The reason is the buffer's; the caller maps it to [`super::Failure`].
@@ -10,6 +11,21 @@ pub(super) type W = Result<(), ()>;
 
 pub(super) fn put(b: &mut Buf, bytes: &[u8]) -> W {
     b.append(bytes).map_err(|_| ())
+}
+
+/// A processing instruction: `<?target data?>`, with the space only when there
+/// is data.
+///
+/// Neither form escapes or reformats a PI, so the rule is the same for both and
+/// lives here rather than being spelled out in each.
+pub(super) fn put_pi(b: &mut Buf, doc: &XmlDoc, n: NodeId) -> W {
+    put(b, b"<?")?;
+    put(b, doc.span(doc.node(n).local))?;
+    if doc.node(n).value.len != 0 {
+        put(b, b" ")?;
+        put(b, doc.span(doc.node(n).value))?;
+    }
+    put(b, b"?>")
 }
 
 /// Which characters an escaper replaces, and with what.

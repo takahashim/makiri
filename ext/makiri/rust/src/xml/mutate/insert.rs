@@ -135,20 +135,19 @@ fn place_fragment(doc: &mut Document, target: NodeId, frag: NodeId, splice: Spli
     if st != MutStatus::Ok {
         return st;
     }
-    /* --- commit pass: relinking only, so nothing here can refuse */
-    let mut last = target; /* the moving insertion point, for After */
+    /* --- commit pass: relinking only, so nothing here can refuse. `After` is
+     * the one verb whose site MOVES - each child lands after the previous - so
+     * it is rebuilt per child; the other two keep the validated one. */
+    let mut last = target;
     while let Some(c) = doc.first_child(frag) {
         doc.detach(c);
-        let (prev, next) = match splice {
-            Splice::Child => (doc.last_child(site.container), None),
-            Splice::Before => (doc.prev(target), Some(target)),
-            Splice::After => {
-                let after = (Some(last), doc.next(last));
-                last = c;
-                after
-            }
+        let here = match splice {
+            Splice::After => Site::after(doc, site.container, last),
+            _ => site,
         };
+        let (prev, next) = here.neighbours(doc);
         doc.splice_between(site.container, c, prev, next);
+        last = c;
     }
     doc.sync_doc_meta(site.container);
     MutStatus::Ok
@@ -206,6 +205,14 @@ impl Site {
             exclude: None,
         }
     }
+    /// Just after `target`, which is "before whatever follows it" - or an
+    /// append when nothing does.
+    fn after(doc: &Document, container: NodeId, target: NodeId) -> Site {
+        match doc.next(target) {
+            Some(next) => Site::before(container, next),
+            None => Site::appending(container),
+        }
+    }
     /// The site a `replace` leaves: `target`'s place, with `target` itself not
     /// counting as an existing child.
     fn replacing(container: NodeId, target: NodeId) -> Site {
@@ -213,6 +220,24 @@ impl Site {
             container,
             before: Some(target),
             exclude: Some(target),
+        }
+    }
+
+    /// The two neighbours a node lands between here.
+    ///
+    /// The ONE statement of where an insertion goes. It used to be written
+    /// twice: once as a `(prev, next)` expression in each of the four verbs, and
+    /// once as a three-arm match inside the fragment commit loop.
+    ///
+    /// Must be read AFTER the incoming node is detached - a move can be its own
+    /// neighbour, and then detaching it changes the answer.
+    fn neighbours(&self, doc: &Document) -> (Option<NodeId>, Option<NodeId>) {
+        match self.before {
+            /* Appending: after whatever is last, before nothing. */
+            None => (doc.last_child(self.container), None),
+            /* Replacing: the target goes away, so its own next is the far side. */
+            Some(r) if self.exclude == Some(r) => (doc.prev(r), doc.next(r)),
+            Some(r) => (doc.prev(r), Some(r)),
         }
     }
 
@@ -329,72 +354,58 @@ fn prepare_insert(doc: &mut Document, site: Site, node: NodeId) -> MutStatus {
     resolve_into(doc, node, site.container)
 }
 
-pub fn insert_child(doc: &mut Document, parent: NodeId, node: NodeId) -> MutStatus {
-    let st = prepare_insert(doc, Site::appending(parent), node);
+/// Validate, then link `node` in at `site`. The shape every structural verb
+/// shares; what differs between them is only the [`Site`] they build.
+fn insert_at(doc: &mut Document, site: Site, node: NodeId) -> MutStatus {
+    let st = prepare_insert(doc, site, node);
     if st != MutStatus::Ok {
         return st;
     }
     doc.detach(node);
-    let last = doc.last_child(parent);
-    doc.splice_between(parent, node, last, None);
-    doc.sync_doc_meta(parent);
+    let (prev, next) = site.neighbours(doc);
+    doc.splice_between(site.container, node, prev, next);
+    doc.sync_doc_meta(site.container);
     MutStatus::Ok
 }
 
+pub fn insert_child(doc: &mut Document, parent: NodeId, node: NodeId) -> MutStatus {
+    insert_at(doc, Site::appending(parent), node)
+}
+
 pub fn insert_before(doc: &mut Document, r: NodeId, node: NodeId) -> MutStatus {
+    /* Beside itself is a no-op, not a self-loop. */
     if node == r {
         return MutStatus::Ok;
     }
-    let Some(container) = doc.parent(r) else {
-        return MutStatus::Hierarchy;
-    };
-    let st = prepare_insert(doc, Site::before(container, r), node);
-    if st != MutStatus::Ok {
-        return st;
+    match doc.parent(r) {
+        Some(container) => insert_at(doc, Site::before(container, r), node),
+        None => MutStatus::Hierarchy,
     }
-    doc.detach(node);
-    let prev = doc.prev(r);
-    doc.splice_between(container, node, prev, Some(r));
-    doc.sync_doc_meta(container);
-    MutStatus::Ok
 }
 
 pub fn insert_after(doc: &mut Document, r: NodeId, node: NodeId) -> MutStatus {
     if node == r {
         return MutStatus::Ok;
     }
-    let Some(container) = doc.parent(r) else {
-        return MutStatus::Hierarchy;
-    };
-    let next = doc.next(r);
-    let st = match next {
-        Some(nx) => prepare_insert(doc, Site::before(container, nx), node),
-        None => prepare_insert(doc, Site::appending(container), node),
-    };
-    if st != MutStatus::Ok {
-        return st;
+    match doc.parent(r) {
+        Some(container) => insert_at(doc, Site::after(doc, container, r), node),
+        None => MutStatus::Hierarchy,
     }
-    doc.detach(node);
-    let next = doc.next(r);
-    doc.splice_between(container, node, Some(r), next);
-    doc.sync_doc_meta(container);
-    MutStatus::Ok
 }
 
 pub fn replace_node(doc: &mut Document, r: NodeId, node: NodeId) -> MutStatus {
+    /* The parent check comes FIRST here, unlike the sibling verbs: replacing a
+     * DETACHED node is a hierarchy error even when it is replaced by itself. */
     let Some(container) = doc.parent(r) else {
         return MutStatus::Hierarchy;
     };
     if node == r {
         return MutStatus::Ok;
     }
-    let st = prepare_insert(doc, Site::replacing(container, r), node);
+    let st = insert_at(doc, Site::replacing(container, r), node);
     if st != MutStatus::Ok {
         return st;
     }
-    doc.detach(node);
-    let (prev, next) = (doc.prev(r), doc.next(r));
-    doc.splice_between(container, node, prev, next);
     /* `r`'s links now belong to `node`, so `detach` would unlink the wrong
      * node; the swapped-out one just forgets them. */
     doc.clear_links(r);

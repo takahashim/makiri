@@ -7,7 +7,7 @@
 
 #![forbid(unsafe_code)]
 
-use super::out::{put, C14N, W};
+use super::out::{put, put_pi, C14N, W};
 use super::Failure;
 use crate::cbuf::Buf;
 use crate::falloc::Reserve;
@@ -130,15 +130,7 @@ impl<'d> Writer<'d, '_> {
                 }
                 Ok(())
             }
-            Some(NodeType::Pi) => {
-                self.put(b"<?")?;
-                self.put(doc.span(doc.node(n).local))?;
-                if doc.node(n).value.len != 0 {
-                    self.put(b" ")?;
-                    self.put(doc.span(doc.node(n).value))?;
-                }
-                self.put(b"?>")
-            }
+            Some(NodeType::Pi) => put_pi(self.b, doc, n),
             Some(NodeType::Fragment) => self.children(n, depth),
             _ => Ok(()),
         }
