@@ -426,7 +426,7 @@ fn text_fill_keeps_the_length_written() {
 
 #[test]
 fn xml_serialization_answers_what_the_ruby_methods_did_and_round_trips() {
-    use crate::xml::parse::xml_parse;
+    use crate::xml::tree::parse as xml_parse;
     use crate::xml::serialize::{canonicalize, to_xml};
 
     // The expected bytes are what `#to_xml` and `#canonicalize` answered before

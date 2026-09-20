@@ -1,5 +1,5 @@
-//! Mutation primitives (mkr_xml_mutate.c). Every primitive validates and
-//! allocates BEFORE changing any link, so a failure leaves the tree untouched.
+//! Mutation primitives. Every primitive validates and allocates BEFORE
+//! changing any link, so a failure leaves the tree untouched.
 //!
 //! The tree is an index arena, so this module is ordinary safe Rust under
 //! `#![forbid(unsafe_code)]`: nodes are [`NodeId`] values, structure lives in
@@ -24,133 +24,6 @@ const NO_NS: Ns = Span::EMPTY;
 /// allocation here.
 fn copy_span(bytes: &[u8]) -> Result<Vec<u8>, MutStatus> {
     crate::falloc::try_to_vec(bytes).ok_or(MutStatus::Oom)
-}
-
-pub fn xml_detach(doc: &mut Document, node: NodeId) {
-    if !node.is_invalid() {
-        detach(doc, node);
-    }
-}
-
-pub fn xml_remove(doc: &mut Document, node: NodeId) {
-    if !node.is_invalid() {
-        remove(doc, node);
-    }
-}
-
-pub fn xml_replace_with_fragment(doc: &mut Document, target: NodeId, frag: NodeId) -> MutStatus {
-    replace_with_fragment(doc, target, frag)
-}
-
-pub fn xml_rename(doc: &mut Document, node: NodeId, name: &[u8]) -> MutStatus {
-    rename(doc, node, name)
-}
-
-pub fn xml_set_attribute(
-    doc: &mut Document,
-    el: NodeId,
-    name: &[u8],
-    val: &[u8],
-) -> Result<NodeId, MutStatus> {
-    set_attribute(doc, el, name, val)
-}
-
-pub fn xml_remove_attribute(doc: &mut Document, el: NodeId, name: &[u8]) -> bool {
-    remove_attribute(doc, el, name)
-}
-
-pub fn xml_set_attribute_ns(
-    doc: &mut Document,
-    el: NodeId,
-    ns: &[u8],
-    name: &[u8],
-    val: &[u8],
-) -> Result<NodeId, MutStatus> {
-    set_attribute_ns(doc, el, ns, name, val)
-}
-
-pub fn xml_remove_attribute_ns(doc: &mut Document, el: NodeId, ns: &[u8], local: &[u8]) -> bool {
-    remove_attribute_ns(doc, el, ns, local)
-}
-
-pub fn xml_set_content(doc: &mut Document, node: NodeId, text: &[u8]) -> MutStatus {
-    set_content(doc, node, text)
-}
-
-pub fn xml_new_element(doc: &mut Document, name: &[u8]) -> Result<NodeId, MutStatus> {
-    new_element(doc, name)
-}
-
-pub fn xml_new_loose_dom_element(
-    doc: &mut Document,
-    name: &[u8],
-    sp: Split,
-    ns: &[u8],
-) -> Result<NodeId, MutStatus> {
-    new_loose_dom_element(doc, name, sp, ns)
-}
-
-pub fn xml_new_document_type(
-    doc: &mut Document,
-    name: &[u8],
-    pub_id: Option<&[u8]>,
-    sys_id: Option<&[u8]>,
-) -> Result<NodeId, MutStatus> {
-    new_document_type(doc, name, pub_id, sys_id)
-}
-
-pub fn xml_new_chardata(
-    doc: &mut Document,
-    type_: NodeType,
-    text: &[u8],
-) -> Result<NodeId, MutStatus> {
-    new_chardata(doc, type_, text)
-}
-
-pub fn xml_new_pi(doc: &mut Document, target: &[u8], data: &[u8]) -> Result<NodeId, MutStatus> {
-    new_pi(doc, target, data)
-}
-
-pub fn xml_import_subtree(
-    doc: &mut Document,
-    src_doc: &Document,
-    src: NodeId,
-) -> Result<NodeId, MutStatus> {
-    debug_assert!(
-        !core::ptr::eq(doc as *const Document, src_doc as *const Document),
-        "same-document import must use clone_node, not the cross-document copy"
-    );
-    import_subtree(doc, src_doc, src)
-}
-
-pub fn xml_copy_node(
-    doc: &mut Document,
-    src_doc: &Document,
-    src: NodeId,
-    deep: bool,
-) -> Result<NodeId, MutStatus> {
-    debug_assert!(
-        !core::ptr::eq(doc as *const Document, src_doc as *const Document),
-        "same-document import must use clone_node, not the cross-document copy"
-    );
-    copy_node_from(doc, src_doc, src, deep)
-}
-
-pub fn xml_clone_node(doc: &mut Document, src: NodeId, deep: bool) -> Result<NodeId, MutStatus> {
-    clone_node(doc, src, deep)
-}
-
-pub fn xml_insert_child(doc: &mut Document, parent: NodeId, node: NodeId) -> MutStatus {
-    insert_child(doc, parent, node)
-}
-pub fn xml_insert_before(doc: &mut Document, r: NodeId, node: NodeId) -> MutStatus {
-    insert_before(doc, r, node)
-}
-pub fn xml_insert_after(doc: &mut Document, r: NodeId, node: NodeId) -> MutStatus {
-    insert_after(doc, r, node)
-}
-pub fn xml_replace_node(doc: &mut Document, r: NodeId, node: NodeId) -> MutStatus {
-    replace_node(doc, r, node)
 }
 
 /// Where [`place`] puts a node, relative to its target.
@@ -251,8 +124,11 @@ fn assign_qname(doc: &mut Document, node: NodeId, name: &[u8], sp: &Split) -> Mu
     }
 }
 
+/// Unlink `node` from its parent. The invalid handle is a no-op.
 pub fn detach(doc: &mut Document, node: NodeId) {
-    doc.detach(node);
+    if !node.is_invalid() {
+        doc.detach(node);
+    }
 }
 
 pub fn rename(doc: &mut Document, node: NodeId, name: &[u8]) -> MutStatus {
@@ -293,7 +169,8 @@ pub fn rename(doc: &mut Document, node: NodeId, name: &[u8]) -> MutStatus {
     MutStatus::Ok
 }
 
-/// Build a fresh ATTRIBUTE (qname + value + namespace) and append it to `el`.
+/// Build a fresh ATTRIBUTE (qname + value + namespace) and link it onto `el`
+/// after `tail`, the last entry the caller's own scan reached.
 fn build_attr(
     doc: &mut Document,
     el: NodeId,
@@ -301,6 +178,7 @@ fn build_attr(
     sp: &Split,
     val: &[u8],
     ns: Ns,
+    tail: Option<NodeId>,
 ) -> Result<NodeId, MutStatus> {
     let attr = doc
         .new_node(NodeType::Attribute)
@@ -311,7 +189,7 @@ fn build_attr(
     }
     doc.set_value_bytes(attr, val).map_err(|_| MutStatus::Oom)?;
     doc.node_mut(attr).ns_uri = ns;
-    doc.append_attr(el, attr);
+    doc.link_attr(el, tail, attr);
     Ok(attr)
 }
 
@@ -338,6 +216,7 @@ pub fn set_attribute(
     let connected = doc.is_connected(el);
     let ns = resolve_ns(doc, Some(el), name, &sp, true, connected)?;
     /* an existing attribute with the same raw QName -> replace its value */
+    let mut tail = None;
     let mut a = doc.attrs(el);
     while let Some(attr) = a {
         if doc.qname(attr) == name {
@@ -345,9 +224,10 @@ pub fn set_attribute(
             doc.node_mut(attr).ns_uri = ns;
             return Ok(attr);
         }
+        tail = Some(attr);
         a = doc.next(attr);
     }
-    build_attr(doc, el, name, &sp, val, ns)
+    build_attr(doc, el, name, &sp, val, ns, tail)
 }
 
 /// Remove `el`'s attribute named `name`; `true` when one was removed.
@@ -394,12 +274,14 @@ pub fn set_attribute_ns(
         return Err(MutStatus::BadChars);
     }
     let local = &name[sp.local_off as usize..];
+    let mut tail = None;
     let mut a = doc.attrs(el);
     while let Some(attr) = a {
         if attr_matches_ns(doc, attr, ns, local) {
             doc.set_value_bytes(attr, val).map_err(|_| MutStatus::Oom)?;
             return Ok(attr);
         }
+        tail = Some(attr);
         a = doc.next(attr);
     }
     /* no match: copy the namespace into the arena only now */
@@ -408,7 +290,7 @@ pub fn set_attribute_ns(
     } else {
         doc.store(ns).map_err(|_| MutStatus::Oom)?
     };
-    build_attr(doc, el, name, &sp, val, nsv)
+    build_attr(doc, el, name, &sp, val, nsv, tail)
 }
 
 /// Remove `el`'s attribute keyed by `(ns, local)`; `true` when one was removed.
@@ -875,11 +757,23 @@ fn deep_copy(doc: &mut Document, src: NodeId) -> Result<NodeId, MutStatus> {
     Ok(root)
 }
 
+/// The cross-document entries take two distinct documents; a same-document copy
+/// is [`clone_node`], which reads and writes one arena.
+#[inline]
+fn debug_assert_distinct(dst: &Document, src_doc: &Document) {
+    debug_assert!(
+        !core::ptr::eq(dst as *const Document, src_doc as *const Document),
+        "same-document import must use clone_node, not the cross-document copy"
+    );
+}
+
+/// Cross-document deep import (`importNode`).
 pub fn import_subtree(
     dst: &mut Document,
     src_doc: &Document,
     src: NodeId,
 ) -> Result<NodeId, MutStatus> {
+    debug_assert_distinct(dst, src_doc);
     deep_copy_from(dst, src_doc, src)
 }
 
@@ -890,6 +784,7 @@ pub fn copy_node_from(
     src: NodeId,
     deep: bool,
 ) -> Result<NodeId, MutStatus> {
+    debug_assert_distinct(dst, src_doc);
     if deep {
         deep_copy_from(dst, src_doc, src)
     } else {
@@ -1100,7 +995,12 @@ pub fn replace_node(doc: &mut Document, r: NodeId, node: NodeId) -> MutStatus {
     MutStatus::Ok
 }
 
+/// Unlink `node` and re-derive the document meta it may have named. The invalid
+/// handle is a no-op.
 pub fn remove(doc: &mut Document, node: NodeId) {
+    if node.is_invalid() {
+        return;
+    }
     let parent = doc.parent(node);
     doc.detach(node);
     if let Some(p) = parent {

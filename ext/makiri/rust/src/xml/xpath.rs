@@ -204,9 +204,9 @@ impl<'d> Dom<'d> for &'d xml::Document {
         let uri = ns_uri.unwrap_or(b"");
         /* Built lazily and cached on the document; None on OOM, and the caller
          * walks. */
-        let idx = crate::xml::index::get(self)?;
+        let idx = self.name_index()?;
         Some(Bucket {
-            nodes: crate::xml::index::lookup(idx, local, uri),
+            nodes: idx.lookup(local, uri),
             recheck: false,
         })
     }

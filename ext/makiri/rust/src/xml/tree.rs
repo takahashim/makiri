@@ -1,6 +1,9 @@
-//! Tokenizer + tree builder (mkr_xml_tree.c). The scanning is safe slice code
-//! over the input; the tree is an index arena, so this module contains no
-//! `unsafe`.
+//! Tokenizer + tree builder: the XML entry points (`parse`, `parse_ex`,
+//! `parse_fragment`) and the cursor they run on.
+//!
+//! The scanning is safe slice code over the input; the tree is an index arena,
+//! so this module contains no `unsafe`. The internal DTD subset is checked by
+//! `tree::dtd`, which keeps nothing.
 
 #![forbid(unsafe_code)]
 
@@ -13,8 +16,8 @@ use crate::xml::qname::{
     is_enc_name, is_version_num, is_yes_no, split_scanned, xmlns_prefix, Split,
 };
 use crate::xml::{
-    Document, Link, NodeId, NodeType, Span, Status, MAX_ATTRS, MAX_DEPTH, MAX_NS, XMLNS_NS_URI,
-    XML_NS_URI,
+    Document, Limits, Link, NodeId, NodeType, Span, Status, MAX_ATTRS, MAX_DEPTH, MAX_NS,
+    XMLNS_NS_URI, XML_NS_URI,
 };
 
 /// A namespace binding in scope: prefix ("" = default) -> byte-store span.
@@ -1412,9 +1415,15 @@ impl<'a> Parser<'a> {
     }
 }
 
-/// Parse already-bounded input into a fresh document.
-pub fn parse_ex(src: &[u8], limits: Option<usize>) -> Result<Box<Document>, Status> {
-    let mut doc = Document::create(limits, src.len())?;
+/// Parse `src` into a fresh document under the default budget.
+pub fn parse(src: &[u8]) -> Result<Box<Document>, Status> {
+    parse_ex(src, None)
+}
+
+/// Parse `src` into a fresh document. `Document::create` applies `limits` and
+/// rejects an over-long source, so the budget is checked in exactly one place.
+pub fn parse_ex(src: &[u8], limits: Option<&Limits>) -> Result<Box<Document>, Status> {
+    let mut doc = Document::create(limits.map(|l| l.max_bytes), src.len())?;
     let norm = match normalize_newlines(src) {
         Ok(n) => n,
         Err(()) => return Err(Status::Oom),
@@ -1438,6 +1447,13 @@ pub fn parse_ex(src: &[u8], limits: Option<usize>) -> Result<Box<Document>, Stat
 
 /// Parse a fragment into a live document's arena. The document reference and
 /// input slice make the ownership preconditions explicit to Rust callers.
+///
+/// A FAILED parse rewinds the arena. The partial fragment is unreachable - it
+/// hangs off a fragment root this function never returns, and nothing already
+/// in the document points into it - so its nodes and bytes are given back
+/// rather than charged to the document for its lifetime. Without that, a loop
+/// of rejected fragments grows a live document until every later operation
+/// fails with `Limit` (`spec/xml_fragment_spec.rb` pins it).
 pub fn parse_fragment(
     doc: &mut Document,
     src: &[u8],
@@ -1446,6 +1462,21 @@ pub fn parse_fragment(
     if src.len() > doc.max_bytes {
         return Err(Status::Limit);
     }
+    let mark = doc.mark();
+    match parse_fragment_into(doc, src, inherit_doc_ns) {
+        Ok(frag) => Ok(frag),
+        Err(status) => {
+            doc.rewind(mark);
+            Err(status)
+        }
+    }
+}
+
+fn parse_fragment_into(
+    doc: &mut Document,
+    src: &[u8],
+    inherit_doc_ns: bool,
+) -> Result<NodeId, Status> {
     let frag = doc.new_node(NodeType::Fragment)?;
     let norm = normalize_newlines(src).map_err(|_| doc.status)?;
     let body: &[u8] = match &norm {
@@ -1461,7 +1492,7 @@ pub fn parse_fragment(
         let _ = p.syntax::<()>(); /* unclosed element(s) */
     }
     if p.status != Status::Ok {
-        return Err(p.status); /* the partial fragment stays detached in the arena */
+        return Err(p.status);
     }
     Ok(frag)
 }

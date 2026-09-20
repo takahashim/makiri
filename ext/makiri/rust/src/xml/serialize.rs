@@ -27,7 +27,7 @@
 use crate::falloc::Reserve;
 
 use crate::cbuf::Buf;
-use crate::xml::model::{Doc as XmlDoc, NodeId, NodeType, Span, FLAG_DOM_LOOSE_NAME, MAX_DEPTH};
+use crate::xml::model::{Document as XmlDoc, NodeId, NodeType, Span, FLAG_DOM_LOOSE_NAME, MAX_DEPTH};
 
 /// Why serialization produced no output.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

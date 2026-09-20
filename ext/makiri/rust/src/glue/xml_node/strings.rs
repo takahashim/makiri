@@ -7,7 +7,7 @@
 
 use magnus::{prelude::*, RString, Ruby, Value};
 
-use crate::xml::model::{Doc as XmlDoc, Span};
+use crate::xml::model::{Document as XmlDoc, Span};
 
 /// A field's bytes as a UTF-8 Ruby String.
 pub fn str_field(ruby: &Ruby, bytes: &[u8]) -> Value {

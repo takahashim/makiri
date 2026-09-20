@@ -28,7 +28,7 @@ impl Split {
 /// Split a name whose bytes are ALREADY known to be a valid XML 1.0 Name,
 /// enforcing the NCName rules a QName adds: at most one colon, non-empty
 /// prefix and local, and a local part beginning with a NameStartChar.
-/// mkr_xml_split_scanned_qname. `name.len()` must fit in u32 (callers pass
+/// `name.len()` must fit in u32 (callers pass
 /// u32 lengths).
 pub fn split_scanned(name: &[u8]) -> Option<Split> {
     let len = name.len();
@@ -61,7 +61,7 @@ pub fn split_scanned(name: &[u8]) -> Option<Split> {
 }
 
 /// Validate `name` as a full XML 1.0 Name, then split it (the mutation path,
-/// whose input is not pre-scanned). mkr_xml_qname_split.
+/// whose input is not pre-scanned).
 pub fn split_checked(name: &[u8]) -> Option<Split> {
     if name.is_empty() || !validate_name(name) {
         return None;
@@ -70,7 +70,7 @@ pub fn split_checked(name: &[u8]) -> Option<Split> {
 }
 
 /// If `name` is an xmlns declaration ("xmlns" / "xmlns:PREFIX"), the declared
-/// prefix (empty for the default namespace). mkr_xml_xmlns_prefix.
+/// prefix (empty for the default namespace).
 #[inline]
 pub fn xmlns_prefix(name: &[u8]) -> Option<&[u8]> {
     if name == b"xmlns" {
@@ -101,7 +101,7 @@ pub fn is_yes_no(s: &[u8]) -> bool {
 }
 
 /// Forbidden character SEQUENCE for a leaf value: "--" (or a trailing "-") in
-/// a comment, "]]>" in CDATA, "?>" in a PI. mkr_xml_check_value_seq.
+/// a comment, "]]>" in CDATA, "?>" in a PI.
 pub fn value_seq_ok(node_type: NodeType, text: &[u8]) -> bool {
     match node_type {
         NodeType::Comment => text.last() != Some(&b'-') && !text.windows(2).any(|w| w == b"--"),

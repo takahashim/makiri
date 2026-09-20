@@ -356,10 +356,6 @@ pub struct Document {
     pub has_encoding_decl: bool,
 }
 
-/// Historical name for [`Document`]; the Ruby glue and XPath backend refer to
-/// the document type by this.
-pub type Doc = Document;
-
 impl Document {
     pub(crate) fn blank() -> Self {
         Document {

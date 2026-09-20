@@ -12,7 +12,7 @@ use core::ffi::c_void;
 
 pub use makiri::text::VerifiedText;
 pub use makiri::token::Token;
-pub use makiri::xml::parse::xml_parse;
+pub use makiri::xml::tree::parse as xml_parse;
 pub use makiri::xml::Document;
 pub use makiri::xpath::ast::Ast;
 pub use makiri::xpath::ctx::{Context, XPathValue};

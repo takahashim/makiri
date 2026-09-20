@@ -238,12 +238,6 @@ impl Document {
         })
     }
 
-    /// The empty span, for callers that want a value with no bytes.
-    #[inline]
-    pub fn empty_span(&self) -> Span {
-        Span::EMPTY
-    }
-
     /// Set a node's value to a fresh copy of `data`.
     pub fn set_value_bytes(&mut self, id: NodeId, data: &[u8]) -> Result<(), Status> {
         let span = self.store(data)?;
@@ -381,6 +375,34 @@ impl Document {
         Ok(())
     }
 
+    /* ---- rewind ---- */
+
+    /// The arena's current high-water mark, for [`Document::rewind`].
+    #[inline]
+    pub(crate) fn mark(&self) -> Mark {
+        Mark {
+            nodes: self.nodes.len(),
+            bytes: self.bytes.len(),
+            arena_bytes: self.arena_bytes,
+        }
+    }
+
+    /// Discard everything allocated since `mark`, giving the budget back.
+    ///
+    /// Sound only when NOTHING allocated after the mark escaped the caller and
+    /// nothing allocated before it points past the mark - i.e. the work being
+    /// undone was never linked into the live tree and never handed out as a
+    /// handle. A failed fragment parse is exactly that case: its nodes hang off
+    /// a fragment root the caller never returns. `status` is deliberately left
+    /// as it is: it records that a failure HAPPENED, which rewinding does not
+    /// undo.
+    pub(crate) fn rewind(&mut self, mark: Mark) {
+        debug_assert!(mark.nodes <= self.nodes.len() && mark.bytes <= self.bytes.len());
+        self.nodes.truncate(mark.nodes);
+        self.bytes.truncate(mark.bytes);
+        self.arena_bytes = mark.arena_bytes;
+    }
+
     /* ---- linking ---- */
 
     #[inline]
@@ -456,19 +478,30 @@ impl Document {
         self.clear_links(Link::of(a));
     }
 
-    /// Append `attr` to `el`'s attribute list.
-    pub fn append_attr(&mut self, el: NodeId, attr: NodeId) {
+    /// Link `attr` onto `el`'s attribute list after `tail`, the list's current
+    /// last entry (`None` when the list is empty).
+    ///
+    /// Callers that reach here have just scanned the list - looking for an
+    /// attribute of the same name - so they already know its end; taking it as
+    /// an argument keeps a `set_attribute` to ONE walk instead of two.
+    pub fn link_attr(&mut self, el: NodeId, tail: Option<NodeId>, attr: NodeId) {
         self.node_mut(attr).parent = Link::of(el);
-        let head = self.node(el).attrs;
-        if head.is_none() {
-            self.node_mut(el).attrs = Link::of(attr);
-        } else {
-            let mut t = head;
-            while !self.node_at(t).next.is_none() {
-                t = self.node_at(t).next;
-            }
-            self.node_at_mut(t).next = Link::of(attr);
+        match tail {
+            None => self.node_mut(el).attrs = Link::of(attr),
+            Some(t) => self.node_mut(t).next = Link::of(attr),
         }
+    }
+
+    /// Append `attr` to `el`'s attribute list, walking to its end first. For a
+    /// caller that has not already scanned the list.
+    pub fn append_attr(&mut self, el: NodeId, attr: NodeId) {
+        let mut tail = None;
+        let mut a = self.node(el).attrs;
+        while !a.is_none() {
+            tail = Some(self.id_of(a));
+            a = self.node_at(a).next;
+        }
+        self.link_attr(el, tail, attr);
     }
 
     /// The ONE place the doubly-linked child list is written by insertion.
@@ -641,10 +674,12 @@ impl Document {
     }
 }
 
-/// The C `""` sentinel check: a span is empty. Kept for the FFI adapter.
-#[inline]
-pub fn span_is_empty(s: Span) -> bool {
-    s.len == 0
+/// An arena high-water mark: what [`Document::rewind`] restores.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Mark {
+    nodes: usize,
+    bytes: usize,
+    arena_bytes: usize,
 }
 
 /// How an element or attribute is named: [`Document::name_parts`].

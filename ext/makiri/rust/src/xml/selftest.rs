@@ -10,9 +10,10 @@
 
 use crate::xml::mutate;
 use crate::xml::qname;
-use crate::xml::tree::{parse_ex, parse_fragment};
+use crate::xml::tree::{parse, parse_ex, parse_fragment};
 use crate::xml::{
-    Document, Link, MutStatus, NodeId, NodeType, Status, MAX_BYTES, XMLNS_NS_URI, XML_NS_URI,
+    Document, Limits, Link, MutStatus, NodeId, NodeType, Status, MAX_BYTES, XMLNS_NS_URI,
+    XML_NS_URI,
 };
 
 fn name_is(d: &Document, n: NodeId, s: &[u8]) -> bool {
@@ -50,7 +51,7 @@ fn doc_new() -> Option<Box<Document>> {
 }
 
 fn parse_lit(s: &[u8], st: &mut Status) -> Option<Box<Document>> {
-    match parse_ex(s, None) {
+    match parse(s) {
         Ok(d) => {
             *st = Status::Ok;
             Some(d)
@@ -70,7 +71,15 @@ fn parse_ex_len(src: &[u8], len: usize, limits: Option<usize>) -> Result<Box<Doc
     if len > max {
         return Err(Status::Limit);
     }
-    parse_ex(&src[..len], limits)
+    parse_limited(&src[..len], limits)
+}
+
+/// `parse_ex` under an optional byte budget.
+fn parse_limited(src: &[u8], limits: Option<usize>) -> Result<Box<Document>, Status> {
+    match limits {
+        Some(max_bytes) => parse_ex(src, Some(&Limits { max_bytes })),
+        None => parse(src),
+    }
 }
 
 /// A fragment of `src` into `doc`, refused past the document's byte budget.
@@ -573,8 +582,8 @@ fn parse_selftest_impl() -> i32 {
             }
         }
         /* §2.8: a 1.x label is read as 1.0; 2.0 is not a VersionNum at all. */
-        if parse_ex(b"<?xml version=\"1.1\"?><r/>", None).is_err()
-            || parse_ex(b"<?xml version=\"1.5\"?><r/>", None).is_err()
+        if parse(b"<?xml version=\"1.1\"?><r/>").is_err()
+            || parse(b"<?xml version=\"1.5\"?><r/>").is_err()
             || !rejects(b"<?xml version=\"2.0\"?><r/>", Status::Syntax)
         {
             return i;

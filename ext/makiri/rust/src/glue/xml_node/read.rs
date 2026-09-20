@@ -21,7 +21,7 @@ use magnus::{prelude::*, Error, Ruby, Value};
 use super::strings::{str_field, utf8};
 use super::{wrap, XmlSelf};
 use crate::bridge::node_set::node_set_with_fill;
-use crate::xml::model::{Doc as XmlDoc, NodeId, NodeType};
+use crate::xml::model::{Document as XmlDoc, NodeId, NodeType};
 
 fn nil(ruby: &Ruby) -> Value {
     ruby.qnil().as_value()

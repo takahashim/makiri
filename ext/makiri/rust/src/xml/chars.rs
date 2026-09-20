@@ -180,8 +180,7 @@ impl<'a> Writer<'a> {
 /// Expand the 5 predefined entities + numeric character references in `src`
 /// into `out` (which must hold at least `src.len()` bytes - the output is never
 /// longer than the input), validating XML Char and, in Attr mode, folding
-/// literal whitespace. Returns the number of bytes written. mkr_xml_expand's
-/// pure core.
+/// literal whitespace. Returns the number of bytes written. the pure core of reference expansion.
 pub fn expand_into(src: &[u8], mode: ExpandMode, out: &mut [u8]) -> Result<usize, ExpandErr> {
     let mut w = Writer { out, pos: 0 };
     let mut i = 0usize;

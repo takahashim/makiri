@@ -22,7 +22,7 @@ use crate::bridge::typed::{Hooks, Marker, TypedType};
 use crate::init::CLASS_DOCUMENT;
 use crate::lexbor::adapter::html::{HtmlDoc, RawDoc};
 use crate::lexbor::adapter::post_parse::HtmlParsed;
-use crate::xml::model::Doc as XmlDoc;
+use crate::xml::model::Document as XmlDoc;
 
 /* ------------------------------------------------------------------ *
  * the node wrapper                                                   *
@@ -126,7 +126,7 @@ impl DocData {
             match self.content {
                 Content::Empty => 0,
                 Content::Html(p) => p.as_ref().external_bytes(),
-                Content::Xml(d) => crate::xml::api::xml_doc_memsize(d.as_ref()),
+                Content::Xml(d) => d.as_ref().memsize(),
             }
         }
     }

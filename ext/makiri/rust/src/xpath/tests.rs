@@ -14,7 +14,7 @@ use crate::xpath::limits::Budget;
 
 use crate::text::VerifiedText;
 use crate::token::Token;
-use crate::xml::parse::xml_parse;
+use crate::xml::tree::parse as xml_parse;
 use crate::xml::{NodeId, NodeType};
 use crate::xpath::ast::Ast;
 use crate::xpath::ctx::{Context, Resolver, ResolverCall, XPathValue};

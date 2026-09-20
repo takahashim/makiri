@@ -36,8 +36,11 @@ use crate::init::{
     CLASS_XML_TEXT,
 };
 use crate::lexbor::adapter::cross_import::cross_html_to_xml;
-use crate::xml::api::*;
-use crate::xml::model::{Doc as XmlDoc, Limits as XmlLimits, MutStatus, NodeId, NodeType, Status};
+use crate::xml::model::{
+    Document as XmlDoc, Limits as XmlLimits, MutStatus, NodeId, NodeType, Status,
+};
+use crate::xml::mutate::{clone_node, copy_node_from, import_subtree, remove as remove_node};
+use crate::xml::tree;
 
 fn is_a(v: Value, klass: &crate::init::RbConst) -> bool {
     v.is_kind_of(klass.class())
@@ -263,7 +266,7 @@ pub fn with_arena_mut<R>(document: Value, f: impl FnOnce(&mut XmlDoc) -> R) -> R
 /// about to change what it indexes.
 pub fn begin_edit(this: XmlSelf) -> Result<NodeId, Error> {
     check_frozen(this.value)?;
-    with_arena_mut(this.document, xml_name_index_invalidate)?;
+    with_arena_mut(this.document, XmlDoc::invalidate_name_index)?;
     Ok(this.id)
 }
 
@@ -354,7 +357,7 @@ pub fn parse_xml_document(source: Value, limits: XmlLimits, budget: usize) -> Re
     /* Ruby-free from here: only the copied bytes and the limits cross. */
     let (result, status) =
         crate::bridge::gvl::without_gvl(|| {
-            match crate::xml::api::xml_parse_ex(src.as_slice(), Some(&limits)) {
+            match tree::parse_ex(src.as_slice(), Some(&limits)) {
                 Ok(doc) => (Box::into_raw(doc), Status::Ok),
                 Err(status) => (core::ptr::null_mut(), status),
             }
@@ -390,7 +393,7 @@ pub fn document_internal_subset(ruby: &Ruby, rb_self: Value) -> Value {
 /// A fresh, empty XML Document: an arena holding a DOCUMENT node and no root.
 pub fn new_empty_xml_document() -> Result<Value, Error> {
     let shell = DocumentShell::new(DocKind::Xml);
-    let arena = crate::xml::api::xml_doc_new()
+    let arena = XmlDoc::create(None, 0)
         .map_err(|_| makiri_error("out of memory allocating XML document"))?;
     Ok(shell.install_xml(arena))
 }
@@ -411,7 +414,7 @@ pub fn fragment_into(
     let decoded = xml_decode_input_value(source.as_value(), unsafe { (*xdoc).max_bytes })?;
     let src = crate::bridge::string::ruby_string_bytes(decoded)?;
     // SAFETY: the arena is live and mutable for this call, under the GVL.
-    crate::xml::api::xml_parse_fragment(unsafe { &mut *xdoc }, src.as_slice(), inherit_doc_ns)
+    tree::parse_fragment(unsafe { &mut *xdoc }, src.as_slice(), inherit_doc_ns)
         .map_err(|status| parse_status_error(status, Unit::Fragment))
 }
 
@@ -485,12 +488,12 @@ impl Adoption {
         let sdoc = unsafe { &mut *self.src_doc };
         if sdoc.type_(self.src) == Some(NodeType::Fragment) {
             while let Some(c) = sdoc.first_child(self.src) {
-                xml_remove(sdoc, c);
+                remove_node(sdoc, c);
             }
         } else {
-            xml_remove(sdoc, self.src);
+            remove_node(sdoc, self.src);
         }
-        xml_name_index_invalidate(sdoc);
+        sdoc.invalidate_name_index();
     }
 }
 
@@ -514,7 +517,7 @@ pub fn incoming_node(target_doc: Value, arg: Value) -> Result<(NodeId, Option<Ad
     let src_doc = arena_mut(src_document)?;
     // SAFETY: two distinct live arenas (the documents differ), both cleared
     // for writing; the source is only read here.
-    let copy = xml_mut_result(unsafe { xml_import_subtree(&mut *xd, &*src_doc, src) })?;
+    let copy = xml_mut_result(unsafe { import_subtree(&mut *xd, &*src_doc, src) })?;
     Ok((
         copy,
         Some(Adoption {
@@ -538,10 +541,10 @@ pub fn import_copy(rb_self: Value, node_v: Value, deep: bool) -> Result<NodeId, 
             if src_doc == xd {
                 /* Same arena: the single-`&mut` clone path. */
                 // SAFETY: the target arena, which is the source here.
-                xml_mut_result(unsafe { xml_clone_node(&mut *xd, src, deep) })?
+                xml_mut_result(unsafe { clone_node(&mut *xd, src, deep) })?
             } else {
                 // SAFETY: two distinct live arenas.
-                xml_mut_result(unsafe { xml_copy_node(&mut *xd, &*src_doc, src, deep) })?
+                xml_mut_result(unsafe { copy_node_from(&mut *xd, &*src_doc, src, deep) })?
             }
         }
         NodeRepr::Html => {
