@@ -195,8 +195,10 @@ mod guard_agreement {
     #[test]
     fn nothing_the_guard_keeps_makes_lexbor_fail() {
         let gvl = crate::gvl::Gvl::exclusive();
+        /* Borrowed, not `into_parser`: `parts` must still free all three when
+         * this returns, or the run leaks under LeakSanitizer. */
         let parts = ParserParts::build().expect("lexbor css parser");
-        let parser = parts.into_parser();
+        let parser = parts.as_parser();
         let _ = &gvl;
 
         let mut checked = 0;

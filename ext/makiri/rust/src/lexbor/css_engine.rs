@@ -98,6 +98,24 @@ impl ParserParts {
         Some(parts)
     }
 
+    /// A view of the three for as long as `self` lives.
+    ///
+    /// [`into_parser`] is the way to a `SelectorParser` in production, and it
+    /// gives ownership up for good - the process-global engine is never
+    /// destroyed. A test that used it would leak the whole object graph, which
+    /// is what LeakSanitizer reports. This borrows instead, so `self`'s `Drop`
+    /// still frees all three.
+    ///
+    /// [`into_parser`]: ParserParts::into_parser
+    #[cfg(test)]
+    pub(crate) fn as_parser(&self) -> SelectorParser {
+        SelectorParser {
+            parser: self.parser.as_ptr(),
+            table: self.table.as_ptr(),
+            mem: self.mem.as_ptr(),
+        }
+    }
+
     /// Hand the three on, for the life of the process.
     pub(crate) fn into_parser(self) -> SelectorParser {
         let ParserParts { parser, table, mem } = self;
