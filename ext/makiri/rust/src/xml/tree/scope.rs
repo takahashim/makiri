@@ -51,6 +51,19 @@ impl Scope {
         self.binds.truncate(frame.0);
     }
 
+    /// Close an element whose frame is missing, which cannot happen: a frame is
+    /// pushed with the element and popped with it, under one guard.
+    ///
+    /// It has a body anyway, and the body throws EVERY binding away. That is what
+    /// the code this was extracted from did (`frame.pop().unwrap_or(0)`), and the
+    /// extraction quietly turned it into "do nothing" - the wrong direction for a
+    /// fail-closed parser, where a scope stack that has lost track of its frames
+    /// must not keep answering lookups from it.
+    pub(super) fn leave_without_frame(&mut self) {
+        debug_assert!(false, "an element closed with no namespace frame");
+        self.binds.clear();
+    }
+
     /// Bind `pfx` to `uri` for the current element and everything under it.
     pub(super) fn bind(&mut self, pfx: &[u8], uri: Span) -> Result<(), ScopeFull> {
         if self.binds.len() + 1 > MAX_NS {

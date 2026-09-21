@@ -297,6 +297,14 @@ fn release_from_tree(node: HtmlNodeMut<'_>) {
 pub fn insert(this: &HtmlSelf, rb_incoming: Value, place: Place) -> Result<Value, Error> {
     let target = edit(this)?;
     let incoming = arg_node(&rb_incoming)?;
+    /* The argument is relinked too - `place` changes its parent and siblings, and
+     * an adoption removes it from its own document - so a frozen argument is a
+     * frozen node being modified. The receiver check alone let it through, which
+     * made `a.remove` raise and `span.add_child(a)` not, for the same effect on
+     * `a`. Reaches the nodes the caller NAMED; a fragment's children cannot be
+     * checked, because frozenness lives on the Ruby object and there is no map
+     * from a node back to its wrapper. */
+    crate::bridge::ruby::check_frozen(rb_incoming)?;
     Insertion::new(target.node(), place, incoming)
         .and_then(|i| i.check())
         .map_err(|e| refused(e, place))?;

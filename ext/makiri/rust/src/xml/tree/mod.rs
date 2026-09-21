@@ -399,8 +399,9 @@ impl<'a> Parser<'a> {
             return self.cur.syntax(); /* mismatched end tag */
         }
         self.stack.pop();
-        if let Some(frame) = self.frames.pop() {
-            self.scope.leave(frame);
+        match self.frames.pop() {
+            Some(frame) => self.scope.leave(frame),
+            None => self.scope.leave_without_frame(),
         }
         Ok(())
     }

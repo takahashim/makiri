@@ -253,8 +253,18 @@ allows a single root element, and a sibling target must have a parent)"
 /* lending the arena for an edit                                      */
 /* ------------------------------------------------------------------ */
 
-/// Run `f` on `document`'s arena, for a WRITE - the one way a caller outside
-/// this module gets `&mut` to an XML arena.
+/// Run `f` on `document`'s arena to build a DETACHED node - the factories'
+/// gate, and the one way a caller outside this module gets `&mut` to an XML
+/// arena without a receiver.
+///
+/// A detached node is not in the tree, so it is not in the name index and there
+/// is no receiver to check for frozenness. A TREE EDIT is [`Editing`]: it needs
+/// both, and the only way to get the `&mut` for one is to spend the token
+/// `begin_edit` hands out. The name says which of the two this is, because a
+/// mutator reaching for "the arena, mutably" would otherwise skip the checks
+/// simply by asking for the wrong thing - which is how the XML side came to have
+/// nine sites that correctly skip the index invalidation and eight that must
+/// not, with nothing but a reader's judgement telling them apart.
 ///
 /// Refused while an XPath evaluation with a handler reads the document (see
 /// [`arena_mut`]). The `&mut` lives for `f` alone, and `f` must not run Ruby:
@@ -262,20 +272,65 @@ allows a single root element, and a sibling target must have a parent)"
 /// meanwhile would alias the borrow. That is why a method converts and checks
 /// its arguments FIRST and only then calls this, with nothing but engine calls
 /// inside - which are Ruby-free by construction.
-pub fn with_arena_mut<R>(document: Value, f: impl FnOnce(&mut XmlDoc) -> R) -> Result<R, Error> {
+pub fn with_arena_for_new_node<R>(
+    document: Value,
+    f: impl FnOnce(&mut XmlDoc) -> R,
+) -> Result<R, Error> {
     let xd = arena_mut(document)?;
     // SAFETY: a live arena of `document`, which the caller holds; cleared for
     // writing above, and borrowed only for `f`, which runs no Ruby.
     Ok(f(unsafe { &mut *xd }))
 }
 
+/// The receiver cleared for an edit, and the PROOF of it.
+///
+/// [`begin_edit`] is the only way to build one and [`Editing::with_arena`] the
+/// only way to spend it, so a tree edit cannot reach the arena without the two
+/// things that must happen first: the frozen check, and dropping the name index
+/// the edit is about to invalidate.
+///
+/// [`with_arena_for_new_node`] stays for the FACTORIES, which build a detached node -
+/// not in the tree, so not in the index, and with no receiver to freeze. The
+/// HTML side has had this as one `edit` gate all along; XML had the `&mut` gate
+/// and the invalidate gate as two separate calls, and whether a site needed the
+/// second was a judgement the reader had to make at each of seventeen.
+pub struct Editing {
+    document: Value,
+    id: NodeId,
+}
+
+impl Editing {
+    /// The node being edited.
+    pub fn id(&self) -> NodeId {
+        self.id
+    }
+
+    /// Its document, for the Ruby-side work an edit does around the arena call.
+    pub fn document(&self) -> Value {
+        self.document
+    }
+
+    /// Lend the arena for the change. `f` runs no Ruby (see [`with_arena_for_new_node`]),
+    /// so every argument is converted BEFORE this - which is also why the frozen
+    /// check is in `begin_edit` rather than here: it must stay ahead of the
+    /// argument conversion, so a frozen receiver is reported before a bad
+    /// argument, as it always was.
+    pub fn with_arena<R>(&self, f: impl FnOnce(&mut XmlDoc, NodeId) -> R) -> Result<R, Error> {
+        let id = self.id;
+        with_arena_for_new_node(self.document, |d| f(d, id))
+    }
+}
+
 /// The receiver cleared for an edit - not frozen, its document not under
 /// evaluation - with the document's name index dropped, since the edit is
 /// about to change what it indexes.
-pub fn begin_edit(this: XmlSelf) -> Result<NodeId, Error> {
+pub fn begin_edit(this: XmlSelf) -> Result<Editing, Error> {
     check_frozen(this.value)?;
-    with_arena_mut(this.document, XmlDoc::invalidate_name_index)?;
-    Ok(this.id)
+    with_arena_for_new_node(this.document, XmlDoc::invalidate_name_index)?;
+    Ok(Editing {
+        document: this.document,
+        id: this.id,
+    })
 }
 
 /// A String argument verified as an engine string - valid UTF-8, no NUL - and
@@ -471,7 +526,7 @@ fn find_attribute_bytes(d: &XmlDoc, el: NodeId, name: &[u8]) -> Option<NodeId> {
 /* ------------------------------------------------------------------ */
 /* The node methods live in `glue::xml_node::mutate`. What stays here is what
  * holds two arenas - or an arena and a Lexbor document - at the same time,
- * which `with_arena_mut`'s one-at-a-time lending cannot express. */
+ * which `with_arena_for_new_node`'s one-at-a-time lending cannot express. */
 
 /// A node copied in from another document, still to be taken out of it: the
 /// second half of the move `appendChild` performs across arenas. It carries
@@ -513,6 +568,17 @@ pub fn incoming_node(target_doc: Value, arg: Value) -> Result<(NodeId, Option<Ad
             "expected a Makiri::XML node (NodeSet / String arguments are a later phase)",
         ));
     }
+    /* Inserting `arg` relinks IT - its parent, prev and next all change, and an
+     * adoption takes it out of its own document - so a frozen argument is a
+     * frozen node being modified, which the receiver check alone let through:
+     * `a.remove` raised and `b.add_child(a)` did not, for the same effect on `a`.
+     *
+     * This reaches the nodes the caller NAMED. A fragment argument splices its
+     * children, and those cannot be checked: frozenness is a property of a Ruby
+     * object and the arena has no map from a node back to its wrapper (see
+     * CLAUDE.md on why a per-node wrapper cache was rejected). A child the caller
+     * never named is out of reach by construction, not by choice. */
+    check_frozen(arg)?;
     let src = unwrap(arg)?;
     let src_document = xml_node_document(arg)?;
     if src_document.as_raw() == target_doc.as_raw() {
