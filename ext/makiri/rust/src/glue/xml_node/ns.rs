@@ -16,7 +16,7 @@ use super::strings::{str_field, utf8};
 use super::XmlSelf;
 use crate::bridge::ruby::entry;
 use crate::init::MOD_XML;
-use crate::xml::model::{Doc as XmlDoc, NodeId, NodeType};
+use crate::xml::model::{Document as XmlDoc, NodeId, NodeType};
 
 /// `Makiri::XML::Namespace.new(prefix, href)`.
 fn new_ns(prefix: Value, href: Value) -> Result<Value, Error> {

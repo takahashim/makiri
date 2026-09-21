@@ -1,76 +1,87 @@
 //! The arena, tree and mutation self-checks, run by `cargo test`.
 //!
-//! They were the C self-tests (mkr_xml_node_selftest / mkr_xml_parse_selftest /
-//! mkr_xml_mutate_selftest), ported check-for-check, and reach edge and
-//! overflow states no public API can construct. Each returns 0, or the number
-//! of the check that failed. The tree is an index arena, so the checks address
+//! They reach edge and overflow states no public API can construct - a budget
+//! lowered below what the document already holds, a hand-linked sibling chain, a
+//! document node replaced under a live tree - which is why they live inside the
+//! crate instead of in `spec/`. The tree is an index arena, so they address
 //! nodes by `NodeId` through the `Document`.
+//!
+//! Each check names the fact it is about, in its own `#[test]` where the state
+//! allows one. Where a run of checks genuinely depends on an earlier mutation of
+//! the same document, they stay together and a fixture function builds the
+//! shared starting point.
 
 #![forbid(unsafe_code)]
 
 use crate::xml::mutate;
 use crate::xml::qname;
-use crate::xml::tree::{parse_ex, parse_fragment};
+use crate::xml::tree::{parse, parse_ex, parse_fragment};
 use crate::xml::{
-    Document, Link, MutStatus, NodeId, NodeType, Status, MAX_BYTES, XMLNS_NS_URI, XML_NS_URI,
+    Document, Limits, Link, MutStatus, NodeId, NodeType, Status, MAX_BYTES, XMLNS_NS_URI,
+    XML_NS_URI,
 };
 
-fn name_is(d: &Document, n: NodeId, s: &[u8]) -> bool {
-    !n.is_invalid() && d.local(n) == s
+/* ------------------------------------------------------------------ */
+/* helpers                                                            */
+/* ------------------------------------------------------------------ */
+
+/// A byte literal as something a failure message can print.
+fn show(s: &[u8]) -> String {
+    String::from_utf8_lossy(s).into_owned()
 }
-fn val_is(d: &Document, n: NodeId, s: &[u8]) -> bool {
-    !n.is_invalid() && d.value(n) == s
+
+fn doc_new() -> Box<Document> {
+    Document::create(None, 0).expect("a fresh document")
 }
-fn ns_is(d: &Document, n: NodeId, s: &[u8]) -> bool {
-    !n.is_invalid() && d.ns(n) == s
+
+/// Parse a literal that must be well-formed.
+fn parse_ok(s: &[u8]) -> Box<Document> {
+    parse(s).unwrap_or_else(|e| panic!("{} must parse, got {e:?}", show(s)))
 }
-fn pfx_is(d: &Document, n: NodeId, s: &[u8]) -> bool {
-    !n.is_invalid() && d.prefix(n) == s
-}
-fn ns_none(d: &Document, n: NodeId) -> bool {
-    !n.is_invalid() && d.node(n).ns_uri.len == 0
-}
-fn next(d: &Document, n: NodeId) -> Option<NodeId> {
-    if n.is_invalid() {
-        None
-    } else {
-        d.next(n)
-    }
-}
-fn first(d: &Document, n: NodeId) -> Option<NodeId> {
-    if n.is_invalid() {
-        None
-    } else {
-        d.first_child(n)
+
+/// `s` must be refused, and with exactly `want` - a document that fails for the
+/// wrong reason is as much a bug as one that is accepted.
+fn assert_rejected(s: &[u8], want: Status) {
+    match parse(s) {
+        Ok(_) => panic!("accepted {}, which must fail with {want:?}", show(s)),
+        Err(got) => assert_eq!(got, want, "wrong status refusing {}", show(s)),
     }
 }
 
-fn doc_new() -> Option<Box<Document>> {
-    Document::create(None, 0).ok()
+/* The navigation these checks do is always "the node that must be there", so
+ * the accessors below fail with what was missing rather than handing back
+ * `NodeId::INVALID` for a later comparison to trip over. */
+
+fn root_of(d: &Document) -> NodeId {
+    d.root().expect("a root element")
+}
+fn child(d: &Document, n: NodeId) -> NodeId {
+    d.first_child(n).expect("a first child")
+}
+fn sibling(d: &Document, n: NodeId) -> NodeId {
+    d.next(n).expect("a next sibling")
+}
+fn attr(d: &Document, n: NodeId) -> NodeId {
+    d.attrs(n).expect("an attribute")
 }
 
-fn parse_lit(s: &[u8], st: &mut Status) -> Option<Box<Document>> {
-    match parse_ex(s, None) {
-        Ok(d) => {
-            *st = Status::Ok;
-            Some(d)
-        }
-        Err(e) => {
-            *st = e;
-            None
-        }
-    }
-}
-
-/// Parse the first `len` bytes of `src`, checking `len` against the byte
-/// budget BEFORE the bytes are touched - the C entry's guard, which a caller
-/// can reach with a length longer than the buffer it holds.
+/// Parse the first `len` bytes of `src`, checking `len` against the byte budget
+/// BEFORE the bytes are touched - a caller can reach the entry point with a
+/// length longer than the buffer it holds.
 fn parse_ex_len(src: &[u8], len: usize, limits: Option<usize>) -> Result<Box<Document>, Status> {
     let max = limits.filter(|&n| n != 0).unwrap_or(MAX_BYTES);
     if len > max {
         return Err(Status::Limit);
     }
-    parse_ex(&src[..len], limits)
+    parse_limited(&src[..len], limits)
+}
+
+/// `parse_ex` under an optional byte budget.
+fn parse_limited(src: &[u8], limits: Option<usize>) -> Result<Box<Document>, Status> {
+    match limits {
+        Some(max_bytes) => parse_ex(src, Some(&Limits { max_bytes })),
+        None => parse(src),
+    }
 }
 
 /// A fragment of `src` into `doc`, refused past the document's byte budget.
@@ -85,182 +96,143 @@ fn parse_fragment_checked(
     parse_fragment(doc, src, inherit_doc_ns)
 }
 
-/// `s` must be rejected with status `want`.
-fn rejects(s: &[u8], want: Status) -> bool {
-    let mut st = Status::Ok;
-    parse_lit(s, &mut st).is_none() && st == want
+/* ------------------------------------------------------------------ */
+/* the arena                                                          */
+/* ------------------------------------------------------------------ */
+
+#[test]
+fn a_fresh_node_is_zeroed_and_a_stored_slice_is_copied() {
+    let mut doc = doc_new();
+    let root = doc.new_node(NodeType::Element).expect("a new element");
+    let local = doc.store(b"Feed").expect("room for the name");
+
+    assert!(
+        doc.node(root).first_child.is_none(),
+        "a fresh node has no first child"
+    );
+    assert_eq!(doc.type_(root), Some(NodeType::Element));
+    assert_eq!(
+        doc.span(local),
+        b"Feed",
+        "the name was copied into the store"
+    );
+    /* An unset name field is the ABSENT marker, not a stray span into the
+     * store - the difference a doctype's `PUBLIC ""` depends on. */
+    assert!(
+        doc.node(root).qname.is_absent(),
+        "an unset qname is ABSENT, not an empty span"
+    );
 }
 
-/* ---- mkr_xml_node_selftest ---- */
-
-fn node_selftest() -> i32 {
-    node_selftest_impl()
-}
-
-fn node_selftest_impl() -> i32 {
-    let mut idx = 0;
-    let doc = Document::create(None, 0);
-    idx += 1; /* 1 */
-    let Ok(mut doc) = doc else {
-        return idx;
-    };
-
-    idx += 1; /* 2: node zero-init + byte copy into the store */
-    let root = doc.new_node(NodeType::Element);
-    let local = doc.store(b"Feed");
-    if root.is_err()
-        || local.is_err()
-        || !doc
-            .node(root.as_ref().copied().unwrap_or(NodeId::INVALID))
-            .first_child
-            .is_none()
-        || doc.type_(root.as_ref().copied().unwrap_or(NodeId::INVALID)) != Some(NodeType::Element)
-        || doc.span(local.as_ref().copied().unwrap_or(crate::xml::Span::EMPTY)) != b"Feed"
-    {
-        return idx;
-    }
-    let root = root.unwrap();
-
-    idx += 1; /* 3: an unset name field is the ABSENT marker, not a stray span */
-    if !doc.node(root).qname.is_absent() {
-        return idx;
-    }
-
-    idx += 1; /* 4: build 1000 children */
-    for _ in 0..1000 {
-        let Ok(c) = doc.new_node(NodeType::Element) else {
-            return idx;
-        };
+#[test]
+fn a_thousand_children_link_into_one_chain() {
+    let mut doc = doc_new();
+    let root = doc.new_node(NodeType::Element).expect("a new element");
+    for n in 0..1000 {
+        let c = doc
+            .new_node(NodeType::Element)
+            .unwrap_or_else(|e| panic!("child {n} of 1000: {e:?}"));
         doc.append_child(root, c);
     }
+
     let mut cnt = 0;
     let mut c = doc.first_child(root);
     while let Some(id) = c {
         cnt += 1;
         c = doc.next(id);
     }
-    if cnt != 1000 || doc.status != Status::Ok {
-        return idx;
-    }
-
-    idx += 1; /* 5: pathological size fails closed */
-    {
-        let mut doc = Document::create(None, 0).unwrap();
-        doc.max_bytes = doc.arena_bytes; /* no room left for another node */
-        if doc.new_node(NodeType::Element).is_ok() || doc.status != Status::Limit {
-            return idx;
-        }
-    }
-
-    idx += 1; /* 6: byte budget enforced inside the allocator */
-    {
-        let mut doc = Document::create(None, 0).unwrap();
-        doc.max_bytes = 4096;
-        let mut hit = false;
-        for _ in 0..100000 {
-            if doc.new_node(NodeType::Element).is_err() {
-                hit = doc.status == Status::Limit;
-                break;
-            }
-        }
-        if !hit {
-            return idx;
-        }
-    }
-
-    idx += 1; /* 7: node budget enforced */
-    {
-        let mut doc = Document::create(None, 0).unwrap();
-        doc.max_nodes = 10;
-        let mut nlimit = false;
-        for _ in 0..100 {
-            if doc.new_node(NodeType::Element).is_err() {
-                nlimit = doc.status == Status::Limit;
-                break;
-            }
-        }
-        if !nlimit {
-            return idx;
-        }
-    }
-
-    0
+    assert_eq!(cnt, 1000, "every appended child is reachable by `next`");
+    assert_eq!(doc.status, Status::Ok, "no failure was latched");
 }
 
-/* ---- mkr_xml_parse_selftest ---- */
-
-fn parse_selftest() -> i32 {
-    parse_selftest_impl()
+#[test]
+fn a_byte_budget_already_spent_refuses_the_next_node() {
+    let mut doc = doc_new();
+    /* Not reachable through the public API: the budget is lowered to what the
+     * document has ALREADY charged, so there is no room for one more node. */
+    doc.max_bytes = doc.arena_bytes;
+    assert!(
+        doc.new_node(NodeType::Element).is_err(),
+        "no room left for a node"
+    );
+    assert_eq!(doc.status, Status::Limit, "and the reason is the budget");
 }
 
-fn parse_selftest_impl() -> i32 {
-    let mut st = Status::Ok;
-    let mut i = 0;
+#[test]
+fn the_byte_budget_is_enforced_inside_the_allocator() {
+    let mut doc = doc_new();
+    doc.max_bytes = 4096;
+    for _ in 0..100_000 {
+        if doc.new_node(NodeType::Element).is_err() {
+            assert_eq!(doc.status, Status::Limit);
+            return;
+        }
+    }
+    panic!("100000 nodes fitted in a 4096-byte budget");
+}
 
-    i += 1; /* 1 */
-    let d = parse_lit(b"<Feed x='1' y='two'>hi<b/>z</Feed>", &mut st);
-    let Some(d) = d.filter(|_| st == Status::Ok) else {
-        return i;
-    };
-    i += 1; /* 2 */
-    let doc = &*d;
-    let root = doc.root().unwrap_or(NodeId::INVALID);
-    if !name_is(doc, root, b"Feed")
-        || doc.type_(root) != Some(NodeType::Element)
-        || doc.node(root).line != 1
-    {
-        return i;
+#[test]
+fn the_node_budget_is_enforced() {
+    let mut doc = doc_new();
+    doc.max_nodes = 10;
+    for _ in 0..100 {
+        if doc.new_node(NodeType::Element).is_err() {
+            assert_eq!(doc.status, Status::Limit);
+            return;
+        }
     }
-    i += 1; /* 3 */
-    let a0 = doc.attrs(root).unwrap_or(NodeId::INVALID);
-    let a1 = next(doc, a0).unwrap_or(NodeId::INVALID);
-    if a0.is_invalid()
-        || doc.type_(a0) != Some(NodeType::Attribute)
-        || !name_is(doc, a0, b"x")
-        || !val_is(doc, a0, b"1")
-        || a1.is_invalid()
-        || !name_is(doc, a1, b"y")
-        || !val_is(doc, a1, b"two")
-        || doc.next(a1).is_some()
-    {
-        return i;
-    }
-    i += 1; /* 4 */
-    let c0 = doc.first_child(root).unwrap_or(NodeId::INVALID);
-    let c1 = next(doc, c0).unwrap_or(NodeId::INVALID);
-    let c2 = next(doc, c1).unwrap_or(NodeId::INVALID);
-    if c0.is_invalid()
-        || doc.type_(c0) != Some(NodeType::Text)
-        || !val_is(doc, c0, b"hi")
-        || c1.is_invalid()
-        || doc.type_(c1) != Some(NodeType::Element)
-        || !name_is(doc, c1, b"b")
-        || doc.first_child(c1).is_some()
-        || c2.is_invalid()
-        || doc.type_(c2) != Some(NodeType::Text)
-        || !val_is(doc, c2, b"z")
-        || doc.next(c2).is_some()
-    {
-        return i;
-    }
-    i += 1; /* 5 */
-    if doc.parent(c1) != Some(root) || doc.prev(c1) != Some(c0) || doc.prev(c2) != Some(c1) {
-        return i;
-    }
+    panic!("100 nodes fitted in a 10-node budget");
+}
 
-    i += 1; /* 6: case sensitivity */
-    let d = parse_lit(b"<X><x/></X>", &mut st);
-    let Some(d) = d else {
-        return i;
-    };
-    let doc = &*d;
-    let root = doc.root().unwrap_or(NodeId::INVALID);
-    let f = doc.first_child(root).unwrap_or(NodeId::INVALID);
-    if !name_is(doc, root, b"X") || !name_is(doc, f, b"x") {
-        return i;
-    }
+/* ------------------------------------------------------------------ */
+/* parsing                                                            */
+/* ------------------------------------------------------------------ */
 
-    i += 1; /* 7: well-formedness errors fail closed */
+#[test]
+fn a_document_parses_into_elements_attributes_and_text() {
+    let doc = parse_ok(b"<Feed x='1' y='two'>hi<b/>z</Feed>");
+    let root = root_of(&doc);
+    assert_eq!(doc.local(root), b"Feed");
+    assert_eq!(doc.type_(root), Some(NodeType::Element));
+    assert_eq!(doc.node(root).line, 1, "the root starts on line 1");
+
+    let a0 = attr(&doc, root);
+    let a1 = sibling(&doc, a0);
+    assert_eq!(doc.type_(a0), Some(NodeType::Attribute));
+    assert_eq!(doc.local(a0), b"x");
+    assert_eq!(doc.value(a0), b"1");
+    assert_eq!(doc.local(a1), b"y");
+    assert_eq!(doc.value(a1), b"two");
+    assert!(doc.next(a1).is_none(), "and no third attribute");
+
+    let c0 = child(&doc, root);
+    let c1 = sibling(&doc, c0);
+    let c2 = sibling(&doc, c1);
+    assert_eq!(doc.type_(c0), Some(NodeType::Text));
+    assert_eq!(doc.value(c0), b"hi");
+    assert_eq!(doc.type_(c1), Some(NodeType::Element));
+    assert_eq!(doc.local(c1), b"b");
+    assert!(doc.first_child(c1).is_none(), "<b/> is empty");
+    assert_eq!(doc.type_(c2), Some(NodeType::Text));
+    assert_eq!(doc.value(c2), b"z");
+    assert!(doc.next(c2).is_none(), "and no fourth child");
+
+    /* The parent and prev links, which nothing above reads. */
+    assert_eq!(doc.parent(c1), Some(root));
+    assert_eq!(doc.prev(c1), Some(c0));
+    assert_eq!(doc.prev(c2), Some(c1));
+}
+
+#[test]
+fn element_names_are_case_sensitive() {
+    let doc = parse_ok(b"<X><x/></X>");
+    let root = root_of(&doc);
+    assert_eq!(doc.local(root), b"X");
+    assert_eq!(doc.local(child(&doc, root)), b"x");
+}
+
+#[test]
+fn well_formedness_errors_fail_closed() {
     for s in [
         &b"<a>"[..],
         b"<a></b>",
@@ -269,783 +241,794 @@ fn parse_selftest_impl() -> i32 {
         b"<a x=>",
         b"<a y='<'>",
     ] {
-        if !rejects(s, Status::Syntax) {
-            return i;
-        }
+        assert_rejected(s, Status::Syntax);
     }
+}
 
-    i += 1; /* 8: references expand */
-    let d = parse_lit(
-        b"<a x='p&amp;q' y='&#65;&#x42;'>1&lt;2&gt;3&amp;4&apos;5&quot;6</a>",
-        &mut st,
-    );
-    let Some(d) = d.filter(|_| st == Status::Ok) else {
-        return i;
-    };
-    {
-        let doc = &*d;
-        let r = doc.root().unwrap_or(NodeId::INVALID);
-        let ax = doc.attrs(r).unwrap_or(NodeId::INVALID);
-        let ay = next(doc, ax).unwrap_or(NodeId::INVALID);
-        let tx = doc.first_child(r).unwrap_or(NodeId::INVALID);
-        if !val_is(doc, ax, b"p&q")
-            || !val_is(doc, ay, b"AB")
-            || tx.is_invalid()
-            || doc.type_(tx) != Some(NodeType::Text)
-            || !val_is(doc, tx, b"1<2>3&4'5\"6")
-        {
-            return i;
-        }
-    }
+#[test]
+fn the_predefined_entities_and_character_references_expand() {
+    let doc = parse_ok(b"<a x='p&amp;q' y='&#65;&#x42;'>1&lt;2&gt;3&amp;4&apos;5&quot;6</a>");
+    let r = root_of(&doc);
+    let ax = attr(&doc, r);
+    let ay = sibling(&doc, ax);
+    let tx = child(&doc, r);
+    assert_eq!(doc.value(ax), b"p&q");
+    assert_eq!(doc.value(ay), b"AB");
+    assert_eq!(doc.type_(tx), Some(NodeType::Text));
+    assert_eq!(doc.value(tx), b"1<2>3&4'5\"6");
+}
 
-    i += 1; /* 9: bad references fail closed */
+#[test]
+fn bad_references_fail_closed() {
     for s in [
-        &b"<a>&nbsp;</a>"[..],
-        b"<a>x & y</a>",
-        b"<a>&#0;</a>",
-        b"<a>&#xD800;</a>",
-        b"<a>&#;</a>",
+        &b"<a>&nbsp;</a>"[..], /* undeclared entity */
+        b"<a>x & y</a>",       /* a bare ampersand */
+        b"<a>&#0;</a>",        /* U+0000 is not an XML Char */
+        b"<a>&#xD800;</a>",    /* a surrogate */
+        b"<a>&#;</a>",         /* no digits */
     ] {
-        if !rejects(s, Status::Syntax) {
-            return i;
-        }
+        assert_rejected(s, Status::Syntax);
     }
+}
 
-    i += 1; /* 10: namespaces */
-    let d = parse_lit(
-        b"<a:e xmlns:a='urn:a' xmlns='urn:d' a:x='1' y='2'><c/></a:e>",
-        &mut st,
+#[test]
+fn namespaces_resolve_on_elements_and_attributes() {
+    let doc = parse_ok(b"<a:e xmlns:a='urn:a' xmlns='urn:d' a:x='1' y='2'><c/></a:e>");
+    let r = root_of(&doc);
+    assert_eq!(doc.local(r), b"e");
+    assert_eq!(doc.prefix(r), b"a");
+    assert_eq!(doc.ns(r), b"urn:a");
+
+    let c = child(&doc, r);
+    assert_eq!(doc.local(c), b"c");
+    assert_eq!(doc.ns(c), b"urn:d", "an unprefixed child takes the default");
+
+    /* The xmlns declarations stay as attribute nodes, in source order, and in
+     * the XMLNS namespace (§7.2). */
+    let a = attr(&doc, r);
+    assert_eq!(doc.local(a), b"a");
+    assert_eq!(doc.prefix(a), b"xmlns");
+    assert_eq!(doc.ns(a), XMLNS_NS_URI);
+
+    let a = sibling(&doc, a);
+    assert_eq!(doc.local(a), b"xmlns");
+    assert_eq!(doc.node(a).prefix.len, 0, "`xmlns` alone has no prefix");
+
+    let a = sibling(&doc, a);
+    assert_eq!(doc.local(a), b"x");
+    assert_eq!(doc.prefix(a), b"a");
+    assert_eq!(doc.ns(a), b"urn:a");
+    assert_eq!(doc.value(a), b"1");
+
+    let a = sibling(&doc, a);
+    assert_eq!(doc.local(a), b"y");
+    assert_eq!(doc.node(a).prefix.len, 0);
+    assert_eq!(
+        doc.node(a).ns_uri.len,
+        0,
+        "an unprefixed ATTRIBUTE is in no namespace, default or not"
     );
-    let Some(d) = d.filter(|_| st == Status::Ok) else {
-        return i;
-    };
-    {
-        let doc = &*d;
-        let r = doc.root().unwrap_or(NodeId::INVALID);
-        if !name_is(doc, r, b"e") || !pfx_is(doc, r, b"a") || !ns_is(doc, r, b"urn:a") {
-            return i;
-        }
-        let c = doc.first_child(r).unwrap_or(NodeId::INVALID);
-        if !name_is(doc, c, b"c") || !ns_is(doc, c, b"urn:d") {
-            return i;
-        }
-        let a = doc.attrs(r).unwrap_or(NodeId::INVALID);
-        if a.is_invalid()
-            || !name_is(doc, a, b"a")
-            || !pfx_is(doc, a, b"xmlns")
-            || !ns_is(doc, a, XMLNS_NS_URI)
-        {
-            return i;
-        }
-        let a = next(doc, a).unwrap_or(NodeId::INVALID);
-        if a.is_invalid() || !name_is(doc, a, b"xmlns") || doc.node(a).prefix.len != 0 {
-            return i;
-        }
-        let a = next(doc, a).unwrap_or(NodeId::INVALID);
-        if a.is_invalid()
-            || !name_is(doc, a, b"x")
-            || !pfx_is(doc, a, b"a")
-            || !ns_is(doc, a, b"urn:a")
-            || !val_is(doc, a, b"1")
-        {
-            return i;
-        }
-        let a = next(doc, a).unwrap_or(NodeId::INVALID);
-        if a.is_invalid()
-            || !name_is(doc, a, b"y")
-            || doc.node(a).prefix.len != 0
-            || !ns_none(doc, a)
-            || !val_is(doc, a, b"2")
-        {
-            return i;
-        }
-    }
+    assert_eq!(doc.value(a), b"2");
+}
 
-    i += 1; /* 11: namespace errors fail closed */
+#[test]
+fn namespace_errors_fail_closed() {
     for s in [
-        &b"<a:b/>"[..],
-        b"<a x:y='1'/>",
-        b"<a xmlns:xml='wrong'/>",
-        b"<a:b xmlns:a=''/>",
+        &b"<a:b/>"[..],            /* unbound prefix */
+        b"<a x:y='1'/>",           /* unbound attribute prefix */
+        b"<a xmlns:xml='wrong'/>", /* the reserved xml: prefix */
+        b"<a:b xmlns:a=''/>",      /* XML 1.0 forbids xmlns:p="" */
     ] {
-        if !rejects(s, Status::Syntax) {
-            return i;
-        }
+        assert_rejected(s, Status::Syntax);
     }
+}
 
-    i += 1; /* 12: attribute-value normalization */
-    let d = parse_lit(b"<a x=\"p\tq\nr\" y=\"p&#9;q&#10;r\">u\tv\nw</a>", &mut st);
-    let Some(d) = d.filter(|_| st == Status::Ok) else {
-        return i;
-    };
-    {
-        let doc = &*d;
-        let r = doc.root().unwrap_or(NodeId::INVALID);
-        let ax = doc.attrs(r).unwrap_or(NodeId::INVALID);
-        let ay = next(doc, ax).unwrap_or(NodeId::INVALID);
-        let tx = doc.first_child(r).unwrap_or(NodeId::INVALID);
-        if !val_is(doc, ax, b"p q r")
-            || !val_is(doc, ay, b"p\tq\nr")
-            || tx.is_invalid()
-            || doc.type_(tx) != Some(NodeType::Text)
-            || !val_is(doc, tx, b"u\tv\nw")
-        {
-            return i;
-        }
-    }
+#[test]
+fn attribute_values_normalize_literal_whitespace_but_not_references() {
+    let doc = parse_ok(b"<a x=\"p\tq\nr\" y=\"p&#9;q&#10;r\">u\tv\nw</a>");
+    let r = root_of(&doc);
+    let ax = attr(&doc, r);
+    let ay = sibling(&doc, ax);
+    let tx = child(&doc, r);
+    assert_eq!(doc.value(ax), b"p q r", "§3.3.3 folds a LITERAL tab/LF");
+    assert_eq!(
+        doc.value(ay),
+        b"p\tq\nr",
+        "a reference-derived one survives"
+    );
+    assert_eq!(doc.type_(tx), Some(NodeType::Text));
+    assert_eq!(doc.value(tx), b"u\tv\nw", "text is not folded at all");
+}
 
-    i += 1; /* 13: comment / CDATA / PI nodes; prolog PI + comment retained */
-    let d = parse_lit(
+#[test]
+fn comments_cdata_and_pis_become_nodes_inside_and_around_the_root() {
+    let doc = parse_ok(
         b"<?xml version=\"1.0\"?><?xml-stylesheet href=\"x\"?><!--top--><r><!--c--><![CDATA[a<b]]><?pi dat?></r><?tail t?>",
-        &mut st,
     );
-    let Some(d) = d.filter(|_| st == Status::Ok) else {
-        return i;
-    };
-    {
-        let doc = &*d;
-        let r = doc.root().unwrap_or(NodeId::INVALID);
-        if !name_is(doc, r, b"r") {
-            return i;
-        }
-        let cm = doc.first_child(r).unwrap_or(NodeId::INVALID);
-        let cd = next(doc, cm).unwrap_or(NodeId::INVALID);
-        let pi = next(doc, cd).unwrap_or(NodeId::INVALID);
-        if cm.is_invalid()
-            || doc.type_(cm) != Some(NodeType::Comment)
-            || !val_is(doc, cm, b"c")
-            || cd.is_invalid()
-            || doc.type_(cd) != Some(NodeType::CData)
-            || !val_is(doc, cd, b"a<b")
-            || pi.is_invalid()
-            || doc.type_(pi) != Some(NodeType::Pi)
-            || !name_is(doc, pi, b"pi")
-            || !val_is(doc, pi, b"dat")
-            || doc.next(pi).is_some()
-        {
-            return i;
-        }
-        let dn = doc.doc_node();
-        let p1 = first(doc, dn).unwrap_or(NodeId::INVALID);
-        let p2 = next(doc, p1).unwrap_or(NodeId::INVALID);
-        let p3 = next(doc, p2).unwrap_or(NodeId::INVALID);
-        let p4 = next(doc, p3).unwrap_or(NodeId::INVALID);
-        if p1.is_invalid()
-            || doc.type_(p1) != Some(NodeType::Pi)
-            || !name_is(doc, p1, b"xml-stylesheet")
-            || p2.is_invalid()
-            || doc.type_(p2) != Some(NodeType::Comment)
-            || !val_is(doc, p2, b"top")
-            || p3 != r
-            || doc.parent(r) != Some(dn)
-            || p4.is_invalid()
-            || doc.type_(p4) != Some(NodeType::Pi)
-            || !name_is(doc, p4, b"tail")
-            || doc.next(p4).is_some()
-        {
-            return i;
-        }
-    }
+    let r = root_of(&doc);
+    assert_eq!(doc.local(r), b"r");
 
-    i += 1; /* 14: §9 fail-closed cases */
+    let cm = child(&doc, r);
+    let cd = sibling(&doc, cm);
+    let pi = sibling(&doc, cd);
+    assert_eq!(doc.type_(cm), Some(NodeType::Comment));
+    assert_eq!(doc.value(cm), b"c");
+    assert_eq!(doc.type_(cd), Some(NodeType::CData));
+    assert_eq!(doc.value(cd), b"a<b");
+    assert_eq!(doc.type_(pi), Some(NodeType::Pi));
+    assert_eq!(doc.local(pi), b"pi");
+    assert_eq!(doc.value(pi), b"dat");
+    assert!(doc.next(pi).is_none(), "and nothing after the PI");
+
+    /* The prolog's PI and comment are kept, as siblings of the root. */
+    let dn = doc.doc_node();
+    let p1 = child(&doc, dn);
+    let p2 = sibling(&doc, p1);
+    let p3 = sibling(&doc, p2);
+    let p4 = sibling(&doc, p3);
+    assert_eq!(doc.type_(p1), Some(NodeType::Pi));
+    assert_eq!(doc.local(p1), b"xml-stylesheet");
+    assert_eq!(doc.type_(p2), Some(NodeType::Comment));
+    assert_eq!(doc.value(p2), b"top");
+    assert_eq!(p3, r, "the root is the document node's third child");
+    assert_eq!(doc.parent(r), Some(dn));
+    assert_eq!(doc.type_(p4), Some(NodeType::Pi));
+    assert_eq!(doc.local(p4), b"tail");
+    assert!(doc.next(p4).is_none(), "and nothing after the trailing PI");
+}
+
+#[test]
+fn section_9_violations_fail_closed() {
     for s in [
-        &b"<r/><!DOCTYPE r>"[..],
-        b"<r><!-- a--b --></r>",
-        b"<r><!-- c </r>",
-        b" <?xml version=\"1.0\"?><r/>",
-        b"<![CDATA[x]]><r/>",
-        b"<r><?a:b x?></r>",              /* NS §7: PI target is an NCName */
-        b"<!DOCTYPE r [ <!BOGUS> ]><r/>", /* §5.1: the subset is checked */
+        &b"<r/><!DOCTYPE r>"[..],                    /* a DOCTYPE after the root */
+        b"<r><!-- a--b --></r>",                     /* '--' inside a comment */
+        b"<r><!-- c </r>",                           /* unterminated comment */
+        b" <?xml version=\"1.0\"?><r/>",             /* the declaration must be first */
+        b"<![CDATA[x]]><r/>",                        /* CDATA outside the root */
+        b"<r><?a:b x?></r>",                         /* NS §7: PI target is an NCName */
+        b"<!DOCTYPE r [ <!BOGUS> ]><r/>",            /* §5.1: the subset is checked */
         b"<!DOCTYPE r [ <!ENTITY e \"%p;\"> ]><r/>", /* WFC: PEs in Internal Subset */
     ] {
-        if !rejects(s, Status::Syntax) {
-            return i;
-        }
+        assert_rejected(s, Status::Syntax);
     }
-    /* Well-formed, but it declares what Makiri would have to apply. */
-    for s in [
-        &b"<!DOCTYPE r [ <!ENTITY x \"y\"> ]><r>&x;</r>"[..],
-        b"<!DOCTYPE r [ <!ATTLIST r k CDATA \"d\"> ]><r/>",
-        b"<!DOCTYPE r [ <!ATTLIST r k ID #IMPLIED> ]><r/>",
-        b"<!DOCTYPE r [ <!ENTITY % p \"x\"> %p; ]><r/>",
-    ] {
-        if !rejects(s, Status::Unsupported) {
-            return i;
-        }
-    }
+}
 
-    i += 1; /* 14b: DOCTYPE recognized, not processed */
-    let d = parse_lit(
-        b"<!DOCTYPE r SYSTEM \"a>b\" [ <!ELEMENT r (#PCDATA)> ]><r>ok</r>",
-        &mut st,
+#[test]
+fn a_dtd_construct_makiri_would_have_to_apply_is_refused_not_ignored() {
+    /* Well-formed every one of them; each would change the tree if applied, so
+     * the parse fails rather than answering a document the DTD disagrees with. */
+    for s in [
+        &b"<!DOCTYPE r [ <!ENTITY x \"y\"> ]><r>&x;</r>"[..], /* a declared entity, referenced */
+        b"<!DOCTYPE r [ <!ATTLIST r k CDATA \"d\"> ]><r/>",   /* an attribute default */
+        b"<!DOCTYPE r [ <!ATTLIST r k ID #IMPLIED> ]><r/>",   /* a non-CDATA type */
+        b"<!DOCTYPE r [ <!ENTITY % p \"x\"> %p; ]><r/>",      /* a parameter entity */
+    ] {
+        assert_rejected(s, Status::Unsupported);
+    }
+}
+
+#[test]
+fn a_doctype_is_recognized_and_kept_but_not_processed() {
+    let doc = parse_ok(b"<!DOCTYPE r SYSTEM \"a>b\" [ <!ELEMENT r (#PCDATA)> ]><r>ok</r>");
+    let r = root_of(&doc);
+    assert_eq!(doc.local(r), b"r");
+    assert_eq!(doc.value(child(&doc, r)), b"ok");
+
+    let dt = doc.doctype().expect("a doctype node");
+    assert_eq!(doc.type_(dt), Some(NodeType::Doctype));
+    assert_eq!(doc.parent(dt), Some(doc.doc_node()));
+    assert_eq!(doc.first_child(doc.doc_node()), Some(dt));
+    assert!(doc.prev(dt).is_none(), "the doctype comes first");
+    assert_eq!(doc.next(dt), Some(r), "and the root next");
+    assert_eq!(doc.local(dt), b"r");
+    assert!(
+        doc.node(dt).prefix.is_absent(),
+        "no PUBLIC id was written, which is not the same as an empty one"
     );
-    let Some(d) = d.filter(|_| st == Status::Ok) else {
-        return i;
-    };
-    {
-        let doc = &*d;
-        let r = doc.root().unwrap_or(NodeId::INVALID);
-        if !name_is(doc, r, b"r") || !val_is(doc, first(doc, r).unwrap_or(NodeId::INVALID), b"ok") {
-            return i;
-        }
-        let dt = doc.doctype().unwrap_or(NodeId::INVALID);
-        if dt.is_invalid()
-            || doc.type_(dt) != Some(NodeType::Doctype)
-            || doc.parent(dt) != Some(doc.doc_node())
-            || first(doc, doc.doc_node()) != Some(dt)
-            || doc.prev(dt).is_some()
-            || doc.next(dt) != Some(r)
-            || doc.local(dt) != b"r"
-            || !doc.node(dt).prefix.is_absent()
-            || doc.value(dt) != b"a>b"
-        {
-            return i;
-        }
-    }
+    assert_eq!(doc.value(dt), b"a>b", "the SYSTEM id may hold '>'");
+}
 
-    i += 1; /* 15: line-ending normalization */
-    let d = parse_lit(b"<a x=\"p\r\nq\r\">m\r\nn\ro</a>", &mut st);
-    let Some(d) = d.filter(|_| st == Status::Ok) else {
-        return i;
-    };
-    {
-        let doc = &*d;
-        let r = doc.root().unwrap_or(NodeId::INVALID);
-        let ax = doc.attrs(r).unwrap_or(NodeId::INVALID);
-        let tx = doc.first_child(r).unwrap_or(NodeId::INVALID);
-        if !val_is(doc, ax, b"p q ")
-            || tx.is_invalid()
-            || doc.type_(tx) != Some(NodeType::Text)
-            || !val_is(doc, tx, b"m\nn\no")
-        {
-            return i;
-        }
-    }
+#[test]
+fn line_endings_normalize_to_lf() {
+    let doc = parse_ok(b"<a x=\"p\r\nq\r\">m\r\nn\ro</a>");
+    let r = root_of(&doc);
+    let ax = attr(&doc, r);
+    let tx = child(&doc, r);
+    assert_eq!(
+        doc.value(ax),
+        b"p q ",
+        "CRLF folds to LF, then LF to a space"
+    );
+    assert_eq!(doc.type_(tx), Some(NodeType::Text));
+    assert_eq!(doc.value(tx), b"m\nn\no");
+}
 
-    i += 1; /* 16: strict names + duplicate attributes + "]]>" */
+#[test]
+fn strict_names_duplicate_attributes_and_a_bare_cdata_close_fail_closed() {
     for s in [
-        &b"<1bad/>"[..],
-        b"<a:1b xmlns:a='u'/>",
-        b"<a x='1' x='2'/>",
-        b"<e xmlns:a='u' xmlns:b='u' a:x='1' b:x='2'/>",
-        b"<a>foo]]>bar</a>",
+        &b"<1bad/>"[..],                                 /* not a NameStartChar */
+        b"<a:1b xmlns:a='u'/>",                          /* nor is the local part */
+        b"<a x='1' x='2'/>",                             /* §9.3, by raw QName */
+        b"<e xmlns:a='u' xmlns:b='u' a:x='1' b:x='2'/>", /* §9.3, by (ns, local) */
+        b"<a>foo]]>bar</a>",                             /* §2.4 */
     ] {
-        if !rejects(s, Status::Syntax) {
-            return i;
-        }
+        assert_rejected(s, Status::Syntax);
     }
-    let d = parse_lit(b"<a>1]2]]3</a>", &mut st);
-    let Some(d) = d.filter(|_| st == Status::Ok) else {
-        return i;
-    };
-    {
-        let doc = &*d;
-        let r = doc.root().unwrap_or(NodeId::INVALID);
-        if !val_is(doc, first(doc, r).unwrap_or(NodeId::INVALID), b"1]2]]3") {
-            return i;
-        }
-    }
+    /* Only the full "]]>" is forbidden, not the brackets that lead to it. */
+    let doc = parse_ok(b"<a>1]2]]3</a>");
+    let r = root_of(&doc);
+    assert_eq!(doc.value(child(&doc, r)), b"1]2]]3");
+}
 
-    i += 1; /* 17: XML declaration grammar + reserved / colon PI targets */
-    {
-        let d = parse_lit(
-            b"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><r/>",
-            &mut st,
+#[test]
+fn the_xml_declaration_grammar_is_enforced() {
+    parse_ok(b"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><r/>");
+    for s in [
+        &b"<?xml VERSION=\"1.0\"?><r/>"[..], /* keywords are lowercase */
+        b"<?xml version=\"1.0\" standalone=\"YES\"?><r/>", /* so are the values */
+        b"<?xml encoding=\"UTF-8\"?><r/>",   /* version is required */
+        b"<?xml version=\"1.0\"encoding=\"UTF-8\"?><r/>", /* S-separated */
+        b"<?xml version=\"1.0\" version=\"1.0\"?><r/>", /* once each */
+        b"<?xml version=\"1.0\" valid=\"no\"?><r/>", /* and no others */
+        b"<?xml version=\"1.0' ?><r/>",      /* mismatched quotes */
+        b"<?xml version=\"1.0^\"?><r/>",     /* not a VersionNum */
+        b"<?XML version=\"1.0\"?><r/>",      /* §2.6 reserved target */
+        b"<a x=\"1\"y=\"2\"/>",              /* §3.1 S-separated */
+        b"<a>&#X58;</a>",                    /* §4.1: lowercase 'x' only */
+    ] {
+        assert_rejected(s, Status::Syntax);
+    }
+    /* §2.8: a 1.x label is read as 1.0; 2.0 is not a VersionNum at all. */
+    parse_ok(b"<?xml version=\"1.1\"?><r/>");
+    parse_ok(b"<?xml version=\"1.5\"?><r/>");
+    assert_rejected(b"<?xml version=\"2.0\"?><r/>", Status::Syntax);
+}
+
+#[test]
+fn the_byte_budget_is_checked_before_the_source_is_read() {
+    let tiny = b"<r/>";
+    /* An over-long LENGTH is refused without `parse_ex_len` ever slicing - which
+     * it could not, holding only four bytes. */
+    assert_eq!(
+        parse_ex_len(tiny, MAX_BYTES + 1, None).err(),
+        Some(Status::Limit)
+    );
+    parse_ok(tiny);
+}
+
+#[test]
+fn a_per_parse_byte_budget_overrides_the_default() {
+    let src = b"<root><a/><b/><c/></root>";
+    for max in [2, 64] {
+        assert_eq!(
+            parse_ex_len(src, src.len(), Some(max)).err(),
+            Some(Status::Limit),
+            "{max} bytes cannot hold this document's arena"
         );
-        if d.is_none() || st != Status::Ok {
-            return i;
-        }
-        for s in [
-            &b"<?xml VERSION=\"1.0\"?><r/>"[..],
-            b"<?xml version=\"1.0\" standalone=\"YES\"?><r/>",
-            b"<?xml encoding=\"UTF-8\"?><r/>",
-            b"<?xml version=\"1.0\"encoding=\"UTF-8\"?><r/>",
-            b"<?xml version=\"1.0\" version=\"1.0\"?><r/>",
-            b"<?xml version=\"1.0\" valid=\"no\"?><r/>",
-            b"<?xml version=\"1.0' ?><r/>",
-            b"<?xml version=\"1.0^\"?><r/>",
-            b"<?XML version=\"1.0\"?><r/>",
-            b"<a x=\"1\"y=\"2\"/>",
-            b"<a>&#X58;</a>",
-        ] {
-            if !rejects(s, Status::Syntax) {
-                return i;
-            }
-        }
-        /* §2.8: a 1.x label is read as 1.0; 2.0 is not a VersionNum at all. */
-        if parse_ex(b"<?xml version=\"1.1\"?><r/>", None).is_err()
-            || parse_ex(b"<?xml version=\"1.5\"?><r/>", None).is_err()
-            || !rejects(b"<?xml version=\"2.0\"?><r/>", Status::Syntax)
-        {
-            return i;
-        }
     }
-
-    i += 1; /* 18: byte-budget entry guard (src not dereferenced) */
-    {
-        let tiny = b"<r/>";
-        match parse_ex_len(tiny, MAX_BYTES + 1, None) {
-            Err(Status::Limit) => {}
-            Ok(_) => return i,
-            Err(_) => return i,
-        }
-        let d = parse_lit(tiny, &mut st);
-        if d.is_none() || st != Status::Ok {
-            return i;
-        }
-    }
-
-    i += 1; /* 19: per-parse override */
-    {
-        let src = b"<root><a/><b/><c/></root>";
-        match parse_ex_len(src, src.len(), Some(2)) {
-            Err(Status::Limit) => {}
-            Ok(_) => return i,
-            Err(_) => return i,
-        }
-        match parse_ex_len(src, src.len(), Some(64)) {
-            Err(Status::Limit) => {}
-            Ok(_) => return i,
-            Err(_) => return i,
-        }
-        match parse_ex_len(src, src.len(), Some(1024 * 1024)) {
-            Ok(d) => {
-                if !name_is(&d, d.root().unwrap_or(NodeId::INVALID), b"root") {
-                    return i;
-                }
-            }
-            Err(_) => return i,
-        }
-        match parse_ex_len(src, src.len(), Some(0)) {
-            Ok(_) => {}
-            Err(_) => return i,
-        }
-    }
-
-    i += 1; /* 20: fragment - multiple top-level nodes */
-    {
-        let fsrc = b"<a/>txt<p:b xmlns:p='urn:p'>x</p:b>";
-        let fd = doc_new();
-        let Some(mut fd) = fd else {
-            return i;
-        };
-        let frag = match parse_fragment_checked(&mut fd, fsrc, false) {
-            Ok(f) => f,
-            Err(_) => {
-                return i;
-            }
-        };
-        let d = &fd;
-        if d.type_(frag) != Some(NodeType::Fragment) {
-            return i;
-        }
-        let c0 = d.first_child(frag).unwrap_or(NodeId::INVALID);
-        let c1 = next(d, c0).unwrap_or(NodeId::INVALID);
-        let c2 = next(d, c1).unwrap_or(NodeId::INVALID);
-        if !name_is(d, c0, b"a")
-            || d.type_(c0) != Some(NodeType::Element)
-            || c1.is_invalid()
-            || d.type_(c1) != Some(NodeType::Text)
-            || !val_is(d, c1, b"txt")
-            || !name_is(d, c2, b"b")
-            || !ns_is(d, c2, b"urn:p")
-            || d.next(c2).is_some()
-        {
-            return i;
-        }
-    }
-
-    i += 1; /* 21: a fragment fails closed */
-    {
-        let fd = doc_new();
-        let Some(mut fd) = fd else {
-            return i;
-        };
-        for s in [
-            &b"<?xml version='1.0'?>"[..],
-            b"<!DOCTYPE r>",
-            b"</x>",
-            b"<a>",
-            b"<p:a/>",
-        ] {
-            if parse_fragment_checked(&mut fd, s, false).is_ok() {
-                return i;
-            }
-        }
-    }
-
-    i += 1; /* 22: inherit_doc_ns */
-    {
-        let fsrc = b"<p:a/><plain/>";
-        let fd = parse_lit(b"<r xmlns:p='urn:p' xmlns='urn:d'/>", &mut st);
-        let Some(mut fd) = fd.filter(|_| st == Status::Ok) else {
-            return i;
-        };
-        let frag = parse_fragment_checked(&mut fd, fsrc, true).unwrap_or(NodeId::INVALID);
-        let d = &fd;
-        let a = first(d, frag).unwrap_or(NodeId::INVALID);
-        let plain = next(d, a).unwrap_or(NodeId::INVALID);
-        if frag.is_invalid() || !ns_is(d, a, b"urn:p") || !ns_is(d, plain, b"urn:d") {
-            return i;
-        }
-    }
-
-    0
+    let d = parse_ex_len(src, src.len(), Some(1024 * 1024)).expect("a megabyte is plenty");
+    assert_eq!(d.local(root_of(&d)), b"root");
+    /* 0 is not "no room": it selects the default budget. */
+    parse_ex_len(src, src.len(), Some(0)).expect("0 means the default budget");
 }
 
-/* ---- mkr_xml_mutate_selftest ---- */
+#[test]
+fn a_fragment_holds_several_top_level_nodes() {
+    let mut fd = doc_new();
+    let frag = parse_fragment_checked(&mut fd, b"<a/>txt<p:b xmlns:p='urn:p'>x</p:b>", false)
+        .expect("a well-formed fragment");
+    assert_eq!(fd.type_(frag), Some(NodeType::Fragment));
 
-fn mutate_selftest() -> i32 {
-    mutate_selftest_impl()
+    let c0 = child(&fd, frag);
+    let c1 = sibling(&fd, c0);
+    let c2 = sibling(&fd, c1);
+    assert_eq!(fd.type_(c0), Some(NodeType::Element));
+    assert_eq!(fd.local(c0), b"a");
+    assert_eq!(fd.type_(c1), Some(NodeType::Text));
+    assert_eq!(fd.value(c1), b"txt");
+    assert_eq!(fd.local(c2), b"b");
+    assert_eq!(fd.ns(c2), b"urn:p", "a fragment may declare its own prefix");
+    assert!(fd.next(c2).is_none(), "and no fourth top-level node");
 }
 
-fn mutate_selftest_impl() -> i32 {
-    let Some(mut doc) = doc_new() else {
-        return 1;
-    };
-    mutate_selftest_body(&mut doc)
+#[test]
+fn a_fragment_fails_closed() {
+    let mut fd = doc_new();
+    for s in [
+        &b"<?xml version='1.0'?>"[..], /* no declaration in a fragment */
+        b"<!DOCTYPE r>",               /* nor a doctype */
+        b"</x>",                       /* nor an unmatched end tag */
+        b"<a>",                        /* nor an unclosed element */
+        b"<p:a/>",                     /* and an unbound prefix is still unbound */
+    ] {
+        assert!(
+            parse_fragment_checked(&mut fd, s, false).is_err(),
+            "accepted the fragment {}",
+            show(s)
+        );
+    }
 }
 
-fn mutate_selftest_body(doc: &mut Document) -> i32 {
-    let invalid = NodeId::INVALID;
+#[test]
+fn a_fragment_can_inherit_the_documents_namespaces() {
+    let mut fd = parse_ok(b"<r xmlns:p='urn:p' xmlns='urn:d'/>");
+    let frag = parse_fragment_checked(&mut fd, b"<p:a/><plain/>", true)
+        .expect("the root's prefixes are in scope");
+    let a = child(&fd, frag);
+    let plain = sibling(&fd, a);
+    assert_eq!(fd.ns(a), b"urn:p", "the declared prefix resolved");
+    assert_eq!(fd.ns(plain), b"urn:d", "and so did the default");
+}
 
-    /* 1. QName validation + split */
-    match qname::split_checked(b"a:b") {
-        Some(q) if q.prefix_len == 1 && q.local_len == 1 => {}
-        _ => return 2,
-    }
-    if qname::split_checked(b"1bad").is_some() {
-        return 3;
-    }
-    if qname::split_checked(b"a:b:c").is_some() {
-        return 4;
-    }
-    if qname::split_checked(b":x").is_some() {
-        return 5;
-    }
-    if qname::split_checked(b"x:").is_some() {
-        return 6;
-    }
+/* ------------------------------------------------------------------ */
+/* mutation                                                           */
+/* ------------------------------------------------------------------ */
 
-    /* 2. root element, attribute set/replace */
-    let r = match doc.new_node(NodeType::Element) {
-        Ok(n) => n,
-        Err(_) => return 7,
-    };
-    if doc.assign_qname(r, b"r", 0, 0, 1).is_err() {
-        return 8;
-    }
-    let at = match mutate::set_attribute(doc, r, b"id", b"x") {
-        Ok(a) => a,
-        Err(_) => return 9,
-    };
-    if doc.node(at).value.len != 1 || doc.value(at) != b"x" || doc.attrs(r) != Some(at) {
-        return 9;
-    }
-    let at = match mutate::set_attribute(doc, r, b"id", b"yy") {
-        Ok(a) => a,
-        Err(_) => return 10,
-    };
-    if doc.node(at).value.len != 2 || doc.next(at).is_some() {
-        return 10;
-    }
+/// A document holding one detached, named element - the starting point for every
+/// check about a node that is not yet in a tree.
+fn detached_element(name: &[u8]) -> (Box<Document>, NodeId) {
+    let mut doc = doc_new();
+    let el = mutate::new_element(&mut doc, name).expect("a new element");
+    (doc, el)
+}
 
-    /* 3. fail-closed: non-XML-Char value */
-    if mutate::set_attribute(doc, r, b"k", b"\x01") != Err(MutStatus::BadChars) {
-        return 11;
+#[test]
+fn split_checked_accepts_a_qname_and_refuses_the_ncname_violations() {
+    let q = qname::split_checked(b"a:b").expect("a:b is a QName");
+    assert_eq!(q.prefix_len, 1);
+    assert_eq!(q.local_len, 1);
+    for bad in [
+        &b"1bad"[..], /* not a NameStartChar */
+        b"a:b:c",     /* a second colon */
+        b":x",        /* empty prefix */
+        b"x:",        /* empty local part */
+    ] {
+        assert!(
+            qname::split_checked(bad).is_none(),
+            "accepted {} as a QName",
+            show(bad)
+        );
     }
+}
 
-    /* 3b. forbidden value sequences */
-    if mutate::new_chardata(doc, NodeType::Comment, b"a--b") != Err(MutStatus::BadChars) {
-        return 111;
-    }
-    if mutate::new_chardata(doc, NodeType::Comment, b"x-") != Err(MutStatus::BadChars) {
-        return 112;
-    }
-    if mutate::new_chardata(doc, NodeType::CData, b"a]]>b") != Err(MutStatus::BadChars) {
-        return 113;
-    }
-    let chk = match mutate::new_chardata(doc, NodeType::Comment, b"a-b") {
-        Ok(n) => n,
-        Err(_) => return 114,
-    };
-    if mutate::set_content(doc, chk, b"x--y") != MutStatus::BadChars {
-        return 115;
-    }
-    if mutate::set_attribute(doc, r, b"xmlns:q", b"") != Err(MutStatus::BadNsDecl) {
-        return 116;
-    }
-    if mutate::set_attribute(doc, r, b"xmlns", b"").is_err() {
-        return 117;
-    }
+#[test]
+fn setting_an_attribute_twice_replaces_its_value() {
+    let (mut doc, r) = detached_element(b"r");
+    let at = mutate::set_attribute(&mut doc, r, b"id", b"x").expect("a new attribute");
+    assert_eq!(doc.node(at).value.len, 1);
+    assert_eq!(doc.value(at), b"x");
+    assert_eq!(
+        doc.attrs(r),
+        Some(at),
+        "it is the element's first attribute"
+    );
 
-    let det = match mutate::new_element(doc, b"det") {
-        Ok(n) => n,
-        Err(_) => return 12,
-    };
-    let at = match mutate::set_attribute(doc, det, b"p:k", b"v") {
-        Ok(a) => a,
-        Err(_) => return 12,
-    };
-    if doc.node(at).ns_uri.len != 0 {
-        return 12;
-    }
+    let again = mutate::set_attribute(&mut doc, r, b"id", b"yy").expect("a replacement");
+    assert_eq!(doc.node(again).value.len, 2);
+    assert_eq!(doc.value(again), b"yy");
+    /* Asserted on the ELEMENT, not on `again`: a freshly APPENDED attribute is
+     * also the tail, so `doc.next(again).is_none()` holds either way and cannot
+     * tell a replacement from a second attribute. */
+    assert_eq!(
+        doc.attrs(r),
+        Some(at),
+        "a replacement reuses the existing attribute node"
+    );
+    assert_eq!(again, at, "and hands the same node back");
+    assert!(
+        doc.next(at).is_none(),
+        "so the element still has exactly one attribute"
+    );
+}
 
-    /* 4. the predefined xml: prefix */
-    let at = match mutate::set_attribute(doc, r, b"xml:lang", b"en") {
-        Ok(a) => a,
-        Err(_) => return 13,
-    };
-    if doc.ns(at) != XML_NS_URI {
-        return 13;
-    }
+#[test]
+fn an_attribute_value_that_is_not_xml_char_is_refused() {
+    let (mut doc, r) = detached_element(b"r");
+    assert_eq!(
+        mutate::set_attribute(&mut doc, r, b"k", b"\x01"),
+        Err(MutStatus::BadChars)
+    );
+}
 
-    /* 5. xmlns:* declaration then a bound prefix */
-    let at = match mutate::set_attribute(doc, r, b"xmlns:p", b"urn:p") {
-        Ok(a) => a,
-        Err(_) => return 14,
-    };
-    if doc.ns(at) != XMLNS_NS_URI {
-        return 14;
-    }
-    let at = match mutate::set_attribute(doc, r, b"p:k", b"v") {
-        Ok(a) => a,
-        Err(_) => return 15,
-    };
-    if doc.ns(at) != b"urn:p" {
-        return 15;
-    }
+#[test]
+fn a_leaf_value_holding_its_own_close_sequence_is_refused() {
+    let mut doc = doc_new();
+    /* Each of these would end the construct early once serialized, so the value
+     * is refused rather than escaped. */
+    assert_eq!(
+        mutate::new_chardata(&mut doc, NodeType::Comment, b"a--b"),
+        Err(MutStatus::BadChars)
+    );
+    assert_eq!(
+        mutate::new_chardata(&mut doc, NodeType::Comment, b"x-"),
+        Err(MutStatus::BadChars),
+        "a trailing '-' would make '-->' out of the close"
+    );
+    assert_eq!(
+        mutate::new_chardata(&mut doc, NodeType::CData, b"a]]>b"),
+        Err(MutStatus::BadChars)
+    );
 
-    /* 6. remove by name (idempotent) */
-    if !mutate::remove_attribute(doc, r, b"id") {
-        return 16;
-    }
-    if mutate::remove_attribute(doc, r, b"id") {
-        return 17;
-    }
+    let ok = mutate::new_chardata(&mut doc, NodeType::Comment, b"a-b").expect("one '-' is fine");
+    assert_eq!(
+        mutate::set_content(&mut doc, ok, b"x--y"),
+        MutStatus::BadChars,
+        "and the rule holds on a later write, not just at creation"
+    );
+}
 
-    /* 7. rename */
-    if mutate::rename(doc, r, b"q") != MutStatus::Ok
-        || doc.node(r).qname.len != 1
-        || doc.local(r) != b"q"
-        || doc.node(r).ns_uri.len != 0
-    {
-        return 18;
-    }
+#[test]
+fn a_prefix_may_not_be_bound_to_the_empty_namespace() {
+    let (mut doc, r) = detached_element(b"r");
+    assert_eq!(
+        mutate::set_attribute(&mut doc, r, b"xmlns:q", b""),
+        Err(MutStatus::BadNsDecl)
+    );
+    /* `xmlns=""` is different: it un-declares the DEFAULT namespace, which XML
+     * 1.0 allows. */
+    mutate::set_attribute(&mut doc, r, b"xmlns", b"").expect("xmlns=\"\" is legal");
+}
 
-    /* 8. content */
-    let c1 = match doc.new_node(NodeType::Element) {
-        Ok(n) => n,
-        Err(_) => return 19,
-    };
+#[test]
+fn an_unbound_prefix_on_a_detached_element_defers_rather_than_failing() {
+    let (mut doc, det) = detached_element(b"det");
+    let at = mutate::set_attribute(&mut doc, det, b"p:k", b"v")
+        .expect("an unbound prefix is not an error while detached");
+    assert_eq!(doc.node(at).ns_uri.len, 0, "it simply has no namespace yet");
+}
+
+#[test]
+fn the_xml_prefix_is_bound_without_a_declaration() {
+    let (mut doc, r) = detached_element(b"r");
+    let at = mutate::set_attribute(&mut doc, r, b"xml:lang", b"en").expect("xml: is predefined");
+    assert_eq!(doc.ns(at), XML_NS_URI);
+}
+
+#[test]
+fn a_declaration_binds_the_prefix_for_a_later_attribute() {
+    let (mut doc, r) = detached_element(b"r");
+    let decl = mutate::set_attribute(&mut doc, r, b"xmlns:p", b"urn:p").expect("a declaration");
+    assert_eq!(
+        doc.ns(decl),
+        XMLNS_NS_URI,
+        "the declaration itself is in the XMLNS namespace"
+    );
+    let at = mutate::set_attribute(&mut doc, r, b"p:k", b"v").expect("now p: is bound");
+    assert_eq!(doc.ns(at), b"urn:p");
+}
+
+#[test]
+fn removing_an_attribute_is_idempotent() {
+    let (mut doc, r) = detached_element(b"r");
+    mutate::set_attribute(&mut doc, r, b"id", b"x").expect("an attribute to remove");
+    assert!(mutate::remove_attribute(&mut doc, r, b"id"), "removed once");
+    assert!(
+        !mutate::remove_attribute(&mut doc, r, b"id"),
+        "and reports nothing to remove the second time"
+    );
+}
+
+#[test]
+fn renaming_an_element_rewrites_its_whole_name() {
+    let (mut doc, r) = detached_element(b"r");
+    /* A default declaration in scope, so the namespace assertion below is about
+     * the rule rather than about there being nothing to resolve against: a
+     * rename re-decides the URI from the scope the node is in RIGHT NOW. */
+    mutate::set_attribute(&mut doc, r, b"xmlns", b"").expect("xmlns=\"\" is legal");
+    mutate::set_attribute(&mut doc, r, b"xmlns:p", b"urn:p").expect("a declaration");
+
+    assert_eq!(mutate::rename(&mut doc, r, b"q"), MutStatus::Ok);
+    assert_eq!(doc.node(r).qname.len, 1);
+    assert_eq!(doc.local(r), b"q");
+    assert_eq!(
+        doc.node(r).ns_uri.len,
+        0,
+        "unprefixed, so it takes the DEFAULT binding - which is empty here"
+    );
+}
+
+#[test]
+fn set_content_replaces_the_children_with_one_text_node() {
+    let (mut doc, r) = detached_element(b"r");
+    /* Hand-linked, so the child is there without an insertion having run. */
+    let c1 = doc.new_node(NodeType::Element).expect("a child");
     doc.set_parent(c1, Some(r));
     doc.node_mut(r).first_child = Link::of(c1);
     doc.node_mut(r).last_child = Link::of(c1);
-    if mutate::set_content(doc, r, b"hi") != MutStatus::Ok {
-        return 20;
-    }
-    let fc = doc.first_child(r).unwrap_or(invalid);
-    if fc.is_invalid()
-        || doc.type_(fc) != Some(NodeType::Text)
-        || doc.node(fc).value.len != 2
-        || doc.last_child(r) != Some(fc)
-        || doc.parent(c1).is_some()
-    {
-        return 21;
-    }
-    if mutate::set_content(doc, r, b"") != MutStatus::Ok
-        || doc.first_child(r).is_some()
-        || doc.last_child(r).is_some()
-    {
-        return 22;
-    }
 
-    /* 9. detach */
-    let a1 = match doc.new_node(NodeType::Element) {
-        Ok(n) => n,
-        Err(_) => return 23,
-    };
-    let a2 = match doc.new_node(NodeType::Element) {
-        Ok(n) => n,
-        Err(_) => return 23,
-    };
-    doc.set_parent(a1, Some(r));
-    doc.set_parent(a2, Some(r));
-    doc.node_mut(a1).next = Link::of(a2);
-    doc.node_mut(a2).prev = Link::of(a1);
-    doc.node_mut(r).first_child = Link::of(a1);
-    doc.node_mut(r).last_child = Link::of(a2);
-    mutate::detach(doc, a1);
-    if doc.first_child(r) != Some(a2) || doc.prev(a2).is_some() || doc.parent(a1).is_some() {
-        return 24;
-    }
-    mutate::detach(doc, a2);
-    if doc.first_child(r).is_some() || doc.last_child(r).is_some() || doc.parent(a2).is_some() {
-        return 25;
-    }
+    assert_eq!(mutate::set_content(&mut doc, r, b"hi"), MutStatus::Ok);
+    let fc = child(&doc, r);
+    assert_eq!(doc.type_(fc), Some(NodeType::Text));
+    assert_eq!(doc.node(fc).value.len, 2);
+    assert_eq!(doc.last_child(r), Some(fc), "it is the only child");
+    assert!(
+        doc.parent(c1).is_none(),
+        "the old child was detached, not destroyed"
+    );
 
-    /* 10. a live document node + connected root */
-    let docn = match doc.new_node(NodeType::Document) {
-        Ok(n) => n,
-        Err(_) => return 26,
-    };
-    doc.doc_node = docn;
-    let pr = match mutate::new_element(doc, b"pr") {
-        Ok(n) => n,
-        Err(_) => return 27,
-    };
-    if doc.parent(pr).is_some() || doc.node(pr).ns_uri.len != 0 {
-        return 27;
-    }
-    if mutate::set_attribute(doc, pr, b"xmlns:p", b"urn:p").is_err() {
-        return 28;
-    }
-    if mutate::insert_child(doc, docn, pr) != MutStatus::Ok || doc.root() != Some(pr) {
-        return 29;
-    }
-    let tx = match mutate::new_chardata(doc, NodeType::Text, b"hi") {
-        Ok(n) => n,
-        Err(_) => return 30,
-    };
-    if doc.node(tx).value.len != 2 {
-        return 30;
-    }
+    assert_eq!(mutate::set_content(&mut doc, r, b""), MutStatus::Ok);
+    assert!(doc.first_child(r).is_none(), "empty content means no child");
+    assert!(doc.last_child(r).is_none());
+}
 
-    /* 11. insert_child resolves the inserted subtree */
-    let ne = match mutate::new_element(doc, b"p:c") {
-        Ok(n) => n,
-        Err(_) => return 31,
-    };
-    if mutate::insert_child(doc, pr, ne) != MutStatus::Ok
-        || doc.first_child(pr) != Some(ne)
-        || doc.parent(ne) != Some(pr)
-        || doc.ns(ne) != b"urn:p"
-    {
-        return 32;
-    }
-    if mutate::insert_child(doc, ne, tx) != MutStatus::Ok || doc.first_child(ne) != Some(tx) {
-        return 33;
-    }
-
-    /* 12. unbound prefix in the live tree */
-    let ub = match mutate::new_element(doc, b"z:c") {
-        Ok(n) => n,
-        Err(_) => return 34,
-    };
-    if mutate::insert_child(doc, pr, ub) != MutStatus::UnboundNs
-        || doc.parent(ub).is_some()
-        || doc.last_child(pr) != Some(ne)
-    {
-        return 35;
-    }
-
-    /* 13. deferred resolution */
-    let wrap = match mutate::new_element(doc, b"p:wrap") {
-        Ok(n) => n,
-        Err(_) => return 36,
-    };
-    let inner = match mutate::new_element(doc, b"p:inner") {
-        Ok(n) => n,
-        Err(_) => return 36,
-    };
-    if mutate::insert_child(doc, wrap, inner) != MutStatus::Ok || doc.node(inner).ns_uri.len != 0 {
-        return 37;
-    }
-    if mutate::insert_child(doc, pr, wrap) != MutStatus::Ok
-        || doc.ns(wrap) != b"urn:p"
-        || doc.ns(inner) != b"urn:p"
-    {
-        return 38;
-    }
-
-    /* 14. cycle rejection */
-    if mutate::insert_child(doc, ne, pr) != MutStatus::Cycle {
-        return 39;
-    }
-
-    /* 15. sibling order */
-    let b1 = match mutate::new_element(doc, b"b1") {
-        Ok(n) => n,
-        Err(_) => return 40,
-    };
-    let b2 = match mutate::new_element(doc, b"b2") {
-        Ok(n) => n,
-        Err(_) => return 40,
-    };
-    if mutate::insert_before(doc, ne, b1) != MutStatus::Ok
-        || doc.first_child(pr) != Some(b1)
-        || doc.next(b1) != Some(ne)
-    {
-        return 41;
-    }
-    if mutate::insert_after(doc, ne, b2) != MutStatus::Ok || doc.next(ne) != Some(b2) {
-        return 42;
-    }
-    if mutate::insert_before(doc, ne, ne) != MutStatus::Ok
-        || doc.next(ne) == Some(ne)
-        || doc.prev(ne) == Some(ne)
-        || mutate::insert_after(doc, ne, ne) != MutStatus::Ok
-        || doc.next(ne) == Some(ne)
-    {
-        return 99;
-    }
-
-    /* 16. replace */
-    let rep = match mutate::new_element(doc, b"rep") {
-        Ok(n) => n,
-        Err(_) => return 43,
-    };
-    if mutate::replace_node(doc, ne, rep) != MutStatus::Ok
-        || doc.parent(ne).is_some()
-        || doc.parent(rep) != Some(pr)
-        || doc.next(b1) != Some(rep)
-    {
-        return 44;
-    }
-
-    /* 17. cross-document import */
-    let doc2 = doc_new();
-    let Some(mut doc2) = doc2 else {
-        return 45;
-    };
-    let mut rc = 0;
-    match mutate::import_subtree(&mut doc2, doc, pr) {
-        Ok(imp) => {
-            if doc2.qname(imp) != b"pr" || doc2.first_child(imp).is_none() {
-                rc = 46;
-            }
+/// `r` with `n` hand-linked element children. Hand-linked because the public
+/// insert would resolve namespaces and sync document meta, and these checks are
+/// about the link surgery alone.
+fn chain_of_children(n: usize) -> (Box<Document>, NodeId, Vec<NodeId>) {
+    let (mut doc, r) = detached_element(b"r");
+    let mut kids = Vec::new();
+    for _ in 0..n {
+        let c = doc.new_node(NodeType::Element).expect("a child");
+        doc.set_parent(c, Some(r));
+        if let Some(&prev) = kids.last() {
+            doc.node_mut(prev).next = Link::of(c);
+            doc.node_mut(c).prev = Link::of(prev);
+        } else {
+            doc.node_mut(r).first_child = Link::of(c);
         }
-        Err(_) => rc = 46,
+        doc.node_mut(r).last_child = Link::of(c);
+        kids.push(c);
     }
-    if rc != 0 {
-        return rc;
-    }
-
-    /* 18. single-root rule */
-    let root2 = match mutate::new_element(doc, b"root2") {
-        Ok(n) => n,
-        Err(_) => return 47,
-    };
-    if mutate::insert_child(doc, docn, root2) != MutStatus::Hierarchy {
-        return 48;
-    }
-    0
+    (doc, r, kids)
 }
 
 #[test]
-fn node_checks_pass() {
-    let rc = node_selftest();
-    assert_eq!(rc, 0, "node self-check {rc} failed");
+fn detach_unlinks_the_head_and_then_the_only_remaining_child() {
+    let (mut doc, r, kids) = chain_of_children(2);
+    let (a1, a2) = (kids[0], kids[1]);
+
+    mutate::detach(&mut doc, a1);
+    assert_eq!(doc.first_child(r), Some(a2), "the head moved on");
+    assert!(doc.prev(a2).is_none(), "and its prev was cleared");
+    assert!(doc.parent(a1).is_none(), "the removed node is detached");
+
+    mutate::detach(&mut doc, a2);
+    assert!(doc.first_child(r).is_none(), "emptying clears first_child");
+    assert!(doc.last_child(r).is_none(), "and last_child");
+    assert!(doc.parent(a2).is_none());
 }
 
 #[test]
-fn parse_checks_pass() {
-    let rc = parse_selftest();
-    assert_eq!(rc, 0, "parse self-check {rc} failed");
+fn detach_clears_the_removed_nodes_own_links_and_joins_its_neighbours() {
+    /* The MIDDLE child, which is the only position where the detached node's own
+     * `prev` is non-empty: detaching the head or the tail leaves it NONE either
+     * way, so neither can catch a `clear_links` that forgets `prev`. */
+    let (mut doc, r, kids) = chain_of_children(3);
+    let (a1, a2, a3) = (kids[0], kids[1], kids[2]);
+
+    mutate::detach(&mut doc, a2);
+
+    assert!(doc.parent(a2).is_none(), "the removed node has no parent");
+    assert!(doc.prev(a2).is_none(), "nor a prev");
+    assert!(doc.next(a2).is_none(), "nor a next");
+    assert_eq!(doc.next(a1), Some(a3), "its neighbours joined up");
+    assert_eq!(doc.prev(a3), Some(a1));
+    assert_eq!(doc.first_child(r), Some(a1), "the ends are unchanged");
+    assert_eq!(doc.last_child(r), Some(a3));
+}
+
+/// A document whose document node holds a connected root `pr` declaring
+/// `xmlns:p="urn:p"`. Being CONNECTED is what makes prefix resolution happen
+/// rather than defer, so most insertion checks need it.
+fn connected_root() -> (Box<Document>, NodeId, NodeId) {
+    let mut doc = doc_new();
+    /* A live document node of this document's own, so `sync_doc_meta` fires and
+     * re-derives `root` from the tree. */
+    let docn = doc.new_node(NodeType::Document).expect("a document node");
+    doc.doc_node = docn;
+
+    let pr = mutate::new_element(&mut doc, b"pr").expect("a root element");
+    assert!(
+        doc.parent(pr).is_none(),
+        "a factory element starts detached"
+    );
+    assert_eq!(
+        doc.node(pr).ns_uri.len,
+        0,
+        "and with no namespace decided yet"
+    );
+    mutate::set_attribute(&mut doc, pr, b"xmlns:p", b"urn:p").expect("a declaration");
+    assert_eq!(mutate::insert_child(&mut doc, docn, pr), MutStatus::Ok);
+    assert_eq!(doc.root(), Some(pr), "inserting it made it the root");
+    (doc, docn, pr)
+}
+
+/// [`connected_root`] with one `p:c` child already resolved under the root.
+fn connected_tree() -> (Box<Document>, NodeId, NodeId, NodeId) {
+    let (mut doc, docn, pr) = connected_root();
+    let ne = mutate::new_element(&mut doc, b"p:c").expect("a prefixed element");
+    assert_eq!(mutate::insert_child(&mut doc, pr, ne), MutStatus::Ok);
+    (doc, docn, pr, ne)
 }
 
 #[test]
-fn mutate_checks_pass() {
-    let rc = mutate_selftest();
-    assert_eq!(rc, 0, "mutate self-check {rc} failed");
+fn new_chardata_copies_its_text() {
+    let mut doc = doc_new();
+    let tx = mutate::new_chardata(&mut doc, NodeType::Text, b"hi").expect("a text node");
+    assert_eq!(doc.node(tx).value.len, 2);
+}
+
+#[test]
+fn inserting_a_subtree_resolves_its_prefixes_against_the_new_context() {
+    let (mut doc, _docn, pr) = connected_root();
+    let ne = mutate::new_element(&mut doc, b"p:c").expect("a prefixed element");
+    assert_eq!(mutate::insert_child(&mut doc, pr, ne), MutStatus::Ok);
+    assert_eq!(doc.first_child(pr), Some(ne));
+    assert_eq!(doc.parent(ne), Some(pr));
+    assert_eq!(doc.ns(ne), b"urn:p", "the prefix resolved on insertion");
+
+    let tx = mutate::new_chardata(&mut doc, NodeType::Text, b"hi").expect("a text node");
+    assert_eq!(mutate::insert_child(&mut doc, ne, tx), MutStatus::Ok);
+    assert_eq!(doc.first_child(ne), Some(tx));
+}
+
+#[test]
+fn an_unbound_prefix_in_the_live_tree_is_refused_and_changes_nothing() {
+    let (mut doc, _docn, pr, ne) = connected_tree();
+    let ub = mutate::new_element(&mut doc, b"z:c").expect("an element with an unbound prefix");
+    assert_eq!(
+        mutate::insert_child(&mut doc, pr, ub),
+        MutStatus::UnboundNs,
+        "connected, so an unbound prefix is an error rather than deferred"
+    );
+    assert!(doc.parent(ub).is_none(), "the refused node stayed detached");
+    assert_eq!(
+        doc.last_child(pr),
+        Some(ne),
+        "and the container is untouched"
+    );
+}
+
+#[test]
+fn resolution_is_deferred_until_the_subtree_joins_the_document() {
+    let (mut doc, _docn, pr) = connected_root();
+    let wrap = mutate::new_element(&mut doc, b"p:wrap").expect("an outer element");
+    let inner = mutate::new_element(&mut doc, b"p:inner").expect("an inner element");
+
+    assert_eq!(mutate::insert_child(&mut doc, wrap, inner), MutStatus::Ok);
+    assert_eq!(
+        doc.node(inner).ns_uri.len,
+        0,
+        "still detached, so nothing was resolved"
+    );
+
+    assert_eq!(mutate::insert_child(&mut doc, pr, wrap), MutStatus::Ok);
+    assert_eq!(doc.ns(wrap), b"urn:p");
+    assert_eq!(
+        doc.ns(inner),
+        b"urn:p",
+        "joining the document resolved the whole subtree, not just its root"
+    );
+}
+
+#[test]
+fn inserting_an_ancestor_into_its_own_descendant_is_a_cycle() {
+    let (mut doc, _docn, pr, ne) = connected_tree();
+    assert_eq!(mutate::insert_child(&mut doc, ne, pr), MutStatus::Cycle);
+}
+
+#[test]
+fn insert_before_and_after_place_a_sibling_on_the_right_side() {
+    let (mut doc, _docn, pr, ne) = connected_tree();
+    let b1 = mutate::new_element(&mut doc, b"b1").expect("a preceding sibling");
+    let b2 = mutate::new_element(&mut doc, b"b2").expect("a following sibling");
+
+    assert_eq!(mutate::insert_before(&mut doc, ne, b1), MutStatus::Ok);
+    assert_eq!(doc.first_child(pr), Some(b1));
+    assert_eq!(doc.next(b1), Some(ne));
+
+    assert_eq!(mutate::insert_after(&mut doc, ne, b2), MutStatus::Ok);
+    assert_eq!(doc.next(ne), Some(b2));
+}
+
+#[test]
+fn inserting_a_node_next_to_itself_is_a_no_op_not_a_self_loop() {
+    let (mut doc, _docn, _pr, ne) = connected_tree();
+    assert_eq!(mutate::insert_before(&mut doc, ne, ne), MutStatus::Ok);
+    assert_ne!(doc.next(ne), Some(ne), "no forward self-link");
+    assert_ne!(doc.prev(ne), Some(ne), "no backward self-link");
+    assert_eq!(mutate::insert_after(&mut doc, ne, ne), MutStatus::Ok);
+    assert_ne!(doc.next(ne), Some(ne));
+}
+
+#[test]
+fn replace_node_swaps_one_child_for_another() {
+    let (mut doc, _docn, pr, ne) = connected_tree();
+    let b1 = mutate::new_element(&mut doc, b"b1").expect("a preceding sibling");
+    assert_eq!(mutate::insert_before(&mut doc, ne, b1), MutStatus::Ok);
+
+    let rep = mutate::new_element(&mut doc, b"rep").expect("a replacement");
+    assert_eq!(mutate::replace_node(&mut doc, ne, rep), MutStatus::Ok);
+    assert!(doc.parent(ne).is_none(), "the replaced node is detached");
+    assert_eq!(doc.parent(rep), Some(pr));
+    assert_eq!(doc.next(b1), Some(rep), "in the slot it vacated");
+}
+
+#[test]
+fn import_subtree_deep_copies_into_another_document() {
+    let (doc, _docn, pr, _ne) = connected_tree();
+    let mut doc2 = doc_new();
+    let imp = mutate::import_subtree(&mut doc2, &doc, pr).expect("an imported copy");
+    assert_eq!(doc2.qname(imp), b"pr");
+    assert!(
+        doc2.first_child(imp).is_some(),
+        "deep, so the children came too"
+    );
+}
+
+#[test]
+fn a_document_takes_only_one_root_element() {
+    let (mut doc, docn, _pr) = connected_root();
+    let root2 = mutate::new_element(&mut doc, b"root2").expect("a second root");
+    assert_eq!(
+        mutate::insert_child(&mut doc, docn, root2),
+        MutStatus::Hierarchy
+    );
+}
+
+#[test]
+fn node_id_tokens_fail_closed_outside_their_document() {
+    // A node-set token is not authenticated, so the checked accessor must
+    // reject anything that does not name a live slot in THIS document: a
+    // foreign document's handle (same index, different stamp), an out-of-range
+    // index, and the null handle.
+    let mut a = Document::create(None, 0).expect("doc a");
+    let mut b = Document::create(None, 0).expect("doc b");
+    let na = a.new_node(NodeType::Element).expect("node a");
+    let nb = b.new_node(NodeType::Element).expect("node b");
+
+    // The handle resolves in its own document.
+    assert_eq!(a.try_node(na).map(|n| n.type_), Some(NodeType::Element));
+    assert_eq!(b.try_node(nb).map(|n| n.type_), Some(NodeType::Element));
+
+    // Same slot index, different document stamp -> rejected.
+    assert_eq!(na.index(), nb.index());
+    assert!(b.try_node(na).is_none());
+    assert!(a.try_node(nb).is_none());
+
+    // Out-of-range index -> rejected, not a panic.
+    let oob = NodeId::new(u32::MAX - 1, na.stamp());
+    assert!(a.try_node(oob).is_none());
+
+    // The null handle -> rejected.
+    assert!(a.try_node(NodeId::INVALID).is_none());
+    assert!(NodeId::INVALID.is_invalid());
+}
+
+/// A node spliced next to ITSELF is a sibling ring, and the engine follows
+/// `next` without a bound everywhere - so the first traversal afterwards would
+/// hang the host with no way out. `splice_between` refuses instead.
+///
+/// This is the shape a real bug reached: `a.add_next_sibling(b)` with b already
+/// after a, where the insertion anchored on b, detached b, and then spliced b
+/// before what was now itself.
+#[test]
+#[should_panic(expected = "cannot be its own parent or sibling")]
+fn a_node_cannot_be_spliced_next_to_itself() {
+    let (mut doc, r) = detached_element(b"r");
+    let a = doc.new_node(NodeType::Element).expect("a child");
+    doc.splice_between(r, a, None, Some(a));
+}
+
+#[test]
+#[should_panic(expected = "cannot be its own parent or sibling")]
+fn a_node_cannot_be_spliced_after_itself() {
+    let (mut doc, r) = detached_element(b"r");
+    let a = doc.new_node(NodeType::Element).expect("a child");
+    doc.splice_between(r, a, Some(a), None);
+}
+
+#[test]
+#[should_panic(expected = "cannot be its own parent or sibling")]
+fn a_node_cannot_be_its_own_parent() {
+    let (mut doc, r) = detached_element(b"r");
+    doc.splice_between(r, r, None, None);
+}
+
+#[test]
+#[should_panic(expected = "cannot be its own parent or sibling")]
+fn an_attribute_cannot_be_linked_after_itself() {
+    let (mut doc, r) = detached_element(b"r");
+    let at = doc.new_node(NodeType::Attribute).expect("an attribute");
+    doc.link_attr(r, Some(at), at);
 }

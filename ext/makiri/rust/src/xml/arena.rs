@@ -6,16 +6,35 @@
 //! names/values are spans into the byte store. No address is ever exposed, so a
 //! growing `Vec` cannot invalidate a node, and `detach` (which never destroys)
 //! is free to leave a removed node addressable for life.
+//!
+//! # Two visibilities, on purpose
+//!
+//! The READERS are `pub`: a `NodeId` cannot name the wrong document, because
+//! [`Document::try_node`] checks its stamp, so handing them out is safe. The
+//! byte and link SURGERY - `store`, `new_node`, `append_child`, `detach`,
+//! `splice_between`, `sync_doc_meta` and the rest - is `pub(super)`, which from
+//! here means "inside `crate::xml`". It skips every rule `mutate` enforces
+//! (hierarchy, cycles, namespace resolution, index invalidation), so the glue
+//! and the bridge must not be able to reach it; before, it was `pub` like the
+//! readers and only convention kept them apart.
 
 #![forbid(unsafe_code)]
 
 use crate::falloc::{Reserve, VecPush};
 use crate::xml::chars::{expand_into, ExpandErr, ExpandMode};
+use crate::xml::qname::Split;
 use crate::xml::{Document, Link, Node, NodeId, NodeType, Span, Status};
 use core::sync::atomic::{AtomicU32, Ordering};
 
 /// Hands each document a unique stamp (never 0). Node ids carry it so a handle
 /// built for one document is rejected by another's `try_node`.
+///
+/// It wraps after 2^32 documents, so in principle a handle kept across that many
+/// later parses could match a stamp again. That is not a hazard worth widening
+/// the counter for: a `NodeId` is only ever obtained from a live Ruby wrapper,
+/// which keeps its document alive, so a handle and its document cannot drift
+/// four billion documents apart - and a handle from a document that is GONE has
+/// no way to reach `try_node` at all.
 static DOC_STAMP: AtomicU32 = AtomicU32::new(1);
 
 const NODE_COST: usize = core::mem::size_of::<Node>();
@@ -217,7 +236,7 @@ impl Document {
 
     /// Copy `src` into the byte store, returning its span. Empty is the shared
     /// empty span (never an allocation).
-    pub fn store(&mut self, src: &[u8]) -> Result<Span, Status> {
+    pub(super) fn store(&mut self, src: &[u8]) -> Result<Span, Status> {
         if src.is_empty() {
             // A present-but-empty value: offset is the tail, so it is distinct
             // from the `ABSENT` marker (offset u32::MAX).
@@ -228,7 +247,7 @@ impl Document {
         }
         self.charge(src.len())?;
         self.bytes
-            .mkr_reserve(src.len())
+            .falloc_reserve(src.len())
             .map_err(|_| self.fail(Status::Oom))?;
         let off = self.bytes.len() as u32;
         self.bytes.extend_from_slice(src);
@@ -238,37 +257,38 @@ impl Document {
         })
     }
 
-    /// The empty span, for callers that want a value with no bytes.
-    #[inline]
-    pub fn empty_span(&self) -> Span {
-        Span::EMPTY
-    }
-
     /// Set a node's value to a fresh copy of `data`.
-    pub fn set_value_bytes(&mut self, id: NodeId, data: &[u8]) -> Result<(), Status> {
+    pub(super) fn set_value_bytes(&mut self, id: NodeId, data: &[u8]) -> Result<(), Status> {
         let span = self.store(data)?;
         self.node_mut(id).value = span;
         Ok(())
     }
 
     /// Set a node's namespace URI to a fresh copy of `uri`.
-    pub fn set_ns_bytes(&mut self, id: NodeId, uri: &[u8]) -> Result<(), Status> {
+    pub(super) fn set_ns_bytes(&mut self, id: NodeId, uri: &[u8]) -> Result<(), Status> {
         let span = self.store(uri)?;
         self.node_mut(id).ns_uri = span;
         Ok(())
     }
 
-    /// Set a leaf's name (PI target) to a fresh copy of `name`.
-    pub fn set_local_bytes(&mut self, id: NodeId, name: &[u8]) -> Result<(), Status> {
-        let span = self.store(name)?;
-        let n = self.node_mut(id);
-        n.local = span;
-        Ok(())
+    /// The prefix/local split of `id`'s qualified name.
+    ///
+    /// The three name spans all point into ONE arena copy (see
+    /// [`Document::assign_qname`]), so the split is derived from their offsets
+    /// rather than stored - and derived HERE, not at each of the four callers
+    /// that used to recompute `local.off - qname.off` by hand.
+    pub(crate) fn split_of(&self, id: NodeId) -> Split {
+        let n = self.node(id);
+        Split {
+            prefix_len: n.prefix.len,
+            local_off: n.local.off.saturating_sub(n.qname.off),
+            local_len: n.local.len,
+        }
     }
 
     /// Copy a whole QName once, then point qname/prefix/local into that copy.
     /// `prefix_len` and `local_off`/`local_len` are offsets into `name`.
-    pub fn assign_qname(
+    pub(super) fn assign_qname(
         &mut self,
         id: NodeId,
         name: &[u8],
@@ -298,13 +318,13 @@ impl Document {
     }
 
     /// Allocate a zeroed node, counted against the node and byte budgets.
-    pub fn new_node(&mut self, type_: NodeType) -> Result<NodeId, Status> {
+    pub(super) fn new_node(&mut self, type_: NodeType) -> Result<NodeId, Status> {
         if self.nodes.len() + 1 > self.max_nodes {
             return Err(self.fail(Status::Limit));
         }
         self.charge(NODE_COST)?;
         self.nodes
-            .mkr_reserve(1)
+            .falloc_reserve(1)
             .map_err(|_| self.fail(Status::Oom))?;
         let index = self.nodes.len() as u32;
         let stamp = self.stamp;
@@ -313,13 +333,13 @@ impl Document {
     }
 
     /// Expand XML references into one byte-store span.
-    pub fn expand(&mut self, src: &[u8], mode: ExpandMode) -> Result<Span, Status> {
+    pub(super) fn expand(&mut self, src: &[u8], mode: ExpandMode) -> Result<Span, Status> {
         if src.is_empty() {
             return Ok(Span::EMPTY);
         }
         self.charge(src.len())?;
         self.bytes
-            .mkr_reserve(src.len())
+            .falloc_reserve(src.len())
             .map_err(|_| self.fail(Status::Oom))?;
         let off = self.bytes.len();
         self.bytes.resize(off + src.len(), 0);
@@ -345,7 +365,7 @@ impl Document {
 
     /// Append a TEXT/CDATA node, coalescing with a preceding sibling of the
     /// SAME type (as libxml2 / the XPath data model do).
-    pub fn append_chardata(
+    pub(super) fn append_chardata(
         &mut self,
         parent: NodeId,
         type_: NodeType,
@@ -368,8 +388,8 @@ impl Document {
             let (a, b) = (old, span);
             let mut merged: Vec<u8> = Vec::new();
             merged
-                .mkr_extend(self.span(a))
-                .and_then(|()| merged.mkr_extend(self.span(b)))
+                .falloc_extend(self.span(a))
+                .and_then(|()| merged.falloc_extend(self.span(b)))
                 .map_err(|_| self.fail(Status::Oom))?;
             let s = self.store(&merged)?;
             self.node_at_mut(last).value = s;
@@ -381,16 +401,45 @@ impl Document {
         Ok(())
     }
 
+    /* ---- rewind ---- */
+
+    /// The arena's current high-water mark, for [`Document::rewind`].
+    #[inline]
+    pub(crate) fn mark(&self) -> Mark {
+        Mark {
+            nodes: self.nodes.len(),
+            bytes: self.bytes.len(),
+            arena_bytes: self.arena_bytes,
+        }
+    }
+
+    /// Discard everything allocated since `mark`, giving the budget back.
+    ///
+    /// Sound only when NOTHING allocated after the mark escaped the caller and
+    /// nothing allocated before it points past the mark - i.e. the work being
+    /// undone was never linked into the live tree and never handed out as a
+    /// handle. A failed fragment parse is exactly that case: its nodes hang off
+    /// a fragment root the caller never returns. `status` is deliberately left
+    /// as it is: it records that a failure HAPPENED, which rewinding does not
+    /// undo.
+    pub(crate) fn rewind(&mut self, mark: Mark) {
+        debug_assert!(mark.nodes <= self.nodes.len() && mark.bytes <= self.bytes.len());
+        self.nodes.truncate(mark.nodes);
+        self.bytes.truncate(mark.bytes);
+        self.arena_bytes = mark.arena_bytes;
+    }
+
     /* ---- linking ---- */
 
     #[inline]
-    pub fn set_parent(&mut self, id: NodeId, parent: Option<NodeId>) {
+    pub(super) fn set_parent(&mut self, id: NodeId, parent: Option<NodeId>) {
         self.node_mut(id).parent = Link::from_option(parent);
     }
 
     /// Append `child` as the last child of `parent`.
-    pub fn append_child(&mut self, parent: NodeId, child: NodeId) {
+    pub(super) fn append_child(&mut self, parent: NodeId, child: NodeId) {
         let (parent, child) = (Link::of(parent), Link::of(child));
+        assert_no_self_link(child, parent, self.node_at(parent).last_child, Link::NONE);
         self.node_at_mut(child).parent = parent;
         let last = self.node_at(parent).last_child;
         if last.is_none() {
@@ -404,7 +453,7 @@ impl Document {
 
     /// Unlink `node` from its parent (child chain or attribute chain). No-op
     /// when the node is already detached.
-    pub fn detach(&mut self, node: NodeId) {
+    pub(super) fn detach(&mut self, node: NodeId) {
         let node_link = Link::of(node);
         let parent = self.node_at(node_link).parent;
         if parent.is_none() {
@@ -421,7 +470,7 @@ impl Document {
                 prev = attr;
                 attr = self.node_at(attr).next;
             }
-            self.clear_links(node_link);
+            self.clear_links_at(node_link);
             return;
         }
         let (prev, next) = (self.node_at(node_link).prev, self.node_at(node_link).next);
@@ -435,44 +484,86 @@ impl Document {
         } else {
             self.node_at_mut(next).prev = prev;
         }
-        self.clear_links(node_link);
+        self.clear_links_at(node_link);
+    }
+
+    /// Forget `node`'s parent and siblings, leaving its CHILDREN alone.
+    ///
+    /// `pub(super)` because `mutate` needs it for the node a `replace` swapped
+    /// out: that node's links were already taken over by the splice, so
+    /// `detach` would unlink the wrong thing. Two callers there open-coded the
+    /// three assignments through `node_mut`, which is the layer this module's
+    /// visibility split exists to close.
+    #[inline]
+    pub(super) fn clear_links(&mut self, node: NodeId) {
+        self.clear_links_at(Link::of(node));
     }
 
     #[inline]
-    fn clear_links(&mut self, node: Link) {
+    fn clear_links_at(&mut self, node: Link) {
         let n = self.node_at_mut(node);
         n.parent = Link::NONE;
         n.prev = Link::NONE;
         n.next = Link::NONE;
     }
 
+    /// Detach every child of `node` and make `only` its single child (or leave
+    /// it childless when `only` is None).
+    ///
+    /// One arena operation because it is one invariant: every former child ends
+    /// up fully unlinked AND `first_child`/`last_child` agree with what is
+    /// actually there. `set_content` wrote both halves by hand.
+    pub(super) fn replace_children(&mut self, node: NodeId, only: Option<NodeId>) {
+        let mut c = self.first_child(node);
+        while let Some(cur) = c {
+            let next = self.next(cur);
+            self.clear_links(cur);
+            c = next;
+        }
+        {
+            let n = self.node_mut(node);
+            n.first_child = Link::from_option(only);
+            n.last_child = Link::from_option(only);
+        }
+        if let Some(only) = only {
+            self.set_parent(only, Some(node));
+        }
+    }
+
     /// Unlink attribute `a` (predecessor `prev`, `None` if head) from `el`.
-    pub fn unlink_attr(&mut self, el: NodeId, prev: Option<NodeId>, a: NodeId) {
+    pub(super) fn unlink_attr(&mut self, el: NodeId, prev: Option<NodeId>, a: NodeId) {
         let next = self.node(a).next;
         match prev {
             Some(p) => self.node_mut(p).next = next,
             None => self.node_mut(el).attrs = next,
         }
-        self.clear_links(Link::of(a));
+        self.clear_links_at(Link::of(a));
     }
 
-    /// Append `attr` to `el`'s attribute list.
-    pub fn append_attr(&mut self, el: NodeId, attr: NodeId) {
+    /// Link `attr` onto `el`'s attribute list after `tail`, the list's current
+    /// last entry (`None` when the list is empty).
+    ///
+    /// The ONLY way to extend the list, and it takes the tail rather than
+    /// finding it: every caller has just scanned the list - looking for an
+    /// attribute of the same name, or building the list in order - so it already
+    /// knows the end. An `append_attr` that walked to it existed and turned out
+    /// to have no callers left once the tail was threaded through.
+    pub(super) fn link_attr(&mut self, el: NodeId, tail: Option<NodeId>, attr: NodeId) {
+        assert_no_self_link(
+            Link::of(attr),
+            Link::of(el),
+            Link::from_option(tail),
+            Link::NONE,
+        );
         self.node_mut(attr).parent = Link::of(el);
-        let head = self.node(el).attrs;
-        if head.is_none() {
-            self.node_mut(el).attrs = Link::of(attr);
-        } else {
-            let mut t = head;
-            while !self.node_at(t).next.is_none() {
-                t = self.node_at(t).next;
-            }
-            self.node_at_mut(t).next = Link::of(attr);
+        match tail {
+            None => self.node_mut(el).attrs = Link::of(attr),
+            Some(t) => self.node_mut(t).next = Link::of(attr),
         }
     }
 
     /// The ONE place the doubly-linked child list is written by insertion.
-    pub fn splice_between(
+    pub(super) fn splice_between(
         &mut self,
         container: NodeId,
         node: NodeId,
@@ -483,6 +574,7 @@ impl Document {
         let node = Link::of(node);
         let prev = Link::from_option(prev);
         let next = Link::from_option(next);
+        assert_no_self_link(node, container, prev, next);
         {
             let n = self.node_at_mut(node);
             n.parent = container;
@@ -504,7 +596,14 @@ impl Document {
     /* ---- tree walks ---- */
 
     /// Pre-order (document-order) successor of `cur` within `root`'s subtree.
+    ///
+    /// `cur` is checked, not assumed: this is reached from the Ruby glue with a
+    /// handle a wrapper supplied, so a stale or foreign one must answer "no
+    /// successor" rather than read whatever slot its index lands on. The link
+    /// walk after that needs no check - a link always names a live slot of THIS
+    /// document.
     pub fn preorder_next(&self, root: NodeId, cur: NodeId) -> Option<NodeId> {
+        self.try_node(cur)?;
         let root_link = Link::of(root);
         let mut cur_link = Link::of(cur);
         let first = self.node_at(cur_link).first_child;
@@ -524,57 +623,14 @@ impl Document {
         self.node_id(self.node_at(cur_link).next)
     }
 
-    /// `node`'s topmost ancestor is the document node.
-    pub fn is_connected(&self, node: NodeId) -> bool {
+    /// `node`'s topmost ancestor is the document node. Internal: it walks links
+    /// unchecked, so the caller must hold a live handle.
+    pub(crate) fn is_connected(&self, node: NodeId) -> bool {
         let mut top = Link::of(node);
         while !self.node_at(top).parent.is_none() {
             top = self.node_at(top).parent;
         }
         self.node_at(top).type_ == NodeType::Document
-    }
-
-    /// Nearest in-scope binding for `prefix` ("" = default) at or above `node`;
-    /// [`Span::EMPTY`] when there is none, which callers treat like an empty
-    /// binding. Not an `Option<Span>`: `None` leaves the payload undefined, and
-    /// LLVM folds the caller's `Some(s) if s.len > 0` into one branch that reads
-    /// it - harmless, but Valgrind reports it as an uninitialised-value jump.
-    pub fn resolve_in_scope(&self, node: Option<NodeId>, prefix: &[u8]) -> Span {
-        let mut e = node.map(Link::of);
-        while let Some(id) = e {
-            if self.node_at(id).type_ == NodeType::Element {
-                let mut a = self.node_at(id).attrs;
-                while !a.is_none() {
-                    if let Some(p) =
-                        crate::xml::qname::xmlns_prefix(self.span(self.node_at(a).qname))
-                    {
-                        if p == prefix {
-                            return self.node_at(a).value;
-                        }
-                    }
-                    a = self.node_at(a).next;
-                }
-            }
-            e = self.node_at(id).parent.optional();
-        }
-        Span::EMPTY
-    }
-
-    /// True when two attributes share `(local name, namespace URI)`.
-    pub fn has_duplicate_attributes(&self, element: NodeId) -> bool {
-        let mut a = self.node(element).attrs;
-        while !a.is_none() {
-            let mut b = self.node_at(a).next;
-            while !b.is_none() {
-                if self.span(self.node_at(a).local) == self.span(self.node_at(b).local)
-                    && self.span(self.node_at(a).ns_uri) == self.span(self.node_at(b).ns_uri)
-                {
-                    return true;
-                }
-                b = self.node_at(b).next;
-            }
-            a = self.node_at(a).next;
-        }
-        false
     }
 
     /* ---- document meta ---- */
@@ -584,7 +640,7 @@ impl Document {
         self.root
     }
     #[inline]
-    pub fn set_root(&mut self, root: Option<NodeId>) {
+    pub(super) fn set_root(&mut self, root: Option<NodeId>) {
         self.root = root;
     }
     #[inline]
@@ -592,7 +648,7 @@ impl Document {
         self.doctype
     }
     #[inline]
-    pub fn set_doctype(&mut self, doctype: Option<NodeId>) {
+    pub(super) fn set_doctype(&mut self, doctype: Option<NodeId>) {
         self.doctype = doctype;
     }
     #[inline]
@@ -600,13 +656,13 @@ impl Document {
         self.doc_node
     }
     #[inline]
-    pub fn mark_encoding_decl(&mut self) {
+    pub(super) fn mark_encoding_decl(&mut self) {
         self.has_encoding_decl = true;
     }
 
     /// Re-derive root / doctype from the tree after a change at the document
     /// node.
-    pub fn sync_doc_meta(&mut self, container: NodeId) {
+    pub(super) fn sync_doc_meta(&mut self, container: NodeId) {
         if container != self.doc_node {
             return;
         }
@@ -641,10 +697,38 @@ impl Document {
     }
 }
 
-/// The C `""` sentinel check: a span is empty. Kept for the FFI adapter.
+/// A node may not be its own parent or its own sibling.
+///
+/// Checked in RELEASE at the three places that write a link, which is not the
+/// usual `debug_assert` trade. A cycle here is not a wrong answer that a later
+/// check could catch: `node.next == node` is a ring, and every walk in the
+/// engine follows `next` without a bound, so the first traversal afterwards
+/// hangs the host process with no way out. Two `u32` compares against an
+/// unrecoverable hang is not a close call, and turning a broken invariant into a
+/// panic (which `bridge::ruby::entry` presents as `Makiri::InternalError`) is
+/// what this codebase does with broken invariants everywhere else.
+///
+/// It is also what makes the mutation fuzzer safe to run in CI: a ring cannot be
+/// created, so no generated edit sequence can hang the suite. The bug that
+/// prompted this (`a.add_next_sibling(b)` with b already after a, spliced before
+/// ITSELF) reached exactly here, as `node == next`.
 #[inline]
-pub fn span_is_empty(s: Span) -> bool {
-    s.len == 0
+#[allow(
+    clippy::panic,
+    reason = "a sibling ring hangs the process; a panic is the recoverable outcome"
+)]
+fn assert_no_self_link(node: Link, container: Link, prev: Link, next: Link) {
+    if node == container || node == prev || node == next {
+        panic!("XML arena: a node cannot be its own parent or sibling");
+    }
+}
+
+/// An arena high-water mark: what [`Document::rewind`] restores.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Mark {
+    nodes: usize,
+    bytes: usize,
+    arena_bytes: usize,
 }
 
 /// How an element or attribute is named: [`Document::name_parts`].

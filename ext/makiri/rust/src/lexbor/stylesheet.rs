@@ -122,7 +122,7 @@ unsafe extern "C" fn ser_cb(data: *const u8, len: usize, ctx: *mut c_void) -> u3
         if len != 0 && !data.is_null() {
             // SAFETY: Lexbor hands `len` readable bytes at `data`.
             let bytes = unsafe { core::slice::from_raw_parts(data, len) };
-            if buf.mkr_extend(bytes).is_err() {
+            if buf.falloc_extend(bytes).is_err() {
                 *oom = true;
                 return k::STATUS_ERROR;
             }
@@ -228,7 +228,7 @@ unsafe fn declarations(
             })?;
 
             if out
-                .mkr_push(Decl {
+                .falloc_push(Decl {
                     name,
                     value,
                     important: (*decl).important,
@@ -258,7 +258,7 @@ unsafe fn selectors(
         })?;
         let sp = specificity((*l).specificity);
         if out
-            .mkr_push(Selector {
+            .falloc_push(Selector {
                 text,
                 specificity: sp,
             })
@@ -419,7 +419,7 @@ unsafe fn rules(
             _ => None,
         };
         if let Some(e) = entry {
-            if out.mkr_push(e).is_err() {
+            if out.falloc_push(e).is_err() {
                 return Err(Fail::Oom);
             }
         }

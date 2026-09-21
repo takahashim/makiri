@@ -1,12 +1,24 @@
-//! QName splitting and xmlns detection over byte slices. No unsafe code.
+//! QName splitting and xmlns detection over byte slices: the XML naming rules
+//! and nothing else.
+//!
+//! What used to share the file has moved to where its one consumer is - the XML
+//! declaration's pseudo-attribute grammars to `tree`, the leaf-value forbidden
+//! sequences to `mutate`, and the WHATWG DOM's much looser element names, which
+//! are not XML naming at all, to [`crate::xml::dom_name`].
 
 #![forbid(unsafe_code)]
 
 use crate::xml::chars::{decode1, is_name_start, validate_name};
-use crate::xml::NodeType;
 
 /// A QName split into its parts as OFFSETS into the name (prefix is always
 /// at offset 0; prefix_len 0 = unprefixed).
+///
+/// The lengths are `u32` because the arena stores them as `Span`s, and a name
+/// that long is refused before it gets here: the parser's cursor caps every
+/// scanned slice at `u32::MAX` and the bridge caps a programmatic name at the
+/// Ruby String's length. Build one through [`Split::unprefixed`] or
+/// [`Split::prefixed`] rather than by hand, so `local_off` cannot disagree with
+/// `prefix_len`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Split {
     pub prefix_len: u32,
@@ -23,12 +35,38 @@ impl Split {
             local_len: len,
         }
     }
+
+    /// A prefixed name, `prefix ':' local`: the one place that knows the local
+    /// part starts one byte past the prefix.
+    pub const fn prefixed(prefix_len: u32, local_len: u32) -> Split {
+        Split {
+            prefix_len,
+            local_off: prefix_len + 1,
+            local_len,
+        }
+    }
+
+    /// The length of the qualified name this split describes.
+    pub const fn qname_len(&self) -> usize {
+        self.local_off as usize + self.local_len as usize
+    }
+
+    /// Whether `qname` really is this split's prefix, a colon, and its local
+    /// part - the inverse of building the split, for a caller handed all three
+    /// separately.
+    pub fn describes(&self, qname: &[u8], prefix: &[u8], local: &[u8]) -> bool {
+        let (pl, lo) = (self.prefix_len as usize, self.local_off as usize);
+        qname.len() == self.qname_len()
+            && qname.get(..pl) == Some(prefix)
+            && (pl == lo || qname.get(pl) == Some(&b':'))
+            && qname.get(lo..) == Some(local)
+    }
 }
 
 /// Split a name whose bytes are ALREADY known to be a valid XML 1.0 Name,
 /// enforcing the NCName rules a QName adds: at most one colon, non-empty
 /// prefix and local, and a local part beginning with a NameStartChar.
-/// mkr_xml_split_scanned_qname. `name.len()` must fit in u32 (callers pass
+/// `name.len()` must fit in u32 (callers pass
 /// u32 lengths).
 pub fn split_scanned(name: &[u8]) -> Option<Split> {
     let len = name.len();
@@ -51,17 +89,13 @@ pub fn split_scanned(name: &[u8]) -> Option<Split> {
             if !is_name_start(cp) {
                 return None; /* local must be an NCName */
             }
-            Some(Split {
-                prefix_len: pl as u32,
-                local_off: (pl + 1) as u32,
-                local_len: ll as u32,
-            })
+            Some(Split::prefixed(pl as u32, ll as u32))
         }
     }
 }
 
 /// Validate `name` as a full XML 1.0 Name, then split it (the mutation path,
-/// whose input is not pre-scanned). mkr_xml_qname_split.
+/// whose input is not pre-scanned).
 pub fn split_checked(name: &[u8]) -> Option<Split> {
     if name.is_empty() || !validate_name(name) {
         return None;
@@ -70,7 +104,13 @@ pub fn split_checked(name: &[u8]) -> Option<Split> {
 }
 
 /// If `name` is an xmlns declaration ("xmlns" / "xmlns:PREFIX"), the declared
-/// prefix (empty for the default namespace). mkr_xml_xmlns_prefix.
+/// prefix.
+///
+/// The prefix is EMPTY for `xmlns` itself, which declares the default
+/// namespace. That is the representation every caller wants - a binding is
+/// keyed by prefix and "" is the default's key throughout the parser, the
+/// serializer and `resolve_in_scope` - so it stays a slice rather than becoming
+/// a `Default | Prefix(..)` enum every one of them would immediately flatten.
 #[inline]
 pub fn xmlns_prefix(name: &[u8]) -> Option<&[u8]> {
     if name == b"xmlns" {
@@ -80,115 +120,4 @@ pub fn xmlns_prefix(name: &[u8]) -> Option<&[u8]> {
     } else {
         None
     }
-}
-
-/// XML declaration pseudo-attribute value grammars (§2.8).
-pub fn is_version_num(s: &[u8]) -> bool {
-    s.len() >= 3 && s.starts_with(b"1.") && s[2..].iter().all(|b| b.is_ascii_digit())
-}
-
-pub fn is_enc_name(s: &[u8]) -> bool {
-    match s.first() {
-        Some(c0) if c0.is_ascii_alphabetic() => s[1..]
-            .iter()
-            .all(|&c| c.is_ascii_alphanumeric() || c == b'.' || c == b'_' || c == b'-'),
-        _ => false,
-    }
-}
-
-pub fn is_yes_no(s: &[u8]) -> bool {
-    s == b"yes" || s == b"no"
-}
-
-/// Forbidden character SEQUENCE for a leaf value: "--" (or a trailing "-") in
-/// a comment, "]]>" in CDATA, "?>" in a PI. mkr_xml_check_value_seq.
-pub fn value_seq_ok(node_type: NodeType, text: &[u8]) -> bool {
-    match node_type {
-        NodeType::Comment => text.last() != Some(&b'-') && !text.windows(2).any(|w| w == b"--"),
-        NodeType::CData => !text.windows(3).any(|w| w == b"]]>"),
-        NodeType::Pi => !text.windows(2).any(|w| w == b"?>"),
-        _ => true,
-    }
-}
-
-/* ---- DOM-loose element names (WHATWG DOM, not XML) ---- */
-
-/// Why [`split_loose_dom_name`] refused a name. The bridge words it as an
-/// `ArgumentError`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LooseNameError {
-    Local,
-    Prefix,
-    UnprefixedMismatch,
-    PrefixedMismatch,
-}
-
-impl LooseNameError {
-    pub fn message(self) -> &'static str {
-        match self {
-            LooseNameError::Local => "invalid DOM element local name",
-            LooseNameError::Prefix => "invalid DOM element prefix",
-            LooseNameError::UnprefixedMismatch => {
-                "qualified name must equal local name when prefix is nil"
-            }
-            LooseNameError::PrefixedMismatch => "qualified name must be prefix + ':' + local name",
-        }
-    }
-}
-
-/// The WHATWG DOM's name-character exclusions: what `createElement` refuses
-/// even though it is far looser than an XML Name.
-fn dom_name_forbidden(c: u8) -> bool {
-    matches!(c, 0 | b'\t' | b'\n' | 0x0C | b'\r' | b' ' | b'/' | b'>')
-}
-
-fn dom_prefix_ok(p: &[u8]) -> bool {
-    !p.is_empty() && !p.iter().copied().any(dom_name_forbidden)
-}
-
-fn dom_local_ok(p: &[u8]) -> bool {
-    let Some(&first) = p.first() else {
-        return false;
-    };
-    if first < 0x80 && !(first.is_ascii_alphabetic() || first == b':' || first == b'_') {
-        return false;
-    }
-    !p.iter().copied().any(dom_name_forbidden)
-}
-
-/// Check that `qname`, `prefix` and `local` describe one DOM element name -
-/// valid under the WHATWG rules, and `qname` exactly `prefix:local` (or
-/// `local` when there is no prefix) - and split it.
-///
-/// For the browser-DOM escape hatch that makes an element XML cannot name
-/// (`Document#create_loose_dom_element`); the serializer refuses those later.
-pub fn split_loose_dom_name(
-    qname: &[u8],
-    prefix: Option<&[u8]>,
-    local: &[u8],
-) -> Result<Split, LooseNameError> {
-    if !dom_local_ok(local) {
-        return Err(LooseNameError::Local);
-    }
-    let Some(p) = prefix else {
-        if qname != local {
-            return Err(LooseNameError::UnprefixedMismatch);
-        }
-        return Ok(Split::unprefixed(qname.len() as u32));
-    };
-    if !dom_prefix_ok(p) {
-        return Err(LooseNameError::Prefix);
-    }
-    if qname.len() != p.len() + 1 + local.len()
-        || &qname[..p.len()] != p
-        || qname[p.len()] != b':'
-        || &qname[p.len() + 1..] != local
-    {
-        return Err(LooseNameError::PrefixedMismatch);
-    }
-    Ok(Split {
-        prefix_len: p.len() as u32,
-        local_off: (p.len() + 1) as u32,
-        local_len: local.len() as u32,
-    })
 }

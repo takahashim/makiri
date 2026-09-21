@@ -10,8 +10,8 @@
 
 use crate::cutf8::{decode1, valid};
 use crate::falloc::grow_capacity;
-use crate::xml::chars::utf8_encode;
-use crate::xml::qname::{is_enc_name, is_version_num, is_yes_no, split_checked, xmlns_prefix};
+use crate::xml::chars::Utf8Char;
+use crate::xml::qname::{split_checked, xmlns_prefix};
 use crate::xpath::number::{extent, from_extent, to_text};
 
 fn decoder_consumes_all(s: &[u8]) -> bool {
@@ -61,10 +61,8 @@ fn utf8_encoder_matches_std_for_every_unicode_scalar() {
         let Some(ch) = char::from_u32(cp) else {
             continue; // surrogate code points are not Unicode scalars.
         };
-        let mut actual = [0u8; 4];
-        let n = utf8_encode(cp, &mut actual);
         assert_eq!(
-            &actual[..n],
+            Utf8Char::encode(cp).as_bytes(),
             ch.encode_utf8(&mut [0; 4]).as_bytes(),
             "U+{cp:04X}"
         );
@@ -149,7 +147,7 @@ fn xpath_number_rendering_has_xpath_boundary_behaviour() {
 }
 
 #[test]
-fn qname_and_declaration_grammars_reject_boundary_forms() {
+fn qname_grammar_rejects_boundary_forms() {
     assert!(split_checked(b"root").is_some());
     assert!(split_checked("p:要素".as_bytes()).is_some());
     for bad in [
@@ -165,13 +163,6 @@ fn qname_and_declaration_grammars_reject_boundary_forms() {
     assert_eq!(xmlns_prefix(b"xmlns"), Some(b"".as_slice()));
     assert_eq!(xmlns_prefix(b"xmlns:svg"), Some(b"svg".as_slice()));
     assert_eq!(xmlns_prefix(b"xmlnsx"), None);
-    assert!(is_version_num(b"1.0"));
-    assert!(!is_version_num(b"1."));
-    assert!(is_enc_name(b"UTF-8"));
-    assert!(!is_enc_name(b"8UTF"));
-    assert!(is_yes_no(b"yes"));
-    assert!(is_yes_no(b"no"));
-    assert!(!is_yes_no(b"Yes"));
 }
 
 #[test]
@@ -243,37 +234,6 @@ fn growth_policy_never_shrinks_a_live_allocation_for_non_empty_need() {
             }
         }
     }
-}
-
-#[test]
-fn node_id_tokens_fail_closed_outside_their_document() {
-    // A node-set token is not authenticated, so the checked accessor must
-    // reject anything that does not name a live slot in THIS document: a
-    // foreign document's handle (same index, different stamp), an out-of-range
-    // index, and the null handle.
-    use crate::xml::{Document, NodeId, NodeType};
-
-    let mut a = Document::create(None, 0).expect("doc a");
-    let mut b = Document::create(None, 0).expect("doc b");
-    let na = a.new_node(NodeType::Element).expect("node a");
-    let nb = b.new_node(NodeType::Element).expect("node b");
-
-    // The handle resolves in its own document.
-    assert_eq!(a.try_node(na).map(|n| n.type_), Some(NodeType::Element));
-    assert_eq!(b.try_node(nb).map(|n| n.type_), Some(NodeType::Element));
-
-    // Same slot index, different document stamp -> rejected.
-    assert_eq!(na.index(), nb.index());
-    assert!(b.try_node(na).is_none());
-    assert!(a.try_node(nb).is_none());
-
-    // Out-of-range index -> rejected, not a panic.
-    let oob = NodeId::new(u32::MAX - 1, na.stamp());
-    assert!(a.try_node(oob).is_none());
-
-    // The null handle -> rejected.
-    assert!(a.try_node(NodeId::INVALID).is_none());
-    assert!(NodeId::INVALID.is_invalid());
 }
 
 #[test]
@@ -426,8 +386,8 @@ fn text_fill_keeps_the_length_written() {
 
 #[test]
 fn xml_serialization_answers_what_the_ruby_methods_did_and_round_trips() {
-    use crate::xml::parse::xml_parse;
     use crate::xml::serialize::{canonicalize, to_xml};
+    use crate::xml::tree::parse as xml_parse;
 
     // The expected bytes are what `#to_xml` and `#canonicalize` answered before
     // the serializer moved out of the glue.

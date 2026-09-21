@@ -93,19 +93,24 @@ FORBID_FILES = %w[
   glue/xml_node/mod.rs glue/xml_node/mutate.rs glue/xml_node/ns.rs
   glue/xml_node/read.rs glue/xml_node/serialize.rs glue/xml_node/strings.rs
   glue/xpath_context.rs lexbor/adapter/dom_index.rs lexbor/adapter/utf8_input.rs
-  limits.rs ptr_table.rs xml/api.rs
-  xml/arena.rs xml/chars.rs xml/index.rs
-  xml/mod.rs xml/model.rs xml/mutate.rs
-  xml/parse.rs xml/qname.rs xml/selftest.rs
-  xml/serialize.rs xml/tree.rs xml/verify.rs
-  xml/xpath.rs xpath/abi.rs xpath/ast.rs
-  xpath/ast_ops.rs xpath/attr_pred.rs xpath/axis.rs
-  xpath/ctx.rs xpath/dom.rs xpath/eval.rs
-  xpath/funcs/ext.rs xpath/funcs/mod.rs xpath/lex.rs
-  xpath/limits.rs xpath/mod.rs xpath/msg.rs
-  xpath/nodetest.rs xpath/number.rs xpath/order.rs
-  xpath/parse.rs xpath/step_index.rs xpath/str_cache.rs
-  xpath/tests.rs xpath/value.rs xpath/verify.rs
+  limits.rs ptr_table.rs xml/arena.rs
+  xml/chars/expand.rs xml/chars/mod.rs xml/dom_name.rs
+  xml/encoding_sniff.rs xml/index.rs xml/mod.rs
+  xml/model.rs xml/mutate/attr.rs xml/mutate/copy.rs
+  xml/mutate/edit.rs xml/mutate/factory.rs xml/mutate/insert.rs
+  xml/mutate/mod.rs xml/mutate/ns.rs xml/qname.rs
+  xml/selftest.rs xml/serialize/c14n.rs xml/serialize/mod.rs
+  xml/serialize/out.rs xml/serialize/xml.rs xml/tree/cursor.rs
+  xml/tree/decl.rs xml/tree/dtd.rs xml/tree/mod.rs
+  xml/tree/scope.rs xml/verify.rs xml/xpath.rs
+  xpath/abi.rs xpath/ast.rs xpath/ast_ops.rs
+  xpath/attr_pred.rs xpath/axis.rs xpath/ctx.rs
+  xpath/dom.rs xpath/eval.rs xpath/funcs/ext.rs
+  xpath/funcs/mod.rs xpath/lex.rs xpath/limits.rs
+  xpath/mod.rs xpath/msg.rs xpath/nodetest.rs
+  xpath/number.rs xpath/order.rs xpath/parse.rs
+  xpath/step_index.rs xpath/str_cache.rs xpath/tests.rs
+  xpath/value.rs xpath/verify.rs
 ].freeze
 
 UNSAFE_USE = /\bunsafe\s*(?:\{|fn\b|impl\b|trait\b|extern\b)/
@@ -152,6 +157,19 @@ LEXBOR_ABI_COUNTS = {}.freeze
 ENGINE_DIRS = %w[lexbor/ xml/ xpath/ css/].freeze
 RUBY_LAYER = /crate::(?:bridge|glue|init)|magnus::/
 RUBY_LAYER_COUNTS = {}.freeze
+
+# The engine allocates only through `falloc`, so `rake oom` can fail every site
+# and an OOM raises instead of aborting the host. `clippy.toml` bans the
+# infallible `Box::new` / `Vec::with_capacity` / `reserve` / `to_vec` crate-wide,
+# but it CANNOT ban `ToOwned::to_owned`: on a `&str` that is the String of a Ruby
+# exception message, which the glue is right to allocate on a path that is
+# already raising. The rule is per-LAYER, so the per-layer half is here.
+#
+# It is here because three `.to_owned()` calls reached `xml/serialize` unnoticed -
+# the engine's only infallible allocations - and the crate-wide lint that would
+# have caught them fired on five legitimate glue sites too.
+INFALLIBLE_ALLOC = /\.to_owned\(\)|\.to_vec\(\)|String::from\(|\bformat!\(/
+INFALLIBLE_ALLOC_COUNTS = {}.freeze
 
 def rust_code(path)
   File.binread(path).lines.reject { |line| line.match?(%r{\A\s*//}) }.join
@@ -369,6 +387,20 @@ Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
 end
 if ruby_layer != RUBY_LAYER_COUNTS
   errors << "Ruby-layer use inside an engine layer changed: #{table_diff(RUBY_LAYER_COUNTS, ruby_layer)}"
+end
+
+infallible = Hash.new(0)
+Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
+  relative = path.delete_prefix("#{RUST}/")
+  next unless relative.start_with?(*ENGINE_DIRS)
+  next if relative.end_with?("selftest.rs", "verify.rs", "tests.rs")
+
+  count = comments_removed(File.binread(path)).scan(INFALLIBLE_ALLOC).length
+  infallible[relative] = count unless count.zero?
+end
+if infallible != INFALLIBLE_ALLOC_COUNTS
+  errors << "infallible allocation inside an engine layer changed: " \
+            "#{table_diff(INFALLIBLE_ALLOC_COUNTS, infallible)}"
 end
 
 # The bridge hands the glue primitives; the Ruby surface - defining a method,

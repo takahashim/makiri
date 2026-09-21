@@ -613,7 +613,7 @@ impl Index {
             return Index::Linear;
         }
         let mut set = PtrSet::default();
-        if set.mkr_reserve(nodes.len()).is_err() {
+        if set.falloc_reserve(nodes.len()).is_err() {
             return Index::Linear;
         }
         set.extend(nodes.iter().copied());
@@ -626,7 +626,7 @@ impl Index {
             return Index::Linear;
         }
         let mut set = PtrSet::default();
-        if set.mkr_reserve(expected).is_err() {
+        if set.falloc_reserve(expected).is_err() {
             return Index::Linear;
         }
         Index::Hashed(set)

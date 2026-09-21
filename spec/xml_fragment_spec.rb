@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "spec_helper"
+require "objspace"
 
 # XML fragment parsing: Makiri::XML::DocumentFragment.parse (a standalone,
 # self-contained fragment with its own backing document) and
@@ -113,6 +114,63 @@ RSpec.describe "Makiri::XML fragments" do
       expect(doc.root.children.map { |c| [c.name, c.namespace_uri] })
         .to eq([["p:a", "urn:p"], ["plain", nil]])
       expect(doc.to_xml).to include("<p:a") # spliced into the live tree
+    end
+  end
+
+  describe "a rejected fragment leaves no trace in the arena" do
+    # The partial fragment is unreachable - it hangs off a root #fragment never
+    # returned - so tree.rs rewinds the arena. Without the rewind, a loop of
+    # rejected fragments charged a live document until every later operation
+    # failed with Limit: 100k of these grew a <r/> document to 77 MB.
+    it "does not grow the document" do
+      doc = Makiri::XML("<r/>")
+      before = ObjectSpace.memsize_of(doc)
+      2_000.times do
+        expect { doc.fragment("<a><b>#{"x" * 200}</b>") }.to raise_error(Makiri::Error)
+      end
+      expect(ObjectSpace.memsize_of(doc) - before).to be < 4_096
+    end
+
+    it "leaves the document usable and unchanged" do
+      doc = Makiri::XML("<r><keep/></r>")
+      expect { doc.fragment("<unclosed>") }.to raise_error(Makiri::Error)
+      expect(doc.to_xml).to include("<r><keep/></r>")
+      frag = doc.fragment("<ok/>")
+      doc.root.add_child(frag)
+      expect(doc.root.children.map(&:name)).to eq(%w[keep ok])
+    end
+  end
+
+  describe "a rejected fragment insertion is all or nothing" do
+    # place() used to insert a fragment's children one at a time, so a child the
+    # rules refused left the earlier ones linked. The document node found it:
+    # two elements there is one too many, and the first was already the root by
+    # the time the second was refused. Place::Replace always validated the whole
+    # fragment first; the other three verbs do now too.
+    it "leaves the document untouched when one child of an appended fragment is refused" do
+      doc = Makiri::XML::Document.new
+      frag = doc.fragment("<a/><b/>")
+      expect { doc.add_child(frag) }.to raise_error(Makiri::Error)
+      expect(doc.root).to be_nil
+      expect(doc.to_xml).not_to include("<a/>")
+      expect(frag.children.map(&:name)).to eq(%w[a b])
+    end
+
+    it "still appends a fragment the rules allow" do
+      doc = Makiri::XML::Document.new
+      doc.add_child(doc.fragment("<only/>"))
+      expect(doc.root.name).to eq("only")
+    end
+
+    it "refuses a second root through before/after as well" do
+      doc = Makiri::XML("<r/>")
+      %i[add_previous_sibling add_next_sibling].each do |verb|
+        frag = doc.fragment("<x/><y/>")
+        expect { doc.root.public_send(verb, frag) }.to raise_error(Makiri::Error)
+        expect(doc.root.name).to eq("r")
+        expect(doc.children.map(&:name)).to eq(%w[r])
+        expect(frag.children.map(&:name)).to eq(%w[x y])
+      end
     end
   end
 end

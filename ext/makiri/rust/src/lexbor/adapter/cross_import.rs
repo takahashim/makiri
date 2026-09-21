@@ -77,7 +77,7 @@ fn push<'a, S, D>(stack: &mut Vec<Frame<'a, S, D>>, frame: Frame<'a, S, D>) -> R
             core::mem::size_of::<Frame<'a, S, D>>(),
         )
         .ok_or(())?;
-        stack.mkr_reserve_exact(want - stack.len())?;
+        stack.falloc_reserve_exact(want - stack.len())?;
     }
     stack.push(frame);
     Ok(())
@@ -232,12 +232,7 @@ fn h2x_make<'a>(
             unchanged(mutate::new_pi(doc, target, data(s)?)?)
         }
 
-        h::FRAGMENT => {
-            let f = doc
-                .new_node(NodeType::Fragment)
-                .map_err(|_| MutStatus::Oom)?;
-            unchanged(f)
-        }
+        h::FRAGMENT => unchanged(mutate::new_fragment(doc)?),
 
         /* An unsupported descendant type is skipped, not an error. */
         _ => unchanged(NodeId::INVALID),

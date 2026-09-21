@@ -161,7 +161,7 @@ impl<'a> Parser<'a> {
     /// Charge the step budget, then append. A step that does not land is freed.
     fn push_step(&mut self, steps: &mut Vec<Step>, s: Step) -> PResult {
         self.budget.check_steps(steps.len() + 1)?;
-        if steps.mkr_push(s).is_err() {
+        if steps.falloc_push(s).is_err() {
             return Err(err_setf!(
                 self.err.clone(),
                 XP_ERR_OOM,
@@ -252,7 +252,7 @@ impl<'a> Parser<'a> {
             self.advance()?;
             let e = self.parse_expr()?;
             self.eat(Tok::RBracket, "']' to close predicate")?;
-            if preds.mkr_push(e).is_err() {
+            if preds.falloc_push(e).is_err() {
                 return Err(err_setf!(
                     self.err,
                     XP_ERR_OOM,
@@ -385,7 +385,7 @@ impl<'a> Parser<'a> {
             loop {
                 self.budget.check_func_args(args.len() + 1)?;
                 let arg = self.parse_expr()?;
-                if args.mkr_push(arg).is_err() {
+                if args.falloc_push(arg).is_err() {
                     return Err(err_setf!(
                         self.err,
                         XP_ERR_OOM,

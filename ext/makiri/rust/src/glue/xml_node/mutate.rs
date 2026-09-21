@@ -2,7 +2,8 @@
 //!
 //! The Ruby surface of each edit: the arguments converted and checked, the
 //! error each refusal raises, the value handed back. The arena itself is only
-//! ever reached through [`with_arena_mut`], after every argument is converted -
+//! ever reached through [`Editing::with_arena`] or [`with_arena_for_new_node`],
+//! after every argument is converted -
 //! converting runs Ruby, and the closure it lends the arena to runs none - and
 //! what holds two arenas at once (adopting, importing) is a primitive in
 //! [`crate::bridge::xml`]. So this module holds no unsafe.
@@ -14,18 +15,14 @@ use magnus::{prelude::*, Error, RArray, RHash, Ruby, Value};
 use crate::bridge::ruby::makiri_error;
 
 use crate::bridge::xml::{
-    begin_edit, import_copy, incoming_node, verified_text, verified_text_opt, with_arena_mut, wrap,
-    xml_mut_check, xml_mut_result, xml_wrap_rel_value, XmlSelf,
+    begin_edit, import_copy, incoming_node, verified_text, verified_text_opt,
+    with_arena_for_new_node, wrap, xml_mut_check, xml_mut_result, xml_wrap_rel_value, Editing,
+    XmlSelf,
 };
 use crate::init::CLASS_XML_DOCUMENT;
-use crate::xml::api::{
-    xml_clone_node, xml_new_chardata, xml_new_document_type, xml_new_element,
-    xml_new_loose_dom_element, xml_new_pi, xml_remove, xml_remove_attribute,
-    xml_remove_attribute_ns, xml_rename, xml_set_attribute, xml_set_attribute_ns, xml_set_content,
-};
+use crate::xml::dom_name::split_loose_dom_name;
 use crate::xml::model::{NodeId, NodeType};
-use crate::xml::mutate::{place, Place};
-use crate::xml::qname::split_loose_dom_name;
+use crate::xml::mutate::{self, place, Place};
 
 /* ------------------------------------------------------------------ */
 /* in-place edits                                                     */
@@ -37,8 +34,8 @@ pub fn remove(this: XmlSelf) -> Result<Value, Error> {
     if rb_self.is_kind_of(CLASS_XML_DOCUMENT.class()) {
         return Err(makiri_error("cannot remove the document node"));
     }
-    let n = begin_edit(this)?;
-    with_arena_mut(this.document, |d| xml_remove(d, n))?;
+    let edit = begin_edit(this)?;
+    edit.with_arena(mutate::remove)?;
     Ok(rb_self)
 }
 
@@ -48,25 +45,23 @@ fn is_element(this: &XmlSelf, n: NodeId) -> bool {
 }
 
 /// The receiver cleared for an edit, which must be an element.
-fn element_for(this: XmlSelf) -> Result<NodeId, Error> {
-    let n = begin_edit(this)?;
-    if !is_element(&this, n) {
+fn element_for(this: XmlSelf) -> Result<Editing, Error> {
+    let edit = begin_edit(this)?;
+    if !is_element(&this, edit.id()) {
         return Err(makiri_error(
             "cannot set an attribute on a non-element node",
         ));
     }
-    Ok(n)
+    Ok(edit)
 }
 
 /// `element[name] = value` -> value.
 pub fn aset(_ruby: &Ruby, this: XmlSelf, name: Value, val: Value) -> Result<Value, Error> {
-    let n = element_for(this)?;
+    let edit = element_for(this)?;
     let nv = verified_text(name, c"attribute name")?;
     let vv = verified_text(val, c"attribute value")?;
     let (name, value) = (nv.as_verified().as_bytes(), vv.as_verified().as_bytes());
-    xml_mut_result(with_arena_mut(this.document, |d| {
-        xml_set_attribute(d, n, name, value)
-    })?)?;
+    xml_mut_result(edit.with_arena(|d, n| mutate::set_attribute(d, n, name, value))?)?;
     Ok(val)
 }
 
@@ -78,7 +73,7 @@ pub fn set_attribute_ns(
     qname: Value,
     val: Value,
 ) -> Result<Value, Error> {
-    let n = element_for(this)?;
+    let edit = element_for(this)?;
     let qv = verified_text(qname, c"attribute qualified name")?;
     let vv = verified_text(val, c"attribute value")?;
     let nv = verified_text_opt(ns, c"namespace")?;
@@ -87,9 +82,7 @@ pub fn set_attribute_ns(
         qv.as_verified().as_bytes(),
         vv.as_verified().as_bytes(),
     );
-    xml_mut_result(with_arena_mut(this.document, |d| {
-        xml_set_attribute_ns(d, n, ns, qname, value)
-    })?)?;
+    xml_mut_result(edit.with_arena(|d, n| mutate::set_attribute_ns(d, n, ns, qname, value))?)?;
     Ok(val)
 }
 
@@ -101,47 +94,45 @@ pub fn remove_attribute_ns(
     local: Value,
 ) -> Result<Value, Error> {
     let rb_self = this.value;
-    let n = begin_edit(this)?;
-    if !is_element(&this, n) {
+    let edit = begin_edit(this)?;
+    if !is_element(&this, edit.id()) {
         return Ok(rb_self);
     }
     let lv = verified_text(local, c"attribute local name")?;
     let nv = verified_text_opt(ns, c"namespace")?;
     let (ns, local) = (nv.as_verified().as_bytes(), lv.as_verified().as_bytes());
-    with_arena_mut(this.document, |d| xml_remove_attribute_ns(d, n, ns, local))?;
+    edit.with_arena(|d, n| mutate::remove_attribute_ns(d, n, ns, local))?;
     Ok(rb_self)
 }
 
 /// `element.delete(name)` / `#remove_attribute` -> self.
 pub fn delete(_ruby: &Ruby, this: XmlSelf, name: Value) -> Result<Value, Error> {
     let rb_self = this.value;
-    let n = begin_edit(this)?;
-    if !is_element(&this, n) {
+    let edit = begin_edit(this)?;
+    if !is_element(&this, edit.id()) {
         return Ok(rb_self);
     }
     let nv = verified_text(name, c"attribute name")?;
     let name = nv.as_verified().as_bytes();
-    with_arena_mut(this.document, |d| xml_remove_attribute(d, n, name))?;
+    edit.with_arena(|d, n| mutate::remove_attribute(d, n, name))?;
     Ok(rb_self)
 }
 
 /// `node.content = text` -> text.
 pub fn set_content(_ruby: &Ruby, this: XmlSelf, text: Value) -> Result<Value, Error> {
-    let n = begin_edit(this)?;
+    let edit = begin_edit(this)?;
     let tv = verified_text(text, c"node content")?;
     let bytes = tv.as_verified().as_bytes();
-    xml_mut_check(with_arena_mut(this.document, |d| {
-        xml_set_content(d, n, bytes)
-    })?)?;
+    xml_mut_check(edit.with_arena(|d, n| mutate::set_content(d, n, bytes))?)?;
     Ok(text)
 }
 
 /// `node.name = new_name` -> new_name.
 pub fn set_name(_ruby: &Ruby, this: XmlSelf, name: Value) -> Result<Value, Error> {
-    let n = begin_edit(this)?;
+    let edit = begin_edit(this)?;
     let nv = verified_text(name, c"node name")?;
     let bytes = nv.as_verified().as_bytes();
-    xml_mut_check(with_arena_mut(this.document, |d| xml_rename(d, n, bytes))?)?;
+    xml_mut_check(edit.with_arena(|d, n| mutate::rename(d, n, bytes))?)?;
     Ok(name)
 }
 
@@ -152,11 +143,9 @@ pub fn set_name(_ruby: &Ruby, this: XmlSelf, name: Value) -> Result<Value, Error
 /// Put `arg` at `at` relative to the receiver - moved when it is of this
 /// document, adopted from its own otherwise - and return it.
 fn insert(this: XmlSelf, arg: Value, at: Place) -> Result<Value, Error> {
-    let target = begin_edit(this)?;
-    let (node, adoption) = incoming_node(this.document, arg)?;
-    xml_mut_check(with_arena_mut(this.document, |d| {
-        place(d, target, node, at)
-    })?)?;
+    let edit = begin_edit(this)?;
+    let (node, adoption) = incoming_node(edit.document(), arg)?;
+    xml_mut_check(edit.with_arena(|d, target| place(d, target, node, at))?)?;
     if let Some(a) = adoption {
         a.finish();
     }
@@ -184,11 +173,17 @@ pub fn lshift(_ruby: &Ruby, this: XmlSelf, arg: Value) -> Result<Value, Error> {
 }
 
 /// `clone_node(deep = false)` -> a detached copy in the same document.
+///
+/// The ONE method here that takes a node receiver and still uses the factory
+/// gate rather than [`Editing`]: it reads the receiver and builds something
+/// DETACHED, so there is nothing to invalidate and nothing on the receiver to
+/// change - freezing a node does not stop it being copied. Every other method
+/// taking `XmlSelf` edits the tree and goes through `begin_edit`.
 pub fn clone_node(this: XmlSelf, args: &[Value]) -> Result<Value, Error> {
     let a = magnus::scan_args::scan_args::<(), (Option<Value>,), (), (), (), ()>(args)?;
     let deep = a.optional.0.is_some_and(|v| v.to_bool());
-    let copy = xml_mut_result(with_arena_mut(this.document, |d| {
-        xml_clone_node(d, this.id, deep)
+    let copy = xml_mut_result(with_arena_for_new_node(this.document, |d| {
+        mutate::clone_node(d, this.id, deep)
     })?)?;
     Ok(xml_wrap_rel_value(this, copy))
 }
@@ -214,9 +209,13 @@ pub fn create_element(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Val
     let nv = verified_text(name, c"element name")?;
     let cv = verified_text_opt(content, c"element content")?;
     let (name, text) = (nv.as_verified().as_bytes(), cv.as_verified().as_bytes());
-    let el = xml_mut_result(with_arena_mut(rb_self, |d| xml_new_element(d, name))?)?;
+    let el = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
+        mutate::new_element(d, name)
+    })?)?;
     if !content.is_nil() {
-        xml_mut_check(with_arena_mut(rb_self, |d| xml_set_content(d, el, text))?)?;
+        xml_mut_check(with_arena_for_new_node(rb_self, |d| {
+            mutate::set_content(d, el, text)
+        })?)?;
     }
     let rb_el = wrap(el, rb_self);
     if let Some(h) = attrs {
@@ -265,8 +264,8 @@ pub fn create_loose_dom_element(
     )
     .map_err(|e| Error::new(ruby.exception_arg_error(), e.message()))?;
     let ns = nv.as_verified().as_bytes();
-    let el = xml_mut_result(with_arena_mut(rb_self, |d| {
-        xml_new_loose_dom_element(d, qname, sp, ns)
+    let el = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
+        mutate::new_loose_dom_element(d, qname, sp, ns)
     })?)?;
     Ok(wrap(el, rb_self))
 }
@@ -287,8 +286,8 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
         (pv.len() != 0).then(|| pv.as_verified().as_bytes()),
         (sv.len() != 0).then(|| sv.as_verified().as_bytes()),
     );
-    let dt = xml_mut_result(with_arena_mut(rb_self, |d| {
-        xml_new_document_type(d, name, pub_id, sys_id)
+    let dt = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
+        mutate::new_document_type(d, name, pub_id, sys_id)
     })?)?;
     Ok(wrap(dt, rb_self))
 }
@@ -302,8 +301,8 @@ fn create_chardata(
 ) -> Result<Value, Error> {
     let tv = verified_text(text, what)?;
     let bytes = tv.as_verified().as_bytes();
-    let n = xml_mut_result(with_arena_mut(rb_self, |d| {
-        xml_new_chardata(d, type_, bytes)
+    let n = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
+        mutate::new_chardata(d, type_, bytes)
     })?)?;
     Ok(wrap(n, rb_self))
 }
@@ -322,7 +321,9 @@ pub fn create_pi(_ruby: &Ruby, rb_self: Value, target: Value, data: Value) -> Re
     let tg = verified_text(target, c"PI target")?;
     let dt = verified_text(data, c"PI data")?;
     let (target, data) = (tg.as_verified().as_bytes(), dt.as_verified().as_bytes());
-    let pi = xml_mut_result(with_arena_mut(rb_self, |d| xml_new_pi(d, target, data))?)?;
+    let pi = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
+        mutate::new_pi(d, target, data)
+    })?)?;
     Ok(wrap(pi, rb_self))
 }
 

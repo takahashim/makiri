@@ -24,7 +24,9 @@ use crate::xpath::dom::{Bucket, Dom};
 /// Level 2); only the XPath iteration below skips it.
 fn is_ns_decl(doc: &xml::Document, a: xml::NodeId) -> bool {
     let q = doc.try_node(a).map_or(&[][..], |x| doc.span(x.qname));
-    q == b"xmlns" || q.starts_with(b"xmlns:")
+    /* `qname::xmlns_prefix` is the ONE definition of the shape; spelling the
+     * prefix test out again here would be a third copy of it. */
+    crate::xml::qname::xmlns_prefix(q).is_some()
 }
 
 fn skip_ns_decls(doc: &xml::Document, mut a: xml::NodeId) -> Option<xml::NodeId> {
@@ -204,9 +206,9 @@ impl<'d> Dom<'d> for &'d xml::Document {
         let uri = ns_uri.unwrap_or(b"");
         /* Built lazily and cached on the document; None on OOM, and the caller
          * walks. */
-        let idx = crate::xml::index::get(self)?;
+        let idx = self.name_index()?;
         Some(Bucket {
-            nodes: crate::xml::index::lookup(idx, local, uri),
+            nodes: idx.lookup(local, uri),
             recheck: false,
         })
     }

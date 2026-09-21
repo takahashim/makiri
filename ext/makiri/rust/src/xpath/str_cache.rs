@@ -61,7 +61,7 @@ impl StrCache {
         text: Text,
         budget: &mut Budget,
     ) -> Result<TextId, Reported> {
-        if self.entries.mkr_reserve(1).is_err() {
+        if self.entries.falloc_reserve(1).is_err() {
             return Err(err_setf!(
                 budget.sink(),
                 XP_ERR_OOM,

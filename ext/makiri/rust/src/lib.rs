@@ -11,7 +11,7 @@
 //!   ruby     `bridge`, `glue`, `init` - the magnus boundary and `Init_makiri`
 //!            (`ruby`, on by default; it implies `lexbor`).
 //!
-//! Nothing here carries the C ABI's `mkr_` prefix any more: the crate exports only
+//! No SYMBOL here carries the C ABI's `mkr_` prefix any more: the crate exports only
 //! `Init_makiri` (and `ruby_abi_version`), so every item is named as Rust.
 //! Lexbor's own names stay `lxb_*`.
 

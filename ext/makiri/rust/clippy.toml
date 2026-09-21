@@ -19,17 +19,25 @@
 # call, and review is what catches a site that skipped them.
 disallowed-methods = [
   { path = "std::boxed::Box::new", reason = "aborts on OOM; use falloc::try_box" },
+  # `to_vec` is the same allocation as `Vec::from` under a friendlier name, and
+  # it was one of the holes this list had. Its sibling `ToOwned::to_owned` is NOT
+  # banned here, because it cannot be: on a `&str` it builds the String of a Ruby
+  # exception message, which the glue is right to allocate infallibly on a path
+  # that is already raising. The rule is per-LAYER and clippy.toml is crate-wide,
+  # so the layer half lives in `script/check_unsafe_boundaries.rb` ("infallible
+  # allocation inside an engine layer"), beside the other per-layer gates.
+  { path = "slice::to_vec", reason = "aborts on OOM; use falloc::try_to_vec" },
   { path = "alloc::vec::Vec::with_capacity", reason = "aborts on OOM; use falloc::try_vec_with_capacity" },
-  { path = "alloc::vec::Vec::reserve", reason = "aborts on OOM; use Reserve::mkr_reserve" },
-  { path = "alloc::vec::Vec::reserve_exact", reason = "aborts on OOM; use Reserve::mkr_reserve_exact" },
-  { path = "alloc::vec::Vec::try_reserve", reason = "not injectable; use Reserve::mkr_reserve" },
-  { path = "alloc::vec::Vec::try_reserve_exact", reason = "not injectable; use Reserve::mkr_reserve_exact" },
-  { path = "std::collections::HashMap::reserve", reason = "aborts on OOM; use Reserve::mkr_reserve" },
-  { path = "std::collections::HashMap::try_reserve", reason = "not injectable; use Reserve::mkr_reserve" },
-  { path = "std::collections::HashMap::with_capacity", reason = "aborts on OOM; use Reserve::mkr_reserve" },
-  { path = "std::collections::HashSet::reserve", reason = "aborts on OOM; use Reserve::mkr_reserve" },
-  { path = "std::collections::HashSet::try_reserve", reason = "not injectable; use Reserve::mkr_reserve" },
-  { path = "std::collections::HashSet::with_capacity", reason = "aborts on OOM; use Reserve::mkr_reserve" },
+  { path = "alloc::vec::Vec::reserve", reason = "aborts on OOM; use Reserve::falloc_reserve" },
+  { path = "alloc::vec::Vec::reserve_exact", reason = "aborts on OOM; use Reserve::falloc_reserve_exact" },
+  { path = "alloc::vec::Vec::try_reserve", reason = "not injectable; use Reserve::falloc_reserve" },
+  { path = "alloc::vec::Vec::try_reserve_exact", reason = "not injectable; use Reserve::falloc_reserve_exact" },
+  { path = "std::collections::HashMap::reserve", reason = "aborts on OOM; use Reserve::falloc_reserve" },
+  { path = "std::collections::HashMap::try_reserve", reason = "not injectable; use Reserve::falloc_reserve" },
+  { path = "std::collections::HashMap::with_capacity", reason = "aborts on OOM; use Reserve::falloc_reserve" },
+  { path = "std::collections::HashSet::reserve", reason = "aborts on OOM; use Reserve::falloc_reserve" },
+  { path = "std::collections::HashSet::try_reserve", reason = "not injectable; use Reserve::falloc_reserve" },
+  { path = "std::collections::HashSet::with_capacity", reason = "aborts on OOM; use Reserve::falloc_reserve" },
   # std's STABLE sorts take a scratch buffer from the global allocator and abort
   # the process when it cannot be had - outside falloc, so `rake oom` never
   # fails them. The unstable sorts sort in place and allocate nothing.

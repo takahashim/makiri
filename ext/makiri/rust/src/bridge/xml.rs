@@ -7,7 +7,7 @@
 //!
 //! The rules themselves (name well-formedness, the XML character class,
 //! namespace resolution, what may be a child of what) live in the Ruby-free
-//! `xml/mkr_xml_*`; this layer coerces and verifies arguments, and maps the
+//! `crate::xml`; this layer coerces and verifies arguments, and maps the
 //! resulting status to a Ruby exception.
 //!
 //! **Detach, never destroy.** A removed node is unlinked, not freed, so a live
@@ -36,8 +36,11 @@ use crate::init::{
     CLASS_XML_TEXT,
 };
 use crate::lexbor::adapter::cross_import::cross_html_to_xml;
-use crate::xml::api::*;
-use crate::xml::model::{Doc as XmlDoc, Limits as XmlLimits, MutStatus, NodeId, NodeType, Status};
+use crate::xml::model::{
+    Document as XmlDoc, Limits as XmlLimits, MutStatus, NodeId, NodeType, Status,
+};
+use crate::xml::mutate::{clone_node, copy_node_from, import_subtree, remove as remove_node};
+use crate::xml::tree;
 
 fn is_a(v: Value, klass: &crate::init::RbConst) -> bool {
     v.is_kind_of(klass.class())
@@ -234,6 +237,14 @@ allows a single root element, and a sibling target must have a parent)"
         }
         MutStatus::BadNsDecl => "cannot bind a namespace prefix to the empty namespace",
         MutStatus::Internal => "internal error mutating XML (no document)",
+        /* The document's own budget, not the machine's memory - so the same
+         * exception a parse raises for the same cause. */
+        MutStatus::Limit => {
+            return Err(Error::new(
+                EXC_XML_LIMIT_EXCEEDED.exception(),
+                "XML document exceeded its byte or node budget",
+            ))
+        }
     };
     Err(makiri_error(msg))
 }
@@ -242,8 +253,18 @@ allows a single root element, and a sibling target must have a parent)"
 /* lending the arena for an edit                                      */
 /* ------------------------------------------------------------------ */
 
-/// Run `f` on `document`'s arena, for a WRITE - the one way a caller outside
-/// this module gets `&mut` to an XML arena.
+/// Run `f` on `document`'s arena to build a DETACHED node - the factories'
+/// gate, and the one way a caller outside this module gets `&mut` to an XML
+/// arena without a receiver.
+///
+/// A detached node is not in the tree, so it is not in the name index and there
+/// is no receiver to check for frozenness. A TREE EDIT is [`Editing`]: it needs
+/// both, and the only way to get the `&mut` for one is to spend the token
+/// `begin_edit` hands out. The name says which of the two this is, because a
+/// mutator reaching for "the arena, mutably" would otherwise skip the checks
+/// simply by asking for the wrong thing - which is how the XML side came to have
+/// nine sites that correctly skip the index invalidation and eight that must
+/// not, with nothing but a reader's judgement telling them apart.
 ///
 /// Refused while an XPath evaluation with a handler reads the document (see
 /// [`arena_mut`]). The `&mut` lives for `f` alone, and `f` must not run Ruby:
@@ -251,20 +272,65 @@ allows a single root element, and a sibling target must have a parent)"
 /// meanwhile would alias the borrow. That is why a method converts and checks
 /// its arguments FIRST and only then calls this, with nothing but engine calls
 /// inside - which are Ruby-free by construction.
-pub fn with_arena_mut<R>(document: Value, f: impl FnOnce(&mut XmlDoc) -> R) -> Result<R, Error> {
+pub fn with_arena_for_new_node<R>(
+    document: Value,
+    f: impl FnOnce(&mut XmlDoc) -> R,
+) -> Result<R, Error> {
     let xd = arena_mut(document)?;
     // SAFETY: a live arena of `document`, which the caller holds; cleared for
     // writing above, and borrowed only for `f`, which runs no Ruby.
     Ok(f(unsafe { &mut *xd }))
 }
 
+/// The receiver cleared for an edit, and the PROOF of it.
+///
+/// [`begin_edit`] is the only way to build one and [`Editing::with_arena`] the
+/// only way to spend it, so a tree edit cannot reach the arena without the two
+/// things that must happen first: the frozen check, and dropping the name index
+/// the edit is about to invalidate.
+///
+/// [`with_arena_for_new_node`] stays for the FACTORIES, which build a detached node -
+/// not in the tree, so not in the index, and with no receiver to freeze. The
+/// HTML side has had this as one `edit` gate all along; XML had the `&mut` gate
+/// and the invalidate gate as two separate calls, and whether a site needed the
+/// second was a judgement the reader had to make at each of seventeen.
+pub struct Editing {
+    document: Value,
+    id: NodeId,
+}
+
+impl Editing {
+    /// The node being edited.
+    pub fn id(&self) -> NodeId {
+        self.id
+    }
+
+    /// Its document, for the Ruby-side work an edit does around the arena call.
+    pub fn document(&self) -> Value {
+        self.document
+    }
+
+    /// Lend the arena for the change. `f` runs no Ruby (see [`with_arena_for_new_node`]),
+    /// so every argument is converted BEFORE this - which is also why the frozen
+    /// check is in `begin_edit` rather than here: it must stay ahead of the
+    /// argument conversion, so a frozen receiver is reported before a bad
+    /// argument, as it always was.
+    pub fn with_arena<R>(&self, f: impl FnOnce(&mut XmlDoc, NodeId) -> R) -> Result<R, Error> {
+        let id = self.id;
+        with_arena_for_new_node(self.document, |d| f(d, id))
+    }
+}
+
 /// The receiver cleared for an edit - not frozen, its document not under
 /// evaluation - with the document's name index dropped, since the edit is
 /// about to change what it indexes.
-pub fn begin_edit(this: XmlSelf) -> Result<NodeId, Error> {
+pub fn begin_edit(this: XmlSelf) -> Result<Editing, Error> {
     check_frozen(this.value)?;
-    with_arena_mut(this.document, xml_name_index_invalidate)?;
-    Ok(this.id)
+    with_arena_for_new_node(this.document, XmlDoc::invalidate_name_index)?;
+    Ok(Editing {
+        document: this.document,
+        id: this.id,
+    })
 }
 
 /// A String argument verified as an engine string - valid UTF-8, no NUL - and
@@ -353,11 +419,9 @@ pub fn parse_xml_document(source: Value, limits: XmlLimits, budget: usize) -> Re
 
     /* Ruby-free from here: only the copied bytes and the limits cross. */
     let (result, status) =
-        crate::bridge::gvl::without_gvl(|| {
-            match crate::xml::api::xml_parse_ex(src.as_slice(), Some(&limits)) {
-                Ok(doc) => (Box::into_raw(doc), Status::Ok),
-                Err(status) => (core::ptr::null_mut(), status),
-            }
+        crate::bridge::gvl::without_gvl(|| match tree::parse_ex(src.as_slice(), Some(&limits)) {
+            Ok(doc) => (Box::into_raw(doc), Status::Ok),
+            Err(status) => (core::ptr::null_mut(), status),
         });
     drop(src);
 
@@ -390,7 +454,7 @@ pub fn document_internal_subset(ruby: &Ruby, rb_self: Value) -> Value {
 /// A fresh, empty XML Document: an arena holding a DOCUMENT node and no root.
 pub fn new_empty_xml_document() -> Result<Value, Error> {
     let shell = DocumentShell::new(DocKind::Xml);
-    let arena = crate::xml::api::xml_doc_new()
+    let arena = XmlDoc::create(None, 0)
         .map_err(|_| makiri_error("out of memory allocating XML document"))?;
     Ok(shell.install_xml(arena))
 }
@@ -411,7 +475,7 @@ pub fn fragment_into(
     let decoded = xml_decode_input_value(source.as_value(), unsafe { (*xdoc).max_bytes })?;
     let src = crate::bridge::string::ruby_string_bytes(decoded)?;
     // SAFETY: the arena is live and mutable for this call, under the GVL.
-    crate::xml::api::xml_parse_fragment(unsafe { &mut *xdoc }, src.as_slice(), inherit_doc_ns)
+    tree::parse_fragment(unsafe { &mut *xdoc }, src.as_slice(), inherit_doc_ns)
         .map_err(|status| parse_status_error(status, Unit::Fragment))
 }
 
@@ -462,7 +526,7 @@ fn find_attribute_bytes(d: &XmlDoc, el: NodeId, name: &[u8]) -> Option<NodeId> {
 /* ------------------------------------------------------------------ */
 /* The node methods live in `glue::xml_node::mutate`. What stays here is what
  * holds two arenas - or an arena and a Lexbor document - at the same time,
- * which `with_arena_mut`'s one-at-a-time lending cannot express. */
+ * which `with_arena_for_new_node`'s one-at-a-time lending cannot express. */
 
 /// A node copied in from another document, still to be taken out of it: the
 /// second half of the move `appendChild` performs across arenas. It carries
@@ -485,12 +549,12 @@ impl Adoption {
         let sdoc = unsafe { &mut *self.src_doc };
         if sdoc.type_(self.src) == Some(NodeType::Fragment) {
             while let Some(c) = sdoc.first_child(self.src) {
-                xml_remove(sdoc, c);
+                remove_node(sdoc, c);
             }
         } else {
-            xml_remove(sdoc, self.src);
+            remove_node(sdoc, self.src);
         }
-        xml_name_index_invalidate(sdoc);
+        sdoc.invalidate_name_index();
     }
 }
 
@@ -504,6 +568,17 @@ pub fn incoming_node(target_doc: Value, arg: Value) -> Result<(NodeId, Option<Ad
             "expected a Makiri::XML node (NodeSet / String arguments are a later phase)",
         ));
     }
+    /* Inserting `arg` relinks IT - its parent, prev and next all change, and an
+     * adoption takes it out of its own document - so a frozen argument is a
+     * frozen node being modified, which the receiver check alone let through:
+     * `a.remove` raised and `b.add_child(a)` did not, for the same effect on `a`.
+     *
+     * This reaches the nodes the caller NAMED. A fragment argument splices its
+     * children, and those cannot be checked: frozenness is a property of a Ruby
+     * object and the arena has no map from a node back to its wrapper (see
+     * CLAUDE.md on why a per-node wrapper cache was rejected). A child the caller
+     * never named is out of reach by construction, not by choice. */
+    check_frozen(arg)?;
     let src = unwrap(arg)?;
     let src_document = xml_node_document(arg)?;
     if src_document.as_raw() == target_doc.as_raw() {
@@ -514,7 +589,7 @@ pub fn incoming_node(target_doc: Value, arg: Value) -> Result<(NodeId, Option<Ad
     let src_doc = arena_mut(src_document)?;
     // SAFETY: two distinct live arenas (the documents differ), both cleared
     // for writing; the source is only read here.
-    let copy = xml_mut_result(unsafe { xml_import_subtree(&mut *xd, &*src_doc, src) })?;
+    let copy = xml_mut_result(unsafe { import_subtree(&mut *xd, &*src_doc, src) })?;
     Ok((
         copy,
         Some(Adoption {
@@ -538,10 +613,10 @@ pub fn import_copy(rb_self: Value, node_v: Value, deep: bool) -> Result<NodeId, 
             if src_doc == xd {
                 /* Same arena: the single-`&mut` clone path. */
                 // SAFETY: the target arena, which is the source here.
-                xml_mut_result(unsafe { xml_clone_node(&mut *xd, src, deep) })?
+                xml_mut_result(unsafe { clone_node(&mut *xd, src, deep) })?
             } else {
                 // SAFETY: two distinct live arenas.
-                xml_mut_result(unsafe { xml_copy_node(&mut *xd, &*src_doc, src, deep) })?
+                xml_mut_result(unsafe { copy_node_from(&mut *xd, &*src_doc, src, deep) })?
             }
         }
         NodeRepr::Html => {

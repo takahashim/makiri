@@ -400,7 +400,7 @@ fn advance_chars(s: &[u8], n: usize) -> usize {
 /// the abort a plain `Vec` growth would give under `panic = "abort"`.
 fn try_vec<T>(n: usize, err: ErrSink, what: &str) -> FnResult<Vec<T>> {
     let mut v: Vec<T> = Vec::new();
-    if v.mkr_reserve_exact(n).is_err() {
+    if v.falloc_reserve_exact(n).is_err() {
         return Err(err_setf!(err, XP_ERR_OOM, "out of memory in {}()", what));
     }
     Ok(v)

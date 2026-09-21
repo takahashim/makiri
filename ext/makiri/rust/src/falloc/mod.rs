@@ -34,7 +34,7 @@
 //! oom` does not need to know which code path owns consultation number 4,271,
 //! and a sweep sized from a disarmed baseline run stays correct as sites move.
 //!
-//! It counts consultations, not allocations: `Reserve::mkr_reserve` consults
+//! It counts consultations, not allocations: `Reserve::falloc_reserve` consults
 //! before a reserve that may not need to allocate. The sweep still covers every
 //! real allocation, because the call sequence up to the armed index is exactly
 //! the baseline one.
@@ -46,7 +46,7 @@
 //! # Two shapes, and why
 //!
 //! Growth is on traits (`Reserve`, `VecPush`, `MapInsert`) because it has a
-//! receiver: `v.mkr_push(x)` reads like the `v.push(x)` it replaces, which is
+//! receiver: `v.falloc_push(x)` reads like the `v.push(x)` it replaces, which is
 //! what kept the conversion of the call sites reviewable. Construction is free
 //! functions (`try_box`, `try_vec_with_capacity`, `try_to_vec`, ...) because
 //! there is nothing to hang a method on. Each names one shape and each has
@@ -145,7 +145,7 @@ pub fn try_box<T>(value: T) -> Result<Box<T>, ()> {
 /// The fallible container operations, as one extension trait.
 ///
 /// A trait rather than free functions because the call sites already read
-/// `x.try_reserve(n).is_err()`; `x.mkr_reserve(n).is_err()` keeps that shape.
+/// `x.try_reserve(n).is_err()`; `x.falloc_reserve(n).is_err()` keeps that shape.
 /// The `mkr_` prefix is deliberate: a method named `try_reserve` would be
 /// shadowed by the inherent one silently, which is exactly the bug this module
 /// exists to prevent.
@@ -162,35 +162,35 @@ pub fn try_box<T>(value: T) -> Result<Box<T>, ()> {
 pub trait Reserve {
     /// Room for `additional` more elements. `Err(())` leaves the receiver
     /// untouched.
-    fn mkr_reserve(&mut self, additional: usize) -> Result<(), ()>;
-    /// As `mkr_reserve`, without the growth slack. The hash containers below
-    /// cannot honour the difference and forward to `mkr_reserve`.
-    fn mkr_reserve_exact(&mut self, additional: usize) -> Result<(), ()>;
+    fn falloc_reserve(&mut self, additional: usize) -> Result<(), ()>;
+    /// As `falloc_reserve`, without the growth slack. The hash containers below
+    /// cannot honour the difference and forward to `falloc_reserve`.
+    fn falloc_reserve_exact(&mut self, additional: usize) -> Result<(), ()>;
 }
 
 /// Growing a `Vec`, beyond the reserve itself.
 pub trait VecPush<T> {
     /// Push one element. `Err(())` leaves the vector unchanged.
-    fn mkr_push(&mut self, item: T) -> Result<(), ()>;
+    fn falloc_push(&mut self, item: T) -> Result<(), ()>;
     /// Append a slice. `Err(())` leaves the vector unchanged.
-    fn mkr_extend(&mut self, s: &[T]) -> Result<(), ()>
+    fn falloc_extend(&mut self, s: &[T]) -> Result<(), ()>
     where
         T: Clone;
 }
 
 impl<T> VecPush<T> for Vec<T> {
     #[inline]
-    fn mkr_push(&mut self, item: T) -> Result<(), ()> {
-        self.mkr_reserve(1)?;
+    fn falloc_push(&mut self, item: T) -> Result<(), ()> {
+        self.falloc_reserve(1)?;
         self.push(item);
         Ok(())
     }
     #[inline]
-    fn mkr_extend(&mut self, s: &[T]) -> Result<(), ()>
+    fn falloc_extend(&mut self, s: &[T]) -> Result<(), ()>
     where
         T: Clone,
     {
-        self.mkr_reserve(s.len())?;
+        self.falloc_reserve(s.len())?;
         self.extend_from_slice(s);
         Ok(())
     }
@@ -199,7 +199,7 @@ impl<T> VecPush<T> for Vec<T> {
 impl<T> Reserve for Vec<T> {
     #[inline]
     #[allow(clippy::disallowed_methods)]
-    fn mkr_reserve(&mut self, additional: usize) -> Result<(), ()> {
+    fn falloc_reserve(&mut self, additional: usize) -> Result<(), ()> {
         if allocation_should_fail() {
             return Err(());
         }
@@ -207,7 +207,7 @@ impl<T> Reserve for Vec<T> {
     }
     #[inline]
     #[allow(clippy::disallowed_methods)]
-    fn mkr_reserve_exact(&mut self, additional: usize) -> Result<(), ()> {
+    fn falloc_reserve_exact(&mut self, additional: usize) -> Result<(), ()> {
         if allocation_should_fail() {
             return Err(());
         }
@@ -218,30 +218,30 @@ impl<T> Reserve for Vec<T> {
 impl<K: core::hash::Hash + Eq, V, S: core::hash::BuildHasher> Reserve for HashMap<K, V, S> {
     #[inline]
     #[allow(clippy::disallowed_methods)]
-    fn mkr_reserve(&mut self, additional: usize) -> Result<(), ()> {
+    fn falloc_reserve(&mut self, additional: usize) -> Result<(), ()> {
         if allocation_should_fail() {
             return Err(());
         }
         self.try_reserve(additional).map_err(|_| ())
     }
     #[inline]
-    fn mkr_reserve_exact(&mut self, additional: usize) -> Result<(), ()> {
-        self.mkr_reserve(additional)
+    fn falloc_reserve_exact(&mut self, additional: usize) -> Result<(), ()> {
+        self.falloc_reserve(additional)
     }
 }
 
 impl<T: core::hash::Hash + Eq, S: core::hash::BuildHasher> Reserve for HashSet<T, S> {
     #[inline]
     #[allow(clippy::disallowed_methods)]
-    fn mkr_reserve(&mut self, additional: usize) -> Result<(), ()> {
+    fn falloc_reserve(&mut self, additional: usize) -> Result<(), ()> {
         if allocation_should_fail() {
             return Err(());
         }
         self.try_reserve(additional).map_err(|_| ())
     }
     #[inline]
-    fn mkr_reserve_exact(&mut self, additional: usize) -> Result<(), ()> {
-        self.mkr_reserve(additional)
+    fn falloc_reserve_exact(&mut self, additional: usize) -> Result<(), ()> {
+        self.falloc_reserve(additional)
     }
 }
 
@@ -252,7 +252,7 @@ pub fn try_vec_with_capacity<T>(cap: usize) -> Option<Vec<T>> {
     if cap == 0 {
         return Some(v);
     }
-    v.mkr_reserve_exact(cap).ok()?;
+    v.falloc_reserve_exact(cap).ok()?;
     Some(v)
 }
 
@@ -274,14 +274,14 @@ pub fn try_to_boxed_slice<T: Clone>(s: &[T]) -> Option<Box<[T]>> {
 /// Inserting into a map, beyond the reserve itself.
 pub trait MapInsert<K, V> {
     /// `Err(())` means the allocation failed and the map is unchanged.
-    fn mkr_insert(&mut self, key: K, value: V) -> Result<(), ()>;
+    fn falloc_insert(&mut self, key: K, value: V) -> Result<(), ()>;
 }
 
 impl<K: core::hash::Hash + Eq, V, S: core::hash::BuildHasher> MapInsert<K, V> for HashMap<K, V, S> {
     #[inline]
     #[allow(clippy::disallowed_methods)]
-    fn mkr_insert(&mut self, key: K, value: V) -> Result<(), ()> {
-        self.mkr_reserve(1)?;
+    fn falloc_insert(&mut self, key: K, value: V) -> Result<(), ()> {
+        self.falloc_reserve(1)?;
         self.insert(key, value);
         Ok(())
     }

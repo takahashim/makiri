@@ -139,6 +139,32 @@ RSpec.describe "Makiri::XML security" do
         .to raise_error(Makiri::XML::LimitExceeded)
     end
 
+    # A MUTATION that fills the budget is the same refusal as a parse that does,
+    # and must say so: every arena failure used to collapse into MutStatus::Oom,
+    # so this raised "out of memory mutating XML" on a machine with gigabytes
+    # free. MutStatus::Limit and mutate::arena keep the reason.
+    it "reports a mutation that fills the budget as LimitExceeded, not out of memory" do
+      doc = Makiri::XML("<r/>", max_bytes: 4096)
+      expect { doc.root["big"] = "x" * 100_000 }
+        .to raise_error(Makiri::XML::LimitExceeded, /budget/)
+    end
+
+    it "reports a budget-filling factory call the same way" do
+      doc = Makiri::XML("<r/>", max_bytes: 4096)
+      expect { doc.create_text_node("y" * 100_000) }
+        .to raise_error(Makiri::XML::LimitExceeded)
+      expect { doc.create_element("e", "z" * 100_000) }
+        .to raise_error(Makiri::XML::LimitExceeded)
+    end
+
+    it "still says out of memory only when it is out of memory" do
+      # A budget that cannot be the cause: the refusals above are Limit, and
+      # nothing on this path reports Oom unless an allocation really failed.
+      doc = Makiri::XML("<r/>")
+      doc.root["ok"] = "x" * 100_000
+      expect(doc.root["ok"].bytesize).to eq(100_000)
+    end
+
     it "parses the same document under a raised max_bytes" do
       expect(Makiri::XML(big, max_bytes: 64 * 1024 * 1024).xpath("count(//item)"))
         .to eq(20_000.0)

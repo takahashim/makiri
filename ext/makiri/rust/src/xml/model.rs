@@ -129,6 +129,16 @@ pub enum MutStatus {
     /// overloaded the parse code `4` here; as its own variant it can no longer
     /// be mistaken for [`MutStatus::UnboundNs`].
     Internal = 9,
+    /// The document's OWN budget refused the allocation - `max_bytes` or
+    /// `max_nodes` - which is not the machine running out of memory.
+    ///
+    /// It exists because without it every arena failure collapsed into
+    /// [`MutStatus::Oom`] at ~30 call sites, so filling a document's byte
+    /// budget told the caller "out of memory mutating XML" on a machine with
+    /// gigabytes free. The parse path always kept them apart
+    /// ([`Status::Limit`] -> `Makiri::XML::LimitExceeded`); mutation now does
+    /// too. `mutate::arena` is the one conversion.
+    Limit = 10,
 }
 
 /* ---- budgets (§4) ---- */
@@ -255,15 +265,6 @@ impl Link {
     pub(crate) fn from_option(id: Option<NodeId>) -> Self {
         Link(id.map_or(0, |id| id.index()))
     }
-    /// This link as an `Option`, `None` for [`Link::NONE`].
-    #[inline]
-    pub(crate) fn optional(self) -> Option<Link> {
-        if self.is_none() {
-            None
-        } else {
-            Some(self)
-        }
-    }
     /// The slot index this link names (0 = none).
     #[inline]
     pub(crate) fn index(self) -> u32 {
@@ -355,10 +356,6 @@ pub struct Document {
     pub(crate) name_index: core::cell::OnceCell<Box<crate::xml::index::NameIndex>>,
     pub has_encoding_decl: bool,
 }
-
-/// Historical name for [`Document`]; the Ruby glue and XPath backend refer to
-/// the document type by this.
-pub type Doc = Document;
 
 impl Document {
     pub(crate) fn blank() -> Self {

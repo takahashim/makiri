@@ -47,7 +47,7 @@ pub(crate) fn boxed(b: &Build, e: Expr) -> Result<Box<Expr>, Reported> {
 
 /// Append to a list the AST owns; `item` is dropped if it cannot grow.
 pub(crate) fn push<T>(b: &Build, list: &mut Vec<T>, item: T) -> Result<(), Reported> {
-    list.mkr_push(item).map_err(|_| b.oom())
+    list.falloc_push(item).map_err(|_| b.oom())
 }
 
 pub(crate) fn literal(b: &Build, s: &[u8]) -> Built {

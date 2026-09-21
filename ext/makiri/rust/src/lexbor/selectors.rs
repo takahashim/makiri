@@ -218,7 +218,7 @@ impl SelectorCache {
          * shared arena. The key is copied: the borrow points into a Ruby String
          * that may be collected or mutated, while the entry outlives the call. */
         let key = try_to_boxed_slice(selector).ok_or(SelectError::CacheOom)?;
-        if self.map().mkr_reserve(1).is_err() {
+        if self.map().falloc_reserve(1).is_err() {
             return Err(SelectError::CacheOom);
         }
 
@@ -228,7 +228,7 @@ impl SelectorCache {
         p.clean_parser();
         let list = list.ok_or(SelectError::Syntax)?;
 
-        if self.map().mkr_insert(key, list).is_err() {
+        if self.map().falloc_insert(key, list).is_err() {
             self.flush(p);
             return Err(SelectError::CacheOom);
         }
@@ -313,7 +313,7 @@ unsafe extern "C" fn find_cb(node: *mut LxbNode, _spec: u32, ctx: *mut c_void) -
         /* `try_reserve` rather than relying on `push`: the global allocator
          * aborts on OOM, and this path fails closed by reporting instead
          * (`rake oom` sweeps it). */
-        if nodes.len() == nodes.capacity() && nodes.mkr_reserve(1).is_err() {
+        if nodes.len() == nodes.capacity() && nodes.falloc_reserve(1).is_err() {
             *oom = true;
             return LXB_STATUS_STOP;
         }
