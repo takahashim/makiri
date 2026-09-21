@@ -226,7 +226,14 @@ impl SelectorCache {
         /* Return the parser to its CLEAN stage, but do NOT clean the arena -
          * the list just parsed lives there and is about to be cached. */
         p.clean_parser();
-        let list = list.ok_or(SelectError::Syntax)?;
+        let Some(list) = list else {
+            /* A rejected parse drops the cached lists instead of keeping them.
+             * This belongs to the same decision as `super::contains_guard` and
+             * goes with it; errors are not a hot path, so the cost is a cold
+             * cache. See CLAUDE.md. */
+            self.flush(p);
+            return Err(SelectError::Syntax);
+        };
 
         if self.map().falloc_insert(key, list).is_err() {
             self.flush(p);

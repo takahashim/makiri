@@ -139,11 +139,19 @@ impl SelectorParser {
     /// # Safety
     /// Its cell's borrow is live.
     pub(crate) unsafe fn parse(self, selector: &[u8]) -> Option<*mut lxb_css_selector_list_t> {
-        // SAFETY: a live parser, used under its cell's borrow; `selector` is a live slice
+        /* `contains_guard` decides what reaches the parser; `Err` is OOM, and
+         * the original bytes are never a fallback. */
+        let guarded = match crate::lexbor::contains_guard::neutralized(selector) {
+            Ok(g) => g,
+            Err(_) => return None,
+        };
+        let bytes = guarded.as_deref().unwrap_or(selector);
+
+        // SAFETY: a live parser, used under its cell's borrow; `bytes` is a live slice
         // the parser only reads. The pointer is the slice's own even when it
         // is empty, which the parser may look at.
         unsafe {
-            let list = lxb_css_selectors_parse(self.parser, selector.as_ptr(), selector.len());
+            let list = lxb_css_selectors_parse(self.parser, bytes.as_ptr(), bytes.len());
             (!list.is_null() && lxb_css_parser_status_noi(self.parser) == STATUS_OK).then_some(list)
         }
     }
