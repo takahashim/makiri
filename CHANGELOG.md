@@ -1,5 +1,42 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+* A frozen node now raises `FrozenError` when it is the ARGUMENT of a tree
+  mutation, not only the receiver: `b.add_child(a)` relinks `a` exactly as
+  `a.remove` does. Both `Makiri::XML` and `Makiri::HTML`. A fragment argument
+  splices its children, which have no wrapper of their own to check.
+* A `Makiri::XML` mutation that exceeds the document's own `max_bytes` /
+  `max_nodes` now raises `Makiri::XML::LimitExceeded` instead of reporting the
+  refusal as out of memory.
+* Inserting a `DocumentFragment` is all or nothing on `add_child`, `before` and
+  `after`, as it already was on `replace`: a child the rules refuse no longer
+  leaves the earlier ones linked in a document the caller was told had not
+  changed.
+* A rejected `Makiri::XML::Document#fragment` no longer charges the document for
+  the nodes it discarded. 100k rejected fragments grew a `<r/>` document to
+  77 MB; it is now 516 bytes.
+* A failed `Makiri::XML` parse reports the FIRST failure for all four kinds
+  (`syntax` was sticky while `limit` and `unsupported` overwrote each other).
+* `Makiri::XML#to_xml`'s serializer allocates fallibly again, so running out of
+  memory raises instead of aborting the process.
+* `:lexbor-contains()` now rejects an argument the bundled CSS parser does not
+  take, the way any unknown pseudo-class is rejected: `Makiri::CSS::SyntaxError`
+  from `#css` / `#at_css` / `#matches?`, and a `:bad_style` rule from
+  `Makiri::Lexbor::CSS.parse_stylesheet`. Well-formed uses are unchanged.
+
+### Performance
+
+* `Makiri::XML#to_xml` plans namespaces from a binding stack instead of
+  re-walking each ancestor's attribute list, which cost O(depth^2 x attributes).
+  403 KB of nested prefixed attributes took 4.88s and now takes 0.001s. A
+  crafted document fails closed with `Makiri::Error` ("namespace planning
+  exceeded its step budget") rather than running on.
+* Setting an attribute on a `Makiri::XML` element walks the attribute list once
+  instead of twice (4096 attributes: 47ms -> 27ms).
+
 ## [0.10.0.rc2] - 2026-09-20
 
 ### Added
@@ -48,10 +85,6 @@
 
 ### Fixed
 
-* `:lexbor-contains()` now rejects an argument the bundled CSS parser does not
-  take, the way any unknown pseudo-class is rejected: `Makiri::CSS::SyntaxError`
-  from `#css` / `#at_css` / `#matches?`, and a `:bad_style` rule from
-  `Makiri::Lexbor::CSS.parse_stylesheet`. Well-formed uses are unchanged.
 * `Makiri::XML::DocumentType#prefix` now returns `nil` instead of
   the PUBLIC ID.
 * `Makiri::XML#last_element_child` now correctly returns an `Element`
