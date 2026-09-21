@@ -26,11 +26,39 @@ use super::ruby::protect;
 pub struct Marker(());
 
 impl Marker {
-    /// Mark a stored `VALUE` as reachable.
+    /// Mark a stored `VALUE` as reachable, PINNING it where it is.
+    ///
+    /// For a field the object holds once. A table of many - a node cache - uses
+    /// [`Marker::mark_movable`] instead, so 50,000 pinned objects do not stop
+    /// compaction from doing its job.
     #[inline]
     pub fn mark(&self, v: VALUE) {
         // SAFETY: called from Ruby's mark phase, with the GVL held.
         unsafe { rb_sys::rb_gc_mark(v) };
+    }
+
+    /// Mark a stored `VALUE` that compaction MAY move.
+    ///
+    /// Paired with [`Relocator::location`] in [`Hooks::compact`]: whatever is
+    /// marked movable must be re-read there, or the stored copy is left pointing
+    /// at where the object used to be.
+    #[inline]
+    pub fn mark_movable(&self, v: VALUE) {
+        // SAFETY: as `mark`; `Hooks::compact` updates every VALUE marked here.
+        unsafe { rb_sys::rb_gc_mark_movable(v) };
+    }
+}
+
+/// The compaction phase's handle, for [`Hooks::compact`].
+pub struct Relocator(());
+
+impl Relocator {
+    /// Where `v` is now, after compaction may have moved it.
+    #[inline]
+    pub fn location(&self, v: VALUE) -> VALUE {
+        // SAFETY: called from Ruby's compaction phase, with the GVL held, on a
+        // VALUE this object marked movable.
+        unsafe { rb_sys::rb_gc_location(v) }
     }
 }
 
@@ -43,6 +71,15 @@ impl Marker {
 pub trait Hooks: Sized {
     /// Mark every `VALUE` this object holds.
     fn mark(&self, marker: &Marker);
+
+    /// Re-read every `VALUE` marked with [`Marker::mark_movable`].
+    ///
+    /// Empty by default, which is correct for an object that only ever marks
+    /// with [`Marker::mark`] - those are pinned and cannot move. An object that
+    /// marks movable MUST implement this; Ruby's `GC.auto_compact` (which
+    /// `GC_COMPACT_STRESS=1` turns on for the whole suite) is what catches one
+    /// that does not.
+    fn compact(&mut self, _relocator: &Relocator) {}
 
     /// The bytes this object owns, reported to Ruby's GC.
     fn memsize(&self) -> usize {
@@ -82,6 +119,12 @@ unsafe extern "C" fn memsize_cb<T: Hooks>(ptr: *const c_void) -> rb_sys::size_t 
     unsafe { (*(ptr as *const T)).memsize() as rb_sys::size_t }
 }
 
+unsafe extern "C" fn compact_cb<T: Hooks>(ptr: *mut c_void) {
+    // SAFETY: as `mark_cb`; compaction has finished moving and is now fixing up
+    // the references to what it moved.
+    unsafe { (*(ptr as *mut T)).compact(&Relocator(())) };
+}
+
 /// A `rb_data_type_t` for `T`: its GC callbacks drive [`Hooks`] for `T`, and
 /// every way to make or read an object of this type goes through it.
 ///
@@ -105,6 +148,7 @@ impl<T: Hooks> TypedType<T> {
                 Some(mark_cb::<T>),
                 Some(free_cb::<T>),
                 Some(memsize_cb::<T>),
+                Some(compact_cb::<T>),
             ),
             _t: PhantomData,
         }
@@ -190,6 +234,7 @@ impl DataType {
         dmark: rb_sys::RUBY_DATA_FUNC,
         dfree: rb_sys::RUBY_DATA_FUNC,
         dsize: Option<unsafe extern "C" fn(*const core::ffi::c_void) -> rb_sys::size_t>,
+        dcompact: rb_sys::RUBY_DATA_FUNC,
     ) -> DataType {
         DataType(rb_sys::rb_data_type_t {
             wrap_struct_name: name,
@@ -197,7 +242,7 @@ impl DataType {
                 dmark,
                 dfree,
                 dsize,
-                dcompact: None,
+                dcompact,
                 reserved: [core::ptr::null_mut(); 1],
             },
             parent,

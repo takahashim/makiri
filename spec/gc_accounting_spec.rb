@@ -69,4 +69,39 @@ RSpec.describe "GC accounting of document arenas" do
     # malloc_limit worth of documents in flight plus heap growth.
     expect(rss.call - settled).to be < 200 * 1024
   end
+
+  # The node cache marks its wrappers MOVABLE rather than pinning them, so a
+  # document walked end to end does not stop compaction doing its job. That makes
+  # DocData::compact load-bearing: without it the cache hands back a VALUE for
+  # where an object USED to be. Breaking the callback on purpose crashes the
+  # process here, which is why this runs GC.compact rather than trusting a read.
+  describe "the node cache survives compaction" do
+    %w[HTML XML].each do |kind|
+      it "keeps identity, attached state and reads across GC.compact (#{kind})" do
+        src = "<r>#{(1..500).map { |i| %(<e#{i} id="i#{i}">t#{i}</e#{i}>) }.join}</r>"
+        doc = kind == "HTML" ? Makiri::HTML(src) : Makiri::XML(src)
+        root = kind == "HTML" ? doc.at_css("r") : doc.root
+        held = root.children.to_a
+        held.each_with_index { |n, i| n.instance_variable_set(:@tag, i) }
+        ids = held.map(&:object_id)
+
+        3.times { GC.compact }
+
+        again = root.children.to_a
+        expect(again).to eq(held)                       # same nodes
+        expect(again.map(&:object_id)).to eq(ids)       # same OBJECTS
+        expect(again.each_with_index.all? { |n, i| n.equal?(held[i]) }).to be true
+        expect(again.each_with_index.all? { |n, i| n.instance_variable_get(:@tag) == i }).to be true
+        expect(again.each_with_index.all? { |n, i| n["id"] == "i#{i + 1}" }).to be true
+      end
+    end
+
+    it "still navigates after the wrappers are dropped and the heap compacted" do
+      doc = Makiri::HTML("<r><a id='x'/></r>")
+      root = doc.at_css("r")
+      root.children.to_a
+      3.times { GC.compact }
+      expect(root.children.first["id"]).to eq("x")
+    end
+  end
 end

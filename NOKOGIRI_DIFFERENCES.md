@@ -61,6 +61,13 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
   * `create_processing_instruction("a:b", ...)` succeeds, as DOM
     `createProcessingInstruction` does, but `#to_xml` / `#canonicalize` then raise,
     as DOM Parsing's well-formed serializer does. Nokogiri writes `<?a:b ...?>`.
+* `#freeze` on a node is ENFORCED: a frozen node's mutators raise `FrozenError`,
+  and so does passing a frozen node as the argument of an insertion, which
+  relinks it. Nokogiri reports `frozen?` but every mutator still mutates. The
+  check reaches the nodes the caller named; a fragment argument splices its
+  children, and those cannot be checked, because frozen-ness is a property of a
+  Ruby object and the arena keeps no map from a node back to its wrapper.
+
 * A node's namespace URI is its identity, not something re-derived from the
   declarations around it - the WHATWG DOM model, measured against Chrome 152
   (`DOMParser` + `XMLSerializer`).

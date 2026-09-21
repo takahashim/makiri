@@ -18,11 +18,14 @@ use crate::bridge::ruby::makiri_error;
 use magnus::{prelude::*, Error, Value};
 
 use crate::bridge::ruby::{value, VALUE};
-use crate::bridge::typed::{Hooks, Marker, TypedType};
+use crate::bridge::typed::{Hooks, Marker, Relocator, TypedType};
+use crate::falloc::MapInsert;
 use crate::init::CLASS_DOCUMENT;
 use crate::lexbor::adapter::html::{HtmlDoc, RawDoc};
 use crate::lexbor::adapter::post_parse::HtmlParsed;
 use crate::xml::model::Document as XmlDoc;
+use core::hash::BuildHasherDefault;
+use std::collections::HashMap;
 
 /* ------------------------------------------------------------------ *
  * the node wrapper                                                   *
@@ -97,6 +100,86 @@ impl Content {
     }
 }
 
+/// One Ruby wrapper per node, so navigating to the same node twice gives the
+/// SAME object.
+///
+/// Without it every navigation allocated a fresh wrapper, and everything that
+/// lives on a Ruby object was silently lost: `equal?` was false for one node,
+/// an instance variable set through one wrapper was gone through the next, a
+/// singleton method vanished, and `freeze` protected only the object you
+/// happened to be holding. `==`/`eql?`/`hash` were unaffected, because those
+/// are node identity, which is why it went unnoticed.
+///
+/// The cost is Nokogiri's, and it is the same cost for the same reason: a
+/// wrapper stays alive while its document does. Measured on a 50,000-node
+/// document, minor GC after wrapping N nodes and dropping every reference:
+/// N=1,000 costs nothing (0.30 ms, the same as N=0), N=50,000 costs +2.2 ms.
+/// Nokogiri's figures for the same experiment are 0.31 ms and +2.24 ms.
+///
+/// Keyed by the node TOKEN - a `NodeId` for XML, a node pointer for HTML - which
+/// is stable for the document's life in both: XML never recycles an arena slot,
+/// and HTML detaches without destroying, so a node is never freed.
+struct NodeCache {
+    /// Empty until the first navigation, so a document nobody walks pays
+    /// nothing.
+    map: HashMap<usize, VALUE, BuildHasherDefault<TokenHasher>>,
+}
+
+/// The token is already a well-distributed integer - a slot index or an aligned
+/// pointer - so it only needs mixing, not hashing. `ptr_table::mix64` is the
+/// crate's one place for that.
+#[derive(Default)]
+struct TokenHasher(u64);
+
+impl core::hash::Hasher for TokenHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 = crate::ptr_table::mix64(self.0 ^ b as u64);
+        }
+    }
+    fn write_usize(&mut self, n: usize) {
+        self.0 = crate::ptr_table::mix64(n as u64);
+    }
+}
+
+impl NodeCache {
+    fn get(&self, token: usize) -> Option<VALUE> {
+        self.map.get(&token).copied()
+    }
+
+    /// Remember `wrapper` as the one wrapper for `token`.
+    ///
+    /// A failed insert leaves the node uncached, so the next navigation builds
+    /// another wrapper and identity is lost for it. That only happens when the
+    /// allocator is refusing, where the process is already failing; the
+    /// alternative is raising out of a wrap that has no error path.
+    fn insert(&mut self, token: usize, wrapper: VALUE) {
+        let _ = self.map.falloc_insert(token, wrapper);
+    }
+
+    /// MOVABLE, not pinned: a document walked end to end holds one entry per
+    /// node, and pinning them all would stop compaction doing its job. Paired
+    /// with [`NodeCache::compact`].
+    fn mark(&self, marker: &Marker) {
+        for v in self.map.values() {
+            marker.mark_movable(*v);
+        }
+    }
+
+    fn compact(&mut self, relocator: &Relocator) {
+        for v in self.map.values_mut() {
+            *v = relocator.location(*v);
+        }
+    }
+
+    fn memsize(&self) -> usize {
+        self.map.capacity() * (core::mem::size_of::<usize>() + core::mem::size_of::<VALUE>())
+    }
+}
+
 /// A Document wrapper's data: the parsed content (owned - GC frees it), the
 /// mutation gate's count, and the reserved errors Array.
 pub struct DocData {
@@ -110,9 +193,38 @@ pub struct DocData {
     /// The external bytes this wrapper has told the GC about, so `release`
     /// takes back exactly what [`account_document`] reported.
     reported: usize,
+    /// One wrapper per node; see [`NodeCache`].
+    ///
+    /// Boxed and optional because a `DocData` is born from `ruby_xcalloc` - all
+    /// zero bytes - and a zeroed `HashMap` is not an empty one: hashbrown's empty
+    /// table points at a static, not at null. `None` IS all-zero (Box is
+    /// non-null, so the niche is the null pointer), which makes the zeroed state
+    /// both valid and the right one: a document nobody navigates never allocates
+    /// a cache.
+    nodes: Option<Box<NodeCache>>,
 }
 
 impl DocData {
+    /// The one wrapper for `token`, or None until something navigates to it.
+    fn cached(&self, token: usize) -> Option<VALUE> {
+        self.nodes.as_ref()?.get(token)
+    }
+
+    /// Remember `wrapper` for `token`, allocating the cache on first use.
+    fn cache(&mut self, token: usize, wrapper: VALUE) {
+        if self.nodes.is_none() {
+            let Ok(fresh) = crate::falloc::try_box(NodeCache {
+                map: HashMap::with_hasher(BuildHasherDefault::default()),
+            }) else {
+                return; /* see NodeCache::insert on a refusing allocator */
+            };
+            self.nodes = Some(fresh);
+        }
+        if let Some(cache) = self.nodes.as_mut() {
+            cache.insert(token, wrapper);
+        }
+    }
+
     /// The Document's parse-warning Array.
     pub fn errors(&self) -> Value {
         // SAFETY: the live Array this wrapper marks.
@@ -135,10 +247,21 @@ impl DocData {
 impl Hooks for DocData {
     fn mark(&self, marker: &Marker) {
         marker.mark(self.errors);
+        if let Some(cache) = self.nodes.as_ref() {
+            cache.mark(marker);
+        }
+    }
+
+    fn compact(&mut self, relocator: &Relocator) {
+        if let Some(cache) = self.nodes.as_mut() {
+            cache.compact(relocator);
+        }
     }
 
     fn memsize(&self) -> usize {
-        core::mem::size_of::<DocData>().saturating_add(self.external_bytes())
+        core::mem::size_of::<DocData>()
+            .saturating_add(self.external_bytes())
+            .saturating_add(self.nodes.as_ref().map_or(0, |c| c.memsize()))
     }
 
     fn release(&mut self) {
@@ -151,6 +274,10 @@ impl Hooks for DocData {
             }
         }
         self.content = Content::Empty;
+        /* The cache is Rust-owned heap in a struct Ruby frees with `xfree`, which
+         * does NOT run Drop - so it has to be dropped here, like the content
+         * above. `rake leaks` is what caught this one when it was missing. */
+        drop(self.nodes.take());
         /* Balance the report, or the GC keeps counting freed arenas as live
          * and collects ever more eagerly. A plain C call, as this hook has to
          * be: it only subtracts, and Ruby's own `xfree` does the same from
@@ -354,6 +481,22 @@ pub(in crate::bridge) fn with_html_parsed_known<R>(
         .expect("an HTML Document without its document");
     // SAFETY: under the GVL, and the borrow is confined to `f`.
     unsafe { f(p.as_mut()) }
+}
+
+/// The one wrapper for `token` under `rb_doc`, or None the first time.
+///
+/// `rb_doc` must be a live Document; the two `wrap_*_node` functions are the
+/// only callers and both already hold one.
+pub fn cached_node(rb_doc: Value, token: usize) -> Option<Value> {
+    // SAFETY: as `with_doc_data_known`.
+    let v = with_doc_data_known(rb_doc, |d| d.cached(token));
+    // SAFETY: a VALUE this document marks, so it is live.
+    v.map(|v| unsafe { value(v) })
+}
+
+/// Remember `wrapper` as the one wrapper for `token` under `rb_doc`.
+pub fn cache_node(rb_doc: Value, token: usize, wrapper: Value) {
+    with_doc_data_known(rb_doc, |d| d.cache(token, wrapper.as_raw()));
 }
 
 /// Run `f` over a Document's wrapper data, for the fields that are the
