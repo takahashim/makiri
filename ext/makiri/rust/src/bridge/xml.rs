@@ -77,15 +77,28 @@ pub fn wrap_xml_node(node: *mut core::ffi::c_void, document: Value) -> Value {
         _ => CLASS_XML_NODE.raw(),
     };
 
+    /* One wrapper per node: navigating here twice must give the SAME object, or
+     * everything that lives on a Ruby object is silently lost - `equal?`, an
+     * instance variable, a singleton method, `freeze`. The Document above is
+     * already its own wrapper, which is why it needs no entry. */
+    let token = id.to_token();
+    if let Some(cached) = crate::bridge::wrapper::cached_node(document, token) {
+        return cached;
+    }
+
     /* The Document is stored after the wrap: see `TypedType::wrap`. */
     // SAFETY: a fresh wrapper; the store closure only moves a live VALUE in.
-    unsafe {
+    let fresh = unsafe {
         value(XML_NODE_TYPE.wrap(
             klass,
             |nd| nd.node = node,
             |nd| nd.document = document.as_raw(),
         ))
-    }
+    };
+    /* After the wrap, so the VALUE exists; `fresh` is on the stack, where the
+     * conservative scan pins it across the cache's own allocation. */
+    crate::bridge::wrapper::cache_node(document, token, fresh);
+    fresh
 }
 
 /// The arena node token behind a wrapper.
