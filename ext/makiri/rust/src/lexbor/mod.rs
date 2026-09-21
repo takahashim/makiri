@@ -15,10 +15,16 @@
 //! in `bridge::string::HtmlSource` and `glue::stylesheet`. Nothing here names a
 //! Ruby type, and `rake unsafe:boundaries` holds it to that.
 
+#[cfg(test)]
+mod tests;
+
 /// Lexbor's generated layout and constants, plus the wrappers that own a raw
 /// Lexbor object. The one module allowed to hold `lxb_*` bindings.
 pub mod abi;
 pub mod adapter;
+/// An input restriction on `:lexbor-contains()`, applied before the CSS parser
+/// sees the text. Text in, text out - no Lexbor.
+pub mod contains_guard;
 /// HTML fragment parsing and import/fixup operations.
 pub mod fragment;
 /// Selector traversal engine, including its Lexbor callbacks.

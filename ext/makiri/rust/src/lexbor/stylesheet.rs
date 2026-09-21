@@ -190,7 +190,41 @@ fn specificity(sp: u32) -> [u32; 3] {
 struct Conv<'a> {
     /// The original input, borrowed. At-rule preludes are byte ranges into it.
     css: &'a [u8],
+    /// What Lexbor was actually given, when [`contains_guard`] rewrote a name.
+    /// `None` when the two are the same, which is the usual case.
+    ///
+    /// [`contains_guard`]: crate::lexbor::contains_guard
+    parsed: Option<&'a [u8]>,
     scratch: Vec<u8>,
+}
+
+/// `text`, as the CALLER wrote it.
+///
+/// A rule Lexbor rejects carries its prelude copied out of the buffer Lexbor
+/// read, which after a `contains_guard` rewrite is not what the caller typed.
+/// Equal byte length means finding that copy gives the range to take from the
+/// original instead. A prelude that is not a verbatim substring, or that appears
+/// more than once, is left alone - the rewritten name beats the wrong range.
+fn as_written(c: &Conv, text: Vec<u8>) -> Result<Vec<u8>, Fail> {
+    let Some(parsed) = c.parsed else {
+        return Ok(text);
+    };
+    if text.is_empty() || parsed.len() != c.css.len() {
+        return Ok(text);
+    }
+    let mut found = None;
+    for (i, w) in parsed.windows(text.len()).enumerate() {
+        if w == text.as_slice() {
+            if found.is_some() {
+                return Ok(text); /* ambiguous */
+            }
+            found = Some(i);
+        }
+    }
+    match found {
+        Some(i) => falloc::try_to_vec(&c.css[i..i + text.len()]).ok_or(Fail::Oom),
+        None => Ok(text),
+    }
 }
 
 unsafe fn declarations(
@@ -411,7 +445,7 @@ unsafe fn rules(
                     falloc::try_to_vec(b).ok_or(Fail::Oom)?
                 };
                 Some(Rule::BadStyle {
-                    selector_text: text,
+                    selector_text: as_written(c, text)?,
                     declarations: declarations(c, (*bad).declarations)?,
                 })
             }
@@ -442,6 +476,12 @@ unsafe fn rules(
 /// because nothing between construction and drop can `longjmp`: phase one calls
 /// Lexbor and the allocator, never Ruby.
 pub fn parse(css: &[u8]) -> Result<Vec<Rule>, Fail> {
+    /* `contains_guard` decides what reaches the parser. Its rewrite keeps byte
+     * length, so `conv.css` below stays the CALLER's text and every span Lexbor
+     * reports still lands on it. */
+    let guarded = crate::lexbor::contains_guard::neutralized(css).map_err(|_| Fail::Oom)?;
+    let source = guarded.as_deref().unwrap_or(css);
+
     // SAFETY: one contract for the whole body. Every pointer here is created by
     // the Lexbor calls below and owned by an `Owned` from then on. `css` is a
     // Rust slice, which the parser only reads, and nothing in here runs Ruby.
@@ -460,8 +500,8 @@ pub fn parse(css: &[u8]) -> Result<Vec<Rule>, Fail> {
         if lxb::lxb_css_stylesheet_parse(
             sst.as_ptr(),
             parser.as_ptr() as *mut lxb::lxb_css_parser_t,
-            css.as_ptr(),
-            css.len(),
+            source.as_ptr(),
+            source.len(),
         ) != k::STATUS_OK
         {
             return Err(Fail::Parse);
@@ -472,6 +512,7 @@ pub fn parse(css: &[u8]) -> Result<Vec<Rule>, Fail> {
         }
         let mut conv = Conv {
             css,
+            parsed: guarded.as_deref(),
             scratch: Vec::new(),
         };
         let first = (*(root as *mut lxb::lxb_css_rule_list_t)).first;

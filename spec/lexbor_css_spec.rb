@@ -158,6 +158,56 @@ RSpec.describe Makiri::Lexbor::CSS do
       expect { parse("a{}\0x") }.to raise_error(Makiri::Error, /NUL/)
     end
 
+    # `lexbor::contains_guard` rewrites these, so the rule degrades the way any
+    # unparseable selector does and the rest of the sheet is unaffected.
+    describe "a :lexbor-contains() Lexbor would reject" do
+      it "degrades to :bad_style and leaves the rest of the sheet standing" do
+        rules = parse(".a{color:red}:lexbor-contains(#x){color:blue}.b{color:green}")
+        expect(rules.map { |r| r[:type] }).to eq(%i[style bad_style style])
+        expect(rules[0][:selectors].map { |s| s[:text] }).to eq([".a"])
+        expect(rules[2][:selectors].map { |s| s[:text] }).to eq([".b"])
+      end
+
+      it "reports the selector the caller wrote, not the rewritten name" do
+        rules = parse(".a{color:red}:lexbor-contains(#x){color:blue}")
+        expect(rules[1][:selector_text]).to eq(":lexbor-contains(#x)")
+        expect(rules[1][:declarations])
+          .to eq([{ name: "color", value: "blue", important: false }])
+      end
+
+      it "keeps a well-formed :lexbor-contains() working" do
+        rules = parse(%(.a{color:red}:lexbor-contains("x"){color:blue}.b{color:green}))
+        expect(rules.map { |r| r[:type] }).to eq(%i[style style style])
+        expect(rules[1][:selectors].map { |s| s[:text] }).to eq([%(:lexbor-contains("x"))])
+      end
+
+      it "sees through the identifier escapes Lexbor decodes" do
+        # None of these contain the substring "lexbor-contains".
+        [%q(:lexbor\\-contains(#x)), %q(:\\6C exbor-contains(#x)), ":LEXBOR-CONTAINS(#x)"]
+          .each do |sel|
+            rules = parse("#{sel}{color:blue}.b{color:green}")
+            expect(rules.map { |r| r[:type] }).to eq(%i[bad_style style]), sel
+          end
+      end
+
+      it "handles many rejected rules interleaved with good ones" do
+        # An UNCLOSED `(` swallows the rest of the sheet - ordinary css-syntax-3
+        # error recovery, and the same with any unknown pseudo - so only the
+        # rules before it are asserted to survive.
+        bad = [":lexbor-contains(#x)", ":lexbor-contains()", ":lexbor-contains(*)",
+               %(:lexbor-contains("s" junk)), ":lexbor-contains("]
+        40.times do |i|
+          sel = bad[i % bad.length]
+          css = ".a#{'x' * (i % 37 + 1)}{color:red}" \
+                "#{sel}{color:blue}" \
+                ".b#{'y' * (i % 53 + 1)}{color:green}"
+          types = parse(css).map { |r| r[:type] }
+          expect(types.first).to eq(:style), css
+          expect(types.last).to eq(:style), css unless sel.end_with?("(")
+        end
+      end
+    end
+
     it "rejects invalid UTF-8" do
       expect { parse("a { x: y }".dup.force_encoding("UTF-8") + 255.chr) }
         .to raise_error(Makiri::Error, /UTF-8/)

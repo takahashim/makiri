@@ -48,6 +48,10 @@
 
 ### Fixed
 
+* `:lexbor-contains()` now rejects an argument the bundled CSS parser does not
+  take, the way any unknown pseudo-class is rejected: `Makiri::CSS::SyntaxError`
+  from `#css` / `#at_css` / `#matches?`, and a `:bad_style` rule from
+  `Makiri::Lexbor::CSS.parse_stylesheet`. Well-formed uses are unchanged.
 * `Makiri::XML::DocumentType#prefix` now returns `nil` instead of
   the PUBLIC ID.
 * `Makiri::XML#last_element_child` now correctly returns an `Element`

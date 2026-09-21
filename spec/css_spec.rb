@@ -85,6 +85,60 @@ RSpec.describe "Makiri CSS" do
     end
   end
 
+  # Which arguments reach the CSS parser is `lexbor::contains_guard`'s decision.
+  describe ":lexbor-contains()" do
+    it "keeps answering after a rejected one" do
+      d = Makiri::HTML("<p>x")
+      expect(d.css("p").length).to eq(1)
+      expect { d.css(':lexbor-contains())') }.to raise_error(Makiri::CSS::SyntaxError)
+      expect { d.css(":#{'a' * 17}") }.to raise_error(Makiri::CSS::SyntaxError)
+      expect(d.css("p").length).to eq(1)
+    end
+
+    it "keeps answering when rejected and valid queries interleave" do
+      d = Makiri::HTML("<div id='m'><p class='c'>one</p><p>two</p></div>")
+      bad = [':lexbor-contains())', ':lexbor-contains()x', ':lexbor-contains( ))',
+             'p:lexbor-contains()")', ':lexbor-contains(']
+      50.times do |i|
+        expect { d.css(bad[i % bad.length]) }.to raise_error(Makiri::CSS::SyntaxError)
+        expect(d.css("p").length).to eq(2)
+        expect(d.at_css("#m .c").text).to eq("one")
+        # a fresh selector each round, so the cache both fills and is flushed
+        expect(d.css("div > p:nth-of-type(#{(i % 2) + 1})").length).to eq(1)
+      end
+    end
+
+    it "still serves a well-formed one" do
+      d = Makiri::HTML("<p>hello</p><p>bye</p>")
+      expect { d.css(':lexbor-contains())') }.to raise_error(Makiri::CSS::SyntaxError)
+      expect(d.css('p:lexbor-contains("hello")').length).to eq(1)
+      expect(d.css('p:lexbor-contains("HELLO" i)').length).to eq(1)
+      expect(d.css("p:lexbor-contains(hello)").length).to eq(1)
+    end
+
+    # The escapes matter: the parser decodes them, so none of the last three
+    # contain the substring "lexbor-contains" at all.
+    it "rejects every malformed form, escapes included" do
+      d = Makiri::HTML("<p>hello</p>")
+      x = Makiri::XML("<r><a>hello</a></r>")
+      [':lexbor-contains()', ':lexbor-contains())', ':lexbor-contains(*)',
+       ':lexbor-contains(#x)', ':lexbor-contains(123)', ':lexbor-contains(foo(bar))',
+       %(:lexbor-contains("s" junk)), ':lexbor-contains(id junk)',
+       %q(:lexbor\\-contains(#x)), %q(:\\6C exbor-contains(#x)),
+       ':LEXBOR-CONTAINS(#x)'].each do |sel|
+        expect { d.css(sel) }.to raise_error(Makiri::CSS::SyntaxError), sel
+        expect { x.css(sel) }.to raise_error(Makiri::CSS::SyntaxError), sel
+        expect(d.css("p").length).to eq(1), "document still answers after #{sel}"
+      end
+    end
+
+    it "works on XML too" do
+      x = Makiri::XML("<r><a>hello</a><b>bye</b></r>")
+      expect(x.css(%(:lexbor-contains("hello"))).length).to eq(1)
+      expect(x.css(%(:lexbor-contains("HELLO" i))).length).to eq(1)
+    end
+  end
+
   describe "memory safety", :gc_compact do
     it "stays correct under GC stress and compaction" do
       GC.stress = true

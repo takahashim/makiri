@@ -142,6 +142,15 @@ WPT, so the data pin cannot gain the new expectation).
 Still **vanilla, NEVER patched** - the constraint that relaxed is "release tag
 only", not "no fork".
 
+**`lexbor::contains_guard` decides which `:lexbor-contains()` arguments reach
+the vendored CSS parser, and it is not optional.** Its module doc states the
+three properties that must hold and why; `lexbor/tests.rs` pins the load-bearing
+one against the real parser. Both call sites go through it - `css_engine::parse`
+(so HTML `#css` and the XML lowering) and `stylesheet.rs` - and a new one must.
+`SelectorCache::compile`'s flush after a rejected parse belongs to the same
+decision. The guard, that flush and their tests come out together or not at all,
+and only once the pin has moved past what they stand in for.
+
 ## Build / test
 
 ```bash
@@ -359,6 +368,14 @@ by the check that concluded "every undefined symbol is legitimate".
   auto-rebuilds on a switch, so an instrumented Lexbor never leaks into a normal
   build. Switching the Lexbor *commit* still needs `rake clean:lexbor` (the stamp
   tracks mode, not revision). No Lexbor patch - it is a vendor build flag.
+
+  That path is LINUX ONLY for the extension, but a **pure-C reproduction is not**:
+  build Lexbor with `cmake -DLEXBOR_BUILD_WITH_ASAN=ON -DCMAKE_BUILD_TYPE=Debug`
+  and link a small `clang -fsanitize=address` program against it. There is no
+  rustc runtime in that process, so the ABI clash does not arise and it works on
+  macOS - the fastest way to decide whether something is ours or Lexbor's. When
+  the answer has to come from a Ruby-side crash instead, build with
+  `MAKIRI_NO_EXPORT_TRIM=1`: without it every frame symbolises as `Init_makiri`.
 - **Our XML bump arena (`src/xml/arena.rs`) is ASan-red-zoned, so its intra-arena
   overflows ARE caught** - the same blind spot as Lexbor's mraw, but this is our
   own module. The allocator poisons each fresh 64 KiB chunk and unpoisons only

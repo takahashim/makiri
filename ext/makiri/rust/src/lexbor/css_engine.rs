@@ -98,6 +98,24 @@ impl ParserParts {
         Some(parts)
     }
 
+    /// A view of the three for as long as `self` lives.
+    ///
+    /// [`into_parser`] is the way to a `SelectorParser` in production, and it
+    /// gives ownership up for good - the process-global engine is never
+    /// destroyed. A test that used it would leak the whole object graph, which
+    /// is what LeakSanitizer reports. This borrows instead, so `self`'s `Drop`
+    /// still frees all three.
+    ///
+    /// [`into_parser`]: ParserParts::into_parser
+    #[cfg(test)]
+    pub(crate) fn as_parser(&self) -> SelectorParser {
+        SelectorParser {
+            parser: self.parser.as_ptr(),
+            table: self.table.as_ptr(),
+            mem: self.mem.as_ptr(),
+        }
+    }
+
     /// Hand the three on, for the life of the process.
     pub(crate) fn into_parser(self) -> SelectorParser {
         let ParserParts { parser, table, mem } = self;
@@ -139,11 +157,19 @@ impl SelectorParser {
     /// # Safety
     /// Its cell's borrow is live.
     pub(crate) unsafe fn parse(self, selector: &[u8]) -> Option<*mut lxb_css_selector_list_t> {
-        // SAFETY: a live parser, used under its cell's borrow; `selector` is a live slice
+        /* `contains_guard` decides what reaches the parser; `Err` is OOM, and
+         * the original bytes are never a fallback. */
+        let guarded = match crate::lexbor::contains_guard::neutralized(selector) {
+            Ok(g) => g,
+            Err(_) => return None,
+        };
+        let bytes = guarded.as_deref().unwrap_or(selector);
+
+        // SAFETY: a live parser, used under its cell's borrow; `bytes` is a live slice
         // the parser only reads. The pointer is the slice's own even when it
         // is empty, which the parser may look at.
         unsafe {
-            let list = lxb_css_selectors_parse(self.parser, selector.as_ptr(), selector.len());
+            let list = lxb_css_selectors_parse(self.parser, bytes.as_ptr(), bytes.len());
             (!list.is_null() && lxb_css_parser_status_noi(self.parser) == STATUS_OK).then_some(list)
         }
     }
