@@ -14,6 +14,8 @@ rescue LoadError
 end
 
 require_relative "makiri/clone_via_dup"
+require_relative "makiri/xpath_syntax"
+require_relative "makiri/node_path"
 require_relative "makiri/node"
 require_relative "makiri/reader_aliases"
 require_relative "makiri/document"

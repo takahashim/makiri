@@ -4,6 +4,26 @@
 
 ### Fixed
 
+* `Node#path` round-trips through `#at_xpath` for CDATA sections and processing
+  instructions, and for text next to a CDATA section. A CDATA section is a
+  `text()` step counted among its text siblings, and a PI is
+  `processing-instruction('target')`, as Nokogiri writes them; before, the path
+  was `#cdata-section` (a syntax error) or the PI's target as an element name.
+  A node XPath cannot reach - a doctype, a namespace declaration, or a node
+  inside a `DocumentFragment` - answers `"?"`, as Nokogiri does, instead of
+  `/#document-fragment/...`. So does a node not attached to its document, which
+  Nokogiri does not do: its `/div/p` could name the document's own `/div/p`
+  (see NOKOGIRI_DIFFERENCES.md).
+* `Node#path` round-trips for namespaced nodes too: SVG and MathML in HTML,
+  default-namespace and prefixed XML, and namespaced attributes (`xlink:href`).
+  These are named by expanded name -
+  `*[local-name()='path' and namespace-uri()='http://www.w3.org/2000/svg']` -
+  which needs no prefix registered; before, the path found nothing, or raised
+  `unknown namespace prefix`. An SVG `<a>` no longer shares a position count
+  with the HTML `<a>`s beside it. The same holds for HTML names that are no
+  plain XPath name: Word's `<o:p>`, `xml:lang`, `xmlns:v` on an HTML element,
+  and Vue's `@click` / `:href` / `v-on:x`, whose paths raised
+  `unknown namespace prefix` or `XPath::SyntaxError`.
 * `NodeSet#xpath` / `#at_xpath` / `#search` with an expression that evaluates
   to a string, number or boolean raise `ArgumentError`, as Nokogiri does,
   instead of `NoMethodError` from inside the union.

@@ -55,6 +55,132 @@ RSpec.describe "Makiri convenience API" do
       text = doc.at_css("p").child
       expect(doc.at_xpath(text.path)).to eq(text)
     end
+
+    # XPath has no CDATA or PI name test of the node's own name: text() selects
+    # a CDATA section together with the text beside it, and a PI is reached by
+    # processing-instruction('target'). The path has to count what the engine
+    # will count.
+    it "round-trips CDATA, processing instructions and the text beside them" do
+      xml = Makiri::XML("<r><a/><![CDATA[x]]><?pi d?>t<?pi e?><?other f?></r>")
+      paths = xml.root.children.map(&:path)
+      expect(paths).to eq(%w[/r/a /r/text()[1] /r/processing-instruction('pi')[1] /r/text()[2]
+                             /r/processing-instruction('pi')[2] /r/processing-instruction('other')])
+      xml.root.children.each { |child| expect(xml.at_xpath(child.path)).to eq(child) }
+    end
+
+    it "round-trips an HTML processing instruction" do
+      html = Makiri.HTML("<p>a</p><?pi d?>")
+      pi = html.at_css("body").children.find(&:processing_instruction?)
+      expect(pi.path).to eq("/html/body/processing-instruction('pi')")
+      expect(html.at_xpath(pi.path)).to eq(pi)
+    end
+
+    # No step from the document reaches a detached node, and the absolute
+    # path its ancestors spell can name an ATTACHED node instead: here, the
+    # document's own /div/p. Nokogiri answers "/div/p".
+    it "answers ? for a detached node rather than a path to another node" do
+      xml = Makiri::XML("<div><p>attached</p></div>")
+      div = xml.create_element("div")
+      div.add_child(xml.create_element("p"))
+      expect(div.path).to eq("?")
+      expect(div.first_element_child.path).to eq("?")
+      expect(Makiri::Element.new("div", doc).path).to eq("?")
+
+      removed = doc.at_css("span").tap(&:remove)
+      expect(removed.path).to eq("?")
+    end
+
+    # A doctype has no XPath node type, so its name must not make it count
+    # among the elements of that name: "/html[2]/body/p" finds nothing.
+    it "does not count a doctype among the root element's siblings" do
+      html = Makiri.HTML("<!DOCTYPE html><p>a</p>")
+      p_el = html.at_css("p")
+      expect(p_el.path).to eq("/html/body/p")
+      expect(html.at_xpath(p_el.path)).to eq(p_el)
+
+      xml = Makiri::XML("<!DOCTYPE r><r><a/></r>")
+      a = xml.at_xpath("//a")
+      expect(a.path).to eq("/r/a")
+      expect(xml.at_xpath(a.path)).to eq(a)
+    end
+
+    it "answers ? for a node XPath cannot reach, as Nokogiri does" do
+      html = Makiri.HTML("<!DOCTYPE html><p>a</p>")
+      expect(html.children.first.path).to eq("?") # the doctype
+      expect(html.fragment("<p>x</p><p>y</p>").children.last.path).to eq("?")
+
+      xml = Makiri::XML(%(<r xmlns:x="urn:x"/>))
+      expect(xml.root.attribute_nodes.first.path).to eq("?") # a namespace declaration
+
+      # A target no XPath literal can quote (the factory allows one in HTML).
+      pi = html.create_processing_instruction(%(a'b"c), "d")
+      html.at_css("p").add_child(pi)
+      expect(pi.path).to eq("?")
+    end
+
+    # An unprefixed name test selects only the HTML namespace in HTML and no
+    # namespace in XML, and a prefix would need registering: anything else is
+    # named by expanded name, which evaluates with no setup.
+    describe "for namespaced nodes" do
+      xmlns = "http://www.w3.org/2000/xmlns/"
+
+      # Every node round-trips, except a declaration in the XMLNS namespace,
+      # which is no attribute to XPath and answers "?". An `xmlns:v` on an HTML
+      # element is an ordinary attribute there, and must round-trip.
+      define_method(:expect_round_trip) do |doc|
+        nodes = []
+        walk = lambda do |n|
+          n.children.each do |c|
+            nodes << c
+            nodes.concat(c.attribute_nodes.to_a) if c.element?
+            walk.(c)
+          end
+        end
+        walk.(doc)
+        nodes.each do |node|
+          if node.attribute? && node.namespace_uri == xmlns
+            expect(node.path).to eq("?")
+          else
+            expect(doc.at_xpath(node.path)).to eq(node), node.path
+          end
+        end
+      end
+
+      it "round-trips SVG and MathML in HTML, and their namespaced attributes" do
+        html = Makiri.HTML(<<~HTML)
+          <svg xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1 1"><a xlink:href="#"/><a/></svg>
+          <a>h</a><math><mi>x</mi></math>
+        HTML
+        svg_a = html.at_xpath("//*[local-name()='a'][1]")
+        expect(svg_a.path).to eq("/html/body/*[local-name()='svg' and namespace-uri()='http://www.w3.org/2000/svg']" \
+                                  "/*[local-name()='a' and namespace-uri()='http://www.w3.org/2000/svg'][1]")
+        expect(html.at_css("body > a").path).to eq("/html/body/a") # not counted with the SVG <a>s
+        expect_round_trip(html)
+      end
+
+      # The HTML parser takes names XPath cannot write bare: a colon reads as a
+      # prefix to resolve ("o:p" from Word, "xml:lang", "v-on:x"), and "@click"
+      # or "x!y" is no name at all.
+      it "round-trips HTML names that are no plain NCName" do
+        html = Makiri.HTML(<<~HTML)
+          <html xmlns:v="urn:v" xml:lang="ja"><p>Word<o:p></o:p></p>
+          <button @click="go" :href="u" v-on:x="1" data-é="2">b</button><x!y>z</x!y></html>
+        HTML
+        o_p = html.at_xpath("//*[local-name()='o:p']")
+        expect(o_p.path).to eq("/html/body/p/*[local-name()='o:p' and namespace-uri()='http://www.w3.org/1999/xhtml']")
+        click = html.at_css("button").attribute_nodes.first
+        expect(click.path).to eq("/html/body/button/@*[local-name()='@click' and namespace-uri()='']")
+        expect(html.at_css("button").path).to eq("/html/body/button") # a plain name stays bare
+        expect_round_trip(html)
+      end
+
+      it "round-trips default-namespace and prefixed XML" do
+        xml = Makiri::XML(%(<r xmlns="urn:a" xmlns:y="urn:y"><a/><y:a y:k="1" k="2"/><a/><s xmlns=""><a/></s></r>))
+        expect(xml.root.path).to eq("/*[local-name()='r' and namespace-uri()='urn:a']")
+        expect(xml.at_xpath("//*[local-name()='s']/*").path).to end_with("/a")
+        expect_round_trip(xml)
+      end
+    end
   end
 
   describe "NodeSet operations" do

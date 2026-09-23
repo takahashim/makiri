@@ -21,6 +21,9 @@ module Makiri
   #   resolves names against the document's in-scope namespaces. (Extension: glue/xml_doc.rs.)
   #
   # See also {Makiri::Node#parse}.
+  #
+  # A fragment is no step of any document's XPath, so neither it nor anything
+  # inside it has a {NodePath#path}: they answer "?".
   class DocumentFragment < Node
   end
 end

@@ -15,6 +15,9 @@ module Makiri
     # immutable - its mutators raise +FrozenError+.
     include CloneViaDup
 
+    # #path, an XPath that finds this node again.
+    include NodePath
+
     # @yieldparam child [Makiri::Node]
     # @return [self, Enumerator]
     def each(&block)
@@ -166,23 +169,6 @@ module Makiri
       result.is_a?(NodeSet) ? result.first : result
     end
 
-    # An absolute XPath that locates this node, e.g. "/html/body/p[2]".
-    # Element/text/comment steps carry a 1-based position among same-kind
-    # siblings (omitted when unique); attributes use "@name". Round-trips
-    # through {#at_xpath}.
-    # @return [String]
-    def path
-      return "/" if document?
-
-      segments = []
-      node = self
-      until node.nil? || node.document?
-        segments.unshift(node.send(:path_segment))
-        node = node.parent
-      end
-      "/#{segments.join("/")}"
-    end
-
     # Inspect representation. Avoids dumping the whole subtree.
     def inspect
       "#<#{self.class.name} name=#{name.inspect}>"
@@ -206,43 +192,6 @@ module Makiri
     def xpath?(path)
       s = path.to_s.strip
       s.start_with?("/", "./", "../", ".//", "(", "@") || s.include?("::")
-    end
-
-    # One "/"-separated step of {#path} for this node.
-    def path_segment
-      return "@#{name}" if attribute?
-
-      parent_node = parent
-      return step_name unless parent_node
-
-      siblings = parent_node.children.select { |c| same_step_kind?(c) }
-      return step_name if siblings.length <= 1
-
-      "#{step_name}[#{siblings.index(self) + 1}]"
-    end
-
-    # The node-test portion of a path step (without any position predicate).
-    def step_name
-      if text?
-        "text()"
-      elsif comment?
-        "comment()"
-      else
-        name
-      end
-    end
-
-    # Whether +other+ shares this node's path-step kind (for position counting).
-    def same_step_kind?(other)
-      if element?
-        other.element? && other.name == name
-      elsif text?
-        other.text?
-      elsif comment?
-        other.comment?
-      else
-        false
-      end
     end
   end
 end

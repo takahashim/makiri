@@ -17,5 +17,12 @@ module Makiri
       Makiri::Document.coerce!(document).create_processing_instruction(target, content)
     end
 
+    private
+
+    # See {NodePath#path}. nil (so "?") for a target no XPath literal can hold.
+    def path_step
+      literal = XPathSyntax.literal(target)
+      "processing-instruction(#{literal})" if literal
+    end
   end
 end

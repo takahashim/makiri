@@ -56,6 +56,12 @@ module Makiri
 
       private
 
+      # The namespace an unprefixed XPath element name test selects here: none,
+      # per XPath 1.0 (see {NodePath#path}).
+      def unprefixed_element_namespace
+        nil
+      end
+
       # Build the {prefix => uri} hash the native primitives register. Matching
       # Nokogiri: with NO explicit namespaces the document's own declarations are
       # collected (the default namespace under the synthetic prefix "xmlns", so a

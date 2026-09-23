@@ -7,6 +7,13 @@ module Makiri
     module NodeMethods
       ReaderAliases.define_on(self)
 
+      private
+
+      # The namespace an unprefixed XPath element name test selects here: the
+      # HTML namespace, as in browsers' document.evaluate (see {NodePath#path}).
+      def unprefixed_element_namespace
+        "http://www.w3.org/1999/xhtml"
+      end
     end
   end
 end
