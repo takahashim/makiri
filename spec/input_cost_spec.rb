@@ -11,6 +11,19 @@ RSpec.describe "Cost proportional to input" do
     Process.clock_gettime(Process::CLOCK_MONOTONIC) - t
   end
 
+  # A single-context reverse-axis step was merge-sorted back into document
+  # order, uncharged: count(preceding-sibling::i) per candidate over 4000
+  # siblings took 3.9 s, following-sibling 0.2 s. It is reversed now.
+  describe "a reverse-axis step" do
+    it "costs what the forward one does" do
+      doc = Makiri.HTML("<div>#{"<i>x</i>" * 4000}</div>")
+      took = elapsed { doc.xpath("count(//i[count(preceding-sibling::i) mod 2 = 1])") }
+      expect(took).to be < 1.5
+      expect(doc.xpath("count(//i[count(preceding-sibling::i) mod 2 = 1])")).to eq(2000)
+      expect(doc.at_xpath("//i[3]/preceding-sibling::i[1]")).to eq(doc.at_xpath("//i[2]"))
+    end
+  end
+
   describe "the preceding axis" do
     # Each climb re-walked the context's whole ancestor chain: O(depth^2) per
     # context node, uncharged. Depth 2000 took 8.8 s.
@@ -128,10 +141,18 @@ RSpec.describe "Cost proportional to input" do
       end
     end
 
-    it "stops :nth-of-type's sibling count over XML" do
+    # Counting preceding siblings per candidate was n^2 over a flat list: 40k
+    # ran for 15 s uncharged, and once charged a 10k-entry feed hit the
+    # budget. The CSS lowering now reads a per-parent memo of positions.
+    it "answers structural pseudo-classes over a long XML sibling list" do
       xml = Makiri::XML("<r>#{"<a/>" * 40_000}</r>")
-      took = elapsed { expect { xml.css("r > *:nth-of-type(2)") }.to raise_error(Makiri::XPath::LimitExceeded) }
-      expect(took).to be < 5.0
+      {
+        "r > *:nth-of-type(2)" => 1, "a:nth-child(2n)" => 20_000, "a:first-of-type" => 1,
+        "a:nth-last-child(3n+1)" => 13_334, "a:last-of-type" => 1, "a:only-child" => 0
+      }.each do |selector, count|
+        took = elapsed { expect(xml.css(selector).size).to eq(count), selector }
+        expect(took).to be < 1.0
+      end
     end
 
     it "leaves ordinary sizes inside the budget" do

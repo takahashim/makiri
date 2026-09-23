@@ -15,6 +15,7 @@
 /// The functions beyond XPath 1.0's library: the Nokogiri builtins and the
 /// CSS lowering's internal hooks.
 mod ext;
+pub(crate) use ext::SiblingPositions;
 
 use super::abi::*;
 use super::axis::walk_descendants;
@@ -38,6 +39,11 @@ use core::ops::ControlFlow;
 /// nothing.
 pub const FN_OF_TYPE_POS: &[u8] = b"\x01of-type-pos";
 pub const FN_OF_TYPE_POS_LAST: &[u8] = b"\x01of-type-pos-last";
+/// The same pair for the `-child` family: the position among ALL element
+/// siblings. XPath can say that (`count(preceding-sibling::*) + 1`), but per
+/// candidate it is n^2 over a flat list; the hook reads a per-parent memo.
+pub const FN_CHILD_POS: &[u8] = b"\x01child-pos";
+pub const FN_CHILD_POS_LAST: &[u8] = b"\x01child-pos-last";
 
 /// Namespace URI registered from Nokogiri's XPath context, so prefixed names
 /// like "nokogiri-builtin:css-class" resolve.
@@ -132,6 +138,8 @@ enum Builtin {
     LocalNameIs,
     OfTypePos,
     OfTypePosLast,
+    ChildPos,
+    ChildPosLast,
 }
 
 /// THE list of built-ins: each name once, with its library and its purity. The
@@ -179,6 +187,8 @@ const BUILTINS: &[(Library, &[u8], Builtin, Purity)] = {
          * lowering reaches them - and it runs only for XML today. */
         (Core, FN_OF_TYPE_POS, OfTypePos, Impure),
         (Core, FN_OF_TYPE_POS_LAST, OfTypePosLast, Impure),
+        (Core, FN_CHILD_POS, ChildPos, Impure),
+        (Core, FN_CHILD_POS_LAST, ChildPosLast, Impure),
         /* Nokogiri's builtins, in its builtin namespace */
         (Nokogiri, b"css-class", CssClass, Impure),
         (Nokogiri, b"local-name-is", LocalNameIs, Impure),
@@ -219,6 +229,8 @@ impl Builtin {
             Builtin::LocalNameIs => ext::fn_local_name_is::<D> as FnImpl<'e, 'd, D>,
             Builtin::OfTypePos => ext::fn_of_type_pos::<D> as FnImpl<'e, 'd, D>,
             Builtin::OfTypePosLast => ext::fn_of_type_pos_last::<D> as FnImpl<'e, 'd, D>,
+            Builtin::ChildPos => ext::fn_child_pos::<D> as FnImpl<'e, 'd, D>,
+            Builtin::ChildPosLast => ext::fn_child_pos_last::<D> as FnImpl<'e, 'd, D>,
         }
     }
 }
