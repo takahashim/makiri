@@ -24,6 +24,11 @@
   plain XPath name: Word's `<o:p>`, `xml:lang`, `xmlns:v` on an HTML element,
   and Vue's `@click` / `:href` / `v-on:x`, whose paths raised
   `unknown namespace prefix` or `XPath::SyntaxError`.
+* Copying an XML doctype (`import_node`, `clone_node`, and so `Document#dup`)
+  keeps its PUBLIC id. The copy read the id's length as a name-prefix length:
+  the PUBLIC id came back as the name's bytes and whatever followed them, an
+  absent one as `PUBLIC ""` - and where that ran past the end of the new
+  document's store, the first `#public_id` raised `fatal`.
 * `Makiri::XML::Document#dup` / `#clone` return a copy. They returned the
   document itself, so `xml.clone(freeze: true)` froze the original. `#dup`
   re-parses the serialisation, as `Makiri::HTML::Document#dup` does (a document
