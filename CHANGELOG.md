@@ -50,6 +50,10 @@
   (`substring("12345", 1.5, 2.6)` is `"234"`, was `"23"`); `<`, `>`, `<=`, `>=`
   between a node-set and a boolean compare the node-set's boolean (§3.4), as
   `=` did; and a string beginning with U+0000 is true.
+* CSS over XML agrees with the HTML matcher on an empty attribute value
+  (`[a^=""]` matched every element, attribute or not) and whitespace in `~=`
+  (both match nothing), on `$=` with a non-ASCII value, and on `:empty` beside
+  a comment.
 * `Node#path` round-trips through `#at_xpath` for CDATA sections and processing
   instructions, and for text next to a CDATA section. A CDATA section is a
   `text()` step counted among its text siblings, and a PI is

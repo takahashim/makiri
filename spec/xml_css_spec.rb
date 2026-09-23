@@ -363,7 +363,8 @@ RSpec.describe "Makiri::XML CSS selectors" do
   describe "agreement with the HTML matcher" do
     body = %(<main id="m"><p id="p1" class="a b">one</p><p id="p2"></p>) +
            %(<div id="d1"><span id="s1">x</span><span id="s2">y z</span></div>) +
-           %(<p id="p3" lang="en-US" data-k="pre-mid-suf">Three</p><div id="d2"></div><em id="e1"> </em></main>)
+           %(<p id="p3" lang="en-US" data-k="pre-mid-suf">Three</p><div id="d2"></div><em id="e1"> </em>) +
+           %(<b id="b1" data-u="aé"><!--c--></b><i id="i1"><?pi x?></i></main>)
     [
       ":first-child", ":last-child", ":only-child", ":empty", ":first-of-type", ":last-of-type",
       ":only-of-type", ":nth-child(2n+1)", ":nth-child(-n+2)", ":nth-last-child(2)", ":nth-of-type(2)",
@@ -371,6 +372,13 @@ RSpec.describe "Makiri::XML CSS selectors" do
       "[lang|=en]", "[data-k^=pre]", "[data-k$=suf]", "[data-k*=mid]", "[class~=b]", ":not(p)",
       "p:not(:first-child)", ":is(p, span)", ":where(div > span)", ":has(> span)", ":has(+ p)", ":has(~ em)",
       "*:not(:has(*))", %(:lexbor-contains("y")), %(:lexbor-contains("three" i)),
+      # An empty value "represents nothing" (and so does whitespace in ~=); the
+      # lowering matched every element, attribute or not.
+      %([data-k^=""]), %([zz*=""]), %([zz$=""]), %([class~=""]), %([class~="a b"]),
+      # $= counts characters, as XPath's substring does, not bytes.
+      %([data-u$="é"]), %([data-u$="aé"]),
+      # :empty ignores comments (b1), not processing instructions (i1).
+      "b:empty", "i:empty",
     ].each do |sel|
       it "answers #{sel} as the HTML matcher does" do
         xml = Makiri::XML(body).root

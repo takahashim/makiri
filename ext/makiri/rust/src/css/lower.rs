@@ -137,6 +137,21 @@ fn lower_attribute(b: &Build, s: Selector<'_>, at: Attribute<'_>) -> Built {
         return build::attr_ns(b, prefix, name);
     };
 
+    /* An empty value for ^= $= *= ~=, or a value holding whitespace for ~=,
+     * "represents nothing" (Selectors 4 §6.2-6.3), as the HTML matcher has it.
+     * Lowered as written they matched everything - starts-with(@a, '') is true
+     * with no @a at all, so [z^=""] found every element. */
+    let never = match at.op {
+        AttrMatch::Prefix | AttrMatch::Suffix | AttrMatch::Substring => value.is_empty(),
+        AttrMatch::Include => {
+            value.is_empty() || value.iter().any(|&c| matches!(c, b' ' | b'\t' | b'\n' | b'\r' | 0x0c))
+        }
+        _ => false,
+    };
+    if never {
+        return build::call(b, b"false", []);
+    }
+
     match at.op {
         /* [a=v] -> @a = 'v' */
         AttrMatch::Equal => build::binop(
@@ -161,13 +176,16 @@ fn lower_attribute(b: &Build, s: Selector<'_>, at: Attribute<'_>) -> Built {
             build::attr_ns(b, prefix, name),
             build::literal(b, value),
         ),
-        /* [a$=v] -> substring(@a, string-length(@a) - len + 1) = 'v' */
+        /* [a$=v] -> substring(@a, string-length(@a) - len + 1) = 'v', where len
+         * counts CHARACTERS: string-length and substring do, so a byte count
+         * missed any non-ASCII suffix ([d$="é"]). */
         AttrMatch::Suffix => {
             let slen = build::call1(b, b"string-length", build::attr_ns(b, prefix, name));
+            let chars = value.iter().filter(|&&c| c & 0xC0 != 0x80).count();
             let start = build::binop(
                 b,
                 Op::Add,
-                build::binop(b, Op::Sub, slen, build::num(b, value.len() as f64)),
+                build::binop(b, Op::Sub, slen, build::num(b, chars as f64)),
                 build::num(b, 1.0),
             );
             let sub = build::call2(b, b"substring", build::attr_ns(b, prefix, name), start);
@@ -329,7 +347,17 @@ fn lower_pseudo_simple(b: &Build, pc: PseudoClass, test: &NodeTest) -> Built {
         PseudoClass::LastOfType => none_along(b, Axis::FollowingSibling, of_type),
         PseudoClass::OnlyOfType => only(b, of_type),
         /* not(node()) */
-        PseudoClass::Empty => not_axis(b, Axis::Child, TestKind::Node),
+        /* No child but comments, as the HTML matcher (Lexbor) has it: an
+         * element, text or processing instruction makes it non-empty. `not(node())`
+         * counted a comment too, so <e><!--c--></e> was empty only in HTML. */
+        PseudoClass::Empty => build::fold(
+            b,
+            Op::And,
+            [TestKind::Wildcard, TestKind::Text, TestKind::Pi]
+                .into_iter()
+                .map(|kind| not_axis(b, Axis::Child, kind)),
+            c":empty",
+        ),
         /* not(parent::*) */
         PseudoClass::Root => not_axis(b, Axis::Parent, TestKind::Wildcard),
         PseudoClass::Other => Err(b.fail(XP_ERR_SYNTAX, c"unsupported CSS pseudo-class")),
