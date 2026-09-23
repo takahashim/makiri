@@ -1,5 +1,6 @@
-//! WHATWG DOM element names: what `createElement` accepts, which is far looser
-//! than an XML Name.
+//! WHATWG DOM names: what `createElement` and `setAttribute` accept, which is
+//! far looser than an XML Name - but not unchecked. The HTML mutators apply it
+//! to every element and attribute name they are given.
 //!
 //! Its own module because it is not XML naming. `Document#create_loose_dom_element`
 //! exists so a caller can build the element a browser would - `":good:times:"`,
@@ -53,6 +54,24 @@ fn local_ok(p: &[u8]) -> bool {
         return false;
     }
     !p.iter().copied().any(forbidden)
+}
+
+/// Whether `name` is a WHATWG DOM "valid element local name" - what
+/// `createElement` and a rename accept.
+pub fn valid_element_local_name(name: &[u8]) -> bool {
+    local_ok(name)
+}
+
+/// Whether `name` is a WHATWG DOM "valid attribute local name": at least one
+/// character, and no ASCII whitespace, NUL, `/`, `=` or `>` - the characters
+/// that would end or split the name when the element is serialized.
+pub fn valid_attribute_local_name(name: &[u8]) -> bool {
+    !name.is_empty() && !name.iter().any(|&c| forbidden(c) || c == b'=')
+}
+
+/// Whether `prefix` is a WHATWG DOM "valid namespace prefix".
+pub fn valid_namespace_prefix(prefix: &[u8]) -> bool {
+    prefix_ok(prefix)
 }
 
 /// Check that `qname`, `prefix` and `local` describe one DOM element name -

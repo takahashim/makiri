@@ -127,6 +127,20 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
     still produces the older bogus comment (`<!--?php ... ?-->`), and
     `Nokogiri::HTML` (libxml2) its own comment.
 
+## HTML mutation
+
+* Element and attribute names follow the WHATWG DOM's rules
+  * `name=`, `create_element`, `[]=` and `set_attribute_ns` raise `ArgumentError`
+    for a name the DOM refuses - one holding whitespace, `/`, `>` (or `=` for an
+    attribute) - where `Nokogiri::HTML5` accepts it and writes it into the markup
+    as it stands: `name = "img src=x onerror=alert(1)"` serializes as that tag.
+    The names HTML actually uses (`data-*`, `aria-*`, `@click`, `:href`,
+    `v-on:x`, custom elements) are accepted.
+  * `set_attribute_ns(nil, "x:y")` raises, as the DOM's `setAttributeNS` does:
+    a prefix needs a namespace.
+* An HTML document has one root element and no text child, as the DOM requires;
+  `doc << element` beside an existing root raises.
+
 ## CSS
 
 * Most jQuery/Nokogiri CSS extensions are not supported (`:gt`, `:lt`, `:eq`, `:first`, ...)

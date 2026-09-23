@@ -63,8 +63,10 @@ RSpec.describe "cross-kind import_node" do
     describe "DOM-lenient element names (not well-formed XML QNames)" do
       let(:hdoc) { Makiri::HTML::Document.parse("<div></div>") }
 
+      # Names the DOM accepts but XML does not. ("0:a" and "a b" were here too,
+      # but the DOM's own rule refuses them, and create_element now applies it.)
       it "imports a lenient-named element verbatim instead of raising" do
-        %w[:good:times: x< 0:a a\ b f}oo xmlns:foo].each do |nm|
+        %w[:good:times: x< f}oo xmlns:foo].each do |nm|
           el  = hdoc.create_element(nm)
           imp = xml.import_node(el, true)
           expect(imp).to be_a(Makiri::XML::Element)

@@ -22,6 +22,30 @@ use crate::bridge::fragment::stage_fragment_in;
 use crate::bridge::html::{edit, insert, owning_doc, wrap_html_node, HtmlEdit, HtmlSelf};
 use crate::bridge::string::{ruby_verified_data, ruby_verified_text};
 use crate::lexbor::adapter::html::{HtmlElementMut, Place, RawNode, TYPE_ATTRIBUTE, TYPE_ELEMENT};
+use crate::xml::dom_name;
+use crate::xml::qname::Split;
+
+/// `name` held to the WHATWG DOM rule `ok`, else `ArgumentError` - the DOM's
+/// InvalidCharacterError, and what the XML side raises for a bad name.
+///
+/// Unchecked, a name was written into the markup as it stood:
+/// `name = "img src=x onerror=alert(1)"` serialized as that tag with those
+/// attributes, and `e['x="y" onload'] = v` as two attributes. Nokogiri's HTML5
+/// does not check either; this is the DOM's rule, and XML already had its own.
+fn check_dom_name(
+    ruby: &Ruby,
+    name: &crate::bridge::string::RubyText,
+    ok: impl Fn(&[u8]) -> bool,
+    what: &str,
+) -> Result<(), Error> {
+    if ok(name.as_verified().as_bytes()) {
+        return Ok(());
+    }
+    Err(Error::new(
+        ruby.exception_arg_error(),
+        format!("invalid HTML {what} name"),
+    ))
+}
 
 /// The receiver as an element, once every argument is converted. Its node type
 /// was checked before the conversion (an argument cannot change it), so the
@@ -83,7 +107,7 @@ pub fn remove(_ruby: &Ruby, this: HtmlSelf) -> Result<Value, Error> {
  * ------------------------------------------------------------------ */
 
 /// `element[name] = value` -> value.
-pub fn aset(_ruby: &Ruby, this: HtmlSelf, rb_name: Value, rb_value: Value) -> Result<Value, Error> {
+pub fn aset(ruby: &Ruby, this: HtmlSelf, rb_name: Value, rb_value: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         const REFUSAL: &str = "cannot set an attribute on a non-element node";
         let edit = edit(&this)?;
@@ -92,6 +116,7 @@ pub fn aset(_ruby: &Ruby, this: HtmlSelf, rb_name: Value, rb_value: Value) -> Re
         }
         let nv = ruby_verified_text(rb_name, c"attribute name")?;
         let vv = ruby_verified_data(rb_value, c"attribute value")?;
+        check_dom_name(ruby, &nv, dom_name::valid_attribute_local_name, "attribute")?;
         let el = element_of(&edit, REFUSAL)?;
         if !crate::bridge::html::set_attribute(el, &nv, &vv) {
             return Err(makiri_error("failed to set attribute"));
@@ -102,7 +127,7 @@ pub fn aset(_ruby: &Ruby, this: HtmlSelf, rb_name: Value, rb_value: Value) -> Re
 
 /// `element.set_attribute_ns(namespace_or_nil, qualified_name, value)` -> value.
 pub fn set_attribute_ns(
-    _ruby: &Ruby,
+    ruby: &Ruby,
     this: HtmlSelf,
     rb_ns: Value,
     rb_qname: Value,
@@ -121,6 +146,30 @@ pub fn set_attribute_ns(
         } else {
             Some(ruby_verified_text(rb_ns, c"namespace")?)
         };
+        /* The DOM's "validate and extract": split at the first colon, check
+         * both halves, then that the namespace fits them - the rule XML's
+         * set_attribute_ns applies too (`xml::qname::ns_fits_name`). It named
+         * `(nil, "x:y")` a prefixed attribute in no namespace. */
+        let q = qv.as_verified().as_bytes();
+        let colon = q.iter().position(|&b| b == b':');
+        let (prefix, local) = match colon {
+            Some(i) => (&q[..i], &q[i + 1..]),
+            None => (&b""[..], q),
+        };
+        let names_ok = dom_name::valid_attribute_local_name(local)
+            && (colon.is_none() || dom_name::valid_namespace_prefix(prefix));
+        check_dom_name(ruby, &qv, |_| names_ok, "attribute")?;
+        let ns = nv.as_ref().map_or(&b""[..], |n| n.as_verified().as_bytes());
+        let split = match colon {
+            Some(i) => Split::prefixed(i as u32, (q.len() - i - 1) as u32),
+            None => Split::unprefixed(q.len() as u32),
+        };
+        if !crate::xml::qname::ns_fits_name(ns, q, &split) {
+            return Err(makiri_error(
+                "the namespace does not fit the qualified name (a prefix needs a namespace; \
+xml and xmlns take only their own)",
+            ));
+        }
         let el = element_of(&edit, REFUSAL)?;
         if !crate::bridge::html::set_attribute_ns(el, nv.as_ref(), &qv, &vv) {
             return Err(makiri_error("failed to set namespaced attribute"));
@@ -154,7 +203,7 @@ pub fn remove_attribute_ns(
 }
 
 /// `element.name = new_name` -> new_name.
-pub fn set_name(_ruby: &Ruby, this: HtmlSelf, rb_name: Value) -> Result<Value, Error> {
+pub fn set_name(ruby: &Ruby, this: HtmlSelf, rb_name: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         const REFUSAL: &str = "name= is only supported on elements";
         let edit = edit(&this)?;
@@ -162,6 +211,7 @@ pub fn set_name(_ruby: &Ruby, this: HtmlSelf, rb_name: Value) -> Result<Value, E
             return Err(makiri_error(REFUSAL));
         }
         let nv = ruby_verified_text(rb_name, c"element name")?;
+        check_dom_name(ruby, &nv, dom_name::valid_element_local_name, "element")?;
         let el = element_of(&edit, REFUSAL)?;
         if !crate::bridge::html::rename(el, &nv) {
             return Err(makiri_error("failed to rename element"));
@@ -260,10 +310,11 @@ fn created(node: Option<RawNode>, rb_self: Value, what: &str) -> Result<Value, E
 }
 
 /// `Document#create_element(name)` -> Element.
-pub fn create_element(_ruby: &Ruby, rb_self: Value, rb_name: Value) -> Result<Value, Error> {
+pub fn create_element(ruby: &Ruby, rb_self: Value, rb_name: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let doc = owning_doc(&rb_self)?;
         let nv = ruby_verified_text(rb_name, c"element name")?;
+        check_dom_name(ruby, &nv, dom_name::valid_element_local_name, "element")?;
         created(
             crate::bridge::html::create_element(doc, &nv),
             rb_self,

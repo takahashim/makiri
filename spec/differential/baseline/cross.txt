@@ -95,7 +95,6 @@ h2x.leaf[1] = Comment:"<!--c-->"
 h2x.pi = ProcessingInstruction:"<?tgt data?>"
 h2x.fragment = "RAISE Makiri::Error: invalid placement (an attribute/document node cannot be a tree child, a document allows a single root element, and a sibling target must have a parent)"
 h2x.doctype = "RAISE Makiri::Error: operation unsupported for this node type"
-h2x.loose[0bad] = Element:"RAISE Makiri::Error: cannot serialize XML containing a DOM-loose element name"
 h2x.loose[x:y:z] = Element:"RAISE Makiri::Error: cannot serialize XML containing a DOM-loose element name"
 x2h[plain].deep=true = Element:"<r><a id=\"1\">t</a></r>"
 x2h[plain].deep=true.ns = ["r", nil]
@@ -163,7 +162,7 @@ roundtrip.html = Element:"<div xmlns=\"http://www.w3.org/1999/xhtml\"><svg xmlns
 h2x=15
 h2x_leaves=1
 h2x_linked=30
-h2x_loose=2
+h2x_loose=1
 h2x_ok=30
 raised=6
 roundtrip=1

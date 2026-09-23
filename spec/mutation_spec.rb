@@ -521,4 +521,34 @@ RSpec.describe "Makiri mutation" do
       end
     end
   end
+
+  # Names were written into the markup unchecked, so a name could carry markup
+  # of its own. The WHATWG DOM's name rules now apply (XML had its own).
+  describe "element and attribute names" do
+    let(:doc) { Makiri::HTML("<p>t</p>") }
+    let(:para) { doc.at_css("p") }
+
+    it "refuses names that would become markup" do
+      expect { para[%(x="y" onload)] = "v" }.to raise_error(ArgumentError, /attribute name/)
+      expect { para.name = "img src=x onerror=alert(1)" }.to raise_error(ArgumentError, /element name/)
+      expect { doc.create_element("a href=javascript:x") }.to raise_error(ArgumentError, /element name/)
+      expect { para.set_attribute_ns("urn:x", ":a", "v") }.to raise_error(ArgumentError, /attribute name/)
+      expect(para.to_html).to eq("<p>t</p>")
+    end
+
+    it "keeps accepting the names HTML uses" do
+      para["data-x"] = "1"
+      para["@click"] = "go"
+      para[":href"] = "u"
+      para["v-on:x"] = "1"
+      expect(para.attribute_nodes.map(&:name)).to eq(%w[data-x @click :href v-on:x])
+      expect(doc.create_element("my-widget").name).to eq("my-widget")
+    end
+
+    it "refuses a prefix without a namespace in set_attribute_ns, as the DOM does" do
+      expect { para.set_attribute_ns(nil, "x:y", "v") }.to raise_error(Makiri::Error, /does not fit/)
+      para.set_attribute_ns("http://www.w3.org/1999/xlink", "xlink:href", "#")
+      expect(para["xlink:href"]).to eq("#")
+    end
+  end
 end
