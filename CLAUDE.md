@@ -735,7 +735,8 @@ and `lxb_dom_document_import_node` (deep) each child into the target arena;
 inserting a fragment splices its **children**. The four structural verbs are one
 `bridge::html::insert(this, node, Place)`; every rule Lexbor omits (no parent,
 no self-cycles, attribute nodes can't be tree children, doctype order) is the
-adapter's `Insertion::check`, run before any link changes, and the placing is
+adapter's `Insertion::check` (the doctype order, and one element child and no
+text child under the document), run before any link changes, and the placing is
 `HtmlNodeMut::place`. **Every edit goes through `bridge::html::edit` and then
 `HtmlEdit::node`, which drops the indexes** (`HtmlParsed::invalidate_indexes`) -
 so no mutator calls it, and none can forget to on an error path. The two are

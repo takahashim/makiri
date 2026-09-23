@@ -370,6 +370,8 @@ fn refused(e: PreInsertError, place: Place) -> Error {
         PreInsertError::DoctypeAfterElement | PreInsertError::ElementBeforeDoctype => {
             "a doctype must precede the document element"
         }
+        PreInsertError::SecondDocumentElement => "the document already has a root element",
+        PreInsertError::TextUnderDocument => "text cannot be a child of the document",
     })
 }
 

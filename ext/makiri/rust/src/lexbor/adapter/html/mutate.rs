@@ -33,6 +33,10 @@ pub enum PreInsertError {
     DuplicateDoctype,
     DoctypeAfterElement,
     ElementBeforeDoctype,
+    /// The document already has its one element child.
+    SecondDocumentElement,
+    /// Text cannot be a child of the document.
+    TextUnderDocument,
 }
 
 /// An insertion about to be made: `node` at `place` relative to `target`,
@@ -141,6 +145,31 @@ impl<'d> Insertion<'d> {
             && siblings_from(self.before).any(|n| self.stays(n) && n.node_type() == TYPE_DOCTYPE)
         {
             return Err(PreInsertError::ElementBeforeDoctype);
+        }
+        if at_document {
+            /* WHATWG DOM "ensure pre-insertion validity", the element half: a
+             * document has at most one element child and no text child. Lexbor
+             * enforces neither, so `doc << element` made a second root, and
+             * `count(/child::*)` answered 2 - where the XML side refuses. After
+             * the doctype order above, whose message an insertion breaking both
+             * has always reported. */
+            let is_text = |n: HtmlNode<'_>| matches!(n.node_type(), TYPE_TEXT | TYPE_CDATA);
+            let is_element = |n: HtmlNode<'_>| n.node_type() == TYPE_ELEMENT;
+            let incoming_elements = match self.node.node_type() {
+                TYPE_FRAGMENT => {
+                    if self.node.children().any(is_text) {
+                        return Err(PreInsertError::TextUnderDocument);
+                    }
+                    self.node.children().filter(|&c| is_element(c)).count()
+                }
+                _ if is_text(self.node) => return Err(PreInsertError::TextUnderDocument),
+                _ => usize::from(is_element(self.node)),
+            };
+            let has_element = siblings_from(self.parent.first_child())
+                .any(|n| self.stays(n) && is_element(n));
+            if incoming_elements > 1 || (incoming_elements == 1 && has_element) {
+                return Err(PreInsertError::SecondDocumentElement);
+            }
         }
         Ok(())
     }

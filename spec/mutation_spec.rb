@@ -180,6 +180,19 @@ RSpec.describe "Makiri mutation" do
             .to eq([Makiri::HTML::Comment, Makiri::HTML::DocumentType, Makiri::HTML::Element])
         end
 
+        # A document has one element child and no text child. Lexbor enforces
+        # neither, so `<<` made a second root.
+        it "rejects a second root element, text under the document, and a two-element fragment" do
+          d = Makiri::HTML("<p>x</p>")
+          expect { d << d.create_element("y") }.to raise_error(Makiri::Error, /already has a root element/)
+          expect { d << d.create_text_node("t") }.to raise_error(Makiri::Error, /text cannot be a child/)
+          expect { d << d.fragment("<a></a><b></b>") }.to raise_error(Makiri::Error, /already has a root element/)
+          expect(d.xpath("count(/*)")).to eq(1)
+          d << d.create_comment("fine")
+          d.root.replace(d.create_element("html")) # replacing the root is fine
+          expect(d.xpath("count(/*)")).to eq(1)
+        end
+
         it "rejects a second doctype even when another node precedes the first" do
           # The duplicate check must scan the whole child list: stopping at the
           # insertion point would let the leading comment hide the doctype.
@@ -403,14 +416,18 @@ RSpec.describe "Makiri mutation" do
       root.add_child(leaf)
       root.add_child(built.create_text_node("t5"))
 
-      [built.create_processing_instruction("pi", "d"), built.create_comment("c"),
-        built.create_text_node("x")].each do |node|
+      [built.create_processing_instruction("pi", "d"), built.create_comment("c")].each do |node|
         root.add_previous_sibling(node)
 
         expect(root.text).to eq("t5")
         expect(leaf.text).to eq("")
         node.unlink
       end
+      # Text is no child of a document (DOM pre-insertion validity), so that
+      # leaf is refused before it can reach the index.
+      expect { root.add_previous_sibling(built.create_text_node("x")) }
+        .to raise_error(Makiri::Error, /text cannot be a child of the document/)
+      expect(root.text).to eq("t5")
     end
 
     it "invalidates the element-by-tag index when #name= renames an element" do

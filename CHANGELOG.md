@@ -46,6 +46,8 @@
   element's `xmlns:xlink`, which made the output unreadable, and no longer turns
   an HTML element's `xmlns` attribute into a declaration that moved it out of
   XHTML.
+* An HTML document refuses a second root element and a text child, as the DOM
+  requires and the XML side already did.
 * XPath: `substring()` rounds each argument by `round()`'s rule, as §4.2 says
   (`substring("12345", 1.5, 2.6)` is `"234"`, was `"23"`); `<`, `>`, `<=`, `>=`
   between a node-set and a boolean compare the node-set's boolean (§3.4), as
