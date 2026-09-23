@@ -23,6 +23,27 @@ enum CopiedValue {
     Bytes(Vec<u8>),
 }
 
+impl CopiedValue {
+    fn read(doc: &Document, span: Span) -> Result<CopiedValue, MutStatus> {
+        Ok(if span.len > 0 {
+            CopiedValue::Bytes(copy_span(doc.span(span))?)
+        } else if span.is_absent() {
+            CopiedValue::Absent
+        } else {
+            CopiedValue::Empty
+        })
+    }
+
+    /// The span to store: ABSENT stays absent, the rest land in `dst`'s bytes.
+    fn write(&self, dst: &mut Document) -> Result<Span, MutStatus> {
+        match self {
+            CopiedValue::Absent => Ok(Span::ABSENT),
+            CopiedValue::Empty => Ok(Span::EMPTY),
+            CopiedValue::Bytes(v) => arena(dst.store(v)),
+        }
+    }
+}
+
 /// One node's own fields, owned, out of any arena. Attributes come with it,
 /// since they are part of the node's identity rather than its children.
 struct CopiedNode {
@@ -32,6 +53,9 @@ struct CopiedNode {
     /// A bare local name (a PI target, a doctype name) on a node with no qname.
     local: Option<Vec<u8>>,
     value: CopiedValue,
+    /// A DOCTYPE's PUBLIC id, which it keeps in the `prefix` field (see
+    /// `Document::doctype_ids`); Absent for every other kind.
+    public: CopiedValue,
     ns_uri: Option<Vec<u8>>,
     flags: u32,
     attrs: Vec<CopiedNode>,
@@ -44,25 +68,30 @@ impl CopiedNode {
             return Err(MutStatus::Type);
         };
         let (type_, flags) = (node.type_, node.flags);
-        let (qname_span, local_span, value_span, ns_span) =
-            (node.qname, node.local, node.value, node.ns_uri);
+        let (qname_span, local_span, value_span, ns_span, prefix_span) =
+            (node.qname, node.local, node.value, node.ns_uri, node.prefix);
+        /* A DOCTYPE repurposes `prefix` for its PUBLIC id, so its name is no
+         * qname to split: splitting it read the id's LENGTH as a prefix length
+         * and carried the name's bytes plus whatever followed them in the store
+         * into the copy as its PUBLIC id. Its name travels as a bare local and
+         * the id as a value of its own. */
+        let doctype = type_ == NodeType::Doctype;
 
-        let qname = if qname_span.len > 0 {
+        let qname = if qname_span.len > 0 && !doctype {
             Some((copy_span(doc.qname(src))?, doc.split_of(src)))
         } else {
             None
         };
-        let local = if qname_span.len == 0 && local_span.len > 0 {
+        let local = if (qname_span.len == 0 || doctype) && local_span.len > 0 {
             Some(copy_span(doc.local(src))?)
         } else {
             None
         };
-        let value = if value_span.len > 0 {
-            CopiedValue::Bytes(copy_span(doc.value(src))?)
-        } else if value_span.is_absent() {
-            CopiedValue::Absent
+        let value = CopiedValue::read(doc, value_span)?;
+        let public = if doctype {
+            CopiedValue::read(doc, prefix_span)?
         } else {
-            CopiedValue::Empty
+            CopiedValue::Absent
         };
         let ns_uri = if ns_span.len > 0 {
             Some(copy_span(doc.ns(src))?)
@@ -83,6 +112,7 @@ impl CopiedNode {
             qname,
             local,
             value,
+            public,
             ns_uri,
             flags,
             attrs,
@@ -96,15 +126,20 @@ impl CopiedNode {
             arena(dst.assign_qname(n, name, sp.prefix_len, sp.local_off, sp.local_len))?;
         } else if let Some(local) = &self.local {
             let span = arena(dst.store(local))?;
-            dst.node_mut(n).local = span;
-        }
-        match &self.value {
-            CopiedValue::Absent => {}
-            CopiedValue::Empty => dst.node_mut(n).value = Span::EMPTY,
-            CopiedValue::Bytes(v) => {
-                let span = arena(dst.store(v))?;
-                dst.node_mut(n).value = span;
+            let node = dst.node_mut(n);
+            node.local = span;
+            /* A doctype's name is both, as `new_document_type` stores it. */
+            if self.type_ == NodeType::Doctype {
+                node.qname = span;
             }
+        }
+        let value = self.value.write(dst)?;
+        dst.node_mut(n).value = value;
+        /* Only a doctype: anything else's `prefix` is the split `assign_qname`
+         * just wrote. */
+        if self.type_ == NodeType::Doctype {
+            let public = self.public.write(dst)?;
+            dst.node_mut(n).prefix = public;
         }
         dst.node_mut(n).flags = self.flags;
         if let Some(uri) = &self.ns_uri {

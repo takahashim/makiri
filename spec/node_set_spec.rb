@@ -53,6 +53,39 @@ RSpec.describe Makiri::NodeSet do
     expect(lis.clone.map(&:text)).to eq(%w[a b c])
   end
 
+  describe "per-node queries" do
+    # A string, number or boolean has no union, so rather than answering with
+    # one node's value the set refuses - as Nokogiri does.
+    it "raises ArgumentError for a scalar-valued XPath" do
+      expect { lis.xpath("count(.)") }.to raise_error(ArgumentError, /not a node-set/)
+      expect { lis.at_xpath("string(.)") }.to raise_error(ArgumentError, /not a node-set/)
+      expect { lis.search("/html/@lang = 'x'") }.to raise_error(ArgumentError, /not a node-set/)
+    end
+
+    it "answers #at_css / #at_xpath with the union's first node" do
+      doc = Makiri::HTML("<div><p>1</p></div><div></div><div><p>2</p><p>3</p></div>")
+      divs = doc.css("div")
+      expect(divs.at_css("p")).to eq(divs.css("p").first)
+      expect(divs.at_xpath(".//p")).to eq(divs.xpath(".//p").first)
+      expect(divs[1..1].at_css("p")).to be_nil
+      expect(divs[3..].at_xpath(".//p")).to be_nil # empty set
+    end
+
+    it "passes namespaces and options through to each node's query" do
+      xml = Makiri::XML(%(<r xmlns:x="urn:x"><s><x:a/></s><s><x:a/></s></r>))
+      set = xml.root.element_children
+      ns = { "x" => "urn:x" }
+      expect(set.xpath("x:a", ns).length).to eq(2)
+      expect(set.at_xpath("x:a", ns)).to eq(xml.root.first_element_child.first_element_child)
+      expect(set.css("x|a", ns).length).to eq(2)
+      expect(set.at_css("x|a", ns)).not_to be_nil
+
+      html = Makiri.HTML("<div><svg><path/></svg></div>")
+      expect(html.css("div").xpath(".//path").length).to eq(0)
+      expect(html.css("div").xpath(".//path", namespace_matching: :lax).length).to eq(1)
+    end
+  end
+
   describe ".new" do
     it "builds a set from a document (or node) and a list of its nodes" do
       ns = Makiri::NodeSet.new(doc, lis.to_a)

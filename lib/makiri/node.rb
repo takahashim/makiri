@@ -11,6 +11,13 @@ module Makiri
     # Enumerable over its child nodes, like Nokogiri.
     include Enumerable
 
+    # #clone is a deep #dup that honours +freeze:+. A frozen node is genuinely
+    # immutable - its mutators raise +FrozenError+.
+    include CloneViaDup
+
+    # #path, an XPath that finds this node again.
+    include NodePath
+
     # @yieldparam child [Makiri::Node]
     # @return [self, Enumerator]
     def each(&block)
@@ -67,10 +74,8 @@ module Makiri
 
     # --- Nokogiri-compatible aliases over the core API ---
     #
-    # Aliases of the representation-specific reader methods (#[], #name, ...) live
-    # with those methods on the per-kind node behaviour (Makiri::HTML::Node), not
-    # here, since alias_method resolves its target at definition time and the
-    # readers are defined on the leaves' included module. These two alias
+    # Aliases of the representation-specific readers (#[], #name, ...) are
+    # applied to each NodeMethods module by {ReaderAliases}. These two alias
     # representation-independent predicates defined just above, so they stay.
     alias_method :elem?, :element?
     alias_method :fragment?, :document_fragment?
@@ -83,7 +88,8 @@ module Makiri
     # The Attr node named +name+, or nil (cf. {#[]}, which returns the value).
     # @return [Makiri::Attr, nil]
     def attribute(name)
-      attributes[name.to_s]
+      wanted = name.to_s
+      attribute_nodes.find { |attr| attr.name == wanted }
     end
 
     # --- CSS class helpers (operate on the `class` attribute) ---
@@ -163,28 +169,9 @@ module Makiri
       result.is_a?(NodeSet) ? result.first : result
     end
 
-    # An absolute XPath that locates this node, e.g. "/html/body/p[2]".
-    # Element/text/comment steps carry a 1-based position among same-kind
-    # siblings (omitted when unique); attributes use "@name". Round-trips
-    # through {#at_xpath}.
-    # @return [String]
-    def path
-      return "/" if document?
-
-      segments = []
-      node = self
-      until node.nil? || node.document?
-        segments.unshift(node.send(:path_segment))
-        node = node.parent
-      end
-      "/#{segments.join("/")}"
-    end
-
     # Inspect representation. Avoids dumping the whole subtree.
     def inspect
       "#<#{self.class.name} name=#{name.inspect}>"
-    rescue NoMethodError
-      "#<#{self.class.name}>"
     end
 
     # An independent copy of this node, detached from any parent and owned by the
@@ -192,19 +179,10 @@ module Makiri
     # a shallow copy (matching Nokogiri's level argument). The native allocator
     # is undef'd to keep wrappers memory-safe, so #dup/#clone delegate to
     # {#clone_node} rather than Ruby's default allocate-and-copy (which would
-    # otherwise raise "allocator undefined").
+    # otherwise raise "allocator undefined"). #clone is this, deep, via
+    # {CloneViaDup}.
     def dup(level = 1)
       clone_node(level != 0)
-    end
-
-    # Like {#dup}, always a deep copy, and honouring Ruby's +freeze:+ keyword:
-    # +true+ returns a frozen copy, +false+ an unfrozen one, the default (+nil+)
-    # copies the receiver's frozen state. A frozen node is genuinely immutable -
-    # its mutators raise +FrozenError+ (see Makiri's mutation methods).
-    def clone(freeze: nil)
-      copy = clone_node(true)
-      copy.freeze if freeze || (freeze.nil? && frozen?)
-      copy
     end
 
     private
@@ -214,43 +192,6 @@ module Makiri
     def xpath?(path)
       s = path.to_s.strip
       s.start_with?("/", "./", "../", ".//", "(", "@") || s.include?("::")
-    end
-
-    # One "/"-separated step of {#path} for this node.
-    def path_segment
-      return "@#{name}" if attribute?
-
-      parent_node = parent
-      return step_name unless parent_node
-
-      siblings = parent_node.children.select { |c| same_step_kind?(c) }
-      return step_name if siblings.length <= 1
-
-      "#{step_name}[#{siblings.index(self) + 1}]"
-    end
-
-    # The node-test portion of a path step (without any position predicate).
-    def step_name
-      if text?
-        "text()"
-      elsif comment?
-        "comment()"
-      else
-        name
-      end
-    end
-
-    # Whether +other+ shares this node's path-step kind (for position counting).
-    def same_step_kind?(other)
-      if element?
-        other.element? && other.name == name
-      elsif text?
-        other.text?
-      elsif comment?
-        other.comment?
-      else
-        false
-      end
     end
   end
 end

@@ -14,16 +14,22 @@ module Makiri
 
 class Makiri::Attr < Makiri::Node
   def element(0)
+  private def path_step(0)
 
 class Makiri::CDATASection < Makiri::Node
   def self.new(2 req:document,req:content)
+  private def path_step(0)
 
 module Makiri::CSS
 
 class Makiri::CSS::SyntaxError < Makiri::Error
 
+module Makiri::CloneViaDup (private_constant)
+  def clone(-1 key:freeze)
+
 class Makiri::Comment < Makiri::Node
   def self.new(2 req:document,req:content)
+  private def path_step(0)
 
 class Makiri::Document < Makiri::Node
   def self.coerce!(1 req:document)
@@ -35,6 +41,7 @@ class Makiri::DocumentType < Makiri::Node
 
 class Makiri::Element < Makiri::Node
   def self.new(2 req:name,req:document)
+  private def path_step(0)
 
 class Makiri::Error < StandardError
 
@@ -56,7 +63,6 @@ class Makiri::HTML::Document < Makiri::Document
   def self._parse(1)
   def self.parse(1 req:source)
   def body(0)
-  def clone(-1 key:freeze)
   def create_comment(1)
   def create_document_fragment(0)
   def create_document_type(-1)
@@ -169,6 +175,7 @@ module Makiri::HTML::NodeMethods
   def value(0)
   def values(0)
   def xpath(-1)
+  private def unprefixed_element_namespace(0)
 
 class Makiri::HTML::ProcessingInstruction < Makiri::ProcessingInstruction
   include Makiri::HTML::NodeMethods
@@ -187,6 +194,8 @@ module Makiri::Lexbor::CSS
 class Makiri::Node < Object
   include Comparable
   include Enumerable
+  include Makiri::CloneViaDup
+  include Makiri::NodePath
   def add_class(1 req:names)
   def append_class(1 req:names)
   def at(1 req:path)
@@ -196,7 +205,6 @@ class Makiri::Node < Object
   def blank?(0)
   def cdata?(0)
   def classes(0)
-  def clone(-1 key:freeze)
   def comment?(0)
   def document?(0)
   def document_fragment?(0)
@@ -206,7 +214,6 @@ class Makiri::Node < Object
   def element?(0)
   def fragment?(0)
   def inspect(0)
-  def path(0)
   def processing_instruction?(0)
   def remove_class(-1 opt:names)
   def root(0)
@@ -215,23 +222,28 @@ class Makiri::Node < Object
   def text?(0)
   def to_h(0)
   def traverse(0 block:block)
-  private def path_segment(0)
-  private def same_step_kind?(1 req:other)
-  private def step_name(0)
   private def xpath?(1 req:path)
+
+module Makiri::NodePath (private_constant)
+  def path(0)
+  protected def path_node_test(0)
+  protected def path_segment(0)
+  private def name_step(2 req:axis,req:plain_namespace)
+  private def path_step(0)
+  private def unprefixed_element_namespace(0)
 
 class Makiri::NodeSet < Object
   include Enumerable
+  include Makiri::CloneViaDup
   def self.new(-1)
   def &(1)
   def +(1)
   def -(1)
   def [](-1)
   def at(1 req:index)
-  def at_css(1 req:selector)
-  def at_xpath(1 req:expr)
-  def clone(-1 key:freeze)
-  def css(1 req:selector)
+  def at_css(-2 req:selector,rest:args,keyrest:opts)
+  def at_xpath(-2 req:expr,rest:args,keyrest:opts)
+  def css(-2 req:selector,rest:args,keyrest:opts)
   def dup(-1)
   def each(0)
   def empty?(0)
@@ -249,16 +261,19 @@ class Makiri::NodeSet < Object
   def to_html(0)
   def to_s(0)
   def unlink(0)
-  def xpath(1 req:expr)
+  def xpath(-2 req:expr,rest:args,keyrest:opts)
   def |(1)
-  private def union_query(2 req:method,req:arg)
+  private def first_hit(-3 req:method,req:query,rest:args,keyrest:opts)
+  private def scalar_result(2 req:expr,req:value)
+  private def union_query(-3 req:method,req:query,rest:args,keyrest:opts)
 
 class Makiri::ProcessingInstruction < Makiri::Node
   def self.new(3 req:document,req:target,req:content)
-  def target(0)
+  private def path_step(0)
 
 class Makiri::Text < Makiri::Node
   def self.new(2 req:content,req:document)
+  private def path_step(0)
 
 module Makiri::XML
   const CDATA = Makiri::XML::CDATASection
@@ -285,7 +300,7 @@ class Makiri::XML::Builder < Object
   private def create_element(2 req:tag,req:args)
   private def initialize(-1 opt:options,opt:root,block:block)
   private def insert(1 req:node,block:block)
-  private def respond_to_missing?(-2 req:_name,opt:_include_private)
+  private def respond_to_missing?(-2 req:name,opt:_include_private)
   private def run(0 block:block)
 
 class Makiri::XML::Builder::NodeBuilder < Object
@@ -294,7 +309,7 @@ class Makiri::XML::Builder::NodeBuilder < Object
   def method_missing(-2 req:method,rest:args,block:block)
   private def append_attr(2 req:key,req:value)
   private def initialize(2 req:node,req:doc_builder)
-  private def respond_to_missing?(-2 req:_name,opt:_include_private)
+  private def respond_to_missing?(-2 req:name,opt:_include_private)
 
 class Makiri::XML::CDATASection < Makiri::CDATASection
   include Makiri::XML::NodeMethods
@@ -314,6 +329,7 @@ class Makiri::XML::Document < Makiri::Document
   def create_loose_dom_element(4)
   def create_processing_instruction(2)
   def create_text_node(1)
+  def dup(-1 rest:*)
   def fragment(1)
   def import_node(-1)
   def internal_subset(0)
@@ -428,6 +444,7 @@ module Makiri::XML::NodeMethods
   private def _css(2)
   private def _css_matches(2)
   private def _css_namespaces(1 req:user)
+  private def unprefixed_element_namespace(0)
 
 class Makiri::XML::ProcessingInstruction < Makiri::ProcessingInstruction
   include Makiri::XML::NodeMethods

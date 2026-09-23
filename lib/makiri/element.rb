@@ -13,5 +13,14 @@ module Makiri
     def self.new(name, document)
       Makiri::Document.coerce!(document).create_element(name)
     end
+
+    private
+
+    # See {NodePath#path}. An unprefixed name test selects elements in the
+    # HTML namespace in HTML and in none in XML; SVG, MathML, namespaced XML
+    # and names like "o:p" are written by expanded name.
+    def path_step
+      name_step("", unprefixed_element_namespace)
+    end
   end
 end

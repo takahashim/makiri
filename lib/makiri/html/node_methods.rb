@@ -4,15 +4,16 @@ module Makiri
   module HTML
     # The lxb_dom reader/query methods are defined natively on this module and
     # included into every HTML leaf (including the generic Makiri::HTML::Node).
-    # The Nokogiri-compatible aliases over those readers live here (not on
-    # Makiri::Node) so they resolve against the HTML readers at definition time.
     module NodeMethods
-      alias_method :attr, :[]
-      alias_method :get_attribute, :[]
-      alias_method :has_attribute?, :key?
-      alias_method :node_name, :name
-      alias_method :node_name=, :name=
-      alias_method :type, :node_type
+      ReaderAliases.define_on(self)
+
+      private
+
+      # The namespace an unprefixed XPath element name test selects here: the
+      # HTML namespace, as in browsers' document.evaluate (see {NodePath#path}).
+      def unprefixed_element_namespace
+        "http://www.w3.org/1999/xhtml"
+      end
     end
   end
 end

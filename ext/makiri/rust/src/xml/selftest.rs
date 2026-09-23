@@ -428,6 +428,40 @@ fn a_doctype_is_recognized_and_kept_but_not_processed() {
     assert_eq!(doc.value(dt), b"a>b", "the SYSTEM id may hold '>'");
 }
 
+/// A doctype keeps its PUBLIC id in `prefix`, so a copy that split its name as
+/// a qname read the id's length as a prefix length: the copy's PUBLIC id was
+/// the name's bytes and whatever followed them, and an absent one came back
+/// as `PUBLIC ""`.
+#[test]
+fn a_copied_doctype_keeps_its_name_and_both_ids() {
+    let cases: [(&[u8], Option<&[u8]>, Option<&[u8]>); 4] = [
+        (
+            b"<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\" \"x.dtd\"><html/>",
+            Some(b"-//W3C//DTD XHTML 1.0 Strict//EN"),
+            Some(b"x.dtd"),
+        ),
+        (b"<!DOCTYPE r SYSTEM \"r.dtd\"><r/>", None, Some(b"r.dtd")),
+        (b"<!DOCTYPE r PUBLIC \"\" \"\"><r/>", Some(b""), Some(b"")),
+        (b"<!DOCTYPE r><r/>", None, None),
+    ];
+    for (src, public, system) in cases {
+        let mut doc = parse_ok(src);
+        let dt = doc.doctype().expect("a doctype node");
+        let name = doc.local(dt).to_vec();
+
+        let mut other = doc_new();
+        let imported = mutate::import_subtree(&mut other, &doc, dt).expect("import");
+        let cloned = mutate::clone_node(&mut doc, dt, true).expect("clone");
+        for (d, copy) in [(&*other, imported), (&*doc, cloned)] {
+            let ids = d.doctype_ids(copy).expect("a doctype copy");
+            assert_eq!(d.local(copy), &name[..], "{}", show(src));
+            assert_eq!(d.qname(copy), &name[..], "{}", show(src));
+            assert_eq!(ids.public, public, "PUBLIC of {}", show(src));
+            assert_eq!(ids.system, system, "SYSTEM of {}", show(src));
+        }
+    }
+}
+
 #[test]
 fn line_endings_normalize_to_lf() {
     let doc = parse_ok(b"<a x=\"p\r\nq\r\">m\r\nn\ro</a>");

@@ -12,5 +12,12 @@ module Makiri
     def self.new(content, document)
       Makiri::Document.coerce!(document).create_text_node(content)
     end
+
+    private
+
+    # See {NodePath#path}.
+    def path_step
+      "text()"
+    end
   end
 end

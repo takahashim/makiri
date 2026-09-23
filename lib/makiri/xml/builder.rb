@@ -38,6 +38,14 @@ module Makiri
     # declared via an +"xmlns:dc"+ attribute on an ancestor or on the element
     # itself, exactly as Makiri resolves prefixes at insertion time).
     class Builder
+      # Ruby's implicit conversions (+to_ary+, +to_str+, +to_hash+, ...) are
+      # asked for through +respond_to?+ by +Array()+, +puts+, splats and
+      # interpolation. Answering yes would turn each such probe into an element
+      # (or, on a {NodeBuilder}, a class token), so these names are the ones a
+      # builder does not claim. Calling one explicitly still builds the tag.
+      CONVERSION = /\Ato_/
+      private_constant :CONVERSION
+
       # The document being built (a {Makiri::XML::Document}).
       attr_reader :doc
 
@@ -131,10 +139,10 @@ module Makiri
         insert(node, &block)
       end
 
-      # Tag methods are open-ended, so report respond_to? truthfully for them
-      # (anything that is not already a real method is a candidate tag).
-      def respond_to_missing?(_name, _include_private = false)
-        true
+      # Tag methods are open-ended, so any name is a candidate tag - except the
+      # conversion hooks (see {CONVERSION}).
+      def respond_to_missing?(name, _include_private = false)
+        !CONVERSION.match?(name)
       end
 
       # Run +block+ with +node+ as the current parent, restoring the previous
@@ -253,17 +261,18 @@ module Makiri
           self
         end
 
-        def respond_to_missing?(_name, _include_private = false)
-          true
+        def respond_to_missing?(name, _include_private = false)
+          !CONVERSION.match?(name)
         end
 
         private
 
         # Append +value+ as a space-separated token to the +key+ attribute,
         # preserving any existing tokens. The shared idiom behind the terse
-        # class-append and the trailing-Hash attribute shortcut.
+        # class-append and the trailing-Hash attribute shortcut; tokens split
+        # as {Node#classes} splits them, so a run of whitespace is one gap.
         def append_attr(key, value)
-          @node[key] = ((@node[key] || "").split(/\s/) + [value]).join(" ")
+          @node[key] = (@node[key].to_s.split(/\s+/).reject(&:empty?) << value).join(" ")
         end
       end
     end

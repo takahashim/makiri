@@ -6,9 +6,8 @@ module Makiri
   # public/system identifiers; XPath cannot reach it (XPath 1.0 has no doctype
   # node type), matching Nokogiri/libxml2.
   class DocumentType < Node
-    # @return [String, nil] the public identifier, or nil if absent. An empty
-    #   `PUBLIC ""` literal returns "".
     # `public_id`, `external_id` (Nokogiri-compatible alias), and `system_id`
-    # are defined in the extension.
+    # are defined in the extension; each is nil when the identifier is absent,
+    # and "" for an empty `PUBLIC ""` literal.
   end
 end

@@ -14,13 +14,16 @@ module Makiri
   #   the HTML is parsed inside of - a tag-name String (HTML namespace, e.g.
   #   <tt>context: "tr"</tt>; the bare strings <tt>"svg"</tt> / <tt>"math"</tt>
   #   name the foreign roots), or a {Makiri::Node} element whose tag and namespace
-  #   are used. The default context is <tt><body></tt>. (Defined in the extension, glue/fragment.rs.)
+  #   are used. The default context is <tt><body></tt>. (Defined in the extension, glue/html_doc.rs.)
   # * XML is namespace-context-based (no <tt>context:</tt> keyword):
   #   {Makiri::XML::DocumentFragment.parse} is self-contained (a prefix must be
   #   declared within the fragment itself), while {Makiri::XML::Document#fragment}
-  #   resolves names against the document's in-scope namespaces. (Extension: glue/xml.rs.)
+  #   resolves names against the document's in-scope namespaces. (Extension: glue/xml_doc.rs.)
   #
   # See also {Makiri::Node#parse}.
+  #
+  # A fragment is no step of any document's XPath, so neither it nor anything
+  # inside it has a {NodePath#path}: they answer "?".
   class DocumentFragment < Node
   end
 end

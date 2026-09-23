@@ -15,5 +15,13 @@ module Makiri
     def self.new(document, content)
       Makiri::Document.coerce!(document).create_cdata(content)
     end
+
+    private
+
+    # See {NodePath#path}. XPath has no CDATA node type - text() selects a CDATA
+    # section along with the text nodes around it, so it counts among them.
+    def path_step
+      "text()"
+    end
   end
 end

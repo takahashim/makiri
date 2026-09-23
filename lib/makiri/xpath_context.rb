@@ -12,7 +12,7 @@ module Makiri
   # Float, or boolean for the corresponding scalar XPath types.
   #
   # The bulk of the implementation lives in the extension (see
-  # ext/makiri/rust/src/glue/xpath.rs and ext/makiri/rust/src/xpath/).
+  # ext/makiri/rust/src/glue/xpath_context.rs and ext/makiri/rust/src/xpath/).
   class XPathContext
     # +#evaluate+ is defined in the extension and runs under the GVL (XPath never releases
     # it), so it cannot corrupt memory under concurrency. Two distinct hazards,

@@ -10,5 +10,12 @@ module Makiri
     def self.new(document, content)
       Makiri::Document.coerce!(document).create_comment(content)
     end
+
+    private
+
+    # See {NodePath#path}.
+    def path_step
+      "comment()"
+    end
   end
 end
