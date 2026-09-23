@@ -366,9 +366,23 @@ where
     f(a.as_slice(), b.as_slice())
 }
 
-/// See [`crate::cutf8::find`]: linear, where a window scan was O(n x m).
+/// The byte offset of the first `needle` in `hay`, in time linear in both and
+/// with no allocation.
+///
+/// A `windows(n).position(..)` scan is O(hay x needle), which the input picks:
+/// `contains()` of a 400 KB string took 2.4 s. `str::find` runs std's Two-Way
+/// search, which is linear; XPath strings are valid UTF-8 (DOM text, verified
+/// expressions and variables), and a match of valid UTF-8 in valid UTF-8 starts
+/// on a character boundary, so its offset is the byte search's. Called once
+/// per function call - it validates both strings, so a caller must not loop
+/// it over the rest of one haystack. Bytes that are not UTF-8 get the plain
+/// scan: slower, never wrong.
 fn find_bytes(hay: &[u8], needle: &[u8]) -> Option<usize> {
-    crate::cutf8::find(hay, needle)
+    match (core::str::from_utf8(hay), core::str::from_utf8(needle)) {
+        (Ok(h), Ok(n)) => h.find(n),
+        _ if needle.is_empty() => Some(0),
+        _ => hay.windows(needle.len()).position(|w| w == needle),
+    }
 }
 
 /// The number of characters in valid UTF-8; a stray continuation byte counts as

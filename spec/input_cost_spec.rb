@@ -150,4 +150,15 @@ RSpec.describe "Cost proportional to input" do
       expect(x.xpath(%q{translate("日本","本日","XY")})).to eq("YX")
     end
   end
+
+  # Splitting "]]>" across CDATA sections searched the rest of the value with a
+  # UTF-8 aware search that re-validated it on every match: 256k of them (3.8
+  # MB) took 6.3 s to write.
+  describe "writing a CDATA value full of ]]>" do
+    it "is linear in the value" do
+      doc = Makiri::XML("<r><![CDATA[#{"]]]]><![CDATA[>" * 256_000}]]></r>")
+      expect(elapsed { doc.to_xml }).to be < 1.0
+      expect(Makiri::XML(doc.to_xml).root.children.first.content).to eq(doc.root.children.first.content)
+    end
+  end
 end

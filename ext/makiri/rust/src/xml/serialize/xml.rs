@@ -294,7 +294,10 @@ impl<'d, 'b> Writer<'d, 'b> {
     fn cdata(&mut self, value: &[u8]) -> W {
         self.put(b"<![CDATA[")?;
         let mut rest = value;
-        while let Some(i) = crate::cutf8::find(rest, b"]]>") {
+        /* A byte scan resumed after each match: linear in the value. (A UTF-8
+         * aware search re-validated the rest on every match - quadratic in
+         * the number of "]]>".) */
+        while let Some(i) = rest.windows(3).position(|w| w == b"]]>") {
             self.put(&rest[..i + 2])?;
             self.put(b"]]><![CDATA[")?;
             rest = &rest[i + 2..];
