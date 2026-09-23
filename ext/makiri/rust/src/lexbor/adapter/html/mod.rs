@@ -492,6 +492,14 @@ impl<'doc> HtmlNode<'doc> {
         unsafe { (*self.as_raw()).user = offset.wrapping_add(1) as *mut core::ffi::c_void };
     }
 
+    /// Forget this node's source position, so [`source_offset`](Self::source_offset)
+    /// answers None. The third writer of `user`, beside the stamping: see
+    /// [`BuildingNode::clear_source_offsets`](super::build::BuildingNode::clear_source_offsets).
+    pub(crate) fn forget_source_offset(self) {
+        // SAFETY: a live node; `user` is not part of the tree's structure.
+        unsafe { (*self.as_raw()).user = core::ptr::null_mut() };
+    }
+
     /// The interned tag id (`local_name`).
     #[inline]
     pub fn tag_id(self) -> usize {

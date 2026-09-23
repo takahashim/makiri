@@ -285,6 +285,10 @@ unsafe fn import_raw(doc: RawDoc, src: *mut LxbNode, deep: bool) -> Option<*mut 
         // is what the sweep is for.
         return None;
     }
+    if hsrc.owner_document() != hdoc {
+        /* The copied offsets index the other document's source. */
+        himp.clear_source_offsets();
+    }
     Some(imp)
 }
 

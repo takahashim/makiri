@@ -54,6 +54,9 @@
   (`[a^=""]` matched every element, attribute or not) and whitespace in `~=`
   (both match nothing), on `$=` with a non-ASCII value, and on `:empty` beside
   a comment.
+* `Node#line` of a node copied from another document is nil, where it
+  answered with a line of this document the node was never on.
+
 * `Node#path` round-trips through `#at_xpath` for CDATA sections and processing
   instructions, and for text next to a CDATA section. A CDATA section is a
   `text()` step counted among its text siblings, and a PI is

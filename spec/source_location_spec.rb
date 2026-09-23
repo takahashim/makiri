@@ -138,6 +138,32 @@ RSpec.describe "Makiri source location" do
     end
   end
 
+  # Lexbor's import copies the node's source offset, which indexes the OTHER
+  # document's text: an imported <div> from line 41 answered 22 here, a line it
+  # was never on - and only when the source had been asked for a line first.
+  describe "a node copied from another document" do
+    let(:src) { Makiri.HTML(("<p>x</p>\n" * 40) + "<div id=far>f<i id=inner>i</i></div>") }
+    let(:dst) { Makiri.HTML("<p>1</p>\n<p id=t>2</p>" + ("\n<i>pad</i>" * 20)) }
+
+    before { expect(src.at_css("#far").line).to eq(41) } # stamp the source first
+
+    it "has no line after import_node, at any depth" do
+      imported = dst.import_node(src.at_css("#far"), true)
+      dst.at_css("#t").add_child(imported)
+      expect(imported.line).to be_nil
+      expect(imported.at_css("#inner").line).to be_nil
+    end
+
+    it "has no line after being adopted by insertion" do
+      dst.at_css("#t").add_child(src.at_css("#far"))
+      expect(dst.css("#far").last.line).to be_nil
+    end
+
+    it "keeps the line of a copy made within the same document" do
+      expect(dst.at_css("#t").clone_node(true).line).to eq(2)
+    end
+  end
+
   describe "parsing still behaves" do
     it "produces an equivalent DOM to the plain parse path" do
       doc = Makiri::HTML("<html><body><div><p>a</p><p>b</p></div></body></html>")

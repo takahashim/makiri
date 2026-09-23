@@ -246,6 +246,35 @@ impl<'doc> BuildingNode<'doc> {
         self.0.as_raw()
     }
 
+    /// Forget the source position of this node and everything below it.
+    /// (A `<template>`'s contents are never stamped - the position walk goes
+    /// through children - so there is nothing there to forget.)
+    ///
+    /// For a copy made from ANOTHER document: Lexbor's import copies `user`,
+    /// and the offset in it indexes the source document's text, so `#line`
+    /// answered with a line of this document the node was never on (41 in the
+    /// source became 22 here). No position is the truthful answer - nil.
+    /// Iterative, like every walk over a tree built from input.
+    pub fn clear_source_offsets(self) {
+        let root = self.0;
+        let mut cur = Some(root);
+        while let Some(n) = cur {
+            n.forget_source_offset();
+            cur = n.first_child().or_else(|| {
+                let mut up = n;
+                loop {
+                    if up == root {
+                        return None;
+                    }
+                    if let Some(next) = up.next() {
+                        return Some(next);
+                    }
+                    up = up.parent()?;
+                }
+            });
+        }
+    }
+
     /// Where this node's CHILDREN attach: a `<template>`'s content fragment,
     /// the node itself otherwise.
     #[inline]
