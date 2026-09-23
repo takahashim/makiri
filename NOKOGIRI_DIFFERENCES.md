@@ -110,6 +110,14 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
   the property-based differential), including namespaces, prolog/epilog comments
   and PIs, and adjacent-CDATA coalescing.
 
+* `to_xml` keeps an element's namespace when an `xmlns` attribute on it says
+  otherwise
+  * `root["xmlns"] = "urn:x"` on an element in no namespace is not written: the
+    element stays in no namespace when the output is re-read, as the DOM Parsing
+    and Serialization spec asks. Nokogiri writes `<r xmlns="urn:x">`, which moves
+    the element into `urn:x` on re-parse. Create the element in the namespace
+    instead (`create_element("r", "xmlns" => "urn:x")`, or parse it so).
+
 ## HTML parsing
 
 * `<?php ... ?>` in HTML input is a **ProcessingInstruction** node; `#to_html`

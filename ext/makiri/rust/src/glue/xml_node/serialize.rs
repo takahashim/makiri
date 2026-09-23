@@ -53,6 +53,11 @@ fn failure_error(f: Failure, verb: &str) -> Error {
         Failure::NamespaceBudget => {
             format!("failed to {verb} XML: namespace planning exceeded its step budget")
         }
+        Failure::NamespaceMismatch => format!(
+            "cannot {verb} XML whose namespace declarations no longer match its names \
+(a node moved from under its declaration, or one removed); to_xml writes the \
+declarations it needs"
+        ),
     };
     makiri_error(msg)
 }

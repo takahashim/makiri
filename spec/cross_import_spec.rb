@@ -235,4 +235,27 @@ RSpec.describe "cross-kind import_node" do
       expect(imp.at_css("p").text).to eq("x")
     end
   end
+
+  describe "namespace declarations crossing from HTML to XML" do
+    # A foreign element's xmlns:xlink is a declaration already; declaring its
+    # "prefix" wrote xmlns:xmlns, which no parser accepts.
+    it "copies a foreign element's declarations without declaring xmlns" do
+      html = Makiri.HTML(%(<svg xmlns:xlink="http://www.w3.org/1999/xlink"><a xlink:href="#u"/></svg>))
+      xml = Makiri::XML("<r/>")
+      xml.root.add_child(xml.import_node(html.at_css("svg"), true))
+      expect(xml.to_xml).not_to include("xmlns:xmlns")
+      back = Makiri::XML(xml.to_xml)
+      expect(back.at_xpath("//@*[local-name()='href']").namespace_uri).to eq("http://www.w3.org/1999/xlink")
+    end
+
+    # In HTML an xmlns attribute is only an attribute; copied, it became a
+    # declaration and moved the element out of XHTML.
+    it "leaves out an HTML element's xmlns attribute" do
+      html = Makiri.HTML(%(<div xmlns="urn:bogus"></div>))
+      xml = Makiri::XML("<r/>")
+      div = xml.import_node(html.at_css("div"), true)
+      xml.root.add_child(div)
+      expect(div.namespace_uri).to eq("http://www.w3.org/1999/xhtml")
+    end
+  end
 end

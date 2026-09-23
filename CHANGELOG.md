@@ -25,6 +25,21 @@
 
 ### Fixed
 
+* `Makiri::XML#to_xml` output re-parses in cases it did not: a CDATA value
+  holding `]]>` (adjacent sections merge, as in libxml2) is split across two
+  sections as libxml2 writes it; a SYSTEM id holding `"` is single-quoted; an
+  attribute with a namespace but no prefix gets a declared prefix instead of
+  losing its namespace; an `xmlns` attribute contradicting a no-namespace
+  element is left out rather than inventing `xmlns:ns1=""` (see
+  NOKOGIRI_DIFFERENCES.md); and an element copied in but not yet inserted keeps
+  its own declaration.
+* `Makiri::XML::Node#canonicalize` raises when the document's declarations no
+  longer give a name its namespace (a node moved from under its declaration,
+  one removed), where it rendered a different namespace or an unbound prefix.
+* Importing HTML into XML no longer writes `xmlns:xmlns` for a foreign
+  element's `xmlns:xlink`, which made the output unreadable, and no longer turns
+  an HTML element's `xmlns` attribute into a declaration that moved it out of
+  XHTML.
 * `Node#path` round-trips through `#at_xpath` for CDATA sections and processing
   instructions, and for text next to a CDATA section. A CDATA section is a
   `text()` step counted among its text siblings, and a PI is

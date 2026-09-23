@@ -1,93 +1,93 @@
 # Recorded from: C only (no MAKIRI_RUST_* flags)
 # Regenerate with `bundle exec rake diff:record`. See spec/differential/run.rb.
-h2x[plain].deep=true = Element:"<ns1:div xmlns:ns1=\"\" xmlns=\"http://www.w3.org/1999/xhtml\" id=\"a\" class=\"c\">text<b>bold</b></ns1:div>"
+h2x[plain].deep=true = Element:"<div xmlns=\"http://www.w3.org/1999/xhtml\" id=\"a\" class=\"c\">text<b>bold</b></div>"
 h2x[plain].deep=true.linked = Element:"<h><div xmlns=\"http://www.w3.org/1999/xhtml\" id=\"a\" class=\"c\">text<b>bold</b></div></h>"
 h2x[plain].deep=true.ns = [["div", "http://www.w3.org/1999/xhtml"]]
-h2x[plain].deep=false = Element:"<ns1:div xmlns:ns1=\"\" xmlns=\"http://www.w3.org/1999/xhtml\" id=\"a\" class=\"c\"/>"
+h2x[plain].deep=false = Element:"<div xmlns=\"http://www.w3.org/1999/xhtml\" id=\"a\" class=\"c\"/>"
 h2x[plain].deep=false.linked = Element:"<h><div xmlns=\"http://www.w3.org/1999/xhtml\" id=\"a\" class=\"c\"/></h>"
 h2x[plain].deep=false.ns = [["div", "http://www.w3.org/1999/xhtml"]]
-h2x[nested-deep].deep=true = Element:"<ns1:div xmlns:ns1=\"\" xmlns=\"http://www.w3.org/1999/xhtml\"><p><span><i><u>deep</u></i></span></p></ns1:div>"
+h2x[nested-deep].deep=true = Element:"<div xmlns=\"http://www.w3.org/1999/xhtml\"><p><span><i><u>deep</u></i></span></p></div>"
 h2x[nested-deep].deep=true.linked = Element:"<h><div xmlns=\"http://www.w3.org/1999/xhtml\"><p><span><i><u>deep</u></i></span></p></div></h>"
 h2x[nested-deep].deep=true.ns = [["div", "http://www.w3.org/1999/xhtml"]]
-h2x[nested-deep].deep=false = Element:"<ns1:div xmlns:ns1=\"\" xmlns=\"http://www.w3.org/1999/xhtml\"/>"
+h2x[nested-deep].deep=false = Element:"<div xmlns=\"http://www.w3.org/1999/xhtml\"/>"
 h2x[nested-deep].deep=false.linked = Element:"<h><div xmlns=\"http://www.w3.org/1999/xhtml\"/></h>"
 h2x[nested-deep].deep=false.ns = [["div", "http://www.w3.org/1999/xhtml"]]
-h2x[svg-default-ns].deep=true = Element:"<ns1:div xmlns:ns1=\"\" xmlns=\"http://www.w3.org/1999/xhtml\"><svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1 1\"><path d=\"M0 0\"/></svg></ns1:div>"
+h2x[svg-default-ns].deep=true = Element:"<div xmlns=\"http://www.w3.org/1999/xhtml\"><svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1 1\"><path d=\"M0 0\"/></svg></div>"
 h2x[svg-default-ns].deep=true.linked = Element:"<h><div xmlns=\"http://www.w3.org/1999/xhtml\"><svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1 1\"><path d=\"M0 0\"/></svg></div></h>"
 h2x[svg-default-ns].deep=true.ns = [["div", "http://www.w3.org/1999/xhtml"]]
-h2x[svg-default-ns].deep=false = Element:"<ns1:div xmlns:ns1=\"\" xmlns=\"http://www.w3.org/1999/xhtml\"/>"
+h2x[svg-default-ns].deep=false = Element:"<div xmlns=\"http://www.w3.org/1999/xhtml\"/>"
 h2x[svg-default-ns].deep=false.linked = Element:"<h><div xmlns=\"http://www.w3.org/1999/xhtml\"/></h>"
 h2x[svg-default-ns].deep=false.ns = [["div", "http://www.w3.org/1999/xhtml"]]
-h2x[svg-xlink-attr].deep=true = Element:"<ns1:div xmlns:ns1=\"\" xmlns=\"http://www.w3.org/1999/xhtml\"><svg xmlns=\"http://www.w3.org/2000/svg\"><a xmlns:xlink=\"http://www.w3.org/1999/xlink\" xlink:href=\"#z\">t</a></svg></ns1:div>"
+h2x[svg-xlink-attr].deep=true = Element:"<div xmlns=\"http://www.w3.org/1999/xhtml\"><svg xmlns=\"http://www.w3.org/2000/svg\"><a xmlns:xlink=\"http://www.w3.org/1999/xlink\" xlink:href=\"#z\">t</a></svg></div>"
 h2x[svg-xlink-attr].deep=true.linked = Element:"<h><div xmlns=\"http://www.w3.org/1999/xhtml\"><svg xmlns=\"http://www.w3.org/2000/svg\"><a xmlns:xlink=\"http://www.w3.org/1999/xlink\" xlink:href=\"#z\">t</a></svg></div></h>"
 h2x[svg-xlink-attr].deep=true.ns = [["div", "http://www.w3.org/1999/xhtml"]]
-h2x[svg-xlink-attr].deep=false = Element:"<ns1:div xmlns:ns1=\"\" xmlns=\"http://www.w3.org/1999/xhtml\"/>"
+h2x[svg-xlink-attr].deep=false = Element:"<div xmlns=\"http://www.w3.org/1999/xhtml\"/>"
 h2x[svg-xlink-attr].deep=false.linked = Element:"<h><div xmlns=\"http://www.w3.org/1999/xhtml\"/></h>"
 h2x[svg-xlink-attr].deep=false.ns = [["div", "http://www.w3.org/1999/xhtml"]]
-h2x[svg-xml-lang].deep=true = Element:"<ns1:div xmlns:ns1=\"\" xmlns=\"http://www.w3.org/1999/xhtml\"><svg xmlns=\"http://www.w3.org/2000/svg\"><text xml:lang=\"en\">t</text></svg></ns1:div>"
+h2x[svg-xml-lang].deep=true = Element:"<div xmlns=\"http://www.w3.org/1999/xhtml\"><svg xmlns=\"http://www.w3.org/2000/svg\"><text xml:lang=\"en\">t</text></svg></div>"
 h2x[svg-xml-lang].deep=true.linked = Element:"<h><div xmlns=\"http://www.w3.org/1999/xhtml\"><svg xmlns=\"http://www.w3.org/2000/svg\"><text xml:lang=\"en\">t</text></svg></div></h>"
 h2x[svg-xml-lang].deep=true.ns = [["div", "http://www.w3.org/1999/xhtml"]]
-h2x[svg-xml-lang].deep=false = Element:"<ns1:div xmlns:ns1=\"\" xmlns=\"http://www.w3.org/1999/xhtml\"/>"
+h2x[svg-xml-lang].deep=false = Element:"<div xmlns=\"http://www.w3.org/1999/xhtml\"/>"
 h2x[svg-xml-lang].deep=false.linked = Element:"<h><div xmlns=\"http://www.w3.org/1999/xhtml\"/></h>"
 h2x[svg-xml-lang].deep=false.ns = [["div", "http://www.w3.org/1999/xhtml"]]
-h2x[math].deep=true = Element:"<ns1:div xmlns:ns1=\"\" xmlns=\"http://www.w3.org/1999/xhtml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><mi>x</mi></math></ns1:div>"
+h2x[math].deep=true = Element:"<div xmlns=\"http://www.w3.org/1999/xhtml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><mi>x</mi></math></div>"
 h2x[math].deep=true.linked = Element:"<h><div xmlns=\"http://www.w3.org/1999/xhtml\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\"><mi>x</mi></math></div></h>"
 h2x[math].deep=true.ns = [["div", "http://www.w3.org/1999/xhtml"]]
-h2x[math].deep=false = Element:"<ns1:div xmlns:ns1=\"\" xmlns=\"http://www.w3.org/1999/xhtml\"/>"
+h2x[math].deep=false = Element:"<div xmlns=\"http://www.w3.org/1999/xhtml\"/>"
 h2x[math].deep=false.linked = Element:"<h><div xmlns=\"http://www.w3.org/1999/xhtml\"/></h>"
 h2x[math].deep=false.ns = [["div", "http://www.w3.org/1999/xhtml"]]
-h2x[mixed-ns].deep=true = Element:"<ns1:div xmlns:ns1=\"\" xmlns=\"http://www.w3.org/1999/xhtml\"><svg xmlns=\"http://www.w3.org/2000/svg\"><foreignObject><p xmlns=\"http://www.w3.org/1999/xhtml\">back in html</p></foreignObject></svg></ns1:div>"
+h2x[mixed-ns].deep=true = Element:"<div xmlns=\"http://www.w3.org/1999/xhtml\"><svg xmlns=\"http://www.w3.org/2000/svg\"><foreignObject><p xmlns=\"http://www.w3.org/1999/xhtml\">back in html</p></foreignObject></svg></div>"
 h2x[mixed-ns].deep=true.linked = Element:"<h><div xmlns=\"http://www.w3.org/1999/xhtml\"><svg xmlns=\"http://www.w3.org/2000/svg\"><foreignObject><p xmlns=\"http://www.w3.org/1999/xhtml\">back in html</p></foreignObject></svg></div></h>"
 h2x[mixed-ns].deep=true.ns = [["div", "http://www.w3.org/1999/xhtml"]]
-h2x[mixed-ns].deep=false = Element:"<ns1:div xmlns:ns1=\"\" xmlns=\"http://www.w3.org/1999/xhtml\"/>"
+h2x[mixed-ns].deep=false = Element:"<div xmlns=\"http://www.w3.org/1999/xhtml\"/>"
 h2x[mixed-ns].deep=false.linked = Element:"<h><div xmlns=\"http://www.w3.org/1999/xhtml\"/></h>"
 h2x[mixed-ns].deep=false.ns = [["div", "http://www.w3.org/1999/xhtml"]]
-h2x[template].deep=true = Element:"<ns1:div xmlns:ns1=\"\" xmlns=\"http://www.w3.org/1999/xhtml\"><template><i>inside</i>tail</template></ns1:div>"
+h2x[template].deep=true = Element:"<div xmlns=\"http://www.w3.org/1999/xhtml\"><template><i>inside</i>tail</template></div>"
 h2x[template].deep=true.linked = Element:"<h><div xmlns=\"http://www.w3.org/1999/xhtml\"><template><i>inside</i>tail</template></div></h>"
 h2x[template].deep=true.ns = [["div", "http://www.w3.org/1999/xhtml"]]
-h2x[template].deep=false = Element:"<ns1:div xmlns:ns1=\"\" xmlns=\"http://www.w3.org/1999/xhtml\"/>"
+h2x[template].deep=false = Element:"<div xmlns=\"http://www.w3.org/1999/xhtml\"/>"
 h2x[template].deep=false.linked = Element:"<h><div xmlns=\"http://www.w3.org/1999/xhtml\"/></h>"
 h2x[template].deep=false.ns = [["div", "http://www.w3.org/1999/xhtml"]]
-h2x[template-empty].deep=true = Element:"<ns1:div xmlns:ns1=\"\" xmlns=\"http://www.w3.org/1999/xhtml\"><template/></ns1:div>"
+h2x[template-empty].deep=true = Element:"<div xmlns=\"http://www.w3.org/1999/xhtml\"><template/></div>"
 h2x[template-empty].deep=true.linked = Element:"<h><div xmlns=\"http://www.w3.org/1999/xhtml\"><template/></div></h>"
 h2x[template-empty].deep=true.ns = [["div", "http://www.w3.org/1999/xhtml"]]
-h2x[template-empty].deep=false = Element:"<ns1:div xmlns:ns1=\"\" xmlns=\"http://www.w3.org/1999/xhtml\"/>"
+h2x[template-empty].deep=false = Element:"<div xmlns=\"http://www.w3.org/1999/xhtml\"/>"
 h2x[template-empty].deep=false.linked = Element:"<h><div xmlns=\"http://www.w3.org/1999/xhtml\"/></h>"
 h2x[template-empty].deep=false.ns = [["div", "http://www.w3.org/1999/xhtml"]]
-h2x[template-nested].deep=true = Element:"<ns1:div xmlns:ns1=\"\" xmlns=\"http://www.w3.org/1999/xhtml\"><template><template><b>deep</b></template></template></ns1:div>"
+h2x[template-nested].deep=true = Element:"<div xmlns=\"http://www.w3.org/1999/xhtml\"><template><template><b>deep</b></template></template></div>"
 h2x[template-nested].deep=true.linked = Element:"<h><div xmlns=\"http://www.w3.org/1999/xhtml\"><template><template><b>deep</b></template></template></div></h>"
 h2x[template-nested].deep=true.ns = [["div", "http://www.w3.org/1999/xhtml"]]
-h2x[template-nested].deep=false = Element:"<ns1:div xmlns:ns1=\"\" xmlns=\"http://www.w3.org/1999/xhtml\"/>"
+h2x[template-nested].deep=false = Element:"<div xmlns=\"http://www.w3.org/1999/xhtml\"/>"
 h2x[template-nested].deep=false.linked = Element:"<h><div xmlns=\"http://www.w3.org/1999/xhtml\"/></h>"
 h2x[template-nested].deep=false.ns = [["div", "http://www.w3.org/1999/xhtml"]]
-h2x[comment].deep=true = Element:"<ns1:div xmlns:ns1=\"\" xmlns=\"http://www.w3.org/1999/xhtml\">a<!-- c -->b</ns1:div>"
+h2x[comment].deep=true = Element:"<div xmlns=\"http://www.w3.org/1999/xhtml\">a<!-- c -->b</div>"
 h2x[comment].deep=true.linked = Element:"<h><div xmlns=\"http://www.w3.org/1999/xhtml\">a<!-- c -->b</div></h>"
 h2x[comment].deep=true.ns = [["div", "http://www.w3.org/1999/xhtml"]]
-h2x[comment].deep=false = Element:"<ns1:div xmlns:ns1=\"\" xmlns=\"http://www.w3.org/1999/xhtml\"/>"
+h2x[comment].deep=false = Element:"<div xmlns=\"http://www.w3.org/1999/xhtml\"/>"
 h2x[comment].deep=false.linked = Element:"<h><div xmlns=\"http://www.w3.org/1999/xhtml\"/></h>"
 h2x[comment].deep=false.ns = [["div", "http://www.w3.org/1999/xhtml"]]
-h2x[custom-el].deep=true = Element:"<ns1:my-widget xmlns:ns1=\"\" xmlns=\"http://www.w3.org/1999/xhtml\" my-attr=\"1\">c</ns1:my-widget>"
+h2x[custom-el].deep=true = Element:"<my-widget xmlns=\"http://www.w3.org/1999/xhtml\" my-attr=\"1\">c</my-widget>"
 h2x[custom-el].deep=true.linked = Element:"<h><my-widget xmlns=\"http://www.w3.org/1999/xhtml\" my-attr=\"1\">c</my-widget></h>"
 h2x[custom-el].deep=true.ns = [["my-widget", "http://www.w3.org/1999/xhtml"]]
-h2x[custom-el].deep=false = Element:"<ns1:my-widget xmlns:ns1=\"\" xmlns=\"http://www.w3.org/1999/xhtml\" my-attr=\"1\"/>"
+h2x[custom-el].deep=false = Element:"<my-widget xmlns=\"http://www.w3.org/1999/xhtml\" my-attr=\"1\"/>"
 h2x[custom-el].deep=false.linked = Element:"<h><my-widget xmlns=\"http://www.w3.org/1999/xhtml\" my-attr=\"1\"/></h>"
 h2x[custom-el].deep=false.ns = [["my-widget", "http://www.w3.org/1999/xhtml"]]
-h2x[entities].deep=true = Element:"<ns1:div xmlns:ns1=\"\" xmlns=\"http://www.w3.org/1999/xhtml\">a &amp; b &lt; c</ns1:div>"
+h2x[entities].deep=true = Element:"<div xmlns=\"http://www.w3.org/1999/xhtml\">a &amp; b &lt; c</div>"
 h2x[entities].deep=true.linked = Element:"<h><div xmlns=\"http://www.w3.org/1999/xhtml\">a &amp; b &lt; c</div></h>"
 h2x[entities].deep=true.ns = [["div", "http://www.w3.org/1999/xhtml"]]
-h2x[entities].deep=false = Element:"<ns1:div xmlns:ns1=\"\" xmlns=\"http://www.w3.org/1999/xhtml\"/>"
+h2x[entities].deep=false = Element:"<div xmlns=\"http://www.w3.org/1999/xhtml\"/>"
 h2x[entities].deep=false.linked = Element:"<h><div xmlns=\"http://www.w3.org/1999/xhtml\"/></h>"
 h2x[entities].deep=false.ns = [["div", "http://www.w3.org/1999/xhtml"]]
-h2x[empty].deep=true = Element:"<ns1:div xmlns:ns1=\"\" xmlns=\"http://www.w3.org/1999/xhtml\"/>"
+h2x[empty].deep=true = Element:"<div xmlns=\"http://www.w3.org/1999/xhtml\"/>"
 h2x[empty].deep=true.linked = Element:"<h><div xmlns=\"http://www.w3.org/1999/xhtml\"/></h>"
 h2x[empty].deep=true.ns = [["div", "http://www.w3.org/1999/xhtml"]]
-h2x[empty].deep=false = Element:"<ns1:div xmlns:ns1=\"\" xmlns=\"http://www.w3.org/1999/xhtml\"/>"
+h2x[empty].deep=false = Element:"<div xmlns=\"http://www.w3.org/1999/xhtml\"/>"
 h2x[empty].deep=false.linked = Element:"<h><div xmlns=\"http://www.w3.org/1999/xhtml\"/></h>"
 h2x[empty].deep=false.ns = [["div", "http://www.w3.org/1999/xhtml"]]
-h2x[attr-order].deep=true = Element:"<ns1:div xmlns:ns1=\"\" xmlns=\"http://www.w3.org/1999/xhtml\" z=\"1\" a=\"2\" m=\"3\">x</ns1:div>"
+h2x[attr-order].deep=true = Element:"<div xmlns=\"http://www.w3.org/1999/xhtml\" z=\"1\" a=\"2\" m=\"3\">x</div>"
 h2x[attr-order].deep=true.linked = Element:"<h><div xmlns=\"http://www.w3.org/1999/xhtml\" z=\"1\" a=\"2\" m=\"3\">x</div></h>"
 h2x[attr-order].deep=true.ns = [["div", "http://www.w3.org/1999/xhtml"]]
-h2x[attr-order].deep=false = Element:"<ns1:div xmlns:ns1=\"\" xmlns=\"http://www.w3.org/1999/xhtml\" z=\"1\" a=\"2\" m=\"3\"/>"
+h2x[attr-order].deep=false = Element:"<div xmlns=\"http://www.w3.org/1999/xhtml\" z=\"1\" a=\"2\" m=\"3\"/>"
 h2x[attr-order].deep=false.linked = Element:"<h><div xmlns=\"http://www.w3.org/1999/xhtml\" z=\"1\" a=\"2\" m=\"3\"/></h>"
 h2x[attr-order].deep=false.ns = [["div", "http://www.w3.org/1999/xhtml"]]
 h2x.leaf[0] = Text:"t"
@@ -157,7 +157,7 @@ x2h[xml-lang].deep=false = Element:"<r></r>"
 x2h[xml-lang].deep=false.ns = ["r", nil]
 x2h[xml-lang].deep=false.attrs = []
 x2h.fragment = DocumentFragment:"<a>1</a><b>2</b>"
-roundtrip.xml = Element:"<ns1:div xmlns:ns1=\"\" xmlns=\"http://www.w3.org/1999/xhtml\"><svg xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M0 0\"/></svg><p>t</p></ns1:div>"
+roundtrip.xml = Element:"<div xmlns=\"http://www.w3.org/1999/xhtml\"><svg xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M0 0\"/></svg><p>t</p></div>"
 roundtrip.html = Element:"<div xmlns=\"http://www.w3.org/1999/xhtml\"><svg xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M0 0\"></path></svg><p>t</p></div>"
 ---- branch counts ----
 h2x=15

@@ -14,7 +14,7 @@
 //! ATTRIBUTE LIST. `to_xml` therefore cost O(depth^2 x attributes) - a 403 KB
 //! document of 800 nested elements carrying 50 prefixed attributes each took
 //! 4.88s, against 0.097s for the same byte count without prefixes. A resolution
-//! is now a reverse scan of the bindings actually in scope, and [`NS_STEP_MAX`]
+//! is now a reverse scan of the bindings actually in scope, and [`NS_STEP_MAX`](super::bindings::NS_STEP_MAX)
 //! bounds the total work so a crafted document fails closed rather than hanging.
 
 #![forbid(unsafe_code)]
@@ -22,112 +22,39 @@
 use super::out::{put, put_pi, W, XML};
 use super::Failure;
 use crate::cbuf::Buf;
-use crate::falloc::Reserve;
-use crate::xml::model::{Document as XmlDoc, NodeId, NodeType, FLAG_DOM_LOOSE_NAME, MAX_DEPTH};
+use crate::xml::model::{
+    Document as XmlDoc, NodeId, NodeType, FLAG_DOM_LOOSE_NAME, FLAG_NS_RESOLVED, MAX_DEPTH,
+};
 use crate::xml::qname::xmlns_prefix;
 
-/// The total prefix-resolution steps one serialization may take. Generous - an
-/// ordinary document uses a handful - but finite, so namespace planning cannot
-/// be made to run unboundedly long by nesting and prefix count alone.
-const NS_STEP_MAX: u64 = 64 * 1024 * 1024;
-
-const PREFIX_CAP: usize = 8;
-
-/// A namespace prefix: borrowed from the arena when the document supplied it,
-/// owned inline when the serializer invented it.
-#[derive(Clone)]
-enum Prefix<'d> {
-    Own(&'d [u8]),
-    Invented([u8; PREFIX_CAP], usize),
-}
-
-impl Prefix<'_> {
-    fn bytes(&self) -> &[u8] {
-        match self {
-            Prefix::Own(s) => s,
-            Prefix::Invented(b, n) => &b[..*n],
-        }
-    }
-    fn is_invented(&self) -> bool {
-        matches!(self, Prefix::Invented(..))
-    }
-}
-
-/// Every binding in scope at the current element, innermost last.
-///
-/// One element's entries are its own xmlns declarations plus at most one
-/// declaration the planner synthesized for the element's own name; they are
-/// pushed on entry and truncated away on exit. Within one element the order is
-/// immaterial: a prefix is declared at most once per element (the parser rejects
-/// a duplicate and the DOM replaces it), and an invented prefix is chosen
-/// unbound, so no two entries from the same element share a prefix.
-struct Bindings<'d> {
-    stack: Vec<(Prefix<'d>, &'d [u8])>,
-    steps: u64,
-    /// Latched once the step budget is spent. A lookup then answers `None`,
-    /// which every caller turns into a refusal, so an exhausted planner can
-    /// never emit a declaration it did not verify.
-    exhausted: bool,
-}
-
-impl<'d> Bindings<'d> {
-    fn new() -> Self {
-        Bindings {
-            stack: Vec::new(),
-            steps: 0,
-            exhausted: false,
-        }
-    }
-
-    fn len(&self) -> usize {
-        self.stack.len()
-    }
-
-    fn truncate(&mut self, base: usize) {
-        self.stack.truncate(base);
-    }
-
-    fn push(&mut self, prefix: Prefix<'d>, uri: &'d [u8]) -> W {
-        self.stack.falloc_reserve(1).map_err(|_| ())?;
-        self.stack.push((prefix, uri));
-        Ok(())
-    }
-
-    /// The innermost binding for `prefix`, or None when it is unbound - or when
-    /// the step budget ran out, which [`Bindings::exhausted`] then reports.
-    fn lookup(&mut self, prefix: &[u8]) -> Option<&'d [u8]> {
-        for (p, uri) in self.stack.iter().rev() {
-            self.steps += 1;
-            if self.steps > NS_STEP_MAX {
-                self.exhausted = true;
-                return None;
-            }
-            if p.bytes() == prefix {
-                return Some(uri);
-            }
-        }
-        None
-    }
-
-    /// `xml` is bound everywhere and never declared (Namespaces in XML §3).
-    fn bound_to(&mut self, prefix: &[u8], uri: &[u8]) -> bool {
-        if prefix == b"xml" {
-            return true;
-        }
-        match self.lookup(prefix) {
-            None => prefix.is_empty() && uri.is_empty(),
-            Some(got) => got == uri,
-        }
-    }
-
-    fn is_bound(&mut self, prefix: &[u8]) -> bool {
-        prefix == b"xml" || self.lookup(prefix).is_some()
-    }
-}
+use super::bindings::{Bindings, Prefix, PREFIX_CAP};
 
 /* ---- planning one name ---- */
 
 /// The declaration for `prefix` on `el` ITSELF (not in scope), or None.
+/// An `xmlns="X"` attribute (X non-empty) on an unprefixed element in NO
+/// namespace, which the serializer leaves out.
+///
+/// Written, it would put the element in X on re-parse. Planning a prefix for the
+/// element instead gave `xmlns:ns1=""`, which Namespaces 1.0 forbids, and the
+/// output did not re-parse. The DOM Parsing and Serialization spec's answer is
+/// this one: ignore the declaration, and declare `xmlns=""` where an inherited
+/// default would otherwise claim the element - which `plan_element` already
+/// does. (Nokogiri writes the attribute, and the element changes namespace.)
+fn dropped_default_decl(doc: &XmlDoc, el: NodeId) -> Option<NodeId> {
+    let node = doc.node(el);
+    /* Only for a DECIDED no-namespace: an unresolved element's empty URI means
+     * "not decided yet", and its declaration is what decides it. */
+    if node.prefix.len != 0
+        || node.ns_uri.len != 0
+        || node.flags & FLAG_DOM_LOOSE_NAME != 0
+        || node.flags & FLAG_NS_RESOLVED == 0
+    {
+        return None;
+    }
+    own_decl(doc, el, b"").filter(|&at| doc.node(at).value.len != 0)
+}
+
 fn own_decl(doc: &XmlDoc, el: NodeId, prefix: &[u8]) -> Option<NodeId> {
     let mut a = doc.attrs(el);
     while let Some(at) = a {
@@ -220,9 +147,18 @@ fn plan_element<'d>(
         prefix: Prefix::Own(own_prefix),
         declare: doc.node(el).flags & FLAG_DOM_LOOSE_NAME == 0 && !binds.bound_to(own_prefix, uri),
     };
-    if plan.declare && own_decl(doc, el, own_prefix).is_some() {
+    let resolved = doc.node(el).flags & FLAG_NS_RESOLVED != 0;
+    if !resolved && own_decl(doc, el, own_prefix).is_some() {
+        /* Not resolved yet (a detached copy or build): its URI reads empty only
+         * because nothing has decided it, and its own declaration is what will -
+         * so the name and that declaration are written as they are, which is
+         * what the element serializes to once inserted. Planning for "no
+         * namespace" here gave `xmlns:ns1=""`, which does not parse. */
+        plan.declare = false;
+    } else if plan.declare && !uri.is_empty() && own_decl(doc, el, own_prefix).is_some() {
         /* The element declares this prefix for a DIFFERENT URI, so its own name
-         * needs one of ours. */
+         * needs one of ours. Not for no namespace: no prefix binds to "" -
+         * that declaration is dropped instead (`dropped_default_decl`). */
         plan.prefix = gen_prefix(binds, gen)?;
     }
     (!binds.exhausted).then_some(plan)
@@ -243,10 +179,22 @@ fn plan_attr<'d>(
     };
 
     let is_decl = xmlns_prefix(doc.qname(a)).is_some();
-    if own_prefix.is_empty() || is_decl {
+    if is_decl {
         return Some(plan);
     }
     let uri = doc.span(doc.node(a).ns_uri);
+    if own_prefix.is_empty() {
+        if uri.is_empty() || doc.node(a).flags & FLAG_DOM_LOOSE_NAME != 0 {
+            return Some(plan);
+        }
+        /* An unprefixed attribute is in NO namespace (Namespaces in XML §6.2),
+         * so one with a namespace - `set_attribute_ns("urn:p", "c", v)` -
+         * written bare lost it on re-parse, and could collide with a plain `c`.
+         * It gets a prefix of ours, declared for its URI. */
+        plan.prefix = gen_prefix(binds, gen)?;
+        plan.declare = true;
+        return (!binds.exhausted).then_some(plan);
+    }
     if binds.bound_to(own_prefix, uri) {
         return (!binds.exhausted).then_some(plan);
     }
@@ -337,17 +285,31 @@ impl<'d, 'b> Writer<'d, 'b> {
 
     /// Write `n`. `depth` is both the nesting level the indentation uses and the
     /// recursion guard - they were two arguments carrying the same number.
+    /// A CDATA section. Its value can hold `]]>`: the parser merges adjacent
+    /// sections into one node (as libxml2 does, for XPath's data model), so
+    /// `<![CDATA[a]]]><![CDATA[]>b]]>` is one node reading `a]]>b`. Written raw
+    /// that closed the section early and did not re-parse; each `]]>` is split
+    /// across two sections instead - `]]` ends one, `>` starts the next - which
+    /// is what libxml2 writes, and re-parses (and re-merges) to the same value.
+    fn cdata(&mut self, value: &[u8]) -> W {
+        self.put(b"<![CDATA[")?;
+        let mut rest = value;
+        while let Some(i) = crate::cutf8::find(rest, b"]]>") {
+            self.put(&rest[..i + 2])?;
+            self.put(b"]]><![CDATA[")?;
+            rest = &rest[i + 2..];
+        }
+        self.put(rest)?;
+        self.put(b"]]>")
+    }
+
     fn node(&mut self, n: NodeId, depth: u32, binds: &mut Bindings<'d>) -> W {
         let doc = self.doc;
         match doc.type_(n) {
             Some(NodeType::Doctype) => self.doctype(n),
             Some(NodeType::Element) => self.element(n, depth, binds),
             Some(NodeType::Text) => self.escape(doc.span(doc.node(n).value), false),
-            Some(NodeType::CData) => {
-                self.put(b"<![CDATA[")?;
-                self.put(doc.span(doc.node(n).value))?;
-                self.put(b"]]>")
-            }
+            Some(NodeType::CData) => self.cdata(doc.span(doc.node(n).value)),
             Some(NodeType::Comment) => {
                 self.put(b"<!--")?;
                 self.put(doc.span(doc.node(n).value))?;
@@ -372,17 +334,27 @@ impl<'d, 'b> Writer<'d, 'b> {
         self.put(doc.span(doc.node(dt).local))?;
         let (prefix, value) = (doc.node(dt).prefix, doc.node(dt).value);
         if !prefix.is_absent() {
-            self.put(b" PUBLIC \"")?;
-            self.put(doc.span(prefix))?;
-            self.put(b"\" \"")?;
-            self.put(doc.span(value))?;
-            self.put(b"\"")?;
+            self.put(b" PUBLIC ")?;
+            self.literal(doc.span(prefix))?;
+            self.put(b" ")?;
+            self.literal(doc.span(value))?;
         } else if !value.is_absent() {
-            self.put(b" SYSTEM \"")?;
-            self.put(doc.span(value))?;
-            self.put(b"\"")?;
+            self.put(b" SYSTEM ")?;
+            self.literal(doc.span(value))?;
         }
         self.put(b">")
+    }
+
+    /// A doctype id as a quoted literal. The grammar has no escape: a literal
+    /// is `"..."` or `'...'` and holds no instance of its own quote, and a
+    /// single-quoted SYSTEM id may contain `"` - always writing `"` made that
+    /// one ill-formed. (A PUBLIC id's characters exclude `"`, so it is always
+    /// double-quoted, as before.)
+    fn literal(&mut self, id: &[u8]) -> W {
+        let quote: &[u8] = if id.contains(&b'"') { b"'" } else { b"\"" };
+        self.put(quote)?;
+        self.put(id)?;
+        self.put(quote)
     }
 
     fn element(&mut self, n: NodeId, depth: u32, binds: &mut Bindings<'d>) -> W {
@@ -399,10 +371,15 @@ impl<'d, 'b> Writer<'d, 'b> {
     /// popping them, so an early `?` cannot leave the scope stack unbalanced.
     fn element_in_scope(&mut self, n: NodeId, depth: u32, binds: &mut Bindings<'d>) -> W {
         let doc = self.doc;
+        let dropped = dropped_default_decl(doc, n);
 
         /* This element's own xmlns declarations bind from here down. */
         let mut a = doc.attrs(n);
         while let Some(at) = a {
+            if Some(at) == dropped {
+                a = doc.next(at);
+                continue;
+            }
             if let Some(p) = xmlns_prefix(doc.qname(at)) {
                 binds.push(Prefix::Own(p), doc.span(doc.node(at).value))?;
             }
@@ -423,6 +400,10 @@ impl<'d, 'b> Writer<'d, 'b> {
 
         let mut a = doc.attrs(n);
         while let Some(at) = a {
+            if Some(at) == dropped {
+                a = doc.next(at);
+                continue;
+            }
             let plan = plan_attr(doc, n, at, binds, &mut gen).ok_or(())?;
             if plan.declare {
                 let uri = doc.span(doc.node(at).ns_uri);

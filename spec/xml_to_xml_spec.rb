@@ -244,4 +244,71 @@ RSpec.describe "Makiri::XML#to_xml" do
       expect(Makiri::XML(out).to_xml).to eq(out) # round-trips
     end
   end
+
+  # Output that did not re-parse. Each example serialises, re-parses, and
+  # compares what matters with the original.
+  describe "well-formed output" do
+    def names_of(doc)
+      doc.xpath("//*").map { |e| [e.name, e.namespace_uri] }
+    end
+
+    # The parser merges adjacent CDATA sections (as libxml2 does), so one node
+    # can hold "]]>"; written raw, it closed the section early.
+    it "splits ]]> in a CDATA value across two sections, as libxml2 does" do
+      doc = Makiri::XML("<r><![CDATA[a]]]><![CDATA[]>b]]></r>")
+      expect(doc.root.to_xml).to eq("<r><![CDATA[a]]]]><![CDATA[>b]]></r>")
+      expect(Makiri::XML(doc.to_xml).root.children.map(&:content)).to eq(["a]]>b"])
+    end
+
+    it "quotes a SYSTEM id holding a double quote with single quotes" do
+      doc = Makiri::XML(%(<!DOCTYPE r SYSTEM 'a"b'><r/>))
+      expect(doc.to_xml).to include(%(<!DOCTYPE r SYSTEM 'a"b'>))
+      expect(Makiri::XML(doc.to_xml).internal_subset.system_id).to eq('a"b')
+    end
+
+    # A prefix was invented for the element - xmlns:ns1="" - which Namespaces
+    # 1.0 forbids. The DOM Parsing spec drops the declaration instead, so the
+    # element stays in no namespace. Nokogiri writes it and the element moves.
+    it "leaves out an xmlns attribute that contradicts a no-namespace element" do
+      doc = Makiri::XML("<r><c/></r>")
+      doc.root["xmlns"] = "urn:x"
+      expect(doc.root.to_xml).to eq("<r><c/></r>")
+      expect(names_of(Makiri::XML(doc.to_xml))).to eq(names_of(doc))
+    end
+  end
+
+  describe "an attribute with a namespace but no prefix" do
+    # Unprefixed means no namespace (Namespaces in XML §6.2), so written bare it
+    # lost its namespace on re-parse, beside a plain attribute of the same name.
+    it "is written under a declared prefix" do
+      doc = Makiri::XML(%(<r c="plain"/>))
+      doc.root.set_attribute_ns("urn:p", "c", "v")
+      back = Makiri::XML(doc.to_xml).root.attribute_nodes.reject { |a| a.name.start_with?("xmlns") }
+      expect(back.map { |a| [a.local_name, a.namespace_uri, a.value] })
+        .to contain_exactly(["c", nil, "plain"], ["c", "urn:p", "v"])
+    end
+  end
+
+  describe "#canonicalize" do
+    # c14n renders the declarations the document holds; when they no longer
+    # give a name its namespace it refuses, where it wrote p:x under u2's
+    # declaration - a different namespace - or an unbound prefix.
+    it "refuses names their declarations no longer describe" do
+      moved = Makiri::XML(%(<r><a xmlns:p="u1"><p:x/></a><b xmlns:p="u2"/></r>))
+      moved.at_xpath("//b").add_child(moved.at_xpath("//*[local-name()='x']"))
+      expect { moved.canonicalize }.to raise_error(Makiri::Error, /no longer match/)
+      expect(Makiri::XML(moved.to_xml).at_xpath("//*[local-name()='x']").namespace_uri).to eq("u1")
+
+      nsattr = Makiri::XML("<r/>")
+      nsattr.root.set_attribute_ns("urn:q", "q:a", "v")
+      expect { nsattr.canonicalize }.to raise_error(Makiri::Error, /no longer match/)
+    end
+
+    it "still renders a consistent document and a subtree under its ancestors' declarations" do
+      doc = Makiri::XML(%(<r xmlns:p="u"><a xmlns:q="v"><p:x q:y="1"/></a></r>))
+      expect(doc.canonicalize).to eq(%(<r xmlns:p="u"><a xmlns:q="v"><p:x q:y="1"></p:x></a></r>))
+      expect(doc.at_xpath("//*[local-name()='x']").canonicalize)
+        .to eq(%(<p:x xmlns:p="u" xmlns:q="v" q:y="1"></p:x>))
+    end
+  end
 end
