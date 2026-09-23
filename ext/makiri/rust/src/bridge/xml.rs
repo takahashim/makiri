@@ -304,9 +304,9 @@ pub fn with_arena_for_new_node<R>(
 ///
 /// [`with_arena_for_new_node`] stays for the FACTORIES, which build a detached node -
 /// not in the tree, so not in the index, and with no receiver to freeze. The
-/// HTML side has had this as one `edit` gate all along; XML had the `&mut` gate
-/// and the invalidate gate as two separate calls, and whether a site needed the
-/// second was a judgement the reader had to make at each of seventeen.
+/// HTML side has the same pair, `edit` and `HtmlEdit::node`; XML had the `&mut`
+/// gate and the invalidate gate as two separate calls, and whether a site needed
+/// the second was a judgement the reader had to make at each of seventeen.
 pub struct Editing {
     document: Value,
     id: NodeId,
@@ -328,18 +328,27 @@ impl Editing {
     /// check is in `begin_edit` rather than here: it must stay ahead of the
     /// argument conversion, so a frozen receiver is reported before a bad
     /// argument, as it always was.
+    ///
+    /// It is also where the name index is dropped, just before `f` changes what
+    /// it indexes. Not in `begin_edit`: the argument conversion between the two
+    /// runs `#to_s`, and a query there rebuilt the index from the tree about to
+    /// change - `//a` then kept finding an element renamed to `b`.
     pub fn with_arena<R>(&self, f: impl FnOnce(&mut XmlDoc, NodeId) -> R) -> Result<R, Error> {
         let id = self.id;
-        with_arena_for_new_node(self.document, |d| f(d, id))
+        with_arena_for_new_node(self.document, |d| {
+            d.invalidate_name_index();
+            f(d, id)
+        })
     }
 }
 
 /// The receiver cleared for an edit - not frozen, its document not under
-/// evaluation - with the document's name index dropped, since the edit is
-/// about to change what it indexes.
+/// evaluation. The name index is dropped later, by [`Editing::with_arena`].
 pub fn begin_edit(this: XmlSelf) -> Result<Editing, Error> {
     check_frozen(this.value)?;
-    with_arena_for_new_node(this.document, XmlDoc::invalidate_name_index)?;
+    /* The evaluation guard, checked now so it is reported before a bad
+     * argument; `with_arena` checks it again at the change. */
+    with_arena_for_new_node(this.document, |_| ())?;
     Ok(Editing {
         document: this.document,
         id: this.id,

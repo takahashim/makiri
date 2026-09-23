@@ -3,8 +3,11 @@
 //! The Ruby surface of each edit: reading and verifying the arguments, the
 //! error each refusal raises, and the value handed back. The DOM's rules about
 //! what may go where are the adapter's `Insertion`, and every edit starts at
-//! `bridge::html::edit`, which also drops the document's indexes - so no method
-//! here can forget to. What touches a
+//! `bridge::html::edit` and reaches the tree through its `HtmlEdit::node`,
+//! which drops the document's indexes - so no method here can forget to. Each
+//! method converts its arguments BETWEEN the two: a conversion is the
+//! argument's `#to_s`, and a query there must not rebuild the indexes from the
+//! tree the edit is about to change. What touches a
 //! raw handle or a String's bytes - the adopt copy, the fragment import, the
 //! handoff of a verified String to Lexbor - is a primitive in
 //! [`crate::bridge::html`], so this module holds no unsafe.
@@ -13,12 +16,21 @@
 
 use magnus::{prelude::*, Error, Ruby, Value};
 
-use crate::bridge::ruby::makiri_error;
+use crate::bridge::ruby::{makiri_error, string_of};
 
 use crate::bridge::fragment::stage_fragment_in;
-use crate::bridge::html::{edit, insert, owning_doc, wrap_html_node, HtmlSelf};
+use crate::bridge::html::{edit, insert, owning_doc, wrap_html_node, HtmlEdit, HtmlSelf};
 use crate::bridge::string::{ruby_verified_data, ruby_verified_text};
-use crate::lexbor::adapter::html::{Place, RawNode, TYPE_ATTRIBUTE, TYPE_ELEMENT};
+use crate::lexbor::adapter::html::{
+    HtmlElementMut, Place, RawNode, TYPE_ATTRIBUTE, TYPE_ELEMENT,
+};
+
+/// The receiver as an element, once every argument is converted. Its node type
+/// was checked before the conversion (an argument cannot change it), so the
+/// `None` arm is unreachable - it answers `refusal` rather than assuming so.
+fn element_of<'a>(edit: &HtmlEdit<'a>, refusal: &'static str) -> Result<HtmlElementMut<'a>, Error> {
+    edit.node()?.element_mut().ok_or_else(|| makiri_error(refusal))
+}
 
 /* ------------------------------------------------------------------ *
  * structural mutation                                                *
@@ -52,7 +64,7 @@ pub fn replace(_ruby: &Ruby, this: HtmlSelf, rb_other: Value) -> Result<Value, E
 
 /// `node.remove` / `node.unlink` -> node.
 pub fn remove(_ruby: &Ruby, this: HtmlSelf) -> Result<Value, Error> {
-    let node = edit(&this)?;
+    let node = edit(&this)?.node()?;
     if node.node().node_type() == TYPE_ATTRIBUTE {
         return Err(makiri_error("use delete(name) to remove an attribute"));
     }
@@ -68,13 +80,14 @@ pub fn remove(_ruby: &Ruby, this: HtmlSelf) -> Result<Value, Error> {
 
 /// `element[name] = value` -> value.
 pub fn aset(_ruby: &Ruby, this: HtmlSelf, rb_name: Value, rb_value: Value) -> Result<Value, Error> {
-    let Some(el) = edit(&this)?.element_mut() else {
-        return Err(makiri_error(
-            "cannot set an attribute on a non-element node",
-        ));
-    };
+    const REFUSAL: &str = "cannot set an attribute on a non-element node";
+    let edit = edit(&this)?;
+    if edit.node_type() != TYPE_ELEMENT {
+        return Err(makiri_error(REFUSAL));
+    }
     let nv = ruby_verified_text(rb_name, c"attribute name")?;
     let vv = ruby_verified_data(rb_value, c"attribute value")?;
+    let el = element_of(&edit, REFUSAL)?;
     if !crate::bridge::html::set_attribute(el, &nv, &vv) {
         return Err(makiri_error("failed to set attribute"));
     }
@@ -89,11 +102,11 @@ pub fn set_attribute_ns(
     rb_qname: Value,
     rb_value: Value,
 ) -> Result<Value, Error> {
-    let Some(el) = edit(&this)?.element_mut() else {
-        return Err(makiri_error(
-            "cannot set an attribute on a non-element node",
-        ));
-    };
+    const REFUSAL: &str = "cannot set an attribute on a non-element node";
+    let edit = edit(&this)?;
+    if edit.node_type() != TYPE_ELEMENT {
+        return Err(makiri_error(REFUSAL));
+    }
     let qv = ruby_verified_text(rb_qname, c"attribute qualified name")?;
     let vv = ruby_verified_data(rb_value, c"attribute value")?;
     let nv = if rb_ns.is_nil() {
@@ -101,6 +114,7 @@ pub fn set_attribute_ns(
     } else {
         Some(ruby_verified_text(rb_ns, c"namespace")?)
     };
+    let el = element_of(&edit, REFUSAL)?;
     if !crate::bridge::html::set_attribute_ns(el, nv.as_ref(), &qv, &vv) {
         return Err(makiri_error("failed to set namespaced attribute"));
     }
@@ -114,25 +128,30 @@ pub fn remove_attribute_ns(
     rb_ns: Value,
     rb_local: Value,
 ) -> Result<Value, Error> {
-    let Some(el) = edit(&this)?.element_mut() else {
+    let edit = edit(&this)?;
+    if edit.node_type() != TYPE_ELEMENT {
         return Ok(ruby.qnil().as_value());
-    };
+    }
     let lv = ruby_verified_text(rb_local, c"attribute local name")?;
     let nv = if rb_ns.is_nil() {
         None
     } else {
         Some(ruby_verified_text(rb_ns, c"namespace")?)
     };
+    let el = element_of(&edit, "remove_attribute_ns requires an element")?;
     crate::bridge::html::remove_attribute_ns(el, nv.as_ref(), &lv);
     Ok(ruby.qnil().as_value())
 }
 
 /// `element.name = new_name` -> new_name.
 pub fn set_name(_ruby: &Ruby, this: HtmlSelf, rb_name: Value) -> Result<Value, Error> {
-    let Some(el) = edit(&this)?.element_mut() else {
-        return Err(makiri_error("name= is only supported on elements"));
-    };
+    const REFUSAL: &str = "name= is only supported on elements";
+    let edit = edit(&this)?;
+    if edit.node_type() != TYPE_ELEMENT {
+        return Err(makiri_error(REFUSAL));
+    }
     let nv = ruby_verified_text(rb_name, c"element name")?;
+    let el = element_of(&edit, REFUSAL)?;
     if !crate::bridge::html::rename(el, &nv) {
         return Err(makiri_error("failed to rename element"));
     }
@@ -141,8 +160,9 @@ pub fn set_name(_ruby: &Ruby, this: HtmlSelf, rb_name: Value) -> Result<Value, E
 
 /// `node.content = text` -> text.
 pub fn set_content(_ruby: &Ruby, this: HtmlSelf, rb_text: Value) -> Result<Value, Error> {
-    let node = edit(&this)?;
+    let edit = edit(&this)?;
     let tv = ruby_verified_data(rb_text, c"node content")?;
+    let node = edit.node()?;
     if !crate::bridge::html::set_text_content(node, &tv) {
         return Err(makiri_error("failed to set node content"));
     }
@@ -152,10 +172,12 @@ pub fn set_content(_ruby: &Ruby, this: HtmlSelf, rb_text: Value) -> Result<Value
 /// `element.delete(name)` -> self.
 pub fn delete(_ruby: &Ruby, this: HtmlSelf, rb_name: Value) -> Result<Value, Error> {
     let rb_self = this.value;
-    let Some(el) = edit(&this)?.element_mut() else {
+    let edit = edit(&this)?;
+    if edit.node_type() != TYPE_ELEMENT {
         return Ok(rb_self);
-    };
+    }
     let nv = ruby_verified_text(rb_name, c"attribute name")?;
+    let el = element_of(&edit, "delete requires an element")?;
     crate::bridge::html::remove_attribute(el, &nv);
     Ok(rb_self)
 }
@@ -165,11 +187,14 @@ pub fn delete(_ruby: &Ruby, this: HtmlSelf, rb_name: Value) -> Result<Value, Err
 /// All or nothing: the new content is parsed and imported into a detached
 /// fragment first, and only then are the old children swapped for it.
 pub fn set_inner_html(_ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Value, Error> {
-    let node = edit(&this)?;
-    if node.node().node_type() != TYPE_ELEMENT {
+    let edit = edit(&this)?;
+    if edit.node_type() != TYPE_ELEMENT {
         return Err(makiri_error("inner_html= requires an element"));
     }
-    let staged = stage_fragment_in(node, rb_html)?;
+    /* `to_str`/`to_s` is Ruby code that may raise: converted under protect. */
+    let html = string_of(rb_html)?;
+    let node = edit.node()?;
+    let staged = stage_fragment_in(node, html)?;
     /* Detached, not destroyed: the arena reclaims them with the document. */
     while let Some(c) = node.first_child() {
         c.detach();
@@ -179,8 +204,16 @@ pub fn set_inner_html(_ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Va
 }
 
 /// `node.outer_html = html` -> html. All or nothing, as `inner_html=`.
+///
+/// The parent is looked up AFTER the argument is converted: its `#to_s` may
+/// have moved or removed the receiver, and a parent read before it was a
+/// parent the receiver no longer had - the new content went nowhere and the
+/// call still reported success.
 pub fn set_outer_html(_ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Value, Error> {
-    let node = edit(&this)?;
+    let edit = edit(&this)?;
+    /* `to_str`/`to_s` is Ruby code that may raise: converted under protect. */
+    let html = string_of(rb_html)?;
+    let node = edit.node()?;
     let Some(parent) = node
         .parent()
         .filter(|p| p.node().node_type() == TYPE_ELEMENT)
@@ -189,7 +222,7 @@ pub fn set_outer_html(_ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Va
             "outer_html= requires a node with a parent element",
         ));
     };
-    let staged = stage_fragment_in(parent, rb_html)?;
+    let staged = stage_fragment_in(parent, html)?;
     node.place(staged, Place::Replace);
     Ok(rb_html)
 }

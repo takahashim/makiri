@@ -10,7 +10,7 @@
 
 #![allow(unsafe_code)]
 
-use magnus::{prelude::*, Error, Ruby, Value};
+use magnus::{prelude::*, Error, RString, Ruby, Value};
 
 use crate::bridge::ruby::makiri_error;
 
@@ -113,12 +113,14 @@ pub fn resolve_fragment_context(
     Ok(FragmentTag { tag, ns: NS_HTML })
 }
 
-/// Parse `rb_html` as a fragment in `context`. Nothing is changed yet: a String
-/// that fails to convert or parse leaves every document as it was.
-fn parse(rb_html: Value, context: &FragmentContext) -> Result<TransientFragment, Error> {
-    /* `to_str`/`to_s` is Ruby code that may raise: converted under protect. */
-    let html = string_of(rb_html)?.as_value();
-    let src = HtmlSource::from_ruby(html)?;
+/// Parse `html` as a fragment in `context`. Nothing is changed yet: a String
+/// that fails to parse leaves every document as it was.
+///
+/// `html` is a String already - the caller ran `string_of` - because that
+/// conversion is the argument's `#to_s`, arbitrary Ruby, and for `inner_html=`
+/// it has to finish before the edit drops the document's indexes.
+fn parse(html: RString, context: &FragmentContext) -> Result<TransientFragment, Error> {
+    let src = HtmlSource::from_ruby(html.as_value())?;
     // SAFETY: the context's element or document is live (the callers below hold
     // it), and the bytes are read by the parse alone, which runs no Ruby.
     unsafe { TransientFragment::parse(src.bytes(), src.known_valid(), context) }
@@ -137,10 +139,10 @@ fn parse(rb_html: Value, context: &FragmentContext) -> Result<TransientFragment,
 /// relinks and cannot fail.
 pub fn stage_fragment_in<'d>(
     context: HtmlNodeMut<'d>,
-    rb_html: Value,
+    html: RString,
 ) -> Result<HtmlNodeMut<'d>, Error> {
     let parsed = parse(
-        rb_html,
+        html,
         &FragmentContext::Element(RawNode::from(context.node())),
     )?;
     let doc = context.node().owner_document();
@@ -163,9 +165,11 @@ pub fn build_fragment(document: Value, rb_html: Value, at: FragmentTag) -> Resul
     /* A fragment's nodes are made in `document`: a change to it, refused while
      * an XPath evaluation with a handler reads it. */
     ensure_document_mutable(document)?;
+    /* `to_str`/`to_s` is Ruby code that may raise: converted under protect. */
+    let html = string_of(rb_html)?;
     let doc = html_doc_unwrap(document)?;
     let parsed = parse(
-        rb_html,
+        html,
         &FragmentContext::Tag {
             doc,
             tag: at.tag,

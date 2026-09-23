@@ -732,9 +732,14 @@ inserting a fragment splices its **children**. The four structural verbs are one
 `bridge::html::insert(this, node, Place)`; every rule Lexbor omits (no parent,
 no self-cycles, attribute nodes can't be tree children, doctype order) is the
 adapter's `Insertion::check`, run before any link changes, and the placing is
-`HtmlNodeMut::place`. **Every edit starts at `bridge::html::edit`, which drops
-the indexes** (`HtmlParsed::invalidate_indexes`) - so no mutator calls it, and
-none can forget to on an error path. `inner_html=`/`outer_html=` are all or
+`HtmlNodeMut::place`. **Every edit goes through `bridge::html::edit` and then
+`HtmlEdit::node`, which drops the indexes** (`HtmlParsed::invalidate_indexes`) -
+so no mutator calls it, and none can forget to on an error path. The two are
+separate on purpose: `edit` checks (frozen, evaluating) so those errors come
+first, and every argument is converted BETWEEN the two, because a conversion is
+the argument's `#to_s` - arbitrary Ruby - and a query there rebuilt the indexes
+from the tree about to change (a read of released text storage). The XML side
+is the same pair, `begin_edit` and `Editing::with_arena`. `inner_html=`/`outer_html=` are all or
 nothing: `stage_fragment_in` imports into a DETACHED fragment first, and only
 then are the old nodes swapped out (`rake oom`'s `html_inner_html` scenario
 checks the document is unchanged after every injected failure).

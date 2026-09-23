@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Security
+
+* A mutator's argument can no longer rebuild the document's indexes in the
+  middle of the edit. Arguments are converted with `#to_s`, which is arbitrary
+  Ruby; a query made there rebuilt the indexes from the tree the edit was about
+  to change, after which `#text` read text storage the edit had released (a
+  read of freed memory) and `//p` found removed nodes. Both representations;
+  every mutator.
+
 ### Fixed
 
 * `Node#path` round-trips through `#at_xpath` for CDATA sections and processing
