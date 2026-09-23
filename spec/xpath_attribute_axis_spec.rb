@@ -68,4 +68,41 @@ RSpec.describe "XPath axes from an attribute context node" do
 
     include_examples "attribute-axis conformance"
   end
+
+  # An attribute's parent came from a table built with the element index, and
+  # written into the attribute at build time: a detached element's attribute
+  # had a parent or not depending on whether anything had queried the document
+  # before the detach, and a fragment's attributes had none. It is now Lexbor's
+  # own attr->owner, read live.
+  describe "an attribute's parent, whatever happened before" do
+    it "is the same whether or not the document was queried first" do
+      answers = [true, false].map do |query_first|
+        doc = Makiri.HTML("<p k=v>t</p>")
+        doc.xpath("//@k") if query_first
+        el = doc.at_css("p")
+        el.unlink
+        el.attribute_nodes.first.xpath("..").map(&:name)
+      end
+      expect(answers).to eq([["p"], ["p"]])
+    end
+
+    it "is nil for a removed attribute" do
+      doc = Makiri.HTML("<p k=v>t</p>")
+      el = doc.at_css("p")
+      attr = el.attribute_nodes.first
+      el.delete("k")
+      expect(attr.parent).to be_nil
+      expect(attr.xpath("..")).to be_empty
+    end
+
+    it "is the element in a fragment and on a created element" do
+      doc = Makiri.HTML("<p></p>")
+      frag = doc.fragment("<b id=x>1</b><c e=1>2</c>")
+      expect(frag.xpath(".//@e/..").map(&:name)).to eq(["c"])
+      expect(frag.xpath("count(.//c/@e/preceding::*)")).to eq(1)
+      el = doc.create_element("div")
+      el["k"] = "v"
+      expect(el.attribute_nodes.first.xpath("..").map(&:name)).to eq(["div"])
+    end
+  end
 end

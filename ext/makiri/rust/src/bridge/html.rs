@@ -65,21 +65,6 @@ pub fn text_index_string(document: Value, node: RawNode) -> Result<Option<Value>
     found.transpose()
 }
 
-/// The element that owns `attr` through the attr->owner index.
-///
-/// `Err` when the index cannot be built (out of memory) - distinct from a node
-/// the index does not know, which is `Ok(None)`. The owner is borrowed for as
-/// long as the caller borrows `rb_doc`, the Document that keeps it alive.
-pub fn attribute_owner(rb_doc: &Value, attr: RawNode) -> Result<Option<HtmlNode<'_>>, Error> {
-    with_html_parsed(*rb_doc, |p| match p.dom_index() {
-        None => Err(makiri_error(
-            "could not build the attribute index (out of memory)",
-        )),
-        // SAFETY: an owner the live index answers is a live node of this document.
-        Some(i) => Ok(i.owner_of(attr).map(|o| unsafe { o.as_node() })),
-    })?
-}
-
 /// The 1-based source line for `node`, or 0 when unknown.
 pub fn node_line(rb_doc: Value, node: RawNode) -> usize {
     with_html_parsed_known(rb_doc, |p| {

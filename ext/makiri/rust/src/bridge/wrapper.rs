@@ -457,21 +457,11 @@ fn html_doc_of(d: &DocData) -> RawDoc {
     unsafe { p.as_ref().raw_doc() }
 }
 
-/// Run `f` over an HTML Document's parsed document. `Err(TypeError)` for
-/// anything else.
+/// Run `f` over the parsed document of a VALUE known to be an HTML Document.
 ///
 /// The `&mut HtmlParsed` does not escape `f`, so the raw pointer stays in this
 /// layer and no alias can outlive the call. `f` must not run Ruby that could
 /// re-enter this document (the readers' closures copy, they do not call back).
-pub(in crate::bridge) fn with_html_parsed<R>(
-    rb_doc: Value,
-    f: impl FnOnce(&mut HtmlParsed) -> R,
-) -> Result<R, Error> {
-    HTML_DOC_TYPE.get(&rb_doc)?;
-    Ok(with_html_parsed_known(rb_doc, f))
-}
-
-/// [`with_html_parsed`] for a VALUE already known to be an HTML Document.
 pub(in crate::bridge) fn with_html_parsed_known<R>(
     rb_doc: Value,
     f: impl FnOnce(&mut HtmlParsed) -> R,

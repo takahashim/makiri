@@ -408,10 +408,12 @@ by the check that concluded "every undefined symbol is legitimate".
   scratch from falloc and falls back to the in-place sort without it.
 - **`node->user` is reserved** for source-location byte offsets (see below) - do
   not repurpose it. Its encoding (offset + 1) lives in `HtmlNode::source_offset`
-  / `stamp_source_offset`, the only reader and writer.
+  / `stamp_source_offset` / `forget_source_offset`, the only reader and writers
+  (a copy from another document forgets the offsets it copied).
 - **Lexbor's DOM structs are read only through `lexbor::adapter::html`'s typed
-  handles** - the index builders included; its two tree writes are named
-  (`HtmlAttr::backfill_parent`, `HtmlNode::stamp_source_offset`). Pointer-keyed
+  handles** - the index builders included; its only tree writes are the
+  source-offset stamp and forget (`HtmlNode::stamp_source_offset`,
+  `forget_source_offset`). Pointer-keyed
   tables hash with `crate::ptr_table::ptr_hash`, and are a `PtrTable` (sized
   once) or a `PtrMap` (grows) rather than another hand-written probe loop; a
   key that can be 0 (an XML token) supplies its own empty marker through
@@ -490,7 +492,7 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            exports no header declares are written by hand, and
                            build.rs's `UNDECLARED_EXPORTS` fails the build if
                            their C definitions change - `adapter`, the one reader of
-                           Lexbor's DOM structs, plus the attr->owner index,
+                           Lexbor's DOM structs, plus the element index,
                            text index, source location and post-parse - and the
                            selectors/stylesheet/serialize/fragment facades, the
                            CSS selector parser (`css_parser.rs`) and the XPath
@@ -581,22 +583,24 @@ change took Makiri's own share of a parse from 13.3% to 2.6%. `lines_build`
 stays eager (~2%): deferring it would mean holding the source buffer, which is
 the one thing the parse frees.
 
-**attr→owner index** (`lexbor/adapter/dom_index.rs`). Lexbor never links an
-attribute back to its element, so we build a `PtrTable` (pointer
-keys, lazy two-phase build - count, size once, fill; iterative DFS, no recursion
-→ no stack DoS; OOM fails closed and retries). The build also **backfills each
-attribute's `node.parent`** to its owner (safe: Lexbor walks the tree via
-first_child/next, never attr.parent), so the XPath engine handles
-parent/ancestor axes and document-order over attributes with no special-casing.
-Owned by the parse handle (`HtmlParsed::dom_index`, `DomIndex::owner_of`);
-`HtmlParsed::invalidate_indexes` drops it after any mutation so it rebuilds on the
-next query. The same walk **co-builds
-an element index** (`tag id → elements`, document-order CSR) used by the XPath
+**An attribute's parent is Lexbor's own `attr->owner`**, which Lexbor sets when
+it appends an attribute and clears when it removes one; `HtmlNode::parent`
+reads it live, so the XPath parent/ancestor axes, document order and
+`Attr#parent` all agree and need no index. (An earlier premise that Lexbor links
+neither `owner` nor `node.parent` led to an attr->owner table that backfilled
+`node.parent` at index time - which answered whatever held when the index was
+last built, so a detached element's attribute had a parent or not depending on
+history. It is gone.)
+
+**element index** (`lexbor/adapter/dom_index.rs`; lazy two-phase build - count,
+size once, fill; iterative walk, no recursion → no stack DoS; OOM fails closed
+and retries). It is a `tag id → elements` document-order CSR used by the XPath
 `//tag` fast path; only Lexbor's static tag-id range `[1, LXB_TAG__LAST_ENTRY)`
 is bucketed - custom-element tag ids are *pointer values* (`lxb_tag_append`),
 so those elements are left out and `//customtag` falls back to the tree walk.
-Reached via `DomIndex::tag_bucket` / `DomIndex::has_foreign`; invalidated with
-the attr index. **Every evaluate reads the index afresh from the handle**: a
+Reached via `DomIndex::tag_bucket` / `DomIndex::has_foreign`; owned by the parse
+handle (`HtmlParsed::dom_index`) and dropped by `HtmlParsed::invalidate_indexes`
+after any mutation. **Every evaluate reads the index afresh from the handle**: a
 reused `XPathContext` must never keep the one it first saw, because a mutation
 frees it - that stale pointer was a use-after-free that answered from another
 document's index (`spec/xpath_context_mutation_spec.rb`).
