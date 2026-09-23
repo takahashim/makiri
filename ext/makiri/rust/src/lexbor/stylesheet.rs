@@ -195,43 +195,24 @@ struct Conv<'a> {
     ///
     /// [`contains_guard`]: crate::lexbor::contains_guard
     parsed: Option<&'a [u8]>,
-    /// Where [`as_written`] resumes searching `parsed`: rejected preludes come
-    /// back in source order, so each lies at or after the previous one's match.
-    search_from: usize,
     scratch: Vec<u8>,
 }
 
-/// `text`, as the CALLER wrote it.
+/// `text` - Lexbor's copy of the input between `begin` and `end` - as the
+/// CALLER wrote it.
 ///
-/// A rule Lexbor rejects carries its prelude copied out of the buffer Lexbor
-/// read, which after a `contains_guard` rewrite is not what the caller typed.
-/// Equal byte length means finding that copy gives the range to take from the
-/// original instead. A prelude that is not a verbatim substring is left alone -
-/// the rewritten name beats a wrong range.
-///
-/// Linear in the sheet, where it was quadratic: every rejected rule searched the
-/// whole buffer, so one rewrite followed by 4000 bad rules took 4.6 s on 186 KB.
-/// A prelude holding no rewrite is already as written and is not searched at
-/// all; one that does is searched from where the previous match ended, with a
-/// linear search. The first match there is the prelude or an identical piece
-/// between the two (a declaration block holding the same bytes), and either
-/// reads the same in `parsed`.
-fn as_written(c: &mut Conv, text: Vec<u8>) -> Result<Vec<u8>, Fail> {
-    let Some(parsed) = c.parsed else {
-        return Ok(text);
-    };
-    if text.is_empty()
-        || parsed.len() != c.css.len()
-        || !crate::lexbor::contains_guard::may_hold_rewrite(&text)
-    {
+/// Lexbor copied it out of the buffer it read, which after a `contains_guard`
+/// rewrite is not what the caller typed; the offsets are into that buffer, and
+/// the rewrite keeps every byte where it was, so the same range of the ORIGINAL
+/// is the caller's text - exactly, with no search. (A search for the copy,
+/// here before, was quadratic in the sheet and could pick an identical piece
+/// from another place, spelled differently in the original.) Offsets that do
+/// not fit keep Lexbor's text: the rewritten name beats a wrong range.
+fn as_written(c: &Conv, text: Vec<u8>, begin: usize, end: usize) -> Result<Vec<u8>, Fail> {
+    if c.parsed.is_none() || begin > end || end > c.css.len() {
         return Ok(text);
     }
-    let from = c.search_from.min(parsed.len());
-    let Some(at) = crate::cutf8::find(&parsed[from..], &text).map(|i| from + i) else {
-        return Ok(text);
-    };
-    c.search_from = at + text.len();
-    falloc::try_to_vec(&c.css[at..at + text.len()]).ok_or(Fail::Oom)
+    falloc::try_to_vec(&c.css[begin..end]).ok_or(Fail::Oom)
 }
 
 unsafe fn declarations(
@@ -267,6 +248,17 @@ unsafe fn declarations(
                     s as *mut Ser as *mut c_void,
                 )
             })?;
+            /* Serialized from what Lexbor parsed - the rewritten buffer - so a
+             * rewritten name in a value (`--x: :lexbor-contains(1 2)`) came back
+             * as `:zzzzzzzzzzzzzzz(1 2)`. Such a value is taken from the
+             * caller's own text instead, by the offsets Lexbor recorded. */
+            let value =
+                if c.parsed.is_some() && crate::lexbor::contains_guard::may_hold_rewrite(&value) {
+                    let off = (*decl).offset;
+                    slice_trim(c.css, off.value_begin, off.value_end)?
+                } else {
+                    value
+                };
 
             if out
                 .falloc_push(Decl {
@@ -452,7 +444,7 @@ unsafe fn rules(
                     falloc::try_to_vec(b).ok_or(Fail::Oom)?
                 };
                 Some(Rule::BadStyle {
-                    selector_text: as_written(c, text)?,
+                    selector_text: as_written(c, text, (*bad).prelude_begin, (*bad).prelude_end)?,
                     declarations: declarations(c, (*bad).declarations)?,
                 })
             }
@@ -520,7 +512,6 @@ pub fn parse(css: &[u8]) -> Result<Vec<Rule>, Fail> {
         let mut conv = Conv {
             css,
             parsed: guarded.as_deref(),
-            search_from: 0,
             scratch: Vec::new(),
         };
         let first = (*(root as *mut lxb::lxb_css_rule_list_t)).first;

@@ -60,10 +60,11 @@ pub fn neutralized(input: &[u8]) -> Result<Option<Vec<u8>>, Oom> {
     Ok(Some(out))
 }
 
-/// Whether `bytes` - a piece of the rewritten text - can hold a rewritten name.
-/// Every rewrite leaves a run of at least `NAME.len()` [`FILLER`] bytes, so a
-/// piece without one reads exactly as the caller wrote it. Lets a caller skip
-/// mapping such a piece back to the original, which is nearly every piece.
+/// Whether `bytes` - text serialized from the rewritten buffer - can hold a
+/// rewritten name. Every rewrite leaves a run of at least `NAME.len()`
+/// [`FILLER`] bytes, so text without one reads exactly as the caller wrote it,
+/// and `stylesheet.rs` takes a declaration value from the original only when
+/// it has one.
 pub fn may_hold_rewrite(bytes: &[u8]) -> bool {
     let mut run = 0;
     for &b in bytes {

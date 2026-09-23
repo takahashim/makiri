@@ -51,9 +51,28 @@ RSpec.describe "Cost proportional to input" do
       expect(elapsed { Makiri::Lexbor::CSS.parse_stylesheet(sheet) }).to be < 1.0
     end
 
+    # 4000 rules hid it: the search that replaced the first quadratic one
+    # re-validated the rest of the sheet on each rule - 64k rules took 4.5 s.
+    # The prelude is now sliced by Lexbor's own offsets.
     it "stays linear when every rule holds one" do
-      sheet = (1..4000).map { |i| "a#{i}:lexbor-contains(1) {x:y}" }.join("\n")
-      expect(elapsed { Makiri::Lexbor::CSS.parse_stylesheet(sheet) }).to be < 1.0
+      sheet = ":lexbor-contains(1 2 3 4){}\n" * 64_000
+      expect(elapsed { Makiri::Lexbor::CSS.parse_stylesheet(sheet) }).to be < 1.5
+    end
+
+    # A search for the prelude's copy could land on an identical piece spelled
+    # differently in the original (a declaration here), or on a comment the
+    # caller typed the filler into.
+    it "takes each prelude from the rule itself, not an identical piece elsewhere" do
+      sheet = "q{--v: b:LEXBOR-CONTAINS(1 2)} b:lexbor-contains(1 2){}"
+      expect(Makiri::Lexbor::CSS.parse_stylesheet(sheet).last[:selector_text]).to eq("b:lexbor-contains(1 2)")
+      sheet = "/* a:zzzzzzzzzzzzzzz(1 2) */ a:lexbor-contains(1 2){}"
+      expect(Makiri::Lexbor::CSS.parse_stylesheet(sheet).last[:selector_text]).to eq("a:lexbor-contains(1 2)")
+    end
+
+    it "shows a declaration value as written, not with the guard's rewrite" do
+      sheet = "a{--x: :lexbor-contains(1 2); background: url(x:lexbor-contains(1 2))}"
+      values = Makiri::Lexbor::CSS.parse_stylesheet(sheet).first[:declarations].map { |d| d[:value] }
+      expect(values).to eq([":lexbor-contains(1 2)", "url(x:lexbor-contains(1 2))"])
     end
 
     # The same prelude twice was "ambiguous" and showed the rewritten name.
