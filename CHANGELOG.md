@@ -4,6 +4,24 @@
 
 ### Security
 
+* A checked argument String is locked while its bytes are borrowed. A call
+  converts its arguments one at a time, and a later argument's `#to_s` could
+  rewrite an earlier one - putting a NUL into a name that had passed its
+  check, or growing it so the view read freed memory into the DOM. Such a
+  `#to_s` now raises "can't modify string; temporarily locked".
+* A receiver frozen by its own argument's `#to_s` is no longer edited.
+* HTML element and attribute names follow the WHATWG DOM's rules: `name=`,
+  `create_element`, `[]=` and `set_attribute_ns` raise `ArgumentError` for a
+  name holding whitespace, `/`, `>` (or `=`), which was written into the markup
+  as it stood - `name = "img src=x onerror=alert(1)"` serialized as that tag.
+  See NOKOGIRI_DIFFERENCES.md.
+* More inputs whose cost outgrew their size: a single-context reverse-axis
+  step (`preceding-sibling`, `ancestor`) is reversed rather than merge-sorted
+  (4000 siblings: 3.9 s); XML CSS `:nth-child` / `:nth-of-type` /
+  `:first-of-type` and kin read a per-parent memo of positions (a 10k-entry
+  sitemap took seconds, or hit the budget); a CDATA value full of `]]>` and a
+  stylesheet full of rewritten `:lexbor-contains()` rules are linear again.
+
 * A mutator's argument can no longer rebuild the document's indexes in the
   middle of the edit. Arguments are converted with `#to_s`, which is arbitrary
   Ruby; a query made there rebuilt the indexes from the tree the edit was about
@@ -24,6 +42,21 @@
   rather than `fatal`, as parsing and querying already did.
 
 ### Fixed
+
+* A rejected stylesheet rule's `selector_text` is sliced by Lexbor's own
+  offsets, so it can no longer come from an identical piece elsewhere in the
+  sheet, and a declaration value no longer shows the `:lexbor-contains()`
+  guard's `zzzz` rewrite.
+* An HTML attribute's parent is Lexbor's `attr->owner`, read live: a detached
+  element's attribute had a parent or not depending on whether the document
+  had been queried first, and a fragment's attributes had none.
+* XML namespaces: an attribute whose prefix was unbound on a detached element
+  is resolved when the element is inserted (it was written as `xmlns:ns1=""`),
+  insertion refuses two attributes that end up with one (namespace, local
+  name), a rename while detached is resolved on insertion, both writers refuse
+  a prefix bound to nothing, and `set_attribute_ns` refuses a namespace that
+  does not fit the name (a prefix with none, the XML namespace under another
+  prefix, ...).
 
 * `Makiri::XML#to_xml` output re-parses in cases it did not: a CDATA value
   holding `]]>` (adjacent sections merge, as in libxml2) is split across two
