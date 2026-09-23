@@ -9,6 +9,7 @@
 #![forbid(unsafe_code)]
 
 use crate::xml::chars::{decode1, is_name_start, validate_name};
+use crate::xml::{XMLNS_NS_URI, XML_NS_URI};
 
 /// A QName split into its parts as OFFSETS into the name (prefix is always
 /// at offset 0; prefix_len 0 = unprefixed).
@@ -112,6 +113,28 @@ pub fn split_checked(name: &[u8]) -> Option<Split> {
 /// serializer and `resolve_in_scope` - so it stays a slice rather than becoming
 /// a `Default | Prefix(..)` enum every one of them would immediately flatten.
 #[inline]
+/// Whether `prefix` - empty for the default `xmlns` - may be declared for
+/// `uri` (Namespaces in XML 1.0 §3): `xmlns` is never declared, `xml` only for
+/// its own URI, neither reserved URI for anything else, and no prefix for the
+/// empty URI (only the default may be undeclared that way).
+///
+/// The one statement of the rule. The parser always applied it; the mutators
+/// applied only the last clause, so `[]=`, `set_attribute_ns` and `rename`
+/// could write `xmlns:xml="urn:other"` into a tree `to_xml` then could not
+/// re-read.
+pub fn ns_decl_ok(prefix: &[u8], uri: &[u8]) -> bool {
+    if prefix == b"xmlns" {
+        return false;
+    }
+    if prefix == b"xml" {
+        return uri == XML_NS_URI;
+    }
+    if uri == XML_NS_URI || uri == XMLNS_NS_URI {
+        return false;
+    }
+    prefix.is_empty() || !uri.is_empty()
+}
+
 pub fn xmlns_prefix(name: &[u8]) -> Option<&[u8]> {
     if name == b"xmlns" {
         Some(&name[5..])

@@ -294,4 +294,27 @@ RSpec.describe "Makiri::XML DOCTYPE / internal_subset" do
       expect(doc.dup.to_xml).to eq(doc.to_xml)
     end
   end
+
+  # The factory accepted what the parser rejects - a name that is no QName, a
+  # PUBLIC id outside PubidChar - and to_xml wrote a DOCTYPE that did not parse.
+  describe "#create_document_type validates as the parser does" do
+    let(:doc) { Makiri::XML::Document.new }
+
+    it "refuses a name that is no QName" do
+      expect { doc.create_document_type("a:b:c") }.to raise_error(ArgumentError)
+      expect { doc.create_document_type(":a") }.to raise_error(ArgumentError)
+    end
+
+    it "refuses a PUBLIC id outside PubidChar" do
+      expect { doc.create_document_type("r", "a<b", nil) }.to raise_error(Makiri::Error)
+      expect { doc.create_document_type("r", "é", nil) }.to raise_error(Makiri::Error)
+    end
+
+    it "takes a SYSTEM id holding one kind of quote, which the writer can quote" do
+      doc.add_child(doc.create_document_type("r", nil, %(a"b)))
+      doc.add_child(doc.create_element("r"))
+      expect(Makiri::XML(doc.to_xml).internal_subset.system_id).to eq(%(a"b))
+      expect { doc.create_document_type("r", nil, %(a"b'c)) }.to raise_error(Makiri::Error)
+    end
+  end
 end

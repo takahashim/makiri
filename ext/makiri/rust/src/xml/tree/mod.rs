@@ -17,8 +17,7 @@ use crate::falloc::Reserve;
 use crate::xml::chars::{is_reserved_pi_target, normalize_newlines, ExpandMode};
 use crate::xml::qname::{split_scanned, xmlns_prefix, Split};
 use crate::xml::{
-    Document, Limits, Link, NodeId, NodeType, Span, Status, MAX_ATTRS, MAX_DEPTH, XMLNS_NS_URI,
-    XML_NS_URI,
+    Document, Limits, Link, NodeId, NodeType, Span, Status, MAX_ATTRS, MAX_DEPTH,
 };
 use cursor::{is_space, Cursor, InSlice, R};
 use dtd::{scan_external_id, Declared, ExternalId, Subset};
@@ -215,21 +214,10 @@ impl<'a> Parser<'a> {
                 Some(p) => p,
                 None => continue,
             };
-            if bpfx == b"xmlns" {
-                return self.cur.syntax(); /* xmlns:xmlns reserved */
-            }
             let val = self.cur.slice(r.val);
             let uri = self.expand(val, ExpandMode::Attr)?;
-            let ub = self.doc.span(uri);
-            if bpfx == b"xml" {
-                if ub != XML_NS_URI {
-                    return self.cur.syntax();
-                }
-            } else if ub == XML_NS_URI || ub == XMLNS_NS_URI {
-                return self.cur.syntax(); /* reserved URI bound to another prefix */
-            }
-            if !bpfx.is_empty() && ub.is_empty() {
-                return self.cur.syntax(); /* xmlns:p="" (XML 1.0) */
+            if !crate::xml::qname::ns_decl_ok(bpfx, self.doc.span(uri)) {
+                return self.cur.syntax();
             }
             self.push_binding(bpfx, uri)?;
         }

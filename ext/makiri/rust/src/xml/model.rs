@@ -139,6 +139,11 @@ pub enum MutStatus {
     /// ([`Status::Limit`] -> `Makiri::XML::LimitExceeded`); mutation now does
     /// too. `mutate::arena` is the one conversion.
     Limit = 10,
+    /// Another attribute of the element already has this (namespace URI, local
+    /// name) - Namespaces in XML 1.0 §3's "attributes are unique", which the
+    /// parser enforces. `[]=` by a second prefix for the same URI, or a rename
+    /// onto another attribute's name, wrote two, and the output did not parse.
+    DuplicateAttr = 11,
 }
 
 /* ---- budgets (§4) ---- */

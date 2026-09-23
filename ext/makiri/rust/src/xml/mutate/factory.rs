@@ -101,13 +101,19 @@ pub fn new_document_type(
     pub_id: Option<&[u8]>,
     sys_id: Option<&[u8]>,
 ) -> Result<NodeId, MutStatus> {
-    if !crate::xml::chars::validate_name(name) {
+    /* The parser's rules, not looser ones: a DOCTYPE the factory accepted but
+     * the parser rejects made `to_xml` output that did not re-parse. The name
+     * is a QName (not any Name: "a:b:c" and ":a" were accepted); a PUBLIC id is
+     * PubidChar only; a SYSTEM id may hold either quote, since the writer picks
+     * the other one, but not both, which no literal can hold. */
+    if crate::xml::qname::split_checked(name).is_none() {
         return Err(MutStatus::BadName);
     }
-    for id in [pub_id, sys_id].into_iter().flatten() {
-        if !id.is_empty() && (!validate_chars(id) || id.contains(&b'"')) {
-            return Err(MutStatus::BadChars);
-        }
+    if pub_id.is_some_and(|id| !crate::xml::chars::is_pubid(id)) {
+        return Err(MutStatus::BadChars);
+    }
+    if sys_id.is_some_and(|id| !validate_chars(id) || (id.contains(&b'"') && id.contains(&b'\''))) {
+        return Err(MutStatus::BadChars);
     }
     let dt = arena(doc.new_node(NodeType::Doctype))?;
     let nm = arena(doc.store(name))?;

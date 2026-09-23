@@ -33,6 +33,12 @@
   element is left out rather than inventing `xmlns:ns1=""` (see
   NOKOGIRI_DIFFERENCES.md); and an element copied in but not yet inserted keeps
   its own declaration.
+* The XML mutators enforce the rules the parser does. `[]=`,
+  `set_attribute_ns` and `name=` refuse a namespace declaration Namespaces in
+  XML §3 forbids (`xmlns:xml` to another URI, `xmlns:xmlns`, a reserved URI
+  under another prefix) and a second attribute with the same namespace and
+  local name; `create_document_type` refuses a name that is no QName and a
+  PUBLIC id outside PubidChar.
 * `Makiri::XML::Node#canonicalize` raises when the document's declarations no
   longer give a name its namespace (a node moved from under its declaration,
   one removed), where it rendered a different namespace or an unbound prefix.

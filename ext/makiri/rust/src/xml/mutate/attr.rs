@@ -10,7 +10,7 @@
 use super::ns::{resolve_ns, Ns, NO_NS};
 use super::{arena, assign_qname};
 use crate::xml::chars::validate_chars;
-use crate::xml::qname::{split_checked, Split};
+use crate::xml::qname::{ns_decl_ok, split_checked, xmlns_prefix, Split};
 use crate::xml::{Document, MutStatus, NodeId, NodeType};
 
 /// Build a fresh ATTRIBUTE (qname + value + namespace) and link it onto `el`
@@ -35,6 +35,33 @@ fn build_attr(
     Ok(attr)
 }
 
+/// Whether an attribute named `name` may hold `val`: anything but a namespace
+/// declaration the §3 rules forbid ([`ns_decl_ok`]).
+pub(super) fn decl_ok(name: &[u8], val: &[u8]) -> bool {
+    xmlns_prefix(name).is_none_or(|p| ns_decl_ok(p, val))
+}
+
+/// Whether an attribute of `el` other than `except` already has the key
+/// (`ns`, `local`) - the uniqueness the parser enforces (§3). Asked only for a
+/// DECIDED key: a prefix not yet resolvable (a detached element) has no
+/// namespace to compare, and is checked when it is.
+pub(super) fn key_taken(
+    doc: &Document,
+    el: NodeId,
+    ns: &[u8],
+    local: &[u8],
+    except: Option<NodeId>,
+) -> bool {
+    let mut a = doc.attrs(el);
+    while let Some(attr) = a {
+        if Some(attr) != except && attr_matches_ns(doc, attr, ns, local) {
+            return true;
+        }
+        a = doc.next(attr);
+    }
+    false
+}
+
 pub fn set_attribute(
     doc: &mut Document,
     el: NodeId,
@@ -48,8 +75,7 @@ pub fn set_attribute(
         Some(s) => s,
         None => return Err(MutStatus::BadName),
     };
-    /* xmlns:foo="" must not bind a prefix to the empty namespace */
-    if val.is_empty() && sp.prefix_len == 5 && &name[..5] == b"xmlns" {
+    if !decl_ok(name, val) {
         return Err(MutStatus::BadNsDecl);
     }
     if !val.is_empty() && !validate_chars(val) {
@@ -68,6 +94,12 @@ pub fn set_attribute(
         }
         tail = Some(attr);
         a = doc.next(attr);
+    }
+    /* No attribute has this QName, but one may have its key under another
+     * prefix for the same URI (p:a beside q:a, both bound to one URI). */
+    let local = &name[sp.local_off as usize..];
+    if ns.len != 0 && key_taken(doc, el, doc.span(ns), local, None) {
+        return Err(MutStatus::DuplicateAttr);
     }
     build_attr(doc, el, name, &sp, val, ns, tail)
 }
@@ -112,6 +144,9 @@ pub fn set_attribute_ns(
         Some(s) => s,
         None => return Err(MutStatus::BadName),
     };
+    if !decl_ok(name, val) {
+        return Err(MutStatus::BadNsDecl);
+    }
     if !val.is_empty() && !validate_chars(val) {
         return Err(MutStatus::BadChars);
     }

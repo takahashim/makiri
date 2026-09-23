@@ -43,6 +43,19 @@ pub fn rename(doc: &mut Document, node: NodeId, name: &[u8]) -> MutStatus {
         Ok(ns) => ns,
         Err(st) => return st,
     };
+    /* An attribute renamed into a declaration must be one its value allows, and
+     * onto another attribute's key is a second attribute with that key - both
+     * rules the parser holds a document to (§3). */
+    if let (true, Some(el)) = (is_attr, scope) {
+        if !super::attr::decl_ok(name, doc.value(node)) {
+            return MutStatus::BadNsDecl;
+        }
+        let local = &name[sp.local_off as usize..];
+        let decided = ns.len != 0 || sp.prefix_len == 0;
+        if decided && super::attr::key_taken(doc, el, doc.span(ns), local, Some(node)) {
+            return MutStatus::DuplicateAttr;
+        }
+    }
     /* copy the new qname BEFORE writing ns_uri, so an OOM leaves node intact */
     let st = assign_qname(doc, node, name, &sp);
     if st != MutStatus::Ok {

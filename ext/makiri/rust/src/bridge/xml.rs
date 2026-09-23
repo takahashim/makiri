@@ -248,7 +248,13 @@ pub fn xml_mut_check(st: MutStatus) -> Result<(), Error> {
             "invalid placement (an attribute/document node cannot be a tree child, a document \
 allows a single root element, and a sibling target must have a parent)"
         }
-        MutStatus::BadNsDecl => "cannot bind a namespace prefix to the empty namespace",
+        MutStatus::BadNsDecl => {
+            "namespace declaration not permitted (a prefix bound to the empty namespace, \
+xml to another URI, xmlns at all, or either reserved URI to another prefix)"
+        }
+        MutStatus::DuplicateAttr => {
+            "the element already has an attribute with that namespace and local name"
+        }
         MutStatus::Internal => "internal error mutating XML (no document)",
         /* The document's own budget, not the machine's memory - so the same
          * exception a parse raises for the same cause. */
