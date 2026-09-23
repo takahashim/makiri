@@ -404,6 +404,16 @@ fn compare_rel<'e, 'd, D: Dom<'d>>(
             return Ok(rel_hit(op, a, b));
         }
     };
+    /* §3.4, as `compare_eq` has it: against a boolean the node-set is its own
+     * boolean(), not each node's number. `//p > true()` over <p>5</p> was true
+     * (5 > 1) where the spec says false (1 > 1), and `//q < true()` over no q
+     * false where it says true (0 < 1). */
+    if let ValRef::Boolean(b) = sc.get() {
+        let setn = if set.is_empty() { 0.0 } else { 1.0 };
+        let bn = if b { 1.0 } else { 0.0 };
+        let (a, c) = if swap { (bn, setn) } else { (setn, bn) };
+        return Ok(rel_hit(op, a, c));
+    }
     let scn = val_to_number_or_fail::<D>(doc, sc, &mut ev.budget)?;
     for i in 0..set.len() {
         ev.budget.charge_op()?;

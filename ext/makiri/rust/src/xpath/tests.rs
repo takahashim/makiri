@@ -158,7 +158,10 @@ fn string_functions_follow_the_xpath_rules() {
     assert_eq!(xpath(r#"concat("a", 1, true())"#), text("a1true"));
     assert_eq!(xpath(r#"contains("abc","bc")"#), Answer::Bool(true));
     assert_eq!(xpath(r#"starts-with("abc","ab")"#), Answer::Bool(true));
-    assert_eq!(xpath(r#"substring("12345", 1.5, 2.6)"#), text("23"));
+    /* XPath 1.0 §4.2's own example: round(1.5) = 2, round(2.6) = 3, so
+     * positions 2 <= p < 5. This line used to pin "23", the answer of rounding
+     * the SUM 1.5 + 2.6. */
+    assert_eq!(xpath(r#"substring("12345", 1.5, 2.6)"#), text("234"));
     assert_eq!(xpath(r#"substring-before("a/b","/")"#), text("a"));
     assert_eq!(xpath(r#"substring-after("a/b","/")"#), text("b"));
     assert_eq!(xpath(r#"translate("abc","abc","AB")"#), text("AB"));

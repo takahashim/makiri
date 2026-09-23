@@ -746,23 +746,28 @@ fn fn_substring<'e, 'd, D: Dom<'d>>(
     let err = ev.budget.sink();
     arity(args.len(), 2, 3, err.clone(), "substring")?;
     let s = to_text::<D>(&args[0], ev)?;
-    let start_d = to_number::<D>(&args[1], ev)?;
     let bytes = s.as_slice();
     let nchars = count_chars(bytes);
+    /* §4.2: the characters at positions p with
+     *   round(start) <= p < round(start) + round(length)
+     * - each argument rounded on its own, by round()'s own rule. Rounding the
+     * SUM instead gave substring("12345", 1.5, 2.6) = "23" where the spec's own
+     * example is "234", and floor(x + 0.5) rounded 0.49999999999999994 up. */
+    let rstart = round_half_up(to_number::<D>(&args[1], ev)?);
     let end_d = match args.get(2) {
-        Some(a) => start_d + to_number::<D>(a, ev)?,
-        None => nchars as f64 + 1.0,
+        Some(a) => rstart + round_half_up(to_number::<D>(a, ev)?),
+        None => f64::INFINITY,
     };
 
-    if start_d.is_nan() || end_d.is_nan() {
+    if rstart.is_nan() || end_d.is_nan() {
         return string(b"", err.clone(), "substring");
     }
-    /* Round, then clamp AS DOUBLES before any cast: start/end can be infinite
-     * or beyond i64 (`substring(s, 1 div 0)`), where casting first would be
-     * undefined in C and saturating here - either way not the spec's clip. */
+    /* Clamp AS DOUBLES before any cast: start/end can be infinite or beyond
+     * i64 (`substring(s, 1 div 0)`), where a cast would saturate - not the
+     * spec's clip. */
     let imax = nchars as f64 + 1.0;
-    let rstart = (start_d + 0.5).floor().clamp(1.0, imax);
-    let rend = (end_d + 0.5).floor().clamp(1.0, imax);
+    let rstart = rstart.clamp(1.0, imax);
+    let rend = end_d.clamp(1.0, imax);
     if rend <= rstart {
         return string(b"", err.clone(), "substring");
     }

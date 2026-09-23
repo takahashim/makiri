@@ -46,6 +46,10 @@
   element's `xmlns:xlink`, which made the output unreadable, and no longer turns
   an HTML element's `xmlns` attribute into a declaration that moved it out of
   XHTML.
+* XPath: `substring()` rounds each argument by `round()`'s rule, as §4.2 says
+  (`substring("12345", 1.5, 2.6)` is `"234"`, was `"23"`); `<`, `>`, `<=`, `>=`
+  between a node-set and a boolean compare the node-set's boolean (§3.4), as
+  `=` did; and a string beginning with U+0000 is true.
 * `Node#path` round-trips through `#at_xpath` for CDATA sections and processing
   instructions, and for text next to a CDATA section. A CDATA section is a
   `text()` step counted among its text siblings, and a PI is

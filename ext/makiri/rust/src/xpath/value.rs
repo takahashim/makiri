@@ -442,7 +442,9 @@ pub fn val_to_boolean<N>(v: &Val<N>) -> bool {
         ValRef::Number(d) => !(d == 0.0 || d.is_nan()),
         /* A string that starts with U+0000 is false, as it was when it was read
          * as a C string. */
-        ValRef::String(s) => s.as_slice().first().is_some_and(|&b| b != 0),
+        /* Non-empty, by length (§4.3). A first byte of 0 is U+0000, which DOM
+         * text may hold - reading it as a C string's end made "\0abc" false. */
+        ValRef::String(s) => !s.as_slice().is_empty(),
         ValRef::NodeSet(ns) => !ns.is_empty(),
     }
 }
