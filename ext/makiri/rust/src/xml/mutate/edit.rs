@@ -39,8 +39,8 @@ pub fn rename(doc: &mut Document, node: NodeId, name: &[u8]) -> MutStatus {
         Some(node)
     };
     let connected = scope.is_some_and(|s| doc.is_connected(s));
-    let ns = match resolve_ns(doc, scope, name, &sp, is_attr, connected) {
-        Ok(ns) => ns,
+    let r = match resolve_ns(doc, scope, name, &sp, is_attr, connected) {
+        Ok(r) => r,
         Err(st) => return st,
     };
     /* An attribute renamed into a declaration must be one its value allows, and
@@ -51,8 +51,7 @@ pub fn rename(doc: &mut Document, node: NodeId, name: &[u8]) -> MutStatus {
             return MutStatus::BadNsDecl;
         }
         let local = &name[sp.local_off as usize..];
-        let decided = ns.len != 0 || sp.prefix_len == 0;
-        if decided && super::attr::key_taken(doc, el, doc.span(ns), local, Some(node)) {
+        if !r.pending && super::attr::key_taken(doc, el, doc.span(r.ns), local, Some(node)) {
             return MutStatus::DuplicateAttr;
         }
     }
@@ -61,16 +60,22 @@ pub fn rename(doc: &mut Document, node: NodeId, name: &[u8]) -> MutStatus {
     if st != MutStatus::Ok {
         return st;
     }
-    {
-        let n = doc.node_mut(node);
-        n.ns_uri = ns;
-        n.flags &= !FLAG_DOM_LOOSE_NAME;
+    doc.node_mut(node).flags &= !FLAG_DOM_LOOSE_NAME;
+    if is_attr {
+        r.write_attr(doc, node);
+        return MutStatus::Ok;
     }
     /* A rename picks a new prefix, so it decides a new URI from the scope the
-     * node is in right now - and that decision is the node's identity from here
-     * (an element's; an attribute follows its element). */
-    if connected && !is_attr {
-        doc.node_mut(node).flags |= FLAG_NS_RESOLVED;
+     * node is in right now - and that decision is the node's identity from
+     * here. Detached, there is no such scope: the element is undecided again,
+     * so the insertion that connects it resolves the new name (it kept the old
+     * decision, and `q:n` came back bound to ""). */
+    let n = doc.node_mut(node);
+    n.ns_uri = r.ns;
+    if connected {
+        n.flags |= FLAG_NS_RESOLVED;
+    } else {
+        n.flags &= !FLAG_NS_RESOLVED;
     }
     MutStatus::Ok
 }

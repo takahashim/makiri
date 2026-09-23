@@ -51,6 +51,11 @@ pub(super) struct Bindings<'d> {
     /// which every caller turns into a refusal, so an exhausted planner can
     /// never emit a declaration it did not verify.
     pub(super) exhausted: bool,
+    /// Latched when a name's prefix is bound to nothing: a declaration for it
+    /// would be `xmlns:p=""`, which Namespaces in XML forbids, and leaving it
+    /// out writes an unbound prefix. Either way no well-formed output exists,
+    /// so the writer refuses with [`super::Failure::UnboundPrefix`].
+    pub(super) unbound: bool,
 }
 
 impl<'d> Bindings<'d> {
@@ -59,6 +64,7 @@ impl<'d> Bindings<'d> {
             stack: Vec::new(),
             steps: 0,
             exhausted: false,
+            unbound: false,
         }
     }
 

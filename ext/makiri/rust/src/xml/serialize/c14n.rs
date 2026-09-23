@@ -167,43 +167,52 @@ impl<'d> Writer<'d, '_> {
     }
 
     /// What `prefix` means here by the document's declarations: `xml` its own
-    /// URI, an undeclared default no namespace. None once the step budget is
-    /// spent.
-    fn scope_uri(&mut self, prefix: &[u8]) -> Option<&'d [u8]> {
+    /// URI, an undeclared default no namespace, and an undeclared prefix
+    /// NOTHING - `Ok(None)`, which no name may carry. `Err` once the step
+    /// budget is spent.
+    fn scope_uri(&mut self, prefix: &[u8]) -> Result<Option<&'d [u8]>, ()> {
         if prefix == b"xml" {
-            return Some(XML_NS_URI);
+            return Ok(Some(XML_NS_URI));
         }
         match self.binds.lookup(prefix) {
-            Some(uri) => Some(uri),
-            None if self.binds.exhausted => None,
-            None => Some(b""),
+            Some(uri) => Ok(Some(uri)),
+            None if self.binds.exhausted => Err(()),
+            None if prefix.is_empty() => Ok(Some(b"")),
+            None => Ok(None),
         }
     }
 
-    /// Whether the declarations in scope give `n` and its attributes the
-    /// namespaces they have. Only for a decided element: an unresolved one
-    /// (a detached copy) takes its namespace FROM those declarations.
+    /// Whether the declarations in scope bind every prefix `n` and its
+    /// attributes use - latching `binds.unbound` when one is bound to nothing,
+    /// which no rendering can repair - and, for a decided element, give each
+    /// the namespace it has. An unresolved one (a detached copy) takes its
+    /// namespace FROM those declarations, so only the binding is checked.
     fn names_agree(&mut self, n: NodeId) -> Result<bool, ()> {
         let doc = self.doc;
-        if doc.node(n).flags & FLAG_NS_RESOLVED == 0 {
-            return Ok(true);
-        }
+        let decided = doc.node(n).flags & FLAG_NS_RESOLVED != 0;
         let el_prefix = doc.span(doc.node(n).prefix);
-        if self.scope_uri(el_prefix).ok_or(())? != doc.span(doc.node(n).ns_uri) {
+        let Some(el_uri) = self.scope_uri(el_prefix)? else {
+            self.binds.unbound = true;
+            return Err(());
+        };
+        if decided && el_uri != doc.span(doc.node(n).ns_uri) {
             return Ok(false);
         }
         let mut a = doc.attrs(n);
         while let Some(at) = a {
-            if xmlns_decl(doc, at).is_none() {
-                let (prefix, uri) = (doc.span(doc.node(at).prefix), doc.span(doc.node(at).ns_uri));
-                let expected = if prefix.is_empty() {
-                    &b""[..]
-                } else {
-                    self.scope_uri(prefix).ok_or(())?
+            let prefix = doc.span(doc.node(at).prefix);
+            if xmlns_decl(doc, at).is_none() && !prefix.is_empty() {
+                let Some(expected) = self.scope_uri(prefix)? else {
+                    self.binds.unbound = true;
+                    return Err(());
                 };
-                if expected != uri {
+                if decided && expected != doc.span(doc.node(at).ns_uri) {
                     return Ok(false);
                 }
+            } else if decided && xmlns_decl(doc, at).is_none() && doc.node(at).ns_uri.len != 0 {
+                /* Unprefixed means no namespace; one with a namespace has no
+                 * canonical form that keeps it. */
+                return Ok(false);
             }
             a = doc.next(at);
         }
@@ -348,6 +357,8 @@ pub(super) fn write(b: &mut Buf, doc: &XmlDoc, n: NodeId, comments: bool) -> Res
     r.map_err(|()| {
         if w.mismatch {
             Failure::NamespaceMismatch
+        } else if w.binds.unbound {
+            Failure::UnboundPrefix
         } else if w.binds.exhausted {
             Failure::NamespaceBudget
         } else {

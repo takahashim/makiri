@@ -106,6 +106,15 @@ pub const FLAG_DOM_LOOSE_NAME: u32 = 0x0000_0001;
 /// attaching it gives the same tree as building it top-down.
 pub const FLAG_NS_RESOLVED: u32 = 0x0000_0002;
 
+/// Set on an ATTRIBUTE whose prefix was unbound when it was named - on a
+/// detached element, where that defers rather than fails. Its namespace reads
+/// empty only because nothing has decided it, which is not the same as "no
+/// namespace": the insertion that connects its element resolves it (and is
+/// refused if the prefix is still unbound), even under an element whose own
+/// namespace was decided long before. Without the flag the two were one state,
+/// and a removed-then-edited element came back with `ns1:a` bound to "".
+pub const FLAG_NS_PENDING: u32 = 0x0000_0004;
+
 /* ---- mutation status ---- */
 
 /// The outcome of a tree mutation. [`MutStatus::Ok`] is success; each failure
@@ -144,6 +153,10 @@ pub enum MutStatus {
     /// parser enforces. `[]=` by a second prefix for the same URI, or a rename
     /// onto another attribute's name, wrote two, and the output did not parse.
     DuplicateAttr = 11,
+    /// A namespace that does not fit the qualified name it was given with
+    /// (the DOM's "validate and extract"): a prefix without a namespace, `xml`
+    /// or `xmlns` with another one, or the XMLNS namespace on another name.
+    BadNsName = 12,
 }
 
 /* ---- budgets (§4) ---- */

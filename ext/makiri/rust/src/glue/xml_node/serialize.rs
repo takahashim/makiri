@@ -53,6 +53,10 @@ fn failure_error(f: Failure, verb: &str) -> Error {
         Failure::NamespaceBudget => {
             format!("failed to {verb} XML: namespace planning exceeded its step budget")
         }
+        Failure::UnboundPrefix => format!(
+            "cannot {verb} XML with a namespace prefix bound to nothing (declare it, \
+or insert the node where it is declared)"
+        ),
         Failure::NamespaceMismatch => format!(
             "cannot {verb} XML whose namespace declarations no longer match its names \
 (a node moved from under its declaration, or one removed); to_xml writes the \

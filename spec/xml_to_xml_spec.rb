@@ -301,7 +301,7 @@ RSpec.describe "Makiri::XML#to_xml" do
 
       nsattr = Makiri::XML("<r/>")
       nsattr.root.set_attribute_ns("urn:q", "q:a", "v")
-      expect { nsattr.canonicalize }.to raise_error(Makiri::Error, /no longer match/)
+      expect { nsattr.canonicalize }.to raise_error(Makiri::Error, /bound to nothing/)
     end
 
     it "still renders a consistent document and a subtree under its ancestors' declarations" do
@@ -310,5 +310,106 @@ RSpec.describe "Makiri::XML#to_xml" do
       expect(doc.at_xpath("//*[local-name()='x']").canonicalize)
         .to eq(%(<p:x xmlns:p="u" xmlns:q="v" q:y="1"></p:x>))
     end
+  end
+
+  # "Not decided yet" and "no namespace" were one state for an attribute, so
+  # detach-edit-reinsert sequences left names the output could not express.
+  # Each example ends with the invariant: the output re-parses to the same
+  # names and namespaces.
+  describe "namespaces decided when a detached node is inserted" do
+    def names(doc)
+      doc.xpath("//*").map { |e| [e.name, e.namespace_uri, e.attribute_nodes.map { |a| [a.name, a.namespace_uri] }] }
+    end
+
+    def expect_round_trip(doc)
+      expect(names(Makiri::XML(doc.to_xml))).to eq(names(doc))
+    end
+
+    it "resolves an attribute set while its (parsed) element was detached" do
+      doc = Makiri::XML(%(<r xmlns:q="urn:q"><e/></r>))
+      e = doc.at_xpath("//e")
+      e.remove
+      e["q:a"] = "1"
+      doc.root << e
+      expect(e.attribute_nodes.map(&:namespace_uri)).to eq(["urn:q"])
+      expect_round_trip(doc)
+    end
+
+    it "refuses the insertion when that prefix is still unbound" do
+      doc = Makiri::XML("<r><e/></r>")
+      e = doc.at_xpath("//e")
+      e.remove
+      e["q:a"] = "1"
+      expect { doc.root << e }.to raise_error(Makiri::Error, /not bound/)
+    end
+
+    it "resolves an element renamed while detached" do
+      doc = Makiri::XML(%(<r xmlns:q="urn:q"><e/></r>))
+      e = doc.at_xpath("//e")
+      e.remove
+      e.name = "q:n"
+      doc.root << e
+      expect(e.namespace_uri).to eq("urn:q")
+      expect_round_trip(doc)
+    end
+
+    it "refuses two attributes that insertion gives one key" do
+      doc = Makiri::XML(%(<r xmlns:p="u" xmlns:q="u"/>))
+      n = doc.create_element("n")
+      n["p:a"] = "1"
+      n["q:a"] = "2"
+      expect { doc.root << n }.to raise_error(Makiri::Error, /already has an attribute/)
+    end
+
+    it "does not let a pending attribute answer for a no-namespace key" do
+      doc = Makiri::XML("<r/>")
+      e = doc.create_element("e")
+      e["p:a"] = "1"
+      e.set_attribute_ns("", "a", "2")
+      expect(e.attribute_nodes.map(&:name)).to eq(["p:a", "a"])
+    end
+  end
+
+  describe "a prefix bound to nothing" do
+    it "is refused by both writers rather than written as xmlns:q=\"\" or bare" do
+      e = Makiri::XML::Document.new.create_element("q:e")
+      expect { e.to_xml }.to raise_error(Makiri::Error, /bound to nothing/)
+      expect { e.canonicalize }.to raise_error(Makiri::Error, /bound to nothing/)
+    end
+  end
+
+  # The DOM's "validate and extract", plus Namespaces in XML's converse for the
+  # XML namespace: each of these wrote a tree that did not re-read.
+  describe "set_attribute_ns" do
+    {
+      ["", "p:a"] => "a prefix without a namespace",
+      ["urn:x", "xml:lang"] => "xml with another namespace",
+      ["http://www.w3.org/XML/1998/namespace", "p:a"] => "the XML namespace under another prefix",
+      ["urn:x", "xmlns:p"] => "xmlns with another namespace",
+      ["http://www.w3.org/2000/xmlns/", "a"] => "the XMLNS namespace on another name"
+    }.each do |(ns, qname), what|
+      it "refuses #{what}" do
+        doc = Makiri::XML("<r/>")
+        expect { doc.root.set_attribute_ns(ns, qname, "v") }.to raise_error(Makiri::Error, /does not fit/)
+      end
+    end
+
+    it "still takes xml:lang in its own namespace" do
+      doc = Makiri::XML("<r/>")
+      doc.root.set_attribute_ns("http://www.w3.org/XML/1998/namespace", "xml:lang", "en")
+      expect(doc.root.to_xml).to eq(%(<r xml:lang="en"/>))
+    end
+  end
+
+  # The writer ignored a no-namespace element's contrary xmlns, but the
+  # mutators still resolved against it: renaming the element moved it.
+  it "ignores a contrary default declaration when resolving too" do
+    doc = Makiri::XML("<r><e/></r>")
+    e = doc.at_xpath("//e")
+    e["xmlns"] = "urn:x"
+    e.name = "e"
+    e << doc.create_element("c")
+    expect(e.namespace_uri).to be_nil
+    expect(doc.at_xpath("//c").namespace_uri).to be_nil
   end
 end

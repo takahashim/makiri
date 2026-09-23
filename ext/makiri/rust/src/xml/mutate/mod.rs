@@ -18,6 +18,7 @@ mod edit;
 mod factory;
 mod insert;
 mod ns;
+pub use ns::ignored_default_decl;
 
 use crate::xml::qname::Split;
 use crate::xml::{Document, MutStatus, NodeId, Status};

@@ -32,29 +32,6 @@ use super::bindings::{Bindings, Prefix, PREFIX_CAP};
 /* ---- planning one name ---- */
 
 /// The declaration for `prefix` on `el` ITSELF (not in scope), or None.
-/// An `xmlns="X"` attribute (X non-empty) on an unprefixed element in NO
-/// namespace, which the serializer leaves out.
-///
-/// Written, it would put the element in X on re-parse. Planning a prefix for the
-/// element instead gave `xmlns:ns1=""`, which Namespaces 1.0 forbids, and the
-/// output did not re-parse. The DOM Parsing and Serialization spec's answer is
-/// this one: ignore the declaration, and declare `xmlns=""` where an inherited
-/// default would otherwise claim the element - which `plan_element` already
-/// does. (Nokogiri writes the attribute, and the element changes namespace.)
-fn dropped_default_decl(doc: &XmlDoc, el: NodeId) -> Option<NodeId> {
-    let node = doc.node(el);
-    /* Only for a DECIDED no-namespace: an unresolved element's empty URI means
-     * "not decided yet", and its declaration is what decides it. */
-    if node.prefix.len != 0
-        || node.ns_uri.len != 0
-        || node.flags & FLAG_DOM_LOOSE_NAME != 0
-        || node.flags & FLAG_NS_RESOLVED == 0
-    {
-        return None;
-    }
-    own_decl(doc, el, b"").filter(|&at| doc.node(at).value.len != 0)
-}
-
 fn own_decl(doc: &XmlDoc, el: NodeId, prefix: &[u8]) -> Option<NodeId> {
     let mut a = doc.attrs(el);
     while let Some(at) = a {
@@ -158,7 +135,7 @@ fn plan_element<'d>(
     } else if plan.declare && !uri.is_empty() && own_decl(doc, el, own_prefix).is_some() {
         /* The element declares this prefix for a DIFFERENT URI, so its own name
          * needs one of ours. Not for no namespace: no prefix binds to "" -
-         * that declaration is dropped instead (`dropped_default_decl`). */
+         * that declaration is ignored instead (`mutate::ignored_default_decl`). */
         plan.prefix = gen_prefix(binds, gen)?;
     }
     (!binds.exhausted).then_some(plan)
@@ -272,6 +249,19 @@ impl<'d, 'b> Writer<'d, 'b> {
         self.put(doc.span(doc.node(n).local))
     }
 
+    /// Declare `prefix` for `uri` and bring it into scope - or refuse, latching
+    /// `binds.unbound`, when `prefix` names something and `uri` is empty: a name
+    /// whose prefix nothing binds (a detached element's, say) has no
+    /// well-formed form, and `xmlns:p=""` was written for it.
+    fn bind(&mut self, binds: &mut Bindings<'d>, prefix: Prefix<'d>, uri: &'d [u8]) -> W {
+        if !prefix.bytes().is_empty() && uri.is_empty() {
+            binds.unbound = true;
+            return Err(());
+        }
+        self.declare(prefix.bytes(), uri)?;
+        binds.push(prefix, uri)
+    }
+
     fn declare(&mut self, prefix: &[u8], uri: &'d [u8]) -> W {
         self.put(b" xmlns")?;
         if !prefix.is_empty() {
@@ -283,8 +273,6 @@ impl<'d, 'b> Writer<'d, 'b> {
         self.put(b"\"")
     }
 
-    /// Write `n`. `depth` is both the nesting level the indentation uses and the
-    /// recursion guard - they were two arguments carrying the same number.
     /// A CDATA section. Its value can hold `]]>`: the parser merges adjacent
     /// sections into one node (as libxml2 does, for XPath's data model), so
     /// `<![CDATA[a]]]><![CDATA[]>b]]>` is one node reading `a]]>b`. Written raw
@@ -306,6 +294,8 @@ impl<'d, 'b> Writer<'d, 'b> {
         self.put(b"]]>")
     }
 
+    /// Write `n`. `depth` is both the nesting level the indentation uses and the
+    /// recursion guard - they were two arguments carrying the same number.
     fn node(&mut self, n: NodeId, depth: u32, binds: &mut Bindings<'d>) -> W {
         let doc = self.doc;
         match doc.type_(n) {
@@ -374,7 +364,7 @@ impl<'d, 'b> Writer<'d, 'b> {
     /// popping them, so an early `?` cannot leave the scope stack unbalanced.
     fn element_in_scope(&mut self, n: NodeId, depth: u32, binds: &mut Bindings<'d>) -> W {
         let doc = self.doc;
-        let dropped = dropped_default_decl(doc, n);
+        let dropped = crate::xml::mutate::ignored_default_decl(doc, n);
 
         /* This element's own xmlns declarations bind from here down. */
         let mut a = doc.attrs(n);
@@ -395,10 +385,7 @@ impl<'d, 'b> Writer<'d, 'b> {
         self.put(b"<")?;
         self.name(n, &el)?;
         if el.declare {
-            let uri = doc.span(doc.node(n).ns_uri);
-            let prefix = el.prefix.clone();
-            self.declare(prefix.bytes(), uri)?;
-            binds.push(prefix, uri)?;
+            self.bind(binds, el.prefix.clone(), doc.span(doc.node(n).ns_uri))?;
         }
 
         let mut a = doc.attrs(n);
@@ -409,10 +396,7 @@ impl<'d, 'b> Writer<'d, 'b> {
             }
             let plan = plan_attr(doc, n, at, binds, &mut gen).ok_or(())?;
             if plan.declare {
-                let uri = doc.span(doc.node(at).ns_uri);
-                let prefix = plan.prefix.clone();
-                self.declare(prefix.bytes(), uri)?;
-                binds.push(prefix, uri)?;
+                self.bind(binds, plan.prefix.clone(), doc.span(doc.node(at).ns_uri))?;
             }
             self.put(b" ")?;
             self.name(at, &plan)?;
@@ -490,6 +474,7 @@ pub(super) fn write(
          * sets it, and a planner that sees it set refuses immediately - so a
          * write failure always propagates with the flag still clear. */
         Err(()) if binds.exhausted => Err(Failure::NamespaceBudget),
+        Err(()) if binds.unbound => Err(Failure::UnboundPrefix),
         Err(()) => Err(Failure::Output),
     }
 }

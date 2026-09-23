@@ -104,15 +104,28 @@ pub fn split_checked(name: &[u8]) -> Option<Split> {
     split_scanned(name)
 }
 
-/// If `name` is an xmlns declaration ("xmlns" / "xmlns:PREFIX"), the declared
-/// prefix.
-///
-/// The prefix is EMPTY for `xmlns` itself, which declares the default
-/// namespace. That is the representation every caller wants - a binding is
-/// keyed by prefix and "" is the default's key throughout the parser, the
-/// serializer and `resolve_in_scope` - so it stays a slice rather than becoming
-/// a `Default | Prefix(..)` enum every one of them would immediately flatten.
-#[inline]
+/// Whether `ns` may name the namespace of an attribute called `name` (split per
+/// `sp`) - the DOM's "validate and extract": a prefix needs a namespace, `xml`
+/// and its namespace take only each other, and `xmlns` (as the name or the
+/// prefix) takes only the XMLNS namespace, which in turn takes nothing else. `set_attribute_ns`
+/// checked none of it, and wrote `xmlns:p=""` or an `xml:` attribute that
+/// re-read in another namespace.
+pub fn ns_fits_name(ns: &[u8], name: &[u8], sp: &Split) -> bool {
+    let prefix = &name[..sp.prefix_len as usize];
+    let is_xmlns = name == b"xmlns" || prefix == b"xmlns";
+    if !prefix.is_empty() && ns.is_empty() {
+        return false;
+    }
+    /* The DOM stops at "xml takes only its own namespace"; the converse is
+     * Namespaces in XML's (§3: the XML namespace is bound to no other prefix),
+     * and without it the attribute could only be written under a declaration
+     * no parser accepts. */
+    if (prefix == b"xml") != (ns == XML_NS_URI) {
+        return false;
+    }
+    is_xmlns == (ns == XMLNS_NS_URI)
+}
+
 /// Whether `prefix` - empty for the default `xmlns` - may be declared for
 /// `uri` (Namespaces in XML 1.0 §3): `xmlns` is never declared, `xml` only for
 /// its own URI, neither reserved URI for anything else, and no prefix for the
@@ -135,6 +148,15 @@ pub fn ns_decl_ok(prefix: &[u8], uri: &[u8]) -> bool {
     prefix.is_empty() || !uri.is_empty()
 }
 
+/// If `name` is an xmlns declaration ("xmlns" / "xmlns:PREFIX"), the declared
+/// prefix.
+///
+/// The prefix is EMPTY for `xmlns` itself, which declares the default
+/// namespace. That is the representation every caller wants - a binding is
+/// keyed by prefix and "" is the default's key throughout the parser, the
+/// serializer and `resolve_in_scope` - so it stays a slice rather than becoming
+/// a `Default | Prefix(..)` enum every one of them would immediately flatten.
+#[inline]
 pub fn xmlns_prefix(name: &[u8]) -> Option<&[u8]> {
     if name == b"xmlns" {
         Some(&name[5..])

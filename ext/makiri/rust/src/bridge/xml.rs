@@ -255,6 +255,10 @@ xml to another URI, xmlns at all, or either reserved URI to another prefix)"
         MutStatus::DuplicateAttr => {
             "the element already has an attribute with that namespace and local name"
         }
+        MutStatus::BadNsName => {
+            "the namespace does not fit the qualified name (a prefix needs a namespace; \
+xml and xmlns take only their own)"
+        }
         MutStatus::Internal => "internal error mutating XML (no document)",
         /* The document's own budget, not the machine's memory - so the same
          * exception a parse raises for the same cause. */
