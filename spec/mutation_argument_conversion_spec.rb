@@ -114,4 +114,43 @@ RSpec.describe "Mutation argument conversion" do
       end
     end
   end
+
+  # A call converts its arguments one at a time, and the view of an earlier
+  # one borrowed its bytes. A later #to_s that rewrote that String put a NUL
+  # into a name that had passed the check, and one that grew it made the view
+  # read freed memory into the DOM. The checked views now hold the String's
+  # temporary lock, so the rewrite raises instead.
+  describe "an earlier argument rewritten by a later one's #to_s" do
+    def rewriting(target, value)
+      Object.new.tap do |o|
+        o.define_singleton_method(:to_s) { target << ("Z" * 100_000) && value }
+      end
+    end
+
+    it "raises rather than read the rewritten or released bytes" do
+      html = Makiri.HTML("<p>t</p>")
+      name = +"id"
+      expect { html.at_css("p")[name] = rewriting(name, "v") }.to raise_error(RuntimeError, /locked/)
+      expect(html.at_css("p").attribute_nodes).to be_empty
+
+      xml = Makiri::XML("<r/>")
+      qname = +"p:q"
+      expect { xml.root.set_attribute_ns(rewriting(qname, "urn:a"), qname, "v") }
+        .to raise_error(RuntimeError, /locked/) # the namespace converts after the name
+      target = +"t"
+      expect { xml.create_processing_instruction(target, rewriting(target, "d")) }.to raise_error(RuntimeError, /locked/)
+
+      prefix = +"x"
+      ctx = Makiri::XPathContext.new(xml)
+      expect { ctx.register_namespace(prefix, rewriting(prefix, "urn:x")) }.to raise_error(RuntimeError, /locked/)
+    end
+
+    it "releases the lock afterwards, and takes the same String twice" do
+      html = Makiri.HTML("<p>t</p>")
+      s = +"dup"
+      html.at_css("p")[s] = s
+      expect(html.at_css("p")["dup"]).to eq("dup")
+      expect(s << "!").to eq("dup!")
+    end
+  end
 end
