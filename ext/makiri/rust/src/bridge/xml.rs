@@ -314,6 +314,8 @@ pub fn with_arena_for_new_node<R>(
 /// gate and the invalidate gate as two separate calls, and whether a site needed
 /// the second was a judgement the reader had to make at each of seventeen.
 pub struct Editing {
+    /// The receiver, frozen-checked again at the change.
+    receiver: Value,
     document: Value,
     id: NodeId,
 }
@@ -330,10 +332,10 @@ impl Editing {
     }
 
     /// Lend the arena for the change. `f` runs no Ruby (see [`with_arena_for_new_node`]),
-    /// so every argument is converted BEFORE this - which is also why the frozen
-    /// check is in `begin_edit` rather than here: it must stay ahead of the
-    /// argument conversion, so a frozen receiver is reported before a bad
-    /// argument, as it always was.
+    /// so every argument is converted BEFORE this. The frozen check is in
+    /// `begin_edit`, ahead of that conversion, so a frozen receiver is reported
+    /// before a bad argument - and again here, because the conversion's `#to_s`
+    /// may have frozen the receiver since.
     ///
     /// It is also where the name index is dropped, just before `f` changes what
     /// it indexes. Not in `begin_edit`: the argument conversion between the two
@@ -341,6 +343,7 @@ impl Editing {
     /// change - `//a` then kept finding an element renamed to `b`.
     pub fn with_arena<R>(&self, f: impl FnOnce(&mut XmlDoc, NodeId) -> R) -> Result<R, Error> {
         let id = self.id;
+        check_frozen(self.receiver)?;
         with_arena_for_new_node(self.document, |d| {
             d.invalidate_name_index();
             f(d, id)
@@ -356,6 +359,7 @@ pub fn begin_edit(this: XmlSelf) -> Result<Editing, Error> {
      * argument; `with_arena` checks it again at the change. */
     with_arena_for_new_node(this.document, |_| ())?;
     Ok(Editing {
+        receiver: this.value,
         document: this.document,
         id: this.id,
     })

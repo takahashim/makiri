@@ -71,6 +71,28 @@ RSpec.describe "Mutation argument conversion" do
     end
   end
 
+  # The frozen check ran before the conversion only, so a #to_s that froze the
+  # receiver still had its edit go through.
+  describe "a receiver frozen by its argument's #to_s" do
+    def freezing(node, value)
+      Object.new.tap { |o| o.define_singleton_method(:to_s) { node.freeze && value } }
+    end
+
+    it "refuses the HTML edit" do
+      p_el = Makiri.HTML("<p>t</p>").at_css("p")
+      expect { p_el.name = freezing(p_el, "span") }.to raise_error(FrozenError)
+      expect(p_el.name).to eq("p")
+      expect { p_el["k"] = freezing(p_el, "v") }.to raise_error(FrozenError)
+      expect(p_el["k"]).to be_nil
+    end
+
+    it "refuses the XML edit" do
+      a = Makiri::XML("<r><a>x</a></r>").at_xpath("//a")
+      expect { a.content = freezing(a, "zzz") }.to raise_error(FrozenError)
+      expect(a.content).to eq("x")
+    end
+  end
+
   describe "XML" do
     let(:doc) { Makiri::XML(%(<r><p a="1">hello</p><p>two</p></r>)) }
 

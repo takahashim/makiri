@@ -263,13 +263,18 @@ impl<'a> HtmlEdit<'a> {
 
     /// The mutable handle, with the document's indexes dropped. From here to
     /// the change nothing may run Ruby - every argument is already converted -
-    /// so nothing can rebuild them. The evaluation guard is checked again,
-    /// since an argument's `#to_s` ran in between.
+    /// so nothing can rebuild them.
+    ///
+    /// Both guards are checked again, since an argument's `#to_s` ran between
+    /// `edit` and here: one that froze the receiver had its edit go through.
+    /// `edit` checked first only so a frozen receiver is still reported ahead
+    /// of a bad argument.
     pub fn node(&self) -> Result<HtmlNodeMut<'a>, Error> {
+        crate::bridge::ruby::check_frozen(self.this.value)?;
         ensure_document_mutable(self.this.document)?;
         invalidate_indexes(self.this.document);
-        // SAFETY: the receiver is not frozen (checked by `edit`), and no XPath
-        // evaluation is reading its document (checked just now).
+        // SAFETY: the receiver is not frozen and no XPath evaluation is
+        // reading its document - both checked just now.
         Ok(unsafe { HtmlNodeMut::assume_mutable(self.this.raw().as_node()) })
     }
 }
