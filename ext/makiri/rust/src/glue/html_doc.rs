@@ -104,32 +104,36 @@ fn node_parse(ruby: &Ruby, self_: Value, rb_html: Value) -> Result<Value, Error>
 /// `Document#import_node(node, deep = false)` -> a copy of `node` owned by THIS
 /// document - the DOM importNode, whose `deep` defaults to false.
 fn doc_import_node(_ruby: &Ruby, self_: Value, args: &[Value]) -> Result<Value, Error> {
-    let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), (), ()>(args)?;
-    /* `deep` is truthiness, anything but nil and false - the DOM default off. */
-    let deep = a.optional.0.is_some_and(|v| v.to_bool());
-    crate::bridge::doc::import_node(self_, a.required.0, deep)
+    crate::bridge::ruby::entry(|| {
+        let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), (), ()>(args)?;
+        /* `deep` is truthiness, anything but nil and false - the DOM default off. */
+        let deep = a.optional.0.is_some_and(|v| v.to_bool());
+        crate::bridge::doc::import_node(self_, a.required.0, deep)
+    })
 }
 
 /// `Node#clone_node(deep = false)`: a copy owned by the same document and
 /// detached from any parent - the DOM cloneNode, whose `deep` defaults to false.
 pub fn node_clone_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
-    /* The 0..1 arity by hand: `scan_args` cost about a third of a shallow
-     * clone. The message is the one `rb_scan_args` gives. */
-    let deep = match args {
-        [] => false,
-        /* Truthiness: anything but nil and false. */
-        [v] => v.to_bool(),
-        _ => {
-            return Err(Error::new(
-                ruby.exception_arg_error(),
-                format!(
-                    "wrong number of arguments (given {}, expected 0..1)",
-                    args.len()
-                ),
-            ))
-        }
-    };
-    crate::bridge::doc::clone_node(rb_self, deep)
+    crate::bridge::ruby::entry(|| {
+        /* The 0..1 arity by hand: `scan_args` cost about a third of a shallow
+         * clone. The message is the one `rb_scan_args` gives. */
+        let deep = match args {
+            [] => false,
+            /* Truthiness: anything but nil and false. */
+            [v] => v.to_bool(),
+            _ => {
+                return Err(Error::new(
+                    ruby.exception_arg_error(),
+                    format!(
+                        "wrong number of arguments (given {}, expected 0..1)",
+                        args.len()
+                    ),
+                ))
+            }
+        };
+        crate::bridge::doc::clone_node(rb_self, deep)
+    })
 }
 
 /* ---- registration ---- */

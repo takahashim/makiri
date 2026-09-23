@@ -10,6 +10,10 @@
   to change, after which `#text` read text storage the edit had released (a
   read of freed memory) and `//p` found removed nodes. Both representations;
   every mutator.
+* A panic below mutators, factories, `clone_node` / `import_node`,
+  `XPathContext.new` and its setters, `Node#line`, `Attr#parent` and `#<=>` -
+  all of which walk a tree built from input - raises `Makiri::InternalError`
+  rather than `fatal`, as parsing and querying already did.
 
 ### Fixed
 

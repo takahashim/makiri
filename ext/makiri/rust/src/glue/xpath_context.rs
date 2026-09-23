@@ -33,26 +33,30 @@ fn expect_node(ruby: &Ruby, v: Value) -> Result<(), Error> {
 /// Keywords read exactly as `#xpath`'s do: the mode, and prefix bindings - here
 /// registered on the context, so they hold for every later evaluate.
 fn s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
-    let a = magnus::scan_args::scan_args::<(Value,), (), (), (), RHash, ()>(args)?;
-    let node = a.required.0;
-    let kw = Keywords::scan(ruby, a.keywords)?;
-    expect_node(ruby, node)?;
+    crate::bridge::ruby::entry(|| {
+        let a = magnus::scan_args::scan_args::<(Value,), (), (), (), RHash, ()>(args)?;
+        let node = a.required.0;
+        let kw = Keywords::scan(ruby, a.keywords)?;
+        expect_node(ruby, node)?;
 
-    let obj = XPathCtx::create(ruby, node, kw.lax)?;
-    if let Some(bindings) = kw.bindings {
-        /* A registration that fails leaves `obj` to the GC, never a context
-         * with half its prefixes. */
-        register_bindings(<&XPathCtx>::try_convert(obj)?, bindings)?;
-    }
-    Ok(obj)
+        let obj = XPathCtx::create(ruby, node, kw.lax)?;
+        if let Some(bindings) = kw.bindings {
+            /* A registration that fails leaves `obj` to the GC, never a context
+             * with half its prefixes. */
+            register_bindings(<&XPathCtx>::try_convert(obj)?, bindings)?;
+        }
+        Ok(obj)
+    })
 }
 
 /// `#node=` - rebind the context node, so one context can evaluate relative
 /// expressions against several nodes of its document.
 fn set_node(ruby: &Ruby, ctx: &XPathCtx, node: Value) -> Result<Value, Error> {
-    expect_node(ruby, node)?;
-    ctx.set_node(ruby, node)?;
-    Ok(node)
+    crate::bridge::ruby::entry(|| {
+        expect_node(ruby, node)?;
+        ctx.set_node(ruby, node)?;
+        Ok(node)
+    })
 }
 
 /// `#evaluate(expr, handler = nil)`.
@@ -66,14 +70,18 @@ fn evaluate(ruby: &Ruby, ctx: &XPathCtx, args: &[Value]) -> Result<Value, Error>
 
 /// `#register_namespace(prefix, uri)` -> self.
 fn register_namespace(ctx: &XPathCtx, prefix: Value, uri: Value) -> Result<Value, Error> {
-    ctx.register_namespace(prefix, uri)?;
-    Ok(method_receiver())
+    crate::bridge::ruby::entry(|| {
+        ctx.register_namespace(prefix, uri)?;
+        Ok(method_receiver())
+    })
 }
 
 /// `#register_variable(name, value)` -> self.
 fn register_variable(ctx: &XPathCtx, name: Value, value: Value) -> Result<Value, Error> {
-    ctx.register_variable(name, value)?;
-    Ok(method_receiver())
+    crate::bridge::ruby::entry(|| {
+        ctx.register_variable(name, value)?;
+        Ok(method_receiver())
+    })
 }
 
 /// From `Init_makiri`, after the classes exist.

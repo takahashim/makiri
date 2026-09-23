@@ -80,7 +80,11 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   not `fatal`.** `bridge::ruby::entry` wraps every method a crafted document,
   expression or stylesheet reaches - parse and fragment, xpath/at_xpath/evaluate,
   css/at_css/matches?, the serializers, the text readers, the namespace queries,
-  `parse_stylesheet` - and turns a panic
+  `parse_stylesheet`, and (on both representations) every mutator and factory,
+  `clone_node`/`import_node`, `XPathContext.new` and its setters, `Node#line`,
+  `Attr#parent` and `#<=>`: an HTML document's first mutation or factory call
+  runs the source-position walk, and the rest build an index or walk the tree -
+  and turns a panic
   there into that exception. It descends from `Exception`, NOT `StandardError`,
   which is the point: a bare `rescue => e` keeps passing it through, because a
   broken invariant is not a bad selector, while a host that wants to turn one
