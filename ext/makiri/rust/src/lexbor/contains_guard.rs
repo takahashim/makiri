@@ -60,6 +60,21 @@ pub fn neutralized(input: &[u8]) -> Result<Option<Vec<u8>>, Oom> {
     Ok(Some(out))
 }
 
+/// Whether `bytes` - a piece of the rewritten text - can hold a rewritten name.
+/// Every rewrite leaves a run of at least `NAME.len()` [`FILLER`] bytes, so a
+/// piece without one reads exactly as the caller wrote it. Lets a caller skip
+/// mapping such a piece back to the original, which is nearly every piece.
+pub fn may_hold_rewrite(bytes: &[u8]) -> bool {
+    let mut run = 0;
+    for &b in bytes {
+        run = if b == FILLER { run + 1 } else { 0 };
+        if run >= NAME.len() {
+            return true;
+        }
+    }
+    false
+}
+
 /// Walk `input`, reporting the `[start, end)` of each `:lexbor-contains` name
 /// whose argument is not recognised. Returns whether any was reported.
 fn scan(input: &[u8], on_bad: &mut dyn FnMut(usize, usize)) -> bool {

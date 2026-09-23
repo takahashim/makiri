@@ -10,6 +10,14 @@
   to change, after which `#text` read text storage the edit had released (a
   read of freed memory) and `//p` found removed nodes. Both representations;
   every mutator.
+* Inputs whose cost grew faster than their size, with no budget to stop them,
+  are linear or budgeted now: the `preceding` axis (depth 2000 took 8.8 s),
+  `Makiri::Lexbor::CSS.parse_stylesheet` after one rejected
+  `:lexbor-contains()` (186 KB took 4.6 s), the XML parser's duplicate-attribute
+  check (100 elements of 4096 attributes took 16.6 s), `contains` /
+  `substring-before` / `substring-after` and `translate` over long strings, and
+  - charged to the op budget, so they raise `XPath::LimitExceeded` - a node's
+  string-value, `lang()` and CSS `:nth-of-type` over XML.
 * A panic below mutators, factories, `clone_node` / `import_node`,
   `XPathContext.new` and its setters, `Node#line`, `Attr#parent` and `#<=>` -
   all of which walk a tree built from input - raises `Makiri::InternalError`

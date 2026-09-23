@@ -293,8 +293,10 @@ impl<'a> Parser<'a> {
             tail = Some(attr);
         }
         /* §9.3: no two attributes share (namespace URI, local name) */
-        if has_duplicate_attributes(self.doc, el) {
-            return self.cur.syntax();
+        match has_duplicate_attributes(self.doc, el) {
+            Some(false) => {}
+            Some(true) => return self.cur.syntax(),
+            None => return self.cur.fail(Status::Oom),
         }
         Ok(())
     }
@@ -694,17 +696,29 @@ fn parse_fragment_into(
 /// A free function here rather than a `Document` method in `arena`: the arena
 /// stores nodes, it does not judge whether they are well-formed. It reads
 /// through the checked accessors, which is what a rule at this layer should do.
-fn has_duplicate_attributes(doc: &Document, element: NodeId) -> bool {
-    let mut a = doc.attrs(element);
-    while let Some(x) = a {
-        let mut b = doc.next(x);
-        while let Some(y) = b {
-            if doc.local(x) == doc.local(y) && doc.ns(x) == doc.ns(y) {
-                return true;
-            }
-            b = doc.next(y);
-        }
-        a = doc.next(x);
+/// Whether two of `element`'s attributes share (namespace URI, local name) -
+/// or None when the sort buffer cannot be allocated.
+///
+/// Pairwise for the usual handful. Past that, pairwise is quadratic in a count
+/// the input picks, up to `MAX_ATTRS`: 8.4M comparisons an element, and 100
+/// such elements (3.6 MB) took 16.6 s with no budget to stop it. So a longer
+/// list is sorted by the pair and compared as neighbours, O(n log n).
+fn has_duplicate_attributes(doc: &Document, element: NodeId) -> Option<bool> {
+    const PAIRWISE_MAX: usize = 16;
+    let attrs = || core::iter::successors(doc.attrs(element), |&x| doc.next(x));
+    let count = attrs().count();
+    if count <= PAIRWISE_MAX {
+        let found = attrs().enumerate().any(|(i, x)| {
+            attrs()
+                .skip(i + 1)
+                .any(|y| doc.local(x) == doc.local(y) && doc.ns(x) == doc.ns(y))
+        });
+        return Some(found);
     }
-    false
+    let mut ids: Vec<NodeId> = Vec::new();
+    ids.falloc_reserve_exact(count).ok()?;
+    ids.extend(attrs());
+    let key = |x: NodeId| (doc.ns(x), doc.local(x));
+    ids.sort_unstable_by(|&x, &y| key(x).cmp(&key(y)));
+    Some(ids.windows(2).any(|w| key(w[0]) == key(w[1])))
 }

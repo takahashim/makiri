@@ -173,12 +173,20 @@ pub fn walk_axis<'d, D: Dom<'d>, B, F: FnMut(D::Node) -> ControlFlow<B>>(
              * the closest preceding node comes first.
              *
              * Climbing to a parent reaches an ancestor only when we are climbing
-             * the chain from the context itself, not when climbing back out of a
-             * preceding sibling's subtree - hence the explicit test. It stays
-             * anchored on `context`, not the base: for an attribute context node
-             * the owner element IS an ancestor (§2.2), so starting the walk there
-             * must not emit it. */
+             * the chain from the base itself, not when climbing back out of a
+             * preceding sibling's subtree - and the chain is met nearest first.
+             * So the one ancestor still to be skipped is enough to recognise
+             * each: comparing against the whole chain on every climb cost
+             * O(depth) a climb and O(depth^2) a context node, none of it charged
+             * to the budget - `//span/preceding::a` over 2000 nested spans ran
+             * for nine seconds. (libxml2's xmlXPathNextPrecedingInternal keeps
+             * the same single ancestor.)
+             *
+             * The chain starts above the BASE: for an attribute context node the
+             * owner element is an ancestor too (§2.2), and the walk starts there,
+             * so it is never climbed to and cannot be emitted. */
             let mut cur = axis_base::<D>(doc, context);
+            let mut next_ancestor = doc.parent(cur);
             loop {
                 if let Some(p) = doc.prev(cur) {
                     cur = p;
@@ -191,16 +199,9 @@ pub fn walk_axis<'d, D: Dom<'d>, B, F: FnMut(D::Node) -> ControlFlow<B>>(
                         return ControlFlow::Continue(());
                     };
                     cur = p;
-                    let mut is_ancestor = false;
-                    let mut a = doc.parent(context);
-                    while let Some(x) = a {
-                        if x == cur {
-                            is_ancestor = true;
-                            break;
-                        }
-                        a = doc.parent(x);
-                    }
-                    if !is_ancestor {
+                    if Some(cur) == next_ancestor {
+                        next_ancestor = doc.parent(cur);
+                    } else {
                         visit(cur)?;
                     }
                 }

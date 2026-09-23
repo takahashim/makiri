@@ -366,14 +366,9 @@ where
     f(a.as_slice(), b.as_slice())
 }
 
+/// See [`crate::cutf8::find`]: linear, where a window scan was O(n x m).
 fn find_bytes(hay: &[u8], needle: &[u8]) -> Option<usize> {
-    if needle.is_empty() {
-        return Some(0);
-    }
-    if needle.len() > hay.len() {
-        return None;
-    }
-    hay.windows(needle.len()).position(|w| w == needle)
+    crate::cutf8::find(hay, needle)
 }
 
 /// The number of characters in valid UTF-8; a stray continuation byte counts as
@@ -862,8 +857,13 @@ fn fn_translate<'e, 'd, D: Dom<'d>>(
     /* A character is never shorter than a byte, so the byte length bounds the
      * count - reserving up front keeps a failed allocation an XPath OOM rather
      * than the abort a growing Vec would give under `panic = "abort"`. */
-    let mut from_cp = try_vec::<char>(fv.len(), err.clone(), "translate")?;
-    from_cp.extend(fv.chars());
+    /* `from` as (character, its FIRST position), sorted by character, so each
+     * input character is a binary search rather than a scan of `from`: that
+     * scan was O(string x from), both up to the byte cap. */
+    let mut from_cp = try_vec::<(char, usize)>(fv.len(), err.clone(), "translate")?;
+    from_cp.extend(fv.chars().enumerate().map(|(k, c)| (c, k)));
+    from_cp.sort_unstable();
+    from_cp.dedup_by_key(|&mut (c, _)| c); /* keeps the first, the smallest k */
     let mut to_cp = try_vec::<char>(tv.len(), err.clone(), "translate")?;
     to_cp.extend(tv.chars());
 
@@ -873,7 +873,11 @@ fn fn_translate<'e, 'd, D: Dom<'d>>(
     let mut buf = Buf::new(ev.budget.limits.max_string_bytes);
     let mut enc = [0u8; 4];
     for c in sv.chars() {
-        let emit: Option<&str> = match from_cp.iter().position(|&f| f == c) {
+        let found = from_cp
+            .binary_search_by_key(&c, |&(f, _)| f)
+            .ok()
+            .map(|i| from_cp[i].1);
+        let emit: Option<&str> = match found {
             None => Some(c.encode_utf8(&mut enc)), /* not in `from`: keep it */
             Some(k) if k < to_cp.len() => Some(to_cp[k].encode_utf8(&mut enc)),
             Some(_) => None, /* past `to`: drop it */
@@ -957,9 +961,12 @@ fn fn_lang<'e, 'd, D: Dom<'d>>(
     let want = to_text::<D>(&args[0], ev)?;
     let want = want.as_slice();
     /* Walk the ancestors for the host's language attributes
-     * (`Dom::LANG_ATTRIBUTES`). */
+     * (`Dom::LANG_ATTRIBUTES`), a tick each: a predicate runs this per
+     * candidate, and `//span[lang('en')]` over 16,000 nested spans climbed a
+     * quadratic number of ancestors, uncharged, for 4.5 s. */
     let mut p = focus.node;
     while let Some(n) = p {
+        ev.budget.charge_op()?;
         if doc.node_type(n) == NTYPE_ELEMENT {
             let v = D::LANG_ATTRIBUTES
                 .iter()

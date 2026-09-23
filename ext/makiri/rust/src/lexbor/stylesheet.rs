@@ -195,6 +195,9 @@ struct Conv<'a> {
     ///
     /// [`contains_guard`]: crate::lexbor::contains_guard
     parsed: Option<&'a [u8]>,
+    /// Where [`as_written`] resumes searching `parsed`: rejected preludes come
+    /// back in source order, so each lies at or after the previous one's match.
+    search_from: usize,
     scratch: Vec<u8>,
 }
 
@@ -203,28 +206,32 @@ struct Conv<'a> {
 /// A rule Lexbor rejects carries its prelude copied out of the buffer Lexbor
 /// read, which after a `contains_guard` rewrite is not what the caller typed.
 /// Equal byte length means finding that copy gives the range to take from the
-/// original instead. A prelude that is not a verbatim substring, or that appears
-/// more than once, is left alone - the rewritten name beats the wrong range.
-fn as_written(c: &Conv, text: Vec<u8>) -> Result<Vec<u8>, Fail> {
+/// original instead. A prelude that is not a verbatim substring is left alone -
+/// the rewritten name beats a wrong range.
+///
+/// Linear in the sheet, where it was quadratic: every rejected rule searched the
+/// whole buffer, so one rewrite followed by 4000 bad rules took 4.6 s on 186 KB.
+/// A prelude holding no rewrite is already as written and is not searched at
+/// all; one that does is searched from where the previous match ended, with a
+/// linear search. The first match there is the prelude or an identical piece
+/// between the two (a declaration block holding the same bytes), and either
+/// reads the same in `parsed`.
+fn as_written(c: &mut Conv, text: Vec<u8>) -> Result<Vec<u8>, Fail> {
     let Some(parsed) = c.parsed else {
         return Ok(text);
     };
-    if text.is_empty() || parsed.len() != c.css.len() {
+    if text.is_empty()
+        || parsed.len() != c.css.len()
+        || !crate::lexbor::contains_guard::may_hold_rewrite(&text)
+    {
         return Ok(text);
     }
-    let mut found = None;
-    for (i, w) in parsed.windows(text.len()).enumerate() {
-        if w == text.as_slice() {
-            if found.is_some() {
-                return Ok(text); /* ambiguous */
-            }
-            found = Some(i);
-        }
-    }
-    match found {
-        Some(i) => falloc::try_to_vec(&c.css[i..i + text.len()]).ok_or(Fail::Oom),
-        None => Ok(text),
-    }
+    let from = c.search_from.min(parsed.len());
+    let Some(at) = crate::cutf8::find(&parsed[from..], &text).map(|i| from + i) else {
+        return Ok(text);
+    };
+    c.search_from = at + text.len();
+    falloc::try_to_vec(&c.css[at..at + text.len()]).ok_or(Fail::Oom)
 }
 
 unsafe fn declarations(
@@ -513,6 +520,7 @@ pub fn parse(css: &[u8]) -> Result<Vec<Rule>, Fail> {
         let mut conv = Conv {
             css,
             parsed: guarded.as_deref(),
+            search_from: 0,
             scratch: Vec::new(),
         };
         let first = (*(root as *mut lxb::lxb_css_rule_list_t)).first;

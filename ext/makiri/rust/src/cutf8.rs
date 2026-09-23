@@ -161,3 +161,22 @@ pub fn text_verdict(bytes: &[u8], known_valid_utf8: bool) -> TextVerdict {
     }
     TextVerdict::InvalidUtf8
 }
+
+/// The byte offset of the first `needle` in `hay`, or None - in time linear in
+/// both, with no allocation.
+///
+/// A plain `windows(n).position(..)` is O(hay x needle), which input picks:
+/// `contains()` of a 400 KB string took 2.4 s, and a stylesheet's prelude
+/// search went quadratic. `str::find` runs std's Two-Way search, which is
+/// linear, so both views are taken as `str`. Every caller's bytes are valid
+/// UTF-8 (XPath strings, a verified stylesheet), and a match of valid UTF-8 in
+/// valid UTF-8 starts on a character boundary, so the offset is the one a byte
+/// search would give. Bytes that are NOT valid UTF-8 get that byte search
+/// instead - still correct, only not linear - rather than a wrong answer.
+pub fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    match (core::str::from_utf8(hay), core::str::from_utf8(needle)) {
+        (Ok(h), Ok(n)) => h.find(n),
+        _ if needle.is_empty() => Some(0),
+        _ => hay.windows(needle.len()).position(|w| w == needle),
+    }
+}
