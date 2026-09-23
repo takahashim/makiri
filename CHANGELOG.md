@@ -24,6 +24,13 @@
   plain XPath name: Word's `<o:p>`, `xml:lang`, `xmlns:v` on an HTML element,
   and Vue's `@click` / `:href` / `v-on:x`, whose paths raised
   `unknown namespace prefix` or `XPath::SyntaxError`.
+* `Makiri::XML::Document#dup` / `#clone` return a copy. They returned the
+  document itself, so `xml.clone(freeze: true)` froze the original. `#dup`
+  re-parses the serialisation, as `Makiri::HTML::Document#dup` does (a document
+  with no root yet is copied node by node), with the default `max_bytes`.
+* `Node#clone_node` on a Document raises `Makiri::Error` in both
+  representations, instead of returning the document itself as its "copy"
+  (and, in XML, leaving a stray node in the arena).
 * `NodeSet#xpath` / `#at_xpath` / `#search` with an expression that evaluates
   to a string, number or boolean raise `ArgumentError`, as Nokogiri does,
   instead of `NoMethodError` from inside the union.

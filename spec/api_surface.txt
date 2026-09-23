@@ -329,6 +329,7 @@ class Makiri::XML::Document < Makiri::Document
   def create_loose_dom_element(4)
   def create_processing_instruction(2)
   def create_text_node(1)
+  def dup(-1 rest:*)
   def fragment(1)
   def import_node(-1)
   def internal_subset(0)

@@ -327,6 +327,35 @@ RSpec.describe Makiri::Node do
       d2.at_css("#x")["id"] = "z"
       expect(doc.at_css("#x")).not_to be_nil # original untouched
     end
+
+    # clone_node on a document wrapped its copy back to the receiver, so #dup
+    # handed out the original - and #clone(freeze: true) froze it.
+    it "XML::Document#dup / #clone copy the document, never alias it" do
+      xml = Makiri::XML(%(<?xml version="1.0"?>\n<?top x?><!--c--><r xmlns:x="urn:x"><x:a/>t</r>))
+      copy = xml.dup
+      expect(copy).to be_a(Makiri::XML::Document)
+      expect(copy).not_to equal(xml)
+      expect(copy.to_xml).to eq(xml.to_xml)
+      copy.root.add_child(copy.create_element("b"))
+      expect(xml.at_xpath("//b")).to be_nil
+
+      frozen = xml.clone(freeze: true)
+      expect(frozen).to be_frozen
+      expect(xml).not_to be_frozen
+    end
+
+    it "XML::Document#dup copies a document that has no root yet" do
+      xml = Makiri::XML::Document.new
+      xml.add_child(xml.create_comment("c"))
+      copy = xml.dup
+      expect(copy).not_to equal(xml)
+      expect(copy.to_xml).to eq(xml.to_xml)
+    end
+
+    it "clone_node refuses a document in both representations" do
+      expect { doc.clone_node(true) }.to raise_error(Makiri::Error, /use #dup/)
+      expect { Makiri::XML("<r/>").clone_node }.to raise_error(Makiri::Error, /use #dup/)
+    end
   end
 
   describe "Enumerable over child nodes" do

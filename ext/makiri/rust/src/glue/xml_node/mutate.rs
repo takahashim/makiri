@@ -179,9 +179,17 @@ pub fn lshift(_ruby: &Ruby, this: XmlSelf, arg: Value) -> Result<Value, Error> {
 /// DETACHED, so there is nothing to invalidate and nothing on the receiver to
 /// change - freezing a node does not stop it being copied. Every other method
 /// taking `XmlSelf` edits the tree and goes through `begin_edit`.
+///
+/// A Document is refused: its copy would be a second DOCUMENT node in this
+/// same arena, which wraps back to the receiver - so the caller got the
+/// original under the name of a copy (and `#clone(freeze: true)` froze it),
+/// with a stray node left behind. `XML::Document#dup` is the document copy.
 pub fn clone_node(this: XmlSelf, args: &[Value]) -> Result<Value, Error> {
     let a = magnus::scan_args::scan_args::<(), (Option<Value>,), (), (), (), ()>(args)?;
     let deep = a.optional.0.is_some_and(|v| v.to_bool());
+    if crate::bridge::ruby::same_value(this.value, this.document) {
+        return Err(makiri_error("clone_node cannot copy a document; use #dup"));
+    }
     let copy = xml_mut_result(with_arena_for_new_node(this.document, |d| {
         mutate::clone_node(d, this.id, deep)
     })?)?;

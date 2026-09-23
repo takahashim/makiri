@@ -152,6 +152,11 @@ pub fn import_node(rb_self: Value, node_v: Value, deep: bool) -> Result<Value, E
 pub fn clone_node(rb_self: Value, deep: bool) -> Result<Value, Error> {
     let node = html_node_unwrap(rb_self)?;
     let document = keepalive_document(rb_self)?;
+    /* A Document's copy would wrap back to the receiver itself - the original
+     * handed out as a copy. `HTML::Document#dup` is the document copy. */
+    if crate::bridge::ruby::same_value(rb_self, document) {
+        return Err(makiri_error("clone_node cannot copy a document; use #dup"));
+    }
     /* The copy is made in this document: refused while a handler reads it. */
     ensure_document_mutable(document)?;
     // SAFETY: the node of a live wrapper, which keeps its document alive.

@@ -20,6 +20,24 @@ module Makiri
         r ? r.replace(node) : add_child(node)
       end
 
+      # An independent copy of the whole document (like Nokogiri's
+      # Document#dup), sharing no nodes with the original. A document with a
+      # root is serialised and re-parsed, like {Makiri::HTML::Document#dup}. One
+      # without (still being built) is not well-formed, so it cannot be; what it
+      # can hold before a root - comments and processing instructions - is
+      # imported node by node instead. Any level argument is ignored, and
+      # #clone is this too (see {CloneViaDup}).
+      #
+      # The copy is parsed with the default +max_bytes+, not the original's.
+      #
+      # @return [Makiri::XML::Document]
+      def dup(*)
+        return self.class.parse(to_xml) if root
+
+        self.class.new.tap do |copy|
+          children.each { |child| copy.add_child(copy.import_node(child, true)) }
+        end
+      end
     end
   end
 end
