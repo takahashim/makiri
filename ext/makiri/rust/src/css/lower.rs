@@ -144,7 +144,10 @@ fn lower_attribute(b: &Build, s: Selector<'_>, at: Attribute<'_>) -> Built {
     let never = match at.op {
         AttrMatch::Prefix | AttrMatch::Suffix | AttrMatch::Substring => value.is_empty(),
         AttrMatch::Include => {
-            value.is_empty() || value.iter().any(|&c| matches!(c, b' ' | b'\t' | b'\n' | b'\r' | 0x0c))
+            value.is_empty()
+                || value
+                    .iter()
+                    .any(|&c| matches!(c, b' ' | b'\t' | b'\n' | b'\r' | 0x0c))
         }
         _ => false,
     };

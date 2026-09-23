@@ -167,24 +167,16 @@ fn insert(this: XmlSelf, arg: Value, at: Place) -> Result<Value, Error> {
 }
 
 pub fn add_child(_ruby: &Ruby, this: XmlSelf, arg: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        insert(this, arg, Place::Child)
-    })
+    crate::bridge::ruby::entry(|| insert(this, arg, Place::Child))
 }
 pub fn before(_ruby: &Ruby, this: XmlSelf, arg: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        insert(this, arg, Place::Before)
-    })
+    crate::bridge::ruby::entry(|| insert(this, arg, Place::Before))
 }
 pub fn after(_ruby: &Ruby, this: XmlSelf, arg: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        insert(this, arg, Place::After)
-    })
+    crate::bridge::ruby::entry(|| insert(this, arg, Place::After))
 }
 pub fn replace(_ruby: &Ruby, this: XmlSelf, arg: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        insert(this, arg, Place::Replace)
-    })
+    crate::bridge::ruby::entry(|| insert(this, arg, Place::Replace))
 }
 
 /// `element << node` -> self.
@@ -311,9 +303,14 @@ pub fn create_loose_dom_element(
 /// `create_document_type(name, public_id = "", system_id = "")` -> DocumentType.
 pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>, Option<Value>), (), (), (), ()>(
-            args,
-        )?;
+        let a = magnus::scan_args::scan_args::<
+            (Value,),
+            (Option<Value>, Option<Value>),
+            (),
+            (),
+            (),
+            (),
+        >(args)?;
         let name = a.required.0;
         let nil = ruby.qnil().as_value();
         let nv = verified_text(name, c"doctype name")?;
@@ -348,9 +345,7 @@ fn create_chardata(
 }
 
 pub fn create_text_node(_ruby: &Ruby, rb_self: Value, t: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        create_chardata(rb_self, t, NodeType::Text, c"text content")
-    })
+    crate::bridge::ruby::entry(|| create_chardata(rb_self, t, NodeType::Text, c"text content"))
 }
 pub fn create_comment(_ruby: &Ruby, rb_self: Value, t: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
@@ -358,9 +353,7 @@ pub fn create_comment(_ruby: &Ruby, rb_self: Value, t: Value) -> Result<Value, E
     })
 }
 pub fn create_cdata(_ruby: &Ruby, rb_self: Value, t: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        create_chardata(rb_self, t, NodeType::CData, c"CDATA content")
-    })
+    crate::bridge::ruby::entry(|| create_chardata(rb_self, t, NodeType::CData, c"CDATA content"))
 }
 
 pub fn create_pi(_ruby: &Ruby, rb_self: Value, target: Value, data: Value) -> Result<Value, Error> {

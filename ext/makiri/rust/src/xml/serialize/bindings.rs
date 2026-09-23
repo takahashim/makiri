@@ -107,4 +107,3 @@ impl<'d> Bindings<'d> {
         prefix == b"xml" || self.lookup(prefix).is_some()
     }
 }
-

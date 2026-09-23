@@ -16,9 +16,7 @@ mod scope;
 use crate::falloc::Reserve;
 use crate::xml::chars::{is_reserved_pi_target, normalize_newlines, ExpandMode};
 use crate::xml::qname::{split_scanned, xmlns_prefix, Split};
-use crate::xml::{
-    Document, Limits, Link, NodeId, NodeType, Span, Status, MAX_ATTRS, MAX_DEPTH,
-};
+use crate::xml::{Document, Limits, Link, NodeId, NodeType, Span, Status, MAX_ATTRS, MAX_DEPTH};
 use cursor::{is_space, Cursor, InSlice, R};
 use dtd::{scan_external_id, Declared, ExternalId, Subset};
 use scope::{Frame, Scope, ScopeFull};

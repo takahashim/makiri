@@ -165,8 +165,8 @@ impl<'d> Insertion<'d> {
                 _ if is_text(self.node) => return Err(PreInsertError::TextUnderDocument),
                 _ => usize::from(is_element(self.node)),
             };
-            let has_element = siblings_from(self.parent.first_child())
-                .any(|n| self.stays(n) && is_element(n));
+            let has_element =
+                siblings_from(self.parent.first_child()).any(|n| self.stays(n) && is_element(n));
             if incoming_elements > 1 || (incoming_elements == 1 && has_element) {
                 return Err(PreInsertError::SecondDocumentElement);
             }

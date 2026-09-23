@@ -21,15 +21,15 @@ use crate::bridge::ruby::{makiri_error, string_of};
 use crate::bridge::fragment::stage_fragment_in;
 use crate::bridge::html::{edit, insert, owning_doc, wrap_html_node, HtmlEdit, HtmlSelf};
 use crate::bridge::string::{ruby_verified_data, ruby_verified_text};
-use crate::lexbor::adapter::html::{
-    HtmlElementMut, Place, RawNode, TYPE_ATTRIBUTE, TYPE_ELEMENT,
-};
+use crate::lexbor::adapter::html::{HtmlElementMut, Place, RawNode, TYPE_ATTRIBUTE, TYPE_ELEMENT};
 
 /// The receiver as an element, once every argument is converted. Its node type
 /// was checked before the conversion (an argument cannot change it), so the
 /// `None` arm is unreachable - it answers `refusal` rather than assuming so.
 fn element_of<'a>(edit: &HtmlEdit<'a>, refusal: &'static str) -> Result<HtmlElementMut<'a>, Error> {
-    edit.node()?.element_mut().ok_or_else(|| makiri_error(refusal))
+    edit.node()?
+        .element_mut()
+        .ok_or_else(|| makiri_error(refusal))
 }
 
 /* ------------------------------------------------------------------ *
@@ -38,9 +38,7 @@ fn element_of<'a>(edit: &HtmlEdit<'a>, refusal: &'static str) -> Result<HtmlElem
 
 /// `node.add_child(child)` -> child.
 pub fn add_child(_ruby: &Ruby, this: HtmlSelf, rb_child: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        insert(&this, rb_child, Place::Child)
-    })
+    crate::bridge::ruby::entry(|| insert(&this, rb_child, Place::Child))
 }
 
 /// `node << child` -> node (chainable).
@@ -53,23 +51,17 @@ pub fn lshift(_ruby: &Ruby, this: HtmlSelf, rb_child: Value) -> Result<Value, Er
 
 /// `node.add_previous_sibling(node)` / `before` -> node.
 pub fn before(_ruby: &Ruby, this: HtmlSelf, rb_node: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        insert(&this, rb_node, Place::Before)
-    })
+    crate::bridge::ruby::entry(|| insert(&this, rb_node, Place::Before))
 }
 
 /// `node.add_next_sibling(node)` / `after` -> node.
 pub fn after(_ruby: &Ruby, this: HtmlSelf, rb_node: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        insert(&this, rb_node, Place::After)
-    })
+    crate::bridge::ruby::entry(|| insert(&this, rb_node, Place::After))
 }
 
 /// `node.replace(other)` -> other.
 pub fn replace(_ruby: &Ruby, this: HtmlSelf, rb_other: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        insert(&this, rb_other, Place::Replace)
-    })
+    crate::bridge::ruby::entry(|| insert(&this, rb_other, Place::Replace))
 }
 
 /// `node.remove` / `node.unlink` -> node.
@@ -328,10 +320,14 @@ pub fn create_pi(
 /// `Document#create_document_type(name, public_id = "", system_id = "")`.
 pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let args =
-            magnus::scan_args::scan_args::<(Value,), (Option<Value>, Option<Value>), (), (), (), ()>(
-                args,
-            )?;
+        let args = magnus::scan_args::scan_args::<
+            (Value,),
+            (Option<Value>, Option<Value>),
+            (),
+            (),
+            (),
+            (),
+        >(args)?;
         let (rb_name,) = args.required;
         let (rb_pub, rb_sys_) = args.optional;
 

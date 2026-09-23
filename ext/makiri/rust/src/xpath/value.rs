@@ -344,7 +344,11 @@ fn build_string_value<'d, D: Dom<'d>>(
 ) -> Result<(), Unbuilt> {
     if let Some(a) = doc.as_attr(node) {
         let v = doc.attr_value(a);
-        return if v.is_empty() { Ok(()) } else { buf.append(v).map_err(Unbuilt::Buf) };
+        return if v.is_empty() {
+            Ok(())
+        } else {
+            buf.append(v).map_err(Unbuilt::Buf)
+        };
     }
     match doc.node_type(node) {
         NTYPE_TEXT | NTYPE_CDATA_SECTION | NTYPE_COMMENT | NTYPE_PI => {
