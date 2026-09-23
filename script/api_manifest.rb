@@ -15,10 +15,11 @@
 #
 #   * every module and class under `Makiri`, with a class's superclass and the
 #     modules mixed directly into it - the leaf classes are what `#css` and
-#     `#xpath` hand back, so their identity is part of the contract;
+#     `#xpath` hand back, so their identity is part of the contract - plus any
+#     `private_constant` module mixed in, whose methods are API all the same;
 #   * alias constants (`Makiri::CDATA`), which are API and have no methods of
 #     their own to notice their absence;
-#   * methods DEFINED ON each module, public and private, with arity - private
+#   * methods DEFINED ON each module, public, protected and private, with arity - private
 #     because `lib/` calls the extension's `_css` / `_at_css` and a rename there
 #     is a silent break;
 #   * the parameter shape for methods written in Ruby, which is where keyword
@@ -46,6 +47,7 @@ module ApiManifest
     def namespace
       found = { "Makiri" => Makiri }
       walk(Makiri, "Makiri", found)
+      mixed_in(found)
       found.sort_by(&:first)
     end
 
@@ -69,8 +71,27 @@ module ApiManifest
       end
     end
 
+    # A `private_constant` module is out of the constant walk but not out of
+    # the API: mixed into a recorded class, its public methods are that class's
+    # (`Node#path` lives in `Makiri::NodePath`). Without this, moving a method
+    # into such a mixin would drop it from the manifest unnoticed.
+    def mixed_in(found)
+      found.values.flat_map(&:ancestors).uniq.each do |m|
+        found[m.name] ||= m if m.name&.start_with?("Makiri::")
+      end
+    end
+
+    # Whether `name` is reachable as a constant, i.e. not a `private_constant`.
+    def public_constant?(name)
+      owner, _, last = name.rpartition("::")
+      scope = owner.empty? ? Object : Object.const_get(owner)
+      scope.constants(false).include?(last.to_sym)
+    end
+
     def block(name, mod)
-      lines = [mod.is_a?(Class) ? "class #{name} < #{mod.superclass}" : "module #{name}"]
+      header = mod.is_a?(Class) ? "class #{name} < #{mod.superclass}" : "module #{name}"
+      header += " (private_constant)" unless public_constant?(name)
+      lines = [header]
       lines.concat(mixins(mod).map { |m| "  include #{m}" })
       lines.concat(constants(mod))
       lines.concat(methods_of(mod))
@@ -109,6 +130,7 @@ module ApiManifest
       out.concat(entries(singleton, :public_instance_methods, "  def self.", mod, true))
       out.concat(entries(singleton, :private_instance_methods, "  private def self.", mod, true))
       out.concat(entries(mod, :public_instance_methods, "  def ", mod, false))
+      out.concat(entries(mod, :protected_instance_methods, "  protected def ", mod, false))
       out.concat(entries(mod, :private_instance_methods, "  private def ", mod, false))
       out
     end

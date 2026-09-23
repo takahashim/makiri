@@ -13,7 +13,9 @@ rescue LoadError
   require_relative "makiri/makiri"
 end
 
+require_relative "makiri/clone_via_dup"
 require_relative "makiri/node"
+require_relative "makiri/reader_aliases"
 require_relative "makiri/document"
 require_relative "makiri/html"
 require_relative "makiri/html/node_methods"
@@ -37,10 +39,10 @@ require_relative "makiri/xpath"
 require_relative "makiri/css"
 require_relative "makiri/compat_aliases"
 
+# The error classes (Makiri::Error < StandardError and everything under it,
+# plus Makiri::InternalError < Exception) are defined by the extension, in
+# init.rs, so their hierarchy has a single source.
 module Makiri
-  # Base exception class for Makiri-specific errors.
-  class Error < StandardError; end
-
   # Convenience constructor mirroring Nokogiri.
   #
   # @param source [String] HTML source (UTF-8).

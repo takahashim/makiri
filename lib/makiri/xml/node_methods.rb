@@ -2,50 +2,38 @@
 
 module Makiri
   module XML
-    # Ruby additions over the native XML node readers, mirroring
-    # Makiri::HTML::NodeMethods so the XML node surface matches the HTML one for
-    # the methods consumers (e.g. Dommy) rely on. Each is guarded with
-    # `method_defined?` so a future native implementation on this module takes
-    # precedence rather than being shadowed.
+    # Ruby additions over the native XML node readers, so the XML node surface
+    # matches the HTML one (Makiri::HTML::NodeMethods).
     module NodeMethods
-      # The HTML surface's aliases, for the same readers.
-      alias_method :attr, :[]
-      alias_method :get_attribute, :[]
-      alias_method :node_name, :name
-      alias_method :node_name=, :name=
-      alias_method :type, :node_type
-
-      # Element ancestors, nearest first, excluding self (element nodes only) —
-      # matching Makiri::HTML's #ancestors.
-      unless method_defined?(:ancestors)
-        def ancestors
-          out = []
-          node = parent
-          while node
-            out << node if node.node_type == 1
-            node = node.respond_to?(:parent) ? node.parent : nil
-          end
-          out
+      # Element ancestors, nearest first, excluding self - matching
+      # Makiri::HTML's native #ancestors.
+      # @return [Array<Makiri::XML::Element>]
+      def ancestors
+        out = []
+        node = parent
+        while node
+          out << node if node.element?
+          node = node.parent
         end
+        out
       end
 
       # Whether an attribute with the given qualified name is present
       # (case-sensitive, per XML).
-      unless method_defined?(:key?)
-        def key?(name)
-          wanted = name.to_s
-          attribute_nodes.any? { |attr| attr.name == wanted }
-        end
+      def key?(name)
+        wanted = name.to_s
+        attribute_nodes.any? { |attr| attr.name == wanted }
       end
 
-      alias_method :has_attribute?, :key? unless method_defined?(:has_attribute?)
+      # After #key?, which #has_attribute? aliases.
+      ReaderAliases.define_on(self)
 
       # CSS selector queries over XML, lowered to the native XPath engine (so
       # matching is case-sensitive and namespace-aware, unlike a Lexbor HTML
-      # matcher). Nokogiri-compatible namespaces: the document's in-scope
+      # matcher). Nokogiri-compatible namespaces: the root element's
       # declarations are collected automatically (a bare type selector binds to
-      # the default namespace), and an optional +ns+ hash of {prefix => uri}
-      # supplements/overrides them.
+      # the default namespace), unless an +ns+ hash of {prefix => uri} is
+      # given, which then replaces them.
       #
       #   doc.css("entry")               # default-namespace bound (Atom/RSS just work)
       #   doc.css("a|entry", "a" => uri) # explicit prefix

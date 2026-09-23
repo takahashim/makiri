@@ -156,6 +156,24 @@ RSpec.describe Makiri::XML::Builder do
       expect(b.doc).to be_a(Makiri::XML::Document)
       expect(b.parent).to equal(b.doc) # back at the document once the build is done
     end
+
+    # Array(), puts and splats ask respond_to?(:to_ary) and friends; a builder
+    # that said yes would build a <to_ary> element (and a NodeBuilder would add
+    # a "to_ary" class) behind the caller's back.
+    it "does not claim Ruby's implicit conversion hooks" do
+      node = nil
+      b = described_class.new { |xml| node = xml.root }
+      expect(b).not_to respond_to(:to_ary, :to_str, :to_hash)
+      expect(Array(b)).to eq([b])
+      expect(Array(node)).to eq([node])
+      expect(b.to_xml).to include("<root/>")
+      expect(b).to respond_to(:anything)
+    end
+
+    it "keeps its internals out of the public constant namespace" do
+      expect(described_class.constants).not_to include(:CONVERSION)
+      expect(Makiri.constants).not_to include(:ReaderAliases, :CloneViaDup)
+    end
   end
 
   describe "attribute short-cut chain (NodeBuilder)" do

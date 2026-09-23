@@ -24,19 +24,10 @@ module Makiri
       # original - Node#dup's clone_node delegation is wrong for a document node,
       # hence this override. (A DOM mutated into a shape the HTML parser would not
       # itself produce, e.g. a foster-parented table cell, may be re-normalised on
-      # re-parse; a freshly parsed document round-trips unchanged.) Any level /
-      # freeze argument is ignored.
+      # re-parse; a freshly parsed document round-trips unchanged.) Any level
+      # argument is ignored. #clone is this too (see {CloneViaDup}).
       def dup(*)
-        Makiri.parse(to_html)
-      end
-
-      # Like {#dup}: an independent copy of the document, honouring Ruby's
-      # +freeze:+ keyword (a frozen document's nodes raise +FrozenError+ on
-      # mutation).
-      def clone(freeze: nil)
-        copy = Makiri.parse(to_html)
-        copy.freeze if freeze || (freeze.nil? && frozen?)
-        copy
+        self.class.parse(to_html)
       end
 
       # The document's <body> element, or nil.

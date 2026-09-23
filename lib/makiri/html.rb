@@ -4,10 +4,10 @@ module Makiri
   # HTML-specific node leaves (§12). Every concrete HTML node is a Makiri::HTML::*
   # class under the matching abstract base (so is_a?(Makiri::Element) etc. holds),
   # carrying the lxb_dom-backed reader/query methods via the included
-  # Makiri::HTML::Node module. XML nodes never inherit these. The classes
+  # Makiri::HTML::NodeMethods module. XML nodes never inherit these. The classes
   # themselves are defined in the extension (ext/makiri/rust/src/glue/html_node/);
-  # the per-class Ruby
-  # additions live in this namespace's files (html/node_methods.rb, html/document.rb).
+  # the per-class Ruby additions live in this namespace's files
+  # (html/node_methods.rb, html/document.rb).
   module HTML
   end
 end

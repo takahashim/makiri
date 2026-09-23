@@ -1,14 +1,14 @@
 # frozen_string_literal: true
 
 module Makiri
+  # XPath error types, defined by the extension (init.rs) with every other
+  # Makiri error class, so the hierarchy has one source:
+  #
+  # * Makiri::XPath::SyntaxError (< Makiri::Error) - an expression fails to
+  #   parse.
+  # * Makiri::XPath::LimitExceeded (< SyntaxError, for Nokogiri-shaped
+  #   rescue) - an evaluation budget (operation count, recursion depth,
+  #   node-set cap) is exhausted.
   module XPath
-    # Raised when an XPath expression fails to parse, or when an
-    # evaluation limit (operation count, recursion depth, node-set
-    # cap) is exceeded.
-    class SyntaxError < ::Makiri::Error; end
-
-    # Raised when an evaluation budget is exhausted. Subclasses
-    # SyntaxError for Nokogiri-shaped error compatibility.
-    class LimitExceeded < SyntaxError; end
   end
 end

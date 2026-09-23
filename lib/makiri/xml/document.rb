@@ -3,9 +3,8 @@
 module Makiri
   module XML
     # XML-specific document conveniences. The XML node leaves and the document
-    # itself are defined in the extension (ext/makiri/rust/src/glue/xml.rs);
-    # construction sugar
-    # that is pure composition over the public surface lives here, not on the
+    # itself are defined in the extension (ext/makiri/rust/src/glue/xml_doc.rs);
+    # construction sugar that is pure composition over the public surface lives here, not on the
     # abstract Makiri::Document (which carries no construction).
     class Document
       # Set (or replace) the document's root element: with an existing root it
@@ -20,6 +19,7 @@ module Makiri
         r = root
         r ? r.replace(node) : add_child(node)
       end
+
     end
   end
 end

@@ -11,6 +11,10 @@ module Makiri
     # Enumerable over its child nodes, like Nokogiri.
     include Enumerable
 
+    # #clone is a deep #dup that honours +freeze:+. A frozen node is genuinely
+    # immutable - its mutators raise +FrozenError+.
+    include CloneViaDup
+
     # @yieldparam child [Makiri::Node]
     # @return [self, Enumerator]
     def each(&block)
@@ -67,10 +71,8 @@ module Makiri
 
     # --- Nokogiri-compatible aliases over the core API ---
     #
-    # Aliases of the representation-specific reader methods (#[], #name, ...) live
-    # with those methods on the per-kind node behaviour (Makiri::HTML::Node), not
-    # here, since alias_method resolves its target at definition time and the
-    # readers are defined on the leaves' included module. These two alias
+    # Aliases of the representation-specific readers (#[], #name, ...) are
+    # applied to each NodeMethods module by {ReaderAliases}. These two alias
     # representation-independent predicates defined just above, so they stay.
     alias_method :elem?, :element?
     alias_method :fragment?, :document_fragment?
@@ -83,7 +85,8 @@ module Makiri
     # The Attr node named +name+, or nil (cf. {#[]}, which returns the value).
     # @return [Makiri::Attr, nil]
     def attribute(name)
-      attributes[name.to_s]
+      wanted = name.to_s
+      attribute_nodes.find { |attr| attr.name == wanted }
     end
 
     # --- CSS class helpers (operate on the `class` attribute) ---
@@ -183,8 +186,6 @@ module Makiri
     # Inspect representation. Avoids dumping the whole subtree.
     def inspect
       "#<#{self.class.name} name=#{name.inspect}>"
-    rescue NoMethodError
-      "#<#{self.class.name}>"
     end
 
     # An independent copy of this node, detached from any parent and owned by the
@@ -192,19 +193,10 @@ module Makiri
     # a shallow copy (matching Nokogiri's level argument). The native allocator
     # is undef'd to keep wrappers memory-safe, so #dup/#clone delegate to
     # {#clone_node} rather than Ruby's default allocate-and-copy (which would
-    # otherwise raise "allocator undefined").
+    # otherwise raise "allocator undefined"). #clone is this, deep, via
+    # {CloneViaDup}.
     def dup(level = 1)
       clone_node(level != 0)
-    end
-
-    # Like {#dup}, always a deep copy, and honouring Ruby's +freeze:+ keyword:
-    # +true+ returns a frozen copy, +false+ an unfrozen one, the default (+nil+)
-    # copies the receiver's frozen state. A frozen node is genuinely immutable -
-    # its mutators raise +FrozenError+ (see Makiri's mutation methods).
-    def clone(freeze: nil)
-      copy = clone_node(true)
-      copy.freeze if freeze || (freeze.nil? && frozen?)
-      copy
     end
 
     private

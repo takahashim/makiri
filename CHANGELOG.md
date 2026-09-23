@@ -1,5 +1,24 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+* `NodeSet#xpath` / `#at_xpath` / `#search` with an expression that evaluates
+  to a string, number or boolean raise `ArgumentError`, as Nokogiri does,
+  instead of `NoMethodError` from inside the union.
+* `Makiri::XML::Builder` and its `NodeBuilder` no longer claim Ruby's implicit
+  conversions (`to_ary`, `to_str`, ...) through `respond_to?`, so `Array(builder)`,
+  `puts` and splats no longer build a `<to_ary>` element or add a `to_ary` class.
+* `NodeSet#css` / `#xpath` / `#at_css` / `#at_xpath` pass their further
+  arguments (a namespace map, a handler, `namespace_matching:`) to each node's
+  query, as `Node`'s take them; they used to accept the expression alone.
+
+### Performance
+
+* `NodeSet#at_css` / `#at_xpath` stop at the first node with a match instead of
+  querying every node and building the union.
+
 ## [0.10.0] - 2026-09-22
 
 ### Fixed
