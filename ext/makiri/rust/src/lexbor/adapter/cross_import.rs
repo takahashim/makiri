@@ -124,15 +124,13 @@ fn status(r: Result<NodeId, MutStatus>) -> MutStatus {
 /// one attribute per prefix: an attribute `p:x` in `urn:other` on an element
 /// `p:e` in `urn:p` redeclared `p` and moved the element into `urn:other`.
 ///
-/// Three kinds of attribute do not cross as they stand:
-/// * a declaration (a foreign element's `xmlns:xlink`, in the XMLNS
-///   namespace) is copied unless the element already declares that prefix
-///   for its own name, which wins - the attributes need no declaration now;
-/// * one named `xmlns` / `xmlns:*` in NO namespace (on an HTML element) is an
-///   ordinary attribute in HTML, but copied it would become a declaration and
-///   move the element: `<div xmlns="urn:bogus">` came out in `urn:bogus`
-///   instead of XHTML. The translator declares each element's real namespace
-///   itself, so these are left out;
+/// Two kinds of attribute do not cross as they stand:
+/// * a declaration is left out - one parsed on a foreign element
+///   (`xmlns:xlink`, in the XMLNS namespace) and one that is an ordinary HTML
+///   attribute named `xmlns` alike. The translator declares each element's
+///   namespace itself and gives each attribute its own, so a copied
+///   declaration could only restate one or move one (`<div xmlns="urn:bogus">`
+///   came out in `urn:bogus`, `<svg><g xmlns="urn:evil">` in `urn:evil`);
 /// * one in NO namespace whose name has a prefix other than `xml` (`fb:like`)
 ///   has no XML form: written as it stands it is a prefix with no binding, so
 ///   the copy was made and then could be neither inserted nor serialized. It is
@@ -149,9 +147,13 @@ fn h2x_copy_attrs(doc: &mut XmlDoc, s: HtmlElement<'_>, el: NodeId) -> MutStatus
         let own = a.own_ns();
         let decl = crate::xml::qname::xmlns_prefix(name);
         let st = match (own, decl) {
-            (NS_XMLNS, Some(p)) if declares(doc, el, p) => MutStatus::Ok,
-            (NS_XMLNS, _) => status(mutate::set_attribute(doc, el, name, value)),
-            (_, Some(_)) => MutStatus::Ok, /* an HTML attribute named xmlns */
+            /* A declaration, parsed (a foreign element's `xmlns:xlink`) or an
+             * HTML attribute that only looks like one: never copied. Every
+             * name crosses with its namespace already - an element declares
+             * its own, an attribute is given its - so a declaration can only
+             * restate one, or move one: `<svg><g xmlns="urn:evil">` put `g`
+             * and its children in `urn:evil`. */
+            (NS_XMLNS, _) | (_, Some(_)) => MutStatus::Ok,
             (NS_UNDEF | NS_XML, _) => {
                 let colon = name.iter().position(|&b| b == b':');
                 match colon {
@@ -169,12 +171,6 @@ fn h2x_copy_attrs(doc: &mut XmlDoc, s: HtmlElement<'_>, el: NodeId) -> MutStatus
         }
     }
     MutStatus::Ok
-}
-
-/// Whether `el` already carries the declaration of `prefix` ("" = default).
-fn declares(doc: &XmlDoc, el: NodeId, prefix: &[u8]) -> bool {
-    core::iter::successors(doc.attrs(el), |&a| doc.next(a))
-        .any(|a| crate::xml::qname::xmlns_prefix(doc.qname(a)) == Some(prefix))
 }
 
 /// The refusal for a no-namespace attribute named with a colon: `BadNsName`

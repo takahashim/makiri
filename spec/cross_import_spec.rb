@@ -261,6 +261,17 @@ RSpec.describe "cross-kind import_node" do
     end
   end
 
+  # A copied declaration could only restate a namespace or move one: the
+  # element and its children came out in whatever it named.
+  it "leaves every xmlns declaration behind, so none moves an element" do
+    html = Makiri.HTML(%(<svg><g xmlns="urn:evil"><rect/></g></svg><math><mi xmlns="http://www.w3.org/2000/svg">x</mi></math>))
+    xml = Makiri::XML("<root/>")
+    %w[svg math].each { |n| xml.root << xml.import_node(html.at_xpath("//*[local-name()='#{n}']"), true) }
+    reread = Makiri::XML(xml.to_xml)
+    expect(reread.xpath("//*[local-name()='rect' or local-name()='mi']").map(&:namespace_uri))
+      .to eq(["http://www.w3.org/2000/svg", "http://www.w3.org/1998/Math/MathML"])
+  end
+
   describe "names with a colon and no namespace" do
     svg_ns = "http://www.w3.org/2000/svg"
 

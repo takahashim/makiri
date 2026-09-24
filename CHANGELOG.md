@@ -90,6 +90,9 @@
   (`p:e` in `urn:p` with an attribute `p:x` in `urn:other` came out in
   `urn:other`). Namespaced attributes cross with their namespace given
   directly, and a prefixed element is declared once, not on every descendant.
+  No `xmlns` attribute is copied any more: every name crosses with its
+  namespace already, so a copied declaration could only restate one or move
+  one (`<svg><g xmlns="urn:evil">` put `g` and its children in `urn:evil`).
   A malformed attribute name (`:class`) is refused with `ArgumentError` again.
 * A namespace given with `XML::Node#set_attribute_ns` on a detached element
   survives the element's insertion. The insertion re-derived it from the
