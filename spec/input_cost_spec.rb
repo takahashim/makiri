@@ -5,10 +5,18 @@
 # The bounds below are generous - ten to a hundred times the fixed cost - so a
 # slow machine passes, and a return to the old growth fails by minutes.
 RSpec.describe "Cost proportional to input" do
+  # An AddressSanitizer build runs several times slower, and a CI runner slower
+  # again: 64k stylesheet rules took 1.59 s there against a 1.5 s bound. Every
+  # regression these guard against was 10-100x over its bound, so a slack of 5
+  # under the sanitizer still catches each one.
+  SLACK = ENV.key?("ASAN_OPTIONS") ? 5.0 : 1.0
+
+  # Seconds the block took, divided by SLACK, so each example can keep stating
+  # the plain build's bound.
   def elapsed
     t = Process.clock_gettime(Process::CLOCK_MONOTONIC)
     yield
-    Process.clock_gettime(Process::CLOCK_MONOTONIC) - t
+    (Process.clock_gettime(Process::CLOCK_MONOTONIC) - t) / SLACK
   end
 
   # A single-context reverse-axis step was merge-sorted back into document
