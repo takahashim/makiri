@@ -199,9 +199,12 @@
 * `NodeSet#at_css` / `#at_xpath` stop at the first node with a match instead of
   querying every node and building the union.
 * `XML::Node#canonicalize` no longer walks up the ancestors for each namespace
-  declaration it renders; it reads the scope it already keeps, under the same
-  step budget as the rest of the namespace work. A 1000-deep document of
-  declarations went from 0.7 s to 0.02 s.
+  declaration it renders; it reads the scope it already keeps, and that scope
+  is indexed by prefix, so a lookup no longer costs the depth of the
+  declarations in scope. A 1000-deep document of declarations went from 0.7 s
+  to 0.02 s, and documents with thousands of declarations in scope, which ran
+  both `to_xml` and `canonicalize` out of their namespace step budget, now
+  serialize.
 
 ## [0.10.0] - 2026-09-22
 
