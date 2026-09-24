@@ -203,6 +203,18 @@ impl<'d> Bindings<'d> {
         Ok(())
     }
 
+    /// Every prefix in scope with its innermost binding, in no order: what
+    /// the index holds, read without a lookup per prefix.
+    pub(super) fn innermost(&self) -> impl Iterator<Item = (&Prefix<'d>, &'d [u8])> + '_ {
+        self.slots
+            .iter()
+            .filter(|&&at| at != EMPTY && at != GONE)
+            .map(|&at| {
+                let e = &self.stack[at as usize];
+                (&e.prefix, e.uri)
+            })
+    }
+
     /// The innermost binding for `prefix`, or None when it is unbound - or when
     /// the step budget ran out, which [`Bindings::exhausted`] then reports.
     pub(super) fn lookup(&mut self, prefix: &[u8]) -> Option<&'d [u8]> {
