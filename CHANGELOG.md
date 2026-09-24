@@ -4,6 +4,11 @@
 
 ### Security
 
+* `content=` on an HTML element and `delete(name)` no longer free the nodes they
+  remove. Both went through Lexbor calls that destroy them, while a Ruby
+  wrapper may still hold one: the wrapper then read freed memory, and the next
+  node allocated there came back under it - a text node answering as an
+  Element or an Attr. They detach now, as every other mutator does.
 * A checked argument String is locked while its bytes are borrowed. A call
   converts its arguments one at a time, and a later argument's `#to_s` could
   rewrite an earlier one - putting a NUL into a name that had passed its
