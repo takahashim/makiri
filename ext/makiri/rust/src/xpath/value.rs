@@ -383,7 +383,6 @@ pub fn node_to_owned_text<'d, D: Dom<'d>>(
         ),
     });
     built?;
-    budget.charge_bytes(buf.as_slice().len())?;
     let owned = buf.steal().map_err(|_| {
         err_setf!(
             budget.sink(),

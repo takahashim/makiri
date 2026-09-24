@@ -27,6 +27,9 @@ pub struct StrCache {
     /// node token -> entry index.
     index: PtrMap<Token, usize>,
     total_bytes: usize,
+    /// The nodes whose value the cache could not keep. A node found here is
+    /// being built AGAIN, which is the work [`Budget::charge_bytes`] prices.
+    refused: PtrMap<Token, u8>,
 }
 
 impl StrCache {
@@ -35,6 +38,7 @@ impl StrCache {
             entries: Vec::new(),
             index: PtrMap::new(),
             total_bytes: 0,
+            refused: PtrMap::new(),
         }
     }
 
@@ -69,6 +73,16 @@ impl StrCache {
             .checked_add(text.as_slice().len())
             .filter(|&t| t <= budget.limits.max_cache_bytes);
         let Some(new_total) = fits else {
+            /* Not kept, so a later comparison that needs it builds it again.
+             * That repeated building is what is charged, by its size - from
+             * the second build of a node on. A first build costs its walk,
+             * cached or not: charging it priced a query by text size times
+             * nesting depth. If the note cannot be made, the build is charged
+             * as a repeat. */
+            let again = self.refused.get(node).is_some() || self.refused.insert(node, 1).is_err();
+            if again {
+                budget.charge_bytes(text.as_slice().len())?;
+            }
             return Ok(NodeText::Uncached(text));
         };
         if self.entries.falloc_reserve(1).is_err() {

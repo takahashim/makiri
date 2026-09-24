@@ -10,10 +10,10 @@ use crate::err_setf;
 use core::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-/// Bytes of node string-value one evaluator op pays for
-/// ([`Budget::charge_bytes`]). At the default op cap that bounds the
-/// string-values one evaluate may build to about 3 GB - seconds of copying,
-/// not minutes - while an ordinary page's queries stay far under it.
+/// Bytes of uncached node string-value one evaluator op pays for
+/// ([`Budget::charge_bytes`]). At the default op cap that bounds what one
+/// evaluate rebuilds past a full cache to about 3 GB - seconds of copying, not
+/// minutes. A value the cache keeps is not charged by size.
 pub const BYTES_PER_OP: usize = 64;
 
 /// The caps, as configured. Plain data: a run copies them into its [`Budget`].
@@ -163,7 +163,10 @@ impl Budget {
     /// count otherwise missed. A string-value build is charged per node it
     /// walks, but one node can hold megabytes, so a comparison that rebuilt
     /// large values (the cache full, a node-set against a node-set) ran for
-    /// seconds on a few thousand ops.
+    /// seconds on a few thousand ops. Only a value the cache could not keep
+    /// is charged - the one that gets built again. Charging every build
+    /// priced a query by text size times nesting depth, and refused
+    /// `//*[contains(., "x")]` on a 21 MB page 150 elements deep.
     pub fn charge_bytes(&self, bytes: usize) -> Result<(), Reported> {
         let ops = bytes / BYTES_PER_OP;
         let left = self.limits.max_eval_ops.saturating_sub(self.eval_ops.get());
