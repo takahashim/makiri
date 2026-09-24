@@ -254,7 +254,11 @@ impl<'a> HtmlEdit<'a> {
     /// `edit` and here: one that froze the receiver had its edit go through.
     /// `edit` checked first only so a frozen receiver is still reported ahead
     /// of a bad argument. It takes the token, so a caller cannot reach for the
-    /// handle a second time, after running Ruby.
+    /// handle a second time after running Ruby. What it cannot stop is Ruby
+    /// run while the handle is held - the handle's lifetime is the receiver's,
+    /// not the token's - so a caller keeps the span from here to the change
+    /// to engine calls and checks that call no Ruby (`insert` reads its
+    /// argument's node and frozen flag there, and nothing more).
     pub fn node(self) -> Result<HtmlNodeMut<'a>, Error> {
         crate::bridge::ruby::check_frozen(self.this.value)?;
         ensure_document_mutable(self.this.document)?;

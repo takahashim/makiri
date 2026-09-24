@@ -147,6 +147,21 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
     a prefix needs a namespace.
 * An HTML document has one root element and no text child, as the DOM requires;
   `doc << element` beside an existing root raises.
+* Moving HTML into an XML document (`xml_doc.import_node(html_node)`, or
+  inserting one) keeps every name's namespace, and refuses what XML cannot
+  write that way. An attribute in no namespace whose name has a prefix other
+  than `xml` - `v-on:click`, `fb:like`, an `xlink:href` on an HTML (not SVG)
+  element - raises `Makiri::Error`: as XML it would be a prefix bound to
+  nothing. Nokogiri copies it and writes `v-on:click="..."` into output that is
+  not namespace-well-formed. An element named with a colon (`<fb:like>`)
+  crosses as a DOM-loose name, which `to_xml` refuses.
+* An XML element with a prefix, imported into HTML, keeps it (`h:div` in
+  XHTML has the local name `div`). Two readers then disagree, as they do in
+  browsers: CSS's `div` matches it (Lexbor matches the local name), XPath's
+  `//div` does not (an HTML element's name test reads its qualified name). And
+  Lexbor's HTML serializer writes the prefix (`<h:div>`), where the HTML
+  standard writes the local name, so the HTML does not re-parse to the same
+  element.
 
 ## CSS
 
@@ -177,8 +192,9 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
     prefix IS resolved against the bindings, when the namespace matters.
   * `Makiri::XML` resolves CSS prefixes properly - it lowers the selector to the
     XPath engine, which registers the bindings.
-  * The same holds for attribute selectors: HTML `[|href]` (no namespace)
-    also finds an SVG `xlink:href`, which `Nokogiri::HTML5` does not.
+  * The same holds for attribute selectors: HTML `[|href]` (no namespace) and
+    plain `[href]` also find an SVG `xlink:href`, which `Nokogiri::HTML5`
+    does not.
     `Makiri::XML` reads `[|a]` as the no-namespace attribute.
 * A selector under a node matches the way `Element#querySelectorAll` does in a
   browser, not scoped to that node, on HTML: `at_css("#c").css("div p")` finds a

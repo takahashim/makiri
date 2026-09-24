@@ -159,7 +159,7 @@ LEXBOR_ABI_COUNTS = {}.freeze
 # along - so the table is empty and any such use fails.
 # The crate-root modules the engine is built on sit outside those directories
 # and are held to the same two rules.
-ENGINE_DIRS = %w[lexbor/ xml/ xpath/ css/ cbuf.rs cutf8.rs limits.rs ptr_table.rs text.rs token.rs].freeze
+ENGINE_DIRS = %w[lexbor/ xml/ xpath/ css/ falloc/ cbuf.rs cutf8.rs limits.rs ptr_table.rs text.rs token.rs].freeze
 RUBY_LAYER = /crate::(?:bridge|glue|init)|magnus::/
 RUBY_LAYER_COUNTS = {}.freeze
 
