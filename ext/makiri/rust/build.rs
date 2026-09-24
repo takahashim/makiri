@@ -245,6 +245,7 @@ fn main() {
         .allowlist_function("lxb_dom_attr_set_value")
         .allowlist_function("lxb_dom_attr_set_name")
         .allowlist_function("lxb_dom_document_create_element")
+        .allowlist_function("lxb_dom_element_create")
         .allowlist_function("lxb_dom_document_create_text_node")
         .allowlist_function("lxb_dom_document_create_comment")
         .allowlist_function("lxb_dom_document_create_processing_instruction")

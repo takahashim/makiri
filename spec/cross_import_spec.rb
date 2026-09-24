@@ -260,4 +260,58 @@ RSpec.describe "cross-kind import_node" do
       expect(div.namespace_uri).to eq("http://www.w3.org/1999/xhtml")
     end
   end
+
+  describe "names with a colon and no namespace" do
+    svg_ns = "http://www.w3.org/2000/svg"
+
+    # Lexbor stores a plain attribute under its element's namespace; the copy
+    # read that, and a parsed q:y inside <svg> came out in SVG.
+    it "refuses an HTML attribute whose prefix has no namespace instead of inventing one" do
+      html = Makiri.HTML(%(<svg q:y="2"></svg>))
+      expect(html.xpath("namespace-uri(//@*)")).to eq("")
+      expect { Makiri::XML("<r/>").import_node(html.at_xpath("//*[local-name()='svg']"), true) }
+        .to raise_error(Makiri::Error, /does not fit the qualified name/)
+    end
+
+    it "keeps xml:lang in the XML namespace" do
+      html = Makiri.HTML(%(<div xml:lang="en"></div>))
+      xml = Makiri::XML("<r/>")
+      xml.root << xml.import_node(html.at_css("div"), true)
+      lang = Makiri::XML(xml.to_xml).at_xpath("//@*[local-name()='lang']")
+      expect([lang.value, lang.namespace_uri]).to eq(["en", "http://www.w3.org/XML/1998/namespace"])
+    end
+
+    # fb:like is one DOM local name. Made strictly, fb became a prefix bound to
+    # nothing and the copy could not even be inserted.
+    it "copies an HTML element named with a colon as a DOM-loose name" do
+      html = Makiri.HTML(%(<div><fb:like></fb:like></div>))
+      xml = Makiri::XML("<r/>")
+      copy = xml.import_node(html.at_css("div"), true)
+      xml.root << copy
+      expect(xml.xpath("local-name(//*[@* or not(*)])")).to eq("fb:like")
+      expect { xml.to_xml }.to raise_error(Makiri::Error, /DOM-loose/)
+    end
+
+    it "gives an SVG attribute set in SVG's own namespace that namespace" do
+      html = Makiri.HTML("<svg></svg>")
+      html.at_xpath("//*[local-name()='svg']").set_attribute_ns(svg_ns, "q:x", "1")
+      expect(html.xpath("namespace-uri(//@*[local-name()='x'])")).to eq(svg_ns)
+    end
+  end
+
+  describe "a prefixed XML element crossing into HTML" do
+    it "keeps its prefix out of its local name, and comes back as it was" do
+      xml = Makiri::XML(%(<r xmlns:p="urn:p"><p:e p:a="1" b="2"><p:f/></p:e></r>))
+      html = Makiri.HTML("<div></div>")
+      e = html.import_node(xml.at_xpath("//*[local-name()='e']"), true)
+      html.at_css("div") << e
+      expect(html.xpath("local-name(//*[@b])")).to eq("e")
+      expect(html.xpath("//q:e/@q:a", "q" => "urn:p").size).to eq(1)
+
+      back = Makiri::XML("<root/>")
+      back.root << back.import_node(e, true)
+      reread = Makiri::XML(back.to_xml)
+      expect(reread.xpath("//q:e/q:f", "q" => "urn:p").size).to eq(1)
+    end
+  end
 end

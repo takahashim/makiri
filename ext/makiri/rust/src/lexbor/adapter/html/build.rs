@@ -25,6 +25,41 @@ impl<'doc> HtmlDoc<'doc> {
         }
     }
 
+    /// A detached element with a PREFIXED name - `local` in `ns`, written
+    /// `prefix:local` - the DOM's createElementNS, where [`create_element`]
+    /// is createElement and would take `p:e` as one local name. An empty `ns`
+    /// is no namespace. `None` when Lexbor could not make one.
+    ///
+    /// [`create_element`]: Self::create_element
+    pub fn create_element_ns(
+        self,
+        local: &[u8],
+        ns: &[u8],
+        prefix: &[u8],
+    ) -> Option<BuildingElement<'doc>> {
+        let ns_ptr = if ns.is_empty() {
+            core::ptr::null()
+        } else {
+            ns.as_ptr()
+        };
+        // SAFETY: a live document; Lexbor copies every name into its own
+        // storage, and a failure destroys the half-made element itself.
+        unsafe {
+            BuildingElement::from_raw(lxb::lxb_dom_element_create(
+                self.as_raw(),
+                local.as_ptr(),
+                local.len(),
+                ns_ptr,
+                ns.len(),
+                prefix.as_ptr(),
+                prefix.len(),
+                core::ptr::null(),
+                0,
+                false,
+            ))
+        }
+    }
+
     /// A detached text node holding `text`. `None` on allocation failure.
     pub fn create_text(self, text: &[u8]) -> Option<BuildingNode<'doc>> {
         // SAFETY: a live document; Lexbor copies the bytes.

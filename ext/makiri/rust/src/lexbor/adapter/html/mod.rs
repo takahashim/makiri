@@ -511,6 +511,16 @@ impl<'doc> HtmlNode<'doc> {
         unsafe { (*self.as_raw()).user = core::ptr::null_mut() };
     }
 
+    /// Whether the node's name carries a namespace prefix - one a namespaced
+    /// name was given (createElementNS, setAttributeNS, the parser's foreign
+    /// attributes). A parsed `fb:like` has none: its colon is part of one
+    /// local name.
+    #[inline]
+    pub fn has_prefix(self) -> bool {
+        // SAFETY: as `node_type`.
+        unsafe { (*self.as_raw()).prefix != 0 }
+    }
+
     /// The interned tag id (`local_name`).
     #[inline]
     pub fn tag_id(self) -> usize {
@@ -916,14 +926,22 @@ impl<'doc> HtmlAttr<'doc> {
         st == lxb::consts::STATUS_OK
     }
 
-    /// The attribute's OWN namespace id, the one `setAttributeNS` recorded.
+    /// The attribute's OWN namespace id, the one `setAttributeNS` (or the
+    /// parser's foreign-attribute adjustment) recorded.
     ///
-    /// An attribute with no namespace of its own reports its element's, so the
-    /// two are compared: only a difference is the attribute's own. [`NS_UNDEF`]
-    /// for an attribute Lexbor has not linked to an element yet.
+    /// An attribute with no namespace of its own reports its element's, so a
+    /// namespace is the attribute's own when it differs from its element's - or
+    /// when the attribute has a prefix, which only a namespaced name is given:
+    /// `set_attribute_ns(SVG, "q:x")` on an SVG element is in SVG, while a
+    /// parsed `q:x` there is one no-namespace name. An UNPREFIXED namespaced
+    /// attribute in its element's own namespace reads as no namespace - Lexbor
+    /// keeps nothing that tells the two apart. [`NS_UNDEF`] for an unprefixed
+    /// attribute Lexbor has not linked to an element yet.
     pub fn own_ns(self) -> usize {
+        let ns = self.node().ns_id();
         match self.owner() {
-            Some(owner) if owner.node().ns_id() != self.node().ns_id() => self.node().ns_id(),
+            _ if self.node().has_prefix() => ns,
+            Some(owner) if owner.node().ns_id() != ns => ns,
             _ => NS_UNDEF,
         }
     }

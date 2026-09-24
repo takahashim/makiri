@@ -52,6 +52,21 @@
 
 ### Fixed
 
+* Namespaces across `import_node` between HTML and XML:
+  * HTML to XML reads each attribute's own namespace, as `Attr#namespace_uri`
+    does. A parsed `q:y` inside `<svg>` (no namespace) was put in SVG.
+  * An HTML attribute in no namespace whose name has a prefix other than `xml`
+    (`fb:like`, a parsed `xlink:href` on an HTML element) has no XML form, and
+    the import now refuses it. The copy used to be made with a prefix bound
+    to nothing, and then could be neither inserted nor serialized.
+  * An HTML element named with a colon (`<fb:like>`) crosses as a DOM-loose
+    name, like other names XML cannot write: it can be inserted, and
+    `to_xml` refuses it.
+  * XML to HTML makes a prefixed element with its prefix, so `p:e` has the
+    local name `e` and `//q:e` finds it. It used to have the local name `p:e`.
+  * An attribute set by `set_attribute_ns` in its element's own namespace
+    (`set_attribute_ns(SVG, "q:x")` on an SVG element) reports that namespace;
+    it read as none.
 * An XPath comparison over node string-values no longer raises `LimitExceeded`
   because the values it compared added up past 64 MB. That total was the
   per-string cap reused for the evaluation's string-value cache, so
