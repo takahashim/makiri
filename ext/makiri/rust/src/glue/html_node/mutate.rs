@@ -50,7 +50,7 @@ fn check_dom_name(
 /// The receiver as an element, once every argument is converted. Its node type
 /// was checked before the conversion (an argument cannot change it), so the
 /// `None` arm is unreachable - it answers `refusal` rather than assuming so.
-fn element_of<'a>(edit: &HtmlEdit<'a>, refusal: &'static str) -> Result<HtmlElementMut<'a>, Error> {
+fn element_of<'a>(edit: HtmlEdit<'a>, refusal: &'static str) -> Result<HtmlElementMut<'a>, Error> {
     edit.node()?
         .element_mut()
         .ok_or_else(|| makiri_error(refusal))
@@ -117,7 +117,7 @@ pub fn aset(ruby: &Ruby, this: HtmlSelf, rb_name: Value, rb_value: Value) -> Res
         let nv = ruby_verified_text(rb_name, c"attribute name")?;
         let vv = ruby_verified_data(rb_value, c"attribute value")?;
         check_dom_name(ruby, &nv, dom_name::valid_attribute_local_name, "attribute")?;
-        let el = element_of(&edit, REFUSAL)?;
+        let el = element_of(edit, REFUSAL)?;
         if !crate::bridge::html::set_attribute(el, &nv, &vv) {
             return Err(makiri_error("failed to set attribute"));
         }
@@ -170,7 +170,7 @@ pub fn set_attribute_ns(
 xml and xmlns take only their own)",
             ));
         }
-        let el = element_of(&edit, REFUSAL)?;
+        let el = element_of(edit, REFUSAL)?;
         if !crate::bridge::html::set_attribute_ns(el, nv.as_ref(), &qv, &vv) {
             return Err(makiri_error("failed to set namespaced attribute"));
         }
@@ -196,7 +196,7 @@ pub fn remove_attribute_ns(
         } else {
             Some(ruby_verified_text(rb_ns, c"namespace")?)
         };
-        let el = element_of(&edit, "remove_attribute_ns requires an element")?;
+        let el = element_of(edit, "remove_attribute_ns requires an element")?;
         crate::bridge::html::remove_attribute_ns(el, nv.as_ref(), &lv);
         Ok(ruby.qnil().as_value())
     })
@@ -212,7 +212,7 @@ pub fn set_name(ruby: &Ruby, this: HtmlSelf, rb_name: Value) -> Result<Value, Er
         }
         let nv = ruby_verified_text(rb_name, c"element name")?;
         check_dom_name(ruby, &nv, dom_name::valid_element_local_name, "element")?;
-        let el = element_of(&edit, REFUSAL)?;
+        let el = element_of(edit, REFUSAL)?;
         if !crate::bridge::html::rename(el, &nv) {
             return Err(makiri_error("failed to rename element"));
         }
@@ -242,7 +242,7 @@ pub fn delete(_ruby: &Ruby, this: HtmlSelf, rb_name: Value) -> Result<Value, Err
             return Ok(rb_self);
         }
         let nv = ruby_verified_text(rb_name, c"attribute name")?;
-        let el = element_of(&edit, "delete requires an element")?;
+        let el = element_of(edit, "delete requires an element")?;
         crate::bridge::html::remove_attribute(el, &nv);
         Ok(rb_self)
     })

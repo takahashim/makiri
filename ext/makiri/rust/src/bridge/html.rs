@@ -253,8 +253,9 @@ impl<'a> HtmlEdit<'a> {
     /// Both guards are checked again, since an argument's `#to_s` ran between
     /// `edit` and here: one that froze the receiver had its edit go through.
     /// `edit` checked first only so a frozen receiver is still reported ahead
-    /// of a bad argument.
-    pub fn node(&self) -> Result<HtmlNodeMut<'a>, Error> {
+    /// of a bad argument. It takes the token, so a caller cannot reach for the
+    /// handle a second time, after running Ruby.
+    pub fn node(self) -> Result<HtmlNodeMut<'a>, Error> {
         crate::bridge::ruby::check_frozen(self.this.value)?;
         ensure_document_mutable(self.this.document)?;
         invalidate_indexes(self.this.document);
