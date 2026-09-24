@@ -71,7 +71,8 @@ fn evaluate(ruby: &Ruby, ctx: &XPathCtx, args: &[Value]) -> Result<Value, Error>
 /// `#register_namespace(prefix, uri)` -> self.
 fn register_namespace(ctx: &XPathCtx, prefix: Value, uri: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        ctx.register_namespace(prefix, uri)?;
+        let cap = ctx.limits().max_string_bytes;
+        crate::glue::query::bind_pair(prefix, uri, cap, |p, u| ctx.bind_namespace(p, u))?;
         Ok(method_receiver())
     })
 }

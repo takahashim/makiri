@@ -139,10 +139,21 @@ RSpec.describe "Mutation argument conversion" do
         .to raise_error(RuntimeError, /locked/) # the namespace converts after the name
       target = +"t"
       expect { xml.create_processing_instruction(target, rewriting(target, "d")) }.to raise_error(RuntimeError, /locked/)
+    end
 
+    # A namespace binding converts both sides before checking either, so the
+    # rewrite happens first and the rewritten prefix is what is checked and
+    # bound - nothing is borrowed across the conversion to lock.
+    it "checks a namespace binding after both sides convert" do
       prefix = +"x"
-      ctx = Makiri::XPathContext.new(xml)
-      expect { ctx.register_namespace(prefix, rewriting(prefix, "urn:x")) }.to raise_error(RuntimeError, /locked/)
+      renaming = Object.new.tap { |o| o.define_singleton_method(:to_s) { prefix << "y" && "urn:x" } }
+      ctx = Makiri::XPathContext.new(Makiri::XML(%(<r xmlns="urn:x"/>)))
+      ctx.register_namespace(prefix, renaming)
+      expect(ctx.evaluate("count(//xy:r)")).to eq(1.0)
+
+      nul = +"y"
+      expect { ctx.register_namespace(nul, Object.new.tap { |o| o.define_singleton_method(:to_s) { nul << "\0" && "urn:y" } }) }
+        .to raise_error(Makiri::Error, /NUL/)
     end
 
     it "releases the lock afterwards, and takes the same String twice" do

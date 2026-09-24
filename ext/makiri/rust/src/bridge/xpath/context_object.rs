@@ -212,18 +212,8 @@ impl XPathCtx {
         self.ctx.limits()
     }
 
-    /// Bind `prefix` to `uri` for every later evaluate.
-    pub fn register_namespace(&self, prefix: Value, uri: Value) -> Result<(), Error> {
-        if self.ctx.is_evaluating() {
-            return Err(refused(ContextError::Evaluating, NS_BUSY, NS_FAILED));
-        }
-        let pv = ruby_verified_text(prefix, c"namespace prefix")?;
-        let uv = ruby_verified_text(uri, c"namespace URI")?;
-        self.bind_namespace(pv.as_verified().as_bytes(), uv.as_verified().as_bytes())
-    }
-
-    /// As [`register_namespace`](Self::register_namespace), for bytes a caller
-    /// has already put through the text contract.
+    /// Bind `prefix` to `uri` for every later evaluate, for bytes a caller has
+    /// already put through the text contract (`glue::query::bind_pair`).
     pub fn bind_namespace(&self, prefix: &[u8], uri: &[u8]) -> Result<(), Error> {
         if self.ctx.is_evaluating() {
             return Err(refused(ContextError::Evaluating, NS_BUSY, NS_FAILED));

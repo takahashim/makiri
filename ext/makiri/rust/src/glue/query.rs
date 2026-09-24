@@ -170,21 +170,37 @@ fn bind_each(
     let pairs: RArray = h.funcall("to_a", ())?;
     for pair in pairs.into_iter() {
         let pair = RArray::from_value(pair).expect("Hash#to_a yields pairs");
-        let ks: RString = pair.entry::<Value>(0)?.funcall("to_s", ())?;
-        let vs: RString = pair.entry::<Value>(1)?.funcall("to_s", ())?;
-
-        /* Both are the Strings `to_s` just returned, and the checks allocate
-         * nothing, so the views stay valid through the registration below. */
-        let (pv, uv) =
-            ruby_try_verified_text_pair(ks.as_value(), vs.as_value(), cap).map_err(|reason| {
-                makiri_error(format!(
-                    "invalid namespace mapping: {}",
-                    reason.to_string_lossy()
-                ))
-            })?;
-        register(pv.as_verified().as_bytes(), uv.as_verified().as_bytes())?;
+        bind_pair(pair.entry(0)?, pair.entry(1)?, cap, &mut register)?;
     }
     Ok(())
+}
+
+/// Bind one `prefix => uri` pair through `register` - the one reading of a
+/// namespace binding, for a query's Hash, `XPathContext.new`'s and
+/// `#register_namespace` alike, so all three convert, check, cap and word a
+/// refusal the same way.
+///
+/// Both are converted with `to_s` FIRST, and only then checked: a conversion
+/// is Ruby code, and a view of the first held across the second's `to_s` is
+/// what let that code rewrite a checked prefix.
+pub fn bind_pair(
+    prefix: Value,
+    uri: Value,
+    cap: usize,
+    mut register: impl FnMut(&[u8], &[u8]) -> Result<(), Error>,
+) -> Result<(), Error> {
+    let ks: RString = prefix.funcall("to_s", ())?;
+    let vs: RString = uri.funcall("to_s", ())?;
+    /* Both are the Strings `to_s` just returned, and the checks allocate
+     * nothing, so the views stay valid through the registration below. */
+    let (pv, uv) =
+        ruby_try_verified_text_pair(ks.as_value(), vs.as_value(), cap).map_err(|reason| {
+            makiri_error(format!(
+                "invalid namespace mapping: {}",
+                reason.to_string_lossy()
+            ))
+        })?;
+    register(pv.as_verified().as_bytes(), uv.as_verified().as_bytes())
 }
 
 /// Register a `{prefix => uri}` Hash onto `ctx` for one query.
