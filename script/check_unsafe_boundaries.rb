@@ -427,14 +427,16 @@ end
 # Every Ruby method the glue registers runs its body inside
 # `bridge::ruby::entry`, so a panic below it raises Makiri::InternalError rather
 # than `fatal`. Wrapping by hand, method by method, left readers like
-# `children`, `[]` and `NodeSet#each` out; so the gate resolves each
-# registration to its function and fails on one whose body does not start with
-# the call. The exemptions are the hooks that exist to test the panic and
-# allocation paths, and the identity methods, which read a pointer.
+# `children`, `[]` and `NodeSet#each` out; so the gate finds EVERY `method!` /
+# `function!` in the glue - wherever it is written, a registration table
+# included - resolves it to its one definition, and fails unless that body is
+# nothing but a `crate::bridge::ruby::entry(...)` call. What it cannot read, it
+# refuses rather than skips. The exemptions are the hooks that exist to test the
+# panic and allocation paths themselves.
 ENTRY_EXEMPT = %w[
   init.rs:panic_probe init.rs:alloc_inject_p init.rs:alloc_inject init.rs:alloc_inject_calls
-  glue/node.rs:node_equals glue/node.rs:node_hash glue/node.rs:node_pointer_id
 ].freeze
+ENTRY_CALL = "crate::bridge::ruby::entry("
 
 def module_dir(rel)
   base = File.basename(rel, ".rs")
@@ -446,13 +448,15 @@ def module_file(rust, modpath)
   ["#{modpath}.rs", "#{modpath}/mod.rs"].find { |c| File.exist?(File.join(rust, c)) }
 end
 
+def fn_def_re(name) = /^\s*(?:pub(?:\([^)]*\))?\s+)?fn\s+#{Regexp.escape(name)}\b/
+
 # The file a registered path names: `read::name` from `glue/html_node/mod.rs`,
 # `crate::glue::node::f`, or a bare name defined here or brought in by `use`.
 def resolve_fn(rust, rel, path, src)
   parts = path.split("::")
   name = parts.pop
   if parts.empty?
-    return [rel, name] if src.match?(/^\s*(?:pub(?:\([^)]*\))?\s+)?fn\s+#{Regexp.escape(name)}\b/)
+    return [rel, name] if src.match?(fn_def_re(name))
 
     src.scan(/^\s*(?:pub\s+)?use\s+([\w:]+)::\{([^}]*)\}|^\s*(?:pub\s+)?use\s+([\w:]+)::(\w+)\s*;/m) do |p1, list, p2, single|
       if p1 && list.split(",").map(&:strip).include?(name)
@@ -474,33 +478,87 @@ def resolve_fn(rust, rel, path, src)
   [file, name]
 end
 
-def fn_body_start(src, name)
-  m = src.match(/^\s*(?:pub(?:\([^)]*\))?\s+)?fn\s+#{Regexp.escape(name)}\b[^{]*\{\s*/m) or return nil
-  src[m.end(0), 60]
+# The index of the bracket closing the one at `open`, skipping string, char and
+# comment text; nil when unbalanced.
+def matching_close(src, open)
+  depth = 0
+  i = open
+  while i < src.length
+    c = src[i]
+    if src[i, 2] == "//"
+      i = (src.index("\n", i) || src.length)
+      next
+    elsif src[i, 2] == "/*"
+      i = (src.index("*/", i) || src.length) + 2
+      next
+    elsif c == '"'
+      i += 1
+      i += (src[i] == "\\" ? 2 : 1) while i < src.length && src[i] != '"'
+    elsif c == "'" && (m = src[i..].match(/\A'(?:\\.|[^\\'])'/))
+      i += m[0].length
+      next
+    elsif "([{".include?(c)
+      depth += 1
+    elsif ")]}".include?(c)
+      depth -= 1
+      return i if depth.zero?
+    end
+    i += 1
+  end
+  nil
 end
+
+# Why the definition of `name` in `src` is not a method body wrapped in entry,
+# or nil when it is: exactly one definition, whose whole body is one
+# `crate::bridge::ruby::entry(...)` call.
+def entry_violation(src, name)
+  src = comments_removed(src)
+  # Anywhere, not just at a line start, so a same-named fn tucked into a
+  # one-line `mod` still counts as a second definition.
+  defs = src.to_enum(:scan, /\bfn\s+#{Regexp.escape(name)}\b/).map { Regexp.last_match }
+  return "no definition" if defs.empty?
+  return "#{defs.length} definitions" if defs.length > 1
+
+  open = src.index("{", defs.first.end(0)) or return "no body"
+  close = matching_close(src, open) or return "unbalanced body"
+  body = src[(open + 1)...close].strip
+  return "body does not start with #{ENTRY_CALL}" unless body.start_with?(ENTRY_CALL)
+
+  call_close = matching_close(body, ENTRY_CALL.length - 1)
+  return nil if call_close && body[(call_close + 1)..].strip.empty?
+
+  "code outside the #{ENTRY_CALL}...) call"
+end
+
+REGISTRATION = /\b(?:magnus::)?(?:method|function)!\(\s*([^,()]+?)\s*,/
 
 def unwrapped_entries(rust)
   missing = []
+  seen = []
   files = Dir.glob(File.join(rust, "glue", "**", "*.rs")) + [File.join(rust, "init.rs")]
   files.sort.each do |path|
     rel = path.delete_prefix("#{rust}/")
     src = File.binread(path)
-    src.scan(/define_(?:singleton_|private_|module_)?(?:method|function)\(\s*(?:"[^"]*"|\w+)\s*,\s*(?:method|function)!\(\s*([\w:]+)\s*,/m) do |(fpath)|
+    comments_removed(src).scan(REGISTRATION) do |(fpath)|
+      unless fpath.match?(/\A[\w:]+\z/)
+        missing << "#{rel}: registration of `#{fpath}` is not a function path"
+        next
+      end
       file, name = resolve_fn(rust, rel, fpath, src)
       if file.nil?
         missing << "#{rel}: cannot resolve #{fpath}"
         next
       end
-      next if ENTRY_EXEMPT.include?("#{file}:#{name}")
+      key = "#{file}:#{name}"
+      seen << key
+      next if ENTRY_EXEMPT.include?(key)
 
-      body = fn_body_start(File.binread(File.join(rust, file)), name)
-      if body.nil?
-        missing << "#{rel}: no definition of #{name} in #{file}"
-      elsif !body.start_with?("crate::bridge::ruby::entry(", "entry(")
-        missing << "#{file}:#{name}"
-      end
+      why = entry_violation(File.binread(File.join(rust, file)), name)
+      missing << "#{key} (#{why})" if why
     end
   end
+  stale = ENTRY_EXEMPT - seen
+  missing << "ENTRY_EXEMPT names what nothing registers: #{stale.inspect}" unless stale.empty?
   missing.uniq
 end
 

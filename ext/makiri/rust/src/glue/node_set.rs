@@ -90,19 +90,19 @@ fn dup(ruby: &Ruby, s: &NodeSet, _args: &[Value]) -> Result<Value, Error> {
 }
 
 fn op_or(ruby: &Ruby, s: &NodeSet, other: Value) -> Result<Value, Error> {
-    s.union(ruby, s.operand(ruby, other)?)
+    crate::bridge::ruby::entry(|| s.union(ruby, s.operand(ruby, other)?))
 }
 
 fn op_plus(ruby: &Ruby, s: &NodeSet, other: Value) -> Result<Value, Error> {
-    s.concat(ruby, s.operand(ruby, other)?)
+    crate::bridge::ruby::entry(|| s.concat(ruby, s.operand(ruby, other)?))
 }
 
 fn op_and(ruby: &Ruby, s: &NodeSet, other: Value) -> Result<Value, Error> {
-    s.filter(ruby, s.operand(ruby, other)?, true)
+    crate::bridge::ruby::entry(|| s.filter(ruby, s.operand(ruby, other)?, true))
 }
 
 fn op_minus(ruby: &Ruby, s: &NodeSet, other: Value) -> Result<Value, Error> {
-    s.filter(ruby, s.operand(ruby, other)?, false)
+    crate::bridge::ruby::entry(|| s.filter(ruby, s.operand(ruby, other)?, false))
 }
 
 /// `NodeSet.new(document_or_node, list = [])`.

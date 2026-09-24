@@ -82,11 +82,12 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   `bridge::ruby::entry` wraps the body of EVERY method the glue registers, and
   turns a panic there into that exception. It used to wrap only the methods
   judged to reach untrusted input, and the judgement left readers such as
-  `children`, `[]` and `NodeSet#each` out; so `rake unsafe:boundaries` now
-  resolves each registration to its function and fails on one whose body does
-  not start with `entry(`. `ENTRY_EXEMPT` there names the few that stay out -
-  the `__panic` / `__alloc_inject*` test hooks and the identity methods
-  (`==`, `hash`, `pointer_id`) - and a new exemption needs a reason.
+  `children`, `[]` and `NodeSet#each` out; so `rake unsafe:boundaries` finds
+  every `method!`/`function!` in the glue (a registration table included),
+  resolves it to its one definition, and fails unless the whole body is a
+  `crate::bridge::ruby::entry(...)` call. `ENTRY_EXEMPT` there names the few
+  that stay out - the `__panic` / `__alloc_inject*` test hooks - and a new
+  exemption needs a reason.
   `InternalError` descends from `Exception`, NOT `StandardError`, which is the
   point: a bare `rescue => e` keeps passing it through, because a broken
   invariant is not a bad selector, while a host that wants to turn one request
