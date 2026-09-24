@@ -41,6 +41,7 @@ end
 require_relative "../fuzz/grammar"
 require_relative "../fuzz/fixtures"
 require_relative "xpath_corpus"
+require_relative "node_key"
 
 opts = { generate: 0, seed: nil, max_diffs: 25, verbose: false }
 OptionParser.new do |o|
@@ -95,14 +96,9 @@ rescue StandardError => e
   [:raise, e.class.name]
 end
 
-# Canonical node key: the absolute path with any namespace prefix stripped
-# from each step. The two libraries' DOM trees are isomorphic, but they render
-# the path of a foreign (SVG/MathML) element differently - Nokogiri qualifies
-# it ("svg:circle"), Makiri does not ("circle"). That is a Node#path rendering
-# nuance, NOT an XPath-evaluation difference, so we normalise it away here to
-# keep the comparison about which nodes matched.
+# Canonical node key: see node_key.rb.
 def node_key(node)
-  node.path.split("/").map { |seg| seg.sub(/\A[\w-]+:/, "") }.join("/")
+  NodeKey.of(node)
 end
 
 # Normalise a successful result into a comparable shape.
