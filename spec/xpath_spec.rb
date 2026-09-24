@@ -616,12 +616,12 @@ RSpec.describe "Makiri XPath" do
     # square of its size with the GVL held (65,000 pairs: six seconds). An
     # index makes it linear, and a Hash past the cap is refused before any
     # pair is read.
-    it "binds a large namespace Hash in linear time and refuses one past the cap" do
+    it "binds a large namespace Hash in linear time and refuses one past the cap", :timing do
       xml = Makiri::XML(%(<r xmlns="urn:5"/>))
       big = (0...60_000).to_h { |i| ["p#{i}", "urn:#{i}"] }
-      t = Process.clock_gettime(Process::CLOCK_PROCESS_CPUTIME_ID)
+      t = Process.clock_gettime(Process::CLOCK_MONOTONIC)
       expect(xml.xpath("count(/p5:r)", big)).to eq(1.0)
-      expect(Process.clock_gettime(Process::CLOCK_PROCESS_CPUTIME_ID) - t).to be < 2.0
+      expect(Process.clock_gettime(Process::CLOCK_MONOTONIC) - t).to be < 2.0
       too_big = (0...65_537).to_h { |i| ["p#{i}", "urn:#{i}"] }
       expect { xml.xpath("/r", too_big) }.to raise_error(Makiri::Error, /65537 bindings \(max 65536\)/)
     end
