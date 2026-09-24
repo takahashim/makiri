@@ -423,6 +423,92 @@ Dir.glob(File.join(RUST, "bridge", "**", "*.rs")).sort.each do |path|
   count = comments_removed(File.binread(path)).scan(RUBY_SURFACE).length
   ruby_surface[relative] = count unless count.zero?
 end
+# Every Ruby method the glue registers runs its body inside
+# `bridge::ruby::entry`, so a panic below it raises Makiri::InternalError rather
+# than `fatal`. Wrapping by hand, method by method, left readers like
+# `children`, `[]` and `NodeSet#each` out; so the gate resolves each
+# registration to its function and fails on one whose body does not start with
+# the call. The exemptions are the hooks that exist to test the panic and
+# allocation paths, and the identity methods, which read a pointer.
+ENTRY_EXEMPT = %w[
+  init.rs:panic_probe init.rs:alloc_inject_p init.rs:alloc_inject init.rs:alloc_inject_calls
+  glue/node.rs:node_equals glue/node.rs:node_hash glue/node.rs:node_pointer_id
+].freeze
+
+def module_dir(rel)
+  base = File.basename(rel, ".rs")
+  dir = File.dirname(rel)
+  %w[mod lib].include?(base) || rel == "init.rs" ? (dir == "." ? "" : dir) : File.join(dir, base).sub(%r{\A\./}, "")
+end
+
+def module_file(rust, modpath)
+  ["#{modpath}.rs", "#{modpath}/mod.rs"].find { |c| File.exist?(File.join(rust, c)) }
+end
+
+# The file a registered path names: `read::name` from `glue/html_node/mod.rs`,
+# `crate::glue::node::f`, or a bare name defined here or brought in by `use`.
+def resolve_fn(rust, rel, path, src)
+  parts = path.split("::")
+  name = parts.pop
+  if parts.empty?
+    return [rel, name] if src.match?(/^\s*(?:pub(?:\([^)]*\))?\s+)?fn\s+#{Regexp.escape(name)}\b/)
+
+    src.scan(/^\s*(?:pub\s+)?use\s+([\w:]+)::\{([^}]*)\}|^\s*(?:pub\s+)?use\s+([\w:]+)::(\w+)\s*;/m) do |p1, list, p2, single|
+      if p1 && list.split(",").map(&:strip).include?(name)
+        return resolve_fn(rust, rel, "#{p1}::#{name}", "")
+      elsif p2 && single == name
+        return resolve_fn(rust, rel, "#{p2}::#{name}", "")
+      end
+    end
+    return nil
+  end
+  modpath = if parts.first == "crate"
+              parts.drop(1).join("/")
+            elsif parts.first == "super"
+              File.join(File.dirname(module_dir(rel)), *parts.drop(1))
+            else
+              File.join(module_dir(rel), *parts).sub(%r{\A/}, "")
+            end
+  file = module_file(rust, modpath) or return nil
+  [file, name]
+end
+
+def fn_body_start(src, name)
+  m = src.match(/^\s*(?:pub(?:\([^)]*\))?\s+)?fn\s+#{Regexp.escape(name)}\b[^{]*\{\s*/m) or return nil
+  src[m.end(0), 60]
+end
+
+def unwrapped_entries(rust)
+  missing = []
+  files = Dir.glob(File.join(rust, "glue", "**", "*.rs")) + [File.join(rust, "init.rs")]
+  files.sort.each do |path|
+    rel = path.delete_prefix("#{rust}/")
+    src = File.binread(path)
+    src.scan(/define_(?:singleton_|private_|module_)?(?:method|function)\(\s*(?:"[^"]*"|\w+)\s*,\s*(?:method|function)!\(\s*([\w:]+)\s*,/m) do |(fpath)|
+      file, name = resolve_fn(rust, rel, fpath, src)
+      if file.nil?
+        missing << "#{rel}: cannot resolve #{fpath}"
+        next
+      end
+      next if ENTRY_EXEMPT.include?("#{file}:#{name}")
+
+      body = fn_body_start(File.binread(File.join(rust, file)), name)
+      if body.nil?
+        missing << "#{rel}: no definition of #{name} in #{file}"
+      elsif !body.start_with?("crate::bridge::ruby::entry(", "entry(")
+        missing << "#{file}:#{name}"
+      end
+    end
+  end
+  missing.uniq
+end
+
+unentered = unwrapped_entries(RUST)
+unless unentered.empty?
+  errors << "Ruby methods whose body is not wrapped in bridge::ruby::entry " \
+            "(wrap it, or add it to ENTRY_EXEMPT with the reason): #{unentered.inspect}"
+end
+
 unless ruby_surface.empty?
   errors << "Ruby methods defined or argument lists scanned in bridge/ (they are the glue's): " \
             "#{ruby_surface.inspect}"
@@ -446,4 +532,5 @@ puts "unsafe-boundaries: #{forbidding.length} forbid files; " \
      "#{lexbor_abi.values.sum} Lexbor ABI names outside their layer and " \
      "#{lexbor_decls.values.sum} Lexbor declarations outside lexbor/abi.rs; " \
      "#{ruby_layer.values.sum} Ruby-layer uses inside the engine; " \
-     "#{ruby_surface.values.sum} Ruby methods in bridge/"
+     "#{ruby_surface.values.sum} Ruby methods in bridge/; " \
+     "every registered method but #{ENTRY_EXEMPT.length} exempt runs under entry"

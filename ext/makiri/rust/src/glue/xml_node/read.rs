@@ -43,87 +43,108 @@ fn is_element(d: &XmlDoc, id: NodeId) -> bool {
 
 /* ---- name ---- */
 
-pub fn name(ruby: &Ruby, this: XmlSelf) -> Value {
-    let d = this.doc_ref();
-    let id = this.id;
-    if let Some(n) = d.name_parts(id) {
-        return str_field(ruby, n.qname);
-    }
-    match d.type_(id) {
-        /* A PI's target and a DOCTYPE's name are its `local`. */
-        Some(NodeType::Pi | NodeType::Doctype) => str_field(ruby, d.local(id)),
-        Some(NodeType::Text) => ruby.str_new("text").as_value(),
-        Some(NodeType::CData) => ruby.str_new("#cdata-section").as_value(),
-        Some(NodeType::Comment) => ruby.str_new("comment").as_value(),
-        Some(NodeType::Fragment) => ruby.str_new("#document-fragment").as_value(),
-        _ => ruby.str_new("document").as_value(),
-    }
+pub fn name(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| {
+        let d = this.doc_ref();
+        let id = this.id;
+        if let Some(n) = d.name_parts(id) {
+            return Ok(str_field(ruby, n.qname));
+        }
+        Ok(match d.type_(id) {
+            /* A PI's target and a DOCTYPE's name are its `local`. */
+            Some(NodeType::Pi | NodeType::Doctype) => str_field(ruby, d.local(id)),
+            Some(NodeType::Text) => ruby.str_new("text").as_value(),
+            Some(NodeType::CData) => ruby.str_new("#cdata-section").as_value(),
+            Some(NodeType::Comment) => ruby.str_new("comment").as_value(),
+            Some(NodeType::Fragment) => ruby.str_new("#document-fragment").as_value(),
+            _ => ruby.str_new("document").as_value(),
+        })
+    })
 }
 
 /// `#local_name`: Element and Attribute only.
-pub fn local_name(ruby: &Ruby, this: XmlSelf) -> Value {
-    str_or_nil(ruby, this.doc_ref().name_parts(this.id).map(|n| n.local))
+pub fn local_name(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| {
+        Ok(str_or_nil(
+            ruby,
+            this.doc_ref().name_parts(this.id).map(|n| n.local),
+        ))
+    })
 }
 
 /// `#prefix`: nil when unprefixed - the distinction `#namespace` depends on -
 /// and for any kind but Element and Attribute.
-pub fn prefix(ruby: &Ruby, this: XmlSelf) -> Value {
-    str_or_nil(
-        ruby,
-        this.doc_ref().name_parts(this.id).and_then(|n| n.prefix),
-    )
+pub fn prefix(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| {
+        Ok(str_or_nil(
+            ruby,
+            this.doc_ref().name_parts(this.id).and_then(|n| n.prefix),
+        ))
+    })
 }
 
 /// `#namespace_uri`: nil in no namespace, and for any kind but Element and
 /// Attribute.
-pub fn namespace_uri(ruby: &Ruby, this: XmlSelf) -> Value {
-    str_or_nil(
-        ruby,
-        this.doc_ref().name_parts(this.id).and_then(|n| n.ns_uri),
-    )
+pub fn namespace_uri(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| {
+        Ok(str_or_nil(
+            ruby,
+            this.doc_ref().name_parts(this.id).and_then(|n| n.ns_uri),
+        ))
+    })
 }
 
 /// `Element#tag_name` (DOM `tagName`): the qualified name - XML keeps its case
 /// - or nil for a non-element.
-pub fn tag_name(ruby: &Ruby, this: XmlSelf) -> Value {
-    let d = this.doc_ref();
-    let tag = d.name_parts(this.id).filter(|_| is_element(d, this.id));
-    str_or_nil(ruby, tag.map(|n| n.qname))
+pub fn tag_name(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| {
+        let d = this.doc_ref();
+        let tag = d.name_parts(this.id).filter(|_| is_element(d, this.id));
+        Ok(str_or_nil(ruby, tag.map(|n| n.qname)))
+    })
 }
 
 /// `ProcessingInstruction#target`, or nil for a non-PI.
-pub fn pi_target(ruby: &Ruby, this: XmlSelf) -> Value {
-    let d = this.doc_ref();
-    let target = (d.type_(this.id) == Some(NodeType::Pi)).then(|| d.local(this.id));
-    str_or_nil(ruby, target)
+pub fn pi_target(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| {
+        let d = this.doc_ref();
+        let target = (d.type_(this.id) == Some(NodeType::Pi)).then(|| d.local(this.id));
+        Ok(str_or_nil(ruby, target))
+    })
 }
 
-pub fn node_type(ruby: &Ruby, this: XmlSelf) -> Value {
-    let d = this.doc_ref();
-    let ty = d.type_(this.id).map_or(0, |t| t.as_u32());
-    ruby.integer_from_i64(ty as i64).as_value()
+pub fn node_type(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| {
+        let d = this.doc_ref();
+        let ty = d.type_(this.id).map_or(0, |t| t.as_u32());
+        Ok(ruby.integer_from_i64(ty as i64).as_value())
+    })
 }
 
 /* ---- DTD identifiers ----
  *
  * An omitted id answers nil; an empty literal (`PUBLIC ""`) answers `""`. */
 
-pub fn dtd_external_id(ruby: &Ruby, this: XmlSelf) -> Value {
-    str_or_nil(
-        ruby,
-        this.doc_ref()
-            .doctype_ids(this.id)
-            .and_then(|ids| ids.public),
-    )
+pub fn dtd_external_id(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| {
+        Ok(str_or_nil(
+            ruby,
+            this.doc_ref()
+                .doctype_ids(this.id)
+                .and_then(|ids| ids.public),
+        ))
+    })
 }
 
-pub fn dtd_system_id(ruby: &Ruby, this: XmlSelf) -> Value {
-    str_or_nil(
-        ruby,
-        this.doc_ref()
-            .doctype_ids(this.id)
-            .and_then(|ids| ids.system),
-    )
+pub fn dtd_system_id(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| {
+        Ok(str_or_nil(
+            ruby,
+            this.doc_ref()
+                .doctype_ids(this.id)
+                .and_then(|ids| ids.system),
+        ))
+    })
 }
 
 /* ---- content ---- */
@@ -171,26 +192,28 @@ pub fn content(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
 /// `#value`: an attribute's value; for any other node its text content, as
 /// the HTML `#value` answers.
 pub fn value(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
-    let d = this.doc_ref();
-    if d.type_(this.id) == Some(NodeType::Attribute) {
-        return Ok(str_field(ruby, d.value(this.id)));
-    }
-    content(ruby, this)
+    crate::bridge::ruby::entry(|| {
+        let d = this.doc_ref();
+        if d.type_(this.id) == Some(NodeType::Attribute) {
+            return Ok(str_field(ruby, d.value(this.id)));
+        }
+        content(ruby, this)
+    })
 }
 
 /* ---- navigation ---- */
 
-pub fn parent(this: XmlSelf) -> Value {
-    wrap_rel(this, this.doc_ref().parent(this.id))
+pub fn parent(this: XmlSelf) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| Ok(wrap_rel(this, this.doc_ref().parent(this.id))))
 }
-pub fn next(this: XmlSelf) -> Value {
-    wrap_rel(this, this.doc_ref().next(this.id))
+pub fn next(this: XmlSelf) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| Ok(wrap_rel(this, this.doc_ref().next(this.id))))
 }
-pub fn previous(this: XmlSelf) -> Value {
-    wrap_rel(this, this.doc_ref().prev(this.id))
+pub fn previous(this: XmlSelf) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| Ok(wrap_rel(this, this.doc_ref().prev(this.id))))
 }
-pub fn first_child(this: XmlSelf) -> Value {
-    wrap_rel(this, this.doc_ref().first_child(this.id))
+pub fn first_child(this: XmlSelf) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| Ok(wrap_rel(this, this.doc_ref().first_child(this.id))))
 }
 
 /// The first element from `start` along `step`.
@@ -202,28 +225,45 @@ fn first_element(
     core::iter::successors(start, |&n| step(n)).find(|&n| is_element(d, n))
 }
 
-pub fn next_element(this: XmlSelf) -> Value {
-    let d = this.doc_ref();
-    wrap_rel(this, first_element(d, d.next(this.id), |n| d.next(n)))
+pub fn next_element(this: XmlSelf) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| {
+        let d = this.doc_ref();
+        Ok(wrap_rel(
+            this,
+            first_element(d, d.next(this.id), |n| d.next(n)),
+        ))
+    })
 }
-pub fn previous_element(this: XmlSelf) -> Value {
-    let d = this.doc_ref();
-    wrap_rel(this, first_element(d, d.prev(this.id), |n| d.prev(n)))
+pub fn previous_element(this: XmlSelf) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| {
+        let d = this.doc_ref();
+        Ok(wrap_rel(
+            this,
+            first_element(d, d.prev(this.id), |n| d.prev(n)),
+        ))
+    })
 }
-pub fn first_element_child(this: XmlSelf) -> Value {
-    let d = this.doc_ref();
-    wrap_rel(
-        this,
-        first_element(d, d.first_child(this.id), |n| d.next(n)),
-    )
+pub fn first_element_child(this: XmlSelf) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| {
+        let d = this.doc_ref();
+        Ok(wrap_rel(
+            this,
+            first_element(d, d.first_child(this.id), |n| d.next(n)),
+        ))
+    })
 }
-pub fn last_element_child(this: XmlSelf) -> Value {
-    let d = this.doc_ref();
-    wrap_rel(this, first_element(d, d.last_child(this.id), |n| d.prev(n)))
+pub fn last_element_child(this: XmlSelf) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| {
+        let d = this.doc_ref();
+        Ok(wrap_rel(
+            this,
+            first_element(d, d.last_child(this.id), |n| d.prev(n)),
+        ))
+    })
 }
 
-pub fn get_document(this: XmlSelf) -> Value {
-    this.document
+pub fn get_document(this: XmlSelf) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| Ok(this.document))
 }
 
 /// Collect nodes into a NodeSet.
@@ -241,13 +281,15 @@ fn children_of(d: &XmlDoc, id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
 
 /// `#children`: every child node.
 pub fn children(this: XmlSelf) -> Result<Value, Error> {
-    set_of(this, children_of(this.doc_ref(), this.id))
+    crate::bridge::ruby::entry(|| set_of(this, children_of(this.doc_ref(), this.id)))
 }
 
 /// `#element_children` / `#elements`: the child elements only.
 pub fn element_children(this: XmlSelf) -> Result<Value, Error> {
-    let d = this.doc_ref();
-    set_of(this, children_of(d, this.id).filter(|&n| is_element(d, n)))
+    crate::bridge::ruby::entry(|| {
+        let d = this.doc_ref();
+        set_of(this, children_of(d, this.id).filter(|&n| is_element(d, n)))
+    })
 }
 
 /* ---- attributes ---- */
@@ -260,36 +302,44 @@ fn attrs_of(d: &XmlDoc, id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
 
 /// `#[]` - the attribute's value, or nil.
 pub fn aref(ruby: &Ruby, this: XmlSelf, rb_name: Value) -> Result<Value, Error> {
-    let found = crate::bridge::xml::find_attribute(this, rb_name)?;
-    Ok(str_or_nil(ruby, found.map(|at| this.doc_ref().value(at))))
+    crate::bridge::ruby::entry(|| {
+        let found = crate::bridge::xml::find_attribute(this, rb_name)?;
+        Ok(str_or_nil(ruby, found.map(|at| this.doc_ref().value(at))))
+    })
 }
 
 /// The Attr NODE with that qualified name.
 pub fn attribute_by_qualified_name(this: XmlSelf, rb_name: Value) -> Result<Value, Error> {
-    let a = crate::bridge::xml::find_attribute(this, rb_name)?;
-    Ok(wrap_rel(this, a))
+    crate::bridge::ruby::entry(|| {
+        let a = crate::bridge::xml::find_attribute(this, rb_name)?;
+        Ok(wrap_rel(this, a))
+    })
 }
 
 pub fn attribute_nodes(this: XmlSelf) -> Result<Value, Error> {
-    set_of(this, attrs_of(this.doc_ref(), this.id))
+    crate::bridge::ruby::entry(|| set_of(this, attrs_of(this.doc_ref(), this.id)))
 }
 
 /// `#keys` -> the attribute names, in document order.
 pub fn keys(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
-    let d = this.doc_ref();
-    let ary = ruby.ary_new();
-    for at in attrs_of(d, this.id) {
-        ary.push(str_field(ruby, d.qname(at)))?;
-    }
-    Ok(ary.as_value())
+    crate::bridge::ruby::entry(|| {
+        let d = this.doc_ref();
+        let ary = ruby.ary_new();
+        for at in attrs_of(d, this.id) {
+            ary.push(str_field(ruby, d.qname(at)))?;
+        }
+        Ok(ary.as_value())
+    })
 }
 
 /// `#values` -> the attribute values, in document order.
 pub fn values(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
-    let d = this.doc_ref();
-    let ary = ruby.ary_new();
-    for at in attrs_of(d, this.id) {
-        ary.push(utf8(ruby, d.value(at)))?;
-    }
-    Ok(ary.as_value())
+    crate::bridge::ruby::entry(|| {
+        let d = this.doc_ref();
+        let ary = ruby.ary_new();
+        for at in attrs_of(d, this.id) {
+            ary.push(utf8(ruby, d.value(at)))?;
+        }
+        Ok(ary.as_value())
+    })
 }

@@ -118,11 +118,13 @@ fn canonicalize(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Val
 }
 
 fn no_serialize(ruby: &Ruby, _rb_self: Value, _args: &[Value]) -> Result<Value, Error> {
-    Err(Error::new(
-        ruby.exception_not_imp_error(),
-        "Makiri::XML does not HTML-serialize (to_html / inner_html / outer_html); \
+    crate::bridge::ruby::entry(|| {
+        Err(Error::new(
+            ruby.exception_not_imp_error(),
+            "Makiri::XML does not HTML-serialize (to_html / inner_html / outer_html); \
          use #to_xml for XML output.",
-    ))
+        ))
+    })
 }
 
 /// From `Init_makiri`.

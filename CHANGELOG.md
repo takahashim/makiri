@@ -52,6 +52,11 @@
 
 ### Fixed
 
+* Every Ruby method Makiri defines turns an internal panic into
+  `Makiri::InternalError`. Readers such as `children`, `[]`, `keys`,
+  `NodeSet#each` and `Document#title` still raised `fatal`, which cannot be
+  rescued in the frame that called them. `rake unsafe:boundaries` now fails on
+  a method whose body does not go through `entry`.
 * Namespaces across `import_node` between HTML and XML:
   * HTML to XML reads each attribute's own namespace, as `Attr#namespace_uri`
     does. A parsed `q:y` inside `<svg>` (no namespace) was put in SVG.

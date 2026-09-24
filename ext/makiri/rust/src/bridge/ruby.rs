@@ -251,10 +251,9 @@ pub fn bool_value(v: VALUE) -> Option<bool> {
 /// frame that raised it, so a host with no thread boundary around the call
 /// loses the process; `InternalError` it can catch and turn into a 500.
 ///
-/// Wrapped here rather than at every method: these are the entries that parse
-/// a document, evaluate an expression, or walk a tree built from one - the
-/// places a crafted input reaches. Elsewhere a panic still becomes `fatal`,
-/// which is the right severity for a bug on a path nobody's data reaches.
+/// Every method the glue registers starts with this - `rake unsafe:boundaries`
+/// fails on one that does not, bar its short `ENTRY_EXEMPT` list - so a panic
+/// under any of them is this exception. Elsewhere it is still `fatal`.
 #[inline]
 pub fn entry<T>(f: impl FnOnce() -> Result<T, Error>) -> Result<T, Error> {
     match std::panic::catch_unwind(core::panic::AssertUnwindSafe(f)) {

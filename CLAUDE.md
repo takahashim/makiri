@@ -76,22 +76,21 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   raw `rb_protect` thunks (`exception_message_thunk`, `strict_transcode_thunk`)
   contain only C calls, so there is no Rust there to panic; keep it that way.
 
-  **An entry point exposed to untrusted input raises `Makiri::InternalError`,
-  not `fatal`.** `bridge::ruby::entry` wraps every method a crafted document,
-  expression or stylesheet reaches - parse and fragment, xpath/at_xpath/evaluate,
-  css/at_css/matches?, the serializers, the text readers, the namespace queries,
-  `parse_stylesheet`, and (on both representations) every mutator and factory,
-  `clone_node`/`import_node`, `XPathContext.new` and its setters, `Node#line`,
-  `Attr#parent` and `#<=>`: an HTML document's first mutation or factory call
-  runs the source-position walk, and the rest build an index or walk the tree -
-  and turns a panic
-  there into that exception. It descends from `Exception`, NOT `StandardError`,
-  which is the point: a bare `rescue => e` keeps passing it through, because a
-  broken invariant is not a bad selector, while a host that wants to turn one
-  request into a 500 can catch it WITHOUT a thread boundary to re-raise at (a
-  `fatal` cannot be rescued in its own frame at all). Everywhere else a panic
-  stays `fatal`, which is the right severity on a path nobody's data reaches.
-  Wrap a new entry if it parses, evaluates, or walks a tree built from input.
+  **A Ruby method raises `Makiri::InternalError`, not `fatal`.**
+  `bridge::ruby::entry` wraps the body of EVERY method the glue registers, and
+  turns a panic there into that exception. It used to wrap only the methods
+  judged to reach untrusted input, and the judgement left readers such as
+  `children`, `[]` and `NodeSet#each` out; so `rake unsafe:boundaries` now
+  resolves each registration to its function and fails on one whose body does
+  not start with `entry(`. `ENTRY_EXEMPT` there names the few that stay out -
+  the `__panic` / `__alloc_inject*` test hooks and the identity methods
+  (`==`, `hash`, `pointer_id`) - and a new exemption needs a reason.
+  `InternalError` descends from `Exception`, NOT `StandardError`, which is the
+  point: a bare `rescue => e` keeps passing it through, because a broken
+  invariant is not a bad selector, while a host that wants to turn one request
+  into a 500 can catch it WITHOUT a thread boundary to re-raise at (a `fatal`
+  cannot be rescued in its own frame at all). Outside a registered method - the
+  exempt ones, GC callbacks, init - a panic stays `fatal`.
 
   `clippy::unwrap_used` and `clippy::panic` (in `Cargo.toml`) keep a new panic
   from arriving by accident; a site that wants one carries an `#[allow]` with a
