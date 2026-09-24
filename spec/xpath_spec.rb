@@ -585,6 +585,16 @@ RSpec.describe "Makiri XPath" do
         .to raise_error(Makiri::Error, /unknown namespace prefix/i)
     end
 
+    # Namespaces in XML binds xml by definition, and libxml2 resolves it with
+    # nothing registered; a registration of its own still wins.
+    it "resolves the xml prefix without a registration" do
+      xml = Makiri::XML(%(<r xml:lang="en"/>))
+      expect(xml.xpath("string(//@xml:lang)")).to eq("en")
+      ctx = Makiri::XPathContext.new(xml)
+      ctx.register_namespace("xml", "urn:other")
+      expect(ctx.evaluate("count(//@xml:lang)")).to eq(0.0)
+    end
+
     it "raises on an undefined variable" do
       expect { doc.xpath("//p[@id=$missing]") }
         .to raise_error(Makiri::Error, /undefined variable/i)

@@ -80,11 +80,16 @@ pub struct Names {
 
 impl Names {
     /// The URI registered for `prefix`.
+    ///
+    /// `xml` needs no registration: Namespaces in XML binds it by definition,
+    /// and libxml2 (so Nokogiri) resolves `//@xml:lang` with nothing
+    /// registered. A registration of its own still comes first.
     pub fn lookup_ns(&self, prefix: &[u8]) -> Option<&[u8]> {
         self.ns
             .iter()
             .find(|e| e.prefix.as_slice() == prefix)
             .map(|e| e.uri.as_slice())
+            .or_else(|| (prefix == b"xml").then_some(crate::xml::XML_NS_URI))
     }
 
     /// The URI registered for `prefix`, or the RUNTIME error an expression

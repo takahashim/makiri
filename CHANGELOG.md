@@ -52,6 +52,9 @@
 
 ### Fixed
 
+* XPath resolves the `xml` prefix without a registration (`//@xml:lang`), as
+  Namespaces in XML binds it and Nokogiri answers. It raised "unknown
+  namespace prefix".
 * `Makiri::XML` nodes compare by document order with `<=>`, as HTML nodes
   do, so they sort; `<=>` returned nil for every pair.
 * `XPathContext#register_namespace` reads its arguments as a namespace Hash
