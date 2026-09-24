@@ -94,7 +94,7 @@ rb-sys = { version = "0.9", optional = true }
 # aborting on purpose; see CLAUDE.md.
 #
 # Anything that must be released across a panic is therefore a `Drop`, not a
-# statement after the work. `lexbor::selectors::PanicReset` and
+# statement after the work. `lexbor::selectors::Session` and
 # `post_parse::DocOwner` are the two that had to be converted.
 #
 # overflow-checks stays ON in release: a wrapped size is exactly the class of

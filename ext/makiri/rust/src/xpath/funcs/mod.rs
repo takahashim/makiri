@@ -418,7 +418,8 @@ fn advance_chars(s: &[u8], n: usize) -> usize {
 }
 
 /// A `Vec` sized up front, so a failed allocation is an XPath OOM rather than
-/// the abort a plain `Vec` growth would give under `panic = "abort"`.
+/// the abort a plain `Vec` growth gives (std's allocation failure aborts, it
+/// does not unwind).
 fn try_vec<T>(n: usize, err: ErrSink, what: &str) -> FnResult<Vec<T>> {
     let mut v: Vec<T> = Vec::new();
     if v.falloc_reserve_exact(n).is_err() {
@@ -887,7 +888,7 @@ fn fn_translate<'e, 'd, D: Dom<'d>>(
     };
     /* A character is never shorter than a byte, so the byte length bounds the
      * count - reserving up front keeps a failed allocation an XPath OOM rather
-     * than the abort a growing Vec would give under `panic = "abort"`. */
+     * than the abort a growing Vec gives on allocation failure. */
     /* `from` as (character, its FIRST position), sorted by character, so each
      * input character is a binary search rather than a scan of `from`: that
      * scan was O(string x from), both up to the byte cap. */

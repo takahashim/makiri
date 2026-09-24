@@ -256,22 +256,10 @@ impl<'doc> BuildingNode<'doc> {
     /// source became 22 here). No position is the truthful answer - nil.
     /// Iterative, like every walk over a tree built from input.
     pub fn clear_source_offsets(self) {
-        let root = self.0;
-        let mut cur = Some(root);
+        let mut cur = Some(self);
         while let Some(n) = cur {
-            n.forget_source_offset();
-            cur = n.first_child().or_else(|| {
-                let mut up = n;
-                loop {
-                    if up == root {
-                        return None;
-                    }
-                    if let Some(next) = up.next() {
-                        return Some(next);
-                    }
-                    up = up.parent()?;
-                }
-            });
+            n.0.forget_source_offset();
+            cur = n.preorder_next(self);
         }
     }
 

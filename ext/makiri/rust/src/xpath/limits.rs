@@ -95,6 +95,10 @@ impl Budget {
             ast_nodes: Cell::new(0),
             eval_ops: Cell::new(0),
             recursion_depth: Cell::new(0),
+            /* The engine's one infallible allocation, and a stated exception
+             * to the falloc line: a fixed few dozen bytes per run, before any
+             * input is read, and stable Rust has no fallible `Rc`. Removing
+             * it means a borrowed sink (`ErrSink<'a>`) through every layer. */
             err: Rc::new(RefCell::new(Error::new())),
         }
     }

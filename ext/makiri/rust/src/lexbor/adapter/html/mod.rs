@@ -504,7 +504,7 @@ impl<'doc> HtmlNode<'doc> {
     }
 
     /// Forget this node's source position, so [`source_offset`](Self::source_offset)
-    /// answers None. The third writer of `user`, beside the stamping: see
+    /// answers None. The second writer of `user`, beside the stamping: see
     /// [`BuildingNode::clear_source_offsets`](super::build::BuildingNode::clear_source_offsets).
     pub(crate) fn forget_source_offset(self) {
         // SAFETY: a live node; `user` is not part of the tree's structure.

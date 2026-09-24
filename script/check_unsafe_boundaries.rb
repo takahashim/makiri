@@ -156,7 +156,9 @@ LEXBOR_ABI_COUNTS = {}.freeze
 # reached back up for a `VALUE`, the String borrow rules and `Makiri::Error` - an
 # engine module holding the bridge's invariants, and the path a raise escaped
 # along - so the table is empty and any such use fails.
-ENGINE_DIRS = %w[lexbor/ xml/ xpath/ css/].freeze
+# The crate-root modules the engine is built on sit outside those directories
+# and are held to the same two rules.
+ENGINE_DIRS = %w[lexbor/ xml/ xpath/ css/ cbuf.rs cutf8.rs limits.rs ptr_table.rs text.rs token.rs].freeze
 RUBY_LAYER = /crate::(?:bridge|glue|init)|magnus::/
 RUBY_LAYER_COUNTS = {}.freeze
 
@@ -278,6 +280,11 @@ else
 
   missing = FORBID_FILES - forbidding
   errors << "lost #![forbid(unsafe_code)]: #{missing.inspect}" unless missing.empty?
+  # Two-way, like the islands: a new forbid file is recorded, so a later loss of
+  # it is caught above rather than never having been known.
+  unrecorded = forbidding - FORBID_FILES
+  errors << "unrecorded #![forbid(unsafe_code)] (`rake unsafe:fix`): #{unrecorded.inspect}" \
+    unless unrecorded.empty?
 
   # A whole directory is safe by one inherited attribute, so a stray `allow`
   # under it does not build; the gate only has to keep the root attribute there.
