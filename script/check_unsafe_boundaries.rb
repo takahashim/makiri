@@ -436,7 +436,7 @@ end
 ENTRY_EXEMPT = %w[
   init.rs:panic_probe init.rs:alloc_inject_p init.rs:alloc_inject init.rs:alloc_inject_calls
 ].freeze
-ENTRY_CALL = "crate::bridge::ruby::entry("
+ENTRY_FN = "crate::bridge::ruby::entry"
 
 def module_dir(rel)
   base = File.basename(rel, ".rs")
@@ -456,7 +456,11 @@ def resolve_fn(rust, rel, path, src)
   parts = path.split("::")
   name = parts.pop
   if parts.empty?
-    return [rel, name] if src.match?(fn_def_re(name))
+    imported = src.match?(/^\s*(?:pub\s+)?use\s+[\w:]+::(?:\{[^}]*\b#{Regexp.escape(name)}\b[^}]*\}|#{Regexp.escape(name)}\s*;)/m)
+    local = src.match?(/\bfn\s+#{Regexp.escape(name)}\b/)
+    # Both: which one the macro reaches is Rust's to decide, not this script's.
+    return nil if imported && local
+    return [rel, name] if local
 
     src.scan(/^\s*(?:pub\s+)?use\s+([\w:]+)::\{([^}]*)\}|^\s*(?:pub\s+)?use\s+([\w:]+)::(\w+)\s*;/m) do |p1, list, p2, single|
       if p1 && list.split(",").map(&:strip).include?(name)
@@ -478,32 +482,71 @@ def resolve_fn(rust, rel, path, src)
   [file, name]
 end
 
-# The index of the bracket closing the one at `open`, skipping string, char and
-# comment text; nil when unbalanced.
-def matching_close(src, open)
-  depth = 0
-  i = open
-  while i < src.length
-    c = src[i]
+# `src` with every comment, and the inside of every string and character
+# literal, turned to spaces - line breaks kept, so offsets and line numbers
+# still match. What is left is code only: a `method!(` written in a string or a
+# comment is not seen, and a `"/*"` or `'('` in the code cannot throw a scan
+# off. Handles nested block comments, raw strings (`r#"..."#`, `br"..."`) and
+# tells a char literal from a lifetime.
+def code_only(src)
+  out = src.dup
+  blank = ->(from, to) { (from...to).each { |k| out[k] = " " unless out[k] == "\n" } }
+  i = 0
+  n = src.length
+  while i < n
     if src[i, 2] == "//"
-      i = (src.index("\n", i) || src.length)
-      next
+      j = src.index("\n", i) || n
+      blank.(i, j)
+      i = j
     elsif src[i, 2] == "/*"
-      i = (src.index("*/", i) || src.length) + 2
-      next
-    elsif c == '"'
-      i += 1
-      i += (src[i] == "\\" ? 2 : 1) while i < src.length && src[i] != '"'
-    elsif c == "'" && (m = src[i..].match(/\A'(?:\\.|[^\\'])'/))
+      depth = 0
+      j = i
+      while j < n
+        if src[j, 2] == "/*"
+          depth += 1
+          j += 2
+        elsif src[j, 2] == "*/"
+          depth -= 1
+          j += 2
+          break if depth.zero?
+        else
+          j += 1
+        end
+      end
+      blank.(i, j)
+      i = j
+    elsif (m = src[i..].match(/\A(?<![\w])b?r(#*)"/)) && (i.zero? || src[i - 1] !~ /\w/)
+      close = "\"" + m[1]
+      j = src.index(close, i + m[0].length) || n
+      blank.(i + m[0].length, j)
+      i = j + close.length
+    elsif src[i] == '"'
+      j = i + 1
+      j += (src[j] == "\\" ? 2 : 1) while j < n && src[j] != '"'
+      blank.(i + 1, j)
+      i = j + 1
+    elsif src[i] == "'" && (m = src[i..].match(/\A'(?:\\u\{[0-9a-fA-F]+\}|\\.|[^\\'\n])'/))
+      blank.(i + 1, i + m[0].length - 1)
       i += m[0].length
-      next
-    elsif "([{".include?(c)
+    else
+      i += 1
+    end
+  end
+  out
+end
+
+# The index of the bracket closing the one at `open` in CODE (see
+# `code_only`); nil when unbalanced.
+def matching_close(code, open)
+  depth = 0
+  (open...code.length).each do |i|
+    c = code[i]
+    if "([{".include?(c)
       depth += 1
     elsif ")]}".include?(c)
       depth -= 1
       return i if depth.zero?
     end
-    i += 1
   end
   nil
 end
@@ -512,25 +555,42 @@ end
 # or nil when it is: exactly one definition, whose whole body is one
 # `crate::bridge::ruby::entry(...)` call.
 def entry_violation(src, name)
-  src = comments_removed(src)
+  code = code_only(src)
   # Anywhere, not just at a line start, so a same-named fn tucked into a
   # one-line `mod` still counts as a second definition.
-  defs = src.to_enum(:scan, /\bfn\s+#{Regexp.escape(name)}\b/).map { Regexp.last_match }
+  defs = code.to_enum(:scan, /\bfn\s+#{Regexp.escape(name)}\b/).map { Regexp.last_match }
   return "no definition" if defs.empty?
   return "#{defs.length} definitions" if defs.length > 1
 
-  open = src.index("{", defs.first.end(0)) or return "no body"
-  close = matching_close(src, open) or return "unbalanced body"
-  body = src[(open + 1)...close].strip
-  return "body does not start with #{ENTRY_CALL}" unless body.start_with?(ENTRY_CALL)
+  open = code.index("{", defs.first.end(0)) or return "no body"
+  close = matching_close(code, open) or return "unbalanced body"
+  body = code[(open + 1)...close].strip
+  # The call, with a closure or a bare function as its argument - both run
+  # inside the catch. `entry(make(x))` would build its value before it.
+  m = body.match(/\A#{Regexp.escape(ENTRY_FN)}\s*\(\s*(?:(?:move\s*)?\||[\w:]+\s*\))/)
+  return "body is not #{ENTRY_FN}(|| ...) or #{ENTRY_FN}(a_fn)" unless m
 
-  call_close = matching_close(body, ENTRY_CALL.length - 1)
+  call_close = matching_close(body, body.index("(", ENTRY_FN.length))
   return nil if call_close && body[(call_close + 1)..].strip.empty?
 
-  "code outside the #{ENTRY_CALL}...) call"
+  "code outside the #{ENTRY_FN}(...) call"
 end
 
-REGISTRATION = /\b(?:magnus::)?(?:method|function)!\(\s*([^,()]+?)\s*,/
+REGISTRATION = /\b(?:[\w:]*::)?(?:method|function)!\s*\(/
+
+# The first argument of the macro call whose `(` is at `open` in `code`: the
+# text up to its first top-level comma. nil when the call is not closed.
+def first_argument(code, open)
+  close = matching_close(code, open) or return nil
+  depth = 0
+  ((open + 1)...close).each do |i|
+    c = code[i]
+    depth += 1 if "([{".include?(c)
+    depth -= 1 if ")]}".include?(c)
+    return code[(open + 1)...i].strip if c == "," && depth.zero?
+  end
+  code[(open + 1)...close].strip
+end
 
 def unwrapped_entries(rust)
   missing = []
@@ -539,12 +599,19 @@ def unwrapped_entries(rust)
   files.sort.each do |path|
     rel = path.delete_prefix("#{rust}/")
     src = File.binread(path)
-    comments_removed(src).scan(REGISTRATION) do |(fpath)|
-      unless fpath.match?(/\A[\w:]+\z/)
+    code = code_only(src)
+    # A renamed macro (`use magnus::method as m`) would register unseen.
+    if code.match?(/\b(?:method|function)\s+as\s+\w+/)
+      missing << "#{rel}: magnus's method!/function! imported under another name"
+    end
+    code.to_enum(:scan, REGISTRATION).each do
+      m = Regexp.last_match
+      fpath = first_argument(code, m.end(0) - 1)
+      unless fpath&.match?(/\A[\w:]+\z/)
         missing << "#{rel}: registration of `#{fpath}` is not a function path"
         next
       end
-      file, name = resolve_fn(rust, rel, fpath, src)
+      file, name = resolve_fn(rust, rel, fpath, code)
       if file.nil?
         missing << "#{rel}: cannot resolve #{fpath}"
         next
