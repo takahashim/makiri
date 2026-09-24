@@ -40,6 +40,10 @@ use crate::lexbor::abi::HtmlParser;
 /// empty. Walk source and clone in lockstep (deep import preserves child order
 /// 1:1) and import each template's content into the clone's.
 ///
+/// The same lockstep walk gives each copied element the name its source
+/// records as written, which Lexbor's copy also leaves out
+/// (`BuildingNode::copy_written_name_from`).
+///
 /// Iterative, with an explicit worklist: an adversarially deep fragment must not
 /// be able to overflow the stack. Best-effort on allocation failure, as the C
 /// was - a template whose content could not be copied is left empty rather than
@@ -65,6 +69,9 @@ fn fixup_template_content(
             /* Nested rather than a tuple: the clone-side test is only worth
              * paying for once the source side has said this is a template, and
              * every node of every deep import passes through here. */
+            if !c.copy_written_name_from(s) {
+                return Err(());
+            }
             if let Some((sc, cc)) = s
                 .template_content()
                 .and_then(|sc| Some((sc, c.template_content()?)))
@@ -277,6 +284,9 @@ unsafe fn import_raw(doc: RawDoc, src: *mut LxbNode, deep: bool) -> Option<*mut 
     };
     let himp = hdoc.import_node(hsrc, deep)?;
     let imp = himp.as_raw();
+    if !deep && !himp.copy_written_name_from(hsrc) {
+        return None;
+    }
     if deep && fixup_template_content(hdoc, hsrc, himp).is_err() {
         // A copy whose <template> lost its contents is a wrong answer, not a
         // degraded one: `<template><i>x</i></template>` comes back as

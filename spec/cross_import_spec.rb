@@ -356,6 +356,17 @@ RSpec.describe "cross-kind import_node" do
     end
   end
 
+  # Lexbor's copy keeps an element's tag but not the name as written, so a
+  # dup or clone of SVG came back lower-cased and a prefixed name lost its
+  # prefix.
+  it "keeps written names through dup, clone and HTML-to-HTML import" do
+    html = Makiri::HTML(%(<body><svg><linearGradient/><foreignObject/></svg></body>))
+    body = html.at_css("body")
+    expect(body.dup(1).inner_html).to eq(body.inner_html)
+    bar = html.import_node(Makiri::XML(%(<r xmlns:q="urn:q"><q:Bar/></r>)).at_xpath("//*[local-name()='Bar']"), true)
+    expect([bar.clone_node(true).name, Makiri.HTML("<p></p>").import_node(bar, true).name]).to eq(%w[q:Bar q:Bar])
+  end
+
   describe "a prefixed XML element crossing into HTML" do
     it "keeps its prefix out of its local name, and comes back as it was" do
       xml = Makiri::XML(%(<r xmlns:p="urn:p"><p:e p:a="1" b="2"><p:f/></p:e></r>))

@@ -322,6 +322,33 @@ impl<'doc> BuildingNode<'doc> {
         }
     }
 
+    /// Give this copy of `src` the name `src` records as written, which
+    /// Lexbor's copy leaves behind (`lxb_dom_element_interface_copy` copies the
+    /// tag, not the spelling): a copied SVG `linearGradient` read
+    /// `lineargradient`, and `p:Bar` read `bar`. Nothing to do for a node
+    /// with no written name. `false` when Lexbor could not store it.
+    pub fn copy_written_name_from(self, src: HtmlNode<'_>) -> bool {
+        let (Some(from), Some(to)) = (src.element(), self.0.element()) else {
+            return true;
+        };
+        if !from.has_written_name() {
+            return true;
+        }
+        let name = from.qualified_name();
+        // SAFETY: an element being built, in no tree yet; the name is copied
+        // into this document's tag table.
+        let st = unsafe {
+            lxb::lxb_dom_element_qualified_name_set(
+                to.raw(),
+                core::ptr::null(),
+                0,
+                name.as_ptr(),
+                name.len(),
+            )
+        };
+        st == lxb::consts::STATUS_OK
+    }
+
     /// Where this node's CHILDREN attach: a `<template>`'s content fragment,
     /// the node itself otherwise.
     #[inline]

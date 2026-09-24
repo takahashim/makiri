@@ -738,6 +738,13 @@ impl<'doc> HtmlElement<'doc> {
         // SAFETY: a live element.
         unsafe { named(self.raw(), lxb::lxb_dom_element_qualified_name) }
     }
+    /// Whether the element records its name as written beside its lower-cased
+    /// tag (an SVG `linearGradient`, a prefixed `p:Foo`) - then
+    /// [`qualified_name`](Self::qualified_name) is that spelling.
+    pub fn has_written_name(self) -> bool {
+        // SAFETY: a live element.
+        unsafe { (*self.raw()).qualified_name != 0 }
+    }
     pub fn local_name(self) -> &'doc [u8] {
         // SAFETY: a live element.
         unsafe { named_mut(self.raw(), lxb::lxb_dom_element_local_name) }

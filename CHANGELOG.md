@@ -68,6 +68,10 @@
 
 ### Fixed
 
+* `dup`, `clone_node` and HTML-to-HTML `import_node` keep an element's name as
+  written: a copied SVG `linearGradient` came back `lineargradient`, and a
+  prefixed `q:Bar` came back `bar` (Lexbor's copy keeps the tag, not the
+  spelling).
 * `XML::Node#canonicalize` of a detached element refuses an attribute whose
   namespace was given with `set_attribute_ns` and cannot be written as it is;
   it wrote the attribute under whatever its prefix meant there, or without
