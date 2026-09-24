@@ -68,6 +68,12 @@
 
 ### Fixed
 
+* `XML::Node#[]=` on an attribute the element already has changes its value
+  and nothing else, as the DOM's `setAttribute` does. It re-derived the
+  attribute's namespace from the current scope, which could give it the key
+  of another attribute - `to_xml` then wrote two attributes with one
+  (namespace, local name), which does not parse - and dropped a namespace
+  `set_attribute_ns` had given.
 * A namespace Hash given to a query is read as a Hash, not through a `to_a`
   a subclass may redefine (a non-pair raised `Makiri::InternalError`), and
   each prefix and URI is read with `String()`, preferring `to_str`, as other

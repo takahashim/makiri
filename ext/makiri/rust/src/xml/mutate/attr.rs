@@ -92,20 +92,23 @@ pub fn set_attribute(
     if !val.is_empty() && !validate_chars(val) {
         return Err(MutStatus::BadChars);
     }
-    let connected = doc.is_connected(el);
-    let r = resolve_ns(doc, Some(el), name, &sp, true, connected)?;
-    /* an existing attribute with the same raw QName -> replace its value */
+    /* An attribute with this qualified name gets the value and nothing else,
+     * as the DOM's setAttribute does: its namespace is its own, decided when
+     * it was named. Re-deriving it here gave a second attribute the key of
+     * another (`q:x` moved under a scope where `q` meant another attribute's
+     * namespace), silently, and dropped a namespace set_attribute_ns gave. */
     let mut tail = None;
     let mut a = doc.attrs(el);
     while let Some(attr) = a {
         if doc.qname(attr) == name {
             arena(doc.set_value_bytes(attr, val))?;
-            r.write_attr(doc, attr);
             return Ok(attr);
         }
         tail = Some(attr);
         a = doc.next(attr);
     }
+    let connected = doc.is_connected(el);
+    let r = resolve_ns(doc, Some(el), name, &sp, true, connected)?;
     /* No attribute has this QName, but one may have its key under another
      * prefix for the same URI (p:a beside q:a, both bound to one URI). A
      * pending one has no key yet: the insertion that decides it checks. */
