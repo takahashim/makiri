@@ -1,6 +1,5 @@
 //! The XPath 1.0 Number production, read and written (the write is `string()`'s
 //! number rule, §4.2).
-#![forbid(unsafe_code)]
 //!
 //! Both halves of one grammar, so they sit together: a change to what counts as
 //! a Number is a change to both.
@@ -12,6 +11,8 @@
 //! comma-decimal locale. Rust's `f64` parser is locale-independent and
 //! correctly rounded, so the scan below is still the grammar gate but the
 //! conversion has no fallback to get wrong.
+
+#![forbid(unsafe_code)]
 
 #[inline]
 fn is_digit(b: u8) -> bool {
@@ -105,6 +106,13 @@ fn strip_zeros(s: &[u8]) -> &[u8] {
 
 /// Write `d` the way XPath's `string()` does (§4.2): an integral value in
 /// range prints as an integer, everything else as C's `%.15g`.
+///
+/// That is libxml2's rule, and deliberately so: §4.2 asks for as many digits as
+/// it takes to tell the value apart from its neighbours, which `%.15g` is not
+/// (`1 div 3` is `0.333333333333333`, fifteen digits, where the shortest
+/// string that reads back as the same double has sixteen). It is kept because Nokogiri answers with these bytes - checked on
+/// `1 div 3`, `0.1 + 0.2`, `1e23`, `1e-7`, `12345678901234567` and `1e-21` -
+/// and a caller moving from it compares strings, not values.
 ///
 /// Returns the byte length, or None if `out` was too small - which the caller
 /// turns into an INTERNAL error rather than emitting a truncated number.

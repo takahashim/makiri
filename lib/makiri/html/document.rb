@@ -26,6 +26,10 @@ module Makiri
       # itself produce, e.g. a foster-parented table cell, may be re-normalised on
       # re-parse; a freshly parsed document round-trips unchanged.) Any level
       # argument is ignored. #clone is this too (see {CloneViaDup}).
+      #
+      # Node#line on the copy is the line in the SERIALISED text it was parsed
+      # from, not in the original source: `to_html` does not keep the original
+      # line breaks between tags, so the two differ.
       def dup(*)
         self.class.parse(to_html)
       end

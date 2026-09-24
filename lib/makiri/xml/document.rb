@@ -28,7 +28,9 @@ module Makiri
       # imported node by node instead. Any level argument is ignored, and
       # #clone is this too (see {CloneViaDup}).
       #
-      # The copy is parsed with the default +max_bytes+, not the original's.
+      # The copy is parsed with the default +max_bytes+, not the original's, and
+      # its Node#line numbers are lines of the serialised text, which can
+      # differ from the original source's.
       #
       # @return [Makiri::XML::Document]
       def dup(*)
