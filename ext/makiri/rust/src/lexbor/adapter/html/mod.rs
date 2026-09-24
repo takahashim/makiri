@@ -782,6 +782,21 @@ impl<'doc> HtmlElement<'doc> {
     /// Lexbor's lookup, by local name and lower-cased for HTML. `None` when
     /// Lexbor could not store it.
     fn put_attribute(self, name: &[u8], value: &[u8]) -> Option<HtmlAttr<'doc>> {
+        /* An attribute the element already has gets its value here, not in
+         * `lxb_dom_element_set_attribute`: when storing the value fails, that
+         * DESTROYS the attribute while it is still in the element's list - a
+         * dangling link in the tree, and a freed node under whatever Ruby
+         * wrapper holds it. A failure here leaves the attribute as it was.
+         * The lookup is the one set_attribute makes, so the same attribute is
+         * found. */
+        // SAFETY: a live element; `name` is only read.
+        let found =
+            unsafe { lxb::lxb_dom_element_attr_is_exist(self.raw(), name.as_ptr(), name.len()) };
+        if let Some(at) = HtmlNode::link(found as *mut LxbNode).map(HtmlAttr) {
+            return at.set_value(value).then_some(at);
+        }
+        /* Only the create path is left, where a failure destroys an attribute
+         * nothing links to yet. */
         // SAFETY: a live element its caller may change; both slices are read
         // and copied by Lexbor before anything else runs.
         let at = unsafe {

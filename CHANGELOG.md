@@ -9,6 +9,10 @@
   wrapper may still hold one: the wrapper then read freed memory, and the next
   node allocated there came back under it - a text node answering as an
   Element or an Attr. They detach now, as every other mutator does.
+* `el[name] = value` on an attribute the element already has no longer goes
+  through `lxb_dom_element_set_attribute`, which destroys the attribute - still
+  linked into the element - when storing the new value runs out of memory. The
+  value is set directly, and a failure leaves the attribute as it was.
 * A checked argument String is locked while its bytes are borrowed. A call
   converts its arguments one at a time, and a later argument's `#to_s` could
   rewrite an earlier one - putting a NUL into a name that had passed its
