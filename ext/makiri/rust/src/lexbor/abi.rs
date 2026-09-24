@@ -72,15 +72,13 @@ impl Drop for HtmlParser {
 pub struct TransientDoc(core::ptr::NonNull<lxb_html_document_t>);
 
 impl TransientDoc {
-    /// The document `node` was parsed into.
+    /// Own `doc`, the document a fragment parse built its root in.
     ///
     /// # Safety
-    /// `node` must be a live node whose owner document is the transient one -
-    /// the root a fragment parse just returned - and must not be destroyed by
-    /// anything else.
-    pub unsafe fn of(node: *mut lxb_dom_node_t) -> Option<TransientDoc> {
-        core::ptr::NonNull::new((*node).owner_document as *mut lxb_html_document_t)
-            .map(TransientDoc)
+    /// `doc` must be that transient document - read from the root a fragment
+    /// parse just returned - and nothing else may destroy it.
+    pub unsafe fn own(doc: *mut lxb_dom_document_t) -> Option<TransientDoc> {
+        core::ptr::NonNull::new(doc as *mut lxb_html_document_t).map(TransientDoc)
     }
 }
 

@@ -123,10 +123,10 @@ unsafe fn import_fragment_children(doc: RawDoc, root: RawNode, into: RawNode) ->
     let Some(into) = BuildingNode::from_raw(into.as_ptr() as *mut LxbNode) else {
         return false;
     };
-    let mut f = (*(root.as_ptr() as *mut LxbNode)).first_child;
-    while !f.is_null() {
-        let next = (*f).next; /* import does not unlink f, but be safe */
-        match import_raw(doc, f, true) {
+    let mut f = root.as_node().first_child();
+    while let Some(child) = f {
+        let next = child.next(); /* import does not unlink it, but be safe */
+        match import_raw(doc, child.as_raw(), true) {
             Some(imp) => {
                 /* A node import just made in `doc`, not yet in any tree. */
                 if let Some(imp) = BuildingNode::from_raw(imp.cast()) {
@@ -172,7 +172,7 @@ impl TransientFragment {
          * destroying it would free the target's. */
         let _doc = match context {
             FragmentContext::Element(_) => {
-                crate::lexbor::abi::TransientDoc::of(root.as_ptr() as *mut LxbNode)
+                crate::lexbor::abi::TransientDoc::own(root.as_node().owner_document().as_raw())
             }
             FragmentContext::Tag { .. } => None,
         };
