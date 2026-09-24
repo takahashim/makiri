@@ -212,8 +212,6 @@ impl XPathCtx {
         self.ctx.limits()
     }
 
-    /// Bind `prefix` to `uri` for every later evaluate, for bytes a caller has
-    /// already put through the text contract (`glue::query::bind_pair`).
     /// Refused while an evaluate on this context runs - checked before a
     /// binding's arguments are converted, as well as at the change.
     pub fn ensure_idle(&self) -> Result<(), Error> {
@@ -223,6 +221,8 @@ impl XPathCtx {
         Ok(())
     }
 
+    /// Bind `prefix` to `uri` for every later evaluate, for bytes a caller has
+    /// already put through the text contract (`glue::query::bind_pair`).
     pub fn bind_namespace(&self, prefix: &[u8], uri: &[u8]) -> Result<(), Error> {
         if self.ctx.is_evaluating() {
             return Err(refused(ContextError::Evaluating, NS_BUSY, NS_FAILED));

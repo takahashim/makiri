@@ -167,12 +167,29 @@ fn bind_each(
     mut register: impl FnMut(&[u8], &[u8]) -> Result<(), Error>,
     cap: usize,
 ) -> Result<(), Error> {
-    /* Read the Hash itself, not through `to_a`, which a subclass can redefine
-     * to hand back anything - a non-pair used to trip an `expect`. */
+    /* The pairs are copied out first and bound after. Read from the Hash
+     * itself, not through a `to_a` a subclass can redefine (a non-pair tripped
+     * an `expect`); and bound outside the walk, because binding converts with
+     * the caller's `to_s`: inside `foreach` a panic in it became `fatal` - the
+     * walk runs under magnus's own `protect` - and a `to_s` that added a key
+     * to the same Hash raised "can't add a new key into hash during
+     * iteration". The copy runs no Ruby code of the caller's. */
+    let ruby = Ruby::get().map_err(|_| makiri_error("Ruby is not available here"))?;
+    let pairs = ruby.ary_new_capa(h.len() * 2);
     h.foreach(|prefix: Value, uri: Value| {
-        bind_pair(prefix, uri, cap, &mut register)?;
+        pairs.push(prefix)?;
+        pairs.push(uri)?;
         Ok(magnus::r_hash::ForEach::Continue)
-    })
+    })?;
+    for i in (0..pairs.len()).step_by(2) {
+        bind_pair(
+            pairs.entry(i as isize)?,
+            pairs.entry(i as isize + 1)?,
+            cap,
+            &mut register,
+        )?;
+    }
+    Ok(())
 }
 
 /// Bind one `prefix => uri` pair through `register` - the one reading of a
@@ -180,20 +197,19 @@ fn bind_each(
 /// `#register_namespace` alike, so all three convert, check, cap and word a
 /// refusal the same way.
 ///
-/// Both are converted with `to_s` FIRST, and only then checked: a conversion
-/// is Ruby code, and a view of the first held across the second's `to_s` is
-/// what let that code rewrite a checked prefix.
+/// Both are converted FIRST (`String()`: a String as it is, else `to_str`, else
+/// `to_s`), and only then checked: a conversion is Ruby code, and a view of the
+/// first held across the second's conversion is what let that code rewrite a
+/// checked prefix.
 pub fn bind_pair(
     prefix: Value,
     uri: Value,
     cap: usize,
     mut register: impl FnMut(&[u8], &[u8]) -> Result<(), Error>,
 ) -> Result<(), Error> {
-    /* `String(x)`: a String as it is, else `to_str`, else `to_s` - how every
-     * other argument is read. */
     let ks = crate::bridge::ruby::string_of(prefix)?;
     let vs = crate::bridge::ruby::string_of(uri)?;
-    /* Both are the Strings `to_s` just returned, and the checks allocate
+    /* Both are the Strings the conversion returned, and the checks allocate
      * nothing, so the views stay valid through the registration below. */
     let (pv, uv) =
         ruby_try_verified_text_pair(ks.as_value(), vs.as_value(), cap).map_err(|reason| {
