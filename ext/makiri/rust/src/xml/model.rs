@@ -364,9 +364,6 @@ pub struct Document {
     pub arena_bytes: usize,
     pub max_bytes: usize,
     pub max_nodes: usize,
-    /// The first failure the arena hit, sticky until the document is dropped.
-    /// [`Status::Ok`] until something fails.
-    pub status: Status,
     pub root: Option<NodeId>,
     pub doc_node: NodeId,
     pub doctype: Option<NodeId>,
@@ -386,7 +383,6 @@ impl Document {
             arena_bytes: 0,
             max_bytes: MAX_BYTES,
             max_nodes: MAX_NODES,
-            status: Status::Ok,
             root: None,
             doc_node: NodeId::INVALID,
             doctype: None,

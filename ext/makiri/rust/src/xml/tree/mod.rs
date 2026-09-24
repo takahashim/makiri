@@ -16,7 +16,7 @@ mod scope;
 use crate::falloc::Reserve;
 use crate::xml::chars::{is_reserved_pi_target, normalize_newlines, ExpandMode};
 use crate::xml::qname::{split_scanned, xmlns_prefix, Split};
-use crate::xml::{Document, Limits, Link, NodeId, NodeType, Span, Status, MAX_ATTRS, MAX_DEPTH};
+use crate::xml::{Document, Limits, NodeId, NodeType, Span, Status, MAX_ATTRS, MAX_DEPTH};
 use cursor::{is_space, Cursor, InSlice, R};
 use dtd::{scan_external_id, Declared, ExternalId, Subset};
 use scope::{Frame, Scope, ScopeFull};
@@ -271,11 +271,7 @@ impl<'a> Parser<'a> {
             let val = self.cur.slice(r.val);
             let v = self.expand(val, ExpandMode::Attr)?;
             self.doc.node_mut(attr).value = v;
-            self.doc.set_parent(attr, Some(el));
-            match tail {
-                None => self.doc.node_mut(el).attrs = Link::of(attr),
-                Some(t) => self.doc.node_mut(t).next = Link::of(attr),
-            }
+            self.doc.link_attr(el, tail, attr);
             tail = Some(attr);
         }
         /* §9.3: no two attributes share (namespace URI, local name) */

@@ -142,7 +142,6 @@ fn a_thousand_children_link_into_one_chain() {
         c = doc.next(id);
     }
     assert_eq!(cnt, 1000, "every appended child is reachable by `next`");
-    assert_eq!(doc.status, Status::Ok, "no failure was latched");
 }
 
 #[test]
@@ -151,11 +150,11 @@ fn a_byte_budget_already_spent_refuses_the_next_node() {
     /* Not reachable through the public API: the budget is lowered to what the
      * document has ALREADY charged, so there is no room for one more node. */
     doc.max_bytes = doc.arena_bytes;
-    assert!(
-        doc.new_node(NodeType::Element).is_err(),
-        "no room left for a node"
+    assert_eq!(
+        doc.new_node(NodeType::Element).err(),
+        Some(Status::Limit),
+        "no room left for a node, and the reason is the budget"
     );
-    assert_eq!(doc.status, Status::Limit, "and the reason is the budget");
 }
 
 #[test]
@@ -163,8 +162,8 @@ fn the_byte_budget_is_enforced_inside_the_allocator() {
     let mut doc = doc_new();
     doc.max_bytes = 4096;
     for _ in 0..100_000 {
-        if doc.new_node(NodeType::Element).is_err() {
-            assert_eq!(doc.status, Status::Limit);
+        if let Err(st) = doc.new_node(NodeType::Element) {
+            assert_eq!(st, Status::Limit);
             return;
         }
     }
@@ -176,8 +175,8 @@ fn the_node_budget_is_enforced() {
     let mut doc = doc_new();
     doc.max_nodes = 10;
     for _ in 0..100 {
-        if doc.new_node(NodeType::Element).is_err() {
-            assert_eq!(doc.status, Status::Limit);
+        if let Err(st) = doc.new_node(NodeType::Element) {
+            assert_eq!(st, Status::Limit);
             return;
         }
     }
