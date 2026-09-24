@@ -226,8 +226,6 @@ fn init_mutate() {
     }
     m.define_method("content=", method!(mutate::set_content, 1))
         .expect("#content=");
-    m.define_method("name=", method!(mutate::set_name, 1))
-        .expect("#name=");
 
     doc.define_method("create_element", method!(mutate::create_element, 1))
         .expect("#create_element");

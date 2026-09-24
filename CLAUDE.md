@@ -64,8 +64,10 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   tables is undefined behaviour - so the callback catches the panic, latches it
   and returns the stop status, and the caller re-raises once C has unwound.
   `caught::PanicLatch` is that, and it is deliberately the same shape the
-  callbacks already used for the node cap and OOM. It is installed in all nine:
-  the CSS traversal (`find_cb`/`first_cb`/`match_cb`), both serializer sinks,
+  callbacks already used for the node cap and OOM. It is installed in all eight:
+  the CSS traversal (`find_cb`/`first_cb`/`match_cb`), the serializer sink
+  (`lexbor::chunks::chunk_cb`, one generic function for the HTML and stylesheet
+  serializers),
   the tokenizer's `pos_token_cb`, `bridge::gvl`'s trampoline (which carries the
   whole parser), and - covering every `rb_protect` at once, since magnus runs
   the closure inside its own `extern "C"` trampoline - `bridge::ruby::protect`.
@@ -76,22 +78,22 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   raw `rb_protect` thunks (`exception_message_thunk`, `strict_transcode_thunk`)
   contain only C calls, so there is no Rust there to panic; keep it that way.
 
-  **An entry point exposed to untrusted input raises `Makiri::InternalError`,
-  not `fatal`.** `bridge::ruby::entry` wraps every method a crafted document,
-  expression or stylesheet reaches - parse and fragment, xpath/at_xpath/evaluate,
-  css/at_css/matches?, the serializers, the text readers, the namespace queries,
-  `parse_stylesheet`, and (on both representations) every mutator and factory,
-  `clone_node`/`import_node`, `XPathContext.new` and its setters, `Node#line`,
-  `Attr#parent` and `#<=>`: an HTML document's first mutation or factory call
-  runs the source-position walk, and the rest build an index or walk the tree -
-  and turns a panic
-  there into that exception. It descends from `Exception`, NOT `StandardError`,
-  which is the point: a bare `rescue => e` keeps passing it through, because a
-  broken invariant is not a bad selector, while a host that wants to turn one
-  request into a 500 can catch it WITHOUT a thread boundary to re-raise at (a
-  `fatal` cannot be rescued in its own frame at all). Everywhere else a panic
-  stays `fatal`, which is the right severity on a path nobody's data reaches.
-  Wrap a new entry if it parses, evaluates, or walks a tree built from input.
+  **A Ruby method raises `Makiri::InternalError`, not `fatal`.**
+  `bridge::ruby::entry` wraps the body of EVERY method the glue registers, and
+  turns a panic there into that exception. It used to wrap only the methods
+  judged to reach untrusted input, and the judgement left readers such as
+  `children`, `[]` and `NodeSet#each` out; so `rake unsafe:boundaries` finds
+  every `method!`/`function!` in the glue (a registration table included),
+  resolves it to its one definition, and fails unless the whole body is a
+  `crate::bridge::ruby::entry(...)` call. `ENTRY_EXEMPT` there names the few
+  that stay out - the `__panic` / `__alloc_inject*` test hooks - and a new
+  exemption needs a reason.
+  `InternalError` descends from `Exception`, NOT `StandardError`, which is the
+  point: a bare `rescue => e` keeps passing it through, because a broken
+  invariant is not a bad selector, while a host that wants to turn one request
+  into a 500 can catch it WITHOUT a thread boundary to re-raise at (a `fatal`
+  cannot be rescued in its own frame at all). Outside a registered method - the
+  exempt ones, GC callbacks, init - a panic stays `fatal`.
 
   `clippy::unwrap_used` and `clippy::panic` (in `Cargo.toml`) keep a new panic
   from arriving by accident; a site that wants one carries an `#[allow]` with a
@@ -162,6 +164,9 @@ git submodule update --init        # fresh clone only
 bundle install
 bundle exec rake compile           # builds vendored Lexbor static lib, then the crate
 bundle exec rake spec
+bundle exec rake rust:test         # Ruby-free core tests, Lexbor-feature tests, fuzz-crate check
+bundle exec rake lint              # cargo clippy --all-features -D warnings + cargo fmt --check
+bundle exec rake unsafe:boundaries # reviewed unsafe islands and safe-module boundaries
 bundle exec rake clean             # wipe the build dir (regenerates the Makefile next compile)
 bundle exec rake clean:lexbor      # wipe vendor/lexbor/{build,dist} (full Lexbor rebuild)
 bundle exec ruby -Ilib -r makiri -e 'p Makiri::VERSION'   # smoke load
@@ -187,7 +192,9 @@ bundle exec rake leaks             # macOS malloc-leak gate (ASan runs detect_le
 bundle exec rake oom               # OOM-injection sweep: rebuilds with
                                    # MAKIRI_ALLOC_INJECT=1 and fails each core alloc
                                    # site in turn - every OOM branch must fail closed
-                                   # (clean raise or baseline-identical result)
+                                   # (clean raise or baseline-identical result), then
+                                   # reuses the same document/context after GC.compact.
+                                   # Prefix with MAKIRI_SANITIZE=address to combine ASan.
 bundle exec rake "sanitize:lexbor" # also build vendored Lexbor under ASan+UBSan (mraw-arena
                                    # overflows). LINUX ONLY: Apple clang's ASan ABI
                                    # does not match rustc's runtime (load segfault)
@@ -387,7 +394,7 @@ by the check that concluded "every undefined symbol is legitimate".
   so a write past one node/bytes/scratch cut hits poisoned memory and ASan
   reports it. It auto-activates under any address-sanitized build - no extra
   flag, unlike Lexbor - and is a no-op otherwise. So plain `rake sanitize` /
-  `fuzz:sanitize --target xml,mutate` already cover the arena. Everything else
+  `FUZZ_ARGS="--target xml,mutate" bundle exec rake fuzz:sanitize` already cover the arena. Everything else
   we write allocates through `falloc` onto the system allocator, or - for the
   glue's Ruby-side storage - through Ruby's xmalloc; ASan red-zones both per
   allocation - no arena, no special handling. Keep the unpoison at exactly the requested `size` (not
@@ -488,7 +495,7 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            functions (the `_noi` twins included), the ONE place
                            a Lexbor function is declared (a second `extern "C"`
                            spelling is a second Rust type for the symbol;
-                           `rake unsafe:boundaries` fails on one). Only the three
+                           `rake unsafe:boundaries` fails on one). Only the four
                            exports no header declares are written by hand, and
                            build.rs's `UNDECLARED_EXPORTS` fails the build if
                            their C definitions change - `adapter`, the one reader of
@@ -502,7 +509,7 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            parser (safe Rust, no Lexbor ABI names)
   fuzz/                    cargo-fuzz harnesses (xml/html, xpath/xml_xpath/
                            html_xpath, css; built on PRs, run nightly)
-vendor/lexbor/             git submodule, pinned 3a2d595 (v3.0.0-25), NEVER patched
+vendor/lexbor/             git submodule, pinned 05b5d37 (v3.0.0-66), NEVER patched
 spec/fuzz/                 grammar-aware robustness fuzzer
 spec/invariants/           randomized property checks (see its README)
 spec/differential/         the recorded C-build answers + the probes (see `rake diff`)
@@ -537,7 +544,7 @@ no forced scan) already proves it valid - `parse_html`'s `assume_valid` and
 `ruby_str_known_valid_utf8`. The **programmatic APIs are strict**:
 `verify_text` (`bridge/string.rs`) raises `Makiri::Error` for **invalid
 UTF-8 everywhere** at the XPath/CSS/mutation boundaries (expr, selector,
-attribute name/value, `content=`, `name=`, `create_*`, variable/namespace) -
+attribute name/value, `content=`, `create_*`, variable/namespace) -
 never truncate/repair. **Embedded NUL (U+0000) is a two-tier contract**: rejected
 for names/tags/namespaces/PI target+data/selectors/XPath/variables and all engine
 inputs (which assume NUL-terminated C strings), but **accepted for the HTML
@@ -729,10 +736,10 @@ text (DOM makes a Document's textContent null, which is not what callers want).
 `add_previous_sibling`/`before`, `add_next_sibling`/`after`, `remove`/`unlink`,
 `replace`) over Lexbor insert/remove. We **detach, never destroy** - the arena
 owns node memory and live Ruby wrappers may alias a removed node; move semantics
-= detach-then-insert. Attribute `[]=` / `delete`; `Node#name=` renames in place
-(create a fresh element so the doc interns the name, copy its
-`local_name`/`prefix`/`ns`/`upper_name`/`qualified_name`, destroy the throwaway -
-identity preserved); `Node#content=`. `Document#{create_element,create_text_node}`.
+= detach-then-insert. Attribute `[]=` / `delete`; `Node#content=`. There is
+NO rename (`name=` was removed on both representations): the DOM has none, and
+Lexbor keeps many elements in structs of their own, so rewriting a node's tag in
+place left it read as a struct it is not (`div` -> `template` segfaulted). `Document#{create_element,create_text_node}`.
 Fragments: `DocumentFragment.parse(html)` (own backing doc) and
 `Document#fragment(html)` (bound to a doc) parse in a throwaway `<body>` context
 and `lxb_dom_document_import_node` (deep) each child into the target arena;
@@ -822,7 +829,8 @@ Key decisions that got there, worth not regressing:
   ~6000× Nokogiri / ~5× nokolexbor (was ~1.16× *slower* than nokolexbor). `at_css`
   also wraps the single first match directly (no NodeSet / no Ruby `#first`). Do
   not reintroduce per-call engine teardown; verify with `bench`'s `at_css`/`css`
-  rows and `fuzz:sanitize --target css` (the reuse is the memory-safety risk).
+  rows and `FUZZ_ARGS="--target css" bundle exec rake fuzz:sanitize`
+  (the reuse is the memory-safety risk).
 - **`Node#text` is served from the text index** (`lexbor/adapter/text_index.rs`,
   see the subsystem note): a per-document, lazily-built, mutation-invalidated
   map from node → its document-order text-slice run, turning text extraction

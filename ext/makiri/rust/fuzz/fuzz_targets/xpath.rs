@@ -53,6 +53,8 @@ fuzz_target!(|data: &[u8]| {
         l.max_eval_ops = 5_000_000;
         l.max_nodeset_size = 10_000;
         l.max_string_bytes = 1024 * 1024;
+        /* A cache smaller than one value, so the uncached comparison path runs. */
+        l.max_cache_bytes = 256;
         l.max_recursion_depth = 64;
 
         evaluate_both(&ctx, &ast);

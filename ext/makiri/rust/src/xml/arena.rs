@@ -82,10 +82,7 @@ impl Document {
                 self.arena_bytes = t;
                 Ok(())
             }
-            _ => {
-                self.status = Status::Limit;
-                Err(Status::Limit)
-            }
+            _ => Err(Status::Limit),
         }
     }
 
@@ -248,7 +245,7 @@ impl Document {
         self.charge(src.len())?;
         self.bytes
             .falloc_reserve(src.len())
-            .map_err(|_| self.fail(Status::Oom))?;
+            .map_err(|_| Status::Oom)?;
         let off = self.bytes.len() as u32;
         self.bytes.extend_from_slice(src);
         Ok(Span {
@@ -312,20 +309,13 @@ impl Document {
 
     /* ---- allocation ---- */
 
-    fn fail(&mut self, st: Status) -> Status {
-        self.status = st;
-        st
-    }
-
     /// Allocate a zeroed node, counted against the node and byte budgets.
     pub(super) fn new_node(&mut self, type_: NodeType) -> Result<NodeId, Status> {
         if self.nodes.len() + 1 > self.max_nodes {
-            return Err(self.fail(Status::Limit));
+            return Err(Status::Limit);
         }
         self.charge(NODE_COST)?;
-        self.nodes
-            .falloc_reserve(1)
-            .map_err(|_| self.fail(Status::Oom))?;
+        self.nodes.falloc_reserve(1).map_err(|_| Status::Oom)?;
         let index = self.nodes.len() as u32;
         let stamp = self.stamp;
         self.nodes.push(Node::zeroed(type_));
@@ -340,7 +330,7 @@ impl Document {
         self.charge(src.len())?;
         self.bytes
             .falloc_reserve(src.len())
-            .map_err(|_| self.fail(Status::Oom))?;
+            .map_err(|_| Status::Oom)?;
         let off = self.bytes.len();
         self.bytes.resize(off + src.len(), 0);
         let n = match expand_into(src, mode, &mut self.bytes[off..]) {
@@ -380,7 +370,7 @@ impl Document {
                 let total = (old.len as usize)
                     .checked_add(span.len as usize)
                     .filter(|&t| t <= u32::MAX as usize)
-                    .ok_or_else(|| self.fail(Status::Limit))?;
+                    .ok_or(Status::Limit)?;
                 self.node_at_mut(last).value.len = total as u32;
                 return Ok(());
             }
@@ -390,7 +380,7 @@ impl Document {
             merged
                 .falloc_extend(self.span(a))
                 .and_then(|()| merged.falloc_extend(self.span(b)))
-                .map_err(|_| self.fail(Status::Oom))?;
+                .map_err(|_| Status::Oom)?;
             let s = self.store(&merged)?;
             self.node_at_mut(last).value = s;
             return Ok(());
@@ -419,9 +409,7 @@ impl Document {
     /// nothing allocated before it points past the mark - i.e. the work being
     /// undone was never linked into the live tree and never handed out as a
     /// handle. A failed fragment parse is exactly that case: its nodes hang off
-    /// a fragment root the caller never returns. `status` is deliberately left
-    /// as it is: it records that a failure HAPPENED, which rewinding does not
-    /// undo.
+    /// a fragment root the caller never returns.
     pub(crate) fn rewind(&mut self, mark: Mark) {
         debug_assert!(mark.nodes <= self.nodes.len() && mark.bytes <= self.bytes.len());
         self.nodes.truncate(mark.nodes);

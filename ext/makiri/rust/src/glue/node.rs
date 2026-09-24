@@ -16,10 +16,12 @@ use crate::bridge::wrapper::node_identity;
 /// Pointer identity: equal iff both wrappers resolve to the same node pointer,
 /// so an HTML node is never equal to an XML one.
 pub fn node_equals(rb_self: Value, other: Value) -> Result<bool, magnus::Error> {
-    if !crate::bridge::ruby::is_kind_of(other, &CLASS_NODE) {
-        return Ok(false);
-    }
-    Ok(node_identity(rb_self)? == node_identity(other)?)
+    crate::bridge::ruby::entry(|| {
+        if !crate::bridge::ruby::is_kind_of(other, &CLASS_NODE) {
+            return Ok(false);
+        }
+        Ok(node_identity(rb_self)? == node_identity(other)?)
+    })
 }
 
 /// Nokogiri-compatible identity: the underlying node pointer as an Integer.
@@ -28,12 +30,12 @@ pub fn node_equals(rb_self: Value, other: Value) -> Result<bool, magnus::Error> 
 /// `Nokogiri::XML::Node#pointer_id`). `a.pointer_id == b.pointer_id` iff
 /// `a.eql?(b)`.
 pub fn node_pointer_id(ruby: &Ruby, rb_self: Value) -> Result<Integer, magnus::Error> {
-    Ok(ruby.integer_from_u64(node_identity(rb_self)? as u64))
+    crate::bridge::ruby::entry(|| Ok(ruby.integer_from_u64(node_identity(rb_self)? as u64)))
 }
 
 /// A stable hash from the node pointer, so `a == b` implies `a.hash == b.hash`
 /// even across separately-created wrappers. Shares the pointer value with
 /// `#pointer_id`.
 pub fn node_hash(ruby: &Ruby, rb_self: Value) -> Result<Integer, magnus::Error> {
-    node_pointer_id(ruby, rb_self)
+    crate::bridge::ruby::entry(|| node_pointer_id(ruby, rb_self))
 }

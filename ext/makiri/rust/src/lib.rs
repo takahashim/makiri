@@ -16,8 +16,9 @@
 //! Lexbor's own names stay `lxb_*`.
 
 #![deny(unsafe_code)]
-// `panic = "abort"`, so a panic is not an exception a caller can rescue - it
-// takes the host process down. `Cargo.toml`'s clippy lints therefore refuse a
+// A panic unwinds into Ruby's `fatal` (or `Makiri::InternalError` at an
+// `entry`), which kills the calling thread - a broken invariant, never an
+// answer. `Cargo.toml`'s clippy lints therefore refuse a
 // new `unwrap()` or `panic!` in the shipped crate; a site that genuinely wants
 // one carries an `#[allow]` saying why. Test code is exempt: there a panic IS
 // the failure report.
@@ -76,7 +77,7 @@ pub mod gvl;
 #[cfg(feature = "lexbor")]
 pub mod css;
 
-/// The shared UTF-8 primitives (core/mkr_utf8.c). Unconditional, like `falloc`
+/// The shared UTF-8 primitives. Unconditional, like `falloc`
 /// and `cbuf`: the XML and XPath layers use the strict decoder whatever the
 /// feature set, and only the `#[no_mangle]` C entries are gated.
 pub mod cutf8;

@@ -234,7 +234,6 @@ fn main() {
         .allowlist_function("lxb_dom_node_insert_child")
         .allowlist_function("lxb_dom_node_insert_before")
         .allowlist_function("lxb_dom_node_insert_after")
-        .allowlist_function("lxb_dom_node_destroy")
         .allowlist_function("lxb_dom_node_text_content_set")
         .allowlist_function("lxb_dom_element_set_attribute")
         .allowlist_function("lxb_dom_element_attr_by_name")
@@ -245,6 +244,7 @@ fn main() {
         .allowlist_function("lxb_dom_attr_set_value")
         .allowlist_function("lxb_dom_attr_set_name")
         .allowlist_function("lxb_dom_document_create_element")
+        .allowlist_function("lxb_dom_element_create")
         .allowlist_function("lxb_dom_document_create_text_node")
         .allowlist_function("lxb_dom_document_create_comment")
         .allowlist_function("lxb_dom_document_create_processing_instruction")
@@ -367,6 +367,13 @@ const UNDECLARED_EXPORTS: &[(&str, &str, &str, &str)] = &[
         "lxb_dom_attr_data_t *",
         "lxb_dom_attr_qualified_name_append",
         "lexbor_hash_t *hash, const lxb_char_t *name, size_t length",
+    ),
+    (
+        "lexbor/dom/interfaces/element.c",
+        "LXB_API lxb_status_t",
+        "lxb_dom_element_qualified_name_set",
+        "lxb_dom_element_t *element, const lxb_char_t *prefix, size_t prefix_len, \
+         const lxb_char_t *lname, size_t lname_len",
     ),
 ];
 

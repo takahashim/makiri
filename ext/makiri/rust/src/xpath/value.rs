@@ -444,8 +444,6 @@ pub fn val_to_boolean<N>(v: &Val<N>) -> bool {
     match v.get() {
         ValRef::Boolean(b) => b,
         ValRef::Number(d) => !(d == 0.0 || d.is_nan()),
-        /* A string that starts with U+0000 is false, as it was when it was read
-         * as a C string. */
         /* Non-empty, by length (§4.3). A first byte of 0 is U+0000, which DOM
          * text may hold - reading it as a C string's end made "\0abc" false. */
         ValRef::String(s) => !s.as_slice().is_empty(),
@@ -526,14 +524,14 @@ pub fn val_to_number_or_fail<'d, D: Dom<'d>>(
 /* ---------- the cached string-value of a node ---------- */
 
 /// The cached string-value of `node`, building and caching it on a miss. The
-/// text is `ev.str_cache.text(id)`.
+/// text is `.bytes(&ev.str_cache)`.
 pub fn cached_node_text<'e, 'd, D: Dom<'d>>(
     ev: &mut super::eval::Evaluation<'e, 'd, D>,
     node: D::Node,
-) -> Result<TextId, Reported> {
+) -> Result<NodeText, Reported> {
     let key = D::token(node);
     if let Some(id) = ev.str_cache.find(key) {
-        return Ok(id);
+        return Ok(NodeText::Cached(id));
     }
     let text = node_to_owned_text::<D>(ev.doc, node, &mut ev.budget)?;
     ev.str_cache.insert(key, text, &mut ev.budget)
@@ -545,6 +543,6 @@ pub fn cached_node_number<'e, 'd, D: Dom<'d>>(
     ev: &mut super::eval::Evaluation<'e, 'd, D>,
     node: D::Node,
 ) -> Result<f64, Reported> {
-    let id = cached_node_text::<D>(ev, node)?;
-    Ok(bytes_to_number(ev.str_cache.text(id)))
+    let text = cached_node_text::<D>(ev, node)?;
+    Ok(bytes_to_number(text.bytes(&ev.str_cache)))
 }

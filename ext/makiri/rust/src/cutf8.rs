@@ -1,4 +1,4 @@
-//! The shared UTF-8 primitives (core/mkr_utf8.c).
+//! The shared UTF-8 primitives.
 //!
 //! Two functions, deliberately implemented DIFFERENTLY from each other:
 //!
@@ -23,8 +23,8 @@
 //! # What the CBMC proofs covered, and where each part went
 //!
 //! `verify/harness_utf8.c`, `harness_utf8_chain.c` and `harness_utf8_words.c`
-//! prove things about `core/mkr_utf8.c`. They still run, and still pass, but
-//! they cover the C build - so this is the accounting for the Rust one:
+//! proved things about the C validator, and went with it. This is the
+//! accounting of where each property went:
 //!
 //! - **memory safety** (`--bounds-check` over the scan): gone as an obligation.
 //!   Both functions take a slice; there is no pointer arithmetic to get wrong.

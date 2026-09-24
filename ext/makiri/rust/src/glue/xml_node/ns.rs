@@ -14,7 +14,6 @@ use magnus::{prelude::*, Error, RArray, RClass, RHash, Ruby, Value};
 
 use super::strings::{str_field, utf8};
 use super::XmlSelf;
-use crate::bridge::ruby::entry;
 use crate::init::MOD_XML;
 use crate::xml::model::{Document as XmlDoc, NodeId, NodeType};
 
@@ -46,7 +45,7 @@ fn declarations(d: &XmlDoc, id: NodeId) -> impl Iterator<Item = (NodeId, &[u8], 
 
 /// `#namespace` - the node's own resolved namespace, or nil.
 pub fn namespace(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
-    entry(|| {
+    crate::bridge::ruby::entry(|| {
         let parts = this.doc_ref().name_parts(this.id);
         match parts.and_then(|n| Some((n.prefix, n.ns_uri?))) {
             Some((prefix, uri)) => new_ns(prefix_value(ruby, prefix), str_field(ruby, uri)),
@@ -57,7 +56,7 @@ pub fn namespace(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
 
 /// `#namespace_definitions` - the declarations made ON this element.
 pub fn namespace_definitions(ruby: &Ruby, this: XmlSelf) -> Result<RArray, Error> {
-    entry(|| {
+    crate::bridge::ruby::entry(|| {
         let arr = ruby.ary_new();
         for (_, p, u) in declarations(this.doc_ref(), this.id) {
             arr.push(new_ns(
@@ -72,7 +71,7 @@ pub fn namespace_definitions(ruby: &Ruby, this: XmlSelf) -> Result<RArray, Error
 /// `#namespaces` - every declaration in scope here, keyed by the declaring
 /// attribute's name. The inner scope wins because the first binding seen is kept.
 pub fn namespaces(ruby: &Ruby, this: XmlSelf) -> Result<RHash, Error> {
-    entry(|| {
+    crate::bridge::ruby::entry(|| {
         let h = ruby.hash_new();
         let d = this.doc_ref();
         for id in core::iter::successors(Some(this.id), |&n| d.parent(n)) {
@@ -90,7 +89,7 @@ pub fn namespaces(ruby: &Ruby, this: XmlSelf) -> Result<RHash, Error> {
 /// `#collect_namespaces` - every declaration anywhere in the document, in
 /// document order, so a later one with the same name wins.
 pub fn collect_namespaces(ruby: &Ruby, this: XmlSelf) -> Result<RHash, Error> {
-    entry(|| {
+    crate::bridge::ruby::entry(|| {
         let h = ruby.hash_new();
         let d = this.doc_ref();
         let top = core::iter::successors(Some(this.id), |&n| d.parent(n))

@@ -31,9 +31,7 @@
 #![allow(unsafe_code)]
 #![cfg(kani)]
 
-use super::{
-    buf_append, buf_reserve, buf_steal, Buf, BUF_ERR_INVALID, BUF_ERR_LIMIT, BUF_ERR_OOM, BUF_OK,
-};
+use super::{buf_append, buf_reserve, buf_steal, Buf, BufError};
 
 /// The largest ceiling the proofs quantify over.
 ///
@@ -88,7 +86,7 @@ unsafe fn step_append(b: &mut Buf, shadow: &mut [u8], slen: usize, maxlim: usize
     let cap0 = b.cap;
     let st = buf_append(b, src.as_ptr() as *const core::ffi::c_void, n);
 
-    if st == BUF_OK {
+    if st.is_ok() {
         assert!(b.len == len0 + n, "append: len advances by n");
         assert!(b.len <= maxlim, "append: ceiling respected");
         assert!(b.cap <= maxlim + 1, "append: growth clamped to max+1");
@@ -104,11 +102,11 @@ unsafe fn step_append(b: &mut Buf, shadow: &mut [u8], slen: usize, maxlim: usize
         slen
     } else {
         assert!(
-            st == BUF_ERR_LIMIT || st == BUF_ERR_OOM,
+            st == Err(BufError::Limit) || st == Err(BufError::Oom),
             "append: a non-NULL source fails only on limit or OOM"
         );
         assert!(
-            st != BUF_ERR_LIMIT || len0 + n > maxlim,
+            st != Err(BufError::Limit) || len0 + n > maxlim,
             "append: LIMIT only past the ceiling"
         );
         assert!(
@@ -154,7 +152,7 @@ fn append_matches_a_shadow_model() {
     unsafe {
         /* A NULL source with n > 0 is INVALID and touches nothing. */
         assert!(
-            buf_append(&mut b, core::ptr::null(), 3) == BUF_ERR_INVALID,
+            buf_append(&mut b, core::ptr::null(), 3) == Err(BufError::Invalid),
             "append: a NULL source fails closed"
         );
         assert!(b.len == 0 && b.cap == 0, "append: INVALID touches nothing");
@@ -173,10 +171,10 @@ fn append_matches_a_shadow_model() {
             b.cap <= maxlim + 1,
             "reserve: clamped to the buffer's ceiling"
         );
-        if st == BUF_OK {
+        if st.is_ok() {
             assert!(b.cap >= cap0, "reserve: success does not shrink cap");
         } else {
-            assert!(st == BUF_ERR_OOM, "reserve: failure is OOM");
+            assert!(st == Err(BufError::Oom), "reserve: failure is OOM");
             assert!(
                 b.len == len0 && b.cap == cap0,
                 "reserve: failure leaves len and cap"

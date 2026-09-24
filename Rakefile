@@ -649,8 +649,20 @@ task :oom do
   # The hook is compiled in only under MAKIRI_ALLOC_INJECT=1 (zero overhead in
   # a normal build), so this needs its own rebuild; see
   # script/check_alloc_failures.rb for the protocol and the property gated.
-  sh({ "MAKIRI_ALLOC_INJECT" => "1" }, "#{FileUtils::RUBY} -S rake clean compile")
-  sh "#{FileUtils::RUBY} -Ilib script/check_alloc_failures.rb"
+  sanitize = ENV["MAKIRI_SANITIZE"].to_s
+  build_env = { "MAKIRI_ALLOC_INJECT" => "1" }
+  build_env["MAKIRI_SANITIZE"] = sanitize unless sanitize.empty?
+  sh(build_env, "#{FileUtils::RUBY} -S rake clean compile")
+
+  run_env = {}
+  unless sanitize.empty?
+    assert_sanitized!("oom", sanitize)
+    run_env = {
+      "ASAN_OPTIONS" => ASAN_ENV_OPTIONS,
+      "MAKIRI_SANITIZE" => sanitize,
+    }.merge(asan_preload_env(sanitize))
+  end
+  sh(run_env, "#{FileUtils::RUBY} -Ilib script/check_alloc_failures.rb")
   puts "(injection build left in place; run `rake clean compile` to restore a normal build)"
 end
 
@@ -795,10 +807,11 @@ namespace :fuzz do
   #                 (halt_on_error). The default (isolated) is the complete net:
   #                 it also survives + attributes a genuine segfault and catches a
   #                 hang via the per-query timeout, at much lower throughput.
+  #   ISOLATED=0    same as FAST=1; ISOLATED=1 (like the default) keeps isolation.
   #   SKIP_BUILD=1  reuse the current build instead of rebuilding (refuses to run
   #                 if it is not a sanitizer build, so you never fuzz a plain ext).
   #   FUZZ_TIME=N   seconds per surface (default 90).
-  #   FUZZ_ARGS=... run a single custom invocation instead of the three surfaces.
+  #   FUZZ_ARGS=... run a single custom invocation instead of the five surfaces.
   desc "Run the fuzzer under AddressSanitizer (FAST=1 non-isolated, SKIP_BUILD=1 reuse build)"
   task :sanitize do
     sanitize = ENV["MAKIRI_SANITIZE"] || "address"
@@ -818,12 +831,15 @@ namespace :fuzz do
     if ENV["FUZZ_ARGS"]
       sh(env, "#{FileUtils::RUBY} -Ilib spec/fuzz/run.rb #{ENV['FUZZ_ARGS']}")
     else
-      iso  = %w[1 true yes].include?(ENV["ISOLATED"].to_s.downcase) ? "--isolated" : ""
+      truthy = ->(name) { %w[1 true yes].include?(ENV[name].to_s.downcase) }
+      explicit_isolated = ENV.key?("ISOLATED") && !ENV["ISOLATED"].to_s.strip.empty?
+      isolated = explicit_isolated ? truthy.call("ISOLATED") : !truthy.call("FAST")
+      iso = isolated ? "--isolated" : "--in-process"
       secs = ENV["FUZZ_TIME"] || "90"
-      # Cover every surface under the sanitizer: the query engine (XPath/CSS over
-      # parsed fixtures), the XML parser (hostile documents), and the XML mutation
-      # surface (random edit sequences + invariants).
-      ["", "--target xml", "--target mutate", "--target xmlcss"].each do |surface|
+      # Cover every surface under the sanitizer: the query engine (XPath over the
+      # default fixtures), the HTML CSS selector path, the XML parser (hostile
+      # documents), the XML mutation surface, and CSS over an XML document.
+      ["", "--target css", "--target xml", "--target mutate", "--target xmlcss"].each do |surface|
         sh(env, "#{FileUtils::RUBY} -Ilib spec/fuzz/run.rb #{surface} #{iso} --time #{secs}".squeeze(" ").strip)
       end
     end

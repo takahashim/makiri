@@ -142,56 +142,89 @@ enum Builtin {
     ChildPosLast,
 }
 
-/// THE list of built-ins: each name once, with its library and its purity. The
-/// evaluator asks it whether a call is a built-in before routing it to a Ruby
-/// handler, and the hoisting pass asks it whether a call is pure, so there is
-/// no second list of names to fall out of step with this one.
-const BUILTINS: &[(Library, &[u8], Builtin, Purity)] = {
+/// One [`BUILTINS`] row.
+struct Entry {
+    library: Library,
+    name: &'static [u8],
+    id: Builtin,
+    purity: Purity,
+    /// The least and most arguments it takes; `usize::MAX` is no upper bound.
+    min: usize,
+    max: usize,
+}
+
+/// A row, positionally, so the table stays one line per built-in.
+const fn e(
+    library: Library,
+    name: &'static [u8],
+    id: Builtin,
+    purity: Purity,
+    min: usize,
+    max: usize,
+) -> Entry {
+    Entry {
+        library,
+        name,
+        id,
+        purity,
+        min,
+        max,
+    }
+}
+
+/// THE list of built-ins: each name once, with its library, its purity and how
+/// many arguments it takes (`min`, `max`). The evaluator asks it whether a call
+/// is a built-in before routing it to a Ruby handler, and checks the count
+/// against it before the call; the hoisting pass asks it whether a call is pure.
+/// So there is no second list of names, or of arities, to fall out of step
+/// with this one.
+#[rustfmt::skip]
+const BUILTINS: &[Entry] = {
     use Builtin::*;
     use Library::*;
     use Purity::*;
     &[
         /* node-set */
-        (Core, b"last", Last, Impure),
-        (Core, b"position", Position, Impure),
-        (Core, b"count", Count, PureWithArgs),
-        (Core, b"id", Id, Impure),
-        (Core, b"local-name", LocalName, Impure),
-        (Core, b"namespace-uri", NamespaceUri, Impure),
-        (Core, b"name", Name, Impure),
+        e(Core, b"last", Last, Impure, 0, 0),
+        e(Core, b"position", Position, Impure, 0, 0),
+        e(Core, b"count", Count, PureWithArgs, 1, 1),
+        e(Core, b"id", Id, Impure, 1, 1),
+        e(Core, b"local-name", LocalName, Impure, 0, 1),
+        e(Core, b"namespace-uri", NamespaceUri, Impure, 0, 1),
+        e(Core, b"name", Name, Impure, 0, 1),
         /* string */
-        (Core, b"string", String, Impure),
-        (Core, b"concat", Concat, PureWithArgs),
-        (Core, b"starts-with", StartsWith, PureWithArgs),
-        (Core, b"contains", Contains, PureWithArgs),
-        (Core, b"substring-before", SubstringBefore, PureWithArgs),
-        (Core, b"substring-after", SubstringAfter, PureWithArgs),
-        (Core, b"substring", Substring, PureWithArgs),
-        (Core, b"string-length", StringLength, PureWithArgs),
-        (Core, b"normalize-space", NormalizeSpace, Impure),
-        (Core, b"translate", Translate, PureWithArgs),
+        e(Core, b"string", String, Impure, 0, 1),
+        e(Core, b"concat", Concat, PureWithArgs, 2, usize::MAX),
+        e(Core, b"starts-with", StartsWith, PureWithArgs, 2, 2),
+        e(Core, b"contains", Contains, PureWithArgs, 2, 2),
+        e(Core, b"substring-before", SubstringBefore, PureWithArgs, 2, 2),
+        e(Core, b"substring-after", SubstringAfter, PureWithArgs, 2, 2),
+        e(Core, b"substring", Substring, PureWithArgs, 2, 3),
+        e(Core, b"string-length", StringLength, PureWithArgs, 0, 1),
+        e(Core, b"normalize-space", NormalizeSpace, Impure, 0, 1),
+        e(Core, b"translate", Translate, PureWithArgs, 3, 3),
         /* boolean */
-        (Core, b"not", Not, PureWithArgs),
-        (Core, b"true", True, Pure),
-        (Core, b"false", False, Pure),
-        (Core, b"boolean", Boolean, PureWithArgs),
-        (Core, b"lang", Lang, Impure),
+        e(Core, b"not", Not, PureWithArgs, 1, 1),
+        e(Core, b"true", True, Pure, 0, 0),
+        e(Core, b"false", False, Pure, 0, 0),
+        e(Core, b"boolean", Boolean, PureWithArgs, 1, 1),
+        e(Core, b"lang", Lang, Impure, 1, 1),
         /* number */
-        (Core, b"number", Number, PureWithArgs),
-        (Core, b"sum", Sum, PureWithArgs),
-        (Core, b"floor", Floor, PureWithArgs),
-        (Core, b"ceiling", Ceiling, PureWithArgs),
-        (Core, b"round", Round, PureWithArgs),
+        e(Core, b"number", Number, PureWithArgs, 0, 1),
+        e(Core, b"sum", Sum, PureWithArgs, 1, 1),
+        e(Core, b"floor", Floor, PureWithArgs, 1, 1),
+        e(Core, b"ceiling", Ceiling, PureWithArgs, 1, 1),
+        e(Core, b"round", Round, PureWithArgs, 1, 1),
         /* The CSS lowering's internal hooks. Registered for every host: their
          * names begin with \x01, which no expression can spell, so only the
          * lowering reaches them - and it runs only for XML today. */
-        (Core, FN_OF_TYPE_POS, OfTypePos, Impure),
-        (Core, FN_OF_TYPE_POS_LAST, OfTypePosLast, Impure),
-        (Core, FN_CHILD_POS, ChildPos, Impure),
-        (Core, FN_CHILD_POS_LAST, ChildPosLast, Impure),
+        e(Core, FN_OF_TYPE_POS, OfTypePos, Impure, 0, usize::MAX),
+        e(Core, FN_OF_TYPE_POS_LAST, OfTypePosLast, Impure, 0, usize::MAX),
+        e(Core, FN_CHILD_POS, ChildPos, Impure, 0, usize::MAX),
+        e(Core, FN_CHILD_POS_LAST, ChildPosLast, Impure, 0, usize::MAX),
         /* Nokogiri's builtins, in its builtin namespace */
-        (Nokogiri, b"css-class", CssClass, Impure),
-        (Nokogiri, b"local-name-is", LocalNameIs, Impure),
+        e(Nokogiri, b"css-class", CssClass, Impure, 2, 2),
+        e(Nokogiri, b"local-name-is", LocalNameIs, Impure, 1, 1),
     ]
 };
 
@@ -236,43 +269,79 @@ impl Builtin {
 }
 
 /// The table entry for `local` in `library`.
-fn find(library: Library, local: &[u8]) -> Option<(Builtin, Purity)> {
+fn find(library: Library, local: &[u8]) -> Option<&'static Entry> {
     BUILTINS
         .iter()
-        .find(|(lib, name, _, _)| *lib == library && *name == local)
-        .map(|&(_, _, id, purity)| (id, purity))
+        .find(|e| e.library == library && e.name == local)
 }
 
 /// The built-in named `(ns_uri, local)`, or None - in which case the evaluator
 /// routes the call to the registered resolver. The Nokogiri builtins live in
 /// one namespace; any other registered namespace means a user-defined function.
-pub fn lookup<'e, 'd, D: Dom<'d>>(
-    ns_uri: Option<&[u8]>,
-    local: &[u8],
-) -> Option<FnImpl<'e, 'd, D>> {
+pub fn lookup<'e, 'd, D: Dom<'d>>(ns_uri: Option<&[u8]>, local: &[u8]) -> Option<Found<'e, 'd, D>> {
     let library = match ns_uri {
         None => Library::Core,
         Some(uri) if uri == NS_NOKOGIRI_BUILTIN_URI => Library::Nokogiri,
         Some(_) => return None,
     };
-    find(library, local).map(|(id, _)| id.imp::<D>())
+    find(library, local).map(|e| Found {
+        imp: e.id.imp::<D>(),
+        library: e.library,
+        name: e.name,
+        min: e.min,
+        max: e.max,
+    })
 }
 
-/// The purity of the unprefixed call `local`; [`Purity::Impure`] for a name
-/// that is not a core built-in, which a handler answers.
-pub fn purity(local: &[u8]) -> Purity {
-    find(Library::Core, local).map_or(Purity::Impure, |(_, purity)| purity)
+/// A built-in [`lookup`] found: the function, and what [`Found::call`] checks
+/// before running it.
+pub struct Found<'e, 'd, D: Dom<'d>> {
+    imp: FnImpl<'e, 'd, D>,
+    library: Library,
+    name: &'static [u8],
+    min: usize,
+    max: usize,
 }
 
-/* ---------- shared helpers ---------- */
+impl<'e, 'd, D: Dom<'d>> Found<'e, 'd, D> {
+    /// Check the argument count against the table, then call.
+    pub fn call(
+        &self,
+        ev: &mut Evaluation<'e, 'd, D>,
+        focus: &Focus<'d, D>,
+        args: &[Val<D::Node>],
+    ) -> Answer<D::Node> {
+        let got = args.len();
+        if got < self.min || got > self.max {
+            return Err(self.arity_error(ev.budget.sink(), got));
+        }
+        (self.imp)(ev, focus, args)
+    }
 
-fn arity(got: usize, min: usize, max: usize, err: ErrSink, name: &str) -> FnResult {
-    if got < min || got > max {
-        return Err(if min == max {
+    #[cold]
+    fn arity_error(&self, err: ErrSink, got: usize) -> Reported {
+        let (min, max) = (self.min, self.max);
+        let lib = match self.library {
+            Library::Core => "",
+            Library::Nokogiri => "nokogiri-builtin:",
+        };
+        let name = super::msg::Bytes(self.name);
+        if max == usize::MAX {
             err_setf!(
                 err,
                 XP_ERR_RUNTIME,
-                "{}(): expected {} argument(s), got {}",
+                "{}{}(): expected at least {} argument{}",
+                lib,
+                name,
+                min,
+                if min == 1 { "" } else { "s" }
+            )
+        } else if min == max {
+            err_setf!(
+                err,
+                XP_ERR_RUNTIME,
+                "{}{}(): expected {} argument(s), got {}",
+                lib,
                 name,
                 min,
                 got
@@ -281,16 +350,24 @@ fn arity(got: usize, min: usize, max: usize, err: ErrSink, name: &str) -> FnResu
             err_setf!(
                 err,
                 XP_ERR_RUNTIME,
-                "{}(): expected {}-{} argument(s), got {}",
+                "{}{}(): expected {}-{} argument(s), got {}",
+                lib,
                 name,
                 min,
                 max,
                 got
             )
-        });
+        }
     }
-    Ok(())
 }
+
+/// The purity of the unprefixed call `local`; [`Purity::Impure`] for a name
+/// that is not a core built-in, which a handler answers.
+pub fn purity(local: &[u8]) -> Purity {
+    find(Library::Core, local).map_or(Purity::Impure, |e| e.purity)
+}
+
+/* ---------- shared helpers ---------- */
 
 /// The shared "argument must be a node-set" check.
 fn require_nodeset<'v, N>(arg: &'v Val<N>, fname: &str, err: ErrSink) -> FnResult<&'v NodeSet<N>> {
@@ -418,7 +495,8 @@ fn advance_chars(s: &[u8], n: usize) -> usize {
 }
 
 /// A `Vec` sized up front, so a failed allocation is an XPath OOM rather than
-/// the abort a plain `Vec` growth would give under `panic = "abort"`.
+/// the abort a plain `Vec` growth gives (std's allocation failure aborts, it
+/// does not unwind).
 fn try_vec<T>(n: usize, err: ErrSink, what: &str) -> FnResult<Vec<T>> {
     let mut v: Vec<T> = Vec::new();
     if v.falloc_reserve_exact(n).is_err() {
@@ -430,22 +508,18 @@ fn try_vec<T>(n: usize, err: ErrSink, what: &str) -> FnResult<Vec<T>> {
 /* ---------- node-set functions ---------- */
 
 fn fn_last<'e, 'd, D: Dom<'d>>(
-    ev: &mut Evaluation<'e, 'd, D>,
+    _ev: &mut Evaluation<'e, 'd, D>,
     focus: &Focus<'d, D>,
-    args: &[Val<D::Node>],
+    _args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
-    let err = ev.budget.sink();
-    arity(args.len(), 0, 0, err.clone(), "last")?;
     number(focus.size as f64)
 }
 
 fn fn_position<'e, 'd, D: Dom<'d>>(
-    ev: &mut Evaluation<'e, 'd, D>,
+    _ev: &mut Evaluation<'e, 'd, D>,
     focus: &Focus<'d, D>,
-    args: &[Val<D::Node>],
+    _args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
-    let err = ev.budget.sink();
-    arity(args.len(), 0, 0, err.clone(), "position")?;
     number(focus.pos as f64)
 }
 
@@ -455,7 +529,6 @@ fn fn_count<'e, 'd, D: Dom<'d>>(
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
-    arity(args.len(), 1, 1, err.clone(), "count")?;
     let ns = require_nodeset(&args[0], "count", err)?;
     number(ns.len() as f64)
 }
@@ -521,9 +594,6 @@ fn fn_id<'e, 'd, D: Dom<'d>>(
     _focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
-    let err = ev.budget.sink();
-    arity(args.len(), 1, 1, err.clone(), "id")?;
-
     /* A host with no ID attributes answers the empty node-set - see
      * `Dom::ID_ATTRIBUTE`. */
     let Some(id_attr) = D::ID_ATTRIBUTE else {
@@ -615,7 +685,6 @@ fn fn_local_name<'e, 'd, D: Dom<'d>>(
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
     let doc = ev.doc;
-    arity(args.len(), 0, 1, err.clone(), "local-name")?;
     let t = name_target::<D>(args, focus, err.clone(), "local-name")?;
     name_emit::<D>(doc, t, false, err.clone(), "local-name")
 }
@@ -627,7 +696,6 @@ fn fn_name<'e, 'd, D: Dom<'d>>(
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
     let doc = ev.doc;
-    arity(args.len(), 0, 1, err.clone(), "name")?;
     let t = name_target::<D>(args, focus, err.clone(), "name")?;
     name_emit::<D>(doc, t, true, err.clone(), "name")
 }
@@ -638,7 +706,6 @@ fn fn_namespace_uri<'e, 'd, D: Dom<'d>>(
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
-    arity(args.len(), 0, 1, err.clone(), "namespace-uri")?;
     let doc = ev.doc;
     let Some(t) = name_target::<D>(args, focus, err.clone(), "namespace-uri")? else {
         return string(b"", err.clone(), "namespace-uri");
@@ -660,8 +727,6 @@ fn fn_string<'e, 'd, D: Dom<'d>>(
     focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
-    let err = ev.budget.sink();
-    arity(args.len(), 0, 1, err.clone(), "string")?;
     Ok(Val::string(arg_or_self_text::<D>(focus, args, ev)?))
 }
 
@@ -671,13 +736,6 @@ fn fn_concat<'e, 'd, D: Dom<'d>>(
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
-    if args.len() < 2 {
-        return Err(err_setf!(
-            err,
-            XP_ERR_RUNTIME,
-            "concat(): expected at least 2 arguments"
-        ));
-    }
     let mut parts = try_vec::<Text>(args.len(), err.clone(), "concat")?;
     let mut total = 0usize;
     for a in args {
@@ -709,8 +767,6 @@ fn fn_starts_with<'e, 'd, D: Dom<'d>>(
     _focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
-    let err = ev.budget.sink();
-    arity(args.len(), 2, 2, err.clone(), "starts-with")?;
     two::<D, _>(ev, args, |s, t| boolean(s.starts_with(t)))
 }
 
@@ -719,8 +775,6 @@ fn fn_contains<'e, 'd, D: Dom<'d>>(
     _focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
-    let err = ev.budget.sink();
-    arity(args.len(), 2, 2, err.clone(), "contains")?;
     two::<D, _>(ev, args, |s, t| boolean(find_bytes(s, t).is_some()))
 }
 
@@ -730,7 +784,6 @@ fn fn_substring_before<'e, 'd, D: Dom<'d>>(
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
-    arity(args.len(), 2, 2, err.clone(), "substring-before")?;
     two::<D, _>(ev, args, |s, t| {
         /* the bytes of s before the first t, or "" when t is empty or absent */
         let end = if t.is_empty() {
@@ -748,7 +801,6 @@ fn fn_substring_after<'e, 'd, D: Dom<'d>>(
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
-    arity(args.len(), 2, 2, err.clone(), "substring-after")?;
     two::<D, _>(ev, args, |s, t| {
         let rest: &[u8] = if t.is_empty() {
             s
@@ -770,7 +822,6 @@ fn fn_substring<'e, 'd, D: Dom<'d>>(
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
-    arity(args.len(), 2, 3, err.clone(), "substring")?;
     let s = to_text::<D>(&args[0], ev)?;
     let bytes = s.as_slice();
     let nchars = count_chars(bytes);
@@ -807,8 +858,6 @@ fn fn_string_length<'e, 'd, D: Dom<'d>>(
     focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
-    let err = ev.budget.sink();
-    arity(args.len(), 0, 1, err.clone(), "string-length")?;
     let t = arg_or_self_text::<D>(focus, args, ev)?;
     number(count_chars(t.as_slice()) as f64)
 }
@@ -820,7 +869,6 @@ fn fn_normalize_space<'e, 'd, D: Dom<'d>>(
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
-    arity(args.len(), 0, 1, err.clone(), "normalize-space")?;
     let s = arg_or_self_text::<D>(focus, args, ev)?;
     let src = s.as_slice();
     let normalized = Text::try_fill(src.len(), |dst| {
@@ -866,7 +914,6 @@ fn fn_translate<'e, 'd, D: Dom<'d>>(
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
-    arity(args.len(), 3, 3, err.clone(), "translate")?;
     let mut texts = try_vec::<Text>(3, err.clone(), "translate")?;
     for a in args {
         texts.push(to_text::<D>(a, ev)?);
@@ -887,7 +934,7 @@ fn fn_translate<'e, 'd, D: Dom<'d>>(
     };
     /* A character is never shorter than a byte, so the byte length bounds the
      * count - reserving up front keeps a failed allocation an XPath OOM rather
-     * than the abort a growing Vec would give under `panic = "abort"`. */
+     * than the abort a growing Vec gives on allocation failure. */
     /* `from` as (character, its FIRST position), sorted by character, so each
      * input character is a binary search rather than a scan of `from`: that
      * scan was O(string x from), both up to the byte cap. */
@@ -942,42 +989,34 @@ fn fn_translate<'e, 'd, D: Dom<'d>>(
 /* ---------- boolean functions ---------- */
 
 fn fn_not<'e, 'd, D: Dom<'d>>(
-    ev: &mut Evaluation<'e, 'd, D>,
+    _ev: &mut Evaluation<'e, 'd, D>,
     _focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
-    let err = ev.budget.sink();
-    arity(args.len(), 1, 1, err.clone(), "not")?;
     boolean(!val_to_boolean(&args[0]))
 }
 
 fn fn_true<'e, 'd, D: Dom<'d>>(
-    ev: &mut Evaluation<'e, 'd, D>,
+    _ev: &mut Evaluation<'e, 'd, D>,
     _focus: &Focus<'d, D>,
-    args: &[Val<D::Node>],
+    _args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
-    let err = ev.budget.sink();
-    arity(args.len(), 0, 0, err.clone(), "true")?;
     boolean(true)
 }
 
 fn fn_false<'e, 'd, D: Dom<'d>>(
-    ev: &mut Evaluation<'e, 'd, D>,
+    _ev: &mut Evaluation<'e, 'd, D>,
     _focus: &Focus<'d, D>,
-    args: &[Val<D::Node>],
+    _args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
-    let err = ev.budget.sink();
-    arity(args.len(), 0, 0, err.clone(), "false")?;
     boolean(false)
 }
 
 fn fn_boolean<'e, 'd, D: Dom<'d>>(
-    ev: &mut Evaluation<'e, 'd, D>,
+    _ev: &mut Evaluation<'e, 'd, D>,
     _focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
-    let err = ev.budget.sink();
-    arity(args.len(), 1, 1, err.clone(), "boolean")?;
     boolean(val_to_boolean(&args[0]))
 }
 
@@ -986,9 +1025,7 @@ fn fn_lang<'e, 'd, D: Dom<'d>>(
     focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
-    let err = ev.budget.sink();
     let doc = ev.doc;
-    arity(args.len(), 1, 1, err.clone(), "lang")?;
     let want = to_text::<D>(&args[0], ev)?;
     let want = want.as_slice();
     /* Walk the ancestors for the host's language attributes
@@ -1026,8 +1063,6 @@ fn fn_number<'e, 'd, D: Dom<'d>>(
     focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
-    let err = ev.budget.sink();
-    arity(args.len(), 0, 1, err.clone(), "number")?;
     match args.first() {
         Some(a) => number(to_number::<D>(a, ev)?),
         None => {
@@ -1044,7 +1079,6 @@ fn fn_sum<'e, 'd, D: Dom<'d>>(
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
-    arity(args.len(), 1, 1, err.clone(), "sum")?;
     let ns = require_nodeset(&args[0], "sum", err)?;
     let mut total = 0.0;
     for i in 0..ns.len() {
@@ -1057,14 +1091,11 @@ fn fn_sum<'e, 'd, D: Dom<'d>>(
 fn num1<'e, 'd, D: Dom<'d>, F>(
     ev: &mut Evaluation<'e, 'd, D>,
     args: &[Val<D::Node>],
-    name: &str,
     f: F,
 ) -> Answer<D::Node>
 where
     F: FnOnce(f64) -> f64,
 {
-    let err = ev.budget.sink();
-    arity(args.len(), 1, 1, err, name)?;
     number(f(to_number::<D>(&args[0], ev)?))
 }
 
@@ -1073,7 +1104,7 @@ fn fn_floor<'e, 'd, D: Dom<'d>>(
     _focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
-    num1::<D, _>(ev, args, "floor", f64::floor)
+    num1::<D, _>(ev, args, f64::floor)
 }
 
 fn fn_ceiling<'e, 'd, D: Dom<'d>>(
@@ -1081,7 +1112,7 @@ fn fn_ceiling<'e, 'd, D: Dom<'d>>(
     _focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
-    num1::<D, _>(ev, args, "ceiling", f64::ceil)
+    num1::<D, _>(ev, args, f64::ceil)
 }
 
 /// XPath round(): the integer closest to the argument, the one nearer +inf when
@@ -1112,7 +1143,7 @@ fn fn_round<'e, 'd, D: Dom<'d>>(
     _focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
-    num1::<D, _>(ev, args, "round", round_half_up)
+    num1::<D, _>(ev, args, round_half_up)
 }
 
 #[cfg(test)]
@@ -1121,11 +1152,11 @@ mod tests {
 
     #[test]
     fn every_builtin_is_named_once_per_library() {
-        for (i, (lib, name, _, _)) in BUILTINS.iter().enumerate() {
+        for (i, a) in BUILTINS.iter().enumerate() {
             let twin = BUILTINS[i + 1..]
                 .iter()
-                .any(|(l, n, _, _)| l == lib && n == name);
-            assert!(!twin, "{} is listed twice", String::from_utf8_lossy(name));
+                .any(|b| a.library == b.library && a.name == b.name);
+            assert!(!twin, "{} is listed twice", String::from_utf8_lossy(a.name));
         }
     }
 

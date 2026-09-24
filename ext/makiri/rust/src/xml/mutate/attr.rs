@@ -10,8 +10,8 @@
 use super::ns::{resolve_ns, Ns, Resolved, NO_NS};
 use super::{arena, assign_qname};
 use crate::xml::chars::validate_chars;
-use crate::xml::qname::{ns_decl_ok, split_checked, xmlns_prefix, Split};
-use crate::xml::{Document, MutStatus, NodeId, NodeType, Span, FLAG_NS_PENDING};
+use crate::xml::qname::{ns_decl_check, split_checked, xmlns_prefix, Split};
+use crate::xml::{Document, MutStatus, NodeId, NodeType, Span, FLAG_NS_EXPLICIT, FLAG_NS_PENDING};
 
 /// Build a fresh ATTRIBUTE (qname + value + namespace) and link it onto `el`
 /// after `tail`, the last entry the caller's own scan reached.
@@ -45,9 +45,13 @@ pub(super) fn keys_repeat(doc: &Document, keys: &mut [(Span, NodeId)]) -> bool {
 }
 
 /// Whether an attribute named `name` may hold `val`: anything but a namespace
-/// declaration the §3 rules forbid ([`ns_decl_ok`]).
-pub(super) fn decl_ok(name: &[u8], val: &[u8]) -> bool {
-    xmlns_prefix(name).is_none_or(|p| ns_decl_ok(p, val))
+/// declaration the §3 rules forbid ([`ns_decl_check`]), refused as
+/// [`MutStatus::BadNsDecl`] with the clause it broke.
+pub(super) fn decl_check(name: &[u8], val: &[u8]) -> Result<(), MutStatus> {
+    match xmlns_prefix(name) {
+        Some(p) => ns_decl_check(p, val).map_err(MutStatus::BadNsDecl),
+        None => Ok(()),
+    }
 }
 
 /// Whether an attribute of `el` other than `except` already has the key
@@ -84,26 +88,27 @@ pub fn set_attribute(
         Some(s) => s,
         None => return Err(MutStatus::BadName),
     };
-    if !decl_ok(name, val) {
-        return Err(MutStatus::BadNsDecl);
-    }
+    decl_check(name, val)?;
     if !val.is_empty() && !validate_chars(val) {
         return Err(MutStatus::BadChars);
     }
-    let connected = doc.is_connected(el);
-    let r = resolve_ns(doc, Some(el), name, &sp, true, connected)?;
-    /* an existing attribute with the same raw QName -> replace its value */
+    /* An attribute with this qualified name gets the value and nothing else,
+     * as the DOM's setAttribute does: its namespace is its own, decided when
+     * it was named. Re-deriving it here gave a second attribute the key of
+     * another (`q:x` moved under a scope where `q` meant another attribute's
+     * namespace), silently, and dropped a namespace set_attribute_ns gave. */
     let mut tail = None;
     let mut a = doc.attrs(el);
     while let Some(attr) = a {
         if doc.qname(attr) == name {
             arena(doc.set_value_bytes(attr, val))?;
-            r.write_attr(doc, attr);
             return Ok(attr);
         }
         tail = Some(attr);
         a = doc.next(attr);
     }
+    let connected = doc.is_connected(el);
+    let r = resolve_ns(doc, Some(el), name, &sp, true, connected)?;
     /* No attribute has this QName, but one may have its key under another
      * prefix for the same URI (p:a beside q:a, both bound to one URI). A
      * pending one has no key yet: the insertion that decides it checks. */
@@ -160,9 +165,7 @@ pub fn set_attribute_ns(
     if !crate::xml::qname::ns_fits_name(ns, name, &sp) {
         return Err(MutStatus::BadNsName);
     }
-    if !decl_ok(name, val) {
-        return Err(MutStatus::BadNsDecl);
-    }
+    decl_check(name, val)?;
     if !val.is_empty() && !validate_chars(val) {
         return Err(MutStatus::BadChars);
     }
@@ -183,7 +186,9 @@ pub fn set_attribute_ns(
     } else {
         arena(doc.store(ns))?
     };
-    build_attr(doc, el, name, &sp, val, Resolved::decided(nsv), tail)
+    let attr = build_attr(doc, el, name, &sp, val, Resolved::decided(nsv), tail)?;
+    doc.node_mut(attr).flags |= FLAG_NS_EXPLICIT;
+    Ok(attr)
 }
 
 /// Remove `el`'s attribute keyed by `(ns, local)`; `true` when one was removed.

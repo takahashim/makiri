@@ -27,7 +27,7 @@ ruby -Ilib spec/fuzz/run.rb --time 300      # 5 minutes
 ruby -Ilib spec/fuzz/run.rb --seed 42       # deterministic
 ruby -Ilib spec/fuzz/run.rb --target css    # CSS instead of XPath
 ruby -Ilib spec/fuzz/run.rb --target both
-ruby -Ilib spec/fuzz/run.rb --isolated      # fork per query (crash/hang safe)
+ruby -Ilib spec/fuzz/run.rb --in-process     # no fork (faster; crash/hang not isolated)
 
 # Or via rake (defaults below; override with FUZZ_ARGS):
 bundle exec rake fuzz
@@ -39,20 +39,20 @@ Exit status is non-zero when any new regression is saved.
 ### Under AddressSanitizer
 
 ```sh
-MAKIRI_SANITIZE=address,undefined bundle exec rake fuzz:sanitize
+MAKIRI_SANITIZE=address bundle exec rake fuzz:sanitize
 ```
 
-This rebuilds the extension with the sanitizers, preloads the ASan runtime
-(`DYLD_INSERT_LIBRARIES` / `LD_PRELOAD`) the same way `rake sanitize` does, then
-runs the fuzzer. `--isolated` is implied so a sanitizer abort becomes a saved
+This rebuilds the extension with AddressSanitizer and applies the platform-split
+runtime options used by `rake sanitize` (Linux uses `LD_PRELOAD`; macOS does not
+preload). `--isolated` is the default so a sanitizer abort becomes a saved
 `crash_*` finding instead of killing the loop.
 
 ## In-process vs isolated
 
-The default in-process loop is fast but dies on a crash or hang. `--isolated`
-forks a worker per query and kills it after `--query-timeout` seconds, so each
-crash/hang becomes a single saved finding and the loop continues. Recommended
-for runs longer than a few seconds and required to catch `crash`/`timeout`.
+The default isolated loop forks a worker per query and kills it after
+`--query-timeout` seconds, so each crash/hang becomes a single saved finding and
+the loop continues. `--in-process` selects the faster loop when crash and hang
+isolation are not needed.
 
 `regressions/last_input.txt` always records the in-flight query, so even an
 in-process death leaves a trace.

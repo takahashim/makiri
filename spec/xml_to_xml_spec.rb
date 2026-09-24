@@ -343,16 +343,6 @@ RSpec.describe "Makiri::XML#to_xml" do
       expect { doc.root << e }.to raise_error(Makiri::Error, /not bound/)
     end
 
-    it "resolves an element renamed while detached" do
-      doc = Makiri::XML(%(<r xmlns:q="urn:q"><e/></r>))
-      e = doc.at_xpath("//e")
-      e.remove
-      e.name = "q:n"
-      doc.root << e
-      expect(e.namespace_uri).to eq("urn:q")
-      expect_round_trip(doc)
-    end
-
     it "refuses two attributes that insertion gives one key" do
       doc = Makiri::XML(%(<r xmlns:p="u" xmlns:q="u"/>))
       n = doc.create_element("n")
@@ -402,14 +392,30 @@ RSpec.describe "Makiri::XML#to_xml" do
   end
 
   # The writer ignored a no-namespace element's contrary xmlns, but the
-  # mutators still resolved against it: renaming the element moved it.
+  # mutators still resolved against it: a new child took its namespace.
   it "ignores a contrary default declaration when resolving too" do
     doc = Makiri::XML("<r><e/></r>")
     e = doc.at_xpath("//e")
     e["xmlns"] = "urn:x"
-    e.name = "e"
     e << doc.create_element("c")
     expect(e.namespace_uri).to be_nil
     expect(doc.at_xpath("//c").namespace_uri).to be_nil
+  end
+
+  # canonicalize compared a namespace given with set_attribute_ns only when
+  # the element was decided, so a detached one wrote it under whatever the
+  # prefix meant there, or dropped it.
+  it "refuses to canonicalize a detached element whose given attribute namespace it cannot write" do
+    doc = Makiri::XML("<r/>")
+    prefixed = doc.create_element("q:e")
+    prefixed["xmlns:q"] = "urn:b"
+    prefixed.set_attribute_ns("urn:a", "q:x", "1")
+    bare = doc.create_element("e")
+    bare.set_attribute_ns("urn:a", "x", "1")
+    [prefixed, bare].each { |el| expect { el.canonicalize }.to raise_error(Makiri::Error) }
+    fits = doc.create_element("g")
+    fits.set_attribute_ns("urn:a", "z:x", "1")
+    fits["xmlns:z"] = "urn:a"
+    expect(fits.canonicalize).to eq(%(<g xmlns:z="urn:a" z:x="1"></g>))
   end
 end

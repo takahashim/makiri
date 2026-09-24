@@ -320,3 +320,22 @@ fn css_selectors_lower_to_the_same_answers_as_xml_css() {
     // A selector list lowers to a chain of unions, held to the same depth cap.
     assert_eq!(css(&vec!["a"; 1100].join(",")), Answer::Err(XP_ERR_LIMIT));
 }
+
+/// With no room in the string-value cache, comparisons build their values
+/// uncached and still answer as with the cache.
+#[test]
+fn comparisons_answer_the_same_with_no_cache() {
+    let exprs = [
+        "//a = //a",
+        "//a != //a",
+        r#"count(//a[. = //a])"#,
+        "//a < //c",
+        r#"count(//*[. = "x"])"#,
+        "sum(//@k) = 3",
+    ];
+    for e in exprs {
+        let cached = xpath(e);
+        let uncached = run(Query::XPath, e, |l| l.max_cache_bytes = 0);
+        assert_eq!(cached, uncached, "{e}");
+    }
+}

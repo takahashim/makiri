@@ -16,7 +16,7 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{method, prelude::*, Error, RArray, RHash, RModule, RString, Ruby, Value};
+use magnus::{method, prelude::*, Error, RHash, RModule, Ruby, Value};
 
 use crate::bridge::ruby::makiri_error;
 use crate::bridge::string::ruby_try_verified_text_pair;
@@ -120,7 +120,7 @@ impl Keywords {
                 bindings: None,
             });
         }
-        let mode = ruby.to_symbol("namespace_matching");
+        let mode = ruby.sym_new("namespace_matching");
         let lax = match keywords.get(mode) {
             None => false,
             Some(v) => matching_lax(ruby, v)?,
@@ -141,10 +141,10 @@ impl Keywords {
 /// `:strict` (the default) resolves an unprefixed name test in the HTML
 /// namespace, which is what browsers do; `:lax` makes it namespace-agnostic.
 fn matching_lax(ruby: &Ruby, v: Value) -> Result<bool, Error> {
-    if v.is_nil() || v.eql(ruby.to_symbol("strict"))? {
+    if v.is_nil() || v.eql(ruby.sym_new("strict"))? {
         return Ok(false);
     }
-    if v.eql(ruby.to_symbol("lax"))? {
+    if v.eql(ruby.sym_new("lax"))? {
         return Ok(true);
     }
     Err(Error::new(
@@ -167,24 +167,67 @@ fn bind_each(
     mut register: impl FnMut(&[u8], &[u8]) -> Result<(), Error>,
     cap: usize,
 ) -> Result<(), Error> {
-    let pairs: RArray = h.funcall("to_a", ())?;
-    for pair in pairs.into_iter() {
-        let pair = RArray::from_value(pair).expect("Hash#to_a yields pairs");
-        let ks: RString = pair.entry::<Value>(0)?.funcall("to_s", ())?;
-        let vs: RString = pair.entry::<Value>(1)?.funcall("to_s", ())?;
-
-        /* Both are the Strings `to_s` just returned, and the checks allocate
-         * nothing, so the views stay valid through the registration below. */
-        let (pv, uv) =
-            ruby_try_verified_text_pair(ks.as_value(), vs.as_value(), cap).map_err(|reason| {
-                makiri_error(format!(
-                    "invalid namespace mapping: {}",
-                    reason.to_string_lossy()
-                ))
-            })?;
-        register(pv.as_verified().as_bytes(), uv.as_verified().as_bytes())?;
+    /* The pairs are copied out first and bound after. Read from the Hash
+     * itself, not through a `to_a` a subclass can redefine (a non-pair tripped
+     * an `expect`); and bound outside the walk, because binding converts with
+     * the caller's `to_s`: inside `foreach` a panic in it became `fatal` - the
+     * walk runs under magnus's own `protect` - and a `to_s` that added a key
+     * to the same Hash raised "can't add a new key into hash during
+     * iteration". The copy runs no Ruby code of the caller's. */
+    /* More pairs than a context may hold is refused before any is converted
+     * or copied, rather than after every one of them has been. */
+    let max = crate::xpath::ctx::MAX_NAMESPACES;
+    if h.len() > max {
+        return Err(makiri_error(format!(
+            "invalid namespace mapping: {} bindings (max {max})",
+            h.len()
+        )));
+    }
+    let ruby = Ruby::get().map_err(|_| makiri_error("Ruby is not available here"))?;
+    let pairs = ruby.ary_new_capa(h.len() * 2);
+    h.foreach(|prefix: Value, uri: Value| {
+        pairs.push(prefix)?;
+        pairs.push(uri)?;
+        Ok(magnus::r_hash::ForEach::Continue)
+    })?;
+    for i in (0..pairs.len()).step_by(2) {
+        bind_pair(
+            pairs.entry(i as isize)?,
+            pairs.entry(i as isize + 1)?,
+            cap,
+            &mut register,
+        )?;
     }
     Ok(())
+}
+
+/// Bind one `prefix => uri` pair through `register` - the one reading of a
+/// namespace binding, for a query's Hash, `XPathContext.new`'s and
+/// `#register_namespace` alike, so all three convert, check, cap and word a
+/// refusal the same way.
+///
+/// Both are converted FIRST (`String()`: a String as it is, else `to_str`, else
+/// `to_s`), and only then checked: a conversion is Ruby code, and a view of the
+/// first held across the second's conversion is what let that code rewrite a
+/// checked prefix.
+pub fn bind_pair(
+    prefix: Value,
+    uri: Value,
+    cap: usize,
+    mut register: impl FnMut(&[u8], &[u8]) -> Result<(), Error>,
+) -> Result<(), Error> {
+    let ks = crate::bridge::ruby::string_of(prefix)?;
+    let vs = crate::bridge::ruby::string_of(uri)?;
+    /* Both are the Strings the conversion returned, and the checks allocate
+     * nothing, so the views stay valid through the registration below. */
+    let (pv, uv) =
+        ruby_try_verified_text_pair(ks.as_value(), vs.as_value(), cap).map_err(|reason| {
+            makiri_error(format!(
+                "invalid namespace mapping: {}",
+                reason.to_string_lossy()
+            ))
+        })?;
+    register(pv.as_verified().as_bytes(), uv.as_verified().as_bytes())
 }
 
 /// Register a `{prefix => uri}` Hash onto `ctx` for one query.

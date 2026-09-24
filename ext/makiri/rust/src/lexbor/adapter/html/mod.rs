@@ -1,10 +1,10 @@
 //! The one place Makiri reads Lexbor's DOM - node, element, attribute and
 //! document fields, and the Lexbor accessors over them - and the one place it
-//! edits the tree. An edit needs one of three clearance types, each with its own
+//! edits the tree. An edit needs one of two clearance types, each with its own
 //! contract: [`HtmlNodeMut`] / [`HtmlElementMut`] for a caller's node that
-//! passed the frozen and evaluation checks (`mutate`), [`BuildingNode`] /
-//! [`BuildingElement`] for a node no tree holds yet, and [`ScratchElement`] for
-//! one made only to be read and destroyed (`build`).
+//! passed the frozen and evaluation checks (`mutate`), and [`BuildingNode`] /
+//! [`BuildingElement`] for a node no tree holds yet (`build`). Nothing here
+//! destroys a node: Makiri detaches, and the document's arena frees.
 //!
 //! Everything here reads the GENERATED layout (`crate::lexbor::abi`), so there is
 //! no hand-written copy of a Lexbor struct left to drift from the pinned headers.
@@ -26,7 +26,7 @@ use crate::lexbor::abi::{self as lxb, LxbAttr, LxbDoc, LxbElement, LxbNode};
 
 mod build;
 mod mutate;
-pub use build::{BuildingElement, BuildingNode, ScratchElement};
+pub use build::{BuildingElement, BuildingNode};
 pub use mutate::{HtmlElementMut, HtmlNodeMut, Insertion, Place, PreInsertError};
 
 /* A node handle is cast to an element or attribute handle, which is sound only
@@ -504,11 +504,21 @@ impl<'doc> HtmlNode<'doc> {
     }
 
     /// Forget this node's source position, so [`source_offset`](Self::source_offset)
-    /// answers None. The third writer of `user`, beside the stamping: see
+    /// answers None. The second writer of `user`, beside the stamping: see
     /// [`BuildingNode::clear_source_offsets`](super::build::BuildingNode::clear_source_offsets).
     pub(crate) fn forget_source_offset(self) {
         // SAFETY: a live node; `user` is not part of the tree's structure.
         unsafe { (*self.as_raw()).user = core::ptr::null_mut() };
+    }
+
+    /// Whether the node's name carries a namespace prefix - one a namespaced
+    /// name was given (createElementNS, setAttributeNS, the parser's foreign
+    /// attributes). A parsed `fb:like` has none: its colon is part of one
+    /// local name.
+    #[inline]
+    pub fn has_prefix(self) -> bool {
+        // SAFETY: as `node_type`.
+        unsafe { (*self.as_raw()).prefix != 0 }
     }
 
     /// The interned tag id (`local_name`).
@@ -728,6 +738,13 @@ impl<'doc> HtmlElement<'doc> {
         // SAFETY: a live element.
         unsafe { named(self.raw(), lxb::lxb_dom_element_qualified_name) }
     }
+    /// Whether the element records its name as written beside its lower-cased
+    /// tag (an SVG `linearGradient`, a prefixed `p:Foo`) - then
+    /// [`qualified_name`](Self::qualified_name) is that spelling.
+    pub fn has_written_name(self) -> bool {
+        // SAFETY: a live element.
+        unsafe { (*self.raw()).qualified_name != 0 }
+    }
     pub fn local_name(self) -> &'doc [u8] {
         // SAFETY: a live element.
         unsafe { named_mut(self.raw(), lxb::lxb_dom_element_local_name) }
@@ -916,14 +933,22 @@ impl<'doc> HtmlAttr<'doc> {
         st == lxb::consts::STATUS_OK
     }
 
-    /// The attribute's OWN namespace id, the one `setAttributeNS` recorded.
+    /// The attribute's OWN namespace id, the one `setAttributeNS` (or the
+    /// parser's foreign-attribute adjustment) recorded.
     ///
-    /// An attribute with no namespace of its own reports its element's, so the
-    /// two are compared: only a difference is the attribute's own. [`NS_UNDEF`]
-    /// for an attribute Lexbor has not linked to an element yet.
+    /// An attribute with no namespace of its own reports its element's, so a
+    /// namespace is the attribute's own when it differs from its element's - or
+    /// when the attribute has a prefix, which only a namespaced name is given:
+    /// `set_attribute_ns(SVG, "q:x")` on an SVG element is in SVG, while a
+    /// parsed `q:x` there is one no-namespace name. An UNPREFIXED namespaced
+    /// attribute in its element's own namespace reads as no namespace - Lexbor
+    /// keeps nothing that tells the two apart. [`NS_UNDEF`] for an unprefixed
+    /// attribute Lexbor has not linked to an element yet.
     pub fn own_ns(self) -> usize {
+        let ns = self.node().ns_id();
         match self.owner() {
-            Some(owner) if owner.node().ns_id() != self.node().ns_id() => self.node().ns_id(),
+            _ if self.node().has_prefix() => ns,
+            Some(owner) if owner.node().ns_id() != ns => ns,
             _ => NS_UNDEF,
         }
     }

@@ -1,6 +1,5 @@
 //! Making nodes: the document's factories, and the handles for a node that is
-//! being built and not yet in a tree ([`BuildingNode`], [`BuildingElement`]) or
-//! made only to be read and destroyed ([`ScratchElement`]).
+//! being built and not yet in a tree ([`BuildingNode`], [`BuildingElement`]).
 
 #![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
@@ -23,6 +22,66 @@ impl<'doc> HtmlDoc<'doc> {
                 core::ptr::null_mut(),
             ))
         }
+    }
+
+    /// A detached element named `local` in `ns`, with `prefix` when it is not
+    /// empty - the DOM's createElementNS, where [`create_element`] is
+    /// createElement: that takes `p:e` as one local name, and lower-cases it.
+    /// Here the name keeps its case (`linearGradient`), as the parser keeps a
+    /// foreign element's: the lower-cased tag is Lexbor's key, and the name as
+    /// written is recorded beside it. An empty `ns` is no namespace. `None`
+    /// when Lexbor could not make one.
+    ///
+    /// [`create_element`]: Self::create_element
+    pub fn create_element_ns(
+        self,
+        local: &[u8],
+        ns: &[u8],
+        prefix: &[u8],
+    ) -> Option<BuildingElement<'doc>> {
+        let or_null = |s: &[u8]| {
+            if s.is_empty() {
+                core::ptr::null()
+            } else {
+                s.as_ptr()
+            }
+        };
+        // SAFETY: a live document; Lexbor copies every name into its own
+        // storage, and a failure destroys the half-made element itself. A null
+        // prefix is "none" - a non-null empty one would be interned as a
+        // prefix of its own.
+        let el = unsafe {
+            BuildingElement::from_raw(lxb::lxb_dom_element_create(
+                self.as_raw(),
+                local.as_ptr(),
+                local.len(),
+                or_null(ns),
+                ns.len(),
+                or_null(prefix),
+                prefix.len(),
+                core::ptr::null(),
+                0,
+                false,
+            ))
+        }?;
+        /* With a prefix, Lexbor recorded `prefix:local` as written already. */
+        if prefix.is_empty() && local.iter().any(u8::is_ascii_uppercase) {
+            // SAFETY: an element just made in this document, in no tree; the
+            // name is copied.
+            let st = unsafe {
+                lxb::lxb_dom_element_qualified_name_set(
+                    el.0.raw(),
+                    core::ptr::null(),
+                    0,
+                    local.as_ptr(),
+                    local.len(),
+                )
+            };
+            if st != lxb::consts::STATUS_OK {
+                return None;
+            }
+        }
+        Some(el)
     }
 
     /// A detached text node holding `text`. `None` on allocation failure.
@@ -256,23 +315,56 @@ impl<'doc> BuildingNode<'doc> {
     /// source became 22 here). No position is the truthful answer - nil.
     /// Iterative, like every walk over a tree built from input.
     pub fn clear_source_offsets(self) {
-        let root = self.0;
-        let mut cur = Some(root);
+        let mut cur = Some(self);
         while let Some(n) = cur {
-            n.forget_source_offset();
-            cur = n.first_child().or_else(|| {
-                let mut up = n;
-                loop {
-                    if up == root {
-                        return None;
-                    }
-                    if let Some(next) = up.next() {
-                        return Some(next);
-                    }
-                    up = up.parent()?;
-                }
-            });
+            n.0.forget_source_offset();
+            cur = n.preorder_next(self);
         }
+    }
+
+    /// Give this copy of `src` the name `src` records as written, which
+    /// Lexbor's copy leaves behind (`lxb_dom_element_interface_copy` copies the
+    /// tag, not the spelling): a copied SVG `linearGradient` read
+    /// `lineargradient`, and `p:Bar` read `bar`. Nothing to do for a node
+    /// with no written name. `false` when Lexbor could not store it.
+    pub fn copy_written_name_from(self, src: HtmlNode<'_>) -> bool {
+        let (Some(from), Some(to)) = (src.element(), self.0.element()) else {
+            return true;
+        };
+        if !from.has_written_name() {
+            return true;
+        }
+        if src.owner_document() == self.0.owner_document() {
+            /* One document, one tag table: the entry the source points at is
+             * already this document's, so it is shared rather than looked up
+             * again. Looking it up cost every copied SVG element a hash probe
+             * (clone 10% slower, many small dups 20%) - and appending a name
+             * the table already had can re-point its entry (see below). */
+            // SAFETY: two live elements of one document; the tag entry is the
+            // document's and outlives both.
+            unsafe { (*to.raw()).qualified_name = (*from.raw()).qualified_name };
+            return true;
+        }
+        /* Another document's entry means nothing here, so the name is interned
+         * in this one. A known gap, in Lexbor: `lxb_tag_append` given a name
+         * the table already holds under ANOTHER tag - a parsed `<x:y>`, one
+         * local name - re-points that entry, so the parsed element stops
+         * matching CSS `x\:y`. It takes a prefixed `x:y` imported from another
+         * document into one that already has a parsed `x:y`; see
+         * NOKOGIRI_DIFFERENCES.md. */
+        let name = from.qualified_name();
+        // SAFETY: an element being built, in no tree yet; the name is copied
+        // into this document's tag table.
+        let st = unsafe {
+            lxb::lxb_dom_element_qualified_name_set(
+                to.raw(),
+                core::ptr::null(),
+                0,
+                name.as_ptr(),
+                name.len(),
+            )
+        };
+        st == lxb::consts::STATUS_OK
     }
 
     /// Where this node's CHILDREN attach: a `<template>`'s content fragment,
@@ -322,9 +414,8 @@ impl<'doc> BuildingNode<'doc> {
 /// [`HtmlElementMut`]: that type means the receiver passed the frozen and
 /// evaluation checks, which say nothing about an element this code just made.
 ///
-/// Nor is it [`ScratchElement`], which destroys what it holds. A half-built
-/// subtree that is abandoned on failure is left where it is: the document's
-/// arena reclaims it wholesale, and nothing else ever points at it.
+/// A half-built subtree that is abandoned on failure is left where it is: the
+/// document's arena reclaims it wholesale, and nothing else ever points at it.
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct BuildingElement<'doc>(HtmlElement<'doc>);
@@ -364,51 +455,5 @@ impl<'doc> BuildingElement<'doc> {
     /// abandoned subtree.
     pub fn append_ns_attribute(self, ns: &[u8], qname: &[u8], value: &[u8]) -> bool {
         self.0.append_attribute_ns(Some(ns), qname, value)
-    }
-}
-
-/// An element made only to be read from and thrown away, destroyed when it
-/// goes out of scope.
-///
-/// Renaming an element is done by creating one under the new name, copying the
-/// names the document interned for it, and discarding the source: the five
-/// fields copied out (`local_name`, `prefix`, `ns`, `upper_name`,
-/// `qualified_name`) are the DOCUMENT's interned strings and tag ids, not the
-/// element's own storage, so they outlive it.
-///
-/// This is the one place Makiri destroys rather than detaches, and it is sound
-/// for the same reason: the throwaway was never in a tree and no Ruby wrapper
-/// ever saw it. Owning it keeps the destroy off the success path, where it used
-/// to sit between the copies and the index drop.
-pub struct ScratchElement<'doc>(HtmlElement<'doc>);
-
-impl<'doc> ScratchElement<'doc> {
-    /// A detached element named `local_name`, or `None` when Lexbor could not
-    /// make one.
-    ///
-    pub fn create(doc: HtmlDoc<'doc>, local_name: &[u8]) -> Option<Self> {
-        doc.create_element(local_name).map(|b| ScratchElement(b.0))
-    }
-
-    /// Give `target` this element's interned name, in place, so a Ruby wrapper
-    /// pointing at `target` keeps pointing at the same element.
-    pub fn rename(&self, target: HtmlElementMut<'doc>) {
-        // SAFETY: two live elements of one document; the names copied are the
-        // document's interned storage, which outlives this scratch element.
-        unsafe {
-            let (to, from) = (target.element().raw(), self.0.raw());
-            (*to).node.local_name = (*from).node.local_name;
-            (*to).node.prefix = (*from).node.prefix;
-            (*to).node.ns = (*from).node.ns;
-            (*to).upper_name = (*from).upper_name;
-            (*to).qualified_name = (*from).qualified_name;
-        }
-    }
-}
-
-impl Drop for ScratchElement<'_> {
-    fn drop(&mut self) {
-        // SAFETY: this type owns the element, which was never in a tree.
-        unsafe { lxb::lxb_dom_node_destroy(self.0.node().as_raw()) };
     }
 }

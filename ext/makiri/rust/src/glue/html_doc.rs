@@ -26,31 +26,33 @@ fn doc_s_parse(_klass: Value, source: Value) -> Result<Value, Error> {
 
 /* ---- read-only accessors ---- */
 
-fn doc_root(ruby: &Ruby, self_: Value) -> Value {
-    crate::bridge::doc::document_root(ruby, self_)
+fn doc_root(ruby: &Ruby, self_: Value) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| Ok(crate::bridge::doc::document_root(ruby, self_)))
 }
 
-fn doc_title(ruby: &Ruby, self_: Value) -> magnus::RString {
-    crate::bridge::doc::document_title(ruby, self_)
+fn doc_title(ruby: &Ruby, self_: Value) -> Result<magnus::RString, Error> {
+    crate::bridge::ruby::entry(|| Ok(crate::bridge::doc::document_title(ruby, self_)))
 }
 
 /// The `<!DOCTYPE ...>` node, or nil - Nokogiri's `#internal_subset`. It is a
 /// child of the document node (typically first), so a short scan finds it.
 fn doc_internal_subset(_ruby: &Ruby, self_: Value) -> Result<Value, Error> {
-    let doc = crate::glue::html_node::arg_node(&self_)?;
-    let doctype = doc
-        .children()
-        .find(|c| c.node_type() == NODE_TYPE_DOCUMENT_TYPE);
-    Ok(crate::glue::html_node::wrap_node(doctype, self_))
+    crate::bridge::ruby::entry(|| {
+        let doc = crate::glue::html_node::arg_node(&self_)?;
+        let doctype = doc
+            .children()
+            .find(|c| c.node_type() == NODE_TYPE_DOCUMENT_TYPE);
+        Ok(crate::glue::html_node::wrap_node(doctype, self_))
+    })
 }
 
-fn doc_quirks_mode(ruby: &Ruby, self_: Value) -> Value {
-    crate::bridge::doc::document_quirks_mode(ruby, self_)
+fn doc_quirks_mode(ruby: &Ruby, self_: Value) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| Ok(crate::bridge::doc::document_quirks_mode(ruby, self_)))
 }
 
 /// Parse warnings. Reserved; currently always empty.
-fn doc_errors(_ruby: &Ruby, self_: Value) -> Value {
-    crate::bridge::doc::document_errors(self_)
+fn doc_errors(_ruby: &Ruby, self_: Value) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| Ok(crate::bridge::doc::document_errors(self_)))
 }
 
 /* ---- fragment entry points ---- */
@@ -69,7 +71,7 @@ fn fragment_from_args(
     document: impl FnOnce() -> Result<Value, Error>,
 ) -> Result<Value, Error> {
     let a = magnus::scan_args::scan_args::<(Value,), (), (), (), magnus::RHash, ()>(args)?;
-    let context = a.keywords.get(ruby.to_symbol("context"));
+    let context = a.keywords.get(ruby.sym_new("context"));
     let document = document()?;
     let at = fragment::resolve_fragment_context(document, context)?;
     fragment::build_fragment(document, a.required.0, at)

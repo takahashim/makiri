@@ -219,3 +219,28 @@ impl<'d> Dom<'d> for &'d xml::Document {
 pub fn context(doc: &xml::Document, node: xml::NodeId) -> Context<'_, &xml::Document> {
     Context::new(doc, Token::xml(node.to_token()))
 }
+
+/// Where `a` falls against `b` in document order, for `Node#<=>`: `None` for
+/// an attribute, or for two nodes in different trees (a detached subtree has
+/// no place in its document's order) - the same cases the HTML side leaves
+/// unordered.
+pub fn document_order(
+    doc: &xml::Document,
+    a: xml::NodeId,
+    b: xml::NodeId,
+) -> Option<core::cmp::Ordering> {
+    if a == b {
+        return Some(core::cmp::Ordering::Equal); /* as the HTML side answers */
+    }
+    let is_attr = |n| doc.type_(n) == Some(xml::NodeType::Attribute);
+    if is_attr(a) || is_attr(b) {
+        return None;
+    }
+    let top = |mut n| {
+        while let Some(p) = doc.parent(n) {
+            n = p;
+        }
+        n
+    };
+    (top(a) == top(b)).then(|| crate::xpath::order::doc_order_cmp(doc, a, b))
+}

@@ -34,7 +34,7 @@ fn pretty_opt(ruby: &Ruby, args: &[Value]) -> Result<bool, Error> {
     let scanned = magnus::scan_args::scan_args::<(), (), (), (), RHash, ()>(args)?;
     Ok(scanned
         .keywords
-        .get(ruby.to_symbol("pretty"))
+        .get(ruby.sym_new("pretty"))
         .is_some_and(|v: Value| v.to_bool()))
 }
 

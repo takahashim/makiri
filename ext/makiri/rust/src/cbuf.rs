@@ -1,39 +1,32 @@
-//! `Buf` (once `mkr_buf_t`, core/mkr_buf.h): the owned, capped, growable byte
-//! buffer that output is collected into.
+//! `Buf`: the owned, capped, growable byte buffer that output is collected
+//! into.
 //!
 //! Declared here rather than inside one subsystem because more than one of them
 //! now writes into it - the XPath engine's string values and the glue's
-//! serializers - and two Rust copies of one C layout is exactly the drift the
-//! layout cross-checks exist to catch.
+//! serializers.
 //!
-//! `mkr_buf_init` and `mkr_buf_free` are `static inline` in the header, so they
-//! have no symbol to call and are written out as methods; everything else is
-//! the exported C function.
+//! The memory is libc's rather than Rust's allocator, so a stolen buffer is an
+//! [`OwnedBuf`] that `free()`s it; see the section on the growth functions.
 
 #![allow(unsafe_code)]
 
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::{c_char, c_void};
 use core::ptr::NonNull;
 
 pub mod verify;
 
-/* `mkr_status_t`. Generated would be better, but these five are the C enum's
- * whole content and it has no `-D` override, unlike the limits below. */
-/// `BUF_OK` - the `mkr_status_t` the buffer calls return on success.
-pub const BUF_OK: c_int = 0;
-pub const BUF_ERR_OOM: c_int = 1;
-pub const BUF_ERR_LIMIT: c_int = 2;
-pub const BUF_ERR_INVALID: c_int = 3;
-
-/// A failure returned by the safe buffer API.
+/// Why a buffer operation failed. Every failure leaves the buffer as it was.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BufError {
+    /// Allocation failed, or a size computation overflowed.
     Oom,
+    /// The content would pass the buffer's ceiling.
     Limit,
+    /// A non-empty write with no source.
     Invalid,
 }
 
-/// `mkr_buf_t`.
+/// A growable buffer, NUL-terminated whenever it holds an allocation.
 pub struct Buf {
     data: *mut c_char,
     len: usize,
@@ -110,13 +103,11 @@ impl Drop for OwnedBuf {
 }
 
 impl Buf {
-    /// An empty buffer with the soft ceiling `max` (0 = the C default limit).
+    /// An empty buffer with the soft ceiling `max` (0 = [`BUF_DEFAULT_LIMIT`]).
     ///
-    /// The value is not clamped here: every growth path in `mkr_buf.c` takes
-    /// `min(max, MKR_BUF_HARD_MAX)`, so passing a larger soft ceiling is
-    /// already equivalent to passing the hard one. Restating `MKR_BUF_HARD_MAX`
-    /// in Rust would only add a constant that a `-DMKR_BUF_HARD_MAX=` build
-    /// could silently disagree with.
+    /// The value is not clamped here: every growth path goes through
+    /// `content_limit`, which takes `min(max, BUF_HARD_MAX)`, so passing a
+    /// larger soft ceiling is already equivalent to passing the hard one.
     pub fn new(max: usize) -> Buf {
         Buf {
             data: core::ptr::null_mut(),
@@ -146,27 +137,13 @@ impl Buf {
     pub fn append(&mut self, bytes: &[u8]) -> Result<(), BufError> {
         // SAFETY: `self` is a live buffer, and the pointer and length are one
         // Rust slice's, so they name exactly `bytes.len()` readable bytes.
-        let status = unsafe { buf_append(self, bytes.as_ptr() as *const c_void, bytes.len()) };
-        match status {
-            BUF_OK => Ok(()),
-            BUF_ERR_OOM => Err(BufError::Oom),
-            BUF_ERR_LIMIT => Err(BufError::Limit),
-            BUF_ERR_INVALID => Err(BufError::Invalid),
-            _ => Err(BufError::Invalid),
-        }
+        unsafe { buf_append(self, bytes.as_ptr() as *const c_void, bytes.len()) }
     }
 
     /// Reserve room for `n` content bytes without changing the current length.
     pub fn reserve(&mut self, n: usize) -> Result<(), BufError> {
         // SAFETY: `self` is a live buffer.
-        let status = unsafe { buf_reserve(self, n) };
-        match status {
-            BUF_OK => Ok(()),
-            BUF_ERR_OOM => Err(BufError::Oom),
-            BUF_ERR_LIMIT => Err(BufError::Limit),
-            BUF_ERR_INVALID => Err(BufError::Invalid),
-            _ => Err(BufError::Invalid),
-        }
+        unsafe { buf_reserve(self, n) }
     }
 
     /// Detach the allocation and reset this buffer to an empty state.
@@ -214,21 +191,10 @@ extern "C" {
     fn libc_realloc(p: *mut c_void, n: usize) -> *mut c_void;
 }
 
-/* The build-time content limits.
- *
- * Alongside the C these are read FROM it: `core/mkr_core_abi.c` publishes the
- * `-D`-overridable macros of `mkr_buf.h` from a translation unit the
- * preprocessor has already seen, so a `-DMKR_BUF_HARD_MAX=` build cannot end up
- * with two different ceilings in one extension.
- *
- * Standing alone there is no preprocessor to be that source, so these become the
- * definition and the override arrives from the environment instead. That is a
- * CHANGE OF SPELLING for anyone who set one: `-DMKR_BUF_HARD_MAX=<bytes>` at
- * compile time becomes `MKR_BUF_HARD_MAX=<bytes>` in the environment. The
- * defaults are unchanged, and they are still read in one place.
- *
- * The lower-case names are deliberate - they are what the C ABI published, and
- * `content_limit` below should not have to know which side defines them. */
+/* The build-time content limits, each overridable from the environment at
+ * build time (`MKR_BUF_HARD_MAX=<bytes>`, `MKR_BUF_DEFAULT_LIMIT=<bytes>`; the
+ * variable names predate the port and are kept so an existing build setting
+ * still applies). Read in one place, `content_limit`. */
 
 mod limits {
     use crate::kani_bounds::parse_usize;
@@ -250,21 +216,19 @@ mod limits {
 pub(crate) use limits::{BUF_DEFAULT_LIMIT, BUF_HARD_MAX};
 
 /* ------------------------------------------------------------------ *
- * the C ABI (core/mkr_buf.c)                                         *
+ * growth                                                             *
  * ------------------------------------------------------------------ *
  *
- * The buffer's memory is libc's, not Rust's: `buf_steal` hands the pointer
- * to a caller that `free()`s it, and C code still appends to buffers Rust made.
- * So these use malloc/realloc directly rather than `falloc`, and consult the
- * allocation instrumentation through `falloc::allocation_should_fail`, so
- * `rake oom` reaches these allocations exactly as it reached the C's while
- * production builds compile that hook to `false`. */
+ * The buffer's memory is libc's, not Rust's: `buf_steal` hands the pointer to
+ * an `OwnedBuf` that `free()`s it. So these use malloc/realloc directly rather
+ * than `falloc`, and consult the allocation instrumentation through
+ * `falloc::allocation_should_fail`, so `rake oom` reaches them while production
+ * builds compile that hook to `false`. */
 
 /// The effective content ceiling for a buffer: its own `max` (0 meaning the
 /// default), clamped by the absolute hard maximum.
 ///
-/// One function, because the C computed it identically in `append` and
-/// `reserve` and the two must not drift - a `reserve` with a larger ceiling
+/// One function, because `append` and `reserve` must not drift - a `reserve` with a larger ceiling
 /// than `append` would pre-size past what any append will accept.
 #[inline]
 fn content_limit(b: &Buf) -> usize {
@@ -272,48 +236,51 @@ fn content_limit(b: &Buf) -> usize {
     soft.min(BUF_HARD_MAX)
 }
 
-/// Append `n` bytes. Fails closed, leaving the buffer untouched:
-/// `BUF_ERR_INVALID` for a non-empty write with no source, `BUF_ERR_LIMIT` past
-/// the ceiling, `BUF_ERR_OOM` on overflow or allocation failure.
+/// Append `n` bytes. Fails closed, leaving the buffer untouched (see
+/// [`BufError`]).
 ///
 /// `pub(crate)` for the Lexbor serializer callback (`lexbor::serialize`), the
 /// one caller that cannot go through [`Buf::append`]'s slice.
 ///
 /// # Safety
 /// `b` must be a live buffer; `bytes` must name `n` readable bytes.
-pub(crate) unsafe fn buf_append(b: *mut Buf, bytes: *const c_void, n: usize) -> c_int {
+pub(crate) unsafe fn buf_append(
+    b: *mut Buf,
+    bytes: *const c_void,
+    n: usize,
+) -> Result<(), BufError> {
     if n == 0 {
-        return BUF_OK;
+        return Ok(());
     }
     if bytes.is_null() {
-        return BUF_ERR_INVALID; /* fail closed: nonzero length with no source */
+        return Err(BufError::Invalid); /* fail closed: nonzero length with no source */
     }
     let b = &mut *b;
 
     let need = match b.len.checked_add(n) {
         Some(v) => v,
-        None => return BUF_ERR_OOM,
+        None => return Err(BufError::Oom),
     };
     let limit = content_limit(b);
     if need > limit {
-        return BUF_ERR_LIMIT;
+        return Err(BufError::Limit);
     }
     let need_term = match need.checked_add(1) {
         Some(v) => v, /* room for the NUL terminator too */
-        None => return BUF_ERR_OOM,
+        None => return Err(BufError::Oom),
     };
 
     if need_term > b.cap {
         let mut new_cap = match crate::falloc::grow_capacity(b.cap, need_term, 1) {
             Some(c) => c,
-            None => return BUF_ERR_OOM,
+            None => return Err(BufError::Oom),
         };
         /* Geometric growth can overshoot to ~2x need_term; clamp the ALLOCATION
          * to the same ceiling as the content (limit, plus the NUL), so cap never
          * runs to ~2x the hard maximum near the limit. Safe: this append already
          * passed `need <= limit`, so `need_term <= limit + 1` and the clamp can
          * never drop new_cap below what this append needs. A limit + 1 that
-         * overflows - only a pathological -DMKR_BUF_HARD_MAX=SIZE_MAX - skips
+         * overflows - only a pathological MKR_BUF_HARD_MAX=SIZE_MAX - skips
          * the clamp. */
         if let Some(ceiling) = limit.checked_add(1) {
             if new_cap > ceiling {
@@ -326,7 +293,7 @@ pub(crate) unsafe fn buf_append(b: *mut Buf, bytes: *const c_void, n: usize) -> 
             libc_realloc(b.data as *mut c_void, new_cap)
         };
         if p.is_null() {
-            return BUF_ERR_OOM;
+            return Err(BufError::Oom);
         }
         b.data = p as *mut c_char;
         b.cap = new_cap;
@@ -335,7 +302,7 @@ pub(crate) unsafe fn buf_append(b: *mut Buf, bytes: *const c_void, n: usize) -> 
     core::ptr::copy_nonoverlapping(bytes as *const u8, b.data.add(b.len) as *mut u8, n);
     b.len += n;
     *b.data.add(b.len) = 0; /* keep NUL-terminated */
-    BUF_OK
+    Ok(())
 }
 
 /// Pre-allocate capacity for `n` bytes, so a known-size fill does not realloc on
@@ -346,15 +313,15 @@ pub(crate) unsafe fn buf_append(b: *mut Buf, bytes: *const c_void, n: usize) -> 
 ///
 /// # Safety
 /// `b` must be a live buffer.
-unsafe fn buf_reserve(b: *mut Buf, n: usize) -> c_int {
+unsafe fn buf_reserve(b: *mut Buf, n: usize) -> Result<(), BufError> {
     let b = &mut *b;
     let n = n.min(content_limit(b));
     let need_term = match n.checked_add(1) {
         Some(v) => v,
-        None => return BUF_ERR_OOM,
+        None => return Err(BufError::Oom),
     };
     if need_term <= b.cap {
-        return BUF_OK; /* already have room */
+        return Ok(()); /* already have room */
     }
     let p = if crate::falloc::allocation_should_fail() {
         core::ptr::null_mut()
@@ -362,12 +329,12 @@ unsafe fn buf_reserve(b: *mut Buf, n: usize) -> c_int {
         libc_realloc(b.data as *mut c_void, need_term)
     };
     if p.is_null() {
-        return BUF_ERR_OOM;
+        return Err(BufError::Oom);
     }
     b.data = p as *mut c_char;
     b.cap = need_term;
     *b.data.add(b.len) = 0; /* keep NUL-terminated */
-    BUF_OK
+    Ok(())
 }
 
 /// Take ownership of the NUL-terminated bytes; the buffer is reset to empty.

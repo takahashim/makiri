@@ -18,7 +18,7 @@ use crate::bridge::wrapper::keepalive_document;
 use crate::init::{CLASS_DOCUMENT, CLASS_NODE, CLASS_NODE_SET};
 
 fn length(s: &NodeSet) -> Result<usize, Error> {
-    s.count()
+    crate::bridge::ruby::entry(|| s.count())
 }
 
 fn arity_error(ruby: &Ruby, given: usize) -> Error {
@@ -32,35 +32,37 @@ fn arity_error(ruby: &Ruby, given: usize) -> Error {
 /// `set[start, length]` and `set[range]` -> a new NodeSet, nil when the start is
 /// out of range. Mirrors `Array#[]`.
 fn aref(ruby: &Ruby, s: &NodeSet, args: &[Value]) -> Result<Value, Error> {
-    let count = s.count()? as c_long;
-    let from_end = |i: c_long| if i < 0 { i + count } else { i };
-    let nil = ruby.qnil().as_value();
-    match args {
-        [range] if range.is_kind_of(ruby.class_range()) => {
-            /* A start outside the set is nil; a bound too large for a `long`
-             * raises, as `Array#[]` does. */
-            match range_beg_len(*range, count)? {
-                Some((beg, len)) => s.slice(ruby, beg as usize, len as usize),
-                None => Ok(nil),
+    crate::bridge::ruby::entry(|| {
+        let count = s.count()? as c_long;
+        let from_end = |i: c_long| if i < 0 { i + count } else { i };
+        let nil = ruby.qnil().as_value();
+        match args {
+            [range] if range.is_kind_of(ruby.class_range()) => {
+                /* A start outside the set is nil; a bound too large for a `long`
+                 * raises, as `Array#[]` does. */
+                match range_beg_len(*range, count)? {
+                    Some((beg, len)) => s.slice(ruby, beg as usize, len as usize),
+                    None => Ok(nil),
+                }
             }
-        }
-        [index] => {
-            let i = from_end(c_long::try_convert(*index)?);
-            if i < 0 || i >= count {
-                return Ok(nil);
+            [index] => {
+                let i = from_end(c_long::try_convert(*index)?);
+                if i < 0 || i >= count {
+                    return Ok(nil);
+                }
+                s.at(ruby, i as usize)
             }
-            s.at(ruby, i as usize)
-        }
-        [beg, len] => {
-            let beg = from_end(c_long::try_convert(*beg)?);
-            let len = c_long::try_convert(*len)?;
-            if beg < 0 || beg > count || len < 0 {
-                return Ok(nil);
+            [beg, len] => {
+                let beg = from_end(c_long::try_convert(*beg)?);
+                let len = c_long::try_convert(*len)?;
+                if beg < 0 || beg > count || len < 0 {
+                    return Ok(nil);
+                }
+                s.slice(ruby, beg as usize, len as usize)
             }
-            s.slice(ruby, beg as usize, len as usize)
+            _ => Err(arity_error(ruby, args.len())),
         }
-        _ => Err(arity_error(ruby, args.len())),
-    }
+    })
 }
 
 /// `each`: yields every node; an Enumerator without a block.
@@ -69,36 +71,38 @@ fn aref(ruby: &Ruby, s: &NodeSet, args: &[Value]) -> Result<Value, Error> {
 /// through a query), and holding the borrow across the yield would turn that
 /// into an error for no reason.
 fn each(ruby: &Ruby, s: &NodeSet) -> Result<Value, Error> {
-    /* magnus hands methods a `&NodeSet`, not the object, and `each` needs the
-     * object both to return and to enumeratorize. */
-    let this = method_receiver();
-    if !ruby.block_given() {
-        return Ok(this.enumeratorize("each", ()).as_value());
-    }
-    for node in s.snapshot(ruby)?.wrapped() {
-        let _: Value = ruby.yield_value(node)?;
-    }
-    Ok(this)
+    crate::bridge::ruby::entry(|| {
+        /* magnus hands methods a `&NodeSet`, not the object, and `each` needs the
+         * object both to return and to enumeratorize. */
+        let this = method_receiver();
+        if !ruby.block_given() {
+            return Ok(this.enumeratorize("each", ()).as_value());
+        }
+        for node in s.snapshot(ruby)?.wrapped() {
+            let _: Value = ruby.yield_value(node)?;
+        }
+        Ok(this)
+    })
 }
 
 fn dup(ruby: &Ruby, s: &NodeSet, _args: &[Value]) -> Result<Value, Error> {
-    s.slice(ruby, 0, s.count()?)
+    crate::bridge::ruby::entry(|| s.slice(ruby, 0, s.count()?))
 }
 
 fn op_or(ruby: &Ruby, s: &NodeSet, other: Value) -> Result<Value, Error> {
-    s.union(ruby, s.operand(ruby, other)?)
+    crate::bridge::ruby::entry(|| s.union(ruby, s.operand(ruby, other)?))
 }
 
 fn op_plus(ruby: &Ruby, s: &NodeSet, other: Value) -> Result<Value, Error> {
-    s.concat(ruby, s.operand(ruby, other)?)
+    crate::bridge::ruby::entry(|| s.concat(ruby, s.operand(ruby, other)?))
 }
 
 fn op_and(ruby: &Ruby, s: &NodeSet, other: Value) -> Result<Value, Error> {
-    s.filter(ruby, s.operand(ruby, other)?, true)
+    crate::bridge::ruby::entry(|| s.filter(ruby, s.operand(ruby, other)?, true))
 }
 
 fn op_minus(ruby: &Ruby, s: &NodeSet, other: Value) -> Result<Value, Error> {
-    s.filter(ruby, s.operand(ruby, other)?, false)
+    crate::bridge::ruby::entry(|| s.filter(ruby, s.operand(ruby, other)?, false))
 }
 
 /// `NodeSet.new(document_or_node, list = [])`.
@@ -107,34 +111,36 @@ fn op_minus(ruby: &Ruby, s: &NodeSet, other: Value) -> Result<Value, Error> {
 /// whose document is taken) that the set pins as a GC keepalive; the optional
 /// list seeds it, and every node in it must belong to that document.
 fn s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
-    let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), (), ()>(args)?;
-    let (owner,) = a.required;
-    let (list,) = a.optional;
+    crate::bridge::ruby::entry(|| {
+        let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), (), ()>(args)?;
+        let (owner,) = a.required;
+        let (list,) = a.optional;
 
-    let document = if is_kind_of(owner, &CLASS_DOCUMENT) {
-        owner
-    } else if is_kind_of(owner, &CLASS_NODE) {
-        keepalive_document(owner)?
-    } else {
-        return Err(Error::new(
-            ruby.exception_type_error(),
-            "expected a Makiri::Document or Node as the first argument",
-        ));
-    };
-    let nodes = match list.filter(|v| !v.is_nil()) {
-        None => None,
-        Some(v) => Some(RArray::from_value(v).ok_or_else(|| {
-            Error::new(
+        let document = if is_kind_of(owner, &CLASS_DOCUMENT) {
+            owner
+        } else if is_kind_of(owner, &CLASS_NODE) {
+            keepalive_document(owner)?
+        } else {
+            return Err(Error::new(
                 ruby.exception_type_error(),
-                "expected an Array of nodes as the second argument",
-            )
-        })?),
-    };
-    node_set_of_nodes(
-        ruby,
-        document,
-        nodes.into_iter().flat_map(|a| a.into_iter()),
-    )
+                "expected a Makiri::Document or Node as the first argument",
+            ));
+        };
+        let nodes = match list.filter(|v| !v.is_nil()) {
+            None => None,
+            Some(v) => Some(RArray::from_value(v).ok_or_else(|| {
+                Error::new(
+                    ruby.exception_type_error(),
+                    "expected an Array of nodes as the second argument",
+                )
+            })?),
+        };
+        node_set_of_nodes(
+            ruby,
+            document,
+            nodes.into_iter().flat_map(|a| a.into_iter()),
+        )
+    })
 }
 
 /// From `Init_makiri`, with the classes already defined.

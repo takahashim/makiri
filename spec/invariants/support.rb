@@ -82,7 +82,7 @@ def fingerprint(node, out = [])
 end
 
 def fingerprint_attrs(el)
-  el.attribute_nodes.reject { |a| a.name.start_with?("xmlns") }
+  el.attribute_nodes.reject { |a| a.namespace_uri == "http://www.w3.org/2000/xmlns/" }
     .map { |a| [a.local_name, a.value, a.namespace_uri] }.sort
 end
 

@@ -37,13 +37,12 @@
 #![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
-use core::ffi::c_void;
-
 use crate::falloc::{self, VecPush};
 use crate::lexbor::abi as lxb;
 use crate::lexbor::abi::consts as k;
 
 use crate::lexbor::abi::{lxb_css_parser_create, lxb_css_parser_destroy, lxb_css_parser_init};
+use crate::lexbor::chunks::{chunk_cb, Chunks};
 use crate::lexbor::css_engine::Owned;
 
 /// Bound on at-rule nesting: fail closed rather than recurse without limit on a
@@ -102,73 +101,28 @@ pub enum Fail {
 
 /* ---- serialization ---- */
 
-/// Collects Lexbor's serializer chunks. `oom` latches, and the callback then
-/// stops the serializer by returning a non-OK status.
-struct Ser {
-    buf: Vec<u8>,
-    oom: bool,
-    /// A panic, latched like `oom`: this is called from C, and unwinding into
-    /// Lexbor aborts. `serialize_with` raises it after the call returns.
-    panic: crate::caught::PanicLatch,
-}
-
-/// Lexbor's chunk sink. Must not panic INTO C: a panic is latched and raised by
-/// `serialize_with` once Lexbor has returned, as an allocation failure is.
-unsafe extern "C" fn ser_cb(data: *const u8, len: usize, ctx: *mut c_void) -> u32 {
-    let s = &mut *(ctx as *mut Ser);
-    let (buf, oom) = (&mut s.buf, &mut s.oom);
-    /* Any non-OK status stops the serializer. */
-    s.panic.guard(k::STATUS_ERROR, || {
-        if len != 0 && !data.is_null() {
-            // SAFETY: Lexbor hands `len` readable bytes at `data`.
-            let bytes = unsafe { core::slice::from_raw_parts(data, len) };
-            if buf.falloc_extend(bytes).is_err() {
-                *oom = true;
-                return k::STATUS_ERROR;
-            }
-        }
-        k::STATUS_OK
-    })
-}
-
 /// Drive one of Lexbor's `*_serialize` callbacks into an owned buffer.
 ///
 /// `scratch` is reused across calls so a stylesheet's many small serializations
 /// share one allocation, and is handed back grown.
 unsafe fn serialize_with(
     scratch: &mut Vec<u8>,
-    run: impl FnOnce(&mut Ser) -> u32,
+    run: impl FnOnce(&mut Chunks<Vec<u8>>) -> u32,
 ) -> Result<Vec<u8>, Fail> {
-    let mut s = Ser {
-        buf: core::mem::take(scratch),
-        oom: false,
-        panic: crate::caught::PanicLatch::new(),
-    };
-    s.buf.clear();
+    let mut s = Chunks::new(core::mem::take(scratch));
+    s.sink.clear();
     let st = run(&mut s);
     /* Lexbor has returned: raise what the sink caught, giving the scratch
      * buffer back first so the caller's allocation is not lost. */
-    if s.panic.caught() {
-        *scratch = core::mem::take(&mut s.buf);
-        s.panic.resume();
-    }
-    if s.oom {
-        *scratch = s.buf;
+    *scratch = core::mem::take(&mut s.sink);
+    s.panic.resume();
+    if s.refused {
         return Err(Fail::Oom);
     }
     if st != 0 {
-        *scratch = s.buf;
         return Err(Fail::Serialize);
     }
-    let out = match falloc::try_to_vec(&s.buf) {
-        Some(v) => v,
-        None => {
-            *scratch = s.buf;
-            return Err(Fail::Oom);
-        }
-    };
-    *scratch = s.buf;
-    Ok(out)
+    falloc::try_to_vec(scratch).ok_or(Fail::Oom)
 }
 
 /* ---- specificity ---- */
@@ -233,20 +187,10 @@ unsafe fn declarations(
             let ty = (*decl).type_;
 
             let name = serialize_with(&mut c.scratch, |s| {
-                lxb::lxb_css_property_serialize_name(
-                    style,
-                    ty,
-                    Some(ser_cb),
-                    s as *mut Ser as *mut c_void,
-                )
+                lxb::lxb_css_property_serialize_name(style, ty, Some(chunk_cb::<Vec<u8>>), s.ctx())
             })?;
             let value = serialize_with(&mut c.scratch, |s| {
-                lxb::lxb_css_property_serialize(
-                    style,
-                    ty,
-                    Some(ser_cb),
-                    s as *mut Ser as *mut c_void,
-                )
+                lxb::lxb_css_property_serialize(style, ty, Some(chunk_cb::<Vec<u8>>), s.ctx())
             })?;
             /* Serialized from what Lexbor parsed - the rewritten buffer - so a
              * rewritten name in a value (`--x: :lexbor-contains(1 2)`) came back
@@ -287,7 +231,7 @@ unsafe fn selectors(
         // list->next, which would re-emit the whole comma list.
         let first = (*l).first;
         let text = serialize_with(&mut c.scratch, |s| {
-            lxb::lxb_css_selector_serialize_chain(first, Some(ser_cb), s as *mut Ser as *mut c_void)
+            lxb::lxb_css_selector_serialize_chain(first, Some(chunk_cb::<Vec<u8>>), s.ctx())
         })?;
         let sp = specificity((*l).specificity);
         if out

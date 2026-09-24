@@ -22,6 +22,8 @@ mod tests;
 /// Lexbor object. The one module allowed to hold `lxb_*` bindings.
 pub mod abi;
 pub mod adapter;
+/// Lexbor's serializer callback, shared by every serializer below.
+pub mod chunks;
 /// An input restriction on `:lexbor-contains()`, applied before the CSS parser
 /// sees the text. Text in, text out - no Lexbor.
 pub mod contains_guard;

@@ -88,13 +88,13 @@ rb-sys = { version = "0.9", optional = true }
 # an `extern "C"` boundary into an abort, because unwinding through C frames
 # built without unwind tables is undefined behaviour. So every callback catches
 # its own panic and the caller re-raises it past the C frames - `caught::
-# PanicLatch`, installed in all nine (the CSS traversal, both serializer sinks,
+# PanicLatch`, installed in all eight (the CSS traversal, the serializer sink,
 # the tokenizer hook, the GVL trampoline, and `bridge::ruby::protect`, which
 # covers every `rb_protect`). The GC callbacks in `bridge/typed.rs` keep
 # aborting on purpose; see CLAUDE.md.
 #
 # Anything that must be released across a panic is therefore a `Drop`, not a
-# statement after the work. `lexbor::selectors::PanicReset` and
+# statement after the work. `lexbor::selectors::Session` and
 # `post_parse::DocOwner` are the two that had to be converted.
 #
 # overflow-checks stays ON in release: a wrapped size is exactly the class of

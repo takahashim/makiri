@@ -113,16 +113,6 @@ RSpec.describe "Makiri::XML building (Phase 2)" do
       expect { other.to_xml }.to raise_error(Makiri::Error, /DOM-loose/)
     end
 
-    it "returns a DOM-loose element to strict XML mode after a valid rename" do
-      loose = doc.create_loose_dom_element("f:o:o", "f", "o:o", "http://example.com/")
-      expect { loose.to_xml }.to raise_error(Makiri::Error, /DOM-loose/)
-      loose.name = "ok"
-      expect(loose.name).to eq("ok")
-      expect(loose.prefix).to be_nil
-      expect(loose.namespace_uri).to be_nil
-      expect(loose.to_xml).to eq("<ok/>")
-    end
-
     it "rejects an embedded NUL in XML data (U+0000 is not a legal XML char)" do
       # Unlike the HTML DOM, XML 1.0 cannot represent U+0000, so the data-family
       # NUL relaxation deliberately does NOT apply here: text/CDATA/comment content
@@ -325,6 +315,30 @@ RSpec.describe "Makiri::XML building (Phase 2)" do
       r = doc.root
       r.freeze
       expect { r.add_child(doc.create_element("x")) }.to raise_error(FrozenError)
+    end
+
+    # Inserting a detached element re-derived every attribute's namespace from
+    # its prefix, so a namespace given with set_attribute_ns was lost.
+    it "keeps a namespace given with set_attribute_ns when the element is inserted" do
+      xml = Makiri::XML(%(<r xmlns:q="urn:b"/>))
+      el = xml.create_element("b")
+      el.set_attribute_ns("urn:a", "x", "1")
+      el.set_attribute_ns("urn:a", "q:y", "2")
+      xml.root << el
+      expect(el.attribute_nodes.map(&:namespace_uri)).to eq(%w[urn:a urn:a])
+      expect(Makiri::XML(xml.to_xml).xpath("//@*").map(&:namespace_uri)).to eq(%w[urn:a urn:a])
+    end
+
+    it "says which namespace-declaration rule a refused declaration breaks" do
+      {
+        ["xmlns:xmlns", "urn:x"] => /xmlns cannot be declared/,
+        ["xmlns:xml", "urn:x"] => /xml can only be bound to/,
+        ["xmlns:p", "http://www.w3.org/2000/xmlns/"] => /cannot be bound to another prefix/,
+        ["xmlns", "http://www.w3.org/XML/1998/namespace"] => /cannot be the default namespace/,
+        ["xmlns:p", ""] => /a prefix cannot be bound to the empty namespace/
+      }.each do |(name, value), message|
+        expect { doc.root[name] = value }.to raise_error(Makiri::Error, message)
+      end
     end
   end
 

@@ -56,6 +56,22 @@ RSpec.describe "Makiri XPath" do
       expect(doc.xpath("string(-1 div 0)")).to eq("-Infinity")
     end
 
+    # libxml2's xmlXPathFormatNumber, which Nokogiri answers with: exponential
+    # above 1e9 and below 1e-5, and an integer only inside C's int.
+    it "formats numbers at libxml2's thresholds" do
+      {
+        "1000000000" => "1000000000",
+        "1000000000.5" => "1.0000000005e+09",
+        "2147483646" => "2147483646",
+        "2147483647" => "2.147483647e+09",
+        "0.00001" => "0.00001",
+        "0.000009" => "9e-06",
+        "12345.678901234567" => "12345.6789012346"
+      }.each do |expr, text|
+        expect(doc.xpath("string(#{expr})")).to eq(text), expr
+      end
+    end
+
     it "converts booleans to/from strings and numbers" do
       expect(doc.xpath("string(true())")).to eq("true")
       expect(doc.xpath("string(false())")).to eq("false")
@@ -307,6 +323,16 @@ RSpec.describe "Makiri XPath" do
       expect(doc.xpath('substring-after(//p[@id="p1"], "a")')).to eq("\u0000b")
       expect(doc.xpath('contains(//p[@id="p1"], "b")')).to be(true)
       expect(doc.at_xpath('//p[string-length(.) = 3 and starts-with(., "a")]')["id"]).to eq("p1")
+    end
+
+    it "answers a comparison whose string-values outgrow the cache" do
+      # 100 nested divs over 1 MB of text: ~100 MB of string-values, past the
+      # cache's 64 MB, each value well under the per-string cap. The cache
+      # stops keeping values there; it does not fail the query.
+      big = Makiri::HTML("<div>" * 100 + "<p>#{'y' * 1_000_000}</p>" + "</div>" * 100)
+      expect(big.xpath('count(//*[. = "x"])')).to eq(0.0)
+      expect(big.xpath('count(//*[string(.) = "x"])')).to eq(0.0)
+      expect(big.xpath("count(//div[. = //p])")).to eq(100.0)
     end
   end
 
@@ -573,6 +599,42 @@ RSpec.describe "Makiri XPath" do
     it "raises on an unknown namespace prefix" do
       expect { doc.xpath("//foo:bar") }
         .to raise_error(Makiri::Error, /unknown namespace prefix/i)
+    end
+
+    # Namespaces in XML binds xml by definition and forbids binding it
+    # elsewhere; libxml2 answers it before the registrations.
+    it "resolves the xml prefix to its fixed namespace, registered or not" do
+      xml = Makiri::XML(%(<r xml:lang="en"/>))
+      expect(xml.xpath("string(//@xml:lang)")).to eq("en")
+      expect(xml.xpath("string(//@xml:lang)", "xml" => "urn:other")).to eq("en")
+      ctx = Makiri::XPathContext.new(xml)
+      ctx.register_namespace("xml", "urn:other")
+      expect(ctx.evaluate("count(//@xml:lang)")).to eq(1.0)
+    end
+
+    # Registration scanned the prefixes already bound, so a large Hash cost the
+    # square of its size with the GVL held (65,000 pairs: six seconds). An
+    # index makes it linear, and a Hash past the cap is refused before any
+    # pair is read.
+    it "binds a large namespace Hash in linear time and refuses one past the cap", :timing do
+      xml = Makiri::XML(%(<r xmlns="urn:5"/>))
+      big = (0...60_000).to_h { |i| ["p#{i}", "urn:#{i}"] }
+      t = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      expect(xml.xpath("count(/p5:r)", big)).to eq(1.0)
+      expect(Process.clock_gettime(Process::CLOCK_MONOTONIC) - t).to be < 2.0
+      too_big = (0...65_537).to_h { |i| ["p#{i}", "urn:#{i}"] }
+      expect { xml.xpath("/r", too_big) }.to raise_error(Makiri::Error, /65537 bindings \(max 65536\)/)
+    end
+
+    it "reads a namespace Hash as a Hash and each side with String()" do
+      xml = Makiri::XML(%(<r xmlns="urn:x"/>))
+      odd = Class.new(Hash) { def to_a = [1] }.new
+      odd["q"] = "urn:x"
+      expect(xml.xpath("count(//q:r)", odd)).to eq(1.0)
+      prefix = Object.new.tap { |o| o.define_singleton_method(:to_str) { "q" } }
+      ctx = Makiri::XPathContext.new(xml)
+      ctx.register_namespace(prefix, "urn:x")
+      expect(ctx.evaluate("count(//q:r)")).to eq(1.0)
     end
 
     it "raises on an undefined variable" do

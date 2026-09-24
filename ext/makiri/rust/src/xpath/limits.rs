@@ -10,6 +10,12 @@ use crate::err_setf;
 use core::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+/// Bytes of uncached node string-value one evaluator op pays for
+/// ([`Budget::charge_bytes`]). At the default op cap that bounds what one
+/// evaluate rebuilds past a full cache to about 3 GB - seconds of copying, not
+/// minutes. A value the cache keeps is not charged by size.
+pub const BYTES_PER_OP: usize = 64;
+
 /// The caps, as configured. Plain data: a run copies them into its [`Budget`].
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
@@ -21,6 +27,10 @@ pub struct Limits {
     pub max_nodeset_size: usize,
     pub max_eval_ops: usize,
     pub max_string_bytes: usize,
+    /// The string-value cache's total bytes. Past it the cache stops growing
+    /// rather than failing: it is an optimisation, so a query that fits every
+    /// other cap answers whether or not its values could be kept.
+    pub max_cache_bytes: usize,
     pub max_recursion_depth: usize,
 }
 
@@ -35,6 +45,7 @@ impl Limits {
         max_nodeset_size: crate::limits::NODE_SET_MAX,
         max_eval_ops: 50 * 1000 * 1000,     /* 50M evaluator steps */
         max_string_bytes: 64 * 1024 * 1024, /* 64 MB string-value */
+        max_cache_bytes: 64 * 1024 * 1024,  /* 64 MB of cached string-values */
         max_recursion_depth: 256,
     };
 }
@@ -95,6 +106,10 @@ impl Budget {
             ast_nodes: Cell::new(0),
             eval_ops: Cell::new(0),
             recursion_depth: Cell::new(0),
+            /* The engine's one infallible allocation, and a stated exception
+             * to the falloc line: a fixed few dozen bytes per run, before any
+             * input is read, and stable Rust has no fallible `Rc`. Removing
+             * it means a borrowed sink (`ErrSink<'a>`) through every layer. */
             err: Rc::new(RefCell::new(Error::new())),
         }
     }
@@ -138,6 +153,27 @@ impl Budget {
             return Err(over_eval_ops(self.limits.max_eval_ops, self.sink()));
         }
         self.eval_ops.set(self.eval_ops.get() + 1);
+        Ok(())
+    }
+
+    /// Charge the building of `bytes` of string-value: one op per
+    /// [`BYTES_PER_OP`].
+    ///
+    /// The one bulk charge, and it is not a loop's - it prices work the op
+    /// count otherwise missed. A string-value build is charged per node it
+    /// walks, but one node can hold megabytes, so a comparison that rebuilt
+    /// large values (the cache full, a node-set against a node-set) ran for
+    /// seconds on a few thousand ops. Only a value the cache could not keep
+    /// is charged - the one that gets built again. Charging every build
+    /// priced a query by text size times nesting depth, and refused
+    /// `//*[contains(., "x")]` on a 21 MB page 150 elements deep.
+    pub fn charge_bytes(&self, bytes: usize) -> Result<(), Reported> {
+        let ops = bytes / BYTES_PER_OP;
+        let left = self.limits.max_eval_ops.saturating_sub(self.eval_ops.get());
+        if ops > left {
+            return Err(over_eval_ops(self.limits.max_eval_ops, self.sink()));
+        }
+        self.eval_ops.set(self.eval_ops.get() + ops);
         Ok(())
     }
 

@@ -55,7 +55,7 @@ jobs:
           bundler-cache: true
 
       - name: Run short fuzz under sanitizers
-        run: bundle exec rake fuzz:sanitize FUZZ_ARGS="--time 30"
+        run: FUZZ_TIME=30 bundle exec rake fuzz:sanitize
 
   # macOS-only malloc-leak gate: ASan everywhere runs with detect_leaks=0 (Ruby
   # and Lexbor are uninstrumented), so this is the ONLY automated leak check. It
@@ -98,9 +98,9 @@ jobs:
         run: bundle exec rake leaks
 
   # OOM-injection sweep: rebuilds with MAKIRI_ALLOC_INJECT=1 and fails each core
-  # C allocation site in turn, gating that every OOM branch fails closed - a
-  # clean exception or a baseline-identical result, never truncated output
-  # (see script/check_alloc_failures.rb).
+  # Rust allocation site in turn, gating that every OOM branch fails closed - a
+  # clean exception or a baseline-identical result, with stateful objects reusable
+  # after the failure (see script/check_alloc_failures.rb).
   security-alloc-inject:
     name: OOM-injection sweep
     runs-on: ubuntu-latest
@@ -137,9 +137,8 @@ jobs:
       - name: Run the OOM-injection sweep
         run: bundle exec rake oom
 
-  # Nightly: fuzz EVERY target (the 30s PR fuzz covers only the default xpath
-  # target; the CSS engine reuse and the XML parser/mutator are each their own
-  # documented memory-safety risk, so each gets a full 300s run).
+  # Nightly: fuzz EVERY target for a longer run. The PR job already exercises
+  # every surface for 30s; nightly gives each target a full 300s run.
   security-fuzz-nightly:
     name: Nightly sanitized fuzz (${{ matrix.target }})
     runs-on: ubuntu-latest
@@ -178,7 +177,7 @@ jobs:
           bundler-cache: true
 
       - name: Run nightly fuzz under sanitizers
-        run: bundle exec rake fuzz:sanitize FUZZ_ARGS="--target ${{ matrix.target }} --time 300"
+        run: FUZZ_ARGS="--target ${{ matrix.target }} --time 300" bundle exec rake fuzz:sanitize
 
   # Nightly: the whole spec suite with Lexbor ITSELF built under ASan (mraw
   # poisoning on), catching intra-arena overflows that a plain ASan build cannot

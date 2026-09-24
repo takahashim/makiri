@@ -2,8 +2,29 @@
 
 ## [Unreleased]
 
+### Removed
+
+* `Node#name=` and `Node#node_name=`, on both HTML and XML nodes. The DOM has
+  no way to rename an element, and Lexbor keeps many elements in structs of
+  their own (`<template>` its contents, `<option>` its selectedness): renaming
+  a `<div>` to `template` in place left it read as a template, and serializing
+  it segfaulted. To change an element's name, make one and put it in the old
+  one's place, as the DOM does:
+
+  ```ruby
+  new_el = doc.create_element("section")
+  old_el.attribute_nodes.each { |a| new_el[a.name] = a.value }
+  old_el.children.each { |c| new_el << c }
+  old_el.replace(new_el)
+  ```
+
 ### Security
 
+* Binding namespaces no longer costs the square of their number. Each
+  registration scanned the prefixes already bound, so a query's namespace Hash
+  of 65,000 pairs held the GVL for six seconds of CPU; prefixes are indexed
+  now (0.02 s), and a Hash with more pairs than a context may hold (65,536)
+  is refused before any is read.
 * `content=` on an HTML element and `delete(name)` no longer free the nodes they
   remove. Both went through Lexbor calls that destroy them, while a Ruby
   wrapper may still hold one: the wrapper then read freed memory, and the next
@@ -19,11 +40,11 @@
   check, or growing it so the view read freed memory into the DOM. Such a
   `#to_s` now raises "can't modify string; temporarily locked".
 * A receiver frozen by its own argument's `#to_s` is no longer edited.
-* HTML element and attribute names follow the WHATWG DOM's rules: `name=`,
+* HTML element and attribute names follow the WHATWG DOM's rules:
   `create_element`, `[]=` and `set_attribute_ns` raise `ArgumentError` for a
   name holding whitespace, `/`, `>` (or `=`), which was written into the markup
-  as it stood - `name = "img src=x onerror=alert(1)"` serialized as that tag.
-  See NOKOGIRI_DIFFERENCES.md.
+  as it stood - `create_element("img src=x onerror=alert(1)")` serialized as
+  that tag. See NOKOGIRI_DIFFERENCES.md.
 * More inputs whose cost outgrew their size: a single-context reverse-axis
   step (`preceding-sibling`, `ancestor`) is reversed rather than merge-sorted
   (4000 siblings: 3.9 s); XML CSS `:nth-child` / `:nth-of-type` /
@@ -52,6 +73,91 @@
 
 ### Fixed
 
+* `dup`, `clone_node` and HTML-to-HTML `import_node` keep an element's name as
+  written: a copied SVG `linearGradient` came back `lineargradient`, and a
+  prefixed `q:Bar` came back `bar` (Lexbor's copy keeps the tag, not the
+  spelling).
+* `XML::Node#canonicalize` of a detached element refuses an attribute whose
+  namespace was given with `set_attribute_ns` and cannot be written as it is;
+  it wrote the attribute under whatever its prefix meant there, or without
+  its namespace.
+* `XML::Node#[]=` on an attribute the element already has changes its value
+  and nothing else, as the DOM's `setAttribute` does. It re-derived the
+  attribute's namespace from the current scope, which could give it the key
+  of another attribute - `to_xml` then wrote two attributes with one
+  (namespace, local name), which does not parse - and dropped a namespace
+  `set_attribute_ns` had given.
+* A namespace Hash given to a query is read as a Hash, not through a `to_a`
+  a subclass may redefine (a non-pair raised `Makiri::InternalError`), and
+  each prefix and URI is read with `String()`, preferring `to_str`, as other
+  arguments are. `XPathContext#register_namespace` refuses inside a handler
+  before converting its arguments.
+* An XML attribute compares equal to itself with `<=>`, as an HTML one does.
+* XPath `string()` of a number follows libxml2's rule, as Nokogiri does:
+  exponential notation above 1e9 and below 1e-5 (`1234567890.5` is
+  `1.2345678905e+09`, `0.00001` stays `0.00001`), and integer form only inside
+  C's `int` (`2147483647` is `2.147483647e+09`). It was C's `%.15g`, which
+  disagreed with Nokogiri outside `[1e-4, 1e15)`.
+* HTML-to-XML `import_node` no longer moves an element into another namespace
+  when one of its attributes uses the element's prefix for a different URI
+  (`p:e` in `urn:p` with an attribute `p:x` in `urn:other` came out in
+  `urn:other`). Namespaced attributes cross with their namespace given
+  directly, and a prefixed element is declared once, not on every descendant.
+  No `xmlns` attribute is copied any more: every name crosses with its
+  namespace already, so a copied declaration could only restate one or move
+  one (`<svg><g xmlns="urn:evil">` put `g` and its children in `urn:evil`).
+  A malformed attribute name (`:class`) is refused with `ArgumentError` again.
+* A namespace given with `XML::Node#set_attribute_ns` on a detached element
+  survives the element's insertion. The insertion re-derived it from the
+  prefix, so `set_attribute_ns("urn:a", "x", v)` ended up in no namespace.
+* `Makiri::XML` CSS reads `[|a]` as the no-namespace attribute, as the
+  Selectors spec does; it was refused as the unsupported `[*|a]`. The `s`
+  attribute modifier is accepted (XML values compare case-sensitively anyway);
+  `i` is still refused.
+* XPath resolves the `xml` prefix to its fixed namespace (`//@xml:lang`), with
+  no registration and whatever one says, as Namespaces in XML binds it and
+  Nokogiri answers. It raised "unknown namespace prefix".
+* `Makiri::XML` nodes compare by document order with `<=>`, as HTML nodes
+  do, so they sort; `<=>` returned nil for every pair.
+* `XPathContext#register_namespace` reads its arguments as a namespace Hash
+  does: both converted with `to_s` before either is checked, the same
+  string-length cap, and the same "invalid namespace mapping" message. It
+  had no cap, and worded a refusal differently.
+* Every Ruby method Makiri defines turns an internal panic into
+  `Makiri::InternalError`. Readers such as `children`, `[]`, `keys`,
+  `NodeSet#each` and `Document#title` still raised `fatal`, which cannot be
+  rescued in the frame that called them. `rake unsafe:boundaries` now fails on
+  a method whose body does not go through `entry`.
+* Namespaces across `import_node` between HTML and XML:
+  * HTML to XML reads each attribute's own namespace, as `Attr#namespace_uri`
+    does. A parsed `q:y` inside `<svg>` (no namespace) was put in SVG.
+  * An HTML attribute in no namespace whose name has a prefix other than `xml`
+    (`fb:like`, a parsed `xlink:href` on an HTML element) has no XML form, and
+    the import now refuses it. The copy used to be made with a prefix bound
+    to nothing, and then could be neither inserted nor serialized.
+  * An HTML element named with a colon (`<fb:like>`) crosses as a DOM-loose
+    name, like other names XML cannot write: it can be inserted, and
+    `to_xml` refuses it.
+  * XML to HTML makes a prefixed element with its prefix, so `p:e` has the
+    local name `e` and `//q:e` finds it. It used to have the local name `p:e`.
+    An element outside XHTML also keeps the case of its name: an SVG
+    `linearGradient` came across as `lineargradient`.
+  * An attribute set by `set_attribute_ns` in its element's own namespace
+    (`set_attribute_ns(SVG, "q:x")` on an SVG element) reports that namespace;
+    it read as none.
+* An XPath comparison over node string-values no longer raises `LimitExceeded`
+  because the values it compared added up past 64 MB. That total was the
+  per-string cap reused for the evaluation's string-value cache, so
+  `//*[. = "x"]` raised on a page where `//*[string(.) = "x"]` answered. The
+  cache has its own cap now and stops keeping values past it. A value the
+  full cache could not keep and that is then built AGAIN is charged to the op
+  budget by its size (one op per 64 bytes), so a comparison that rebuilds
+  large values fails fast rather than copying gigabytes; a value built once
+  costs what it always did.
+* A refused XML namespace declaration says which rule it broke - declaring
+  `xmlns`, binding `xml` elsewhere, binding a reserved namespace to another
+  prefix or as the default, or binding a prefix to the empty namespace -
+  instead of one message listing all of them.
 * A rejected stylesheet rule's `selector_text` is sliced by Lexbor's own
   offsets, so it can no longer come from an identical piece elsewhere in the
   sheet, and a declaration value no longer shows the `:lexbor-contains()`
@@ -62,7 +168,7 @@
 * XML namespaces: an attribute whose prefix was unbound on a detached element
   is resolved when the element is inserted (it was written as `xmlns:ns1=""`),
   insertion refuses two attributes that end up with one (namespace, local
-  name), a rename while detached is resolved on insertion, both writers refuse
+  name), both writers refuse
   a prefix bound to nothing, and `set_attribute_ns` refuses a namespace that
   does not fit the name (a prefix with none, the XML namespace under another
   prefix, ...).
@@ -75,8 +181,8 @@
   element is left out rather than inventing `xmlns:ns1=""` (see
   NOKOGIRI_DIFFERENCES.md); and an element copied in but not yet inserted keeps
   its own declaration.
-* The XML mutators enforce the rules the parser does. `[]=`,
-  `set_attribute_ns` and `name=` refuse a namespace declaration Namespaces in
+* The XML mutators enforce the rules the parser does. `[]=` and
+  `set_attribute_ns` refuse a namespace declaration Namespaces in
   XML §3 forbids (`xmlns:xml` to another URI, `xmlns:xmlns`, a reserved URI
   under another prefix) and a second attribute with the same namespace and
   local name; `create_document_type` refuses a name that is no QName and a
@@ -147,6 +253,13 @@
 
 * `NodeSet#at_css` / `#at_xpath` stop at the first node with a match instead of
   querying every node and building the union.
+* `XML::Node#canonicalize` no longer walks up the ancestors for each namespace
+  declaration it renders; it reads the scope it already keeps, and that scope
+  is indexed by prefix, so a lookup no longer costs the depth of the
+  declarations in scope. A 1000-deep document of declarations went from 0.7 s
+  to 0.02 s, and documents with thousands of declarations in scope, which ran
+  both `to_xml` and `canonicalize` out of their namespace step budget, now
+  serialize.
 
 ## [0.10.0] - 2026-09-22
 

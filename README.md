@@ -23,7 +23,7 @@ XPath 1.0 evaluation in its own native engine, with no libxml2 dependency.
 * Native XML 1.0 parser
   * A strict, non-validating, fail-closed parser with its own node arena (not
     Lexbor's HTML DOM), queried through the same native XPath engine, with
-    in-place tree edits (attributes, content, rename, remove).
+    in-place tree edits (attributes, content, remove).
   * Conformance is held by the W3C XML Conformance Test Suite, an XPath
     differential, and property-based testing vs Nokogiri (see below).
 * Bounded, fail-closed execution
@@ -132,11 +132,10 @@ e   = doc.at_xpath("//entry")
 e["id"]   = "9"            # add or replace an attribute (value escaped on output)
 e["dc:k"] = "v"           # a prefixed name resolves against the in-scope xmlns
 e.content = "Bye"         # replace an element's children with text
-e.name    = "post"        # rename in place (identity + namespace re-resolved)
 e.delete("id")            # remove an attribute
 doc.at_xpath("//draft").remove
 
-doc.root.to_xml           # => "<feed xmlns:dc=\"urn:dc\"><post dc:k=\"v\">Bye</post></feed>"
+doc.root.to_xml           # => "<feed xmlns:dc=\"urn:dc\"><entry dc:k=\"v\">Bye</entry></feed>"
 ```
 
 XML subtrees can be built using `Document#create_element` and other node factory methods,

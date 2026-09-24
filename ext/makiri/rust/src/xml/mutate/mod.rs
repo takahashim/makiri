@@ -18,14 +18,14 @@ mod edit;
 mod factory;
 mod insert;
 mod ns;
-pub use ns::ignored_default_decl;
+pub use ns::{ignored_default_decl, namespace_in_scope};
 
 use crate::xml::qname::Split;
 use crate::xml::{Document, MutStatus, NodeId, Status};
 
 pub use attr::{remove_attribute, remove_attribute_ns, set_attribute, set_attribute_ns};
 pub use copy::{clone_node, copy_node_from, import_subtree};
-pub use edit::{rename, set_content};
+pub use edit::set_content;
 pub use factory::{
     new_chardata, new_document_type, new_element, new_fragment, new_loose_dom_element, new_pi,
 };

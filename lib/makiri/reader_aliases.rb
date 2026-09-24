@@ -15,7 +15,6 @@ module Makiri
       get_attribute: :[],
       has_attribute?: :key?,
       node_name: :name,
-      "node_name=": :name=,
       type: :node_type
     }.freeze
 

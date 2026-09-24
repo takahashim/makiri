@@ -83,4 +83,13 @@ RSpec.configure do |config|
     config.filter_run_excluding :slow
     config.before(:suite) { warn "[spec] skipping :slow examples under instrumentation" }
   end
+
+  # Examples tagged :timing assert a wall-clock bound (spec/input_cost_spec.rb).
+  # Valgrind runs 20-50x slower and unevenly, so a bound there measures the
+  # runner, not the code: they failed main's memcheck at 3-9x their bounds.
+  # ASan keeps them, with the slack the file applies.
+  unless ENV["VALGRIND"].to_s.empty?
+    config.filter_run_excluding :timing
+    config.before(:suite) { warn "[spec] skipping :timing examples under Valgrind" }
+  end
 end

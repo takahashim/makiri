@@ -126,26 +126,51 @@ pub fn ns_fits_name(ns: &[u8], name: &[u8], sp: &Split) -> bool {
     is_xmlns == (ns == XMLNS_NS_URI)
 }
 
+/// Which clause of the §3 declaration rule a declaration breaks.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum NsDeclError {
+    /// `xmlns:xmlns`: the `xmlns` prefix is never declared.
+    Xmlns,
+    /// `xmlns:xml` with a URI other than the XML namespace.
+    XmlElsewhere,
+    /// The XML or XMLNS namespace bound to another prefix (`default: false`)
+    /// or made the default namespace (`default: true`).
+    ReservedUri { default: bool },
+    /// A prefix bound to the empty namespace; only the default may be undeclared.
+    PrefixToEmpty,
+}
+
 /// Whether `prefix` - empty for the default `xmlns` - may be declared for
 /// `uri` (Namespaces in XML 1.0 §3): `xmlns` is never declared, `xml` only for
 /// its own URI, neither reserved URI for anything else, and no prefix for the
-/// empty URI (only the default may be undeclared that way).
+/// empty URI (only the default may be undeclared that way) - `Err` naming the
+/// clause broken.
 ///
-/// The one statement of the rule. The parser always applied it; the mutators
-/// applied only the last clause, so `[]=`, `set_attribute_ns` and `rename`
-/// could write `xmlns:xml="urn:other"` into a tree `to_xml` then could not
-/// re-read.
-pub fn ns_decl_ok(prefix: &[u8], uri: &[u8]) -> bool {
+/// The one statement of the rule, for the parser and the mutators alike. The
+/// mutators once applied only the last clause, so `[]=`, `set_attribute_ns`
+/// and `rename` could write `xmlns:xml="urn:other"` into a tree `to_xml` then
+/// could not re-read.
+pub fn ns_decl_check(prefix: &[u8], uri: &[u8]) -> Result<(), NsDeclError> {
     if prefix == b"xmlns" {
-        return false;
+        return Err(NsDeclError::Xmlns);
     }
     if prefix == b"xml" {
-        return uri == XML_NS_URI;
+        return if uri == XML_NS_URI {
+            Ok(())
+        } else {
+            Err(NsDeclError::XmlElsewhere)
+        };
     }
     if uri == XML_NS_URI || uri == XMLNS_NS_URI {
-        return false;
+        return Err(NsDeclError::ReservedUri {
+            default: prefix.is_empty(),
+        });
     }
-    prefix.is_empty() || !uri.is_empty()
+    if prefix.is_empty() || !uri.is_empty() {
+        Ok(())
+    } else {
+        Err(NsDeclError::PrefixToEmpty)
+    }
 }
 
 /// If `name` is an xmlns declaration ("xmlns" / "xmlns:PREFIX"), the declared

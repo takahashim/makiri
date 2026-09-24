@@ -1,13 +1,12 @@
-//! Changing what one node IS - its name, its content - as opposed to where it
-//! sits (`super::insert`) or what it carries (`super::attr`).
+//! Changing what one node holds - its content - as opposed to where it sits
+//! (`super::insert`) or what it carries (`super::attr`). A node's name is
+//! fixed once made: the DOM has no rename, and Makiri has none either.
 
 #![forbid(unsafe_code)]
 
-use super::ns::resolve_ns;
-use super::{arena, assign_qname};
+use super::arena;
 use crate::xml::chars::validate_chars;
-use crate::xml::qname::split_checked;
-use crate::xml::{Document, MutStatus, NodeId, NodeType, FLAG_DOM_LOOSE_NAME, FLAG_NS_RESOLVED};
+use crate::xml::{Document, MutStatus, NodeId, NodeType};
 
 /// Whether `text` is free of the SEQUENCE its node kind cannot hold: "--" (or
 /// a trailing "-") in a comment, "]]>" in CDATA, "?>" in a PI. Each would close
@@ -22,62 +21,6 @@ pub(super) fn value_seq_ok(node_type: NodeType, text: &[u8]) -> bool {
         NodeType::Pi => !text.windows(2).any(|w| w == b"?>"),
         _ => true,
     }
-}
-
-pub fn rename(doc: &mut Document, node: NodeId, name: &[u8]) -> MutStatus {
-    if doc.type_(node) != Some(NodeType::Element) && doc.type_(node) != Some(NodeType::Attribute) {
-        return MutStatus::Type;
-    }
-    let sp = match split_checked(name) {
-        Some(s) => s,
-        None => return MutStatus::BadName,
-    };
-    let is_attr = doc.type_(node) == Some(NodeType::Attribute);
-    let scope: Option<NodeId> = if is_attr {
-        doc.parent(node)
-    } else {
-        Some(node)
-    };
-    let connected = scope.is_some_and(|s| doc.is_connected(s));
-    let r = match resolve_ns(doc, scope, name, &sp, is_attr, connected) {
-        Ok(r) => r,
-        Err(st) => return st,
-    };
-    /* An attribute renamed into a declaration must be one its value allows, and
-     * onto another attribute's key is a second attribute with that key - both
-     * rules the parser holds a document to (§3). */
-    if let (true, Some(el)) = (is_attr, scope) {
-        if !super::attr::decl_ok(name, doc.value(node)) {
-            return MutStatus::BadNsDecl;
-        }
-        let local = &name[sp.local_off as usize..];
-        if !r.pending && super::attr::key_taken(doc, el, doc.span(r.ns), local, Some(node)) {
-            return MutStatus::DuplicateAttr;
-        }
-    }
-    /* copy the new qname BEFORE writing ns_uri, so an OOM leaves node intact */
-    let st = assign_qname(doc, node, name, &sp);
-    if st != MutStatus::Ok {
-        return st;
-    }
-    doc.node_mut(node).flags &= !FLAG_DOM_LOOSE_NAME;
-    if is_attr {
-        r.write_attr(doc, node);
-        return MutStatus::Ok;
-    }
-    /* A rename picks a new prefix, so it decides a new URI from the scope the
-     * node is in right now - and that decision is the node's identity from
-     * here. Detached, there is no such scope: the element is undecided again,
-     * so the insertion that connects it resolves the new name (it kept the old
-     * decision, and `q:n` came back bound to ""). */
-    let n = doc.node_mut(node);
-    n.ns_uri = r.ns;
-    if connected {
-        n.flags |= FLAG_NS_RESOLVED;
-    } else {
-        n.flags &= !FLAG_NS_RESOLVED;
-    }
-    MutStatus::Ok
 }
 
 pub fn set_content(doc: &mut Document, node: NodeId, text: &[u8]) -> MutStatus {

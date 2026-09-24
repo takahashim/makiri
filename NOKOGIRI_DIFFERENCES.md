@@ -41,6 +41,13 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
     and in XPath's data model. An `xmlns` on an HTML element is an ordinary
     attribute and stays visible.
 
+* A number literal is read as the nearest double; libxml2's own reader is not
+  correctly rounded for a literal with more digits than a double holds, so
+  `string(0.72609133372266155)` is `0.726091333722662` in Makiri and
+  `0.726091333722661` in Nokogiri (the digits differ in the last place). The
+  number is then written by libxml2's rule in both (`string(1234567890.5)` is
+  `1.2345678905e+09`); only the value read differs.
+
 ## XML
 
 * `Makiri::XML` is XML 1.0 (Fifth Edition) only and non-validating.
@@ -129,17 +136,45 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
 
 ## HTML mutation
 
+* There is no `Node#name=` / `#node_name=` (on HTML or XML nodes). Nokogiri
+  renames a node in place and keeps its identity; the DOM has no rename, and
+  Lexbor keeps elements such as `<template>`, `<option>` and `<style>` in
+  structs of their own, so a node cannot change its tag safely. Create an
+  element of the new name, move the attributes and children, and `replace`
+  the old one (see CHANGELOG.md).
 * Element and attribute names follow the WHATWG DOM's rules
-  * `name=`, `create_element`, `[]=` and `set_attribute_ns` raise `ArgumentError`
-    for a name the DOM refuses - one holding whitespace, `/`, `>` (or `=` for an
-    attribute) - where `Nokogiri::HTML5` accepts it and writes it into the markup
-    as it stands: `name = "img src=x onerror=alert(1)"` serializes as that tag.
+  * `create_element`, `[]=` and `set_attribute_ns` raise `ArgumentError` for a
+    name the DOM refuses - one holding whitespace, `/`, `>` (or `=` for an
+    attribute) - where `Nokogiri::HTML5` accepts it and writes it into the
+    markup as it stands: `create_element("img src=x onerror=alert(1)")`
+    serializes as that tag.
     The names HTML actually uses (`data-*`, `aria-*`, `@click`, `:href`,
     `v-on:x`, custom elements) are accepted.
   * `set_attribute_ns(nil, "x:y")` raises, as the DOM's `setAttributeNS` does:
     a prefix needs a namespace.
 * An HTML document has one root element and no text child, as the DOM requires;
   `doc << element` beside an existing root raises.
+* Moving HTML into an XML document (`xml_doc.import_node(html_node)`, or
+  inserting one) keeps every name's namespace, and refuses what XML cannot
+  write that way. An attribute in no namespace whose name has a prefix other
+  than `xml` - `v-on:click`, `fb:like`, an `xlink:href` on an HTML (not SVG)
+  element - raises `Makiri::Error`: as XML it would be a prefix bound to
+  nothing. Nokogiri copies it and writes `v-on:click="..."` into output that is
+  not namespace-well-formed. An element named with a colon (`<fb:like>`)
+  crosses as a DOM-loose name, which `to_xml` refuses.
+* A known gap, in Lexbor's tag table: an HTML document that already holds a
+  parsed element named with a colon (`<x:y>`, one local name) and then
+  receives, by `import_node` from another document, a prefixed element
+  written the same way (`x:y` from XML: prefix `x`, local name `y`) re-points
+  the table's entry for that spelling - the parsed element then no longer
+  matches CSS `x\:y`. Copies within one document do not touch the table.
+* An XML element with a prefix, imported into HTML, keeps it (`h:div` in
+  XHTML has the local name `div`). Two readers then disagree, as they do in
+  browsers: CSS's `div` matches it (Lexbor matches the local name), XPath's
+  `//div` does not (an HTML element's name test reads its qualified name). And
+  Lexbor's HTML serializer writes the prefix (`<h:div>`), where the HTML
+  standard writes the local name, so the HTML does not re-parse to the same
+  element.
 
 ## CSS
 
@@ -170,6 +205,22 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
     prefix IS resolved against the bindings, when the namespace matters.
   * `Makiri::XML` resolves CSS prefixes properly - it lowers the selector to the
     XPath engine, which registers the bindings.
+  * The same holds for attribute selectors: HTML `[|href]` (no namespace) and
+    plain `[href]` also find an SVG `xlink:href`, which `Nokogiri::HTML5`
+    does not.
+    `Makiri::XML` reads `[|a]` as the no-namespace attribute.
+* A selector under a node matches the way `Element#querySelectorAll` does in a
+  browser, not scoped to that node, on HTML: `at_css("#c").css("div p")` finds a
+  `p` inside `#c` when `#c` is itself a `div`, since the selector is matched
+  against the whole document and only the results are kept to descendants.
+  `Nokogiri::HTML5` and `Nokogiri::XML` scope the selector to the node (`#c`
+  cannot be the `div`), and so does `Makiri::XML`, which lowers the selector to
+  an XPath from the node. Lexbor has no `:scope`; for a scoped match on HTML,
+  use XPath from the node (`xpath(".//div//p")`).
+* The attribute case modifiers (`[a="x" i]`, `[a="x" s]`): HTML supports both,
+  through Lexbor's matcher. `Makiri::XML` accepts `s` (case-sensitive, which XML
+  values are anyway) and refuses `i` with `Makiri::CSS::SyntaxError`. Nokogiri
+  refuses both on either representation.
 * `#matches?` answers for a DETACHED node (`document.create_element("p")
   .matches?("p")` is true, on both representations). Nokogiri raises
   `NoMethodError` there - it implements `#matches?` as a search from

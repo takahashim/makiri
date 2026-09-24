@@ -83,10 +83,6 @@ RSpec.describe "Makiri source location" do
       inserted.at_css("#a").add_child(inserted.create_element("b"))
       expect(lines_of(inserted)).to eq(untouched)
 
-      renamed = Makiri::HTML(SRC)
-      renamed.at_css("#b").name = "h1"
-      expect(renamed.css("div,h1,span").map { |n| [n["id"], n.line] }).to eq(untouched)
-
       attributed = Makiri::HTML(SRC)
       attributed.at_css("#a")["class"] = "x"
       expect(lines_of(attributed)).to eq(untouched)

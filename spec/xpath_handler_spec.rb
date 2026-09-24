@@ -36,6 +36,22 @@ RSpec.describe "Makiri XPath custom function handler" do
       expect(ctx.evaluate("ng:my-count(//p)", handler)).to eq(2.0)
     end
 
+    it "round-trips a NodeSet from its validated internal storage in document order" do
+      nodes = doc.xpath("//p").to_a
+      set = Makiri::NodeSet.new(doc, [nodes.last, nodes.first, nodes.last])
+      def set.length = raise("length override was dispatched")
+      def set.[](_index) = raise("index override was dispatched")
+      returning = Class.new do
+        define_method(:initialize) { |value| @value = value }
+        define_method(:echo) { |_argument| @value }
+      end.new(set)
+
+      result = ctx.evaluate("ng:echo(//p)", returning)
+      expect(result).to be_a(Makiri::NodeSet)
+      expect(result.map(&:text)).to eq(%w[hi there])
+      expect(ctx.evaluate("string(ng:echo(//p))", returning)).to eq("hi")
+    end
+
     it "accepts boolean returns" do
       expect(ctx.evaluate("ng:is-paragraph(//p)", handler)).to be(true)
     end
@@ -283,7 +299,6 @@ RSpec.describe "Makiri XPath custom function handler" do
         "sets an attribute" => ->(d) { d.at_css("p")["class"] = "x" },
         "removes an attribute" => ->(d) { d.at_css("p").delete("class") },
         "sets content" => ->(d) { d.at_css("p").content = "y" },
-        "renames a node" => ->(d) { d.at_css("div").name = "span" },
         "removes a node" => ->(d) { d.at_css("div").remove },
         "inserts a node" => ->(d) { d.at_css("body").add_child(d.create_element("hr")) },
         "sets inner_html" => ->(d) { d.at_css("div").inner_html = "<b>z</b>" },

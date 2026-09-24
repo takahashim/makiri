@@ -4,7 +4,7 @@
 # each took seconds to minutes on input of a few kilobytes to a few megabytes.
 # The bounds below are generous - ten to a hundred times the fixed cost - so a
 # slow machine passes, and a return to the old growth fails by minutes.
-RSpec.describe "Cost proportional to input" do
+RSpec.describe "Cost proportional to input", :timing do
   # An AddressSanitizer build runs several times slower, and a CI runner slower
   # again: 64k stylesheet rules took 1.59 s there against a 1.5 s bound. Every
   # regression these guard against was 10-100x over its bound, so a slack of 5

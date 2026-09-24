@@ -113,19 +113,30 @@ fn status(r: Result<NodeId, MutStatus>) -> MutStatus {
     }
 }
 
-/// Copy the source element's attributes onto the translated mkr element,
-/// declaring an `xmlns:PREFIX` for each foreign-prefixed one.
+/// Copy the source element's attributes onto the translated mkr element.
 ///
-/// Two kinds of attribute are declarations-or-not depending on the side:
-/// * one in the XMLNS namespace (a foreign element's `xmlns:xlink`) already IS
-///   a declaration, so it is copied and nothing is declared for it - declaring
-///   its "prefix" wrote `xmlns:xmlns="http://www.w3.org/2000/xmlns/"`, which
-///   no parser accepts;
-/// * one named `xmlns` / `xmlns:*` in NO namespace (on an HTML element) is an
-///   ordinary attribute in HTML, but copied it would become a declaration and
-///   move the element: `<div xmlns="urn:bogus">` came out in `urn:bogus`
-///   instead of XHTML. The translator declares each element's real namespace
-///   itself, so these are left out - the one attribute that cannot cross.
+/// An attribute's namespace is its OWN ([`HtmlAttr::own_ns`], the reading
+/// XPath and `Attr#namespace_uri` use): Lexbor stores a plain attribute under
+/// its element's namespace, and reading that raw id put a parsed `q:y` inside
+/// `<svg>` into SVG. A namespaced attribute is set WITH its namespace
+/// (`set_attribute_ns`), so it keeps it wherever the copy is inserted. It used
+/// to be a declaration of its prefix plus the bare name, and a declaration is
+/// one attribute per prefix: an attribute `p:x` in `urn:other` on an element
+/// `p:e` in `urn:p` redeclared `p` and moved the element into `urn:other`.
+///
+/// Two kinds of attribute do not cross as they stand:
+/// * a declaration is left out - one parsed on a foreign element
+///   (`xmlns:xlink`, in the XMLNS namespace) and one that is an ordinary HTML
+///   attribute named `xmlns` alike. The translator declares each element's
+///   namespace itself and gives each attribute its own, so a copied
+///   declaration could only restate one or move one (`<div xmlns="urn:bogus">`
+///   came out in `urn:bogus`, `<svg><g xmlns="urn:evil">` in `urn:evil`);
+/// * one in NO namespace whose name has a prefix other than `xml` (`fb:like`)
+///   has no XML form: written as it stands it is a prefix with no binding, so
+///   the copy was made and then could be neither inserted nor serialized. It is
+///   refused here instead, as `MutStatus::BadNsName` - or `BadName` when the
+///   name is not a QName at all. `xml:` keeps its fixed meaning, as the XML
+///   reader gives it.
 fn h2x_copy_attrs(doc: &mut XmlDoc, s: HtmlElement<'_>, el: NodeId) -> MutStatus {
     for a in s.attrs() {
         let (name, value) = (a.qualified_name(), a.value());
@@ -133,27 +144,45 @@ fn h2x_copy_attrs(doc: &mut XmlDoc, s: HtmlElement<'_>, el: NodeId) -> MutStatus
             return MutStatus::Oom;
         }
 
-        let ans = a.node().ns_id();
-        if ans != NS_XMLNS && crate::xml::qname::xmlns_prefix(name).is_some() {
-            continue;
-        }
-        if ans != NS_UNDEF && ans != NS_HTML && ans != NS_XML && ans != NS_XMLNS {
-            if let Some(colon) = name.iter().position(|&b| b == b':') {
-                if let Some(uri) = html_ns_uri(a.node()) {
-                    let st = declare_ns(doc, el, &name[..colon], uri);
-                    if st != MutStatus::Ok {
-                        return st;
-                    }
+        let own = a.own_ns();
+        let decl = crate::xml::qname::xmlns_prefix(name);
+        let st = match (own, decl) {
+            /* A declaration, parsed (a foreign element's `xmlns:xlink`) or an
+             * HTML attribute that only looks like one: never copied. Every
+             * name crosses with its namespace already - an element declares
+             * its own, an attribute is given its - so a declaration can only
+             * restate one, or move one: `<svg><g xmlns="urn:evil">` put `g`
+             * and its children in `urn:evil`. */
+            (NS_XMLNS, _) | (_, Some(_)) => MutStatus::Ok,
+            (NS_UNDEF | NS_XML, _) => {
+                let colon = name.iter().position(|&b| b == b':');
+                match colon {
+                    Some(c) if &name[..c] != b"xml" => no_namespace_colon(name),
+                    _ => status(mutate::set_attribute(doc, el, name, value)),
                 }
             }
-        }
-
-        let st = status(mutate::set_attribute(doc, el, name, value));
+            _ => match a.own_ns_uri() {
+                Some(uri) => status(mutate::set_attribute_ns(doc, el, uri, name, value)),
+                None => status(mutate::set_attribute(doc, el, name, value)),
+            },
+        };
         if st != MutStatus::Ok {
             return st;
         }
     }
     MutStatus::Ok
+}
+
+/// The refusal for a no-namespace attribute named with a colon: `BadNsName`
+/// when it reads as `prefix:local` (it has a prefix and no namespace), and
+/// `BadName` when it is no QName at all (`:class`, `a:b:c`), as a malformed
+/// name is refused everywhere else.
+fn no_namespace_colon(name: &[u8]) -> MutStatus {
+    if crate::xml::qname::split_checked(name).is_some() {
+        MutStatus::BadNsName
+    } else {
+        MutStatus::BadName
+    }
 }
 
 /// What [`h2x_make`] produced, plus the default namespace in scope for the new
@@ -172,6 +201,7 @@ fn h2x_make<'a>(
     doc: &mut XmlDoc,
     s: HtmlNode<'a>,
     parent_default: Option<&'a [u8]>,
+    parent: Option<NodeId>,
 ) -> Result<Made<'a>, MutStatus> {
     let unchanged = |node| {
         Ok(Made {
@@ -195,23 +225,49 @@ fn h2x_make<'a>(
             };
             let euri = html_ns_uri(s);
 
-            /* Strict first; a valid DOM element name that is not a well-formed
-             * XML QName is taken VERBATIM as an unprefixed DOM-loose name. The
-             * namespace is passed DIRECTLY (link-time resolution skips loose
-             * names). */
-            let mut made = mutate::new_element(doc, name);
-            if made.as_ref().err() == Some(&MutStatus::BadName) && !name.is_empty() {
-                made = mutate::new_loose_dom_element(
+            /* Three kinds of name. A PREFIXED one (an element that came from
+             * XML) is made as written and its prefix declared on it. An
+             * unprefixed name with a colon (a parsed `fb:like`) is one DOM
+             * local name, which XML cannot write as it stands: it is taken
+             * VERBATIM as a DOM-loose name, so the copy is the DOM's element
+             * and the XML serializer refuses it later - made strictly, `fb`
+             * became a prefix bound to nothing, and the copy could not even be
+             * inserted. Any other name is made strictly, and one that is a
+             * valid DOM name but no XML QName is loose as well. A loose name
+             * takes its namespace DIRECTLY (link-time resolution skips it). */
+            let prefixed = s.has_prefix();
+            let colon = name.iter().position(|&b| b == b':');
+            let loose = |doc: &mut XmlDoc| {
+                mutate::new_loose_dom_element(
                     doc,
                     name,
                     crate::xml::qname::Split::unprefixed(nl),
                     euri.unwrap_or(&[]),
-                );
+                )
+            };
+            let mut made = if colon.is_some() && !prefixed {
+                loose(doc)
+            } else {
+                mutate::new_element(doc, name)
+            };
+            if made.as_ref().err() == Some(&MutStatus::BadName) && !name.is_empty() {
+                made = loose(doc);
             }
             let el = made?;
 
             let mut child_default = parent_default;
-            if euri.unwrap_or(&[]) != parent_default.unwrap_or(&[]) {
+            if let (true, Some(c)) = (prefixed, colon) {
+                /* Declared where the copy will sit unless its parent's scope
+                 * already binds the prefix to the same URI. */
+                let (p, uri) = (&name[..c], euri.unwrap_or(&[]));
+                let bound = parent.is_some_and(|up| mutate::namespace_in_scope(doc, up, p) == uri);
+                if !bound {
+                    let st = declare_ns(doc, el, p, uri);
+                    if st != MutStatus::Ok {
+                        return Err(st);
+                    }
+                }
+            } else if euri.unwrap_or(&[]) != parent_default.unwrap_or(&[]) {
                 let st = declare_ns(doc, el, &[], euri.unwrap_or(&[]));
                 if st != MutStatus::Ok {
                     return Err(st);
@@ -275,7 +331,7 @@ pub unsafe fn cross_html_to_xml(
     // SAFETY: the caller's contract.
     let src = unsafe { src.as_node() };
 
-    let root = h2x_make(doc, src, None)?;
+    let root = h2x_make(doc, src, None, None)?;
     if root.node.is_invalid() {
         return Err(MutStatus::Type); /* the root's type has no XML counterpart */
     }
@@ -297,7 +353,7 @@ pub unsafe fn cross_html_to_xml(
             let mut c = h2x_first_child(f.s);
             while let Some(child) = c {
                 /* An error abandons the partial subtree. */
-                let made = h2x_make(doc, child, f.def)?;
+                let made = h2x_make(doc, child, f.def, Some(f.d))?;
                 if !made.node.is_invalid() {
                     let st = mutate::insert_child(doc, f.d, made.node);
                     if st != MutStatus::Ok {
@@ -360,8 +416,21 @@ fn x2h_make<'doc>(
 
     match doc.type_(s) {
         Some(NodeType::Element) => {
-            let el = hdoc.create_element(doc.qname(s)).ok_or(MutStatus::Oom)?;
-            el.set_ns(hdoc.intern_ns(doc.ns(s)));
+            /* An element outside XHTML is made as createElementNS makes it:
+             * with its prefix, so the copy's localName is `e` and not `p:e`
+             * (as `//q:e` and local-name() read it), and with its case, so an
+             * SVG `linearGradient` does not come back `lineargradient`. An
+             * XHTML element is an HTML element, whose name is lower case. */
+            let (prefix, ns) = (doc.prefix(s), doc.ns(s));
+            let ns_id = hdoc.intern_ns(ns);
+            let el = if prefix.is_empty() && ns_id == NS_HTML {
+                let el = hdoc.create_element(doc.qname(s)).ok_or(MutStatus::Oom)?;
+                el.set_ns(ns_id);
+                el
+            } else {
+                hdoc.create_element_ns(doc.local(s), ns, prefix)
+                    .ok_or(MutStatus::Oom)?
+            };
 
             let st = x2h_copy_attrs(doc, s, el);
             if st != MutStatus::Ok {

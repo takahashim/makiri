@@ -314,7 +314,7 @@ fn compare_eq<'e, 'd, D: Dom<'d>>(
                 for j in 0..rs.len() {
                     ev.budget.charge_op()?;
                     let b = cached_node_text::<D>(ev, rs.get(j))?;
-                    if (ev.str_cache.text(a) == ev.str_cache.text(b)) == want_eq {
+                    if (a.bytes(&ev.str_cache) == b.bytes(&ev.str_cache)) == want_eq {
                         return Ok(true);
                     }
                 }
@@ -363,7 +363,7 @@ fn compare_eq<'e, 'd, D: Dom<'d>>(
             for i in 0..set.len() {
                 ev.budget.charge_op()?;
                 let s = cached_node_text::<D>(ev, set.get(i))?;
-                if (ev.str_cache.text(s) == want) == want_eq {
+                if (s.bytes(&ev.str_cache) == want) == want_eq {
                     return Ok(true);
                 }
             }
@@ -687,7 +687,7 @@ fn eval_fncall<'e, 'd, D: Dom<'d>>(
     }
 
     if let Some(f) = funcs::lookup::<D>(ns_uri, name) {
-        return f(ev, focus, &vals);
+        return f.call(ev, focus, &vals);
     }
     match ev.call_handler(focus, ns_uri, name, &vals)? {
         Some(v) => Ok(v),
@@ -740,10 +740,15 @@ impl<'e, 'd, D: Dom<'d>> Evaluation<'e, 'd, D> {
         };
         match handler.resolve(&mut self.budget, &call)? {
             None => Ok(None),
-            Some(v) => match val_from_tokens::<D>(self.doc, v) {
-                Some(v) => Ok(Some(v)),
-                None => Err(handler_oom(&mut self.budget)),
-            },
+            Some(v) => {
+                let Some(mut v) = val_from_tokens::<D>(self.doc, v) else {
+                    return Err(handler_oom(&mut self.budget));
+                };
+                if let Some(ns) = v.as_nodeset_mut() {
+                    nodeset_unique_sorted::<D>(self, ns);
+                }
+                Ok(Some(v))
+            }
         }
     }
 }

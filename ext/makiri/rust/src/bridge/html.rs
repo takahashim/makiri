@@ -27,7 +27,7 @@ use crate::lexbor::fragment::import_with_fixup;
 
 use crate::bridge::string::{RubyData, RubyText};
 use crate::bridge::wrapper::*;
-use crate::lexbor::adapter::html::{HtmlDoc, HtmlElementMut, ScratchElement, NS_UNDEF};
+use crate::lexbor::adapter::html::{HtmlDoc, HtmlElementMut, NS_UNDEF};
 
 /* ---- the document's own bytes and text ---- */
 
@@ -253,8 +253,13 @@ impl<'a> HtmlEdit<'a> {
     /// Both guards are checked again, since an argument's `#to_s` ran between
     /// `edit` and here: one that froze the receiver had its edit go through.
     /// `edit` checked first only so a frozen receiver is still reported ahead
-    /// of a bad argument.
-    pub fn node(&self) -> Result<HtmlNodeMut<'a>, Error> {
+    /// of a bad argument. It takes the token, so a caller cannot reach for the
+    /// handle a second time after running Ruby. What it cannot stop is Ruby
+    /// run while the handle is held - the handle's lifetime is the receiver's,
+    /// not the token's - so a caller keeps the span from here to the change
+    /// to engine calls and checks that call no Ruby (`insert` reads its
+    /// argument's node and frozen flag there, and nothing more).
+    pub fn node(self) -> Result<HtmlNodeMut<'a>, Error> {
         crate::bridge::ruby::check_frozen(self.this.value)?;
         ensure_document_mutable(self.this.document)?;
         invalidate_indexes(self.this.document);
@@ -474,22 +479,6 @@ fn intern_ns(el: HtmlElementMut<'_>, uri: &[u8]) -> usize {
 pub fn remove_attribute(el: HtmlElementMut<'_>, name: &RubyText) {
     // SAFETY: see the section comment.
     el.remove_attribute(unsafe { name.bytes() });
-}
-
-/// Rename `el` in place, keeping its identity; false when Lexbor could not
-/// intern the name.
-pub fn rename(el: HtmlElementMut<'_>, name: &RubyText) -> bool {
-    // SAFETY: see the section comment.
-    let scratch = ScratchElement::create(el.element().node().owner_document(), unsafe {
-        name.bytes()
-    });
-    match scratch {
-        Some(scratch) => {
-            scratch.rename(el);
-            true
-        }
-        None => false,
-    }
 }
 
 /// `node.content = text`; false when Lexbor could not store it.

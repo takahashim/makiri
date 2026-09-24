@@ -43,7 +43,6 @@ RSpec.describe "Mutation argument conversion" do
       "set_attribute_ns" => ->(d, x) { d.at_css("p").set_attribute_ns(nil, x.call("lang"), "en") },
       "remove_attribute_ns" => ->(d, x) { d.at_css("p").remove_attribute_ns(nil, x.call("class")) },
       "delete" => ->(d, x) { d.at_css("p").delete(x.call("class")) },
-      "name=" => ->(d, x) { d.at_css("p").name = x.call("span") },
       "content= on an element" => ->(d, x) { d.at_css("p").content = x.call("x" * 5000) },
       "content= on a text node" => ->(d, x) { d.at_css("p").children.first.content = x.call("y" * 5000) },
       "inner_html=" => ->(d, x) { d.at_css("div").inner_html = x.call("<p>new1</p><p>new2</p>") },
@@ -80,8 +79,8 @@ RSpec.describe "Mutation argument conversion" do
 
     it "refuses the HTML edit" do
       p_el = Makiri.HTML("<p>t</p>").at_css("p")
-      expect { p_el.name = freezing(p_el, "span") }.to raise_error(FrozenError)
-      expect(p_el.name).to eq("p")
+      expect { p_el.content = freezing(p_el, "x") }.to raise_error(FrozenError)
+      expect(p_el.content).to eq("t")
       expect { p_el["k"] = freezing(p_el, "v") }.to raise_error(FrozenError)
       expect(p_el["k"]).to be_nil
     end
@@ -105,7 +104,6 @@ RSpec.describe "Mutation argument conversion" do
       "set_attribute_ns" => ->(d, x) { d.at_xpath("//p").set_attribute_ns(nil, x.call("c"), "3") },
       "remove_attribute_ns" => ->(d, x) { d.at_xpath("//p").remove_attribute_ns(nil, x.call("a")) },
       "delete" => ->(d, x) { d.at_xpath("//p").delete(x.call("a")) },
-      "name=" => ->(d, x) { d.at_xpath("//p").name = x.call("q") },
       "content=" => ->(d, x) { d.at_xpath("//p").content = x.call("x" * 5000) }
     }.each do |name, edit|
       it "keeps the name index current across #{name}" do
@@ -139,10 +137,21 @@ RSpec.describe "Mutation argument conversion" do
         .to raise_error(RuntimeError, /locked/) # the namespace converts after the name
       target = +"t"
       expect { xml.create_processing_instruction(target, rewriting(target, "d")) }.to raise_error(RuntimeError, /locked/)
+    end
 
+    # A namespace binding converts both sides before checking either, so the
+    # rewrite happens first and the rewritten prefix is what is checked and
+    # bound - nothing is borrowed across the conversion to lock.
+    it "checks a namespace binding after both sides convert" do
       prefix = +"x"
-      ctx = Makiri::XPathContext.new(xml)
-      expect { ctx.register_namespace(prefix, rewriting(prefix, "urn:x")) }.to raise_error(RuntimeError, /locked/)
+      renaming = Object.new.tap { |o| o.define_singleton_method(:to_s) { prefix << "y" && "urn:x" } }
+      ctx = Makiri::XPathContext.new(Makiri::XML(%(<r xmlns="urn:x"/>)))
+      ctx.register_namespace(prefix, renaming)
+      expect(ctx.evaluate("count(//xy:r)")).to eq(1.0)
+
+      nul = +"y"
+      expect { ctx.register_namespace(nul, Object.new.tap { |o| o.define_singleton_method(:to_s) { nul << "\0" && "urn:y" } }) }
+        .to raise_error(Makiri::Error, /NUL/)
     end
 
     it "releases the lock afterwards, and takes the same String twice" do

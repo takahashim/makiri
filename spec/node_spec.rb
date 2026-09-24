@@ -415,6 +415,19 @@ RSpec.describe Makiri::Node do
       attr = div.attribute_nodes.first
       expect(attr <=> items[0]).to be_nil
     end
+
+    it "orders XML nodes the same way" do
+      xml = Makiri::XML("<r k='v'><a/><b><c/></b></r>")
+      a, b, c = %w[a b c].map { |n| xml.at_xpath("//#{n}") }
+      expect([c, b, a].sort).to eq([a, b, c])
+      expect([xml <=> a, b <=> c, c <=> a]).to eq([-1, -1, 1])
+      expect(a <=> xml.create_element("x")).to be_nil # a detached tree
+      expect(a <=> Makiri::XML("<r/>").root).to be_nil
+      expect(a <=> items[0]).to be_nil # an HTML node
+      expect(xml.root.attribute_nodes.first <=> a).to be_nil
+      attr = xml.root.attribute_nodes.first
+      expect(attr <=> attr).to eq(0) # as an HTML attribute answers
+    end
   end
 
   describe "a frozen node is immutable" do
@@ -426,7 +439,6 @@ RSpec.describe Makiri::Node do
       expect { node["k"] = "v" }.to raise_error(FrozenError)
       expect { node.delete("id") }.to raise_error(FrozenError)
       expect { node.content = "x" }.to raise_error(FrozenError)
-      expect { node.name = "section" }.to raise_error(FrozenError)
       expect { node.add_child(child) }.to raise_error(FrozenError)
       expect { node << child }.to raise_error(FrozenError)
       expect { node.inner_html = "<b>x</b>" }.to raise_error(FrozenError)

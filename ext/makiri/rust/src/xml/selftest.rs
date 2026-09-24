@@ -142,7 +142,6 @@ fn a_thousand_children_link_into_one_chain() {
         c = doc.next(id);
     }
     assert_eq!(cnt, 1000, "every appended child is reachable by `next`");
-    assert_eq!(doc.status, Status::Ok, "no failure was latched");
 }
 
 #[test]
@@ -151,11 +150,11 @@ fn a_byte_budget_already_spent_refuses_the_next_node() {
     /* Not reachable through the public API: the budget is lowered to what the
      * document has ALREADY charged, so there is no room for one more node. */
     doc.max_bytes = doc.arena_bytes;
-    assert!(
-        doc.new_node(NodeType::Element).is_err(),
-        "no room left for a node"
+    assert_eq!(
+        doc.new_node(NodeType::Element).err(),
+        Some(Status::Limit),
+        "no room left for a node, and the reason is the budget"
     );
-    assert_eq!(doc.status, Status::Limit, "and the reason is the budget");
 }
 
 #[test]
@@ -163,8 +162,8 @@ fn the_byte_budget_is_enforced_inside_the_allocator() {
     let mut doc = doc_new();
     doc.max_bytes = 4096;
     for _ in 0..100_000 {
-        if doc.new_node(NodeType::Element).is_err() {
-            assert_eq!(doc.status, Status::Limit);
+        if let Err(st) = doc.new_node(NodeType::Element) {
+            assert_eq!(st, Status::Limit);
             return;
         }
     }
@@ -176,8 +175,8 @@ fn the_node_budget_is_enforced() {
     let mut doc = doc_new();
     doc.max_nodes = 10;
     for _ in 0..100 {
-        if doc.new_node(NodeType::Element).is_err() {
-            assert_eq!(doc.status, Status::Limit);
+        if let Err(st) = doc.new_node(NodeType::Element) {
+            assert_eq!(st, Status::Limit);
             return;
         }
     }
@@ -434,7 +433,9 @@ fn a_doctype_is_recognized_and_kept_but_not_processed() {
 /// as `PUBLIC ""`.
 #[test]
 fn a_copied_doctype_keeps_its_name_and_both_ids() {
-    let cases: [(&[u8], Option<&[u8]>, Option<&[u8]>); 4] = [
+    /// (source, PUBLIC id, SYSTEM id)
+    type Case = (&'static [u8], Option<&'static [u8]>, Option<&'static [u8]>);
+    let cases: [Case; 4] = [
         (
             b"<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\" \"x.dtd\"><html/>",
             Some(b"-//W3C//DTD XHTML 1.0 Strict//EN"),
@@ -447,7 +448,7 @@ fn a_copied_doctype_keeps_its_name_and_both_ids() {
     for (src, public, system) in cases {
         let mut doc = parse_ok(src);
         let dt = doc.doctype().expect("a doctype node");
-        let name = doc.local(dt).to_vec();
+        let name = crate::falloc::try_to_vec(doc.local(dt)).expect("name");
 
         let mut other = doc_new();
         let imported = mutate::import_subtree(&mut other, &doc, dt).expect("import");
@@ -696,7 +697,9 @@ fn a_prefix_may_not_be_bound_to_the_empty_namespace() {
     let (mut doc, r) = detached_element(b"r");
     assert_eq!(
         mutate::set_attribute(&mut doc, r, b"xmlns:q", b""),
-        Err(MutStatus::BadNsDecl)
+        Err(MutStatus::BadNsDecl(
+            crate::xml::qname::NsDeclError::PrefixToEmpty
+        ))
     );
     /* `xmlns=""` is different: it un-declares the DEFAULT namespace, which XML
      * 1.0 allows. */
@@ -739,25 +742,6 @@ fn removing_an_attribute_is_idempotent() {
     assert!(
         !mutate::remove_attribute(&mut doc, r, b"id"),
         "and reports nothing to remove the second time"
-    );
-}
-
-#[test]
-fn renaming_an_element_rewrites_its_whole_name() {
-    let (mut doc, r) = detached_element(b"r");
-    /* A default declaration in scope, so the namespace assertion below is about
-     * the rule rather than about there being nothing to resolve against: a
-     * rename re-decides the URI from the scope the node is in RIGHT NOW. */
-    mutate::set_attribute(&mut doc, r, b"xmlns", b"").expect("xmlns=\"\" is legal");
-    mutate::set_attribute(&mut doc, r, b"xmlns:p", b"urn:p").expect("a declaration");
-
-    assert_eq!(mutate::rename(&mut doc, r, b"q"), MutStatus::Ok);
-    assert_eq!(doc.node(r).qname.len, 1);
-    assert_eq!(doc.local(r), b"q");
-    assert_eq!(
-        doc.node(r).ns_uri.len,
-        0,
-        "unprefixed, so it takes the DEFAULT binding - which is empty here"
     );
 }
 

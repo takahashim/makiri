@@ -12,9 +12,11 @@ use super::out::{put, put_pi, C14N, W};
 use super::Failure;
 use crate::cbuf::Buf;
 use crate::falloc::Reserve;
-use crate::xml::model::{Document as XmlDoc, NodeId, NodeType, FLAG_NS_RESOLVED, MAX_DEPTH};
+use crate::xml::model::{
+    Document as XmlDoc, NodeId, NodeType, FLAG_NS_EXPLICIT, FLAG_NS_PENDING, FLAG_NS_RESOLVED,
+    MAX_DEPTH,
+};
 use crate::xml::qname::xmlns_prefix;
-use crate::xml::XML_NS_URI;
 
 fn xmlns_decl(doc: &XmlDoc, a: NodeId) -> Option<(&[u8], &[u8])> {
     let p = xmlns_prefix(doc.qname(a))?;
@@ -26,72 +28,10 @@ struct Ns<'d> {
     uri: &'d [u8],
 }
 
-fn nearest<'d>(doc: &'d XmlDoc, node: NodeId, prefix: &[u8]) -> Option<&'d [u8]> {
-    let mut e = Some(node);
-    while let Some(id) = e {
-        if doc.type_(id) == Some(NodeType::Element) {
-            let mut a = doc.attrs(id);
-            while let Some(at) = a {
-                if let Some((p, u)) = xmlns_decl(doc, at) {
-                    if p == prefix {
-                        return Some(u);
-                    }
-                }
-                a = doc.next(at);
-            }
-        }
-        e = doc.parent(id);
-    }
-    None
-}
-
-fn namespaces(doc: &XmlDoc, n: NodeId, is_apex: bool) -> Result<Vec<Ns<'_>>, ()> {
-    let mut out: Vec<Ns> = Vec::new();
-    let mut default_seen = false;
-    let mut e = Some(n);
-    while let Some(id) = e {
-        if doc.type_(id) == Some(NodeType::Element) {
-            let mut a = doc.attrs(id);
-            while let Some(at) = a {
-                if let Some((p, u)) = xmlns_decl(doc, at) {
-                    if p != b"xml" {
-                        let keep = if is_apex {
-                            if p.is_empty() {
-                                let first = !default_seen;
-                                default_seen = true;
-                                first && !u.is_empty()
-                            } else {
-                                !out.iter().any(|x| x.prefix == p)
-                            }
-                        } else {
-                            // Declared above this element, not on it: its own
-                            // declaration would always match and never render.
-                            let above = doc.parent(id).and_then(|up| nearest(doc, up, p));
-                            if above == Some(u) {
-                                false
-                            } else {
-                                !(p.is_empty() && u.is_empty())
-                                    || above.is_some_and(|a| !a.is_empty())
-                            }
-                        };
-                        if keep {
-                            out.falloc_reserve(1)?;
-                            out.push(Ns { prefix: p, uri: u });
-                        }
-                    }
-                }
-                a = doc.next(at);
-            }
-        }
-        if !is_apex {
-            break;
-        }
-        e = doc.parent(id);
-    }
-    /* In place (see clippy.toml): a prefix is declared once per element, so
-     * the keys are distinct and stability would buy nothing. */
+/// In place (see clippy.toml): a prefix is rendered once per element, so the
+/// keys are distinct and stability would buy nothing.
+fn sort_by_prefix(out: &mut [Ns<'_>]) {
     out.sort_unstable_by(|a, b| a.prefix.cmp(b.prefix));
-    Ok(out)
 }
 
 /// The Canonical XML writer: the output buffer, the document it reads, and
@@ -166,20 +106,60 @@ impl<'d> Writer<'d, '_> {
         Ok(())
     }
 
-    /// What `prefix` means here by the document's declarations: `xml` its own
-    /// URI, an undeclared default no namespace, and an undeclared prefix
-    /// NOTHING - `Ok(None)`, which no name may carry. `Err` once the step
-    /// budget is spent.
-    fn scope_uri(&mut self, prefix: &[u8]) -> Result<Option<&'d [u8]>, ()> {
-        if prefix == b"xml" {
-            return Ok(Some(XML_NS_URI));
+    /// The declarations the apex renders (§2.2): every prefix in scope at its
+    /// innermost binding, since nothing above the apex is output - but not
+    /// `xml`, and not a default that undeclares. Read from the scope index,
+    /// where it used to walk the ancestors again and check each prefix
+    /// against the ones already kept.
+    fn apex_namespaces(&self) -> Result<Vec<Ns<'d>>, ()> {
+        let mut out: Vec<Ns> = Vec::new();
+        for (prefix, uri) in self.binds.innermost() {
+            /* c14n renders the document's own declarations and never invents
+             * a prefix, so every binding is one it can borrow. */
+            let Prefix::Own(prefix) = *prefix else {
+                continue;
+            };
+            if prefix == b"xml" || (prefix.is_empty() && uri.is_empty()) {
+                continue;
+            }
+            out.falloc_reserve(1)?;
+            out.push(Ns { prefix, uri });
         }
-        match self.binds.lookup(prefix) {
-            Some(uri) => Ok(Some(uri)),
-            None if self.binds.exhausted => Err(()),
-            None if prefix.is_empty() => Ok(Some(b"")),
-            None => Ok(None),
+        sort_by_prefix(&mut out);
+        Ok(out)
+    }
+
+    /// The declarations of a non-apex `n` that render: those that change what
+    /// is in scope (§2.2). Read from the scope BEFORE `n`'s own are pushed, so
+    /// a lookup answers what an ancestor declared - one stack lookup, charged
+    /// to the step budget, where a walk up the ancestors per declaration made
+    /// deep trees quadratic.
+    fn own_namespaces(&mut self, n: NodeId) -> Result<Vec<Ns<'d>>, ()> {
+        let doc = self.doc;
+        let mut out: Vec<Ns> = Vec::new();
+        let mut a = doc.attrs(n);
+        while let Some(at) = a {
+            if let Some((p, u)) = xmlns_decl(doc, at) {
+                if p != b"xml" {
+                    let above = self.binds.lookup(p);
+                    if self.binds.exhausted {
+                        return Err(());
+                    }
+                    let keep = if above == Some(u) {
+                        false
+                    } else {
+                        !(p.is_empty() && u.is_empty()) || above.is_some_and(|a| !a.is_empty())
+                    };
+                    if keep {
+                        out.falloc_reserve(1)?;
+                        out.push(Ns { prefix: p, uri: u });
+                    }
+                }
+            }
+            a = doc.next(at);
         }
+        sort_by_prefix(&mut out);
+        Ok(out)
     }
 
     /// Whether the declarations in scope bind every prefix `n` and its
@@ -191,7 +171,7 @@ impl<'d> Writer<'d, '_> {
         let doc = self.doc;
         let decided = doc.node(n).flags & FLAG_NS_RESOLVED != 0;
         let el_prefix = doc.span(doc.node(n).prefix);
-        let Some(el_uri) = self.scope_uri(el_prefix)? else {
+        let Some(el_uri) = self.binds.resolve(el_prefix)? else {
             self.binds.unbound = true;
             return Err(());
         };
@@ -201,8 +181,16 @@ impl<'d> Writer<'d, '_> {
         let mut a = doc.attrs(n);
         while let Some(at) = a {
             let prefix = doc.span(doc.node(at).prefix);
+            /* An attribute's namespace is its own once its element is decided -
+             * or once it was GIVEN (`set_attribute_ns`), which holds on a
+             * detached element too: compared only through its element, a given
+             * `urn:a` was written under whatever the prefix meant here, or
+             * dropped from an unprefixed name. */
+            let flags = doc.node(at).flags;
+            let decided =
+                decided || (flags & FLAG_NS_EXPLICIT != 0 && flags & FLAG_NS_PENDING == 0);
             if xmlns_decl(doc, at).is_none() && !prefix.is_empty() {
-                let Some(expected) = self.scope_uri(prefix)? else {
+                let Some(expected) = self.binds.resolve(prefix)? else {
                     self.binds.unbound = true;
                     return Err(());
                 };
@@ -255,7 +243,17 @@ impl<'d> Writer<'d, '_> {
     /// caller owns the scope, so an early `?` cannot unbalance it.
     fn element_in_scope(&mut self, n: NodeId, is_apex: bool, depth: u32) -> W {
         let doc = self.doc;
-        self.push_decls(n)?;
+        /* The apex renders every binding in scope, its own included, so it
+         * reads the scope after pushing them; any other element renders what
+         * it changes, so it reads the scope before. */
+        let rendered = if is_apex {
+            self.push_decls(n)?;
+            self.apex_namespaces()?
+        } else {
+            let own = self.own_namespaces(n)?;
+            self.push_decls(n)?;
+            own
+        };
         if !self.names_agree(n)? {
             self.mismatch = true;
             return Err(());
@@ -263,7 +261,7 @@ impl<'d> Writer<'d, '_> {
         self.put(b"<")?;
         self.qname(n)?;
 
-        for ns in namespaces(doc, n, is_apex)? {
+        for ns in rendered {
             if ns.prefix.is_empty() {
                 self.put(b" xmlns=\"")?;
             } else {

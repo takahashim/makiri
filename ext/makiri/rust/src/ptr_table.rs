@@ -198,14 +198,18 @@ impl<K: TableKey, V: Copy + Default> PtrMap<K, V> {
         if key == K::EMPTY {
             return Err(InsertRefused);
         }
+        /* A key already present is a no-op, so it is looked for BEFORE growing:
+         * growing first made a repeated key allocate, and fail on OOM, for a
+         * write that changes nothing. */
+        if !self.slots.is_empty() && self.slots[probe(&self.slots, key)].0 != K::EMPTY {
+            return Ok(());
+        }
         if self.slots.is_empty() || (self.len + 1) * 2 > self.slots.len() {
             self.grow()?;
         }
         let i = probe(&self.slots, key);
-        if self.slots[i].0 == K::EMPTY {
-            self.slots[i] = (key, value);
-            self.len += 1;
-        }
+        self.slots[i] = (key, value);
+        self.len += 1;
         Ok(())
     }
 

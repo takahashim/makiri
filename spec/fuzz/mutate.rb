@@ -4,16 +4,15 @@
 #
 # Where the :xml target fuzzes the PARSER, this fuzzes the MUTATION surface: it
 # applies a random, seeded SEQUENCE of tree edits - factories + add_child/<<,
-# before/after, add_previous/next_sibling, replace, []=/delete, content=/name=,
+# before/after, add_previous/next_sibling, replace, []=/delete, content=,
 # remove, clone_node (deep/shallow), cross-document import and in-tree moves,
 # plus deliberate cycle /
 # cross-representation / frozen attempts - to a fresh document, then checks the
 # structural INVARIANTS every edit must preserve:
 #
 #   (a) no cycle         - the connected tree is walkable in bounded steps. The
-#                          walk uses #child/#next one step at a time (never the C
-#                          #children iterator), so a corrupt sibling ring is
-#                          caught as a finding instead of hanging the walker.
+#                          walk uses #child/#next one step at a time, so a corrupt
+#                          sibling ring is caught as a finding instead of hanging.
 #   (b) link consistency - every child's #parent is its container.
 #   (c) serialization    - #to_xml terminates (the buffer cap turns any residual
 #                          runaway into a raise).
@@ -73,9 +72,9 @@ module MutateFuzz
   HTML_IMPORT_NAMES = ["div", "span", ":good:times:", "x<", "0:a", "a b", "f}oo", "xmlns:foo"].freeze
 
   # A documented, fail-closed rejection of a bad edit (invalid name/char, cycle,
-  # second root, cross-document/representation, frozen receiver, bad index): the
-  # fuzzer expects these and keeps going. Anything else is a finding.
-  CLEAN = [Makiri::Error, ArgumentError, TypeError, FrozenError, RangeError, IndexError].freeze
+  # second root, cross-document/representation, frozen receiver): the fuzzer expects
+  # these and keeps going. Anything else is a finding.
+  CLEAN = [Makiri::Error, ArgumentError, TypeError, FrozenError].freeze
 
   CycleError     = Class.new(StandardError)
   InvariantError = Class.new(StandardError)
@@ -89,31 +88,49 @@ module MutateFuzz
   # Build, mutate and verify a document deterministically from +seed+.
   # Returns [category, detail] in run.rb's vocabulary.
   def run(seed)
-    rng   = Random.new(seed)
-    doc   = Makiri::XML(SEED_DOCS.sample(random: rng))
-    other = Makiri::XML(SEED_DOCS.sample(random: rng))
-    src   = collect(other) # cross-document import sources (deep-copied on insert)
-    (8 + rng.rand(40)).times do
-      nodes = collect(doc) # bounded; CycleError on a runaway
+    rng     = Random.new(seed)
+    doc     = Makiri::XML(SEED_DOCS.sample(random: rng))
+    other   = Makiri::XML(SEED_DOCS.sample(random: rng))
+    src     = collect(other) # cross-document insertion sources
+    history = []
+    (8 + rng.rand(40)).times.with_index(1) do |_, step|
+      nodes  = collect(doc) # bounded; CycleError on a runaway
+      before = state_fingerprint(nodes)
+      rejected = false
       begin
-        apply(doc, nodes, src, rng)
+        apply(doc, nodes, src, rng, history)
       rescue *CLEAN
-        # documented rejection of an invalid edit - expected, keep mutating
+        rejected = true
       end
+      after = collect(doc)
+      verify_links(doc, after)
+      verify_links(other, collect(other))
+      if rejected && state_fingerprint(after) != before
+        raise InvariantError, "rejected edit changed the DOM"
+      end
+      verify(doc) if (step % 8).zero?
+      verify(other) if (step % 8).zero?
     end
     verify(doc)
+    verify(other)
     [:ok, nil]
   rescue CycleError, InvariantError => e
-    [:unexpected, "#{e.class.name.split('::').last}: #{e.message}"]
+    detail = "#{e.class.name.split('::').last}: #{e.message}"
+    detail += " ops=#{history.last(12).join(',')}" if history
+    [:unexpected, detail]
   rescue StandardError => e
-    [:unexpected, "#{e.class}: #{e.message}".slice(0, 2000)]
+    detail = "#{e.class}: #{e.message}"
+    detail += " ops=#{history.last(12).join(',')}" if history
+    [:unexpected, detail.slice(0, 2000)]
   end
 
   # ---- operations ---------------------------------------------------------
 
-  def apply(doc, nodes, src, rng)
+  def apply(doc, nodes, src, rng, history)
     t = nodes.sample(random: rng)
-    case rng.rand(23)
+    operation = rng.rand(23)
+    history << "op#{operation}"
+    case operation
     when 0  then t.add_child(make(doc, rng))
     when 1  then t << make(doc, rng)
     when 2  then t.before(make(doc, rng))
@@ -124,9 +141,9 @@ module MutateFuzz
     when 7  then t[ATTR_NAMES.sample(random: rng)] = ATTR_VALS.sample(random: rng)
     when 8  then t.delete(ATTR_NAMES.sample(random: rng))
     when 9  then t.content = TEXTS.sample(random: rng)
-    when 10 then t.name = ELEM_NAMES.sample(random: rng)
+    when 10 then t.replace(doc.create_element(ELEM_NAMES.sample(random: rng)))
     when 11 then t.remove
-    when 12 then t.add_child(src.sample(random: rng))              # cross-document import (deep copy)
+    when 12 then t.add_child(src.sample(random: rng))              # cross-document insertion (copy + source removal)
     when 13 then t.add_child(nodes.sample(random: rng))            # in-tree move (an ancestor -> cycle, rejected)
     when 14 then t.before(nodes.sample(random: rng))              # in-tree move as a sibling
     when 15 then t.replace(nodes.sample(random: rng))            # in-tree move via replace
@@ -227,11 +244,15 @@ module MutateFuzz
     nil # leaf representations may not expose #child
   end
 
-  def verify(doc)
-    # (a) the connected tree is finite + walkable
-    nodes = collect(doc)
+  def state_fingerprint(nodes)
+    nodes.map do |n|
+      attrs = n.attribute_nodes.map { |a| [a.namespace_uri, a.name, a.value] }
+      [n.class.name, n.node_type, n.name, n.namespace_uri, n.content, attrs]
+    end
+  end
 
-    # (b) every child points back to its container
+  def verify_links(doc, nodes = nil)
+    nodes ||= collect(doc)
     nodes.each do |n|
       c = child_of(n)
       while c
@@ -240,6 +261,14 @@ module MutateFuzz
         c = c.next
       end
     end
+  end
+
+  def verify(doc)
+    # (a) the connected tree is finite + walkable
+    nodes = collect(doc)
+
+    # (b) every child points back to its container
+    verify_links(doc, nodes)
 
     # (c) serialization terminates
     xml1 = doc.to_xml

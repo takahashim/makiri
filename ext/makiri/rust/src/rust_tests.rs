@@ -135,7 +135,19 @@ fn xpath_number_rendering_has_xpath_boundary_behaviour() {
         (-1.0, "-1"),
         (1.5, "1.5"),
         (0.0001, "0.0001"),
-        (0.00001, "1e-05"),
+        /* libxml2's thresholds (xmlXPathFormatNumber), which Nokogiri answers
+         * with: 1e-5 itself is fixed notation, below it and above 1e9 is
+         * exponential, and an integer only prints as one inside C's int. */
+        (0.00001, "0.00001"),
+        (0.000009, "9e-06"),
+        (1e9, "1000000000"),
+        (1_000_000_000.5, "1.0000000005e+09"),
+        (999_999_999.5, "999999999.5"),
+        (2_147_483_646.0, "2147483646"),
+        (2_147_483_647.0, "2.147483647e+09"),
+        (-2_147_483_647.0, "-2147483647"),
+        (-2_147_483_648.0, "-2.147483648e+09"),
+        (12_345.678_901_234_567, "12345.6789012346"),
         (1e15, "1e+15"),
     ];
     for (number, expected) in cases {
