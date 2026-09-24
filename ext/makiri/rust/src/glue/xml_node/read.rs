@@ -343,3 +343,26 @@ pub fn values(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
         Ok(ary.as_value())
     })
 }
+
+/// `#<=>`: document (pre-order) position, as the HTML one - nil for a
+/// non-node, a node of another document (an HTML one included), an attribute,
+/// or two nodes in different trees. Comparable, which `Makiri::Node`
+/// includes, supplies `<`, `>` and the rest.
+pub fn spaceship(ruby: &Ruby, this: XmlSelf, other: Value) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| {
+        let same_document = crate::bridge::ruby::is_kind_of(other, &crate::init::CLASS_NODE)
+            && crate::bridge::wrapper::keepalive_document(other)?.equal(this.document)?;
+        if !same_document {
+            return Ok(ruby.qnil().as_value());
+        }
+        let order = crate::xml::xpath::document_order(
+            this.doc_ref(),
+            this.id,
+            crate::bridge::xml::unwrap(other)?,
+        );
+        Ok(match order {
+            Some(o) => ruby.integer_from_i64(o as i64).as_value(),
+            None => ruby.qnil().as_value(),
+        })
+    })
+}

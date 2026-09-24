@@ -52,6 +52,8 @@
 
 ### Fixed
 
+* `Makiri::XML` nodes compare by document order with `<=>`, as HTML nodes
+  do, so they sort; `<=>` returned nil for every pair.
 * `XPathContext#register_namespace` reads its arguments as a namespace Hash
   does: both converted with `to_s` before either is checked, the same
   string-length cap, and the same "invalid namespace mapping" message. It

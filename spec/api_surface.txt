@@ -366,6 +366,7 @@ class Makiri::XML::Node < Makiri::Node
 
 module Makiri::XML::NodeMethods
   def <<(1)
+  def <=>(1)
   def ==(1)
   def [](1)
   def []=(2)

@@ -415,6 +415,17 @@ RSpec.describe Makiri::Node do
       attr = div.attribute_nodes.first
       expect(attr <=> items[0]).to be_nil
     end
+
+    it "orders XML nodes the same way" do
+      xml = Makiri::XML("<r k='v'><a/><b><c/></b></r>")
+      a, b, c = %w[a b c].map { |n| xml.at_xpath("//#{n}") }
+      expect([c, b, a].sort).to eq([a, b, c])
+      expect([xml <=> a, b <=> c, c <=> a]).to eq([-1, -1, 1])
+      expect(a <=> xml.create_element("x")).to be_nil # a detached tree
+      expect(a <=> Makiri::XML("<r/>").root).to be_nil
+      expect(a <=> items[0]).to be_nil # an HTML node
+      expect(xml.root.attribute_nodes.first <=> a).to be_nil
+    end
   end
 
   describe "a frozen node is immutable" do
