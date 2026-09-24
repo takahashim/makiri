@@ -6,7 +6,7 @@
 //! Ruby objects - each one a possible raise - leaves nothing to free. That is
 //! the whole reason for the two phases; see `lexbor::stylesheet`.
 
-use magnus::{function, prelude::*, Error, RArray, RHash, Ruby, Symbol, Value};
+use magnus::{function, prelude::*, Error, RArray, RHash, Ruby, StaticSymbol, Value};
 
 use crate::bridge::ruby::error_class;
 use crate::bridge::string::ruby_verified_text;
@@ -15,43 +15,48 @@ use crate::lexbor::stylesheet::{parse, Decl, Fail, Rule, MAX_DEPTH};
 
 /// The fixed hash keys and `:type` values, interned once per call.
 ///
+/// STATIC symbols (`rb_intern`), which are never collected. `to_symbol` made
+/// dynamic ones, and re-interning one the GC had just freed - a large sheet
+/// makes plenty of garbage between calls - took Ruby's resurrection path,
+/// which Valgrind reports as a read of uninitialised GC state.
+///
 /// Interned once so the conversion loops do not hash-look-up every key again
 /// for every declaration; a per-call struct does that without process-global
 /// mutable state, and a stylesheet is one call.
 struct Keys {
-    type_: Symbol,
-    selectors: Symbol,
-    declarations: Symbol,
-    name: Symbol,
-    value: Symbol,
-    important: Symbol,
-    text: Symbol,
-    specificity: Symbol,
-    selector_text: Symbol,
-    prelude: Symbol,
-    rules: Symbol,
-    sym_style: Symbol,
-    sym_bad_style: Symbol,
-    sym_at_rule: Symbol,
+    type_: StaticSymbol,
+    selectors: StaticSymbol,
+    declarations: StaticSymbol,
+    name: StaticSymbol,
+    value: StaticSymbol,
+    important: StaticSymbol,
+    text: StaticSymbol,
+    specificity: StaticSymbol,
+    selector_text: StaticSymbol,
+    prelude: StaticSymbol,
+    rules: StaticSymbol,
+    sym_style: StaticSymbol,
+    sym_bad_style: StaticSymbol,
+    sym_at_rule: StaticSymbol,
 }
 
 impl Keys {
     fn new(ruby: &Ruby) -> Keys {
         Keys {
-            type_: ruby.to_symbol("type"),
-            selectors: ruby.to_symbol("selectors"),
-            declarations: ruby.to_symbol("declarations"),
-            name: ruby.to_symbol("name"),
-            value: ruby.to_symbol("value"),
-            important: ruby.to_symbol("important"),
-            text: ruby.to_symbol("text"),
-            specificity: ruby.to_symbol("specificity"),
-            selector_text: ruby.to_symbol("selector_text"),
-            prelude: ruby.to_symbol("prelude"),
-            rules: ruby.to_symbol("rules"),
-            sym_style: ruby.to_symbol("style"),
-            sym_bad_style: ruby.to_symbol("bad_style"),
-            sym_at_rule: ruby.to_symbol("at_rule"),
+            type_: ruby.sym_new("type"),
+            selectors: ruby.sym_new("selectors"),
+            declarations: ruby.sym_new("declarations"),
+            name: ruby.sym_new("name"),
+            value: ruby.sym_new("value"),
+            important: ruby.sym_new("important"),
+            text: ruby.sym_new("text"),
+            specificity: ruby.sym_new("specificity"),
+            selector_text: ruby.sym_new("selector_text"),
+            prelude: ruby.sym_new("prelude"),
+            rules: ruby.sym_new("rules"),
+            sym_style: ruby.sym_new("style"),
+            sym_bad_style: ruby.sym_new("bad_style"),
+            sym_at_rule: ruby.sym_new("at_rule"),
         }
     }
 }
