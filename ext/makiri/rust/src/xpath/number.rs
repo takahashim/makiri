@@ -94,8 +94,9 @@ impl<'a> Fixed<'a> {
     }
 }
 
-/// Trailing zeros (and a bare trailing '.') dropped from a decimal run, which is
-/// what `%g` does. A run with no '.' is returned unchanged.
+/// Trailing zeros, and a '.' they leave last, dropped from a decimal run - the
+/// trim libxml2 applies to both of its notations. A run with no '.' is
+/// returned unchanged.
 fn strip_zeros(s: &[u8]) -> &[u8] {
     if !s.contains(&b'.') {
         return s;
@@ -104,15 +105,24 @@ fn strip_zeros(s: &[u8]) -> &[u8] {
     s.strip_suffix(b".").unwrap_or(s)
 }
 
-/// Write `d` the way XPath's `string()` does (§4.2): an integral value in
-/// range prints as an integer, everything else as C's `%.15g`.
+/// Write `d` the way XPath's `string()` does (§4.2) - as libxml2 2.13 writes
+/// it (`xmlXPathFormatNumber`), which is what Nokogiri answers:
 ///
-/// That is libxml2's rule, and deliberately so: §4.2 asks for as many digits as
-/// it takes to tell the value apart from its neighbours, which `%.15g` is not
-/// (`1 div 3` is `0.333333333333333`, fifteen digits, where the shortest
-/// string that reads back as the same double has sixteen). It is kept because Nokogiri answers with these bytes - checked on
-/// `1 div 3`, `0.1 + 0.2`, `1e23`, `1e-7`, `12345678901234567` and `1e-21` -
-/// and a caller moving from it compares strings, not values.
+/// * an integer strictly inside C's `int` range prints as an integer;
+/// * any other value above 1e9 or below 1e-5 in magnitude prints as C's
+///   `%.14e`, so `2147483647` is `2.147483647e+09` and `0.000009` is `9e-06`;
+/// * the rest prints as `%.Nf` with 15 significant digits, `N` from the
+///   truncated `log10` (`12345.678901234567` is `12345.6789012346`);
+/// * both notations then lose trailing zeros, and a '.' that ends up last.
+///
+/// This is not §4.2's rule, which asks for as many digits as it takes to tell
+/// the value apart (`1 div 3` has sixteen threes there, fifteen here), nor
+/// C's `%.15g`, which this used to be and which disagreed with Nokogiri from
+/// 1e9 up (`1234567890.5`) and in `[1e-5, 1e-4)` (`0.00001`). It is kept to
+/// libxml2's because a caller moving from Nokogiri compares strings; the
+/// thresholds are checked against Nokogiri in `spec/xpath_spec.rb`.
+///
+/// Zero (either sign) is `0`. NaN and the infinities are the caller's.
 ///
 /// Returns the byte length, or None if `out` was too small - which the caller
 /// turns into an INTERNAL error rather than emitting a truncated number.
@@ -120,47 +130,56 @@ fn strip_zeros(s: &[u8]) -> &[u8] {
 /// status, so it must not be able to abort on a failed allocation instead.
 pub fn to_text(d: f64, out: &mut [u8]) -> Option<usize> {
     use core::fmt::Write;
-    const P: i32 = 15;
+    /* DBL_DIG, and libxml2's UPPER_DOUBLE / LOWER_DOUBLE. */
+    const DIGITS: i32 = 15;
+    const UPPER: f64 = 1e9;
+    const LOWER: f64 = 1e-5;
 
-    if d == d.trunc() && d.abs() < 1e15 {
+    if d == 0.0 {
         let mut w = Fixed::new(out);
-        write!(w, "{}", d as i64).ok()?;
+        w.write_str("0").ok()?;
+        return Some(w.len);
+    }
+    if d > i32::MIN as f64 && d < i32::MAX as f64 && d == d.trunc() {
+        let mut w = Fixed::new(out);
+        write!(w, "{}", d as i32).ok()?;
         return Some(w.len);
     }
 
-    /* %.15g picks exponential when the decimal exponent is below -4 or at least
-     * the precision, and strips trailing zeros either way. */
-    let exp = if d == 0.0 {
-        0
-    } else {
-        d.abs().log10().floor() as i32
-    };
+    let abs = d.abs();
     let mut scratch = [0u8; 64];
 
-    if (-4..P).contains(&exp) {
+    if abs > UPPER || abs < LOWER {
+        /* %.14e, then C's exponent: a sign and at least two digits, where Rust
+         * writes "1.5e20". */
         let mut w = Fixed::new(&mut scratch);
-        write!(w, "{:.*}", (P - 1 - exp).max(0) as usize, d).ok()?;
-        let text = strip_zeros(w.written());
-        if text.len() > out.len() {
-            return None;
-        }
-        out[..text.len()].copy_from_slice(text);
-        return Some(text.len());
+        write!(w, "{:.*e}", (DIGITS - 1) as usize, d).ok()?;
+        let written = w.written();
+        let at = written.iter().position(|&b| b == b'e')?;
+        let mantissa = strip_zeros(&written[..at]);
+        let ev: i32 = core::str::from_utf8(&written[at + 1..])
+            .ok()?
+            .parse()
+            .ok()?;
+        let mut o = Fixed::new(out);
+        o.write_str(core::str::from_utf8(mantissa).ok()?).ok()?;
+        write!(o, "e{}{:02}", if ev < 0 { '-' } else { '+' }, ev.abs()).ok()?;
+        return Some(o.len);
     }
 
+    /* libxml2 truncates the logarithm toward zero, as C's `(int)` does. */
+    let integer_place = abs.log10() as i32;
+    let fraction = if integer_place > 0 {
+        DIGITS - integer_place - 1
+    } else {
+        DIGITS - integer_place
+    };
     let mut w = Fixed::new(&mut scratch);
-    write!(w, "{:.*e}", (P - 1) as usize, d).ok()?;
-    /* Rust writes "1.5e20"; C writes "1.5e+20". */
-    let written = w.written();
-    let at = written.iter().position(|&b| b == b'e')?;
-    let mantissa = strip_zeros(&written[..at]);
-    let ev: i32 = core::str::from_utf8(&written[at + 1..])
-        .ok()?
-        .parse()
-        .ok()?;
-
-    let mut o = Fixed::new(out);
-    o.write_str(core::str::from_utf8(mantissa).ok()?).ok()?;
-    write!(o, "e{}{:02}", if ev < 0 { '-' } else { '+' }, ev.abs()).ok()?;
-    Some(o.len)
+    write!(w, "{:.*}", fraction.max(0) as usize, d).ok()?;
+    let text = strip_zeros(w.written());
+    if text.len() > out.len() {
+        return None;
+    }
+    out[..text.len()].copy_from_slice(text);
+    Some(text.len())
 }

@@ -41,6 +41,13 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
     and in XPath's data model. An `xmlns` on an HTML element is an ordinary
     attribute and stays visible.
 
+* A number literal is read as the nearest double; libxml2's own reader is not
+  correctly rounded for a literal with more digits than a double holds, so
+  `string(0.72609133372266155)` is `0.726091333722662` in Makiri and
+  `0.726091333722661` in Nokogiri (the digits differ in the last place). The
+  number is then written by libxml2's rule in both (`string(1234567890.5)` is
+  `1.2345678905e+09`); only the value read differs.
+
 ## XML
 
 * `Makiri::XML` is XML 1.0 (Fifth Edition) only and non-validating.

@@ -56,6 +56,22 @@ RSpec.describe "Makiri XPath" do
       expect(doc.xpath("string(-1 div 0)")).to eq("-Infinity")
     end
 
+    # libxml2's xmlXPathFormatNumber, which Nokogiri answers with: exponential
+    # above 1e9 and below 1e-5, and an integer only inside C's int.
+    it "formats numbers at libxml2's thresholds" do
+      {
+        "1000000000" => "1000000000",
+        "1000000000.5" => "1.0000000005e+09",
+        "2147483646" => "2147483646",
+        "2147483647" => "2.147483647e+09",
+        "0.00001" => "0.00001",
+        "0.000009" => "9e-06",
+        "12345.678901234567" => "12345.6789012346"
+      }.each do |expr, text|
+        expect(doc.xpath("string(#{expr})")).to eq(text), expr
+      end
+    end
+
     it "converts booleans to/from strings and numbers" do
       expect(doc.xpath("string(true())")).to eq("true")
       expect(doc.xpath("string(false())")).to eq("false")

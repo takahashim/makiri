@@ -52,6 +52,11 @@
 
 ### Fixed
 
+* XPath `string()` of a number follows libxml2's rule, as Nokogiri does:
+  exponential notation above 1e9 and below 1e-5 (`1234567890.5` is
+  `1.2345678905e+09`, `0.00001` stays `0.00001`), and integer form only inside
+  C's `int` (`2147483647` is `2.147483647e+09`). It was C's `%.15g`, which
+  disagreed with Nokogiri outside `[1e-4, 1e15)`.
 * HTML-to-XML `import_node` no longer moves an element into another namespace
   when one of its attributes uses the element's prefix for a different URI
   (`p:e` in `urn:p` with an attribute `p:x` in `urn:other` came out in
