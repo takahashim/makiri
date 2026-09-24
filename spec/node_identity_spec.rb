@@ -63,6 +63,50 @@ RSpec.describe "node wrapper identity" do
     include_examples "one wrapper per node"
   end
 
+  describe "detached references under GC compaction", :gc_compact do
+    {
+      "HTML" => lambda do
+        doc = Makiri::HTML("<div><p id='x'>text</p></div>")
+        element = doc.at_css("p")
+        [doc, element, element.children.first, element.attribute_nodes.first,
+         -> { element.remove }, -> { element.delete("id") },
+         -> { element.children.first.remove }]
+      end,
+      "XML" => lambda do
+        doc = Makiri::XML(%(<r><p id="x">text</p></r>))
+        element = doc.root.at_xpath("p")
+        [doc, element, element.children.first, element.attribute_nodes.first,
+         -> { element.remove }, -> { element.delete("id") },
+         -> { element.children.first.remove }]
+      end,
+    }.each do |backend, build|
+      it "keeps detached Element, Text, and Attr wrappers readable in #{backend}" do
+        doc, element, text, attr, remove_element, remove_attr, remove_text = build.call
+        remove_element.call
+        remove_attr.call
+        remove_text.call
+
+        GC.stress = true
+        begin
+          200.times do |i|
+            churned = doc.create_element("n#{i}")
+            churned["data-i"] = i.to_s
+          end
+          GC.compact
+
+          expect(element.parent).to be_nil
+          expect(element.name).to eq("p")
+          expect(text.parent).to be_nil
+          expect(text.content).to eq("text")
+          expect(attr.parent).to be_nil
+          expect([attr.name, attr.value]).to eq(["id", "x"])
+        ensure
+          GC.stress = false
+        end
+      end
+    end
+  end
+
   it "gives each node its own wrapper, not one shared wrapper" do
     doc = Makiri::XML("<r><a/><b/></r>")
     first, second = doc.root.children[0], doc.root.children[1]
@@ -105,14 +149,18 @@ RSpec.describe "node wrapper identity" do
       end
     end
 
-    it "keeps children replaced by content= alive for their wrappers" do
-      para = doc.at_css("p")
-      kids = para.children.to_a
-      para.content = "x"
-      churn(doc, para)
-      expect(kids.map(&:name)).to eq(%w[span b])
-      expect(kids.map(&:parent)).to eq([nil, nil])
-      expect_classes_agree(doc)
+    ["replaced", "cleared"].each do |mode|
+      it "keeps children removed by content= (#{mode}) alive for their wrappers" do
+        para = doc.at_css("p")
+        kids = para.children.to_a
+        para.content = mode == "cleared" ? "" : "x"
+        child_count = para.children.length
+        churn(doc, para)
+        expect(kids.map(&:name)).to eq(%w[span b])
+        expect(kids.map(&:parent)).to eq([nil, nil])
+        expect(child_count).to eq(mode == "cleared" ? 0 : 1)
+        expect_classes_agree(doc)
+      end
     end
 
     it "keeps an attribute removed by delete alive for its wrapper" do

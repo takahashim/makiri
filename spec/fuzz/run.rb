@@ -24,7 +24,7 @@
 #   ruby -Ilib spec/fuzz/run.rb --seed 42             # deterministic
 #   ruby -Ilib spec/fuzz/run.rb --target css          # fuzz CSS instead
 #   ruby -Ilib spec/fuzz/run.rb --target both
-#   ruby -Ilib spec/fuzz/run.rb --isolated            # fork per query (crash/hang safe)
+#   ruby -Ilib spec/fuzz/run.rb --in-process        # no fork (faster, less isolation)
 
 require "fileutils"
 require "digest"
@@ -43,14 +43,15 @@ REGRESSIONS_DIR = File.expand_path("regressions", __dir__)
 STATE_FILE      = File.join(REGRESSIONS_DIR, "last_input.txt")
 FileUtils.mkdir_p(REGRESSIONS_DIR)
 
-opts = { time: 60, seed: Random.new_seed, isolated: false, quiet: false,
+opts = { time: 60, seed: Random.new_seed, isolated: true, quiet: false,
          query_timeout: 5, target: :xpath }
 OptionParser.new do |o|
   o.banner = "Usage: ruby spec/fuzz/run.rb [options]"
   o.on("--time SEC", Integer, "seconds to run (default 60)")          { |v| opts[:time] = v }
   o.on("--seed N", Integer, "RNG seed (default random)")              { |v| opts[:seed] = v }
   o.on("--target T", %i[xpath css both xml mutate xmlcss], "xpath (default), css, both, xml, mutate, xmlcss") { |v| opts[:target] = v }
-  o.on("--isolated", "fork per query (crash/hang safe)")              { opts[:isolated] = true }
+  o.on("--isolated", "fork per query (crash/hang safe; default)")    { opts[:isolated] = true }
+  o.on("--in-process", "run in one process (faster; crash/hang not isolated)") { opts[:isolated] = false }
   o.on("--query-timeout SEC", Integer, "per-query timeout in --isolated (default 5)") { |v| opts[:query_timeout] = v }
   o.on("-q", "--quiet", "suppress per-finding output")               { opts[:quiet] = true }
 end.parse!(ARGV)

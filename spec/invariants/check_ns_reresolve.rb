@@ -84,7 +84,7 @@ def apply_edit(rng, doc)
     target["xmlns:#{pfx}"] = uri
     desc = "addDecl #{target.name} xmlns:#{pfx}=#{uri}"
   when 1 # remove one
-    decl = target.attribute_nodes.find { |a| a.name.start_with?("xmlns") }
+    decl = target.attribute_nodes.find { |a| a.namespace_uri == "http://www.w3.org/2000/xmlns/" }
     (target.delete(decl.name); desc = "delDecl #{target.name} #{decl.name}") if decl
   when 2 # insert a prefixed element
     pfx = rng.pick(PREFIXES)
@@ -134,6 +134,16 @@ def ancestor?(node, maybe_desc)
   end
   false
 end
+
+ordinary_probe = Makiri::XML(%(<r xmlns="urn:d" xmlnsfoo="must-survive"/>))
+ordinary_before = fingerprint(ordinary_probe)
+ordinary_probe.root.delete("xmlnsfoo")
+raise "fingerprint dropped the ordinary xmlnsfoo attribute" if fingerprint(ordinary_probe) == ordinary_before
+
+declaration_probe = Makiri::XML(%(<r xmlns:p="urn:a"><x/></r>))
+declaration_before = fingerprint(declaration_probe)
+declaration_probe.root["xmlns:p"] = "urn:b"
+raise "fingerprint included a namespace declaration" unless fingerprint(declaration_probe) == declaration_before
 
 count = (ARGV[0] || 2000).to_i
 seed  = (ARGV[1] || 20_260_911).to_i

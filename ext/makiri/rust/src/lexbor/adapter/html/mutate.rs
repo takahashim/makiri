@@ -241,18 +241,25 @@ impl<'doc> HtmlNodeMut<'doc> {
              * The memory went back to the arena, the next node allocated there
              * came back under the old wrapper - a text node answering as an
              * Element or an Attr - and the old wrapper read freed memory.
-             * Makiri detaches, never destroys: the same result (the text node
-             * made first, so a failure changes nothing), with the old children
-             * kept for their wrappers. */
-            let Some(text_node) = node.owner_document().create_text(text) else {
-                return false;
+             * Makiri detaches, never destroys: the same result (a non-empty
+             * text node made first, so a failure changes nothing), with the old
+             * children kept for their wrappers. Empty content creates no Text. */
+            let text_node = if text.is_empty() {
+                None
+            } else {
+                let Some(text_node) = node.owner_document().create_text(text) else {
+                    return false;
+                };
+                Some(text_node)
             };
             while let Some(c) = self.first_child() {
                 c.detach();
             }
-            // SAFETY: a live node the caller may change, and a detached node
-            // of its document just made.
-            unsafe { lxb::lxb_dom_node_insert_child(self.as_raw(), text_node.as_raw()) };
+            if let Some(text_node) = text_node {
+                // SAFETY: a live node the caller may change, and a detached node
+                // of its document just made.
+                unsafe { lxb::lxb_dom_node_insert_child(self.as_raw(), text_node.as_raw()) };
+            }
             return true;
         }
         // SAFETY: a live node the caller may change; for a character-data node

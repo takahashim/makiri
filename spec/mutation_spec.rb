@@ -321,6 +321,87 @@ RSpec.describe "Makiri mutation" do
     end
   end
 
+  describe "#content=" do
+    it "clears an attached element without leaving an empty Text node" do
+      document = Makiri::HTML('<main><section><p id="old">old</p><span>tail</span></section></main>')
+      target = document.at_css("section")
+      parent = target.parent
+      children = target.children.to_a
+      before = children.map(&:text)
+
+      expect(target.text).to eq("oldtail")
+      expect(document.xpath("//p").length).to eq(1)
+      expect(document.xpath("//@id").map(&:value)).to eq(["old"])
+
+      target.content = ""
+
+      expect(target.children).to be_empty
+      expect(target.xpath("count(text())")).to eq(0.0)
+      expect(target.parent).to equal(parent)
+      expect(children.map(&:text)).to eq(before)
+      expect(children.map(&:parent)).to eq([nil, nil])
+      expect(document.xpath("//p")).to be_empty
+      expect(document.xpath("//@id")).to be_empty
+      expect(document.css("#old")).to be_empty
+    end
+
+    it "clears a detached element and keeps its old children readable" do
+      document = Makiri::HTML("<main></main>")
+      target = document.create_element("section")
+      child = document.create_element("p")
+      child.content = "old"
+      target << child
+
+      target.content = ""
+
+      expect(target.parent).to be_nil
+      expect(target.children).to be_empty
+      expect(target.xpath("count(text())")).to eq(0.0)
+      expect(child.parent).to be_nil
+      expect(child.text).to eq("old")
+    end
+
+    it "clears document-bound and standalone fragments without empty Text nodes" do
+      document = Makiri::HTML("<main></main>")
+      [document.fragment("<p>one</p><b>two</b>"),
+       Makiri::DocumentFragment.parse("<p>one</p><b>two</b>")].each do |fragment|
+        children = fragment.children.to_a
+
+        fragment.content = ""
+
+        expect(fragment.parent).to be_nil
+        expect(fragment.children).to be_empty
+        expect(fragment.xpath("count(text())")).to eq(0.0)
+        expect(children.map(&:parent)).to eq([nil, nil])
+        expect(children.map(&:text)).to eq(%w[one two])
+      end
+    end
+
+    it "clears a template content fragment without leaving an empty Text node" do
+      document = Makiri::HTML("<template><p>old</p><b>tail</b></template>")
+      fragment = document.at_css("template").content_fragment
+      children = fragment.children.to_a
+
+      fragment.content = ""
+
+      expect(fragment.children).to be_empty
+      expect(fragment.xpath("count(text())")).to eq(0.0)
+      expect(children.map(&:parent)).to eq([nil, nil])
+      expect(children.map(&:text)).to eq(%w[old tail])
+    end
+
+    it "keeps a leaf Text attached when its content becomes empty" do
+      text = doc.create_text_node("old")
+      div << text
+
+      text.content = ""
+
+      expect(text.parent).to equal(div)
+      expect(text.content).to eq("")
+      expect(div.children.last).to equal(text)
+    end
+  end
+
   describe "inner_html= / outer_html=" do
     it "replaces an element's children" do
       div.inner_html = '<a href="/y">link</a><b>bold</b>'

@@ -134,10 +134,36 @@ def ancestor?(node, maybe_desc)
   false
 end
 
+def retained_snapshot(node)
+  value = node.node_type == 2 ? node.value : node.content
+  [node.class.name, node.node_type, node.name, node.namespace_uri, value]
+end
+
+def retain(retained, node)
+  retained << [node, retained_snapshot(node)] if node && retained.length < 32
+end
+
+def check_retained(doc, retained)
+  return if retained.empty?
+
+  connected = ([doc.root] + elements(doc.root)).compact
+  connected.concat(connected.flat_map { |node| node.attribute_nodes.to_a })
+  connected_ids = connected.map(&:pointer_id)
+  retained.each do |node, expected|
+    raise Violation, "detached wrapper became connected: #{node.name}" if connected_ids.include?(node.pointer_id)
+    raise Violation, "detached wrapper regained a parent: #{node.name}" unless node.parent.nil?
+    raise Violation, "detached wrapper changed: #{node.name}" unless retained_snapshot(node) == expected
+  rescue Violation
+    raise
+  rescue StandardError => e
+    raise Violation, "detached wrapper became unreadable: #{e.class}: #{e.message}"
+  end
+end
+
 # The mutation surface Dommy exercises. An operation the implementation refuses
 # (a cycle, say) counts as normal - what must hold is that the tree survives the
 # refusal intact, which is checked after every edit either way.
-def apply_edit(rng, doc, other = nil)
+def apply_edit(rng, doc, other = nil, retained = nil)
   body = container_of(doc) or return nil
   els = elements(body)
   return nil if els.empty?
@@ -161,6 +187,7 @@ def apply_edit(rng, doc, other = nil)
   when 3
     return nil if target.parent.nil?
 
+    retain(retained, target)
     target.remove
     "remove"
   when 4 # a move; into its own subtree the implementation must refuse
@@ -181,15 +208,19 @@ def apply_edit(rng, doc, other = nil)
   when 5
     return nil if target.parent.nil?
 
+    retain(retained, target)
     target.replace(doc.create_element(rng.pick(TAGS)))
     "replace"
   when 6
     target["data-k"] = "v#{rng.next_int(100)}"
     "setAttr"
   when 7
+    attr = target.attribute_nodes.find { |a| a.name == "id" }
     target.delete("id")
+    retain(retained, attr)
     "delAttr"
   when 8
+    target.children.to_a.each { |child| retain(retained, child) }
     target.content = "z#{rng.next_int(100)}"
     "content="
   when 9
@@ -247,18 +278,19 @@ count.times do |i|
   doc = make.call(rng)
   other = make.call(rng)                  # the far side of the cross-document edits
   log = []
+  retained = []
 
   begin
-    (2 + rng.next_int(10)).times do
+    (2 + rng.next_int(10)).times.with_index(1) do |_, edit_number|
       desc = begin
-        apply_edit(rng, doc, other)
+        apply_edit(rng, doc, other, retained)
       rescue Makiri::Error => e
         "rejected(#{e.message[0, 40]})"
       end
-      next if desc.nil?
-
-      log << desc
-      op_counts[desc.split(" ").first] += 1
+      unless desc.nil?
+        log << desc
+        op_counts[desc.split(" ").first] += 1
+      end
 
       bad = check_tree(doc.root) + check_tree(other.root).map { |m| "[other] #{m}" }
       elements(doc.root).each do |e|
@@ -267,9 +299,20 @@ count.times do |i|
           break
         end
       end
-      bad << desc if desc.start_with?("***")
+      bad << desc if desc&.start_with?("***")
 
       raise Violation, bad.join(" | ") unless bad.empty?
+
+      if (edit_number % 8).zero?
+        GC.start
+        GC.compact
+      end
+      check_retained(doc, retained)
+    end
+    unless retained.empty?
+      GC.start
+      GC.compact
+      check_retained(doc, retained)
     end
     stats[:ok] += 1
   rescue Violation => e

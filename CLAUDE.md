@@ -164,6 +164,9 @@ git submodule update --init        # fresh clone only
 bundle install
 bundle exec rake compile           # builds vendored Lexbor static lib, then the crate
 bundle exec rake spec
+bundle exec rake rust:test         # Ruby-free core tests, Lexbor-feature tests, fuzz-crate check
+bundle exec rake lint              # cargo clippy --all-features -D warnings + cargo fmt --check
+bundle exec rake unsafe:boundaries # reviewed unsafe islands and safe-module boundaries
 bundle exec rake clean             # wipe the build dir (regenerates the Makefile next compile)
 bundle exec rake clean:lexbor      # wipe vendor/lexbor/{build,dist} (full Lexbor rebuild)
 bundle exec ruby -Ilib -r makiri -e 'p Makiri::VERSION'   # smoke load
@@ -189,7 +192,9 @@ bundle exec rake leaks             # macOS malloc-leak gate (ASan runs detect_le
 bundle exec rake oom               # OOM-injection sweep: rebuilds with
                                    # MAKIRI_ALLOC_INJECT=1 and fails each core alloc
                                    # site in turn - every OOM branch must fail closed
-                                   # (clean raise or baseline-identical result)
+                                   # (clean raise or baseline-identical result), then
+                                   # reuses the same document/context after GC.compact.
+                                   # Prefix with MAKIRI_SANITIZE=address to combine ASan.
 bundle exec rake "sanitize:lexbor" # also build vendored Lexbor under ASan+UBSan (mraw-arena
                                    # overflows). LINUX ONLY: Apple clang's ASan ABI
                                    # does not match rustc's runtime (load segfault)
@@ -389,7 +394,7 @@ by the check that concluded "every undefined symbol is legitimate".
   so a write past one node/bytes/scratch cut hits poisoned memory and ASan
   reports it. It auto-activates under any address-sanitized build - no extra
   flag, unlike Lexbor - and is a no-op otherwise. So plain `rake sanitize` /
-  `fuzz:sanitize --target xml,mutate` already cover the arena. Everything else
+  `FUZZ_ARGS="--target xml,mutate" bundle exec rake fuzz:sanitize` already cover the arena. Everything else
   we write allocates through `falloc` onto the system allocator, or - for the
   glue's Ruby-side storage - through Ruby's xmalloc; ASan red-zones both per
   allocation - no arena, no special handling. Keep the unpoison at exactly the requested `size` (not
@@ -504,7 +509,7 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            parser (safe Rust, no Lexbor ABI names)
   fuzz/                    cargo-fuzz harnesses (xml/html, xpath/xml_xpath/
                            html_xpath, css; built on PRs, run nightly)
-vendor/lexbor/             git submodule, pinned 3a2d595 (v3.0.0-25), NEVER patched
+vendor/lexbor/             git submodule, pinned 05b5d37 (v3.0.0-66), NEVER patched
 spec/fuzz/                 grammar-aware robustness fuzzer
 spec/invariants/           randomized property checks (see its README)
 spec/differential/         the recorded C-build answers + the probes (see `rake diff`)
@@ -824,7 +829,8 @@ Key decisions that got there, worth not regressing:
   ~6000× Nokogiri / ~5× nokolexbor (was ~1.16× *slower* than nokolexbor). `at_css`
   also wraps the single first match directly (no NodeSet / no Ruby `#first`). Do
   not reintroduce per-call engine teardown; verify with `bench`'s `at_css`/`css`
-  rows and `fuzz:sanitize --target css` (the reuse is the memory-safety risk).
+  rows and `FUZZ_ARGS="--target css" bundle exec rake fuzz:sanitize`
+  (the reuse is the memory-safety risk).
 - **`Node#text` is served from the text index** (`lexbor/adapter/text_index.rs`,
   see the subsystem note): a per-document, lazily-built, mutation-invalidated
   map from node → its document-order text-slice run, turning text extraction

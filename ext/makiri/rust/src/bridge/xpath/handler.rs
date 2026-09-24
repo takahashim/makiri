@@ -8,6 +8,7 @@ use magnus::rb_sys::AsRawValue;
 use magnus::value::ReprValue;
 use magnus::{Error, Ruby, Value};
 
+use crate::bridge::node_set::NodeSet as RubyNodeSet;
 use crate::bridge::ruby::VALUE;
 use crate::bridge::string::ruby_try_verified_text;
 use crate::bridge::wrapper::{keepalive_document, node_raw};
@@ -134,16 +135,17 @@ fn ruby_to_val(bridge: &Bridge, budget: &mut Budget, rv: Value) -> Result<Val, H
         if is_node {
             push_result_node(bridge, budget, rv, &mut set)?;
         } else {
-            let Ok(n) = rv.funcall::<_, _, i64>("length", ()) else {
+            let Ok(source) = <&RubyNodeSet as magnus::TryConvert>::try_convert(rv) else {
                 return Err(HandlerFailure::Msg("handler result could not be read"));
             };
-            for i in 0..n {
-                let Ok(node) = rv.funcall::<_, _, Value>("[]", (i,)) else {
-                    continue;
+            let Ok(count) = source.count() else {
+                return Err(HandlerFailure::Msg("handler result could not be read"));
+            };
+            for i in 0..count {
+                let Ok(node) = source.at(&ruby, i) else {
+                    return Err(HandlerFailure::Msg("handler result could not be read"));
                 };
-                if is_kind_of(node, &CLASS_NODE) {
-                    push_result_node(bridge, budget, node, &mut set)?;
-                }
+                push_result_node(bridge, budget, node, &mut set)?;
             }
         }
         return Ok(Val::nodeset(set));

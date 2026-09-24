@@ -740,10 +740,15 @@ impl<'e, 'd, D: Dom<'d>> Evaluation<'e, 'd, D> {
         };
         match handler.resolve(&mut self.budget, &call)? {
             None => Ok(None),
-            Some(v) => match val_from_tokens::<D>(self.doc, v) {
-                Some(v) => Ok(Some(v)),
-                None => Err(handler_oom(&mut self.budget)),
-            },
+            Some(v) => {
+                let Some(mut v) = val_from_tokens::<D>(self.doc, v) else {
+                    return Err(handler_oom(&mut self.budget));
+                };
+                if let Some(ns) = v.as_nodeset_mut() {
+                    nodeset_unique_sorted::<D>(self, ns);
+                }
+                Ok(Some(v))
+            }
         }
     }
 }

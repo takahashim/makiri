@@ -413,6 +413,134 @@ SCENARIOS = {
 ALLOWED = [Makiri::Error, NoMemoryError].freeze
 TRUNCATE = 120
 
+STATEFUL_SCENARIOS = {
+  "html_text_index" => {
+    setup: lambda do
+      body = (1..20).map { |i| "<p>para #{i} <em>em#{i}</em> tail</p>" }.join
+      doc = Makiri::HTML::Document.parse("<html><body>#{body}</body></html>")
+      expected = (1..20).map { |i| "para #{i} em#{i} tail" }.join
+      { doc: doc, expected: expected }
+    end,
+    action: ->(state) { state[:doc].text },
+    check: lambda do |state, _outcome|
+      doc = state[:doc]
+      raise "text changed after allocation failure" unless doc.text == state[:expected]
+      raise "element index changed after allocation failure" unless doc.xpath("//em").length == 20
+
+      GC.compact
+      doc.at_css("p").content = "after"
+      raise "document was not reusable after text-index failure" unless doc.at_css("p").text == "after"
+    end,
+  },
+  "xml_context" => {
+    setup: lambda do
+      doc = Makiri::XML::Document.parse(<<~XML)
+        <root xmlns:p="urn:p">
+          <a v="1">alpha</a><a v="2">beta</a><p:c><a v="9">nested</a></p:c>
+        </root>
+      XML
+      ctx = Makiri::XPathContext.new(doc)
+      ctx.register_namespace("p", "urn:p")
+      ctx.register_variable("warm", "9")
+      raise "XPathContext warmup failed" unless ctx.evaluate("count(//p:c/a[@v=$warm])") == 1.0
+
+      { doc: doc, ctx: ctx, before: doc.to_xml }
+    end,
+    action: ->(state) { state[:ctx].evaluate("//p:c/a").length },
+    snapshot: ->(state) { state[:doc].to_xml },
+    unchanged: :always,
+    check: lambda do |state, _outcome|
+      raise "document changed during XPath evaluation" unless state[:doc].to_xml == state[:before]
+
+      GC.compact
+      ctx = state[:ctx]
+      raise "context became unreadable after evaluation failure" unless ctx.evaluate("//a[@v='1']").length == 1
+      raise "cached expression failed after evaluation failure" unless ctx.evaluate("//a[@v='2']").length == 1
+      raise "prefixed expression failed after evaluation failure" unless ctx.evaluate("//p:c/a").length == 1
+
+      ctx.register_variable("later", "9")
+      raise "context could not register after evaluation failure" unless ctx.evaluate("//p:c/a[@v=$later]").length == 1
+      state[:doc].root["data-after"] = "ok"
+      raise "document was not mutable after evaluation failure" unless state[:doc].root["data-after"] == "ok"
+    end,
+  },
+  "xml_content" => {
+    setup: lambda do
+      doc = Makiri::XML::Document.parse(%(<root xmlns:p="urn:p"><old id="i" p:k="v"><child>old</child></old></root>))
+      target = doc.root.at_xpath("old")
+      child = target.children.first
+      attr = target.attribute_nodes.find { |a| a.name == "p:k" }
+      before = [doc.to_xml, doc.text, target.name, child.name, child.text,
+                attr.name, attr.value, target.parent.name, attr.parent.name]
+      { doc: doc, target: target, child: child, attr: attr, before: before }
+    end,
+    action: ->(state) { state[:target].content = "rewritten" },
+    snapshot: lambda do |state|
+      [state[:doc].to_xml, state[:doc].text, state[:target].name,
+       state[:child].name, state[:child].text, state[:attr].name,
+       state[:attr].value, state[:target].parent&.name, state[:attr].parent&.name]
+    end,
+    unchanged: true,
+    check: lambda do |state, outcome|
+      current = [state[:doc].to_xml, state[:doc].text, state[:target].name,
+                 state[:child].name, state[:child].text, state[:attr].name,
+                 state[:attr].value, state[:target].parent&.name, state[:attr].parent&.name]
+      if outcome == :raised && current != state[:before]
+        raise "content= changed the tree before allocation failed"
+      end
+      if outcome == :success && (state[:target].children.length != 1 || state[:target].text != "rewritten")
+        raise "content= returned success without the replacement text"
+      end
+      if outcome == :success
+        raise "detached child was not detached" unless state[:child].parent.nil?
+      elsif !state[:child].parent.equal?(state[:target])
+        raise "failed content= detached a child"
+      end
+      raise "detached child changed" unless state[:child].text == "old"
+      raise "retained attribute changed" unless state[:attr].value == "v"
+      raise "retained attribute changed owner" unless state[:attr].parent.equal?(state[:target])
+
+      GC.compact
+      raise "retained child became unreadable" unless state[:child].text == "old"
+      state[:target]["data-after"] = "ok"
+      raise "document was not reusable after content= failure" unless state[:doc].xpath("//old[@data-after='ok']").length == 1
+    end,
+  },
+  "cross_import_state" => {
+    setup: lambda do
+      html = Makiri::HTML::Document.parse(<<~HTML)
+        <html><body><div id="a"><span data-x="1">text</span><svg><path/></svg><template><i>inside</i></template></div></body></html>
+      HTML
+      xml = Makiri::XML::Document.parse(%(<root xmlns="urn:d"><keep/></root>))
+      source = html.at_css("#a")
+      { html: html, xml: xml, source: source, before: [html.to_html, xml.to_xml] }
+    end,
+    action: lambda do |state|
+      imported = state[:xml].import_node(state[:source], true)
+      state[:imported] = imported
+      imported.to_xml
+    end,
+    snapshot: ->(state) { [state[:html].to_html, state[:xml].to_xml] },
+    unchanged: :always,
+    check: lambda do |state, outcome|
+      current = [state[:html].to_html, state[:xml].to_xml]
+      raise "import changed a visible document" unless current == state[:before]
+      if state[:imported]
+        raise "imported subtree is linked" unless state[:imported].parent.nil?
+        span = state[:imported].children.find { |child| child.name == "span" }
+        raise "imported subtree changed" unless span&.text == "text"
+      end
+
+      GC.compact
+      raise "source wrapper became unreadable" unless state[:source].text.include?("text")
+      state[:html].at_css("#a")["data-after"] = "ok"
+      state[:xml].root["data-after"] = "ok"
+      raise "HTML document was not reusable after import failure" unless state[:html].css("#a[data-after]").length == 1
+      raise "XML document was not reusable after import failure" unless state[:xml].root["data-after"] == "ok"
+    end,
+  },
+}.freeze
+
 def disarm = Makiri.send(:__alloc_inject, 0)
 
 failures_total = 0
@@ -464,15 +592,95 @@ SCENARIOS.each do |name, work|
     # A scenario that never reaches a core allocation sweeps nothing - that is
     # a broken scenario, not a pass.
     failures_total += 1
-    puts "    scenario performed ZERO core allocations - workload not reaching the C core"
+    puts "    scenario performed ZERO core allocations - workload not reaching the Rust core"
+  end
+end
+
+STATEFUL_SCENARIOS.each do |name, spec|
+  disarm
+  baseline_state = spec[:setup].call
+  disarm
+  baseline = spec[:action].call(baseline_state)
+  total = Makiri.send(:__alloc_inject_calls)
+
+  ok_raised = 0
+  ok_identical = 0
+  failures = []
+
+  begin
+    spec[:check].call(baseline_state, :success)
+  rescue Exception => e # rubocop:disable Lint/RescueException -- post-check failures are findings
+    failures << [0, "baseline post-check failed", "#{e.class}: #{e.message.to_s[0, TRUNCATE]}"]
+  end
+
+  total.times do |index|
+    n = index + 1
+    disarm
+    state = spec[:setup].call
+    before = spec[:snapshot]&.call(state)
+    disarm
+    outcome = :success
+    result = nil
+    action_error = nil
+
+    Makiri.send(:__alloc_inject, n)
+    begin
+      result = spec[:action].call(state)
+    rescue *ALLOWED => e
+      outcome = :raised
+      action_error = e
+    rescue Exception => e # rubocop:disable Lint/RescueException -- the wrong class IS the finding
+      outcome = :wrong
+      action_error = e
+    ensure
+      disarm
+    end
+
+    if outcome == :success
+      if result == baseline
+        ok_identical += 1
+      else
+        failures << [n, "truncated/wrong stateful result",
+                     "baseline=#{baseline.to_s[0, TRUNCATE].inspect} " \
+                     "got=#{result.to_s[0, TRUNCATE].inspect}"]
+      end
+    elsif outcome == :raised
+      ok_raised += 1
+    else
+      failures << [n, "wrong exception class",
+                   "#{action_error.class}: #{action_error.message.to_s[0, TRUNCATE]}"]
+    end
+
+    begin
+      if spec[:unchanged] == :always || (spec[:unchanged] && outcome == :raised)
+        current = spec[:snapshot].call(state)
+        if current != before
+          failures << [n, "state changed on failure", "before != after"]
+        end
+      end
+      spec[:check].call(state, outcome)
+    rescue Exception => e # rubocop:disable Lint/RescueException -- reuse failure IS the finding
+      failures << [n, "same-object post-check failed", "#{e.class}: #{e.message.to_s[0, TRUNCATE]}"]
+    end
+  end
+
+  failures_total += failures.size
+  puts format("%-16s allocations=%-5d raised=%-5d identical=%-5d failed=%d",
+              name, total, ok_raised, ok_identical, failures.size)
+  failures.each do |n, kind, detail|
+    puts "    n=#{n} #{kind}: #{detail}"
+  end
+  if total.zero?
+    failures_total += 1
+    puts "    scenario performed ZERO core allocations - stateful workload did not reach the Rust core"
   end
 end
 
 if failures_total.zero?
   puts "check_alloc_failures: OK - every injected allocation failure failed closed " \
-       "(clean raise or baseline-identical result)"
+       "(clean raise or baseline-identical result, with stateful objects reusable)"
 else
   puts "check_alloc_failures: FAILED - #{failures_total} injected failure(s) " \
-       "produced a wrong exception or a non-baseline result"
+       "produced a wrong exception, result, or post-failure state"
   exit 1
 end
