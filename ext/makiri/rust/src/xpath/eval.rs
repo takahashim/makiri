@@ -687,7 +687,7 @@ fn eval_fncall<'e, 'd, D: Dom<'d>>(
     }
 
     if let Some(f) = funcs::lookup::<D>(ns_uri, name) {
-        return f(ev, focus, &vals);
+        return f.call(ev, focus, &vals);
     }
     match ev.call_handler(focus, ns_uri, name, &vals)? {
         Some(v) => Ok(v),

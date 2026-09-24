@@ -31,8 +31,6 @@ pub(super) fn fn_css_class<'e, 'd, D: Dom<'d>>(
     _focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
-    let err = ev.budget.sink();
-    arity(args.len(), 2, 2, err.clone(), "nokogiri-builtin:css-class")?;
     two::<D, _>(ev, args, |hay, needle| {
         boolean(ws_token_match(Some(hay), Some(needle)))
     })
@@ -45,15 +43,7 @@ pub(super) fn fn_local_name_is<'e, 'd, D: Dom<'d>>(
     focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
-    let err = ev.budget.sink();
     let doc = ev.doc;
-    arity(
-        args.len(),
-        1,
-        1,
-        err.clone(),
-        "nokogiri-builtin:local-name-is",
-    )?;
     let want = to_text::<D>(&args[0], ev)?;
     boolean(
         focus
