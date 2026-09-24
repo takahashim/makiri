@@ -126,19 +126,6 @@ pub fn ns_fits_name(ns: &[u8], name: &[u8], sp: &Split) -> bool {
     is_xmlns == (ns == XMLNS_NS_URI)
 }
 
-/// Whether `prefix` - empty for the default `xmlns` - may be declared for
-/// `uri` (Namespaces in XML 1.0 §3): `xmlns` is never declared, `xml` only for
-/// its own URI, neither reserved URI for anything else, and no prefix for the
-/// empty URI (only the default may be undeclared that way).
-///
-/// The one statement of the rule. The parser always applied it; the mutators
-/// applied only the last clause, so `[]=`, `set_attribute_ns` and `rename`
-/// could write `xmlns:xml="urn:other"` into a tree `to_xml` then could not
-/// re-read. [`ns_decl_check`] says which clause a refusal broke.
-pub fn ns_decl_ok(prefix: &[u8], uri: &[u8]) -> bool {
-    ns_decl_check(prefix, uri).is_ok()
-}
-
 /// Which clause of the §3 declaration rule a declaration breaks.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum NsDeclError {
@@ -153,7 +140,16 @@ pub enum NsDeclError {
     PrefixToEmpty,
 }
 
-/// [`ns_decl_ok`], saying which clause failed.
+/// Whether `prefix` - empty for the default `xmlns` - may be declared for
+/// `uri` (Namespaces in XML 1.0 §3): `xmlns` is never declared, `xml` only for
+/// its own URI, neither reserved URI for anything else, and no prefix for the
+/// empty URI (only the default may be undeclared that way) - `Err` naming the
+/// clause broken.
+///
+/// The one statement of the rule, for the parser and the mutators alike. The
+/// mutators once applied only the last clause, so `[]=`, `set_attribute_ns`
+/// and `rename` could write `xmlns:xml="urn:other"` into a tree `to_xml` then
+/// could not re-read.
 pub fn ns_decl_check(prefix: &[u8], uri: &[u8]) -> Result<(), NsDeclError> {
     if prefix == b"xmlns" {
         return Err(NsDeclError::Xmlns);

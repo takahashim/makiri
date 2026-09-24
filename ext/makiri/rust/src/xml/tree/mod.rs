@@ -214,7 +214,7 @@ impl<'a> Parser<'a> {
             };
             let val = self.cur.slice(r.val);
             let uri = self.expand(val, ExpandMode::Attr)?;
-            if !crate::xml::qname::ns_decl_ok(bpfx, self.doc.span(uri)) {
+            if crate::xml::qname::ns_decl_check(bpfx, self.doc.span(uri)).is_err() {
                 return self.cur.syntax();
             }
             self.push_binding(bpfx, uri)?;

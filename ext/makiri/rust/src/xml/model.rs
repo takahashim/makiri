@@ -131,21 +131,19 @@ pub const FLAG_NS_EXPLICIT: u32 = 0x0000_0008;
 /// never fails with [`Status::Syntax`], a parse never with
 /// [`MutStatus::Cycle`]).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[repr(i32)]
 pub enum MutStatus {
-    Ok = 0,
-    Oom = 1,
-    BadName = 2,
-    BadChars = 3,
-    UnboundNs = 4,
-    Type = 5,
-    Cycle = 6,
-    Hierarchy = 7,
-    BadNsDecl(crate::xml::qname::NsDeclError) = 8,
-    /// A null / stale document handle reached a mutator. The C entry points
-    /// overloaded the parse code `4` here; as its own variant it can no longer
-    /// be mistaken for [`MutStatus::UnboundNs`].
-    Internal = 9,
+    Ok,
+    Oom,
+    BadName,
+    BadChars,
+    UnboundNs,
+    Type,
+    Cycle,
+    Hierarchy,
+    BadNsDecl(crate::xml::qname::NsDeclError),
+    /// A null / stale document handle reached a mutator; its own variant, so
+    /// it cannot be mistaken for [`MutStatus::UnboundNs`].
+    Internal,
     /// The document's OWN budget refused the allocation - `max_bytes` or
     /// `max_nodes` - which is not the machine running out of memory.
     ///
@@ -155,16 +153,16 @@ pub enum MutStatus {
     /// gigabytes free. The parse path always kept them apart
     /// ([`Status::Limit`] -> `Makiri::XML::LimitExceeded`); mutation now does
     /// too. `mutate::arena` is the one conversion.
-    Limit = 10,
+    Limit,
     /// Another attribute of the element already has this (namespace URI, local
     /// name) - Namespaces in XML 1.0 §3's "attributes are unique", which the
     /// parser enforces. `[]=` by a second prefix for the same URI, or a rename
     /// onto another attribute's name, wrote two, and the output did not parse.
-    DuplicateAttr = 11,
+    DuplicateAttr,
     /// A namespace that does not fit the qualified name it was given with
     /// (the DOM's "validate and extract"): a prefix without a namespace, `xml`
     /// or `xmlns` with another one, or the XMLNS namespace on another name.
-    BadNsName = 12,
+    BadNsName,
 }
 
 /* ---- budgets (§4) ---- */

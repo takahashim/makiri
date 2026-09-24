@@ -142,9 +142,35 @@ enum Builtin {
     ChildPosLast,
 }
 
-/// One [`BUILTINS`] row: library, name, function, purity, and the least and
-/// most arguments it takes (`usize::MAX` for no upper bound).
-type Entry = (Library, &'static [u8], Builtin, Purity, usize, usize);
+/// One [`BUILTINS`] row.
+struct Entry {
+    library: Library,
+    name: &'static [u8],
+    id: Builtin,
+    purity: Purity,
+    /// The least and most arguments it takes; `usize::MAX` is no upper bound.
+    min: usize,
+    max: usize,
+}
+
+/// A row, positionally, so the table stays one line per built-in.
+const fn e(
+    library: Library,
+    name: &'static [u8],
+    id: Builtin,
+    purity: Purity,
+    min: usize,
+    max: usize,
+) -> Entry {
+    Entry {
+        library,
+        name,
+        id,
+        purity,
+        min,
+        max,
+    }
+}
 
 /// THE list of built-ins: each name once, with its library, its purity and how
 /// many arguments it takes (`min`, `max`). The evaluator asks it whether a call
@@ -159,53 +185,46 @@ const BUILTINS: &[Entry] = {
     use Purity::*;
     &[
         /* node-set */
-        (Core, b"last", Last, Impure, 0, 0),
-        (Core, b"position", Position, Impure, 0, 0),
-        (Core, b"count", Count, PureWithArgs, 1, 1),
-        (Core, b"id", Id, Impure, 1, 1),
-        (Core, b"local-name", LocalName, Impure, 0, 1),
-        (Core, b"namespace-uri", NamespaceUri, Impure, 0, 1),
-        (Core, b"name", Name, Impure, 0, 1),
+        e(Core, b"last", Last, Impure, 0, 0),
+        e(Core, b"position", Position, Impure, 0, 0),
+        e(Core, b"count", Count, PureWithArgs, 1, 1),
+        e(Core, b"id", Id, Impure, 1, 1),
+        e(Core, b"local-name", LocalName, Impure, 0, 1),
+        e(Core, b"namespace-uri", NamespaceUri, Impure, 0, 1),
+        e(Core, b"name", Name, Impure, 0, 1),
         /* string */
-        (Core, b"string", String, Impure, 0, 1),
-        (Core, b"concat", Concat, PureWithArgs, 2, usize::MAX),
-        (Core, b"starts-with", StartsWith, PureWithArgs, 2, 2),
-        (Core, b"contains", Contains, PureWithArgs, 2, 2),
-        (Core, b"substring-before", SubstringBefore, PureWithArgs, 2, 2),
-        (Core, b"substring-after", SubstringAfter, PureWithArgs, 2, 2),
-        (Core, b"substring", Substring, PureWithArgs, 2, 3),
-        (Core, b"string-length", StringLength, PureWithArgs, 0, 1),
-        (Core, b"normalize-space", NormalizeSpace, Impure, 0, 1),
-        (Core, b"translate", Translate, PureWithArgs, 3, 3),
+        e(Core, b"string", String, Impure, 0, 1),
+        e(Core, b"concat", Concat, PureWithArgs, 2, usize::MAX),
+        e(Core, b"starts-with", StartsWith, PureWithArgs, 2, 2),
+        e(Core, b"contains", Contains, PureWithArgs, 2, 2),
+        e(Core, b"substring-before", SubstringBefore, PureWithArgs, 2, 2),
+        e(Core, b"substring-after", SubstringAfter, PureWithArgs, 2, 2),
+        e(Core, b"substring", Substring, PureWithArgs, 2, 3),
+        e(Core, b"string-length", StringLength, PureWithArgs, 0, 1),
+        e(Core, b"normalize-space", NormalizeSpace, Impure, 0, 1),
+        e(Core, b"translate", Translate, PureWithArgs, 3, 3),
         /* boolean */
-        (Core, b"not", Not, PureWithArgs, 1, 1),
-        (Core, b"true", True, Pure, 0, 0),
-        (Core, b"false", False, Pure, 0, 0),
-        (Core, b"boolean", Boolean, PureWithArgs, 1, 1),
-        (Core, b"lang", Lang, Impure, 1, 1),
+        e(Core, b"not", Not, PureWithArgs, 1, 1),
+        e(Core, b"true", True, Pure, 0, 0),
+        e(Core, b"false", False, Pure, 0, 0),
+        e(Core, b"boolean", Boolean, PureWithArgs, 1, 1),
+        e(Core, b"lang", Lang, Impure, 1, 1),
         /* number */
-        (Core, b"number", Number, PureWithArgs, 0, 1),
-        (Core, b"sum", Sum, PureWithArgs, 1, 1),
-        (Core, b"floor", Floor, PureWithArgs, 1, 1),
-        (Core, b"ceiling", Ceiling, PureWithArgs, 1, 1),
-        (Core, b"round", Round, PureWithArgs, 1, 1),
+        e(Core, b"number", Number, PureWithArgs, 0, 1),
+        e(Core, b"sum", Sum, PureWithArgs, 1, 1),
+        e(Core, b"floor", Floor, PureWithArgs, 1, 1),
+        e(Core, b"ceiling", Ceiling, PureWithArgs, 1, 1),
+        e(Core, b"round", Round, PureWithArgs, 1, 1),
         /* The CSS lowering's internal hooks. Registered for every host: their
          * names begin with \x01, which no expression can spell, so only the
          * lowering reaches them - and it runs only for XML today. */
-        (Core, FN_OF_TYPE_POS, OfTypePos, Impure, 0, usize::MAX),
-        (
-            Core,
-            FN_OF_TYPE_POS_LAST,
-            OfTypePosLast,
-            Impure,
-            0,
-            usize::MAX,
-        ),
-        (Core, FN_CHILD_POS, ChildPos, Impure, 0, usize::MAX),
-        (Core, FN_CHILD_POS_LAST, ChildPosLast, Impure, 0, usize::MAX),
+        e(Core, FN_OF_TYPE_POS, OfTypePos, Impure, 0, usize::MAX),
+        e(Core, FN_OF_TYPE_POS_LAST, OfTypePosLast, Impure, 0, usize::MAX),
+        e(Core, FN_CHILD_POS, ChildPos, Impure, 0, usize::MAX),
+        e(Core, FN_CHILD_POS_LAST, ChildPosLast, Impure, 0, usize::MAX),
         /* Nokogiri's builtins, in its builtin namespace */
-        (Nokogiri, b"css-class", CssClass, Impure, 2, 2),
-        (Nokogiri, b"local-name-is", LocalNameIs, Impure, 1, 1),
+        e(Nokogiri, b"css-class", CssClass, Impure, 2, 2),
+        e(Nokogiri, b"local-name-is", LocalNameIs, Impure, 1, 1),
     ]
 };
 
@@ -253,7 +272,7 @@ impl Builtin {
 fn find(library: Library, local: &[u8]) -> Option<&'static Entry> {
     BUILTINS
         .iter()
-        .find(|(lib, name, ..)| *lib == library && *name == local)
+        .find(|e| e.library == library && e.name == local)
 }
 
 /// The built-in named `(ns_uri, local)`, or None - in which case the evaluator
@@ -265,12 +284,12 @@ pub fn lookup<'e, 'd, D: Dom<'d>>(ns_uri: Option<&[u8]>, local: &[u8]) -> Option
         Some(uri) if uri == NS_NOKOGIRI_BUILTIN_URI => Library::Nokogiri,
         Some(_) => return None,
     };
-    find(library, local).map(|&(lib, name, id, _, min, max)| Found {
-        imp: id.imp::<D>(),
-        library: lib,
-        name,
-        min,
-        max,
+    find(library, local).map(|e| Found {
+        imp: e.id.imp::<D>(),
+        library: e.library,
+        name: e.name,
+        min: e.min,
+        max: e.max,
     })
 }
 
@@ -311,10 +330,11 @@ impl<'e, 'd, D: Dom<'d>> Found<'e, 'd, D> {
             err_setf!(
                 err,
                 XP_ERR_RUNTIME,
-                "{}{}(): expected at least {} arguments",
+                "{}{}(): expected at least {} argument{}",
                 lib,
                 name,
-                min
+                min,
+                if min == 1 { "" } else { "s" }
             )
         } else if min == max {
             err_setf!(
@@ -344,7 +364,7 @@ impl<'e, 'd, D: Dom<'d>> Found<'e, 'd, D> {
 /// The purity of the unprefixed call `local`; [`Purity::Impure`] for a name
 /// that is not a core built-in, which a handler answers.
 pub fn purity(local: &[u8]) -> Purity {
-    find(Library::Core, local).map_or(Purity::Impure, |e| e.3)
+    find(Library::Core, local).map_or(Purity::Impure, |e| e.purity)
 }
 
 /* ---------- shared helpers ---------- */
@@ -1071,7 +1091,6 @@ fn fn_sum<'e, 'd, D: Dom<'d>>(
 fn num1<'e, 'd, D: Dom<'d>, F>(
     ev: &mut Evaluation<'e, 'd, D>,
     args: &[Val<D::Node>],
-    _name: &str,
     f: F,
 ) -> Answer<D::Node>
 where
@@ -1085,7 +1104,7 @@ fn fn_floor<'e, 'd, D: Dom<'d>>(
     _focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
-    num1::<D, _>(ev, args, "floor", f64::floor)
+    num1::<D, _>(ev, args, f64::floor)
 }
 
 fn fn_ceiling<'e, 'd, D: Dom<'d>>(
@@ -1093,7 +1112,7 @@ fn fn_ceiling<'e, 'd, D: Dom<'d>>(
     _focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
-    num1::<D, _>(ev, args, "ceiling", f64::ceil)
+    num1::<D, _>(ev, args, f64::ceil)
 }
 
 /// XPath round(): the integer closest to the argument, the one nearer +inf when
@@ -1124,7 +1143,7 @@ fn fn_round<'e, 'd, D: Dom<'d>>(
     _focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
-    num1::<D, _>(ev, args, "round", round_half_up)
+    num1::<D, _>(ev, args, round_half_up)
 }
 
 #[cfg(test)]
@@ -1133,11 +1152,11 @@ mod tests {
 
     #[test]
     fn every_builtin_is_named_once_per_library() {
-        for (i, (lib, name, ..)) in BUILTINS.iter().enumerate() {
+        for (i, a) in BUILTINS.iter().enumerate() {
             let twin = BUILTINS[i + 1..]
                 .iter()
-                .any(|(l, n, ..)| l == lib && n == name);
-            assert!(!twin, "{} is listed twice", String::from_utf8_lossy(name));
+                .any(|b| a.library == b.library && a.name == b.name);
+            assert!(!twin, "{} is listed twice", String::from_utf8_lossy(a.name));
         }
     }
 
