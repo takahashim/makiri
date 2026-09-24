@@ -14,7 +14,6 @@ use crate::cbuf::Buf;
 use crate::falloc::Reserve;
 use crate::xml::model::{Document as XmlDoc, NodeId, NodeType, FLAG_NS_RESOLVED, MAX_DEPTH};
 use crate::xml::qname::xmlns_prefix;
-use crate::xml::XML_NS_URI;
 
 fn xmlns_decl(doc: &XmlDoc, a: NodeId) -> Option<(&[u8], &[u8])> {
     let p = xmlns_prefix(doc.qname(a))?;
@@ -171,22 +170,6 @@ impl<'d> Writer<'d, '_> {
         Ok(out)
     }
 
-    /// What `prefix` means here by the document's declarations: `xml` its own
-    /// URI, an undeclared default no namespace, and an undeclared prefix
-    /// NOTHING - `Ok(None)`, which no name may carry. `Err` once the step
-    /// budget is spent.
-    fn scope_uri(&mut self, prefix: &[u8]) -> Result<Option<&'d [u8]>, ()> {
-        if prefix == b"xml" {
-            return Ok(Some(XML_NS_URI));
-        }
-        match self.binds.lookup(prefix) {
-            Some(uri) => Ok(Some(uri)),
-            None if self.binds.exhausted => Err(()),
-            None if prefix.is_empty() => Ok(Some(b"")),
-            None => Ok(None),
-        }
-    }
-
     /// Whether the declarations in scope bind every prefix `n` and its
     /// attributes use - latching `binds.unbound` when one is bound to nothing,
     /// which no rendering can repair - and, for a decided element, give each
@@ -196,7 +179,7 @@ impl<'d> Writer<'d, '_> {
         let doc = self.doc;
         let decided = doc.node(n).flags & FLAG_NS_RESOLVED != 0;
         let el_prefix = doc.span(doc.node(n).prefix);
-        let Some(el_uri) = self.scope_uri(el_prefix)? else {
+        let Some(el_uri) = self.binds.resolve(el_prefix)? else {
             self.binds.unbound = true;
             return Err(());
         };
@@ -207,7 +190,7 @@ impl<'d> Writer<'d, '_> {
         while let Some(at) = a {
             let prefix = doc.span(doc.node(at).prefix);
             if xmlns_decl(doc, at).is_none() && !prefix.is_empty() {
-                let Some(expected) = self.scope_uri(prefix)? else {
+                let Some(expected) = self.binds.resolve(prefix)? else {
                     self.binds.unbound = true;
                     return Err(());
                 };

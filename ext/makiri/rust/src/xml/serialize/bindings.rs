@@ -98,15 +98,28 @@ impl<'d> Bindings<'d> {
         None
     }
 
-    /// `xml` is bound everywhere and never declared (Namespaces in XML §3).
-    pub(super) fn bound_to(&mut self, prefix: &[u8], uri: &[u8]) -> bool {
+    /// What `prefix` means in this scope (Namespaces in XML §3, §6.2): `xml`
+    /// its fixed URI, bound everywhere and never declared; an undeclared
+    /// default no namespace (`""`); an undeclared prefix nothing, `Ok(None)`,
+    /// which no name may carry. `Err` once the step budget is spent.
+    pub(super) fn resolve(&mut self, prefix: &[u8]) -> Result<Option<&'d [u8]>, ()> {
         if prefix == b"xml" {
-            return true;
+            return Ok(Some(crate::xml::XML_NS_URI));
         }
         match self.lookup(prefix) {
-            None => prefix.is_empty() && uri.is_empty(),
-            Some(got) => got == uri,
+            Some(uri) => Ok(Some(uri)),
+            None if self.exhausted => Err(()),
+            None if prefix.is_empty() => Ok(Some(b"")),
+            None => Ok(None),
         }
+    }
+
+    /// Whether `prefix` means `uri` here, by [`resolve`](Self::resolve) - and
+    /// `xml` always, whatever `uri` says: a name not yet decided carries no
+    /// URI, and the mutators refuse `xml` with any namespace but its own, so
+    /// `xml` never needs a declaration.
+    pub(super) fn bound_to(&mut self, prefix: &[u8], uri: &[u8]) -> bool {
+        prefix == b"xml" || self.resolve(prefix) == Ok(Some(uri))
     }
 
     pub(super) fn is_bound(&mut self, prefix: &[u8]) -> bool {
