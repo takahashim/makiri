@@ -16,7 +16,7 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{method, prelude::*, Error, RArray, RHash, RModule, RString, Ruby, Value};
+use magnus::{method, prelude::*, Error, RHash, RModule, Ruby, Value};
 
 use crate::bridge::ruby::makiri_error;
 use crate::bridge::string::ruby_try_verified_text_pair;
@@ -167,12 +167,12 @@ fn bind_each(
     mut register: impl FnMut(&[u8], &[u8]) -> Result<(), Error>,
     cap: usize,
 ) -> Result<(), Error> {
-    let pairs: RArray = h.funcall("to_a", ())?;
-    for pair in pairs.into_iter() {
-        let pair = RArray::from_value(pair).expect("Hash#to_a yields pairs");
-        bind_pair(pair.entry(0)?, pair.entry(1)?, cap, &mut register)?;
-    }
-    Ok(())
+    /* Read the Hash itself, not through `to_a`, which a subclass can redefine
+     * to hand back anything - a non-pair used to trip an `expect`. */
+    h.foreach(|prefix: Value, uri: Value| {
+        bind_pair(prefix, uri, cap, &mut register)?;
+        Ok(magnus::r_hash::ForEach::Continue)
+    })
 }
 
 /// Bind one `prefix => uri` pair through `register` - the one reading of a
@@ -189,8 +189,10 @@ pub fn bind_pair(
     cap: usize,
     mut register: impl FnMut(&[u8], &[u8]) -> Result<(), Error>,
 ) -> Result<(), Error> {
-    let ks: RString = prefix.funcall("to_s", ())?;
-    let vs: RString = uri.funcall("to_s", ())?;
+    /* `String(x)`: a String as it is, else `to_str`, else `to_s` - how every
+     * other argument is read. */
+    let ks = crate::bridge::ruby::string_of(prefix)?;
+    let vs = crate::bridge::ruby::string_of(uri)?;
     /* Both are the Strings `to_s` just returned, and the checks allocate
      * nothing, so the views stay valid through the registration below. */
     let (pv, uv) =

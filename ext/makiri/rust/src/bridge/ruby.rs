@@ -201,13 +201,6 @@ pub fn same_value(a: Value, b: Value) -> bool {
     a.as_raw() == b.as_raw()
 }
 
-/// A Symbol, interned. Symbols are immortal, so a cached one stays valid.
-#[inline]
-pub fn symbol(name: &str) -> Value {
-    // SAFETY: as `nil`.
-    unsafe { Ruby::get_unchecked() }.to_symbol(name).as_value()
-}
-
 /// A method `ID`, interned from a NUL-terminated name.
 #[inline]
 pub fn intern(name: &[u8]) -> ID {

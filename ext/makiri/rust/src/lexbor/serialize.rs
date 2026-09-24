@@ -91,7 +91,9 @@ pub fn serialize(node: RawNode, deep: bool, pretty: bool) -> Option<Buf> {
          * sink caught can be raised. `Buf`'s Drop frees what was written. */
         c.panic.resume();
 
-        if st != LXB_STATUS_OK {
+        /* Lexbor stops on the refusing chunk's status; `refused` is checked
+         * as well, so a sink that said no can never pass for a whole output. */
+        if st != LXB_STATUS_OK || c.refused {
             return None; /* `Buf`'s Drop frees it */
         }
         Some(c.sink)

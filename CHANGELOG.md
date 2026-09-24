@@ -52,6 +52,12 @@
 
 ### Fixed
 
+* A namespace Hash given to a query is read as a Hash, not through a `to_a`
+  a subclass may redefine (a non-pair raised `Makiri::InternalError`), and
+  each prefix and URI is read with `String()`, preferring `to_str`, as other
+  arguments are. `XPathContext#register_namespace` refuses inside a handler
+  before converting its arguments.
+* An XML attribute compares equal to itself with `<=>`, as an HTML one does.
 * XPath `string()` of a number follows libxml2's rule, as Nokogiri does:
   exponential notation above 1e9 and below 1e-5 (`1234567890.5` is
   `1.2345678905e+09`, `0.00001` stays `0.00001`), and integer form only inside
@@ -70,9 +76,9 @@
   Selectors spec does; it was refused as the unsupported `[*|a]`. The `s`
   attribute modifier is accepted (XML values compare case-sensitively anyway);
   `i` is still refused.
-* XPath resolves the `xml` prefix without a registration (`//@xml:lang`), as
-  Namespaces in XML binds it and Nokogiri answers. It raised "unknown
-  namespace prefix".
+* XPath resolves the `xml` prefix to its fixed namespace (`//@xml:lang`), with
+  no registration and whatever one says, as Namespaces in XML binds it and
+  Nokogiri answers. It raised "unknown namespace prefix".
 * `Makiri::XML` nodes compare by document order with `<=>`, as HTML nodes
   do, so they sort; `<=>` returned nil for every pair.
 * `XPathContext#register_namespace` reads its arguments as a namespace Hash

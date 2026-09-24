@@ -425,6 +425,8 @@ RSpec.describe Makiri::Node do
       expect(a <=> Makiri::XML("<r/>").root).to be_nil
       expect(a <=> items[0]).to be_nil # an HTML node
       expect(xml.root.attribute_nodes.first <=> a).to be_nil
+      attr = xml.root.attribute_nodes.first
+      expect(attr <=> attr).to eq(0) # as an HTML attribute answers
     end
   end
 

@@ -601,14 +601,26 @@ RSpec.describe "Makiri XPath" do
         .to raise_error(Makiri::Error, /unknown namespace prefix/i)
     end
 
-    # Namespaces in XML binds xml by definition, and libxml2 resolves it with
-    # nothing registered; a registration of its own still wins.
-    it "resolves the xml prefix without a registration" do
+    # Namespaces in XML binds xml by definition and forbids binding it
+    # elsewhere; libxml2 answers it before the registrations.
+    it "resolves the xml prefix to its fixed namespace, registered or not" do
       xml = Makiri::XML(%(<r xml:lang="en"/>))
       expect(xml.xpath("string(//@xml:lang)")).to eq("en")
+      expect(xml.xpath("string(//@xml:lang)", "xml" => "urn:other")).to eq("en")
       ctx = Makiri::XPathContext.new(xml)
       ctx.register_namespace("xml", "urn:other")
-      expect(ctx.evaluate("count(//@xml:lang)")).to eq(0.0)
+      expect(ctx.evaluate("count(//@xml:lang)")).to eq(1.0)
+    end
+
+    it "reads a namespace Hash as a Hash and each side with String()" do
+      xml = Makiri::XML(%(<r xmlns="urn:x"/>))
+      odd = Class.new(Hash) { def to_a = [1] }.new
+      odd["q"] = "urn:x"
+      expect(xml.xpath("count(//q:r)", odd)).to eq(1.0)
+      prefix = Object.new.tap { |o| o.define_singleton_method(:to_str) { "q" } }
+      ctx = Makiri::XPathContext.new(xml)
+      ctx.register_namespace(prefix, "urn:x")
+      expect(ctx.evaluate("count(//q:r)")).to eq(1.0)
     end
 
     it "raises on an undefined variable" do

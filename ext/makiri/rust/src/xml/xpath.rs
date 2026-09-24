@@ -229,6 +229,9 @@ pub fn document_order(
     a: xml::NodeId,
     b: xml::NodeId,
 ) -> Option<core::cmp::Ordering> {
+    if a == b {
+        return Some(core::cmp::Ordering::Equal); /* as the HTML side answers */
+    }
     let is_attr = |n| doc.type_(n) == Some(xml::NodeType::Attribute);
     if is_attr(a) || is_attr(b) {
         return None;
