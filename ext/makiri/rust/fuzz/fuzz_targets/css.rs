@@ -46,6 +46,8 @@ fuzz_target!(|data: &[u8]| {
         l.max_eval_ops = 1_000_000;
         l.max_nodeset_size = 10_000;
         l.max_string_bytes = 64 * 1024;
+        /* A cache smaller than one value, so the uncached comparison path runs. */
+        l.max_cache_bytes = 256;
 
         // What `build_ctx` registers from the caller's namespace hash: a
         // prefix, and - when the hash names one - the default namespace under

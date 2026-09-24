@@ -61,6 +61,8 @@ unsafe fn run(p: &mut HtmlParsed, text: VerifiedText, lax: bool) {
     l.max_eval_ops = 20_000;
     l.max_nodeset_size = 1024;
     l.max_string_bytes = 4096;
+    /* A cache smaller than one value, so the uncached comparison path runs. */
+    l.max_cache_bytes = 256;
 
     for (prefix, uri) in [
         (&b"svg"[..], &b"http://www.w3.org/2000/svg"[..]),

@@ -10,6 +10,12 @@ use crate::err_setf;
 use core::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+/// Bytes of node string-value one evaluator op pays for
+/// ([`Budget::charge_bytes`]). At the default op cap that bounds the
+/// string-values one evaluate may build to about 3 GB - seconds of copying,
+/// not minutes - while an ordinary page's queries stay far under it.
+pub const BYTES_PER_OP: usize = 64;
+
 /// The caps, as configured. Plain data: a run copies them into its [`Budget`].
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
@@ -147,6 +153,24 @@ impl Budget {
             return Err(over_eval_ops(self.limits.max_eval_ops, self.sink()));
         }
         self.eval_ops.set(self.eval_ops.get() + 1);
+        Ok(())
+    }
+
+    /// Charge the building of `bytes` of string-value: one op per
+    /// [`BYTES_PER_OP`].
+    ///
+    /// The one bulk charge, and it is not a loop's - it prices work the op
+    /// count otherwise missed. A string-value build is charged per node it
+    /// walks, but one node can hold megabytes, so a comparison that rebuilt
+    /// large values (the cache full, a node-set against a node-set) ran for
+    /// seconds on a few thousand ops.
+    pub fn charge_bytes(&self, bytes: usize) -> Result<(), Reported> {
+        let ops = bytes / BYTES_PER_OP;
+        let left = self.limits.max_eval_ops.saturating_sub(self.eval_ops.get());
+        if ops > left {
+            return Err(over_eval_ops(self.limits.max_eval_ops, self.sink()));
+        }
+        self.eval_ops.set(self.eval_ops.get() + ops);
         Ok(())
     }
 

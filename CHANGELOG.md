@@ -109,7 +109,10 @@
   because the values it compared added up past 64 MB. That total was the
   per-string cap reused for the evaluation's string-value cache, so
   `//*[. = "x"]` raised on a page where `//*[string(.) = "x"]` answered. The
-  cache has its own cap now and stops keeping values past it.
+  cache has its own cap now and stops keeping values past it. Building a
+  string-value is charged to the op budget by its size (one op per 64 bytes),
+  so a comparison that rebuilds large uncached values fails fast rather than
+  copying gigabytes.
 * A refused XML namespace declaration says which rule it broke - declaring
   `xmlns`, binding `xml` elsewhere, binding a reserved namespace to another
   prefix or as the default, or binding a prefix to the empty namespace -

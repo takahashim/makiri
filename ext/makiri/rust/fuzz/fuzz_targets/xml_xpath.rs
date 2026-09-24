@@ -55,6 +55,8 @@ fuzz_target!(|data: &[u8]| {
         l.max_eval_ops = 20_000;
         l.max_nodeset_size = 1024;
         l.max_string_bytes = 4096;
+        /* A cache smaller than one value, so the uncached comparison path runs. */
+        l.max_cache_bytes = 256;
 
         let _ = ctx.register_ns(b"d", b"urn:d");
 
