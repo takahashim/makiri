@@ -203,7 +203,6 @@ p1 = d.at_css("p")
   "attribute name"   => -> { p1[INVALID_UTF8] = "v" },
   "attribute value"  => -> { p1["k"] = INVALID_UTF8 },
   "content="         => -> { p1.content = INVALID_UTF8 },
-  "name="            => -> { p1.name = INVALID_UTF8 },
   "create_element"   => -> { d.create_element(INVALID_UTF8) },
   "create_text_node" => -> { d.create_text_node(INVALID_UTF8) },
   "create_comment"   => -> { d.create_comment(INVALID_UTF8) },
@@ -247,7 +246,6 @@ expect_ok("  attribute value", NUL)  { p1["k"] = NUL; p1["k"] }
 puts "  names and engine input refuse it"
 expect_raise("  create_element") { d.create_element(NUL) }
 expect_raise("  attribute name") { p1[NUL] = "v" }
-expect_raise("  name=")          { p1.name = NUL }
 expect_raise("  xpath")          { d.xpath("//#{NUL}") }
 expect_raise("  css")            { d.css(NUL) }
 

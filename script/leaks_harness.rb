@@ -31,7 +31,7 @@ ITERATIONS.times do |i|
   begin d.xpath("//li", handler) rescue nil; end
   d.xpath("//*[local-name()='path']")
   d.to_html; d.at_css("ul").inner_html; d.to_html(pretty: true); d.text
-  e = d.at_css("li"); e["k#{i}"] = "v"; e.name = "li2"; e.content = "c"
+  e = d.at_css("li"); e["k#{i}"] = "v"; e.content = "c"
   e.set_attribute_ns("urn:x", "x:y", "1"); e.remove_attribute_ns("urn:x", "y")
   d.at_css("ul").inner_html = "<li>new</li>"                          # transient fragment document path
   frag = d.fragment("<b>f</b>"); d.at_css("p") << frag

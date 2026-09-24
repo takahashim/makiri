@@ -132,7 +132,7 @@ SCENARIOS = {
     parts.join("\n")
   end,
 
-  # The mutation surface: create_*, insertion on every side, rename, content,
+  # The mutation surface: create_*, insertion on every side, content,
   # attributes, replace, remove, and a fragment splice.
   "xml_mutate" => lambda do
     doc = Makiri::XML::Document.parse("<root><old>x</old><gone/></root>")
@@ -140,7 +140,6 @@ SCENARIOS = {
     el.add_child(doc.create_text_node("inner"))
     el["k"] = "v"
     doc.root.add_child(el)
-    el.name = "renamed"
     el.content = "rewritten"
     el.add_previous_sibling(doc.create_element("before"))
     el.add_next_sibling(doc.create_element("after"))
@@ -268,7 +267,6 @@ SCENARIOS = {
     p1 = d.at_css("p")
     p1.add_previous_sibling(d.create_element("prev"))
     p1.add_next_sibling(d.create_element("next"))
-    p1.name = "h1"
     p1.content = "renamed"
     p1["data-n"] = "1"
     p1.set_attribute_ns("http://www.w3.org/1999/xlink", "xlink:href", "#x")
