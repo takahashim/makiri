@@ -21,6 +21,10 @@ pub struct Limits {
     pub max_nodeset_size: usize,
     pub max_eval_ops: usize,
     pub max_string_bytes: usize,
+    /// The string-value cache's total bytes. Past it the cache stops growing
+    /// rather than failing: it is an optimisation, so a query that fits every
+    /// other cap answers whether or not its values could be kept.
+    pub max_cache_bytes: usize,
     pub max_recursion_depth: usize,
 }
 
@@ -35,6 +39,7 @@ impl Limits {
         max_nodeset_size: crate::limits::NODE_SET_MAX,
         max_eval_ops: 50 * 1000 * 1000,     /* 50M evaluator steps */
         max_string_bytes: 64 * 1024 * 1024, /* 64 MB string-value */
+        max_cache_bytes: 64 * 1024 * 1024,  /* 64 MB of cached string-values */
         max_recursion_depth: 256,
     };
 }

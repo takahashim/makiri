@@ -12,7 +12,7 @@ use crate::token::Token;
 ///
 /// An index rather than a borrow, so a caller can hold one string-value while
 /// asking the cache for the next - the node-set comparisons hold one side's
-/// value across the whole scan of the other.
+/// value across the whole scan of the other ([`NodeText`] carries it).
 #[derive(Clone, Copy, Debug)]
 pub struct TextId(usize);
 
@@ -50,17 +50,27 @@ impl StrCache {
         self.entries[id.0].1.as_slice()
     }
 
-    /// Cache `text` as `node`'s string-value, within `budget`'s string cap on
-    /// the total cached bytes.
+    /// Cache `text` as `node`'s string-value, or hand it back uncached when
+    /// the cache is at `budget`'s `max_cache_bytes`.
     ///
-    /// Every refusal happens before anything is committed, so a failed insert
-    /// leaves the cache as it was (and drops `text`).
+    /// Only OOM is an error. Every refusal happens before anything is
+    /// committed, so a failed insert leaves the cache as it was.
     pub fn insert(
         &mut self,
         node: Token,
         text: Text,
         budget: &mut Budget,
-    ) -> Result<TextId, Reported> {
+    ) -> Result<NodeText, Reported> {
+        // Past the cap the value is still the answer, just not kept: a total
+        // held to the per-string cap made `//*[. = "x"]` raise on a page where
+        // `//*[string(.) = "x"]`, which never caches, answered.
+        let fits = self
+            .total_bytes
+            .checked_add(text.as_slice().len())
+            .filter(|&t| t <= budget.limits.max_cache_bytes);
+        let Some(new_total) = fits else {
+            return Ok(NodeText::Uncached(text));
+        };
         if self.entries.falloc_reserve(1).is_err() {
             return Err(err_setf!(
                 budget.sink(),
@@ -68,17 +78,6 @@ impl StrCache {
                 "out of memory in node string cache"
             ));
         }
-
-        /* A total cap on the cached bytes, so one evaluate cannot grow the cache
-         * without bound. */
-        let Some(new_total) = self.total_bytes.checked_add(text.as_slice().len()) else {
-            return Err(err_setf!(
-                budget.sink(),
-                XP_ERR_OOM,
-                "node string cache size overflow"
-            ));
-        };
-        budget.check_string_bytes(new_total)?;
 
         /* Index before committing: a failed growth leaves the map as it was,
          * and the entry push below cannot fail - it was reserved above. */
@@ -92,6 +91,24 @@ impl StrCache {
         }
         self.total_bytes = new_total;
         self.entries.push((node, text));
-        Ok(TextId(id))
+        Ok(NodeText::Cached(TextId(id)))
+    }
+}
+
+/// A node's string-value as [`StrCache::insert`] left it: in the cache, or held
+/// here because the cache was full.
+pub enum NodeText {
+    Cached(TextId),
+    Uncached(Text),
+}
+
+impl NodeText {
+    /// The bytes, wherever they are.
+    #[inline]
+    pub fn bytes<'a>(&'a self, cache: &'a StrCache) -> &'a [u8] {
+        match self {
+            NodeText::Cached(id) => cache.text(*id),
+            NodeText::Uncached(t) => t.as_slice(),
+        }
     }
 }

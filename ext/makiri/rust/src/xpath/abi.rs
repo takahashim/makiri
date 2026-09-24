@@ -13,7 +13,7 @@ pub use super::msg::{
     XP_ERR_SYNTAX, XP_ERR_TYPE,
 };
 pub use super::order::OrderIndex;
-pub use super::str_cache::{StrCache, TextId};
+pub use super::str_cache::{NodeText, StrCache, TextId};
 pub use super::value::{NodeSet, Text, Val, ValRef};
 
 pub use super::ctx::Context;

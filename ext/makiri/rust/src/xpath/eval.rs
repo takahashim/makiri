@@ -314,7 +314,7 @@ fn compare_eq<'e, 'd, D: Dom<'d>>(
                 for j in 0..rs.len() {
                     ev.budget.charge_op()?;
                     let b = cached_node_text::<D>(ev, rs.get(j))?;
-                    if (ev.str_cache.text(a) == ev.str_cache.text(b)) == want_eq {
+                    if (a.bytes(&ev.str_cache) == b.bytes(&ev.str_cache)) == want_eq {
                         return Ok(true);
                     }
                 }
@@ -363,7 +363,7 @@ fn compare_eq<'e, 'd, D: Dom<'d>>(
             for i in 0..set.len() {
                 ev.budget.charge_op()?;
                 let s = cached_node_text::<D>(ev, set.get(i))?;
-                if (ev.str_cache.text(s) == want) == want_eq {
+                if (s.bytes(&ev.str_cache) == want) == want_eq {
                     return Ok(true);
                 }
             }

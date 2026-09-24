@@ -308,6 +308,16 @@ RSpec.describe "Makiri XPath" do
       expect(doc.xpath('contains(//p[@id="p1"], "b")')).to be(true)
       expect(doc.at_xpath('//p[string-length(.) = 3 and starts-with(., "a")]')["id"]).to eq("p1")
     end
+
+    it "answers a comparison whose string-values outgrow the cache" do
+      # 100 nested divs over 1 MB of text: ~100 MB of string-values, past the
+      # cache's 64 MB, each value well under the per-string cap. The cache
+      # stops keeping values there; it does not fail the query.
+      big = Makiri::HTML("<div>" * 100 + "<p>#{'y' * 1_000_000}</p>" + "</div>" * 100)
+      expect(big.xpath('count(//*[. = "x"])')).to eq(0.0)
+      expect(big.xpath('count(//*[string(.) = "x"])')).to eq(0.0)
+      expect(big.xpath("count(//div[. = //p])")).to eq(100.0)
+    end
   end
 
   describe "number functions and arithmetic" do

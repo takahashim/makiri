@@ -52,6 +52,11 @@
 
 ### Fixed
 
+* An XPath comparison over node string-values no longer raises `LimitExceeded`
+  because the values it compared added up past 64 MB. That total was the
+  per-string cap reused for the evaluation's string-value cache, so
+  `//*[. = "x"]` raised on a page where `//*[string(.) = "x"]` answered. The
+  cache has its own cap now and stops keeping values past it.
 * A refused XML namespace declaration says which rule it broke - declaring
   `xmlns`, binding `xml` elsewhere, binding a reserved namespace to another
   prefix or as the default, or binding a prefix to the empty namespace -
