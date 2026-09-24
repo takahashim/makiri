@@ -162,6 +162,12 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
   nothing. Nokogiri copies it and writes `v-on:click="..."` into output that is
   not namespace-well-formed. An element named with a colon (`<fb:like>`)
   crosses as a DOM-loose name, which `to_xml` refuses.
+* A known gap, in Lexbor's tag table: an HTML document that already holds a
+  parsed element named with a colon (`<x:y>`, one local name) and then
+  receives, by `import_node` from another document, a prefixed element
+  written the same way (`x:y` from XML: prefix `x`, local name `y`) re-points
+  the table's entry for that spelling - the parsed element then no longer
+  matches CSS `x\:y`. Copies within one document do not touch the table.
 * An XML element with a prefix, imported into HTML, keeps it (`h:div` in
   XHTML has the local name `div`). Two readers then disagree, as they do in
   browsers: CSS's `div` matches it (Lexbor matches the local name), XPath's

@@ -334,6 +334,24 @@ impl<'doc> BuildingNode<'doc> {
         if !from.has_written_name() {
             return true;
         }
+        if src.owner_document() == self.0.owner_document() {
+            /* One document, one tag table: the entry the source points at is
+             * already this document's, so it is shared rather than looked up
+             * again. Looking it up cost every copied SVG element a hash probe
+             * (clone 10% slower, many small dups 20%) - and appending a name
+             * the table already had can re-point its entry (see below). */
+            // SAFETY: two live elements of one document; the tag entry is the
+            // document's and outlives both.
+            unsafe { (*to.raw()).qualified_name = (*from.raw()).qualified_name };
+            return true;
+        }
+        /* Another document's entry means nothing here, so the name is interned
+         * in this one. A known gap, in Lexbor: `lxb_tag_append` given a name
+         * the table already holds under ANOTHER tag - a parsed `<x:y>`, one
+         * local name - re-points that entry, so the parsed element stops
+         * matching CSS `x\:y`. It takes a prefixed `x:y` imported from another
+         * document into one that already has a parsed `x:y`; see
+         * NOKOGIRI_DIFFERENCES.md. */
         let name = from.qualified_name();
         // SAFETY: an element being built, in no tree yet; the name is copied
         // into this document's tag table.
