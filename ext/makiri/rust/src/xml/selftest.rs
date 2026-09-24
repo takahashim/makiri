@@ -434,7 +434,9 @@ fn a_doctype_is_recognized_and_kept_but_not_processed() {
 /// as `PUBLIC ""`.
 #[test]
 fn a_copied_doctype_keeps_its_name_and_both_ids() {
-    let cases: [(&[u8], Option<&[u8]>, Option<&[u8]>); 4] = [
+    /// (source, PUBLIC id, SYSTEM id)
+    type Case = (&'static [u8], Option<&'static [u8]>, Option<&'static [u8]>);
+    let cases: [Case; 4] = [
         (
             b"<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\" \"x.dtd\"><html/>",
             Some(b"-//W3C//DTD XHTML 1.0 Strict//EN"),
@@ -447,7 +449,7 @@ fn a_copied_doctype_keeps_its_name_and_both_ids() {
     for (src, public, system) in cases {
         let mut doc = parse_ok(src);
         let dt = doc.doctype().expect("a doctype node");
-        let name = doc.local(dt).to_vec();
+        let name = crate::falloc::try_to_vec(doc.local(dt)).expect("name");
 
         let mut other = doc_new();
         let imported = mutate::import_subtree(&mut other, &doc, dt).expect("import");
@@ -696,7 +698,9 @@ fn a_prefix_may_not_be_bound_to_the_empty_namespace() {
     let (mut doc, r) = detached_element(b"r");
     assert_eq!(
         mutate::set_attribute(&mut doc, r, b"xmlns:q", b""),
-        Err(MutStatus::BadNsDecl)
+        Err(MutStatus::BadNsDecl(
+            crate::xml::qname::NsDeclError::PrefixToEmpty
+        ))
     );
     /* `xmlns=""` is different: it un-declares the DEFAULT namespace, which XML
      * 1.0 allows. */

@@ -52,6 +52,10 @@
 
 ### Fixed
 
+* A refused XML namespace declaration says which rule it broke - declaring
+  `xmlns`, binding `xml` elsewhere, binding a reserved namespace to another
+  prefix or as the default, or binding a prefix to the empty namespace -
+  instead of one message listing all of them.
 * A rejected stylesheet rule's `selector_text` is sliced by Lexbor's own
   offsets, so it can no longer come from an identical piece elsewhere in the
   sheet, and a declaration value no longer shows the `:lexbor-contains()`

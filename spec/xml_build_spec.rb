@@ -326,6 +326,18 @@ RSpec.describe "Makiri::XML building (Phase 2)" do
       r.freeze
       expect { r.add_child(doc.create_element("x")) }.to raise_error(FrozenError)
     end
+
+    it "says which namespace-declaration rule a refused declaration breaks" do
+      {
+        ["xmlns:xmlns", "urn:x"] => /xmlns cannot be declared/,
+        ["xmlns:xml", "urn:x"] => /xml can only be bound to/,
+        ["xmlns:p", "http://www.w3.org/2000/xmlns/"] => /cannot be bound to another prefix/,
+        ["xmlns", "http://www.w3.org/XML/1998/namespace"] => /cannot be the default namespace/,
+        ["xmlns:p", ""] => /a prefix cannot be bound to the empty namespace/
+      }.each do |(name, value), message|
+        expect { doc.root[name] = value }.to raise_error(Makiri::Error, message)
+      end
+    end
   end
 
   describe "Document.new (build from scratch)" do

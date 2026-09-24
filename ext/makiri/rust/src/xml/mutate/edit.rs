@@ -47,8 +47,8 @@ pub fn rename(doc: &mut Document, node: NodeId, name: &[u8]) -> MutStatus {
      * onto another attribute's key is a second attribute with that key - both
      * rules the parser holds a document to (§3). */
     if let (true, Some(el)) = (is_attr, scope) {
-        if !super::attr::decl_ok(name, doc.value(node)) {
-            return MutStatus::BadNsDecl;
+        if let Err(st) = super::attr::decl_check(name, doc.value(node)) {
+            return st;
         }
         let local = &name[sp.local_off as usize..];
         if !r.pending && super::attr::key_taken(doc, el, doc.span(r.ns), local, Some(node)) {

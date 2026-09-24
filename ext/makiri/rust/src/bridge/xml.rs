@@ -40,6 +40,7 @@ use crate::xml::model::{
     Document as XmlDoc, Limits as XmlLimits, MutStatus, NodeId, NodeType, Status,
 };
 use crate::xml::mutate::{clone_node, copy_node_from, import_subtree, remove as remove_node};
+use crate::xml::qname::NsDeclError;
 use crate::xml::tree;
 
 fn is_a(v: Value, klass: &crate::init::RbConst) -> bool {
@@ -248,10 +249,25 @@ pub fn xml_mut_check(st: MutStatus) -> Result<(), Error> {
             "invalid placement (an attribute/document node cannot be a tree child, a document \
 allows a single root element, and a sibling target must have a parent)"
         }
-        MutStatus::BadNsDecl => {
-            "namespace declaration not permitted (a prefix bound to the empty namespace, \
-xml to another URI, xmlns at all, or either reserved URI to another prefix)"
-        }
+        MutStatus::BadNsDecl(why) => match why {
+            NsDeclError::Xmlns => "namespace declaration not permitted: xmlns cannot be declared",
+            NsDeclError::XmlElsewhere => {
+                "namespace declaration not permitted: xml can only be bound to \
+http://www.w3.org/XML/1998/namespace"
+            }
+            NsDeclError::ReservedUri { default: false } => {
+                "namespace declaration not permitted: the XML and XMLNS namespaces cannot be \
+bound to another prefix"
+            }
+            NsDeclError::ReservedUri { default: true } => {
+                "namespace declaration not permitted: the XML and XMLNS namespaces cannot be \
+the default namespace"
+            }
+            NsDeclError::PrefixToEmpty => {
+                "namespace declaration not permitted: a prefix cannot be bound to the empty \
+namespace (only xmlns=\"\" undeclares, and only the default)"
+            }
+        },
         MutStatus::DuplicateAttr => {
             "the element already has an attribute with that namespace and local name"
         }

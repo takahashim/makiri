@@ -133,7 +133,7 @@ pub enum MutStatus {
     Type = 5,
     Cycle = 6,
     Hierarchy = 7,
-    BadNsDecl = 8,
+    BadNsDecl(crate::xml::qname::NsDeclError) = 8,
     /// A null / stale document handle reached a mutator. The C entry points
     /// overloaded the parse code `4` here; as its own variant it can no longer
     /// be mistaken for [`MutStatus::UnboundNs`].

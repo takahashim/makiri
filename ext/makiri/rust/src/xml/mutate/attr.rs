@@ -10,7 +10,7 @@
 use super::ns::{resolve_ns, Ns, Resolved, NO_NS};
 use super::{arena, assign_qname};
 use crate::xml::chars::validate_chars;
-use crate::xml::qname::{ns_decl_ok, split_checked, xmlns_prefix, Split};
+use crate::xml::qname::{ns_decl_check, split_checked, xmlns_prefix, Split};
 use crate::xml::{Document, MutStatus, NodeId, NodeType, Span, FLAG_NS_PENDING};
 
 /// Build a fresh ATTRIBUTE (qname + value + namespace) and link it onto `el`
@@ -45,9 +45,13 @@ pub(super) fn keys_repeat(doc: &Document, keys: &mut [(Span, NodeId)]) -> bool {
 }
 
 /// Whether an attribute named `name` may hold `val`: anything but a namespace
-/// declaration the §3 rules forbid ([`ns_decl_ok`]).
-pub(super) fn decl_ok(name: &[u8], val: &[u8]) -> bool {
-    xmlns_prefix(name).is_none_or(|p| ns_decl_ok(p, val))
+/// declaration the §3 rules forbid ([`ns_decl_check`]), refused as
+/// [`MutStatus::BadNsDecl`] with the clause it broke.
+pub(super) fn decl_check(name: &[u8], val: &[u8]) -> Result<(), MutStatus> {
+    match xmlns_prefix(name) {
+        Some(p) => ns_decl_check(p, val).map_err(MutStatus::BadNsDecl),
+        None => Ok(()),
+    }
 }
 
 /// Whether an attribute of `el` other than `except` already has the key
@@ -84,9 +88,7 @@ pub fn set_attribute(
         Some(s) => s,
         None => return Err(MutStatus::BadName),
     };
-    if !decl_ok(name, val) {
-        return Err(MutStatus::BadNsDecl);
-    }
+    decl_check(name, val)?;
     if !val.is_empty() && !validate_chars(val) {
         return Err(MutStatus::BadChars);
     }
@@ -160,9 +162,7 @@ pub fn set_attribute_ns(
     if !crate::xml::qname::ns_fits_name(ns, name, &sp) {
         return Err(MutStatus::BadNsName);
     }
-    if !decl_ok(name, val) {
-        return Err(MutStatus::BadNsDecl);
-    }
+    decl_check(name, val)?;
     if !val.is_empty() && !validate_chars(val) {
         return Err(MutStatus::BadChars);
     }

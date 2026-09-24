@@ -134,18 +134,47 @@ pub fn ns_fits_name(ns: &[u8], name: &[u8], sp: &Split) -> bool {
 /// The one statement of the rule. The parser always applied it; the mutators
 /// applied only the last clause, so `[]=`, `set_attribute_ns` and `rename`
 /// could write `xmlns:xml="urn:other"` into a tree `to_xml` then could not
-/// re-read.
+/// re-read. [`ns_decl_check`] says which clause a refusal broke.
 pub fn ns_decl_ok(prefix: &[u8], uri: &[u8]) -> bool {
+    ns_decl_check(prefix, uri).is_ok()
+}
+
+/// Which clause of the §3 declaration rule a declaration breaks.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum NsDeclError {
+    /// `xmlns:xmlns`: the `xmlns` prefix is never declared.
+    Xmlns,
+    /// `xmlns:xml` with a URI other than the XML namespace.
+    XmlElsewhere,
+    /// The XML or XMLNS namespace bound to another prefix (`default: false`)
+    /// or made the default namespace (`default: true`).
+    ReservedUri { default: bool },
+    /// A prefix bound to the empty namespace; only the default may be undeclared.
+    PrefixToEmpty,
+}
+
+/// [`ns_decl_ok`], saying which clause failed.
+pub fn ns_decl_check(prefix: &[u8], uri: &[u8]) -> Result<(), NsDeclError> {
     if prefix == b"xmlns" {
-        return false;
+        return Err(NsDeclError::Xmlns);
     }
     if prefix == b"xml" {
-        return uri == XML_NS_URI;
+        return if uri == XML_NS_URI {
+            Ok(())
+        } else {
+            Err(NsDeclError::XmlElsewhere)
+        };
     }
     if uri == XML_NS_URI || uri == XMLNS_NS_URI {
-        return false;
+        return Err(NsDeclError::ReservedUri {
+            default: prefix.is_empty(),
+        });
     }
-    prefix.is_empty() || !uri.is_empty()
+    if prefix.is_empty() || !uri.is_empty() {
+        Ok(())
+    } else {
+        Err(NsDeclError::PrefixToEmpty)
+    }
 }
 
 /// If `name` is an xmlns declaration ("xmlns" / "xmlns:PREFIX"), the declared
