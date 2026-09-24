@@ -81,10 +81,8 @@ pub trait Dom<'d>: Copy {
     /// Refresh whatever the backend reads once per walk, before it starts.
     ///
     /// The HTML backend builds (or, after a mutation since the last evaluate,
-    /// rebuilds) its element/attribute index here - building it also backfills
-    /// each attribute's parent, which the parent and ancestor axes read. XML has
-    /// no such state. `false` when it cannot be built (out of memory), and the
-    /// evaluate fails closed.
+    /// rebuilds) its element index here. XML has no such state. `false` when it
+    /// cannot be built (out of memory), and the evaluate fails closed.
     fn prepare(&self) -> bool {
         true
     }

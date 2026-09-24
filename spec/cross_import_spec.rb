@@ -63,8 +63,10 @@ RSpec.describe "cross-kind import_node" do
     describe "DOM-lenient element names (not well-formed XML QNames)" do
       let(:hdoc) { Makiri::HTML::Document.parse("<div></div>") }
 
+      # Names the DOM accepts but XML does not. ("0:a" and "a b" were here too,
+      # but the DOM's own rule refuses them, and create_element now applies it.)
       it "imports a lenient-named element verbatim instead of raising" do
-        %w[:good:times: x< 0:a a\ b f}oo xmlns:foo].each do |nm|
+        %w[:good:times: x< f}oo xmlns:foo].each do |nm|
           el  = hdoc.create_element(nm)
           imp = xml.import_node(el, true)
           expect(imp).to be_a(Makiri::XML::Element)
@@ -233,6 +235,29 @@ RSpec.describe "cross-kind import_node" do
       html = Makiri::HTML("<div><p>x</p></div>")
       imp = html.import_node(html.at_css("div"), true)
       expect(imp.at_css("p").text).to eq("x")
+    end
+  end
+
+  describe "namespace declarations crossing from HTML to XML" do
+    # A foreign element's xmlns:xlink is a declaration already; declaring its
+    # "prefix" wrote xmlns:xmlns, which no parser accepts.
+    it "copies a foreign element's declarations without declaring xmlns" do
+      html = Makiri.HTML(%(<svg xmlns:xlink="http://www.w3.org/1999/xlink"><a xlink:href="#u"/></svg>))
+      xml = Makiri::XML("<r/>")
+      xml.root.add_child(xml.import_node(html.at_css("svg"), true))
+      expect(xml.to_xml).not_to include("xmlns:xmlns")
+      back = Makiri::XML(xml.to_xml)
+      expect(back.at_xpath("//@*[local-name()='href']").namespace_uri).to eq("http://www.w3.org/1999/xlink")
+    end
+
+    # In HTML an xmlns attribute is only an attribute; copied, it became a
+    # declaration and moved the element out of XHTML.
+    it "leaves out an HTML element's xmlns attribute" do
+      html = Makiri.HTML(%(<div xmlns="urn:bogus"></div>))
+      xml = Makiri::XML("<r/>")
+      div = xml.import_node(html.at_css("div"), true)
+      xml.root.add_child(div)
+      expect(div.namespace_uri).to eq("http://www.w3.org/1999/xhtml")
     end
   end
 end

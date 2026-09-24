@@ -95,6 +95,14 @@ pub fn validate_chars(s: &[u8]) -> bool {
 
 /// `s` is a well-formed XML 1.0 Name (NameStartChar NameChar*). A colon is
 /// permitted (this is the PITarget check).
+/// Whether `s` is all PubidChar (XML 1.0 §2.3 [13]) - what a DOCTYPE's PUBLIC
+/// id may hold. The parser's literal scan and the doctype factory both ask
+/// here; the factory used to check only for `"`.
+pub fn is_pubid(s: &[u8]) -> bool {
+    s.iter()
+        .all(|&c| c.is_ascii_alphanumeric() || b" \r\n-'()+,./:=?;!*#@$_%".contains(&c))
+}
+
 pub fn validate_name(s: &[u8]) -> bool {
     let (cp, bl) = match decode1(s) {
         Some(x) => x,

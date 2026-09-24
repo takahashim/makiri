@@ -313,11 +313,7 @@ impl<'a> Cursor<'a> {
     /// PubidLiteral (§2.3): a restricted ASCII set.
     pub(super) fn scan_pubid_literal(&mut self) -> R<InSlice> {
         let s = self.parse_quoted()?;
-        let ok = self
-            .slice(s)
-            .iter()
-            .all(|&c| c.is_ascii_alphanumeric() || b" \r\n-'()+,./:=?;!*#@$_%".contains(&c));
-        if !ok {
+        if !crate::xml::chars::is_pubid(self.slice(s)) {
             return self.syntax();
         }
         Ok(s)

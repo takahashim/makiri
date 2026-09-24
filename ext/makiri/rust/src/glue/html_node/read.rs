@@ -24,7 +24,7 @@ use crate::bridge::node_set::node_set_with_fill;
 use crate::bridge::ruby::is_kind_of;
 use crate::bridge::string::ruby_verified_text;
 use crate::init::{CLASS_NODE, CLASS_XML_DOCUMENT};
-use crate::lexbor::adapter::html::{HtmlNode, RawNode};
+use crate::lexbor::adapter::html::HtmlNode;
 
 /* ------------------------------------------------------------------ *
  * small helpers                                                      *
@@ -250,26 +250,12 @@ pub fn get_document(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
     this.document
 }
 
-/// `#parent`. An attribute has no `node.parent` - Lexbor never links one back to
-/// its element - so it resolves through the compat attr->owner index.
-///
-/// The index is built explicitly, and a failed build raises, because an owner
-/// lookup with no index would answer NULL for BOTH "this attribute is
-/// not in the document" and "the index could not be allocated". Taking the
-/// second as the first makes an owned attribute report no parent - a navigation
-/// answer indistinguishable from the truthful one - so an allocation failure
-/// raises here instead. (The OOM sweep found this: `Attr#parent` degraded from
-/// `"svg"` to `nil` under injection, in the C original as much as here.)
+/// `#parent`. For an attribute, the element it is set on - Lexbor's own
+/// `attr->owner`, read live (see `HtmlNode::parent`), so a removed attribute
+/// answers nil and nothing needs building. (It used to go through an index
+/// whose build could fail, which is why this returned `Result`.)
 pub fn parent(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
-    let node = this.node();
-    let document = this.document;
-    if node.attr().is_some() {
-        /* The owner the index answers belongs to `document`, the attribute's
-         * live Document. */
-        let owner = crate::bridge::html::attribute_owner(&document, RawNode::from(node))?;
-        return Ok(wrap_node(owner, document));
-    }
-    Ok(wrap_node(node.parent(), document))
+    crate::bridge::ruby::entry(|| Ok(wrap_node(this.node().parent(), this.document)))
 }
 
 pub fn next(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
@@ -416,7 +402,7 @@ pub fn values(ruby: &Ruby, this: super::HtmlSelf) -> Value {
 
 /// `element.attribute_nodes` -> a NodeSet of Attribute nodes, in document order.
 /// Empty for a non-element. These wrap the bare `lxb_dom_attr_t`; navigating
-/// back with `Attribute#parent` goes through the compat attr->owner index.
+/// back with `Attribute#parent` reads its `attr->owner`.
 pub fn attribute_nodes(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
     let node = this.node();
     let attrs = node.element().into_iter().flat_map(|el| el.attrs());
@@ -495,13 +481,15 @@ pub fn value(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
 /// resolved against the document's line table. nil for a node the tracker could
 /// not place - a parser-inserted implicit `<html>`/`<head>`/`<body>`, a text or
 /// comment node - never a wrong line.
-pub fn line(ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    let n = crate::bridge::html::node_line(this.document, this.raw());
-    if n == 0 {
-        nil(ruby)
-    } else {
-        ruby.integer_from_u64(n as u64).as_value()
-    }
+pub fn line(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| {
+        let n = crate::bridge::html::node_line(this.document, this.raw());
+        Ok(if n == 0 {
+            nil(ruby)
+        } else {
+            ruby.integer_from_u64(n as u64).as_value()
+        })
+    })
 }
 
 /* ------------------------------------------------------------------ *
@@ -515,18 +503,20 @@ pub fn line(ruby: &Ruby, this: super::HtmlSelf) -> Value {
 /// subtrees with no common root, an attribute node). Included via Comparable,
 /// which supplies `<`, `>`, `between?` and the rest.
 pub fn spaceship(ruby: &Ruby, this: super::HtmlSelf, other: Value) -> Result<Value, Error> {
-    /* A non-node, or an XML node - never order-comparable to an HTML one, and
-     * asking is how we avoid arg_node's TypeError below. */
-    let comparable = is_kind_of(other, &CLASS_NODE)
-        && !is_kind_of(
-            crate::bridge::wrapper::keepalive_document(other)?,
-            &CLASS_XML_DOCUMENT,
-        );
-    if !comparable {
-        return Ok(nil(ruby));
-    }
-    Ok(match this.node().document_order(arg_node(&other)?) {
-        Some(order) => ruby.integer_from_i64(order as i64).as_value(),
-        None => nil(ruby),
+    crate::bridge::ruby::entry(|| {
+        /* A non-node, or an XML node - never order-comparable to an HTML one, and
+         * asking is how we avoid arg_node's TypeError below. */
+        let comparable = is_kind_of(other, &CLASS_NODE)
+            && !is_kind_of(
+                crate::bridge::wrapper::keepalive_document(other)?,
+                &CLASS_XML_DOCUMENT,
+            );
+        if !comparable {
+            return Ok(nil(ruby));
+        }
+        Ok(match this.node().document_order(arg_node(&other)?) {
+            Some(order) => ruby.integer_from_i64(order as i64).as_value(),
+            None => nil(ruby),
+        })
     })
 }

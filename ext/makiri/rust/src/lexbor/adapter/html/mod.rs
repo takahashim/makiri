@@ -144,11 +144,10 @@ unsafe fn named_mut<'a, T>(
  * one, so it is the single place that contract is asserted, and every method
  * is safe.
  *
- * "Not restructured" admits two writes, neither to the tree's links: building
- * the attribute->owner index backfills an attribute's `parent` from null to its
- * element (`HtmlAttr::backfill_parent`), and source-location stamping records
- * an element's offset in `node.user` (`HtmlNode::stamp_source_offset`). That is
- * why the
+ * "Not restructured" admits one kind of write, not to the tree's links: the
+ * source location in `node.user` - stamped (`HtmlNode::stamp_source_offset`)
+ * and, for a copy from another document, forgotten
+ * (`HtmlNode::forget_source_offset`). That is why the
  * methods read fields through the raw pointer, place by place, rather than
  * holding a `&LxbNode` - no reference to a Lexbor struct outlives the read. */
 
@@ -385,8 +384,20 @@ impl<'doc> HtmlNode<'doc> {
         unsafe { (*self.as_raw()).type_ }
     }
 
+    /// The parent: for an attribute, the element it is set on.
+    ///
+    /// Lexbor keeps an attribute's element in `attr->owner` - set when it is
+    /// appended, cleared when it is removed - and leaves `node.parent` null.
+    /// The owner is read live, so a removed attribute, one on a detached element
+    /// and one in a fragment all answer truly; the former backfill of
+    /// `node.parent` at index time answered whatever held when the index was
+    /// last built (`..` of a detached element's attribute depended on whether
+    /// anything had queried the document before the detach).
     #[inline]
     pub fn parent(self) -> Option<Self> {
+        if let Some(a) = self.attr() {
+            return a.owner().map(HtmlElement::node);
+        }
         // SAFETY: as `node_type`.
         Self::link(unsafe { (*self.as_raw()).parent })
     }
@@ -490,6 +501,14 @@ impl<'doc> HtmlNode<'doc> {
     pub(crate) fn stamp_source_offset(self, offset: usize) {
         // SAFETY: a live node; `user` is not part of the tree's structure.
         unsafe { (*self.as_raw()).user = offset.wrapping_add(1) as *mut core::ffi::c_void };
+    }
+
+    /// Forget this node's source position, so [`source_offset`](Self::source_offset)
+    /// answers None. The third writer of `user`, beside the stamping: see
+    /// [`BuildingNode::clear_source_offsets`](super::build::BuildingNode::clear_source_offsets).
+    pub(crate) fn forget_source_offset(self) {
+        // SAFETY: a live node; `user` is not part of the tree's structure.
+        unsafe { (*self.as_raw()).user = core::ptr::null_mut() };
     }
 
     /// The interned tag id (`local_name`).
@@ -763,6 +782,21 @@ impl<'doc> HtmlElement<'doc> {
     /// Lexbor's lookup, by local name and lower-cased for HTML. `None` when
     /// Lexbor could not store it.
     fn put_attribute(self, name: &[u8], value: &[u8]) -> Option<HtmlAttr<'doc>> {
+        /* An attribute the element already has gets its value here, not in
+         * `lxb_dom_element_set_attribute`: when storing the value fails, that
+         * DESTROYS the attribute while it is still in the element's list - a
+         * dangling link in the tree, and a freed node under whatever Ruby
+         * wrapper holds it. A failure here leaves the attribute as it was.
+         * The lookup is the one set_attribute makes, so the same attribute is
+         * found. */
+        // SAFETY: a live element; `name` is only read.
+        let found =
+            unsafe { lxb::lxb_dom_element_attr_is_exist(self.raw(), name.as_ptr(), name.len()) };
+        if let Some(at) = HtmlNode::link(found as *mut LxbNode).map(HtmlAttr) {
+            return at.set_value(value).then_some(at);
+        }
+        /* Only the create path is left, where a failure destroys an attribute
+         * nothing links to yet. */
         // SAFETY: a live element its caller may change; both slices are read
         // and copied by Lexbor before anything else runs.
         let at = unsafe {
@@ -908,16 +942,6 @@ impl<'doc> HtmlAttr<'doc> {
         // SAFETY: a live attribute.
         let owner = unsafe { (*self.raw()).owner };
         HtmlNode::link(owner as *mut LxbNode).map(HtmlElement)
-    }
-    /// Point the attribute's `parent` at `owner`.
-    ///
-    /// The one write the handle contract admits (see the section note): the
-    /// attr->owner index build makes it, so the XPath engine can climb from an
-    /// attribute like from any other node. Lexbor never walks an attribute
-    /// through the tree links, so the field is otherwise unused.
-    pub(crate) fn backfill_parent(self, owner: HtmlElement<'doc>) {
-        // SAFETY: a live attribute of a live element of the same document.
-        unsafe { (*self.raw()).node.parent = owner.node().as_raw() };
     }
 }
 

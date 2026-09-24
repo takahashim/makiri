@@ -113,11 +113,9 @@ impl core::ops::DerefMut for Cx {
 
 /// Build the context a query on `rb_node` runs under, bound to `document`.
 ///
-/// The HTML branch builds the attr->owner index up front, so the engine's parent
-/// and ancestor axes and its document-order sort see attribute owners, and hands
-/// over the element index so `//tag` is answered without a tree walk. The XML
-/// branch needs neither: the custom node links attributes to their owner
-/// directly, and its name index hangs off the document.
+/// The HTML branch builds the element index up front, so `//tag` is answered
+/// without a tree walk and an allocation failure raises here rather than on the
+/// first evaluate. The XML branch's name index hangs off the document.
 ///
 /// The context is `'static` because Ruby, not a Rust borrow, keeps the document
 /// alive: the caller holds `document` for as long as the context lives. The
@@ -152,7 +150,7 @@ pub fn context_for(rb_node: Value, document: Value) -> Result<Cx, Error> {
      * first evaluate. Each evaluate still reads the index afresh from the
      * handle, which rebuilds it after a mutation. */
     if with_html_parsed_known(document, |p| p.dom_index().is_none()) {
-        return Err(makiri_error("failed to build attribute index for XPath"));
+        return Err(makiri_error("failed to build the element index for XPath"));
     }
     // SAFETY: the handle of `document`, which the caller holds for as long as
     // the context it gets back, and `node` is one of its nodes.

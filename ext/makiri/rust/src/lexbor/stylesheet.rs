@@ -198,33 +198,21 @@ struct Conv<'a> {
     scratch: Vec<u8>,
 }
 
-/// `text`, as the CALLER wrote it.
+/// `text` - Lexbor's copy of the input between `begin` and `end` - as the
+/// CALLER wrote it.
 ///
-/// A rule Lexbor rejects carries its prelude copied out of the buffer Lexbor
-/// read, which after a `contains_guard` rewrite is not what the caller typed.
-/// Equal byte length means finding that copy gives the range to take from the
-/// original instead. A prelude that is not a verbatim substring, or that appears
-/// more than once, is left alone - the rewritten name beats the wrong range.
-fn as_written(c: &Conv, text: Vec<u8>) -> Result<Vec<u8>, Fail> {
-    let Some(parsed) = c.parsed else {
+/// Lexbor copied it out of the buffer it read, which after a `contains_guard`
+/// rewrite is not what the caller typed; the offsets are into that buffer, and
+/// the rewrite keeps every byte where it was, so the same range of the ORIGINAL
+/// is the caller's text - exactly, with no search. (A search for the copy,
+/// here before, was quadratic in the sheet and could pick an identical piece
+/// from another place, spelled differently in the original.) Offsets that do
+/// not fit keep Lexbor's text: the rewritten name beats a wrong range.
+fn as_written(c: &Conv, text: Vec<u8>, begin: usize, end: usize) -> Result<Vec<u8>, Fail> {
+    if c.parsed.is_none() || begin > end || end > c.css.len() {
         return Ok(text);
-    };
-    if text.is_empty() || parsed.len() != c.css.len() {
-        return Ok(text);
     }
-    let mut found = None;
-    for (i, w) in parsed.windows(text.len()).enumerate() {
-        if w == text.as_slice() {
-            if found.is_some() {
-                return Ok(text); /* ambiguous */
-            }
-            found = Some(i);
-        }
-    }
-    match found {
-        Some(i) => falloc::try_to_vec(&c.css[i..i + text.len()]).ok_or(Fail::Oom),
-        None => Ok(text),
-    }
+    falloc::try_to_vec(&c.css[begin..end]).ok_or(Fail::Oom)
 }
 
 unsafe fn declarations(
@@ -260,6 +248,17 @@ unsafe fn declarations(
                     s as *mut Ser as *mut c_void,
                 )
             })?;
+            /* Serialized from what Lexbor parsed - the rewritten buffer - so a
+             * rewritten name in a value (`--x: :lexbor-contains(1 2)`) came back
+             * as `:zzzzzzzzzzzzzzz(1 2)`. Such a value is taken from the
+             * caller's own text instead, by the offsets Lexbor recorded. */
+            let value =
+                if c.parsed.is_some() && crate::lexbor::contains_guard::may_hold_rewrite(&value) {
+                    let off = (*decl).offset;
+                    slice_trim(c.css, off.value_begin, off.value_end)?
+                } else {
+                    value
+                };
 
             if out
                 .falloc_push(Decl {
@@ -445,7 +444,7 @@ unsafe fn rules(
                     falloc::try_to_vec(b).ok_or(Fail::Oom)?
                 };
                 Some(Rule::BadStyle {
-                    selector_text: as_written(c, text)?,
+                    selector_text: as_written(c, text, (*bad).prelude_begin, (*bad).prelude_end)?,
                     declarations: declarations(c, (*bad).declarations)?,
                 })
             }

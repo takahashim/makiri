@@ -827,4 +827,39 @@ RSpec.describe "Makiri XPath" do
       expect(doc.at_xpath("//*[@a]", namespace_matching: :lax).name).to eq("f")
     end
   end
+
+  describe "XPath 1.0 semantics the engine had wrong" do
+    let(:x) { Makiri::XML("<r><p>5</p></r>") }
+
+    # §4.2's own examples: round(start) <= p < round(start) + round(length),
+    # each argument rounded on its own. Rounding the sum gave "23".
+    {
+      %q{substring("12345", 1.5, 2.6)} => "234",
+      %q{substring("12345", 0, 3)} => "12",
+      %q{substring("12345", 0 div 0, 3)} => "",
+      %q{substring("12345", 1, 0 div 0)} => "",
+      %q{substring("12345", -42, 1 div 0)} => "12345",
+      %q{substring("12345", -1 div 0, 1 div 0)} => "",
+      %q{substring("12345", 0.49999999999999994, 3)} => "12"
+    }.each do |expr, want|
+      it("#{expr} is #{want.inspect}") { expect(x.xpath(expr)).to eq(want) }
+    end
+
+    # §3.4: against a boolean, a node-set compares as its own boolean() - for
+    # < > <= >= as for = and !=, which already did.
+    {
+      "//p > true()" => false, "//q < true()" => true,
+      "true() < //p" => false, "//p >= true()" => true, "//p > 3" => true
+    }.each do |expr, want|
+      it("#{expr} is #{want}") { expect(x.xpath(expr)).to be(want) }
+    end
+
+    # A string is true iff it is non-empty; U+0000, which DOM text may hold,
+    # was read as a C string's end.
+    it "counts a string beginning with U+0000 as true" do
+      doc = Makiri.HTML("<p></p>")
+      doc.at_css("p").add_child(doc.create_text_node("\0abc"))
+      expect(doc.xpath("boolean(string(//p))")).to be(true)
+    end
+  end
 end

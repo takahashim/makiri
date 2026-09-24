@@ -81,4 +81,49 @@ RSpec.describe "node wrapper identity" do
     doc = Makiri::XML("<r/>")
     expect(doc.root.document).to equal(doc)
   end
+
+  # content= on an element and delete(name) went through Lexbor calls that
+  # DESTROY the nodes they remove. A wrapper still held for one pointed at freed
+  # arena memory, and the next node allocated there came back under that
+  # wrapper: a text node answering as an Element or an Attr (the invariant
+  # check found both). Makiri detaches, never destroys - so a held wrapper
+  # keeps its own node, and a new node gets its own wrapper.
+  describe "nodes a mutation removes" do
+    let(:doc) { Makiri::HTML("<div><p id=k><span>a</span><b>b</b></p></div>") }
+
+    def churn(doc, parent)
+      200.times do |i|
+        parent.add_child(doc.create_text_node("t#{i}"))
+        parent["a#{i}"] = "v"
+      end
+    end
+
+    def expect_classes_agree(doc)
+      want = { 1 => Makiri::Element, 2 => Makiri::Attr, 3 => Makiri::Text }
+      doc.xpath("//node() | //@*").each do |n|
+        expect(n).to be_a(want.fetch(n.node_type, Makiri::Node)), "#{n.class} for node type #{n.node_type}"
+      end
+    end
+
+    it "keeps children replaced by content= alive for their wrappers" do
+      para = doc.at_css("p")
+      kids = para.children.to_a
+      para.content = "x"
+      churn(doc, para)
+      expect(kids.map(&:name)).to eq(%w[span b])
+      expect(kids.map(&:parent)).to eq([nil, nil])
+      expect_classes_agree(doc)
+    end
+
+    it "keeps an attribute removed by delete alive for its wrapper" do
+      para = doc.at_css("p")
+      attr = para.attribute_nodes.first
+      para.delete("id")
+      churn(doc, para)
+      expect(attr.name).to eq("id")
+      expect(attr.value).to eq("k")
+      expect(attr.parent).to be_nil
+      expect_classes_agree(doc)
+    end
+  end
 end

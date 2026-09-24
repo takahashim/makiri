@@ -24,6 +24,7 @@
 
 #![forbid(unsafe_code)]
 
+mod bindings;
 mod c14n;
 mod out;
 mod xml;
@@ -47,6 +48,17 @@ pub enum Failure {
     /// re-declares prefixes deeply enough that resolving them all is not worth
     /// doing. Fails closed rather than running on.
     NamespaceBudget,
+    /// Canonical XML renders the declarations the document holds, and they
+    /// no longer give some name the namespace it has - an element moved out
+    /// from under its declaration, one removed, or an attribute given a
+    /// namespace by `set_attribute_ns`. Rendered anyway, the output named a
+    /// different namespace or an unbound prefix; canonical form cannot add
+    /// declarations the document lacks, so it refuses.
+    NamespaceMismatch,
+    /// A name's prefix is bound to nothing - a detached element built with
+    /// `q:e`, or an attribute whose prefix never resolved - so it has no
+    /// well-formed form: `xmlns:q=""` is forbidden and a bare `q:` is unbound.
+    UnboundPrefix,
 }
 
 /// The output ceiling for `doc`: generous, but proportional to its arena, so a

@@ -26,12 +26,12 @@ use crate::lexbor::css_parser::{
     AttrMatch, Attribute, Combinator, FunctionArg, ListPseudo, Lists, Nth, PseudoClass, Selector,
     Simple,
 };
-use crate::xpath::ast::{Axis, Expr, NodeTest, Op, Step, TestKind};
+use crate::xpath::ast::{Axis, Expr, Op, Step, TestKind};
 use crate::xpath::msg::{Reported, XP_ERR_LIMIT, XP_ERR_SYNTAX};
 
 /// The internal of-type position functions, whose names carry a leading \x01 so
 /// no user expression can name them.
-use crate::xpath::funcs::{FN_OF_TYPE_POS, FN_OF_TYPE_POS_LAST};
+use crate::xpath::funcs::{FN_CHILD_POS, FN_CHILD_POS_LAST, FN_OF_TYPE_POS, FN_OF_TYPE_POS_LAST};
 
 /* ------------------------------------------------------------------ *
  * simple selectors                                                   *
@@ -137,6 +137,24 @@ fn lower_attribute(b: &Build, s: Selector<'_>, at: Attribute<'_>) -> Built {
         return build::attr_ns(b, prefix, name);
     };
 
+    /* An empty value for ^= $= *= ~=, or a value holding whitespace for ~=,
+     * "represents nothing" (Selectors 4 §6.2-6.3), as the HTML matcher has it.
+     * Lowered as written they matched everything - starts-with(@a, '') is true
+     * with no @a at all, so [z^=""] found every element. */
+    let never = match at.op {
+        AttrMatch::Prefix | AttrMatch::Suffix | AttrMatch::Substring => value.is_empty(),
+        AttrMatch::Include => {
+            value.is_empty()
+                || value
+                    .iter()
+                    .any(|&c| matches!(c, b' ' | b'\t' | b'\n' | b'\r' | 0x0c))
+        }
+        _ => false,
+    };
+    if never {
+        return build::call(b, b"false", []);
+    }
+
     match at.op {
         /* [a=v] -> @a = 'v' */
         AttrMatch::Equal => build::binop(
@@ -161,13 +179,16 @@ fn lower_attribute(b: &Build, s: Selector<'_>, at: Attribute<'_>) -> Built {
             build::attr_ns(b, prefix, name),
             build::literal(b, value),
         ),
-        /* [a$=v] -> substring(@a, string-length(@a) - len + 1) = 'v' */
+        /* [a$=v] -> substring(@a, string-length(@a) - len + 1) = 'v', where len
+         * counts CHARACTERS: string-length and substring do, so a byte count
+         * missed any non-ASCII suffix ([d$="é"]). */
         AttrMatch::Suffix => {
             let slen = build::call1(b, b"string-length", build::attr_ns(b, prefix, name));
+            let chars = value.iter().filter(|&&c| c & 0xC0 != 0x80).count();
             let start = build::binop(
                 b,
                 Op::Add,
-                build::binop(b, Op::Sub, slen, build::num(b, value.len() as f64)),
+                build::binop(b, Op::Sub, slen, build::num(b, chars as f64)),
                 build::num(b, 1.0),
             );
             let sub = build::call2(b, b"substring", build::attr_ns(b, prefix, name), start);
@@ -205,81 +226,51 @@ fn not_axis(b: &Build, axis: Axis, nt: TestKind) -> Built {
 }
 
 /// The siblings a structural pseudo-class counts among.
+///
+/// Each is answered by an internal function reading a per-parent memo of
+/// positions (`xpath::funcs::SiblingPositions`), not by counting a sibling
+/// axis per candidate: `count(preceding-sibling::*)` per candidate is n^2 over
+/// a flat list, and a 5,000-entry sitemap took 5-14 s for `:first-of-type` and
+/// `:nth-child(2n)`.
 #[derive(Clone, Copy)]
-enum Siblings<'t> {
+enum Siblings {
     /// Every element sibling: the `-child` family.
     All,
-    /// Siblings named like the compound's type selector: a typed of-type
-    /// (`a:first-of-type`).
-    Named(&'t NodeTest),
-    /// Siblings with the element's OWN expanded name: an untyped of-type
-    /// (`:first-of-type`). Pure XPath 1.0 cannot say "same name as self", so
-    /// this is an internal function compared at eval time.
+    /// Siblings with the element's own expanded name: the `-of-type` family.
+    /// A typed compound (`a:nth-of-type`) is the same set - the candidate
+    /// passed the type test, which names one expanded name (`*|a` is lowered
+    /// to a wildcard plus a local-name predicate, not a name test), so its own
+    /// name is the test's.
     SameType,
 }
 
-impl<'t> Siblings<'t> {
-    /// The of-type set for a compound whose node test so far is `test`.
-    fn of_type(test: &'t NodeTest) -> Self {
-        if test.kind == TestKind::Name {
-            Siblings::Named(test)
-        } else {
-            Siblings::SameType
-        }
-    }
-
-    /// `axis::` restricted to this set, as a relative path - or None for
-    /// [`Siblings::SameType`], which no path can express.
-    fn path(self, b: &Build, axis: Axis) -> Option<Built> {
-        match self {
-            Siblings::All => Some(build::step_path(b, axis, TestKind::Wildcard)),
-            Siblings::Named(t) => Some(build::named_step_path(
-                b,
-                axis,
-                t.prefix.as_deref(),
-                t.local.as_deref().unwrap_or(&[]),
-            )),
-            Siblings::SameType => None,
+impl Siblings {
+    /// The internal position function counting along `axis`: from the start
+    /// when it looks back, from the end otherwise.
+    fn position_fn(self, axis: Axis) -> &'static [u8] {
+        let from_start = axis == Axis::PrecedingSibling;
+        match (self, from_start) {
+            (Siblings::All, true) => FN_CHILD_POS,
+            (Siblings::All, false) => FN_CHILD_POS_LAST,
+            (Siblings::SameType, true) => FN_OF_TYPE_POS,
+            (Siblings::SameType, false) => FN_OF_TYPE_POS_LAST,
         }
     }
 }
 
-/// The internal of-type position call: 1-based among same-type siblings,
-/// counting from the start when `axis` looks back, from the end otherwise.
-fn of_type_pos(b: &Build, axis: Axis) -> Built {
-    let name = if axis == Axis::PrecedingSibling {
-        FN_OF_TYPE_POS
-    } else {
-        FN_OF_TYPE_POS_LAST
-    };
-    build::call(b, name, [])
-}
-
-/// The 1-based position among `set`, counted along `axis`:
-/// `count(axis::test) + 1`.
-fn position(b: &Build, axis: Axis, set: Siblings<'_>) -> Built {
-    match set.path(b, axis) {
-        Some(path) => build::binop(
-            b,
-            Op::Add,
-            build::call1(b, b"count", path),
-            build::num(b, 1.0),
-        ),
-        None => of_type_pos(b, axis),
-    }
+/// The 1-based position among `set`, counted along `axis`.
+fn position(b: &Build, axis: Axis, set: Siblings) -> Built {
+    build::call(b, set.position_fn(axis), [])
 }
 
 /// "No sibling of `set` along `axis`" - first (looking back) or last (looking
 /// forward) among them.
-fn none_along(b: &Build, axis: Axis, set: Siblings<'_>) -> Built {
-    match set.path(b, axis) {
-        Some(path) => build::call1(b, b"not", path),
-        None => build::binop(b, Op::Eq, of_type_pos(b, axis), build::num(b, 1.0)),
-    }
+fn none_along(b: &Build, axis: Axis, set: Siblings) -> Built {
+    build::binop(b, Op::Eq, position(b, axis, set), build::num(b, 1.0))
 }
 
 /// Both first and last among `set`: the `only-` family.
-fn only(b: &Build, set: Siblings<'_>) -> Built {
+fn only(b: &Build, set: Siblings) -> Built {
     build::binop(
         b,
         Op::And,
@@ -290,7 +281,7 @@ fn only(b: &Build, set: Siblings<'_>) -> Built {
 
 /// The `:nth-*(an+b)` match condition over the position among `set` along
 /// `axis`.
-fn nth(b: &Build, axis: Axis, set: Siblings<'_>, anb: Nth) -> Built {
+fn nth(b: &Build, axis: Axis, set: Siblings, anb: Nth) -> Built {
     /* `c_long` from Lexbor's `lxb_css_syntax_anb_t` - 64-bit on LP64, 32-bit on
      * LLP64 - so the `as f64` below is a real conversion on either. */
     let (a, bb) = (anb.a as f64, anb.b as f64);
@@ -317,10 +308,9 @@ fn nth(b: &Build, axis: Axis, set: Siblings<'_>, anb: Nth) -> Built {
     build::binop(b, Op::And, modz, qge)
 }
 
-/// The non-functional structural pseudo-classes. `test` - the compound's node
-/// test so far - supplies the element name for the of-type family.
-fn lower_pseudo_simple(b: &Build, pc: PseudoClass, test: &NodeTest) -> Built {
-    let of_type = Siblings::of_type(test);
+/// The non-functional structural pseudo-classes.
+fn lower_pseudo_simple(b: &Build, pc: PseudoClass) -> Built {
+    let of_type = Siblings::SameType;
     match pc {
         PseudoClass::FirstChild => none_along(b, Axis::PrecedingSibling, Siblings::All),
         PseudoClass::LastChild => none_along(b, Axis::FollowingSibling, Siblings::All),
@@ -329,7 +319,17 @@ fn lower_pseudo_simple(b: &Build, pc: PseudoClass, test: &NodeTest) -> Built {
         PseudoClass::LastOfType => none_along(b, Axis::FollowingSibling, of_type),
         PseudoClass::OnlyOfType => only(b, of_type),
         /* not(node()) */
-        PseudoClass::Empty => not_axis(b, Axis::Child, TestKind::Node),
+        /* No child but comments, as the HTML matcher (Lexbor) has it: an
+         * element, text or processing instruction makes it non-empty. `not(node())`
+         * counted a comment too, so <e><!--c--></e> was empty only in HTML. */
+        PseudoClass::Empty => build::fold(
+            b,
+            Op::And,
+            [TestKind::Wildcard, TestKind::Text, TestKind::Pi]
+                .into_iter()
+                .map(|kind| not_axis(b, Axis::Child, kind)),
+            c":empty",
+        ),
         /* not(parent::*) */
         PseudoClass::Root => not_axis(b, Axis::Parent, TestKind::Wildcard),
         PseudoClass::Other => Err(b.fail(XP_ERR_SYNTAX, c"unsupported CSS pseudo-class")),
@@ -366,7 +366,7 @@ fn child_text_pred(b: &Build, pred: Built) -> Built {
 
 /// The functional pseudo-classes: `:nth-*(an+b)`, `:not()`, `:is()`/`:where()`,
 /// `:has()`, `:lexbor-contains()`.
-fn lower_pseudo_func(b: &Build, arg: FunctionArg<'_>, test: &NodeTest) -> Built {
+fn lower_pseudo_func(b: &Build, arg: FunctionArg<'_>) -> Built {
     match arg {
         FunctionArg::Nth {
             from_end,
@@ -385,7 +385,7 @@ fn lower_pseudo_func(b: &Build, arg: FunctionArg<'_>, test: &NodeTest) -> Built 
                 Axis::PrecedingSibling
             };
             let set = if of_type {
-                Siblings::of_type(test)
+                Siblings::SameType
             } else {
                 Siblings::All
             };
@@ -481,10 +481,8 @@ fn fold_simple(
         Simple::Class => push_pred(b, preds, build::token_match(b, None, b"class", s.name())),
 
         Simple::Attribute(at) => push_pred(b, preds, lower_attribute(b, s, at)),
-        Simple::PseudoClass(pc) => push_pred(b, preds, lower_pseudo_simple(b, pc, &step.test)),
-        Simple::PseudoClassFunction(arg) => {
-            push_pred(b, preds, lower_pseudo_func(b, arg, &step.test))
-        }
+        Simple::PseudoClass(pc) => push_pred(b, preds, lower_pseudo_simple(b, pc)),
+        Simple::PseudoClassFunction(arg) => push_pred(b, preds, lower_pseudo_func(b, arg)),
 
         Simple::PseudoElement => {
             Err(b.fail(XP_ERR_SYNTAX, c"CSS pseudo-elements are not selectable"))

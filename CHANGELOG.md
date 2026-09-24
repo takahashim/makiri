@@ -2,7 +2,104 @@
 
 ## [Unreleased]
 
+### Security
+
+* `content=` on an HTML element and `delete(name)` no longer free the nodes they
+  remove. Both went through Lexbor calls that destroy them, while a Ruby
+  wrapper may still hold one: the wrapper then read freed memory, and the next
+  node allocated there came back under it - a text node answering as an
+  Element or an Attr. They detach now, as every other mutator does.
+* `el[name] = value` on an attribute the element already has no longer goes
+  through `lxb_dom_element_set_attribute`, which destroys the attribute - still
+  linked into the element - when storing the new value runs out of memory. The
+  value is set directly, and a failure leaves the attribute as it was.
+* A checked argument String is locked while its bytes are borrowed. A call
+  converts its arguments one at a time, and a later argument's `#to_s` could
+  rewrite an earlier one - putting a NUL into a name that had passed its
+  check, or growing it so the view read freed memory into the DOM. Such a
+  `#to_s` now raises "can't modify string; temporarily locked".
+* A receiver frozen by its own argument's `#to_s` is no longer edited.
+* HTML element and attribute names follow the WHATWG DOM's rules: `name=`,
+  `create_element`, `[]=` and `set_attribute_ns` raise `ArgumentError` for a
+  name holding whitespace, `/`, `>` (or `=`), which was written into the markup
+  as it stood - `name = "img src=x onerror=alert(1)"` serialized as that tag.
+  See NOKOGIRI_DIFFERENCES.md.
+* More inputs whose cost outgrew their size: a single-context reverse-axis
+  step (`preceding-sibling`, `ancestor`) is reversed rather than merge-sorted
+  (4000 siblings: 3.9 s); XML CSS `:nth-child` / `:nth-of-type` /
+  `:first-of-type` and kin read a per-parent memo of positions (a 10k-entry
+  sitemap took seconds, or hit the budget); a CDATA value full of `]]>` and a
+  stylesheet full of rewritten `:lexbor-contains()` rules are linear again.
+
+* A mutator's argument can no longer rebuild the document's indexes in the
+  middle of the edit. Arguments are converted with `#to_s`, which is arbitrary
+  Ruby; a query made there rebuilt the indexes from the tree the edit was about
+  to change, after which `#text` read text storage the edit had released (a
+  read of freed memory) and `//p` found removed nodes. Both representations;
+  every mutator.
+* Inputs whose cost grew faster than their size, with no budget to stop them,
+  are linear or budgeted now: the `preceding` axis (depth 2000 took 8.8 s),
+  `Makiri::Lexbor::CSS.parse_stylesheet` after one rejected
+  `:lexbor-contains()` (186 KB took 4.6 s), the XML parser's duplicate-attribute
+  check (100 elements of 4096 attributes took 16.6 s), `contains` /
+  `substring-before` / `substring-after` and `translate` over long strings, and
+  - charged to the op budget, so they raise `XPath::LimitExceeded` - a node's
+  string-value, `lang()` and CSS `:nth-of-type` over XML.
+* A panic below mutators, factories, `clone_node` / `import_node`,
+  `XPathContext.new` and its setters, `Node#line`, `Attr#parent` and `#<=>` -
+  all of which walk a tree built from input - raises `Makiri::InternalError`
+  rather than `fatal`, as parsing and querying already did.
+
 ### Fixed
+
+* A rejected stylesheet rule's `selector_text` is sliced by Lexbor's own
+  offsets, so it can no longer come from an identical piece elsewhere in the
+  sheet, and a declaration value no longer shows the `:lexbor-contains()`
+  guard's `zzzz` rewrite.
+* An HTML attribute's parent is Lexbor's `attr->owner`, read live: a detached
+  element's attribute had a parent or not depending on whether the document
+  had been queried first, and a fragment's attributes had none.
+* XML namespaces: an attribute whose prefix was unbound on a detached element
+  is resolved when the element is inserted (it was written as `xmlns:ns1=""`),
+  insertion refuses two attributes that end up with one (namespace, local
+  name), a rename while detached is resolved on insertion, both writers refuse
+  a prefix bound to nothing, and `set_attribute_ns` refuses a namespace that
+  does not fit the name (a prefix with none, the XML namespace under another
+  prefix, ...).
+
+* `Makiri::XML#to_xml` output re-parses in cases it did not: a CDATA value
+  holding `]]>` (adjacent sections merge, as in libxml2) is split across two
+  sections as libxml2 writes it; a SYSTEM id holding `"` is single-quoted; an
+  attribute with a namespace but no prefix gets a declared prefix instead of
+  losing its namespace; an `xmlns` attribute contradicting a no-namespace
+  element is left out rather than inventing `xmlns:ns1=""` (see
+  NOKOGIRI_DIFFERENCES.md); and an element copied in but not yet inserted keeps
+  its own declaration.
+* The XML mutators enforce the rules the parser does. `[]=`,
+  `set_attribute_ns` and `name=` refuse a namespace declaration Namespaces in
+  XML §3 forbids (`xmlns:xml` to another URI, `xmlns:xmlns`, a reserved URI
+  under another prefix) and a second attribute with the same namespace and
+  local name; `create_document_type` refuses a name that is no QName and a
+  PUBLIC id outside PubidChar.
+* `Makiri::XML::Node#canonicalize` raises when the document's declarations no
+  longer give a name its namespace (a node moved from under its declaration,
+  one removed), where it rendered a different namespace or an unbound prefix.
+* Importing HTML into XML no longer writes `xmlns:xmlns` for a foreign
+  element's `xmlns:xlink`, which made the output unreadable, and no longer turns
+  an HTML element's `xmlns` attribute into a declaration that moved it out of
+  XHTML.
+* An HTML document refuses a second root element and a text child, as the DOM
+  requires and the XML side already did.
+* XPath: `substring()` rounds each argument by `round()`'s rule, as §4.2 says
+  (`substring("12345", 1.5, 2.6)` is `"234"`, was `"23"`); `<`, `>`, `<=`, `>=`
+  between a node-set and a boolean compare the node-set's boolean (§3.4), as
+  `=` did; and a string beginning with U+0000 is true.
+* CSS over XML agrees with the HTML matcher on an empty attribute value
+  (`[a^=""]` matched every element, attribute or not) and whitespace in `~=`
+  (both match nothing), on `$=` with a non-ASCII value, and on `:empty` beside
+  a comment.
+* `Node#line` of a node copied from another document is nil, where it
+  answered with a line of this document the node was never on.
 
 * `Node#path` round-trips through `#at_xpath` for CDATA sections and processing
   instructions, and for text next to a CDATA section. A CDATA section is a

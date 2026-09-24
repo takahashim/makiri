@@ -329,7 +329,7 @@ impl<'d, D: Dom<'d>> Context<'d, D> {
     fn index_error(&self) -> Error {
         Error::with(
             XP_ERR_OOM,
-            format_args!("out of memory building the attribute index"),
+            format_args!("out of memory building the element index"),
         )
     }
 

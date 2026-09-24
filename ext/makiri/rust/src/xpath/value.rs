@@ -292,6 +292,13 @@ pub fn val_clone<N: Copy>(src: &Val<N>, err: ErrSink) -> Result<Val<N>, Reported
  * Built into a buffer whose ceiling is the per-evaluate byte cap, so an append
  * fails closed past it - there is never a partial or truncated result. */
 
+/// Why a string-value could not be built: the buffer refused (its byte cap, or
+/// OOM), or the walk ran out of the evaluation's op budget.
+enum Unbuilt {
+    Buf(BufError),
+    Budget(Reported),
+}
+
 /// Append the string-value of every character-data descendant of `node`, in
 /// document order.
 ///
@@ -299,19 +306,28 @@ pub fn val_clone<N: Copy>(src: &Val<N>, err: ErrSink) -> Result<Val<N>, Reported
 /// text, not a distinct node type). The axis walker is iterative through parent
 /// links, so an adversarially deep tree cannot overflow the stack; only an
 /// element has children below `node`, so the walk goes into elements only.
+///
+/// Each visited node is charged to the op budget. The byte cap alone did not
+/// bound the work: the walk is over every descendant, text or not, and a
+/// predicate runs it once per candidate - `//span[. = 'x']` over 16,000 nested
+/// spans walked a quadratic number of empty elements for two seconds.
 fn append_text_descendants<'d, D: Dom<'d>>(
     doc: D,
     node: D::Node,
     buf: &mut Buf,
-) -> Result<(), BufError> {
+    budget: &Budget,
+) -> Result<(), Unbuilt> {
     let flow = walk_descendants::<D, _, _>(doc, node, &mut |n| {
+        if let Err(r) = budget.charge_op() {
+            return ControlFlow::Break(Unbuilt::Budget(r));
+        }
         if !matches!(doc.node_type(n), NTYPE_TEXT | NTYPE_CDATA_SECTION) {
             return ControlFlow::Continue(());
         }
         /* LIMIT or OOM - the caller fails closed */
         match doc.append_own_text(n, buf) {
             Ok(()) => ControlFlow::Continue(()),
-            Err(e) => ControlFlow::Break(e),
+            Err(e) => ControlFlow::Break(Unbuilt::Buf(e)),
         }
     });
     match flow {
@@ -324,16 +340,21 @@ fn build_string_value<'d, D: Dom<'d>>(
     doc: D,
     node: D::Node,
     buf: &mut Buf,
-) -> Result<(), BufError> {
+    budget: &Budget,
+) -> Result<(), Unbuilt> {
     if let Some(a) = doc.as_attr(node) {
         let v = doc.attr_value(a);
-        return if v.is_empty() { Ok(()) } else { buf.append(v) };
+        return if v.is_empty() {
+            Ok(())
+        } else {
+            buf.append(v).map_err(Unbuilt::Buf)
+        };
     }
     match doc.node_type(node) {
         NTYPE_TEXT | NTYPE_CDATA_SECTION | NTYPE_COMMENT | NTYPE_PI => {
-            doc.append_own_text(node, buf)
+            doc.append_own_text(node, buf).map_err(Unbuilt::Buf)
         }
-        _ => append_text_descendants::<D>(doc, node, buf),
+        _ => append_text_descendants::<D>(doc, node, buf, budget),
     }
 }
 
@@ -347,21 +368,19 @@ pub fn node_to_owned_text<'d, D: Dom<'d>>(
 ) -> Result<Text, Reported> {
     let max = budget.limits.max_string_bytes;
     let mut buf = Buf::new(max);
-    let built = build_string_value::<D>(doc, node, &mut buf).map_err(|e| {
-        if e == BufError::Limit {
-            err_setf!(
-                budget.sink(),
-                XP_ERR_LIMIT,
-                "string size limit exceeded ({} bytes) while building node string-value",
-                max
-            )
-        } else {
-            err_setf!(
-                budget.sink(),
-                XP_ERR_OOM,
-                "out of memory building node string-value"
-            )
-        }
+    let built = build_string_value::<D>(doc, node, &mut buf, budget).map_err(|e| match e {
+        Unbuilt::Budget(reported) => reported,
+        Unbuilt::Buf(BufError::Limit) => err_setf!(
+            budget.sink(),
+            XP_ERR_LIMIT,
+            "string size limit exceeded ({} bytes) while building node string-value",
+            max
+        ),
+        Unbuilt::Buf(_) => err_setf!(
+            budget.sink(),
+            XP_ERR_OOM,
+            "out of memory building node string-value"
+        ),
     });
     built?;
     let owned = buf.steal().map_err(|_| {
@@ -427,7 +446,9 @@ pub fn val_to_boolean<N>(v: &Val<N>) -> bool {
         ValRef::Number(d) => !(d == 0.0 || d.is_nan()),
         /* A string that starts with U+0000 is false, as it was when it was read
          * as a C string. */
-        ValRef::String(s) => s.as_slice().first().is_some_and(|&b| b != 0),
+        /* Non-empty, by length (§4.3). A first byte of 0 is U+0000, which DOM
+         * text may hold - reading it as a C string's end made "\0abc" false. */
+        ValRef::String(s) => !s.as_slice().is_empty(),
         ValRef::NodeSet(ns) => !ns.is_empty(),
     }
 }

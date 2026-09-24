@@ -159,8 +159,8 @@ impl<'a> CompiledTest<'a> {
 /// `want`. The attribute axis and the `[@name]` fast path both ask this, so the
 /// two cannot answer differently - they once did, in XML's lax mode.
 ///
-/// `owner` is the attribute's element, which decides whether names fold case;
-/// the HTML index backfills it as the attribute's parent.
+/// `owner` is the attribute's element (its parent in both backends), which
+/// decides whether names fold case.
 pub fn unprefixed_attr_matches<'d, D: Dom<'d>>(
     doc: D,
     owner: Option<D::Node>,

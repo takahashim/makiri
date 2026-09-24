@@ -76,12 +76,19 @@ pub enum BytesContract {}
 /// container, which the GC does not scan), and read through `&self`.
 ///
 /// Anchoring keeps the String alive and in place; it does not stop Ruby code
-/// from mutating it. The bytes are read only while no Ruby code runs, which is
-/// why reading them is `unsafe`.
+/// from mutating it. A CHECKED view ([`RubyText`], [`RubyData`]) therefore also
+/// holds the String's temporary lock ([`RubyStr::locked`]) for its life: a
+/// mutator converts its arguments one after another, and the second one's
+/// `#to_s` is arbitrary Ruby that could rewrite the first - putting a NUL into
+/// a name that had passed the check, or reallocating it so the view read freed
+/// memory. Locked, that `#to_s` raises instead. The unchecked [`RubyBytes`]
+/// (the parse source) is not locked; it is copied before the GVL is released.
 pub struct RubyStr<C> {
     value: VALUE,
     ptr: *const c_char,
     len: usize,
+    /// Whether this view took the String's temporary lock, and so releases it.
+    owns_lock: bool,
     contract: core::marker::PhantomData<C>,
 }
 
@@ -97,8 +104,27 @@ impl<C> RubyStr<C> {
             value,
             ptr,
             len,
+            owns_lock: false,
             contract: core::marker::PhantomData,
         }
+    }
+
+    /// The view, with its String held immutable until the view drops: Ruby
+    /// raises "can't modify string; temporarily locked" on any change,
+    /// reallocation included (`IO#write` holds its buffer the same way).
+    ///
+    /// `rb_str_locktmp` raises when the String is already locked - by another
+    /// view of the same argument passed twice, or by an IO - and the holder of
+    /// that lock releases it; this view then only anchors. Taken right after
+    /// the borrow, with no Ruby run in between.
+    pub(crate) fn locked(mut self) -> Self {
+        if !self.ptr.is_null() {
+            let v = self.value;
+            // SAFETY: `v` is the live String this view borrows; `protect`
+            // turns the already-locked raise into `Err`.
+            self.owns_lock = protect(|| unsafe { rb_sys::rb_str_locktmp(v) }).is_ok();
+        }
+        self
     }
 
     /// No String at all: a null pointer, which Lexbor and the engine read as an
@@ -108,6 +134,7 @@ impl<C> RubyStr<C> {
             value: rb_sys::Qnil as VALUE,
             ptr: core::ptr::null(),
             len: 0,
+            owns_lock: false,
             contract: core::marker::PhantomData,
         }
     }
@@ -143,6 +170,12 @@ impl RubyText {
 
 impl<C> Drop for RubyStr<C> {
     fn drop(&mut self) {
+        if self.owns_lock {
+            let v = self.value;
+            // SAFETY: the String this view locked, still alive (the view
+            // anchors it). Only the locker unlocks, so it is still locked.
+            let _ = protect(|| unsafe { rb_sys::rb_str_unlocktmp(v) });
+        }
         core::hint::black_box(self.value);
     }
 }
@@ -291,7 +324,7 @@ pub fn ruby_verified_text(in_: Value, what: &CStr) -> Result<RubyText, Error> {
     // view anchors it.
     unsafe {
         let (value, ptr, len) = borrow(s.as_raw());
-        Ok(RubyText::from_raw_parts(value, ptr, len))
+        Ok(RubyText::from_raw_parts(value, ptr, len).locked())
     }
 }
 
@@ -309,7 +342,7 @@ pub fn ruby_verified_data(in_: Value, what: &CStr) -> Result<RubyData, Error> {
         if let Some(problem) = text_check(s, ptr, len).data_problem() {
             return Err(text_error(what, problem));
         }
-        Ok(RubyData::from_raw_parts(value, ptr, len))
+        Ok(RubyData::from_raw_parts(value, ptr, len).locked())
     }
 }
 
@@ -565,6 +598,6 @@ pub unsafe fn ruby_try_verified_text(
     }
     match text_check(sv, ptr, len).reason() {
         Some(reason) => Err(reason),
-        None => Ok(RubyText::from_raw_parts(value, ptr, len)),
+        None => Ok(RubyText::from_raw_parts(value, ptr, len).locked()),
     }
 }

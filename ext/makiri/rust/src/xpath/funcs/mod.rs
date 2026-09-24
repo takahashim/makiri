@@ -15,6 +15,7 @@
 /// The functions beyond XPath 1.0's library: the Nokogiri builtins and the
 /// CSS lowering's internal hooks.
 mod ext;
+pub(crate) use ext::SiblingPositions;
 
 use super::abi::*;
 use super::axis::walk_descendants;
@@ -38,6 +39,11 @@ use core::ops::ControlFlow;
 /// nothing.
 pub const FN_OF_TYPE_POS: &[u8] = b"\x01of-type-pos";
 pub const FN_OF_TYPE_POS_LAST: &[u8] = b"\x01of-type-pos-last";
+/// The same pair for the `-child` family: the position among ALL element
+/// siblings. XPath can say that (`count(preceding-sibling::*) + 1`), but per
+/// candidate it is n^2 over a flat list; the hook reads a per-parent memo.
+pub const FN_CHILD_POS: &[u8] = b"\x01child-pos";
+pub const FN_CHILD_POS_LAST: &[u8] = b"\x01child-pos-last";
 
 /// Namespace URI registered from Nokogiri's XPath context, so prefixed names
 /// like "nokogiri-builtin:css-class" resolve.
@@ -132,6 +138,8 @@ enum Builtin {
     LocalNameIs,
     OfTypePos,
     OfTypePosLast,
+    ChildPos,
+    ChildPosLast,
 }
 
 /// THE list of built-ins: each name once, with its library and its purity. The
@@ -179,6 +187,8 @@ const BUILTINS: &[(Library, &[u8], Builtin, Purity)] = {
          * lowering reaches them - and it runs only for XML today. */
         (Core, FN_OF_TYPE_POS, OfTypePos, Impure),
         (Core, FN_OF_TYPE_POS_LAST, OfTypePosLast, Impure),
+        (Core, FN_CHILD_POS, ChildPos, Impure),
+        (Core, FN_CHILD_POS_LAST, ChildPosLast, Impure),
         /* Nokogiri's builtins, in its builtin namespace */
         (Nokogiri, b"css-class", CssClass, Impure),
         (Nokogiri, b"local-name-is", LocalNameIs, Impure),
@@ -219,6 +229,8 @@ impl Builtin {
             Builtin::LocalNameIs => ext::fn_local_name_is::<D> as FnImpl<'e, 'd, D>,
             Builtin::OfTypePos => ext::fn_of_type_pos::<D> as FnImpl<'e, 'd, D>,
             Builtin::OfTypePosLast => ext::fn_of_type_pos_last::<D> as FnImpl<'e, 'd, D>,
+            Builtin::ChildPos => ext::fn_child_pos::<D> as FnImpl<'e, 'd, D>,
+            Builtin::ChildPosLast => ext::fn_child_pos_last::<D> as FnImpl<'e, 'd, D>,
         }
     }
 }
@@ -366,14 +378,23 @@ where
     f(a.as_slice(), b.as_slice())
 }
 
+/// The byte offset of the first `needle` in `hay`, in time linear in both and
+/// with no allocation.
+///
+/// A `windows(n).position(..)` scan is O(hay x needle), which the input picks:
+/// `contains()` of a 400 KB string took 2.4 s. `str::find` runs std's Two-Way
+/// search, which is linear; XPath strings are valid UTF-8 (DOM text, verified
+/// expressions and variables), and a match of valid UTF-8 in valid UTF-8 starts
+/// on a character boundary, so its offset is the byte search's. Called once
+/// per function call - it validates both strings, so a caller must not loop
+/// it over the rest of one haystack. Bytes that are not UTF-8 get the plain
+/// scan: slower, never wrong.
 fn find_bytes(hay: &[u8], needle: &[u8]) -> Option<usize> {
-    if needle.is_empty() {
-        return Some(0);
+    match (core::str::from_utf8(hay), core::str::from_utf8(needle)) {
+        (Ok(h), Ok(n)) => h.find(n),
+        _ if needle.is_empty() => Some(0),
+        _ => hay.windows(needle.len()).position(|w| w == needle),
     }
-    if needle.len() > hay.len() {
-        return None;
-    }
-    hay.windows(needle.len()).position(|w| w == needle)
 }
 
 /// The number of characters in valid UTF-8; a stray continuation byte counts as
@@ -751,23 +772,28 @@ fn fn_substring<'e, 'd, D: Dom<'d>>(
     let err = ev.budget.sink();
     arity(args.len(), 2, 3, err.clone(), "substring")?;
     let s = to_text::<D>(&args[0], ev)?;
-    let start_d = to_number::<D>(&args[1], ev)?;
     let bytes = s.as_slice();
     let nchars = count_chars(bytes);
+    /* §4.2: the characters at positions p with
+     *   round(start) <= p < round(start) + round(length)
+     * - each argument rounded on its own, by round()'s own rule. Rounding the
+     * SUM instead gave substring("12345", 1.5, 2.6) = "23" where the spec's own
+     * example is "234", and floor(x + 0.5) rounded 0.49999999999999994 up. */
+    let rstart = round_half_up(to_number::<D>(&args[1], ev)?);
     let end_d = match args.get(2) {
-        Some(a) => start_d + to_number::<D>(a, ev)?,
-        None => nchars as f64 + 1.0,
+        Some(a) => rstart + round_half_up(to_number::<D>(a, ev)?),
+        None => f64::INFINITY,
     };
 
-    if start_d.is_nan() || end_d.is_nan() {
+    if rstart.is_nan() || end_d.is_nan() {
         return string(b"", err.clone(), "substring");
     }
-    /* Round, then clamp AS DOUBLES before any cast: start/end can be infinite
-     * or beyond i64 (`substring(s, 1 div 0)`), where casting first would be
-     * undefined in C and saturating here - either way not the spec's clip. */
+    /* Clamp AS DOUBLES before any cast: start/end can be infinite or beyond
+     * i64 (`substring(s, 1 div 0)`), where a cast would saturate - not the
+     * spec's clip. */
     let imax = nchars as f64 + 1.0;
-    let rstart = (start_d + 0.5).floor().clamp(1.0, imax);
-    let rend = (end_d + 0.5).floor().clamp(1.0, imax);
+    let rstart = rstart.clamp(1.0, imax);
+    let rend = end_d.clamp(1.0, imax);
     if rend <= rstart {
         return string(b"", err.clone(), "substring");
     }
@@ -862,8 +888,13 @@ fn fn_translate<'e, 'd, D: Dom<'d>>(
     /* A character is never shorter than a byte, so the byte length bounds the
      * count - reserving up front keeps a failed allocation an XPath OOM rather
      * than the abort a growing Vec would give under `panic = "abort"`. */
-    let mut from_cp = try_vec::<char>(fv.len(), err.clone(), "translate")?;
-    from_cp.extend(fv.chars());
+    /* `from` as (character, its FIRST position), sorted by character, so each
+     * input character is a binary search rather than a scan of `from`: that
+     * scan was O(string x from), both up to the byte cap. */
+    let mut from_cp = try_vec::<(char, usize)>(fv.len(), err.clone(), "translate")?;
+    from_cp.extend(fv.chars().enumerate().map(|(k, c)| (c, k)));
+    from_cp.sort_unstable();
+    from_cp.dedup_by_key(|&mut (c, _)| c); /* keeps the first, the smallest k */
     let mut to_cp = try_vec::<char>(tv.len(), err.clone(), "translate")?;
     to_cp.extend(tv.chars());
 
@@ -873,7 +904,11 @@ fn fn_translate<'e, 'd, D: Dom<'d>>(
     let mut buf = Buf::new(ev.budget.limits.max_string_bytes);
     let mut enc = [0u8; 4];
     for c in sv.chars() {
-        let emit: Option<&str> = match from_cp.iter().position(|&f| f == c) {
+        let found = from_cp
+            .binary_search_by_key(&c, |&(f, _)| f)
+            .ok()
+            .map(|i| from_cp[i].1);
+        let emit: Option<&str> = match found {
             None => Some(c.encode_utf8(&mut enc)), /* not in `from`: keep it */
             Some(k) if k < to_cp.len() => Some(to_cp[k].encode_utf8(&mut enc)),
             Some(_) => None, /* past `to`: drop it */
@@ -957,9 +992,12 @@ fn fn_lang<'e, 'd, D: Dom<'d>>(
     let want = to_text::<D>(&args[0], ev)?;
     let want = want.as_slice();
     /* Walk the ancestors for the host's language attributes
-     * (`Dom::LANG_ATTRIBUTES`). */
+     * (`Dom::LANG_ATTRIBUTES`), a tick each: a predicate runs this per
+     * candidate, and `//span[lang('en')]` over 16,000 nested spans climbed a
+     * quadratic number of ancestors, uncharged, for 4.5 s. */
     let mut p = focus.node;
     while let Some(n) = p {
+        ev.budget.charge_op()?;
         if doc.node_type(n) == NTYPE_ELEMENT {
             let v = D::LANG_ATTRIBUTES
                 .iter()

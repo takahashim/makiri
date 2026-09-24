@@ -65,21 +65,6 @@ pub fn text_index_string(document: Value, node: RawNode) -> Result<Option<Value>
     found.transpose()
 }
 
-/// The element that owns `attr` through the attr->owner index.
-///
-/// `Err` when the index cannot be built (out of memory) - distinct from a node
-/// the index does not know, which is `Ok(None)`. The owner is borrowed for as
-/// long as the caller borrows `rb_doc`, the Document that keeps it alive.
-pub fn attribute_owner(rb_doc: &Value, attr: RawNode) -> Result<Option<HtmlNode<'_>>, Error> {
-    with_html_parsed(*rb_doc, |p| match p.dom_index() {
-        None => Err(makiri_error(
-            "could not build the attribute index (out of memory)",
-        )),
-        // SAFETY: an owner the live index answers is a live node of this document.
-        Some(i) => Ok(i.owner_of(attr).map(|o| unsafe { o.as_node() })),
-    })?
-}
-
 /// The 1-based source line for `node`, or 0 when unknown.
 pub fn node_line(rb_doc: Value, node: RawNode) -> usize {
     with_html_parsed_known(rb_doc, |p| {
@@ -232,22 +217,51 @@ pub fn wrap_node(node: Option<HtmlNode<'_>>, document: Value) -> Value {
  * structural mutation                                                *
  * ------------------------------------------------------------------ */
 
-/// A mutable handle to the receiver, after the frozen and evaluation guards.
+/// The receiver cleared for an edit - not frozen, its document not under
+/// evaluation - and the PROOF of it: [`edit`] is the only way to build one and
+/// [`HtmlEdit::node`] the only way to spend it. The XML side's `Editing`.
 ///
-/// A node the caller has frozen is immutable (FrozenError), and a document an
-/// XPath handler is being evaluated over refuses to change.
-///
-/// It is also where the document's indexes are dropped. Every change to a tree
-/// starts here, so no method can forget to, on any path out - a failed edit
-/// included. Before the change rather than after it is as good: nothing between
-/// here and the change runs a query that could rebuild them.
-pub fn edit(this: &HtmlSelf) -> Result<HtmlNodeMut<'_>, Error> {
+/// The checks and the index drop are two steps on purpose. The checks come
+/// first, so a frozen receiver is reported before a bad argument. The drop
+/// comes last, once every argument is converted: converting one runs its
+/// `#to_s`, which is arbitrary Ruby, and a query there rebuilt the indexes from
+/// the tree the edit was about to change - after which `#text` read the text
+/// the edit had released, and `//p` found the nodes it had removed.
+pub struct HtmlEdit<'a> {
+    this: &'a HtmlSelf,
+}
+
+/// Clear the receiver for an edit. Convert every argument after this and
+/// before [`HtmlEdit::node`].
+pub fn edit(this: &HtmlSelf) -> Result<HtmlEdit<'_>, Error> {
     crate::bridge::ruby::check_frozen(this.value)?;
     ensure_document_mutable(this.document)?;
-    invalidate_indexes(this.document);
-    // SAFETY: the checks above are exactly what the type asks for - the
-    // receiver is not frozen, and no XPath evaluation is reading its document.
-    Ok(unsafe { HtmlNodeMut::assume_mutable(this.raw().as_node()) })
+    Ok(HtmlEdit { this })
+}
+
+impl<'a> HtmlEdit<'a> {
+    /// The receiver's node, read-only, for a check that no argument can
+    /// change (its node type).
+    pub fn node_type(&self) -> u32 {
+        self.this.node().node_type()
+    }
+
+    /// The mutable handle, with the document's indexes dropped. From here to
+    /// the change nothing may run Ruby - every argument is already converted -
+    /// so nothing can rebuild them.
+    ///
+    /// Both guards are checked again, since an argument's `#to_s` ran between
+    /// `edit` and here: one that froze the receiver had its edit go through.
+    /// `edit` checked first only so a frozen receiver is still reported ahead
+    /// of a bad argument.
+    pub fn node(&self) -> Result<HtmlNodeMut<'a>, Error> {
+        crate::bridge::ruby::check_frozen(self.this.value)?;
+        ensure_document_mutable(self.this.document)?;
+        invalidate_indexes(self.this.document);
+        // SAFETY: the receiver is not frozen and no XPath evaluation is
+        // reading its document - both checked just now.
+        Ok(unsafe { HtmlNodeMut::assume_mutable(self.this.raw().as_node()) })
+    }
 }
 
 /// A detached copy of `src` in `doc` - `<template>` contents included - or a
@@ -308,7 +322,7 @@ fn release_from_tree(node: HtmlNodeMut<'_>) {
 /// [`Insertion::check`]); after that only the adoption copy can fail, and it
 /// too runs before a link is touched.
 pub fn insert(this: &HtmlSelf, rb_incoming: Value, place: Place) -> Result<Value, Error> {
-    let target = edit(this)?;
+    let target = edit(this)?.node()?;
     let incoming = arg_node(&rb_incoming)?;
     /* The argument is relinked too - `place` changes its parent and siblings, and
      * an adoption removes it from its own document - so a frozen argument is a
@@ -346,6 +360,8 @@ fn refused(e: PreInsertError, place: Place) -> Error {
         PreInsertError::DoctypeAfterElement | PreInsertError::ElementBeforeDoctype => {
             "a doctype must precede the document element"
         }
+        PreInsertError::SecondDocumentElement => "the document already has a root element",
+        PreInsertError::TextUnderDocument => "text cannot be a child of the document",
     })
 }
 

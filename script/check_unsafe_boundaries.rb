@@ -33,10 +33,10 @@ UNSAFE_ISLANDS = {
   "bridge/doc.rs" => 5,
   "bridge/fragment.rs" => 6,
   "bridge/gvl.rs" => 4,
-  "bridge/html.rs" => 32,
+  "bridge/html.rs" => 31,
   "bridge/node_set.rs" => 9,
   "bridge/ruby.rs" => 24,
-  "bridge/string.rs" => 30,
+  "bridge/string.rs" => 32,
   "bridge/typed.rs" => 21,
   "bridge/wrapper.rs" => 17,
   "bridge/xml.rs" => 14,
@@ -56,8 +56,8 @@ UNSAFE_ISLANDS = {
   "lexbor/adapter/arena_bytes.rs" => 3,
   "lexbor/adapter/cross_import.rs" => 4,
   "lexbor/adapter/html/build.rs" => 16,
-  "lexbor/adapter/html/mod.rs" => 53,
-  "lexbor/adapter/html/mutate.rs" => 8,
+  "lexbor/adapter/html/mod.rs" => 54,
+  "lexbor/adapter/html/mutate.rs" => 9,
   "lexbor/adapter/post_parse.rs" => 9,
   "lexbor/adapter/source_loc.rs" => 3,
   "lexbor/adapter/text_index.rs" => 1,
@@ -100,18 +100,19 @@ FORBID_FILES = %w[
   xml/mod.rs xml/model.rs xml/mutate/attr.rs
   xml/mutate/copy.rs xml/mutate/edit.rs xml/mutate/factory.rs
   xml/mutate/insert.rs xml/mutate/mod.rs xml/mutate/ns.rs
-  xml/qname.rs xml/selftest.rs xml/serialize/c14n.rs
-  xml/serialize/mod.rs xml/serialize/out.rs xml/serialize/xml.rs
-  xml/tree/cursor.rs xml/tree/decl.rs xml/tree/dtd.rs
-  xml/tree/mod.rs xml/tree/scope.rs xml/verify.rs
-  xml/xpath.rs xpath/abi.rs xpath/ast.rs
-  xpath/ast_ops.rs xpath/attr_pred.rs xpath/axis.rs
-  xpath/ctx.rs xpath/dom.rs xpath/eval.rs
-  xpath/funcs/ext.rs xpath/funcs/mod.rs xpath/lex.rs
-  xpath/limits.rs xpath/mod.rs xpath/msg.rs
-  xpath/nodetest.rs xpath/number.rs xpath/order.rs
-  xpath/parse.rs xpath/step_index.rs xpath/str_cache.rs
-  xpath/tests.rs xpath/value.rs xpath/verify.rs
+  xml/qname.rs xml/selftest.rs xml/serialize/bindings.rs
+  xml/serialize/c14n.rs xml/serialize/mod.rs xml/serialize/out.rs
+  xml/serialize/xml.rs xml/tree/cursor.rs xml/tree/decl.rs
+  xml/tree/dtd.rs xml/tree/mod.rs xml/tree/scope.rs
+  xml/verify.rs xml/xpath.rs xpath/abi.rs
+  xpath/ast.rs xpath/ast_ops.rs xpath/attr_pred.rs
+  xpath/axis.rs xpath/ctx.rs xpath/dom.rs
+  xpath/eval.rs xpath/funcs/ext.rs xpath/funcs/mod.rs
+  xpath/lex.rs xpath/limits.rs xpath/mod.rs
+  xpath/msg.rs xpath/nodetest.rs xpath/number.rs
+  xpath/order.rs xpath/parse.rs xpath/step_index.rs
+  xpath/str_cache.rs xpath/tests.rs xpath/value.rs
+  xpath/verify.rs
 ].freeze
 
 UNSAFE_USE = /\bunsafe\s*(?:\{|fn\b|impl\b|trait\b|extern\b)/

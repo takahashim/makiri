@@ -15,9 +15,11 @@
 #![forbid(unsafe_code)]
 
 use super::copy_span;
+use crate::falloc::VecPush;
 use crate::xml::qname::{xmlns_prefix, Split};
 use crate::xml::{
-    Document, MutStatus, NodeId, NodeType, Span, FLAG_DOM_LOOSE_NAME, FLAG_NS_RESOLVED,
+    Document, MutStatus, NodeId, NodeType, Span, FLAG_DOM_LOOSE_NAME, FLAG_NS_PENDING,
+    FLAG_NS_RESOLVED,
 };
 
 /// A resolved namespace: a byte-store span (empty = no namespace).
@@ -25,9 +27,34 @@ pub(super) type Ns = Span;
 
 pub(super) const NO_NS: Ns = Span::EMPTY;
 
+/// A resolved name: its namespace, and whether that is still PENDING - a
+/// prefix unbound on a detached node, deferred rather than refused.
+#[derive(Clone, Copy)]
+pub(super) struct Resolved {
+    pub ns: Ns,
+    pub pending: bool,
+}
+
+impl Resolved {
+    pub(super) fn decided(ns: Ns) -> Resolved {
+        Resolved { ns, pending: false }
+    }
+
+    /// Record the outcome on attribute `attr`.
+    pub(super) fn write_attr(self, doc: &mut Document, attr: NodeId) {
+        let n = doc.node_mut(attr);
+        n.ns_uri = self.ns;
+        if self.pending {
+            n.flags |= FLAG_NS_PENDING;
+        } else {
+            n.flags &= !FLAG_NS_PENDING;
+        }
+    }
+}
+
 /// Resolve `name` (split per `sp`) applied at `scope` (mirrors the parser's §7
-/// rules). An unbound prefix is an error only when connected; deferred
-/// (unresolved) otherwise.
+/// rules). An unbound prefix is an error only when connected; deferred - and
+/// reported pending - otherwise.
 pub(super) fn resolve_ns(
     doc: &Document,
     scope: Option<NodeId>,
@@ -35,70 +62,99 @@ pub(super) fn resolve_ns(
     sp: &Split,
     is_attr: bool,
     connected: bool,
-) -> Result<Ns, MutStatus> {
+) -> Result<Resolved, MutStatus> {
     let prefix = &name[..sp.prefix_len as usize];
     if is_attr && xmlns_prefix(name).is_some() {
-        return Ok(doc.xmlns_ns_span());
+        return Ok(Resolved::decided(doc.xmlns_ns_span()));
     }
     if sp.prefix_len == 0 {
         if is_attr {
-            return Ok(NO_NS); /* unprefixed attribute -> no namespace */
+            return Ok(Resolved::decided(NO_NS)); /* unprefixed attribute -> no namespace */
         }
         let s = resolve_in_scope(doc, scope, b"");
-        return Ok(if s.len > 0 { s } else { NO_NS });
+        return Ok(Resolved::decided(if s.len > 0 { s } else { NO_NS }));
     }
     if prefix == b"xml" {
-        return Ok(doc.xml_ns_span());
+        return Ok(Resolved::decided(doc.xml_ns_span()));
     }
     if prefix == b"xmlns" {
         return Err(MutStatus::BadName);
     }
     let s = resolve_in_scope(doc, scope, prefix);
     if s.len > 0 {
-        Ok(s)
+        Ok(Resolved::decided(s))
     } else if connected {
         Err(MutStatus::UnboundNs)
     } else {
-        Ok(NO_NS)
+        Ok(Resolved {
+            ns: NO_NS,
+            pending: true,
+        })
     }
 }
 
-/// Resolve the namespace of element `e` and its attributes.
+/// Resolve the namespace of element `e` - its name unless `attrs_only`, and its
+/// attributes (only the PENDING ones when `attrs_only`) - and check that its
+/// attributes' keys stay unique, the rule the parser holds a document to (§3).
 ///
 /// `commit` selects the pass: false only computes (to find out whether every
-/// prefix in the subtree binds), true writes the resolved URIs.
-fn resolve_node_ns(doc: &mut Document, e: NodeId, connected: bool, commit: bool) -> MutStatus {
-    if doc.node(e).flags & FLAG_DOM_LOOSE_NAME == 0 {
+/// prefix in the subtree binds and every key is unique), true writes.
+fn resolve_node_ns(
+    doc: &mut Document,
+    e: NodeId,
+    connected: bool,
+    commit: bool,
+    attrs_only: bool,
+) -> MutStatus {
+    if !attrs_only && doc.node(e).flags & FLAG_DOM_LOOSE_NAME == 0 {
         let name = match copy_span(doc.qname(e)) {
             Ok(v) => v,
             Err(st) => return st,
         };
         let sp = doc.split_of(e);
         match resolve_ns(doc, Some(e), &name, &sp, false, connected) {
-            Ok(ns) => {
+            Ok(r) => {
                 if commit {
-                    doc.node_mut(e).ns_uri = ns
+                    doc.node_mut(e).ns_uri = r.ns
                 }
             }
             Err(st) => return st,
         }
     }
+    /* Every attribute's key as it will stand - a re-resolved one's new
+     * namespace, anyone else's stored one - leaving out those still pending,
+     * which have no namespace to compare yet. */
+    let mut keys: Vec<(Span, NodeId)> = Vec::new();
     let mut a = doc.attrs(e);
     while let Some(attr) = a {
-        let name = match copy_span(doc.qname(attr)) {
-            Ok(v) => v,
-            Err(st) => return st,
-        };
-        let sp = doc.split_of(attr);
-        match resolve_ns(doc, Some(e), &name, &sp, true, connected) {
-            Ok(ns) => {
-                if commit {
-                    doc.node_mut(attr).ns_uri = ns
+        let redo = !attrs_only || doc.node(attr).flags & FLAG_NS_PENDING != 0;
+        let key = if redo {
+            let name = match copy_span(doc.qname(attr)) {
+                Ok(v) => v,
+                Err(st) => return st,
+            };
+            let sp = doc.split_of(attr);
+            match resolve_ns(doc, Some(e), &name, &sp, true, connected) {
+                Ok(r) => {
+                    if commit {
+                        r.write_attr(doc, attr);
+                    }
+                    (!r.pending).then_some(r.ns)
                 }
+                Err(st) => return st,
             }
-            Err(st) => return st,
+        } else {
+            Some(doc.node(attr).ns_uri)
+        };
+        if let (false, Some(ns)) = (commit, key) {
+            if keys.falloc_push((ns, attr)).is_err() {
+                return MutStatus::Oom;
+            }
         }
         a = doc.next(attr);
+    }
+    if !commit && super::attr::keys_repeat(doc, &mut keys) {
+        return MutStatus::DuplicateAttr;
     }
     /* Only mark once connected: resolution inside a still-detached fragment is
      * deferred (an unbound prefix is not an error there), so the node must stay
@@ -107,6 +163,18 @@ fn resolve_node_ns(doc: &mut Document, e: NodeId, connected: bool, commit: bool)
         doc.node_mut(e).flags |= FLAG_NS_RESOLVED;
     }
     MutStatus::Ok
+}
+
+/// Whether any attribute of `e` still has a pending namespace.
+fn has_pending_attr(doc: &Document, e: NodeId) -> bool {
+    let mut a = doc.attrs(e);
+    while let Some(attr) = a {
+        if doc.node(attr).flags & FLAG_NS_PENDING != 0 {
+            return true;
+        }
+        a = doc.next(attr);
+    }
+    false
 }
 
 /// True once `e`'s namespace has been decided - by the parser, or by resolving
@@ -121,10 +189,15 @@ fn resolve_subtree(doc: &mut Document, root: NodeId, connected: bool) -> MutStat
     for commit in [false, true] {
         let mut cur = Some(root);
         while let Some(c) = cur {
-            if doc.type_(c) == Some(NodeType::Element) && !ns_is_decided(doc, c) {
-                let st = resolve_node_ns(doc, c, connected, commit);
-                if st != MutStatus::Ok {
-                    return st; /* commit == false: nothing written yet */
+            if doc.type_(c) == Some(NodeType::Element) {
+                /* A decided element keeps its own namespace; its attributes set
+                 * while it was detached may still be pending. */
+                let decided = ns_is_decided(doc, c);
+                if !decided || has_pending_attr(doc, c) {
+                    let st = resolve_node_ns(doc, c, connected, commit, decided);
+                    if st != MutStatus::Ok {
+                        return st; /* commit == false: nothing written yet */
+                    }
                 }
             }
             cur = doc.preorder_next(root, c);
@@ -143,6 +216,40 @@ pub(super) fn resolve_into(doc: &mut Document, node: NodeId, context: NodeId) ->
     st
 }
 
+/// An `xmlns="X"` attribute (X non-empty) on an unprefixed element DECIDED to
+/// be in no namespace - a declaration that contradicts its own element, which
+/// `root["xmlns"] = "urn:x"` makes. It is ignored, by the serializer and the
+/// mutators alike.
+///
+/// Written, it would put the element in X on re-parse; planning a prefix for
+/// the element instead gave `xmlns:ns1=""`, which Namespaces 1.0 forbids. The
+/// DOM Parsing and Serialization spec ignores such a declaration and writes
+/// `xmlns=""` where an inherited default would otherwise claim the element.
+/// Only the serializer did, so a later rename or a new child still resolved
+/// against it - `e.name = "e"` moved `e` into X. Now [`resolve_in_scope`] skips
+/// it as well. (Nokogiri writes the attribute, and the element moves.)
+///
+/// Only a DECIDED no-namespace: an unresolved element's empty URI means "not
+/// decided yet", and its own declaration is what decides it.
+pub fn ignored_default_decl(doc: &Document, el: NodeId) -> Option<NodeId> {
+    let node = doc.node(el);
+    if node.prefix.len != 0
+        || node.ns_uri.len != 0
+        || node.flags & FLAG_DOM_LOOSE_NAME != 0
+        || node.flags & FLAG_NS_RESOLVED == 0
+    {
+        return None;
+    }
+    let mut a = doc.attrs(el);
+    while let Some(at) = a {
+        if xmlns_prefix(doc.qname(at)) == Some(&b""[..]) {
+            return (doc.node(at).value.len != 0).then_some(at);
+        }
+        a = doc.next(at);
+    }
+    None
+}
+
 /// Nearest in-scope binding for `prefix` ("" = default) at or above `node`;
 /// [`Span::EMPTY`] when there is none, which callers treat like an empty
 /// binding. Not an `Option<Span>`: `None` leaves the payload undefined, and LLVM
@@ -158,10 +265,11 @@ fn resolve_in_scope(doc: &Document, node: Option<NodeId>, prefix: &[u8]) -> Span
     let mut e = node;
     while let Some(id) = e {
         if doc.type_(id) == Some(NodeType::Element) {
+            let ignored = ignored_default_decl(doc, id);
             let mut a = doc.attrs(id);
             while let Some(at) = a {
                 if let Some(p) = xmlns_prefix(doc.qname(at)) {
-                    if p == prefix {
+                    if p == prefix && Some(at) != ignored {
                         return doc.try_node(at).map_or(Span::EMPTY, |n| n.value);
                     }
                 }

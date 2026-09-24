@@ -37,6 +37,7 @@ end
 
 require_relative "../fuzz/fixtures"
 require_relative "css_corpus"
+require_relative "node_key"
 
 opts = { max_diffs: 25, verbose: false }
 OptionParser.new do |o|
@@ -53,10 +54,9 @@ DOCS = (FuzzFixtures.all + CSSCorpus.extra_docs).map do |name, html|
   { name: name, makiri: Makiri::HTML(html), nokogiri: Nokogiri::HTML5(html) }
 end
 
-# Canonical node key: absolute path with any namespace prefix stripped per step
-# (Makiri renders foreign element paths without the "svg:" prefix Nokogiri uses).
+# Canonical node key: see node_key.rb.
 def node_key(node)
-  node.path.split("/").map { |seg| seg.sub(/\A[\w-]+:/, "") }.join("/")
+  NodeKey.of(node)
 end
 
 def run(node, sel)

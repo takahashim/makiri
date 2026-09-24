@@ -9,6 +9,7 @@
 #![forbid(unsafe_code)]
 
 use crate::xml::chars::{decode1, is_name_start, validate_name};
+use crate::xml::{XMLNS_NS_URI, XML_NS_URI};
 
 /// A QName split into its parts as OFFSETS into the name (prefix is always
 /// at offset 0; prefix_len 0 = unprefixed).
@@ -101,6 +102,50 @@ pub fn split_checked(name: &[u8]) -> Option<Split> {
         return None;
     }
     split_scanned(name)
+}
+
+/// Whether `ns` may name the namespace of an attribute called `name` (split per
+/// `sp`) - the DOM's "validate and extract": a prefix needs a namespace, `xml`
+/// and its namespace take only each other, and `xmlns` (as the name or the
+/// prefix) takes only the XMLNS namespace, which in turn takes nothing else. `set_attribute_ns`
+/// checked none of it, and wrote `xmlns:p=""` or an `xml:` attribute that
+/// re-read in another namespace.
+pub fn ns_fits_name(ns: &[u8], name: &[u8], sp: &Split) -> bool {
+    let prefix = &name[..sp.prefix_len as usize];
+    let is_xmlns = name == b"xmlns" || prefix == b"xmlns";
+    if !prefix.is_empty() && ns.is_empty() {
+        return false;
+    }
+    /* The DOM stops at "xml takes only its own namespace"; the converse is
+     * Namespaces in XML's (§3: the XML namespace is bound to no other prefix),
+     * and without it the attribute could only be written under a declaration
+     * no parser accepts. */
+    if (prefix == b"xml") != (ns == XML_NS_URI) {
+        return false;
+    }
+    is_xmlns == (ns == XMLNS_NS_URI)
+}
+
+/// Whether `prefix` - empty for the default `xmlns` - may be declared for
+/// `uri` (Namespaces in XML 1.0 §3): `xmlns` is never declared, `xml` only for
+/// its own URI, neither reserved URI for anything else, and no prefix for the
+/// empty URI (only the default may be undeclared that way).
+///
+/// The one statement of the rule. The parser always applied it; the mutators
+/// applied only the last clause, so `[]=`, `set_attribute_ns` and `rename`
+/// could write `xmlns:xml="urn:other"` into a tree `to_xml` then could not
+/// re-read.
+pub fn ns_decl_ok(prefix: &[u8], uri: &[u8]) -> bool {
+    if prefix == b"xmlns" {
+        return false;
+    }
+    if prefix == b"xml" {
+        return uri == XML_NS_URI;
+    }
+    if uri == XML_NS_URI || uri == XMLNS_NS_URI {
+        return false;
+    }
+    prefix.is_empty() || !uri.is_empty()
 }
 
 /// If `name` is an xmlns declaration ("xmlns" / "xmlns:PREFIX"), the declared

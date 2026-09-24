@@ -22,7 +22,7 @@
 use crate::falloc::{try_vec_with_capacity, Reserve};
 use crate::lexbor::adapter::html::{
     BuildingElement, BuildingNode, HtmlDoc, HtmlElement, HtmlNode, RawDoc, RawNode, NS_HTML,
-    NS_UNDEF, NS_XML,
+    NS_UNDEF, NS_XML, NS_XMLNS,
 };
 use crate::xml::model::{Document as XmlDoc, MutStatus, NodeId, NodeType};
 use crate::xml::mutate;
@@ -115,6 +115,17 @@ fn status(r: Result<NodeId, MutStatus>) -> MutStatus {
 
 /// Copy the source element's attributes onto the translated mkr element,
 /// declaring an `xmlns:PREFIX` for each foreign-prefixed one.
+///
+/// Two kinds of attribute are declarations-or-not depending on the side:
+/// * one in the XMLNS namespace (a foreign element's `xmlns:xlink`) already IS
+///   a declaration, so it is copied and nothing is declared for it - declaring
+///   its "prefix" wrote `xmlns:xmlns="http://www.w3.org/2000/xmlns/"`, which
+///   no parser accepts;
+/// * one named `xmlns` / `xmlns:*` in NO namespace (on an HTML element) is an
+///   ordinary attribute in HTML, but copied it would become a declaration and
+///   move the element: `<div xmlns="urn:bogus">` came out in `urn:bogus`
+///   instead of XHTML. The translator declares each element's real namespace
+///   itself, so these are left out - the one attribute that cannot cross.
 fn h2x_copy_attrs(doc: &mut XmlDoc, s: HtmlElement<'_>, el: NodeId) -> MutStatus {
     for a in s.attrs() {
         let (name, value) = (a.qualified_name(), a.value());
@@ -123,7 +134,10 @@ fn h2x_copy_attrs(doc: &mut XmlDoc, s: HtmlElement<'_>, el: NodeId) -> MutStatus
         }
 
         let ans = a.node().ns_id();
-        if ans != NS_UNDEF && ans != NS_HTML && ans != NS_XML {
+        if ans != NS_XMLNS && crate::xml::qname::xmlns_prefix(name).is_some() {
+            continue;
+        }
+        if ans != NS_UNDEF && ans != NS_HTML && ans != NS_XML && ans != NS_XMLNS {
             if let Some(colon) = name.iter().position(|&b| b == b':') {
                 if let Some(uri) = html_ns_uri(a.node()) {
                     let st = declare_ns(doc, el, &name[..colon], uri);

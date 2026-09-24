@@ -41,7 +41,7 @@ const _: () = {
 };
 
 /// The HTML backend as an evaluate holds it: the document, and the parsed handle
-/// its element/attribute index is read from.
+/// its element index is read from.
 ///
 /// The handle, not the index: a mutation between evaluates drops the index, so
 /// each evaluate reads it afresh ([`Dom::prepare`]) rather than keeping a stale
@@ -58,7 +58,7 @@ impl<'d> HtmlDom<'d> {
         HtmlDom { doc, parsed }
     }
 
-    /// The document's element/attribute index as it stands now, rebuilding it
+    /// The document's element index as it stands now, rebuilding it
     /// after a mutation. `None` on OOM.
     fn index(&self) -> Option<&DomIndex> {
         // SAFETY: the caller's contract - `parsed` is live for `'d`, and no
@@ -233,8 +233,8 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
     }
 
     fn prepare(&self) -> bool {
-        /* Reading the index builds it when a mutation dropped it, which also
-         * backfills each attribute's parent. */
+        /* Reading the index builds it when a mutation dropped it, so `//tag`
+         * is served from it; an allocation failure fails the evaluate closed. */
         self.index().is_some()
     }
 
@@ -285,11 +285,10 @@ fn no_document() -> Error {
 /// A context over the HTML document behind `parsed`, with its element/attribute
 /// index as it stands now, and `node` as the focus.
 ///
-/// The index is required, not an optimisation: building it also backfills each
-/// attribute's parent, which the parent and ancestor axes read. Each evaluate
-/// reads the index afresh from the handle, so a mutation between evaluates drops
-/// it and the next evaluate rebuilds it - the context must not keep the one it
-/// saw here.
+/// The index serves `//tag`; an attribute's parent is Lexbor's own
+/// `attr->owner` (see `HtmlNode::parent`). Each evaluate reads the index afresh
+/// from the handle, so a mutation between evaluates drops it and the next
+/// evaluate rebuilds it - the context must not keep the one it saw here.
 ///
 /// # Safety
 /// `parsed` must stay live and free of mutation for `'e`, and `node` must be a
@@ -310,7 +309,7 @@ pub unsafe fn context<'e>(
     if parsed.dom_index().is_none() {
         return Err(Error::with(
             XP_ERR_OOM,
-            format_args!("out of memory building the attribute index"),
+            format_args!("out of memory building the element index"),
         ));
     }
     let parsed: *mut HtmlParsed = parsed;

@@ -180,6 +180,19 @@ RSpec.describe "Makiri mutation" do
             .to eq([Makiri::HTML::Comment, Makiri::HTML::DocumentType, Makiri::HTML::Element])
         end
 
+        # A document has one element child and no text child. Lexbor enforces
+        # neither, so `<<` made a second root.
+        it "rejects a second root element, text under the document, and a two-element fragment" do
+          d = Makiri::HTML("<p>x</p>")
+          expect { d << d.create_element("y") }.to raise_error(Makiri::Error, /already has a root element/)
+          expect { d << d.create_text_node("t") }.to raise_error(Makiri::Error, /text cannot be a child/)
+          expect { d << d.fragment("<a></a><b></b>") }.to raise_error(Makiri::Error, /already has a root element/)
+          expect(d.xpath("count(/*)")).to eq(1)
+          d << d.create_comment("fine")
+          d.root.replace(d.create_element("html")) # replacing the root is fine
+          expect(d.xpath("count(/*)")).to eq(1)
+        end
+
         it "rejects a second doctype even when another node precedes the first" do
           # The duplicate check must scan the whole child list: stopping at the
           # insertion point would let the leading comment hide the doctype.
@@ -403,14 +416,18 @@ RSpec.describe "Makiri mutation" do
       root.add_child(leaf)
       root.add_child(built.create_text_node("t5"))
 
-      [built.create_processing_instruction("pi", "d"), built.create_comment("c"),
-        built.create_text_node("x")].each do |node|
+      [built.create_processing_instruction("pi", "d"), built.create_comment("c")].each do |node|
         root.add_previous_sibling(node)
 
         expect(root.text).to eq("t5")
         expect(leaf.text).to eq("")
         node.unlink
       end
+      # Text is no child of a document (DOM pre-insertion validity), so that
+      # leaf is refused before it can reach the index.
+      expect { root.add_previous_sibling(built.create_text_node("x")) }
+        .to raise_error(Makiri::Error, /text cannot be a child of the document/)
+      expect(root.text).to eq("t5")
     end
 
     it "invalidates the element-by-tag index when #name= renames an element" do
@@ -502,6 +519,36 @@ RSpec.describe "Makiri mutation" do
       ensure
         GC.stress = false
       end
+    end
+  end
+
+  # Names were written into the markup unchecked, so a name could carry markup
+  # of its own. The WHATWG DOM's name rules now apply (XML had its own).
+  describe "element and attribute names" do
+    let(:doc) { Makiri::HTML("<p>t</p>") }
+    let(:para) { doc.at_css("p") }
+
+    it "refuses names that would become markup" do
+      expect { para[%(x="y" onload)] = "v" }.to raise_error(ArgumentError, /attribute name/)
+      expect { para.name = "img src=x onerror=alert(1)" }.to raise_error(ArgumentError, /element name/)
+      expect { doc.create_element("a href=javascript:x") }.to raise_error(ArgumentError, /element name/)
+      expect { para.set_attribute_ns("urn:x", ":a", "v") }.to raise_error(ArgumentError, /attribute name/)
+      expect(para.to_html).to eq("<p>t</p>")
+    end
+
+    it "keeps accepting the names HTML uses" do
+      para["data-x"] = "1"
+      para["@click"] = "go"
+      para[":href"] = "u"
+      para["v-on:x"] = "1"
+      expect(para.attribute_nodes.map(&:name)).to eq(%w[data-x @click :href v-on:x])
+      expect(doc.create_element("my-widget").name).to eq("my-widget")
+    end
+
+    it "refuses a prefix without a namespace in set_attribute_ns, as the DOM does" do
+      expect { para.set_attribute_ns(nil, "x:y", "v") }.to raise_error(Makiri::Error, /does not fit/)
+      para.set_attribute_ns("http://www.w3.org/1999/xlink", "xlink:href", "#")
+      expect(para["xlink:href"]).to eq("#")
     end
   end
 end

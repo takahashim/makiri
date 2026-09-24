@@ -33,6 +33,10 @@ pub enum PreInsertError {
     DuplicateDoctype,
     DoctypeAfterElement,
     ElementBeforeDoctype,
+    /// The document already has its one element child.
+    SecondDocumentElement,
+    /// Text cannot be a child of the document.
+    TextUnderDocument,
 }
 
 /// An insertion about to be made: `node` at `place` relative to `target`,
@@ -142,6 +146,31 @@ impl<'d> Insertion<'d> {
         {
             return Err(PreInsertError::ElementBeforeDoctype);
         }
+        if at_document {
+            /* WHATWG DOM "ensure pre-insertion validity", the element half: a
+             * document has at most one element child and no text child. Lexbor
+             * enforces neither, so `doc << element` made a second root, and
+             * `count(/child::*)` answered 2 - where the XML side refuses. After
+             * the doctype order above, whose message an insertion breaking both
+             * has always reported. */
+            let is_text = |n: HtmlNode<'_>| matches!(n.node_type(), TYPE_TEXT | TYPE_CDATA);
+            let is_element = |n: HtmlNode<'_>| n.node_type() == TYPE_ELEMENT;
+            let incoming_elements = match self.node.node_type() {
+                TYPE_FRAGMENT => {
+                    if self.node.children().any(is_text) {
+                        return Err(PreInsertError::TextUnderDocument);
+                    }
+                    self.node.children().filter(|&c| is_element(c)).count()
+                }
+                _ if is_text(self.node) => return Err(PreInsertError::TextUnderDocument),
+                _ => usize::from(is_element(self.node)),
+            };
+            let has_element =
+                siblings_from(self.parent.first_child()).any(|n| self.stays(n) && is_element(n));
+            if incoming_elements > 1 || (incoming_elements == 1 && has_element) {
+                return Err(PreInsertError::SecondDocumentElement);
+            }
+        }
         Ok(())
     }
 }
@@ -204,8 +233,30 @@ impl<'doc> HtmlNodeMut<'doc> {
     /// `false` when Lexbor could not store it, in which case the node keeps
     /// what it had.
     pub fn set_text_content(self, text: &[u8]) -> bool {
-        // SAFETY: a live node the caller may change; Lexbor copies the bytes
-        // into the document before anything else runs.
+        let node = self.node();
+        if matches!(node.node_type(), TYPE_ELEMENT | TYPE_FRAGMENT) {
+            /* Not Lexbor's own `text_content_set` here: for a container it
+             * DESTROYS the old children (`lxb_dom_node_replace_all` ->
+             * `destroy_deep`), and a Ruby wrapper may still hold any of them.
+             * The memory went back to the arena, the next node allocated there
+             * came back under the old wrapper - a text node answering as an
+             * Element or an Attr - and the old wrapper read freed memory.
+             * Makiri detaches, never destroys: the same result (the text node
+             * made first, so a failure changes nothing), with the old children
+             * kept for their wrappers. */
+            let Some(text_node) = node.owner_document().create_text(text) else {
+                return false;
+            };
+            while let Some(c) = self.first_child() {
+                c.detach();
+            }
+            // SAFETY: a live node the caller may change, and a detached node
+            // of its document just made.
+            unsafe { lxb::lxb_dom_node_insert_child(self.as_raw(), text_node.as_raw()) };
+            return true;
+        }
+        // SAFETY: a live node the caller may change; for a character-data node
+        // (or an attribute) Lexbor replaces the bytes in place and frees no node.
         let st =
             unsafe { lxb::lxb_dom_node_text_content_set(self.as_raw(), text.as_ptr(), text.len()) };
         st == lxb::consts::STATUS_OK
@@ -310,12 +361,17 @@ impl<'doc> HtmlElementMut<'doc> {
         unsafe { lxb::lxb_dom_element_attr_remove(self.0.raw(), attr.raw()) };
     }
 
-    /// Remove the attribute Lexbor's lookup finds for `name`; no-op when there
-    /// is none.
+    /// Take off the attribute Lexbor's lookup finds for `name`; no-op when
+    /// there is none. Detached, as [`attr_remove`](Self::attr_remove) does -
+    /// not `lxb_dom_element_remove_attribute`, which DESTROYS it while a Ruby
+    /// wrapper may still hold it (the freed attribute's memory came back as a
+    /// text node under the old Attr wrapper).
     pub fn remove_attribute(self, name: &[u8]) {
-        // SAFETY: as above.
-        unsafe {
-            lxb::lxb_dom_element_remove_attribute(self.0.raw(), name.as_ptr(), name.len());
+        // SAFETY: as above; the lookup only reads.
+        let raw =
+            unsafe { lxb::lxb_dom_element_attr_by_name(self.0.raw(), name.as_ptr(), name.len()) };
+        if let Some(attr) = HtmlNode::link(raw as *mut LxbNode).and_then(HtmlNode::attr) {
+            self.attr_remove(attr);
         }
     }
 }

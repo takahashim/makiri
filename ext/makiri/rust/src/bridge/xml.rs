@@ -248,7 +248,17 @@ pub fn xml_mut_check(st: MutStatus) -> Result<(), Error> {
             "invalid placement (an attribute/document node cannot be a tree child, a document \
 allows a single root element, and a sibling target must have a parent)"
         }
-        MutStatus::BadNsDecl => "cannot bind a namespace prefix to the empty namespace",
+        MutStatus::BadNsDecl => {
+            "namespace declaration not permitted (a prefix bound to the empty namespace, \
+xml to another URI, xmlns at all, or either reserved URI to another prefix)"
+        }
+        MutStatus::DuplicateAttr => {
+            "the element already has an attribute with that namespace and local name"
+        }
+        MutStatus::BadNsName => {
+            "the namespace does not fit the qualified name (a prefix needs a namespace; \
+xml and xmlns take only their own)"
+        }
         MutStatus::Internal => "internal error mutating XML (no document)",
         /* The document's own budget, not the machine's memory - so the same
          * exception a parse raises for the same cause. */
@@ -304,10 +314,12 @@ pub fn with_arena_for_new_node<R>(
 ///
 /// [`with_arena_for_new_node`] stays for the FACTORIES, which build a detached node -
 /// not in the tree, so not in the index, and with no receiver to freeze. The
-/// HTML side has had this as one `edit` gate all along; XML had the `&mut` gate
-/// and the invalidate gate as two separate calls, and whether a site needed the
-/// second was a judgement the reader had to make at each of seventeen.
+/// HTML side has the same pair, `edit` and `HtmlEdit::node`; XML had the `&mut`
+/// gate and the invalidate gate as two separate calls, and whether a site needed
+/// the second was a judgement the reader had to make at each of seventeen.
 pub struct Editing {
+    /// The receiver, frozen-checked again at the change.
+    receiver: Value,
     document: Value,
     id: NodeId,
 }
@@ -324,23 +336,34 @@ impl Editing {
     }
 
     /// Lend the arena for the change. `f` runs no Ruby (see [`with_arena_for_new_node`]),
-    /// so every argument is converted BEFORE this - which is also why the frozen
-    /// check is in `begin_edit` rather than here: it must stay ahead of the
-    /// argument conversion, so a frozen receiver is reported before a bad
-    /// argument, as it always was.
+    /// so every argument is converted BEFORE this. The frozen check is in
+    /// `begin_edit`, ahead of that conversion, so a frozen receiver is reported
+    /// before a bad argument - and again here, because the conversion's `#to_s`
+    /// may have frozen the receiver since.
+    ///
+    /// It is also where the name index is dropped, just before `f` changes what
+    /// it indexes. Not in `begin_edit`: the argument conversion between the two
+    /// runs `#to_s`, and a query there rebuilt the index from the tree about to
+    /// change - `//a` then kept finding an element renamed to `b`.
     pub fn with_arena<R>(&self, f: impl FnOnce(&mut XmlDoc, NodeId) -> R) -> Result<R, Error> {
         let id = self.id;
-        with_arena_for_new_node(self.document, |d| f(d, id))
+        check_frozen(self.receiver)?;
+        with_arena_for_new_node(self.document, |d| {
+            d.invalidate_name_index();
+            f(d, id)
+        })
     }
 }
 
 /// The receiver cleared for an edit - not frozen, its document not under
-/// evaluation - with the document's name index dropped, since the edit is
-/// about to change what it indexes.
+/// evaluation. The name index is dropped later, by [`Editing::with_arena`].
 pub fn begin_edit(this: XmlSelf) -> Result<Editing, Error> {
     check_frozen(this.value)?;
-    with_arena_for_new_node(this.document, XmlDoc::invalidate_name_index)?;
+    /* The evaluation guard, checked now so it is reported before a bad
+     * argument; `with_arena` checks it again at the change. */
+    with_arena_for_new_node(this.document, |_| ())?;
     Ok(Editing {
+        receiver: this.value,
         document: this.document,
         id: this.id,
     })
