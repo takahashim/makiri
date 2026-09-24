@@ -401,4 +401,21 @@ RSpec.describe "Makiri::XML#to_xml" do
     expect(e.namespace_uri).to be_nil
     expect(doc.at_xpath("//c").namespace_uri).to be_nil
   end
+
+  # canonicalize compared a namespace given with set_attribute_ns only when
+  # the element was decided, so a detached one wrote it under whatever the
+  # prefix meant there, or dropped it.
+  it "refuses to canonicalize a detached element whose given attribute namespace it cannot write" do
+    doc = Makiri::XML("<r/>")
+    prefixed = doc.create_element("q:e")
+    prefixed["xmlns:q"] = "urn:b"
+    prefixed.set_attribute_ns("urn:a", "q:x", "1")
+    bare = doc.create_element("e")
+    bare.set_attribute_ns("urn:a", "x", "1")
+    [prefixed, bare].each { |el| expect { el.canonicalize }.to raise_error(Makiri::Error) }
+    fits = doc.create_element("g")
+    fits.set_attribute_ns("urn:a", "z:x", "1")
+    fits["xmlns:z"] = "urn:a"
+    expect(fits.canonicalize).to eq(%(<g xmlns:z="urn:a" z:x="1"></g>))
+  end
 end

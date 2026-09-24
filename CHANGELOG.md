@@ -68,6 +68,10 @@
 
 ### Fixed
 
+* `XML::Node#canonicalize` of a detached element refuses an attribute whose
+  namespace was given with `set_attribute_ns` and cannot be written as it is;
+  it wrote the attribute under whatever its prefix meant there, or without
+  its namespace.
 * `XML::Node#[]=` on an attribute the element already has changes its value
   and nothing else, as the DOM's `setAttribute` does. It re-derived the
   attribute's namespace from the current scope, which could give it the key

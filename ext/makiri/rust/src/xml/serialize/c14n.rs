@@ -12,7 +12,10 @@ use super::out::{put, put_pi, C14N, W};
 use super::Failure;
 use crate::cbuf::Buf;
 use crate::falloc::Reserve;
-use crate::xml::model::{Document as XmlDoc, NodeId, NodeType, FLAG_NS_RESOLVED, MAX_DEPTH};
+use crate::xml::model::{
+    Document as XmlDoc, NodeId, NodeType, FLAG_NS_EXPLICIT, FLAG_NS_PENDING, FLAG_NS_RESOLVED,
+    MAX_DEPTH,
+};
 use crate::xml::qname::xmlns_prefix;
 
 fn xmlns_decl(doc: &XmlDoc, a: NodeId) -> Option<(&[u8], &[u8])> {
@@ -178,6 +181,14 @@ impl<'d> Writer<'d, '_> {
         let mut a = doc.attrs(n);
         while let Some(at) = a {
             let prefix = doc.span(doc.node(at).prefix);
+            /* An attribute's namespace is its own once its element is decided -
+             * or once it was GIVEN (`set_attribute_ns`), which holds on a
+             * detached element too: compared only through its element, a given
+             * `urn:a` was written under whatever the prefix meant here, or
+             * dropped from an unprefixed name. */
+            let flags = doc.node(at).flags;
+            let decided =
+                decided || (flags & FLAG_NS_EXPLICIT != 0 && flags & FLAG_NS_PENDING == 0);
             if xmlns_decl(doc, at).is_none() && !prefix.is_empty() {
                 let Some(expected) = self.binds.resolve(prefix)? else {
                     self.binds.unbound = true;
