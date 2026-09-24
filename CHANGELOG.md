@@ -20,6 +20,11 @@
 
 ### Security
 
+* Binding namespaces no longer costs the square of their number. Each
+  registration scanned the prefixes already bound, so a query's namespace Hash
+  of 65,000 pairs held the GVL for six seconds of CPU; prefixes are indexed
+  now (0.02 s), and a Hash with more pairs than a context may hold (65,536)
+  is refused before any is read.
 * `content=` on an HTML element and `delete(name)` no longer free the nodes they
   remove. Both went through Lexbor calls that destroy them, while a Ruby
   wrapper may still hold one: the wrapper then read freed memory, and the next

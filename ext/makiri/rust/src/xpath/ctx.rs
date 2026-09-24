@@ -12,10 +12,11 @@
 use super::abi::*;
 use super::dom::Dom;
 use super::eval;
-use crate::falloc::Reserve;
+use crate::falloc::{MapInsert, Reserve};
 use crate::token::Token;
 use core::cell::{Cell, Ref, RefCell, RefMut};
 use core::marker::PhantomData;
+use std::collections::HashMap;
 
 /// One call the evaluator routes to the custom-function resolver.
 pub struct ResolverCall<'a> {
@@ -51,11 +52,12 @@ pub trait Resolver {
 
 /// Per-context registration caps. These bound an abusive Ruby loop that calls
 /// register_namespace / register_variable without limit; far above any real use.
-const MAX_NAMESPACES: usize = 65536;
+pub const MAX_NAMESPACES: usize = 65536;
 const MAX_VARIABLES: usize = 65536;
 
+/// A registered namespace; its prefix is the key it is found by in
+/// `Names::ns_index`.
 struct NsEntry {
-    prefix: Text,
     uri: Text,
 }
 
@@ -75,6 +77,10 @@ struct VarEntry {
 #[derive(Default)]
 pub struct Names {
     ns: Vec<NsEntry>,
+    /// prefix -> its entry in `ns`. A registration looked its prefix up by a
+    /// scan, so registering n prefixes cost n squared: a 65,000-pair Hash took
+    /// six seconds of CPU with the GVL held.
+    ns_index: HashMap<Box<[u8]>, usize>,
     vars: Vec<VarEntry>,
 }
 
@@ -88,10 +94,9 @@ impl Names {
         if prefix == b"xml" {
             return Some(crate::xml::XML_NS_URI);
         }
-        self.ns
-            .iter()
-            .find(|e| e.prefix.as_slice() == prefix)
-            .map(|e| e.uri.as_slice())
+        self.ns_index
+            .get(prefix)
+            .map(|&i| self.ns[i].uri.as_slice())
     }
 
     /// The URI registered for `prefix`, or the RUNTIME error an expression
@@ -238,20 +243,26 @@ impl<'d, D: Dom<'d>> Context<'d, D> {
     /// Bind `prefix` to `uri`, replacing an earlier binding. Both are copied.
     pub fn register_ns(&self, prefix: &[u8], uri: &[u8]) -> Result<(), ContextError> {
         let mut names = self.names_mut()?;
-        if let Some(e) = names.ns.iter_mut().find(|e| e.prefix.as_slice() == prefix) {
+        if let Some(&i) = names.ns_index.get(prefix) {
             /* Copy first, so an OOM leaves the old binding in place. */
-            e.uri = copy(uri)?;
+            names.ns[i].uri = copy(uri)?;
             return Ok(());
         }
-        if names.ns.len() >= MAX_NAMESPACES || names.ns.falloc_reserve(1).is_err() {
+        if names.ns.len() >= MAX_NAMESPACES
+            || names.ns.falloc_reserve(1).is_err()
+            || names.ns_index.falloc_reserve(1).is_err()
+        {
             return Err(ContextError::Failed);
         }
-        let entry = NsEntry {
-            prefix: copy(prefix)?,
-            uri: copy(uri)?,
-        };
+        let key = crate::falloc::try_to_boxed_slice(prefix).ok_or(ContextError::Failed)?;
+        let entry = NsEntry { uri: copy(uri)? };
+        /* Both reserved above, so neither can fail from here. */
+        let at = names.ns.len();
         names.ns.push(entry);
-        Ok(())
+        names
+            .ns_index
+            .falloc_insert(key, at)
+            .map_err(|()| ContextError::Failed)
     }
 
     /// Bind the unprefixed variable `$name` to the string `value`, replacing an

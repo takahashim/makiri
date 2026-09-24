@@ -174,6 +174,15 @@ fn bind_each(
      * walk runs under magnus's own `protect` - and a `to_s` that added a key
      * to the same Hash raised "can't add a new key into hash during
      * iteration". The copy runs no Ruby code of the caller's. */
+    /* More pairs than a context may hold is refused before any is converted
+     * or copied, rather than after every one of them has been. */
+    let max = crate::xpath::ctx::MAX_NAMESPACES;
+    if h.len() > max {
+        return Err(makiri_error(format!(
+            "invalid namespace mapping: {} bindings (max {max})",
+            h.len()
+        )));
+    }
     let ruby = Ruby::get().map_err(|_| makiri_error("Ruby is not available here"))?;
     let pairs = ruby.ary_new_capa(h.len() * 2);
     h.foreach(|prefix: Value, uri: Value| {

@@ -612,6 +612,20 @@ RSpec.describe "Makiri XPath" do
       expect(ctx.evaluate("count(//@xml:lang)")).to eq(1.0)
     end
 
+    # Registration scanned the prefixes already bound, so a large Hash cost the
+    # square of its size with the GVL held (65,000 pairs: six seconds). An
+    # index makes it linear, and a Hash past the cap is refused before any
+    # pair is read.
+    it "binds a large namespace Hash in linear time and refuses one past the cap" do
+      xml = Makiri::XML(%(<r xmlns="urn:5"/>))
+      big = (0...60_000).to_h { |i| ["p#{i}", "urn:#{i}"] }
+      t = Process.clock_gettime(Process::CLOCK_PROCESS_CPUTIME_ID)
+      expect(xml.xpath("count(/p5:r)", big)).to eq(1.0)
+      expect(Process.clock_gettime(Process::CLOCK_PROCESS_CPUTIME_ID) - t).to be < 2.0
+      too_big = (0...65_537).to_h { |i| ["p#{i}", "urn:#{i}"] }
+      expect { xml.xpath("/r", too_big) }.to raise_error(Makiri::Error, /65537 bindings \(max 65536\)/)
+    end
+
     it "reads a namespace Hash as a Hash and each side with String()" do
       xml = Makiri::XML(%(<r xmlns="urn:x"/>))
       odd = Class.new(Hash) { def to_a = [1] }.new
