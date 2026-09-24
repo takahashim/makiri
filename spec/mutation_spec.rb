@@ -430,6 +430,16 @@ RSpec.describe "Makiri mutation" do
       expect(root.text).to eq("t5")
     end
 
+    # The rename used to make its new name with createElement, so a foreign
+    # element was moved into XHTML and lower-cased.
+    it "renames a foreign element within its own namespace, keeping the name's case" do
+      html = Makiri::HTML("<svg><rect/></svg>")
+      rect = html.at_xpath("//*[local-name()='rect']")
+      rect.name = "linearGradient"
+      expect([rect.name, rect.namespace_uri]).to eq(["linearGradient", "http://www.w3.org/2000/svg"])
+      expect(html.at_css("svg").to_html).to eq("<svg><linearGradient></linearGradient></svg>")
+    end
+
     it "invalidates the element-by-tag index when #name= renames an element" do
       multi = Makiri::HTML("<html><body><div>x</div><div>y</div></body></html>")
       multi.xpath("//div")           # build the persisted tag index

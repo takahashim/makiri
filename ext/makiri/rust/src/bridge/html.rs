@@ -481,9 +481,7 @@ pub fn remove_attribute(el: HtmlElementMut<'_>, name: &RubyText) {
 /// intern the name.
 pub fn rename(el: HtmlElementMut<'_>, name: &RubyText) -> bool {
     // SAFETY: see the section comment.
-    let scratch = ScratchElement::create(el.element().node().owner_document(), unsafe {
-        name.bytes()
-    });
+    let scratch = ScratchElement::for_rename(el, unsafe { name.bytes() });
     match scratch {
         Some(scratch) => {
             scratch.rename(el);

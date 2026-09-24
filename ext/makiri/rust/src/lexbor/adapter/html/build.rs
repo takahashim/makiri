@@ -431,11 +431,21 @@ impl<'doc> BuildingElement<'doc> {
 pub struct ScratchElement<'doc>(HtmlElement<'doc>);
 
 impl<'doc> ScratchElement<'doc> {
-    /// A detached element named `local_name`, or `None` when Lexbor could not
-    /// make one.
+    /// A detached element named `name` in `target`'s namespace, for
+    /// [`rename`](Self::rename), or `None` when Lexbor could not make one.
     ///
-    pub fn create(doc: HtmlDoc<'doc>, local_name: &[u8]) -> Option<Self> {
-        doc.create_element(local_name).map(|b| ScratchElement(b.0))
+    /// An HTML element's name is made as createElement makes it, lower case. A
+    /// foreign one keeps its namespace and the case of the name: made with
+    /// createElement, a renamed SVG `rect` came out an XHTML `lineargradient`.
+    pub fn for_rename(target: HtmlElementMut<'doc>, name: &[u8]) -> Option<Self> {
+        let node = target.element().node();
+        let doc = node.owner_document();
+        let made = if node.ns_id() == NS_HTML {
+            doc.create_element(name)
+        } else {
+            doc.create_element_ns(name, node.ns_uri().unwrap_or(&[]), &[])
+        };
+        made.map(|b| ScratchElement(b.0))
     }
 
     /// Give `target` this element's interned name, in place, so a Ruby wrapper

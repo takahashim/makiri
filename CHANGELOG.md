@@ -52,6 +52,10 @@
 
 ### Fixed
 
+* `name=` on an SVG or MathML element (or one in any other non-HTML
+  namespace) keeps it in its namespace and keeps the case of the new name,
+  as Nokogiri does. It moved the element into XHTML and lower-cased the name
+  (`rect.name = "linearGradient"` gave an XHTML `lineargradient`).
 * A namespace Hash given to a query is read as a Hash, not through a `to_a`
   a subclass may redefine (a non-pair raised `Makiri::InternalError`), and
   each prefix and URI is read with `String()`, preferring `to_str`, as other
