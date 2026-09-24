@@ -21,8 +21,8 @@
 
 use crate::falloc::{try_vec_with_capacity, Reserve};
 use crate::lexbor::adapter::html::{
-    BuildingElement, BuildingNode, HtmlDoc, HtmlElement, HtmlNode, RawDoc, RawNode, NS_UNDEF,
-    NS_XML, NS_XMLNS,
+    BuildingElement, BuildingNode, HtmlDoc, HtmlElement, HtmlNode, RawDoc, RawNode, NS_HTML,
+    NS_UNDEF, NS_XML, NS_XMLNS,
 };
 use crate::xml::model::{Document as XmlDoc, MutStatus, NodeId, NodeType};
 use crate::xml::mutate;
@@ -420,16 +420,19 @@ fn x2h_make<'doc>(
 
     match doc.type_(s) {
         Some(NodeType::Element) => {
-            /* A prefixed name is made as one, so the copy's localName is `e`
-             * and its prefix `p` - as `//q:e` and local-name() read it - where
-             * createElement would take the whole `p:e` as its local name. */
-            let prefix = doc.prefix(s);
-            let el = if prefix.is_empty() {
+            /* An element outside XHTML is made as createElementNS makes it:
+             * with its prefix, so the copy's localName is `e` and not `p:e`
+             * (as `//q:e` and local-name() read it), and with its case, so an
+             * SVG `linearGradient` does not come back `lineargradient`. An
+             * XHTML element is an HTML element, whose name is lower case. */
+            let (prefix, ns) = (doc.prefix(s), doc.ns(s));
+            let ns_id = hdoc.intern_ns(ns);
+            let el = if prefix.is_empty() && ns_id == NS_HTML {
                 let el = hdoc.create_element(doc.qname(s)).ok_or(MutStatus::Oom)?;
-                el.set_ns(hdoc.intern_ns(doc.ns(s)));
+                el.set_ns(ns_id);
                 el
             } else {
-                hdoc.create_element_ns(doc.local(s), doc.ns(s), prefix)
+                hdoc.create_element_ns(doc.local(s), ns, prefix)
                     .ok_or(MutStatus::Oom)?
             };
 

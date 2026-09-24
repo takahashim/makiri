@@ -333,6 +333,18 @@ RSpec.describe "cross-kind import_node" do
     end
   end
 
+  describe "an XML element's case crossing into HTML" do
+    # createElement lower-cases; an element outside XHTML keeps its name as
+    # written, as the parser keeps SVG's.
+    it "keeps the case of a name outside XHTML" do
+      xml = Makiri::XML(%(<r><svg xmlns="http://www.w3.org/2000/svg"><linearGradient/></svg><Foo xmlns="urn:p"/></r>))
+      html = Makiri.HTML("<div></div>")
+      xml.root.element_children.each { |e| html.at_css("div") << html.import_node(e, true) }
+      expect(html.at_css("div").inner_html).to include("<linearGradient>", "<Foo ")
+      expect(html.xpath("count(//s:linearGradient)", "s" => "http://www.w3.org/2000/svg")).to eq(1.0)
+    end
+  end
+
   describe "a prefixed XML element crossing into HTML" do
     it "keeps its prefix out of its local name, and comes back as it was" do
       xml = Makiri::XML(%(<r xmlns:p="urn:p"><p:e p:a="1" b="2"><p:f/></p:e></r>))

@@ -102,6 +102,8 @@
     `to_xml` refuses it.
   * XML to HTML makes a prefixed element with its prefix, so `p:e` has the
     local name `e` and `//q:e` finds it. It used to have the local name `p:e`.
+    An element outside XHTML also keeps the case of its name: an SVG
+    `linearGradient` came across as `lineargradient`.
   * An attribute set by `set_attribute_ns` in its element's own namespace
     (`set_attribute_ns(SVG, "q:x")` on an SVG element) reports that namespace;
     it read as none.

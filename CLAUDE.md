@@ -490,7 +490,7 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            functions (the `_noi` twins included), the ONE place
                            a Lexbor function is declared (a second `extern "C"`
                            spelling is a second Rust type for the symbol;
-                           `rake unsafe:boundaries` fails on one). Only the three
+                           `rake unsafe:boundaries` fails on one). Only the four
                            exports no header declares are written by hand, and
                            build.rs's `UNDECLARED_EXPORTS` fails the build if
                            their C definitions change - `adapter`, the one reader of

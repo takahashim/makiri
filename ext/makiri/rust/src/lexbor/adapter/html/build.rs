@@ -25,10 +25,13 @@ impl<'doc> HtmlDoc<'doc> {
         }
     }
 
-    /// A detached element with a PREFIXED name - `local` in `ns`, written
-    /// `prefix:local` - the DOM's createElementNS, where [`create_element`]
-    /// is createElement and would take `p:e` as one local name. An empty `ns`
-    /// is no namespace. `None` when Lexbor could not make one.
+    /// A detached element named `local` in `ns`, with `prefix` when it is not
+    /// empty - the DOM's createElementNS, where [`create_element`] is
+    /// createElement: that takes `p:e` as one local name, and lower-cases it.
+    /// Here the name keeps its case (`linearGradient`), as the parser keeps a
+    /// foreign element's: the lower-cased tag is Lexbor's key, and the name as
+    /// written is recorded beside it. An empty `ns` is no namespace. `None`
+    /// when Lexbor could not make one.
     ///
     /// [`create_element`]: Self::create_element
     pub fn create_element_ns(
@@ -37,27 +40,49 @@ impl<'doc> HtmlDoc<'doc> {
         ns: &[u8],
         prefix: &[u8],
     ) -> Option<BuildingElement<'doc>> {
-        let ns_ptr = if ns.is_empty() {
-            core::ptr::null()
-        } else {
-            ns.as_ptr()
+        let or_null = |s: &[u8]| {
+            if s.is_empty() {
+                core::ptr::null()
+            } else {
+                s.as_ptr()
+            }
         };
         // SAFETY: a live document; Lexbor copies every name into its own
-        // storage, and a failure destroys the half-made element itself.
-        unsafe {
+        // storage, and a failure destroys the half-made element itself. A null
+        // prefix is "none" - a non-null empty one would be interned as a
+        // prefix of its own.
+        let el = unsafe {
             BuildingElement::from_raw(lxb::lxb_dom_element_create(
                 self.as_raw(),
                 local.as_ptr(),
                 local.len(),
-                ns_ptr,
+                or_null(ns),
                 ns.len(),
-                prefix.as_ptr(),
+                or_null(prefix),
                 prefix.len(),
                 core::ptr::null(),
                 0,
                 false,
             ))
+        }?;
+        /* With a prefix, Lexbor recorded `prefix:local` as written already. */
+        if prefix.is_empty() && local.iter().any(u8::is_ascii_uppercase) {
+            // SAFETY: an element just made in this document, in no tree; the
+            // name is copied.
+            let st = unsafe {
+                lxb::lxb_dom_element_qualified_name_set(
+                    el.0.raw(),
+                    core::ptr::null(),
+                    0,
+                    local.as_ptr(),
+                    local.len(),
+                )
+            };
+            if st != lxb::consts::STATUS_OK {
+                return None;
+            }
         }
+        Some(el)
     }
 
     /// A detached text node holding `text`. `None` on allocation failure.
