@@ -72,75 +72,26 @@ pub enum LexErr {
     UnexpectedChar(u8),
 }
 
-/* ---- NCName code-point classes ---- */
+/* ---- NCName code-point classes ----
+ *
+ * XPath 1.0 §3.7 -> Namespaces in XML -> the XML 1.0 (5th ed.) Name
+ * production, minus ':' - the definition browsers and libxml2 track. The XML
+ * reader's own classes and its one strict decoder, so a name the reader
+ * accepts is one the lexer does: this file used to keep a copy of both. */
 
-/// XPath 1.0 §3.7 -> Namespaces in XML -> the XML 1.0 (5th ed.) Name
-/// production, minus ':'. The definition browsers and libxml2 track.
 fn is_ncname_start_cp(c: u32) -> bool {
-    c == '_' as u32
-        || (c >= 'A' as u32 && c <= 'Z' as u32)
-        || (c >= 'a' as u32 && c <= 'z' as u32)
-        || (0xC0..=0xD6).contains(&c)
-        || (0xD8..=0xF6).contains(&c)
-        || (0xF8..=0x2FF).contains(&c)
-        || (0x370..=0x37D).contains(&c)
-        || (0x37F..=0x1FFF).contains(&c)
-        || (0x200C..=0x200D).contains(&c)
-        || (0x2070..=0x218F).contains(&c)
-        || (0x2C00..=0x2FEF).contains(&c)
-        || (0x3001..=0xD7FF).contains(&c)
-        || (0xF900..=0xFDCF).contains(&c)
-        || (0xFDF0..=0xFFFD).contains(&c)
-        || (0x10000..=0xEFFFF).contains(&c)
+    c != ':' as u32 && crate::xml::chars::is_name_start(c)
 }
 
 fn is_ncname_cont_cp(c: u32) -> bool {
-    is_ncname_start_cp(c)
-        || c == '-' as u32
-        || c == '.' as u32
-        || (c >= '0' as u32 && c <= '9' as u32)
-        || c == 0xB7
-        || (0x0300..=0x036F).contains(&c)
-        || (0x203F..=0x2040).contains(&c)
-}
-
-/// Strict one-codepoint decode at `s[0..]`: the length and the value, or None
-/// for an empty slice or ill-formed UTF-8 (overlong, surrogate, out of range).
-fn decode1(s: &[u8]) -> Option<(usize, u32)> {
-    let b0 = *s.first()?;
-    let (need, mut cp): (usize, u32) = match b0 {
-        0x00..=0x7F => return Some((1, b0 as u32)),
-        0xC2..=0xDF => (2, (b0 & 0x1F) as u32),
-        0xE0..=0xEF => (3, (b0 & 0x0F) as u32),
-        0xF0..=0xF4 => (4, (b0 & 0x07) as u32),
-        _ => return None, /* continuation byte, or an overlong/out-of-range lead */
-    };
-    if s.len() < need {
-        return None;
-    }
-    for &b in &s[1..need] {
-        if !(0x80..=0xBF).contains(&b) {
-            return None;
-        }
-        cp = (cp << 6) | (b & 0x3F) as u32;
-    }
-    let ok = match need {
-        2 => cp >= 0x80,
-        3 => cp >= 0x800 && !(0xD800..=0xDFFF).contains(&cp),
-        _ => (0x10000..=0x10FFFF).contains(&cp),
-    };
-    if ok {
-        Some((need, cp))
-    } else {
-        None
-    }
+    c != ':' as u32 && crate::xml::chars::is_name_char(c)
 }
 
 /// Byte length of the NCName character at `s[0..]`, or 0. `start` selects
 /// NameStartChar over NameChar.
 fn ncname_char(s: &[u8], start: bool) -> usize {
-    match decode1(s) {
-        Some((n, cp))
+    match crate::xml::chars::decode1(s) {
+        Some((cp, n))
             if (if start {
                 is_ncname_start_cp(cp)
             } else {
