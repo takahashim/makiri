@@ -42,10 +42,6 @@ RSpec.describe "Nokogiri-compatible convenience methods" do
       expect(doc.at_css("p").child.blank?).to be(false)
     end
 
-    it "node_name= renames the element" do
-      el.node_name = "section"
-      expect(doc.at_css("section")).to eq(el)
-    end
   end
 
   describe "CSS class helpers" do

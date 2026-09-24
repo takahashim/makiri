@@ -439,7 +439,6 @@ RSpec.describe Makiri::Node do
       expect { node["k"] = "v" }.to raise_error(FrozenError)
       expect { node.delete("id") }.to raise_error(FrozenError)
       expect { node.content = "x" }.to raise_error(FrozenError)
-      expect { node.name = "section" }.to raise_error(FrozenError)
       expect { node.add_child(child) }.to raise_error(FrozenError)
       expect { node << child }.to raise_error(FrozenError)
       expect { node.inner_html = "<b>x</b>" }.to raise_error(FrozenError)

@@ -283,7 +283,6 @@ RSpec.describe "Makiri XPath custom function handler" do
         "sets an attribute" => ->(d) { d.at_css("p")["class"] = "x" },
         "removes an attribute" => ->(d) { d.at_css("p").delete("class") },
         "sets content" => ->(d) { d.at_css("p").content = "y" },
-        "renames a node" => ->(d) { d.at_css("div").name = "span" },
         "removes a node" => ->(d) { d.at_css("div").remove },
         "inserts a node" => ->(d) { d.at_css("body").add_child(d.create_element("hr")) },
         "sets inner_html" => ->(d) { d.at_css("div").inner_html = "<b>z</b>" },

@@ -1,32 +1,19 @@
 # frozen_string_literal: true
 
-# Remaining Nokogiri-compat API: Node#name=, #to_h, Document#encoding /
+# Remaining Nokogiri-compat API: #to_h, Document#encoding /
 # #meta_encoding(=), ProcessingInstruction + DocumentFragment.
 RSpec.describe "Makiri Nokogiri-compat API (part 2)" do
-  describe "Node#name=" do
-    let(:doc) { Makiri::HTML('<html><body><div id="m" class="c"><p>x</p></div></body></html>') }
-
-    it "renames an element in place, preserving identity, attributes, children" do
-      div = doc.at_css("#m")
-      div.name = "section"
-      expect(div.name).to eq("section")
-      expect(doc.at_css("section")).to eq(div)  # same node
-      expect(div["id"]).to eq("m")
-      expect(div["class"]).to eq("c")
-      expect(div.css("p").length).to eq(1)
-    end
-
-    it "is reflected in serialization and queries" do
-      div = doc.at_css("#m")
-      div.name = "article"
-      expect(div.to_html).to start_with("<article")
-      expect(doc.xpath("//article").length).to eq(1)
-      expect(doc.css("div").length).to eq(0)
-    end
-
-    it "rejects non-elements" do
-      text = doc.at_css("p").child
-      expect { text.name = "x" }.to raise_error(Makiri::Error)
+  # The DOM has no rename, and Lexbor keeps many elements in structs of their
+  # own, so an in-place rename could leave a node read as a struct it is not.
+  # A new element replacing the old one is the DOM's way.
+  describe "Node#name= (removed)" do
+    it "is not defined on either representation" do
+      html = Makiri::HTML("<p>x</p>").at_css("p")
+      xml = Makiri::XML("<r/>").root
+      [html, xml].each do |node|
+        expect(node).not_to respond_to(:name=)
+        expect(node).not_to respond_to(:node_name=)
+      end
     end
   end
 

@@ -1,10 +1,10 @@
 //! The one place Makiri reads Lexbor's DOM - node, element, attribute and
 //! document fields, and the Lexbor accessors over them - and the one place it
-//! edits the tree. An edit needs one of three clearance types, each with its own
+//! edits the tree. An edit needs one of two clearance types, each with its own
 //! contract: [`HtmlNodeMut`] / [`HtmlElementMut`] for a caller's node that
-//! passed the frozen and evaluation checks (`mutate`), [`BuildingNode`] /
-//! [`BuildingElement`] for a node no tree holds yet, and [`ScratchElement`] for
-//! one made only to be read and destroyed (`build`).
+//! passed the frozen and evaluation checks (`mutate`), and [`BuildingNode`] /
+//! [`BuildingElement`] for a node no tree holds yet (`build`). Nothing here
+//! destroys a node: Makiri detaches, and the document's arena frees.
 //!
 //! Everything here reads the GENERATED layout (`crate::lexbor::abi`), so there is
 //! no hand-written copy of a Lexbor struct left to drift from the pinned headers.
@@ -26,7 +26,7 @@ use crate::lexbor::abi::{self as lxb, LxbAttr, LxbDoc, LxbElement, LxbNode};
 
 mod build;
 mod mutate;
-pub use build::{BuildingElement, BuildingNode, ScratchElement};
+pub use build::{BuildingElement, BuildingNode};
 pub use mutate::{HtmlElementMut, HtmlNodeMut, Insertion, Place, PreInsertError};
 
 /* A node handle is cast to an element or attribute handle, which is sound only

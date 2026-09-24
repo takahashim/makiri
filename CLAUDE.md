@@ -539,7 +539,7 @@ no forced scan) already proves it valid - `parse_html`'s `assume_valid` and
 `ruby_str_known_valid_utf8`. The **programmatic APIs are strict**:
 `verify_text` (`bridge/string.rs`) raises `Makiri::Error` for **invalid
 UTF-8 everywhere** at the XPath/CSS/mutation boundaries (expr, selector,
-attribute name/value, `content=`, `name=`, `create_*`, variable/namespace) -
+attribute name/value, `content=`, `create_*`, variable/namespace) -
 never truncate/repair. **Embedded NUL (U+0000) is a two-tier contract**: rejected
 for names/tags/namespaces/PI target+data/selectors/XPath/variables and all engine
 inputs (which assume NUL-terminated C strings), but **accepted for the HTML
@@ -731,10 +731,10 @@ text (DOM makes a Document's textContent null, which is not what callers want).
 `add_previous_sibling`/`before`, `add_next_sibling`/`after`, `remove`/`unlink`,
 `replace`) over Lexbor insert/remove. We **detach, never destroy** - the arena
 owns node memory and live Ruby wrappers may alias a removed node; move semantics
-= detach-then-insert. Attribute `[]=` / `delete`; `Node#name=` renames in place
-(create a fresh element so the doc interns the name, copy its
-`local_name`/`prefix`/`ns`/`upper_name`/`qualified_name`, destroy the throwaway -
-identity preserved); `Node#content=`. `Document#{create_element,create_text_node}`.
+= detach-then-insert. Attribute `[]=` / `delete`; `Node#content=`. There is
+NO rename (`name=` was removed on both representations): the DOM has none, and
+Lexbor keeps many elements in structs of their own, so rewriting a node's tag in
+place left it read as a struct it is not (`div` -> `template` segfaulted). `Document#{create_element,create_text_node}`.
 Fragments: `DocumentFragment.parse(html)` (own backing doc) and
 `Document#fragment(html)` (bound to a doc) parse in a throwaway `<body>` context
 and `lxb_dom_document_import_node` (deep) each child into the target arena;

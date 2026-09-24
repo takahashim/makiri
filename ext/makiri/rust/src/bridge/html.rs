@@ -27,7 +27,7 @@ use crate::lexbor::fragment::import_with_fixup;
 
 use crate::bridge::string::{RubyData, RubyText};
 use crate::bridge::wrapper::*;
-use crate::lexbor::adapter::html::{HtmlDoc, HtmlElementMut, ScratchElement, NS_UNDEF};
+use crate::lexbor::adapter::html::{HtmlDoc, HtmlElementMut, NS_UNDEF};
 
 /* ---- the document's own bytes and text ---- */
 
@@ -479,20 +479,6 @@ fn intern_ns(el: HtmlElementMut<'_>, uri: &[u8]) -> usize {
 pub fn remove_attribute(el: HtmlElementMut<'_>, name: &RubyText) {
     // SAFETY: see the section comment.
     el.remove_attribute(unsafe { name.bytes() });
-}
-
-/// Rename `el` in place, keeping its identity; false when Lexbor could not
-/// intern the name.
-pub fn rename(el: HtmlElementMut<'_>, name: &RubyText) -> bool {
-    // SAFETY: see the section comment.
-    let scratch = ScratchElement::for_rename(el, unsafe { name.bytes() });
-    match scratch {
-        Some(scratch) => {
-            scratch.rename(el);
-            true
-        }
-        None => false,
-    }
 }
 
 /// `node.content = text`; false when Lexbor could not store it.

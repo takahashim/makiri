@@ -95,7 +95,6 @@ RSpec.describe "UTF-8 text-input contract" do
       "create_element (invalid UTF-8)"  => -> (d, e) { d.create_element(INVALID.dup.force_encoding("BINARY")) },
       "create_text_node (invalid UTF-8)" => -> (d, e) { d.create_text_node(INVALID.dup.force_encoding("BINARY")) },
       "create_comment (invalid UTF-8)"  => -> (d, e) { d.create_comment(INVALID.dup.force_encoding("BINARY")) },
-      "name= (NUL)"                     => -> (d, e) { e.name = "a#{NUL}b" },
       "css selector (NUL)"              => -> (d, e) { d.css("div#{NUL}") },
       "css selector (invalid UTF-8)"    => -> (d, e) { d.css(INVALID.dup.force_encoding("BINARY")) },
       "xpath expression (NUL)"          => -> (d, e) { d.xpath("//div#{NUL}") },

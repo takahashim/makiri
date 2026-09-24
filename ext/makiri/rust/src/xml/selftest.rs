@@ -746,25 +746,6 @@ fn removing_an_attribute_is_idempotent() {
 }
 
 #[test]
-fn renaming_an_element_rewrites_its_whole_name() {
-    let (mut doc, r) = detached_element(b"r");
-    /* A default declaration in scope, so the namespace assertion below is about
-     * the rule rather than about there being nothing to resolve against: a
-     * rename re-decides the URI from the scope the node is in RIGHT NOW. */
-    mutate::set_attribute(&mut doc, r, b"xmlns", b"").expect("xmlns=\"\" is legal");
-    mutate::set_attribute(&mut doc, r, b"xmlns:p", b"urn:p").expect("a declaration");
-
-    assert_eq!(mutate::rename(&mut doc, r, b"q"), MutStatus::Ok);
-    assert_eq!(doc.node(r).qname.len, 1);
-    assert_eq!(doc.local(r), b"q");
-    assert_eq!(
-        doc.node(r).ns_uri.len,
-        0,
-        "unprefixed, so it takes the DEFAULT binding - which is empty here"
-    );
-}
-
-#[test]
 fn set_content_replaces_the_children_with_one_text_node() {
     let (mut doc, r) = detached_element(b"r");
     /* Hand-linked, so the child is there without an insertion having run. */

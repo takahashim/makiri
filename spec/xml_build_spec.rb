@@ -113,16 +113,6 @@ RSpec.describe "Makiri::XML building (Phase 2)" do
       expect { other.to_xml }.to raise_error(Makiri::Error, /DOM-loose/)
     end
 
-    it "returns a DOM-loose element to strict XML mode after a valid rename" do
-      loose = doc.create_loose_dom_element("f:o:o", "f", "o:o", "http://example.com/")
-      expect { loose.to_xml }.to raise_error(Makiri::Error, /DOM-loose/)
-      loose.name = "ok"
-      expect(loose.name).to eq("ok")
-      expect(loose.prefix).to be_nil
-      expect(loose.namespace_uri).to be_nil
-      expect(loose.to_xml).to eq("<ok/>")
-    end
-
     it "rejects an embedded NUL in XML data (U+0000 is not a legal XML char)" do
       # Unlike the HTML DOM, XML 1.0 cannot represent U+0000, so the data-family
       # NUL relaxation deliberately does NOT apply here: text/CDATA/comment content

@@ -234,7 +234,6 @@ fn main() {
         .allowlist_function("lxb_dom_node_insert_child")
         .allowlist_function("lxb_dom_node_insert_before")
         .allowlist_function("lxb_dom_node_insert_after")
-        .allowlist_function("lxb_dom_node_destroy")
         .allowlist_function("lxb_dom_node_text_content_set")
         .allowlist_function("lxb_dom_element_set_attribute")
         .allowlist_function("lxb_dom_element_attr_by_name")

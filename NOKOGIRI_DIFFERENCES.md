@@ -136,11 +136,18 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
 
 ## HTML mutation
 
+* There is no `Node#name=` / `#node_name=` (on HTML or XML nodes). Nokogiri
+  renames a node in place and keeps its identity; the DOM has no rename, and
+  Lexbor keeps elements such as `<template>`, `<option>` and `<style>` in
+  structs of their own, so a node cannot change its tag safely. Create an
+  element of the new name, move the attributes and children, and `replace`
+  the old one (see CHANGELOG.md).
 * Element and attribute names follow the WHATWG DOM's rules
-  * `name=`, `create_element`, `[]=` and `set_attribute_ns` raise `ArgumentError`
-    for a name the DOM refuses - one holding whitespace, `/`, `>` (or `=` for an
-    attribute) - where `Nokogiri::HTML5` accepts it and writes it into the markup
-    as it stands: `name = "img src=x onerror=alert(1)"` serializes as that tag.
+  * `create_element`, `[]=` and `set_attribute_ns` raise `ArgumentError` for a
+    name the DOM refuses - one holding whitespace, `/`, `>` (or `=` for an
+    attribute) - where `Nokogiri::HTML5` accepts it and writes it into the
+    markup as it stands: `create_element("img src=x onerror=alert(1)")`
+    serializes as that tag.
     The names HTML actually uses (`data-*`, `aria-*`, `@click`, `:href`,
     `v-on:x`, custom elements) are accepted.
   * `set_attribute_ns(nil, "x:y")` raises, as the DOM's `setAttributeNS` does:

@@ -139,17 +139,6 @@ pub fn set_content(_ruby: &Ruby, this: XmlSelf, text: Value) -> Result<Value, Er
     })
 }
 
-/// `node.name = new_name` -> new_name.
-pub fn set_name(_ruby: &Ruby, this: XmlSelf, name: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        let edit = begin_edit(this)?;
-        let nv = verified_text(name, c"node name")?;
-        let bytes = nv.as_verified().as_bytes();
-        xml_mut_check(edit.with_arena(|d, n| mutate::rename(d, n, bytes))?)?;
-        Ok(name)
-    })
-}
-
 /* ------------------------------------------------------------------ */
 /* building: insertion                                                */
 /* ------------------------------------------------------------------ */

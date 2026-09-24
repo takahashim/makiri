@@ -62,14 +62,12 @@ RSpec.describe "Makiri::XML element-name index" do
     expect(doc.css("y").length).to eq(0)
   end
 
-  it "is invalidated on remove and rename (#name=)" do
+  it "is invalidated on remove" do
     doc = Makiri::XML("<r><a/><a/><b/></r>")
     expect(doc.css("a").length).to eq(2)
     doc.css("a").first.remove
     expect(doc.css("a").length).to eq(1)
-    doc.at_css("b").name = "a"
-    expect(doc.css("a").length).to eq(2)
-    expect(doc.css("b").length).to eq(0)
+    expect(doc.css("b").length).to eq(1)
   end
 
   it "reflects #content= (children replaced) " do

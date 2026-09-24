@@ -343,16 +343,6 @@ RSpec.describe "Makiri::XML#to_xml" do
       expect { doc.root << e }.to raise_error(Makiri::Error, /not bound/)
     end
 
-    it "resolves an element renamed while detached" do
-      doc = Makiri::XML(%(<r xmlns:q="urn:q"><e/></r>))
-      e = doc.at_xpath("//e")
-      e.remove
-      e.name = "q:n"
-      doc.root << e
-      expect(e.namespace_uri).to eq("urn:q")
-      expect_round_trip(doc)
-    end
-
     it "refuses two attributes that insertion gives one key" do
       doc = Makiri::XML(%(<r xmlns:p="u" xmlns:q="u"/>))
       n = doc.create_element("n")
@@ -402,12 +392,11 @@ RSpec.describe "Makiri::XML#to_xml" do
   end
 
   # The writer ignored a no-namespace element's contrary xmlns, but the
-  # mutators still resolved against it: renaming the element moved it.
+  # mutators still resolved against it: a new child took its namespace.
   it "ignores a contrary default declaration when resolving too" do
     doc = Makiri::XML("<r><e/></r>")
     e = doc.at_xpath("//e")
     e["xmlns"] = "urn:x"
-    e.name = "e"
     e << doc.create_element("c")
     expect(e.namespace_uri).to be_nil
     expect(doc.at_xpath("//c").namespace_uri).to be_nil

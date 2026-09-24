@@ -1,6 +1,5 @@
 //! Making nodes: the document's factories, and the handles for a node that is
-//! being built and not yet in a tree ([`BuildingNode`], [`BuildingElement`]) or
-//! made only to be read and destroyed ([`ScratchElement`]).
+//! being built and not yet in a tree ([`BuildingNode`], [`BuildingElement`]).
 
 #![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
@@ -370,9 +369,8 @@ impl<'doc> BuildingNode<'doc> {
 /// [`HtmlElementMut`]: that type means the receiver passed the frozen and
 /// evaluation checks, which say nothing about an element this code just made.
 ///
-/// Nor is it [`ScratchElement`], which destroys what it holds. A half-built
-/// subtree that is abandoned on failure is left where it is: the document's
-/// arena reclaims it wholesale, and nothing else ever points at it.
+/// A half-built subtree that is abandoned on failure is left where it is: the
+/// document's arena reclaims it wholesale, and nothing else ever points at it.
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct BuildingElement<'doc>(HtmlElement<'doc>);
@@ -412,61 +410,5 @@ impl<'doc> BuildingElement<'doc> {
     /// abandoned subtree.
     pub fn append_ns_attribute(self, ns: &[u8], qname: &[u8], value: &[u8]) -> bool {
         self.0.append_attribute_ns(Some(ns), qname, value)
-    }
-}
-
-/// An element made only to be read from and thrown away, destroyed when it
-/// goes out of scope.
-///
-/// Renaming an element is done by creating one under the new name, copying the
-/// names the document interned for it, and discarding the source: the five
-/// fields copied out (`local_name`, `prefix`, `ns`, `upper_name`,
-/// `qualified_name`) are the DOCUMENT's interned strings and tag ids, not the
-/// element's own storage, so they outlive it.
-///
-/// This is the one place Makiri destroys rather than detaches, and it is sound
-/// for the same reason: the throwaway was never in a tree and no Ruby wrapper
-/// ever saw it. Owning it keeps the destroy off the success path, where it used
-/// to sit between the copies and the index drop.
-pub struct ScratchElement<'doc>(HtmlElement<'doc>);
-
-impl<'doc> ScratchElement<'doc> {
-    /// A detached element named `name` in `target`'s namespace, for
-    /// [`rename`](Self::rename), or `None` when Lexbor could not make one.
-    ///
-    /// An HTML element's name is made as createElement makes it, lower case. A
-    /// foreign one keeps its namespace and the case of the name: made with
-    /// createElement, a renamed SVG `rect` came out an XHTML `lineargradient`.
-    pub fn for_rename(target: HtmlElementMut<'doc>, name: &[u8]) -> Option<Self> {
-        let node = target.element().node();
-        let doc = node.owner_document();
-        let made = if node.ns_id() == NS_HTML {
-            doc.create_element(name)
-        } else {
-            doc.create_element_ns(name, node.ns_uri().unwrap_or(&[]), &[])
-        };
-        made.map(|b| ScratchElement(b.0))
-    }
-
-    /// Give `target` this element's interned name, in place, so a Ruby wrapper
-    /// pointing at `target` keeps pointing at the same element.
-    pub fn rename(&self, target: HtmlElementMut<'doc>) {
-        // SAFETY: two live elements of one document; the names copied are the
-        // document's interned storage, which outlives this scratch element.
-        unsafe {
-            let (to, from) = (target.element().raw(), self.0.raw());
-            (*to).node.local_name = (*from).node.local_name;
-            (*to).node.prefix = (*from).node.prefix;
-            (*to).node.ns = (*from).node.ns;
-            (*to).upper_name = (*from).upper_name;
-            (*to).qualified_name = (*from).qualified_name;
-        }
-    }
-}
-
-impl Drop for ScratchElement<'_> {
-    fn drop(&mut self) {
-        // SAFETY: this type owns the element, which was never in a tree.
-        unsafe { lxb::lxb_dom_node_destroy(self.0.node().as_raw()) };
     }
 }

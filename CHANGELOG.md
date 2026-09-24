@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Removed
+
+* `Node#name=` and `Node#node_name=`, on both HTML and XML nodes. The DOM has
+  no way to rename an element, and Lexbor keeps many elements in structs of
+  their own (`<template>` its contents, `<option>` its selectedness): renaming
+  a `<div>` to `template` in place left it read as a template, and serializing
+  it segfaulted. To change an element's name, make one and put it in the old
+  one's place, as the DOM does:
+
+  ```ruby
+  new_el = doc.create_element("section")
+  old_el.attribute_nodes.each { |a| new_el[a.name] = a.value }
+  old_el.children.each { |c| new_el << c }
+  old_el.replace(new_el)
+  ```
+
 ### Security
 
 * `content=` on an HTML element and `delete(name)` no longer free the nodes they
@@ -19,11 +35,11 @@
   check, or growing it so the view read freed memory into the DOM. Such a
   `#to_s` now raises "can't modify string; temporarily locked".
 * A receiver frozen by its own argument's `#to_s` is no longer edited.
-* HTML element and attribute names follow the WHATWG DOM's rules: `name=`,
+* HTML element and attribute names follow the WHATWG DOM's rules:
   `create_element`, `[]=` and `set_attribute_ns` raise `ArgumentError` for a
   name holding whitespace, `/`, `>` (or `=`), which was written into the markup
-  as it stood - `name = "img src=x onerror=alert(1)"` serialized as that tag.
-  See NOKOGIRI_DIFFERENCES.md.
+  as it stood - `create_element("img src=x onerror=alert(1)")` serialized as
+  that tag. See NOKOGIRI_DIFFERENCES.md.
 * More inputs whose cost outgrew their size: a single-context reverse-axis
   step (`preceding-sibling`, `ancestor`) is reversed rather than merge-sorted
   (4000 siblings: 3.9 s); XML CSS `:nth-child` / `:nth-of-type` /
@@ -52,10 +68,6 @@
 
 ### Fixed
 
-* `name=` on an SVG or MathML element (or one in any other non-HTML
-  namespace) keeps it in its namespace and keeps the case of the new name,
-  as Nokogiri does. It moved the element into XHTML and lower-cased the name
-  (`rect.name = "linearGradient"` gave an XHTML `lineargradient`).
 * A namespace Hash given to a query is read as a Hash, not through a `to_a`
   a subclass may redefine (a non-pair raised `Makiri::InternalError`), and
   each prefix and URI is read with `String()`, preferring `to_str`, as other
@@ -134,7 +146,7 @@
 * XML namespaces: an attribute whose prefix was unbound on a detached element
   is resolved when the element is inserted (it was written as `xmlns:ns1=""`),
   insertion refuses two attributes that end up with one (namespace, local
-  name), a rename while detached is resolved on insertion, both writers refuse
+  name), both writers refuse
   a prefix bound to nothing, and `set_attribute_ns` refuses a namespace that
   does not fit the name (a prefix with none, the XML namespace under another
   prefix, ...).
@@ -147,8 +159,8 @@
   element is left out rather than inventing `xmlns:ns1=""` (see
   NOKOGIRI_DIFFERENCES.md); and an element copied in but not yet inserted keeps
   its own declaration.
-* The XML mutators enforce the rules the parser does. `[]=`,
-  `set_attribute_ns` and `name=` refuse a namespace declaration Namespaces in
+* The XML mutators enforce the rules the parser does. `[]=` and
+  `set_attribute_ns` refuse a namespace declaration Namespaces in
   XML §3 forbids (`xmlns:xml` to another URI, `xmlns:xmlns`, a reserved URI
   under another prefix) and a second attribute with the same namespace and
   local name; `create_document_type` refuses a name that is no QName and a

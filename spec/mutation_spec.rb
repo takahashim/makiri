@@ -430,25 +430,6 @@ RSpec.describe "Makiri mutation" do
       expect(root.text).to eq("t5")
     end
 
-    # The rename used to make its new name with createElement, so a foreign
-    # element was moved into XHTML and lower-cased.
-    it "renames a foreign element within its own namespace, keeping the name's case" do
-      html = Makiri::HTML("<svg><rect/></svg>")
-      rect = html.at_xpath("//*[local-name()='rect']")
-      rect.name = "linearGradient"
-      expect([rect.name, rect.namespace_uri]).to eq(["linearGradient", "http://www.w3.org/2000/svg"])
-      expect(html.at_css("svg").to_html).to eq("<svg><linearGradient></linearGradient></svg>")
-    end
-
-    it "invalidates the element-by-tag index when #name= renames an element" do
-      multi = Makiri::HTML("<html><body><div>x</div><div>y</div></body></html>")
-      multi.xpath("//div")           # build the persisted tag index
-      multi.at_xpath("//div").name = "section"
-      # the //newtag fast path is served from the tag index; without invalidation
-      # the renamed element would be missing from it (a truncated wrong result).
-      expect(multi.xpath("//section").map(&:text)).to eq(["x"])
-      expect(multi.xpath("//div").map(&:text)).to eq(["y"])
-    end
   end
 
   # Data-family mutations (text/comment node content, attribute values) accept an
@@ -499,8 +480,6 @@ RSpec.describe "Makiri mutation" do
         .to raise_error(Makiri::Error, /must not contain a NUL byte/)
       expect { div["a\x00b"] = "v" }
         .to raise_error(Makiri::Error, /must not contain a NUL byte/)
-      expect { div.name = "a\x00b" }
-        .to raise_error(Makiri::Error, /must not contain a NUL byte/)
     end
 
     it "still rejects invalid UTF-8 in the relaxed data-family sites" do
@@ -540,7 +519,6 @@ RSpec.describe "Makiri mutation" do
 
     it "refuses names that would become markup" do
       expect { para[%(x="y" onload)] = "v" }.to raise_error(ArgumentError, /attribute name/)
-      expect { para.name = "img src=x onerror=alert(1)" }.to raise_error(ArgumentError, /element name/)
       expect { doc.create_element("a href=javascript:x") }.to raise_error(ArgumentError, /element name/)
       expect { para.set_attribute_ns("urn:x", ":a", "v") }.to raise_error(ArgumentError, /attribute name/)
       expect(para.to_html).to eq("<p>t</p>")

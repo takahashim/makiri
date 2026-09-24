@@ -202,24 +202,6 @@ pub fn remove_attribute_ns(
     })
 }
 
-/// `element.name = new_name` -> new_name.
-pub fn set_name(ruby: &Ruby, this: HtmlSelf, rb_name: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        const REFUSAL: &str = "name= is only supported on elements";
-        let edit = edit(&this)?;
-        if edit.node_type() != TYPE_ELEMENT {
-            return Err(makiri_error(REFUSAL));
-        }
-        let nv = ruby_verified_text(rb_name, c"element name")?;
-        check_dom_name(ruby, &nv, dom_name::valid_element_local_name, "element")?;
-        let el = element_of(edit, REFUSAL)?;
-        if !crate::bridge::html::rename(el, &nv) {
-            return Err(makiri_error("failed to rename element"));
-        }
-        Ok(rb_name)
-    })
-}
-
 /// `node.content = text` -> text.
 pub fn set_content(_ruby: &Ruby, this: HtmlSelf, rb_text: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {

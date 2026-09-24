@@ -124,7 +124,7 @@ module MutateFuzz
     when 7  then t[ATTR_NAMES.sample(random: rng)] = ATTR_VALS.sample(random: rng)
     when 8  then t.delete(ATTR_NAMES.sample(random: rng))
     when 9  then t.content = TEXTS.sample(random: rng)
-    when 10 then t.name = ELEM_NAMES.sample(random: rng)
+    when 10 then t.replace(doc.create_element(ELEM_NAMES.sample(random: rng)))
     when 11 then t.remove
     when 12 then t.add_child(src.sample(random: rng))              # cross-document import (deep copy)
     when 13 then t.add_child(nodes.sample(random: rng))            # in-tree move (an ancestor -> cycle, rejected)

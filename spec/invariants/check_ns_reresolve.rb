@@ -105,10 +105,11 @@ def apply_edit(rng, doc)
         nil # cycles and the like are refused; not the finding
       end
     end
-  when 4 # rename (swap the prefix)
+  when 4 # replace with an element of another name (the DOM has no rename)
     pfx = rng.chance(7, 10) ? "#{rng.pick(PREFIXES)}:" : ""
     begin
-      nn = "#{pfx}#{rng.pick(LOCALS)}"; old = target.name; target.name = nn; desc = "rename #{old} -> #{nn}"
+      nn = "#{pfx}#{rng.pick(LOCALS)}"; old = target.name
+      target.replace(doc.create_element(nn)); desc = "replace #{old} with #{nn}"
     rescue StandardError
       nil
     end

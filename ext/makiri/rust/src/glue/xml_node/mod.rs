@@ -173,8 +173,6 @@ fn init_mutate() {
     .expect("#remove_attribute_ns");
     m.define_method("content=", method!(mutate::set_content, 1))
         .expect("#content=");
-    m.define_method("name=", method!(mutate::set_name, 1))
-        .expect("#name=");
 
     /* Building. Insertion accepts a single Makiri::XML node; one from another
      * document is deep-copied into this one. */

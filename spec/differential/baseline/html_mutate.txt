@@ -100,11 +100,6 @@ rans.miss = nil
 rans.case_miss = nil
 rans.tree = UTF-8:"<a xlink:href=\"#third\" plain2=\"v3\" mixedcase=\"v4\">t</a>"
 rans.non_element = nil
-name=.ret = UTF-8:"h1"
-name=.tree = UTF-8:"<html><head></head><body><div id=\"a\"><h1 id=\"p1\">one</h1><p id=\"p2\">two</p></div></body></html>"
-name=.query = Integer:1
-name=.non_element = UTF-8:"x"
-name=.bad = UTF-8:"RAISE Makiri::Error: element name must be valid UTF-8"
 content=.element = UTF-8:"replaced"
 content=.tree = UTF-8:"<html><head></head><body><div id=\"a\">replaced</div></body></html>"
 content=.text = UTF-8:"T"
@@ -151,7 +146,6 @@ create_doctype.importable = UTF-8:"n2"
 create_doctype.bad = UTF-8:"RAISE ArgumentError: invalid doctype name"
 create_doctype.no_args = UTF-8:"RAISE ArgumentError: wrong number of arguments (given 0, expected 1..3)"
 doctype.place = UTF-8:"<!DOCTYPE html><html><head></head><body>b</body></html>"
-inval.rename = Integer:1
 inval.text = UTF-8:"oneNEW"
 inval.add = Integer:1
 inval.remove = Integer:0
@@ -169,6 +163,6 @@ invalidation=1
 move=2
 nul_value=1
 outer_html=1
-raised=31
+raised=30
 remove_attribute_ns=1
 set_attribute_ns=1
