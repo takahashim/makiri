@@ -64,8 +64,10 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   tables is undefined behaviour - so the callback catches the panic, latches it
   and returns the stop status, and the caller re-raises once C has unwound.
   `caught::PanicLatch` is that, and it is deliberately the same shape the
-  callbacks already used for the node cap and OOM. It is installed in all nine:
-  the CSS traversal (`find_cb`/`first_cb`/`match_cb`), both serializer sinks,
+  callbacks already used for the node cap and OOM. It is installed in all eight:
+  the CSS traversal (`find_cb`/`first_cb`/`match_cb`), the serializer sink
+  (`lexbor::chunks::chunk_cb`, one generic function for the HTML and stylesheet
+  serializers),
   the tokenizer's `pos_token_cb`, `bridge::gvl`'s trampoline (which carries the
   whole parser), and - covering every `rb_protect` at once, since magnus runs
   the closure inside its own `extern "C"` trampoline - `bridge::ruby::protect`.
