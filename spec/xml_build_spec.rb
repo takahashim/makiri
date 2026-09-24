@@ -327,6 +327,18 @@ RSpec.describe "Makiri::XML building (Phase 2)" do
       expect { r.add_child(doc.create_element("x")) }.to raise_error(FrozenError)
     end
 
+    # Inserting a detached element re-derived every attribute's namespace from
+    # its prefix, so a namespace given with set_attribute_ns was lost.
+    it "keeps a namespace given with set_attribute_ns when the element is inserted" do
+      xml = Makiri::XML(%(<r xmlns:q="urn:b"/>))
+      el = xml.create_element("b")
+      el.set_attribute_ns("urn:a", "x", "1")
+      el.set_attribute_ns("urn:a", "q:y", "2")
+      xml.root << el
+      expect(el.attribute_nodes.map(&:namespace_uri)).to eq(%w[urn:a urn:a])
+      expect(Makiri::XML(xml.to_xml).xpath("//@*").map(&:namespace_uri)).to eq(%w[urn:a urn:a])
+    end
+
     it "says which namespace-declaration rule a refused declaration breaks" do
       {
         ["xmlns:xmlns", "urn:x"] => /xmlns cannot be declared/,

@@ -11,7 +11,7 @@ use super::ns::{resolve_ns, Ns, Resolved, NO_NS};
 use super::{arena, assign_qname};
 use crate::xml::chars::validate_chars;
 use crate::xml::qname::{ns_decl_check, split_checked, xmlns_prefix, Split};
-use crate::xml::{Document, MutStatus, NodeId, NodeType, Span, FLAG_NS_PENDING};
+use crate::xml::{Document, MutStatus, NodeId, NodeType, Span, FLAG_NS_EXPLICIT, FLAG_NS_PENDING};
 
 /// Build a fresh ATTRIBUTE (qname + value + namespace) and link it onto `el`
 /// after `tail`, the last entry the caller's own scan reached.
@@ -183,7 +183,9 @@ pub fn set_attribute_ns(
     } else {
         arena(doc.store(ns))?
     };
-    build_attr(doc, el, name, &sp, val, Resolved::decided(nsv), tail)
+    let attr = build_attr(doc, el, name, &sp, val, Resolved::decided(nsv), tail)?;
+    doc.node_mut(attr).flags |= FLAG_NS_EXPLICIT;
+    Ok(attr)
 }
 
 /// Remove `el`'s attribute keyed by `(ns, local)`; `true` when one was removed.

@@ -115,6 +115,14 @@ pub const FLAG_NS_RESOLVED: u32 = 0x0000_0002;
 /// and a removed-then-edited element came back with `ns1:a` bound to "".
 pub const FLAG_NS_PENDING: u32 = 0x0000_0004;
 
+/// Set on an ATTRIBUTE whose namespace was GIVEN (`set_attribute_ns`) rather
+/// than derived from its prefix. Resolution leaves it alone: re-deriving it
+/// when a detached element was inserted put `set_attribute_ns("urn:a", "x")`
+/// in no namespace (an unprefixed name resolves to none), and a `q:x` into
+/// whatever `q` meant at the insertion point. Naming the attribute again by
+/// its qualified name alone clears it.
+pub const FLAG_NS_EXPLICIT: u32 = 0x0000_0008;
+
 /* ---- mutation status ---- */
 
 /// The outcome of a tree mutation. [`MutStatus::Ok`] is success; each failure

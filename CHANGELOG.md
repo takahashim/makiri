@@ -52,6 +52,15 @@
 
 ### Fixed
 
+* HTML-to-XML `import_node` no longer moves an element into another namespace
+  when one of its attributes uses the element's prefix for a different URI
+  (`p:e` in `urn:p` with an attribute `p:x` in `urn:other` came out in
+  `urn:other`). Namespaced attributes cross with their namespace given
+  directly, and a prefixed element is declared once, not on every descendant.
+  A malformed attribute name (`:class`) is refused with `ArgumentError` again.
+* A namespace given with `XML::Node#set_attribute_ns` on a detached element
+  survives the element's insertion. The insertion re-derived it from the
+  prefix, so `set_attribute_ns("urn:a", "x", v)` ended up in no namespace.
 * `Makiri::XML` CSS reads `[|a]` as the no-namespace attribute, as the
   Selectors spec does; it was refused as the unsupported `[*|a]`. The `s`
   attribute modifier is accepted (XML values compare case-sensitively anyway);

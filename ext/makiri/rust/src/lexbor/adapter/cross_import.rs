@@ -113,19 +113,21 @@ fn status(r: Result<NodeId, MutStatus>) -> MutStatus {
     }
 }
 
-/// Copy the source element's attributes onto the translated mkr element,
-/// declaring an `xmlns:PREFIX` for each namespaced prefixed one.
+/// Copy the source element's attributes onto the translated mkr element.
 ///
 /// An attribute's namespace is its OWN ([`HtmlAttr::own_ns`], the reading
 /// XPath and `Attr#namespace_uri` use): Lexbor stores a plain attribute under
 /// its element's namespace, and reading that raw id put a parsed `q:y` inside
-/// `<svg>` into SVG.
+/// `<svg>` into SVG. A namespaced attribute is set WITH its namespace
+/// (`set_attribute_ns`), so it keeps it wherever the copy is inserted. It used
+/// to be a declaration of its prefix plus the bare name, and a declaration is
+/// one attribute per prefix: an attribute `p:x` in `urn:other` on an element
+/// `p:e` in `urn:p` redeclared `p` and moved the element into `urn:other`.
 ///
 /// Three kinds of attribute do not cross as they stand:
-/// * one in the XMLNS namespace (a foreign element's `xmlns:xlink`) already IS
-///   a declaration, so it is copied and nothing is declared for it - declaring
-///   its "prefix" wrote `xmlns:xmlns="http://www.w3.org/2000/xmlns/"`, which
-///   no parser accepts;
+/// * a declaration (a foreign element's `xmlns:xlink`, in the XMLNS
+///   namespace) is copied unless the element already declares that prefix
+///   for its own name, which wins - the attributes need no declaration now;
 /// * one named `xmlns` / `xmlns:*` in NO namespace (on an HTML element) is an
 ///   ordinary attribute in HTML, but copied it would become a declaration and
 ///   move the element: `<div xmlns="urn:bogus">` came out in `urn:bogus`
@@ -134,9 +136,9 @@ fn status(r: Result<NodeId, MutStatus>) -> MutStatus {
 /// * one in NO namespace whose name has a prefix other than `xml` (`fb:like`)
 ///   has no XML form: written as it stands it is a prefix with no binding, so
 ///   the copy was made and then could be neither inserted nor serialized. It is
-///   refused here instead, as `MutStatus::BadNsName`, like a name that is no
-///   XML name at all. `xml:` keeps its fixed meaning, as the XML reader gives
-///   it.
+///   refused here instead, as `MutStatus::BadNsName` - or `BadName` when the
+///   name is not a QName at all. `xml:` keeps its fixed meaning, as the XML
+///   reader gives it.
 fn h2x_copy_attrs(doc: &mut XmlDoc, s: HtmlElement<'_>, el: NodeId) -> MutStatus {
     for a in s.attrs() {
         let (name, value) = (a.qualified_name(), a.value());
@@ -145,31 +147,20 @@ fn h2x_copy_attrs(doc: &mut XmlDoc, s: HtmlElement<'_>, el: NodeId) -> MutStatus
         }
 
         let own = a.own_ns();
-        if own != NS_XMLNS && crate::xml::qname::xmlns_prefix(name).is_some() {
-            continue;
-        }
-        let colon = name.iter().position(|&b| b == b':');
-        let st = match (own, colon) {
-            (NS_UNDEF, Some(c)) if &name[..c] != b"xml" => MutStatus::BadNsName,
-            (NS_UNDEF | NS_XML | NS_XMLNS, _) => {
-                status(mutate::set_attribute(doc, el, name, value))
-            }
-            (_, colon) => match a.own_ns_uri() {
-                Some(uri) => {
-                    let declared = match colon {
-                        Some(c) => declare_ns(doc, el, &name[..c], uri),
-                        None => MutStatus::Ok,
-                    };
-                    if declared != MutStatus::Ok {
-                        return declared;
-                    }
-                    match colon {
-                        Some(_) => status(mutate::set_attribute(doc, el, name, value)),
-                        /* No prefix to declare: the namespace goes on the
-                         * attribute itself, and the writer names a prefix. */
-                        None => status(mutate::set_attribute_ns(doc, el, uri, name, value)),
-                    }
+        let decl = crate::xml::qname::xmlns_prefix(name);
+        let st = match (own, decl) {
+            (NS_XMLNS, Some(p)) if declares(doc, el, p) => MutStatus::Ok,
+            (NS_XMLNS, _) => status(mutate::set_attribute(doc, el, name, value)),
+            (_, Some(_)) => MutStatus::Ok, /* an HTML attribute named xmlns */
+            (NS_UNDEF | NS_XML, _) => {
+                let colon = name.iter().position(|&b| b == b':');
+                match colon {
+                    Some(c) if &name[..c] != b"xml" => no_namespace_colon(name),
+                    _ => status(mutate::set_attribute(doc, el, name, value)),
                 }
+            }
+            _ => match a.own_ns_uri() {
+                Some(uri) => status(mutate::set_attribute_ns(doc, el, uri, name, value)),
                 None => status(mutate::set_attribute(doc, el, name, value)),
             },
         };
@@ -178,6 +169,24 @@ fn h2x_copy_attrs(doc: &mut XmlDoc, s: HtmlElement<'_>, el: NodeId) -> MutStatus
         }
     }
     MutStatus::Ok
+}
+
+/// Whether `el` already carries the declaration of `prefix` ("" = default).
+fn declares(doc: &XmlDoc, el: NodeId, prefix: &[u8]) -> bool {
+    core::iter::successors(doc.attrs(el), |&a| doc.next(a))
+        .any(|a| crate::xml::qname::xmlns_prefix(doc.qname(a)) == Some(prefix))
+}
+
+/// The refusal for a no-namespace attribute named with a colon: `BadNsName`
+/// when it reads as `prefix:local` (it has a prefix and no namespace), and
+/// `BadName` when it is no QName at all (`:class`, `a:b:c`), as a malformed
+/// name is refused everywhere else.
+fn no_namespace_colon(name: &[u8]) -> MutStatus {
+    if crate::xml::qname::split_checked(name).is_some() {
+        MutStatus::BadNsName
+    } else {
+        MutStatus::BadName
+    }
 }
 
 /// What [`h2x_make`] produced, plus the default namespace in scope for the new
@@ -196,6 +205,7 @@ fn h2x_make<'a>(
     doc: &mut XmlDoc,
     s: HtmlNode<'a>,
     parent_default: Option<&'a [u8]>,
+    parent: Option<NodeId>,
 ) -> Result<Made<'a>, MutStatus> {
     let unchanged = |node| {
         Ok(Made {
@@ -251,9 +261,15 @@ fn h2x_make<'a>(
 
             let mut child_default = parent_default;
             if let (true, Some(c)) = (prefixed, colon) {
-                let st = declare_ns(doc, el, &name[..c], euri.unwrap_or(&[]));
-                if st != MutStatus::Ok {
-                    return Err(st);
+                /* Declared where the copy will sit unless its parent's scope
+                 * already binds the prefix to the same URI. */
+                let (p, uri) = (&name[..c], euri.unwrap_or(&[]));
+                let bound = parent.is_some_and(|up| mutate::namespace_in_scope(doc, up, p) == uri);
+                if !bound {
+                    let st = declare_ns(doc, el, p, uri);
+                    if st != MutStatus::Ok {
+                        return Err(st);
+                    }
                 }
             } else if euri.unwrap_or(&[]) != parent_default.unwrap_or(&[]) {
                 let st = declare_ns(doc, el, &[], euri.unwrap_or(&[]));
@@ -319,7 +335,7 @@ pub unsafe fn cross_html_to_xml(
     // SAFETY: the caller's contract.
     let src = unsafe { src.as_node() };
 
-    let root = h2x_make(doc, src, None)?;
+    let root = h2x_make(doc, src, None, None)?;
     if root.node.is_invalid() {
         return Err(MutStatus::Type); /* the root's type has no XML counterpart */
     }
@@ -341,7 +357,7 @@ pub unsafe fn cross_html_to_xml(
             let mut c = h2x_first_child(f.s);
             while let Some(child) = c {
                 /* An error abandons the partial subtree. */
-                let made = h2x_make(doc, child, f.def)?;
+                let made = h2x_make(doc, child, f.def, Some(f.d))?;
                 if !made.node.is_invalid() {
                     let st = mutate::insert_child(doc, f.d, made.node);
                     if st != MutStatus::Ok {

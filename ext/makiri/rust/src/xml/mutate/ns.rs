@@ -18,8 +18,8 @@ use super::copy_span;
 use crate::falloc::VecPush;
 use crate::xml::qname::{xmlns_prefix, Split};
 use crate::xml::{
-    Document, MutStatus, NodeId, NodeType, Span, FLAG_DOM_LOOSE_NAME, FLAG_NS_PENDING,
-    FLAG_NS_RESOLVED,
+    Document, MutStatus, NodeId, NodeType, Span, FLAG_DOM_LOOSE_NAME, FLAG_NS_EXPLICIT,
+    FLAG_NS_PENDING, FLAG_NS_RESOLVED,
 };
 
 /// A resolved namespace: a byte-store span (empty = no namespace).
@@ -44,6 +44,7 @@ impl Resolved {
     pub(super) fn write_attr(self, doc: &mut Document, attr: NodeId) {
         let n = doc.node_mut(attr);
         n.ns_uri = self.ns;
+        n.flags &= !FLAG_NS_EXPLICIT;
         if self.pending {
             n.flags |= FLAG_NS_PENDING;
         } else {
@@ -127,7 +128,11 @@ fn resolve_node_ns(
     let mut keys: Vec<(Span, NodeId)> = Vec::new();
     let mut a = doc.attrs(e);
     while let Some(attr) = a {
-        let redo = !attrs_only || doc.node(attr).flags & FLAG_NS_PENDING != 0;
+        /* A namespace given with `set_attribute_ns` is the attribute's own and
+         * is never derived again; everything else is (re-)derived from its
+         * prefix unless it is only the pending ones being looked at. */
+        let flags = doc.node(attr).flags;
+        let redo = flags & FLAG_NS_EXPLICIT == 0 && (!attrs_only || flags & FLAG_NS_PENDING != 0);
         let key = if redo {
             let name = match copy_span(doc.qname(attr)) {
                 Ok(v) => v,
@@ -261,6 +266,13 @@ pub fn ignored_default_decl(doc: &Document, el: NodeId) -> Option<NodeId> {
 /// stores nodes rather than interpreting them. Moving it also made it go through
 /// the CHECKED accessors, which is the right thing at this layer - it used to
 /// index links raw, which only the arena's own private accessors may do.
+/// What `prefix` ("" = default) is bound to at or above `node`, by the
+/// declarations the mutators resolve against; empty when unbound. For a caller
+/// deciding whether a declaration it is about to add would repeat one in scope.
+pub fn namespace_in_scope<'d>(doc: &'d Document, node: NodeId, prefix: &[u8]) -> &'d [u8] {
+    doc.span(resolve_in_scope(doc, Some(node), prefix))
+}
+
 fn resolve_in_scope(doc: &Document, node: Option<NodeId>, prefix: &[u8]) -> Span {
     let mut e = node;
     while let Some(id) = e {

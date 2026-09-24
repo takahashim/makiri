@@ -299,6 +299,40 @@ RSpec.describe "cross-kind import_node" do
     end
   end
 
+  describe "prefix collisions and namespaced attributes crossing into XML" do
+    # A declaration is one attribute per prefix, so declaring an attribute's
+    # prefix overwrote the element's own: p:e in urn:p moved into urn:other.
+    it "keeps the element's namespace when an attribute uses its prefix for another URI" do
+      src = Makiri::XML(%(<r xmlns:p="urn:p"><p:e><p:f/></p:e></r>))
+      e = Makiri.HTML("<div></div>").import_node(src.at_xpath("//*[local-name()='e']"), true)
+      e.set_attribute_ns("urn:other", "p:x", "1")
+      xml = Makiri::XML(%(<root xmlns:p="urn:p"/>))
+      xml.root << xml.import_node(e, true)
+      reread = Makiri::XML(xml.to_xml)
+      expect(reread.xpath("count(//q:e/q:f)", "q" => "urn:p")).to eq(1.0)
+      expect(reread.xpath("string(//@*[namespace-uri()='urn:other'])")).to eq("1")
+      expect(xml.to_xml.scan('xmlns:p="urn:p"').length).to eq(2) # root and e, not f
+    end
+
+    it "keeps each attribute's own namespace, prefixed or not" do
+      div = Makiri.HTML("<div></div>").at_css("div")
+      div.set_attribute_ns("urn:a", "q:x", "1")
+      div.set_attribute_ns("urn:b", "q:y", "2")
+      div.set_attribute_ns("urn:a", "z", "3")
+      xml = Makiri::XML("<r/>")
+      xml.root << xml.import_node(div, true)
+      attrs = Makiri::XML(xml.to_xml).xpath("//@*").map { |a| [a.local_name, a.namespace_uri] }
+      expect(attrs).to eq([%w[x urn:a], %w[y urn:b], %w[z urn:a]])
+    end
+
+    it "refuses a malformed attribute name as a malformed name" do
+      %w[:class a:b:c].each do |name|
+        html = Makiri.HTML(%(<div #{name}="1"></div>))
+        expect { Makiri::XML("<r/>").import_node(html.at_css("div"), true) }.to raise_error(ArgumentError)
+      end
+    end
+  end
+
   describe "a prefixed XML element crossing into HTML" do
     it "keeps its prefix out of its local name, and comes back as it was" do
       xml = Makiri::XML(%(<r xmlns:p="urn:p"><p:e p:a="1" b="2"><p:f/></p:e></r>))
