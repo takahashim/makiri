@@ -328,6 +328,22 @@ RSpec.describe "Makiri::XML CSS selectors" do
       expect(doc.xpath("//wrap").length).to eq(1)
       expect(doc.css(%([id|="x"])).length).to eq(0)               # |= operator unaffected
     end
+
+    # Lexbor stores [|a] with the namespace "*", and the lowering took that for
+    # [*|a] and refused it.
+    it "matches [|a] as the no-namespace attribute" do
+      attrs = Makiri::XML(%(<r xmlns:p="u"><q a="1" p:a="2"/><w p:a="3"/></r>))
+      expect(attrs.css("[|a]").map(&:name)).to eq(%w[q])
+      expect(attrs.css(%([|a="1"])).map(&:name)).to eq(%w[q])
+      expect(attrs.css("[p|a]", "p" => "u").map(&:name)).to eq(%w[q w])
+    end
+
+    it "accepts the s attribute modifier (case-sensitive, as XML is) and refuses i" do
+      attrs = Makiri::XML(%(<r><q a="X"/></r>))
+      expect(attrs.css(%([a="X" s])).map(&:name)).to eq(%w[q])
+      expect(attrs.css(%([a="x" s]))).to be_empty
+      expect { attrs.css(%([a="x" i])) }.to raise_error(Makiri::CSS::SyntaxError, /modifier i/)
+    end
   end
 
   describe "namespaced universal selectors (ns|*, |*, *|*)" do

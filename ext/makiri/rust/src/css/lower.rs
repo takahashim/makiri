@@ -111,25 +111,22 @@ fn lower_universal(
 fn lower_attribute(b: &Build, s: Selector<'_>, at: Attribute<'_>) -> Built {
     let name = s.name();
 
-    if at.case_modifier {
+    if at.case_insensitive {
         return Err(b.fail(
             XP_ERR_SYNTAX,
-            c"CSS attribute case modifier ([a=v i]) is not supported",
+            c"CSS attribute case modifier i ([a=v i]) is not supported for XML",
         ));
     }
 
-    /* The attribute namespace: NULL is a bare name (no namespace, the common
-     * case), `*` is any (unsupported), anything else is a prefix. An unprefixed
-     * CSS attribute selector matches the no-namespace attribute, per CSS and
-     * XPath alike. */
+    /* The attribute namespace: NULL is a bare name, anything else a prefix. An
+     * unprefixed CSS attribute selector matches the no-namespace attribute, per
+     * CSS and XPath alike. Lexbor stores `[|a]` - explicitly no namespace -
+     * with the namespace `*`, and refuses `[*|a]` (any namespace) before it gets
+     * here, so a `*` is `[|a]` and reads as no prefix. It was refused as
+     * `[*|a]`. */
     let prefix = match s.ns() {
-        Some(p) if p == b"*" => {
-            return Err(b.fail(
-                XP_ERR_SYNTAX,
-                c"any-namespace attribute selectors ([*|a]) are not supported",
-            ));
-        }
-        other => other, /* a zero-length one (|a) means no namespace */
+        Some(p) if p == b"*" => None,
+        other => other,
     };
 
     let Some(value) = at.value else {

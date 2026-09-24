@@ -170,6 +170,21 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
     prefix IS resolved against the bindings, when the namespace matters.
   * `Makiri::XML` resolves CSS prefixes properly - it lowers the selector to the
     XPath engine, which registers the bindings.
+  * The same holds for attribute selectors: HTML `[|href]` (no namespace)
+    also finds an SVG `xlink:href`, which `Nokogiri::HTML5` does not.
+    `Makiri::XML` reads `[|a]` as the no-namespace attribute.
+* A selector under a node matches the way `Element#querySelectorAll` does in a
+  browser, not scoped to that node, on HTML: `at_css("#c").css("div p")` finds a
+  `p` inside `#c` when `#c` is itself a `div`, since the selector is matched
+  against the whole document and only the results are kept to descendants.
+  `Nokogiri::HTML5` and `Nokogiri::XML` scope the selector to the node (`#c`
+  cannot be the `div`), and so does `Makiri::XML`, which lowers the selector to
+  an XPath from the node. Lexbor has no `:scope`; for a scoped match on HTML,
+  use XPath from the node (`xpath(".//div//p")`).
+* The attribute case modifiers (`[a="x" i]`, `[a="x" s]`): HTML supports both,
+  through Lexbor's matcher. `Makiri::XML` accepts `s` (case-sensitive, which XML
+  values are anyway) and refuses `i` with `Makiri::CSS::SyntaxError`. Nokogiri
+  refuses both on either representation.
 * `#matches?` answers for a DETACHED node (`document.create_element("p")
   .matches?("p")` is true, on both representations). Nokogiri raises
   `NoMethodError` there - it implements `#matches?` as a search from

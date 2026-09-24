@@ -52,6 +52,10 @@
 
 ### Fixed
 
+* `Makiri::XML` CSS reads `[|a]` as the no-namespace attribute, as the
+  Selectors spec does; it was refused as the unsupported `[*|a]`. The `s`
+  attribute modifier is accepted (XML values compare case-sensitively anyway);
+  `i` is still refused.
 * XPath resolves the `xml` prefix without a registration (`//@xml:lang`), as
   Namespaces in XML binds it and Nokogiri answers. It raised "unknown
   namespace prefix".

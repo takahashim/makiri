@@ -143,6 +143,8 @@ mod raw {
 
     pub const MOD_UNSET: l::lxb_css_selector_modifier_t =
         l::lxb_css_selector_modifier_t_LXB_CSS_SELECTOR_MODIFIER_UNSET;
+    pub const MOD_S: l::lxb_css_selector_modifier_t =
+        l::lxb_css_selector_modifier_t_LXB_CSS_SELECTOR_MODIFIER_S;
 
     type Pc = l::lxb_css_selector_pseudo_class_id_t;
     pub const FIRST_CHILD: Pc =
@@ -294,8 +296,10 @@ pub enum AttrMatch {
 #[derive(Clone, Copy)]
 pub struct Attribute<'p> {
     pub op: AttrMatch,
-    /// Whether an `i` or `s` modifier was written.
-    pub case_modifier: bool,
+    /// Whether an `i` modifier was written: match the value ASCII
+    /// case-insensitively. `s`, case-sensitive, is how values compare anyway,
+    /// so it reads as no modifier.
+    pub case_insensitive: bool,
     /// None for `[name]`, an existence test.
     pub value: Option<&'p [u8]>,
 }
@@ -442,7 +446,7 @@ impl<'p> Selector<'p> {
                 raw::SUBSTRING => AttrMatch::Substring,
                 _ => AttrMatch::Other,
             },
-            case_modifier: at.modifier != raw::MOD_UNSET,
+            case_insensitive: at.modifier != raw::MOD_UNSET && at.modifier != raw::MOD_S,
             // SAFETY: as in `name`.
             value: unsafe { str_opt(&at.value) },
         }
