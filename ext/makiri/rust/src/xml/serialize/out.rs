@@ -18,6 +18,12 @@ pub(super) fn put(b: &mut Buf, bytes: &[u8]) -> W {
 ///
 /// Neither form escapes or reformats a PI, so the rule is the same for both and
 /// lives here rather than being spelled out in each.
+///
+/// Data that starts with whitespace does not survive a re-parse: XML reads
+/// every space after the target as the separator (§2.6, `PITarget (S ...)`),
+/// so `create_processing_instruction("t", "  x")` comes back as `x`. No
+/// spelling of the PI keeps it, which is why this writes the data as it is
+/// rather than refusing or altering it.
 pub(super) fn put_pi(b: &mut Buf, doc: &XmlDoc, n: NodeId) -> W {
     put(b, b"<?")?;
     put(b, doc.span(doc.node(n).local))?;
