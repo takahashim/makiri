@@ -46,7 +46,7 @@ unsafe extern "C" fn serialize_cb(data: *const u8, len: usize, ctx: *mut c_void)
     let c = &mut *(ctx as *mut SerCtx);
     let buf = &mut c.buf;
     c.panic.guard(LXB_STATUS_ERROR_MEMORY_ALLOCATION, || {
-        if buf_append(buf, data as *const c_void, len) == crate::cbuf::BUF_OK {
+        if buf_append(buf, data as *const c_void, len).is_ok() {
             LXB_STATUS_OK
         } else {
             LXB_STATUS_ERROR_MEMORY_ALLOCATION
