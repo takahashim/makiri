@@ -12,7 +12,7 @@ use magnus::{method, prelude::*, Error, RHash, RString, Ruby, Value};
 use super::HtmlSelf;
 use crate::bridge::ruby::makiri_error;
 use crate::init::MOD_HTML_NODE_METHODS;
-use crate::lexbor::adapter::html::TYPE_FRAGMENT;
+use crate::lexbor::adapter::html::{RawNode, TYPE_FRAGMENT};
 use crate::lexbor::serialize::serialize;
 
 /// The optional `pretty:` keyword.
@@ -61,9 +61,19 @@ fn to_html(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<RString, Error
 }
 
 /// Inner HTML: the node's children, without the node's own tag.
+///
+/// WHATWG special-cases a `<template>`: its inner HTML is its template contents,
+/// a separate fragment rather than the element's (empty) children - the same
+/// node `Element#content_fragment` exposes and `#to_html` serializes, so the
+/// three agree.
 fn inner_html(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<RString, Error> {
     crate::bridge::ruby::entry(|| {
         let pretty = pretty_opt(ruby, args)?;
+        if let Some(content) = this.node().template_content() {
+            let buf = serialize(RawNode::from(content), true, pretty)
+                .ok_or_else(|| makiri_error("HTML serialization failed"))?;
+            return Ok(ruby.enc_str_new(buf.as_slice(), ruby.utf8_encoding()));
+        }
         render(ruby, &this, true, pretty)
     })
 }

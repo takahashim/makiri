@@ -544,5 +544,30 @@ RSpec.describe Makiri::Node do
     it "is nil for a non-template element" do
       expect(tdoc.at_css("div").content_fragment).to be_nil
     end
+
+    it "reads and writes #inner_html through the contents (WHATWG special case)" do
+      # The spec special-cases innerHTML for <template>: it targets the template
+      # contents, so inner_html, inner_html= and to_html all agree with
+      # content_fragment. The element's own children stay empty.
+      expect(tpl.inner_html).to eq("<p>hi</p><span>x</span>")
+      expect(tpl.children).to be_empty
+
+      tpl.inner_html = "<b>x</b>"
+      expect(tpl.inner_html).to eq("<b>x</b>")
+      expect(tpl.content_fragment.at_css("b").text).to eq("x")
+      expect(tpl.to_html).to eq("<template id=\"t\"><b>x</b></template>")
+      expect(tpl.children).to be_empty
+
+      tpl.inner_html = ""
+      expect(tpl.inner_html).to eq("")
+      expect(tpl.to_html).to eq("<template id=\"t\"></template>")
+    end
+
+    it "keeps nested <template> contents through inner_html=" do
+      tpl.inner_html = "<b>x</b><template><i>y</i></template>"
+      inner = tpl.content_fragment.at_css("template")
+      expect(inner.content_fragment.at_css("i").text).to eq("y")
+      expect(tpl.to_html).to eq("<template id=\"t\"><b>x</b><template><i>y</i></template></template>")
+    end
   end
 end

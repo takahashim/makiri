@@ -18,7 +18,7 @@ use magnus::{prelude::*, Error, Ruby, Value};
 
 use crate::bridge::ruby::{makiri_error, string_of};
 
-use crate::bridge::fragment::stage_fragment_in;
+use crate::bridge::fragment::{set_template_inner_html, stage_fragment_in};
 use crate::bridge::html::{edit, insert, owning_doc, wrap_html_node, HtmlEdit, HtmlSelf};
 use crate::bridge::string::{ruby_verified_data, ruby_verified_text};
 use crate::lexbor::adapter::html::{HtmlElementMut, Place, RawNode, TYPE_ATTRIBUTE, TYPE_ELEMENT};
@@ -243,12 +243,20 @@ pub fn set_inner_html(_ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Va
         /* `to_str`/`to_s` is Ruby code that may raise: converted under protect. */
         let html = string_of(rb_html)?;
         let node = edit.node()?;
-        let staged = stage_fragment_in(node, html)?;
-        /* Detached, not destroyed: the arena reclaims them with the document. */
-        while let Some(c) = node.first_child() {
-            c.detach();
+        /* WHATWG: a `<template>`'s inner HTML is its contents fragment, not the
+         * element's (empty) children - the same node `Element#content_fragment`
+         * exposes and `#to_html` serializes, so `inner_html`/`inner_html=`/
+         * `to_html` all agree. */
+        if let Some(content) = node.template_content_mut() {
+            set_template_inner_html(node, content, html)?;
+        } else {
+            let staged = stage_fragment_in(node, html)?;
+            /* Detached, not destroyed: the arena reclaims them with the document. */
+            while let Some(c) = node.first_child() {
+                c.detach();
+            }
+            node.place(staged, Place::Child);
         }
-        node.place(staged, Place::Child);
         Ok(rb_html)
     })
 }

@@ -99,7 +99,10 @@ fn node_parse(ruby: &Ruby, self_: Value, rb_html: Value) -> Result<Value, Error>
         let at = fragment::FragmentTag::of(context.node());
         let document = keepalive_document(self_)?;
         let frag = fragment::build_fragment(document, rb_html, at)?;
-        frag.funcall("children", ())
+        /* The native children reader, not a Ruby `children` dispatch: the
+         * fragment is ours, and a subclass could redefine the method. */
+        let frag = <crate::bridge::html::HtmlSelf as magnus::TryConvert>::try_convert(frag)?;
+        crate::glue::html_node::read::children(ruby, frag)
     })
 }
 

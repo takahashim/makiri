@@ -92,12 +92,29 @@ impl QueryArgs {
          * win over a Hash given positionally. */
         if let Some(rest) = kw.bindings {
             q.namespaces = Some(match q.namespaces {
-                Some(h) => h.funcall("merge", (rest,))?,
+                Some(h) => merge_hashes(ruby, h, rest)?,
                 None => rest,
             });
         }
         Ok(q)
     }
+}
+
+/// `a.merge(b)` - a fresh plain Hash with `a`'s pairs then `b`'s (b wins), read
+/// through the Hash storage rather than a Ruby `merge` a Hash subclass could
+/// redefine. `rb_hash_foreach`/`rb_hash_aset` are the C operations, so no
+/// caller's method runs.
+fn merge_hashes(ruby: &Ruby, a: RHash, b: RHash) -> Result<RHash, Error> {
+    let out: RHash = ruby.hash_new();
+    a.foreach(|k: Value, v: Value| {
+        out.aset(k, v)?;
+        Ok(magnus::r_hash::ForEach::Continue)
+    })?;
+    b.foreach(|k: Value, v: Value| {
+        out.aset(k, v)?;
+        Ok(magnus::r_hash::ForEach::Continue)
+    })?;
+    Ok(out)
 }
 
 /// What a query's keywords mean: the matching mode, and the prefix bindings
@@ -126,12 +143,22 @@ impl Keywords {
             Some(v) => matching_lax(ruby, v)?,
         };
         /* The rest are prefix bindings - how Nokogiri's `xpath("//s:p", s: uri)`
-         * reads. Copied rather than mutated: the caller's Hash is its own. */
-        let bindings: RHash = keywords.funcall("dup", ())?;
-        let _: Value = bindings.funcall("delete", (mode,))?;
+         * reads. Copied rather than mutated, and read through the Hash storage
+         * (`rb_hash_foreach`/`rb_hash_aset`) rather than `dup`/`delete`, which a
+         * Hash subclass can redefine. The mode key is dropped by raw identity:
+         * keyword keys are interned symbols. */
+        let bindings: RHash = ruby.hash_new();
+        let mut count = 0usize;
+        keywords.foreach(|k: Value, v: Value| {
+            if !crate::bridge::ruby::same_value(k, mode.as_value()) {
+                bindings.aset(k, v)?;
+                count += 1;
+            }
+            Ok(magnus::r_hash::ForEach::Continue)
+        })?;
         Ok(Keywords {
             lax,
-            bindings: (!bindings.is_empty()).then_some(bindings),
+            bindings: (count != 0).then_some(bindings),
         })
     }
 }

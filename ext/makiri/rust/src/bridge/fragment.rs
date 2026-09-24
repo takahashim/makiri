@@ -20,8 +20,8 @@ use crate::bridge::string::{ruby_verified_text, HtmlSource};
 use crate::bridge::wrapper::{ensure_document_mutable, html_doc_unwrap, DocKind, DocumentShell};
 use crate::init::CLASS_NODE;
 use crate::lexbor::adapter::html::{
-    HtmlDoc, HtmlNode, HtmlNodeMut, RawDoc, RawNode, NS_HTML, NS_MATH, NS_SVG, TAG_BODY, TAG_MATH,
-    TAG_SVG, TAG_UNDEF, TYPE_ELEMENT,
+    HtmlDoc, HtmlNode, HtmlNodeMut, Place, RawDoc, RawNode, NS_HTML, NS_MATH, NS_SVG, TAG_BODY,
+    TAG_MATH, TAG_SVG, TAG_UNDEF, TYPE_ELEMENT,
 };
 use crate::lexbor::adapter::post_parse::parse_html;
 use crate::lexbor::fragment::{tag_id_by_name, FragmentContext, FragmentError, TransientFragment};
@@ -141,22 +141,67 @@ pub fn stage_fragment_in<'d>(
     context: HtmlNodeMut<'d>,
     html: RString,
 ) -> Result<HtmlNodeMut<'d>, Error> {
+    let doc = context.node().owner_document();
+    let Some(staged) = new_staged_fragment(doc) else {
+        return Err(makiri_error("failed to create document fragment"));
+    };
+    import_into(context, staged, html)?;
+    Ok(staged)
+}
+
+/// A fresh, detached DOCUMENT_FRAGMENT of `doc`, cleared for editing - the
+/// staging target both fragment setters fill and place.
+fn new_staged_fragment<'d>(doc: HtmlDoc<'d>) -> Option<HtmlNodeMut<'d>> {
+    let staged = doc.create_fragment().map(RawNode::from)?;
+    // SAFETY: just made in `doc`, detached, and nothing else refers to it.
+    Some(unsafe { HtmlNodeMut::assume_mutable(staged.as_node()) })
+}
+
+/// Parse `html` in the context of the element `context` and import the result
+/// into the DETACHED fragment `into`. Nothing in `into` is cleared first: on a
+/// failure it is left as it was (a parse failure) or partly filled (an import
+/// failure), and the caller only places it once this returned `Ok`.
+fn import_into<'d>(
+    context: HtmlNodeMut<'d>,
+    into: HtmlNodeMut<'d>,
+    html: RString,
+) -> Result<(), Error> {
     let parsed = parse(
         html,
         &FragmentContext::Element(RawNode::from(context.node())),
     )?;
     let doc = context.node().owner_document();
-    let Some(staged) = doc.create_fragment().map(RawNode::from) else {
-        return Err(makiri_error("failed to create document fragment"));
-    };
-    // SAFETY: `staged` was just made in `doc`, detached, and nothing else
-    // refers to it.
-    if !unsafe { parsed.import_into(RawDoc::from(doc), staged) } {
+    // SAFETY: `into` is a detached fragment of `context`'s document, which the
+    // caller cleared for editing.
+    if !unsafe { parsed.import_into(RawDoc::from(doc), RawNode::from(into.node())) } {
         return Err(makiri_error("failed to import a fragment child"));
     }
-    // SAFETY: a node of `context`'s document, which the caller cleared for
-    // editing.
-    Ok(unsafe { HtmlNodeMut::assume_mutable(staged.as_node()) })
+    Ok(())
+}
+
+/// The WHATWG `template.innerHTML = html`: parse `html` in the TEMPLATE
+/// element's context and replace the children of its contents fragment, which
+/// is where the specification puts a template's inner HTML (browsers read and
+/// write `template.innerHTML` there, while the content fragment is what
+/// `Element#content_fragment` exposes and `#to_html` serializes).
+///
+/// All or nothing, as [`stage_fragment_in`]: the contents change only after the
+/// parse has succeeded.
+pub fn set_template_inner_html(
+    template: HtmlNodeMut<'_>,
+    content: HtmlNodeMut<'_>,
+    html: RString,
+) -> Result<(), Error> {
+    let doc = template.node().owner_document();
+    let Some(staged) = new_staged_fragment(doc) else {
+        return Err(makiri_error("failed to create document fragment"));
+    };
+    import_into(template, staged, html)?;
+    while let Some(c) = content.first_child() {
+        c.detach();
+    }
+    content.place(staged, Place::Child);
+    Ok(())
 }
 
 /// A DOCUMENT_FRAGMENT owned by `document`, holding `rb_html` parsed in the

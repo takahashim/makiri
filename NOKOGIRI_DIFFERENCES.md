@@ -152,6 +152,15 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
     `v-on:x`, custom elements) are accepted.
   * `set_attribute_ns(nil, "x:y")` raises, as the DOM's `setAttributeNS` does:
     a prefix needs a namespace.
+* An HTML `<template>` follows the WHATWG content model, which Nokogiri does
+  not: its parsed contents live in the separate fragment `Element#content_fragment`
+  returns, `template.children` is empty, and `inner_html` / `inner_html=`
+  special-case the contents (the WHATWG DOM special-cases `innerHTML` alone;
+  `append_child`, `content=`, and `children` act on the element's own empty
+  children, as the specification says). Nokogiri treats `<template>` as an
+  ordinary element, with the parsed nodes as its children, so
+  `template.inner_html` and `template.children` answer the other way round and
+  there is no `content_fragment`.
 * An HTML document has one root element and no text child, as the DOM requires;
   `doc << element` beside an existing root raises.
 * Moving HTML into an XML document (`xml_doc.import_node(html_node)`, or

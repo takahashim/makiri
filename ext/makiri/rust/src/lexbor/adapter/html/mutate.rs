@@ -206,6 +206,14 @@ impl<'doc> HtmlNodeMut<'doc> {
         self.0
     }
 
+    /// An HTML `<template>`'s separate contents fragment, as a mutable handle -
+    /// what `template.innerHTML = ...` (WHATWG) targets. `None` for a
+    /// non-template, or a template Lexbor gave no contents fragment.
+    #[inline]
+    pub fn template_content_mut(self) -> Option<HtmlNodeMut<'doc>> {
+        self.0.template_content().map(HtmlNodeMut)
+    }
+
     #[inline]
     pub fn as_raw(self) -> *mut LxbNode {
         self.0.as_raw()

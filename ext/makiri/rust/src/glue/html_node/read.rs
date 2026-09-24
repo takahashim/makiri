@@ -420,7 +420,7 @@ pub fn keys(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
         let ary = ruby.ary_new();
         if let Some(el) = this.node().element() {
             for at in el.attrs() {
-                let _ = ary.push(dom_str(at.qualified_name()));
+                ary.push(dom_str(at.qualified_name()))?;
             }
         }
         Ok(ary.as_value())
@@ -433,7 +433,7 @@ pub fn values(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
         let ary = ruby.ary_new();
         if let Some(el) = this.node().element() {
             for at in el.attrs() {
-                let _ = ary.push(dom_str(at.value()));
+                ary.push(dom_str(at.value()))?;
             }
         }
         Ok(ary.as_value())

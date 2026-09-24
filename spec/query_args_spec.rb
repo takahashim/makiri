@@ -59,4 +59,19 @@ RSpec.describe "XPath query arguments" do
     expect { html.xpath("//a", {}, {}) }.to raise_error(ArgumentError)
     expect { html.xpath("//a", handler, handler) }.to raise_error(ArgumentError)
   end
+
+  it "reads a namespace Hash through its storage, not overridden Hash methods" do
+    # A subclass whose #merge/#dup/#delete lie must not be able to drop or forge
+    # a binding: the Hash is read with rb_hash_foreach/rb_hash_aset.
+    klass = Class.new(Hash) do
+      def merge(*) = {}
+      def dup = {}
+      def delete(*) = nil
+    end
+    h = klass.new
+    h["s"] = "urn:s"
+    # Positional Hash plus keyword bindings is the branch that used to call
+    # `Hash#merge`; the keyword binding wins and the override is not consulted.
+    expect(xml.xpath("//s:p", h, s: "urn:s").size).to eq(1)
+  end
 end

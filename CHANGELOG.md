@@ -73,6 +73,24 @@
 
 ### Fixed
 
+* `Element#inner_html` and `#inner_html=` on an HTML `<template>` now target its
+  template contents, as the WHATWG DOM special-cases `innerHTML` for a template.
+  The getter read the element's (empty) children while `#to_html` serialized the
+  contents, so `template.inner_html` answered `""` for a template that
+  `#to_html` wrote with content, and `template.inner_html = ...` added a stray
+  direct child instead of replacing the contents. `inner_html`, `inner_html=`,
+  `#to_html` and `Element#content_fragment` agree now. Other APIs keep the
+  specification's non-special-cased behavior: `append_child`, `content=`, and
+  `children` still use the element's own (empty) children, and the contents are
+  reached through `content_fragment`.
+* HTML `Node#keys` and `#values` propagate an allocation failure instead of
+  returning a truncated Array. They discarded the result of each `Array#push`,
+  so an out-of-memory answered with the attribute names (or values) collected so
+  far rather than raising, against the fail-closed contract the XML twins keep.
+* A namespace Hash is read through its storage (`rb_hash_foreach`/
+  `rb_hash_aset`), not a Ruby `#dup`/`#delete`/`#merge` a Hash subclass can
+  redefine, and `Node#parse` reads a fragment's children natively rather than
+  through a `children` dispatch.
 * `dup`, `clone_node` and HTML-to-HTML `import_node` keep an element's name as
   written: a copied SVG `linearGradient` came back `lineargradient`, and a
   prefixed `q:Bar` came back `bar` (Lexbor's copy keeps the tag, not the

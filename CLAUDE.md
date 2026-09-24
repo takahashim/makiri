@@ -725,7 +725,11 @@ straight into a growing Ruby String avoids the final copy but measured *slower* 
 the intermediate growth is GC-tracked; the untracked C buffer + one copy wins.)
 `pretty: true` uses `serialize_pretty_*` (Lexbor
 quotes text nodes in that mode). A `DocumentFragment` serializes via the deep
-serializer (the tree serializer rejects a fragment node). `Node#text`/`#content`
+serializer (the tree serializer rejects a fragment node). `#inner_html` and
+`#inner_html=` special-case an HTML `<template>` to its contents fragment, as
+the WHATWG DOM special-cases `innerHTML` alone - so `inner_html`, `inner_html=`,
+`#to_html` and `content_fragment` agree, while `children`/`content=` keep the
+element's own (empty) children as the specification says. `Node#text`/`#content`
 (`html_node::read::content`) serves descendant text from the **text index** (see
 below) - a hash lookup + one pre-sized `ruby_str_from_slices` memcpy run,
 no per-call tree walk - and falls back to a direct iterative walk for
