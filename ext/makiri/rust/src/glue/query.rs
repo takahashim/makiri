@@ -120,7 +120,7 @@ impl Keywords {
                 bindings: None,
             });
         }
-        let mode = ruby.to_symbol("namespace_matching");
+        let mode = ruby.sym_new("namespace_matching");
         let lax = match keywords.get(mode) {
             None => false,
             Some(v) => matching_lax(ruby, v)?,
@@ -141,10 +141,10 @@ impl Keywords {
 /// `:strict` (the default) resolves an unprefixed name test in the HTML
 /// namespace, which is what browsers do; `:lax` makes it namespace-agnostic.
 fn matching_lax(ruby: &Ruby, v: Value) -> Result<bool, Error> {
-    if v.is_nil() || v.eql(ruby.to_symbol("strict"))? {
+    if v.is_nil() || v.eql(ruby.sym_new("strict"))? {
         return Ok(false);
     }
-    if v.eql(ruby.to_symbol("lax"))? {
+    if v.eql(ruby.sym_new("lax"))? {
         return Ok(true);
     }
     Err(Error::new(

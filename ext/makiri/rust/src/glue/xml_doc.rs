@@ -33,7 +33,7 @@ fn parse_limits(ruby: &Ruby, h: RHash) -> Result<XmlLimits, Error> {
         return Ok(limits);
     }
 
-    let key = ruby.to_symbol("max_bytes");
+    let key = ruby.sym_new("max_bytes");
     let keys: RArray = h.funcall("keys", ())?;
     for k in keys.into_iter() {
         if !k.eql(key)? {

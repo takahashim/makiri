@@ -22,20 +22,20 @@ fn to_xml_opts(ruby: &Ruby, args: &[Value]) -> Result<(i32, Value), Error> {
     let scanned = magnus::scan_args::scan_args::<(), (), (), (), RHash, ()>(args)?;
     let h = scanned.keywords;
     let mut width = 0i32;
-    if h.get(ruby.to_symbol("pretty"))
+    if h.get(ruby.sym_new("pretty"))
         .is_some_and(|v: Value| v.to_bool())
     {
         width = 2;
     }
     if let Some(iv) = h
-        .get(ruby.to_symbol("indent"))
+        .get(ruby.sym_new("indent"))
         .filter(|v: &Value| !v.is_nil())
     {
         let n = i32::try_convert(iv)?;
         width = n.max(0);
     }
     let enc = h
-        .get(ruby.to_symbol("encoding"))
+        .get(ruby.sym_new("encoding"))
         .unwrap_or(ruby.qnil().as_value());
     Ok((width, enc))
 }
@@ -108,7 +108,7 @@ fn canonicalize(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Val
             let scanned = magnus::scan_args::scan_args::<(), (), (), (), RHash, ()>(args)?;
             scanned
                 .keywords
-                .get(ruby.to_symbol("comments"))
+                .get(ruby.sym_new("comments"))
                 .is_some_and(|v: Value| v.to_bool())
         };
         let buf = xml_serialize::canonicalize(this.doc_ref(), this.id, comments)

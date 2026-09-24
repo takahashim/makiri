@@ -71,7 +71,7 @@ fn fragment_from_args(
     document: impl FnOnce() -> Result<Value, Error>,
 ) -> Result<Value, Error> {
     let a = magnus::scan_args::scan_args::<(Value,), (), (), (), magnus::RHash, ()>(args)?;
-    let context = a.keywords.get(ruby.to_symbol("context"));
+    let context = a.keywords.get(ruby.sym_new("context"));
     let document = document()?;
     let at = fragment::resolve_fragment_context(document, context)?;
     fragment::build_fragment(document, a.required.0, at)
