@@ -294,7 +294,7 @@ pub unsafe fn text_check(coderange_str: VALUE, ptr: *const c_char, len: usize) -
 
 /// Enforce the strict contract (valid UTF-8, no NUL) on the String `str`,
 /// naming `what` in the `Makiri::Error`.
-pub fn verify_text(str: Value, what: &CStr) -> Result<(), Error> {
+pub fn verify_text(str: RString, what: &CStr) -> Result<(), Error> {
     let str = str.as_raw();
     // SAFETY: `str` is a live String, and the borrow ends with the check -
     // before anything below can allocate.
@@ -328,7 +328,7 @@ pub fn ruby_verified_text_opt(in_: Value, what: &CStr) -> Result<Option<RubyText
 /// naming `what` in the error. The names-and-engine-input path.
 pub fn ruby_verified_text(in_: Value, what: &CStr) -> Result<RubyText, Error> {
     let s = string_of(in_)?;
-    verify_text(s.as_value(), what)?;
+    verify_text(s, what)?;
     // SAFETY: `s` is a live String that has just passed the text contract; the
     // view anchors it.
     unsafe {
@@ -378,7 +378,7 @@ impl<C> RubyStr<C> {
 }
 
 /// A live Ruby String's raw bytes, copied into an owned buffer.
-pub fn ruby_string_bytes(s: Value) -> Result<OwnedBuf, Error> {
+pub fn ruby_string_bytes(s: RString) -> Result<OwnedBuf, Error> {
     // SAFETY: `s` is a live Ruby String; the view anchors it for the copy.
     unsafe { ruby_bytes_view(s.as_raw()) }.to_owned_buf()
 }
@@ -582,31 +582,34 @@ unsafe fn ruby_str_known_valid_utf8(str: VALUE) -> bool {
 /// [`ruby_try_verified_text`] for two Strings at once (a `{prefix => uri}` pair),
 /// as a safe call: both are live Strings.
 pub fn ruby_try_verified_text_pair(
-    a: Value,
-    b: Value,
+    a: RString,
+    b: RString,
     max_bytes: usize,
 ) -> Result<(RubyText, RubyText), &'static core::ffi::CStr> {
-    // SAFETY: `a` and `b` are live Strings.
-    unsafe {
-        let av = ruby_try_verified_text(a.as_raw(), max_bytes)?;
-        let bv = ruby_try_verified_text(b.as_raw(), max_bytes)?;
-        Ok((av, bv))
-    }
+    Ok((
+        ruby_try_verified_text(a, max_bytes)?,
+        ruby_try_verified_text(b, max_bytes)?,
+    ))
 }
 
 /// The non-raising form: the checked view, or a static reason on rejection.
 /// Allocation-free, like `verify_text`, so the borrow it hands back has not
-/// crossed a Ruby allocation. `sv` must already be a String; nothing is coerced.
-pub unsafe fn ruby_try_verified_text(
-    sv: VALUE,
+/// crossed a Ruby allocation. Nothing is coerced: `sv` is a String by type.
+pub fn ruby_try_verified_text(
+    sv: RString,
     max_bytes: usize,
 ) -> Result<RubyText, &'static core::ffi::CStr> {
-    let (value, ptr, len) = borrow(sv);
-    if len > max_bytes {
-        return Err(c"string exceeds the maximum length");
-    }
-    match text_check(sv, ptr, len).reason() {
-        Some(reason) => Err(reason),
-        None => Ok(RubyText::from_raw_parts(value, ptr, len).locked()),
+    let sv = sv.as_raw();
+    // SAFETY: a live String, by type; the check allocates nothing, and the view
+    // anchors the String it borrows from.
+    unsafe {
+        let (value, ptr, len) = borrow(sv);
+        if len > max_bytes {
+            return Err(c"string exceeds the maximum length");
+        }
+        match text_check(sv, ptr, len).reason() {
+            Some(reason) => Err(reason),
+            None => Ok(RubyText::from_raw_parts(value, ptr, len).locked()),
+        }
     }
 }

@@ -438,7 +438,7 @@ impl Unit {
 /// and copying it.
 pub fn parse_xml_document(source: Value, limits: XmlLimits, budget: usize) -> Result<Value, Error> {
     let source = crate::bridge::ruby::string_of(source)?;
-    let decoded = xml_decode_input_value(source.as_value(), budget)?;
+    let decoded = xml_decode_input_value(source, budget)?;
     let src = crate::bridge::string::ruby_string_bytes(decoded)?;
 
     /* The wrapper first, while nothing needs freeing (see DocumentShell). The
@@ -492,7 +492,7 @@ pub fn fragment_into(
     let xdoc = arena_mut(document)?;
     let source = crate::bridge::ruby::string_of(source)?;
     // SAFETY: a live arena; the decode only reads its `max_bytes`.
-    let decoded = xml_decode_input_value(source.as_value(), unsafe { (*xdoc).max_bytes })?;
+    let decoded = xml_decode_input_value(source, unsafe { (*xdoc).max_bytes })?;
     let src = crate::bridge::string::ruby_string_bytes(decoded)?;
     // SAFETY: the arena is live and mutable for this call, under the GVL.
     tree::parse_fragment(unsafe { &mut *xdoc }, src.as_slice(), inherit_doc_ns)

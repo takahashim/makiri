@@ -230,13 +230,12 @@ pub fn bind_pair(
     let vs = crate::bridge::ruby::string_of(uri)?;
     /* Both are the Strings the conversion returned, and the checks allocate
      * nothing, so the views stay valid through the registration below. */
-    let (pv, uv) =
-        ruby_try_verified_text_pair(ks.as_value(), vs.as_value(), cap).map_err(|reason| {
-            makiri_error(format!(
-                "invalid namespace mapping: {}",
-                reason.to_string_lossy()
-            ))
-        })?;
+    let (pv, uv) = ruby_try_verified_text_pair(ks, vs, cap).map_err(|reason| {
+        makiri_error(format!(
+            "invalid namespace mapping: {}",
+            reason.to_string_lossy()
+        ))
+    })?;
     register(pv.as_verified().as_bytes(), uv.as_verified().as_bytes())
 }
 

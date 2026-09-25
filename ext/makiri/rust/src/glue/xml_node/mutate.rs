@@ -241,12 +241,8 @@ pub fn create_element(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Val
             /* `rb_el` was wrapped just above, so it converts. */
             let el_self = <XmlSelf as magnus::TryConvert>::try_convert(rb_el)?;
             crate::glue::kwargs::each_pair(ruby, h, |k, v| {
-                aset(
-                    ruby,
-                    el_self,
-                    k.funcall("to_s", ())?,
-                    v.funcall("to_s", ())?,
-                )?;
+                let (k, v) = (crate::bridge::ruby::to_s(k)?, crate::bridge::ruby::to_s(v)?);
+                aset(ruby, el_self, k.as_value(), v.as_value())?;
                 Ok(())
             })?;
         }

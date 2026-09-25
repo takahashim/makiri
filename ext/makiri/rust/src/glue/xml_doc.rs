@@ -14,7 +14,7 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{function, method, prelude::*, Error, RArray, RHash, Ruby, Value};
+use magnus::{function, method, prelude::*, Error, RHash, Ruby, Value};
 
 use crate::bridge::xml::wrap;
 use crate::init::{CLASS_XML_DOCUMENT, CLASS_XML_DOCUMENT_FRAGMENT};
@@ -34,15 +34,17 @@ fn parse_limits(ruby: &Ruby, h: RHash) -> Result<XmlLimits, Error> {
     }
 
     let key = ruby.sym_new("max_bytes");
-    let keys: RArray = h.funcall("keys", ())?;
-    for k in keys.into_iter() {
-        if !k.eql(key)? {
-            return Err(Error::new(
-                ruby.exception_arg_error(),
-                format!("unknown keyword: {}", k.inspect()),
-            ));
+    /* The keys are read from the Hash itself (`kwargs::each_pair`), not
+     * through a `keys` a subclass can redefine. */
+    crate::glue::kwargs::each_pair(ruby, h, |k, _| {
+        if k.eql(key)? {
+            return Ok(());
         }
-    }
+        Err(Error::new(
+            ruby.exception_arg_error(),
+            format!("unknown keyword: {}", k.inspect()),
+        ))
+    })?;
 
     let Some(v) = h.get(key) else {
         return Ok(limits);

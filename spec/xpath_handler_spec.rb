@@ -379,3 +379,27 @@ RSpec.describe "Makiri XPath custom function handler" do
     end
   end
 end
+
+# A `to_s` Makiri calls can be anyone's, and may return anything. Its result
+# must be checked to BE a String before its bytes are read as one: an Integer
+# read as a String's pointer and length is a crash, not an error.
+RSpec.describe "a to_s that returns a non-String" do
+  let(:not_a_string) { Class.new { def to_s = 42 }.new }
+
+  it "refuses it as an XPath handler's result" do
+    doc = Makiri::HTML("<p>x</p>")
+    value = not_a_string
+    handler = Class.new { define_method(:odd) { |*| value } }.new
+    expect { doc.xpath("odd()", handler) }.to raise_error(Makiri::Error, /converted to a string/)
+  end
+
+  it "refuses it as a registered variable's value" do
+    ctx = Makiri::XPathContext.new(Makiri::HTML("<p>x</p>"))
+    expect { ctx.register_variable("v", not_a_string) }.to raise_error(TypeError, /non-String/)
+  end
+
+  it "refuses it as a created element's attribute value" do
+    doc = Makiri::XML::Document.parse("<r/>")
+    expect { doc.create_element("e", "k" => not_a_string) }.to raise_error(TypeError, /non-String/)
+  end
+end

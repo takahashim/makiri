@@ -7,7 +7,7 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{method, prelude::*, Error, RString, Ruby, Value};
+use magnus::{method, prelude::*, Error, Ruby, Value};
 
 use crate::bridge::ruby::makiri_error;
 use crate::glue::kwargs::Kwargs;
@@ -71,9 +71,9 @@ fn to_xml(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Er
             /* An unknown name raises, and this frame is about to own the
              * serializer's buffer: the lookup returns the error instead. */
             let e = crate::bridge::string::to_encoding(enc_opt)?;
-            let name: RString = enc_opt.funcall("to_s", ())?;
+            let name = crate::bridge::ruby::to_s(enc_opt)?;
             /* A copy, so the bytes stay valid across the serializer's call. */
-            let bytes = crate::bridge::string::ruby_string_bytes(name.as_value())?;
+            let bytes = crate::bridge::string::ruby_string_bytes(name)?;
             (Some(e), Some(bytes))
         };
 

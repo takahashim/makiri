@@ -244,11 +244,10 @@ impl XPathCtx {
          * borrowed name bytes are held across it. The value then gets the
          * stricter engine-string check, which adds the byte cap on top of the
          * no-NUL / valid-UTF-8 contract. */
-        let sv: Value = value.funcall("to_s", ())?;
+        let sv = crate::bridge::ruby::to_s(value)?;
         let nv = ruby_verified_text(name, c"variable name")?;
-        // SAFETY: `sv` is a live String, and the borrow ends with the check.
-        let vv = unsafe { ruby_try_verified_text(sv.as_raw(), self.ctx.limits().max_string_bytes) }
-            .map_err(|reason| {
+        let vv =
+            ruby_try_verified_text(sv, self.ctx.limits().max_string_bytes).map_err(|reason| {
                 makiri_error(format!(
                     "invalid variable value: {}",
                     reason.to_string_lossy()

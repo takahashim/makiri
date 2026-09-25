@@ -246,7 +246,7 @@ fn xml_decode(_ruby: &Ruby, str: Value) -> Result<Value, Error> {
         /* `to_str`/`to_s` is Ruby code that may raise: converted under protect. */
         let s = crate::bridge::ruby::string_of(str)?;
         /* decode-only: no arena, no budget */
-        crate::bridge::xml_decode::xml_decode_input_value(s.as_value(), 0)
+        crate::bridge::xml_decode::xml_decode_input_value(s, 0).map(|d| d.as_value())
     })
 }
 

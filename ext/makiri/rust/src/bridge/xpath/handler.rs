@@ -155,13 +155,14 @@ fn ruby_to_val(bridge: &Bridge, budget: &mut Budget, rv: Value) -> Result<Val, H
     if rv.is_nil() {
         return Ok(Val::string(Text::default()));
     }
-    let Ok(sv) = rv.funcall::<_, _, Value>("to_s", ()) else {
+    /* A `to_s` that raises, or returns something other than a String, is
+     * refused here rather than read as a String. */
+    let Ok(sv) = crate::bridge::ruby::to_s(rv) else {
         return Err(HandlerFailure::Msg(
             "handler result could not be converted to a string",
         ));
     };
-    // SAFETY: `sv` is the live String `to_s` returned.
-    let vv = unsafe { ruby_try_verified_text(sv.as_raw(), budget.limits.max_string_bytes) }
+    let vv = ruby_try_verified_text(sv, budget.limits.max_string_bytes)
         .map_err(HandlerFailure::InvalidString)?;
     Text::try_copy(vv.as_verified().as_bytes())
         .map(Val::string)

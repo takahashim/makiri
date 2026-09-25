@@ -18,8 +18,9 @@
 
 use core::ffi::{c_char, c_int, c_long};
 
+use crate::bridge::ruby::makiri_error;
 use magnus::rb_sys::AsRawValue;
-use magnus::{Error, Value};
+use magnus::{Error, RString};
 use rb_sys::{rb_encoding, VALUE};
 
 use super::ruby::exception_message;
@@ -204,9 +205,10 @@ pub unsafe fn xml_decode_input(str: VALUE, max_bytes: usize) -> Result<VALUE, Er
     Ok(u)
 }
 
-/// [`xml_decode_input`] as a safe call: `s` is a live String, and the result is
-/// one.
-pub fn xml_decode_input_value(s: Value, max_bytes: usize) -> Result<Value, Error> {
-    // SAFETY: `s` is a live String; the decoder returns a live String.
-    unsafe { xml_decode_input(s.as_raw(), max_bytes).map(|v| crate::bridge::ruby::value(v)) }
+/// [`xml_decode_input`] as a safe call: `s` is a String by type, and so is
+/// the result.
+pub fn xml_decode_input_value(s: RString, max_bytes: usize) -> Result<RString, Error> {
+    // SAFETY: `s` is a live String; the decoder returns a live value.
+    let v = unsafe { crate::bridge::ruby::value(xml_decode_input(s.as_raw(), max_bytes)?) };
+    RString::from_value(v).ok_or_else(|| makiri_error("XML input decoded to a non-String"))
 }
