@@ -474,7 +474,7 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            `#![forbid(unsafe_code)]` and Lexbor/Ruby-free. The
                            two `Dom` instances live with their layers:
                            `lexbor/xpath.rs` (HTML) and `xml/xpath.rs` (XML),
-                           joined for the glue by the `Cx` enum in
+                           joined for the glue by `Cx` in
                            `bridge/xpath.rs`
     xml/                   native XML reader (Ruby/Lexbor-free; own arena), plus
                            its XPath `Dom` instance. One job per module:
@@ -817,7 +817,7 @@ Key decisions that got there, worth not regressing:
   `glue/query.rs`): parse copies the source to a C buffer then runs
   `parse_html` under `rb_thread_call_without_gvl` - safe because a freshly
   parsed document is not yet shared, so it can't race anything. **XPath holds
-  the GVL for the whole evaluation by design** (`xpath::ctx::Context::evaluate` is a plain
+  the GVL for the whole evaluation by design** (`xpath::ctx::Session::evaluate` is a plain
   GVL-held call). The engine and DOM are not thread-safe against concurrent
   mutation, and holding the GVL makes that safe *by construction*: the GVL
   serialises all Ruby-thread C code, so an XPath walk never runs in parallel

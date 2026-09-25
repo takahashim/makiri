@@ -13,8 +13,8 @@ pub use super::order::OrderIndex;
 pub use super::str_cache::{NodeText, StrCache, TextId};
 pub use super::value::{NodeSet, Text, Val, ValRef};
 
-pub use super::ctx::Context;
 pub use super::ctx::XPathValue;
+pub use super::ctx::{Context, Session};
 pub use super::limits::Budget;
 pub use super::msg::{ErrSink, Error, Reported};
 pub(crate) use crate::cbuf::{Buf, BufError};

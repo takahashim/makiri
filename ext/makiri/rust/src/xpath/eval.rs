@@ -61,7 +61,7 @@ impl<N> Memo<N> {
 /// its own, so it can neither refill this walk's budget nor take its handler
 /// away.
 pub struct Evaluation<'e, 'd, D: Dom<'d>> {
-    pub cx: &'e Context<'d, D>,
+    pub cx: &'e Session,
     pub names: &'e Names,
     pub doc: D,
     pub budget: Budget,
@@ -75,12 +75,7 @@ pub struct Evaluation<'e, 'd, D: Dom<'d>> {
 
 impl<'e, 'd, D: Dom<'d>> Evaluation<'e, 'd, D> {
     /// One evaluate of `doc` under `cx`, whose registrations are `names`.
-    fn new(
-        cx: &'e Context<'d, D>,
-        names: &'e Names,
-        doc: D,
-        handler: Option<&'e dyn Resolver>,
-    ) -> Self {
+    fn new(cx: &'e Session, names: &'e Names, doc: D, handler: Option<&'e dyn Resolver>) -> Self {
         Evaluation {
             cx,
             names,
@@ -536,7 +531,7 @@ fn first_node_ok<'e, 'd, D: Dom<'d>>(doc: D, step: &Step, n: D::Node, lax: bool)
 /// On a match or none, the answer is the 0-or-1-node node-set.
 #[allow(clippy::result_large_err)]
 pub(crate) fn try_first_match<'e, 'd, D: Dom<'d>>(
-    cx: &'e Context<'d, D>,
+    cx: &'e Session,
     names: &'e Names,
     doc: D,
     node: Option<D::Node>,
@@ -906,7 +901,7 @@ fn eval_node_inner<'e, 'd, D: Dom<'d>>(
 /// that `handler` answers unknown functions for.
 #[allow(clippy::result_large_err)]
 pub(crate) fn eval_ast<'e, 'd, D: Dom<'d>>(
-    cx: &'e Context<'d, D>,
+    cx: &'e Session,
     names: &'e Names,
     doc: D,
     node: Option<D::Node>,

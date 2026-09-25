@@ -17,6 +17,7 @@ use crate::xpath::abi::*;
 use crate::xpath::ctx::Context;
 use crate::xpath::dom::*;
 use crate::xpath::msg::{Error, Status};
+use core::ptr::NonNull;
 
 /// The HTML backend as an evaluate holds it: the document, and the parsed handle
 /// its element index is read from.
@@ -274,13 +275,26 @@ fn no_document() -> Error {
     Error::with(Status::Runtime, format_args!("evaluate with no document"))
 }
 
-/// A context over the HTML document behind `parsed`, with its element/attribute
-/// index as it stands now, and `node` as the focus.
+/// The HTML document behind `parsed` as the backend reads it, for `'e`.
 ///
-/// The index serves `//tag`; an attribute's parent is Lexbor's own
-/// `attr->owner` (see `HtmlNode::parent`). Each evaluate reads the index afresh
-/// from the handle, so a mutation between evaluates drops it and the next
-/// evaluate rebuilds it - the context must not keep the one it saw here.
+/// This is how a holder that keeps a [`Session`](crate::xpath::ctx::Session)
+/// across calls (Ruby's `XPathContext`) reaches the document for one evaluate:
+/// it takes the handle for that call and lets `'e` end with it. The handle
+/// stays a pointer inside, which [`HtmlDom::parsed`] reborrows per read, and
+/// each evaluate reads the element index afresh from it ([`Dom::prepare`]), so
+/// a mutation between evaluates drops the index and the next one rebuilds it.
+///
+/// # Safety
+/// `parsed` must stay live, and nothing may edit its document, for `'e`.
+pub unsafe fn dom<'e>(parsed: NonNull<HtmlParsed>) -> HtmlDom<'e> {
+    // SAFETY: the caller's contract - the handle, and so the document it owns,
+    // is live and unedited for `'e` - which is also `new`'s.
+    unsafe { HtmlDom::new(parsed.as_ref().raw_doc().as_doc(), parsed.as_ptr()) }
+}
+
+/// A context over the HTML document behind `parsed`, with `node` as the focus,
+/// for a caller that holds the handle for one scope (the fuzz harnesses). The
+/// element index is built by the first evaluate, if the caller has not.
 ///
 /// # Safety
 /// `parsed` must stay live and free of mutation for `'e`, and `node` must be a
@@ -290,25 +304,9 @@ pub unsafe fn context<'e>(
     parsed: *mut HtmlParsed,
     node: Token,
 ) -> Result<Context<'e, HtmlDom<'e>>, Error> {
-    // SAFETY: the caller's contract - the handle is live for `'e`.
-    let Some(parsed) = (unsafe { parsed.as_mut() }) else {
+    let Some(parsed) = NonNull::new(parsed) else {
         return Err(no_document());
     };
-    // SAFETY: as above - the document the handle owns, live for `'e`.
-    let doc: HtmlDoc<'e> = unsafe { parsed.raw_doc().as_doc() };
-    /* Build it now, so an allocation failure is reported here rather than on
-     * the first evaluate. Each evaluate still re-reads it through the handle. */
-    parsed.ensure_dom_index().map_err(|_| {
-        Error::with(
-            Status::Oom,
-            format_args!("out of memory building the element index"),
-        )
-    })?;
-    let parsed: *mut HtmlParsed = parsed;
-    // SAFETY: this function's contract is `new`'s: `parsed` owns `doc` and is
-    // live and unedited for `'e`.
-    Ok(Context::new(
-        unsafe { HtmlDom::new(doc, parsed) },
-        Some(node),
-    ))
+    // SAFETY: the caller's contract, which is `dom`'s.
+    Ok(Context::new(unsafe { dom(parsed) }, Some(node)))
 }

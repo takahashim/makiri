@@ -62,7 +62,7 @@ struct AstCache(HashMap<Box<[u8]>, Box<Ast>>);
 /// `glue::node_set`.
 ///
 /// The engine context sits outside the `RefCell` too: everything done with it
-/// takes `&Context`, so a handler re-entering mid-walk can evaluate again on it,
+/// takes `&Cx`, so a handler re-entering mid-walk can evaluate again on it,
 /// and the context itself refuses the changes that would disturb the walk.
 #[derive(TypedData)]
 #[magnus(class = "Makiri::XPathContext", mark, size, free_immediately)]

@@ -1,11 +1,12 @@
-//! The engine's driver: the context an expression is evaluated against - the
-//! document it walks, the context node, the namespace and variable registries,
-//! and the caps - plus the two evaluate entries.
+//! The engine's driver: what an expression is evaluated under - the context
+//! node, the namespace and variable registries, and the caps - plus the two
+//! evaluate entries, which take the document they walk as an argument.
 //!
-//! The context is generic over the `Dom` backend, so this module names no
-//! representation: the HTML and XML contexts are built by their own layers
-//! (`lexbor::xpath`, `xml::xpath`) and the Ruby glue holds whichever it was
-//! given.
+//! [`Session`] is that state with no document in it; [`Context`] pairs one with
+//! a document for a caller that holds both in one scope. Both are generic over
+//! the `Dom` backend only at the evaluate, so this module names no
+//! representation: the HTML and XML documents are lent by their own layers
+//! (`lexbor::xpath`, `xml::xpath`).
 
 #![forbid(unsafe_code)]
 
@@ -193,25 +194,27 @@ pub enum ContextError {
     Failed,
 }
 
-/// An expression's surroundings: the document it is evaluated against, the
-/// context node, the registrations it may name, and the caps its runs start
-/// from.
+/// What an expression is evaluated under, apart from the document: the context
+/// node, the registrations it may name, the caps its runs start from and the
+/// namespace-matching mode.
 ///
-/// `D` is the backend's document handle (a Lexbor handle for HTML, a borrowed
-/// `&xml::Document` for XML), which is why this type is `Context<'d, D>`: a
-/// context made from a borrowed XML document cannot outlive it, while the glue,
-/// which keeps the document alive through Ruby, makes `Context<'static, _>` and
-/// states that contract itself.
+/// It names no document, and that is the point. A holder that keeps a context
+/// between calls - Ruby's `XPathContext`, for the Document's whole life - keeps
+/// THIS, and lends the document to each evaluate as an argument, so no borrow of
+/// the document outlives the one evaluate that reads it. A retained `&Document`
+/// would still be live while a mutator writes the same arena through `&mut`
+/// between two evaluates, which is undefined behaviour even though no read
+/// overlaps the write. [`Context`] pairs a session with a document for a caller
+/// that holds both for one scope.
 ///
 /// An evaluate needs only `&self`, so a handler may evaluate again on the same
-/// context. What may change while one runs is kept in cells; changes that would
+/// session. What may change while one runs is kept in cells; changes that would
 /// disturb the walk are refused with [`ContextError::Evaluating`].
-pub struct Context<'d, D: Dom<'d>> {
-    doc: D,
+pub struct Session {
     node: Cell<Option<Token>>,
     names: RefCell<Names>,
 
-    /* The caps every run under this context starts from. Each evaluate and
+    /* The caps every run under this session starts from. Each evaluate and
      * parse charges a `Budget` of its own made from these. */
     limits: Limits,
 
@@ -220,39 +223,25 @@ pub struct Context<'d, D: Dom<'d>> {
      * foreign SVG/MathML needs a prefix. Lax matches by local name. */
     lax: bool,
 
-    /* Re-entrancy depth, >0 while an evaluate runs on this context. A nested
+    /* Re-entrancy depth, >0 while an evaluate runs on this session. A nested
      * evaluate just stacks. */
     evaluating: Cell<usize>,
-
-    /// `D` names the backend but does not syntax-use `'d` when it is a plain
-    /// borrow type; this ties the context's lifetime to a document borrow.
-    _doc: PhantomData<&'d ()>,
 }
 
-impl<'d, D: Dom<'d>> Context<'d, D> {
-    /// A context over `doc`, with `node` (None for none) as the context node.
-    ///
-    /// Safe: `doc` carries its own contract (a live document that is not
-    /// restructured while the context lives), and the node is an opaque token
-    /// the backend resolves.
-    pub fn new(doc: D, node: Option<Token>) -> Context<'d, D> {
-        Context {
-            doc,
+impl Session {
+    /// A session with `node` (None for none) as the context node, which is an
+    /// opaque token the document of each evaluate resolves.
+    pub fn new(node: Option<Token>) -> Session {
+        Session {
             node: Cell::new(node),
             names: RefCell::new(Names::default()),
             limits: Limits::DEFAULT,
             lax: false,
             evaluating: Cell::new(0),
-            _doc: PhantomData,
         }
     }
 
-    /// The backend document handle.
-    pub fn doc(&self) -> D {
-        self.doc
-    }
-
-    /// The caps a run under this context starts from.
+    /// The caps a run under this session starts from.
     pub fn limits(&self) -> Limits {
         self.limits
     }
@@ -270,7 +259,7 @@ impl<'d, D: Dom<'d>> Context<'d, D> {
         self.lax = lax;
     }
 
-    /// True while an evaluate is in progress on this context, nested ones
+    /// True while an evaluate is in progress on this session, nested ones
     /// included.
     pub fn is_evaluating(&self) -> bool {
         self.evaluating.get() > 0
@@ -306,26 +295,33 @@ impl<'d, D: Dom<'d>> Context<'d, D> {
         self.names_mut()?.bind_var(name, value)
     }
 
-    /// Evaluate `ast` with the context node as the focus; `handler` answers the
-    /// function calls there is no built-in for.
+    /// Evaluate `ast` over `doc` with the context node as the focus; `handler`
+    /// answers the function calls there is no built-in for.
     ///
-    /// Each call runs on an evaluation of its own - its budget, its caches - and
-    /// only reads the context, so a handler that evaluates again on this same
-    /// context cannot disturb the walk it was called from.
+    /// `doc` is borrowed for this call alone. Each call runs on an evaluation of
+    /// its own - its budget, its caches - and only reads the session, so a
+    /// handler that evaluates again on this same session cannot disturb the
+    /// walk it was called from.
     #[allow(clippy::result_large_err)]
-    pub fn evaluate(&self, ast: &Ast, handler: Option<&dyn Resolver>) -> Result<XPathValue, Error> {
-        if !self.doc.prepare() {
-            return Err(self.index_error());
+    pub fn evaluate<'d, D: Dom<'d>>(
+        &self,
+        doc: D,
+        ast: &Ast,
+        handler: Option<&dyn Resolver>,
+    ) -> Result<XPathValue, Error> {
+        if !doc.prepare() {
+            return Err(index_error());
         }
         let run = self.enter()?;
-        eval::eval_ast(self, &run.names, self.doc, self.focus_node(), ast, handler)
+        eval::eval_ast(self, &run.names, doc, self.focus_node(doc), ast, handler)
     }
 
     /// [`evaluate`](Self::evaluate) through the `at_xpath` first-match fast
     /// path when the shape allows it, and the full evaluator otherwise.
     #[allow(clippy::result_large_err)]
-    pub fn evaluate_first(
+    pub fn evaluate_first<'d, D: Dom<'d>>(
         &self,
+        doc: D,
         ast: &Ast,
         handler: Option<&dyn Resolver>,
     ) -> Result<XPathValue, Error> {
@@ -333,23 +329,23 @@ impl<'d, D: Dom<'d>> Context<'d, D> {
          * is bounded fail-closed exactly like the full evaluator; it only runs
          * for recognised shapes, which call no functions, so it needs no
          * handler. */
-        if !self.doc.prepare() {
-            return Err(self.index_error());
+        if !doc.prepare() {
+            return Err(index_error());
         }
         let matched = {
             let run = self.enter()?;
-            eval::try_first_match(self, &run.names, self.doc, self.focus_node(), ast)
+            eval::try_first_match(self, &run.names, doc, self.focus_node(doc), ast)
         }?;
         match matched {
             Some(value) => Ok(value),
-            None => self.evaluate(ast, handler),
+            None => self.evaluate(doc, ast, handler),
         }
     }
 
     /// Mark an evaluate as running for as long as the guard lives, and lend it
     /// the registrations.
     #[allow(clippy::result_large_err)]
-    fn enter(&self) -> Result<Running<'_, 'd, D>, Error> {
+    fn enter(&self) -> Result<Running<'_>, Error> {
         let Ok(names) = self.names.try_borrow() else {
             return Err(Error::with(
                 Status::Internal,
@@ -360,30 +356,92 @@ impl<'d, D: Dom<'d>> Context<'d, D> {
         Ok(Running { cx: self, names })
     }
 
-    /// The backend could not build the per-walk index: out of memory.
-    fn index_error(&self) -> Error {
-        Error::with(
-            Status::Oom,
-            format_args!("out of memory building the element index"),
-        )
+    /// The context node, resolved through `doc`.
+    fn focus_node<'d, D: Dom<'d>>(&self, doc: D) -> Option<D::Node> {
+        self.node.get().map(|t| doc.resolve_token(t))
     }
+}
 
-    /// The context node, resolved through the backend.
-    fn focus_node(&self) -> Option<D::Node> {
-        self.node.get().map(|t| self.doc.resolve_token(t))
-    }
+/// The backend could not build the per-walk index: out of memory.
+fn index_error() -> Error {
+    Error::with(
+        Status::Oom,
+        format_args!("out of memory building the element index"),
+    )
 }
 
 /// An evaluate in progress: the borrowed registrations, and the depth count it
 /// gives back when it ends.
-struct Running<'a, 'd, D: Dom<'d>> {
-    cx: &'a Context<'d, D>,
+struct Running<'a> {
+    cx: &'a Session,
     names: Ref<'a, Names>,
 }
 
-impl<'d, D: Dom<'d>> Drop for Running<'_, 'd, D> {
+impl Drop for Running<'_> {
     fn drop(&mut self) {
         self.cx.evaluating.set(self.cx.evaluating.get() - 1);
+    }
+}
+
+/// A [`Session`] paired with the document it evaluates, for a caller that
+/// holds both for one scope - the engine's tests, the fuzz harnesses.
+///
+/// `D` is the backend's document handle (a Lexbor handle for HTML, a borrowed
+/// `&xml::Document` for XML), which is why this type is `Context<'d, D>`: a
+/// context made from a borrowed document cannot outlive it. A holder that
+/// keeps the registrations across calls keeps the [`Session`] instead and
+/// lends the document per evaluate. Derefs to the session for everything but
+/// the two evaluates.
+pub struct Context<'d, D: Dom<'d>> {
+    doc: D,
+    session: Session,
+    /// `D` names the backend but does not syntax-use `'d` when it is a plain
+    /// borrow type; this ties the context's lifetime to a document borrow.
+    _doc: PhantomData<&'d ()>,
+}
+
+impl<'d, D: Dom<'d>> Context<'d, D> {
+    /// A context over `doc`, with `node` (None for none) as the context node.
+    pub fn new(doc: D, node: Option<Token>) -> Context<'d, D> {
+        Context {
+            doc,
+            session: Session::new(node),
+            _doc: PhantomData,
+        }
+    }
+
+    /// The backend document handle.
+    pub fn doc(&self) -> D {
+        self.doc
+    }
+
+    /// [`Session::evaluate`] over this context's document.
+    #[allow(clippy::result_large_err)]
+    pub fn evaluate(&self, ast: &Ast, handler: Option<&dyn Resolver>) -> Result<XPathValue, Error> {
+        self.session.evaluate(self.doc, ast, handler)
+    }
+
+    /// [`Session::evaluate_first`] over this context's document.
+    #[allow(clippy::result_large_err)]
+    pub fn evaluate_first(
+        &self,
+        ast: &Ast,
+        handler: Option<&dyn Resolver>,
+    ) -> Result<XPathValue, Error> {
+        self.session.evaluate_first(self.doc, ast, handler)
+    }
+}
+
+impl<'d, D: Dom<'d>> core::ops::Deref for Context<'d, D> {
+    type Target = Session;
+    fn deref(&self) -> &Session {
+        &self.session
+    }
+}
+
+impl<'d, D: Dom<'d>> core::ops::DerefMut for Context<'d, D> {
+    fn deref_mut(&mut self) -> &mut Session {
+        &mut self.session
     }
 }
 
@@ -394,63 +452,3 @@ fn copy(bytes: &[u8]) -> Result<Text, ContextError> {
 /// The result of an evaluate, owned: dropping it frees the node-set's array or
 /// the string.
 pub type XPathValue = Val;
-
-/// What a caller does with a context whatever backend it walks - the
-/// document-independent part of [`Context`], as an object-safe trait.
-///
-/// The glue holds a context for either an HTML or an XML document, and used to
-/// forward each of these nine operations through a two-armed `match`. With this
-/// it picks the backend once and calls through `&dyn QueryContext`.
-pub trait QueryContext {
-    fn limits(&self) -> Limits;
-    fn lax(&self) -> bool;
-    fn set_lax(&mut self, lax: bool);
-    fn is_evaluating(&self) -> bool;
-    fn set_context_node(&self, node: Token) -> Result<(), ContextError>;
-    fn register_ns(&self, prefix: &[u8], uri: &[u8]) -> Result<(), ContextError>;
-    fn register_variable(&self, name: &[u8], value: &[u8]) -> Result<(), ContextError>;
-    #[allow(clippy::result_large_err)]
-    fn evaluate(&self, ast: &Ast, handler: Option<&dyn Resolver>) -> Result<XPathValue, Error>;
-    #[allow(clippy::result_large_err)]
-    fn evaluate_first(
-        &self,
-        ast: &Ast,
-        handler: Option<&dyn Resolver>,
-    ) -> Result<XPathValue, Error>;
-}
-
-/* Each forwards to the inherent method of the same name, which method
- * resolution prefers - so none of these calls itself. */
-impl<'d, D: Dom<'d>> QueryContext for Context<'d, D> {
-    fn limits(&self) -> Limits {
-        Context::limits(self)
-    }
-    fn lax(&self) -> bool {
-        Context::lax(self)
-    }
-    fn set_lax(&mut self, lax: bool) {
-        Context::set_lax(self, lax)
-    }
-    fn is_evaluating(&self) -> bool {
-        Context::is_evaluating(self)
-    }
-    fn set_context_node(&self, node: Token) -> Result<(), ContextError> {
-        Context::set_context_node(self, node)
-    }
-    fn register_ns(&self, prefix: &[u8], uri: &[u8]) -> Result<(), ContextError> {
-        Context::register_ns(self, prefix, uri)
-    }
-    fn register_variable(&self, name: &[u8], value: &[u8]) -> Result<(), ContextError> {
-        Context::register_variable(self, name, value)
-    }
-    fn evaluate(&self, ast: &Ast, handler: Option<&dyn Resolver>) -> Result<XPathValue, Error> {
-        Context::evaluate(self, ast, handler)
-    }
-    fn evaluate_first(
-        &self,
-        ast: &Ast,
-        handler: Option<&dyn Resolver>,
-    ) -> Result<XPathValue, Error> {
-        Context::evaluate_first(self, ast, handler)
-    }
-}

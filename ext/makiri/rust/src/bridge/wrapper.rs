@@ -164,9 +164,9 @@ pub enum NodeRepr {
 ///
 /// Raw pointers, from `Box::leak`, freed by `DocData`'s `Drop`. Not `Box`,
 /// deliberately: readers copy the pointer out of a `&DocData` and hold what
-/// they derive from it well past that borrow - an XPath context keeps a
-/// `&'static` arena and a `*mut HtmlParsed` for the Document's whole life,
-/// while other calls take `&mut DocData` for the node cache. A `Box` field
+/// they derive from it well past that borrow - an XPath context keeps this
+/// pointer for the Document's whole life and reborrows the content per
+/// evaluate, while other calls take `&mut DocData` for the node cache. A `Box` field
 /// would assert unique ownership underneath those live aliases (a Stacked
 /// Borrows hazard); a `NonNull` asserts nothing. `Copy`, so a reader gets the
 /// pointer without borrowing the wrapper.
