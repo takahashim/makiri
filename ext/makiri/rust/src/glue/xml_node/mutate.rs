@@ -236,6 +236,10 @@ pub fn create_element(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Val
                 mutate::set_content(d, el, text)
             })?)?;
         }
+        /* Both views are done with. Drop them before any Ruby runs again (the
+         * wrapper allocation, the attribute loop's `to_s`), so no borrow of a
+         * Ruby String is held across a GC point. */
+        drop((nv, cv));
         let rb_el = wrap(el, rb_self);
         if let Some(h) = attrs {
             /* Keys and values are stringified - Nokogiri accepts symbol keys and
