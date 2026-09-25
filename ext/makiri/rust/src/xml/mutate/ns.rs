@@ -156,7 +156,7 @@ fn check_node_ns(doc: &Document, e: NodeId, connected: bool, part: Part) -> Resu
             keys.falloc_push((ns, attr)).map_err(|()| MutError::Oom)?;
         }
     }
-    if super::attr::keys_repeat(doc, &mut keys) {
+    if crate::xml::attr_key::keys_repeat(doc, &mut keys) {
         return Err(MutError::DuplicateAttr);
     }
     Ok(())

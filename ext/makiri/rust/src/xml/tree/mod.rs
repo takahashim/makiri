@@ -257,7 +257,7 @@ impl<'a> Parser<'a> {
             tail = Some(attr);
         }
         /* §9.3: no two attributes share (namespace URI, local name) */
-        match has_duplicate_attributes(self.doc, el) {
+        match crate::xml::attr_key::has_duplicate(self.doc, el) {
             Some(false) => {}
             Some(true) => return self.cur.syntax(),
             None => return Err(ParseError::Oom),
@@ -624,36 +624,4 @@ fn parse_fragment_into(
     /* A fragment has no single-root rule. */
     p.run_to_end(false)?;
     Ok(frag)
-}
-
-/// XML §9.3: no two attributes of one element share a `(namespace URI, local
-/// name)`. Whether two of `element`'s do - or None when the sort buffer cannot
-/// be allocated.
-///
-/// A free function here rather than a `Document` method in `arena`: the arena
-/// stores nodes, it does not judge whether they are well-formed. It reads
-/// through the checked accessors, which is what a rule at this layer should do.
-///
-/// Pairwise for the usual handful. Past that, pairwise is quadratic in a count
-/// the input picks, up to `MAX_ATTRS`: 8.4M comparisons an element, and 100
-/// such elements (3.6 MB) took 16.6 s with no budget to stop it. So a longer
-/// list is sorted by the pair and compared as neighbours, O(n log n).
-fn has_duplicate_attributes(doc: &Document, element: NodeId) -> Option<bool> {
-    const PAIRWISE_MAX: usize = 16;
-    let attrs = || doc.attributes(element);
-    let count = attrs().count();
-    if count <= PAIRWISE_MAX {
-        let found = attrs().enumerate().any(|(i, x)| {
-            attrs()
-                .skip(i + 1)
-                .any(|y| doc.local(x) == doc.local(y) && doc.ns(x) == doc.ns(y))
-        });
-        return Some(found);
-    }
-    let mut ids: Vec<NodeId> = Vec::new();
-    ids.falloc_reserve_exact(count).ok()?;
-    ids.extend(attrs());
-    let key = |x: NodeId| (doc.ns(x), doc.local(x));
-    ids.sort_unstable_by(|&x, &y| key(x).cmp(&key(y)));
-    Some(ids.windows(2).any(|w| key(w[0]) == key(w[1])))
 }

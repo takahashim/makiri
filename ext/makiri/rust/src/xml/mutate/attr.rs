@@ -10,9 +10,10 @@
 
 use super::assign_qname;
 use super::ns::{resolve_ns, Ns, Resolved, NO_NS};
+use crate::xml::attr_key::{key_taken, AttrKey};
 use crate::xml::chars::validate_chars;
 use crate::xml::qname::{ns_decl_check, split_checked, xmlns_prefix, Split};
-use crate::xml::{ArenaKind, Document, MutError, NodeFlags, NodeId, Span};
+use crate::xml::{ArenaKind, Document, MutError, NodeFlags, NodeId};
 
 /// Build a fresh ATTRIBUTE (qname + value + namespace) and link it onto `el`
 /// after `tail`, the last entry the caller's own scan reached.
@@ -33,15 +34,6 @@ fn build_attr(
     Ok(attr)
 }
 
-/// Whether two of the `(namespace, attribute)` keys are equal by namespace URI
-/// and local name - the uniqueness rule (§3) a resolution checks before it
-/// writes. Sorts `keys` in place.
-pub(super) fn keys_repeat(doc: &Document, keys: &mut [(Span, NodeId)]) -> bool {
-    let key = |&(ns, a): &(Span, NodeId)| (doc.span(ns), doc.local(a));
-    keys.sort_unstable_by(|x, y| key(x).cmp(&key(y)));
-    keys.windows(2).any(|w| key(&w[0]) == key(&w[1]))
-}
-
 /// Whether an attribute named `name` may hold `val`: anything but a namespace
 /// declaration the §3 rules forbid ([`ns_decl_check`]), refused as
 /// [`MutError::BadNsDecl`] with the clause it broke.
@@ -49,39 +41,6 @@ pub(super) fn decl_check(name: &[u8], val: &[u8]) -> Result<(), MutError> {
     match xmlns_prefix(name) {
         Some(p) => ns_decl_check(p, val).map_err(MutError::BadNsDecl),
         None => Ok(()),
-    }
-}
-
-/// Whether an attribute of `el` other than `except` already has the key
-/// (`ns`, `local`) - the uniqueness the parser enforces (§3). Asked only for a
-/// DECIDED key: a prefix not yet resolvable (a detached element) has no
-/// namespace to compare, and is checked when it is.
-pub(super) fn key_taken(
-    doc: &Document,
-    el: NodeId,
-    ns: &[u8],
-    local: &[u8],
-    except: Option<NodeId>,
-) -> bool {
-    let key = AttrKey::Ns { ns, local };
-    doc.attributes(el)
-        .any(|attr| Some(attr) != except && key.matches(doc, attr))
-}
-
-/// How an attribute is looked up: by its raw qualified name, or by the DOM's
-/// `(namespace, local name)` key - the module's two keys for the same node.
-#[derive(Clone, Copy)]
-enum AttrKey<'a> {
-    QName(&'a [u8]),
-    Ns { ns: &'a [u8], local: &'a [u8] },
-}
-
-impl AttrKey<'_> {
-    fn matches(self, doc: &Document, a: NodeId) -> bool {
-        match self {
-            AttrKey::QName(q) => doc.qname(a) == q,
-            AttrKey::Ns { ns, local } => attr_matches_ns(doc, a, ns, local),
-        }
     }
 }
 
@@ -162,17 +121,6 @@ fn remove_attr_by(doc: &mut Document, el: NodeId, key: AttrKey<'_>) -> bool {
         }
         AttrSlot::Absent { .. } => false,
     }
-}
-
-/// `a` is keyed by (ns, local) - the DOM key; an empty wanted namespace
-/// matches an attribute with no namespace.
-fn attr_matches_ns(doc: &Document, a: NodeId, ns: &[u8], local: &[u8]) -> bool {
-    /* A pending attribute's namespace is undecided, not empty: it has no key
-     * to match (`set_attribute_ns("", "a")` used to overwrite a pending p:a). */
-    !doc.node(a).flags.contains(NodeFlags::NS_PENDING)
-        && doc.node(a).ns_uri.len as usize == ns.len()
-        && (ns.is_empty() || doc.ns(a) == ns)
-        && doc.local(a) == local
 }
 
 pub fn set_attribute_ns(

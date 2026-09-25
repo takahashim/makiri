@@ -10,6 +10,7 @@ pub mod model;
 pub use model::*;
 
 pub mod arena;
+pub mod attr_key;
 pub mod chars;
 pub mod dom_name;
 pub mod encoding_sniff;
