@@ -123,11 +123,9 @@ impl TextIndex {
         }
 
         /* Both arrays are sized EXACTLY here, so every push below lands in
-         * reserved capacity and cannot allocate. That is why they use `push`
-         * rather than falloc's `falloc_push`: a reserve per text node would make
-         * every slice its own injection point in `rake oom` - hundreds of them
-         * for one document, all testing the same branch. See clippy.toml on why
-         * `push` after a successful reserve is deliberately not banned. */
+         * reserved capacity and cannot allocate - which is why they use a plain
+         * `push`. See clippy.toml on why `push` after a successful reserve is
+         * deliberately not banned. */
         let empty = Run { start: 0, end: 0 };
         let mut t = TextIndex {
             slices: try_vec_with_capacity(nslices)?,
@@ -189,11 +187,8 @@ impl TextIndex {
                 let slot = t
                     .runs
                     .insert(Some(RawNode::from(child)), Run { start, end: start })?;
-                /* Amortized: a plain `falloc_push` made each of a document's
-                 * containers its own injection point - 178 for one `rake oom`
-                 * scenario, all re-testing one branch. */
                 stack
-                    .falloc_push_amortized(Frame {
+                    .falloc_push(Frame {
                         child: child.first_child(),
                         slot,
                     })

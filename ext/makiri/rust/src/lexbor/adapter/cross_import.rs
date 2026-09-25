@@ -309,7 +309,7 @@ pub unsafe fn cross_html_to_xml(
         let mut stack: Vec<Frame<'_, HtmlNode<'_>, NodeId>> =
             try_vec_with_capacity(1).ok_or(MutStatus::Oom)?;
         stack
-            .falloc_push_amortized(Frame {
+            .falloc_push(Frame {
                 s: src,
                 d: root.node,
                 def: root.child_default,
@@ -325,7 +325,7 @@ pub unsafe fn cross_html_to_xml(
                     mutate::insert_child(doc, f.d, made.node)?;
                     if h2x_first_child(child).is_some() {
                         stack
-                            .falloc_push_amortized(Frame {
+                            .falloc_push(Frame {
                                 s: child,
                                 d: made.node,
                                 def: made.child_default,
@@ -426,7 +426,7 @@ pub unsafe fn cross_xml_to_html(
         let mut stack: Vec<Frame<NodeId, BuildingNode<'_>>> =
             try_vec_with_capacity(1).ok_or(MutStatus::Oom)?;
         stack
-            .falloc_push_amortized(Frame {
+            .falloc_push(Frame {
                 s: src,
                 d: root.link_target(),
                 def: None,
@@ -441,7 +441,7 @@ pub unsafe fn cross_xml_to_html(
                     f.d.insert_child(dc);
                     if doc.first_child(cid).is_some() {
                         stack
-                            .falloc_push_amortized(Frame {
+                            .falloc_push(Frame {
                                 s: cid,
                                 d: dc.link_target(),
                                 def: None,

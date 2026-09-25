@@ -369,7 +369,7 @@ unsafe extern "C" fn find_cb(node: *mut LxbNode, _spec: u32, ctx: *mut c_void) -
         }
         /* Not a bare `push`: the global allocator aborts on OOM, and this path
          * fails closed by reporting instead (`rake oom` sweeps it). */
-        if nodes.falloc_push_amortized(found).is_err() {
+        if nodes.falloc_push(found).is_err() {
             *oom = true;
             return LXB_STATUS_STOP;
         }

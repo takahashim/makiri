@@ -32,6 +32,9 @@ end
 # an injected run's result can be compared (==) against the baseline. Fixtures
 # are built INSIDE the lambda (unless reuse is the point) so the sweep covers
 # their parse/build allocations too.
+# The replacement text of the "xml_content" scenario; see there for its length.
+XML_CONTENT_TEXT = ("rewritten" * 8192).freeze
+
 SCENARIOS = {
   # XML parse covering the syntax surface: declaration, DOCTYPE (SYSTEM id +
   # internal subset), default + prefixed namespaces, prefixed attributes,
@@ -474,7 +477,10 @@ STATEFUL_SCENARIOS = {
                 attr.name, attr.value, target.parent.name, attr.parent.name]
       { doc: doc, target: target, child: child, attr: attr, before: before }
     end,
-    action: ->(state) { state[:target].content = "rewritten" },
+    # Long enough that the arena's byte store must GROW: a short value fits
+    # the room it already has, allocates nothing, and so never reaches the
+    # failure path this scenario is for.
+    action: ->(state) { state[:target].content = XML_CONTENT_TEXT },
     snapshot: lambda do |state|
       [state[:doc].to_xml, state[:doc].text, state[:target].name,
        state[:child].name, state[:child].text, state[:attr].name,
@@ -488,7 +494,7 @@ STATEFUL_SCENARIOS = {
       if outcome == :raised && current != state[:before]
         raise "content= changed the tree before allocation failed"
       end
-      if outcome == :success && (state[:target].children.length != 1 || state[:target].text != "rewritten")
+      if outcome == :success && (state[:target].children.length != 1 || state[:target].text != XML_CONTENT_TEXT)
         raise "content= returned success without the replacement text"
       end
       if outcome == :success

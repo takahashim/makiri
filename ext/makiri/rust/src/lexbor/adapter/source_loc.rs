@@ -221,7 +221,7 @@ unsafe fn record(rec: &mut Recorder, token: *const Token) {
         tag_id: (*token).tag_id,
         offset: (*token).begin as usize - rec.first as usize,
     };
-    if (full && rec.items.len() >= MAX_TOKENS) || rec.items.falloc_push_amortized(entry).is_err() {
+    if (full && rec.items.len() >= MAX_TOKENS) || rec.items.falloc_push(entry).is_err() {
         rec.overflow = true; /* fail closed: stop recording */
     }
 }
