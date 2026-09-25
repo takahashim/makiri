@@ -227,3 +227,38 @@ fn steal_of_an_empty_buffer_is_an_owned_empty_string() {
         );
     }
 }
+
+/// `copy_small_or_memcpy` moves exactly `n` bytes, for every `n` its
+/// fixed-size path handles (0..=16), and touches nothing else.
+///
+/// The append proof above offers at most `NSRC` = 4 bytes, so of the paired
+/// copies it reaches only u16 and the 4-byte u32; the overlapping u32 pair
+/// (5-7) and the u64 pair (8-16) - two unaligned reads and writes each, the
+/// second ending exactly at `n` - were proved by nothing.
+///
+/// Out-of-bounds is caught by placement: the `n` bytes sit at either end of
+/// their 16-byte arrays (nondeterministically), so a read or write past either
+/// edge leaves the array and Kani reports it. The rest of the destination is
+/// checked by value.
+#[kani::proof]
+#[kani::unwind(17)]
+fn small_copies_move_exactly_n_bytes() {
+    const W: usize = 16;
+    let n: usize = kani::any();
+    kani::assume(n <= W);
+    let off = if kani::any() { W - n } else { 0 };
+
+    let src: [u8; W] = kani::any();
+    let mut dst = [0x5Au8; W];
+    unsafe {
+        super::copy_small_or_memcpy(src.as_ptr().add(off), dst.as_mut_ptr().add(off), n);
+    }
+    assert!(
+        dst[off..off + n] == src[off..off + n],
+        "copy: the n bytes arrive"
+    );
+    assert!(
+        dst[..off].iter().chain(&dst[off + n..]).all(|&b| b == 0x5A),
+        "copy: nothing outside the n bytes is written"
+    );
+}
