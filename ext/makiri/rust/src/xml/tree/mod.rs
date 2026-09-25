@@ -130,11 +130,7 @@ impl<'a> Parser<'a> {
     }
 
     fn push_binding(&mut self, pfx: &[u8], uri: Span) -> R {
-        match self.scope.bind(pfx, uri) {
-            Ok(()) => Ok(()),
-            Err(ScopeFull::Limit) => self.cur.limit(),
-            Err(ScopeFull::Oom) => self.cur.fail(Status::Oom),
-        }
+        bind(&mut self.scope, &mut self.cur, pfx, uri)
     }
 
     /* ---- start tag: four ordered phases ---- */
@@ -601,17 +597,27 @@ impl<'a> Parser<'a> {
         };
         let mut a = self.doc.attrs(root);
         while let Some(attr) = a {
-            let bpfx = match xmlns_prefix(self.doc.qname(attr)) {
-                Some(p) => Some(crate::falloc::try_to_vec(p).ok_or(())?),
-                None => None,
-            };
-            if let Some(bpfx) = bpfx {
+            /* The prefix borrows `self.doc`, which `bind` does not touch, so it
+             * is passed as is: `Scope::bind` makes its own copy. */
+            if let Some(p) = xmlns_prefix(self.doc.qname(attr)) {
                 let uri = self.doc.node(attr).value;
-                self.push_binding(&bpfx, uri)?;
+                bind(&mut self.scope, &mut self.cur, p, uri)?;
             }
             a = self.doc.next(attr);
         }
         Ok(())
+    }
+}
+
+/// Bind `pfx` in `scope`, reporting a refusal through `cur`'s status.
+///
+/// A free function so a caller can bind a prefix that borrows the document
+/// the parser holds.
+fn bind(scope: &mut Scope, cur: &mut Cursor<'_>, pfx: &[u8], uri: Span) -> R {
+    match scope.bind(pfx, uri) {
+        Ok(()) => Ok(()),
+        Err(ScopeFull::Limit) => cur.limit(),
+        Err(ScopeFull::Oom) => cur.fail(Status::Oom),
     }
 }
 
