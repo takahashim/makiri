@@ -131,16 +131,17 @@ pub(crate) fn build(doc: HtmlDoc<'_>) -> Option<DomIndex> {
  * ------------------------------------------------------------------ */
 
 impl DomIndex {
-    /// The elements with tag id `tag`, in document order; empty for a tag
-    /// this index does not bucket.
-    pub fn tag_bucket(&self, tag: TagId) -> &[RawNode] {
-        let Some(i) = tag.static_index() else {
-            return &[];
-        };
+    /// The elements with tag id `tag`, in document order. `None` for a tag
+    /// this index does not bucket at all - a custom element's, whose id is a
+    /// pointer value - which the caller must answer by walking the tree:
+    /// "not indexed" is not "no such elements". A bucketed tag with no
+    /// elements is `Some(&[])`.
+    pub fn tag_bucket(&self, tag: TagId) -> Option<&[RawNode]> {
+        let i = tag.static_index()?;
         if self.tag_nodes.is_empty() || i > self.tag_max {
-            return &[];
+            return Some(&[]);
         }
-        &self.tag_nodes[self.tag_off[i]..self.tag_off[i + 1]]
+        Some(&self.tag_nodes[self.tag_off[i]..self.tag_off[i + 1]])
     }
 
     /// Whether the document holds any non-HTML element. The `//tag` fast path is

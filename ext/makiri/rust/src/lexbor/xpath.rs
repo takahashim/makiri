@@ -244,8 +244,8 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
             return None;
         }
         let tag = self.doc.tag_id(local)?;
-        tag.static_index()?;
-        /* Built by `prepare`; the handle lends the nodes for `'d`. */
+        /* Built by `prepare`; the handle lends the nodes for `'d`. None for a
+         * tag the index does not bucket, which falls back to the walk. */
         let nodes = parsed.tag_bucket(tag)?;
         Some(Bucket {
             nodes,
