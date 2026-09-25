@@ -21,7 +21,7 @@ use crate::init::{CLASS_XML_DOCUMENT, CLASS_XML_DOCUMENT_TYPE, MOD_XML_NODE_METH
 
 /* The wrapper and the receiver handle live in the Ruby <-> XML-arena seam
  * (`bridge::xml`). */
-pub use crate::bridge::xml::{wrap, XmlSelf};
+pub use crate::bridge::xml::{wrap_xml_node as wrap, XmlSelf};
 
 fn node_methods() -> RModule {
     MOD_XML_NODE_METHODS.module()

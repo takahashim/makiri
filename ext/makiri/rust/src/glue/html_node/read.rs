@@ -326,7 +326,7 @@ fn set_of<'d>(
     let (set, fill) = node_set_with_fill(document);
     for n in nodes {
         if !elements_only || n.element().is_some() {
-            fill.push(RawNode::from(n).as_ptr())?;
+            fill.push(RawNode::from(n).into())?;
         }
     }
     Ok(set)

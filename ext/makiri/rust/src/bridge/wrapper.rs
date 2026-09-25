@@ -9,7 +9,6 @@
 
 #![allow(unsafe_code)]
 
-use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use magnus::rb_sys::AsRawValue;
@@ -21,10 +20,11 @@ use crate::bridge::ruby::{value, VALUE};
 use crate::bridge::typed::{Hooks, Marker, Relocator, TypedType};
 use crate::falloc::MapInsert;
 use crate::init::{RbConst, CLASS_DOCUMENT};
-use crate::lexbor::adapter::html::{HtmlDoc, RawDoc};
+use crate::lexbor::adapter::html::{HtmlDoc, RawDoc, RawNode};
 use crate::lexbor::adapter::post_parse::HtmlParsed;
 use crate::node_type::NodeType;
-use crate::xml::model::Document as XmlDoc;
+use crate::token::{Kind, Token};
+use crate::xml::model::{Document as XmlDoc, NodeId};
 use core::hash::BuildHasherDefault;
 use std::collections::HashMap;
 
@@ -36,14 +36,93 @@ const QFALSE: VALUE = rb_sys::Qfalse as VALUE;
  * the node wrapper                                                   *
  * ------------------------------------------------------------------ */
 
-/// A node wrapper's data: the node pointer plus the keepalive Document.
+/// A node as the Ruby layer stores it: one pointer-sized word that is a Lexbor
+/// node pointer in an HTML document and an arena [`NodeId`] in an XML one.
+///
+/// Which of the two it is is not stored beside it. It is the document's
+/// representation - the wrapper's TypedData type, a NodeSet's [`DocKind`] -
+/// decided once, so a word is read back only through the reader named for
+/// that kind ([`xml`](Self::xml), [`html`](Self::html), [`token`](Self::token)).
+/// This type is where the handle crosses between the typed forms and the
+/// word, and so the one place in the glue a node is cast.
+///
+/// `repr(transparent)` over `usize`: a [`NodeData`] and a NodeSet's buffer
+/// keep the layout they had as `*mut c_void`.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[repr(transparent)]
+pub struct NodeWord(usize);
+
+impl From<NodeId> for NodeWord {
+    #[inline]
+    fn from(id: NodeId) -> Self {
+        NodeWord(id.to_token())
+    }
+}
+
+impl From<RawNode> for NodeWord {
+    #[inline]
+    fn from(n: RawNode) -> Self {
+        NodeWord(n.as_ptr() as usize)
+    }
+}
+
+impl NodeWord {
+    /// The word of an engine token. The token's kind is dropped: the word goes
+    /// into a set or wrapper whose document already names it.
+    #[inline]
+    pub fn of_token(t: Token) -> Self {
+        NodeWord(t.word())
+    }
+
+    /// The XML node. Safe for any word: an arena reads a `NodeId` through
+    /// `Document::try_node`, which rejects a stale or foreign one.
+    #[inline]
+    pub fn xml(self) -> NodeId {
+        NodeId::from_token(self.0)
+    }
+
+    /// The HTML node; `None` for a null word.
+    ///
+    /// # Safety
+    /// The word was made from a [`RawNode`] (it belongs to an HTML document),
+    /// and that document is still alive - a `RawNode` is trusted to be live.
+    #[inline]
+    pub unsafe fn html(self) -> Option<RawNode> {
+        RawNode::from_ptr(self.0 as *mut core::ffi::c_void)
+    }
+
+    /// The engine token for this node of a document walked by backend `kind`.
+    /// `None` for [`Kind::Null`], which names no document - the one place a
+    /// Ruby-held node becomes a token, so no caller can let a null kind slip
+    /// through as XML.
+    ///
+    /// # Safety
+    /// The word is a live node of a document of backend `kind`.
+    #[inline]
+    pub unsafe fn token(self, kind: Kind) -> Option<Token> {
+        match kind {
+            Kind::Html => Some(Token::html(self.0 as *mut core::ffi::c_void)),
+            Kind::Xml => Some(Token::xml(self.0)),
+            Kind::Null => None,
+        }
+    }
+
+    /// Node identity as an integer: for `#==`/`#hash` and the wrapper cache's
+    /// key. Never read back as a node.
+    #[inline]
+    pub fn identity(self) -> usize {
+        self.0
+    }
+}
+
+/// A node wrapper's data: the node plus the keepalive Document.
 ///
 /// The node is owned by the document's arena (HTML or XML), so the wrapper
 /// never frees it; the Document reference is what keeps it alive, and marking
 /// it is the wrapper's whole GC job.
 pub struct NodeData {
     /// Representation-opaque; read it only through a kind-checked accessor.
-    pub node: *mut c_void,
+    pub node: NodeWord,
     pub document: VALUE,
 }
 
@@ -345,21 +424,19 @@ impl DocKind {
 }
 
 /// Wrap `node`, a node of `document`, under the representation `kind` names -
-/// the one place a node pointer handed over as `c_void` (a NodeSet's stored
-/// one, a query result's token) is cast back to a typed node, which `kind` is
-/// what justifies.
+/// the one place a stored [`NodeWord`] (a NodeSet's, a query result's) is read
+/// back as a typed node, which `kind` is what justifies.
 ///
 /// # Safety
-/// `node` is a live node pointer (an XML node token, for `Xml`) of
-/// `document`, and `document` is of `kind`.
+/// `node` is a live node of `document`, and `document` is of `kind`.
 pub(in crate::bridge) unsafe fn wrap_doc_node(
     kind: DocKind,
-    node: *mut c_void,
+    node: NodeWord,
     document: Value,
 ) -> Value {
     match kind {
-        DocKind::Xml => crate::bridge::xml::wrap_xml_node(node, document),
-        DocKind::Html => match crate::lexbor::adapter::html::RawNode::from_ptr(node) {
+        DocKind::Xml => crate::bridge::xml::wrap_xml_node(node.xml(), document),
+        DocKind::Html => match node.html() {
             Some(n) => crate::bridge::html::wrap_html_node(n, document),
             None => crate::bridge::ruby::nil(),
         },
@@ -550,7 +627,7 @@ impl NodeClasses {
 /// `document`: the cached one, or a fresh one that is then cached. The shared
 /// half of the two `wrap_*_node` functions.
 ///
-/// Keyed by the node's token, which is `node` itself as an integer for both
+/// Keyed by the node's identity, which is the [`NodeWord`] itself for both
 /// representations - an HTML node pointer, an XML `NodeId` - so it is derived
 /// here, not passed beside `node` where the two could disagree.
 ///
@@ -565,10 +642,10 @@ impl NodeClasses {
 pub(in crate::bridge) fn wrap_cached(
     ty: &'static TypedType<NodeData>,
     klass: VALUE,
-    node: *mut c_void,
+    node: NodeWord,
     document: Value,
 ) -> Value {
-    let token = node as usize;
+    let token = node.identity();
     if let Some(cached) = cached_node(document, token) {
         return cached;
     }
@@ -614,21 +691,21 @@ fn with_doc_data_known<R>(rb_doc: Value, f: impl FnOnce(&mut DocData) -> R) -> R
     unsafe { f(&mut *DOC_TYPE.known_ptr(rb_doc)) }
 }
 
-/// The kind-AGNOSTIC raw node pointer (the base type, so HTML or XML), as an
-/// opaque `*mut c_void`. Only for the few sites where the representation is
-/// irrelevant (identity comparison) or already guaranteed by an external
-/// same-document check (the XPath context node).
+/// The kind-AGNOSTIC node word (the base type, so HTML or XML). Only for the
+/// few sites where the representation is irrelevant (identity comparison) or
+/// already guaranteed by an external same-document check (the XPath context
+/// node, a NodeSet of the node's own document).
 ///
 /// The Document branch is kind-aware: an XML Document resolves to its arena's
 /// document node, an HTML one to Lexbor's.
-pub fn node_raw(rb_node: Value) -> Result<*mut c_void, Error> {
+pub fn node_raw(rb_node: Value) -> Result<NodeWord, Error> {
     if rb_node.is_kind_of(CLASS_DOCUMENT.class()) {
         if let Content::Xml(xdoc) = doc_content(rb_node)? {
             // SAFETY: a Document's arena lives as long as the Document, and its
             // document node is read, not written.
-            return Ok(unsafe { xdoc.as_ref() }.doc_node().to_token() as *mut c_void);
+            return Ok(unsafe { xdoc.as_ref() }.doc_node().into());
         }
-        return Ok(html_doc_unwrap(rb_node)?.as_ptr());
+        return Ok(RawNode::from(html_doc_unwrap(rb_node)?).into());
     }
     /* TypeError for a non-node, as TypedData_Get_Struct raised. */
     let nd: &NodeData = NODE_DATA_TYPE.get(&rb_node)?;
@@ -649,7 +726,7 @@ pub fn node_repr(v: Value) -> NodeRepr {
 /// Node identity as an integer, for `#==`/`#eql?`/`#hash`/`#pointer_id` -
 /// kind-agnostic, and never dereferenced.
 pub fn node_identity(rb_node: Value) -> Result<usize, Error> {
-    Ok(node_raw(rb_node)? as usize)
+    Ok(node_raw(rb_node)?.identity())
 }
 
 /// The keepalive Document of any node, or the Document itself.

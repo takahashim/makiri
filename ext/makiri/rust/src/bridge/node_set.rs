@@ -1,12 +1,12 @@
 //! `Makiri::NodeSet`.
 //!
-//! A NodeSet is an array of node pointers plus a keepalive reference to the
+//! A NodeSet is an array of [`NodeWord`]s plus a keepalive reference to the
 //! owning Document. The nodes are owned by the document's arena, so marking the
 //! document keeps every one of them alive - that is the whole GC contract.
 //!
-//! The stored pointers are representation-opaque. The set never dereferences
-//! one; it compares them for identity and, when vending a node, casts to the
-//! representation named by its `kind`. That keeps an XML set from ever reading
+//! The stored words are representation-opaque. The set never dereferences
+//! one; it compares them for identity and, when vending a node, reads it back
+//! as the representation named by its `kind`. That keeps an XML set from ever reading
 //! an XML arena handle as a Lexbor node. The kind is decided once at
 //! construction rather than probed per node, which would regress the hot
 //! traversal path.
@@ -29,7 +29,6 @@
 #![allow(unsafe_code)]
 
 use crate::falloc::Reserve;
-use core::ffi::c_void;
 use std::cell::RefCell;
 use std::collections::HashSet;
 
@@ -40,7 +39,7 @@ use magnus::value::{Opaque, ReprValue};
 use magnus::{gc::Marker, prelude::*, DataTypeFunctions, Error, RClass, Ruby, TypedData, Value};
 
 use crate::bridge::typed::typed_data_unprotected;
-use crate::bridge::wrapper::{keepalive_document, node_raw, wrap_doc_node, DocKind};
+use crate::bridge::wrapper::{keepalive_document, node_raw, wrap_doc_node, DocKind, NodeWord};
 use crate::init::{CLASS_DOCUMENT, CLASS_NODE, CLASS_NODE_SET};
 
 use crate::limits::NODE_SET_MAX;
@@ -55,14 +54,14 @@ use crate::bridge::ruby::is_kind_of;
 /* storage                                                            */
 /* ------------------------------------------------------------------ */
 
-/// A growable array of node pointers held in Ruby's allocator.
+/// A growable array of node words held in Ruby's allocator.
 ///
 /// Ruby's rather than Rust's on purpose: `ruby_xrealloc2` keeps the buffer
 /// GC-accounted, so a large set contributes to the pressure that decides when a
 /// GC runs. It also raises `NoMemoryError` instead of returning NULL, so there
 /// is no allocation-failure branch to get wrong.
 struct NodeVec {
-    ptr: *mut *mut c_void,
+    ptr: *mut NodeWord,
     len: usize,
     cap: usize,
 }
@@ -118,7 +117,7 @@ impl NodeVec {
         self.len
     }
 
-    fn as_slice(&self) -> &[*mut c_void] {
+    fn as_slice(&self) -> &[NodeWord] {
         if self.ptr.is_null() {
             return &[];
         }
@@ -132,7 +131,7 @@ impl NodeVec {
     /// itself not fitting, which the caller has already bounded by
     /// `NODE_SET_MAX`.
     fn grow_capacity(cap: usize, need: usize) -> Option<usize> {
-        crate::falloc::grow_capacity(cap, need, core::mem::size_of::<*mut c_void>())
+        crate::falloc::grow_capacity(cap, need, core::mem::size_of::<NodeWord>())
     }
 
     /// Make room for `n` nodes (at most [`NODE_SET_MAX`]) in one allocation,
@@ -155,7 +154,7 @@ impl NodeVec {
 
     /// Append one node. `Err` only for the size cap or a capacity overflow -
     /// allocation failure raises inside Ruby.
-    fn push(&mut self, node: *mut c_void) -> Result<(), PushError> {
+    fn push(&mut self, node: NodeWord) -> Result<(), PushError> {
         if self.len >= NODE_SET_MAX {
             return Err(PushError::SizeLimit);
         }
@@ -198,8 +197,8 @@ pub struct NodeSet {
     /// a Ruby thread), and it is `Mark`, which is what makes storing it sound -
     /// `mark` below is what the GC follows to reach it.
     document: Opaque<Value>,
-    /// Decided once: the stored pointers are XML arena handles, so they wrap as
-    /// `Makiri::XML::*`.
+    /// Decided once: whether the stored words are XML arena handles (wrapped as
+    /// `Makiri::XML::*`) or Lexbor nodes.
     kind: DocKind,
     nodes: RefCell<NodeVec>,
 }
@@ -214,11 +213,9 @@ impl DataTypeFunctions for NodeSet {
         let base = core::mem::size_of::<Self>();
         /* Advisory only, so a busy cell just reports the header. */
         match self.nodes.try_borrow() {
-            Ok(nodes) => base.saturating_add(
-                nodes
-                    .cap
-                    .saturating_mul(core::mem::size_of::<*mut c_void>()),
-            ),
+            Ok(nodes) => {
+                base.saturating_add(nodes.cap.saturating_mul(core::mem::size_of::<NodeWord>()))
+            }
             Err(_) => base,
         }
     }
@@ -246,7 +243,7 @@ impl NodeSet {
     /// Append a node to a set this module built or checked; see [`Fill`]. `Err`
     /// only for the fail-closed refusals (size cap, capacity overflow, busy).
     #[inline]
-    fn try_push(&self, node: *mut c_void) -> Result<(), PushError> {
+    fn try_push(&self, node: NodeWord) -> Result<(), PushError> {
         let Ok(mut nodes) = self.nodes.try_borrow_mut() else {
             return Err(PushError::Busy);
         };
@@ -265,7 +262,7 @@ fn node_set_class() -> RClass {
 
 /// An empty NodeSet over `document`, whose nodes it will hold.
 ///
-/// The Document decides how a stored pointer is read back - an arena token for
+/// The Document decides how a stored word is read back - an arena token for
 /// XML, a Lexbor node for HTML - so it is checked here rather than taken on
 /// trust: one class test per set, never per node.
 pub fn node_set_new(document: Value) -> Value {
@@ -311,7 +308,7 @@ impl Fill<'_> {
     /// Append one node of this set's document. `Err` for the fail-closed
     /// refusals only; growth raises inside Ruby.
     #[inline]
-    pub fn push(&self, node: *mut c_void) -> Result<(), PushError> {
+    pub fn push(&self, node: NodeWord) -> Result<(), PushError> {
         self.set.try_push(node)
     }
 }
@@ -336,7 +333,7 @@ pub fn node_set_with_fill<'a>(document: Value) -> (Value, Fill<'a>) {
 /// not per node.
 pub fn node_set_from(
     document: Value,
-    nodes: impl Iterator<Item = *mut c_void>,
+    nodes: impl Iterator<Item = NodeWord>,
 ) -> Result<Value, Error> {
     let (set, fill) = node_set_with_fill(document);
     let mut refused = None;
@@ -358,15 +355,15 @@ pub fn node_set_from(
 /* ------------------------------------------------------------------ */
 /* the set's own operations                                           */
 /* ------------------------------------------------------------------ */
-/* What `glue::node_set`'s Ruby methods are built on. These only move pointers
+/* What `glue::node_set`'s Ruby methods are built on. These only move words
  * between sets of one document (or take them from a checked node, in
- * `node_set_of_nodes`), so none of them can put a foreign pointer where the one
- * cast in [`wrap`] would read it; new nodes from a walk arrive through [`Fill`]. */
+ * `node_set_of_nodes`), so none of them can put a foreign word where
+ * [`wrap_doc_node`] would read it; new nodes from a walk arrive through [`Fill`]. */
 
 /// A copy of a set's nodes, detached from its borrow, which wraps them on the
 /// way out: see [`NodeSet::snapshot`].
 pub struct Snapshot {
-    nodes: Vec<*mut c_void>,
+    nodes: Vec<NodeWord>,
     document: Value,
     kind: DocKind,
 }
@@ -390,7 +387,7 @@ impl NodeSet {
 
     /// The node at `i`, wrapped; `None` past the end.
     ///
-    /// O(1): the one pointer is read under a short borrow that is released
+    /// O(1): the one word is read under a short borrow that is released
     /// before the wrap, which allocates and so can run arbitrary Ruby.
     pub fn at(&self, ruby: &Ruby, i: usize) -> Result<Option<Value>, Error> {
         let node = self.read()?.as_slice().get(i).copied();
@@ -594,7 +591,7 @@ fn new_result_with_room<'a>(
 /* ---- membership, for the operators ---- */
 
 type PtrBuild = core::hash::BuildHasherDefault<crate::ptr_table::MixHasher>;
-type PtrSet = HashSet<*mut c_void, PtrBuild>;
+type PtrSet = HashSet<NodeWord, PtrBuild>;
 
 /// Membership over a node array: hashed above [`HASH_MIN`], scanned below it.
 ///
@@ -607,7 +604,7 @@ enum Index {
 }
 
 impl Index {
-    fn build(nodes: &[*mut c_void]) -> Index {
+    fn build(nodes: &[NodeWord]) -> Index {
         if nodes.len() <= HASH_MIN {
             return Index::Linear;
         }
@@ -631,7 +628,7 @@ impl Index {
         Index::Hashed(set)
     }
 
-    fn contains(&self, n: *mut c_void, fallback: &[*mut c_void]) -> bool {
+    fn contains(&self, n: NodeWord, fallback: &[NodeWord]) -> bool {
         match self {
             Index::Hashed(s) => s.contains(&n),
             Index::Linear => fallback.contains(&n),
@@ -640,7 +637,7 @@ impl Index {
 
     /// True when `n` had not been seen. `already` is what the linear fallback
     /// scans - the result built so far.
-    fn insert(&mut self, n: *mut c_void, already: &[*mut c_void]) -> bool {
+    fn insert(&mut self, n: NodeWord, already: &[NodeWord]) -> bool {
         match self {
             Index::Hashed(s) => s.insert(n),
             Index::Linear => !already.contains(&n),

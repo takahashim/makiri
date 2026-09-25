@@ -16,7 +16,7 @@
 
 use magnus::{function, method, prelude::*, Error, RHash, Ruby, Value};
 
-use crate::bridge::xml::wrap;
+use crate::bridge::xml::wrap_xml_node as wrap;
 use crate::init::{CLASS_XML_DOCUMENT, CLASS_XML_DOCUMENT_FRAGMENT};
 use crate::xml::model::{Limits as XmlLimits, MAX_BYTES};
 

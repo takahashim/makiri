@@ -110,7 +110,7 @@ fn push_result_node(
     };
     /* Same-document is checked above, so this is a node of the context's kind. */
     // SAFETY: a live node of the context's own document.
-    let Some(token) = (unsafe { node_token(bridge.kind, n) }) else {
+    let Some(token) = (unsafe { n.token(bridge.kind) }) else {
         return Err(HandlerFailure::Msg("handler returned an unusable node"));
     };
     set.push(token, budget)

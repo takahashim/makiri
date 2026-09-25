@@ -22,7 +22,7 @@ use crate::bridge::ruby::makiri_error;
 use magnus::{prelude::*, Error, Value};
 
 use crate::bridge::html::html_node_unwrap;
-use crate::bridge::ruby::{check_frozen, is_kind_of, nil, value};
+use crate::bridge::ruby::{check_frozen, is_kind_of, value};
 use crate::bridge::string::{ruby_verified_text, RubyText};
 use crate::bridge::wrapper::*;
 use crate::bridge::wrapper::{
@@ -60,17 +60,13 @@ static XML_NODE_CLASSES: NodeClasses = NodeClasses {
     fragment: &CLASS_XML_DOCUMENT_FRAGMENT,
 };
 
-/// Wrap an arena node token into its `Makiri::XML::*` leaf.
+/// Wrap an arena node into its `Makiri::XML::*` leaf.
 ///
-/// An invalid token becomes nil, and the DOCUMENT node maps back onto the Ruby
-/// Document rather than getting a second wrapper, so the arena has exactly one
-/// owner. The token resolves through `document`'s arena, where a stale or
-/// foreign id reads as no node.
-pub fn wrap_xml_node(node: *mut core::ffi::c_void, document: Value) -> Value {
-    let id = NodeId::from_token(node as usize);
-    if id.is_invalid() {
-        return nil();
-    }
+/// The DOCUMENT node maps back onto the Ruby Document rather than getting a
+/// second wrapper, so the arena has exactly one owner. The id resolves through
+/// `document`'s arena; a caller with no node holds an `Option` and maps `None`
+/// to nil itself.
+pub fn wrap_xml_node(id: NodeId, document: Value) -> Value {
     let ty = arena_ref(&document).type_(id);
     if ty == Some(NodeType::Document) {
         return document;
@@ -78,22 +74,21 @@ pub fn wrap_xml_node(node: *mut core::ffi::c_void, document: Value) -> Value {
     let klass =
         XML_NODE_CLASSES.class_for(ty.map_or(crate::node_type::NodeType::Other, Into::into));
 
-    crate::bridge::wrapper::wrap_cached(&XML_NODE_TYPE, klass, node, document)
+    crate::bridge::wrapper::wrap_cached(&XML_NODE_TYPE, klass, id.into(), document)
 }
 
-/// The arena node token behind a wrapper.
+/// The arena node behind a wrapper.
 ///
 /// An XML Document resolves to its arena's DOCUMENT node. Anything else goes
 /// through the XML TypedData type, which fails with TypeError for an HTML node.
-pub fn xml_node_unwrap(rb_self: Value) -> Result<*mut core::ffi::c_void, Error> {
+pub fn xml_node_unwrap(rb_self: Value) -> Result<NodeId, Error> {
     if rb_self.is_kind_of(CLASS_XML_DOCUMENT.class()) {
         XML_DOC_TYPE.get(&rb_self)?; /* TypeError for any other Document */
         // SAFETY: the arena a live XML Document owns.
-        let node = unsafe { (*doc_of(rb_self)).doc_node() };
-        return Ok(node.to_token() as *mut core::ffi::c_void);
+        return Ok(unsafe { (*doc_of(rb_self)).doc_node() });
     }
     let nd: &NodeData = XML_NODE_TYPE.get(&rb_self)?;
-    Ok(nd.node)
+    Ok(nd.node.xml())
 }
 
 /// The XML arena behind a value checked to be an XML Document:
@@ -152,7 +147,7 @@ pub struct XmlSelf {
 
 impl magnus::TryConvert for XmlSelf {
     fn try_convert(value: Value) -> Result<Self, Error> {
-        let id = unwrap(value)?;
+        let id = xml_node_unwrap(value)?;
         let document = xml_node_document(value)?;
         Ok(XmlSelf {
             value,
@@ -170,11 +165,6 @@ impl XmlSelf {
     }
 }
 
-/// [`xml_node_unwrap`] with the node id typed.
-pub fn unwrap(v: Value) -> Result<NodeId, Error> {
-    Ok(NodeId::from_token(xml_node_unwrap(v)? as usize))
-}
-
 /// The XML arena behind `document`, for a WRITE: refused while an XPath
 /// evaluation with a handler is reading the document.
 ///
@@ -188,14 +178,9 @@ fn arena_mut(document: Value) -> Result<*mut XmlDoc, Error> {
     Ok(doc_of(document))
 }
 
-/// Wrap an arena node under `document`, its XML Document.
-pub fn wrap(node: NodeId, document: Value) -> Value {
-    wrap_xml_node(node.to_token() as *mut core::ffi::c_void, document)
-}
-
 /// Wrap a node reached from a checked receiver, under its Document.
 pub fn xml_wrap_rel_value(this: XmlSelf, rel: NodeId) -> Value {
-    wrap(rel, this.document)
+    wrap_xml_node(rel, this.document)
 }
 
 /// A mutation's or translation's `Result` with its failure as the Ruby
@@ -460,12 +445,14 @@ pub fn parse_xml_document(source: Value, limits: XmlLimits, budget: usize) -> Re
 
 /// `Document#root` for an XML document: the root element, or nil.
 pub fn document_root(rb_self: Value) -> Option<Value> {
-    arena_ref(&rb_self).root.map(|n| wrap(n, rb_self))
+    arena_ref(&rb_self).root.map(|n| wrap_xml_node(n, rb_self))
 }
 
 /// `Document#internal_subset` for an XML document: the DOCTYPE node, or nil.
 pub fn document_internal_subset(rb_self: Value) -> Option<Value> {
-    arena_ref(&rb_self).doctype.map(|n| wrap(n, rb_self))
+    arena_ref(&rb_self)
+        .doctype
+        .map(|n| wrap_xml_node(n, rb_self))
 }
 
 /// A fresh, empty XML Document: an arena holding a DOCUMENT node and no root.
@@ -588,7 +575,7 @@ pub fn incoming_node(target_doc: Value, arg: Value) -> Result<(NodeId, Option<Ad
      * CLAUDE.md on why a per-node wrapper cache was rejected). A child the caller
      * never named is out of reach by construction, not by choice. */
     check_frozen(arg)?;
-    let src = unwrap(arg)?;
+    let src = xml_node_unwrap(arg)?;
     let src_document = xml_node_document(arg)?;
     if src_document.as_raw() == target_doc.as_raw() {
         return Ok((src, None)); /* same arena -> move */
@@ -618,7 +605,7 @@ pub fn import_copy(rb_self: Value, node_v: Value, deep: bool) -> Result<NodeId, 
         NodeRepr::Xml => {
             /* Read, not written: the copy goes into the receiver's arena. */
             let src_doc = doc_of(xml_node_document(node_v)?);
-            let src = unwrap(node_v)?;
+            let src = xml_node_unwrap(node_v)?;
             if src_doc == xd {
                 /* Same arena: the single-`&mut` clone path. */
                 // SAFETY: the target arena, which is the source here.

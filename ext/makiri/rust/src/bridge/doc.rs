@@ -31,7 +31,7 @@ use crate::bridge::wrapper::{
 };
 use crate::bridge::xml::doc_of;
 use crate::bridge::xml::xml_node_document;
-use crate::bridge::xml::{unwrap as xml_node_id, xml_mut_result};
+use crate::bridge::xml::{xml_mut_result, xml_node_unwrap};
 use crate::lexbor::adapter::cross_import::cross_xml_to_html;
 use crate::lexbor::adapter::html::{RawDoc, RawNode};
 use crate::lexbor::adapter::post_parse::parse_html;
@@ -123,7 +123,7 @@ pub fn import_node(rb_self: Value, node_v: Value, deep: bool) -> Result<Value, E
      * detached lxb subtree owned by this document. */
     if node_repr(node_v) == NodeRepr::Xml {
         let xdoc = doc_of(xml_node_document(node_v)?);
-        let src = xml_node_id(node_v)?;
+        let src = xml_node_unwrap(node_v)?;
         // SAFETY: two live arenas, and the translation validates the target.
         let imp = xml_mut_result(unsafe { cross_xml_to_html(doc, &*xdoc, src, deep) })?;
         return Ok(wrap_html_node(imp, rb_self));

@@ -10,8 +10,6 @@
 
 #![allow(unsafe_code)]
 
-use core::ffi::c_void;
-
 use magnus::rb_sys::AsRawValue;
 
 use crate::bridge::ruby::makiri_error;
@@ -23,7 +21,7 @@ use crate::bridge::node_set::{node_set_with_fill, PushError};
 use crate::bridge::ruby::VALUE;
 use crate::bridge::string::{ruby_str_from_utf8, ruby_verified_text};
 use crate::bridge::wrapper::{doc_content, html_doc_unwrap, with_html_parsed_known, Content};
-use crate::bridge::wrapper::{wrap_doc_node, DocKind};
+use crate::bridge::wrapper::{wrap_doc_node, DocKind, NodeWord};
 use crate::bridge::xml::xml_node_unwrap;
 use crate::init::{CLASS_XML_DOCUMENT, EXC_ERROR};
 pub use crate::init::{CLASS_XPATH_CONTEXT, EXC_XPATH_LIMIT_EXCEEDED, EXC_XPATH_SYNTAX_ERROR};
@@ -130,11 +128,11 @@ pub fn context_for(rb_node: Value, document: Value) -> Result<Cx, Error> {
         // caller's keepalive, and only read here.
         let doc: &'static crate::xml::model::Document = unsafe { &*xdoc.as_ptr() };
         let node = if rb_node.is_kind_of(CLASS_XML_DOCUMENT.class()) {
-            Token::xml(doc.doc_node().to_token())
+            doc.doc_node()
         } else {
-            Token::xml(xml_node_unwrap(rb_node)? as usize)
+            xml_node_unwrap(rb_node)?
         };
-        return Ok(Cx::Xml(Context::new(doc, Some(node))));
+        return Ok(Cx::Xml(crate::xml::xpath::context(doc, node)));
     }
 
     let raw = html_node_unwrap(rb_node)?;
@@ -192,7 +190,7 @@ unsafe fn val_to_ruby(v: ValRef<'_>, document: Value) -> Result<VALUE, PushError
         ValRef::NodeSet(set) => {
             let (rb, fill) = node_set_with_fill(document);
             for &n in set.as_slice() {
-                fill.push(n.as_ptr())?;
+                fill.push(NodeWord::of_token(n))?;
             }
             rb.as_raw()
         }
@@ -230,20 +228,6 @@ fn value_to_ruby(v: XPathValue, document: Value) -> Result<Value, Error> {
         return Err(e.into());
     }
     Ok(converted)
-}
-
-/// The token for `raw`, a node of a document walked by backend `kind`. `None`
-/// for [`Kind::Null`], which names no document - the one place both callers
-/// mint a node token, so neither can let a null kind slip through as XML.
-///
-/// # Safety
-/// `raw` must be a live node of a document of backend `kind`.
-unsafe fn node_token(kind: Kind, raw: *mut c_void) -> Option<Token> {
-    match kind {
-        Kind::Html => Some(Token::html(raw)),
-        Kind::Xml => Some(Token::xml(raw as usize)),
-        Kind::Null => None,
-    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -302,7 +286,7 @@ pub fn query_result(value: XPathValue, document: Value, answer: Answer) -> Resul
             /* Only the first node is wrapped - no NodeSet, no `#first` call.
              * The pointer is the document's, so the value is freed before the
              * wrap, which allocates and so can raise past this frame. */
-            let first = set.as_slice().first().map(|n| n.as_ptr());
+            let first = set.as_slice().first().map(|&n| NodeWord::of_token(n));
             drop(value);
             return Ok(match first {
                 // SAFETY: a node the query found in `document`.

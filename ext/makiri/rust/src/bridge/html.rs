@@ -101,7 +101,7 @@ pub fn wrap_html_node(node: RawNode, document: Value) -> Value {
     }
     let klass = HTML_NODE_CLASSES.class_for(node_type);
 
-    crate::bridge::wrapper::wrap_cached(&HTML_NODE_TYPE, klass, node.as_ptr(), document)
+    crate::bridge::wrapper::wrap_cached(&HTML_NODE_TYPE, klass, node.into(), document)
 }
 
 /// The HTML node handle behind an HTML node or HTML Document.
@@ -119,7 +119,9 @@ pub fn html_node_unwrap(rb_node: Value) -> Result<RawNode, Error> {
         return Ok(html_doc_unwrap(rb_node)?.into());
     }
     let nd: &NodeData = HTML_NODE_TYPE.get(&rb_node)?;
-    RawNode::from_ptr(nd.node).ok_or_else(uninitialized)
+    // SAFETY: an HTML wrapper's word was stored from a `RawNode` (the type
+    // check above), and the Document the wrapper marks keeps it alive.
+    unsafe { nd.node.html() }.ok_or_else(uninitialized)
 }
 
 fn uninitialized() -> Error {

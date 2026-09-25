@@ -71,7 +71,7 @@ fn css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Value, Error> {
         let nodes = select_all(&held(ruby), this.raw(), sv.as_verified().as_bytes())
             .map_err(|e| select_error(e, selector))?;
         drop(sv);
-        node_set_from(this.document, nodes.iter().map(|n| n.as_ptr()))
+        node_set_from(this.document, nodes.iter().map(|&n| n.into()))
     })
 }
 

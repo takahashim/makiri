@@ -266,7 +266,7 @@ pub fn get_document(this: XmlSelf) -> Result<Value, Error> {
 fn set_of(this: XmlSelf, nodes: impl Iterator<Item = NodeId>) -> Result<Value, Error> {
     let (set, fill) = node_set_with_fill(this.document);
     for id in nodes {
-        fill.push(id.to_token() as *mut core::ffi::c_void)?;
+        fill.push(id.into())?;
     }
     Ok(set)
 }
@@ -359,7 +359,7 @@ pub fn spaceship(_ruby: &Ruby, this: XmlSelf, other: Value) -> Result<Option<i64
         let order = crate::xml::xpath::document_order(
             this.doc_ref(),
             this.id,
-            crate::bridge::xml::unwrap(other)?,
+            crate::bridge::xml::xml_node_unwrap(other)?,
         );
         Ok(order.map(|o| o as i64))
     })

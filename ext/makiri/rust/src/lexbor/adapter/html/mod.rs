@@ -312,7 +312,7 @@ impl RawNode {
         NonNull::new(p as *mut LxbNode).map(RawNode)
     }
 
-    /// The pointer, for storing in a Ruby wrapper's TypedData.
+    /// The pointer, for the bridge's `NodeWord` and the engine's `Token`.
     #[inline]
     pub fn as_ptr(self) -> *mut core::ffi::c_void {
         self.0.as_ptr().cast()

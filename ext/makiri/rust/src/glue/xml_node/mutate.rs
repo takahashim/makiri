@@ -16,8 +16,8 @@ use crate::bridge::ruby::makiri_error;
 
 use crate::bridge::xml::{
     begin_edit, import_copy, incoming_node, verified_text, verified_text_opt,
-    verified_text_or_absent, with_arena_for_new_node, wrap, xml_mut_result, xml_wrap_rel_value,
-    Editing, XmlSelf,
+    verified_text_or_absent, with_arena_for_new_node, wrap_xml_node as wrap, xml_mut_result,
+    xml_wrap_rel_value, Editing, XmlSelf,
 };
 use crate::init::CLASS_XML_DOCUMENT;
 use crate::xml::dom_name::split_loose_dom_name;
