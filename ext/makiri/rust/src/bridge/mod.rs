@@ -51,6 +51,10 @@ pub mod fragment;
 #[cfg(feature = "lexbor")]
 pub mod node_set;
 
+/// Reading a stored node word back as a typed wrapper (the two front doors).
+#[cfg(feature = "lexbor")]
+pub mod node_wrap;
+
 /// The Ruby <-> XPath engine seam: which backend a query runs on, and
 /// building the engine context for a Ruby node or document.
 #[cfg(feature = "lexbor")]

@@ -38,8 +38,9 @@ use crate::bridge::ruby::makiri_error;
 use magnus::value::{Opaque, ReprValue};
 use magnus::{gc::Marker, prelude::*, DataTypeFunctions, Error, Ruby, TypedData, Value};
 
+use crate::bridge::node_wrap::wrap_doc_node;
 use crate::bridge::typed::typed_data_unprotected;
-use crate::bridge::wrapper::{keepalive_document, node_raw, wrap_doc_node, DocKind, NodeWord};
+use crate::bridge::wrapper::{keepalive_document, node_raw, DocKind, NodeWord};
 use crate::init::{CLASS_DOCUMENT, CLASS_NODE, CLASS_NODE_SET};
 
 use crate::limits::NODE_SET_MAX;

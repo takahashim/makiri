@@ -17,10 +17,11 @@ use magnus::{prelude::*, Error, Value};
 
 use crate::bridge::html::html_node_unwrap;
 use crate::bridge::node_set::{node_set_with_fill, PushError};
+use crate::bridge::node_wrap::wrap_doc_node;
 use crate::bridge::ruby::VALUE;
 use crate::bridge::string::{ruby_str_from_utf8, ruby_verified_text};
 use crate::bridge::wrapper::{doc_content, html_doc_unwrap, with_html_parsed_known, Content};
-use crate::bridge::wrapper::{wrap_doc_node, DocKind, NodeWord};
+use crate::bridge::wrapper::{DocKind, NodeWord};
 use crate::bridge::xml::xml_node_unwrap;
 use crate::engine_error::{Error as XPathError, ErrorKind};
 use crate::init::EXC_ERROR;
@@ -188,7 +189,7 @@ pub fn context_for(rb_node: Value, document: Value) -> Result<Cx, Error> {
 
     let raw = html_node_unwrap(rb_node)?;
     // SAFETY: `html_node_unwrap` returned a live node of `document`.
-    let node = unsafe { Token::html(raw.as_ptr()) };
+    let node = unsafe { NodeWord::from(raw).token(DocKind::Html) };
     /* TypeError for a Document that is not HTML. */
     html_doc_unwrap(document)?;
     let Content::Html(parsed) = content else {

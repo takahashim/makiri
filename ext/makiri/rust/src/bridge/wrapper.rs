@@ -434,26 +434,6 @@ impl From<DocKind> for Kind {
     }
 }
 
-/// Wrap `node`, a node of `document`, under the representation `kind` names -
-/// the one place a stored [`NodeWord`] (a NodeSet's, a query result's) is read
-/// back as a typed node, which `kind` is what justifies.
-///
-/// # Safety
-/// `node` is a live node of `document`, and `document` is of `kind`.
-pub(in crate::bridge) unsafe fn wrap_doc_node(
-    kind: DocKind,
-    node: NodeWord,
-    document: Value,
-) -> Value {
-    match kind {
-        DocKind::Xml => crate::bridge::xml::wrap_xml_node(node.xml(), document),
-        DocKind::Html => match node.html() {
-            Some(n) => crate::bridge::html::wrap_html_node(n, document),
-            None => crate::bridge::ruby::nil(),
-        },
-    }
-}
-
 /// A Document wrapper allocated before the content it will own, and the only
 /// way a Document gets that content.
 ///
