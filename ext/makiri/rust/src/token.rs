@@ -43,9 +43,10 @@ pub struct Token {
 
 impl Token {
     /// The token naming no node - the empty slot of a token-keyed table (see
-    /// the `TableKey` impl below). An absent context node is `None`, not this.
+    /// the `TableKey` impl below). An absent context node is `None`, not this,
+    /// so this stays crate-internal: only the table ever makes one.
     #[inline]
-    pub const fn null() -> Token {
+    pub(crate) const fn null() -> Token {
         Token {
             kind: Kind::Null,
             word: 0,
