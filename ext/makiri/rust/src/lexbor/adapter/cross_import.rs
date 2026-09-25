@@ -371,7 +371,7 @@ fn x2h_make<'doc>(
              * SVG `linearGradient` does not come back `lineargradient`. An
              * XHTML element is an HTML element, whose name is lower case. */
             let (prefix, ns) = (doc.prefix(s), doc.ns(s));
-            let el = if prefix.is_empty() && hdoc.intern_ns(ns) == Some(NsId::HTML) {
+            let el = if prefix.is_empty() && hdoc.lookup_ns(ns) == Some(NsId::HTML) {
                 let el = hdoc.create_element(doc.qname(s)).ok_or(MutStatus::Oom)?;
                 el.set_ns(NsId::HTML);
                 el

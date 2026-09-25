@@ -177,6 +177,7 @@ fn main() {
         .allowlist_function("lxb_dom_processing_instruction_target")
         .allowlist_function("lxb_dom_document_destroy_text")
         .allowlist_function("lxb_ns_by_id")
+        .allowlist_function("lxb_ns_data_by_link")
         .allowlist_function("lxb_dom_document_root")
         .allowlist_type("lxb_html_token_t")
         .allowlist_type("lxb_html_token_type_t")

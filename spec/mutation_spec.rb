@@ -64,6 +64,22 @@ RSpec.describe "Makiri mutation" do
         expect { div.set_attribute_ns("urn\x00", "x:y", "v") }.to raise_error(Makiri::Error)
       end
     end
+
+    describe "#remove_attribute_ns" do
+      it "removes only the attribute in that namespace" do
+        div["k"] = "plain"
+        div.set_attribute_ns("urn:a", "a:k", "ns")
+        div.remove_attribute_ns("urn:a", "k")
+        expect(div["k"]).to eq("plain")
+        expect(div.to_html).not_to include("a:k")
+      end
+
+      it "leaves the null-namespace attribute alone for a namespace never used" do
+        div["k"] = "plain"
+        div.remove_attribute_ns("urn:never-interned", "k")
+        expect(div["k"]).to eq("plain")
+      end
+    end
   end
 
   describe "node creation" do

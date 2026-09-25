@@ -246,27 +246,28 @@ impl<'doc> HtmlDoc<'doc> {
     /// Intern `uri` in the document's namespace table and give back its id -
     /// the half of the key the DOM matches a namespaced attribute on.
     ///
-    /// `None` for an empty URI, and for a document with no table or one that
-    /// could not take another entry: a miss then simply finds nothing, rather
-    /// than matching the wrong attribute.
-    pub fn intern_ns(self, uri: &[u8]) -> Option<NsId> {
+    /// `Ok(None)` for an empty URI, which is no namespace. `Err` when the
+    /// table cannot take it: "no namespace" names a DIFFERENT attribute, so a
+    /// failure must not read as it. To only look a URI up, see
+    /// [`HtmlDoc::lookup_ns`].
+    pub fn intern_ns(self, uri: &[u8]) -> Result<Option<NsId>, LexborRefused> {
         if uri.is_empty() {
-            return None;
+            return Ok(None);
         }
         // SAFETY: a live document; the table and the URI are only read, and
         // Lexbor copies the URI into its own storage.
-        unsafe {
+        let id = unsafe {
             let table = (*self.as_raw()).ns;
             if table.is_null() {
-                return None;
+                return Err(LexborRefused);
             }
             let d = lxb::lxb_ns_append(table as *mut core::ffi::c_void, uri.as_ptr(), uri.len());
             if d.is_null() {
-                None
-            } else {
-                NsId::from_raw((*d).ns_id)
+                return Err(LexborRefused);
             }
-        }
+            (*d).ns_id
+        };
+        NsId::from_raw(id).map(Some).ok_or(LexborRefused)
     }
 }
 

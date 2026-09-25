@@ -441,6 +441,28 @@ impl<'doc> HtmlDoc<'doc> {
         NonNull::new(raw).map(|raw| HtmlDoc::from_non_null(raw))
     }
 
+    /// The id `uri` already has in the document's namespace table, WITHOUT
+    /// interning it. `None` for an empty URI and for one never interned - no
+    /// node or attribute can carry a namespace the table does not hold.
+    pub fn lookup_ns(self, uri: &[u8]) -> Option<NsId> {
+        if uri.is_empty() {
+            return None;
+        }
+        // SAFETY: a live document; the table and the URI are only read.
+        let id = unsafe {
+            let table = (*self.as_raw()).ns;
+            if table.is_null() {
+                return None;
+            }
+            let d = lxb::lxb_ns_data_by_link(table, uri.as_ptr(), uri.len());
+            if d.is_null() {
+                return None;
+            }
+            (*d).ns_id
+        };
+        NsId::from_raw(id)
+    }
+
     /// Take ownership of this document as the transient one a fragment parse
     /// built, to be destroyed when the returned value drops.
     ///

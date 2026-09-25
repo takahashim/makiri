@@ -23,7 +23,7 @@ use crate::lexbor::fragment::import_with_fixup;
 
 use crate::bridge::string::{RubyData, RubyText};
 use crate::bridge::wrapper::*;
-use crate::lexbor::adapter::html::{HtmlDoc, HtmlElementMut, LexborRefused, NsId};
+use crate::lexbor::adapter::html::{HtmlDoc, HtmlElementMut, LexborRefused};
 
 /* ---- the document's own bytes and text ---- */
 
@@ -409,7 +409,11 @@ pub fn set_attribute_ns(
     /* An empty URI is no namespace: it names the attribute the unprefixed way. */
     // SAFETY: as above.
     let ns = ns.filter(|v| v.len() != 0).map(|v| unsafe { v.bytes() });
-    let want_ns = intern_ns(el, ns.unwrap_or(&[]));
+    let want_ns = el
+        .element()
+        .node()
+        .owner_document()
+        .intern_ns(ns.unwrap_or(&[]))?;
     let local = match qname.iter().position(|&b| b == b':') {
         Some(i) => &qname[i + 1..],
         None => qname,
@@ -427,9 +431,18 @@ pub fn remove_attribute_ns(
     ns: Option<&RubyText>,
     local: &RubyText,
 ) -> bool {
-    // SAFETY: see the section comment.
+    /* Looked up, not interned: a namespace the document never interned is
+     * one no attribute here carries, so there is nothing to remove - and a
+     * lookup can neither fail nor grow the table. */
     let want_ns = match ns.filter(|v| v.len() != 0) {
-        Some(nv) => intern_ns(el, unsafe { nv.bytes() }),
+        Some(nv) => {
+            let doc = el.element().node().owner_document();
+            // SAFETY: see the section comment.
+            let Some(id) = doc.lookup_ns(unsafe { nv.bytes() }) else {
+                return false;
+            };
+            Some(id)
+        }
         None => None,
     };
     // SAFETY: as above.
@@ -440,11 +453,6 @@ pub fn remove_attribute_ns(
         }
         None => false,
     }
-}
-
-/// `uri` interned in `el`'s document, for a (namespace, local name) lookup.
-fn intern_ns(el: HtmlElementMut<'_>, uri: &[u8]) -> Option<NsId> {
-    el.element().node().owner_document().intern_ns(uri)
 }
 
 /// `el.delete(name)`.
