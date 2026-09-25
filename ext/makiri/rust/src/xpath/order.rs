@@ -288,6 +288,11 @@ pub(super) fn merge_runs<T: Copy>(
     scratch: &mut [T],
     mut cmp: impl FnMut(&T, &T) -> Ordering,
 ) {
+    debug_assert_eq!(
+        scratch.len(),
+        items.len(),
+        "merge_runs needs a scratch buffer the same length as its input"
+    );
     let n = items.len();
     /* The end of the non-descending run that starts at `i`. */
     let run_end = |a: &[T], i: usize, cmp: &mut dyn FnMut(&T, &T) -> Ordering| {

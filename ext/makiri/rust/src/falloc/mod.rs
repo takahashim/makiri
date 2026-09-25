@@ -34,10 +34,11 @@
 //! oom` does not need to know which code path owns consultation number 4,271,
 //! and a sweep sized from a disarmed baseline run stays correct as sites move.
 //!
-//! It counts consultations, not allocations: `Reserve::falloc_reserve` consults
-//! before a reserve that may not need to allocate. The sweep still covers every
-//! real allocation, because the call sequence up to the armed index is exactly
-//! the baseline one.
+//! It counts allocation ATTEMPTS, not calls: `injectable` asks the hook only
+//! when a reserve would actually allocate, so a push per node of a walk costs
+//! the sweep one injection point per growth rather than one per push. The sweep
+//! still covers every real allocation, because the consult sequence up to the
+//! armed index is exactly the baseline one.
 //!
 //! The counter is atomic, not GVL-protected: a parse runs under
 //! `rb_thread_call_without_gvl` and consults it from there, so two threads can
@@ -271,9 +272,6 @@ impl<T: core::hash::Hash + Eq, S: core::hash::BuildHasher> Reserve for HashSet<T
 #[inline]
 pub fn try_vec_with_capacity<T>(cap: usize) -> Option<Vec<T>> {
     let mut v = Vec::new();
-    if cap == 0 {
-        return Some(v);
-    }
     v.falloc_reserve_exact(cap).ok()?;
     Some(v)
 }
