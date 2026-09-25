@@ -79,6 +79,16 @@ fn probe<K: TableKey, V>(slots: &[(K, V)], key: K) -> usize {
     i
 }
 
+/// The value `key` maps to in `slots` (empty, or as [`probe`] requires).
+#[inline]
+fn lookup<K: TableKey, V: Copy>(slots: &[(K, V)], key: K) -> Option<V> {
+    if key == K::EMPTY || slots.is_empty() {
+        return None;
+    }
+    let (k, v) = slots[probe(slots, key)];
+    (k != K::EMPTY).then_some(v)
+}
+
 /// A key -> `V` table for a key count known before it is filled.
 ///
 /// Insert-only (there are no tombstones), sized at load factor <= 1/2 for the
@@ -135,11 +145,7 @@ impl<K: TableKey, V: Copy> PtrTable<K, V> {
 
     /// The value `key` maps to.
     pub fn get(&self, key: K) -> Option<V> {
-        if key == K::EMPTY || self.slots.is_empty() {
-            return None;
-        }
-        let (k, v) = self.slots[probe(&self.slots, key)];
-        (k != K::EMPTY).then_some(v)
+        lookup(&self.slots, key)
     }
 }
 
@@ -184,11 +190,7 @@ impl<K: TableKey, V: Copy + Default> PtrMap<K, V> {
     /// The value `key` maps to.
     #[inline]
     pub fn get(&self, key: K) -> Option<V> {
-        if key == K::EMPTY || self.slots.is_empty() {
-            return None;
-        }
-        let (k, v) = self.slots[probe(&self.slots, key)];
-        (k != K::EMPTY).then_some(v)
+        lookup(&self.slots, key)
     }
 
     /// Map `key` to `value`; a key already present keeps its first value.
@@ -200,13 +202,20 @@ impl<K: TableKey, V: Copy + Default> PtrMap<K, V> {
         }
         /* A key already present is a no-op, so it is looked for BEFORE growing:
          * growing first made a repeated key allocate, and fail on OOM, for a
-         * write that changes nothing. */
-        if !self.slots.is_empty() && self.slots[probe(&self.slots, key)].0 != K::EMPTY {
-            return Ok(());
+         * write that changes nothing. When no growth is needed, the slot that
+         * probe found is where the key goes. */
+        if !self.slots.is_empty() {
+            let i = probe(&self.slots, key);
+            if self.slots[i].0 != K::EMPTY {
+                return Ok(());
+            }
+            if (self.len + 1) * 2 <= self.slots.len() {
+                self.slots[i] = (key, value);
+                self.len += 1;
+                return Ok(());
+            }
         }
-        if self.slots.is_empty() || (self.len + 1) * 2 > self.slots.len() {
-            self.grow()?;
-        }
+        self.grow()?;
         let i = probe(&self.slots, key);
         self.slots[i] = (key, value);
         self.len += 1;
