@@ -540,8 +540,8 @@ pub(crate) fn try_first_match<'e, 'd, D: Dom<'d>>(
 ) -> Result<Option<Val>, Error> {
     let mut ev = Evaluation::new(cx, names, doc, None);
     let found = match first_match_walk::<D>(&mut ev, ast, node) {
-        Ok(Some(found)) => found,
-        Ok(None) => return Ok(None),
+        Ok(FirstMatch::Answered(found)) => found,
+        Ok(FirstMatch::NotApplicable) => return Ok(None),
         Err(_) => return Err(ev.budget.take_error()),
     };
     let mut set = NodeSet::new();
@@ -553,16 +553,25 @@ pub(crate) fn try_first_match<'e, 'd, D: Dom<'d>>(
     Ok(Some(Val::NodeSet(set)))
 }
 
+/// Whether the `at_xpath` fast path applied, and, if it did, the first match.
+enum FirstMatch<N> {
+    /// The shape is not recognised; the caller runs the full evaluator.
+    NotApplicable,
+    /// The shape was handled: the first matching node in document order, or
+    /// none.
+    Answered(Option<N>),
+}
+
 fn first_match_walk<'e, 'd, D: Dom<'d>>(
     ev: &mut Evaluation<'e, 'd, D>,
     ast: &Ast,
     node: Option<D::Node>,
-) -> EvalResult<Option<Option<D::Node>>> {
+) -> EvalResult<FirstMatch<D::Node>> {
     let doc = ev.doc;
     let root = ast.root();
     let step = match first_recognise(root) {
         Some(s) => s,
-        None => return Ok(None),
+        None => return Ok(FirstMatch::NotApplicable),
     };
 
     /* Compile the test as the step driver does, so the fast path stays
@@ -579,7 +588,7 @@ fn first_match_walk<'e, 'd, D: Dom<'d>>(
         node
     };
     let Some(start) = start else {
-        return Ok(Some(None)); /* recognised; no context means no match */
+        return Ok(FirstMatch::Answered(None)); /* recognised; no context means no match */
     };
 
     let budget = &mut ev.budget;
@@ -593,8 +602,8 @@ fn first_match_walk<'e, 'd, D: Dom<'d>>(
         ControlFlow::Continue(())
     });
     match flow {
-        ControlFlow::Continue(()) => Ok(Some(None)),
-        ControlFlow::Break(found) => found.map(|n| Some(Some(n))),
+        ControlFlow::Continue(()) => Ok(FirstMatch::Answered(None)),
+        ControlFlow::Break(found) => found.map(|n| FirstMatch::Answered(Some(n))),
     }
 }
 
