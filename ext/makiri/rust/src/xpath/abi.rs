@@ -18,4 +18,4 @@ pub use super::ctx::XPathValue;
 pub use super::limits::Budget;
 pub use super::msg::{ErrSink, Error, Reported};
 pub(crate) use crate::cbuf::{Buf, BufError};
-pub use crate::text::{BorrowedText, VerifiedText};
+pub use crate::text::VerifiedText;

@@ -9,9 +9,9 @@
 //! its subtree owns. A later `Node#text` is a hash lookup and a single pre-sized
 //! memcpy run over a cache-dense slice array, touching no element node at all.
 //!
-//! # The slices are raw pointers on purpose
+//! # The slices are stored raw on purpose
 //!
-//! A borrowed `&[u8]` here would be a stronger claim than the truth. The nodes
+//! A stored `&[u8]` would be a stronger claim than the truth. The nodes
 //! belong to Lexbor, and its mutation API writes through them outside Rust's borrow
 //! checker, so a long-lived Rust reference would assert a lifetime nothing
 //! enforces. What actually keeps a cached slice valid is a RUNTIME protocol:
@@ -19,8 +19,13 @@
 //! (`HtmlParsed::invalidate_indexes`), which drops the whole index, so a
 //! slice can never outlive the storage it points into. The arena also never
 //! frees a node - detached, never destroyed - so only a mutation can reallocate
-//! the text a slice borrows. That protocol is the safety argument; the types
-//! record it rather than pretending to prove it.
+//! the text a slice borrows.
+//!
+//! So the index keeps a private [`RawSlice`] and hands out ordinary `&[u8]`
+//! borrowed from `&self` ([`TextIndex::slices_of`] / [`TextRun`]): holding the
+//! borrow holds the index, and dropping the index is the only thing a mutation
+//! does to it. The one `unsafe` that turns a stored slice back into bytes is
+//! [`RawSlice::get`], and that protocol is its safety argument.
 //!
 //! # Fail-closed
 //!
@@ -33,7 +38,7 @@
 
 use crate::falloc::{try_vec_with_capacity, VecPush};
 use crate::ptr_table::PtrTable;
-use crate::text::BorrowedText;
+use core::ptr::NonNull;
 
 use super::html::{HtmlNode, NodeType, RawNode};
 
@@ -46,9 +51,50 @@ struct Run {
     end: u32,
 }
 
+/// A TEXT/CDATA node's character data, as the address and length of the
+/// arena storage it borrows. Private, and only ever stored inside a
+/// [`TextIndex`], so borrowing one borrows the index. Neither `Clone` nor
+/// `Copy`, so it cannot be taken out of the index.
+struct RawSlice(NonNull<[u8]>);
+
+impl RawSlice {
+    /// The bytes, for as long as the slice - and so the index holding it - is
+    /// borrowed.
+    fn get(&self) -> &[u8] {
+        // SAFETY: the pointer is a character-data node's own storage in the
+        // document's arena, taken by `TextIndex::build`. The arena never frees
+        // a node (detached, never destroyed), and the only thing that can move
+        // or rewrite the text is a mutation - every one of which goes through
+        // `HtmlParsed::invalidate_indexes`, which DROPS the index first. The
+        // result borrows `self`, which lives inside the index, so it cannot
+        // outlive that drop.
+        unsafe { self.0.as_ref() }
+    }
+}
+
+/// The run of text slices one container's subtree owns, borrowed from the
+/// index: the bytes in document order, and their total length.
+#[derive(Clone, Copy)]
+pub struct TextRun<'i> {
+    slices: &'i [RawSlice],
+    total: usize,
+}
+
+impl<'i> TextRun<'i> {
+    /// The slices, in document order. Never empty ones.
+    pub fn iter(self) -> impl Iterator<Item = &'i [u8]> {
+        self.slices.iter().map(RawSlice::get)
+    }
+
+    /// The byte total of the run: the sum of the slices' lengths.
+    pub fn total(self) -> usize {
+        self.total
+    }
+}
+
 pub struct TextIndex {
     /// Document-order TEXT/CDATA slices, borrowed from the arena.
-    slices: Vec<BorrowedText>,
+    slices: Vec<RawSlice>,
     /// `slices.len() + 1` entries; `prefix[i]` is the byte count before slice
     /// `i`. Always non-empty, so an empty `[0, 0)` run over a text-free subtree
     /// reads `prefix[0]` rather than nothing.
@@ -173,17 +219,8 @@ impl TextIndex {
                  * smaller than the bytes actually present, which is a short read
                  * into a pre-sized String. */
                 let total = t.prefix[t.slices.len()].checked_add(text.len())?;
-                // SAFETY: `text` is the character-data node's own storage in
-                // this document's arena, which outlives the index. The view is
-                // lifetime-free, so what keeps it valid is the invalidation
-                // hook: `HtmlParsed::invalidate_indexes` drops the whole index on
-                // any mutation, before the storage can move or detach.
-                t.slices.push(unsafe {
-                    BorrowedText::from_raw_parts(
-                        text.as_ptr() as *const core::ffi::c_char,
-                        text.len(),
-                    )
-                });
+                /* Stored raw: see the module docs, and `RawSlice::get`. */
+                t.slices.push(RawSlice(NonNull::from(text)));
                 t.prefix.push(total);
             } else if is_container(child) {
                 let start = t.slices.len() as u32;
@@ -212,12 +249,12 @@ impl TextIndex {
     /// The document-order run of text slices `node`'s subtree owns, with its
     /// byte total; None for a node outside the indexed tree. Never a shorter
     /// run than the truth.
-    pub fn slices_of(&self, node: RawNode) -> Option<(&[BorrowedText], usize)> {
+    pub fn slices_of(&self, node: RawNode) -> Option<TextRun<'_>> {
         let r = self.runs.get(Some(node))?;
         let (start, end) = (r.start as usize, r.end as usize);
-        Some((
-            &self.slices[start..end],
-            self.prefix[end] - self.prefix[start],
-        ))
+        Some(TextRun {
+            slices: &self.slices[start..end],
+            total: self.prefix[end] - self.prefix[start],
+        })
     }
 }

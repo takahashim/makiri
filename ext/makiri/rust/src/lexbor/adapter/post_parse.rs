@@ -40,8 +40,7 @@ use crate::lexbor::adapter::html::{HtmlDoc as DomDoc, HtmlNode, RawDoc, RawNode,
 use crate::lexbor::adapter::source_loc::{
     lines_build, pos_assign_to_dom, pos_token_cb, Lines, Positions, Recorder,
 };
-use crate::lexbor::adapter::text_index::TextIndex;
-use crate::text::BorrowedText;
+use crate::lexbor::adapter::text_index::{TextIndex, TextRun};
 use crate::utf8_input::sanitize;
 
 type HtmlDoc = lxb::lxb_html_document_t;
@@ -153,7 +152,7 @@ impl HtmlParsed {
     ///
     /// None means "walk instead": a node outside the indexed tree (a
     /// fragment), or a build that could not allocate.
-    pub fn text_slices(&mut self, node: RawNode) -> Option<(&[BorrowedText], usize)> {
+    pub fn text_slices(&mut self, node: RawNode) -> Option<TextRun<'_>> {
         if self.text_index.is_none() {
             let root = self.doc().as_node().document_root()?;
             let built = TextIndex::build(root)?;

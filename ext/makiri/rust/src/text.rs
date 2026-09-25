@@ -1,36 +1,24 @@
 //! Borrowed text views: a `(ptr, len)` over bytes someone else owns.
 //!
-//! Two types with one shape, kept apart because their contracts differ:
+//! [`VerifiedText`] - valid UTF-8 with **no NUL**. The engine-input contract:
+//! an XPath expression, a CSS selector, a namespace prefix or URI, a variable
+//! name or value. Made by checking the bytes ([`VerifiedText::from_bytes`]) or
+//! at the Ruby boundary, where the bridge has already run the same check.
 //!
-//! * [`VerifiedText`] - valid UTF-8 with **no NUL**. The engine-input contract:
-//!   an XPath expression, a CSS selector, a namespace prefix or URI, a variable
-//!   name or value. Made by checking the bytes ([`VerifiedText::from_bytes`]) or
-//!   at the Ruby boundary, where the bridge has already run the same check.
-//! * [`BorrowedText`] - valid UTF-8, **NUL permitted**. DOM text (HTML text and
-//!   attribute data may hold U+0000, like browsers) and the strings an XPath
-//!   evaluation produces from it.
-//!
-//! A `VerifiedText` converts into a `BorrowedText`, since the contract only
-//! weakens; there is no conversion back, so DOM-derived bytes cannot reach a
-//! place that assumes no NUL without being checked.
-//!
-//! Neither is NUL-terminated in general, so both are consumed as `(ptr, len)`,
+//! It is not NUL-terminated in general, so it is consumed as `(ptr, len)`,
 //! never as a C string. A null pointer is the "absent" sentinel (an omitted
 //! prefix, say), distinct from a present empty string.
 //!
 //! [`VerifiedText`] carries a lifetime: its owner must outlive `'a`, so an
 //! engine call cannot hold the token past the borrow `as_verified` took. Its
 //! `as_bytes` is then safe - the borrow was established with the token, and the
-//! engine never runs Ruby that could move the bytes. [`BorrowedText`] is still
-//! lifetime-free: its owners are the Lexbor arena and the text index, which
-//! drop and invalidate at runtime (one hook), so reading it stays `unsafe`.
+//! engine never runs Ruby that could move the bytes.
 
 #![allow(unsafe_code)]
 
 use core::ffi::c_char;
 
-/// The accessors both views share: the contracts differ, the reading does not.
-/// `as_bytes` is each view's own, since only one of them can make it safe.
+/// The view's shared accessors.
 macro_rules! view_accessors {
     () => {
         /// The pointer. The tests pin it to the owner's own; code reads
@@ -118,53 +106,6 @@ impl<'a> VerifiedText<'a> {
             ptr,
             len,
             _borrow: core::marker::PhantomData,
-        }
-    }
-}
-
-/// Valid UTF-8, NUL permitted: DOM text and the engine's own strings.
-#[derive(Clone, Copy)]
-pub struct BorrowedText {
-    ptr: *const c_char,
-    len: usize,
-}
-
-// Built by the text index and read by the Ruby glue, so the Ruby-free builds
-// see most of it unused - and no build reads its `as_bytes` outside the tests
-// since the engine's own strings became `xpath::value::Text`.
-#[allow(dead_code)]
-impl BorrowedText {
-    view_accessors!();
-
-    /// The bytes, or an empty slice when absent.
-    ///
-    /// # Safety
-    /// The owner of the bytes must stay live, at the same address, for `'a`.
-    pub(crate) unsafe fn as_bytes<'a>(self) -> &'a [u8] {
-        if self.is_empty() {
-            &[]
-        } else {
-            // SAFETY: non-null, `len` live bytes by the constructor's
-            // contract, and the caller keeps the owner alive for `'a`.
-            unsafe { core::slice::from_raw_parts(self.ptr as *const u8, self.len) }
-        }
-    }
-
-    /// Borrow bytes from Lexbor's arena or an engine-owned slot.
-    ///
-    /// # Safety
-    /// `ptr` must be null (with `len == 0`) or point to `len` live bytes of
-    /// valid UTF-8, which stay put while the view is used. NUL is allowed.
-    pub(crate) const unsafe fn from_raw_parts(ptr: *const c_char, len: usize) -> Self {
-        Self { ptr, len }
-    }
-}
-
-impl From<VerifiedText<'_>> for BorrowedText {
-    fn from(t: VerifiedText<'_>) -> Self {
-        Self {
-            ptr: t.ptr,
-            len: t.len,
         }
     }
 }

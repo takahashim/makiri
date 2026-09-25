@@ -36,7 +36,7 @@ UNSAFE_ISLANDS = {
   "bridge/html.rs" => 30,
   "bridge/node_set.rs" => 8,
   "bridge/ruby.rs" => 17,
-  "bridge/string.rs" => 29,
+  "bridge/string.rs" => 28,
   "bridge/typed.rs" => 21,
   "bridge/wrapper.rs" => 21,
   "bridge/xml.rs" => 12,
@@ -69,8 +69,8 @@ UNSAFE_ISLANDS = {
   "lexbor/stylesheet.rs" => 7,
   "lexbor/tests.rs" => 2,
   "lexbor/xpath.rs" => 9,
-  "rust_tests.rs" => 5,
-  "text.rs" => 5,
+  "rust_tests.rs" => 1,
+  "text.rs" => 2,
   "token.rs" => 1,
 }.freeze
 

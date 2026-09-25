@@ -614,8 +614,9 @@ document's index (`spec/xpath_context_mutation_spec.rb`).
 walk from text extraction (the cache-bound cost on Lexbor's 96-byte nodes). One
 lazy build (count, size once, fill; explicit **heap**-stack DFS via
 `grow_capacity` + `falloc_reserve_exact`, no recursion → no stack DoS) records a flat document-order
-array of every TEXT/CDATA node's **borrowed** `BorrowedText` slice, a
-prefix-sum of their lengths, and a `PtrTable` mapping
+array of every TEXT/CDATA node's **borrowed** slice (a private raw
+`RawSlice`, handed out only as `&[u8]` borrowed from the index through a
+`TextRun`), a prefix-sum of their lengths, and a `PtrTable` mapping
 each element/fragment to the `[start,end)` run of slices its subtree owns. A
 `Node#text` is then a hash lookup + `ruby_str_from_slices` (one pre-sized
 memcpy run; **~4× faster than libxml2 at all sizes**), no element node touched.

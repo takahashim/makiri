@@ -88,9 +88,8 @@ pub mod cutf8;
 /// it.
 pub mod utf8_input;
 
-/// Borrowed text views and their two contracts: `VerifiedText` (no NUL, for
-/// engine inputs) and `BorrowedText` (NUL permitted, for DOM data).
-/// Unconditional: the engine, the DOM adapter and the glue all pass them.
+/// `VerifiedText`: a borrowed engine input, valid UTF-8 with no NUL.
+/// Unconditional: the engine, the DOM adapter and the glue all pass it.
 pub mod text;
 
 /// Bounds shared across layers (`NODE_SET_MAX`). Unconditional and Ruby-free.

@@ -327,11 +327,7 @@ fn verified_text_rejects_nul_and_invalid_utf8() {
 
 #[test]
 fn text_views_distinguish_absent_from_empty() {
-    use crate::text::{BorrowedText, VerifiedText};
-
-    let absent = unsafe { BorrowedText::from_raw_parts(core::ptr::null(), 0) };
-    assert!(absent.is_absent() && absent.is_empty());
-    assert!(unsafe { absent.as_bytes() }.is_empty());
+    use crate::text::VerifiedText;
 
     // `empty` is present and NUL-terminated, so it is safe wherever a present
     // string is required.
@@ -341,22 +337,6 @@ fn text_views_distinguish_absent_from_empty() {
 
     let present = VerifiedText::from_bytes(b"").unwrap();
     assert!(!present.is_absent() && present.is_empty());
-
-    // Weakening to a borrowed view keeps presence and the bytes.
-    let b: BorrowedText = empty.into();
-    assert!(!b.is_absent() && b.is_empty());
-    let v = VerifiedText::from_bytes(b"xy").unwrap();
-    let b: BorrowedText = v.into();
-    assert_eq!((b.as_ptr(), b.len()), (v.as_ptr(), v.len()));
-}
-
-#[test]
-fn borrowed_text_carries_an_interior_nul() {
-    use crate::text::BorrowedText;
-    let data = b"a\0b";
-    let b = unsafe { BorrowedText::from_raw_parts(data.as_ptr() as *const _, data.len()) };
-    assert_eq!(b.len(), 3);
-    assert_eq!(unsafe { b.as_bytes() }, data);
 }
 
 #[test]

@@ -46,11 +46,11 @@ pub fn dom_str(bytes: &[u8]) -> Value {
 pub fn text_index_string(document: Value, node: RawNode) -> Result<Option<Value>, Error> {
     let mut found: Option<Result<Value, Error>> = None;
     with_html_parsed_known(document, |p| {
-        if let Some((slices, total)) = p.text_slices(node) {
-            // SAFETY: the slices point into this document's arena (the index
-            // borrows them from `p`) and are copied into the String before the
-            // borrow ends; nothing here runs Ruby.
-            let built = unsafe { crate::bridge::string::ruby_str_from_slices(slices, total) };
+        if let Some(run) = p.text_slices(node) {
+            // SAFETY: valid UTF-8 by the text-input contract (the slices are
+            // this document's text, borrowed from its index for the copy).
+            let built =
+                unsafe { crate::bridge::string::ruby_str_from_slices(run.iter(), run.total()) };
             found = Some(built.map(|v| {
                 // SAFETY: the String `ruby_str_from_slices` just built, live and
                 // on this frame.

@@ -35,10 +35,6 @@ use rb_sys::{StableApiDefinition, VALUE};
 
 /// The shared owned buffer.
 use crate::cbuf::OwnedBuf;
-/// The UNANCHORED, NUL-permitting slice from `crate::text` - a different type
-/// from the Ruby-anchored [`RubyText`] below, despite the family resemblance.
-/// Text-index slices and Lexbor-interned names reach Ruby through it.
-pub use crate::text::BorrowedText;
 
 use crate::bridge::ruby::string_of;
 
@@ -204,32 +200,42 @@ unsafe fn borrow(s: RString) -> (VALUE, *const c_char, usize) {
 
 /* ---- assembling Ruby Strings ---- */
 
-/// Join `n` document-order slices totalling `total` bytes into one UTF-8 String.
+/// Join document-order slices totalling `total` bytes into one UTF-8 String.
 ///
 /// This is the text index's output path, so it writes straight into the fresh
 /// String's buffer: one pre-sized allocation and one memcpy run, with no
 /// intermediate. The bounds checks are not redundant with the caller's
 /// bookkeeping - a wrong `total` would otherwise run past the allocation, so
 /// both a long slice and a short sum fail closed.
-pub unsafe fn ruby_str_from_slices(slices: &[BorrowedText], total: usize) -> Result<VALUE, Error> {
+///
+/// # Safety
+/// The joined bytes must be valid UTF-8. Text-index slices are, by the
+/// text-input contract; bytes that were not would make a wrong String rather
+/// than a memory error.
+pub unsafe fn ruby_str_from_slices<'a>(
+    slices: impl Iterator<Item = &'a [u8]>,
+    total: usize,
+) -> Result<VALUE, Error> {
     if total > c_long::MAX as usize {
         return Err(makiri_error("text too large to assemble"));
     }
     let str = rb_sys::rb_utf8_str_new(core::ptr::null(), total as c_long);
     /* We just created it and hold the only reference, so writing through the
-     * buffer is sound - this is what RSTRING_PTR gives the C. */
+     * buffer is sound - this is what RSTRING_PTR gives the C. It has room for
+     * exactly `total` bytes, and nothing else runs while `out` is held. */
     let dst = rb_sys::stable_api::get_default().rstring_ptr(str) as *mut u8;
+    let out = core::slice::from_raw_parts_mut(dst, total);
 
     let mut off = 0usize;
     for s in slices {
-        if s.is_empty() {
-            continue;
-        }
-        if s.len() > total - off {
-            /* off <= total holds, so the subtraction cannot underflow. */
+        /* A slice past `total` is refused by the bounds check. */
+        let Some(to) = off
+            .checked_add(s.len())
+            .and_then(|end| out.get_mut(off..end))
+        else {
             return Err(makiri_error("text slice length inconsistency"));
-        }
-        core::ptr::copy_nonoverlapping(s.as_ptr() as *const u8, dst.add(off), s.len());
+        };
+        to.copy_from_slice(s);
         off += s.len();
     }
     if off != total {
@@ -242,28 +248,16 @@ pub unsafe fn ruby_str_from_slices(slices: &[BorrowedText], total: usize) -> Res
 /// A UTF-8 String copied from `bytes`.
 ///
 /// The DOM readers hand over a slice the document lends them and want a String
-/// of it. Minting the [`BorrowedText`] for that is this layer's job; deciding
-/// that the bytes satisfy its contract is not, because only the caller knows
-/// where they came from.
+/// of it. Deciding that the bytes are valid UTF-8 is not this layer's job,
+/// because only the caller knows where they came from.
 ///
 /// # Safety
 /// `bytes` must be valid UTF-8. Everything in a parsed document is, by the
 /// text-input contract. Bytes that were not would make a wrong String rather
 /// than a memory error - wrong is still wrong.
 pub unsafe fn ruby_str_from_utf8(bytes: &[u8]) -> VALUE {
-    ruby_str_from_borrowed(BorrowedText::from_raw_parts(
-        bytes.as_ptr() as *const c_char,
-        bytes.len(),
-    ))
-}
-
-/// A UTF-8 String copied from a borrowed slice. NULL is the "absent" sentinel
-/// and yields `""` whatever `len` says, so the sentinel is never dereferenced.
-unsafe fn ruby_str_from_borrowed(text: BorrowedText) -> VALUE {
-    if text.is_absent() {
-        return rb_sys::rb_utf8_str_new(c"".as_ptr(), 0);
-    }
-    rb_sys::rb_utf8_str_new(text.as_ptr(), text.len() as c_long)
+    /* A slice's pointer is never null, even when it is empty. */
+    rb_sys::rb_utf8_str_new(bytes.as_ptr() as *const c_char, bytes.len() as c_long)
 }
 
 /* ---- the strict text contract ---- */
