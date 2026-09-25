@@ -16,7 +16,7 @@ use crate::token::{Kind, Token};
 use crate::xml::model as xml;
 use crate::xpath::abi::*;
 use crate::xpath::ctx::Context;
-use crate::xpath::dom::{Bucket, Dom};
+use crate::xpath::dom::{Bucket, Dom, NodeType};
 
 /// A namespace declaration is a NAMESPACE node in XPath 1.0, not an attribute,
 /// so it must not appear on the attribute axis. The reader still keeps it as a
@@ -34,6 +34,24 @@ fn skip_ns_decls(doc: &xml::Document, mut a: xml::NodeId) -> Option<xml::NodeId>
         a = doc.next(a)?;
     }
     Some(a)
+}
+
+/// An arena node's type as the engine's [`NodeType`]. The two enums share the
+/// DOM discriminants, so this is the identity on the number; XML simply has no
+/// entity, entity-reference or notation node to map.
+#[inline]
+fn engine_type(t: xml::NodeType) -> NodeType {
+    match t {
+        xml::NodeType::Element => NodeType::Element,
+        xml::NodeType::Attribute => NodeType::Attribute,
+        xml::NodeType::Text => NodeType::Text,
+        xml::NodeType::CData => NodeType::CDataSection,
+        xml::NodeType::Pi => NodeType::Pi,
+        xml::NodeType::Comment => NodeType::Comment,
+        xml::NodeType::Document => NodeType::Document,
+        xml::NodeType::Doctype => NodeType::DocumentType,
+        xml::NodeType::Fragment => NodeType::DocumentFragment,
+    }
 }
 
 impl<'d> Dom<'d> for &'d xml::Document {
@@ -68,8 +86,9 @@ impl<'d> Dom<'d> for &'d xml::Document {
         self.doc_node()
     }
     #[inline]
-    fn node_type(self, n: xml::NodeId) -> u32 {
-        self.try_node(n).map_or(0, |x| x.type_.as_u32())
+    fn node_type(self, n: xml::NodeId) -> NodeType {
+        self.try_node(n)
+            .map_or(NodeType::Other, |x| engine_type(x.type_))
     }
 
     #[inline]

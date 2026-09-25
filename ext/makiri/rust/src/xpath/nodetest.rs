@@ -105,13 +105,16 @@ impl<'a> CompiledTest<'a> {
                  * fragment-rooted context, so '.' over a fragment has to see it. */
                 !matches!(
                     doc.node_type(node),
-                    NTYPE_DOCUMENT_TYPE | NTYPE_ENTITY | NTYPE_ENTITY_REFERENCE | NTYPE_NOTATION
+                    NodeType::DocumentType
+                        | NodeType::Entity
+                        | NodeType::EntityReference
+                        | NodeType::Notation
                 )
             }
-            Kind::Text => matches!(doc.node_type(node), NTYPE_TEXT | NTYPE_CDATA_SECTION),
-            Kind::Comment => doc.node_type(node) == NTYPE_COMMENT,
+            Kind::Text => matches!(doc.node_type(node), NodeType::Text | NodeType::CDataSection),
+            Kind::Comment => doc.node_type(node) == NodeType::Comment,
             Kind::Pi(target) => {
-                doc.node_type(node) == NTYPE_PI
+                doc.node_type(node) == NodeType::Pi
                     && target.is_none_or(|target| doc.pi_name(node) == target)
             }
             Kind::Wildcard => {
@@ -126,14 +129,14 @@ impl<'a> CompiledTest<'a> {
                     };
                     self.uri.is_none_or(|want| want == doc.attr_ns_uri(a))
                 } else {
-                    doc.node_type(node) == NTYPE_ELEMENT
+                    doc.node_type(node) == NodeType::Element
                         && self.uri.is_none_or(|want| want == doc.ns_uri(node))
                 }
             }
             Kind::Name(local) => {
                 /* An attribute's kind is checked by the name test, which takes
                  * it as one. */
-                if axis != Axis::Attribute && doc.node_type(node) != NTYPE_ELEMENT {
+                if axis != Axis::Attribute && doc.node_type(node) != NodeType::Element {
                     return false;
                 }
                 self.name_matches(doc, node, local)

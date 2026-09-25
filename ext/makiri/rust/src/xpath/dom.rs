@@ -16,23 +16,57 @@
 use super::abi::*;
 use crate::token::Token;
 
-/* ---- node types (shared numeric encoding) ----
- *
- * The whole monomorphization rests on the two representations agreeing on the
- * node-type encoding, so a node's `type` integer means the same thing whichever
- * backend walks it. The values below are Lexbor's LXB_DOM_NODE_TYPE_*, and
- * `dom_html` asserts that equality at compile time. */
-pub const NTYPE_ELEMENT: u32 = 1;
-pub const NTYPE_ATTRIBUTE: u32 = 2;
-pub const NTYPE_TEXT: u32 = 3;
-pub const NTYPE_CDATA_SECTION: u32 = 4;
-pub const NTYPE_ENTITY_REFERENCE: u32 = 5;
-pub const NTYPE_ENTITY: u32 = 6;
-pub const NTYPE_PI: u32 = 7;
-pub const NTYPE_COMMENT: u32 = 8;
-pub const NTYPE_DOCUMENT: u32 = 9;
-pub const NTYPE_DOCUMENT_TYPE: u32 = 10;
-pub const NTYPE_NOTATION: u32 = 12;
+/// A node's type, as the engine reads it.
+///
+/// The discriminants are the WHATWG DOM numbers (`Node.nodeType`), which are
+/// also Lexbor's `LXB_DOM_NODE_TYPE_*` - `lexbor/xpath.rs` asserts that at
+/// compile time - so a backend holding the number converts with
+/// [`from_u32`](Self::from_u32), a range check. Entity / entity reference /
+/// notation have no node in either representation, but a host's number could
+/// still say so, and the `node()` test has to refuse them by name.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u32)]
+pub enum NodeType {
+    /// Anything else: a number neither DOM defines (Lexbor's UNDEF among
+    /// them), or an XML node no longer in its arena. It passes `node()` and
+    /// nothing else.
+    Other = 0,
+    Element = 1,
+    Attribute = 2,
+    Text = 3,
+    CDataSection = 4,
+    EntityReference = 5,
+    Entity = 6,
+    Pi = 7,
+    Comment = 8,
+    Document = 9,
+    DocumentType = 10,
+    DocumentFragment = 11,
+    Notation = 12,
+}
+
+impl NodeType {
+    /// The type a DOM node-type number names; [`Other`](Self::Other) for one
+    /// outside 1..=12, never an assumed kind.
+    #[inline]
+    pub fn from_u32(v: u32) -> NodeType {
+        match v {
+            1 => NodeType::Element,
+            2 => NodeType::Attribute,
+            3 => NodeType::Text,
+            4 => NodeType::CDataSection,
+            5 => NodeType::EntityReference,
+            6 => NodeType::Entity,
+            7 => NodeType::Pi,
+            8 => NodeType::Comment,
+            9 => NodeType::Document,
+            10 => NodeType::DocumentType,
+            11 => NodeType::DocumentFragment,
+            12 => NodeType::Notation,
+            _ => NodeType::Other,
+        }
+    }
+}
 
 /// A document the evaluator reads, borrowed for `'d`.
 ///
@@ -87,7 +121,7 @@ pub trait Dom<'d>: Copy {
         true
     }
 
-    fn node_type(self, n: Self::Node) -> u32;
+    fn node_type(self, n: Self::Node) -> NodeType;
 
     /* navigation */
     fn first_child(self, n: Self::Node) -> Option<Self::Node>;

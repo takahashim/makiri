@@ -71,7 +71,7 @@ fn next_after<'d, D: Dom<'d>>(doc: D, mut n: D::Node) -> Option<D::Node> {
 /// `following::node()` from an attribute yields what comes after the owner
 /// element's subtree, not the element's own children.
 pub fn axis_base<'d, D: Dom<'d>>(doc: D, context: D::Node) -> D::Node {
-    if doc.node_type(context) == NTYPE_ATTRIBUTE {
+    if doc.node_type(context) == NodeType::Attribute {
         if let Some(owner) = doc.parent(context) {
             return owner;
         }
@@ -133,7 +133,7 @@ pub fn walk_axis<'d, D: Dom<'d>, B, F: FnMut(D::Node) -> ControlFlow<B>>(
         /* §2.2: both sibling axes are empty for an attribute context node - an
          * attribute is not a sibling of anything. */
         Axis::FollowingSibling => {
-            if doc.node_type(context) == NTYPE_ATTRIBUTE {
+            if doc.node_type(context) == NodeType::Attribute {
                 return ControlFlow::Continue(());
             }
             let mut s = doc.next(context);
@@ -144,7 +144,7 @@ pub fn walk_axis<'d, D: Dom<'d>, B, F: FnMut(D::Node) -> ControlFlow<B>>(
             ControlFlow::Continue(())
         }
         Axis::PrecedingSibling => {
-            if doc.node_type(context) == NTYPE_ATTRIBUTE {
+            if doc.node_type(context) == NodeType::Attribute {
                 return ControlFlow::Continue(());
             }
             let mut s = doc.prev(context);

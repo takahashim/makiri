@@ -59,8 +59,8 @@ impl From<ArenaError> for Status {
 
 /// A DOM node type (`Node.nodeType`). The discriminants are the WHATWG DOM
 /// numbers - the same value Ruby's `#node_type` returns and the same set the
-/// XPath engine's `NTYPE_*` constants name - so converting to `u32` at those
-/// two boundaries is a plain cast. Entity / entity-reference / notation (5, 6,
+/// XPath engine's `NodeType` names - so converting at those two boundaries is
+/// the identity on the number. Entity / entity-reference / notation (5, 6,
 /// 12) have no Makiri node and are not representable.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(u32)]

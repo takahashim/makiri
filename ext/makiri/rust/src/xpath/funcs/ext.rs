@@ -115,7 +115,7 @@ fn fill_positions<'e, 'd, D: Dom<'d>>(
     let mut child = 0u32;
     while let Some(n) = c {
         ev.budget.charge_op()?;
-        if doc.node_type(n) == NTYPE_ELEMENT {
+        if doc.node_type(n) == NodeType::Element {
             child += 1;
             let entry = SiblingPos {
                 node: n,
@@ -181,7 +181,7 @@ fn sibling_pos<'e, 'd, D: Dom<'d>>(
     let Some(node) = node else {
         return Ok(0.0);
     };
-    if doc.node_type(node) != NTYPE_ELEMENT {
+    if doc.node_type(node) != NodeType::Element {
         return Ok(0.0);
     }
     let Some(parent) = doc.parent(node) else {

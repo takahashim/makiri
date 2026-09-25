@@ -554,7 +554,7 @@ fn find_by_id<'e, 'd, D: Dom<'d>>(
         if let Err(e) = budget.charge_op() {
             return ControlFlow::Break(Err(e));
         }
-        if doc.node_type(n) == NTYPE_ELEMENT && doc.get_attribute(n, id_attr) == Some(id) {
+        if doc.node_type(n) == NodeType::Element && doc.get_attribute(n, id_attr) == Some(id) {
             return ControlFlow::Break(Ok(n));
         }
         ControlFlow::Continue(())
@@ -676,9 +676,9 @@ fn name_emit<'e, 'd, D: Dom<'d>>(
         }
     } else {
         match (doc.node_type(n), kind) {
-            (NTYPE_ELEMENT, NameKind::Local) => doc.local_name(n),
-            (NTYPE_ELEMENT, NameKind::Qualified) => doc.qualified_name(n),
-            (NTYPE_PI, _) => doc.pi_name(n),
+            (NodeType::Element, NameKind::Local) => doc.local_name(n),
+            (NodeType::Element, NameKind::Qualified) => doc.qualified_name(n),
+            (NodeType::Pi, _) => doc.pi_name(n),
             _ => b"",
         }
     };
@@ -727,7 +727,7 @@ fn fn_namespace_uri<'e, 'd, D: Dom<'d>>(
      * `Dom::attr_ns_uri`. */
     let uri = match doc.as_attr(t) {
         Some(a) => doc.attr_ns_uri(a),
-        None if doc.node_type(t) == NTYPE_ELEMENT && doc.has_ns(t) => doc.ns_uri(t),
+        None if doc.node_type(t) == NodeType::Element && doc.has_ns(t) => doc.ns_uri(t),
         None => b"",
     };
     string(uri, err.clone(), "namespace-uri")
@@ -1054,7 +1054,7 @@ fn fn_lang<'e, 'd, D: Dom<'d>>(
     let mut p = focus.node;
     while let Some(n) = p {
         ev.budget.charge_op()?;
-        if doc.node_type(n) == NTYPE_ELEMENT {
+        if doc.node_type(n) == NodeType::Element {
             let v = D::LANG_ATTRIBUTES
                 .iter()
                 .find_map(|name| doc.get_attribute(n, name));

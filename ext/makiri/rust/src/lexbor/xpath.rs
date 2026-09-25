@@ -19,22 +19,29 @@ use crate::xpath::ctx::Context;
 use crate::xpath::dom::*;
 use crate::xpath::msg::{Error, Status};
 
-/* The engine reads every node's type through the shared `NTYPE_*` encoding, so
- * Lexbor's enum must agree value for value; a mismatch would make an HTML walk
+/* The engine reads every node's type as a `NodeType`, whose discriminants must
+ * agree with Lexbor's enum value for value; a mismatch would make an HTML walk
  * misread each node rather than fail. Checked at compile time, against the
  * generated header view, in every build that has an HTML backend. */
 const _: () = {
-    assert!(NTYPE_ELEMENT == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_ELEMENT);
-    assert!(NTYPE_ATTRIBUTE == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_ATTRIBUTE);
-    assert!(NTYPE_TEXT == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_TEXT);
-    assert!(NTYPE_CDATA_SECTION == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_CDATA_SECTION);
-    assert!(NTYPE_ENTITY_REFERENCE == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_ENTITY_REFERENCE);
-    assert!(NTYPE_ENTITY == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_ENTITY);
-    assert!(NTYPE_PI == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_PROCESSING_INSTRUCTION);
-    assert!(NTYPE_COMMENT == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_COMMENT);
-    assert!(NTYPE_DOCUMENT == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT);
-    assert!(NTYPE_DOCUMENT_TYPE == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT_TYPE);
-    assert!(NTYPE_NOTATION == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_NOTATION);
+    use NodeType as T;
+    assert!(T::Other as u32 == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_UNDEF);
+    assert!(T::Element as u32 == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_ELEMENT);
+    assert!(T::Attribute as u32 == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_ATTRIBUTE);
+    assert!(T::Text as u32 == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_TEXT);
+    assert!(T::CDataSection as u32 == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_CDATA_SECTION);
+    assert!(
+        T::EntityReference as u32 == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_ENTITY_REFERENCE
+    );
+    assert!(T::Entity as u32 == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_ENTITY);
+    assert!(T::Pi as u32 == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_PROCESSING_INSTRUCTION);
+    assert!(T::Comment as u32 == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_COMMENT);
+    assert!(T::Document as u32 == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT);
+    assert!(T::DocumentType as u32 == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT_TYPE);
+    assert!(
+        T::DocumentFragment as u32 == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT_FRAGMENT
+    );
+    assert!(T::Notation as u32 == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_NOTATION);
 };
 
 /// The HTML backend as an evaluate holds it: the document, and the parsed handle
@@ -105,8 +112,8 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
         self.doc.as_node()
     }
     #[inline]
-    fn node_type(self, n: HtmlNode<'d>) -> u32 {
-        n.node_type()
+    fn node_type(self, n: HtmlNode<'d>) -> NodeType {
+        NodeType::from_u32(n.node_type())
     }
 
     #[inline]

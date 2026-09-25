@@ -319,7 +319,7 @@ fn append_text_descendants<'d, D: Dom<'d>>(
         if let Err(r) = budget.charge_op() {
             return ControlFlow::Break(Unbuilt::Budget(r));
         }
-        if !matches!(doc.node_type(n), NTYPE_TEXT | NTYPE_CDATA_SECTION) {
+        if !matches!(doc.node_type(n), NodeType::Text | NodeType::CDataSection) {
             return ControlFlow::Continue(());
         }
         /* LIMIT or OOM - the caller fails closed */
@@ -349,7 +349,7 @@ fn build_string_value<'d, D: Dom<'d>>(
         };
     }
     match doc.node_type(node) {
-        NTYPE_TEXT | NTYPE_CDATA_SECTION | NTYPE_COMMENT | NTYPE_PI => {
+        NodeType::Text | NodeType::CDataSection | NodeType::Comment | NodeType::Pi => {
             doc.append_own_text(node, buf).map_err(Unbuilt::Buf)
         }
         _ => append_text_descendants::<D>(doc, node, buf, budget),

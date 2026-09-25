@@ -50,7 +50,7 @@ impl OrderIndex {
 /// only when both anchor to the same element do the attribute-specific rules
 /// apply.
 fn anchor_for_cmp<'d, D: Dom<'d>>(doc: D, n: D::Node) -> D::Node {
-    if doc.node_type(n) == NTYPE_ATTRIBUTE {
+    if doc.node_type(n) == NodeType::Attribute {
         doc.parent(n).unwrap_or(n)
     } else {
         n
@@ -79,8 +79,8 @@ pub fn doc_order_cmp<'d, D: Dom<'d>>(doc: D, a: D::Node, b: D::Node) -> Ordering
      * same element E can only be E itself - any descendant anchors to itself -
      * so the attribute-vs-descendant case is left to the depth walk below. */
     if aa == bb {
-        let a_attr = doc.node_type(a) == NTYPE_ATTRIBUTE;
-        let b_attr = doc.node_type(b) == NTYPE_ATTRIBUTE;
+        let a_attr = doc.node_type(a) == NodeType::Attribute;
+        let b_attr = doc.node_type(b) == NodeType::Attribute;
         return match (a_attr, b_attr) {
             (true, false) => Ordering::Greater, /* b is the owner; its attribute follows it */
             (false, true) => Ordering::Less,
