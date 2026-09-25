@@ -430,33 +430,13 @@ pub struct Document {
     /// for another document. Node links carry only the slot index.
     pub(crate) stamp: u32,
     /// Running total counted against `max_bytes` (nodes + bytes).
-    pub arena_bytes: usize,
-    pub max_bytes: usize,
-    pub max_nodes: usize,
-    pub root: Option<NodeId>,
-    pub doc_node: NodeId,
-    pub doctype: Option<NodeId>,
+    pub(super) arena_bytes: usize,
+    pub(super) max_bytes: usize,
+    pub(super) max_nodes: usize,
+    pub(super) root: Option<NodeId>,
+    pub(super) doc_node: NodeId,
+    pub(super) doctype: Option<NodeId>,
     /// Rust-owned cache; mutation drops it before changing links.
     pub(crate) name_index: core::cell::OnceCell<Box<crate::xml::index::NameIndex>>,
-    pub has_encoding_decl: bool,
-}
-
-impl Document {
-    pub(crate) fn blank() -> Self {
-        Document {
-            nodes: Vec::new(),
-            bytes: Vec::new(),
-            xml_ns: Span::EMPTY,
-            xmlns_ns: Span::EMPTY,
-            stamp: 0,
-            arena_bytes: 0,
-            max_bytes: MAX_BYTES,
-            max_nodes: MAX_NODES,
-            root: None,
-            doc_node: NodeId::INVALID,
-            doctype: None,
-            name_index: core::cell::OnceCell::new(),
-            has_encoding_decl: false,
-        }
-    }
+    pub(super) has_encoding_decl: bool,
 }

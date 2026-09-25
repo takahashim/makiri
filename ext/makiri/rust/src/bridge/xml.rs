@@ -434,13 +434,15 @@ pub fn parse_xml_document(source: Value, limits: ParseLimits) -> Result<Value, E
 
 /// `Document#root` for an XML document: the root element, or nil.
 pub fn document_root(rb_self: Value) -> Option<Value> {
-    arena_ref(&rb_self).root.map(|n| wrap_xml_node(n, rb_self))
+    arena_ref(&rb_self)
+        .root()
+        .map(|n| wrap_xml_node(n, rb_self))
 }
 
 /// `Document#internal_subset` for an XML document: the DOCTYPE node, or nil.
 pub fn document_internal_subset(rb_self: Value) -> Option<Value> {
     arena_ref(&rb_self)
-        .doctype
+        .doctype()
         .map(|n| wrap_xml_node(n, rb_self))
 }
 
@@ -465,7 +467,7 @@ pub fn fragment_into(
     let xdoc = arena_mut(document)?;
     let source = crate::bridge::ruby::string_of(source)?;
     // SAFETY: a live arena; the decode only reads its `max_bytes`.
-    let decoded = xml_decode_input_value(source, Some(unsafe { (*xdoc).max_bytes }))?;
+    let decoded = xml_decode_input_value(source, Some(unsafe { (*xdoc).max_bytes() }))?;
     let src = crate::bridge::string::ruby_string_bytes(decoded)?;
     // SAFETY: the arena is live and mutable for this call, under the GVL.
     tree::parse_fragment(unsafe { &mut *xdoc }, src.as_slice(), inherit_doc_ns)

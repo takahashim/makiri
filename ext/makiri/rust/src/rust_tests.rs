@@ -396,7 +396,7 @@ fn xml_serialization_answers_what_the_ruby_methods_did_and_round_trips() {
     let src = br#"<?xml version="1.0"?><r xmlns:p="urn:p" b="2" a="1"><p:x>t &amp; u</p:x><!--c--><e/></r>"#;
     let doc = xml_parse(src).expect("well-formed");
     let top = doc.doc_node();
-    let root = doc.root.expect("a root element");
+    let root = doc.root().expect("a root element");
 
     let whole = to_xml(&doc, top, 0, None).expect("serializes");
     assert_eq!(

@@ -22,7 +22,9 @@
 
 use crate::falloc::Reserve;
 use crate::xml::qname::Split;
-use crate::xml::{ArenaKind, BudgetError, Document, Link, Node, NodeId, Span};
+use crate::xml::{
+    ArenaKind, BudgetError, Document, Link, Node, NodeId, Span, MAX_BYTES, MAX_NODES,
+};
 use core::sync::atomic::{AtomicU32, Ordering};
 
 /// Hands each document a unique stamp (never 0). Node ids carry it so a handle
@@ -56,10 +58,22 @@ impl Document {
     /// length is checked by `tree::check_source_len`, which the two entry
     /// points share, so this only records the budget.
     pub fn create(limits: Option<&crate::xml::ParseLimits>) -> Result<Box<Document>, BudgetError> {
-        let mut doc = crate::falloc::try_box(Document::blank()).map_err(|_| BudgetError::Oom)?;
-        if let Some(l) = limits {
-            doc.max_bytes = l.budget();
-        }
+        let doc = Document {
+            nodes: Vec::new(),
+            bytes: Vec::new(),
+            xml_ns: Span::EMPTY,
+            xmlns_ns: Span::EMPTY,
+            stamp: 0,
+            arena_bytes: 0,
+            max_bytes: limits.map_or(MAX_BYTES, crate::xml::ParseLimits::budget),
+            max_nodes: MAX_NODES,
+            root: None,
+            doc_node: NodeId::INVALID,
+            doctype: None,
+            name_index: core::cell::OnceCell::new(),
+            has_encoding_decl: false,
+        };
+        let mut doc = crate::falloc::try_box(doc).map_err(|_| BudgetError::Oom)?;
         let mut stamp = DOC_STAMP.fetch_add(1, Ordering::Relaxed);
         if stamp == 0 {
             stamp = DOC_STAMP.fetch_add(1, Ordering::Relaxed);
@@ -673,6 +687,11 @@ impl Document {
     #[inline]
     pub fn doc_node(&self) -> NodeId {
         self.doc_node
+    }
+    /// The document's byte budget (see [`Document::max_bytes`]).
+    #[inline]
+    pub fn max_bytes(&self) -> usize {
+        self.max_bytes
     }
     #[inline]
     pub(super) fn mark_encoding_decl(&mut self) {
