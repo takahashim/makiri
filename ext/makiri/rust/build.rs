@@ -6,7 +6,7 @@
 //! `#[repr(C)]` view of one of its structs does not fail to build when a field
 //! is added or reordered - it reads the wrong offset, which is a silent wrong
 //! answer. Nothing in the crate declares a Lexbor struct or a header-declared
-//! Lexbor function by hand any more; the three exports no header declares are
+//! Lexbor function by hand any more; the four exports no header declares are
 //! the exception, and `check_undeclared_exports` pins their C definitions.
 //!
 //! Transcription by hand has already been wrong once, though, and not about an
@@ -73,7 +73,7 @@ fn main() {
         .allowlist_type("lxb_dom_character_data_t")
         .allowlist_type("lxb_dom_document_type_t")
         .allowlist_type("lxb_dom_processing_instruction_t")
-        // Read only for their id fields, by the three header-less
+        // Read only for their id fields, by the header-less
         // Lexbor exports declared in lexbor/abi.rs.
         .allowlist_type("lxb_ns_data_t")
         .allowlist_type("lxb_dom_attr_data_t")
@@ -100,7 +100,7 @@ fn main() {
         .allowlist_type("lxb_css_rule_declaration_t")
         .allowlist_type("lxb_css_rule_declaration_list_t")
         .allowlist_type("lxb_css_selector_list_t")
-        // The selector tree mkr_css.c lowers into XPath. A union-carrying
+        // The selector tree `css::lower` turns into XPath. A union-carrying
         // layout from a pinned dependency: exactly what generating is for.
         .allowlist_type("lxb_css_selector_t")
         .allowlist_type("lxb_css_selector_attribute_t")
@@ -136,7 +136,6 @@ fn main() {
         // nothing (the same trap as lxb_ns_id_enum_t).
         .allowlist_type("lexbor_status_t")
         .allowlist_type("lxb_html_serialize_opt")
-        .allowlist_type("lxb_tag_id_enum_t")
         // The selector parser, its arena and its selector table. The parser is
         // OPAQUE below - nothing reads a field of it - so its large layout
         // stays out of the generated file.
@@ -154,7 +153,7 @@ fn main() {
         .allowlist_function("lxb_css_selectors_parse")
         .opaque_type("lxb_css_parser_t")
         .opaque_type("lxb_css_syntax_tokenizer_t")
-        // The DOM readers glue/html_node uses. Generating them rather than
+        // The DOM readers `lexbor::adapter` uses. Generating them rather than
         // hand-declaring them is also the inline-only CHECK: bindgen does not
         // emit a `static inline`, so a name that is only inline in the headers
         // simply does not appear here and the use fails to compile, instead of
@@ -225,10 +224,10 @@ fn main() {
         // header-declared exports.
         .allowlist_function("lxb_html_parse_fragment_by_tag_id")
         .allowlist_function("lxb_dom_document_fragment_interface_create")
-        // The mutators and factories glue/html_node/mutate uses. Three more
-        // Lexbor exports it needs are in NO header at all (lxb_ns_append,
-        // lxb_dom_attr_set_name_ns, lxb_dom_attr_qualified_name_append), so
-        // bindgen cannot see them: they are hand-declared in lexbor/abi.rs, and
+        // The mutators and factories `lexbor::adapter` uses. Four more Lexbor
+        // exports it needs are in NO header at all (the UNDECLARED_EXPORTS
+        // below), so bindgen cannot see them: they are hand-declared in
+        // lexbor/abi.rs, and
         // `check_undeclared_exports` below pins their C definitions instead.
         .allowlist_function("lxb_dom_node_remove")
         .allowlist_function("lxb_dom_node_insert_child")
@@ -302,7 +301,10 @@ fn main() {
     // harmless for a static archive (the linker pulls only the object files it
     // needs), and having it here means cargo consumers that do not go through
     // extconf - chiefly cargo-fuzz - still link Lexbor.
-    let lib_dir = lexbor_include().parent().unwrap().join("lib");
+    let lib_dir = include
+        .parent()
+        .expect("the include dir has a parent")
+        .join("lib");
     println!("cargo:rustc-link-search=native={}", lib_dir.display());
     println!("cargo:rustc-link-lib=static=lexbor_static");
     let target = std::env::var("TARGET").unwrap_or_default();

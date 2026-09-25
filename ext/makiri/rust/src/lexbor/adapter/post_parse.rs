@@ -62,7 +62,7 @@ use crate::lexbor::abi::consts::STATUS_OK as LXB_STATUS_OK;
 /// the Ruby layer's mutation gate.
 pub struct HtmlParsed {
     doc: NonNull<HtmlDoc>,
-    /// attr->owner map + the tag->elements index.
+    /// The tag -> elements index (`//tag`).
     dom_index: Option<Box<DomIndex>>,
     /// byte offset -> source line.
     lines: Option<Box<Lines>>,
@@ -104,7 +104,7 @@ impl HtmlParsed {
         unsafe { DomDoc::from_non_null(self.doc.cast()) }
     }
 
-    /// The attr->owner and tag index, built on first use. None when the build
+    /// The tag -> elements index, built on first use. None when the build
     /// cannot allocate - which caches nothing, so a later call retries.
     pub fn dom_index(&mut self) -> Option<&DomIndex> {
         if self.dom_index.is_none() {
