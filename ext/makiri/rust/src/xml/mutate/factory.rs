@@ -22,10 +22,7 @@ pub fn new_element(doc: &mut Document, name: &[u8]) -> Result<NodeId, MutStatus>
         return Err(MutStatus::BadName); /* xmlns: is not an element prefix */
     }
     let el = arena(doc.new_node(NodeType::Element))?;
-    let st = assign_qname(doc, el, name, &sp);
-    if st != MutStatus::Ok {
-        return Err(st);
-    }
+    assign_qname(doc, el, name, &sp)?;
     Ok(el) /* ns_uri stays unresolved until insertion */
 }
 

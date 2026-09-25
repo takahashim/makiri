@@ -219,27 +219,19 @@ pub fn xml_wrap_rel_value(this: XmlSelf, rel: NodeId) -> Value {
     wrap(rel, this.document)
 }
 
-/// The exception for a non-OK mutation status; [`MutStatus::Ok`] is `Ok`.
-/// A translation's `Result` as the Ruby error [`xml_mut_check`] maps its status
-/// to. An `Err(MutStatus::Ok)` cannot be built by the translators, but is
-/// refused rather than read as success.
+/// A mutation's or translation's `Result` with its failure as the Ruby
+/// exception [`xml_mut_error`] maps the status to.
 pub fn xml_mut_result<T>(r: Result<T, MutStatus>) -> Result<T, Error> {
-    r.or_else(|st| {
-        xml_mut_check(st)?;
-        Err(makiri_error("XML translation failed without a status"))
-    })
+    r.map_err(xml_mut_error)
 }
 
-pub fn xml_mut_check(st: MutStatus) -> Result<(), Error> {
+/// The exception for a failed mutation's status.
+fn xml_mut_error(st: MutStatus) -> Error {
     let msg: &str = match st {
-        MutStatus::Ok => return Ok(()),
         MutStatus::Oom => "out of memory mutating XML",
         MutStatus::BadName => {
             let ruby = Ruby::get().expect("under the GVL");
-            return Err(Error::new(
-                ruby.exception_arg_error(),
-                "not a well-formed XML name",
-            ));
+            return Error::new(ruby.exception_arg_error(), "not a well-formed XML name");
         }
         MutStatus::BadChars => "value contains a character or sequence not permitted in XML",
         MutStatus::UnboundNs => "namespace prefix is not bound in this scope",
@@ -279,13 +271,13 @@ xml and xmlns take only their own)"
         /* The document's own budget, not the machine's memory - so the same
          * exception a parse raises for the same cause. */
         MutStatus::Limit => {
-            return Err(Error::new(
+            return Error::new(
                 EXC_XML_LIMIT_EXCEEDED.exception(),
                 "XML document exceeded its byte or node budget",
-            ))
+            )
         }
     };
-    Err(makiri_error(msg))
+    makiri_error(msg)
 }
 
 /* ------------------------------------------------------------------ */

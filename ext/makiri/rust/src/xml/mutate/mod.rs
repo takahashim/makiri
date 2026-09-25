@@ -59,9 +59,11 @@ pub(super) fn arena<T>(r: Result<T, Status>) -> Result<T, MutStatus> {
 }
 
 #[inline]
-pub(super) fn assign_qname(doc: &mut Document, node: NodeId, name: &[u8], sp: &Split) -> MutStatus {
-    match arena(doc.assign_qname(node, name, sp.prefix_len, sp.local_off, sp.local_len)) {
-        Ok(()) => MutStatus::Ok,
-        Err(st) => st,
-    }
+pub(super) fn assign_qname(
+    doc: &mut Document,
+    node: NodeId,
+    name: &[u8],
+    sp: &Split,
+) -> Result<(), MutStatus> {
+    arena(doc.assign_qname(node, name, sp.prefix_len, sp.local_off, sp.local_len))
 }

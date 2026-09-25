@@ -71,30 +71,23 @@ struct Frame<'a, S, D> {
 
 /// Declare `xmlns` (no prefix) or `xmlns:PREFIX` = `uri` on the detached mkr
 /// element, as an ordinary attribute.
-fn declare_ns(doc: &mut XmlDoc, el: NodeId, prefix: &[u8], uri: &[u8]) -> MutStatus {
+fn declare_ns(doc: &mut XmlDoc, el: NodeId, prefix: &[u8], uri: &[u8]) -> Result<(), MutStatus> {
     if prefix.is_empty() {
-        return status(mutate::set_attribute(doc, el, b"xmlns", uri));
+        mutate::set_attribute(doc, el, b"xmlns", uri)?;
+        return Ok(());
     }
     let nlen = match 6usize.checked_add(prefix.len()).and_then(fits_u32) {
         Some(_) => 6 + prefix.len(),
-        None => return MutStatus::Oom,
+        None => return Err(MutStatus::Oom),
     };
     let mut name: Vec<u8> = match try_vec_with_capacity(nlen) {
         Some(v) => v,
-        None => return MutStatus::Oom,
+        None => return Err(MutStatus::Oom),
     };
     name.extend_from_slice(b"xmlns:");
     name.extend_from_slice(prefix);
-    status(mutate::set_attribute(doc, el, &name, uri))
-}
-
-/// Collapse a safe mutator result onto the reported status.
-#[inline]
-fn status(r: Result<NodeId, MutStatus>) -> MutStatus {
-    match r {
-        Ok(_) => MutStatus::Ok,
-        Err(st) => st,
-    }
+    mutate::set_attribute(doc, el, &name, uri)?;
+    Ok(())
 }
 
 /// Copy the source element's attributes onto the translated mkr element.
@@ -121,40 +114,41 @@ fn status(r: Result<NodeId, MutStatus>) -> MutStatus {
 ///   refused here instead, as `MutStatus::BadNsName` - or `BadName` when the
 ///   name is not a QName at all. `xml:` keeps its fixed meaning, as the XML
 ///   reader gives it.
-fn h2x_copy_attrs(doc: &mut XmlDoc, s: HtmlElement<'_>, el: NodeId) -> MutStatus {
+fn h2x_copy_attrs(doc: &mut XmlDoc, s: HtmlElement<'_>, el: NodeId) -> Result<(), MutStatus> {
     for a in s.attrs() {
         let (name, value) = (a.qualified_name(), a.value());
         if fits_u32(name.len()).is_none() || fits_u32(value.len()).is_none() {
-            return MutStatus::Oom;
+            return Err(MutStatus::Oom);
         }
 
         let own = a.own_ns();
         let decl = crate::xml::qname::xmlns_prefix(name);
-        let st = match (own, decl) {
+        match (own, decl) {
             /* A declaration, parsed (a foreign element's `xmlns:xlink`) or an
              * HTML attribute that only looks like one: never copied. Every
              * name crosses with its namespace already - an element declares
              * its own, an attribute is given its - so a declaration can only
              * restate one, or move one: `<svg><g xmlns="urn:evil">` put `g`
              * and its children in `urn:evil`. */
-            (NS_XMLNS, _) | (_, Some(_)) => MutStatus::Ok,
+            (NS_XMLNS, _) | (_, Some(_)) => {}
             (NS_UNDEF | NS_XML, _) => {
                 let colon = name.iter().position(|&b| b == b':');
                 match colon {
-                    Some(c) if &name[..c] != b"xml" => no_namespace_colon(name),
-                    _ => status(mutate::set_attribute(doc, el, name, value)),
+                    Some(c) if &name[..c] != b"xml" => return Err(no_namespace_colon(name)),
+                    _ => {
+                        mutate::set_attribute(doc, el, name, value)?;
+                    }
                 }
             }
-            _ => match a.own_ns_uri() {
-                Some(uri) => status(mutate::set_attribute_ns(doc, el, uri, name, value)),
-                None => status(mutate::set_attribute(doc, el, name, value)),
-            },
-        };
-        if st != MutStatus::Ok {
-            return st;
+            _ => {
+                match a.own_ns_uri() {
+                    Some(uri) => mutate::set_attribute_ns(doc, el, uri, name, value)?,
+                    None => mutate::set_attribute(doc, el, name, value)?,
+                };
+            }
         }
     }
-    MutStatus::Ok
+    Ok(())
 }
 
 /// The refusal for a no-namespace attribute named with a colon: `BadNsName`
@@ -246,23 +240,14 @@ fn h2x_make<'a>(
                 let (p, uri) = (&name[..c], euri.unwrap_or(&[]));
                 let bound = parent.is_some_and(|up| mutate::namespace_in_scope(doc, up, p) == uri);
                 if !bound {
-                    let st = declare_ns(doc, el, p, uri);
-                    if st != MutStatus::Ok {
-                        return Err(st);
-                    }
+                    declare_ns(doc, el, p, uri)?;
                 }
             } else if euri.unwrap_or(&[]) != parent_default.unwrap_or(&[]) {
-                let st = declare_ns(doc, el, &[], euri.unwrap_or(&[]));
-                if st != MutStatus::Ok {
-                    return Err(st);
-                }
+                declare_ns(doc, el, &[], euri.unwrap_or(&[]))?;
                 child_default = Some(euri.unwrap_or(&[]));
             }
 
-            let st = h2x_copy_attrs(doc, e, el);
-            if st != MutStatus::Ok {
-                return Err(st);
-            }
+            h2x_copy_attrs(doc, e, el)?;
             Ok(Made {
                 node: el,
                 child_default,
@@ -337,10 +322,7 @@ pub unsafe fn cross_html_to_xml(
                 /* An error abandons the partial subtree. */
                 let made = h2x_make(doc, child, f.def, Some(f.d))?;
                 if !made.node.is_invalid() {
-                    let st = mutate::insert_child(doc, f.d, made.node);
-                    if st != MutStatus::Ok {
-                        return Err(st);
-                    }
+                    mutate::insert_child(doc, f.d, made.node)?;
                     if h2x_first_child(child).is_some() {
                         stack
                             .falloc_push_amortized(Frame {
@@ -365,7 +347,7 @@ pub unsafe fn cross_html_to_xml(
 ///
 /// The document comes from `el` itself, so there is no second handle to keep in
 /// step with it.
-fn x2h_copy_attrs(doc: &XmlDoc, s: NodeId, el: BuildingElement<'_>) -> MutStatus {
+fn x2h_copy_attrs(doc: &XmlDoc, s: NodeId, el: BuildingElement<'_>) -> Result<(), MutStatus> {
     let mut a = doc.attrs(s);
     while let Some(attr) = a {
         let (val, qname, ns) = (doc.value(attr), doc.qname(attr), doc.ns(attr));
@@ -375,11 +357,11 @@ fn x2h_copy_attrs(doc: &XmlDoc, s: NodeId, el: BuildingElement<'_>) -> MutStatus
             el.append_ns_attribute(ns, qname, val)
         };
         if !stored {
-            return MutStatus::Oom;
+            return Err(MutStatus::Oom);
         }
         a = doc.next(attr);
     }
-    MutStatus::Ok
+    Ok(())
 }
 
 /// Translate ONE mkr node into a fresh, detached Lexbor node.
@@ -412,10 +394,7 @@ fn x2h_make<'doc>(
                     .ok_or(MutStatus::Oom)?
             };
 
-            let st = x2h_copy_attrs(doc, s, el);
-            if st != MutStatus::Ok {
-                return Err(st);
-            }
+            x2h_copy_attrs(doc, s, el)?;
             Ok(Some(el.as_node()))
         }
         Some(NodeType::Text) => made(hdoc.create_text(doc.value(s))),

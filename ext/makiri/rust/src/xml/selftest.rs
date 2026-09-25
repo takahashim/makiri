@@ -687,7 +687,7 @@ fn a_leaf_value_holding_its_own_close_sequence_is_refused() {
     let ok = mutate::new_chardata(&mut doc, NodeType::Comment, b"a-b").expect("one '-' is fine");
     assert_eq!(
         mutate::set_content(&mut doc, ok, b"x--y"),
-        MutStatus::BadChars,
+        Err(MutStatus::BadChars),
         "and the rule holds on a later write, not just at creation"
     );
 }
@@ -754,7 +754,7 @@ fn set_content_replaces_the_children_with_one_text_node() {
     doc.node_mut(r).first_child = Link::of(c1);
     doc.node_mut(r).last_child = Link::of(c1);
 
-    assert_eq!(mutate::set_content(&mut doc, r, b"hi"), MutStatus::Ok);
+    assert_eq!(mutate::set_content(&mut doc, r, b"hi"), Ok(()));
     let fc = child(&doc, r);
     assert_eq!(doc.type_(fc), Some(NodeType::Text));
     assert_eq!(doc.node(fc).value.len, 2);
@@ -764,7 +764,7 @@ fn set_content_replaces_the_children_with_one_text_node() {
         "the old child was detached, not destroyed"
     );
 
-    assert_eq!(mutate::set_content(&mut doc, r, b""), MutStatus::Ok);
+    assert_eq!(mutate::set_content(&mut doc, r, b""), Ok(()));
     assert!(doc.first_child(r).is_none(), "empty content means no child");
     assert!(doc.last_child(r).is_none());
 }
@@ -846,7 +846,7 @@ fn connected_root() -> (Box<Document>, NodeId, NodeId) {
         "and with no namespace decided yet"
     );
     mutate::set_attribute(&mut doc, pr, b"xmlns:p", b"urn:p").expect("a declaration");
-    assert_eq!(mutate::insert_child(&mut doc, docn, pr), MutStatus::Ok);
+    assert_eq!(mutate::insert_child(&mut doc, docn, pr), Ok(()));
     assert_eq!(doc.root(), Some(pr), "inserting it made it the root");
     (doc, docn, pr)
 }
@@ -855,7 +855,7 @@ fn connected_root() -> (Box<Document>, NodeId, NodeId) {
 fn connected_tree() -> (Box<Document>, NodeId, NodeId, NodeId) {
     let (mut doc, docn, pr) = connected_root();
     let ne = mutate::new_element(&mut doc, b"p:c").expect("a prefixed element");
-    assert_eq!(mutate::insert_child(&mut doc, pr, ne), MutStatus::Ok);
+    assert_eq!(mutate::insert_child(&mut doc, pr, ne), Ok(()));
     (doc, docn, pr, ne)
 }
 
@@ -870,13 +870,13 @@ fn new_chardata_copies_its_text() {
 fn inserting_a_subtree_resolves_its_prefixes_against_the_new_context() {
     let (mut doc, _docn, pr) = connected_root();
     let ne = mutate::new_element(&mut doc, b"p:c").expect("a prefixed element");
-    assert_eq!(mutate::insert_child(&mut doc, pr, ne), MutStatus::Ok);
+    assert_eq!(mutate::insert_child(&mut doc, pr, ne), Ok(()));
     assert_eq!(doc.first_child(pr), Some(ne));
     assert_eq!(doc.parent(ne), Some(pr));
     assert_eq!(doc.ns(ne), b"urn:p", "the prefix resolved on insertion");
 
     let tx = mutate::new_chardata(&mut doc, NodeType::Text, b"hi").expect("a text node");
-    assert_eq!(mutate::insert_child(&mut doc, ne, tx), MutStatus::Ok);
+    assert_eq!(mutate::insert_child(&mut doc, ne, tx), Ok(()));
     assert_eq!(doc.first_child(ne), Some(tx));
 }
 
@@ -886,7 +886,7 @@ fn an_unbound_prefix_in_the_live_tree_is_refused_and_changes_nothing() {
     let ub = mutate::new_element(&mut doc, b"z:c").expect("an element with an unbound prefix");
     assert_eq!(
         mutate::insert_child(&mut doc, pr, ub),
-        MutStatus::UnboundNs,
+        Err(MutStatus::UnboundNs),
         "connected, so an unbound prefix is an error rather than deferred"
     );
     assert!(doc.parent(ub).is_none(), "the refused node stayed detached");
@@ -903,14 +903,14 @@ fn resolution_is_deferred_until_the_subtree_joins_the_document() {
     let wrap = mutate::new_element(&mut doc, b"p:wrap").expect("an outer element");
     let inner = mutate::new_element(&mut doc, b"p:inner").expect("an inner element");
 
-    assert_eq!(mutate::insert_child(&mut doc, wrap, inner), MutStatus::Ok);
+    assert_eq!(mutate::insert_child(&mut doc, wrap, inner), Ok(()));
     assert_eq!(
         doc.node(inner).ns_uri.len,
         0,
         "still detached, so nothing was resolved"
     );
 
-    assert_eq!(mutate::insert_child(&mut doc, pr, wrap), MutStatus::Ok);
+    assert_eq!(mutate::insert_child(&mut doc, pr, wrap), Ok(()));
     assert_eq!(doc.ns(wrap), b"urn:p");
     assert_eq!(
         doc.ns(inner),
@@ -922,7 +922,10 @@ fn resolution_is_deferred_until_the_subtree_joins_the_document() {
 #[test]
 fn inserting_an_ancestor_into_its_own_descendant_is_a_cycle() {
     let (mut doc, _docn, pr, ne) = connected_tree();
-    assert_eq!(mutate::insert_child(&mut doc, ne, pr), MutStatus::Cycle);
+    assert_eq!(
+        mutate::insert_child(&mut doc, ne, pr),
+        Err(MutStatus::Cycle)
+    );
 }
 
 #[test]
@@ -931,21 +934,21 @@ fn insert_before_and_after_place_a_sibling_on_the_right_side() {
     let b1 = mutate::new_element(&mut doc, b"b1").expect("a preceding sibling");
     let b2 = mutate::new_element(&mut doc, b"b2").expect("a following sibling");
 
-    assert_eq!(mutate::insert_before(&mut doc, ne, b1), MutStatus::Ok);
+    assert_eq!(mutate::insert_before(&mut doc, ne, b1), Ok(()));
     assert_eq!(doc.first_child(pr), Some(b1));
     assert_eq!(doc.next(b1), Some(ne));
 
-    assert_eq!(mutate::insert_after(&mut doc, ne, b2), MutStatus::Ok);
+    assert_eq!(mutate::insert_after(&mut doc, ne, b2), Ok(()));
     assert_eq!(doc.next(ne), Some(b2));
 }
 
 #[test]
 fn inserting_a_node_next_to_itself_is_a_no_op_not_a_self_loop() {
     let (mut doc, _docn, _pr, ne) = connected_tree();
-    assert_eq!(mutate::insert_before(&mut doc, ne, ne), MutStatus::Ok);
+    assert_eq!(mutate::insert_before(&mut doc, ne, ne), Ok(()));
     assert_ne!(doc.next(ne), Some(ne), "no forward self-link");
     assert_ne!(doc.prev(ne), Some(ne), "no backward self-link");
-    assert_eq!(mutate::insert_after(&mut doc, ne, ne), MutStatus::Ok);
+    assert_eq!(mutate::insert_after(&mut doc, ne, ne), Ok(()));
     assert_ne!(doc.next(ne), Some(ne));
 }
 
@@ -953,10 +956,10 @@ fn inserting_a_node_next_to_itself_is_a_no_op_not_a_self_loop() {
 fn replace_node_swaps_one_child_for_another() {
     let (mut doc, _docn, pr, ne) = connected_tree();
     let b1 = mutate::new_element(&mut doc, b"b1").expect("a preceding sibling");
-    assert_eq!(mutate::insert_before(&mut doc, ne, b1), MutStatus::Ok);
+    assert_eq!(mutate::insert_before(&mut doc, ne, b1), Ok(()));
 
     let rep = mutate::new_element(&mut doc, b"rep").expect("a replacement");
-    assert_eq!(mutate::replace_node(&mut doc, ne, rep), MutStatus::Ok);
+    assert_eq!(mutate::replace_node(&mut doc, ne, rep), Ok(()));
     assert!(doc.parent(ne).is_none(), "the replaced node is detached");
     assert_eq!(doc.parent(rep), Some(pr));
     assert_eq!(doc.next(b1), Some(rep), "in the slot it vacated");
@@ -980,7 +983,7 @@ fn a_document_takes_only_one_root_element() {
     let root2 = mutate::new_element(&mut doc, b"root2").expect("a second root");
     assert_eq!(
         mutate::insert_child(&mut doc, docn, root2),
-        MutStatus::Hierarchy
+        Err(MutStatus::Hierarchy)
     );
 }
 

@@ -25,10 +25,7 @@ fn build_attr(
     tail: Option<NodeId>,
 ) -> Result<NodeId, MutStatus> {
     let attr = arena(doc.new_node(NodeType::Attribute))?;
-    let st = assign_qname(doc, attr, name, sp);
-    if st != MutStatus::Ok {
-        return Err(st);
-    }
+    assign_qname(doc, attr, name, sp)?;
     arena(doc.set_value_bytes(attr, val))?;
     ns.write_attr(doc, attr);
     doc.link_attr(el, tail, attr);

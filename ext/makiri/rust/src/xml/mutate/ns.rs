@@ -105,17 +105,13 @@ fn resolve_node_ns(
     connected: bool,
     commit: bool,
     attrs_only: bool,
-) -> MutStatus {
+) -> Result<(), MutStatus> {
     if !attrs_only && doc.node(e).flags & FLAG_DOM_LOOSE_NAME == 0 {
         let sp = doc.split_of(e);
         /* `resolve_ns` only reads, so the name is passed borrowed. */
-        match resolve_ns(doc, Some(e), doc.qname(e), &sp, false, connected) {
-            Ok(r) => {
-                if commit {
-                    doc.node_mut(e).ns_uri = r.ns
-                }
-            }
-            Err(st) => return st,
+        let r = resolve_ns(doc, Some(e), doc.qname(e), &sp, false, connected)?;
+        if commit {
+            doc.node_mut(e).ns_uri = r.ns
         }
     }
     /* Every attribute's key as it will stand - a re-resolved one's new
@@ -131,27 +127,23 @@ fn resolve_node_ns(
         let redo = flags & FLAG_NS_EXPLICIT == 0 && (!attrs_only || flags & FLAG_NS_PENDING != 0);
         let key = if redo {
             let sp = doc.split_of(attr);
-            match resolve_ns(doc, Some(e), doc.qname(attr), &sp, true, connected) {
-                Ok(r) => {
-                    if commit {
-                        r.write_attr(doc, attr);
-                    }
-                    (!r.pending).then_some(r.ns)
-                }
-                Err(st) => return st,
+            let r = resolve_ns(doc, Some(e), doc.qname(attr), &sp, true, connected)?;
+            if commit {
+                r.write_attr(doc, attr);
             }
+            (!r.pending).then_some(r.ns)
         } else {
             Some(doc.node(attr).ns_uri)
         };
         if let (false, Some(ns)) = (commit, key) {
             if keys.falloc_push((ns, attr)).is_err() {
-                return MutStatus::Oom;
+                return Err(MutStatus::Oom);
             }
         }
         a = doc.next(attr);
     }
     if !commit && super::attr::keys_repeat(doc, &mut keys) {
-        return MutStatus::DuplicateAttr;
+        return Err(MutStatus::DuplicateAttr);
     }
     /* Only mark once connected: resolution inside a still-detached fragment is
      * deferred (an unbound prefix is not an error there), so the node must stay
@@ -159,7 +151,7 @@ fn resolve_node_ns(
     if commit && connected {
         doc.node_mut(e).flags |= FLAG_NS_RESOLVED;
     }
-    MutStatus::Ok
+    Ok(())
 }
 
 /// Whether any attribute of `e` still has a pending namespace.
@@ -180,7 +172,7 @@ fn ns_is_decided(doc: &Document, e: NodeId) -> bool {
 
 /// Re-resolve every element in `root`'s subtree, all-or-nothing: one pass that
 /// only computes, and - only if every prefix binds - a second that writes.
-fn resolve_subtree(doc: &mut Document, root: NodeId, connected: bool) -> MutStatus {
+fn resolve_subtree(doc: &mut Document, root: NodeId, connected: bool) -> Result<(), MutStatus> {
     for commit in [false, true] {
         let mut cur = Some(root);
         while let Some(c) = cur {
@@ -189,21 +181,23 @@ fn resolve_subtree(doc: &mut Document, root: NodeId, connected: bool) -> MutStat
                  * while it was detached may still be pending. */
                 let decided = ns_is_decided(doc, c);
                 if !decided || has_pending_attr(doc, c) {
-                    let st = resolve_node_ns(doc, c, connected, commit, decided);
-                    if st != MutStatus::Ok {
-                        return st; /* commit == false: nothing written yet */
-                    }
+                    /* an Err here comes from commit == false: nothing written yet */
+                    resolve_node_ns(doc, c, connected, commit, decided)?;
                 }
             }
             cur = doc.preorder_next(root, c);
         }
     }
-    MutStatus::Ok
+    Ok(())
 }
 
 /// Resolve `node`'s subtree as if it were a child of `context`, WITHOUT linking
 /// it (borrow node.parent for the ancestor walk, then restore).
-pub(super) fn resolve_into(doc: &mut Document, node: NodeId, context: NodeId) -> MutStatus {
+pub(super) fn resolve_into(
+    doc: &mut Document,
+    node: NodeId,
+    context: NodeId,
+) -> Result<(), MutStatus> {
     let saved = doc.parent(node);
     doc.set_parent(node, Some(context));
     let st = resolve_subtree(doc, node, doc.is_connected(node));

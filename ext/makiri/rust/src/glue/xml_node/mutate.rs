@@ -16,8 +16,7 @@ use crate::bridge::ruby::makiri_error;
 
 use crate::bridge::xml::{
     begin_edit, import_copy, incoming_node, verified_text, verified_text_opt,
-    with_arena_for_new_node, wrap, xml_mut_check, xml_mut_result, xml_wrap_rel_value, Editing,
-    XmlSelf,
+    with_arena_for_new_node, wrap, xml_mut_result, xml_wrap_rel_value, Editing, XmlSelf,
 };
 use crate::init::CLASS_XML_DOCUMENT;
 use crate::xml::dom_name::split_loose_dom_name;
@@ -134,7 +133,7 @@ pub fn set_content(_ruby: &Ruby, this: XmlSelf, text: Value) -> Result<Value, Er
         let edit = begin_edit(this)?;
         let tv = verified_text(text, c"node content")?;
         let bytes = tv.as_verified().as_bytes();
-        xml_mut_check(edit.with_arena(|d, n| mutate::set_content(d, n, bytes))?)?;
+        xml_mut_result(edit.with_arena(|d, n| mutate::set_content(d, n, bytes))?)?;
         Ok(text)
     })
 }
@@ -148,7 +147,7 @@ pub fn set_content(_ruby: &Ruby, this: XmlSelf, text: Value) -> Result<Value, Er
 fn insert(this: XmlSelf, arg: Value, at: Place) -> Result<Value, Error> {
     let edit = begin_edit(this)?;
     let (node, adoption) = incoming_node(edit.document(), arg)?;
-    xml_mut_check(edit.with_arena(|d, target| place(d, target, node, at))?)?;
+    xml_mut_result(edit.with_arena(|d, target| place(d, target, node, at))?)?;
     if let Some(a) = adoption {
         a.finish();
     }
@@ -229,7 +228,7 @@ pub fn create_element(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Val
             mutate::new_element(d, name)
         })?)?;
         if !content.is_nil() {
-            xml_mut_check(with_arena_for_new_node(rb_self, |d| {
+            xml_mut_result(with_arena_for_new_node(rb_self, |d| {
                 mutate::set_content(d, el, text)
             })?)?;
         }

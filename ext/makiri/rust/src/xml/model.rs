@@ -125,14 +125,14 @@ pub const FLAG_NS_EXPLICIT: u32 = 0x0000_0008;
 
 /* ---- mutation status ---- */
 
-/// The outcome of a tree mutation. [`MutStatus::Ok`] is success; each failure
-/// names a rule the mutation broke, which the glue maps to a Ruby exception.
+/// Why a tree mutation failed - the `Err` of every mutator's `Result`. Each
+/// variant names a rule the mutation broke, which the glue maps to a Ruby
+/// exception. There is deliberately no success variant: success is `Ok`.
 /// Kept distinct from [`Status`] because the failure domains differ (a mutation
 /// never fails with [`Status::Syntax`], a parse never with
 /// [`MutStatus::Cycle`]).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MutStatus {
-    Ok,
     Oom,
     BadName,
     BadChars,
