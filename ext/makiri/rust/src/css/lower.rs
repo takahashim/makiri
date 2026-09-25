@@ -26,7 +26,7 @@ use crate::lexbor::css_parser::{
     AttrMatch, Attribute, Combinator, FunctionArg, ListPseudo, Lists, Nth, PseudoClass, Selector,
     Simple,
 };
-use crate::xpath::ast::{Axis, Expr, Op, Step, TestKind};
+use crate::xpath::ast::{Axis, Expr, NodeTest, Op, Step};
 use crate::xpath::msg::{Reported, Status};
 
 /// The internal of-type position functions, whose names carry a leading \x01 so
@@ -51,33 +51,28 @@ fn lower_type(
     if ns == Some(b"*") {
         /* `*|el`: any namespace with a specific local name. XPath has no such
          * test, so it becomes a wildcard plus a local-name() predicate. */
-        step.test.kind = TestKind::Wildcard;
+        step.test = NodeTest::ANY;
         let ln = build::call(b, b"local-name", []);
         let lit = build::literal(b, name);
         return push_pred(b, preds, build::binop(b, Op::Eq, ln, lit));
     }
 
-    step.test.kind = TestKind::Name;
-    step.test.local = Some(build::copy_text(b, name)?);
+    let local = build::copy_text(b, name)?;
 
-    match ns {
+    let prefix = match ns {
         /* `p|el` */
-        Some(p) if !p.is_empty() => {
-            step.test.prefix = Some(build::copy_text(b, p)?);
-            Ok(())
-        }
+        Some(p) if !p.is_empty() => Some(build::copy_text(b, p)?),
         /* `|el`: an explicit no-namespace, so leave the prefix unset. */
-        Some(_) => Ok(()),
+        Some(_) => None,
         /* A bare `el`. With a document default namespace in scope it binds to
          * the synthetic prefix, which is Nokogiri's behaviour. */
         None => match b.default_prefix() {
-            Some(dp) => {
-                step.test.prefix = Some(build::copy_text(b, dp)?);
-                Ok(())
-            }
-            None => Ok(()),
+            Some(dp) => Some(build::copy_text(b, dp)?),
+            None => None,
         },
-    }
+    };
+    step.test = NodeTest::Name { prefix, local };
+    Ok(())
 }
 
 /// Set the step's test from a universal selector, honouring its namespace.
@@ -92,7 +87,7 @@ fn lower_universal(
     step: &mut Step,
     preds: &mut Vec<Expr>,
 ) -> Result<(), Reported> {
-    step.test.kind = TestKind::Wildcard;
+    step.test = NodeTest::ANY;
     match s.ns() {
         None | Some(b"*") => Ok(()),
         Some(b"") => {
@@ -101,7 +96,9 @@ fn lower_universal(
             push_pred(b, preds, build::binop(b, Op::Eq, uri, lit))
         }
         Some(p) => {
-            step.test.prefix = Some(build::copy_text(b, p)?);
+            step.test = NodeTest::Wildcard {
+                prefix: Some(build::copy_text(b, p)?),
+            };
             Ok(())
         }
     }
@@ -218,7 +215,7 @@ fn lower_attribute(b: &Build, s: Selector<'_>, at: Attribute<'_>) -> Built {
 }
 
 /// `not(axis::nt)` - "nothing on that axis".
-fn not_axis(b: &Build, axis: Axis, nt: TestKind) -> Built {
+fn not_axis(b: &Build, axis: Axis, nt: NodeTest) -> Built {
     build::call1(b, b"not", build::step_path(b, axis, nt))
 }
 
@@ -322,13 +319,13 @@ fn lower_pseudo_simple(b: &Build, pc: PseudoClass) -> Built {
         PseudoClass::Empty => build::fold(
             b,
             Op::And,
-            [TestKind::Wildcard, TestKind::Text, TestKind::Pi]
+            [NodeTest::ANY, NodeTest::Text, NodeTest::Pi(None)]
                 .into_iter()
                 .map(|kind| not_axis(b, Axis::Child, kind)),
             ":empty",
         ),
         /* not(parent::*) */
-        PseudoClass::Root => not_axis(b, Axis::Parent, TestKind::Wildcard),
+        PseudoClass::Root => not_axis(b, Axis::Parent, NodeTest::ANY),
         PseudoClass::Other => Err(b.fail(Status::Syntax, "unsupported CSS pseudo-class")),
     }
 }
@@ -356,7 +353,7 @@ pub(crate) fn selector_list_selftest(b: &Build, lists: Lists<'_>) -> Built {
 /// the HTML one.
 fn child_text_pred(b: &Build, pred: Built) -> Built {
     let pred = pred?;
-    let mut step = Step::new(Axis::Child, TestKind::Text);
+    let mut step = Step::new(Axis::Child, NodeTest::Text);
     build::push(b, &mut step.predicates, pred)?;
     build::single_step_path(b, step)
 }
@@ -409,7 +406,7 @@ fn lower_pseudo_func(b: &Build, arg: FunctionArg<'_>) -> Built {
             let needle = c.needle;
 
             if !c.insensitive {
-                let dot = build::step_path(b, Axis::SelfAxis, TestKind::Node); /* "." */
+                let dot = build::step_path(b, Axis::SelfAxis, NodeTest::Node); /* "." */
                 return child_text_pred(
                     b,
                     build::call2(b, b"contains", dot, build::literal(b, needle)),
@@ -429,7 +426,7 @@ fn lower_pseudo_func(b: &Build, arg: FunctionArg<'_>) -> Built {
                 b,
                 b"translate",
                 [
-                    build::step_path(b, Axis::SelfAxis, TestKind::Node),
+                    build::step_path(b, Axis::SelfAxis, NodeTest::Node),
                     build::literal(b, UPPER),
                     build::literal(b, LOWER),
                 ],
@@ -521,7 +518,7 @@ fn emit_compound_step(
     comp: Compound<'_>,
 ) -> Result<(), Reported> {
     /* A type selector overrides the wildcard test. */
-    let mut step = Step::new(axis, TestKind::Wildcard);
+    let mut step = Step::new(axis, NodeTest::ANY);
     let mut preds = Vec::new();
 
     let mut cur = Some(comp.first);
@@ -576,7 +573,7 @@ impl<'p> Iterator for Compounds<'p> {
 
 /// `axis::*[1]` - the immediately adjacent sibling in either direction.
 fn emit_adjacent_sibling(b: &Build, steps: &mut Vec<Step>, axis: Axis) -> Result<(), Reported> {
-    let mut st = Step::new(axis, TestKind::Wildcard);
+    let mut st = Step::new(axis, NodeTest::ANY);
     let p = build::num(b, 1.0)?;
     build::push(b, &mut st.predicates, p)?;
     build::push(b, steps, st)

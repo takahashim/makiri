@@ -4,7 +4,7 @@
 
 #![forbid(unsafe_code)]
 
-use super::ast::{Ast, Axis, Expr, ExprKind, Step, TestKind};
+use super::ast::{Ast, Axis, Expr, ExprKind, NodeTest, Step};
 
 /* ---------- the peephole: // fusion ---------- */
 
@@ -26,8 +26,7 @@ fn fuse_descendant_or_self(steps: &mut Vec<Step>) {
     while i + 1 < steps.len() {
         let (s, next) = (&steps[i], &steps[i + 1]);
         let fusable = s.axis == Axis::DescendantOrSelf
-            && s.test.kind == TestKind::Node
-            && s.test.prefix.is_none()
+            && matches!(s.test, NodeTest::Node)
             && s.predicates.is_empty()
             && next.axis == Axis::Child
             && next.predicates.is_empty();

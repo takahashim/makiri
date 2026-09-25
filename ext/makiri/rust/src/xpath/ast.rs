@@ -32,17 +32,6 @@ pub enum Axis {
     AncestorOrSelf,
 }
 
-/// What a node test tests (XPath 1.0 section 2.3).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TestKind {
-    Name,
-    Wildcard,
-    Node,
-    Text,
-    Comment,
-    Pi,
-}
-
 /// A binary operator.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Op {
@@ -62,14 +51,26 @@ pub enum Op {
     Union,
 }
 
-/// A step's node test. `None` is an omitted part, which is not the same as an
+/// A step's node test (XPath 1.0 section 2.3), each shape carrying exactly the
+/// names it has. A `None` prefix is an omitted one, which is not the same as an
 /// empty one: an unprefixed test has no prefix, while a CSS `*|el` or `|el` is
 /// lowered to an explicit shape of its own.
-pub struct NodeTest {
-    pub kind: TestKind,
-    pub prefix: Option<Box<[u8]>>,
-    pub local: Option<Box<[u8]>>,
-    pub pi_target: Option<Box<[u8]>>,
+pub enum NodeTest {
+    /// `local` or `prefix:local`.
+    Name {
+        prefix: Option<Box<[u8]>>,
+        local: Box<[u8]>,
+    },
+    /// `*` or `prefix:*`: any node of the axis's principal type.
+    Wildcard { prefix: Option<Box<[u8]>> },
+    /// `node()`.
+    Node,
+    /// `text()`.
+    Text,
+    /// `comment()`.
+    Comment,
+    /// `processing-instruction()`, with its optional target literal.
+    Pi(Option<Box<[u8]>>),
 }
 
 pub struct Step {
@@ -79,23 +80,24 @@ pub struct Step {
 }
 
 impl NodeTest {
-    /// A test of `kind` with no names.
-    pub fn new(kind: TestKind) -> NodeTest {
-        NodeTest {
-            kind,
-            prefix: None,
-            local: None,
-            pi_target: None,
+    /// `*`, unprefixed.
+    pub const ANY: NodeTest = NodeTest::Wildcard { prefix: None };
+
+    /// The test's prefix, for the two shapes that can carry one.
+    pub fn prefix(&self) -> Option<&[u8]> {
+        match self {
+            NodeTest::Name { prefix, .. } | NodeTest::Wildcard { prefix } => prefix.as_deref(),
+            NodeTest::Node | NodeTest::Text | NodeTest::Comment | NodeTest::Pi(_) => None,
         }
     }
 }
 
 impl Step {
-    /// A step with no names and no predicates.
-    pub fn new(axis: Axis, kind: TestKind) -> Step {
+    /// A step with no predicates.
+    pub fn new(axis: Axis, test: NodeTest) -> Step {
         Step {
             axis,
-            test: NodeTest::new(kind),
+            test,
             predicates: Vec::new(),
         }
     }

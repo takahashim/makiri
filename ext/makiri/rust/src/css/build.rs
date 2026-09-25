@@ -12,7 +12,7 @@
 use super::Build;
 use crate::falloc::{try_box, try_to_boxed_slice, VecPush};
 use crate::text::VerifiedText;
-use crate::xpath::ast::{Axis, Expr, ExprKind, Op, Path, Step, TestKind};
+use crate::xpath::ast::{Axis, Expr, ExprKind, NodeTest, Op, Path, Step};
 use crate::xpath::limits::check_ast_depth;
 use crate::xpath::msg::{Reported, Status};
 
@@ -137,8 +137,8 @@ pub(crate) fn single_step_path(b: &Build, step: Step) -> Built {
 
 /// A one-step relative PATH with no predicates and a wildcard or kind test:
 /// `preceding-sibling::*`, `child::node()`, `self::node()` and the rest.
-pub(crate) fn step_path(b: &Build, axis: Axis, kind: TestKind) -> Built {
-    single_step_path(b, Step::new(axis, kind))
+pub(crate) fn step_path(b: &Build, axis: Axis, test: NodeTest) -> Built {
+    single_step_path(b, Step::new(axis, test))
 }
 
 /// A one-step relative PATH with a NAME test: `axis::[prefix:]local`.
@@ -146,12 +146,12 @@ pub(crate) fn step_path(b: &Build, axis: Axis, kind: TestKind) -> Built {
 /// The shared builder for every named single-step path - `@prefix:name`, the
 /// typed of-type sibling tests - so the step and its two names exist once.
 pub(crate) fn named_step_path(b: &Build, axis: Axis, prefix: Option<&[u8]>, name: &[u8]) -> Built {
-    let mut step = Step::new(axis, TestKind::Name);
-    step.test.local = Some(copy_text(b, name)?);
-    if let Some(prefix) = prefix.filter(|p| !p.is_empty()) {
-        step.test.prefix = Some(copy_text(b, prefix)?);
-    }
-    single_step_path(b, step)
+    let local = copy_text(b, name)?;
+    let prefix = match prefix.filter(|p| !p.is_empty()) {
+        Some(prefix) => Some(copy_text(b, prefix)?),
+        None => None,
+    };
+    single_step_path(b, Step::new(axis, NodeTest::Name { prefix, local }))
 }
 
 /// `@prefix:name` (or `@name`) as a relative attribute-axis path.

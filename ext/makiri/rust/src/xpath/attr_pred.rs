@@ -30,15 +30,16 @@ pub fn match_attr_step(e: &Expr) -> Option<&[u8]> {
     let [s] = p.steps.as_slice() else {
         return None;
     };
-    if p.absolute
-        || s.axis != Axis::Attribute
-        || !s.predicates.is_empty()
-        || s.test.kind != TestKind::Name
-        || s.test.prefix.is_some()
-    {
+    if p.absolute || s.axis != Axis::Attribute || !s.predicates.is_empty() {
         return None;
     }
-    s.test.local.as_deref()
+    match &s.test {
+        NodeTest::Name {
+            prefix: None,
+            local,
+        } => Some(local),
+        _ => None,
+    }
 }
 
 /// `[@name]`, or `[@name='lit']` in either operand order.

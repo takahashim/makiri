@@ -493,7 +493,7 @@ fn first_recognise(root: &Expr) -> Option<&Step> {
         [s] if s.axis == Axis::Descendant => s,
         [s0, s1]
             if s0.axis == Axis::DescendantOrSelf
-                && s0.test.kind == TestKind::Node
+                && matches!(s0.test, NodeTest::Node)
                 && s0.predicates.is_empty()
                 && s1.axis == Axis::Child =>
         {

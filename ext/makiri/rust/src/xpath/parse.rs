@@ -180,7 +180,7 @@ impl<'a> Parser<'a> {
             let dslash = self.kind() == Tok::DSlash;
             self.advance()?;
             if dslash {
-                self.push_step(steps, Step::new(Axis::DescendantOrSelf, TestKind::Node))?;
+                self.push_step(steps, Step::new(Axis::DescendantOrSelf, NodeTest::Node))?;
             }
             let next = self.parse_step()?;
             self.push_step(steps, next)?;
@@ -198,25 +198,26 @@ impl<'a> Parser<'a> {
         if is_nodetype_name(name) && self.kind() == Tok::LParen {
             self.advance()?;
             let test = match name {
-                b"node" => NodeTest::new(TestKind::Node),
-                b"text" => NodeTest::new(TestKind::Text),
-                b"comment" => NodeTest::new(TestKind::Comment),
+                b"node" => NodeTest::Node,
+                b"text" => NodeTest::Text,
+                b"comment" => NodeTest::Comment,
                 _ => {
-                    let mut test = NodeTest::new(TestKind::Pi);
+                    let mut target = None;
                     if self.kind() == Tok::Literal {
                         let t = self.tok();
-                        test.pi_target = Some(self.fill_owned(self.text(&t))?);
+                        target = Some(self.fill_owned(self.text(&t))?);
                         self.advance()?;
                     }
-                    test
+                    NodeTest::Pi(target)
                 }
             };
             self.eat(Tok::RParen, "')' after node type test")?;
             return Ok(test);
         }
-        let mut test = NodeTest::new(TestKind::Name);
-        test.local = Some(self.fill_owned(name)?);
-        Ok(test)
+        Ok(NodeTest::Name {
+            prefix: None,
+            local: self.fill_owned(name)?,
+        })
     }
 
     /// Called with the current token at the first token of the node test; leaves
@@ -224,7 +225,7 @@ impl<'a> Parser<'a> {
     fn parse_node_test(&mut self) -> PResult<NodeTest> {
         if self.kind() == Tok::Star {
             self.advance()?;
-            return Ok(NodeTest::new(TestKind::Wildcard));
+            return Ok(NodeTest::ANY);
         }
         if self.kind() == Tok::Name {
             let saved = self.tok();
@@ -235,15 +236,15 @@ impl<'a> Parser<'a> {
             /* `prefix:local` or `prefix:*`. */
             let t = self.tok();
             let (prefix, local) = split_qname(self.text(&t));
-            let prefix = self.fill_owned(prefix)?;
-            let mut test = if local == b"*" {
-                NodeTest::new(TestKind::Wildcard)
+            let prefix = Some(self.fill_owned(prefix)?);
+            let test = if local == b"*" {
+                NodeTest::Wildcard { prefix }
             } else {
-                let mut test = NodeTest::new(TestKind::Name);
-                test.local = Some(self.fill_owned(local)?);
-                test
+                NodeTest::Name {
+                    prefix,
+                    local: self.fill_owned(local)?,
+                }
             };
-            test.prefix = Some(prefix);
             self.advance()?;
             return Ok(test);
         }
@@ -276,11 +277,11 @@ impl<'a> Parser<'a> {
         /* Abbreviated steps. */
         if self.kind() == Tok::Dot {
             self.advance()?;
-            return Ok(Step::new(Axis::SelfAxis, TestKind::Node));
+            return Ok(Step::new(Axis::SelfAxis, NodeTest::Node));
         }
         if self.kind() == Tok::DotDot {
             self.advance()?;
-            return Ok(Step::new(Axis::Parent, TestKind::Node));
+            return Ok(Step::new(Axis::Parent, NodeTest::Node));
         }
 
         /* AxisSpecifier: '@' or NAME '::'. */

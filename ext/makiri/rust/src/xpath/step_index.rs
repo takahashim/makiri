@@ -32,14 +32,10 @@ pub fn try_descendant_index<'e, 'd, D: Dom<'d>>(
     context_set: &NodeSet<D::Node>,
     budget: &mut Budget,
 ) -> Result<Option<NodeSet<D::Node>>, Reported> {
-    let test = ct.test();
-    let Some(local) = test.local.as_deref() else {
+    let Some(local) = ct.name() else {
         return Ok(None);
     };
-    if ct.axis() != Axis::Descendant
-        || test.kind != TestKind::Name
-        || !context_is_document::<D>(doc, context_set)
-    {
+    if ct.axis() != Axis::Descendant || !context_is_document::<D>(doc, context_set) {
         return Ok(None);
     }
     let Some(bucket) = doc.name_bucket(local, ct.uri()) else {
@@ -65,20 +61,23 @@ pub fn try_descendant_index<'e, 'd, D: Dom<'d>>(
 /// pointer-keyed parent -> count map emits exactly those whose running count
 /// reaches N, already in document order, with no sort or dedup.
 ///
-fn nth_shape<'e, 'd, D: Dom<'d>>(
+/// The shape's N, and the name test's local name.
+fn nth_shape<'s, 'e, 'd, D: Dom<'d>>(
     doc: D,
     s0: &Step,
-    s1: &Step,
+    s1: &'s Step,
     seed: &NodeSet<D::Node>,
-) -> Option<usize> {
+) -> Option<(usize, &'s [u8])> {
     if s0.axis != Axis::DescendantOrSelf
-        || s0.test.kind != TestKind::Node
-        || s0.test.prefix.is_some()
+        || !matches!(s0.test, NodeTest::Node)
         || !s0.predicates.is_empty()
     {
         return None;
     }
-    if s1.axis != Axis::Child || s1.test.kind != TestKind::Name || s1.test.local.is_none() {
+    let NodeTest::Name { local, .. } = &s1.test else {
+        return None;
+    };
+    if s1.axis != Axis::Child {
         return None;
     }
     /* The sole predicate must be a bare positive-integer literal, which is
@@ -98,7 +97,7 @@ fn nth_shape<'e, 'd, D: Dom<'d>>(
     if !context_is_document::<D>(doc, seed) {
         return None;
     }
-    Some(dn as usize)
+    Some((dn as usize, local))
 }
 
 /// `//name[N]` from the index: the two steps' result, or None when the shape
@@ -111,12 +110,11 @@ pub fn try_descendant_index_nth<'e, 'd, D: Dom<'d>>(
     seed: &NodeSet<D::Node>,
 ) -> Result<Option<NodeSet<D::Node>>, Reported> {
     let doc = ev.doc;
-    let Some(need) = nth_shape::<D>(doc, s0, s1, seed) else {
+    let Some((need, local)) = nth_shape::<D>(doc, s0, s1, seed) else {
         return Ok(None);
     };
     let names: &'e Names = ev.names;
     let ct = CompiledTest::new(&s1.test, s1.axis, names, ev.cx.lax(), ev.budget.sink())?;
-    let local = ct.test().local.as_deref().unwrap_or(&[]);
     let Some(bucket) = doc.name_bucket(local, ct.uri()) else {
         return Ok(None);
     };
