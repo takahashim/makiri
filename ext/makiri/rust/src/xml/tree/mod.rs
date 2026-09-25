@@ -577,7 +577,7 @@ pub fn parse(src: &[u8]) -> Result<Box<Document>, Status> {
 /// Parse `src` into a fresh document. `Document::create` applies `limits` and
 /// rejects an over-long source, so the budget is checked in exactly one place.
 pub fn parse_ex(src: &[u8], limits: Option<&Limits>) -> Result<Box<Document>, Status> {
-    let mut doc = Document::create(limits.map(|l| l.max_bytes), src.len())?;
+    let mut doc = Document::create(limits.and_then(|l| l.max_bytes), src.len())?;
     let norm = normalize_newlines(src)?;
     Parser::new(norm.as_deref().unwrap_or(src), &mut doc, None).run_to_end(true)?;
     Ok(doc)

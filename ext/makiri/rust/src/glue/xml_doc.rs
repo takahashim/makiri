@@ -28,7 +28,7 @@ use crate::xml::model::{Limits as XmlLimits, MAX_BYTES};
 /// conversion, because a negative would otherwise wrap into a huge `size_t` and
 /// bypass the budget entirely.
 fn parse_limits(ruby: &Ruby, h: RHash) -> Result<XmlLimits, Error> {
-    let mut limits = XmlLimits { max_bytes: 0 };
+    let mut limits = XmlLimits { max_bytes: None };
     if h.is_empty() {
         return Ok(limits);
     }
@@ -60,7 +60,7 @@ fn parse_limits(ruby: &Ruby, h: RHash) -> Result<XmlLimits, Error> {
             "max_bytes must be positive",
         ));
     }
-    limits.max_bytes = n as usize;
+    limits.max_bytes = Some(n as usize);
     Ok(limits)
 }
 
@@ -74,11 +74,7 @@ fn s_parse(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
         let scanned = magnus::scan_args::scan_args::<(Value,), (), (), (), RHash, ()>(args)?;
         let (source,) = scanned.required;
         let limits = parse_limits(ruby, scanned.keywords)?;
-        let budget = if limits.max_bytes != 0 {
-            limits.max_bytes
-        } else {
-            MAX_BYTES
-        };
+        let budget = limits.max_bytes.unwrap_or(MAX_BYTES);
 
         /* An IO/File-like source is read first, as the HTML entry does; a String
          * passes straight through. */

@@ -69,7 +69,7 @@ fn attr(d: &Document, n: NodeId) -> NodeId {
 /// BEFORE the bytes are touched - a caller can reach the entry point with a
 /// length longer than the buffer it holds.
 fn parse_ex_len(src: &[u8], len: usize, limits: Option<usize>) -> Result<Box<Document>, Status> {
-    let max = limits.filter(|&n| n != 0).unwrap_or(MAX_BYTES);
+    let max = limits.unwrap_or(MAX_BYTES);
     if len > max {
         return Err(Status::Limit);
     }
@@ -79,7 +79,12 @@ fn parse_ex_len(src: &[u8], len: usize, limits: Option<usize>) -> Result<Box<Doc
 /// `parse_ex` under an optional byte budget.
 fn parse_limited(src: &[u8], limits: Option<usize>) -> Result<Box<Document>, Status> {
     match limits {
-        Some(max_bytes) => parse_ex(src, Some(&Limits { max_bytes })),
+        Some(max_bytes) => parse_ex(
+            src,
+            Some(&Limits {
+                max_bytes: Some(max_bytes),
+            }),
+        ),
         None => parse(src),
     }
 }
@@ -543,8 +548,8 @@ fn a_per_parse_byte_budget_overrides_the_default() {
     }
     let d = parse_ex_len(src, src.len(), Some(1024 * 1024)).expect("a megabyte is plenty");
     assert_eq!(d.local(root_of(&d)), b"root");
-    /* 0 is not "no room": it selects the default budget. */
-    parse_ex_len(src, src.len(), Some(0)).expect("0 means the default budget");
+    /* No override is the default budget. */
+    parse_ex(src, Some(&Limits { max_bytes: None })).expect("the default budget");
 }
 
 #[test]

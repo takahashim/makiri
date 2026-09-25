@@ -40,14 +40,13 @@ static DOC_STAMP: AtomicU32 = AtomicU32::new(1);
 const NODE_COST: usize = core::mem::size_of::<Node>();
 
 impl Document {
-    /// A fresh document with `limits` applied, rejecting `src_len` up front when
-    /// it already exceeds the byte budget.
-    pub fn create(limits: Option<usize>, src_len: usize) -> Result<Box<Document>, ArenaError> {
+    /// A fresh document under the byte budget `max_bytes` (None: the default,
+    /// [`crate::xml::MAX_BYTES`]), rejecting `src_len` up front when it already
+    /// exceeds that budget.
+    pub fn create(max_bytes: Option<usize>, src_len: usize) -> Result<Box<Document>, ArenaError> {
         let mut doc = crate::falloc::try_box(Document::blank()).map_err(|_| ArenaError::Oom)?;
-        if let Some(mb) = limits {
-            if mb != 0 {
-                doc.max_bytes = mb;
-            }
+        if let Some(mb) = max_bytes {
+            doc.max_bytes = mb;
         }
         if src_len > doc.max_bytes {
             return Err(ArenaError::Limit);

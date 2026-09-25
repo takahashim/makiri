@@ -389,9 +389,10 @@ impl Node {
     }
 }
 
-/// The per-document allocation limit.
+/// The per-document allocation limit. `None` is the default budget,
+/// [`MAX_BYTES`].
 pub struct Limits {
-    pub max_bytes: usize,
+    pub max_bytes: Option<usize>,
 }
 
 /// An XML document and the arena that owns its nodes and bytes.
