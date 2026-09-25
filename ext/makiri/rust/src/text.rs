@@ -2,7 +2,8 @@
 //! selector, a namespace prefix or URI, a variable name or value.
 //!
 //! The one contract is **valid UTF-8 with no NUL**. The UTF-8 half is the type
-//! (`&str`); the NUL half is the constructors'. Made by checking the bytes
+//! (`&str`); the NUL half is [`crate::cutf8::text_verdict`], the one check this
+//! type and the Ruby bridge's `text_check` both run. Made by checking the bytes
 //! ([`VerifiedText::from_bytes`], [`VerifiedText::new`]) or at the Ruby boundary,
 //! where the bridge has already run the same check
 //! ([`VerifiedText::from_checked`]).
@@ -21,6 +22,8 @@
 
 use core::ops::Deref;
 
+use crate::cutf8::{text_verdict, TextVerdict};
+
 /// Valid UTF-8 (by type) with no NUL (by construction): the text an engine
 /// input must be.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -31,8 +34,12 @@ pub struct VerifiedText<'a>(&'a str);
 #[cfg_attr(not(feature = "ruby"), allow(dead_code))]
 impl<'a> VerifiedText<'a> {
     /// `s`, unless it holds a NUL.
+    ///
+    /// The NUL half of the contract is [`cutf8::text_verdict`], the one check
+    /// the bridge's [`text_check`](crate::bridge::string::text_check) also runs;
+    /// `true` because `s` is already UTF-8 by type.
     pub fn new(s: &'a str) -> Option<Self> {
-        (!s.as_bytes().contains(&0)).then_some(Self(s))
+        matches!(text_verdict(s.as_bytes(), true), TextVerdict::Ok).then_some(Self(s))
     }
 
     /// Check `bytes` against the contract and borrow them.
