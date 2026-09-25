@@ -17,7 +17,7 @@ use crate::falloc::Reserve;
 use crate::xml::chars::{is_reserved_pi_target, normalize_newlines, ExpandMode};
 use crate::xml::qname::{split_scanned, xmlns_prefix, Split};
 use crate::xml::{
-    Document, NodeFlags, NodeId, NodeType, ParseError, ParseLimits, Span, MAX_ATTRS, MAX_DEPTH,
+    ArenaKind, Document, NodeFlags, NodeId, ParseError, ParseLimits, Span, MAX_ATTRS, MAX_DEPTH,
 };
 use cursor::{is_space, Cursor, InSlice, R};
 use dtd::{scan_external_id, Declared, ExternalId, Subset};
@@ -87,13 +87,13 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn new_node(&mut self, ty: NodeType) -> R<NodeId> {
+    fn new_node(&mut self, ty: ArenaKind) -> R<NodeId> {
         Ok(self.doc.new_node(ty)?)
     }
 
     /// Append a TEXT / CDATA node, coalescing with a preceding sibling of the
     /// SAME type (as libxml2 / the XPath data model do).
-    fn append_chardata(&mut self, parent: NodeId, ty: NodeType, val: Span) -> R {
+    fn append_chardata(&mut self, parent: NodeId, ty: ArenaKind, val: Span) -> R {
         Ok(self.doc.append_chardata(parent, ty, val)?)
     }
 
@@ -239,7 +239,7 @@ impl<'a> Parser<'a> {
                 Some(s) => s,
                 None => return self.cur.syntax(),
             };
-            let attr = self.new_node(NodeType::Attribute)?;
+            let attr = self.new_node(ArenaKind::Attribute)?;
             self.set_node_qname(attr, name, &sp)?;
             if xmlns_prefix(name).is_some() {
                 let span = self.doc.xmlns_ns_span();
@@ -279,7 +279,7 @@ impl<'a> Parser<'a> {
     fn parse_comment(&mut self, parent: NodeId) -> R {
         self.cur.advance_n(3);
         let body = self.cur.scan_until_close(b"-->", Some(b'-'))?;
-        let c = self.new_node(NodeType::Comment)?;
+        let c = self.new_node(ArenaKind::Comment)?;
         let v = self.own(body)?;
         self.doc.node_mut(c).value = v;
         self.doc.append_child(parent, c);
@@ -295,7 +295,7 @@ impl<'a> Parser<'a> {
         self.cur.advance_n(8);
         let body = self.cur.scan_until_close(b"]]>", None)?;
         let cval = self.own(body)?;
-        self.append_chardata(parent, NodeType::CData, cval)?;
+        self.append_chardata(parent, ArenaKind::CDataSection, cval)?;
         self.cur.take_close(body, b"]]>");
         Ok(())
     }
@@ -322,7 +322,7 @@ impl<'a> Parser<'a> {
             self.cur.require_space()?;
         }
         let body = self.cur.scan_until_close(b"?>", None)?;
-        let pi = self.new_node(NodeType::Pi)?;
+        let pi = self.new_node(ArenaKind::Pi)?;
         let lp = self.own(t)?;
         let vp = self.own(body)?;
         {
@@ -449,7 +449,7 @@ impl<'a> Parser<'a> {
             Some(s) => s,
             None => return self.cur.syntax(),
         };
-        let el = self.new_node(NodeType::Element)?;
+        let el = self.new_node(ArenaKind::Element)?;
         self.set_node_qname(el, name, &sp)?;
         {
             let n = self.doc.node_mut(el);
@@ -508,7 +508,7 @@ impl<'a> Parser<'a> {
         let raw = self.cur.slice(text);
         let tv = self.expand(raw, ExpandMode::Text)?;
         let parent = self.cur_parent();
-        self.append_chardata(parent, NodeType::Text, tv)
+        self.append_chardata(parent, ArenaKind::Text, tv)
     }
 
     /// Tokenizer dispatch, stopping at the first failure.
@@ -615,7 +615,7 @@ fn parse_fragment_into(
     src: &[u8],
     inherit_doc_ns: bool,
 ) -> Result<NodeId, ParseError> {
-    let frag = doc.new_node(NodeType::Fragment)?;
+    let frag = doc.new_node(ArenaKind::DocumentFragment)?;
     let norm = normalize_newlines(src)?;
     let mut p = Parser::new(norm.as_deref().unwrap_or(src), doc, Some(frag));
     if inherit_doc_ns {

@@ -36,7 +36,8 @@ use crate::init::{
     CLASS_XML_TEXT,
 };
 use crate::lexbor::adapter::cross_import::cross_html_to_xml;
-use crate::xml::model::{Document as XmlDoc, MutError, NodeId, NodeType, ParseError, ParseLimits};
+use crate::node_type::NodeType as CrateKind;
+use crate::xml::model::{ArenaKind, Document as XmlDoc, MutError, NodeId, ParseError, ParseLimits};
 use crate::xml::mutate::{clone_node, copy_node_from, import_subtree, remove as remove_node};
 use crate::xml::qname::NsDeclError;
 use crate::xml::tree;
@@ -66,11 +67,10 @@ static XML_NODE_CLASSES: NodeClasses = NodeClasses {
 /// to nil itself.
 pub fn wrap_xml_node(id: NodeId, document: Value) -> Value {
     let ty = arena_ref(&document).type_(id);
-    if ty == Some(NodeType::Document) {
+    if ty == Some(ArenaKind::Document) {
         return document;
     }
-    let klass =
-        XML_NODE_CLASSES.class_for(ty.map_or(crate::node_type::NodeType::Other, Into::into));
+    let klass = XML_NODE_CLASSES.class_for(ty.map_or(CrateKind::Other, Into::into));
 
     crate::bridge::wrapper::wrap_cached(&XML_NODE_TYPE, klass, id.into(), document)
 }
@@ -488,7 +488,7 @@ pub fn fragment_into(
 /// document.
 pub fn find_attribute(this: XmlSelf, name: Value) -> Result<Option<NodeId>, Error> {
     let id = this.id;
-    if this.doc_ref().type_(id) != Some(NodeType::Element) {
+    if this.doc_ref().type_(id) != Some(ArenaKind::Element) {
         return Ok(None);
     }
     let nv = ruby_verified_text(name, "attribute name")?;
@@ -503,7 +503,7 @@ pub fn find_attribute(this: XmlSelf, name: Value) -> Result<Option<NodeId>, Erro
 /// model is the one that hides them (`xml::xpath` skips them on the attribute
 /// axis), which is why `@xmlns:p` finds nothing while this does.
 fn find_attribute_bytes(d: &XmlDoc, el: NodeId, name: &[u8]) -> Option<NodeId> {
-    if d.type_(el) != Some(NodeType::Element) {
+    if d.type_(el) != Some(ArenaKind::Element) {
         return None;
     }
     d.attributes(el).find(|&id| d.qname(id) == name)
@@ -535,7 +535,7 @@ impl Adoption {
         // for writing; `_keep` holds it, and the caller ran only engine code
         // on the OTHER arena since.
         let sdoc = unsafe { &mut *self.src_doc };
-        if sdoc.type_(self.src) == Some(NodeType::Fragment) {
+        if sdoc.type_(self.src) == Some(ArenaKind::DocumentFragment) {
             while let Some(c) = sdoc.first_child(self.src) {
                 remove_node(sdoc, c);
             }

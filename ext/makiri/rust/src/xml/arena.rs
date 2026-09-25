@@ -23,7 +23,7 @@
 use crate::falloc::Reserve;
 use crate::xml::chars::{expand_into, ExpandErr, ExpandMode};
 use crate::xml::qname::Split;
-use crate::xml::{BudgetError, Document, Link, Node, NodeId, NodeType, ParseError, Span};
+use crate::xml::{ArenaKind, BudgetError, Document, Link, Node, NodeId, ParseError, Span};
 use core::sync::atomic::{AtomicU32, Ordering};
 
 /// Hands each document a unique stamp (never 0). Node ids carry it so a handle
@@ -60,8 +60,8 @@ impl Document {
         doc.xmlns_ns = doc.store(crate::xml::XMLNS_NS_URI)?;
         /* Index 0 is reserved: it is the null handle's slot (token 0 == a NULL
          * `void *`), so a real node never has index 0. */
-        let _null_slot = doc.new_node(NodeType::Document)?;
-        doc.doc_node = doc.new_node(NodeType::Document)?;
+        let _null_slot = doc.new_node(ArenaKind::Document)?;
+        doc.doc_node = doc.new_node(ArenaKind::Document)?;
         Ok(doc)
     }
 
@@ -172,7 +172,7 @@ impl Document {
         core::iter::successors(self.first_attr(id), move |&a| self.next(a))
     }
     #[inline]
-    pub fn type_(&self, id: NodeId) -> Option<NodeType> {
+    pub fn type_(&self, id: NodeId) -> Option<ArenaKind> {
         self.try_node(id).map(|n| n.type_)
     }
 
@@ -218,7 +218,7 @@ impl Document {
     pub fn name_parts(&self, id: NodeId) -> Option<NameParts<'_>> {
         let n = self.try_node(id)?;
         let present = |s: Span| (s.len != 0).then(|| self.span(s));
-        matches!(n.type_, NodeType::Element | NodeType::Attribute).then(|| NameParts {
+        matches!(n.type_, ArenaKind::Element | ArenaKind::Attribute).then(|| NameParts {
             qname: self.span(n.qname),
             local: self.span(n.local),
             prefix: present(n.prefix),
@@ -230,7 +230,7 @@ impl Document {
     pub fn doctype_ids(&self, id: NodeId) -> Option<DoctypeIds<'_>> {
         let n = self.try_node(id)?;
         let written = |s: Span| (!s.is_absent()).then(|| self.span(s));
-        (n.type_ == NodeType::Doctype).then(|| DoctypeIds {
+        (n.type_ == ArenaKind::DocumentType).then(|| DoctypeIds {
             public: written(n.prefix),
             system: written(n.value),
         })
@@ -248,7 +248,7 @@ impl Document {
         public: Option<&[u8]>,
         system: Option<&[u8]>,
     ) -> Result<NodeId, BudgetError> {
-        let dt = self.new_node(NodeType::Doctype)?;
+        let dt = self.new_node(ArenaKind::DocumentType)?;
         let name = self.store(name)?;
         let node = self.node_mut(dt);
         node.local = name;
@@ -343,7 +343,7 @@ impl Document {
     /* ---- allocation ---- */
 
     /// Allocate a zeroed node, counted against the node and byte budgets.
-    pub(super) fn new_node(&mut self, type_: NodeType) -> Result<NodeId, BudgetError> {
+    pub(super) fn new_node(&mut self, type_: ArenaKind) -> Result<NodeId, BudgetError> {
         if self.nodes.len() + 1 > self.max_nodes {
             return Err(BudgetError::Limit);
         }
@@ -391,7 +391,7 @@ impl Document {
     pub(super) fn append_chardata(
         &mut self,
         parent: NodeId,
-        type_: NodeType,
+        type_: ArenaKind,
         span: Span,
     ) -> Result<(), BudgetError> {
         let last = self.node(parent).last_child;
@@ -484,7 +484,7 @@ impl Document {
         let Some(parent) = self.node(node).parent else {
             return;
         };
-        if self.node(node).type_ == NodeType::Attribute {
+        if self.node(node).type_ == ArenaKind::Attribute {
             let node_link = Link::of(node);
             let mut prev = None;
             let mut attr = self.node_at(parent).attrs;
@@ -638,7 +638,7 @@ impl Document {
         while let Some(up) = top.parent {
             top = self.node_at(up);
         }
-        top.type_ == NodeType::Document
+        top.type_ == ArenaKind::Document
     }
 
     /* ---- document meta ---- */
@@ -679,10 +679,10 @@ impl Document {
         let mut c = self.node(self.doc_node).first_child;
         while let Some(l) = c {
             let t = self.node_at(l).type_;
-            if self.root.is_none() && t == NodeType::Element {
+            if self.root.is_none() && t == ArenaKind::Element {
                 self.root = Some(self.id_of(l));
             }
-            if self.doctype.is_none() && t == NodeType::Doctype {
+            if self.doctype.is_none() && t == ArenaKind::DocumentType {
                 self.doctype = Some(self.id_of(l));
             }
             c = self.node_at(l).next;

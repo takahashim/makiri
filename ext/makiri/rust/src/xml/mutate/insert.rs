@@ -9,7 +9,7 @@
 #![forbid(unsafe_code)]
 
 use super::ns::resolve_into;
-use crate::xml::{Document, MutError, NodeId, NodeType};
+use crate::xml::{ArenaKind, Document, MutError, NodeId};
 
 /// The three verbs that splice a fragment's children INTO an existing chain.
 /// `Replace` is not one: it swaps the target out, which is
@@ -51,7 +51,7 @@ pub fn place(
     node: NodeId,
     place: Place,
 ) -> Result<(), MutError> {
-    if doc.type_(node) != Some(NodeType::Fragment) {
+    if doc.type_(node) != Some(ArenaKind::DocumentFragment) {
         return match place {
             Place::Child => insert_child(doc, target, node),
             Place::Before => insert_before(doc, target, node),
@@ -82,7 +82,7 @@ fn splice_site(doc: &Document, target: NodeId, splice: Splice) -> Option<Site> {
 /// child, which a fragment cannot hold today - a fragment is not an insertion
 /// container - but which would otherwise be a silent second root-level doctype.
 fn fragment_fits_container(doc: &Document, frag: NodeId, site: Site) -> Result<(), MutError> {
-    if doc.type_(site.container) != Some(NodeType::Document) {
+    if doc.type_(site.container) != Some(ArenaKind::Document) {
         return Ok(());
     }
     if element_child_count(doc, frag, None)
@@ -92,7 +92,7 @@ fn fragment_fits_container(doc: &Document, frag: NodeId, site: Site) -> Result<(
         return Err(MutError::Hierarchy);
     }
     for cur in doc.children(frag) {
-        if doc.type_(cur) == Some(NodeType::Doctype) {
+        if doc.type_(cur) == Some(ArenaKind::DocumentType) {
             return Err(MutError::Hierarchy);
         }
     }
@@ -157,12 +157,12 @@ fn is_insertable(doc: &Document, node: NodeId) -> bool {
     matches!(
         doc.type_(node),
         Some(
-            NodeType::Element
-                | NodeType::Text
-                | NodeType::CData
-                | NodeType::Comment
-                | NodeType::Pi
-                | NodeType::Doctype
+            ArenaKind::Element
+                | ArenaKind::Text
+                | ArenaKind::CDataSection
+                | ArenaKind::Comment
+                | ArenaKind::Pi
+                | ArenaKind::DocumentType
         )
     )
 }
@@ -283,13 +283,13 @@ impl Site {
             }
             if Some(cur) != exclude && cur != node {
                 match doc.type_(cur) {
-                    Some(NodeType::Element) => {
+                    Some(ArenaKind::Element) => {
                         t.elements += 1;
                         if !reached {
                             t.element_before = true;
                         }
                     }
-                    Some(NodeType::Doctype) => {
+                    Some(ArenaKind::DocumentType) => {
                         t.doctypes += 1;
                         if reached {
                             t.doctype_at_or_after = true;
@@ -307,16 +307,16 @@ impl Site {
     /// element, and no doctype anywhere else. Fail-closed.
     fn check(&self, doc: &Document, node: NodeId) -> Result<(), MutError> {
         let ty = doc.type_(node);
-        if doc.type_(self.container) != Some(NodeType::Document) {
+        if doc.type_(self.container) != Some(ArenaKind::Document) {
             /* Only a Document may hold a doctype. */
-            return if ty == Some(NodeType::Doctype) {
+            return if ty == Some(ArenaKind::DocumentType) {
                 Err(MutError::Hierarchy)
             } else {
                 Ok(())
             };
         }
         match ty {
-            Some(NodeType::Doctype) => {
+            Some(ArenaKind::DocumentType) => {
                 let t = self.tally(doc, node);
                 if t.doctypes > 0 || t.element_before {
                     Err(MutError::Hierarchy)
@@ -324,7 +324,7 @@ impl Site {
                     Ok(())
                 }
             }
-            Some(NodeType::Element) => {
+            Some(ArenaKind::Element) => {
                 let t = self.tally(doc, node);
                 if t.elements > 0 || t.doctype_at_or_after {
                     Err(MutError::Hierarchy)
@@ -367,7 +367,7 @@ fn prepare_insert(doc: &mut Document, site: Site, node: NodeId) -> Result<(), Mu
         return Err(MutError::Hierarchy);
     }
     let ct = doc.type_(site.container);
-    if ct != Some(NodeType::Element) && ct != Some(NodeType::Document) {
+    if ct != Some(ArenaKind::Element) && ct != Some(ArenaKind::Document) {
         return Err(MutError::Hierarchy);
     }
     if would_cycle(doc, site.container, node) {
@@ -446,7 +446,7 @@ pub fn remove(doc: &mut Document, node: NodeId) {
 fn element_child_count(doc: &Document, parent: NodeId, exclude: Option<NodeId>) -> usize {
     let mut n = 0;
     for cur in doc.children(parent) {
-        if Some(cur) != exclude && doc.type_(cur) == Some(NodeType::Element) {
+        if Some(cur) != exclude && doc.type_(cur) == Some(ArenaKind::Element) {
             n += 1;
         }
     }

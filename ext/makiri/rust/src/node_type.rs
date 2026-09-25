@@ -4,9 +4,9 @@
 //! node, and the Ruby boundary picks a node's class by it. It sits at the crate
 //! root, beside `token`, because none of those layers owns it: the adapter
 //! reading it from the engine's module would make Lexbor's reader depend on
-//! the query engine. The XML arena keeps its own narrower `xml::NodeType` (it
-//! has no `Other`, since it never stores an unknown kind) and converts into
-//! this one with `From`.
+//! the query engine. The XML arena keeps its own narrower `xml::model::ArenaKind`
+//! (it has no `Other`, since it never stores an unknown kind - and it names the
+//! variants exactly as this enum does) and converts into this one with `From`.
 
 #![forbid(unsafe_code)]
 

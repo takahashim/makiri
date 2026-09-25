@@ -109,7 +109,7 @@ impl<'d> Dom<'d> for &'d xml::Document {
     #[inline]
     fn as_attr(self, n: xml::NodeId) -> Option<xml::NodeId> {
         self.try_node(n)
-            .is_some_and(|x| x.type_ == xml::NodeType::Attribute)
+            .is_some_and(|x| x.type_ == xml::ArenaKind::Attribute)
             .then_some(n)
     }
     #[inline]
@@ -226,7 +226,7 @@ pub fn document_order(
     if a == b {
         return Some(core::cmp::Ordering::Equal); /* as the HTML side answers */
     }
-    let is_attr = |n| doc.type_(n) == Some(xml::NodeType::Attribute);
+    let is_attr = |n| doc.type_(n) == Some(xml::ArenaKind::Attribute);
     if is_attr(a) || is_attr(b) {
         return None;
     }

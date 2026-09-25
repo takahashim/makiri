@@ -17,7 +17,7 @@ use crate::xml::mutate;
 use crate::xml::qname;
 use crate::xml::tree::{parse, parse_ex, parse_fragment};
 use crate::xml::{
-    BudgetError, Document, Link, MutError, NodeId, NodeType, ParseError, ParseLimits, MAX_BYTES,
+    ArenaKind, BudgetError, Document, Link, MutError, NodeId, ParseError, ParseLimits, MAX_BYTES,
     XMLNS_NS_URI, XML_NS_URI,
 };
 
@@ -112,14 +112,14 @@ fn parse_fragment_checked(
 #[test]
 fn a_fresh_node_is_zeroed_and_a_stored_slice_is_copied() {
     let mut doc = doc_new();
-    let root = doc.new_node(NodeType::Element).expect("a new element");
+    let root = doc.new_node(ArenaKind::Element).expect("a new element");
     let local = doc.store(b"Feed").expect("room for the name");
 
     assert!(
         doc.node(root).first_child.is_none(),
         "a fresh node has no first child"
     );
-    assert_eq!(doc.type_(root), Some(NodeType::Element));
+    assert_eq!(doc.type_(root), Some(ArenaKind::Element));
     assert_eq!(
         doc.span(local),
         b"Feed",
@@ -136,10 +136,10 @@ fn a_fresh_node_is_zeroed_and_a_stored_slice_is_copied() {
 #[test]
 fn a_thousand_children_link_into_one_chain() {
     let mut doc = doc_new();
-    let root = doc.new_node(NodeType::Element).expect("a new element");
+    let root = doc.new_node(ArenaKind::Element).expect("a new element");
     for n in 0..1000 {
         let c = doc
-            .new_node(NodeType::Element)
+            .new_node(ArenaKind::Element)
             .unwrap_or_else(|e| panic!("child {n} of 1000: {e:?}"));
         doc.append_child(root, c);
     }
@@ -160,7 +160,7 @@ fn a_byte_budget_already_spent_refuses_the_next_node() {
      * document has ALREADY charged, so there is no room for one more node. */
     doc.max_bytes = doc.arena_bytes;
     assert_eq!(
-        doc.new_node(NodeType::Element).err(),
+        doc.new_node(ArenaKind::Element).err(),
         Some(BudgetError::Limit),
         "no room left for a node, and the reason is the budget"
     );
@@ -171,7 +171,7 @@ fn the_byte_budget_is_enforced_inside_the_allocator() {
     let mut doc = doc_new();
     doc.max_bytes = 4096;
     for _ in 0..100_000 {
-        if let Err(st) = doc.new_node(NodeType::Element) {
+        if let Err(st) = doc.new_node(ArenaKind::Element) {
             assert_eq!(st, BudgetError::Limit);
             return;
         }
@@ -184,7 +184,7 @@ fn the_node_budget_is_enforced() {
     let mut doc = doc_new();
     doc.max_nodes = 10;
     for _ in 0..100 {
-        if let Err(st) = doc.new_node(NodeType::Element) {
+        if let Err(st) = doc.new_node(ArenaKind::Element) {
             assert_eq!(st, BudgetError::Limit);
             return;
         }
@@ -201,12 +201,12 @@ fn a_document_parses_into_elements_attributes_and_text() {
     let doc = parse_ok(b"<Feed x='1' y='two'>hi<b/>z</Feed>");
     let root = root_of(&doc);
     assert_eq!(doc.local(root), b"Feed");
-    assert_eq!(doc.type_(root), Some(NodeType::Element));
+    assert_eq!(doc.type_(root), Some(ArenaKind::Element));
     assert_eq!(doc.node(root).line, 1, "the root starts on line 1");
 
     let a0 = attr(&doc, root);
     let a1 = sibling(&doc, a0);
-    assert_eq!(doc.type_(a0), Some(NodeType::Attribute));
+    assert_eq!(doc.type_(a0), Some(ArenaKind::Attribute));
     assert_eq!(doc.local(a0), b"x");
     assert_eq!(doc.value(a0), b"1");
     assert_eq!(doc.local(a1), b"y");
@@ -216,12 +216,12 @@ fn a_document_parses_into_elements_attributes_and_text() {
     let c0 = child(&doc, root);
     let c1 = sibling(&doc, c0);
     let c2 = sibling(&doc, c1);
-    assert_eq!(doc.type_(c0), Some(NodeType::Text));
+    assert_eq!(doc.type_(c0), Some(ArenaKind::Text));
     assert_eq!(doc.value(c0), b"hi");
-    assert_eq!(doc.type_(c1), Some(NodeType::Element));
+    assert_eq!(doc.type_(c1), Some(ArenaKind::Element));
     assert_eq!(doc.local(c1), b"b");
     assert!(doc.first_child(c1).is_none(), "<b/> is empty");
-    assert_eq!(doc.type_(c2), Some(NodeType::Text));
+    assert_eq!(doc.type_(c2), Some(ArenaKind::Text));
     assert_eq!(doc.value(c2), b"z");
     assert!(doc.next(c2).is_none(), "and no fourth child");
 
@@ -262,7 +262,7 @@ fn the_predefined_entities_and_character_references_expand() {
     let tx = child(&doc, r);
     assert_eq!(doc.value(ax), b"p&q");
     assert_eq!(doc.value(ay), b"AB");
-    assert_eq!(doc.type_(tx), Some(NodeType::Text));
+    assert_eq!(doc.type_(tx), Some(ArenaKind::Text));
     assert_eq!(doc.value(tx), b"1<2>3&4'5\"6");
 }
 
@@ -344,7 +344,7 @@ fn attribute_values_normalize_literal_whitespace_but_not_references() {
         b"p\tq\nr",
         "a reference-derived one survives"
     );
-    assert_eq!(doc.type_(tx), Some(NodeType::Text));
+    assert_eq!(doc.type_(tx), Some(ArenaKind::Text));
     assert_eq!(doc.value(tx), b"u\tv\nw", "text is not folded at all");
 }
 
@@ -359,11 +359,11 @@ fn comments_cdata_and_pis_become_nodes_inside_and_around_the_root() {
     let cm = child(&doc, r);
     let cd = sibling(&doc, cm);
     let pi = sibling(&doc, cd);
-    assert_eq!(doc.type_(cm), Some(NodeType::Comment));
+    assert_eq!(doc.type_(cm), Some(ArenaKind::Comment));
     assert_eq!(doc.value(cm), b"c");
-    assert_eq!(doc.type_(cd), Some(NodeType::CData));
+    assert_eq!(doc.type_(cd), Some(ArenaKind::CDataSection));
     assert_eq!(doc.value(cd), b"a<b");
-    assert_eq!(doc.type_(pi), Some(NodeType::Pi));
+    assert_eq!(doc.type_(pi), Some(ArenaKind::Pi));
     assert_eq!(doc.local(pi), b"pi");
     assert_eq!(doc.value(pi), b"dat");
     assert!(doc.next(pi).is_none(), "and nothing after the PI");
@@ -374,13 +374,13 @@ fn comments_cdata_and_pis_become_nodes_inside_and_around_the_root() {
     let p2 = sibling(&doc, p1);
     let p3 = sibling(&doc, p2);
     let p4 = sibling(&doc, p3);
-    assert_eq!(doc.type_(p1), Some(NodeType::Pi));
+    assert_eq!(doc.type_(p1), Some(ArenaKind::Pi));
     assert_eq!(doc.local(p1), b"xml-stylesheet");
-    assert_eq!(doc.type_(p2), Some(NodeType::Comment));
+    assert_eq!(doc.type_(p2), Some(ArenaKind::Comment));
     assert_eq!(doc.value(p2), b"top");
     assert_eq!(p3, r, "the root is the document node's third child");
     assert_eq!(doc.parent(r), Some(dn));
-    assert_eq!(doc.type_(p4), Some(NodeType::Pi));
+    assert_eq!(doc.type_(p4), Some(ArenaKind::Pi));
     assert_eq!(doc.local(p4), b"tail");
     assert!(doc.next(p4).is_none(), "and nothing after the trailing PI");
 }
@@ -423,7 +423,7 @@ fn a_doctype_is_recognized_and_kept_but_not_processed() {
     assert_eq!(doc.value(child(&doc, r)), b"ok");
 
     let dt = doc.doctype().expect("a doctype node");
-    assert_eq!(doc.type_(dt), Some(NodeType::Doctype));
+    assert_eq!(doc.type_(dt), Some(ArenaKind::DocumentType));
     assert_eq!(doc.parent(dt), Some(doc.doc_node()));
     assert_eq!(doc.first_child(doc.doc_node()), Some(dt));
     assert!(doc.prev(dt).is_none(), "the doctype comes first");
@@ -483,7 +483,7 @@ fn line_endings_normalize_to_lf() {
         b"p q ",
         "CRLF folds to LF, then LF to a space"
     );
-    assert_eq!(doc.type_(tx), Some(NodeType::Text));
+    assert_eq!(doc.type_(tx), Some(ArenaKind::Text));
     assert_eq!(doc.value(tx), b"m\nn\no");
 }
 
@@ -561,14 +561,14 @@ fn a_fragment_holds_several_top_level_nodes() {
     let mut fd = doc_new();
     let frag = parse_fragment_checked(&mut fd, b"<a/>txt<p:b xmlns:p='urn:p'>x</p:b>", false)
         .expect("a well-formed fragment");
-    assert_eq!(fd.type_(frag), Some(NodeType::Fragment));
+    assert_eq!(fd.type_(frag), Some(ArenaKind::DocumentFragment));
 
     let c0 = child(&fd, frag);
     let c1 = sibling(&fd, c0);
     let c2 = sibling(&fd, c1);
-    assert_eq!(fd.type_(c0), Some(NodeType::Element));
+    assert_eq!(fd.type_(c0), Some(ArenaKind::Element));
     assert_eq!(fd.local(c0), b"a");
-    assert_eq!(fd.type_(c1), Some(NodeType::Text));
+    assert_eq!(fd.type_(c1), Some(ArenaKind::Text));
     assert_eq!(fd.value(c1), b"txt");
     assert_eq!(fd.local(c2), b"b");
     assert_eq!(fd.ns(c2), b"urn:p", "a fragment may declare its own prefix");
@@ -680,20 +680,20 @@ fn a_leaf_value_holding_its_own_close_sequence_is_refused() {
     /* Each of these would end the construct early once serialized, so the value
      * is refused rather than escaped. */
     assert_eq!(
-        mutate::new_chardata(&mut doc, NodeType::Comment, b"a--b"),
+        mutate::new_chardata(&mut doc, ArenaKind::Comment, b"a--b"),
         Err(MutError::BadChars)
     );
     assert_eq!(
-        mutate::new_chardata(&mut doc, NodeType::Comment, b"x-"),
+        mutate::new_chardata(&mut doc, ArenaKind::Comment, b"x-"),
         Err(MutError::BadChars),
         "a trailing '-' would make '-->' out of the close"
     );
     assert_eq!(
-        mutate::new_chardata(&mut doc, NodeType::CData, b"a]]>b"),
+        mutate::new_chardata(&mut doc, ArenaKind::CDataSection, b"a]]>b"),
         Err(MutError::BadChars)
     );
 
-    let ok = mutate::new_chardata(&mut doc, NodeType::Comment, b"a-b").expect("one '-' is fine");
+    let ok = mutate::new_chardata(&mut doc, ArenaKind::Comment, b"a-b").expect("one '-' is fine");
     assert_eq!(
         mutate::set_content(&mut doc, ok, b"x--y"),
         Err(MutError::BadChars),
@@ -758,14 +758,14 @@ fn removing_an_attribute_is_idempotent() {
 fn set_content_replaces_the_children_with_one_text_node() {
     let (mut doc, r) = detached_element(b"r");
     /* Hand-linked, so the child is there without an insertion having run. */
-    let c1 = doc.new_node(NodeType::Element).expect("a child");
+    let c1 = doc.new_node(ArenaKind::Element).expect("a child");
     doc.set_parent(c1, Some(r));
     doc.node_mut(r).first_child = Link::of(c1);
     doc.node_mut(r).last_child = Link::of(c1);
 
     assert_eq!(mutate::set_content(&mut doc, r, b"hi"), Ok(()));
     let fc = child(&doc, r);
-    assert_eq!(doc.type_(fc), Some(NodeType::Text));
+    assert_eq!(doc.type_(fc), Some(ArenaKind::Text));
     assert_eq!(doc.node(fc).value.len, 2);
     assert_eq!(doc.last_child(r), Some(fc), "it is the only child");
     assert!(
@@ -785,7 +785,7 @@ fn chain_of_children(n: usize) -> (Box<Document>, NodeId, Vec<NodeId>) {
     let (mut doc, r) = detached_element(b"r");
     let mut kids = Vec::new();
     for _ in 0..n {
-        let c = doc.new_node(NodeType::Element).expect("a child");
+        let c = doc.new_node(ArenaKind::Element).expect("a child");
         doc.set_parent(c, Some(r));
         if let Some(&prev) = kids.last() {
             doc.node_mut(prev).next = Link::of(c);
@@ -841,7 +841,7 @@ fn connected_root() -> (Box<Document>, NodeId, NodeId) {
     let mut doc = doc_new();
     /* A live document node of this document's own, so `sync_doc_meta` fires and
      * re-derives `root` from the tree. */
-    let docn = doc.new_node(NodeType::Document).expect("a document node");
+    let docn = doc.new_node(ArenaKind::Document).expect("a document node");
     doc.doc_node = docn;
 
     let pr = mutate::new_element(&mut doc, b"pr").expect("a root element");
@@ -871,7 +871,7 @@ fn connected_tree() -> (Box<Document>, NodeId, NodeId, NodeId) {
 #[test]
 fn new_chardata_copies_its_text() {
     let mut doc = doc_new();
-    let tx = mutate::new_chardata(&mut doc, NodeType::Text, b"hi").expect("a text node");
+    let tx = mutate::new_chardata(&mut doc, ArenaKind::Text, b"hi").expect("a text node");
     assert_eq!(doc.node(tx).value.len, 2);
 }
 
@@ -884,7 +884,7 @@ fn inserting_a_subtree_resolves_its_prefixes_against_the_new_context() {
     assert_eq!(doc.parent(ne), Some(pr));
     assert_eq!(doc.ns(ne), b"urn:p", "the prefix resolved on insertion");
 
-    let tx = mutate::new_chardata(&mut doc, NodeType::Text, b"hi").expect("a text node");
+    let tx = mutate::new_chardata(&mut doc, ArenaKind::Text, b"hi").expect("a text node");
     assert_eq!(mutate::insert_child(&mut doc, ne, tx), Ok(()));
     assert_eq!(doc.first_child(ne), Some(tx));
 }
@@ -1001,12 +1001,12 @@ fn node_id_tokens_fail_closed_outside_their_document() {
     // index, and the null handle.
     let mut a = Document::create(None, 0).expect("doc a");
     let mut b = Document::create(None, 0).expect("doc b");
-    let na = a.new_node(NodeType::Element).expect("node a");
-    let nb = b.new_node(NodeType::Element).expect("node b");
+    let na = a.new_node(ArenaKind::Element).expect("node a");
+    let nb = b.new_node(ArenaKind::Element).expect("node b");
 
     // The handle resolves in its own document.
-    assert_eq!(a.try_node(na).map(|n| n.type_), Some(NodeType::Element));
-    assert_eq!(b.try_node(nb).map(|n| n.type_), Some(NodeType::Element));
+    assert_eq!(a.try_node(na).map(|n| n.type_), Some(ArenaKind::Element));
+    assert_eq!(b.try_node(nb).map(|n| n.type_), Some(ArenaKind::Element));
 
     // Same slot index, different document stamp -> rejected.
     assert_eq!(na.index(), nb.index());
@@ -1033,7 +1033,7 @@ fn node_id_tokens_fail_closed_outside_their_document() {
 #[should_panic(expected = "cannot be its own parent or sibling")]
 fn a_node_cannot_be_spliced_next_to_itself() {
     let (mut doc, r) = detached_element(b"r");
-    let a = doc.new_node(NodeType::Element).expect("a child");
+    let a = doc.new_node(ArenaKind::Element).expect("a child");
     doc.splice_between(r, a, None, Some(a));
 }
 
@@ -1041,7 +1041,7 @@ fn a_node_cannot_be_spliced_next_to_itself() {
 #[should_panic(expected = "cannot be its own parent or sibling")]
 fn a_node_cannot_be_spliced_after_itself() {
     let (mut doc, r) = detached_element(b"r");
-    let a = doc.new_node(NodeType::Element).expect("a child");
+    let a = doc.new_node(ArenaKind::Element).expect("a child");
     doc.splice_between(r, a, Some(a), None);
 }
 
@@ -1056,6 +1056,6 @@ fn a_node_cannot_be_its_own_parent() {
 #[should_panic(expected = "cannot be its own parent or sibling")]
 fn an_attribute_cannot_be_linked_after_itself() {
     let (mut doc, r) = detached_element(b"r");
-    let at = doc.new_node(NodeType::Attribute).expect("an attribute");
+    let at = doc.new_node(ArenaKind::Attribute).expect("an attribute");
     doc.link_attr(r, Some(at), at);
 }

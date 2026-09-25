@@ -21,7 +21,7 @@ use crate::bridge::xml::{
 };
 use crate::init::CLASS_XML_DOCUMENT;
 use crate::xml::dom_name::split_loose_dom_name;
-use crate::xml::model::{NodeId, NodeType};
+use crate::xml::model::{ArenaKind, NodeId};
 use crate::xml::mutate::{self, place, Place};
 
 /* ------------------------------------------------------------------ */
@@ -43,7 +43,7 @@ pub fn remove(this: XmlSelf) -> Result<Value, Error> {
 
 /// Whether `n`, in the receiver's document, is an element.
 fn is_element(this: &XmlSelf, n: NodeId) -> bool {
-    this.doc_ref().type_(n) == Some(NodeType::Element)
+    this.doc_ref().type_(n) == Some(ArenaKind::Element)
 }
 
 /// The receiver cleared for an edit, which must be an element.
@@ -314,7 +314,7 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
 fn create_chardata(
     rb_self: Value,
     text: Value,
-    type_: NodeType,
+    type_: ArenaKind,
     what: &str,
 ) -> Result<Value, Error> {
     let tv = verified_text(text, what)?;
@@ -326,13 +326,17 @@ fn create_chardata(
 }
 
 pub fn create_text_node(_ruby: &Ruby, rb_self: Value, t: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| create_chardata(rb_self, t, NodeType::Text, "text content"))
+    crate::bridge::ruby::entry(|| create_chardata(rb_self, t, ArenaKind::Text, "text content"))
 }
 pub fn create_comment(_ruby: &Ruby, rb_self: Value, t: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| create_chardata(rb_self, t, NodeType::Comment, "comment content"))
+    crate::bridge::ruby::entry(|| {
+        create_chardata(rb_self, t, ArenaKind::Comment, "comment content")
+    })
 }
 pub fn create_cdata(_ruby: &Ruby, rb_self: Value, t: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| create_chardata(rb_self, t, NodeType::CData, "CDATA content"))
+    crate::bridge::ruby::entry(|| {
+        create_chardata(rb_self, t, ArenaKind::CDataSection, "CDATA content")
+    })
 }
 
 pub fn create_pi(_ruby: &Ruby, rb_self: Value, target: Value, data: Value) -> Result<Value, Error> {

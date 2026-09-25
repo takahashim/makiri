@@ -66,74 +66,50 @@ impl From<BudgetError> for MutError {
     }
 }
 
-/* ---- node types ---- */
+/* ---- node kinds ---- */
 
-/// A DOM node type (`Node.nodeType`). The discriminants are the WHATWG DOM
-/// numbers - the same value Ruby's `#node_type` returns and the same set the
-/// XPath engine's `NodeType` names - so converting at those two boundaries is
-/// the identity on the number. Entity / entity-reference / notation (5, 6,
-/// 12) have no Makiri node and are not representable.
+/// An arena node's kind. The discriminants are the WHATWG DOM numbers - the
+/// same value Ruby's `#node_type` returns and the same set
+/// [`crate::node_type::NodeType`] names - so the conversion at the engine
+/// boundary is the identity on the number. Entity / entity-reference /
+/// notation (5, 6, 12) have no Makiri node and are not representable.
+///
+/// Named `ArenaKind`, not `NodeType`: the crate-wide
+/// [`NodeType`](crate::node_type::NodeType) is what every other layer reads,
+/// and the two used to share a name while spelling the variants differently.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(u32)]
-pub enum NodeType {
+pub enum ArenaKind {
     Element = 1,
     Attribute = 2,
     Text = 3,
-    CData = 4,
+    CDataSection = 4,
     Pi = 7,
     Comment = 8,
     Document = 9,
-    Doctype = 10,
-    Fragment = 11,
+    DocumentType = 10,
+    DocumentFragment = 11,
 }
 
-impl NodeType {
-    #[inline]
-    pub fn as_u32(self) -> u32 {
-        self as u32
-    }
-}
-
-impl TryFrom<u32> for NodeType {
-    type Error = ();
-    /// The inverse of [`NodeType::as_u32`], failing on anything the DOM does not
-    /// define (including the unused 5/6/12) so a bad value can never be stored.
-    #[inline]
-    fn try_from(v: u32) -> Result<Self, ()> {
-        Ok(match v {
-            1 => NodeType::Element,
-            2 => NodeType::Attribute,
-            3 => NodeType::Text,
-            4 => NodeType::CData,
-            7 => NodeType::Pi,
-            8 => NodeType::Comment,
-            9 => NodeType::Document,
-            10 => NodeType::Doctype,
-            11 => NodeType::Fragment,
-            _ => return Err(()),
-        })
-    }
-}
-
-impl From<NodeType> for crate::node_type::NodeType {
+impl From<ArenaKind> for crate::node_type::NodeType {
     /// The crate-wide [`NodeType`](crate::node_type::NodeType) of an arena
     /// node - the one the XPath engine and the Ruby class table read. The two
     /// enums share the DOM discriminants, so this is the identity on the
     /// number; XML simply has no entity, entity-reference or notation node to
     /// map.
     #[inline]
-    fn from(t: NodeType) -> Self {
+    fn from(t: ArenaKind) -> Self {
         use crate::node_type::NodeType as N;
         match t {
-            NodeType::Element => N::Element,
-            NodeType::Attribute => N::Attribute,
-            NodeType::Text => N::Text,
-            NodeType::CData => N::CDataSection,
-            NodeType::Pi => N::Pi,
-            NodeType::Comment => N::Comment,
-            NodeType::Document => N::Document,
-            NodeType::Doctype => N::DocumentType,
-            NodeType::Fragment => N::DocumentFragment,
+            ArenaKind::Element => N::Element,
+            ArenaKind::Attribute => N::Attribute,
+            ArenaKind::Text => N::Text,
+            ArenaKind::CDataSection => N::CDataSection,
+            ArenaKind::Pi => N::Pi,
+            ArenaKind::Comment => N::Comment,
+            ArenaKind::Document => N::Document,
+            ArenaKind::DocumentType => N::DocumentType,
+            ArenaKind::DocumentFragment => N::DocumentFragment,
         }
     }
 }
@@ -380,7 +356,7 @@ impl Link {
 /// data with no pointer to chase and no per-node document stamp (the stamp lives
 /// once on the [`Document`]).
 pub struct Node {
-    pub type_: NodeType,
+    pub type_: ArenaKind,
     pub parent: Option<Link>,
     pub first_child: Option<Link>,
     pub last_child: Option<Link>,
@@ -402,7 +378,7 @@ pub struct Node {
 const _: () = assert!(core::mem::size_of::<Node>() == 80);
 
 impl Node {
-    pub(crate) fn zeroed(type_: NodeType) -> Self {
+    pub(crate) fn zeroed(type_: ArenaKind) -> Self {
         Node {
             type_,
             parent: None,

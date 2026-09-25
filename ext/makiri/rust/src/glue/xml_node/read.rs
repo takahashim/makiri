@@ -21,7 +21,7 @@ use magnus::{prelude::*, Error, Ruby, Value};
 use super::strings::{str_field, utf8};
 use super::{wrap, XmlSelf};
 use crate::bridge::node_set::node_set_with_fill;
-use crate::xml::model::{Document as XmlDoc, NodeId, NodeType};
+use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId};
 
 fn nil(ruby: &Ruby) -> Value {
     ruby.qnil().as_value()
@@ -38,7 +38,7 @@ fn str_or_nil(ruby: &Ruby, bytes: Option<&[u8]>) -> Value {
 }
 
 fn is_element(d: &XmlDoc, id: NodeId) -> bool {
-    d.type_(id) == Some(NodeType::Element)
+    d.type_(id) == Some(ArenaKind::Element)
 }
 
 /* ---- name ---- */
@@ -52,11 +52,11 @@ pub fn name(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
         }
         Ok(match d.type_(id) {
             /* A PI's target and a DOCTYPE's name are its `local`. */
-            Some(NodeType::Pi | NodeType::Doctype) => str_field(ruby, d.local(id)),
-            Some(NodeType::Text) => ruby.str_new("text").as_value(),
-            Some(NodeType::CData) => ruby.str_new("#cdata-section").as_value(),
-            Some(NodeType::Comment) => ruby.str_new("comment").as_value(),
-            Some(NodeType::Fragment) => ruby.str_new("#document-fragment").as_value(),
+            Some(ArenaKind::Pi | ArenaKind::DocumentType) => str_field(ruby, d.local(id)),
+            Some(ArenaKind::Text) => ruby.str_new("text").as_value(),
+            Some(ArenaKind::CDataSection) => ruby.str_new("#cdata-section").as_value(),
+            Some(ArenaKind::Comment) => ruby.str_new("comment").as_value(),
+            Some(ArenaKind::DocumentFragment) => ruby.str_new("#document-fragment").as_value(),
             _ => ruby.str_new("document").as_value(),
         })
     })
@@ -108,13 +108,13 @@ pub fn tag_name(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
 pub fn pi_target(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let d = this.doc_ref();
-        let target = (d.type_(this.id) == Some(NodeType::Pi)).then(|| d.local(this.id));
+        let target = (d.type_(this.id) == Some(ArenaKind::Pi)).then(|| d.local(this.id));
         Ok(str_or_nil(ruby, target))
     })
 }
 
 pub fn node_type(_ruby: &Ruby, this: XmlSelf) -> Result<u32, Error> {
-    crate::bridge::ruby::entry(|| Ok(this.doc_ref().type_(this.id).map_or(0, |t| t.as_u32())))
+    crate::bridge::ruby::entry(|| Ok(this.doc_ref().type_(this.id).map_or(0, |t| t as u32)))
 }
 
 /* ---- DTD identifiers ----
@@ -158,11 +158,11 @@ pub fn content(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
         if matches!(
             d.type_(id),
             Some(
-                NodeType::Text
-                    | NodeType::CData
-                    | NodeType::Comment
-                    | NodeType::Attribute
-                    | NodeType::Pi
+                ArenaKind::Text
+                    | ArenaKind::CDataSection
+                    | ArenaKind::Comment
+                    | ArenaKind::Attribute
+                    | ArenaKind::Pi
             )
         ) {
             return Ok(str_field(ruby, d.value(id)));
@@ -170,7 +170,7 @@ pub fn content(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
 
         let texts = || {
             core::iter::successors(d.first_child(id), move |&n| d.preorder_next(id, n))
-                .filter(|&n| matches!(d.type_(n), Some(NodeType::Text | NodeType::CData)))
+                .filter(|&n| matches!(d.type_(n), Some(ArenaKind::Text | ArenaKind::CDataSection)))
                 .map(|n| d.value(n))
         };
         let total = texts().try_fold(0usize, |acc, t| acc.checked_add(t.len()));
@@ -190,7 +190,7 @@ pub fn content(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
 pub fn value(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let d = this.doc_ref();
-        if d.type_(this.id) == Some(NodeType::Attribute) {
+        if d.type_(this.id) == Some(ArenaKind::Attribute) {
             return Ok(str_field(ruby, d.value(this.id)));
         }
         content(ruby, this)

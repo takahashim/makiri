@@ -12,7 +12,7 @@ use super::assign_qname;
 use super::ns::{resolve_ns, Ns, Resolved, NO_NS};
 use crate::xml::chars::validate_chars;
 use crate::xml::qname::{ns_decl_check, split_checked, xmlns_prefix, Split};
-use crate::xml::{Document, MutError, NodeFlags, NodeId, NodeType, Span};
+use crate::xml::{ArenaKind, Document, MutError, NodeFlags, NodeId, Span};
 
 /// Build a fresh ATTRIBUTE (qname + value + namespace) and link it onto `el`
 /// after `tail`, the last entry the caller's own scan reached.
@@ -25,7 +25,7 @@ fn build_attr(
     ns: Resolved,
     tail: Option<NodeId>,
 ) -> Result<NodeId, MutError> {
-    let attr = doc.new_node(NodeType::Attribute)?;
+    let attr = doc.new_node(ArenaKind::Attribute)?;
     assign_qname(doc, attr, name, sp)?;
     doc.set_value_bytes(attr, val)?;
     ns.write_attr(doc, attr);
@@ -112,7 +112,7 @@ pub fn set_attribute(
     name: &[u8],
     val: &[u8],
 ) -> Result<NodeId, MutError> {
-    if doc.type_(el) != Some(NodeType::Element) {
+    if doc.type_(el) != Some(ArenaKind::Element) {
         return Err(MutError::Type);
     }
     let sp = split_checked(name).ok_or(MutError::BadName)?;
@@ -152,7 +152,7 @@ pub fn remove_attribute(doc: &mut Document, el: NodeId, name: &[u8]) -> bool {
 /// Unlink `el`'s attribute that `key` matches; `true` when there was one. The
 /// shared body of the two removers, which differ only in the key.
 fn remove_attr_by(doc: &mut Document, el: NodeId, key: AttrKey<'_>) -> bool {
-    if doc.type_(el) != Some(NodeType::Element) {
+    if doc.type_(el) != Some(ArenaKind::Element) {
         return false;
     }
     match find_attr(doc, el, key) {
@@ -182,7 +182,7 @@ pub fn set_attribute_ns(
     name: &[u8],
     val: &[u8],
 ) -> Result<NodeId, MutError> {
-    if doc.type_(el) != Some(NodeType::Element) {
+    if doc.type_(el) != Some(ArenaKind::Element) {
         return Err(MutError::Type);
     }
     let sp = split_checked(name).ok_or(MutError::BadName)?;

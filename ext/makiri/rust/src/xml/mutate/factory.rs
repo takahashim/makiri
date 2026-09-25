@@ -11,7 +11,7 @@ use super::assign_qname;
 use super::edit::value_seq_ok;
 use crate::xml::chars::validate_chars;
 use crate::xml::qname::{split_checked, Split};
-use crate::xml::{Document, MutError, NodeFlags, NodeId, NodeType};
+use crate::xml::{ArenaKind, Document, MutError, NodeFlags, NodeId};
 
 pub fn new_element(doc: &mut Document, name: &[u8]) -> Result<NodeId, MutError> {
     let sp = match split_checked(name) {
@@ -21,7 +21,7 @@ pub fn new_element(doc: &mut Document, name: &[u8]) -> Result<NodeId, MutError> 
     if sp.prefix_len == 5 && &name[..5] == b"xmlns" {
         return Err(MutError::BadName); /* xmlns: is not an element prefix */
     }
-    let el = doc.new_node(NodeType::Element)?;
+    let el = doc.new_node(ArenaKind::Element)?;
     assign_qname(doc, el, name, &sp)?;
     Ok(el) /* ns_uri stays unresolved until insertion */
 }
@@ -46,7 +46,7 @@ pub fn new_loose_dom_element(
     if local_off as usize + local_len as usize > name.len() || prefix_len as usize > name.len() {
         return Err(MutError::BadName);
     }
-    let el = doc.new_node(NodeType::Element)?;
+    let el = doc.new_node(ArenaKind::Element)?;
     doc.assign_qname(el, name, prefix_len, local_off, local_len)?;
     if !ns.is_empty() {
         doc.set_ns_bytes(el, ns)?;
@@ -55,8 +55,8 @@ pub fn new_loose_dom_element(
     Ok(el)
 }
 
-pub fn new_chardata(doc: &mut Document, ty: NodeType, text: &[u8]) -> Result<NodeId, MutError> {
-    if ty != NodeType::Text && ty != NodeType::CData && ty != NodeType::Comment {
+pub fn new_chardata(doc: &mut Document, ty: ArenaKind, text: &[u8]) -> Result<NodeId, MutError> {
+    if ty != ArenaKind::Text && ty != ArenaKind::CDataSection && ty != ArenaKind::Comment {
         return Err(MutError::Type);
     }
     if !validate_chars(text) {
@@ -78,10 +78,10 @@ pub fn new_pi(doc: &mut Document, target: &[u8], data: &[u8]) -> Result<NodeId, 
     if !validate_chars(data) {
         return Err(MutError::BadChars);
     }
-    if !value_seq_ok(NodeType::Pi, data) {
+    if !value_seq_ok(ArenaKind::Pi, data) {
         return Err(MutError::BadChars);
     }
-    let pi = doc.new_node(NodeType::Pi)?;
+    let pi = doc.new_node(ArenaKind::Pi)?;
     let t = doc.store(target)?;
     let d = doc.store(data)?;
     {
@@ -123,5 +123,6 @@ pub fn new_document_type(
 /// the arena's `new_node` directly, which is the layer the arena's `pub(super)`
 /// now closes off.
 pub fn new_fragment(doc: &mut Document) -> Result<NodeId, MutError> {
-    doc.new_node(NodeType::Fragment).map_err(MutError::from)
+    doc.new_node(ArenaKind::DocumentFragment)
+        .map_err(MutError::from)
 }

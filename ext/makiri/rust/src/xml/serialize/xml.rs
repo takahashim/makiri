@@ -22,7 +22,7 @@
 use super::out::{put, put_pi, W, XML};
 use super::Failure;
 use crate::cbuf::Buf;
-use crate::xml::model::{Document as XmlDoc, NodeFlags, NodeId, NodeType, MAX_DEPTH};
+use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeFlags, NodeId, MAX_DEPTH};
 use crate::xml::qname::xmlns_prefix;
 
 use super::bindings::{Bindings, Prefix, PREFIX_CAP};
@@ -296,17 +296,17 @@ impl<'d, 'b> Writer<'d, 'b> {
     fn node(&mut self, n: NodeId, depth: u32, binds: &mut Bindings<'d>) -> W {
         let doc = self.doc;
         match doc.type_(n) {
-            Some(NodeType::Doctype) => self.doctype(n),
-            Some(NodeType::Element) => self.element(n, depth, binds),
-            Some(NodeType::Text) => self.escape(doc.span(doc.node(n).value), false),
-            Some(NodeType::CData) => self.cdata(doc.span(doc.node(n).value)),
-            Some(NodeType::Comment) => {
+            Some(ArenaKind::DocumentType) => self.doctype(n),
+            Some(ArenaKind::Element) => self.element(n, depth, binds),
+            Some(ArenaKind::Text) => self.escape(doc.span(doc.node(n).value), false),
+            Some(ArenaKind::CDataSection) => self.cdata(doc.span(doc.node(n).value)),
+            Some(ArenaKind::Comment) => {
                 self.put(b"<!--")?;
                 self.put(doc.span(doc.node(n).value))?;
                 self.put(b"-->")
             }
-            Some(NodeType::Pi) => put_pi(self.b, doc, n),
-            Some(NodeType::Fragment) => {
+            Some(ArenaKind::Pi) => put_pi(self.b, doc, n),
+            Some(ArenaKind::DocumentFragment) => {
                 for cid in doc.children(n) {
                     self.node(cid, depth, binds)?;
                 }
@@ -412,7 +412,10 @@ impl<'d, 'b> Writer<'d, 'b> {
 
 fn has_chardata(doc: &XmlDoc, e: NodeId) -> bool {
     for id in doc.children(e) {
-        if matches!(doc.type_(id), Some(NodeType::Text | NodeType::CData)) {
+        if matches!(
+            doc.type_(id),
+            Some(ArenaKind::Text | ArenaKind::CDataSection)
+        ) {
             return true;
         }
     }
@@ -434,7 +437,7 @@ pub(super) fn write(
 ) -> W {
     let mut binds = Bindings::new();
     let mut w = Writer::new(b, doc, indent);
-    if doc.type_(n) != Some(NodeType::Document) {
+    if doc.type_(n) != Some(ArenaKind::Document) {
         return w.node(n, 0, &mut binds);
     }
     /* The Document node gives the declaration, then each top-level child on

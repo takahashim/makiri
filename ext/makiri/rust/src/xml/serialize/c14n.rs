@@ -12,7 +12,7 @@ use super::out::{put, put_pi, C14N, W};
 use super::{Failure, OrOom};
 use crate::cbuf::Buf;
 use crate::falloc::Reserve;
-use crate::xml::model::{Document as XmlDoc, NodeFlags, NodeId, NodeType, MAX_DEPTH};
+use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeFlags, NodeId, MAX_DEPTH};
 use crate::xml::qname::xmlns_prefix;
 
 fn xmlns_decl(doc: &XmlDoc, a: NodeId) -> Option<(&[u8], &[u8])> {
@@ -60,11 +60,11 @@ impl<'d> Writer<'d, '_> {
     fn node(&mut self, n: NodeId, is_apex: bool, depth: u32) -> W {
         let doc = self.doc;
         match doc.type_(n) {
-            Some(NodeType::Element) => self.element(n, is_apex, depth),
-            Some(NodeType::Text | NodeType::CData) => {
+            Some(ArenaKind::Element) => self.element(n, is_apex, depth),
+            Some(ArenaKind::Text | ArenaKind::CDataSection) => {
                 self.escape(doc.span(doc.node(n).value), false)
             }
-            Some(NodeType::Comment) => {
+            Some(ArenaKind::Comment) => {
                 if self.comments {
                     self.put(b"<!--")?;
                     self.put(doc.span(doc.node(n).value))?;
@@ -72,8 +72,8 @@ impl<'d> Writer<'d, '_> {
                 }
                 Ok(())
             }
-            Some(NodeType::Pi) => put_pi(self.b, doc, n),
-            Some(NodeType::Fragment) => self.children(n, depth),
+            Some(ArenaKind::Pi) => put_pi(self.b, doc, n),
+            Some(ArenaKind::DocumentFragment) => self.children(n, depth),
             _ => Ok(()),
         }
     }
@@ -198,7 +198,7 @@ impl<'d> Writer<'d, '_> {
         let mut chain: Vec<NodeId> = Vec::new();
         let mut up = doc.parent(n);
         while let Some(id) = up {
-            if doc.type_(id) == Some(NodeType::Element) {
+            if doc.type_(id) == Some(ArenaKind::Element) {
                 chain.falloc_reserve(1).or_oom()?;
                 chain.push(id);
             }
@@ -305,16 +305,16 @@ pub(super) fn write(b: &mut Buf, doc: &XmlDoc, n: NodeId, comments: bool) -> W {
         comments,
         binds: Bindings::new(),
     };
-    if doc.type_(n) != Some(NodeType::Document) {
+    if doc.type_(n) != Some(ArenaKind::Document) {
         return w.node(n, true, 0);
     }
     let mut seen_root = false;
     for cid in doc.children(n) {
         let ty = doc.type_(cid);
-        if ty == Some(NodeType::Element) {
+        if ty == Some(ArenaKind::Element) {
             w.node(cid, true, 0)?;
             seen_root = true;
-        } else if ty == Some(NodeType::Pi) || (ty == Some(NodeType::Comment) && comments) {
+        } else if ty == Some(ArenaKind::Pi) || (ty == Some(ArenaKind::Comment) && comments) {
             if seen_root {
                 w.put(b"\n")?;
             }

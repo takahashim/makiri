@@ -23,15 +23,15 @@ use crate::falloc::{try_vec_with_capacity, VecPush};
 use crate::lexbor::adapter::html::{
     BuildingElement, BuildingNode, HtmlDoc, HtmlElement, HtmlNode, NsId, RawDoc, RawNode,
 };
-use crate::xml::model::{Document as XmlDoc, MutError, NodeId, NodeType};
+use crate::xml::model::{ArenaKind, Document as XmlDoc, MutError, NodeId};
 use crate::xml::mutate;
 
-/* ---- the node types on both sides ----
+/* ---- the node kinds on both sides ----
  *
- * `H` is the HTML side's, the crate-wide type the adapter reads a Lexbor node
- * as; the mkr side arrives as `NodeType` from the XML engine. Keeping the
- * short name is what makes a comparison across representations read as one. */
-use crate::node_type::NodeType as H;
+ * `NodeType` is the crate-wide kind every layer reads; the XML arena arrives
+ * as its own `ArenaKind`. The two now have distinct names, so a comparison
+ * across representations reads for itself. */
+use crate::node_type::NodeType;
 
 /// A DOM name or value slice must fit `u32` - the mkr store's per-slice cap.
 #[inline]
@@ -188,17 +188,17 @@ fn h2x_make<'a>(
         return h2x_element(doc, e, parent_default, parent).map(Some);
     }
     let ty = match s.node_type() {
-        H::Text => NodeType::Text,
-        H::CDataSection => NodeType::CData,
-        H::Comment => NodeType::Comment,
-        H::Pi => {
+        NodeType::Text => ArenaKind::Text,
+        NodeType::CDataSection => ArenaKind::CDataSection,
+        NodeType::Comment => ArenaKind::Comment,
+        NodeType::Pi => {
             let target = s.pi_target().unwrap_or(&[]);
             if fits_u32(target.len()).is_none() {
                 return Err(MutError::Oom);
             }
             return unchanged(mutate::new_pi(doc, target, data(s)?)?);
         }
-        H::DocumentFragment => return unchanged(mutate::new_fragment(doc)?),
+        NodeType::DocumentFragment => return unchanged(mutate::new_fragment(doc)?),
         /* An unsupported descendant type is skipped, not an error. */
         _ => return Ok(None),
     };
@@ -364,7 +364,7 @@ fn x2h_make<'doc>(
     let made = |n: Option<BuildingNode<'doc>>| n.map(Some).ok_or(MutError::Oom);
 
     match doc.type_(s) {
-        Some(NodeType::Element) => {
+        Some(ArenaKind::Element) => {
             /* An element outside XHTML is made as createElementNS makes it:
              * with its prefix, so the copy's localName is `e` and not `p:e`
              * (as `//q:e` and local-name() read it), and with its case, so an
@@ -383,11 +383,11 @@ fn x2h_make<'doc>(
             x2h_copy_attrs(doc, s, el)?;
             Ok(Some(el.as_node()))
         }
-        Some(NodeType::Text) => made(hdoc.create_text(doc.value(s))),
-        Some(NodeType::Comment) => made(hdoc.create_comment(doc.value(s))),
-        Some(NodeType::Pi) => made(hdoc.create_pi(doc.local(s), doc.value(s))),
-        Some(NodeType::CData) => Err(MutError::Type), /* HTML has no CDATA section */
-        Some(NodeType::Fragment) => made(hdoc.create_fragment()),
+        Some(ArenaKind::Text) => made(hdoc.create_text(doc.value(s))),
+        Some(ArenaKind::Comment) => made(hdoc.create_comment(doc.value(s))),
+        Some(ArenaKind::Pi) => made(hdoc.create_pi(doc.local(s), doc.value(s))),
+        Some(ArenaKind::CDataSection) => Err(MutError::Type), /* HTML has no CDATA section */
+        Some(ArenaKind::DocumentFragment) => made(hdoc.create_fragment()),
         _ => Ok(None), /* unsupported descendant type: skip */
     }
 }

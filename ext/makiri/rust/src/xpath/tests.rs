@@ -15,7 +15,7 @@ use crate::xpath::limits::Budget;
 use crate::text::VerifiedText;
 use crate::token::Token;
 use crate::xml::tree::parse as xml_parse;
-use crate::xml::{NodeId, NodeType};
+use crate::xml::{ArenaKind, NodeId};
 use crate::xpath::ast::Ast;
 use crate::xpath::ctx::{Context, Resolver, ResolverCall, XPathValue};
 use crate::xpath::parse::parse_owned;
@@ -100,9 +100,9 @@ fn run(
         let describe = |node: &Token| {
             let id = NodeId::from_token(node.as_ptr() as usize);
             match doc.type_(id) {
-                Some(NodeType::Text) | Some(NodeType::CData) => "text".to_string(),
-                Some(NodeType::Comment) => "comment".to_string(),
-                Some(NodeType::Pi) => String::from_utf8_lossy(doc.local(id)).into_owned(),
+                Some(ArenaKind::Text) | Some(ArenaKind::CDataSection) => "text".to_string(),
+                Some(ArenaKind::Comment) => "comment".to_string(),
+                Some(ArenaKind::Pi) => String::from_utf8_lossy(doc.local(id)).into_owned(),
                 _ => String::from_utf8_lossy(doc.qname(id)).into_owned(),
             }
         };

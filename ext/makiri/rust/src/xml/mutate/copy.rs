@@ -13,7 +13,7 @@
 use super::copy_span;
 use crate::falloc::Reserve;
 use crate::xml::qname::Split;
-use crate::xml::{Document, MutError, NodeFlags, NodeId, NodeType, Span};
+use crate::xml::{ArenaKind, Document, MutError, NodeFlags, NodeId, Span};
 
 /// A copied `value` span. XML distinguishes "never set" from "set to empty" - a
 /// doctype's `PUBLIC ""` is present - so a copy has to carry the difference.
@@ -47,7 +47,7 @@ impl CopiedValue {
 /// One node's own fields, owned, out of any arena. Attributes come with it,
 /// since they are part of the node's identity rather than its children.
 struct CopiedNode {
-    type_: NodeType,
+    type_: ArenaKind,
     /// The qualified name and its split, for a node that has one.
     qname: Option<(Vec<u8>, Split)>,
     /// A bare local name (a PI target, a doctype name) on a node with no qname.
@@ -75,7 +75,7 @@ impl CopiedNode {
          * and carried the name's bytes plus whatever followed them in the store
          * into the copy as its PUBLIC id. Its name travels as a bare local and
          * the id as a value of its own. */
-        let doctype = type_ == NodeType::Doctype;
+        let doctype = type_ == ArenaKind::DocumentType;
 
         let qname = if qname_span.len > 0 && !doctype {
             Some((copy_span(doc.qname(src))?, doc.split_of(src)))
@@ -127,7 +127,7 @@ impl CopiedNode {
             let node = dst.node_mut(n);
             node.local = span;
             /* A doctype's name is both, as `new_document_type` stores it. */
-            if self.type_ == NodeType::Doctype {
+            if self.type_ == ArenaKind::DocumentType {
                 node.qname = span;
             }
         }
@@ -135,7 +135,7 @@ impl CopiedNode {
         dst.node_mut(n).value = value;
         /* Only a doctype: anything else's `prefix` is the split `assign_qname`
          * just wrote. */
-        if self.type_ == NodeType::Doctype {
+        if self.type_ == ArenaKind::DocumentType {
             let public = self.public.write(dst)?;
             dst.node_mut(n).prefix = public;
         }

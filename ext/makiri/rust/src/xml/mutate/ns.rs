@@ -16,7 +16,7 @@
 
 use crate::falloc::VecPush;
 use crate::xml::qname::{xmlns_prefix, Split};
-use crate::xml::{Document, MutError, NodeFlags, NodeId, NodeType, Span};
+use crate::xml::{ArenaKind, Document, MutError, NodeFlags, NodeId, Span};
 
 /// A resolved namespace: a byte-store span (empty = no namespace).
 pub(super) type Ns = Span;
@@ -229,7 +229,7 @@ fn resolve_subtree(doc: &mut Document, root: NodeId, connected: bool) -> Result<
     for pass in [Pass::Check, Pass::Commit] {
         let mut cur = Some(root);
         while let Some(c) = cur {
-            if doc.type_(c) == Some(NodeType::Element) {
+            if doc.type_(c) == Some(ArenaKind::Element) {
                 /* A decided element keeps its own namespace; its attributes set
                  * while it was detached may still be pending. */
                 let decided = ns_is_decided(doc, c);
@@ -319,7 +319,7 @@ pub fn namespace_in_scope<'d>(doc: &'d Document, node: NodeId, prefix: &[u8]) ->
 fn resolve_in_scope(doc: &Document, node: Option<NodeId>, prefix: &[u8]) -> Span {
     let mut e = node;
     while let Some(id) = e {
-        if doc.type_(id) == Some(NodeType::Element) {
+        if doc.type_(id) == Some(ArenaKind::Element) {
             let ignored = ignored_default_decl(doc, id);
             for at in doc.attributes(id) {
                 if let Some(p) = xmlns_prefix(doc.qname(at)) {

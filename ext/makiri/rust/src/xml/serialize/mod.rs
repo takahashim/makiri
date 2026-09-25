@@ -30,7 +30,7 @@ mod out;
 mod xml;
 
 use crate::cbuf::Buf;
-use crate::xml::model::{Document as XmlDoc, NodeId, NodeType};
+use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId};
 
 /// Why serialization produced no output.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -131,7 +131,7 @@ fn unserializable_name(doc: &XmlDoc, root: NodeId) -> Option<Failure> {
     let mut cur = Some(root);
     while let Some(id) = cur {
         match doc.type_(id) {
-            Some(NodeType::Element)
+            Some(ArenaKind::Element)
                 if doc
                     .node(id)
                     .flags
@@ -139,7 +139,7 @@ fn unserializable_name(doc: &XmlDoc, root: NodeId) -> Option<Failure> {
             {
                 return Some(Failure::DomLooseName)
             }
-            Some(NodeType::Pi) if doc.span(doc.node(id).local).contains(&b':') => {
+            Some(ArenaKind::Pi) if doc.span(doc.node(id).local).contains(&b':') => {
                 return Some(Failure::PiTargetColon)
             }
             _ => {}

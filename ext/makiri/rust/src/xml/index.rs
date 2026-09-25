@@ -11,7 +11,7 @@
 
 use crate::falloc;
 use crate::falloc::{MapInsert, Reserve, VecPush};
-use crate::xml::{Document, NodeId, NodeType};
+use crate::xml::{ArenaKind, Document, NodeId};
 use core::cell::Cell;
 use core::hash::{BuildHasherDefault, Hasher};
 use std::collections::HashMap;
@@ -114,7 +114,7 @@ fn build(doc: &Document) -> Option<Box<NameIndex>> {
     let mut max_key = 0usize;
     let mut cur = Some(root);
     while let Some(node) = cur {
-        if doc.type_(node) == Some(NodeType::Element) {
+        if doc.type_(node) == Some(ArenaKind::Element) {
             let (local, ns) = (doc.local(node), doc.ns(node));
             key.falloc_reserve(key_len(local, ns)).ok()?;
             key_into(&mut key, local, ns);

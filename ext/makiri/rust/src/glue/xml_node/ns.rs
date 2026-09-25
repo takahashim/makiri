@@ -15,7 +15,7 @@ use magnus::{prelude::*, Error, RArray, RClass, RHash, Ruby, Value};
 use super::strings::{str_field, utf8};
 use super::XmlSelf;
 use crate::init::MOD_XML;
-use crate::xml::model::{Document as XmlDoc, NodeId, NodeType};
+use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId};
 
 /// `Makiri::XML::Namespace.new(prefix, href)`.
 fn new_ns(prefix: Value, href: Value) -> Result<Value, Error> {
@@ -34,7 +34,7 @@ fn prefix_value(ruby: &Ruby, p: Option<&[u8]>) -> Value {
 /// The xmlns declarations among `id`'s attributes, as (declaring attribute,
 /// declared prefix - empty for the default - and URI). None for a non-element.
 fn declarations(d: &XmlDoc, id: NodeId) -> impl Iterator<Item = (NodeId, &[u8], &[u8])> + '_ {
-    (d.type_(id) == Some(NodeType::Element))
+    (d.type_(id) == Some(ArenaKind::Element))
         .then(|| d.attributes(id))
         .into_iter()
         .flatten()
