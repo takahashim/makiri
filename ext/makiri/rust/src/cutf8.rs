@@ -1,24 +1,29 @@
 //! The shared UTF-8 primitives.
 //!
-//! Two functions, deliberately implemented DIFFERENTLY from each other:
+//! Two functions:
 //!
 //! - [`valid`] is `core::str::from_utf8`. The C hand-wrote the Unicode
 //!   well-formed table with a word-at-a-time ASCII fast path; the standard
 //!   library does the same job, with the same acceptance set, and brings the
 //!   memory safety and the range guarantees with it.
-//! - [`decode1`] stays OURS, a direct port of the C's strict one-codepoint
-//!   decoder.
+//! - [`decode1`] stays OURS: a strict one-codepoint decoder.
 //!
-//! # Why not route both through `core::str`
+//! # Why `decode1` is not `core::str` too
 //!
-//! Because the property worth keeping is that the two AGREE, and agreement is
-//! only evidence when the two sides are written differently. The C proved it
-//! with CBMC by cross-checking its own decoder against its own table scan;
-//! routing both through the standard library would turn that into a
-//! restatement. `crate::xml::verify` already carries the same warning about
-//! `validate_chars`, written before this module existed.
+//! Performance, on a path that runs once per character. Stable std has no
+//! "decode the first code point of these bytes" - the nearest is
+//! `from_utf8(&p[..width])` then `.chars().next()`, which was measured and
+//! rejected: XML parsing of Japanese text took ~11% longer. `from_utf8` is
+//! built for long input (an alignment computation and a 16-byte ASCII block
+//! loop before the first multi-byte check, then a `Result` to build), is too
+//! large for LLVM to inline at every call site even under LTO, and leaves
+//! `.chars()` to decode the same bytes a second time. This decoder validates
+//! and assembles the code point in one pass.
 //!
-//! The Kani proofs in [`verify`] are what that cross-check became.
+//! It gives up nothing in correctness: [`verify::decode1_agrees_with_from_utf8`]
+//! proves it returns exactly what `from_utf8` accepts, for every input the
+//! bound covers. Keep that proof with it - it is what makes a hand-written
+//! decoder as trustworthy as the standard one.
 //!
 //! # What the CBMC proofs covered, and where each part went
 //!
@@ -55,6 +60,16 @@ pub fn decode1(p: &[u8]) -> Option<(u32, usize)> {
     if b0 < 0x80 {
         return Some((b0, 1));
     }
+    decode_multibyte(p, b0)
+}
+
+/// [`decode1`] past the ASCII fast path: `b0` is `p[0]`, and >= 0x80.
+///
+/// Out of line on purpose. It keeps `decode1` down to the ASCII test and a
+/// call, small enough to inline into every per-character loop, which measured
+/// ~10% on ASCII-heavy XML parsing and nothing lost on Japanese text.
+#[inline(never)]
+fn decode_multibyte(p: &[u8], b0: u32) -> Option<(u32, usize)> {
     let (len, min, init) = if b0 & 0xE0 == 0xC0 {
         (2usize, 0x80u32, b0 & 0x1F)
     } else if b0 & 0xF0 == 0xE0 {
