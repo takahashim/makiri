@@ -426,21 +426,12 @@ impl<'a> Parser<'a> {
             return self.cur.unsupported();
         }
 
-        let dt = self.new_node(NodeType::Doctype)?;
-        let nm = self.own(name)?;
-        {
-            let d = self.doc.node_mut(dt);
-            d.local = nm;
-            d.qname = nm;
-        }
-        if let Some(p) = ids.public {
-            let p = self.own(p)?;
-            self.doc.node_mut(dt).prefix = p;
-        }
-        if let Some(s) = ids.system {
-            let s = self.own(s)?;
-            self.doc.node_mut(dt).value = s;
-        }
+        let (public, system) = (
+            ids.public.map(|p| self.cur.slice(p)),
+            ids.system.map(|s| self.cur.slice(s)),
+        );
+        let r = self.doc.new_doctype(self.cur.slice(name), public, system);
+        let dt = self.arena(r)?;
         let dn = self.doc.doc_node();
         self.doc.append_child(dn, dt);
         self.doc.set_doctype(Some(dt));

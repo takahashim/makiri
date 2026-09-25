@@ -242,6 +242,34 @@ impl Document {
         })
     }
 
+    /// A new, detached DOCTYPE named `name`, with its PUBLIC and SYSTEM ids.
+    ///
+    /// The one writer of the layout [`doctype_ids`](Self::doctype_ids) reads: a
+    /// DOCTYPE repurposes the name fields, its name in both `local` and
+    /// `qname`, the PUBLIC id in `prefix` and the SYSTEM id in `value`; an
+    /// omitted id stays absent. The parser and the factory each wrote it out.
+    pub(super) fn new_doctype(
+        &mut self,
+        name: &[u8],
+        public: Option<&[u8]>,
+        system: Option<&[u8]>,
+    ) -> Result<NodeId, Status> {
+        let dt = self.new_node(NodeType::Doctype)?;
+        let name = self.store(name)?;
+        let node = self.node_mut(dt);
+        node.local = name;
+        node.qname = name;
+        if let Some(p) = public {
+            let p = self.store(p)?;
+            self.node_mut(dt).prefix = p;
+        }
+        if let Some(s) = system {
+            let s = self.store(s)?;
+            self.node_mut(dt).value = s;
+        }
+        Ok(dt)
+    }
+
     /// Copy `src` into the byte store, returning its span. Empty is the shared
     /// empty span (never an allocation).
     pub(super) fn store(&mut self, src: &[u8]) -> Result<Span, Status> {

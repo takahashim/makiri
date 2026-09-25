@@ -70,6 +70,27 @@ pub(super) fn key_taken(
     false
 }
 
+/// Where the first attribute of `el` that `hit` accepts sits in its list: the
+/// attribute and the one before it, or - when none matches - the last one,
+/// which a new attribute is linked after.
+enum AttrSlot {
+    Found { prev: Option<NodeId>, attr: NodeId },
+    Absent { tail: Option<NodeId> },
+}
+
+/// Find `el`'s first attribute `hit` accepts. Read-only: the edit that follows
+/// is the caller's, once the walk is over.
+fn find_attr(doc: &Document, el: NodeId, hit: impl Fn(NodeId) -> bool) -> AttrSlot {
+    let mut prev = None;
+    for attr in doc.attributes(el) {
+        if hit(attr) {
+            return AttrSlot::Found { prev, attr };
+        }
+        prev = Some(attr);
+    }
+    AttrSlot::Absent { tail: prev }
+}
+
 pub fn set_attribute(
     doc: &mut Document,
     el: NodeId,
@@ -79,10 +100,7 @@ pub fn set_attribute(
     if doc.type_(el) != Some(NodeType::Element) {
         return Err(MutStatus::Type);
     }
-    let sp = match split_checked(name) {
-        Some(s) => s,
-        None => return Err(MutStatus::BadName),
-    };
+    let sp = split_checked(name).ok_or(MutStatus::BadName)?;
     decl_check(name, val)?;
     if !validate_chars(val) {
         return Err(MutStatus::BadChars);
@@ -92,16 +110,13 @@ pub fn set_attribute(
      * it was named. Re-deriving it here gave a second attribute the key of
      * another (`q:x` moved under a scope where `q` meant another attribute's
      * namespace), silently, and dropped a namespace set_attribute_ns gave. */
-    let mut tail = None;
-    let mut a = doc.attrs(el);
-    while let Some(attr) = a {
-        if doc.qname(attr) == name {
+    let tail = match find_attr(doc, el, |a| doc.qname(a) == name) {
+        AttrSlot::Found { attr, .. } => {
             arena(doc.set_value_bytes(attr, val))?;
             return Ok(attr);
         }
-        tail = Some(attr);
-        a = doc.next(attr);
-    }
+        AttrSlot::Absent { tail } => tail,
+    };
     let connected = doc.is_connected(el);
     let r = resolve_ns(doc, Some(el), name, &sp, true, connected)?;
     /* No attribute has this QName, but one may have its key under another
@@ -119,17 +134,13 @@ pub fn remove_attribute(doc: &mut Document, el: NodeId, name: &[u8]) -> bool {
     if doc.type_(el) != Some(NodeType::Element) {
         return false;
     }
-    let mut prev: Option<NodeId> = None;
-    let mut a = doc.attrs(el);
-    while let Some(attr) = a {
-        if doc.qname(attr) == name {
+    match find_attr(doc, el, |a| doc.qname(a) == name) {
+        AttrSlot::Found { prev, attr } => {
             doc.unlink_attr(el, prev, attr);
-            return true;
+            true
         }
-        prev = Some(attr);
-        a = doc.next(attr);
+        AttrSlot::Absent { .. } => false,
     }
-    false
 }
 
 /// `a` is keyed by (ns, local) - the DOM key; an empty wanted namespace
@@ -153,10 +164,7 @@ pub fn set_attribute_ns(
     if doc.type_(el) != Some(NodeType::Element) {
         return Err(MutStatus::Type);
     }
-    let sp = match split_checked(name) {
-        Some(s) => s,
-        None => return Err(MutStatus::BadName),
-    };
+    let sp = split_checked(name).ok_or(MutStatus::BadName)?;
     if !crate::xml::qname::ns_fits_name(ns, name, &sp) {
         return Err(MutStatus::BadNsName);
     }
@@ -165,16 +173,13 @@ pub fn set_attribute_ns(
         return Err(MutStatus::BadChars);
     }
     let local = &name[sp.local_off as usize..];
-    let mut tail = None;
-    let mut a = doc.attrs(el);
-    while let Some(attr) = a {
-        if attr_matches_ns(doc, attr, ns, local) {
+    let tail = match find_attr(doc, el, |a| attr_matches_ns(doc, a, ns, local)) {
+        AttrSlot::Found { attr, .. } => {
             arena(doc.set_value_bytes(attr, val))?;
             return Ok(attr);
         }
-        tail = Some(attr);
-        a = doc.next(attr);
-    }
+        AttrSlot::Absent { tail } => tail,
+    };
     /* no match: copy the namespace into the arena only now */
     let nsv: Ns = if ns.is_empty() {
         NO_NS
@@ -191,15 +196,11 @@ pub fn remove_attribute_ns(doc: &mut Document, el: NodeId, ns: &[u8], local: &[u
     if doc.type_(el) != Some(NodeType::Element) {
         return false;
     }
-    let mut prev: Option<NodeId> = None;
-    let mut a = doc.attrs(el);
-    while let Some(attr) = a {
-        if attr_matches_ns(doc, attr, ns, local) {
+    match find_attr(doc, el, |a| attr_matches_ns(doc, a, ns, local)) {
+        AttrSlot::Found { prev, attr } => {
             doc.unlink_attr(el, prev, attr);
-            return true;
+            true
         }
-        prev = Some(attr);
-        a = doc.next(attr);
+        AttrSlot::Absent { .. } => false,
     }
-    false
 }

@@ -112,22 +112,7 @@ pub fn new_document_type(
     if sys_id.is_some_and(|id| !validate_chars(id) || (id.contains(&b'"') && id.contains(&b'\''))) {
         return Err(MutStatus::BadChars);
     }
-    let dt = arena(doc.new_node(NodeType::Doctype))?;
-    let nm = arena(doc.store(name))?;
-    {
-        let n = doc.node_mut(dt);
-        n.local = nm;
-        n.qname = nm;
-    }
-    if let Some(p) = pub_id {
-        let pp = arena(doc.store(p))?;
-        doc.node_mut(dt).prefix = pp;
-    }
-    if let Some(s) = sys_id {
-        let sp = arena(doc.store(s))?;
-        doc.node_mut(dt).value = sp;
-    }
-    Ok(dt)
+    arena(doc.new_doctype(name, pub_id, sys_id))
 }
 
 /// A detached, empty DOCUMENT_FRAGMENT.
