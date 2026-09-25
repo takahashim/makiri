@@ -31,7 +31,7 @@ fn show(s: &[u8]) -> String {
 }
 
 fn doc_new() -> Box<Document> {
-    Document::create(None, 0).expect("a fresh document")
+    Document::create(None).expect("a fresh document")
 }
 
 /// Parse a literal that must be well-formed.
@@ -999,8 +999,8 @@ fn node_id_tokens_fail_closed_outside_their_document() {
     // reject anything that does not name a live slot in THIS document: a
     // foreign document's handle (same index, different stamp), an out-of-range
     // index, and the null handle.
-    let mut a = Document::create(None, 0).expect("doc a");
-    let mut b = Document::create(None, 0).expect("doc b");
+    let mut a = Document::create(None).expect("doc a");
+    let mut b = Document::create(None).expect("doc b");
     let na = a.new_node(ArenaKind::Element).expect("node a");
     let nb = b.new_node(ArenaKind::Element).expect("node b");
 

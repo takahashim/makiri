@@ -413,13 +413,9 @@ impl Unit {
 /// byte or a NUL all raise), then copies into a private buffer BEFORE the
 /// wrapper exists, so no GC point can run between obtaining the decoded String
 /// and copying it.
-pub fn parse_xml_document(
-    source: Value,
-    limits: ParseLimits,
-    budget: usize,
-) -> Result<Value, Error> {
+pub fn parse_xml_document(source: Value, limits: ParseLimits) -> Result<Value, Error> {
     let source = crate::bridge::ruby::string_of(source)?;
-    let decoded = xml_decode_input_value(source, Some(budget))?;
+    let decoded = xml_decode_input_value(source, Some(limits.budget()))?;
     let src = crate::bridge::string::ruby_string_bytes(decoded)?;
 
     /* The wrapper first, while nothing needs freeing (see DocumentShell). The
@@ -451,8 +447,8 @@ pub fn document_internal_subset(rb_self: Value) -> Option<Value> {
 /// A fresh, empty XML Document: an arena holding a DOCUMENT node and no root.
 pub fn new_empty_xml_document() -> Result<Value, Error> {
     let shell = DocumentShell::new(DocKind::Xml);
-    let arena = XmlDoc::create(None, 0)
-        .map_err(|_| makiri_error("out of memory allocating XML document"))?;
+    let arena =
+        XmlDoc::create(None).map_err(|_| makiri_error("out of memory allocating XML document"))?;
     Ok(shell.install_xml(arena))
 }
 

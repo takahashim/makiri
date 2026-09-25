@@ -40,16 +40,13 @@ static DOC_STAMP: AtomicU32 = AtomicU32::new(1);
 const NODE_COST: usize = core::mem::size_of::<Node>();
 
 impl Document {
-    /// A fresh document under the byte budget `max_bytes` (None: the default,
-    /// [`crate::xml::MAX_BYTES`]), rejecting `src_len` up front when it already
-    /// exceeds that budget.
-    pub fn create(max_bytes: Option<usize>, src_len: usize) -> Result<Box<Document>, BudgetError> {
+    /// A fresh document under `limits` (None: the default budget). The source
+    /// length is checked by `tree::check_source_len`, which the two entry
+    /// points share, so this only records the budget.
+    pub fn create(limits: Option<&crate::xml::ParseLimits>) -> Result<Box<Document>, BudgetError> {
         let mut doc = crate::falloc::try_box(Document::blank()).map_err(|_| BudgetError::Oom)?;
-        if let Some(mb) = max_bytes {
-            doc.max_bytes = mb;
-        }
-        if src_len > doc.max_bytes {
-            return Err(BudgetError::Limit);
+        if let Some(l) = limits {
+            doc.max_bytes = l.budget();
         }
         let mut stamp = DOC_STAMP.fetch_add(1, Ordering::Relaxed);
         if stamp == 0 {

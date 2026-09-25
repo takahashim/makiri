@@ -405,6 +405,15 @@ pub struct ParseLimits {
     pub max_bytes: Option<usize>,
 }
 
+impl ParseLimits {
+    /// The effective byte budget: `max_bytes`, or [`MAX_BYTES`]. The ONE place
+    /// the default is resolved, so the parse, the fragment parse and the
+    /// decode that runs before either cannot disagree.
+    pub fn budget(&self) -> usize {
+        self.max_bytes.unwrap_or(MAX_BYTES)
+    }
+}
+
 /// An XML document and the arena that owns its nodes and bytes.
 ///
 /// `nodes[i]` is the node whose `NodeId.index` is `i`; the byte store holds

@@ -18,7 +18,7 @@ use magnus::{function, method, prelude::*, Error, RHash, Ruby, Value};
 
 use crate::bridge::xml::wrap_xml_node as wrap;
 use crate::init::{CLASS_XML_DOCUMENT, CLASS_XML_DOCUMENT_FRAGMENT};
-use crate::xml::model::{ParseLimits, MAX_BYTES};
+use crate::xml::model::ParseLimits;
 
 /// The optional per-parse budget overrides.
 ///
@@ -74,7 +74,6 @@ fn s_parse(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
         let scanned = magnus::scan_args::scan_args::<(Value,), (), (), (), RHash, ()>(args)?;
         let (source,) = scanned.required;
         let limits = parse_limits(ruby, scanned.keywords)?;
-        let budget = limits.max_bytes.unwrap_or(MAX_BYTES);
 
         /* An IO/File-like source is read first, as the HTML entry does; a String
          * passes straight through. */
@@ -83,7 +82,7 @@ fn s_parse(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
         } else {
             source
         };
-        crate::bridge::xml::parse_xml_document(source, limits, budget)
+        crate::bridge::xml::parse_xml_document(source, limits)
     })
 }
 

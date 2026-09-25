@@ -574,10 +574,21 @@ pub fn parse(src: &[u8]) -> Result<Box<Document>, ParseError> {
     parse_ex(src, None)
 }
 
-/// Parse `src` into a fresh document. `Document::create` applies `limits` and
-/// rejects an over-long source, so the budget is checked in exactly one place.
+/// Reject a source longer than the budget. The ONE length check, shared by the
+/// document parse and the fragment parse.
+fn check_source_len(src_len: usize, max_bytes: usize) -> Result<(), ParseError> {
+    if src_len > max_bytes {
+        Err(ParseError::Limit)
+    } else {
+        Ok(())
+    }
+}
+
+/// Parse `src` into a fresh document under `limits`.
 pub fn parse_ex(src: &[u8], limits: Option<&ParseLimits>) -> Result<Box<Document>, ParseError> {
-    let mut doc = Document::create(limits.and_then(|l| l.max_bytes), src.len())?;
+    let max_bytes = limits.map_or(crate::xml::MAX_BYTES, ParseLimits::budget);
+    check_source_len(src.len(), max_bytes)?;
+    let mut doc = Document::create(limits)?;
     let norm = normalize_newlines(src)?;
     Parser::new(norm.as_deref().unwrap_or(src), &mut doc, None).run_to_end(true)?;
     Ok(doc)
@@ -597,9 +608,7 @@ pub fn parse_fragment(
     src: &[u8],
     inherit_doc_ns: bool,
 ) -> Result<NodeId, ParseError> {
-    if src.len() > doc.max_bytes {
-        return Err(ParseError::Limit);
-    }
+    check_source_len(src.len(), doc.max_bytes)?;
     let mark = doc.mark();
     match parse_fragment_into(doc, src, inherit_doc_ns) {
         Ok(frag) => Ok(frag),
