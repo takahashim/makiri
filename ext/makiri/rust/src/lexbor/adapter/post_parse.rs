@@ -41,8 +41,8 @@ use crate::lexbor::adapter::source_loc::{
     lines_build, pos_assign_to_dom, pos_token_cb, Lines, Positions, Recorder,
 };
 use crate::lexbor::adapter::text_index::TextIndex;
-use crate::lexbor::adapter::utf8_input::sanitize;
 use crate::text::BorrowedText;
+use crate::utf8_input::sanitize;
 
 type HtmlDoc = lxb::lxb_html_document_t;
 

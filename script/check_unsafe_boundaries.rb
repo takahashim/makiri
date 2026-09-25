@@ -93,9 +93,9 @@ FORBID_FILES = %w[
   glue/query.rs glue/xml_doc.rs glue/xml_node/css.rs
   glue/xml_node/mod.rs glue/xml_node/mutate.rs glue/xml_node/ns.rs
   glue/xml_node/read.rs glue/xml_node/serialize.rs glue/xml_node/strings.rs
-  glue/xpath_context.rs lexbor/adapter/dom_index.rs lexbor/adapter/utf8_input.rs
-  lexbor/contains_guard.rs limits.rs node_type.rs
-  ptr_table.rs xml/arena.rs xml/chars/expand.rs
+  glue/xpath_context.rs lexbor/adapter/dom_index.rs lexbor/contains_guard.rs
+  limits.rs node_type.rs ptr_table.rs
+  utf8_input.rs xml/arena.rs xml/chars/expand.rs
   xml/chars/mod.rs xml/dom_name.rs xml/encoding_sniff.rs
   xml/index.rs xml/mod.rs xml/model.rs
   xml/mutate/attr.rs xml/mutate/copy.rs xml/mutate/edit.rs
@@ -158,7 +158,7 @@ LEXBOR_ABI_COUNTS = {}.freeze
 # along - so the table is empty and any such use fails.
 # The crate-root modules the engine is built on sit outside those directories
 # and are held to the same two rules.
-ENGINE_DIRS = %w[lexbor/ xml/ xpath/ css/ falloc/ cbuf.rs cutf8.rs limits.rs node_type.rs ptr_table.rs text.rs token.rs].freeze
+ENGINE_DIRS = %w[lexbor/ xml/ xpath/ css/ falloc/ cbuf.rs cutf8.rs limits.rs node_type.rs ptr_table.rs text.rs token.rs utf8_input.rs].freeze
 RUBY_LAYER = /crate::(?:bridge|glue|init)|magnus::/
 RUBY_LAYER_COUNTS = {}.freeze
 

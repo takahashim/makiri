@@ -243,8 +243,8 @@ SCENARIOS = {
   end,
 
   # Invalid UTF-8 input, which is the ONLY path that reaches the sanitiser's
-  # buffer: every other scenario feeds valid UTF-8, where `utf8_sanitize`
-  # (lexbor/adapter/utf8_input.rs) short-circuits and allocates nothing. The 3x growth and the steal are what
+  # buffer: every other scenario feeds valid UTF-8, where `sanitize`
+  # (utf8_input.rs) short-circuits and allocates nothing. The 3x growth and the steal are what
   # is being swept here, and a truncated document is exactly the failure the
   # property forbids.
   "html_invalid_utf8" => lambda do

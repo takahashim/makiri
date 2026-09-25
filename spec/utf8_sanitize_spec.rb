@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
-# Browser-compatible UTF-8 input sanitisation (dom_adapter/utf8_input.c, or its
-# Rust port): every invalid sequence becomes U+FFFD, per WHATWG byte-stream
-# decoding, so parsing NEVER fails on bad bytes and the DOM is always valid
-# UTF-8.
+# Browser-compatible UTF-8 input sanitisation (ext/makiri/rust/src/
+# utf8_input.rs, formerly dom_adapter/utf8_input.c): every invalid sequence
+# becomes U+FFFD, per WHATWG byte-stream decoding, so parsing NEVER fails on bad
+# bytes and the DOM is always valid UTF-8.
 #
 # The Rust port replaced Lexbor's decode/encode pipeline with the standard
 # library's lossy decode. That is only sound if the two agree on where one

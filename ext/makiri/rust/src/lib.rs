@@ -82,6 +82,12 @@ pub mod css;
 /// feature set.
 pub mod cutf8;
 
+/// The HTML input sanitiser: invalid UTF-8 becomes U+FFFD, per WHATWG
+/// byte-stream decoding. Ruby-free and Lexbor-free - it is `cbuf` and `cutf8`
+/// only - so it sits with the engine even though only the HTML parse path calls
+/// it.
+pub mod utf8_input;
+
 /// Borrowed text views and their two contracts: `VerifiedText` (no NUL, for
 /// engine inputs) and `BorrowedText` (NUL permitted, for DOM data).
 /// Unconditional: the engine, the DOM adapter and the glue all pass them.

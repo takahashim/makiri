@@ -444,6 +444,8 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            Ruby-side storage is Ruby's xmalloc; see the gotchas)
     cbuf.rs                `Buf`: the owned, capped, growable byte buffer
     cutf8.rs               the one UTF-8 validator + strict 1-codepoint decoder
+    utf8_input.rs          HTML input sanitiser: invalid UTF-8 -> U+FFFD, per
+                           WHATWG; `cbuf`+`cutf8` only, so Ruby/Lexbor-free
     bridge/                the Ruby boundary - the ONLY layer allowed raw Ruby String
                            access (RSTRING) and verified-string minting, and where
                            raising C calls (rb_String, typed-data checks) and the
@@ -530,8 +532,8 @@ through untouched (the UTF-8 common case is a single encoding compare - no
 transcode, no copy), any other encoding (Shift_JIS, EUC-JP, ISO-8859-1, ...) is
 `rb_str_encode`'d to UTF-8 (invalid/undef → U+FFFD) so its content survives
 instead of being read as raw UTF-8. After that the bytes are UTF-8. **HTML
-parsing then decodes leniently like a browser**: `utf8_sanitize`
-(`lexbor/adapter/utf8_input.rs`) replaces any remaining invalid UTF-8 with U+FFFD (a NUL is left
+parsing then decodes leniently like a browser**: `sanitize`
+(`utf8_input.rs`) replaces any remaining invalid UTF-8 with U+FFFD (a NUL is left
 for the HTML5 tokenizer to drop/replace), so parse/fragment **never fail** on
 bad bytes and the DOM is always valid UTF-8. The validation is a dedicated
 validate-only scan (Unicode well-formed table + word-at-a-time ASCII); it is

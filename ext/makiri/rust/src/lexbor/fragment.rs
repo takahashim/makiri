@@ -24,7 +24,6 @@ use crate::lexbor::abi::LxbNode;
 use crate::lexbor::adapter::html::{
     BuildingNode, HtmlDoc, HtmlElement, HtmlNode, LexborRefused, NsId, RawDoc, RawNode, TagId,
 };
-use crate::lexbor::adapter::utf8_input::sanitize;
 
 /* The two fragment parsers, both generated. Everything this file does to the
  * DOM itself goes through `lexbor::adapter::html` - these are the parser, not
@@ -36,6 +35,7 @@ use crate::lexbor::abi::{lxb_html_parse_fragment, lxb_html_parse_fragment_by_tag
  * the tokenizer inside it and build.rs started generating them - two Rust types
  * for one symbol again. */
 use crate::lexbor::abi::HtmlParser;
+use crate::utf8_input::sanitize;
 
 /// `lxb_dom_document_import_node` deep-clones the normal child chain but NOT a
 /// `<template>`'s separate content fragment, so an imported template comes out
