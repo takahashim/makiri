@@ -333,7 +333,7 @@ impl<'doc> HtmlDoc<'doc> {
     /// `raw` must be null or a live document that outlives `'doc` and is not
     /// restructured (see the section note) while `'doc` lasts.
     #[inline]
-    pub unsafe fn from_raw(raw: *mut LxbDoc) -> Option<Self> {
+    pub(in crate::lexbor::adapter) unsafe fn from_raw(raw: *mut LxbDoc) -> Option<Self> {
         NonNull::new(raw).map(|raw| HtmlDoc::from_non_null(raw))
     }
 
@@ -420,7 +420,7 @@ impl<'doc> HtmlNode<'doc> {
     /// `raw` must be null or a live node whose document outlives `'doc` and is
     /// not restructured (see the section note) while `'doc` lasts.
     #[inline]
-    pub unsafe fn from_raw(raw: *mut LxbNode) -> Option<Self> {
+    pub(in crate::lexbor::adapter) unsafe fn from_raw(raw: *mut LxbNode) -> Option<Self> {
         NonNull::new(raw).map(|raw| HtmlNode {
             raw,
             _doc: PhantomData,

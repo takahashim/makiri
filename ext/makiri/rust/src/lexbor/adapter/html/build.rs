@@ -435,7 +435,7 @@ impl<'doc> BuildingElement<'doc> {
     /// `el` must be a live element that outlives `'doc`, freshly created and
     /// not yet linked into any tree.
     #[inline]
-    pub unsafe fn from_raw(el: *mut LxbElement) -> Option<Self> {
+    pub(in crate::lexbor::adapter) unsafe fn from_raw(el: *mut LxbElement) -> Option<Self> {
         HtmlNode::from_raw(el as *mut LxbNode).map(|n| BuildingElement(HtmlElement(n)))
     }
 

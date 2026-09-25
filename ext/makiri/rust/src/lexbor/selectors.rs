@@ -174,9 +174,15 @@ impl CachePolicy {
 /// and has no `Drop`; what it adds over the raw pointer is that it is non-null,
 /// and neither `Copy` nor `Clone`, so a list is only ever LENT. A cached one is
 /// lent by [`SelectorCache::with_list`] from a `&mut` borrow of the cache, and
-/// `flush` needs that same borrow - so the compiler rules out flushing the arena
-/// under a list in use. A bypass-path list is a local that goes out of scope
-/// before its `clean_all`.
+/// [`SelectorCache::flush`] needs that same borrow - so the compiler rules out
+/// flushing THROUGH THE CACHE under a list in use. It does not rule out
+/// cleaning the arena directly: the arena belongs to `SelectorParser`, a `Copy`
+/// value, and its `clean_arena`/`clean_all` are callable wherever an `Engine`
+/// is - `with_list`'s closure included. What keeps them out is that
+/// `with_compiled_selector` calls them in exactly two places (the bypass path,
+/// on a list it has already dropped, and [`Session`]'s unwind reset), and no
+/// closure it passes does. A bypass-path list is a local that goes out of
+/// scope before its `clean_all`.
 struct CompiledList(NonNull<SelectorList>);
 
 impl CompiledList {

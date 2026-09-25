@@ -235,27 +235,34 @@ unless File.binread(File.join(RUST, "lib.rs")).include?("#![deny(unsafe_code)]")
   errors << "lib.rs: must retain #![deny(unsafe_code)] - it is what makes the rest a ratchet"
 end
 
-# The typed handles keep their raw pointers private to `lexbor::adapter`, so
-# nothing above the adapter - not the facades, not the glue - can read a Lexbor
-# struct field through one, or hand a Lexbor pointer on. This is what closed
-# the `compat_mode` leak: a field read spells no `lxb_*`/`Lxb*` name, so
-# LEXBOR_ABI below cannot see it, and only the compiler can enforce this one.
-# A facade that needs a node pointer for a Lexbor call takes `RawNode::as_lxb_mut`.
-RAW_ACCESSORS = {
-  "lexbor/adapter/html/mod.rs" => [
-    "pub(in crate::lexbor::adapter) fn as_raw(self) -> *mut LxbDoc", # HtmlDoc
-    "pub(in crate::lexbor::adapter) fn as_raw(self) -> *mut LxbNode", # HtmlNode
-    "pub(in crate::lexbor::adapter) fn raw(self) -> *mut LxbAttr", # HtmlAttr
-    # The unbounded-lifetime slice cast; `HtmlParsed::tag_bucket` wraps it safely.
-    "pub(in crate::lexbor::adapter) unsafe fn as_html_nodes_unchecked<'doc>(",
-  ],
-  "lexbor/adapter/html/build.rs" => ["pub(in crate::lexbor::adapter) fn as_raw(self) -> *mut LxbNode"],
-  "lexbor/adapter/html/mutate.rs" => ["pub(in crate::lexbor::adapter) fn as_raw(self) -> *mut LxbNode"],
+# The typed handles keep Lexbor pointers inside `lexbor::adapter`, so nothing
+# above it - not the facades, not the glue - can read a Lexbor struct field
+# through one. This is what closed the `compat_mode` leak: a field read spells
+# no `lxb_*`/`Lxb*` name, so LEXBOR_ABI below cannot see it, and only the
+# compiler can enforce this one.
+#
+# Stated as a rule rather than a list of signatures: every `fn` under
+# `lexbor/adapter/` whose signature carries a `*mut Lxb*`/`*const Lxb*` must be
+# private, `pub(super)` or `pub(in crate::lexbor::adapter)`. A new accessor is
+# caught without anyone remembering to list it. The exceptions are the doors a
+# facade is meant to use, each with its reason.
+# Not a Lexbor pointer, so the rule above cannot see it, but as dangerous: an
+# unbounded-lifetime reinterpretation, whose one safe caller is
+# `HtmlParsed::tag_bucket`. Held to the same visibility by name.
+ADAPTER_ONLY_BY_NAME = %w[as_html_nodes_unchecked].freeze
+RAW_POINTER_EXEMPT = {
+  "as_lxb_mut" => "the one way a facade (selectors, serialize) gets the node pointer a Lexbor call takes; " \
+                  "typed, so nothing casts c_void back",
 }.freeze
-RAW_ACCESSORS.each do |file, sigs|
-  src = File.binread(File.join(RUST, file))
-  sigs.each do |sig|
-    errors << "#{file}: `#{sig[/fn \w+.*/]}` must stay `pub(in crate::lexbor::adapter)`" unless src.include?(sig)
+ADAPTER_PRIVATE = /\A(?:pub\(super\)|pub\(in crate::lexbor::adapter(?:::\w+)*\))?\z/
+Dir.glob(File.join(RUST, "lexbor/adapter/**/*.rs")).sort.each do |path|
+  rel = path.delete_prefix("#{RUST}/")
+  File.binread(path).scan(/^[ \t]*((pub(?:\([^)]*\))?)?\s*(?:const\s+)?(?:unsafe\s+)?(?:extern\s+"C"\s+)?fn\s+(\w+)[^{;]*?)(?:\{|;|\bwhere\b)/m) do |sig, vis, name|
+    next unless sig.match?(/\*(?:mut|const)\s+Lxb\w*/) || ADAPTER_ONLY_BY_NAME.include?(name)
+    next if ADAPTER_PRIVATE.match?(vis.to_s)
+    next if RAW_POINTER_EXEMPT.key?(name)
+    errors << "#{rel}: `#{name}` hands out a Lexbor pointer or an unchecked view, so it must stay inside lexbor::adapter " \
+              "(private, pub(super) or pub(in crate::lexbor::adapter)) or be listed in RAW_POINTER_EXEMPT with a reason"
   end
 end
 

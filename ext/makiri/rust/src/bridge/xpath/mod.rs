@@ -180,9 +180,11 @@ pub fn parse_query(cx: &Cx, expr: Value) -> Result<Box<Ast>, Error> {
 /// and an allocation can raise, so each caller runs this under `protect`. A
 /// NodeSet push the set refuses (its cap) comes back as `Err`.
 ///
-/// The one conversion, for a query's result and for a handler's arguments
-/// alike, so the two cannot drift apart in how a string or a node-set reaches
-/// Ruby.
+/// The one conversion for a whole value, for a query's result and for a
+/// handler's arguments alike, so the two cannot drift apart in how a string or
+/// a node-set reaches Ruby. `at_xpath` is the exception by design: its
+/// [`query_result`] fast path wraps only a node-set's first node, through the
+/// same wrap a set's read-back uses, and never builds the set.
 ///
 /// # Safety
 /// Under `protect`; `document` is the keepalive a node-set is wrapped under.
