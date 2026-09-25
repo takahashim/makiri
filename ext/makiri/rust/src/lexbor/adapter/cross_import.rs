@@ -173,19 +173,18 @@ struct Made<'a> {
 /// Translate ONE Lexbor node into a fresh mkr node - its own fields and
 /// attributes, NOT its children.
 ///
-/// The invalid `NodeId` means SKIP an unsupported type; an `Err` status fails
-/// the whole import.
+/// `None` to SKIP an unsupported type; an `Err` status fails the whole import.
 fn h2x_make<'a>(
     doc: &mut XmlDoc,
     s: HtmlNode<'a>,
     parent_default: Option<&'a [u8]>,
     parent: Option<NodeId>,
-) -> Result<Made<'a>, MutStatus> {
+) -> Result<Option<Made<'a>>, MutStatus> {
     let unchanged = |node| {
-        Ok(Made {
+        Ok(Some(Made {
             node,
             child_default: parent_default,
-        })
+        }))
     };
     let data = |n: HtmlNode<'a>| {
         let d = n.data().unwrap_or(&[]);
@@ -195,7 +194,7 @@ fn h2x_make<'a>(
     match s.node_type() {
         h::ELEMENT => {
             let Some(e) = s.element() else {
-                return unchanged(NodeId::INVALID);
+                return Ok(None);
             };
             let name = e.qualified_name();
             let Some(nl) = fits_u32(name.len()) else {
@@ -248,10 +247,10 @@ fn h2x_make<'a>(
             }
 
             h2x_copy_attrs(doc, e, el)?;
-            Ok(Made {
+            Ok(Some(Made {
                 node: el,
                 child_default,
-            })
+            }))
         }
 
         h::TEXT | h::CDATA | h::COMMENT => {
@@ -274,7 +273,7 @@ fn h2x_make<'a>(
         h::FRAGMENT => unchanged(mutate::new_fragment(doc)?),
 
         /* An unsupported descendant type is skipped, not an error. */
-        _ => unchanged(NodeId::INVALID),
+        _ => Ok(None),
     }
 }
 
@@ -300,10 +299,8 @@ pub unsafe fn cross_html_to_xml(
     // SAFETY: the caller's contract.
     let src = unsafe { src.as_node() };
 
-    let root = h2x_make(doc, src, None, None)?;
-    if root.node.is_invalid() {
-        return Err(MutStatus::Type); /* the root's type has no XML counterpart */
-    }
+    /* `None`: the root's type has no XML counterpart. */
+    let root = h2x_make(doc, src, None, None)?.ok_or(MutStatus::Type)?;
 
     if deep {
         let mut stack: Vec<Frame<'_, HtmlNode<'_>, NodeId>> =
@@ -320,8 +317,7 @@ pub unsafe fn cross_html_to_xml(
             let mut c = h2x_first_child(f.s);
             while let Some(child) = c {
                 /* An error abandons the partial subtree. */
-                let made = h2x_make(doc, child, f.def, Some(f.d))?;
-                if !made.node.is_invalid() {
+                if let Some(made) = h2x_make(doc, child, f.def, Some(f.d))? {
                     mutate::insert_child(doc, f.d, made.node)?;
                     if h2x_first_child(child).is_some() {
                         stack
