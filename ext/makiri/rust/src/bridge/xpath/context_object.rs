@@ -173,8 +173,13 @@ impl XPathCtx {
             .map_err(|e| refused(e, BUSY, BUSY))
     }
 
-    /// Evaluate `expr` - parsed once and cached - with `handler` (nil for none).
-    pub fn evaluate(&self, ruby: &Ruby, expr: Value, handler: Value) -> Result<Value, Error> {
+    /// Evaluate `expr` - parsed once and cached - with `handler`, if any.
+    pub fn evaluate(
+        &self,
+        ruby: &Ruby,
+        expr: Value,
+        handler: Option<Value>,
+    ) -> Result<Value, Error> {
         let document = ruby.get_inner(self.document);
 
         /* The cache borrow is taken for the lookup ONLY, and released before the

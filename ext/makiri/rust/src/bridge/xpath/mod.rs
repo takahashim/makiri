@@ -255,7 +255,7 @@ unsafe fn node_token(kind: Kind, raw: *mut c_void) -> Option<Token> {
  * and `XPathContext#evaluate` all run parse -> evaluate -> convert through
  * these three; they differ only in how the context is built and who owns it. */
 
-/// Evaluate `ast` under `ctx`, with `handler` (nil for none) answering unknown
+/// Evaluate `ast` under `ctx`, with `handler` (if any) answering unknown
 /// functions for this evaluation only. [`Answer::First`] takes the `at_xpath` fast
 /// path.
 /// What a query answers: every result, or - for `at_xpath` / `at_css` - the
@@ -269,22 +269,21 @@ pub enum Answer {
 pub fn evaluate_query(
     ctx: &Cx,
     ast: &Ast,
-    handler: Value,
+    handler: Option<Value>,
     document: Value,
     answer: Answer,
 ) -> Result<XPathValue, Error> {
     /* A handler runs Ruby mid-walk, so for as long as one can, the document
      * refuses to be changed: the bridge holds that guard, and lives on this
      * frame for this evaluate alone. */
-    let bridge = if handler.is_nil() {
-        None
-    } else {
-        Some(Bridge {
+    let bridge = match handler {
+        None => None,
+        Some(handler) => Some(Bridge {
             handler: handler.as_raw(),
             document: document.as_raw(),
             kind: ctx.token_kind(),
             _reading: crate::bridge::wrapper::DocumentEvaluation::enter(document)?,
-        })
+        }),
     };
     let resolver = bridge.as_ref().map(|b| b as &dyn Resolver);
     let result = if answer == Answer::First {

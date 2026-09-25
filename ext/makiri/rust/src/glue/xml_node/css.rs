@@ -23,11 +23,11 @@ use crate::xpath::ctx::XPathValue;
 use crate::xpath::msg::Status;
 
 /// The query arguments for a selector and its namespace Hash.
-fn css_args(ruby: &Ruby, selector: Value, ns: Value) -> QueryArgs {
+fn css_args(selector: Value, ns: Value) -> QueryArgs {
     QueryArgs {
         text: selector,
         namespaces: RHash::from_value(ns),
-        handler: ruby.qnil().as_value(),
+        handler: None,
         lax: false,
     }
 }
@@ -72,13 +72,11 @@ fn css_run(ruby: &Ruby, rb_self: Value, q: QueryArgs, answer: Answer) -> Result<
 }
 
 fn css(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| css_run(ruby, rb_self, css_args(ruby, selector, ns), Answer::All))
+    crate::bridge::ruby::entry(|| css_run(ruby, rb_self, css_args(selector, ns), Answer::All))
 }
 
 fn at_css(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        css_run(ruby, rb_self, css_args(ruby, selector, ns), Answer::First)
-    })
+    crate::bridge::ruby::entry(|| css_run(ruby, rb_self, css_args(selector, ns), Answer::First))
 }
 
 /// `#matches?(selector)`: does THIS node match?
@@ -88,7 +86,7 @@ fn at_css(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Result<Val
 /// whole document - the same question Lexbor's `match_node` answers for HTML.
 fn css_matches(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Result<bool, Error> {
     crate::bridge::ruby::entry(|| {
-        let q = css_args(ruby, selector, ns);
+        let q = css_args(selector, ns);
         let document = keepalive_document(rb_self)?;
         let ctx = query_context(rb_self, document, &q)?;
         let ast = compile(ruby, &ctx, &q, Form::SelfTest)?;

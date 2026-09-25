@@ -242,9 +242,6 @@ unsafe fn handler_resolver(
     call: &ResolverCall<'_>,
 ) -> Result<Option<Val>, Reported> {
     let err = budget.sink();
-    if bridge.handler == crate::bridge::ruby::nil().as_raw() {
-        return Ok(None);
-    }
 
     /* The method name: XPath uses '-', Ruby uses '_'. The buffer starts zeroed,
      * so the copy stays NUL-terminated. */

@@ -33,8 +33,8 @@ pub struct QueryArgs {
     pub text: Value,
     /// Prefix bindings for this query alone, if any were given.
     pub namespaces: Option<RHash>,
-    /// Answers unknown functions; nil for none.
-    pub handler: Value,
+    /// Answers unknown functions, if one was given.
+    pub handler: Option<Value>,
     /// `namespace_matching: :lax`.
     pub lax: bool,
 }
@@ -49,12 +49,11 @@ impl QueryArgs {
     /// per call in total, so the allocation and the symbol lookups behind it
     /// measured ~32% of it.
     pub fn scan(ruby: &Ruby, args: &[Value]) -> Result<QueryArgs, Error> {
-        let nil = ruby.qnil().as_value();
         if let [text] = args {
             return Ok(QueryArgs {
                 text: *text,
                 namespaces: None,
-                handler: nil,
+                handler: None,
                 lax: false,
             });
         }
@@ -70,7 +69,7 @@ impl QueryArgs {
         let mut q = QueryArgs {
             text: a.required.0,
             namespaces: None,
-            handler: nil,
+            handler: None,
             lax: kw.lax,
         };
         for v in [a.optional.0, a.optional.1].into_iter().flatten() {
@@ -79,7 +78,7 @@ impl QueryArgs {
             }
             match RHash::from_value(v) {
                 Some(h) if q.namespaces.is_none() => q.namespaces = Some(h),
-                None if q.handler.is_nil() => q.handler = v,
+                None if q.handler.is_none() => q.handler = Some(v),
                 _ => {
                     return Err(Error::new(
                         ruby.exception_arg_error(),
@@ -282,7 +281,7 @@ pub fn query_context(rb_self: Value, document: Value, q: &QueryArgs) -> Result<C
 pub fn run_query(
     ctx: Cx,
     ast: Box<Ast>,
-    handler: Value,
+    handler: Option<Value>,
     document: Value,
     answer: Answer,
 ) -> Result<Value, Error> {

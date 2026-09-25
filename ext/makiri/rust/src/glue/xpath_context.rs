@@ -63,7 +63,8 @@ fn set_node(ruby: &Ruby, ctx: &XPathCtx, node: Value) -> Result<Value, Error> {
 fn evaluate(ruby: &Ruby, ctx: &XPathCtx, args: &[Value]) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), (), ()>(args)?;
-        let handler = a.optional.0.unwrap_or(ruby.qnil().as_value());
+        /* An explicit nil is no handler, as an omitted one is. */
+        let handler = a.optional.0.filter(|h| !h.is_nil());
         ctx.evaluate(ruby, a.required.0, handler)
     })
 }
