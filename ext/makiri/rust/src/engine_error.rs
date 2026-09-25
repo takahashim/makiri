@@ -105,11 +105,19 @@ impl Error {
     /// An error of `status`, its message formatted from `args` - for a caller
     /// that has an error to hand back and no run to report it through.
     pub fn with(status: ErrorKind, args: core::fmt::Arguments<'_>) -> Error {
-        use core::fmt::Write;
         let mut e = Error::new();
-        e.status = status;
-        let _ = e.msg.write_fmt(args);
+        e.set(status, args);
         e
+    }
+
+    /// Overwrite this slot with `status` and the message formatted from `args`.
+    /// The one writer of the two fields, whether the slot is an owned `Error` or
+    /// one borrowed through [`ErrSink`].
+    pub(crate) fn set(&mut self, status: ErrorKind, args: core::fmt::Arguments<'_>) {
+        use core::fmt::Write;
+        self.status = status;
+        self.msg.clear();
+        let _ = self.msg.write_fmt(args);
     }
 
     /// The message, or None when none was written.
@@ -167,32 +175,15 @@ impl ErrSink {
 
 /// Set `err` from a formatted message, formatted straight into the slot.
 ///
-/// Crate-internal, and the one place the front end writes an error. A silent
-/// sink skips the formatting as well as the write.
+/// The one way the front end (the lexer, the parser, the CSS lowering) reports
+/// a runtime error. A silent sink skips the formatting as well as the write.
 pub(crate) fn err_set_fmt(
     err: ErrSink,
     status: ErrorKind,
     args: core::fmt::Arguments<'_>,
 ) -> Reported {
-    use core::fmt::Write;
     if let Some(slot) = err.0 {
-        let mut e = slot.borrow_mut();
-        e.status = status;
-        e.msg.clear();
-        let _ = e.msg.write_fmt(args);
-    }
-    Reported(())
-}
-
-/// Set `err` to a fixed message: [`err_set_fmt`] without the formatting.
-#[cfg(feature = "lexbor")]
-pub(crate) fn err_set(err: ErrSink, status: ErrorKind, msg: &str) -> Reported {
-    use core::fmt::Write;
-    if let Some(slot) = err.0 {
-        let mut e = slot.borrow_mut();
-        e.status = status;
-        e.msg.clear();
-        let _ = e.msg.write_str(msg);
+        slot.borrow_mut().set(status, args);
     }
     Reported(())
 }

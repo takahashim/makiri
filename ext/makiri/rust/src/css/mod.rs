@@ -66,7 +66,7 @@ pub(crate) struct Build<'a> {
 
 impl Build<'_> {
     pub(crate) fn fail(&self, status: crate::engine_error::ErrorKind, msg: &str) -> Reported {
-        crate::engine_error::err_set(self.err.clone(), status, msg)
+        crate::engine_error::err_set_fmt(self.err.clone(), status, format_args!("{}", msg))
     }
 
     pub(crate) fn oom(&self) -> Reported {
