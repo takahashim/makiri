@@ -318,8 +318,8 @@ by the check that concluded "every undefined symbol is legitimate".
   stale shadow - a layout-sensitive spurious report that ASan then aborts on
   while rendering (`asan_thread.cpp` `kCurrentStackFrameMagic` CHECK; this took
   CI's sanitize jobs down via the XML-mutation PBT, which raises thousands of
-  times - see `docs/ci-crash/INVESTIGATION.md`). Heap red zones and the
-  `xml::arena` poisoning are unaffected; only stack-buffer checks are lost.
+  times - see `docs/ci-crash/INVESTIGATION.md`). Heap red zones are
+  unaffected; only stack-buffer checks are lost.
   Do not re-enable without solving the `__builtin_longjmp` shadow problem.
 
   What used to soften this loss no longer applies and was not replaced:
@@ -387,19 +387,14 @@ by the check that concluded "every undefined symbol is legitimate".
   macOS - the fastest way to decide whether something is ours or Lexbor's. When
   the answer has to come from a Ruby-side crash instead, build with
   `MAKIRI_NO_EXPORT_TRIM=1`: without it every frame symbolises as `Init_makiri`.
-- **Our XML bump arena (`src/xml/arena.rs`) is ASan-red-zoned, so its intra-arena
-  overflows ARE caught** - the same blind spot as Lexbor's mraw, but this is our
-  own module. The allocator poisons each fresh 64 KiB chunk and unpoisons only
-  the bytes a cut hands out (the `[size, need)` alignment tail stays poisoned),
-  so a write past one node/bytes/scratch cut hits poisoned memory and ASan
-  reports it. It auto-activates under any address-sanitized build - no extra
-  flag, unlike Lexbor - and is a no-op otherwise. So plain `rake sanitize` /
-  `FUZZ_ARGS="--target xml,mutate" bundle exec rake fuzz:sanitize` already cover the arena. Everything else
-  we write allocates through `falloc` onto the system allocator, or - for the
-  glue's Ruby-side storage - through Ruby's xmalloc; ASan red-zones both per
-  allocation - no arena, no special handling. Keep the unpoison at exactly the requested `size` (not
-  `need`); widening it to `need` would silence off-by-one-into-padding
-  overflows.
+- **The XML arena (`src/xml/arena.rs`) needs no ASan poisoning, and has none.**
+  The C build's bump arena did (poisoned 64 KiB chunks, the Lexbor-mraw blind
+  spot); the Rust one is an index arena - a `Vec<Node>` and a `Vec<u8>` under
+  `#![forbid(unsafe_code)]`, addressed by `NodeId` and spans - so a write past
+  one node or byte span is a bounds-checked index, not an overrun into the
+  next cut. Everything else we write allocates through `falloc` onto the system
+  allocator, or - for the glue's Ruby-side storage - through Ruby's xmalloc;
+  ASan red-zones both per allocation.
 - **The fallible-allocation line.** The engine (`xml`, `xpath`, `css`,
   `lexbor/adapter`, `cbuf`) allocates only through `falloc`: `clippy.toml` bans the
   infallible `Box::new` / `Vec::with_capacity` / `reserve`, and `rake oom` fails
