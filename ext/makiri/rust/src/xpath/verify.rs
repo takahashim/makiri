@@ -22,6 +22,7 @@
 use crate::kani_bounds::parse_usize;
 
 use super::number::extent;
+use super::order::merge_runs;
 
 /// The longest input these proofs quantify over.
 ///
@@ -121,5 +122,57 @@ fn accepted_bytes_satisfy_the_parser_precondition() {
         // parsed value can never be negative or lose precision to an exponent.
         assert!(b != b'-' && b != b'+' && b != b'e' && b != b'E');
         i += 1;
+    }
+}
+
+/// `merge_sort` - the natural merge sort behind document order - is a STABLE
+/// SORT (proved on `merge_runs`, its merge half): its output is ordered, is a
+/// permutation of its input, and keeps equal elements in input order.
+///
+/// Its failures would be silent: a wrong merge does not crash, it answers a
+/// query in the wrong order. Every input of 1-3 elements, keys drawn from
+/// 0..3 so ties - the stability case - are common; each element carries
+/// its input position, which lets one check see all three properties.
+///
+/// Only the merge path is proved. The fallback when scratch cannot be had is
+/// std's `sort_unstable_by`, not ours - and left in, CBMC unwinds it anyway
+/// (a whole-`merge_sort` harness ran past 20 minutes).
+#[kani::proof]
+#[kani::unwind(5)]
+fn merge_sort_is_a_stable_sort() {
+    /* One concrete length per call, not a nondet one: with `len` symbolic,
+     * CBMC cannot bound the merge loops by it and unwinds every path to the
+     * limit, which ran past ten minutes at three elements. Three elements
+     * already reach a second merge pass (3 2 1 is three runs) and a merge of
+     * unequal runs. */
+    sorts_stably::<1>();
+    sorts_stably::<2>();
+    sorts_stably::<3>();
+}
+
+fn sorts_stably<const N: usize>() {
+    /* Key in the high nibble, input position in the low one, so a stable
+     * sort by key is an ascending sort of the whole byte. One byte and not a
+     * (key, position) pair because Kani 0.67 mis-models `copy_from_slice`
+     * between wider elements at a symbolic offset (it reported a merge copying
+     * the wrong element that the same code, run, copies correctly). */
+    let mut items = [0u8; N];
+    for (i, item) in items.iter_mut().enumerate() {
+        let key: u8 = kani::any();
+        kani::assume(key < 3);
+        *item = key << 4 | i as u8;
+    }
+    let mut scratch = items;
+    merge_runs(&mut items, &mut scratch, |a, b| (a >> 4).cmp(&(b >> 4)));
+
+    let mut seen = [false; N];
+    for i in 0..N {
+        let from = usize::from(items[i] & 0xF);
+        assert!(from < N && !seen[from], "sort: a permutation of the input");
+        seen[from] = true;
+        if i > 0 {
+            /* Ordered by key, and by position among equal keys. */
+            assert!(items[i - 1] < items[i], "sort: ordered and stable");
+        }
     }
 }

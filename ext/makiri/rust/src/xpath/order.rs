@@ -271,14 +271,24 @@ pub fn nodeset_sort_doc_order<'e, 'd, D: Dom<'d>>(
 /// When the scratch space cannot be had, the sort falls back to the unstable,
 /// in-place one: still correct, since two nodes compare Equal only when they
 /// are not comparable at all, so there is no order among ties to keep.
-fn merge_sort<T: Copy>(items: &mut [T], mut cmp: impl FnMut(&T, &T) -> Ordering) {
+fn merge_sort<T: Copy>(items: &mut [T], cmp: impl FnMut(&T, &T) -> Ordering) {
     let n = items.len();
     let Some(mut scratch) = try_vec_with_capacity::<T>(n) else {
         items.sort_unstable_by(cmp);
         return;
     };
     scratch.extend_from_slice(items); /* reserved above; cannot allocate */
+    merge_runs(items, &mut scratch, cmp);
+}
 
+/// The merge half of `merge_sort`, apart so that it can be proved without
+/// std's fallback sort (`xpath::verify`). `scratch` is `items`' length.
+pub(super) fn merge_runs<T: Copy>(
+    items: &mut [T],
+    scratch: &mut [T],
+    mut cmp: impl FnMut(&T, &T) -> Ordering,
+) {
+    let n = items.len();
     /* The end of the non-descending run that starts at `i`. */
     let run_end = |a: &[T], i: usize, cmp: &mut dyn FnMut(&T, &T) -> Ordering| {
         let mut j = i + 1;
@@ -318,7 +328,7 @@ fn merge_sort<T: Copy>(items: &mut [T], mut cmp: impl FnMut(&T, &T) -> Ordering)
             runs += 1;
             i = end;
         }
-        items.copy_from_slice(&scratch);
+        items.copy_from_slice(scratch);
         if runs <= 1 {
             return;
         }
