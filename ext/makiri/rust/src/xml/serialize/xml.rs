@@ -63,7 +63,10 @@ struct Gen {
     seq: u32,
 }
 
-fn gen_prefix<'d>(binds: &mut Bindings<'d>, gen: &mut Gen) -> Option<Prefix<'d>> {
+/// A prefix no binding in scope uses. [`Failure::Output`] when the sequence
+/// runs out - the answer this refusal has always given - and the budget's
+/// failure when a lookup spends it.
+fn gen_prefix<'d>(binds: &mut Bindings<'d>, gen: &mut Gen) -> Result<Prefix<'d>, Failure> {
     const GEN_MAX: u32 = 100_000;
     while gen.seq < GEN_MAX {
         let mut buf = [0u8; PREFIX_CAP];
@@ -83,11 +86,11 @@ fn gen_prefix<'d>(binds: &mut Bindings<'d>, gen: &mut Gen) -> Option<Prefix<'d>>
             div /= 10;
         }
         gen.seq += 1;
-        if !binds.is_bound(&buf[..i]) {
-            return Some(Prefix::Invented(buf, i));
+        if !binds.is_bound(&buf[..i])? {
+            return Ok(Prefix::Invented(buf, i));
         }
     }
-    None
+    Err(Failure::Output)
 }
 
 /// How one name will be written: under which prefix, and whether the output has
@@ -106,19 +109,20 @@ impl Plan<'_> {
     }
 }
 
-/// The plan for `el`'s own name. `None` refuses the document: either no prefix
+/// The plan for `el`'s own name. `Err` refuses the document: either no prefix
 /// could be invented or the step budget is spent.
 fn plan_element<'d>(
     doc: &'d XmlDoc,
     el: NodeId,
     binds: &mut Bindings<'d>,
     gen: &mut Gen,
-) -> Option<Plan<'d>> {
+) -> Result<Plan<'d>, Failure> {
     let own_prefix = doc.span(doc.node(el).prefix);
     let uri = doc.span(doc.node(el).ns_uri);
     let mut plan = Plan {
         prefix: Prefix::Own(own_prefix),
-        declare: doc.node(el).flags & FLAG_DOM_LOOSE_NAME == 0 && !binds.bound_to(own_prefix, uri),
+        declare: doc.node(el).flags & FLAG_DOM_LOOSE_NAME == 0
+            && !binds.bound_to(own_prefix, uri)?,
     };
     let resolved = doc.node(el).flags & FLAG_NS_RESOLVED != 0;
     if !resolved && own_decl(doc, el, own_prefix).is_some() {
@@ -134,7 +138,7 @@ fn plan_element<'d>(
          * that declaration is ignored instead (`mutate::ignored_default_decl`). */
         plan.prefix = gen_prefix(binds, gen)?;
     }
-    (!binds.exhausted).then_some(plan)
+    Ok(plan)
 }
 
 /// The plan for attribute `a` of `el`.
@@ -144,7 +148,7 @@ fn plan_attr<'d>(
     a: NodeId,
     binds: &mut Bindings<'d>,
     gen: &mut Gen,
-) -> Option<Plan<'d>> {
+) -> Result<Plan<'d>, Failure> {
     let own_prefix = doc.span(doc.node(a).prefix);
     let mut plan = Plan {
         prefix: Prefix::Own(own_prefix),
@@ -153,12 +157,12 @@ fn plan_attr<'d>(
 
     let is_decl = xmlns_prefix(doc.qname(a)).is_some();
     if is_decl {
-        return Some(plan);
+        return Ok(plan);
     }
     let uri = doc.span(doc.node(a).ns_uri);
     if own_prefix.is_empty() {
         if uri.is_empty() || doc.node(a).flags & FLAG_DOM_LOOSE_NAME != 0 {
-            return Some(plan);
+            return Ok(plan);
         }
         /* An unprefixed attribute is in NO namespace (Namespaces in XML §6.2),
          * so one with a namespace - `set_attribute_ns("urn:p", "c", v)` -
@@ -166,18 +170,18 @@ fn plan_attr<'d>(
          * It gets a prefix of ours, declared for its URI. */
         plan.prefix = gen_prefix(binds, gen)?;
         plan.declare = true;
-        return (!binds.exhausted).then_some(plan);
+        return Ok(plan);
     }
-    if binds.bound_to(own_prefix, uri) {
-        return (!binds.exhausted).then_some(plan);
+    if binds.bound_to(own_prefix, uri)? {
+        return Ok(plan);
     }
 
     let prior = prefix_seen(doc, el, a, own_prefix);
-    let taken = binds.is_bound(own_prefix);
+    let taken = binds.is_bound(own_prefix)?;
     if !taken {
         if let Some(p) = prior {
             if doc.span(doc.node(p).ns_uri) == uri {
-                return (!binds.exhausted).then_some(plan);
+                return Ok(plan);
             }
         }
     }
@@ -185,7 +189,7 @@ fn plan_attr<'d>(
         plan.prefix = gen_prefix(binds, gen)?;
     }
     plan.declare = true;
-    (!binds.exhausted).then_some(plan)
+    Ok(plan)
 }
 
 /* ---- writing ---- */
@@ -245,14 +249,14 @@ impl<'d, 'b> Writer<'d, 'b> {
         self.put(doc.span(doc.node(n).local))
     }
 
-    /// Declare `prefix` for `uri` and bring it into scope - or refuse, latching
-    /// `binds.unbound`, when `prefix` names something and `uri` is empty: a name
-    /// whose prefix nothing binds (a detached element's, say) has no
-    /// well-formed form, and `xmlns:p=""` was written for it.
+    /// Declare `prefix` for `uri` and bring it into scope - or refuse with
+    /// [`Failure::UnboundPrefix`] when `prefix` names something and `uri` is
+    /// empty: a name whose prefix nothing binds (a detached element's, say) has
+    /// no well-formed form - `xmlns:p=""` is forbidden by Namespaces in XML,
+    /// and leaving the declaration out writes an unbound prefix.
     fn bind(&mut self, binds: &mut Bindings<'d>, prefix: Prefix<'d>, uri: &'d [u8]) -> W {
         if !prefix.bytes().is_empty() && uri.is_empty() {
-            binds.unbound = true;
-            return Err(());
+            return Err(Failure::UnboundPrefix);
         }
         self.declare(prefix.bytes(), uri)?;
         binds.push(prefix, uri)
@@ -346,7 +350,7 @@ impl<'d, 'b> Writer<'d, 'b> {
 
     fn element(&mut self, n: NodeId, depth: u32, binds: &mut Bindings<'d>) -> W {
         if depth as usize >= MAX_DEPTH {
-            return Err(());
+            return Err(Failure::Output);
         }
         let base = binds.len();
         let r = self.element_in_scope(n, depth, binds);
@@ -369,7 +373,7 @@ impl<'d, 'b> Writer<'d, 'b> {
         }
 
         let mut gen = Gen { seq: 1 };
-        let el = plan_element(doc, n, binds, &mut gen).ok_or(())?;
+        let el = plan_element(doc, n, binds, &mut gen)?;
 
         self.put(b"<")?;
         self.name(n, &el)?;
@@ -378,7 +382,7 @@ impl<'d, 'b> Writer<'d, 'b> {
         }
 
         for at in doc.attributes(n).filter(kept) {
-            let plan = plan_attr(doc, n, at, binds, &mut gen).ok_or(())?;
+            let plan = plan_attr(doc, n, at, binds, &mut gen)?;
             if plan.declare {
                 self.bind(binds, plan.prefix.clone(), doc.span(doc.node(at).ns_uri))?;
             }
@@ -422,36 +426,26 @@ fn has_chardata(doc: &XmlDoc, e: NodeId) -> bool {
 ///
 /// The whole of this module's surface: the scope stack, the writer and the
 /// document-level layout stay inside, so `super` picks a form and maps a failure
-/// and knows nothing of how either is shaped.
+/// and knows nothing of how either is shaped. The first failure is the answer:
+/// each one stops the walk where it happens, carrying its own reason.
 pub(super) fn write(
     b: &mut Buf,
     doc: &XmlDoc,
     n: NodeId,
     indent: i32,
     encoding: Option<&[u8]>,
-) -> Result<(), Failure> {
+) -> W {
     let mut binds = Bindings::new();
-    let r = (|| -> W {
-        let mut w = Writer::new(b, doc, indent);
-        if doc.type_(n) != Some(NodeType::Document) {
-            return w.node(n, 0, &mut binds);
-        }
-        /* The Document node gives the declaration, then each top-level child on
-         * its own line. */
-        w.declaration(encoding)?;
-        for cid in doc.children(n) {
-            w.node(cid, 0, &mut binds)?;
-            w.newline()?;
-        }
-        Ok(())
-    })();
-    match r {
-        Ok(()) => Ok(()),
-        /* Reading the flag after the fact is exact, not a guess: only a lookup
-         * sets it, and a planner that sees it set refuses immediately - so a
-         * write failure always propagates with the flag still clear. */
-        Err(()) if binds.exhausted => Err(Failure::NamespaceBudget),
-        Err(()) if binds.unbound => Err(Failure::UnboundPrefix),
-        Err(()) => Err(Failure::Output),
+    let mut w = Writer::new(b, doc, indent);
+    if doc.type_(n) != Some(NodeType::Document) {
+        return w.node(n, 0, &mut binds);
     }
+    /* The Document node gives the declaration, then each top-level child on
+     * its own line. */
+    w.declaration(encoding)?;
+    for cid in doc.children(n) {
+        w.node(cid, 0, &mut binds)?;
+        w.newline()?;
+    }
+    Ok(())
 }

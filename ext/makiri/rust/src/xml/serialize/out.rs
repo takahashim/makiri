@@ -2,15 +2,24 @@
 
 #![forbid(unsafe_code)]
 
+use super::Failure;
 use crate::cbuf::Buf;
 use crate::xml::model::{Document as XmlDoc, NodeId};
 
-/// A write either succeeded or the output buffer refused it (its ceiling, or
-/// OOM). The reason is the buffer's; the caller maps it to [`super::Failure`].
-pub(super) type W = Result<(), ()>;
+/// A write either succeeded or failed for the reason it carries: the failure
+/// is decided where it happens - the buffer's ceiling or OOM here, a spent
+/// step budget or an unbound prefix in the scope - and travels up with `?`, so
+/// no writer has to work out afterwards why it stopped.
+pub(super) type W = Result<(), Failure>;
 
 pub(super) fn put(b: &mut Buf, bytes: &[u8]) -> W {
-    b.append(bytes).map_err(|_| ())
+    b.append(bytes).map_err(|_| Failure::Output)
+}
+
+/// An allocation for the writers' own bookkeeping (`crate::falloc`'s `()` on
+/// OOM), refused as the output would be: memory ran out.
+pub(super) fn room(r: Result<(), ()>) -> W {
+    r.map_err(|()| Failure::Output)
 }
 
 /// A processing instruction: `<?target data?>`, with the space only when there

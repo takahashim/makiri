@@ -6,7 +6,8 @@
 
 #![forbid(unsafe_code)]
 
-use super::out::W;
+use super::out::{room, W};
+use super::Failure;
 use crate::falloc::Reserve;
 
 /// The total prefix-resolution steps one serialization may take. Generous - an
@@ -60,16 +61,10 @@ pub(super) struct Bindings<'d> {
     /// Slots that are not [`EMPTY`] - live ones and [`GONE`] ones - which is
     /// what decides when the table is rebuilt.
     filled: usize,
+    /// Lookups taken so far, against [`NS_STEP_MAX`]. Once past it every
+    /// lookup fails with [`Failure::NamespaceBudget`] - the count only grows,
+    /// so no separate flag is needed to keep it failing.
     steps: u64,
-    /// Latched once the step budget is spent. A lookup then answers `None`,
-    /// which every caller turns into a refusal, so an exhausted planner can
-    /// never emit a declaration it did not verify.
-    pub(super) exhausted: bool,
-    /// Latched when a name's prefix is bound to nothing: a declaration for it
-    /// would be `xmlns:p=""`, which Namespaces in XML forbids, and leaving it
-    /// out writes an unbound prefix. Either way no well-formed output exists,
-    /// so the writer refuses with [`super::Failure::UnboundPrefix`].
-    pub(super) unbound: bool,
 }
 
 struct Entry<'d> {
@@ -107,8 +102,6 @@ impl<'d> Bindings<'d> {
             slots: Vec::new(),
             filled: 0,
             steps: 0,
-            exhausted: false,
-            unbound: false,
         }
     }
 
@@ -147,9 +140,9 @@ impl<'d> Bindings<'d> {
         let size = (self.stack.len() + 1)
             .checked_mul(4)
             .map(|n| n.next_power_of_two().max(16))
-            .ok_or(())?;
+            .ok_or(Failure::Output)?;
         let mut slots: Vec<u32> = Vec::new();
-        slots.falloc_reserve_exact(size)?;
+        room(slots.falloc_reserve_exact(size))?;
         slots.resize(size, EMPTY);
         let old = core::mem::replace(&mut self.slots, slots);
         self.filled = 0;
@@ -182,8 +175,8 @@ impl<'d> Bindings<'d> {
         let at = u32::try_from(self.stack.len())
             .ok()
             .filter(|&n| n < GONE)
-            .ok_or(())?;
-        self.stack.falloc_reserve(1)?;
+            .ok_or(Failure::Output)?;
+        room(self.stack.falloc_reserve(1))?;
         self.make_room()?;
         let shadows = match self.probe(prefix.bytes()) {
             Probe::Found(i) => core::mem::replace(&mut self.slots[i], at),
@@ -215,48 +208,48 @@ impl<'d> Bindings<'d> {
             })
     }
 
-    /// The innermost binding for `prefix`, or None when it is unbound - or when
-    /// the step budget ran out, which [`Bindings::exhausted`] then reports.
-    pub(super) fn lookup(&mut self, prefix: &[u8]) -> Option<&'d [u8]> {
+    /// The innermost binding for `prefix`, or `Ok(None)` when it is unbound.
+    /// [`Failure::NamespaceBudget`] once the step budget is spent - raised
+    /// here, where it runs out, so no caller can mistake an exhausted lookup
+    /// for an unbound prefix and emit a declaration it did not verify.
+    pub(super) fn lookup(&mut self, prefix: &[u8]) -> Result<Option<&'d [u8]>, Failure> {
         self.steps += 1;
         if self.steps > NS_STEP_MAX {
-            self.exhausted = true;
-            return None;
+            return Err(Failure::NamespaceBudget);
         }
         if self.slots.is_empty() {
-            return None;
+            return Ok(None);
         }
-        match self.probe(prefix) {
+        Ok(match self.probe(prefix) {
             Probe::Found(i) => Some(self.stack[self.slots[i] as usize].uri),
             Probe::Absent(_) => None,
-        }
+        })
     }
 
     /// What `prefix` means in this scope (Namespaces in XML §3, §6.2): `xml`
     /// its fixed URI, bound everywhere and never declared; an undeclared
     /// default no namespace (`""`); an undeclared prefix nothing, `Ok(None)`,
     /// which no name may carry. `Err` once the step budget is spent.
-    pub(super) fn resolve(&mut self, prefix: &[u8]) -> Result<Option<&'d [u8]>, ()> {
+    pub(super) fn resolve(&mut self, prefix: &[u8]) -> Result<Option<&'d [u8]>, Failure> {
         if prefix == b"xml" {
             return Ok(Some(crate::xml::XML_NS_URI));
         }
-        match self.lookup(prefix) {
-            Some(uri) => Ok(Some(uri)),
-            None if self.exhausted => Err(()),
-            None if prefix.is_empty() => Ok(Some(b"")),
-            None => Ok(None),
-        }
+        Ok(match self.lookup(prefix)? {
+            Some(uri) => Some(uri),
+            None if prefix.is_empty() => Some(b""),
+            None => None,
+        })
     }
 
     /// Whether `prefix` means `uri` here, by [`resolve`](Self::resolve) - and
     /// `xml` always, whatever `uri` says: a name not yet decided carries no
     /// URI, and the mutators refuse `xml` with any namespace but its own, so
     /// `xml` never needs a declaration.
-    pub(super) fn bound_to(&mut self, prefix: &[u8], uri: &[u8]) -> bool {
-        prefix == b"xml" || self.resolve(prefix) == Ok(Some(uri))
+    pub(super) fn bound_to(&mut self, prefix: &[u8], uri: &[u8]) -> Result<bool, Failure> {
+        Ok(prefix == b"xml" || self.resolve(prefix)? == Some(uri))
     }
 
-    pub(super) fn is_bound(&mut self, prefix: &[u8]) -> bool {
-        prefix == b"xml" || self.lookup(prefix).is_some()
+    pub(super) fn is_bound(&mut self, prefix: &[u8]) -> Result<bool, Failure> {
+        Ok(prefix == b"xml" || self.lookup(prefix)?.is_some())
     }
 }

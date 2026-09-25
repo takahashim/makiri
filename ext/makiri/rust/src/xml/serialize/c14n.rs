@@ -8,7 +8,7 @@
 #![forbid(unsafe_code)]
 
 use super::bindings::{Bindings, Prefix};
-use super::out::{put, put_pi, C14N, W};
+use super::out::{put, put_pi, room, C14N, W};
 use super::Failure;
 use crate::cbuf::Buf;
 use crate::falloc::Reserve;
@@ -44,8 +44,6 @@ struct Writer<'d, 'b> {
     /// The declarations in scope - the document's own, which is all c14n
     /// renders - to check each name against.
     binds: Bindings<'d>,
-    /// Set when a name's namespace is not what those declarations say.
-    mismatch: bool,
 }
 
 impl<'d> Writer<'d, '_> {
@@ -107,7 +105,7 @@ impl<'d> Writer<'d, '_> {
     /// `xml`, and not a default that undeclares. Read from the scope index,
     /// where it used to walk the ancestors again and check each prefix
     /// against the ones already kept.
-    fn apex_namespaces(&self) -> Result<Vec<Ns<'d>>, ()> {
+    fn apex_namespaces(&self) -> Result<Vec<Ns<'d>>, Failure> {
         let mut out: Vec<Ns> = Vec::new();
         for (prefix, uri) in self.binds.innermost() {
             /* c14n renders the document's own declarations and never invents
@@ -118,7 +116,7 @@ impl<'d> Writer<'d, '_> {
             if prefix == b"xml" || (prefix.is_empty() && uri.is_empty()) {
                 continue;
             }
-            out.falloc_reserve(1)?;
+            room(out.falloc_reserve(1))?;
             out.push(Ns { prefix, uri });
         }
         sort_by_prefix(&mut out);
@@ -130,23 +128,20 @@ impl<'d> Writer<'d, '_> {
     /// a lookup answers what an ancestor declared - one stack lookup, charged
     /// to the step budget, where a walk up the ancestors per declaration made
     /// deep trees quadratic.
-    fn own_namespaces(&mut self, n: NodeId) -> Result<Vec<Ns<'d>>, ()> {
+    fn own_namespaces(&mut self, n: NodeId) -> Result<Vec<Ns<'d>>, Failure> {
         let doc = self.doc;
         let mut out: Vec<Ns> = Vec::new();
         for at in doc.attributes(n) {
             if let Some((p, u)) = xmlns_decl(doc, at) {
                 if p != b"xml" {
-                    let above = self.binds.lookup(p);
-                    if self.binds.exhausted {
-                        return Err(());
-                    }
+                    let above = self.binds.lookup(p)?;
                     let keep = if above == Some(u) {
                         false
                     } else {
                         !(p.is_empty() && u.is_empty()) || above.is_some_and(|a| !a.is_empty())
                     };
                     if keep {
-                        out.falloc_reserve(1)?;
+                        room(out.falloc_reserve(1))?;
                         out.push(Ns { prefix: p, uri: u });
                     }
                 }
@@ -156,21 +151,21 @@ impl<'d> Writer<'d, '_> {
         Ok(out)
     }
 
-    /// Whether the declarations in scope bind every prefix `n` and its
-    /// attributes use - latching `binds.unbound` when one is bound to nothing,
-    /// which no rendering can repair - and, for a decided element, give each
-    /// the namespace it has. An unresolved one (a detached copy) takes its
-    /// namespace FROM those declarations, so only the binding is checked.
-    fn names_agree(&mut self, n: NodeId) -> Result<bool, ()> {
+    /// That the declarations in scope bind every prefix `n` and its
+    /// attributes use - [`Failure::UnboundPrefix`] when one is bound to
+    /// nothing, which no rendering can repair - and, for a decided element,
+    /// give each the namespace it has, [`Failure::NamespaceMismatch`] when
+    /// they do not. An unresolved one (a detached copy) takes its namespace
+    /// FROM those declarations, so only the binding is checked.
+    fn names_agree(&mut self, n: NodeId) -> W {
         let doc = self.doc;
         let decided = doc.node(n).flags & FLAG_NS_RESOLVED != 0;
         let el_prefix = doc.span(doc.node(n).prefix);
         let Some(el_uri) = self.binds.resolve(el_prefix)? else {
-            self.binds.unbound = true;
-            return Err(());
+            return Err(Failure::UnboundPrefix);
         };
         if decided && el_uri != doc.span(doc.node(n).ns_uri) {
-            return Ok(false);
+            return Err(Failure::NamespaceMismatch);
         }
         for at in doc.attributes(n) {
             let prefix = doc.span(doc.node(at).prefix);
@@ -184,19 +179,18 @@ impl<'d> Writer<'d, '_> {
                 decided || (flags & FLAG_NS_EXPLICIT != 0 && flags & FLAG_NS_PENDING == 0);
             if xmlns_decl(doc, at).is_none() && !prefix.is_empty() {
                 let Some(expected) = self.binds.resolve(prefix)? else {
-                    self.binds.unbound = true;
-                    return Err(());
+                    return Err(Failure::UnboundPrefix);
                 };
                 if decided && expected != doc.span(doc.node(at).ns_uri) {
-                    return Ok(false);
+                    return Err(Failure::NamespaceMismatch);
                 }
             } else if decided && xmlns_decl(doc, at).is_none() && doc.node(at).ns_uri.len != 0 {
                 /* Unprefixed means no namespace; one with a namespace has no
                  * canonical form that keeps it. */
-                return Ok(false);
+                return Err(Failure::NamespaceMismatch);
             }
         }
-        Ok(true)
+        Ok(())
     }
 
     /// The scope for the apex: every ancestor's declarations, outermost first,
@@ -207,7 +201,7 @@ impl<'d> Writer<'d, '_> {
         let mut up = doc.parent(n);
         while let Some(id) = up {
             if doc.type_(id) == Some(NodeType::Element) {
-                chain.falloc_reserve(1)?;
+                room(chain.falloc_reserve(1))?;
                 chain.push(id);
             }
             up = doc.parent(id);
@@ -220,7 +214,7 @@ impl<'d> Writer<'d, '_> {
 
     fn element(&mut self, n: NodeId, is_apex: bool, depth: u32) -> W {
         if depth as usize >= MAX_DEPTH {
-            return Err(());
+            return Err(Failure::Output);
         }
         let base = self.binds.len();
         if is_apex {
@@ -246,10 +240,7 @@ impl<'d> Writer<'d, '_> {
             self.push_decls(n)?;
             own
         };
-        if !self.names_agree(n)? {
-            self.mismatch = true;
-            return Err(());
-        }
+        self.names_agree(n)?;
         self.put(b"<")?;
         self.qname(n)?;
 
@@ -285,11 +276,11 @@ impl<'d> Writer<'d, '_> {
 
 /// §3.3: an element's non-declaration attributes, ordered by namespace URI then
 /// local name.
-fn sorted_attributes(doc: &XmlDoc, n: NodeId) -> Result<Vec<NodeId>, ()> {
+fn sorted_attributes(doc: &XmlDoc, n: NodeId) -> Result<Vec<NodeId>, Failure> {
     let mut attrs: Vec<NodeId> = Vec::new();
     for at in doc.attributes(n) {
         if xmlns_decl(doc, at).is_none() {
-            attrs.falloc_reserve(1)?;
+            room(attrs.falloc_reserve(1))?;
             attrs.push(at);
         }
     }
@@ -307,46 +298,33 @@ fn sorted_attributes(doc: &XmlDoc, n: NodeId) -> Result<Vec<NodeId>, ()> {
 ///
 /// The whole of this module's surface. For the Document node that is the root
 /// element plus the top-level PIs (and comments, when asked for) on their own
-/// lines before and after it.
-pub(super) fn write(b: &mut Buf, doc: &XmlDoc, n: NodeId, comments: bool) -> Result<(), Failure> {
+/// lines before and after it. The first failure is the answer: each one stops
+/// the walk where it happens, carrying its own reason.
+pub(super) fn write(b: &mut Buf, doc: &XmlDoc, n: NodeId, comments: bool) -> W {
     let mut w = Writer {
         b,
         doc,
         comments,
         binds: Bindings::new(),
-        mismatch: false,
     };
-    let r = (|| -> W {
-        if doc.type_(n) != Some(NodeType::Document) {
-            return w.node(n, true, 0);
-        }
-        let mut seen_root = false;
-        for cid in doc.children(n) {
-            let ty = doc.type_(cid);
-            if ty == Some(NodeType::Element) {
-                w.node(cid, true, 0)?;
-                seen_root = true;
-            } else if ty == Some(NodeType::Pi) || (ty == Some(NodeType::Comment) && comments) {
-                if seen_root {
-                    w.put(b"\n")?;
-                }
-                w.node(cid, false, 0)?;
-                if !seen_root {
-                    w.put(b"\n")?;
-                }
+    if doc.type_(n) != Some(NodeType::Document) {
+        return w.node(n, true, 0);
+    }
+    let mut seen_root = false;
+    for cid in doc.children(n) {
+        let ty = doc.type_(cid);
+        if ty == Some(NodeType::Element) {
+            w.node(cid, true, 0)?;
+            seen_root = true;
+        } else if ty == Some(NodeType::Pi) || (ty == Some(NodeType::Comment) && comments) {
+            if seen_root {
+                w.put(b"\n")?;
+            }
+            w.node(cid, false, 0)?;
+            if !seen_root {
+                w.put(b"\n")?;
             }
         }
-        Ok(())
-    })();
-    r.map_err(|()| {
-        if w.mismatch {
-            Failure::NamespaceMismatch
-        } else if w.binds.unbound {
-            Failure::UnboundPrefix
-        } else if w.binds.exhausted {
-            Failure::NamespaceBudget
-        } else {
-            Failure::Output
-        }
-    })
+    }
+    Ok(())
 }
