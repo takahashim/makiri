@@ -241,9 +241,9 @@ impl<'doc> HtmlNodeMut<'doc> {
 
     /// Replace the node's descendants with `text`, DOM `textContent=`.
     ///
-    /// `false` when Lexbor could not store it, in which case the node keeps
+    /// `Err` when Lexbor could not store it, in which case the node keeps
     /// what it had.
-    pub fn set_text_content(self, text: &[u8]) -> bool {
+    pub fn set_text_content(self, text: &[u8]) -> Result<(), LexborRefused> {
         let node = self.node();
         if matches!(
             node.node_type(),
@@ -261,10 +261,11 @@ impl<'doc> HtmlNodeMut<'doc> {
             let text_node = if text.is_empty() {
                 None
             } else {
-                let Some(text_node) = node.owner_document().create_text(text) else {
-                    return false;
-                };
-                Some(text_node)
+                Some(
+                    node.owner_document()
+                        .create_text(text)
+                        .ok_or(LexborRefused)?,
+                )
             };
             while let Some(c) = self.first_child() {
                 c.detach();
@@ -274,13 +275,13 @@ impl<'doc> HtmlNodeMut<'doc> {
                  * as changeable as `self`. */
                 self.insert_child(HtmlNodeMut(text_node.node()));
             }
-            return true;
+            return Ok(());
         }
         // SAFETY: a live node the caller may change; for a character-data node
         // (or an attribute) Lexbor replaces the bytes in place and frees no node.
-        let st =
-            unsafe { lxb::lxb_dom_node_text_content_set(self.as_raw(), text.as_ptr(), text.len()) };
-        st == lxb::consts::STATUS_OK
+        lexbor_ok(unsafe {
+            lxb::lxb_dom_node_text_content_set(self.as_raw(), text.as_ptr(), text.len())
+        })
     }
 
     /// The node as an element cleared for editing, when it is one.
@@ -371,8 +372,13 @@ impl<'doc> HtmlElementMut<'doc> {
     }
 
     /// Create an attribute named `qname`, give it `value`, and append it, in
-    /// namespace `ns` or none. `false` when any step failed.
-    pub fn append_attribute(self, ns: Option<&[u8]>, qname: &[u8], value: &[u8]) -> bool {
+    /// namespace `ns` or none. `Err` when any step failed.
+    pub fn append_attribute(
+        self,
+        ns: Option<&[u8]>,
+        qname: &[u8],
+        value: &[u8],
+    ) -> Result<(), LexborRefused> {
         self.0.append_attribute_ns(ns, qname, value)
     }
 

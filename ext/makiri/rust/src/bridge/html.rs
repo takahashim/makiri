@@ -23,7 +23,7 @@ use crate::lexbor::fragment::import_with_fixup;
 
 use crate::bridge::string::{RubyData, RubyText};
 use crate::bridge::wrapper::*;
-use crate::lexbor::adapter::html::{HtmlDoc, HtmlElementMut, NsId};
+use crate::lexbor::adapter::html::{HtmlDoc, HtmlElementMut, LexborRefused, NsId};
 
 /* ---- the document's own bytes and text ---- */
 
@@ -383,21 +383,27 @@ pub fn owning_doc(rb_self: &Value) -> Result<HtmlDoc<'_>, Error> {
     Ok(unsafe { doc.as_doc() })
 }
 
-/// `el[name] = value`; false when Lexbor could not store it.
-pub fn set_attribute(el: HtmlElementMut<'_>, name: &RubyText, value: &RubyData) -> bool {
+/// `el[name] = value`; `Err` when Lexbor could not store it.
+pub fn set_attribute(
+    el: HtmlElementMut<'_>,
+    name: &RubyText,
+    value: &RubyData,
+) -> Result<(), LexborRefused> {
     // SAFETY: see the section comment.
-    unsafe { el.set_attribute(name.bytes(), value.bytes()) }.is_some()
+    unsafe { el.set_attribute(name.bytes(), value.bytes()) }
+        .map(drop)
+        .ok_or(LexborRefused)
 }
 
 /// Set the attribute `qname` in namespace `ns` (nil or "" = none), matching an
 /// existing one on (namespace, local name) - the DOM key - rather than on the
-/// qualified name. False when Lexbor could not store it.
+/// qualified name. `Err` when Lexbor could not store it.
 pub fn set_attribute_ns(
     el: HtmlElementMut<'_>,
     ns: Option<&RubyText>,
     qname: &RubyText,
     value: &RubyData,
-) -> bool {
+) -> Result<(), LexborRefused> {
     // SAFETY: see the section comment.
     let (qname, value) = unsafe { (qname.bytes(), value.bytes()) };
     /* An empty URI is no namespace: it names the attribute the unprefixed way. */
@@ -447,8 +453,8 @@ pub fn remove_attribute(el: HtmlElementMut<'_>, name: &RubyText) {
     el.remove_attribute(unsafe { name.bytes() });
 }
 
-/// `node.content = text`; false when Lexbor could not store it.
-pub fn set_text_content(node: HtmlNodeMut<'_>, text: &RubyData) -> bool {
+/// `node.content = text`; `Err` when Lexbor could not store it.
+pub fn set_text_content(node: HtmlNodeMut<'_>, text: &RubyData) -> Result<(), LexborRefused> {
     // SAFETY: see the section comment.
     node.set_text_content(unsafe { text.bytes() })
 }

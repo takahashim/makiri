@@ -132,10 +132,8 @@ fn import_into<'d>(
     let doc = context.node().owner_document();
     // SAFETY: `into` is a detached fragment of `context`'s document, which the
     // caller cleared for editing.
-    if !unsafe { parsed.import_into(RawDoc::from(doc), RawNode::from(into.node())) } {
-        return Err(makiri_error("failed to import a fragment child"));
-    }
-    Ok(())
+    unsafe { parsed.import_into(RawDoc::from(doc), RawNode::from(into.node())) }
+        .map_err(|_| makiri_error("failed to import a fragment child"))
 }
 
 /// The WHATWG `template.innerHTML = html`: parse `html` in the TEMPLATE
@@ -179,9 +177,8 @@ pub fn build_fragment(document: Value, rb_html: Value, at: FragmentTag) -> Resul
     };
     let frag = RawNode::from(frag);
     // SAFETY: `frag` was just made in `doc`, which nothing else is editing.
-    if !unsafe { parsed.import_into(doc, frag) } {
-        return Err(makiri_error("failed to import a fragment child"));
-    }
+    unsafe { parsed.import_into(doc, frag) }
+        .map_err(|_| makiri_error("failed to import a fragment child"))?;
     Ok(wrap_html_node(frag, document))
 }
 

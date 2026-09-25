@@ -22,7 +22,7 @@ use crate::lexbor::abi::LxbNode;
  * ------------------------------------------------------------------ */
 
 use crate::lexbor::adapter::html::{
-    BuildingNode, HtmlDoc, HtmlElement, HtmlNode, NsId, RawDoc, RawNode, TagId,
+    BuildingNode, HtmlDoc, HtmlElement, HtmlNode, LexborRefused, NsId, RawDoc, RawNode, TagId,
 };
 use crate::lexbor::adapter::utf8_input::sanitize;
 
@@ -61,9 +61,13 @@ fn fixup_template_content(
     doc: HtmlDoc<'_>,
     root_src: HtmlNode<'_>,
     root_clone: BuildingNode<'_>,
-) -> Result<(), ()> {
+) -> Result<(), LexborRefused> {
     let mut stack: Vec<(HtmlNode<'_>, BuildingNode<'_>)> = Vec::new();
-    stack.falloc_push((root_src, root_clone))?;
+    /* The worklist's own allocation failing refuses the copy as surely as
+     * Lexbor's does. */
+    stack
+        .falloc_push((root_src, root_clone))
+        .map_err(|()| LexborRefused)?;
 
     while let Some((src_root, clone_root)) = stack.pop() {
         let (mut sn, mut cn) = (Some(src_root), Some(clone_root));
@@ -71,9 +75,7 @@ fn fixup_template_content(
             /* Nested rather than a tuple: the clone-side test is only worth
              * paying for once the source side has said this is a template, and
              * every node of every deep import passes through here. */
-            if !c.copy_written_name_from(s) {
-                return Err(());
-            }
+            c.copy_written_name_from(s)?;
             if let Some((sc, cc)) = s
                 .template_content()
                 .and_then(|sc| Some((sc, c.template_content()?)))
@@ -83,11 +85,11 @@ fn fixup_template_content(
                         // Lexbor could not copy a content child. Giving up
                         // here leaves the clone's template SHORT, which is
                         // the truncated answer the contract forbids.
-                        return Err(());
+                        return Err(LexborRefused);
                     };
                     cc.insert_child(imp);
                 }
-                stack.falloc_push((sc, cc))?;
+                stack.falloc_push((sc, cc)).map_err(|()| LexborRefused)?;
             }
             sn = s.preorder_next(src_root);
             cn = c.preorder_next(clone_root);
@@ -119,24 +121,26 @@ impl FragmentError {
 
 /// Deep-import each child of `root` into `doc`, appending each to `into`.
 ///
-/// `false` when a child could not be copied whole. It REPORTS rather than
+/// `Err` when a child could not be copied whole. It REPORTS rather than
 /// raising, and that still matters now the C has gone: every caller owns the
 /// transient document the fragment was parsed into
 /// (`lexbor::abi::TransientDoc`), and a raise from here would longjmp past its
 /// `Drop` - one leaked Lexbor document per failure. The caller raises once its
 /// own cleanup has run, with the message that suits it.
-unsafe fn import_fragment_children(doc: RawDoc, root: RawNode, into: RawNode) -> bool {
+unsafe fn import_fragment_children(
+    doc: RawDoc,
+    root: RawNode,
+    into: RawNode,
+) -> Result<(), LexborRefused> {
     let into = BuildingNode::from_raw_node(into);
     let hdoc = doc.as_doc();
     /* `children` reads each next sibling before yielding the node; import does
      * not unlink the source anyway. */
     for child in root.as_node().children() {
-        let Some(imp) = import_fixed(hdoc, child, true) else {
-            return false;
-        };
+        let imp = import_fixed(hdoc, child, true).ok_or(LexborRefused)?;
         into.insert_child(imp);
     }
-    true
+    Ok(())
 }
 
 /// A fragment parsed in a context - an element, or a tag and namespace. With an
@@ -176,7 +180,7 @@ impl TransientFragment {
         Ok(TransientFragment { root, _doc })
     }
 
-    /// Import every child into `doc`, as the children of `into`; `false` if
+    /// Import every child into `doc`, as the children of `into`; `Err` if
     /// one failed, with the ones before it already there.
     ///
     /// Always into a detached DOCUMENT_FRAGMENT, never into a live tree: a
@@ -186,7 +190,7 @@ impl TransientFragment {
     /// # Safety
     /// `doc` must be live, and `into` a detached fragment of `doc` that nothing
     /// else refers to.
-    pub unsafe fn import_into(self, doc: RawDoc, into: RawNode) -> bool {
+    pub unsafe fn import_into(self, doc: RawDoc, into: RawNode) -> Result<(), LexborRefused> {
         import_fragment_children(doc, self.root, into)
     }
 }
@@ -313,8 +317,8 @@ pub unsafe fn import_with_fixup(doc: RawDoc, src: RawNode, deep: bool) -> Option
 /// walks itself.
 fn import_fixed<'d>(hdoc: HtmlDoc<'d>, hsrc: HtmlNode<'_>, deep: bool) -> Option<BuildingNode<'d>> {
     let himp = hdoc.import_node(hsrc, deep)?;
-    if !deep && !himp.copy_written_name_from(hsrc) {
-        return None;
+    if !deep {
+        himp.copy_written_name_from(hsrc).ok()?;
     }
     if deep && fixup_template_content(hdoc, hsrc, himp).is_err() {
         // A copy whose <template> lost its contents is a wrong answer, not a

@@ -232,7 +232,7 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
         // SAFETY: `new`'s contract, and nothing borrowed from the handle is
         // live: this evaluation has not started, and an outer one would have
         // built the index already.
-        unsafe { (*self.parsed).ensure_dom_index() }
+        unsafe { (*self.parsed).ensure_dom_index() }.is_ok()
     }
 
     /// Served only for a document with no foreign element, where lax and
@@ -298,12 +298,12 @@ pub unsafe fn context<'e>(
     let doc: HtmlDoc<'e> = unsafe { parsed.raw_doc().as_doc() };
     /* Build it now, so an allocation failure is reported here rather than on
      * the first evaluate. Each evaluate still re-reads it through the handle. */
-    if !parsed.ensure_dom_index() {
-        return Err(Error::with(
+    parsed.ensure_dom_index().map_err(|_| {
+        Error::with(
             Status::Oom,
             format_args!("out of memory building the element index"),
-        ));
-    }
+        )
+    })?;
     let parsed: *mut HtmlParsed = parsed;
     // SAFETY: this function's contract is `new`'s: `parsed` owns `doc` and is
     // live and unedited for `'e`.

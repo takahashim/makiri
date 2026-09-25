@@ -340,14 +340,12 @@ fn x2h_copy_attrs(doc: &XmlDoc, s: NodeId, el: BuildingElement<'_>) -> Result<()
     let mut a = doc.first_attr(s);
     while let Some(attr) = a {
         let (val, qname, ns) = (doc.value(attr), doc.qname(attr), doc.ns(attr));
-        let stored = if ns.is_empty() {
+        if ns.is_empty() {
             el.set_attribute(qname, val)
         } else {
             el.append_ns_attribute(ns, qname, val)
-        };
-        if !stored {
-            return Err(MutStatus::Oom);
         }
+        .map_err(|_| MutStatus::Oom)?;
         a = doc.next(attr);
     }
     Ok(())

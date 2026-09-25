@@ -118,9 +118,8 @@ pub fn aset(ruby: &Ruby, this: HtmlSelf, rb_name: Value, rb_value: Value) -> Res
         let vv = ruby_verified_data(rb_value, "attribute value")?;
         check_dom_name(ruby, &nv, dom_name::valid_attribute_local_name, "attribute")?;
         let el = element_of(edit, REFUSAL)?;
-        if !crate::bridge::html::set_attribute(el, &nv, &vv) {
-            return Err(makiri_error("failed to set attribute"));
-        }
+        crate::bridge::html::set_attribute(el, &nv, &vv)
+            .map_err(|_| makiri_error("failed to set attribute"))?;
         Ok(rb_value)
     })
 }
@@ -167,9 +166,8 @@ xml and xmlns take only their own)",
             ));
         }
         let el = element_of(edit, REFUSAL)?;
-        if !crate::bridge::html::set_attribute_ns(el, nv.as_ref(), &qv, &vv) {
-            return Err(makiri_error("failed to set namespaced attribute"));
-        }
+        crate::bridge::html::set_attribute_ns(el, nv.as_ref(), &qv, &vv)
+            .map_err(|_| makiri_error("failed to set namespaced attribute"))?;
         Ok(rb_value)
     })
 }
@@ -200,9 +198,8 @@ pub fn set_content(_ruby: &Ruby, this: HtmlSelf, rb_text: Value) -> Result<Value
         let edit = edit(&this)?;
         let tv = ruby_verified_data(rb_text, "node content")?;
         let node = edit.node()?;
-        if !crate::bridge::html::set_text_content(node, &tv) {
-            return Err(makiri_error("failed to set node content"));
-        }
+        crate::bridge::html::set_text_content(node, &tv)
+            .map_err(|_| makiri_error("failed to set node content"))?;
         Ok(rb_text)
     })
 }

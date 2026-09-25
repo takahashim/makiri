@@ -336,13 +336,13 @@ impl<'doc> BuildingNode<'doc> {
     /// Lexbor's copy leaves behind (`lxb_dom_element_interface_copy` copies the
     /// tag, not the spelling): a copied SVG `linearGradient` read
     /// `lineargradient`, and `p:Bar` read `bar`. Nothing to do for a node
-    /// with no written name. `false` when Lexbor could not store it.
-    pub fn copy_written_name_from(self, src: HtmlNode<'_>) -> bool {
+    /// with no written name. `Err` when Lexbor could not store it.
+    pub fn copy_written_name_from(self, src: HtmlNode<'_>) -> Result<(), LexborRefused> {
         let (Some(from), Some(to)) = (src.element(), self.0.element()) else {
-            return true;
+            return Ok(());
         };
         if !from.has_written_name() {
-            return true;
+            return Ok(());
         }
         if src.owner_document() == self.0.owner_document() {
             /* One document, one tag table: the entry the source points at is
@@ -353,7 +353,7 @@ impl<'doc> BuildingNode<'doc> {
             // SAFETY: two live elements of one document; the tag entry is the
             // document's and outlives both.
             unsafe { (*to.raw()).qualified_name = (*from.raw()).qualified_name };
-            return true;
+            return Ok(());
         }
         /* Another document's entry means nothing here, so the name is interned
          * in this one. A known gap, in Lexbor: `lxb_tag_append` given a name
@@ -365,7 +365,7 @@ impl<'doc> BuildingNode<'doc> {
         let name = from.qualified_name();
         // SAFETY: an element being built, in no tree yet; the name is copied
         // into this document's tag table.
-        let st = unsafe {
+        lexbor_ok(unsafe {
             lxb::lxb_dom_element_qualified_name_set(
                 to.raw(),
                 core::ptr::null(),
@@ -373,8 +373,7 @@ impl<'doc> BuildingNode<'doc> {
                 name.as_ptr(),
                 name.len(),
             )
-        };
-        st == lxb::consts::STATUS_OK
+        })
     }
 
     /// Where this node's CHILDREN attach: a `<template>`'s content fragment,
@@ -453,17 +452,25 @@ impl<'doc> BuildingElement<'doc> {
         unsafe { (*self.0.raw()).node.ns = ns.raw() };
     }
 
-    /// Set a plain, namespaceless attribute. `false` when Lexbor could not
+    /// Set a plain, namespaceless attribute. `Err` when Lexbor could not
     /// store it.
-    pub fn set_attribute(self, name: &[u8], value: &[u8]) -> bool {
-        self.0.put_attribute(name, value).is_some()
+    pub fn set_attribute(self, name: &[u8], value: &[u8]) -> Result<(), LexborRefused> {
+        self.0
+            .put_attribute(name, value)
+            .map(drop)
+            .ok_or(LexborRefused)
     }
 
     /// Create an attribute in `ns`, name it `qname` case-preserving, give it
-    /// `value`, and append it. `false` when any step failed, in which case the
+    /// `value`, and append it. `Err` when any step failed, in which case the
     /// unappended attribute is left for the arena, like the rest of an
     /// abandoned subtree.
-    pub fn append_ns_attribute(self, ns: &[u8], qname: &[u8], value: &[u8]) -> bool {
+    pub fn append_ns_attribute(
+        self,
+        ns: &[u8],
+        qname: &[u8],
+        value: &[u8],
+    ) -> Result<(), LexborRefused> {
         self.0.append_attribute_ns(Some(ns), qname, value)
     }
 }

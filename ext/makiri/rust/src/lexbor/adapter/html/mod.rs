@@ -179,6 +179,26 @@ const _: () = {
     assert!(T::Notation as u32 == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_NOTATION);
 };
 
+/* ---------- a refused step ---------- */
+
+/// Lexbor could not complete an edit or a copy - store a value or a name, copy
+/// a node - or an allocation the step itself needed failed. In practice every
+/// such failure is out of memory; Lexbor's status is not carried, since no
+/// caller reports more than that the step failed. The node it was working on
+/// keeps what it had, or is a copy nothing links to yet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LexborRefused;
+
+/// A Lexbor status as a result.
+#[inline]
+pub(in crate::lexbor) fn lexbor_ok(st: lxb::lxb_status_t) -> Result<(), LexborRefused> {
+    if st == lxb::consts::STATUS_OK {
+        Ok(())
+    } else {
+        Err(LexborRefused)
+    }
+}
+
 /* ---------- borrowed bytes ---------- */
 
 /// A DOM `localName` from a qualified name and Lexbor's stored local name: the
@@ -975,7 +995,7 @@ impl<'doc> HtmlElement<'doc> {
         let found =
             unsafe { lxb::lxb_dom_element_attr_is_exist(self.raw(), name.as_ptr(), name.len()) };
         if let Some(at) = HtmlAttr::link(found) {
-            return at.set_value(value).then_some(at);
+            return at.set_value(value).ok().map(|()| at);
         }
         /* Only the create path is left, where a failure destroys an attribute
          * nothing links to yet. */
@@ -998,16 +1018,19 @@ impl<'doc> HtmlElement<'doc> {
     /// naming call, not an empty URI; a fresh attribute is already in the null
     /// namespace.
     ///
-    /// `false` when any step failed; the unappended attribute is left for the
+    /// `Err` when any step failed; the unappended attribute is left for the
     /// document's arena to reclaim wholesale, the "never destroy" convention.
-    fn append_attribute_ns(self, ns: Option<&[u8]>, qname: &[u8], value: &[u8]) -> bool {
+    fn append_attribute_ns(
+        self,
+        ns: Option<&[u8]>,
+        qname: &[u8],
+        value: &[u8],
+    ) -> Result<(), LexborRefused> {
         // SAFETY: a live element of a live document its caller may change;
         // every slice is read and copied by Lexbor.
         unsafe {
             let at = lxb::lxb_dom_attr_interface_create(self.node().owner_document().as_raw());
-            let Some(at) = HtmlAttr::link(at) else {
-                return false;
-            };
+            let at = HtmlAttr::link(at).ok_or(LexborRefused)?;
             let named = match ns {
                 Some(uri) => lxb::lxb_dom_attr_set_name_ns(
                     at.raw(),
@@ -1019,11 +1042,10 @@ impl<'doc> HtmlElement<'doc> {
                 ),
                 None => lxb::lxb_dom_attr_set_name(at.raw(), qname.as_ptr(), qname.len(), false),
             };
-            if named != lxb::consts::STATUS_OK || !at.set_value(value) {
-                return false;
-            }
+            lexbor_ok(named)?;
+            at.set_value(value)?;
             lxb::lxb_dom_element_attr_append(self.raw(), at.raw());
-            true
+            Ok(())
         }
     }
 
@@ -1091,17 +1113,16 @@ impl<'doc> HtmlAttr<'doc> {
         // which the handle's contract rules out for 'doc.
         unsafe { named_mut(self.raw(), lxb::lxb_dom_attr_value_noi) }
     }
-    /// Replace the attribute's value. `false` when Lexbor could not store it,
+    /// Replace the attribute's value. `Err` when Lexbor could not store it,
     /// in which case the attribute keeps what it had.
     ///
     /// Lexbor frees the old value here, which is why an XPath evaluation may not
     /// be reading this document - the borrowed slices it holds would dangle.
     /// Reaching this through [`HtmlElementMut`] is what says that was checked.
-    pub fn set_value(self, value: &[u8]) -> bool {
+    pub fn set_value(self, value: &[u8]) -> Result<(), LexborRefused> {
         // SAFETY: a live attribute; Lexbor copies the bytes before anything
         // else runs.
-        let st = unsafe { lxb::lxb_dom_attr_set_value(self.raw(), value.as_ptr(), value.len()) };
-        st == lxb::consts::STATUS_OK
+        lexbor_ok(unsafe { lxb::lxb_dom_attr_set_value(self.raw(), value.as_ptr(), value.len()) })
     }
 
     /// The attribute's OWN namespace id, the one `setAttributeNS` (or the
