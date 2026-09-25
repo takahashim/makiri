@@ -18,25 +18,14 @@ use super::dom::*;
 /// visited node, the hottest loop in the engine, with nothing left to look up.
 #[derive(Clone, Copy)]
 pub struct CompiledTest<'a> {
-    kind: Kind<'a>,
+    /// The AST's test with its names borrowed in place, so the hot match reads
+    /// them from here rather than through the AST.
+    test: NodeTest<&'a [u8]>,
     axis: Axis,
     /// The URI the test's prefix is bound to; None for an unprefixed test.
     uri: Option<&'a [u8]>,
     /// namespace_matching: :lax.
     lax: bool,
-}
-
-/// A [`NodeTest`] as the per-node match reads it: the prefix is gone (it is
-/// [`CompiledTest`]'s resolved URI), and the names are borrowed in place, so
-/// the hot loop reads them from the compiled test rather than through the AST.
-#[derive(Clone, Copy)]
-enum Kind<'a> {
-    Name(&'a [u8]),
-    Wildcard,
-    Node,
-    Text,
-    Comment,
-    Pi(Option<&'a [u8]>),
 }
 
 impl<'a> CompiledTest<'a> {
@@ -54,16 +43,21 @@ impl<'a> CompiledTest<'a> {
             None => None,
             Some(prefix) => Some(names.resolve_prefix(prefix, err)?),
         };
-        let kind = match test {
-            NodeTest::Name { local, .. } => Kind::Name(local),
-            NodeTest::Wildcard { .. } => Kind::Wildcard,
-            NodeTest::Node => Kind::Node,
-            NodeTest::Text => Kind::Text,
-            NodeTest::Comment => Kind::Comment,
-            NodeTest::Pi(target) => Kind::Pi(target.as_deref()),
+        let test = match test {
+            NodeTest::Name { prefix, local } => NodeTest::Name {
+                prefix: prefix.as_deref(),
+                local: local.as_ref(),
+            },
+            NodeTest::Wildcard { prefix } => NodeTest::Wildcard {
+                prefix: prefix.as_deref(),
+            },
+            NodeTest::Node => NodeTest::Node,
+            NodeTest::Text => NodeTest::Text,
+            NodeTest::Comment => NodeTest::Comment,
+            NodeTest::Pi(target) => NodeTest::Pi(target.as_deref()),
         };
         Ok(CompiledTest {
-            kind,
+            test,
             axis,
             uri,
             lax,
@@ -72,8 +66,8 @@ impl<'a> CompiledTest<'a> {
 
     /// The local name of a name test; None for any other test.
     pub fn name(&self) -> Option<&'a [u8]> {
-        match self.kind {
-            Kind::Name(local) => Some(local),
+        match self.test {
+            NodeTest::Name { local, .. } => Some(local),
             _ => None,
         }
     }
@@ -95,8 +89,8 @@ impl<'a> CompiledTest<'a> {
     #[inline]
     pub fn matches<'d, D: Dom<'d>>(&self, doc: D, node: D::Node) -> bool {
         let axis = self.axis;
-        match self.kind {
-            Kind::Node => {
+        match self.test {
+            NodeTest::Node => {
                 /* §5's data model has only element, attribute, text, namespace,
                  * PI, comment and the root. Both representations additionally
                  * carry DOCUMENT_TYPE / ENTITY / ENTITY_REFERENCE / NOTATION
@@ -111,13 +105,15 @@ impl<'a> CompiledTest<'a> {
                         | NodeType::Notation
                 )
             }
-            Kind::Text => matches!(doc.node_type(node), NodeType::Text | NodeType::CDataSection),
-            Kind::Comment => doc.node_type(node) == NodeType::Comment,
-            Kind::Pi(target) => {
+            NodeTest::Text => {
+                matches!(doc.node_type(node), NodeType::Text | NodeType::CDataSection)
+            }
+            NodeTest::Comment => doc.node_type(node) == NodeType::Comment,
+            NodeTest::Pi(target) => {
                 doc.node_type(node) == NodeType::Pi
                     && target.is_none_or(|target| doc.pi_name(node) == target)
             }
-            Kind::Wildcard => {
+            NodeTest::Wildcard { .. } => {
                 if axis == Axis::Namespace {
                     return false;
                 }
@@ -133,7 +129,7 @@ impl<'a> CompiledTest<'a> {
                         && self.uri.is_none_or(|want| want == doc.ns_uri(node))
                 }
             }
-            Kind::Name(local) => {
+            NodeTest::Name { local, .. } => {
                 /* An attribute's kind is checked by the name test, which takes
                  * it as one. */
                 if axis != Axis::Attribute && doc.node_type(node) != NodeType::Element {

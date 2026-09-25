@@ -55,14 +55,16 @@ pub enum Op {
 /// names it has. A `None` prefix is an omitted one, which is not the same as an
 /// empty one: an unprefixed test has no prefix, while a CSS `*|el` or `|el` is
 /// lowered to an explicit shape of its own.
-pub enum NodeTest {
+///
+/// `S` is how a name is stored: the AST owns its names (`Box<[u8]>`, the
+/// default), while the compiled test borrows them (`&[u8]`) so the hot match
+/// reads them in place. One shape, one definition, so the two cannot drift.
+#[derive(Clone, Copy)]
+pub enum NodeTest<S = Box<[u8]>> {
     /// `local` or `prefix:local`.
-    Name {
-        prefix: Option<Box<[u8]>>,
-        local: Box<[u8]>,
-    },
+    Name { prefix: Option<S>, local: S },
     /// `*` or `prefix:*`: any node of the axis's principal type.
-    Wildcard { prefix: Option<Box<[u8]>> },
+    Wildcard { prefix: Option<S> },
     /// `node()`.
     Node,
     /// `text()`.
@@ -70,7 +72,7 @@ pub enum NodeTest {
     /// `comment()`.
     Comment,
     /// `processing-instruction()`, with its optional target literal.
-    Pi(Option<Box<[u8]>>),
+    Pi(Option<S>),
 }
 
 pub struct Step {
@@ -79,17 +81,21 @@ pub struct Step {
     pub predicates: Vec<Expr>,
 }
 
-impl NodeTest {
-    /// `*`, unprefixed.
-    pub const ANY: NodeTest = NodeTest::Wildcard { prefix: None };
-
+impl<S: AsRef<[u8]>> NodeTest<S> {
     /// The test's prefix, for the two shapes that can carry one.
     pub fn prefix(&self) -> Option<&[u8]> {
         match self {
-            NodeTest::Name { prefix, .. } | NodeTest::Wildcard { prefix } => prefix.as_deref(),
+            NodeTest::Name { prefix, .. } | NodeTest::Wildcard { prefix } => {
+                prefix.as_ref().map(AsRef::as_ref)
+            }
             NodeTest::Node | NodeTest::Text | NodeTest::Comment | NodeTest::Pi(_) => None,
         }
     }
+}
+
+impl NodeTest<Box<[u8]>> {
+    /// `*`, unprefixed.
+    pub const ANY: NodeTest = NodeTest::Wildcard { prefix: None };
 }
 
 impl Step {

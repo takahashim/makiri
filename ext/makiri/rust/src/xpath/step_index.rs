@@ -61,22 +61,22 @@ pub fn try_descendant_index<'e, 'd, D: Dom<'d>>(
 /// pointer-keyed parent -> count map emits exactly those whose running count
 /// reaches N, already in document order, with no sort or dedup.
 ///
-/// The shape's N, and the name test's local name.
-fn nth_shape<'s, 'e, 'd, D: Dom<'d>>(
+/// The shape's N, when it is `//name[N]`. The local name is read from `ct`,
+/// the compiled test, not re-destructured from the AST.
+fn nth_shape<'d, D: Dom<'d>>(
     doc: D,
+    ct: &CompiledTest<'_>,
     s0: &Step,
-    s1: &'s Step,
+    s1: &Step,
     seed: &NodeSet<D::Node>,
-) -> Option<(usize, &'s [u8])> {
+) -> Option<usize> {
     if s0.axis != Axis::DescendantOrSelf
         || !matches!(s0.test, NodeTest::Node)
         || !s0.predicates.is_empty()
     {
         return None;
     }
-    let NodeTest::Name { local, .. } = &s1.test else {
-        return None;
-    };
+    ct.name()?;
     if s1.axis != Axis::Child {
         return None;
     }
@@ -97,7 +97,7 @@ fn nth_shape<'s, 'e, 'd, D: Dom<'d>>(
     if !context_is_document::<D>(doc, seed) {
         return None;
     }
-    Some((dn as usize, local))
+    Some(dn as usize)
 }
 
 /// `//name[N]` from the index: the two steps' result, or None when the shape
@@ -110,11 +110,14 @@ pub fn try_descendant_index_nth<'e, 'd, D: Dom<'d>>(
     seed: &NodeSet<D::Node>,
 ) -> Result<Option<NodeSet<D::Node>>, Reported> {
     let doc = ev.doc;
-    let Some((need, local)) = nth_shape::<D>(doc, s0, s1, seed) else {
-        return Ok(None);
-    };
     let names: &'e Names = ev.names;
     let ct = CompiledTest::new(&s1.test, s1.axis, names, ev.cx.lax(), ev.budget.sink())?;
+    let Some(need) = nth_shape::<D>(doc, &ct, s0, s1, seed) else {
+        return Ok(None);
+    };
+    let Some(local) = ct.name() else {
+        return Ok(None);
+    };
     let Some(bucket) = doc.name_bucket(local, ct.uri()) else {
         return Ok(None);
     };
