@@ -30,10 +30,6 @@ use crate::lexbor::adapter::html::{HtmlNode, RawNode};
  * small helpers                                                      *
  * ------------------------------------------------------------------ */
 
-fn nil(ruby: &Ruby) -> Value {
-    ruby.qnil().as_value()
-}
-
 /// An Element's or Attribute's qualified name with its local name, or `None`
 /// for any other kind. The one place the element-vs-attribute accessor pair is
 /// chosen.
@@ -178,7 +174,7 @@ pub fn doctype_system_id(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<V
 /// template ELEMENT deliberately do not descend into the content - matching the
 /// DOM, and unavoidable for CSS, which runs Lexbor's selector engine over the
 /// real tree - so query the fragment instead.
-pub fn content_fragment(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
+pub fn content_fragment(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| Ok(wrap_node(this.node().template_content(), this.document)))
 }
 
@@ -256,15 +252,15 @@ pub fn get_document(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error>
 /// `attr->owner`, read live (see `HtmlNode::parent`), so a removed attribute
 /// answers nil and nothing needs building. (It used to go through an index
 /// whose build could fail, which is why this returned `Result`.)
-pub fn parent(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
+pub fn parent(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| Ok(wrap_node(this.node().parent(), this.document)))
 }
 
-pub fn next(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
+pub fn next(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| Ok(wrap_node(this.node().next(), this.document)))
 }
 
-pub fn previous(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
+pub fn previous(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| Ok(wrap_node(this.node().prev(), this.document)))
 }
 
@@ -285,14 +281,14 @@ fn first_element<'d>(
     None
 }
 
-pub fn next_element(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
+pub fn next_element(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
         let found = first_element(this.node().next(), HtmlNode::next);
         Ok(wrap_node(found, this.document))
     })
 }
 
-pub fn previous_element(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
+pub fn previous_element(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
         let found = first_element(this.node().prev(), HtmlNode::prev);
         Ok(wrap_node(found, this.document))
@@ -300,18 +296,18 @@ pub fn previous_element(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Er
 }
 
 /// `#child`: the first child node of any type, or nil.
-pub fn child(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
+pub fn child(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| Ok(wrap_node(this.node().first_child(), this.document)))
 }
 
-pub fn first_element_child(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
+pub fn first_element_child(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
         let found = first_element(this.node().first_child(), HtmlNode::next);
         Ok(wrap_node(found, this.document))
     })
 }
 
-pub fn last_element_child(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
+pub fn last_element_child(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
         let found = first_element(this.node().last_child(), HtmlNode::prev);
         Ok(wrap_node(found, this.document))
@@ -438,13 +434,13 @@ pub fn attribute_nodes(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Err
 /// getAttribute's ASCII-lowercasing applies only to an HTML element in an HTML
 /// document, so the caller does that step.
 pub fn attribute_by_qualified_name(
-    ruby: &Ruby,
+    _ruby: &Ruby,
     this: super::HtmlSelf,
     rb_name: Value,
-) -> Result<Value, Error> {
+) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
         let Some(el) = this.node().element() else {
-            return Ok(nil(ruby));
+            return Ok(None);
         };
         let nv = ruby_verified_text(rb_name, c"attribute name")?;
         let name = nv.as_verified().as_bytes();
@@ -511,7 +507,7 @@ pub fn line(this: super::HtmlSelf) -> Result<Option<usize>, Error> {
 /// `HtmlNode::document_order` does not order (different documents, detached
 /// subtrees with no common root, an attribute node). Included via Comparable,
 /// which supplies `<`, `>`, `between?` and the rest.
-pub fn spaceship(ruby: &Ruby, this: super::HtmlSelf, other: Value) -> Result<Value, Error> {
+pub fn spaceship(_ruby: &Ruby, this: super::HtmlSelf, other: Value) -> Result<Option<i64>, Error> {
     crate::bridge::ruby::entry(|| {
         /* A non-node, or an XML node - never order-comparable to an HTML one, and
          * asking is how we avoid arg_node's TypeError below. */
@@ -521,11 +517,9 @@ pub fn spaceship(ruby: &Ruby, this: super::HtmlSelf, other: Value) -> Result<Val
                 &CLASS_XML_DOCUMENT,
             );
         if !comparable {
-            return Ok(nil(ruby));
+            return Ok(None);
         }
-        Ok(match this.node().document_order(arg_node(&other)?) {
-            Some(order) => ruby.integer_from_i64(order as i64).as_value(),
-            None => nil(ruby),
-        })
+        let order = this.node().document_order(arg_node(&other)?);
+        Ok(order.map(|o| o as i64))
     })
 }

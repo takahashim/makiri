@@ -142,7 +142,7 @@ fn ruby_to_val(bridge: &Bridge, budget: &mut Budget, rv: Value) -> Result<Val, H
                 return Err(HandlerFailure::Msg("handler result could not be read"));
             };
             for i in 0..count {
-                let Ok(node) = source.at(&ruby, i) else {
+                let Ok(Some(node)) = source.at(&ruby, i) else {
                     return Err(HandlerFailure::Msg("handler result could not be read"));
                 };
                 push_result_node(bridge, budget, node, &mut set)?;

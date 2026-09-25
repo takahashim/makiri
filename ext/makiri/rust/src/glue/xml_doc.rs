@@ -91,8 +91,8 @@ fn s_parse(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
     })
 }
 
-fn doc_root(ruby: &Ruby, rb_self: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| Ok(crate::bridge::xml::document_root(ruby, rb_self)))
+fn doc_root(_ruby: &Ruby, rb_self: Value) -> Result<Option<Value>, Error> {
+    crate::bridge::ruby::entry(|| Ok(crate::bridge::xml::document_root(rb_self)))
 }
 
 /// The document's DOCTYPE, or nil.
@@ -101,8 +101,8 @@ fn doc_root(ruby: &Ruby, rb_self: Value) -> Result<Value, Error> {
 /// parsed - no entity or element declarations are loaded, so `&name;` stays an
 /// undefined-entity error and no external subset is fetched. The node is kept
 /// off the tree, so XPath never sees it (XPath 1.0 has no doctype node type).
-fn doc_internal_subset(ruby: &Ruby, rb_self: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| Ok(crate::bridge::xml::document_internal_subset(ruby, rb_self)))
+fn doc_internal_subset(_ruby: &Ruby, rb_self: Value) -> Result<Option<Value>, Error> {
+    crate::bridge::ruby::entry(|| Ok(crate::bridge::xml::document_internal_subset(rb_self)))
 }
 
 /// `Makiri::XML::Document.new` - an empty document to build up programmatically.

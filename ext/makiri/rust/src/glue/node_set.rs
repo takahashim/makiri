@@ -31,24 +31,23 @@ fn arity_error(ruby: &Ruby, given: usize) -> Error {
 /// `set[i]` -> Node or nil (negative counts from the end);
 /// `set[start, length]` and `set[range]` -> a new NodeSet, nil when the start is
 /// out of range. Mirrors `Array#[]`.
-fn aref(ruby: &Ruby, s: &NodeSet, args: &[Value]) -> Result<Value, Error> {
+fn aref(ruby: &Ruby, s: &NodeSet, args: &[Value]) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
         let count = s.count()? as c_long;
         let from_end = |i: c_long| if i < 0 { i + count } else { i };
-        let nil = ruby.qnil().as_value();
         match args {
             [range] if range.is_kind_of(ruby.class_range()) => {
                 /* A start outside the set is nil; a bound too large for a `long`
                  * raises, as `Array#[]` does. */
                 match range_beg_len(*range, count)? {
                     Some((beg, len)) => s.slice(ruby, beg as usize, len as usize),
-                    None => Ok(nil),
+                    None => Ok(None),
                 }
             }
             [index] => {
                 let i = from_end(c_long::try_convert(*index)?);
                 if i < 0 || i >= count {
-                    return Ok(nil);
+                    return Ok(None);
                 }
                 s.at(ruby, i as usize)
             }
@@ -56,7 +55,7 @@ fn aref(ruby: &Ruby, s: &NodeSet, args: &[Value]) -> Result<Value, Error> {
                 let beg = from_end(c_long::try_convert(*beg)?);
                 let len = c_long::try_convert(*len)?;
                 if beg < 0 || beg > count || len < 0 {
-                    return Ok(nil);
+                    return Ok(None);
                 }
                 s.slice(ruby, beg as usize, len as usize)
             }
@@ -86,7 +85,7 @@ fn each(ruby: &Ruby, s: &NodeSet) -> Result<Value, Error> {
 }
 
 fn dup(ruby: &Ruby, s: &NodeSet, _args: &[Value]) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| s.slice(ruby, 0, s.count()?))
+    crate::bridge::ruby::entry(|| s.copy(ruby))
 }
 
 fn op_or(ruby: &Ruby, s: &NodeSet, other: Value) -> Result<Value, Error> {

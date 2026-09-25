@@ -388,27 +388,36 @@ impl NodeSet {
         Ok(self.read()?.len())
     }
 
-    /// The node at `i`, wrapped; nil past the end.
+    /// The node at `i`, wrapped; `None` past the end.
     ///
     /// O(1): the one pointer is read under a short borrow that is released
     /// before the wrap, which allocates and so can run arbitrary Ruby.
-    pub fn at(&self, ruby: &Ruby, i: usize) -> Result<Value, Error> {
+    pub fn at(&self, ruby: &Ruby, i: usize) -> Result<Option<Value>, Error> {
         let node = self.read()?.as_slice().get(i).copied();
-        Ok(match node {
+        Ok(node.map(|n| {
             // SAFETY: a node this set stored, under its own `kind`, and its
             // document is rooted by the set.
-            Some(n) => unsafe { wrap_doc_node(self.kind, n, self.document(ruby)) },
-            None => ruby.qnil().as_value(),
-        })
+            unsafe { wrap_doc_node(self.kind, n, self.document(ruby)) }
+        }))
     }
 
-    /// A new set of `len` nodes from `beg`, clamped to the end; nil when `beg`
-    /// is past it.
-    pub fn slice(&self, ruby: &Ruby, beg: usize, len: usize) -> Result<Value, Error> {
+    /// A new set of `len` nodes from `beg`, clamped to the end; `None` when
+    /// `beg` is past it.
+    pub fn slice(&self, ruby: &Ruby, beg: usize, len: usize) -> Result<Option<Value>, Error> {
         let Some(room) = self.count()?.checked_sub(beg) else {
-            return Ok(ruby.qnil().as_value());
+            return Ok(None);
         };
-        let (result, mut w) = new_result_with_room(self.document(ruby), len.min(room))?;
+        self.take(ruby, beg, len.min(room)).map(Some)
+    }
+
+    /// A new set holding every node of this one.
+    pub fn copy(&self, ruby: &Ruby) -> Result<Value, Error> {
+        self.take(ruby, 0, self.count()?)
+    }
+
+    /// A new set of at most `len` nodes from `beg`.
+    fn take(&self, ruby: &Ruby, beg: usize, len: usize) -> Result<Value, Error> {
+        let (result, mut w) = new_result_with_room(self.document(ruby), len)?;
         let mine = self.read()?;
         let tail = mine.as_slice().get(beg..).unwrap_or_default();
         for &n in &tail[..len.min(tail.len())] {

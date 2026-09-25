@@ -79,17 +79,14 @@ fn css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Value, Error> {
 ///
 /// Stops at the first match and wraps that one node - no NodeSet, and no Ruby
 /// `#first` dispatch, for the single node the caller asked for.
-fn at_css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Value, Error> {
+fn at_css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
         let selector = css_args(ruby, args)?;
         let sv = selector_text(selector)?;
         let found = select_first(&held(ruby), this.raw(), sv.as_verified().as_bytes())
             .map_err(|e| select_error(e, selector))?;
         drop(sv);
-        Ok(found.map_or_else(
-            || ruby.qnil().as_value(),
-            |n| wrap_html_node(n, this.document),
-        ))
+        Ok(found.map(|n| wrap_html_node(n, this.document)))
     })
 }
 

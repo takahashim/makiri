@@ -80,12 +80,9 @@ pub fn parse_document(source: Value) -> Result<Value, Error> {
 
 /// `Document#root`: the root Element node, or nil (unreachable today - the HTML
 /// parser inserts html/head/body even for empty input).
-pub fn document_root(ruby: &Ruby, rb_doc: Value) -> Value {
-    let root = html_doc(&rb_doc).as_node().document_root();
-    let Some(root) = root else {
-        return ruby.qnil().as_value();
-    };
-    wrap_html_node(RawNode::from(root), rb_doc)
+pub fn document_root(rb_doc: Value) -> Option<Value> {
+    let root = html_doc(&rb_doc).as_node().document_root()?;
+    Some(wrap_html_node(RawNode::from(root), rb_doc))
 }
 
 /// `Document#title`: the document `<title>`, or `""`.

@@ -19,7 +19,7 @@
 use magnus::rb_sys::AsRawValue;
 
 use crate::bridge::ruby::makiri_error;
-use magnus::{prelude::*, Error, Ruby, Value};
+use magnus::{prelude::*, Error, Value};
 
 use crate::bridge::html::html_node_unwrap;
 use crate::bridge::ruby::{check_frozen, is_kind_of, nil, value};
@@ -456,19 +456,13 @@ pub fn parse_xml_document(source: Value, limits: XmlLimits, budget: usize) -> Re
 }
 
 /// `Document#root` for an XML document: the root element, or nil.
-pub fn document_root(ruby: &Ruby, rb_self: Value) -> Value {
-    match arena_ref(&rb_self).root {
-        Some(n) => wrap(n, rb_self),
-        None => ruby.qnil().as_value(),
-    }
+pub fn document_root(rb_self: Value) -> Option<Value> {
+    arena_ref(&rb_self).root.map(|n| wrap(n, rb_self))
 }
 
 /// `Document#internal_subset` for an XML document: the DOCTYPE node, or nil.
-pub fn document_internal_subset(ruby: &Ruby, rb_self: Value) -> Value {
-    match arena_ref(&rb_self).doctype {
-        Some(n) => wrap(n, rb_self),
-        None => ruby.qnil().as_value(),
-    }
+pub fn document_internal_subset(rb_self: Value) -> Option<Value> {
+    arena_ref(&rb_self).doctype.map(|n| wrap(n, rb_self))
 }
 
 /// A fresh, empty XML Document: an arena holding a DOCUMENT node and no root.

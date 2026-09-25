@@ -10,7 +10,7 @@
 use crate::bridge::ruby::makiri_error;
 use magnus::{prelude::*, Error, Value};
 
-use crate::bridge::ruby::{nil, value};
+use crate::bridge::ruby::value;
 use crate::init::{
     CLASS_DOCUMENT, CLASS_HTML_ATTR, CLASS_HTML_CDATA_SECTION, CLASS_HTML_COMMENT,
     CLASS_HTML_DOCUMENT_FRAGMENT, CLASS_HTML_DOCUMENT_TYPE, CLASS_HTML_ELEMENT, CLASS_HTML_NODE,
@@ -174,12 +174,9 @@ pub fn arg_node(v: &Value) -> Result<HtmlNode<'_>, Error> {
     Ok(unsafe { html_node_unwrap(*v)?.as_node() })
 }
 
-/// [`wrap_html_node`] for an optional handle: nil for None.
-pub fn wrap_node(node: Option<HtmlNode<'_>>, document: Value) -> Value {
-    match node {
-        Some(n) => wrap_html_node(RawNode::from(n), document),
-        None => nil(),
-    }
+/// [`wrap_html_node`] for an optional handle.
+pub fn wrap_node(node: Option<HtmlNode<'_>>, document: Value) -> Option<Value> {
+    node.map(|n| wrap_html_node(RawNode::from(n), document))
 }
 
 /* ------------------------------------------------------------------ *

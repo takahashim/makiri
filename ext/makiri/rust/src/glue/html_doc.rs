@@ -26,8 +26,8 @@ fn doc_s_parse(_klass: Value, source: Value) -> Result<Value, Error> {
 
 /* ---- read-only accessors ---- */
 
-fn doc_root(ruby: &Ruby, self_: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| Ok(crate::bridge::doc::document_root(ruby, self_)))
+fn doc_root(_ruby: &Ruby, self_: Value) -> Result<Option<Value>, Error> {
+    crate::bridge::ruby::entry(|| Ok(crate::bridge::doc::document_root(self_)))
 }
 
 fn doc_title(ruby: &Ruby, self_: Value) -> Result<magnus::RString, Error> {
@@ -36,7 +36,7 @@ fn doc_title(ruby: &Ruby, self_: Value) -> Result<magnus::RString, Error> {
 
 /// The `<!DOCTYPE ...>` node, or nil - Nokogiri's `#internal_subset`. It is a
 /// child of the document node (typically first), so a short scan finds it.
-fn doc_internal_subset(_ruby: &Ruby, self_: Value) -> Result<Value, Error> {
+fn doc_internal_subset(_ruby: &Ruby, self_: Value) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
         let doc = crate::glue::html_node::arg_node(&self_)?;
         let doctype = doc
