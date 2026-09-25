@@ -7,9 +7,10 @@
 //! [`Hooks`], and the callbacks below are the one monomorphised bridge from
 //! Ruby's GC to it, so no glue module writes an `extern "C"` GC function.
 //!
-//! The object outlives the wrapper struct with `ruby_xfree` as its allocator
-//! ([`wrap_zeroed`]), so the free callback releases what the struct
-//! owns and then frees it, in one place.
+//! The wrapper struct lives in memory from `ruby_xmalloc` ([`wrap_built`]),
+//! and the free callback runs the struct's `Drop` in place before handing that
+//! memory back to `ruby_xfree` - `xfree` alone would skip the destructor, and
+//! with it everything the struct owns.
 
 #![allow(unsafe_code)]
 
@@ -65,9 +66,10 @@ impl Relocator {
 /// A Rust value owned by a Ruby object.
 ///
 /// Exactly one method is required: what Ruby values the object keeps alive.
-/// `memsize` sizes the object for the GC and defaults to its Rust size;
-/// `release` frees what the object owns and defaults to nothing (the wrapper
-/// struct itself is always freed by the bridge).
+/// `memsize` sizes the object for the GC and defaults to its Rust size. What
+/// the object owns is released by its ordinary `Drop`, which the free callback
+/// runs - so a `Drop` here runs inside Ruby's collector, and must neither
+/// panic nor touch a Ruby object (see the note on the callbacks below).
 pub trait Hooks: Sized {
     /// Mark every `VALUE` this object holds.
     fn mark(&self, marker: &Marker);
@@ -85,9 +87,6 @@ pub trait Hooks: Sized {
     fn memsize(&self) -> usize {
         core::mem::size_of::<Self>()
     }
-
-    /// Release what the object owns, before the bridge frees the struct.
-    fn release(&mut self) {}
 }
 
 /* The three GC callbacks below are the crate's only `extern "C"` functions
@@ -100,16 +99,16 @@ pub trait Hooks: Sized {
  * Keep their bodies trivial; that is what makes the choice cheap. */
 
 unsafe extern "C" fn mark_cb<T: Hooks>(ptr: *mut c_void) {
-    // SAFETY: Ruby hands back the pointer `wrap_zeroed` stored, a live `T`.
+    // SAFETY: Ruby hands back the pointer `wrap_built` stored, a live `T`.
     unsafe { (*(ptr as *mut T)).mark(&Marker(())) };
 }
 
 unsafe extern "C" fn free_cb<T: Hooks>(ptr: *mut c_void) {
     // SAFETY: as `mark_cb`; the object is being collected, so this is its last
-    // access, and the struct came from `ruby_xcalloc`, so it goes back to
-    // `ruby_xfree`.
+    // access - the `T` is dropped exactly once, here, and never read again -
+    // and the struct came from `ruby_xmalloc`, so it goes back to `ruby_xfree`.
     unsafe {
-        (*(ptr as *mut T)).release();
+        core::ptr::drop_in_place(ptr as *mut T);
         rb_sys::ruby_xfree(ptr);
     }
 }
@@ -196,19 +195,19 @@ impl<T: Hooks> TypedType<T> {
         typed_data_known(v, &self.raw) as *mut T
     }
 
-    /// Allocate a zeroed `T`, fill it with `init`, wrap it as a `klass` object
-    /// of this type, and only then let `store` write the VALUEs it holds - see
-    /// [`wrap_zeroed`] for why that order.
+    /// Allocate Ruby memory for a `T`, `build` it there, wrap it as a `klass`
+    /// object of this type, and only then let `store` write the VALUEs it
+    /// holds - see [`wrap_built`] for why that order.
     ///
     /// # Safety
-    /// Under the GVL; `T` must be valid when zeroed.
+    /// Under the GVL; see [`wrap_built`] for what `build` may return.
     pub unsafe fn wrap(
         &'static self,
         klass: VALUE,
-        init: impl FnOnce(&mut T),
+        build: impl FnOnce() -> T,
         store: impl FnOnce(&mut T),
     ) -> VALUE {
-        wrap_zeroed::<T>(klass, self.raw.as_ptr(), init, store)
+        wrap_built::<T>(klass, self.raw.as_ptr(), build, store)
     }
 }
 
@@ -302,38 +301,49 @@ fn typed_data_known(v: Value, ty: &'static DataType) -> *mut c_void {
     }
 }
 
-/// Allocate a zeroed `T`, fill it with `init`, wrap it as a `klass` object of
-/// data type `ty`, and only then let `store` write the VALUEs it holds.
+/// Allocate `ruby_xmalloc` memory for a `T`, write the fully built value
+/// `build` returns into it, wrap it as a `klass` object of data type `ty`, and
+/// only then let `store` write the VALUEs it holds.
 ///
 /// The order is the point. The wrap allocates, so it is a GC point, and a VALUE
 /// already sitting in this malloc'd struct is seen by no mark there: a GC can
-/// free it, or compaction move it out from under the stored copy. Zeroed, a
-/// VALUE field reads as `false` to the mark until `store` sets it; and the
-/// VALUEs `store` writes are still on the caller's stack across the wrap,
-/// where the conservative scan pins them.
+/// free it, or compaction move it out from under the stored copy. So the built
+/// value has its VALUE fields `Qfalse` (0), which the mark ignores, until
+/// `store` sets them; and the VALUEs `store` writes are still on the caller's
+/// stack across the wrap, where the conservative scan pins them.
 ///
-/// `ruby_xcalloc` raises `NoMemoryError` on OOM; nothing is owned at that
-/// point, which is the fallible-allocation line for glue-side buffers.
+/// Built AFTER the allocation, by a closure, not passed in: `ruby_xmalloc`
+/// raises `NoMemoryError` on OOM, and a raise longjmps - which Rust permits
+/// only over frames with no destructor to run, so no `T` may be a live local
+/// across it. The wrap can raise too, once the value is in place; so what
+/// `build` returns must own nothing yet (a raise there leaks the struct, as it
+/// always did) - which is also the fallible-allocation line for glue-side
+/// buffers. Once wrapped, the free callback drops it in place.
 ///
 /// # Safety
-/// Under the GVL. `T` must be valid when zeroed, and `ty` must free it with
-/// `ruby_xfree`.
-unsafe fn wrap_zeroed<T>(
+/// Under the GVL. `build` returns a `T` that owns nothing needing a drop and
+/// holds no VALUE but `Qfalse`; `ty` must be `T`'s type (its free callback
+/// drops a `T` and returns the memory to `ruby_xfree`).
+unsafe fn wrap_built<T>(
     klass: VALUE,
     ty: *const rb_data_type_t,
-    init: impl FnOnce(&mut T),
+    build: impl FnOnce() -> T,
     store: impl FnOnce(&mut T),
 ) -> VALUE {
-    let data = rb_sys::ruby_xcalloc(1, core::mem::size_of::<T>() as rb_sys::size_t) as *mut T;
-    init(&mut *data);
-    let obj = rb_sys::rb_data_typed_object_wrap(klass, data as *mut c_void, ty);
-    store(&mut *data);
+    /* `ruby_xmalloc` is malloc-aligned; nothing wrapped asks for more. */
+    const { assert!(core::mem::align_of::<T>() <= 16) };
+    let p = rb_sys::ruby_xmalloc(core::mem::size_of::<T>() as rb_sys::size_t) as *mut T;
+    p.write(build());
+    let obj = rb_sys::rb_data_typed_object_wrap(klass, p as *mut c_void, ty);
+    store(&mut *p);
     obj
 }
 
 /* ---- magnus's TypedData, for NodeSet ----
  * NodeSet is a magnus `#[derive(TypedData)]` (its GC hooks are magnus's), not
- * a `TypedType`; this is its one unchecked accessor, kept beside the others. */
+ * a `TypedType`; this is its one unchecked accessor, kept beside the others.
+ * magnus boxes the value and its free drops the `Box`, so NodeSet and
+ * XPathContext get their `Drop` the same way a `TypedType` object does. */
 
 /// The wrapped Rust value behind a TypedData object, without magnus's
 /// `rb_protect`.

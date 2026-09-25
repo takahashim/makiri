@@ -28,6 +28,10 @@ use crate::xml::model::Document as XmlDoc;
 use core::hash::BuildHasherDefault;
 use std::collections::HashMap;
 
+/// The placeholder a wrapper's VALUE field holds until `TypedType::wrap`'s
+/// store step writes the real one: `Qfalse`, which the mark ignores.
+const QFALSE: VALUE = rb_sys::Qfalse as VALUE;
+
 /* ------------------------------------------------------------------ *
  * the node wrapper                                                   *
  * ------------------------------------------------------------------ */
@@ -79,10 +83,14 @@ pub enum NodeRepr {
 /// What a Document owns: its parsed content, in one of the two
 /// representations.
 ///
-/// Raw pointers, from `Box::into_raw`, because `DocData` lives in memory Ruby
-/// allocated and has no `Drop` of its own: [`DocData::release`] is where they
-/// are boxed again and freed. `Copy`, so it can be written into that memory
-/// without dropping whatever was there.
+/// Raw pointers, from `Box::leak`, freed by `DocData`'s `Drop`. Not `Box`,
+/// deliberately: readers copy the pointer out of a `&DocData` and hold what
+/// they derive from it well past that borrow - an XPath context keeps a
+/// `&'static` arena and a `*mut HtmlParsed` for the Document's whole life,
+/// while other calls take `&mut DocData` for the node cache. A `Box` field
+/// would assert unique ownership underneath those live aliases (a Stacked
+/// Borrows hazard); a `NonNull` asserts nothing. `Copy`, so a reader gets the
+/// pointer without borrowing the wrapper.
 #[derive(Clone, Copy)]
 pub(in crate::bridge) enum Content {
     /// Not yet installed - only between `DocumentShell::new` and `install`.
@@ -174,17 +182,13 @@ pub struct DocData {
     /// non-zero - see [`DocumentEvaluation`].
     evaluating: usize,
     errors: VALUE,
-    /// The external bytes this wrapper has told the GC about, so `release`
-    /// takes back exactly what [`account_document`] reported.
+    /// The external bytes this wrapper has told the GC about, so `Drop` takes
+    /// back exactly what [`account_document`] reported.
     reported: usize,
     /// One wrapper per node; see [`NodeCache`].
     ///
-    /// Boxed and optional because a `DocData` is born from `ruby_xcalloc` - all
-    /// zero bytes - and a zeroed `HashMap` is not an empty one: hashbrown's empty
-    /// table points at a static, not at null. `None` IS all-zero (Box is
-    /// non-null, so the niche is the null pointer), which makes the zeroed state
-    /// both valid and the right one: a document nobody navigates never allocates
-    /// a cache.
+    /// Boxed and optional so a document nobody navigates never allocates a
+    /// cache, and its wrapper stays one pointer wide.
     nodes: Option<Box<NodeCache>>,
 }
 
@@ -247,9 +251,18 @@ impl Hooks for DocData {
             .saturating_add(self.external_bytes())
             .saturating_add(self.nodes.as_ref().map_or(0, |c| c.memsize()))
     }
+}
 
-    fn release(&mut self) {
-        // SAFETY: each pointer came from `Box::into_raw` and only this owns it.
+/// Run by the free callback, in Ruby's collector - so it must not panic (the
+/// callback aborts rather than unwind into C) and must touch no Ruby object.
+/// A `DocData` exists only in the memory `TypedType::wrap` gave it, so this
+/// is the one place a Document's content is freed; the node cache (a `Box`
+/// field) follows by drop glue.
+impl Drop for DocData {
+    fn drop(&mut self) {
+        // SAFETY: each pointer came from `Box::leak` in `DocumentShell` and only
+        // this wrapper owns it; readers' borrows are confined to calls on a
+        // live Document, and this one is being collected.
         unsafe {
             match self.content {
                 Content::Empty => {}
@@ -258,10 +271,6 @@ impl Hooks for DocData {
             }
         }
         self.content = Content::Empty;
-        /* The cache is Rust-owned heap in a struct Ruby frees with `xfree`, which
-         * does NOT run Drop - so it has to be dropped here, like the content
-         * above. `rake leaks` is what caught this one when it was missing. */
-        drop(self.nodes.take());
         /* Balance the report, or the GC keeps counting freed arenas as live
          * and collects ever more eagerly. A plain C call, as this hook has to
          * be: it only subtracts, and Ruby's own `xfree` does the same from
@@ -384,10 +393,12 @@ impl DocumentShell {
         DocumentShell(unsafe {
             ty.wrap(
                 klass,
-                |d| {
-                    d.content = Content::Empty;
-                    d.evaluating = 0;
-                    d.reported = 0;
+                || DocData {
+                    content: Content::Empty,
+                    evaluating: 0,
+                    errors: QFALSE,
+                    reported: 0,
+                    nodes: None,
                 },
                 |d| d.errors = errors.as_raw(),
             )
@@ -566,7 +577,10 @@ pub(in crate::bridge) fn wrap_cached(
     let fresh = unsafe {
         value(ty.wrap(
             klass,
-            |nd| nd.node = node,
+            || NodeData {
+                node,
+                document: QFALSE,
+            },
             |nd| nd.document = document.as_raw(),
         ))
     };

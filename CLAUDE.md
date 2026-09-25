@@ -399,7 +399,8 @@ by the check that concluded "every undefined symbol is legitimate".
   `lexbor/adapter`, `cbuf`) allocates only through `falloc`: `clippy.toml` bans the
   infallible `Box::new` / `Vec::with_capacity` / `reserve`, and `rake oom` fails
   each site in turn, so an OOM there raises instead of aborting. The glue's
-  Ruby-side storage - TypedData wrappers (`bridge::ruby::wrap_zeroed`) and
+  Ruby-side storage - TypedData wrappers (`bridge::typed::wrap_built`, freed by
+  running the struct's `Drop` in place before `ruby_xfree`) and
   `NodeSet`'s node array - uses Ruby's `ruby_xmalloc` family instead: its failure
   is `NoMemoryError`, Ruby's own, and because that raise longjmps, it may happen
   only in a frame that owns nothing or under `rb_protect` (`value_to_ruby`).
@@ -874,7 +875,7 @@ Key decisions that got there, worth not regressing:
   each expression once and re-runs the cached AST (bounded by `AST_CACHE_MAX`).
   `Node#xpath` uses a throwaway context and does not cache.
 - **Every Document reports its arena to the GC** (`account_document`, which
-  `DocumentShell::install` calls; `DocData::release` takes the report back). Neither
+  `DocumentShell::install` calls; `impl Drop for DocData` takes the report back). Neither
   Lexbor's pools nor the XML arena is an `xmalloc`, so without the report Ruby
   sees a parsed Document as ~56 bytes and NO collection is triggered by memory
   pressure: `500.times { Makiri::HTML(html) }` ran with zero GCs, 2.2 GB RSS,
