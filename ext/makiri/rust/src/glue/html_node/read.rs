@@ -359,7 +359,7 @@ pub fn aref(_ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Optio
         let Some(el) = this.node().element() else {
             return Ok(None);
         };
-        let nv = ruby_verified_text(rb_name, c"attribute name")?;
+        let nv = ruby_verified_text(rb_name, "attribute name")?;
         let name = nv.as_verified().as_bytes();
         /* Asked first because the value alone cannot tell: Lexbor answers NULL
          * both for an absent attribute and for a present one with no value
@@ -378,7 +378,7 @@ pub fn has_key(_ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<bo
         let Some(el) = this.node().element() else {
             return Ok(false);
         };
-        let nv = ruby_verified_text(rb_name, c"attribute name")?;
+        let nv = ruby_verified_text(rb_name, "attribute name")?;
         Ok(el.has_attribute(nv.as_verified().as_bytes()))
     })
 }
@@ -442,7 +442,7 @@ pub fn attribute_by_qualified_name(
         let Some(el) = this.node().element() else {
             return Ok(None);
         };
-        let nv = ruby_verified_text(rb_name, c"attribute name")?;
+        let nv = ruby_verified_text(rb_name, "attribute name")?;
         let name = nv.as_verified().as_bytes();
         let found = el.attrs().find(|at| at.qualified_name() == name);
         /* The name is not read past here; wrapping allocates, so it happens after. */
@@ -467,7 +467,7 @@ pub fn attribute_value_by_qualified_name(
         let Some(el) = this.node().element() else {
             return Ok(None);
         };
-        let nv = ruby_verified_text(rb_name, c"attribute name")?;
+        let nv = ruby_verified_text(rb_name, "attribute name")?;
         let name = nv.as_verified().as_bytes();
         let value = el
             .attrs()

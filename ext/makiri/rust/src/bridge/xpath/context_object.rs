@@ -194,7 +194,7 @@ impl XPathCtx {
             /* Verify BEFORE borrowing: coercing the expression can run Ruby
              * (`to_s`), which may re-enter this context, and a borrow held across
              * that would turn the re-entry into "already in use". */
-            let ev = ruby_verified_text(expr, c"XPath expression")?;
+            let ev = ruby_verified_text(expr, "XPath expression")?;
             let mut cache = self.cache()?;
             let parsed = cached_ast(&mut cache, self.ctx.limits(), ev);
             /* Release the borrow before building the exception: that allocates,
@@ -250,7 +250,7 @@ impl XPathCtx {
          * stricter engine-string check, which adds the byte cap on top of the
          * no-NUL / valid-UTF-8 contract. */
         let sv = crate::bridge::ruby::to_s(value)?;
-        let nv = ruby_verified_text(name, c"variable name")?;
+        let nv = ruby_verified_text(name, "variable name")?;
         let vv = ruby_try_verified_text(sv, self.ctx.limits().max_string_bytes)
             .map_err(|reason| makiri_error(format!("invalid variable value: {reason}")))?;
         self.ctx

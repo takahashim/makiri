@@ -114,8 +114,8 @@ pub fn aset(ruby: &Ruby, this: HtmlSelf, rb_name: Value, rb_value: Value) -> Res
         if edit.node_type() != TYPE_ELEMENT {
             return Err(makiri_error(REFUSAL));
         }
-        let nv = ruby_verified_text(rb_name, c"attribute name")?;
-        let vv = ruby_verified_data(rb_value, c"attribute value")?;
+        let nv = ruby_verified_text(rb_name, "attribute name")?;
+        let vv = ruby_verified_data(rb_value, "attribute value")?;
         check_dom_name(ruby, &nv, dom_name::valid_attribute_local_name, "attribute")?;
         let el = element_of(edit, REFUSAL)?;
         if !crate::bridge::html::set_attribute(el, &nv, &vv) {
@@ -139,9 +139,9 @@ pub fn set_attribute_ns(
         if edit.node_type() != TYPE_ELEMENT {
             return Err(makiri_error(REFUSAL));
         }
-        let qv = ruby_verified_text(rb_qname, c"attribute qualified name")?;
-        let vv = ruby_verified_data(rb_value, c"attribute value")?;
-        let nv = ruby_verified_text_opt(rb_ns, c"namespace")?;
+        let qv = ruby_verified_text(rb_qname, "attribute qualified name")?;
+        let vv = ruby_verified_data(rb_value, "attribute value")?;
+        let nv = ruby_verified_text_opt(rb_ns, "namespace")?;
         /* The DOM's "validate and extract": split at the first colon, check
          * both halves, then that the namespace fits them - the rule XML's
          * set_attribute_ns applies too (`xml::qname::ns_fits_name`). It named
@@ -186,8 +186,8 @@ pub fn remove_attribute_ns(
         if edit.node_type() != TYPE_ELEMENT {
             return Ok(ruby.qnil().as_value());
         }
-        let lv = ruby_verified_text(rb_local, c"attribute local name")?;
-        let nv = ruby_verified_text_opt(rb_ns, c"namespace")?;
+        let lv = ruby_verified_text(rb_local, "attribute local name")?;
+        let nv = ruby_verified_text_opt(rb_ns, "namespace")?;
         let el = element_of(edit, "remove_attribute_ns requires an element")?;
         crate::bridge::html::remove_attribute_ns(el, nv.as_ref(), &lv);
         Ok(ruby.qnil().as_value())
@@ -198,7 +198,7 @@ pub fn remove_attribute_ns(
 pub fn set_content(_ruby: &Ruby, this: HtmlSelf, rb_text: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let edit = edit(&this)?;
-        let tv = ruby_verified_data(rb_text, c"node content")?;
+        let tv = ruby_verified_data(rb_text, "node content")?;
         let node = edit.node()?;
         if !crate::bridge::html::set_text_content(node, &tv) {
             return Err(makiri_error("failed to set node content"));
@@ -215,7 +215,7 @@ pub fn delete(_ruby: &Ruby, this: HtmlSelf, rb_name: Value) -> Result<Value, Err
         if edit.node_type() != TYPE_ELEMENT {
             return Ok(rb_self);
         }
-        let nv = ruby_verified_text(rb_name, c"attribute name")?;
+        let nv = ruby_verified_text(rb_name, "attribute name")?;
         let el = element_of(edit, "delete requires an element")?;
         crate::bridge::html::remove_attribute(el, &nv);
         Ok(rb_self)
@@ -295,7 +295,7 @@ fn created(node: Option<RawNode>, rb_self: Value, what: &str) -> Result<Value, E
 pub fn create_element(ruby: &Ruby, rb_self: Value, rb_name: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let doc = owning_doc(&rb_self)?;
-        let nv = ruby_verified_text(rb_name, c"element name")?;
+        let nv = ruby_verified_text(rb_name, "element name")?;
         check_dom_name(ruby, &nv, dom_name::valid_element_local_name, "element")?;
         created(
             crate::bridge::html::create_element(doc, &nv),
@@ -309,7 +309,7 @@ pub fn create_element(ruby: &Ruby, rb_self: Value, rb_name: Value) -> Result<Val
 pub fn create_text_node(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let doc = owning_doc(&rb_self)?;
-        let tv = ruby_verified_data(rb_text, c"text content")?;
+        let tv = ruby_verified_data(rb_text, "text content")?;
         created(
             crate::bridge::html::create_text(doc, &tv),
             rb_self,
@@ -322,7 +322,7 @@ pub fn create_text_node(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<
 pub fn create_comment(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let doc = owning_doc(&rb_self)?;
-        let tv = ruby_verified_data(rb_text, c"comment content")?;
+        let tv = ruby_verified_data(rb_text, "comment content")?;
         created(
             crate::bridge::html::create_comment(doc, &tv),
             rb_self,
@@ -340,8 +340,8 @@ pub fn create_pi(
 ) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let doc = owning_doc(&rb_self)?;
-        let tv = ruby_verified_text(rb_target, c"processing instruction target")?;
-        let dv = ruby_verified_text(rb_data, c"processing instruction data")?;
+        let tv = ruby_verified_text(rb_target, "processing instruction target")?;
+        let dv = ruby_verified_text(rb_data, "processing instruction data")?;
         created(
             crate::bridge::html::create_pi(doc, &tv, &dv),
             rb_self,
@@ -365,7 +365,7 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
         let (rb_pub, rb_sys_) = args.optional;
 
         let doc = owning_doc(&rb_self)?;
-        let nv = ruby_verified_text(rb_name, c"doctype name")?;
+        let nv = ruby_verified_text(rb_name, "doctype name")?;
         if !crate::bridge::html::valid_doctype_name(&nv) {
             /* The caller's error, not Lexbor's, so the exception class is picked
              * here - the check itself is the DOM layer's. */
@@ -375,12 +375,12 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
             ));
         }
 
-        let verified = |v: Option<Value>, what: &'static core::ffi::CStr| match v {
+        let verified = |v: Option<Value>, what: &'static str| match v {
             Some(v) => ruby_verified_text_opt(v, what),
             None => Ok(None),
         };
-        let pv = verified(rb_pub, c"doctype public id")?;
-        let sv = verified(rb_sys_, c"doctype system id")?;
+        let pv = verified(rb_pub, "doctype public id")?;
+        let sv = verified(rb_sys_, "doctype system id")?;
         created(
             crate::bridge::html::create_doctype(doc, &nv, pv.as_ref(), sv.as_ref()),
             rb_self,

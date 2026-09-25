@@ -37,7 +37,7 @@ fn select_error(err: SelectError, selector: Value) -> Error {
 /// The selector after the strict text check. The engine reads its bytes and
 /// runs no Ruby, so the view stays valid for the query.
 fn selector_text(selector: Value) -> Result<RubyText, Error> {
-    ruby_verified_text(selector, c"CSS selector")
+    ruby_verified_text(selector, "CSS selector")
 }
 
 /// `(selector, namespaces = nil)`, the argument list `Makiri::XML`'s CSS

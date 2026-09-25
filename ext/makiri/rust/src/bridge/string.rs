@@ -21,7 +21,7 @@
 /* Every function takes `VALUE`s its caller holds rooted. */
 #![allow(clippy::missing_safety_doc)]
 
-use core::ffi::{c_char, c_int, c_long, CStr};
+use core::ffi::{c_char, c_int, c_long};
 
 use magnus::encoding::Coderange;
 
@@ -297,7 +297,7 @@ pub unsafe fn text_check(coderange_str: RString, ptr: *const c_char, len: usize)
 
 /// Enforce the strict contract (valid UTF-8, no NUL) on the String `str`,
 /// naming `what` in the `Makiri::Error`.
-pub fn verify_text(str: RString, what: &CStr) -> Result<(), Error> {
+pub fn verify_text(str: RString, what: &str) -> Result<(), Error> {
     // SAFETY: the borrow ends with the check - before anything below can
     // allocate.
     let verdict = unsafe {
@@ -313,13 +313,12 @@ pub fn verify_text(str: RString, what: &CStr) -> Result<(), Error> {
 }
 
 /// `Makiri::Error` with "<what> <problem>", the wording the C raised with.
-fn text_error(what: &CStr, problem: &str) -> Error {
-    let what = what.to_string_lossy();
+fn text_error(what: &str, problem: &str) -> Error {
     makiri_error(format!("{what} {problem}"))
 }
 
 /// [`ruby_verified_text`] for an optional argument: `nil` is `None`.
-pub fn ruby_verified_text_opt(in_: Value, what: &CStr) -> Result<Option<RubyText>, Error> {
+pub fn ruby_verified_text_opt(in_: Value, what: &str) -> Result<Option<RubyText>, Error> {
     if in_.is_nil() {
         return Ok(None);
     }
@@ -328,7 +327,7 @@ pub fn ruby_verified_text_opt(in_: Value, what: &CStr) -> Result<Option<RubyText
 
 /// Coerce to a String and enforce the strict contract (valid UTF-8, no NUL),
 /// naming `what` in the error. The names-and-engine-input path.
-pub fn ruby_verified_text(in_: Value, what: &CStr) -> Result<RubyText, Error> {
+pub fn ruby_verified_text(in_: Value, what: &str) -> Result<RubyText, Error> {
     let s = string_of(in_)?;
     verify_text(s, what)?;
     // SAFETY: `s` is a live String that has just passed the text contract; the
@@ -344,7 +343,7 @@ pub fn ruby_verified_text(in_: Value, what: &CStr) -> Result<RubyText, Error> {
 ///
 /// `verify_text` is not reused because it rejects NUL. The check is
 /// allocation-free, so the borrow taken before it is not held across a GC point.
-pub fn ruby_verified_data(in_: Value, what: &CStr) -> Result<RubyData, Error> {
+pub fn ruby_verified_data(in_: Value, what: &str) -> Result<RubyData, Error> {
     let s = string_of(in_)?;
     // SAFETY: the check reads the bytes without allocating, and the view
     // anchors the String.

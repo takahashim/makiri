@@ -353,7 +353,7 @@ pub fn begin_edit(this: XmlSelf) -> Result<Editing, Error> {
 
 /// A String argument verified as an engine string - valid UTF-8, no NUL - and
 /// short enough for an arena span (4 GiB).
-pub fn verified_text(v: Value, what: &core::ffi::CStr) -> Result<RubyText, Error> {
+pub fn verified_text(v: Value, what: &str) -> Result<RubyText, Error> {
     let t = ruby_verified_text(v, what)?;
     if u32::try_from(t.len()).is_err() {
         return Err(makiri_error("string too long for an XML node (max 4 GiB)"));
@@ -363,7 +363,7 @@ pub fn verified_text(v: Value, what: &core::ffi::CStr) -> Result<RubyText, Error
 
 /// [`verified_text`] for an optional argument whose absence the engine reads
 /// as a present-but-absent text: `nil` is [`RubyText::absent`].
-pub fn verified_text_or_absent(v: Value, what: &core::ffi::CStr) -> Result<RubyText, Error> {
+pub fn verified_text_or_absent(v: Value, what: &str) -> Result<RubyText, Error> {
     if v.is_nil() {
         return Ok(RubyText::absent());
     }
@@ -372,7 +372,7 @@ pub fn verified_text_or_absent(v: Value, what: &core::ffi::CStr) -> Result<RubyT
 
 /// [`verified_text`] for an optional argument: `nil` is `None` - the same
 /// shape as `bridge::string::ruby_verified_text_opt`.
-pub fn verified_text_opt(v: Value, what: &core::ffi::CStr) -> Result<Option<RubyText>, Error> {
+pub fn verified_text_opt(v: Value, what: &str) -> Result<Option<RubyText>, Error> {
     if v.is_nil() {
         return Ok(None);
     }
@@ -508,7 +508,7 @@ pub fn find_attribute(this: XmlSelf, name: Value) -> Result<Option<NodeId>, Erro
     if this.doc_ref().type_(id) != Some(NodeType::Element) {
         return Ok(None);
     }
-    let nv = ruby_verified_text(name, c"attribute name")?;
+    let nv = ruby_verified_text(name, "attribute name")?;
     // SAFETY: the bytes are the verified view's, live across the lookup, and
     // nothing below runs Ruby.
     let bytes = unsafe { nv.bytes() };

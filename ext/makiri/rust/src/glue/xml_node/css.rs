@@ -43,7 +43,7 @@ fn compile(ruby: &Ruby, ctx: &Cx, q: &QueryArgs, form: Form) -> Result<Box<Ast>,
     let cns = CssNs {
         default_namespace: default_namespace(ruby, q),
     };
-    let sv = ruby_verified_text(q.text, c"CSS selector")?;
+    let sv = ruby_verified_text(q.text, "CSS selector")?;
     let mut budget = crate::xpath::limits::Budget::with_limits(ctx.limits());
     /* `sv` holds the selector String rooted; the compile allocates through
      * falloc only - no Ruby runs in it. */

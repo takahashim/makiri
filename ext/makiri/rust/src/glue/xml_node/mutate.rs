@@ -61,8 +61,8 @@ fn element_for(this: XmlSelf) -> Result<Editing, Error> {
 pub fn aset(_ruby: &Ruby, this: XmlSelf, name: Value, val: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let edit = element_for(this)?;
-        let nv = verified_text(name, c"attribute name")?;
-        let vv = verified_text(val, c"attribute value")?;
+        let nv = verified_text(name, "attribute name")?;
+        let vv = verified_text(val, "attribute value")?;
         let (name, value) = (nv.as_verified().as_bytes(), vv.as_verified().as_bytes());
         xml_mut_result(edit.with_arena(|d, n| mutate::set_attribute(d, n, name, value))?)?;
         Ok(val)
@@ -79,9 +79,9 @@ pub fn set_attribute_ns(
 ) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let edit = element_for(this)?;
-        let qv = verified_text(qname, c"attribute qualified name")?;
-        let vv = verified_text(val, c"attribute value")?;
-        let nv = verified_text_or_absent(ns, c"namespace")?;
+        let qv = verified_text(qname, "attribute qualified name")?;
+        let vv = verified_text(val, "attribute value")?;
+        let nv = verified_text_or_absent(ns, "namespace")?;
         let (ns, qname, value) = (
             nv.as_verified().as_bytes(),
             qv.as_verified().as_bytes(),
@@ -105,8 +105,8 @@ pub fn remove_attribute_ns(
         if !is_element(&this, edit.id()) {
             return Ok(rb_self);
         }
-        let lv = verified_text(local, c"attribute local name")?;
-        let nv = verified_text_or_absent(ns, c"namespace")?;
+        let lv = verified_text(local, "attribute local name")?;
+        let nv = verified_text_or_absent(ns, "namespace")?;
         let (ns, local) = (nv.as_verified().as_bytes(), lv.as_verified().as_bytes());
         edit.with_arena(|d, n| mutate::remove_attribute_ns(d, n, ns, local))?;
         Ok(rb_self)
@@ -121,7 +121,7 @@ pub fn delete(_ruby: &Ruby, this: XmlSelf, name: Value) -> Result<Value, Error> 
         if !is_element(&this, edit.id()) {
             return Ok(rb_self);
         }
-        let nv = verified_text(name, c"attribute name")?;
+        let nv = verified_text(name, "attribute name")?;
         let name = nv.as_verified().as_bytes();
         edit.with_arena(|d, n| mutate::remove_attribute(d, n, name))?;
         Ok(rb_self)
@@ -132,7 +132,7 @@ pub fn delete(_ruby: &Ruby, this: XmlSelf, name: Value) -> Result<Value, Error> 
 pub fn set_content(_ruby: &Ruby, this: XmlSelf, text: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let edit = begin_edit(this)?;
-        let tv = verified_text(text, c"node content")?;
+        let tv = verified_text(text, "node content")?;
         let bytes = tv.as_verified().as_bytes();
         xml_mut_result(edit.with_arena(|d, n| mutate::set_content(d, n, bytes))?)?;
         Ok(text)
@@ -222,8 +222,8 @@ pub fn create_element(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Val
             }
         }
 
-        let nv = verified_text(name, c"element name")?;
-        let cv = verified_text_or_absent(content, c"element content")?;
+        let nv = verified_text(name, "element name")?;
+        let cv = verified_text_or_absent(content, "element content")?;
         let (name, text) = (nv.as_verified().as_bytes(), cv.as_verified().as_bytes());
         let el = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
             mutate::new_element(d, name)
@@ -261,10 +261,10 @@ pub fn create_loose_dom_element(
     ns: Value,
 ) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let qv = verified_text(qname, c"qualified name")?;
-        let lv = verified_text(local, c"local name")?;
-        let pv = verified_text_opt(prefix, c"prefix")?;
-        let nv = verified_text_or_absent(ns, c"namespace URI")?;
+        let qv = verified_text(qname, "qualified name")?;
+        let lv = verified_text(local, "local name")?;
+        let pv = verified_text_opt(prefix, "prefix")?;
+        let nv = verified_text_or_absent(ns, "namespace URI")?;
 
         let qname = qv.as_verified().as_bytes();
         let sp = split_loose_dom_name(
@@ -294,9 +294,9 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
         >(args)?;
         let name = a.required.0;
         let nil = ruby.qnil().as_value();
-        let nv = verified_text(name, c"doctype name")?;
-        let pv = verified_text_or_absent(a.optional.0.unwrap_or(nil), c"doctype public id")?;
-        let sv = verified_text_or_absent(a.optional.1.unwrap_or(nil), c"doctype system id")?;
+        let nv = verified_text(name, "doctype name")?;
+        let pv = verified_text_or_absent(a.optional.0.unwrap_or(nil), "doctype public id")?;
+        let sv = verified_text_or_absent(a.optional.1.unwrap_or(nil), "doctype system id")?;
         /* An empty id is absent (NULL), matching the HTML factory and Nokogiri. */
         let (name, pub_id, sys_id) = (
             nv.as_verified().as_bytes(),
@@ -315,7 +315,7 @@ fn create_chardata(
     rb_self: Value,
     text: Value,
     type_: NodeType,
-    what: &core::ffi::CStr,
+    what: &str,
 ) -> Result<Value, Error> {
     let tv = verified_text(text, what)?;
     let bytes = tv.as_verified().as_bytes();
@@ -326,21 +326,19 @@ fn create_chardata(
 }
 
 pub fn create_text_node(_ruby: &Ruby, rb_self: Value, t: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| create_chardata(rb_self, t, NodeType::Text, c"text content"))
+    crate::bridge::ruby::entry(|| create_chardata(rb_self, t, NodeType::Text, "text content"))
 }
 pub fn create_comment(_ruby: &Ruby, rb_self: Value, t: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        create_chardata(rb_self, t, NodeType::Comment, c"comment content")
-    })
+    crate::bridge::ruby::entry(|| create_chardata(rb_self, t, NodeType::Comment, "comment content"))
 }
 pub fn create_cdata(_ruby: &Ruby, rb_self: Value, t: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| create_chardata(rb_self, t, NodeType::CData, c"CDATA content"))
+    crate::bridge::ruby::entry(|| create_chardata(rb_self, t, NodeType::CData, "CDATA content"))
 }
 
 pub fn create_pi(_ruby: &Ruby, rb_self: Value, target: Value, data: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let tg = verified_text(target, c"PI target")?;
-        let dt = verified_text(data, c"PI data")?;
+        let tg = verified_text(target, "PI target")?;
+        let dt = verified_text(data, "PI data")?;
         let (target, data) = (tg.as_verified().as_bytes(), dt.as_verified().as_bytes());
         let pi = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
             mutate::new_pi(d, target, data)

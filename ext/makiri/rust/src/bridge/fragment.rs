@@ -85,7 +85,7 @@ pub fn resolve_fragment_context(
 
     /* A context tag name is a programmatic control string, not parsed HTML, so
      * it follows the strict text-input contract (valid UTF-8, no NUL). */
-    let cv = ruby_verified_text(context, c"fragment context element")?;
+    let cv = ruby_verified_text(context, "fragment context element")?;
     let name = cv.as_verified().as_bytes();
     if name == b"svg" {
         return Ok(FragmentTag {

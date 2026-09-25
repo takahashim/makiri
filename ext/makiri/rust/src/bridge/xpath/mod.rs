@@ -161,7 +161,7 @@ pub fn context_for(rb_node: Value, document: Value) -> Result<Cx, Error> {
 /// Parse `expr` for one query under `cx`'s caps, on a budget of the query's own;
 /// a failure is that budget's error as the exception.
 pub fn parse_query(cx: &Cx, expr: Value) -> Result<Box<Ast>, Error> {
-    let ev = ruby_verified_text(expr, c"XPath expression")?;
+    let ev = ruby_verified_text(expr, "XPath expression")?;
     let mut budget = Budget::with_limits(cx.limits());
     /* `ev` holds the String rooted; `as_verified`'s borrow keeps it live for the
      * parse. */
