@@ -14,7 +14,6 @@
 
 #![forbid(unsafe_code)]
 
-use super::copy_span;
 use crate::falloc::VecPush;
 use crate::xml::qname::{xmlns_prefix, Split};
 use crate::xml::{
@@ -108,12 +107,9 @@ fn resolve_node_ns(
     attrs_only: bool,
 ) -> MutStatus {
     if !attrs_only && doc.node(e).flags & FLAG_DOM_LOOSE_NAME == 0 {
-        let name = match copy_span(doc.qname(e)) {
-            Ok(v) => v,
-            Err(st) => return st,
-        };
         let sp = doc.split_of(e);
-        match resolve_ns(doc, Some(e), &name, &sp, false, connected) {
+        /* `resolve_ns` only reads, so the name is passed borrowed. */
+        match resolve_ns(doc, Some(e), doc.qname(e), &sp, false, connected) {
             Ok(r) => {
                 if commit {
                     doc.node_mut(e).ns_uri = r.ns
@@ -134,12 +130,8 @@ fn resolve_node_ns(
         let flags = doc.node(attr).flags;
         let redo = flags & FLAG_NS_EXPLICIT == 0 && (!attrs_only || flags & FLAG_NS_PENDING != 0);
         let key = if redo {
-            let name = match copy_span(doc.qname(attr)) {
-                Ok(v) => v,
-                Err(st) => return st,
-            };
             let sp = doc.split_of(attr);
-            match resolve_ns(doc, Some(e), &name, &sp, true, connected) {
+            match resolve_ns(doc, Some(e), doc.qname(attr), &sp, true, connected) {
                 Ok(r) => {
                     if commit {
                         r.write_attr(doc, attr);

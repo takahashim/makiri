@@ -20,7 +20,7 @@
 
 #![forbid(unsafe_code)]
 
-use crate::falloc::{Reserve, VecPush};
+use crate::falloc::Reserve;
 use crate::xml::chars::{expand_into, ExpandErr, ExpandMode};
 use crate::xml::qname::Split;
 use crate::xml::{Document, Link, Node, NodeId, NodeType, Span, Status};
@@ -374,15 +374,20 @@ impl Document {
                 self.node_at_mut(last).value.len = total as u32;
                 return Ok(());
             }
-            /* Not contiguous: rebuild the coalesced bytes once. */
-            let (a, b) = (old, span);
-            let mut merged: Vec<u8> = Vec::new();
-            merged
-                .falloc_extend(self.span(a))
-                .and_then(|()| merged.falloc_extend(self.span(b)))
+            /* Not contiguous: copy both chunks, in order, to the end of the
+             * store. Reserved first, so the copies cannot reallocate. */
+            let total = old.len.checked_add(span.len).ok_or(Status::Limit)?;
+            self.charge(total as usize)?;
+            self.bytes
+                .falloc_reserve(total as usize)
                 .map_err(|_| Status::Oom)?;
-            let s = self.store(&merged)?;
-            self.node_at_mut(last).value = s;
+            let off = self.bytes.len() as u32;
+            for s in [old, span] {
+                if !s.is_absent() {
+                    self.bytes.extend_from_within(s.off as usize..s.end());
+                }
+            }
+            self.node_at_mut(last).value = Span { off, len: total };
             return Ok(());
         }
         let node = self.new_node(type_)?;

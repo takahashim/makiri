@@ -172,18 +172,35 @@ pub fn normalize_newlines(src: &[u8]) -> Result<Option<Vec<u8>>, Status> {
     let mut out: Vec<u8> = Vec::new();
     out.falloc_reserve_exact(src.len())
         .map_err(|_| Status::Oom)?;
-    let mut i = 0;
-    while i < src.len() {
-        let ch = src[i];
-        i += 1;
-        if ch == b'\r' {
-            out.push(b'\n');
-            if src.get(i) == Some(&b'\n') {
-                i += 1; /* CRLF -> single LF */
-            }
-        } else {
-            out.push(ch);
-        }
+    /* Each CR becomes an LF, and swallows an LF right after it (CRLF -> LF).
+     * Reserved exactly above, and the output only shrinks, so nothing here
+     * reallocates. */
+    let mut runs = src.split(|&b| b == b'\r');
+    out.extend_from_slice(runs.next().unwrap_or_default());
+    for run in runs {
+        out.push(b'\n');
+        out.extend_from_slice(run.strip_prefix(b"\n").unwrap_or(run));
     }
     Ok(Some(out))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_newlines;
+
+    #[test]
+    fn folds_cr_and_crlf_to_lf() {
+        let norm = |s: &[u8]| normalize_newlines(s).unwrap();
+        assert_eq!(norm(b"no cr\n"), None);
+        for (src, want) in [
+            (&b"a\r\nb"[..], &b"a\nb"[..]),
+            (b"a\rb", b"a\nb"),
+            (b"\r\r\n", b"\n\n"),
+            (b"\r\n\n", b"\n\n"),
+            (b"\n\r\n\r", b"\n\n\n"),
+            (b"a\r", b"a\n"),
+        ] {
+            assert_eq!(norm(src).as_deref(), Some(want), "{src:?}");
+        }
+    }
 }

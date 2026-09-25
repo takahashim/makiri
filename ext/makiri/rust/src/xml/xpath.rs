@@ -23,7 +23,7 @@ use crate::xpath::dom::{Bucket, Dom};
 /// DOM attribute (Node#attribute_nodes reads `attrs` directly, matching DOM
 /// Level 2); only the XPath iteration below skips it.
 fn is_ns_decl(doc: &xml::Document, a: xml::NodeId) -> bool {
-    let q = doc.try_node(a).map_or(&[][..], |x| doc.span(x.qname));
+    let q = doc.qname(a);
     /* `qname::xmlns_prefix` is the ONE definition of the shape; spelling the
      * prefix test out again here would be a third copy of it. */
     crate::xml::qname::xmlns_prefix(q).is_some()
@@ -108,20 +108,18 @@ impl<'d> Dom<'d> for &'d xml::Document {
     #[inline]
     fn as_attr(self, n: xml::NodeId) -> Option<xml::NodeId> {
         self.try_node(n)
-            .is_some_and(|x| x.type_.as_u32() == crate::xpath::dom::NTYPE_ATTRIBUTE)
+            .is_some_and(|x| x.type_ == xml::NodeType::Attribute)
             .then_some(n)
     }
     #[inline]
     fn attr_value(self, a: xml::NodeId) -> &'d [u8] {
-        self.try_node(a).map_or(&[], |x| self.span(x.value))
+        xml::Document::value(self, a)
     }
     fn get_attribute(self, el: xml::NodeId, name: &[u8]) -> Option<&'d [u8]> {
         let mut a = xml::Document::attrs(self, el);
         while let Some(id) = a {
-            if let Some(x) = self.try_node(id) {
-                if !is_ns_decl(self, id) && self.span(x.qname) == name {
-                    return Some(self.span(x.value));
-                }
+            if !is_ns_decl(self, id) && xml::Document::qname(self, id) == name {
+                return Some(xml::Document::value(self, id));
             }
             a = xml::Document::next(self, id);
         }
@@ -130,28 +128,28 @@ impl<'d> Dom<'d> for &'d xml::Document {
 
     #[inline]
     fn local_name(self, n: xml::NodeId) -> &'d [u8] {
-        self.try_node(n).map_or(&[], |x| self.span(x.local))
+        xml::Document::local(self, n)
     }
     #[inline]
     fn attr_local_name(self, a: xml::NodeId) -> &'d [u8] {
-        self.try_node(a).map_or(&[], |x| self.span(x.local))
+        xml::Document::local(self, a)
     }
     #[inline]
     fn qualified_name(self, n: xml::NodeId) -> &'d [u8] {
-        self.try_node(n).map_or(&[], |x| self.span(x.qname))
+        xml::Document::qname(self, n)
     }
     #[inline]
     fn attr_qualified_name(self, a: xml::NodeId) -> &'d [u8] {
-        self.try_node(a).map_or(&[], |x| self.span(x.qname))
+        xml::Document::qname(self, a)
     }
     #[inline]
     fn pi_name(self, n: xml::NodeId) -> &'d [u8] {
-        self.try_node(n).map_or(&[], |x| self.span(x.local))
+        xml::Document::local(self, n)
     }
 
     #[inline]
     fn ns_uri(self, n: xml::NodeId) -> &'d [u8] {
-        self.try_node(n).map_or(&[], |x| self.span(x.ns_uri))
+        xml::Document::ns(self, n)
     }
 
     /// A name test compares the local name, prefixed or not: the namespace
@@ -192,7 +190,7 @@ impl<'d> Dom<'d> for &'d xml::Document {
     /// The node owns its value, so this is an append of a borrowed slice.
     #[inline]
     fn append_own_text(self, n: xml::NodeId, buf: &mut Buf) -> Result<(), BufError> {
-        let s = self.try_node(n).map_or(&[][..], |x| self.span(x.value));
+        let s = xml::Document::value(self, n);
         if s.is_empty() {
             return Ok(());
         }
