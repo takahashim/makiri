@@ -63,20 +63,15 @@ pub fn parse_document(source: Value) -> Result<Value, Error> {
      * Makiri::HTML::Document, so the result is always HTML. */
     let shell = DocumentShell::new(DocKind::Html);
 
-    let result = crate::bridge::gvl::without_gvl(|| {
-        /* The handle crosses the GVL boundary as a raw pointer; it is boxed
-         * again below, on this thread. */
-        parse_html(owned.as_slice(), assume_valid).map_or(core::ptr::null_mut(), Box::into_raw)
-    });
+    /* The body runs on this thread with the GVL released, so the parsed
+     * handle comes back as it is. */
+    let result = crate::bridge::gvl::without_gvl(|| parse_html(owned.as_slice(), assume_valid));
     drop(owned);
 
-    if result.is_null() {
-        return Err(makiri_error("failed to parse HTML document"));
-    }
+    let parsed = result.ok_or_else(|| makiri_error("failed to parse HTML document"))?;
     /* The GC learns the arena's size in `install`; `owned` is already gone, so
      * a collection that triggers has nothing of ours to invalidate. */
-    // SAFETY: `result` is the handle the parse just returned, owned by no one.
-    Ok(shell.install_html(unsafe { Box::from_raw(result) }))
+    Ok(shell.install_html(parsed))
 }
 
 /* ------------------------------------------------------------------ *

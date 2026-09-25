@@ -473,11 +473,48 @@ pub(in crate::bridge) fn with_html_parsed_known<R>(
     unsafe { f(p.as_mut()) }
 }
 
+/// The one wrapper of class `klass` (a `ty` object) for `node`, keyed by
+/// `token`, under `document`: the cached one, or a fresh one that is then
+/// cached. The shared half of the two `wrap_*_node` functions.
+///
+/// One wrapper per node: navigating to a node twice must give the SAME object,
+/// or everything that lives on a Ruby object is silently lost - `equal?`, an
+/// instance variable, a singleton method, `freeze`. A Document is already its
+/// own wrapper, which is why it needs no entry.
+///
+/// The caller vouches that `node` is a node of `document` of the representation
+/// `ty` wraps, and `klass` a class of it: only the two `wrap_*_node` functions
+/// call this, each for its own kind.
+pub(in crate::bridge) fn wrap_cached(
+    ty: &'static TypedType<NodeData>,
+    klass: VALUE,
+    node: *mut c_void,
+    token: usize,
+    document: Value,
+) -> Value {
+    if let Some(cached) = cached_node(document, token) {
+        return cached;
+    }
+    /* The Document is stored after the wrap: see `TypedType::wrap`. */
+    // SAFETY: a fresh wrapper; the store closure only moves a live VALUE in.
+    let fresh = unsafe {
+        value(ty.wrap(
+            klass,
+            |nd| nd.node = node,
+            |nd| nd.document = document.as_raw(),
+        ))
+    };
+    /* After the wrap, so the VALUE exists; `fresh` is on the stack, where the
+     * conservative scan pins it across the cache's own allocation. */
+    cache_node(document, token, fresh);
+    fresh
+}
+
 /// The one wrapper for `token` under `rb_doc`, or None the first time.
 ///
-/// `rb_doc` must be a live Document; the two `wrap_*_node` functions are the
-/// only callers and both already hold one.
-pub fn cached_node(rb_doc: Value, token: usize) -> Option<Value> {
+/// `rb_doc` must be a live Document; [`wrap_cached`] is the only caller and
+/// already holds one.
+fn cached_node(rb_doc: Value, token: usize) -> Option<Value> {
     // SAFETY: as `with_doc_data_known`.
     let v = with_doc_data_known(rb_doc, |d| d.cached(token));
     // SAFETY: a VALUE this document marks, so it is live.
@@ -485,7 +522,7 @@ pub fn cached_node(rb_doc: Value, token: usize) -> Option<Value> {
 }
 
 /// Remember `wrapper` as the one wrapper for `token` under `rb_doc`.
-pub fn cache_node(rb_doc: Value, token: usize, wrapper: Value) {
+fn cache_node(rb_doc: Value, token: usize, wrapper: Value) {
     with_doc_data_known(rb_doc, |d| d.cache(token, wrapper.as_raw()));
 }
 

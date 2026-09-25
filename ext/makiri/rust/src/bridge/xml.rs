@@ -78,28 +78,7 @@ pub fn wrap_xml_node(node: *mut core::ffi::c_void, document: Value) -> Value {
         _ => CLASS_XML_NODE.raw(),
     };
 
-    /* One wrapper per node: navigating here twice must give the SAME object, or
-     * everything that lives on a Ruby object is silently lost - `equal?`, an
-     * instance variable, a singleton method, `freeze`. The Document above is
-     * already its own wrapper, which is why it needs no entry. */
-    let token = id.to_token();
-    if let Some(cached) = crate::bridge::wrapper::cached_node(document, token) {
-        return cached;
-    }
-
-    /* The Document is stored after the wrap: see `TypedType::wrap`. */
-    // SAFETY: a fresh wrapper; the store closure only moves a live VALUE in.
-    let fresh = unsafe {
-        value(XML_NODE_TYPE.wrap(
-            klass,
-            |nd| nd.node = node,
-            |nd| nd.document = document.as_raw(),
-        ))
-    };
-    /* After the wrap, so the VALUE exists; `fresh` is on the stack, where the
-     * conservative scan pins it across the cache's own allocation. */
-    crate::bridge::wrapper::cache_node(document, token, fresh);
-    fresh
+    crate::bridge::wrapper::wrap_cached(&XML_NODE_TYPE, klass, node, id.to_token(), document)
 }
 
 /// The arena node token behind a wrapper.
@@ -462,18 +441,10 @@ pub fn parse_xml_document(source: Value, limits: XmlLimits, budget: usize) -> Re
     let shell = DocumentShell::new(DocKind::Xml);
 
     /* Ruby-free from here: only the copied bytes and the limits cross. */
-    let (result, status) =
-        crate::bridge::gvl::without_gvl(|| match tree::parse_ex(src.as_slice(), Some(&limits)) {
-            Ok(doc) => (Box::into_raw(doc), Status::Ok),
-            Err(status) => (core::ptr::null_mut(), status),
-        });
+    let result = crate::bridge::gvl::without_gvl(|| tree::parse_ex(src.as_slice(), Some(&limits)));
     drop(src);
 
-    if result.is_null() {
-        return Err(parse_status_error(status, Unit::Document));
-    }
-    // SAFETY: `result` is the arena the parse just returned, owned by no one.
-    let arena = unsafe { Box::from_raw(result) };
+    let arena = result.map_err(|status| parse_status_error(status, Unit::Document))?;
     /* `src` is gone, so the collection `install`'s GC report may trigger
      * disturbs nothing. */
     Ok(shell.install_xml(arena))
