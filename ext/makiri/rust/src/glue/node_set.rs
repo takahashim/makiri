@@ -144,14 +144,12 @@ fn s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
 }
 
 /// From `Init_makiri`, with the classes already defined.
-pub fn init_node_set() {
+pub fn init_node_set() -> Result<(), Error> {
     let klass = CLASS_NODE_SET.class();
 
     /* Sets are made by queries and by `.new` below, never allocated bare. */
     klass.undef_default_alloc_func();
-    klass
-        .define_singleton_method("new", function!(s_new, -1))
-        .expect("NodeSet.new");
+    klass.define_singleton_method("new", function!(s_new, -1))?;
 
     for (name, f) in [
         ("|", method!(op_or, 1)),
@@ -159,18 +157,11 @@ pub fn init_node_set() {
         ("&", method!(op_and, 1)),
         ("-", method!(op_minus, 1)),
     ] {
-        klass.define_method(name, f).expect("a NodeSet operator");
+        klass.define_method(name, f)?;
     }
-    klass
-        .define_method("length", method!(length, 0))
-        .expect("NodeSet#length");
-    klass
-        .define_method("[]", method!(aref, -1))
-        .expect("NodeSet#[]");
-    klass
-        .define_method("each", method!(each, 0))
-        .expect("NodeSet#each");
-    klass
-        .define_method("dup", method!(dup, -1))
-        .expect("NodeSet#dup");
+    klass.define_method("length", method!(length, 0))?;
+    klass.define_method("[]", method!(aref, -1))?;
+    klass.define_method("each", method!(each, 0))?;
+    klass.define_method("dup", method!(dup, -1))?;
+    Ok(())
 }

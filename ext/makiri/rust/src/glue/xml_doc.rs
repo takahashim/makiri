@@ -14,7 +14,7 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{function, method, prelude::*, Error, RArray, RClass, RHash, Ruby, Value};
+use magnus::{function, method, prelude::*, Error, RArray, RHash, Ruby, Value};
 
 use crate::bridge::xml::wrap;
 use crate::init::{CLASS_XML_DOCUMENT, CLASS_XML_DOCUMENT_FRAGMENT};
@@ -133,22 +133,17 @@ fn doc_fragment(rb_self: Value, source: Value) -> Result<Value, Error> {
 
 /// The XML Document surface. From `Init_makiri`; the class itself is defined
 /// with the rest of the hierarchy in `init`.
-pub fn init_xml_doc() {
-    let doc = RClass::from_value(CLASS_XML_DOCUMENT.value()).expect("Makiri::XML::Document");
+pub fn init_xml_doc() -> Result<(), Error> {
+    let doc = CLASS_XML_DOCUMENT.class();
 
-    doc.define_singleton_method("parse", function!(s_parse, -1))
-        .expect("Document.parse");
-    doc.define_singleton_method("new", function!(document_s_new, -1))
-        .expect("Document.new");
-    doc.define_method("root", method!(doc_root, 0))
-        .expect("#root");
-    doc.define_method("internal_subset", method!(doc_internal_subset, 0))
-        .expect("#internal_subset");
-    doc.define_method("fragment", method!(doc_fragment, 1))
-        .expect("#fragment");
+    doc.define_singleton_method("parse", function!(s_parse, -1))?;
+    doc.define_singleton_method("new", function!(document_s_new, -1))?;
+    doc.define_method("root", method!(doc_root, 0))?;
+    doc.define_method("internal_subset", method!(doc_internal_subset, 0))?;
+    doc.define_method("fragment", method!(doc_fragment, 1))?;
 
-    RClass::from_value(CLASS_XML_DOCUMENT_FRAGMENT.value())
-        .expect("Makiri::XML::DocumentFragment")
-        .define_singleton_method("parse", method!(fragment_s_parse, 1))
-        .expect("DocumentFragment.parse");
+    CLASS_XML_DOCUMENT_FRAGMENT
+        .class()
+        .define_singleton_method("parse", method!(fragment_s_parse, 1))?;
+    Ok(())
 }

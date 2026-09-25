@@ -10,7 +10,7 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{method, prelude::*, Error, RHash, RModule, Ruby, Value};
+use magnus::{method, prelude::*, Error, RHash, Ruby, Value};
 
 use crate::bridge::string::ruby_verified_text;
 use crate::bridge::wrapper::keepalive_document;
@@ -98,12 +98,10 @@ fn css_matches(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Resul
 }
 
 /// The private primitives, on the XML node-method module. From `Init_makiri`.
-pub fn init_xml_css() {
-    let m = RModule::from_value(MOD_XML_NODE_METHODS.value()).expect("Makiri::XML::NodeMethods");
-    m.define_private_method("_css", method!(css, 2))
-        .expect("#_css");
-    m.define_private_method("_at_css", method!(at_css, 2))
-        .expect("#_at_css");
-    m.define_private_method("_css_matches", method!(css_matches, 2))
-        .expect("#_css_matches");
+pub fn init_xml_css() -> Result<(), Error> {
+    let m = MOD_XML_NODE_METHODS.module();
+    m.define_private_method("_css", method!(css, 2))?;
+    m.define_private_method("_at_css", method!(at_css, 2))?;
+    m.define_private_method("_css_matches", method!(css_matches, 2))?;
+    Ok(())
 }

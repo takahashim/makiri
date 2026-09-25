@@ -128,17 +128,15 @@ fn no_serialize(ruby: &Ruby, _rb_self: Value, _args: &[Value]) -> Result<Value, 
 }
 
 /// From `Init_makiri`.
-pub fn init_xml_node_serialize() {
-    let m = magnus::RModule::from_value(MOD_XML_NODE_METHODS.value())
-        .expect("Makiri::XML::NodeMethods");
+pub fn init_xml_node_serialize() -> Result<(), Error> {
+    let m = MOD_XML_NODE_METHODS.module();
     for name in ["to_xml", "to_s"] {
-        m.define_method(name, method!(to_xml, -1)).expect("#to_xml");
+        m.define_method(name, method!(to_xml, -1))?;
     }
-    m.define_method("canonicalize", method!(canonicalize, -1))
-        .expect("#canonicalize");
+    m.define_method("canonicalize", method!(canonicalize, -1))?;
 
     for name in ["to_html", "inner_html", "outer_html"] {
-        m.define_method(name, method!(no_serialize, -1))
-            .expect("#to_html");
+        m.define_method(name, method!(no_serialize, -1))?;
     }
+    Ok(())
 }

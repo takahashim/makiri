@@ -16,7 +16,7 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{method, prelude::*, Error, RHash, RModule, Ruby, Value};
+use magnus::{method, prelude::*, Error, RHash, Ruby, Value};
 
 use crate::bridge::ruby::makiri_error;
 use crate::bridge::string::ruby_try_verified_text_pair;
@@ -333,12 +333,11 @@ fn node_at_xpath(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, E
 
 /// `#xpath` / `#at_xpath` on both node-method modules. From `Init_makiri`,
 /// after the classes exist.
-pub fn init_xpath() {
+pub fn init_xpath() -> Result<(), Error> {
     for module in [&MOD_HTML_NODE_METHODS, &MOD_XML_NODE_METHODS] {
-        let m = RModule::from_value(module.value()).expect("a NodeMethods module");
-        m.define_method("xpath", method!(node_xpath, -1))
-            .expect("#xpath");
-        m.define_method("at_xpath", method!(node_at_xpath, -1))
-            .expect("#at_xpath");
+        let m = module.module();
+        m.define_method("xpath", method!(node_xpath, -1))?;
+        m.define_method("at_xpath", method!(node_at_xpath, -1))?;
     }
+    Ok(())
 }

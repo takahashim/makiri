@@ -437,14 +437,14 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         /* One registration per feature, each defining its methods onto the
          * classes above. The order is free: every class and module they touch
          * exists by now, and no two define the same name. */
-        crate::glue::html_node::init();
-        crate::glue::html_doc::init_html_doc();
-        crate::glue::xml_node::init();
-        crate::glue::xml_doc::init_xml_doc();
-        crate::glue::node_set::init_node_set();
-        crate::glue::xpath_context::init_xpath_context();
-        crate::glue::query::init_xpath();
-        crate::glue::stylesheet::init_lexbor_css();
+        crate::glue::html_node::init()?;
+        crate::glue::html_doc::init_html_doc()?;
+        crate::glue::xml_node::init()?;
+        crate::glue::xml_doc::init_xml_doc()?;
+        crate::glue::node_set::init_node_set()?;
+        crate::glue::xpath_context::init_xpath_context()?;
+        crate::glue::query::init_xpath()?;
+        crate::glue::stylesheet::init_lexbor_css()?;
     }
 
     makiri.define_singleton_method("__alloc_inject?", function!(alloc_inject_p, 0))?;

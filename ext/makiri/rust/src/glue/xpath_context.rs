@@ -10,7 +10,7 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{function, method, prelude::*, Error, RClass, RHash, Ruby, Value};
+use magnus::{function, method, prelude::*, Error, RHash, Ruby, Value};
 
 use crate::bridge::ruby::{is_kind_of, method_receiver};
 use crate::bridge::xpath::XPathCtx;
@@ -87,22 +87,12 @@ fn register_variable(ctx: &XPathCtx, name: Value, value: Value) -> Result<Value,
 }
 
 /// From `Init_makiri`, after the classes exist.
-pub fn init_xpath_context() {
-    let klass =
-        RClass::from_value(CLASS_XPATH_CONTEXT.value()).expect("Makiri::XPathContext is a Class");
-    klass
-        .define_singleton_method("new", function!(s_new, -1))
-        .expect("XPathContext.new");
-    klass
-        .define_method("evaluate", method!(evaluate, -1))
-        .expect("#evaluate");
-    klass
-        .define_method("register_namespace", method!(register_namespace, 2))
-        .expect("#register_namespace");
-    klass
-        .define_method("register_variable", method!(register_variable, 2))
-        .expect("#register_variable");
-    klass
-        .define_method("node=", method!(set_node, 1))
-        .expect("#node=");
+pub fn init_xpath_context() -> Result<(), Error> {
+    let klass = CLASS_XPATH_CONTEXT.class();
+    klass.define_singleton_method("new", function!(s_new, -1))?;
+    klass.define_method("evaluate", method!(evaluate, -1))?;
+    klass.define_method("register_namespace", method!(register_namespace, 2))?;
+    klass.define_method("register_variable", method!(register_variable, 2))?;
+    klass.define_method("node=", method!(set_node, 1))?;
+    Ok(())
 }

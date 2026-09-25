@@ -144,45 +144,24 @@ pub fn node_clone_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Va
 /* ---- registration ---- */
 
 /// The HTML Document surface. From `Init_makiri`, after the classes exist.
-pub fn init_html_doc() {
-    let html_doc = magnus::RClass::from_value(crate::init::CLASS_HTML_DOCUMENT.value())
-        .expect("Makiri::HTML::Document is a class");
+pub fn init_html_doc() -> Result<(), Error> {
+    let html_doc = crate::init::CLASS_HTML_DOCUMENT.class();
 
-    html_doc
-        .define_singleton_method("_parse", method!(doc_s_parse, 1))
-        .expect("Document._parse");
-    html_doc
-        .define_method("root", method!(doc_root, 0))
-        .expect("Document#root");
-    html_doc
-        .define_method("title", method!(doc_title, 0))
-        .expect("Document#title");
-    html_doc
-        .define_method("errors", method!(doc_errors, 0))
-        .expect("Document#errors");
-    html_doc
-        .define_method("internal_subset", method!(doc_internal_subset, 0))
-        .expect("Document#internal_subset");
-    html_doc
-        .define_method("quirks_mode", method!(doc_quirks_mode, 0))
-        .expect("Document#quirks_mode");
-    html_doc
-        .define_method("fragment", method!(doc_fragment, -1))
-        .expect("Document#fragment");
-    html_doc
-        .define_method("import_node", method!(doc_import_node, -1))
-        .expect("Document#import_node");
+    html_doc.define_singleton_method("_parse", method!(doc_s_parse, 1))?;
+    html_doc.define_method("root", method!(doc_root, 0))?;
+    html_doc.define_method("title", method!(doc_title, 0))?;
+    html_doc.define_method("errors", method!(doc_errors, 0))?;
+    html_doc.define_method("internal_subset", method!(doc_internal_subset, 0))?;
+    html_doc.define_method("quirks_mode", method!(doc_quirks_mode, 0))?;
+    html_doc.define_method("fragment", method!(doc_fragment, -1))?;
+    html_doc.define_method("import_node", method!(doc_import_node, -1))?;
 
-    let frag = magnus::RClass::from_value(crate::init::CLASS_DOCUMENT_FRAGMENT.value())
-        .expect("Makiri::DocumentFragment is a class");
-    frag.define_singleton_method("parse", method!(frag_s_parse, -1))
-        .expect("DocumentFragment.parse");
+    let frag = crate::init::CLASS_DOCUMENT_FRAGMENT.class();
+    frag.define_singleton_method("parse", method!(frag_s_parse, -1))?;
 
     /* Node#parse(html): fragment-parse in this element's context. Defined here,
      * next to the fragment machinery it reuses. */
-    let node_methods = magnus::RModule::from_value(crate::init::MOD_HTML_NODE_METHODS.value())
-        .expect("Makiri::HTML::NodeMethods is a module");
-    node_methods
-        .define_method("parse", method!(node_parse, 1))
-        .expect("Node#parse");
+    let node_methods = crate::init::MOD_HTML_NODE_METHODS.module();
+    node_methods.define_method("parse", method!(node_parse, 1))?;
+    Ok(())
 }

@@ -79,12 +79,11 @@ fn inner_html(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<RString, Er
 }
 
 /// From `Init_makiri`.
-pub fn init_serialize() {
+pub fn init_serialize() -> Result<(), Error> {
     let m = MOD_HTML_NODE_METHODS.module();
     for name in ["to_html", "to_s", "outer_html"] {
-        m.define_method(name, method!(to_html, -1))
-            .expect("defining an HTML serializer method");
+        m.define_method(name, method!(to_html, -1))?;
     }
-    m.define_method("inner_html", method!(inner_html, -1))
-        .expect("defining an HTML serializer method");
+    m.define_method("inner_html", method!(inner_html, -1))?;
+    Ok(())
 }
