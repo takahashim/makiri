@@ -221,13 +221,15 @@ impl RawNode {
     /// are live, and `'doc` is UNBOUNDED: it is whatever the caller asks for,
     /// not tied to the borrow of `nodes` - the same hazard as
     /// [`core::slice::from_raw_parts`]. Prefer [`RawNode::as_node`] one node at
-    /// a time; this exists for the `//tag` bucket, which lends a whole slice.
+    /// a time; this exists for the `//tag` bucket, which lends a whole slice,
+    /// and its one caller is `HtmlParsed::tag_bucket`, which wraps it in a
+    /// safe method bounded by the handle that owns both index and document.
     ///
     /// # Safety
     /// As [`RawNode::as_node`], for every node of `nodes`, and `nodes` itself
     /// outlives `'doc`.
     #[inline]
-    pub(in crate::lexbor) unsafe fn as_html_nodes_unchecked<'doc>(
+    pub(in crate::lexbor::adapter) unsafe fn as_html_nodes_unchecked<'doc>(
         nodes: &[RawNode],
     ) -> &'doc [HtmlNode<'doc>] {
         /* `RawNode` and `HtmlNode` are both `repr(transparent)` over

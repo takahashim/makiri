@@ -63,6 +63,12 @@ impl<'d> HtmlDom<'d> {
         // mutation runs while an evaluate on it does.
         unsafe { (*self.parsed).dom_index() }
     }
+
+    /// The parsed handle, for the evaluation's `'d`.
+    fn parsed(&self) -> &'d HtmlParsed {
+        // SAFETY: as `index` - `parsed` is live, and unchanged, for `'d`.
+        unsafe { &*self.parsed }
+    }
 }
 
 impl<'d> Dom<'d> for HtmlDom<'d> {
@@ -247,11 +253,8 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
         if tag == dom::TAG_UNDEF || tag >= dom::TAG_LAST_ENTRY {
             return None;
         }
-        let nodes = index.tag_bucket(tag);
-        // SAFETY: the index holds only live elements of this document, and it
-        // lives as long as the evaluation over `'d` (no mutation runs during
-        // one, and a mutation is what drops the index).
-        let nodes: &'d [HtmlNode<'d>] = unsafe { RawNode::as_html_nodes_unchecked(nodes) };
+        /* Built by `index` above; the handle lends the nodes for `'d`. */
+        let nodes = self.parsed().tag_bucket(tag)?;
         Some(Bucket {
             nodes,
             recheck: true,

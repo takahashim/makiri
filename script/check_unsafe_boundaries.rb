@@ -58,7 +58,7 @@ UNSAFE_ISLANDS = {
   "lexbor/adapter/html/build.rs" => 19,
   "lexbor/adapter/html/mod.rs" => 59,
   "lexbor/adapter/html/mutate.rs" => 9,
-  "lexbor/adapter/post_parse.rs" => 9,
+  "lexbor/adapter/post_parse.rs" => 10,
   "lexbor/adapter/source_loc.rs" => 3,
   "lexbor/adapter/text_index.rs" => 1,
   "lexbor/chunks.rs" => 2,
@@ -246,6 +246,8 @@ RAW_ACCESSORS = {
     "pub(in crate::lexbor::adapter) fn as_raw(self) -> *mut LxbDoc", # HtmlDoc
     "pub(in crate::lexbor::adapter) fn as_raw(self) -> *mut LxbNode", # HtmlNode
     "pub(in crate::lexbor::adapter) fn raw(self) -> *mut LxbAttr", # HtmlAttr
+    # The unbounded-lifetime slice cast; `HtmlParsed::tag_bucket` wraps it safely.
+    "pub(in crate::lexbor::adapter) unsafe fn as_html_nodes_unchecked<'doc>(",
   ],
   "lexbor/adapter/html/build.rs" => ["pub(in crate::lexbor::adapter) fn as_raw(self) -> *mut LxbNode"],
   "lexbor/adapter/html/mutate.rs" => ["pub(in crate::lexbor::adapter) fn as_raw(self) -> *mut LxbNode"],

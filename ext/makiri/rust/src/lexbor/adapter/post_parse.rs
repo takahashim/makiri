@@ -36,7 +36,7 @@ use crate::lexbor::abi::{
 };
 use crate::lexbor::adapter::arena_bytes::document_capacity;
 use crate::lexbor::adapter::dom_index::DomIndex;
-use crate::lexbor::adapter::html::{HtmlDoc as DomDoc, RawDoc, RawNode};
+use crate::lexbor::adapter::html::{HtmlDoc as DomDoc, HtmlNode, RawDoc, RawNode};
 use crate::lexbor::adapter::source_loc::{
     lines_build, pos_assign_to_dom, pos_token_cb, Lines, Positions, Recorder,
 };
@@ -112,6 +112,26 @@ impl HtmlParsed {
             self.dom_index = Some(try_box(built).ok()?);
         }
         self.dom_index.as_deref()
+    }
+
+    /// The elements with tag id `tag`, in document order, as typed nodes
+    /// borrowed from this handle. `None` until [`dom_index`](Self::dom_index)
+    /// has built the index.
+    ///
+    /// Safe, and bounded by `&self`, because this handle is what makes the
+    /// nodes live: the index is built only from `self`'s own document, is
+    /// dropped with it, and is dropped by [`invalidate_indexes`] - which takes
+    /// `&mut self` - before any edit. An edit that skipped it would first have
+    /// had to break the contract of the `unsafe` mutable handle
+    /// (`HtmlNodeMut::assume_mutable`).
+    ///
+    /// [`invalidate_indexes`]: Self::invalidate_indexes
+    pub fn tag_bucket(&self, tag: usize) -> Option<&[HtmlNode<'_>]> {
+        let index = self.dom_index.as_deref()?;
+        // SAFETY: every node of the bucket is a live element of `self.doc`, and
+        // stays one for as long as `self` is borrowed - see above. The
+        // lifetime is `&self`'s, not one of the caller's choosing.
+        Some(unsafe { RawNode::as_html_nodes_unchecked(index.tag_bucket(tag)) })
     }
 
     /// The run of text slices `node`'s subtree owns, and its byte total.
