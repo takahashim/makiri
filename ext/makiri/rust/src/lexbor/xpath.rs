@@ -11,7 +11,6 @@
 #![allow(unsafe_code)]
 
 use crate::lexbor::abi as lxb;
-use crate::lexbor::adapter::dom_index::DomIndex;
 use crate::lexbor::adapter::html::{self as dom, HtmlAttr, HtmlDoc, HtmlNode, RawNode};
 use crate::lexbor::adapter::post_parse::HtmlParsed;
 use crate::token::{Kind, Token};
@@ -54,23 +53,16 @@ impl<'d> HtmlDom<'d> {
     /// # Safety
     /// `parsed` must be the live handle that owns `doc`, and stay live for
     /// `'d`, with nothing editing its document while `'d` lasts - which
-    /// [`index`](Self::index) and [`parsed`](Self::parsed) rely on to read it,
-    /// and `HtmlParsed::tag_bucket` to lend its nodes for `'d`.
+    /// [`parsed`](Self::parsed) relies on to read it, and
+    /// `HtmlParsed::tag_bucket` to lend its nodes for `'d`.
     unsafe fn new(doc: HtmlDoc<'d>, parsed: *mut HtmlParsed) -> HtmlDom<'d> {
         HtmlDom { doc, parsed }
     }
 
-    /// The document's element index as it stands now, rebuilding it
-    /// after a mutation. `None` on OOM.
-    fn index(&self) -> Option<&DomIndex> {
-        // SAFETY: `new`'s contract - `parsed` is live for `'d`, and no
-        // mutation runs while an evaluate on it does.
-        unsafe { (*self.parsed).dom_index() }
-    }
-
-    /// The parsed handle, for the evaluation's `'d`.
+    /// The parsed handle, shared, for the evaluation's `'d`. Everything an
+    /// evaluation reads goes through this; the one `&mut` is `prepare`'s.
     fn parsed(&self) -> &'d HtmlParsed {
-        // SAFETY: `new`'s contract, as `index` - live and unedited for `'d`.
+        // SAFETY: `new`'s contract - live and unedited for `'d`.
         unsafe { &*self.parsed }
     }
 }
@@ -245,15 +237,28 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
     }
 
     fn prepare(&self) -> bool {
-        /* Reading the index builds it when a mutation dropped it, so `//tag`
-         * is served from it; an allocation failure fails the evaluate closed. */
-        self.index().is_some()
+        /* Rebuild the index a mutation dropped, so `//tag` is served from it;
+         * an allocation failure fails the evaluate closed.
+         *
+         * This is the only `&mut` of the handle an evaluation takes, and it is
+         * taken only when the index is missing - before this evaluation has
+         * lent anything from it. A nested (handler-called) evaluate finds the
+         * index its caller built and takes none, so no `&mut` ever overlaps a
+         * bucket lent by `name_bucket`. */
+        if self.parsed().dom_index().is_some() {
+            return true;
+        }
+        // SAFETY: `new`'s contract, and nothing borrowed from the handle is
+        // live: this evaluation has not started, and an outer one would have
+        // built the index already.
+        unsafe { (*self.parsed).ensure_dom_index() }
     }
 
     /// Served only for a document with no foreign element, where lax and
     /// strict admit the same elements.
     fn name_bucket(self, local: &[u8], ns_uri: Option<&[u8]>) -> Option<Bucket<'d, HtmlNode<'d>>> {
-        let index = self.index()?;
+        let parsed = self.parsed();
+        let index = parsed.dom_index()?;
         if ns_uri.is_some() || index.has_foreign() {
             return None;
         }
@@ -261,8 +266,8 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
         if tag == dom::TAG_UNDEF || tag >= dom::TAG_LAST_ENTRY {
             return None;
         }
-        /* Built by `index` above; the handle lends the nodes for `'d`. */
-        let nodes = self.parsed().tag_bucket(tag)?;
+        /* Built by `prepare`; the handle lends the nodes for `'d`. */
+        let nodes = parsed.tag_bucket(tag)?;
         Some(Bucket {
             nodes,
             recheck: true,
@@ -314,7 +319,7 @@ pub unsafe fn context<'e>(
     let doc: HtmlDoc<'e> = unsafe { parsed.raw_doc().as_doc() };
     /* Build it now, so an allocation failure is reported here rather than on
      * the first evaluate. Each evaluate still re-reads it through the handle. */
-    if parsed.dom_index().is_none() {
+    if !parsed.ensure_dom_index() {
         return Err(Error::with(
             XP_ERR_OOM,
             format_args!("out of memory building the element index"),

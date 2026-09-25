@@ -45,7 +45,7 @@ unsafe fn run(p: &mut HtmlParsed, text: VerifiedText, lax: bool) {
     // An lxb_html_document_t leads with its DOM document, which leads with its
     // node, so the document is also the context node.
     let doc = p.raw_doc().as_ptr();
-    if p.dom_index().is_none() {
+    if !p.ensure_dom_index() {
         return;
     }
     // SAFETY: the caller destroys `p` only after the context is dropped, and

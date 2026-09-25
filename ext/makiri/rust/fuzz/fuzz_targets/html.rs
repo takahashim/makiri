@@ -19,5 +19,5 @@ fuzz_target!(|data: &[u8]| {
     // Force the lazy tag -> elements index (a CSR) to build. This is where
     // most of the compat-layer allocation happens, so it is the memory-safety
     // surface we want under the fuzzer.
-    let _ = p.dom_index();
+    let _ = p.ensure_dom_index();
 });

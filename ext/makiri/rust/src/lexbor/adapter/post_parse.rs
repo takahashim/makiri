@@ -104,19 +104,34 @@ impl HtmlParsed {
         unsafe { DomDoc::from_non_null(self.doc.cast()) }
     }
 
-    /// The tag -> elements index, built on first use. None when the build
-    /// cannot allocate - which caches nothing, so a later call retries.
-    pub fn dom_index(&mut self) -> Option<&DomIndex> {
+    /// Build the tag -> elements index if a mutation (or nothing yet) left it
+    /// unbuilt. `false` when the build cannot allocate - which caches nothing,
+    /// so a later call retries.
+    ///
+    /// The one writer; the readers below take `&self`, so a reader holding
+    /// what they lend cannot be overlapped by a rebuild.
+    pub fn ensure_dom_index(&mut self) -> bool {
         if self.dom_index.is_none() {
-            let built = crate::lexbor::adapter::dom_index::build(self.doc())?;
-            self.dom_index = Some(try_box(built).ok()?);
+            let Some(built) = crate::lexbor::adapter::dom_index::build(self.doc()) else {
+                return false;
+            };
+            let Ok(boxed) = try_box(built) else {
+                return false;
+            };
+            self.dom_index = Some(boxed);
         }
+        true
+    }
+
+    /// The tag -> elements index, or `None` until
+    /// [`ensure_dom_index`](Self::ensure_dom_index) has built it.
+    pub fn dom_index(&self) -> Option<&DomIndex> {
         self.dom_index.as_deref()
     }
 
     /// The elements with tag id `tag`, in document order, as typed nodes
-    /// borrowed from this handle. `None` until [`dom_index`](Self::dom_index)
-    /// has built the index.
+    /// borrowed from this handle. `None` until
+    /// [`ensure_dom_index`](Self::ensure_dom_index) has built the index.
     ///
     /// Safe, and bounded by `&self`, because this handle is what makes the
     /// nodes live: the index is built only from `self`'s own document, is

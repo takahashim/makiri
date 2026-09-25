@@ -149,7 +149,7 @@ pub fn context_for(rb_node: Value, document: Value) -> Result<Cx, Error> {
     /* Built up front, so an allocation failure raises here rather than on the
      * first evaluate. Each evaluate still reads the index afresh from the
      * handle, which rebuilds it after a mutation. */
-    if with_html_parsed_known(document, |p| p.dom_index().is_none()) {
+    if with_html_parsed_known(document, |p| !p.ensure_dom_index()) {
         return Err(makiri_error("failed to build the element index for XPath"));
     }
     // SAFETY: the handle of `document`, which the caller holds for as long as
