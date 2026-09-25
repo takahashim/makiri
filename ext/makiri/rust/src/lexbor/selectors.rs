@@ -341,36 +341,36 @@ fn engine_in(g: &mut Globals) -> Result<Engine, SelectError> {
  * would abort the walk mid-way AND skip the engine reset, leaving the
  * process-global parser dirty for every later query. So they touch no Ruby at
  * all - matches go into a plain Vec, and the node cap and an allocation failure
- * each latch a flag and STOP. The caller reports them after the traversal has
+ * each latch their error and STOP. The caller reports them after the traversal has
  * unwound normally and the engine has been reset. */
 
 struct FindCtx {
     nodes: Vec<RawNode>,
     /// Excluded from the results: `css` is descendant-only, like Nokogiri's.
     root: RawNode,
-    overflow: bool,
-    oom: bool,
-    /// A panic, latched the same way as the two flags above: it stops the walk
-    /// and is reported after it, because unwinding into Lexbor would abort.
+    /// Why the walk stopped early: the node cap or an allocation failure.
+    stopped: Option<SelectError>,
+    /// A panic, latched the same way as `stopped`: it stops the walk and is
+    /// reported after it, because unwinding into Lexbor would abort.
     panic: PanicLatch,
 }
 
 unsafe extern "C" fn find_cb(node: *mut LxbNode, _spec: u32, ctx: *mut c_void) -> u32 {
     let c = &mut *(ctx as *mut FindCtx);
-    let (nodes, root, overflow, oom) = (&mut c.nodes, c.root, &mut c.overflow, &mut c.oom);
+    let (nodes, root, stopped) = (&mut c.nodes, c.root, &mut c.stopped);
     c.panic.guard(LXB_STATUS_STOP, || {
         /* Lexbor reports no null match; the root is not a descendant. */
         let Some(found) = RawNode::from_ptr(node.cast()).filter(|&n| n != root) else {
             return LXB_STATUS_OK;
         };
         if nodes.len() >= NODE_SET_MAX {
-            *overflow = true;
+            *stopped = Some(SelectError::Overflow);
             return LXB_STATUS_STOP;
         }
         /* Not a bare `push`: the global allocator aborts on OOM, and this path
          * fails closed by reporting instead (`rake oom` sweeps it). */
         if nodes.falloc_push(found).is_err() {
-            *oom = true;
+            *stopped = Some(SelectError::CollectOom);
             return LXB_STATUS_STOP;
         }
         LXB_STATUS_OK
@@ -583,18 +583,14 @@ pub fn select_all(gvl: &Gvl, root: RawNode, selector: &[u8]) -> Result<Vec<RawNo
     let mut ctx = FindCtx {
         nodes: Vec::new(),
         root,
-        overflow: false,
-        oom: false,
+        stopped: None,
         panic: PanicLatch::new(),
     };
     walk(gvl, root, selector, &mut ctx)?;
-    if ctx.overflow {
-        return Err(SelectError::Overflow);
+    match ctx.stopped {
+        Some(e) => Err(e),
+        None => Ok(ctx.nodes),
     }
-    if ctx.oom {
-        return Err(SelectError::CollectOom);
-    }
-    Ok(ctx.nodes)
 }
 
 /// The first matching **descendant** of `root`, or `None`.
