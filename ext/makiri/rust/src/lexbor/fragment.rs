@@ -22,8 +22,9 @@ use crate::lexbor::abi::LxbNode;
  * ------------------------------------------------------------------ */
 
 use crate::lexbor::adapter::html::{
-    BuildingNode, HtmlDoc, HtmlElement, HtmlNode, LexborRefused, NsId, RawDoc, RawNode, TagId,
+    BuildingNode, HtmlDoc, HtmlElement, HtmlNode, NsId, RawDoc, RawNode, TagId,
 };
+use crate::lexbor::adapter::AdapterOom;
 
 /* The two fragment parsers, both generated. Everything this file does to the
  * DOM itself goes through `lexbor::adapter::html` - these are the parser, not
@@ -61,13 +62,13 @@ fn fixup_template_content(
     doc: HtmlDoc<'_>,
     root_src: HtmlNode<'_>,
     root_clone: BuildingNode<'_>,
-) -> Result<(), LexborRefused> {
+) -> Result<(), AdapterOom> {
     let mut stack: Vec<(HtmlNode<'_>, BuildingNode<'_>)> = Vec::new();
     /* The worklist's own allocation failing refuses the copy as surely as
      * Lexbor's does. */
     stack
         .falloc_push((root_src, root_clone))
-        .map_err(|()| LexborRefused)?;
+        .map_err(|()| AdapterOom)?;
 
     while let Some((src_root, clone_root)) = stack.pop() {
         let (mut sn, mut cn) = (Some(src_root), Some(clone_root));
@@ -85,11 +86,11 @@ fn fixup_template_content(
                         // Lexbor could not copy a content child. Giving up
                         // here leaves the clone's template SHORT, which is
                         // the truncated answer the contract forbids.
-                        return Err(LexborRefused);
+                        return Err(AdapterOom);
                     };
                     cc.insert_child(imp);
                 }
-                stack.falloc_push((sc, cc)).map_err(|()| LexborRefused)?;
+                stack.falloc_push((sc, cc)).map_err(|()| AdapterOom)?;
             }
             sn = s.preorder_next(src_root);
             cn = c.preorder_next(clone_root);
@@ -131,13 +132,13 @@ unsafe fn import_fragment_children(
     doc: RawDoc,
     root: RawNode,
     into: RawNode,
-) -> Result<(), LexborRefused> {
+) -> Result<(), AdapterOom> {
     let into = BuildingNode::from_raw_node(into);
     let hdoc = doc.as_doc();
     /* `children` reads each next sibling before yielding the node; import does
      * not unlink the source anyway. */
     for child in root.as_node().children() {
-        let imp = import_fixed(hdoc, child, true).ok_or(LexborRefused)?;
+        let imp = import_fixed(hdoc, child, true)?;
         into.insert_child(imp);
     }
     Ok(())
@@ -190,7 +191,7 @@ impl TransientFragment {
     /// # Safety
     /// `doc` must be live, and `into` a detached fragment of `doc` that nothing
     /// else refers to.
-    pub unsafe fn import_into(self, doc: RawDoc, into: RawNode) -> Result<(), LexborRefused> {
+    pub unsafe fn import_into(self, doc: RawDoc, into: RawNode) -> Result<(), AdapterOom> {
         import_fragment_children(doc, self.root, into)
     }
 }
@@ -300,14 +301,18 @@ unsafe fn run_fragment_parser(
     RawNode::from_ptr(root.cast()).ok_or(FragmentError::Parse)
 }
 
-/// Copy `src` into `doc`, `<template>` contents included, or `None` on failure.
+/// Copy `src` into `doc`, `<template>` contents included, or `Err` on failure.
 ///
 /// The DOM `importNode` omits a template's separate content fragment, so every
 /// copy in this extension is import-plus-fixup; this is that one operation.
 /// Three callers wanted it with different deep flags, different error channels
 /// and different messages, and each had grown its own copy of the four lines -
 /// so the operation lives here and they keep only the parts that differ.
-pub unsafe fn import_with_fixup(doc: RawDoc, src: RawNode, deep: bool) -> Option<RawNode> {
+pub unsafe fn import_with_fixup(
+    doc: RawDoc,
+    src: RawNode,
+    deep: bool,
+) -> Result<RawNode, AdapterOom> {
     /* SAFETY: a live document and the caller's live source node. The handles
      * do not outlive this call. */
     import_fixed(doc.as_doc(), src.as_node(), deep).map(|n| RawNode::from(n.node()))
@@ -315,24 +320,28 @@ pub unsafe fn import_with_fixup(doc: RawDoc, src: RawNode, deep: bool) -> Option
 
 /// [`import_with_fixup`] over the typed handles, for the children this module
 /// walks itself.
-fn import_fixed<'d>(hdoc: HtmlDoc<'d>, hsrc: HtmlNode<'_>, deep: bool) -> Option<BuildingNode<'d>> {
-    let himp = hdoc.import_node(hsrc, deep)?;
+fn import_fixed<'d>(
+    hdoc: HtmlDoc<'d>,
+    hsrc: HtmlNode<'_>,
+    deep: bool,
+) -> Result<BuildingNode<'d>, AdapterOom> {
+    let himp = hdoc.import_node(hsrc, deep).ok_or(AdapterOom)?;
     if !deep {
-        himp.copy_written_name_from(hsrc).ok()?;
+        himp.copy_written_name_from(hsrc)?;
     }
-    if deep && fixup_template_content(hdoc, hsrc, himp).is_err() {
+    if deep {
         // A copy whose <template> lost its contents is a wrong answer, not a
         // degraded one: `<template><i>x</i></template>` comes back as
         // `<template></template>` and nothing says so. The C was best-effort
         // here and the port carried that over; the OOM sweep called it, which
         // is what the sweep is for.
-        return None;
+        fixup_template_content(hdoc, hsrc, himp)?;
     }
     if hsrc.owner_document() != hdoc {
         /* The copied offsets index the other document's source. */
         himp.clear_source_offsets();
     }
-    Some(himp)
+    Ok(himp)
 }
 
 /* ------------------------------------------------------------------ */

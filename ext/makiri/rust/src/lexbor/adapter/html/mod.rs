@@ -181,21 +181,18 @@ const _: () = {
 
 /* ---------- a refused step ---------- */
 
-/// Lexbor could not complete an edit or a copy - store a value or a name, copy
-/// a node - or an allocation the step itself needed failed. In practice every
-/// such failure is out of memory; Lexbor's status is not carried, since no
-/// caller reports more than that the step failed. The node it was working on
+/// Lexbor could not complete the step - store a value or a name, copy a node -
+/// or an allocation the step itself needed failed. The node it was working on
 /// keeps what it had, or is a copy nothing links to yet.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct LexborRefused;
+use crate::lexbor::adapter::AdapterOom;
 
 /// A Lexbor status as a result.
 #[inline]
-pub(in crate::lexbor) fn lexbor_ok(st: lxb::lxb_status_t) -> Result<(), LexborRefused> {
+pub(in crate::lexbor) fn lexbor_ok(st: lxb::lxb_status_t) -> Result<(), AdapterOom> {
     if st == lxb::consts::STATUS_OK {
         Ok(())
     } else {
-        Err(LexborRefused)
+        Err(AdapterOom)
     }
 }
 
@@ -1006,9 +1003,9 @@ impl<'doc> HtmlElement<'doc> {
      * may call them, not in what Lexbor is asked to do. */
 
     /// Set `name` to `value`, adding the attribute when the element has none -
-    /// Lexbor's lookup, by local name and lower-cased for HTML. `None` when
+    /// Lexbor's lookup, by local name and lower-cased for HTML. `Err` when
     /// Lexbor could not store it.
-    fn put_attribute(self, name: &[u8], value: &[u8]) -> Option<HtmlAttr<'doc>> {
+    fn put_attribute(self, name: &[u8], value: &[u8]) -> Result<HtmlAttr<'doc>, AdapterOom> {
         /* An attribute the element already has gets its value here, not in
          * `lxb_dom_element_set_attribute`: when storing the value fails, that
          * DESTROYS the attribute while it is still in the element's list - a
@@ -1020,7 +1017,7 @@ impl<'doc> HtmlElement<'doc> {
         let found =
             unsafe { lxb::lxb_dom_element_attr_is_exist(self.raw(), name.as_ptr(), name.len()) };
         if let Some(at) = HtmlAttr::link(found) {
-            return at.set_value(value).ok().map(|()| at);
+            return at.set_value(value).map(|()| at);
         }
         /* Only the create path is left, where a failure destroys an attribute
          * nothing links to yet. */
@@ -1035,7 +1032,7 @@ impl<'doc> HtmlElement<'doc> {
                 value.len(),
             )
         };
-        HtmlAttr::link(at)
+        HtmlAttr::link(at).ok_or(AdapterOom)
     }
 
     /// Create an attribute named `qname` (case preserved), give it `value`, and
@@ -1050,12 +1047,12 @@ impl<'doc> HtmlElement<'doc> {
         ns: Option<&[u8]>,
         qname: &[u8],
         value: &[u8],
-    ) -> Result<(), LexborRefused> {
+    ) -> Result<(), AdapterOom> {
         // SAFETY: a live element of a live document its caller may change;
         // every slice is read and copied by Lexbor.
         unsafe {
             let at = lxb::lxb_dom_attr_interface_create(self.node().owner_document().as_raw());
-            let at = HtmlAttr::link(at).ok_or(LexborRefused)?;
+            let at = HtmlAttr::link(at).ok_or(AdapterOom)?;
             let named = match ns {
                 Some(uri) => lxb::lxb_dom_attr_set_name_ns(
                     at.raw(),
@@ -1144,7 +1141,7 @@ impl<'doc> HtmlAttr<'doc> {
     /// Lexbor frees the old value here, which is why an XPath evaluation may not
     /// be reading this document - the borrowed slices it holds would dangle.
     /// Reaching this through [`HtmlElementMut`] is what says that was checked.
-    pub fn set_value(self, value: &[u8]) -> Result<(), LexborRefused> {
+    pub fn set_value(self, value: &[u8]) -> Result<(), AdapterOom> {
         // SAFETY: a live attribute; Lexbor copies the bytes before anything
         // else runs.
         lexbor_ok(unsafe { lxb::lxb_dom_attr_set_value(self.raw(), value.as_ptr(), value.len()) })

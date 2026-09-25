@@ -243,7 +243,7 @@ impl<'doc> HtmlNodeMut<'doc> {
     ///
     /// `Err` when Lexbor could not store it, in which case the node keeps
     /// what it had.
-    pub fn set_text_content(self, text: &[u8]) -> Result<(), LexborRefused> {
+    pub fn set_text_content(self, text: &[u8]) -> Result<(), AdapterOom> {
         let node = self.node();
         if matches!(
             node.node_type(),
@@ -261,11 +261,7 @@ impl<'doc> HtmlNodeMut<'doc> {
             let text_node = if text.is_empty() {
                 None
             } else {
-                Some(
-                    node.owner_document()
-                        .create_text(text)
-                        .ok_or(LexborRefused)?,
-                )
+                Some(node.owner_document().create_text(text).ok_or(AdapterOom)?)
             };
             while let Some(c) = self.first_child() {
                 c.detach();
@@ -364,10 +360,10 @@ impl<'doc> HtmlElementMut<'doc> {
 
     /// Set `name` to `value`, adding the attribute when the element has none.
     ///
-    /// `None` when Lexbor could not store it. The lookup is Lexbor's own, by
+    /// `Err` when Lexbor could not store it. The lookup is Lexbor's own, by
     /// local name and lower-cased for HTML - `set_attribute_ns` is the one that
     /// keys on (namespace, local name) instead.
-    pub fn set_attribute(self, name: &[u8], value: &[u8]) -> Option<HtmlAttr<'doc>> {
+    pub fn set_attribute(self, name: &[u8], value: &[u8]) -> Result<HtmlAttr<'doc>, AdapterOom> {
         self.0.put_attribute(name, value)
     }
 
@@ -378,7 +374,7 @@ impl<'doc> HtmlElementMut<'doc> {
         ns: Option<&[u8]>,
         qname: &[u8],
         value: &[u8],
-    ) -> Result<(), LexborRefused> {
+    ) -> Result<(), AdapterOom> {
         self.0.append_attribute_ns(ns, qname, value)
     }
 

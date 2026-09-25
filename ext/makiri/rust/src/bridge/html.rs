@@ -23,7 +23,8 @@ use crate::lexbor::fragment::import_with_fixup;
 
 use crate::bridge::string::{RubyData, RubyText};
 use crate::bridge::wrapper::*;
-use crate::lexbor::adapter::html::{HtmlDoc, HtmlElementMut, LexborRefused};
+use crate::lexbor::adapter::html::{HtmlDoc, HtmlElementMut};
+use crate::lexbor::adapter::AdapterOom;
 
 /* ---- the document's own bytes and text ---- */
 
@@ -250,7 +251,7 @@ pub unsafe fn import_copy(
     deep: bool,
     what: &str,
 ) -> Result<RawNode, Error> {
-    import_with_fixup(doc, src, deep).ok_or_else(|| makiri_error(format!("failed to {what}")))
+    import_with_fixup(doc, src, deep).map_err(|_| makiri_error(format!("failed to {what}")))
 }
 
 /// Copy `node` into `doc`, for a node that came from another document.
@@ -388,10 +389,9 @@ pub fn set_attribute(
     el: HtmlElementMut<'_>,
     name: &RubyText,
     value: &RubyData,
-) -> Result<(), LexborRefused> {
+) -> Result<(), AdapterOom> {
     el.set_attribute(name.as_bytes(), value.as_bytes())
         .map(drop)
-        .ok_or(LexborRefused)
 }
 
 /// Set the attribute `qname` in namespace `ns` (nil or "" = none), matching an
@@ -402,7 +402,7 @@ pub fn set_attribute_ns(
     ns: Option<&RubyText>,
     qname: &RubyText,
     value: &RubyData,
-) -> Result<(), LexborRefused> {
+) -> Result<(), AdapterOom> {
     let (qname, value) = (qname.as_bytes(), value.as_bytes());
     /* An empty URI is no namespace: it names the attribute the unprefixed way. */
     let ns = ns.map(|v| v.as_bytes()).filter(|v| !v.is_empty());
@@ -461,7 +461,7 @@ pub fn remove_attribute(el: HtmlElementMut<'_>, name: &RubyText) {
 }
 
 /// `node.content = text`; `Err` when Lexbor could not store it.
-pub fn set_text_content(node: HtmlNodeMut<'_>, text: &RubyData) -> Result<(), LexborRefused> {
+pub fn set_text_content(node: HtmlNodeMut<'_>, text: &RubyData) -> Result<(), AdapterOom> {
     node.set_text_content(text.as_bytes())
 }
 

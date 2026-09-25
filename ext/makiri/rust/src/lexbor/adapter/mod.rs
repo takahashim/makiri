@@ -15,3 +15,13 @@ pub mod html;
 pub mod post_parse;
 pub mod source_loc;
 pub mod text_index;
+
+/// An allocation the adapter needed could not be satisfied.
+///
+/// Every step the adapter takes - storing a value or a name through Lexbor,
+/// copying a node, growing a worklist, building an index - fails only for want
+/// of memory, so one type carries all of them. Lexbor's own status is not
+/// carried: no caller reports more than that the step failed. The caller fails
+/// closed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AdapterOom;

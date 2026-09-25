@@ -218,7 +218,7 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
         n.with_text_content(|text| text.map_or(Ok(()), |t| buf.append(t)))
     }
 
-    fn prepare(&self) -> bool {
+    fn prepare(&self) -> Result<(), Status> {
         /* Rebuild the index a mutation dropped, so `//tag` is served from it;
          * an allocation failure fails the evaluate closed.
          *
@@ -228,12 +228,12 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
          * index its caller built and takes none, so no `&mut` ever overlaps a
          * bucket lent by `name_bucket`. */
         if self.parsed().dom_index().is_some() {
-            return true;
+            return Ok(());
         }
         // SAFETY: `new`'s contract, and nothing borrowed from the handle is
         // live: this evaluation has not started, and an outer one would have
         // built the index already.
-        unsafe { (*self.parsed).ensure_dom_index() }.is_ok()
+        unsafe { (*self.parsed).ensure_dom_index() }.map_err(|_| Status::Oom)
     }
 
     /// Served only for a document with no foreign element, where lax and

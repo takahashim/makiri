@@ -311,7 +311,7 @@ impl<'doc> BuildingNode<'doc> {
     /// tag, not the spelling): a copied SVG `linearGradient` read
     /// `lineargradient`, and `p:Bar` read `bar`. Nothing to do for a node
     /// with no written name. `Err` when Lexbor could not store it.
-    pub fn copy_written_name_from(self, src: HtmlNode<'_>) -> Result<(), LexborRefused> {
+    pub fn copy_written_name_from(self, src: HtmlNode<'_>) -> Result<(), AdapterOom> {
         let (Some(from), Some(to)) = (src.element(), self.0.element()) else {
             return Ok(());
         };
@@ -428,11 +428,8 @@ impl<'doc> BuildingElement<'doc> {
 
     /// Set a plain, namespaceless attribute. `Err` when Lexbor could not
     /// store it.
-    pub fn set_attribute(self, name: &[u8], value: &[u8]) -> Result<(), LexborRefused> {
-        self.0
-            .put_attribute(name, value)
-            .map(drop)
-            .ok_or(LexborRefused)
+    pub fn set_attribute(self, name: &[u8], value: &[u8]) -> Result<(), AdapterOom> {
+        self.0.put_attribute(name, value).map(drop)
     }
 
     /// Create an attribute in `ns`, name it `qname` case-preserving, give it
@@ -444,7 +441,7 @@ impl<'doc> BuildingElement<'doc> {
         ns: &[u8],
         qname: &[u8],
         value: &[u8],
-    ) -> Result<(), LexborRefused> {
+    ) -> Result<(), AdapterOom> {
         self.0.append_attribute_ns(Some(ns), qname, value)
     }
 }

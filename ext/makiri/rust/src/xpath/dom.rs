@@ -67,10 +67,10 @@ pub trait Dom<'d>: Copy {
     /// Refresh whatever the backend reads once per walk, before it starts.
     ///
     /// The HTML backend builds (or, after a mutation since the last evaluate,
-    /// rebuilds) its element index here. XML has no such state. `false` when it
+    /// rebuilds) its element index here. XML has no such state. `Err` when it
     /// cannot be built (out of memory), and the evaluate fails closed.
-    fn prepare(&self) -> bool {
-        true
+    fn prepare(&self) -> Result<(), Status> {
+        Ok(())
     }
 
     fn node_type(self, n: Self::Node) -> NodeType;

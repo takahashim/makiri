@@ -49,10 +49,7 @@ use crate::lexbor::abi::consts::STATUS_OK as LXB_STATUS_OK;
 
 /* ---- the parsed document ---- */
 
-/// The element index could not be built: an allocation failed. Nothing is
-/// cached, so the next [`HtmlParsed::ensure_dom_index`] tries again.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct IndexOom;
+use super::AdapterOom;
 
 /// A parsed HTML document, and the indices built over it on demand.
 ///
@@ -114,10 +111,10 @@ impl HtmlParsed {
     ///
     /// The one writer; the readers below take `&self`, so a reader holding
     /// what they lend cannot be overlapped by a rebuild.
-    pub fn ensure_dom_index(&mut self) -> Result<(), IndexOom> {
+    pub fn ensure_dom_index(&mut self) -> Result<(), AdapterOom> {
         if self.dom_index.is_none() {
-            let built = crate::lexbor::adapter::dom_index::build(self.doc()).ok_or(IndexOom)?;
-            self.dom_index = Some(try_box(built).map_err(|()| IndexOom)?);
+            let built = crate::lexbor::adapter::dom_index::build(self.doc()).ok_or(AdapterOom)?;
+            self.dom_index = Some(try_box(built).map_err(|()| AdapterOom)?);
         }
         Ok(())
     }

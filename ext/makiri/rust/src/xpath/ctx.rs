@@ -309,9 +309,7 @@ impl Session {
         ast: &Ast,
         handler: Option<&dyn Resolver>,
     ) -> Result<XPathValue, Error> {
-        if !doc.prepare() {
-            return Err(index_error());
-        }
+        doc.prepare().map_err(index_error)?;
         let run = self.enter()?;
         eval::eval_ast(self, &run.names, doc, self.focus_node(doc), ast, handler)
     }
@@ -329,9 +327,7 @@ impl Session {
          * is bounded fail-closed exactly like the full evaluator; it only runs
          * for recognised shapes, which call no functions, so it needs no
          * handler. */
-        if !doc.prepare() {
-            return Err(index_error());
-        }
+        doc.prepare().map_err(index_error)?;
         let matched = {
             let run = self.enter()?;
             eval::try_first_match(self, &run.names, doc, self.focus_node(doc), ast)
@@ -363,9 +359,9 @@ impl Session {
 }
 
 /// The backend could not build the per-walk index: out of memory.
-fn index_error() -> Error {
+fn index_error(status: Status) -> Error {
     Error::with(
-        Status::Oom,
+        status,
         format_args!("out of memory building the element index"),
     )
 }
