@@ -186,8 +186,7 @@ fn eval_step<'e, 'd, D: Dom<'d>>(
     ev: &mut Evaluation<'e, 'd, D>,
     step: &Step,
     context_set: &NodeSet<D::Node>,
-    out: &mut NodeSet<D::Node>,
-) -> EvalResult {
+) -> EvalResult<NodeSet<D::Node>> {
     let doc = ev.doc;
     let axis = step.axis;
     if !axis_is_implemented(axis) {
@@ -215,16 +214,19 @@ fn eval_step<'e, 'd, D: Dom<'d>>(
         || (axis_can_alias(axis) && context_set.len() > 1)
         || (context_set.len() > 1 && axis != Axis::SelfAxis && axis != Axis::Attribute);
 
-    let mut result = NodeSet::new();
-
     let preds = step.predicates.as_slice();
-    if preds.is_empty() {
-        if !try_descendant_index::<D>(doc, &ct, context_set, &mut result, &mut ev.budget)? {
-            /* No-predicate walk: every context goes straight into the result
-             * buffer regardless of the post-pass, saving the per-context
-             * fragment the predicate path needs. */
-            for &c in context_set.as_slice() {
-                collect_axis(ev, &ct, c, &mut result)?;
+    let mut result = if preds.is_empty() {
+        match try_descendant_index::<D>(doc, &ct, context_set, &mut ev.budget)? {
+            Some(indexed) => indexed,
+            None => {
+                /* No-predicate walk: every context goes straight into the
+                 * result buffer regardless of the post-pass, saving the
+                 * per-context fragment the predicate path needs. */
+                let mut result = NodeSet::new();
+                for &c in context_set.as_slice() {
+                    collect_axis(ev, &ct, c, &mut result)?;
+                }
+                result
             }
         }
     } else {
@@ -232,6 +234,7 @@ fn eval_step<'e, 'd, D: Dom<'d>>(
          * context's fragment has to be materialised before filtering. One
          * fragment buffer is reused across iterations, so its storage grows to
          * the largest single-context cardinality once rather than per iteration. */
+        let mut result = NodeSet::new();
         let mut fragment = NodeSet::new();
         for &c in context_set.as_slice() {
             fragment.clear();
@@ -246,7 +249,8 @@ fn eval_step<'e, 'd, D: Dom<'d>>(
                 result.push(n, &mut ev.budget)?;
             }
         }
-    }
+        result
+    };
 
     if need_post_pass && result.len() > 1 {
         if context_set.len() == 1 && is_reverse_axis(axis) {
@@ -261,29 +265,25 @@ fn eval_step<'e, 'd, D: Dom<'d>>(
             nodeset_unique_sorted::<D>(ev, &mut result);
         }
     }
-    *out = result;
-    Ok(())
+    Ok(result)
 }
 
 fn eval_steps<'e, 'd, D: Dom<'d>>(
     ev: &mut Evaluation<'e, 'd, D>,
     steps: &[Step],
-    seed: &mut NodeSet<D::Node>,
+    seed: NodeSet<D::Node>,
 ) -> EvalResult<Val<D::Node>> {
-    let mut current = core::mem::take(seed);
+    let mut current = seed;
     let mut rest = steps;
 
     if let [s0, s1, ..] = steps {
-        let mut nth = NodeSet::new();
-        if try_descendant_index_nth::<D>(ev, s0, s1, &current, &mut nth)? {
+        if let Some(nth) = try_descendant_index_nth::<D>(ev, s0, s1, &current)? {
             current = nth;
             rest = &steps[2..];
         }
     }
     for step in rest {
-        let mut next = NodeSet::new();
-        eval_step::<D>(ev, step, &current, &mut next)?;
-        current = next;
+        current = eval_step::<D>(ev, step, &current)?;
     }
     Ok(Val::nodeset(current))
 }
@@ -619,7 +619,7 @@ fn eval_path<'e, 'd, D: Dom<'d>>(
     if let Some(n) = start {
         seed.push(n, &mut ev.budget)?;
     }
-    eval_steps::<D>(ev, &p.steps, &mut seed)
+    eval_steps::<D>(ev, &p.steps, seed)
 }
 
 fn eval_filter<'e, 'd, D: Dom<'d>>(
@@ -648,8 +648,8 @@ fn eval_filter<'e, 'd, D: Dom<'d>>(
                 "path applied to non-node-set"
             ));
         };
-        let mut seed = core::mem::take(ns);
-        return eval_steps::<D>(ev, steps, &mut seed);
+        let seed = core::mem::take(ns);
+        return eval_steps::<D>(ev, steps, seed);
     }
     Ok(primary)
 }

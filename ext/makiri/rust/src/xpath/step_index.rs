@@ -2,7 +2,7 @@
 //!
 //! Both answer a document-rooted descendant name test from the document's
 //! element index instead of walking the tree, and both are pure optimisation -
-//! each returns Ok(false) whenever the shape or the index cannot serve it, and
+//! each returns Ok(None) whenever the shape or the index cannot serve it, and
 //! the caller walks. Keeping them out of the step driver keeps that "never
 //! changes the answer, only the cost" property readable.
 
@@ -24,28 +24,28 @@ fn context_is_document<'e, 'd, D: Dom<'d>>(doc: D, set: &NodeSet<D::Node>) -> bo
     matches!(set.as_slice(), [n] if *n == doc.document_node())
 }
 
-/// `//tag` from the index instead of a tree walk. Returns Ok(true) when it
-/// filled `result`, Ok(false) when the shape does not qualify.
+/// `//tag` from the index instead of a tree walk: the step's result, or None
+/// when the shape does not qualify.
 pub fn try_descendant_index<'e, 'd, D: Dom<'d>>(
     doc: D,
     ct: &CompiledTest<'_>,
     context_set: &NodeSet<D::Node>,
-    result: &mut NodeSet<D::Node>,
     budget: &mut Budget,
-) -> Result<bool, Reported> {
+) -> Result<Option<NodeSet<D::Node>>, Reported> {
     let test = ct.test();
     let Some(local) = test.local.as_deref() else {
-        return Ok(false);
+        return Ok(None);
     };
     if ct.axis() != Axis::Descendant
         || test.kind != TestKind::Name
         || !context_is_document::<D>(doc, context_set)
     {
-        return Ok(false);
+        return Ok(None);
     }
     let Some(bucket) = doc.name_bucket(local, ct.uri()) else {
-        return Ok(false);
+        return Ok(None);
     };
+    let mut result = NodeSet::new();
     for &n in bucket.nodes {
         budget.charge_op()?;
         if bucket.recheck && !ct.matches(doc, n) {
@@ -53,7 +53,7 @@ pub fn try_descendant_index<'e, 'd, D: Dom<'d>>(
         }
         result.push(n, budget)?;
     }
-    Ok(true)
+    Ok(Some(result))
 }
 
 /// `//name[N]` - the two leading steps `descendant-or-self::node()` and
@@ -101,26 +101,28 @@ fn nth_shape<'e, 'd, D: Dom<'d>>(
     Some(dn as usize)
 }
 
+/// `//name[N]` from the index: the two steps' result, or None when the shape
+/// or the index cannot serve it - a sweep abandoned midway included, so a
+/// partly filled set never reaches the caller.
 pub fn try_descendant_index_nth<'e, 'd, D: Dom<'d>>(
     ev: &mut Evaluation<'e, 'd, D>,
     s0: &Step,
     s1: &Step,
     seed: &NodeSet<D::Node>,
-    result: &mut NodeSet<D::Node>,
-) -> Result<bool, Reported> {
+) -> Result<Option<NodeSet<D::Node>>, Reported> {
     let doc = ev.doc;
-    let need = match nth_shape::<D>(doc, s0, s1, seed) {
-        Some(n) => n,
-        None => return Ok(false),
+    let Some(need) = nth_shape::<D>(doc, s0, s1, seed) else {
+        return Ok(None);
     };
     let names: &'e Names = ev.names;
     let ct = CompiledTest::new(&s1.test, s1.axis, names, ev.cx.lax(), ev.budget.sink())?;
     let local = ct.test().local.as_deref().unwrap_or(&[]);
     let Some(bucket) = doc.name_bucket(local, ct.uri()) else {
-        return Ok(false);
+        return Ok(None);
     };
+    let mut result = NodeSet::new();
     if bucket.nodes.is_empty() {
-        return Ok(true);
+        return Ok(Some(result));
     }
 
     /* A count per parent, sized for one parent per element - a table that
@@ -142,10 +144,10 @@ pub fn try_descendant_index_nth<'e, 'd, D: Dom<'d>>(
         /* An element of the bucket always has a parent; a parentless one would
          * be the index disagreeing with the tree, and the walk answers then. */
         let Some(par) = doc.parent(e) else {
-            return Ok(false);
+            return Ok(None);
         };
         let Some(slot) = per_parent.insert(D::token(par), 0) else {
-            return Ok(false);
+            return Ok(None);
         };
         let count = per_parent.slot_mut(slot);
         *count += 1;
@@ -153,5 +155,5 @@ pub fn try_descendant_index_nth<'e, 'd, D: Dom<'d>>(
             result.push(e, budget)?;
         }
     }
-    Ok(true)
+    Ok(Some(result))
 }

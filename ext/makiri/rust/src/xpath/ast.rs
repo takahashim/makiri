@@ -78,17 +78,24 @@ pub struct Step {
     pub predicates: Vec<Expr>,
 }
 
+impl NodeTest {
+    /// A test of `kind` with no names.
+    pub fn new(kind: TestKind) -> NodeTest {
+        NodeTest {
+            kind,
+            prefix: None,
+            local: None,
+            pi_target: None,
+        }
+    }
+}
+
 impl Step {
     /// A step with no names and no predicates.
     pub fn new(axis: Axis, kind: TestKind) -> Step {
         Step {
             axis,
-            test: NodeTest {
-                kind,
-                prefix: None,
-                local: None,
-                pi_target: None,
-            },
+            test: NodeTest::new(kind),
             predicates: Vec::new(),
         }
     }

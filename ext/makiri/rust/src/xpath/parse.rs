@@ -193,54 +193,59 @@ impl<'a> Parser<'a> {
     /// `saved` is an already-consumed NAME; the current token is the one after
     /// it. A node-type keyword immediately followed by '(' is a node-type test
     /// (with an optional PI target literal); anything else is an NCName test.
-    fn parse_nodetype_or_name(&mut self, saved: Token, out: &mut NodeTest) -> PResult {
+    fn parse_nodetype_or_name(&mut self, saved: Token) -> PResult<NodeTest> {
         let name = self.text(&saved);
         if is_nodetype_name(name) && self.kind() == Tok::LParen {
             self.advance()?;
-            match name {
-                b"node" => out.kind = TestKind::Node,
-                b"text" => out.kind = TestKind::Text,
-                b"comment" => out.kind = TestKind::Comment,
+            let test = match name {
+                b"node" => NodeTest::new(TestKind::Node),
+                b"text" => NodeTest::new(TestKind::Text),
+                b"comment" => NodeTest::new(TestKind::Comment),
                 _ => {
-                    out.kind = TestKind::Pi;
+                    let mut test = NodeTest::new(TestKind::Pi);
                     if self.kind() == Tok::Literal {
                         let t = self.tok();
-                        out.pi_target = Some(self.fill_owned(self.text(&t))?);
+                        test.pi_target = Some(self.fill_owned(self.text(&t))?);
                         self.advance()?;
                     }
+                    test
                 }
-            }
-            return self.eat(Tok::RParen, "')' after node type test");
+            };
+            self.eat(Tok::RParen, "')' after node type test")?;
+            return Ok(test);
         }
-        out.kind = TestKind::Name;
-        out.local = Some(self.fill_owned(name)?);
-        Ok(())
+        let mut test = NodeTest::new(TestKind::Name);
+        test.local = Some(self.fill_owned(name)?);
+        Ok(test)
     }
 
     /// Called with the current token at the first token of the node test; leaves
-    /// it at the token after. `out` is a fresh test with no names yet.
-    fn parse_node_test(&mut self, out: &mut NodeTest) -> PResult {
+    /// it at the token after.
+    fn parse_node_test(&mut self) -> PResult<NodeTest> {
         if self.kind() == Tok::Star {
-            out.kind = TestKind::Wildcard;
-            return self.advance();
+            self.advance()?;
+            return Ok(NodeTest::new(TestKind::Wildcard));
         }
         if self.kind() == Tok::Name {
             let saved = self.tok();
             self.advance()?;
-            return self.parse_nodetype_or_name(saved, out);
+            return self.parse_nodetype_or_name(saved);
         }
         if self.kind() == Tok::QName {
             /* `prefix:local` or `prefix:*`. */
             let t = self.tok();
             let (prefix, local) = split_qname(self.text(&t));
-            out.prefix = Some(self.fill_owned(prefix)?);
-            if local == b"*" {
-                out.kind = TestKind::Wildcard;
+            let prefix = self.fill_owned(prefix)?;
+            let mut test = if local == b"*" {
+                NodeTest::new(TestKind::Wildcard)
             } else {
-                out.kind = TestKind::Name;
-                out.local = Some(self.fill_owned(local)?);
-            }
-            return self.advance();
+                let mut test = NodeTest::new(TestKind::Name);
+                test.local = Some(self.fill_owned(local)?);
+                test
+            };
+            test.prefix = Some(prefix);
+            self.advance()?;
+            return Ok(test);
         }
         Err(err_setf!(self.err, Status::Syntax, "expected node test"))
     }
@@ -266,33 +271,22 @@ impl<'a> Parser<'a> {
 
     /* ---- steps ---- */
 
-    /// Parse one step. A failure partway leaves an owned name or predicates
-    /// behind in the step, which is freed as the error returns.
+    /// Parse one step.
     fn parse_step(&mut self) -> PResult<Step> {
-        let mut step = Step::new(Axis::Child, TestKind::Name);
-        self.parse_step_inner(&mut step)?;
-        Ok(step)
-    }
-
-    fn parse_step_inner(&mut self, out: &mut Step) -> PResult {
         /* Abbreviated steps. */
         if self.kind() == Tok::Dot {
             self.advance()?;
-            out.axis = Axis::SelfAxis;
-            out.test.kind = TestKind::Node;
-            return Ok(());
+            return Ok(Step::new(Axis::SelfAxis, TestKind::Node));
         }
         if self.kind() == Tok::DotDot {
             self.advance()?;
-            out.axis = Axis::Parent;
-            out.test.kind = TestKind::Node;
-            return Ok(());
+            return Ok(Step::new(Axis::Parent, TestKind::Node));
         }
 
         /* AxisSpecifier: '@' or NAME '::'. */
-        if self.kind() == Tok::At {
-            out.axis = Axis::Attribute;
+        let axis = if self.kind() == Tok::At {
             self.advance()?;
+            Axis::Attribute
         } else if self.kind() == Tok::Name {
             /* Axis or NameTest - decided by the token after, so peek by
              * advancing and keeping the NAME. */
@@ -300,31 +294,40 @@ impl<'a> Parser<'a> {
             self.advance()?;
             if self.kind() == Tok::ColonColon {
                 let name = self.text(&saved);
-                match axis_by_name(name) {
-                    Some(ax) => out.axis = ax,
-                    None => {
-                        return Err(err_setf!(
-                            self.err,
-                            Status::Syntax,
-                            "unknown axis '{}'",
-                            Bytes(name)
-                        ));
-                    }
-                }
+                let Some(ax) = axis_by_name(name) else {
+                    return Err(err_setf!(
+                        self.err,
+                        Status::Syntax,
+                        "unknown axis '{}'",
+                        Bytes(name)
+                    ));
+                };
                 self.advance()?; /* eat '::' */
+                ax
             } else {
                 /* It was a NameTest, and the NAME is already consumed, so replay
                  * it through the shared node-type grammar. */
-                out.axis = Axis::Child;
-                self.parse_nodetype_or_name(saved, &mut out.test)?;
-                return self.parse_predicates(&mut out.predicates);
+                let test = self.parse_nodetype_or_name(saved)?;
+                return self.finish_step(Axis::Child, test);
             }
         } else {
-            out.axis = Axis::Child;
-        }
+            Axis::Child
+        };
 
-        self.parse_node_test(&mut out.test)?;
-        self.parse_predicates(&mut out.predicates)
+        let test = self.parse_node_test()?;
+        self.finish_step(axis, test)
+    }
+
+    /// The step's predicates, after its axis and test. A failure partway drops
+    /// the test's owned names and the predicates parsed so far as it returns.
+    fn finish_step(&mut self, axis: Axis, test: NodeTest) -> PResult<Step> {
+        let mut step = Step {
+            axis,
+            test,
+            predicates: Vec::new(),
+        };
+        self.parse_predicates(&mut step.predicates)?;
+        Ok(step)
     }
 
     /* ---- location paths ---- */
