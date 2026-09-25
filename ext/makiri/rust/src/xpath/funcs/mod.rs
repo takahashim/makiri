@@ -642,32 +642,43 @@ fn name_target<'e, 'd, D: Dom<'d>>(
 /// element, attribute or PI yields "". A PI's name is its target either way (its
 /// expanded-name is (null, target)). In HTML the qualified name equals the local
 /// name, which also keeps the LXB_NS_HTML prefix out of the result.
+/// Which name `local-name()` / `name()` reads. The function's own name - for
+/// its error messages - comes with it, so the two cannot disagree.
+#[derive(Clone, Copy)]
+enum NameKind {
+    Local,
+    Qualified,
+}
+
+impl NameKind {
+    fn fname(self) -> &'static str {
+        match self {
+            NameKind::Local => "local-name",
+            NameKind::Qualified => "name",
+        }
+    }
+}
+
 fn name_emit<'e, 'd, D: Dom<'d>>(
     doc: D,
     n: Option<D::Node>,
-    qualified: bool,
+    kind: NameKind,
     err: ErrSink,
-    fname: &str,
 ) -> Answer<D::Node> {
+    let fname = kind.fname();
     let Some(n) = n else {
         return string(b"", err, fname);
     };
     let name: &[u8] = if let Some(a) = doc.as_attr(n) {
-        if qualified {
-            doc.attr_qualified_name(a)
-        } else {
-            doc.attr_local_name(a)
+        match kind {
+            NameKind::Local => doc.attr_local_name(a),
+            NameKind::Qualified => doc.attr_qualified_name(a),
         }
     } else {
-        match doc.node_type(n) {
-            NTYPE_ELEMENT => {
-                if qualified {
-                    doc.qualified_name(n)
-                } else {
-                    doc.local_name(n)
-                }
-            }
-            NTYPE_PI => doc.pi_name(n),
+        match (doc.node_type(n), kind) {
+            (NTYPE_ELEMENT, NameKind::Local) => doc.local_name(n),
+            (NTYPE_ELEMENT, NameKind::Qualified) => doc.qualified_name(n),
+            (NTYPE_PI, _) => doc.pi_name(n),
             _ => b"",
         }
     };
@@ -679,12 +690,11 @@ fn name_of<'e, 'd, D: Dom<'d>>(
     ev: &mut Evaluation<'e, 'd, D>,
     focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
-    qualified: bool,
-    fname: &str,
+    kind: NameKind,
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
-    let t = name_target::<D>(args, focus, err.clone(), fname)?;
-    name_emit::<D>(ev.doc, t, qualified, err, fname)
+    let t = name_target::<D>(args, focus, err.clone(), kind.fname())?;
+    name_emit::<D>(ev.doc, t, kind, err)
 }
 
 fn fn_local_name<'e, 'd, D: Dom<'d>>(
@@ -692,7 +702,7 @@ fn fn_local_name<'e, 'd, D: Dom<'d>>(
     focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
-    name_of(ev, focus, args, false, "local-name")
+    name_of(ev, focus, args, NameKind::Local)
 }
 
 fn fn_name<'e, 'd, D: Dom<'d>>(
@@ -700,7 +710,7 @@ fn fn_name<'e, 'd, D: Dom<'d>>(
     focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
-    name_of(ev, focus, args, true, "name")
+    name_of(ev, focus, args, NameKind::Qualified)
 }
 
 fn fn_namespace_uri<'e, 'd, D: Dom<'d>>(

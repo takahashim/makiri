@@ -94,8 +94,8 @@ pub(super) fn resolve_ns(
 }
 
 /// Which pass of an all-or-nothing resolution this is: one that only computes
-/// (to find out whether every prefix in the subtree binds and every key is
-/// unique), then one that writes.
+/// ([`check_node_ns`]: does every prefix in the subtree bind, is every key
+/// unique), then one that writes ([`commit_node_ns`]).
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Pass {
     Check,
@@ -111,59 +111,103 @@ enum Part {
     PendingAttrs,
 }
 
-/// Resolve the namespace of element `e` - see [`Part`] - and check that its
-/// attributes' keys stay unique, the rule the parser holds a document to (§3).
-fn resolve_node_ns(
-    doc: &mut Document,
-    e: NodeId,
-    connected: bool,
-    pass: Pass,
-    part: Part,
-) -> Result<(), MutStatus> {
-    let (commit, attrs_only) = (pass == Pass::Commit, part == Part::PendingAttrs);
-    if !attrs_only && doc.node(e).flags & FLAG_DOM_LOOSE_NAME == 0 {
-        let sp = doc.split_of(e);
-        /* `resolve_ns` only reads, so the name is passed borrowed. */
-        let r = resolve_ns(doc, Some(e), doc.qname(e), &sp, false, connected)?;
-        if commit {
-            doc.node_mut(e).ns_uri = r.ns
-        }
+/// Whether attribute `attr`'s namespace is (re-)derived from its prefix for
+/// this `part`. A namespace given with `set_attribute_ns` is the attribute's
+/// own and is never derived again; everything else is, unless only the
+/// pending ones are being looked at.
+fn rederives(doc: &Document, attr: NodeId, part: Part) -> bool {
+    let flags = doc.node(attr).flags;
+    flags & FLAG_NS_EXPLICIT == 0 && (part == Part::Whole || flags & FLAG_NS_PENDING != 0)
+}
+
+/// Whether `e`'s own name is resolved for this `part`.
+fn resolves_name(doc: &Document, e: NodeId, part: Part) -> bool {
+    part == Part::Whole && doc.node(e).flags & FLAG_DOM_LOOSE_NAME == 0
+}
+
+/// The [`Pass::Check`] half for element `e` - see [`Part`]: that every prefix
+/// binds, and that its attributes' keys stay unique, the rule the parser holds
+/// a document to (§3). Takes `&Document`, so the pass that must write nothing
+/// cannot.
+fn check_node_ns(doc: &Document, e: NodeId, connected: bool, part: Part) -> Result<(), MutStatus> {
+    if resolves_name(doc, e, part) {
+        resolve_ns(
+            doc,
+            Some(e),
+            doc.qname(e),
+            &doc.split_of(e),
+            false,
+            connected,
+        )?;
     }
     /* Every attribute's key as it will stand - a re-resolved one's new
      * namespace, anyone else's stored one - leaving out those still pending,
      * which have no namespace to compare yet. */
     let mut keys: Vec<(Span, NodeId)> = Vec::new();
-    let mut a = doc.attrs(e);
-    while let Some(attr) = a {
-        /* A namespace given with `set_attribute_ns` is the attribute's own and
-         * is never derived again; everything else is (re-)derived from its
-         * prefix unless it is only the pending ones being looked at. */
-        let flags = doc.node(attr).flags;
-        let redo = flags & FLAG_NS_EXPLICIT == 0 && (!attrs_only || flags & FLAG_NS_PENDING != 0);
-        let key = if redo {
-            let sp = doc.split_of(attr);
-            let r = resolve_ns(doc, Some(e), doc.qname(attr), &sp, true, connected)?;
-            if commit {
-                r.write_attr(doc, attr);
-            }
+    for attr in doc.attributes(e) {
+        let key = if rederives(doc, attr, part) {
+            let r = resolve_ns(
+                doc,
+                Some(e),
+                doc.qname(attr),
+                &doc.split_of(attr),
+                true,
+                connected,
+            )?;
             (!r.pending).then_some(r.ns)
         } else {
             Some(doc.node(attr).ns_uri)
         };
-        if let (false, Some(ns)) = (commit, key) {
-            if keys.falloc_push((ns, attr)).is_err() {
-                return Err(MutStatus::Oom);
-            }
+        if let Some(ns) = key {
+            keys.falloc_push((ns, attr)).map_err(|()| MutStatus::Oom)?;
+        }
+    }
+    if super::attr::keys_repeat(doc, &mut keys) {
+        return Err(MutStatus::DuplicateAttr);
+    }
+    Ok(())
+}
+
+/// The [`Pass::Commit`] half for element `e`: write what [`check_node_ns`]
+/// found resolvable. An `Err` here would mean the check let through what the
+/// commit refuses; the two resolve the same names against the same scope.
+fn commit_node_ns(
+    doc: &mut Document,
+    e: NodeId,
+    connected: bool,
+    part: Part,
+) -> Result<(), MutStatus> {
+    if resolves_name(doc, e, part) {
+        let r = resolve_ns(
+            doc,
+            Some(e),
+            doc.qname(e),
+            &doc.split_of(e),
+            false,
+            connected,
+        )?;
+        doc.node_mut(e).ns_uri = r.ns;
+    }
+    /* A cursor, not `attributes()`: the body writes. */
+    let mut a = doc.attrs(e);
+    while let Some(attr) = a {
+        if rederives(doc, attr, part) {
+            let r = resolve_ns(
+                doc,
+                Some(e),
+                doc.qname(attr),
+                &doc.split_of(attr),
+                true,
+                connected,
+            )?;
+            r.write_attr(doc, attr);
         }
         a = doc.next(attr);
-    }
-    if !commit && super::attr::keys_repeat(doc, &mut keys) {
-        return Err(MutStatus::DuplicateAttr);
     }
     /* Only mark once connected: resolution inside a still-detached fragment is
      * deferred (an unbound prefix is not an error there), so the node must stay
      * open to being resolved again when the fragment joins the document. */
-    if commit && connected {
+    if connected {
         doc.node_mut(e).flags |= FLAG_NS_RESOLVED;
     }
     Ok(())
@@ -202,7 +246,10 @@ fn resolve_subtree(doc: &mut Document, root: NodeId, connected: bool) -> Result<
                     } else {
                         Part::Whole
                     };
-                    resolve_node_ns(doc, c, connected, pass, part)?;
+                    match pass {
+                        Pass::Check => check_node_ns(doc, c, connected, part)?,
+                        Pass::Commit => commit_node_ns(doc, c, connected, part)?,
+                    }
                 }
             }
             cur = doc.preorder_next(root, c);

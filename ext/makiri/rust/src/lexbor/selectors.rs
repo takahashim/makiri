@@ -215,8 +215,8 @@ impl SelectorCache {
         self.map.get_or_insert_with(HashMap::new)
     }
 
-    /// Run `f` over the compiled list for `selector` - the cached one (`hit` is
-    /// true), or one compiled and cached now.
+    /// Run `f` over the compiled list for `selector` - the cached one, which
+    /// counts as a hit in `policy`, or one compiled and cached now.
     ///
     /// A closure rather than a returned `&CompiledList`: a reference returned
     /// from the hit arm would keep the cache borrowed into the miss arm's
@@ -228,15 +228,17 @@ impl SelectorCache {
     /// The globals' borrow is live.
     unsafe fn with_list<R>(
         &mut self,
+        policy: &mut CachePolicy,
         p: SelectorParser,
         selector: &[u8],
-        f: impl FnOnce(&CompiledList, bool) -> R,
+        f: impl FnOnce(&CompiledList) -> R,
     ) -> Result<R, SelectError> {
         if let Some(list) = self.map().get(selector) {
-            return Ok(f(list, true));
+            policy.hit();
+            return Ok(f(list));
         }
         let list = self.compile(p, selector)?;
-        Ok(f(list, false))
+        Ok(f(list))
     }
 
     /// Drop every compiled list: the arena they live in and the map.
@@ -517,13 +519,10 @@ unsafe fn with_compiled_selector(
     }
 
     /* The traversal engine self-cleans; the cached list and its arena stay. */
-    let policy = &mut g.policy;
-    g.cache.with_list(e.parser, selector, |list, hit| {
-        if hit {
-            policy.hit();
-        }
-        run.call(&e, node, list, ctx);
-    })
+    g.cache
+        .with_list(&mut g.policy, e.parser, selector, |list| {
+            run.call(&e, node, list, ctx);
+        })
 }
 
 /* ------------------------------------------------------------------ */
