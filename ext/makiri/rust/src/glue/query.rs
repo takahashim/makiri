@@ -312,7 +312,7 @@ fn node_at_xpath(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, E
 /// after the classes exist.
 pub fn init_xpath() -> Result<(), Error> {
     for module in [&MOD_HTML_NODE_METHODS, &MOD_XML_NODE_METHODS] {
-        let m = module.module();
+        let m = module.defined()?;
         m.define_method("xpath", method!(node_xpath, -1))?;
         m.define_method("at_xpath", method!(node_at_xpath, -1))?;
     }

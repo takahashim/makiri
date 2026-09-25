@@ -82,7 +82,7 @@ pub fn wrap_xml_node(id: NodeId, document: Value) -> Value {
 /// An XML Document resolves to its arena's DOCUMENT node. Anything else goes
 /// through the XML TypedData type, which fails with TypeError for an HTML node.
 pub fn xml_node_unwrap(rb_self: Value) -> Result<NodeId, Error> {
-    if rb_self.is_kind_of(CLASS_XML_DOCUMENT.class()) {
+    if crate::bridge::ruby::is_kind_of(rb_self, &CLASS_XML_DOCUMENT) {
         XML_DOC_TYPE.get(&rb_self)?; /* TypeError for any other Document */
         // SAFETY: the arena a live XML Document owns.
         return Ok(unsafe { (*doc_of(rb_self)).doc_node() });
@@ -123,7 +123,7 @@ fn arena_ref(document: &Value) -> &XmlDoc {
 /// The keepalive Document of an XML node. XML-strict: it rejects an HTML node
 /// at the type boundary, like [`xml_node_unwrap`].
 pub fn xml_node_document(rb_self: Value) -> Result<Value, Error> {
-    if rb_self.is_kind_of(CLASS_XML_DOCUMENT.class()) {
+    if crate::bridge::ruby::is_kind_of(rb_self, &CLASS_XML_DOCUMENT) {
         return Ok(rb_self);
     }
     let nd: &NodeData = XML_NODE_TYPE.get(&rb_self)?;

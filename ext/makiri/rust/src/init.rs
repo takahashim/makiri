@@ -18,7 +18,8 @@
 //!
 //! They are written exactly once, during `init`, before any Ruby code can run,
 //! and only read afterwards - the argument the C's plain globals relied on. An
-//! [`RbConst`] states it once, so reading one takes no `unsafe`.
+//! [`RbConst`] is typed by what it holds and roots it with the GC, so reading
+//! one takes no `unsafe` and no type check.
 //!
 //! # What the hierarchy encodes
 //!
@@ -32,16 +33,16 @@
 //! Every leaf also loses its allocator. These objects are created only from
 //! Rust, wrapping a live node; `.new` would hand back one wrapping nothing.
 
-#![allow(unsafe_code)]
+use std::sync::OnceLock;
 
-use core::sync::atomic::{AtomicUsize, Ordering};
 use magnus::rb_sys::AsRawValue;
-
-use crate::bridge::ruby::VALUE;
 use magnus::{
-    function, value::ReprValue, Class, Error, ExceptionClass, Module, Object, RClass, RModule,
-    Ruby, Value,
+    function,
+    value::{Opaque, ReprValue},
+    Class, Error, ExceptionClass, Module, Object, RClass, RModule, Ruby, Value,
 };
+
+use crate::bridge::ruby::{gvl_ruby, VALUE};
 
 /* ------------------------------------------------------------------ *
  * the classes and modules other modules read                         *
@@ -52,81 +53,88 @@ use magnus::{
 
 /// A class, module or exception class `init` defines, for the glue to read.
 ///
-/// Written once, during `init`, before any Ruby code can run, and only read
-/// afterwards. Every object one holds is a constant under `Makiri`, so it lives
-/// for the rest of the process. Read before `init` it is `0` - Ruby's `false`,
-/// a valid immediate rather than a dangling object.
-pub struct RbConst(AtomicUsize);
+/// Typed: an `RbConst<RClass>` can only ever hold an `RClass`, so a read hands
+/// the handle back with no type check to fail. It is written once, by `init`,
+/// which also registers the object with the GC - so it stays alive and unmoved
+/// even if Ruby code removes the constant that named it.
+///
+/// Unset is the state before `Init_makiri`, when none of the methods that read
+/// one exist yet. A read in that state answers `None` (or the documented
+/// fallback of the reader below) rather than panicking.
+pub struct RbConst<T>(OnceLock<Opaque<T>>);
 
-const _: () = assert!(core::mem::size_of::<VALUE>() <= core::mem::size_of::<usize>());
-
-impl RbConst {
-    const fn new() -> RbConst {
-        RbConst(AtomicUsize::new(0))
+impl<T: ReprValue> RbConst<T> {
+    const fn new() -> RbConst<T> {
+        RbConst(OnceLock::new())
     }
 
-    /// # Safety
-    /// `v` must be a class or module that lives for the rest of the process.
-    pub(crate) unsafe fn set(&self, v: VALUE) {
-        self.0.store(v as usize, Ordering::Relaxed);
+    /// Record `v`, rooted for the rest of the process. `init` is the only
+    /// writer, and a second write is refused rather than replacing the first.
+    fn set(&self, v: T) -> Result<(), Error> {
+        magnus::gc::register_mark_object(v);
+        self.0.set(Opaque::from(v)).map_err(|_| {
+            Error::new(
+                gvl_ruby().exception_runtime_error(),
+                "Makiri: a class handle was set twice",
+            )
+        })
     }
 
-    /// The object as Ruby's handle, for a C call.
+    /// The object, or `None` before `Init_makiri`.
+    #[inline]
+    pub fn get(&self) -> Option<T> {
+        self.0.get().map(|o| gvl_ruby().get_inner(*o))
+    }
+
+    /// The object, for the registration code `init` runs once it is set.
+    pub fn defined(&self) -> Result<T, Error> {
+        self.get().ok_or_else(|| {
+            Error::new(
+                gvl_ruby().exception_runtime_error(),
+                "Makiri: a class handle was read before Init_makiri",
+            )
+        })
+    }
+
+    /// The object as Ruby's handle, for a C call. `0` before `Init_makiri` -
+    /// Ruby's `false`, which a TypedData wrap reads as "no class".
     #[inline]
     pub fn raw(&self) -> VALUE {
-        self.0.load(Ordering::Relaxed) as VALUE
+        self.get().map_or(0, |v| v.as_raw())
     }
+}
 
-    /// The object as a value.
+impl RbConst<ExceptionClass> {
+    /// The class to raise. Before `Init_makiri` - when nothing that raises one
+    /// of these can run - it is `RuntimeError`, so a raise still raises.
     #[inline]
-    pub fn value(&self) -> Value {
-        // SAFETY: `0` or, once `init` has run, a class that lives for the
-        // process - see the type.
-        unsafe { crate::bridge::ruby::value(self.raw()) }
-    }
-
-    #[allow(
-        clippy::expect_used,
-        reason = "every RbConst is set by Init_makiri, before any caller runs"
-    )]
-    pub fn class(&self) -> RClass {
-        RClass::from_value(self.value()).expect("a Makiri class, after Init_makiri")
-    }
-
-    #[allow(
-        clippy::expect_used,
-        reason = "every RbConst is set by Init_makiri, before any caller runs"
-    )]
-    pub fn module(&self) -> RModule {
-        RModule::from_value(self.value()).expect("a Makiri module, after Init_makiri")
-    }
-
-    #[allow(
-        clippy::expect_used,
-        reason = "every RbConst is set by Init_makiri, before any caller runs"
-    )]
     pub fn exception(&self) -> ExceptionClass {
-        ExceptionClass::from_value(self.value()).expect("a Makiri exception, after Init_makiri")
+        self.get()
+            .unwrap_or_else(|| gvl_ruby().exception_runtime_error())
     }
 }
 
 macro_rules! exported {
-    ($($name:ident),* $(,)?) => {
+    ($ty:ty: $($name:ident),* $(,)?) => {
         $(
-            pub static $name: RbConst = RbConst::new();
+            pub static $name: RbConst<$ty> = RbConst::new();
         )*
     };
 }
 
-exported! {
+exported! { RClass:
     CLASS_NODE, CLASS_DOCUMENT, CLASS_DOCUMENT_FRAGMENT, CLASS_NODE_SET, CLASS_XPATH_CONTEXT,
-    MOD_XML, MOD_LEXBOR,
-    MOD_HTML_NODE_METHODS, CLASS_HTML_NODE, CLASS_HTML_DOCUMENT, CLASS_HTML_ELEMENT,
+    CLASS_HTML_NODE, CLASS_HTML_DOCUMENT, CLASS_HTML_ELEMENT,
     CLASS_HTML_ATTR, CLASS_HTML_TEXT, CLASS_HTML_COMMENT, CLASS_HTML_CDATA_SECTION,
     CLASS_HTML_PROCESSING_INSTRUCTION, CLASS_HTML_DOCUMENT_TYPE, CLASS_HTML_DOCUMENT_FRAGMENT,
-    MOD_XML_NODE_METHODS, CLASS_XML_NODE, CLASS_XML_DOCUMENT, CLASS_XML_ELEMENT,
+    CLASS_XML_NODE, CLASS_XML_DOCUMENT, CLASS_XML_ELEMENT,
     CLASS_XML_ATTR, CLASS_XML_TEXT, CLASS_XML_COMMENT, CLASS_XML_CDATA_SECTION,
     CLASS_XML_PROCESSING_INSTRUCTION, CLASS_XML_DOCUMENT_TYPE, CLASS_XML_DOCUMENT_FRAGMENT,
+}
+
+exported! { RModule: MOD_XML, MOD_LEXBOR, MOD_HTML_NODE_METHODS, MOD_XML_NODE_METHODS }
+
+exported! { ExceptionClass:
     EXC_ERROR, EXC_INTERNAL_ERROR, EXC_XPATH_SYNTAX_ERROR, EXC_XPATH_LIMIT_EXCEEDED,
     EXC_CSS_SYNTAX_ERROR, EXC_XML_SYNTAX_ERROR, EXC_XML_LIMIT_EXCEEDED,
 }
@@ -350,115 +358,95 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     let xml_syntax = m_xml.define_error("SyntaxError", err)?;
     let xml_limit = m_xml.define_error("LimitExceeded", err)?;
 
-    // SAFETY: `RbConst::set` wants a class or module that lives for the rest of
-    // the process. Every value below was just defined under `Makiri::`, so the
-    // module holds it for good - and this runs once, from `Init_makiri`, before
-    // any of these globals can be read.
-    unsafe {
-        CLASS_NODE.set(node.as_raw());
-        CLASS_DOCUMENT.set(document.as_raw());
-        CLASS_DOCUMENT_FRAGMENT.set(fragment.as_raw());
-        CLASS_NODE_SET.set(node_set.as_raw());
-        CLASS_XPATH_CONTEXT.set(xpath_context.as_raw());
-        MOD_XML.set(m_xml.as_raw());
-        MOD_LEXBOR.set(m_lexbor.as_raw());
+    /* Recorded before anything that reads them is registered: the glue's
+     * `init`s below read these, and so does every method they define. */
+    CLASS_NODE.set(node)?;
+    CLASS_DOCUMENT.set(document)?;
+    CLASS_DOCUMENT_FRAGMENT.set(fragment)?;
+    CLASS_NODE_SET.set(node_set)?;
+    CLASS_XPATH_CONTEXT.set(xpath_context)?;
+    MOD_XML.set(m_xml)?;
+    MOD_LEXBOR.set(m_lexbor)?;
 
-        MOD_HTML_NODE_METHODS.set(html_methods.as_raw());
-        CLASS_HTML_NODE.set(h_node.as_raw());
-        CLASS_HTML_DOCUMENT.set(h_document.as_raw());
-        CLASS_HTML_ELEMENT.set(h_element.as_raw());
-        CLASS_HTML_ATTR.set(h_attr.as_raw());
-        CLASS_HTML_TEXT.set(h_text.as_raw());
-        CLASS_HTML_COMMENT.set(h_comment.as_raw());
-        CLASS_HTML_CDATA_SECTION.set(h_cdata.as_raw());
-        CLASS_HTML_PROCESSING_INSTRUCTION.set(h_pi.as_raw());
-        CLASS_HTML_DOCUMENT_TYPE.set(h_doctype.as_raw());
-        CLASS_HTML_DOCUMENT_FRAGMENT.set(h_fragment.as_raw());
+    MOD_HTML_NODE_METHODS.set(html_methods)?;
+    CLASS_HTML_NODE.set(h_node)?;
+    CLASS_HTML_DOCUMENT.set(h_document)?;
+    CLASS_HTML_ELEMENT.set(h_element)?;
+    CLASS_HTML_ATTR.set(h_attr)?;
+    CLASS_HTML_TEXT.set(h_text)?;
+    CLASS_HTML_COMMENT.set(h_comment)?;
+    CLASS_HTML_CDATA_SECTION.set(h_cdata)?;
+    CLASS_HTML_PROCESSING_INSTRUCTION.set(h_pi)?;
+    CLASS_HTML_DOCUMENT_TYPE.set(h_doctype)?;
+    CLASS_HTML_DOCUMENT_FRAGMENT.set(h_fragment)?;
 
-        MOD_XML_NODE_METHODS.set(xml_methods.as_raw());
-        CLASS_XML_DOCUMENT.set(x_document.as_raw());
-        CLASS_XML_NODE.set(x_node.as_raw());
-        CLASS_XML_ELEMENT.set(x_element.as_raw());
-        CLASS_XML_ATTR.set(x_attr.as_raw());
-        CLASS_XML_TEXT.set(x_text.as_raw());
-        CLASS_XML_COMMENT.set(x_comment.as_raw());
-        CLASS_XML_CDATA_SECTION.set(x_cdata.as_raw());
-        CLASS_XML_PROCESSING_INSTRUCTION.set(x_pi.as_raw());
-        CLASS_XML_DOCUMENT_TYPE.set(x_doctype.as_raw());
-        CLASS_XML_DOCUMENT_FRAGMENT.set(x_fragment.as_raw());
+    MOD_XML_NODE_METHODS.set(xml_methods)?;
+    CLASS_XML_DOCUMENT.set(x_document)?;
+    CLASS_XML_NODE.set(x_node)?;
+    CLASS_XML_ELEMENT.set(x_element)?;
+    CLASS_XML_ATTR.set(x_attr)?;
+    CLASS_XML_TEXT.set(x_text)?;
+    CLASS_XML_COMMENT.set(x_comment)?;
+    CLASS_XML_CDATA_SECTION.set(x_cdata)?;
+    CLASS_XML_PROCESSING_INSTRUCTION.set(x_pi)?;
+    CLASS_XML_DOCUMENT_TYPE.set(x_doctype)?;
+    CLASS_XML_DOCUMENT_FRAGMENT.set(x_fragment)?;
 
-        EXC_ERROR.set(err.as_raw());
-        EXC_INTERNAL_ERROR.set(internal.as_raw());
-        EXC_XPATH_SYNTAX_ERROR.set(xpath_syntax.as_raw());
-        EXC_XPATH_LIMIT_EXCEEDED.set(xpath_limit.as_raw());
-        EXC_CSS_SYNTAX_ERROR.set(css_syntax.as_raw());
-        EXC_XML_SYNTAX_ERROR.set(xml_syntax.as_raw());
-        EXC_XML_LIMIT_EXCEEDED.set(xml_limit.as_raw());
+    EXC_ERROR.set(err)?;
+    EXC_INTERNAL_ERROR.set(internal)?;
+    EXC_XPATH_SYNTAX_ERROR.set(xpath_syntax)?;
+    EXC_XPATH_LIMIT_EXCEEDED.set(xpath_limit)?;
+    EXC_CSS_SYNTAX_ERROR.set(css_syntax)?;
+    EXC_XML_SYNTAX_ERROR.set(xml_syntax)?;
+    EXC_XML_LIMIT_EXCEEDED.set(xml_limit)?;
 
-        seal_leaves(
-            MOD_HTML_NODE_METHODS.module(),
-            &[
-                CLASS_HTML_NODE.class(),
-                CLASS_HTML_DOCUMENT.class(),
-                CLASS_HTML_ELEMENT.class(),
-                CLASS_HTML_ATTR.class(),
-                CLASS_HTML_TEXT.class(),
-                CLASS_HTML_COMMENT.class(),
-                CLASS_HTML_CDATA_SECTION.class(),
-                CLASS_HTML_PROCESSING_INSTRUCTION.class(),
-                CLASS_HTML_DOCUMENT_TYPE.class(),
-                CLASS_HTML_DOCUMENT_FRAGMENT.class(),
-            ],
-        )?;
-        seal_leaves(
-            MOD_XML_NODE_METHODS.module(),
-            &[
-                CLASS_XML_NODE.class(),
-                CLASS_XML_ELEMENT.class(),
-                CLASS_XML_ATTR.class(),
-                CLASS_XML_TEXT.class(),
-                CLASS_XML_COMMENT.class(),
-                CLASS_XML_CDATA_SECTION.class(),
-                CLASS_XML_PROCESSING_INSTRUCTION.class(),
-                CLASS_XML_DOCUMENT.class(),
-                CLASS_XML_DOCUMENT_TYPE.class(),
-                CLASS_XML_DOCUMENT_FRAGMENT.class(),
-            ],
-        )?;
+    seal_leaves(
+        html_methods,
+        &[
+            h_node, h_document, h_element, h_attr, h_text, h_comment, h_cdata, h_pi, h_doctype,
+            h_fragment,
+        ],
+    )?;
+    seal_leaves(
+        xml_methods,
+        &[
+            x_node, x_element, x_attr, x_text, x_comment, x_cdata, x_pi, x_document, x_doctype,
+            x_fragment,
+        ],
+    )?;
 
-        /* The abstract bases are never constructed directly either: an instance
-         * always wraps a live node, and `.new` would hand back one wrapping
-         * nothing. XPathContext.new exists, but it is defined by
-         * init_xpath and wraps a native context. */
-        for base in [
-            CLASS_NODE.class(),
-            CLASS_DOCUMENT.class(),
-            element,
-            attr,
-            text,
-            comment,
-            cdata,
-            pi,
-            doctype,
-            CLASS_DOCUMENT_FRAGMENT.class(),
-            CLASS_NODE_SET.class(),
-            CLASS_XPATH_CONTEXT.class(),
-        ] {
-            base.undef_default_alloc_func();
-        }
-
-        /* One registration per feature, each defining its methods onto the
-         * classes above. The order is free: every class and module they touch
-         * exists by now, and no two define the same name. */
-        crate::glue::html_node::init()?;
-        crate::glue::html_doc::init_html_doc()?;
-        crate::glue::xml_node::init()?;
-        crate::glue::xml_doc::init_xml_doc()?;
-        crate::glue::node_set::init_node_set()?;
-        crate::glue::xpath_context::init_xpath_context()?;
-        crate::glue::query::init_xpath()?;
-        crate::glue::stylesheet::init_lexbor_css(ruby)?;
+    /* The abstract bases are never constructed directly either: an instance
+     * always wraps a live node, and `.new` would hand back one wrapping
+     * nothing. XPathContext.new exists, but it is defined by
+     * init_xpath and wraps a native context. */
+    for base in [
+        node,
+        document,
+        element,
+        attr,
+        text,
+        comment,
+        cdata,
+        pi,
+        doctype,
+        fragment,
+        node_set,
+        xpath_context,
+    ] {
+        base.undef_default_alloc_func();
     }
+
+    /* One registration per feature, each defining its methods onto the
+     * classes above. The order is free: every class and module they touch
+     * exists by now, and no two define the same name. */
+    crate::glue::html_node::init()?;
+    crate::glue::html_doc::init_html_doc()?;
+    crate::glue::xml_node::init()?;
+    crate::glue::xml_doc::init_xml_doc()?;
+    crate::glue::node_set::init_node_set()?;
+    crate::glue::xpath_context::init_xpath_context()?;
+    crate::glue::query::init_xpath()?;
+    crate::glue::stylesheet::init_lexbor_css(ruby)?;
 
     makiri.define_singleton_method("__alloc_inject?", function!(alloc_inject_p, 0))?;
     makiri.define_singleton_method("__panic", function!(panic_probe, 1))?;

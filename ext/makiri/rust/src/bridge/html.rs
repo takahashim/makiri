@@ -8,7 +8,7 @@
 #![allow(unsafe_code)]
 
 use crate::bridge::ruby::makiri_error;
-use magnus::{prelude::*, Error, Value};
+use magnus::{Error, Value};
 
 use crate::bridge::ruby::value;
 use crate::init::{
@@ -110,8 +110,8 @@ pub fn wrap_html_node(node: RawNode, document: Value) -> Value {
 /// [`HTML_NODE_TYPE`], which an XML node (wrapped under `XML_NODE_TYPE`) does
 /// not satisfy.
 pub fn html_node_unwrap(rb_node: Value) -> Result<RawNode, Error> {
-    if rb_node.is_kind_of(CLASS_DOCUMENT.class()) {
-        if rb_node.is_kind_of(CLASS_XML_DOCUMENT.class()) {
+    if crate::bridge::ruby::is_kind_of(rb_node, &CLASS_DOCUMENT) {
+        if crate::bridge::ruby::is_kind_of(rb_node, &CLASS_XML_DOCUMENT) {
             return Err(crate::bridge::ruby::type_error(
                 "expected an HTML node, got a Makiri::XML::Document",
             ));

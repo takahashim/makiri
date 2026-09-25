@@ -96,7 +96,7 @@ fn css_matches(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Resul
 
 /// The private primitives, on the XML node-method module. From `Init_makiri`.
 pub fn init_xml_css() -> Result<(), Error> {
-    let m = MOD_XML_NODE_METHODS.module();
+    let m = MOD_XML_NODE_METHODS.defined()?;
     m.define_private_method("_css", method!(css, 2))?;
     m.define_private_method("_at_css", method!(at_css, 2))?;
     m.define_private_method("_css_matches", method!(css_matches, 2))?;

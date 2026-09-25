@@ -36,7 +36,7 @@ use magnus::rb_sys::AsRawValue;
 
 use crate::bridge::ruby::makiri_error;
 use magnus::value::{Opaque, ReprValue};
-use magnus::{gc::Marker, prelude::*, DataTypeFunctions, Error, RClass, Ruby, TypedData, Value};
+use magnus::{gc::Marker, prelude::*, DataTypeFunctions, Error, Ruby, TypedData, Value};
 
 use crate::bridge::typed::typed_data_unprotected;
 use crate::bridge::wrapper::{keepalive_document, node_raw, wrap_doc_node, DocKind, NodeWord};
@@ -251,11 +251,6 @@ impl NodeSet {
     }
 }
 
-/// `Makiri::NodeSet`, as created by Init_makiri.
-fn node_set_class() -> RClass {
-    CLASS_NODE_SET.class()
-}
-
 /* ------------------------------------------------------------------ */
 /* the constructors the glue calls                                    */
 /* ------------------------------------------------------------------ */
@@ -445,7 +440,7 @@ impl NodeSet {
     /// also means possibly mixing HTML and XML - would wrap a node under the
     /// wrong representation and fail to keep its document alive. Fail closed.
     pub fn operand<'a>(&self, ruby: &Ruby, other: Value) -> Result<&'a NodeSet, Error> {
-        if !other.is_kind_of(node_set_class()) {
+        if !is_kind_of(other, &CLASS_NODE_SET) {
             return Err(Error::new(
                 ruby.exception_type_error(),
                 "expected a Makiri::NodeSet",

@@ -132,7 +132,7 @@ fn doc_fragment(rb_self: Value, source: Value) -> Result<Value, Error> {
 /// The XML Document surface. From `Init_makiri`; the class itself is defined
 /// with the rest of the hierarchy in `init`.
 pub fn init_xml_doc() -> Result<(), Error> {
-    let doc = CLASS_XML_DOCUMENT.class();
+    let doc = CLASS_XML_DOCUMENT.defined()?;
 
     doc.define_singleton_method("parse", function!(s_parse, -1))?;
     doc.define_singleton_method("new", function!(document_s_new, -1))?;
@@ -141,7 +141,7 @@ pub fn init_xml_doc() -> Result<(), Error> {
     doc.define_method("fragment", method!(doc_fragment, 1))?;
 
     CLASS_XML_DOCUMENT_FRAGMENT
-        .class()
+        .defined()?
         .define_singleton_method("parse", method!(fragment_s_parse, 1))?;
     Ok(())
 }

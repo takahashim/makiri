@@ -145,7 +145,7 @@ pub fn node_clone_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Va
 
 /// The HTML Document surface. From `Init_makiri`, after the classes exist.
 pub fn init_html_doc() -> Result<(), Error> {
-    let html_doc = crate::init::CLASS_HTML_DOCUMENT.class();
+    let html_doc = crate::init::CLASS_HTML_DOCUMENT.defined()?;
 
     html_doc.define_singleton_method("_parse", method!(doc_s_parse, 1))?;
     html_doc.define_method("root", method!(doc_root, 0))?;
@@ -156,12 +156,12 @@ pub fn init_html_doc() -> Result<(), Error> {
     html_doc.define_method("fragment", method!(doc_fragment, -1))?;
     html_doc.define_method("import_node", method!(doc_import_node, -1))?;
 
-    let frag = crate::init::CLASS_DOCUMENT_FRAGMENT.class();
+    let frag = crate::init::CLASS_DOCUMENT_FRAGMENT.defined()?;
     frag.define_singleton_method("parse", method!(frag_s_parse, -1))?;
 
     /* Node#parse(html): fragment-parse in this element's context. Defined here,
      * next to the fragment machinery it reuses. */
-    let node_methods = crate::init::MOD_HTML_NODE_METHODS.module();
+    let node_methods = crate::init::MOD_HTML_NODE_METHODS.defined()?;
     node_methods.define_method("parse", method!(node_parse, 1))?;
     Ok(())
 }

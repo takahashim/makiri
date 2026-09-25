@@ -14,7 +14,7 @@ use core::ptr::NonNull;
 use magnus::rb_sys::AsRawValue;
 
 use crate::bridge::ruby::makiri_error;
-use magnus::{prelude::*, Error, Value};
+use magnus::{Error, Value};
 
 use crate::bridge::ruby::{value, VALUE};
 use crate::bridge::typed::{Hooks, Marker, Relocator, TypedType};
@@ -590,15 +590,15 @@ pub(in crate::bridge) fn with_html_parsed_known<R>(
 /// `wrap_*_node` functions make, written once. The two tables differ only in
 /// which classes they name, so neither can grow a kind the other lacks.
 pub(in crate::bridge) struct NodeClasses {
-    pub node: &'static RbConst,
-    pub element: &'static RbConst,
-    pub attr: &'static RbConst,
-    pub text: &'static RbConst,
-    pub comment: &'static RbConst,
-    pub cdata: &'static RbConst,
-    pub pi: &'static RbConst,
-    pub doctype: &'static RbConst,
-    pub fragment: &'static RbConst,
+    pub node: &'static RbConst<magnus::RClass>,
+    pub element: &'static RbConst<magnus::RClass>,
+    pub attr: &'static RbConst<magnus::RClass>,
+    pub text: &'static RbConst<magnus::RClass>,
+    pub comment: &'static RbConst<magnus::RClass>,
+    pub cdata: &'static RbConst<magnus::RClass>,
+    pub pi: &'static RbConst<magnus::RClass>,
+    pub doctype: &'static RbConst<magnus::RClass>,
+    pub fragment: &'static RbConst<magnus::RClass>,
 }
 
 impl NodeClasses {
@@ -699,7 +699,7 @@ fn with_doc_data_known<R>(rb_doc: Value, f: impl FnOnce(&mut DocData) -> R) -> R
 /// The Document branch is kind-aware: an XML Document resolves to its arena's
 /// document node, an HTML one to Lexbor's.
 pub fn node_raw(rb_node: Value) -> Result<NodeWord, Error> {
-    if rb_node.is_kind_of(CLASS_DOCUMENT.class()) {
+    if crate::bridge::ruby::is_kind_of(rb_node, &CLASS_DOCUMENT) {
         if let Content::Xml(xdoc) = doc_content(rb_node)? {
             // SAFETY: a Document's arena lives as long as the Document, and its
             // document node is read, not written.
@@ -732,7 +732,7 @@ pub fn node_identity(rb_node: Value) -> Result<usize, Error> {
 /// The keepalive Document of any node, or the Document itself.
 /// `Err(TypeError)` for a non-node.
 pub fn keepalive_document(rb_node: Value) -> Result<Value, Error> {
-    if rb_node.is_kind_of(CLASS_DOCUMENT.class()) {
+    if crate::bridge::ruby::is_kind_of(rb_node, &CLASS_DOCUMENT) {
         return Ok(rb_node);
     }
     let nd: &NodeData = NODE_DATA_TYPE.get(&rb_node)?;

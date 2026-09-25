@@ -19,7 +19,7 @@ use crate::xml::model::{Document as XmlDoc, NodeId, NodeType};
 
 /// `Makiri::XML::Namespace.new(prefix, href)`.
 fn new_ns(prefix: Value, href: Value) -> Result<Value, Error> {
-    let xml = MOD_XML.module();
+    let xml = MOD_XML.defined()?;
     let class: RClass = xml.const_get("Namespace")?;
     class.funcall("new", (prefix, href))
 }

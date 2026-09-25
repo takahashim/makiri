@@ -32,7 +32,7 @@ use crate::xml::mutate::{self, place, Place};
 pub fn remove(this: XmlSelf) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let rb_self = this.value;
-        if rb_self.is_kind_of(CLASS_XML_DOCUMENT.class()) {
+        if crate::bridge::ruby::is_kind_of(rb_self, &CLASS_XML_DOCUMENT) {
             return Err(makiri_error("cannot remove the document node"));
         }
         let edit = begin_edit(this)?;

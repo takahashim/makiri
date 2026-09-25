@@ -13,7 +13,6 @@
 use magnus::rb_sys::AsRawValue;
 
 use crate::bridge::ruby::makiri_error;
-use magnus::value::ReprValue;
 use magnus::{prelude::*, Error, Value};
 
 use crate::bridge::html::html_node_unwrap;
@@ -127,7 +126,7 @@ pub fn context_for(rb_node: Value, document: Value) -> Result<Cx, Error> {
         // SAFETY: the XML arena behind `document`, live for `'static` by the
         // caller's keepalive, and only read here.
         let doc: &'static crate::xml::model::Document = unsafe { &*xdoc.as_ptr() };
-        let node = if rb_node.is_kind_of(CLASS_XML_DOCUMENT.class()) {
+        let node = if crate::bridge::ruby::is_kind_of(rb_node, &CLASS_XML_DOCUMENT) {
             doc.doc_node()
         } else {
             xml_node_unwrap(rb_node)?

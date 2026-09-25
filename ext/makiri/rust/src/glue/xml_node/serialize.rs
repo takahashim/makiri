@@ -117,7 +117,7 @@ fn no_serialize(ruby: &Ruby, _rb_self: Value, _args: &[Value]) -> Result<Value, 
 
 /// From `Init_makiri`.
 pub fn init_xml_node_serialize() -> Result<(), Error> {
-    let m = MOD_XML_NODE_METHODS.module();
+    let m = MOD_XML_NODE_METHODS.defined()?;
     for name in ["to_xml", "to_s"] {
         m.define_method(name, method!(to_xml, -1))?;
     }

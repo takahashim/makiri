@@ -144,7 +144,7 @@ fn s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
 
 /// From `Init_makiri`, with the classes already defined.
 pub fn init_node_set() -> Result<(), Error> {
-    let klass = CLASS_NODE_SET.class();
+    let klass = CLASS_NODE_SET.defined()?;
 
     /* Sets are made by queries and by `.new` below, never allocated bare. */
     klass.undef_default_alloc_func();

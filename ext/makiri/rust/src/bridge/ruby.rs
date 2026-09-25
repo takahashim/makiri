@@ -33,9 +33,11 @@ pub fn makiri_error(msg: impl Into<std::borrow::Cow<'static, str>>) -> Error {
     Error::new(error_class(), msg)
 }
 
-/// Is `v` an instance of the class in `klass`?
-pub fn is_kind_of(v: Value, klass: &crate::init::RbConst) -> bool {
-    v.is_kind_of(klass.class())
+/// Is `v` an instance of the class in `klass`? `false` before `Init_makiri`,
+/// when no class of ours exists for it to be an instance of.
+#[inline]
+pub fn is_kind_of(v: Value, klass: &crate::init::RbConst<magnus::RClass>) -> bool {
+    klass.get().is_some_and(|c| v.is_kind_of(c))
 }
 
 /// `v` as a String, coerced the way `rb_String` does (`to_str`, else `to_s`).
@@ -152,8 +154,9 @@ pub unsafe fn value(raw: VALUE) -> Value {
 /// one precondition `Ruby::get_unchecked` has. Stated here once, rather than
 /// at each helper; a caller off a Ruby thread (the GVL-released parse) takes
 /// no Ruby value at all, which `bridge::gvl::without_gvl`'s `Send` bound keeps.
+/// `init::RbConst`'s readers are helpers of the same kind.
 #[inline]
-fn gvl_ruby() -> Ruby {
+pub(crate) fn gvl_ruby() -> Ruby {
     // SAFETY: see above - on a Ruby thread, with the GVL.
     unsafe { Ruby::get_unchecked() }
 }

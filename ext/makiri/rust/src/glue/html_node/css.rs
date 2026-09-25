@@ -103,7 +103,7 @@ fn matches(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<bool, Error> {
 
 /// From `Init_makiri`.
 pub fn init_css() -> Result<(), Error> {
-    let m = MOD_HTML_NODE_METHODS.module();
+    let m = MOD_HTML_NODE_METHODS.defined()?;
     m.define_method("css", method!(css, -1))?;
     m.define_method("at_css", method!(at_css, -1))?;
     m.define_method("matches?", method!(matches, -1))?;

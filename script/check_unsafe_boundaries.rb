@@ -51,7 +51,6 @@ UNSAFE_ISLANDS = {
   "falloc/mod.rs" => 1,
   "falloc/raw.rs" => 3,
   "gvl.rs" => 4,
-  "init.rs" => 3,
   "lexbor/abi.rs" => 4,
   "lexbor/adapter/arena_bytes.rs" => 3,
   "lexbor/adapter/cross_import.rs" => 4,

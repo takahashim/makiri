@@ -23,8 +23,8 @@ use crate::init::{CLASS_XML_DOCUMENT, CLASS_XML_DOCUMENT_TYPE, MOD_XML_NODE_METH
  * (`bridge::xml`). */
 pub use crate::bridge::xml::{wrap_xml_node as wrap, XmlSelf};
 
-fn node_methods() -> RModule {
-    MOD_XML_NODE_METHODS.module()
+fn node_methods() -> Result<RModule, Error> {
+    MOD_XML_NODE_METHODS.defined()
 }
 
 /// The whole XML node surface. From `Init_makiri`, after the classes exist.
@@ -39,7 +39,7 @@ pub fn init() -> Result<(), Error> {
 
 /// The readers - names, content, navigation, attributes - and identity.
 fn init_read() -> Result<(), Error> {
-    let m = node_methods();
+    let m = node_methods()?;
 
     m.define_method("name", method!(read::name, 0))?;
     m.define_method("local_name", method!(read::local_name, 0))?;
@@ -94,7 +94,7 @@ fn init_read() -> Result<(), Error> {
 
     /* DocumentType identifiers; #public_id is the Nokogiri-style alias of
      * #external_id, and #name comes from the shared reader above. */
-    let dt = CLASS_XML_DOCUMENT_TYPE.class();
+    let dt = CLASS_XML_DOCUMENT_TYPE.defined()?;
     for name in ["external_id", "public_id"] {
         dt.define_method(name, method!(read::dtd_external_id, 0))?;
     }
@@ -105,7 +105,7 @@ fn init_read() -> Result<(), Error> {
 /// Namespace introspection. The `Makiri::XML::Namespace` it hands back is
 /// defined in Ruby.
 fn init_ns() -> Result<(), Error> {
-    let m = node_methods();
+    let m = node_methods()?;
     m.define_method("namespace", method!(ns::namespace, 0))?;
     m.define_method(
         "namespace_definitions",
@@ -118,8 +118,8 @@ fn init_ns() -> Result<(), Error> {
 
 /// The mutators, insertion, and the Document factories.
 fn init_mutate() -> Result<(), Error> {
-    let m = node_methods();
-    let doc = CLASS_XML_DOCUMENT.class();
+    let m = node_methods()?;
+    let doc = CLASS_XML_DOCUMENT.defined()?;
 
     /* In-place edits. Detach, never destroy: the primitives are
      * `crate::xml::mutate`'s. */

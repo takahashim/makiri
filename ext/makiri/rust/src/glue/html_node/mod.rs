@@ -62,7 +62,7 @@ pub fn init() -> Result<(), Error> {
 
 /// The readers, identity, and the DocumentType and `<template>` accessors.
 fn init_read() -> Result<(), Error> {
-    let m = MOD_HTML_NODE_METHODS.module();
+    let m = MOD_HTML_NODE_METHODS.defined()?;
 
     m.define_method("name", method!(read::name, 0))?;
     m.define_method("namespace_uri", method!(read::namespace_uri, 0))?;
@@ -123,22 +123,22 @@ fn init_read() -> Result<(), Error> {
 
     /* DocumentType identifiers (WHATWG DOM names; external_id is the
      * Nokogiri-compatible alias for public_id). */
-    let dt = CLASS_HTML_DOCUMENT_TYPE.class();
+    let dt = CLASS_HTML_DOCUMENT_TYPE.defined()?;
     for name in ["public_id", "external_id"] {
         dt.define_method(name, method!(read::doctype_public_id, 0))?;
     }
     dt.define_method("system_id", method!(read::doctype_system_id, 0))?;
 
     /* <template> contents (WHATWG DOM HTMLTemplateElement.content). */
-    let el = CLASS_HTML_ELEMENT.class();
+    let el = CLASS_HTML_ELEMENT.defined()?;
     el.define_method("content_fragment", method!(read::content_fragment, 0))?;
     Ok(())
 }
 
 /// The mutators and the Document factories.
 fn init_mutate() -> Result<(), Error> {
-    let m = MOD_HTML_NODE_METHODS.module();
-    let doc = CLASS_HTML_DOCUMENT.class();
+    let m = MOD_HTML_NODE_METHODS.defined()?;
+    let doc = CLASS_HTML_DOCUMENT.defined()?;
 
     m.define_method("add_child", method!(mutate::add_child, 1))?;
     m.define_method("<<", method!(mutate::lshift, 1))?;

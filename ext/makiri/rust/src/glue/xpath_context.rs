@@ -89,7 +89,7 @@ fn register_variable(ctx: &XPathCtx, name: Value, value: Value) -> Result<Value,
 
 /// From `Init_makiri`, after the classes exist.
 pub fn init_xpath_context() -> Result<(), Error> {
-    let klass = CLASS_XPATH_CONTEXT.class();
+    let klass = CLASS_XPATH_CONTEXT.defined()?;
     klass.define_singleton_method("new", function!(s_new, -1))?;
     klass.define_method("evaluate", method!(evaluate, -1))?;
     klass.define_method("register_namespace", method!(register_namespace, 2))?;
