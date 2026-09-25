@@ -136,13 +136,13 @@ fn decoded_string(v: VALUE) -> Result<RString, Error> {
 }
 
 /// Decode `str` to a validated, UTF-8-tagged, BOM-stripped String, or the
-/// error that rejects it. `max_bytes` of 0 disables the budget check (the
+/// error that rejects it. A `max_bytes` of `None` skips the budget check (the
 /// `__decode` test hook).
 ///
 /// # Safety
 /// Called with the GVL, as every bridge function is; `str` is a String by
 /// type, and every String the decode makes is checked to be one.
-unsafe fn xml_decode_input(str: RString, max_bytes: usize) -> Result<RString, Error> {
+unsafe fn xml_decode_input(str: RString, max_bytes: Option<usize>) -> Result<RString, Error> {
     let eff = effective_encoding(str)?;
 
     /* Phase 2: decode to UTF-8, strictly. UTF-8 / US-ASCII / ASCII-8BIT are
@@ -190,7 +190,7 @@ unsafe fn xml_decode_input(str: RString, max_bytes: usize) -> Result<RString, Er
     /* Fail closed on an over-budget input BEFORE the validation scan and the
      * caller's GVL-release copy: an input whose UTF-8 length already exceeds the
      * arena budget can never parse. */
-    if max_bytes != 0 && len > max_bytes {
+    if max_bytes.is_some_and(|max| len > max) {
         return Err(Error::new(
             EXC_XML_LIMIT_EXCEEDED.exception(),
             "XML input exceeds the byte budget",
@@ -219,7 +219,7 @@ unsafe fn xml_decode_input(str: RString, max_bytes: usize) -> Result<RString, Er
 
 /// [`xml_decode_input`] as a safe call: `s` is a String by type, and so is
 /// the result.
-pub fn xml_decode_input_value(s: RString, max_bytes: usize) -> Result<RString, Error> {
+pub fn xml_decode_input_value(s: RString, max_bytes: Option<usize>) -> Result<RString, Error> {
     // SAFETY: with the GVL, as every bridge function runs.
     unsafe { xml_decode_input(s, max_bytes) }
 }
