@@ -15,7 +15,7 @@
 
 use crate::falloc::VecPush;
 
-use crate::lexbor::abi::{LxbDoc, LxbNode};
+use crate::lexbor::abi::LxbNode;
 
 /* ------------------------------------------------------------------ *
  * fragments                                                          *
@@ -53,7 +53,7 @@ use crate::lexbor::abi::HtmlParser;
 /// `None` for a node that is not an HTML `<template>` AND for one Lexbor gave no
 /// contents fragment. Those are the same case here, because the only thing this
 /// walk does is copy one existing contents fragment into another - which is why
-/// `cross_import`'s `h2x_children_of`, where an empty template and a
+/// `cross_import`'s `h2x_first_child`, where an empty template and a
 /// non-template mean DIFFERENT children, keeps a test of its own.
 fn fixup_template_content(
     doc: HtmlDoc<'_>,
@@ -76,17 +76,14 @@ fn fixup_template_content(
                 .template_content()
                 .and_then(|sc| Some((sc, c.template_content()?)))
             {
-                let mut x = sc.first_child();
-                while let Some(child) = x {
-                    let imp = doc.import_node(child, true);
-                    let Some(imp) = imp else {
+                for child in sc.children() {
+                    let Some(imp) = doc.import_node(child, true) else {
                         // Lexbor could not copy a content child. Giving up
                         // here leaves the clone's template SHORT, which is
                         // the truncated answer the contract forbids.
                         return Err(());
                     };
                     cc.insert_child(imp);
-                    x = child.next();
                 }
                 stack.falloc_push((sc, cc))?;
             }
@@ -130,19 +127,14 @@ unsafe fn import_fragment_children(doc: RawDoc, root: RawNode, into: RawNode) ->
     let Some(into) = BuildingNode::from_raw(into.as_ptr() as *mut LxbNode) else {
         return false;
     };
-    let mut f = root.as_node().first_child();
-    while let Some(child) = f {
-        let next = child.next(); /* import does not unlink it, but be safe */
-        match import_raw(doc, child.as_raw(), true) {
-            Some(imp) => {
-                /* A node import just made in `doc`, not yet in any tree. */
-                if let Some(imp) = BuildingNode::from_raw(imp.cast()) {
-                    into.insert_child(imp);
-                }
-            }
-            None => return false,
-        }
-        f = next;
+    let hdoc = doc.as_doc();
+    /* `children` reads each next sibling before yielding the node; import does
+     * not unlink the source anyway. */
+    for child in root.as_node().children() {
+        let Some(imp) = import_fixed(hdoc, child, true) else {
+            return false;
+        };
+        into.insert_child(imp);
     }
     true
 }
@@ -268,22 +260,15 @@ unsafe fn run_fragment_parser(
 /// and different messages, and each had grown its own copy of the four lines -
 /// so the operation lives here and they keep only the parts that differ.
 pub unsafe fn import_with_fixup(doc: RawDoc, src: RawNode, deep: bool) -> Option<RawNode> {
-    import_raw(doc, src.as_ptr() as *mut LxbNode, deep).and_then(|p| RawNode::from_ptr(p.cast()))
-}
-
-/// The raw form of [`import_with_fixup`]: `src` is a Lexbor node pointer, which
-/// only this module uses, for the children it walks itself.
-unsafe fn import_raw(doc: RawDoc, src: *mut LxbNode, deep: bool) -> Option<*mut LxbNode> {
     /* SAFETY: a live document and the caller's live source node. The handles
      * do not outlive this call. */
-    let (Some(hdoc), Some(hsrc)) = (
-        HtmlDoc::from_raw(doc.as_ptr() as *mut LxbDoc),
-        HtmlNode::from_raw(src),
-    ) else {
-        return None;
-    };
+    import_fixed(doc.as_doc(), src.as_node(), deep).map(|n| RawNode::from(n.node()))
+}
+
+/// [`import_with_fixup`] over the typed handles, for the children this module
+/// walks itself.
+fn import_fixed<'d>(hdoc: HtmlDoc<'d>, hsrc: HtmlNode<'_>, deep: bool) -> Option<BuildingNode<'d>> {
     let himp = hdoc.import_node(hsrc, deep)?;
-    let imp = himp.as_raw();
     if !deep && !himp.copy_written_name_from(hsrc) {
         return None;
     }
@@ -299,7 +284,7 @@ unsafe fn import_raw(doc: RawDoc, src: *mut LxbNode, deep: bool) -> Option<*mut 
         /* The copied offsets index the other document's source. */
         himp.clear_source_offsets();
     }
-    Some(imp)
+    Some(himp)
 }
 
 /* ------------------------------------------------------------------ */

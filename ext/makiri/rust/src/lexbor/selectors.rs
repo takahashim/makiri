@@ -483,32 +483,72 @@ unsafe fn with_compiled_selector(
 /* the safe entries the Ruby layer calls                              */
 /* ------------------------------------------------------------------ */
 
-/// Every matching **descendant** of `root` (the context node itself excluded),
-/// in document order. `Err` for a bad selector, the node cap or OOM.
-#[inline]
-pub fn select_all(gvl: &Gvl, root: RawNode, selector: &[u8]) -> Result<Vec<RawNode>, SelectError> {
-    let raw = root.as_ptr() as *mut LxbNode;
-    let mut ctx = FindCtx {
-        nodes: Vec::new(),
-        root: raw,
-        overflow: false,
-        oom: false,
-        panic: PanicLatch::new(),
-    };
-    // SAFETY: `root` is a live node whose document outlives the call.
+/// A traversal's context, tied to the callback that reads it - so the pairing
+/// the `*mut c_void` hand-off relies on is made once, by type, not per call.
+trait Walk {
+    /// What to run; its callback casts the context back to `Self`.
+    const RUN: Run;
+    fn latch(&mut self) -> &mut PanicLatch;
+}
+
+impl Walk for FindCtx {
+    const RUN: Run = Run::Find(find_cb);
+    fn latch(&mut self) -> &mut PanicLatch {
+        &mut self.panic
+    }
+}
+
+impl Walk for FirstCtx {
+    const RUN: Run = Run::Find(first_cb);
+    fn latch(&mut self) -> &mut PanicLatch {
+        &mut self.panic
+    }
+}
+
+impl Walk for MatchCtx {
+    const RUN: Run = Run::MatchNode(match_cb);
+    fn latch(&mut self) -> &mut PanicLatch {
+        &mut self.panic
+    }
+}
+
+/// Run `C`'s traversal of `selector` from `root` into `ctx`, re-raising a
+/// panic the callback latched.
+fn walk<C: Walk>(
+    gvl: &Gvl,
+    root: RawNode,
+    selector: &[u8],
+    ctx: &mut C,
+) -> Result<(), SelectError> {
+    // SAFETY: `root` is a live node whose document outlives the call, and
+    // `C::RUN`'s callback reads the context as the `C` it is.
     let walked = unsafe {
         with_compiled_selector(
             gvl,
             selector,
-            raw,
-            Run::Find(find_cb),
-            &mut ctx as *mut FindCtx as *mut c_void,
+            root.as_ptr() as *mut LxbNode,
+            C::RUN,
+            (ctx as *mut C).cast(),
         )
     };
-    /* Before the `?`: Lexbor has unwound and the engine is reset, so this is
-     * the first frame where re-raising is safe. */
-    ctx.panic.resume();
-    walked?;
+    /* Before the caller's `?`: Lexbor has unwound and the engine is reset, so
+     * this is the first frame where re-raising is safe. */
+    ctx.latch().resume();
+    walked
+}
+
+/// Every matching **descendant** of `root` (the context node itself excluded),
+/// in document order. `Err` for a bad selector, the node cap or OOM.
+#[inline]
+pub fn select_all(gvl: &Gvl, root: RawNode, selector: &[u8]) -> Result<Vec<RawNode>, SelectError> {
+    let mut ctx = FindCtx {
+        nodes: Vec::new(),
+        root: root.as_ptr() as *mut LxbNode,
+        overflow: false,
+        oom: false,
+        panic: PanicLatch::new(),
+    };
+    walk(gvl, root, selector, &mut ctx)?;
     if ctx.overflow {
         return Err(SelectError::Overflow);
     }
@@ -525,46 +565,22 @@ pub fn select_first(
     root: RawNode,
     selector: &[u8],
 ) -> Result<Option<RawNode>, SelectError> {
-    let raw = root.as_ptr() as *mut LxbNode;
     let mut ctx = FirstCtx {
-        root: raw,
+        root: root.as_ptr() as *mut LxbNode,
         found: core::ptr::null_mut(),
         panic: PanicLatch::new(),
     };
-    // SAFETY: as `select_all`.
-    let walked = unsafe {
-        with_compiled_selector(
-            gvl,
-            selector,
-            raw,
-            Run::Find(first_cb),
-            &mut ctx as *mut FirstCtx as *mut c_void,
-        )
-    };
-    ctx.panic.resume(); /* as `select_all` */
-    walked?;
+    walk(gvl, root, selector, &mut ctx)?;
     Ok(RawNode::from_ptr(ctx.found.cast()))
 }
 
 /// Does `root` itself match `selector`?
 #[inline]
 pub fn matches_node(gvl: &Gvl, root: RawNode, selector: &[u8]) -> Result<bool, SelectError> {
-    let raw = root.as_ptr() as *mut LxbNode;
     let mut ctx = MatchCtx {
         matched: false,
         panic: PanicLatch::new(),
     };
-    // SAFETY: as `select_all`.
-    let walked = unsafe {
-        with_compiled_selector(
-            gvl,
-            selector,
-            raw,
-            Run::MatchNode(match_cb),
-            &mut ctx as *mut MatchCtx as *mut c_void,
-        )
-    };
-    ctx.panic.resume(); /* as `select_all` */
-    walked?;
+    walk(gvl, root, selector, &mut ctx)?;
     Ok(ctx.matched)
 }
