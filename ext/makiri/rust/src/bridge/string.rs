@@ -378,6 +378,13 @@ pub fn ruby_verified_text_opt(in_: Value, what: &str) -> Result<Option<RubyText>
     ruby_verified_text(in_, what).map(Some)
 }
 
+/// The `namespace_or_nil` argument of the namespaced APIs: `nil` and the empty
+/// string ALIKE mean "no namespace", so everything below receives `None` or a
+/// non-empty URI and never re-decides.
+pub fn namespace_arg(in_: Value, what: &str) -> Result<Option<RubyText>, Error> {
+    Ok(ruby_verified_text_opt(in_, what)?.filter(|t| !t.is_empty()))
+}
+
 /// Coerce to a String and enforce the strict contract (valid UTF-8, no NUL),
 /// naming `what` in the error. The names-and-engine-input path.
 pub fn ruby_verified_text(in_: Value, what: &str) -> Result<RubyText, Error> {

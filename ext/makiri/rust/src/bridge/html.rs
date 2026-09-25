@@ -397,18 +397,19 @@ pub fn set_attribute(
         .map(drop)
 }
 
-/// Set the attribute `qname` in namespace `ns` (nil or "" = none), matching an
+/// Set the attribute `qname` in namespace `ns` (`None` = none), matching an
 /// existing one on (namespace, local name) - the DOM key - rather than on the
 /// qualified name. `Err` when Lexbor could not store it.
+///
+/// `ns` comes from `string::namespace_arg`, so an empty URI already reads as
+/// `None`.
 pub fn set_attribute_ns(
     el: HtmlElementMut<'_>,
-    ns: Option<&RubyText>,
+    ns: Option<&[u8]>,
     qname: &RubyText,
     value: &RubyData,
 ) -> Result<(), AdapterOom> {
     let (qname, value) = (qname.as_bytes(), value.as_bytes());
-    /* An empty URI is no namespace: it names the attribute the unprefixed way. */
-    let ns = ns.map(|v| v.as_bytes()).filter(|v| !v.is_empty());
     let local = match qname.iter().position(|&b| b == b':') {
         Some(i) => &qname[i + 1..],
         None => qname,
@@ -429,20 +430,16 @@ pub fn set_attribute_ns(
     }
 }
 
-/// Remove the attribute `local` in namespace `ns` (nil or "" = none); whether
-/// there was one.
-pub fn remove_attribute_ns(
-    el: HtmlElementMut<'_>,
-    ns: Option<&RubyText>,
-    local: &RubyText,
-) -> bool {
+/// Remove the attribute `local` in namespace `ns` (`None` = none); whether
+/// there was one. `ns` comes from `string::namespace_arg`.
+pub fn remove_attribute_ns(el: HtmlElementMut<'_>, ns: Option<&[u8]>, local: &RubyText) -> bool {
     /* Looked up, not interned: a namespace the document never interned is
      * one no attribute here carries, so there is nothing to remove - and a
      * lookup can neither fail nor grow the table. */
-    let want_ns = match ns.filter(|v| !v.is_empty()) {
-        Some(nv) => {
+    let want_ns = match ns {
+        Some(uri) => {
             let doc = el.element().node().owner_document();
-            let Some(id) = doc.lookup_ns(nv.as_bytes()) else {
+            let Some(id) = doc.lookup_ns(uri) else {
                 return false;
             };
             Some(id)

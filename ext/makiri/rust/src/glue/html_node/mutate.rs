@@ -20,7 +20,9 @@ use crate::bridge::ruby::{makiri_error, string_of};
 
 use crate::bridge::fragment::{set_template_inner_html, stage_fragment_in};
 use crate::bridge::html::{edit, insert, owning_doc, wrap_html_node, HtmlEdit, HtmlSelf};
-use crate::bridge::string::{ruby_verified_data, ruby_verified_text, ruby_verified_text_opt};
+use crate::bridge::string::{
+    namespace_arg, ruby_verified_data, ruby_verified_text, ruby_verified_text_opt,
+};
 use crate::lexbor::adapter::html::{HtmlElementMut, NodeType, Place, RawNode};
 use crate::xml::dom_name;
 use crate::xml::qname::Split;
@@ -140,7 +142,7 @@ pub fn set_attribute_ns(
         }
         let qv = ruby_verified_text(rb_qname, "attribute qualified name")?;
         let vv = ruby_verified_data(rb_value, "attribute value")?;
-        let nv = ruby_verified_text_opt(rb_ns, "namespace")?;
+        let nv = namespace_arg(rb_ns, "namespace")?;
         /* The DOM's "validate and extract": split at the first colon, check
          * both halves, then that the namespace fits them - the rule XML's
          * set_attribute_ns applies too (`xml::qname::ns_fits_name`). It named
@@ -166,7 +168,7 @@ xml and xmlns take only their own)",
             ));
         }
         let el = element_of(edit, REFUSAL)?;
-        crate::bridge::html::set_attribute_ns(el, nv.as_ref(), &qv, &vv)
+        crate::bridge::html::set_attribute_ns(el, nv.as_ref().map(|n| n.as_bytes()), &qv, &vv)
             .map_err(|_| makiri_error("failed to set namespaced attribute"))?;
         Ok(rb_value)
     })
@@ -185,9 +187,9 @@ pub fn remove_attribute_ns(
             return Ok(ruby.qnil().as_value());
         }
         let lv = ruby_verified_text(rb_local, "attribute local name")?;
-        let nv = ruby_verified_text_opt(rb_ns, "namespace")?;
+        let nv = namespace_arg(rb_ns, "namespace")?;
         let el = element_of(edit, "remove_attribute_ns requires an element")?;
-        crate::bridge::html::remove_attribute_ns(el, nv.as_ref(), &lv);
+        crate::bridge::html::remove_attribute_ns(el, nv.as_ref().map(|n| n.as_bytes()), &lv);
         Ok(ruby.qnil().as_value())
     })
 }

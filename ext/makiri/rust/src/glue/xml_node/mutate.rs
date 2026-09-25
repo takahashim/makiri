@@ -13,6 +13,7 @@
 use magnus::{prelude::*, Error, RArray, RHash, Ruby, Value};
 
 use crate::bridge::ruby::makiri_error;
+use crate::bridge::string::namespace_arg;
 
 use crate::bridge::xml::{
     begin_edit, import_copy, incoming_node, verified_text, verified_text_opt,
@@ -81,8 +82,7 @@ pub fn set_attribute_ns(
         let edit = element_for(this)?;
         let qv = verified_text(qname, "attribute qualified name")?;
         let vv = verified_text(val, "attribute value")?;
-        let nv = verified_text_opt(ns, "namespace")?;
-        /* nil and "" alike are no namespace. */
+        let nv = namespace_arg(ns, "namespace")?;
         let (ns, qname, value) = (
             nv.as_ref().map_or(&b""[..], |n| n.as_bytes()),
             qv.as_bytes(),
@@ -107,8 +107,7 @@ pub fn remove_attribute_ns(
             return Ok(rb_self);
         }
         let lv = verified_text(local, "attribute local name")?;
-        let nv = verified_text_opt(ns, "namespace")?;
-        /* nil and "" alike are no namespace. */
+        let nv = namespace_arg(ns, "namespace")?;
         let ns = nv.as_ref().map_or(&b""[..], |n| n.as_bytes());
         let local = lv.as_bytes();
         edit.with_arena(|d, n| mutate::remove_attribute_ns(d, n, ns, local))?;
@@ -268,12 +267,11 @@ pub fn create_loose_dom_element(
         let qv = verified_text(qname, "qualified name")?;
         let lv = verified_text(local, "local name")?;
         let pv = verified_text_opt(prefix, "prefix")?;
-        let nv = verified_text_opt(ns, "namespace URI")?;
+        let nv = namespace_arg(ns, "namespace URI")?;
 
         let qname = qv.as_bytes();
         let sp = split_loose_dom_name(qname, pv.as_ref().map(|p| p.as_bytes()), lv.as_bytes())
             .map_err(|e| Error::new(ruby.exception_arg_error(), e.message()))?;
-        /* nil and "" alike are no namespace. */
         let ns = nv.as_ref().map_or(&b""[..], |n| n.as_bytes());
         let el = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
             mutate::new_loose_dom_element(d, qname, sp, ns)
