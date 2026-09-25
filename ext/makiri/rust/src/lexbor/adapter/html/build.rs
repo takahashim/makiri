@@ -290,8 +290,18 @@ impl<'doc> BuildingNode<'doc> {
     /// `raw` must be null, or a live node that outlives `'doc` and belongs to a
     /// subtree still being built - nothing outside that subtree points at it.
     #[inline]
-    pub unsafe fn from_raw(raw: *mut LxbNode) -> Option<Self> {
+    pub(in crate::lexbor::adapter) unsafe fn from_raw(raw: *mut LxbNode) -> Option<Self> {
         HtmlNode::from_raw(raw).map(BuildingNode)
+    }
+
+    /// `node` as a handle for building under.
+    ///
+    /// # Safety
+    /// As [`RawNode::as_node`], and `node` belongs to a subtree still being
+    /// built - nothing outside that subtree points at it.
+    #[inline]
+    pub unsafe fn from_raw_node(node: RawNode) -> Self {
+        BuildingNode(node.as_node())
     }
 
     /// The node as an ordinary handle, for reading.
@@ -301,7 +311,7 @@ impl<'doc> BuildingNode<'doc> {
     }
 
     #[inline]
-    pub fn as_raw(self) -> *mut LxbNode {
+    pub(in crate::lexbor::adapter) fn as_raw(self) -> *mut LxbNode {
         self.0.as_raw()
     }
 

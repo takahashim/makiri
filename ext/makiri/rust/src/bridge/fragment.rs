@@ -222,10 +222,7 @@ pub fn build_fragment(document: Value, rb_html: Value, at: FragmentTag) -> Resul
         },
     )?;
 
-    // SAFETY: `document`'s live Lexbor document, for the length of this call.
-    let frag =
-        unsafe { HtmlDoc::from_raw(doc.as_ptr() as *mut _) }.and_then(HtmlDoc::create_fragment);
-    let Some(frag) = frag else {
+    let Some(frag) = crate::bridge::wrapper::html_doc(&document).create_fragment() else {
         return Err(makiri_error("failed to create document fragment"));
     };
     let frag = RawNode::from(frag);

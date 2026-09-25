@@ -31,7 +31,7 @@ RUST = File.join(ROOT, "ext/makiri/rust/src")
 UNSAFE_ISLANDS = {
   "bridge/alloc.rs" => 4,
   "bridge/doc.rs" => 4,
-  "bridge/fragment.rs" => 6,
+  "bridge/fragment.rs" => 5,
   "bridge/gvl.rs" => 4,
   "bridge/html.rs" => 29,
   "bridge/node_set.rs" => 10,
@@ -55,8 +55,8 @@ UNSAFE_ISLANDS = {
   "lexbor/abi.rs" => 4,
   "lexbor/adapter/arena_bytes.rs" => 3,
   "lexbor/adapter/cross_import.rs" => 4,
-  "lexbor/adapter/html/build.rs" => 18,
-  "lexbor/adapter/html/mod.rs" => 57,
+  "lexbor/adapter/html/build.rs" => 19,
+  "lexbor/adapter/html/mod.rs" => 58,
   "lexbor/adapter/html/mutate.rs" => 9,
   "lexbor/adapter/post_parse.rs" => 9,
   "lexbor/adapter/source_loc.rs" => 3,
@@ -235,13 +235,26 @@ unless File.binread(File.join(RUST, "lib.rs")).include?("#![deny(unsafe_code)]")
   errors << "lib.rs: must retain #![deny(unsafe_code)] - it is what makes the rest a ratchet"
 end
 
-# The typed document handle keeps its raw pointer `lexbor`-private, so nothing
-# above the layer can read a Lexbor struct field through it. This is what closed
+# The typed handles keep their raw pointers private to `lexbor::adapter`, so
+# nothing above the adapter - not the facades, not the glue - can read a Lexbor
+# struct field through one, or hand a Lexbor pointer on. This is what closed
 # the `compat_mode` leak: a field read spells no `lxb_*`/`Lxb*` name, so
 # LEXBOR_ABI below cannot see it, and only the compiler can enforce this one.
-unless File.binread(File.join(RUST, "lexbor/adapter/html/mod.rs"))
-    .include?("pub(in crate::lexbor) fn as_raw(self) -> *mut LxbDoc")
-  errors << "lexbor/adapter/html/mod.rs: HtmlDoc::as_raw must stay `pub(in crate::lexbor)`"
+# A facade that needs a node pointer for a Lexbor call takes `RawNode::as_lxb_mut`.
+RAW_ACCESSORS = {
+  "lexbor/adapter/html/mod.rs" => [
+    "pub(in crate::lexbor::adapter) fn as_raw(self) -> *mut LxbDoc", # HtmlDoc
+    "pub(in crate::lexbor::adapter) fn as_raw(self) -> *mut LxbNode", # HtmlNode
+    "pub(in crate::lexbor::adapter) fn raw(self) -> *mut LxbAttr", # HtmlAttr
+  ],
+  "lexbor/adapter/html/build.rs" => ["pub(in crate::lexbor::adapter) fn as_raw(self) -> *mut LxbNode"],
+  "lexbor/adapter/html/mutate.rs" => ["pub(in crate::lexbor::adapter) fn as_raw(self) -> *mut LxbNode"],
+}.freeze
+RAW_ACCESSORS.each do |file, sigs|
+  src = File.binread(File.join(RUST, file))
+  sigs.each do |sig|
+    errors << "#{file}: `#{sig[/fn \w+.*/]}` must stay `pub(in crate::lexbor::adapter)`" unless src.include?(sig)
+  end
 end
 
 unsafe_actual = Hash.new(0)

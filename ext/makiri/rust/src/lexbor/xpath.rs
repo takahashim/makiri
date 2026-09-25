@@ -10,11 +10,9 @@
 
 #![allow(unsafe_code)]
 
-use core::ffi::c_void;
-
-use crate::lexbor::abi::{self as lxb, LxbNode};
+use crate::lexbor::abi as lxb;
 use crate::lexbor::adapter::dom_index::DomIndex;
-use crate::lexbor::adapter::html::{self as dom, HtmlAttr, HtmlDoc, HtmlNode};
+use crate::lexbor::adapter::html::{self as dom, HtmlAttr, HtmlDoc, HtmlNode, RawNode};
 use crate::lexbor::adapter::post_parse::HtmlParsed;
 use crate::token::{Kind, Token};
 use crate::xpath::abi::*;
@@ -79,7 +77,7 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
     #[inline]
     fn token(n: HtmlNode<'d>) -> Token {
         // SAFETY: `n` is a live node of this document, which `HtmlDom` holds.
-        unsafe { Token::html(n.as_raw() as *mut c_void) }
+        unsafe { Token::html(RawNode::from(n).as_ptr()) }
     }
     #[inline]
     fn resolve_token(self, t: Token) -> HtmlNode<'d> {
@@ -90,10 +88,10 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
             Kind::Html,
             "an HTML context resolved a non-HTML token"
         );
+        let raw = RawNode::from_ptr(t.as_ptr()).expect("a resolved token names a node");
         // SAFETY: an HTML token names a live node of the document it was made
         // over, and `self` is that document.
-        unsafe { HtmlNode::from_raw(t.as_ptr() as *mut LxbNode) }
-            .expect("a resolved token names a node")
+        unsafe { raw.as_node() }
     }
 
     #[inline]

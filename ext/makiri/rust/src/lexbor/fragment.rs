@@ -124,9 +124,7 @@ impl FragmentError {
 /// `Drop` - one leaked Lexbor document per failure. The caller raises once its
 /// own cleanup has run, with the message that suits it.
 unsafe fn import_fragment_children(doc: RawDoc, root: RawNode, into: RawNode) -> bool {
-    let Some(into) = BuildingNode::from_raw(into.as_ptr() as *mut LxbNode) else {
-        return false;
-    };
+    let into = BuildingNode::from_raw_node(into);
     let hdoc = doc.as_doc();
     /* `children` reads each next sibling before yielding the node; import does
      * not unlink the source anyway. */
@@ -170,9 +168,7 @@ impl TransientFragment {
          * document, so its result is made inside that document's memory and
          * destroying it would free the target's. */
         let _doc = match context {
-            FragmentContext::Element(_) => {
-                crate::lexbor::abi::TransientDoc::own(root.as_node().owner_document().as_raw())
-            }
+            FragmentContext::Element(_) => root.as_node().owner_document().own_transient(),
             FragmentContext::Tag { .. } => None,
         };
         Ok(TransientFragment { root, _doc })

@@ -24,7 +24,7 @@ use crate::bridge::node_set::node_set_with_fill;
 use crate::bridge::ruby::is_kind_of;
 use crate::bridge::string::ruby_verified_text;
 use crate::init::{CLASS_NODE, CLASS_XML_DOCUMENT};
-use crate::lexbor::adapter::html::HtmlNode;
+use crate::lexbor::adapter::html::{HtmlNode, RawNode};
 
 /* ------------------------------------------------------------------ *
  * small helpers                                                      *
@@ -328,7 +328,7 @@ fn set_of<'d>(
     let (set, fill) = node_set_with_fill(document);
     for n in nodes {
         if !elements_only || n.element().is_some() {
-            fill.push(n.as_raw() as *mut core::ffi::c_void)?;
+            fill.push(RawNode::from(n).as_ptr())?;
         }
     }
     Ok(set)

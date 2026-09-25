@@ -17,7 +17,7 @@ use crate::lexbor::abi::consts::STATUS_OK as LXB_STATUS_OK;
 use crate::lexbor::abi::{
     lxb_html_serialize_deep_cb, lxb_html_serialize_opt_LXB_HTML_SERIALIZE_OPT_UNDEF,
     lxb_html_serialize_pretty_deep_cb, lxb_html_serialize_pretty_tree_cb,
-    lxb_html_serialize_tree_cb, LxbNode,
+    lxb_html_serialize_tree_cb,
 };
 use crate::lexbor::adapter::arena_bytes::document_bytes;
 use crate::lexbor::adapter::html::RawNode;
@@ -59,7 +59,7 @@ pub fn serialize(node: RawNode, deep: bool, pretty: bool) -> Option<Buf> {
     // SAFETY: `node` came from a live wrapper, so it and its document are live.
     let doc = unsafe { node.as_node() }.owner_document();
     let (cap, reserve) = serialize_sizes(document_bytes(doc));
-    let node = node.as_ptr() as *mut LxbNode;
+    let node = node.as_lxb_mut();
 
     let mut c = Chunks::new(Buf::new(cap));
     // SAFETY: the buffer is freed by `Buf`'s Drop however this exits, including

@@ -526,7 +526,7 @@ fn walk<C: Walk>(
         with_compiled_selector(
             gvl,
             selector,
-            root.as_ptr() as *mut LxbNode,
+            root.as_lxb_mut(),
             C::RUN,
             (ctx as *mut C).cast(),
         )
@@ -543,7 +543,7 @@ fn walk<C: Walk>(
 pub fn select_all(gvl: &Gvl, root: RawNode, selector: &[u8]) -> Result<Vec<RawNode>, SelectError> {
     let mut ctx = FindCtx {
         nodes: Vec::new(),
-        root: root.as_ptr() as *mut LxbNode,
+        root: root.as_lxb_mut(),
         overflow: false,
         oom: false,
         panic: PanicLatch::new(),
@@ -566,7 +566,7 @@ pub fn select_first(
     selector: &[u8],
 ) -> Result<Option<RawNode>, SelectError> {
     let mut ctx = FirstCtx {
-        root: root.as_ptr() as *mut LxbNode,
+        root: root.as_lxb_mut(),
         found: core::ptr::null_mut(),
         panic: PanicLatch::new(),
     };

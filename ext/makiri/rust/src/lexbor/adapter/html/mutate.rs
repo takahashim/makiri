@@ -215,7 +215,7 @@ impl<'doc> HtmlNodeMut<'doc> {
     }
 
     #[inline]
-    pub fn as_raw(self) -> *mut LxbNode {
+    pub(in crate::lexbor::adapter) fn as_raw(self) -> *mut LxbNode {
         self.0.as_raw()
     }
 

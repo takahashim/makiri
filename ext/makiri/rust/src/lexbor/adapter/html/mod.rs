@@ -208,6 +208,14 @@ impl RawNode {
         self.0.as_ptr()
     }
 
+    /// The typed node pointer, for the facades that hand it to a Lexbor call.
+    /// Typed rather than [`as_ptr`](RawNode::as_ptr)'s `c_void`, so no caller
+    /// casts it back.
+    #[inline]
+    pub(in crate::lexbor) fn as_lxb_mut(self) -> *mut LxbNode {
+        self.0.as_ptr()
+    }
+
     /// The typed node, lent for `'doc`.
     ///
     /// # Safety
@@ -299,6 +307,19 @@ impl<'doc> HtmlDoc<'doc> {
         NonNull::new(raw).map(|raw| HtmlDoc::from_non_null(raw))
     }
 
+    /// Take ownership of this document as the transient one a fragment parse
+    /// built, to be destroyed when the returned value drops.
+    ///
+    /// # Safety
+    /// As [`TransientDoc::own`](crate::lexbor::abi::TransientDoc::own): this is
+    /// that transient document, and nothing else may destroy it.
+    #[inline]
+    pub(in crate::lexbor) unsafe fn own_transient(
+        self,
+    ) -> Option<crate::lexbor::abi::TransientDoc> {
+        crate::lexbor::abi::TransientDoc::own(self.as_raw())
+    }
+
     /// # Safety
     /// As [`HtmlDoc::from_raw`], for a pointer already known non-null.
     #[inline]
@@ -315,7 +336,7 @@ impl<'doc> HtmlDoc<'doc> {
     /// a `pub` raw pointer is how a document field (`compat_mode`) came to be
     /// read from `bridge`. Callers above use a named accessor instead.
     #[inline]
-    pub(in crate::lexbor) fn as_raw(self) -> *mut LxbDoc {
+    pub(in crate::lexbor::adapter) fn as_raw(self) -> *mut LxbDoc {
         self.raw.as_ptr()
     }
 
@@ -386,7 +407,7 @@ impl<'doc> HtmlNode<'doc> {
     }
 
     #[inline]
-    pub fn as_raw(self) -> *mut LxbNode {
+    pub(in crate::lexbor::adapter) fn as_raw(self) -> *mut LxbNode {
         self.raw.as_ptr()
     }
 
@@ -917,7 +938,7 @@ impl<'doc> HtmlAttr<'doc> {
         self.0
     }
     #[inline]
-    pub(crate) fn raw(self) -> *mut LxbAttr {
+    pub(in crate::lexbor::adapter) fn raw(self) -> *mut LxbAttr {
         self.0.as_raw() as *mut LxbAttr
     }
 
