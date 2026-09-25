@@ -5,8 +5,9 @@
 //!
 //! - **the size arithmetic** (`mkr_size_add`, `mkr_size_mul`): gone as an
 //!   obligation. `checked_add` / `checked_mul` are the standard library's.
-//! - **`mkr_grow_capacity`**: already proved in `falloc::verify`, where Kani
-//!   found a real precondition the C harness had not.
+//! - **`mkr_grow_capacity`** (now `falloc::grow_capacity`): proved in
+//!   `falloc::verify`, where Kani found a real precondition the C harness had
+//!   not.
 //! - **the OOM branches**: `rake oom`, end to end. Not a proof, but it exercises
 //!   the whole extension rather than one function, and the sweep's injection
 //!   points are identical to the C build's.

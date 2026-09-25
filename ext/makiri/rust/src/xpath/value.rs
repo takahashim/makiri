@@ -1,5 +1,5 @@
 //! The per-backend value model: node string-values
-//! (XPath 1.0 §5), the coercions that read a node-set's first node, document
+//! (XPath 1.0 §5), the coercions that read a node-set's first node in document
 //! order, and the cached string-value lookup.
 //!
 //! Generic over `Dom`, where the C compiled the same body once per

@@ -55,8 +55,8 @@ pub mod kani_bounds {
     }
 }
 
-/// Fallible allocation. Every heap allocation in Rust code that does not
-/// already go through the C allocator goes through here, so that `rake oom` can
+/// Fallible allocation. Every engine heap allocation goes through here (the
+/// glue's Ruby-side storage uses Ruby's xmalloc instead), so that `rake oom` can
 /// fail it and so that failure raises instead of aborting the host process.
 pub mod falloc;
 
@@ -79,7 +79,7 @@ pub mod css;
 
 /// The shared UTF-8 primitives. Unconditional, like `falloc`
 /// and `cbuf`: the XML and XPath layers use the strict decoder whatever the
-/// feature set, and only the `#[no_mangle]` C entries are gated.
+/// feature set.
 pub mod cutf8;
 
 /// Borrowed text views and their two contracts: `VerifiedText` (no NUL, for
@@ -90,8 +90,8 @@ pub mod text;
 /// Bounds shared across layers (`NODE_SET_MAX`). Unconditional and Ruby-free.
 pub mod limits;
 
-/// The one pointer hash, and the fixed-capacity pointer-keyed table the
-/// per-document indexes are built on. Below every layer, so none reaches into
+/// The one pointer hash, and the pointer-keyed tables the per-document indexes
+/// are built on: `PtrTable` (sized once) and `PtrMap` (grows). Below every layer, so none reaches into
 /// another's internals for them.
 pub mod ptr_table;
 

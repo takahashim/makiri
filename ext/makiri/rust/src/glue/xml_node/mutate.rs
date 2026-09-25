@@ -1,4 +1,4 @@
-//! The XML node's mutators and the Document factories (glue/ruby_xml_node.c).
+//! The XML node's mutators and the Document factories.
 //!
 //! The Ruby surface of each edit: the arguments converted and checked, the
 //! error each refusal raises, the value handed back. The arena itself is only

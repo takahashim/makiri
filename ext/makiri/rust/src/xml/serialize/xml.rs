@@ -7,7 +7,7 @@
 //! whatever declarations the output needs to reproduce each URI - inventing a
 //! prefix when the natural one is taken. Deciding that needs the bindings in
 //! scope, and they live in ONE stack, exactly as the parser keeps them
-//! (`tree::Parser::binds` plus its frame bases).
+//! (`tree::scope::Scope`, its bindings plus their frame bases).
 //!
 //! That is a fix, not a style: the bindings used to be a chain of per-element
 //! links, and resolving a prefix walked it re-scanning every ancestor's

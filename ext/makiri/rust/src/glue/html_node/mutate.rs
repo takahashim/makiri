@@ -1,4 +1,4 @@
-//! The HTML node's mutators and the Document factories (glue/ruby_html_mutate.c).
+//! The HTML node's mutators and the Document factories.
 //!
 //! The Ruby surface of each edit: reading and verifying the arguments, the
 //! error each refusal raises, and the value handed back. The DOM's rules about

@@ -3,11 +3,10 @@
 //! Shared:
 //!   abi.rs        the engine's prelude: the shared names, re-exported
 //!   msg.rs        error messages, assembled without allocating
-//!   token.rs      the opaque node token a node-set stores
 //!
 //! The front end:
-//!   number.rs     the Number production, read and written       (no unsafe)
-//!   lex.rs        the tokenizer                                 (no unsafe)
+//!   number.rs     the Number production, read and written
+//!   lex.rs        the tokenizer
 //!   parse.rs      recursive descent
 //!
 //! The driver:
@@ -26,7 +25,7 @@
 //!   attr_pred.rs  the [@name] / [@name='lit'] predicate shapes
 //!   step_index.rs the //tag and //tag[N] index fast paths
 //!   funcs/        the built-in function library (ext.rs: Nokogiri and CSS hooks)
-//!   eval.rs       node tests, predicates, steps, operators
+//!   eval.rs       predicates, steps, operators
 //!
 //! An instance binds the contract to one representation, and lives outside this
 //! module so the engine stays representation-free:

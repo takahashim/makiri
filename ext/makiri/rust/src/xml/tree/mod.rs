@@ -677,13 +677,12 @@ fn parse_fragment_into(
 }
 
 /// XML §9.3: no two attributes of one element share a `(namespace URI, local
-/// name)`.
+/// name)`. Whether two of `element`'s do - or None when the sort buffer cannot
+/// be allocated.
 ///
 /// A free function here rather than a `Document` method in `arena`: the arena
 /// stores nodes, it does not judge whether they are well-formed. It reads
 /// through the checked accessors, which is what a rule at this layer should do.
-/// Whether two of `element`'s attributes share (namespace URI, local name) -
-/// or None when the sort buffer cannot be allocated.
 ///
 /// Pairwise for the usual handful. Past that, pairwise is quadratic in a count
 /// the input picks, up to `MAX_ATTRS`: 8.4M comparisons an element, and 100

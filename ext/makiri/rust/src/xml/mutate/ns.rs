@@ -214,8 +214,8 @@ pub(super) fn resolve_into(
 /// the element instead gave `xmlns:ns1=""`, which Namespaces 1.0 forbids. The
 /// DOM Parsing and Serialization spec ignores such a declaration and writes
 /// `xmlns=""` where an inherited default would otherwise claim the element.
-/// Only the serializer did, so a later rename or a new child still resolved
-/// against it - `e.name = "e"` moved `e` into X. Now [`resolve_in_scope`] skips
+/// Only the serializer did, so a later rename (since removed) or a new child
+/// still resolved against it - `e.name = "e"` moved `e` into X. Now [`resolve_in_scope`] skips
 /// it as well. (Nokogiri writes the attribute, and the element moves.)
 ///
 /// Only a DECIDED no-namespace: an unresolved element's empty URI means "not
@@ -237,6 +237,13 @@ pub fn ignored_default_decl(doc: &Document, el: NodeId) -> Option<NodeId> {
     None
 }
 
+/// What `prefix` ("" = default) is bound to at or above `node`, by the
+/// declarations the mutators resolve against; empty when unbound. For a caller
+/// deciding whether a declaration it is about to add would repeat one in scope.
+pub fn namespace_in_scope<'d>(doc: &'d Document, node: NodeId, prefix: &[u8]) -> &'d [u8] {
+    doc.span(resolve_in_scope(doc, Some(node), prefix))
+}
+
 /// Nearest in-scope binding for `prefix` ("" = default) at or above `node`;
 /// [`Span::EMPTY`] when there is none, which callers treat like an empty
 /// binding. Not an `Option<Span>`: `None` leaves the payload undefined, and LLVM
@@ -248,13 +255,6 @@ pub fn ignored_default_decl(doc: &Document, el: NodeId) -> Option<NodeId> {
 /// stores nodes rather than interpreting them. Moving it also made it go through
 /// the CHECKED accessors, which is the right thing at this layer - it used to
 /// index links raw, which only the arena's own private accessors may do.
-/// What `prefix` ("" = default) is bound to at or above `node`, by the
-/// declarations the mutators resolve against; empty when unbound. For a caller
-/// deciding whether a declaration it is about to add would repeat one in scope.
-pub fn namespace_in_scope<'d>(doc: &'d Document, node: NodeId, prefix: &[u8]) -> &'d [u8] {
-    doc.span(resolve_in_scope(doc, Some(node), prefix))
-}
-
 fn resolve_in_scope(doc: &Document, node: Option<NodeId>, prefix: &[u8]) -> Span {
     let mut e = node;
     while let Some(id) = e {

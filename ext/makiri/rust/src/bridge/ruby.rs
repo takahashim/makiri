@@ -5,8 +5,7 @@
 //! functions here are the places the extension still calls such a function,
 //! and each turns the raise into a [`magnus::Error`] instead: the caller hands
 //! it back as `Err`, and magnus raises only after the Rust frames have returned
-//! normally. [`raise`] is the one exit for an entry point Ruby calls with the C
-//! convention, which has no `Result` to return.
+//! normally.
 
 #![allow(unsafe_code)]
 
@@ -111,15 +110,11 @@ pub fn range_beg_len(range: Value, count: c_long) -> Result<Option<(c_long, c_lo
  *
  * `nil` and `boolean` are immortal singletons and cannot raise.
  *
- * The constructors DO allocate through Ruby - `integer` for a value that is
- * not a fixnum, `float` and `array_new` always - so an out-of-memory there
- * RAISES `NoMemoryError`, which unwinds with `longjmp` and not as an `Err`.
- * This is the same OOM the raw `rb_float_new`/`rb_int2inum`/`rb_ary_new` they
- * replace could raise, so no call site changed; it is also why they are not
- * protected yet. A caller that holds a live Rust destructor across one must
- * run the whole conversion under `protect` (as `bridge::xpath::value_to_ruby`
- * does), and turning them into `Result`-returning helpers is part of moving
- * the protected calls behind the bridge. */
+ * The constructors DO allocate through Ruby - `float` and `array_new` - so an out-of-memory there RAISES
+ * `NoMemoryError`, which unwinds with `longjmp` and not as an `Err`. This is
+ * the same OOM the raw `rb_float_new`/`rb_ary_new` they replace could raise.
+ * A caller that holds a live Rust destructor across one must run the whole
+ * conversion under `protect`, as `bridge::xpath::value_to_ruby` does. */
 
 /// A `Value` from a raw handle the caller already holds - a stored field, or a
 /// producer that still returns `VALUE`. The bridge is the one place that turns
@@ -159,15 +154,6 @@ pub fn float(n: f64) -> Value {
     // SAFETY: every caller is a Ruby method, entered with the GVL.
     unsafe { Ruby::get_unchecked() }
         .float_from_f64(n)
-        .as_value()
-}
-
-/// An Integer from an `i64`.
-#[inline]
-pub fn integer(n: i64) -> Value {
-    // SAFETY: as `float`.
-    unsafe { Ruby::get_unchecked() }
-        .integer_from_i64(n)
         .as_value()
 }
 

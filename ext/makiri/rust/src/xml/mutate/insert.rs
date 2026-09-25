@@ -171,14 +171,6 @@ fn is_insertable(doc: &Document, node: NodeId) -> bool {
     )
 }
 
-/// Where an insertion goes, as the hierarchy rules see it: into `container`,
-/// just before `before` (None = append), standing in for `exclude` (None = the
-/// insertion replaces nothing, so every existing child counts).
-///
-/// The three used to travel as separate arguments through three predicates that
-/// each walked the container's children again - up to four walks for one
-/// insertion at the document node. Here they are one value and [`Site::check`]
-/// is one walk.
 /// Which side of which child an insertion is anchored to.
 ///
 /// `After` is NOT the same as `Before(next(target))`, and that mistake cost a
@@ -199,6 +191,14 @@ enum Anchor {
     Replacing(NodeId),
 }
 
+/// Where an insertion goes, as the hierarchy rules see it: into `container`,
+/// at `anchor` (which also says whether the insertion stands in for a child, so
+/// that child does not count as an existing one).
+///
+/// The parts used to travel as separate arguments through three predicates that
+/// each walked the container's children again - up to four walks for one
+/// insertion at the document node. Here they are one value and [`Site::check`]
+/// is one walk.
 #[derive(Clone, Copy)]
 struct Site {
     container: NodeId,

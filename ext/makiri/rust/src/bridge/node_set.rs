@@ -15,10 +15,10 @@
 //!
 //! It owns its `rb_data_type_t`, its GC `mark`/`size`/free, and a raw
 //! Ruby-allocator buffer, so its layout is private and it belongs with the other
-//! raw-Ruby-ABI seams rather than in the glue. The two functions the rest of the
-//! crate calls (`node_set_new` / `node_set_push`) are over an opaque `VALUE`;
-//! glue-side callers use [`node_set_with_fill`], whose [`Fill`] handle carries
-//! the "this is a NodeSet" invariant so their pushes are safe.
+//! raw-Ruby-ABI seams rather than in the glue. The glue builds a set through
+//! `node_set_with_fill`, `node_set_from` or `node_set_of_nodes`, all over
+//! the Document's opaque `VALUE`; the [`Fill`] handle carries the "this is a
+//! NodeSet" invariant so its pushes are safe.
 //!
 //! Mutation goes through a `RefCell`, and every borrow failure becomes a Ruby
 //! error rather than a panic: a panic would reach Ruby as `fatal` (the crate
@@ -129,7 +129,7 @@ impl NodeVec {
         unsafe { core::slice::from_raw_parts(self.ptr, self.len) }
     }
 
-    /// Geometric growth, restated from `mkr_grow_capacity`: double from 8 until
+    /// Geometric growth, delegated to `falloc::grow_capacity`: double from 8 until
     /// it covers `need`, falling back to exactly `need` when doubling would
     /// overshoot what the element size allows. So the only failure is `need`
     /// itself not fitting, which the caller has already bounded by
@@ -287,7 +287,7 @@ fn node_set_class() -> RClass {
 }
 
 /* ------------------------------------------------------------------ */
-/* the C API other glue files call                                    */
+/* the constructors the glue calls                                    */
 /* ------------------------------------------------------------------ */
 
 /// An empty NodeSet over `document`, whose nodes it will hold.

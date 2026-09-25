@@ -2,8 +2,8 @@
 //!
 //! A complete concern with its own data structure and lifecycle: the comparator
 //! walks parent chains, and once a single sort is large enough to amortise a
-//! full-document walk the index takes over. The C keeps the two apart only by
-//! where the lifecycle hooks live (shared) versus the node-dereferencing halves
+//! full-document walk the index takes over. The C kept the two apart only by
+//! where the lifecycle hooks lived (shared) versus the node-dereferencing halves
 //! (per-instance); here they are one module because they are one idea.
 
 #![forbid(unsafe_code)]

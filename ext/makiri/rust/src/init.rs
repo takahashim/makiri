@@ -1,15 +1,18 @@
-//! `Init_makiri` - the registration seam (makiri.c).
+//! `Init_makiri` - the registration seam.
 //!
 //! Ruby loads the extension by calling `Init_makiri`, and this is it:
-//! `#[magnus::init]` generates a symbol with exactly that name and the C ABI, so
-//! the contract "export only `Init_makiri`" is unchanged - it is enforced by the
-//! linker flag, as it always was, not by the language the function is written in.
+//! `#[magnus::init]` generates a symbol with exactly that name and the C ABI.
+//! The contract "export only `Init_makiri`" (plus rb-sys's `ruby_abi_version`)
+//! is enforced at the source: the macro's output is the crate's only
+//! `#[no_mangle]` item, so rustc emits no other exported name. extconf's
+//! post-link trim is belt-and-braces on macOS, not the mechanism, and
+//! `rake symbols` checks the result.
 //!
 //! # The class VALUEs are written once
 //!
-//! Forty-six classes and modules are created here and read from a dozen other
+//! Forty-seven classes and modules are created here and read from a dozen other
 //! modules. In C they were plain globals; they are the same object with the same
-//! contract here. Thirty-five are exported because something outside this file
+//! contract here. Thirty-six are exported because something outside this file
 //! reads them; the other eleven exist only long enough to build the hierarchy
 //! and stay local.
 //!

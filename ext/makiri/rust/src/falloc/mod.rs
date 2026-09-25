@@ -146,7 +146,7 @@ pub fn try_box<T>(value: T) -> Result<Box<T>, ()> {
 ///
 /// A trait rather than free functions because the call sites already read
 /// `x.try_reserve(n).is_err()`; `x.falloc_reserve(n).is_err()` keeps that shape.
-/// The `mkr_` prefix is deliberate: a method named `try_reserve` would be
+/// The `falloc_` prefix is deliberate: a method named `try_reserve` would be
 /// shadowed by the inherent one silently, which is exactly the bug this module
 /// exists to prevent.
 ///

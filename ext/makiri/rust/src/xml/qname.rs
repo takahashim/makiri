@@ -148,8 +148,8 @@ pub enum NsDeclError {
 ///
 /// The one statement of the rule, for the parser and the mutators alike. The
 /// mutators once applied only the last clause, so `[]=`, `set_attribute_ns`
-/// and `rename` could write `xmlns:xml="urn:other"` into a tree `to_xml` then
-/// could not re-read.
+/// and the since-removed `rename` could write `xmlns:xml="urn:other"` into a
+/// tree `to_xml` then could not re-read.
 pub fn ns_decl_check(prefix: &[u8], uri: &[u8]) -> Result<(), NsDeclError> {
     if prefix == b"xmlns" {
         return Err(NsDeclError::Xmlns);

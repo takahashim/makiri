@@ -57,7 +57,7 @@ fn local_ok(p: &[u8]) -> bool {
 }
 
 /// Whether `name` is a WHATWG DOM "valid element local name" - what
-/// `createElement` and a rename accept.
+/// `createElement` accepts.
 pub fn valid_element_local_name(name: &[u8]) -> bool {
     local_ok(name)
 }
