@@ -135,11 +135,12 @@ impl Buf {
         let n = bytes.len();
         /* The common case - serializer output arrives as many small chunks -
          * is a copy into room already there. It needs no ceiling check: `cap`
-         * never exceeds the ceiling plus the NUL (every growth clamps to it,
-         * which the Kani proof asserts), so content that fits below `cap` is
-         * within the ceiling. `len < cap` whenever there is an allocation, and
-         * both are 0 when there is none, so the subtraction cannot wrap and an
-         * empty buffer falls through to the growth. */
+         * never exceeds the ceiling plus the NUL (`realloc_within_ceiling`,
+         * the one place it changes, clamps it; the Kani proof asserts it), so
+         * content that fits below `cap` is within the ceiling. `len < cap`
+         * whenever there is an allocation, and both are 0 when there is none,
+         * so the subtraction cannot wrap and an empty buffer falls through to
+         * the growth. */
         if n < self.cap - self.len {
             // SAFETY: `len + n + 1 <= cap`, so the copy and the terminator fit
             // the allocation; `bytes` is a slice, so it names `n` readable
@@ -173,19 +174,12 @@ impl Buf {
         let need_term = need.checked_add(1).ok_or(BufError::Oom)?;
 
         if need_term > self.cap {
-            let mut new_cap =
+            /* Geometric growth can overshoot to ~2x need_term; the realloc
+             * clamps it to the ceiling. This append passed `need <= limit`, so
+             * `need_term <= limit + 1` and the clamp never cuts below it. */
+            let new_cap =
                 crate::falloc::grow_capacity(self.cap, need_term, 1).ok_or(BufError::Oom)?;
-            /* Geometric growth can overshoot to ~2x need_term; clamp the
-             * ALLOCATION to the same ceiling as the content (limit, plus the
-             * NUL), so cap never runs to ~2x the hard maximum near the limit.
-             * Safe: this append already passed `need <= limit`, so
-             * `need_term <= limit + 1` and the clamp can never drop new_cap
-             * below what this append needs. A limit + 1 that overflows - only a
-             * pathological MKR_BUF_HARD_MAX=SIZE_MAX - skips the clamp. */
-            if let Some(ceiling) = limit.checked_add(1) {
-                new_cap = new_cap.min(ceiling);
-            }
-            self.realloc_to(new_cap)?;
+            self.realloc_within_ceiling(new_cap)?;
         }
 
         // SAFETY: `data` holds `cap >= need + 1` bytes after the growth above,
@@ -211,7 +205,7 @@ impl Buf {
         if need_term <= self.cap {
             return Ok(()); /* already have room */
         }
-        self.realloc_to(need_term)?;
+        self.realloc_within_ceiling(need_term)?;
         // SAFETY: `cap > len` (the allocation holds the old content and its
         // terminator), so byte `len` is inside it.
         unsafe { *self.data.add(self.len) = 0 }; /* keep NUL-terminated */
@@ -267,14 +261,26 @@ impl Buf {
         soft.min(BUF_HARD_MAX)
     }
 
-    /// Reallocate to exactly `cap` bytes. `Err` leaves the buffer as it was.
+    /// Reallocate to `want` bytes, or to the ceiling (content limit plus the
+    /// NUL) when `want` is past it. `Err` leaves the buffer as it was.
+    ///
+    /// The one place capacity changes, so the one place that holds
+    /// `cap <= content_limit() + 1`: [`append`](Self::append)'s fast path skips
+    /// the ceiling check on the strength of it, and the Kani proof asserts it.
+    /// A new growth path that goes through here cannot break it. (A limit + 1
+    /// that overflows - only a pathological `MKR_BUF_HARD_MAX=SIZE_MAX` - has no
+    /// ceiling to clamp to.)
     ///
     /// The memory is libc's, not Rust's: `steal` hands the pointer to an
     /// `OwnedBuf` that `free()`s it. So this uses `realloc` directly rather
     /// than `falloc`, and consults `falloc::allocation_should_fail`, so
     /// `rake oom` reaches it while production builds compile that hook to
     /// `false`.
-    fn realloc_to(&mut self, cap: usize) -> Result<(), BufError> {
+    fn realloc_within_ceiling(&mut self, want: usize) -> Result<(), BufError> {
+        let cap = match self.content_limit().checked_add(1) {
+            Some(ceiling) => want.min(ceiling),
+            None => want,
+        };
         if crate::falloc::allocation_should_fail() {
             return Err(BufError::Oom);
         }
