@@ -130,18 +130,29 @@ pub unsafe fn value(raw: VALUE) -> Value {
     unsafe { Value::from_raw(raw) }
 }
 
+/// The Ruby handle the helpers below build their values with, unchecked.
+///
+/// Every caller of this module's value and error helpers is a Ruby method - or
+/// `Init_makiri` - so it runs on a Ruby thread holding the GVL, which is the
+/// one precondition `Ruby::get_unchecked` has. Stated here once, rather than
+/// at each helper; a caller off a Ruby thread (the GVL-released parse) takes
+/// no Ruby value at all, which `bridge::gvl::without_gvl`'s `Send` bound keeps.
+#[inline]
+fn gvl_ruby() -> Ruby {
+    // SAFETY: see above - on a Ruby thread, with the GVL.
+    unsafe { Ruby::get_unchecked() }
+}
+
 /// `nil`, as a `Value`.
 #[inline]
 pub fn nil() -> Value {
-    // SAFETY: every caller is a Ruby method, entered with the GVL.
-    unsafe { Ruby::get_unchecked() }.qnil().as_value()
+    gvl_ruby().qnil().as_value()
 }
 
 /// `true`/`false`, as a `Value`.
 #[inline]
 pub fn boolean(b: bool) -> Value {
-    // SAFETY: as `nil`.
-    let ruby = unsafe { Ruby::get_unchecked() };
+    let ruby = gvl_ruby();
     if b {
         ruby.qtrue().as_value()
     } else {
@@ -152,17 +163,13 @@ pub fn boolean(b: bool) -> Value {
 /// A fresh Float.
 #[inline]
 pub fn float(n: f64) -> Value {
-    // SAFETY: every caller is a Ruby method, entered with the GVL.
-    unsafe { Ruby::get_unchecked() }
-        .float_from_f64(n)
-        .as_value()
+    gvl_ruby().float_from_f64(n).as_value()
 }
 
 /// A fresh empty Array.
 #[inline]
 pub fn array_new() -> Value {
-    // SAFETY: as `float`.
-    unsafe { Ruby::get_unchecked() }.ary_new().as_value()
+    gvl_ruby().ary_new().as_value()
 }
 
 /// The frame's current receiver.
@@ -172,20 +179,17 @@ pub fn array_new() -> Value {
 /// receiver, which a method invocation always has.
 #[inline]
 pub fn current_receiver() -> Result<Value, Error> {
-    // SAFETY: as `float`.
-    unsafe { Ruby::get_unchecked() }.current_receiver::<Value>()
+    gvl_ruby().current_receiver::<Value>()
 }
 
 /// A `TypeError` with `msg`.
 pub fn type_error(msg: impl Into<std::borrow::Cow<'static, str>>) -> Error {
-    // SAFETY: as `float`.
-    Error::new(unsafe { Ruby::get_unchecked() }.exception_type_error(), msg)
+    Error::new(gvl_ruby().exception_type_error(), msg)
 }
 
 /// An `ArgumentError` with `msg`.
 pub fn arg_error(msg: impl Into<std::borrow::Cow<'static, str>>) -> Error {
-    // SAFETY: as `float`.
-    Error::new(unsafe { Ruby::get_unchecked() }.exception_arg_error(), msg)
+    Error::new(gvl_ruby().exception_arg_error(), msg)
 }
 
 /// VALUE identity, for the several sites that compare two references.
@@ -217,8 +221,7 @@ pub unsafe fn funcallv(recv: VALUE, method: ID, args: &[VALUE]) -> VALUE {
 /// else (which a caller treats as neither).
 #[inline]
 pub fn bool_value(v: VALUE) -> Option<bool> {
-    // SAFETY: as `nil`.
-    let ruby = unsafe { Ruby::get_unchecked() };
+    let ruby = gvl_ruby();
     if v == ruby.qtrue().as_raw() {
         Some(true)
     } else if v == ruby.qfalse().as_raw() {

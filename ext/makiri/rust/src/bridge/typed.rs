@@ -277,10 +277,7 @@ fn typed_data(v: Value, ty: &'static DataType) -> Result<*mut c_void, Error> {
         match protect(|| rb_sys::rb_check_typeddata(v, ty) as VALUE) {
             Err(e) => Err(e),
             /* rb_typeddata_is_kind_of said no, so the check should have raised. */
-            Ok(_) => Err(Error::new(
-                magnus::Ruby::get_unchecked().exception_type_error(),
-                "wrong argument type",
-            )),
+            Ok(_) => Err(crate::bridge::ruby::type_error("wrong argument type")),
         }
     }
 }

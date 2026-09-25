@@ -85,6 +85,61 @@ pub struct Names {
 }
 
 impl Names {
+    /// Bind `prefix` to `uri`, replacing an earlier binding; both are copied.
+    /// All or nothing: a failure leaves no trace, not even an unreachable
+    /// entry the per-context cap would still count.
+    ///
+    /// The writer beside the reader ([`lookup_ns`](Self::lookup_ns)), so the
+    /// invariant both rely on - an `ns_index` value is an index into `ns` - is
+    /// kept in one place.
+    fn bind_ns(&mut self, prefix: &[u8], uri: &[u8]) -> Result<(), ContextError> {
+        if let Some(&i) = self.ns_index.get(prefix) {
+            /* Copy first, so an OOM leaves the old binding in place. */
+            self.ns[i].uri = copy(uri)?;
+            return Ok(());
+        }
+        if self.ns.len() >= MAX_NAMESPACES
+            || self.ns.falloc_reserve(1).is_err()
+            || self.ns_index.falloc_reserve(1).is_err()
+        {
+            return Err(ContextError::Failed);
+        }
+        let key = crate::falloc::try_to_boxed_slice(prefix).ok_or(ContextError::Failed)?;
+        let entry = NsEntry { uri: copy(uri)? };
+        /* Both are reserved above, so neither write below can fail. The index
+         * still goes first: if one ever could, a failed insert must not leave
+         * a pushed entry the lookup cannot reach but the cap counts. */
+        let at = self.ns.len();
+        self.ns_index
+            .falloc_insert(key, at)
+            .map_err(|()| ContextError::Failed)?;
+        self.ns.push(entry);
+        Ok(())
+    }
+
+    /// Bind the unprefixed variable `$name` to `value`, replacing an earlier
+    /// binding; both are copied.
+    fn bind_var(&mut self, name: &[u8], value: &[u8]) -> Result<(), ContextError> {
+        if let Some(e) = self
+            .vars
+            .iter_mut()
+            .find(|e| e.prefix.is_none() && e.name.as_slice() == name)
+        {
+            e.value = copy(value)?;
+            return Ok(());
+        }
+        if self.vars.len() >= MAX_VARIABLES || self.vars.falloc_reserve(1).is_err() {
+            return Err(ContextError::Failed);
+        }
+        let entry = VarEntry {
+            prefix: None,
+            name: copy(name)?,
+            value: copy(value)?,
+        };
+        self.vars.push(entry);
+        Ok(())
+    }
+
     /// The URI registered for `prefix`.
     ///
     /// `xml` needs no registration and takes none: Namespaces in XML binds it
@@ -242,55 +297,13 @@ impl<'d, D: Dom<'d>> Context<'d, D> {
 
     /// Bind `prefix` to `uri`, replacing an earlier binding. Both are copied.
     pub fn register_ns(&self, prefix: &[u8], uri: &[u8]) -> Result<(), ContextError> {
-        let mut names = self.names_mut()?;
-        if let Some(&i) = names.ns_index.get(prefix) {
-            /* Copy first, so an OOM leaves the old binding in place. */
-            names.ns[i].uri = copy(uri)?;
-            return Ok(());
-        }
-        if names.ns.len() >= MAX_NAMESPACES
-            || names.ns.falloc_reserve(1).is_err()
-            || names.ns_index.falloc_reserve(1).is_err()
-        {
-            return Err(ContextError::Failed);
-        }
-        let key = crate::falloc::try_to_boxed_slice(prefix).ok_or(ContextError::Failed)?;
-        let entry = NsEntry { uri: copy(uri)? };
-        /* The index first: `falloc_insert` reserves again, which is one more
-         * injection site even with room already made, so it has to come before
-         * anything that cannot be taken back. The push into the reserved `ns`
-         * cannot fail. */
-        let at = names.ns.len();
-        names
-            .ns_index
-            .falloc_insert(key, at)
-            .map_err(|()| ContextError::Failed)?;
-        names.ns.push(entry);
-        Ok(())
+        self.names_mut()?.bind_ns(prefix, uri)
     }
 
     /// Bind the unprefixed variable `$name` to the string `value`, replacing an
     /// earlier binding. Both are copied.
     pub fn register_variable(&self, name: &[u8], value: &[u8]) -> Result<(), ContextError> {
-        let mut names = self.names_mut()?;
-        if let Some(e) = names
-            .vars
-            .iter_mut()
-            .find(|e| e.prefix.is_none() && e.name.as_slice() == name)
-        {
-            e.value = copy(value)?;
-            return Ok(());
-        }
-        if names.vars.len() >= MAX_VARIABLES || names.vars.falloc_reserve(1).is_err() {
-            return Err(ContextError::Failed);
-        }
-        let entry = VarEntry {
-            prefix: None,
-            name: copy(name)?,
-            value: copy(value)?,
-        };
-        names.vars.push(entry);
-        Ok(())
+        self.names_mut()?.bind_var(name, value)
     }
 
     /// Evaluate `ast` with the context node as the focus; `handler` answers the

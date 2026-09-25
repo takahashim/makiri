@@ -215,14 +215,20 @@ unsafe fn record(rec: &mut Recorder, token: *const Token) {
         return;
     }
 
-    /* Fail closed BEFORE the geometric growth can exceed the cap. */
-    let full = rec.items.len() == rec.items.capacity();
+    /* The cap is checked where the array would GROW, so it stops the next
+     * growth past MAX_TOKENS; tokens that fit the capacity already allocated
+     * are still recorded. (Checking on every push would record fewer.) */
+    let at_growth = rec.items.len() == rec.items.capacity();
+    if at_growth && rec.items.len() >= MAX_TOKENS {
+        rec.overflow = true; /* fail closed: stop recording */
+        return;
+    }
     let entry = Entry {
         tag_id: (*token).tag_id,
         offset: (*token).begin as usize - rec.first as usize,
     };
-    if (full && rec.items.len() >= MAX_TOKENS) || rec.items.falloc_push(entry).is_err() {
-        rec.overflow = true; /* fail closed: stop recording */
+    if rec.items.falloc_push(entry).is_err() {
+        rec.overflow = true;
     }
 }
 

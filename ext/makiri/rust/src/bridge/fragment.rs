@@ -10,7 +10,7 @@
 
 #![allow(unsafe_code)]
 
-use magnus::{prelude::*, Error, RString, Ruby, Value};
+use magnus::{prelude::*, Error, RString, Value};
 
 use crate::bridge::ruby::makiri_error;
 
@@ -76,8 +76,7 @@ pub fn resolve_fragment_context(
         // alive for this call.
         let cn = unsafe { html_node_unwrap(context)?.as_node() };
         if cn.node_type() != TYPE_ELEMENT {
-            return Err(Error::new(
-                Ruby::get_with(context).exception_arg_error(),
+            return Err(crate::bridge::ruby::arg_error(
                 "fragment context node must be an element",
             ));
         }
@@ -102,13 +101,10 @@ pub fn resolve_fragment_context(
     }
     let tag = tag_id_by_name(html_doc_unwrap(document)?, name);
     if tag == TAG_UNDEF {
-        return Err(Error::new(
-            Ruby::get_with(context).exception_arg_error(),
-            format!(
-                "unknown fragment context element: {}",
-                String::from_utf8_lossy(name)
-            ),
-        ));
+        return Err(crate::bridge::ruby::arg_error(format!(
+            "unknown fragment context element: {}",
+            String::from_utf8_lossy(name)
+        )));
     }
     Ok(FragmentTag { tag, ns: NS_HTML })
 }

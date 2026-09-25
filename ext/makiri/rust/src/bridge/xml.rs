@@ -576,8 +576,7 @@ impl Adoption {
 /// that takes it out of there once it is placed.
 pub fn incoming_node(target_doc: Value, arg: Value) -> Result<(NodeId, Option<Adoption>), Error> {
     if !is_kind_of(arg, &CLASS_NODE) || !is_kind_of(xml_node_document(arg)?, &CLASS_XML_DOCUMENT) {
-        return Err(Error::new(
-            Ruby::get_with(arg).exception_type_error(),
+        return Err(crate::bridge::ruby::type_error(
             "expected a Makiri::XML node (NodeSet / String arguments are a later phase)",
         ));
     }
@@ -639,8 +638,7 @@ pub fn import_copy(rb_self: Value, node_v: Value, deep: bool) -> Result<NodeId, 
             xml_mut_result(unsafe { cross_html_to_xml(&mut *xd, src, deep) })?
         }
         NodeRepr::Other => {
-            return Err(Error::new(
-                Ruby::get_with(node_v).exception_type_error(),
+            return Err(crate::bridge::ruby::type_error(
                 "import_node expects a Makiri node",
             ))
         }
