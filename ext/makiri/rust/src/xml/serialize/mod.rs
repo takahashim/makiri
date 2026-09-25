@@ -122,7 +122,10 @@ fn unserializable_name(doc: &XmlDoc, root: NodeId) -> Option<Failure> {
     while let Some(id) = cur {
         match doc.type_(id) {
             Some(NodeType::Element)
-                if doc.node(id).flags & crate::xml::FLAG_DOM_LOOSE_NAME != 0 =>
+                if doc
+                    .node(id)
+                    .flags
+                    .contains(crate::xml::NodeFlags::DOM_LOOSE_NAME) =>
             {
                 return Some(Failure::DomLooseName)
             }

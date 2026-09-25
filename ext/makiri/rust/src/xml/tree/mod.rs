@@ -16,7 +16,9 @@ mod scope;
 use crate::falloc::Reserve;
 use crate::xml::chars::{is_reserved_pi_target, normalize_newlines, ExpandMode};
 use crate::xml::qname::{split_scanned, xmlns_prefix, Split};
-use crate::xml::{Document, Limits, NodeId, NodeType, Span, Status, MAX_ATTRS, MAX_DEPTH};
+use crate::xml::{
+    Document, Limits, NodeFlags, NodeId, NodeType, Span, Status, MAX_ATTRS, MAX_DEPTH,
+};
 use cursor::{is_space, Cursor, InSlice, R};
 use dtd::{scan_external_id, Declared, ExternalId, Subset};
 use scope::{Frame, Scope};
@@ -223,7 +225,7 @@ impl<'a> Parser<'a> {
          * parsed element in no namespace is resolved too - "no namespace" is
          * a decision, not an absence, and moving it under a default
          * namespace must not silently put it in one. */
-        self.doc.node_mut(el).flags |= crate::xml::FLAG_NS_RESOLVED;
+        self.doc.node_mut(el).flags.insert(NodeFlags::NS_RESOLVED);
         Ok(())
     }
 

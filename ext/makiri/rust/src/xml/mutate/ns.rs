@@ -6,7 +6,7 @@
 //! refused, so a subtree built bottom-up and then attached gives the same tree
 //! as one built top-down.
 //!
-//! A decided URI is the node's IDENTITY from then on (`FLAG_NS_RESOLVED`): moving
+//! A decided URI is the node's IDENTITY from then on (`NodeFlags::NS_RESOLVED`): moving
 //! the node does not change it, and the serializer emits whatever declarations
 //! the output needs to reproduce it. So resolution happens exactly once per
 //! element, and [`resolve_subtree`] is all-or-nothing - one pass that only
@@ -16,10 +16,7 @@
 
 use crate::falloc::VecPush;
 use crate::xml::qname::{xmlns_prefix, Split};
-use crate::xml::{
-    Document, MutStatus, NodeId, NodeType, Span, FLAG_DOM_LOOSE_NAME, FLAG_NS_EXPLICIT,
-    FLAG_NS_PENDING, FLAG_NS_RESOLVED,
-};
+use crate::xml::{Document, MutStatus, NodeFlags, NodeId, NodeType, Span};
 
 /// A resolved namespace: a byte-store span (empty = no namespace).
 pub(super) type Ns = Span;
@@ -43,12 +40,8 @@ impl Resolved {
     pub(super) fn write_attr(self, doc: &mut Document, attr: NodeId) {
         let n = doc.node_mut(attr);
         n.ns_uri = self.ns;
-        n.flags &= !FLAG_NS_EXPLICIT;
-        if self.pending {
-            n.flags |= FLAG_NS_PENDING;
-        } else {
-            n.flags &= !FLAG_NS_PENDING;
-        }
+        n.flags.remove(NodeFlags::NS_EXPLICIT);
+        n.flags.set(NodeFlags::NS_PENDING, self.pending);
     }
 }
 
@@ -117,12 +110,13 @@ enum Part {
 /// pending ones are being looked at.
 fn rederives(doc: &Document, attr: NodeId, part: Part) -> bool {
     let flags = doc.node(attr).flags;
-    flags & FLAG_NS_EXPLICIT == 0 && (part == Part::Whole || flags & FLAG_NS_PENDING != 0)
+    !flags.contains(NodeFlags::NS_EXPLICIT)
+        && (part == Part::Whole || flags.contains(NodeFlags::NS_PENDING))
 }
 
 /// Whether `e`'s own name is resolved for this `part`.
 fn resolves_name(doc: &Document, e: NodeId, part: Part) -> bool {
-    part == Part::Whole && doc.node(e).flags & FLAG_DOM_LOOSE_NAME == 0
+    part == Part::Whole && !doc.node(e).flags.contains(NodeFlags::DOM_LOOSE_NAME)
 }
 
 /// The [`Pass::Check`] half for element `e` - see [`Part`]: that every prefix
@@ -208,7 +202,7 @@ fn commit_node_ns(
      * deferred (an unbound prefix is not an error there), so the node must stay
      * open to being resolved again when the fragment joins the document. */
     if connected {
-        doc.node_mut(e).flags |= FLAG_NS_RESOLVED;
+        doc.node_mut(e).flags.insert(NodeFlags::NS_RESOLVED);
     }
     Ok(())
 }
@@ -216,7 +210,7 @@ fn commit_node_ns(
 /// Whether any attribute of `e` still has a pending namespace.
 fn has_pending_attr(doc: &Document, e: NodeId) -> bool {
     for attr in doc.attributes(e) {
-        if doc.node(attr).flags & FLAG_NS_PENDING != 0 {
+        if doc.node(attr).flags.contains(NodeFlags::NS_PENDING) {
             return true;
         }
     }
@@ -226,7 +220,7 @@ fn has_pending_attr(doc: &Document, e: NodeId) -> bool {
 /// True once `e`'s namespace has been decided - by the parser, or by resolving
 /// it against the context it was first inserted into.
 fn ns_is_decided(doc: &Document, e: NodeId) -> bool {
-    doc.node(e).flags & FLAG_NS_RESOLVED != 0
+    doc.node(e).flags.contains(NodeFlags::NS_RESOLVED)
 }
 
 /// Re-resolve every element in `root`'s subtree, all-or-nothing: one pass that
@@ -291,8 +285,8 @@ pub fn ignored_default_decl(doc: &Document, el: NodeId) -> Option<NodeId> {
     let node = doc.node(el);
     if node.prefix.len != 0
         || node.ns_uri.len != 0
-        || node.flags & FLAG_DOM_LOOSE_NAME != 0
-        || node.flags & FLAG_NS_RESOLVED == 0
+        || node.flags.contains(NodeFlags::DOM_LOOSE_NAME)
+        || !node.flags.contains(NodeFlags::NS_RESOLVED)
     {
         return None;
     }

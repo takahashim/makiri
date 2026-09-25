@@ -13,7 +13,7 @@
 use super::{arena, copy_span};
 use crate::falloc::Reserve;
 use crate::xml::qname::Split;
-use crate::xml::{Document, MutStatus, NodeId, NodeType, Span};
+use crate::xml::{Document, MutStatus, NodeFlags, NodeId, NodeType, Span};
 
 /// A copied `value` span. XML distinguishes "never set" from "set to empty" - a
 /// doctype's `PUBLIC ""` is present - so a copy has to carry the difference.
@@ -57,7 +57,7 @@ struct CopiedNode {
     /// `Document::doctype_ids`); Absent for every other kind.
     public: CopiedValue,
     ns_uri: Option<Vec<u8>>,
-    flags: u32,
+    flags: NodeFlags,
     attrs: Vec<CopiedNode>,
 }
 

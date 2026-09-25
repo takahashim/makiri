@@ -5,7 +5,7 @@
 //! Its own module because it is not XML naming. `Document#create_loose_dom_element`
 //! exists so a caller can build the element a browser would - `":good:times:"`,
 //! `"x<"` - and the XML serializer refuses such a name later
-//! (`FLAG_DOM_LOOSE_NAME`, `serialize::Failure::DomLooseName`). Keeping it out
+//! (`NodeFlags::DOM_LOOSE_NAME`, `serialize::Failure::DomLooseName`). Keeping it out
 //! of [`crate::xml::qname`] means an XML rule can never be relaxed by reading
 //! this file's rules as the same thing.
 

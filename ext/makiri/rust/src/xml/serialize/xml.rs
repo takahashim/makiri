@@ -2,7 +2,7 @@
 //!
 //! # The bindings are a stack, not a chain
 //!
-//! An element's namespace URI is its IDENTITY (`FLAG_NS_RESOLVED`), not
+//! An element's namespace URI is its IDENTITY (`NodeFlags::NS_RESOLVED`), not
 //! something read off the declarations around it, so the writer must emit
 //! whatever declarations the output needs to reproduce each URI - inventing a
 //! prefix when the natural one is taken. Deciding that needs the bindings in
@@ -22,9 +22,7 @@
 use super::out::{put, put_pi, W, XML};
 use super::Failure;
 use crate::cbuf::Buf;
-use crate::xml::model::{
-    Document as XmlDoc, NodeId, NodeType, FLAG_DOM_LOOSE_NAME, FLAG_NS_RESOLVED, MAX_DEPTH,
-};
+use crate::xml::model::{Document as XmlDoc, NodeFlags, NodeId, NodeType, MAX_DEPTH};
 use crate::xml::qname::xmlns_prefix;
 
 use super::bindings::{Bindings, Prefix, PREFIX_CAP};
@@ -120,10 +118,10 @@ fn plan_element<'d>(
     let uri = doc.span(doc.node(el).ns_uri);
     let mut plan = Plan {
         prefix: Prefix::Own(own_prefix),
-        declare: doc.node(el).flags & FLAG_DOM_LOOSE_NAME == 0
+        declare: !doc.node(el).flags.contains(NodeFlags::DOM_LOOSE_NAME)
             && !binds.bound_to(own_prefix, uri)?,
     };
-    let resolved = doc.node(el).flags & FLAG_NS_RESOLVED != 0;
+    let resolved = doc.node(el).flags.contains(NodeFlags::NS_RESOLVED);
     if !resolved && own_decl(doc, el, own_prefix).is_some() {
         /* Not resolved yet (a detached copy or build): its URI reads empty only
          * because nothing has decided it, and its own declaration is what will -
@@ -160,7 +158,7 @@ fn plan_attr<'d>(
     }
     let uri = doc.span(doc.node(a).ns_uri);
     if own_prefix.is_empty() {
-        if uri.is_empty() || doc.node(a).flags & FLAG_DOM_LOOSE_NAME != 0 {
+        if uri.is_empty() || doc.node(a).flags.contains(NodeFlags::DOM_LOOSE_NAME) {
             return Ok(plan);
         }
         /* An unprefixed attribute is in NO namespace (Namespaces in XML §6.2),

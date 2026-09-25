@@ -11,7 +11,7 @@ use super::edit::value_seq_ok;
 use super::{arena, assign_qname};
 use crate::xml::chars::validate_chars;
 use crate::xml::qname::{split_checked, Split};
-use crate::xml::{Document, MutStatus, NodeId, NodeType, FLAG_DOM_LOOSE_NAME};
+use crate::xml::{Document, MutStatus, NodeFlags, NodeId, NodeType};
 
 pub fn new_element(doc: &mut Document, name: &[u8]) -> Result<NodeId, MutStatus> {
     let sp = match split_checked(name) {
@@ -51,7 +51,7 @@ pub fn new_loose_dom_element(
     if !ns.is_empty() {
         arena(doc.set_ns_bytes(el, ns))?;
     }
-    doc.node_mut(el).flags |= FLAG_DOM_LOOSE_NAME;
+    doc.node_mut(el).flags.insert(NodeFlags::DOM_LOOSE_NAME);
     Ok(el)
 }
 

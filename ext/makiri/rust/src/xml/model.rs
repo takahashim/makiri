@@ -104,35 +104,72 @@ impl TryFrom<u32> for NodeType {
     }
 }
 
-pub const FLAG_DOM_LOOSE_NAME: u32 = 0x0000_0001;
+/// A node's state bits: [`NodeFlags::DOM_LOOSE_NAME`] and the three namespace
+/// states. A set of named bits rather than a bare integer, so a site says which
+/// state it tests, sets or clears instead of spelling the mask.
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
+pub struct NodeFlags(u8);
 
-/// Set on an ELEMENT once its namespace URI has been decided - by the parser,
-/// or by resolving it against the context it was first inserted into. From
-/// then on the URI is the node's IDENTITY, not a value derived from the
-/// declarations around it: moving the node does not change it, and the
-/// serializer emits whatever declarations the output needs to reproduce it
-/// (the WHATWG DOM model, matching what browsers do). An element still
-/// carrying no flag - freshly built by a factory - has no namespace yet and
-/// takes one from its insertion context, so building a subtree bottom-up and
-/// attaching it gives the same tree as building it top-down.
-pub const FLAG_NS_RESOLVED: u32 = 0x0000_0002;
+impl NodeFlags {
+    /// No state.
+    pub const EMPTY: NodeFlags = NodeFlags(0);
 
-/// Set on an ATTRIBUTE whose prefix was unbound when it was named - on a
-/// detached element, where that defers rather than fails. Its namespace reads
-/// empty only because nothing has decided it, which is not the same as "no
-/// namespace": the insertion that connects its element resolves it (and is
-/// refused if the prefix is still unbound), even under an element whose own
-/// namespace was decided long before. Without the flag the two were one state,
-/// and a removed-then-edited element came back with `ns1:a` bound to "".
-pub const FLAG_NS_PENDING: u32 = 0x0000_0004;
+    /// Set on an element built by `create_loose_dom_element`: its name is a
+    /// WHATWG DOM name that need not be an XML QName, so the serializer refuses
+    /// to write it (see [`crate::xml::dom_name`]).
+    pub const DOM_LOOSE_NAME: NodeFlags = NodeFlags(0x01);
 
-/// Set on an ATTRIBUTE whose namespace was GIVEN (`set_attribute_ns`) rather
-/// than derived from its prefix. Resolution leaves it alone: re-deriving it
-/// when a detached element was inserted put `set_attribute_ns("urn:a", "x")`
-/// in no namespace (an unprefixed name resolves to none), and a `q:x` into
-/// whatever `q` meant at the insertion point. Naming the attribute again by
-/// its qualified name alone clears it.
-pub const FLAG_NS_EXPLICIT: u32 = 0x0000_0008;
+    /// Set on an ELEMENT once its namespace URI has been decided - by the parser,
+    /// or by resolving it against the context it was first inserted into. From
+    /// then on the URI is the node's IDENTITY, not a value derived from the
+    /// declarations around it: moving the node does not change it, and the
+    /// serializer emits whatever declarations the output needs to reproduce it
+    /// (the WHATWG DOM model, matching what browsers do). An element still
+    /// carrying no flag - freshly built by a factory - has no namespace yet and
+    /// takes one from its insertion context, so building a subtree bottom-up and
+    /// attaching it gives the same tree as building it top-down.
+    pub const NS_RESOLVED: NodeFlags = NodeFlags(0x02);
+
+    /// Set on an ATTRIBUTE whose prefix was unbound when it was named - on a
+    /// detached element, where that defers rather than fails. Its namespace reads
+    /// empty only because nothing has decided it, which is not the same as "no
+    /// namespace": the insertion that connects its element resolves it (and is
+    /// refused if the prefix is still unbound), even under an element whose own
+    /// namespace was decided long before. Without the flag the two were one state,
+    /// and a removed-then-edited element came back with `ns1:a` bound to "".
+    pub const NS_PENDING: NodeFlags = NodeFlags(0x04);
+
+    /// Set on an ATTRIBUTE whose namespace was GIVEN (`set_attribute_ns`) rather
+    /// than derived from its prefix. Resolution leaves it alone: re-deriving it
+    /// when a detached element was inserted put `set_attribute_ns("urn:a", "x")`
+    /// in no namespace (an unprefixed name resolves to none), and a `q:x` into
+    /// whatever `q` meant at the insertion point. Naming the attribute again by
+    /// its qualified name alone clears it.
+    pub const NS_EXPLICIT: NodeFlags = NodeFlags(0x08);
+
+    /// Whether every bit of `f` is set.
+    #[inline]
+    pub fn contains(self, f: NodeFlags) -> bool {
+        self.0 & f.0 == f.0
+    }
+    #[inline]
+    pub fn insert(&mut self, f: NodeFlags) {
+        self.0 |= f.0;
+    }
+    #[inline]
+    pub fn remove(&mut self, f: NodeFlags) {
+        self.0 &= !f.0;
+    }
+    /// [`NodeFlags::insert`] when `on`, else [`NodeFlags::remove`].
+    #[inline]
+    pub fn set(&mut self, f: NodeFlags, on: bool) {
+        if on {
+            self.insert(f);
+        } else {
+            self.remove(f);
+        }
+    }
+}
 
 /* ---- mutation status ---- */
 
@@ -323,7 +360,7 @@ pub struct Node {
     pub value: Span,
     pub line: u32,
     pub col: u32,
-    pub flags: u32,
+    pub flags: NodeFlags,
 }
 
 /* A node is the arena's unit of cost (`NODE_COST`), so its size is pinned:
@@ -347,7 +384,7 @@ impl Node {
             value: Span::ABSENT,
             line: 0,
             col: 0,
-            flags: 0,
+            flags: NodeFlags::EMPTY,
         }
     }
 }

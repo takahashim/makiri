@@ -12,10 +12,7 @@ use super::out::{put, put_pi, C14N, W};
 use super::Failure;
 use crate::cbuf::Buf;
 use crate::falloc::Reserve;
-use crate::xml::model::{
-    Document as XmlDoc, NodeId, NodeType, FLAG_NS_EXPLICIT, FLAG_NS_PENDING, FLAG_NS_RESOLVED,
-    MAX_DEPTH,
-};
+use crate::xml::model::{Document as XmlDoc, NodeFlags, NodeId, NodeType, MAX_DEPTH};
 use crate::xml::qname::xmlns_prefix;
 
 fn xmlns_decl(doc: &XmlDoc, a: NodeId) -> Option<(&[u8], &[u8])> {
@@ -159,7 +156,7 @@ impl<'d> Writer<'d, '_> {
     /// FROM those declarations, so only the binding is checked.
     fn ensure_names_agree(&mut self, n: NodeId) -> W {
         let doc = self.doc;
-        let decided = doc.node(n).flags & FLAG_NS_RESOLVED != 0;
+        let decided = doc.node(n).flags.contains(NodeFlags::NS_RESOLVED);
         let el_prefix = doc.span(doc.node(n).prefix);
         let Some(el_uri) = self.binds.resolve(el_prefix)? else {
             return Err(Failure::UnboundPrefix);
@@ -175,8 +172,9 @@ impl<'d> Writer<'d, '_> {
              * `urn:a` was written under whatever the prefix meant here, or
              * dropped from an unprefixed name. */
             let flags = doc.node(at).flags;
-            let decided =
-                decided || (flags & FLAG_NS_EXPLICIT != 0 && flags & FLAG_NS_PENDING == 0);
+            let decided = decided
+                || (flags.contains(NodeFlags::NS_EXPLICIT)
+                    && !flags.contains(NodeFlags::NS_PENDING));
             if xmlns_decl(doc, at).is_none() && !prefix.is_empty() {
                 let Some(expected) = self.binds.resolve(prefix)? else {
                     return Err(Failure::UnboundPrefix);

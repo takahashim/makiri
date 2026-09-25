@@ -12,7 +12,7 @@ use super::ns::{resolve_ns, Ns, Resolved, NO_NS};
 use super::{arena, assign_qname};
 use crate::xml::chars::validate_chars;
 use crate::xml::qname::{ns_decl_check, split_checked, xmlns_prefix, Split};
-use crate::xml::{Document, MutStatus, NodeId, NodeType, Span, FLAG_NS_EXPLICIT, FLAG_NS_PENDING};
+use crate::xml::{Document, MutStatus, NodeFlags, NodeId, NodeType, Span};
 
 /// Build a fresh ATTRIBUTE (qname + value + namespace) and link it onto `el`
 /// after `tail`, the last entry the caller's own scan reached.
@@ -169,7 +169,7 @@ fn remove_attr_by(doc: &mut Document, el: NodeId, key: AttrKey<'_>) -> bool {
 fn attr_matches_ns(doc: &Document, a: NodeId, ns: &[u8], local: &[u8]) -> bool {
     /* A pending attribute's namespace is undecided, not empty: it has no key
      * to match (`set_attribute_ns("", "a")` used to overwrite a pending p:a). */
-    doc.node(a).flags & FLAG_NS_PENDING == 0
+    !doc.node(a).flags.contains(NodeFlags::NS_PENDING)
         && doc.node(a).ns_uri.len as usize == ns.len()
         && (ns.is_empty() || doc.ns(a) == ns)
         && doc.local(a) == local
@@ -208,7 +208,7 @@ pub fn set_attribute_ns(
         arena(doc.store(ns))?
     };
     let attr = build_attr(doc, el, name, &sp, val, Resolved::decided(nsv), tail)?;
-    doc.node_mut(attr).flags |= FLAG_NS_EXPLICIT;
+    doc.node_mut(attr).flags.insert(NodeFlags::NS_EXPLICIT);
     Ok(attr)
 }
 
