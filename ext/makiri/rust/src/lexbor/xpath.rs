@@ -90,6 +90,10 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
         unsafe { Token::html(RawNode::from(n).as_ptr()) }
     }
     #[inline]
+    #[allow(
+        clippy::expect_used,
+        reason = "an HTML token is minted only by `Token::html` from a live node"
+    )]
     fn resolve_token(self, t: Token) -> HtmlNode<'d> {
         /* The kind check is the safety gate: only `Token::html` (unsafe) makes
          * an HTML token, so a token that reaches here names a live node. */

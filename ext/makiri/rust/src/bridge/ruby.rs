@@ -49,8 +49,9 @@ pub fn string_of(v: Value) -> Result<RString, Error> {
     }
     // SAFETY: `v` is a live value; `protect` turns a raising `to_s` into `Err`.
     let s = protect(|| unsafe { rb_sys::rb_String(v.as_raw()) })?;
-    // SAFETY: `rb_String` returned a live String.
-    Ok(RString::from_value(unsafe { Value::from_raw(s) }).expect("rb_String returns a String"))
+    // SAFETY: `rb_String` returned a live value.
+    RString::from_value(unsafe { Value::from_raw(s) })
+        .ok_or_else(|| type_error("String() returned a non-String"))
 }
 
 /// `rb_check_frozen` returning its FrozenError rather than raising it.
@@ -175,10 +176,16 @@ pub fn current_receiver() -> Result<Value, Error> {
     unsafe { Ruby::get_unchecked() }.current_receiver::<Value>()
 }
 
-/// The receiver of the method being run - for a wrapped-type method, whose
-/// argument is the Rust value rather than the object, to return `self`.
-pub fn method_receiver() -> Value {
-    current_receiver().expect("a method invocation has a receiver")
+/// A `TypeError` with `msg`.
+pub fn type_error(msg: impl Into<std::borrow::Cow<'static, str>>) -> Error {
+    // SAFETY: as `float`.
+    Error::new(unsafe { Ruby::get_unchecked() }.exception_type_error(), msg)
+}
+
+/// An `ArgumentError` with `msg`.
+pub fn arg_error(msg: impl Into<std::borrow::Cow<'static, str>>) -> Error {
+    // SAFETY: as `float`.
+    Error::new(unsafe { Ruby::get_unchecked() }.exception_arg_error(), msg)
 }
 
 /// VALUE identity, for the several sites that compare two references.

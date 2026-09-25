@@ -164,8 +164,7 @@ fn parse_stylesheet_inner(ruby: &Ruby, text: Value) -> Result<RArray, Error> {
 }
 
 /// `Makiri::Lexbor::CSS.parse_stylesheet`. From `Init_makiri`.
-pub fn init_lexbor_css() -> Result<(), Error> {
-    let ruby = Ruby::get().expect("init_lexbor_css runs on the Ruby thread");
+pub fn init_lexbor_css(ruby: &Ruby) -> Result<(), Error> {
     let lexbor = MOD_LEXBOR.module();
     let css = ruby.module_new();
     lexbor.const_set("CSS", css)?;

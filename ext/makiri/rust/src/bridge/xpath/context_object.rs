@@ -287,12 +287,14 @@ fn cached_ast(
     let Some(owned_key) = try_to_boxed_slice(key) else {
         return Ok((&*ast as *const Ast, Some(ast)));
     };
+    /* The Box's heap address is what the cache keeps; moving the Box into the
+     * map does not move the AST, so the pointer is taken before the insert. */
+    let ptr = &*ast as *const Ast;
     if cache.0.falloc_insert(owned_key, ast).is_err() {
         return Err(XPathError::with(
             XP_ERR_OOM,
             format_args!("out of memory caching XPath expression"),
         ));
     }
-    let ast = cache.0.get(key).expect("inserted AST");
-    Ok((&**ast as *const Ast, None))
+    Ok((ptr, None))
 }

@@ -32,15 +32,15 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
 # few sites that want one carry an `#[allow]` with a reason. Test code is
 # exempt in `lib.rs`.
 #
-# `expect_used` is deliberately NOT here: 223 of its hits are the
-# `.expect("#name")` of method registration, which cannot fail after a
-# successful `Init_makiri`, and allowing each would say nothing. Nor are
-# `indexing_slicing` and `arithmetic_side_effects` (469 hits, mostly the
+# `expect_used` joined them once method registration stopped `.expect`ing each
+# definition (223 hits, now `?`): what remains is a handful of invariants, each
+# with an `#[allow(..., reason = ...)]`. Not here are `indexing_slicing` and `arithmetic_side_effects` (469 hits, mostly the
 # engine's own bounds-checked walks): gating those needs a different argument
 # than "a panic aborts", since release builds keep `overflow-checks` on
 # precisely so a wrapped size stops the process instead of answering wrong.
 [lints.clippy]
 unwrap_used = "warn"
+expect_used = "warn"
 panic = "warn"
 
 [features]

@@ -84,14 +84,26 @@ impl RbConst {
         unsafe { crate::bridge::ruby::value(self.raw()) }
     }
 
+    #[allow(
+        clippy::expect_used,
+        reason = "every RbConst is set by Init_makiri, before any caller runs"
+    )]
     pub fn class(&self) -> RClass {
         RClass::from_value(self.value()).expect("a Makiri class, after Init_makiri")
     }
 
+    #[allow(
+        clippy::expect_used,
+        reason = "every RbConst is set by Init_makiri, before any caller runs"
+    )]
     pub fn module(&self) -> RModule {
         RModule::from_value(self.value()).expect("a Makiri module, after Init_makiri")
     }
 
+    #[allow(
+        clippy::expect_used,
+        reason = "every RbConst is set by Init_makiri, before any caller runs"
+    )]
     pub fn exception(&self) -> ExceptionClass {
         ExceptionClass::from_value(self.value()).expect("a Makiri exception, after Init_makiri")
     }
@@ -249,12 +261,12 @@ fn xml_decode(ruby: &Ruby, str: Value) -> Result<Value, Error> {
 ///
 /// The two go together: a leaf carries the readers because it wraps a live
 /// node, and loses `.new` for the same reason.
-fn seal_leaves(methods: RModule, leaves: &[RClass]) {
+fn seal_leaves(methods: RModule, leaves: &[RClass]) -> Result<(), Error> {
     for &leaf in leaves {
-        leaf.include_module(methods)
-            .expect("including the reader module");
+        leaf.include_module(methods)?;
         leaf.undef_default_alloc_func();
     }
+    Ok(())
 }
 
 /// `name = "makiri"` is load-bearing: the attribute defaults to the CRATE name,
@@ -399,7 +411,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
                 CLASS_HTML_DOCUMENT_TYPE.class(),
                 CLASS_HTML_DOCUMENT_FRAGMENT.class(),
             ],
-        );
+        )?;
         seal_leaves(
             MOD_XML_NODE_METHODS.module(),
             &[
@@ -414,7 +426,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
                 CLASS_XML_DOCUMENT_TYPE.class(),
                 CLASS_XML_DOCUMENT_FRAGMENT.class(),
             ],
-        );
+        )?;
 
         /* The abstract bases are never constructed directly either: an instance
          * always wraps a live node, and `.new` would hand back one wrapping
@@ -447,7 +459,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         crate::glue::node_set::init_node_set()?;
         crate::glue::xpath_context::init_xpath_context()?;
         crate::glue::query::init_xpath()?;
-        crate::glue::stylesheet::init_lexbor_css()?;
+        crate::glue::stylesheet::init_lexbor_css(ruby)?;
     }
 
     makiri.define_singleton_method("__alloc_inject?", function!(alloc_inject_p, 0))?;

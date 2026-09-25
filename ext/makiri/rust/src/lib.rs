@@ -22,7 +22,7 @@
 // new `unwrap()` or `panic!` in the shipped crate; a site that genuinely wants
 // one carries an `#[allow]` saying why. Test code is exempt: there a panic IS
 // the failure report.
-#![cfg_attr(test, allow(clippy::unwrap_used, clippy::panic))]
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 /// Compile-time decimal parsing, for the settings that arrive as `option_env!`
 /// overrides: a const context cannot call `parse`.

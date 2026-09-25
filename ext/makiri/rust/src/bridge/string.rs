@@ -193,9 +193,10 @@ pub use crate::cutf8::TextVerdict;
 /// `s` must be a `T_STRING`. The returned pointer is valid only until Ruby runs.
 #[inline]
 unsafe fn borrow(s: VALUE) -> (VALUE, *const c_char, usize) {
-    let r = RString::from_value(Value::from_raw(s)).expect("a T_STRING");
-    let bytes = r.as_slice();
-    (s, bytes.as_ptr() as *const c_char, bytes.len())
+    /* The contract says `T_STRING`, so this reads it as one - what magnus's
+     * checked conversion did after a type test this function does not need. */
+    let api = rb_sys::stable_api::get_default();
+    (s, api.rstring_ptr(s), api.rstring_len(s) as usize)
 }
 
 /* ---- assembling Ruby Strings ---- */

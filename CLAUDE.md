@@ -95,7 +95,7 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   cannot be rescued in its own frame at all). Outside a registered method - the
   exempt ones, GC callbacks, init - a panic stays `fatal`.
 
-  `clippy::unwrap_used` and `clippy::panic` (in `Cargo.toml`) keep a new panic
+  `clippy::unwrap_used`, `clippy::expect_used` and `clippy::panic` (in `Cargo.toml`) keep a new panic
   from arriving by accident; a site that wants one carries an `#[allow]` with a
   reason. `spec/panic_spec.rb` drives `Makiri.__panic(kind)`: kind 4 panics
   below the GVL-release frame, the case that proves the latch since without it

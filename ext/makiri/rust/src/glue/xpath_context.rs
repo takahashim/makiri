@@ -12,7 +12,7 @@
 
 use magnus::{function, method, prelude::*, Error, RHash, Ruby, Value};
 
-use crate::bridge::ruby::{is_kind_of, method_receiver};
+use crate::bridge::ruby::is_kind_of;
 use crate::bridge::xpath::XPathCtx;
 use crate::glue::query::{register_bindings, Keywords};
 use crate::init::{CLASS_NODE, CLASS_XPATH_CONTEXT};
@@ -74,7 +74,7 @@ fn register_namespace(ctx: &XPathCtx, prefix: Value, uri: Value) -> Result<Value
         ctx.ensure_idle()?;
         let cap = ctx.limits().max_string_bytes;
         crate::glue::query::bind_pair(prefix, uri, cap, |p, u| ctx.bind_namespace(p, u))?;
-        Ok(method_receiver())
+        crate::bridge::ruby::current_receiver()
     })
 }
 
@@ -82,7 +82,7 @@ fn register_namespace(ctx: &XPathCtx, prefix: Value, uri: Value) -> Result<Value
 fn register_variable(ctx: &XPathCtx, name: Value, value: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         ctx.register_variable(name, value)?;
-        Ok(method_receiver())
+        crate::bridge::ruby::current_receiver()
     })
 }
 

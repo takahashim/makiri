@@ -209,8 +209,7 @@ fn xml_mut_error(st: MutStatus) -> Error {
     let msg: &str = match st {
         MutStatus::Oom => "out of memory mutating XML",
         MutStatus::BadName => {
-            let ruby = Ruby::get().expect("under the GVL");
-            return Error::new(ruby.exception_arg_error(), "not a well-formed XML name");
+            return crate::bridge::ruby::arg_error("not a well-formed XML name");
         }
         MutStatus::BadChars => "value contains a character or sequence not permitted in XML",
         MutStatus::UnboundNs => "namespace prefix is not bound in this scope",

@@ -621,6 +621,10 @@ impl<'doc> HtmlNode<'doc> {
     /// The document the node belongs to. A live node's owner is a live
     /// document, kept alive by the same thing that keeps the node.
     #[inline]
+    #[allow(
+        clippy::expect_used,
+        reason = "Lexbor gives every node its document at creation and never clears it"
+    )]
     pub fn owner_document(self) -> HtmlDoc<'doc> {
         // SAFETY: as `node_type`; the owner outlives its node.
         unsafe { HtmlDoc::from_raw((*self.as_raw()).owner_document) }

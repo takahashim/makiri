@@ -43,6 +43,10 @@ pub fn held(_ruby: &magnus::Ruby) -> Gvl {
 /// unwinding into one aborts the process. This is the whole parser, so it is
 /// the single largest piece of Rust that runs under a callback - see
 /// [`crate::caught`].
+#[allow(
+    clippy::expect_used,
+    reason = "Ruby runs the body exactly once, and a panic in it is re-raised before the result is read"
+)]
 pub fn without_gvl<F: FnOnce() -> R + Send, R>(f: F) -> R {
     struct Slot<F, R> {
         f: Option<F>,
@@ -53,7 +57,13 @@ pub fn without_gvl<F: FnOnce() -> R + Send, R>(f: F) -> R {
     unsafe extern "C" fn run<F: FnOnce() -> R, R>(p: *mut c_void) -> *mut c_void {
         // SAFETY: `p` is the `&mut Slot` passed below, live for this call.
         let slot = unsafe { &mut *(p as *mut Slot<F, R>) };
-        let f = slot.f.take().expect("the GVL-released body runs once");
+        /* Never a panic here: this frame is Ruby's C, outside the guard below,
+         * so one would abort the process. The body is always present (Ruby
+         * runs this once); if it somehow were not, `out` stays None and the
+         * caller reports that under the GVL. */
+        let Some(f) = slot.f.take() else {
+            return core::ptr::null_mut();
+        };
         /* Catch here rather than let the panic reach Ruby's C frame: `out`
          * simply stays None, and the caller re-raises once the GVL is back. */
         let out = &mut slot.out;

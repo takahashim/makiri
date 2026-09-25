@@ -444,6 +444,10 @@ pub fn html_doc_known(rb_doc: Value) -> RawDoc {
     html_doc_of(HTML_DOC_TYPE.get_known(&rb_doc))
 }
 
+#[allow(
+    clippy::expect_used,
+    reason = "an HTML Document holds HTML content from `install` on, and none is reachable before"
+)]
 fn html_doc_of(d: &DocData) -> RawDoc {
     /* The HTML type guarantees HTML content once installed, and nothing
      * reaches a Document before `install`: a broken invariant. */
@@ -462,6 +466,10 @@ fn html_doc_of(d: &DocData) -> RawDoc {
 /// The `&mut HtmlParsed` does not escape `f`, so the raw pointer stays in this
 /// layer and no alias can outlive the call. `f` must not run Ruby that could
 /// re-enter this document (the readers' closures copy, they do not call back).
+#[allow(
+    clippy::expect_used,
+    reason = "an HTML Document holds HTML content from `install` on, and none is reachable before"
+)]
 pub(in crate::bridge) fn with_html_parsed_known<R>(
     rb_doc: Value,
     f: impl FnOnce(&mut HtmlParsed) -> R,

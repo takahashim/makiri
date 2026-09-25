@@ -13,7 +13,7 @@ use core::ffi::c_long;
 use magnus::{function, method, prelude::*, Error, RArray, Ruby, TryConvert, Value};
 
 use crate::bridge::node_set::{node_set_of_nodes, NodeSet};
-use crate::bridge::ruby::{is_kind_of, method_receiver, range_beg_len};
+use crate::bridge::ruby::{is_kind_of, range_beg_len};
 use crate::bridge::wrapper::keepalive_document;
 use crate::init::{CLASS_DOCUMENT, CLASS_NODE, CLASS_NODE_SET};
 
@@ -74,7 +74,7 @@ fn each(ruby: &Ruby, s: &NodeSet) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         /* magnus hands methods a `&NodeSet`, not the object, and `each` needs the
          * object both to return and to enumeratorize. */
-        let this = method_receiver();
+        let this = crate::bridge::ruby::current_receiver()?;
         if !ruby.block_given() {
             return Ok(this.enumeratorize("each", ()).as_value());
         }

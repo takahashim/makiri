@@ -113,10 +113,7 @@ pub fn wrap_html_node(node: RawNode, document: Value) -> Value {
 pub fn html_node_unwrap(rb_node: Value) -> Result<RawNode, Error> {
     if rb_node.is_kind_of(CLASS_DOCUMENT.class()) {
         if rb_node.is_kind_of(CLASS_XML_DOCUMENT.class()) {
-            return Err(Error::new(
-                magnus::Ruby::get()
-                    .expect("under the GVL")
-                    .exception_type_error(),
+            return Err(crate::bridge::ruby::type_error(
                 "expected an HTML node, got a Makiri::XML::Document",
             ));
         }
@@ -127,12 +124,7 @@ pub fn html_node_unwrap(rb_node: Value) -> Result<RawNode, Error> {
 }
 
 fn uninitialized() -> Error {
-    Error::new(
-        magnus::Ruby::get()
-            .expect("under the GVL")
-            .exception_type_error(),
-        "uninitialized HTML node",
-    )
+    crate::bridge::ruby::type_error("uninitialized HTML node")
 }
 
 /// A method receiver already checked to be an HTML node or HTML Document.
