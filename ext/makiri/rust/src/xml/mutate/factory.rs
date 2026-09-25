@@ -7,8 +7,8 @@
 
 #![forbid(unsafe_code)]
 
+use super::assign_qname;
 use super::edit::value_seq_ok;
-use super::{arena, assign_qname};
 use crate::xml::chars::validate_chars;
 use crate::xml::qname::{split_checked, Split};
 use crate::xml::{Document, MutStatus, NodeFlags, NodeId, NodeType};
@@ -21,7 +21,7 @@ pub fn new_element(doc: &mut Document, name: &[u8]) -> Result<NodeId, MutStatus>
     if sp.prefix_len == 5 && &name[..5] == b"xmlns" {
         return Err(MutStatus::BadName); /* xmlns: is not an element prefix */
     }
-    let el = arena(doc.new_node(NodeType::Element))?;
+    let el = doc.new_node(NodeType::Element)?;
     assign_qname(doc, el, name, &sp)?;
     Ok(el) /* ns_uri stays unresolved until insertion */
 }
@@ -46,10 +46,10 @@ pub fn new_loose_dom_element(
     if local_off as usize + local_len as usize > name.len() || prefix_len as usize > name.len() {
         return Err(MutStatus::BadName);
     }
-    let el = arena(doc.new_node(NodeType::Element))?;
-    arena(doc.assign_qname(el, name, prefix_len, local_off, local_len))?;
+    let el = doc.new_node(NodeType::Element)?;
+    doc.assign_qname(el, name, prefix_len, local_off, local_len)?;
     if !ns.is_empty() {
-        arena(doc.set_ns_bytes(el, ns))?;
+        doc.set_ns_bytes(el, ns)?;
     }
     doc.node_mut(el).flags.insert(NodeFlags::DOM_LOOSE_NAME);
     Ok(el)
@@ -65,8 +65,8 @@ pub fn new_chardata(doc: &mut Document, ty: NodeType, text: &[u8]) -> Result<Nod
     if !value_seq_ok(ty, text) {
         return Err(MutStatus::BadChars);
     }
-    let n = arena(doc.new_node(ty))?;
-    arena(doc.set_value_bytes(n, text))?;
+    let n = doc.new_node(ty)?;
+    doc.set_value_bytes(n, text)?;
     Ok(n)
 }
 
@@ -81,9 +81,9 @@ pub fn new_pi(doc: &mut Document, target: &[u8], data: &[u8]) -> Result<NodeId, 
     if !value_seq_ok(NodeType::Pi, data) {
         return Err(MutStatus::BadChars);
     }
-    let pi = arena(doc.new_node(NodeType::Pi))?;
-    let t = arena(doc.store(target))?;
-    let d = arena(doc.store(data))?;
+    let pi = doc.new_node(NodeType::Pi)?;
+    let t = doc.store(target)?;
+    let d = doc.store(data)?;
     {
         let n = doc.node_mut(pi);
         n.local = t;
@@ -112,7 +112,8 @@ pub fn new_document_type(
     if sys_id.is_some_and(|id| !validate_chars(id) || (id.contains(&b'"') && id.contains(&b'\''))) {
         return Err(MutStatus::BadChars);
     }
-    arena(doc.new_doctype(name, pub_id, sys_id))
+    doc.new_doctype(name, pub_id, sys_id)
+        .map_err(MutStatus::from)
 }
 
 /// A detached, empty DOCUMENT_FRAGMENT.
@@ -122,5 +123,5 @@ pub fn new_document_type(
 /// the arena's `new_node` directly, which is the layer the arena's `pub(super)`
 /// now closes off.
 pub fn new_fragment(doc: &mut Document) -> Result<NodeId, MutStatus> {
-    arena(doc.new_node(NodeType::Fragment))
+    doc.new_node(NodeType::Fragment).map_err(MutStatus::from)
 }

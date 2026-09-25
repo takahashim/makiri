@@ -15,7 +15,7 @@
 #![forbid(unsafe_code)]
 
 use crate::falloc::{Reserve, VecPush};
-use crate::xml::{Span, Status, MAX_NS};
+use crate::xml::{BudgetError, Span, MAX_NS};
 
 /// One binding: prefix ("" = the default namespace) -> byte-store span.
 struct Binding {
@@ -32,22 +32,6 @@ pub(super) struct Frame(usize);
 #[derive(Default)]
 pub(super) struct Scope {
     binds: Vec<Binding>,
-}
-
-/// Why a binding could not be added: the scope's own cap, or memory.
-pub(super) enum ScopeFull {
-    Limit,
-    Oom,
-}
-
-impl From<ScopeFull> for Status {
-    #[inline]
-    fn from(e: ScopeFull) -> Self {
-        match e {
-            ScopeFull::Limit => Status::Limit,
-            ScopeFull::Oom => Status::Oom,
-        }
-    }
 }
 
 impl Scope {
@@ -75,18 +59,23 @@ impl Scope {
     }
 
     /// Bind `pfx` to `uri` for the current element and everything under it.
-    pub(super) fn bind(&mut self, pfx: &[u8], uri: Span) -> Result<(), ScopeFull> {
+    ///
+    /// `Err` when the scope is at its cap (`MAX_NS`) or an allocation failed;
+    /// both are [`BudgetError`], which converts to the parser's [`Status`].
+    ///
+    /// [`Status`]: crate::xml::Status
+    pub(super) fn bind(&mut self, pfx: &[u8], uri: Span) -> Result<(), BudgetError> {
         if self.binds.len() + 1 > MAX_NS {
-            return Err(ScopeFull::Limit);
+            return Err(BudgetError::Limit);
         }
         let mut owned: Vec<u8> = Vec::new();
         owned
             .falloc_reserve_exact(pfx.len())
-            .map_err(|()| ScopeFull::Oom)?;
+            .map_err(|()| BudgetError::Oom)?;
         owned.extend_from_slice(pfx);
         self.binds
             .falloc_push(Binding { pfx: owned, uri })
-            .map_err(|()| ScopeFull::Oom)
+            .map_err(|()| BudgetError::Oom)
     }
 
     /// The innermost binding for `pfx`, or None when it is unbound.

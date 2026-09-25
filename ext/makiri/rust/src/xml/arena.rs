@@ -23,7 +23,7 @@
 use crate::falloc::Reserve;
 use crate::xml::chars::{expand_into, ExpandErr, ExpandMode};
 use crate::xml::qname::Split;
-use crate::xml::{ArenaError, Document, Link, Node, NodeId, NodeType, Span, Status};
+use crate::xml::{BudgetError, Document, Link, Node, NodeId, NodeType, Span, Status};
 use core::sync::atomic::{AtomicU32, Ordering};
 
 /// Hands each document a unique stamp (never 0). Node ids carry it so a handle
@@ -43,13 +43,13 @@ impl Document {
     /// A fresh document under the byte budget `max_bytes` (None: the default,
     /// [`crate::xml::MAX_BYTES`]), rejecting `src_len` up front when it already
     /// exceeds that budget.
-    pub fn create(max_bytes: Option<usize>, src_len: usize) -> Result<Box<Document>, ArenaError> {
-        let mut doc = crate::falloc::try_box(Document::blank()).map_err(|_| ArenaError::Oom)?;
+    pub fn create(max_bytes: Option<usize>, src_len: usize) -> Result<Box<Document>, BudgetError> {
+        let mut doc = crate::falloc::try_box(Document::blank()).map_err(|_| BudgetError::Oom)?;
         if let Some(mb) = max_bytes {
             doc.max_bytes = mb;
         }
         if src_len > doc.max_bytes {
-            return Err(ArenaError::Limit);
+            return Err(BudgetError::Limit);
         }
         let mut stamp = DOC_STAMP.fetch_add(1, Ordering::Relaxed);
         if stamp == 0 {
@@ -75,13 +75,13 @@ impl Document {
     }
 
     /// Count `amount` more bytes against the budget, failing closed.
-    fn charge(&mut self, amount: usize) -> Result<(), ArenaError> {
+    fn charge(&mut self, amount: usize) -> Result<(), BudgetError> {
         match self.arena_bytes.checked_add(amount) {
             Some(t) if t <= self.max_bytes => {
                 self.arena_bytes = t;
                 Ok(())
             }
-            _ => Err(ArenaError::Limit),
+            _ => Err(BudgetError::Limit),
         }
     }
 
@@ -247,7 +247,7 @@ impl Document {
         name: &[u8],
         public: Option<&[u8]>,
         system: Option<&[u8]>,
-    ) -> Result<NodeId, ArenaError> {
+    ) -> Result<NodeId, BudgetError> {
         let dt = self.new_node(NodeType::Doctype)?;
         let name = self.store(name)?;
         let node = self.node_mut(dt);
@@ -266,7 +266,7 @@ impl Document {
 
     /// Copy `src` into the byte store, returning its span. Empty is the shared
     /// empty span (never an allocation).
-    pub(super) fn store(&mut self, src: &[u8]) -> Result<Span, ArenaError> {
+    pub(super) fn store(&mut self, src: &[u8]) -> Result<Span, BudgetError> {
         if src.is_empty() {
             // A present-but-empty value: offset is the tail, so it is distinct
             // from the `ABSENT` marker (offset u32::MAX).
@@ -278,7 +278,7 @@ impl Document {
         self.charge(src.len())?;
         self.bytes
             .falloc_reserve(src.len())
-            .map_err(|_| ArenaError::Oom)?;
+            .map_err(|_| BudgetError::Oom)?;
         let off = self.bytes.len() as u32;
         self.bytes.extend_from_slice(src);
         Ok(Span {
@@ -288,14 +288,14 @@ impl Document {
     }
 
     /// Set a node's value to a fresh copy of `data`.
-    pub(super) fn set_value_bytes(&mut self, id: NodeId, data: &[u8]) -> Result<(), ArenaError> {
+    pub(super) fn set_value_bytes(&mut self, id: NodeId, data: &[u8]) -> Result<(), BudgetError> {
         let span = self.store(data)?;
         self.node_mut(id).value = span;
         Ok(())
     }
 
     /// Set a node's namespace URI to a fresh copy of `uri`.
-    pub(super) fn set_ns_bytes(&mut self, id: NodeId, uri: &[u8]) -> Result<(), ArenaError> {
+    pub(super) fn set_ns_bytes(&mut self, id: NodeId, uri: &[u8]) -> Result<(), BudgetError> {
         let span = self.store(uri)?;
         self.node_mut(id).ns_uri = span;
         Ok(())
@@ -325,7 +325,7 @@ impl Document {
         prefix_len: u32,
         local_off: u32,
         local_len: u32,
-    ) -> Result<(), ArenaError> {
+    ) -> Result<(), BudgetError> {
         let span = self.store(name)?;
         let n = self.node_mut(id);
         n.qname = span;
@@ -343,12 +343,12 @@ impl Document {
     /* ---- allocation ---- */
 
     /// Allocate a zeroed node, counted against the node and byte budgets.
-    pub(super) fn new_node(&mut self, type_: NodeType) -> Result<NodeId, ArenaError> {
+    pub(super) fn new_node(&mut self, type_: NodeType) -> Result<NodeId, BudgetError> {
         if self.nodes.len() + 1 > self.max_nodes {
-            return Err(ArenaError::Limit);
+            return Err(BudgetError::Limit);
         }
         self.charge(NODE_COST)?;
-        self.nodes.falloc_reserve(1).map_err(|_| ArenaError::Oom)?;
+        self.nodes.falloc_reserve(1).map_err(|_| BudgetError::Oom)?;
         let index = self.nodes.len() as u32;
         let stamp = self.stamp;
         self.nodes.push(Node::zeroed(type_));
@@ -363,7 +363,7 @@ impl Document {
         self.charge(src.len())?;
         self.bytes
             .falloc_reserve(src.len())
-            .map_err(|_| ArenaError::Oom)?;
+            .map_err(|_| BudgetError::Oom)?;
         let off = self.bytes.len();
         self.bytes.resize(off + src.len(), 0);
         let n = match expand_into(src, mode, &mut self.bytes[off..]) {
@@ -393,7 +393,7 @@ impl Document {
         parent: NodeId,
         type_: NodeType,
         span: Span,
-    ) -> Result<(), ArenaError> {
+    ) -> Result<(), BudgetError> {
         let last = self.node(parent).last_child;
         if let Some(last) = last.filter(|&l| self.node_at(l).type_ == type_) {
             let old = self.node_at(last).value;
@@ -403,17 +403,17 @@ impl Document {
                 let total = (old.len as usize)
                     .checked_add(span.len as usize)
                     .filter(|&t| t <= u32::MAX as usize)
-                    .ok_or(ArenaError::Limit)?;
+                    .ok_or(BudgetError::Limit)?;
                 self.node_at_mut(last).value.len = total as u32;
                 return Ok(());
             }
             /* Not contiguous: copy both chunks, in order, to the end of the
              * store. Reserved first, so the copies cannot reallocate. */
-            let total = old.len.checked_add(span.len).ok_or(ArenaError::Limit)?;
+            let total = old.len.checked_add(span.len).ok_or(BudgetError::Limit)?;
             self.charge(total as usize)?;
             self.bytes
                 .falloc_reserve(total as usize)
-                .map_err(|_| ArenaError::Oom)?;
+                .map_err(|_| BudgetError::Oom)?;
             let off = self.bytes.len() as u32;
             for s in [old, span] {
                 if !s.is_absent() {

@@ -4,7 +4,6 @@
 
 #![forbid(unsafe_code)]
 
-use super::arena;
 use crate::xml::chars::validate_chars;
 use crate::xml::{Document, MutStatus, NodeId, NodeType};
 
@@ -32,15 +31,15 @@ pub fn set_content(doc: &mut Document, node: NodeId, text: &[u8]) -> Result<(), 
             if !value_seq_ok(ty, text) {
                 return Err(MutStatus::BadChars);
             }
-            arena(doc.set_value_bytes(node, text))
+            doc.set_value_bytes(node, text).map_err(MutStatus::from)
         }
         Some(NodeType::Element) => {
             /* build the replacement TEXT node FIRST, so an OOM leaves the
              * children intact */
             let mut t: Option<NodeId> = None;
             if !text.is_empty() {
-                let v = arena(doc.store(text))?;
-                let n = arena(doc.new_node(NodeType::Text))?;
+                let v = doc.store(text)?;
+                let n = doc.new_node(NodeType::Text)?;
                 doc.node_mut(n).value = v;
                 t = Some(n);
             }

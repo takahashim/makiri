@@ -8,8 +8,8 @@
 
 #![forbid(unsafe_code)]
 
+use super::assign_qname;
 use super::ns::{resolve_ns, Ns, Resolved, NO_NS};
-use super::{arena, assign_qname};
 use crate::xml::chars::validate_chars;
 use crate::xml::qname::{ns_decl_check, split_checked, xmlns_prefix, Split};
 use crate::xml::{Document, MutStatus, NodeFlags, NodeId, NodeType, Span};
@@ -25,9 +25,9 @@ fn build_attr(
     ns: Resolved,
     tail: Option<NodeId>,
 ) -> Result<NodeId, MutStatus> {
-    let attr = arena(doc.new_node(NodeType::Attribute))?;
+    let attr = doc.new_node(NodeType::Attribute)?;
     assign_qname(doc, attr, name, sp)?;
-    arena(doc.set_value_bytes(attr, val))?;
+    doc.set_value_bytes(attr, val)?;
     ns.write_attr(doc, attr);
     doc.link_attr(el, tail, attr);
     Ok(attr)
@@ -127,7 +127,7 @@ pub fn set_attribute(
      * namespace), silently, and dropped a namespace set_attribute_ns gave. */
     let tail = match find_attr(doc, el, AttrKey::QName(name)) {
         AttrSlot::Found { attr, .. } => {
-            arena(doc.set_value_bytes(attr, val))?;
+            doc.set_value_bytes(attr, val)?;
             return Ok(attr);
         }
         AttrSlot::Absent { tail } => tail,
@@ -196,17 +196,13 @@ pub fn set_attribute_ns(
     let local = &name[sp.local_off as usize..];
     let tail = match find_attr(doc, el, AttrKey::Ns { ns, local }) {
         AttrSlot::Found { attr, .. } => {
-            arena(doc.set_value_bytes(attr, val))?;
+            doc.set_value_bytes(attr, val)?;
             return Ok(attr);
         }
         AttrSlot::Absent { tail } => tail,
     };
     /* no match: copy the namespace into the arena only now */
-    let nsv: Ns = if ns.is_empty() {
-        NO_NS
-    } else {
-        arena(doc.store(ns))?
-    };
+    let nsv: Ns = if ns.is_empty() { NO_NS } else { doc.store(ns)? };
     let attr = build_attr(doc, el, name, &sp, val, Resolved::decided(nsv), tail)?;
     doc.node_mut(attr).flags.insert(NodeFlags::NS_EXPLICIT);
     Ok(attr)

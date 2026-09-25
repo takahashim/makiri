@@ -34,23 +34,34 @@ pub enum Status {
     Unsupported = 5,
 }
 
-/// Why the arena refused an allocation: the document's own budget
-/// (`max_bytes` / `max_nodes`), or the machine's memory. Every arena
-/// allocation answers one of these two and nothing else, so each caller's
-/// conversion - [`Status`] for the parser, [`MutStatus`] for a mutation - is
-/// exhaustive rather than a guess.
+/// Why a bounded allocation was refused: a document's own budget (`max_bytes` /
+/// `max_nodes`), a stack's cap (`MAX_NS`), or the machine's memory.
+///
+/// Both the arena and the namespace-scope stack answer one of these two and
+/// nothing else, so each caller's conversion - [`Status`] for the parser,
+/// [`MutStatus`] for a mutation - is exhaustive rather than a guess.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum ArenaError {
+pub enum BudgetError {
     Limit,
     Oom,
 }
 
-impl From<ArenaError> for Status {
+impl From<BudgetError> for Status {
     #[inline]
-    fn from(e: ArenaError) -> Self {
+    fn from(e: BudgetError) -> Self {
         match e {
-            ArenaError::Limit => Status::Limit,
-            ArenaError::Oom => Status::Oom,
+            BudgetError::Limit => Status::Limit,
+            BudgetError::Oom => Status::Oom,
+        }
+    }
+}
+
+impl From<BudgetError> for MutStatus {
+    #[inline]
+    fn from(e: BudgetError) -> Self {
+        match e {
+            BudgetError::Limit => MutStatus::Limit,
+            BudgetError::Oom => MutStatus::Oom,
         }
     }
 }
@@ -223,7 +234,7 @@ pub enum MutStatus {
     /// budget told the caller "out of memory mutating XML" on a machine with
     /// gigabytes free. The parse path always kept them apart
     /// ([`Status::Limit`] -> `Makiri::XML::LimitExceeded`); mutation now does
-    /// too. `mutate::arena` is the one conversion from [`ArenaError`].
+    /// too. `From<BudgetError>` is the one conversion from an arena refusal.
     Limit,
     /// Another attribute of the element already has this (namespace URI, local
     /// name) - Namespaces in XML 1.0 §3's "attributes are unique", which the
