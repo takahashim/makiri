@@ -25,7 +25,6 @@
 #![forbid(unsafe_code)]
 
 use crate::falloc::try_vec_with_capacity;
-use crate::lexbor::abi::LxbNode;
 
 /// Tag buckets cover only Lexbor's STATIC tag-id range `[1, LXB_TAG__LAST_ENTRY)`,
 /// so the end of that range doubles as this index's capacity.
@@ -35,12 +34,12 @@ use crate::lexbor::abi::LxbNode;
 /// value that cannot key a dense array. Those elements are simply left out, and
 /// `//customtag` falls back to a tree walk - rare in practice.
 use super::html::{
-    HtmlDoc, HtmlElement, HtmlNode, NS_HTML, TAG_LAST_ENTRY as TAG_INDEX_CAP, TAG_UNDEF,
+    HtmlDoc, HtmlElement, HtmlNode, RawNode, NS_HTML, TAG_LAST_ENTRY as TAG_INDEX_CAP, TAG_UNDEF,
 };
 
 pub struct DomIndex {
     /// Every indexed element, grouped by tag id, in document order.
-    tag_nodes: Vec<*mut LxbNode>,
+    tag_nodes: Vec<RawNode>,
     /// `tag_max + 2` entries, or empty.
     tag_off: Vec<usize>,
     /// The highest tag id present.
@@ -111,13 +110,16 @@ pub(crate) fn build(doc: HtmlDoc<'_>) -> Option<DomIndex> {
             idx.tag_off.push(running);
         }
         cursor.extend_from_slice(&idx.tag_off); /* reserved above */
-        idx.tag_nodes.resize(n_indexed, core::ptr::null_mut());
+        /* A placeholder every slot is overwritten with in pass 2, which visits
+         * exactly the elements pass 1 counted. Were one ever left, it would be
+         * the document node, which no name test's recheck admits. */
+        idx.tag_nodes.resize(n_indexed, RawNode::from(root));
     }
 
     /* Pass 2: fill. No failure path - every array is already the right size. */
     for el in elements(root) {
         if let Some(tag) = indexable_tag(el) {
-            idx.tag_nodes[cursor[tag]] = el.node().as_raw();
+            idx.tag_nodes[cursor[tag]] = RawNode::from(el.node());
             cursor[tag] += 1;
         }
     }
@@ -132,7 +134,7 @@ pub(crate) fn build(doc: HtmlDoc<'_>) -> Option<DomIndex> {
 impl DomIndex {
     /// The elements with tag id `tag_id`, in document order; empty for a tag
     /// this index does not bucket.
-    pub fn tag_bucket(&self, tag_id: usize) -> &[*mut LxbNode] {
+    pub fn tag_bucket(&self, tag_id: usize) -> &[RawNode] {
         if self.tag_nodes.is_empty()
             || tag_id == TAG_UNDEF
             || tag_id >= TAG_INDEX_CAP

@@ -32,7 +32,6 @@
 #![allow(unsafe_code)]
 
 use crate::falloc::{try_vec_with_capacity, VecPush};
-use crate::lexbor::abi::LxbNode;
 use crate::ptr_table::PtrTable;
 use crate::text::BorrowedText;
 
@@ -55,7 +54,7 @@ pub struct TextIndex {
     /// reads `prefix[0]` rather than nothing.
     prefix: Vec<usize>,
     /// Container -> slice run.
-    runs: PtrTable<*const LxbNode, Run>,
+    runs: PtrTable<Option<RawNode>, Run>,
 }
 
 #[inline]
@@ -143,7 +142,7 @@ impl TextIndex {
          * The run table was sized for exactly the containers pass 1 counted, so
          * a refused insert means the tree changed under us: fail closed. */
         let mut stack: Vec<Frame<'_>> = try_vec_with_capacity(1)?;
-        let slot = t.runs.insert(root.as_raw().cast_const(), empty)?;
+        let slot = t.runs.insert(Some(RawNode::from(root)), empty)?;
         stack.push(Frame {
             child: root.first_child(),
             slot,
@@ -189,7 +188,7 @@ impl TextIndex {
                 let start = t.slices.len() as u32;
                 let slot = t
                     .runs
-                    .insert(child.as_raw().cast_const(), Run { start, end: start })?;
+                    .insert(Some(RawNode::from(child)), Run { start, end: start })?;
                 /* Amortized: a plain `falloc_push` made each of a document's
                  * containers its own injection point - 178 for one `rake oom`
                  * scenario, all re-testing one branch. */
@@ -216,7 +215,7 @@ impl TextIndex {
     /// byte total; None for a node outside the indexed tree. Never a shorter
     /// run than the truth.
     pub fn slices_of(&self, node: RawNode) -> Option<(&[BorrowedText], usize)> {
-        let r = self.runs.get(node.as_lxb())?;
+        let r = self.runs.get(Some(node))?;
         let (start, end) = (r.start as usize, r.end as usize);
         Some((
             &self.slices[start..end],

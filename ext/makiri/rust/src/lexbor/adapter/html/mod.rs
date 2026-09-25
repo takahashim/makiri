@@ -184,9 +184,22 @@ pub struct HtmlDoc<'doc> {
 /// must be read, [`as_node`](RawNode::as_node) lends the typed [`HtmlNode`].
 /// It carries no `'doc`, because the Ruby wrapper owning the pointer is what
 /// keeps the document alive, not a Rust borrow.
-#[derive(Clone, Copy)]
+///
+/// Equality is identity: two `RawNode`s are equal when they name the same node.
+#[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct RawNode(NonNull<LxbNode>);
+
+/// A node-keyed table's key. `None` marks an empty slot, which a `RawNode`
+/// never is; hashing and equality are the node's identity (its address), as
+/// for any pointer key. The same size as a pointer, by the non-null niche.
+impl crate::ptr_table::TableKey for Option<RawNode> {
+    const EMPTY: Self = None;
+    #[inline]
+    fn table_hash(self) -> u64 {
+        crate::ptr_table::ptr_hash(self.map_or(core::ptr::null(), |n| n.0.as_ptr().cast_const()))
+    }
+}
 
 impl RawNode {
     /// `None` for null.
@@ -201,11 +214,18 @@ impl RawNode {
         self.0.as_ptr().cast()
     }
 
-    /// The typed node pointer, for the adapter's own tables (the text index
-    /// keys on it). Outside `lexbor`, nodes cross as `RawNode` or `c_void`.
+    /// `nodes`, lent as typed nodes for `'doc` - a reinterpretation, not a
+    /// copy: both types are a transparent non-null node pointer.
+    ///
+    /// # Safety
+    /// As [`RawNode::as_node`], for every node of `nodes`, and `nodes` itself
+    /// outlives `'doc`.
     #[inline]
-    pub(in crate::lexbor) fn as_lxb(self) -> *const LxbNode {
-        self.0.as_ptr()
+    pub(in crate::lexbor) unsafe fn as_nodes<'doc>(nodes: &[RawNode]) -> &'doc [HtmlNode<'doc>] {
+        /* `RawNode` and `HtmlNode` are both `repr(transparent)` over
+         * `NonNull<LxbNode>` (the `PhantomData` is zero-sized); liveness and
+         * the lifetime are the caller's contract. */
+        core::slice::from_raw_parts(nodes.as_ptr().cast::<HtmlNode<'doc>>(), nodes.len())
     }
 
     /// The typed node pointer, for the facades that hand it to a Lexbor call.

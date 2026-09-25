@@ -248,11 +248,10 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
             return None;
         }
         let nodes = index.tag_bucket(tag);
-        // SAFETY: `HtmlNode` is a transparent non-null node pointer, and the
-        // index holds only live elements of this document, none null.
-        let nodes: &'d [HtmlNode<'d>] = unsafe {
-            core::slice::from_raw_parts(nodes.as_ptr() as *const HtmlNode<'d>, nodes.len())
-        };
+        // SAFETY: the index holds only live elements of this document, and it
+        // lives as long as the evaluation over `'d` (no mutation runs during
+        // one, and a mutation is what drops the index).
+        let nodes: &'d [HtmlNode<'d>] = unsafe { RawNode::as_nodes(nodes) };
         Some(Bucket {
             nodes,
             recheck: true,
