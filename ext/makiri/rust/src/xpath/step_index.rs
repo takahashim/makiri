@@ -21,7 +21,7 @@ use crate::token::Token;
 /// which is what the index groups.
 ///
 fn context_is_document<'e, 'd, D: Dom<'d>>(doc: D, set: &NodeSet<D::Node>) -> bool {
-    set.len() == 1 && set.get(0) == doc.document_node()
+    matches!(set.as_slice(), [n] if *n == doc.document_node())
 }
 
 /// `//tag` from the index instead of a tree walk. Returns Ok(true) when it

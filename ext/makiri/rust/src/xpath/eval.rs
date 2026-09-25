@@ -111,12 +111,11 @@ fn apply_predicates<'e, 'd, D: Dom<'d>>(
         /* Specialise [@name] / [@name='lit'] - position-independent, so applying
          * it per predicate even amid others matches the generic path. */
         if let Some(ap) = match_attr_pred(pred) {
-            for i in 0..inout.len() {
+            for &n in inout.as_slice() {
                 /* Charge per candidate: this replaces a per-node generic
                  * predicate eval, which would tick through eval_node, so the
                  * shortcut stays under the same budget as the path it skips. */
                 ev.budget.charge_op()?;
-                let n = inout.get(i);
                 if attr_pred_matches::<D>(doc, &ap, n, lax) {
                     kept.push(n, &mut ev.budget)?;
                 }
@@ -126,8 +125,7 @@ fn apply_predicates<'e, 'd, D: Dom<'d>>(
         }
 
         let size = inout.len();
-        for i in 0..size {
-            let n = inout.get(i);
+        for (i, &n) in inout.as_slice().iter().enumerate() {
             let pf = Focus {
                 node: Some(n),
                 pos: i + 1,
@@ -225,8 +223,8 @@ fn eval_step<'e, 'd, D: Dom<'d>>(
             /* No-predicate walk: every context goes straight into the result
              * buffer regardless of the post-pass, saving the per-context
              * fragment the predicate path needs. */
-            for ci in 0..context_set.len() {
-                collect_axis(ev, &ct, context_set.get(ci), &mut result)?;
+            for &c in context_set.as_slice() {
+                collect_axis(ev, &ct, c, &mut result)?;
             }
         }
     } else {
@@ -235,17 +233,17 @@ fn eval_step<'e, 'd, D: Dom<'d>>(
          * fragment buffer is reused across iterations, so its storage grows to
          * the largest single-context cardinality once rather than per iteration. */
         let mut fragment = NodeSet::new();
-        for ci in 0..context_set.len() {
+        for &c in context_set.as_slice() {
             fragment.clear();
-            collect_axis(ev, &ct, context_set.get(ci), &mut fragment)?;
+            collect_axis(ev, &ct, c, &mut fragment)?;
 
             /* Predicates apply per context with axis-natural position numbering
              * (§2.4). For a reverse axis the fragment is in reverse-document
              * order, so [1] is the closest to the context - the intended
              * meaning. */
             apply_predicates::<D>(ev, preds, &mut fragment)?;
-            for i in 0..fragment.len() {
-                result.push(fragment.get(i), &mut ev.budget)?;
+            for &n in fragment.as_slice() {
+                result.push(n, &mut ev.budget)?;
             }
         }
     }
@@ -309,11 +307,11 @@ fn compare_eq<'e, 'd, D: Dom<'d>>(
             /* The pair scan itself is M*N even though the string builds are
              * O(M+N), so charge each pair: otherwise an all-pairs node-set
              * equality drives up to ~1e14 comparisons as a handful of ops. */
-            for i in 0..ls.len() {
-                let a = cached_node_text::<D>(ev, ls.get(i))?;
-                for j in 0..rs.len() {
+            for &ln in ls.as_slice() {
+                let a = cached_node_text::<D>(ev, ln)?;
+                for &rn in rs.as_slice() {
                     ev.budget.charge_op()?;
-                    let b = cached_node_text::<D>(ev, rs.get(j))?;
+                    let b = cached_node_text::<D>(ev, rn)?;
                     if (a.bytes(&ev.str_cache) == b.bytes(&ev.str_cache)) == want_eq {
                         return Ok(true);
                     }
@@ -344,9 +342,9 @@ fn compare_eq<'e, 'd, D: Dom<'d>>(
     };
     match sc.get() {
         ValRef::Number(target) => {
-            for i in 0..set.len() {
+            for &n in set.as_slice() {
                 ev.budget.charge_op()?;
-                let s = cached_node_number::<D>(ev, set.get(i))?;
+                let s = cached_node_number::<D>(ev, n)?;
                 if (s == target) == want_eq {
                     return Ok(true);
                 }
@@ -355,14 +353,14 @@ fn compare_eq<'e, 'd, D: Dom<'d>>(
         }
         ValRef::Boolean(b) => {
             let eq = (!set.is_empty()) == b;
-            Ok(if want_eq { eq } else { !eq })
+            Ok(eq == want_eq)
         }
         _ => {
             let target = val_to_owned_text_or_fail::<D>(doc, sc, &mut ev.budget)?;
             let want = target.as_slice();
-            for i in 0..set.len() {
+            for &n in set.as_slice() {
                 ev.budget.charge_op()?;
-                let s = cached_node_text::<D>(ev, set.get(i))?;
+                let s = cached_node_text::<D>(ev, n)?;
                 if (s.bytes(&ev.str_cache) == want) == want_eq {
                     return Ok(true);
                 }
@@ -397,11 +395,11 @@ fn compare_rel<'e, 'd, D: Dom<'d>>(
      * compared in source order. */
     let (set, sc, swap) = match (l.as_nodeset(), r.as_nodeset()) {
         (Some(ls), Some(rs)) => {
-            for i in 0..ls.len() {
-                let a = cached_node_number::<D>(ev, ls.get(i))?;
-                for j in 0..rs.len() {
+            for &ln in ls.as_slice() {
+                let a = cached_node_number::<D>(ev, ln)?;
+                for &rn in rs.as_slice() {
                     ev.budget.charge_op()?;
-                    let b = cached_node_number::<D>(ev, rs.get(j))?;
+                    let b = cached_node_number::<D>(ev, rn)?;
                     if rel_hit(op, a, b) {
                         return Ok(true);
                     }
@@ -428,9 +426,9 @@ fn compare_rel<'e, 'd, D: Dom<'d>>(
         return Ok(rel_hit(op, a, c));
     }
     let scn = val_to_number_or_fail::<D>(doc, sc, &mut ev.budget)?;
-    for i in 0..set.len() {
+    for &n in set.as_slice() {
         ev.budget.charge_op()?;
-        let nv = cached_node_number::<D>(ev, set.get(i))?;
+        let nv = cached_node_number::<D>(ev, n)?;
         let (a, b) = if swap { (scn, nv) } else { (nv, scn) };
         if rel_hit(op, a, b) {
             return Ok(true);
@@ -457,8 +455,8 @@ fn union_nodeset<'e, 'd, D: Dom<'d>>(
      * then sort once and collapse adjacent duplicates. */
     let mut merged = NodeSet::new();
     for set in [ls, rs] {
-        for i in 0..set.len() {
-            merged.push(set.get(i), &mut ev.budget)?;
+        for &n in set.as_slice() {
+            merged.push(n, &mut ev.budget)?;
         }
     }
     /* §3.3: the result of '|' is a node-set in document order, which the

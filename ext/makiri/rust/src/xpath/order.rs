@@ -340,15 +340,7 @@ pub fn nodeset_unique_sorted<'e, 'd, D: Dom<'d>>(
         return;
     }
     nodeset_sort_doc_order::<D>(ev, ns);
-    let items = ns.as_mut_slice();
-    let mut w = 1;
-    for r in 1..items.len() {
-        if items[r] != items[r - 1] {
-            items[w] = items[r];
-            w += 1;
-        }
-    }
-    ns.truncate(w);
+    ns.dedup();
 }
 
 #[cfg(test)]

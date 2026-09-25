@@ -93,8 +93,12 @@ impl<N> NodeSet<N> {
     pub fn clear(&mut self) {
         self.0.clear();
     }
-    pub fn truncate(&mut self, len: usize) {
-        self.0.truncate(len);
+    /// Collapse runs of equal adjacent nodes to one.
+    pub fn dedup(&mut self)
+    where
+        N: PartialEq,
+    {
+        self.0.dedup();
     }
 
     /// Append `n` within `budget`'s node-set cap.
@@ -113,11 +117,6 @@ impl<N> NodeSet<N> {
 }
 
 impl<N: Copy> NodeSet<N> {
-    /// Node `i`.
-    pub fn get(&self, i: usize) -> N {
-        self.0[i]
-    }
-
     /// A copy, or None on OOM. The nodes belong to the document, so only the
     /// handles are copied.
     pub fn try_clone(&self) -> Option<NodeSet<N>> {
@@ -491,12 +490,12 @@ pub fn val_to_owned_text_or_fail<'d, D: Dom<'d>>(
             }
         }
         ValRef::NodeSet(ns) => {
-            if ns.is_empty() {
-                return owned_copy(b"", err, c"out of memory");
-            }
             /* §4.2: string(node-set) is the string-value of its first node in
              * document order. */
-            node_to_owned_text::<D>(doc, ns.get(0), budget)
+            match ns.as_slice().first() {
+                Some(&first) => node_to_owned_text::<D>(doc, first, budget),
+                None => owned_copy(b"", err, c"out of memory"),
+            }
         }
     }
 }

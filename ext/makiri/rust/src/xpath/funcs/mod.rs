@@ -607,8 +607,8 @@ fn fn_id<'e, 'd, D: Dom<'d>>(
     /* §4.1: a node-set argument treats each node's string-value as IDREFS;
      * anything else is converted to a string and split the same way. */
     if let Some(set) = args[0].as_nodeset() {
-        (0..set.len()).try_for_each(|i| {
-            let t = node_to_owned_text::<D>(doc, set.get(i), &mut ev.budget)?;
+        set.as_slice().iter().try_for_each(|&n| {
+            let t = node_to_owned_text::<D>(doc, n, &mut ev.budget)?;
             id_collect::<D>(id_attr, t.as_slice(), root, &mut found, ev)
         })?;
     } else {
@@ -635,11 +635,7 @@ fn name_target<'e, 'd, D: Dom<'d>>(
         return Ok(focus.node);
     }
     let ns = require_nodeset(&args[0], fname, err)?;
-    if ns.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(ns.get(0)))
-    }
+    Ok(ns.as_slice().first().copied())
 }
 
 /// `n`'s local or qualified name as a string result; anything that is not an
@@ -1081,9 +1077,9 @@ fn fn_sum<'e, 'd, D: Dom<'d>>(
     let err = ev.budget.sink();
     let ns = require_nodeset(&args[0], "sum", err)?;
     let mut total = 0.0;
-    for i in 0..ns.len() {
+    for &n in ns.as_slice() {
         ev.budget.charge_op()?;
-        total += cached_node_number::<D>(ev, ns.get(i))?;
+        total += cached_node_number::<D>(ev, n)?;
     }
     number(total)
 }
