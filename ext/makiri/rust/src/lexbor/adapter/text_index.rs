@@ -78,7 +78,7 @@ fn text_slice(n: HtmlNode<'_>) -> Option<&[u8]> {
 /// so each array is sized exactly once.
 fn count(root: HtmlNode<'_>) -> (usize, usize) {
     let (mut slices, mut containers) = (0usize, 0usize);
-    for n in core::iter::successors(Some(root), |n| n.preorder_next(root)) {
+    for n in root.subtree() {
         if is_container(n) {
             containers += 1;
         } else if text_slice(n).is_some() {

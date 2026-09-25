@@ -75,27 +75,13 @@ fn replace_invalid(src: &[u8]) -> Result<OwnedBuf, BufError> {
      * fails closed if it cannot, so the reserve is a performance hint. */
     let _ = buf.reserve(src.len());
 
-    /* `buf` frees itself on the error returns (`Buf`'s Drop). */
-    let mut rest = src;
-    loop {
-        match core::str::from_utf8(rest) {
-            Ok(s) => {
-                buf.append(s.as_bytes())?;
-                break;
-            }
-            Err(e) => {
-                let good = e.valid_up_to();
-                buf.append(&rest[..good])?;
-                buf.append("\u{FFFD}".as_bytes())?;
-                match e.error_len() {
-                    /* A maximal subpart of `n` bytes was invalid; one U+FFFD
-                     * stands for all of it and decoding resumes after it. */
-                    Some(n) => rest = &rest[good + n..],
-                    /* The input ended mid-sequence: one U+FFFD for the tail,
-                     * and there is nothing left. */
-                    None => break,
-                }
-            }
+    /* `buf` frees itself on the error returns (`Buf`'s Drop). Each chunk's
+     * invalid part is one maximal subpart - or the input's truncated tail -
+     * and one U+FFFD stands for all of it, as `String::from_utf8_lossy`. */
+    for chunk in src.utf8_chunks() {
+        buf.append(chunk.valid().as_bytes())?;
+        if !chunk.invalid().is_empty() {
+            buf.append("\u{FFFD}".as_bytes())?;
         }
     }
 

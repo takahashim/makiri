@@ -60,7 +60,7 @@ fn indexable_tag(el: HtmlElement<'_>) -> Option<usize> {
 /// by parent links rather than recursing, so a deep tree cannot exhaust the
 /// stack.
 fn elements<'d>(root: HtmlNode<'d>) -> impl Iterator<Item = HtmlElement<'d>> {
-    core::iter::successors(Some(root), move |n| n.preorder_next(root)).filter_map(HtmlNode::element)
+    root.subtree().filter_map(HtmlNode::element)
 }
 
 /// Build over `doc`. `None` on allocation failure.

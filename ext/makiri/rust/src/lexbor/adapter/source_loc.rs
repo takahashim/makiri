@@ -270,8 +270,7 @@ pub fn pos_assign_to_dom(rec: &Positions, root: HtmlNode<'_>) {
     }
 
     let mut cursor = 0usize;
-    let walk = core::iter::successors(Some(root), |n| n.preorder_next(root));
-    for el in walk.filter_map(HtmlNode::element) {
+    for el in root.subtree().filter_map(HtmlNode::element) {
         if cursor >= rec.items.len() {
             break;
         }

@@ -215,7 +215,10 @@ impl RawNode {
     /// restructured while `'doc` lasts - the [`HtmlNode`] contract.
     #[inline]
     pub unsafe fn as_node<'doc>(self) -> HtmlNode<'doc> {
-        HtmlNode::from_raw(self.0.as_ptr()).expect("non-null by construction")
+        HtmlNode {
+            raw: self.0,
+            _doc: PhantomData,
+        }
     }
 }
 
@@ -273,7 +276,10 @@ impl RawDoc {
     /// As [`RawNode::as_node`].
     #[inline]
     pub unsafe fn as_doc<'doc>(self) -> HtmlDoc<'doc> {
-        HtmlDoc::from_raw(self.0.as_ptr()).expect("non-null by construction")
+        HtmlDoc {
+            raw: self.0,
+            _doc: PhantomData,
+        }
     }
 }
 
@@ -290,10 +296,17 @@ impl<'doc> HtmlDoc<'doc> {
     /// restructured (see the section note) while `'doc` lasts.
     #[inline]
     pub unsafe fn from_raw(raw: *mut LxbDoc) -> Option<Self> {
-        NonNull::new(raw).map(|raw| HtmlDoc {
+        NonNull::new(raw).map(|raw| HtmlDoc::from_non_null(raw))
+    }
+
+    /// # Safety
+    /// As [`HtmlDoc::from_raw`], for a pointer already known non-null.
+    #[inline]
+    pub(in crate::lexbor) unsafe fn from_non_null(raw: NonNull<LxbDoc>) -> Self {
+        HtmlDoc {
             raw,
             _doc: PhantomData,
-        })
+        }
     }
 
     /// The raw pointer, for `lexbor/` only.
@@ -429,6 +442,13 @@ impl<'doc> HtmlNode<'doc> {
     /// The ancestors, nearest first.
     pub fn ancestors(self) -> Ancestors<'doc> {
         Ancestors(self.parent())
+    }
+
+    /// This node and its descendants, in document (pre-)order; see
+    /// [`HtmlNode::preorder_next`].
+    #[inline]
+    pub fn subtree(self) -> impl Iterator<Item = HtmlNode<'doc>> {
+        core::iter::successors(Some(self), move |n| n.preorder_next(self))
     }
 
     /// The node after this one in a pre-order walk of `root`'s subtree, or
@@ -725,6 +745,12 @@ impl<'doc> HtmlNode<'doc> {
 }
 
 impl<'doc> HtmlElement<'doc> {
+    /// [`HtmlNode::link`] for an element pointer.
+    #[inline]
+    fn link(p: *mut LxbElement) -> Option<Self> {
+        HtmlNode::link(p.cast()).map(HtmlElement)
+    }
+
     #[inline]
     pub fn node(self) -> HtmlNode<'doc> {
         self.0
@@ -768,7 +794,7 @@ impl<'doc> HtmlElement<'doc> {
     #[inline]
     pub fn first_attr(self) -> Option<HtmlAttr<'doc>> {
         // SAFETY: a live element; its attribute list belongs to the document.
-        HtmlNode::link(unsafe { (*self.raw()).first_attr } as *mut LxbNode).map(HtmlAttr)
+        HtmlAttr::link(unsafe { (*self.raw()).first_attr })
     }
 
     /// The attributes, in document order.
@@ -809,7 +835,7 @@ impl<'doc> HtmlElement<'doc> {
         // SAFETY: a live element; `name` is only read.
         let found =
             unsafe { lxb::lxb_dom_element_attr_is_exist(self.raw(), name.as_ptr(), name.len()) };
-        if let Some(at) = HtmlNode::link(found as *mut LxbNode).map(HtmlAttr) {
+        if let Some(at) = HtmlAttr::link(found) {
             return at.set_value(value).then_some(at);
         }
         /* Only the create path is left, where a failure destroys an attribute
@@ -825,7 +851,7 @@ impl<'doc> HtmlElement<'doc> {
                 value.len(),
             )
         };
-        HtmlNode::link(at as *mut LxbNode).map(HtmlAttr)
+        HtmlAttr::link(at)
     }
 
     /// Create an attribute named `qname` (case preserved), give it `value`, and
@@ -840,7 +866,7 @@ impl<'doc> HtmlElement<'doc> {
         // every slice is read and copied by Lexbor.
         unsafe {
             let at = lxb::lxb_dom_attr_interface_create(self.node().owner_document().as_raw());
-            let Some(at) = HtmlNode::link(at as *mut LxbNode).map(HtmlAttr) else {
+            let Some(at) = HtmlAttr::link(at) else {
                 return false;
             };
             let named = match ns {
@@ -880,6 +906,12 @@ impl<'doc> HtmlElement<'doc> {
 }
 
 impl<'doc> HtmlAttr<'doc> {
+    /// [`HtmlNode::link`] for an attribute pointer.
+    #[inline]
+    fn link(p: *mut LxbAttr) -> Option<Self> {
+        HtmlNode::link(p.cast()).map(HtmlAttr)
+    }
+
     #[inline]
     pub fn node(self) -> HtmlNode<'doc> {
         self.0
@@ -893,7 +925,7 @@ impl<'doc> HtmlAttr<'doc> {
     #[inline]
     pub fn next_attr(self) -> Option<HtmlAttr<'doc>> {
         // SAFETY: a live attribute; the next one is in the same list.
-        HtmlNode::link(unsafe { (*self.raw()).next } as *mut LxbNode).map(HtmlAttr)
+        HtmlAttr::link(unsafe { (*self.raw()).next })
     }
 
     #[inline]
@@ -966,7 +998,7 @@ impl<'doc> HtmlAttr<'doc> {
     pub fn owner(self) -> Option<HtmlElement<'doc>> {
         // SAFETY: a live attribute.
         let owner = unsafe { (*self.raw()).owner };
-        HtmlNode::link(owner as *mut LxbNode).map(HtmlElement)
+        HtmlElement::link(owner)
     }
 }
 

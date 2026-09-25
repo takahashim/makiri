@@ -32,7 +32,7 @@ use core::ptr::NonNull;
 use crate::falloc::try_box;
 use crate::lexbor::abi::{
     self as lxb, lxb_html_document_destroy, lxb_html_parse_chunk_begin, lxb_html_parse_chunk_end,
-    lxb_html_parse_chunk_process, LxbDoc,
+    lxb_html_parse_chunk_process,
 };
 use crate::lexbor::adapter::arena_bytes::document_capacity;
 use crate::lexbor::adapter::dom_index::DomIndex;
@@ -101,8 +101,7 @@ impl HtmlParsed {
         // SAFETY: the handle owns a live document, and it is not restructured
         // while `&self` is borrowed - every mutation takes `&mut` of the
         // wrapper's content first (see `bridge::wrapper`).
-        unsafe { DomDoc::from_raw(self.doc.as_ptr() as *mut LxbDoc) }
-            .expect("a parsed handle owns a document")
+        unsafe { DomDoc::from_non_null(self.doc.cast()) }
     }
 
     /// The attr->owner and tag index, built on first use. None when the build
