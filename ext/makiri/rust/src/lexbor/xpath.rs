@@ -51,22 +51,26 @@ pub struct HtmlDom<'d> {
 }
 
 impl<'d> HtmlDom<'d> {
-    /// `parsed` must be the live handle behind `doc`.
-    pub fn new(doc: HtmlDoc<'d>, parsed: *mut HtmlParsed) -> HtmlDom<'d> {
+    /// # Safety
+    /// `parsed` must be the live handle that owns `doc`, and stay live for
+    /// `'d`, with nothing editing its document while `'d` lasts - which
+    /// [`index`](Self::index) and [`parsed`](Self::parsed) rely on to read it,
+    /// and `HtmlParsed::tag_bucket` to lend its nodes for `'d`.
+    unsafe fn new(doc: HtmlDoc<'d>, parsed: *mut HtmlParsed) -> HtmlDom<'d> {
         HtmlDom { doc, parsed }
     }
 
     /// The document's element index as it stands now, rebuilding it
     /// after a mutation. `None` on OOM.
     fn index(&self) -> Option<&DomIndex> {
-        // SAFETY: the caller's contract - `parsed` is live for `'d`, and no
+        // SAFETY: `new`'s contract - `parsed` is live for `'d`, and no
         // mutation runs while an evaluate on it does.
         unsafe { (*self.parsed).dom_index() }
     }
 
     /// The parsed handle, for the evaluation's `'d`.
     fn parsed(&self) -> &'d HtmlParsed {
-        // SAFETY: as `index` - `parsed` is live, and unchanged, for `'d`.
+        // SAFETY: `new`'s contract, as `index` - live and unedited for `'d`.
         unsafe { &*self.parsed }
     }
 }
@@ -313,5 +317,7 @@ pub unsafe fn context<'e>(
         ));
     }
     let parsed: *mut HtmlParsed = parsed;
-    Ok(Context::new(HtmlDom::new(doc, parsed), node))
+    // SAFETY: this function's contract is `new`'s: `parsed` owns `doc` and is
+    // live and unedited for `'e`.
+    Ok(Context::new(unsafe { HtmlDom::new(doc, parsed) }, node))
 }
