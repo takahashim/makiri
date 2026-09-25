@@ -105,23 +105,18 @@ impl Document {
         &mut self.nodes[id.index() as usize]
     }
 
-    /// Resolve a [`Link`] to a handle, re-attaching this document's stamp.
-    /// [`Link::NONE`] is no node.
+    /// Resolve an optional [`Link`] to a handle, re-attaching this document's
+    /// stamp.
     #[inline]
-    fn node_id(&self, l: Link) -> Option<NodeId> {
-        if l.is_none() {
-            None
-        } else {
-            Some(self.id_of(l))
-        }
+    fn node_id(&self, l: Option<Link>) -> Option<NodeId> {
+        l.map(|l| self.id_of(l))
     }
-    /// The handle a [`Link`] names, re-attaching this document's stamp;
-    /// [`Link::NONE`] yields [`NodeId::INVALID`].
+    /// The handle a [`Link`] names, re-attaching this document's stamp.
     #[inline]
     fn id_of(&self, l: Link) -> NodeId {
         NodeId::new(l.index(), self.stamp)
     }
-    /// The node a non-[`Link::NONE`] link names.
+    /// The node a link names.
     #[inline]
     fn node_at(&self, l: Link) -> &Node {
         &self.nodes[l.index() as usize]
@@ -401,7 +396,7 @@ impl Document {
         span: Span,
     ) -> Result<(), ArenaError> {
         let last = self.node(parent).last_child;
-        if !last.is_none() && self.node_at(last).type_ == type_ {
+        if let Some(last) = last.filter(|&l| self.node_at(l).type_ == type_) {
             let old = self.node_at(last).value;
             if old.end() == span.off as usize {
                 // The two chunks are contiguous in the store (the common
@@ -470,53 +465,51 @@ impl Document {
 
     /// Append `child` as the last child of `parent`.
     pub(super) fn append_child(&mut self, parent: NodeId, child: NodeId) {
-        let (parent, child) = (Link::of(parent), Link::of(child));
-        assert_no_self_link(child, parent, self.node_at(parent).last_child, Link::NONE);
-        self.node_at_mut(child).parent = parent;
-        let last = self.node_at(parent).last_child;
-        if last.is_none() {
-            self.node_at_mut(parent).first_child = child;
-        } else {
-            self.node_at_mut(last).next = child;
-            self.node_at_mut(child).prev = last;
+        let (parent_link, child_link) = (Link::of(parent), Link::of(child));
+        let last = self.node(parent).last_child;
+        assert_no_self_link(child_link, parent_link, last, None);
+        self.node_mut(child).parent = parent_link;
+        match last {
+            None => self.node_mut(parent).first_child = child_link,
+            Some(last) => {
+                self.node_at_mut(last).next = child_link;
+                self.node_mut(child).prev = Some(last);
+            }
         }
-        self.node_at_mut(parent).last_child = child;
+        self.node_mut(parent).last_child = child_link;
     }
 
     /// Unlink `node` from its parent (child chain or attribute chain). No-op
     /// when the node is already detached.
     pub(super) fn detach(&mut self, node: NodeId) {
-        let node_link = Link::of(node);
-        let parent = self.node_at(node_link).parent;
-        if parent.is_none() {
+        let Some(parent) = self.node(node).parent else {
             return;
-        }
-        if self.node_at(node_link).type_ == NodeType::Attribute {
-            let mut prev = Link::NONE;
+        };
+        if self.node(node).type_ == NodeType::Attribute {
+            let node_link = Link::of(node);
+            let mut prev = None;
             let mut attr = self.node_at(parent).attrs;
-            while !attr.is_none() {
-                if attr == node_link {
-                    self.unlink_attr(self.id_of(parent), self.node_id(prev), self.id_of(attr));
+            while let Some(a) = attr {
+                if Some(a) == node_link {
+                    self.unlink_attr(self.id_of(parent), self.node_id(prev), self.id_of(a));
                     break;
                 }
-                prev = attr;
-                attr = self.node_at(attr).next;
+                prev = Some(a);
+                attr = self.node_at(a).next;
             }
-            self.clear_links_at(node_link);
+            self.clear_links(node);
             return;
         }
-        let (prev, next) = (self.node_at(node_link).prev, self.node_at(node_link).next);
-        if prev.is_none() {
-            self.node_at_mut(parent).first_child = next;
-        } else {
-            self.node_at_mut(prev).next = next;
+        let (prev, next) = (self.node(node).prev, self.node(node).next);
+        match prev {
+            None => self.node_at_mut(parent).first_child = next,
+            Some(p) => self.node_at_mut(p).next = next,
         }
-        if next.is_none() {
-            self.node_at_mut(parent).last_child = prev;
-        } else {
-            self.node_at_mut(next).prev = prev;
+        match next {
+            None => self.node_at_mut(parent).last_child = prev,
+            Some(n) => self.node_at_mut(n).prev = prev,
         }
-        self.clear_links_at(node_link);
+        self.clear_links(node);
     }
 
     /// Forget `node`'s parent and siblings, leaving its CHILDREN alone.
@@ -528,15 +521,10 @@ impl Document {
     /// visibility split exists to close.
     #[inline]
     pub(super) fn clear_links(&mut self, node: NodeId) {
-        self.clear_links_at(Link::of(node));
-    }
-
-    #[inline]
-    fn clear_links_at(&mut self, node: Link) {
-        let n = self.node_at_mut(node);
-        n.parent = Link::NONE;
-        n.prev = Link::NONE;
-        n.next = Link::NONE;
+        let n = self.node_mut(node);
+        n.parent = None;
+        n.prev = None;
+        n.next = None;
     }
 
     /// Detach every child of `node` and make `only` its single child (or leave
@@ -569,7 +557,7 @@ impl Document {
             Some(p) => self.node_mut(p).next = next,
             None => self.node_mut(el).attrs = next,
         }
-        self.clear_links_at(Link::of(a));
+        self.clear_links(a);
     }
 
     /// Link `attr` onto `el`'s attribute list after `tail`, the list's current
@@ -581,12 +569,7 @@ impl Document {
     /// knows the end. An `append_attr` that walked to it existed and turned out
     /// to have no callers left once the tail was threaded through.
     pub(super) fn link_attr(&mut self, el: NodeId, tail: Option<NodeId>, attr: NodeId) {
-        assert_no_self_link(
-            Link::of(attr),
-            Link::of(el),
-            Link::from_option(tail),
-            Link::NONE,
-        );
+        assert_no_self_link(Link::of(attr), Link::of(el), Link::from_option(tail), None);
         self.node_mut(attr).parent = Link::of(el);
         match tail {
             None => self.node_mut(el).attrs = Link::of(attr),
@@ -602,26 +585,23 @@ impl Document {
         prev: Option<NodeId>,
         next: Option<NodeId>,
     ) {
-        let container = Link::of(container);
-        let node = Link::of(node);
+        let node_link = Link::of(node);
         let prev = Link::from_option(prev);
         let next = Link::from_option(next);
-        assert_no_self_link(node, container, prev, next);
+        assert_no_self_link(node_link, Link::of(container), prev, next);
         {
-            let n = self.node_at_mut(node);
-            n.parent = container;
+            let n = self.node_mut(node);
+            n.parent = Link::of(container);
             n.prev = prev;
             n.next = next;
         }
-        if prev.is_none() {
-            self.node_at_mut(container).first_child = node;
-        } else {
-            self.node_at_mut(prev).next = node;
+        match prev {
+            None => self.node_mut(container).first_child = node_link,
+            Some(p) => self.node_at_mut(p).next = node_link,
         }
-        if next.is_none() {
-            self.node_at_mut(container).last_child = node;
-        } else {
-            self.node_at_mut(next).prev = node;
+        match next {
+            None => self.node_mut(container).last_child = node_link,
+            Some(n) => self.node_at_mut(n).prev = node_link,
         }
     }
 
@@ -637,32 +617,29 @@ impl Document {
     pub fn preorder_next(&self, root: NodeId, cur: NodeId) -> Option<NodeId> {
         self.try_node(cur)?;
         let root_link = Link::of(root);
-        let mut cur_link = Link::of(cur);
-        let first = self.node_at(cur_link).first_child;
-        if !first.is_none() {
-            return self.node_id(first);
+        let mut at = Link::of(cur)?;
+        if let Some(first) = self.node_at(at).first_child {
+            return Some(self.id_of(first));
         }
-        while cur_link != root_link && self.node_at(cur_link).next.is_none() {
-            let up = self.node_at(cur_link).parent;
-            if up.is_none() {
+        loop {
+            if Some(at) == root_link {
                 return None;
             }
-            cur_link = up;
+            if let Some(next) = self.node_at(at).next {
+                return Some(self.id_of(next));
+            }
+            at = self.node_at(at).parent?;
         }
-        if cur_link == root_link {
-            return None;
-        }
-        self.node_id(self.node_at(cur_link).next)
     }
 
     /// `node`'s topmost ancestor is the document node. Internal: it walks links
     /// unchecked, so the caller must hold a live handle.
     pub(crate) fn is_connected(&self, node: NodeId) -> bool {
-        let mut top = Link::of(node);
-        while !self.node_at(top).parent.is_none() {
-            top = self.node_at(top).parent;
+        let mut top = self.node(node);
+        while let Some(up) = top.parent {
+            top = self.node_at(up);
         }
-        self.node_at(top).type_ == NodeType::Document
+        top.type_ == NodeType::Document
     }
 
     /* ---- document meta ---- */
@@ -701,15 +678,15 @@ impl Document {
         self.root = None;
         self.doctype = None;
         let mut c = self.node(self.doc_node).first_child;
-        while !c.is_none() {
-            let t = self.node_at(c).type_;
+        while let Some(l) = c {
+            let t = self.node_at(l).type_;
             if self.root.is_none() && t == NodeType::Element {
-                self.root = Some(self.id_of(c));
+                self.root = Some(self.id_of(l));
             }
             if self.doctype.is_none() && t == NodeType::Doctype {
-                self.doctype = Some(self.id_of(c));
+                self.doctype = Some(self.id_of(l));
             }
-            c = self.node_at(c).next;
+            c = self.node_at(l).next;
         }
     }
 
@@ -749,7 +726,12 @@ impl Document {
     clippy::panic,
     reason = "a sibling ring hangs the process; a panic is the recoverable outcome"
 )]
-fn assert_no_self_link(node: Link, container: Link, prev: Link, next: Link) {
+fn assert_no_self_link(
+    node: Option<Link>,
+    container: Option<Link>,
+    prev: Option<Link>,
+    next: Option<Link>,
+) {
     if node == container || node == prev || node == next {
         panic!("XML arena: a node cannot be its own parent or sibling");
     }

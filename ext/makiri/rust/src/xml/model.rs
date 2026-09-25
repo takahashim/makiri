@@ -11,6 +11,8 @@
 
 #![forbid(unsafe_code)]
 
+use core::num::NonZeroU32;
+
 /* Boundary readers state their precondition once, on `bytes`. */
 /* ---- status codes ---- */
 
@@ -273,39 +275,31 @@ impl NodeId {
 }
 
 /// A structural link: the slot index of a parent / child / sibling / first
-/// attribute, or [`Link::NONE`] (slot 0, the reserved null slot) when absent.
+/// attribute. A node's link fields are `Option<Link>`, None when absent.
 ///
 /// Links are 4 bytes and travel inside exactly one [`Document`], so they carry
 /// no stamp; the owning document re-attaches its [`Document::stamp`] when a link
-/// is handed back out as a [`NodeId`]. A link to the invalid handle
-/// ([`NodeId::INVALID`], index 0) is [`Link::NONE`], which is the correct
-/// reading: an invalid node has no link.
+/// is handed back out as a [`NodeId`]. The index is never 0 - slot 0 is the
+/// reserved null slot - which is what lets `Option<Link>` stay 4 bytes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Link(u32);
+pub struct Link(NonZeroU32);
 
 impl Link {
-    /// No link (also the encoding of a link to [`NodeId::INVALID`]).
-    pub(crate) const NONE: Link = Link(0);
-
-    /// The link naming `id`; [`NodeId::INVALID`] (index 0) becomes
-    /// [`Link::NONE`].
+    /// The link naming `id`; [`NodeId::INVALID`] (index 0) names no node, so
+    /// it has none.
     #[inline]
-    pub(crate) fn of(id: NodeId) -> Self {
-        Link(id.index())
+    pub(crate) fn of(id: NodeId) -> Option<Link> {
+        NonZeroU32::new(id.index()).map(Link)
     }
     /// As [`Link::of`], for an optional handle.
     #[inline]
-    pub(crate) fn from_option(id: Option<NodeId>) -> Self {
-        Link(id.map_or(0, |id| id.index()))
+    pub(crate) fn from_option(id: Option<NodeId>) -> Option<Link> {
+        id.and_then(Link::of)
     }
-    /// The slot index this link names (0 = none).
+    /// The slot index this link names (never 0).
     #[inline]
     pub(crate) fn index(self) -> u32 {
-        self.0
-    }
-    #[inline]
-    pub(crate) fn is_none(self) -> bool {
-        self.0 == 0
+        self.0.get()
     }
 }
 
@@ -316,12 +310,12 @@ impl Link {
 /// once on the [`Document`]).
 pub struct Node {
     pub type_: NodeType,
-    pub parent: Link,
-    pub first_child: Link,
-    pub last_child: Link,
-    pub prev: Link,
-    pub next: Link,
-    pub attrs: Link,
+    pub parent: Option<Link>,
+    pub first_child: Option<Link>,
+    pub last_child: Option<Link>,
+    pub prev: Option<Link>,
+    pub next: Option<Link>,
+    pub attrs: Option<Link>,
     pub qname: Span,
     pub local: Span,
     pub prefix: Span,
@@ -332,16 +326,20 @@ pub struct Node {
     pub flags: u32,
 }
 
+/* A node is the arena's unit of cost (`NODE_COST`), so its size is pinned:
+ * `Option<Link>` must stay 4 bytes. */
+const _: () = assert!(core::mem::size_of::<Node>() == 80);
+
 impl Node {
     pub(crate) fn zeroed(type_: NodeType) -> Self {
         Node {
             type_,
-            parent: Link::NONE,
-            first_child: Link::NONE,
-            last_child: Link::NONE,
-            prev: Link::NONE,
-            next: Link::NONE,
-            attrs: Link::NONE,
+            parent: None,
+            first_child: None,
+            last_child: None,
+            prev: None,
+            next: None,
+            attrs: None,
             qname: Span::ABSENT,
             local: Span::ABSENT,
             prefix: Span::ABSENT,

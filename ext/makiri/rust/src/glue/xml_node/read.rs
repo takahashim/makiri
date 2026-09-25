@@ -29,7 +29,7 @@ fn nil(ruby: &Ruby) -> Value {
 
 /// Wrap an optional reached node under the receiver's Document (None -> nil).
 fn wrap_rel(this: XmlSelf, rel: Option<NodeId>) -> Value {
-    wrap(rel.unwrap_or(NodeId::INVALID), this.document)
+    rel.map_or_else(crate::bridge::ruby::nil, |n| wrap(n, this.document))
 }
 
 /// A byte field as a String, or nil when there is none.
