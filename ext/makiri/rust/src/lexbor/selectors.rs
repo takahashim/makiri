@@ -41,8 +41,9 @@
 #![allow(clippy::missing_safety_doc)]
 
 use crate::caught::PanicLatch;
-use crate::falloc::{try_to_boxed_slice, MapInsert, Reserve, VecPush};
+use crate::falloc::{try_to_boxed_slice, Reserve, VecPush};
 use core::ffi::c_void;
+use core::ptr::NonNull;
 use std::collections::HashMap;
 
 use crate::gvl::{Gvl, GvlCell, GvlRef};
@@ -165,13 +166,37 @@ impl CachePolicy {
     }
 }
 
+/// A compiled selector list in the engine's shared CSS arena.
+///
+/// The arena owns it, not this: Lexbor never frees one list on its own, and
+/// cleaning the arena - [`SelectorCache::flush`], or the bypass path's
+/// `clean_all` - invalidates every list in it at once. So this is not `Box`-like
+/// and has no `Drop`; what it adds over the raw pointer is that it is non-null,
+/// and neither `Copy` nor `Clone`, so a list is only ever LENT. A cached one is
+/// lent by [`SelectorCache::with_list`] from a `&mut` borrow of the cache, and
+/// `flush` needs that same borrow - so the compiler rules out flushing the arena
+/// under a list in use. A bypass-path list is a local that goes out of scope
+/// before its `clean_all`.
+struct CompiledList(NonNull<SelectorList>);
+
+impl CompiledList {
+    /// The list a parse just produced, or `None` for a rejected selector.
+    fn new(p: Option<*mut SelectorList>) -> Option<CompiledList> {
+        p.and_then(NonNull::new).map(CompiledList)
+    }
+
+    fn as_ptr(&self) -> *const SelectorList {
+        self.0.as_ptr()
+    }
+}
+
 /// Selector bytes -> the compiled list, which lives in the shared arena.
 ///
 /// The map and the arena are only consistent together, so everything that
 /// empties the arena here also empties the map: no entry can outlive the memory
 /// it points into.
 struct SelectorCache {
-    map: Option<HashMap<Box<[u8]>, *mut SelectorList>>,
+    map: Option<HashMap<Box<[u8]>, CompiledList>>,
 }
 
 impl SelectorCache {
@@ -180,12 +205,32 @@ impl SelectorCache {
     }
 
     /// The map, created on first use.
-    fn map(&mut self) -> &mut HashMap<Box<[u8]>, *mut SelectorList> {
+    fn map(&mut self) -> &mut HashMap<Box<[u8]>, CompiledList> {
         self.map.get_or_insert_with(HashMap::new)
     }
 
-    fn get(&mut self, selector: &[u8]) -> Option<*mut SelectorList> {
-        self.map().get(selector).copied()
+    /// Run `f` over the compiled list for `selector` - the cached one (`hit` is
+    /// true), or one compiled and cached now.
+    ///
+    /// A closure rather than a returned `&CompiledList`: a reference returned
+    /// from the hit arm would keep the cache borrowed into the miss arm's
+    /// `compile`, which the borrow checker refuses, and looking the key up a
+    /// second time would cost the hot path a hash. The list's borrow ends with
+    /// `f`.
+    ///
+    /// # Safety
+    /// The globals' borrow is live.
+    unsafe fn with_list<R>(
+        &mut self,
+        p: SelectorParser,
+        selector: &[u8],
+        f: impl FnOnce(&CompiledList, bool) -> R,
+    ) -> Result<R, SelectError> {
+        if let Some(list) = self.map().get(selector) {
+            return Ok(f(list, true));
+        }
+        let list = self.compile(p, selector)?;
+        Ok(f(list, false))
     }
 
     /// Drop every compiled list: the arena they live in and the map.
@@ -205,7 +250,7 @@ impl SelectorCache {
         &mut self,
         p: SelectorParser,
         selector: &[u8],
-    ) -> Result<*mut SelectorList, SelectError> {
+    ) -> Result<&CompiledList, SelectError> {
         /* Bound the cache BEFORE parsing: when it is full, drop every compiled
          * list at once, so the new list is parsed into the now-empty arena.
          * Flushing after the parse would free the very list just produced. */
@@ -222,7 +267,7 @@ impl SelectorCache {
             return Err(SelectError::CacheOom);
         }
 
-        let list = p.parse(selector);
+        let list = CompiledList::new(p.parse(selector));
         /* Return the parser to its CLEAN stage, but do NOT clean the arena -
          * the list just parsed lives there and is about to be cached. */
         p.clean_parser();
@@ -235,11 +280,10 @@ impl SelectorCache {
             return Err(SelectError::Syntax);
         };
 
-        if self.map().falloc_insert(key, list).is_err() {
-            self.flush(p);
-            return Err(SelectError::CacheOom);
-        }
-        Ok(list)
+        /* Reserved above, so the vacant entry is written without allocating:
+         * nothing between the parse and here can fail. `or_insert` rather than
+         * an insert so the entry hands back the list it now holds. */
+        Ok(self.map().entry(key).or_insert(list))
     }
 }
 
@@ -373,13 +417,8 @@ enum Run {
 }
 
 impl Run {
-    unsafe fn call(
-        &self,
-        e: &Engine,
-        node: *mut LxbNode,
-        list: *const SelectorList,
-        ctx: *mut c_void,
-    ) {
+    unsafe fn call(&self, e: &Engine, node: *mut LxbNode, list: &CompiledList, ctx: *mut c_void) {
+        let list = list.as_ptr();
         match self {
             Run::Find(cb) => {
                 lxb_selectors_opt_set_noi(e.selectors, LXB_SELECTORS_OPT_MATCH_FIRST);
@@ -459,24 +498,25 @@ unsafe fn with_compiled_selector(
         /* Parse + clean per call - the behaviour before the cache existed - so
          * the arena stays small and a one-off-selector flood is no slower than
          * having no cache at all. */
-        let list = e.parser.parse(selector);
-        if let Some(list) = list {
-            run.call(&e, node, list, ctx);
-        }
+        let parsed = match CompiledList::new(e.parser.parse(selector)) {
+            Some(list) => {
+                run.call(&e, node, &list, ctx);
+                Ok(())
+            }
+            None => Err(SelectError::Syntax),
+        }; /* the list is out of scope before the arena it lives in is cleaned */
         e.parser.clean_all();
-        return list.map(|_| ()).ok_or(SelectError::Syntax);
+        return parsed;
     }
 
-    let list = match g.cache.get(selector) {
-        Some(list) => {
-            g.policy.hit();
-            list
-        }
-        None => g.cache.compile(e.parser, selector)?,
-    };
     /* The traversal engine self-cleans; the cached list and its arena stay. */
-    run.call(&e, node, list, ctx);
-    Ok(())
+    let policy = &mut g.policy;
+    g.cache.with_list(e.parser, selector, |list, hit| {
+        if hit {
+            policy.hit();
+        }
+        run.call(&e, node, list, ctx);
+    })
 }
 
 /* ------------------------------------------------------------------ */
