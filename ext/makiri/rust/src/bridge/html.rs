@@ -406,16 +406,21 @@ pub fn set_attribute_ns(
     let (qname, value) = (qname.as_bytes(), value.as_bytes());
     /* An empty URI is no namespace: it names the attribute the unprefixed way. */
     let ns = ns.map(|v| v.as_bytes()).filter(|v| !v.is_empty());
-    let want_ns = el
-        .element()
-        .node()
-        .owner_document()
-        .intern_ns(ns.unwrap_or(&[]))?;
     let local = match qname.iter().position(|&b| b == b':') {
         Some(i) => &qname[i + 1..],
         None => qname,
     };
-    match el.element().find_attr_ns(want_ns, local) {
+    /* Looked up, not interned: no attribute carries a namespace the document
+     * never interned, and the append below interns it itself. */
+    let existing = match ns {
+        Some(uri) => {
+            let doc = el.element().node().owner_document();
+            doc.lookup_ns(uri)
+                .and_then(|id| el.element().find_attr_ns(Some(id), local))
+        }
+        None => el.element().find_attr_ns(None, local),
+    };
+    match existing {
         Some(existing) => existing.set_value(value),
         None => el.append_attribute(ns, qname, value),
     }

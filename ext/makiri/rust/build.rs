@@ -6,7 +6,7 @@
 //! `#[repr(C)]` view of one of its structs does not fail to build when a field
 //! is added or reordered - it reads the wrong offset, which is a silent wrong
 //! answer. Nothing in the crate declares a Lexbor struct or a header-declared
-//! Lexbor function by hand any more; the four exports no header declares are
+//! Lexbor function by hand any more; the three exports no header declares are
 //! the exception, and `check_undeclared_exports` pins their C definitions.
 //!
 //! Transcription by hand has already been wrong once, though, and not about an
@@ -352,12 +352,6 @@ fn lexbor_include() -> std::path::PathBuf {
 /// again. A name that is not found at all fails too: that is the export having
 /// gone, which `rake symbols` would otherwise report only after a link.
 const UNDECLARED_EXPORTS: &[(&str, &str, &str, &str)] = &[
-    (
-        "lexbor/ns/ns.c",
-        "LXB_API const lxb_ns_data_t *",
-        "lxb_ns_append",
-        "lexbor_hash_t *hash, const lxb_char_t *link, size_t length",
-    ),
     (
         "lexbor/dom/interfaces/attr.c",
         "lxb_status_t",

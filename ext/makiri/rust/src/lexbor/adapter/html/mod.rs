@@ -444,6 +444,9 @@ impl<'doc> HtmlDoc<'doc> {
     /// The id `uri` already has in the document's namespace table, WITHOUT
     /// interning it. `None` for an empty URI and for one never interned - no
     /// node or attribute can carry a namespace the table does not hold.
+    ///
+    /// Lexbor folds ASCII case in namespace URIs (it stores and looks them up
+    /// lower-cased), so `URN:X` finds what `urn:x` interned.
     pub fn lookup_ns(self, uri: &[u8]) -> Option<NsId> {
         if uri.is_empty() {
             return None;
