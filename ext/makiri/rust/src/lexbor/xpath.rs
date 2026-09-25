@@ -251,7 +251,7 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
         // SAFETY: the index holds only live elements of this document, and it
         // lives as long as the evaluation over `'d` (no mutation runs during
         // one, and a mutation is what drops the index).
-        let nodes: &'d [HtmlNode<'d>] = unsafe { RawNode::as_nodes(nodes) };
+        let nodes: &'d [HtmlNode<'d>] = unsafe { RawNode::as_html_nodes_unchecked(nodes) };
         Some(Bucket {
             nodes,
             recheck: true,

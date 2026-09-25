@@ -217,11 +217,19 @@ impl RawNode {
     /// `nodes`, lent as typed nodes for `'doc` - a reinterpretation, not a
     /// copy: both types are a transparent non-null node pointer.
     ///
+    /// Unchecked in two ways, as the name warns. Nothing checks that the nodes
+    /// are live, and `'doc` is UNBOUNDED: it is whatever the caller asks for,
+    /// not tied to the borrow of `nodes` - the same hazard as
+    /// [`core::slice::from_raw_parts`]. Prefer [`RawNode::as_node`] one node at
+    /// a time; this exists for the `//tag` bucket, which lends a whole slice.
+    ///
     /// # Safety
     /// As [`RawNode::as_node`], for every node of `nodes`, and `nodes` itself
     /// outlives `'doc`.
     #[inline]
-    pub(in crate::lexbor) unsafe fn as_nodes<'doc>(nodes: &[RawNode]) -> &'doc [HtmlNode<'doc>] {
+    pub(in crate::lexbor) unsafe fn as_html_nodes_unchecked<'doc>(
+        nodes: &[RawNode],
+    ) -> &'doc [HtmlNode<'doc>] {
         /* `RawNode` and `HtmlNode` are both `repr(transparent)` over
          * `NonNull<LxbNode>` (the `PhantomData` is zero-sized); liveness and
          * the lifetime are the caller's contract. */
