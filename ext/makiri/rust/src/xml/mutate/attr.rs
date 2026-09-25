@@ -84,7 +84,7 @@ pub fn set_attribute(
         None => return Err(MutStatus::BadName),
     };
     decl_check(name, val)?;
-    if !val.is_empty() && !validate_chars(val) {
+    if !validate_chars(val) {
         return Err(MutStatus::BadChars);
     }
     /* An attribute with this qualified name gets the value and nothing else,
@@ -161,7 +161,7 @@ pub fn set_attribute_ns(
         return Err(MutStatus::BadNsName);
     }
     decl_check(name, val)?;
-    if !val.is_empty() && !validate_chars(val) {
+    if !validate_chars(val) {
         return Err(MutStatus::BadChars);
     }
     let local = &name[sp.local_off as usize..];

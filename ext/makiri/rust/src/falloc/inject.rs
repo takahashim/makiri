@@ -17,7 +17,7 @@ static ATTEMPTS: AtomicU64 = AtomicU64::new(0);
 /// Only the serialized OOM sweep should call this: arming it under a live
 /// workload would fail an allocation no test asked for.
 pub fn alloc_inject_arm(nth: i64) {
-    COUNTDOWN.store(if nth > 0 { nth } else { 0 }, Ordering::Release);
+    COUNTDOWN.store(nth.max(0), Ordering::Release);
     ATTEMPTS.store(0, Ordering::Release);
 }
 
@@ -30,15 +30,11 @@ pub fn alloc_inject_call_count() -> u64 {
 ///
 /// The caller's only contract is to consult it once per allocation attempt;
 /// violating that mis-numbers the sweep, which is not a soundness problem.
-pub fn alloc_inject_should_fail() -> core::ffi::c_int {
+pub fn alloc_inject_should_fail() -> bool {
     ATTEMPTS.fetch_add(1, Ordering::Relaxed);
-    let mut left = COUNTDOWN.load(Ordering::Acquire);
-    while left > 0 {
-        match COUNTDOWN.compare_exchange_weak(left, left - 1, Ordering::AcqRel, Ordering::Acquire) {
-            Ok(_) if left == 1 => return 1,
-            Ok(_) => return 0,
-            Err(actual) => left = actual,
-        }
-    }
-    0
+    /* Count down while armed; the consultation that takes it from 1 to 0 is
+     * the one that fails. */
+    COUNTDOWN.fetch_update(Ordering::AcqRel, Ordering::Acquire, |left| {
+        (left > 0).then(|| left - 1)
+    }) == Ok(1)
 }

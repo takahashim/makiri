@@ -24,7 +24,7 @@ pub(super) fn value_seq_ok(node_type: NodeType, text: &[u8]) -> bool {
 }
 
 pub fn set_content(doc: &mut Document, node: NodeId, text: &[u8]) -> Result<(), MutStatus> {
-    if !text.is_empty() && !validate_chars(text) {
+    if !validate_chars(text) {
         return Err(MutStatus::BadChars);
     }
     match doc.type_(node) {

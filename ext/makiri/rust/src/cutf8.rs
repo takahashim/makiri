@@ -73,7 +73,9 @@ pub fn decode1(p: &[u8]) -> Option<(u32, usize)> {
         }
         cp = (cp << 6) | (b as u32 & 0x3F);
     }
-    if cp < min || cp > 0x10FFFF || (0xD800..=0xDFFF).contains(&cp) {
+    /* `from_u32` refuses exactly what is not a scalar value: past U+10FFFF,
+     * or a surrogate. */
+    if cp < min || char::from_u32(cp).is_none() {
         return None;
     }
     Some((cp, len))

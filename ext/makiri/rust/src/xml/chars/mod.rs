@@ -88,13 +88,11 @@ fn all_code_points(s: &[u8], ok: impl Fn(u32) -> bool) -> bool {
     true
 }
 
-/// All of `s` is XML Char (no reference recognition).
+/// All of `s` is XML Char (no reference recognition); true for empty `s`.
 pub fn validate_chars(s: &[u8]) -> bool {
     all_code_points(s, is_char)
 }
 
-/// `s` is a well-formed XML 1.0 Name (NameStartChar NameChar*). A colon is
-/// permitted (this is the PITarget check).
 /// Whether `s` is all PubidChar (XML 1.0 §2.3 [13]) - what a DOCTYPE's PUBLIC
 /// id may hold. The parser's literal scan and the doctype factory both ask
 /// here; the factory used to check only for `"`.
@@ -103,6 +101,8 @@ pub fn is_pubid(s: &[u8]) -> bool {
         .all(|&c| c.is_ascii_alphanumeric() || b" \r\n-'()+,./:=?;!*#@$_%".contains(&c))
 }
 
+/// `s` is a well-formed XML 1.0 Name (NameStartChar NameChar*). A colon is
+/// permitted (this is the PITarget check).
 pub fn validate_name(s: &[u8]) -> bool {
     let (cp, bl) = match decode1(s) {
         Some(x) => x,

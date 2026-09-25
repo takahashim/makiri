@@ -52,9 +52,7 @@ impl PanicLatch {
         match std::panic::catch_unwind(AssertUnwindSafe(f)) {
             Ok(v) => v,
             Err(payload) => {
-                if self.0.is_none() {
-                    self.0 = Some(payload);
-                }
+                self.0.get_or_insert(payload); /* the first panic is the one kept */
                 stop
             }
         }

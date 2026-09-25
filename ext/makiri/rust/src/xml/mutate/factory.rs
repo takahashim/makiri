@@ -59,7 +59,7 @@ pub fn new_chardata(doc: &mut Document, ty: NodeType, text: &[u8]) -> Result<Nod
     if ty != NodeType::Text && ty != NodeType::CData && ty != NodeType::Comment {
         return Err(MutStatus::Type);
     }
-    if !text.is_empty() && !validate_chars(text) {
+    if !validate_chars(text) {
         return Err(MutStatus::BadChars);
     }
     if !value_seq_ok(ty, text) {
@@ -75,7 +75,7 @@ pub fn new_pi(doc: &mut Document, target: &[u8], data: &[u8]) -> Result<NodeId, 
     {
         return Err(MutStatus::BadName);
     }
-    if !data.is_empty() && !validate_chars(data) {
+    if !validate_chars(data) {
         return Err(MutStatus::BadChars);
     }
     if !value_seq_ok(NodeType::Pi, data) {

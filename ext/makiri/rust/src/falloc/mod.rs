@@ -101,7 +101,7 @@ pub(crate) fn allocation_should_fail() -> bool {
      * parse consults it under `rb_thread_call_without_gvl`. The only contract
      * is the sweep's - call it once per allocation attempt - and violating it
      * mis-sizes the sweep rather than causing UB. */
-    alloc_inject_should_fail() != 0
+    alloc_inject_should_fail()
 }
 
 /// Production allocator hook: no test instrumentation or branch remains.
