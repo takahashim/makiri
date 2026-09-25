@@ -63,8 +63,8 @@ pub fn text_index_string(document: Value, node: RawNode) -> Result<Option<Value>
     found.transpose()
 }
 
-/// The 1-based source line for `node`, or 0 when unknown.
-pub fn node_line(rb_doc: Value, node: RawNode) -> usize {
+/// The 1-based source line for `node`, or `None` when unknown.
+pub fn node_line(rb_doc: Value, node: RawNode) -> Option<usize> {
     with_html_parsed_known(rb_doc, |p| {
         // SAFETY: `node` is a live node of this document.
         unsafe { p.node_line(node) }

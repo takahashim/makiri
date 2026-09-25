@@ -497,15 +497,8 @@ pub fn value(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
 /// resolved against the document's line table. nil for a node the tracker could
 /// not place - a parser-inserted implicit `<html>`/`<head>`/`<body>`, a text or
 /// comment node - never a wrong line.
-pub fn line(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        let n = crate::bridge::html::node_line(this.document, this.raw());
-        Ok(if n == 0 {
-            nil(ruby)
-        } else {
-            ruby.integer_from_u64(n as u64).as_value()
-        })
-    })
+pub fn line(this: super::HtmlSelf) -> Result<Option<usize>, Error> {
+    crate::bridge::ruby::entry(|| Ok(crate::bridge::html::node_line(this.document, this.raw())))
 }
 
 /* ------------------------------------------------------------------ *

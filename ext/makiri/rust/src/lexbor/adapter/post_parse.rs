@@ -194,27 +194,23 @@ impl HtmlParsed {
         document_capacity(self.doc())
     }
 
-    /// The 1-based source line for `node`, or 0 when unknown.
+    /// The 1-based source line for `node`, or `None` when unknown.
     ///
-    /// 0 covers both "the tracker could not place this node" and "the line table
+    /// `None` covers both "the tracker could not place this node" and "the line table
     /// could not be allocated". The two are deliberately not distinguished: the
     /// Ruby contract for `#line` is an Integer or nil, and the table's
     /// allocation is an allowed degradation - see `parse_tracked`.
     ///
     /// # Safety
     /// `node` must be a live node of this document.
-    pub unsafe fn node_line(&mut self, node: RawNode) -> usize {
+    pub unsafe fn node_line(&mut self, node: RawNode) -> Option<usize> {
         // SAFETY: the document this handle owns, unchanged since the parse -
         // any mutation would have stamped already (see `assign_positions`).
         unsafe { self.assign_positions() };
-        let Some(lines) = self.lines.as_deref() else {
-            return 0;
-        };
+        let lines = self.lines.as_deref()?;
         // SAFETY: the caller's contract.
-        match unsafe { node.as_node() }.source_offset() {
-            Some(offset) => lines.lookup(offset),
-            None => 0,
-        }
+        let offset = unsafe { node.as_node() }.source_offset()?;
+        Some(lines.lookup(offset))
     }
 }
 
