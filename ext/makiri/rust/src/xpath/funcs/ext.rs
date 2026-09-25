@@ -11,14 +11,8 @@ use crate::falloc::{try_vec_with_capacity, VecPush};
 /* ---------- the Nokogiri builtins ---------- */
 
 /// css-class(haystack, needle): true iff `needle` is a whitespace-separated
-/// token of `haystack`. Kept behaviour-identical to libxml2's builtin_css_class,
-/// including the NULL ordering - a NULL haystack is a non-match even for an
-/// empty needle.
-fn ws_token_match(hay: Option<&[u8]>, val: Option<&[u8]>) -> bool {
-    let (hay, val) = match (hay, val) {
-        (Some(h), Some(v)) => (h, v),
-        _ => return false,
-    };
+/// token of `haystack`. Kept behaviour-identical to libxml2's builtin_css_class.
+fn ws_token_match(hay: &[u8], val: &[u8]) -> bool {
     if val.is_empty() {
         return true; /* libxml2 returns non-NULL for an empty val */
     }
@@ -31,9 +25,7 @@ pub(super) fn fn_css_class<'e, 'd, D: Dom<'d>>(
     _focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
-    two::<D, _>(ev, args, |hay, needle| {
-        boolean(ws_token_match(Some(hay), Some(needle)))
-    })
+    two::<D, _>(ev, args, |hay, needle| boolean(ws_token_match(hay, needle)))
 }
 
 /// local-name-is(name): true iff the context node's qualified name (for HTML the

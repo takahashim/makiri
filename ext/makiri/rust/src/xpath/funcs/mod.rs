@@ -474,8 +474,8 @@ fn find_bytes(hay: &[u8], needle: &[u8]) -> Option<usize> {
     }
 }
 
-/// The number of characters in valid UTF-8; a stray continuation byte counts as
-/// its own character, matching the C primitive's byte-lead counting.
+/// The number of characters in valid UTF-8: every byte that is not a
+/// continuation byte starts one.
 fn count_chars(s: &[u8]) -> usize {
     s.iter().filter(|&&b| (b & 0xC0) != 0x80).count()
 }
@@ -910,14 +910,23 @@ fn fn_translate<'e, 'd, D: Dom<'d>>(
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
-    let mut texts = try_vec::<Text>(3, err.clone(), "translate")?;
-    for a in args {
-        texts.push(to_text::<D>(a, ev)?);
-    }
+    let [s, f, t] = args else {
+        return Err(err_setf!(
+            err,
+            XP_ERR_RUNTIME,
+            "translate() takes 3 arguments"
+        ));
+    };
+    /* Converted left to right, as the arguments were written. */
+    let (s, f, t) = (
+        to_text::<D>(s, ev)?,
+        to_text::<D>(f, ev)?,
+        to_text::<D>(t, ev)?,
+    );
     let (sv, fv, tv) = match (
-        core::str::from_utf8(texts[0].as_slice()),
-        core::str::from_utf8(texts[1].as_slice()),
-        core::str::from_utf8(texts[2].as_slice()),
+        core::str::from_utf8(s.as_slice()),
+        core::str::from_utf8(f.as_slice()),
+        core::str::from_utf8(t.as_slice()),
     ) {
         (Ok(a), Ok(b), Ok(c)) => (a, b, c),
         _ => {
@@ -957,28 +966,22 @@ fn fn_translate<'e, 'd, D: Dom<'d>>(
             Some(_) => None, /* past `to`: drop it */
         };
         if let Some(e) = emit {
-            let result = buf.append(e.as_bytes());
-            if result.is_err() {
-                buf.free();
-                return Err(if matches!(result, Err(crate::cbuf::BufError::Limit)) {
-                    err_setf!(
-                        err,
-                        XP_ERR_LIMIT,
-                        "string size limit exceeded ({} bytes) in translate()",
-                        ev.budget.limits.max_string_bytes
-                    )
-                } else {
+            buf.append(e.as_bytes()).map_err(|e| match e {
+                crate::cbuf::BufError::Limit => err_setf!(
+                    err,
+                    XP_ERR_LIMIT,
+                    "string size limit exceeded ({} bytes) in translate()",
+                    ev.budget.limits.max_string_bytes
+                ),
+                crate::cbuf::BufError::Oom => {
                     err_setf!(err, XP_ERR_OOM, "out of memory in translate()")
-                });
-            }
+                }
+            })?;
         }
     }
-    let owned = match buf.steal() {
-        Ok(owned) => owned,
-        Err(_) => {
-            return Err(err_setf!(err, XP_ERR_OOM, "out of memory in translate()"));
-        }
-    };
+    let owned = buf
+        .steal()
+        .map_err(|_| err_setf!(err, XP_ERR_OOM, "out of memory in translate()"))?;
     Ok(Val::string(Text::from_buf(owned)))
 }
 

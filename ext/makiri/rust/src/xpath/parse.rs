@@ -545,9 +545,9 @@ impl<'a> Parser<'a> {
     fn binop_here(&self) -> Option<(Op, usize)> {
         BINOP_LEVELS.iter().enumerate().find_map(|(li, level)| {
             level.iter().find_map(|m| {
-                let hit = match m.word {
-                    Some(w) => self.lx.tok_is_word(w),
-                    None => self.kind() == m.kind,
+                let hit = match m.trigger {
+                    Trigger::Word(w) => self.lx.tok_is_word(w),
+                    Trigger::Kind(k) => self.kind() == k,
                 };
                 hit.then_some((m.op, li))
             })
@@ -590,24 +590,27 @@ impl<'a> Parser<'a> {
 
 /* ---- the precedence table ---- */
 
+/// What an operator is spelled as: a word token ("div", "and", ...) or a
+/// token kind.
+enum Trigger {
+    Word(&'static [u8]),
+    Kind(Tok),
+}
+
 struct BinMatch {
-    /// Some: match a word token ("div", "and", ...); None: match `kind`.
-    word: Option<&'static [u8]>,
-    kind: Tok,
+    trigger: Trigger,
     op: Op,
 }
 
 const fn w(word: &'static [u8], op: Op) -> BinMatch {
     BinMatch {
-        word: Some(word),
-        kind: Tok::Eof,
+        trigger: Trigger::Word(word),
         op,
     }
 }
 const fn k(kind: Tok, op: Op) -> BinMatch {
     BinMatch {
-        word: None,
-        kind,
+        trigger: Trigger::Kind(kind),
         op,
     }
 }

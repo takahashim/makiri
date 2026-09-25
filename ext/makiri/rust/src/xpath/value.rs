@@ -214,14 +214,21 @@ impl<N> Val<N> {
 
 /* ---- the token boundary ---- */
 
+impl<N: Copy> Val<N> {
+    /// `self` with each node mapped through `f`, or None on OOM.
+    fn try_map_nodes<M>(self, f: impl FnMut(N) -> M) -> Option<Val<M>> {
+        Some(match self {
+            Val::NodeSet(ns) => Val::NodeSet(ns.try_map(f)?),
+            Val::String(t) => Val::String(t),
+            Val::Number(d) => Val::Number(d),
+            Val::Boolean(b) => Val::Boolean(b),
+        })
+    }
+}
+
 /// `v` as the glue carries it - its nodes as tokens - or None on OOM.
 pub fn val_to_tokens<'d, D: Dom<'d>>(v: Val<D::Node>) -> Option<Val> {
-    Some(match v {
-        Val::NodeSet(ns) => Val::NodeSet(ns.try_map(D::token)?),
-        Val::String(t) => Val::String(t),
-        Val::Number(d) => Val::Number(d),
-        Val::Boolean(b) => Val::Boolean(b),
-    })
+    v.try_map_nodes(D::token)
 }
 
 /// A copy of `v` as the glue carries it, or None on OOM.
@@ -239,12 +246,7 @@ pub fn val_copy_to_tokens<'d, D: Dom<'d>>(v: &Val<D::Node>) -> Option<Val> {
 /// Safe because a token is only ever made by `doc`'s own `token` or by the
 /// Ruby bridge, which checked the node's document.
 pub fn val_from_tokens<'d, D: Dom<'d>>(doc: D, v: Val) -> Option<Val<D::Node>> {
-    Some(match v {
-        Val::NodeSet(ns) => Val::NodeSet(ns.try_map(|t| doc.resolve_token(t))?),
-        Val::String(t) => Val::String(t),
-        Val::Number(d) => Val::Number(d),
-        Val::Boolean(b) => Val::Boolean(b),
-    })
+    v.try_map_nodes(|t| doc.resolve_token(t))
 }
 
 /// The dynamic context of XPath 1.0 - the "focus": the context node with its
