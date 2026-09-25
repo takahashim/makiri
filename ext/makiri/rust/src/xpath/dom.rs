@@ -69,7 +69,7 @@ pub trait Dom<'d>: Copy {
     /// The HTML backend builds (or, after a mutation since the last evaluate,
     /// rebuilds) its element index here. XML has no such state. `Err` when it
     /// cannot be built (out of memory), and the evaluate fails closed.
-    fn prepare(&self) -> Result<(), Status> {
+    fn prepare(&self) -> Result<(), ErrorKind> {
         Ok(())
     }
 

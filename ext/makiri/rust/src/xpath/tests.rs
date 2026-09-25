@@ -8,7 +8,7 @@
 
 #![forbid(unsafe_code)]
 
-use crate::xpath::msg::Status;
+use crate::xpath::msg::ErrorKind;
 
 use crate::xpath::limits::Budget;
 
@@ -28,7 +28,7 @@ enum Answer {
     Str(String),
     Num(f64),
     Bool(bool),
-    Err(Status),
+    Err(ErrorKind),
 }
 
 impl PartialEq for Answer {
@@ -193,10 +193,10 @@ fn numbers_and_booleans_follow_the_xpath_rules() {
 
 #[test]
 fn failures_come_back_with_their_status() {
-    assert_eq!(xpath("//a["), Answer::Err(Status::Syntax));
-    assert_eq!(xpath("foo()"), Answer::Err(Status::Runtime));
+    assert_eq!(xpath("//a["), Answer::Err(ErrorKind::Syntax));
+    assert_eq!(xpath("foo()"), Answer::Err(ErrorKind::Runtime));
     let capped = run(Query::XPath, "//c | //a", |l| l.max_nodeset_size = 2);
-    assert_eq!(capped, Answer::Err(Status::Limit));
+    assert_eq!(capped, Answer::Err(ErrorKind::Limit));
 }
 
 /// `1+1+...+1` with `ops` operators: a left-leaning tree `ops + 1` levels deep.
@@ -210,7 +210,7 @@ fn chain(ops: usize) -> String {
 ///
 /// Parse only: evaluating a tree this deep takes more stack than a debug build's
 /// test thread has, and what is being tested is where the tree stops being built.
-fn parse_status(expr: &str) -> Result<(), Status> {
+fn parse_status(expr: &str) -> Result<(), ErrorKind> {
     let doc = xml_parse(DOC).expect("the fixture parses");
     let ctx = crate::xml::xpath::context(&doc, doc.doc_node());
     let mut budget = Budget::with_limits(ctx.limits());
@@ -225,12 +225,12 @@ fn parse_status(expr: &str) -> Result<(), Status> {
 fn nesting_depth_is_bounded_where_the_tree_is_built() {
     // At the cap the tree is built; one level past it the parse refuses.
     assert_eq!(parse_status(&chain(1023)), Ok(()));
-    assert_eq!(parse_status(&chain(1024)), Err(Status::Limit));
+    assert_eq!(parse_status(&chain(1024)), Err(ErrorKind::Limit));
     // Under the cap the parse succeeds and the evaluation limit decides, as before.
     assert_eq!(parse_status(&chain(300)), Ok(()));
     // A chain that used to build tens of thousands of levels stops at the cap
     // instead of taking the stack with it.
-    assert_eq!(parse_status(&chain(30_000)), Err(Status::Limit));
+    assert_eq!(parse_status(&chain(30_000)), Err(ErrorKind::Limit));
 }
 
 /// `f()` answers true, first running `inner` on the same context when `nest`
@@ -293,8 +293,8 @@ fn a_nested_evaluate_does_not_refill_the_outer_budget() {
     assert_eq!(walk_with_handler(true, 1000), all);
     /* A budget the walk overruns stays overrun when every predicate call
      * evaluates again - the nested run must not reset the outer's count. */
-    assert_eq!(walk_with_handler(false, 30), Answer::Err(Status::Limit));
-    assert_eq!(walk_with_handler(true, 30), Answer::Err(Status::Limit));
+    assert_eq!(walk_with_handler(false, 30), Answer::Err(ErrorKind::Limit));
+    assert_eq!(walk_with_handler(true, 30), Answer::Err(ErrorKind::Limit));
 }
 
 #[cfg(feature = "lexbor")]
@@ -315,9 +315,12 @@ fn css_selectors_lower_to_the_same_answers_as_xml_css() {
     assert_eq!(css("b > *:first-child"), nodes(&["c"]));
     assert_eq!(css("a:last-of-type"), nodes(&["a"]));
     assert_eq!(css("c[n]"), nodes(&["c"]));
-    assert_eq!(css("a["), Answer::Err(Status::Syntax));
+    assert_eq!(css("a["), Answer::Err(ErrorKind::Syntax));
     // A selector list lowers to a chain of unions, held to the same depth cap.
-    assert_eq!(css(&vec!["a"; 1100].join(",")), Answer::Err(Status::Limit));
+    assert_eq!(
+        css(&vec!["a"; 1100].join(",")),
+        Answer::Err(ErrorKind::Limit)
+    );
 }
 
 /// With no room in the string-value cache, comparisons build their values

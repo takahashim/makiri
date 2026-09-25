@@ -16,7 +16,7 @@ use crate::token::{Kind, Token};
 use crate::xpath::abi::*;
 use crate::xpath::ctx::Context;
 use crate::xpath::dom::*;
-use crate::xpath::msg::{Error, Status};
+use crate::xpath::msg::{Error, ErrorKind};
 use core::ptr::NonNull;
 
 /// The HTML backend as an evaluate holds it: the document, and the parsed handle
@@ -218,7 +218,7 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
         n.with_text_content(|text| text.map_or(Ok(()), |t| buf.append(t)))
     }
 
-    fn prepare(&self) -> Result<(), Status> {
+    fn prepare(&self) -> Result<(), ErrorKind> {
         /* Rebuild the index a mutation dropped, so `//tag` is served from it;
          * an allocation failure fails the evaluate closed.
          *
@@ -233,7 +233,7 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
         // SAFETY: `new`'s contract, and nothing borrowed from the handle is
         // live: this evaluation has not started, and an outer one would have
         // built the index already.
-        unsafe { (*self.parsed).ensure_dom_index() }.map_err(|_| Status::Oom)
+        unsafe { (*self.parsed).ensure_dom_index() }.map_err(|_| ErrorKind::Oom)
     }
 
     /// Served only for a document with no foreign element, where lax and
@@ -272,7 +272,10 @@ fn skip_ns_decls(mut a: Option<HtmlAttr<'_>>) -> Option<HtmlAttr<'_>> {
 
 /// `evaluate with no document`.
 fn no_document() -> Error {
-    Error::with(Status::Runtime, format_args!("evaluate with no document"))
+    Error::with(
+        ErrorKind::Runtime,
+        format_args!("evaluate with no document"),
+    )
 }
 
 /// The HTML document behind `parsed` as the backend reads it, for `'e`.

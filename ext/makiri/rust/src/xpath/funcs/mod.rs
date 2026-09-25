@@ -329,7 +329,7 @@ impl<'e, 'd, D: Dom<'d>> Found<'e, 'd, D> {
         if max == usize::MAX {
             err_setf!(
                 err,
-                Status::Runtime,
+                ErrorKind::Runtime,
                 "{}{}(): expected at least {} argument{}",
                 lib,
                 name,
@@ -339,7 +339,7 @@ impl<'e, 'd, D: Dom<'d>> Found<'e, 'd, D> {
         } else if min == max {
             err_setf!(
                 err,
-                Status::Runtime,
+                ErrorKind::Runtime,
                 "{}{}(): expected {} argument(s), got {}",
                 lib,
                 name,
@@ -349,7 +349,7 @@ impl<'e, 'd, D: Dom<'d>> Found<'e, 'd, D> {
         } else {
             err_setf!(
                 err,
-                Status::Runtime,
+                ErrorKind::Runtime,
                 "{}{}(): expected {}-{} argument(s), got {}",
                 lib,
                 name,
@@ -375,7 +375,7 @@ fn require_nodeset<'v, N>(arg: &'v Val<N>, fname: &str, err: ErrSink) -> FnResul
         Some(ns) => Ok(ns),
         None => Err(err_setf!(
             err,
-            Status::Type,
+            ErrorKind::Type,
             "{}(): argument must be a node-set",
             fname
         )),
@@ -384,7 +384,7 @@ fn require_nodeset<'v, N>(arg: &'v Val<N>, fname: &str, err: ErrSink) -> FnResul
 
 /// An owned copy of `s`, or `Err` with `*err` naming `what` on OOM.
 fn c_string(s: &[u8], err: ErrSink, what: &str) -> FnResult<Text> {
-    Text::try_copy(s).ok_or_else(|| err_setf!(err, Status::Oom, "out of memory in {}()", what))
+    Text::try_copy(s).ok_or_else(|| err_setf!(err, ErrorKind::Oom, "out of memory in {}()", what))
 }
 
 /// A string answer copied from `s`.
@@ -500,7 +500,12 @@ fn advance_chars(s: &[u8], n: usize) -> usize {
 fn try_vec<T>(n: usize, err: ErrSink, what: &str) -> FnResult<Vec<T>> {
     let mut v: Vec<T> = Vec::new();
     if v.falloc_reserve_exact(n).is_err() {
-        return Err(err_setf!(err, Status::Oom, "out of memory in {}()", what));
+        return Err(err_setf!(
+            err,
+            ErrorKind::Oom,
+            "out of memory in {}()",
+            what
+        ));
     }
     Ok(v)
 }
@@ -755,7 +760,7 @@ fn fn_concat<'e, 'd, D: Dom<'d>>(
         let t = to_text::<D>(a, ev)?;
         total = match total.checked_add(t.as_slice().len()) {
             Some(n) => n,
-            None => return Err(err_setf!(err, Status::Oom, "concat() size overflow")),
+            None => return Err(err_setf!(err, ErrorKind::Oom, "concat() size overflow")),
         };
         ev.budget.check_string_bytes(total)?;
         parts.push(t);
@@ -770,7 +775,7 @@ fn fn_concat<'e, 'd, D: Dom<'d>>(
         off
     });
     let Some(joined) = joined else {
-        return Err(err_setf!(err, Status::Oom, "out of memory in concat()"));
+        return Err(err_setf!(err, ErrorKind::Oom, "out of memory in concat()"));
     };
     Ok(Val::string(joined))
 }
@@ -908,7 +913,7 @@ fn fn_normalize_space<'e, 'd, D: Dom<'d>>(
     let Some(normalized) = normalized else {
         return Err(err_setf!(
             err,
-            Status::Oom,
+            ErrorKind::Oom,
             "out of memory in normalize-space()"
         ));
     };
@@ -932,7 +937,7 @@ fn fn_translate<'e, 'd, D: Dom<'d>>(
          * is a broken invariant, not the caller's mistake. */
         return Err(err_setf!(
             err,
-            Status::Internal,
+            ErrorKind::Internal,
             "translate() reached with {} arguments",
             args.len()
         ));
@@ -952,7 +957,7 @@ fn fn_translate<'e, 'd, D: Dom<'d>>(
         _ => {
             return Err(err_setf!(
                 err,
-                Status::Runtime,
+                ErrorKind::Runtime,
                 "invalid UTF-8 in translate() argument"
             ));
         }
@@ -989,19 +994,19 @@ fn fn_translate<'e, 'd, D: Dom<'d>>(
             buf.append(e.as_bytes()).map_err(|e| match e {
                 crate::cbuf::BufError::Limit => err_setf!(
                     err,
-                    Status::Limit,
+                    ErrorKind::Limit,
                     "string size limit exceeded ({} bytes) in translate()",
                     ev.budget.limits.max_string_bytes
                 ),
                 crate::cbuf::BufError::Oom => {
-                    err_setf!(err, Status::Oom, "out of memory in translate()")
+                    err_setf!(err, ErrorKind::Oom, "out of memory in translate()")
                 }
             })?;
         }
     }
     let owned = buf
         .steal()
-        .map_err(|_| err_setf!(err, Status::Oom, "out of memory in translate()"))?;
+        .map_err(|_| err_setf!(err, ErrorKind::Oom, "out of memory in translate()"))?;
     Ok(Val::string(Text::from_buf(owned)))
 }
 

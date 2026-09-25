@@ -8,7 +8,7 @@ pub use super::ast::*;
 pub use super::ctx::{Names, Resolver, ResolverCall};
 pub use super::funcs::{FN_CHILD_POS, FN_CHILD_POS_LAST, FN_OF_TYPE_POS, FN_OF_TYPE_POS_LAST};
 pub use super::limits::Limits;
-pub use super::msg::Status;
+pub use super::msg::ErrorKind;
 pub use super::order::OrderIndex;
 pub use super::str_cache::{NodeText, StrCache, TextId};
 pub use super::value::{NodeSet, Text, Val, ValRef};

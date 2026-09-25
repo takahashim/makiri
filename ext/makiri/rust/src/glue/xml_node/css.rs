@@ -20,7 +20,7 @@ use crate::glue::query::{query_context, run_query, QueryArgs};
 use crate::init::MOD_XML_NODE_METHODS;
 use crate::xpath::ast::Ast;
 use crate::xpath::ctx::XPathValue;
-use crate::xpath::msg::Status;
+use crate::xpath::msg::ErrorKind;
 
 /// The query arguments for a selector and its namespace Hash.
 fn css_args(selector: Value, ns: Value) -> QueryArgs {
@@ -57,7 +57,7 @@ fn compile(ruby: &Ruby, ctx: &Cx, q: &QueryArgs, form: Form) -> Result<Box<Ast>,
 /// that does not parse or lower - with the lowering's reason, when it gave one -
 /// and the XPath mapping otherwise.
 fn compile_error(selector: Value, error: &crate::xpath::msg::Error) -> Error {
-    if error.status != Status::Syntax {
+    if error.status != ErrorKind::Syntax {
         return xpath_error(error);
     }
     crate::glue::css::syntax_error(selector, error.message())

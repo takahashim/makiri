@@ -102,7 +102,7 @@ fn fill_positions<'e, 'd, D: Dom<'d>>(
     let oom = |ev: &Evaluation<'e, 'd, D>| {
         err_setf!(
             ev.budget.sink(),
-            Status::Oom,
+            ErrorKind::Oom,
             "out of memory computing sibling positions"
         )
     };

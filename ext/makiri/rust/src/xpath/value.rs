@@ -109,7 +109,7 @@ impl<N> NodeSet<N> {
         if self.0.falloc_reserve(1).is_err() {
             return Err(err_setf!(
                 budget.sink(),
-                Status::Oom,
+                ErrorKind::Oom,
                 "out of memory growing node-set"
             ));
         }
@@ -256,7 +256,7 @@ pub struct Focus<'d, D: Dom<'d>> {
 
 /// Copy `s` into a fresh text, or `Err` with `err` set to `what` on OOM.
 pub fn owned_copy(s: &[u8], err: ErrSink, what: &str) -> Result<Text, Reported> {
-    Text::try_copy(s).ok_or_else(|| err_setf!(err, Status::Oom, "{}", what))
+    Text::try_copy(s).ok_or_else(|| err_setf!(err, ErrorKind::Oom, "{}", what))
 }
 
 /* ---------- value clone ---------- */
@@ -277,7 +277,7 @@ pub fn val_clone<N: Copy>(src: &Val<N>, err: ErrSink) -> Result<Val<N>, Reported
             None => {
                 return Err(err_setf!(
                     err,
-                    Status::Oom,
+                    ErrorKind::Oom,
                     "out of memory cloning node-set"
                 ))
             }
@@ -370,13 +370,13 @@ pub fn node_to_owned_text<'d, D: Dom<'d>>(
         Unbuilt::Budget(reported) => reported,
         Unbuilt::Buf(BufError::Limit) => err_setf!(
             budget.sink(),
-            Status::Limit,
+            ErrorKind::Limit,
             "string size limit exceeded ({} bytes) while building node string-value",
             max
         ),
         Unbuilt::Buf(_) => err_setf!(
             budget.sink(),
-            Status::Oom,
+            ErrorKind::Oom,
             "out of memory building node string-value"
         ),
     });
@@ -384,7 +384,7 @@ pub fn node_to_owned_text<'d, D: Dom<'d>>(
     let owned = buf.steal().map_err(|_| {
         err_setf!(
             budget.sink(),
-            Status::Oom,
+            ErrorKind::Oom,
             "out of memory building node string-value"
         )
     })?;
@@ -471,7 +471,7 @@ pub fn val_to_owned_text_or_fail<'d, D: Dom<'d>>(
                 Some(n) => owned_copy(&buf[..n], err, what),
                 None => Err(err_setf!(
                     err,
-                    Status::Internal,
+                    ErrorKind::Internal,
                     "number string conversion overflow"
                 )),
             }

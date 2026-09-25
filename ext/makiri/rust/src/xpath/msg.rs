@@ -84,12 +84,12 @@ impl core::fmt::Write for MsgBuf {
 /// than grown, so every failure - running out of memory included - can say what
 /// went wrong, and there is nothing to free afterwards.
 pub struct Error {
-    pub status: Status,
+    pub status: ErrorKind,
     msg: MsgBuf,
 }
 
 impl Error {
-    /// An empty error slot: [`Status::Internal`] with no message.
+    /// An empty error slot: [`ErrorKind::Internal`] with no message.
     ///
     /// There is no "no error" status. A slot is only ever read after a failure
     /// has been reported (`Reported` proves it was written), so one read without
@@ -97,14 +97,14 @@ impl Error {
     /// a success, and never as a user's mistake.
     pub fn new() -> Error {
         Error {
-            status: Status::Internal,
+            status: ErrorKind::Internal,
             msg: MsgBuf::default(),
         }
     }
 
     /// An error of `status`, its message formatted from `args` - for a caller
     /// that has an error to hand back and no run to report it through.
-    pub fn with(status: Status, args: core::fmt::Arguments<'_>) -> Error {
+    pub fn with(status: ErrorKind, args: core::fmt::Arguments<'_>) -> Error {
         use core::fmt::Write;
         let mut e = Error::new();
         e.status = status;
@@ -171,7 +171,7 @@ impl ErrSink {
 /// sink skips the formatting as well as the write.
 pub(crate) fn err_set_fmt(
     err: ErrSink,
-    status: Status,
+    status: ErrorKind,
     args: core::fmt::Arguments<'_>,
 ) -> Reported {
     use core::fmt::Write;
@@ -186,7 +186,7 @@ pub(crate) fn err_set_fmt(
 
 /// Set `err` to a fixed message: [`err_set_fmt`] without the formatting.
 #[cfg(feature = "lexbor")]
-pub(crate) fn err_set(err: ErrSink, status: Status, msg: &str) -> Reported {
+pub(crate) fn err_set(err: ErrSink, status: ErrorKind, msg: &str) -> Reported {
     use core::fmt::Write;
     if let Some(slot) = err.0 {
         let mut e = slot.borrow_mut();
@@ -214,7 +214,7 @@ macro_rules! err_setf {
 /// What kind of failure an [`Error`] is. The Ruby layer picks the exception
 /// class from it, with a `match` the compiler checks is complete.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Status {
+pub enum ErrorKind {
     /// A construct the engine does not implement (the namespace axis).
     NotImplemented,
     /// The expression does not parse.

@@ -88,7 +88,7 @@ impl StrCache {
         if self.entries.falloc_reserve(1).is_err() {
             return Err(err_setf!(
                 budget.sink(),
-                Status::Oom,
+                ErrorKind::Oom,
                 "out of memory in node string cache"
             ));
         }
@@ -99,7 +99,7 @@ impl StrCache {
         if self.index.insert(node, id).is_err() {
             return Err(err_setf!(
                 budget.sink(),
-                Status::Oom,
+                ErrorKind::Oom,
                 "out of memory indexing node string cache"
             ));
         }

@@ -128,7 +128,7 @@ pub fn try_descendant_index_nth<'e, 'd, D: Dom<'d>>(
     let Some(mut per_parent) = PtrTable::<Token, usize>::with_keys(bucket.nodes.len(), 0) else {
         return Err(err_setf!(
             ev.budget.sink(),
-            Status::Oom,
+            ErrorKind::Oom,
             "out of memory (//name[N])"
         ));
     };

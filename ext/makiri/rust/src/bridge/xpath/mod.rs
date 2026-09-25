@@ -31,7 +31,7 @@ use crate::xpath::ast::Ast;
 use crate::xpath::ctx::{Resolver, Session, XPathValue};
 use crate::xpath::dom::Dom;
 use crate::xpath::limits::Budget;
-use crate::xpath::msg::{Error as XPathError, Status};
+use crate::xpath::msg::{Error as XPathError, ErrorKind};
 use crate::xpath::value::ValRef;
 use core::ptr::NonNull;
 
@@ -49,13 +49,13 @@ use handler::Bridge;
 /// magnus raises once its frames - and the context they own - are gone.
 pub fn xpath_error(err: &XPathError) -> Error {
     let class = match err.status {
-        Status::Syntax => EXC_XPATH_SYNTAX_ERROR.exception(),
-        Status::Limit => EXC_XPATH_LIMIT_EXCEEDED.exception(),
-        Status::NotImplemented
-        | Status::Type
-        | Status::Runtime
-        | Status::Internal
-        | Status::Oom => EXC_ERROR.exception(),
+        ErrorKind::Syntax => EXC_XPATH_SYNTAX_ERROR.exception(),
+        ErrorKind::Limit => EXC_XPATH_LIMIT_EXCEEDED.exception(),
+        ErrorKind::NotImplemented
+        | ErrorKind::Type
+        | ErrorKind::Runtime
+        | ErrorKind::Internal
+        | ErrorKind::Oom => EXC_ERROR.exception(),
     };
     let ruby = magnus::Ruby::get_with(class);
     let msg = ruby.enc_str_new(

@@ -16,7 +16,7 @@ use crate::init::{CLASS_NODE, CLASS_NODE_SET};
 use crate::token::Kind;
 use crate::xpath::ctx::{Resolver, ResolverCall};
 use crate::xpath::limits::Budget;
-use crate::xpath::msg::{Reported, Status};
+use crate::xpath::msg::{ErrorKind, Reported};
 use crate::xpath::value::{NodeSet, Text, Val};
 
 use super::*;
@@ -75,10 +75,10 @@ impl HandlerFailure {
     /// The failure as the engine error that ends the evaluation.
     fn report(self, err: crate::xpath::msg::ErrSink) -> Reported {
         match self {
-            HandlerFailure::Msg(m) => crate::err_setf!(err, Status::Runtime, "{m}"),
+            HandlerFailure::Msg(m) => crate::err_setf!(err, ErrorKind::Runtime, "{m}"),
             HandlerFailure::InvalidString(reason) => crate::err_setf!(
                 err,
-                Status::Runtime,
+                ErrorKind::Runtime,
                 "handler returned an invalid string: {reason}"
             ),
         }
@@ -226,7 +226,7 @@ fn handler_call_body(c: &mut HandlerCall<'_>) {
 fn handler_raised(err: crate::xpath::msg::ErrSink, e: &Error) -> Reported {
     crate::err_setf!(
         err,
-        Status::Runtime,
+        ErrorKind::Runtime,
         "handler raised: {}",
         crate::bridge::ruby::error_message(e)
     )
@@ -266,7 +266,7 @@ unsafe fn handler_resolver(
     if call.args.len() > HANDLER_MAX_ARGS {
         return Err(crate::err_setf!(
             err,
-            Status::Runtime,
+            ErrorKind::Runtime,
             "handler function '{}' called with too many arguments ({} > {})",
             core::str::from_utf8_unchecked(&name[..n]),
             call.args.len(),
@@ -299,7 +299,7 @@ unsafe fn handler_resolver(
         /* The body sets a result on every path that returns normally. */
         None => Err(crate::err_setf!(
             err,
-            Status::Runtime,
+            ErrorKind::Runtime,
             "handler produced no result"
         )),
     }

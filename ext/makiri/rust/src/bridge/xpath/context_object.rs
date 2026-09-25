@@ -21,7 +21,7 @@ use crate::falloc::{try_to_boxed_slice, MapInsert, Reserve};
 use crate::xpath::ast::Ast;
 use crate::xpath::ctx::ContextError;
 use crate::xpath::limits::Budget;
-use crate::xpath::msg::Status;
+use crate::xpath::msg::ErrorKind;
 
 use super::*;
 
@@ -291,7 +291,7 @@ fn cached_ast(
     let ptr = &*ast as *const Ast;
     if cache.0.falloc_insert(owned_key, ast).is_err() {
         return Err(XPathError::with(
-            Status::Oom,
+            ErrorKind::Oom,
             format_args!("out of memory caching XPath expression"),
         ));
     }
