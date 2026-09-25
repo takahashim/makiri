@@ -21,9 +21,8 @@
 #![forbid(unsafe_code)]
 
 use crate::falloc::Reserve;
-use crate::xml::chars::{expand_into, ExpandErr, ExpandMode};
 use crate::xml::qname::Split;
-use crate::xml::{ArenaKind, BudgetError, Document, Link, Node, NodeId, ParseError, Span};
+use crate::xml::{ArenaKind, BudgetError, Document, Link, Node, NodeId, Span};
 use core::sync::atomic::{AtomicU32, Ordering};
 
 /// Hands each document a unique stamp (never 0). Node ids carry it so a handle
@@ -38,6 +37,19 @@ use core::sync::atomic::{AtomicU32, Ordering};
 static DOC_STAMP: AtomicU32 = AtomicU32::new(1);
 
 const NODE_COST: usize = core::mem::size_of::<Node>();
+
+/// Why [`Document::append_with`] wrote nothing: the budget refused, or `fill`
+/// did.
+pub(super) enum AppendError<E> {
+    Budget(BudgetError),
+    Fill(E),
+}
+
+impl<E> From<BudgetError> for AppendError<E> {
+    fn from(b: BudgetError) -> Self {
+        AppendError::Budget(b)
+    }
+}
 
 impl Document {
     /// A fresh document under `limits` (None: the default budget). The source
@@ -352,35 +364,37 @@ impl Document {
         Ok(NodeId::new(index, stamp))
     }
 
-    /// Expand XML references into one byte-store span.
-    pub(super) fn expand(&mut self, src: &[u8], mode: ExpandMode) -> Result<Span, ParseError> {
-        if src.is_empty() {
-            return Ok(Span::EMPTY);
-        }
-        self.charge(src.len())?;
+    /// Reserve `cap` bytes at the end of the store, run `fill` over that tail,
+    /// and keep the first `n` bytes it reports; the store is truncated back on
+    /// `fill`'s error, so nothing partial is ever visible. `cap` bytes are
+    /// charged, not `n`: the reservation is what costs.
+    ///
+    /// Generic over `fill`'s error on purpose, so the arena stays free of the
+    /// parser's error vocabulary - the caller maps its own.
+    pub(super) fn append_with<E>(
+        &mut self,
+        cap: usize,
+        fill: impl FnOnce(&mut [u8]) -> Result<usize, E>,
+    ) -> Result<Span, AppendError<E>> {
+        self.charge(cap)?;
         self.bytes
-            .falloc_reserve(src.len())
+            .falloc_reserve(cap)
             .map_err(|_| BudgetError::Oom)?;
         let off = self.bytes.len();
-        self.bytes.resize(off + src.len(), 0);
-        let n = match expand_into(src, mode, &mut self.bytes[off..]) {
-            Ok(n) => n,
-            Err(ExpandErr::Syntax) => {
-                self.bytes.truncate(off);
-                return Err(ParseError::Syntax);
+        self.bytes.resize(off + cap, 0);
+        match fill(&mut self.bytes[off..]) {
+            Ok(n) => {
+                self.bytes.truncate(off + n);
+                Ok(Span {
+                    off: off as u32,
+                    len: n as u32,
+                })
             }
-            Err(ExpandErr::Overflow) => {
+            Err(e) => {
                 self.bytes.truncate(off);
-                return Err(ParseError::Internal);
+                Err(AppendError::Fill(e))
             }
-        };
-        self.bytes.truncate(off + n);
-        // The reservation above charged `src.len()`; the expansion never grows
-        // (references only shrink), so this is the only accounting needed.
-        Ok(Span {
-            off: off as u32,
-            len: n as u32,
-        })
+        }
     }
 
     /// Append a TEXT/CDATA node, coalescing with a preceding sibling of the

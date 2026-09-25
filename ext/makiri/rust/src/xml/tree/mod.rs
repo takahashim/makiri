@@ -14,7 +14,10 @@ mod dtd;
 mod scope;
 
 use crate::falloc::Reserve;
-use crate::xml::chars::{is_reserved_pi_target, normalize_newlines, ExpandMode};
+use crate::xml::arena::AppendError;
+use crate::xml::chars::{
+    expand_into, is_reserved_pi_target, normalize_newlines, ExpandErr, ExpandMode,
+};
 use crate::xml::qname::{split_scanned, xmlns_prefix, Split};
 use crate::xml::{
     ArenaKind, Document, NodeFlags, NodeId, ParseError, ParseLimits, Span, MAX_ATTRS, MAX_DEPTH,
@@ -76,15 +79,26 @@ impl<'a> Parser<'a> {
     }
 
     /// Expand references into the arena. A reference to an entity a DTD
-    /// declared is not a syntax error but a construct Makiri refuses.
+    /// declared is not a syntax error but a construct Makiri refuses. The
+    /// expansion never grows (references only shrink), so `s.len()` is the
+    /// reservation to charge.
     fn expand(&mut self, s: &[u8], mode: ExpandMode) -> R<Span> {
-        self.doc.expand(s, mode).map_err(|st| {
-            if st == ParseError::Syntax && self.declared.refs_unexpanded_entity(&self.cur, s) {
-                ParseError::Unsupported
-            } else {
-                st
-            }
-        })
+        if s.is_empty() {
+            return Ok(Span::EMPTY);
+        }
+        self.doc
+            .append_with(s.len(), |out| expand_into(s, mode, out))
+            .map_err(|e| match e {
+                AppendError::Budget(b) => b.into(),
+                AppendError::Fill(ExpandErr::Syntax) => {
+                    if self.declared.refs_unexpanded_entity(&self.cur, s) {
+                        ParseError::Unsupported
+                    } else {
+                        ParseError::Syntax
+                    }
+                }
+                AppendError::Fill(ExpandErr::Overflow) => ParseError::Internal,
+            })
     }
 
     fn new_node(&mut self, ty: ArenaKind) -> R<NodeId> {
