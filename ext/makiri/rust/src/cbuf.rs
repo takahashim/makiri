@@ -130,7 +130,36 @@ impl Buf {
 
     /// Append `bytes`. Fails closed, leaving the buffer untouched (see
     /// [`BufError`]).
+    #[inline]
     pub fn append(&mut self, bytes: &[u8]) -> Result<(), BufError> {
+        let n = bytes.len();
+        /* The common case - serializer output arrives as many small chunks -
+         * is a copy into room already there. It needs no ceiling check: `cap`
+         * never exceeds the ceiling plus the NUL (every growth clamps to it,
+         * which the Kani proof asserts), so content that fits below `cap` is
+         * within the ceiling. `len < cap` whenever there is an allocation, and
+         * both are 0 when there is none, so the subtraction cannot wrap and an
+         * empty buffer falls through to the growth. */
+        if n < self.cap - self.len {
+            // SAFETY: `len + n + 1 <= cap`, so the copy and the terminator fit
+            // the allocation; `bytes` is a slice, so it names `n` readable
+            // bytes, and it cannot overlap a buffer this one owns.
+            unsafe {
+                copy_small_or_memcpy(bytes.as_ptr(), self.data.add(self.len), n);
+                *self.data.add(self.len + n) = 0; /* keep NUL-terminated */
+            }
+            self.len += n;
+            return Ok(());
+        }
+        self.append_growing(bytes)
+    }
+
+    /// [`append`](Self::append) when the bytes do not fit the allocation: the
+    /// ceiling, the growth and its clamp. Kept out of line so the common path
+    /// stays small enough to inline into a per-chunk callback.
+    #[cold]
+    #[inline(never)]
+    fn append_growing(&mut self, bytes: &[u8]) -> Result<(), BufError> {
         let n = bytes.len();
         if n == 0 {
             return Ok(());
@@ -259,6 +288,37 @@ impl Buf {
         self.data = p;
         self.cap = cap;
         Ok(())
+    }
+}
+
+/// Copy `n` bytes, without a `memcpy` call when `n <= 16`.
+///
+/// Serializer output is mostly chunks of a few bytes - `<`, a tag name, `="` -
+/// and a call per chunk into libc's `memcpy` measured about a fifth of
+/// `to_html`. Up to 16 bytes are moved as two fixed-size reads and writes that
+/// may overlap in the middle (`[0, k)` and `[n - k, n)` for the largest power
+/// of two `k <= n`), which covers every byte and reads none outside `src`.
+///
+/// # Safety
+/// As [`core::ptr::copy_nonoverlapping`]: `src` names `n` readable bytes, `dst`
+/// `n` writable ones, and the two do not overlap.
+#[inline(always)]
+unsafe fn copy_small_or_memcpy(src: *const u8, dst: *mut u8, n: usize) {
+    #[inline(always)]
+    unsafe fn two<T: Copy>(src: *const u8, dst: *mut u8, n: usize) {
+        let k = core::mem::size_of::<T>();
+        let head = src.cast::<T>().read_unaligned();
+        let tail = src.add(n - k).cast::<T>().read_unaligned();
+        dst.cast::<T>().write_unaligned(head);
+        dst.add(n - k).cast::<T>().write_unaligned(tail);
+    }
+    match n {
+        0 => {}
+        1 => *dst = *src,
+        2..=3 => two::<u16>(src, dst, n),
+        4..=7 => two::<u32>(src, dst, n),
+        8..=16 => two::<u64>(src, dst, n),
+        _ => core::ptr::copy_nonoverlapping(src, dst, n),
     }
 }
 

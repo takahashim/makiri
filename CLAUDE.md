@@ -711,11 +711,18 @@ map are only ever emptied together (`spec/css_selector_cache_spec.rb`).
 **Serialization** (`lexbor/serialize.rs`). `Node#{to_html,to_s,outer_html}` =
 Lexbor `serialize_tree_cb`, `#inner_html` = `serialize_deep_cb`; the callback
 collects Lexbor's many small chunks into one growing C buffer (`cbuf::Buf`,
-**pre-reserved to ~the output size** via `buf_reserve` so the per-chunk
-appends don't realloc on every geometric step) and the
+**pre-reserved** via `Buf::reserve` so the per-chunk appends don't realloc on
+every geometric step) and the
 whole thing is copied into a UTF-8 Ruby String once - markedly faster than
 `rb_str_cat` per chunk (its per-append capacity + coderange bookkeeping was the
-serializer's dominant cost), and at parity with `nokolexbor`. (Serializing
+serializer's dominant cost). **The per-chunk append is the hot path**, since
+a chunk is a few bytes (`<`, a tag name, `="`) and there are ~20 per element:
+`Buf::append`'s inline fast path (fits the allocation => no ceiling check, as
+`cap <= ceiling + 1` always holds) and its `memcpy`-free copy of <= 16 bytes
+took `to_html` from ~1.1x slower than `nokolexbor` to ~1.5x faster; profile
+`chunk_cb` before touching either. nokolexbor also pays a callback per chunk
+(Lexbor's `*_str` serializers are `*_cb` plus a C append), so the gap was
+never "C vs FFI" but what each call costs. (Serializing
 straight into a growing Ruby String avoids the final copy but measured *slower* -
 the intermediate growth is GC-tracked; the untracked C buffer + one copy wins.)
 `pretty: true` uses `serialize_pretty_*` (Lexbor
