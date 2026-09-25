@@ -88,7 +88,7 @@ pub fn doc_order_cmp<'d, D: Dom<'d>>(doc: D, a: D::Node, b: D::Node) -> Ordering
             /* Both attributes of one element: the relative order is
              * implementation-defined, so use the attribute list's order. */
             (true, true) => {
-                for x in crate::xpath::dom::attrs(doc, aa) {
+                for x in doc.attributes(aa) {
                     let xn = D::attr_node(x);
                     if xn == a {
                         return Ordering::Less;
@@ -173,7 +173,7 @@ fn order_index_walk<'d, D: Dom<'d>>(doc: D, idx: &mut OrderIndex, root: D::Node)
         ord += 1;
         /* Only an element has attributes; `first_attr` answers None for the
          * rest, so it is the element test too. */
-        for x in crate::xpath::dom::attrs(doc, n) {
+        for x in doc.attributes(n) {
             if !idx.insert(D::token(D::attr_node(x)), ord) {
                 return ControlFlow::Break(());
             }

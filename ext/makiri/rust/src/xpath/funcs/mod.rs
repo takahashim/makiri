@@ -928,10 +928,13 @@ fn fn_translate<'e, 'd, D: Dom<'d>>(
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
     let [s, f, t] = args else {
+        /* The dispatch table's arity check makes this unreachable: reaching it
+         * is a broken invariant, not the caller's mistake. */
         return Err(err_setf!(
             err,
-            XP_ERR_RUNTIME,
-            "translate() takes 3 arguments"
+            XP_ERR_INTERNAL,
+            "translate() reached with {} arguments",
+            args.len()
         ));
     };
     /* Converted left to right, as the arguments were written. */

@@ -100,6 +100,14 @@ pub trait Dom<'d>: Copy {
      * an attribute handle and do not test again. */
     fn first_attr(self, el: Self::Node) -> Option<Self::Attr>;
     fn attr_next(self, a: Self::Attr) -> Option<Self::Attr>;
+
+    /// `el`'s attributes, in the host's order: [`first_attr`](Dom::first_attr)
+    /// then [`attr_next`](Dom::attr_next). Empty for anything but an element,
+    /// since `first_attr` is the element test too - the way to walk them.
+    #[inline]
+    fn attributes(self, el: Self::Node) -> impl Iterator<Item = Self::Attr> {
+        core::iter::successors(self.first_attr(el), move |&a| self.attr_next(a))
+    }
     /// The node an attribute handle is, for walking, pushing or comparing.
     fn attr_node(a: Self::Attr) -> Self::Node;
     /// `n` as an attribute, or None when it is some other kind of node.
@@ -189,14 +197,6 @@ pub trait Dom<'d>: Copy {
     /// foreign elements), the host must not answer a bucket that leaves them
     /// out.
     fn name_bucket(self, local: &[u8], ns_uri: Option<&[u8]>) -> Option<Bucket<'d, Self::Node>>;
-}
-
-/// `el`'s attributes, in the host's order: [`Dom::first_attr`] then
-/// [`Dom::attr_next`]. Empty for anything but an element, since `first_attr`
-/// is the element test too.
-#[inline]
-pub fn attrs<'d, D: Dom<'d>>(doc: D, el: D::Node) -> impl Iterator<Item = D::Attr> {
-    core::iter::successors(doc.first_attr(el), move |&a| doc.attr_next(a))
 }
 
 /// What `Dom::name_bucket` found: the elements, in document order, and whether

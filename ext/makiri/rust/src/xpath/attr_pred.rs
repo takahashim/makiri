@@ -87,7 +87,7 @@ fn string_literal(e: &Expr) -> Option<&[u8]> {
 /// and sees the namespace declarations the axis hides.
 pub fn attr_pred_matches<'d, D: Dom<'d>>(doc: D, ap: &AttrPred, n: D::Node, lax: bool) -> bool {
     /* Only an element has attributes, so a node of any other kind finds none. */
-    crate::xpath::dom::attrs(doc, n).any(|x| {
+    doc.attributes(n).any(|x| {
         unprefixed_attr_matches(doc, Some(n), x, ap.name, lax)
             && ap.value.is_none_or(|want| doc.attr_value(x) == want)
     })

@@ -104,7 +104,7 @@ pub fn walk_axis<'d, D: Dom<'d>, B, F: FnMut(D::Node) -> ControlFlow<B>>(
         }
         Axis::Attribute => {
             /* None for anything but an element: see `attrs`. */
-            for x in crate::xpath::dom::attrs(doc, context) {
+            for x in doc.attributes(context) {
                 visit(D::attr_node(x))?;
             }
             ControlFlow::Continue(())

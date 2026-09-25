@@ -93,8 +93,10 @@ impl<N> NodeSet<N> {
     pub fn clear(&mut self) {
         self.0.clear();
     }
-    /// Collapse runs of equal adjacent nodes to one.
-    pub fn dedup(&mut self)
+    /// Collapse runs of equal adjacent nodes to one - a de-duplication only
+    /// once the set is sorted, which is why its one caller is
+    /// `order::nodeset_unique_sorted`, right after the sort.
+    pub(in crate::xpath) fn dedup(&mut self)
     where
         N: PartialEq,
     {
