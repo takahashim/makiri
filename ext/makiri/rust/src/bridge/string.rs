@@ -26,7 +26,7 @@ use core::ffi::{c_char, c_int, c_long, CStr};
 use magnus::encoding::Coderange;
 
 use crate::bridge::ruby::makiri_error;
-use magnus::rb_sys::{AsRawValue, FromRawValue};
+use magnus::rb_sys::AsRawValue;
 /* Not magnus's: ours catches a panic before `rb_protect`'s C frame. */
 use super::ruby::protect;
 use magnus::value::ReprValue;
@@ -189,13 +189,16 @@ pub use crate::cutf8::TextVerdict;
 /// The `value` + `(ptr, len)` of a String, taken together so the borrow and its
 /// anchor cannot be separated by accident.
 ///
+/// A String by type, so the bytes are read as one without a check. What is
+/// left to the caller is the part no type can say:
+///
 /// # Safety
-/// `s` must be a `T_STRING`. The returned pointer is valid only until Ruby runs.
+/// The returned pointer is valid only until Ruby runs - a GC, a mutation or a
+/// reallocation of the String can move or free the bytes - so it must not be
+/// held across anything that can run Ruby or allocate.
 #[inline]
-unsafe fn borrow(s: VALUE) -> (VALUE, *const c_char, usize) {
-    /* The contract says `T_STRING`, so this reads it as one - what magnus's
-     * checked conversion did after a type test this function does not need. */
-    let api = rb_sys::stable_api::get_default();
+unsafe fn borrow(s: RString) -> (VALUE, *const c_char, usize) {
+    let (s, api) = (s.as_raw(), rb_sys::stable_api::get_default());
     (s, api.rstring_ptr(s), api.rstring_len(s) as usize)
 }
 
@@ -280,9 +283,9 @@ unsafe fn ruby_str_from_borrowed(text: BorrowedText) -> VALUE {
 /// Allocation-free - see the module docs.
 ///
 /// # Safety
-/// `ptr` must be readable for `len` bytes (or null), and `coderange_str` must be
-/// a valid `T_STRING`. Both borrows must not be held across a Ruby allocation.
-pub unsafe fn text_check(coderange_str: VALUE, ptr: *const c_char, len: usize) -> TextVerdict {
+/// `ptr` must be readable for `len` bytes (or null). The borrow must not be
+/// held across a Ruby allocation. (`coderange_str` is a String by type.)
+pub unsafe fn text_check(coderange_str: RString, ptr: *const c_char, len: usize) -> TextVerdict {
     let bytes = if ptr.is_null() || len == 0 {
         &[][..]
     } else {
@@ -295,9 +298,8 @@ pub unsafe fn text_check(coderange_str: VALUE, ptr: *const c_char, len: usize) -
 /// Enforce the strict contract (valid UTF-8, no NUL) on the String `str`,
 /// naming `what` in the `Makiri::Error`.
 pub fn verify_text(str: RString, what: &CStr) -> Result<(), Error> {
-    let str = str.as_raw();
-    // SAFETY: `str` is a live String, and the borrow ends with the check -
-    // before anything below can allocate.
+    // SAFETY: the borrow ends with the check - before anything below can
+    // allocate.
     let verdict = unsafe {
         let (_, ptr, len) = borrow(str);
         text_check(str, ptr, len)
@@ -332,7 +334,7 @@ pub fn ruby_verified_text(in_: Value, what: &CStr) -> Result<RubyText, Error> {
     // SAFETY: `s` is a live String that has just passed the text contract; the
     // view anchors it.
     unsafe {
-        let (value, ptr, len) = borrow(s.as_raw());
+        let (value, ptr, len) = borrow(s);
         Ok(RubyText::from_raw_parts(value, ptr, len).locked())
     }
 }
@@ -343,9 +345,9 @@ pub fn ruby_verified_text(in_: Value, what: &CStr) -> Result<RubyText, Error> {
 /// `verify_text` is not reused because it rejects NUL. The check is
 /// allocation-free, so the borrow taken before it is not held across a GC point.
 pub fn ruby_verified_data(in_: Value, what: &CStr) -> Result<RubyData, Error> {
-    let s = string_of(in_)?.as_raw();
-    // SAFETY: `s` is a live String; the check reads its bytes without
-    // allocating, and the view anchors it.
+    let s = string_of(in_)?;
+    // SAFETY: the check reads the bytes without allocating, and the view
+    // anchors the String.
     unsafe {
         let (value, ptr, len) = borrow(s);
         if let Some(problem) = text_check(s, ptr, len).data_problem() {
@@ -358,10 +360,9 @@ pub fn ruby_verified_data(in_: Value, what: &CStr) -> Result<RubyData, Error> {
 /// A borrowed raw byte view. Deliberately enforces nothing: HTML parsing
 /// consumes raw bytes and decodes invalid UTF-8 leniently, like a browser.
 ///
-/// `s` must already be a String - every caller passes one it has just coerced,
-/// transcoded or decoded - so there is nothing to convert, and nothing here can
-/// raise.
-pub unsafe fn ruby_bytes_view(s: VALUE) -> RubyBytes {
+/// `s` is a String by type, so there is nothing to convert, and nothing here
+/// can raise. The view's bytes are [`borrow`]'s: valid only until Ruby runs.
+pub unsafe fn ruby_bytes_view(s: RString) -> RubyBytes {
     let (value, ptr, len) = borrow(s);
     RubyBytes::from_raw_parts(value, ptr, len)
 }
@@ -380,7 +381,7 @@ impl<C> RubyStr<C> {
 /// A live Ruby String's raw bytes, copied into an owned buffer.
 pub fn ruby_string_bytes(s: RString) -> Result<OwnedBuf, Error> {
     // SAFETY: `s` is a live Ruby String; the view anchors it for the copy.
-    unsafe { ruby_bytes_view(s.as_raw()) }.to_owned_buf()
+    unsafe { ruby_bytes_view(s) }.to_owned_buf()
 }
 
 /* ---- encoding ---- */
@@ -394,10 +395,10 @@ pub fn ruby_string_bytes(s: RString) -> Result<OwnedBuf, Error> {
 pub struct Encoding(*mut rb_sys::rb_encoding);
 
 impl Encoding {
-    /// The encoding `str` (a live String) is tagged with.
-    fn of(str: VALUE) -> Encoding {
-        // SAFETY: `str` is a live String; reading its tag runs no Ruby.
-        Encoding(unsafe { rb_sys::rb_enc_get(str) })
+    /// The encoding `str` is tagged with.
+    fn of(str: RString) -> Encoding {
+        // SAFETY: a live String, by type; reading its tag runs no Ruby.
+        Encoding(unsafe { rb_sys::rb_enc_get(str.as_raw()) })
     }
 
     fn utf8() -> Encoding {
@@ -484,14 +485,14 @@ pub fn to_encoding(v: Value) -> Result<Encoding, Error> {
 /// ISO-2022-JP-2 to UTF-8), so it is only ever called under [`protect`] - see
 /// [`ruby_to_utf8_value`]. Called bare, that raise would `longjmp` over the
 /// Rust frames above it.
-unsafe fn ruby_to_utf8(str: VALUE) -> VALUE {
+unsafe fn ruby_to_utf8(str: RString) -> VALUE {
     if Encoding::of(str).parses_as_is() {
-        return str;
+        return str.as_raw();
     }
     const REPLACE: c_int = rb_sys::ruby_econv_flag_type::RUBY_ECONV_INVALID_REPLACE as c_int
         | rb_sys::ruby_econv_flag_type::RUBY_ECONV_UNDEF_REPLACE as c_int;
     rb_sys::rb_str_encode(
-        str,
+        str.as_raw(),
         rb_sys::rb_enc_from_encoding(Encoding::utf8().0),
         REPLACE,
         rb_sys::Qnil as VALUE,
@@ -503,7 +504,7 @@ unsafe fn ruby_to_utf8(str: VALUE) -> VALUE {
 /// `Encoding::ConverterNotFoundError`, returned rather than raised.
 pub fn ruby_to_utf8_value(s: RString) -> Result<RString, Error> {
     // SAFETY: `s` is a live String, and `protect` turns the raise into `Err`.
-    let raw = protect(|| unsafe { ruby_to_utf8(s.as_raw()) })?;
+    let raw = protect(|| unsafe { ruby_to_utf8(s) })?;
     // SAFETY: `rb_str_encode` returns a live value; checked to be a String.
     RString::from_value(unsafe { crate::bridge::ruby::value(raw) })
         .ok_or_else(|| makiri_error("transcoding returned a non-String"))
@@ -533,9 +534,9 @@ impl HtmlSource {
          * is valid UTF-8 whatever its coderange says. */
         let transcoded = src.as_raw() != s.as_raw();
         // SAFETY: `src` is a live String; the view anchors it.
-        let known_valid = transcoded || unsafe { ruby_str_known_valid_utf8(src.as_raw()) };
+        let known_valid = transcoded || ruby_str_known_valid_utf8(src);
         // SAFETY: as above.
-        let view = unsafe { ruby_bytes_view(src.as_raw()) };
+        let view = unsafe { ruby_bytes_view(src) };
         Ok(HtmlSource { view, known_valid })
     }
 
@@ -566,11 +567,8 @@ impl HtmlSource {
 /// scan (a scan would cost as much as running our own validator), so it only
 /// wins when Ruby has the answer already. UNKNOWN or BROKEN returns false and
 /// the caller validates or sanitises.
-unsafe fn ruby_str_known_valid_utf8(str: VALUE) -> bool {
-    let Some(r) = RString::from_value(Value::from_raw(str)) else {
-        return false;
-    };
-    match r.enc_coderange() {
+fn ruby_str_known_valid_utf8(str: RString) -> bool {
+    match str.enc_coderange() {
         /* Every byte < 0x80 in an ASCII-compatible encoding. */
         Coderange::SevenBit => true,
         /* Valid for its own encoding - which has to be UTF-8 for that to mean
@@ -600,9 +598,8 @@ pub fn ruby_try_verified_text(
     sv: RString,
     max_bytes: usize,
 ) -> Result<RubyText, &'static core::ffi::CStr> {
-    let sv = sv.as_raw();
-    // SAFETY: a live String, by type; the check allocates nothing, and the view
-    // anchors the String it borrows from.
+    // SAFETY: the check allocates nothing, and the view anchors the String it
+    // borrows from.
     unsafe {
         let (value, ptr, len) = borrow(sv);
         if len > max_bytes {
