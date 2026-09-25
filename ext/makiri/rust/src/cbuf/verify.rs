@@ -31,7 +31,7 @@
 #![allow(unsafe_code)]
 #![cfg(kani)]
 
-use super::{buf_append, buf_reserve, buf_steal, Buf, BufError};
+use super::{Buf, BufError};
 
 /// The largest ceiling the proofs quantify over.
 ///
@@ -84,7 +84,7 @@ unsafe fn step_append(b: &mut Buf, shadow: &mut [u8], slen: usize, maxlim: usize
 
     let len0 = b.len;
     let cap0 = b.cap;
-    let st = buf_append(b, src.as_ptr() as *const core::ffi::c_void, n);
+    let st = b.append(&src[..n]);
 
     if st.is_ok() {
         assert!(b.len == len0 + n, "append: len advances by n");
@@ -103,7 +103,7 @@ unsafe fn step_append(b: &mut Buf, shadow: &mut [u8], slen: usize, maxlim: usize
     } else {
         assert!(
             st == Err(BufError::Limit) || st == Err(BufError::Oom),
-            "append: a non-NULL source fails only on limit or OOM"
+            "append: fails only on limit or OOM"
         );
         assert!(
             st != Err(BufError::Limit) || len0 + n > maxlim,
@@ -129,7 +129,7 @@ unsafe fn content_matches(b: &Buf, want: &[u8]) -> bool {
     if b.data.is_null() {
         return false;
     }
-    core::slice::from_raw_parts(b.data as *const u8, want.len()) == want
+    core::slice::from_raw_parts(b.data, want.len()) == want
 }
 
 /// Two appends with a reserve between them, against the shadow model.
@@ -150,13 +150,6 @@ fn append_matches_a_shadow_model() {
     let mut slen = 0usize;
 
     unsafe {
-        /* A NULL source with n > 0 is INVALID and touches nothing. */
-        assert!(
-            buf_append(&mut b, core::ptr::null(), 3) == Err(BufError::Invalid),
-            "append: a NULL source fails closed"
-        );
-        assert!(b.len == 0 && b.cap == 0, "append: INVALID touches nothing");
-
         slen = step_append(&mut b, &mut shadow, slen, maxlim);
 
         /* A reserve in the middle: it may grow the allocation but must never
@@ -165,7 +158,7 @@ fn append_matches_a_shadow_model() {
         let cap0 = b.cap;
         let want: usize = kani::any();
         kani::assume(want <= 2 * NSRC);
-        let st = buf_reserve(&mut b, want);
+        let st = b.reserve(want);
         assert!(b.len == len0, "reserve: len untouched");
         assert!(
             b.cap <= maxlim + 1,
@@ -189,17 +182,13 @@ fn append_matches_a_shadow_model() {
 
         /* Steal hands back exactly what went in, NUL-terminated, and leaves a
          * usable empty buffer. */
-        let mut out_len = usize::MAX;
-        let p = buf_steal(&mut b, &mut out_len);
-        if !p.is_null() {
-            assert!(out_len == slen, "steal: the length is what was appended");
-            let got = core::slice::from_raw_parts(p as *const u8, out_len);
+        if let Ok(owned) = b.steal() {
+            let got = owned.as_slice();
             assert!(
                 got == &shadow[..slen],
                 "steal: the bytes are what was appended"
             );
-            assert!(*p.add(out_len) == 0, "steal: NUL-terminated");
-            libc_free(p as *mut core::ffi::c_void);
+            assert!(*got.as_ptr().add(slen) == 0, "steal: NUL-terminated");
         }
         assert!(
             b.data.is_null() && b.len == 0 && b.cap == 0,
@@ -218,23 +207,23 @@ fn steal_of_an_empty_buffer_is_an_owned_empty_string() {
     unsafe { assume_limits_are_sane() };
     let mut b = Buf::new(0);
     unsafe {
-        let mut out_len = usize::MAX;
-        let p = buf_steal(&mut b, &mut out_len);
-        if p.is_null() {
+        match b.steal() {
             /* The only reason is allocation failure. */
-        } else {
-            assert!(out_len == 0, "steal: an empty buffer has length 0");
-            assert!(*p == 0, "steal: the empty result is NUL-terminated");
-            libc_free(p as *mut core::ffi::c_void);
+            Err(e) => assert!(e == BufError::Oom, "steal: failure is OOM"),
+            Ok(owned) => {
+                assert!(
+                    owned.as_slice().is_empty(),
+                    "steal: an empty buffer has length 0"
+                );
+                assert!(
+                    *owned.as_slice().as_ptr() == 0,
+                    "steal: the empty result is NUL-terminated"
+                );
+            }
         }
         assert!(
             b.data.is_null() && b.len == 0 && b.cap == 0,
             "steal: still empty"
         );
     }
-}
-
-extern "C" {
-    #[link_name = "free"]
-    fn libc_free(p: *mut core::ffi::c_void);
 }
