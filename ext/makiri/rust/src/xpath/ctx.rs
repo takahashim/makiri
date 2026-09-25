@@ -64,9 +64,6 @@ struct NsEntry {
 }
 
 struct VarEntry {
-    /// None for the unprefixed (only supported) form.
-    prefix: Option<Text>,
-    name: Text,
     value: Text,
 }
 
@@ -84,6 +81,10 @@ pub struct Names {
     /// six seconds of CPU with the GVL held.
     ns_index: HashMap<Box<[u8]>, usize>,
     vars: Vec<VarEntry>,
+    /// variable name -> its entry in `vars`, for the same reason `ns_index`
+    /// exists: registering n variables by scan cost n squared, all of it with
+    /// the GVL held.
+    vars_index: HashMap<Box<[u8]>, usize>,
 }
 
 impl Names {
@@ -104,9 +105,9 @@ impl Names {
             || self.ns.falloc_reserve(1).is_err()
             || self.ns_index.falloc_reserve(1).is_err()
         {
-            return Err(ContextError::Failed);
+            return Err(ContextError::TooMany);
         }
-        let key = crate::falloc::try_to_boxed_slice(prefix).ok_or(ContextError::Failed)?;
+        let key = crate::falloc::try_to_boxed_slice(prefix).ok_or(ContextError::Oom)?;
         let entry = NsEntry { uri: copy(uri)? };
         /* Both are reserved above, so neither write below can fail. The index
          * still goes first: if one ever could, a failed insert must not leave
@@ -114,30 +115,35 @@ impl Names {
         let at = self.ns.len();
         self.ns_index
             .falloc_insert(key, at)
-            .map_err(|()| ContextError::Failed)?;
+            .map_err(|()| ContextError::Oom)?;
         self.ns.push(entry);
         Ok(())
     }
 
     /// Bind the unprefixed variable `$name` to `value`, replacing an earlier
-    /// binding; both are copied.
+    /// binding; the value is copied.
     fn bind_var(&mut self, name: &[u8], value: &[u8]) -> Result<(), ContextError> {
-        if let Some(e) = self
-            .vars
-            .iter_mut()
-            .find(|e| e.prefix.is_none() && e.name.as_slice() == name)
-        {
-            e.value = copy(value)?;
+        if let Some(&i) = self.vars_index.get(name) {
+            /* Copy first, so an OOM leaves the old binding in place. */
+            self.vars[i].value = copy(value)?;
             return Ok(());
         }
-        if self.vars.len() >= MAX_VARIABLES || self.vars.falloc_reserve(1).is_err() {
-            return Err(ContextError::Failed);
+        if self.vars.len() >= MAX_VARIABLES
+            || self.vars.falloc_reserve(1).is_err()
+            || self.vars_index.falloc_reserve(1).is_err()
+        {
+            return Err(ContextError::TooMany);
         }
+        let key = crate::falloc::try_to_boxed_slice(name).ok_or(ContextError::Oom)?;
         let entry = VarEntry {
-            prefix: None,
-            name: copy(name)?,
             value: copy(value)?,
         };
+        /* Both are reserved above, and the index goes first for the same reason
+         * as `bind_ns`. */
+        let at = self.vars.len();
+        self.vars_index
+            .falloc_insert(key, at)
+            .map_err(|()| ContextError::Oom)?;
         self.vars.push(entry);
         Ok(())
     }
@@ -171,17 +177,15 @@ impl Names {
     }
 
     /// The string bound to `$prefix:name` (`prefix` is `None` when unprefixed).
+    ///
+    /// Only the unprefixed form is registered, so a prefixed one is unbound.
     pub fn variable_text(&self, prefix: Option<&[u8]>, name: &[u8]) -> Option<&[u8]> {
-        self.vars
-            .iter()
-            .find(|e| {
-                let prefix_match = match prefix {
-                    None => e.prefix.is_none(),
-                    Some(p) => e.prefix.as_ref().is_some_and(|t| t.as_slice() == p),
-                };
-                prefix_match && e.name.as_slice() == name
-            })
-            .map(|e| e.value.as_slice())
+        if prefix.is_some() {
+            return None;
+        }
+        self.vars_index
+            .get(name)
+            .map(|&i| self.vars[i].value.as_slice())
     }
 }
 
@@ -190,8 +194,10 @@ impl Names {
 pub enum ContextError {
     /// An evaluate on this context is running (a handler re-entered).
     Evaluating,
-    /// Out of memory, or past the registration cap.
-    Failed,
+    /// Past the per-context registration cap.
+    TooMany,
+    /// Out of memory copying a registration or a binding.
+    Oom,
 }
 
 /// What an expression is evaluated under, apart from the document: the context
@@ -442,7 +448,7 @@ impl<'d, D: Dom<'d>> core::ops::DerefMut for Context<'d, D> {
 }
 
 fn copy(bytes: &[u8]) -> Result<Text, ContextError> {
-    Text::try_copy(bytes).ok_or(ContextError::Failed)
+    Text::try_copy(bytes).ok_or(ContextError::Oom)
 }
 
 /// The result of an evaluate, owned: dropping it frees the node-set's array or

@@ -104,11 +104,13 @@ const NS_BUSY: &str =
 const NS_FAILED: &str = "failed to register namespace";
 
 /// A context's refusal as the exception it raises: `busy` when an evaluate is
-/// running on it, `failed` otherwise.
+/// running on it, `failed` when an allocation failed, and a cap message
+/// otherwise.
 fn refused(error: ContextError, busy: &'static str, failed: &'static str) -> Error {
     let msg = match error {
         ContextError::Evaluating => busy,
-        ContextError::Failed => failed,
+        ContextError::Oom => failed,
+        ContextError::TooMany => "too many registrations on this XPath context",
     };
     makiri_error(msg)
 }
