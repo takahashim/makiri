@@ -343,16 +343,3 @@ fn import_fixed<'d>(
     }
     Ok(himp)
 }
-
-/* ------------------------------------------------------------------ */
-/* the context helpers the Ruby-facing bridge drives                   */
-/* ------------------------------------------------------------------ */
-
-/// The tag id Lexbor knows `name` by, or `None` for an unknown name.
-///
-/// The Ruby-facing context resolution lives in [`crate::bridge::fragment`];
-/// the lookup itself is [`HtmlDoc::tag_id`].
-pub fn tag_id_by_name(doc: RawDoc, name: &[u8]) -> Option<TagId> {
-    // SAFETY: a live document handle, read for this call.
-    unsafe { doc.as_doc() }.tag_id(name)
-}

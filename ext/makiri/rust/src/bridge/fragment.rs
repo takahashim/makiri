@@ -22,7 +22,7 @@ use crate::init::CLASS_NODE;
 use crate::lexbor::adapter::html::{HtmlDoc, HtmlNodeMut, Place, RawDoc, RawNode};
 use crate::lexbor::adapter::post_parse::parse_html;
 pub use crate::lexbor::fragment::FragmentTag;
-use crate::lexbor::fragment::{tag_id_by_name, FragmentContext, FragmentError, TransientFragment};
+use crate::lexbor::fragment::{FragmentContext, FragmentError, TransientFragment};
 
 /// A fragment-parse failure as `Makiri::Error`.
 fn fragment_error(e: FragmentError) -> Error {
@@ -63,7 +63,9 @@ pub fn resolve_fragment_context(
     if name == b"math" {
         return Ok(FragmentTag::MATH);
     }
-    let Some(tag) = tag_id_by_name(html_doc_unwrap(document)?, name) else {
+    let doc = html_doc_unwrap(document)?;
+    // SAFETY: a live HTML Document, kept alive by `document` for this call.
+    let Some(tag) = (unsafe { doc.as_doc() }).tag_id(name) else {
         return Err(crate::bridge::ruby::arg_error(format!(
             "unknown fragment context element: {}",
             String::from_utf8_lossy(name)

@@ -70,6 +70,11 @@ const fn nonzero(v: usize) -> NonZeroUsize {
 
 /// An interned namespace id of a document's namespace table - never
 /// `LXB_NS__UNDEF`, which reads as `None`.
+///
+/// Not an array index, like [`TagId`]: a built-in namespace is a small enum
+/// number, but one `lxb_ns_append` adds gets a POINTER VALUE
+/// (`(lxb_ns_id_t) data`), and ids are unique to their document. The raw number
+/// is only for handing back to Lexbor.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(transparent)]
 pub struct NsId(NonZeroUsize);
