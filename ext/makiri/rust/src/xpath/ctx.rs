@@ -256,13 +256,17 @@ impl<'d, D: Dom<'d>> Context<'d, D> {
         }
         let key = crate::falloc::try_to_boxed_slice(prefix).ok_or(ContextError::Failed)?;
         let entry = NsEntry { uri: copy(uri)? };
-        /* Both reserved above, so neither can fail from here. */
+        /* The index first: `falloc_insert` reserves again, which is one more
+         * injection site even with room already made, so it has to come before
+         * anything that cannot be taken back. The push into the reserved `ns`
+         * cannot fail. */
         let at = names.ns.len();
-        names.ns.push(entry);
         names
             .ns_index
             .falloc_insert(key, at)
-            .map_err(|()| ContextError::Failed)
+            .map_err(|()| ContextError::Failed)?;
+        names.ns.push(entry);
+        Ok(())
     }
 
     /// Bind the unprefixed variable `$name` to the string `value`, replacing an

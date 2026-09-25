@@ -506,6 +506,42 @@ STATEFUL_SCENARIOS = {
       raise "document was not reusable after content= failure" unless state[:doc].xpath("//old[@data-after='ok']").length == 1
     end,
   },
+  # A failed registration must leave no trace - not even an unreachable
+  # entry, which the lookup cannot see but the per-context cap still counts.
+  "xpath_register_ns" => {
+    setup: lambda do
+      doc = Makiri::XML::Document.parse(%(<root xmlns:q="urn:q"><q:x/></root>))
+      ctx = Makiri::XPathContext.new(doc)
+      ctx.register_namespace("p", "urn:p")
+      { doc: doc, ctx: ctx }
+    end,
+    action: ->(state) { state[:ctx].register_namespace("q", "urn:q") },
+    check: lambda do |state, outcome|
+      ctx = state[:ctx]
+      if outcome == :raised
+        begin
+          ctx.evaluate("//q:x")
+          raise "a failed registration bound its prefix"
+        rescue Makiri::Error
+          nil
+        end
+      end
+
+      GC.compact
+      ctx.register_namespace("q", "urn:q")
+      raise "prefix did not resolve after re-registering" unless ctx.evaluate("//q:x").length == 1
+
+      # p and q are the only bindings, so exactly MAX - 2 more fit.
+      max = 65_536
+      (max - 2).times { |i| ctx.register_namespace("f#{i}", "urn:f") }
+      begin
+        ctx.register_namespace("over", "urn:f")
+        raise "registration cap was not reached"
+      rescue Makiri::Error
+        nil
+      end
+    end,
+  },
   "cross_import_state" => {
     setup: lambda do
       html = Makiri::HTML::Document.parse(<<~HTML)
