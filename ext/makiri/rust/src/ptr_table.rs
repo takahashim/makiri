@@ -42,6 +42,31 @@ pub fn mix64(mut h: u64) -> u64 {
     h
 }
 
+/// [`mix64`] as a `Hasher`, for a std `HashMap`/`HashSet` keyed by a pointer or
+/// a node token - an address or index is already well distributed, so it only
+/// needs mixing, and std's SipHash (right for attacker-chosen keys) measured
+/// about a third of the throughput on the NodeSet difference operator.
+#[derive(Default, Clone, Copy)]
+pub struct MixHasher(u64);
+
+impl core::hash::Hasher for MixHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    /// Only ever fed one pointer or token (`write_usize`), but stays correct
+    /// for anything else.
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 = self.0.rotate_left(8) ^ u64::from(b);
+        }
+    }
+
+    fn write_usize(&mut self, n: usize) {
+        self.0 = mix64(n as u64);
+    }
+}
+
 /// What a table can key on: a hash, and one value no entry ever uses, which
 /// marks an empty slot.
 ///

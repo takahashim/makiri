@@ -7,7 +7,7 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{method, prelude::*, Error, RHash, RString, Ruby, Value};
+use magnus::{method, prelude::*, Error, RString, Ruby, Value};
 
 use crate::bridge::ruby::makiri_error;
 
@@ -16,15 +16,11 @@ use crate::init::MOD_XML_NODE_METHODS;
 use crate::xml::serialize::{self as xml_serialize, Failure};
 
 fn to_xml_opts(ruby: &Ruby, args: &[Value]) -> Result<(i32, Value), Error> {
-    if args.is_empty() {
+    let Some(h) = crate::glue::keywords(args)? else {
         return Ok((0, ruby.qnil().as_value()));
-    }
-    let scanned = magnus::scan_args::scan_args::<(), (), (), (), RHash, ()>(args)?;
-    let h = scanned.keywords;
+    };
     let mut width = 0i32;
-    if h.get(ruby.sym_new("pretty"))
-        .is_some_and(|v: Value| v.to_bool())
-    {
+    if crate::glue::kw_flag(ruby, Some(h), "pretty") {
         width = 2;
     }
     if let Some(iv) = h
@@ -102,15 +98,7 @@ fn to_xml(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Er
 
 fn canonicalize(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let comments = if args.is_empty() {
-            false
-        } else {
-            let scanned = magnus::scan_args::scan_args::<(), (), (), (), RHash, ()>(args)?;
-            scanned
-                .keywords
-                .get(ruby.sym_new("comments"))
-                .is_some_and(|v: Value| v.to_bool())
-        };
+        let comments = crate::glue::kw_flag(ruby, crate::glue::keywords(args)?, "comments");
         let buf = xml_serialize::canonicalize(this.doc_ref(), this.id, comments)
             .map_err(|f| failure_error(f, "canonicalize"))?;
         Ok(utf8(ruby, buf.as_slice()).as_value())

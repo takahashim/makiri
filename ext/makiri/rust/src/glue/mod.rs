@@ -28,6 +28,32 @@
 
 #![forbid(unsafe_code)]
 
+use magnus::{prelude::*, Error, RHash, Ruby, Value};
+
+/// The keyword Hash of a method that takes only keywords, or `None` for a call
+/// with no arguments.
+///
+/// The no-argument call returns before `scan_args`. It is the overwhelmingly
+/// common one - `to_html` with a keyword is the exception - and routing it
+/// through `scan_args` cost about a quarter of the per-call throughput on a
+/// small element, which is all such a method does at that size.
+pub(crate) fn keywords(args: &[Value]) -> Result<Option<RHash>, Error> {
+    if args.is_empty() {
+        return Ok(None);
+    }
+    let scanned = magnus::scan_args::scan_args::<(), (), (), (), RHash, ()>(args)?;
+    Ok(Some(scanned.keywords))
+}
+
+/// Keyword `name`, read for truthiness: absent and `nil` are false, any other
+/// value - `0` included, this being Ruby - true. A plain lookup rather than
+/// `get_kwargs`, which allocates a second hash for the keys it was not asked
+/// about, and so ignores unknown keywords.
+pub(crate) fn kw_flag(ruby: &Ruby, kw: Option<RHash>, name: &str) -> bool {
+    kw.and_then(|h| h.get(ruby.sym_new(name)))
+        .is_some_and(|v: Value| v.to_bool())
+}
+
 /// `Makiri::Lexbor::CSS.parse_stylesheet` - the Ruby half of `lexbor::stylesheet`.
 pub mod stylesheet;
 

@@ -22,7 +22,7 @@ use crate::bridge::ruby::makiri_error;
 use magnus::{prelude::*, Error, Ruby, Value};
 
 use crate::bridge::html::html_node_unwrap;
-use crate::bridge::ruby::{check_frozen, nil, value};
+use crate::bridge::ruby::{check_frozen, is_kind_of, nil, value};
 use crate::bridge::string::{ruby_verified_text, RubyText};
 use crate::bridge::wrapper::*;
 use crate::bridge::wrapper::{
@@ -42,10 +42,6 @@ use crate::xml::model::{
 use crate::xml::mutate::{clone_node, copy_node_from, import_subtree, remove as remove_node};
 use crate::xml::qname::NsDeclError;
 use crate::xml::tree;
-
-fn is_a(v: Value, klass: &crate::init::RbConst) -> bool {
-    v.is_kind_of(klass.class())
-}
 
 /* ------------------------------------------------------------------ *
  * the XML node front door                                            *
@@ -576,7 +572,7 @@ impl Adoption {
 /// (a move), or a copy imported from its own document plus the [`Adoption`]
 /// that takes it out of there once it is placed.
 pub fn incoming_node(target_doc: Value, arg: Value) -> Result<(NodeId, Option<Adoption>), Error> {
-    if !is_a(arg, &CLASS_NODE) || !is_a(xml_node_document(arg)?, &CLASS_XML_DOCUMENT) {
+    if !is_kind_of(arg, &CLASS_NODE) || !is_kind_of(xml_node_document(arg)?, &CLASS_XML_DOCUMENT) {
         return Err(Error::new(
             Ruby::get_with(arg).exception_type_error(),
             "expected a Makiri::XML node (NodeSet / String arguments are a later phase)",

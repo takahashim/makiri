@@ -20,7 +20,7 @@ use crate::bridge::ruby::{makiri_error, string_of};
 
 use crate::bridge::fragment::{set_template_inner_html, stage_fragment_in};
 use crate::bridge::html::{edit, insert, owning_doc, wrap_html_node, HtmlEdit, HtmlSelf};
-use crate::bridge::string::{ruby_verified_data, ruby_verified_text};
+use crate::bridge::string::{ruby_verified_data, ruby_verified_text, ruby_verified_text_opt};
 use crate::lexbor::adapter::html::{HtmlElementMut, Place, RawNode, TYPE_ATTRIBUTE, TYPE_ELEMENT};
 use crate::xml::dom_name;
 use crate::xml::qname::Split;
@@ -141,11 +141,7 @@ pub fn set_attribute_ns(
         }
         let qv = ruby_verified_text(rb_qname, c"attribute qualified name")?;
         let vv = ruby_verified_data(rb_value, c"attribute value")?;
-        let nv = if rb_ns.is_nil() {
-            None
-        } else {
-            Some(ruby_verified_text(rb_ns, c"namespace")?)
-        };
+        let nv = ruby_verified_text_opt(rb_ns, c"namespace")?;
         /* The DOM's "validate and extract": split at the first colon, check
          * both halves, then that the namespace fits them - the rule XML's
          * set_attribute_ns applies too (`xml::qname::ns_fits_name`). It named
@@ -191,11 +187,7 @@ pub fn remove_attribute_ns(
             return Ok(ruby.qnil().as_value());
         }
         let lv = ruby_verified_text(rb_local, c"attribute local name")?;
-        let nv = if rb_ns.is_nil() {
-            None
-        } else {
-            Some(ruby_verified_text(rb_ns, c"namespace")?)
-        };
+        let nv = ruby_verified_text_opt(rb_ns, c"namespace")?;
         let el = element_of(edit, "remove_attribute_ns requires an element")?;
         crate::bridge::html::remove_attribute_ns(el, nv.as_ref(), &lv);
         Ok(ruby.qnil().as_value())
@@ -383,11 +375,10 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
             ));
         }
 
-        let verified =
-            |v: Option<Value>, what: &'static core::ffi::CStr| match v.filter(|v| !v.is_nil()) {
-                Some(v) => ruby_verified_text(v, what).map(Some),
-                None => Ok(None),
-            };
+        let verified = |v: Option<Value>, what: &'static core::ffi::CStr| match v {
+            Some(v) => ruby_verified_text_opt(v, what),
+            None => Ok(None),
+        };
         let pv = verified(rb_pub, c"doctype public id")?;
         let sv = verified(rb_sys_, c"doctype system id")?;
         created(

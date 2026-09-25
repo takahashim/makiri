@@ -122,27 +122,10 @@ impl Content {
 struct NodeCache {
     /// Empty until the first navigation, so a document nobody walks pays
     /// nothing.
-    map: HashMap<usize, VALUE, BuildHasherDefault<TokenHasher>>,
-}
-
-/// The token is already a well-distributed integer - a slot index or an aligned
-/// pointer - so it only needs mixing, not hashing. `ptr_table::mix64` is the
-/// crate's one place for that.
-#[derive(Default)]
-struct TokenHasher(u64);
-
-impl core::hash::Hasher for TokenHasher {
-    fn finish(&self) -> u64 {
-        self.0
-    }
-    fn write(&mut self, bytes: &[u8]) {
-        for &b in bytes {
-            self.0 = crate::ptr_table::mix64(self.0 ^ b as u64);
-        }
-    }
-    fn write_usize(&mut self, n: usize) {
-        self.0 = crate::ptr_table::mix64(n as u64);
-    }
+    /// Tokens are a slot index or an aligned pointer - already well
+    /// distributed - so they are mixed ([`crate::ptr_table::MixHasher`]) rather
+    /// than hashed.
+    map: HashMap<usize, VALUE, BuildHasherDefault<crate::ptr_table::MixHasher>>,
 }
 
 impl NodeCache {

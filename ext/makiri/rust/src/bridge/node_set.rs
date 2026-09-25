@@ -608,36 +608,7 @@ fn new_result_with_room<'a>(
 
 /* ---- membership, for the operators ---- */
 
-/// Pointer hashing: `ptr_table`'s MurmurHash3 fmix64 finalizer, as a `Hasher`.
-///
-/// std's SipHash is the right default for attacker-chosen keys; these are heap
-/// addresses, and paying for it measured about a third of the C's throughput on
-/// the difference operator.
-#[derive(Default, Clone, Copy)]
-struct PtrHasher(u64);
-
-impl core::hash::Hasher for PtrHasher {
-    fn finish(&self) -> u64 {
-        self.0
-    }
-
-    fn write(&mut self, bytes: &[u8]) {
-        /* Only ever fed one pointer, but stay correct if that changes. */
-        for b in bytes {
-            self.write_u8(*b);
-        }
-    }
-
-    fn write_u8(&mut self, b: u8) {
-        self.0 = self.0.rotate_left(8) ^ u64::from(b);
-    }
-
-    fn write_usize(&mut self, p: usize) {
-        self.0 = crate::ptr_table::mix64(p as u64);
-    }
-}
-
-type PtrBuild = core::hash::BuildHasherDefault<PtrHasher>;
+type PtrBuild = core::hash::BuildHasherDefault<crate::ptr_table::MixHasher>;
 type PtrSet = HashSet<*mut c_void, PtrBuild>;
 
 /// Membership over a node array: hashed above [`HASH_MIN`], scanned below it.

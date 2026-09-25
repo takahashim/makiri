@@ -316,6 +316,14 @@ fn text_error(what: &CStr, problem: &str) -> Error {
     makiri_error(format!("{what} {problem}"))
 }
 
+/// [`ruby_verified_text`] for an optional argument: `nil` is `None`.
+pub fn ruby_verified_text_opt(in_: Value, what: &CStr) -> Result<Option<RubyText>, Error> {
+    if in_.is_nil() {
+        return Ok(None);
+    }
+    ruby_verified_text(in_, what).map(Some)
+}
+
 /// Coerce to a String and enforce the strict contract (valid UTF-8, no NUL),
 /// naming `what` in the error. The names-and-engine-input path.
 pub fn ruby_verified_text(in_: Value, what: &CStr) -> Result<RubyText, Error> {
