@@ -48,9 +48,9 @@ use crate::utf8_input::sanitize;
 /// (`BuildingNode::copy_written_name_from`).
 ///
 /// Iterative, with an explicit worklist: an adversarially deep fragment must not
-/// be able to overflow the stack. Best-effort on allocation failure, as the C
-/// was - a template whose content could not be copied is left empty rather than
-/// the whole import failing.
+/// be able to overflow the stack. Fail-closed on allocation failure: a template
+/// content that could not be copied refuses the whole import rather than
+/// leaving a clone that is silently short.
 ///
 /// `template_content` answers in one what this used to ask in three: it is
 /// `None` for a node that is not an HTML `<template>` AND for one Lexbor gave no

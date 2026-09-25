@@ -6,14 +6,14 @@
 //!
 //! Two tree passes: count and size, then fill. The arrays are therefore sized
 //! once and never grow mid-build, which is what keeps the OOM path trivial -
-//! there is nothing half-built to unwind.
+//! there is nothing half-built to unwind. The index never writes to the tree.
 //!
-//! It used to carry an attribute -> owner table too, and to backfill each
-//! attribute's `node.parent` from it, on the premise that Lexbor links neither.
-//! Lexbor does keep `attr->owner` (set on append, cleared on removal), and
-//! `HtmlNode::parent` now reads it live - the backfill answered whatever held
-//! when the index was last built, so a detached element's attribute had a
-//! parent or not depending on history. The index no longer writes to the tree.
+//! Buckets cover only Lexbor's STATIC tag-id range `[1, LXB_TAG__LAST_ENTRY)`,
+//! which is why that range's end is the index's capacity: a custom element's
+//! tag id is the pointer to its interned tag data (`lxb_tag_append` sets
+//! `data->tag_id = (lxb_tag_id_t) data`), an enormous value that cannot key a
+//! dense array. Those elements are simply left out, and `//customtag` falls
+//! back to a tree walk - rare in practice.
 //!
 //! # Fail-closed
 //!
@@ -26,13 +26,6 @@
 
 use crate::falloc::try_vec_with_capacity;
 
-/// Tag buckets cover only Lexbor's STATIC tag-id range `[1, LXB_TAG__LAST_ENTRY)`,
-/// so the end of that range doubles as this index's capacity.
-///
-/// A custom element's tag id is the pointer to its interned tag data
-/// (`lxb_tag_append` sets `data->tag_id = (lxb_tag_id_t) data`), an enormous
-/// value that cannot key a dense array. Those elements are simply left out, and
-/// `//customtag` falls back to a tree walk - rare in practice.
 use super::html::{
     HtmlDoc, HtmlElement, HtmlNode, NsId, RawNode, TagId, TAG_LAST_ENTRY as TAG_INDEX_CAP,
 };

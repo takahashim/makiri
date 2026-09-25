@@ -122,9 +122,12 @@ pub fn lines_build(bytes: &[u8]) -> Option<Lines> {
  * token position recorder                                            *
  * ------------------------------------------------------------------ */
 
-/// A defensive cap so a pathological input cannot make the transient recorder
-/// grow without bound. On overflow recording stops AND assignment is skipped
-/// entirely, so locations degrade to "unknown" rather than to wrong values.
+/// A SOFT cap so a pathological input cannot make the transient recorder grow
+/// without bound. Checked where the array would GROW (see `record`), so the
+/// vec can already hold up to about one geometric step past this - the cap
+/// bounds the order, it is not an exact length. On overflow recording stops
+/// AND assignment is skipped entirely, so locations degrade to "unknown"
+/// rather than to wrong values.
 const MAX_TOKENS: usize = 10_000_000;
 
 /// How far ahead of the cursor a match is looked for. This bounds the damage

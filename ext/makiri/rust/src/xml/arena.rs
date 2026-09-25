@@ -67,8 +67,8 @@ impl Document {
         doc.stamp = stamp;
         doc.xml_ns = doc.store(crate::xml::XML_NS_URI)?;
         doc.xmlns_ns = doc.store(crate::xml::XMLNS_NS_URI)?;
-        /* Index 0 is reserved: it is the null handle's slot (token 0 == a NULL
-         * `void *`), so a real node never has index 0. */
+        /* Index 0 is reserved: its token word is 0, the engine's null slot, so
+         * a real node never has index 0. */
         let _null_slot = doc.new_node(ArenaKind::Document)?;
         doc.doc_node = doc.new_node(ArenaKind::Document)?;
         Ok(doc)

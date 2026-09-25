@@ -52,17 +52,11 @@ pub fn try_descendant_index<'e, 'd, D: Dom<'d>>(
     Ok(Some(result))
 }
 
-/// `//name[N]` - the two leading steps `descendant-or-self::node()` and
-/// `child::name[N]`, rooted at the document - selects, for every node, its Nth
-/// name-child. That is NOT `(//name)[N]` and not `descendant::name[N]`.
-///
-/// The index lists matching elements in document order, so a parent's
-/// name-children appear among them in child order: one sweep with a
-/// pointer-keyed parent -> count map emits exactly those whose running count
-/// reaches N, already in document order, with no sort or dedup.
-///
-/// The shape's N, when it is `//name[N]`. The local name is read from `ct`,
-/// the compiled test, not re-destructured from the AST.
+/// The shape's N, when `s0`/`s1` are `descendant-or-self::node()` followed by
+/// `child::name[N]` rooted at the document: `//name[N]` selects, for every
+/// node, its Nth name-child, which is NOT `(//name)[N]` nor
+/// `descendant::name[N]`. The local name is read from `ct`, the compiled test,
+/// not re-destructured from the AST. `None` for any other shape.
 fn nth_shape<'d, D: Dom<'d>>(
     doc: D,
     ct: &CompiledTest<'_>,
@@ -103,6 +97,11 @@ fn nth_shape<'d, D: Dom<'d>>(
 /// `//name[N]` from the index: the two steps' result, or None when the shape
 /// or the index cannot serve it - a sweep abandoned midway included, so a
 /// partly filled set never reaches the caller.
+///
+/// The index lists matching elements in document order, so a parent's
+/// name-children appear among them in child order: one sweep with a
+/// pointer-keyed parent -> count map emits exactly those whose running count
+/// reaches N, already in document order, with no sort or dedup.
 pub fn try_descendant_index_nth<'e, 'd, D: Dom<'d>>(
     ev: &mut Evaluation<'e, 'd, D>,
     s0: &Step,

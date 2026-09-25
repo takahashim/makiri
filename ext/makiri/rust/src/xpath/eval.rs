@@ -523,10 +523,11 @@ fn first_node_ok<'e, 'd, D: Dom<'d>>(doc: D, step: &Step, n: D::Node, lax: bool)
 
 /// Walk for the first match if `ast` is a recognised shape.
 ///
-/// Returns Ok(Some(node)) or Ok(Some(null)) when it handled the expression,
-/// Ok(None) when the shape is not recognised, and Err when the op budget was
-/// exceeded. Every visited node is charged, so a huge late- or no-match document
-/// fails closed here exactly as it would in the full evaluator.
+/// Returns `Ok(Some(Some(node)))` on a match or `Ok(Some(None))` when it
+/// handled the expression but nothing matched, `Ok(None)` when the shape is not
+/// recognised, and `Err` when the op budget was exceeded. Every visited node is
+/// charged, so a huge late- or no-match document fails closed here exactly as it
+/// would in the full evaluator.
 ///
 /// On a match or none, the answer is the 0-or-1-node node-set.
 #[allow(clippy::result_large_err)]

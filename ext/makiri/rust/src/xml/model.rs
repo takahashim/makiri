@@ -19,19 +19,17 @@ use core::num::NonZeroU32;
 /// Why an XML parse failed - the `Err` of every parse entry point, and of the
 /// parser's internal steps, which carry it out with `?`. Each variant names a
 /// failure so the Ruby glue can pick an exception class. There is no success
-/// variant: success is `Ok`. The `#[repr(i32)]` values are the numbers the C
-/// entry points published.
+/// variant: success is `Ok`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[repr(i32)]
 pub enum ParseError {
-    Syntax = 1,
-    Limit = 2,
-    Oom = 3,
-    Internal = 4,
+    Syntax,
+    Limit,
+    Oom,
+    Internal,
     /// Well-formed, but it uses a DTD construct Makiri does not apply (an
     /// attribute default, a non-CDATA attribute type, a parameter entity, a
     /// reference to a declared entity) - refused rather than ignored.
-    Unsupported = 5,
+    Unsupported,
 }
 
 /// Why a bounded allocation was refused: a document's own budget (`max_bytes` /
@@ -266,7 +264,7 @@ impl Span {
 ///
 /// The one-word form is deliberate. The engine carries nodes through node-sets
 /// as opaque tokens it only compares and hashes, so a node id *is* that token:
-/// an `&[NodeId]` is layout-identical to the engine's `*mut c_void` buffer, and
+/// an `&[NodeId]` is layout-identical to the engine's node-set buffer, and
 /// `to_token`/`from_token` cost nothing (`#[repr(transparent)]` makes that
 /// layout a guarantee, not an observation). The packing needs a 64-bit word,
 /// which the `compile_error!` below enforces.
@@ -288,8 +286,9 @@ compile_error!(
 );
 
 impl NodeId {
-    /// The absent handle. It packs to a NULL `*mut c_void` token, which is the
-    /// engine's "no node", so index 0 is reserved and never a real node.
+    /// The absent handle. Its token word is 0, which is the engine's "no
+    /// node" ([`crate::token::Token`]'s null slot), so index 0 is reserved and
+    /// never a real node.
     pub const INVALID: NodeId = NodeId(0);
 
     #[inline]
