@@ -158,12 +158,12 @@ impl TextVerdict {
     }
 
     /// [`problem`](Self::problem) with "string" as its subject, for a caller
-    /// that reports through a static C string.
-    pub fn reason(self) -> Option<&'static core::ffi::CStr> {
+    /// that reports through a static string.
+    pub fn reason(self) -> Option<&'static str> {
         match self {
             TextVerdict::Ok => None,
-            TextVerdict::HasNul => Some(c"string must not contain a NUL byte"),
-            TextVerdict::InvalidUtf8 => Some(c"string must be valid UTF-8"),
+            TextVerdict::HasNul => Some("string must not contain a NUL byte"),
+            TextVerdict::InvalidUtf8 => Some("string must be valid UTF-8"),
         }
     }
 }

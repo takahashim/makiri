@@ -68,7 +68,7 @@ impl Resolver for Bridge {
 enum HandlerFailure {
     Msg(&'static str),
     /// The handler's string failed the text contract, for this reason.
-    InvalidString(&'static core::ffi::CStr),
+    InvalidString(&'static str),
 }
 
 impl HandlerFailure {
@@ -79,8 +79,7 @@ impl HandlerFailure {
             HandlerFailure::InvalidString(reason) => crate::err_setf!(
                 err,
                 Status::Runtime,
-                "handler returned an invalid string: {}",
-                reason.to_string_lossy()
+                "handler returned an invalid string: {reason}"
             ),
         }
     }

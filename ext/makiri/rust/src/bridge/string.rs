@@ -584,7 +584,7 @@ pub fn ruby_try_verified_text_pair(
     a: RString,
     b: RString,
     max_bytes: usize,
-) -> Result<(RubyText, RubyText), &'static core::ffi::CStr> {
+) -> Result<(RubyText, RubyText), &'static str> {
     Ok((
         ruby_try_verified_text(a, max_bytes)?,
         ruby_try_verified_text(b, max_bytes)?,
@@ -594,16 +594,13 @@ pub fn ruby_try_verified_text_pair(
 /// The non-raising form: the checked view, or a static reason on rejection.
 /// Allocation-free, like `verify_text`, so the borrow it hands back has not
 /// crossed a Ruby allocation. Nothing is coerced: `sv` is a String by type.
-pub fn ruby_try_verified_text(
-    sv: RString,
-    max_bytes: usize,
-) -> Result<RubyText, &'static core::ffi::CStr> {
+pub fn ruby_try_verified_text(sv: RString, max_bytes: usize) -> Result<RubyText, &'static str> {
     // SAFETY: the check allocates nothing, and the view anchors the String it
     // borrows from.
     unsafe {
         let (value, ptr, len) = borrow(sv);
         if len > max_bytes {
-            return Err(c"string exceeds the maximum length");
+            return Err("string exceeds the maximum length");
         }
         match text_check(sv, ptr, len).reason() {
             Some(reason) => Err(reason),
