@@ -14,40 +14,25 @@
 
 #![forbid(unsafe_code)]
 
-#[inline]
-fn is_digit(b: u8) -> bool {
-    b.is_ascii_digit()
-}
-
 /// Byte length of the longest prefix of `s` matching the Number production, or
 /// 0 if it does not begin with one ("5." IS a Number, a bare "." is NOT).
 pub fn extent(s: &[u8]) -> usize {
-    let mut i = 0;
-    if s.first().copied().is_some_and(is_digit) {
-        /* Digits ('.' Digits?)?  -> "5", "5.", "5.5" */
-        while s.get(i).copied().is_some_and(is_digit) {
-            i += 1;
-        }
-        if s.get(i) == Some(&b'.') {
-            i += 1;
-            while s.get(i).copied().is_some_and(is_digit) {
-                i += 1;
+    let digits = |s: &[u8]| s.iter().take_while(|b| b.is_ascii_digit()).count();
+    let int = digits(s);
+    match s.get(int) {
+        /* "5." and "5.5" and ".5" - but a '.' with a digit on neither side is
+         * not a Number. */
+        Some(b'.') => {
+            let frac = s.get(int + 1..).map_or(0, digits);
+            if int + frac == 0 {
+                0
+            } else {
+                int + 1 + frac
             }
         }
-        return i;
+        /* "5", or nothing */
+        _ => int,
     }
-    if s.first() == Some(&b'.') {
-        /* '.' Digits  -> ".5" */
-        if !s.get(1).copied().is_some_and(is_digit) {
-            return 0;
-        }
-        i = 1;
-        while s.get(i).copied().is_some_and(is_digit) {
-            i += 1;
-        }
-        return i;
-    }
-    0
 }
 
 /// Convert bytes the caller has already confirmed match the grammar. Those are

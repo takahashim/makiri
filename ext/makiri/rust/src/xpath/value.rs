@@ -402,26 +402,14 @@ pub fn node_to_owned_text<'d, D: Dom<'d>>(
 /// "INF" all come out NaN - the extent stops early and the leftover trips the
 /// end check.
 pub fn bytes_to_number(s: &[u8]) -> f64 {
-    let mut i = 0;
-    while i < s.len() && super::lex::is_ws(s[i]) {
-        i += 1;
-    }
-    let neg = s.get(i) == Some(&b'-');
-    if neg {
-        i += 1;
-    }
-    let extent = number::extent(&s[i..]);
-    if extent == 0 {
+    let s = super::lex::trim_ws(s);
+    let (neg, body) = s.strip_prefix(b"-").map_or((false, s), |rest| (true, rest));
+    /* The whole of what is left must be one Number: an empty body, a space
+     * after the '-', or anything trailing leaves the extent short. */
+    if body.is_empty() || number::extent(body) != body.len() {
         return f64::NAN;
     }
-    let d = number::from_extent(&s[i..i + extent]);
-    i += extent;
-    while i < s.len() && super::lex::is_ws(s[i]) {
-        i += 1;
-    }
-    if i != s.len() {
-        return f64::NAN; /* trailing garbage */
-    }
+    let d = number::from_extent(body);
     if neg {
         -d
     } else {
@@ -546,4 +534,38 @@ pub fn cached_node_number<'e, 'd, D: Dom<'d>>(
 ) -> Result<f64, Reported> {
     let text = cached_node_text::<D>(ev, node)?;
     Ok(bytes_to_number(text.bytes(&ev.str_cache)))
+}
+
+#[cfg(test)]
+mod number_tests {
+    use super::bytes_to_number;
+
+    #[test]
+    fn string_to_number_follows_section_4_4() {
+        for (src, want) in [
+            (&b"5"[..], 5.0),
+            (b" \t5\r\n", 5.0),
+            (b"-5", -5.0),
+            (b" -1.5 ", -1.5),
+            (b"5.", 5.0),
+            (b".5", 0.5),
+        ] {
+            assert_eq!(bytes_to_number(src), want, "{src:?}");
+        }
+        for src in [
+            &b""[..],
+            b" ",
+            b"-",
+            b"- 5",
+            b".",
+            b"5 5",
+            b"5x",
+            b"+5",
+            b"1e3",
+            b"0x10",
+            b"\x0c5",
+        ] {
+            assert!(bytes_to_number(src).is_nan(), "{src:?}");
+        }
+    }
 }

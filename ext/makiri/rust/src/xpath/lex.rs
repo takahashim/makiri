@@ -87,21 +87,12 @@ fn is_ncname_cont_cp(c: u32) -> bool {
     c != ':' as u32 && crate::xml::chars::is_name_char(c)
 }
 
-/// Byte length of the NCName character at `s[0..]`, or 0. `start` selects
-/// NameStartChar over NameChar.
-fn ncname_char(s: &[u8], start: bool) -> usize {
-    match crate::xml::chars::decode1(s) {
-        Some((cp, n))
-            if (if start {
-                is_ncname_start_cp(cp)
-            } else {
-                is_ncname_cont_cp(cp)
-            }) =>
-        {
-            n
-        }
-        _ => 0,
-    }
+/// Byte length of the NCName character at `s[0..]`, or 0. `ok` is
+/// [`is_ncname_start_cp`] or [`is_ncname_cont_cp`].
+fn ncname_char(s: &[u8], ok: fn(u32) -> bool) -> usize {
+    crate::xml::chars::decode1(s)
+        .filter(|&(cp, _)| ok(cp))
+        .map_or(0, |(_, n)| n)
 }
 
 /// XPath 1.0 whitespace: S = #x20 | #x9 | #xD | #xA only - NOT C isspace(),
@@ -109,6 +100,15 @@ fn ncname_char(s: &[u8], start: bool) -> usize {
 #[inline]
 pub fn is_ws(b: u8) -> bool {
     b == b' ' || b == b'\t' || b == b'\r' || b == b'\n'
+}
+
+/// `s` without leading or trailing XPath whitespace ([`is_ws`]). Not
+/// `trim_ascii`, which also strips a form feed, which XPath's S does not
+/// include.
+pub fn trim_ws(s: &[u8]) -> &[u8] {
+    let start = s.iter().position(|&b| !is_ws(b)).unwrap_or(s.len());
+    let end = s.iter().rposition(|&b| !is_ws(b)).map_or(start, |i| i + 1);
+    &s[start..end]
 }
 
 /* ---- the lexer ---- */
@@ -236,7 +236,7 @@ impl<'a> Lexer<'a> {
         if c.is_ascii_digit() || c == b'.' {
             return self.lex_number();
         }
-        if ncname_char(self.rest(), true) > 0 {
+        if ncname_char(self.rest(), is_ncname_start_cp) > 0 {
             return Ok(self.lex_name());
         }
         Err(LexErr::UnexpectedChar(c))
@@ -282,32 +282,32 @@ impl<'a> Lexer<'a> {
         })
     }
 
-    fn lex_name(&mut self) -> Token {
-        let start = self.pos;
+    /// Advance over NCName continuation characters.
+    fn eat_ncname(&mut self) {
         loop {
-            let n = ncname_char(self.rest(), false);
+            let n = ncname_char(self.rest(), is_ncname_cont_cp);
             if n == 0 {
                 break;
             }
             self.pos += n;
         }
+    }
+
+    fn lex_name(&mut self) -> Token {
+        let start = self.pos;
+        self.eat_ncname();
         /* A QName NameTest is `prefix:local` or `prefix:*` (§2.3); the ':' must
          * not be the '::' axis separator. */
         let colon_starts_qname = self.at(0) == Some(b':')
             && self.at(1) != Some(b':')
-            && (self.at(1) == Some(b'*') || ncname_char(&self.src[self.pos + 1..], true) > 0);
+            && (self.at(1) == Some(b'*')
+                || ncname_char(&self.src[self.pos + 1..], is_ncname_start_cp) > 0);
         let kind = if colon_starts_qname {
             self.pos += 1; /* eat ':' */
             if self.at(0) == Some(b'*') {
                 self.pos += 1;
             } else {
-                loop {
-                    let n = ncname_char(self.rest(), false);
-                    if n == 0 {
-                        break;
-                    }
-                    self.pos += n;
-                }
+                self.eat_ncname();
             }
             Tok::QName
         } else {
