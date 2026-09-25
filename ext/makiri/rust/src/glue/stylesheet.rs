@@ -140,7 +140,7 @@ fn parse_stylesheet_inner(ruby: &Ruby, text: Value) -> Result<RArray, Error> {
     let tv = ruby_verified_text(text, "CSS stylesheet")?;
     /* `tv` anchors the String for this frame, and `parse` is Lexbor and the
      * allocator only - no Ruby runs that could move or mutate the bytes. */
-    let css: &[u8] = tv.as_verified().as_bytes();
+    let css: &[u8] = tv.as_bytes();
 
     let eclass = error_class();
     let err = |m: &str| Error::new(eclass, m.to_owned());

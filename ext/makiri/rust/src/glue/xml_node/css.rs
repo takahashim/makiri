@@ -48,7 +48,7 @@ fn compile(ruby: &Ruby, ctx: &Cx, q: &QueryArgs, form: Form) -> Result<Box<Ast>,
     /* `sv` holds the selector String rooted; the compile allocates through
      * falloc only - no Ruby runs in it. */
     let gvl = crate::bridge::gvl::held(ruby);
-    let ast = crate::css::compile_owned(&gvl, sv.as_verified(), &cns, form, &mut budget);
+    let ast = crate::css::compile_owned(&gvl, sv.text(), &cns, form, &mut budget);
     drop(sv);
     ast.map_err(|_| compile_error(q.text, &budget.take_error()))
 }

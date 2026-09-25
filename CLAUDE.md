@@ -545,12 +545,17 @@ UTF-8 everywhere** at the XPath/CSS/mutation boundaries (expr, selector,
 attribute name/value, `content=`, `create_*`, variable/namespace) -
 never truncate/repair. **Embedded NUL (U+0000) is a two-tier contract**: rejected
 for names/tags/namespaces/PI target+data/selectors/XPath/variables and all engine
-inputs (which assume NUL-terminated C strings), but **accepted for the HTML
+inputs (`text::VerifiedText`, a `&str` with no NUL - a logical contract, since
+every consumer, Lexbor's selector parser included, reads a slice and none a C
+string), but **accepted for the HTML
 data-family** - text/comment node content (`create_text_node`/`create_comment`/
 `content=`) and attribute values (`[]=`/`set_attribute_ns`) - so the DOM can hold
 U+0000 like browsers. Those data-family sites go through `ruby_verified_data`
-(distinct type `RubyData`, UTF-8-validated but NUL-permitting;
-consumed only as `(ptr,len)`), never `verify_text`. `Makiri::XML` keeps
+(distinct type `RubyData`, UTF-8-validated but NUL-permitting), never
+`verify_text`. Both checked views (`RubyText`, `RubyData`) deref to `&str`: each
+holds its String `rb_str_locktmp`ed for its life, or - when someone else already
+holds that lock (the same String passed twice, an IO) - reads its own copy,
+since a lock it does not own can be released under it. `Makiri::XML` keeps
 rejecting NUL everywhere (its `crate::xml` engine enforces the XML 1.0 char class,
 independent of the bridge; U+0000 can't be well-formed XML). Don't drop the
 UTF-8 checks or route a name/engine string through the data path; see

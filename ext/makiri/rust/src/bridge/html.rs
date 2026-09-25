@@ -368,12 +368,10 @@ fn take_incoming<'d>(
 /* ------------------------------------------------------------------ *
  * verified strings into Lexbor                                        *
  * ------------------------------------------------------------------ *
- * The node methods live in `glue::html_node::mutate`, which is unsafe-free. The
- * one unsafe they would need is reading a verified String's bytes
- * (`RubyStr::bytes`), sound only while no Ruby code runs - so the reads are
- * here, each passed straight to a Lexbor call that copies what it keeps and
- * runs no Ruby. A primitive answers what Lexbor answered; the method words the
- * error. */
+ * The node methods live in `glue::html_node::mutate`. A checked view reads as
+ * a plain `&str` (`RubyStr`'s `Deref`: it holds its String locked), and each
+ * primitive passes it straight to a Lexbor call that copies what it keeps. A
+ * primitive answers what Lexbor answered; the method words the error. */
 
 /// The Lexbor document behind an HTML Document receiver, for a factory - so,
 /// like every other change to a document, refused while an XPath evaluation
@@ -391,8 +389,7 @@ pub fn set_attribute(
     name: &RubyText,
     value: &RubyData,
 ) -> Result<(), LexborRefused> {
-    // SAFETY: see the section comment.
-    unsafe { el.set_attribute(name.bytes(), value.bytes()) }
+    el.set_attribute(name.as_bytes(), value.as_bytes())
         .map(drop)
         .ok_or(LexborRefused)
 }
@@ -406,11 +403,9 @@ pub fn set_attribute_ns(
     qname: &RubyText,
     value: &RubyData,
 ) -> Result<(), LexborRefused> {
-    // SAFETY: see the section comment.
-    let (qname, value) = unsafe { (qname.bytes(), value.bytes()) };
+    let (qname, value) = (qname.as_bytes(), value.as_bytes());
     /* An empty URI is no namespace: it names the attribute the unprefixed way. */
-    // SAFETY: as above.
-    let ns = ns.filter(|v| v.len() != 0).map(|v| unsafe { v.bytes() });
+    let ns = ns.map(|v| v.as_bytes()).filter(|v| !v.is_empty());
     let want_ns = el
         .element()
         .node()
@@ -436,19 +431,17 @@ pub fn remove_attribute_ns(
     /* Looked up, not interned: a namespace the document never interned is
      * one no attribute here carries, so there is nothing to remove - and a
      * lookup can neither fail nor grow the table. */
-    let want_ns = match ns.filter(|v| v.len() != 0) {
+    let want_ns = match ns.filter(|v| !v.is_empty()) {
         Some(nv) => {
             let doc = el.element().node().owner_document();
-            // SAFETY: see the section comment.
-            let Some(id) = doc.lookup_ns(unsafe { nv.bytes() }) else {
+            let Some(id) = doc.lookup_ns(nv.as_bytes()) else {
                 return false;
             };
             Some(id)
         }
         None => None,
     };
-    // SAFETY: as above.
-    match el.element().find_attr_ns(want_ns, unsafe { local.bytes() }) {
+    match el.element().find_attr_ns(want_ns, local.as_bytes()) {
         Some(attr) => {
             el.attr_remove(attr);
             true
@@ -459,47 +452,38 @@ pub fn remove_attribute_ns(
 
 /// `el.delete(name)`.
 pub fn remove_attribute(el: HtmlElementMut<'_>, name: &RubyText) {
-    // SAFETY: see the section comment.
-    el.remove_attribute(unsafe { name.bytes() });
+    el.remove_attribute(name.as_bytes());
 }
 
 /// `node.content = text`; `Err` when Lexbor could not store it.
 pub fn set_text_content(node: HtmlNodeMut<'_>, text: &RubyData) -> Result<(), LexborRefused> {
-    // SAFETY: see the section comment.
-    node.set_text_content(unsafe { text.bytes() })
+    node.set_text_content(text.as_bytes())
 }
 
 /// A new element in `doc`.
 pub fn create_element<'d>(doc: HtmlDoc<'d>, name: &RubyText) -> Option<RawNode> {
-    // SAFETY: see the section comment.
-    doc.create_element(unsafe { name.bytes() })
-        .map(RawNode::from)
+    doc.create_element(name.as_bytes()).map(RawNode::from)
 }
 
 /// A new Text node in `doc`.
 pub fn create_text(doc: HtmlDoc<'_>, text: &RubyData) -> Option<RawNode> {
-    // SAFETY: see the section comment.
-    doc.create_text(unsafe { text.bytes() }).map(RawNode::from)
+    doc.create_text(text.as_bytes()).map(RawNode::from)
 }
 
 /// A new Comment in `doc`.
 pub fn create_comment(doc: HtmlDoc<'_>, text: &RubyData) -> Option<RawNode> {
-    // SAFETY: see the section comment.
-    doc.create_comment(unsafe { text.bytes() })
-        .map(RawNode::from)
+    doc.create_comment(text.as_bytes()).map(RawNode::from)
 }
 
 /// A new ProcessingInstruction in `doc`.
 pub fn create_pi(doc: HtmlDoc<'_>, target: &RubyText, data: &RubyText) -> Option<RawNode> {
-    // SAFETY: see the section comment.
-    doc.create_pi(unsafe { target.bytes() }, unsafe { data.bytes() })
+    doc.create_pi(target.as_bytes(), data.as_bytes())
         .map(RawNode::from)
 }
 
 /// Whether `name` is one the DOM accepts for a doctype.
 pub fn valid_doctype_name(name: &RubyText) -> bool {
-    // SAFETY: see the section comment.
-    HtmlDoc::valid_doctype_name(unsafe { name.bytes() })
+    HtmlDoc::valid_doctype_name(name.as_bytes())
 }
 
 /// A new DocumentType in `doc`.
@@ -509,13 +493,10 @@ pub fn create_doctype(
     public_id: Option<&RubyText>,
     system_id: Option<&RubyText>,
 ) -> Option<RawNode> {
-    // SAFETY: see the section comment.
-    let (name, pub_id, sys_id) = unsafe {
-        (
-            name.bytes(),
-            public_id.map(|v| v.bytes()),
-            system_id.map(|v| v.bytes()),
-        )
-    };
+    let (name, pub_id, sys_id) = (
+        name.as_bytes(),
+        public_id.map(|v| v.as_bytes()),
+        system_id.map(|v| v.as_bytes()),
+    );
     doc.create_doctype(name, pub_id, sys_id).map(RawNode::from)
 }

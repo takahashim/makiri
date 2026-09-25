@@ -163,7 +163,7 @@ fn ruby_to_val(bridge: &Bridge, budget: &mut Budget, rv: Value) -> Result<Val, H
     };
     let vv = ruby_try_verified_text(sv, budget.limits.max_string_bytes)
         .map_err(HandlerFailure::InvalidString)?;
-    Text::try_copy(vv.as_verified().as_bytes())
+    Text::try_copy(vv.as_bytes())
         .map(Val::string)
         .ok_or(HandlerFailure::Msg(
             "out of memory converting handler result",

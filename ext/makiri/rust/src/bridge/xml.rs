@@ -490,9 +490,7 @@ pub fn find_attribute(this: XmlSelf, name: Value) -> Result<Option<NodeId>, Erro
         return Ok(None);
     }
     let nv = ruby_verified_text(name, "attribute name")?;
-    // SAFETY: the bytes are the verified view's, live across the lookup, and
-    // nothing below runs Ruby.
-    let bytes = unsafe { nv.bytes() };
+    let bytes = nv.as_bytes();
     Ok(find_attribute_bytes(this.doc_ref(), id, bytes))
 }
 

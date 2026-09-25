@@ -63,7 +63,7 @@ pub fn aset(_ruby: &Ruby, this: XmlSelf, name: Value, val: Value) -> Result<Valu
         let edit = element_for(this)?;
         let nv = verified_text(name, "attribute name")?;
         let vv = verified_text(val, "attribute value")?;
-        let (name, value) = (nv.as_verified().as_bytes(), vv.as_verified().as_bytes());
+        let (name, value) = (nv.as_bytes(), vv.as_bytes());
         xml_mut_result(edit.with_arena(|d, n| mutate::set_attribute(d, n, name, value))?)?;
         Ok(val)
     })
@@ -84,9 +84,9 @@ pub fn set_attribute_ns(
         let nv = verified_text_opt(ns, "namespace")?;
         /* nil and "" alike are no namespace. */
         let (ns, qname, value) = (
-            nv.as_ref().map_or(&b""[..], |n| n.as_verified().as_bytes()),
-            qv.as_verified().as_bytes(),
-            vv.as_verified().as_bytes(),
+            nv.as_ref().map_or(&b""[..], |n| n.as_bytes()),
+            qv.as_bytes(),
+            vv.as_bytes(),
         );
         xml_mut_result(edit.with_arena(|d, n| mutate::set_attribute_ns(d, n, ns, qname, value))?)?;
         Ok(val)
@@ -109,8 +109,8 @@ pub fn remove_attribute_ns(
         let lv = verified_text(local, "attribute local name")?;
         let nv = verified_text_opt(ns, "namespace")?;
         /* nil and "" alike are no namespace. */
-        let ns = nv.as_ref().map_or(&b""[..], |n| n.as_verified().as_bytes());
-        let local = lv.as_verified().as_bytes();
+        let ns = nv.as_ref().map_or(&b""[..], |n| n.as_bytes());
+        let local = lv.as_bytes();
         edit.with_arena(|d, n| mutate::remove_attribute_ns(d, n, ns, local))?;
         Ok(rb_self)
     })
@@ -125,7 +125,7 @@ pub fn delete(_ruby: &Ruby, this: XmlSelf, name: Value) -> Result<Value, Error> 
             return Ok(rb_self);
         }
         let nv = verified_text(name, "attribute name")?;
-        let name = nv.as_verified().as_bytes();
+        let name = nv.as_bytes();
         edit.with_arena(|d, n| mutate::remove_attribute(d, n, name))?;
         Ok(rb_self)
     })
@@ -136,7 +136,7 @@ pub fn set_content(_ruby: &Ruby, this: XmlSelf, text: Value) -> Result<Value, Er
     crate::bridge::ruby::entry(|| {
         let edit = begin_edit(this)?;
         let tv = verified_text(text, "node content")?;
-        let bytes = tv.as_verified().as_bytes();
+        let bytes = tv.as_bytes();
         xml_mut_result(edit.with_arena(|d, n| mutate::set_content(d, n, bytes))?)?;
         Ok(text)
     })
@@ -227,12 +227,12 @@ pub fn create_element(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Val
 
         let nv = verified_text(name, "element name")?;
         let cv = verified_text_opt(content, "element content")?;
-        let name = nv.as_verified().as_bytes();
+        let name = nv.as_bytes();
         let el = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
             mutate::new_element(d, name)
         })?)?;
         if let Some(cv) = &cv {
-            let text = cv.as_verified().as_bytes();
+            let text = cv.as_bytes();
             xml_mut_result(with_arena_for_new_node(rb_self, |d| {
                 mutate::set_content(d, el, text)
             })?)?;
@@ -270,15 +270,11 @@ pub fn create_loose_dom_element(
         let pv = verified_text_opt(prefix, "prefix")?;
         let nv = verified_text_opt(ns, "namespace URI")?;
 
-        let qname = qv.as_verified().as_bytes();
-        let sp = split_loose_dom_name(
-            qname,
-            pv.as_ref().map(|p| p.as_verified().as_bytes()),
-            lv.as_verified().as_bytes(),
-        )
-        .map_err(|e| Error::new(ruby.exception_arg_error(), e.message()))?;
+        let qname = qv.as_bytes();
+        let sp = split_loose_dom_name(qname, pv.as_ref().map(|p| p.as_bytes()), lv.as_bytes())
+            .map_err(|e| Error::new(ruby.exception_arg_error(), e.message()))?;
         /* nil and "" alike are no namespace. */
-        let ns = nv.as_ref().map_or(&b""[..], |n| n.as_verified().as_bytes());
+        let ns = nv.as_ref().map_or(&b""[..], |n| n.as_bytes());
         let el = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
             mutate::new_loose_dom_element(d, qname, sp, ns)
         })?)?;
@@ -304,11 +300,9 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
         let sv = verified_text_opt(a.optional.1.unwrap_or(nil), "doctype system id")?;
         /* An empty id is absent, like nil, matching the HTML factory and Nokogiri. */
         fn id(v: &Option<crate::bridge::string::RubyText>) -> Option<&[u8]> {
-            v.as_ref()
-                .map(|v| v.as_verified().as_bytes())
-                .filter(|b| !b.is_empty())
+            v.as_ref().map(|v| v.as_bytes()).filter(|b| !b.is_empty())
         }
-        let (name, pub_id, sys_id) = (nv.as_verified().as_bytes(), id(&pv), id(&sv));
+        let (name, pub_id, sys_id) = (nv.as_bytes(), id(&pv), id(&sv));
         let dt = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
             mutate::new_document_type(d, name, pub_id, sys_id)
         })?)?;
@@ -324,7 +318,7 @@ fn create_chardata(
     what: &str,
 ) -> Result<Value, Error> {
     let tv = verified_text(text, what)?;
-    let bytes = tv.as_verified().as_bytes();
+    let bytes = tv.as_bytes();
     let n = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
         mutate::new_chardata(d, type_, bytes)
     })?)?;
@@ -345,7 +339,7 @@ pub fn create_pi(_ruby: &Ruby, rb_self: Value, target: Value, data: Value) -> Re
     crate::bridge::ruby::entry(|| {
         let tg = verified_text(target, "PI target")?;
         let dt = verified_text(data, "PI data")?;
-        let (target, data) = (tg.as_verified().as_bytes(), dt.as_verified().as_bytes());
+        let (target, data) = (tg.as_bytes(), dt.as_bytes());
         let pi = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
             mutate::new_pi(d, target, data)
         })?)?;

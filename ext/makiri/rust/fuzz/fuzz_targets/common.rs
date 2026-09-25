@@ -33,10 +33,7 @@ pub fn xml_context(doc: &Document) -> Option<Context<'_, &Document>> {
 
 /// Parse `text` under the context's caps, on a budget of the parse's own - the
 /// way the glue parses.
-///
-/// # Safety
-/// `text`'s bytes must outlive the parse.
-pub unsafe fn parse<'d, D: Dom<'d>>(ctx: &Context<'d, D>, text: VerifiedText) -> Option<Box<Ast>> {
+pub fn parse<'d, D: Dom<'d>>(ctx: &Context<'d, D>, text: VerifiedText) -> Option<Box<Ast>> {
     let mut budget = Budget::with_limits(ctx.limits());
     parse_owned(text, &mut budget).ok()
 }

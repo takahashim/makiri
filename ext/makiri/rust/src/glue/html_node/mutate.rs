@@ -38,7 +38,7 @@ fn check_dom_name(
     ok: impl Fn(&[u8]) -> bool,
     what: &str,
 ) -> Result<(), Error> {
-    if ok(name.as_verified().as_bytes()) {
+    if ok(name.as_bytes()) {
         return Ok(());
     }
     Err(Error::new(
@@ -145,7 +145,7 @@ pub fn set_attribute_ns(
          * both halves, then that the namespace fits them - the rule XML's
          * set_attribute_ns applies too (`xml::qname::ns_fits_name`). It named
          * `(nil, "x:y")` a prefixed attribute in no namespace. */
-        let q = qv.as_verified().as_bytes();
+        let q = qv.as_bytes();
         let colon = q.iter().position(|&b| b == b':');
         let (prefix, local) = match colon {
             Some(i) => (&q[..i], &q[i + 1..]),
@@ -154,7 +154,7 @@ pub fn set_attribute_ns(
         let names_ok = dom_name::valid_attribute_local_name(local)
             && (colon.is_none() || dom_name::valid_namespace_prefix(prefix));
         check_dom_name(ruby, &qv, |_| names_ok, "attribute")?;
-        let ns = nv.as_ref().map_or(&b""[..], |n| n.as_verified().as_bytes());
+        let ns = nv.as_ref().map_or(&b""[..], |n| n.as_bytes());
         let split = match colon {
             Some(i) => Split::prefixed(i as u32, (q.len() - i - 1) as u32),
             None => Split::unprefixed(q.len() as u32),

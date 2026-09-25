@@ -254,7 +254,7 @@ impl XPathCtx {
         let vv = ruby_try_verified_text(sv, self.ctx.limits().max_string_bytes)
             .map_err(|reason| makiri_error(format!("invalid variable value: {reason}")))?;
         self.ctx
-            .register_variable(nv.as_verified().as_bytes(), vv.as_verified().as_bytes()) /* copies both */
+            .register_variable(nv.as_bytes(), vv.as_bytes()) /* copies both */
             .map_err(|e| refused(e, BUSY, FAILED))
     }
 }
@@ -270,14 +270,14 @@ fn cached_ast(
     expr: RubyText,
 ) -> Result<(*const Ast, Option<Box<Ast>>), crate::xpath::msg::Error> {
     // SAFETY: `expr` holds its String rooted for this lookup.
-    let key = unsafe { expr.bytes() };
+    let key = expr.as_bytes();
     if let Some(ast) = cache.0.get(key) {
         return Ok((&**ast as *const Ast, None));
     }
 
     /* Each parse charges a budget of its own, made from the context's caps. */
     let mut budget = Budget::with_limits(limits);
-    let Ok(ast) = crate::xpath::parse::parse_owned(expr.as_verified(), &mut budget) else {
+    let Ok(ast) = crate::xpath::parse::parse_owned(expr.text(), &mut budget) else {
         return Err(budget.take_error());
     };
     if cache.0.len() >= AST_CACHE_MAX || cache.0.falloc_reserve(1).is_err() {

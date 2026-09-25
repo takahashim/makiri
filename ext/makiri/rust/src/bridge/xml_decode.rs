@@ -16,7 +16,7 @@
 #![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
-use core::ffi::{c_char, c_int, c_long};
+use core::ffi::{c_int, c_long};
 
 use crate::bridge::ruby::makiri_error;
 use magnus::rb_sys::AsRawValue;
@@ -204,7 +204,7 @@ unsafe fn xml_decode_input(str: RString, max_bytes: Option<usize>) -> Result<RSt
      * UTF-8 character) while the bytes validated are the suffix. */
     let problem = {
         let anchor = ruby_bytes_view(s);
-        text_check(s, anchor.bytes().as_ptr().add(off) as *const c_char, len).problem()
+        text_check(s, &anchor.bytes()[off..]).problem()
     };
     if let Some(problem) = problem {
         return Err(syntax_error(format!("XML input {problem}")));

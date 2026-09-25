@@ -33,30 +33,28 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
 
-    unsafe {
-        let Some(mut ctx) = xml_context(&doc) else {
-            return;
-        };
+    let Some(mut ctx) = xml_context(&doc) else {
+        return;
+    };
 
-        // Budgets tightened so a hostile expression fails fast instead of
-        // burning fuzzer time. Same numbers the C harness used, and applied in
-        // the same order: the compile-time pair for the parse, the rest only for
-        // the evaluation.
-        let l = ctx.limits_mut();
-        l.max_ast_nodes = 10_000;
-        l.max_expr_bytes = 16 * 1024;
-        let Some(ast) = parse(&ctx, text) else {
-            return;
-        };
+    // Budgets tightened so a hostile expression fails fast instead of
+    // burning fuzzer time. Same numbers the C harness used, and applied in
+    // the same order: the compile-time pair for the parse, the rest only for
+    // the evaluation.
+    let l = ctx.limits_mut();
+    l.max_ast_nodes = 10_000;
+    l.max_expr_bytes = 16 * 1024;
+    let Some(ast) = parse(&ctx, text) else {
+        return;
+    };
 
-        let l = ctx.limits_mut();
-        l.max_eval_ops = 5_000_000;
-        l.max_nodeset_size = 10_000;
-        l.max_string_bytes = 1024 * 1024;
-        /* A cache smaller than one value, so the uncached comparison path runs. */
-        l.max_cache_bytes = 256;
-        l.max_recursion_depth = 64;
+    let l = ctx.limits_mut();
+    l.max_eval_ops = 5_000_000;
+    l.max_nodeset_size = 10_000;
+    l.max_string_bytes = 1024 * 1024;
+    /* A cache smaller than one value, so the uncached comparison path runs. */
+    l.max_cache_bytes = 256;
+    l.max_recursion_depth = 64;
 
-        evaluate_both(&ctx, &ast);
-    }
+    evaluate_both(&ctx, &ast);
 });

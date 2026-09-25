@@ -68,7 +68,7 @@ fn css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let selector = css_args(ruby, args)?;
         let sv = selector_text(selector)?;
-        let nodes = select_all(&held(ruby), this.raw(), sv.as_verified().as_bytes())
+        let nodes = select_all(&held(ruby), this.raw(), sv.as_bytes())
             .map_err(|e| select_error(e, selector))?;
         drop(sv);
         node_set_from(this.document, nodes.iter().map(|&n| n.into()))
@@ -83,7 +83,7 @@ fn at_css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Option<Value>, 
     crate::bridge::ruby::entry(|| {
         let selector = css_args(ruby, args)?;
         let sv = selector_text(selector)?;
-        let found = select_first(&held(ruby), this.raw(), sv.as_verified().as_bytes())
+        let found = select_first(&held(ruby), this.raw(), sv.as_bytes())
             .map_err(|e| select_error(e, selector))?;
         drop(sv);
         Ok(found.map(|n| wrap_html_node(n, this.document)))
@@ -96,8 +96,7 @@ fn matches(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<bool, Error> {
     crate::bridge::ruby::entry(|| {
         let selector = css_args(ruby, args)?;
         let sv = selector_text(selector)?;
-        matches_node(&held(ruby), this.raw(), sv.as_verified().as_bytes())
-            .map_err(|e| select_error(e, selector))
+        matches_node(&held(ruby), this.raw(), sv.as_bytes()).map_err(|e| select_error(e, selector))
     })
 }
 

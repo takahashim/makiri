@@ -231,7 +231,7 @@ pub fn bind_pair(
      * nothing, so the views stay valid through the registration below. */
     let (pv, uv) = ruby_try_verified_text_pair(ks, vs, cap)
         .map_err(|reason| makiri_error(format!("invalid namespace mapping: {reason}")))?;
-    register(pv.as_verified().as_bytes(), uv.as_verified().as_bytes())
+    register(pv.as_bytes(), uv.as_bytes())
 }
 
 /// Register a `{prefix => uri}` Hash onto `ctx` for one query.

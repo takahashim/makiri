@@ -160,9 +160,9 @@ pub fn context_for(rb_node: Value, document: Value) -> Result<Cx, Error> {
 pub fn parse_query(cx: &Cx, expr: Value) -> Result<Box<Ast>, Error> {
     let ev = ruby_verified_text(expr, "XPath expression")?;
     let mut budget = Budget::with_limits(cx.limits());
-    /* `ev` holds the String rooted; `as_verified`'s borrow keeps it live for the
+    /* `ev` holds the String rooted and locked; `text`'s borrow keeps it live for the
      * parse. */
-    let parsed = crate::xpath::parse::parse_owned(ev.as_verified(), &mut budget);
+    let parsed = crate::xpath::parse::parse_owned(ev.text(), &mut budget);
     /* No borrowed bytes across the exception's allocation. */
     drop(ev);
     parsed.map_err(|_| xpath_error(&budget.take_error()))

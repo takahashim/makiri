@@ -6,7 +6,7 @@
 //! oracles where one exists, and preserve concrete regressions without
 //! requiring a Ruby VM or a Lexbor build.
 
-#![allow(unsafe_code)]
+#![forbid(unsafe_code)]
 
 use crate::cutf8::{decode1, valid};
 use crate::falloc::grow_capacity;
@@ -315,28 +315,38 @@ fn text_verdict_agrees_with_the_standard_library_on_every_one_and_two_byte_input
 fn verified_text_rejects_nul_and_invalid_utf8() {
     use crate::text::VerifiedText;
     assert!(VerifiedText::from_bytes(b"a\0b").is_none());
+    assert!(VerifiedText::new("a\0b").is_none());
     assert!(VerifiedText::from_bytes(b"\xFF").is_none());
+    // A surrogate and an overlong form are invalid UTF-8 too.
+    assert!(VerifiedText::from_bytes(b"\xED\xA0\x80").is_none());
+    assert!(VerifiedText::from_bytes(b"\xC0\xAF").is_none());
 
     let bytes = "日本語".as_bytes();
     let t = VerifiedText::from_bytes(bytes).unwrap();
     // A borrow, not a copy.
-    assert_eq!(t.as_ptr() as *const u8, bytes.as_ptr());
-    assert_eq!(t.len(), bytes.len());
+    assert_eq!(t.as_ptr(), bytes.as_ptr());
+    assert_eq!(t.as_str(), "日本語");
     assert_eq!(t.as_bytes(), bytes);
+
+    // The empty string is a present text like any other.
+    assert_eq!(VerifiedText::from_bytes(b"").map(|t| t.len()), Some(0));
+    assert_eq!(VerifiedText::new(""), VerifiedText::from_bytes(b""));
 }
 
 #[test]
-fn text_views_distinguish_absent_from_empty() {
+fn verified_text_agrees_with_the_bridge_check() {
+    use crate::cutf8::{text_verdict, TextVerdict};
     use crate::text::VerifiedText;
-
-    // `empty` is present and NUL-terminated, so it is safe wherever a present
-    // string is required.
-    let empty = VerifiedText::empty();
-    assert!(!empty.is_absent() && empty.is_empty());
-    assert_eq!(unsafe { *empty.as_ptr() }, 0);
-
-    let present = VerifiedText::from_bytes(b"").unwrap();
-    assert!(!present.is_absent() && present.is_empty());
+    for first in 0u8..=u8::MAX {
+        for second in [0u8, 0x41, 0x80, 0xA0, 0xBF, 0xC0, 0xFF] {
+            let two = [first, second];
+            assert_eq!(
+                VerifiedText::from_bytes(&two).is_some(),
+                text_verdict(&two, false) == TextVerdict::Ok,
+                "{two:02x?}"
+            );
+        }
+    }
 }
 
 #[test]

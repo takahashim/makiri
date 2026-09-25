@@ -33,15 +33,15 @@ UNSAFE_ISLANDS = {
   "bridge/doc.rs" => 4,
   "bridge/fragment.rs" => 5,
   "bridge/gvl.rs" => 4,
-  "bridge/html.rs" => 30,
+  "bridge/html.rs" => 16,
   "bridge/node_set.rs" => 8,
   "bridge/ruby.rs" => 17,
-  "bridge/string.rs" => 28,
+  "bridge/string.rs" => 29,
   "bridge/typed.rs" => 21,
   "bridge/wrapper.rs" => 21,
-  "bridge/xml.rs" => 12,
+  "bridge/xml.rs" => 11,
   "bridge/xml_decode.rs" => 7,
-  "bridge/xpath/context_object.rs" => 4,
+  "bridge/xpath/context_object.rs" => 3,
   "bridge/xpath/handler.rs" => 7,
   "bridge/xpath/mod.rs" => 6,
   "cbuf.rs" => 18,
@@ -69,8 +69,6 @@ UNSAFE_ISLANDS = {
   "lexbor/stylesheet.rs" => 7,
   "lexbor/tests.rs" => 2,
   "lexbor/xpath.rs" => 9,
-  "rust_tests.rs" => 1,
-  "text.rs" => 2,
   "token.rs" => 1,
 }.freeze
 
@@ -95,24 +93,25 @@ FORBID_FILES = %w[
   glue/xml_node/read.rs glue/xml_node/serialize.rs glue/xml_node/strings.rs
   glue/xpath_context.rs lexbor/adapter/dom_index.rs lexbor/contains_guard.rs
   limits.rs node_type.rs ptr_table.rs
-  utf8_input.rs xml/arena.rs xml/chars/expand.rs
-  xml/chars/mod.rs xml/dom_name.rs xml/encoding_sniff.rs
-  xml/index.rs xml/mod.rs xml/model.rs
-  xml/mutate/attr.rs xml/mutate/copy.rs xml/mutate/edit.rs
-  xml/mutate/factory.rs xml/mutate/insert.rs xml/mutate/mod.rs
-  xml/mutate/ns.rs xml/qname.rs xml/selftest.rs
-  xml/serialize/bindings.rs xml/serialize/c14n.rs xml/serialize/mod.rs
-  xml/serialize/out.rs xml/serialize/xml.rs xml/tree/cursor.rs
-  xml/tree/decl.rs xml/tree/dtd.rs xml/tree/mod.rs
-  xml/tree/scope.rs xml/verify.rs xml/xpath.rs
-  xpath/abi.rs xpath/ast.rs xpath/ast_ops.rs
-  xpath/attr_pred.rs xpath/axis.rs xpath/ctx.rs
-  xpath/dom.rs xpath/eval.rs xpath/funcs/ext.rs
-  xpath/funcs/mod.rs xpath/lex.rs xpath/limits.rs
-  xpath/mod.rs xpath/msg.rs xpath/nodetest.rs
-  xpath/number.rs xpath/order.rs xpath/parse.rs
-  xpath/step_index.rs xpath/str_cache.rs xpath/tests.rs
-  xpath/value.rs xpath/verify.rs
+  rust_tests.rs text.rs utf8_input.rs
+  xml/arena.rs xml/chars/expand.rs xml/chars/mod.rs
+  xml/dom_name.rs xml/encoding_sniff.rs xml/index.rs
+  xml/mod.rs xml/model.rs xml/mutate/attr.rs
+  xml/mutate/copy.rs xml/mutate/edit.rs xml/mutate/factory.rs
+  xml/mutate/insert.rs xml/mutate/mod.rs xml/mutate/ns.rs
+  xml/qname.rs xml/selftest.rs xml/serialize/bindings.rs
+  xml/serialize/c14n.rs xml/serialize/mod.rs xml/serialize/out.rs
+  xml/serialize/xml.rs xml/tree/cursor.rs xml/tree/decl.rs
+  xml/tree/dtd.rs xml/tree/mod.rs xml/tree/scope.rs
+  xml/verify.rs xml/xpath.rs xpath/abi.rs
+  xpath/ast.rs xpath/ast_ops.rs xpath/attr_pred.rs
+  xpath/axis.rs xpath/ctx.rs xpath/dom.rs
+  xpath/eval.rs xpath/funcs/ext.rs xpath/funcs/mod.rs
+  xpath/lex.rs xpath/limits.rs xpath/mod.rs
+  xpath/msg.rs xpath/nodetest.rs xpath/number.rs
+  xpath/order.rs xpath/parse.rs xpath/step_index.rs
+  xpath/str_cache.rs xpath/tests.rs xpath/value.rs
+  xpath/verify.rs
 ].freeze
 
 UNSAFE_USE = /\bunsafe\s*(?:\{|fn\b|impl\b|trait\b|extern\b)/
