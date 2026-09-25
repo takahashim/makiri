@@ -80,7 +80,7 @@ pub fn name(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
 /// `#local_name` (DOM `localName`): the name without any prefix - `div` for
 /// `<div>`, `path` for an SVG `<path>`, `href` for an `xlink:href` attribute.
 /// Element and Attribute only; the DOM gives a Text/Comment/Document none.
-pub fn local_name(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
+pub fn local_name(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
         /* The DOM's case-preserved name - `foreignObject`, `refX` - where Lexbor
          * stores a lower-cased one; the same answer XPath's `local-name()` gives. */
@@ -88,22 +88,19 @@ pub fn local_name(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
         let local = match (node.element(), node.attr()) {
             (Some(el), _) => el.dom_local_name(),
             (None, Some(at)) => at.dom_local_name(),
-            (None, None) => return Ok(nil(ruby)),
+            (None, None) => return Ok(None),
         };
-        Ok(dom_str(local))
+        Ok(Some(dom_str(local)))
     })
 }
 
 /// `#prefix` (DOM `prefix`): nil unless the qualified name is `prefix:local` -
 /// typically nil for HTML5-parsed content. Element and Attribute only.
-pub fn prefix(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
+pub fn prefix(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        Ok(
-            match qname(this.node()).and_then(|(q, local)| qname_prefix(q, local.len())) {
-                Some(p) => dom_str(p),
-                None => nil(ruby),
-            },
-        )
+        Ok(qname(this.node())
+            .and_then(|(q, local)| qname_prefix(q, local.len()))
+            .map(dom_str))
     })
 }
 
@@ -119,7 +116,7 @@ pub fn prefix(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
 /// what XPath's `namespace-uri()` answers.
 ///
 /// Other kinds: nil.
-pub fn namespace_uri(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
+pub fn namespace_uri(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
         let node = this.node();
         let uri = match (node.element(), node.attr()) {
@@ -127,7 +124,7 @@ pub fn namespace_uri(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error>
             (None, Some(at)) => at.own_ns_uri(),
             (None, None) => None,
         };
-        Ok(uri.map_or_else(|| nil(ruby), dom_str))
+        Ok(uri.map(dom_str))
     })
 }
 
@@ -135,30 +132,26 @@ pub fn namespace_uri(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error>
 /// HTML element in an HTML document (`DIV`), as the DOM specifies - unlike
 /// `#name`, which is the lowercase qualified name. SVG/MathML elements keep
 /// their case. nil for a non-element.
-pub fn tag_name(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
+pub fn tag_name(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
         Ok(this
             .node()
             .element()
             .and_then(|el| el.tag_name())
-            .map_or_else(|| nil(ruby), dom_str))
+            .map(dom_str))
     })
 }
 
 /// `ProcessingInstruction#target` (DOM `target`): the `xml` in `<?xml ...?>`.
 /// nil for a non-PI. The PI's data is read with `#content` like any
 /// character-data node.
-pub fn pi_target(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| Ok(this.node().pi_target().map_or_else(|| nil(ruby), dom_str)))
+pub fn pi_target(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
+    crate::bridge::ruby::entry(|| Ok(this.node().pi_target().map(dom_str)))
 }
 
 /// `#node_type`: the numeric DOM node type (`LXB_DOM_NODE_TYPE_*`).
-pub fn node_type(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        Ok(ruby
-            .integer_from_i64(this.node().node_type() as i64)
-            .as_value())
-    })
+pub fn node_type(_ruby: &Ruby, this: super::HtmlSelf) -> Result<i64, Error> {
+    crate::bridge::ruby::entry(|| Ok(this.node().node_type() as i64))
 }
 
 /// `DocumentType#public_id` / `#system_id` (WHATWG DOM).
@@ -167,22 +160,12 @@ pub fn node_type(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
 /// empty string for a bare `<!DOCTYPE html>` - so empty is treated as absent and
 /// both answer nil, matching Nokogiri. Defined only on DocumentType; for any
 /// other receiver the handle answers None as well.
-pub fn doctype_public_id(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        Ok(this
-            .node()
-            .doctype_public_id()
-            .map_or_else(|| nil(ruby), dom_str))
-    })
+pub fn doctype_public_id(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
+    crate::bridge::ruby::entry(|| Ok(this.node().doctype_public_id().map(dom_str)))
 }
 
-pub fn doctype_system_id(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        Ok(this
-            .node()
-            .doctype_system_id()
-            .map_or_else(|| nil(ruby), dom_str))
-    })
+pub fn doctype_system_id(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
+    crate::bridge::ruby::entry(|| Ok(this.node().doctype_system_id().map(dom_str)))
 }
 
 /// `Element#content_fragment`: a `<template>` element's "template contents" -
@@ -195,13 +178,8 @@ pub fn doctype_system_id(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Er
 /// template ELEMENT deliberately do not descend into the content - matching the
 /// DOM, and unavoidable for CSS, which runs Lexbor's selector engine over the
 /// real tree - so query the fragment instead.
-pub fn content_fragment(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        Ok(match this.node().template_content() {
-            Some(content) => wrap_node(Some(content), this.document),
-            None => nil(ruby),
-        })
-    })
+pub fn content_fragment(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| Ok(wrap_node(this.node().template_content(), this.document)))
 }
 
 /// `#content` / `#text` / `#inner_text`: the concatenated text of this node and
@@ -380,10 +358,10 @@ pub fn ancestors(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
 /// This goes through Lexbor's attribute-name hash, which is keyed by LOCAL name
 /// and lower-cases the lookup - see [`attribute_by_qualified_name`] for the
 /// exact-match sibling and why both exist.
-pub fn aref(ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Value, Error> {
+pub fn aref(_ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
         let Some(el) = this.node().element() else {
-            return Ok(nil(ruby));
+            return Ok(None);
         };
         let nv = ruby_verified_text(rb_name, c"attribute name")?;
         let name = nv.as_verified().as_bytes();
@@ -391,26 +369,21 @@ pub fn aref(ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Value,
          * both for an absent attribute and for a present one with no value
          * (`<input disabled>`), and only the second is `""`. */
         if !el.has_attribute(name) {
-            return Ok(nil(ruby));
+            return Ok(None);
         }
         let value = el.get_attribute(name).unwrap_or(&[]);
-        Ok(dom_str(value))
+        Ok(Some(dom_str(value)))
     })
 }
 
 /// `node.key?(name)`.
-pub fn has_key(ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Value, Error> {
+pub fn has_key(_ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<bool, Error> {
     crate::bridge::ruby::entry(|| {
         let Some(el) = this.node().element() else {
-            return Ok(ruby.qfalse().as_value());
+            return Ok(false);
         };
         let nv = ruby_verified_text(rb_name, c"attribute name")?;
-        let has = el.has_attribute(nv.as_verified().as_bytes());
-        Ok(if has {
-            ruby.qtrue().as_value()
-        } else {
-            ruby.qfalse().as_value()
-        })
+        Ok(el.has_attribute(nv.as_verified().as_bytes()))
     })
 }
 
@@ -478,10 +451,7 @@ pub fn attribute_by_qualified_name(
         let found = el.attrs().find(|at| at.qualified_name() == name);
         /* The name is not read past here; wrapping allocates, so it happens after. */
         drop(nv);
-        Ok(match found {
-            Some(at) => wrap_node(Some(at.node()), this.document),
-            None => nil(ruby),
-        })
+        Ok(wrap_node(found.map(|at| at.node()), this.document))
     })
 }
 
@@ -493,13 +463,13 @@ pub fn attribute_by_qualified_name(
 /// often enough for the wrapper to show up. An empty value answers `""`, which
 /// is how `hasAttribute` tells it from an absent attribute.
 pub fn attribute_value_by_qualified_name(
-    ruby: &Ruby,
+    _ruby: &Ruby,
     this: super::HtmlSelf,
     rb_name: Value,
-) -> Result<Value, Error> {
+) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
         let Some(el) = this.node().element() else {
-            return Ok(nil(ruby));
+            return Ok(None);
         };
         let nv = ruby_verified_text(rb_name, c"attribute name")?;
         let name = nv.as_verified().as_bytes();
@@ -508,7 +478,7 @@ pub fn attribute_value_by_qualified_name(
             .find(|at| at.qualified_name() == name)
             .map(|at| at.value());
         drop(nv);
-        Ok(value.map_or_else(|| nil(ruby), dom_str))
+        Ok(value.map(dom_str))
     })
 }
 

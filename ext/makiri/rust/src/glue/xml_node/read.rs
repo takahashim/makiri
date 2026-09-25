@@ -113,12 +113,8 @@ pub fn pi_target(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
     })
 }
 
-pub fn node_type(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        let d = this.doc_ref();
-        let ty = d.type_(this.id).map_or(0, |t| t.as_u32());
-        Ok(ruby.integer_from_i64(ty as i64).as_value())
-    })
+pub fn node_type(_ruby: &Ruby, this: XmlSelf) -> Result<u32, Error> {
+    crate::bridge::ruby::entry(|| Ok(this.doc_ref().type_(this.id).map_or(0, |t| t.as_u32())))
 }
 
 /* ---- DTD identifiers ----
@@ -348,21 +344,21 @@ pub fn values(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
 /// non-node, a node of another document (an HTML one included), an attribute,
 /// or two nodes in different trees. Comparable, which `Makiri::Node`
 /// includes, supplies `<`, `>` and the rest.
-pub fn spaceship(ruby: &Ruby, this: XmlSelf, other: Value) -> Result<Value, Error> {
+pub fn spaceship(_ruby: &Ruby, this: XmlSelf, other: Value) -> Result<Option<i64>, Error> {
     crate::bridge::ruby::entry(|| {
         let same_document = crate::bridge::ruby::is_kind_of(other, &crate::init::CLASS_NODE)
-            && crate::bridge::wrapper::keepalive_document(other)?.equal(this.document)?;
+            && crate::bridge::ruby::same_value(
+                crate::bridge::wrapper::keepalive_document(other)?,
+                this.document,
+            );
         if !same_document {
-            return Ok(ruby.qnil().as_value());
+            return Ok(None);
         }
         let order = crate::xml::xpath::document_order(
             this.doc_ref(),
             this.id,
             crate::bridge::xml::unwrap(other)?,
         );
-        Ok(match order {
-            Some(o) => ruby.integer_from_i64(o as i64).as_value(),
-            None => ruby.qnil().as_value(),
-        })
+        Ok(order.map(|o| o as i64))
     })
 }
