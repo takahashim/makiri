@@ -16,12 +16,6 @@ pub(super) fn put(b: &mut Buf, bytes: &[u8]) -> W {
     b.append(bytes).map_err(|_| Failure::Output)
 }
 
-/// An allocation for the writers' own bookkeeping (`crate::falloc`'s `()` on
-/// OOM), refused as the output would be: memory ran out.
-pub(super) fn room(r: Result<(), ()>) -> W {
-    r.map_err(|()| Failure::Output)
-}
-
 /// A processing instruction: `<?target data?>`, with the space only when there
 /// is data.
 ///

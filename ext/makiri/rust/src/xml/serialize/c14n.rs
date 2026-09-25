@@ -8,7 +8,7 @@
 #![forbid(unsafe_code)]
 
 use super::bindings::{Bindings, Prefix};
-use super::out::{put, put_pi, room, C14N, W};
+use super::out::{put, put_pi, C14N, W};
 use super::Failure;
 use crate::cbuf::Buf;
 use crate::falloc::Reserve;
@@ -116,7 +116,7 @@ impl<'d> Writer<'d, '_> {
             if prefix == b"xml" || (prefix.is_empty() && uri.is_empty()) {
                 continue;
             }
-            room(out.falloc_reserve(1))?;
+            Failure::from_alloc(out.falloc_reserve(1))?;
             out.push(Ns { prefix, uri });
         }
         sort_by_prefix(&mut out);
@@ -141,7 +141,7 @@ impl<'d> Writer<'d, '_> {
                         !(p.is_empty() && u.is_empty()) || above.is_some_and(|a| !a.is_empty())
                     };
                     if keep {
-                        room(out.falloc_reserve(1))?;
+                        Failure::from_alloc(out.falloc_reserve(1))?;
                         out.push(Ns { prefix: p, uri: u });
                     }
                 }
@@ -157,7 +157,7 @@ impl<'d> Writer<'d, '_> {
     /// give each the namespace it has, [`Failure::NamespaceMismatch`] when
     /// they do not. An unresolved one (a detached copy) takes its namespace
     /// FROM those declarations, so only the binding is checked.
-    fn names_agree(&mut self, n: NodeId) -> W {
+    fn ensure_names_agree(&mut self, n: NodeId) -> W {
         let doc = self.doc;
         let decided = doc.node(n).flags & FLAG_NS_RESOLVED != 0;
         let el_prefix = doc.span(doc.node(n).prefix);
@@ -201,7 +201,7 @@ impl<'d> Writer<'d, '_> {
         let mut up = doc.parent(n);
         while let Some(id) = up {
             if doc.type_(id) == Some(NodeType::Element) {
-                room(chain.falloc_reserve(1))?;
+                Failure::from_alloc(chain.falloc_reserve(1))?;
                 chain.push(id);
             }
             up = doc.parent(id);
@@ -214,7 +214,7 @@ impl<'d> Writer<'d, '_> {
 
     fn element(&mut self, n: NodeId, is_apex: bool, depth: u32) -> W {
         if depth as usize >= MAX_DEPTH {
-            return Err(Failure::Output);
+            return Err(Failure::TooDeep);
         }
         let base = self.binds.len();
         if is_apex {
@@ -240,7 +240,7 @@ impl<'d> Writer<'d, '_> {
             self.push_decls(n)?;
             own
         };
-        self.names_agree(n)?;
+        self.ensure_names_agree(n)?;
         self.put(b"<")?;
         self.qname(n)?;
 
@@ -280,7 +280,7 @@ fn sorted_attributes(doc: &XmlDoc, n: NodeId) -> Result<Vec<NodeId>, Failure> {
     let mut attrs: Vec<NodeId> = Vec::new();
     for at in doc.attributes(n) {
         if xmlns_decl(doc, at).is_none() {
-            room(attrs.falloc_reserve(1))?;
+            Failure::from_alloc(attrs.falloc_reserve(1))?;
             attrs.push(at);
         }
     }

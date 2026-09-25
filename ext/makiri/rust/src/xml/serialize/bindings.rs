@@ -6,7 +6,6 @@
 
 #![forbid(unsafe_code)]
 
-use super::out::{room, W};
 use super::Failure;
 use crate::falloc::Reserve;
 
@@ -133,7 +132,7 @@ impl<'d> Bindings<'d> {
 
     /// Room for one more prefix: rebuilt from the stack, larger, once the
     /// filled slots would pass half.
-    fn make_room(&mut self) -> W {
+    fn make_room(&mut self) -> Result<(), Failure> {
         if !self.slots.is_empty() && (self.filled + 1) * 2 <= self.slots.len() {
             return Ok(());
         }
@@ -142,7 +141,7 @@ impl<'d> Bindings<'d> {
             .map(|n| n.next_power_of_two().max(16))
             .ok_or(Failure::Output)?;
         let mut slots: Vec<u32> = Vec::new();
-        room(slots.falloc_reserve_exact(size))?;
+        Failure::from_alloc(slots.falloc_reserve_exact(size))?;
         slots.resize(size, EMPTY);
         let old = core::mem::replace(&mut self.slots, slots);
         self.filled = 0;
@@ -171,12 +170,12 @@ impl<'d> Bindings<'d> {
         }
     }
 
-    pub(super) fn push(&mut self, prefix: Prefix<'d>, uri: &'d [u8]) -> W {
+    pub(super) fn push(&mut self, prefix: Prefix<'d>, uri: &'d [u8]) -> Result<(), Failure> {
         let at = u32::try_from(self.stack.len())
             .ok()
             .filter(|&n| n < GONE)
             .ok_or(Failure::Output)?;
-        room(self.stack.falloc_reserve(1))?;
+        Failure::from_alloc(self.stack.falloc_reserve(1))?;
         self.make_room()?;
         let shadows = match self.probe(prefix.bytes()) {
             Probe::Found(i) => core::mem::replace(&mut self.slots[i], at),

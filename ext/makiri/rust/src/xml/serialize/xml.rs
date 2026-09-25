@@ -63,9 +63,8 @@ struct Gen {
     seq: u32,
 }
 
-/// A prefix no binding in scope uses. [`Failure::Output`] when the sequence
-/// runs out - the answer this refusal has always given - and the budget's
-/// failure when a lookup spends it.
+/// A prefix no binding in scope uses. [`Failure::PrefixSpace`] when the
+/// sequence runs out, and the budget's failure when a lookup spends it.
 fn gen_prefix<'d>(binds: &mut Bindings<'d>, gen: &mut Gen) -> Result<Prefix<'d>, Failure> {
     const GEN_MAX: u32 = 100_000;
     while gen.seq < GEN_MAX {
@@ -90,7 +89,7 @@ fn gen_prefix<'d>(binds: &mut Bindings<'d>, gen: &mut Gen) -> Result<Prefix<'d>,
             return Ok(Prefix::Invented(buf, i));
         }
     }
-    Err(Failure::Output)
+    Err(Failure::PrefixSpace)
 }
 
 /// How one name will be written: under which prefix, and whether the output has
@@ -350,7 +349,7 @@ impl<'d, 'b> Writer<'d, 'b> {
 
     fn element(&mut self, n: NodeId, depth: u32, binds: &mut Bindings<'d>) -> W {
         if depth as usize >= MAX_DEPTH {
-            return Err(Failure::Output);
+            return Err(Failure::TooDeep);
         }
         let base = binds.len();
         let r = self.element_in_scope(n, depth, binds);

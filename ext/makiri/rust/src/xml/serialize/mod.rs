@@ -42,8 +42,15 @@ pub enum Failure {
     /// makes every PI target an NCName, and DOM Parsing's serializer refuses
     /// it too.
     PiTargetColon,
-    /// The output exceeded its ceiling, or memory ran out.
+    /// The output exceeded its ceiling, memory ran out, or the scope table
+    /// outgrew its index range.
     Output,
+    /// The tree nests deeper than [`crate::xml::model::MAX_DEPTH`], the bound
+    /// on the writers' recursion.
+    TooDeep,
+    /// Every prefix the writer can invent (`ns0` .. `ns99999`) is already bound
+    /// in scope, so a namespace that needs a declaration cannot get one.
+    PrefixSpace,
     /// Namespace planning exceeded its step budget - the document nests and
     /// re-declares prefixes deeply enough that resolving them all is not worth
     /// doing. Fails closed rather than running on.
@@ -59,6 +66,14 @@ pub enum Failure {
     /// `q:e`, or an attribute whose prefix never resolved - so it has no
     /// well-formed form: `xmlns:q=""` is forbidden and a bare `q:` is unbound.
     UnboundPrefix,
+}
+
+impl Failure {
+    /// A `crate::falloc` reservation for the writers' own bookkeeping, whose
+    /// `()` on OOM is refused as the output would be: memory ran out.
+    pub(super) fn from_alloc(r: Result<(), ()>) -> Result<(), Failure> {
+        r.map_err(|()| Failure::Output)
+    }
 }
 
 /// The output ceiling for `doc`: generous, but proportional to its arena, so a

@@ -200,9 +200,10 @@ RSpec.describe "Makiri::XML#to_xml" do
       cur = doc.root
       8000.times { e = doc.create_element("a"); cur.add_child(e); cur = e }
 
-      expect { doc.to_xml }.to raise_error(Makiri::Error, /size limit|out of memory/)
-      expect { doc.to_xml(pretty: true) }.to raise_error(Makiri::Error)
-      expect { doc.root.canonicalize }.to raise_error(Makiri::Error)
+      # the reason is the depth, not the output's size or memory
+      expect { doc.to_xml }.to raise_error(Makiri::Error, /nests deeper than 1024 levels/)
+      expect { doc.to_xml(pretty: true) }.to raise_error(Makiri::Error, /nests deeper than/)
+      expect { doc.root.canonicalize }.to raise_error(Makiri::Error, /nests deeper than/)
       # the same tree is fine to hold, walk and query - only serializing it is not
       expect(doc.root.xpath("//a").length).to eq(8000)
     end

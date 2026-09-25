@@ -39,6 +39,13 @@ fn failure_error(f: Failure, verb: &str) -> Error {
         Failure::Output => {
             format!("failed to {verb} XML: output exceeded the size limit or out of memory")
         }
+        Failure::TooDeep => format!(
+            "failed to {verb} XML: the tree nests deeper than {} levels",
+            crate::xml::model::MAX_DEPTH
+        ),
+        Failure::PrefixSpace => {
+            format!("failed to {verb} XML: ran out of namespace prefixes to declare")
+        }
         Failure::NamespaceBudget => {
             format!("failed to {verb} XML: namespace planning exceeded its step budget")
         }
