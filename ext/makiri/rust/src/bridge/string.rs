@@ -80,7 +80,7 @@ use sealed::Checked;
 ///
 /// Anchoring keeps the String alive and in place; it does not stop Ruby code
 /// from mutating it. A CHECKED view ([`RubyText`], [`RubyData`]) is therefore
-/// held immutable for its whole life ([`RubyStr::held`]): a mutator converts
+/// held immutable for its whole life ([`RubyStr::acquire`]): a mutator converts
 /// its arguments one after another, and the second one's `#to_s` is arbitrary
 /// Ruby that could rewrite the first - putting a NUL into a name that had
 /// passed the check, or reallocating it so the view read freed memory. That is
@@ -94,7 +94,7 @@ pub struct RubyStr<C> {
     /// Whether this view took the String's temporary lock, and so releases it.
     owns_lock: bool,
     /// The view's own copy of the bytes, when the String was already locked by
-    /// someone else (see [`RubyStr::held`]); `ptr` then points into it.
+    /// someone else (see [`RubyStr::acquire`]); `ptr` then points into it.
     _copy: Option<OwnedBuf>,
     contract: core::marker::PhantomData<C>,
 }
@@ -118,13 +118,21 @@ impl<C> RubyStr<C> {
     }
 }
 
+/// Why [`RubyStr::acquire`] gave no view.
+enum Refusal<P> {
+    /// The held bytes failed the contract; `P` is the check's own answer.
+    Check(P),
+    /// The String was locked by someone else and its bytes could not be copied.
+    Oom,
+}
+
 impl<C: Checked> RubyStr<C> {
-    /// The checked view of `ptr`/`len`, with its bytes held immutable until the
-    /// view drops; `None` only when that needed a copy and the copy could not
-    /// be allocated.
+    /// A checked view of `s`: its bytes held immutable until the view drops,
+    /// and only THEN checked, by `check` (which gets the String, for its cached
+    /// coderange, and the held bytes).
     ///
-    /// Normally that is the String's temporary lock: Ruby raises "can't modify
-    /// string; temporarily locked" on any change, reallocation included
+    /// Held normally means the String's temporary lock: Ruby raises "can't
+    /// modify string; temporarily locked" on any change, reallocation included
     /// (`IO#write` holds its buffer the same way).
     ///
     /// `rb_str_locktmp` raises when the String is already locked - by another
@@ -133,26 +141,47 @@ impl<C: Checked> RubyStr<C> {
     /// can be while this view still lives (an IO on another thread finishing
     /// during a later argument's `#to_s`, or the earlier view dropping first),
     /// and after that Ruby may rewrite or free the bytes under a `&str` this
-    /// view handed out. So the view copies the bytes instead - they were
-    /// checked just now, with no Ruby run since - and reads its own copy. That
-    /// keeps the answer (the same argument twice still works) and keeps the
-    /// safe `Deref` sound; it costs an allocation only in that rare case.
+    /// view handed out. So the view copies the bytes instead and reads its own
+    /// copy - which keeps the answer (the same argument twice still works) and
+    /// the safe `Deref` sound, at an allocation only in that rare case.
     ///
-    /// # Safety
-    /// `ptr`/`len` must be the bytes of the live String `value`, just checked
-    /// against `C`, with no Ruby run since.
-    unsafe fn held(value: VALUE, ptr: *const u8, len: usize) -> Option<Self> {
-        let mut view = Self::from_raw_parts(value, ptr, len);
-        // SAFETY: `value` is the live String this view borrows; `protect`
-        // turns the already-locked raise into `Err`.
-        view.owns_lock = protect(|| unsafe { rb_sys::rb_str_locktmp(value) }).is_ok();
-        if !view.owns_lock {
-            let copy = OwnedBuf::copy_from(bytes_at(ptr, len))?;
+    /// The order is the point. Building the "already locked" error runs Ruby
+    /// (the exception's `initialize`, an interrupt check, another thread), so
+    /// bytes borrowed or checked BEFORE the lock attempt may be gone or changed
+    /// by the time they are copied. They are borrowed only after it, when
+    /// nothing below runs Ruby until they are locked or copied, and the check
+    /// reads exactly what the view will hand out.
+    fn acquire<P>(
+        s: RString,
+        check: impl FnOnce(RString, &[u8]) -> Option<P>,
+    ) -> Result<Self, Refusal<P>> {
+        let value = s.as_raw();
+        // SAFETY: `value` is the live String `s`; `protect` turns the
+        // already-locked raise into `Err`.
+        let owns_lock = protect(|| unsafe { rb_sys::rb_str_locktmp(value) }).is_ok();
+        // SAFETY: borrowed after the lock attempt and whatever Ruby it ran;
+        // nothing from here runs Ruby before the bytes are held (locked, or
+        // copied into the view's own buffer).
+        let (_, ptr, len) = unsafe { borrow(s) };
+        // SAFETY: the bytes of `value`, checked below before the view is
+        // returned.
+        let mut view = unsafe { Self::from_raw_parts(value, ptr, len) };
+        view.owns_lock = owns_lock;
+        if !owns_lock {
+            // SAFETY: as above - no Ruby since the borrow.
+            let copy = OwnedBuf::copy_from(unsafe { bytes_at(ptr, len) }).ok_or(Refusal::Oom)?;
             /* The copy's heap storage does not move with the view. */
             view.ptr = copy.as_slice().as_ptr();
             view._copy = Some(copy);
         }
-        Some(view)
+        /* The coderange `check` may consult is the String's current one, and
+         * the String has not changed since the bytes were taken. */
+        // SAFETY: the held bytes, live for the view's life.
+        match check(s, unsafe { bytes_at(view.ptr, view.len) }) {
+            /* Dropping the view releases a lock it took. */
+            Some(problem) => Err(Refusal::Check(problem)),
+            None => Ok(view),
+        }
     }
 }
 
@@ -330,25 +359,8 @@ pub fn text_check(coderange_str: RString, bytes: &[u8]) -> TextVerdict {
     crate::cutf8::text_verdict(bytes, ruby_str_known_valid_utf8(coderange_str))
 }
 
-/// Enforce the strict contract (valid UTF-8, no NUL) on the String `str`,
-/// naming `what` in the `Makiri::Error`.
-pub fn verify_text(str: RString, what: &str) -> Result<(), Error> {
-    // SAFETY: the borrow ends with the check - before anything below can
-    // allocate.
-    let verdict = unsafe {
-        let (_, ptr, len) = borrow(str);
-        text_check(str, bytes_at(ptr, len))
-    };
-    let Some(problem) = verdict.problem() else {
-        return Ok(());
-    };
-    /* The borrow is not used past the check, so building the message may
-     * allocate. */
-    Err(text_error(what, problem))
-}
-
 /// The error for a checked view whose bytes could not be copied - see
-/// [`RubyStr::held`].
+/// [`RubyStr::acquire`].
 fn oom_reading() -> Error {
     makiri_error("out of memory reading a Ruby string")
 }
@@ -370,31 +382,23 @@ pub fn ruby_verified_text_opt(in_: Value, what: &str) -> Result<Option<RubyText>
 /// naming `what` in the error. The names-and-engine-input path.
 pub fn ruby_verified_text(in_: Value, what: &str) -> Result<RubyText, Error> {
     let s = string_of(in_)?;
-    verify_text(s, what)?;
-    // SAFETY: `s` is a live String that has just passed the text contract,
-    // with no Ruby run since; the view anchors it.
-    unsafe {
-        let (value, ptr, len) = borrow(s);
-        RubyText::held(value, ptr, len).ok_or_else(oom_reading)
-    }
+    RubyText::acquire(s, |s, b| text_check(s, b).problem()).map_err(|r| match r {
+        Refusal::Check(problem) => text_error(what, problem),
+        Refusal::Oom => oom_reading(),
+    })
 }
 
 /// Coerce to a String and enforce the DATA-family contract: invalid UTF-8 is
 /// fatal, an interior NUL is not, so DOM data can hold U+0000 like browsers.
 ///
-/// `verify_text` is not reused because it rejects NUL. The check is
-/// allocation-free, so the borrow taken before it is not held across a GC point.
+/// The same acquisition as [`ruby_verified_text`], with the data check - which
+/// lets NUL through - in place of the text one.
 pub fn ruby_verified_data(in_: Value, what: &str) -> Result<RubyData, Error> {
     let s = string_of(in_)?;
-    // SAFETY: the check reads the bytes without allocating, and the view
-    // anchors the String.
-    unsafe {
-        let (value, ptr, len) = borrow(s);
-        if let Some(problem) = text_check(s, bytes_at(ptr, len)).data_problem() {
-            return Err(text_error(what, problem));
-        }
-        RubyData::held(value, ptr, len).ok_or_else(oom_reading)
-    }
+    RubyData::acquire(s, |s, b| text_check(s, b).data_problem()).map_err(|r| match r {
+        Refusal::Check(problem) => text_error(what, problem),
+        Refusal::Oom => oom_reading(),
+    })
 }
 
 /// A borrowed raw byte view. Deliberately enforces nothing: HTML parsing
@@ -621,19 +625,16 @@ pub fn ruby_try_verified_text_pair(
 }
 
 /// The non-raising form: the checked view, or a static reason on rejection.
-/// Allocation-free, like `verify_text`, so the borrow it hands back has not
-/// crossed a Ruby allocation. Nothing is coerced: `sv` is a String by type.
+/// Nothing is coerced: `sv` is a String by type.
 pub fn ruby_try_verified_text(sv: RString, max_bytes: usize) -> Result<RubyText, &'static str> {
-    // SAFETY: the check allocates nothing, and the view anchors the String it
-    // borrows from.
-    unsafe {
-        let (value, ptr, len) = borrow(sv);
-        if len > max_bytes {
-            return Err("string exceeds the maximum length");
+    RubyText::acquire(sv, |s, b| {
+        if b.len() > max_bytes {
+            return Some("string exceeds the maximum length");
         }
-        match text_check(sv, bytes_at(ptr, len)).reason() {
-            Some(reason) => Err(reason),
-            None => RubyText::held(value, ptr, len).ok_or("could not be copied (out of memory)"),
-        }
-    }
+        text_check(s, b).reason()
+    })
+    .map_err(|r| match r {
+        Refusal::Check(reason) => reason,
+        Refusal::Oom => "could not be copied (out of memory)",
+    })
 }
