@@ -179,7 +179,7 @@ impl Buf {
              * `need_term <= limit + 1` and the clamp never cuts below it. */
             let new_cap =
                 crate::falloc::grow_capacity(self.cap, need_term, 1).ok_or(BufError::Oom)?;
-            self.realloc_within_ceiling(new_cap)?;
+            self.realloc_within_ceiling(need_term, new_cap)?;
         }
 
         // SAFETY: `data` holds `cap >= need + 1` bytes after the growth above,
@@ -205,7 +205,7 @@ impl Buf {
         if need_term <= self.cap {
             return Ok(()); /* already have room */
         }
-        self.realloc_within_ceiling(need_term)?;
+        self.realloc_within_ceiling(need_term, need_term)?;
         // SAFETY: `cap > len` (the allocation holds the old content and its
         // terminator), so byte `len` is inside it.
         unsafe { *self.data.add(self.len) = 0 }; /* keep NUL-terminated */
@@ -261,10 +261,14 @@ impl Buf {
         soft.min(BUF_HARD_MAX)
     }
 
-    /// Reallocate to `want` bytes, or to the ceiling (content limit plus the
-    /// NUL) when `want` is past it. `Err` leaves the buffer as it was.
+    /// Reallocate so the capacity is `want` bytes, or the ceiling (content
+    /// limit plus the NUL) when `want` is past it - but never below `min`.
+    /// [`BufError::Limit`] when even `min` is past the ceiling, `Oom` when the
+    /// allocation fails; either `Err` leaves the buffer as it was.
     ///
-    /// The one place capacity changes, so the one place that holds
+    /// `min <= want`, and `min` is what the caller is about to write, so a
+    /// clamp can never hand back less room than the write needs. The one place
+    /// capacity changes, so the one place that holds
     /// `cap <= content_limit() + 1`: [`append`](Self::append)'s fast path skips
     /// the ceiling check on the strength of it, and the Kani proof asserts it.
     /// A new growth path that goes through here cannot break it. (A limit + 1
@@ -276,9 +280,15 @@ impl Buf {
     /// than `falloc`, and consults `falloc::allocation_should_fail`, so
     /// `rake oom` reaches it while production builds compile that hook to
     /// `false`.
-    fn realloc_within_ceiling(&mut self, want: usize) -> Result<(), BufError> {
+    fn realloc_within_ceiling(&mut self, min: usize, want: usize) -> Result<(), BufError> {
+        debug_assert!(min <= want, "a clamped capacity must still fit the write");
         let cap = match self.content_limit().checked_add(1) {
-            Some(ceiling) => want.min(ceiling),
+            Some(ceiling) => {
+                if min > ceiling {
+                    return Err(BufError::Limit);
+                }
+                want.min(ceiling)
+            }
             None => want,
         };
         if crate::falloc::allocation_should_fail() {
