@@ -16,11 +16,11 @@ use crate::bridge::string::ruby_verified_text;
 use crate::bridge::wrapper::keepalive_document;
 use crate::bridge::xpath::{evaluate_query, xpath_error, Answer, Cx};
 use crate::css::{CssNs, Form, DEFAULT_NS_PREFIX};
+use crate::engine_error::ErrorKind;
 use crate::glue::query::{query_context, run_query, QueryArgs};
 use crate::init::MOD_XML_NODE_METHODS;
 use crate::xpath::ast::Ast;
 use crate::xpath::ctx::XPathValue;
-use crate::xpath::msg::ErrorKind;
 
 /// The query arguments for a selector and its namespace Hash.
 fn css_args(selector: Value, ns: Value) -> QueryArgs {
@@ -56,7 +56,7 @@ fn compile(ruby: &Ruby, ctx: &Cx, q: &QueryArgs, form: Form) -> Result<Box<Ast>,
 /// A failed compile as its exception: `Makiri::CSS::SyntaxError` for a selector
 /// that does not parse or lower - with the lowering's reason, when it gave one -
 /// and the XPath mapping otherwise.
-fn compile_error(selector: Value, error: &crate::xpath::msg::Error) -> Error {
+fn compile_error(selector: Value, error: &crate::engine_error::Error) -> Error {
     if error.status != ErrorKind::Syntax {
         return xpath_error(error);
     }

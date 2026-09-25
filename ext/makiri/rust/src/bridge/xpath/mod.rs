@@ -22,6 +22,7 @@ use crate::bridge::string::{ruby_str_from_utf8, ruby_verified_text};
 use crate::bridge::wrapper::{doc_content, html_doc_unwrap, with_html_parsed_known, Content};
 use crate::bridge::wrapper::{wrap_doc_node, DocKind, NodeWord};
 use crate::bridge::xml::xml_node_unwrap;
+use crate::engine_error::{Error as XPathError, ErrorKind};
 use crate::init::EXC_ERROR;
 pub use crate::init::{CLASS_XPATH_CONTEXT, EXC_XPATH_LIMIT_EXCEEDED, EXC_XPATH_SYNTAX_ERROR};
 use crate::lexbor::adapter::post_parse::HtmlParsed;
@@ -31,7 +32,6 @@ use crate::xpath::ast::Ast;
 use crate::xpath::ctx::{Resolver, Session, XPathValue};
 use crate::xpath::dom::Dom;
 use crate::xpath::limits::Budget;
-use crate::xpath::msg::{Error as XPathError, ErrorKind};
 use crate::xpath::value::ValRef;
 use core::ptr::NonNull;
 

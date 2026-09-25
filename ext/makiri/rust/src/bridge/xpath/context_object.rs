@@ -17,11 +17,11 @@ use magnus::{DataTypeFunctions, Error, Ruby, TypedData, Value};
 use crate::bridge::string::ruby_try_verified_text;
 use crate::bridge::string::{ruby_verified_text, RubyText};
 use crate::bridge::wrapper::{keepalive_document, node_raw};
+use crate::engine_error::ErrorKind;
 use crate::falloc::{try_to_boxed_slice, MapInsert, Reserve};
 use crate::xpath::ast::Ast;
 use crate::xpath::ctx::ContextError;
 use crate::xpath::limits::Budget;
-use crate::xpath::msg::ErrorKind;
 
 use super::*;
 
@@ -268,7 +268,7 @@ fn cached_ast(
     cache: &mut AstCache,
     limits: crate::xpath::limits::Limits,
     expr: RubyText,
-) -> Result<(*const Ast, Option<Box<Ast>>), crate::xpath::msg::Error> {
+) -> Result<(*const Ast, Option<Box<Ast>>), crate::engine_error::Error> {
     // SAFETY: `expr` holds its String rooted for this lookup.
     let key = expr.as_bytes();
     if let Some(ast) = cache.0.get(key) {

@@ -31,10 +31,10 @@ use crate::lexbor::css_parser;
 use crate::xpath::ast::{Ast, Op};
 use core::cell::RefCell;
 
+use crate::engine_error::{ErrSink, ErrorKind, Reported};
 use crate::falloc::try_box;
 use crate::text::VerifiedText;
 use crate::xpath::limits::Budget;
-use crate::xpath::msg::{ErrSink, ErrorKind, Reported};
 
 /// The namespace context the glue hands in.
 ///
@@ -65,8 +65,8 @@ pub(crate) struct Build<'a> {
 }
 
 impl Build<'_> {
-    pub(crate) fn fail(&self, status: crate::xpath::msg::ErrorKind, msg: &str) -> Reported {
-        crate::xpath::msg::err_set(self.err.clone(), status, msg)
+    pub(crate) fn fail(&self, status: crate::engine_error::ErrorKind, msg: &str) -> Reported {
+        crate::engine_error::err_set(self.err.clone(), status, msg)
     }
 
     pub(crate) fn oom(&self) -> Reported {

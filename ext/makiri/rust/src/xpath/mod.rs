@@ -2,7 +2,10 @@
 //!
 //! Shared:
 //!   abi.rs        the engine's prelude: the shared names, re-exported
-//!   msg.rs        error messages, assembled without allocating
+//!
+//! The error vocabulary (`Error`, `ErrorKind`, the message buffer and sink)
+//! lives at the crate root, in `engine_error`, because the CSS lowering that
+//! feeds the engine writes the same errors.
 //!
 //! The front end:
 //!   number.rs     the Number production, read and written
@@ -36,7 +39,6 @@
 #![forbid(unsafe_code)]
 
 pub mod abi;
-pub mod msg;
 
 pub mod ast;
 pub mod lex;

@@ -16,11 +16,11 @@ use super::axis::{
 };
 use super::dom::*;
 use super::funcs;
-use super::msg::Bytes;
 use super::nodetest::CompiledTest;
 use super::order::nodeset_unique_sorted;
 use super::step_index::{try_descendant_index, try_descendant_index_nth};
 use super::value::*;
+use crate::engine_error::Bytes;
 use crate::err_setf;
 use crate::falloc::{try_vec_with_capacity, Reserve};
 use core::ops::ControlFlow;

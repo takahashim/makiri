@@ -165,7 +165,7 @@ impl Names {
                 err,
                 ErrorKind::Runtime,
                 "unknown namespace prefix '{}'",
-                super::msg::Bytes(prefix)
+                crate::engine_error::Bytes(prefix)
             )
         })
     }

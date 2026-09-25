@@ -12,11 +12,11 @@ use crate::bridge::node_set::NodeSet as RubyNodeSet;
 use crate::bridge::ruby::VALUE;
 use crate::bridge::string::ruby_try_verified_text;
 use crate::bridge::wrapper::{keepalive_document, node_raw};
+use crate::engine_error::{ErrorKind, Reported};
 use crate::init::{CLASS_NODE, CLASS_NODE_SET};
 use crate::token::Kind;
 use crate::xpath::ctx::{Resolver, ResolverCall};
 use crate::xpath::limits::Budget;
-use crate::xpath::msg::{ErrorKind, Reported};
 use crate::xpath::value::{NodeSet, Text, Val};
 
 use super::*;
@@ -73,7 +73,7 @@ enum HandlerFailure {
 
 impl HandlerFailure {
     /// The failure as the engine error that ends the evaluation.
-    fn report(self, err: crate::xpath::msg::ErrSink) -> Reported {
+    fn report(self, err: crate::engine_error::ErrSink) -> Reported {
         match self {
             HandlerFailure::Msg(m) => crate::err_setf!(err, ErrorKind::Runtime, "{m}"),
             HandlerFailure::InvalidString(reason) => crate::err_setf!(
@@ -223,7 +223,7 @@ fn handler_call_body(c: &mut HandlerCall<'_>) {
 
 /// A Ruby exception out of the handler - its `respond_to?` or the call itself -
 /// as the engine error that fails the evaluation.
-fn handler_raised(err: crate::xpath::msg::ErrSink, e: &Error) -> Reported {
+fn handler_raised(err: crate::engine_error::ErrSink, e: &Error) -> Reported {
     crate::err_setf!(
         err,
         ErrorKind::Runtime,

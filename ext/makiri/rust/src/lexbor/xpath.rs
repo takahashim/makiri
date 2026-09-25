@@ -10,13 +10,13 @@
 
 #![allow(unsafe_code)]
 
+use crate::engine_error::{Error, ErrorKind};
 use crate::lexbor::adapter::html::{HtmlAttr, HtmlDoc, HtmlNode, NsId, RawNode};
 use crate::lexbor::adapter::post_parse::HtmlParsed;
 use crate::token::{Kind, Token};
 use crate::xpath::abi::*;
 use crate::xpath::ctx::Context;
 use crate::xpath::dom::*;
-use crate::xpath::msg::{Error, ErrorKind};
 use core::ptr::NonNull;
 
 /// The HTML backend as an evaluate holds it: the document, and the parsed handle

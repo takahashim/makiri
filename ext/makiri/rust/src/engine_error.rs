@@ -201,7 +201,7 @@ pub(crate) fn err_set(err: ErrSink, status: ErrorKind, msg: &str) -> Reported {
 #[macro_export]
 macro_rules! err_setf {
     ($err:expr, $status:expr, $($arg:tt)*) => {
-        $crate::xpath::msg::err_set_fmt(
+        $crate::engine_error::err_set_fmt(
             ::core::clone::Clone::clone(&$err),
             $status,
             format_args!($($arg)*),

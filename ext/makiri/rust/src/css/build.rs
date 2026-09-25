@@ -10,11 +10,11 @@
 #![forbid(unsafe_code)]
 
 use super::Build;
+use crate::engine_error::{ErrorKind, Reported};
 use crate::falloc::{try_box, try_to_boxed_slice, VecPush};
 use crate::text::VerifiedText;
 use crate::xpath::ast::{Axis, Expr, ExprKind, NodeTest, Op, Path, Step};
 use crate::xpath::limits::check_ast_depth;
-use crate::xpath::msg::{ErrorKind, Reported};
 
 /// A node under construction, or the proof its build failed with `*err` set.
 pub(crate) type Built = Result<Expr, Reported>;

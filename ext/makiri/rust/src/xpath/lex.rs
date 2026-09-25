@@ -64,7 +64,7 @@ impl Token {
     }
 }
 
-/// What went wrong, for the parser to turn into an [`Error`](super::msg::Error).
+/// What went wrong, for the parser to turn into an [`Error`](crate::engine_error::Error).
 pub enum LexErr {
     ExpectedNumber,
     UnterminatedString,

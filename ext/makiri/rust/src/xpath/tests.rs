@@ -8,7 +8,7 @@
 
 #![forbid(unsafe_code)]
 
-use crate::xpath::msg::ErrorKind;
+use crate::engine_error::ErrorKind;
 
 use crate::xpath::limits::Budget;
 
@@ -246,7 +246,7 @@ impl Resolver for Nesting<'_> {
         &self,
         _budget: &mut Budget,
         call: &ResolverCall<'_>,
-    ) -> Result<Option<crate::xpath::value::Val>, crate::xpath::msg::Reported> {
+    ) -> Result<Option<crate::xpath::value::Val>, crate::engine_error::Reported> {
         if call.local != b"f" {
             return Ok(None);
         }

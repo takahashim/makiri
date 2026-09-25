@@ -19,7 +19,7 @@ use super::abi::*;
 use super::ast_ops;
 use super::lex::{LexErr, Lexer, Tok, Token};
 use super::limits::check_ast_depth;
-use super::msg::Bytes;
+use crate::engine_error::Bytes;
 use crate::err_setf;
 use crate::falloc::{try_box, try_to_boxed_slice, VecPush};
 

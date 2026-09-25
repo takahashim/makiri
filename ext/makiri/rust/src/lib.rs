@@ -95,6 +95,11 @@ pub mod text;
 /// Bounds shared across layers (`NODE_SET_MAX`). Unconditional and Ruby-free.
 pub mod limits;
 
+/// The engine error vocabulary - the kind, the message buffer and the sink -
+/// shared by XPath and the CSS lowering that feeds it. Unconditional and
+/// Ruby-free.
+pub mod engine_error;
+
 /// The one pointer hash, and the pointer-keyed tables the per-document indexes
 /// are built on: `PtrTable` (sized once) and `PtrMap` (grows). Below every layer, so none reaches into
 /// another's internals for them.

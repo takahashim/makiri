@@ -22,12 +22,12 @@
 
 use super::build::{self, Built};
 use super::{Build, MAX_COMPOUNDS};
+use crate::engine_error::{ErrorKind, Reported};
 use crate::lexbor::css_parser::{
     AttrMatch, Attribute, Combinator, FunctionArg, ListPseudo, Lists, Nth, PseudoClass, Selector,
     Simple,
 };
 use crate::xpath::ast::{Axis, Expr, NodeTest, Op, Step};
-use crate::xpath::msg::{ErrorKind, Reported};
 
 /// The internal of-type position functions, whose names carry a leading \x01 so
 /// no user expression can name them.

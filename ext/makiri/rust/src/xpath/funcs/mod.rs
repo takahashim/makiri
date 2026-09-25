@@ -325,7 +325,7 @@ impl<'e, 'd, D: Dom<'d>> Found<'e, 'd, D> {
             Library::Core => "",
             Library::Nokogiri => "nokogiri-builtin:",
         };
-        let name = super::msg::Bytes(self.name);
+        let name = crate::engine_error::Bytes(self.name);
         if max == usize::MAX {
             err_setf!(
                 err,
