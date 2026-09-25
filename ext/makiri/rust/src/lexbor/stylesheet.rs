@@ -43,7 +43,7 @@ use crate::lexbor::abi::consts as k;
 
 use crate::lexbor::abi::{lxb_css_parser_create, lxb_css_parser_destroy, lxb_css_parser_init};
 use crate::lexbor::chunks::{chunk_cb, Chunks};
-use crate::lexbor::css_engine::Owned;
+use crate::lexbor::css_engine::{lexbor_str, Owned};
 
 /// Bound on at-rule nesting: fail closed rather than recurse without limit on a
 /// pathologically nested stylesheet.
@@ -282,16 +282,10 @@ unsafe fn at_name(at: *mut lxb::lxb_css_rule_at_t) -> Result<Vec<u8>, Fail> {
         k::AT_RULE_MEDIA => lit(b"media"),
         k::AT_RULE_FONT_FACE => lit(b"font-face"),
         k::AT_RULE_NAMESPACE => lit(b"namespace"),
-        k::AT_RULE_CUSTOM => {
-            let cu = (*at).u.custom;
-            if !cu.is_null() && !(*cu).name.data.is_null() {
-                let bytes =
-                    core::slice::from_raw_parts((*cu).name.data as *const u8, (*cu).name.length);
-                lit(bytes)
-            } else {
-                Ok(Vec::new())
-            }
-        }
+        k::AT_RULE_CUSTOM => match (*at).u.custom.as_ref().and_then(|cu| lexbor_str(&cu.name)) {
+            Some(name) => lit(name),
+            None => Ok(Vec::new()),
+        },
         // __UNDEF (malformed) and anything else: unnamed.
         _ => Ok(Vec::new()),
     }
@@ -300,40 +294,13 @@ unsafe fn at_name(at: *mut lxb::lxb_css_rule_at_t) -> Result<Vec<u8>, Fail> {
 /// The nested block of any at-rule that has one, or null for the statement
 /// at-rules (@import, @namespace, @charset).
 unsafe fn at_block(at: *mut lxb::lxb_css_rule_at_t) -> *mut lxb::lxb_css_rule_list_t {
+    let null = core::ptr::null_mut;
     match (*at).type_ {
-        k::AT_RULE_MEDIA => {
-            let m = (*at).u.media;
-            if m.is_null() {
-                core::ptr::null_mut()
-            } else {
-                (*m).block
-            }
-        }
-        k::AT_RULE_FONT_FACE => {
-            let f = (*at).u.font_face;
-            if f.is_null() {
-                core::ptr::null_mut()
-            } else {
-                (*f).block
-            }
-        }
-        k::AT_RULE_CUSTOM => {
-            let cu = (*at).u.custom;
-            if cu.is_null() {
-                core::ptr::null_mut()
-            } else {
-                (*cu).block
-            }
-        }
-        k::AT_RULE_UNDEF => {
-            let u = (*at).u.undef;
-            if u.is_null() {
-                core::ptr::null_mut()
-            } else {
-                (*u).block
-            }
-        }
-        _ => core::ptr::null_mut(),
+        k::AT_RULE_MEDIA => (*at).u.media.as_ref().map_or(null(), |m| m.block),
+        k::AT_RULE_FONT_FACE => (*at).u.font_face.as_ref().map_or(null(), |f| f.block),
+        k::AT_RULE_CUSTOM => (*at).u.custom.as_ref().map_or(null(), |cu| cu.block),
+        k::AT_RULE_UNDEF => (*at).u.undef.as_ref().map_or(null(), |u| u.block),
+        _ => null(),
     }
 }
 
@@ -358,12 +325,9 @@ unsafe fn rules(
             }
             k::CSS_RULE_AT_RULE => {
                 let at = r as *mut lxb::lxb_css_rule_at_t;
-                let block = at_block(at);
-                let block_first = if block.is_null() {
-                    core::ptr::null_mut()
-                } else {
-                    (*block).first
-                };
+                let block_first = at_block(at)
+                    .as_ref()
+                    .map_or(core::ptr::null_mut(), |b| b.first);
                 let name = at_name(at)?;
                 let prelude = slice_trim(c.css, (*at).prelude_begin, (*at).prelude_end)?;
                 Some(Rule::At {
@@ -378,14 +342,9 @@ unsafe fn rules(
                 // prelude so the caller can re-validate with its own parser
                 // rather than lose the rule.
                 let bad = r as *mut lxb::lxb_css_rule_bad_style_t;
-                let text = if (*bad).selectors.data.is_null() {
-                    Vec::new()
-                } else {
-                    let b = core::slice::from_raw_parts(
-                        (*bad).selectors.data as *const u8,
-                        (*bad).selectors.length,
-                    );
-                    falloc::try_to_vec(b).ok_or(Fail::Oom)?
+                let text = match lexbor_str(&(*bad).selectors) {
+                    Some(b) => falloc::try_to_vec(b).ok_or(Fail::Oom)?,
+                    None => Vec::new(),
                 };
                 Some(Rule::BadStyle {
                     selector_text: as_written(c, text, (*bad).prelude_begin, (*bad).prelude_end)?,

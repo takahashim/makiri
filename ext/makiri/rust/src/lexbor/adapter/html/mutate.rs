@@ -264,9 +264,9 @@ impl<'doc> HtmlNodeMut<'doc> {
                 c.detach();
             }
             if let Some(text_node) = text_node {
-                // SAFETY: a live node the caller may change, and a detached node
-                // of its document just made.
-                unsafe { lxb::lxb_dom_node_insert_child(self.as_raw(), text_node.as_raw()) };
+                /* A detached node of the document `self` may change, just made:
+                 * as changeable as `self`. */
+                self.insert_child(HtmlNodeMut(text_node.node()));
             }
             return true;
         }

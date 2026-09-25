@@ -207,3 +207,19 @@ impl SelectorParser {
         }
     }
 }
+
+/// A `lexbor_str_t` as a slice, or `None` when its data pointer is NULL.
+///
+/// The NULL-vs-empty distinction is load-bearing: for a namespace, NULL means
+/// "no pipe was written" and empty means "an explicit no-namespace".
+///
+/// # Safety
+/// `s` must be a string Lexbor built in a parse's arena.
+pub(crate) unsafe fn lexbor_str(s: &crate::lexbor::abi::lexbor_str_t) -> Option<&[u8]> {
+    if s.data.is_null() {
+        None
+    } else {
+        // SAFETY: Lexbor keeps `length` bytes at `data`, in the same arena.
+        Some(unsafe { core::slice::from_raw_parts(s.data, s.length) })
+    }
+}

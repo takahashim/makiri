@@ -31,7 +31,7 @@
 
 use crate::gvl::{Gvl, GvlCell, GvlRef};
 use crate::lexbor::abi as lxb;
-use crate::lexbor::css_engine::{ParserParts, SelectorParser};
+use crate::lexbor::css_engine::{lexbor_str, ParserParts, SelectorParser};
 use crate::text::VerifiedText;
 use core::ffi::c_long;
 
@@ -191,22 +191,6 @@ mod raw {
 unsafe fn arena<'p, T>(p: *const T) -> Option<&'p T> {
     // SAFETY: forwarded.
     unsafe { p.as_ref() }
-}
-
-/// A `lexbor_str_t` as a slice, or `None` when its data pointer is NULL.
-///
-/// The NULL-vs-empty distinction is load-bearing: for a namespace, NULL means
-/// "no pipe was written" and empty means "an explicit no-namespace".
-///
-/// # Safety
-/// `s` must be a string Lexbor built in a parse's arena.
-unsafe fn str_opt(s: &lxb::lexbor_str_t) -> Option<&[u8]> {
-    if s.data.is_null() {
-        None
-    } else {
-        // SAFETY: Lexbor keeps `length` bytes at `data`, in the same arena.
-        Some(unsafe { core::slice::from_raw_parts(s.data, s.length) })
-    }
 }
 
 impl Parsed<'_> {
@@ -417,13 +401,13 @@ impl<'p> Selector<'p> {
     /// The name, empty when there is none.
     pub fn name(self) -> &'p [u8] {
         // SAFETY: a selector's strings live in its arena.
-        unsafe { str_opt(&self.0.name) }.unwrap_or(&[])
+        unsafe { lexbor_str(&self.0.name) }.unwrap_or(&[])
     }
 
     /// The namespace as written: None with no pipe, empty for `|name`.
     pub fn ns(self) -> Option<&'p [u8]> {
         // SAFETY: as in `name`.
-        unsafe { str_opt(&self.0.ns) }
+        unsafe { lexbor_str(&self.0.ns) }
     }
 
     /// The next simple selector of the chain.
@@ -448,7 +432,7 @@ impl<'p> Selector<'p> {
             },
             case_insensitive: at.modifier != raw::MOD_UNSET && at.modifier != raw::MOD_S,
             // SAFETY: as in `name`.
-            value: unsafe { str_opt(&at.value) },
+            value: unsafe { lexbor_str(&at.value) },
         }
     }
 
@@ -508,7 +492,7 @@ impl<'p> Selector<'p> {
                 let c = unsafe { arena(data as *const lxb::lxb_css_selector_contains_t) };
                 FunctionArg::Contains(c.map(|c| Contains {
                     // SAFETY: as in `name`.
-                    needle: unsafe { str_opt(&c.str_) }.unwrap_or(&[]),
+                    needle: unsafe { lexbor_str(&c.str_) }.unwrap_or(&[]),
                     insensitive: c.insensitive,
                 }))
             }
