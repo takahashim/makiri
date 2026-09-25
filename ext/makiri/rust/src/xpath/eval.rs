@@ -821,7 +821,7 @@ fn eval_negate<'e, 'd, D: Dom<'d>>(
 }
 
 /// A string result copied from `bytes`.
-fn string_value<N>(bytes: &[u8], err: ErrSink, what: &core::ffi::CStr) -> EvalResult<Val<N>> {
+fn string_value<N>(bytes: &[u8], err: ErrSink, what: &str) -> EvalResult<Val<N>> {
     Ok(Val::string(owned_copy(bytes, err, what)?))
 }
 
@@ -859,14 +859,14 @@ fn eval_node_inner<'e, 'd, D: Dom<'d>>(
     let names = ev.names;
     let value = match &e.kind {
         ExprKind::LiteralStr(t) => {
-            string_value(t, ev.budget.sink(), c"out of memory copying literal")
+            string_value(t, ev.budget.sink(), "out of memory copying literal")
         }
         ExprKind::LiteralNum(d) => Ok(Val::number(*d)),
         ExprKind::VarRef { prefix, name } => match names.variable_text(prefix.as_deref(), name) {
             Some(bytes) => string_value(
                 bytes,
                 ev.budget.sink(),
-                c"out of memory copying variable value",
+                "out of memory copying variable value",
             ),
             None => Err(err_setf!(
                 ev.budget.sink(),

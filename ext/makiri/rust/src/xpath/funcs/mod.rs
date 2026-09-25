@@ -436,7 +436,7 @@ fn self_text<'e, 'd, D: Dom<'d>>(
         None => owned_copy(
             b"",
             ev.budget.sink(),
-            c"out of memory building node string-value",
+            "out of memory building node string-value",
         ),
     }
 }

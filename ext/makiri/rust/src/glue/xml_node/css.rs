@@ -60,8 +60,7 @@ fn compile_error(selector: Value, error: &crate::xpath::msg::Error) -> Error {
     if error.status != Status::Syntax {
         return xpath_error(error);
     }
-    let reason = error.message().map(|m| m.to_string_lossy().into_owned());
-    crate::glue::css::syntax_error(selector, reason.as_deref())
+    crate::glue::css::syntax_error(selector, error.message())
 }
 
 fn css_run(ruby: &Ruby, rb_self: Value, q: QueryArgs, answer: Answer) -> Result<Value, Error> {

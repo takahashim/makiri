@@ -15,7 +15,6 @@ use crate::text::VerifiedText;
 use crate::xpath::ast::{Axis, Expr, ExprKind, Op, Path, Step, TestKind};
 use crate::xpath::limits::check_ast_depth;
 use crate::xpath::msg::{Reported, Status};
-use core::ffi::CStr;
 
 /// A node under construction, or the proof its build failed with `*err` set.
 pub(crate) type Built = Result<Expr, Reported>;
@@ -35,9 +34,9 @@ pub(crate) fn expr(b: &Build, kind: ExprKind) -> Built {
 /// An owned copy of `s` for an AST name, or `Err` with `*err` set.
 pub(crate) fn copy_text(b: &Build, s: &[u8]) -> Result<Box<[u8]>, Reported> {
     if VerifiedText::from_bytes(s).is_none() {
-        return Err(b.fail(Status::Internal, c"invalid internal CSS text"));
+        return Err(b.fail(Status::Internal, "invalid internal CSS text"));
     }
-    try_to_boxed_slice(s).ok_or_else(|| b.fail(Status::Oom, c"css name"))
+    try_to_boxed_slice(s).ok_or_else(|| b.fail(Status::Oom, "css name"))
 }
 
 /// `e` on the heap, for an operand slot.
@@ -105,7 +104,7 @@ pub(crate) fn call2(b: &Build, name: &[u8], a0: Built, a1: Built) -> Built {
 /// `items` joined left to right by `op` - the comma list's union, the
 /// selector-list pseudo-classes' OR. An empty list is refused with `empty`, so
 /// every failure is reported even where Lexbor already rejects one.
-pub(crate) fn fold(b: &Build, op: Op, items: impl Iterator<Item = Built>, empty: &CStr) -> Built {
+pub(crate) fn fold(b: &Build, op: Op, items: impl Iterator<Item = Built>, empty: &str) -> Built {
     let mut acc: Option<Expr> = None;
     for item in items {
         let item = item?;

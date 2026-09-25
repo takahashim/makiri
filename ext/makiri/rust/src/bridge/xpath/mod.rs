@@ -57,12 +57,10 @@ pub fn xpath_error(err: &XPathError) -> Error {
         | Status::Oom => EXC_ERROR.exception(),
     };
     let ruby = magnus::Ruby::get_with(class);
-    /* The message's bytes as they are, tagged UTF-8 - not a lossy copy. */
-    let bytes = err
-        .message()
-        .unwrap_or(c"XPath evaluation failed")
-        .to_bytes();
-    let msg = ruby.enc_str_new(bytes, ruby.utf8_encoding());
+    let msg = ruby.enc_str_new(
+        err.message().unwrap_or("XPath evaluation failed"),
+        ruby.utf8_encoding(),
+    );
     match class.new_instance((msg,)) {
         Ok(e) => Error::from(e),
         Err(e) => e,

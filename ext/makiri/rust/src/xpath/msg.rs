@@ -6,7 +6,6 @@
 #![forbid(unsafe_code)]
 
 use core::cell::RefCell;
-use core::ffi::{c_char, CStr};
 use std::rc::Rc;
 
 /// Bytes as text for a message, with anything non-ASCII-printable escaped, so a
@@ -26,71 +25,55 @@ impl core::fmt::Display for Bytes<'_> {
     }
 }
 
-/// A NUL-terminated message assembled on the stack. Error paths must not
-/// allocate - one of them reports OOM - so this is where messages are built,
-/// and it truncates rather than growing.
+/// The longest message a [`MsgBuf`] holds; a longer one is cut. (199 rather
+/// than a round number: the buffer used to keep a byte for a C terminator, and
+/// the cut stays where it was.)
+const MSG_MAX: usize = 199;
+
+/// A message assembled on the stack. Error paths must not allocate - one of
+/// them reports OOM - so this is where messages are built, and it truncates
+/// rather than growing.
+///
+/// Written only through [`core::fmt::Write`], which cuts on a char boundary, so
+/// what it holds is always UTF-8.
 pub struct MsgBuf {
-    buf: [u8; 200],
+    buf: [u8; MSG_MAX],
     len: usize,
 }
 
 impl Default for MsgBuf {
     fn default() -> Self {
         MsgBuf {
-            buf: [0; 200],
+            buf: [0; MSG_MAX],
             len: 0,
         }
     }
 }
 
 impl MsgBuf {
-    pub fn as_ptr(&self) -> *const c_char {
-        self.buf.as_ptr() as *const c_char
-    }
-
     fn clear(&mut self) {
         self.len = 0;
-        self.buf[0] = 0;
     }
 
     /// The message, or None when nothing was written.
-    fn as_cstr(&self) -> Option<&CStr> {
+    fn as_str(&self) -> Option<&str> {
         if self.len == 0 {
             return None;
         }
-        CStr::from_bytes_until_nul(&self.buf).ok()
-    }
-
-    /// Append `b`, cut on a char boundary when it is UTF-8 and at the byte
-    /// otherwise.
-    #[cfg(feature = "lexbor")]
-    fn push_bytes(&mut self, b: &[u8]) {
-        use core::fmt::Write;
-        match core::str::from_utf8(b) {
-            Ok(s) => {
-                let _ = self.write_str(s);
-            }
-            Err(_) => {
-                let n = b.len().min(self.buf.len() - 1 - self.len);
-                self.buf[self.len..self.len + n].copy_from_slice(&b[..n]);
-                self.len += n;
-                self.buf[self.len] = 0;
-            }
-        }
+        core::str::from_utf8(&self.buf[..self.len]).ok()
     }
 }
 
 impl core::fmt::Write for MsgBuf {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        /* Leave one byte for the terminator, and cut on a char boundary. */
-        let room = self.buf.len() - 1 - self.len;
+        /* Cut on a char boundary, so the buffer stays UTF-8. */
+        let room = self.buf.len() - self.len;
         let mut n = s.len().min(room);
         while n > 0 && !s.is_char_boundary(n) {
             n -= 1;
         }
         self.buf[self.len..self.len + n].copy_from_slice(&s.as_bytes()[..n]);
         self.len += n;
-        self.buf[self.len] = 0;
         Ok(())
     }
 }
@@ -130,8 +113,8 @@ impl Error {
     }
 
     /// The message, or None when none was written.
-    pub fn message(&self) -> Option<&CStr> {
-        self.msg.as_cstr()
+    pub fn message(&self) -> Option<&str> {
+        self.msg.as_str()
     }
 }
 
@@ -203,12 +186,13 @@ pub(crate) fn err_set_fmt(
 
 /// Set `err` to a fixed message: [`err_set_fmt`] without the formatting.
 #[cfg(feature = "lexbor")]
-pub(crate) fn err_set(err: ErrSink, status: Status, msg: &CStr) -> Reported {
+pub(crate) fn err_set(err: ErrSink, status: Status, msg: &str) -> Reported {
+    use core::fmt::Write;
     if let Some(slot) = err.0 {
         let mut e = slot.borrow_mut();
         e.status = status;
         e.msg.clear();
-        e.msg.push_bytes(msg.to_bytes());
+        let _ = e.msg.write_str(msg);
     }
     Reported(())
 }

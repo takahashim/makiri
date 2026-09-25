@@ -266,8 +266,8 @@ pub struct Focus<'d, D: Dom<'d>> {
 }
 
 /// Copy `s` into a fresh text, or `Err` with `err` set to `what` on OOM.
-pub fn owned_copy(s: &[u8], err: ErrSink, what: &core::ffi::CStr) -> Result<Text, Reported> {
-    Text::try_copy(s).ok_or_else(|| err_setf!(err, Status::Oom, "{}", what.to_string_lossy()))
+pub fn owned_copy(s: &[u8], err: ErrSink, what: &str) -> Result<Text, Reported> {
+    Text::try_copy(s).ok_or_else(|| err_setf!(err, Status::Oom, "{}", what))
 }
 
 /* ---------- value clone ---------- */
@@ -279,7 +279,7 @@ pub fn val_clone<N: Copy>(src: &Val<N>, err: ErrSink) -> Result<Val<N>, Reported
         Val::String(s) => Val::String(owned_copy(
             s.as_slice(),
             err,
-            c"out of memory cloning string value",
+            "out of memory cloning string value",
         )?),
         Val::Number(d) => Val::Number(*d),
         Val::Boolean(b) => Val::Boolean(*b),
@@ -459,14 +459,14 @@ pub fn val_to_owned_text_or_fail<'d, D: Dom<'d>>(
         ValRef::String(s) => {
             let text = s.as_slice();
             budget.check_string_bytes(text.len())?;
-            owned_copy(text, err, c"out of memory copying string value")
+            owned_copy(text, err, "out of memory copying string value")
         }
         ValRef::Boolean(b) => {
             let s: &[u8] = if b { b"true" } else { b"false" };
-            owned_copy(s, err, c"out of memory converting boolean to string")
+            owned_copy(s, err, "out of memory converting boolean to string")
         }
         ValRef::Number(d) => {
-            let what = c"out of memory converting number to string";
+            let what = "out of memory converting number to string";
             if d.is_nan() {
                 return owned_copy(b"NaN", err, what);
             }
@@ -492,7 +492,7 @@ pub fn val_to_owned_text_or_fail<'d, D: Dom<'d>>(
              * document order. */
             match ns.as_slice().first() {
                 Some(&first) => node_to_owned_text::<D>(doc, first, budget),
-                None => owned_copy(b"", err, c"out of memory"),
+                None => owned_copy(b"", err, "out of memory"),
             }
         }
     }

@@ -65,16 +65,12 @@ pub(crate) struct Build<'a> {
 }
 
 impl Build<'_> {
-    pub(crate) fn fail(
-        &self,
-        status: crate::xpath::msg::Status,
-        msg: &core::ffi::CStr,
-    ) -> Reported {
+    pub(crate) fn fail(&self, status: crate::xpath::msg::Status, msg: &str) -> Reported {
         crate::xpath::msg::err_set(self.err.clone(), status, msg)
     }
 
     pub(crate) fn oom(&self) -> Reported {
-        self.fail(Status::Oom, c"out of memory (css)")
+        self.fail(Status::Oom, "out of memory (css)")
     }
 
     /// The default-namespace prefix in scope, if any.
@@ -119,13 +115,13 @@ pub fn compile_owned(
     let parsed = match css_parser::parse(gvl, selector) {
         Ok(p) => p,
         Err(css_parser::ParseError::NotReady) => {
-            return Err(b.fail(Status::Internal, c"failed to initialise CSS parser"));
+            return Err(b.fail(Status::Internal, "failed to initialise CSS parser"));
         }
         Err(css_parser::ParseError::Syntax) => {
-            return Err(b.fail(Status::Syntax, c"invalid CSS selector"));
+            return Err(b.fail(Status::Syntax, "invalid CSS selector"));
         }
         Err(css_parser::ParseError::Busy) => {
-            return Err(b.fail(Status::Internal, c"CSS parser is already in use"));
+            return Err(b.fail(Status::Internal, "CSS parser is already in use"));
         }
     };
 
@@ -140,7 +136,7 @@ pub fn compile_owned(
             parsed
                 .groups()
                 .map(|g| lower::complex(&b, g.first(), false)),
-            c"empty CSS selector",
+            "empty CSS selector",
         )?,
         /* Each comma-group as a self-test, OR-ed - and as a boolean even for
          * one group, whose self-test alone is a node-set. */
