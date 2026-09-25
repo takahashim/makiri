@@ -176,11 +176,6 @@ fn arena_mut(document: Value) -> Result<*mut XmlDoc, Error> {
     Ok(doc_of(document))
 }
 
-/// Wrap a node reached from a checked receiver, under its Document.
-pub fn xml_wrap_rel_value(this: XmlSelf, rel: NodeId) -> Value {
-    wrap_xml_node(rel, this.document)
-}
-
 /// A mutation's or translation's `Result` with its failure as the Ruby
 /// exception [`xml_mut_error`] maps the status to.
 pub fn xml_mut_result<T>(r: Result<T, MutError>) -> Result<T, Error> {

@@ -17,8 +17,7 @@ use crate::bridge::string::namespace_arg;
 
 use crate::bridge::xml::{
     begin_edit, import_copy, incoming_node, verified_text, verified_text_opt,
-    with_arena_for_new_node, wrap_xml_node as wrap, xml_mut_result, xml_wrap_rel_value, Editing,
-    XmlSelf,
+    with_arena_for_new_node, wrap_xml_node as wrap, xml_mut_result, Editing, XmlSelf,
 };
 use crate::init::CLASS_XML_DOCUMENT;
 use crate::xml::dom_name::split_loose_dom_name;
@@ -201,7 +200,7 @@ pub fn clone_node(this: XmlSelf, args: &[Value]) -> Result<Value, Error> {
         let copy = xml_mut_result(with_arena_for_new_node(this.document, |d| {
             mutate::clone_node(d, this.id, deep)
         })?)?;
-        Ok(xml_wrap_rel_value(this, copy))
+        Ok(wrap(copy, this.document))
     })
 }
 
