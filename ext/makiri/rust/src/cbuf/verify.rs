@@ -22,9 +22,12 @@
 //! maximum near the limit), every failure leaves the buffer bit-for-bit as it
 //! was, and `steal` hands back exactly what went in.
 //!
-//! Allocation failure is reachable here the same way `rake oom` reaches it: the
-//! implementation consults `falloc::should_fail`, so a Kani-nondeterministic
-//! injection counter drives every OOM branch.
+//! Allocation failure is NOT reached here. The buffer consults
+//! `falloc::allocation_should_fail`, which outside the `alloc-inject` build is
+//! a constant false, and Kani runs CBMC with `--no-malloc-may-fail`, so no
+//! allocation fails either way. The assertions on the OOM branches are
+//! therefore vacuous under Kani; those branches are `rake oom`'s. The failure
+//! these proofs do reach is the ceiling (`BufError::Limit`).
 //!
 //! Run with `rake kani`.
 
@@ -136,7 +139,8 @@ unsafe fn content_matches(b: &Buf, want: &[u8]) -> bool {
 ///
 /// The C harness's `main`, with the same shape and the same bounds: a small
 /// nondet ceiling so LIMIT is reachable, and enough steps for growth, the clamp
-/// and the failure paths to all occur.
+/// and the ceiling failure to all occur (OOM is not reachable; see the module
+/// doc).
 #[kani::proof]
 #[kani::unwind(40)]
 fn append_matches_a_shadow_model() {
