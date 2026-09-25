@@ -166,8 +166,7 @@ impl XPathCtx {
          * document; mint the token for whichever backend that document is. */
         let raw = node_raw(rb_node)?;
         // SAFETY: a live node of this context's document.
-        let token = unsafe { raw.token(self.ctx.token_kind()) }
-            .ok_or_else(|| makiri_error("the context has no document"))?;
+        let token = unsafe { raw.token(self.ctx.doc_kind()) };
         self.ctx
             .set_context_node(token)
             .map_err(|e| refused(e, BUSY, BUSY))

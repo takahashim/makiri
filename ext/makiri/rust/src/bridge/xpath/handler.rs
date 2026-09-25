@@ -11,10 +11,9 @@ use magnus::{Error, Ruby, Value};
 use crate::bridge::node_set::NodeSet as RubyNodeSet;
 use crate::bridge::ruby::VALUE;
 use crate::bridge::string::ruby_try_verified_text;
-use crate::bridge::wrapper::{keepalive_document, node_raw};
+use crate::bridge::wrapper::{keepalive_document, node_raw, DocKind};
 use crate::engine_error::{ErrorKind, Reported};
 use crate::init::{CLASS_NODE, CLASS_NODE_SET};
-use crate::token::Kind;
 use crate::xpath::ctx::{Resolver, ResolverCall};
 use crate::xpath::limits::Budget;
 use crate::xpath::value::{NodeSet, Text, Val};
@@ -42,7 +41,7 @@ pub(super) struct Bridge {
     /// Keepalive, and the document node-set arguments are wrapped under.
     pub(super) document: VALUE,
     /// Which backend the document is, for minting a handler's node token.
-    pub(super) kind: Kind,
+    pub(super) kind: DocKind,
     /// Every mutator on `document` refuses while this lives.
     pub(super) _reading: crate::bridge::wrapper::DocumentEvaluation,
 }
@@ -110,9 +109,7 @@ fn push_result_node(
     };
     /* Same-document is checked above, so this is a node of the context's kind. */
     // SAFETY: a live node of the context's own document.
-    let Some(token) = (unsafe { n.token(bridge.kind) }) else {
-        return Err(HandlerFailure::Msg("handler returned an unusable node"));
-    };
+    let token = unsafe { n.token(bridge.kind) };
     set.push(token, budget)
         .map_err(|_| HandlerFailure::Msg("out of memory building handler result"))
 }

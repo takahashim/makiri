@@ -91,19 +91,17 @@ impl NodeWord {
         RawNode::from_ptr(self.0 as *mut core::ffi::c_void)
     }
 
-    /// The engine token for this node of a document walked by backend `kind`.
-    /// `None` for [`Kind::Null`], which names no document - the one place a
-    /// Ruby-held node becomes a token, so no caller can let a null kind slip
-    /// through as XML.
+    /// The engine token for this node of a document of kind `kind`. Infallible:
+    /// a [`DocKind`] is HTML or XML, never the token table's null slot, so the
+    /// one place a Ruby-held node becomes a token cannot mint a null kind.
     ///
     /// # Safety
-    /// The word is a live node of a document of backend `kind`.
+    /// The word is a live node of a document of kind `kind`.
     #[inline]
-    pub unsafe fn token(self, kind: Kind) -> Option<Token> {
+    pub unsafe fn token(self, kind: DocKind) -> Token {
         match kind {
-            Kind::Html => Some(Token::html(self.0 as *mut core::ffi::c_void)),
-            Kind::Xml => Some(Token::xml(self.0)),
-            Kind::Null => None,
+            DocKind::Html => Token::html(self.0 as *mut core::ffi::c_void),
+            DocKind::Xml => Token::xml(self.0),
         }
     }
 
@@ -414,11 +412,24 @@ pub enum DocKind {
 
 impl DocKind {
     /// The kind of `document`, a live Makiri Document of either leaf.
+    ///
+    /// Read from the wrapped TypedData type rather than the Ruby class, so a
+    /// subclass of either Document answers the kind its bytes are.
     pub fn of(document: Value) -> DocKind {
-        if crate::bridge::ruby::is_kind_of(document, &crate::init::CLASS_XML_DOCUMENT) {
+        if XML_DOC_TYPE.is(document) {
             DocKind::Xml
         } else {
             DocKind::Html
+        }
+    }
+}
+
+impl From<DocKind> for Kind {
+    #[inline]
+    fn from(kind: DocKind) -> Kind {
+        match kind {
+            DocKind::Html => Kind::Html,
+            DocKind::Xml => Kind::Xml,
         }
     }
 }

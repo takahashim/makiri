@@ -26,7 +26,7 @@ use crate::engine_error::{Error as XPathError, ErrorKind};
 use crate::init::EXC_ERROR;
 pub use crate::init::{CLASS_XPATH_CONTEXT, EXC_XPATH_LIMIT_EXCEEDED, EXC_XPATH_SYNTAX_ERROR};
 use crate::lexbor::adapter::post_parse::HtmlParsed;
-use crate::token::{Kind, Token};
+use crate::token::Token;
 use crate::xml::model::Document as XmlDoc;
 use crate::xpath::ast::Ast;
 use crate::xpath::ctx::{Resolver, Session, XPathValue};
@@ -99,10 +99,10 @@ pub struct Cx {
 
 impl Cx {
     /// Which backend this context walks, for minting a node token.
-    pub fn token_kind(&self) -> Kind {
+    pub fn doc_kind(&self) -> DocKind {
         match self.doc {
-            DocPtr::Html(_) => Kind::Html,
-            DocPtr::Xml(_) => Kind::Xml,
+            DocPtr::Html(_) => DocKind::Html,
+            DocPtr::Xml(_) => DocKind::Xml,
         }
     }
 
@@ -313,7 +313,7 @@ pub fn evaluate_query(
         Some(handler) => Some(Bridge {
             handler: handler.as_raw(),
             document: document.as_raw(),
-            kind: ctx.token_kind(),
+            kind: ctx.doc_kind(),
             _reading: crate::bridge::wrapper::DocumentEvaluation::enter(document)?,
         }),
     };
