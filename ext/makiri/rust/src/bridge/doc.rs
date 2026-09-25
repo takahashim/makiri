@@ -48,7 +48,7 @@ pub fn parse_document(source: Value) -> Result<Value, Error> {
     let s = source.to_r_string()?;
     /* Honour the input's encoding: UTF-8/US-ASCII/binary pass through,
      * anything else is transcoded so its content survives. */
-    let src = HtmlSource::from_ruby(s.as_value())?;
+    let src = HtmlSource::from_ruby(s)?;
 
     /* Copy the source out BEFORE allocating the wrapper. Allocating is a GC
      * point, and a borrowed pointer into a Ruby String's backing store must

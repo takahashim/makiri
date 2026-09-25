@@ -498,14 +498,15 @@ unsafe fn ruby_to_utf8(str: VALUE) -> VALUE {
     )
 }
 
-/// [`ruby_to_utf8`] as a safe call: `s` is a live String, and the result is one.
-/// An encoding Ruby cannot convert to UTF-8 comes back as its
+/// [`ruby_to_utf8`] as a safe call: `s` is a String by type, and so is the
+/// result. An encoding Ruby cannot convert to UTF-8 comes back as its
 /// `Encoding::ConverterNotFoundError`, returned rather than raised.
-pub fn ruby_to_utf8_value(s: Value) -> Result<Value, Error> {
+pub fn ruby_to_utf8_value(s: RString) -> Result<RString, Error> {
     // SAFETY: `s` is a live String, and `protect` turns the raise into `Err`.
     let raw = protect(|| unsafe { ruby_to_utf8(s.as_raw()) })?;
-    // SAFETY: `rb_str_encode` returns a live String.
-    Ok(unsafe { crate::bridge::ruby::value(raw) })
+    // SAFETY: `rb_str_encode` returns a live value; checked to be a String.
+    RString::from_value(unsafe { crate::bridge::ruby::value(raw) })
+        .ok_or_else(|| makiri_error("transcoding returned a non-String"))
 }
 
 /// A Ruby String as HTML parser input, under the text-input contract: its
@@ -525,8 +526,8 @@ pub struct HtmlSource {
 }
 
 impl HtmlSource {
-    /// `s` must be a String (the caller has coerced it).
-    pub fn from_ruby(s: Value) -> Result<HtmlSource, Error> {
+    /// `s` is a String by type: the caller has coerced it.
+    pub fn from_ruby(s: RString) -> Result<HtmlSource, Error> {
         let src = ruby_to_utf8_value(s)?;
         /* A transcode replaced every invalid or unmappable byte, so its result
          * is valid UTF-8 whatever its coderange says. */

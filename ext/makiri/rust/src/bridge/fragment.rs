@@ -116,7 +116,7 @@ pub fn resolve_fragment_context(
 /// conversion is the argument's `#to_s`, arbitrary Ruby, and for `inner_html=`
 /// it has to finish before the edit drops the document's indexes.
 fn parse(html: RString, context: &FragmentContext) -> Result<TransientFragment, Error> {
-    let src = HtmlSource::from_ruby(html.as_value())?;
+    let src = HtmlSource::from_ruby(html)?;
     // SAFETY: the context's element or document is live (the callers below hold
     // it), and the bytes are read by the parse alone, which runs no Ruby.
     unsafe { TransientFragment::parse(src.bytes(), src.known_valid(), context) }
