@@ -103,11 +103,9 @@ pub fn walk_axis<'d, D: Dom<'d>, B, F: FnMut(D::Node) -> ControlFlow<B>>(
             ControlFlow::Continue(())
         }
         Axis::Attribute => {
-            /* `first_attr` is None for anything but an element. */
-            let mut a = doc.first_attr(context);
-            while let Some(x) = a {
+            /* None for anything but an element: see `attrs`. */
+            for x in crate::xpath::dom::attrs(doc, context) {
                 visit(D::attr_node(x))?;
-                a = doc.attr_next(x);
             }
             ControlFlow::Continue(())
         }
@@ -207,8 +205,9 @@ pub fn walk_axis<'d, D: Dom<'d>, B, F: FnMut(D::Node) -> ControlFlow<B>>(
                 }
             }
         }
-        /* The namespace axis is rejected by the step driver before it gets here. */
-        _ => ControlFlow::Continue(()),
+        /* Rejected by the step driver before it gets here. Named rather than
+         * `_`, so a new axis is a compile error here, not a silent no-op. */
+        Axis::Namespace => ControlFlow::Continue(()),
     }
 }
 

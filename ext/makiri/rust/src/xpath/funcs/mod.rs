@@ -674,15 +674,25 @@ fn name_emit<'e, 'd, D: Dom<'d>>(
     string(name, err, fname)
 }
 
+/// `local-name()` and `name()`: the target node's local or qualified name.
+fn name_of<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
+    focus: &Focus<'d, D>,
+    args: &[Val<D::Node>],
+    qualified: bool,
+    fname: &str,
+) -> Answer<D::Node> {
+    let err = ev.budget.sink();
+    let t = name_target::<D>(args, focus, err.clone(), fname)?;
+    name_emit::<D>(ev.doc, t, qualified, err, fname)
+}
+
 fn fn_local_name<'e, 'd, D: Dom<'d>>(
     ev: &mut Evaluation<'e, 'd, D>,
     focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
-    let err = ev.budget.sink();
-    let doc = ev.doc;
-    let t = name_target::<D>(args, focus, err.clone(), "local-name")?;
-    name_emit::<D>(doc, t, false, err.clone(), "local-name")
+    name_of(ev, focus, args, false, "local-name")
 }
 
 fn fn_name<'e, 'd, D: Dom<'d>>(
@@ -690,10 +700,7 @@ fn fn_name<'e, 'd, D: Dom<'d>>(
     focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
-    let err = ev.budget.sink();
-    let doc = ev.doc;
-    let t = name_target::<D>(args, focus, err.clone(), "name")?;
-    name_emit::<D>(doc, t, true, err.clone(), "name")
+    name_of(ev, focus, args, true, "name")
 }
 
 fn fn_namespace_uri<'e, 'd, D: Dom<'d>>(

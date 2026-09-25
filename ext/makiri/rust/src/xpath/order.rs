@@ -81,29 +81,25 @@ pub fn doc_order_cmp<'d, D: Dom<'d>>(doc: D, a: D::Node, b: D::Node) -> Ordering
     if aa == bb {
         let a_attr = doc.node_type(a) == NTYPE_ATTRIBUTE;
         let b_attr = doc.node_type(b) == NTYPE_ATTRIBUTE;
-        if a_attr && !b_attr {
-            return Ordering::Greater; /* b is the owner element; its attribute follows it */
-        }
-        if b_attr && !a_attr {
-            return Ordering::Less;
-        }
-        if a_attr && b_attr {
+        return match (a_attr, b_attr) {
+            (true, false) => Ordering::Greater, /* b is the owner; its attribute follows it */
+            (false, true) => Ordering::Less,
+            (false, false) => Ordering::Equal,
             /* Both attributes of one element: the relative order is
              * implementation-defined, so use the attribute list's order. */
-            let mut at = doc.first_attr(aa);
-            while let Some(x) = at {
-                let xn = D::attr_node(x);
-                if xn == a {
-                    return Ordering::Less;
+            (true, true) => {
+                for x in crate::xpath::dom::attrs(doc, aa) {
+                    let xn = D::attr_node(x);
+                    if xn == a {
+                        return Ordering::Less;
+                    }
+                    if xn == b {
+                        return Ordering::Greater;
+                    }
                 }
-                if xn == b {
-                    return Ordering::Greater;
-                }
-                at = doc.attr_next(x);
+                Ordering::Equal
             }
-            return Ordering::Equal;
-        }
-        return Ordering::Equal;
+        };
     }
 
     let (mut da, mut db) = (depth_of::<D>(doc, aa), depth_of::<D>(doc, bb));
@@ -177,13 +173,11 @@ fn order_index_walk<'d, D: Dom<'d>>(doc: D, idx: &mut OrderIndex, root: D::Node)
         ord += 1;
         /* Only an element has attributes; `first_attr` answers None for the
          * rest, so it is the element test too. */
-        let mut a = doc.first_attr(n);
-        while let Some(x) = a {
+        for x in crate::xpath::dom::attrs(doc, n) {
             if !idx.insert(D::token(D::attr_node(x)), ord) {
                 return ControlFlow::Break(());
             }
             ord += 1;
-            a = doc.attr_next(x);
         }
         ControlFlow::Continue(())
     };

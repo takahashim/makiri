@@ -191,6 +191,14 @@ pub trait Dom<'d>: Copy {
     fn name_bucket(self, local: &[u8], ns_uri: Option<&[u8]>) -> Option<Bucket<'d, Self::Node>>;
 }
 
+/// `el`'s attributes, in the host's order: [`Dom::first_attr`] then
+/// [`Dom::attr_next`]. Empty for anything but an element, since `first_attr`
+/// is the element test too.
+#[inline]
+pub fn attrs<'d, D: Dom<'d>>(doc: D, el: D::Node) -> impl Iterator<Item = D::Attr> {
+    core::iter::successors(doc.first_attr(el), move |&a| doc.attr_next(a))
+}
+
 /// What `Dom::name_bucket` found: the elements, in document order, and whether
 /// each still has to be re-checked against the name test before it counts.
 pub struct Bucket<'a, N> {
