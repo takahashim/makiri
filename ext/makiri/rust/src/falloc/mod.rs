@@ -215,22 +215,26 @@ impl<T> VecPush<T> for Vec<T> {
     }
 }
 
+/// The one shape of every reserve here: ask the injection hook first (so
+/// `rake oom` can fail this site), then std's fallible reserve.
+#[inline]
+fn injectable<E>(reserve: impl FnOnce() -> Result<(), E>) -> Result<(), ()> {
+    if allocation_should_fail() {
+        return Err(());
+    }
+    reserve().map_err(|_| ())
+}
+
 impl<T> Reserve for Vec<T> {
     #[inline]
     #[allow(clippy::disallowed_methods)]
     fn falloc_reserve(&mut self, additional: usize) -> Result<(), ()> {
-        if allocation_should_fail() {
-            return Err(());
-        }
-        self.try_reserve(additional).map_err(|_| ())
+        injectable(|| self.try_reserve(additional))
     }
     #[inline]
     #[allow(clippy::disallowed_methods)]
     fn falloc_reserve_exact(&mut self, additional: usize) -> Result<(), ()> {
-        if allocation_should_fail() {
-            return Err(());
-        }
-        self.try_reserve_exact(additional).map_err(|_| ())
+        injectable(|| self.try_reserve_exact(additional))
     }
 }
 
@@ -238,10 +242,7 @@ impl<K: core::hash::Hash + Eq, V, S: core::hash::BuildHasher> Reserve for HashMa
     #[inline]
     #[allow(clippy::disallowed_methods)]
     fn falloc_reserve(&mut self, additional: usize) -> Result<(), ()> {
-        if allocation_should_fail() {
-            return Err(());
-        }
-        self.try_reserve(additional).map_err(|_| ())
+        injectable(|| self.try_reserve(additional))
     }
     #[inline]
     fn falloc_reserve_exact(&mut self, additional: usize) -> Result<(), ()> {
@@ -253,10 +254,7 @@ impl<T: core::hash::Hash + Eq, S: core::hash::BuildHasher> Reserve for HashSet<T
     #[inline]
     #[allow(clippy::disallowed_methods)]
     fn falloc_reserve(&mut self, additional: usize) -> Result<(), ()> {
-        if allocation_should_fail() {
-            return Err(());
-        }
-        self.try_reserve(additional).map_err(|_| ())
+        injectable(|| self.try_reserve(additional))
     }
     #[inline]
     fn falloc_reserve_exact(&mut self, additional: usize) -> Result<(), ()> {

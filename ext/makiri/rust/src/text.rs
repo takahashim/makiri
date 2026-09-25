@@ -29,9 +29,13 @@
 
 use core::ffi::c_char;
 
-/// The accessors both views share. The contracts differ; the reading does not.
+/// The accessors both views share: the contracts differ, the reading does not.
+/// `as_bytes` is each view's own, since only one of them can make it safe.
 macro_rules! view_accessors {
     () => {
+        /// The pointer. The tests pin it to the owner's own; code reads
+        /// `as_bytes`.
+        #[cfg_attr(not(test), allow(dead_code))]
         pub(crate) const fn as_ptr(self) -> *const c_char {
             self.ptr
         }
@@ -48,20 +52,6 @@ macro_rules! view_accessors {
         /// through `is_absent`.
         pub(crate) const fn is_empty(self) -> bool {
             self.is_absent() || self.len == 0
-        }
-
-        /// The bytes, or an empty slice when absent.
-        ///
-        /// # Safety
-        /// The owner of the bytes must stay live, at the same address, for `'a`.
-        pub(crate) unsafe fn as_bytes<'a>(self) -> &'a [u8] {
-            if self.is_empty() {
-                &[]
-            } else {
-                // SAFETY: non-null, `len` live bytes by the constructor's
-                // contract, and the caller keeps the owner alive for `'a`.
-                unsafe { core::slice::from_raw_parts(self.ptr as *const u8, self.len) }
-            }
         }
     };
 }
@@ -82,26 +72,7 @@ pub struct VerifiedText<'a> {
 // Ruby-free builds (Kani, the fuzz crate) see them unused.
 #[cfg_attr(not(feature = "ruby"), allow(dead_code))]
 impl<'a> VerifiedText<'a> {
-    /// The pointer, which the tests pin to the verified owner's own; engine
-    /// callers read `as_bytes`.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) const fn as_ptr(self) -> *const c_char {
-        self.ptr
-    }
-
-    pub(crate) const fn len(self) -> usize {
-        self.len
-    }
-
-    pub(crate) const fn is_absent(self) -> bool {
-        self.ptr.is_null()
-    }
-
-    /// No content. An absent view is empty too, but stays distinguishable
-    /// through `is_absent`.
-    pub(crate) const fn is_empty(self) -> bool {
-        self.is_absent() || self.len == 0
-    }
+    view_accessors!();
 
     /// The bytes, or an empty slice when absent.
     ///
@@ -164,6 +135,20 @@ pub struct BorrowedText {
 #[allow(dead_code)]
 impl BorrowedText {
     view_accessors!();
+
+    /// The bytes, or an empty slice when absent.
+    ///
+    /// # Safety
+    /// The owner of the bytes must stay live, at the same address, for `'a`.
+    pub(crate) unsafe fn as_bytes<'a>(self) -> &'a [u8] {
+        if self.is_empty() {
+            &[]
+        } else {
+            // SAFETY: non-null, `len` live bytes by the constructor's
+            // contract, and the caller keeps the owner alive for `'a`.
+            unsafe { core::slice::from_raw_parts(self.ptr as *const u8, self.len) }
+        }
+    }
 
     /// Borrow bytes from Lexbor's arena or an engine-owned slot.
     ///
