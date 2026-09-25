@@ -74,7 +74,7 @@ pub fn wrap_xml_node(node: *mut core::ffi::c_void, document: Value) -> Value {
         _ => CLASS_XML_NODE.raw(),
     };
 
-    crate::bridge::wrapper::wrap_cached(&XML_NODE_TYPE, klass, node, id.to_token(), document)
+    crate::bridge::wrapper::wrap_cached(&XML_NODE_TYPE, klass, node, document)
 }
 
 /// The arena node token behind a wrapper.
@@ -361,12 +361,22 @@ pub fn verified_text(v: Value, what: &core::ffi::CStr) -> Result<RubyText, Error
     Ok(t)
 }
 
-/// [`verified_text`] for an optional argument: nil is absent.
-pub fn verified_text_opt(v: Value, what: &core::ffi::CStr) -> Result<RubyText, Error> {
+/// [`verified_text`] for an optional argument whose absence the engine reads
+/// as a present-but-absent text: `nil` is [`RubyText::absent`].
+pub fn verified_text_or_absent(v: Value, what: &core::ffi::CStr) -> Result<RubyText, Error> {
     if v.is_nil() {
         return Ok(RubyText::absent());
     }
     verified_text(v, what)
+}
+
+/// [`verified_text`] for an optional argument: `nil` is `None` - the same
+/// shape as `bridge::string::ruby_verified_text_opt`.
+pub fn verified_text_opt(v: Value, what: &core::ffi::CStr) -> Result<Option<RubyText>, Error> {
+    if v.is_nil() {
+        return Ok(None);
+    }
+    verified_text(v, what).map(Some)
 }
 
 /* ------------------------------------------------------------------ */

@@ -323,6 +323,39 @@ pub enum DocKind {
     Xml,
 }
 
+impl DocKind {
+    /// The kind of `document`, a live Makiri Document of either leaf.
+    pub fn of(document: Value) -> DocKind {
+        if crate::bridge::ruby::is_kind_of(document, &crate::init::CLASS_XML_DOCUMENT) {
+            DocKind::Xml
+        } else {
+            DocKind::Html
+        }
+    }
+}
+
+/// Wrap `node`, a node of `document`, under the representation `kind` names -
+/// the one place a node pointer handed over as `c_void` (a NodeSet's stored
+/// one, a query result's token) is cast back to a typed node, which `kind` is
+/// what justifies.
+///
+/// # Safety
+/// `node` is a live node pointer (an XML node token, for `Xml`) of
+/// `document`, and `document` is of `kind`.
+pub(in crate::bridge) unsafe fn wrap_doc_node(
+    kind: DocKind,
+    node: *mut c_void,
+    document: Value,
+) -> Value {
+    match kind {
+        DocKind::Xml => crate::bridge::xml::wrap_xml_node(node, document),
+        DocKind::Html => match crate::lexbor::adapter::html::RawNode::from_ptr(node) {
+            Some(n) => crate::bridge::html::wrap_html_node(n, document),
+            None => crate::bridge::ruby::nil(),
+        },
+    }
+}
+
 /// A Document wrapper allocated before the content it will own, and the only
 /// way a Document gets that content.
 ///
@@ -464,9 +497,13 @@ pub(in crate::bridge) fn with_html_parsed_known<R>(
     unsafe { f(p.as_mut()) }
 }
 
-/// The one wrapper of class `klass` (a `ty` object) for `node`, keyed by
-/// `token`, under `document`: the cached one, or a fresh one that is then
-/// cached. The shared half of the two `wrap_*_node` functions.
+/// The one wrapper of class `klass` (a `ty` object) for `node` under
+/// `document`: the cached one, or a fresh one that is then cached. The shared
+/// half of the two `wrap_*_node` functions.
+///
+/// Keyed by the node's token, which is `node` itself as an integer for both
+/// representations - an HTML node pointer, an XML `NodeId` - so it is derived
+/// here, not passed beside `node` where the two could disagree.
 ///
 /// One wrapper per node: navigating to a node twice must give the SAME object,
 /// or everything that lives on a Ruby object is silently lost - `equal?`, an
@@ -480,9 +517,9 @@ pub(in crate::bridge) fn wrap_cached(
     ty: &'static TypedType<NodeData>,
     klass: VALUE,
     node: *mut c_void,
-    token: usize,
     document: Value,
 ) -> Value {
+    let token = node as usize;
     if let Some(cached) = cached_node(document, token) {
         return cached;
     }

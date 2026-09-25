@@ -6,7 +6,7 @@
 //!
 //! The stored pointers are representation-opaque. The set never dereferences
 //! one; it compares them for identity and, when vending a node, casts to the
-//! representation named by `doc_is_xml`. That keeps an XML set from ever reading
+//! representation named by its `kind`. That keeps an XML set from ever reading
 //! an XML arena handle as a Lexbor node. The kind is decided once at
 //! construction rather than probed per node, which would regress the hot
 //! traversal path.
@@ -39,12 +39,9 @@ use crate::bridge::ruby::makiri_error;
 use magnus::value::{Opaque, ReprValue};
 use magnus::{gc::Marker, prelude::*, DataTypeFunctions, Error, RClass, Ruby, TypedData, Value};
 
-use crate::bridge::html::wrap_html_node;
 use crate::bridge::typed::typed_data_unprotected;
-use crate::bridge::wrapper::{keepalive_document, node_raw};
-use crate::bridge::xml::wrap_xml_node;
-use crate::init::{CLASS_DOCUMENT, CLASS_NODE, CLASS_NODE_SET, CLASS_XML_DOCUMENT};
-use crate::lexbor::adapter::html::RawNode;
+use crate::bridge::wrapper::{keepalive_document, node_raw, wrap_doc_node, DocKind};
+use crate::init::{CLASS_DOCUMENT, CLASS_NODE, CLASS_NODE_SET};
 
 use crate::limits::NODE_SET_MAX;
 
@@ -203,7 +200,7 @@ pub struct NodeSet {
     document: Opaque<Value>,
     /// Decided once: the stored pointers are XML arena handles, so they wrap as
     /// `Makiri::XML::*`.
-    doc_is_xml: bool,
+    kind: DocKind,
     nodes: RefCell<NodeVec>,
 }
 
@@ -257,30 +254,6 @@ impl NodeSet {
     }
 }
 
-/// Wrap a stored node, choosing the representation by the set's fixed document
-/// kind. This is the ONLY place a stored pointer is cast back to a typed one,
-/// and `doc_is_xml` is what justifies the cast.
-unsafe fn wrap(node: *mut c_void, document: Value, doc_is_xml: bool) -> Value {
-    if doc_is_xml {
-        wrap_xml_node(node, document)
-    } else {
-        match RawNode::from_ptr(node) {
-            Some(n) => wrap_html_node(n, document),
-            None => crate::bridge::ruby::nil(),
-        }
-    }
-}
-
-/// Wrap one node a query over `document` answered, as a set over `document`
-/// would when read back - for `at_xpath`, which wants the first node and not
-/// the set.
-///
-/// # Safety
-/// `node` is a node pointer (a token's) of `document`.
-pub(in crate::bridge) unsafe fn wrap_member(node: *mut c_void, document: Value) -> Value {
-    wrap(node, document, is_kind_of(document, &CLASS_XML_DOCUMENT))
-}
-
 /// `Makiri::NodeSet`, as created by Init_makiri.
 fn node_set_class() -> RClass {
     CLASS_NODE_SET.class()
@@ -301,11 +274,11 @@ pub fn node_set_new(document: Value) -> Value {
         "a NodeSet needs the Document its nodes belong to"
     );
     let ruby = Ruby::get_with(document);
-    let doc_is_xml = is_kind_of(document, &CLASS_XML_DOCUMENT);
+    let kind = DocKind::of(document);
     let obj = ruby
         .wrap(NodeSet {
             document: document.into(),
-            doc_is_xml,
+            kind,
             nodes: RefCell::new(NodeVec::new()),
         })
         .as_value();
@@ -395,17 +368,17 @@ pub fn node_set_from(
 pub struct Snapshot {
     nodes: Vec<*mut c_void>,
     document: Value,
-    doc_is_xml: bool,
+    kind: DocKind,
 }
 
 impl Snapshot {
     /// The nodes as Ruby objects, in the set's order.
     pub fn wrapped(&self) -> impl Iterator<Item = Value> + '_ {
-        // SAFETY: nodes a set of this document stored, so `doc_is_xml` is the
+        // SAFETY: nodes a set of this document stored, so `kind` is the
         // representation they were stored as, and `document` roots them.
         self.nodes
             .iter()
-            .map(|&n| unsafe { wrap(n, self.document, self.doc_is_xml) })
+            .map(|&n| unsafe { wrap_doc_node(self.kind, n, self.document) })
     }
 }
 
@@ -422,9 +395,9 @@ impl NodeSet {
     pub fn at(&self, ruby: &Ruby, i: usize) -> Result<Value, Error> {
         let node = self.read()?.as_slice().get(i).copied();
         Ok(match node {
-            // SAFETY: a node this set stored, under its own `doc_is_xml`, and
-            // its document is rooted by the set.
-            Some(n) => unsafe { wrap(n, self.document(ruby), self.doc_is_xml) },
+            // SAFETY: a node this set stored, under its own `kind`, and its
+            // document is rooted by the set.
+            Some(n) => unsafe { wrap_doc_node(self.kind, n, self.document(ruby)) },
             None => ruby.qnil().as_value(),
         })
     }
@@ -454,7 +427,7 @@ impl NodeSet {
         Ok(Snapshot {
             nodes,
             document: self.document(ruby),
-            doc_is_xml: self.doc_is_xml,
+            kind: self.kind,
         })
     }
 

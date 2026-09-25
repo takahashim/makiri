@@ -101,8 +101,7 @@ pub fn wrap_html_node(node: RawNode, document: Value) -> Value {
         _ => CLASS_HTML_NODE.raw(),
     };
 
-    let token = node.as_ptr() as usize;
-    crate::bridge::wrapper::wrap_cached(&HTML_NODE_TYPE, klass, node.as_ptr(), token, document)
+    crate::bridge::wrapper::wrap_cached(&HTML_NODE_TYPE, klass, node.as_ptr(), document)
 }
 
 /// The HTML node handle behind an HTML node or HTML Document.

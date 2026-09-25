@@ -10,29 +10,22 @@
 use magnus::{method, prelude::*, Error, RString, Ruby, Value};
 
 use crate::bridge::ruby::makiri_error;
+use crate::glue::kwargs::Kwargs;
 
 use super::strings::utf8;
 use crate::init::MOD_XML_NODE_METHODS;
 use crate::xml::serialize::{self as xml_serialize, Failure};
 
 fn to_xml_opts(ruby: &Ruby, args: &[Value]) -> Result<(i32, Value), Error> {
-    let Some(h) = crate::glue::keywords(args)? else {
-        return Ok((0, ruby.qnil().as_value()));
-    };
+    let kw = Kwargs::scan(args)?;
     let mut width = 0i32;
-    if crate::glue::kw_flag(ruby, Some(h), "pretty") {
+    if kw.flag(ruby, "pretty") {
         width = 2;
     }
-    if let Some(iv) = h
-        .get(ruby.sym_new("indent"))
-        .filter(|v: &Value| !v.is_nil())
-    {
-        let n = i32::try_convert(iv)?;
-        width = n.max(0);
+    if let Some(iv) = kw.value(ruby, "indent") {
+        width = i32::try_convert(iv)?.max(0);
     }
-    let enc = h
-        .get(ruby.sym_new("encoding"))
-        .unwrap_or(ruby.qnil().as_value());
+    let enc = kw.value(ruby, "encoding").unwrap_or(ruby.qnil().as_value());
     Ok((width, enc))
 }
 
@@ -98,7 +91,7 @@ fn to_xml(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Er
 
 fn canonicalize(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let comments = crate::glue::kw_flag(ruby, crate::glue::keywords(args)?, "comments");
+        let comments = Kwargs::scan(args)?.flag(ruby, "comments");
         let buf = xml_serialize::canonicalize(this.doc_ref(), this.id, comments)
             .map_err(|f| failure_error(f, "canonicalize"))?;
         Ok(utf8(ruby, buf.as_slice()).as_value())

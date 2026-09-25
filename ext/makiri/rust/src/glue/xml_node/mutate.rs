@@ -16,7 +16,8 @@ use crate::bridge::ruby::makiri_error;
 
 use crate::bridge::xml::{
     begin_edit, import_copy, incoming_node, verified_text, verified_text_opt,
-    with_arena_for_new_node, wrap, xml_mut_result, xml_wrap_rel_value, Editing, XmlSelf,
+    verified_text_or_absent, with_arena_for_new_node, wrap, xml_mut_result, xml_wrap_rel_value,
+    Editing, XmlSelf,
 };
 use crate::init::CLASS_XML_DOCUMENT;
 use crate::xml::dom_name::split_loose_dom_name;
@@ -80,7 +81,7 @@ pub fn set_attribute_ns(
         let edit = element_for(this)?;
         let qv = verified_text(qname, c"attribute qualified name")?;
         let vv = verified_text(val, c"attribute value")?;
-        let nv = verified_text_opt(ns, c"namespace")?;
+        let nv = verified_text_or_absent(ns, c"namespace")?;
         let (ns, qname, value) = (
             nv.as_verified().as_bytes(),
             qv.as_verified().as_bytes(),
@@ -105,7 +106,7 @@ pub fn remove_attribute_ns(
             return Ok(rb_self);
         }
         let lv = verified_text(local, c"attribute local name")?;
-        let nv = verified_text_opt(ns, c"namespace")?;
+        let nv = verified_text_or_absent(ns, c"namespace")?;
         let (ns, local) = (nv.as_verified().as_bytes(), lv.as_verified().as_bytes());
         edit.with_arena(|d, n| mutate::remove_attribute_ns(d, n, ns, local))?;
         Ok(rb_self)
@@ -222,7 +223,7 @@ pub fn create_element(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Val
         }
 
         let nv = verified_text(name, c"element name")?;
-        let cv = verified_text_opt(content, c"element content")?;
+        let cv = verified_text_or_absent(content, c"element content")?;
         let (name, text) = (nv.as_verified().as_bytes(), cv.as_verified().as_bytes());
         let el = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
             mutate::new_element(d, name)
@@ -235,28 +236,19 @@ pub fn create_element(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Val
         let rb_el = wrap(el, rb_self);
         if let Some(h) = attrs {
             /* Keys and values are stringified - Nokogiri accepts symbol keys and
-             * non-string values - then go through the normal validated setter.
-             * The pairs are copied out of the Hash itself first, as
-             * `query::bind_each` does and for its reasons: a subclass can
-             * redefine `to_a`, and the `to_s` calls must run outside the walk. */
-            let pairs = ruby.ary_new_capa(h.len() * 2);
-            h.foreach(|k: Value, v: Value| {
-                pairs.push(k)?;
-                pairs.push(v)?;
-                Ok(magnus::r_hash::ForEach::Continue)
-            })?;
+             * non-string values - then go through the normal validated setter,
+             * after the pairs are out of the Hash (`kwargs::each_pair`). */
             /* `rb_el` was wrapped just above, so it converts. */
             let el_self = <XmlSelf as magnus::TryConvert>::try_convert(rb_el)?;
-            for i in (0..pairs.len()).step_by(2) {
-                let k: Value = pairs.entry(i as isize)?;
-                let v: Value = pairs.entry(i as isize + 1)?;
+            crate::glue::kwargs::each_pair(ruby, h, |k, v| {
                 aset(
                     ruby,
                     el_self,
                     k.funcall("to_s", ())?,
                     v.funcall("to_s", ())?,
                 )?;
-            }
+                Ok(())
+            })?;
         }
         Ok(rb_el)
     })
@@ -275,10 +267,8 @@ pub fn create_loose_dom_element(
     crate::bridge::ruby::entry(|| {
         let qv = verified_text(qname, c"qualified name")?;
         let lv = verified_text(local, c"local name")?;
-        let pv = (!prefix.is_nil())
-            .then(|| verified_text(prefix, c"prefix"))
-            .transpose()?;
-        let nv = verified_text_opt(ns, c"namespace URI")?;
+        let pv = verified_text_opt(prefix, c"prefix")?;
+        let nv = verified_text_or_absent(ns, c"namespace URI")?;
 
         let qname = qv.as_verified().as_bytes();
         let sp = split_loose_dom_name(
@@ -309,8 +299,8 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
         let name = a.required.0;
         let nil = ruby.qnil().as_value();
         let nv = verified_text(name, c"doctype name")?;
-        let pv = verified_text_opt(a.optional.0.unwrap_or(nil), c"doctype public id")?;
-        let sv = verified_text_opt(a.optional.1.unwrap_or(nil), c"doctype system id")?;
+        let pv = verified_text_or_absent(a.optional.0.unwrap_or(nil), c"doctype public id")?;
+        let sv = verified_text_or_absent(a.optional.1.unwrap_or(nil), c"doctype system id")?;
         /* An empty id is absent (NULL), matching the HTML factory and Nokogiri. */
         let (name, pub_id, sys_id) = (
             nv.as_verified().as_bytes(),

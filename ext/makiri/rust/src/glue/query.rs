@@ -194,13 +194,8 @@ fn bind_each(
     mut register: impl FnMut(&[u8], &[u8]) -> Result<(), Error>,
     cap: usize,
 ) -> Result<(), Error> {
-    /* The pairs are copied out first and bound after. Read from the Hash
-     * itself, not through a `to_a` a subclass can redefine (a non-pair tripped
-     * an `expect`); and bound outside the walk, because binding converts with
-     * the caller's `to_s`: inside `foreach` a panic in it became `fatal` - the
-     * walk runs under magnus's own `protect` - and a `to_s` that added a key
-     * to the same Hash raised "can't add a new key into hash during
-     * iteration". The copy runs no Ruby code of the caller's. */
+    /* The pairs are copied out first and bound after (`kwargs::each_pair`,
+     * which says why): binding converts with the caller's `to_s`. */
     /* More pairs than a context may hold is refused before any is converted
      * or copied, rather than after every one of them has been. */
     let max = crate::xpath::ctx::MAX_NAMESPACES;
@@ -211,21 +206,9 @@ fn bind_each(
         )));
     }
     let ruby = Ruby::get().map_err(|_| makiri_error("Ruby is not available here"))?;
-    let pairs = ruby.ary_new_capa(h.len() * 2);
-    h.foreach(|prefix: Value, uri: Value| {
-        pairs.push(prefix)?;
-        pairs.push(uri)?;
-        Ok(magnus::r_hash::ForEach::Continue)
-    })?;
-    for i in (0..pairs.len()).step_by(2) {
-        bind_pair(
-            pairs.entry(i as isize)?,
-            pairs.entry(i as isize + 1)?,
-            cap,
-            &mut register,
-        )?;
-    }
-    Ok(())
+    crate::glue::kwargs::each_pair(&ruby, h, |prefix, uri| {
+        bind_pair(prefix, uri, cap, &mut register)
+    })
 }
 
 /// Bind one `prefix => uri` pair through `register` - the one reading of a

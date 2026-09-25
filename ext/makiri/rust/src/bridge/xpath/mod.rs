@@ -19,10 +19,11 @@ use magnus::value::ReprValue;
 use magnus::{prelude::*, Error, Value};
 
 use crate::bridge::html::html_node_unwrap;
-use crate::bridge::node_set::{node_set_with_fill, wrap_member, PushError};
+use crate::bridge::node_set::{node_set_with_fill, PushError};
 use crate::bridge::ruby::VALUE;
 use crate::bridge::string::{ruby_str_from_utf8, ruby_verified_text};
 use crate::bridge::wrapper::{doc_content, html_doc_unwrap, with_html_parsed_known, Content};
+use crate::bridge::wrapper::{wrap_doc_node, DocKind};
 use crate::bridge::xml::xml_node_unwrap;
 use crate::init::{CLASS_XML_DOCUMENT, EXC_ERROR};
 pub use crate::init::{CLASS_XPATH_CONTEXT, EXC_XPATH_LIMIT_EXCEEDED, EXC_XPATH_SYNTAX_ERROR};
@@ -308,7 +309,7 @@ pub fn query_result(value: XPathValue, document: Value, answer: Answer) -> Resul
             drop(value);
             return Ok(match first {
                 // SAFETY: a node the query found in `document`.
-                Some(n) => unsafe { wrap_member(n, document) },
+                Some(n) => unsafe { wrap_doc_node(DocKind::of(document), n, document) },
                 None => crate::bridge::ruby::nil(),
             });
         }

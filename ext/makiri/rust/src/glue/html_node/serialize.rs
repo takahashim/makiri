@@ -11,17 +11,14 @@ use magnus::{method, prelude::*, Error, RString, Ruby, Value};
 
 use super::HtmlSelf;
 use crate::bridge::ruby::makiri_error;
+use crate::glue::kwargs::Kwargs;
 use crate::init::MOD_HTML_NODE_METHODS;
 use crate::lexbor::adapter::html::{RawNode, TYPE_FRAGMENT};
 use crate::lexbor::serialize::serialize;
 
-/// The optional `pretty:` keyword; see [`crate::glue::kw_flag`].
+/// The optional `pretty:` keyword.
 fn pretty_opt(ruby: &Ruby, args: &[Value]) -> Result<bool, Error> {
-    Ok(crate::glue::kw_flag(
-        ruby,
-        crate::glue::keywords(args)?,
-        "pretty",
-    ))
+    Ok(Kwargs::scan(args)?.flag(ruby, "pretty"))
 }
 
 /// The receiver's serialization as a UTF-8 String, or `Makiri::Error` on a
