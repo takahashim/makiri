@@ -16,8 +16,8 @@ use crate::bridge::ruby::makiri_error;
 
 use crate::bridge::xml::{
     begin_edit, import_copy, incoming_node, verified_text, verified_text_opt,
-    verified_text_or_absent, with_arena_for_new_node, wrap_xml_node as wrap, xml_mut_result,
-    xml_wrap_rel_value, Editing, XmlSelf,
+    with_arena_for_new_node, wrap_xml_node as wrap, xml_mut_result, xml_wrap_rel_value, Editing,
+    XmlSelf,
 };
 use crate::init::CLASS_XML_DOCUMENT;
 use crate::xml::dom_name::split_loose_dom_name;
@@ -81,9 +81,10 @@ pub fn set_attribute_ns(
         let edit = element_for(this)?;
         let qv = verified_text(qname, "attribute qualified name")?;
         let vv = verified_text(val, "attribute value")?;
-        let nv = verified_text_or_absent(ns, "namespace")?;
+        let nv = verified_text_opt(ns, "namespace")?;
+        /* nil and "" alike are no namespace. */
         let (ns, qname, value) = (
-            nv.as_verified().as_bytes(),
+            nv.as_ref().map_or(&b""[..], |n| n.as_verified().as_bytes()),
             qv.as_verified().as_bytes(),
             vv.as_verified().as_bytes(),
         );
@@ -106,8 +107,10 @@ pub fn remove_attribute_ns(
             return Ok(rb_self);
         }
         let lv = verified_text(local, "attribute local name")?;
-        let nv = verified_text_or_absent(ns, "namespace")?;
-        let (ns, local) = (nv.as_verified().as_bytes(), lv.as_verified().as_bytes());
+        let nv = verified_text_opt(ns, "namespace")?;
+        /* nil and "" alike are no namespace. */
+        let ns = nv.as_ref().map_or(&b""[..], |n| n.as_verified().as_bytes());
+        let local = lv.as_verified().as_bytes();
         edit.with_arena(|d, n| mutate::remove_attribute_ns(d, n, ns, local))?;
         Ok(rb_self)
     })
@@ -223,12 +226,13 @@ pub fn create_element(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Val
         }
 
         let nv = verified_text(name, "element name")?;
-        let cv = verified_text_or_absent(content, "element content")?;
-        let (name, text) = (nv.as_verified().as_bytes(), cv.as_verified().as_bytes());
+        let cv = verified_text_opt(content, "element content")?;
+        let name = nv.as_verified().as_bytes();
         let el = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
             mutate::new_element(d, name)
         })?)?;
-        if !content.is_nil() {
+        if let Some(cv) = &cv {
+            let text = cv.as_verified().as_bytes();
             xml_mut_result(with_arena_for_new_node(rb_self, |d| {
                 mutate::set_content(d, el, text)
             })?)?;
@@ -264,7 +268,7 @@ pub fn create_loose_dom_element(
         let qv = verified_text(qname, "qualified name")?;
         let lv = verified_text(local, "local name")?;
         let pv = verified_text_opt(prefix, "prefix")?;
-        let nv = verified_text_or_absent(ns, "namespace URI")?;
+        let nv = verified_text_opt(ns, "namespace URI")?;
 
         let qname = qv.as_verified().as_bytes();
         let sp = split_loose_dom_name(
@@ -273,7 +277,8 @@ pub fn create_loose_dom_element(
             lv.as_verified().as_bytes(),
         )
         .map_err(|e| Error::new(ruby.exception_arg_error(), e.message()))?;
-        let ns = nv.as_verified().as_bytes();
+        /* nil and "" alike are no namespace. */
+        let ns = nv.as_ref().map_or(&b""[..], |n| n.as_verified().as_bytes());
         let el = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
             mutate::new_loose_dom_element(d, qname, sp, ns)
         })?)?;
@@ -295,14 +300,15 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
         let name = a.required.0;
         let nil = ruby.qnil().as_value();
         let nv = verified_text(name, "doctype name")?;
-        let pv = verified_text_or_absent(a.optional.0.unwrap_or(nil), "doctype public id")?;
-        let sv = verified_text_or_absent(a.optional.1.unwrap_or(nil), "doctype system id")?;
-        /* An empty id is absent (NULL), matching the HTML factory and Nokogiri. */
-        let (name, pub_id, sys_id) = (
-            nv.as_verified().as_bytes(),
-            (pv.len() != 0).then(|| pv.as_verified().as_bytes()),
-            (sv.len() != 0).then(|| sv.as_verified().as_bytes()),
-        );
+        let pv = verified_text_opt(a.optional.0.unwrap_or(nil), "doctype public id")?;
+        let sv = verified_text_opt(a.optional.1.unwrap_or(nil), "doctype system id")?;
+        /* An empty id is absent, like nil, matching the HTML factory and Nokogiri. */
+        fn id(v: &Option<crate::bridge::string::RubyText>) -> Option<&[u8]> {
+            v.as_ref()
+                .map(|v| v.as_verified().as_bytes())
+                .filter(|b| !b.is_empty())
+        }
+        let (name, pub_id, sys_id) = (nv.as_verified().as_bytes(), id(&pv), id(&sv));
         let dt = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
             mutate::new_document_type(d, name, pub_id, sys_id)
         })?)?;

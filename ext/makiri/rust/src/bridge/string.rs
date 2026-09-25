@@ -123,18 +123,6 @@ impl<C> RubyStr<C> {
         self
     }
 
-    /// No String at all: a null pointer, which Lexbor and the engine read as an
-    /// omitted argument.
-    pub(crate) fn absent() -> Self {
-        Self {
-            value: rb_sys::Qnil as VALUE,
-            ptr: core::ptr::null(),
-            len: 0,
-            owns_lock: false,
-            contract: core::marker::PhantomData,
-        }
-    }
-
     pub(crate) fn len(&self) -> usize {
         self.len
     }

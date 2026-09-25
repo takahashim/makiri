@@ -350,15 +350,6 @@ pub fn verified_text(v: Value, what: &str) -> Result<RubyText, Error> {
     Ok(t)
 }
 
-/// [`verified_text`] for an optional argument whose absence the engine reads
-/// as a present-but-absent text: `nil` is [`RubyText::absent`].
-pub fn verified_text_or_absent(v: Value, what: &str) -> Result<RubyText, Error> {
-    if v.is_nil() {
-        return Ok(RubyText::absent());
-    }
-    verified_text(v, what)
-}
-
 /// [`verified_text`] for an optional argument: `nil` is `None` - the same
 /// shape as `bridge::string::ruby_verified_text_opt`.
 pub fn verified_text_opt(v: Value, what: &str) -> Result<Option<RubyText>, Error> {
