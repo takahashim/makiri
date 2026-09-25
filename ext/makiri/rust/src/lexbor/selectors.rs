@@ -418,8 +418,8 @@ enum Run {
 }
 
 impl Run {
-    unsafe fn call(&self, e: &Engine, node: *mut LxbNode, list: &CompiledList, ctx: *mut c_void) {
-        let list = list.as_ptr();
+    unsafe fn call(&self, e: &Engine, node: RawNode, list: &CompiledList, ctx: *mut c_void) {
+        let (node, list) = (node.as_lxb_mut(), list.as_ptr());
         match self {
             Run::Find(cb) => {
                 lxb_selectors_opt_set_noi(e.selectors, LXB_SELECTORS_OPT_MATCH_FIRST);
@@ -479,7 +479,7 @@ impl Drop for Session<'_> {
 unsafe fn with_compiled_selector(
     gvl: &Gvl,
     selector: &[u8],
-    node: *mut LxbNode,
+    node: RawNode,
     run: Run,
     ctx: *mut c_void,
 ) -> Result<(), SelectError> {
@@ -563,15 +563,8 @@ fn walk<C: Walk>(
 ) -> Result<(), SelectError> {
     // SAFETY: `root` is a live node whose document outlives the call, and
     // `C::RUN`'s callback reads the context as the `C` it is.
-    let walked = unsafe {
-        with_compiled_selector(
-            gvl,
-            selector,
-            root.as_lxb_mut(),
-            C::RUN,
-            (ctx as *mut C).cast(),
-        )
-    };
+    let walked =
+        unsafe { with_compiled_selector(gvl, selector, root, C::RUN, (ctx as *mut C).cast()) };
     /* Before the caller's `?`: Lexbor has unwound and the engine is reset, so
      * this is the first frame where re-raising is safe. */
     ctx.latch().resume();
