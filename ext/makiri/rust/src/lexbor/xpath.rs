@@ -10,11 +10,11 @@
 
 #![allow(unsafe_code)]
 
+use crate::cbuf::{Buf, BufError};
 use crate::engine_error::{Error, ErrorKind};
 use crate::lexbor::adapter::html::{HtmlAttr, HtmlDoc, HtmlNode, NsId, RawNode};
 use crate::lexbor::adapter::post_parse::HtmlParsed;
 use crate::token::{Kind, Token};
-use crate::xpath::abi::*;
 use crate::xpath::ctx::Context;
 use crate::xpath::dom::*;
 use core::ptr::NonNull;

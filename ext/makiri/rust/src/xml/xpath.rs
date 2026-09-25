@@ -12,9 +12,9 @@
 
 #![forbid(unsafe_code)]
 
+use crate::cbuf::{Buf, BufError};
 use crate::token::{Kind, Token};
 use crate::xml::model as xml;
-use crate::xpath::abi::*;
 use crate::xpath::ctx::Context;
 use crate::xpath::dom::{Bucket, Dom, NodeType};
 
