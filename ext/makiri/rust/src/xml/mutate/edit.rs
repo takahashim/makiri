@@ -5,7 +5,7 @@
 #![forbid(unsafe_code)]
 
 use crate::xml::chars::validate_chars;
-use crate::xml::{Document, MutStatus, NodeId, NodeType};
+use crate::xml::{Document, MutError, NodeId, NodeType};
 
 /// Whether `text` is free of the SEQUENCE its node kind cannot hold: "--" (or
 /// a trailing "-") in a comment, "]]>" in CDATA, "?>" in a PI. Each would close
@@ -22,16 +22,16 @@ pub(super) fn value_seq_ok(node_type: NodeType, text: &[u8]) -> bool {
     }
 }
 
-pub fn set_content(doc: &mut Document, node: NodeId, text: &[u8]) -> Result<(), MutStatus> {
+pub fn set_content(doc: &mut Document, node: NodeId, text: &[u8]) -> Result<(), MutError> {
     if !validate_chars(text) {
-        return Err(MutStatus::BadChars);
+        return Err(MutError::BadChars);
     }
     match doc.type_(node) {
         Some(ty @ (NodeType::Text | NodeType::CData | NodeType::Comment | NodeType::Pi)) => {
             if !value_seq_ok(ty, text) {
-                return Err(MutStatus::BadChars);
+                return Err(MutError::BadChars);
             }
-            doc.set_value_bytes(node, text).map_err(MutStatus::from)
+            doc.set_value_bytes(node, text).map_err(MutError::from)
         }
         Some(NodeType::Element) => {
             /* build the replacement TEXT node FIRST, so an OOM leaves the
@@ -46,6 +46,6 @@ pub fn set_content(doc: &mut Document, node: NodeId, text: &[u8]) -> Result<(), 
             doc.replace_children(node, t);
             Ok(())
         }
-        _ => Err(MutStatus::Type),
+        _ => Err(MutError::Type),
     }
 }

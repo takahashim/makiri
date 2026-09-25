@@ -23,7 +23,7 @@ use core::num::NonZeroU32;
 /// entry points published.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(i32)]
-pub enum Status {
+pub enum ParseError {
     Syntax = 1,
     Limit = 2,
     Oom = 3,
@@ -38,30 +38,30 @@ pub enum Status {
 /// `max_nodes`), a stack's cap (`MAX_NS`), or the machine's memory.
 ///
 /// Both the arena and the namespace-scope stack answer one of these two and
-/// nothing else, so each caller's conversion - [`Status`] for the parser,
-/// [`MutStatus`] for a mutation - is exhaustive rather than a guess.
+/// nothing else, so each caller's conversion - [`ParseError`] for the parser,
+/// [`MutError`] for a mutation - is exhaustive rather than a guess.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum BudgetError {
     Limit,
     Oom,
 }
 
-impl From<BudgetError> for Status {
+impl From<BudgetError> for ParseError {
     #[inline]
     fn from(e: BudgetError) -> Self {
         match e {
-            BudgetError::Limit => Status::Limit,
-            BudgetError::Oom => Status::Oom,
+            BudgetError::Limit => ParseError::Limit,
+            BudgetError::Oom => ParseError::Oom,
         }
     }
 }
 
-impl From<BudgetError> for MutStatus {
+impl From<BudgetError> for MutError {
     #[inline]
     fn from(e: BudgetError) -> Self {
         match e {
-            BudgetError::Limit => MutStatus::Limit,
-            BudgetError::Oom => MutStatus::Oom,
+            BudgetError::Limit => MutError::Limit,
+            BudgetError::Oom => MutError::Oom,
         }
     }
 }
@@ -210,11 +210,11 @@ impl NodeFlags {
 /// Why a tree mutation failed - the `Err` of every mutator's `Result`. Each
 /// variant names a rule the mutation broke, which the glue maps to a Ruby
 /// exception. There is deliberately no success variant: success is `Ok`.
-/// Kept distinct from [`Status`] because the failure domains differ (a mutation
-/// never fails with [`Status::Syntax`], a parse never with
-/// [`MutStatus::Cycle`]).
+/// Kept distinct from [`ParseError`] because the failure domains differ (a mutation
+/// never fails with [`ParseError::Syntax`], a parse never with
+/// [`MutError::Cycle`]).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum MutStatus {
+pub enum MutError {
     Oom,
     BadName,
     BadChars,
@@ -224,16 +224,16 @@ pub enum MutStatus {
     Hierarchy,
     BadNsDecl(crate::xml::qname::NsDeclError),
     /// A null / stale document handle reached a mutator; its own variant, so
-    /// it cannot be mistaken for [`MutStatus::UnboundNs`].
+    /// it cannot be mistaken for [`MutError::UnboundNs`].
     Internal,
     /// The document's OWN budget refused the allocation - `max_bytes` or
     /// `max_nodes` - which is not the machine running out of memory.
     ///
     /// It exists because without it every arena failure collapsed into
-    /// [`MutStatus::Oom`] at ~30 call sites, so filling a document's byte
+    /// [`MutError::Oom`] at ~30 call sites, so filling a document's byte
     /// budget told the caller "out of memory mutating XML" on a machine with
     /// gigabytes free. The parse path always kept them apart
-    /// ([`Status::Limit`] -> `Makiri::XML::LimitExceeded`); mutation now does
+    /// ([`ParseError::Limit`] -> `Makiri::XML::LimitExceeded`); mutation now does
     /// too. `From<BudgetError>` is the one conversion from an arena refusal.
     Limit,
     /// Another attribute of the element already has this (namespace URI, local
@@ -425,7 +425,7 @@ impl Node {
 
 /// The per-document allocation limit. `None` is the default budget,
 /// [`MAX_BYTES`].
-pub struct Limits {
+pub struct ParseLimits {
     pub max_bytes: Option<usize>,
 }
 

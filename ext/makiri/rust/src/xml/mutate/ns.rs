@@ -16,7 +16,7 @@
 
 use crate::falloc::VecPush;
 use crate::xml::qname::{xmlns_prefix, Split};
-use crate::xml::{Document, MutStatus, NodeFlags, NodeId, NodeType, Span};
+use crate::xml::{Document, MutError, NodeFlags, NodeId, NodeType, Span};
 
 /// A resolved namespace: a byte-store span (empty = no namespace).
 pub(super) type Ns = Span;
@@ -55,7 +55,7 @@ pub(super) fn resolve_ns(
     sp: &Split,
     is_attr: bool,
     connected: bool,
-) -> Result<Resolved, MutStatus> {
+) -> Result<Resolved, MutError> {
     let prefix = &name[..sp.prefix_len as usize];
     if is_attr && xmlns_prefix(name).is_some() {
         return Ok(Resolved::decided(doc.xmlns_ns_span()));
@@ -71,13 +71,13 @@ pub(super) fn resolve_ns(
         return Ok(Resolved::decided(doc.xml_ns_span()));
     }
     if prefix == b"xmlns" {
-        return Err(MutStatus::BadName);
+        return Err(MutError::BadName);
     }
     let s = resolve_in_scope(doc, scope, prefix);
     if s.len > 0 {
         Ok(Resolved::decided(s))
     } else if connected {
-        Err(MutStatus::UnboundNs)
+        Err(MutError::UnboundNs)
     } else {
         Ok(Resolved {
             ns: NO_NS,
@@ -123,7 +123,7 @@ fn resolves_name(doc: &Document, e: NodeId, part: Part) -> bool {
 /// binds, and that its attributes' keys stay unique, the rule the parser holds
 /// a document to (§3). Takes `&Document`, so the pass that must write nothing
 /// cannot.
-fn check_node_ns(doc: &Document, e: NodeId, connected: bool, part: Part) -> Result<(), MutStatus> {
+fn check_node_ns(doc: &Document, e: NodeId, connected: bool, part: Part) -> Result<(), MutError> {
     if resolves_name(doc, e, part) {
         resolve_ns(
             doc,
@@ -153,11 +153,11 @@ fn check_node_ns(doc: &Document, e: NodeId, connected: bool, part: Part) -> Resu
             Some(doc.node(attr).ns_uri)
         };
         if let Some(ns) = key {
-            keys.falloc_push((ns, attr)).map_err(|()| MutStatus::Oom)?;
+            keys.falloc_push((ns, attr)).map_err(|()| MutError::Oom)?;
         }
     }
     if super::attr::keys_repeat(doc, &mut keys) {
-        return Err(MutStatus::DuplicateAttr);
+        return Err(MutError::DuplicateAttr);
     }
     Ok(())
 }
@@ -170,7 +170,7 @@ fn commit_node_ns(
     e: NodeId,
     connected: bool,
     part: Part,
-) -> Result<(), MutStatus> {
+) -> Result<(), MutError> {
     if resolves_name(doc, e, part) {
         let r = resolve_ns(
             doc,
@@ -225,7 +225,7 @@ fn ns_is_decided(doc: &Document, e: NodeId) -> bool {
 
 /// Re-resolve every element in `root`'s subtree, all-or-nothing: one pass that
 /// only computes, and - only if every prefix binds - a second that writes.
-fn resolve_subtree(doc: &mut Document, root: NodeId, connected: bool) -> Result<(), MutStatus> {
+fn resolve_subtree(doc: &mut Document, root: NodeId, connected: bool) -> Result<(), MutError> {
     for pass in [Pass::Check, Pass::Commit] {
         let mut cur = Some(root);
         while let Some(c) = cur {
@@ -258,7 +258,7 @@ pub(super) fn resolve_into(
     doc: &mut Document,
     node: NodeId,
     context: NodeId,
-) -> Result<(), MutStatus> {
+) -> Result<(), MutError> {
     let saved = doc.parent(node);
     doc.set_parent(node, Some(context));
     let st = resolve_subtree(doc, node, doc.is_connected(node));

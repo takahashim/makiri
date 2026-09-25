@@ -9,7 +9,7 @@
 #![forbid(unsafe_code)]
 
 use super::ns::resolve_into;
-use crate::xml::{Document, MutStatus, NodeId, NodeType};
+use crate::xml::{Document, MutError, NodeId, NodeType};
 
 /// The three verbs that splice a fragment's children INTO an existing chain.
 /// `Replace` is not one: it swaps the target out, which is
@@ -50,7 +50,7 @@ pub fn place(
     target: NodeId,
     node: NodeId,
     place: Place,
-) -> Result<(), MutStatus> {
+) -> Result<(), MutError> {
     if doc.type_(node) != Some(NodeType::Fragment) {
         return match place {
             Place::Child => insert_child(doc, target, node),
@@ -81,7 +81,7 @@ fn splice_site(doc: &Document, target: NodeId, splice: Splice) -> Option<Site> {
 /// the fragment's and the container's own together. Also refuses a DOCTYPE
 /// child, which a fragment cannot hold today - a fragment is not an insertion
 /// container - but which would otherwise be a silent second root-level doctype.
-fn fragment_fits_container(doc: &Document, frag: NodeId, site: Site) -> Result<(), MutStatus> {
+fn fragment_fits_container(doc: &Document, frag: NodeId, site: Site) -> Result<(), MutError> {
     if doc.type_(site.container) != Some(NodeType::Document) {
         return Ok(());
     }
@@ -89,11 +89,11 @@ fn fragment_fits_container(doc: &Document, frag: NodeId, site: Site) -> Result<(
         + element_child_count(doc, site.container, site.excluded())
         > 1
     {
-        return Err(MutStatus::Hierarchy);
+        return Err(MutError::Hierarchy);
     }
     for cur in doc.children(frag) {
         if doc.type_(cur) == Some(NodeType::Doctype) {
-            return Err(MutStatus::Hierarchy);
+            return Err(MutError::Hierarchy);
         }
     }
     Ok(())
@@ -106,11 +106,7 @@ fn fragment_fits_container(doc: &Document, frag: NodeId, site: Site) -> Result<(
 /// name says what the code may do, not what it usually does.)
 ///
 /// On `Ok` the commit that follows cannot fail: it only relinks.
-fn prepare_fragment_children(
-    doc: &mut Document,
-    frag: NodeId,
-    site: Site,
-) -> Result<(), MutStatus> {
+fn prepare_fragment_children(doc: &mut Document, frag: NodeId, site: Site) -> Result<(), MutError> {
     fragment_fits_container(doc, frag, site)?;
     let mut c = doc.first_child(frag);
     while let Some(cur) = c {
@@ -126,9 +122,9 @@ fn place_fragment(
     target: NodeId,
     frag: NodeId,
     splice: Splice,
-) -> Result<(), MutStatus> {
+) -> Result<(), MutError> {
     let Some(site) = splice_site(doc, target, splice) else {
-        return Err(MutStatus::Hierarchy);
+        return Err(MutError::Hierarchy);
     };
     prepare_fragment_children(doc, frag, site)?;
     /* --- commit pass: relinking only, so nothing here can refuse. `After` is
@@ -309,12 +305,12 @@ impl Site {
     /// The WHATWG document-child rules for `node` entering this site: at most
     /// one element and one doctype under a Document, the doctype before the
     /// element, and no doctype anywhere else. Fail-closed.
-    fn check(&self, doc: &Document, node: NodeId) -> Result<(), MutStatus> {
+    fn check(&self, doc: &Document, node: NodeId) -> Result<(), MutError> {
         let ty = doc.type_(node);
         if doc.type_(self.container) != Some(NodeType::Document) {
             /* Only a Document may hold a doctype. */
             return if ty == Some(NodeType::Doctype) {
-                Err(MutStatus::Hierarchy)
+                Err(MutError::Hierarchy)
             } else {
                 Ok(())
             };
@@ -323,7 +319,7 @@ impl Site {
             Some(NodeType::Doctype) => {
                 let t = self.tally(doc, node);
                 if t.doctypes > 0 || t.element_before {
-                    Err(MutStatus::Hierarchy)
+                    Err(MutError::Hierarchy)
                 } else {
                     Ok(())
                 }
@@ -331,7 +327,7 @@ impl Site {
             Some(NodeType::Element) => {
                 let t = self.tally(doc, node);
                 if t.elements > 0 || t.doctype_at_or_after {
-                    Err(MutStatus::Hierarchy)
+                    Err(MutError::Hierarchy)
                 } else {
                     Ok(())
                 }
@@ -366,16 +362,16 @@ fn would_cycle(doc: &Document, container: NodeId, node: NodeId) -> bool {
 
 /// Validation + namespace resolution for inserting `node` at `site`. No
 /// structural change.
-fn prepare_insert(doc: &mut Document, site: Site, node: NodeId) -> Result<(), MutStatus> {
+fn prepare_insert(doc: &mut Document, site: Site, node: NodeId) -> Result<(), MutError> {
     if !is_insertable(doc, node) {
-        return Err(MutStatus::Hierarchy);
+        return Err(MutError::Hierarchy);
     }
     let ct = doc.type_(site.container);
     if ct != Some(NodeType::Element) && ct != Some(NodeType::Document) {
-        return Err(MutStatus::Hierarchy);
+        return Err(MutError::Hierarchy);
     }
     if would_cycle(doc, site.container, node) {
-        return Err(MutStatus::Cycle);
+        return Err(MutError::Cycle);
     }
     site.check(doc, node)?;
     resolve_into(doc, node, site.container)
@@ -383,7 +379,7 @@ fn prepare_insert(doc: &mut Document, site: Site, node: NodeId) -> Result<(), Mu
 
 /// Validate, then link `node` in at `site`. The shape every structural verb
 /// shares; what differs between them is only the [`Site`] they build.
-fn insert_at(doc: &mut Document, site: Site, node: NodeId) -> Result<(), MutStatus> {
+fn insert_at(doc: &mut Document, site: Site, node: NodeId) -> Result<(), MutError> {
     prepare_insert(doc, site, node)?;
     doc.detach(node);
     let (prev, next) = site.neighbours(doc);
@@ -392,36 +388,36 @@ fn insert_at(doc: &mut Document, site: Site, node: NodeId) -> Result<(), MutStat
     Ok(())
 }
 
-pub fn insert_child(doc: &mut Document, parent: NodeId, node: NodeId) -> Result<(), MutStatus> {
+pub fn insert_child(doc: &mut Document, parent: NodeId, node: NodeId) -> Result<(), MutError> {
     insert_at(doc, Site::appending(parent), node)
 }
 
-pub fn insert_before(doc: &mut Document, r: NodeId, node: NodeId) -> Result<(), MutStatus> {
+pub fn insert_before(doc: &mut Document, r: NodeId, node: NodeId) -> Result<(), MutError> {
     /* Beside itself is a no-op, not a self-loop. */
     if node == r {
         return Ok(());
     }
     match doc.parent(r) {
         Some(container) => insert_at(doc, Site::before(container, r), node),
-        None => Err(MutStatus::Hierarchy),
+        None => Err(MutError::Hierarchy),
     }
 }
 
-pub fn insert_after(doc: &mut Document, r: NodeId, node: NodeId) -> Result<(), MutStatus> {
+pub fn insert_after(doc: &mut Document, r: NodeId, node: NodeId) -> Result<(), MutError> {
     if node == r {
         return Ok(());
     }
     match doc.parent(r) {
         Some(container) => insert_at(doc, Site::after(container, r), node),
-        None => Err(MutStatus::Hierarchy),
+        None => Err(MutError::Hierarchy),
     }
 }
 
-pub fn replace_node(doc: &mut Document, r: NodeId, node: NodeId) -> Result<(), MutStatus> {
+pub fn replace_node(doc: &mut Document, r: NodeId, node: NodeId) -> Result<(), MutError> {
     /* The parent check comes FIRST here, unlike the sibling verbs: replacing a
      * DETACHED node is a hierarchy error even when it is replaced by itself. */
     let Some(container) = doc.parent(r) else {
-        return Err(MutStatus::Hierarchy);
+        return Err(MutError::Hierarchy);
     };
     if node == r {
         return Ok(());
@@ -462,9 +458,9 @@ pub fn replace_with_fragment(
     doc: &mut Document,
     target: NodeId,
     frag: NodeId,
-) -> Result<(), MutStatus> {
+) -> Result<(), MutError> {
     let Some(container) = doc.parent(target) else {
-        return Err(MutStatus::Hierarchy);
+        return Err(MutError::Hierarchy);
     };
     /* --- validation pass: no links change until it all passes */
     prepare_fragment_children(doc, frag, Site::replacing(container, target))?;

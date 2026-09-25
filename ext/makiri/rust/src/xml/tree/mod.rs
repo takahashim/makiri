@@ -17,7 +17,7 @@ use crate::falloc::Reserve;
 use crate::xml::chars::{is_reserved_pi_target, normalize_newlines, ExpandMode};
 use crate::xml::qname::{split_scanned, xmlns_prefix, Split};
 use crate::xml::{
-    Document, Limits, NodeFlags, NodeId, NodeType, Span, Status, MAX_ATTRS, MAX_DEPTH,
+    Document, NodeFlags, NodeId, NodeType, ParseError, ParseLimits, Span, MAX_ATTRS, MAX_DEPTH,
 };
 use cursor::{is_space, Cursor, InSlice, R};
 use dtd::{scan_external_id, Declared, ExternalId, Subset};
@@ -79,8 +79,8 @@ impl<'a> Parser<'a> {
     /// declared is not a syntax error but a construct Makiri refuses.
     fn expand(&mut self, s: &[u8], mode: ExpandMode) -> R<Span> {
         self.doc.expand(s, mode).map_err(|st| {
-            if st == Status::Syntax && self.declared.refs_unexpanded_entity(&self.cur, s) {
-                Status::Unsupported
+            if st == ParseError::Syntax && self.declared.refs_unexpanded_entity(&self.cur, s) {
+                ParseError::Unsupported
             } else {
                 st
             }
@@ -179,7 +179,7 @@ impl<'a> Parser<'a> {
                 return self.cur.limit();
             }
             if self.ratt.falloc_reserve(1).is_err() {
-                return Err(Status::Oom);
+                return Err(ParseError::Oom);
             }
             self.ratt.push(RawAttr { name, val });
         }
@@ -260,7 +260,7 @@ impl<'a> Parser<'a> {
         match has_duplicate_attributes(self.doc, el) {
             Some(false) => {}
             Some(true) => return self.cur.syntax(),
-            None => return Err(Status::Oom),
+            None => return Err(ParseError::Oom),
         }
         Ok(())
     }
@@ -471,7 +471,7 @@ impl<'a> Parser<'a> {
                 return self.cur.limit();
             }
             if self.stack.falloc_reserve(1).is_err() || self.frames.falloc_reserve(1).is_err() {
-                return Err(Status::Oom);
+                return Err(ParseError::Oom);
             }
             self.stack.push(el);
             self.frames.push(frame);
@@ -570,13 +570,13 @@ impl<'a> Parser<'a> {
 }
 
 /// Parse `src` into a fresh document under the default budget.
-pub fn parse(src: &[u8]) -> Result<Box<Document>, Status> {
+pub fn parse(src: &[u8]) -> Result<Box<Document>, ParseError> {
     parse_ex(src, None)
 }
 
 /// Parse `src` into a fresh document. `Document::create` applies `limits` and
 /// rejects an over-long source, so the budget is checked in exactly one place.
-pub fn parse_ex(src: &[u8], limits: Option<&Limits>) -> Result<Box<Document>, Status> {
+pub fn parse_ex(src: &[u8], limits: Option<&ParseLimits>) -> Result<Box<Document>, ParseError> {
     let mut doc = Document::create(limits.and_then(|l| l.max_bytes), src.len())?;
     let norm = normalize_newlines(src)?;
     Parser::new(norm.as_deref().unwrap_or(src), &mut doc, None).run_to_end(true)?;
@@ -596,9 +596,9 @@ pub fn parse_fragment(
     doc: &mut Document,
     src: &[u8],
     inherit_doc_ns: bool,
-) -> Result<NodeId, Status> {
+) -> Result<NodeId, ParseError> {
     if src.len() > doc.max_bytes {
-        return Err(Status::Limit);
+        return Err(ParseError::Limit);
     }
     let mark = doc.mark();
     match parse_fragment_into(doc, src, inherit_doc_ns) {
@@ -614,7 +614,7 @@ fn parse_fragment_into(
     doc: &mut Document,
     src: &[u8],
     inherit_doc_ns: bool,
-) -> Result<NodeId, Status> {
+) -> Result<NodeId, ParseError> {
     let frag = doc.new_node(NodeType::Fragment)?;
     let norm = normalize_newlines(src)?;
     let mut p = Parser::new(norm.as_deref().unwrap_or(src), doc, Some(frag));

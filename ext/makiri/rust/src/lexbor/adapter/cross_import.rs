@@ -23,7 +23,7 @@ use crate::falloc::{try_vec_with_capacity, VecPush};
 use crate::lexbor::adapter::html::{
     BuildingElement, BuildingNode, HtmlDoc, HtmlElement, HtmlNode, NsId, RawDoc, RawNode,
 };
-use crate::xml::model::{Document as XmlDoc, MutStatus, NodeId, NodeType};
+use crate::xml::model::{Document as XmlDoc, MutError, NodeId, NodeType};
 use crate::xml::mutate;
 
 /* ---- the node types on both sides ----
@@ -64,18 +64,18 @@ struct Frame<'a, S, D> {
 
 /// Declare `xmlns` (no prefix) or `xmlns:PREFIX` = `uri` on the detached mkr
 /// element, as an ordinary attribute.
-fn declare_ns(doc: &mut XmlDoc, el: NodeId, prefix: &[u8], uri: &[u8]) -> Result<(), MutStatus> {
+fn declare_ns(doc: &mut XmlDoc, el: NodeId, prefix: &[u8], uri: &[u8]) -> Result<(), MutError> {
     if prefix.is_empty() {
         mutate::set_attribute(doc, el, b"xmlns", uri)?;
         return Ok(());
     }
     let nlen = match 6usize.checked_add(prefix.len()).and_then(fits_u32) {
         Some(_) => 6 + prefix.len(),
-        None => return Err(MutStatus::Oom),
+        None => return Err(MutError::Oom),
     };
     let mut name: Vec<u8> = match try_vec_with_capacity(nlen) {
         Some(v) => v,
-        None => return Err(MutStatus::Oom),
+        None => return Err(MutError::Oom),
     };
     name.extend_from_slice(b"xmlns:");
     name.extend_from_slice(prefix);
@@ -104,14 +104,14 @@ fn declare_ns(doc: &mut XmlDoc, el: NodeId, prefix: &[u8], uri: &[u8]) -> Result
 /// * one in NO namespace whose name has a prefix other than `xml` (`fb:like`)
 ///   has no XML form: written as it stands it is a prefix with no binding, so
 ///   the copy was made and then could be neither inserted nor serialized. It is
-///   refused here instead, as `MutStatus::BadNsName` - or `BadName` when the
+///   refused here instead, as `MutError::BadNsName` - or `BadName` when the
 ///   name is not a QName at all. `xml:` keeps its fixed meaning, as the XML
 ///   reader gives it.
-fn h2x_copy_attrs(doc: &mut XmlDoc, s: HtmlElement<'_>, el: NodeId) -> Result<(), MutStatus> {
+fn h2x_copy_attrs(doc: &mut XmlDoc, s: HtmlElement<'_>, el: NodeId) -> Result<(), MutError> {
     for a in s.attrs() {
         let (name, value) = (a.qualified_name(), a.value());
         if fits_u32(name.len()).is_none() || fits_u32(value.len()).is_none() {
-            return Err(MutStatus::Oom);
+            return Err(MutError::Oom);
         }
 
         let own = a.own_ns();
@@ -148,11 +148,11 @@ fn h2x_copy_attrs(doc: &mut XmlDoc, s: HtmlElement<'_>, el: NodeId) -> Result<()
 /// when it reads as `prefix:local` (it has a prefix and no namespace), and
 /// `BadName` when it is no QName at all (`:class`, `a:b:c`), as a malformed
 /// name is refused everywhere else.
-fn no_namespace_colon(name: &[u8]) -> MutStatus {
+fn no_namespace_colon(name: &[u8]) -> MutError {
     if crate::xml::qname::split_checked(name).is_some() {
-        MutStatus::BadNsName
+        MutError::BadNsName
     } else {
-        MutStatus::BadName
+        MutError::BadName
     }
 }
 
@@ -172,7 +172,7 @@ fn h2x_make<'a>(
     s: HtmlNode<'a>,
     parent_default: Option<&'a [u8]>,
     parent: Option<NodeId>,
-) -> Result<Option<Made<'a>>, MutStatus> {
+) -> Result<Option<Made<'a>>, MutError> {
     let unchanged = |node| {
         Ok(Some(Made {
             node,
@@ -181,7 +181,7 @@ fn h2x_make<'a>(
     };
     let data = |n: HtmlNode<'a>| {
         let d = n.data().unwrap_or(&[]);
-        fits_u32(d.len()).map(|_| d).ok_or(MutStatus::Oom)
+        fits_u32(d.len()).map(|_| d).ok_or(MutError::Oom)
     };
 
     if let Some(e) = s.element() {
@@ -194,7 +194,7 @@ fn h2x_make<'a>(
         H::Pi => {
             let target = s.pi_target().unwrap_or(&[]);
             if fits_u32(target.len()).is_none() {
-                return Err(MutStatus::Oom);
+                return Err(MutError::Oom);
             }
             return unchanged(mutate::new_pi(doc, target, data(s)?)?);
         }
@@ -212,10 +212,10 @@ fn h2x_element<'a>(
     e: HtmlElement<'a>,
     parent_default: Option<&'a [u8]>,
     parent: Option<NodeId>,
-) -> Result<Made<'a>, MutStatus> {
+) -> Result<Made<'a>, MutError> {
     let name = e.qualified_name();
     let Some(nl) = fits_u32(name.len()) else {
-        return Err(MutStatus::Oom);
+        return Err(MutError::Oom);
     };
     let euri = html_ns_uri(e.node());
 
@@ -244,7 +244,7 @@ fn h2x_element<'a>(
     } else {
         mutate::new_element(doc, name)
     };
-    if made.as_ref().err() == Some(&MutStatus::BadName) && !name.is_empty() {
+    if made.as_ref().err() == Some(&MutError::BadName) && !name.is_empty() {
         made = loose(doc);
     }
     let el = made?;
@@ -287,24 +287,24 @@ pub unsafe fn cross_html_to_xml(
     xdoc: &mut XmlDoc,
     src: RawNode,
     deep: bool,
-) -> Result<NodeId, MutStatus> {
+) -> Result<NodeId, MutError> {
     let doc = xdoc;
     // SAFETY: the caller's contract.
     let src = unsafe { src.as_node() };
 
     /* `None`: the root's type has no XML counterpart. */
-    let root = h2x_make(doc, src, None, None)?.ok_or(MutStatus::Type)?;
+    let root = h2x_make(doc, src, None, None)?.ok_or(MutError::Type)?;
 
     if deep {
         let mut stack: Vec<Frame<'_, HtmlNode<'_>, NodeId>> =
-            try_vec_with_capacity(1).ok_or(MutStatus::Oom)?;
+            try_vec_with_capacity(1).ok_or(MutError::Oom)?;
         stack
             .falloc_push(Frame {
                 s: src,
                 d: root.node,
                 def: root.child_default,
             })
-            .map_err(|_| MutStatus::Oom)?;
+            .map_err(|_| MutError::Oom)?;
 
         while let Some(f) = stack.pop() {
             let mut c = h2x_first_child(f.s);
@@ -319,7 +319,7 @@ pub unsafe fn cross_html_to_xml(
                                 d: made.node,
                                 def: made.child_default,
                             })
-                            .map_err(|_| MutStatus::Oom)?;
+                            .map_err(|_| MutError::Oom)?;
                     }
                 }
                 c = child.next();
@@ -336,7 +336,7 @@ pub unsafe fn cross_html_to_xml(
 ///
 /// The document comes from `el` itself, so there is no second handle to keep in
 /// step with it.
-fn x2h_copy_attrs(doc: &XmlDoc, s: NodeId, el: BuildingElement<'_>) -> Result<(), MutStatus> {
+fn x2h_copy_attrs(doc: &XmlDoc, s: NodeId, el: BuildingElement<'_>) -> Result<(), MutError> {
     let mut a = doc.first_attr(s);
     while let Some(attr) = a {
         let (val, qname, ns) = (doc.value(attr), doc.qname(attr), doc.ns(attr));
@@ -345,7 +345,7 @@ fn x2h_copy_attrs(doc: &XmlDoc, s: NodeId, el: BuildingElement<'_>) -> Result<()
         } else {
             el.append_ns_attribute(ns, qname, val)
         }
-        .map_err(|_| MutStatus::Oom)?;
+        .map_err(|_| MutError::Oom)?;
         a = doc.next(attr);
     }
     Ok(())
@@ -360,8 +360,8 @@ fn x2h_make<'doc>(
     hdoc: HtmlDoc<'doc>,
     doc: &XmlDoc,
     s: NodeId,
-) -> Result<Option<BuildingNode<'doc>>, MutStatus> {
-    let made = |n: Option<BuildingNode<'doc>>| n.map(Some).ok_or(MutStatus::Oom);
+) -> Result<Option<BuildingNode<'doc>>, MutError> {
+    let made = |n: Option<BuildingNode<'doc>>| n.map(Some).ok_or(MutError::Oom);
 
     match doc.type_(s) {
         Some(NodeType::Element) => {
@@ -372,12 +372,12 @@ fn x2h_make<'doc>(
              * XHTML element is an HTML element, whose name is lower case. */
             let (prefix, ns) = (doc.prefix(s), doc.ns(s));
             let el = if prefix.is_empty() && hdoc.lookup_ns(ns) == Some(NsId::HTML) {
-                let el = hdoc.create_element(doc.qname(s)).ok_or(MutStatus::Oom)?;
+                let el = hdoc.create_element(doc.qname(s)).ok_or(MutError::Oom)?;
                 el.set_ns(NsId::HTML);
                 el
             } else {
                 hdoc.create_element_ns(doc.local(s), ns, prefix)
-                    .ok_or(MutStatus::Oom)?
+                    .ok_or(MutError::Oom)?
             };
 
             x2h_copy_attrs(doc, s, el)?;
@@ -386,7 +386,7 @@ fn x2h_make<'doc>(
         Some(NodeType::Text) => made(hdoc.create_text(doc.value(s))),
         Some(NodeType::Comment) => made(hdoc.create_comment(doc.value(s))),
         Some(NodeType::Pi) => made(hdoc.create_pi(doc.local(s), doc.value(s))),
-        Some(NodeType::CData) => Err(MutStatus::Type), /* HTML has no CDATA section */
+        Some(NodeType::CData) => Err(MutError::Type), /* HTML has no CDATA section */
         Some(NodeType::Fragment) => made(hdoc.create_fragment()),
         _ => Ok(None), /* unsupported descendant type: skip */
     }
@@ -401,23 +401,23 @@ pub unsafe fn cross_xml_to_html(
     doc: &XmlDoc,
     src: NodeId,
     deep: bool,
-) -> Result<RawNode, MutStatus> {
+) -> Result<RawNode, MutError> {
     // SAFETY: the caller's contract.
     let hdoc = unsafe { hdoc.as_doc() };
 
     /* `None` is a root whose type has no HTML counterpart. */
-    let root = x2h_make(hdoc, doc, src)?.ok_or(MutStatus::Type)?;
+    let root = x2h_make(hdoc, doc, src)?.ok_or(MutError::Type)?;
 
     if deep {
         let mut stack: Vec<Frame<NodeId, BuildingNode<'_>>> =
-            try_vec_with_capacity(1).ok_or(MutStatus::Oom)?;
+            try_vec_with_capacity(1).ok_or(MutError::Oom)?;
         stack
             .falloc_push(Frame {
                 s: src,
                 d: root.link_target(),
                 def: None,
             })
-            .map_err(|_| MutStatus::Oom)?;
+            .map_err(|_| MutError::Oom)?;
 
         while let Some(f) = stack.pop() {
             let mut c = doc.first_child(f.s);
@@ -432,7 +432,7 @@ pub unsafe fn cross_xml_to_html(
                                 d: dc.link_target(),
                                 def: None,
                             })
-                            .map_err(|_| MutStatus::Oom)?;
+                            .map_err(|_| MutError::Oom)?;
                     }
                 }
                 c = doc.next(cid);

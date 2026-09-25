@@ -12,7 +12,7 @@
 mod expand;
 
 use crate::falloc::Reserve;
-use crate::xml::Status;
+use crate::xml::ParseError;
 /* The engine is reached ONLY through these three names, so there is never a
  * second equally-correct way to spell one of them. */
 pub use expand::{expand_into, ExpandErr, ExpandMode};
@@ -165,13 +165,13 @@ impl Utf8Char {
 /// The allocation is fallible, and its only failure mode is running out of
 /// memory - so it says so, rather than returning a bare `Err(())` whose detail
 /// the caller had to supply from somewhere else.
-pub fn normalize_newlines(src: &[u8]) -> Result<Option<Vec<u8>>, Status> {
+pub fn normalize_newlines(src: &[u8]) -> Result<Option<Vec<u8>>, ParseError> {
     if !src.contains(&b'\r') {
         return Ok(None);
     }
     let mut out: Vec<u8> = Vec::new();
     out.falloc_reserve_exact(src.len())
-        .map_err(|_| Status::Oom)?;
+        .map_err(|_| ParseError::Oom)?;
     /* Each CR becomes an LF, and swallows an LF right after it (CRLF -> LF).
      * Reserved exactly above, and the output only shrinks, so nothing here
      * reallocates. */

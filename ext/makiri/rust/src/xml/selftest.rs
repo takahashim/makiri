@@ -17,7 +17,7 @@ use crate::xml::mutate;
 use crate::xml::qname;
 use crate::xml::tree::{parse, parse_ex, parse_fragment};
 use crate::xml::{
-    BudgetError, Document, Limits, Link, MutStatus, NodeId, NodeType, Status, MAX_BYTES,
+    BudgetError, Document, Link, MutError, NodeId, NodeType, ParseError, ParseLimits, MAX_BYTES,
     XMLNS_NS_URI, XML_NS_URI,
 };
 
@@ -41,7 +41,7 @@ fn parse_ok(s: &[u8]) -> Box<Document> {
 
 /// `s` must be refused, and with exactly `want` - a document that fails for the
 /// wrong reason is as much a bug as one that is accepted.
-fn assert_rejected(s: &[u8], want: Status) {
+fn assert_rejected(s: &[u8], want: ParseError) {
     match parse(s) {
         Ok(_) => panic!("accepted {}, which must fail with {want:?}", show(s)),
         Err(got) => assert_eq!(got, want, "wrong status refusing {}", show(s)),
@@ -68,20 +68,24 @@ fn attr(d: &Document, n: NodeId) -> NodeId {
 /// Parse the first `len` bytes of `src`, checking `len` against the byte budget
 /// BEFORE the bytes are touched - a caller can reach the entry point with a
 /// length longer than the buffer it holds.
-fn parse_ex_len(src: &[u8], len: usize, limits: Option<usize>) -> Result<Box<Document>, Status> {
+fn parse_ex_len(
+    src: &[u8],
+    len: usize,
+    limits: Option<usize>,
+) -> Result<Box<Document>, ParseError> {
     let max = limits.unwrap_or(MAX_BYTES);
     if len > max {
-        return Err(Status::Limit);
+        return Err(ParseError::Limit);
     }
     parse_limited(&src[..len], limits)
 }
 
 /// `parse_ex` under an optional byte budget.
-fn parse_limited(src: &[u8], limits: Option<usize>) -> Result<Box<Document>, Status> {
+fn parse_limited(src: &[u8], limits: Option<usize>) -> Result<Box<Document>, ParseError> {
     match limits {
         Some(max_bytes) => parse_ex(
             src,
-            Some(&Limits {
+            Some(&ParseLimits {
                 max_bytes: Some(max_bytes),
             }),
         ),
@@ -94,9 +98,9 @@ fn parse_fragment_checked(
     doc: &mut Document,
     src: &[u8],
     inherit_doc_ns: bool,
-) -> Result<NodeId, Status> {
+) -> Result<NodeId, ParseError> {
     if src.len() > doc.max_bytes {
-        return Err(Status::Limit);
+        return Err(ParseError::Limit);
     }
     parse_fragment(doc, src, inherit_doc_ns)
 }
@@ -245,7 +249,7 @@ fn well_formedness_errors_fail_closed() {
         b"<a x=>",
         b"<a y='<'>",
     ] {
-        assert_rejected(s, Status::Syntax);
+        assert_rejected(s, ParseError::Syntax);
     }
 }
 
@@ -271,7 +275,7 @@ fn bad_references_fail_closed() {
         b"<a>&#xD800;</a>",    /* a surrogate */
         b"<a>&#;</a>",         /* no digits */
     ] {
-        assert_rejected(s, Status::Syntax);
+        assert_rejected(s, ParseError::Syntax);
     }
 }
 
@@ -323,7 +327,7 @@ fn namespace_errors_fail_closed() {
         b"<a xmlns:xml='wrong'/>", /* the reserved xml: prefix */
         b"<a:b xmlns:a=''/>",      /* XML 1.0 forbids xmlns:p="" */
     ] {
-        assert_rejected(s, Status::Syntax);
+        assert_rejected(s, ParseError::Syntax);
     }
 }
 
@@ -393,7 +397,7 @@ fn section_9_violations_fail_closed() {
         b"<!DOCTYPE r [ <!BOGUS> ]><r/>",            /* §5.1: the subset is checked */
         b"<!DOCTYPE r [ <!ENTITY e \"%p;\"> ]><r/>", /* WFC: PEs in Internal Subset */
     ] {
-        assert_rejected(s, Status::Syntax);
+        assert_rejected(s, ParseError::Syntax);
     }
 }
 
@@ -407,7 +411,7 @@ fn a_dtd_construct_makiri_would_have_to_apply_is_refused_not_ignored() {
         b"<!DOCTYPE r [ <!ATTLIST r k ID #IMPLIED> ]><r/>",   /* a non-CDATA type */
         b"<!DOCTYPE r [ <!ENTITY % p \"x\"> %p; ]><r/>",      /* a parameter entity */
     ] {
-        assert_rejected(s, Status::Unsupported);
+        assert_rejected(s, ParseError::Unsupported);
     }
 }
 
@@ -492,7 +496,7 @@ fn strict_names_duplicate_attributes_and_a_bare_cdata_close_fail_closed() {
         b"<e xmlns:a='u' xmlns:b='u' a:x='1' b:x='2'/>", /* §9.3, by (ns, local) */
         b"<a>foo]]>bar</a>",                             /* §2.4 */
     ] {
-        assert_rejected(s, Status::Syntax);
+        assert_rejected(s, ParseError::Syntax);
     }
     /* Only the full "]]>" is forbidden, not the brackets that lead to it. */
     let doc = parse_ok(b"<a>1]2]]3</a>");
@@ -516,12 +520,12 @@ fn the_xml_declaration_grammar_is_enforced() {
         b"<a x=\"1\"y=\"2\"/>",              /* §3.1 S-separated */
         b"<a>&#X58;</a>",                    /* §4.1: lowercase 'x' only */
     ] {
-        assert_rejected(s, Status::Syntax);
+        assert_rejected(s, ParseError::Syntax);
     }
     /* §2.8: a 1.x label is read as 1.0; 2.0 is not a VersionNum at all. */
     parse_ok(b"<?xml version=\"1.1\"?><r/>");
     parse_ok(b"<?xml version=\"1.5\"?><r/>");
-    assert_rejected(b"<?xml version=\"2.0\"?><r/>", Status::Syntax);
+    assert_rejected(b"<?xml version=\"2.0\"?><r/>", ParseError::Syntax);
 }
 
 #[test]
@@ -531,7 +535,7 @@ fn the_byte_budget_is_checked_before_the_source_is_read() {
      * it could not, holding only four bytes. */
     assert_eq!(
         parse_ex_len(tiny, MAX_BYTES + 1, None).err(),
-        Some(Status::Limit)
+        Some(ParseError::Limit)
     );
     parse_ok(tiny);
 }
@@ -542,14 +546,14 @@ fn a_per_parse_byte_budget_overrides_the_default() {
     for max in [2, 64] {
         assert_eq!(
             parse_ex_len(src, src.len(), Some(max)).err(),
-            Some(Status::Limit),
+            Some(ParseError::Limit),
             "{max} bytes cannot hold this document's arena"
         );
     }
     let d = parse_ex_len(src, src.len(), Some(1024 * 1024)).expect("a megabyte is plenty");
     assert_eq!(d.local(root_of(&d)), b"root");
     /* No override is the default budget. */
-    parse_ex(src, Some(&Limits { max_bytes: None })).expect("the default budget");
+    parse_ex(src, Some(&ParseLimits { max_bytes: None })).expect("the default budget");
 }
 
 #[test]
@@ -666,7 +670,7 @@ fn an_attribute_value_that_is_not_xml_char_is_refused() {
     let (mut doc, r) = detached_element(b"r");
     assert_eq!(
         mutate::set_attribute(&mut doc, r, b"k", b"\x01"),
-        Err(MutStatus::BadChars)
+        Err(MutError::BadChars)
     );
 }
 
@@ -677,22 +681,22 @@ fn a_leaf_value_holding_its_own_close_sequence_is_refused() {
      * is refused rather than escaped. */
     assert_eq!(
         mutate::new_chardata(&mut doc, NodeType::Comment, b"a--b"),
-        Err(MutStatus::BadChars)
+        Err(MutError::BadChars)
     );
     assert_eq!(
         mutate::new_chardata(&mut doc, NodeType::Comment, b"x-"),
-        Err(MutStatus::BadChars),
+        Err(MutError::BadChars),
         "a trailing '-' would make '-->' out of the close"
     );
     assert_eq!(
         mutate::new_chardata(&mut doc, NodeType::CData, b"a]]>b"),
-        Err(MutStatus::BadChars)
+        Err(MutError::BadChars)
     );
 
     let ok = mutate::new_chardata(&mut doc, NodeType::Comment, b"a-b").expect("one '-' is fine");
     assert_eq!(
         mutate::set_content(&mut doc, ok, b"x--y"),
-        Err(MutStatus::BadChars),
+        Err(MutError::BadChars),
         "and the rule holds on a later write, not just at creation"
     );
 }
@@ -702,7 +706,7 @@ fn a_prefix_may_not_be_bound_to_the_empty_namespace() {
     let (mut doc, r) = detached_element(b"r");
     assert_eq!(
         mutate::set_attribute(&mut doc, r, b"xmlns:q", b""),
-        Err(MutStatus::BadNsDecl(
+        Err(MutError::BadNsDecl(
             crate::xml::qname::NsDeclError::PrefixToEmpty
         ))
     );
@@ -891,7 +895,7 @@ fn an_unbound_prefix_in_the_live_tree_is_refused_and_changes_nothing() {
     let ub = mutate::new_element(&mut doc, b"z:c").expect("an element with an unbound prefix");
     assert_eq!(
         mutate::insert_child(&mut doc, pr, ub),
-        Err(MutStatus::UnboundNs),
+        Err(MutError::UnboundNs),
         "connected, so an unbound prefix is an error rather than deferred"
     );
     assert!(doc.parent(ub).is_none(), "the refused node stayed detached");
@@ -927,10 +931,7 @@ fn resolution_is_deferred_until_the_subtree_joins_the_document() {
 #[test]
 fn inserting_an_ancestor_into_its_own_descendant_is_a_cycle() {
     let (mut doc, _docn, pr, ne) = connected_tree();
-    assert_eq!(
-        mutate::insert_child(&mut doc, ne, pr),
-        Err(MutStatus::Cycle)
-    );
+    assert_eq!(mutate::insert_child(&mut doc, ne, pr), Err(MutError::Cycle));
 }
 
 #[test]
@@ -988,7 +989,7 @@ fn a_document_takes_only_one_root_element() {
     let root2 = mutate::new_element(&mut doc, b"root2").expect("a second root");
     assert_eq!(
         mutate::insert_child(&mut doc, docn, root2),
-        Err(MutStatus::Hierarchy)
+        Err(MutError::Hierarchy)
     );
 }
 

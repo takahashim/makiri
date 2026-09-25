@@ -23,7 +23,7 @@
 use crate::falloc::Reserve;
 use crate::xml::chars::{expand_into, ExpandErr, ExpandMode};
 use crate::xml::qname::Split;
-use crate::xml::{BudgetError, Document, Link, Node, NodeId, NodeType, Span, Status};
+use crate::xml::{BudgetError, Document, Link, Node, NodeId, NodeType, ParseError, Span};
 use core::sync::atomic::{AtomicU32, Ordering};
 
 /// Hands each document a unique stamp (never 0). Node ids carry it so a handle
@@ -356,7 +356,7 @@ impl Document {
     }
 
     /// Expand XML references into one byte-store span.
-    pub(super) fn expand(&mut self, src: &[u8], mode: ExpandMode) -> Result<Span, Status> {
+    pub(super) fn expand(&mut self, src: &[u8], mode: ExpandMode) -> Result<Span, ParseError> {
         if src.is_empty() {
             return Ok(Span::EMPTY);
         }
@@ -370,11 +370,11 @@ impl Document {
             Ok(n) => n,
             Err(ExpandErr::Syntax) => {
                 self.bytes.truncate(off);
-                return Err(Status::Syntax);
+                return Err(ParseError::Syntax);
             }
             Err(ExpandErr::Overflow) => {
                 self.bytes.truncate(off);
-                return Err(Status::Internal);
+                return Err(ParseError::Internal);
             }
         };
         self.bytes.truncate(off + n);

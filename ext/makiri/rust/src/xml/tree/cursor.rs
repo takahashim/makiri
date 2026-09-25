@@ -23,12 +23,12 @@
 
 use crate::xml::chars::{decode1, is_name_char, is_name_start, validate_chars};
 use crate::xml::qname::split_scanned;
-use crate::xml::Status;
+use crate::xml::ParseError;
 
 /// The parser's result. The error is the cause, and `?` carries it out
 /// unchanged: the parse stops at its first failure, so the first failure is the
 /// one reported.
-pub(super) type R<T = ()> = Result<T, Status>;
+pub(super) type R<T = ()> = Result<T, ParseError>;
 
 /// A slice of the input, as (offset, length). Read it with [`Cursor::slice`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -169,17 +169,17 @@ impl<'a> Cursor<'a> {
 
     #[inline]
     pub(super) fn syntax<T>(&self) -> R<T> {
-        Err(Status::Syntax)
+        Err(ParseError::Syntax)
     }
     /// Well-formed, but uses a DTD construct Makiri refuses rather than
     /// silently ignores (see [`super::dtd`]).
     #[inline]
     pub(super) fn unsupported<T>(&self) -> R<T> {
-        Err(Status::Unsupported)
+        Err(ParseError::Unsupported)
     }
     #[inline]
     pub(super) fn limit<T>(&self) -> R<T> {
-        Err(Status::Limit)
+        Err(ParseError::Limit)
     }
     #[inline]
     pub(super) fn need_space(&mut self) -> R {

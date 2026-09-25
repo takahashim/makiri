@@ -36,9 +36,7 @@ use crate::init::{
     CLASS_XML_TEXT,
 };
 use crate::lexbor::adapter::cross_import::cross_html_to_xml;
-use crate::xml::model::{
-    Document as XmlDoc, Limits as XmlLimits, MutStatus, NodeId, NodeType, Status,
-};
+use crate::xml::model::{Document as XmlDoc, MutError, NodeId, NodeType, ParseError, ParseLimits};
 use crate::xml::mutate::{clone_node, copy_node_from, import_subtree, remove as remove_node};
 use crate::xml::qname::NsDeclError;
 use crate::xml::tree;
@@ -185,26 +183,26 @@ pub fn xml_wrap_rel_value(this: XmlSelf, rel: NodeId) -> Value {
 
 /// A mutation's or translation's `Result` with its failure as the Ruby
 /// exception [`xml_mut_error`] maps the status to.
-pub fn xml_mut_result<T>(r: Result<T, MutStatus>) -> Result<T, Error> {
+pub fn xml_mut_result<T>(r: Result<T, MutError>) -> Result<T, Error> {
     r.map_err(xml_mut_error)
 }
 
 /// The exception for a failed mutation's status.
-fn xml_mut_error(st: MutStatus) -> Error {
+fn xml_mut_error(st: MutError) -> Error {
     let msg: &str = match st {
-        MutStatus::Oom => "out of memory mutating XML",
-        MutStatus::BadName => {
+        MutError::Oom => "out of memory mutating XML",
+        MutError::BadName => {
             return crate::bridge::ruby::arg_error("not a well-formed XML name");
         }
-        MutStatus::BadChars => "value contains a character or sequence not permitted in XML",
-        MutStatus::UnboundNs => "namespace prefix is not bound in this scope",
-        MutStatus::Type => "operation unsupported for this node type",
-        MutStatus::Cycle => "cannot insert a node into its own subtree",
-        MutStatus::Hierarchy => {
+        MutError::BadChars => "value contains a character or sequence not permitted in XML",
+        MutError::UnboundNs => "namespace prefix is not bound in this scope",
+        MutError::Type => "operation unsupported for this node type",
+        MutError::Cycle => "cannot insert a node into its own subtree",
+        MutError::Hierarchy => {
             "invalid placement (an attribute/document node cannot be a tree child, a document \
 allows a single root element, and a sibling target must have a parent)"
         }
-        MutStatus::BadNsDecl(why) => match why {
+        MutError::BadNsDecl(why) => match why {
             NsDeclError::Xmlns => "namespace declaration not permitted: xmlns cannot be declared",
             NsDeclError::XmlElsewhere => {
                 "namespace declaration not permitted: xml can only be bound to \
@@ -223,17 +221,17 @@ the default namespace"
 namespace (only xmlns=\"\" undeclares, and only the default)"
             }
         },
-        MutStatus::DuplicateAttr => {
+        MutError::DuplicateAttr => {
             "the element already has an attribute with that namespace and local name"
         }
-        MutStatus::BadNsName => {
+        MutError::BadNsName => {
             "the namespace does not fit the qualified name (a prefix needs a namespace; \
 xml and xmlns take only their own)"
         }
-        MutStatus::Internal => "internal error mutating XML (no document)",
+        MutError::Internal => "internal error mutating XML (no document)",
         /* The document's own budget, not the machine's memory - so the same
          * exception a parse raises for the same cause. */
-        MutStatus::Limit => {
+        MutError::Limit => {
             return Error::new(
                 EXC_XML_LIMIT_EXCEEDED.exception(),
                 "XML document exceeded its byte or node budget",
@@ -364,18 +362,18 @@ pub fn verified_text_opt(v: Value, what: &str) -> Result<Option<RubyText>, Error
  * ------------------------------------------------------------------ */
 
 /// A `Makiri::XML::SyntaxError`-family error for a parse status.
-fn parse_status_error(status: Status, unit: Unit) -> Error {
+fn parse_status_error(status: ParseError, unit: Unit) -> Error {
     match status {
-        Status::Syntax => Error::new(EXC_XML_SYNTAX_ERROR.exception(), unit.malformed()),
-        Status::Limit => Error::new(EXC_XML_LIMIT_EXCEEDED.exception(), unit.budget()),
-        Status::Unsupported => Error::new(
+        ParseError::Syntax => Error::new(EXC_XML_SYNTAX_ERROR.exception(), unit.malformed()),
+        ParseError::Limit => Error::new(EXC_XML_LIMIT_EXCEEDED.exception(), unit.budget()),
+        ParseError::Unsupported => Error::new(
             EXC_XML_SYNTAX_ERROR.exception(),
             "unsupported DTD construct: Makiri does not apply attribute defaults or \
              non-CDATA attribute types, expand parameter entities, or expand entities \
              a DTD declares",
         ),
         /* The generic "failed to parse" bucket. */
-        Status::Oom | Status::Internal => makiri_error(unit.failed()),
+        ParseError::Oom | ParseError::Internal => makiri_error(unit.failed()),
     }
 }
 
@@ -415,7 +413,11 @@ impl Unit {
 /// byte or a NUL all raise), then copies into a private buffer BEFORE the
 /// wrapper exists, so no GC point can run between obtaining the decoded String
 /// and copying it.
-pub fn parse_xml_document(source: Value, limits: XmlLimits, budget: usize) -> Result<Value, Error> {
+pub fn parse_xml_document(
+    source: Value,
+    limits: ParseLimits,
+    budget: usize,
+) -> Result<Value, Error> {
     let source = crate::bridge::ruby::string_of(source)?;
     let decoded = xml_decode_input_value(source, Some(budget))?;
     let src = crate::bridge::string::ruby_string_bytes(decoded)?;

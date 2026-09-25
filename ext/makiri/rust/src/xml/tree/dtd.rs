@@ -5,7 +5,7 @@
 //! APPLY what it declares, so a declaration that WOULD change the tree - an
 //! attribute default or a non-CDATA attribute type (§3.3.2-3.3.3), or a
 //! parameter-entity reference whose replacement text could carry either - makes
-//! the parse fail with [`Status::Unsupported`] instead of being silently
+//! the parse fail with [`ParseError::Unsupported`] instead of being silently
 //! ignored. Entity declarations are accepted: declaring one changes nothing
 //! until a reference to it, and that reference is refused where it occurs.
 //!
@@ -20,7 +20,7 @@ use super::cursor::{find, Cursor, InSlice, R};
 use crate::falloc::Reserve;
 use crate::xml::chars::is_reserved_pi_target;
 use crate::xml::chars::validate_name;
-use crate::xml::{Status, MAX_DEPTH};
+use crate::xml::{ParseError, MAX_DEPTH};
 
 /// An ExternalID's identifiers (§4.2.2). Either may be absent, and which one is
 /// present is the difference between SYSTEM and PUBLIC, so they are named
@@ -425,7 +425,7 @@ impl<'c, 'a> Subset<'c, 'a> {
         self.end_decl()?;
         if !pe {
             if self.declared.names.falloc_reserve(1).is_err() {
-                return Err(Status::Oom);
+                return Err(ParseError::Oom);
             }
             self.declared.names.push(name);
         }

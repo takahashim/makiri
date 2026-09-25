@@ -13,7 +13,7 @@
 use super::copy_span;
 use crate::falloc::Reserve;
 use crate::xml::qname::Split;
-use crate::xml::{Document, MutStatus, NodeFlags, NodeId, NodeType, Span};
+use crate::xml::{Document, MutError, NodeFlags, NodeId, NodeType, Span};
 
 /// A copied `value` span. XML distinguishes "never set" from "set to empty" - a
 /// doctype's `PUBLIC ""` is present - so a copy has to carry the difference.
@@ -24,7 +24,7 @@ enum CopiedValue {
 }
 
 impl CopiedValue {
-    fn read(doc: &Document, span: Span) -> Result<CopiedValue, MutStatus> {
+    fn read(doc: &Document, span: Span) -> Result<CopiedValue, MutError> {
         Ok(if span.len > 0 {
             CopiedValue::Bytes(copy_span(doc.span(span))?)
         } else if span.is_absent() {
@@ -35,11 +35,11 @@ impl CopiedValue {
     }
 
     /// The span to store: ABSENT stays absent, the rest land in `dst`'s bytes.
-    fn write(&self, dst: &mut Document) -> Result<Span, MutStatus> {
+    fn write(&self, dst: &mut Document) -> Result<Span, MutError> {
         match self {
             CopiedValue::Absent => Ok(Span::ABSENT),
             CopiedValue::Empty => Ok(Span::EMPTY),
-            CopiedValue::Bytes(v) => dst.store(v).map_err(MutStatus::from),
+            CopiedValue::Bytes(v) => dst.store(v).map_err(MutError::from),
         }
     }
 }
@@ -63,9 +63,9 @@ struct CopiedNode {
 
 impl CopiedNode {
     /// Lift `src`'s own fields and attributes out of `doc`.
-    fn read(doc: &Document, src: NodeId) -> Result<CopiedNode, MutStatus> {
+    fn read(doc: &Document, src: NodeId) -> Result<CopiedNode, MutError> {
         let Some(node) = doc.try_node(src) else {
-            return Err(MutStatus::Type);
+            return Err(MutError::Type);
         };
         let (type_, flags) = (node.type_, node.flags);
         let (qname_span, local_span, value_span, ns_span, prefix_span) =
@@ -101,7 +101,7 @@ impl CopiedNode {
 
         let mut attrs: Vec<CopiedNode> = Vec::new();
         for attr in doc.attributes(src) {
-            attrs.falloc_reserve(1).map_err(|_| MutStatus::Oom)?;
+            attrs.falloc_reserve(1).map_err(|_| MutError::Oom)?;
             attrs.push(CopiedNode::read(doc, attr)?);
         }
 
@@ -118,7 +118,7 @@ impl CopiedNode {
     }
 
     /// Write these fields as a fresh, detached node in `dst`.
-    fn write(&self, dst: &mut Document) -> Result<NodeId, MutStatus> {
+    fn write(&self, dst: &mut Document) -> Result<NodeId, MutError> {
         let n = dst.new_node(self.type_)?;
         if let Some((name, sp)) = &self.qname {
             dst.assign_qname(n, name, sp.prefix_len, sp.local_off, sp.local_len)?;
@@ -167,17 +167,17 @@ fn source<'a>(dst: &'a Document, from: ReadFrom<'a>) -> &'a Document {
 }
 
 /// One arena copy of `src` - own fields and attributes, NOT children.
-fn copy_one(dst: &mut Document, from: ReadFrom<'_>, src: NodeId) -> Result<NodeId, MutStatus> {
+fn copy_one(dst: &mut Document, from: ReadFrom<'_>, src: NodeId) -> Result<NodeId, MutError> {
     let copied = CopiedNode::read(source(dst, from), src)?;
     copied.write(dst)
 }
 
 /// Deep copy of `src`'s subtree (iterative; no recursion, so a deep tree cannot
 /// exhaust the stack).
-fn deep_copy(dst: &mut Document, from: ReadFrom<'_>, src: NodeId) -> Result<NodeId, MutStatus> {
+fn deep_copy(dst: &mut Document, from: ReadFrom<'_>, src: NodeId) -> Result<NodeId, MutError> {
     let root = copy_one(dst, from, src)?;
     let mut stack: Vec<(NodeId, NodeId)> = Vec::new();
-    stack.falloc_reserve(1).map_err(|_| MutStatus::Oom)?;
+    stack.falloc_reserve(1).map_err(|_| MutError::Oom)?;
     stack.push((src, root));
     while let Some((s, d)) = stack.pop() {
         let mut sc = source(dst, from).first_child(s);
@@ -185,7 +185,7 @@ fn deep_copy(dst: &mut Document, from: ReadFrom<'_>, src: NodeId) -> Result<Node
             let dc = copy_one(dst, from, child)?;
             dst.append_child(d, dc);
             if source(dst, from).first_child(child).is_some() {
-                stack.falloc_reserve(1).map_err(|_| MutStatus::Oom)?;
+                stack.falloc_reserve(1).map_err(|_| MutError::Oom)?;
                 stack.push((child, dc));
             }
             sc = source(dst, from).next(child);
@@ -209,7 +209,7 @@ pub fn import_subtree(
     dst: &mut Document,
     src_doc: &Document,
     src: NodeId,
-) -> Result<NodeId, MutStatus> {
+) -> Result<NodeId, MutError> {
     debug_assert_distinct(dst, src_doc);
     deep_copy(dst, Some(src_doc), src)
 }
@@ -220,7 +220,7 @@ pub fn copy_node_from(
     src_doc: &Document,
     src: NodeId,
     deep: bool,
-) -> Result<NodeId, MutStatus> {
+) -> Result<NodeId, MutError> {
     debug_assert_distinct(dst, src_doc);
     if deep {
         deep_copy(dst, Some(src_doc), src)
@@ -230,7 +230,7 @@ pub fn copy_node_from(
 }
 
 /// Same-document `cloneNode`: shallow or deep, reading the arena it writes.
-pub fn clone_node(doc: &mut Document, src: NodeId, deep: bool) -> Result<NodeId, MutStatus> {
+pub fn clone_node(doc: &mut Document, src: NodeId, deep: bool) -> Result<NodeId, MutError> {
     if deep {
         deep_copy(doc, None, src)
     } else {

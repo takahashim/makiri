@@ -61,9 +61,9 @@ impl Scope {
     /// Bind `pfx` to `uri` for the current element and everything under it.
     ///
     /// `Err` when the scope is at its cap (`MAX_NS`) or an allocation failed;
-    /// both are [`BudgetError`], which converts to the parser's [`Status`].
+    /// both are [`BudgetError`], which converts to the parser's [`ParseError`].
     ///
-    /// [`Status`]: crate::xml::Status
+    /// [`ParseError`]: crate::xml::ParseError
     pub(super) fn bind(&mut self, pfx: &[u8], uri: Span) -> Result<(), BudgetError> {
         if self.binds.len() + 1 > MAX_NS {
             return Err(BudgetError::Limit);

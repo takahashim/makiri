@@ -12,7 +12,7 @@ use super::assign_qname;
 use super::ns::{resolve_ns, Ns, Resolved, NO_NS};
 use crate::xml::chars::validate_chars;
 use crate::xml::qname::{ns_decl_check, split_checked, xmlns_prefix, Split};
-use crate::xml::{Document, MutStatus, NodeFlags, NodeId, NodeType, Span};
+use crate::xml::{Document, MutError, NodeFlags, NodeId, NodeType, Span};
 
 /// Build a fresh ATTRIBUTE (qname + value + namespace) and link it onto `el`
 /// after `tail`, the last entry the caller's own scan reached.
@@ -24,7 +24,7 @@ fn build_attr(
     val: &[u8],
     ns: Resolved,
     tail: Option<NodeId>,
-) -> Result<NodeId, MutStatus> {
+) -> Result<NodeId, MutError> {
     let attr = doc.new_node(NodeType::Attribute)?;
     assign_qname(doc, attr, name, sp)?;
     doc.set_value_bytes(attr, val)?;
@@ -44,10 +44,10 @@ pub(super) fn keys_repeat(doc: &Document, keys: &mut [(Span, NodeId)]) -> bool {
 
 /// Whether an attribute named `name` may hold `val`: anything but a namespace
 /// declaration the §3 rules forbid ([`ns_decl_check`]), refused as
-/// [`MutStatus::BadNsDecl`] with the clause it broke.
-pub(super) fn decl_check(name: &[u8], val: &[u8]) -> Result<(), MutStatus> {
+/// [`MutError::BadNsDecl`] with the clause it broke.
+pub(super) fn decl_check(name: &[u8], val: &[u8]) -> Result<(), MutError> {
     match xmlns_prefix(name) {
-        Some(p) => ns_decl_check(p, val).map_err(MutStatus::BadNsDecl),
+        Some(p) => ns_decl_check(p, val).map_err(MutError::BadNsDecl),
         None => Ok(()),
     }
 }
@@ -111,14 +111,14 @@ pub fn set_attribute(
     el: NodeId,
     name: &[u8],
     val: &[u8],
-) -> Result<NodeId, MutStatus> {
+) -> Result<NodeId, MutError> {
     if doc.type_(el) != Some(NodeType::Element) {
-        return Err(MutStatus::Type);
+        return Err(MutError::Type);
     }
-    let sp = split_checked(name).ok_or(MutStatus::BadName)?;
+    let sp = split_checked(name).ok_or(MutError::BadName)?;
     decl_check(name, val)?;
     if !validate_chars(val) {
-        return Err(MutStatus::BadChars);
+        return Err(MutError::BadChars);
     }
     /* An attribute with this qualified name gets the value and nothing else,
      * as the DOM's setAttribute does: its namespace is its own, decided when
@@ -139,7 +139,7 @@ pub fn set_attribute(
      * pending one has no key yet: the insertion that decides it checks. */
     let local = &name[sp.local_off as usize..];
     if !r.pending && r.ns.len != 0 && key_taken(doc, el, doc.span(r.ns), local, None) {
-        return Err(MutStatus::DuplicateAttr);
+        return Err(MutError::DuplicateAttr);
     }
     build_attr(doc, el, name, &sp, val, r, tail)
 }
@@ -181,17 +181,17 @@ pub fn set_attribute_ns(
     ns: &[u8],
     name: &[u8],
     val: &[u8],
-) -> Result<NodeId, MutStatus> {
+) -> Result<NodeId, MutError> {
     if doc.type_(el) != Some(NodeType::Element) {
-        return Err(MutStatus::Type);
+        return Err(MutError::Type);
     }
-    let sp = split_checked(name).ok_or(MutStatus::BadName)?;
+    let sp = split_checked(name).ok_or(MutError::BadName)?;
     if !crate::xml::qname::ns_fits_name(ns, name, &sp) {
-        return Err(MutStatus::BadNsName);
+        return Err(MutError::BadNsName);
     }
     decl_check(name, val)?;
     if !validate_chars(val) {
-        return Err(MutStatus::BadChars);
+        return Err(MutError::BadChars);
     }
     let local = &name[sp.local_off as usize..];
     let tail = match find_attr(doc, el, AttrKey::Ns { ns, local }) {

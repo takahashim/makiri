@@ -21,7 +21,7 @@ mod ns;
 pub use ns::{ignored_default_decl, namespace_in_scope};
 
 use crate::xml::qname::Split;
-use crate::xml::{Document, MutStatus, NodeId};
+use crate::xml::{Document, MutError, NodeId};
 
 pub use attr::{remove_attribute, remove_attribute_ns, set_attribute, set_attribute_ns};
 pub use copy::{clone_node, copy_node_from, import_subtree};
@@ -37,8 +37,8 @@ pub use insert::{
 /// Copy a node's span out of the arena before taking `&mut doc`. `to_vec` would
 /// abort on OOM; this path must fail closed instead, like every other
 /// allocation here.
-pub(super) fn copy_span(bytes: &[u8]) -> Result<Vec<u8>, MutStatus> {
-    crate::falloc::try_to_vec(bytes).ok_or(MutStatus::Oom)
+pub(super) fn copy_span(bytes: &[u8]) -> Result<Vec<u8>, MutError> {
+    crate::falloc::try_to_vec(bytes).ok_or(MutError::Oom)
 }
 
 #[inline]
@@ -47,7 +47,7 @@ pub(super) fn assign_qname(
     node: NodeId,
     name: &[u8],
     sp: &Split,
-) -> Result<(), MutStatus> {
+) -> Result<(), MutError> {
     doc.assign_qname(node, name, sp.prefix_len, sp.local_off, sp.local_len)
-        .map_err(MutStatus::from)
+        .map_err(MutError::from)
 }

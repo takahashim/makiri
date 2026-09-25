@@ -18,7 +18,7 @@ use magnus::{function, method, prelude::*, Error, RHash, Ruby, Value};
 
 use crate::bridge::xml::wrap_xml_node as wrap;
 use crate::init::{CLASS_XML_DOCUMENT, CLASS_XML_DOCUMENT_FRAGMENT};
-use crate::xml::model::{Limits as XmlLimits, MAX_BYTES};
+use crate::xml::model::{ParseLimits, MAX_BYTES};
 
 /// The optional per-parse budget overrides.
 ///
@@ -27,8 +27,8 @@ use crate::xml::model::{Limits as XmlLimits, MAX_BYTES};
 /// It must be a positive Integer - the sign is checked BEFORE the unsigned
 /// conversion, because a negative would otherwise wrap into a huge `size_t` and
 /// bypass the budget entirely.
-fn parse_limits(ruby: &Ruby, h: RHash) -> Result<XmlLimits, Error> {
-    let mut limits = XmlLimits { max_bytes: None };
+fn parse_limits(ruby: &Ruby, h: RHash) -> Result<ParseLimits, Error> {
+    let mut limits = ParseLimits { max_bytes: None };
     if h.is_empty() {
         return Ok(limits);
     }
