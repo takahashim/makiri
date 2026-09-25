@@ -134,7 +134,7 @@ pub fn context_for(rb_node: Value, document: Value) -> Result<Cx, Error> {
         } else {
             Token::xml(xml_node_unwrap(rb_node)? as usize)
         };
-        return Ok(Cx::Xml(Context::new(doc, node)));
+        return Ok(Cx::Xml(Context::new(doc, Some(node))));
     }
 
     let raw = html_node_unwrap(rb_node)?;

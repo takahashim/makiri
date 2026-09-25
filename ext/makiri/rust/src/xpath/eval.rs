@@ -23,7 +23,6 @@ use super::step_index::{try_descendant_index, try_descendant_index_nth};
 use super::value::*;
 use crate::err_setf;
 use crate::falloc::{try_vec_with_capacity, Reserve};
-use crate::token::Token;
 use core::ops::ControlFlow;
 
 /// An evaluation step: the value, or proof its error was written to the
@@ -729,7 +728,7 @@ impl<'e, 'd, D: Dom<'d>> Evaluation<'e, 'd, D> {
             token_args.push(t);
         }
         let call = ResolverCall {
-            node: focus.node.map_or(Token::null(), D::token),
+            node: focus.node.map(D::token),
             pos: focus.pos,
             size: focus.size,
             ns_uri,

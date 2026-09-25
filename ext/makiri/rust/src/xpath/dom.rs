@@ -68,7 +68,7 @@ pub trait Dom<'d>: Copy {
     /// The erased token a node-set stores for `n`.
     fn token(n: Self::Node) -> Token;
 
-    /// The node a non-null token names.
+    /// The node a token names.
     ///
     /// A token comes from [`token`](Self::token) or from the Ruby bridge, which
     /// checks the node's document first, so it always names a node of this

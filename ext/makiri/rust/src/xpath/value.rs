@@ -133,17 +133,6 @@ impl<N: Copy> NodeSet<N> {
     }
 }
 
-impl NodeSet<Token> {
-    /// Append a token within `budget`'s node-set cap. A null token names no
-    /// node and is not pushed.
-    pub fn push_token(&mut self, token: Token, budget: &mut Budget) -> Result<(), Reported> {
-        if token.is_null() {
-            return Ok(());
-        }
-        self.push(token, budget)
-    }
-}
-
 /// An XPath value (§1): a node-set, a string, a number or a boolean. It owns
 /// what it holds. As with [`NodeSet`], the nodes are the backend's handles
 /// inside the engine and tokens at the glue.

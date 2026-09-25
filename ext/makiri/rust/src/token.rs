@@ -26,7 +26,7 @@ use core::ffi::c_void;
 /// Which backend a token belongs to.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Kind {
-    /// No node: the absent context node. Never resolved.
+    /// No node: the empty-slot marker of token-keyed tables. Never resolved.
     Null,
     /// A Lexbor node pointer.
     Html,
@@ -42,19 +42,14 @@ pub struct Token {
 }
 
 impl Token {
-    /// The token naming no node.
+    /// The token naming no node - the empty slot of a token-keyed table (see
+    /// the `TableKey` impl below). An absent context node is `None`, not this.
     #[inline]
     pub const fn null() -> Token {
         Token {
             kind: Kind::Null,
             word: 0,
         }
-    }
-
-    /// True for [`null`](Self::null): no node.
-    #[inline]
-    pub const fn is_null(self) -> bool {
-        matches!(self.kind, Kind::Null)
     }
 
     /// Which backend made this token.

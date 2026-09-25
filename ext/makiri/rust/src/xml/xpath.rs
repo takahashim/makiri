@@ -210,7 +210,7 @@ impl<'d> Dom<'d> for &'d xml::Document {
 /// A context over `doc` with `node` as the focus; the bridge passes the document
 /// node for a whole-document query.
 pub fn context(doc: &xml::Document, node: xml::NodeId) -> Context<'_, &xml::Document> {
-    Context::new(doc, Token::xml(node.to_token()))
+    Context::new(doc, Some(Token::xml(node.to_token())))
 }
 
 /// Where `a` falls against `b` in document order, for `Node#<=>`: `None` for

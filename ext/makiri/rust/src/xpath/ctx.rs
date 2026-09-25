@@ -20,8 +20,9 @@ use std::collections::HashMap;
 
 /// One call the evaluator routes to the custom-function resolver.
 pub struct ResolverCall<'a> {
-    /// The focus: the context node's token, and its position.
-    pub node: Token,
+    /// The focus: the context node's token (None when there is none), and its
+    /// position.
+    pub node: Option<Token>,
     pub pos: usize,
     pub size: usize,
     /// The namespace URI of the call's prefix, when it had one.
@@ -207,7 +208,7 @@ pub enum ContextError {
 /// disturb the walk are refused with [`ContextError::Evaluating`].
 pub struct Context<'d, D: Dom<'d>> {
     doc: D,
-    node: Cell<Token>,
+    node: Cell<Option<Token>>,
     names: RefCell<Names>,
 
     /* The caps every run under this context starts from. Each evaluate and
@@ -229,13 +230,12 @@ pub struct Context<'d, D: Dom<'d>> {
 }
 
 impl<'d, D: Dom<'d>> Context<'d, D> {
-    /// A context over `doc`, with `node` ([`Token::null`] for none) as the
-    /// context node.
+    /// A context over `doc`, with `node` (None for none) as the context node.
     ///
     /// Safe: `doc` carries its own contract (a live document that is not
     /// restructured while the context lives), and the node is an opaque token
     /// the backend resolves.
-    pub fn new(doc: D, node: Token) -> Context<'d, D> {
+    pub fn new(doc: D, node: Option<Token>) -> Context<'d, D> {
         Context {
             doc,
             node: Cell::new(node),
@@ -282,7 +282,7 @@ impl<'d, D: Dom<'d>> Context<'d, D> {
         if self.is_evaluating() {
             return Err(ContextError::Evaluating);
         }
-        self.node.set(node);
+        self.node.set(Some(node));
         Ok(())
     }
 
@@ -370,8 +370,7 @@ impl<'d, D: Dom<'d>> Context<'d, D> {
 
     /// The context node, resolved through the backend.
     fn focus_node(&self) -> Option<D::Node> {
-        let t = self.node.get();
-        (!t.is_null()).then(|| self.doc.resolve_token(t))
+        self.node.get().map(|t| self.doc.resolve_token(t))
     }
 }
 

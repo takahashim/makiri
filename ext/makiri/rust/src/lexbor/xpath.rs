@@ -328,5 +328,8 @@ pub unsafe fn context<'e>(
     let parsed: *mut HtmlParsed = parsed;
     // SAFETY: this function's contract is `new`'s: `parsed` owns `doc` and is
     // live and unedited for `'e`.
-    Ok(Context::new(unsafe { HtmlDom::new(doc, parsed) }, node))
+    Ok(Context::new(
+        unsafe { HtmlDom::new(doc, parsed) },
+        Some(node),
+    ))
 }

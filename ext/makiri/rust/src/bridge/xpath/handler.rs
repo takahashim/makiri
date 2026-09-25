@@ -113,7 +113,7 @@ fn push_result_node(
     let Some(token) = (unsafe { node_token(bridge.kind, n) }) else {
         return Err(HandlerFailure::Msg("handler returned an unusable node"));
     };
-    set.push_token(token, budget)
+    set.push(token, budget)
         .map_err(|_| HandlerFailure::Msg("out of memory building handler result"))
 }
 
