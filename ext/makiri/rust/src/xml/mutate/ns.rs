@@ -164,12 +164,10 @@ fn resolve_node_ns(
 
 /// Whether any attribute of `e` still has a pending namespace.
 fn has_pending_attr(doc: &Document, e: NodeId) -> bool {
-    let mut a = doc.attrs(e);
-    while let Some(attr) = a {
+    for attr in doc.attributes(e) {
         if doc.node(attr).flags & FLAG_NS_PENDING != 0 {
             return true;
         }
-        a = doc.next(attr);
     }
     false
 }
@@ -237,12 +235,10 @@ pub fn ignored_default_decl(doc: &Document, el: NodeId) -> Option<NodeId> {
     {
         return None;
     }
-    let mut a = doc.attrs(el);
-    while let Some(at) = a {
+    for at in doc.attributes(el) {
         if xmlns_prefix(doc.qname(at)) == Some(&b""[..]) {
             return (doc.node(at).value.len != 0).then_some(at);
         }
-        a = doc.next(at);
     }
     None
 }
@@ -270,14 +266,12 @@ fn resolve_in_scope(doc: &Document, node: Option<NodeId>, prefix: &[u8]) -> Span
     while let Some(id) = e {
         if doc.type_(id) == Some(NodeType::Element) {
             let ignored = ignored_default_decl(doc, id);
-            let mut a = doc.attrs(id);
-            while let Some(at) = a {
+            for at in doc.attributes(id) {
                 if let Some(p) = xmlns_prefix(doc.qname(at)) {
                     if p == prefix && Some(at) != ignored {
                         return doc.try_node(at).map_or(Span::EMPTY, |n| n.value);
                     }
                 }
-                a = doc.next(at);
             }
         }
         e = doc.parent(id);

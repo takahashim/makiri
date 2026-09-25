@@ -85,10 +85,8 @@ impl<'d> Writer<'d, '_> {
 
     fn children(&mut self, n: NodeId, depth: u32) -> W {
         let doc = self.doc;
-        let mut c = doc.first_child(n);
-        while let Some(cid) = c {
+        for cid in doc.children(n) {
             self.node(cid, false, depth)?;
-            c = doc.next(cid);
         }
         Ok(())
     }
@@ -96,12 +94,10 @@ impl<'d> Writer<'d, '_> {
     /// Push `el`'s own xmlns declarations onto the scope.
     fn push_decls(&mut self, el: NodeId) -> W {
         let doc = self.doc;
-        let mut a = doc.attrs(el);
-        while let Some(at) = a {
+        for at in doc.attributes(el) {
             if let Some((p, u)) = xmlns_decl(doc, at) {
                 self.binds.push(Prefix::Own(p), u)?;
             }
-            a = doc.next(at);
         }
         Ok(())
     }
@@ -137,8 +133,7 @@ impl<'d> Writer<'d, '_> {
     fn own_namespaces(&mut self, n: NodeId) -> Result<Vec<Ns<'d>>, ()> {
         let doc = self.doc;
         let mut out: Vec<Ns> = Vec::new();
-        let mut a = doc.attrs(n);
-        while let Some(at) = a {
+        for at in doc.attributes(n) {
             if let Some((p, u)) = xmlns_decl(doc, at) {
                 if p != b"xml" {
                     let above = self.binds.lookup(p);
@@ -156,7 +151,6 @@ impl<'d> Writer<'d, '_> {
                     }
                 }
             }
-            a = doc.next(at);
         }
         sort_by_prefix(&mut out);
         Ok(out)
@@ -178,8 +172,7 @@ impl<'d> Writer<'d, '_> {
         if decided && el_uri != doc.span(doc.node(n).ns_uri) {
             return Ok(false);
         }
-        let mut a = doc.attrs(n);
-        while let Some(at) = a {
+        for at in doc.attributes(n) {
             let prefix = doc.span(doc.node(at).prefix);
             /* An attribute's namespace is its own once its element is decided -
              * or once it was GIVEN (`set_attribute_ns`), which holds on a
@@ -202,7 +195,6 @@ impl<'d> Writer<'d, '_> {
                  * canonical form that keeps it. */
                 return Ok(false);
             }
-            a = doc.next(at);
         }
         Ok(true)
     }
@@ -282,10 +274,8 @@ impl<'d> Writer<'d, '_> {
         }
 
         self.put(b">")?;
-        let mut c = doc.first_child(n);
-        while let Some(cid) = c {
+        for cid in doc.children(n) {
             self.node(cid, false, depth + 1)?;
-            c = doc.next(cid);
         }
         self.put(b"</")?;
         self.qname(n)?;
@@ -297,13 +287,11 @@ impl<'d> Writer<'d, '_> {
 /// local name.
 fn sorted_attributes(doc: &XmlDoc, n: NodeId) -> Result<Vec<NodeId>, ()> {
     let mut attrs: Vec<NodeId> = Vec::new();
-    let mut a = doc.attrs(n);
-    while let Some(at) = a {
+    for at in doc.attributes(n) {
         if xmlns_decl(doc, at).is_none() {
             attrs.falloc_reserve(1)?;
             attrs.push(at);
         }
-        a = doc.next(at);
     }
     /* In place (see clippy.toml): an element's attributes are distinct by
      * (namespace URI, local name), so stability would buy nothing. */
@@ -333,8 +321,7 @@ pub(super) fn write(b: &mut Buf, doc: &XmlDoc, n: NodeId, comments: bool) -> Res
             return w.node(n, true, 0);
         }
         let mut seen_root = false;
-        let mut c = doc.first_child(n);
-        while let Some(cid) = c {
+        for cid in doc.children(n) {
             let ty = doc.type_(cid);
             if ty == Some(NodeType::Element) {
                 w.node(cid, true, 0)?;
@@ -348,7 +335,6 @@ pub(super) fn write(b: &mut Buf, doc: &XmlDoc, n: NodeId, comments: bool) -> Res
                     w.put(b"\n")?;
                 }
             }
-            c = doc.next(cid);
         }
         Ok(())
     })();

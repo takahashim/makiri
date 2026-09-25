@@ -86,12 +86,10 @@ fn fragment_fits_container(doc: &Document, frag: NodeId, site: Site) -> MutStatu
     {
         return MutStatus::Hierarchy;
     }
-    let mut c = doc.first_child(frag);
-    while let Some(cur) = c {
+    for cur in doc.children(frag) {
         if doc.type_(cur) == Some(NodeType::Doctype) {
             return MutStatus::Hierarchy;
         }
-        c = doc.next(cur);
     }
     MutStatus::Ok
 }
@@ -278,8 +276,7 @@ impl Site {
         let before = self.insertion_point(doc);
         let exclude = self.excluded();
         let mut reached = false;
-        let mut c = doc.first_child(self.container);
-        while let Some(cur) = c {
+        for cur in doc.children(self.container) {
             if Some(cur) == before {
                 reached = true;
             }
@@ -300,7 +297,6 @@ impl Site {
                     _ => {}
                 }
             }
-            c = doc.next(cur);
         }
         t
     }
@@ -457,12 +453,10 @@ pub fn remove(doc: &mut Document, node: NodeId) {
 
 fn element_child_count(doc: &Document, parent: NodeId, exclude: Option<NodeId>) -> usize {
     let mut n = 0;
-    let mut c = doc.first_child(parent);
-    while let Some(cur) = c {
+    for cur in doc.children(parent) {
         if Some(cur) != exclude && doc.type_(cur) == Some(NodeType::Element) {
             n += 1;
         }
-        c = doc.next(cur);
     }
     n
 }

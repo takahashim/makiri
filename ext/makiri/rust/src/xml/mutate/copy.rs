@@ -100,11 +100,9 @@ impl CopiedNode {
         };
 
         let mut attrs: Vec<CopiedNode> = Vec::new();
-        let mut a = doc.attrs(src);
-        while let Some(attr) = a {
+        for attr in doc.attributes(src) {
             attrs.falloc_reserve(1).map_err(|_| MutStatus::Oom)?;
             attrs.push(CopiedNode::read(doc, attr)?);
-            a = doc.next(attr);
         }
 
         Ok(CopiedNode {

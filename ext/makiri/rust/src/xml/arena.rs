@@ -166,6 +166,17 @@ impl Document {
     pub fn attrs(&self, id: NodeId) -> Option<NodeId> {
         self.node_id(self.try_node(id)?.attrs)
     }
+    /// `id`'s children, first to last. Read-only: the next sibling is read
+    /// before a child is yielded, so relinking in the loop body is not safe.
+    #[inline]
+    pub fn children(&self, id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
+        core::iter::successors(self.first_child(id), move |&c| self.next(c))
+    }
+    /// `id`'s attributes, in order; read-only, as [`Document::children`].
+    #[inline]
+    pub fn attributes(&self, id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
+        core::iter::successors(self.attrs(id), move |&a| self.next(a))
+    }
     #[inline]
     pub fn type_(&self, id: NodeId) -> Option<NodeType> {
         self.try_node(id).map(|n| n.type_)

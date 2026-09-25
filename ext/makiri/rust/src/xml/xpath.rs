@@ -116,14 +116,9 @@ impl<'d> Dom<'d> for &'d xml::Document {
         xml::Document::value(self, a)
     }
     fn get_attribute(self, el: xml::NodeId, name: &[u8]) -> Option<&'d [u8]> {
-        let mut a = xml::Document::attrs(self, el);
-        while let Some(id) = a {
-            if !is_ns_decl(self, id) && xml::Document::qname(self, id) == name {
-                return Some(xml::Document::value(self, id));
-            }
-            a = xml::Document::next(self, id);
-        }
-        None
+        self.attributes(el)
+            .find(|&id| !is_ns_decl(self, id) && xml::Document::qname(self, id) == name)
+            .map(|id| xml::Document::value(self, id))
     }
 
     #[inline]

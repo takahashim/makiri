@@ -33,22 +33,19 @@ use super::bindings::{Bindings, Prefix, PREFIX_CAP};
 
 /// The declaration for `prefix` on `el` ITSELF (not in scope), or None.
 fn own_decl(doc: &XmlDoc, el: NodeId, prefix: &[u8]) -> Option<NodeId> {
-    let mut a = doc.attrs(el);
-    while let Some(at) = a {
+    for at in doc.attributes(el) {
         if let Some(p) = xmlns_prefix(doc.qname(at)) {
             if p == prefix {
                 return Some(at);
             }
         }
-        a = doc.next(at);
     }
     None
 }
 
 /// The first attribute of `el` before `stop` that carries `prefix`, or None.
 fn prefix_seen(doc: &XmlDoc, el: NodeId, stop: NodeId, prefix: &[u8]) -> Option<NodeId> {
-    let mut a = doc.attrs(el);
-    while let Some(at) = a {
+    for at in doc.attributes(el) {
         if at == stop {
             break;
         }
@@ -58,7 +55,6 @@ fn prefix_seen(doc: &XmlDoc, el: NodeId, stop: NodeId, prefix: &[u8]) -> Option<
         {
             return Some(at);
         }
-        a = doc.next(at);
     }
     None
 }
@@ -310,10 +306,8 @@ impl<'d, 'b> Writer<'d, 'b> {
             }
             Some(NodeType::Pi) => put_pi(self.b, doc, n),
             Some(NodeType::Fragment) => {
-                let mut c = doc.first_child(n);
-                while let Some(cid) = c {
+                for cid in doc.children(n) {
                     self.node(cid, depth, binds)?;
-                    c = doc.next(cid);
                 }
                 Ok(())
             }
@@ -367,16 +361,11 @@ impl<'d, 'b> Writer<'d, 'b> {
         let dropped = crate::xml::mutate::ignored_default_decl(doc, n);
 
         /* This element's own xmlns declarations bind from here down. */
-        let mut a = doc.attrs(n);
-        while let Some(at) = a {
-            if Some(at) == dropped {
-                a = doc.next(at);
-                continue;
-            }
+        let kept = |&at: &NodeId| Some(at) != dropped;
+        for at in doc.attributes(n).filter(kept) {
             if let Some(p) = xmlns_prefix(doc.qname(at)) {
                 binds.push(Prefix::Own(p), doc.span(doc.node(at).value))?;
             }
-            a = doc.next(at);
         }
 
         let mut gen = Gen { seq: 1 };
@@ -388,12 +377,7 @@ impl<'d, 'b> Writer<'d, 'b> {
             self.bind(binds, el.prefix.clone(), doc.span(doc.node(n).ns_uri))?;
         }
 
-        let mut a = doc.attrs(n);
-        while let Some(at) = a {
-            if Some(at) == dropped {
-                a = doc.next(at);
-                continue;
-            }
+        for at in doc.attributes(n).filter(kept) {
             let plan = plan_attr(doc, n, at, binds, &mut gen).ok_or(())?;
             if plan.declare {
                 self.bind(binds, plan.prefix.clone(), doc.span(doc.node(at).ns_uri))?;
@@ -403,7 +387,6 @@ impl<'d, 'b> Writer<'d, 'b> {
             self.put(b"=\"")?;
             self.escape(doc.span(doc.node(at).value), true)?;
             self.put(b"\"")?;
-            a = doc.next(at);
         }
 
         if doc.first_child(n).is_none() {
@@ -411,13 +394,11 @@ impl<'d, 'b> Writer<'d, 'b> {
         }
         self.put(b">")?;
         let block = self.width > 0 && !has_chardata(doc, n);
-        let mut c = doc.first_child(n);
-        while let Some(cid) = c {
+        for cid in doc.children(n) {
             if block {
                 self.indent(depth + 1)?;
             }
             self.node(cid, depth + 1, binds)?;
-            c = doc.next(cid);
         }
         if block {
             self.indent(depth)?;
@@ -429,12 +410,10 @@ impl<'d, 'b> Writer<'d, 'b> {
 }
 
 fn has_chardata(doc: &XmlDoc, e: NodeId) -> bool {
-    let mut c = doc.first_child(e);
-    while let Some(id) = c {
+    for id in doc.children(e) {
         if matches!(doc.type_(id), Some(NodeType::Text | NodeType::CData)) {
             return true;
         }
-        c = doc.next(id);
     }
     false
 }
@@ -460,11 +439,9 @@ pub(super) fn write(
         /* The Document node gives the declaration, then each top-level child on
          * its own line. */
         w.declaration(encoding)?;
-        let mut c = doc.first_child(n);
-        while let Some(cid) = c {
+        for cid in doc.children(n) {
             w.node(cid, 0, &mut binds)?;
             w.newline()?;
-            c = doc.next(cid);
         }
         Ok(())
     })();

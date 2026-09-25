@@ -595,15 +595,13 @@ impl<'a> Parser<'a> {
         let Some(root) = self.doc.root() else {
             return Ok(());
         };
-        let mut a = self.doc.attrs(root);
-        while let Some(attr) = a {
+        for attr in self.doc.attributes(root) {
             /* The prefix borrows `self.doc`, which `bind` does not touch, so it
              * is passed as is: `Scope::bind` makes its own copy. */
             if let Some(p) = xmlns_prefix(self.doc.qname(attr)) {
                 let uri = self.doc.node(attr).value;
                 bind(&mut self.scope, &mut self.cur, p, uri)?;
             }
-            a = self.doc.next(attr);
         }
         Ok(())
     }

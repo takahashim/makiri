@@ -65,12 +65,10 @@ pub(super) fn key_taken(
     local: &[u8],
     except: Option<NodeId>,
 ) -> bool {
-    let mut a = doc.attrs(el);
-    while let Some(attr) = a {
+    for attr in doc.attributes(el) {
         if Some(attr) != except && attr_matches_ns(doc, attr, ns, local) {
             return true;
         }
-        a = doc.next(attr);
     }
     false
 }
