@@ -163,7 +163,7 @@ impl Document {
         self.node_id(self.try_node(id)?.parent)
     }
     #[inline]
-    pub fn attrs(&self, id: NodeId) -> Option<NodeId> {
+    pub fn first_attr(&self, id: NodeId) -> Option<NodeId> {
         self.node_id(self.try_node(id)?.attrs)
     }
     /// `id`'s children, first to last. Read-only: the next sibling is read
@@ -175,7 +175,7 @@ impl Document {
     /// `id`'s attributes, in order; read-only, as [`Document::children`].
     #[inline]
     pub fn attributes(&self, id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
-        core::iter::successors(self.attrs(id), move |&a| self.next(a))
+        core::iter::successors(self.first_attr(id), move |&a| self.next(a))
     }
     #[inline]
     pub fn type_(&self, id: NodeId) -> Option<NodeType> {

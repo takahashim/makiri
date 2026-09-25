@@ -34,13 +34,14 @@ fn prefix_value(ruby: &Ruby, p: Option<&[u8]>) -> Value {
 /// The xmlns declarations among `id`'s attributes, as (declaring attribute,
 /// declared prefix - empty for the default - and URI). None for a non-element.
 fn declarations(d: &XmlDoc, id: NodeId) -> impl Iterator<Item = (NodeId, &[u8], &[u8])> + '_ {
-    let first = (d.type_(id) == Some(NodeType::Element))
-        .then(|| d.attrs(id))
-        .flatten();
-    core::iter::successors(first, move |&a| d.next(a)).filter_map(move |a| {
-        let p = crate::xml::qname::xmlns_prefix(d.qname(a))?;
-        Some((a, p, d.value(a)))
-    })
+    (d.type_(id) == Some(NodeType::Element))
+        .then(|| d.attributes(id))
+        .into_iter()
+        .flatten()
+        .filter_map(move |a| {
+            let p = crate::xml::qname::xmlns_prefix(d.qname(a))?;
+            Some((a, p, d.value(a)))
+        })
 }
 
 /// `#namespace` - the node's own resolved namespace, or nil.

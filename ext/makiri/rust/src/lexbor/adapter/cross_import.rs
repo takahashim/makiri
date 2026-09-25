@@ -348,7 +348,7 @@ pub unsafe fn cross_html_to_xml(
 /// The document comes from `el` itself, so there is no second handle to keep in
 /// step with it.
 fn x2h_copy_attrs(doc: &XmlDoc, s: NodeId, el: BuildingElement<'_>) -> Result<(), MutStatus> {
-    let mut a = doc.attrs(s);
+    let mut a = doc.first_attr(s);
     while let Some(attr) = a {
         let (val, qname, ns) = (doc.value(attr), doc.qname(attr), doc.ns(attr));
         let stored = if ns.is_empty() {

@@ -95,7 +95,7 @@ impl<'d> Dom<'d> for &'d xml::Document {
 
     #[inline]
     fn first_attr(self, el: xml::NodeId) -> Option<xml::NodeId> {
-        skip_ns_decls(self, xml::Document::attrs(self, el)?)
+        skip_ns_decls(self, xml::Document::first_attr(self, el)?)
     }
     #[inline]
     fn attr_next(self, a: xml::NodeId) -> Option<xml::NodeId> {

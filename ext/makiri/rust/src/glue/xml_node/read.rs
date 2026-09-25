@@ -292,8 +292,10 @@ pub fn element_children(this: XmlSelf) -> Result<Value, Error> {
 
 /// The receiver's attribute nodes, in document order; none for a non-element.
 fn attrs_of(d: &XmlDoc, id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
-    let first = is_element(d, id).then(|| d.attrs(id)).flatten();
-    core::iter::successors(first, move |&a| d.next(a))
+    is_element(d, id)
+        .then(|| d.attributes(id))
+        .into_iter()
+        .flatten()
 }
 
 /// `#[]` - the attribute's value, or nil.

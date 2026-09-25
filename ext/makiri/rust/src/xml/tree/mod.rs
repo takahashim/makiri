@@ -681,7 +681,7 @@ fn parse_fragment_into(
 /// list is sorted by the pair and compared as neighbours, O(n log n).
 fn has_duplicate_attributes(doc: &Document, element: NodeId) -> Option<bool> {
     const PAIRWISE_MAX: usize = 16;
-    let attrs = || core::iter::successors(doc.attrs(element), |&x| doc.next(x));
+    let attrs = || doc.attributes(element);
     let count = attrs().count();
     if count <= PAIRWISE_MAX {
         let found = attrs().enumerate().any(|(i, x)| {

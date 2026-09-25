@@ -531,14 +531,7 @@ fn find_attribute_bytes(d: &XmlDoc, el: NodeId, name: &[u8]) -> Option<NodeId> {
     if d.type_(el) != Some(NodeType::Element) {
         return None;
     }
-    let mut a = d.attrs(el);
-    while let Some(id) = a {
-        if d.qname(id) == name {
-            return Some(id);
-        }
-        a = d.next(id);
-    }
-    None
+    d.attributes(el).find(|&id| d.qname(id) == name)
 }
 
 /* ------------------------------------------------------------------ */

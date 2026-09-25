@@ -189,7 +189,7 @@ fn commit_node_ns(
         doc.node_mut(e).ns_uri = r.ns;
     }
     /* A cursor, not `attributes()`: the body writes. */
-    let mut a = doc.attrs(e);
+    let mut a = doc.first_attr(e);
     while let Some(attr) = a {
         if rederives(doc, attr, part) {
             let r = resolve_ns(

@@ -62,7 +62,7 @@ fn sibling(d: &Document, n: NodeId) -> NodeId {
     d.next(n).expect("a next sibling")
 }
 fn attr(d: &Document, n: NodeId) -> NodeId {
-    d.attrs(n).expect("an attribute")
+    d.first_attr(n).expect("an attribute")
 }
 
 /// Parse the first `len` bytes of `src`, checking `len` against the byte budget
@@ -633,7 +633,7 @@ fn setting_an_attribute_twice_replaces_its_value() {
     assert_eq!(doc.node(at).value.len, 1);
     assert_eq!(doc.value(at), b"x");
     assert_eq!(
-        doc.attrs(r),
+        doc.first_attr(r),
         Some(at),
         "it is the element's first attribute"
     );
@@ -645,7 +645,7 @@ fn setting_an_attribute_twice_replaces_its_value() {
      * also the tail, so `doc.next(again).is_none()` holds either way and cannot
      * tell a replacement from a second attribute. */
     assert_eq!(
-        doc.attrs(r),
+        doc.first_attr(r),
         Some(at),
         "a replacement reuses the existing attribute node"
     );

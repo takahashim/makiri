@@ -1,9 +1,10 @@
 //! Setting and removing attributes, by raw qualified name and by `(namespace,
 //! local name)` - the DOM's two keys for the same node.
 //!
-//! Each of the four walks the element's attribute list exactly once: the scan
-//! that looks for a match also finds the list's end, which is what the tail
-//! argument to `Document::link_attr` is for.
+//! Each of the four finds its attribute with one scan ([`find_attr`]), which
+//! also finds the list's end - what the tail argument to
+//! `Document::link_attr` is for. `set_attribute` scans once more when it
+//! ADDS an attribute, for the key-uniqueness check ([`key_taken`]).
 
 #![forbid(unsafe_code)]
 
@@ -62,15 +63,29 @@ pub(super) fn key_taken(
     local: &[u8],
     except: Option<NodeId>,
 ) -> bool {
-    for attr in doc.attributes(el) {
-        if Some(attr) != except && attr_matches_ns(doc, attr, ns, local) {
-            return true;
-        }
-    }
-    false
+    let key = AttrKey::Ns { ns, local };
+    doc.attributes(el)
+        .any(|attr| Some(attr) != except && key.matches(doc, attr))
 }
 
-/// Where the first attribute of `el` that `hit` accepts sits in its list: the
+/// How an attribute is looked up: by its raw qualified name, or by the DOM's
+/// `(namespace, local name)` key - the module's two keys for the same node.
+#[derive(Clone, Copy)]
+enum AttrKey<'a> {
+    QName(&'a [u8]),
+    Ns { ns: &'a [u8], local: &'a [u8] },
+}
+
+impl AttrKey<'_> {
+    fn matches(self, doc: &Document, a: NodeId) -> bool {
+        match self {
+            AttrKey::QName(q) => doc.qname(a) == q,
+            AttrKey::Ns { ns, local } => attr_matches_ns(doc, a, ns, local),
+        }
+    }
+}
+
+/// Where the first attribute of `el` that `key` matches sits in its list: the
 /// attribute and the one before it, or - when none matches - the last one,
 /// which a new attribute is linked after.
 enum AttrSlot {
@@ -78,12 +93,12 @@ enum AttrSlot {
     Absent { tail: Option<NodeId> },
 }
 
-/// Find `el`'s first attribute `hit` accepts. Read-only: the edit that follows
+/// Find `el`'s first attribute `key` matches. Read-only: the edit that follows
 /// is the caller's, once the walk is over.
-fn find_attr(doc: &Document, el: NodeId, hit: impl Fn(NodeId) -> bool) -> AttrSlot {
+fn find_attr(doc: &Document, el: NodeId, key: AttrKey<'_>) -> AttrSlot {
     let mut prev = None;
     for attr in doc.attributes(el) {
-        if hit(attr) {
+        if key.matches(doc, attr) {
             return AttrSlot::Found { prev, attr };
         }
         prev = Some(attr);
@@ -110,7 +125,7 @@ pub fn set_attribute(
      * it was named. Re-deriving it here gave a second attribute the key of
      * another (`q:x` moved under a scope where `q` meant another attribute's
      * namespace), silently, and dropped a namespace set_attribute_ns gave. */
-    let tail = match find_attr(doc, el, |a| doc.qname(a) == name) {
+    let tail = match find_attr(doc, el, AttrKey::QName(name)) {
         AttrSlot::Found { attr, .. } => {
             arena(doc.set_value_bytes(attr, val))?;
             return Ok(attr);
@@ -131,10 +146,16 @@ pub fn set_attribute(
 
 /// Remove `el`'s attribute named `name`; `true` when one was removed.
 pub fn remove_attribute(doc: &mut Document, el: NodeId, name: &[u8]) -> bool {
+    remove_attr_by(doc, el, AttrKey::QName(name))
+}
+
+/// Unlink `el`'s attribute that `key` matches; `true` when there was one. The
+/// shared body of the two removers, which differ only in the key.
+fn remove_attr_by(doc: &mut Document, el: NodeId, key: AttrKey<'_>) -> bool {
     if doc.type_(el) != Some(NodeType::Element) {
         return false;
     }
-    match find_attr(doc, el, |a| doc.qname(a) == name) {
+    match find_attr(doc, el, key) {
         AttrSlot::Found { prev, attr } => {
             doc.unlink_attr(el, prev, attr);
             true
@@ -173,7 +194,7 @@ pub fn set_attribute_ns(
         return Err(MutStatus::BadChars);
     }
     let local = &name[sp.local_off as usize..];
-    let tail = match find_attr(doc, el, |a| attr_matches_ns(doc, a, ns, local)) {
+    let tail = match find_attr(doc, el, AttrKey::Ns { ns, local }) {
         AttrSlot::Found { attr, .. } => {
             arena(doc.set_value_bytes(attr, val))?;
             return Ok(attr);
@@ -193,14 +214,5 @@ pub fn set_attribute_ns(
 
 /// Remove `el`'s attribute keyed by `(ns, local)`; `true` when one was removed.
 pub fn remove_attribute_ns(doc: &mut Document, el: NodeId, ns: &[u8], local: &[u8]) -> bool {
-    if doc.type_(el) != Some(NodeType::Element) {
-        return false;
-    }
-    match find_attr(doc, el, |a| attr_matches_ns(doc, a, ns, local)) {
-        AttrSlot::Found { prev, attr } => {
-            doc.unlink_attr(el, prev, attr);
-            true
-        }
-        AttrSlot::Absent { .. } => false,
-    }
+    remove_attr_by(doc, el, AttrKey::Ns { ns, local })
 }
