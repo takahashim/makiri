@@ -20,6 +20,7 @@
 #![allow(clippy::missing_safety_doc)]
 
 use core::marker::PhantomData;
+use core::num::NonZeroUsize;
 use core::ptr::NonNull;
 
 use crate::lexbor::abi::{self as lxb, LxbAttr, LxbDoc, LxbElement, LxbNode};
@@ -43,40 +44,111 @@ const _: () = assert!(
     "lxb_dom_attr_t no longer starts with its node - the handle cast is unsound"
 );
 
-/* ---- the Lexbor constants the readers compare against ----
+/* ---- namespace and tag ids ----
  *
  * Generated, not restated. LXB_NS_HTML is 2, and a hand-written 1 once made
  * every HTML element foreign, so every unprefixed name test matched nothing -
- * silently. Deriving the value removes the class rather than checking for it. */
-pub const NS_UNDEF: usize = lxb::lxb_ns_id_enum_t_LXB_NS__UNDEF as usize;
-pub const NS_HTML: usize = lxb::lxb_ns_id_enum_t_LXB_NS_HTML as usize;
-/// The two foreign roots. A fragment parsed in one of their contexts follows
-/// the foreign-content rules rather than the HTML ones.
-pub const NS_SVG: usize = lxb::lxb_ns_id_enum_t_LXB_NS_SVG as usize;
-/// See [`NS_SVG`].
-pub const NS_MATH: usize = lxb::lxb_ns_id_enum_t_LXB_NS_MATH as usize;
-/// `LXB_NS_XML`. An attribute in it keeps its `xml:` prefix across a
-/// cross-document translation rather than having one invented.
-pub const NS_XML: usize = lxb::lxb_ns_id_enum_t_LXB_NS_XML as usize;
-/// `LXB_NS_XMLNS`: the parser puts a foreign element's `xmlns` / `xmlns:*`
-/// declarations in it, and XPath does not see them as attributes.
-pub const NS_XMLNS: usize = lxb::lxb_ns_id_enum_t_LXB_NS_XMLNS as usize;
+ * silently. Deriving the value removes the class rather than checking for it.
+ *
+ * Both ids are Lexbor's `usize`, where 0 (`_UNDEF`) means "none". Here they are
+ * non-zero newtypes, and "none" is an `Option`: a namespace id cannot be
+ * passed where a tag id is wanted, and "no namespace" cannot be compared as if
+ * it were one. The raw number is only for handing back to Lexbor. */
 
-/// `LXB_TAG__UNDEF`. A custom element's tag id is a pointer value, far above
-/// the static range the element index buckets, so it is compared against
-/// [`TAG_LAST_ENTRY`] rather than this.
-pub const TAG_UNDEF: usize = lxb::lxb_tag_id_enum_t_LXB_TAG__UNDEF as usize;
+/// `v` as a non-zero id, for the generated constants below: evaluated at
+/// compile time, where a zero fails the build.
+#[allow(
+    clippy::panic,
+    reason = "only ever evaluated in a const: a zero constant is a build error"
+)]
+const fn nonzero(v: usize) -> NonZeroUsize {
+    match NonZeroUsize::new(v) {
+        Some(n) => n,
+        None => panic!("a Lexbor id constant is zero"),
+    }
+}
 
-/// `LXB_TAG__LAST_ENTRY` - the end of Lexbor's static tag-id range.
+/// An interned namespace id of a document's namespace table - never
+/// `LXB_NS__UNDEF`, which reads as `None`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(transparent)]
+pub struct NsId(NonZeroUsize);
+
+impl NsId {
+    pub const HTML: NsId = NsId(nonzero(lxb::lxb_ns_id_enum_t_LXB_NS_HTML as usize));
+    /// The two foreign roots. A fragment parsed in one of their contexts
+    /// follows the foreign-content rules rather than the HTML ones.
+    pub const SVG: NsId = NsId(nonzero(lxb::lxb_ns_id_enum_t_LXB_NS_SVG as usize));
+    /// See [`NsId::SVG`].
+    pub const MATH: NsId = NsId(nonzero(lxb::lxb_ns_id_enum_t_LXB_NS_MATH as usize));
+    /// `LXB_NS_XML`. An attribute in it keeps its `xml:` prefix across a
+    /// cross-document translation rather than having one invented.
+    pub const XML: NsId = NsId(nonzero(lxb::lxb_ns_id_enum_t_LXB_NS_XML as usize));
+    /// `LXB_NS_XMLNS`: the parser puts a foreign element's `xmlns` /
+    /// `xmlns:*` declarations in it, and XPath does not see them as
+    /// attributes.
+    pub const XMLNS: NsId = NsId(nonzero(lxb::lxb_ns_id_enum_t_LXB_NS_XMLNS as usize));
+
+    /// Lexbor's number as an id; `None` for `LXB_NS__UNDEF`.
+    #[inline]
+    pub(in crate::lexbor) fn from_raw(v: usize) -> Option<NsId> {
+        NonZeroUsize::new(v).map(NsId)
+    }
+
+    /// The number, for a Lexbor call.
+    #[inline]
+    pub(in crate::lexbor) fn raw(self) -> usize {
+        self.0.get()
+    }
+}
+
+/// A tag id, as Lexbor interns an element's name - never `LXB_TAG__UNDEF`,
+/// which reads as `None`.
+///
+/// Two ranges. A name Lexbor knows is a small number below
+/// [`TAG_LAST_ENTRY`]; a custom element's id is a POINTER VALUE
+/// (`lxb_tag_append` sets `data->tag_id = (lxb_tag_id_t) data`), far above it.
+/// So an id is not an array index: [`static_index`](Self::static_index) is the
+/// checked way to get one.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(transparent)]
+pub struct TagId(NonZeroUsize);
+
+impl TagId {
+    /// The three tags a fragment context can be named by: `<body>` is the
+    /// default context, and `<svg>`/`<math>` are the foreign roots.
+    pub const BODY: TagId = TagId(nonzero(lxb::lxb_tag_id_enum_t_LXB_TAG_BODY as usize));
+    /// See [`TagId::BODY`].
+    pub const SVG: TagId = TagId(nonzero(lxb::lxb_tag_id_enum_t_LXB_TAG_SVG as usize));
+    /// See [`TagId::BODY`].
+    pub const MATH: TagId = TagId(nonzero(lxb::lxb_tag_id_enum_t_LXB_TAG_MATH as usize));
+    /// `LXB_TAG_TEMPLATE`.
+    pub const TEMPLATE: TagId = TagId(nonzero(lxb::lxb_tag_id_enum_t_LXB_TAG_TEMPLATE as usize));
+
+    /// Lexbor's number as an id; `None` for `LXB_TAG__UNDEF`.
+    #[inline]
+    pub(in crate::lexbor) fn from_raw(v: usize) -> Option<TagId> {
+        NonZeroUsize::new(v).map(TagId)
+    }
+
+    /// The number, for a Lexbor call.
+    #[inline]
+    pub(in crate::lexbor) fn raw(self) -> usize {
+        self.0.get()
+    }
+
+    /// The id as an index into Lexbor's static range `[1, TAG_LAST_ENTRY)`,
+    /// or `None` for a custom element's pointer-valued id.
+    #[inline]
+    pub fn static_index(self) -> Option<usize> {
+        let v = self.0.get();
+        (v < TAG_LAST_ENTRY).then_some(v)
+    }
+}
+
+/// `LXB_TAG__LAST_ENTRY` - the end of Lexbor's static tag-id range, and so the
+/// size of an array indexed by [`TagId::static_index`].
 pub const TAG_LAST_ENTRY: usize = lxb::lxb_tag_id_enum_t_LXB_TAG__LAST_ENTRY as usize;
-
-/// The three tags a fragment context can be named by: `<body>` is the default
-/// context, and `<svg>`/`<math>` are the foreign roots.
-pub const TAG_BODY: usize = lxb::lxb_tag_id_enum_t_LXB_TAG_BODY as usize;
-/// See [`TAG_BODY`].
-pub const TAG_SVG: usize = lxb::lxb_tag_id_enum_t_LXB_TAG_SVG as usize;
-/// See [`TAG_BODY`].
-pub const TAG_MATH: usize = lxb::lxb_tag_id_enum_t_LXB_TAG_MATH as usize;
 
 /// The last of Lexbor's special tag ids (text, comment, doctype, document,
 /// eof). A token at or below it is not an element start-tag.
@@ -106,9 +178,6 @@ const _: () = {
     );
     assert!(T::Notation as u32 == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_NOTATION);
 };
-
-/// `LXB_TAG_TEMPLATE`.
-pub const TAG_TEMPLATE: usize = lxb::lxb_tag_id_enum_t_LXB_TAG_TEMPLATE as usize;
 
 /* ---------- borrowed bytes ---------- */
 
@@ -393,17 +462,17 @@ impl<'doc> HtmlDoc<'doc> {
         unsafe { (*self.raw.as_ptr()).compat_mode as i64 }
     }
 
-    /// The tag id Lexbor knows `name` by, or [`TAG_UNDEF`] for an unknown or
-    /// empty name. Custom-element ids are pointer values past
-    /// [`TAG_LAST_ENTRY`], which callers bucketing by id must allow for.
-    pub fn tag_id(self, name: &[u8]) -> usize {
+    /// The tag id Lexbor knows `name` by, or `None` for an unknown or empty
+    /// name. Custom-element ids are pointer values past [`TAG_LAST_ENTRY`],
+    /// which callers bucketing by id must allow for.
+    pub fn tag_id(self, name: &[u8]) -> Option<TagId> {
         // SAFETY: a live document handle, read for this call.
         let tags = unsafe { (*self.raw.as_ptr()).tags };
         if name.is_empty() || tags.is_null() {
-            return TAG_UNDEF;
+            return None;
         }
         // SAFETY: `tags` is the document's own tag table, `name` a live slice.
-        unsafe { lxb::lxb_tag_id_by_name_noi(tags, name.as_ptr(), name.len()) }
+        TagId::from_raw(unsafe { lxb::lxb_tag_id_by_name_noi(tags, name.as_ptr(), name.len()) })
     }
 
     /// The document as a node: an `lxb_dom_document_t` leads with its node.
@@ -562,11 +631,11 @@ impl<'doc> HtmlNode<'doc> {
         unsafe { named_mut(self.as_raw(), lxb::lxb_dom_node_name) }
     }
 
-    /// The interned namespace id; [`NS_UNDEF`] for none.
+    /// The interned namespace id, or `None` for none.
     #[inline]
-    pub fn ns_id(self) -> usize {
+    pub fn ns_id(self) -> Option<NsId> {
         // SAFETY: as `node_type`.
-        unsafe { (*self.as_raw()).ns }
+        NsId::from_raw(unsafe { (*self.as_raw()).ns })
     }
 
     /// The source byte offset the parse stamped on this element, or None when
@@ -608,19 +677,16 @@ impl<'doc> HtmlNode<'doc> {
         unsafe { (*self.as_raw()).prefix != 0 }
     }
 
-    /// The interned tag id (`local_name`).
+    /// The interned tag id (`local_name`), or `None` for none.
     #[inline]
-    pub fn tag_id(self) -> usize {
+    pub fn tag_id(self) -> Option<TagId> {
         // SAFETY: as `node_type`.
-        unsafe { (*self.as_raw()).local_name }
+        TagId::from_raw(unsafe { (*self.as_raw()).local_name })
     }
 
     /// The namespace URI, or None when the node has none.
     pub fn ns_uri(self) -> Option<&'doc [u8]> {
-        let ns = self.ns_id();
-        if ns == NS_UNDEF {
-            return None;
-        }
+        let ns = self.ns_id()?;
         // SAFETY: a live node's document, whose namespace table interns the
         // URI for the document's lifetime.
         let uri = unsafe {
@@ -629,7 +695,7 @@ impl<'doc> HtmlNode<'doc> {
                 return None;
             }
             let mut len = 0;
-            seen(lxb::lxb_ns_by_id(table, ns, &mut len), len)
+            seen(lxb::lxb_ns_by_id(table, ns.raw(), &mut len), len)
         };
         (!uri.is_empty()).then_some(uri)
     }
@@ -775,8 +841,8 @@ impl<'doc> HtmlNode<'doc> {
     /// contents fragment rather than under it.
     pub fn is_html_template(self) -> bool {
         self.node_type() == NodeType::Element
-            && self.tag_id() == TAG_TEMPLATE
-            && self.ns_id() == NS_HTML
+            && self.tag_id() == Some(TagId::TEMPLATE)
+            && self.ns_id() == Some(NsId::HTML)
     }
 
     /// Lexbor's text content of this node, lent to `f` - None when Lexbor has
@@ -884,9 +950,9 @@ impl<'doc> HtmlElement<'doc> {
     /// name, not Lexbor's stored `local_name`: Lexbor lower-cases that even when
     /// the qualified name keeps its case, and `setAttributeNS` is
     /// case-sensitive.
-    pub fn find_attr_ns(self, ns_id: usize, local: &[u8]) -> Option<HtmlAttr<'doc>> {
+    pub fn find_attr_ns(self, ns: Option<NsId>, local: &[u8]) -> Option<HtmlAttr<'doc>> {
         self.attrs()
-            .find(|a| a.own_ns() == ns_id && a.dom_local_name() == local)
+            .find(|a| a.own_ns() == ns && a.dom_local_name() == local)
     }
 
     /* The attribute-writing steps, spelled once. Reached only through the two
@@ -1047,23 +1113,21 @@ impl<'doc> HtmlAttr<'doc> {
     /// `set_attribute_ns(SVG, "q:x")` on an SVG element is in SVG, while a
     /// parsed `q:x` there is one no-namespace name. An UNPREFIXED namespaced
     /// attribute in its element's own namespace reads as no namespace - Lexbor
-    /// keeps nothing that tells the two apart. [`NS_UNDEF`] for an unprefixed
+    /// keeps nothing that tells the two apart. `None` for an unprefixed
     /// attribute Lexbor has not linked to an element yet.
-    pub fn own_ns(self) -> usize {
+    pub fn own_ns(self) -> Option<NsId> {
         let ns = self.node().ns_id();
         match self.owner() {
             _ if self.node().has_prefix() => ns,
             Some(owner) if owner.node().ns_id() != ns => ns,
-            _ => NS_UNDEF,
+            _ => None,
         }
     }
 
     /// The attribute's OWN namespace URI - see [`own_ns`](Self::own_ns) - or
     /// None when it has none.
     pub fn own_ns_uri(self) -> Option<&'doc [u8]> {
-        if self.own_ns() == NS_UNDEF {
-            return None;
-        }
+        self.own_ns()?;
         self.node().ns_uri()
     }
 

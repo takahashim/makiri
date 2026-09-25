@@ -19,41 +19,14 @@ use crate::bridge::ruby::{is_kind_of, string_of};
 use crate::bridge::string::{ruby_verified_text, HtmlSource};
 use crate::bridge::wrapper::{ensure_document_mutable, html_doc_unwrap, DocKind, DocumentShell};
 use crate::init::CLASS_NODE;
-use crate::lexbor::adapter::html::{
-    HtmlDoc, HtmlNode, HtmlNodeMut, NodeType, Place, RawDoc, RawNode, NS_HTML, NS_MATH, NS_SVG,
-    TAG_BODY, TAG_MATH, TAG_SVG, TAG_UNDEF,
-};
+use crate::lexbor::adapter::html::{HtmlDoc, HtmlNodeMut, Place, RawDoc, RawNode};
 use crate::lexbor::adapter::post_parse::parse_html;
+pub use crate::lexbor::fragment::FragmentTag;
 use crate::lexbor::fragment::{tag_id_by_name, FragmentContext, FragmentError, TransientFragment};
 
 /// A fragment-parse failure as `Makiri::Error`.
 fn fragment_error(e: FragmentError) -> Error {
     makiri_error(e.message())
-}
-
-/// The context a fragment is parsed "inside of", per the WHATWG algorithm, as
-/// the tag and namespace ids the parser takes - a pair that used to travel as
-/// two bare `usize`s, where swapping them compiled.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct FragmentTag {
-    pub tag: usize,
-    pub ns: usize,
-}
-
-impl FragmentTag {
-    /// `<body>` in the HTML namespace - the context when none is given.
-    pub const BODY: FragmentTag = FragmentTag {
-        tag: TAG_BODY,
-        ns: NS_HTML,
-    };
-
-    /// The context an element provides: its own tag and namespace.
-    pub fn of(el: HtmlNode<'_>) -> FragmentTag {
-        FragmentTag {
-            tag: el.tag_id(),
-            ns: el.ns_id(),
-        }
-    }
 }
 
 /// Resolve the Ruby `context:` argument against `document`.
@@ -75,12 +48,9 @@ pub fn resolve_fragment_context(
         // SAFETY: `unwrap` checked it is an HTML node, which `context` keeps
         // alive for this call.
         let cn = unsafe { html_node_unwrap(context)?.as_node() };
-        if cn.node_type() != NodeType::Element {
-            return Err(crate::bridge::ruby::arg_error(
-                "fragment context node must be an element",
-            ));
-        }
-        return Ok(FragmentTag::of(cn));
+        return cn.element().and_then(FragmentTag::of).ok_or_else(|| {
+            crate::bridge::ruby::arg_error("fragment context node must be an element")
+        });
     }
 
     /* A context tag name is a programmatic control string, not parsed HTML, so
@@ -88,25 +58,18 @@ pub fn resolve_fragment_context(
     let cv = ruby_verified_text(context, "fragment context element")?;
     let name = cv.as_verified().as_bytes();
     if name == b"svg" {
-        return Ok(FragmentTag {
-            tag: TAG_SVG,
-            ns: NS_SVG,
-        });
+        return Ok(FragmentTag::SVG);
     }
     if name == b"math" {
-        return Ok(FragmentTag {
-            tag: TAG_MATH,
-            ns: NS_MATH,
-        });
+        return Ok(FragmentTag::MATH);
     }
-    let tag = tag_id_by_name(html_doc_unwrap(document)?, name);
-    if tag == TAG_UNDEF {
+    let Some(tag) = tag_id_by_name(html_doc_unwrap(document)?, name) else {
         return Err(crate::bridge::ruby::arg_error(format!(
             "unknown fragment context element: {}",
             String::from_utf8_lossy(name)
         )));
-    }
-    Ok(FragmentTag { tag, ns: NS_HTML })
+    };
+    Ok(FragmentTag::html(tag))
 }
 
 /// Parse `html` as a fragment in `context`. Nothing is changed yet: a String
@@ -209,14 +172,7 @@ pub fn build_fragment(document: Value, rb_html: Value, at: FragmentTag) -> Resul
     /* `to_str`/`to_s` is Ruby code that may raise: converted under protect. */
     let html = string_of(rb_html)?;
     let doc = html_doc_unwrap(document)?;
-    let parsed = parse(
-        html,
-        &FragmentContext::Tag {
-            doc,
-            tag: at.tag,
-            ns: at.ns,
-        },
-    )?;
+    let parsed = parse(html, &FragmentContext::Tag { doc, at })?;
 
     let Some(frag) = crate::bridge::wrapper::html_doc(&document).create_fragment() else {
         return Err(makiri_error("failed to create document fragment"));

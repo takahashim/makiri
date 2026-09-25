@@ -246,25 +246,25 @@ impl<'doc> HtmlDoc<'doc> {
     /// Intern `uri` in the document's namespace table and give back its id -
     /// the half of the key the DOM matches a namespaced attribute on.
     ///
-    /// [`NS_UNDEF`] for an empty URI, and for a document with no table or one
-    /// that could not take another entry: a miss then simply finds nothing,
-    /// rather than matching the wrong attribute.
-    pub fn intern_ns(self, uri: &[u8]) -> usize {
+    /// `None` for an empty URI, and for a document with no table or one that
+    /// could not take another entry: a miss then simply finds nothing, rather
+    /// than matching the wrong attribute.
+    pub fn intern_ns(self, uri: &[u8]) -> Option<NsId> {
         if uri.is_empty() {
-            return NS_UNDEF;
+            return None;
         }
         // SAFETY: a live document; the table and the URI are only read, and
         // Lexbor copies the URI into its own storage.
         unsafe {
             let table = (*self.as_raw()).ns;
             if table.is_null() {
-                return NS_UNDEF;
+                return None;
             }
             let d = lxb::lxb_ns_append(table as *mut core::ffi::c_void, uri.as_ptr(), uri.len());
             if d.is_null() {
-                NS_UNDEF
+                None
             } else {
-                (*d).ns_id
+                NsId::from_raw((*d).ns_id)
             }
         }
     }
@@ -445,12 +445,12 @@ impl<'doc> BuildingElement<'doc> {
         BuildingNode(self.0.node())
     }
 
-    /// Put the element in the interned namespace `ns_id`.
+    /// Put the element in the interned namespace `ns`.
     #[inline]
-    pub fn set_ns(self, ns_id: usize) {
-        // SAFETY: an element nothing else holds; `ns_id` is an id this
+    pub fn set_ns(self, ns: NsId) {
+        // SAFETY: an element nothing else holds; `ns` is an id this
         // document's own namespace table handed out.
-        unsafe { (*self.0.raw()).node.ns = ns_id };
+        unsafe { (*self.0.raw()).node.ns = ns.raw() };
     }
 
     /// Set a plain, namespaceless attribute. `false` when Lexbor could not

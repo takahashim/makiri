@@ -36,7 +36,7 @@ use crate::lexbor::abi::{
 };
 use crate::lexbor::adapter::arena_bytes::document_capacity;
 use crate::lexbor::adapter::dom_index::DomIndex;
-use crate::lexbor::adapter::html::{HtmlDoc as DomDoc, HtmlNode, RawDoc, RawNode};
+use crate::lexbor::adapter::html::{HtmlDoc as DomDoc, HtmlNode, RawDoc, RawNode, TagId};
 use crate::lexbor::adapter::source_loc::{
     lines_build, pos_assign_to_dom, pos_token_cb, Lines, Positions, Recorder,
 };
@@ -141,7 +141,7 @@ impl HtmlParsed {
     /// (`HtmlNodeMut::assume_mutable`).
     ///
     /// [`invalidate_indexes`]: Self::invalidate_indexes
-    pub fn tag_bucket(&self, tag: usize) -> Option<&[HtmlNode<'_>]> {
+    pub fn tag_bucket(&self, tag: TagId) -> Option<&[HtmlNode<'_>]> {
         let index = self.dom_index.as_deref()?;
         // SAFETY: every node of the bucket is a live element of `self.doc`, and
         // stays one for as long as `self` is borrowed - see above. The

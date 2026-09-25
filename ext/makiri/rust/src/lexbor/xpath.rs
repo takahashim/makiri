@@ -10,7 +10,7 @@
 
 #![allow(unsafe_code)]
 
-use crate::lexbor::adapter::html::{self as dom, HtmlAttr, HtmlDoc, HtmlNode, RawNode};
+use crate::lexbor::adapter::html::{HtmlAttr, HtmlDoc, HtmlNode, NsId, RawNode};
 use crate::lexbor::adapter::post_parse::HtmlParsed;
 use crate::token::{Kind, Token};
 use crate::xpath::abi::*;
@@ -194,7 +194,7 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
     #[inline]
     fn unprefixed_matches(self, n: HtmlNode<'d>, is_attr: bool, lax: bool) -> bool {
         let ns = n.ns_id();
-        lax || is_attr || ns == dom::NS_HTML || ns == dom::NS_UNDEF
+        lax || is_attr || ns.is_none() || ns == Some(NsId::HTML)
     }
 
     /// Lexbor gives an attribute with no namespace of its own its element's,
@@ -206,11 +206,11 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
 
     #[inline]
     fn folds_name_case(self, el: HtmlNode<'d>) -> bool {
-        el.ns_id() == dom::NS_HTML
+        el.ns_id() == Some(NsId::HTML)
     }
     #[inline]
     fn has_ns(self, n: HtmlNode<'d>) -> bool {
-        n.ns_id() != dom::NS_UNDEF
+        n.ns_id().is_some()
     }
     #[inline]
     fn append_own_text(self, n: HtmlNode<'d>, buf: &mut Buf) -> Result<(), BufError> {
@@ -243,10 +243,8 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
         if ns_uri.is_some() || index.has_foreign() {
             return None;
         }
-        let tag = self.doc.tag_id(local);
-        if tag == dom::TAG_UNDEF || tag >= dom::TAG_LAST_ENTRY {
-            return None;
-        }
+        let tag = self.doc.tag_id(local)?;
+        tag.static_index()?;
         /* Built by `prepare`; the handle lends the nodes for `'d`. */
         let nodes = parsed.tag_bucket(tag)?;
         Some(Bucket {
@@ -259,7 +257,7 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
 /// `a`, or the first attribute after it that is not a namespace declaration.
 fn skip_ns_decls(mut a: Option<HtmlAttr<'_>>) -> Option<HtmlAttr<'_>> {
     while let Some(x) = a {
-        if x.node().ns_id() != dom::NS_XMLNS {
+        if x.node().ns_id() != Some(NsId::XMLNS) {
             return Some(x);
         }
         a = x.next_attr();

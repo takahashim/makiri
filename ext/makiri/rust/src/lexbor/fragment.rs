@@ -21,7 +21,9 @@ use crate::lexbor::abi::LxbNode;
  * fragments                                                          *
  * ------------------------------------------------------------------ */
 
-use crate::lexbor::adapter::html::{BuildingNode, HtmlDoc, HtmlNode, RawDoc, RawNode};
+use crate::lexbor::adapter::html::{
+    BuildingNode, HtmlDoc, HtmlElement, HtmlNode, NsId, RawDoc, RawNode, TagId,
+};
 use crate::lexbor::adapter::utf8_input::sanitize;
 
 /* The two fragment parsers, both generated. Everything this file does to the
@@ -201,7 +203,53 @@ pub enum FragmentContext {
     Element(RawNode),
     /// A named context: a tag id and namespace, for `Document#fragment` and
     /// `DocumentFragment.parse`, where no such element exists yet.
-    Tag { doc: RawDoc, tag: usize, ns: usize },
+    Tag { doc: RawDoc, at: FragmentTag },
+}
+
+/// The context a fragment is parsed "inside of", per the WHATWG algorithm, as
+/// the tag and namespace ids the parser takes - a pair that used to travel as
+/// two bare `usize`s, where swapping them compiled. Declared once, here, for
+/// the parser that reads it and the bridge that resolves it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FragmentTag {
+    pub tag: TagId,
+    /// `None` for an element in no namespace, which a context node can be.
+    pub ns: Option<NsId>,
+}
+
+impl FragmentTag {
+    /// `<body>` in the HTML namespace - the context when none is given.
+    pub const BODY: FragmentTag = FragmentTag {
+        tag: TagId::BODY,
+        ns: Some(NsId::HTML),
+    };
+    /// The SVG root, `<svg>` in its own namespace.
+    pub const SVG: FragmentTag = FragmentTag {
+        tag: TagId::SVG,
+        ns: Some(NsId::SVG),
+    };
+    /// The MathML root, `<math>` in its own namespace.
+    pub const MATH: FragmentTag = FragmentTag {
+        tag: TagId::MATH,
+        ns: Some(NsId::MATH),
+    };
+
+    /// The context an element provides: its own tag and namespace. `None`
+    /// only for an element Lexbor gave no tag id, which it never makes.
+    pub fn of(el: HtmlElement<'_>) -> Option<FragmentTag> {
+        Some(FragmentTag {
+            tag: el.node().tag_id()?,
+            ns: el.node().ns_id(),
+        })
+    }
+
+    /// An HTML-namespace tag.
+    pub fn html(tag: TagId) -> FragmentTag {
+        FragmentTag {
+            tag,
+            ns: Some(NsId::HTML),
+        }
+    }
 }
 
 impl FragmentContext {
@@ -217,11 +265,11 @@ impl FragmentContext {
             }
             /* A document handle is untyped; this entry takes the HTML document
              * it is. */
-            FragmentContext::Tag { doc, tag, ns } => lxb_html_parse_fragment_by_tag_id(
+            FragmentContext::Tag { doc, at } => lxb_html_parse_fragment_by_tag_id(
                 parser.as_ptr(),
                 doc.as_ptr().cast(),
-                tag,
-                ns,
+                at.tag.raw(),
+                at.ns.map_or(0, NsId::raw),
                 src,
                 len,
             ),
@@ -287,11 +335,11 @@ fn import_fixed<'d>(hdoc: HtmlDoc<'d>, hsrc: HtmlNode<'_>, deep: bool) -> Option
 /* the context helpers the Ruby-facing bridge drives                   */
 /* ------------------------------------------------------------------ */
 
-/// The tag id Lexbor knows `name` by, or `TAG_UNDEF` for an unknown name.
+/// The tag id Lexbor knows `name` by, or `None` for an unknown name.
 ///
 /// The Ruby-facing context resolution lives in [`crate::bridge::fragment`];
 /// the lookup itself is [`HtmlDoc::tag_id`].
-pub fn tag_id_by_name(doc: RawDoc, name: &[u8]) -> usize {
+pub fn tag_id_by_name(doc: RawDoc, name: &[u8]) -> Option<TagId> {
     // SAFETY: a live document handle, read for this call.
     unsafe { doc.as_doc() }.tag_id(name)
 }

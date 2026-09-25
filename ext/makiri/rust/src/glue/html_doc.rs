@@ -86,15 +86,17 @@ fn frag_s_parse(ruby: &Ruby, _klass: Value, args: &[Value]) -> Result<Value, Err
 /// (SVG/MathML) fragment context.
 fn node_parse(ruby: &Ruby, self_: Value, rb_html: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let Some(context) = crate::glue::html_node::arg_node(&self_)?.element() else {
+        /* Only the context's tag and namespace ids are needed, read before the
+         * fragment parse runs. */
+        let Some(at) = crate::glue::html_node::arg_node(&self_)?
+            .element()
+            .and_then(fragment::FragmentTag::of)
+        else {
             return Err(Error::new(
                 ruby.exception_arg_error(),
                 "Node#parse requires an element context",
             ));
         };
-        /* Only the context's tag and namespace ids are needed, read before the
-         * fragment parse runs. */
-        let at = fragment::FragmentTag::of(context.node());
         let document = keepalive_document(self_)?;
         let frag = fragment::build_fragment(document, rb_html, at)?;
         /* The native children reader, not a Ruby `children` dispatch: the

@@ -34,7 +34,7 @@ use crate::falloc::try_vec_with_capacity;
 /// value that cannot key a dense array. Those elements are simply left out, and
 /// `//customtag` falls back to a tree walk - rare in practice.
 use super::html::{
-    HtmlDoc, HtmlElement, HtmlNode, RawNode, NS_HTML, TAG_LAST_ENTRY as TAG_INDEX_CAP, TAG_UNDEF,
+    HtmlDoc, HtmlElement, HtmlNode, NsId, RawNode, TagId, TAG_LAST_ENTRY as TAG_INDEX_CAP,
 };
 
 pub struct DomIndex {
@@ -48,11 +48,10 @@ pub struct DomIndex {
     has_foreign: bool,
 }
 
-/// An element's tag id, when it is one this index buckets.
+/// An element's tag id as a bucket index, when it is one this index buckets.
 #[inline]
 fn indexable_tag(el: HtmlElement<'_>) -> Option<usize> {
-    let tag = el.node().tag_id();
-    (tag != TAG_UNDEF && tag < TAG_INDEX_CAP).then_some(tag)
+    el.node().tag_id()?.static_index()
 }
 
 /// Every element under `root` (inclusive), in document order. The walk climbs
@@ -73,7 +72,7 @@ pub(crate) fn build(doc: HtmlDoc<'_>) -> Option<DomIndex> {
     let mut has_foreign = false;
 
     for el in elements(root) {
-        if el.node().ns_id() != NS_HTML {
+        if el.node().ns_id() != Some(NsId::HTML) {
             has_foreign = true;
         }
         if let Some(tag) = indexable_tag(el) {
@@ -132,17 +131,16 @@ pub(crate) fn build(doc: HtmlDoc<'_>) -> Option<DomIndex> {
  * ------------------------------------------------------------------ */
 
 impl DomIndex {
-    /// The elements with tag id `tag_id`, in document order; empty for a tag
+    /// The elements with tag id `tag`, in document order; empty for a tag
     /// this index does not bucket.
-    pub fn tag_bucket(&self, tag_id: usize) -> &[RawNode] {
-        if self.tag_nodes.is_empty()
-            || tag_id == TAG_UNDEF
-            || tag_id >= TAG_INDEX_CAP
-            || tag_id > self.tag_max
-        {
+    pub fn tag_bucket(&self, tag: TagId) -> &[RawNode] {
+        let Some(i) = tag.static_index() else {
+            return &[];
+        };
+        if self.tag_nodes.is_empty() || i > self.tag_max {
             return &[];
         }
-        &self.tag_nodes[self.tag_off[tag_id]..self.tag_off[tag_id + 1]]
+        &self.tag_nodes[self.tag_off[i]..self.tag_off[i + 1]]
     }
 
     /// Whether the document holds any non-HTML element. The `//tag` fast path is

@@ -21,8 +21,7 @@
 
 use crate::falloc::{try_vec_with_capacity, VecPush};
 use crate::lexbor::adapter::html::{
-    BuildingElement, BuildingNode, HtmlDoc, HtmlElement, HtmlNode, RawDoc, RawNode, NS_HTML,
-    NS_UNDEF, NS_XML, NS_XMLNS,
+    BuildingElement, BuildingNode, HtmlDoc, HtmlElement, HtmlNode, NsId, RawDoc, RawNode,
 };
 use crate::xml::model::{Document as XmlDoc, MutStatus, NodeId, NodeType};
 use crate::xml::mutate;
@@ -124,8 +123,8 @@ fn h2x_copy_attrs(doc: &mut XmlDoc, s: HtmlElement<'_>, el: NodeId) -> Result<()
              * its own, an attribute is given its - so a declaration can only
              * restate one, or move one: `<svg><g xmlns="urn:evil">` put `g`
              * and its children in `urn:evil`. */
-            (NS_XMLNS, _) | (_, Some(_)) => {}
-            (NS_UNDEF | NS_XML, _) => {
+            (Some(NsId::XMLNS), _) | (_, Some(_)) => {}
+            (None | Some(NsId::XML), _) => {
                 let colon = name.iter().position(|&b| b == b':');
                 match colon {
                     Some(c) if &name[..c] != b"xml" => return Err(no_namespace_colon(name)),
@@ -374,10 +373,9 @@ fn x2h_make<'doc>(
              * SVG `linearGradient` does not come back `lineargradient`. An
              * XHTML element is an HTML element, whose name is lower case. */
             let (prefix, ns) = (doc.prefix(s), doc.ns(s));
-            let ns_id = hdoc.intern_ns(ns);
-            let el = if prefix.is_empty() && ns_id == NS_HTML {
+            let el = if prefix.is_empty() && hdoc.intern_ns(ns) == Some(NsId::HTML) {
                 let el = hdoc.create_element(doc.qname(s)).ok_or(MutStatus::Oom)?;
-                el.set_ns(ns_id);
+                el.set_ns(NsId::HTML);
                 el
             } else {
                 hdoc.create_element_ns(doc.local(s), ns, prefix)

@@ -47,7 +47,7 @@ type Token = lxb::lxb_html_token_t;
 type Tokenizer = lxb::lxb_html_tokenizer_t;
 type TokenFn = lxb::lxb_html_tokenizer_token_f;
 
-use super::html::{HtmlNode, TAG_EM_DOCTYPE};
+use super::html::{HtmlNode, TagId, TAG_EM_DOCTYPE};
 const TOKEN_TYPE_CLOSE: i32 = lxb::lxb_html_token_type_LXB_HTML_TOKEN_TYPE_CLOSE as i32;
 
 /* ------------------------------------------------------------------ *
@@ -134,7 +134,7 @@ const LOOKAHEAD: usize = 64;
 
 #[derive(Clone, Copy)]
 struct Entry {
-    tag_id: usize,
+    tag_id: TagId,
     offset: usize,
 }
 
@@ -214,6 +214,10 @@ unsafe fn record(rec: &mut Recorder, token: *const Token) {
     {
         return;
     }
+    /* Above the special ids, so never UNDEF. */
+    let Some(tag_id) = TagId::from_raw((*token).tag_id) else {
+        return;
+    };
 
     /* The cap is checked where the array would GROW, so it stops the next
      * growth past MAX_TOKENS; tokens that fit the capacity already allocated
@@ -224,7 +228,7 @@ unsafe fn record(rec: &mut Recorder, token: *const Token) {
         return;
     }
     let entry = Entry {
-        tag_id: (*token).tag_id,
+        tag_id,
         offset: (*token).begin as usize - rec.first as usize,
     };
     if rec.items.falloc_push(entry).is_err() {
@@ -280,7 +284,9 @@ pub fn pos_assign_to_dom(rec: &Positions, root: HtmlNode<'_>) {
         if cursor >= rec.items.len() {
             break;
         }
-        let tid = el.node().tag_id();
+        let Some(tid) = el.node().tag_id() else {
+            continue; /* no token has an UNDEF id to match */
+        };
         let limit = (cursor + LOOKAHEAD).min(rec.items.len());
         if let Some(j) = (cursor..limit).find(|&j| rec.items[j].tag_id == tid) {
             el.node().stamp_source_offset(rec.items[j].offset);

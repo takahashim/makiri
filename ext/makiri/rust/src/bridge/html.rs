@@ -23,7 +23,7 @@ use crate::lexbor::fragment::import_with_fixup;
 
 use crate::bridge::string::{RubyData, RubyText};
 use crate::bridge::wrapper::*;
-use crate::lexbor::adapter::html::{HtmlDoc, HtmlElementMut, NS_UNDEF};
+use crate::lexbor::adapter::html::{HtmlDoc, HtmlElementMut, NsId};
 
 /* ---- the document's own bytes and text ---- */
 
@@ -424,7 +424,7 @@ pub fn remove_attribute_ns(
     // SAFETY: see the section comment.
     let want_ns = match ns.filter(|v| v.len() != 0) {
         Some(nv) => intern_ns(el, unsafe { nv.bytes() }),
-        None => NS_UNDEF,
+        None => None,
     };
     // SAFETY: as above.
     match el.element().find_attr_ns(want_ns, unsafe { local.bytes() }) {
@@ -437,7 +437,7 @@ pub fn remove_attribute_ns(
 }
 
 /// `uri` interned in `el`'s document, for a (namespace, local name) lookup.
-fn intern_ns(el: HtmlElementMut<'_>, uri: &[u8]) -> usize {
+fn intern_ns(el: HtmlElementMut<'_>, uri: &[u8]) -> Option<NsId> {
     el.element().node().owner_document().intern_ns(uri)
 }
 
