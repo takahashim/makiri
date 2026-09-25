@@ -19,12 +19,12 @@ use magnus::value::ReprValue;
 use magnus::{prelude::*, Error, Value};
 
 use crate::bridge::html::html_node_unwrap;
-use crate::bridge::node_set::{node_set_with_fill, PushError};
+use crate::bridge::node_set::{node_set_with_fill, wrap_member, PushError};
 use crate::bridge::ruby::VALUE;
 use crate::bridge::string::{ruby_str_from_utf8, ruby_verified_text};
 use crate::bridge::wrapper::{doc_content, html_doc_unwrap, with_html_parsed_known, Content};
 use crate::bridge::xml::xml_node_unwrap;
-use crate::init::{CLASS_NODE_SET, CLASS_XML_DOCUMENT, EXC_ERROR};
+use crate::init::{CLASS_XML_DOCUMENT, EXC_ERROR};
 pub use crate::init::{CLASS_XPATH_CONTEXT, EXC_XPATH_LIMIT_EXCEEDED, EXC_XPATH_SYNTAX_ERROR};
 use crate::token::{Kind, Token};
 use crate::xpath::ast::Ast;
@@ -297,9 +297,19 @@ pub fn evaluate_query(
 /// Callers free the AST and any context they own BEFORE this: the value owns
 /// its data and references neither.
 pub fn query_result(value: XPathValue, document: Value, answer: Answer) -> Result<Value, Error> {
-    let result = value_to_ruby(value, document)?;
-    if answer == Answer::First && is_kind_of(result, &CLASS_NODE_SET) {
-        return result.funcall("first", ());
+    if answer == Answer::First {
+        if let ValRef::NodeSet(set) = value.get() {
+            /* Only the first node is wrapped - no NodeSet, no `#first` call.
+             * The pointer is the document's, so the value is freed before the
+             * wrap, which allocates and so can raise past this frame. */
+            let first = set.as_slice().first().map(|n| n.as_ptr());
+            drop(value);
+            return Ok(match first {
+                // SAFETY: a node the query found in `document`.
+                Some(n) => unsafe { wrap_member(n, document) },
+                None => crate::bridge::ruby::nil(),
+            });
+        }
     }
-    Ok(result)
+    value_to_ruby(value, document)
 }

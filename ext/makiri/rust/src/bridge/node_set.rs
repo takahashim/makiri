@@ -271,6 +271,16 @@ unsafe fn wrap(node: *mut c_void, document: Value, doc_is_xml: bool) -> Value {
     }
 }
 
+/// Wrap one node a query over `document` answered, as a set over `document`
+/// would when read back - for `at_xpath`, which wants the first node and not
+/// the set.
+///
+/// # Safety
+/// `node` is a node pointer (a token's) of `document`.
+pub(in crate::bridge) unsafe fn wrap_member(node: *mut c_void, document: Value) -> Value {
+    wrap(node, document, is_kind_of(document, &CLASS_XML_DOCUMENT))
+}
+
 /// `Makiri::NodeSet`, as created by Init_makiri.
 fn node_set_class() -> RClass {
     CLASS_NODE_SET.class()
