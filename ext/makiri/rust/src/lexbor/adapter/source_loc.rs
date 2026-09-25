@@ -33,7 +33,7 @@
 
 use core::ffi::c_void;
 
-use crate::falloc::{try_vec_with_capacity, Reserve};
+use crate::falloc::{try_vec_with_capacity, VecPush};
 
 use crate::lexbor::abi as lxb;
 
@@ -215,37 +215,15 @@ unsafe fn record(rec: &mut Recorder, token: *const Token) {
         return;
     }
 
-    if rec.items.len() == rec.items.capacity() {
-        /* Fail closed BEFORE the geometric growth can exceed the cap. */
-        if rec.items.len() >= MAX_TOKENS {
-            rec.overflow = true;
-            return;
-        }
-        let want = match crate::falloc::grow_capacity(
-            rec.items.capacity(),
-            rec.items.len() + 1,
-            core::mem::size_of::<Entry>(),
-        ) {
-            Some(w) => w,
-            None => {
-                rec.overflow = true;
-                return;
-            }
-        };
-        if rec
-            .items
-            .falloc_reserve_exact(want - rec.items.len())
-            .is_err()
-        {
-            rec.overflow = true; /* fail closed: stop recording */
-            return;
-        }
-    }
-
-    rec.items.push(Entry {
+    /* Fail closed BEFORE the geometric growth can exceed the cap. */
+    let full = rec.items.len() == rec.items.capacity();
+    let entry = Entry {
         tag_id: (*token).tag_id,
         offset: (*token).begin as usize - rec.first as usize,
-    });
+    };
+    if (full && rec.items.len() >= MAX_TOKENS) || rec.items.falloc_push_amortized(entry).is_err() {
+        rec.overflow = true; /* fail closed: stop recording */
+    }
 }
 
 /// The chained token-done callback, installed on the tokenizer.

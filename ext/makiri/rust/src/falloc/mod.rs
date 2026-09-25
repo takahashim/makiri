@@ -172,6 +172,15 @@ pub trait Reserve {
 pub trait VecPush<T> {
     /// Push one element. `Err(())` leaves the vector unchanged.
     fn falloc_push(&mut self, item: T) -> Result<(), ()>;
+    /// Push one element, asking the allocator - and so the injection counter -
+    /// only when the vector is full, and then growing geometrically
+    /// ([`grow_capacity`]). For a push per node of a walk: [`falloc_push`]
+    /// consults the counter on every call, which made each push its own
+    /// `rake oom` injection point re-testing one branch. `Err(())` leaves the
+    /// vector unchanged.
+    ///
+    /// [`falloc_push`]: VecPush::falloc_push
+    fn falloc_push_amortized(&mut self, item: T) -> Result<(), ()>;
     /// Append a slice. `Err(())` leaves the vector unchanged.
     fn falloc_extend(&mut self, s: &[T]) -> Result<(), ()>
     where
@@ -182,6 +191,16 @@ impl<T> VecPush<T> for Vec<T> {
     #[inline]
     fn falloc_push(&mut self, item: T) -> Result<(), ()> {
         self.falloc_reserve(1)?;
+        self.push(item);
+        Ok(())
+    }
+    #[inline]
+    fn falloc_push_amortized(&mut self, item: T) -> Result<(), ()> {
+        if self.len() == self.capacity() {
+            let want = grow_capacity(self.capacity(), self.len() + 1, core::mem::size_of::<T>())
+                .ok_or(())?;
+            self.falloc_reserve_exact(want - self.len())?;
+        }
         self.push(item);
         Ok(())
     }

@@ -41,7 +41,7 @@
 #![allow(clippy::missing_safety_doc)]
 
 use crate::caught::PanicLatch;
-use crate::falloc::{try_to_boxed_slice, MapInsert, Reserve};
+use crate::falloc::{try_to_boxed_slice, MapInsert, Reserve, VecPush};
 use core::ffi::c_void;
 use std::collections::HashMap;
 
@@ -317,14 +317,12 @@ unsafe extern "C" fn find_cb(node: *mut LxbNode, _spec: u32, ctx: *mut c_void) -
             *overflow = true;
             return LXB_STATUS_STOP;
         }
-        /* `try_reserve` rather than relying on `push`: the global allocator
-         * aborts on OOM, and this path fails closed by reporting instead
-         * (`rake oom` sweeps it). */
-        if nodes.len() == nodes.capacity() && nodes.falloc_reserve(1).is_err() {
+        /* Not a bare `push`: the global allocator aborts on OOM, and this path
+         * fails closed by reporting instead (`rake oom` sweeps it). */
+        if nodes.falloc_push_amortized(found).is_err() {
             *oom = true;
             return LXB_STATUS_STOP;
         }
-        nodes.push(found);
         LXB_STATUS_OK
     })
 }

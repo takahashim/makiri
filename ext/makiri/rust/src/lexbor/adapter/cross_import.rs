@@ -19,7 +19,7 @@
 #![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
-use crate::falloc::{try_vec_with_capacity, Reserve};
+use crate::falloc::{try_vec_with_capacity, VecPush};
 use crate::lexbor::adapter::html::{
     BuildingElement, BuildingNode, HtmlDoc, HtmlElement, HtmlNode, RawDoc, RawNode, NS_HTML,
     NS_UNDEF, NS_XML, NS_XMLNS,
@@ -65,22 +65,6 @@ struct Frame<'a, S, D> {
     s: S,
     d: D,
     def: Option<&'a [u8]>,
-}
-
-/// Push, growing only when the stack is actually full.
-#[inline]
-fn push<'a, S, D>(stack: &mut Vec<Frame<'a, S, D>>, frame: Frame<'a, S, D>) -> Result<(), ()> {
-    if stack.len() == stack.capacity() {
-        let want = crate::falloc::grow_capacity(
-            stack.capacity(),
-            stack.len() + 1,
-            core::mem::size_of::<Frame<'a, S, D>>(),
-        )
-        .ok_or(())?;
-        stack.falloc_reserve_exact(want - stack.len())?;
-    }
-    stack.push(frame);
-    Ok(())
 }
 
 /* ================= HTML (lxb) -> XML (mkr) ========================== */
@@ -339,15 +323,13 @@ pub unsafe fn cross_html_to_xml(
     if deep {
         let mut stack: Vec<Frame<'_, HtmlNode<'_>, NodeId>> =
             try_vec_with_capacity(1).ok_or(MutStatus::Oom)?;
-        push(
-            &mut stack,
-            Frame {
+        stack
+            .falloc_push_amortized(Frame {
                 s: src,
                 d: root.node,
                 def: root.child_default,
-            },
-        )
-        .map_err(|_| MutStatus::Oom)?;
+            })
+            .map_err(|_| MutStatus::Oom)?;
 
         while let Some(f) = stack.pop() {
             let mut c = h2x_first_child(f.s);
@@ -360,15 +342,13 @@ pub unsafe fn cross_html_to_xml(
                         return Err(st);
                     }
                     if h2x_first_child(child).is_some() {
-                        push(
-                            &mut stack,
-                            Frame {
+                        stack
+                            .falloc_push_amortized(Frame {
                                 s: child,
                                 d: made.node,
                                 def: made.child_default,
-                            },
-                        )
-                        .map_err(|_| MutStatus::Oom)?;
+                            })
+                            .map_err(|_| MutStatus::Oom)?;
                     }
                 }
                 c = child.next();
@@ -466,15 +446,13 @@ pub unsafe fn cross_xml_to_html(
     if deep {
         let mut stack: Vec<Frame<NodeId, BuildingNode<'_>>> =
             try_vec_with_capacity(1).ok_or(MutStatus::Oom)?;
-        push(
-            &mut stack,
-            Frame {
+        stack
+            .falloc_push_amortized(Frame {
                 s: src,
                 d: root.link_target(),
                 def: None,
-            },
-        )
-        .map_err(|_| MutStatus::Oom)?;
+            })
+            .map_err(|_| MutStatus::Oom)?;
 
         while let Some(f) = stack.pop() {
             let mut c = doc.first_child(f.s);
@@ -483,15 +461,13 @@ pub unsafe fn cross_xml_to_html(
                 if let Some(dc) = x2h_make(hdoc, doc, cid)? {
                     f.d.insert_child(dc);
                     if doc.first_child(cid).is_some() {
-                        push(
-                            &mut stack,
-                            Frame {
+                        stack
+                            .falloc_push_amortized(Frame {
                                 s: cid,
                                 d: dc.link_target(),
                                 def: None,
-                            },
-                        )
-                        .map_err(|_| MutStatus::Oom)?;
+                            })
+                            .map_err(|_| MutStatus::Oom)?;
                     }
                 }
                 c = doc.next(cid);

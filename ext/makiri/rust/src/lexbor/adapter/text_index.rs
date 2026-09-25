@@ -31,7 +31,7 @@
 
 #![allow(unsafe_code)]
 
-use crate::falloc::{try_vec_with_capacity, Reserve};
+use crate::falloc::{try_vec_with_capacity, VecPush};
 use crate::lexbor::abi::LxbNode;
 use crate::ptr_table::PtrTable;
 use crate::text::BorrowedText;
@@ -190,24 +190,15 @@ impl TextIndex {
                 let slot = t
                     .runs
                     .insert(child.as_raw().cast_const(), Run { start, end: start })?;
-                /* Reserve only when the stack is actually full. `falloc_push`
-                 * consults the injection counter on EVERY call, so pushing
-                 * unconditionally made each of a document's containers its own
-                 * injection point - 178 for one `rake oom` scenario, all
-                 * re-testing one branch. Grow geometrically, and only when the
-                 * stack must. */
-                if stack.len() == stack.capacity() {
-                    let want = crate::falloc::grow_capacity(
-                        stack.capacity(),
-                        stack.len() + 1,
-                        core::mem::size_of::<Frame<'_>>(),
-                    )?;
-                    stack.falloc_reserve_exact(want - stack.len()).ok()?;
-                }
-                stack.push(Frame {
-                    child: child.first_child(),
-                    slot,
-                });
+                /* Amortized: a plain `falloc_push` made each of a document's
+                 * containers its own injection point - 178 for one `rake oom`
+                 * scenario, all re-testing one branch. */
+                stack
+                    .falloc_push_amortized(Frame {
+                        child: child.first_child(),
+                        slot,
+                    })
+                    .ok()?;
             }
             /* Other kinds (comment / PI / doctype) are childless leaves. */
         }
