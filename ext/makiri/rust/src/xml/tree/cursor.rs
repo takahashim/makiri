@@ -25,9 +25,10 @@ use crate::xml::chars::{decode1, is_name_char, is_name_start, validate_chars};
 use crate::xml::qname::split_scanned;
 use crate::xml::Status;
 
-/// The parser's result: the detail lives in [`Cursor::status`], which the whole
-/// parse shares, so an error only has to say THAT it happened.
-pub(super) type R<T = ()> = Result<T, ()>;
+/// The parser's result. The error is the cause, and `?` carries it out
+/// unchanged: the parse stops at its first failure, so the first failure is the
+/// one reported.
+pub(super) type R<T = ()> = Result<T, Status>;
 
 /// A slice of the input, as (offset, length). Read it with [`Cursor::slice`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -46,22 +47,12 @@ pub(super) fn find(h: &[u8], b: u8) -> Option<usize> {
     h.iter().position(|&x| x == b)
 }
 
-/// The input, where the scan has reached, and how the parse ended.
-///
-/// The STATUS is here on purpose, not just the position: it is what lets
-/// [`super::dtd::Subset`] report a failure while holding nothing but a cursor,
-/// which is the whole reason the validator can exist without a document. The
-/// cost is that a couple of READS take `&mut self` ([`Cursor::span`] and
-/// [`Cursor::taken_since`], which refuse a length no `u32` span could hold) -
-/// worth it, because the alternative is every caller deciding what a too-long
-/// slice means.
+/// The input and where the scan has reached.
 pub(super) struct Cursor<'a> {
     input: &'a [u8],
     pos: usize,
     line: u32,
     col: u32,
-    /// The first failure, kept for the whole parse.
-    pub status: Status,
 }
 
 impl<'a> Cursor<'a> {
@@ -71,7 +62,6 @@ impl<'a> Cursor<'a> {
             pos: 0,
             line: 1,
             col: 1,
-            status: Status::Ok,
         }
     }
 
@@ -119,11 +109,11 @@ impl<'a> Cursor<'a> {
     /// The slice from `start` to the cursor, refusing a length no `u32` span
     /// could hold.
     #[inline]
-    pub(super) fn taken_since(&mut self, start: usize) -> R<InSlice> {
+    pub(super) fn taken_since(&self, start: usize) -> R<InSlice> {
         self.span(start, self.pos - start)
     }
     #[inline]
-    pub(super) fn span(&mut self, off: usize, len: usize) -> R<InSlice> {
+    pub(super) fn span(&self, off: usize, len: usize) -> R<InSlice> {
         if len > u32::MAX as usize {
             return self.limit();
         }
@@ -171,35 +161,25 @@ impl<'a> Cursor<'a> {
         self.pos > before
     }
 
-    /* ---- status ---- */
+    /* ---- failure ----
+     *
+     * Shorthands for the three failures a scan reports. They need no cursor
+     * state; they are methods so a rule reads `return self.cur.syntax()` at the
+     * point it gives up. */
 
-    /// Record `st` as the parse's outcome and give up.
-    ///
-    /// The FIRST failure wins, for all four kinds: it is the cause, and anything
-    /// after it is a consequence of having given up. (`syntax` alone used to be
-    /// sticky while `limit`/`unsupported` overwrote, which raised a question
-    /// nothing answered - the parse stops at the first failure, so the two
-    /// behaved identically and only one can be the rule.)
     #[inline]
-    pub(super) fn fail<T>(&mut self, st: Status) -> R<T> {
-        if self.status.is_ok() {
-            self.status = st;
-        }
-        Err(())
-    }
-    #[inline]
-    pub(super) fn syntax<T>(&mut self) -> R<T> {
-        self.fail(Status::Syntax)
+    pub(super) fn syntax<T>(&self) -> R<T> {
+        Err(Status::Syntax)
     }
     /// Well-formed, but uses a DTD construct Makiri refuses rather than
     /// silently ignores (see [`super::dtd`]).
     #[inline]
-    pub(super) fn unsupported<T>(&mut self) -> R<T> {
-        self.fail(Status::Unsupported)
+    pub(super) fn unsupported<T>(&self) -> R<T> {
+        Err(Status::Unsupported)
     }
     #[inline]
-    pub(super) fn limit<T>(&mut self) -> R<T> {
-        self.fail(Status::Limit)
+    pub(super) fn limit<T>(&self) -> R<T> {
+        Err(Status::Limit)
     }
     #[inline]
     pub(super) fn need_space(&mut self) -> R {

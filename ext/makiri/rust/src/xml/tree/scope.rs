@@ -15,7 +15,7 @@
 #![forbid(unsafe_code)]
 
 use crate::falloc::{Reserve, VecPush};
-use crate::xml::{Span, MAX_NS};
+use crate::xml::{Span, Status, MAX_NS};
 
 /// One binding: prefix ("" = the default namespace) -> byte-store span.
 struct Binding {
@@ -38,6 +38,16 @@ pub(super) struct Scope {
 pub(super) enum ScopeFull {
     Limit,
     Oom,
+}
+
+impl From<ScopeFull> for Status {
+    #[inline]
+    fn from(e: ScopeFull) -> Self {
+        match e {
+            ScopeFull::Limit => Status::Limit,
+            ScopeFull::Oom => Status::Oom,
+        }
+    }
 }
 
 impl Scope {

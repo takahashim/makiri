@@ -21,7 +21,7 @@ mod ns;
 pub use ns::{ignored_default_decl, namespace_in_scope};
 
 use crate::xml::qname::Split;
-use crate::xml::{Document, MutStatus, NodeId, Status};
+use crate::xml::{ArenaError, Document, MutStatus, NodeId};
 
 pub use attr::{remove_attribute, remove_attribute_ns, set_attribute, set_attribute_ns};
 pub use copy::{clone_node, copy_node_from, import_subtree};
@@ -43,18 +43,15 @@ pub(super) fn copy_span(bytes: &[u8]) -> Result<Vec<u8>, MutStatus> {
 
 /// An arena result as a mutation result, KEEPING the reason.
 ///
-/// The one place the two status domains meet. It matters that it is one place:
-/// every site used to write `.map_err(|_| MutStatus::Oom)`, which reported a
+/// The one place the two domains meet. It matters that it is one place: every
+/// site used to write `.map_err(|_| MutStatus::Oom)`, which reported a
 /// document's own `max_bytes`/`max_nodes` refusal as the machine running out of
-/// memory. `tree::Parser::arena` is the same conversion on the parse side, and
-/// it never lost the reason.
+/// memory. The parser's conversion is `From<ArenaError> for Status`.
 #[inline]
-pub(super) fn arena<T>(r: Result<T, Status>) -> Result<T, MutStatus> {
-    r.map_err(|st| match st {
-        Status::Limit => MutStatus::Limit,
-        /* Syntax and Unsupported are the parser's; an arena call cannot answer
-         * either, so anything else here is an allocation that failed. */
-        _ => MutStatus::Oom,
+pub(super) fn arena<T>(r: Result<T, ArenaError>) -> Result<T, MutStatus> {
+    r.map_err(|e| match e {
+        ArenaError::Limit => MutStatus::Limit,
+        ArenaError::Oom => MutStatus::Oom,
     })
 }
 

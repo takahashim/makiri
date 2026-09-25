@@ -14,18 +14,14 @@
 /* Boundary readers state their precondition once, on `bytes`. */
 /* ---- status codes ---- */
 
-/// The outcome of an XML operation that reports failure through a status rather
-/// than a typed error: parsing, tree building and arena allocation all
-/// accumulate one. [`Status::Ok`] is success; the rest name the failure so the
-/// Ruby glue can pick an exception class. The `#[repr(i32)]` values are the
-/// numbers the C entry points published.
-///
-/// `Ok` is a member (the parser and the arena keep a sticky status that starts
-/// there) but a `Result<T, Status>` never carries it in the `Err` position.
+/// Why an XML parse failed - the `Err` of every parse entry point, and of the
+/// parser's internal steps, which carry it out with `?`. Each variant names a
+/// failure so the Ruby glue can pick an exception class. There is no success
+/// variant: success is `Ok`. The `#[repr(i32)]` values are the numbers the C
+/// entry points published.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(i32)]
 pub enum Status {
-    Ok = 0,
     Syntax = 1,
     Limit = 2,
     Oom = 3,
@@ -36,11 +32,24 @@ pub enum Status {
     Unsupported = 5,
 }
 
-impl Status {
-    /// Whether this is the success status (the common `status != Ok` test).
+/// Why the arena refused an allocation: the document's own budget
+/// (`max_bytes` / `max_nodes`), or the machine's memory. Every arena
+/// allocation answers one of these two and nothing else, so each caller's
+/// conversion - [`Status`] for the parser, [`MutStatus`] for a mutation - is
+/// exhaustive rather than a guess.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ArenaError {
+    Limit,
+    Oom,
+}
+
+impl From<ArenaError> for Status {
     #[inline]
-    pub fn is_ok(self) -> bool {
-        matches!(self, Status::Ok)
+    fn from(e: ArenaError) -> Self {
+        match e {
+            ArenaError::Limit => Status::Limit,
+            ArenaError::Oom => Status::Oom,
+        }
     }
 }
 
@@ -152,7 +161,7 @@ pub enum MutStatus {
     /// budget told the caller "out of memory mutating XML" on a machine with
     /// gigabytes free. The parse path always kept them apart
     /// ([`Status::Limit`] -> `Makiri::XML::LimitExceeded`); mutation now does
-    /// too. `mutate::arena` is the one conversion.
+    /// too. `mutate::arena` is the one conversion from [`ArenaError`].
     Limit,
     /// Another attribute of the element already has this (namespace URI, local
     /// name) - Namespaces in XML 1.0 §3's "attributes are unique", which the

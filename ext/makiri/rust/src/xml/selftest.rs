@@ -17,8 +17,8 @@ use crate::xml::mutate;
 use crate::xml::qname;
 use crate::xml::tree::{parse, parse_ex, parse_fragment};
 use crate::xml::{
-    Document, Limits, Link, MutStatus, NodeId, NodeType, Status, MAX_BYTES, XMLNS_NS_URI,
-    XML_NS_URI,
+    ArenaError, Document, Limits, Link, MutStatus, NodeId, NodeType, Status, MAX_BYTES,
+    XMLNS_NS_URI, XML_NS_URI,
 };
 
 /* ------------------------------------------------------------------ */
@@ -152,7 +152,7 @@ fn a_byte_budget_already_spent_refuses_the_next_node() {
     doc.max_bytes = doc.arena_bytes;
     assert_eq!(
         doc.new_node(NodeType::Element).err(),
-        Some(Status::Limit),
+        Some(ArenaError::Limit),
         "no room left for a node, and the reason is the budget"
     );
 }
@@ -163,7 +163,7 @@ fn the_byte_budget_is_enforced_inside_the_allocator() {
     doc.max_bytes = 4096;
     for _ in 0..100_000 {
         if let Err(st) = doc.new_node(NodeType::Element) {
-            assert_eq!(st, Status::Limit);
+            assert_eq!(st, ArenaError::Limit);
             return;
         }
     }
@@ -176,7 +176,7 @@ fn the_node_budget_is_enforced() {
     doc.max_nodes = 10;
     for _ in 0..100 {
         if let Err(st) = doc.new_node(NodeType::Element) {
-            assert_eq!(st, Status::Limit);
+            assert_eq!(st, ArenaError::Limit);
             return;
         }
     }

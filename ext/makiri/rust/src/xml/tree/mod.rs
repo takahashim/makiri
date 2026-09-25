@@ -19,7 +19,7 @@ use crate::xml::qname::{split_scanned, xmlns_prefix, Split};
 use crate::xml::{Document, Limits, NodeId, NodeType, Span, Status, MAX_ATTRS, MAX_DEPTH};
 use cursor::{is_space, Cursor, InSlice, R};
 use dtd::{scan_external_id, Declared, ExternalId, Subset};
-use scope::{Frame, Scope, ScopeFull};
+use scope::{Frame, Scope};
 
 /// One attribute of the current start tag before namespace resolution.
 #[derive(Clone, Copy)]
@@ -57,10 +57,6 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn status(&self) -> Status {
-        self.cur.status
-    }
-
     /* ---- arena ---- */
 
     /// The parent a node created at the cursor attaches to.
@@ -72,50 +68,38 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Map a `Document` allocation error onto the parse status.
-    #[inline]
-    fn arena<T>(&mut self, r: Result<T, Status>) -> R<T> {
-        match r {
-            Ok(v) => Ok(v),
-            Err(st) => self.cur.fail(st),
-        }
-    }
-
     /// Copy a slice into the arena (fails closed on budget / OOM).
     fn own(&mut self, s: InSlice) -> R<Span> {
-        let bytes = self.cur.slice(s);
-        let r = self.doc.store(bytes);
-        self.arena(r)
+        Ok(self.doc.store(self.cur.slice(s))?)
     }
 
     /// Expand references into the arena. A reference to an entity a DTD
     /// declared is not a syntax error but a construct Makiri refuses.
     fn expand(&mut self, s: &[u8], mode: ExpandMode) -> R<Span> {
-        let r = self.doc.expand(s, mode);
-        if r == Err(Status::Syntax) && self.declared.refs_unexpanded_entity(&self.cur, s) {
-            return self.cur.unsupported();
-        }
-        self.arena(r)
+        self.doc.expand(s, mode).map_err(|st| {
+            if st == Status::Syntax && self.declared.refs_unexpanded_entity(&self.cur, s) {
+                Status::Unsupported
+            } else {
+                st
+            }
+        })
     }
 
     fn new_node(&mut self, ty: NodeType) -> R<NodeId> {
-        let r = self.doc.new_node(ty);
-        self.arena(r)
+        Ok(self.doc.new_node(ty)?)
     }
 
     /// Append a TEXT / CDATA node, coalescing with a preceding sibling of the
     /// SAME type (as libxml2 / the XPath data model do).
     fn append_chardata(&mut self, parent: NodeId, ty: NodeType, val: Span) -> R {
-        let r = self.doc.append_chardata(parent, ty, val);
-        self.arena(r)
+        Ok(self.doc.append_chardata(parent, ty, val)?)
     }
 
     /// Store `name` (prefix:local per `sp`) as one arena copy on `node`.
     fn set_node_qname(&mut self, node: NodeId, name: &[u8], sp: &Split) -> R {
-        let r = self
+        Ok(self
             .doc
-            .assign_qname(node, name, sp.prefix_len, sp.local_off, sp.local_len);
-        self.arena(r)
+            .assign_qname(node, name, sp.prefix_len, sp.local_off, sp.local_len)?)
     }
 
     /* ---- namespaces (§7) ---- */
@@ -130,7 +114,7 @@ impl<'a> Parser<'a> {
     }
 
     fn push_binding(&mut self, pfx: &[u8], uri: Span) -> R {
-        bind(&mut self.scope, &mut self.cur, pfx, uri)
+        Ok(self.scope.bind(pfx, uri)?)
     }
 
     /* ---- start tag: four ordered phases ---- */
@@ -193,7 +177,7 @@ impl<'a> Parser<'a> {
                 return self.cur.limit();
             }
             if self.ratt.falloc_reserve(1).is_err() {
-                return self.cur.fail(Status::Oom);
+                return Err(Status::Oom);
             }
             self.ratt.push(RawAttr { name, val });
         }
@@ -274,7 +258,7 @@ impl<'a> Parser<'a> {
         match has_duplicate_attributes(self.doc, el) {
             Some(false) => {}
             Some(true) => return self.cur.syntax(),
-            None => return self.cur.fail(Status::Oom),
+            None => return Err(Status::Oom),
         }
         Ok(())
     }
@@ -430,8 +414,7 @@ impl<'a> Parser<'a> {
             ids.public.map(|p| self.cur.slice(p)),
             ids.system.map(|s| self.cur.slice(s)),
         );
-        let r = self.doc.new_doctype(self.cur.slice(name), public, system);
-        let dt = self.arena(r)?;
+        let dt = self.doc.new_doctype(self.cur.slice(name), public, system)?;
         let dn = self.doc.doc_node();
         self.doc.append_child(dn, dt);
         self.doc.set_doctype(Some(dt));
@@ -486,7 +469,7 @@ impl<'a> Parser<'a> {
                 return self.cur.limit();
             }
             if self.stack.falloc_reserve(1).is_err() || self.frames.falloc_reserve(1).is_err() {
-                return self.cur.fail(Status::Oom);
+                return Err(Status::Oom);
             }
             self.stack.push(el);
             self.frames.push(frame);
@@ -526,41 +509,30 @@ impl<'a> Parser<'a> {
         self.append_chardata(parent, NodeType::Text, tv)
     }
 
-    /// Tokenizer dispatch.
-    fn run(&mut self) {
+    /// Tokenizer dispatch, stopping at the first failure.
+    fn run(&mut self) -> R {
         while self.cur.left() > 0 {
             if self.cur.peek() != Some(b'<') {
-                if self.parse_text().is_err() {
-                    break;
-                }
-            } else {
-                let (tl, tc) = (self.cur.line(), self.cur.col());
-                let at_start = self.cur.at_start() && self.fragment.is_none();
-                self.cur.advance(); /* '<' */
-                let c = match self.cur.peek() {
-                    Some(c) => c,
-                    None => {
-                        let _ = self.cur.syntax::<()>();
-                        break;
-                    }
-                };
-                let rc = match c {
-                    b'/' => self.parse_end_tag(),
-                    b'!' => self.parse_markup(),
-                    b'?' => {
-                        let p = self.cur_parent();
-                        self.parse_pi(p, at_start)
-                    }
-                    _ => self.parse_start_tag(tl, tc),
-                };
-                if rc.is_err() {
-                    break;
-                }
+                self.parse_text()?;
+                continue;
             }
-            if self.status() != Status::Ok {
-                break;
-            }
+            let (tl, tc) = (self.cur.line(), self.cur.col());
+            let at_start = self.cur.at_start() && self.fragment.is_none();
+            self.cur.advance(); /* '<' */
+            let Some(c) = self.cur.peek() else {
+                return self.cur.syntax();
+            };
+            match c {
+                b'/' => self.parse_end_tag(),
+                b'!' => self.parse_markup(),
+                b'?' => {
+                    let p = self.cur_parent();
+                    self.parse_pi(p, at_start)
+                }
+                _ => self.parse_start_tag(tl, tc),
+            }?;
         }
+        Ok(())
     }
 
     /// Run to the end of the input, then apply the close-out rule: input can
@@ -569,16 +541,13 @@ impl<'a> Parser<'a> {
     /// The whole "normalize, run, check the close-out, report" sequence used to
     /// be written out in both `parse_ex` and `parse_fragment_into`, so the rule
     /// for when a parse is finished lived twice.
-    fn run_to_end(&mut self, require_root: bool) -> Result<(), Status> {
-        self.run();
+    fn run_to_end(&mut self, require_root: bool) -> R {
+        self.run()?;
         let unclosed = !self.stack.is_empty() || (require_root && self.doc.root().is_none());
-        if self.status() == Status::Ok && unclosed {
-            let _ = self.cur.syntax::<()>();
+        if unclosed {
+            return self.cur.syntax();
         }
-        match self.status() {
-            Status::Ok => Ok(()),
-            st => Err(st),
-        }
+        Ok(())
     }
 
     /// Seed a fragment parser's scope with the document root's xmlns attributes.
@@ -587,26 +556,14 @@ impl<'a> Parser<'a> {
             return Ok(());
         };
         for attr in self.doc.attributes(root) {
-            /* The prefix borrows `self.doc`, which `bind` does not touch, so it
-             * is passed as is: `Scope::bind` makes its own copy. */
+            /* The prefix borrows `self.doc`, which the scope does not touch, so
+             * it is passed as is: `Scope::bind` makes its own copy. */
             if let Some(p) = xmlns_prefix(self.doc.qname(attr)) {
                 let uri = self.doc.node(attr).value;
-                bind(&mut self.scope, &mut self.cur, p, uri)?;
+                self.scope.bind(p, uri)?;
             }
         }
         Ok(())
-    }
-}
-
-/// Bind `pfx` in `scope`, reporting a refusal through `cur`'s status.
-///
-/// A free function so a caller can bind a prefix that borrows the document
-/// the parser holds.
-fn bind(scope: &mut Scope, cur: &mut Cursor<'_>, pfx: &[u8], uri: Span) -> R {
-    match scope.bind(pfx, uri) {
-        Ok(()) => Ok(()),
-        Err(ScopeFull::Limit) => cur.limit(),
-        Err(ScopeFull::Oom) => cur.fail(Status::Oom),
     }
 }
 
@@ -659,8 +616,8 @@ fn parse_fragment_into(
     let frag = doc.new_node(NodeType::Fragment)?;
     let norm = normalize_newlines(src)?;
     let mut p = Parser::new(norm.as_deref().unwrap_or(src), doc, Some(frag));
-    if inherit_doc_ns && p.seed_doc_namespaces().is_err() {
-        return Err(p.status());
+    if inherit_doc_ns {
+        p.seed_doc_namespaces()?;
     }
     /* A fragment has no single-root rule. */
     p.run_to_end(false)?;

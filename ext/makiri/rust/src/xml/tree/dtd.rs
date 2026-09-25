@@ -425,7 +425,7 @@ impl<'c, 'a> Subset<'c, 'a> {
         self.end_decl()?;
         if !pe {
             if self.declared.names.falloc_reserve(1).is_err() {
-                return self.cur.fail(Status::Oom);
+                return Err(Status::Oom);
             }
             self.declared.names.push(name);
         }

@@ -394,9 +394,8 @@ fn parse_status_error(status: Status, unit: Unit) -> Error {
              non-CDATA attribute types, expand parameter entities, or expand entities \
              a DTD declares",
         ),
-        /* `Ok` never reaches here (it means no failure); the rest are the
-         * generic "failed to parse" bucket. */
-        Status::Ok | Status::Oom | Status::Internal => makiri_error(unit.failed()),
+        /* The generic "failed to parse" bucket. */
+        Status::Oom | Status::Internal => makiri_error(unit.failed()),
     }
 }
 
