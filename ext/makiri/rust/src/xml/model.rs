@@ -104,6 +104,29 @@ impl TryFrom<u32> for NodeType {
     }
 }
 
+impl From<NodeType> for crate::node_type::NodeType {
+    /// The crate-wide [`NodeType`](crate::node_type::NodeType) of an arena
+    /// node - the one the XPath engine and the Ruby class table read. The two
+    /// enums share the DOM discriminants, so this is the identity on the
+    /// number; XML simply has no entity, entity-reference or notation node to
+    /// map.
+    #[inline]
+    fn from(t: NodeType) -> Self {
+        use crate::node_type::NodeType as N;
+        match t {
+            NodeType::Element => N::Element,
+            NodeType::Attribute => N::Attribute,
+            NodeType::Text => N::Text,
+            NodeType::CData => N::CDataSection,
+            NodeType::Pi => N::Pi,
+            NodeType::Comment => N::Comment,
+            NodeType::Document => N::Document,
+            NodeType::Doctype => N::DocumentType,
+            NodeType::Fragment => N::DocumentFragment,
+        }
+    }
+}
+
 /// A node's state bits: [`NodeFlags::DOM_LOOSE_NAME`] and the three namespace
 /// states. A set of named bits rather than a bare integer, so a site says which
 /// state it tests, sets or clears instead of spelling the mask.

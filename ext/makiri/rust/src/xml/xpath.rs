@@ -36,24 +36,6 @@ fn skip_ns_decls(doc: &xml::Document, mut a: xml::NodeId) -> Option<xml::NodeId>
     Some(a)
 }
 
-/// An arena node's type as the engine's [`NodeType`]. The two enums share the
-/// DOM discriminants, so this is the identity on the number; XML simply has no
-/// entity, entity-reference or notation node to map.
-#[inline]
-fn engine_type(t: xml::NodeType) -> NodeType {
-    match t {
-        xml::NodeType::Element => NodeType::Element,
-        xml::NodeType::Attribute => NodeType::Attribute,
-        xml::NodeType::Text => NodeType::Text,
-        xml::NodeType::CData => NodeType::CDataSection,
-        xml::NodeType::Pi => NodeType::Pi,
-        xml::NodeType::Comment => NodeType::Comment,
-        xml::NodeType::Document => NodeType::Document,
-        xml::NodeType::Doctype => NodeType::DocumentType,
-        xml::NodeType::Fragment => NodeType::DocumentFragment,
-    }
-}
-
 impl<'d> Dom<'d> for &'d xml::Document {
     /* ---- host policy: XML's (see `Dom`) ---- */
     const ID_ATTRIBUTE: Option<&'static [u8]> = None;
@@ -88,7 +70,7 @@ impl<'d> Dom<'d> for &'d xml::Document {
     #[inline]
     fn node_type(self, n: xml::NodeId) -> NodeType {
         self.try_node(n)
-            .map_or(NodeType::Other, |x| engine_type(x.type_))
+            .map_or(NodeType::Other, |x| NodeType::from(x.type_))
     }
 
     #[inline]

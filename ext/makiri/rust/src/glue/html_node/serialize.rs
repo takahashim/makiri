@@ -13,7 +13,7 @@ use super::HtmlSelf;
 use crate::bridge::ruby::makiri_error;
 use crate::glue::kwargs::Kwargs;
 use crate::init::MOD_HTML_NODE_METHODS;
-use crate::lexbor::adapter::html::{RawNode, TYPE_FRAGMENT};
+use crate::lexbor::adapter::html::{NodeType, RawNode};
 use crate::lexbor::serialize::serialize;
 
 /// The optional `pretty:` keyword.
@@ -38,7 +38,7 @@ fn to_html(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<RString, Error
         /* A document fragment has no tag of its own, so its "outer" is its
          * children: the deep serializer is the right one (the tree serializer
          * rejects a fragment node). */
-        let deep = this.node().node_type() == TYPE_FRAGMENT;
+        let deep = this.node().node_type() == NodeType::DocumentFragment;
         render(ruby, this.raw(), deep, pretty)
     })
 }

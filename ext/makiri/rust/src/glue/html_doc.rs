@@ -13,10 +13,8 @@
 
 use crate::bridge::fragment;
 use crate::bridge::wrapper::keepalive_document;
+use crate::lexbor::adapter::html::NodeType;
 use magnus::{method, prelude::*, Error, Ruby, Value};
-
-/// The doctype node type, generated (see lexbor::abi).
-const NODE_TYPE_DOCUMENT_TYPE: u32 = crate::lexbor::adapter::html::TYPE_DOCTYPE;
 
 /* ---- Document.parse ---- */
 
@@ -41,7 +39,7 @@ fn doc_internal_subset(_ruby: &Ruby, self_: Value) -> Result<Option<Value>, Erro
         let doc = crate::glue::html_node::arg_node(&self_)?;
         let doctype = doc
             .children()
-            .find(|c| c.node_type() == NODE_TYPE_DOCUMENT_TYPE);
+            .find(|c| c.node_type() == NodeType::DocumentType);
         Ok(crate::glue::html_node::wrap_node(doctype, self_))
     })
 }

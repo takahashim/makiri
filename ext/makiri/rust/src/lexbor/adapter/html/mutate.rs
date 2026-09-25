@@ -83,7 +83,7 @@ impl<'d> Insertion<'d> {
     /// node can be a child at all and is not the target or its ancestor.
     pub fn check(&self) -> Result<(), PreInsertError> {
         self.check_document_order()?;
-        if self.node.node_type() == TYPE_ATTRIBUTE {
+        if self.node.node_type() == NodeType::Attribute {
             return Err(PreInsertError::AttributeNode);
         }
         /* The target itself counts: a node placed relative to itself would be
@@ -106,9 +106,9 @@ impl<'d> Insertion<'d> {
     fn check_document_order(&self) -> Result<(), PreInsertError> {
         let siblings_from =
             |start: Option<HtmlNode<'d>>| core::iter::successors(start, |n| n.next());
-        let at_document = self.parent.node_type() == TYPE_DOCUMENT;
+        let at_document = self.parent.node_type() == NodeType::Document;
 
-        if self.node.node_type() == TYPE_DOCTYPE {
+        if self.node.node_type() == NodeType::DocumentType {
             if !at_document {
                 return Err(PreInsertError::DoctypeParent);
             }
@@ -117,7 +117,7 @@ impl<'d> Insertion<'d> {
              * of the insertion point (a comment, say) hide a later doctype, and
              * the document would end up with two. */
             if siblings_from(self.parent.first_child())
-                .any(|n| self.stays(n) && n.node_type() == TYPE_DOCTYPE)
+                .any(|n| self.stays(n) && n.node_type() == NodeType::DocumentType)
             {
                 return Err(PreInsertError::DuplicateDoctype);
             }
@@ -126,7 +126,7 @@ impl<'d> Insertion<'d> {
              * replaced node, and excluding it first would scan past it. */
             if siblings_from(self.parent.first_child())
                 .take_while(|n| Some(*n) != self.before)
-                .any(|n| self.stays(n) && n.node_type() == TYPE_ELEMENT)
+                .any(|n| self.stays(n) && n.node_type() == NodeType::Element)
             {
                 return Err(PreInsertError::DoctypeAfterElement);
             }
@@ -134,15 +134,17 @@ impl<'d> Insertion<'d> {
         }
 
         let contributes_element = |n: HtmlNode<'_>| {
-            n.node_type() == TYPE_ELEMENT
-                || (n.node_type() == TYPE_FRAGMENT
-                    && n.children().any(|child| child.node_type() == TYPE_ELEMENT))
+            n.node_type() == NodeType::Element
+                || (n.node_type() == NodeType::DocumentFragment
+                    && n.children()
+                        .any(|child| child.node_type() == NodeType::Element))
         };
         /* An element must not land ahead of the doctype: none may follow the
          * insertion point. */
         if at_document
             && contributes_element(self.node)
-            && siblings_from(self.before).any(|n| self.stays(n) && n.node_type() == TYPE_DOCTYPE)
+            && siblings_from(self.before)
+                .any(|n| self.stays(n) && n.node_type() == NodeType::DocumentType)
         {
             return Err(PreInsertError::ElementBeforeDoctype);
         }
@@ -153,10 +155,11 @@ impl<'d> Insertion<'d> {
              * `count(/child::*)` answered 2 - where the XML side refuses. After
              * the doctype order above, whose message an insertion breaking both
              * has always reported. */
-            let is_text = |n: HtmlNode<'_>| matches!(n.node_type(), TYPE_TEXT | TYPE_CDATA);
-            let is_element = |n: HtmlNode<'_>| n.node_type() == TYPE_ELEMENT;
+            let is_text =
+                |n: HtmlNode<'_>| matches!(n.node_type(), NodeType::Text | NodeType::CDataSection);
+            let is_element = |n: HtmlNode<'_>| n.node_type() == NodeType::Element;
             let incoming_elements = match self.node.node_type() {
-                TYPE_FRAGMENT => {
+                NodeType::DocumentFragment => {
                     if self.node.children().any(is_text) {
                         return Err(PreInsertError::TextUnderDocument);
                     }
@@ -242,7 +245,10 @@ impl<'doc> HtmlNodeMut<'doc> {
     /// what it had.
     pub fn set_text_content(self, text: &[u8]) -> bool {
         let node = self.node();
-        if matches!(node.node_type(), TYPE_ELEMENT | TYPE_FRAGMENT) {
+        if matches!(
+            node.node_type(),
+            NodeType::Element | NodeType::DocumentFragment
+        ) {
             /* Not Lexbor's own `text_content_set` here: for a container it
              * DESTROYS the old children (`lxb_dom_node_replace_all` ->
              * `destroy_deep`), and a Ruby wrapper may still hold any of them.
@@ -326,7 +332,7 @@ impl<'doc> HtmlNodeMut<'doc> {
                 after = c; /* the next one goes after this one */
             }
         };
-        if node.node().node_type() == TYPE_FRAGMENT {
+        if node.node().node_type() == NodeType::DocumentFragment {
             while let Some(c) = node.first_child() {
                 c.detach();
                 put(c);

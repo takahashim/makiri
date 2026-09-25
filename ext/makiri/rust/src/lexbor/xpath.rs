@@ -10,7 +10,6 @@
 
 #![allow(unsafe_code)]
 
-use crate::lexbor::abi as lxb;
 use crate::lexbor::adapter::html::{self as dom, HtmlAttr, HtmlDoc, HtmlNode, RawNode};
 use crate::lexbor::adapter::post_parse::HtmlParsed;
 use crate::token::{Kind, Token};
@@ -18,31 +17,6 @@ use crate::xpath::abi::*;
 use crate::xpath::ctx::Context;
 use crate::xpath::dom::*;
 use crate::xpath::msg::{Error, Status};
-
-/* The engine reads every node's type as a `NodeType`, whose discriminants must
- * agree with Lexbor's enum value for value; a mismatch would make an HTML walk
- * misread each node rather than fail. Checked at compile time, against the
- * generated header view, in every build that has an HTML backend. */
-const _: () = {
-    use NodeType as T;
-    assert!(T::Other as u32 == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_UNDEF);
-    assert!(T::Element as u32 == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_ELEMENT);
-    assert!(T::Attribute as u32 == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_ATTRIBUTE);
-    assert!(T::Text as u32 == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_TEXT);
-    assert!(T::CDataSection as u32 == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_CDATA_SECTION);
-    assert!(
-        T::EntityReference as u32 == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_ENTITY_REFERENCE
-    );
-    assert!(T::Entity as u32 == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_ENTITY);
-    assert!(T::Pi as u32 == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_PROCESSING_INSTRUCTION);
-    assert!(T::Comment as u32 == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_COMMENT);
-    assert!(T::Document as u32 == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT);
-    assert!(T::DocumentType as u32 == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT_TYPE);
-    assert!(
-        T::DocumentFragment as u32 == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT_FRAGMENT
-    );
-    assert!(T::Notation as u32 == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_NOTATION);
-};
 
 /// The HTML backend as an evaluate holds it: the document, and the parsed handle
 /// its element index is read from.
@@ -113,7 +87,7 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
     }
     #[inline]
     fn node_type(self, n: HtmlNode<'d>) -> NodeType {
-        NodeType::from_u32(n.node_type())
+        n.node_type()
     }
 
     #[inline]

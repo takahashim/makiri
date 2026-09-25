@@ -21,7 +21,7 @@ use crate::bridge::ruby::{makiri_error, string_of};
 use crate::bridge::fragment::{set_template_inner_html, stage_fragment_in};
 use crate::bridge::html::{edit, insert, owning_doc, wrap_html_node, HtmlEdit, HtmlSelf};
 use crate::bridge::string::{ruby_verified_data, ruby_verified_text, ruby_verified_text_opt};
-use crate::lexbor::adapter::html::{HtmlElementMut, Place, RawNode, TYPE_ATTRIBUTE, TYPE_ELEMENT};
+use crate::lexbor::adapter::html::{HtmlElementMut, NodeType, Place, RawNode};
 use crate::xml::dom_name;
 use crate::xml::qname::Split;
 
@@ -92,7 +92,7 @@ pub fn replace(_ruby: &Ruby, this: HtmlSelf, rb_other: Value) -> Result<Value, E
 pub fn remove(_ruby: &Ruby, this: HtmlSelf) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let node = edit(&this)?.node()?;
-        if node.node().node_type() == TYPE_ATTRIBUTE {
+        if node.node().node_type() == NodeType::Attribute {
             return Err(makiri_error("use delete(name) to remove an attribute"));
         }
         if node.parent().is_some() {
@@ -111,7 +111,7 @@ pub fn aset(ruby: &Ruby, this: HtmlSelf, rb_name: Value, rb_value: Value) -> Res
     crate::bridge::ruby::entry(|| {
         const REFUSAL: &str = "cannot set an attribute on a non-element node";
         let edit = edit(&this)?;
-        if edit.node_type() != TYPE_ELEMENT {
+        if edit.node_type() != NodeType::Element {
             return Err(makiri_error(REFUSAL));
         }
         let nv = ruby_verified_text(rb_name, "attribute name")?;
@@ -136,7 +136,7 @@ pub fn set_attribute_ns(
     crate::bridge::ruby::entry(|| {
         const REFUSAL: &str = "cannot set an attribute on a non-element node";
         let edit = edit(&this)?;
-        if edit.node_type() != TYPE_ELEMENT {
+        if edit.node_type() != NodeType::Element {
             return Err(makiri_error(REFUSAL));
         }
         let qv = ruby_verified_text(rb_qname, "attribute qualified name")?;
@@ -183,7 +183,7 @@ pub fn remove_attribute_ns(
 ) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let edit = edit(&this)?;
-        if edit.node_type() != TYPE_ELEMENT {
+        if edit.node_type() != NodeType::Element {
             return Ok(ruby.qnil().as_value());
         }
         let lv = ruby_verified_text(rb_local, "attribute local name")?;
@@ -212,7 +212,7 @@ pub fn delete(_ruby: &Ruby, this: HtmlSelf, rb_name: Value) -> Result<Value, Err
     crate::bridge::ruby::entry(|| {
         let rb_self = this.value;
         let edit = edit(&this)?;
-        if edit.node_type() != TYPE_ELEMENT {
+        if edit.node_type() != NodeType::Element {
             return Ok(rb_self);
         }
         let nv = ruby_verified_text(rb_name, "attribute name")?;
@@ -229,7 +229,7 @@ pub fn delete(_ruby: &Ruby, this: HtmlSelf, rb_name: Value) -> Result<Value, Err
 pub fn set_inner_html(_ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let edit = edit(&this)?;
-        if edit.node_type() != TYPE_ELEMENT {
+        if edit.node_type() != NodeType::Element {
             return Err(makiri_error("inner_html= requires an element"));
         }
         /* `to_str`/`to_s` is Ruby code that may raise: converted under protect. */
@@ -267,7 +267,7 @@ pub fn set_outer_html(_ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Va
         let node = edit.node()?;
         let Some(parent) = node
             .parent()
-            .filter(|p| p.node().node_type() == TYPE_ELEMENT)
+            .filter(|p| p.node().node_type() == NodeType::Element)
         else {
             return Err(makiri_error(
                 "outer_html= requires a node with a parent element",

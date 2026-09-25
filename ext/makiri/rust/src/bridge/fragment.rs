@@ -20,8 +20,8 @@ use crate::bridge::string::{ruby_verified_text, HtmlSource};
 use crate::bridge::wrapper::{ensure_document_mutable, html_doc_unwrap, DocKind, DocumentShell};
 use crate::init::CLASS_NODE;
 use crate::lexbor::adapter::html::{
-    HtmlDoc, HtmlNode, HtmlNodeMut, Place, RawDoc, RawNode, NS_HTML, NS_MATH, NS_SVG, TAG_BODY,
-    TAG_MATH, TAG_SVG, TAG_UNDEF, TYPE_ELEMENT,
+    HtmlDoc, HtmlNode, HtmlNodeMut, NodeType, Place, RawDoc, RawNode, NS_HTML, NS_MATH, NS_SVG,
+    TAG_BODY, TAG_MATH, TAG_SVG, TAG_UNDEF,
 };
 use crate::lexbor::adapter::post_parse::parse_html;
 use crate::lexbor::fragment::{tag_id_by_name, FragmentContext, FragmentError, TransientFragment};
@@ -75,7 +75,7 @@ pub fn resolve_fragment_context(
         // SAFETY: `unwrap` checked it is an HTML node, which `context` keeps
         // alive for this call.
         let cn = unsafe { html_node_unwrap(context)?.as_node() };
-        if cn.node_type() != TYPE_ELEMENT {
+        if cn.node_type() != NodeType::Element {
             return Err(crate::bridge::ruby::arg_error(
                 "fragment context node must be an element",
             ));

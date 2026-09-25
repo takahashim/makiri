@@ -99,6 +99,10 @@ pub mod ptr_table;
 /// mints. Unconditional: the engine, the backends and the bridge all use it.
 pub mod token;
 
+/// The DOM node type every layer reads: the XPath engine, the HTML adapter
+/// and the Ruby class table. Unconditional, like `token`.
+pub mod node_type;
+
 /// The Ruby boundary - the only part of the crate that depends on magnus.
 #[cfg(feature = "ruby")]
 pub mod bridge;

@@ -95,25 +95,25 @@ FORBID_FILES = %w[
   glue/xml_node/mod.rs glue/xml_node/mutate.rs glue/xml_node/ns.rs
   glue/xml_node/read.rs glue/xml_node/serialize.rs glue/xml_node/strings.rs
   glue/xpath_context.rs lexbor/adapter/dom_index.rs lexbor/adapter/utf8_input.rs
-  lexbor/contains_guard.rs limits.rs ptr_table.rs
-  xml/arena.rs xml/chars/expand.rs xml/chars/mod.rs
-  xml/dom_name.rs xml/encoding_sniff.rs xml/index.rs
-  xml/mod.rs xml/model.rs xml/mutate/attr.rs
-  xml/mutate/copy.rs xml/mutate/edit.rs xml/mutate/factory.rs
-  xml/mutate/insert.rs xml/mutate/mod.rs xml/mutate/ns.rs
-  xml/qname.rs xml/selftest.rs xml/serialize/bindings.rs
-  xml/serialize/c14n.rs xml/serialize/mod.rs xml/serialize/out.rs
-  xml/serialize/xml.rs xml/tree/cursor.rs xml/tree/decl.rs
-  xml/tree/dtd.rs xml/tree/mod.rs xml/tree/scope.rs
-  xml/verify.rs xml/xpath.rs xpath/abi.rs
-  xpath/ast.rs xpath/ast_ops.rs xpath/attr_pred.rs
-  xpath/axis.rs xpath/ctx.rs xpath/dom.rs
-  xpath/eval.rs xpath/funcs/ext.rs xpath/funcs/mod.rs
-  xpath/lex.rs xpath/limits.rs xpath/mod.rs
-  xpath/msg.rs xpath/nodetest.rs xpath/number.rs
-  xpath/order.rs xpath/parse.rs xpath/step_index.rs
-  xpath/str_cache.rs xpath/tests.rs xpath/value.rs
-  xpath/verify.rs
+  lexbor/contains_guard.rs limits.rs node_type.rs
+  ptr_table.rs xml/arena.rs xml/chars/expand.rs
+  xml/chars/mod.rs xml/dom_name.rs xml/encoding_sniff.rs
+  xml/index.rs xml/mod.rs xml/model.rs
+  xml/mutate/attr.rs xml/mutate/copy.rs xml/mutate/edit.rs
+  xml/mutate/factory.rs xml/mutate/insert.rs xml/mutate/mod.rs
+  xml/mutate/ns.rs xml/qname.rs xml/selftest.rs
+  xml/serialize/bindings.rs xml/serialize/c14n.rs xml/serialize/mod.rs
+  xml/serialize/out.rs xml/serialize/xml.rs xml/tree/cursor.rs
+  xml/tree/decl.rs xml/tree/dtd.rs xml/tree/mod.rs
+  xml/tree/scope.rs xml/verify.rs xml/xpath.rs
+  xpath/abi.rs xpath/ast.rs xpath/ast_ops.rs
+  xpath/attr_pred.rs xpath/axis.rs xpath/ctx.rs
+  xpath/dom.rs xpath/eval.rs xpath/funcs/ext.rs
+  xpath/funcs/mod.rs xpath/lex.rs xpath/limits.rs
+  xpath/mod.rs xpath/msg.rs xpath/nodetest.rs
+  xpath/number.rs xpath/order.rs xpath/parse.rs
+  xpath/step_index.rs xpath/str_cache.rs xpath/tests.rs
+  xpath/value.rs xpath/verify.rs
 ].freeze
 
 UNSAFE_USE = /\bunsafe\s*(?:\{|fn\b|impl\b|trait\b|extern\b)/
@@ -159,7 +159,7 @@ LEXBOR_ABI_COUNTS = {}.freeze
 # along - so the table is empty and any such use fails.
 # The crate-root modules the engine is built on sit outside those directories
 # and are held to the same two rules.
-ENGINE_DIRS = %w[lexbor/ xml/ xpath/ css/ falloc/ cbuf.rs cutf8.rs limits.rs ptr_table.rs text.rs token.rs].freeze
+ENGINE_DIRS = %w[lexbor/ xml/ xpath/ css/ falloc/ cbuf.rs cutf8.rs limits.rs node_type.rs ptr_table.rs text.rs token.rs].freeze
 RUBY_LAYER = /crate::(?:bridge|glue|init)|magnus::/
 RUBY_LAYER_COUNTS = {}.freeze
 

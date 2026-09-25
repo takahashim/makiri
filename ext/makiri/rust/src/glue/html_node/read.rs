@@ -17,14 +17,13 @@
 
 use magnus::{prelude::*, Error, Ruby, Value};
 
-use super::ty;
 use super::{arg_node, wrap_node};
 use crate::bridge::html::{dom_str, text_index_string};
 use crate::bridge::node_set::node_set_with_fill;
 use crate::bridge::ruby::is_kind_of;
 use crate::bridge::string::ruby_verified_text;
 use crate::init::{CLASS_NODE, CLASS_XML_DOCUMENT};
-use crate::lexbor::adapter::html::{HtmlNode, RawNode};
+use crate::lexbor::adapter::html::{HtmlNode, NodeType, RawNode};
 
 /* ------------------------------------------------------------------ *
  * small helpers                                                      *
@@ -64,10 +63,10 @@ pub fn name(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
             return Ok(dom_str(q));
         }
         Ok(match node.node_type() {
-            ty::TEXT => ruby.str_new("text").as_value(),
-            ty::COMMENT => ruby.str_new("comment").as_value(),
-            ty::CDATA => ruby.str_new("#cdata-section").as_value(),
-            ty::DOCUMENT => ruby.str_new("document").as_value(),
+            NodeType::Text => ruby.str_new("text").as_value(),
+            NodeType::Comment => ruby.str_new("comment").as_value(),
+            NodeType::CDataSection => ruby.str_new("#cdata-section").as_value(),
+            NodeType::Document => ruby.str_new("document").as_value(),
             _ => dom_str(node.node_name()),
         })
     })
@@ -147,7 +146,7 @@ pub fn pi_target(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, E
 
 /// `#node_type`: the numeric DOM node type (`LXB_DOM_NODE_TYPE_*`).
 pub fn node_type(_ruby: &Ruby, this: super::HtmlSelf) -> Result<i64, Error> {
-    crate::bridge::ruby::entry(|| Ok(this.node().node_type() as i64))
+    crate::bridge::ruby::entry(|| Ok(this.node().node_type() as u32 as i64))
 }
 
 /// `DocumentType#public_id` / `#system_id` (WHATWG DOM).
@@ -186,14 +185,17 @@ pub fn content_fragment(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Va
 pub fn content(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let mut node = this.node();
-        if node.node_type() == ty::DOCUMENT {
+        if node.node_type() == NodeType::Document {
             match node.document_root() {
                 Some(root) => node = root,
                 None => return Ok(ruby.str_new("").as_value()),
             }
         }
 
-        if matches!(node.node_type(), ty::ELEMENT | ty::FRAGMENT) {
+        if matches!(
+            node.node_type(),
+            NodeType::Element | NodeType::DocumentFragment
+        ) {
             return element_text(ruby, this.document, node);
         }
 

@@ -27,18 +27,12 @@ use crate::lexbor::adapter::html::{
 use crate::xml::model::{Document as XmlDoc, MutStatus, NodeId, NodeType};
 use crate::xml::mutate;
 
-/* ---- the node-type constants, generated on both sides ----
+/* ---- the node types on both sides ----
  *
- * `h::` is the HTML side, from the module that reads Lexbor's DOM; the mkr side
- * arrives as `NodeType` from the XML engine. Keeping the prefix is what makes a
- * comparison across representations read as one. */
-
-mod h {
-    pub use crate::lexbor::adapter::html::{
-        TYPE_CDATA as CDATA, TYPE_COMMENT as COMMENT, TYPE_ELEMENT as ELEMENT,
-        TYPE_FRAGMENT as FRAGMENT, TYPE_PI as PI, TYPE_TEXT as TEXT,
-    };
-}
+ * `H` is the HTML side's, the crate-wide type the adapter reads a Lexbor node
+ * as; the mkr side arrives as `NodeType` from the XML engine. Keeping the
+ * short name is what makes a comparison across representations read as one. */
+use crate::node_type::NodeType as H;
 
 /// A DOM name or value slice must fit `u32` - the mkr store's per-slice cap.
 #[inline]
@@ -191,90 +185,90 @@ fn h2x_make<'a>(
         fits_u32(d.len()).map(|_| d).ok_or(MutStatus::Oom)
     };
 
-    match s.node_type() {
-        h::ELEMENT => {
-            let Some(e) = s.element() else {
-                return Ok(None);
-            };
-            let name = e.qualified_name();
-            let Some(nl) = fits_u32(name.len()) else {
-                return Err(MutStatus::Oom);
-            };
-            let euri = html_ns_uri(s);
-
-            /* Three kinds of name. A PREFIXED one (an element that came from
-             * XML) is made as written and its prefix declared on it. An
-             * unprefixed name with a colon (a parsed `fb:like`) is one DOM
-             * local name, which XML cannot write as it stands: it is taken
-             * VERBATIM as a DOM-loose name, so the copy is the DOM's element
-             * and the XML serializer refuses it later - made strictly, `fb`
-             * became a prefix bound to nothing, and the copy could not even be
-             * inserted. Any other name is made strictly, and one that is a
-             * valid DOM name but no XML QName is loose as well. A loose name
-             * takes its namespace DIRECTLY (link-time resolution skips it). */
-            let prefixed = s.has_prefix();
-            let colon = name.iter().position(|&b| b == b':');
-            let loose = |doc: &mut XmlDoc| {
-                mutate::new_loose_dom_element(
-                    doc,
-                    name,
-                    crate::xml::qname::Split::unprefixed(nl),
-                    euri.unwrap_or(&[]),
-                )
-            };
-            let mut made = if colon.is_some() && !prefixed {
-                loose(doc)
-            } else {
-                mutate::new_element(doc, name)
-            };
-            if made.as_ref().err() == Some(&MutStatus::BadName) && !name.is_empty() {
-                made = loose(doc);
-            }
-            let el = made?;
-
-            let mut child_default = parent_default;
-            if let (true, Some(c)) = (prefixed, colon) {
-                /* Declared where the copy will sit unless its parent's scope
-                 * already binds the prefix to the same URI. */
-                let (p, uri) = (&name[..c], euri.unwrap_or(&[]));
-                let bound = parent.is_some_and(|up| mutate::namespace_in_scope(doc, up, p) == uri);
-                if !bound {
-                    declare_ns(doc, el, p, uri)?;
-                }
-            } else if euri.unwrap_or(&[]) != parent_default.unwrap_or(&[]) {
-                declare_ns(doc, el, &[], euri.unwrap_or(&[]))?;
-                child_default = Some(euri.unwrap_or(&[]));
-            }
-
-            h2x_copy_attrs(doc, e, el)?;
-            Ok(Some(Made {
-                node: el,
-                child_default,
-            }))
-        }
-
-        h::TEXT | h::CDATA | h::COMMENT => {
-            let ty = match s.node_type() {
-                h::TEXT => NodeType::Text,
-                h::CDATA => NodeType::CData,
-                _ => NodeType::Comment,
-            };
-            unchanged(mutate::new_chardata(doc, ty, data(s)?)?)
-        }
-
-        h::PI => {
+    if let Some(e) = s.element() {
+        return h2x_element(doc, e, parent_default, parent).map(Some);
+    }
+    let ty = match s.node_type() {
+        H::Text => NodeType::Text,
+        H::CDataSection => NodeType::CData,
+        H::Comment => NodeType::Comment,
+        H::Pi => {
             let target = s.pi_target().unwrap_or(&[]);
             if fits_u32(target.len()).is_none() {
                 return Err(MutStatus::Oom);
             }
-            unchanged(mutate::new_pi(doc, target, data(s)?)?)
+            return unchanged(mutate::new_pi(doc, target, data(s)?)?);
         }
-
-        h::FRAGMENT => unchanged(mutate::new_fragment(doc)?),
-
+        H::DocumentFragment => return unchanged(mutate::new_fragment(doc)?),
         /* An unsupported descendant type is skipped, not an error. */
-        _ => Ok(None),
+        _ => return Ok(None),
+    };
+    unchanged(mutate::new_chardata(doc, ty, data(s)?)?)
+}
+
+/// [`h2x_make`] for an element: its name, the namespace declaration its copy
+/// needs, and its attributes.
+fn h2x_element<'a>(
+    doc: &mut XmlDoc,
+    e: HtmlElement<'a>,
+    parent_default: Option<&'a [u8]>,
+    parent: Option<NodeId>,
+) -> Result<Made<'a>, MutStatus> {
+    let name = e.qualified_name();
+    let Some(nl) = fits_u32(name.len()) else {
+        return Err(MutStatus::Oom);
+    };
+    let euri = html_ns_uri(e.node());
+
+    /* Three kinds of name. A PREFIXED one (an element that came from
+     * XML) is made as written and its prefix declared on it. An
+     * unprefixed name with a colon (a parsed `fb:like`) is one DOM
+     * local name, which XML cannot write as it stands: it is taken
+     * VERBATIM as a DOM-loose name, so the copy is the DOM's element
+     * and the XML serializer refuses it later - made strictly, `fb`
+     * became a prefix bound to nothing, and the copy could not even be
+     * inserted. Any other name is made strictly, and one that is a
+     * valid DOM name but no XML QName is loose as well. A loose name
+     * takes its namespace DIRECTLY (link-time resolution skips it). */
+    let prefixed = e.node().has_prefix();
+    let colon = name.iter().position(|&b| b == b':');
+    let loose = |doc: &mut XmlDoc| {
+        mutate::new_loose_dom_element(
+            doc,
+            name,
+            crate::xml::qname::Split::unprefixed(nl),
+            euri.unwrap_or(&[]),
+        )
+    };
+    let mut made = if colon.is_some() && !prefixed {
+        loose(doc)
+    } else {
+        mutate::new_element(doc, name)
+    };
+    if made.as_ref().err() == Some(&MutStatus::BadName) && !name.is_empty() {
+        made = loose(doc);
     }
+    let el = made?;
+
+    let mut child_default = parent_default;
+    if let (true, Some(c)) = (prefixed, colon) {
+        /* Declared where the copy will sit unless its parent's scope
+         * already binds the prefix to the same URI. */
+        let (p, uri) = (&name[..c], euri.unwrap_or(&[]));
+        let bound = parent.is_some_and(|up| mutate::namespace_in_scope(doc, up, p) == uri);
+        if !bound {
+            declare_ns(doc, el, p, uri)?;
+        }
+    } else if euri.unwrap_or(&[]) != parent_default.unwrap_or(&[]) {
+        declare_ns(doc, el, &[], euri.unwrap_or(&[]))?;
+        child_default = Some(euri.unwrap_or(&[]));
+    }
+
+    h2x_copy_attrs(doc, e, el)?;
+    Ok(Made {
+        node: el,
+        child_default,
+    })
 }
 
 /// The first child to translate under `s`: a `<template>` descends into its

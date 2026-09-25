@@ -20,9 +20,10 @@ use magnus::{prelude::*, Error, Value};
 use crate::bridge::ruby::{value, VALUE};
 use crate::bridge::typed::{Hooks, Marker, Relocator, TypedType};
 use crate::falloc::MapInsert;
-use crate::init::CLASS_DOCUMENT;
+use crate::init::{RbConst, CLASS_DOCUMENT};
 use crate::lexbor::adapter::html::{HtmlDoc, RawDoc};
 use crate::lexbor::adapter::post_parse::HtmlParsed;
+use crate::node_type::NodeType;
 use crate::xml::model::Document as XmlDoc;
 use core::hash::BuildHasherDefault;
 use std::collections::HashMap;
@@ -495,6 +496,43 @@ pub(in crate::bridge) fn with_html_parsed_known<R>(
         .expect("an HTML Document without its document");
     // SAFETY: under the GVL, and the borrow is confined to `f`.
     unsafe { f(p.as_mut()) }
+}
+
+/// One representation's leaf classes, by node type: the mapping both
+/// `wrap_*_node` functions make, written once. The two tables differ only in
+/// which classes they name, so neither can grow a kind the other lacks.
+pub(in crate::bridge) struct NodeClasses {
+    pub node: &'static RbConst,
+    pub element: &'static RbConst,
+    pub attr: &'static RbConst,
+    pub text: &'static RbConst,
+    pub comment: &'static RbConst,
+    pub cdata: &'static RbConst,
+    pub pi: &'static RbConst,
+    pub doctype: &'static RbConst,
+    pub fragment: &'static RbConst,
+}
+
+impl NodeClasses {
+    /// The class a node of type `t` is wrapped as; the representation's
+    /// abstract `Node` for a type with no leaf of its own (entity, notation,
+    /// an unknown number). A DOCUMENT is the caller's to map back onto the
+    /// Ruby Document before asking.
+    #[inline]
+    pub fn class_for(&self, t: NodeType) -> VALUE {
+        match t {
+            NodeType::Element => self.element,
+            NodeType::Attribute => self.attr,
+            NodeType::Text => self.text,
+            NodeType::Comment => self.comment,
+            NodeType::CDataSection => self.cdata,
+            NodeType::Pi => self.pi,
+            NodeType::DocumentType => self.doctype,
+            NodeType::DocumentFragment => self.fragment,
+            _ => self.node,
+        }
+        .raw()
+    }
 }
 
 /// The one wrapper of class `klass` (a `ty` object) for `node` under

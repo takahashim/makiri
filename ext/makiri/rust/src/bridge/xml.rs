@@ -47,6 +47,19 @@ use crate::xml::tree;
  * the XML node front door                                            *
  * ------------------------------------------------------------------ */
 
+/// The `Makiri::XML::*` leaves, by node type.
+static XML_NODE_CLASSES: NodeClasses = NodeClasses {
+    node: &CLASS_XML_NODE,
+    element: &CLASS_XML_ELEMENT,
+    attr: &CLASS_XML_ATTR,
+    text: &CLASS_XML_TEXT,
+    comment: &CLASS_XML_COMMENT,
+    cdata: &CLASS_XML_CDATA_SECTION,
+    pi: &CLASS_XML_PROCESSING_INSTRUCTION,
+    doctype: &CLASS_XML_DOCUMENT_TYPE,
+    fragment: &CLASS_XML_DOCUMENT_FRAGMENT,
+};
+
 /// Wrap an arena node token into its `Makiri::XML::*` leaf.
 ///
 /// An invalid token becomes nil, and the DOCUMENT node maps back onto the Ruby
@@ -62,17 +75,8 @@ pub fn wrap_xml_node(node: *mut core::ffi::c_void, document: Value) -> Value {
     if ty == Some(NodeType::Document) {
         return document;
     }
-    let klass = match ty {
-        Some(NodeType::Element) => CLASS_XML_ELEMENT.raw(),
-        Some(NodeType::Attribute) => CLASS_XML_ATTR.raw(),
-        Some(NodeType::Text) => CLASS_XML_TEXT.raw(),
-        Some(NodeType::CData) => CLASS_XML_CDATA_SECTION.raw(),
-        Some(NodeType::Comment) => CLASS_XML_COMMENT.raw(),
-        Some(NodeType::Pi) => CLASS_XML_PROCESSING_INSTRUCTION.raw(),
-        Some(NodeType::Doctype) => CLASS_XML_DOCUMENT_TYPE.raw(),
-        Some(NodeType::Fragment) => CLASS_XML_DOCUMENT_FRAGMENT.raw(),
-        _ => CLASS_XML_NODE.raw(),
-    };
+    let klass =
+        XML_NODE_CLASSES.class_for(ty.map_or(crate::node_type::NodeType::Other, Into::into));
 
     crate::bridge::wrapper::wrap_cached(&XML_NODE_TYPE, klass, node, document)
 }

@@ -16,57 +16,9 @@
 use super::abi::*;
 use crate::token::Token;
 
-/// A node's type, as the engine reads it.
-///
-/// The discriminants are the WHATWG DOM numbers (`Node.nodeType`), which are
-/// also Lexbor's `LXB_DOM_NODE_TYPE_*` - `lexbor/xpath.rs` asserts that at
-/// compile time - so a backend holding the number converts with
-/// [`from_u32`](Self::from_u32), a range check. Entity / entity reference /
-/// notation have no node in either representation, but a host's number could
-/// still say so, and the `node()` test has to refuse them by name.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[repr(u32)]
-pub enum NodeType {
-    /// Anything else: a number neither DOM defines (Lexbor's UNDEF among
-    /// them), or an XML node no longer in its arena. It passes `node()` and
-    /// nothing else.
-    Other = 0,
-    Element = 1,
-    Attribute = 2,
-    Text = 3,
-    CDataSection = 4,
-    EntityReference = 5,
-    Entity = 6,
-    Pi = 7,
-    Comment = 8,
-    Document = 9,
-    DocumentType = 10,
-    DocumentFragment = 11,
-    Notation = 12,
-}
-
-impl NodeType {
-    /// The type a DOM node-type number names; [`Other`](Self::Other) for one
-    /// outside 1..=12, never an assumed kind.
-    #[inline]
-    pub fn from_u32(v: u32) -> NodeType {
-        match v {
-            1 => NodeType::Element,
-            2 => NodeType::Attribute,
-            3 => NodeType::Text,
-            4 => NodeType::CDataSection,
-            5 => NodeType::EntityReference,
-            6 => NodeType::Entity,
-            7 => NodeType::Pi,
-            8 => NodeType::Comment,
-            9 => NodeType::Document,
-            10 => NodeType::DocumentType,
-            11 => NodeType::DocumentFragment,
-            12 => NodeType::Notation,
-            _ => NodeType::Other,
-        }
-    }
-}
+/// A node's type, as the engine reads it: the crate's one DOM node-type enum,
+/// shared with the HTML adapter and the XML model.
+pub use crate::node_type::NodeType;
 
 /// A document the evaluator reads, borrowed for `'d`.
 ///

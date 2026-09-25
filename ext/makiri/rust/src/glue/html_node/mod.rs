@@ -39,18 +39,6 @@ use crate::init::CLASS_HTML_DOCUMENT;
  * the DOM node types                                                 *
  * ------------------------------------------------------------------ */
 
-/// The DOM node types, under the short names this layer reads best. Defined
-/// once in [`crate::lexbor::adapter::html`], which is where the generated values
-/// are read - a second definition of a node type is how every HTML element
-/// once became foreign (see that module).
-pub mod ty {
-    pub use crate::lexbor::adapter::html::{
-        TYPE_ATTRIBUTE as ATTRIBUTE, TYPE_CDATA as CDATA, TYPE_COMMENT as COMMENT,
-        TYPE_DOCTYPE as DOCTYPE, TYPE_DOCUMENT as DOCUMENT, TYPE_ELEMENT as ELEMENT,
-        TYPE_FRAGMENT as FRAGMENT, TYPE_PI as PI, TYPE_TEXT as TEXT,
-    };
-}
-
 use crate::glue::html_doc::node_clone_node;
 use crate::glue::node::{node_equals, node_hash, node_pointer_id};
 use crate::init::{CLASS_HTML_DOCUMENT_TYPE, CLASS_HTML_ELEMENT};

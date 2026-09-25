@@ -17,9 +17,7 @@ use crate::init::{
     CLASS_HTML_PROCESSING_INSTRUCTION, CLASS_HTML_TEXT, CLASS_XML_DOCUMENT,
 };
 use crate::lexbor::adapter::html::{
-    HtmlNode, HtmlNodeMut, Insertion, Place, PreInsertError, RawDoc, RawNode, TYPE_ATTRIBUTE,
-    TYPE_CDATA, TYPE_COMMENT, TYPE_DOCTYPE, TYPE_DOCUMENT, TYPE_ELEMENT, TYPE_FRAGMENT, TYPE_PI,
-    TYPE_TEXT,
+    HtmlNode, HtmlNodeMut, Insertion, NodeType, Place, PreInsertError, RawDoc, RawNode,
 };
 use crate::lexbor::fragment::import_with_fixup;
 
@@ -75,6 +73,19 @@ pub fn node_line(rb_doc: Value, node: RawNode) -> Option<usize> {
  * the HTML node front door                                           *
  * ------------------------------------------------------------------ */
 
+/// The `Makiri::HTML::*` leaves, by node type.
+static HTML_NODE_CLASSES: NodeClasses = NodeClasses {
+    node: &CLASS_HTML_NODE,
+    element: &CLASS_HTML_ELEMENT,
+    attr: &CLASS_HTML_ATTR,
+    text: &CLASS_HTML_TEXT,
+    comment: &CLASS_HTML_COMMENT,
+    cdata: &CLASS_HTML_CDATA_SECTION,
+    pi: &CLASS_HTML_PROCESSING_INSTRUCTION,
+    doctype: &CLASS_HTML_DOCUMENT_TYPE,
+    fragment: &CLASS_HTML_DOCUMENT_FRAGMENT,
+};
+
 /// Wrap a live HTML node handle into its `Makiri::HTML::*` leaf.
 ///
 /// A DOCUMENT node maps back onto the Ruby Document rather than getting a
@@ -85,21 +96,10 @@ pub fn wrap_html_node(node: RawNode, document: Value) -> Value {
      * and `From<Building*>`, and the only raw one, `from_ptr`, is unsafe. */
     let handle = unsafe { node.as_node() };
     let node_type = handle.node_type();
-    if node_type == TYPE_DOCUMENT {
+    if node_type == NodeType::Document {
         return document;
     }
-
-    let klass = match node_type {
-        TYPE_ELEMENT => CLASS_HTML_ELEMENT.raw(),
-        TYPE_ATTRIBUTE => CLASS_HTML_ATTR.raw(),
-        TYPE_TEXT => CLASS_HTML_TEXT.raw(),
-        TYPE_COMMENT => CLASS_HTML_COMMENT.raw(),
-        TYPE_CDATA => CLASS_HTML_CDATA_SECTION.raw(),
-        TYPE_PI => CLASS_HTML_PROCESSING_INSTRUCTION.raw(),
-        TYPE_DOCTYPE => CLASS_HTML_DOCUMENT_TYPE.raw(),
-        TYPE_FRAGMENT => CLASS_HTML_DOCUMENT_FRAGMENT.raw(),
-        _ => CLASS_HTML_NODE.raw(),
-    };
+    let klass = HTML_NODE_CLASSES.class_for(node_type);
 
     crate::bridge::wrapper::wrap_cached(&HTML_NODE_TYPE, klass, node.as_ptr(), document)
 }
@@ -208,7 +208,7 @@ pub fn edit(this: &HtmlSelf) -> Result<HtmlEdit<'_>, Error> {
 impl<'a> HtmlEdit<'a> {
     /// The receiver's node, read-only, for a check that no argument can
     /// change (its node type).
-    pub fn node_type(&self) -> u32 {
+    pub fn node_type(&self) -> NodeType {
         self.this.node().node_type()
     }
 
@@ -273,7 +273,7 @@ fn adopt_release(src: Value) -> Result<(), Error> {
 }
 
 fn release_from_tree(node: HtmlNodeMut<'_>) {
-    if node.node().node_type() == TYPE_FRAGMENT {
+    if node.node().node_type() == NodeType::DocumentFragment {
         /* A fragment contributes its children; the DOM leaves a spliced one
          * empty, so empty the source rather than detaching it. */
         while let Some(c) = node.first_child() {

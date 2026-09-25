@@ -23,6 +23,7 @@ use core::marker::PhantomData;
 use core::ptr::NonNull;
 
 use crate::lexbor::abi::{self as lxb, LxbAttr, LxbDoc, LxbElement, LxbNode};
+pub use crate::node_type::NodeType;
 
 mod build;
 mod mutate;
@@ -81,16 +82,30 @@ pub const TAG_MATH: usize = lxb::lxb_tag_id_enum_t_LXB_TAG_MATH as usize;
 /// eof). A token at or below it is not an element start-tag.
 pub const TAG_EM_DOCTYPE: usize = lxb::lxb_tag_id_enum_t_LXB_TAG__EM_DOCTYPE as usize;
 
-/* The node types the handles branch on, generated. */
-pub const TYPE_ELEMENT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_ELEMENT;
-pub const TYPE_ATTRIBUTE: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_ATTRIBUTE;
-pub const TYPE_TEXT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_TEXT;
-pub const TYPE_CDATA: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_CDATA_SECTION;
-pub const TYPE_PI: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_PROCESSING_INSTRUCTION;
-pub const TYPE_DOCUMENT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT;
-pub const TYPE_COMMENT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_COMMENT;
-pub const TYPE_DOCTYPE: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT_TYPE;
-pub const TYPE_FRAGMENT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT_FRAGMENT;
+/* A node's type is read as the crate's `NodeType`, whose discriminants must
+ * agree with Lexbor's enum value for value; a mismatch would make every reader
+ * misread each node rather than fail. Checked at compile time, against the
+ * generated header view. */
+const _: () = {
+    use NodeType as T;
+    assert!(T::Other as u32 == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_UNDEF);
+    assert!(T::Element as u32 == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_ELEMENT);
+    assert!(T::Attribute as u32 == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_ATTRIBUTE);
+    assert!(T::Text as u32 == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_TEXT);
+    assert!(T::CDataSection as u32 == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_CDATA_SECTION);
+    assert!(
+        T::EntityReference as u32 == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_ENTITY_REFERENCE
+    );
+    assert!(T::Entity as u32 == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_ENTITY);
+    assert!(T::Pi as u32 == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_PROCESSING_INSTRUCTION);
+    assert!(T::Comment as u32 == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_COMMENT);
+    assert!(T::Document as u32 == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT);
+    assert!(T::DocumentType as u32 == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT_TYPE);
+    assert!(
+        T::DocumentFragment as u32 == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT_FRAGMENT
+    );
+    assert!(T::Notation as u32 == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_NOTATION);
+};
 
 /// `LXB_TAG_TEMPLATE`.
 pub const TAG_TEMPLATE: usize = lxb::lxb_tag_id_enum_t_LXB_TAG_TEMPLATE as usize;
@@ -441,11 +456,12 @@ impl<'doc> HtmlNode<'doc> {
         self.raw.as_ptr()
     }
 
-    /// The node's type (`lxb_dom_node_type_t`).
+    /// The node's type; [`NodeType::Other`] for a number the DOM does not
+    /// define.
     #[inline]
-    pub fn node_type(self) -> u32 {
+    pub fn node_type(self) -> NodeType {
         // SAFETY: a live node (the handle's contract).
-        unsafe { (*self.as_raw()).type_ }
+        NodeType::from_u32(unsafe { (*self.as_raw()).type_ })
     }
 
     /// The parent: for an attribute, the element it is set on.
@@ -524,11 +540,11 @@ impl<'doc> HtmlNode<'doc> {
 
     #[inline]
     pub fn element(self) -> Option<HtmlElement<'doc>> {
-        (self.node_type() == TYPE_ELEMENT).then_some(HtmlElement(self))
+        (self.node_type() == NodeType::Element).then_some(HtmlElement(self))
     }
     #[inline]
     pub fn attr(self) -> Option<HtmlAttr<'doc>> {
-        (self.node_type() == TYPE_ATTRIBUTE).then_some(HtmlAttr(self))
+        (self.node_type() == NodeType::Attribute).then_some(HtmlAttr(self))
     }
 
     /// The qualified name: an element's own (prefix and case preserved), any
@@ -699,7 +715,7 @@ impl<'doc> HtmlNode<'doc> {
 
     /// A processing instruction's target, or None for any other kind.
     pub fn pi_target(self) -> Option<&'doc [u8]> {
-        (self.node_type() == TYPE_PI).then(|| {
+        (self.node_type() == NodeType::Pi).then(|| {
             // SAFETY: a live PI node, which Lexbor allocates as one.
             unsafe {
                 named_mut(
@@ -722,7 +738,7 @@ impl<'doc> HtmlNode<'doc> {
         self,
         f: unsafe extern "C" fn(*mut lxb::lxb_dom_document_type_t, *mut usize) -> *const u8,
     ) -> Option<&'doc [u8]> {
-        if self.node_type() != TYPE_DOCTYPE {
+        if self.node_type() != NodeType::DocumentType {
             return None;
         }
         // SAFETY: a live doctype node, which Lexbor allocates as one.
@@ -734,7 +750,7 @@ impl<'doc> HtmlNode<'doc> {
     /// is text content - or None for any other kind.
     pub fn char_data(self) -> Option<&'doc [u8]> {
         self.data()
-            .filter(|_| matches!(self.node_type(), TYPE_TEXT | TYPE_CDATA))
+            .filter(|_| matches!(self.node_type(), NodeType::Text | NodeType::CDataSection))
     }
 
     /// The data of any CharacterData node - text, CDATA, comment or processing
@@ -743,7 +759,7 @@ impl<'doc> HtmlNode<'doc> {
     pub fn data(self) -> Option<&'doc [u8]> {
         if !matches!(
             self.node_type(),
-            TYPE_TEXT | TYPE_CDATA | TYPE_COMMENT | TYPE_PI
+            NodeType::Text | NodeType::CDataSection | NodeType::Comment | NodeType::Pi
         ) {
             return None;
         }
@@ -758,7 +774,9 @@ impl<'doc> HtmlNode<'doc> {
     /// Whether this is an HTML `<template>`, whose children live in a separate
     /// contents fragment rather than under it.
     pub fn is_html_template(self) -> bool {
-        self.node_type() == TYPE_ELEMENT && self.tag_id() == TAG_TEMPLATE && self.ns_id() == NS_HTML
+        self.node_type() == NodeType::Element
+            && self.tag_id() == TAG_TEMPLATE
+            && self.ns_id() == NS_HTML
     }
 
     /// Lexbor's text content of this node, lent to `f` - None when Lexbor has
@@ -791,7 +809,7 @@ impl<'doc> HtmlNode<'doc> {
 
     /// A document node's root element, or None.
     pub fn document_root(self) -> Option<HtmlNode<'doc>> {
-        if self.node_type() != TYPE_DOCUMENT {
+        if self.node_type() != NodeType::Document {
             return None;
         }
         // SAFETY: a live document node, which leads its document struct.

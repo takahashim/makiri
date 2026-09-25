@@ -35,7 +35,7 @@ use crate::falloc::{try_vec_with_capacity, VecPush};
 use crate::ptr_table::PtrTable;
 use crate::text::BorrowedText;
 
-use super::html::{HtmlNode, RawNode, TYPE_ELEMENT, TYPE_FRAGMENT};
+use super::html::{HtmlNode, NodeType, RawNode};
 
 /// One container's slice run. `start`/`end` are INDICES into `slices`, not byte
 /// offsets, and are `u32` because the build refuses to index a document with
@@ -59,7 +59,10 @@ pub struct TextIndex {
 
 #[inline]
 fn is_container(n: HtmlNode<'_>) -> bool {
-    matches!(n.node_type(), TYPE_ELEMENT | TYPE_FRAGMENT)
+    matches!(
+        n.node_type(),
+        NodeType::Element | NodeType::DocumentFragment
+    )
 }
 
 /// The non-empty character data of a TEXT/CDATA node, or `None`.
