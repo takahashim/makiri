@@ -11,11 +11,13 @@ gem "rake-compiler", "~> 1.2"
 gem "rb_sys", "~> 0.9"
 gem "rspec", "~> 3.13"
 
+# for benchmark
+gem "benchmark-ips", "~> 2.0"
+
 # Benchmark-only (never a runtime/gemspec dependency — Makiri itself stays
 # libxml2-free). Nokogiri (libxml2) and Nokolexbor (a Nokogiri-compatible API
 # also built on Lexbor) are performance references in bench/.
 group :bench, optional: true do
-  gem "benchmark-ips", "~> 2.0"
   gem "nokogiri", "~> 1.19"
   gem "nokolexbor", "~> 0.7"
 end
