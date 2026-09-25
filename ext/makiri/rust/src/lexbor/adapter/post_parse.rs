@@ -40,7 +40,7 @@ use crate::lexbor::adapter::html::{HtmlDoc as DomDoc, HtmlNode, RawDoc, RawNode,
 use crate::lexbor::adapter::source_loc::{
     lines_build, pos_assign_to_dom, pos_token_cb, Lines, Positions, Recorder,
 };
-use crate::lexbor::adapter::text_index::{TextIndex, TextRun};
+use crate::lexbor::adapter::text_index::{TextBuildError, TextIndex, TextRun};
 use crate::utf8_input::sanitize;
 
 type HtmlDoc = lxb::lxb_html_document_t;
@@ -78,7 +78,19 @@ pub struct HtmlParsed {
     /// tokens, and a wrong line is the one thing `#line` must never give.
     pending_pos: Option<Box<Positions>>,
     /// node -> descendant-text slice run.
-    text_index: Option<Box<TextIndex>>,
+    text_index: TextIndexState,
+}
+
+/// The text index's state, so a document the index cannot serve does not rebuild
+/// on every `Node#text`.
+enum TextIndexState {
+    /// Not built since the last invalidation.
+    Unbuilt,
+    /// Built over the document root.
+    Built(Box<TextIndex>),
+    /// The index does not fit this document (its root is not a container, or it
+    /// holds more slices than a run can index). Retrying cannot change that.
+    Inapplicable,
 }
 
 impl Drop for HtmlParsed {
@@ -146,17 +158,40 @@ impl HtmlParsed {
         Some(unsafe { RawNode::as_html_nodes_unchecked(bucket) })
     }
 
+    /// Build the node -> text index if it is not built and the document can
+    /// have one. `Err` when the build could not allocate - which caches
+    /// nothing, so a later call retries; an index that does not fit this
+    /// document is remembered so it is never attempted again.
+    pub fn ensure_text_index(&mut self) -> Result<(), AdapterOom> {
+        if matches!(self.text_index, TextIndexState::Unbuilt) {
+            let Some(root) = self.doc().as_node().document_root() else {
+                self.text_index = TextIndexState::Inapplicable;
+                return Ok(());
+            };
+            match TextIndex::build(root) {
+                Ok(built) => {
+                    self.text_index =
+                        TextIndexState::Built(try_box(built).map_err(|()| AdapterOom)?);
+                }
+                Err(TextBuildError::NotApplicable) => {
+                    self.text_index = TextIndexState::Inapplicable;
+                }
+                Err(TextBuildError::Oom) => return Err(AdapterOom),
+            }
+        }
+        Ok(())
+    }
+
     /// The run of text slices `node`'s subtree owns, and its byte total.
     ///
-    /// None means "walk instead": a node outside the indexed tree (a
-    /// fragment), or a build that could not allocate.
-    pub fn text_slices(&mut self, node: RawNode) -> Option<TextRun<'_>> {
-        if self.text_index.is_none() {
-            let root = self.doc().as_node().document_root()?;
-            let built = TextIndex::build(root)?;
-            self.text_index = Some(try_box(built).ok()?);
+    /// None means "walk instead": the index is not built (call
+    /// [`ensure_text_index`](Self::ensure_text_index) first), does not fit this
+    /// document, or does not place this node (a fragment outside the tree).
+    pub fn text_slices(&self, node: RawNode) -> Option<TextRun<'_>> {
+        match &self.text_index {
+            TextIndexState::Built(index) => index.slices_of(node),
+            TextIndexState::Unbuilt | TextIndexState::Inapplicable => None,
         }
-        self.text_index.as_deref()?.slices_of(node)
     }
 
     /// Stamp the recorded offsets into the DOM, once.
@@ -182,7 +217,7 @@ impl HtmlParsed {
     /// points into.
     pub fn invalidate_indexes(&mut self) {
         self.dom_index = None;
-        self.text_index = None;
+        self.text_index = TextIndexState::Unbuilt;
     }
 
     /// The bytes this document holds OUTSIDE Ruby's allocator, for the GC:
@@ -332,7 +367,7 @@ pub fn parse_html(src: &[u8], assume_valid: bool) -> Option<Box<HtmlParsed>> {
         dom_index: None,
         lines,
         pending_pos: positions,
-        text_index: None,
+        text_index: TextIndexState::Unbuilt,
     };
     /* On OOM the handle drops, and with it the document. */
     try_box(parsed).ok()

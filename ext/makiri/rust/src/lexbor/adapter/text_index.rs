@@ -145,12 +145,25 @@ struct Frame<'d> {
     slot: usize,
 }
 
+/// Why a [`TextIndex::build`] refused.
+///
+/// The two are kept apart so the caller can tell "this document has no text
+/// index" (cache it, never retry) from "the build could not allocate" (retry on
+/// the next request). Both are fail-closed: the caller walks instead.
+pub(crate) enum TextBuildError {
+    /// The build does not apply: `root` is not a container
+    /// (`lxb_dom_document_root` answers with the first child when the document
+    /// has no `<html>`, and that can be a leaf), the document holds more slices
+    /// than a run can index, or the tree changed under the build.
+    NotApplicable,
+    /// An allocation the build needed failed.
+    Oom,
+}
+
 impl TextIndex {
-    /// Build over `root` (the document root element). `None` when `root` is not
-    /// a container - `lxb_dom_document_root` answers with the first child when
-    /// the document has no `<html>`, and that can be a leaf - or on OOM; both
-    /// are fail-closed and the caller walks instead.
-    pub(crate) fn build(root: HtmlNode<'_>) -> Option<TextIndex> {
+    /// Build over `root` (the document root element). `NotApplicable` when the
+    /// index does not fit this document, `Oom` when an allocation failed.
+    pub(crate) fn build(root: HtmlNode<'_>) -> Result<TextIndex, TextBuildError> {
         /* The index is ROOTED at a container: pass 2 opens `root`'s own run
          * before it looks at anything, and the run table is sized from the
          * container count, which does not count `root` when it is a leaf. The
@@ -159,7 +172,7 @@ impl TextIndex {
          * script can put a comment or a processing instruction there. Walk
          * instead. */
         if !is_container(root) {
-            return None;
+            return Err(TextBuildError::NotApplicable);
         }
 
         let (nslices, ncont) = count(root);
@@ -168,7 +181,7 @@ impl TextIndex {
          * u32::MAX text slices is impossible in practice (each is >= 1 byte),
          * but guard it anyway rather than truncate the index. */
         if nslices > u32::MAX as usize {
-            return None;
+            return Err(TextBuildError::NotApplicable);
         }
 
         /* Both arrays are sized EXACTLY here, so every push below lands in
@@ -176,10 +189,13 @@ impl TextIndex {
          * `push`. See clippy.toml on why `push` after a successful reserve is
          * deliberately not banned. */
         let empty = Run { start: 0, end: 0 };
+        let prefix_cap = nslices
+            .checked_add(1)
+            .ok_or(TextBuildError::NotApplicable)?;
         let mut t = TextIndex {
-            slices: try_vec_with_capacity(nslices)?,
-            prefix: try_vec_with_capacity(nslices.checked_add(1)?)?,
-            runs: PtrTable::with_keys(ncont, empty)?,
+            slices: try_vec_with_capacity(nslices).ok_or(TextBuildError::Oom)?,
+            prefix: try_vec_with_capacity(prefix_cap).ok_or(TextBuildError::Oom)?,
+            runs: PtrTable::with_keys(ncont, empty).ok_or(TextBuildError::Oom)?,
         };
         t.prefix.push(0);
 
@@ -188,8 +204,11 @@ impl TextIndex {
          * bounded by tree DEPTH, not node count), so it grows through falloc.
          * The run table was sized for exactly the containers pass 1 counted, so
          * a refused insert means the tree changed under us: fail closed. */
-        let mut stack: Vec<Frame<'_>> = try_vec_with_capacity(1)?;
-        let slot = t.runs.insert(Some(RawNode::from(root)), empty)?;
+        let mut stack: Vec<Frame<'_>> = try_vec_with_capacity(1).ok_or(TextBuildError::Oom)?;
+        let slot = t
+            .runs
+            .insert(Some(RawNode::from(root)), empty)
+            .ok_or(TextBuildError::Oom)?;
         stack.push(Frame {
             child: root.first_child(),
             slot,
@@ -212,13 +231,15 @@ impl TextIndex {
                  * the tree changed under us - fail closed rather than push past
                  * the reservation. */
                 if t.slices.len() == nslices {
-                    return None;
+                    return Err(TextBuildError::NotApplicable);
                 }
                 /* The running total is checked rather than wrapped: a wrapped
                  * prefix would make a later `prefix[end] - prefix[start]`
                  * smaller than the bytes actually present, which is a short read
                  * into a pre-sized String. */
-                let total = t.prefix[t.slices.len()].checked_add(text.len())?;
+                let total = t.prefix[t.slices.len()]
+                    .checked_add(text.len())
+                    .ok_or(TextBuildError::NotApplicable)?;
                 /* Stored raw: see the module docs, and `RawSlice::get`. */
                 t.slices.push(RawSlice(NonNull::from(text)));
                 t.prefix.push(total);
@@ -226,18 +247,19 @@ impl TextIndex {
                 let start = t.slices.len() as u32;
                 let slot = t
                     .runs
-                    .insert(Some(RawNode::from(child)), Run { start, end: start })?;
+                    .insert(Some(RawNode::from(child)), Run { start, end: start })
+                    .ok_or(TextBuildError::Oom)?;
                 stack
                     .falloc_push(Frame {
                         child: child.first_child(),
                         slot,
                     })
-                    .ok()?;
+                    .map_err(|()| TextBuildError::Oom)?;
             }
             /* Other kinds (comment / PI / doctype) are childless leaves. */
         }
 
-        Some(t)
+        Ok(t)
     }
 }
 

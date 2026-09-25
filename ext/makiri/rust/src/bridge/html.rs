@@ -47,6 +47,9 @@ pub fn dom_str(bytes: &[u8]) -> Value {
 pub fn text_index_string(document: Value, node: RawNode) -> Result<Option<Value>, Error> {
     let mut found: Option<Result<Value, Error>> = None;
     with_html_parsed_known(document, |p| {
+        if p.ensure_text_index().is_err() {
+            return; /* build failed closed: walk instead */
+        }
         if let Some(run) = p.text_slices(node) {
             // SAFETY: valid UTF-8 by the text-input contract (the slices are
             // this document's text, borrowed from its index for the copy).
