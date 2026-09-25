@@ -138,6 +138,24 @@ impl NodeVec {
         crate::falloc::grow_capacity(cap, need, core::mem::size_of::<*mut c_void>())
     }
 
+    /// Make room for `n` nodes (at most [`NODE_SET_MAX`]) in one allocation,
+    /// so the pushes that follow cannot reallocate - and so cannot raise.
+    fn reserve(&mut self, n: usize) {
+        let want = n.min(NODE_SET_MAX);
+        if want > self.cap {
+            self.grow_to(want);
+        }
+    }
+
+    /// Reallocate to exactly `cap` nodes; raises `NoMemoryError` on failure.
+    fn grow_to(&mut self, cap: usize) {
+        // SAFETY: ptr is either null or a live Ruby-allocated block of
+        // `self.cap` elements; `realloc_array` reallocates it and checks the
+        // multiply.
+        self.ptr = unsafe { crate::bridge::alloc::realloc_array(self.ptr, cap) };
+        self.cap = cap;
+    }
+
     /// Append one node. `Err` only for the size cap or a capacity overflow -
     /// allocation failure raises inside Ruby.
     fn push(&mut self, node: *mut c_void) -> Result<(), PushError> {
@@ -147,11 +165,7 @@ impl NodeVec {
         if self.len == self.cap {
             let new_cap =
                 Self::grow_capacity(self.cap, self.len + 1).ok_or(PushError::CapacityOverflow)?;
-            // SAFETY: ptr is either null or a live Ruby-allocated block of
-            // `cap` elements; `realloc_array` reallocates it and checks the
-            // multiply.
-            self.ptr = unsafe { crate::bridge::alloc::realloc_array(self.ptr, new_cap) };
-            self.cap = new_cap;
+            self.grow_to(new_cap);
         }
         // SAFETY: len < cap after the growth above.
         unsafe { *self.ptr.add(self.len) = node };
@@ -408,14 +422,13 @@ impl NodeSet {
     /// A new set of `len` nodes from `beg`, clamped to the end; nil when `beg`
     /// is past it.
     pub fn slice(&self, ruby: &Ruby, beg: usize, len: usize) -> Result<Value, Error> {
-        let mine = self.read()?;
-        let Some(tail) = mine.as_slice().get(beg..) else {
+        let Some(room) = self.count()?.checked_sub(beg) else {
             return Ok(ruby.qnil().as_value());
         };
-        let nodes = &tail[..len.min(tail.len())];
-        let (result, r) = new_result(self.document(ruby));
-        let mut w = r.write()?;
-        for &n in nodes {
+        let (result, mut w) = new_result_with_room(self.document(ruby), len.min(room))?;
+        let mine = self.read()?;
+        let tail = mine.as_slice().get(beg..).unwrap_or_default();
+        for &n in &tail[..len.min(tail.len())] {
             w.push(n)?;
         }
         drop(w);
@@ -468,13 +481,20 @@ impl NodeSet {
      * fresh object, so its mutable borrow is a different cell. A push can
      * trigger a GC, and `mark` takes no borrow - see the note on the struct. An
      * earlier version snapshotted each operand into a Vec to sidestep all this
-     * and measured about half the C's throughput. */
+     * and measured about half the C's throughput.
+     *
+     * What they must not do is hold those borrows across a push that grows the
+     * result: growing is `ruby_xrealloc2`, whose `NoMemoryError` longjmps past
+     * every drop, leaving an operand's borrow counted for good (the set refuses
+     * every later write) and leaking the membership index. So each sizes its
+     * result by the operands first, under short borrows, and only then takes
+     * the long ones; the pushes fit and cannot raise. */
 
     /// `self | other`: the union, deduped, self first.
     pub fn union(&self, ruby: &Ruby, other: &NodeSet) -> Result<Value, Error> {
+        let room = self.count()?.saturating_add(other.count()?);
+        let (result, mut w) = new_result_with_room(self.document(ruby), room)?;
         let (mine, theirs) = (self.read()?, other.read()?);
-        let (result, r) = new_result(self.document(ruby));
-        let mut w = r.write()?;
         let mut seen = Index::empty(mine.len() + theirs.len());
         for &n in mine.as_slice().iter().chain(theirs.as_slice()) {
             if seen.insert(n, w.as_slice()) {
@@ -487,9 +507,9 @@ impl NodeSet {
 
     /// `self + other`: the concatenation, duplicates kept.
     pub fn concat(&self, ruby: &Ruby, other: &NodeSet) -> Result<Value, Error> {
+        let room = self.count()?.saturating_add(other.count()?);
+        let (result, mut w) = new_result_with_room(self.document(ruby), room)?;
         let (mine, theirs) = (self.read()?, other.read()?);
-        let (result, r) = new_result(self.document(ruby));
-        let mut w = r.write()?;
         for &n in mine.as_slice().iter().chain(theirs.as_slice()) {
             w.push(n)?;
         }
@@ -505,10 +525,9 @@ impl NodeSet {
         other: &NodeSet,
         keep_if_in_other: bool,
     ) -> Result<Value, Error> {
+        let (result, mut w) = new_result_with_room(self.document(ruby), self.count()?)?;
         let (mine, theirs) = (self.read()?, other.read()?);
         let theirs_index = Index::build(theirs.as_slice());
-        let (result, r) = new_result(self.document(ruby));
-        let mut w = r.write()?;
         let mut seen = Index::empty(mine.len());
         for &n in mine.as_slice() {
             if theirs_index.contains(n, theirs.as_slice()) != keep_if_in_other {
@@ -561,6 +580,20 @@ fn new_result<'a>(document: Value) -> (Value, &'a NodeSet) {
     /* The one unchecked borrow of a fresh set is `node_set_with_fill`'s. */
     let (set, fill) = node_set_with_fill(document);
     (set, fill.set)
+}
+
+/// [`new_result`] with room for `room` nodes, and its write borrow.
+///
+/// The one allocation that can raise happens here, before the caller holds
+/// anything but this borrow of a set nothing else can reach yet.
+fn new_result_with_room<'a>(
+    document: Value,
+    room: usize,
+) -> Result<(Value, std::cell::RefMut<'a, NodeVec>), Error> {
+    let (result, r) = new_result(document);
+    let mut w = r.write()?;
+    w.reserve(room);
+    Ok((result, w))
 }
 
 /* ---- membership, for the operators ---- */
