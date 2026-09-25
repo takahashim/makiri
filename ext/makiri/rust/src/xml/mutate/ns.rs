@@ -93,19 +93,34 @@ pub(super) fn resolve_ns(
     }
 }
 
-/// Resolve the namespace of element `e` - its name unless `attrs_only`, and its
-/// attributes (only the PENDING ones when `attrs_only`) - and check that its
+/// Which pass of an all-or-nothing resolution this is: one that only computes
+/// (to find out whether every prefix in the subtree binds and every key is
+/// unique), then one that writes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Pass {
+    Check,
+    Commit,
+}
+
+/// What of an element to resolve: its name and every attribute, or - for an
+/// element whose own namespace is already decided - only the attributes still
+/// pending.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Part {
+    Whole,
+    PendingAttrs,
+}
+
+/// Resolve the namespace of element `e` - see [`Part`] - and check that its
 /// attributes' keys stay unique, the rule the parser holds a document to (§3).
-///
-/// `commit` selects the pass: false only computes (to find out whether every
-/// prefix in the subtree binds and every key is unique), true writes.
 fn resolve_node_ns(
     doc: &mut Document,
     e: NodeId,
     connected: bool,
-    commit: bool,
-    attrs_only: bool,
+    pass: Pass,
+    part: Part,
 ) -> Result<(), MutStatus> {
+    let (commit, attrs_only) = (pass == Pass::Commit, part == Part::PendingAttrs);
     if !attrs_only && doc.node(e).flags & FLAG_DOM_LOOSE_NAME == 0 {
         let sp = doc.split_of(e);
         /* `resolve_ns` only reads, so the name is passed borrowed. */
@@ -173,7 +188,7 @@ fn ns_is_decided(doc: &Document, e: NodeId) -> bool {
 /// Re-resolve every element in `root`'s subtree, all-or-nothing: one pass that
 /// only computes, and - only if every prefix binds - a second that writes.
 fn resolve_subtree(doc: &mut Document, root: NodeId, connected: bool) -> Result<(), MutStatus> {
-    for commit in [false, true] {
+    for pass in [Pass::Check, Pass::Commit] {
         let mut cur = Some(root);
         while let Some(c) = cur {
             if doc.type_(c) == Some(NodeType::Element) {
@@ -181,8 +196,13 @@ fn resolve_subtree(doc: &mut Document, root: NodeId, connected: bool) -> Result<
                  * while it was detached may still be pending. */
                 let decided = ns_is_decided(doc, c);
                 if !decided || has_pending_attr(doc, c) {
-                    /* an Err here comes from commit == false: nothing written yet */
-                    resolve_node_ns(doc, c, connected, commit, decided)?;
+                    /* an Err here comes from the Check pass: nothing written yet */
+                    let part = if decided {
+                        Part::PendingAttrs
+                    } else {
+                        Part::Whole
+                    };
+                    resolve_node_ns(doc, c, connected, pass, part)?;
                 }
             }
             cur = doc.preorder_next(root, c);

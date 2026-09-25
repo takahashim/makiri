@@ -12,7 +12,7 @@ use core::ffi::c_long;
 
 use magnus::{function, method, prelude::*, Error, RArray, Ruby, TryConvert, Value};
 
-use crate::bridge::node_set::{node_set_of_nodes, NodeSet};
+use crate::bridge::node_set::{node_set_of_nodes, Membership, NodeSet};
 use crate::bridge::ruby::{is_kind_of, range_beg_len};
 use crate::bridge::wrapper::keepalive_document;
 use crate::init::{CLASS_DOCUMENT, CLASS_NODE, CLASS_NODE_SET};
@@ -98,11 +98,11 @@ fn op_plus(ruby: &Ruby, s: &NodeSet, other: Value) -> Result<Value, Error> {
 }
 
 fn op_and(ruby: &Ruby, s: &NodeSet, other: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| s.filter(ruby, s.operand(ruby, other)?, true))
+    crate::bridge::ruby::entry(|| s.filter(ruby, s.operand(ruby, other)?, Membership::In))
 }
 
 fn op_minus(ruby: &Ruby, s: &NodeSet, other: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| s.filter(ruby, s.operand(ruby, other)?, false))
+    crate::bridge::ruby::entry(|| s.filter(ruby, s.operand(ruby, other)?, Membership::NotIn))
 }
 
 /// `NodeSet.new(document_or_node, list = [])`.

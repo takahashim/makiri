@@ -527,20 +527,15 @@ impl NodeSet {
         Ok(result)
     }
 
-    /// `&` (`keep_if_in_other`) and `-` (not): each node of self whose
-    /// membership in `other` is `keep_if_in_other`, deduped, in self's order.
-    pub fn filter(
-        &self,
-        ruby: &Ruby,
-        other: &NodeSet,
-        keep_if_in_other: bool,
-    ) -> Result<Value, Error> {
+    /// `&` ([`Membership::In`]) and `-` ([`Membership::NotIn`]): each node of
+    /// self with that membership in `other`, deduped, in self's order.
+    pub fn filter(&self, ruby: &Ruby, other: &NodeSet, keep: Membership) -> Result<Value, Error> {
         let (result, mut w) = new_result_with_room(self.document(ruby), self.count()?)?;
         let (mine, theirs) = (self.read()?, other.read()?);
         let theirs_index = Index::build(theirs.as_slice());
         let mut seen = Index::empty(mine.len());
         for &n in mine.as_slice() {
-            if theirs_index.contains(n, theirs.as_slice()) != keep_if_in_other {
+            if theirs_index.contains(n, theirs.as_slice()) != (keep == Membership::In) {
                 continue;
             }
             if seen.insert(n, w.as_slice()) {
@@ -590,6 +585,14 @@ fn new_result<'a>(document: Value) -> (Value, &'a NodeSet) {
     /* The one unchecked borrow of a fresh set is `node_set_with_fill`'s. */
     let (set, fill) = node_set_with_fill(document);
     (set, fill.set)
+}
+
+/// Which nodes of self [`NodeSet::filter`] keeps: those in the other set
+/// (`&`), or those not in it (`-`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Membership {
+    In,
+    NotIn,
 }
 
 /// [`new_result`] with room for `room` nodes, and its write borrow.
