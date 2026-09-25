@@ -161,7 +161,7 @@ impl Names {
         self.lookup_ns(prefix).ok_or_else(|| {
             crate::err_setf!(
                 err,
-                XP_ERR_RUNTIME,
+                Status::Runtime,
                 "unknown namespace prefix '{}'",
                 super::msg::Bytes(prefix)
             )
@@ -352,7 +352,7 @@ impl<'d, D: Dom<'d>> Context<'d, D> {
     fn enter(&self) -> Result<Running<'_, 'd, D>, Error> {
         let Ok(names) = self.names.try_borrow() else {
             return Err(Error::with(
-                XP_ERR_INTERNAL,
+                Status::Internal,
                 format_args!("evaluate: the context is being changed"),
             ));
         };
@@ -363,7 +363,7 @@ impl<'d, D: Dom<'d>> Context<'d, D> {
     /// The backend could not build the per-walk index: out of memory.
     fn index_error(&self) -> Error {
         Error::with(
-            XP_ERR_OOM,
+            Status::Oom,
             format_args!("out of memory building the element index"),
         )
     }

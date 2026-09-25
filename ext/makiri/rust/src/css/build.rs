@@ -14,7 +14,7 @@ use crate::falloc::{try_box, try_to_boxed_slice, VecPush};
 use crate::text::VerifiedText;
 use crate::xpath::ast::{Axis, Expr, ExprKind, Op, Path, Step, TestKind};
 use crate::xpath::limits::check_ast_depth;
-use crate::xpath::msg::{Reported, XP_ERR_INTERNAL, XP_ERR_OOM, XP_ERR_SYNTAX};
+use crate::xpath::msg::{Reported, Status};
 use core::ffi::CStr;
 
 /// A node under construction, or the proof its build failed with `*err` set.
@@ -35,9 +35,9 @@ pub(crate) fn expr(b: &Build, kind: ExprKind) -> Built {
 /// An owned copy of `s` for an AST name, or `Err` with `*err` set.
 pub(crate) fn copy_text(b: &Build, s: &[u8]) -> Result<Box<[u8]>, Reported> {
     if VerifiedText::from_bytes(s).is_none() {
-        return Err(b.fail(XP_ERR_INTERNAL, c"invalid internal CSS text"));
+        return Err(b.fail(Status::Internal, c"invalid internal CSS text"));
     }
-    try_to_boxed_slice(s).ok_or_else(|| b.fail(XP_ERR_OOM, c"css name"))
+    try_to_boxed_slice(s).ok_or_else(|| b.fail(Status::Oom, c"css name"))
 }
 
 /// `e` on the heap, for an operand slot.
@@ -114,7 +114,7 @@ pub(crate) fn fold(b: &Build, op: Op, items: impl Iterator<Item = Built>, empty:
             Some(lhs) => binop(b, op, Ok(lhs), Ok(item))?,
         });
     }
-    acc.ok_or_else(|| b.fail(XP_ERR_SYNTAX, empty))
+    acc.ok_or_else(|| b.fail(Status::Syntax, empty))
 }
 
 /// A relative PATH node over already-built steps.

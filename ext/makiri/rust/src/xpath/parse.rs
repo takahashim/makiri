@@ -39,18 +39,18 @@ type QualifiedName = (Option<Box<[u8]>>, Box<[u8]>);
 /// the very first token is lexed before there is a parser to hold it.
 fn lex_err(err: ErrSink, e: LexErr) -> Reported {
     match e {
-        LexErr::ExpectedNumber => err_setf!(err, XP_ERR_SYNTAX, "expected number"),
+        LexErr::ExpectedNumber => err_setf!(err, Status::Syntax, "expected number"),
         LexErr::UnterminatedString => {
-            err_setf!(err, XP_ERR_SYNTAX, "unterminated string literal")
+            err_setf!(err, Status::Syntax, "unterminated string literal")
         }
         LexErr::InvalidUtf8Literal => {
-            err_setf!(err, XP_ERR_SYNTAX, "invalid UTF-8 in string literal")
+            err_setf!(err, Status::Syntax, "invalid UTF-8 in string literal")
         }
         LexErr::UnexpectedChar(c) => {
             if (0x20..0x7F).contains(&c) {
-                err_setf!(err, XP_ERR_SYNTAX, "unexpected character '{}'", c as char)
+                err_setf!(err, Status::Syntax, "unexpected character '{}'", c as char)
             } else {
-                err_setf!(err, XP_ERR_SYNTAX, "unexpected byte 0x{:02x}", c)
+                err_setf!(err, Status::Syntax, "unexpected byte 0x{:02x}", c)
             }
         }
     }
@@ -118,7 +118,7 @@ impl<'a> Parser<'a> {
 
     fn eat(&mut self, k: Tok, what: &str) -> PResult {
         if self.kind() != k {
-            return Err(err_setf!(self.err, XP_ERR_SYNTAX, "expected {}", what));
+            return Err(err_setf!(self.err, Status::Syntax, "expected {}", what));
         }
         self.advance()
     }
@@ -133,7 +133,7 @@ impl<'a> Parser<'a> {
     /// instead.
     fn fill_owned(&self, text: &[u8]) -> PResult<Box<[u8]>> {
         try_to_boxed_slice(text)
-            .ok_or_else(|| err_setf!(self.err, XP_ERR_OOM, "out of memory in parser"))
+            .ok_or_else(|| err_setf!(self.err, Status::Oom, "out of memory in parser"))
     }
 
     /// `kind` as a node, refused if it would nest the AST too deeply.
@@ -145,7 +145,8 @@ impl<'a> Parser<'a> {
 
     /// `e` on the heap, for an operand slot.
     fn boxed(&self, e: Expr) -> PResult<Box<Expr>> {
-        try_box(e).map_err(|_| err_setf!(self.err, XP_ERR_OOM, "out of memory allocating AST node"))
+        try_box(e)
+            .map_err(|_| err_setf!(self.err, Status::Oom, "out of memory allocating AST node"))
     }
 
     /// A name token's optional prefix and local part, copied.
@@ -164,7 +165,7 @@ impl<'a> Parser<'a> {
         if steps.falloc_push(s).is_err() {
             return Err(err_setf!(
                 self.err.clone(),
-                XP_ERR_OOM,
+                Status::Oom,
                 "out of memory growing step array"
             ));
         }
@@ -241,7 +242,7 @@ impl<'a> Parser<'a> {
             }
             return self.advance();
         }
-        Err(err_setf!(self.err, XP_ERR_SYNTAX, "expected node test"))
+        Err(err_setf!(self.err, Status::Syntax, "expected node test"))
     }
 
     /* ---- predicates ---- */
@@ -255,7 +256,7 @@ impl<'a> Parser<'a> {
             if preds.falloc_push(e).is_err() {
                 return Err(err_setf!(
                     self.err,
-                    XP_ERR_OOM,
+                    Status::Oom,
                     "out of memory growing predicate array"
                 ));
             }
@@ -304,7 +305,7 @@ impl<'a> Parser<'a> {
                     None => {
                         return Err(err_setf!(
                             self.err,
-                            XP_ERR_SYNTAX,
+                            Status::Syntax,
                             "unknown axis '{}'",
                             Bytes(name)
                         ));
@@ -372,7 +373,7 @@ impl<'a> Parser<'a> {
         if self.kind() != Tok::LParen {
             return Err(err_setf!(
                 self.err,
-                XP_ERR_SYNTAX,
+                Status::Syntax,
                 "expected '(' in function call"
             ));
         }
@@ -388,7 +389,7 @@ impl<'a> Parser<'a> {
                 if args.falloc_push(arg).is_err() {
                     return Err(err_setf!(
                         self.err,
-                        XP_ERR_OOM,
+                        Status::Oom,
                         "out of memory growing function argument array"
                     ));
                 }
@@ -409,7 +410,7 @@ impl<'a> Parser<'a> {
                 if self.kind() != Tok::Name && self.kind() != Tok::QName {
                     return Err(err_setf!(
                         self.err,
-                        XP_ERR_SYNTAX,
+                        Status::Syntax,
                         "expected name after '$'"
                     ));
                 }
@@ -445,13 +446,13 @@ impl<'a> Parser<'a> {
                 }
                 Err(err_setf!(
                     self.err,
-                    XP_ERR_SYNTAX,
+                    Status::Syntax,
                     "expected '(' after function name"
                 ))
             }
             _ => Err(err_setf!(
                 self.err,
-                XP_ERR_SYNTAX,
+                Status::Syntax,
                 "expected primary expression"
             )),
         }
@@ -659,11 +660,11 @@ pub fn parse_owned(expr: VerifiedText, budget: &mut Budget) -> Result<Box<Ast>, 
         let t = p.tok();
         return Err(err_setf!(
             err,
-            XP_ERR_SYNTAX,
+            Status::Syntax,
             "trailing input at '{}'",
             Bytes(p.text(&t))
         ));
     }
     try_box(ast_ops::finish(root))
-        .map_err(|_| err_setf!(err, XP_ERR_OOM, "out of memory allocating AST node"))
+        .map_err(|_| err_setf!(err, Status::Oom, "out of memory allocating AST node"))
 }

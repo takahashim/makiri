@@ -27,7 +27,7 @@ use crate::lexbor::css_parser::{
     Simple,
 };
 use crate::xpath::ast::{Axis, Expr, Op, Step, TestKind};
-use crate::xpath::msg::{Reported, XP_ERR_LIMIT, XP_ERR_SYNTAX};
+use crate::xpath::msg::{Reported, Status};
 
 /// The internal of-type position functions, whose names carry a leading \x01 so
 /// no user expression can name them.
@@ -113,7 +113,7 @@ fn lower_attribute(b: &Build, s: Selector<'_>, at: Attribute<'_>) -> Built {
 
     if at.case_insensitive {
         return Err(b.fail(
-            XP_ERR_SYNTAX,
+            Status::Syntax,
             c"CSS attribute case modifier i ([a=v i]) is not supported for XML",
         ));
     }
@@ -213,7 +213,7 @@ fn lower_attribute(b: &Build, s: Selector<'_>, at: Attribute<'_>) -> Built {
             );
             build::binop(b, Op::Or, eq, pre)
         }
-        AttrMatch::Other => Err(b.fail(XP_ERR_SYNTAX, c"unsupported CSS attribute operator")),
+        AttrMatch::Other => Err(b.fail(Status::Syntax, c"unsupported CSS attribute operator")),
     }
 }
 
@@ -329,7 +329,7 @@ fn lower_pseudo_simple(b: &Build, pc: PseudoClass) -> Built {
         ),
         /* not(parent::*) */
         PseudoClass::Root => not_axis(b, Axis::Parent, TestKind::Wildcard),
-        PseudoClass::Other => Err(b.fail(XP_ERR_SYNTAX, c"unsupported CSS pseudo-class")),
+        PseudoClass::Other => Err(b.fail(Status::Syntax, c"unsupported CSS pseudo-class")),
     }
 }
 
@@ -371,10 +371,10 @@ fn lower_pseudo_func(b: &Build, arg: FunctionArg<'_>) -> Built {
             anb,
         } => {
             let Some(anb) = anb else {
-                return Err(b.fail(XP_ERR_SYNTAX, c"malformed :nth-*()"));
+                return Err(b.fail(Status::Syntax, c"malformed :nth-*()"));
             };
             if anb.of {
-                return Err(b.fail(XP_ERR_SYNTAX, c":nth-*(... of S) is not supported"));
+                return Err(b.fail(Status::Syntax, c":nth-*(... of S) is not supported"));
             }
             let axis = if from_end {
                 Axis::FollowingSibling
@@ -404,7 +404,7 @@ fn lower_pseudo_func(b: &Build, arg: FunctionArg<'_>) -> Built {
 
         FunctionArg::Contains(c) => {
             let Some(c) = c else {
-                return Err(b.fail(XP_ERR_SYNTAX, c"malformed :lexbor-contains()"));
+                return Err(b.fail(Status::Syntax, c"malformed :lexbor-contains()"));
             };
             let needle = c.needle;
 
@@ -441,7 +441,7 @@ fn lower_pseudo_func(b: &Build, arg: FunctionArg<'_>) -> Built {
         }
 
         FunctionArg::Other => {
-            Err(b.fail(XP_ERR_SYNTAX, c"unsupported functional CSS pseudo-class"))
+            Err(b.fail(Status::Syntax, c"unsupported functional CSS pseudo-class"))
         }
     }
 }
@@ -482,9 +482,9 @@ fn fold_simple(
         Simple::PseudoClassFunction(arg) => push_pred(b, preds, lower_pseudo_func(b, arg)),
 
         Simple::PseudoElement => {
-            Err(b.fail(XP_ERR_SYNTAX, c"CSS pseudo-elements are not selectable"))
+            Err(b.fail(Status::Syntax, c"CSS pseudo-elements are not selectable"))
         }
-        Simple::Other => Err(b.fail(XP_ERR_SYNTAX, c"unsupported CSS selector component")),
+        Simple::Other => Err(b.fail(Status::Syntax, c"unsupported CSS selector component")),
     }
 }
 
@@ -508,7 +508,7 @@ fn combinator_axis(b: &Build, c: Combinator, reverse: bool) -> Result<Axis, Repo
         (Combinator::SubsequentSibling, false) => Axis::FollowingSibling,
         (Combinator::SubsequentSibling, true) => Axis::PrecedingSibling,
         (Combinator::NextSibling | Combinator::Other, _) => {
-            return Err(b.fail(XP_ERR_SYNTAX, c"unsupported CSS combinator"));
+            return Err(b.fail(Status::Syntax, c"unsupported CSS combinator"));
         }
     })
 }
@@ -592,7 +592,7 @@ pub(crate) fn complex(b: &Build, first: Option<Selector<'_>>, relative_first: bo
 
     for (nc, comp) in (Compounds { cursor: first }).enumerate() {
         if nc >= MAX_COMPOUNDS {
-            return Err(b.fail(XP_ERR_LIMIT, c"CSS selector too complex"));
+            return Err(b.fail(Status::Limit, c"CSS selector too complex"));
         }
         /* The first compound of a top-level query is a DESCENDANT of the
          * context node whatever it carries, which is what makes `css("p")` find
@@ -631,7 +631,7 @@ pub(crate) fn complex_selftest(b: &Build, first: Option<Selector<'_>>) -> Built 
     let mut nc = 0usize;
     for comp in (Compounds { cursor: first }) {
         if nc >= MAX_COMPOUNDS {
-            return Err(b.fail(XP_ERR_LIMIT, c"CSS selector too complex"));
+            return Err(b.fail(Status::Limit, c"CSS selector too complex"));
         }
         comps[nc] = Some(comp);
         nc += 1;
@@ -641,7 +641,7 @@ pub(crate) fn complex_selftest(b: &Build, first: Option<Selector<'_>>) -> Built 
      * by the combinator that sits on its right neighbour. */
     let mut leftward = comps[..nc].iter().rev().flatten();
     let Some(&subject) = leftward.next() else {
-        return Err(b.fail(XP_ERR_SYNTAX, c"empty CSS selector"));
+        return Err(b.fail(Status::Syntax, c"empty CSS selector"));
     };
 
     let mut steps = Vec::new();

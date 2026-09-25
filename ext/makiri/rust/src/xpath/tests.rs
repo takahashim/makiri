@@ -18,7 +18,6 @@ use crate::xml::tree::parse as xml_parse;
 use crate::xml::{NodeId, NodeType};
 use crate::xpath::ast::Ast;
 use crate::xpath::ctx::{Context, Resolver, ResolverCall, XPathValue};
-use crate::xpath::msg::{XP_ERR_LIMIT, XP_ERR_RUNTIME, XP_ERR_SYNTAX};
 use crate::xpath::parse::parse_owned;
 
 const DOC: &[u8] = br#"<r xmlns:d="urn:d"><a k="1">x</a><a k="2"> y  z </a><b><c/><c n="3"/><d:e>ne</d:e></b><!--cm--><?pi data?></r>"#;
@@ -194,10 +193,10 @@ fn numbers_and_booleans_follow_the_xpath_rules() {
 
 #[test]
 fn failures_come_back_with_their_status() {
-    assert_eq!(xpath("//a["), Answer::Err(XP_ERR_SYNTAX));
-    assert_eq!(xpath("foo()"), Answer::Err(XP_ERR_RUNTIME));
+    assert_eq!(xpath("//a["), Answer::Err(Status::Syntax));
+    assert_eq!(xpath("foo()"), Answer::Err(Status::Runtime));
     let capped = run(Query::XPath, "//c | //a", |l| l.max_nodeset_size = 2);
-    assert_eq!(capped, Answer::Err(XP_ERR_LIMIT));
+    assert_eq!(capped, Answer::Err(Status::Limit));
 }
 
 /// `1+1+...+1` with `ops` operators: a left-leaning tree `ops + 1` levels deep.
@@ -226,12 +225,12 @@ fn parse_status(expr: &str) -> Result<(), Status> {
 fn nesting_depth_is_bounded_where_the_tree_is_built() {
     // At the cap the tree is built; one level past it the parse refuses.
     assert_eq!(parse_status(&chain(1023)), Ok(()));
-    assert_eq!(parse_status(&chain(1024)), Err(XP_ERR_LIMIT));
+    assert_eq!(parse_status(&chain(1024)), Err(Status::Limit));
     // Under the cap the parse succeeds and the evaluation limit decides, as before.
     assert_eq!(parse_status(&chain(300)), Ok(()));
     // A chain that used to build tens of thousands of levels stops at the cap
     // instead of taking the stack with it.
-    assert_eq!(parse_status(&chain(30_000)), Err(XP_ERR_LIMIT));
+    assert_eq!(parse_status(&chain(30_000)), Err(Status::Limit));
 }
 
 /// `f()` answers true, first running `inner` on the same context when `nest`
@@ -294,8 +293,8 @@ fn a_nested_evaluate_does_not_refill_the_outer_budget() {
     assert_eq!(walk_with_handler(true, 1000), all);
     /* A budget the walk overruns stays overrun when every predicate call
      * evaluates again - the nested run must not reset the outer's count. */
-    assert_eq!(walk_with_handler(false, 30), Answer::Err(XP_ERR_LIMIT));
-    assert_eq!(walk_with_handler(true, 30), Answer::Err(XP_ERR_LIMIT));
+    assert_eq!(walk_with_handler(false, 30), Answer::Err(Status::Limit));
+    assert_eq!(walk_with_handler(true, 30), Answer::Err(Status::Limit));
 }
 
 #[cfg(feature = "lexbor")]
@@ -316,9 +315,9 @@ fn css_selectors_lower_to_the_same_answers_as_xml_css() {
     assert_eq!(css("b > *:first-child"), nodes(&["c"]));
     assert_eq!(css("a:last-of-type"), nodes(&["a"]));
     assert_eq!(css("c[n]"), nodes(&["c"]));
-    assert_eq!(css("a["), Answer::Err(XP_ERR_SYNTAX));
+    assert_eq!(css("a["), Answer::Err(Status::Syntax));
     // A selector list lowers to a chain of unions, held to the same depth cap.
-    assert_eq!(css(&vec!["a"; 1100].join(",")), Answer::Err(XP_ERR_LIMIT));
+    assert_eq!(css(&vec!["a"; 1100].join(",")), Answer::Err(Status::Limit));
 }
 
 /// With no room in the string-value cache, comparisons build their values

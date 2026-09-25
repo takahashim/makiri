@@ -246,12 +246,3 @@ pub enum Status {
     /// A budget or cap was exceeded.
     Limit,
 }
-
-/* The short names the engine has always spelled its statuses with. */
-pub const XP_ERR_NOT_IMPLEMENTED: Status = Status::NotImplemented;
-pub const XP_ERR_SYNTAX: Status = Status::Syntax;
-pub const XP_ERR_TYPE: Status = Status::Type;
-pub const XP_ERR_RUNTIME: Status = Status::Runtime;
-pub const XP_ERR_INTERNAL: Status = Status::Internal;
-pub const XP_ERR_OOM: Status = Status::Oom;
-pub const XP_ERR_LIMIT: Status = Status::Limit;

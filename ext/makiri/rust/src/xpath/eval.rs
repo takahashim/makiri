@@ -42,7 +42,7 @@ impl<N> Memo<N> {
         let Some(mut table) = try_vec_with_capacity(slots) else {
             return Err(err_setf!(
                 err,
-                XP_ERR_OOM,
+                Status::Oom,
                 "out of memory allocating the memo table"
             ));
         };
@@ -193,7 +193,7 @@ fn eval_step<'e, 'd, D: Dom<'d>>(
     if !axis_is_implemented(axis) {
         return Err(err_setf!(
             ev.budget.sink(),
-            XP_ERR_NOT_IMPLEMENTED,
+            Status::NotImplemented,
             "native engine: axis '{}' not implemented yet",
             axis_name(axis)
         ));
@@ -447,7 +447,7 @@ fn union_nodeset<'e, 'd, D: Dom<'d>>(
     let (Some(ls), Some(rs)) = (l.as_nodeset(), r.as_nodeset()) else {
         return Err(err_setf!(
             ev.budget.sink(),
-            XP_ERR_TYPE,
+            Status::Type,
             "operands of '|' must be node-sets"
         ));
     };
@@ -634,7 +634,7 @@ fn eval_filter<'e, 'd, D: Dom<'d>>(
         let Some(ns) = primary.as_nodeset_mut() else {
             return Err(err_setf!(
                 ev.budget.sink(),
-                XP_ERR_TYPE,
+                Status::Type,
                 "predicate applied to non-node-set"
             ));
         };
@@ -644,7 +644,7 @@ fn eval_filter<'e, 'd, D: Dom<'d>>(
         let Some(ns) = primary.as_nodeset_mut() else {
             return Err(err_setf!(
                 ev.budget.sink(),
-                XP_ERR_TYPE,
+                Status::Type,
                 "path applied to non-node-set"
             ));
         };
@@ -676,7 +676,7 @@ fn eval_fncall<'e, 'd, D: Dom<'d>>(
     if !args.is_empty() && vals.falloc_reserve_exact(args.len()).is_err() {
         return Err(err_setf!(
             ev.budget.sink(),
-            XP_ERR_OOM,
+            Status::Oom,
             "out of memory allocating function arguments"
         ));
     }
@@ -691,7 +691,7 @@ fn eval_fncall<'e, 'd, D: Dom<'d>>(
         Some(v) => Ok(v),
         None => Err(err_setf!(
             ev.budget.sink(),
-            XP_ERR_RUNTIME,
+            Status::Runtime,
             "unknown function {}{}{}",
             Bytes(prefix.unwrap_or(&[])),
             if prefix.is_none() { "" } else { ":" },
@@ -755,7 +755,7 @@ impl<'e, 'd, D: Dom<'d>> Evaluation<'e, 'd, D> {
 fn handler_oom(budget: &mut Budget) -> Reported {
     err_setf!(
         budget.sink(),
-        XP_ERR_OOM,
+        Status::Oom,
         "out of memory passing a function call to the handler"
     )
 }
@@ -802,7 +802,7 @@ fn eval_binop<'e, 'd, D: Dom<'d>>(
         Op::Union => union_nodeset::<D>(ev, l, r),
         _ => Err(err_setf!(
             ev.budget.sink(),
-            XP_ERR_INTERNAL,
+            Status::Internal,
             "unexpected binop"
         )),
     }
@@ -870,7 +870,7 @@ fn eval_node_inner<'e, 'd, D: Dom<'d>>(
             ),
             None => Err(err_setf!(
                 ev.budget.sink(),
-                XP_ERR_RUNTIME,
+                Status::Runtime,
                 "undefined variable ${}{}{}",
                 Bytes(prefix.as_deref().unwrap_or(&[])),
                 if prefix.is_none() { "" } else { ":" },
@@ -932,7 +932,7 @@ pub(crate) fn eval_ast<'e, 'd, D: Dom<'d>>(
         Ok(None) => {
             let _ = err_setf!(
                 ev.budget.sink(),
-                XP_ERR_OOM,
+                Status::Oom,
                 "out of memory returning the result"
             );
             Err(ev.budget.take_error())

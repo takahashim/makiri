@@ -17,7 +17,7 @@ use crate::token::{Kind, Token};
 use crate::xpath::abi::*;
 use crate::xpath::ctx::Context;
 use crate::xpath::dom::*;
-use crate::xpath::msg::{Error, XP_ERR_OOM, XP_ERR_RUNTIME};
+use crate::xpath::msg::{Error, Status};
 
 /* The engine reads every node's type through the shared `NTYPE_*` encoding, so
  * Lexbor's enum must agree value for value; a mismatch would make an HTML walk
@@ -292,7 +292,7 @@ fn skip_ns_decls(mut a: Option<HtmlAttr<'_>>) -> Option<HtmlAttr<'_>> {
 
 /// `evaluate with no document`.
 fn no_document() -> Error {
-    Error::with(XP_ERR_RUNTIME, format_args!("evaluate with no document"))
+    Error::with(Status::Runtime, format_args!("evaluate with no document"))
 }
 
 /// A context over the HTML document behind `parsed`, with its element/attribute
@@ -321,7 +321,7 @@ pub unsafe fn context<'e>(
      * the first evaluate. Each evaluate still re-reads it through the handle. */
     if !parsed.ensure_dom_index() {
         return Err(Error::with(
-            XP_ERR_OOM,
+            Status::Oom,
             format_args!("out of memory building the element index"),
         ));
     }

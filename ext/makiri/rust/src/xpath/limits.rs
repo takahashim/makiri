@@ -1,7 +1,7 @@
 //! The per-run budgets: the caps a context is configured with ([`Limits`]),
 //! and what one run charges against them and reports into ([`Budget`]).
 //!
-//! Every overrun is XP_ERR_LIMIT - never a truncated or empty result.
+//! Every overrun is Status::Limit - never a truncated or empty result.
 
 #![forbid(unsafe_code)]
 
@@ -252,7 +252,7 @@ impl Budget {
 #[cold]
 #[inline(never)]
 fn over_ast_nodes(max: usize, err: ErrSink) -> Reported {
-    err_setf!(err, XP_ERR_LIMIT, "AST node limit exceeded ({})", max)
+    err_setf!(err, Status::Limit, "AST node limit exceeded ({})", max)
 }
 
 #[cold]
@@ -260,7 +260,7 @@ fn over_ast_nodes(max: usize, err: ErrSink) -> Reported {
 fn over_eval_ops(max: usize, err: ErrSink) -> Reported {
     err_setf!(
         err,
-        XP_ERR_LIMIT,
+        Status::Limit,
         "evaluation budget exceeded ({} ops)",
         max
     )
@@ -271,7 +271,7 @@ fn over_eval_ops(max: usize, err: ErrSink) -> Reported {
 fn over_recursion(max: usize, err: ErrSink) -> Reported {
     err_setf!(
         err,
-        XP_ERR_LIMIT,
+        Status::Limit,
         "recursion depth limit exceeded ({})",
         max
     )
@@ -306,7 +306,7 @@ pub fn check_ast_depth(e: &Expr, err: ErrSink) -> Result<(), Reported> {
 fn over_ast_depth(err: ErrSink) -> Reported {
     err_setf!(
         err,
-        XP_ERR_LIMIT,
+        Status::Limit,
         "expression nesting depth limit exceeded ({})",
         MAX_AST_DEPTH
     )
@@ -315,7 +315,7 @@ fn over_ast_depth(err: ErrSink) -> Reported {
 #[cold]
 #[inline(never)]
 fn over_check(max: usize, noun: &str, err: ErrSink) -> Reported {
-    err_setf!(err, XP_ERR_LIMIT, "{} limit exceeded ({})", noun, max)
+    err_setf!(err, Status::Limit, "{} limit exceeded ({})", noun, max)
 }
 
 #[cold]
@@ -323,7 +323,7 @@ fn over_check(max: usize, noun: &str, err: ErrSink) -> Reported {
 fn over_string_bytes(max: usize, err: ErrSink) -> Reported {
     err_setf!(
         err,
-        XP_ERR_LIMIT,
+        Status::Limit,
         "string size limit exceeded ({} bytes)",
         max
     )
@@ -334,7 +334,7 @@ fn over_string_bytes(max: usize, err: ErrSink) -> Reported {
 fn over_expr_bytes(bytes: usize, max: usize, err: ErrSink) -> Reported {
     err_setf!(
         err,
-        XP_ERR_LIMIT,
+        Status::Limit,
         "expression too long ({} bytes, max {})",
         bytes,
         max

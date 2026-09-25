@@ -34,7 +34,7 @@ use core::cell::RefCell;
 use crate::falloc::try_box;
 use crate::text::VerifiedText;
 use crate::xpath::limits::Budget;
-use crate::xpath::msg::{ErrSink, Reported, XP_ERR_INTERNAL, XP_ERR_OOM, XP_ERR_SYNTAX};
+use crate::xpath::msg::{ErrSink, Reported, Status};
 
 /// The namespace context the glue hands in.
 ///
@@ -74,7 +74,7 @@ impl Build<'_> {
     }
 
     pub(crate) fn oom(&self) -> Reported {
-        self.fail(XP_ERR_OOM, c"out of memory (css)")
+        self.fail(Status::Oom, c"out of memory (css)")
     }
 
     /// The default-namespace prefix in scope, if any.
@@ -119,13 +119,13 @@ pub fn compile_owned(
     let parsed = match css_parser::parse(gvl, selector) {
         Ok(p) => p,
         Err(css_parser::ParseError::NotReady) => {
-            return Err(b.fail(XP_ERR_INTERNAL, c"failed to initialise CSS parser"));
+            return Err(b.fail(Status::Internal, c"failed to initialise CSS parser"));
         }
         Err(css_parser::ParseError::Syntax) => {
-            return Err(b.fail(XP_ERR_SYNTAX, c"invalid CSS selector"));
+            return Err(b.fail(Status::Syntax, c"invalid CSS selector"));
         }
         Err(css_parser::ParseError::Busy) => {
-            return Err(b.fail(XP_ERR_INTERNAL, c"CSS parser is already in use"));
+            return Err(b.fail(Status::Internal, c"CSS parser is already in use"));
         }
     };
 

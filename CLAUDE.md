@@ -626,7 +626,7 @@ Fail-closed: a build OOM leaves it unbuilt and the walk fallback serves.
 recursive-descent parser → AST → evaluator + 26 built-in functions. The only
 external hook is `Dom::qualified_name` (in `xpath/dom.rs`). Per-evaluate
 budgets (op count, recursion depth, step/predicate/arg counts, node-set & string
-caps) live in `xpath/limits.rs` and fail closed with `XP_ERR_LIMIT`. Ruby:
+caps) live in `xpath/limits.rs` and fail closed with `Status::Limit`. Ruby:
 `Node#{xpath,at_xpath}(expr, handler=nil)`, `Makiri::XPathContext`
 (`.new`, `#evaluate`, `#register_namespace`/`#register_ns`, `#register_variable`).
 `#xpath` returns a NodeSet for node-sets, else String/Float/boolean. Errors map
