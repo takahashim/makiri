@@ -6,7 +6,7 @@
 
 #![forbid(unsafe_code)]
 
-use super::Failure;
+use super::{Failure, OrOom};
 use crate::falloc::Reserve;
 
 /// The total prefix-resolution steps one serialization may take. Generous - an
@@ -139,9 +139,9 @@ impl<'d> Bindings<'d> {
         let size = (self.stack.len() + 1)
             .checked_mul(4)
             .map(|n| n.next_power_of_two().max(16))
-            .ok_or(Failure::Output)?;
+            .ok_or(Failure::ScopeOverflow)?;
         let mut slots: Vec<u32> = Vec::new();
-        Failure::from_alloc(slots.falloc_reserve_exact(size))?;
+        slots.falloc_reserve_exact(size).or_oom()?;
         slots.resize(size, EMPTY);
         let old = core::mem::replace(&mut self.slots, slots);
         self.filled = 0;
@@ -174,8 +174,8 @@ impl<'d> Bindings<'d> {
         let at = u32::try_from(self.stack.len())
             .ok()
             .filter(|&n| n < GONE)
-            .ok_or(Failure::Output)?;
-        Failure::from_alloc(self.stack.falloc_reserve(1))?;
+            .ok_or(Failure::ScopeOverflow)?;
+        self.stack.falloc_reserve(1).or_oom()?;
         self.make_room()?;
         let shadows = match self.probe(prefix.bytes()) {
             Probe::Found(i) => core::mem::replace(&mut self.slots[i], at),

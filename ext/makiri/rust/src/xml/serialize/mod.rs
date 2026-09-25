@@ -42,9 +42,13 @@ pub enum Failure {
     /// makes every PI target an NCName, and DOM Parsing's serializer refuses
     /// it too.
     PiTargetColon,
-    /// The output exceeded its ceiling, memory ran out, or the scope table
-    /// outgrew its index range.
-    Output,
+    /// The output exceeded its ceiling.
+    OutputCap,
+    /// The machine ran out of memory while serializing.
+    Oom,
+    /// The namespace scope table outgrew its index range - more bindings in
+    /// scope at once than it can name.
+    ScopeOverflow,
     /// The tree nests deeper than [`crate::xml::model::MAX_DEPTH`], the bound
     /// on the writers' recursion.
     TooDeep,
@@ -68,11 +72,17 @@ pub enum Failure {
     UnboundPrefix,
 }
 
-impl Failure {
-    /// A `crate::falloc` reservation for the writers' own bookkeeping, whose
-    /// `()` on OOM is refused as the output would be: memory ran out.
-    pub(super) fn from_alloc(r: Result<(), ()>) -> Result<(), Failure> {
-        r.map_err(|()| Failure::Output)
+/// A `crate::falloc` reservation for the writers' own bookkeeping, whose `()`
+/// on OOM is refused as [`Failure::Oom`], so an allocation failure is never
+/// confused with the output cap.
+pub(super) trait OrOom {
+    fn or_oom(self) -> Result<(), Failure>;
+}
+
+impl OrOom for Result<(), ()> {
+    #[inline]
+    fn or_oom(self) -> Result<(), Failure> {
+        self.map_err(|()| Failure::Oom)
     }
 }
 

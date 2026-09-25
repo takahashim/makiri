@@ -3,7 +3,7 @@
 #![forbid(unsafe_code)]
 
 use super::Failure;
-use crate::cbuf::Buf;
+use crate::cbuf::{Buf, BufError};
 use crate::xml::model::{Document as XmlDoc, NodeId};
 
 /// A write either succeeded or failed for the reason it carries: the failure
@@ -13,7 +13,10 @@ use crate::xml::model::{Document as XmlDoc, NodeId};
 pub(super) type W = Result<(), Failure>;
 
 pub(super) fn put(b: &mut Buf, bytes: &[u8]) -> W {
-    b.append(bytes).map_err(|_| Failure::Output)
+    b.append(bytes).map_err(|e| match e {
+        BufError::Limit => Failure::OutputCap,
+        BufError::Oom => Failure::Oom,
+    })
 }
 
 /// A processing instruction: `<?target data?>`, with the space only when there

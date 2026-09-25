@@ -36,8 +36,14 @@ fn failure_error(f: Failure, verb: &str) -> Error {
         Failure::PiTargetColon => {
             format!("cannot {verb} XML containing a processing-instruction target with a colon")
         }
-        Failure::Output => {
-            format!("failed to {verb} XML: output exceeded the size limit or out of memory")
+        Failure::OutputCap => {
+            format!("failed to {verb} XML: output exceeded the size limit")
+        }
+        Failure::Oom => {
+            format!("failed to {verb} XML: out of memory")
+        }
+        Failure::ScopeOverflow => {
+            format!("failed to {verb} XML: too many namespace bindings in scope")
         }
         Failure::TooDeep => format!(
             "failed to {verb} XML: the tree nests deeper than {} levels",

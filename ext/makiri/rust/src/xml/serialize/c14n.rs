@@ -9,7 +9,7 @@
 
 use super::bindings::{Bindings, Prefix};
 use super::out::{put, put_pi, C14N, W};
-use super::Failure;
+use super::{Failure, OrOom};
 use crate::cbuf::Buf;
 use crate::falloc::Reserve;
 use crate::xml::model::{Document as XmlDoc, NodeFlags, NodeId, NodeType, MAX_DEPTH};
@@ -113,7 +113,7 @@ impl<'d> Writer<'d, '_> {
             if prefix == b"xml" || (prefix.is_empty() && uri.is_empty()) {
                 continue;
             }
-            Failure::from_alloc(out.falloc_reserve(1))?;
+            out.falloc_reserve(1).or_oom()?;
             out.push(Ns { prefix, uri });
         }
         sort_by_prefix(&mut out);
@@ -138,7 +138,7 @@ impl<'d> Writer<'d, '_> {
                         !(p.is_empty() && u.is_empty()) || above.is_some_and(|a| !a.is_empty())
                     };
                     if keep {
-                        Failure::from_alloc(out.falloc_reserve(1))?;
+                        out.falloc_reserve(1).or_oom()?;
                         out.push(Ns { prefix: p, uri: u });
                     }
                 }
@@ -199,7 +199,7 @@ impl<'d> Writer<'d, '_> {
         let mut up = doc.parent(n);
         while let Some(id) = up {
             if doc.type_(id) == Some(NodeType::Element) {
-                Failure::from_alloc(chain.falloc_reserve(1))?;
+                chain.falloc_reserve(1).or_oom()?;
                 chain.push(id);
             }
             up = doc.parent(id);
@@ -278,7 +278,7 @@ fn sorted_attributes(doc: &XmlDoc, n: NodeId) -> Result<Vec<NodeId>, Failure> {
     let mut attrs: Vec<NodeId> = Vec::new();
     for at in doc.attributes(n) {
         if xmlns_decl(doc, at).is_none() {
-            Failure::from_alloc(attrs.falloc_reserve(1))?;
+            attrs.falloc_reserve(1).or_oom()?;
             attrs.push(at);
         }
     }
