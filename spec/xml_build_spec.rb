@@ -25,6 +25,12 @@ RSpec.describe "Makiri::XML building (Phase 2)" do
       expect { doc.create_element("x", "xmlns:q" => "") }.to raise_error(Makiri::Error) # validated
     end
 
+    it "reads an attributes Hash as a Hash, not through a redefined #to_a" do
+      odd = Class.new(Hash) { def to_a = [1] }.new
+      odd["id"] = "1"
+      expect(doc.create_element("box", odd).to_xml).to eq(%(<box id="1"/>))
+    end
+
     it "creates text, comment, CDATA and PI nodes" do
       expect(doc.create_text_node("t")).to be_a(Makiri::XML::Text)
       expect(doc.create_comment(" c ")).to be_a(Makiri::XML::Comment)

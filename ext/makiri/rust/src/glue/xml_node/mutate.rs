@@ -236,14 +236,21 @@ pub fn create_element(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Val
         let rb_el = wrap(el, rb_self);
         if let Some(h) = attrs {
             /* Keys and values are stringified - Nokogiri accepts symbol keys and
-             * non-string values - then go through the normal validated setter. */
-            let pairs: RArray = h.funcall("to_a", ())?;
-            for pair in pairs.into_iter() {
-                let entry = RArray::from_value(pair).expect("Hash#to_a yields pairs");
-                let k: Value = entry.entry(0)?;
-                let v: Value = entry.entry(1)?;
-                /* `rb_el` was wrapped just above, so it converts. */
-                let el_self = <XmlSelf as magnus::TryConvert>::try_convert(rb_el)?;
+             * non-string values - then go through the normal validated setter.
+             * The pairs are copied out of the Hash itself first, as
+             * `query::bind_each` does and for its reasons: a subclass can
+             * redefine `to_a`, and the `to_s` calls must run outside the walk. */
+            let pairs = ruby.ary_new_capa(h.len() * 2);
+            h.foreach(|k: Value, v: Value| {
+                pairs.push(k)?;
+                pairs.push(v)?;
+                Ok(magnus::r_hash::ForEach::Continue)
+            })?;
+            /* `rb_el` was wrapped just above, so it converts. */
+            let el_self = <XmlSelf as magnus::TryConvert>::try_convert(rb_el)?;
+            for i in (0..pairs.len()).step_by(2) {
+                let k: Value = pairs.entry(i as isize)?;
+                let v: Value = pairs.entry(i as isize + 1)?;
                 aset(
                     ruby,
                     el_self,
