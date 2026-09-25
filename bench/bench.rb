@@ -159,6 +159,40 @@ bench("text extraction: full document text") do |x|
   x.report("nokolexbor") { nl_doc.root.text } if NOKOLEX
 end
 
+# --- one-shot: parse, then a single query --------------------------------
+#
+# The rows above query one document over and over, so a lazily built index
+# (Makiri's element index for `//tag`, its text index for `#text`) is paid for
+# once and amortised away. These rows parse a fresh document for every query and
+# throw it away, so an index is built and used exactly once - the case where
+# building it can cost more than it saves. Read them against the "parse" row:
+# the difference is what the one query cost, index build included.
+
+bench("one-shot: parse + xpath //li (element index)") do |x|
+  x.report("makiri")     { Makiri::HTML(HTML).xpath("//li").length }
+  x.report("nokogiri")   { Nokogiri::HTML(HTML).xpath("//li").length } if NOKO
+  x.report("nokolexbor") { Nokolexbor::HTML(HTML).xpath("//li").length } if NOKOLEX
+end
+
+bench("one-shot: parse + text (text index)") do |x|
+  x.report("makiri")     { Makiri::HTML(HTML).text }
+  x.report("nokogiri")   { Nokogiri::HTML(HTML).text } if NOKO
+  # As in "text extraction": a Nokolexbor Document's own text is empty.
+  x.report("nokolexbor") { Nokolexbor::HTML(HTML).root.text } if NOKOLEX
+end
+
+bench("one-shot: parse + css ul li.item (no index)") do |x|
+  x.report("makiri")     { Makiri::HTML(HTML).css("ul li.item").length }
+  x.report("nokogiri")   { Nokogiri::HTML(HTML).css("ul li.item").length } if NOKO
+  x.report("nokolexbor") { Nokolexbor::HTML(HTML).css("ul li.item").length } if NOKOLEX
+end
+
+bench("one-shot: parse + at_css #main (first match)") do |x|
+  x.report("makiri")     { Makiri::HTML(HTML).at_css("#main") }
+  x.report("nokogiri")   { Nokogiri::HTML(HTML).at_css("#main") } if NOKO
+  x.report("nokolexbor") { Nokolexbor::HTML(HTML).at_css("#main") } if NOKOLEX
+end
+
 # --- threaded throughput --------------------------------------------------
 #
 # Measures aggregate ops/sec with T worker threads, each doing CPU-bound work
