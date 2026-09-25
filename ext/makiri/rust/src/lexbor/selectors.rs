@@ -339,7 +339,7 @@ fn engine_in(g: &mut Globals) -> Result<Engine, SelectError> {
 struct FindCtx {
     nodes: Vec<RawNode>,
     /// Excluded from the results: `css` is descendant-only, like Nokogiri's.
-    root: *mut LxbNode,
+    root: RawNode,
     overflow: bool,
     oom: bool,
     /// A panic, latched the same way as the two flags above: it stops the walk
@@ -351,11 +351,9 @@ unsafe extern "C" fn find_cb(node: *mut LxbNode, _spec: u32, ctx: *mut c_void) -
     let c = &mut *(ctx as *mut FindCtx);
     let (nodes, root, overflow, oom) = (&mut c.nodes, c.root, &mut c.overflow, &mut c.oom);
     c.panic.guard(LXB_STATUS_STOP, || {
-        if node == root {
+        /* Lexbor reports no null match; the root is not a descendant. */
+        let Some(found) = RawNode::from_ptr(node.cast()).filter(|&n| n != root) else {
             return LXB_STATUS_OK;
-        }
-        let Some(found) = RawNode::from_ptr(node.cast()) else {
-            return LXB_STATUS_OK; /* Lexbor reports no null match */
         };
         if nodes.len() >= NODE_SET_MAX {
             *overflow = true;
@@ -372,8 +370,8 @@ unsafe extern "C" fn find_cb(node: *mut LxbNode, _spec: u32, ctx: *mut c_void) -
 }
 
 struct FirstCtx {
-    root: *mut LxbNode,
-    found: *mut LxbNode,
+    root: RawNode,
+    found: Option<RawNode>,
     panic: PanicLatch,
 }
 
@@ -381,11 +379,14 @@ unsafe extern "C" fn first_cb(node: *mut LxbNode, _spec: u32, ctx: *mut c_void) 
     let c = &mut *(ctx as *mut FirstCtx);
     let (root, found) = (c.root, &mut c.found);
     c.panic.guard(LXB_STATUS_STOP, || {
-        if node == root {
-            return LXB_STATUS_OK; /* descendant-only */
+        /* Descendant-only, so the root does not count; nor does a null. */
+        match RawNode::from_ptr(node.cast()).filter(|&n| n != root) {
+            Some(n) => {
+                *found = Some(n);
+                LXB_STATUS_STOP
+            }
+            None => LXB_STATUS_OK,
         }
-        *found = node;
-        LXB_STATUS_STOP
     })
 }
 
@@ -583,7 +584,7 @@ fn walk<C: Walk>(
 pub fn select_all(gvl: &Gvl, root: RawNode, selector: &[u8]) -> Result<Vec<RawNode>, SelectError> {
     let mut ctx = FindCtx {
         nodes: Vec::new(),
-        root: root.as_lxb_mut(),
+        root,
         overflow: false,
         oom: false,
         panic: PanicLatch::new(),
@@ -606,12 +607,12 @@ pub fn select_first(
     selector: &[u8],
 ) -> Result<Option<RawNode>, SelectError> {
     let mut ctx = FirstCtx {
-        root: root.as_lxb_mut(),
-        found: core::ptr::null_mut(),
+        root,
+        found: None,
         panic: PanicLatch::new(),
     };
     walk(gvl, root, selector, &mut ctx)?;
-    Ok(RawNode::from_ptr(ctx.found.cast()))
+    Ok(ctx.found)
 }
 
 /// Does `root` itself match `selector`?
