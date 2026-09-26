@@ -157,6 +157,13 @@ pub fn set_attribute_ns(
             && (colon.is_none() || dom_name::valid_namespace_prefix(prefix));
         check_dom_name(ruby, &qv, |_| names_ok, "attribute")?;
         let ns = nv.as_ref().map_or(&b""[..], |n| n.as_bytes());
+        /* `Split` holds u32 lengths; a name past that would be split wrong, so
+         * it is refused rather than truncated (each `as u32` below is exact). */
+        if u32::try_from(q.len()).is_err() {
+            return Err(makiri_error(
+                "attribute qualified name too long (max 4 GiB)",
+            ));
+        }
         let split = match colon {
             Some(i) => Split::prefixed(i as u32, (q.len() - i - 1) as u32),
             None => Split::unprefixed(q.len() as u32),
