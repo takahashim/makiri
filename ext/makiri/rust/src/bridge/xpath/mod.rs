@@ -339,15 +339,24 @@ pub fn evaluate_query(
     })
 }
 
-/// `error` with `cause` - the handler's own StandardError - as its `#cause`,
-/// the way `raise ... cause:` would set it. Left without one when either is
-/// not an exception object.
+/// `error` with `cause` - the handler's own StandardError - as its `#cause`.
+///
+/// Ruby sets a cause only by raising, and has no C API for it, so this goes
+/// through `Makiri::Error.__with_cause` (`lib/makiri/error.rb`), which raises
+/// with `cause:` and hands the exception back. Left without one when either
+/// is not an exception object, or the call fails.
 fn with_cause(error: Error, cause: &Error) -> Error {
     use magnus::error::ErrorType::Exception;
-    if let (Exception(exc), Exception(cause)) = (error.error_type(), cause.error_type()) {
-        crate::bridge::ruby::set_exception_cause(exc.as_value(), cause.as_value());
+    let (Exception(exc), Exception(cause)) = (error.error_type(), cause.error_type()) else {
+        return error;
+    };
+    let with: Result<Value, Error> = crate::init::EXC_ERROR
+        .exception()
+        .funcall("__with_cause", (*exc, *cause));
+    match with.ok().and_then(magnus::Exception::from_value) {
+        Some(e) => Error::from(e),
+        None => error,
     }
-    error
 }
 
 /// A query's value as Ruby, and for `at_xpath` the first node of a node-set.
