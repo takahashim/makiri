@@ -747,7 +747,12 @@ the document's size, so a subtree grows from empty and measures the document
 only if its output passes the 64 KiB ceiling floor) and the
 whole thing is copied into a UTF-8 Ruby String once - markedly faster than
 `rb_str_cat` per chunk (its per-append capacity + coderange bookkeeping was the
-serializer's dominant cost). **The per-chunk append is the hot path**, since
+serializer's dominant cost). The ceiling (`serialize::ceiling`) is 64 KiB +
+32x the live arena + nodes x 4 x the longest interned name, from
+`arena_bytes::document_size`: the arena includes the four name tables (tags,
+attrs, ns, prefix), and the name term exists because a name is stored once
+however many nodes write it - 50 elements named by 20,000 bytes failed their
+own `to_html` without it. **The per-chunk append is the hot path**, since
 a chunk is a few bytes (`<`, a tag name, `="`) and there are ~20 per element:
 `Buf::append`'s inline fast path (fits the allocation => no ceiling check, as
 `cap <= ceiling + 1` always holds) and its `memcpy`-free copy of <= 16 bytes
@@ -945,7 +950,10 @@ Key decisions that got there, worth not regressing:
   and `install_html(Box<HtmlParsed>)` / `install_xml(Box<XmlDoc>)` store the
   content and report it in one step, so a
   new parse entry cannot skip the report; `spec/gc_accounting_spec.rb` pins
-  both halves. Growth through mutation/fragment import is NOT re-reported
+  both halves. The report is the capacity of everything the document OWNS -
+  pools and the four name tables (~23 KB of tables for an empty document); a
+  document made with an owner shares its owner's and reports 0. Growth through
+  mutation/fragment import is NOT re-reported
   (an approximation, in the safe direction of under-reporting).
 - Tree-walk speed is structurally capped by Lexbor's 96-byte node (we can't
   shrink it); investigated nodeset-pool / prefetch follow-ups were **not** shipped

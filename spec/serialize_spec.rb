@@ -77,6 +77,21 @@ RSpec.describe "Makiri serialization" do
       expect(ul.to_html(pretty: true).scan("<li>").size).to eq(5000)
       expect(d.at_css("body").to_html).to eq("<body><ul>#{items}</ul><p>after</p></body>")
     end
+
+    # A name is interned once however many nodes carry it, so the arena says
+    # little about how much markup a long one becomes: 50 elements named by
+    # 20,000 bytes are ~20 KB of arena and 2 MB of output, which the ceiling
+    # used to refuse ("HTML serialization failed").
+    it "round-trips a document whose long names repeat" do
+      tag = "x-#{"a" * 20_000}"
+      attr = "data-#{"b" * 20_000}"
+      body = %(<#{tag} #{attr}="v">t</#{tag}>) * 50
+      d = Makiri::HTML("<html><head></head><body>#{body}</body></html>")
+      expect(d.to_html).to eq("<html><head></head><body>#{body}</body></html>")
+      expect(d.at_css("body").to_html).to eq("<body>#{body}</body>")
+      expect(d.at_css("body").inner_html).to eq(body)
+      expect(d.to_html(pretty: true).scan("<#{tag}").size).to eq(50)
+    end
   end
 
   describe "NodeSet#to_html / #text" do

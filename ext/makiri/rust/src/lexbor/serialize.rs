@@ -19,7 +19,7 @@ use crate::lexbor::abi::{
     lxb_html_serialize_pretty_deep_cb, lxb_html_serialize_pretty_tree_cb,
     lxb_html_serialize_tree_cb,
 };
-use crate::lexbor::adapter::arena_bytes::document_bytes;
+use crate::lexbor::adapter::arena_bytes::{document_size, DocumentSize};
 use crate::lexbor::adapter::html::{HtmlDoc, HtmlNode, RawNode};
 use crate::lexbor::chunks::{chunk_cb, ChunkSink, Chunks};
 use crate::node_type::NodeType;
@@ -33,20 +33,31 @@ const LXB_HTML_SERIALIZE_OPT_UNDEF: crate::lexbor::abi::lxb_html_serialize_opt_t
 /// under it before the document has been measured.
 const CEILING_FLOOR: usize = 65536;
 
-/// The buffer's ceiling for a document of `live` arena bytes.
+/// The buffer's ceiling for a document of `size`.
 ///
 /// The Lexbor analogue of the XML serializer's `arena_bytes` cap: 32x the live
-/// bytes (covering escaping plus maximal pretty indentation) over
-/// [`CEILING_FLOOR`] - tight for a small document yet scaling with a large one,
-/// so a legitimate parse round-trips through `to_html` (HTML parsing is itself
-/// byte-uncapped) while a pathologically deep pretty-print fails closed instead
-/// of growing without bound. It is deliberately *not* clamped to `cbuf`'s hard
-/// ceiling here; `Buf` takes the minimum of the two on every growth, so the
-/// clamp would only duplicate a constant this side could then disagree with.
-/// The HTML tree cannot cycle (the mutation guards plus Lexbor's own insert
-/// checks), so the ceiling is never reached in normal operation.
-fn ceiling(live: usize) -> usize {
-    CEILING_FLOOR.saturating_add(live.saturating_mul(32))
+/// bytes (covering escaping plus maximal pretty indentation), plus every node
+/// writing the longest name the document interns four times (a start and an
+/// end tag, each up to a prefix and a local name that long), over
+/// [`CEILING_FLOOR`]. The name term is what `live` cannot see: a name is
+/// stored once however many nodes carry it, and 50 custom elements named by
+/// 20,000 bytes failed their own `to_html` without it; for ordinary names it
+/// is a few percent of the first term. Tight for a small document yet scaling
+/// with a large one, so a legitimate parse round-trips through `to_html` (HTML
+/// parsing is itself byte-uncapped) while a pathologically deep pretty-print
+/// fails closed instead of growing without bound. It is deliberately *not*
+/// clamped to `cbuf`'s hard ceiling here; `Buf` takes the minimum of the two
+/// on every growth, so the clamp would only duplicate a constant this side
+/// could then disagree with. The HTML tree cannot cycle (the mutation guards
+/// plus Lexbor's own insert checks), so the ceiling is never reached in normal
+/// operation.
+fn ceiling(size: DocumentSize) -> usize {
+    let names = size
+        .nodes
+        .saturating_mul(size.longest_name.saturating_mul(4));
+    CEILING_FLOOR
+        .saturating_add(size.live.saturating_mul(32))
+        .saturating_add(names)
 }
 
 /// The output buffer, plus the document whose ceiling it has not taken yet.
@@ -69,7 +80,7 @@ impl Sink<'_> {
         let Some(doc) = self.unmeasured.take() else {
             return false;
         };
-        self.buf.raise_limit(ceiling(document_bytes(doc)));
+        self.buf.raise_limit(ceiling(document_size(doc)));
         self.buf.append(bytes).is_ok()
     }
 }
@@ -104,9 +115,9 @@ fn sink_for(node: HtmlNode<'_>) -> Sink<'_> {
             unmeasured: Some(doc),
         };
     }
-    let live = document_bytes(doc);
-    let mut buf = Buf::new(ceiling(live));
-    let _ = buf.reserve((live / 4).max(4096)); /* best-effort pre-size */
+    let size = document_size(doc);
+    let mut buf = Buf::new(ceiling(size));
+    let _ = buf.reserve((size.live / 4).max(4096)); /* best-effort pre-size */
     Sink {
         buf,
         unmeasured: None,
