@@ -114,6 +114,17 @@ RSpec.describe "Makiri mutation" do
           .to raise_error(Makiri::Error)
       end
 
+      # DOM: the target must match the XML Name production. Lexbor does not
+      # check it, and an unchecked target was serialized as it stood - a live
+      # <script> included.
+      it "refuses a target that is not an XML Name" do
+        ["x?><script>alert(1)</script><?y", "a b", "", "1x"].each do |target|
+          expect { doc.create_processing_instruction(target, "d") }
+            .to raise_error(ArgumentError, /processing instruction target/)
+        end
+        expect(doc.create_processing_instruction("xml-stylesheet", "d").target).to eq("xml-stylesheet")
+      end
+
       it "rejects an embedded NUL or invalid UTF-8 in target or data" do
         expect { doc.create_processing_instruction("t\x00", "d") }
           .to raise_error(Makiri::Error)

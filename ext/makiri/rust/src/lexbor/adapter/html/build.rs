@@ -109,8 +109,8 @@ impl<'doc> HtmlDoc<'doc> {
     }
 
     /// A detached processing instruction, or `None` when Lexbor could not make
-    /// one. That includes an invalid target, which Lexbor validates, so this
-    /// fails closed rather than building a PI that cannot serialize.
+    /// one - including data holding `?>`, which Lexbor refuses. The TARGET it
+    /// does not check (a TODO in Lexbor), so the caller validates it first.
     pub fn create_pi(self, target: &[u8], data: &[u8]) -> Option<BuildingNode<'doc>> {
         // SAFETY: as above, for both slices.
         unsafe {

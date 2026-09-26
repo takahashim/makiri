@@ -332,7 +332,7 @@ pub fn create_comment(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<Va
 
 /// `Document#create_processing_instruction(target, data)` -> PI.
 pub fn create_pi(
-    _ruby: &Ruby,
+    ruby: &Ruby,
     rb_self: Value,
     rb_target: Value,
     rb_data: Value,
@@ -341,6 +341,10 @@ pub fn create_pi(
         let doc = owning_doc(&rb_self)?;
         let tv = ruby_verified_text(rb_target, "processing instruction target")?;
         let dv = ruby_verified_text(rb_data, "processing instruction data")?;
+        /* DOM createProcessingInstruction: the target must match the XML Name
+         * production. Lexbor leaves that check as a TODO, and an unchecked
+         * target is written into the output as it is - markup included. */
+        check_dom_name(ruby, &tv, crate::xml::chars::validate_name, "processing instruction target")?;
         created(
             crate::bridge::html::create_pi(doc, &tv, &dv),
             rb_self,

@@ -112,10 +112,8 @@ RSpec.describe "Makiri convenience API" do
       xml = Makiri::XML(%(<r xmlns:x="urn:x"/>))
       expect(xml.root.attribute_nodes.first.path).to eq("?") # a namespace declaration
 
-      # A target no XPath literal can quote (the factory allows one in HTML).
-      pi = html.create_processing_instruction(%(a'b"c), "d")
-      html.at_css("p").add_child(pi)
-      expect(pi.path).to eq("?")
+      # (A PI target no XPath literal can quote cannot be made: the factory
+      # requires an XML Name, and the parser reads such a target as a comment.)
     end
 
     # An unprefixed name test selects only the HTML namespace in HTML and no
