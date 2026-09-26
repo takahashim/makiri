@@ -194,6 +194,15 @@ impl Buf {
         Ok(())
     }
 
+    /// Raise the soft ceiling to `max`; a `max` at or below the current one is
+    /// ignored. Only ever raising keeps `cap <= content_limit() + 1`, which
+    /// [`append`](Self::append)'s fast path relies on.
+    pub fn raise_limit(&mut self, max: usize) {
+        if max > self.content_limit() {
+            self.max = max;
+        }
+    }
+
     /// Pre-allocate capacity for `n` content bytes without changing the current
     /// length, so a known-size fill does not realloc on every geometric step.
     ///
@@ -395,6 +404,17 @@ mod tests {
         assert_eq!(buf.append(b"hello"), Ok(()));
         assert_eq!(buf.append(b"!"), Err(BufError::Limit));
         assert_eq!(buf.as_slice(), b"hello");
+    }
+
+    #[test]
+    fn raise_limit_only_ever_raises() {
+        let mut buf = Buf::new(5);
+        assert_eq!(buf.append(b"hello"), Ok(()));
+        buf.raise_limit(3); /* a lower ceiling is ignored */
+        assert_eq!(buf.append(b"!"), Err(BufError::Limit));
+        buf.raise_limit(6);
+        assert_eq!(buf.append(b"!"), Ok(()));
+        assert_eq!(buf.as_slice(), b"hello!");
     }
 
     #[test]

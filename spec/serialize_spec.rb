@@ -63,6 +63,20 @@ RSpec.describe "Makiri serialization" do
       reparsed = Makiri::HTML("<html><body>#{html}</body></html>")
       expect(reparsed.at_css("#d").to_html).to eq(html)
     end
+
+    # A subtree's buffer starts under a 64 KiB floor and takes the document's
+    # ceiling only when its output passes that, so a large subtree must still
+    # come out whole, pretty or not.
+    it "serializes a subtree larger than the initial ceiling whole" do
+      items = (1..5000).map { |i| "<li>item #{i} &amp; more</li>" }.join
+      d = Makiri::HTML("<html><body><ul>#{items}</ul><p>after</p></body></html>")
+      ul = d.at_css("ul")
+      expect(ul.to_html).to eq("<ul>#{items}</ul>")
+      expect(ul.to_html.bytesize).to be > 65_536
+      expect(ul.inner_html).to eq(items)
+      expect(ul.to_html(pretty: true).scan("<li>").size).to eq(5000)
+      expect(d.at_css("body").to_html).to eq("<body><ul>#{items}</ul><p>after</p></body>")
+    end
   end
 
   describe "NodeSet#to_html / #text" do

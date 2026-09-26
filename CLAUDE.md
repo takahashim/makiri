@@ -728,7 +728,10 @@ map are only ever emptied together (`spec/css_selector_cache_spec.rb`).
 Lexbor `serialize_tree_cb`, `#inner_html` = `serialize_deep_cb`; the callback
 collects Lexbor's many small chunks into one growing C buffer (`cbuf::Buf`,
 **pre-reserved** via `Buf::reserve` so the per-chunk appends don't realloc on
-every geometric step) and the
+every geometric step - but only for the document or its root element: the
+estimate walks the WHOLE arena, which made one `<p>`'s `to_html` cost time in
+the document's size, so a subtree grows from empty and measures the document
+only if its output passes the 64 KiB ceiling floor) and the
 whole thing is copied into a UTF-8 Ruby String once - markedly faster than
 `rb_str_cat` per chunk (its per-append capacity + coderange bookkeeping was the
 serializer's dominant cost). **The per-chunk append is the hot path**, since
