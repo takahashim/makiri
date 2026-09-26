@@ -170,10 +170,10 @@ SCENARIOS = {
     doc.text
   end,
 
-  # The HTML node readers, which reach three lazily-built C structures the other
-  # scenarios do not: the attr->owner index (Attribute#parent), the line table
-  # (#line) and the NodeSet builder (#children / #ancestors / #attribute_nodes).
-  # Each has its own OOM branch, and each must fail closed - a NodeSet that
+  # The HTML node readers, which reach what the other scenarios do not:
+  # Attribute#parent (Lexbor's live attr->owner), the line table (#line) and
+  # the NodeSet builder (#children / #ancestors / #attribute_nodes). Each
+  # allocation has its own OOM branch, and each must fail closed - a NodeSet that
   # silently loses a member reads exactly like a correct shorter one.
   "html_node_read" => lambda do
     doc = Makiri::HTML::Document.parse(<<~HTML)

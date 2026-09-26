@@ -17,10 +17,10 @@
 //!
 //! # Fail-closed
 //!
-//! An allocation failure leaves the index UNBUILT and returns "no index", so the
-//! caller either walks or raises. It must not leave a partially filled one: a
-//! lookup that misses reads as "this attribute has no owner", which is a
-//! well-formed wrong answer.
+//! A tag with no bucket answers `None`, and the step walks the tree instead.
+//! An allocation failure leaves the whole index UNBUILT - `None` from
+//! [`build`] - and the caller raises. It must never leave a partially filled
+//! one: a bucket short of some elements reads as a complete, shorter answer.
 
 #![forbid(unsafe_code)]
 

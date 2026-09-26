@@ -6,7 +6,7 @@
 //! `arena_bytes` the arena's pool chunks, `source_loc` the tokenizer's tokens,
 //! `tree_guard` the tree builder's stack of open elements.)
 //! Around it, everything Lexbor does not give us and we will not patch it to:
-//! the attribute->owner index, source locations, the text index, the
+//! the element (tag-bucket) index, source locations, the text index, the
 //! tree-depth guard, and cross-import.
 
 pub mod arena_bytes;

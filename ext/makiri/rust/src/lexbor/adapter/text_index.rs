@@ -137,7 +137,7 @@ fn count(root: HtmlNode<'_>) -> (usize, usize) {
 }
 
 /// An explicit DFS frame. Recursion is avoided so a deep tree cannot exhaust the
-/// stack - the same discipline as the attr/element index.
+/// stack - the same discipline as the element index's parent-climbing walk.
 struct Frame<'d> {
     /// The next child to visit.
     child: Option<HtmlNode<'d>>,

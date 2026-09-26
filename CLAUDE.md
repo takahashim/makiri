@@ -633,7 +633,7 @@ each element/fragment to the `[start,end)` run of slices its subtree owns. A
 `Node#text` is then a hash lookup + `ruby_str_from_slices` (one pre-sized
 memcpy run; **~4× faster than libxml2 at all sizes**), no element node touched.
 Cached on the parse handle; `HtmlParsed::invalidate_indexes` drops it
-from the **same single mutation hook** as the attr index, so a borrowed slice
+from the **same single mutation hook** as the element index, so a borrowed slice
 can never point at reallocated/detached text storage. Reached via
 `HtmlParsed::text_slices` (None → caller walks: fragments, build OOM).
 Fail-closed: a build OOM leaves it unbuilt and the walk fallback serves.
