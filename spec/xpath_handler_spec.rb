@@ -369,6 +369,29 @@ RSpec.describe "Makiri XPath custom function handler" do
         end
       end
 
+      # `fragment` converts its argument with `to_s` - arbitrary Ruby - after
+      # the check that no evaluation is reading the document. That Ruby can
+      # START one and leave it suspended mid-walk (a handler that yields from
+      # an Enumerator), still reading the document when the fragment is made
+      # in it. So the check is made again after the conversion.
+      {
+        html: [-> { Makiri.HTML("<p>x</p>") }, "//p[f()]", "<b>y</b>"],
+        xml: [-> { Makiri::XML("<r><a/></r>") }, "//a[f()]", "<b/>"],
+      }.each do |kind, (make, expr, source)|
+        it "fails closed when a #{kind} fragment's source starts an evaluation it leaves suspended" do
+          doc = make.call
+          walk = Enumerator.new do |y|
+            h = Object.new
+            h.define_singleton_method(:f) { |*| y << :suspended; true }
+            doc.xpath(expr, h)
+          end
+          arg = Object.new
+          arg.define_singleton_method(:to_s) { walk.next && source }
+
+          expect { doc.fragment(arg) }.to raise_error(Makiri::Error, /while evaluating/)
+        end
+      end
+
       it "fails closed for an XML document too" do
         xml = Makiri::XML(%(<r><a k="1"/><a/></r>))
         h = editor_class.new { xml.at_xpath("//a")["k"] = "2" }

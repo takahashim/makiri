@@ -468,11 +468,17 @@ pub fn fragment_into(
     source: Value,
     inherit_doc_ns: bool,
 ) -> Result<NodeId, Error> {
+    /* Refused first, so a document an evaluation is reading answers that
+     * rather than whatever the argument is... */
     let xdoc = arena_mut(document)?;
     let source = crate::bridge::ruby::string_of(source)?;
     // SAFETY: a live arena; the decode only reads its `max_bytes`.
     let decoded = xml_decode_input_value(source, Some(unsafe { (*xdoc).max_bytes() }))?;
     let src = crate::bridge::string::ruby_string_bytes(decoded)?;
+    /* ...and checked again: the conversion is arbitrary Ruby, which can start
+     * an evaluation that suspends mid-walk (an Enumerator) still holding
+     * slices of the arena this parse grows. */
+    let xdoc = arena_mut(document)?;
     // SAFETY: the arena is live and mutable for this call, under the GVL.
     tree::parse_fragment(unsafe { &mut *xdoc }, src.as_slice(), inherit_doc_ns)
         .map_err(|status| parse_status_error(status, Unit::Fragment))

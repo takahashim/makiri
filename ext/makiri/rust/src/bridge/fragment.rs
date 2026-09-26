@@ -167,10 +167,15 @@ pub fn set_template_inner_html(
 /// context `at`. The fragment node is made only once the parse has succeeded.
 pub fn build_fragment(document: Value, rb_html: Value, at: FragmentTag) -> Result<Value, Error> {
     /* A fragment's nodes are made in `document`: a change to it, refused while
-     * an XPath evaluation with a handler reads it. */
+     * an XPath evaluation with a handler reads it. Checked first, so that
+     * refusal wins over a bad argument... */
     ensure_document_mutable(document)?;
     /* `to_str`/`to_s` is Ruby code that may raise: converted under protect. */
     let html = string_of(rb_html)?;
+    /* ...and again, because that conversion is arbitrary Ruby: it can start an
+     * evaluation that suspends mid-walk (an Enumerator), still reading this
+     * document when the import below writes it. */
+    ensure_document_mutable(document)?;
     let doc = html_doc_unwrap(document)?;
     let parsed = parse(html, &FragmentContext::Tag { doc, at })?;
 
