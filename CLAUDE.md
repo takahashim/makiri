@@ -154,7 +154,11 @@ only", not "no fork".
 **`lexbor::contains_guard` decides which `:lexbor-contains()` arguments reach
 the vendored CSS parser, and it is not optional.** Its module doc states the
 three properties that must hold and why; `lexbor/tests.rs` pins the load-bearing
-one against the real parser. Both call sites go through it - `css_engine::parse`
+one against the real parser. It decides on the tokens of Lexbor's OWN CSS
+syntax tokenizer (`lexbor::css_tokens`), never on a scanner of ours: the hand
+scanner it replaced ended strings where the tokenizer did not (CR, FF,
+backslash-newline), so a `:lexbor-contains(#x)` after such a string reached the
+parser unseen and `parse_stylesheet` crashed serializing what it left behind. Both call sites go through it - `css_engine::parse`
 (so HTML `#css` and the XML lowering) and `stylesheet.rs` - and a new one must.
 `SelectorCache::compile`'s flush after a rejected parse belongs to the same
 decision. The guard, that flush and their tests come out together or not at all,

@@ -66,6 +66,7 @@ UNSAFE_ISLANDS = {
   "lexbor/chunks.rs" => 2,
   "lexbor/css_engine.rs" => 14,
   "lexbor/css_parser.rs" => 18,
+  "lexbor/css_tokens.rs" => 10,
   "lexbor/fragment.rs" => 7,
   "lexbor/selectors.rs" => 12,
   "lexbor/serialize.rs" => 2,

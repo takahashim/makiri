@@ -25,8 +25,10 @@ pub mod adapter;
 /// Lexbor's serializer callback, shared by every serializer below.
 pub mod chunks;
 /// An input restriction on `:lexbor-contains()`, applied before the CSS parser
-/// sees the text. Text in, text out - no Lexbor.
+/// sees the text, decided on Lexbor's own CSS tokens.
 pub mod contains_guard;
+/// Lexbor's CSS syntax tokenizer, run on its own for `contains_guard`.
+pub(crate) mod css_tokens;
 /// HTML fragment parsing and import/fixup operations.
 pub mod fragment;
 /// Selector traversal engine, including its Lexbor callbacks.

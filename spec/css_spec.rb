@@ -132,6 +132,17 @@ RSpec.describe "Makiri CSS" do
       end
     end
 
+    # Where a string ends is the tokenizer's call: CR, FF and LF end one, and
+    # the selector after it is read on.
+    it "rejects one after a string a newline ends" do
+      d = Makiri::HTML("<p title='x'>hello</p>")
+      ["\r", "\n", "\r\n", "\f"].each do |nl|
+        sel = %([title="x#{nl}], p:lexbor-contains(#x))
+        expect { d.css(sel) }.to raise_error(Makiri::CSS::SyntaxError), sel.dump
+      end
+      expect(d.css(%(p:lexbor-contains("hello"))).length).to eq(1)
+    end
+
     it "works on XML too" do
       x = Makiri::XML("<r><a>hello</a><b>bye</b></r>")
       expect(x.css(%(:lexbor-contains("hello"))).length).to eq(1)

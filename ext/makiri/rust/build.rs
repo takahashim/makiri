@@ -152,7 +152,19 @@ fn main() {
         .allowlist_function("lxb_css_selectors_destroy")
         .allowlist_function("lxb_css_selectors_parse")
         .opaque_type("lxb_css_parser_t")
-        .opaque_type("lxb_css_syntax_tokenizer_t")
+        // Lexbor's own CSS syntax tokenizer, which `lexbor::css_tokens` drives
+        // so `contains_guard` decides on the tokens the parser will see. Its
+        // layout is generated, not opaque: the buffer setter is an inline with
+        // no `_noi` twin, so the three input pointers are written directly.
+        .allowlist_type("lxb_css_syntax_tokenizer_t")
+        .allowlist_type("lxb_css_syntax_token_t")
+        .allowlist_type("lxb_css_syntax_token_type_t")
+        .allowlist_function("lxb_css_syntax_tokenizer_create")
+        .allowlist_function("lxb_css_syntax_tokenizer_init")
+        .allowlist_function("lxb_css_syntax_tokenizer_clean")
+        .allowlist_function("lxb_css_syntax_tokenizer_destroy")
+        .allowlist_function("lxb_css_syntax_token")
+        .allowlist_function("lxb_css_syntax_token_consume")
         // The DOM readers `lexbor::adapter` uses. Generating them rather than
         // hand-declaring them is also the inline-only CHECK: bindgen does not
         // emit a `static inline`, so a name that is only inline in the headers

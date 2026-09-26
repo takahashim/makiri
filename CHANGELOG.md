@@ -34,6 +34,11 @@
     keeps every attribute; an imported no-namespace name keeps its case.
   * `set_attribute_ns(nil, "MixedCase", v)` serializes as `MixedCase`, as
     `#keys` already reported it, rather than `mixedcase`.
+* `Makiri::Lexbor::CSS.parse_stylesheet` no longer crashes (Bus Error) on a
+  `:lexbor-contains()` that follows a string ended by CR, FF or a newline. The
+  guard that decides which `:lexbor-contains()` arguments reach Lexbor now
+  reads the text with Lexbor's own CSS tokenizer instead of a scanner of its
+  own, which disagreed with it about where strings end.
 * HTML parsing bounds the tree depth (`max_tree_depth:`, default 400; a
   negative value disables it) and the `<option>`s one `<select>` receives
   (10,000), raising `Makiri::Error` past either. Both shapes made Lexbor's tree

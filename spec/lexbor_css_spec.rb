@@ -206,6 +206,41 @@ RSpec.describe Makiri::Lexbor::CSS do
           expect(types.last).to eq(:style), css unless sel.end_with?("(")
         end
       end
+
+      # The guard used to read strings with a scanner of its own that ended one
+      # only at LF and gave up on the rest of the text at an unterminated one;
+      # Lexbor's tokenizer ends a string at CR, FF or LF and reads on. So the
+      # pseudo after such a string reached the parser, and serializing the rule
+      # it left behind killed the process (Bus Error). Each runs in a child, so
+      # a regression is a failed example rather than a dead suite.
+      describe "after a string a newline ends (isolated)" do
+        def parse_isolated(css)
+          lib = File.expand_path("../lib", __dir__)
+          code = "require 'makiri'\n" \
+                 "p Makiri::Lexbor::CSS.parse_stylesheet(#{css.dump}).map { |r| r[:type] }"
+          out = IO.popen([{ "RUBY_FREE_AT_EXIT" => nil }, RbConfig.ruby, "-I#{lib}", "-e", code],
+                         err: %i[child out], &:read)
+          [$?, out]
+        end
+
+        ["\r", "\n", "\r\n", "\f"].each do |nl|
+          it "rejects the rule after a string ended by #{nl.dump}" do
+            status, out = parse_isolated("a{content:\"x#{nl}}b:lexbor-contains(#x){color:red}")
+            expect(status).to be_success, out
+            expect(out).to eq("[:style, :bad_style]\n")
+          end
+        end
+
+        it "reads a backslash-newline as a string continuation" do
+          status, out = parse_isolated("a{content:\"x\\\n}b:lexbor-contains(#x){color:red}")
+          expect(status).to be_success, out
+          expect(out).to eq("[:style]\n") # the rest is string content
+
+          status, out = parse_isolated("a{content:\"x\\\n\"}b:lexbor-contains(#x){color:red}")
+          expect(status).to be_success, out
+          expect(out).to eq("[:style, :bad_style]\n")
+        end
+      end
     end
 
     it "rejects invalid UTF-8" do
