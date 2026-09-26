@@ -70,9 +70,11 @@ impl core::hash::Hasher for MixHasher {
 /// What a table can key on: a hash, and one value no entry ever uses, which
 /// marks an empty slot.
 ///
-/// A raw pointer's empty value is null. A key that can legitimately be 0 - an
-/// XML node token is an arena index - supplies its own (`Token::null()`), which
-/// is why the empty marker belongs to the key type rather than to the table.
+/// A raw pointer's empty value is null. A key that is not a pointer supplies
+/// its own: a `Token` is a kind AND a word, so its empty value is the one kind
+/// no node has (`Token::null()`), not a zero word - which is why the empty
+/// marker belongs to the key type rather than to the table. (No real XML node
+/// token is word 0 either: arena slot 0 is reserved.)
 pub trait TableKey: Copy + Eq {
     /// The key of an empty slot.
     const EMPTY: Self;

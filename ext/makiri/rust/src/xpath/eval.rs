@@ -486,14 +486,12 @@ struct FirstShape<'a> {
     preds: Vec<AttrPred<'a>>,
 }
 
-/// Recognise the shape and parse its predicates once. `Ok(None)` = not this
-/// shape; `Err` = out of memory building the predicate list.
-fn first_shape<'e, 'd, 'a, D: Dom<'d>>(
-    ev: &mut Evaluation<'e, 'd, D>,
-    root: &'a Expr,
-) -> EvalResult<Option<FirstShape<'a>>> {
+/// Recognise the shape and parse its predicates once. `None` = not this
+/// shape, or no memory to hold its predicates: either way the full evaluator
+/// answers instead.
+fn first_shape(root: &Expr) -> Option<FirstShape<'_>> {
     let ExprKind::Path(path) = &root.kind else {
-        return Ok(None);
+        return None;
     };
     let nt = match path.steps.as_slice() {
         [s] if s.axis == Axis::Descendant => s,
@@ -505,24 +503,22 @@ fn first_shape<'e, 'd, 'a, D: Dom<'d>>(
         {
             s1
         }
-        _ => return Ok(None),
+        _ => return None,
     };
-    let Some(mut preds) = try_vec_with_capacity(nt.predicates.len()) else {
-        return Err(handler_oom(&mut ev.budget));
-    };
+    /* Out of memory here only loses the shortcut: the full evaluator answers
+     * the same expression, and reports an OOM of its own under its own name. */
+    let mut preds = try_vec_with_capacity(nt.predicates.len())?;
     /* A prefixed name test is allowed - the caller reproduces the step driver's
      * "unknown prefix is a RUNTIME error" first, and the name match resolves the
      * prefix exactly as the full evaluator does. A prefixed ATTRIBUTE predicate
      * still falls back: match_attr_step requires an unprefixed @name. */
     for p in &nt.predicates {
-        let Some(ap) = match_attr_pred(p) else {
-            return Ok(None);
-        };
-        preds
-            .falloc_push(ap)
-            .map_err(|()| handler_oom(&mut ev.budget))?;
+        let ap = match_attr_pred(p)?;
+        if preds.falloc_push(ap).is_err() {
+            return None;
+        }
     }
-    Ok(Some(FirstShape { step: nt, preds }))
+    Some(FirstShape { step: nt, preds })
 }
 
 /// Does `n` satisfy every attribute predicate the shape parsed?
@@ -580,7 +576,7 @@ fn first_match_walk<'e, 'd, D: Dom<'d>>(
 ) -> EvalResult<FirstMatch<D::Node>> {
     let doc = ev.doc;
     let root = ast.root();
-    let Some(shape) = first_shape::<D>(ev, root)? else {
+    let Some(shape) = first_shape(root) else {
         return Ok(FirstMatch::NotApplicable);
     };
     let step = shape.step;
