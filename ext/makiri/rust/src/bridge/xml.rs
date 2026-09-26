@@ -86,13 +86,16 @@ pub fn xml_node_unwrap(rb_self: Value) -> Result<NodeId, Error> {
         return Ok(unsafe { (*doc_of(rb_self)).doc_node() });
     }
     let nd: &NodeData = XML_NODE_TYPE.get(&rb_self)?;
-    /* A wrapper's word is a real node; a null one is a broken invariant, like
-     * the missing arena `doc_of` refuses. */
-    assert!(
-        nd.node.xml().is_some(),
-        "an XML node wrapper without its node"
-    );
-    Ok(nd.node.xml().unwrap_or(NodeId::INVALID))
+    /* A wrapper's word is a real node; a null one is a broken invariant. It
+     * is answered as `InternalError` directly, not by panicking: this runs in
+     * magnus's argument conversion (`XmlSelf::try_convert`), outside
+     * `entry`, where a panic would be an unrescuable `fatal`. */
+    nd.node.xml().ok_or_else(|| {
+        Error::new(
+            crate::init::EXC_INTERNAL_ERROR.exception(),
+            "an XML node wrapper without its node",
+        )
+    })
 }
 
 /// The XML arena behind a value checked to be an XML Document:
