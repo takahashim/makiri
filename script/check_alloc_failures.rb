@@ -289,6 +289,22 @@ SCENARIOS = {
     d.to_html + "|" + src.to_html
   end,
 
+  # createDocumentType with ABSENT ids, which html_mutate does not reach: an
+  # absent id is given an allocated empty string so the doctype can be cloned
+  # and imported, and a doctype whose string could not be made is refused
+  # rather than returned unimportable. Clone and import are the consumers.
+  "html_doctype" => lambda do
+    d = Makiri::HTML::Document.parse("<html><body><p>x</p></body></html>")
+    other = Makiri::HTML::Document.parse("<html><body></body></html>")
+    bare = d.create_document_type("html")
+    only_pub = d.create_document_type("svg", "-//X//EN")
+    copy = bare.dup
+    moved = other.import_node(only_pub)
+    other.root.add_previous_sibling(moved)
+    [bare, only_pub, copy, moved].map { |t| [t.name, t.public_id, t.system_id] }.inspect +
+      "|" + other.to_html
+  end,
+
   # CSS: a comma list with combinators through the reused engine, plus the
   # at_css first-match path.
   "css" => lambda do

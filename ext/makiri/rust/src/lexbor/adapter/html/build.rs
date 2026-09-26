@@ -188,12 +188,14 @@ impl<'doc> HtmlDoc<'doc> {
             }
             (*dt).name = (*interned).attr_id;
 
+            /* An id whose empty string could not be allocated keeps its NULL
+             * `data`, which is the unimportable doctype described above: fail
+             * closed, leaving the doctype to the arena as above. */
             let text = (*self.as_raw()).text;
-            if (*dt).public_id.data.is_null() {
-                lxb::lexbor_str_init(&mut (*dt).public_id, text, 0);
-            }
-            if (*dt).system_id.data.is_null() {
-                lxb::lexbor_str_init(&mut (*dt).system_id, text, 0);
+            for id in [&mut (*dt).public_id, &mut (*dt).system_id] {
+                if id.data.is_null() && lxb::lexbor_str_init(id, text, 0).is_null() {
+                    return None;
+                }
             }
             BuildingNode::from_raw(dt as *mut LxbNode)
         }
