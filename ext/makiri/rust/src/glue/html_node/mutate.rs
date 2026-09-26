@@ -344,7 +344,12 @@ pub fn create_pi(
         /* DOM createProcessingInstruction: the target must match the XML Name
          * production. Lexbor leaves that check as a TODO, and an unchecked
          * target is written into the output as it is - markup included. */
-        check_dom_name(ruby, &tv, crate::xml::chars::validate_name, "processing instruction target")?;
+        check_dom_name(
+            ruby,
+            &tv,
+            crate::xml::chars::validate_name,
+            "processing instruction target",
+        )?;
         created(
             crate::bridge::html::create_pi(doc, &tv, &dv),
             rb_self,
