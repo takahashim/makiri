@@ -13,7 +13,7 @@
 use super::copy_span;
 use crate::falloc::Reserve;
 use crate::xml::qname::Split;
-use crate::xml::{ArenaKind, Document, MutError, NodeFlags, NodeId, Span};
+use crate::xml::{ArenaKind, AttrNs, Document, MutError, NodeFlags, NodeId, Span};
 
 /// A copied `value` span. XML distinguishes "never set" from "set to empty" - a
 /// doctype's `PUBLIC ""` is present - so a copy has to carry the difference.
@@ -58,6 +58,9 @@ struct CopiedNode {
     public: CopiedValue,
     ns_uri: Option<Vec<u8>>,
     flags: NodeFlags,
+    /// An attribute's namespace state; `Derived` for anything else. Copied
+    /// with `flags` - it lived in them until it became a field of its own.
+    attr_ns: AttrNs,
     attrs: Vec<CopiedNode>,
 }
 
@@ -67,7 +70,7 @@ impl CopiedNode {
         let Some(node) = doc.try_node(src) else {
             return Err(MutError::Type);
         };
-        let (type_, flags) = (node.type_, node.flags);
+        let (type_, flags, attr_ns) = (node.type_, node.flags, node.attr_ns);
         let (qname_span, local_span, value_span, ns_span, prefix_span) =
             (node.qname, node.local, node.value, node.ns_uri, node.prefix);
         /* A DOCTYPE repurposes `prefix` for its PUBLIC id, so its name is no
@@ -113,6 +116,7 @@ impl CopiedNode {
             public,
             ns_uri,
             flags,
+            attr_ns,
             attrs,
         })
     }
@@ -139,7 +143,9 @@ impl CopiedNode {
             let public = self.public.write(dst)?;
             dst.node_mut(n).prefix = public;
         }
-        dst.node_mut(n).flags = self.flags;
+        let node = dst.node_mut(n);
+        node.flags = self.flags;
+        node.attr_ns = self.attr_ns;
         if let Some(uri) = &self.ns_uri {
             let span = dst.store(uri)?;
             dst.node_mut(n).ns_uri = span;

@@ -168,6 +168,43 @@ RSpec.describe "Makiri::XML namespace model" do
       )
     end
 
+    # An attribute's namespace state (explicit, or pending its insertion) is
+    # its own field; a copy that carried only the node flags dropped it, so
+    # the copy's attribute came back in no namespace.
+    def attr_namespaces(el)
+      el.attribute_nodes.map { |a| [a.name, a.namespace_uri] }
+    end
+
+    it "clone_node keeps an attribute's explicit namespace" do
+      doc = Makiri::XML("<r/>")
+      e = doc.create_element("e")
+      e.set_attribute_ns("urn:a", "x", "1")
+      doc.root.add_child(clone = e.clone_node(true))
+
+      expect(attr_namespaces(clone)).to eq([%w[x urn:a]])
+      expect(doc.root.to_xml).to eq(%(<r><e xmlns:ns1="urn:a" ns1:x="1"/></r>))
+    end
+
+    it "import_node keeps a detached element's explicit attribute namespace" do
+      src = Makiri::XML("<s/>")
+      e = src.create_element("e")
+      e.set_attribute_ns("urn:a", "x", "1")
+      tgt = Makiri::XML("<t/>")
+      tgt.root.add_child(imp = tgt.import_node(e, true))
+
+      expect(attr_namespaces(imp)).to eq([%w[x urn:a]])
+    end
+
+    it "clone_node keeps an attribute's pending prefix for its insertion point" do
+      doc = Makiri::XML(%(<r xmlns:p="urn:p"><host/><gone/></r>))
+      gone = doc.root.children[1]
+      gone.remove
+      gone["p:a"] = "v"
+      doc.root.children[0].add_child(clone = gone.clone_node(true))
+
+      expect(attr_namespaces(clone)).to eq([%w[p:a urn:p]])
+    end
+
     it "imports into a document that does not bind the prefix at all" do
       src = Makiri::XML(%(<a xmlns:p="urn:a"><p:x/></a>))
       tgt = Makiri::XML(%(<b/>))
