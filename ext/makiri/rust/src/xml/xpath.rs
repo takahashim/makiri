@@ -12,7 +12,6 @@
 
 #![forbid(unsafe_code)]
 
-use crate::cbuf::{Buf, BufError};
 use crate::token::{Kind, Token};
 use crate::xml::model as xml;
 use crate::xpath::ctx::Context;
@@ -187,14 +186,9 @@ impl<'d> Dom<'d> for &'d xml::Document {
         self.try_node(n).is_some_and(|x| x.ns_uri.len != 0)
     }
 
-    /// The node owns its value, so this is an append of a borrowed slice.
     #[inline]
-    fn append_own_text(self, n: xml::NodeId, buf: &mut Buf) -> Result<(), BufError> {
-        let s = xml::Document::value(self, n);
-        if s.is_empty() {
-            return Ok(());
-        }
-        buf.append(s)
+    fn own_text(self, n: xml::NodeId) -> &'d [u8] {
+        xml::Document::value(self, n)
     }
 
     /// The XML name index is keyed by (local name, namespace URI), so a bucket

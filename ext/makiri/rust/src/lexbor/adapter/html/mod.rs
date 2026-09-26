@@ -890,20 +890,21 @@ impl<'doc> HtmlNode<'doc> {
             && self.ns_id() == Some(NsId::HTML)
     }
 
-    /// Lexbor's text content of this node, lent to `f` - None when Lexbor has
-    /// none - and freed once `f` returns.
-    pub fn with_text_content<R>(self, f: impl FnOnce(Option<&[u8]>) -> R) -> R {
-        let mut len = 0usize;
-        // SAFETY: a live node.
-        let t = unsafe { lxb::lxb_dom_node_text_content(self.as_raw(), &mut len) };
-        if t.is_null() {
-            return f(None);
+    /// This node's own text, borrowed from the document: the data of a text,
+    /// CDATA, comment or processing-instruction node, or an attribute's value
+    /// (empty when it has none). None for every other kind - an element or
+    /// fragment, whose text is its descendants' and so a walk (or the text
+    /// index), and a document or doctype, whose DOM textContent is null.
+    ///
+    /// This replaces Lexbor's `lxb_dom_node_text_content`, which answers the
+    /// same bytes but as an arena COPY the caller must free - an allocation
+    /// and a memcpy per text node on the XPath string-value path, and a
+    /// release a panic or a raise in between would skip.
+    pub fn own_text(self) -> Option<&'doc [u8]> {
+        match self.attr() {
+            Some(a) => Some(a.value()),
+            None => self.data(),
         }
-        // SAFETY: Lexbor handed back `len` bytes it owns until destroyed below.
-        let r = f(Some(unsafe { core::slice::from_raw_parts(t, len) }));
-        // SAFETY: `t` came from this node's document and is released once.
-        unsafe { lxb::lxb_dom_document_destroy_text_noi((*self.as_raw()).owner_document, t) };
-        r
     }
 
     /// An HTML `<template>` element's contents fragment, or None.

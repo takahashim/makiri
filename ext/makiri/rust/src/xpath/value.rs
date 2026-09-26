@@ -323,7 +323,7 @@ fn append_text_descendants<'d, D: Dom<'d>>(
             return ControlFlow::Continue(());
         }
         /* LIMIT or OOM - the caller fails closed */
-        match doc.append_own_text(n, buf) {
+        match append_text(buf, doc.own_text(n)) {
             Ok(()) => ControlFlow::Continue(()),
             Err(e) => ControlFlow::Break(Unbuilt::Buf(e)),
         }
@@ -334,6 +334,15 @@ fn append_text_descendants<'d, D: Dom<'d>>(
     }
 }
 
+/// Append `s`; an empty one is no append at all.
+#[inline]
+fn append_text(buf: &mut Buf, s: &[u8]) -> Result<(), BufError> {
+    if s.is_empty() {
+        return Ok(());
+    }
+    buf.append(s)
+}
+
 fn build_string_value<'d, D: Dom<'d>>(
     doc: D,
     node: D::Node,
@@ -341,16 +350,11 @@ fn build_string_value<'d, D: Dom<'d>>(
     budget: &Budget,
 ) -> Result<(), Unbuilt> {
     if let Some(a) = doc.as_attr(node) {
-        let v = doc.attr_value(a);
-        return if v.is_empty() {
-            Ok(())
-        } else {
-            buf.append(v).map_err(Unbuilt::Buf)
-        };
+        return append_text(buf, doc.attr_value(a)).map_err(Unbuilt::Buf);
     }
     match doc.node_type(node) {
         NodeType::Text | NodeType::CDataSection | NodeType::Comment | NodeType::Pi => {
-            doc.append_own_text(node, buf).map_err(Unbuilt::Buf)
+            append_text(buf, doc.own_text(node)).map_err(Unbuilt::Buf)
         }
         _ => append_text_descendants::<D>(doc, node, buf, budget),
     }

@@ -10,7 +10,6 @@
 
 #![allow(unsafe_code)]
 
-use crate::cbuf::{Buf, BufError};
 use crate::engine_error::{Error, ErrorKind};
 use crate::lexbor::adapter::html::{HtmlAttr, HtmlDoc, HtmlNode, NsId, RawNode};
 use crate::lexbor::adapter::post_parse::HtmlParsed;
@@ -214,8 +213,8 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
         n.ns_id().is_some()
     }
     #[inline]
-    fn append_own_text(self, n: HtmlNode<'d>, buf: &mut Buf) -> Result<(), BufError> {
-        n.with_text_content(|text| text.map_or(Ok(()), |t| buf.append(t)))
+    fn own_text(self, n: HtmlNode<'d>) -> &'d [u8] {
+        n.own_text().unwrap_or(&[])
     }
 
     fn prepare(&self) -> Result<(), ErrorKind> {

@@ -199,14 +199,15 @@ pub fn content(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
             return element_text(ruby, this.document, node);
         }
 
-        /* Character data and the other kinds keep the general path. A UTF-8
+        /* Character data and attributes lend their own bytes; the other kinds
+         * (a doctype) have none. A UTF-8
          * String, not magnus's str_from_slice: that one tags the String
          * ASCII-8BIT, and a binary Text#content poisons every UTF-8 String it is
          * appended to. */
-        Ok(node.with_text_content(|text| match text {
+        Ok(match node.own_text() {
             Some(bytes) => dom_str(bytes),
             None => ruby.str_new("").as_value(),
-        }))
+        })
     })
 }
 

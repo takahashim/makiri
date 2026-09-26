@@ -162,15 +162,13 @@ pub trait Dom<'d>: Copy {
     /// `xml:lang`, and for HTML its own `lang` first.
     const LANG_ATTRIBUTES: &'static [&'static [u8]];
 
-    /// Append the node's own text - the bytes it contributes to a string-value -
-    /// to `buf`; the error is the buffer's (its cap, or OOM).
+    /// The node's own text - the bytes a text, CDATA, comment or processing-
+    /// instruction node contributes to a string-value - borrowed from the
+    /// document for `'d`; empty for a node with none.
     ///
-    /// It appends rather than returning a slice because only one backend can
-    /// lend those bytes. The XML node owns its value, but Lexbor builds a node's
-    /// text content on demand and hands back an allocation the caller must free,
-    /// so a borrowed return has nowhere to free it. Owning the append is the one
-    /// shape both can satisfy.
-    fn append_own_text(self, n: Self::Node, buf: &mut Buf) -> Result<(), BufError>;
+    /// Borrowed, not appended: both hosts hold these bytes, so the one copy is
+    /// the caller's, into the string-value it is building.
+    fn own_text(self, n: Self::Node) -> &'d [u8];
 
     /// The document-level element index's answer for a document-rooted,
     /// predicate-free descendant name test, or None when it cannot serve one.
