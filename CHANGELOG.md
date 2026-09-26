@@ -20,21 +20,12 @@
 
 ### Security
 
-* HTML parsing bounds the tree depth, as Nokogiri::HTML5 and browsers do.
-  Tree construction is quadratic in nesting depth, and the parse runs with the
-  GVL released and cannot be interrupted: `"<div>" * 80_000` (400 KB) took
-  5 seconds. A tree deeper than `max_tree_depth` (default 400; a negative value
-  disables it) now raises `Makiri::Error`
-  ("document tree depth limit exceeded (400)") - in 0.2 ms for that input.
-  `Makiri::HTML`, `Makiri.parse`, `HTML::Document.parse`,
-  `HTML::DocumentFragment.parse` and `Document#fragment` take the keyword;
-  `inner_html=`, `outer_html=` and `Node#parse` use the default. Depth counts
-  elements from the root, `<html>` being 1 (a fragment's top level being 1),
-  with Nokogiri's boundaries. A refused `inner_html=` or `outer_html=` leaves
-  the element unchanged, and the element-context fragment parse no longer
-  leaks its throwaway document when a parse fails.
-* HTML parsing bounds the `<option>`s one `<select>` receives at 10,000.
-  Returns `Makiri::Error` if exceeded.
+* HTML parsing bounds the tree depth (`max_tree_depth:`, default 400; a
+  negative value disables it) and the `<option>`s one `<select>` receives
+  (10,000), raising `Makiri::Error` past either. Both shapes made Lexbor's tree
+  construction quadratic, and a parse cannot be interrupted: 400 KB took 4-5 s.
+  `inner_html=` and `outer_html=` use the default depth. A failed fragment parse
+  no longer leaks its throwaway document.
 * Binding namespaces no longer costs the square of their number. Each
   registration scanned the prefixes already bound, so a query's namespace Hash
   of 65,000 pairs held the GVL for six seconds of CPU; prefixes are indexed

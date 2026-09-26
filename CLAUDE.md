@@ -597,33 +597,12 @@ change took Makiri's own share of a parse from 13.3% to 2.6%. `lines_build`
 stays eager (~2%): deferring it would mean holding the source buffer, which is
 the one thing the parse frees.
 
-**Tree-depth guard** (`lexbor/adapter/tree_guard.rs`). HTML tree construction
-is quadratic in nesting depth (most start tags walk the open-element stack for a
-scope check), and the parse runs with the GVL released and cannot be
-interrupted, so `"<div>" * 80_000` was a 5-second DoS. Every HTML parse -
-document, `DocumentFragment.parse`, `Document#fragment`, `Node#parse`,
-`inner_html=`/`outer_html=`, template contents - installs a `TokenHook` that
-chains the tree builder and, after each token, reads the tree's
-`open_elements->length`; past the limit it returns NULL, which is how Lexbor's
-own tree builder fails (the tokenizer stops with `LXB_STATUS_ERROR`), and the
-latched `GuardStop::TooDeep` turns that into `Makiri::Error` "document tree
-depth limit exceeded (N)". `max_tree_depth:` (default 400, negative = none) is Nokogiri's
-name, default and boundary: depth counts elements from `<html>` = 1; a fragment
-keeps a synthetic `<html>` below its top level, which is not counted. The hook
-is a stack value on EVERY parse and carries the source `Recorder` inside it, so
-no recorder failure (allocation, cap, latched panic) can switch the guard off -
-keep it that way. Fragments therefore use the chunked
-`lxb_html_parse_fragment_chunk_*` API, not the one-shot call, and own the
-element context's throwaway document from `begin`, so a refused parse frees it.
-Not everything quadratic is depth: every `<option>` a `<select>` receives
-re-runs Lexbor's `lxb_html_select_selectedness_setting_algorithm` over all its
-options (Lexbor `9c841a3`, in v3.0.0), so 40,000 options - a flat 400 KB -
-took 4 s. The same hook therefore counts the options each select receives and
-stops past `MAX_SELECT_OPTIONS` (10,000; `GuardStop::TooManyOptions`, "too many
-option elements in one select element (limit 10000)"). Which select an option
-updates is Lexbor's static `nearest_ancestor_select`, restated in
-`tree_guard::nearest_select` - keep the two the same rule. Fixed, not a
-keyword; revisit if Lexbor makes the insertion incremental.
+**HTML parse guard** (`lexbor/adapter/tree_guard.rs`; the why is there).
+Every HTML parse entry installs a `TokenHook` that bounds the tree depth
+(`max_tree_depth:`, default 400) and the options one `<select>` receives
+(10,000). Keep it a stack value on every parse, independent of the source
+`Recorder`, so no recorder failure switches it off; fragments use the chunked
+`lxb_html_parse_fragment_chunk_*` API so it can be installed.
 
 **An attribute's parent is Lexbor's own `attr->owner`**, which Lexbor sets when
 it appends an attribute and clears when it removes one; `HtmlNode::parent`

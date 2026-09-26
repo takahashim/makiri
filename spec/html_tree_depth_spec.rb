@@ -2,17 +2,8 @@
 
 require "spec_helper"
 
-# The HTML tree-depth limit (lexbor/adapter/tree_guard.rs). HTML tree
-# construction is quadratic in nesting depth - most start tags walk the stack of
-# open elements - and the parse runs with the GVL released and cannot be
-# interrupted, so an unbounded depth is a denial of service. Every HTML parse
-# entry refuses a tree deeper than `max_tree_depth` (default 400, Nokogiri's
-# name and default; negative disables it) with a Makiri::Error.
-#
-# Depth counts elements from the root, itself included: in a document <html> is
-# 1 and <body> 2, so 398 nested <div>s in the body reach 400; in a fragment the
-# top-level elements are 1, so a fragment holds 400. Both boundaries are
-# Nokogiri::HTML5's, checked against it.
+# The HTML parse guard (lexbor/adapter/tree_guard.rs, which says why): the
+# tree depth, with Nokogiri's default and boundaries, and the options per select.
 RSpec.describe "HTML tree depth limit" do
   let(:message) { /\Adocument tree depth limit exceeded \((\d+)\)\z/ }
 
@@ -197,10 +188,6 @@ RSpec.describe "HTML tree depth limit" do
     end
   end
 
-  # The one quadratic shape depth does not cover: every <option> a select
-  # receives re-runs Lexbor's selectedness algorithm over all its options, so
-  # 40,000 options (a flat 400 KB) took four seconds. Each select may receive
-  # at most 10,000 during a parse.
   describe "the <option> count per <select>" do
     let(:message) { /too many option elements in one select element \(limit 10000\)/ }
 

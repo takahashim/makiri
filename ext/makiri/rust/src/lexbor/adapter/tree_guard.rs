@@ -1,65 +1,28 @@
-//! The tree-depth guard every HTML parse runs under, and the tokenizer hook
-//! that carries it.
+//! The guard every HTML parse runs under: a tokenizer hook that stops the
+//! parse on the two input shapes Lexbor's tree construction handles in
+//! quadratic time. The parse runs with the GVL released and cannot be
+//! interrupted, so either is a denial of service on untrusted input.
 //!
-//! # Why a limit
+//! - **Depth.** Most start tags walk the stack of open elements for a scope
+//!   check, so `"<div>" * 80_000` (400 KB) took 5 s. The limit is Nokogiri's
+//!   `max_tree_depth` (default 400) with its boundary: an element's depth
+//!   counts itself and its ancestors, `<html>` being 1 in a document and the
+//!   top level 1 in a fragment (whose parser keeps a synthetic `<html>` below
+//!   it - [`TokenHook::new`]'s `synthetic`). Checked on the open-element stack
+//!   after each token; a token that pushes several elements is bounded by what
+//!   the previous check accepted.
+//! - **Options per select.** Each inserted `<option>` re-runs the select's
+//!   selectedness algorithm over all its options (Lexbor `9c841a3`, v3.0.0),
+//!   so 40,000 options took 4 s. Counted per select, up to
+//!   [`MAX_SELECT_OPTIONS`].
 //!
-//! HTML tree construction is quadratic in nesting depth: nearly every start
-//! tag asks a scope question ("has a `p` element in button scope") by walking
-//! the stack of open elements, so `"<div>" * 80_000` - 400 KB - took five
-//! seconds, and every doubling quadruples it. The parse runs with the GVL
-//! released and nothing can interrupt it, which makes that a denial of service
-//! for a server parsing untrusted HTML. Browsers and Gumbo bound the depth for
-//! the same reason (Chrome at 512, Nokogiri::HTML5's `max_tree_depth` at 400),
-//! and Makiri's own XML reader has done so from the start (`xml::MAX_DEPTH`).
+//! The hook stops a parse by returning NULL for the token - how Lexbor's own
+//! tree builder fails - and records why ([`TokenHook::stopped`]).
 //!
-//! # What is measured
-//!
-//! The DEPTH of an element is the number of elements from the root down to it,
-//! itself included: in a document `<html>` is 1, `<body>` 2, and the Nth
-//! nested `<div>` inside it N + 2. In a fragment the top-level elements are 1.
-//! That is Nokogiri::HTML5's count, checked against it at the boundary: with
-//! the default 400, a document holds 398 nested `<div>`s in its body and a
-//! fragment 400.
-//!
-//! What is read is the tree builder's stack of open elements, after the tree
-//! builder has processed each token. In a document that stack IS the ancestor
-//! chain of the insertion point - `html`, then `body`, then the rest. A
-//! fragment parse keeps one synthetic `<html>` root at the bottom of it, which
-//! is not part of the fragment, so a fragment's allowance is one entry longer
-//! ([`TokenHook::new`]'s `synthetic`). A parse stops as soon as the stack
-//! holds more than the limit allows.
-//!
-//! Checking per TOKEN rather than per push is enough: one token can push
-//! several elements (the implied `html`/`body`, or the reconstruction of the
-//! active formatting elements), but every one of those is bounded by what the
-//! stack held after the previous token, which the guard had already accepted.
-//!
-//! # Stopping the parse
-//!
-//! The hook returns NULL for the token, which is how Lexbor's own tree builder
-//! reports a failure: the tokenizer sets `LXB_STATUS_ERROR` and stops, and the
-//! parse call returns that status. [`TokenHook::too_deep`] is what tells the
-//! caller the failure was the limit rather than something else.
-//!
-//! # The `<option>` count
-//!
-//! One shape is quadratic without being deep: `<select>` followed by many
-//! `<option>`s. Inserting an option runs the select's "selectedness setting
-//! algorithm" (Lexbor `9c841a3`, in v3.0.0), which walks the select's whole
-//! list of options, so 40,000 options - 400 KB, a flat tree - took four
-//! seconds (nokolexbor, on a Lexbor before that change, 5 ms). So the hook
-//! also counts, per `<select>`, the options the parse inserts into it, and
-//! stops the parse past [`MAX_SELECT_OPTIONS`]. Which select an option updates
-//! is Lexbor's own rule, restated in [`nearest_select`] because Lexbor does
-//! not export it.
-//!
-//! # Fail-closed, whatever the source recorder does
-//!
-//! The hook is a plain value on the caller's stack, installed on EVERY parse;
-//! nothing about it allocates. The document parse's source-position
-//! [`Recorder`] rides inside it, and its failure modes - an allocation that
-//! fails, the token cap, a caught panic - only stop the RECORDING. The depth
-//! check does not depend on the recorder at all, so it runs regardless.
+//! It is a plain value on the caller's stack, installed on every parse, and
+//! allocates nothing. The source-position [`Recorder`] rides inside it, but its
+//! failures (allocation, token cap, a caught panic) only stop the recording:
+//! the guard does not depend on it.
 
 #![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
@@ -77,9 +40,8 @@ type Tokenizer = lxb::lxb_html_tokenizer_t;
 type TokenFn = lxb::lxb_html_tokenizer_token_f;
 type Tree = lxb::lxb_html_tree_t;
 
-/// The most `<option>`s one `<select>` may receive during a parse - far past
-/// any real list (a country picker is ~250), while bounding the quadratic cost
-/// described in the module doc: 10,000 options take about 0.3 s.
+/// The most `<option>`s one `<select>` may receive during a parse; real lists
+/// are a few hundred at most.
 pub const MAX_SELECT_OPTIONS: usize = 10_000;
 
 /// What stopped a parse the hook refused.
@@ -267,12 +229,9 @@ impl TokenHook {
     }
 }
 
-/// The `<select>` whose options an inserted `<option>` updates, if any -
-/// Lexbor's `lxb_html_option_element_nearest_ancestor_select` (static in
-/// `html/interfaces/option_element.c`, so not callable), restated: the nearest
-/// HTML `select` ancestor, unless a `datalist`, `hr` or `option` comes first,
-/// or a second `optgroup`. It must stay that rule - a looser one would count
-/// options that cost nothing, a stricter one would miss the ones that do.
+/// The `<select>` an inserted `<option>` updates, if any. Lexbor's static
+/// `lxb_html_option_element_nearest_ancestor_select`, restated; keep it that
+/// rule.
 fn nearest_select(option: HtmlNode<'_>) -> Option<HtmlNode<'_>> {
     let mut optgroup = false;
     let mut node = option.parent();

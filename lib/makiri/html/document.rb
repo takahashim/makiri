@@ -16,9 +16,7 @@ module Makiri
       # Nokogiri::HTML5: the depth counts elements from the root, +<html>+
       # being 1, and a document deeper than the limit raises Makiri::Error
       # ("document tree depth limit exceeded (400)"). The default is 400; a
-      # negative Integer disables the limit. It exists because HTML tree
-      # construction is quadratic in nesting depth, and the parse cannot be
-      # interrupted: without it, <tt>"<div>" * 80_000</tt> takes seconds.
+      # negative Integer disables the limit.
       #
       # @param source [String, #read]
       # @param max_tree_depth [Integer, nil] nil for the default

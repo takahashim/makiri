@@ -134,27 +134,13 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
     still produces the older bogus comment (`<!--?php ... ?-->`), and
     `Nokogiri::HTML` (libxml2) its own comment.
 
-* A tree deeper than `max_tree_depth` raises **`Makiri::Error`**
-  ("document tree depth limit exceeded (400)"), where `Nokogiri::HTML5` raises
-  `ArgumentError` ("Document tree depth limit exceeded"). The default (400),
-  the "negative disables it" rule and the boundaries are Nokogiri's: a document
-  holds 398 nested elements inside `<html><body>`, a fragment 400.
-  * `Makiri::HTML` / `Makiri.parse` / `HTML::Document.parse`,
-    `HTML::DocumentFragment.parse` and `Document#fragment` take the keyword;
-    `inner_html=`, `outer_html=` and `Node#parse` always use the default.
-    Nokogiri's `Document#fragment` takes no options.
-  * The other Gumbo limits (`max_attributes`, `max_errors`) do not exist; an
-    unknown keyword is an `ArgumentError`.
-  * `Nokogiri::HTML` (libxml2) stops at depth 256 instead, and returns the
-    TRUNCATED document with the error in `#errors`; Makiri never returns a
-    partial tree.
-
-* A `<select>` that receives more than 10,000 `<option>`s during a parse
-  raises **`Makiri::Error`** ("too many option elements in one select element
-  (limit 10000)"); Nokogiri has no such limit. Lexbor's option insertion is
-  quadratic in the select's option count, so without it 40,000 options took
-  4 seconds. Options that update no select (in a `<datalist>`, or outside any
-  select) are not counted.
+* A tree deeper than `max_tree_depth` raises **`Makiri::Error`**, where
+  `Nokogiri::HTML5` raises `ArgumentError`; the default (400) and boundary are
+  Nokogiri's. `inner_html=`, `outer_html=` and `Node#parse` take no keyword.
+  `Nokogiri::HTML` (libxml2) instead stops at depth 256 and returns the
+  truncated document.
+* More than 10,000 `<option>`s in one `<select>` raise `Makiri::Error`;
+  Nokogiri has no such limit.
 
 ## HTML mutation
 

@@ -28,8 +28,8 @@ XPath 1.0 evaluation in its own native engine, with no libxml2 dependency.
     differential, and property-based testing vs Nokogiri (see below).
 * Bounded, fail-closed execution
   * XPath evaluation is bounded by per-evaluation limits on work, memory, and recursion.
-  * HTML parsing bounds the tree depth (`max_tree_depth:`, default 400), since tree
-    construction is quadratic in it and a parse cannot be interrupted.
+  * HTML parsing bounds the tree depth (`max_tree_depth:`, default 400) and the
+    `<option>`s per `<select>` (10,000).
   * Ownership and borrowing are kept explicit across layers, with owned/borrowed
     string types and verified text at engine boundaries.
   * Programmatic invalid input, limit violations, allocation failures, and unsupported constructs
