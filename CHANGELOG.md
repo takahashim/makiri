@@ -20,6 +20,20 @@
 
 ### Security
 
+* An HTML attribute set with the local name `id` or `class` beside an existing
+  one - `set_attribute_ns(nil, "ID", v)`, a namespaced `id`, a `class` in the
+  XHTML namespace - no longer frees the existing attribute (Lexbor's append
+  destroyed it), which left a held `Attr` reading freed memory. HTML attribute
+  lookups and writes now follow the DOM's algorithms:
+  * `#[]`, `#key?`, `#[]=` and `#delete` match the qualified name (lower-cased
+    on an HTML element), not the local name: `svg_a["href"]` no longer returns
+    `xlink:href`, and `svg_a["href"] = v` adds a plain `href` instead of
+    overwriting it. XPath `id()` and `lang()` read attributes the same way.
+  * CSS `#id` / `.class` match the no-namespace `id` / `class` attribute only.
+  * An XML element imported into HTML, or an HTML element cloned or imported,
+    keeps every attribute; an imported no-namespace name keeps its case.
+  * `set_attribute_ns(nil, "MixedCase", v)` serializes as `MixedCase`, as
+    `#keys` already reported it, rather than `mixedcase`.
 * HTML parsing bounds the tree depth (`max_tree_depth:`, default 400; a
   negative value disables it) and the `<option>`s one `<select>` receives
   (10,000), raising `Makiri::Error` past either. Both shapes made Lexbor's tree

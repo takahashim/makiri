@@ -303,42 +303,43 @@ impl<'doc> HtmlElementMut<'doc> {
         self.0
     }
 
-    /// Set `name` to `value`, adding the attribute when the element has none.
-    ///
-    /// `Err` when Lexbor could not store it. The lookup is Lexbor's own, by
-    /// local name and lower-cased for HTML - `set_attribute_ns` is the one that
-    /// keys on (namespace, local name) instead.
+    /* The DOM's attribute algorithms (`attrs`), for a receiver cleared for
+     * editing. None of them destroys an attribute: a Ruby wrapper may hold
+     * one that is replaced or removed. */
+
+    /// DOM `setAttribute(name, value)`. `Err` when Lexbor could not store it.
     pub fn set_attribute(self, name: &[u8], value: &[u8]) -> Result<HtmlAttr<'doc>, AdapterOom> {
-        self.0.put_attribute(name, value)
+        // SAFETY: this type's clearance - the element may be changed.
+        unsafe { self.0.set_attribute_value(name, value) }
     }
 
-    /// Create an attribute named `qname`, give it `value`, and append it, in
-    /// namespace `ns` or none. `Err` when any step failed.
-    pub fn append_attribute(
+    /// DOM `setAttributeNS(ns, qname, value)`, `ns` a URI or `None` for no
+    /// namespace. `Err` when Lexbor could not store it.
+    pub fn set_attribute_ns(
         self,
         ns: Option<&[u8]>,
         qname: &[u8],
         value: &[u8],
     ) -> Result<(), AdapterOom> {
-        self.0.append_attribute_ns(ns, qname, value)
+        // SAFETY: as above.
+        unsafe { self.0.set_attribute_value_ns(ns, qname, value) }
     }
 
     /// Take `attr` off the element. The arena keeps it, like a detached node.
     pub fn attr_remove(self, attr: HtmlAttr<'doc>) {
-        // SAFETY: a live element the caller may change, and an attribute of it.
-        unsafe { lxb::lxb_dom_element_attr_remove(self.0.raw(), attr.raw()) };
+        if attr.owner() == Some(self.0) {
+            // SAFETY: as above, and `attr` is this element's.
+            unsafe { self.0.unlink_attr(attr) };
+        }
     }
 
-    /// Take off the attribute Lexbor's lookup finds for `name`; no-op when
-    /// there is none. Detached, as [`attr_remove`](Self::attr_remove) does -
-    /// not `lxb_dom_element_remove_attribute`, which DESTROYS it while a Ruby
-    /// wrapper may still hold it (the freed attribute's memory came back as a
-    /// text node under the old Attr wrapper).
+    /// DOM `removeAttribute(name)`: take off the attribute
+    /// [`attr_by_name`](HtmlElement::attr_by_name) finds; no-op when there is
+    /// none. Detached, as [`attr_remove`](Self::attr_remove) does - never
+    /// `lxb_dom_element_remove_attribute`, which DESTROYS it while a Ruby
+    /// wrapper may still hold it.
     pub fn remove_attribute(self, name: &[u8]) {
-        // SAFETY: as above; the lookup only reads.
-        let raw =
-            unsafe { lxb::lxb_dom_element_attr_by_name(self.0.raw(), name.as_ptr(), name.len()) };
-        if let Some(attr) = HtmlNode::link(raw as *mut LxbNode).and_then(HtmlNode::attr) {
+        if let Some(attr) = self.0.attr_by_name(name) {
             self.attr_remove(attr);
         }
     }

@@ -84,8 +84,9 @@ fn string_literal(e: &Expr) -> Option<&[u8]> {
 /// matching attribute has it": in XML's lax mode `a` and `p:a` both match `@a`.
 ///
 /// This scans rather than using the host's attribute lookup, whose rules are
-/// not the name test's: Lexbor's folds case on every element, SVG included,
-/// and sees the namespace declarations the axis hides.
+/// not the name test's: HTML's is DOM getAttribute, keyed on the qualified
+/// name whatever the namespace, and it sees the namespace declarations the
+/// axis hides.
 pub fn attr_pred_matches<'d, D: Dom<'d>>(doc: D, ap: &AttrPred, n: D::Node, lax: bool) -> bool {
     /* Only an element has attributes, so a node of any other kind finds none. */
     doc.attributes(n).any(|x| {

@@ -91,14 +91,14 @@ sans.new_null = UTF-8:"v2"
 sans.empty_ns = UTF-8:"v3"
 sans.case = UTF-8:"v4"
 sans.reset_other_prefix = UTF-8:"#third"
-sans.tree = UTF-8:"<a xlink:href=\"#third\" p:thing=\"v\" plain=\"v2\" plain2=\"v3\" mixedcase=\"v4\">t</a>"
+sans.tree = UTF-8:"<a xlink:href=\"#third\" p:thing=\"v\" plain=\"v2\" plain2=\"v3\" MixedCase=\"v4\">t</a>"
 sans.keys = UTF-8:"[\"xlink:href\", \"p:thing\", \"plain\", \"plain2\", \"MixedCase\"]"
 sans.ns_of_each = UTF-8:"[[\"xlink:href\", \"http://www.w3.org/1999/xlink\", \"#third\"], [\"p:thing\", \"urn:x\", \"v\"], [\"plain\", nil, \"v2\"], [\"plain2\", nil, \"v3\"], [\"MixedCase\", nil, \"v4\"]]"
 rans.hit = nil
 rans.null = nil
 rans.miss = nil
 rans.case_miss = nil
-rans.tree = UTF-8:"<a xlink:href=\"#third\" plain2=\"v3\" mixedcase=\"v4\">t</a>"
+rans.tree = UTF-8:"<a xlink:href=\"#third\" plain2=\"v3\" MixedCase=\"v4\">t</a>"
 rans.non_element = nil
 content=.element = UTF-8:"replaced"
 content=.tree = UTF-8:"<html><head></head><body><div id=\"a\">replaced</div></body></html>"

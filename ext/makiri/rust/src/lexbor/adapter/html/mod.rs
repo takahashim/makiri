@@ -26,6 +26,7 @@ use core::ptr::NonNull;
 use crate::lexbor::abi::{self as lxb, LxbAttr, LxbDoc, LxbElement, LxbNode};
 pub use crate::node_type::NodeType;
 
+mod attrs;
 mod build;
 mod mutate;
 pub use build::{BuildingElement, BuildingNode};
@@ -1003,108 +1004,8 @@ impl<'doc> HtmlElement<'doc> {
         Attrs(self.first_attr())
     }
 
-    /// The attribute with this (namespace, local name) - the DOM's key for a
-    /// namespaced attribute, as against [`get_attribute`](Self::get_attribute),
-    /// which is Lexbor's lookup by local name alone.
-    ///
-    /// The local name compared is the CASE-PRESERVED tail of the qualified
-    /// name, not Lexbor's stored `local_name`: Lexbor lower-cases that even when
-    /// the qualified name keeps its case, and `setAttributeNS` is
-    /// case-sensitive.
-    pub fn find_attr_ns(self, ns: Option<NsId>, local: &[u8]) -> Option<HtmlAttr<'doc>> {
-        self.attrs()
-            .find(|a| a.own_ns() == ns && a.dom_local_name() == local)
-    }
-
-    /* The attribute-writing steps, spelled once. Reached only through the two
-     * clearance types - `HtmlElementMut` (a receiver cleared for editing) and
-     * `BuildingElement` (an element no tree holds yet) - which differ in who
-     * may call them, not in what Lexbor is asked to do. */
-
-    /// Set `name` to `value`, adding the attribute when the element has none -
-    /// Lexbor's lookup, by local name and lower-cased for HTML. `Err` when
-    /// Lexbor could not store it.
-    fn put_attribute(self, name: &[u8], value: &[u8]) -> Result<HtmlAttr<'doc>, AdapterOom> {
-        /* An attribute the element already has gets its value here, not in
-         * `lxb_dom_element_set_attribute`: when storing the value fails, that
-         * DESTROYS the attribute while it is still in the element's list - a
-         * dangling link in the tree, and a freed node under whatever Ruby
-         * wrapper holds it. A failure here leaves the attribute as it was.
-         * The lookup is the one set_attribute makes, so the same attribute is
-         * found. */
-        // SAFETY: a live element; `name` is only read.
-        let found =
-            unsafe { lxb::lxb_dom_element_attr_is_exist(self.raw(), name.as_ptr(), name.len()) };
-        if let Some(at) = HtmlAttr::link(found) {
-            return at.set_value(value).map(|()| at);
-        }
-        /* Only the create path is left, where a failure destroys an attribute
-         * nothing links to yet. */
-        // SAFETY: a live element its caller may change; both slices are read
-        // and copied by Lexbor before anything else runs.
-        let at = unsafe {
-            lxb::lxb_dom_element_set_attribute(
-                self.raw(),
-                name.as_ptr(),
-                name.len(),
-                value.as_ptr(),
-                value.len(),
-            )
-        };
-        HtmlAttr::link(at).ok_or(AdapterOom)
-    }
-
-    /// Create an attribute named `qname` (case preserved), give it `value`, and
-    /// append it. `ns` is the namespace URI, or `None` for none - a different
-    /// naming call, not an empty URI; a fresh attribute is already in the null
-    /// namespace.
-    ///
-    /// `Err` when any step failed; the unappended attribute is left for the
-    /// document's arena to reclaim wholesale, the "never destroy" convention.
-    fn append_attribute_ns(
-        self,
-        ns: Option<&[u8]>,
-        qname: &[u8],
-        value: &[u8],
-    ) -> Result<(), AdapterOom> {
-        // SAFETY: a live element of a live document its caller may change;
-        // every slice is read and copied by Lexbor.
-        unsafe {
-            let at = lxb::lxb_dom_attr_interface_create(self.node().owner_document().as_raw());
-            let at = HtmlAttr::link(at).ok_or(AdapterOom)?;
-            let named = match ns {
-                Some(uri) => lxb::lxb_dom_attr_set_name_ns(
-                    at.raw(),
-                    uri.as_ptr(),
-                    uri.len(),
-                    qname.as_ptr(),
-                    qname.len(),
-                    false,
-                ),
-                None => lxb::lxb_dom_attr_set_name(at.raw(), qname.as_ptr(), qname.len(), false),
-            };
-            lexbor_ok(named)?;
-            at.set_value(value)?;
-            lxb::lxb_dom_element_attr_append(self.raw(), at.raw());
-            Ok(())
-        }
-    }
-
-    /// Lexbor's attribute lookup (by local name, lower-cased for HTML).
-    pub fn has_attribute(self, name: &[u8]) -> bool {
-        // SAFETY: a live element; `name` is only read.
-        unsafe { lxb::lxb_dom_element_has_attribute(self.raw(), name.as_ptr(), name.len()) }
-    }
-    /// The value [`has_attribute`](Self::has_attribute) finds, or None.
-    pub fn get_attribute(self, name: &[u8]) -> Option<&'doc [u8]> {
-        let mut len = 0;
-        // SAFETY: a live element; `name` is only read.
-        let value = unsafe {
-            lxb::lxb_dom_element_get_attribute(self.raw(), name.as_ptr(), name.len(), &mut len)
-        };
-        // SAFETY: Lexbor's stored value, `len` bytes, owned by the document.
-        (!value.is_null()).then(|| unsafe { seen(value, len) })
-    }
+    /* The attribute lookups and writes - the DOM's algorithms - are in
+     * `attrs`. */
 }
 
 impl<'doc> HtmlAttr<'doc> {

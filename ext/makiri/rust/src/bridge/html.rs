@@ -422,25 +422,7 @@ pub fn set_attribute_ns(
     qname: &RubyText,
     value: &RubyData,
 ) -> Result<(), AdapterOom> {
-    let (qname, value) = (qname.as_bytes(), value.as_bytes());
-    let local = match qname.iter().position(|&b| b == b':') {
-        Some(i) => &qname[i + 1..],
-        None => qname,
-    };
-    /* Looked up, not interned: no attribute carries a namespace the document
-     * never interned, and the append below interns it itself. */
-    let existing = match ns {
-        Some(uri) => {
-            let doc = el.element().node().owner_document();
-            doc.lookup_ns(uri)
-                .and_then(|id| el.element().find_attr_ns(Some(id), local))
-        }
-        None => el.element().find_attr_ns(None, local),
-    };
-    match existing {
-        Some(existing) => existing.set_value(value),
-        None => el.append_attribute(ns, qname, value),
-    }
+    el.set_attribute_ns(ns, qname.as_bytes(), value.as_bytes())
 }
 
 /// Remove the attribute `local` in namespace `ns` (`None` = none); whether
@@ -459,7 +441,7 @@ pub fn remove_attribute_ns(el: HtmlElementMut<'_>, ns: Option<&[u8]>, local: &Ru
         }
         None => None,
     };
-    match el.element().find_attr_ns(want_ns, local.as_bytes()) {
+    match el.element().attr_by_ns(want_ns, local.as_bytes()) {
         Some(attr) => {
             el.attr_remove(attr);
             true

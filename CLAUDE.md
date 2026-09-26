@@ -686,7 +686,7 @@ null). **Name tests fold ASCII case on HTML elements** (browsers + WPT
 element namespace): `//DiV` finds `<div>`, `[@Id]` its `id`, in both modes;
 SVG/MathML names stay exact (`refX`). One rule, `nodetest::names_equal` over
 `Dom::folds_name_case`, serves the name test AND the `[@attr]` fast path - keep
-it that way, since Lexbor's own attribute lookup folds on every element. The
+it that way; the host's getAttribute (`id()`, `lang()`) has rules of its own. The
 HTML attribute axis also skips attributes in the XMLNS namespace (a foreign
 element's `xmlns`/`xmlns:*`), as the XML backend skips declarations.
 
@@ -765,7 +765,15 @@ text (DOM makes a Document's textContent null, which is not what callers want).
 `add_previous_sibling`/`before`, `add_next_sibling`/`after`, `remove`/`unlink`,
 `replace`) over Lexbor insert/remove. We **detach, never destroy** - the arena
 owns node memory and live Ruby wrappers may alias a removed node; move semantics
-= detach-then-insert. Attribute `[]=` / `delete`; `Node#content=`. There is
+= detach-then-insert. Attribute `[]=` / `delete`; `Node#content=`. **Every HTML
+attribute lookup and write is the DOM's algorithm in `lexbor/adapter/html/attrs.rs`**
+(by qualified name, lower-cased on an HTML element; by namespace + local name),
+never Lexbor's element helpers: those match the LOCAL name (`svg_a["href"]`
+hit `xlink:href`), and `lxb_dom_element_attr_append` DESTROYS the attribute
+behind `element->attr_id`/`attr_class` when another `id`/`class` arrives.
+`link_attr` empties both shortcuts around that append (nothing to free) and
+points them at the no-namespace `id`/`class` itself (they back CSS `#id` /
+`.class`); `repair_import` fixes what Lexbor's `importNode` copy drops. There is
 NO rename (`name=` was removed on both representations): the DOM has none, and
 Lexbor keeps many elements in structs of their own, so rewriting a node's tag in
 place left it read as a struct it is not (`div` -> `template` segfaulted). `Document#{create_element,create_text_node}`.
@@ -894,8 +902,8 @@ Key decisions that got there, worth not regressing:
   to `max_string_bytes` exactly as a build (`Buf::content_limit_for`).
 - **`[@name]` / `[@name='lit']` predicates take a direct-attribute fast path**
   (`match_attr_pred`/`attr_pred_matches` in `xpath/attr_pred.rs`): a
-  position-independent filter via `lxb_dom_element_has_attribute`/`get_attribute`
-  instead of building a throwaway node-set per candidate; anything else falls
+  position-independent scan of the element's attributes with the axis's own
+  name test, instead of building a throwaway node-set per candidate; anything else falls
   through to the generic evaluator.
 - **`Node#at_xpath` first-match short-circuit** (`xpath/eval.rs`
   `try_first_match`, entered via `evaluate_first`): `at_xpath`

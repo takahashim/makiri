@@ -233,15 +233,22 @@ impl<'doc> HtmlDoc<'doc> {
     /// says. `deep` carries the subtree - but NOT a `<template>`'s separate
     /// contents fragment, which Lexbor's importNode omits; the caller fixes
     /// that up (see `lexbor::fragment::import_with_fixup`).
+    ///
+    /// Lexbor's copy appends attributes by its own rules, which can drop one;
+    /// `attrs::repair_import` puts the copy's attributes right before it is
+    /// handed out, and a copy it cannot repair is `None` too.
     pub fn import_node(self, src: HtmlNode<'_>, deep: bool) -> Option<BuildingNode<'doc>> {
         // SAFETY: two live documents' nodes; Lexbor allocates the copy in this
-        // one and leaves the source alone.
+        // one and leaves the source alone. The copy is unshared until
+        // returned, which is what the repair asks.
         unsafe {
-            BuildingNode::from_raw(lxb::lxb_dom_document_import_node(
+            let copy = BuildingNode::from_raw(lxb::lxb_dom_document_import_node(
                 self.as_raw(),
                 src.as_raw(),
                 deep,
-            ))
+            ))?;
+            super::attrs::repair_import(self, src, copy.0, deep).ok()?;
+            Some(copy)
         }
     }
 }
@@ -428,22 +435,18 @@ impl<'doc> BuildingElement<'doc> {
         unsafe { (*self.0.raw()).node.ns = ns.raw() };
     }
 
-    /// Set a plain, namespaceless attribute. `Err` when Lexbor could not
-    /// store it.
-    pub fn set_attribute(self, name: &[u8], value: &[u8]) -> Result<(), AdapterOom> {
-        self.0.put_attribute(name, value).map(drop)
-    }
-
-    /// Create an attribute in `ns`, name it `qname` case-preserving, give it
-    /// `value`, and append it. `Err` when any step failed, in which case the
+    /// DOM "append an attribute" of a new one named `qname` (case preserved)
+    /// in `ns`, `None` for no namespace - a copy's step, so no existing
+    /// attribute is looked for. `Err` when any step failed, in which case the
     /// unappended attribute is left for the arena, like the rest of an
     /// abandoned subtree.
-    pub fn append_ns_attribute(
+    pub fn append_attribute(
         self,
-        ns: &[u8],
+        ns: Option<&[u8]>,
         qname: &[u8],
         value: &[u8],
     ) -> Result<(), AdapterOom> {
-        self.0.append_attribute_ns(Some(ns), qname, value)
+        // SAFETY: an element nothing else holds may be changed.
+        unsafe { self.0.append_attribute(ns, qname, value) }
     }
 }

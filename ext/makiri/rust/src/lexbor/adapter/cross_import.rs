@@ -338,18 +338,19 @@ pub unsafe fn cross_html_to_xml(
 
 /// Copy the source element's attributes onto the element being translated into.
 ///
+/// Each is appended as it is, name and namespace - the DOM's clone step. No
+/// existing attribute is looked for: the XML element already keeps
+/// (namespace, local name) unique, and a lookup by Lexbor's rules is what used
+/// to merge `href` into `xlink:href` or drop `id` beside `x:id`.
+///
 /// The document comes from `el` itself, so there is no second handle to keep in
 /// step with it.
 fn x2h_copy_attrs(doc: &XmlDoc, s: NodeId, el: BuildingElement<'_>) -> Result<(), MutError> {
     let mut a = doc.first_attr(s);
     while let Some(attr) = a {
         let (val, qname, ns) = (doc.value(attr), doc.qname(attr), doc.ns(attr));
-        if ns.is_empty() {
-            el.set_attribute(qname, val)
-        } else {
-            el.append_ns_attribute(ns, qname, val)
-        }
-        .map_err(|_| MutError::Oom)?;
+        el.append_attribute((!ns.is_empty()).then_some(ns), qname, val)
+            .map_err(|_| MutError::Oom)?;
         a = doc.next(attr);
     }
     Ok(())

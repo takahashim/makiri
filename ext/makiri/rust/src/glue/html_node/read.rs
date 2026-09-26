@@ -354,24 +354,19 @@ pub fn ancestors(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
 
 /// `node[name]` -> the value String, or nil when absent or not an element.
 ///
-/// This goes through Lexbor's attribute-name hash, which is keyed by LOCAL name
-/// and lower-cases the lookup - see [`attribute_by_qualified_name`] for the
-/// exact-match sibling and why both exist.
+/// DOM `getAttribute`: matched on the QUALIFIED name, ASCII-lowercased first on
+/// an HTML element (`HtmlElement::attr_by_name`), so `svg_a["href"]` does not
+/// find `xlink:href`. See [`attribute_by_qualified_name`] for the byte-exact
+/// sibling.
 pub fn aref(_ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
         let Some(el) = this.node().element() else {
             return Ok(None);
         };
         let nv = ruby_verified_text(rb_name, "attribute name")?;
-        let name = nv.as_bytes();
-        /* Asked first because the value alone cannot tell: Lexbor answers NULL
-         * both for an absent attribute and for a present one with no value
-         * (`<input disabled>`), and only the second is `""`. */
-        if !el.has_attribute(name) {
-            return Ok(None);
-        }
-        let value = el.get_attribute(name).unwrap_or(&[]);
-        Ok(Some(dom_str(value)))
+        /* A present attribute with no value (`<input disabled>`) answers
+         * `Some(b"")`, which is `""`; only an absent one is nil. */
+        Ok(el.get_attribute(nv.as_bytes()).map(dom_str))
     })
 }
 
@@ -426,16 +421,9 @@ pub fn attribute_nodes(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Err
 /// `element.attribute_by_qualified_name(name)` -> the Attr whose QUALIFIED name
 /// is exactly `name`, or nil.
 ///
-/// `#[]` and `#key?` cannot answer this: they go through Lexbor's attribute-name
-/// hash, which is keyed by LOCAL name, so on an element carrying a prefixed
-/// attribute - `<a xlink:href>` in an inline `<svg>`, say - `el["href"]` hands
-/// that attribute back. The DOM's by-name family (getAttribute, setAttribute,
-/// removeAttribute) is defined on the qualified name, where `getAttribute("href")`
-/// is null there, and needs the exact match.
-///
-/// The match is also BYTE-exact, where `#[]` lower-cases what it looks up.
-/// getAttribute's ASCII-lowercasing applies only to an HTML element in an HTML
-/// document, so the caller does that step.
+/// `#[]` and `#key?` match the qualified name too, but lower-case what they
+/// look up on an HTML element, as DOM getAttribute does; this match is
+/// BYTE-exact, for a caller that does that step itself.
 pub fn attribute_by_qualified_name(
     _ruby: &Ruby,
     this: super::HtmlSelf,
