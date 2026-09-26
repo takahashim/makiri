@@ -607,6 +607,16 @@ impl HtmlSource {
 /// scan (a scan would cost as much as running our own validator), so it only
 /// wins when Ruby has the answer already. UNKNOWN or BROKEN returns false and
 /// the caller validates or sanitises.
+///
+/// Trusting `Coderange::Valid` is an accepted assumption: Ruby sets it only
+/// after a successful scan, and any C extension that rewrote the bytes must go
+/// through Ruby's string API to keep the object consistent - one that scribbles
+/// over a String without updating it has already broken Ruby's own invariants
+/// (String#=~, Encoding, Marshal all read the same cache). The consequence here
+/// is sharper than a wrong answer, because the view turns the bytes into a
+/// `&str` (see `RubyStr`'s `Deref`); the alternative - scanning every
+/// `Coderange::Valid` string ourselves - gives up the optimization on the hot
+/// path for a case that means the host is already unsound.
 fn ruby_str_known_valid_utf8(str: RString) -> bool {
     match str.enc_coderange() {
         /* Every byte < 0x80 in an ASCII-compatible encoding. */
