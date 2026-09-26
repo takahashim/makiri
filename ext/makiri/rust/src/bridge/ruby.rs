@@ -221,12 +221,22 @@ pub fn same_value(a: Value, b: Value) -> bool {
     a.as_raw() == b.as_raw()
 }
 
-/// A method `ID`, interned from a NUL-terminated name.
+/// A method `ID`, interned from a UTF-8 name.
+///
+/// UTF-8 explicitly, not `rb_intern`: that one tags the name US-ASCII, so a
+/// non-ASCII name (`é`) became a different symbol from the UTF-8 method Ruby
+/// defined under it, and the method was never found.
 #[inline]
-pub fn intern(name: &[u8]) -> ID {
-    debug_assert_eq!(name.last(), Some(&0), "intern needs a NUL-terminated name");
-    // SAFETY: `name` is NUL-terminated as asserted; interning does not raise.
-    unsafe { rb_sys::rb_intern(name.as_ptr() as *const core::ffi::c_char) }
+pub fn intern(name: &str) -> ID {
+    // SAFETY: `name` is `name.len()` valid UTF-8 bytes, read for the call;
+    // interning valid UTF-8 does not raise.
+    unsafe {
+        rb_sys::rb_intern3(
+            name.as_ptr() as *const core::ffi::c_char,
+            name.len() as core::ffi::c_long,
+            rb_sys::rb_utf8_encoding(),
+        )
+    }
 }
 
 /// `rb_funcallv`: call `method` on `recv`. Can raise, so the caller runs it

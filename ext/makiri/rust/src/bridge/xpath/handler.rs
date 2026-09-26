@@ -242,18 +242,22 @@ unsafe fn handler_resolver(
 ) -> Result<Option<Val>, Reported> {
     let err = budget.sink();
 
-    /* The method name: XPath uses '-', Ruby uses '_'. The buffer starts zeroed,
-     * so the copy stays NUL-terminated. */
-    let mut name = [0u8; 128];
+    /* The method name: XPath uses '-', Ruby uses '_'. */
+    let mut buf = [0u8; 128];
     let n = call.local.len();
-    if n >= name.len() {
+    if n > buf.len() {
         return Ok(None); /* too long to map to a Ruby method name */
     }
-    for (dst, &b) in name.iter_mut().zip(call.local) {
+    for (dst, &b) in buf.iter_mut().zip(call.local) {
         *dst = if b == b'-' { b'_' } else { b };
     }
+    /* The expression was checked UTF-8, and swapping one ASCII byte for
+     * another keeps it so; a name that somehow is not has no method. */
+    let Ok(name) = core::str::from_utf8(&buf[..n]) else {
+        return Ok(None);
+    };
 
-    let method = crate::bridge::ruby::intern(&name);
+    let method = crate::bridge::ruby::intern(name);
     /* `respond_to?` - and `respond_to_missing?` behind it - is the handler's own
      * Ruby code, so it is asked under protect: a raise there fails this call like
      * any handler raise, instead of unwinding past the evaluation's guards. */
@@ -268,7 +272,7 @@ unsafe fn handler_resolver(
             err,
             ErrorKind::Runtime,
             "handler function '{}' called with too many arguments ({} > {})",
-            core::str::from_utf8_unchecked(&name[..n]),
+            name,
             call.args.len(),
             HANDLER_MAX_ARGS
         ));

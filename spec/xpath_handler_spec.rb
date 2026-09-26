@@ -76,6 +76,15 @@ RSpec.describe "Makiri XPath custom function handler" do
       expect { ctx.evaluate("ng:mycount(//p)", handler) }
         .to raise_error(Makiri::Error, /unknown function/)
     end
+
+    # The method name is interned as UTF-8, the encoding Ruby defines a
+    # non-ASCII method under; interned US-ASCII it was another symbol, and the
+    # method was reported as an unknown function.
+    it "dispatches a non-ASCII function name to its method" do
+      h = Object.new
+      def h.é(*) = "ok"
+      expect(doc.xpath("é()", h)).to eq("ok")
+    end
   end
 
   describe "errors" do
