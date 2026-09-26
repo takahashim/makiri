@@ -22,13 +22,9 @@ pub use makiri::xpath::limits::Limits;
 pub use makiri::xpath::parse::parse_owned;
 
 /// A context over `doc`, rooted at its document node and pinned to the XML
-/// engine - the same arguments the glue's `build_ctx` passes. `None` when the
-/// document has no root.
-pub fn xml_context(doc: &Document) -> Option<Context<'_, &Document>> {
-    if doc.doc_node().is_invalid() {
-        return None;
-    }
-    Some(makiri::xml::xpath::context(doc, doc.doc_node()))
+/// engine - the same arguments the glue's `build_ctx` passes.
+pub fn xml_context(doc: &Document) -> Context<'_, &Document> {
+    makiri::xml::xpath::context(doc, doc.doc_node())
 }
 
 /// Parse `text` under the context's caps, on a budget of the parse's own - the

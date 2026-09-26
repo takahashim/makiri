@@ -52,6 +52,10 @@ impl<'d> Dom<'d> for &'d xml::Document {
     /// The token is opaque data: every read resolves it through
     /// `Document::try_node`, so a stale or foreign one reads as no node.
     #[inline]
+    #[allow(
+        clippy::expect_used,
+        reason = "an XML token is minted only by `Token::xml` from a real node's id"
+    )]
     fn resolve_token(self, t: Token) -> xml::NodeId {
         /* An HTML token never reaches an XML context; assert it here so a bug
          * shows as a check, not a silently misread arena slot. */
@@ -60,7 +64,7 @@ impl<'d> Dom<'d> for &'d xml::Document {
             Kind::Xml,
             "an XML context resolved a non-XML token"
         );
-        xml::NodeId::from_token(t.word())
+        xml::NodeId::from_token(t.word()).expect("a resolved token names a node")
     }
 
     #[inline]

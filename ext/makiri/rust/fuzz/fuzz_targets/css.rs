@@ -39,9 +39,7 @@ fuzz_target!(|data: &[u8]| {
     };
 
     {
-        let Some(mut ctx) = xml_context(&doc) else {
-            return;
-        };
+        let mut ctx = xml_context(&doc);
         let l = ctx.limits_mut();
         l.max_eval_ops = 1_000_000;
         l.max_nodeset_size = 10_000;

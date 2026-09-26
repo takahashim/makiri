@@ -11,7 +11,7 @@
 
 #![forbid(unsafe_code)]
 
-use core::num::NonZeroU32;
+use core::num::{NonZeroU32, NonZeroU64};
 
 /* Boundary readers state their precondition once, on `bytes`. */
 /* ---- status codes ---- */
@@ -286,7 +286,7 @@ impl Span {
 /// index + document/reuse stamp, and [`Document::try_node`] already checks it.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(transparent)]
-pub struct NodeId(usize);
+pub struct NodeId(NonZeroU64);
 
 #[cfg(not(target_pointer_width = "64"))]
 compile_error!(
@@ -295,37 +295,45 @@ compile_error!(
 );
 
 impl NodeId {
-    /// The absent handle. Its token word is 0, which is the engine's "no
-    /// node" ([`crate::token::Token`]'s null slot), so index 0 is reserved and
-    /// never a real node.
-    pub const INVALID: NodeId = NodeId(0);
-
+    /// Slot 0 is reserved (see `Document::create`), so a slot index is never
+    /// 0 and no `NodeId` names that slot: there is no "absent" handle to pass
+    /// by mistake. Absence is `Option<NodeId>`, which the niche keeps one word.
     #[inline]
-    pub(crate) fn new(index: u32, stamp: u32) -> Self {
-        NodeId(((stamp as usize) << 32) | index as usize)
+    pub(crate) fn new(index: NonZeroU32, stamp: u32) -> Self {
+        NodeId(NonZeroU64::from(index) | (u64::from(stamp) << 32))
     }
     #[inline]
     pub fn index(self) -> u32 {
-        self.0 as u32
+        self.0.get() as u32
     }
     /// The owning document's stamp (see [`Document::stamp`]).
     #[inline]
     pub fn stamp(self) -> u32 {
-        (self.0 >> 32) as u32
+        (self.0.get() >> 32) as u32
+    }
+    /// The link naming this node - total, since no id names slot 0.
+    #[inline]
+    pub(crate) fn link(self) -> Link {
+        Link(self.slot())
     }
     #[inline]
-    pub fn is_invalid(self) -> bool {
-        self.index() == 0
+    fn slot(self) -> NonZeroU32 {
+        /* `new` is the only constructor and put a nonzero index here; read it
+         * back without re-deciding that. */
+        NonZeroU32::new(self.index()).unwrap_or(NonZeroU32::MIN)
     }
 
     /// The opaque token the engine carries in node-sets (identity here).
     #[inline]
     pub fn to_token(self) -> usize {
-        self.0
+        /* 64-bit targets only (the `compile_error!` above), so this is exact. */
+        self.0.get() as usize
     }
+    /// The id a token word names; `None` for a word whose slot index is 0,
+    /// which no node has.
     #[inline]
-    pub(crate) fn from_token(token: usize) -> Self {
-        NodeId(token)
+    pub(crate) fn from_token(token: usize) -> Option<Self> {
+        NonZeroU32::new(token as u32).map(|index| NodeId::new(index, (token >> 32) as u32))
     }
 }
 
@@ -346,16 +354,20 @@ pub struct Link(NonZeroU32);
 const _: () = assert!(core::mem::size_of::<Option<Link>>() == 4);
 
 impl Link {
-    /// The link naming `id`; [`NodeId::INVALID`] (index 0) names no node, so
-    /// it has none.
+    /// The link naming `id`.
     #[inline]
-    pub(crate) fn of(id: NodeId) -> Option<Link> {
-        NonZeroU32::new(id.index()).map(Link)
+    pub(crate) fn of(id: NodeId) -> Link {
+        id.link()
     }
     /// As [`Link::of`], for an optional handle.
     #[inline]
     pub(crate) fn from_option(id: Option<NodeId>) -> Option<Link> {
-        id.and_then(Link::of)
+        id.map(Link::of)
+    }
+    /// The slot index as the nonzero value it is.
+    #[inline]
+    pub(crate) fn slot(self) -> NonZeroU32 {
+        self.0
     }
     /// The slot index this link names (never 0).
     #[inline]

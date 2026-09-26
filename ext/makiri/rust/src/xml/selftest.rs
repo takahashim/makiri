@@ -50,7 +50,7 @@ fn assert_rejected(s: &[u8], want: ParseError) {
 
 /* The navigation these checks do is always "the node that must be there", so
  * the accessors below fail with what was missing rather than handing back
- * `NodeId::INVALID` for a later comparison to trip over. */
+ * a placeholder for a later comparison to trip over. */
 
 fn root_of(d: &Document) -> NodeId {
     d.root().expect("a root element")
@@ -760,8 +760,8 @@ fn set_content_replaces_the_children_with_one_text_node() {
     /* Hand-linked, so the child is there without an insertion having run. */
     let c1 = doc.new_node(ArenaKind::Element).expect("a child");
     doc.set_parent(c1, Some(r));
-    doc.node_mut(r).first_child = Link::of(c1);
-    doc.node_mut(r).last_child = Link::of(c1);
+    doc.node_mut(r).first_child = Some(Link::of(c1));
+    doc.node_mut(r).last_child = Some(Link::of(c1));
 
     assert_eq!(mutate::set_content(&mut doc, r, b"hi"), Ok(()));
     let fc = child(&doc, r);
@@ -788,12 +788,12 @@ fn chain_of_children(n: usize) -> (Box<Document>, NodeId, Vec<NodeId>) {
         let c = doc.new_node(ArenaKind::Element).expect("a child");
         doc.set_parent(c, Some(r));
         if let Some(&prev) = kids.last() {
-            doc.node_mut(prev).next = Link::of(c);
-            doc.node_mut(c).prev = Link::of(prev);
+            doc.node_mut(prev).next = Some(Link::of(c));
+            doc.node_mut(c).prev = Some(Link::of(prev));
         } else {
-            doc.node_mut(r).first_child = Link::of(c);
+            doc.node_mut(r).first_child = Some(Link::of(c));
         }
-        doc.node_mut(r).last_child = Link::of(c);
+        doc.node_mut(r).last_child = Some(Link::of(c));
         kids.push(c);
     }
     (doc, r, kids)
@@ -1014,12 +1014,12 @@ fn node_id_tokens_fail_closed_outside_their_document() {
     assert!(a.try_node(nb).is_none());
 
     // Out-of-range index -> rejected, not a panic.
-    let oob = NodeId::new(u32::MAX - 1, na.stamp());
+    let oob = NodeId::new(core::num::NonZeroU32::MAX, na.stamp());
     assert!(a.try_node(oob).is_none());
 
-    // The null handle -> rejected.
-    assert!(a.try_node(NodeId::INVALID).is_none());
-    assert!(NodeId::INVALID.is_invalid());
+    // A word naming slot 0 is no handle at all.
+    assert!(NodeId::from_token(0).is_none());
+    assert!(NodeId::from_token((na.stamp() as usize) << 32).is_none());
 }
 
 /// A node spliced next to ITSELF is a sibling ring, and the engine follows

@@ -33,9 +33,7 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
 
-    let Some(mut ctx) = xml_context(&doc) else {
-        return;
-    };
+    let mut ctx = xml_context(&doc);
 
     // Budgets tightened so a hostile expression fails fast instead of
     // burning fuzzer time. Same numbers the C harness used, and applied in

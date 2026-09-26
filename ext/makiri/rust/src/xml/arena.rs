@@ -25,6 +25,7 @@ use crate::xml::qname::Split;
 use crate::xml::{
     ArenaKind, BudgetError, Document, Link, Node, NodeId, Span, MAX_BYTES, MAX_NODES,
 };
+use core::num::NonZeroU32;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 /// Hands each document a unique stamp (never 0). Node ids carry it so a handle
@@ -39,6 +40,9 @@ use core::sync::atomic::{AtomicU32, Ordering};
 static DOC_STAMP: AtomicU32 = AtomicU32::new(1);
 
 const NODE_COST: usize = core::mem::size_of::<Node>();
+
+/// The document node's slot: the first after the reserved slot 0.
+const DOC_NODE_SLOT: NonZeroU32 = NonZeroU32::MIN;
 
 /// Why [`Document::append_with`] wrote nothing: the budget refused, or `fill`
 /// did.
@@ -58,37 +62,38 @@ impl Document {
     /// length is checked by `tree::check_source_len`, which the two entry
     /// points share, so this only records the budget.
     pub fn create(limits: Option<&crate::xml::ParseLimits>) -> Result<Box<Document>, BudgetError> {
+        let mut stamp = DOC_STAMP.fetch_add(1, Ordering::Relaxed);
+        if stamp == 0 {
+            stamp = DOC_STAMP.fetch_add(1, Ordering::Relaxed);
+        }
         let doc = Document {
             nodes: Vec::new(),
             bytes: Vec::new(),
             xml_ns: Span::EMPTY,
             xmlns_ns: Span::EMPTY,
-            stamp: 0,
+            stamp,
             arena_bytes: 0,
             max_bytes: limits.map_or(MAX_BYTES, crate::xml::ParseLimits::budget),
             max_nodes: MAX_NODES,
             root: None,
-            doc_node: NodeId::INVALID,
+            /* The slot pushed second below, named before it exists so the
+             * document never holds a placeholder. */
+            doc_node: NodeId::new(DOC_NODE_SLOT, stamp),
             doctype: None,
             name_index: core::cell::OnceCell::new(),
             has_encoding_decl: false,
         };
         let mut doc = crate::falloc::try_box(doc).map_err(|_| BudgetError::Oom)?;
-        let mut stamp = DOC_STAMP.fetch_add(1, Ordering::Relaxed);
-        if stamp == 0 {
-            stamp = DOC_STAMP.fetch_add(1, Ordering::Relaxed);
-        }
-        doc.stamp = stamp;
         doc.xml_ns = doc.store(crate::xml::XML_NS_URI)?;
         doc.xmlns_ns = doc.store(crate::xml::XMLNS_NS_URI)?;
-        /* Index 0 is reserved, and it is a 4-byte `Link` that forces it: a
+        /* Slot 0 is reserved, and it is the 4-byte `Link` that forces it: a
          * `Link` is a `NonZeroU32`, so no link can name slot 0 - and the
-         * document node IS a link target (its children's `parent`). The
-         * absent handle `NodeId::INVALID` is word 0 (index 0, stamp 0), and
-         * real nodes carry a nonzero stamp, so their word is never 0 either;
-         * the two facts agree that real nodes start at index 1. */
-        let _null_slot = doc.new_node(ArenaKind::Document)?;
-        doc.doc_node = doc.new_node(ArenaKind::Document)?;
+         * document node IS a link target (its children's `parent`). No
+         * `NodeId` names it either (`NodeId::new` takes a nonzero index), so
+         * nothing can read or write it; it only holds the numbering. */
+        doc.push_slot(ArenaKind::Document)?;
+        let doc_node = doc.new_node(ArenaKind::Document)?;
+        debug_assert_eq!(doc_node, doc.doc_node, "the document node is slot 1");
         Ok(doc)
     }
 
@@ -122,14 +127,12 @@ impl Document {
     #[inline]
     pub(crate) fn node(&self, id: NodeId) -> &Node {
         debug_assert_eq!(id.stamp(), self.stamp, "NodeId from another document");
-        debug_assert!(!id.is_invalid(), "the absent NodeId names slot 0");
         &self.nodes[id.index() as usize]
     }
     /// As [`Document::node`], for mutation.
     #[inline]
     pub(crate) fn node_mut(&mut self, id: NodeId) -> &mut Node {
         debug_assert_eq!(id.stamp(), self.stamp, "NodeId from another document");
-        debug_assert!(!id.is_invalid(), "the absent NodeId names slot 0");
         &mut self.nodes[id.index() as usize]
     }
 
@@ -142,7 +145,7 @@ impl Document {
     /// The handle a [`Link`] names, re-attaching this document's stamp.
     #[inline]
     fn id_of(&self, l: Link) -> NodeId {
-        NodeId::new(l.index(), self.stamp)
+        NodeId::new(l.slot(), self.stamp)
     }
     /// The node a link names.
     #[inline]
@@ -155,11 +158,11 @@ impl Document {
         &mut self.nodes[l.index() as usize]
     }
 
-    /// A node that may hold a detached/removed value: `None` for the invalid
-    /// handle, a handle from another document, or an out-of-range index.
+    /// A node that may hold a detached/removed value: `None` for a handle from
+    /// another document or an out-of-range index.
     #[inline]
     pub fn try_node(&self, id: NodeId) -> Option<&Node> {
-        if id.is_invalid() || id.stamp() != self.stamp {
+        if id.stamp() != self.stamp {
             return None;
         }
         self.nodes.get(id.index() as usize)
@@ -373,15 +376,23 @@ impl Document {
 
     /// Allocate a zeroed node, counted against the node and byte budgets.
     pub(super) fn new_node(&mut self, type_: ArenaKind) -> Result<NodeId, BudgetError> {
+        let index = self.push_slot(type_)?;
+        /* `create` pushed slot 0 before any node, so a node's index is never 0;
+         * the refusal is only the type saying so. */
+        let index = NonZeroU32::new(index).ok_or(BudgetError::Limit)?;
+        Ok(NodeId::new(index, self.stamp))
+    }
+
+    /// Push one slot, charged and counted like any node; its index.
+    fn push_slot(&mut self, type_: ArenaKind) -> Result<u32, BudgetError> {
         if self.nodes.len() + 1 > self.max_nodes {
             return Err(BudgetError::Limit);
         }
         self.charge(NODE_COST)?;
         self.nodes.falloc_reserve(1).map_err(|_| BudgetError::Oom)?;
         let index = self.nodes.len() as u32;
-        let stamp = self.stamp;
         self.nodes.push(Node::zeroed(type_));
-        Ok(NodeId::new(index, stamp))
+        Ok(index)
     }
 
     /// Reserve `cap` bytes at the end of the store, run `fill` over that tail,
@@ -490,14 +501,12 @@ impl Document {
 
     #[inline]
     pub(super) fn set_parent(&mut self, id: NodeId, parent: Option<NodeId>) {
-        assert_linkable(parent);
         self.node_mut(id).parent = Link::from_option(parent);
     }
 
     /// Append `child` as the last child of `parent`.
     pub(super) fn append_child(&mut self, parent: NodeId, child: NodeId) {
-        assert_linkable(Some(parent));
-        let (parent_link, child_link) = (Link::of(parent), Link::of(child));
+        let (parent_link, child_link) = (Some(Link::of(parent)), Some(Link::of(child)));
         let last = self.node(parent).last_child;
         assert_no_self_link(child_link, parent_link, last, None);
         self.node_mut(child).parent = parent_link;
@@ -518,7 +527,7 @@ impl Document {
             return;
         };
         if self.node(node).type_ == ArenaKind::Attribute {
-            let node_link = Link::of(node);
+            let node_link = Some(Link::of(node));
             let mut prev = None;
             let mut attr = self.node_at(parent).attrs;
             while let Some(a) = attr {
@@ -601,12 +610,16 @@ impl Document {
     /// knows the end. An `append_attr` that walked to it existed and turned out
     /// to have no callers left once the tail was threaded through.
     pub(super) fn link_attr(&mut self, el: NodeId, tail: Option<NodeId>, attr: NodeId) {
-        assert_linkable(Some(el));
-        assert_no_self_link(Link::of(attr), Link::of(el), Link::from_option(tail), None);
-        self.node_mut(attr).parent = Link::of(el);
+        assert_no_self_link(
+            Some(Link::of(attr)),
+            Some(Link::of(el)),
+            Link::from_option(tail),
+            None,
+        );
+        self.node_mut(attr).parent = Some(Link::of(el));
         match tail {
-            None => self.node_mut(el).attrs = Link::of(attr),
-            Some(t) => self.node_mut(t).next = Link::of(attr),
+            None => self.node_mut(el).attrs = Some(Link::of(attr)),
+            Some(t) => self.node_mut(t).next = Some(Link::of(attr)),
         }
     }
 
@@ -618,14 +631,13 @@ impl Document {
         prev: Option<NodeId>,
         next: Option<NodeId>,
     ) {
-        assert_linkable(Some(container));
-        let node_link = Link::of(node);
+        let node_link = Some(Link::of(node));
         let prev = Link::from_option(prev);
         let next = Link::from_option(next);
-        assert_no_self_link(node_link, Link::of(container), prev, next);
+        assert_no_self_link(node_link, Some(Link::of(container)), prev, next);
         {
             let n = self.node_mut(node);
-            n.parent = Link::of(container);
+            n.parent = Some(Link::of(container));
             n.prev = prev;
             n.next = next;
         }
@@ -650,8 +662,8 @@ impl Document {
     /// document.
     pub fn preorder_next(&self, root: NodeId, cur: NodeId) -> Option<NodeId> {
         self.try_node(cur)?;
-        let root_link = Link::of(root);
-        let mut at = Link::of(cur)?;
+        let root_link = Some(Link::of(root));
+        let mut at = Some(Link::of(cur))?;
         if let Some(first) = self.node_at(at).first_child {
             return Some(self.id_of(first));
         }
@@ -747,20 +759,6 @@ impl Document {
 
 /// A node may not be its own parent or its own sibling.
 ///
-/// The container-taking link surgery must not be handed the absent handle:
-/// `Link::of(INVALID)` is `None`, so the node would be linked to "no parent"
-/// while the write lands on slot 0 (the reserved document node) - silent
-/// corruption of the tree. Every public entry checks `type_` first, so this can
-/// only fire on a broken internal caller; a debug check is enough, and a branch
-/// on the parse's hottest linking path is not worth the release cost.
-#[inline]
-fn assert_linkable(container: Option<NodeId>) {
-    debug_assert!(
-        container.is_none_or(|c| !c.is_invalid()),
-        "the absent NodeId must not be a link container"
-    );
-}
-
 /// Checked in RELEASE at the three places that write a link, which is not the
 /// usual `debug_assert` trade. A cycle here is not a wrong answer that a later
 /// check could catch: `node.next == node` is a ring, and every walk in the

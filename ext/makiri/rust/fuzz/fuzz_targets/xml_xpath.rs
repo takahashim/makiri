@@ -43,9 +43,7 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
 
-    let Some(mut ctx) = xml_context(&doc) else {
-        return;
-    };
+    let mut ctx = xml_context(&doc);
 
     // Much tighter than the `xpath` target's: here the fuzzer controls the
     // document too, so a single input could otherwise build a large tree

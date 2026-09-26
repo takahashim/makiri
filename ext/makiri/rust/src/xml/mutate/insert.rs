@@ -145,11 +145,9 @@ fn place_fragment(
     Ok(())
 }
 
-/// Unlink `node` from its parent. The invalid handle is a no-op.
+/// Unlink `node` from its parent.
 pub fn detach(doc: &mut Document, node: NodeId) {
-    if !node.is_invalid() {
-        doc.detach(node);
-    }
+    doc.detach(node);
 }
 
 #[inline]
@@ -430,12 +428,8 @@ pub fn replace_node(doc: &mut Document, r: NodeId, node: NodeId) -> Result<(), M
     Ok(())
 }
 
-/// Unlink `node` and re-derive the document meta it may have named. The invalid
-/// handle is a no-op.
+/// Unlink `node` and re-derive the document meta it may have named.
 pub fn remove(doc: &mut Document, node: NodeId) {
-    if node.is_invalid() {
-        return;
-    }
     let parent = doc.parent(node);
     doc.detach(node);
     if let Some(p) = parent {
