@@ -243,7 +243,7 @@ unsafe fn record(rec: &mut Recorder, token: *const Token) {
 ///
 /// Always delegates, so the parser still builds the tree; a recording failure
 /// only sets the overflow flag, which later suppresses assignment.
-pub unsafe extern "C" fn pos_token_cb(
+pub(crate) unsafe extern "C" fn pos_token_cb(
     tkz: *mut Tokenizer,
     token: *mut Token,
     ctx: *mut c_void,
