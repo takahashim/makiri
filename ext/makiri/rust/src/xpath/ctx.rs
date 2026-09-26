@@ -101,11 +101,13 @@ impl Names {
             self.ns[i].uri = copy(uri)?;
             return Ok(());
         }
-        if self.ns.len() >= MAX_NAMESPACES
-            || self.ns.falloc_reserve(1).is_err()
-            || self.ns_index.falloc_reserve(1).is_err()
-        {
+        if self.ns.len() >= MAX_NAMESPACES {
             return Err(ContextError::TooMany);
+        }
+        /* The cap is one failure and memory another: a reserve that fails is
+         * out of memory, not too many registrations. */
+        if self.ns.falloc_reserve(1).is_err() || self.ns_index.falloc_reserve(1).is_err() {
+            return Err(ContextError::Oom);
         }
         let key = crate::falloc::try_to_boxed_slice(prefix).ok_or(ContextError::Oom)?;
         let entry = NsEntry { uri: copy(uri)? };
@@ -128,11 +130,13 @@ impl Names {
             self.vars[i].value = copy(value)?;
             return Ok(());
         }
-        if self.vars.len() >= MAX_VARIABLES
-            || self.vars.falloc_reserve(1).is_err()
-            || self.vars_index.falloc_reserve(1).is_err()
-        {
+        if self.vars.len() >= MAX_VARIABLES {
             return Err(ContextError::TooMany);
+        }
+        /* The cap is one failure and memory another: a reserve that fails is
+         * out of memory, not too many registrations. */
+        if self.vars.falloc_reserve(1).is_err() || self.vars_index.falloc_reserve(1).is_err() {
+            return Err(ContextError::Oom);
         }
         let key = crate::falloc::try_to_boxed_slice(name).ok_or(ContextError::Oom)?;
         let entry = VarEntry {
