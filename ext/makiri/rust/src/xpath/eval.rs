@@ -10,7 +10,7 @@
  * dropped on an error path is cleared. */
 
 use super::abi::*;
-use super::attr_pred::{attr_pred_matches, match_attr_pred};
+use super::attr_pred::{attr_pred_matches, match_attr_pred, AttrPred};
 use super::axis::{
     axis_can_alias, axis_is_implemented, axis_name, is_reverse_axis, walk_axis, walk_descendants,
 };
@@ -22,7 +22,7 @@ use super::step_index::{try_descendant_index, try_descendant_index_nth};
 use super::value::*;
 use crate::engine_error::Bytes;
 use crate::err_setf;
-use crate::falloc::{try_vec_with_capacity, Reserve};
+use crate::falloc::{try_vec_with_capacity, Reserve, VecPush};
 use core::ops::ControlFlow;
 
 /// An evaluation step: the value, or proof its error was written to the
@@ -480,9 +480,20 @@ fn union_nodeset<'e, 'd, D: Dom<'d>>(
 /// predicates, in document order", so the first node the pre-order walk reaches
 /// IS node-set[0] of the full evaluation - identical, just without building the
 /// rest. Anything else returns None and the caller runs the full evaluator.
-fn first_recognise(root: &Expr) -> Option<&Step> {
+struct FirstShape<'a> {
+    step: &'a Step,
+    /// The step's predicates, parsed once. Empty for `//X`.
+    preds: Vec<AttrPred<'a>>,
+}
+
+/// Recognise the shape and parse its predicates once. `Ok(None)` = not this
+/// shape; `Err` = out of memory building the predicate list.
+fn first_shape<'e, 'd, 'a, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
+    root: &'a Expr,
+) -> EvalResult<Option<FirstShape<'a>>> {
     let ExprKind::Path(path) = &root.kind else {
-        return None;
+        return Ok(None);
     };
     let nt = match path.steps.as_slice() {
         [s] if s.axis == Axis::Descendant => s,
@@ -494,27 +505,30 @@ fn first_recognise(root: &Expr) -> Option<&Step> {
         {
             s1
         }
-        _ => return None,
+        _ => return Ok(None),
+    };
+    let Some(mut preds) = try_vec_with_capacity(nt.predicates.len()) else {
+        return Err(handler_oom(&mut ev.budget));
     };
     /* A prefixed name test is allowed - the caller reproduces the step driver's
      * "unknown prefix is a RUNTIME error" first, and the name match resolves the
      * prefix exactly as the full evaluator does. A prefixed ATTRIBUTE predicate
      * still falls back: match_attr_step requires an unprefixed @name. */
     for p in &nt.predicates {
-        match_attr_pred(p)?;
+        let Some(ap) = match_attr_pred(p) else {
+            return Ok(None);
+        };
+        preds
+            .falloc_push(ap)
+            .map_err(|()| handler_oom(&mut ev.budget))?;
     }
-    Some(nt)
+    Ok(Some(FirstShape { step: nt, preds }))
 }
 
-/// Does `n` satisfy every already-recognised attribute predicate of `step`?
-fn first_node_ok<'e, 'd, D: Dom<'d>>(doc: D, step: &Step, n: D::Node, lax: bool) -> bool {
-    for p in &step.predicates {
-        /* The recogniser already confirmed the shape. */
-        let ap = match match_attr_pred(p) {
-            Some(ap) => ap,
-            None => return false,
-        };
-        if !attr_pred_matches::<D>(doc, &ap, n, lax) {
+/// Does `n` satisfy every attribute predicate the shape parsed?
+fn first_node_ok<'d, D: Dom<'d>>(doc: D, preds: &[AttrPred], n: D::Node, lax: bool) -> bool {
+    for ap in preds {
+        if !attr_pred_matches::<D>(doc, ap, n, lax) {
             return false;
         }
     }
@@ -523,13 +537,10 @@ fn first_node_ok<'e, 'd, D: Dom<'d>>(doc: D, step: &Step, n: D::Node, lax: bool)
 
 /// Walk for the first match if `ast` is a recognised shape.
 ///
-/// Returns `Ok(Some(Some(node)))` on a match or `Ok(Some(None))` when it
-/// handled the expression but nothing matched, `Ok(None)` when the shape is not
-/// recognised, and `Err` when the op budget was exceeded. Every visited node is
-/// charged, so a huge late- or no-match document fails closed here exactly as it
-/// would in the full evaluator.
-///
-/// On a match or none, the answer is the 0-or-1-node node-set.
+/// `Ok(None)` when the shape is not recognised, `Ok(Some(val))` when it was
+/// handled (the 0-or-1-node node-set), and `Err` when the op budget was
+/// exceeded. Every visited node is charged, so a huge late- or no-match document
+/// fails closed here exactly as it would in the full evaluator.
 #[allow(clippy::result_large_err)]
 pub(crate) fn try_first_match<'e, 'd, D: Dom<'d>>(
     cx: &'e Session,
@@ -569,10 +580,10 @@ fn first_match_walk<'e, 'd, D: Dom<'d>>(
 ) -> EvalResult<FirstMatch<D::Node>> {
     let doc = ev.doc;
     let root = ast.root();
-    let step = match first_recognise(root) {
-        Some(s) => s,
-        None => return Ok(FirstMatch::NotApplicable),
+    let Some(shape) = first_shape::<D>(ev, root)? else {
+        return Ok(FirstMatch::NotApplicable);
     };
+    let step = shape.step;
 
     /* Compile the test as the step driver does, so the fast path stays
      * identical to the full evaluator down to the unknown-prefix error. The
@@ -596,7 +607,7 @@ fn first_match_walk<'e, 'd, D: Dom<'d>>(
         if let Err(e) = budget.charge_op() {
             return ControlFlow::Break(Err(e));
         }
-        if ct.matches(doc, n) && first_node_ok::<D>(doc, step, n, ct.lax()) {
+        if ct.matches(doc, n) && first_node_ok::<D>(doc, &shape.preds, n, ct.lax()) {
             return ControlFlow::Break(Ok(n));
         }
         ControlFlow::Continue(())
