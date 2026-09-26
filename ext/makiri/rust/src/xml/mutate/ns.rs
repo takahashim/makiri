@@ -115,20 +115,21 @@ fn resolves_name(doc: &Document, e: NodeId, part: Part) -> bool {
 }
 
 /// The all-or-nothing plan the check pass produces and the apply pass writes:
-/// every namespace decided for an element's name, every attribute's new
-/// namespace, and the connected elements to stamp resolved.
+/// the element names and attributes whose namespace CHANGES.
 ///
 /// The commit is a pure application, so it can neither fail nor disagree with
 /// the check - and every resolution is computed against the same pre-write
 /// tree, which a write-then-resolve pass could not promise.
+///
+/// It holds only changes, so what it costs follows what the insertion does,
+/// not the subtree's size: moving a decided subtree plans nothing. The
+/// `NS_RESOLVED` stamp is not planned at all - see [`apply_ns_plan`].
 #[derive(Default)]
 struct NsPlan {
-    /// Element name -> its new `ns_uri`.
+    /// Element name -> its new `ns_uri`, when that differs from the stored one.
     names: Vec<(NodeId, Ns)>,
     /// Attribute -> its new namespace and pending bit.
     attrs: Vec<(NodeId, Resolved)>,
-    /// Connected elements to mark `NS_RESOLVED` once the writes land.
-    decided: Vec<NodeId>,
 }
 
 /// The check half for element `e` - see [`Part`]: that every prefix binds, and
@@ -151,9 +152,11 @@ fn plan_node_ns(
             false,
             connected,
         )?;
-        plan.names
-            .falloc_push((e, r.ns))
-            .map_err(|()| MutError::Oom)?;
+        if r.ns != doc.node(e).ns_uri {
+            plan.names
+                .falloc_push((e, r.ns))
+                .map_err(|()| MutError::Oom)?;
+        }
     }
     /* Every attribute's key as it will stand - a re-resolved one's new
      * namespace, anyone else's stored one - leaving out those still pending,
@@ -185,25 +188,34 @@ fn plan_node_ns(
     if crate::xml::attr_key::keys_repeat(doc, &mut keys) {
         return Err(MutError::DuplicateAttr);
     }
-    /* Only mark once connected: resolution inside a still-detached fragment is
-     * deferred (an unbound prefix is not an error there), so the node must stay
-     * open to being resolved again when the fragment joins the document. */
-    if connected {
-        plan.decided.falloc_push(e).map_err(|()| MutError::Oom)?;
-    }
     Ok(())
 }
 
-/// Write what the plan decided. Infallible: nothing here resolves a name.
-fn apply_ns_plan(doc: &mut Document, plan: NsPlan) {
+/// Write what the plan decided, then - when `root` is connected - stamp every
+/// element of its subtree `NS_RESOLVED`. Infallible: nothing here resolves a
+/// name or allocates.
+///
+/// The stamp needs no plan entry: once a connected insertion has succeeded,
+/// every element under `root` is decided - the planned ones just were, and the
+/// ones the plan skipped were already. A detached subtree is not stamped,
+/// because resolution there is deferred (an unbound prefix is not an error
+/// yet), so its nodes must stay open to resolving again when it joins the
+/// document.
+fn apply_ns_plan(doc: &mut Document, root: NodeId, connected: bool, plan: NsPlan) {
     for (e, ns) in plan.names {
         doc.node_mut(e).ns_uri = ns;
     }
     for (attr, r) in plan.attrs {
         r.write_attr(doc, attr);
     }
-    for e in plan.decided {
-        doc.node_mut(e).flags.insert(NodeFlags::NS_RESOLVED);
+    if connected {
+        let mut cur = Some(root);
+        while let Some(c) = cur {
+            if doc.type_(c) == Some(ArenaKind::Element) {
+                doc.node_mut(c).flags.insert(NodeFlags::NS_RESOLVED);
+            }
+            cur = doc.preorder_next(root, c);
+        }
     }
 }
 
@@ -244,7 +256,7 @@ fn resolve_subtree(doc: &mut Document, root: NodeId, connected: bool) -> Result<
         }
         cur = doc.preorder_next(root, c);
     }
-    apply_ns_plan(doc, plan);
+    apply_ns_plan(doc, root, connected, plan);
     Ok(())
 }
 
