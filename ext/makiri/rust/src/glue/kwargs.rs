@@ -62,11 +62,11 @@ impl Kwargs {
         /* Made on the first key that stays, so a call passing only `name`
          * allocates no Hash either. */
         let mut rest: Option<RHash> = None;
-        h.foreach(|k: Value, v: Value| {
+        crate::glue::hash::hash_foreach(h, |k, v| {
             if !crate::bridge::ruby::same_value(k, sym.as_value()) {
                 rest.get_or_insert_with(|| ruby.hash_new()).aset(k, v)?;
             }
-            Ok(magnus::r_hash::ForEach::Continue)
+            Ok(())
         })?;
         Ok((taken, rest))
     }

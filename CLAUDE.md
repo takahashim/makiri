@@ -71,7 +71,10 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   the tokenizer's `tree_guard::hook_token_cb`, `bridge::gvl`'s trampoline (which carries the
   whole parser), and - covering every `rb_protect` at once, since magnus runs
   the closure inside its own `extern "C"` trampoline - `bridge::ruby::protect`.
-  Do not call magnus's `protect` directly; ours is the one with the latch.
+  Do not call magnus's `protect` directly; ours is the one with the latch. For
+  the same reason a Hash is walked only through `glue::hash::hash_foreach`
+  (magnus's `RHash::foreach` protects without one; `rake unsafe:boundaries`
+  fails on a direct `.foreach(`).
   Two `extern "C"` functions have no latch ON PURPOSE. The GC callbacks in
   `bridge/typed.rs` run where nothing can be raised and a half-freed object is
   worse than a stop, so they keep aborting - keep their bodies trivial. The two

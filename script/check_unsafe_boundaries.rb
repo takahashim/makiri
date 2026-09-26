@@ -399,6 +399,22 @@ unless lexbor_decls.empty?
   errors << "Lexbor functions declared outside lexbor/abi.rs: #{lexbor_decls.inspect}"
 end
 
+# magnus's `RHash::foreach` runs its closure under magnus's own `protect`, below
+# `rb_hash_foreach`'s C frames, so a panic in it aborts the process instead of
+# raising. `glue::hash::hash_foreach` latches it; every Hash walk goes there.
+HASH_FOREACH = /\.foreach\(/
+hash_walks = Hash.new(0)
+Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
+  relative = path.delete_prefix("#{RUST}/")
+  next if relative == "glue/hash.rs"
+
+  count = comments_removed(File.binread(path)).scan(HASH_FOREACH).length
+  hash_walks[relative] = count unless count.zero?
+end
+unless hash_walks.empty?
+  errors << "RHash#foreach outside glue::hash::hash_foreach (a panic there aborts): #{hash_walks.inspect}"
+end
+
 # Inside it, only the header-less exports are written by hand - everything else
 # is generated, so its signature is Lexbor's. A new hand declaration of a
 # header-declared function belongs in build.rs's allowlist instead; one with no

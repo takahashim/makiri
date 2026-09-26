@@ -106,14 +106,8 @@ impl QueryArgs {
 /// caller's method runs.
 fn merge_hashes(ruby: &Ruby, a: RHash, b: RHash) -> Result<RHash, Error> {
     let out: RHash = ruby.hash_new();
-    a.foreach(|k: Value, v: Value| {
-        out.aset(k, v)?;
-        Ok(magnus::r_hash::ForEach::Continue)
-    })?;
-    b.foreach(|k: Value, v: Value| {
-        out.aset(k, v)?;
-        Ok(magnus::r_hash::ForEach::Continue)
-    })?;
+    crate::glue::hash::hash_foreach(a, |k, v| out.aset(k, v))?;
+    crate::glue::hash::hash_foreach(b, |k, v| out.aset(k, v))?;
     Ok(out)
 }
 
