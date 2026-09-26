@@ -46,7 +46,9 @@ fn parse_limits(ruby: &Ruby, h: RHash) -> Result<ParseLimits, Error> {
         ))
     })?;
 
-    let Some(v) = h.get(key) else {
+    /* `nil` is the default, as the documented `max_bytes: nil` says - and as
+     * `max_tree_depth: nil` is on the HTML side. */
+    let Some(v) = h.get(key).filter(|v: &Value| !v.is_nil()) else {
         return Ok(limits);
     };
     /* An actual Integer, not merely something convertible: a Float (1.5) is a

@@ -318,6 +318,13 @@ RSpec.describe "Makiri::XML minimal parse" do
       many = "<r>" + ("<e a='1' b='2'/>" * 3000) + "</r>" # 6000 attributes total
       expect(ok?(many)).to be true
     end
+
+    # The documented signature is `parse(source, max_bytes: nil)`: nil is the
+    # default, so a caller can forward an unset option.
+    it "reads max_bytes: nil as the default" do
+      expect(Makiri::XML("<r/>", max_bytes: nil).root.name).to eq("r")
+      expect { Makiri::XML("<r/>", max_bytes: 1.5) }.to raise_error(TypeError)
+    end
   end
 
   describe "prolog/epilog comments and PIs are document-node children (like Nokogiri)" do
