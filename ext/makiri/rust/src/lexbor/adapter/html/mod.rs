@@ -129,6 +129,17 @@ impl TagId {
     pub const MATH: TagId = TagId(nonzero(lxb::lxb_tag_id_enum_t_LXB_TAG_MATH as usize));
     /// `LXB_TAG_TEMPLATE`.
     pub const TEMPLATE: TagId = TagId(nonzero(lxb::lxb_tag_id_enum_t_LXB_TAG_TEMPLATE as usize));
+    /// The tags the parse guard's `<option>` count is decided by
+    /// (`tree_guard::nearest_select`).
+    pub const OPTION: TagId = TagId(nonzero(lxb::lxb_tag_id_enum_t_LXB_TAG_OPTION as usize));
+    /// See [`TagId::OPTION`].
+    pub const OPTGROUP: TagId = TagId(nonzero(lxb::lxb_tag_id_enum_t_LXB_TAG_OPTGROUP as usize));
+    /// See [`TagId::OPTION`].
+    pub const SELECT: TagId = TagId(nonzero(lxb::lxb_tag_id_enum_t_LXB_TAG_SELECT as usize));
+    /// See [`TagId::OPTION`].
+    pub const DATALIST: TagId = TagId(nonzero(lxb::lxb_tag_id_enum_t_LXB_TAG_DATALIST as usize));
+    /// See [`TagId::OPTION`].
+    pub const HR: TagId = TagId(nonzero(lxb::lxb_tag_id_enum_t_LXB_TAG_HR as usize));
 
     /// Lexbor's number as an id; `None` for `LXB_TAG__UNDEF`.
     #[inline]

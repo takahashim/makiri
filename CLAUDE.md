@@ -606,8 +606,8 @@ document, `DocumentFragment.parse`, `Document#fragment`, `Node#parse`,
 chains the tree builder and, after each token, reads the tree's
 `open_elements->length`; past the limit it returns NULL, which is how Lexbor's
 own tree builder fails (the tokenizer stops with `LXB_STATUS_ERROR`), and the
-latched `too_deep` turns that into `Makiri::Error` "document tree depth limit
-exceeded (N)". `max_tree_depth:` (default 400, negative = none) is Nokogiri's
+latched `GuardStop::TooDeep` turns that into `Makiri::Error` "document tree
+depth limit exceeded (N)". `max_tree_depth:` (default 400, negative = none) is Nokogiri's
 name, default and boundary: depth counts elements from `<html>` = 1; a fragment
 keeps a synthetic `<html>` below its top level, which is not counted. The hook
 is a stack value on EVERY parse and carries the source `Recorder` inside it, so
@@ -615,8 +615,15 @@ no recorder failure (allocation, cap, latched panic) can switch the guard off -
 keep it that way. Fragments therefore use the chunked
 `lxb_html_parse_fragment_chunk_*` API, not the one-shot call, and own the
 element context's throwaway document from `begin`, so a refused parse frees it.
-Not everything quadratic is depth: `<select>` + `"<option>" * n` stays
-quadratic inside Lexbor's `lxb_html_select_selectedness_setting_algorithm`.
+Not everything quadratic is depth: every `<option>` a `<select>` receives
+re-runs Lexbor's `lxb_html_select_selectedness_setting_algorithm` over all its
+options (Lexbor `9c841a3`, in v3.0.0), so 40,000 options - a flat 400 KB -
+took 4 s. The same hook therefore counts the options each select receives and
+stops past `MAX_SELECT_OPTIONS` (10,000; `GuardStop::TooManyOptions`, "too many
+option elements in one select element (limit 10000)"). Which select an option
+updates is Lexbor's static `nearest_ancestor_select`, restated in
+`tree_guard::nearest_select` - keep the two the same rule. Fixed, not a
+keyword; revisit if Lexbor makes the insertion incremental.
 
 **An attribute's parent is Lexbor's own `attr->owner`**, which Lexbor sets when
 it appends an attribute and clears when it removes one; `HtmlNode::parent`

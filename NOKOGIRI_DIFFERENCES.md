@@ -149,6 +149,13 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
     TRUNCATED document with the error in `#errors`; Makiri never returns a
     partial tree.
 
+* A `<select>` that receives more than 10,000 `<option>`s during a parse
+  raises **`Makiri::Error`** ("too many option elements in one select element
+  (limit 10000)"); Nokogiri has no such limit. Lexbor's option insertion is
+  quadratic in the select's option count, so without it 40,000 options took
+  4 seconds. Options that update no select (in a `<datalist>`, or outside any
+  select) are not counted.
+
 ## HTML mutation
 
 * There is no `Node#name=` / `#node_name=` (on HTML or XML nodes). Nokogiri

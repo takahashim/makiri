@@ -42,7 +42,7 @@ use crate::lexbor::adapter::source_loc::{
     lines_build, pos_assign_to_dom, Lines, Positions, Recorder,
 };
 use crate::lexbor::adapter::text_index::{TextBuildError, TextIndex, TextRun};
-use crate::lexbor::adapter::tree_guard::{DepthLimit, TokenHook};
+use crate::lexbor::adapter::tree_guard::{DepthLimit, GuardStop, TokenHook};
 use crate::utf8_input::sanitize;
 
 type HtmlDoc = lxb::lxb_html_document_t;
@@ -289,6 +289,8 @@ pub enum HtmlParseError {
     Failed,
     /// The tree grew deeper than the [`DepthLimit`] allowed.
     TooDeep,
+    /// A `<select>` received more than `MAX_SELECT_OPTIONS` options.
+    TooManyOptions,
 }
 
 /// Drive the low-level pipeline so element offsets can be captured and the
@@ -329,8 +331,11 @@ unsafe fn parse_tracked(src: &[u8], limit: DepthLimit) -> Result<Tracked, HtmlPa
      * the parser's release it all on the way out. */
     hook.resume_panic();
 
-    if hook.too_deep() {
-        return Err(HtmlParseError::TooDeep); /* `doc`'s Drop destroys it */
+    /* `doc`'s Drop destroys it on either refusal. */
+    match hook.stopped() {
+        Some(GuardStop::TooDeep) => return Err(HtmlParseError::TooDeep),
+        Some(GuardStop::TooManyOptions) => return Err(HtmlParseError::TooManyOptions),
+        None => {}
     }
     if st != LXB_STATUS_OK {
         return Err(HtmlParseError::Failed);

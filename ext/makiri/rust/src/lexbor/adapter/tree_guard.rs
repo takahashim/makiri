@@ -41,6 +41,18 @@
 //! parse call returns that status. [`TokenHook::too_deep`] is what tells the
 //! caller the failure was the limit rather than something else.
 //!
+//! # The `<option>` count
+//!
+//! One shape is quadratic without being deep: `<select>` followed by many
+//! `<option>`s. Inserting an option runs the select's "selectedness setting
+//! algorithm" (Lexbor `9c841a3`, in v3.0.0), which walks the select's whole
+//! list of options, so 40,000 options - 400 KB, a flat tree - took four
+//! seconds (nokolexbor, on a Lexbor before that change, 5 ms). So the hook
+//! also counts, per `<select>`, the options the parse inserts into it, and
+//! stops the parse past [`MAX_SELECT_OPTIONS`]. Which select an option updates
+//! is Lexbor's own rule, restated in [`nearest_select`] because Lexbor does
+//! not export it.
+//!
 //! # Fail-closed, whatever the source recorder does
 //!
 //! The hook is a plain value on the caller's stack, installed on EVERY parse;
@@ -57,12 +69,27 @@ use core::ffi::c_void;
 use crate::caught::PanicLatch;
 use crate::lexbor::abi as lxb;
 
+use super::html::{HtmlNode, NsId, RawNode, TagId};
 use super::source_loc::Recorder;
 
 type Token = lxb::lxb_html_token_t;
 type Tokenizer = lxb::lxb_html_tokenizer_t;
 type TokenFn = lxb::lxb_html_tokenizer_token_f;
 type Tree = lxb::lxb_html_tree_t;
+
+/// The most `<option>`s one `<select>` may receive during a parse - far past
+/// any real list (a country picker is ~250), while bounding the quadratic cost
+/// described in the module doc: 10,000 options take about 0.3 s.
+pub const MAX_SELECT_OPTIONS: usize = 10_000;
+
+/// What stopped a parse the hook refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GuardStop {
+    /// The tree grew deeper than the [`DepthLimit`] allowed.
+    TooDeep,
+    /// One `<select>` received more than [`MAX_SELECT_OPTIONS`] options.
+    TooManyOptions,
+}
 
 /// The deepest element an HTML parse accepts, or no limit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -105,7 +132,12 @@ pub struct TokenHook {
     tree: *const Tree,
     /// The stack length above which the parse stops; `usize::MAX` for none.
     max_open: usize,
-    too_deep: bool,
+    /// The `<select>` the last counted option went into, and how many have.
+    /// One is enough: the parser only ever inserts into the select that is
+    /// open, and once closed a select receives no more.
+    select: *const c_void,
+    options: usize,
+    stopped: Option<GuardStop>,
     /// The document parse's position recorder; `None` for a fragment.
     recorder: Option<Recorder>,
     /// A panic in the recorder, latched rather than raised: this runs from
@@ -124,7 +156,9 @@ impl TokenHook {
             delegate_ctx: core::ptr::null_mut(),
             tree: core::ptr::null(),
             max_open: limit.max_open(synthetic),
-            too_deep: false,
+            select: core::ptr::null(),
+            options: 0,
+            stopped: None,
             recorder,
             panic: PanicLatch::new(),
         }
@@ -159,9 +193,9 @@ impl TokenHook {
         true
     }
 
-    /// Whether the parse was stopped by the depth limit.
-    pub fn too_deep(&self) -> bool {
-        self.too_deep
+    /// What stopped the parse, if the hook did.
+    pub fn stopped(&self) -> Option<GuardStop> {
+        self.stopped
     }
 
     /// Re-raise a panic the recorder caught, now that Lexbor's frames are
@@ -188,6 +222,73 @@ impl TokenHook {
             (*stack).length
         }
     }
+
+    /// The element the tree builder opened last - the current node.
+    ///
+    /// # Safety
+    /// As [`open_elements`](Self::open_elements); the stack's entries are the
+    /// tree's live element nodes.
+    unsafe fn current_node(&self) -> Option<RawNode> {
+        let stack = (*self.tree).open_elements;
+        if stack.is_null() || (*stack).length == 0 {
+            return None;
+        }
+        // SAFETY: `length` entries of `list` are the open elements, and the
+        // stack is not empty, so the last index is in bounds.
+        RawNode::from_ptr(*(*stack).list.add((*stack).length - 1))
+    }
+
+    /// Count an `<option>` the tree builder just inserted, against the select
+    /// it updates; whether that select is now past [`MAX_SELECT_OPTIONS`].
+    ///
+    /// # Safety
+    /// As [`current_node`](Self::current_node).
+    unsafe fn count_option(&mut self) -> bool {
+        let Some(raw) = self.current_node() else {
+            return false;
+        };
+        // SAFETY: an open element of the tree being built, live for the parse,
+        // and only read here (its tag, namespace and ancestors).
+        let option = raw.as_node();
+        if option.tag_id() != Some(TagId::OPTION) || option.ns_id() != Some(NsId::HTML) {
+            return false; /* not inserted as an element that updates a select */
+        }
+        let Some(select) = nearest_select(option) else {
+            return false;
+        };
+        let key = RawNode::from(select).as_ptr() as *const c_void;
+        if key == self.select {
+            self.options += 1;
+        } else {
+            self.select = key;
+            self.options = 1;
+        }
+        self.options > MAX_SELECT_OPTIONS
+    }
+}
+
+/// The `<select>` whose options an inserted `<option>` updates, if any -
+/// Lexbor's `lxb_html_option_element_nearest_ancestor_select` (static in
+/// `html/interfaces/option_element.c`, so not callable), restated: the nearest
+/// HTML `select` ancestor, unless a `datalist`, `hr` or `option` comes first,
+/// or a second `optgroup`. It must stay that rule - a looser one would count
+/// options that cost nothing, a stricter one would miss the ones that do.
+fn nearest_select(option: HtmlNode<'_>) -> Option<HtmlNode<'_>> {
+    let mut optgroup = false;
+    let mut node = option.parent();
+    while let Some(n) = node {
+        if n.ns_id() == Some(NsId::HTML) {
+            match n.tag_id() {
+                Some(TagId::DATALIST | TagId::HR | TagId::OPTION) => return None,
+                Some(TagId::OPTGROUP) if optgroup => return None,
+                Some(TagId::OPTGROUP) => optgroup = true,
+                Some(TagId::SELECT) => return Some(n),
+                _ => {}
+            }
+        }
+        node = n.parent();
+    }
+    None
 }
 
 /// The chained token-done callback.
@@ -214,6 +315,10 @@ unsafe extern "C" fn hook_token_cb(
             hook.panic.guard((), || rec.record(token));
         }
     }
+    /* Read before delegating: the tree builder may reuse the token. Only an
+     * `<option>` start tag can insert an option. */
+    let option_start = (*token).tag_id == lxb::lxb_tag_id_enum_t_LXB_TAG_OPTION as usize
+        && ((*token).type_ & lxb::lxb_html_token_type_LXB_HTML_TOKEN_TYPE_CLOSE as i32) == 0;
     let out = match hook.delegate {
         Some(f) => f(tkz, token, hook.delegate_ctx),
         /* Unreachable in practice - `install` sets the delegate before the
@@ -222,9 +327,16 @@ unsafe extern "C" fn hook_token_cb(
         None => token,
     };
     /* `out` is NULL when the tree builder itself failed; that stands. */
-    if !out.is_null() && hook.max_open != usize::MAX && hook.open_elements() > hook.max_open {
-        hook.too_deep = true;
+    if out.is_null() {
+        return out;
+    }
+    if hook.max_open != usize::MAX && hook.open_elements() > hook.max_open {
+        hook.stopped = Some(GuardStop::TooDeep);
         return core::ptr::null_mut(); /* the tokenizer stops with an error */
+    }
+    if option_start && hook.count_option() {
+        hook.stopped = Some(GuardStop::TooManyOptions);
+        return core::ptr::null_mut();
     }
     out
 }

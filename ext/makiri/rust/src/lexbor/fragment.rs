@@ -32,7 +32,7 @@ use crate::lexbor::abi::{
     lxb_html_parse_fragment_chunk_begin, lxb_html_parse_fragment_chunk_end,
     lxb_html_parse_fragment_chunk_process, TransientDoc,
 };
-use crate::lexbor::adapter::tree_guard::{fragment_document, DepthLimit, TokenHook};
+use crate::lexbor::adapter::tree_guard::{fragment_document, DepthLimit, GuardStop, TokenHook};
 
 /* The HTML parser's lifecycle, from the generated bindings. Declared here first
  * over an opaque parser, which was fine until the source-location port needed
@@ -113,17 +113,21 @@ pub enum FragmentError {
     Parse,
     /// The tree grew deeper than the [`DepthLimit`] allowed.
     TooDeep,
+    /// A `<select>` received more than `MAX_SELECT_OPTIONS` options.
+    TooManyOptions,
 }
 
 impl FragmentError {
-    /// The message, for every error but [`TooDeep`](FragmentError::TooDeep),
-    /// whose message names the limit and is the bridge's to word.
+    /// The message, for every error but [`TooDeep`](FragmentError::TooDeep)
+    /// and [`TooManyOptions`](FragmentError::TooManyOptions), whose messages
+    /// name their limit and are the bridge's to word.
     pub fn message(self) -> &'static str {
         match self {
             FragmentError::Parser => "failed to create HTML parser",
             FragmentError::Decode => "out of memory decoding fragment HTML",
             FragmentError::Parse => "failed to parse HTML fragment",
             FragmentError::TooDeep => "document tree depth limit exceeded",
+            FragmentError::TooManyOptions => "too many option elements in one select element",
         }
     }
 }
@@ -340,8 +344,11 @@ unsafe fn run_fragment_parser(
     drop(src); /* the parse consumed it; the buffer goes on every path */
     drop(parser); /* the fragment belongs to its document, not to the parser */
 
-    if hook.too_deep() {
-        return Err(FragmentError::TooDeep); /* `owned` drops, freeing it */
+    /* `owned` drops, freeing it, on either refusal. */
+    match hook.stopped() {
+        Some(GuardStop::TooDeep) => return Err(FragmentError::TooDeep),
+        Some(GuardStop::TooManyOptions) => return Err(FragmentError::TooManyOptions),
+        None => {}
     }
     let root = RawNode::from_ptr(root.cast()).ok_or(FragmentError::Parse)?;
     Ok(TransientFragment { root, _doc: owned })

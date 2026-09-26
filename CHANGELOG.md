@@ -33,6 +33,8 @@
   with Nokogiri's boundaries. A refused `inner_html=` or `outer_html=` leaves
   the element unchanged, and the element-context fragment parse no longer
   leaks its throwaway document when a parse fails.
+* HTML parsing bounds the `<option>`s one `<select>` receives at 10,000.
+  Returns `Makiri::Error` if exceeded.
 * Binding namespaces no longer costs the square of their number. Each
   registration scanned the prefixes already bound, so a query's namespace Hash
   of 65,000 pairs held the GVL for six seconds of CPU; prefixes are indexed

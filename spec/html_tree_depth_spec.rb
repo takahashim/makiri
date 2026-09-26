@@ -197,6 +197,45 @@ RSpec.describe "HTML tree depth limit" do
     end
   end
 
+  # The one quadratic shape depth does not cover: every <option> a select
+  # receives re-runs Lexbor's selectedness algorithm over all its options, so
+  # 40,000 options (a flat 400 KB) took four seconds. Each select may receive
+  # at most 10,000 during a parse.
+  describe "the <option> count per <select>" do
+    let(:message) { /too many option elements in one select element \(limit 10000\)/ }
+
+    def options(n, open = "<select>", close = "</select>") = "#{open}#{"<option>x" * n}#{close}"
+
+    it "accepts 10,000 options in one select and refuses one more" do
+      expect(Makiri::HTML(options(10_000)).css("option").size).to eq(10_000)
+      expect { Makiri::HTML(options(10_001)) }.to raise_error(Makiri::Error, message)
+    end
+
+    it "bounds the quadratic case: 40,000 options are refused, not parsed" do
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      expect { Makiri::HTML(options(40_000)) }.to raise_error(Makiri::Error, message)
+      expect(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started).to be < 2.5
+    end
+
+    it "counts per select, and counts options inside an optgroup" do
+      expect(Makiri::HTML(options(6_000) * 2).css("select").size).to eq(2)
+      grouped = "<select>#{"<optgroup>#{"<option>x" * 100}</optgroup>" * 101}</select>"
+      expect { Makiri::HTML(grouped) }.to raise_error(Makiri::Error, message)
+    end
+
+    it "does not count options that update no select" do
+      expect(Makiri::HTML(options(12_000, "<datalist>", "</datalist>")).css("option").size).to eq(12_000)
+      expect(Makiri::HTML("<option>x" * 12_000).css("option").size).to eq(12_000)
+    end
+
+    it "guards fragments and inner_html=, leaving the element unchanged on refusal" do
+      expect { Makiri::HTML::DocumentFragment.parse(options(10_001)) }.to raise_error(Makiri::Error, message)
+      doc = Makiri::HTML("<div><b>old</b></div>")
+      expect { doc.at_css("div").inner_html = options(10_001) }.to raise_error(Makiri::Error, message)
+      expect(doc.at_css("div").inner_html).to eq("<b>old</b>")
+    end
+  end
+
   describe "the XML side" do
     it "is unchanged: its own fixed limit, and no max_tree_depth keyword" do
       expect(Makiri::XML("#{"<a>" * 1000}#{"</a>" * 1000}").root.name).to eq("a")
