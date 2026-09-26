@@ -720,6 +720,17 @@ pub fn node_identity(rb_node: Value) -> Result<usize, Error> {
     Ok(node_raw(rb_node)?.identity())
 }
 
+/// Node identity for `==`/`eql?`: the representation AND the word. The word
+/// alone does not tell the two apart - an XML node's is its arena index packed
+/// with its document's stamp, not an address, so it can equal a live HTML
+/// node's pointer.
+pub fn node_key(rb_node: Value) -> Result<(DocKind, usize), Error> {
+    Ok((
+        DocKind::of(keepalive_document(rb_node)?),
+        node_identity(rb_node)?,
+    ))
+}
+
 /// The keepalive Document of any node, or the Document itself.
 /// `Err(TypeError)` for a non-node.
 pub fn keepalive_document(rb_node: Value) -> Result<Value, Error> {
