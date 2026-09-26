@@ -124,6 +124,27 @@ enum Refusal<P> {
     Check(P),
     /// The String was locked by someone else and its bytes could not be copied.
     Oom,
+    /// Something other than the lock refusal was raised while trying to take
+    /// the lock - an interrupt (`Timeout`, `Thread#raise`, `Interrupt`)
+    /// delivered at the raise's interrupt check. It is the caller's to raise.
+    Raised(Error),
+}
+
+/// Whether `e` is `rb_str_locktmp`'s own refusal of an already locked String,
+/// rather than an exception delivered while that refusal was being raised.
+///
+/// Both the class and the message are compared: the class must be exactly
+/// `RuntimeError`, because `Timeout::Error` is a SUBCLASS of it, and a
+/// `Thread#raise` of a plain `RuntimeError` is told apart by its message.
+fn is_already_locked(e: &Error) -> bool {
+    let Some(exc) = e.value() else {
+        return false;
+    };
+    exc.class().as_raw()
+        == crate::bridge::ruby::gvl_ruby()
+            .exception_runtime_error()
+            .as_raw()
+        && crate::bridge::ruby::exception_message(exc.as_raw()).contains("locked")
 }
 
 impl<C: Checked> RubyStr<C> {
@@ -145,6 +166,12 @@ impl<C: Checked> RubyStr<C> {
     /// copy - which keeps the answer (the same argument twice still works) and
     /// the safe `Deref` sound, at an allocation only in that rare case.
     ///
+    /// A frozen String needs neither: no Ruby can change it, so its own bytes
+    /// are held already. And only the lock's own refusal falls back to the
+    /// copy ([`is_already_locked`]): anything else raised meanwhile - an
+    /// interrupt delivered at the raise's interrupt check - is returned for
+    /// the caller to raise, not swallowed.
+    ///
     /// The order is the point. Building the "already locked" error runs Ruby
     /// (the exception's `initialize`, an interrupt check, another thread), so
     /// bytes borrowed or checked BEFORE the lock attempt may be gone or changed
@@ -156,9 +183,20 @@ impl<C: Checked> RubyStr<C> {
         check: impl FnOnce(RString, &[u8]) -> Option<P>,
     ) -> Result<Self, Refusal<P>> {
         let value = s.as_raw();
-        // SAFETY: `value` is the live String `s`; `protect` turns the
-        // already-locked raise into `Err`.
-        let owns_lock = protect(|| unsafe { rb_sys::rb_str_locktmp(value) }).is_ok();
+        /* A frozen String is already held: nothing in Ruby can change it, so
+         * it is borrowed as it is - no lock (which it would refuse with a
+         * FrozenError) and no copy. */
+        let (frozen, owns_lock) = if s.is_frozen() {
+            (true, false)
+        } else {
+            // SAFETY: `value` is the live String `s`; `protect` turns a raise
+            // into `Err`.
+            match protect(|| unsafe { rb_sys::rb_str_locktmp(value) }) {
+                Ok(_) => (false, true),
+                Err(e) if is_already_locked(&e) => (false, false),
+                Err(e) => return Err(Refusal::Raised(e)),
+            }
+        };
         // SAFETY: borrowed after the lock attempt and whatever Ruby it ran;
         // nothing from here runs Ruby before the bytes are held (locked, or
         // copied into the view's own buffer).
@@ -167,7 +205,7 @@ impl<C: Checked> RubyStr<C> {
         // returned.
         let mut view = unsafe { Self::from_raw_parts(value, ptr, len) };
         view.owns_lock = owns_lock;
-        if !owns_lock {
+        if !owns_lock && !frozen {
             // SAFETY: as above - no Ruby since the borrow.
             let copy = OwnedBuf::copy_from(unsafe { bytes_at(ptr, len) }).ok_or(Refusal::Oom)?;
             /* The copy's heap storage does not move with the view. */
@@ -189,12 +227,13 @@ impl<C: Checked> Deref for RubyStr<C> {
     type Target = str;
 
     fn deref(&self) -> &str {
-        // SAFETY: `ptr`/`len` are either the bytes of the String this view
-        // holds locked - anchored (so alive and unmoved) and unmodifiable until
-        // `Drop` unlocks it, which cannot run while `&self` is borrowed - or
-        // the view's own copy, which it owns for as long. Nobody else unlocks a
-        // lock this view took. Either way they were checked for valid UTF-8
-        // (`Checked`: both contracts include it) when the view was built.
+        // SAFETY: `ptr`/`len` are the bytes of the String this view anchors
+        // (so alive and unmoved) and that no Ruby can change - frozen, or held
+        // locked until `Drop` unlocks it, which cannot run while `&self` is
+        // borrowed, and nobody else unlocks a lock this view took - or the
+        // view's own copy, which it owns for as long. Either way they were
+        // checked for valid UTF-8 (`Checked`: both contracts include it) when
+        // the view was built.
         unsafe { core::str::from_utf8_unchecked(bytes_at(self.ptr, self.len)) }
     }
 }
@@ -392,6 +431,7 @@ pub fn ruby_verified_text(in_: Value, what: &str) -> Result<RubyText, Error> {
     RubyText::acquire(s, |s, b| text_check(s, b).problem()).map_err(|r| match r {
         Refusal::Check(problem) => text_error(what, problem),
         Refusal::Oom => oom_reading(),
+        Refusal::Raised(e) => e,
     })
 }
 
@@ -405,6 +445,7 @@ pub fn ruby_verified_data(in_: Value, what: &str) -> Result<RubyData, Error> {
     RubyData::acquire(s, |s, b| text_check(s, b).data_problem()).map_err(|r| match r {
         Refusal::Check(problem) => text_error(what, problem),
         Refusal::Oom => oom_reading(),
+        Refusal::Raised(e) => e,
     })
 }
 
@@ -634,24 +675,32 @@ pub fn ruby_try_verified_text_pair(
     a: RString,
     b: RString,
     max_bytes: usize,
-) -> Result<(RubyText, RubyText), &'static str> {
-    Ok((
-        ruby_try_verified_text(a, max_bytes)?,
-        ruby_try_verified_text(b, max_bytes)?,
-    ))
+) -> Result<Result<(RubyText, RubyText), &'static str>, Error> {
+    let a = match ruby_try_verified_text(a, max_bytes)? {
+        Ok(a) => a,
+        Err(reason) => return Ok(Err(reason)),
+    };
+    Ok(ruby_try_verified_text(b, max_bytes)?.map(|b| (a, b)))
 }
 
 /// The non-raising form: the checked view, or a static reason on rejection.
-/// Nothing is coerced: `sv` is a String by type.
-pub fn ruby_try_verified_text(sv: RString, max_bytes: usize) -> Result<RubyText, &'static str> {
-    RubyText::acquire(sv, |s, b| {
+/// Nothing is coerced: `sv` is a String by type. The outer `Err` is an
+/// exception raised meanwhile - an interrupt - which is not a rejection and
+/// must not be reported as one.
+pub fn ruby_try_verified_text(
+    sv: RString,
+    max_bytes: usize,
+) -> Result<Result<RubyText, &'static str>, Error> {
+    let acquired = RubyText::acquire(sv, |s, b| {
         if b.len() > max_bytes {
             return Some("string exceeds the maximum length");
         }
         text_check(s, b).reason()
-    })
-    .map_err(|r| match r {
-        Refusal::Check(reason) => reason,
-        Refusal::Oom => "could not be copied (out of memory)",
-    })
+    });
+    match acquired {
+        Ok(view) => Ok(Ok(view)),
+        Err(Refusal::Check(reason)) => Ok(Err(reason)),
+        Err(Refusal::Oom) => Ok(Err("could not be copied (out of memory)")),
+        Err(Refusal::Raised(e)) => Err(e),
+    }
 }

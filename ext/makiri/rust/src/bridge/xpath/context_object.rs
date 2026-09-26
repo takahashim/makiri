@@ -252,7 +252,7 @@ impl XPathCtx {
          * no-NUL / valid-UTF-8 contract. */
         let sv = crate::bridge::ruby::to_s(value)?;
         let nv = ruby_verified_text(name, "variable name")?;
-        let vv = ruby_try_verified_text(sv, self.ctx.limits().max_string_bytes)
+        let vv = ruby_try_verified_text(sv, self.ctx.limits().max_string_bytes)?
             .map_err(|reason| makiri_error(format!("invalid variable value: {reason}")))?;
         self.ctx
             .register_variable(nv.as_bytes(), vv.as_bytes()) /* copies both */

@@ -555,9 +555,11 @@ U+0000 like browsers. Those data-family sites go through `ruby_verified_data`
 `ruby_verified_text`. Both checked views (`RubyText`, `RubyData`) deref to
 `&str`: each holds its String `rb_str_locktmp`ed for its life, or - when someone
 else already holds that lock (the same String passed twice, an IO) - reads its
-own copy, since a lock it does not own can be released under it. The bytes are
+own copy, since a lock it does not own can be released under it; a frozen
+String, which no Ruby can change, is borrowed as it is. The bytes are
 borrowed and CHECKED only after that (`RubyStr::acquire`): a failed lock attempt
-raises, and raising runs Ruby that can change the String. `Makiri::XML` keeps
+raises, and raising runs Ruby that can change the String. Only the lock's own
+refusal is swallowed - anything else raised there (an interrupt) propagates. `Makiri::XML` keeps
 rejecting NUL everywhere (its `crate::xml` engine enforces the XML 1.0 char class,
 independent of the bridge; U+0000 can't be well-formed XML). Don't drop the
 UTF-8 checks or route a name/engine string through the data path; see
