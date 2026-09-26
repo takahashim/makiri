@@ -17,10 +17,14 @@ use super::XmlSelf;
 use crate::init::MOD_XML;
 use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId};
 
-/// `Makiri::XML::Namespace.new(prefix, href)`.
-fn new_ns(prefix: Value, href: Value) -> Result<Value, Error> {
-    let xml = MOD_XML.defined()?;
-    let class: RClass = xml.const_get("Namespace")?;
+/// `Makiri::XML::Namespace`, the Ruby `Data` class the queries make.
+fn ns_class() -> Result<RClass, Error> {
+    MOD_XML.defined()?.const_get("Namespace")
+}
+
+/// `Makiri::XML::Namespace.new(prefix, href)`: Ruby code, which may edit the
+/// document - so no borrow of its arena may be held across the call.
+fn new_ns(class: RClass, prefix: Value, href: Value) -> Result<Value, Error> {
     class.funcall("new", (prefix, href))
 }
 
@@ -48,22 +52,35 @@ fn declarations(d: &XmlDoc, id: NodeId) -> impl Iterator<Item = (NodeId, &[u8], 
 pub fn namespace(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let parts = this.doc_ref().name_parts(this.id);
-        match parts.and_then(|n| Some((n.prefix, n.ns_uri?))) {
-            Some((prefix, uri)) => new_ns(prefix_value(ruby, prefix), str_field(ruby, uri)),
-            None => Ok(ruby.qnil().as_value()),
-        }
+        /* Both copied out before the call, so the arena is not lent across it. */
+        let Some((prefix, uri)) = parts
+            .and_then(|n| Some((n.prefix, n.ns_uri?)))
+            .map(|(p, u)| (prefix_value(ruby, p), str_field(ruby, u)))
+        else {
+            return Ok(ruby.qnil().as_value());
+        };
+        new_ns(ns_class()?, prefix, uri)
     })
 }
 
 /// `#namespace_definitions` - the declarations made ON this element.
 pub fn namespace_definitions(ruby: &Ruby, this: XmlSelf) -> Result<RArray, Error> {
     crate::bridge::ruby::entry(|| {
-        let arr = ruby.ary_new();
+        /* Every (prefix, uri) copied into Ruby Strings FIRST: `Namespace.new`
+         * is Ruby code that may edit this document, and the declarations are
+         * read straight out of its arena. The pairs live in a Ruby Array, not
+         * a Vec, so the GC sees them. */
+        let pairs = ruby.ary_new();
         for (_, p, u) in declarations(this.doc_ref(), this.id) {
-            arr.push(new_ns(
-                prefix_value(ruby, Some(p)),
-                utf8(ruby, u).as_value(),
-            )?)?;
+            pairs.push(prefix_value(ruby, Some(p)))?;
+            pairs.push(utf8(ruby, u).as_value())?;
+        }
+        let class = ns_class()?;
+        let arr = ruby.ary_new_capa(pairs.len() / 2);
+        for i in (0..pairs.len()).step_by(2) {
+            let (prefix, uri): (Value, Value) =
+                (pairs.entry(i as isize)?, pairs.entry(i as isize + 1)?);
+            arr.push(new_ns(class, prefix, uri)?)?;
         }
         Ok(arr)
     })
