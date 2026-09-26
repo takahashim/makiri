@@ -22,7 +22,10 @@ pub(in crate::bridge) unsafe fn wrap_doc_node(
     document: Value,
 ) -> Value {
     match kind {
-        DocKind::Xml => crate::bridge::xml::wrap_xml_node(node.xml(), document),
+        DocKind::Xml => match node.xml() {
+            Some(id) => crate::bridge::xml::wrap_xml_node(id, document),
+            None => crate::bridge::ruby::nil(),
+        },
         DocKind::Html => match node.html() {
             Some(n) => crate::bridge::html::wrap_html_node(n, document),
             None => crate::bridge::ruby::nil(),

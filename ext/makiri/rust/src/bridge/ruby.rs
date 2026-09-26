@@ -56,13 +56,18 @@ pub fn string_of(v: Value) -> Result<RString, Error> {
         .ok_or_else(|| type_error("String() returned a non-String"))
 }
 
-/// `v.to_s`, as a String: Ruby's own `to_s` - so an object's override is
-/// honoured, as Nokogiri's `to_s` coercions are - except for a plain `String`,
-/// whose `to_s` is itself and needs no method call. A `to_s` that returns
-/// anything but a String is a `TypeError`, not a value later read as one.
+/// `v.to_s`, as a String: Ruby's own `to_s`, so a subclass's or other object's
+/// override is honoured, as Nokogiri's `to_s` coercions are. A `to_s` that
+/// returns anything but a String is a `TypeError`, not a value later read as
+/// one.
+///
+/// An instance whose class is exactly `String` is returned as it is, without a
+/// call: paying a method dispatch on every string is not worth it. That skips
+/// a `to_s` defined on the instance's own singleton class - `rb_obj_class` does
+/// not see singletons - which is why the fast path tests the class, not
+/// `respond_to?`.
 pub fn to_s(v: Value) -> Result<RString, Error> {
     if let Some(s) = RString::from_value(v) {
-        /* Exactly String: a subclass may override `to_s`. */
         if v.class().as_raw() == gvl_ruby().class_string().as_raw() {
             return Ok(s);
         }

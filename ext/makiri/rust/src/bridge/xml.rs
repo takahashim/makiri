@@ -86,7 +86,13 @@ pub fn xml_node_unwrap(rb_self: Value) -> Result<NodeId, Error> {
         return Ok(unsafe { (*doc_of(rb_self)).doc_node() });
     }
     let nd: &NodeData = XML_NODE_TYPE.get(&rb_self)?;
-    Ok(nd.node.xml())
+    /* A wrapper's word is a real node; a null one is a broken invariant, like
+     * the missing arena `doc_of` refuses. */
+    assert!(
+        nd.node.xml().is_some(),
+        "an XML node wrapper without its node"
+    );
+    Ok(nd.node.xml().unwrap_or(NodeId::INVALID))
 }
 
 /// The XML arena behind a value checked to be an XML Document:

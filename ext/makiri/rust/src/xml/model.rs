@@ -337,7 +337,13 @@ impl NodeId {
 /// is handed back out as a [`NodeId`]. The index is never 0 - slot 0 is the
 /// reserved null slot - which is what lets `Option<Link>` stay 4 bytes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(transparent)]
 pub struct Link(NonZeroU32);
+
+/* The `repr(transparent)` above makes `Link` layout-identical to `NonZeroU32`,
+ * whose niche `Option` reuses; pin the resulting 4 bytes directly rather than
+ * leave them implied by `Node`'s total size. */
+const _: () = assert!(core::mem::size_of::<Option<Link>>() == 4);
 
 impl Link {
     /// The link naming `id`; [`NodeId::INVALID`] (index 0) names no node, so

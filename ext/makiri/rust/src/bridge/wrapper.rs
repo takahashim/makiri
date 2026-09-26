@@ -74,11 +74,12 @@ impl NodeWord {
         NodeWord(t.word())
     }
 
-    /// The XML node. Safe for any word: an arena reads a `NodeId` through
-    /// `Document::try_node`, which rejects a stale or foreign one.
+    /// The XML node, or `None` for a null word - the same shape as
+    /// [`html`](Self::html). Safe for any word: an arena reads a `NodeId`
+    /// through `Document::try_node`, which rejects a stale or foreign one.
     #[inline]
-    pub fn xml(self) -> NodeId {
-        NodeId::from_token(self.0)
+    pub fn xml(self) -> Option<NodeId> {
+        (self.0 != 0).then(|| NodeId::from_token(self.0))
     }
 
     /// The HTML node; `None` for a null word.
