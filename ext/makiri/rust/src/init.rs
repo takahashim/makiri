@@ -224,10 +224,10 @@ fn panic_probe(ruby: &Ruby, kind: i64) -> Result<(), Error> {
             let _ = n.unwrap();
         }
         4 => {
-            /* Under `rb_thread_call_without_gvl`, so the panic starts below a C
-             * frame - the largest such body in the crate is the parser itself.
+            /* With the GVL released, so the panic starts below a C frame - the
+             * largest such body in the crate is the parser itself.
              * `bridge::gvl` latches it and re-raises once the GVL is back. */
-            crate::bridge::gvl::without_gvl(|| panic!("Makiri.__panic(4): panic below the GVL"));
+            crate::bridge::gvl::without_gvl(|| panic!("Makiri.__panic(4): panic below the GVL"))?;
         }
         5 => {
             /* Through `bridge::ruby::entry`, the wrapper the untrusted-input

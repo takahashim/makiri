@@ -29,7 +29,8 @@ pub fn held(_ruby: &magnus::Ruby) -> Gvl {
     unsafe { Gvl::assume() }
 }
 
-/// Run `f` with the GVL released, and return its result.
+/// Run `f` with the GVL released, and return its result - or the exception a
+/// pending interrupt raised instead.
 ///
 /// # Contract
 /// `f` must touch no Ruby state and allocate no Ruby object. It must also be
@@ -39,15 +40,26 @@ pub fn held(_ruby: &magnus::Ruby) -> Gvl {
 /// parse does.
 ///
 /// A panic inside `f` is CAUGHT and re-raised here, after the GVL is back. It
-/// has to be: `f` runs below `rb_thread_call_without_gvl`, a C frame, and
-/// unwinding into one aborts the process. This is the whole parser, so it is
-/// the single largest piece of Rust that runs under a callback - see
-/// [`crate::caught`].
-#[allow(
-    clippy::expect_used,
-    reason = "Ruby runs the body exactly once, and a panic in it is re-raised before the result is read"
-)]
-pub fn without_gvl<F: FnOnce() -> R + Send, R>(f: F) -> R {
+/// has to be: `f` runs below the GVL-releasing call, a C frame, and unwinding
+/// into one aborts the process. This is the whole parser, so it is the single
+/// largest piece of Rust that runs under a callback - see [`crate::caught`].
+///
+/// # Interrupts
+/// `rb_thread_call_without_gvl` checks for pending interrupts before and after
+/// the body and RAISES there - a longjmp over this frame and its callers, which
+/// skips their destructors: the parsed document in `out` and the copied source
+/// leaked on every `Timeout`/`Thread#raise` that landed during a parse (30
+/// interrupted 5 MB parses grew the process by ~900 MB). The `2` variant never
+/// raises: an interrupt pending at the start makes it return without running
+/// the body, and it does not check afterwards. So:
+///
+/// - The body ran: its result is returned. An interrupt that arrived meanwhile
+///   is delivered by Ruby's next check, after the result is a Ruby object that
+///   the GC owns - nothing leaks.
+/// - It did not run: the interrupt is delivered HERE, under `protect`, so it
+///   comes back as `Err` through ordinary Rust returns. If delivering it raised
+///   nothing (a trap handler that returned), the call is simply made again.
+pub fn without_gvl<F: FnOnce() -> R + Send, R>(f: F) -> Result<R, magnus::Error> {
     struct Slot<F, R> {
         f: Option<F>,
         out: Option<R>,
@@ -58,9 +70,9 @@ pub fn without_gvl<F: FnOnce() -> R + Send, R>(f: F) -> R {
         // SAFETY: `p` is the `&mut Slot` passed below, live for this call.
         let slot = unsafe { &mut *(p as *mut Slot<F, R>) };
         /* Never a panic here: this frame is Ruby's C, outside the guard below,
-         * so one would abort the process. The body is always present (Ruby
-         * runs this once); if it somehow were not, `out` stays None and the
-         * caller reports that under the GVL. */
+         * so one would abort the process. The body is present on the first
+         * run; if it somehow were not, `out` stays None and the caller reports
+         * that under the GVL. */
         let Some(f) = slot.f.take() else {
             return core::ptr::null_mut();
         };
@@ -76,17 +88,35 @@ pub fn without_gvl<F: FnOnce() -> R + Send, R>(f: F) -> R {
         out: None,
         panic: crate::caught::PanicLatch::new(),
     };
-    // SAFETY: the trampoline runs `f` once and returns; the unblock function is
-    // Ruby's default (`None`), as in the C call this replaces.
-    unsafe {
-        rb_sys::rb_thread_call_without_gvl(
-            Some(run::<F, R>),
-            &mut slot as *mut Slot<F, R> as *mut c_void,
-            None,
-            core::ptr::null_mut(),
-        );
+    loop {
+        // SAFETY: the trampoline runs `f` at most once and returns; the unblock
+        // function is Ruby's default (`None`), as in the C call this replaces.
+        // This variant raises nothing (see above), so no Rust frame is jumped.
+        unsafe {
+            rb_sys::rb_thread_call_without_gvl2(
+                Some(run::<F, R>),
+                &mut slot as *mut Slot<F, R> as *mut c_void,
+                None,
+                core::ptr::null_mut(),
+            );
+        }
+        /* Back under the GVL and out of the C frame: safe to unwind from here. */
+        slot.panic.resume();
+        if let Some(out) = slot.out.take() {
+            return Ok(out);
+        }
+        if slot.f.is_none() {
+            /* It ran and neither answered nor panicked - which `run` cannot do. */
+            return Err(magnus::Error::new(
+                crate::init::EXC_INTERNAL_ERROR.exception(),
+                "the GVL-released body ran without a result",
+            ));
+        }
+        /* An interrupt was pending, so the body never started: deliver it. */
+        // SAFETY: under the GVL; `protect` turns the raise into `Err`.
+        crate::bridge::ruby::protect(|| {
+            unsafe { rb_sys::rb_thread_check_ints() };
+            rb_sys::Qnil as rb_sys::VALUE
+        })?;
     }
-    /* Back under the GVL and out of the C frame: safe to unwind from here. */
-    slot.panic.resume();
-    slot.out.expect("the GVL-released body ran")
 }

@@ -815,8 +815,13 @@ Key decisions that got there, worth not regressing:
 
 - **Parsing releases the GVL; XPath evaluation does NOT** (`bridge::doc`,
   `glue/query.rs`): parse copies the source to a C buffer then runs
-  `parse_html` under `rb_thread_call_without_gvl` - safe because a freshly
-  parsed document is not yet shared, so it can't race anything. **XPath holds
+  `parse_html` under `rb_thread_call_without_gvl2` - safe because a freshly
+  parsed document is not yet shared, so it can't race anything. The `2`
+  variant is deliberate: the plain one raises a pending interrupt
+  (`Timeout`, `Thread#raise`) as it returns, a longjmp over the Rust frames
+  holding the parsed document and the source copy, which leaked both on every
+  interrupted parse. `bridge::gvl::without_gvl` delivers an interrupt only
+  when the body never started, under `protect`. **XPath holds
   the GVL for the whole evaluation by design** (`xpath::ctx::Session::evaluate` is a plain
   GVL-held call). The engine and DOM are not thread-safe against concurrent
   mutation, and holding the GVL makes that safe *by construction*: the GVL

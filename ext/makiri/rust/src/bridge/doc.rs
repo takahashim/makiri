@@ -65,7 +65,7 @@ pub fn parse_document(source: Value) -> Result<Value, Error> {
 
     /* The body runs on this thread with the GVL released, so the parsed
      * handle comes back as it is. */
-    let result = crate::bridge::gvl::without_gvl(|| parse_html(owned.as_slice(), assume_valid));
+    let result = crate::bridge::gvl::without_gvl(|| parse_html(owned.as_slice(), assume_valid))?;
     drop(owned);
 
     let parsed = result.ok_or_else(|| makiri_error("failed to parse HTML document"))?;
