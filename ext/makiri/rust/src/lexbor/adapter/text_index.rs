@@ -208,7 +208,7 @@ impl TextIndex {
         let slot = t
             .runs
             .insert(Some(RawNode::from(root)), empty)
-            .ok_or(TextBuildError::Oom)?;
+            .ok_or(TextBuildError::NotApplicable)?;
         stack.push(Frame {
             child: root.first_child(),
             slot,
@@ -245,10 +245,12 @@ impl TextIndex {
                 t.prefix.push(total);
             } else if is_container(child) {
                 let start = t.slices.len() as u32;
+                /* `PtrTable::insert` never allocates: a refusal is a full
+                 * table, one more container than pass 1 counted. */
                 let slot = t
                     .runs
                     .insert(Some(RawNode::from(child)), Run { start, end: start })
-                    .ok_or(TextBuildError::Oom)?;
+                    .ok_or(TextBuildError::NotApplicable)?;
                 stack
                     .falloc_push(Frame {
                         child: child.first_child(),
