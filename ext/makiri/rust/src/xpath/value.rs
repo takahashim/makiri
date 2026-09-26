@@ -287,8 +287,41 @@ pub fn val_clone<N: Copy>(src: &Val<N>, err: ErrSink) -> Result<Val<N>, Reported
 
 /* ---------- node string-value (XPath 1.0 §5) ----------
  *
- * Built into a buffer whose ceiling is the per-evaluate byte cap, so an append
- * fails closed past it - there is never a partial or truncated result. */
+ * Borrowed from the document wherever the value is one slice of it, and built
+ * into a buffer only where it is several. Either way it is held to the
+ * per-evaluate byte cap, so there is never a partial or truncated result. */
+
+/// A string that is either a slice of something the caller already holds - the
+/// document, which does not change during an evaluate, or a value the caller
+/// owns - or a copy the engine made.
+///
+/// Most string-values are one slice of the document: a text node's, an
+/// attribute's, and an element's whose only non-empty text is one node
+/// (`<li>item 5</li>`). Those are read in place; only a value that has to be
+/// joined from several texts is built.
+pub enum Str<'a> {
+    Borrowed(&'a [u8]),
+    Owned(Text),
+}
+
+impl<'a> Str<'a> {
+    #[inline]
+    pub fn as_slice(&self) -> &[u8] {
+        match self {
+            Str::Borrowed(s) => s,
+            Str::Owned(t) => t.as_slice(),
+        }
+    }
+
+    /// The value as an engine-owned text: the owned one as it is, a borrowed
+    /// one copied - the one copy, made where a caller needs to keep it.
+    pub fn into_text(self, err: ErrSink, what: &str) -> Result<Text, Reported> {
+        match self {
+            Str::Owned(t) => Ok(t),
+            Str::Borrowed(s) => owned_copy(s, err, what),
+        }
+    }
+}
 
 /// Why a string-value could not be built: the buffer refused (its byte cap, or
 /// OOM), or the walk ran out of the evaluation's op budget.
@@ -297,24 +330,88 @@ enum Unbuilt {
     Budget(Reported),
 }
 
-/// Append the string-value of every character-data descendant of `node`, in
-/// document order.
+/// The byte cap a string-value is held to, as the buffer that builds one
+/// enforces it - so a value that is only borrowed fails at the same length,
+/// with the same error, as one that is copied.
+#[inline]
+fn string_value_limit(budget: &Budget) -> usize {
+    Buf::content_limit_for(budget.limits.max_string_bytes)
+}
+
+/// The string-value failure `e` names, written to `budget`.
+fn unbuilt_error(budget: &Budget, e: Unbuilt) -> Reported {
+    match e {
+        Unbuilt::Budget(reported) => reported,
+        Unbuilt::Buf(BufError::Limit) => err_setf!(
+            budget.sink(),
+            ErrorKind::Limit,
+            "string size limit exceeded ({} bytes) while building node string-value",
+            budget.limits.max_string_bytes
+        ),
+        Unbuilt::Buf(_) => err_setf!(
+            budget.sink(),
+            ErrorKind::Oom,
+            "out of memory building node string-value"
+        ),
+    }
+}
+
+/// `s` as a string-value, held to the byte cap.
+#[inline]
+fn borrow_within_limit(s: &[u8], limit: usize) -> Result<&[u8], Unbuilt> {
+    if s.len() > limit {
+        return Err(Unbuilt::Buf(BufError::Limit));
+    }
+    Ok(s)
+}
+
+/// The value of a node that holds its own: an attribute, or a text, CDATA,
+/// comment or processing-instruction node. None for a node whose value is its
+/// descendants' text (an element, the document, a fragment).
+#[inline]
+fn leaf_text<'d, D: Dom<'d>>(doc: D, node: D::Node) -> Option<&'d [u8]> {
+    if let Some(a) = doc.as_attr(node) {
+        return Some(doc.attr_value(a));
+    }
+    match doc.node_type(node) {
+        NodeType::Text | NodeType::CDataSection | NodeType::Comment | NodeType::Pi => {
+            Some(doc.own_text(node))
+        }
+        _ => None,
+    }
+}
+
+/// What the descendant walk has found so far.
+enum Found<'d> {
+    /// No character data, or only empty ones.
+    Nothing,
+    /// Exactly one non-empty text: the value is that slice.
+    One(&'d [u8]),
+    /// Two or more, joined in document order.
+    Many(Buf),
+}
+
+/// The string-value of a container: the text of every character-data
+/// descendant of `node`, in document order.
 ///
 /// Both TEXT and CDATA count as character data (§3 / §5: a CDATA section is
 /// text, not a distinct node type). The axis walker is iterative through parent
 /// links, so an adversarially deep tree cannot overflow the stack; only an
 /// element has children below `node`, so the walk goes into elements only.
 ///
-/// Each visited node is charged to the op budget. The byte cap alone did not
-/// bound the work: the walk is over every descendant, text or not, and a
-/// predicate runs it once per candidate - `//span[. = 'x']` over 16,000 nested
-/// spans walked a quadratic number of empty elements for two seconds.
-fn append_text_descendants<'d, D: Dom<'d>>(
+/// When at most one of them is non-empty the value is that slice, borrowed:
+/// a buffer is opened only at the second one. Every visited node is charged to
+/// the op budget either way. The byte cap alone did not bound the work: the
+/// walk is over every descendant, text or not, and a predicate runs it once
+/// per candidate - `//span[. = 'x']` over 16,000 nested spans walked a
+/// quadratic number of empty elements for two seconds.
+fn descendant_text<'d, D: Dom<'d>>(
     doc: D,
     node: D::Node,
-    buf: &mut Buf,
     budget: &Budget,
-) -> Result<(), Unbuilt> {
+) -> Result<Str<'d>, Unbuilt> {
+    let limit = string_value_limit(budget);
+    let mut found = Found::Nothing;
     let flow = walk_descendants::<D, _, _>(doc, node, &mut |n| {
         if let Err(r) = budget.charge_op() {
             return ControlFlow::Break(Unbuilt::Budget(r));
@@ -322,77 +419,63 @@ fn append_text_descendants<'d, D: Dom<'d>>(
         if !matches!(doc.node_type(n), NodeType::Text | NodeType::CDataSection) {
             return ControlFlow::Continue(());
         }
+        let s = doc.own_text(n);
+        if s.is_empty() {
+            return ControlFlow::Continue(());
+        }
         /* LIMIT or OOM - the caller fails closed */
-        match append_text(buf, doc.own_text(n)) {
-            Ok(()) => ControlFlow::Continue(()),
-            Err(e) => ControlFlow::Break(Unbuilt::Buf(e)),
+        let step = match found {
+            Found::Nothing => borrow_within_limit(s, limit).map(Found::One),
+            /* The second: open the buffer with both, as the one append
+             * sequence a copied value always was. */
+            Found::One(first) => {
+                let mut buf = Buf::new(budget.limits.max_string_bytes);
+                match buf.append(first).and_then(|()| buf.append(s)) {
+                    Ok(()) => Ok(Found::Many(buf)),
+                    Err(e) => Err(Unbuilt::Buf(e)),
+                }
+            }
+            Found::Many(ref mut buf) => match buf.append(s) {
+                Ok(()) => return ControlFlow::Continue(()),
+                Err(e) => Err(Unbuilt::Buf(e)),
+            },
+        };
+        match step {
+            Ok(next) => {
+                found = next;
+                ControlFlow::Continue(())
+            }
+            Err(e) => ControlFlow::Break(e),
         }
     });
-    match flow {
-        ControlFlow::Continue(()) => Ok(()),
-        ControlFlow::Break(e) => Err(e),
+    if let ControlFlow::Break(e) = flow {
+        return Err(e);
+    }
+    match found {
+        Found::Nothing => Ok(Str::Borrowed(&[])),
+        Found::One(s) => Ok(Str::Borrowed(s)),
+        Found::Many(mut buf) => buf
+            .steal()
+            .map(|owned| Str::Owned(Text::from_buf(owned)))
+            .map_err(|_| Unbuilt::Buf(BufError::Oom)),
     }
 }
 
-/// Append `s`; an empty one is no append at all.
-#[inline]
-fn append_text(buf: &mut Buf, s: &[u8]) -> Result<(), BufError> {
-    if s.is_empty() {
-        return Ok(());
-    }
-    buf.append(s)
-}
-
-fn build_string_value<'d, D: Dom<'d>>(
+/// `node`'s XPath string-value - the one node string-value reader, bounded by
+/// `budget`'s `max_string_bytes` and, for a container, its op count. Borrowed
+/// from the document when it is one slice of it (see [`Str`]). Any failure
+/// returns `Err` with the budget's slot set: there is no unbounded or
+/// best-effort form to reach for.
+pub fn node_string_value<'d, D: Dom<'d>>(
     doc: D,
     node: D::Node,
-    buf: &mut Buf,
     budget: &Budget,
-) -> Result<(), Unbuilt> {
-    if let Some(a) = doc.as_attr(node) {
-        return append_text(buf, doc.attr_value(a)).map_err(Unbuilt::Buf);
-    }
-    match doc.node_type(node) {
-        NodeType::Text | NodeType::CDataSection | NodeType::Comment | NodeType::Pi => {
-            append_text(buf, doc.own_text(node)).map_err(Unbuilt::Buf)
-        }
-        _ => append_text_descendants::<D>(doc, node, buf, budget),
-    }
-}
-
-/// Build `node`'s XPath string-value - the one node string-value builder,
-/// bounded by `budget`'s `max_string_bytes`. Any failure returns `Err` with the
-/// budget's slot set: there is no unbounded or best-effort form to reach for.
-pub fn node_to_owned_text<'d, D: Dom<'d>>(
-    doc: D,
-    node: D::Node,
-    budget: &mut Budget,
-) -> Result<Text, Reported> {
-    let max = budget.limits.max_string_bytes;
-    let mut buf = Buf::new(max);
-    let built = build_string_value::<D>(doc, node, &mut buf, budget).map_err(|e| match e {
-        Unbuilt::Budget(reported) => reported,
-        Unbuilt::Buf(BufError::Limit) => err_setf!(
-            budget.sink(),
-            ErrorKind::Limit,
-            "string size limit exceeded ({} bytes) while building node string-value",
-            max
-        ),
-        Unbuilt::Buf(_) => err_setf!(
-            budget.sink(),
-            ErrorKind::Oom,
-            "out of memory building node string-value"
-        ),
-    });
-    built?;
-    let owned = buf.steal().map_err(|_| {
-        err_setf!(
-            budget.sink(),
-            ErrorKind::Oom,
-            "out of memory building node string-value"
-        )
-    })?;
-    Ok(Text::from_buf(owned))
+) -> Result<Str<'d>, Reported> {
+    let got = match leaf_text::<D>(doc, node) {
+        Some(s) => borrow_within_limit(s, string_value_limit(budget)).map(Str::Borrowed),
+        None => descendant_text::<D>(doc, node, budget),
+    };
+    got.map_err(|e| unbuilt_error(budget, e))
 }
 
 /* ---------- coercions ---------- */
@@ -441,40 +524,45 @@ pub fn val_to_boolean<N>(v: &Val<N>) -> bool {
     }
 }
 
-/// value -> string (§4.2), bounded by `budget`.
-pub fn val_to_owned_text_or_fail<'d, D: Dom<'d>>(
+/// value -> string (§4.2), bounded by `budget`, borrowed wherever the answer
+/// is already held: a string value's own bytes, a node's slice of the
+/// document, a constant.
+pub fn val_to_str_or_fail<'a, 'd: 'a, D: Dom<'d>>(
     doc: D,
-    v: &Val<D::Node>,
-    budget: &mut Budget,
-) -> Result<Text, Reported> {
-    let err = budget.sink();
+    v: &'a Val<D::Node>,
+    budget: &Budget,
+) -> Result<Str<'a>, Reported> {
     match v.get() {
         ValRef::String(s) => {
             let text = s.as_slice();
             budget.check_string_bytes(text.len())?;
-            owned_copy(text, err, "out of memory copying string value")
+            Ok(Str::Borrowed(text))
         }
-        ValRef::Boolean(b) => {
-            let s: &[u8] = if b { b"true" } else { b"false" };
-            owned_copy(s, err, "out of memory converting boolean to string")
-        }
+        ValRef::Boolean(b) => Ok(Str::Borrowed(if b { b"true" } else { b"false" })),
         ValRef::Number(d) => {
-            let what = "out of memory converting number to string";
             if d.is_nan() {
-                return owned_copy(b"NaN", err, what);
+                return Ok(Str::Borrowed(b"NaN"));
             }
             if d.is_infinite() {
-                let s: &[u8] = if d < 0.0 { b"-Infinity" } else { b"Infinity" };
-                return owned_copy(s, err, what);
+                return Ok(Str::Borrowed(if d < 0.0 {
+                    b"-Infinity"
+                } else {
+                    b"Infinity"
+                }));
             }
             if d == 0.0 {
-                return owned_copy(b"0", err, what);
+                return Ok(Str::Borrowed(b"0"));
             }
             let mut buf = [0u8; 64];
             match number::to_text(d, &mut buf) {
-                Some(n) => owned_copy(&buf[..n], err, what),
+                Some(n) => owned_copy(
+                    &buf[..n],
+                    budget.sink(),
+                    "out of memory converting number to string",
+                )
+                .map(Str::Owned),
                 None => Err(err_setf!(
-                    err,
+                    budget.sink(),
                     ErrorKind::Internal,
                     "number string conversion overflow"
                 )),
@@ -484,14 +572,14 @@ pub fn val_to_owned_text_or_fail<'d, D: Dom<'d>>(
             /* §4.2: string(node-set) is the string-value of its first node in
              * document order. */
             match ns.as_slice().first() {
-                Some(&first) => node_to_owned_text::<D>(doc, first, budget),
-                None => owned_copy(b"", err, "out of memory"),
+                Some(&first) => node_string_value::<D>(doc, first, budget),
+                None => Ok(Str::Borrowed(&[])),
             }
         }
     }
 }
 
-/// value -> number, bounded. Only the node-set case can fail (it builds a
+/// value -> number, bounded. Only the node-set case can fail (it reads a
 /// string-value first).
 pub fn val_to_number_or_fail<'d, D: Dom<'d>>(
     doc: D,
@@ -507,23 +595,36 @@ pub fn val_to_number_or_fail<'d, D: Dom<'d>>(
     let Some(node) = first else {
         return Ok(f64::NAN);
     };
-    let text = node_to_owned_text::<D>(doc, node, budget)?;
+    let text = node_string_value::<D>(doc, node, budget)?;
     Ok(bytes_to_number(text.as_slice()))
 }
 
 /* ---------- the cached string-value of a node ---------- */
 
-/// The cached string-value of `node`, building and caching it on a miss. The
-/// text is `.bytes(&ev.str_cache)`.
+/// The string-value of `node` for a comparison. The text is
+/// `.bytes(&ev.str_cache)`.
+///
+/// A node holding its own value (an attribute, a text node) is read in place
+/// on every call: that is cheaper than a cache lookup, and costs nothing to
+/// repeat. A container's value costs a walk of its subtree, charged to the op
+/// budget, so it is read once and cached - borrowed or built - and a node-set
+/// comparison that meets the node again pays neither the walk nor the charge.
 pub fn cached_node_text<'e, 'd, D: Dom<'d>>(
     ev: &mut super::eval::Evaluation<'e, 'd, D>,
     node: D::Node,
-) -> Result<NodeText, Reported> {
+) -> Result<NodeText<'d>, Reported> {
+    let doc = ev.doc;
+    if let Some(s) = leaf_text::<D>(doc, node) {
+        return borrow_within_limit(s, string_value_limit(&ev.budget))
+            .map(NodeText::Borrowed)
+            .map_err(|e| unbuilt_error(&ev.budget, e));
+    }
     let key = D::token(node);
     if let Some(id) = ev.str_cache.find(key) {
         return Ok(NodeText::Cached(id));
     }
-    let text = node_to_owned_text::<D>(ev.doc, node, &mut ev.budget)?;
+    let text =
+        descendant_text::<D>(doc, node, &ev.budget).map_err(|e| unbuilt_error(&ev.budget, e))?;
     ev.str_cache.insert(key, text, &mut ev.budget)
 }
 

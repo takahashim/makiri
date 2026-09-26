@@ -341,3 +341,123 @@ fn comparisons_answer_the_same_with_no_cache() {
         assert_eq!(cached, uncached, "{e}");
     }
 }
+
+/// A document whose string-values come in every shape the reader takes: one
+/// text (borrowed), several (built), none, whitespace only, CDATA, a lone text
+/// among empty elements, and an attribute.
+const SHAPES: &[u8] = br#"<r><li>item 5</li><m>a<!--c-->b<?p q?></m><e/><w> </w><s><![CDATA[cd]]></s><n>x<![CDATA[y]]>z</n><o><i></i>only<i/></o><x a="val"/></r>"#;
+
+/// `expr` against [`SHAPES`] from its document node: the answer, or the
+/// failure's status and message.
+fn shapes(
+    expr: &str,
+    tighten: impl FnOnce(&mut crate::xpath::limits::Limits),
+) -> Result<Answer, (ErrorKind, String)> {
+    let doc = xml_parse(SHAPES).expect("the fixture parses");
+    let mut ctx = crate::xml::xpath::context(&doc, doc.doc_node());
+    tighten(ctx.limits_mut());
+    let mut budget = Budget::with_limits(ctx.limits());
+    let source = VerifiedText::from_bytes(expr.as_bytes()).expect("verified");
+    let Ok(ast) = parse_owned(source, &mut budget) else {
+        panic!("{expr} parses");
+    };
+    match ctx.evaluate(&ast, None) {
+        Ok(XPathValue::NodeSet(set)) => Ok(Answer::Num(set.len() as f64)),
+        Ok(XPathValue::String(t)) => Ok(text(&String::from_utf8_lossy(t.as_slice()))),
+        Ok(XPathValue::Number(d)) => Ok(Answer::Num(d)),
+        Ok(XPathValue::Boolean(b)) => Ok(Answer::Bool(b)),
+        Err(e) => Err((e.status, e.message().unwrap_or("").to_string())),
+    }
+}
+
+fn shape(expr: &str) -> Answer {
+    shapes(expr, |_| {}).unwrap_or_else(|e| panic!("{expr}: {e:?}"))
+}
+
+#[test]
+fn string_values_read_in_place_and_built_agree_with_section_5() {
+    /* One text: the element's value is that text node's slice. */
+    assert_eq!(shape("string(//li)"), text("item 5"));
+    assert_eq!(shape("//li = 'item 5'"), Answer::Bool(true));
+    assert_eq!(shape("count(//*[. = 'item 5'])"), Answer::Num(1.0));
+    assert_eq!(shape("string-length(//li)"), Answer::Num(6.0));
+    assert_eq!(shape("contains(//li, 'm 5')"), Answer::Bool(true));
+    assert_eq!(shape("normalize-space(//li)"), text("item 5"));
+    /* Several: joined in document order, comments and PIs left out. */
+    assert_eq!(shape("string(//m)"), text("ab"));
+    assert_eq!(shape("//m = 'ab'"), Answer::Bool(true));
+    assert_eq!(shape("string(//n)"), text("xyz"));
+    assert_eq!(shape("//n = 'xyz'"), Answer::Bool(true));
+    /* None: the empty string. Whitespace only is text. */
+    assert_eq!(shape("string(//e)"), text(""));
+    assert_eq!(shape("//e = ''"), Answer::Bool(true));
+    assert_eq!(shape("string-length(//w)"), Answer::Num(1.0));
+    /* CDATA is text, alone or among other texts. */
+    assert_eq!(shape("string(//s)"), text("cd"));
+    assert_eq!(shape("//s = 'cd'"), Answer::Bool(true));
+    /* Empty elements around the one text change nothing. */
+    assert_eq!(shape("string(//o)"), text("only"));
+    assert_eq!(shape("//o = 'only'"), Answer::Bool(true));
+    /* The document: every text, joined. */
+    assert_eq!(shape("string(/)"), text("item 5ab cdxyzonly"));
+    /* Attributes and leaves read their own value. */
+    assert_eq!(shape("string(//x/@a)"), text("val"));
+    assert_eq!(shape("//x/@a = 'val'"), Answer::Bool(true));
+    assert_eq!(shape("starts-with(//x/@a, 'va')"), Answer::Bool(true));
+    assert_eq!(shape("string(//m/comment())"), text("c"));
+    assert_eq!(shape("//li/text() = //li"), Answer::Bool(true));
+    /* Node-set against node-set, read in place on both sides and cached. */
+    assert_eq!(shape("count(//*[. = //li/text()])"), Answer::Num(1.0));
+    assert_eq!(shape("//s = //n"), Answer::Bool(false));
+}
+
+#[test]
+fn a_borrowed_string_value_is_held_to_the_byte_cap_like_a_built_one() {
+    let cap = |bytes| move |l: &mut crate::xpath::limits::Limits| l.max_string_bytes = bytes;
+    /* At the cap a borrowed value is read. */
+    assert_eq!(shapes("string(//li)", cap(6)), Ok(text("item 5")));
+    assert_eq!(shapes("string(//x/@a)", cap(3)), Ok(text("val")));
+    /* Past it every shape fails the same way: element, text node, attribute,
+     * a comparison's cached read, and a value that has to be built. */
+    let built = shapes("string(//m)", cap(1)).expect_err("over the cap");
+    assert_eq!(built.0, ErrorKind::Limit);
+    assert!(built.1.contains("string size limit exceeded"), "{built:?}");
+    for e in [
+        "string(//li)",
+        "string(//li/text())",
+        "string(//x/@a)",
+        "//li = 'x'",
+        "//x/@a = 'x'",
+        "contains(//li, 'x')",
+        "number(//li)",
+        "sum(//li)",
+    ] {
+        assert_eq!(shapes(e, cap(1)), Err(built.clone()), "{e}");
+    }
+    /* A lone text below the cap in a value built from several still trips it. */
+    assert_eq!(
+        shapes("string(//n)", cap(2)).map_err(|e| e.0),
+        Err(ErrorKind::Limit)
+    );
+    assert_eq!(shapes("string(//n)", cap(3)), Ok(text("xyz")));
+}
+
+/// The smallest `max_eval_ops` under which `expr` answers on [`SHAPES`].
+fn ops_needed(expr: &str) -> usize {
+    (1..10_000)
+        .find(|&n| shapes(expr, |l| l.max_eval_ops = n).is_ok())
+        .expect("fits some budget")
+}
+
+#[test]
+fn a_borrowed_string_value_still_charges_its_walk() {
+    /* `//o`'s value is one borrowed slice, but finding it walks three nodes
+     * (i, the text, i) - one op each, exactly as a built value's walk. */
+    assert_eq!(ops_needed("string(//o)"), ops_needed("boolean(//o)") + 3);
+    assert_eq!(ops_needed("string(//m)"), ops_needed("boolean(//m)") + 4);
+    /* A leaf walks nothing. */
+    assert_eq!(
+        ops_needed("string(//li/text())"),
+        ops_needed("boolean(//li/text())")
+    );
+}

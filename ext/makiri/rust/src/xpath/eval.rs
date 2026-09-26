@@ -65,7 +65,7 @@ pub struct Evaluation<'e, 'd, D: Dom<'d>> {
     pub names: &'e Names,
     pub doc: D,
     pub budget: Budget,
-    pub str_cache: StrCache,
+    pub str_cache: StrCache<'d>,
     pub order_index: OrderIndex,
     /// The CSS lowering's sibling positions, one parent at a time.
     pub(crate) sibling_positions: super::funcs::SiblingPositions<D::Node>,
@@ -326,8 +326,8 @@ fn compare_eq<'e, 'd, D: Dom<'d>>(
                     scalar_to_number(l) == scalar_to_number(r)
                 }
                 _ => {
-                    let ls = val_to_owned_text_or_fail::<D>(doc, l, &mut ev.budget)?;
-                    let rs = val_to_owned_text_or_fail::<D>(doc, r, &mut ev.budget)?;
+                    let ls = val_to_str_or_fail::<D>(doc, l, &ev.budget)?;
+                    let rs = val_to_str_or_fail::<D>(doc, r, &ev.budget)?;
                     ls.as_slice() == rs.as_slice()
                 }
             };
@@ -350,7 +350,7 @@ fn compare_eq<'e, 'd, D: Dom<'d>>(
             Ok(eq == want_eq)
         }
         _ => {
-            let target = val_to_owned_text_or_fail::<D>(doc, sc, &mut ev.budget)?;
+            let target = val_to_str_or_fail::<D>(doc, sc, &ev.budget)?;
             let want = target.as_slice();
             for &n in set.as_slice() {
                 ev.budget.charge_op()?;

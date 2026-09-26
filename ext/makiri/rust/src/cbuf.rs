@@ -262,11 +262,15 @@ impl Buf {
     /// any append will accept.
     #[inline]
     fn content_limit(&self) -> usize {
-        let soft = if self.max != 0 {
-            self.max
-        } else {
-            BUF_DEFAULT_LIMIT
-        };
+        Buf::content_limit_for(self.max)
+    }
+
+    /// The content ceiling a buffer made by [`Buf::new`]`(max)` enforces: what
+    /// a caller that skips the buffer (a value it only borrows) holds the
+    /// same bytes to, so both answers fail at the same length.
+    #[inline]
+    pub fn content_limit_for(max: usize) -> usize {
+        let soft = if max != 0 { max } else { BUF_DEFAULT_LIMIT };
         soft.min(BUF_HARD_MAX)
     }
 

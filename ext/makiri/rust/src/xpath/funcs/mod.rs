@@ -400,9 +400,12 @@ fn boolean<N>(b: bool) -> Answer<N> {
     Ok(Val::boolean(b))
 }
 
-fn to_text<'e, 'd, D: Dom<'d>>(v: &Val<D::Node>, ev: &mut Evaluation<'e, 'd, D>) -> FnResult<Text> {
-    let doc = ev.doc;
-    val_to_owned_text_or_fail::<D>(doc, v, &mut ev.budget)
+/// `v` as a string, borrowed from `v` or the document where it can be.
+fn to_text<'a, 'e, 'd: 'a, D: Dom<'d>>(
+    v: &'a Val<D::Node>,
+    ev: &mut Evaluation<'e, 'd, D>,
+) -> FnResult<Str<'a>> {
+    val_to_str_or_fail::<D>(ev.doc, v, &ev.budget)
 }
 
 fn to_number<'e, 'd, D: Dom<'d>>(
@@ -415,11 +418,11 @@ fn to_number<'e, 'd, D: Dom<'d>>(
 
 /// The string-value of `args[0]`, or of the context node when there is none -
 /// the idiom string() / string-length() / normalize-space() share.
-fn arg_or_self_text<'e, 'd, D: Dom<'d>>(
+fn arg_or_self_text<'a, 'e, 'd: 'a, D: Dom<'d>>(
     focus: &Focus<'d, D>,
-    args: &[Val<D::Node>],
+    args: &'a [Val<D::Node>],
     ev: &mut Evaluation<'e, 'd, D>,
-) -> FnResult<Text> {
+) -> FnResult<Str<'a>> {
     match args.first() {
         Some(a) => to_text::<D>(a, ev),
         None => self_text::<D>(focus, ev),
@@ -430,14 +433,10 @@ fn arg_or_self_text<'e, 'd, D: Dom<'d>>(
 fn self_text<'e, 'd, D: Dom<'d>>(
     focus: &Focus<'d, D>,
     ev: &mut Evaluation<'e, 'd, D>,
-) -> FnResult<Text> {
+) -> FnResult<Str<'d>> {
     match focus.node {
-        Some(n) => node_to_owned_text::<D>(ev.doc, n, &mut ev.budget),
-        None => owned_copy(
-            b"",
-            ev.budget.sink(),
-            "out of memory building node string-value",
-        ),
+        Some(n) => node_string_value::<D>(ev.doc, n, &ev.budget),
+        None => Ok(Str::Borrowed(&[])),
     }
 }
 
@@ -613,7 +612,7 @@ fn fn_id<'e, 'd, D: Dom<'d>>(
      * anything else is converted to a string and split the same way. */
     if let Some(set) = args[0].as_nodeset() {
         set.as_slice().iter().try_for_each(|&n| {
-            let t = node_to_owned_text::<D>(doc, n, &mut ev.budget)?;
+            let t = node_string_value::<D>(doc, n, &ev.budget)?;
             id_collect::<D>(id_attr, t.as_slice(), root, &mut found, ev)
         })?;
     } else {
@@ -745,7 +744,11 @@ fn fn_string<'e, 'd, D: Dom<'d>>(
     focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
-    Ok(Val::string(arg_or_self_text::<D>(focus, args, ev)?))
+    let s = arg_or_self_text::<D>(focus, args, ev)?;
+    Ok(Val::string(s.into_text(
+        ev.budget.sink(),
+        "out of memory in string()",
+    )?))
 }
 
 fn fn_concat<'e, 'd, D: Dom<'d>>(
@@ -754,7 +757,7 @@ fn fn_concat<'e, 'd, D: Dom<'d>>(
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
-    let mut parts = try_vec::<Text>(args.len(), err.clone(), "concat")?;
+    let mut parts = try_vec::<Str<'_>>(args.len(), err.clone(), "concat")?;
     let mut total = 0usize;
     for a in args {
         let t = to_text::<D>(a, ev)?;

@@ -875,6 +875,17 @@ Key decisions that got there, worth not regressing:
   (`xpath::eval::Evaluation`), as do the op budget and the document-order
   index, so a nested (handler-triggered) evaluate gets its own and cannot
   disturb the walk that called it.
+- **Node string-values are borrowed when they are one slice** (`xpath/value.rs`
+  `node_string_value` -> `Str`, `NodeText::Borrowed`): an attribute, a
+  text/CDATA/comment/PI node, and a container whose descendants hold one
+  non-empty text (`<li>item 5</li>`) are read in place; only a value joined
+  from several texts is built. Leaves and attributes skip the cache (a read is
+  cheaper than a lookup); a container's value is still cached, borrowed or
+  built, because its walk is charged to the op budget and a node-set
+  comparison must not pay it again - not caching borrowed ones measured ~13%
+  faster on `//li[. = 'x']` but would re-charge that walk per pair.
+  `max_cache_bytes` counts a borrowed entry by its length, and a borrow is held
+  to `max_string_bytes` exactly as a build (`Buf::content_limit_for`).
 - **`[@name]` / `[@name='lit']` predicates take a direct-attribute fast path**
   (`match_attr_pred`/`attr_pred_matches` in `xpath/attr_pred.rs`): a
   position-independent filter via `lxb_dom_element_has_attribute`/`get_attribute`

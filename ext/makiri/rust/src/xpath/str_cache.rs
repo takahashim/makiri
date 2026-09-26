@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 
 use super::abi::*;
+use super::value::Str;
 use crate::err_setf;
 use crate::falloc::Reserve;
 use crate::ptr_table::PtrMap;
@@ -16,14 +17,22 @@ use crate::token::Token;
 #[derive(Clone, Copy, Debug)]
 pub struct TextId(usize);
 
-/// One evaluate's node string-value cache: an ordered store of the texts it
-/// built, plus a token-keyed index into it.
+/// One evaluate's node string-value cache: an ordered store of container
+/// string-values, plus a token-keyed index into it.
 ///
-/// It owns every text it holds, and they go with it - there is nothing to
-/// clear by hand.
+/// An entry is the value as the walk found it: a slice of the document when
+/// the container held one non-empty text (borrowed for `'d`, which the
+/// document outlives the evaluate by), or the text built from several, which
+/// the cache owns and drops with itself - there is nothing to clear by hand.
+///
+/// `max_cache_bytes` is charged each entry's LENGTH, borrowed or owned alike.
+/// A borrowed entry holds no copy, but counting it keeps one rule for which
+/// values stay cached, and so for when a rebuild is charged
+/// ([`Budget::charge_bytes`]); counting it as free would let the cap stop
+/// bounding anything a query of borrowed values does.
 #[derive(Default)]
-pub struct StrCache {
-    entries: Vec<(Token, Text)>,
+pub struct StrCache<'d> {
+    entries: Vec<(Token, Str<'d>)>,
     /// node token -> entry index.
     index: PtrMap<Token, usize>,
     total_bytes: usize,
@@ -32,8 +41,8 @@ pub struct StrCache {
     refused: PtrMap<Token, u8>,
 }
 
-impl StrCache {
-    pub const fn new() -> StrCache {
+impl<'d> StrCache<'d> {
+    pub const fn new() -> StrCache<'d> {
         StrCache {
             entries: Vec::new(),
             index: PtrMap::new(),
@@ -55,16 +64,18 @@ impl StrCache {
     }
 
     /// Cache `text` as `node`'s string-value, or hand it back uncached when
-    /// the cache is at `budget`'s `max_cache_bytes`.
+    /// the cache is at `budget`'s `max_cache_bytes`. Only a container's value
+    /// comes here: a node that holds its own is read in place, uncached
+    /// (`value::cached_node_text`).
     ///
     /// Only OOM is an error. Every refusal happens before anything is
     /// committed, so a failed insert leaves the cache as it was.
     pub fn insert(
         &mut self,
         node: Token,
-        text: Text,
+        text: Str<'d>,
         budget: &mut Budget,
-    ) -> Result<NodeText, Reported> {
+    ) -> Result<NodeText<'d>, Reported> {
         // Past the cap the value is still the answer, just not kept: a total
         // held to the per-string cap made `//*[. = "x"]` raise on a page where
         // `//*[string(.) = "x"]`, which never caches, answered.
@@ -83,7 +94,10 @@ impl StrCache {
             if again {
                 budget.charge_bytes(text.as_slice().len())?;
             }
-            return Ok(NodeText::Uncached(text));
+            return Ok(match text {
+                Str::Borrowed(s) => NodeText::Borrowed(s),
+                Str::Owned(t) => NodeText::Uncached(t),
+            });
         };
         if self.entries.falloc_reserve(1).is_err() {
             return Err(err_setf!(
@@ -109,19 +123,21 @@ impl StrCache {
     }
 }
 
-/// A node's string-value as [`StrCache::insert`] left it: in the cache, or held
-/// here because the cache was full.
-pub enum NodeText {
+/// A node's string-value for a comparison: in the cache, a slice of the
+/// document, or a text built for this one use because the cache was full.
+pub enum NodeText<'d> {
     Cached(TextId),
+    Borrowed(&'d [u8]),
     Uncached(Text),
 }
 
-impl NodeText {
+impl NodeText<'_> {
     /// The bytes, wherever they are.
     #[inline]
-    pub fn bytes<'a>(&'a self, cache: &'a StrCache) -> &'a [u8] {
+    pub fn bytes<'a>(&'a self, cache: &'a StrCache<'_>) -> &'a [u8] {
         match self {
             NodeText::Cached(id) => cache.text(*id),
+            NodeText::Borrowed(s) => s,
             NodeText::Uncached(t) => t.as_slice(),
         }
     }
