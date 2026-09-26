@@ -171,10 +171,7 @@ impl<'d> Writer<'d, '_> {
              * detached element too: compared only through its element, a given
              * `urn:a` was written under whatever the prefix meant here, or
              * dropped from an unprefixed name. */
-            let flags = doc.node(at).flags;
-            let decided = decided
-                || (flags.contains(NodeFlags::NS_EXPLICIT)
-                    && !flags.contains(NodeFlags::NS_PENDING));
+            let decided = decided || doc.node(at).attr_ns == crate::xml::AttrNs::Explicit;
             if xmlns_decl(doc, at).is_none() && !prefix.is_empty() {
                 let Some(expected) = self.binds.resolve(prefix)? else {
                     return Err(Failure::UnboundPrefix);

@@ -158,7 +158,7 @@ fn plan_attr<'d>(
     }
     let uri = doc.span(doc.node(a).ns_uri);
     if own_prefix.is_empty() {
-        if uri.is_empty() || doc.node(a).flags.contains(NodeFlags::DOM_LOOSE_NAME) {
+        if uri.is_empty() {
             return Ok(plan);
         }
         /* An unprefixed attribute is in NO namespace (Namespaces in XML §6.2),

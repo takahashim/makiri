@@ -17,7 +17,7 @@
 
 use crate::falloc::VecPush;
 use crate::xml::qname::{xmlns_prefix, Split};
-use crate::xml::{ArenaKind, Document, MutError, NodeFlags, NodeId, Span};
+use crate::xml::{ArenaKind, AttrNs, Document, MutError, NodeFlags, NodeId, Span};
 
 /// A resolved namespace: a byte-store span (empty = no namespace).
 pub(super) type Ns = Span;
@@ -37,12 +37,16 @@ impl Resolved {
         Resolved { ns, pending: false }
     }
 
-    /// Record the outcome on attribute `attr`.
+    /// Record the outcome on attribute `attr`. Resolution only ever produces
+    /// the derived or pending state; `Explicit` is the caller's to set.
     pub(super) fn write_attr(self, doc: &mut Document, attr: NodeId) {
         let n = doc.node_mut(attr);
         n.ns_uri = self.ns;
-        n.flags.remove(NodeFlags::NS_EXPLICIT);
-        n.flags.set(NodeFlags::NS_PENDING, self.pending);
+        n.attr_ns = if self.pending {
+            AttrNs::Pending
+        } else {
+            AttrNs::Derived
+        };
     }
 }
 
@@ -101,9 +105,8 @@ enum Part {
 /// own and is never derived again; everything else is, unless only the
 /// pending ones are being looked at.
 fn rederives(doc: &Document, attr: NodeId, part: Part) -> bool {
-    let flags = doc.node(attr).flags;
-    !flags.contains(NodeFlags::NS_EXPLICIT)
-        && (part == Part::Whole || flags.contains(NodeFlags::NS_PENDING))
+    let state = doc.node(attr).attr_ns;
+    state != AttrNs::Explicit && (part == Part::Whole || state == AttrNs::Pending)
 }
 
 /// Whether `e`'s own name is resolved for this `part`.
@@ -207,7 +210,7 @@ fn apply_ns_plan(doc: &mut Document, plan: NsPlan) {
 /// Whether any attribute of `e` still has a pending namespace.
 fn has_pending_attr(doc: &Document, e: NodeId) -> bool {
     for attr in doc.attributes(e) {
-        if doc.node(attr).flags.contains(NodeFlags::NS_PENDING) {
+        if doc.node(attr).attr_ns == AttrNs::Pending {
             return true;
         }
     }

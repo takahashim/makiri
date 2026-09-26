@@ -13,7 +13,7 @@ use super::ns::{resolve_ns, Ns, Resolved, NO_NS};
 use crate::xml::attr_key::{key_taken, AttrKey};
 use crate::xml::chars::validate_chars;
 use crate::xml::qname::{ns_decl_check, split_checked, xmlns_prefix, Split};
-use crate::xml::{ArenaKind, Document, MutError, NodeFlags, NodeId};
+use crate::xml::{ArenaKind, AttrNs, Document, MutError, NodeId};
 
 /// Build a fresh ATTRIBUTE (qname + value + namespace) and link it onto `el`
 /// after `tail`, the last entry the caller's own scan reached.
@@ -152,7 +152,7 @@ pub fn set_attribute_ns(
     /* no match: copy the namespace into the arena only now */
     let nsv: Ns = if ns.is_empty() { NO_NS } else { doc.store(ns)? };
     let attr = build_attr(doc, el, name, &sp, val, Resolved::decided(nsv), tail)?;
-    doc.node_mut(attr).flags.insert(NodeFlags::NS_EXPLICIT);
+    doc.node_mut(attr).attr_ns = AttrNs::Explicit;
     Ok(attr)
 }
 

@@ -9,7 +9,7 @@
 #![forbid(unsafe_code)]
 
 use crate::falloc::Reserve;
-use crate::xml::{Document, NodeFlags, NodeId, Span};
+use crate::xml::{AttrNs, Document, NodeId, Span};
 
 /// How an attribute is looked up: by its raw qualified name, or by the DOM's
 /// `(namespace, local name)` key - the two keys for the same node.
@@ -33,7 +33,7 @@ impl AttrKey<'_> {
 fn attr_matches_ns(doc: &Document, a: NodeId, ns: &[u8], local: &[u8]) -> bool {
     /* A pending attribute's namespace is undecided, not empty: it has no key
      * to match (`set_attribute_ns("", "a")` used to overwrite a pending p:a). */
-    !doc.node(a).flags.contains(NodeFlags::NS_PENDING)
+    doc.node(a).attr_ns != AttrNs::Pending
         && doc.node(a).ns_uri.len as usize == ns.len()
         && (ns.is_empty() || doc.ns(a) == ns)
         && doc.local(a) == local

@@ -112,9 +112,10 @@ impl From<ArenaKind> for crate::node_type::NodeType {
     }
 }
 
-/// A node's state bits: [`NodeFlags::DOM_LOOSE_NAME`] and the three namespace
-/// states. A set of named bits rather than a bare integer, so a site says which
-/// state it tests, sets or clears instead of spelling the mask.
+/// An ELEMENT's state bits. A set of named bits rather than a bare integer, so
+/// a site says which state it tests, sets or clears instead of spelling the
+/// mask. An ATTRIBUTE's namespace state is a separate [`AttrNs`], not a bit
+/// here: its three values are exclusive.
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub struct NodeFlags(u8);
 
@@ -138,23 +139,6 @@ impl NodeFlags {
     /// attaching it gives the same tree as building it top-down.
     pub const NS_RESOLVED: NodeFlags = NodeFlags(0x02);
 
-    /// Set on an ATTRIBUTE whose prefix was unbound when it was named - on a
-    /// detached element, where that defers rather than fails. Its namespace reads
-    /// empty only because nothing has decided it, which is not the same as "no
-    /// namespace": the insertion that connects its element resolves it (and is
-    /// refused if the prefix is still unbound), even under an element whose own
-    /// namespace was decided long before. Without the flag the two were one state,
-    /// and a removed-then-edited element came back with `ns1:a` bound to "".
-    pub const NS_PENDING: NodeFlags = NodeFlags(0x04);
-
-    /// Set on an ATTRIBUTE whose namespace was GIVEN (`set_attribute_ns`) rather
-    /// than derived from its prefix. Resolution leaves it alone: re-deriving it
-    /// when a detached element was inserted put `set_attribute_ns("urn:a", "x")`
-    /// in no namespace (an unprefixed name resolves to none), and a `q:x` into
-    /// whatever `q` meant at the insertion point. Naming the attribute again by
-    /// its qualified name alone clears it.
-    pub const NS_EXPLICIT: NodeFlags = NodeFlags(0x08);
-
     /// Whether every bit of `f` is set.
     #[inline]
     pub fn contains(self, f: NodeFlags) -> bool {
@@ -177,6 +161,31 @@ impl NodeFlags {
             self.remove(f);
         }
     }
+}
+
+/// An ATTRIBUTE's namespace state - one of three, never a combination:
+///
+/// - [`AttrNs::Derived`]: the namespace comes from the prefix, resolved against
+///   the in-scope declarations when the attribute's element is.
+/// - [`AttrNs::Pending`]: the prefix was unbound when the attribute was named -
+///   on a detached element, where that defers rather than fails. Its namespace
+///   reads empty only because nothing has decided it, which is not the same as
+///   "no namespace": the insertion that connects its element resolves it (and
+///   is refused if the prefix is still unbound), even under an element whose
+///   own namespace was decided long before. Without this state the two were
+///   one, and a removed-then-edited element came back with `ns1:a` bound to "".
+/// - [`AttrNs::Explicit`]: the namespace was GIVEN (`set_attribute_ns`) rather
+///   than derived from its prefix. Resolution leaves it alone: re-deriving it
+///   when a detached element was inserted put `set_attribute_ns("urn:a", "x")`
+///   in no namespace (an unprefixed name resolves to none), and a `q:x` into
+///   whatever `q` meant at the insertion point. Naming the attribute again by
+///   its qualified name alone returns it to `Derived`.
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
+pub enum AttrNs {
+    #[default]
+    Derived,
+    Pending,
+    Explicit,
 }
 
 /* ---- mutation status ---- */
@@ -370,6 +379,7 @@ pub struct Node {
     pub line: u32,
     pub col: u32,
     pub flags: NodeFlags,
+    pub attr_ns: AttrNs,
 }
 
 /* A node is the arena's unit of cost (`NODE_COST`), so its size is pinned:
@@ -394,6 +404,7 @@ impl Node {
             line: 0,
             col: 0,
             flags: NodeFlags::EMPTY,
+            attr_ns: AttrNs::Derived,
         }
     }
 }
