@@ -484,7 +484,7 @@ impl<'doc> HtmlDoc<'doc> {
     /// # Safety
     /// As [`HtmlDoc::from_raw`], for a pointer already known non-null.
     #[inline]
-    pub(in crate::lexbor) unsafe fn from_non_null(raw: NonNull<LxbDoc>) -> Self {
+    pub(in crate::lexbor::adapter) unsafe fn from_non_null(raw: NonNull<LxbDoc>) -> Self {
         HtmlDoc {
             raw,
             _doc: PhantomData,

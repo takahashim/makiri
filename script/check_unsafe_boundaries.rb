@@ -241,10 +241,11 @@ end
 # compiler can enforce this one.
 #
 # Stated as a rule rather than a list of signatures: every `fn` under
-# `lexbor/adapter/` whose signature carries a `*mut Lxb*`/`*const Lxb*` must be
-# private, `pub(super)` or `pub(in crate::lexbor::adapter)`. A new accessor is
-# caught without anyone remembering to list it. The exceptions are the doors a
-# facade is meant to use, each with its reason.
+# `lexbor/adapter/` whose signature carries a `*mut Lxb*`/`*const Lxb*` or a
+# `NonNull<Lxb...>` handle must be private, `pub(super)` or
+# `pub(in crate::lexbor::adapter)`. A new accessor is caught without anyone
+# remembering to list it. The exceptions are the doors a facade is meant to use,
+# each with its reason.
 # Not a Lexbor pointer, so the rule above cannot see it, but as dangerous: an
 # unbounded-lifetime reinterpretation, whose one safe caller is
 # `HtmlParsed::tag_bucket`. Held to the same visibility by name.
@@ -257,7 +258,8 @@ ADAPTER_PRIVATE = /\A(?:pub\(super\)|pub\(in crate::lexbor::adapter(?:::\w+)*\))
 Dir.glob(File.join(RUST, "lexbor/adapter/**/*.rs")).sort.each do |path|
   rel = path.delete_prefix("#{RUST}/")
   File.binread(path).scan(/^[ \t]*((pub(?:\([^)]*\))?)?\s*(?:const\s+)?(?:unsafe\s+)?(?:extern\s+"C"\s+)?fn\s+(\w+)[^{;]*?)(?:\{|;|\bwhere\b)/m) do |sig, vis, name|
-    next unless sig.match?(/\*(?:mut|const)\s+Lxb\w*/) || ADAPTER_ONLY_BY_NAME.include?(name)
+    next unless sig.match?(/\*(?:mut|const)\s+Lxb\w*|NonNull\s*<\s*Lxb\w*/) ||
+                ADAPTER_ONLY_BY_NAME.include?(name)
     next if ADAPTER_PRIVATE.match?(vis.to_s)
     next if RAW_POINTER_EXEMPT.key?(name)
     errors << "#{rel}: `#{name}` hands out a Lexbor pointer or an unchecked view, so it must stay inside lexbor::adapter " \
