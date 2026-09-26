@@ -460,6 +460,14 @@ RSpec.describe "Makiri mutation" do
       expect(div.inner_html).to eq("<em>E</em><i>I</i>")
     end
 
+    # An attribute's parent is its owner element, but it is not the element's
+    # child: outer_html= dropped the new content and still returned normally.
+    it "refuses outer_html= on an attribute, leaving it in place" do
+      attr = doc.at_css("#d").attribute_nodes.first
+      expect { attr.outer_html = "<b>NEW</b>" }.to raise_error(Makiri::Error, /parent element/)
+      expect(doc.at_css("#d").attribute_nodes.first.name).to eq(attr.name)
+    end
+
     it "preserves <template> contents through fragment import" do
       # import_node does not copy a template's separate content fragment; the
       # mutation path must fix it up (as the document fragment parser does).

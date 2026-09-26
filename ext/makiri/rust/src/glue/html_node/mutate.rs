@@ -264,8 +264,11 @@ pub fn set_outer_html(_ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Va
         /* `to_str`/`to_s` is Ruby code that may raise: converted under protect. */
         let html = string_of(rb_html)?;
         let node = edit.node()?;
+        /* An attribute's `parent()` is its owner element, but it is no child of
+         * it: the replace below would drop the new content and report success. */
         let Some(parent) = node
             .parent()
+            .filter(|_| node.node().node_type() != NodeType::Attribute)
             .filter(|p| p.node().node_type() == NodeType::Element)
         else {
             return Err(makiri_error(
