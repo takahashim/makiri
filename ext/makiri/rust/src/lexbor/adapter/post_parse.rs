@@ -270,7 +270,10 @@ pub enum HtmlParseError {
 /// contract ("an Integer, or nil") allows. The depth guard does not degrade:
 /// it lives in the hook, which is a plain value installed on every parse, and
 /// nothing the stamper does can switch it off (see `tree_guard`).
-unsafe fn parse_tracked(src: &[u8], limit: DepthLimit) -> Result<Tracked, HtmlParseError> {
+unsafe fn parse_tracked<const PANIC_PROBE: bool>(
+    src: &[u8],
+    limit: DepthLimit,
+) -> Result<Tracked, HtmlParseError> {
     let parser = lxb::HtmlParser::create().ok_or(HtmlParseError::Failed)?;
 
     let doc = DocOwner(
@@ -281,7 +284,7 @@ unsafe fn parse_tracked(src: &[u8], limit: DepthLimit) -> Result<Tracked, HtmlPa
      * declared after the parser, so it outlives nothing that can still call
      * it; it stays put until the parse calls below have returned. A document
      * keeps nothing below `<html>` on the open-element stack. */
-    let mut hook = TokenHook::new(limit, 0, Some(Stamper::new(src)));
+    let mut hook = TokenHook::<PANIC_PROBE>::build(limit, 0, Some(Stamper::new(src)));
     if !hook.install(parser.as_ptr()) {
         return Err(HtmlParseError::Failed); /* never unguarded */
     }
@@ -292,7 +295,7 @@ unsafe fn parse_tracked(src: &[u8], limit: DepthLimit) -> Result<Tracked, HtmlPa
     }
 
     /* The tokenizer's callback cannot unwind into Lexbor, so a panic in the
-     * position stamper was latched instead. Lexbor has returned, so this is
+     * hook was latched instead, and stopped the parse. Lexbor has returned, so this is
      * the first frame where raising it is safe - and it raises BEFORE the
      * status check, because a panic is not a parse failure. `doc`'s Drop and
      * the parser's release it all on the way out. */
@@ -332,7 +335,7 @@ pub fn parse_html(
     let input = sanitize(src, assume_valid).ok_or(HtmlParseError::Failed)?;
     // SAFETY: a live slice, which the parse only reads and is done with when it
     // returns.
-    let (doc, lines) = unsafe { parse_tracked(input.as_slice(), limit) }?;
+    let (doc, lines) = unsafe { parse_tracked::<false>(input.as_slice(), limit) }?;
     drop(input); /* the parse is done with the buffer, on every path */
 
     let parsed = HtmlParsed {
@@ -343,4 +346,14 @@ pub fn parse_html(
     };
     /* On OOM the handle drops, and with it the document. */
     try_box(parsed).map_err(|()| HtmlParseError::Failed)
+}
+
+/// `Makiri.__panic(6)`'s parse: a real document parse whose token hook panics
+/// on the first token, inside Lexbor's tokenizer. The latch stops the parse and
+/// this re-raises the panic once Lexbor has returned, so it never returns
+/// normally; the result exists only so the type says nothing leaks if it did.
+pub fn parse_with_panicking_hook() -> bool {
+    // SAFETY: a static slice, which the parse only reads.
+    let parsed = unsafe { parse_tracked::<true>(b"<p>x</p>", DepthLimit::DEFAULT) };
+    parsed.map(|(doc, _)| drop(DocOwner(doc))).is_ok()
 }

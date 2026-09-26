@@ -68,7 +68,9 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   the CSS traversal (`find_cb`/`first_cb`/`match_cb`), the serializer sink
   (`lexbor::chunks::chunk_cb`, one generic function for the HTML and stylesheet
   serializers),
-  the tokenizer's `tree_guard::hook_token_cb`, `bridge::gvl`'s trampoline (which carries the
+  the tokenizer's `tree_guard::hook_token_cb` (its whole Rust body is one
+  guarded closure, `HookState::on_token`; a latched panic stops the parse),
+  `bridge::gvl`'s trampoline (which carries the
   whole parser), and - covering every `rb_protect` at once, since magnus runs
   the closure inside its own `extern "C"` trampoline - `bridge::ruby::protect`.
   Do not call magnus's `protect` directly; ours is the one with the latch. For
@@ -102,7 +104,8 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   from arriving by accident; a site that wants one carries an `#[allow]` with a
   reason. `spec/panic_spec.rb` drives `Makiri.__panic(kind)`: kind 4 panics
   below the GVL-release frame, the case that proves the latch since without it
-  that one aborts, and kind 5 goes through `entry`.
+  that one aborts, kind 5 goes through `entry`, and kind 6 panics inside the
+  tokenizer hook (a const-generic probe, compiled out of every real parse).
 
   The C-era hardening flags (`-D_FORTIFY_SOURCE=2`, `-fstack-protector-strong`,
   `-fvisibility=hidden`, `-Wformat-security`) are **gone rather than relaxed**:

@@ -199,7 +199,9 @@ fn alloc_inject_calls(ruby: &Ruby) -> Result<u64, Error> {
 /// `overflow-checks` on), and an `unwrap` on `None`. Kind 4 panics BELOW a C
 /// frame, where the unwind would abort if it were not latched. Kind 5 goes
 /// through `bridge::ruby::entry`, so it raises `Makiri::InternalError` - what
-/// the entry points exposed to untrusted input do.
+/// the entry points exposed to untrusted input do. Kind 6 panics inside the
+/// HTML tokenizer's token-done hook (`lexbor::adapter::tree_guard`), a Rust
+/// callback called from C, under `entry` too.
 #[allow(
     clippy::panic,
     clippy::unwrap_used,
@@ -237,10 +239,19 @@ fn panic_probe(ruby: &Ruby, kind: i64) -> Result<(), Error> {
                 panic!("Makiri.__panic(5): panic inside a guarded entry")
             });
         }
+        6 => {
+            /* Inside Lexbor's tokenizer, in the token-done hook every HTML
+             * parse runs: the hook latches it and stops the parse, the parse
+             * re-raises it, and `entry` makes it `Makiri::InternalError`. */
+            return crate::bridge::ruby::entry(|| -> Result<(), Error> {
+                crate::lexbor::adapter::post_parse::parse_with_panicking_hook();
+                Ok(())
+            });
+        }
         _ => {
             return Err(Error::new(
                 ruby.exception_arg_error(),
-                "__panic: kind must be 0..5",
+                "__panic: kind must be 0..6",
             ))
         }
     }

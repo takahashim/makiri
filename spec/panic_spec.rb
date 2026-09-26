@@ -135,6 +135,29 @@ RSpec.describe "a Rust panic" do
     end
   end
 
+  describe "inside the HTML tokenizer's token-done hook" do
+    # `tree_guard`'s hook is Rust called from Lexbor's C tokenizer on every
+    # token. All of it runs under one latch, so a panic anywhere in it stops the
+    # parse and is raised once Lexbor has returned - without the latch, the
+    # unwind would reach the C frame and abort the process. Kind 6 panics
+    # after the tree builder ran, in the part that used to run unguarded.
+    it "raises Makiri::InternalError instead of aborting" do
+      expect { Makiri.__panic(6) }
+        .to raise_error(Makiri::InternalError, /panic inside the tokenizer hook/)
+    end
+
+    it "leaves parsing, and its guards, working" do
+      begin
+        Makiri.__panic(6)
+      rescue Makiri::InternalError
+        nil
+      end
+      doc = Makiri::HTML("<html><body>\n<p>a</p></body></html>")
+      expect(doc.at_css("p").line).to eq(2)
+      expect { Makiri::HTML("<div>" * 500) }.to raise_error(Makiri::Error, /depth/i)
+    end
+  end
+
   it "rejects an unknown kind with an ordinary ArgumentError" do
     expect { Makiri.__panic(99) }.to raise_error(ArgumentError, /kind must be/)
   end

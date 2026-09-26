@@ -20,9 +20,9 @@
 //! tree builder fails - and records why ([`TokenHook::stopped`]).
 //!
 //! It is a plain value on the caller's stack, installed on every parse, and
-//! allocates nothing. The source-position [`Stamper`] rides inside it, but a
-//! caught panic in it only stops the stamping: the guard does not depend on
-//! it.
+//! allocates nothing. The source-position [`Stamper`] rides inside it. A panic
+//! anywhere in the hook is latched and stops the parse; the caller raises it
+//! once Lexbor has returned.
 
 #![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
@@ -86,7 +86,23 @@ impl DepthLimit {
 /// Installed with its own address as the callback context, so it must stay
 /// where it is, and alive, from [`install`](Self::install) until the parse
 /// call has returned.
-pub struct TokenHook {
+///
+/// `PANIC_PROBE` exists for `Makiri.__panic(6)` alone: a hook built with it
+/// panics inside the guarded part of every token, which is how the suite proves
+/// the latch covers that part. It is a const parameter so an ordinary parse
+/// (`false`, the default) compiles the probe out entirely.
+pub struct TokenHook<const PANIC_PROBE: bool = false> {
+    state: HookState,
+    /// A panic anywhere in the hook's Rust, latched rather than raised: this
+    /// runs from Lexbor's tokenizer, and unwinding into C aborts. The token
+    /// that panicked stops the parse, and the caller raises the panic once the
+    /// parse has returned (see `crate::caught`).
+    panic: PanicLatch,
+}
+
+/// Everything the hook keeps across tokens except the latch, so the callback
+/// can lend all of it to the one guarded closure (see [`hook_token_cb`]).
+struct HookState {
     /// The parser's OWN token-done callback, which builds the tree.
     delegate: TokenFn,
     delegate_ctx: *mut c_void,
@@ -102,10 +118,6 @@ pub struct TokenHook {
     stopped: Option<GuardStop>,
     /// The document parse's position stamper; `None` for a fragment.
     stamper: Option<Stamper>,
-    /// A panic in the stamper, latched rather than raised: this runs from
-    /// Lexbor's tokenizer, and unwinding into C aborts. The caller raises it
-    /// once the parse has returned (see `crate::caught`).
-    panic: PanicLatch,
 }
 
 impl TokenHook {
@@ -113,15 +125,24 @@ impl TokenHook {
     /// its stack below the first real element (0 for a document, 1 for a
     /// fragment's `<html>` root).
     pub fn new(limit: DepthLimit, synthetic: usize, stamper: Option<Stamper>) -> TokenHook {
+        TokenHook::build(limit, synthetic, stamper)
+    }
+}
+
+impl<const PANIC_PROBE: bool> TokenHook<PANIC_PROBE> {
+    /// [`TokenHook::new`], for either value of the probe.
+    pub fn build(limit: DepthLimit, synthetic: usize, stamper: Option<Stamper>) -> Self {
         TokenHook {
-            delegate: None,
-            delegate_ctx: core::ptr::null_mut(),
-            tree: core::ptr::null(),
-            max_open: limit.max_open(synthetic),
-            select: core::ptr::null(),
-            options: 0,
-            stopped: None,
-            stamper,
+            state: HookState {
+                delegate: None,
+                delegate_ctx: core::ptr::null_mut(),
+                tree: core::ptr::null(),
+                max_open: limit.max_open(synthetic),
+                select: core::ptr::null(),
+                options: 0,
+                stopped: None,
+                stamper,
+            },
             panic: PanicLatch::new(),
         }
     }
@@ -140,32 +161,34 @@ impl TokenHook {
         if tree.is_null() {
             return false;
         }
-        self.tree = tree;
+        self.state.tree = tree;
         let tkz = lxb::lxb_html_parser_tokenizer_noi(parser);
         /* Lexbor has a setter and a ctx getter for the token-done callback but
          * no getter for the callback FUNCTION, so that one field is read from
          * the struct directly; the ctx uses the public accessor. */
-        self.delegate = (*tkz).callback_token_done;
-        self.delegate_ctx = lxb::lxb_html_tokenizer_callback_token_done_ctx_noi(tkz);
+        self.state.delegate = (*tkz).callback_token_done;
+        self.state.delegate_ctx = lxb::lxb_html_tokenizer_callback_token_done_ctx_noi(tkz);
         lxb::lxb_html_tokenizer_callback_token_done_set_noi(
             tkz,
-            Some(hook_token_cb),
-            self as *mut TokenHook as *mut c_void,
+            Some(hook_token_cb::<PANIC_PROBE>),
+            self as *mut Self as *mut c_void,
         );
         true
     }
 
     /// What stopped the parse, if the hook did.
     pub fn stopped(&self) -> Option<GuardStop> {
-        self.stopped
+        self.state.stopped
     }
 
-    /// Re-raise a panic the stamper caught, now that Lexbor's frames are
-    /// gone. A no-op when nothing panicked.
+    /// Re-raise a panic the hook caught, now that Lexbor's frames are gone. A
+    /// no-op when nothing panicked.
     pub fn resume_panic(&mut self) {
         self.panic.resume();
     }
+}
 
+impl HookState {
     /// The tree builder's open-element count.
     ///
     /// # Safety
@@ -222,6 +245,71 @@ impl TokenHook {
         }
         self.options > MAX_SELECT_OPTIONS
     }
+
+    /// One token: everything the hook does with it, the delegate included.
+    ///
+    /// Always delegates, so the parser still builds the tree; then refuses the
+    /// token - which stops the parse - if the tree has grown past the limit or
+    /// a select past its options. For a document parse, an element start tag's
+    /// offset is stamped onto the element the tree builder created for it
+    /// (`source_loc::stamp_created`), from the current node seen on either
+    /// side of the delegate.
+    ///
+    /// # Safety
+    /// As [`hook_token_cb`].
+    #[inline]
+    #[allow(
+        clippy::panic,
+        reason = "the `Makiri.__panic(6)` probe, compiled out unless PANIC_PROBE"
+    )]
+    unsafe fn on_token<const PANIC_PROBE: bool>(
+        &mut self,
+        tkz: *mut Tokenizer,
+        token: *mut Token,
+    ) -> *mut Token {
+        /* Read before delegating: the tree builder may reuse the token. */
+        let start = match self.stamper.as_ref() {
+            Some(st) => st.start_tag(token),
+            None => None,
+        };
+        // SAFETY: the stack's entries are the live elements of the tree being
+        // built, which the parse does not free; each handle is used only
+        // within this call, before the parse can go on.
+        let before = start.map(|_| Before::at(self.current_node().map(|r| r.as_node())));
+        /* Only an `<option>` start tag can insert an option. */
+        let option_start = (*token).tag_id == lxb::lxb_tag_id_enum_t_LXB_TAG_OPTION as usize
+            && ((*token).type_ & lxb::lxb_html_token_type_LXB_HTML_TOKEN_TYPE_CLOSE as i32) == 0;
+        let out = match self.delegate {
+            /* Lexbor's tree builder: C that calls nothing of ours, so nothing
+             * can unwind through it from here. */
+            Some(f) => f(tkz, token, self.delegate_ctx),
+            /* Unreachable in practice - `install` sets the delegate before the
+             * first token - but returning the token unchanged is the one
+             * answer that does not lose it. */
+            None => token,
+        };
+        /* `out` is NULL when the tree builder itself failed; that stands. */
+        if out.is_null() {
+            return out;
+        }
+        if PANIC_PROBE {
+            panic!("Makiri.__panic(6): panic inside the tokenizer hook");
+        }
+        if let (Some(tag), Some(before)) = (start, before) {
+            // SAFETY: as `before`.
+            let now = self.current_node().map(|r| r.as_node());
+            stamp_created(tag, before, now);
+        }
+        if self.max_open != usize::MAX && self.open_elements() > self.max_open {
+            self.stopped = Some(GuardStop::TooDeep);
+            return core::ptr::null_mut(); /* the tokenizer stops with an error */
+        }
+        if option_start && self.count_option() {
+            self.stopped = Some(GuardStop::TooManyOptions);
+            return core::ptr::null_mut();
+        }
+        out
+    }
 }
 
 /// The `<select>` an inserted `<option>` updates, if any. Lexbor's static
@@ -245,64 +333,36 @@ fn nearest_select(option: HtmlNode<'_>) -> Option<HtmlNode<'_>> {
     None
 }
 
-/// The chained token-done callback.
+/// The chained token-done callback: [`HookState::on_token`], under the latch.
 ///
-/// Always delegates, so the parser still builds the tree; then refuses the
-/// token - which stops the parse - if the tree has grown past the limit. For
-/// a document parse, an element start tag's offset is stamped onto the element
-/// the tree builder created for it (`source_loc::stamp_created`), from the
-/// current node seen on either side of the delegate.
+/// ALL of the hook's Rust runs inside the one closure given to
+/// `PanicLatch::guard`, so nothing added to `on_token` can land outside it and
+/// unwind into the tokenizer - which, being C, would abort the host. The
+/// delegate is called from inside the closure too: it is Lexbor's C and calls
+/// nothing of ours, so a catch around it changes nothing about how the tree is
+/// built. A caught panic returns NULL for the token, which stops the parse the
+/// way a refused token does; the caller re-raises it once the parse has
+/// returned ([`TokenHook::resume_panic`]). A token after a panic - none is
+/// expected, the tokenizer stops - is refused without running anything.
 ///
 /// # Safety
 /// Called by Lexbor's tokenizer only, with the context [`TokenHook::install`]
 /// registered: `ctx` is that live, unmoved hook, `tkz` and `token` the
 /// tokenizer's own, and the tree `install` found is alive for the parse.
-unsafe extern "C" fn hook_token_cb(
+unsafe extern "C" fn hook_token_cb<const PANIC_PROBE: bool>(
     tkz: *mut Tokenizer,
     token: *mut Token,
     ctx: *mut c_void,
 ) -> *mut Token {
-    let hook = &mut *(ctx as *mut TokenHook);
-    /* Read before delegating: the tree builder may reuse the token. */
-    let start = match hook.stamper.as_ref() {
-        Some(st) if !hook.panic.caught() => st.start_tag(token),
-        _ => None,
-    };
-    // SAFETY: the stack's entries are the live elements of the tree being
-    // built, which the parse does not free; each handle is used only within
-    // this call, before the parse can go on.
-    let before = start.map(|_| Before::at(hook.current_node().map(|r| r.as_node())));
-    /* Only an `<option>` start tag can insert an option. */
-    let option_start = (*token).tag_id == lxb::lxb_tag_id_enum_t_LXB_TAG_OPTION as usize
-        && ((*token).type_ & lxb::lxb_html_token_type_LXB_HTML_TOKEN_TYPE_CLOSE as i32) == 0;
-    let out = match hook.delegate {
-        Some(f) => f(tkz, token, hook.delegate_ctx),
-        /* Unreachable in practice - `install` sets the delegate before the
-         * first token - but returning the token unchanged is the one answer
-         * that does not lose it. */
-        None => token,
-    };
-    /* `out` is NULL when the tree builder itself failed; that stands. */
-    if out.is_null() {
-        return out;
-    }
-    if let (Some(tag), Some(before)) = (start, before) {
-        // SAFETY: as `before`.
-        let now = hook.current_node().map(|r| r.as_node());
-        /* Catch rather than unwind into the tokenizer: this is called from C.
-         * Stamping then stops, the parse carries on, and the caller raises
-         * the panic once C has unwound. */
-        hook.panic.guard((), || stamp_created(tag, before, now));
-    }
-    if hook.max_open != usize::MAX && hook.open_elements() > hook.max_open {
-        hook.stopped = Some(GuardStop::TooDeep);
-        return core::ptr::null_mut(); /* the tokenizer stops with an error */
-    }
-    if option_start && hook.count_option() {
-        hook.stopped = Some(GuardStop::TooManyOptions);
+    let hook = &mut *(ctx as *mut TokenHook<PANIC_PROBE>);
+    if hook.panic.caught() {
         return core::ptr::null_mut();
     }
-    out
+    let state = &mut hook.state;
+    hook.panic.guard(core::ptr::null_mut(), || {
+        // SAFETY: this function's own contract, passed on unchanged.
+        unsafe { state.on_token::<PANIC_PROBE>(tkz, token) }
+    })
 }
 
 /// The document a fragment parse is building in, from the parser's tree.
