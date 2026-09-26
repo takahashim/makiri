@@ -113,6 +113,10 @@ pub mod token;
 /// and the Ruby class table. Unconditional, like `token`.
 pub mod node_type;
 
+/// The WHATWG DOM's pre-insertion rules, once for the HTML adapter and the
+/// XML arena alike. Unconditional, like `node_type`.
+pub mod dom_rules;
+
 /// The Ruby boundary - the only part of the crate that depends on magnus.
 #[cfg(feature = "ruby")]
 pub mod bridge;

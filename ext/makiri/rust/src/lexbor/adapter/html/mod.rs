@@ -29,7 +29,7 @@ pub use crate::node_type::NodeType;
 mod build;
 mod mutate;
 pub use build::{BuildingElement, BuildingNode};
-pub use mutate::{HtmlElementMut, HtmlNodeMut, Insertion, Place, PreInsertError};
+pub use mutate::{HtmlElementMut, HtmlNodeMut, HtmlTree, Insertion, Place, PreInsertError};
 
 /* A node handle is cast to an element or attribute handle, which is sound only
  * while the node sits FIRST in both. That is a claim about the absolute offset,
@@ -916,6 +916,21 @@ impl<'doc> HtmlNode<'doc> {
         // template element; its contents fragment is owned by the document.
         Self::link(unsafe {
             (*(self.as_raw() as *mut lxb::lxb_html_template_element_t)).content as *mut LxbNode
+        })
+    }
+
+    /// A DOCUMENT_FRAGMENT's host - the `<template>` whose contents it is - or
+    /// None: for any other node, and for a fragment no template owns.
+    pub fn fragment_host(self) -> Option<HtmlNode<'doc>> {
+        if self.node_type() != NodeType::DocumentFragment {
+            return None;
+        }
+        // SAFETY: Lexbor allocates every DOCUMENT_FRAGMENT node as an
+        // `lxb_dom_document_fragment_t` (`document_fragment_interface_create`,
+        // the only constructor), which leads with its node; `host` is set only
+        // by the template constructor, to a template the document owns.
+        Self::link(unsafe {
+            (*(self.as_raw() as *mut lxb::lxb_dom_document_fragment_t)).host as *mut LxbNode
         })
     }
 

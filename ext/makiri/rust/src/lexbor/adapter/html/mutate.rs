@@ -5,6 +5,7 @@
 #![allow(clippy::missing_safety_doc)]
 
 use super::*;
+use crate::dom_rules::{self, At, Hierarchy, Tree, Violation};
 
 /// Where an insertion puts its node, relative to the node it is made on.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -19,167 +20,106 @@ pub enum Place {
     Replace,
 }
 
-/// Why an insertion is refused (WHATWG DOM "ensure pre-insertion validity",
-/// as Makiri applies it). Checked before any link changes.
+/// Why an insertion is refused: a place with no parent to resolve to, or one
+/// of the DOM's own rules ([`crate::dom_rules`]). Checked before any link
+/// changes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PreInsertError {
     /// A sibling place, or a replace, on a node with no parent.
     NoParent,
-    /// An attribute node cannot be a child.
-    AttributeNode,
-    /// A document cannot be a child (WHATWG DOM "ensure pre-insertion
-    /// validity": a HierarchyRequestError).
-    DocumentNode,
-    /// The node is the target or one of its ancestors.
-    OwnSubtree,
-    DoctypeParent,
-    DuplicateDoctype,
-    DoctypeAfterElement,
-    ElementBeforeDoctype,
-    /// The document already has its one element child.
-    SecondDocumentElement,
-    /// Text cannot be a child of the document.
-    TextUnderDocument,
+    /// A rule of the WHATWG DOM's "ensure pre-insertion validity".
+    Rule(Violation),
+}
+
+/// The Lexbor tree as [`crate::dom_rules`] reads it: the nodes carry their
+/// own links, so there is nothing to hold but the lifetime.
+#[derive(Clone, Copy, Default)]
+pub struct HtmlTree<'d>(core::marker::PhantomData<HtmlNode<'d>>);
+
+impl<'d> Tree for HtmlTree<'d> {
+    type Node = HtmlNode<'d>;
+    #[inline]
+    fn node_type(&self, n: HtmlNode<'d>) -> NodeType {
+        n.node_type()
+    }
+    /// Not [`HtmlNode::parent`], which answers an attribute's owner element:
+    /// an attribute has no parent in the tree.
+    #[inline]
+    fn tree_parent(&self, n: HtmlNode<'d>) -> Option<HtmlNode<'d>> {
+        match n.node_type() {
+            NodeType::Attribute => None,
+            _ => n.parent(),
+        }
+    }
+    #[inline]
+    fn host(&self, n: HtmlNode<'d>) -> Option<HtmlNode<'d>> {
+        n.fragment_host()
+    }
+    #[inline]
+    fn first_child(&self, n: HtmlNode<'d>) -> Option<HtmlNode<'d>> {
+        n.first_child()
+    }
+    #[inline]
+    fn next_sibling(&self, n: HtmlNode<'d>) -> Option<HtmlNode<'d>> {
+        n.next()
+    }
 }
 
 /// An insertion about to be made: `node` at `place` relative to `target`,
-/// resolved to the parent it goes under, the child it goes before (none for an
-/// append), and the child it replaces.
+/// resolved to the parent it goes under and what it does at the reference
+/// child (goes before it - none for an append - or replaces it).
 ///
-/// A value rather than loose arguments because the three positions are easy to
-/// swap and mean different things - `before` bounds a scan, `replaces` is left
-/// out of one - and the checks read them as a unit.
+/// A value rather than loose arguments because the positions are easy to
+/// swap and mean different things, and the checks read them as a unit.
 #[derive(Clone, Copy)]
 pub struct Insertion<'d> {
     target: HtmlNode<'d>,
     parent: HtmlNode<'d>,
-    before: Option<HtmlNode<'d>>,
-    replaces: Option<HtmlNode<'d>>,
+    at: At<HtmlNode<'d>>,
     node: HtmlNode<'d>,
 }
 
 impl<'d> Insertion<'d> {
     /// `node` at `place` relative to `target`; [`PreInsertError::NoParent`]
-    /// for a place that needs `target`'s parent when it has none.
+    /// for a place that needs `target`'s parent when it has none - and an
+    /// attribute's owner element is not one.
     pub fn new(
         target: HtmlNode<'d>,
         place: Place,
         node: HtmlNode<'d>,
     ) -> Result<Self, PreInsertError> {
-        let parent = || target.parent().ok_or(PreInsertError::NoParent);
-        let (parent, before, replaces) = match place {
-            Place::Child => (target, None, None),
-            Place::Before => (parent()?, Some(target), None),
-            Place::After => (parent()?, target.next(), None),
-            Place::Replace => (parent()?, Some(target), Some(target)),
+        let parent = || {
+            HtmlTree::default()
+                .tree_parent(target)
+                .ok_or(PreInsertError::NoParent)
+        };
+        let (parent, at) = match place {
+            Place::Child => (target, At::Before(None)),
+            Place::Before => (parent()?, At::Before(Some(target))),
+            Place::After => (parent()?, At::Before(target.next())),
+            Place::Replace => (parent()?, At::Replacing(target)),
         };
         Ok(Insertion {
             target,
             parent,
-            before,
-            replaces,
+            at,
             node,
         })
     }
 
-    /// Every rule the insertion must keep: the doctype ordering, then that the
-    /// node can be a child at all and is not the target or its ancestor.
+    /// Every rule the insertion must keep ([`dom_rules::check`]), plus one the
+    /// placing needs: a node is not put beside, or in place of, itself -
+    /// [`HtmlNodeMut::place`] would detach it from the very position it is
+    /// placed at. That one is reported as the own-subtree rule, as it always
+    /// was.
     pub fn check(&self) -> Result<(), PreInsertError> {
-        self.check_document_order()?;
-        match self.node.node_type() {
-            NodeType::Attribute => return Err(PreInsertError::AttributeNode),
-            NodeType::Document => return Err(PreInsertError::DocumentNode),
-            _ => {}
+        if self.target == self.node {
+            return Err(PreInsertError::Rule(Violation::HierarchyRequest(
+                Hierarchy::Ancestor,
+            )));
         }
-        /* The target itself counts: a node placed relative to itself would be
-         * detached from the very position it is placed at. */
-        if core::iter::successors(Some(self.target), |n| n.parent()).any(|n| n == self.node) {
-            return Err(PreInsertError::OwnSubtree);
-        }
-        Ok(())
-    }
-
-    /// Whether `n` is a child that stays where it is: not the one being
-    /// replaced, and not the incoming node (which may be moving within the same
-    /// parent).
-    fn stays(&self, n: HtmlNode<'d>) -> bool {
-        Some(n) != self.replaces && n != self.node
-    }
-
-    /// The document's doctype/element ordering, checked before any link changes
-    /// (WHATWG DOM "ensure pre-insertion validity", the doctype half).
-    fn check_document_order(&self) -> Result<(), PreInsertError> {
-        let siblings_from =
-            |start: Option<HtmlNode<'d>>| core::iter::successors(start, |n| n.next());
-        let at_document = self.parent.node_type() == NodeType::Document;
-
-        if self.node.node_type() == NodeType::DocumentType {
-            if !at_document {
-                return Err(PreInsertError::DoctypeParent);
-            }
-            /* At most one doctype ANYWHERE among the children. This scans the
-             * whole list on purpose: stopping at `before` would let a node ahead
-             * of the insertion point (a comment, say) hide a later doctype, and
-             * the document would end up with two. */
-            if siblings_from(self.parent.first_child())
-                .any(|n| self.stays(n) && n.node_type() == NodeType::DocumentType)
-            {
-                return Err(PreInsertError::DuplicateDoctype);
-            }
-            /* No element before the insertion point. The scan stops AT `before`
-             * before anything is excluded - on a replace `before` is also the
-             * replaced node, and excluding it first would scan past it. */
-            if siblings_from(self.parent.first_child())
-                .take_while(|n| Some(*n) != self.before)
-                .any(|n| self.stays(n) && n.node_type() == NodeType::Element)
-            {
-                return Err(PreInsertError::DoctypeAfterElement);
-            }
-            return Ok(());
-        }
-
-        let contributes_element = |n: HtmlNode<'_>| {
-            n.node_type() == NodeType::Element
-                || (n.node_type() == NodeType::DocumentFragment
-                    && n.children()
-                        .any(|child| child.node_type() == NodeType::Element))
-        };
-        /* An element must not land ahead of the doctype: none may follow the
-         * insertion point. */
-        if at_document
-            && contributes_element(self.node)
-            && siblings_from(self.before)
-                .any(|n| self.stays(n) && n.node_type() == NodeType::DocumentType)
-        {
-            return Err(PreInsertError::ElementBeforeDoctype);
-        }
-        if at_document {
-            /* WHATWG DOM "ensure pre-insertion validity", the element half: a
-             * document has at most one element child and no text child. Lexbor
-             * enforces neither, so `doc << element` made a second root, and
-             * `count(/child::*)` answered 2 - where the XML side refuses. After
-             * the doctype order above, whose message an insertion breaking both
-             * has always reported. */
-            let is_text =
-                |n: HtmlNode<'_>| matches!(n.node_type(), NodeType::Text | NodeType::CDataSection);
-            let is_element = |n: HtmlNode<'_>| n.node_type() == NodeType::Element;
-            let incoming_elements = match self.node.node_type() {
-                NodeType::DocumentFragment => {
-                    if self.node.children().any(is_text) {
-                        return Err(PreInsertError::TextUnderDocument);
-                    }
-                    self.node.children().filter(|&c| is_element(c)).count()
-                }
-                _ if is_text(self.node) => return Err(PreInsertError::TextUnderDocument),
-                _ => usize::from(is_element(self.node)),
-            };
-            let has_element =
-                siblings_from(self.parent.first_child()).any(|n| self.stays(n) && is_element(n));
-            if incoming_elements > 1 || (incoming_elements == 1 && has_element) {
-                return Err(PreInsertError::SecondDocumentElement);
-            }
-        }
-        Ok(())
+        dom_rules::check(&HtmlTree::default(), self.parent, self.node, self.at)
+            .map_err(PreInsertError::Rule)
     }
 }
 

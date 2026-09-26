@@ -296,7 +296,7 @@ fn release_from_tree(node: HtmlNodeMut<'_>) {
 /// node its copy.
 ///
 /// Every rule is checked before anything changes (see
-/// [`Insertion::check`]); after that only the adoption copy can fail, and it
+/// [`Insertion::check`], the shared `crate::dom_rules`); after that only the adoption copy can fail, and it
 /// too runs before a link is touched.
 pub fn insert(this: &HtmlSelf, rb_incoming: Value, place: Place) -> Result<Value, Error> {
     let target = edit(this)?.node()?;
@@ -325,21 +325,33 @@ pub fn insert(this: &HtmlSelf, rb_incoming: Value, place: Place) -> Result<Value
 
 /// A refused insertion, worded. The one place these messages live.
 fn refused(e: PreInsertError, place: Place) -> Error {
+    use crate::dom_rules::{Hierarchy as H, Violation};
     makiri_error(match e {
         PreInsertError::NoParent if place == Place::Replace => {
             "cannot replace a node with no parent"
         }
         PreInsertError::NoParent => "cannot add a sibling to a node with no parent",
-        PreInsertError::AttributeNode => "an attribute node cannot be inserted into the tree",
-        PreInsertError::DocumentNode => "a document node cannot be inserted into the tree",
-        PreInsertError::OwnSubtree => "cannot insert a node into its own subtree",
-        PreInsertError::DoctypeParent => "a doctype node can only be a child of the document",
-        PreInsertError::DuplicateDoctype => "the document already has a doctype",
-        PreInsertError::DoctypeAfterElement | PreInsertError::ElementBeforeDoctype => {
-            "a doctype must precede the document element"
+        /* Unreachable through `Insertion::new`, which takes the reference child
+         * from the parent it names; worded all the same. */
+        PreInsertError::Rule(Violation::NotFound) => {
+            "the reference node is not a child of the parent"
         }
-        PreInsertError::SecondDocumentElement => "the document already has a root element",
-        PreInsertError::TextUnderDocument => "text cannot be a child of the document",
+        PreInsertError::Rule(Violation::HierarchyRequest(h)) => match h {
+            H::ParentNotContainer => {
+                "only a document, a document fragment or an element can have children"
+            }
+            H::Ancestor => "cannot insert a node into its own subtree",
+            H::AttributeNode => "an attribute node cannot be inserted into the tree",
+            H::DocumentNode => "a document node cannot be inserted into the tree",
+            H::UnsupportedNode => "this kind of node cannot be inserted into the tree",
+            H::DoctypeParent => "a doctype node can only be a child of the document",
+            H::DuplicateDoctype => "the document already has a doctype",
+            H::DoctypeAfterElement | H::ElementBeforeDoctype => {
+                "a doctype must precede the document element"
+            }
+            H::SecondDocumentElement => "the document already has a root element",
+            H::TextUnderDocument => "text cannot be a child of the document",
+        },
     })
 }
 
