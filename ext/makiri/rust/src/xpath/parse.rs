@@ -679,6 +679,7 @@ pub fn parse_owned(expr: VerifiedText, budget: &mut Budget) -> Result<Box<Ast>, 
             Bytes(p.text(&t))
         ));
     }
-    try_box(ast_ops::finish(root))
+    let nodes = p.budget.ast_nodes_charged();
+    try_box(ast_ops::finish(root).with_node_count(nodes))
         .map_err(|_| err_setf!(err, ErrorKind::Oom, "out of memory allocating AST node"))
 }

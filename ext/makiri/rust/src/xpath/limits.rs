@@ -125,6 +125,11 @@ impl Budget {
         ErrSink::new(Rc::clone(&self.err))
     }
 
+    /// How many AST nodes this budget has charged: a finished parse's size.
+    pub fn ast_nodes_charged(&self) -> usize {
+        self.ast_nodes.get()
+    }
+
     /// Charge one AST node.
     #[inline]
     pub fn charge_ast_node(&self) -> Result<(), Reported> {

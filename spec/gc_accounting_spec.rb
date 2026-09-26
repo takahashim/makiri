@@ -34,6 +34,19 @@ RSpec.describe "GC accounting of document arenas" do
     expect(ObjectSpace.memsize_of(doc)).to be > xml.bytesize
   end
 
+  # An XPathContext caches up to 1024 parsed expressions. Each AST lives
+  # outside Ruby's heap, so the context used to report only its struct.
+  it "reports an XPathContext's cached ASTs as its memsize" do
+    ctx = Makiri::XPathContext.new(Makiri::XML("<r><a/></r>"))
+    empty = ObjectSpace.memsize_of(ctx)
+    100.times { |i| ctx.evaluate("count(//a[@x=#{i}] | //b[position() < #{i}])") }
+    grown = ObjectSpace.memsize_of(ctx)
+
+    expect(grown).to be > empty + 100 * 100
+    ctx.evaluate("count(//a[@x=1] | //b[position() < 1])") # cached: adds nothing
+    expect(ObjectSpace.memsize_of(ctx)).to eq(grown)
+  end
+
   it "lets memory pressure from dropped HTML documents trigger a collection" do
     GC.start
     before = GC.count

@@ -202,6 +202,8 @@ impl Expr {
 pub struct Ast {
     root: Expr,
     memo_slots: u32,
+    /// How many nodes the parser made - 0 when unknown (a CSS lowering).
+    nodes: usize,
 }
 
 impl Ast {
@@ -210,12 +212,30 @@ impl Ast {
         Ast {
             root,
             memo_slots: 0,
+            nodes: 0,
         }
     }
 
     /// An AST whose `root` already carries slots `0..memo_slots`.
     pub(crate) fn with_memo_slots(root: Expr, memo_slots: u32) -> Ast {
-        Ast { root, memo_slots }
+        Ast {
+            root,
+            memo_slots,
+            nodes: 0,
+        }
+    }
+
+    /// This AST, recording that the parser made `nodes` nodes for it.
+    pub(crate) fn with_node_count(self, nodes: usize) -> Ast {
+        Ast { nodes, ..self }
+    }
+
+    /// Roughly the heap this AST holds: one `Expr` per node the parser made.
+    /// A floor - a node's own lists and names are not counted - which is the
+    /// safe direction for a GC report.
+    pub fn heap_estimate(&self) -> usize {
+        core::mem::size_of::<Ast>()
+            .saturating_add(self.nodes.saturating_mul(core::mem::size_of::<Expr>()))
     }
 
     pub fn root(&self) -> &Expr {

@@ -325,6 +325,15 @@ where
     protect(f).map(|raw| unsafe { Value::from_raw(raw) })
 }
 
+/// Tell the GC about `delta` bytes held outside its heap (negative: given
+/// back). Memory Ruby does not allocate is otherwise invisible to it, and never
+/// triggers a collection.
+pub fn report_external_bytes(delta: isize) {
+    // SAFETY: a plain counter adjustment, with the GVL held - from a method
+    // or from Ruby's free hook, where it only subtracts.
+    unsafe { rb_sys::rb_gc_adjust_memory_usage(delta as rb_sys::ssize_t) };
+}
+
 /* ---- exception messages ---- */
 
 unsafe extern "C" fn exception_message_thunk(exc: VALUE) -> VALUE {

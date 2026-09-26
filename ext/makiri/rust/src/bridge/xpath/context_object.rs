@@ -72,6 +72,10 @@ pub struct XPathCtx {
     /// Keepalive: the context node's wrapper.
     node: Cell<Opaque<Value>>,
     cache: RefCell<AstCache>,
+    /// The bytes the cached ASTs hold, as reported to the GC - kept outside
+    /// the `RefCell` because `size` reads it from the GC, which can land while
+    /// the cache is borrowed.
+    cache_bytes: Cell<usize>,
     ctx: Cx,
 }
 
@@ -87,11 +91,30 @@ impl DataTypeFunctions for XPathCtx {
     }
 
     fn size(&self) -> usize {
-        core::mem::size_of::<Self>()
+        core::mem::size_of::<Self>().saturating_add(self.cache_bytes.get())
+    }
+}
+
+impl Drop for XPathCtx {
+    /// Take the cache's report back, or the GC keeps counting freed ASTs as
+    /// live - the same balance `DocData` keeps for its arena.
+    fn drop(&mut self) {
+        crate::bridge::ruby::report_external_bytes(-(self.cache_bytes.get() as isize));
     }
 }
 
 impl XPathCtx {
+    /// Count `added` more cached bytes, to `size` and to the GC: a context
+    /// holding up to `AST_CACHE_MAX` parsed expressions is more than the few
+    /// dozen bytes of its struct, and without the report the GC never sees it.
+    fn account_cache(&self, added: usize) {
+        if added != 0 {
+            self.cache_bytes
+                .set(self.cache_bytes.get().saturating_add(added));
+            crate::bridge::ruby::report_external_bytes(added as isize);
+        }
+    }
+
     fn cache(&self) -> Result<core::cell::RefMut<'_, AstCache>, Error> {
         self.cache
             .try_borrow_mut()
@@ -136,6 +159,7 @@ impl XPathCtx {
                 document: document.into(),
                 node: Cell::new(rb_node.into()),
                 cache: RefCell::new(AstCache(HashMap::new())),
+                cache_bytes: Cell::new(0),
                 ctx,
             })
             .as_value();
@@ -201,7 +225,9 @@ impl XPathCtx {
             /* Release the borrow before building the exception: that allocates,
              * and a NoMemoryError there would longjmp past the RefMut. */
             drop(cache);
-            parsed.map_err(|error| xpath_error(&error))?
+            let (ast, owned, added) = parsed.map_err(|error| xpath_error(&error))?;
+            self.account_cache(added);
+            (ast, owned)
         };
 
         /* A cached AST outlives this call: the context is live (it is `self`),
@@ -265,15 +291,17 @@ impl XPathCtx {
 /// Returns a pointer to the AST plus its owner when it could not be cached. A
 /// cached AST lives as long as the context (see [`AstCache`]).
 #[allow(clippy::result_large_err)]
+/// The AST for `expr`, from the cache or freshly parsed, with the bytes it
+/// newly added to the cache (0 for a hit, or an AST not cached).
 fn cached_ast(
     cache: &mut AstCache,
     limits: crate::xpath::limits::Limits,
     expr: RubyText,
-) -> Result<(*const Ast, Option<Box<Ast>>), crate::engine_error::Error> {
+) -> Result<(*const Ast, Option<Box<Ast>>, usize), crate::engine_error::Error> {
     // SAFETY: `expr` holds its String rooted for this lookup.
     let key = expr.as_bytes();
     if let Some(ast) = cache.0.get(key) {
-        return Ok((&**ast as *const Ast, None));
+        return Ok((&**ast as *const Ast, None, 0));
     }
 
     /* Each parse charges a budget of its own, made from the context's caps. */
@@ -282,19 +310,20 @@ fn cached_ast(
         return Err(budget.take_error());
     };
     if cache.0.len() >= AST_CACHE_MAX || cache.0.falloc_reserve(1).is_err() {
-        return Ok((&*ast as *const Ast, Some(ast)));
+        return Ok((&*ast as *const Ast, Some(ast), 0));
     }
     let Some(owned_key) = try_to_boxed_slice(key) else {
-        return Ok((&*ast as *const Ast, Some(ast)));
+        return Ok((&*ast as *const Ast, Some(ast), 0));
     };
     /* The Box's heap address is what the cache keeps; moving the Box into the
      * map does not move the AST, so the pointer is taken before the insert. */
     let ptr = &*ast as *const Ast;
+    let added = owned_key.len().saturating_add(ast.heap_estimate());
     if cache.0.falloc_insert(owned_key, ast).is_err() {
         return Err(XPathError::with(
             ErrorKind::Oom,
             format_args!("out of memory caching XPath expression"),
         ));
     }
-    Ok((ptr, None))
+    Ok((ptr, None, added))
 }

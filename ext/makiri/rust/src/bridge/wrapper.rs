@@ -355,8 +355,7 @@ impl Drop for DocData {
          * be: it only subtracts, and Ruby's own `xfree` does the same from
          * here. */
         if let Ok(diff) = isize::try_from(self.reported) {
-            // SAFETY: called from Ruby's free hook, with the GVL held.
-            unsafe { rb_sys::rb_gc_adjust_memory_usage(diff.wrapping_neg() as rb_sys::ssize_t) };
+            crate::bridge::ruby::report_external_bytes(diff.wrapping_neg());
         }
     }
 }
@@ -386,8 +385,7 @@ fn account_document(rb_doc: VALUE) {
     let diff = now_i.wrapping_sub(then_i);
     if diff != 0 {
         d.reported = now;
-        // SAFETY: a Document method's frame, with the GVL held.
-        unsafe { rb_sys::rb_gc_adjust_memory_usage(diff as rb_sys::ssize_t) };
+        crate::bridge::ruby::report_external_bytes(diff);
     }
 }
 
