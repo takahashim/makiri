@@ -9,8 +9,9 @@
 //! A decided URI is the node's IDENTITY from then on (`NodeFlags::NS_RESOLVED`): moving
 //! the node does not change it, and the serializer emits whatever declarations
 //! the output needs to reproduce it. So resolution happens exactly once per
-//! element, and [`resolve_subtree`] is all-or-nothing - one pass that only
-//! computes, and, only if every prefix binds, a second that writes.
+//! element, and [`resolve_subtree`] is all-or-nothing - a pass that plans every
+//! resolution over the unchanged tree, and, only if every prefix binds, a pass
+//! that applies the plan.
 
 #![forbid(unsafe_code)]
 
@@ -86,15 +87,6 @@ pub(super) fn resolve_ns(
     }
 }
 
-/// Which pass of an all-or-nothing resolution this is: one that only computes
-/// ([`check_node_ns`]: does every prefix in the subtree bind, is every key
-/// unique), then one that writes ([`commit_node_ns`]).
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Pass {
-    Check,
-    Commit,
-}
-
 /// What of an element to resolve: its name and every attribute, or - for an
 /// element whose own namespace is already decided - only the attributes still
 /// pending.
@@ -119,57 +111,33 @@ fn resolves_name(doc: &Document, e: NodeId, part: Part) -> bool {
     part == Part::Whole && !doc.node(e).flags.contains(NodeFlags::DOM_LOOSE_NAME)
 }
 
-/// The [`Pass::Check`] half for element `e` - see [`Part`]: that every prefix
-/// binds, and that its attributes' keys stay unique, the rule the parser holds
-/// a document to (§3). Takes `&Document`, so the pass that must write nothing
-/// cannot.
-fn check_node_ns(doc: &Document, e: NodeId, connected: bool, part: Part) -> Result<(), MutError> {
-    if resolves_name(doc, e, part) {
-        resolve_ns(
-            doc,
-            Some(e),
-            doc.qname(e),
-            &doc.split_of(e),
-            false,
-            connected,
-        )?;
-    }
-    /* Every attribute's key as it will stand - a re-resolved one's new
-     * namespace, anyone else's stored one - leaving out those still pending,
-     * which have no namespace to compare yet. */
-    let mut keys: Vec<(Span, NodeId)> = Vec::new();
-    for attr in doc.attributes(e) {
-        let key = if rederives(doc, attr, part) {
-            let r = resolve_ns(
-                doc,
-                Some(e),
-                doc.qname(attr),
-                &doc.split_of(attr),
-                true,
-                connected,
-            )?;
-            (!r.pending).then_some(r.ns)
-        } else {
-            Some(doc.node(attr).ns_uri)
-        };
-        if let Some(ns) = key {
-            keys.falloc_push((ns, attr)).map_err(|()| MutError::Oom)?;
-        }
-    }
-    if crate::xml::attr_key::keys_repeat(doc, &mut keys) {
-        return Err(MutError::DuplicateAttr);
-    }
-    Ok(())
+/// The all-or-nothing plan the check pass produces and the apply pass writes:
+/// every namespace decided for an element's name, every attribute's new
+/// namespace, and the connected elements to stamp resolved.
+///
+/// The commit is a pure application, so it can neither fail nor disagree with
+/// the check - and every resolution is computed against the same pre-write
+/// tree, which a write-then-resolve pass could not promise.
+#[derive(Default)]
+struct NsPlan {
+    /// Element name -> its new `ns_uri`.
+    names: Vec<(NodeId, Ns)>,
+    /// Attribute -> its new namespace and pending bit.
+    attrs: Vec<(NodeId, Resolved)>,
+    /// Connected elements to mark `NS_RESOLVED` once the writes land.
+    decided: Vec<NodeId>,
 }
 
-/// The [`Pass::Commit`] half for element `e`: write what [`check_node_ns`]
-/// found resolvable. An `Err` here would mean the check let through what the
-/// commit refuses; the two resolve the same names against the same scope.
-fn commit_node_ns(
-    doc: &mut Document,
+/// The check half for element `e` - see [`Part`]: that every prefix binds, and
+/// that its attributes' keys stay unique, the rule the parser holds a document
+/// to (§3). Records what to write in `plan` instead of writing. Takes
+/// `&Document`, so the pass that must write nothing cannot.
+fn plan_node_ns(
+    doc: &Document,
     e: NodeId,
     connected: bool,
     part: Part,
+    plan: &mut NsPlan,
 ) -> Result<(), MutError> {
     if resolves_name(doc, e, part) {
         let r = resolve_ns(
@@ -180,12 +148,16 @@ fn commit_node_ns(
             false,
             connected,
         )?;
-        doc.node_mut(e).ns_uri = r.ns;
+        plan.names
+            .falloc_push((e, r.ns))
+            .map_err(|()| MutError::Oom)?;
     }
-    /* A cursor, not `attributes()`: the body writes. */
-    let mut a = doc.first_attr(e);
-    while let Some(attr) = a {
-        if rederives(doc, attr, part) {
+    /* Every attribute's key as it will stand - a re-resolved one's new
+     * namespace, anyone else's stored one - leaving out those still pending,
+     * which have no namespace to compare yet. */
+    let mut keys: Vec<(Span, NodeId)> = Vec::new();
+    for attr in doc.attributes(e) {
+        let (key, write) = if rederives(doc, attr, part) {
             let r = resolve_ns(
                 doc,
                 Some(e),
@@ -194,17 +166,42 @@ fn commit_node_ns(
                 true,
                 connected,
             )?;
-            r.write_attr(doc, attr);
+            ((!r.pending).then_some(r.ns), Some(r))
+        } else {
+            (Some(doc.node(attr).ns_uri), None)
+        };
+        if let Some(ns) = key {
+            keys.falloc_push((ns, attr)).map_err(|()| MutError::Oom)?;
         }
-        a = doc.next(attr);
+        if let Some(r) = write {
+            plan.attrs
+                .falloc_push((attr, r))
+                .map_err(|()| MutError::Oom)?;
+        }
+    }
+    if crate::xml::attr_key::keys_repeat(doc, &mut keys) {
+        return Err(MutError::DuplicateAttr);
     }
     /* Only mark once connected: resolution inside a still-detached fragment is
      * deferred (an unbound prefix is not an error there), so the node must stay
      * open to being resolved again when the fragment joins the document. */
     if connected {
-        doc.node_mut(e).flags.insert(NodeFlags::NS_RESOLVED);
+        plan.decided.falloc_push(e).map_err(|()| MutError::Oom)?;
     }
     Ok(())
+}
+
+/// Write what the plan decided. Infallible: nothing here resolves a name.
+fn apply_ns_plan(doc: &mut Document, plan: NsPlan) {
+    for (e, ns) in plan.names {
+        doc.node_mut(e).ns_uri = ns;
+    }
+    for (attr, r) in plan.attrs {
+        r.write_attr(doc, attr);
+    }
+    for e in plan.decided {
+        doc.node_mut(e).flags.insert(NodeFlags::NS_RESOLVED);
+    }
 }
 
 /// Whether any attribute of `e` still has a pending namespace.
@@ -223,32 +220,28 @@ fn ns_is_decided(doc: &Document, e: NodeId) -> bool {
     doc.node(e).flags.contains(NodeFlags::NS_RESOLVED)
 }
 
-/// Re-resolve every element in `root`'s subtree, all-or-nothing: one pass that
-/// only computes, and - only if every prefix binds - a second that writes.
+/// Re-resolve every element in `root`'s subtree, all-or-nothing: build the plan
+/// over the unchanged tree, and only when every prefix binds, apply it.
 fn resolve_subtree(doc: &mut Document, root: NodeId, connected: bool) -> Result<(), MutError> {
-    for pass in [Pass::Check, Pass::Commit] {
-        let mut cur = Some(root);
-        while let Some(c) = cur {
-            if doc.type_(c) == Some(ArenaKind::Element) {
-                /* A decided element keeps its own namespace; its attributes set
-                 * while it was detached may still be pending. */
-                let decided = ns_is_decided(doc, c);
-                if !decided || has_pending_attr(doc, c) {
-                    /* an Err here comes from the Check pass: nothing written yet */
-                    let part = if decided {
-                        Part::PendingAttrs
-                    } else {
-                        Part::Whole
-                    };
-                    match pass {
-                        Pass::Check => check_node_ns(doc, c, connected, part)?,
-                        Pass::Commit => commit_node_ns(doc, c, connected, part)?,
-                    }
-                }
+    let mut plan = NsPlan::default();
+    let mut cur = Some(root);
+    while let Some(c) = cur {
+        if doc.type_(c) == Some(ArenaKind::Element) {
+            /* A decided element keeps its own namespace; its attributes set
+             * while it was detached may still be pending. */
+            let decided = ns_is_decided(doc, c);
+            if !decided || has_pending_attr(doc, c) {
+                let part = if decided {
+                    Part::PendingAttrs
+                } else {
+                    Part::Whole
+                };
+                plan_node_ns(doc, c, connected, part, &mut plan)?;
             }
-            cur = doc.preorder_next(root, c);
         }
+        cur = doc.preorder_next(root, c);
     }
+    apply_ns_plan(doc, plan);
     Ok(())
 }
 
