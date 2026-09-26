@@ -39,6 +39,12 @@
   guard that decides which `:lexbor-contains()` arguments reach Lexbor now
   reads the text with Lexbor's own CSS tokenizer instead of a scanner of its
   own, which disagreed with it about where strings end.
+* A CSS query whose Lexbor traversal fails no longer answers with what it had
+  collected so far: an allocation failure raises the out-of-memory
+  `Makiri::Error`, and a selector Lexbor parses but cannot run (the `||` column
+  combinator, which answered "nothing matched") raises `Makiri::Error`. An
+  allocation failure while parsing a selector is reported as out of memory,
+  not as `Makiri::CSS::SyntaxError`.
 * HTML parsing bounds the tree depth (`max_tree_depth:`, default 400; a
   negative value disables it) and the `<option>`s one `<select>` receives
   (10,000), raising `Makiri::Error` past either. Both shapes made Lexbor's tree

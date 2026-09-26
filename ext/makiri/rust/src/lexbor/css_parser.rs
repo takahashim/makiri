@@ -31,7 +31,7 @@
 
 use crate::gvl::{Gvl, GvlCell, GvlRef};
 use crate::lexbor::abi as lxb;
-use crate::lexbor::css_engine::{lexbor_str, ParserParts, SelectorParser};
+use crate::lexbor::css_engine::{lexbor_str, ParseFail, ParserParts, SelectorParser};
 use crate::text::VerifiedText;
 use core::ffi::c_long;
 
@@ -47,6 +47,8 @@ pub enum ParseError {
     Syntax,
     /// A parse on this thread is still borrowing the parser.
     Busy,
+    /// Out of memory parsing - not a verdict on the selector.
+    Oom,
 }
 
 /// The process-global parser, built on first use. A build failure leaves it
@@ -95,8 +97,10 @@ pub fn parse<'g>(gvl: &'g Gvl, selector: VerifiedText) -> Result<Parsed<'g>, Par
         _slot: slot,
     };
     match list {
-        Some(_) => Ok(parsed),
-        None => Err(ParseError::Syntax), /* `parsed` drops: the arena is cleaned */
+        Ok(_) => Ok(parsed),
+        /* `parsed` drops on both: the arena is cleaned. */
+        Err(ParseFail::Rejected) => Err(ParseError::Syntax),
+        Err(ParseFail::GuardOom | ParseFail::ParserOom) => Err(ParseError::Oom),
     }
 }
 

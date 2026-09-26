@@ -83,6 +83,18 @@ RSpec.describe "Makiri CSS" do
       expect { doc.at_css("a\x00") }.to raise_error(Makiri::Error)
       expect { doc.at_css("p")&.matches?("p\x00") }.to raise_error(Makiri::Error)
     end
+
+    # Lexbor parses the column combinator but its traversal cannot run it and
+    # returns an error status. That status used to be dropped, so all three
+    # answered "nothing matched" - a wrong answer, not an empty one.
+    it "raises when the traversal cannot run the selector" do
+      d = Makiri::HTML("<table><col><tr><td>x</td></tr></table>")
+      expect { d.css("col || td") }.to raise_error(Makiri::Error, /could not be run/)
+      expect { d.at_css("col || td") }.to raise_error(Makiri::Error, /could not be run/)
+      expect { d.at_css("td").matches?("col || td") }
+        .to raise_error(Makiri::Error, /could not be run/)
+      expect(d.css("td").length).to eq(1)
+    end
   end
 
   # Which arguments reach the CSS parser is `lexbor::contains_guard`'s decision.

@@ -408,7 +408,7 @@ mod guard_agreement {
                 // SAFETY: same, and no list is read after the clean.
                 unsafe { parser.clean_all() };
                 assert!(
-                    list.is_some(),
+                    list.is_ok(),
                     "the guard kept {shape:?}, but the parser rejects it - the guard \
                      must never be laxer than the parser"
                 );

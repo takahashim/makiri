@@ -11,7 +11,7 @@
 
 #![allow(unsafe_code)]
 
-use crate::lexbor::abi::consts::STATUS_OK;
+use crate::lexbor::abi::consts::{STATUS_ERROR_MEMORY_ALLOCATION, STATUS_OK};
 use crate::lexbor::abi::{
     lxb_css_memory_clean, lxb_css_memory_create, lxb_css_memory_destroy, lxb_css_memory_init,
     lxb_css_parser_clean, lxb_css_parser_create, lxb_css_parser_destroy, lxb_css_parser_init,
@@ -127,6 +127,18 @@ impl ParserParts {
     }
 }
 
+/// Why [`SelectorParser::parse`] produced no list.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ParseFail {
+    /// Lexbor rejected the selector (or `contains_guard` had it rejected).
+    Rejected,
+    /// `contains_guard` could not allocate. The parser never ran, so the
+    /// arena is exactly as it was.
+    GuardOom,
+    /// Lexbor ran out of memory mid-parse; the arena was written to.
+    ParserOom,
+}
+
 /// A process-lifetime selector parser: its pieces are never destroyed.
 ///
 /// It lives in a [`crate::gvl::GvlCell`], and every method's contract is that
@@ -147,8 +159,7 @@ pub(crate) struct SelectorParser {
 }
 
 impl SelectorParser {
-    /// Parse `selector` into the arena: the list, or `None` for a selector
-    /// Lexbor rejects.
+    /// Parse `selector` into the arena: the list, or why there is none.
     ///
     /// Both conditions matter: Lexbor can hand back a list AND a non-OK status
     /// for a partially-recovered parse, and a recovered selector is not the one
@@ -156,13 +167,15 @@ impl SelectorParser {
     ///
     /// # Safety
     /// Its cell's borrow is live.
-    pub(crate) unsafe fn parse(self, selector: &[u8]) -> Option<*mut lxb_css_selector_list_t> {
-        /* `contains_guard` decides what reaches the parser; `Err` is OOM, and
-         * the original bytes are never a fallback. */
-        let guarded = match crate::lexbor::contains_guard::neutralized(selector) {
-            Ok(g) => g,
-            Err(_) => return None,
-        };
+    pub(crate) unsafe fn parse(
+        self,
+        selector: &[u8],
+    ) -> Result<*mut lxb_css_selector_list_t, ParseFail> {
+        /* `contains_guard` decides what reaches the parser; the original bytes
+         * are never a fallback. Its OOM is reported as one, not as a bad
+         * selector - and the parser has not run. */
+        let guarded = crate::lexbor::contains_guard::neutralized(selector)
+            .map_err(|_| ParseFail::GuardOom)?;
         let bytes = guarded.as_deref().unwrap_or(selector);
 
         // SAFETY: a live parser, used under its cell's borrow; `bytes` is a live slice
@@ -170,7 +183,11 @@ impl SelectorParser {
         // is empty, which the parser may look at.
         unsafe {
             let list = lxb_css_selectors_parse(self.parser, bytes.as_ptr(), bytes.len());
-            (!list.is_null() && lxb_css_parser_status_noi(self.parser) == STATUS_OK).then_some(list)
+            match lxb_css_parser_status_noi(self.parser) {
+                STATUS_OK if !list.is_null() => Ok(list),
+                STATUS_ERROR_MEMORY_ALLOCATION => Err(ParseFail::ParserOom),
+                _ => Err(ParseFail::Rejected),
+            }
         }
     }
 

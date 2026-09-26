@@ -29,6 +29,8 @@ fn select_error(err: SelectError, selector: Value) -> Error {
         )),
         SelectError::CollectOom => makiri_error("out of memory collecting CSS results"),
         SelectError::CacheOom => makiri_error("out of memory caching CSS selector"),
+        SelectError::ParseOom => makiri_error("out of memory parsing CSS selector"),
+        SelectError::Traversal => makiri_error("CSS selector could not be run"),
         SelectError::Unavailable => makiri_error("failed to initialise CSS selector engine"),
         SelectError::Busy => makiri_error("CSS selector engine is already in use"),
     }

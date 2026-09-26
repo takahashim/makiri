@@ -123,6 +123,9 @@ pub fn compile_owned(
         Err(css_parser::ParseError::Busy) => {
             return Err(b.fail(ErrorKind::Internal, "CSS parser is already in use"));
         }
+        Err(css_parser::ParseError::Oom) => {
+            return Err(b.fail(ErrorKind::Oom, "out of memory parsing CSS selector"));
+        }
     };
 
     /* `parsed` cleans the parser's arena when it drops, on every path out of

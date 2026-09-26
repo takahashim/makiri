@@ -734,6 +734,53 @@ STATEFUL_SCENARIOS.each do |name, spec|
   end
 end
 
+# An allocation failure while deciding a selector is not a verdict on it. For
+# a selector `lexbor::contains_guard` rewrites (so the parse ends in a syntax
+# error when nothing fails), every injected failure - the cache key, the
+# guard's copy - must surface as an out-of-memory Makiri::Error, never as
+# CSS::SyntaxError: the guard's OOM used to become a rejected parse, which
+# ALLOWED above cannot tell apart (SyntaxError is a Makiri::Error), so this is
+# checked on its own. Warmed twice first, as the scenarios are: a cold call
+# also allocates the engines and the error report's one-time state, which
+# fail after the verdict and so may keep the SyntaxError.
+guard_docs = {
+  "html" => Makiri::HTML::Document.parse("<p>hello</p>"),
+  "xml" => Makiri::XML::Document.parse("<r><p>hello</p></r>")
+}
+[":lexbor-contains(#x)", "p:LEXBOR-CONTAINS(*)"].each do |sel|
+  guard_docs.each do |kind, doc|
+    disarm
+    3.times do
+      disarm
+      doc.css(sel)
+      raise "#{sel} was expected to be rejected"
+    rescue Makiri::CSS::SyntaxError
+      nil
+    end
+    total = Makiri.send(:__alloc_inject_calls)
+    bad = []
+    (1..total).each do |n|
+      Makiri.send(:__alloc_inject, n)
+      begin
+        doc.css(sel)
+        bad << [n, "answered"]
+      rescue Makiri::CSS::SyntaxError => e
+        bad << [n, "OOM reported as #{e.class}: #{e.message}"]
+      rescue *ALLOWED
+        nil
+      rescue Exception => e # rubocop:disable Lint/RescueException -- the wrong class IS the finding
+        bad << [n, "wrong exception class #{e.class}: #{e.message.to_s[0, TRUNCATE]}"]
+      ensure
+        disarm
+      end
+    end
+    failures_total += bad.size + (total.zero? ? 1 : 0)
+    puts format("%-16s allocations=%-5d failed=%d", "guard_oom_#{kind}", total, bad.size)
+    bad.each { |n, detail| puts "    n=#{n} #{sel.inspect}: #{detail}" }
+    puts "    zero core allocations for #{sel.inspect}" if total.zero?
+  end
+end
+
 if failures_total.zero?
   puts "check_alloc_failures: OK - every injected allocation failure failed closed " \
        "(clean raise or baseline-identical result, with stateful objects reusable)"

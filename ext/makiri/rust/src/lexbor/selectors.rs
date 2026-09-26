@@ -47,13 +47,16 @@ use core::ptr::NonNull;
 use std::collections::HashMap;
 
 use crate::gvl::{Gvl, GvlCell, GvlRef};
-use crate::lexbor::abi::consts::{STATUS_OK as LXB_STATUS_OK, STATUS_STOP as LXB_STATUS_STOP};
+use crate::lexbor::abi::consts::{
+    STATUS_ERROR_MEMORY_ALLOCATION as LXB_STATUS_ERROR_MEMORY_ALLOCATION,
+    STATUS_OK as LXB_STATUS_OK, STATUS_STOP as LXB_STATUS_STOP,
+};
 use crate::lexbor::abi::{
     lxb_selectors_create, lxb_selectors_destroy, lxb_selectors_find, lxb_selectors_init,
     lxb_selectors_match_node, lxb_selectors_opt_set_noi, LxbNode,
 };
 use crate::lexbor::adapter::html::RawNode;
-use crate::lexbor::css_engine::{Owned, ParserParts, SelectorParser};
+use crate::lexbor::css_engine::{Owned, ParseFail, ParserParts, SelectorParser};
 
 use crate::limits::NODE_SET_MAX;
 
@@ -68,6 +71,13 @@ pub enum SelectError {
     CollectOom,
     /// Out of memory in the compiled-selector cache's bookkeeping.
     CacheOom,
+    /// Out of memory parsing the selector (`contains_guard`'s copy, or
+    /// Lexbor's parser) - not a verdict on the selector.
+    ParseOom,
+    /// Lexbor's traversal stopped with an error that is not an allocation
+    /// failure: a selector it parses but cannot run (the `||` column
+    /// combinator). Reported, because the matches so far are not the answer.
+    Traversal,
     /// The process-global engine could not be built.
     Unavailable,
     /// A query on this thread is still using the engine.
@@ -186,9 +196,10 @@ impl CachePolicy {
 struct CompiledList(NonNull<SelectorList>);
 
 impl CompiledList {
-    /// The list a parse just produced, or `None` for a rejected selector.
-    fn new(p: Option<*mut SelectorList>) -> Option<CompiledList> {
-        p.and_then(NonNull::new).map(CompiledList)
+    /// The list a parse just produced, or why there is none.
+    fn new(p: Result<*mut SelectorList, ParseFail>) -> Result<CompiledList, ParseFail> {
+        p.and_then(|l| NonNull::new(l).ok_or(ParseFail::Rejected))
+            .map(CompiledList)
     }
 
     fn as_ptr(&self) -> *const SelectorList {
@@ -279,13 +290,20 @@ impl SelectorCache {
         /* Return the parser to its CLEAN stage, but do NOT clean the arena -
          * the list just parsed lives there and is about to be cached. */
         p.clean_parser();
-        let Some(list) = list else {
-            /* A rejected parse drops the cached lists instead of keeping them.
-             * This belongs to the same decision as `super::contains_guard` and
-             * goes with it; errors are not a hot path, so the cost is a cold
-             * cache. See CLAUDE.md. */
-            self.flush(p);
-            return Err(SelectError::Syntax);
+        let list = match list {
+            Ok(list) => list,
+            /* The guard could not allocate, so the parser never ran and the
+             * arena holds exactly the cached lists it held before: nothing to
+             * flush, and not a verdict on the selector. */
+            Err(ParseFail::GuardOom) => return Err(SelectError::ParseOom),
+            /* A parse that reached Lexbor and failed drops the cached lists
+             * instead of keeping them. This belongs to the same decision as
+             * `super::contains_guard` and goes with it; errors are not a hot
+             * path, so the cost is a cold cache. See CLAUDE.md. */
+            Err(fail) => {
+                self.flush(p);
+                return Err(select_error(fail));
+            }
         };
 
         /* Reserved above, so the vacant entry is written without allocating:
@@ -426,16 +444,30 @@ enum Run {
 }
 
 impl Run {
-    unsafe fn call(&self, e: &Engine, node: RawNode, list: &CompiledList, ctx: *mut c_void) {
+    /// Run the traversal. Its status is the answer's validity: `OK`, or the
+    /// `STOP` the callbacks return on purpose (`match_node` passes it back;
+    /// `find` turns it into `OK`), means the walk ran as asked. Anything else
+    /// means Lexbor gave up part-way - an allocation failure, or a selector it
+    /// cannot run - and what the callbacks collected is a truncated answer.
+    unsafe fn call(
+        &self,
+        e: &Engine,
+        node: RawNode,
+        list: &CompiledList,
+        ctx: *mut c_void,
+    ) -> Result<(), SelectError> {
         let (node, list) = (node.as_lxb_mut(), list.as_ptr());
-        match self {
+        let status = match self {
             Run::Find(cb) => {
                 lxb_selectors_opt_set_noi(e.selectors, LXB_SELECTORS_OPT_MATCH_FIRST);
-                lxb_selectors_find(e.selectors, node, list, Some(*cb), ctx);
+                lxb_selectors_find(e.selectors, node, list, Some(*cb), ctx)
             }
-            Run::MatchNode(cb) => {
-                lxb_selectors_match_node(e.selectors, node, list, Some(*cb), ctx);
-            }
+            Run::MatchNode(cb) => lxb_selectors_match_node(e.selectors, node, list, Some(*cb), ctx),
+        };
+        match status {
+            LXB_STATUS_OK | LXB_STATUS_STOP => Ok(()),
+            LXB_STATUS_ERROR_MEMORY_ALLOCATION => Err(SelectError::CollectOom),
+            _ => Err(SelectError::Traversal),
         }
     }
 }
@@ -508,11 +540,8 @@ unsafe fn with_compiled_selector(
          * the arena stays small and a one-off-selector flood is no slower than
          * having no cache at all. */
         let parsed = match CompiledList::new(e.parser.parse(selector)) {
-            Some(list) => {
-                run.call(&e, node, &list, ctx);
-                Ok(())
-            }
-            None => Err(SelectError::Syntax),
+            Ok(list) => run.call(&e, node, &list, ctx),
+            Err(fail) => Err(select_error(fail)),
         }; /* the list is out of scope before the arena it lives in is cleaned */
         e.parser.clean_all();
         return parsed;
@@ -521,8 +550,16 @@ unsafe fn with_compiled_selector(
     /* The traversal engine self-cleans; the cached list and its arena stay. */
     g.cache
         .with_list(&mut g.policy, e.parser, selector, |list| {
-            run.call(&e, node, list, ctx);
-        })
+            run.call(&e, node, list, ctx)
+        })?
+}
+
+/// The error a failed parse is reported as.
+fn select_error(fail: ParseFail) -> SelectError {
+    match fail {
+        ParseFail::Rejected => SelectError::Syntax,
+        ParseFail::GuardOom | ParseFail::ParserOom => SelectError::ParseOom,
+    }
 }
 
 /* ------------------------------------------------------------------ */
