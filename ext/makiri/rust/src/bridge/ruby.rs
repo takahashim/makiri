@@ -93,6 +93,22 @@ pub fn check_frozen(v: Value) -> Result<(), Error> {
     .map(|_| ())
 }
 
+/// Give the exception `exc` the `#cause` `cause`, as `raise exc, cause: cause`
+/// would. Best effort: `exc` is one just built, and should the store fail
+/// (a frozen or out-of-memory `exc`) it is left without a cause rather than
+/// the failure replacing the error being reported.
+pub fn set_exception_cause(exc: Value, cause: Value) {
+    // SAFETY: two live values; `cause` is the ivar Ruby's own `raise` sets
+    // and `Exception#cause` reads, and `protect` turns a raise into `Err`.
+    let _ = protect(|| unsafe {
+        rb_sys::rb_ivar_set(
+            exc.as_raw(),
+            rb_sys::rb_intern(c"cause".as_ptr()),
+            cause.as_raw(),
+        )
+    });
+}
+
 /// `rb_respond_to` returning a raise from the object's own `respond_to?` (or the
 /// `respond_to_missing?` behind it) as `Err`, rather than unwinding through the
 /// caller.

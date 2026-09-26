@@ -435,3 +435,76 @@ RSpec.describe "a to_s that returns a non-String" do
     expect { doc.create_element("e", "k" => not_a_string) }.to raise_error(TypeError, /non-String/)
   end
 end
+
+# Only a StandardError out of a handler becomes Makiri::Error. Anything else -
+# an interrupt, exit, Timeout's internal exception, a throw - is the caller's
+# control flow and reaches it unchanged, with the evaluation guard released.
+RSpec.describe "a handler's non-StandardError exit" do
+  let(:doc) { Makiri::HTML("<p>a</p><p>b</p>") }
+
+  def handler(&body)
+    Class.new { define_method(:f, &body) }.new
+  end
+
+  after { expect { doc.at_css("p")["x"] = "1" }.not_to raise_error }
+
+  it "lets Timeout interrupt a slow handler" do
+    require "timeout"
+    h = handler { sleep 5 }
+    expect { Timeout.timeout(0.1) { doc.xpath("//p[f()]", h) } }.to raise_error(Timeout::Error)
+  end
+
+  it "propagates Thread#raise(Interrupt) out of the evaluating thread" do
+    queue = Queue.new
+    h = handler do
+      queue << :in
+      sleep 5
+    end
+    thread = Thread.new { doc.xpath("//p[f()]", h) }
+    thread.report_on_exception = false
+    queue.pop
+    thread.raise(Interrupt)
+    expect { thread.value }.to raise_error(Interrupt)
+  end
+
+  it "propagates exit as SystemExit with its status" do
+    h = handler { exit(3) }
+    expect { doc.xpath("//p[f()]", h) }.to raise_error(SystemExit) { |e| expect(e.status).to eq(3) }
+  end
+
+  it "lets a throw reach the enclosing catch" do
+    h = handler { throw :out, :thrown }
+    expect(catch(:out) { doc.xpath("//p[f()]", h) }).to eq(:thrown)
+  end
+
+  it "propagates an Interrupt raised by the result's to_s" do
+    result = Class.new { def to_s = raise(Interrupt) }.new
+    h = handler { result }
+    expect { doc.xpath("string(f())", h) }.to raise_error(Interrupt)
+  end
+
+  it "propagates a non-StandardError raised by respond_to?" do
+    h = Class.new { def respond_to_missing?(*) = raise(NoMemoryError, "fake") }.new
+    expect { doc.xpath("//p[f()]", h) }.to raise_error(NoMemoryError, "fake")
+  end
+
+  it "propagates the same way through XPathContext#evaluate and at_xpath" do
+    h = handler { raise Interrupt }
+    expect { Makiri::XPathContext.new(doc).evaluate("//p[f()]", h) }.to raise_error(Interrupt)
+    expect { doc.at_xpath("//p[f()]", h) }.to raise_error(Interrupt)
+  end
+
+  it "propagates out of a nested evaluation" do
+    d = doc
+    inner = handler { raise Interrupt }
+    outer = handler { d.xpath("//p[f()]", inner).empty? }
+    expect { doc.xpath("//p[f()]", outer) }.to raise_error(Interrupt)
+  end
+
+  it "still turns a StandardError into Makiri::Error, with the original as its cause" do
+    h = handler { raise "boom" }
+    expect { doc.xpath("//p[f()]", h) }.to raise_error(Makiri::Error, "handler raised: boom") { |e|
+      expect(e.cause).to be_a(RuntimeError).and(have_attributes(message: "boom"))
+    }
+  end
+end

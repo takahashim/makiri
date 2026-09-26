@@ -309,22 +309,45 @@ pub fn evaluate_query(
     /* A handler runs Ruby mid-walk, so for as long as one can, the document
      * refuses to be changed: the bridge holds that guard, and lives on this
      * frame for this evaluate alone. */
-    let bridge = match handler {
+    let mut bridge = match handler {
         None => None,
         Some(handler) => Some(Bridge {
             handler: handler.as_raw(),
             document: document.as_raw(),
             kind: ctx.doc_kind(),
             _reading: crate::bridge::wrapper::DocumentEvaluation::enter(document)?,
+            raised: core::cell::OnceCell::new(),
         }),
     };
     let result = ctx.run(ast, bridge.as_ref().map(|b| b as &dyn Resolver), answer);
+    /* The exception a handler-side call ended in, moved to this frame's stack
+     * (where the GC's conservative scan keeps seeing it) before the bridge goes. */
+    let raised = bridge.as_mut().and_then(|b| b.raised.take());
     /* Released BEFORE the error is built: `xpath_error` allocates Ruby objects
      * outside `protect`, and a `NoMemoryError` there longjmps past this frame,
      * skipping the guard's `Drop` - which would leave the document refusing
      * every edit for the rest of its life. */
     drop(bridge);
-    result.map_err(|error| xpath_error(&error))
+    result.map_err(|error| match raised {
+        /* Not the handler's error but the caller's control flow - an interrupt,
+         * `exit`, Timeout, a `throw` - so it is re-raised as it was. Nothing
+         * runs Ruby between the handler's exit and here, so a `throw`'s pending
+         * state is still the one Ruby resumes. */
+        Some(e) if handler::propagates(&e) => e,
+        Some(e) => with_cause(xpath_error(&error), &e),
+        None => xpath_error(&error),
+    })
+}
+
+/// `error` with `cause` - the handler's own StandardError - as its `#cause`,
+/// the way `raise ... cause:` would set it. Left without one when either is
+/// not an exception object.
+fn with_cause(error: Error, cause: &Error) -> Error {
+    use magnus::error::ErrorType::Exception;
+    if let (Exception(exc), Exception(cause)) = (error.error_type(), cause.error_type()) {
+        crate::bridge::ruby::set_exception_cause(exc.as_value(), cause.as_value());
+    }
+    error
 }
 
 /// A query's value as Ruby, and for `at_xpath` the first node of a node-set.

@@ -41,6 +41,12 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
     and in XPath's data model. An `xmlns` on an HTML element is an ordinary
     attribute and stays visible.
 
+* A `StandardError` raised by a custom-function handler becomes `Makiri::Error`
+  ("handler raised: <message>"), with the handler's exception as its `#cause`
+  * Nokogiri re-raises the handler's exception itself. Anything that is not a
+    `StandardError` (`Interrupt`, `SystemExit`, Timeout's exception) and a
+    `throw` reach the caller unchanged in both.
+
 * A number literal is read as the nearest double; libxml2's own reader is not
   correctly rounded for a literal with more digits than a double holds, so
   `string(0.72609133372266155)` is `0.726091333722662` in Makiri and

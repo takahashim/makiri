@@ -648,8 +648,12 @@ caps) live in `xpath/limits.rs` and fail closed with `Status::Limit`. Ruby:
 `#xpath` returns a NodeSet for node-sets, else String/Float/boolean. Errors map
 SYNTAX→`XPath::SyntaxError`, LIMIT→`XPath::LimitExceeded`, else `Makiri::Error`.
 Custom functions: unknown calls route through the engine resolver to
-`handler.<local_name with - → _>`, run under `rb_protect` (a Ruby exception
-becomes `Makiri::Error`, never a long-jump through the evaluator); node-set
+`handler.<local_name with - → _>`, run under `rb_protect`, so a raise is never
+a long-jump through the evaluator: a `StandardError` becomes `Makiri::Error`
+(the original as its `#cause`), and anything else - `Interrupt`, `exit`,
+Timeout's exception, a `throw` - is kept in the per-evaluate `Bridge` (on
+`evaluate_query`'s stack, so the GC sees it) and re-raised UNCHANGED once the
+evaluation and its guard are gone (`handler::propagates`); node-set
 returns from a foreign document are rejected. A handler may not modify the document
 being evaluated: while an evaluation with a handler runs, every mutator on that
 document raises `Makiri::Error` - the factories (`create_*`, `clone_node`,

@@ -34,7 +34,9 @@ const HANDLER_MAX_ARGS: usize = 64;
  * method name is the XPath local name with '-' mapped to '_' - converting
  * arguments and the return value between engine and Ruby values. The call runs
  * under rb_protect, so a Ruby exception becomes a clean engine error rather than
- * a longjmp through the evaluator's C stack. */
+ * a longjmp through the evaluator's C stack. The exception itself is kept in
+ * `Bridge::raised`, so the evaluate boundary can re-raise one that is not the
+ * handler's error but the caller's control flow (see `Bridge::propagates`). */
 
 pub(super) struct Bridge {
     pub(super) handler: VALUE,
@@ -44,6 +46,28 @@ pub(super) struct Bridge {
     pub(super) kind: DocKind,
     /// Every mutator on `document` refuses while this lives.
     pub(super) _reading: crate::bridge::wrapper::DocumentEvaluation,
+    /// The first Ruby exception (or `throw`) a handler-side call ended in.
+    ///
+    /// The bridge lives on `evaluate_query`'s stack frame, never on the heap,
+    /// so the exception VALUE inside is seen by the GC's conservative stack
+    /// scan for as long as it is held here.
+    pub(super) raised: core::cell::OnceCell<Error>,
+}
+
+impl Bridge {
+    /// Keep `e` for the evaluate boundary; only the first is kept, since the
+    /// first one ends the evaluation.
+    fn stash(&self, e: Error) {
+        let _ = self.raised.set(e);
+    }
+}
+
+/// Whether `e` must reach the caller of the query unchanged rather than become
+/// `Makiri::Error`: anything that is not a `StandardError` - an interrupt,
+/// `exit`, Timeout's own exception - and a non-local exit such as `throw`,
+/// which is no exception at all.
+pub(super) fn propagates(e: &Error) -> bool {
+    !e.is_kind_of(crate::bridge::ruby::gvl_ruby().exception_standard_error())
 }
 
 // The bridge holds `document`'s evaluation guard for as long as it exists,
@@ -61,18 +85,22 @@ impl Resolver for Bridge {
 }
 
 /// Why a handler's call could not be completed. Every message is static text -
-/// a static reason at most - so a failure is two words, allocates nothing on a
-/// path that is already failing, and is worded only when reported.
-#[derive(Clone, Copy, Debug)]
+/// a static reason at most - so a failure allocates nothing on a path that is
+/// already failing, and is worded only when reported.
+#[derive(Clone, Debug)]
 enum HandlerFailure {
     Msg(&'static str),
     /// The handler's string failed the text contract, for this reason.
     InvalidString(&'static str),
+    /// A Ruby call raised (or threw). Worded with the static text when there
+    /// is one, else as "handler raised: <message>"; the exception itself goes
+    /// to the bridge.
+    Raised(Error, Option<&'static str>),
 }
 
 impl HandlerFailure {
     /// The failure as the engine error that ends the evaluation.
-    fn report(self, err: crate::engine_error::ErrSink) -> Reported {
+    fn report(self, bridge: &Bridge, err: crate::engine_error::ErrSink) -> Reported {
         match self {
             HandlerFailure::Msg(m) => crate::err_setf!(err, ErrorKind::Runtime, "{m}"),
             HandlerFailure::InvalidString(reason) => crate::err_setf!(
@@ -80,6 +108,20 @@ impl HandlerFailure {
                 ErrorKind::Runtime,
                 "handler returned an invalid string: {reason}"
             ),
+            HandlerFailure::Raised(e, wording) => {
+                /* One the boundary re-raises unchanged is not worded at all:
+                 * asking it for a message would run more Ruby, and for a
+                 * `throw` there is none. */
+                let reported = if propagates(&e) {
+                    crate::err_setf!(err, ErrorKind::Runtime, "handler raised")
+                } else if let Some(m) = wording {
+                    crate::err_setf!(err, ErrorKind::Runtime, "{m}")
+                } else {
+                    handler_raised(err, &e)
+                };
+                bridge.stash(e);
+                reported
+            }
         }
     }
 }
@@ -96,17 +138,15 @@ fn push_result_node(
     rb_node: Value,
     set: &mut NodeSet,
 ) -> Result<(), HandlerFailure> {
-    let Ok(node_document) = keepalive_document(rb_node) else {
-        return Err(HandlerFailure::Msg("handler returned an unusable node"));
-    };
+    let node_document = keepalive_document(rb_node)
+        .map_err(|e| HandlerFailure::Raised(e, Some("handler returned an unusable node")))?;
     if node_document.as_raw() != bridge.document {
         return Err(HandlerFailure::Msg(
             "handler returned a node from a different document",
         ));
     }
-    let Ok(n) = node_raw(rb_node) else {
-        return Err(HandlerFailure::Msg("handler returned an unusable node"));
-    };
+    let n = node_raw(rb_node)
+        .map_err(|e| HandlerFailure::Raised(e, Some("handler returned an unusable node")))?;
     /* Same-document is checked above, so this is a node of the context's kind. */
     // SAFETY: a live node of the context's own document.
     let token = unsafe { n.token(bridge.kind) };
@@ -121,9 +161,9 @@ fn ruby_to_val(bridge: &Bridge, budget: &mut Budget, rv: Value) -> Result<Val, H
     }
     let ruby = Ruby::get_with(rv);
     if is_numeric(&ruby, rv) {
-        return f64::try_convert(rv)
-            .map(Val::number)
-            .map_err(|_| HandlerFailure::Msg("handler returned a number that could not be read"));
+        return f64::try_convert(rv).map(Val::number).map_err(|e| {
+            HandlerFailure::Raised(e, Some("handler returned a number that could not be read"))
+        });
     }
     let is_node = is_kind_of(rv, &CLASS_NODE);
     if is_node || is_kind_of(rv, &CLASS_NODE_SET) {
@@ -131,15 +171,14 @@ fn ruby_to_val(bridge: &Bridge, budget: &mut Budget, rv: Value) -> Result<Val, H
         if is_node {
             push_result_node(bridge, budget, rv, &mut set)?;
         } else {
-            let Ok(source) = <&RubyNodeSet as magnus::TryConvert>::try_convert(rv) else {
-                return Err(HandlerFailure::Msg("handler result could not be read"));
-            };
-            let Ok(count) = source.count() else {
-                return Err(HandlerFailure::Msg("handler result could not be read"));
-            };
+            const UNREADABLE: &str = "handler result could not be read";
+            let unreadable = |e| HandlerFailure::Raised(e, Some(UNREADABLE));
+            let source =
+                <&RubyNodeSet as magnus::TryConvert>::try_convert(rv).map_err(unreadable)?;
+            let count = source.count().map_err(unreadable)?;
             for i in 0..count {
-                let Ok(Some(node)) = source.at(&ruby, i) else {
-                    return Err(HandlerFailure::Msg("handler result could not be read"));
+                let Some(node) = source.at(&ruby, i).map_err(unreadable)? else {
+                    return Err(HandlerFailure::Msg(UNREADABLE));
                 };
                 push_result_node(bridge, budget, node, &mut set)?;
             }
@@ -153,15 +192,13 @@ fn ruby_to_val(bridge: &Bridge, budget: &mut Budget, rv: Value) -> Result<Val, H
     }
     /* A `to_s` that raises, or returns something other than a String, is
      * refused here rather than read as a String. */
-    let Ok(sv) = crate::bridge::ruby::to_s(rv) else {
-        return Err(HandlerFailure::Msg(
-            "handler result could not be converted to a string",
-        ));
-    };
+    const NOT_A_STRING: &str = "handler result could not be converted to a string";
+    let sv =
+        crate::bridge::ruby::to_s(rv).map_err(|e| HandlerFailure::Raised(e, Some(NOT_A_STRING)))?;
     /* An exception raised while taking the String (an interrupt) ends the
      * evaluation like any exception from the handler's own call. */
     let vv = ruby_try_verified_text(sv, budget.limits.max_string_bytes)
-        .map_err(|_| HandlerFailure::Msg("handler result could not be converted to a string"))?
+        .map_err(|e| HandlerFailure::Raised(e, Some(NOT_A_STRING)))?
         .map_err(HandlerFailure::InvalidString)?;
     Text::try_copy(vv.as_bytes())
         .map(Val::string)
@@ -264,7 +301,7 @@ unsafe fn handler_resolver(
     match crate::bridge::ruby::respond_to(crate::bridge::ruby::value(bridge.handler), method) {
         Ok(true) => {}
         Ok(false) => return Ok(None), /* let the engine raise "unknown function" */
-        Err(e) => return Err(handler_raised(err.clone(), &e)),
+        Err(e) => return Err(HandlerFailure::Raised(e, None).report(bridge, err)),
     }
 
     if call.args.len() > HANDLER_MAX_ARGS {
@@ -295,11 +332,11 @@ unsafe fn handler_resolver(
         crate::bridge::ruby::nil().as_raw()
     });
     if let Err(e) = called {
-        return Err(handler_raised(err, &e));
+        return Err(HandlerFailure::Raised(e, None).report(bridge, err));
     }
     match state.result {
         Some(Ok(v)) => Ok(Some(v)),
-        Some(Err(failure)) => Err(failure.report(err)),
+        Some(Err(failure)) => Err(failure.report(bridge, err)),
         /* The body sets a result on every path that returns normally. */
         None => Err(crate::err_setf!(
             err,
