@@ -24,6 +24,7 @@ use crate::bridge::wrapper::keepalive_document;
 use crate::bridge::xpath::{
     context_for, evaluate_query, parse_query, query_result, Answer, Cx, XPathCtx,
 };
+use crate::glue::kwargs::Kwargs;
 use crate::init::{MOD_HTML_NODE_METHODS, MOD_XML_NODE_METHODS};
 use crate::xpath::ast::Ast;
 
@@ -65,7 +66,7 @@ impl QueryArgs {
             RHash,
             (),
         >(args)?;
-        let kw = Keywords::scan(ruby, a.keywords)?;
+        let kw = Keywords::scan(ruby, Kwargs::from_hash(a.keywords))?;
         let mut q = QueryArgs {
             text: a.required.0,
             namespaces: None,
@@ -129,36 +130,15 @@ pub struct Keywords {
 }
 
 impl Keywords {
-    pub fn scan(ruby: &Ruby, keywords: RHash) -> Result<Keywords, Error> {
-        if keywords.is_empty() {
-            return Ok(Keywords {
-                lax: false,
-                bindings: None,
-            });
-        }
-        let mode = ruby.sym_new("namespace_matching");
-        let lax = match keywords.get(mode) {
+    pub(crate) fn scan(ruby: &Ruby, keywords: Kwargs) -> Result<Keywords, Error> {
+        let (mode, bindings) = keywords.split_off(ruby, "namespace_matching")?;
+        let lax = match mode {
             None => false,
             Some(v) => matching_lax(ruby, v)?,
         };
         /* The rest are prefix bindings - how Nokogiri's `xpath("//s:p", s: uri)`
-         * reads. Copied rather than mutated, and read through the Hash storage
-         * (`rb_hash_foreach`/`rb_hash_aset`) rather than `dup`/`delete`, which a
-         * Hash subclass can redefine. The mode key is dropped by raw identity:
-         * keyword keys are interned symbols. */
-        let bindings: RHash = ruby.hash_new();
-        let mut count = 0usize;
-        keywords.foreach(|k: Value, v: Value| {
-            if !crate::bridge::ruby::same_value(k, mode.as_value()) {
-                bindings.aset(k, v)?;
-                count += 1;
-            }
-            Ok(magnus::r_hash::ForEach::Continue)
-        })?;
-        Ok(Keywords {
-            lax,
-            bindings: (count != 0).then_some(bindings),
-        })
+         * reads. */
+        Ok(Keywords { lax, bindings })
     }
 }
 
@@ -193,7 +173,7 @@ fn bind_each(
     mut register: impl FnMut(&[u8], &[u8]) -> Result<(), Error>,
     cap: usize,
 ) -> Result<(), Error> {
-    /* The pairs are copied out first and bound after (`kwargs::each_pair`,
+    /* The pairs are copied out first and bound after (`hash::each_pair`,
      * which says why): binding converts with the caller's `to_s`. */
     /* More pairs than a context may hold is refused before any is converted
      * or copied, rather than after every one of them has been. */
@@ -205,7 +185,7 @@ fn bind_each(
         )));
     }
     let ruby = Ruby::get().map_err(|_| makiri_error("Ruby is not available here"))?;
-    crate::glue::kwargs::each_pair(&ruby, h, |prefix, uri| {
+    crate::glue::hash::each_pair(&ruby, h, |prefix, uri| {
         bind_pair(prefix, uri, cap, &mut register)
     })
 }

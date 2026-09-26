@@ -28,8 +28,11 @@
 
 #![forbid(unsafe_code)]
 
-/// Keyword arguments and Hash pairs, read one way for every method.
+/// Keyword arguments, read one way for every method.
 pub mod kwargs;
+
+/// Hash argument pairs, copied out before any caller code converts them.
+pub mod hash;
 
 /// `Makiri::Lexbor::CSS.parse_stylesheet` - the Ruby half of `lexbor::stylesheet`.
 pub mod stylesheet;

@@ -34,9 +34,9 @@ fn parse_limits(ruby: &Ruby, h: RHash) -> Result<ParseLimits, Error> {
     }
 
     let key = ruby.sym_new("max_bytes");
-    /* The keys are read from the Hash itself (`kwargs::each_pair`), not
+    /* The keys are read from the Hash itself (`hash::each_pair`), not
      * through a `keys` a subclass can redefine. */
-    crate::glue::kwargs::each_pair(ruby, h, |k, _| {
+    crate::glue::hash::each_pair(ruby, h, |k, _| {
         if k.eql(key)? {
             return Ok(());
         }

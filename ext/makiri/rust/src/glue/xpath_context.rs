@@ -14,6 +14,7 @@ use magnus::{function, method, prelude::*, Error, RHash, Ruby, Value};
 
 use crate::bridge::ruby::is_kind_of;
 use crate::bridge::xpath::XPathCtx;
+use crate::glue::kwargs::Kwargs;
 use crate::glue::query::{register_bindings, Keywords};
 use crate::init::{CLASS_NODE, CLASS_XPATH_CONTEXT};
 
@@ -36,7 +37,7 @@ fn s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let a = magnus::scan_args::scan_args::<(Value,), (), (), (), RHash, ()>(args)?;
         let node = a.required.0;
-        let kw = Keywords::scan(ruby, a.keywords)?;
+        let kw = Keywords::scan(ruby, Kwargs::from_hash(a.keywords))?;
         expect_node(ruby, node)?;
 
         let obj = XPathCtx::create(ruby, node, kw.lax)?;

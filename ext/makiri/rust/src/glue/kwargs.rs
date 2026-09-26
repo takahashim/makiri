@@ -1,9 +1,7 @@
-//! Reading a method's keyword arguments, and the pairs of a Hash argument.
-//!
-//! Two small procedures more than one method needs, kept here so each is
-//! written once with its reasons beside it.
+//! Reading a method's keyword arguments, kept here so each procedure is written
+//! once with its reasons beside it.
 
-use magnus::{prelude::*, Error, RArray, RHash, Ruby, Value};
+use magnus::{prelude::*, Error, RHash, Ruby, Value};
 
 /// The keywords of a method that takes only keywords.
 ///
@@ -23,6 +21,11 @@ impl Kwargs {
         Ok(Kwargs(Some(scanned.keywords)))
     }
 
+    /// The keyword hash `scan_args` already separated out.
+    pub(crate) fn from_hash(h: RHash) -> Kwargs {
+        Kwargs(Some(h))
+    }
+
     /// Keyword `name`, or `None` when it is absent or `nil`. A plain lookup
     /// rather than `get_kwargs`, which allocates a second hash for the keys it
     /// was not asked about - so unknown keywords are ignored.
@@ -37,30 +40,35 @@ impl Kwargs {
     pub(crate) fn flag(self, ruby: &Ruby, name: &str) -> bool {
         self.value(ruby, name).is_some_and(|v| v.to_bool())
     }
-}
 
-/// `h`'s key-value pairs, copied out before any of them is used.
-///
-/// Read from the Hash itself, not through a `to_a` a subclass can redefine (a
-/// non-pair tripped an `expect`), and handed out only after the walk, because a
-/// caller converts them with Ruby code - `to_s` and the like: inside `foreach`
-/// a panic in it became `fatal` (the walk runs under magnus's own `protect`)
-/// and a `to_s` that added a key to the same Hash raised "can't add a new key
-/// into hash during iteration". The copy runs no Ruby code of the caller's; the
-/// Array holding it is a Ruby object on this frame, so the GC sees it.
-pub(crate) fn each_pair(
-    ruby: &Ruby,
-    h: RHash,
-    mut f: impl FnMut(Value, Value) -> Result<(), Error>,
-) -> Result<(), Error> {
-    let pairs: RArray = ruby.ary_new_capa(h.len() * 2);
-    h.foreach(|k: Value, v: Value| {
-        pairs.push(k)?;
-        pairs.push(v)?;
-        Ok(magnus::r_hash::ForEach::Continue)
-    })?;
-    for i in (0..pairs.len()).step_by(2) {
-        f(pairs.entry(i as isize)?, pairs.entry(i as isize + 1)?)?;
+    /// Keyword `name`, and the OTHER keywords as a fresh Hash (`None` when none
+    /// remain).
+    ///
+    /// The key is dropped by raw identity, which is sound because keyword keys
+    /// are interned symbols. Copied rather than mutated, and read through the
+    /// Hash storage (`rb_hash_foreach`/`rb_hash_aset`) rather than
+    /// `dup`/`delete`, which a Hash subclass can redefine.
+    pub(crate) fn split_off(
+        self,
+        ruby: &Ruby,
+        name: &str,
+    ) -> Result<(Option<Value>, Option<RHash>), Error> {
+        let sym = ruby.sym_new(name);
+        let taken = self
+            .0
+            .and_then(|h| h.get(sym))
+            .filter(|v: &Value| !v.is_nil());
+        let rest: RHash = ruby.hash_new();
+        let mut count = 0usize;
+        if let Some(h) = self.0 {
+            h.foreach(|k: Value, v: Value| {
+                if !crate::bridge::ruby::same_value(k, sym.as_value()) {
+                    rest.aset(k, v)?;
+                    count += 1;
+                }
+                Ok(magnus::r_hash::ForEach::Continue)
+            })?;
+        }
+        Ok((taken, (count != 0).then_some(rest)))
     }
-    Ok(())
 }
