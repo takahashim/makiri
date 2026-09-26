@@ -52,8 +52,8 @@ FIXTURES = {
   "implicit" => "\n\n<p>only</p>",
 
   # Foster parenting: the tree builder MOVES these out of the table, so the
-  # DOM order and the token order diverge. The bounded lookahead is what keeps
-  # a mismatch unstamped instead of wrong.
+  # DOM order and the token order diverge. Stamping at creation places the
+  # table too, which the C build's post-parse matching left nil.
   "foster" => "<table>\n<b>fostered</b>\n<tr><td>cell</td></tr>\n</table>",
 
   # The adoption agency, the other reordering the comment names.
@@ -104,7 +104,7 @@ FIXTURES.each do |name, html|
   end
 end
 
-# A document large enough to exercise geometric growth of the recorder.
+# A document with many elements, placed monotonically and without gaps.
 big = (1..5000).map { |i| "<p id='p#{i}'>#{i}</p>" }.join("\n")
 doc = Makiri::HTML("<html><body>#{big}</body></html>")
 lines = doc.css("p").map(&:line)

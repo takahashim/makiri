@@ -571,40 +571,33 @@ UTF-8 checks or route a name/engine string through the data path; see
 **Parsing & source location** (`lexbor/adapter/post_parse.rs`, `source_loc.rs`).
 `parse_html` drives Lexbor's low-level pipeline (`parser_create`/`init` →
 `parse_chunk_begin` → override the tokenizer's token-done callback, **chaining**
-the parser's tree builder → `chunk_process`/`chunk_end`) so it can record each
-element start-tag's byte offset (`token->begin`). After the tree is built,
-`pos_assign_to_dom` walks pre-order, matches each element to the next
-recorded token by tag id (bounded lookahead), and stamps `offset+1` into
-`node->user`; a line table (`source_loc::Lines`, built once) resolves that to a
-1-based line. `Node#line` returns an Integer, or **nil** when unplaceable
-(parser-inserted implicit html/head/body, text/comment/attribute nodes) - never
-a wrong line. Recorder bounded by `source_loc::MAX_TOKENS` (fail closed → nil, never
-wrong). The document outlives `lxb_html_parser_destroy` (it only unrefs
-tkz/tree). An earlier `line: :text`/`:none` option was removed - `:text` (a
-separate source scan) measured *slower* (~36%) and was only approximate.
-
-**The stamping is LAZY, and that is load-bearing for parse speed.** Recording
-rides the parse (`tree_guard::hook_token_cb`, ~1.7% of it), but `pos_assign_to_dom` - the
-walk that pairs elements with tokens - profiled at **11% of a parse**, paid by
-every caller for an answer most never ask for. So the parse hands the offsets
-back (`source_loc::Positions`, which drops the Recorder's pointer INTO the
-source buffer, since the offsets were already resolved) and `HtmlParsed::pending_pos`
-holds them. `HtmlParsed::assign_positions` does the walk once, on the first
-`#line` - or on the first MUTATION, via `ensure_document_mutable`, which is the
-last moment the tree is still the one the parser built. That second trigger is
-what keeps the answers identical to stamping eagerly; a walk over an edited tree
-would pair elements with the wrong tokens. Do not move it after the edit, and do
-not skip it: `spec/source_location_spec.rb`'s "deferred stamping" examples and
-the `lines` differential probe are what catch either. Measured by profile, the
-change took Makiri's own share of a parse from 13.3% to 2.6%. `lines_build`
-stays eager (~2%): deferring it would mean holding the source buffer, which is
-the one thing the parse frees.
+the parser's tree builder → `chunk_process`/`chunk_end`) so each element can
+be stamped with its start tag's byte offset (`token->begin`) **at creation**:
+`tree_guard::hook_token_cb` notes the current node before the tree builder runs
+and `source_loc::stamp_created` looks after it. The element made for a start
+tag is inserted last, so it is the new current node or (void/self-closing) the
+last child of where the current node inserts (a `<template>`'s contents); it
+is stamped (`offset+1` into `node->user`) only if it has the token's tag, no
+stamp, no children, and is neither the previous current node nor that place's
+previous last child. A line table (`source_loc::Lines`, built once, eagerly -
+~2%, and deferring it would mean keeping the source buffer) resolves the offset
+to a 1-based line. `Node#line` returns an Integer, or **nil** when unplaceable -
+never a wrong line. Nil: every element the parser invents (implicit
+html/head/body/tbody/colgroup, formatting elements the adoption agency or
+reconstruction recreates), a void element fostered out of a table,
+text/comment/attribute nodes, and fragments (their parse stamps nothing).
+There is no token array, cap or post-parse walk, so a mutation needs no
+ordering and the first `#line` is O(1). (The previous design recorded tokens
+and paired them with elements after the parse; parser-created elements stole
+later tags' lines.) The document outlives `lxb_html_parser_destroy` (it only
+unrefs tkz/tree). An earlier `line: :text`/`:none` option was removed - `:text`
+(a separate source scan) measured *slower* (~36%) and was only approximate.
 
 **HTML parse guard** (`lexbor/adapter/tree_guard.rs`; the why is there).
 Every HTML parse entry installs a `TokenHook` that bounds the tree depth
 (`max_tree_depth:`, default 400) and the options one `<select>` receives
 (10,000). Keep it a stack value on every parse, independent of the source
-`Recorder`, so no recorder failure switches it off; fragments use the chunked
+`Stamper`, so no stamper failure switches it off; fragments use the chunked
 `lxb_html_parse_fragment_chunk_*` API so it can be installed.
 
 **An attribute's parent is Lexbor's own `attr->owner`**, which Lexbor sets when

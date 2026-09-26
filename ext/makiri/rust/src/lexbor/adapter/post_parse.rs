@@ -5,12 +5,11 @@
 //! parser, `chunk_begin`, override the tokenizer's token-done callback while
 //! CHAINING the parser's own tree builder, then `chunk_process` and
 //! `chunk_end`. The hook is `lexbor::adapter::tree_guard`'s, which enforces
-//! the tree-depth limit; the recorder that rides in it is
+//! the tree-depth limit; the source-position stamper that rides in it is
 //! `lexbor::adapter::source_loc`.
 //!
-//! Tracking is always on: it costs about 7% over no-tracking, measured, and the
-//! alternative that was tried - a separate source scan - measured ~36% slower
-//! and was only approximate.
+//! Tracking is always on. The alternative that was tried - a separate source
+//! scan - measured ~36% slower and was only approximate.
 //!
 //! # The document outlives the parser
 //!
@@ -38,9 +37,7 @@ use crate::lexbor::abi::{
 use crate::lexbor::adapter::arena_bytes::document_capacity;
 use crate::lexbor::adapter::dom_index::DomIndex;
 use crate::lexbor::adapter::html::{HtmlDoc as DomDoc, HtmlNode, RawDoc, RawNode, TagId};
-use crate::lexbor::adapter::source_loc::{
-    lines_build, pos_assign_to_dom, Lines, Positions, Recorder,
-};
+use crate::lexbor::adapter::source_loc::{lines_build, Lines, Stamper};
 use crate::lexbor::adapter::text_index::{TextBuildError, TextIndex, TextRun};
 use crate::lexbor::adapter::tree_guard::{DepthLimit, GuardStop, TokenHook};
 use crate::utf8_input::sanitize;
@@ -69,16 +66,6 @@ pub struct HtmlParsed {
     dom_index: Option<Box<DomIndex>>,
     /// byte offset -> source line.
     lines: Option<Box<Lines>>,
-    /// Recorded element offsets, NOT yet stamped into the DOM.
-    ///
-    /// The stamping walks the whole tree, and it measured 11% of a parse - paid
-    /// by every caller, for a `#line` most never ask for. So the parse records
-    /// and stops; [`assign_positions`](HtmlParsed::assign_positions) does the
-    /// walk on the first `#line`, or on the first MUTATION, whichever comes
-    /// first. The second is what keeps the answers identical to stamping
-    /// eagerly: a walk over an edited tree would match elements to the wrong
-    /// tokens, and a wrong line is the one thing `#line` must never give.
-    pending_pos: Option<Box<Positions>>,
     /// node -> descendant-text slice run.
     text_index: TextIndexState,
 }
@@ -196,22 +183,6 @@ impl HtmlParsed {
         }
     }
 
-    /// Stamp the recorded offsets into the DOM, once.
-    ///
-    /// A no-op after the first call, and for a document that recorded nothing.
-    /// Both callers are deliberate: `node_line`, which needs the answer, and
-    /// the mutation gate, which needs the tree to still be the parsed one.
-    ///
-    /// # Safety
-    /// The document must be unmodified since the parse.
-    pub unsafe fn assign_positions(&mut self) {
-        if let Some(pos) = self.pending_pos.take() {
-            /* `pos` is this parse's own recording - taken above, so this runs
-             * once. */
-            pos_assign_to_dom(&pos, self.doc().as_node());
-        }
-    }
-
     /// Drop the indices so the next query rebuilds them.
     ///
     /// This is the whole safety protocol for what they borrow: EVERY mutation
@@ -237,10 +208,7 @@ impl HtmlParsed {
     ///
     /// # Safety
     /// `node` must be a live node of this document.
-    pub unsafe fn node_line(&mut self, node: RawNode) -> Option<usize> {
-        // SAFETY: the document this handle owns, unchanged since the parse -
-        // any mutation would have stamped already (see `assign_positions`).
-        unsafe { self.assign_positions() };
+    pub unsafe fn node_line(&self, node: RawNode) -> Option<usize> {
         let lines = self.lines.as_deref()?;
         // SAFETY: the caller's contract.
         let offset = unsafe { node.as_node() }.source_offset()?;
@@ -250,16 +218,15 @@ impl HtmlParsed {
 
 /* ---- parsing ---- */
 
-/// What a tracked parse produces: the document, the line table, and the element
-/// offsets still to be stamped into it. The last two are `None` when their
-/// allocation failed, which degrades `#line` to nil rather than failing the
-/// parse.
-type Tracked = (NonNull<HtmlDoc>, Option<Box<Lines>>, Option<Box<Positions>>);
+/// What a tracked parse produces: the document, its elements already stamped
+/// with their offsets, and the line table - `None` when its allocation failed,
+/// which degrades `#line` to nil rather than failing the parse.
+type Tracked = (NonNull<HtmlDoc>, Option<Box<Lines>>);
 
 /// Owns the document the parse is building, until it is handed to the caller.
 ///
 /// Between `chunk_begin` and the return there is Rust that can panic - the
-/// source-position walk and the line table - and the crate unwinds, so an
+/// line table - and the crate unwinds, so an
 /// explicit destroy on the failure path is exactly what a panic skips. This
 /// frees the document on every exit that is not the hand-over.
 struct DocOwner(NonNull<HtmlDoc>);
@@ -302,7 +269,7 @@ pub enum HtmlParseError {
 /// That degradation is deliberate and is what `spec/html_line_spec.rb`'s
 /// contract ("an Integer, or nil") allows. The depth guard does not degrade:
 /// it lives in the hook, which is a plain value installed on every parse, and
-/// nothing the recorder does can switch it off (see `tree_guard`).
+/// nothing the stamper does can switch it off (see `tree_guard`).
 unsafe fn parse_tracked(src: &[u8], limit: DepthLimit) -> Result<Tracked, HtmlParseError> {
     let parser = lxb::HtmlParser::create().ok_or(HtmlParseError::Failed)?;
 
@@ -314,7 +281,7 @@ unsafe fn parse_tracked(src: &[u8], limit: DepthLimit) -> Result<Tracked, HtmlPa
      * declared after the parser, so it outlives nothing that can still call
      * it; it stays put until the parse calls below have returned. A document
      * keeps nothing below `<html>` on the open-element stack. */
-    let mut hook = TokenHook::new(limit, 0, Some(Recorder::new(src.as_ptr())));
+    let mut hook = TokenHook::new(limit, 0, Some(Stamper::new(src)));
     if !hook.install(parser.as_ptr()) {
         return Err(HtmlParseError::Failed); /* never unguarded */
     }
@@ -325,7 +292,7 @@ unsafe fn parse_tracked(src: &[u8], limit: DepthLimit) -> Result<Tracked, HtmlPa
     }
 
     /* The tokenizer's callback cannot unwind into Lexbor, so a panic in the
-     * position recorder was latched instead. Lexbor has returned, so this is
+     * position stamper was latched instead. Lexbor has returned, so this is
      * the first frame where raising it is safe - and it raises BEFORE the
      * status check, because a panic is not a parse failure. `doc`'s Drop and
      * the parser's release it all on the way out. */
@@ -341,19 +308,13 @@ unsafe fn parse_tracked(src: &[u8], limit: DepthLimit) -> Result<Tracked, HtmlPa
         return Err(HtmlParseError::Failed);
     }
 
-    /* The recording is HANDED BACK rather than stamped here: the stamping walks
-     * the whole tree, which measured 11% of a parse, and most callers never ask
-     * for a line. `HtmlParsed::assign_positions` does it on demand. The line table
-     * stays eager - it is ~2%, and deferring it would mean holding the source
-     * buffer, which is the one thing this function is about to free. */
-    let mut lines = None;
-    let mut positions = None;
-    if let Some(r) = hook.into_recorder() {
-        positions = try_box(r.into_positions()).ok();
-        lines = lines_build(src).and_then(|l| try_box(l).ok());
-    }
+    /* The elements were stamped as the tree builder created them. The line
+     * table is built here, eagerly - it is ~2%, and deferring it would mean
+     * holding the source buffer, which is the one thing this function is about
+     * to free. */
+    let lines = lines_build(src).and_then(|l| try_box(l).ok());
 
-    Ok((doc.release(), lines, positions))
+    Ok((doc.release(), lines))
 }
 
 /// Parse `src` as an HTML document, refusing a tree deeper than `limit`.
@@ -371,14 +332,13 @@ pub fn parse_html(
     let input = sanitize(src, assume_valid).ok_or(HtmlParseError::Failed)?;
     // SAFETY: a live slice, which the parse only reads and is done with when it
     // returns.
-    let (doc, lines, positions) = unsafe { parse_tracked(input.as_slice(), limit) }?;
+    let (doc, lines) = unsafe { parse_tracked(input.as_slice(), limit) }?;
     drop(input); /* the parse is done with the buffer, on every path */
 
     let parsed = HtmlParsed {
         doc,
         dom_index: None,
         lines,
-        pending_pos: positions,
         text_index: TextIndexState::Unbuilt,
     };
     /* On OOM the handle drops, and with it the document. */

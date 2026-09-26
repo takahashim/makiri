@@ -79,7 +79,7 @@ foster[1] Element/head line=nil
 foster[2] Element/body line=nil
 foster[3] Element/b line=2
 foster[4] Text/text line=nil
-foster[5] Element/table line=nil
+foster[5] Element/table line=1
 foster[6] Text/text line=nil
 foster[7] Element/tbody line=nil
 foster[8] Element/tr line=3
@@ -785,5 +785,5 @@ big.monotonic=true
 big.nils=0
 ---- branch counts ----
 big=1
-nil_line=525
-placed=255
+nil_line=524
+placed=256

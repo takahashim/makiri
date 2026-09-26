@@ -1,19 +1,18 @@
 //! Source-location tracking.
 //!
 //! Lexbor does not record where in the input a node came from, and we stay on
-//! vanilla Lexbor, so it is reconstructed from the tokenizer instead:
+//! vanilla Lexbor, so it is taken from the tokenizer instead:
 //!
-//! 1. [`Recorder`] rides the tokenizer's token-done hook
-//!    (`tree_guard::TokenHook`, which also carries the tree-depth guard) and
-//!    logs `(tag_id, byte offset)` for every element start-tag, in token order.
-//! 2. After the tree is built, [`pos_assign_to_dom`] walks the DOM
-//!    pre-order and matches each element to the next compatible recorded token,
-//!    stamping the byte offset on it.
-//! 3. [`lines_build`] maps a byte offset to a 1-based line for `Node#line`.
+//! 1. [`Stamper`] rides the tokenizer's token-done hook
+//!    (`tree_guard::TokenHook`, which also carries the tree-depth guard). For
+//!    each element start tag it notes the byte offset before the tree builder
+//!    runs, and [`stamp_created`] writes it onto the element the tree builder
+//!    created for that tag - at creation, so no later matching is needed.
+//! 2. [`lines_build`] maps a byte offset to a 1-based line for `Node#line`.
 //!
-//! Precision is about the HTML5 tree-construction reorderings (foster
-//! parenting, the adoption agency) away from perfect. On a mismatch the node is
-//! left UNSTAMPED - `#line` answers nil - rather than given a wrong location.
+//! An element that cannot be told apart for certain as the product of its own
+//! start tag is left UNSTAMPED - `#line` answers nil - rather than given a
+//! wrong location. That covers every element the parser invents.
 //!
 //! # `node.user` is reserved
 //!
@@ -21,19 +20,19 @@
 //! its encoding belong to `html` (`HtmlNode::stamp_source_offset` /
 //! `source_offset`); this module decides WHICH offset an element gets.
 //!
-//! # The recording runs inside Lexbor
+//! # The stamping runs inside Lexbor
 //!
-//! [`Recorder::record`] is called from the tokenizer's hook, from C, once per
-//! token. It must not unwind and must not stop the parse. Both are structural:
-//! the hook calls it under a panic latch, and it has no failure path of its
-//! own - a recording failure only sets the overflow flag.
+//! Both halves are called from the tokenizer's hook, from C, once per token.
+//! They must not unwind and must not stop the parse. Both are structural: the
+//! hook calls them under a panic latch, and neither has a failure path - a
+//! doubtful case only leaves the element unstamped.
 
 #![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
 use core::ffi::c_void;
 
-use crate::falloc::{try_vec_with_capacity, VecPush};
+use crate::falloc::try_vec_with_capacity;
 
 use crate::lexbor::abi as lxb;
 
@@ -117,148 +116,131 @@ pub fn lines_build(bytes: &[u8]) -> Option<Lines> {
 }
 
 /* ------------------------------------------------------------------ *
- * token position recorder                                            *
+ * stamping at creation                                               *
  * ------------------------------------------------------------------ */
 
-/// A SOFT cap so a pathological input cannot make the transient recorder grow
-/// without bound. Checked where the array would GROW (see `record`), so the
-/// vec can already hold up to about one geometric step past this - the cap
-/// bounds the order, it is not an exact length. On overflow recording stops
-/// AND assignment is skipped entirely, so locations degrade to "unknown"
-/// rather than to wrong values.
-const MAX_TOKENS: usize = 10_000_000;
+/// Stamps each element with the offset of the start tag that created it, as
+/// the parse runs. `tree_guard::TokenHook` calls
+/// [`start_tag`](Self::start_tag) before the tree builder sees a token and
+/// [`stamp_created`] after it.
+///
+/// Holds a pointer to the input for the parse only: the hook it lives in is
+/// gone when the parse returns, and what it wrote are plain offsets.
+pub struct Stamper {
+    /// The start of the input buffer, which offsets are relative to.
+    first: *const u8,
+    len: usize,
+}
 
-/// How far ahead of the cursor a match is looked for. This bounds the damage
-/// from a dropped or reordered token: an unmatched element stays unstamped
-/// instead of taking a far-away token's offset.
-const LOOKAHEAD: usize = 64;
-
+/// An element start tag the tree builder is about to process.
 #[derive(Clone, Copy)]
-struct Entry {
+pub struct StartTag {
     tag_id: TagId,
     offset: usize,
 }
 
-/// The start-tag offsets a parse records, fed by the tokenizer's hook.
-///
-/// A plain value: it allocates nothing until the first token is recorded, and
-/// then only through `falloc`, a failure of which stops the recording.
-pub struct Recorder {
-    items: Vec<Entry>,
-    /// The start of the input buffer, which offsets are relative to.
-    first: *const u8,
-    overflow: bool,
+/// The tree just before the tree builder ran: the current node, and the last
+/// child of the place it inserts into.
+#[derive(Clone, Copy)]
+pub struct Before<'doc> {
+    current: Option<HtmlNode<'doc>>,
+    last_child: Option<HtmlNode<'doc>>,
 }
 
-/// The recorded offsets, detached from the parse that produced them.
-///
-/// Only this survives the parse: `Recorder` also holds a pointer INTO the
-/// source buffer, which is freed when the parse returns. Carrying that into
-/// the document would be a dangling pointer nothing needs - the offsets were
-/// resolved against `first` as each token arrived.
-pub struct Positions {
-    items: Vec<Entry>,
-    overflow: bool,
-}
-
-impl Recorder {
-    /// What the document keeps: the offsets, without the parse-time pointers.
-    pub fn into_positions(self) -> Positions {
-        Positions {
-            items: self.items,
-            overflow: self.overflow,
-        }
-    }
-
-    /// A recorder for the tokens of the input that starts at `src`.
-    pub fn new(src: *const u8) -> Recorder {
-        Recorder {
-            items: Vec::new(),
-            first: src,
-            overflow: false,
-        }
-    }
-
-    /// Whether tokens are still being recorded - false once the cap or an
-    /// allocation failure stopped it.
+impl<'doc> Before<'doc> {
+    /// The snapshot, given the current node.
     #[inline]
-    pub fn recording(&self) -> bool {
-        !self.overflow
+    pub fn at(current: Option<HtmlNode<'doc>>) -> Before<'doc> {
+        Before {
+            current,
+            last_child: current.and_then(|c| inserts_into(c).last_child()),
+        }
+    }
+}
+
+/// Where the tree builder appends a child of `node`: an HTML `<template>`'s
+/// contents fragment, otherwise the node itself.
+#[inline]
+fn inserts_into(node: HtmlNode<'_>) -> HtmlNode<'_> {
+    node.template_content().unwrap_or(node)
+}
+
+impl Stamper {
+    /// A stamper for the tokens of `src`.
+    pub fn new(src: &[u8]) -> Stamper {
+        Stamper {
+            first: src.as_ptr(),
+            len: src.len(),
+        }
     }
 
-    /// Record one token, if it is an element start-tag.
+    /// The token as an element start tag, or None.
+    ///
+    /// The special tag ids (text, comment, doctype, document, eof) sit at or
+    /// below `LXB_TAG__EM_DOCTYPE` and are skipped, as are end-tags. A void or
+    /// self-closing start tag (`CLOSE_SELF`) leaves the CLOSE bit clear, so it
+    /// IS one. A `begin` outside the input - which a single-chunk parse never
+    /// hands out - gives None rather than an offset into something else.
     ///
     /// # Safety
-    /// `token` must be the live token the tokenizer is handing out, and it
-    /// must point into the input that starts at `first`.
+    /// `token` must be the live token the tokenizer is handing out.
     #[inline]
-    pub unsafe fn record(&mut self, token: *const Token) {
-        record(self, token);
+    pub unsafe fn start_tag(&self, token: *const Token) -> Option<StartTag> {
+        if (*token).tag_id <= TAG_EM_DOCTYPE || ((*token).type_ & TOKEN_TYPE_CLOSE) != 0 {
+            return None;
+        }
+        let offset = ((*token).begin as usize).checked_sub(self.first as usize)?;
+        if offset >= self.len {
+            return None;
+        }
+        Some(StartTag {
+            /* Above the special ids, so never UNDEF. */
+            tag_id: TagId::from_raw((*token).tag_id)?,
+            offset,
+        })
     }
 }
 
-/// Record one token, if it is an element start-tag.
+/// Stamp the element the tree builder just created for `tag`, when it can be
+/// told apart for certain; otherwise stamp nothing.
 ///
-/// The special tag ids (text, comment, doctype, document, eof) sit at or below
-/// `LXB_TAG__EM_DOCTYPE` and are skipped, as are end-tags. `CLOSE_SELF` - a
-/// void or self-closing start tag such as `<br/>` - leaves the CLOSE bit clear,
-/// so it IS recorded.
-unsafe fn record(rec: &mut Recorder, token: *const Token) {
-    if (*token).tag_id <= TAG_EM_DOCTYPE
-        || (*token).begin.is_null()
-        || ((*token).type_ & TOKEN_TYPE_CLOSE) != 0
+/// `now` is the current node after the tree builder ran. The element created
+/// for a start tag is inserted LAST, after anything the parser invents on the
+/// way (an implied `<tbody>`, reconstructed formatting elements), so it is
+/// either the new current node or - a void or self-closing element, pushed and
+/// popped at once - the last child of where the current node inserts. That
+/// candidate is stamped only if it is an element of the token's tag, carries
+/// no stamp, has no children yet, and is neither the node that was current
+/// before nor the last child that place already had. A node that existed
+/// before this token is one of those two, holds children (it is an ancestor of
+/// what was current), or was stamped by its own start tag.
+///
+/// Everything else stays unstamped and answers nil: the elements the parser
+/// invents (implied html/head/body/tbody/colgroup, formatting elements the
+/// adoption agency or reconstruction recreates), a start tag the tree builder
+/// ignores or merges (a second `<body>`), and a void element fostered out of a
+/// table, which lands before the table rather than at either place.
+#[inline]
+pub fn stamp_created(tag: StartTag, before: Before<'_>, now: Option<HtmlNode<'_>>) {
+    let Some(now) = now else {
+        return;
+    };
+    let candidate = if Some(now) != before.current && now.tag_id() == Some(tag.tag_id) {
+        Some(now)
+    } else {
+        inserts_into(now).last_child()
+    };
+    let Some(x) = candidate else {
+        return;
+    };
+    if Some(x) == before.current
+        || Some(x) == before.last_child
+        || x.element().is_none()
+        || x.tag_id() != Some(tag.tag_id)
+        || x.source_offset().is_some()
+        || x.first_child().is_some()
     {
         return;
     }
-    /* Above the special ids, so never UNDEF. */
-    let Some(tag_id) = TagId::from_raw((*token).tag_id) else {
-        return;
-    };
-
-    /* The cap is checked where the array would GROW, so it stops the next
-     * growth past MAX_TOKENS; tokens that fit the capacity already allocated
-     * are still recorded. (Checking on every push would record fewer.) */
-    let at_growth = rec.items.len() == rec.items.capacity();
-    if at_growth && rec.items.len() >= MAX_TOKENS {
-        rec.overflow = true; /* fail closed: stop recording */
-        return;
-    }
-    let entry = Entry {
-        tag_id,
-        offset: (*token).begin as usize - rec.first as usize,
-    };
-    if rec.items.falloc_push(entry).is_err() {
-        rec.overflow = true;
-    }
-}
-
-/* ------------------------------------------------------------------ *
- * assignment                                                         *
- * ------------------------------------------------------------------ */
-
-/// Stamp each element's recorded byte offset (`HtmlNode::stamp_source_offset`).
-///
-/// Walks the DOM in document order alongside the recorded tokens, matching by
-/// tag id within a bounded lookahead. An element with no match in that window is
-/// left unstamped; `#line` then answers nil, which is the whole point - never a
-/// wrong line.
-pub fn pos_assign_to_dom(rec: &Positions, root: HtmlNode<'_>) {
-    if rec.overflow {
-        return;
-    }
-
-    let mut cursor = 0usize;
-    for el in root.subtree().filter_map(HtmlNode::element) {
-        if cursor >= rec.items.len() {
-            break;
-        }
-        let Some(tid) = el.node().tag_id() else {
-            continue; /* no token has an UNDEF id to match */
-        };
-        let limit = (cursor + LOOKAHEAD).min(rec.items.len());
-        if let Some(j) = (cursor..limit).find(|&j| rec.items[j].tag_id == tid) {
-            el.node().stamp_source_offset(rec.items[j].offset);
-            cursor = j + 1;
-        }
-    }
+    x.stamp_source_offset(tag.offset);
 }

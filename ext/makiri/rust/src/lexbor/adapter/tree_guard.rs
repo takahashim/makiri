@@ -20,9 +20,9 @@
 //! tree builder fails - and records why ([`TokenHook::stopped`]).
 //!
 //! It is a plain value on the caller's stack, installed on every parse, and
-//! allocates nothing. The source-position [`Recorder`] rides inside it, but its
-//! failures (allocation, token cap, a caught panic) only stop the recording:
-//! the guard does not depend on it.
+//! allocates nothing. The source-position [`Stamper`] rides inside it, but a
+//! caught panic in it only stops the stamping: the guard does not depend on
+//! it.
 
 #![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
@@ -33,7 +33,7 @@ use crate::caught::PanicLatch;
 use crate::lexbor::abi as lxb;
 
 use super::html::{HtmlNode, NsId, RawNode, TagId};
-use super::source_loc::Recorder;
+use super::source_loc::{stamp_created, Before, Stamper};
 
 type Token = lxb::lxb_html_token_t;
 type Tokenizer = lxb::lxb_html_tokenizer_t;
@@ -81,7 +81,7 @@ impl DepthLimit {
 }
 
 /// The tokenizer's token-done hook: runs the depth guard after the tree
-/// builder, and records source positions for a document parse.
+/// builder, and stamps source positions for a document parse.
 ///
 /// Installed with its own address as the callback context, so it must stay
 /// where it is, and alive, from [`install`](Self::install) until the parse
@@ -100,9 +100,9 @@ pub struct TokenHook {
     select: *const c_void,
     options: usize,
     stopped: Option<GuardStop>,
-    /// The document parse's position recorder; `None` for a fragment.
-    recorder: Option<Recorder>,
-    /// A panic in the recorder, latched rather than raised: this runs from
+    /// The document parse's position stamper; `None` for a fragment.
+    stamper: Option<Stamper>,
+    /// A panic in the stamper, latched rather than raised: this runs from
     /// Lexbor's tokenizer, and unwinding into C aborts. The caller raises it
     /// once the parse has returned (see `crate::caught`).
     panic: PanicLatch,
@@ -112,7 +112,7 @@ impl TokenHook {
     /// A hook enforcing `limit`, where the parser keeps `synthetic` entries on
     /// its stack below the first real element (0 for a document, 1 for a
     /// fragment's `<html>` root).
-    pub fn new(limit: DepthLimit, synthetic: usize, recorder: Option<Recorder>) -> TokenHook {
+    pub fn new(limit: DepthLimit, synthetic: usize, stamper: Option<Stamper>) -> TokenHook {
         TokenHook {
             delegate: None,
             delegate_ctx: core::ptr::null_mut(),
@@ -121,7 +121,7 @@ impl TokenHook {
             select: core::ptr::null(),
             options: 0,
             stopped: None,
-            recorder,
+            stamper,
             panic: PanicLatch::new(),
         }
     }
@@ -160,15 +160,10 @@ impl TokenHook {
         self.stopped
     }
 
-    /// Re-raise a panic the recorder caught, now that Lexbor's frames are
+    /// Re-raise a panic the stamper caught, now that Lexbor's frames are
     /// gone. A no-op when nothing panicked.
     pub fn resume_panic(&mut self) {
         self.panic.resume();
-    }
-
-    /// The recorder, once the parse is over.
-    pub fn into_recorder(self) -> Option<Recorder> {
-        self.recorder
     }
 
     /// The tree builder's open-element count.
@@ -252,9 +247,11 @@ fn nearest_select(option: HtmlNode<'_>) -> Option<HtmlNode<'_>> {
 
 /// The chained token-done callback.
 ///
-/// Always delegates first, so the parser still builds the tree; then refuses
-/// the token - which stops the parse - if the tree has grown past the limit.
-/// A recording failure only stops the recording.
+/// Always delegates, so the parser still builds the tree; then refuses the
+/// token - which stops the parse - if the tree has grown past the limit. For
+/// a document parse, an element start tag's offset is stamped onto the element
+/// the tree builder created for it (`source_loc::stamp_created`), from the
+/// current node seen on either side of the delegate.
 ///
 /// # Safety
 /// Called by Lexbor's tokenizer only, with the context [`TokenHook::install`]
@@ -266,16 +263,16 @@ unsafe extern "C" fn hook_token_cb(
     ctx: *mut c_void,
 ) -> *mut Token {
     let hook = &mut *(ctx as *mut TokenHook);
-    if let Some(rec) = hook.recorder.as_mut() {
-        if rec.recording() && !hook.panic.caught() {
-            /* Catch rather than unwind into the tokenizer: this is called from
-             * C. Recording then stops, the parse carries on, and the caller
-             * raises the panic once C has unwound. */
-            hook.panic.guard((), || rec.record(token));
-        }
-    }
-    /* Read before delegating: the tree builder may reuse the token. Only an
-     * `<option>` start tag can insert an option. */
+    /* Read before delegating: the tree builder may reuse the token. */
+    let start = match hook.stamper.as_ref() {
+        Some(st) if !hook.panic.caught() => st.start_tag(token),
+        _ => None,
+    };
+    // SAFETY: the stack's entries are the live elements of the tree being
+    // built, which the parse does not free; each handle is used only within
+    // this call, before the parse can go on.
+    let before = start.map(|_| Before::at(hook.current_node().map(|r| r.as_node())));
+    /* Only an `<option>` start tag can insert an option. */
     let option_start = (*token).tag_id == lxb::lxb_tag_id_enum_t_LXB_TAG_OPTION as usize
         && ((*token).type_ & lxb::lxb_html_token_type_LXB_HTML_TOKEN_TYPE_CLOSE as i32) == 0;
     let out = match hook.delegate {
@@ -288,6 +285,14 @@ unsafe extern "C" fn hook_token_cb(
     /* `out` is NULL when the tree builder itself failed; that stands. */
     if out.is_null() {
         return out;
+    }
+    if let (Some(tag), Some(before)) = (start, before) {
+        // SAFETY: as `before`.
+        let now = hook.current_node().map(|r| r.as_node());
+        /* Catch rather than unwind into the tokenizer: this is called from C.
+         * Stamping then stops, the parse carries on, and the caller raises
+         * the panic once C has unwound. */
+        hook.panic.guard((), || stamp_created(tag, before, now));
     }
     if hook.max_open != usize::MAX && hook.open_elements() > hook.max_open {
         hook.stopped = Some(GuardStop::TooDeep);
