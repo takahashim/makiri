@@ -318,9 +318,13 @@ pub fn evaluate_query(
             _reading: crate::bridge::wrapper::DocumentEvaluation::enter(document)?,
         }),
     };
-    let resolver = bridge.as_ref().map(|b| b as &dyn Resolver);
-    ctx.run(ast, resolver, answer)
-        .map_err(|error| xpath_error(&error))
+    let result = ctx.run(ast, bridge.as_ref().map(|b| b as &dyn Resolver), answer);
+    /* Released BEFORE the error is built: `xpath_error` allocates Ruby objects
+     * outside `protect`, and a `NoMemoryError` there longjmps past this frame,
+     * skipping the guard's `Drop` - which would leave the document refusing
+     * every edit for the rest of its life. */
+    drop(bridge);
+    result.map_err(|error| xpath_error(&error))
 }
 
 /// A query's value as Ruby, and for `at_xpath` the first node of a node-set.
