@@ -124,6 +124,10 @@ fn h2x_copy_attrs(doc: &mut XmlDoc, s: HtmlElement<'_>, el: NodeId) -> Result<()
              * restate one, or move one: `<svg><g xmlns="urn:evil">` put `g`
              * and its children in `urn:evil`. */
             (Some(NsId::XMLNS), _) | (_, Some(_)) => {}
+            /* An attribute in the XML namespace is always named `xml:`: the
+             * parser's foreign-attribute table gives it that prefix, and
+             * `set_attribute_ns` refuses the XML namespace under any other
+             * name (`ns_fits_name`), so `set_attribute` resolves it back. */
             (None | Some(NsId::XML), _) => {
                 let colon = name.iter().position(|&b| b == b':');
                 match colon {

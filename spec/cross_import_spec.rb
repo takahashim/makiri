@@ -292,6 +292,27 @@ RSpec.describe "cross-kind import_node" do
       expect([lang.value, lang.namespace_uri]).to eq(["en", "http://www.w3.org/XML/1998/namespace"])
     end
 
+    # The copy writes an XML-namespace attribute by its qualified name, which
+    # is right only while that name is always `xml:...`. An unprefixed `lang`
+    # in the XML namespace would cross as a no-namespace attribute, so it must
+    # stay impossible to make on the HTML side.
+    it "keeps an xml:lang set with set_attribute_ns, or parsed in foreign content, in the XML namespace" do
+      xml_ns = "http://www.w3.org/XML/1998/namespace"
+      html = Makiri.HTML(%(<div></div><svg><a xml:lang="fr"></a></svg>))
+      div = html.at_css("div")
+      expect { div.set_attribute_ns(xml_ns, "lang", "en") }
+        .to raise_error(Makiri::Error, /does not fit the qualified name/)
+      expect { div.set_attribute_ns(xml_ns, "p:lang", "en") }
+        .to raise_error(Makiri::Error, /does not fit the qualified name/)
+      div.set_attribute_ns(xml_ns, "xml:lang", "en")
+
+      xml = Makiri::XML("<r/>")
+      xml.root << xml.import_node(div, true)
+      xml.root << xml.import_node(html.at_xpath("//*[local-name()='a']"), true)
+      langs = Makiri::XML(xml.to_xml).xpath("//@*[local-name()='lang']")
+      expect(langs.map { |a| [a.value, a.namespace_uri] }).to eq([["en", xml_ns], ["fr", xml_ns]])
+    end
+
     # fb:like is one DOM local name. Made strictly, fb became a prefix bound to
     # nothing and the copy could not even be inserted.
     it "copies an HTML element named with a colon as a DOM-loose name" do
