@@ -371,6 +371,19 @@ RSpec.describe "Makiri::XML minimal parse" do
       expect(Makiri::XML(bytes).root.text).to eq("x")
     end
 
+    # US-ASCII is what a String read with no encoding claim gets (File.read
+    # under LANG=C), so it is detected like ASCII-8BIT rather than taken as a
+    # claim the BOM or declaration then has to agree with.
+    it "autodetects a US-ASCII-tagged String like raw bytes" do
+      u16 = ("\xFF\xFE".b + "<r>x</r>".encode("UTF-16LE").b).force_encoding("US-ASCII")
+      expect(Makiri::XML(u16).root.text).to eq("x")
+      latin1 = %(<?xml version="1.0" encoding="ISO-8859-1"?><r>caf\xE9</r>).b.force_encoding("US-ASCII")
+      expect(Makiri::XML(latin1).root.text).to eq("café")
+      # with neither, its bytes are still validated as UTF-8
+      expect(Makiri::XML("<r>plain</r>".encode("US-ASCII")).root.text).to eq("plain")
+      expect { Makiri::XML("<r>\xFF</r>".b.force_encoding("US-ASCII")) }.to raise_error(Makiri::XML::SyntaxError)
+    end
+
     it "autodetects raw bytes from the encoding declaration (no BOM)" do
       sjis = ("<?xml version='1.0' encoding='Shift_JIS'?><r>".encode("Shift_JIS") +
               "日".encode("Shift_JIS") + "</r>".encode("Shift_JIS")).b

@@ -70,10 +70,17 @@ unsafe fn compatible(a: *mut rb_encoding, b: *mut rb_encoding) -> bool {
 /// Phase 1: the input's single effective byte encoding (XML 1.0 Appendix F).
 ///
 /// A BOM wins, else the `<?xml encoding=?>` declaration, else the String's own
-/// declared encoding - except ASCII-8BIT, which means "raw bytes, no claimed
-/// encoding" and so is decoded by whatever was detected. Any disagreement
-/// between the three is a fatal `Makiri::XML::SyntaxError`, so the caller only
-/// ever sees one self-consistent answer.
+/// declared encoding - except ASCII-8BIT and US-ASCII, which claim no encoding
+/// for the document and so are decoded by whatever was detected. Any
+/// disagreement between the three is a fatal `Makiri::XML::SyntaxError`, so the
+/// caller only ever sees one self-consistent answer.
+///
+/// US-ASCII is in that group because it is what a String gets with no claim
+/// behind it - `File.read` under `LANG=C` - not a promise about the bytes: a
+/// UTF-16 file with its BOM, or a Latin-1 one declaring ISO-8859-1, read that
+/// way was validated as UTF-8 and refused, where the same bytes tagged
+/// ASCII-8BIT decoded. With neither a BOM nor a declaration both still end up
+/// validated as UTF-8, of which US-ASCII is a subset.
 unsafe fn effective_encoding(str: RString) -> Result<*mut rb_encoding, Error> {
     let tag = rb_sys::rb_enc_get(str.as_raw());
     /* Read everything first, while the bytes are borrowed and nothing can run
@@ -87,7 +94,7 @@ unsafe fn effective_encoding(str: RString) -> Result<*mut rb_encoding, Error> {
         find_encoding(b.name().as_bytes())
     });
     let decl = decl.map_or(core::ptr::null_mut(), |d| find_encoding(d.as_bytes()));
-    let is_binary = tag == rb_sys::rb_ascii8bit_encoding();
+    let is_binary = tag == rb_sys::rb_ascii8bit_encoding() || tag == rb_sys::rb_usascii_encoding();
 
     if !bom.is_null() && !decl.is_null() && !compatible(bom, decl) {
         return Err(syntax_error(
