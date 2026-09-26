@@ -15,6 +15,7 @@ use libfuzzer_sys::fuzz_target;
 mod common;
 use common::*;
 use makiri::lexbor::adapter::post_parse::{parse_html, HtmlParsed};
+use makiri::lexbor::adapter::tree_guard::DepthLimit;
 
 fuzz_target!(|data: &[u8]| {
     let Some(sep) = data.iter().position(|&b| b == 0) else {
@@ -32,7 +33,7 @@ fuzz_target!(|data: &[u8]| {
     };
 
     unsafe {
-        let Some(mut p) = parse_html(html, false) else {
+        let Ok(mut p) = parse_html(html, false, DepthLimit::DEFAULT) else {
             return;
         };
         run(&mut p, text, mode & 1 != 0);

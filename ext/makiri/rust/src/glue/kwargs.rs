@@ -71,3 +71,34 @@ impl Kwargs {
         Ok((taken, rest))
     }
 }
+
+/// The `max_tree_depth:` of an HTML parse, as Nokogiri::HTML5 reads it: absent
+/// or `nil` is the default (400), a negative Integer means no limit, and any
+/// other Integer is the deepest element accepted - a Bignum included, which is
+/// simply no limit in practice.
+///
+/// An actual Integer, not merely something convertible: a Float (1.5) or a
+/// String is a `TypeError` rather than a silent truncation or a limit nobody
+/// asked for.
+pub(crate) fn max_tree_depth(
+    ruby: &Ruby,
+    v: Option<Value>,
+) -> Result<crate::lexbor::adapter::tree_guard::DepthLimit, Error> {
+    use crate::lexbor::adapter::tree_guard::DepthLimit;
+    let Some(v) = v.filter(|v| !v.is_nil()) else {
+        return Ok(DepthLimit::DEFAULT);
+    };
+    let n = magnus::Integer::from_value(v).ok_or_else(|| {
+        Error::new(
+            ruby.exception_type_error(),
+            "max_tree_depth must be an Integer",
+        )
+    })?;
+    /* Compared before any conversion, so a negative Bignum disables the limit
+     * as a negative Fixnum does, and a positive one cannot wrap. */
+    if n < ruby.integer_from_i64(0) {
+        return Ok(DepthLimit::UNLIMITED);
+    }
+    Ok(n.to_usize()
+        .map_or(DepthLimit::UNLIMITED, DepthLimit::at_most))
+}

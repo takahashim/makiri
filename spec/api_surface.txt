@@ -4,13 +4,13 @@ module Makiri
   const CDATA = Makiri::CDATASection
   const DTD = Makiri::DocumentType
   const VERSION : String
-  def self.HTML(1 req:source)
+  def self.HTML(-2 req:source,keyrest:opts)
   def self.XML(-2 req:source,keyrest:opts)
   def self.__alloc_inject(1)
   def self.__alloc_inject?(0)
   def self.__alloc_inject_calls(0)
   def self.__panic(1)
-  def self.parse(1 req:source)
+  def self.parse(-2 req:source,keyrest:opts)
 
 class Makiri::Attr < Makiri::Node
   def element(0)
@@ -60,8 +60,8 @@ class Makiri::HTML::Comment < Makiri::Comment
 
 class Makiri::HTML::Document < Makiri::Document
   include Makiri::HTML::NodeMethods
-  def self._parse(1)
-  def self.parse(1 req:source)
+  def self._parse(2)
+  def self.parse(-2 req:source,key:max_tree_depth)
   def body(0)
   def create_comment(1)
   def create_document_fragment(0)

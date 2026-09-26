@@ -34,17 +34,30 @@ use crate::bridge::xml::xml_node_document;
 use crate::bridge::xml::{xml_mut_result, xml_node_unwrap};
 use crate::lexbor::adapter::cross_import::cross_xml_to_html;
 use crate::lexbor::adapter::html::{RawDoc, RawNode};
-use crate::lexbor::adapter::post_parse::parse_html;
+use crate::lexbor::adapter::post_parse::{parse_html, HtmlParseError};
+use crate::lexbor::adapter::tree_guard::DepthLimit;
 
 /* ------------------------------------------------------------------ *
  * parsing                                                            *
  * ------------------------------------------------------------------ */
 
-/// `Document._parse(source)`: parse HTML, releasing the GVL, and wrap it.
+/// The error for a parse the tree-depth limit refused: `Makiri::Error`, naming
+/// the limit, for a document and a fragment alike.
+pub fn tree_depth_error(limit: DepthLimit) -> Error {
+    match limit.max_depth() {
+        Some(n) => makiri_error(format!("document tree depth limit exceeded ({n})")),
+        /* Unreachable: an unlimited parse is never refused for depth. */
+        None => makiri_error("document tree depth limit exceeded"),
+    }
+}
+
+/// `Document._parse(source, max_tree_depth)`: parse HTML, releasing the GVL,
+/// and wrap it.
 ///
 /// The Ruby-level `Document.parse` coerces `source` to a String (and reads IO)
 /// before calling this. Source locations for `Node#line` are always tracked.
-pub fn parse_document(source: Value) -> Result<Value, Error> {
+/// A tree deeper than `limit` fails the parse (see `lexbor::adapter::tree_guard`).
+pub fn parse_document(source: Value, limit: DepthLimit) -> Result<Value, Error> {
     let s = source.to_r_string()?;
     /* Honour the input's encoding: UTF-8/US-ASCII/binary pass through,
      * anything else is transcoded so its content survives. */
@@ -65,10 +78,14 @@ pub fn parse_document(source: Value) -> Result<Value, Error> {
 
     /* The body runs on this thread with the GVL released, so the parsed
      * handle comes back as it is. */
-    let result = crate::bridge::gvl::without_gvl(|| parse_html(owned.as_slice(), assume_valid))?;
+    let result =
+        crate::bridge::gvl::without_gvl(|| parse_html(owned.as_slice(), assume_valid, limit))?;
     drop(owned);
 
-    let parsed = result.ok_or_else(|| makiri_error("failed to parse HTML document"))?;
+    let parsed = result.map_err(|e| match e {
+        HtmlParseError::TooDeep => tree_depth_error(limit),
+        HtmlParseError::Failed => makiri_error("failed to parse HTML document"),
+    })?;
     /* The GC learns the arena's size in `install`; `owned` is already gone, so
      * a collection that triggers has nothing of ours to invalidate. */
     Ok(shell.install_html(parsed))

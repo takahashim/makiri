@@ -36,7 +36,7 @@ RSpec.describe "Cost proportional to input", :timing do
     # Each climb re-walked the context's whole ancestor chain: O(depth^2) per
     # context node, uncharged. Depth 2000 took 8.8 s.
     it "is linear in the depth of the context" do
-      doc = Makiri.HTML("<body>#{"<span>" * 5000}")
+      doc = Makiri.HTML("<body>#{"<span>" * 5000}", max_tree_depth: -1)
       expect(elapsed { doc.xpath("count(//span/preceding::a)") }).to be < 2.0
     end
 
@@ -137,7 +137,7 @@ RSpec.describe "Cost proportional to input", :timing do
   # Walks with no budget charge: each ran its quadratic course and answered.
   # Charged a tick per step, they stop at the op budget instead.
   describe "XPath walks charged to the op budget" do
-    let(:nested) { Makiri.HTML("<body>#{"<span>" * 16_000}") }
+    let(:nested) { Makiri.HTML("<body>#{"<span>" * 16_000}", max_tree_depth: -1) }
 
     {
       "a node's string-value, per candidate" => "count(//span[. = 'x'])",

@@ -468,19 +468,6 @@ impl<'doc> HtmlDoc<'doc> {
         NsId::from_raw(id)
     }
 
-    /// Take ownership of this document as the transient one a fragment parse
-    /// built, to be destroyed when the returned value drops.
-    ///
-    /// # Safety
-    /// As [`TransientDoc::own`](crate::lexbor::abi::TransientDoc::own): this is
-    /// that transient document, and nothing else may destroy it.
-    #[inline]
-    pub(in crate::lexbor) unsafe fn own_transient(
-        self,
-    ) -> Option<crate::lexbor::abi::TransientDoc> {
-        crate::lexbor::abi::TransientDoc::own(self.as_raw())
-    }
-
     /// # Safety
     /// As [`HtmlDoc::from_raw`], for a pointer already known non-null.
     #[inline]

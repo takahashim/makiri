@@ -14,8 +14,7 @@
 #![allow(clippy::missing_safety_doc)]
 
 use crate::falloc::VecPush;
-
-use crate::lexbor::abi::LxbNode;
+use crate::lexbor::abi::consts::STATUS_OK as LXB_STATUS_OK;
 
 /* ------------------------------------------------------------------ *
  * fragments                                                          *
@@ -26,10 +25,14 @@ use crate::lexbor::adapter::html::{
 };
 use crate::lexbor::adapter::AdapterOom;
 
-/* The two fragment parsers, both generated. Everything this file does to the
+/* The chunked fragment parser, generated. Everything this file does to the
  * DOM itself goes through `lexbor::adapter::html` - these are the parser, not
  * the DOM. */
-use crate::lexbor::abi::{lxb_html_parse_fragment, lxb_html_parse_fragment_by_tag_id};
+use crate::lexbor::abi::{
+    lxb_html_parse_fragment_chunk_begin, lxb_html_parse_fragment_chunk_end,
+    lxb_html_parse_fragment_chunk_process, TransientDoc,
+};
+use crate::lexbor::adapter::tree_guard::{fragment_document, DepthLimit, TokenHook};
 
 /* The HTML parser's lifecycle, from the generated bindings. Declared here first
  * over an opaque parser, which was fine until the source-location port needed
@@ -108,14 +111,19 @@ pub enum FragmentError {
     Decode,
     /// The parse itself returned no fragment.
     Parse,
+    /// The tree grew deeper than the [`DepthLimit`] allowed.
+    TooDeep,
 }
 
 impl FragmentError {
+    /// The message, for every error but [`TooDeep`](FragmentError::TooDeep),
+    /// whose message names the limit and is the bridge's to word.
     pub fn message(self) -> &'static str {
         match self {
             FragmentError::Parser => "failed to create HTML parser",
             FragmentError::Decode => "out of memory decoding fragment HTML",
             FragmentError::Parse => "failed to parse HTML fragment",
+            FragmentError::TooDeep => "document tree depth limit exceeded",
         }
     }
 }
@@ -159,26 +167,17 @@ pub struct TransientFragment {
 }
 
 impl TransientFragment {
+    /// Parse `input` in `context`, refusing a tree deeper than `limit`.
+    ///
     /// # Safety
     /// `context`'s element or document must be live; `input` is only read.
     pub unsafe fn parse(
         input: &[u8],
         known_valid: bool,
         context: &FragmentContext,
+        limit: DepthLimit,
     ) -> Result<TransientFragment, FragmentError> {
-        let root = run_fragment_parser(input, known_valid, context)?;
-        /* Only the element context gets a document of its own to free.
-         * `lxb_html_parse_fragment_chunk_begin` builds the fragment in
-         * `lxb_html_document_interface_create(owner)`: the element parser passes
-         * its fresh parser's tree document - NULL - so the result is standalone
-         * and must be destroyed here; the by-tag parser is handed the TARGET
-         * document, so its result is made inside that document's memory and
-         * destroying it would free the target's. */
-        let _doc = match context {
-            FragmentContext::Element(_) => root.as_node().owner_document().own_transient(),
-            FragmentContext::Tag { .. } => None,
-        };
-        Ok(TransientFragment { root, _doc })
+        run_fragment_parser(input, known_valid, context, limit)
     }
 
     /// Import every child into `doc`, as the children of `into`; `Err` if
@@ -258,47 +257,94 @@ impl FragmentTag {
 }
 
 impl FragmentContext {
+    /// What `lxb_html_parse_fragment_chunk_begin` takes: the owner document
+    /// for the fragment's own, and the context's tag and namespace ids.
+    ///
+    /// The element context passes NO owner - as `lxb_html_parse_fragment` does,
+    /// handing over a fresh parser's tree document, which is NULL - so its
+    /// fragment is built in a standalone document; the tag context passes the
+    /// TARGET document, so its fragment is made inside that document's memory.
+    ///
     /// # Safety
-    /// `parser` must be live and initialised, and the source bytes must stay
-    /// put for the call. The context - element or document - must be live.
-    unsafe fn parse(&self, parser: &HtmlParser, src: *const u8, len: usize) -> *mut LxbNode {
+    /// The context element, if that is the context, must be live.
+    unsafe fn begin_args(&self) -> (*mut crate::lexbor::abi::lxb_html_document_t, usize, usize) {
         match *self {
-            /* Lexbor types this one to its element interface; the handle we
-             * hold is a node, which is what that interface begins with. */
             FragmentContext::Element(el) => {
-                lxb_html_parse_fragment(parser.as_ptr(), el.as_ptr() as *mut _, src, len)
+                // SAFETY: the caller's contract - the context element is live.
+                let node = unsafe { el.as_node() };
+                (
+                    core::ptr::null_mut(),
+                    node.tag_id().map_or(0, TagId::raw),
+                    node.ns_id().map_or(0, NsId::raw),
+                )
             }
             /* A document handle is untyped; this entry takes the HTML document
              * it is. */
-            FragmentContext::Tag { doc, at } => lxb_html_parse_fragment_by_tag_id(
-                parser.as_ptr(),
+            FragmentContext::Tag { doc, at } => (
                 doc.as_ptr().cast(),
                 at.tag.raw(),
                 at.ns.map_or(0, NsId::raw),
-                src,
-                len,
             ),
         }
     }
 }
 
-/// Run a fragment parse with a fresh parser, or the error that stopped it.
+/// Run a fragment parse with a fresh parser, under the tree-depth guard.
 ///
-/// The parser is destroyed on every path: the fragment tree belongs to its
-/// document, not the parser, so it survives - the caller may still read
-/// `root->owner_document` afterwards.
+/// Lexbor's chunked fragment API, driven by hand rather than through
+/// `lxb_html_parse_fragment*` - which is exactly begin/process/end - because
+/// the guard has to be installed on the tokenizer between `begin` and
+/// `process`. That also puts the fragment's standalone document (the element
+/// context's) in our hands BEFORE the parse, so a failed parse frees it: the
+/// one-shot call abandoned it on a failure, which was one leaked document per
+/// refused `inner_html=` once the limit made failures routine.
+///
+/// The parser is destroyed on every path, BEFORE that document: the fragment
+/// tree belongs to its document, not the parser.
 unsafe fn run_fragment_parser(
     input: &[u8],
     known_valid: bool,
     context: &FragmentContext,
-) -> Result<RawNode, FragmentError> {
+    limit: DepthLimit,
+) -> Result<TransientFragment, FragmentError> {
+    /* Declared first so it drops last, after the parser. */
+    let mut owned: Option<TransientDoc> = None;
     let parser = HtmlParser::create().ok_or(FragmentError::Parser)?;
     let src = sanitize(input, known_valid).ok_or(FragmentError::Decode)?;
     let bytes = src.as_slice();
-    let root = context.parse(&parser, bytes.as_ptr(), bytes.len());
+
+    let (owner, tag, ns) = context.begin_args();
+    if lxb_html_parse_fragment_chunk_begin(parser.as_ptr(), owner, tag, ns) != LXB_STATUS_OK {
+        return Err(FragmentError::Parse);
+    }
+    /* Only the element context gets a document of its own to free; the tag
+     * context's lives in the target's memory, and Lexbor's own chunk cleanup
+     * destroys it. */
+    if matches!(context, FragmentContext::Element(_)) {
+        owned = TransientDoc::own(fragment_document(parser.as_ptr()).cast());
+    }
+
+    /* A fragment keeps one synthetic `<html>` root below its first element,
+     * which the depth does not count (see `tree_guard`). */
+    let mut hook = TokenHook::new(limit, 1, None);
+    if !hook.install(parser.as_ptr()) {
+        return Err(FragmentError::Parse); /* never unguarded */
+    }
+    let st = lxb_html_parse_fragment_chunk_process(parser.as_ptr(), bytes.as_ptr(), bytes.len());
+    let root = if st == LXB_STATUS_OK {
+        lxb_html_parse_fragment_chunk_end(parser.as_ptr())
+    } else {
+        core::ptr::null_mut()
+    };
+    hook.resume_panic(); /* none can be latched without a recorder; kept uniform */
     drop(src); /* the parse consumed it; the buffer goes on every path */
     drop(parser); /* the fragment belongs to its document, not to the parser */
-    RawNode::from_ptr(root.cast()).ok_or(FragmentError::Parse)
+
+    if hook.too_deep() {
+        return Err(FragmentError::TooDeep); /* `owned` drops, freeing it */
+    }
+    let root = RawNode::from_ptr(root.cast()).ok_or(FragmentError::Parse)?;
+    Ok(TransientFragment { root, _doc: owned })
 }
 
 /// Copy `src` into `doc`, `<template>` contents included, or `Err` on failure.

@@ -1,9 +1,10 @@
 //! `Makiri::HTML::Document` and the fragment entry points.
 //!
-//!   `Document._parse(source)`, `#root`, `#title`, `#errors`,
-//!   `#internal_subset`, `#quirks_mode`, `#fragment(html, context:)`,
+//!   `Document._parse(source, max_tree_depth)`, `#root`, `#title`, `#errors`,
+//!   `#internal_subset`, `#quirks_mode`,
+//!   `#fragment(html, context:, max_tree_depth:)`,
 //!   `#import_node(node, deep = false)`
-//!   `DocumentFragment.parse(html, context:)`, `Node#parse(html)`
+//!   `DocumentFragment.parse(html, context:, max_tree_depth:)`, `Node#parse(html)`
 //!
 //! The Document wrapper and its parsed handle, and the fragment pipeline, are
 //! the bridge's ([`crate::bridge::wrapper`], [`crate::bridge::doc`],
@@ -18,8 +19,13 @@ use magnus::{method, prelude::*, Error, Ruby, Value};
 
 /* ---- Document.parse ---- */
 
-fn doc_s_parse(_klass: Value, source: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| crate::bridge::doc::parse_document(source))
+/// `Document._parse(source, max_tree_depth)`. The Ruby `Document.parse` turns
+/// the keyword into the second argument; `nil` is the default limit.
+fn doc_s_parse(ruby: &Ruby, _klass: Value, source: Value, depth: Value) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| {
+        let limit = crate::glue::kwargs::max_tree_depth(ruby, Some(depth))?;
+        crate::bridge::doc::parse_document(source, limit)
+    })
 }
 
 /* ---- read-only accessors ---- */
@@ -55,14 +61,16 @@ fn doc_errors(_ruby: &Ruby, self_: Value) -> Result<Value, Error> {
 
 /* ---- fragment entry points ---- */
 
-/// `document.fragment(html, context: ...)` -> a DocumentFragment bound to this
-/// document. `context` defaults to `<body>`.
+/// `document.fragment(html, context: ..., max_tree_depth: ...)` -> a
+/// DocumentFragment bound to this document. `context` defaults to `<body>`,
+/// `max_tree_depth` to 400 (see `glue::kwargs::max_tree_depth`).
 fn doc_fragment(ruby: &Ruby, self_: Value, args: &[Value]) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| fragment_from_args(ruby, args, || Ok(self_)))
 }
 
-/// `(html, context:)` from the argument list, parsed as a fragment bound to the
-/// document `document` supplies - the one thing the two entry points differ in.
+/// `(html, context:, max_tree_depth:)` from the argument list, parsed as a
+/// fragment bound to the document `document` supplies - the one thing the two
+/// entry points differ in.
 fn fragment_from_args(
     ruby: &Ruby,
     args: &[Value],
@@ -70,13 +78,17 @@ fn fragment_from_args(
 ) -> Result<Value, Error> {
     let a = magnus::scan_args::scan_args::<(Value,), (), (), (), magnus::RHash, ()>(args)?;
     let context = a.keywords.get(ruby.sym_new("context"));
+    /* Read before the backing document is made, so a bad value costs nothing. */
+    let limit =
+        crate::glue::kwargs::max_tree_depth(ruby, a.keywords.get(ruby.sym_new("max_tree_depth")))?;
     let document = document()?;
     let at = fragment::resolve_fragment_context(document, context)?;
-    fragment::build_fragment(document, a.required.0, at)
+    fragment::build_fragment(document, a.required.0, at, limit)
 }
 
-/// `DocumentFragment.parse(html, context: ...)` -> a standalone fragment with
-/// its own backing document, kept alive by the fragment's wrapper.
+/// `DocumentFragment.parse(html, context: ..., max_tree_depth: ...)` -> a
+/// standalone fragment with its own backing document, kept alive by the
+/// fragment's wrapper.
 fn frag_s_parse(ruby: &Ruby, _klass: Value, args: &[Value]) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| fragment_from_args(ruby, args, fragment::fragment_shell_document))
 }
@@ -98,7 +110,8 @@ fn node_parse(ruby: &Ruby, self_: Value, rb_html: Value) -> Result<Value, Error>
             ));
         };
         let document = keepalive_document(self_)?;
-        let frag = fragment::build_fragment(document, rb_html, at)?;
+        /* No keyword here, as in Nokogiri: the default limit. */
+        let frag = fragment::build_fragment(document, rb_html, at, fragment::DepthLimit::DEFAULT)?;
         /* The native children reader, not a Ruby `children` dispatch: the
          * fragment is ours, and a subclass could redefine the method. */
         let frag = <crate::bridge::html::HtmlSelf as magnus::TryConvert>::try_convert(frag)?;
@@ -147,7 +160,7 @@ pub fn node_clone_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Va
 pub fn init_html_doc() -> Result<(), Error> {
     let html_doc = crate::init::CLASS_HTML_DOCUMENT.defined()?;
 
-    html_doc.define_singleton_method("_parse", method!(doc_s_parse, 1))?;
+    html_doc.define_singleton_method("_parse", method!(doc_s_parse, 2))?;
     html_doc.define_method("root", method!(doc_root, 0))?;
     html_doc.define_method("title", method!(doc_title, 0))?;
     html_doc.define_method("errors", method!(doc_errors, 0))?;

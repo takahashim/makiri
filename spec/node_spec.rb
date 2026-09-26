@@ -205,7 +205,7 @@ RSpec.describe Makiri::Node do
 
     it "gathers text from a deeply nested subtree (iterative, no stack blowup)" do
       open = "<div>x".dup * 500
-      d = Makiri::HTML("<html><body>#{open}#{"</div>" * 500}</body></html>")
+      d = Makiri::HTML("<html><body>#{open}#{"</div>" * 500}</body></html>", max_tree_depth: -1)
       expect(d.at_css("body").text).to eq("x" * 500)
     end
   end

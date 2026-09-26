@@ -231,3 +231,48 @@ mod guard_agreement {
         );
     }
 }
+
+/// The tree-depth guard (`adapter::tree_guard`), against the real parser: the
+/// exact boundary for a document and for a fragment, and that a refusal is
+/// reported as the limit rather than as a generic failure.
+mod tree_depth {
+    use crate::lexbor::adapter::post_parse::{parse_html, HtmlParseError};
+    use crate::lexbor::adapter::tree_guard::DepthLimit;
+    use crate::lexbor::fragment::{FragmentContext, FragmentError, FragmentTag, TransientFragment};
+
+    fn divs(n: usize) -> Vec<u8> {
+        "<div>".repeat(n).into_bytes()
+    }
+
+    fn doc(n: usize, limit: DepthLimit) -> Result<(), HtmlParseError> {
+        parse_html(&divs(n), true, limit).map(drop)
+    }
+
+    #[test]
+    fn a_document_counts_html_and_body() {
+        /* html (1) + body (2) + 398 divs = 400. */
+        assert_eq!(doc(398, DepthLimit::DEFAULT), Ok(()));
+        assert_eq!(doc(399, DepthLimit::DEFAULT), Err(HtmlParseError::TooDeep));
+        assert_eq!(doc(3, DepthLimit::at_most(5)), Ok(()));
+        assert_eq!(doc(4, DepthLimit::at_most(5)), Err(HtmlParseError::TooDeep));
+        assert_eq!(doc(3000, DepthLimit::UNLIMITED), Ok(()));
+        /* Nothing is accepted under a zero limit: `<html>` is already 1. */
+        assert_eq!(doc(0, DepthLimit::at_most(0)), Err(HtmlParseError::TooDeep));
+    }
+
+    #[test]
+    fn a_fragment_does_not_count_its_synthetic_root() {
+        let host = parse_html(b"<p>", true, DepthLimit::DEFAULT).expect("host parses");
+        let ctx = FragmentContext::Tag {
+            doc: host.raw_doc(),
+            at: FragmentTag::BODY,
+        };
+        let frag = |n: usize, limit| {
+            // SAFETY: `host` is live for the call and the input is only read.
+            unsafe { TransientFragment::parse(&divs(n), true, &ctx, limit) }.map(drop)
+        };
+        assert_eq!(frag(400, DepthLimit::DEFAULT), Ok(()));
+        assert_eq!(frag(401, DepthLimit::DEFAULT), Err(FragmentError::TooDeep));
+        assert_eq!(frag(3000, DepthLimit::UNLIMITED), Ok(()));
+    }
+}

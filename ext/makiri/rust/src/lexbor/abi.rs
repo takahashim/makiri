@@ -65,18 +65,19 @@ impl Drop for HtmlParser {
 /// The document a fragment parse builds its nodes in, destroyed however its
 /// scope exits.
 ///
-/// `lxb_html_parse_fragment` puts the fragment in a document of its own that
-/// destroying the parser does not free - one leaked per `inner_html=` before it
-/// was freed by hand. The nodes a caller keeps are imported copies in its own
-/// document, so this one goes as soon as the import is done.
+/// A fragment parse in an element's context puts the fragment in a document of
+/// its own that destroying the parser does not free - one leaked per
+/// `inner_html=` before it was freed by hand, and one per FAILED parse until it
+/// was owned from the start. The nodes a caller keeps are imported copies in
+/// its own document, so this one goes as soon as the import is done.
 pub struct TransientDoc(core::ptr::NonNull<lxb_html_document_t>);
 
 impl TransientDoc {
     /// Own `doc`, the document a fragment parse built its root in.
     ///
     /// # Safety
-    /// `doc` must be that transient document - read from the root a fragment
-    /// parse just returned - and nothing else may destroy it.
+    /// `doc` must be that transient document - read from the parser's tree
+    /// once the fragment parse has begun - and nothing else may destroy it.
     pub unsafe fn own(doc: *mut lxb_dom_document_t) -> Option<TransientDoc> {
         core::ptr::NonNull::new(doc as *mut lxb_html_document_t).map(TransientDoc)
     }

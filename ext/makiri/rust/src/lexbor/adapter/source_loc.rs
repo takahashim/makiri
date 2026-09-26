@@ -3,8 +3,9 @@
 //! Lexbor does not record where in the input a node came from, and we stay on
 //! vanilla Lexbor, so it is reconstructed from the tokenizer instead:
 //!
-//! 1. [`Recorder`] CHAINS the tokenizer's token-done callback and logs
-//!    `(tag_id, byte offset)` for every element start-tag, in token order.
+//! 1. [`Recorder`] rides the tokenizer's token-done hook
+//!    (`tree_guard::TokenHook`, which also carries the tree-depth guard) and
+//!    logs `(tag_id, byte offset)` for every element start-tag, in token order.
 //! 2. After the tree is built, [`pos_assign_to_dom`] walks the DOM
 //!    pre-order and matches each element to the next compatible recorded token,
 //!    stamping the byte offset on it.
@@ -20,13 +21,12 @@
 //! its encoding belong to `html` (`HtmlNode::stamp_source_offset` /
 //! `source_offset`); this module decides WHICH offset an element gets.
 //!
-//! # The callback runs inside Lexbor
+//! # The recording runs inside Lexbor
 //!
-//! [`pos_token_cb`] is called by the tokenizer, from C, once per token. It
-//! must not unwind and must always delegate, or the parser stops building the
-//! tree. Both are structural here: it has no failure path of its own - a
-//! recording failure only sets the overflow flag - and the delegation is the
-//! tail of the function.
+//! [`Recorder::record`] is called from the tokenizer's hook, from C, once per
+//! token. It must not unwind and must not stop the parse. Both are structural:
+//! the hook calls it under a panic latch, and it has no failure path of its
+//! own - a recording failure only sets the overflow flag.
 
 #![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
@@ -44,8 +44,6 @@ extern "C" {
 }
 
 type Token = lxb::lxb_html_token_t;
-type Tokenizer = lxb::lxb_html_tokenizer_t;
-type TokenFn = lxb::lxb_html_tokenizer_token_f;
 
 use super::html::{HtmlNode, TagId, TAG_EM_DOCTYPE};
 const TOKEN_TYPE_CLOSE: i32 = lxb::lxb_html_token_type_LXB_HTML_TOKEN_TYPE_CLOSE as i32;
@@ -141,30 +139,23 @@ struct Entry {
     offset: usize,
 }
 
-/// The start-tag offsets a parse records, handed to the tokenizer callback as
-/// its opaque context.
+/// The start-tag offsets a parse records, fed by the tokenizer's hook.
+///
+/// A plain value: it allocates nothing until the first token is recorded, and
+/// then only through `falloc`, a failure of which stops the recording.
 pub struct Recorder {
     items: Vec<Entry>,
     /// The start of the input buffer, which offsets are relative to.
     first: *const u8,
     overflow: bool,
-    /// A panic in `record`, latched rather than raised: this runs from
-    /// Lexbor's tokenizer, and unwinding into C aborts. `parse_tracked` raises
-    /// it after the parse has unwound (see `crate::caught`).
-    panic: crate::caught::PanicLatch,
-
-    /// The parser's OWN token-done callback, which actually builds the tree.
-    orig: TokenFn,
-    orig_ctx: *mut c_void,
 }
 
 /// The recorded offsets, detached from the parse that produced them.
 ///
 /// Only this survives the parse: `Recorder` also holds a pointer INTO the
-/// source buffer, which is freed when the parse returns, and the tokenizer
-/// delegate, which is gone with the parser. Carrying those into the document
-/// would be a dangling pointer nothing needs - the offsets were resolved
-/// against `first` as each token arrived.
+/// source buffer, which is freed when the parse returns. Carrying that into
+/// the document would be a dangling pointer nothing needs - the offsets were
+/// resolved against `first` as each token arrived.
 pub struct Positions {
     items: Vec<Entry>,
     overflow: bool,
@@ -179,28 +170,30 @@ impl Recorder {
         }
     }
 
-    /// Re-raise a panic the token callback caught, now that Lexbor's frames
-    /// are gone. A no-op when nothing panicked.
-    pub fn resume_panic(&mut self) {
-        self.panic.resume();
-    }
-
     /// A recorder for the tokens of the input that starts at `src`.
     pub fn new(src: *const u8) -> Recorder {
         Recorder {
             items: Vec::new(),
             first: src,
             overflow: false,
-            panic: crate::caught::PanicLatch::new(),
-            orig: None,
-            orig_ctx: core::ptr::null_mut(),
         }
     }
 
-    /// The parser's own token-done callback, which every token is passed on to.
-    pub fn set_delegate(&mut self, orig: TokenFn, orig_ctx: *mut c_void) {
-        self.orig = orig;
-        self.orig_ctx = orig_ctx;
+    /// Whether tokens are still being recorded - false once the cap or an
+    /// allocation failure stopped it.
+    #[inline]
+    pub fn recording(&self) -> bool {
+        !self.overflow
+    }
+
+    /// Record one token, if it is an element start-tag.
+    ///
+    /// # Safety
+    /// `token` must be the live token the tokenizer is handing out, and it
+    /// must point into the input that starts at `first`.
+    #[inline]
+    pub unsafe fn record(&mut self, token: *const Token) {
+        record(self, token);
     }
 }
 
@@ -236,34 +229,6 @@ unsafe fn record(rec: &mut Recorder, token: *const Token) {
     };
     if rec.items.falloc_push(entry).is_err() {
         rec.overflow = true;
-    }
-}
-
-/// The chained token-done callback, installed on the tokenizer.
-///
-/// Always delegates, so the parser still builds the tree; a recording failure
-/// only sets the overflow flag, which later suppresses assignment.
-pub(crate) unsafe extern "C" fn pos_token_cb(
-    tkz: *mut Tokenizer,
-    token: *mut Token,
-    ctx: *mut c_void,
-) -> *mut Token {
-    let rec = &mut *(ctx as *mut Recorder);
-    if !rec.overflow && !rec.panic.caught() {
-        /* Catch rather than unwind into the tokenizer: this is called from C.
-         * The latch is moved out and back so `record` can take `rec` mutably;
-         * recording then stops, the parse carries on through the delegate
-         * below, and `parse_tracked` raises the panic once C has unwound. */
-        let mut latch = core::mem::take(&mut rec.panic);
-        latch.guard((), || record(rec, token));
-        rec.panic = latch;
-    }
-    match rec.orig {
-        Some(f) => f(tkz, token, rec.orig_ctx),
-        /* Unreachable in practice - post_parse installs the delegate before the
-         * first token - but returning the token unchanged is the one answer that
-         * does not lose it. */
-        None => token,
     }
 }
 

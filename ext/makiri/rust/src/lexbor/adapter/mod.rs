@@ -3,10 +3,11 @@
 //! `html` is the one reader of Lexbor's DOM structs: everything else here,
 //! the index builders included, walks the tree through its typed handles.
 //! (What else reads Lexbor memory reads something that is not the DOM:
-//! `arena_bytes` the arena's pool chunks, `source_loc` the tokenizer's tokens.)
+//! `arena_bytes` the arena's pool chunks, `source_loc` the tokenizer's tokens,
+//! `tree_guard` the tree builder's stack of open elements.)
 //! Around it, everything Lexbor does not give us and we will not patch it to:
-//! the attribute->owner index, source locations, the text index, and
-//! cross-import.
+//! the attribute->owner index, source locations, the text index, the
+//! tree-depth guard, and cross-import.
 
 pub mod arena_bytes;
 pub mod cross_import;
@@ -15,6 +16,7 @@ pub mod html;
 pub mod post_parse;
 pub mod source_loc;
 pub mod text_index;
+pub mod tree_guard;
 
 /// An allocation the adapter needed could not be satisfied.
 ///

@@ -21,12 +21,16 @@ use crate::bridge::wrapper::{ensure_document_mutable, html_doc_unwrap, DocKind, 
 use crate::init::CLASS_NODE;
 use crate::lexbor::adapter::html::{HtmlDoc, HtmlNodeMut, Place, RawDoc, RawNode};
 use crate::lexbor::adapter::post_parse::parse_html;
+pub use crate::lexbor::adapter::tree_guard::DepthLimit;
 pub use crate::lexbor::fragment::FragmentTag;
 use crate::lexbor::fragment::{FragmentContext, FragmentError, TransientFragment};
 
 /// A fragment-parse failure as `Makiri::Error`.
-fn fragment_error(e: FragmentError) -> Error {
-    makiri_error(e.message())
+fn fragment_error(e: FragmentError, limit: DepthLimit) -> Error {
+    match e {
+        FragmentError::TooDeep => crate::bridge::doc::tree_depth_error(limit),
+        _ => makiri_error(e.message()),
+    }
 }
 
 /// Resolve the Ruby `context:` argument against `document`.
@@ -80,12 +84,16 @@ pub fn resolve_fragment_context(
 /// `html` is a String already - the caller ran `string_of` - because that
 /// conversion is the argument's `#to_s`, arbitrary Ruby, and for `inner_html=`
 /// it has to finish before the edit drops the document's indexes.
-fn parse(html: RString, context: &FragmentContext) -> Result<TransientFragment, Error> {
+fn parse(
+    html: RString,
+    context: &FragmentContext,
+    limit: DepthLimit,
+) -> Result<TransientFragment, Error> {
     let src = HtmlSource::from_ruby(html)?;
     // SAFETY: the context's element or document is live (the callers below hold
     // it), and the bytes are read by the parse alone, which runs no Ruby.
-    unsafe { TransientFragment::parse(src.bytes(), src.known_valid(), context) }
-        .map_err(fragment_error)
+    unsafe { TransientFragment::parse(src.bytes(), src.known_valid(), context, limit) }
+        .map_err(|e| fragment_error(e, limit))
 }
 
 /// Parse `rb_html` in the context of the element `context`, for `inner_html=`
@@ -127,9 +135,12 @@ fn import_into<'d>(
     into: HtmlNodeMut<'d>,
     html: RString,
 ) -> Result<(), Error> {
+    /* The setters take no keyword, so they parse under the default limit, as
+     * Nokogiri's do. */
     let parsed = parse(
         html,
         &FragmentContext::Element(RawNode::from(context.node())),
+        DepthLimit::DEFAULT,
     )?;
     let doc = context.node().owner_document();
     // SAFETY: `into` is a detached fragment of `context`'s document, which the
@@ -164,8 +175,14 @@ pub fn set_template_inner_html(
 }
 
 /// A DOCUMENT_FRAGMENT owned by `document`, holding `rb_html` parsed in the
-/// context `at`. The fragment node is made only once the parse has succeeded.
-pub fn build_fragment(document: Value, rb_html: Value, at: FragmentTag) -> Result<Value, Error> {
+/// context `at`, refusing a tree deeper than `limit`. The fragment node is made
+/// only once the parse has succeeded.
+pub fn build_fragment(
+    document: Value,
+    rb_html: Value,
+    at: FragmentTag,
+    limit: DepthLimit,
+) -> Result<Value, Error> {
     /* A fragment's nodes are made in `document`: a change to it, refused while
      * an XPath evaluation with a handler reads it. Checked first, so that
      * refusal wins over a bad argument... */
@@ -177,7 +194,7 @@ pub fn build_fragment(document: Value, rb_html: Value, at: FragmentTag) -> Resul
      * document when the import below writes it. */
     ensure_document_mutable(document)?;
     let doc = html_doc_unwrap(document)?;
-    let parsed = parse(html, &FragmentContext::Tag { doc, at })?;
+    let parsed = parse(html, &FragmentContext::Tag { doc, at }, limit)?;
 
     let Some(frag) = crate::bridge::wrapper::html_doc(&document).create_fragment() else {
         return Err(makiri_error("failed to create document fragment"));
@@ -195,7 +212,7 @@ pub fn fragment_shell_document() -> Result<Value, Error> {
     const SHELL: &[u8] = b"<html><body></body></html>";
     /* The wrapper first, while nothing needs freeing - see DocumentShell. */
     let shell = DocumentShell::new(DocKind::Html);
-    let Some(parsed) = parse_html(SHELL, true) else {
+    let Ok(parsed) = parse_html(SHELL, true, DepthLimit::DEFAULT) else {
         return Err(makiri_error("failed to create fragment document"));
     };
     Ok(shell.install_html(parsed))

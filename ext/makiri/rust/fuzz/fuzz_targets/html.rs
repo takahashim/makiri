@@ -10,9 +10,10 @@
 
 use libfuzzer_sys::fuzz_target;
 use makiri::lexbor::adapter::post_parse::parse_html;
+use makiri::lexbor::adapter::tree_guard::DepthLimit;
 
 fuzz_target!(|data: &[u8]| {
-    let Some(mut p) = parse_html(data, false) else {
+    let Ok(mut p) = parse_html(data, false, DepthLimit::DEFAULT) else {
         return;
     };
 

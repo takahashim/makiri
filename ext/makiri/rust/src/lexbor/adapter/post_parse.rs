@@ -4,7 +4,9 @@
 //! parse, because that is the only way to see the tokens: create and init a
 //! parser, `chunk_begin`, override the tokenizer's token-done callback while
 //! CHAINING the parser's own tree builder, then `chunk_process` and
-//! `chunk_end`. The recorder that rides along is `lexbor::adapter::source_loc`.
+//! `chunk_end`. The hook is `lexbor::adapter::tree_guard`'s, which enforces
+//! the tree-depth limit; the recorder that rides in it is
+//! `lexbor::adapter::source_loc`.
 //!
 //! Tracking is always on: it costs about 7% over no-tracking, measured, and the
 //! alternative that was tried - a separate source scan - measured ~36% slower
@@ -26,7 +28,6 @@
 #![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
-use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use crate::falloc::try_box;
@@ -38,9 +39,10 @@ use crate::lexbor::adapter::arena_bytes::document_capacity;
 use crate::lexbor::adapter::dom_index::DomIndex;
 use crate::lexbor::adapter::html::{HtmlDoc as DomDoc, HtmlNode, RawDoc, RawNode, TagId};
 use crate::lexbor::adapter::source_loc::{
-    lines_build, pos_assign_to_dom, pos_token_cb, Lines, Positions, Recorder,
+    lines_build, pos_assign_to_dom, Lines, Positions, Recorder,
 };
 use crate::lexbor::adapter::text_index::{TextBuildError, TextIndex, TextRun};
+use crate::lexbor::adapter::tree_guard::{DepthLimit, TokenHook};
 use crate::utf8_input::sanitize;
 
 type HtmlDoc = lxb::lxb_html_document_t;
@@ -280,38 +282,39 @@ impl Drop for DocOwner {
     }
 }
 
-/// Drive the low-level pipeline so element offsets can be captured, then build
-/// the line table.
+/// Why an HTML document parse produced no document.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HtmlParseError {
+    /// Out of memory, or Lexbor refused the input.
+    Failed,
+    /// The tree grew deeper than the [`DepthLimit`] allowed.
+    TooDeep,
+}
+
+/// Drive the low-level pipeline so element offsets can be captured and the
+/// tree depth bounded, then build the line table.
 ///
-/// Returns the document, or None on failure with everything it allocated
-/// released, together with the line table - itself None if THAT allocation
-/// failed, in which case line information degrades to nil rather than failing
-/// the parse. That degradation is deliberate and is what
-/// `spec/html_line_spec.rb`'s contract ("an Integer, or nil") allows.
-unsafe fn parse_tracked(src: &[u8]) -> Option<Tracked> {
-    let parser = lxb::HtmlParser::create()?;
+/// Returns the document, or the error with everything it allocated released,
+/// together with the line table - itself None if THAT allocation failed, in
+/// which case line information degrades to nil rather than failing the parse.
+/// That degradation is deliberate and is what `spec/html_line_spec.rb`'s
+/// contract ("an Integer, or nil") allows. The depth guard does not degrade:
+/// it lives in the hook, which is a plain value installed on every parse, and
+/// nothing the recorder does can switch it off (see `tree_guard`).
+unsafe fn parse_tracked(src: &[u8], limit: DepthLimit) -> Result<Tracked, HtmlParseError> {
+    let parser = lxb::HtmlParser::create().ok_or(HtmlParseError::Failed)?;
 
-    let doc = DocOwner(NonNull::new(lxb_html_parse_chunk_begin(parser.as_ptr()))?);
+    let doc = DocOwner(
+        NonNull::new(lxb_html_parse_chunk_begin(parser.as_ptr())).ok_or(HtmlParseError::Failed)?,
+    );
 
-    /* Install the recorder, CHAINING the parser's own tree-building callback
-     * (which chunk_begin has just set). If the recorder cannot be allocated we
-     * simply parse without source tracking. It is declared after the parser,
-     * so it outlives nothing that can still call it. */
-    let mut rec = try_box(Recorder::new(src.as_ptr())).ok();
-    if let Some(r) = rec.as_deref_mut() {
-        let tkz = lxb::lxb_html_parser_tokenizer_noi(parser.as_ptr());
-        /* Lexbor has a setter and a ctx getter for the token-done callback but
-         * no getter for the callback FUNCTION, so that one field is read from
-         * the struct directly; the ctx uses the public accessor. */
-        r.set_delegate(
-            (*tkz).callback_token_done,
-            lxb::lxb_html_tokenizer_callback_token_done_ctx_noi(tkz),
-        );
-        lxb::lxb_html_tokenizer_callback_token_done_set_noi(
-            tkz,
-            Some(pos_token_cb),
-            r as *mut Recorder as *mut c_void,
-        );
+    /* Install the hook, CHAINING the parser's own tree-building callback. It is
+     * declared after the parser, so it outlives nothing that can still call
+     * it; it stays put until the parse calls below have returned. A document
+     * keeps nothing below `<html>` on the open-element stack. */
+    let mut hook = TokenHook::new(limit, 0, Some(Recorder::new(src.as_ptr())));
+    if !hook.install(parser.as_ptr()) {
+        return Err(HtmlParseError::Failed); /* never unguarded */
     }
 
     let mut st = lxb_html_parse_chunk_process(parser.as_ptr(), src.as_ptr(), src.len());
@@ -324,12 +327,13 @@ unsafe fn parse_tracked(src: &[u8]) -> Option<Tracked> {
      * the first frame where raising it is safe - and it raises BEFORE the
      * status check, because a panic is not a parse failure. `doc`'s Drop and
      * the parser's release it all on the way out. */
-    if let Some(r) = rec.as_deref_mut() {
-        r.resume_panic();
-    }
+    hook.resume_panic();
 
+    if hook.too_deep() {
+        return Err(HtmlParseError::TooDeep); /* `doc`'s Drop destroys it */
+    }
     if st != LXB_STATUS_OK {
-        return None; /* `doc`'s Drop destroys it */
+        return Err(HtmlParseError::Failed);
     }
 
     /* The recording is HANDED BACK rather than stamped here: the stamping walks
@@ -339,27 +343,30 @@ unsafe fn parse_tracked(src: &[u8]) -> Option<Tracked> {
      * buffer, which is the one thing this function is about to free. */
     let mut lines = None;
     let mut positions = None;
-    if let Some(r) = rec.take() {
+    if let Some(r) = hook.into_recorder() {
         positions = try_box(r.into_positions()).ok();
         lines = lines_build(src).and_then(|l| try_box(l).ok());
     }
 
-    Some((doc.release(), lines, positions))
+    Ok((doc.release(), lines, positions))
 }
 
-/// Parse `src` as an HTML document.
+/// Parse `src` as an HTML document, refusing a tree deeper than `limit`.
 ///
 /// Browser-compatible decoding first: invalid UTF-8 becomes U+FFFD (WHATWG
 /// byte-stream decoding), so parsing never fails on bad bytes and the DOM is
 /// always valid UTF-8. `assume_valid` skips that scan - the caller has already
 /// proved the bytes valid. Source offsets are relative to the SANITISED bytes:
 /// exact for valid input, best-effort where replacement shifted positions.
-/// None on failure.
-pub fn parse_html(src: &[u8], assume_valid: bool) -> Option<Box<HtmlParsed>> {
-    let input = sanitize(src, assume_valid)?;
+pub fn parse_html(
+    src: &[u8],
+    assume_valid: bool,
+    limit: DepthLimit,
+) -> Result<Box<HtmlParsed>, HtmlParseError> {
+    let input = sanitize(src, assume_valid).ok_or(HtmlParseError::Failed)?;
     // SAFETY: a live slice, which the parse only reads and is done with when it
     // returns.
-    let (doc, lines, positions) = unsafe { parse_tracked(input.as_slice()) }?;
+    let (doc, lines, positions) = unsafe { parse_tracked(input.as_slice(), limit) }?;
     drop(input); /* the parse is done with the buffer, on every path */
 
     let parsed = HtmlParsed {
@@ -370,5 +377,5 @@ pub fn parse_html(src: &[u8], assume_valid: bool) -> Option<Box<HtmlParsed>> {
         text_index: TextIndexState::Unbuilt,
     };
     /* On OOM the handle drops, and with it the document. */
-    try_box(parsed).ok()
+    try_box(parsed).map_err(|()| HtmlParseError::Failed)
 }

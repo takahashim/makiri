@@ -467,10 +467,14 @@ RSpec.describe "Makiri mutation" do
 
     it "handles a deeply nested fragment without overflowing the stack" do
       # The template-content fixup walks the import iteratively (not recursively
-      # on DOM depth), so a very deep fragment must not crash.
+      # on DOM depth), so a very deep fragment must not crash. `inner_html=`
+      # parses under the default tree-depth limit, so the depth arrives through
+      # `Document#fragment`, which runs the same import.
       n = 40_000
-      div.inner_html = ("<div>" * n) + "<template><span>ok</span></template>" + ("</div>" * n)
+      html = ("<div>" * n) + "<template><span>ok</span></template>" + ("</div>" * n)
+      div.add_child(div.document.fragment(html, max_tree_depth: -1))
       expect(div.at_css("template").content_fragment.at_css("span").text).to eq("ok")
+      expect { div.inner_html = html }.to raise_error(Makiri::Error, /tree depth limit/)
     end
   end
 

@@ -12,11 +12,20 @@ module Makiri
       # IO). The native parser (#_parse) expects UTF-8 bytes. Source locations
       # for {Node#line} are always tracked (the cost is negligible).
       #
+      # +max_tree_depth+ bounds how deeply elements may nest, as in
+      # Nokogiri::HTML5: the depth counts elements from the root, +<html>+
+      # being 1, and a document deeper than the limit raises Makiri::Error
+      # ("document tree depth limit exceeded (400)"). The default is 400; a
+      # negative Integer disables the limit. It exists because HTML tree
+      # construction is quadratic in nesting depth, and the parse cannot be
+      # interrupted: without it, <tt>"<div>" * 80_000</tt> takes seconds.
+      #
       # @param source [String, #read]
+      # @param max_tree_depth [Integer, nil] nil for the default
       # @return [Makiri::HTML::Document]
-      def self.parse(source)
+      def self.parse(source, max_tree_depth: nil)
         source = source.read if source.respond_to?(:read)
-        _parse(String(source))
+        _parse(String(source), max_tree_depth)
       end
 
       # An independent copy of the whole document (like Nokogiri's Document#dup).
@@ -30,8 +39,11 @@ module Makiri
       # Node#line on the copy is the line in the SERIALISED text it was parsed
       # from, not in the original source: `to_html` does not keep the original
       # line breaks between tags, so the two differ.
+      #
+      # The re-parse has no tree-depth limit: the tree is already here, however
+      # it was built, and a copy must not fail where the original stands.
       def dup(*)
-        self.class.parse(to_html)
+        self.class.parse(to_html, max_tree_depth: -1)
       end
 
       # The document's <body> element, or nil.

@@ -194,6 +194,11 @@ fn main() {
         .allowlist_type("lxb_html_tokenizer_t")
         .allowlist_type("lxb_html_tokenizer_token_f")
         .allowlist_type("lxb_html_parser_t")
+        // The tree builder, for its stack of open elements: the depth the
+        // tree-depth guard measures (`lexbor::adapter::tree_guard`). Reached
+        // through the parser already; named so the dependency is explicit.
+        .allowlist_type("lxb_html_tree_t")
+        .allowlist_type("lexbor_array_t")
         .allowlist_function("lxb_html_parser_create")
         .allowlist_function("lxb_html_parser_init")
         .allowlist_function("lxb_html_parser_destroy")
@@ -216,14 +221,20 @@ fn main() {
         .allowlist_function("lxb_dom_document_destroy_text_noi")
         .allowlist_function("lxb_tag_id_by_name_noi")
         .allowlist_function("lxb_html_parser_tokenizer_noi")
+        .allowlist_function("lxb_html_parser_tree_noi")
         .allowlist_function("lxb_html_tokenizer_callback_token_done_set_noi")
         .allowlist_function("lxb_html_tokenizer_callback_token_done_ctx_noi")
         .allowlist_function("lxb_css_parser_status_noi")
         .allowlist_function("lxb_css_parser_memory_set_noi")
         .allowlist_function("lxb_css_parser_selectors_set_noi")
-        // The fragment parse by tag id and the fragment constructor: ordinary
-        // header-declared exports.
-        .allowlist_function("lxb_html_parse_fragment_by_tag_id")
+        // The fragment parse, CHUNKED - begin/process/end rather than the
+        // one-shot `lxb_html_parse_fragment*`, because only between `begin` and
+        // `process` can the tree-depth guard be installed on the tokenizer
+        // (`lexbor::adapter::tree_guard`) - and the fragment constructor:
+        // ordinary header-declared exports.
+        .allowlist_function("lxb_html_parse_fragment_chunk_begin")
+        .allowlist_function("lxb_html_parse_fragment_chunk_process")
+        .allowlist_function("lxb_html_parse_fragment_chunk_end")
         .allowlist_function("lxb_dom_document_fragment_interface_create")
         // The mutators and factories `lexbor::adapter` uses. Four more Lexbor
         // exports it needs are in NO header at all (the UNDECLARED_EXPORTS
@@ -253,7 +264,6 @@ fn main() {
         .allowlist_function("lxb_dom_document_type_valid_name")
         .allowlist_function("lxb_dom_document_import_node")
         .allowlist_function("lexbor_str_init")
-        .allowlist_function("lxb_html_parse_fragment")
         .allowlist_function("lxb_html_document_destroy")
         // The document title reader, generated rather than hand-declared like
         // the rest of this list.

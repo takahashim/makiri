@@ -48,14 +48,15 @@ module Makiri
   # Convenience constructor mirroring Nokogiri.
   #
   # @param source [String] HTML source (UTF-8).
+  # @param opts [Hash] +max_tree_depth:+ - see {Makiri::HTML::Document.parse}
   # @return [Makiri::HTML::Document]
-  def self.HTML(source) # rubocop:disable Naming/MethodName
-    HTML::Document.parse(source)
+  def self.HTML(source, **opts) # rubocop:disable Naming/MethodName
+    HTML::Document.parse(source, **opts)
   end
 
   # Alias for {.HTML}.
-  def self.parse(source)
-    HTML::Document.parse(source)
+  def self.parse(source, **opts)
+    HTML::Document.parse(source, **opts)
   end
 
   # Convenience XML constructor mirroring Nokogiri::XML(source). A method named

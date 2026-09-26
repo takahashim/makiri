@@ -693,7 +693,7 @@ RSpec.describe "Makiri XPath" do
       # nodes and never fires here (zero matches). Regression for the gap where
       # the general step walk ticked no op budget per visited node.
       n = 11_000
-      big = Makiri::HTML("<html><body>#{"<div>" * n}#{"</div>" * n}</body></html>")
+      big = Makiri::HTML("<html><body>#{"<div>" * n}#{"</div>" * n}</body></html>", max_tree_depth: -1)
       expect { big.xpath("//div/descendant::zzz") }
         .to raise_error(Makiri::XPath::LimitExceeded, /evaluation budget|budget exceeded/i)
     end
