@@ -53,22 +53,21 @@ impl Kwargs {
         ruby: &Ruby,
         name: &str,
     ) -> Result<(Option<Value>, Option<RHash>), Error> {
+        /* No keywords is the common call: answer it without a symbol or a Hash. */
+        let Some(h) = self.0.filter(|h| !h.is_empty()) else {
+            return Ok((None, None));
+        };
         let sym = ruby.sym_new(name);
-        let taken = self
-            .0
-            .and_then(|h| h.get(sym))
-            .filter(|v: &Value| !v.is_nil());
-        let rest: RHash = ruby.hash_new();
-        let mut count = 0usize;
-        if let Some(h) = self.0 {
-            h.foreach(|k: Value, v: Value| {
-                if !crate::bridge::ruby::same_value(k, sym.as_value()) {
-                    rest.aset(k, v)?;
-                    count += 1;
-                }
-                Ok(magnus::r_hash::ForEach::Continue)
-            })?;
-        }
-        Ok((taken, (count != 0).then_some(rest)))
+        let taken = h.get(sym).filter(|v: &Value| !v.is_nil());
+        /* Made on the first key that stays, so a call passing only `name`
+         * allocates no Hash either. */
+        let mut rest: Option<RHash> = None;
+        h.foreach(|k: Value, v: Value| {
+            if !crate::bridge::ruby::same_value(k, sym.as_value()) {
+                rest.get_or_insert_with(|| ruby.hash_new()).aset(k, v)?;
+            }
+            Ok(magnus::r_hash::ForEach::Continue)
+        })?;
+        Ok((taken, rest))
     }
 }
