@@ -68,7 +68,7 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   the CSS traversal (`find_cb`/`first_cb`/`match_cb`), the serializer sink
   (`lexbor::chunks::chunk_cb`, one generic function for the HTML and stylesheet
   serializers),
-  the tokenizer's `pos_token_cb`, `bridge::gvl`'s trampoline (which carries the
+  the tokenizer's `tree_guard::hook_token_cb`, `bridge::gvl`'s trampoline (which carries the
   whole parser), and - covering every `rb_protect` at once, since magnus runs
   the closure inside its own `extern "C"` trampoline - `bridge::ruby::protect`.
   Do not call magnus's `protect` directly; ours is the one with the latch.
@@ -581,7 +581,7 @@ tkz/tree). An earlier `line: :text`/`:none` option was removed - `:text` (a
 separate source scan) measured *slower* (~36%) and was only approximate.
 
 **The stamping is LAZY, and that is load-bearing for parse speed.** Recording
-rides the parse (`pos_token_cb`, ~1.7% of it), but `pos_assign_to_dom` - the
+rides the parse (`tree_guard::hook_token_cb`, ~1.7% of it), but `pos_assign_to_dom` - the
 walk that pairs elements with tokens - profiled at **11% of a parse**, paid by
 every caller for an answer most never ask for. So the parse hands the offsets
 back (`source_loc::Positions`, which drops the Recorder's pointer INTO the
@@ -596,6 +596,27 @@ the `lines` differential probe are what catch either. Measured by profile, the
 change took Makiri's own share of a parse from 13.3% to 2.6%. `lines_build`
 stays eager (~2%): deferring it would mean holding the source buffer, which is
 the one thing the parse frees.
+
+**Tree-depth guard** (`lexbor/adapter/tree_guard.rs`). HTML tree construction
+is quadratic in nesting depth (most start tags walk the open-element stack for a
+scope check), and the parse runs with the GVL released and cannot be
+interrupted, so `"<div>" * 80_000` was a 5-second DoS. Every HTML parse -
+document, `DocumentFragment.parse`, `Document#fragment`, `Node#parse`,
+`inner_html=`/`outer_html=`, template contents - installs a `TokenHook` that
+chains the tree builder and, after each token, reads the tree's
+`open_elements->length`; past the limit it returns NULL, which is how Lexbor's
+own tree builder fails (the tokenizer stops with `LXB_STATUS_ERROR`), and the
+latched `too_deep` turns that into `Makiri::Error` "document tree depth limit
+exceeded (N)". `max_tree_depth:` (default 400, negative = none) is Nokogiri's
+name, default and boundary: depth counts elements from `<html>` = 1; a fragment
+keeps a synthetic `<html>` below its top level, which is not counted. The hook
+is a stack value on EVERY parse and carries the source `Recorder` inside it, so
+no recorder failure (allocation, cap, latched panic) can switch the guard off -
+keep it that way. Fragments therefore use the chunked
+`lxb_html_parse_fragment_chunk_*` API, not the one-shot call, and own the
+element context's throwaway document from `begin`, so a refused parse frees it.
+Not everything quadratic is depth: `<select>` + `"<option>" * n` stays
+quadratic inside Lexbor's `lxb_html_select_selectedness_setting_algorithm`.
 
 **An attribute's parent is Lexbor's own `attr->owner`**, which Lexbor sets when
 it appends an attribute and clears when it removes one; `HtmlNode::parent`

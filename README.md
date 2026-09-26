@@ -28,6 +28,8 @@ XPath 1.0 evaluation in its own native engine, with no libxml2 dependency.
     differential, and property-based testing vs Nokogiri (see below).
 * Bounded, fail-closed execution
   * XPath evaluation is bounded by per-evaluation limits on work, memory, and recursion.
+  * HTML parsing bounds the tree depth (`max_tree_depth:`, default 400), since tree
+    construction is quadratic in it and a parse cannot be interrupted.
   * Ownership and borrowing are kept explicit across layers, with owned/borrowed
     string types and verified text at engine boundaries.
   * Programmatic invalid input, limit violations, allocation failures, and unsupported constructs
@@ -64,6 +66,10 @@ link.parent.name                        # => "div"
 
 # Source location (reconstructed from the tokenizer, no Lexbor patches)
 doc.at_css("p").line                    # => 3
+
+# Nesting deeper than 400 elements raises Makiri::Error (Nokogiri's default);
+# max_tree_depth: raises the limit, and a negative value disables it
+Makiri::HTML(deep_html, max_tree_depth: 2000)
 
 # Serialization
 doc.at_css("#main").to_html             # => "<div id=\"main\" ...>...</div>"
