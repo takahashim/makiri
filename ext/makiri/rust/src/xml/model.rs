@@ -205,6 +205,10 @@ pub enum MutError {
     Type,
     Cycle,
     Hierarchy,
+    /// Text (or CDATA) as a child of the Document node, which the DOM
+    /// refuses and no XML document can hold: it serialized outside the root
+    /// element, and the output did not parse.
+    TextUnderDocument,
     BadNsDecl(crate::xml::qname::NsDeclError),
     /// A null / stale document handle reached a mutator; its own variant, so
     /// it cannot be mistaken for [`MutError::UnboundNs`].

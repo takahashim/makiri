@@ -3,12 +3,15 @@
 //!
 //! Every verb validates BEFORE it changes a link, so a refusal leaves the tree
 //! exactly as it was - including a fragment, whose children are all checked
-//! before any of them moves. The rules themselves are one [`Site`] and one walk
-//! of the container's children ([`Site::check`]).
+//! before any of them moves. The rules themselves are the WHATWG DOM's, shared
+//! with the HTML adapter: [`crate::dom_rules::check`], over the [`Tree`] the
+//! arena implements below.
 
 #![forbid(unsafe_code)]
 
 use super::ns::resolve_into;
+use crate::dom_rules::{self, At, Hierarchy, Tree, Violation};
+use crate::node_type::NodeType;
 use crate::xml::{ArenaKind, Document, MutError, NodeId};
 
 /// The three verbs that splice a fragment's children INTO an existing chain.
@@ -72,48 +75,9 @@ pub fn place(
 fn splice_site(doc: &Document, target: NodeId, splice: Splice) -> Option<Site> {
     match splice {
         Splice::Child => Some(Site::appending(target)),
-        Splice::Before => Some(Site::before(doc.parent(target)?, target)),
-        Splice::After => Some(Site::after(doc.parent(target)?, target)),
+        Splice::Before => Some(Site::before(doc.tree_parent(target)?, target)),
+        Splice::After => Some(Site::after(doc.tree_parent(target)?, target)),
     }
-}
-
-/// The rule no per-child check can see: a Document holds ONE element, counting
-/// the fragment's and the container's own together. Also refuses a DOCTYPE
-/// child, which a fragment cannot hold today - a fragment is not an insertion
-/// container - but which would otherwise be a silent second root-level doctype.
-fn fragment_fits_container(doc: &Document, frag: NodeId, site: Site) -> Result<(), MutError> {
-    if doc.type_(site.container) != Some(ArenaKind::Document) {
-        return Ok(());
-    }
-    if element_child_count(doc, frag, None)
-        + element_child_count(doc, site.container, site.excluded())
-        > 1
-    {
-        return Err(MutError::Hierarchy);
-    }
-    for cur in doc.children(frag) {
-        if doc.type_(cur) == Some(ArenaKind::DocumentType) {
-            return Err(MutError::Hierarchy);
-        }
-    }
-    Ok(())
-}
-
-/// Validate every child of `frag` against `site` AND resolve its namespaces -
-/// `prepare`, not `check`, because `prepare_insert` writes a resolved URI on a
-/// node whose namespace is not yet decided. (A fragment's children always arrive
-/// decided, from a parse or an import, so in practice nothing is written; the
-/// name says what the code may do, not what it usually does.)
-///
-/// On `Ok` the commit that follows cannot fail: it only relinks.
-fn prepare_fragment_children(doc: &mut Document, frag: NodeId, site: Site) -> Result<(), MutError> {
-    fragment_fits_container(doc, frag, site)?;
-    let mut c = doc.first_child(frag);
-    while let Some(cur) = c {
-        prepare_insert(doc, site, cur)?;
-        c = doc.next(cur);
-    }
-    Ok(())
 }
 
 /// Splice every child of `frag` at `splice`, having already validated them.
@@ -126,7 +90,10 @@ fn place_fragment(
     let Some(site) = splice_site(doc, target, splice) else {
         return Err(MutError::Hierarchy);
     };
-    prepare_fragment_children(doc, frag, site)?;
+    /* The fragment is checked as ONE node - the DOM's rules read its children
+     * - and its subtree resolved as one, so every child passes before any
+     * moves. */
+    prepare_insert(doc, site, frag)?;
     /* --- commit pass: relinking only, so nothing here can refuse. `After` is
      * the one verb whose site MOVES - each child lands after the previous - so
      * it is rebuilt per child; the other two keep the validated one. */
@@ -148,21 +115,6 @@ fn place_fragment(
 /// Unlink `node` from its parent.
 pub fn detach(doc: &mut Document, node: NodeId) {
     doc.detach(node);
-}
-
-#[inline]
-fn is_insertable(doc: &Document, node: NodeId) -> bool {
-    matches!(
-        doc.type_(node),
-        Some(
-            ArenaKind::Element
-                | ArenaKind::Text
-                | ArenaKind::CDataSection
-                | ArenaKind::Comment
-                | ArenaKind::Pi
-                | ArenaKind::DocumentType
-        )
-    )
 }
 
 /// Which side of which child an insertion is anchored to.
@@ -187,12 +139,8 @@ enum Anchor {
 
 /// Where an insertion goes, as the hierarchy rules see it: into `container`,
 /// at `anchor` (which also says whether the insertion stands in for a child, so
-/// that child does not count as an existing one).
-///
-/// The parts used to travel as separate arguments through three predicates that
-/// each walked the container's children again - up to four walks for one
-/// insertion at the document node. Here they are one value and [`Site::check`]
-/// is one walk.
+/// that child does not count as an existing one). The rules read it through
+/// [`Site::at`]; the linking through [`Site::neighbours`].
 #[derive(Clone, Copy)]
 struct Site {
     container: NodeId,
@@ -227,22 +175,15 @@ impl Site {
         }
     }
 
-    /// The child the insertion goes BEFORE, for the position-sensitive rules -
-    /// read while the tree is still whole, before anything is detached.
-    fn insertion_point(&self, doc: &Document) -> Option<NodeId> {
+    /// The site as the DOM's rules read it: the reference child the insertion
+    /// goes before (none for an append), or the one it replaces - read while
+    /// the tree is still whole, before anything is detached.
+    fn at(&self, doc: &Document) -> At<NodeId> {
         match self.anchor {
-            Anchor::End => None,
-            Anchor::Before(r) | Anchor::Replacing(r) => Some(r),
-            Anchor::After(r) => doc.next(r),
-        }
-    }
-
-    /// The child that does not count as already being here: a `replace`'s
-    /// target, which is on its way out.
-    fn excluded(&self) -> Option<NodeId> {
-        match self.anchor {
-            Anchor::Replacing(r) => Some(r),
-            _ => None,
+            Anchor::End => At::Before(None),
+            Anchor::Before(r) => At::Before(Some(r)),
+            Anchor::After(r) => At::Before(doc.next(r)),
+            Anchor::Replacing(r) => At::Replacing(r),
         }
     }
 
@@ -264,114 +205,58 @@ impl Site {
             Anchor::Replacing(r) => (doc.prev(r), doc.next(r)),
         }
     }
+}
 
-    fn tally(&self, doc: &Document, node: NodeId) -> Tally {
-        let mut t = Tally {
-            elements: 0,
-            doctypes: 0,
-            element_before: false,
-            doctype_at_or_after: false,
-        };
-        let before = self.insertion_point(doc);
-        let exclude = self.excluded();
-        let mut reached = false;
-        for cur in doc.children(self.container) {
-            if Some(cur) == before {
-                reached = true;
-            }
-            if Some(cur) != exclude && cur != node {
-                match doc.type_(cur) {
-                    Some(ArenaKind::Element) => {
-                        t.elements += 1;
-                        if !reached {
-                            t.element_before = true;
-                        }
-                    }
-                    Some(ArenaKind::DocumentType) => {
-                        t.doctypes += 1;
-                        if reached {
-                            t.doctype_at_or_after = true;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-        t
+/// The arena as [`dom_rules`] reads it. An attribute's stored parent is its
+/// owner element, which is not a tree parent; and no XML fragment has a host.
+impl Tree for Document {
+    type Node = NodeId;
+    #[inline]
+    fn node_type(&self, n: NodeId) -> NodeType {
+        self.type_(n).map_or(NodeType::Other, NodeType::from)
     }
-
-    /// The WHATWG document-child rules for `node` entering this site: at most
-    /// one element and one doctype under a Document, the doctype before the
-    /// element, and no doctype anywhere else. Fail-closed.
-    fn check(&self, doc: &Document, node: NodeId) -> Result<(), MutError> {
-        let ty = doc.type_(node);
-        if doc.type_(self.container) != Some(ArenaKind::Document) {
-            /* Only a Document may hold a doctype. */
-            return if ty == Some(ArenaKind::DocumentType) {
-                Err(MutError::Hierarchy)
-            } else {
-                Ok(())
-            };
+    #[inline]
+    fn tree_parent(&self, n: NodeId) -> Option<NodeId> {
+        match self.type_(n)? {
+            ArenaKind::Attribute => None,
+            _ => Document::parent(self, n),
         }
-        match ty {
-            Some(ArenaKind::DocumentType) => {
-                let t = self.tally(doc, node);
-                if t.doctypes > 0 || t.element_before {
-                    Err(MutError::Hierarchy)
-                } else {
-                    Ok(())
-                }
-            }
-            Some(ArenaKind::Element) => {
-                let t = self.tally(doc, node);
-                if t.elements > 0 || t.doctype_at_or_after {
-                    Err(MutError::Hierarchy)
-                } else {
-                    Ok(())
-                }
-            }
-            _ => Ok(()),
-        }
+    }
+    #[inline]
+    fn host(&self, _n: NodeId) -> Option<NodeId> {
+        None
+    }
+    #[inline]
+    fn first_child(&self, n: NodeId) -> Option<NodeId> {
+        Document::first_child(self, n)
+    }
+    #[inline]
+    fn next_sibling(&self, n: NodeId) -> Option<NodeId> {
+        Document::next(self, n)
     }
 }
 
-/// What the rules need to know about the container's existing children, counted
-/// in one pass. "Before" and "at or after" are relative to [`Site::before`];
-/// with no `before` nothing is ever reached, so every child counts as before it.
-struct Tally {
-    elements: usize,
-    doctypes: usize,
-    /// An element strictly before the insertion point.
-    element_before: bool,
-    /// A doctype at or after the insertion point.
-    doctype_at_or_after: bool,
-}
-
-fn would_cycle(doc: &Document, container: NodeId, node: NodeId) -> bool {
-    let mut p = Some(container);
-    while let Some(cur) = p {
-        if cur == node {
-            return true;
-        }
-        p = doc.parent(cur);
+/// A refused insertion as the mutators report it: the own-subtree rule as
+/// [`MutError::Cycle`], Text under the Document as its own status, and every
+/// other rule as the one [`MutError::Hierarchy`] they have always shared.
+fn refusal(v: Violation) -> MutError {
+    match v {
+        Violation::HierarchyRequest(Hierarchy::Ancestor) => MutError::Cycle,
+        Violation::HierarchyRequest(Hierarchy::TextUnderDocument) => MutError::TextUnderDocument,
+        _ => MutError::Hierarchy,
     }
-    false
 }
 
 /// Validation + namespace resolution for inserting `node` at `site`. No
 /// structural change.
+///
+/// A DOCUMENT_FRAGMENT is one node here: the rules read its children, and
+/// [`resolve_into`] plans every element under it before writing any, so a
+/// child whose prefix does not bind leaves its siblings undecided too. Under a
+/// DETACHED fragment - a fragment is never connected - an unbound prefix stays
+/// deferred, and resolves when the fragment is spliced into a document.
 fn prepare_insert(doc: &mut Document, site: Site, node: NodeId) -> Result<(), MutError> {
-    if !is_insertable(doc, node) {
-        return Err(MutError::Hierarchy);
-    }
-    let ct = doc.type_(site.container);
-    if ct != Some(ArenaKind::Element) && ct != Some(ArenaKind::Document) {
-        return Err(MutError::Hierarchy);
-    }
-    if would_cycle(doc, site.container, node) {
-        return Err(MutError::Cycle);
-    }
-    site.check(doc, node)?;
+    dom_rules::check(&*doc, site.container, node, site.at(doc)).map_err(refusal)?;
     resolve_into(doc, node, site.container)
 }
 
@@ -395,7 +280,11 @@ pub fn insert_before(doc: &mut Document, r: NodeId, node: NodeId) -> Result<(), 
     if node == r {
         return Ok(());
     }
-    match doc.parent(r) {
+    /* The TREE parent, here and in every sibling verb: an attribute's stored
+     * parent is its owner, and a node placed "beside" one was spliced into
+     * the owner's children off the attribute's links - the attribute turned
+     * up among the children and the element lost its old ones. */
+    match doc.tree_parent(r) {
         Some(container) => insert_at(doc, Site::before(container, r), node),
         None => Err(MutError::Hierarchy),
     }
@@ -405,7 +294,7 @@ pub fn insert_after(doc: &mut Document, r: NodeId, node: NodeId) -> Result<(), M
     if node == r {
         return Ok(());
     }
-    match doc.parent(r) {
+    match doc.tree_parent(r) {
         Some(container) => insert_at(doc, Site::after(container, r), node),
         None => Err(MutError::Hierarchy),
     }
@@ -414,7 +303,7 @@ pub fn insert_after(doc: &mut Document, r: NodeId, node: NodeId) -> Result<(), M
 pub fn replace_node(doc: &mut Document, r: NodeId, node: NodeId) -> Result<(), MutError> {
     /* The parent check comes FIRST here, unlike the sibling verbs: replacing a
      * DETACHED node is a hierarchy error even when it is replaced by itself. */
-    let Some(container) = doc.parent(r) else {
+    let Some(container) = doc.tree_parent(r) else {
         return Err(MutError::Hierarchy);
     };
     if node == r {
@@ -437,27 +326,17 @@ pub fn remove(doc: &mut Document, node: NodeId) {
     }
 }
 
-fn element_child_count(doc: &Document, parent: NodeId, exclude: Option<NodeId>) -> usize {
-    let mut n = 0;
-    for cur in doc.children(parent) {
-        if Some(cur) != exclude && doc.type_(cur) == Some(ArenaKind::Element) {
-            n += 1;
-        }
-    }
-    n
-}
-
 /// Replace `target` with the CHILDREN of `frag`, atomically (fail-closed).
 pub fn replace_with_fragment(
     doc: &mut Document,
     target: NodeId,
     frag: NodeId,
 ) -> Result<(), MutError> {
-    let Some(container) = doc.parent(target) else {
+    let Some(container) = doc.tree_parent(target) else {
         return Err(MutError::Hierarchy);
     };
     /* --- validation pass: no links change until it all passes */
-    prepare_fragment_children(doc, frag, Site::replacing(container, target))?;
+    prepare_insert(doc, Site::replacing(container, target), frag)?;
     /* --- commit pass: every child takes target's slot in fragment order */
     while let Some(c) = doc.first_child(frag) {
         doc.detach(c);

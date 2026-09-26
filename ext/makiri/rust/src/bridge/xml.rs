@@ -202,6 +202,7 @@ fn xml_mut_error(st: MutError) -> Error {
         MutError::UnboundNs => "namespace prefix is not bound in this scope",
         MutError::Type => "operation unsupported for this node type",
         MutError::Cycle => "cannot insert a node into its own subtree",
+        MutError::TextUnderDocument => "text cannot be a child of the document",
         MutError::Hierarchy => {
             "invalid placement (an attribute/document node cannot be a tree child, a document \
 allows a single root element, and a sibling target must have a parent)"

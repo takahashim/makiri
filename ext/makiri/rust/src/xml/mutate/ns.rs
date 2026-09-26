@@ -261,7 +261,8 @@ fn resolve_subtree(doc: &mut Document, root: NodeId, connected: bool) -> Result<
 }
 
 /// Resolve `node`'s subtree as if it were a child of `context`, WITHOUT linking
-/// it (borrow node.parent for the ancestor walk, then restore).
+/// it (borrow node.parent for the ancestor walk, then restore). For a
+/// DOCUMENT_FRAGMENT that is every child about to be spliced, planned as one.
 pub(super) fn resolve_into(
     doc: &mut Document,
     node: NodeId,
