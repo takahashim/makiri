@@ -27,6 +27,9 @@ pub enum PreInsertError {
     NoParent,
     /// An attribute node cannot be a child.
     AttributeNode,
+    /// A document cannot be a child (WHATWG DOM "ensure pre-insertion
+    /// validity": a HierarchyRequestError).
+    DocumentNode,
     /// The node is the target or one of its ancestors.
     OwnSubtree,
     DoctypeParent,
@@ -83,8 +86,10 @@ impl<'d> Insertion<'d> {
     /// node can be a child at all and is not the target or its ancestor.
     pub fn check(&self) -> Result<(), PreInsertError> {
         self.check_document_order()?;
-        if self.node.node_type() == NodeType::Attribute {
-            return Err(PreInsertError::AttributeNode);
+        match self.node.node_type() {
+            NodeType::Attribute => return Err(PreInsertError::AttributeNode),
+            NodeType::Document => return Err(PreInsertError::DocumentNode),
+            _ => {}
         }
         /* The target itself counts: a node placed relative to itself would be
          * detached from the very position it is placed at. */

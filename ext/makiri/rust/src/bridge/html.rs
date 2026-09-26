@@ -331,6 +331,7 @@ fn refused(e: PreInsertError, place: Place) -> Error {
         }
         PreInsertError::NoParent => "cannot add a sibling to a node with no parent",
         PreInsertError::AttributeNode => "an attribute node cannot be inserted into the tree",
+        PreInsertError::DocumentNode => "a document node cannot be inserted into the tree",
         PreInsertError::OwnSubtree => "cannot insert a node into its own subtree",
         PreInsertError::DoctypeParent => "a doctype node can only be a child of the document",
         PreInsertError::DuplicateDoctype => "the document already has a doctype",

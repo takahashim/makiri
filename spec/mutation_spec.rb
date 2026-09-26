@@ -335,6 +335,20 @@ RSpec.describe "Makiri mutation" do
       attr = doc.at_css("#d").attribute_nodes.first
       expect { div.add_child(attr) }.to raise_error(Makiri::Error)
     end
+
+    # WHATWG DOM's pre-insertion check: a document is never a child. It was
+    # let through, making the document its own element's descendant (or, from
+    # another document, splicing a whole copied #document into an element).
+    it "rejects inserting a document, its own or another" do
+      el = doc.create_element("div")
+      expect { el.add_child(doc) }.to raise_error(Makiri::Error, /document node/)
+      expect(doc.parent).to be_nil
+
+      other = Makiri::HTML("<p>o</p>")
+      expect { div.add_child(other) }.to raise_error(Makiri::Error, /document node/)
+      expect { div.add_next_sibling(other) }.to raise_error(Makiri::Error, /document node/)
+      expect(div.to_html).not_to include("#document")
+    end
   end
 
   describe "#content=" do
