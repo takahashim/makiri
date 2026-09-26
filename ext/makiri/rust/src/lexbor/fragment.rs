@@ -13,7 +13,6 @@
 #![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
-use crate::falloc::VecPush;
 use crate::lexbor::abi::consts::STATUS_OK as LXB_STATUS_OK;
 
 /* ------------------------------------------------------------------ *
@@ -43,47 +42,45 @@ use crate::utf8_input::sanitize;
 
 /// `lxb_dom_document_import_node` deep-clones the normal child chain but NOT a
 /// `<template>`'s separate content fragment, so an imported template comes out
-/// empty. Walk source and clone in lockstep (deep import preserves child order
-/// 1:1) and import each template's content into the clone's.
+/// empty. Walk source and clone in lockstep and import each template's content
+/// into the clone's.
+///
+/// The walk is `preorder_next_with_contents`, which enters every template's
+/// contents: a template's contents are imported into the clone's the moment
+/// the walk reaches it, before either side steps into them, so the two walks
+/// go on matching 1:1 inside the contents too - which is how a template nested
+/// in another's contents gets its own contents in turn.
 ///
 /// The same lockstep walk gives each copied element the name its source
 /// records as written, which Lexbor's copy also leaves out
 /// (`BuildingNode::copy_written_name_from`).
 ///
-/// Iterative, with an explicit worklist: an adversarially deep fragment must not
-/// be able to overflow the stack. Fail-closed on allocation failure: a template
-/// content that could not be copied refuses the whole import rather than
-/// leaving a clone that is silently short.
+/// Stack-free, like the walk: an adversarially deep fragment must not be able
+/// to overflow the stack. Fail-closed on allocation failure: a template content
+/// that could not be copied refuses the whole import rather than leaving a
+/// clone that is silently short.
 ///
 /// `template_content` answers in one what this used to ask in three: it is
 /// `None` for a node that is not an HTML `<template>` AND for one Lexbor gave no
-/// contents fragment. Those are the same case here, because the only thing this
-/// walk does is copy one existing contents fragment into another - which is why
-/// `cross_import`'s `h2x_first_child`, where an empty template and a
-/// non-template mean DIFFERENT children, keeps a test of its own.
+/// contents fragment. The walk tells those apart where it matters: a source
+/// template with contents whose copy has none (or the reverse) would make the
+/// two walks part ways, so it refuses the copy. `cross_import`'s
+/// `h2x_first_child`, where an empty template and a non-template mean
+/// DIFFERENT children, keeps a test of its own.
 fn fixup_template_content(
     doc: HtmlDoc<'_>,
     root_src: HtmlNode<'_>,
     root_clone: BuildingNode<'_>,
 ) -> Result<(), AdapterOom> {
-    let mut stack: Vec<(HtmlNode<'_>, BuildingNode<'_>)> = Vec::new();
-    /* The worklist's own allocation failing refuses the copy as surely as
-     * Lexbor's does. */
-    stack
-        .falloc_push((root_src, root_clone))
-        .map_err(|()| AdapterOom)?;
-
-    while let Some((src_root, clone_root)) = stack.pop() {
-        let (mut sn, mut cn) = (Some(src_root), Some(clone_root));
-        while let (Some(s), Some(c)) = (sn, cn) {
-            /* Nested rather than a tuple: the clone-side test is only worth
-             * paying for once the source side has said this is a template, and
-             * every node of every deep import passes through here. */
-            c.copy_written_name_from(s)?;
-            if let Some((sc, cc)) = s
-                .template_content()
-                .and_then(|sc| Some((sc, c.template_content()?)))
-            {
+    let (mut sn, mut cn) = (Some(root_src), Some(root_clone));
+    while let (Some(s), Some(c)) = (sn, cn) {
+        c.copy_written_name_from(s)?;
+        /* The clone-side test is only worth paying for once the source side
+         * has said this is a template: every node of every deep import passes
+         * through here. */
+        match s.template_content() {
+            Some(sc) => {
+                let cc = c.template_content().ok_or(AdapterOom)?;
                 for child in sc.children() {
                     let Some(imp) = doc.import_node(child, true) else {
                         // Lexbor could not copy a content child. Giving up
@@ -93,11 +90,15 @@ fn fixup_template_content(
                     };
                     cc.insert_child(imp);
                 }
-                stack.falloc_push((sc, cc)).map_err(|()| AdapterOom)?;
             }
-            sn = s.preorder_next(src_root);
-            cn = c.preorder_next(clone_root);
+            /* A template Lexbor gave no contents: its copy must have none. */
+            None if s.is_html_template() && c.template_content().is_some() => {
+                return Err(AdapterOom);
+            }
+            None => {}
         }
+        sn = s.preorder_next_with_contents(root_src);
+        cn = c.preorder_next_with_contents(root_clone);
     }
     Ok(())
 }

@@ -653,6 +653,68 @@ impl<'doc> HtmlNode<'doc> {
         }
     }
 
+    /// This node and every node below it, `<template>` contents included; see
+    /// [`HtmlNode::preorder_next_with_contents`].
+    #[inline]
+    pub fn subtree_with_contents(self) -> impl Iterator<Item = HtmlNode<'doc>> {
+        core::iter::successors(Some(self), move |n| n.preorder_next_with_contents(self))
+    }
+
+    /// [`preorder_next`](Self::preorder_next), but entering every HTML
+    /// `<template>`'s contents fragment as well - the walk for "every node a
+    /// deep copy produced", since a template's contents are copied with it yet
+    /// are not its children. The order is the template, its contents fragment
+    /// and that fragment's subtree, then the template's own children.
+    ///
+    /// Stack-free like `preorder_next`: a contents fragment has no parent, so
+    /// the climb leaves one through its `host` - the template - and goes on
+    /// with the template's children, then its siblings.
+    pub fn preorder_next_with_contents(self, root: Self) -> Option<Self> {
+        if let Some(c) = self.template_content() {
+            return Some(c);
+        }
+        if let Some(c) = self.first_child() {
+            return Some(c);
+        }
+        let mut n = self;
+        loop {
+            if n == root {
+                return None;
+            }
+            if let Some(s) = n.next() {
+                return Some(s);
+            }
+            n = match n.parent() {
+                Some(p) => p,
+                None => {
+                    /* Out of a template's contents: its host's own children
+                     * follow, then the climb carries on from the host. */
+                    let host = n.template_host()?;
+                    if let Some(c) = host.first_child() {
+                        return Some(c);
+                    }
+                    host
+                }
+            };
+        }
+    }
+
+    /// The `<template>` whose contents fragment this is, or None - for any
+    /// other node, and for a fragment that is not a template's contents.
+    fn template_host(self) -> Option<HtmlNode<'doc>> {
+        if self.node_type() != NodeType::DocumentFragment {
+            return None;
+        }
+        // SAFETY: every Lexbor node of type DOCUMENT_FRAGMENT is allocated as
+        // a `lxb_dom_document_fragment_t` (`lxb_dom_document_fragment_
+        // interface_create`); `host` is null or an element of the document.
+        let host = Self::link(unsafe {
+            (*(self.as_raw() as *mut lxb::lxb_dom_document_fragment_t)).host as *mut LxbNode
+        })?;
+        /* Only the template that owns this very fragment. */
+        (host.template_content() == Some(self)).then_some(host)
+    }
+
     #[inline]
     pub fn element(self) -> Option<HtmlElement<'doc>> {
         (self.node_type() == NodeType::Element).then_some(HtmlElement(self))

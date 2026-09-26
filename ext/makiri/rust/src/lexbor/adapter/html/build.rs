@@ -298,9 +298,9 @@ impl<'doc> BuildingNode<'doc> {
         self.0.as_raw()
     }
 
-    /// Forget the source position of this node and everything below it.
-    /// (A `<template>`'s contents are never stamped - the position walk goes
-    /// through children - so there is nothing there to forget.)
+    /// Forget the source position of this node and everything below it,
+    /// `<template>` contents included: those are stamped at creation like any
+    /// other element, and a deep copy carries them along.
     ///
     /// For a copy made from ANOTHER document: Lexbor's import copies `user`,
     /// and the offset in it indexes the source document's text, so `#line`
@@ -308,10 +308,8 @@ impl<'doc> BuildingNode<'doc> {
     /// source became 22 here). No position is the truthful answer - nil.
     /// Iterative, like every walk over a tree built from input.
     pub fn clear_source_offsets(self) {
-        let mut cur = Some(self);
-        while let Some(n) = cur {
-            n.0.forget_source_offset();
-            cur = n.preorder_next(self);
+        for n in self.0.subtree_with_contents() {
+            n.forget_source_offset();
         }
     }
 
@@ -377,11 +375,11 @@ impl<'doc> BuildingNode<'doc> {
         self.0.template_content().map(BuildingNode)
     }
 
-    /// The next node in a pre-order walk of `root`'s subtree, staying inside
-    /// the subtree being built.
+    /// The next node in a walk of `root`'s subtree that also enters every
+    /// `<template>`'s contents; see [`HtmlNode::preorder_next_with_contents`].
     #[inline]
-    pub fn preorder_next(self, root: Self) -> Option<Self> {
-        self.0.preorder_next(root.0).map(BuildingNode)
+    pub fn preorder_next_with_contents(self, root: Self) -> Option<Self> {
+        self.0.preorder_next_with_contents(root.0).map(BuildingNode)
     }
 
     /// Link `child` in as the last child.

@@ -212,6 +212,38 @@ RSpec.describe "Makiri source location" do
     end
   end
 
+  describe "a <template>'s contents copied from another document" do
+    # A <template>'s contents are stamped as they are created, like any other
+    # element, but they are not its children: a walk over children alone left
+    # the copied contents answering a line of the other document (9 here).
+    describe "when stamped" do
+      let(:src) do
+        Makiri.HTML("<body>\n\n\n\n\n<template><div>x<template><i>y</i></template></div></template>")
+      end
+      let(:dst) { Makiri.HTML("a\nb\nc\nd\ne\nf\ng\nh\n<body>") }
+
+      def contents_lines(template)
+        div = template.content_fragment.children.first
+        [div.line, div.at_css("template").content_fragment.children.first.line]
+      end
+
+      before { expect(contents_lines(src.at_css("template"))).to eq([6, 6]) }
+
+      it "has no line after import_node" do
+        expect(contents_lines(dst.import_node(src.at_css("template"), true))).to eq([nil, nil])
+      end
+
+      it "has no line after being adopted by insertion" do
+        dst.at_css("body").add_child(src.at_css("template"))
+        expect(contents_lines(dst.at_css("template"))).to eq([nil, nil])
+      end
+
+      it "keeps its lines in a copy made within the same document" do
+        expect(contents_lines(src.at_css("template").clone_node(true))).to eq([6, 6])
+      end
+    end
+  end
+
   describe "parsing still behaves" do
     it "produces an equivalent DOM to the plain parse path" do
       doc = Makiri::HTML("<html><body><div><p>a</p><p>b</p></div></body></html>")

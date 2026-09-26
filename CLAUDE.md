@@ -422,7 +422,9 @@ by the check that concluded "every undefined symbol is legitimate".
 - **`node->user` is reserved** for source-location byte offsets (see below) - do
   not repurpose it. Its encoding (offset + 1) lives in `HtmlNode::source_offset`
   / `stamp_source_offset` / `forget_source_offset`, the only reader and writers
-  (a copy from another document forgets the offsets it copied).
+  (a copy from another document forgets the offsets it copied, `<template>`
+  contents included: `HtmlNode::subtree_with_contents` is THE walk over what a
+  deep copy produced, and the import fixup walks in lockstep with it).
 - **Lexbor's DOM structs are read only through `lexbor::adapter::html`'s typed
   handles** - the index builders included; its only tree writes are the
   source-offset stamp and forget (`HtmlNode::stamp_source_offset`,
