@@ -181,18 +181,6 @@ pub fn content(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
     })
 }
 
-/// `#value`: an attribute's value; for any other node its text content, as
-/// the HTML `#value` answers.
-pub fn value(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        let d = this.doc_ref();
-        if d.type_(this.id) == Some(ArenaKind::Attribute) {
-            return Ok(str_field(ruby, d.value(this.id)));
-        }
-        content(ruby, this)
-    })
-}
-
 /* ---- navigation ---- */
 
 pub fn parent(this: XmlSelf) -> Result<Option<Value>, Error> {

@@ -49,10 +49,10 @@ fn init_read() -> Result<(), Error> {
     m.define_method("target", method!(read::pi_target, 0))?;
     m.define_method("node_type", method!(read::node_type, 0))?;
 
-    for name in ["content", "text", "inner_text"] {
+    /* `value` too: an attribute's content IS its value. */
+    for name in ["content", "text", "inner_text", "value"] {
         m.define_method(name, method!(read::content, 0))?;
     }
-    m.define_method("value", method!(read::value, 0))?;
 
     m.define_method("document", method!(read::get_document, 0))?;
     m.define_method("parent", method!(read::parent, 0))?;
