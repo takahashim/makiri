@@ -79,6 +79,26 @@
 
 ### Fixed
 
+* Insertion follows the WHATWG DOM's "ensure pre-insertion validity" in both
+  representations, from one implementation. What it changes:
+  * HTML: `template.content_fragment.add_child(template)` (or into any node of
+    the contents) raises. It made a cycle through the contents' host link,
+    after which `dup` and `import_node` looped forever with the GVL held.
+  * HTML: a Text, Comment, ProcessingInstruction, DocumentType or Attr node no
+    longer takes children; `doctype.add_child(el)` put `el` at document level
+    beside `<html>`.
+  * XML: Text or CDATA as a child of the Document raises, as HTML already did;
+    `doc << text` wrote the text outside the root, and the output did not parse.
+  * XML: a DocumentFragment takes children (`fragment.add_child(el)`, and
+    `before` / `after` / `replace` on its children), as the DOM and Nokogiri
+    allow. A prefix unbound there stays undecided until the fragment is
+    spliced, and a splice whose prefixes do not all bind changes nothing.
+    `XML::Document#import_node` of an HTML DocumentFragment, which raised,
+    now copies it.
+  * Both: `add_previous_sibling` / `add_next_sibling` / `replace` on an
+    attribute raise: an attribute has no parent in the tree. In XML they
+    spliced the node into the owner element's children and lost the
+    element's old ones.
 * `Element#inner_html` and `#inner_html=` on an HTML `<template>` now target its
   template contents, as the WHATWG DOM special-cases `innerHTML` for a template.
   The getter read the element's (empty) children while `#to_html` serialized the

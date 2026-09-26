@@ -177,6 +177,10 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
   there is no `content_fragment`.
 * An HTML document has one root element and no text child, as the DOM requires;
   `doc << element` beside an existing root raises.
+* An insertion the DOM refuses - a child under a text, comment, PI, doctype
+  or attribute node, text under an XML Document, a second root - raises
+  `Makiri::Error` in both representations. Nokogiri refuses the same ones with
+  `ArgumentError` (or `RuntimeError` for a second XML root).
 * Moving HTML into an XML document (`xml_doc.import_node(html_node)`, or
   inserting one) keeps every name's namespace, and refuses what XML cannot
   write that way. An attribute in no namespace whose name has a prefix other
