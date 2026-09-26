@@ -81,8 +81,12 @@ impl Document {
         doc.stamp = stamp;
         doc.xml_ns = doc.store(crate::xml::XML_NS_URI)?;
         doc.xmlns_ns = doc.store(crate::xml::XMLNS_NS_URI)?;
-        /* Index 0 is reserved: its token word is 0, the engine's null slot, so
-         * a real node never has index 0. */
+        /* Index 0 is reserved, and it is a 4-byte `Link` that forces it: a
+         * `Link` is a `NonZeroU32`, so no link can name slot 0 - and the
+         * document node IS a link target (its children's `parent`). The
+         * absent handle `NodeId::INVALID` is word 0 (index 0, stamp 0), and
+         * real nodes carry a nonzero stamp, so their word is never 0 either;
+         * the two facts agree that real nodes start at index 1. */
         let _null_slot = doc.new_node(ArenaKind::Document)?;
         doc.doc_node = doc.new_node(ArenaKind::Document)?;
         Ok(doc)
@@ -118,12 +122,14 @@ impl Document {
     #[inline]
     pub(crate) fn node(&self, id: NodeId) -> &Node {
         debug_assert_eq!(id.stamp(), self.stamp, "NodeId from another document");
+        debug_assert!(!id.is_invalid(), "the absent NodeId names slot 0");
         &self.nodes[id.index() as usize]
     }
     /// As [`Document::node`], for mutation.
     #[inline]
     pub(crate) fn node_mut(&mut self, id: NodeId) -> &mut Node {
         debug_assert_eq!(id.stamp(), self.stamp, "NodeId from another document");
+        debug_assert!(!id.is_invalid(), "the absent NodeId names slot 0");
         &mut self.nodes[id.index() as usize]
     }
 
@@ -484,11 +490,13 @@ impl Document {
 
     #[inline]
     pub(super) fn set_parent(&mut self, id: NodeId, parent: Option<NodeId>) {
+        assert_linkable(parent);
         self.node_mut(id).parent = Link::from_option(parent);
     }
 
     /// Append `child` as the last child of `parent`.
     pub(super) fn append_child(&mut self, parent: NodeId, child: NodeId) {
+        assert_linkable(Some(parent));
         let (parent_link, child_link) = (Link::of(parent), Link::of(child));
         let last = self.node(parent).last_child;
         assert_no_self_link(child_link, parent_link, last, None);
@@ -593,6 +601,7 @@ impl Document {
     /// knows the end. An `append_attr` that walked to it existed and turned out
     /// to have no callers left once the tail was threaded through.
     pub(super) fn link_attr(&mut self, el: NodeId, tail: Option<NodeId>, attr: NodeId) {
+        assert_linkable(Some(el));
         assert_no_self_link(Link::of(attr), Link::of(el), Link::from_option(tail), None);
         self.node_mut(attr).parent = Link::of(el);
         match tail {
@@ -609,6 +618,7 @@ impl Document {
         prev: Option<NodeId>,
         next: Option<NodeId>,
     ) {
+        assert_linkable(Some(container));
         let node_link = Link::of(node);
         let prev = Link::from_option(prev);
         let next = Link::from_option(next);
@@ -737,6 +747,20 @@ impl Document {
 
 /// A node may not be its own parent or its own sibling.
 ///
+/// The container-taking link surgery must not be handed the absent handle:
+/// `Link::of(INVALID)` is `None`, so the node would be linked to "no parent"
+/// while the write lands on slot 0 (the reserved document node) - silent
+/// corruption of the tree. Every public entry checks `type_` first, so this can
+/// only fire on a broken internal caller; a debug check is enough, and a branch
+/// on the parse's hottest linking path is not worth the release cost.
+#[inline]
+fn assert_linkable(container: Option<NodeId>) {
+    debug_assert!(
+        container.is_none_or(|c| !c.is_invalid()),
+        "the absent NodeId must not be a link container"
+    );
+}
+
 /// Checked in RELEASE at the three places that write a link, which is not the
 /// usual `debug_assert` trade. A cycle here is not a wrong answer that a later
 /// check could catch: `node.next == node` is a ring, and every walk in the

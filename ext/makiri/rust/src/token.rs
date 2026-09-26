@@ -99,8 +99,10 @@ impl Token {
 }
 
 /// A token keys the engine's per-evaluate tables (the string-value cache, the
-/// document-order index). Its word alone cannot mark an empty slot - an XML
-/// token is an arena index, and 0 is one - so the empty slot is the null token.
+/// document-order index). A real token's word is never 0 - an HTML word is a
+/// non-null pointer, an XML word packs the arena index under a nonzero
+/// document stamp - but the table still needs a value no real token equals, so
+/// the empty slot carries a kind (`Null`) that no real token has.
 impl crate::ptr_table::TableKey for Token {
     const EMPTY: Token = Token::null();
     #[inline]
