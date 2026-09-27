@@ -177,9 +177,14 @@ pub trait VecPush<T> {
     /// `Err(())` leaves the vector unchanged.
     fn falloc_push(&mut self, item: T) -> Result<(), ()>;
     /// Append a slice. `Err(())` leaves the vector unchanged.
+    ///
+    /// `T: Copy`, not `Clone`: `extend_from_slice` clones each element, and a
+    /// non-`Copy` element's `clone` can allocate through the global allocator,
+    /// outside the sweep and aborting on failure. `Copy`'s clone is a bitwise
+    /// copy, so the reserve above is the only allocation.
     fn falloc_extend(&mut self, s: &[T]) -> Result<(), ()>
     where
-        T: Clone;
+        T: Copy;
 }
 
 impl<T> VecPush<T> for Vec<T> {
@@ -192,7 +197,7 @@ impl<T> VecPush<T> for Vec<T> {
     #[inline]
     fn falloc_extend(&mut self, s: &[T]) -> Result<(), ()>
     where
-        T: Clone,
+        T: Copy,
     {
         self.falloc_reserve(s.len())?;
         self.extend_from_slice(s);
@@ -277,17 +282,23 @@ pub fn try_vec_with_capacity<T>(cap: usize) -> Option<Vec<T>> {
 }
 
 /// Copy a slice into a fresh `Vec`, or fail.
+///
+/// `T: Copy`, not `Clone`: this is the elementwise copy path, and a non-`Copy`
+/// element's `clone` may allocate through the global allocator - outside the
+/// sweep and aborting on failure - under a name that promises fallible
+/// allocation. Every caller copies bytes or handle words.
 #[inline]
-pub fn try_to_vec<T: Clone>(s: &[T]) -> Option<Vec<T>> {
+pub fn try_to_vec<T: Copy>(s: &[T]) -> Option<Vec<T>> {
     let mut v = try_vec_with_capacity(s.len())?;
     v.extend_from_slice(s);
     Some(v)
 }
 
 /// Copy a slice into a fresh boxed slice, or fail. The shape most of the
-/// pointer-keyed caches want for their keys.
+/// pointer-keyed caches want for their keys. `T: Copy` for the same reason as
+/// [`try_to_vec`].
 #[inline]
-pub fn try_to_boxed_slice<T: Clone>(s: &[T]) -> Option<Box<[T]>> {
+pub fn try_to_boxed_slice<T: Copy>(s: &[T]) -> Option<Box<[T]>> {
     Some(try_to_vec(s)?.into_boxed_slice())
 }
 
