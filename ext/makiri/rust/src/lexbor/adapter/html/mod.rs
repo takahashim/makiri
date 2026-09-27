@@ -503,12 +503,15 @@ impl HtmlNodeKey {
     /// The key for `node` under `owner`, with no owner check of its own.
     ///
     /// # Safety
-    /// `node` must be a live node of the document `owner` names. A key built
-    /// with a mismatched owner, or from a dead node, makes the safe
-    /// `HtmlParsed::resolve` unsound - that safe function trusts every key to
-    /// come from here under this contract. `HtmlParsed::mint_key` is the
-    /// checked producer; the visibility reaches `lexbor::adapter` only because
-    /// Rust cannot narrow a constructor to a sibling module.
+    /// `node` must be a live node of the document `owner` names, and that
+    /// document must stay alive at the address `owner` holds until the key is
+    /// no longer used. A key built with a mismatched owner, from a dead node,
+    /// or used after its owner is gone (the address could be reused), makes the
+    /// safe `HtmlParsed::resolve` unsound - it compares the owner address and
+    /// then dereferences the node, trusting every key to come from here under
+    /// this contract. `HtmlParsed::mint_key` is the checked producer; the
+    /// visibility reaches `lexbor::adapter` only because Rust cannot narrow a
+    /// constructor to a sibling module.
     #[inline]
     pub(in crate::lexbor::adapter) unsafe fn new(owner: HtmlDocIdentity, node: RawNode) -> Self {
         HtmlNodeKey { owner, node }
@@ -520,12 +523,15 @@ impl HtmlNodeKey {
         self.owner
     }
 
-    /// The node pointer, for `HtmlParsed::resolve`. The bridge's node identity
-    /// and XPath token will read it too once keys are stored in `NodeData`, at
-    /// which point this accessor is widened to `pub(crate)`. Never dereferenced
-    /// from outside `lexbor`.
+    /// The node pointer, for `HtmlParsed::resolve` and for the bridge's node
+    /// identity, wrapper transport and XPath token. Never dereferenced from
+    /// outside `lexbor`.
+    ///
+    /// Named `raw_node` so the one way a key yields its raw handle is specific
+    /// enough for `script/check_unsafe_boundaries.rb` to count every bridge use
+    /// of it.
     #[inline]
-    pub(in crate::lexbor::adapter) fn node(self) -> RawNode {
+    pub(crate) fn raw_node(self) -> RawNode {
         self.node
     }
 }

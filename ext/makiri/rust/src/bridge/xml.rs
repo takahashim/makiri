@@ -72,7 +72,9 @@ pub fn wrap_xml_node(id: NodeId, document: Value) -> Value {
     }
     let klass = XML_NODE_CLASSES.class_for(ty.map_or(CrateKind::Other, Into::into));
 
-    crate::bridge::wrapper::wrap_cached(&XML_NODE_TYPE, klass, id.into(), document)
+    crate::bridge::wrapper::wrap_cached(&XML_NODE_TYPE, klass, id.to_token(), document, || {
+        NodeHandle::Xml(id)
+    })
 }
 
 /// The arena node behind a wrapper.

@@ -234,7 +234,13 @@ impl HtmlParsed {
     ///
     /// # Safety
     /// `node` must be a live node - the contract [`RawNode::as_node`] states,
-    /// which this function reads the node's owner document through.
+    /// which this function reads the node's owner document through - AND the
+    /// caller must keep THIS document alive at the same address until the key
+    /// is no longer used. A key is `Copy`, so it can outlive the document;
+    /// `resolve` compares the owner address and then dereferences the node, so
+    /// a reused address would pass the comparison and dereference a stale
+    /// pointer. The Ruby path keeps the document alive by marking it from the
+    /// wrapper that holds the key.
     #[cfg_attr(not(feature = "ruby"), allow(dead_code))]
     pub(crate) unsafe fn mint_key(&self, node: RawNode) -> Result<HtmlNodeKey, ForeignNode> {
         // SAFETY: the caller's contract - `node` is live.
@@ -253,7 +259,8 @@ impl HtmlParsed {
     /// key minted under another document is refused rather than dereferenced.
     /// Sound because a key exists only through `mint_key`, or through
     /// `HtmlNodeKey::new` under its own (unsafe) contract, and both require a
-    /// live node of the owner document.
+    /// live node of the owner document - which the caller must have kept alive
+    /// at its address until this call (see `mint_key`'s contract).
     #[cfg_attr(not(feature = "ruby"), allow(dead_code))]
     pub(crate) fn resolve(&self, key: HtmlNodeKey) -> Result<HtmlNode<'_>, ForeignNode> {
         if key.owner() != self.identity() {
@@ -261,7 +268,7 @@ impl HtmlParsed {
         }
         // SAFETY: a key's node is a live node of the document its owner names -
         // the key's construction contract - and `self` is that document.
-        Ok(unsafe { key.node().as_node() })
+        Ok(unsafe { key.raw_node().as_node() })
     }
 }
 

@@ -105,8 +105,25 @@ pub fn wrap_html_node(node: RawNode, document: Value) -> Value {
         return document;
     }
     let klass = HTML_NODE_CLASSES.class_for(node_type);
+    let token = node.as_ptr() as usize;
+    crate::bridge::wrapper::wrap_cached(&HTML_NODE_TYPE, klass, token, document, || {
+        NodeHandle::Html(mint_html_key(node, document))
+    })
+}
 
-    crate::bridge::wrapper::wrap_cached(&HTML_NODE_TYPE, klass, node.into(), document)
+/// The key for `node` under `document`, minted only when a wrapper is actually
+/// built. Its caller vouches `node` is a node of `document`, so a refusal is a
+/// broken invariant, not a bad input.
+#[allow(
+    clippy::expect_used,
+    reason = "wrap_html_node's callers vouch the node belongs to the document"
+)]
+fn mint_html_key(node: RawNode, document: Value) -> HtmlNodeKey {
+    with_html_parsed_known(document, |parsed| {
+        // SAFETY: `node` is a live node of `document`, vouched by the caller.
+        unsafe { parsed.mint_key(node) }
+    })
+    .expect("wrap_html_node: the node must belong to the document it is wrapped under")
 }
 
 /// The HTML node handle behind an HTML node or HTML Document.
@@ -124,72 +141,101 @@ pub fn html_node_unwrap(rb_node: Value) -> Result<RawNode, Error> {
         return Ok(html_doc_unwrap(rb_node)?.into());
     }
     let nd: &NodeData = HTML_NODE_TYPE.get(&rb_node)?;
-    // SAFETY: an HTML wrapper's word was stored from a `RawNode` (the type
-    // check above), and the Document the wrapper marks keeps it alive.
-    unsafe { nd.node.html() }.ok_or_else(uninitialized)
+    /* An HTML wrapper stores a key minted from the node of the Document it
+     * marks (the type check above), so its node pointer is live; no check is
+     * needed here. */
+    nd.node
+        .html()
+        .map(HtmlNodeKey::raw_node)
+        .ok_or_else(uninitialized)
 }
 
 fn uninitialized() -> Error {
     crate::bridge::ruby::type_error("uninitialized HTML node")
 }
 
+/// The key and keepalive Document of an HTML node or HTML Document.
+///
+/// `Err(TypeError)` for an XML node or Document, as [`html_node_unwrap`]. The
+/// Document node is keyed too: Lexbor sets its `owner_document` to itself, so
+/// `mint_key` accepts it.
+pub(in crate::bridge) fn html_node_key(rb_node: Value) -> Result<(HtmlNodeKey, Value), Error> {
+    if crate::bridge::ruby::is_kind_of(rb_node, &CLASS_DOCUMENT) {
+        if crate::bridge::ruby::is_kind_of(rb_node, &CLASS_XML_DOCUMENT) {
+            return Err(crate::bridge::ruby::type_error(
+                "expected an HTML node, got a Makiri::XML::Document",
+            ));
+        }
+        let raw = RawNode::from(html_doc_unwrap(rb_node)?);
+        let key = with_html_parsed_known(rb_node, |parsed| {
+            // SAFETY: `raw` is the document node of `rb_node`'s live document.
+            unsafe { parsed.mint_key(raw) }
+        })
+        .map_err(|ForeignNode| foreign_node_error())?;
+        return Ok((key, rb_node));
+    }
+    let nd: &NodeData = HTML_NODE_TYPE.get(&rb_node)?;
+    let key = nd.node.html().ok_or_else(uninitialized)?;
+    // SAFETY: `nd.document` is the live Document the wrapper marks.
+    let document = unsafe { value(nd.document) };
+    Ok((key, document))
+}
+
 /// A method receiver already checked to be an HTML node or HTML Document.
+///
+/// The field is the receiver's opaque key, not a raw pointer: a long-lived
+/// wrapper stores one, and a Document receiver's key is minted for the call.
+/// `node()` resolves it without a check - the receiver's own Document, kept
+/// alive by the argument, is what makes that sound - while `with_node` is the
+/// checked boundary.
 #[derive(Clone, Copy)]
 pub struct HtmlSelf {
     pub value: Value,
-    raw: RawNode,
+    key: HtmlNodeKey,
     /// The keepalive Document (the receiver itself for a Document).
     pub document: Value,
 }
 
 impl magnus::TryConvert for HtmlSelf {
     fn try_convert(value: Value) -> Result<Self, Error> {
-        let raw = html_node_unwrap(value)?;
-        let document = keepalive_document(value)?;
+        let (key, document) = html_node_key(value)?;
         Ok(HtmlSelf {
             value,
-            raw,
+            key,
             document,
         })
     }
 }
 
 impl HtmlSelf {
-    /// The receiver's node handle, for the length of this method call.
+    /// The receiver's node, for the length of this method call.
     ///
     /// The receiver is a method argument, which Ruby keeps reachable for the
-    /// call and which keeps its document alive; the borrow of `self` ends the
-    /// handle with the call.
+    /// call and which keeps its document - and so the node `key` names -
+    /// alive; the borrow of `self` ends the handle with the call.
     #[inline]
     pub fn node(&self) -> HtmlNode<'_> {
-        // SAFETY: the receiver keeps the node's document alive for this call.
-        unsafe { self.raw.as_node() }
+        // SAFETY: the receiver keeps `key`'s owner document alive for this
+        // call, and `key` was minted from a live node of it.
+        unsafe { self.key.raw_node().as_node() }
     }
 
     /// The receiver's node as the boundary handle, for the mutators.
     #[inline]
     pub fn raw(&self) -> RawNode {
-        self.raw
+        self.key.raw_node()
     }
 
-    /// Run `f` over the receiver's node, resolving it from a key minted against
-    /// the receiver's document.
-    ///
-    /// TRANSITIONAL: the key is minted here on every call. Once `NodeData`
-    /// stores the wrapper's own key, this resolves the stored one and the mint
-    /// disappears.
+    /// Run `f` over the receiver's node, resolving the stored key against the
+    /// receiver's document - the CHECKED boundary, where a key paired with the
+    /// wrong Document is refused rather than dereferenced. `node()` is the
+    /// unchecked fast path for a receiver whose key and Document are already
+    /// known to agree (they always do: the wrapper was minted that way).
     pub fn with_node<R>(
         &self,
         f: impl FnOnce(HtmlNode<'_>) -> Result<R, Error>,
     ) -> Result<R, Error> {
-        let key = with_html_parsed_known(self.document, |parsed| {
-            // SAFETY: `self.raw` is a live node of the receiver's document - a
-            // wrapper's node comes from a safe constructor, and the receiver
-            // keeps the document alive for this call.
-            unsafe { parsed.mint_key(self.raw) }
-        })
-        .map_err(|ForeignNode| foreign_node_error())?;
-        with_html_node(self.document, key, f)?
+        with_html_node(self.document, self.key, f)?
     }
 }
 
