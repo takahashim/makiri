@@ -45,12 +45,11 @@ fn holds_for<const ELEM: usize>() {
                 nc.checked_mul(ELEM).is_some(),
                 "the byte size of the new capacity must not overflow"
             );
-            // Only for a `cap` that could describe a live allocation AND a
-            // non-empty request. An empty request deliberately returns 0
-            // ("no allocation is required for an empty request"), which is
-            // smaller than any live `cap`; that is a contract exception, not a
-            // shrink.
-            if cap != 0 && cap >= need && need > 0 && cap.checked_mul(ELEM).is_some() {
+            // A `cap` that could describe a live allocation must never come
+            // back smaller. This holds for an empty request too: `need == 0`
+            // answers the current `cap`, not 0, precisely so a caller cannot
+            // hand a live capacity to `realloc` as 0.
+            if cap != 0 && cap >= need && cap.checked_mul(ELEM).is_some() {
                 assert!(nc >= cap, "growth must never shrink a live allocation");
             }
         }

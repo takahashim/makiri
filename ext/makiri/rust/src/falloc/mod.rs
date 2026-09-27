@@ -342,7 +342,15 @@ impl<K: core::hash::Hash + Eq, V, S: core::hash::BuildHasher> MapInsert<K, V> fo
     #[inline]
     #[allow(clippy::disallowed_methods)]
     fn falloc_insert(&mut self, key: K, value: V) -> Result<(), ()> {
-        self.falloc_reserve(1)?;
+        // An insert allocates only when the table is full (len == capacity)
+        // AND the key is new. Replacing an existing key's value needs no
+        // memory, so reserving for it would let memory pressure fail an insert
+        // that cannot allocate. When there is spare room, `insert` cannot
+        // allocate at all, so no reserve (and no extra lookup) is needed - the
+        // `falloc_reserve` the old shape ran here was already a no-op then.
+        if self.len() == self.capacity() && !self.contains_key(&key) {
+            self.falloc_reserve(1)?;
+        }
         self.insert(key, value);
         Ok(())
     }
@@ -353,20 +361,24 @@ impl<K: core::hash::Hash + Eq, V, S: core::hash::BuildHasher> MapInsert<K, V> fo
 /// and fall back to exactly `need` when doubling would overshoot what `elem`
 /// allows. `None` only when `need` itself does not fit.
 ///
-/// This lives here rather than beside its callers (`cbuf`, the text index, the
-/// proofs) for a reason worth keeping: the arithmetic is pure, so it can be
-/// built under Kani and `cargo test` without Lexbor or Ruby. Putting it where it
-/// can be proved is the difference between a property that is checked and one
-/// that is merely commented.
+/// This lives here rather than beside its callers (`cbuf`,
+/// `bridge::node_set`, the proofs) for a reason worth keeping: the arithmetic
+/// is pure, so it can be built under Kani and `cargo test` without Lexbor or
+/// Ruby. Putting it where it can be proved is the difference between a property
+/// that is checked and one that is merely commented.
 pub fn grow_capacity(cap: usize, need: usize, elem: usize) -> Option<usize> {
     need.checked_mul(elem)?;
-    // No allocation is required for an empty request. More importantly, do
-    // not manufacture the usual initial capacity (8) here: for an arbitrary
-    // element size that capacity may itself be unallocatable even though zero
-    // elements fit. The public helper's contract is about every `elem`, not
-    // only its current pointer-sized caller.
+    // No allocation is required for an empty request. Answer the CURRENT
+    // capacity rather than 0: a caller that passed 0 on to `realloc` would free
+    // the block (glibc), turning a harmless no-op into a use-after-free or a
+    // double free. A `cap` that cannot describe a live allocation - zero, or a
+    // byte size that does not fit - has nothing to keep, so 0 is right there.
     if need == 0 {
-        return Some(0);
+        return Some(if cap != 0 && cap.checked_mul(elem).is_some() {
+            cap
+        } else {
+            0
+        });
     }
     // A `cap` whose byte size does not fit cannot describe a live allocation,
     // so start over rather than hand it back. Kani found this: with a huge

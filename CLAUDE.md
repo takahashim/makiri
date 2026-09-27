@@ -634,7 +634,7 @@ document's index (`spec/xpath_context_mutation_spec.rb`).
 **text index** (`lexbor/adapter/text_index.rs`). Removes the per-call descendant
 walk from text extraction (the cache-bound cost on Lexbor's 96-byte nodes). One
 lazy build (count, size once, fill; explicit **heap**-stack DFS via
-`grow_capacity` + `falloc_reserve_exact`, no recursion → no stack DoS) records a flat document-order
+`try_vec_with_capacity` and a `PtrTable`, no recursion → no stack DoS) records a flat document-order
 array of every TEXT/CDATA node's **borrowed** slice (a private raw
 `RawSlice`, handed out only as `&[u8]` borrowed from the index through a
 `TextRun`), a prefix-sum of their lengths, and a `PtrTable` mapping

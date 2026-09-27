@@ -72,8 +72,7 @@ impl OwnedBuf {
     /// Room for `cap` bytes, zeroed, that `fill` writes and reports how many it
     /// used; NUL-terminated there. None on OOM.
     pub fn fill(cap: usize, fill: impl FnOnce(&mut [u8]) -> usize) -> Option<OwnedBuf> {
-        // SAFETY: as in `copy_from`; the room is zeroed before `fill` sees it.
-        let p = unsafe { NonNull::new(crate::falloc::cstr::str_alloc(cap) as *mut u8)? };
+        let p = NonNull::new(crate::falloc::cstr::str_alloc(cap) as *mut u8)?;
         // SAFETY: `p` is `cap + 1` writable bytes nothing else holds yet. This
         // zeroes the first `cap` - so every byte `fill` sees is initialised -
         // and lends exactly those, leaving the terminator byte untouched.
@@ -227,9 +226,9 @@ impl Buf {
     /// distinguish "no output" from "failed": `Err` is OOM.
     pub fn steal(&mut self) -> Result<OwnedBuf, BufError> {
         let Some(ptr) = NonNull::new(self.data) else {
-            // SAFETY: `str_alloc(0)` returns null or one NUL byte from libc,
-            // which the `OwnedBuf` frees.
-            let p = unsafe { crate::falloc::cstr::str_alloc(0) } as *mut u8;
+            /* `str_alloc(0)` returns null or one NUL byte from libc, which the
+             * `OwnedBuf` frees. */
+            let p = crate::falloc::cstr::str_alloc(0) as *mut u8;
             let ptr = NonNull::new(p).ok_or(BufError::Oom)?;
             return Ok(OwnedBuf { ptr, len: 0 });
         };

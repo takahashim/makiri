@@ -212,15 +212,17 @@ fn growth_policy_never_returns_an_unallocatable_or_insufficient_capacity() {
 }
 
 #[test]
-fn growth_policy_returns_zero_for_empty_request() {
-    // `need == 0` is a contract exception: no allocation is required, so the
-    // answer is always 0 regardless of the current capacity. This was the case
-    // Kani's "never shrink" assertion stumbled over.
-    for cap in [0, 1, 8, usize::MAX / 8, usize::MAX] {
-        for elem in [1, 8, usize::MAX] {
+fn growth_policy_keeps_a_live_capacity_for_empty_request() {
+    // `need == 0` needs no allocation: the answer is the current capacity, not
+    // 0 - a caller that fed 0 to `realloc` would free the block. A `cap` that
+    // cannot describe a live allocation has nothing to keep, so 0 is right.
+    for elem in [1, 8, usize::MAX] {
+        for cap in [0usize, 1, 8, 64, usize::MAX / 16] {
+            let live = cap != 0 && cap.checked_mul(elem).is_some();
+            let want = if live { cap } else { 0 };
             assert_eq!(
                 grow_capacity(cap, 0, elem),
-                Some(0),
+                Some(want),
                 "cap={cap} elem={elem}"
             );
         }
