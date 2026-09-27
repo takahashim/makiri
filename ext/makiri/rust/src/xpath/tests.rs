@@ -67,7 +67,19 @@ fn run(
     expr: &str,
     tighten: impl FnOnce(&mut crate::xpath::limits::Limits),
 ) -> Answer {
-    let doc = xml_parse(DOC).expect("the fixture parses");
+    run_on(DOC, query, expr, tighten)
+}
+
+/// [`run`] against a document of the caller's choosing, so a test can pin a
+/// shape the shared `DOC` fixture does not carry (CDATA sections, a detached
+/// top element).
+fn run_on(
+    doc_bytes: &[u8],
+    query: Query,
+    expr: &str,
+    tighten: impl FnOnce(&mut crate::xpath::limits::Limits),
+) -> Answer {
+    let doc = xml_parse(doc_bytes).expect("the fixture parses");
     let mut ctx = crate::xml::xpath::context(&doc, doc.doc_node());
     ctx.register_ns(b"d", b"urn:d").expect("registered");
     tighten(ctx.limits_mut());
@@ -321,6 +333,62 @@ fn css_selectors_lower_to_the_same_answers_as_xml_css() {
         css(&vec!["a"; 1100].join(",")),
         Answer::Err(ErrorKind::Limit)
     );
+}
+
+/// A class name holding whitespace (`.x\ y`) "represents nothing": `.class`
+/// goes through `token_match`'s never-test, so it matches no element - the
+/// answer the HTML matcher gives, not every element whose class has a space.
+/// `[a~=v]` already refused such a value, and `.class` must agree.
+#[cfg(feature = "lexbor")]
+#[test]
+fn a_class_name_with_whitespace_matches_nothing() {
+    let doc = br#"<r><e class="x y"/><e class="xy"/></r>"#;
+    assert_eq!(
+        run_on(doc, Query::Css, r".x\ y", |_| {}),
+        Answer::Nodes(vec![])
+    );
+    assert_eq!(
+        run_on(doc, Query::Css, ".xy", |_| {}),
+        Answer::Nodes(vec!["e".to_string()])
+    );
+}
+
+/// `:root` is the document element, as Lexbor's matcher answers it - not merely
+/// a parentless element. A child element has an element parent, so `e:root` is
+/// empty; only the document element matches.
+#[cfg(feature = "lexbor")]
+#[test]
+fn root_is_the_document_element_not_any_parentless_element() {
+    assert_eq!(css(":root"), nodes(&["r"]));
+    assert_eq!(css("a:root"), nodes(&[]));
+    assert_eq!(css("c:root"), nodes(&[]));
+}
+
+/// A CDATA section is a child, so it makes an element NON-empty, exactly as
+/// Lexbor's `:empty` (which ignores only comments) has it. An empty CDATA still
+/// counts: it is a node.
+#[cfg(feature = "lexbor")]
+#[test]
+fn empty_counts_a_cdata_child_but_not_a_comment() {
+    let doc = br#"<r><a><![CDATA[]]></a><b/><c><!--x--></c><d><![CDATA[z]]></d></r>"#;
+    let one = |name: &str| Answer::Nodes(vec![name.to_string()]);
+    assert_eq!(run_on(doc, Query::Css, "b:empty", |_| {}), one("b"));
+    assert_eq!(run_on(doc, Query::Css, "c:empty", |_| {}), one("c"));
+    assert_eq!(run_on(doc, Query::Css, "a:empty", |_| {}), nodes(&[]));
+    assert_eq!(run_on(doc, Query::Css, "d:empty", |_| {}), nodes(&[]));
+}
+
+/// `:nth-child(an+b)` with a NEGATIVE `a`: only the first few positions match,
+/// and the answer is the same as the HTML matcher's.
+#[cfg(feature = "lexbor")]
+#[test]
+fn nth_child_with_a_negative_step_matches_the_leading_positions() {
+    /* `<r>` has element children a(1) a(2) b(3); `<b>` has c(1) c(2) d:e(3).
+     * `-1n+3` is positions 1..=3, `-2n+2` is 2, `-2n+1` is 1. */
+    assert_eq!(css("r > :nth-child(-1n+3)"), nodes(&["a", "a", "b"]));
+    assert_eq!(css("b > :nth-child(-2n+2)"), nodes(&["c"]));
+    assert_eq!(css("b > :nth-child(-2n+1)"), nodes(&["c"]));
+    assert_eq!(css("r > :nth-child(-1n+0)"), nodes(&[]));
 }
 
 /// A selector list nested past the lowering's cap is refused with LIMIT on the

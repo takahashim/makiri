@@ -21,7 +21,7 @@ pub(crate) type Built = Result<Expr, Reported>;
 
 /// Charge one expression node against the AST budget.
 pub(crate) fn charge(b: &Build) -> Result<(), Reported> {
-    b.budget.borrow_mut().charge_ast_node()
+    b.budget.charge_ast_node()
 }
 
 /// `kind` as a node, refused if it would nest the AST too deeply.
@@ -59,9 +59,17 @@ pub(crate) fn num(b: &Build, v: f64) -> Built {
     expr(b, ExprKind::LiteralNum(v))
 }
 
-/// `lhs op rhs`. An `Err` operand fails without charging, dropping the other.
-pub(crate) fn binop(b: &Build, op: Op, lhs: Built, rhs: Built) -> Built {
-    let (lhs, rhs) = (lhs?, rhs?);
+/// `lhs op rhs`. The operands are thunks: the left is built, and only if it
+/// succeeds is the right built, so a failure does not spend work on the rest of
+/// the tree - and the first failure is the one reported.
+pub(crate) fn binop(
+    b: &Build,
+    op: Op,
+    lhs: impl FnOnce() -> Built,
+    rhs: impl FnOnce() -> Built,
+) -> Built {
+    let lhs = lhs()?;
+    let rhs = rhs()?;
     charge(b)?;
     expr(
         b,
@@ -73,32 +81,63 @@ pub(crate) fn binop(b: &Build, op: Op, lhs: Built, rhs: Built) -> Built {
     )
 }
 
-/// A call to an internal, compile-time-known function name. Any `Err` argument
-/// fails the call; the arguments already collected are dropped with the list.
-pub(crate) fn call<const N: usize>(b: &Build, name: &[u8], args: [Built; N]) -> Built {
-    let mut argv = Vec::new();
-    for arg in args {
-        push(b, &mut argv, arg?)?;
-    }
+/// Finish a call from arguments already built and pushed.
+fn finish_call(b: &Build, name: &[u8], args: Vec<Expr>) -> Built {
     charge(b)?;
     expr(
         b,
         ExprKind::FnCall {
             prefix: None,
             name: copy_text(b, name)?,
-            args: argv,
+            args,
         },
     )
 }
 
-/// A one-argument call, the shape most of the lowering wants.
-pub(crate) fn call1(b: &Build, name: &[u8], a0: Built) -> Built {
-    call(b, name, [a0])
+/// A call to an internal, compile-time-known function name. Each argument is a
+/// thunk, built left to right and only after the one before it succeeded; what
+/// was collected is dropped with the list on failure.
+fn call_args(b: &Build, name: &[u8], args: impl IntoIterator<Item = Built>) -> Built {
+    let mut argv = Vec::new();
+    for arg in args {
+        push(b, &mut argv, arg?)?;
+    }
+    finish_call(b, name, argv)
 }
 
-/// A two-argument call.
-pub(crate) fn call2(b: &Build, name: &[u8], a0: Built, a1: Built) -> Built {
-    call(b, name, [a0, a1])
+/// A no-argument call.
+pub(crate) fn call0(b: &Build, name: &[u8]) -> Built {
+    call_args(b, name, [])
+}
+
+/// A one-argument call, the shape most of the lowering wants.
+pub(crate) fn call1(b: &Build, name: &[u8], a0: impl FnOnce() -> Built) -> Built {
+    call_args(b, name, [a0()])
+}
+
+/// A two-argument call: the first is built, and the second only if it
+/// succeeded.
+pub(crate) fn call2(
+    b: &Build,
+    name: &[u8],
+    a0: impl FnOnce() -> Built,
+    a1: impl FnOnce() -> Built,
+) -> Built {
+    let a0 = a0()?;
+    call_args(b, name, [Ok(a0), a1()])
+}
+
+/// A three-argument call, built left to right and short-circuiting.
+pub(crate) fn call3(
+    b: &Build,
+    name: &[u8],
+    a0: impl FnOnce() -> Built,
+    a1: impl FnOnce() -> Built,
+    a2: impl FnOnce() -> Built,
+) -> Built {
+    let a0 = a0()?;
+    let a1 = a1()?;
+    call_args(b, name, [Ok(a0), Ok(a1), a2()])
 }
 
 /// `items` joined left to right by `op` - the comma list's union, the
@@ -110,7 +149,7 @@ pub(crate) fn fold(b: &Build, op: Op, items: impl Iterator<Item = Built>, empty:
         let item = item?;
         acc = Some(match acc {
             None => item,
-            Some(lhs) => binop(b, op, Ok(lhs), Ok(item))?,
+            Some(lhs) => binop(b, op, || Ok(lhs), || Ok(item))?,
         });
     }
     acc.ok_or_else(|| b.fail(ErrorKind::Syntax, empty))
@@ -166,19 +205,17 @@ pub(crate) fn attr(b: &Build, name: &[u8]) -> Built {
 
 /// `normalize-space(@[prefix:]name)`.
 pub(crate) fn norm_attr(b: &Build, prefix: Option<&[u8]>, name: &[u8]) -> Built {
-    call1(b, b"normalize-space", attr_ns(b, prefix, name))
+    call1(b, b"normalize-space", || attr_ns(b, prefix, name))
 }
 
 /// `concat(" ", normalize-space(@name), " ")` - the whitespace-padded token list.
 pub(crate) fn padded_tokens(b: &Build, prefix: Option<&[u8]>, name: &[u8]) -> Built {
-    call(
+    call3(
         b,
         b"concat",
-        [
-            literal(b, b" "),
-            norm_attr(b, prefix, name),
-            literal(b, b" "),
-        ],
+        || literal(b, b" "),
+        || norm_attr(b, prefix, name),
+        || literal(b, b" "),
     )
 }
 
@@ -187,12 +224,25 @@ pub(crate) fn padded_tokens(b: &Build, prefix: Option<&[u8]>, name: &[u8]) -> Bu
 ///
 /// The value is padded with spaces so a token only matches whole, which is what
 /// makes this equivalent to CSS's whitespace-separated list semantics.
+///
+/// An empty value, or one holding whitespace, "represents nothing" (Selectors 4
+/// §6.2-6.3): no token can contain a space, so the padded needle `' x y '` is
+/// never a substring of `' ... '`. This is the ONE check for both users - the
+/// `.class` lowering calls straight in, while `[a~=v]` reaches it after its own
+/// `never` test, and neither may skip it.
 pub(crate) fn token_match(
     b: &Build,
     prefix: Option<&[u8]>,
     attr_name: &[u8],
     value: &[u8],
 ) -> Built {
+    if value
+        .iter()
+        .any(|&c| matches!(c, b' ' | b'\t' | b'\n' | b'\r' | 0x0c))
+    {
+        return call0(b, b"false");
+    }
+
     /* The padded literal needs to live only until `literal` copies it into the
      * AST. */
     let Some(mut padded) = crate::falloc::try_vec_with_capacity::<u8>(value.len() + 2) else {
@@ -205,7 +255,7 @@ pub(crate) fn token_match(
     call2(
         b,
         b"contains",
-        padded_tokens(b, prefix, attr_name),
-        literal(b, &padded),
+        || padded_tokens(b, prefix, attr_name),
+        || literal(b, &padded),
     )
 }

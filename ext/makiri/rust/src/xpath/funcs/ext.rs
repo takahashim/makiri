@@ -243,3 +243,21 @@ pub(super) fn fn_child_pos_last<'e, 'd, D: Dom<'d>>(
 ) -> Answer<D::Node> {
     number(sibling_pos::<D>(ev, focus.node, PosKind::ChildLast)?)
 }
+
+/* ---------- the CSS-lowered text-kind hook (XML only) ---------- */
+
+/// Is the context node a TEXT node rather than a CDATA SECTION? XPath's
+/// `text()` matches both, but Lexbor's `:lexbor-contains` scans only `TEXT`, so
+/// the lowering filters with this to agree with the HTML matcher.
+pub(super) fn fn_is_text<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
+    focus: &Focus<'d, D>,
+    _args: &[Val<D::Node>],
+) -> Answer<D::Node> {
+    let doc = ev.doc;
+    boolean(
+        focus
+            .node
+            .is_some_and(|n| doc.node_type(n) == NodeType::Text),
+    )
+}

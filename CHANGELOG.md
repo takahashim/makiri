@@ -104,6 +104,17 @@
 
 ### Fixed
 
+* CSS selectors over XML agree with the HTML matcher in three more places:
+  * `.class` with an escaped space (`.x\\ y`) matches no element - a whitespace
+    token "represents nothing" (Selectors 4 §6.2), the rule `[class~="x y"]`
+    already followed. It went straight to a token match and matched every
+    element whose `class` held those tokens.
+  * `:root` matches the document element, not any parentless one. A detached
+    element, or a fragment's top element, no longer matches - Lexbor's matcher
+    answers `lxb_dom_document_root(owner_document) == node`.
+  * `:lexbor-contains()` does not read an XML CDATA section. XPath's `text()`
+    matches both TEXT and CDATA, but Lexbor's matcher scans
+    `LXB_DOM_NODE_TYPE_TEXT` alone.
 * Insertion follows the WHATWG DOM's "ensure pre-insertion validity" in both
   representations, from one implementation. What it changes:
   * HTML: `template.content_fragment.add_child(template)` (or into any node of

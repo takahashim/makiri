@@ -31,7 +31,9 @@ use crate::xpath::ast::{Axis, Expr, NodeTest, Op, Step};
 
 /// The internal of-type position functions, whose names carry a leading \x01 so
 /// no user expression can name them.
-use crate::xpath::funcs::{FN_CHILD_POS, FN_CHILD_POS_LAST, FN_OF_TYPE_POS, FN_OF_TYPE_POS_LAST};
+use crate::xpath::funcs::{
+    FN_CHILD_POS, FN_CHILD_POS_LAST, FN_IS_TEXT, FN_OF_TYPE_POS, FN_OF_TYPE_POS_LAST,
+};
 
 /* ------------------------------------------------------------------ *
  * simple selectors                                                   *
@@ -52,9 +54,9 @@ fn lower_type(
         /* `*|el`: any namespace with a specific local name. XPath has no such
          * test, so it becomes a wildcard plus a local-name() predicate. */
         step.test = NodeTest::ANY;
-        let ln = build::call(b, b"local-name", []);
+        let ln = build::call0(b, b"local-name");
         let lit = build::literal(b, name);
-        return push_pred(b, preds, build::binop(b, Op::Eq, ln, lit));
+        return push_pred(b, preds, build::binop(b, Op::Eq, || ln, || lit));
     }
 
     let local = build::copy_text(b, name)?;
@@ -91,9 +93,9 @@ fn lower_universal(
     match s.ns() {
         None | Some(b"*") => Ok(()),
         Some(b"") => {
-            let uri = build::call(b, b"namespace-uri", []);
+            let uri = build::call0(b, b"namespace-uri");
             let lit = build::literal(b, b"");
-            push_pred(b, preds, build::binop(b, Op::Eq, uri, lit))
+            push_pred(b, preds, build::binop(b, Op::Eq, || uri, || lit))
         }
         Some(p) => {
             step.test = NodeTest::Wildcard {
@@ -146,7 +148,7 @@ fn lower_attribute(b: &Build, s: Selector<'_>, at: Attribute<'_>) -> Built {
         _ => false,
     };
     if never {
-        return build::call(b, b"false", []);
+        return build::call0(b, b"false");
     }
 
     match at.op {
@@ -154,8 +156,8 @@ fn lower_attribute(b: &Build, s: Selector<'_>, at: Attribute<'_>) -> Built {
         AttrMatch::Equal => build::binop(
             b,
             Op::Eq,
-            build::attr_ns(b, prefix, name),
-            build::literal(b, value),
+            || build::attr_ns(b, prefix, name),
+            || build::literal(b, value),
         ),
         /* [a~=v] -> whitespace-separated token match */
         AttrMatch::Include => build::token_match(b, prefix, name, value),
@@ -163,38 +165,43 @@ fn lower_attribute(b: &Build, s: Selector<'_>, at: Attribute<'_>) -> Built {
         AttrMatch::Prefix => build::call2(
             b,
             b"starts-with",
-            build::attr_ns(b, prefix, name),
-            build::literal(b, value),
+            || build::attr_ns(b, prefix, name),
+            || build::literal(b, value),
         ),
         /* [a*=v] -> contains(@a, 'v') */
         AttrMatch::Substring => build::call2(
             b,
             b"contains",
-            build::attr_ns(b, prefix, name),
-            build::literal(b, value),
+            || build::attr_ns(b, prefix, name),
+            || build::literal(b, value),
         ),
         /* [a$=v] -> substring(@a, string-length(@a) - len + 1) = 'v', where len
          * counts CHARACTERS: string-length and substring do, so a byte count
          * missed any non-ASCII suffix ([d$="é"]). */
         AttrMatch::Suffix => {
-            let slen = build::call1(b, b"string-length", build::attr_ns(b, prefix, name));
-            let chars = value.iter().filter(|&&c| c & 0xC0 != 0x80).count();
+            let slen = build::call1(b, b"string-length", || build::attr_ns(b, prefix, name));
+            let chars = crate::xpath::funcs::count_chars(value);
             let start = build::binop(
                 b,
                 Op::Add,
-                build::binop(b, Op::Sub, slen, build::num(b, chars as f64)),
-                build::num(b, 1.0),
+                || build::binop(b, Op::Sub, || slen, || build::num(b, chars as f64)),
+                || build::num(b, 1.0),
             );
-            let sub = build::call2(b, b"substring", build::attr_ns(b, prefix, name), start);
-            build::binop(b, Op::Eq, sub, build::literal(b, value))
+            let sub = build::call2(
+                b,
+                b"substring",
+                || build::attr_ns(b, prefix, name),
+                || start,
+            );
+            build::binop(b, Op::Eq, || sub, || build::literal(b, value))
         }
         /* [a|=v] -> @a = 'v' or starts-with(@a, 'v-') */
         AttrMatch::Dash => {
             let eq = build::binop(
                 b,
                 Op::Eq,
-                build::attr_ns(b, prefix, name),
-                build::literal(b, value),
+                || build::attr_ns(b, prefix, name),
+                || build::literal(b, value),
             );
             let Some(mut dashed) = crate::falloc::try_vec_with_capacity::<u8>(value.len() + 1)
             else {
@@ -205,10 +212,10 @@ fn lower_attribute(b: &Build, s: Selector<'_>, at: Attribute<'_>) -> Built {
             let pre = build::call2(
                 b,
                 b"starts-with",
-                build::attr_ns(b, prefix, name),
-                build::literal(b, &dashed),
+                || build::attr_ns(b, prefix, name),
+                || build::literal(b, &dashed),
             );
-            build::binop(b, Op::Or, eq, pre)
+            build::binop(b, Op::Or, || eq, || pre)
         }
         AttrMatch::Other => Err(b.fail(ErrorKind::Syntax, "unsupported CSS attribute operator")),
     }
@@ -216,7 +223,26 @@ fn lower_attribute(b: &Build, s: Selector<'_>, at: Attribute<'_>) -> Built {
 
 /// `not(axis::nt)` - "nothing on that axis".
 fn not_axis(b: &Build, axis: Axis, nt: NodeTest) -> Built {
-    build::call1(b, b"not", build::step_path(b, axis, nt))
+    build::call1(b, b"not", || build::step_path(b, axis, nt))
+}
+
+/// `:root` - the document element.
+///
+/// Lexbor's matcher answers `:root` with
+/// `lxb_dom_document_root(owner_document) == node`, so a detached element (no
+/// parent at all) and a fragment's top element do NOT match. `not(parent::*)`
+/// alone did match them: it takes "no ELEMENT parent" for "the root". Require a
+/// parent NODE that is not an element - the document element's parent is the
+/// document - so an orphan, which has no parent node, is excluded.
+fn root_test(b: &Build) -> Built {
+    let mut step = Step::new(Axis::Parent, NodeTest::Node);
+    let parent_is_element = build::step_path(b, Axis::SelfAxis, NodeTest::ANY);
+    build::push(
+        b,
+        &mut step.predicates,
+        build::call1(b, b"not", || parent_is_element)?,
+    )?;
+    build::single_step_path(b, step)
 }
 
 /// The siblings a structural pseudo-class counts among.
@@ -254,13 +280,13 @@ impl Siblings {
 
 /// The 1-based position among `set`, counted along `axis`.
 fn position(b: &Build, axis: Axis, set: Siblings) -> Built {
-    build::call(b, set.position_fn(axis), [])
+    build::call0(b, set.position_fn(axis))
 }
 
 /// "No sibling of `set` along `axis`" - first (looking back) or last (looking
 /// forward) among them.
 fn none_along(b: &Build, axis: Axis, set: Siblings) -> Built {
-    build::binop(b, Op::Eq, position(b, axis, set), build::num(b, 1.0))
+    build::binop(b, Op::Eq, || position(b, axis, set), || build::num(b, 1.0))
 }
 
 /// Both first and last among `set`: the `only-` family.
@@ -268,8 +294,8 @@ fn only(b: &Build, set: Siblings) -> Built {
     build::binop(
         b,
         Op::And,
-        none_along(b, Axis::PrecedingSibling, set),
-        none_along(b, Axis::FollowingSibling, set),
+        || none_along(b, Axis::PrecedingSibling, set),
+        || none_along(b, Axis::FollowingSibling, set),
     )
 }
 
@@ -281,25 +307,34 @@ fn nth(b: &Build, axis: Axis, set: Siblings, anb: Nth) -> Built {
     let (a, bb) = (anb.a as f64, anb.b as f64);
     if anb.a == 0 {
         /* position = b */
-        return build::binop(b, Op::Eq, position(b, axis, set), build::num(b, bb));
+        return build::binop(b, Op::Eq, || position(b, axis, set), || build::num(b, bb));
     }
-    /* (pos - b) mod a == 0  AND  (pos - b) div a >= 0 - the second rules out a
-     * negative index, which the modulo alone would accept. */
-    let d1 = build::binop(b, Op::Sub, position(b, axis, set), build::num(b, bb));
+    /* (pos - b) mod a == 0, plus "the index is not negative". The index is
+     * (pos - b) / a, and a's sign is known HERE, at build time, so the sign
+     * test is `pos >= b` for a > 0 and `pos <= b` for a < 0 - no division runs
+     * per candidate. (For an exact multiple the quotient's sign is (pos - b)'s
+     * times a's, so the two agree.) */
     let modz = build::binop(
         b,
         Op::Eq,
-        build::binop(b, Op::Mod, d1, build::num(b, a)),
-        build::num(b, 0.0),
+        || {
+            build::binop(
+                b,
+                Op::Mod,
+                || build::binop(b, Op::Sub, || position(b, axis, set), || build::num(b, bb)),
+                || build::num(b, a),
+            )
+        },
+        || build::num(b, 0.0),
     );
-    let d2 = build::binop(b, Op::Sub, position(b, axis, set), build::num(b, bb));
-    let qge = build::binop(
+    let a_positive = anb.a > 0;
+    let sign_ok = build::binop(
         b,
-        Op::Ge,
-        build::binop(b, Op::Div, d2, build::num(b, a)),
-        build::num(b, 0.0),
+        if a_positive { Op::Ge } else { Op::Le },
+        || position(b, axis, set),
+        || build::num(b, bb),
     );
-    build::binop(b, Op::And, modz, qge)
+    build::binop(b, Op::And, || modz, || sign_ok)
 }
 
 /// The non-functional structural pseudo-classes.
@@ -312,10 +347,14 @@ fn lower_pseudo_simple(b: &Build, pc: PseudoClass) -> Built {
         PseudoClass::FirstOfType => none_along(b, Axis::PrecedingSibling, of_type),
         PseudoClass::LastOfType => none_along(b, Axis::FollowingSibling, of_type),
         PseudoClass::OnlyOfType => only(b, of_type),
-        /* not(node()) */
         /* No child but comments, as the HTML matcher (Lexbor) has it: an
          * element, text or processing instruction makes it non-empty. `not(node())`
-         * counted a comment too, so <e><!--c--></e> was empty only in HTML. */
+         * counted a comment too, so <e><!--c--></e> was empty only in HTML.
+         *
+         * `NodeTest::Text` matches a CDATA section as well, and that is wanted
+         * HERE: Lexbor's `:empty` ignores comments alone, so any other child -
+         * a CDATA section included - makes the element non-empty. The
+         * CDATA-excluding rule is `:lexbor-contains`'s, not this one. */
         PseudoClass::Empty => build::fold(
             b,
             Op::And,
@@ -324,8 +363,8 @@ fn lower_pseudo_simple(b: &Build, pc: PseudoClass) -> Built {
                 .map(|kind| not_axis(b, Axis::Child, kind)),
             ":empty",
         ),
-        /* not(parent::*) */
-        PseudoClass::Root => not_axis(b, Axis::Parent, NodeTest::ANY),
+        /* The document element, not merely a parentless one - see [`root_test`]. */
+        PseudoClass::Root => root_test(b),
         PseudoClass::Other => Err(b.fail(ErrorKind::Syntax, "unsupported CSS pseudo-class")),
     }
 }
@@ -343,17 +382,23 @@ pub(crate) fn selector_list_selftest(b: &Build, lists: Lists<'_>) -> Built {
     )
 }
 
-/// `child::text()[pred]` - the element's direct child text nodes satisfying
-/// `pred`, which is consumed.
+/// `child::text()[is-text()][pred]` - the element's direct child TEXT nodes
+/// satisfying `pred`, which is consumed.
 ///
 /// In predicate position a non-empty node-set is truthy, so this reads "some
 /// direct child text node matches" - exactly how Lexbor's `:lexbor-contains`
 /// matcher scans, which looks at immediate child TEXT nodes only and not at the
 /// deep string value. Matching that is what keeps the XML path's answer equal to
 /// the HTML one.
+///
+/// The `is-text()` filter drops CDATA sections, which XPath's `text()` matches
+/// but Lexbor's matcher does not: it scans `LXB_DOM_NODE_TYPE_TEXT` alone, so an
+/// XML `:lexbor-contains` must not see a CDATA section either.
 fn child_text_pred(b: &Build, pred: Built) -> Built {
     let pred = pred?;
     let mut step = Step::new(Axis::Child, NodeTest::Text);
+    let is_text = build::call0(b, FN_IS_TEXT);
+    build::push(b, &mut step.predicates, is_text?)?;
     build::push(b, &mut step.predicates, pred)?;
     build::single_step_path(b, step)
 }
@@ -387,7 +432,7 @@ fn lower_pseudo_func(b: &Build, arg: FunctionArg<'_>) -> Built {
         }
 
         FunctionArg::Selectors { pseudo, lists } => match pseudo {
-            ListPseudo::Not => build::call1(b, b"not", selector_list_selftest(b, lists)),
+            ListPseudo::Not => build::call1(b, b"not", || selector_list_selftest(b, lists)),
             ListPseudo::Is | ListPseudo::Where => selector_list_selftest(b, lists),
             /* OR of relative descendant/child paths; truthy when any matches.
              * Relative to self, so a leading >, + or ~ is honoured. */
@@ -409,7 +454,7 @@ fn lower_pseudo_func(b: &Build, arg: FunctionArg<'_>) -> Built {
                 let dot = build::step_path(b, Axis::SelfAxis, NodeTest::Node); /* "." */
                 return child_text_pred(
                     b,
-                    build::call2(b, b"contains", dot, build::literal(b, needle)),
+                    build::call2(b, b"contains", || dot, || build::literal(b, needle)),
                 );
             }
 
@@ -422,18 +467,16 @@ fn lower_pseudo_func(b: &Build, arg: FunctionArg<'_>) -> Built {
             };
             low.extend(needle.iter().map(|&ch| ch.to_ascii_lowercase()));
 
-            let folded = build::call(
+            let folded = build::call3(
                 b,
                 b"translate",
-                [
-                    build::step_path(b, Axis::SelfAxis, NodeTest::Node),
-                    build::literal(b, UPPER),
-                    build::literal(b, LOWER),
-                ],
+                || build::step_path(b, Axis::SelfAxis, NodeTest::Node),
+                || build::literal(b, UPPER),
+                || build::literal(b, LOWER),
             );
             child_text_pred(
                 b,
-                build::call2(b, b"contains", folded, build::literal(b, &low)),
+                build::call2(b, b"contains", || folded, || build::literal(b, &low)),
             )
         }
 
@@ -467,7 +510,7 @@ fn fold_simple(
             push_pred(
                 b,
                 preds,
-                build::binop(b, Op::Eq, build::attr(b, b"id"), lit),
+                build::binop(b, Op::Eq, || build::attr(b, b"id"), || lit),
             )
         }
 

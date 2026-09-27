@@ -29,7 +29,7 @@ mod lower;
 use crate::gvl::Gvl;
 use crate::lexbor::css_parser;
 use crate::xpath::ast::{Ast, Op};
-use core::cell::{Cell, RefCell};
+use core::cell::Cell;
 
 use crate::engine_error::{ErrSink, ErrorKind, Reported};
 use crate::falloc::try_box;
@@ -70,10 +70,11 @@ pub(crate) const MAX_SELECTOR_NESTING: u32 = 128;
 /// What every builder in this module carries: where to charge AST nodes, where
 /// to report a failure, and the namespace context.
 ///
-/// The builders take it shared - an operand is built in the argument list of the
-/// node that takes it - so the budget they all charge sits in a `RefCell`.
+/// The budget is shared, not owned: charging is an `&self` operation
+/// (`Budget::charge_ast_node`), so a `&Budget` is enough and the builders need
+/// no interior mutability to charge through it.
 pub(crate) struct Build<'a> {
-    pub budget: RefCell<&'a mut Budget>,
+    pub budget: &'a Budget,
     pub err: ErrSink,
     pub default_namespace: bool,
     /// The selector-list nesting currently being lowered; see
@@ -151,7 +152,7 @@ pub fn compile_owned(
 ) -> Result<Box<Ast>, Reported> {
     let err = budget.sink();
     let b = Build {
-        budget: RefCell::new(budget),
+        budget: &*budget,
         err,
         default_namespace: ns.default_namespace,
         nesting: Cell::new(0),
@@ -159,8 +160,10 @@ pub fn compile_owned(
 
     let parsed = match css_parser::parse(gvl, selector) {
         Ok(p) => p,
+        /* `ParserParts::build` returns None only when a Lexbor allocation or
+         * init failed, so this is an OOM, not a broken invariant. */
         Err(css_parser::ParseError::NotReady) => {
-            return Err(b.fail(ErrorKind::Internal, "failed to initialise CSS parser"));
+            return Err(b.fail(ErrorKind::Oom, "out of memory initialising CSS parser"));
         }
         Err(css_parser::ParseError::Syntax) => {
             return Err(b.fail(ErrorKind::Syntax, "invalid CSS selector"));
@@ -188,11 +191,9 @@ pub fn compile_owned(
         )?,
         /* Each comma-group as a self-test, OR-ed - and as a boolean even for
          * one group, whose self-test alone is a node-set. */
-        Form::SelfTest => build::call1(
-            &b,
-            b"boolean",
-            lower::selector_list_selftest(&b, parsed.groups()),
-        )?,
+        Form::SelfTest => build::call1(&b, b"boolean", || {
+            lower::selector_list_selftest(&b, parsed.groups())
+        })?,
     };
     /* No peephole or hoisting pass: the lowering emits no `//` pair to fuse and
      * no subtree worth remembering, so its AST is used as built. */

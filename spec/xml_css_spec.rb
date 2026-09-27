@@ -447,5 +447,35 @@ RSpec.describe "Makiri::XML CSS selectors" do
       expect(html.css(%(:lexbor-contains("cherry"))).map(&:name))
         .to eq(nested.css(%(:lexbor-contains("cherry"))).map(&:name))
     end
+
+    it "does not treat an XML CDATA section as a text node" do
+      # XPath's text() matches both TEXT and CDATA, but Lexbor's matcher scans
+      # LXB_DOM_NODE_TYPE_TEXT alone. Without the CDATA filter the XML answer
+      # would match the CDATA <a> too and diverge from the HTML side (which has
+      # no CDATA at all).
+      doc = Makiri::XML("<r><a><![CDATA[needle]]></a><a>needle</a></r>")
+      expect(doc.css(%(a:lexbor-contains("needle"))).map(&:text)).to eq(["needle"])
+    end
+  end
+
+  describe "class names with whitespace and :root (parity with the HTML side)" do
+    it "matches nothing for a class name holding an escaped space" do
+      # `.x\ y` parses to the class name "x y". Selectors 4 §6.2: a whitespace
+      # token "represents nothing", so it matches no element - the same rule
+      # [class~="x y"] follows.
+      xml = Makiri::XML(%(<r><e class="x y"/><e class="xy"/></r>))
+      html = Makiri::HTML(%(<!doctype html><html><body><e class="x y"></e><e class="xy"></e></body></html>))
+      expect(xml.css(%(.x\\ y)).map(&:name)).to eq([])
+      expect(xml.css(%(.x\\ y)).map(&:name)).to eq(html.css(%(.x\\ y)).map(&:name))
+    end
+
+    it "answers :root with the document element, not a detached element" do
+      # A detached element has no parent at all; `not(parent::*)` matched it, so
+      # :root found it. Lexbor's matcher answers the document element only.
+      xml = Makiri::XML(%(<r><e/></r>))
+      expect(xml.css(":root").map(&:name)).to eq(%w[r])
+      detached = xml.at_css("e").dup
+      expect(detached.matches?(":root")).to be(false)
+    end
   end
 end

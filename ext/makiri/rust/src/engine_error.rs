@@ -86,6 +86,12 @@ impl core::fmt::Write for MsgBuf {
 pub struct Error {
     pub status: ErrorKind,
     msg: MsgBuf,
+    /// Whether [`set_once`](Self::set_once) has already written this slot. A
+    /// shared sink is written by every builder on a failing path - the CSS
+    /// lowering builds both operands of a `binop` before either is `?`-ed - so
+    /// the FIRST failure is kept and later ones cannot overwrite it with a
+    /// shallower message (an OOM replacing a real limit, say).
+    written: bool,
 }
 
 impl Error {
@@ -99,6 +105,7 @@ impl Error {
         Error {
             status: ErrorKind::Internal,
             msg: MsgBuf::default(),
+            written: false,
         }
     }
 
@@ -118,6 +125,15 @@ impl Error {
         self.status = status;
         self.msg.clear();
         let _ = self.msg.write_fmt(args);
+        self.written = true;
+    }
+
+    /// Write this slot only if nothing has written it yet, so the first failure
+    /// on a path is the one reported.
+    pub(crate) fn set_once(&mut self, status: ErrorKind, args: core::fmt::Arguments<'_>) {
+        if !self.written {
+            self.set(status, args);
+        }
     }
 
     /// The message, or None when none was written.
@@ -177,13 +193,15 @@ impl ErrSink {
 ///
 /// The one way the front end (the lexer, the parser, the CSS lowering) reports
 /// a runtime error. A silent sink skips the formatting as well as the write.
+/// The first failure wins: a path that builds several operands and then checks
+/// them keeps the root cause rather than the last one built.
 pub(crate) fn err_set_fmt(
     err: ErrSink,
     status: ErrorKind,
     args: core::fmt::Arguments<'_>,
 ) -> Reported {
     if let Some(slot) = err.0 {
-        slot.borrow_mut().set(status, args);
+        slot.borrow_mut().set_once(status, args);
     }
     Reported(())
 }
