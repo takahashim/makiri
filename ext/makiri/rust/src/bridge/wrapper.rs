@@ -20,7 +20,7 @@ use crate::bridge::ruby::{value, VALUE};
 use crate::bridge::typed::{Hooks, Marker, Relocator, TypedType};
 use crate::falloc::MapInsert;
 use crate::init::{RbConst, CLASS_DOCUMENT};
-use crate::lexbor::adapter::html::{HtmlDoc, RawDoc, RawNode};
+use crate::lexbor::adapter::html::{HtmlDoc, HtmlNodeKey, RawDoc, RawNode};
 use crate::lexbor::adapter::post_parse::HtmlParsed;
 use crate::node_type::NodeType;
 use crate::token::{Kind, Token};
@@ -43,11 +43,12 @@ const QFALSE: VALUE = rb_sys::Qfalse as VALUE;
 /// representation - the wrapper's TypedData type, a NodeSet's [`DocKind`] -
 /// decided once, so a word is read back only through the reader named for
 /// that kind ([`xml`](Self::xml), [`html`](Self::html), [`token`](Self::token)).
-/// This type is where the handle crosses between the typed forms and the
-/// word, and so the one place in the glue a node is cast.
+/// This type is where the word crosses between the typed forms and the
+/// untyped one, and so the one place in the glue a stored node is cast.
 ///
-/// `repr(transparent)` over `usize`: a [`NodeData`] and a NodeSet's buffer
-/// keep the layout they had as `*mut c_void`.
+/// `repr(transparent)` over `usize`: a NodeSet's buffer keeps the layout it had
+/// as `*mut c_void`. (A [`NodeData`] does not use it any more - it stores an
+/// opaque [`NodeHandle`], which is larger by design.)
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(transparent)]
 pub struct NodeWord(usize);
@@ -115,6 +116,40 @@ impl NodeWord {
     }
 }
 
+/// A node as a long-lived Ruby wrapper stores it: the opaque [`HtmlNodeKey`]
+/// for HTML, the arena [`NodeId`] for XML.
+///
+/// The HTML variant is what makes the stored handle opaque: it is a private
+/// mint (see `lexbor::adapter`), so a wrapper's node can only have come from
+/// the document the wrapper marks. The XML variant carries its document stamp
+/// for the same reason. Which variant a wrapper holds is decided by its
+/// TypedData type, as before.
+#[derive(Clone, Copy)]
+pub enum NodeHandle {
+    Html(HtmlNodeKey),
+    Xml(NodeId),
+}
+
+impl NodeHandle {
+    /// The HTML key, when this is an HTML node.
+    #[inline]
+    pub fn html(self) -> Option<HtmlNodeKey> {
+        match self {
+            NodeHandle::Html(key) => Some(key),
+            NodeHandle::Xml(_) => None,
+        }
+    }
+
+    /// The XML id, when this is an XML node.
+    #[inline]
+    pub fn xml(self) -> Option<NodeId> {
+        match self {
+            NodeHandle::Xml(id) => Some(id),
+            NodeHandle::Html(_) => None,
+        }
+    }
+}
+
 /// A node wrapper's data: the node plus the keepalive Document.
 ///
 /// The node is owned by the document's arena (HTML or XML), so the wrapper
@@ -122,9 +157,18 @@ impl NodeWord {
 /// it is the wrapper's whole GC job.
 pub struct NodeData {
     /// Representation-opaque; read it only through a kind-checked accessor.
-    pub node: NodeWord,
+    pub node: NodeHandle,
     pub document: VALUE,
 }
+
+/* Measured: `NodeHandle` fits two words (the `NonNull`/`NonZero` niches carry
+ * the discriminant), so `NodeData` is three words - one more than the two-word
+ * `NodeWord` + `VALUE` it replaced. Pinned as a growth ratchet: a field that
+ * pushes wrapper data past three words fails the build. */
+const _: () = assert!(
+    core::mem::size_of::<NodeData>() <= 24,
+    "NodeData grew past three words; re-measure the wrapper cost before raising this"
+);
 
 impl Hooks for NodeData {
     fn mark(&self, marker: &Marker) {
@@ -614,32 +658,35 @@ impl NodeClasses {
     }
 }
 
-/// The one wrapper of class `klass` (a `ty` object) for `node` under
-/// `document`: the cached one, or a fresh one that is then cached. The shared
-/// half of the two `wrap_*_node` functions.
+/// The one wrapper of class `klass` (a `ty` object) for a node under
+/// `document`: the cached one, or a fresh one built by `handle` and then
+/// cached. The shared half of the two `wrap_*_node` functions.
 ///
-/// Keyed by the node's identity, which is the [`NodeWord`] itself for both
-/// representations - an HTML node pointer, an XML `NodeId` - so it is derived
-/// here, not passed beside `node` where the two could disagree.
+/// Keyed by `token`, the node's identity word - an HTML node pointer, an XML
+/// `NodeId`. The caller derives it from the node itself, so a cache hit costs
+/// no document access, and `handle` runs only on a miss: a fresh wrapper's
+/// opaque handle (an HTML key, minted through its document) is built only when
+/// a wrapper is actually made. `token` must be the identity `handle` returns.
 ///
 /// One wrapper per node: navigating to a node twice must give the SAME object,
 /// or everything that lives on a Ruby object is silently lost - `equal?`, an
 /// instance variable, a singleton method, `freeze`. A Document is already its
 /// own wrapper, which is why it needs no entry.
 ///
-/// The caller vouches that `node` is a node of `document` of the representation
-/// `ty` wraps, and `klass` a class of it: only the two `wrap_*_node` functions
-/// call this, each for its own kind.
+/// The caller vouches that the node is a node of `document` of the
+/// representation `ty` wraps, and `klass` a class of it: only the two
+/// `wrap_*_node` functions call this, each for its own kind.
 pub(in crate::bridge) fn wrap_cached(
     ty: &'static TypedType<NodeData>,
     klass: VALUE,
-    node: NodeWord,
+    token: usize,
     document: Value,
+    handle: impl FnOnce() -> NodeHandle,
 ) -> Value {
-    let token = node.identity();
     if let Some(cached) = cached_node(document, token) {
         return cached;
     }
+    let node = handle();
     /* The Document is stored after the wrap: see `TypedType::wrap`. */
     // SAFETY: a fresh wrapper; the store closure only moves a live VALUE in.
     let fresh = unsafe {
@@ -700,7 +747,10 @@ pub fn node_raw(rb_node: Value) -> Result<NodeWord, Error> {
     }
     /* TypeError for a non-node, as TypedData_Get_Struct raised. */
     let nd: &NodeData = NODE_DATA_TYPE.get(&rb_node)?;
-    Ok(nd.node)
+    Ok(match nd.node {
+        NodeHandle::Html(key) => NodeWord::from(key.raw_node()),
+        NodeHandle::Xml(id) => NodeWord::from(id),
+    })
 }
 
 /// Which representation `v` wraps ([`NodeRepr`]).
