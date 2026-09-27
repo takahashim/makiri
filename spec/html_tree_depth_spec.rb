@@ -95,7 +95,7 @@ RSpec.describe "HTML tree depth limit" do
       expect(doc.dup.xpath("count(//div)")).to eq(1000)
     end
 
-    it "bounds the quadratic case: 80,000 nested elements fail fast" do
+    it "bounds the quadratic case: 80,000 nested elements fail fast", :timing do
       skip "timing is meaningless under GC.stress" if GC_COMPACT_STRESS
       deep = nest(80_000) # 400 KB; took ~5 s to parse before the limit
       took = elapsed { expect { Makiri::HTML(deep) }.to raise_error(Makiri::Error, message) }
@@ -145,7 +145,7 @@ RSpec.describe "HTML tree depth limit" do
       expect { div.parse(nest(401)) }.to raise_error(Makiri::Error, message)
     end
 
-    it "bounds the quadratic case for a fragment too" do
+    it "bounds the quadratic case for a fragment too", :timing do
       skip "timing is meaningless under GC.stress" if GC_COMPACT_STRESS
       took = elapsed do
         expect { Makiri::HTML::DocumentFragment.parse(nest(80_000)) }.to raise_error(Makiri::Error, message)
@@ -198,7 +198,7 @@ RSpec.describe "HTML tree depth limit" do
       expect { Makiri::HTML(options(10_001)) }.to raise_error(Makiri::Error, message)
     end
 
-    it "bounds the quadratic case: 40,000 options are refused, not parsed" do
+    it "bounds the quadratic case: 40,000 options are refused, not parsed", :timing do
       started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
       expect { Makiri::HTML(options(40_000)) }.to raise_error(Makiri::Error, message)
       expect(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started).to be < 2.5
