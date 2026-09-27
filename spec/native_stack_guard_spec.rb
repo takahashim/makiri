@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "spec_helper"
+require "open3"
 
 # `crate::stack`/`bridge::stack` (see there for why): a recursion COUNT alone
 # assumes the caller's own frame started with a full-sized native stack, which
@@ -20,10 +21,19 @@ require "spec_helper"
 RSpec.describe "native stack guard" do
   def run_isolated(env, code)
     lib = File.expand_path("../lib", __dir__)
-    out = IO.popen([env.merge("RUBY_FREE_AT_EXIT" => nil), RbConfig.ruby, "-I#{lib}",
-                    "-e", %(require "makiri"\n#{code})],
-                   err: %i[child out], &:read)
-    [$?, out]
+    # stdout and stderr are kept apart: under AddressSanitizer the runtime
+    # prints its own warning block to stderr ("==N==WARNING: ASan is ignoring
+    # requested __asan_handle_no_return", then "False positive error reports
+    # may follow" / "For details see .../issues/189") when Ruby's
+    # SystemStackError unwind longjmps past Rust's frames in the small Fiber.
+    # These specs compare the child's stdout byte for byte, so folding stderr
+    # in (as xml_html_boundary_spec.rb does, for a different noise source)
+    # would prefix it. stderr is returned for the failure message instead.
+    out, err, status = Open3.capture3(
+      env.merge("RUBY_FREE_AT_EXIT" => nil),
+      RbConfig.ruby, "-I#{lib}", "-e", %(require "makiri"\n#{code})
+    )
+    [status, out, err]
   end
 
   # Nested well inside each count-only cap (CSS's 128, XPath's 256), so the
@@ -33,7 +43,7 @@ RSpec.describe "native stack guard" do
 
   describe "XML CSS lowering, inside a small Fiber" do
     it "raises LimitExceeded instead of SystemStackError, and leaves the shared CSS parser usable" do
-      status, out = run_isolated({ "RUBY_FIBER_MACHINE_STACK_SIZE" => "131072" }, <<~RUBY)
+      status, out, err = run_isolated({ "RUBY_FIBER_MACHINE_STACK_SIZE" => "131072" }, <<~RUBY)
         x = Makiri::XML("<r><a/></r>")
         begin
           Fiber.new { x.css(#{css_nesting.inspect}) }.resume
@@ -50,13 +60,13 @@ RSpec.describe "native stack guard" do
         end
       RUBY
       expect(status).to be_success
-      expect(out).to eq("Makiri::XPath::LimitExceeded:after_ok")
+      expect(out).to eq("Makiri::XPath::LimitExceeded:after_ok"), err
     end
   end
 
   describe "XPath evaluation, inside a small Fiber" do
     it "raises LimitExceeded instead of SystemStackError, on both HTML and XML" do
-      status, out = run_isolated({ "RUBY_FIBER_MACHINE_STACK_SIZE" => "131072" }, <<~RUBY)
+      status, out, err = run_isolated({ "RUBY_FIBER_MACHINE_STACK_SIZE" => "131072" }, <<~RUBY)
         h = Makiri::HTML("<p>x</p>")
         x = Makiri::XML("<r/>")
         [h, x].each do |doc|
@@ -69,7 +79,7 @@ RSpec.describe "native stack guard" do
         end
       RUBY
       expect(status).to be_success
-      expect(out).to eq("Makiri::XPath::LimitExceeded;Makiri::XPath::LimitExceeded;")
+      expect(out).to eq("Makiri::XPath::LimitExceeded;Makiri::XPath::LimitExceeded;"), err
     end
   end
 
