@@ -105,10 +105,17 @@ pub fn wrap_html_node(node: RawNode, document: Value) -> Value {
         return document;
     }
     let klass = HTML_NODE_CLASSES.class_for(node_type);
-    let token = node.as_ptr() as usize;
-    crate::bridge::wrapper::wrap_cached(&HTML_NODE_TYPE, klass, token, document, || {
-        NodeHandle::Html(mint_html_key(node, document))
-    })
+    crate::bridge::wrapper::wrap_cached(&HTML_NODE_TYPE, klass, node, document)
+}
+
+impl crate::bridge::wrapper::NodeHandleSource for RawNode {
+    fn identity(&self) -> usize {
+        self.as_ptr() as usize
+    }
+
+    fn into_handle(self, document: Value) -> NodeHandle {
+        NodeHandle::Html(mint_html_key(self, document))
+    }
 }
 
 /// The key for `node` under `document`, minted only when a wrapper is actually

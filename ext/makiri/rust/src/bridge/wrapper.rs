@@ -130,6 +130,14 @@ pub enum NodeHandle {
     Xml(NodeId),
 }
 
+/// A live representation-specific node that can become a long-lived wrapper
+/// handle. Its cache identity and stored handle are derived from the same
+/// value, so callers cannot accidentally pair an unrelated token and handle.
+pub(in crate::bridge) trait NodeHandleSource {
+    fn identity(&self) -> usize;
+    fn into_handle(self, document: Value) -> NodeHandle;
+}
+
 impl NodeHandle {
     /// The HTML key, when this is an HTML node.
     #[inline]
@@ -659,14 +667,12 @@ impl NodeClasses {
 }
 
 /// The one wrapper of class `klass` (a `ty` object) for a node under
-/// `document`: the cached one, or a fresh one built by `handle` and then
+/// `document`: the cached one, or a fresh one built from `source` and then
 /// cached. The shared half of the two `wrap_*_node` functions.
 ///
-/// Keyed by `token`, the node's identity word - an HTML node pointer, an XML
-/// `NodeId`. The caller derives it from the node itself, so a cache hit costs
-/// no document access, and `handle` runs only on a miss: a fresh wrapper's
-/// opaque handle (an HTML key, minted through its document) is built only when
-/// a wrapper is actually made. `token` must be the identity `handle` returns.
+/// The candidate supplies both its cache identity and, on a miss, its stored
+/// handle. HTML key minting is therefore skipped on a cache hit, while the
+/// token and handle cannot come from different nodes.
 ///
 /// One wrapper per node: navigating to a node twice must give the SAME object,
 /// or everything that lives on a Ruby object is silently lost - `equal?`, an
@@ -679,14 +685,14 @@ impl NodeClasses {
 pub(in crate::bridge) fn wrap_cached(
     ty: &'static TypedType<NodeData>,
     klass: VALUE,
-    token: usize,
+    source: impl NodeHandleSource,
     document: Value,
-    handle: impl FnOnce() -> NodeHandle,
 ) -> Value {
+    let token = source.identity();
     if let Some(cached) = cached_node(document, token) {
         return cached;
     }
-    let node = handle();
+    let node = source.into_handle(document);
     /* The Document is stored after the wrap: see `TypedType::wrap`. */
     // SAFETY: a fresh wrapper; the store closure only moves a live VALUE in.
     let fresh = unsafe {
