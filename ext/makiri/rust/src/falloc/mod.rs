@@ -298,15 +298,47 @@ pub fn try_to_vec<T: Copy>(s: &[T]) -> Option<Vec<T>> {
 /// pointer-keyed caches want for their keys. `T: Copy` for the same reason as
 /// [`try_to_vec`].
 ///
-/// `into_boxed_slice` shrinks when capacity exceeds `len`, and that reallocation
-/// aborts on OOM like any grow (`clippy.toml` bans it). It is safe here only
-/// because `try_vec_with_capacity` reserves EXACTLY, so capacity already equals
-/// `len` and the shrink is a no-op. Do not route this through a vector whose
-/// capacity can exceed its length.
+/// Built against the raw allocator like [`try_box`], NOT through
+/// `Vec::into_boxed_slice`: that calls `shrink_to_fit`, which reallocates and
+/// aborts on OOM when the vector's capacity exceeds its length - outside the
+/// injection counter, and safe today only because std happens to record the
+/// exact requested capacity. Asking for `Layout::array` directly removes that
+/// dependence on a std implementation detail. A zero-sized layout (an empty
+/// slice, or a zero-sized `T`) never allocates and is not counted.
 #[inline]
-#[allow(clippy::disallowed_methods)]
 pub fn try_to_boxed_slice<T: Copy>(s: &[T]) -> Option<Box<[T]>> {
-    Some(try_to_vec(s)?.into_boxed_slice())
+    let layout = std::alloc::Layout::array::<T>(s.len()).ok()?;
+    if layout.size() == 0 {
+        // SAFETY: a zero-sized element needs no allocation; the dangling,
+        // correctly aligned pointer is the valid representation of a boxed
+        // slice of zero-sized elements, and `Box` does not deallocate a
+        // zero-sized layout.
+        return Some(unsafe {
+            Box::from_raw(std::ptr::slice_from_raw_parts_mut(
+                std::ptr::NonNull::<T>::dangling().as_ptr(),
+                s.len(),
+            ))
+        });
+    }
+    if allocation_should_fail() {
+        return None;
+    }
+    // SAFETY: `layout` is non-zero-sized (checked above) and describes exactly
+    // `s.len()` elements of `T`, so `alloc` is within its contract. On success
+    // the pointer is fresh, uniquely owned, aligned for T and uninitialised,
+    // which is what the copy and the ownership claim below need; `T: Copy`, so
+    // the bitwise copy is a valid clone.
+    unsafe {
+        let p = std::alloc::alloc(layout) as *mut T;
+        if p.is_null() {
+            return None;
+        }
+        std::ptr::copy_nonoverlapping(s.as_ptr(), p, s.len());
+        Some(Box::from_raw(std::ptr::slice_from_raw_parts_mut(
+            p,
+            s.len(),
+        )))
+    }
 }
 
 /// Inserting into a map, beyond the reserve itself.
@@ -373,3 +405,26 @@ pub fn grow_capacity(cap: usize, need: usize, elem: usize) -> Option<usize> {
 
 #[cfg(kani)]
 mod verify;
+
+#[cfg(test)]
+mod tests {
+    use super::try_to_boxed_slice;
+
+    /// The raw-allocator construction must preserve length and bytes for a
+    /// normal element, an empty slice, and a zero-sized element of non-zero
+    /// length (the three shapes the pointer arithmetic in it can take).
+    #[test]
+    fn boxed_slice_copies_exactly() {
+        let src = [1u8, 2, 3, 4];
+        let b = try_to_boxed_slice(&src).expect("boxed");
+        assert_eq!(&b[..], &src[..]);
+
+        let empty: [u8; 0] = [];
+        let b = try_to_boxed_slice(&empty).expect("boxed empty");
+        assert!(b.is_empty());
+
+        let zsts = [(); 3];
+        let b = try_to_boxed_slice(&zsts).expect("boxed zst");
+        assert_eq!(b.len(), 3);
+    }
+}
