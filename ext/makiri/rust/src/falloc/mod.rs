@@ -342,15 +342,14 @@ impl<K: core::hash::Hash + Eq, V, S: core::hash::BuildHasher> MapInsert<K, V> fo
     #[inline]
     #[allow(clippy::disallowed_methods)]
     fn falloc_insert(&mut self, key: K, value: V) -> Result<(), ()> {
-        // An insert allocates only when the table is full (len == capacity)
-        // AND the key is new. Replacing an existing key's value needs no
-        // memory, so reserving for it would let memory pressure fail an insert
-        // that cannot allocate. When there is spare room, `insert` cannot
-        // allocate at all, so no reserve (and no extra lookup) is needed - the
-        // `falloc_reserve` the old shape ran here was already a no-op then.
-        if self.len() == self.capacity() && !self.contains_key(&key) {
-            self.falloc_reserve(1)?;
-        }
+        // `std`'s `HashMap::insert` calls `reserve(1)` BEFORE it looks the key
+        // up, so a replace grows the table too when it is full (measured: a
+        // len == capacity == 3 table becomes 7 on an existing-key insert, and
+        // HashSet the same). So this reserve is a real allocation attempt even
+        // for a replace, and must stay unconditional: skipping it because the
+        // key exists would perform that allocation outside the injection
+        // counter, where an OOM aborts the process instead of failing closed.
+        self.falloc_reserve(1)?;
         self.insert(key, value);
         Ok(())
     }
@@ -383,11 +382,10 @@ pub fn grow_capacity(cap: usize, need: usize, elem: usize) -> Option<usize> {
     // A `cap` whose byte size does not fit cannot describe a live allocation,
     // so start over rather than hand it back. Kani found this: with a huge
     // `cap` and a small `need` the loop below never runs, and the function
-    // returned a capacity that overflows on the next multiply. The one caller
-    // only ever passes a real allocation size, so it was an unstated
-    // precondition rather than a live bug - but this is a public helper now,
-    // and an unstated precondition is the kind of thing that becomes a bug
-    // when the second caller arrives.
+    // returned a capacity that overflows on the next multiply. The callers only
+    // ever pass a real allocation size, so it was an unstated precondition
+    // rather than a live bug - but this is a public helper, and the check makes
+    // the precondition explicit instead of leaving it to whoever calls next.
     let start = match cap.checked_mul(elem) {
         Some(_) if cap != 0 => cap,
         // The usual initial capacity is an optimisation, never a contract.
