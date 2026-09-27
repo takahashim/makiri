@@ -35,19 +35,4 @@ pub unsafe fn str_alloc(n: usize) -> *mut c_char {
     p
 }
 
-/// Copy exactly `n` bytes of `s`, NUL-terminated. Only the allocator proof
-/// calls this; no production path does.
-#[cfg(kani)]
-pub unsafe fn strndup(s: *const c_char, n: usize) -> *mut c_char {
-    if n > 0 && s.is_null() {
-        return core::ptr::null_mut();
-    }
-    let p = str_alloc(n);
-    if p.is_null() {
-        return core::ptr::null_mut();
-    }
-    if n > 0 {
-        core::ptr::copy_nonoverlapping(s, p, n);
-    }
-    p
-}
+mod verify;

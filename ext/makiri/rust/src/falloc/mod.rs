@@ -68,18 +68,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-/// Its Kani proofs - the ownership contract at the raw boundaries, which is
-/// what is left after the size arithmetic went to `checked_*` and the OOM
-/// branches to `rake oom`.
-pub mod calloc_verify;
 pub(crate) mod cstr;
 #[cfg(feature = "alloc-inject")]
 pub(crate) mod inject;
-/// The raw allocator primitives the Kani proofs quantify over. No production
-/// path calls them any more; the typed API above and `cstr` cover every live
-/// allocation.
-#[cfg(kani)]
-pub(crate) mod raw;
 
 /* The injection counter has ONE home, `inject`. The allocator implementations
  * call only `allocation_should_fail`, which is a constant false in production. */

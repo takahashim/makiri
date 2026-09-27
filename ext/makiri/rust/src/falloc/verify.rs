@@ -17,8 +17,7 @@
 
 use super::grow_capacity;
 
-/// The growth contract, over arbitrary `cap` and `need` at a realistic element
-/// size.
+/// The growth contract, checked for one fixed element size.
 ///
 /// The properties are the ones a caller relies on:
 ///   - the answer covers `need` (otherwise the caller overflows its own array);
@@ -26,14 +25,16 @@ use super::grow_capacity;
 ///     allocation that follows computes a wrong size);
 ///   - growth never shrinks an existing allocation below what it had.
 ///
-/// `elem` is a fixed 8 here, not nondeterministic. The one caller passes
-/// `size_of::<*mut c_void>()`, and a nondet `elem` puts the proof back into the
-/// same multiply-versus-divide space that defeated the C version - the
-/// restriction is faithful to the code rather than a concession to the solver.
-#[kani::proof]
-#[kani::unwind(80)]
-fn grow_capacity_covers_need_without_overflow() {
-    const ELEM: usize = 8;
+/// `ELEM` is a const, not nondeterministic. `grow_capacity`'s size arithmetic
+/// is `checked_mul(elem)` several times, once per iteration of the doubling
+/// loop; with a constant `elem` each is a multiply by a constant (a shift when
+/// it is a power of two, which every real element size here is), but a
+/// nondeterministic `elem` makes them symbolic-by-symbolic multiplies, and
+/// bit-blasting a 64-bit multiplier inside an unwound loop does not finish. So
+/// the proof runs once per element size a caller actually passes rather than
+/// quantifying over all of them - the live callers are 1 (the byte buffer) and
+/// `size_of::<usize>()` (the node set's word).
+fn holds_for<const ELEM: usize>() {
     let cap: usize = kani::any();
     let need: usize = kani::any();
 
@@ -61,4 +62,18 @@ fn grow_capacity_covers_need_without_overflow() {
             );
         }
     }
+}
+
+/// `elem == 1`: `Buf` (the byte buffer, the most-used path).
+#[kani::proof]
+#[kani::unwind(80)]
+fn grow_capacity_covers_need_without_overflow_bytes() {
+    holds_for::<1>();
+}
+
+/// `elem == size_of::<usize>()`: `NodeSet` (`NodeWord`, a `usize`).
+#[kani::proof]
+#[kani::unwind(80)]
+fn grow_capacity_covers_need_without_overflow_words() {
+    holds_for::<{ core::mem::size_of::<usize>() }>();
 }
