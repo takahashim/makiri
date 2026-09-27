@@ -297,7 +297,14 @@ pub fn try_to_vec<T: Copy>(s: &[T]) -> Option<Vec<T>> {
 /// Copy a slice into a fresh boxed slice, or fail. The shape most of the
 /// pointer-keyed caches want for their keys. `T: Copy` for the same reason as
 /// [`try_to_vec`].
+///
+/// `into_boxed_slice` shrinks when capacity exceeds `len`, and that reallocation
+/// aborts on OOM like any grow (`clippy.toml` bans it). It is safe here only
+/// because `try_vec_with_capacity` reserves EXACTLY, so capacity already equals
+/// `len` and the shrink is a no-op. Do not route this through a vector whose
+/// capacity can exceed its length.
 #[inline]
+#[allow(clippy::disallowed_methods)]
 pub fn try_to_boxed_slice<T: Copy>(s: &[T]) -> Option<Box<[T]>> {
     Some(try_to_vec(s)?.into_boxed_slice())
 }

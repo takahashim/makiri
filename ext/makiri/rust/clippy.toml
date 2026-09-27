@@ -1,4 +1,4 @@
-# The allocation chokepoint, enforced (see src/falloc.rs).
+# The allocation chokepoint, enforced (see src/falloc/mod.rs).
 #
 # Rust's own allocating APIs are either infallible - they abort the process on
 # OOM, which for a library inside someone's application server is not "failing
@@ -7,16 +7,21 @@
 # this list is what keeps a new call site from quietly going around it.
 #
 # Scope is deliberate. Banned here are the ways a NEW owning container comes
-# into existence or grows its capacity, because those are unambiguous. `push`,
-# `insert` and `extend` are NOT banned: after a successful reserve they cannot
-# allocate, and that is the normal shape of the code.
+# into existence or grows its capacity, because those are unambiguous, plus the
+# shrinking methods below, whose normal shape is "reserve exact and never
+# shrink". `push`, `insert`, `extend` and `resize`/`resize_with` are NOT banned:
+# after a successful reserve they cannot allocate, and that is the normal shape
+# of the code.
 #
 # So one residual risk is left uncovered on purpose, and it is stated here
-# rather than deferred to a document: a `push`, `insert` or `extend` with no
-# reserve in front of it allocates infallibly and the sweep cannot fail it.
-# Banning them would need an allow on every second line, which buys nothing -
-# `falloc`'s VecPush / MapInsert exist so the reserve and the write are one
-# call, and review is what catches a site that skipped them.
+# rather than deferred to a document: a `push`, `insert`, `extend` or
+# `resize`/`resize_with` with no reserve in front of it allocates infallibly and
+# the sweep cannot fail it. Banning them would need an allow on every second
+# line, which buys nothing - `falloc`'s VecPush / MapInsert exist so the reserve
+# and the write are one call, and review is what catches a site that skipped
+# them. Every `resize`/`resize_with` in the tree today already sits behind a
+# falloc reserve (ptr_table, dom_index, arena, eval, serialize/bindings), so the
+# exposure is a future site, not a live one.
 disallowed-methods = [
   { path = "std::boxed::Box::new", reason = "aborts on OOM; use falloc::try_box" },
   # `to_vec` is the same allocation as `Vec::from` under a friendlier name, and
@@ -32,6 +37,20 @@ disallowed-methods = [
   { path = "alloc::vec::Vec::reserve_exact", reason = "aborts on OOM; use Reserve::falloc_reserve_exact" },
   { path = "alloc::vec::Vec::try_reserve", reason = "not injectable; use Reserve::falloc_reserve" },
   { path = "alloc::vec::Vec::try_reserve_exact", reason = "not injectable; use Reserve::falloc_reserve_exact" },
+  # Shrinking is not a no-op: when capacity exceeds the target, `shrink_to_fit`
+  # / `shrink_to` / `String::shrink_to_fit` REALLOCATE the buffer downwards and
+  # abort on failure (verified with a failing global allocator), so they are
+  # outside the sweep like any grow. They only reallocate when capacity > len;
+  # the blessed shape is to reserve exactly and never need to shrink.
+  { path = "alloc::vec::Vec::shrink_to_fit", reason = "reallocs and aborts on OOM; reserve exact and never grow past len" },
+  { path = "alloc::vec::Vec::shrink_to", reason = "reallocs and aborts on OOM; reserve exact and never grow past len" },
+  { path = "alloc::string::String::shrink_to_fit", reason = "reallocs and aborts on OOM; reserve exact and never grow past len" },
+  # `into_boxed_slice` shrinks to `len` before converting, so it aborts the same
+  # way. Its `From<Vec<T>>` / `.into()` conversion spellings reach the same code
+  # and cannot be named here - the type-level half of this one lives in
+  # `falloc::try_to_boxed_slice` and the ban keeps the method name out of a new
+  # site.
+  { path = "alloc::vec::Vec::into_boxed_slice", reason = "reallocs and aborts on OOM; use falloc::try_to_boxed_slice" },
   { path = "std::collections::HashMap::reserve", reason = "aborts on OOM; use Reserve::falloc_reserve" },
   { path = "std::collections::HashMap::try_reserve", reason = "not injectable; use Reserve::falloc_reserve" },
   { path = "std::collections::HashMap::with_capacity", reason = "aborts on OOM; use Reserve::falloc_reserve" },
