@@ -141,7 +141,7 @@ pub fn tag_name(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Er
 /// nil for a non-PI. The PI's data is read with `#content` like any
 /// character-data node.
 pub fn pi_target(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| Ok(this.node().pi_target().map(dom_str)))
+    crate::bridge::ruby::entry(|| this.with_node(|node| Ok(node.pi_target().map(dom_str))))
 }
 
 /// `#node_type`: the numeric DOM node type (`LXB_DOM_NODE_TYPE_*`).
