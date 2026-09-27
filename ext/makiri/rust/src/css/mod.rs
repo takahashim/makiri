@@ -29,7 +29,7 @@ mod lower;
 use crate::gvl::Gvl;
 use crate::lexbor::css_parser;
 use crate::xpath::ast::{Ast, Op};
-use core::cell::RefCell;
+use core::cell::{Cell, RefCell};
 
 use crate::engine_error::{ErrSink, ErrorKind, Reported};
 use crate::falloc::try_box;
@@ -53,6 +53,19 @@ pub const DEFAULT_NS_PREFIX: &str = "xmlns";
 /// The cap on compounds in one selector chain - a selector-complexity bound.
 pub(crate) const MAX_COMPOUNDS: usize = 64;
 
+/// The deepest selector-list nesting the lowering descends through.
+///
+/// Every level - a `:is`, `:where`, `:not` or `:has` argument that itself nests
+/// another - recurses through several frames, and Lexbor's parser accepts a
+/// much deeper chain than the AST depth limit would ever see, because
+/// `check_ast_depth` runs on the way UP: by the time it can refuse, the descent
+/// has already spent the stack. That overflow is not a clean error: Ruby's
+/// stack-overflow handling longjmps past Rust's frames, so `Parsed`'s `Drop`
+/// never runs and its borrow of the process-global parser is never released -
+/// `Busy`, and every later XML `css`/`at_css`/`matches?` fails for the rest of
+/// the process. This bound is checked on the way DOWN, far below `MAX_AST_DEPTH`.
+pub(crate) const MAX_SELECTOR_NESTING: u32 = 128;
+
 /// What every builder in this module carries: where to charge AST nodes, where
 /// to report a failure, and the namespace context.
 ///
@@ -62,6 +75,33 @@ pub(crate) struct Build<'a> {
     pub budget: RefCell<&'a mut Budget>,
     pub err: ErrSink,
     pub default_namespace: bool,
+    /// The selector-list nesting currently being lowered; see
+    /// [`MAX_SELECTOR_NESTING`].
+    nesting: Cell<u32>,
+}
+
+/// One selector-list nesting level, released on drop.
+pub(crate) struct Nesting<'b, 'a> {
+    build: &'b Build<'a>,
+}
+
+impl Drop for Nesting<'_, '_> {
+    fn drop(&mut self) {
+        self.build.nesting.set(self.build.nesting.get() - 1);
+    }
+}
+
+impl<'a> Build<'a> {
+    /// Descend one selector-list nesting level, or refuse at the cap. Hold the
+    /// returned guard across the descent; it releases the level when dropped.
+    pub(crate) fn enter_selector_nesting(&self) -> Result<Nesting<'_, 'a>, Reported> {
+        let depth = self.nesting.get();
+        if depth >= MAX_SELECTOR_NESTING {
+            return Err(self.fail(ErrorKind::Limit, "CSS selector nesting too deep"));
+        }
+        self.nesting.set(depth + 1);
+        Ok(Nesting { build: self })
+    }
 }
 
 impl Build<'_> {
@@ -110,6 +150,7 @@ pub fn compile_owned(
         budget: RefCell::new(budget),
         err,
         default_namespace: ns.default_namespace,
+        nesting: Cell::new(0),
     };
 
     let parsed = match css_parser::parse(gvl, selector) {

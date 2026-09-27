@@ -585,6 +585,7 @@ fn emit_adjacent_sibling(b: &Build, steps: &mut Vec<Step>, axis: Axis) -> Result
 /// than being forced to a descendant - which is what `:has(> a)`, `:has(+ a)`
 /// and `:has(~ a)` need, since there the combinator is relative to self.
 pub(crate) fn complex(b: &Build, first: Option<Selector<'_>>, relative_first: bool) -> Built {
+    let _nesting = b.enter_selector_nesting()?;
     let mut steps = Vec::new();
 
     for (nc, comp) in (Compounds { cursor: first }).enumerate() {
@@ -624,20 +625,26 @@ pub(crate) fn complex(b: &Build, first: Option<Selector<'_>>, relative_first: bo
 ///
 /// The path is non-empty - hence truthy - exactly when self matches.
 pub(crate) fn complex_selftest(b: &Build, first: Option<Selector<'_>>) -> Built {
-    let mut comps: [Option<Compound<'_>>; MAX_COMPOUNDS] = [None; MAX_COMPOUNDS];
-    let mut nc = 0usize;
+    let _nesting = b.enter_selector_nesting()?;
+    /* The compounds go on the heap, not in a `[_; MAX_COMPOUNDS]` stack array:
+     * that array was ~1.5 KiB per frame, and nesting selector lists (each
+     * `:not` argument) put one on every level, so a few hundred levels ran the
+     * native stack out before any depth check could fire. */
+    let mut comps: Vec<Compound<'_>> = match crate::falloc::try_vec_with_capacity(MAX_COMPOUNDS) {
+        Some(v) => v,
+        None => return Err(b.oom()),
+    };
     for comp in (Compounds { cursor: first }) {
-        if nc >= MAX_COMPOUNDS {
+        if comps.len() >= MAX_COMPOUNDS {
             return Err(b.fail(ErrorKind::Limit, "CSS selector too complex"));
         }
-        comps[nc] = Some(comp);
-        nc += 1;
+        build::push(b, &mut comps, comp)?;
     }
 
     /* Right to left: the subject first, then each compound to its left, joined
      * by the combinator that sits on its right neighbour. */
-    let mut leftward = comps[..nc].iter().rev().flatten();
-    let Some(&subject) = leftward.next() else {
+    let mut leftward = comps.iter().rev().copied();
+    let Some(subject) = leftward.next() else {
         return Err(b.fail(ErrorKind::Syntax, "empty CSS selector"));
     };
 
@@ -645,7 +652,7 @@ pub(crate) fn complex_selftest(b: &Build, first: Option<Selector<'_>>) -> Built 
     emit_compound_step(b, &mut steps, Axis::SelfAxis, subject)?;
 
     let mut right = subject;
-    for &left in leftward {
+    for left in leftward {
         if right.comb == Combinator::NextSibling {
             /* Reverse adjacent: the immediately preceding sibling must match. */
             emit_adjacent_sibling(b, &mut steps, Axis::PrecedingSibling)?;

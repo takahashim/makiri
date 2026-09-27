@@ -323,6 +323,21 @@ fn css_selectors_lower_to_the_same_answers_as_xml_css() {
     );
 }
 
+/// A selector list nested past the lowering's cap is refused with LIMIT on the
+/// way down, not after the native stack has run out: a stack overflow longjmps
+/// past `Parsed`'s `Drop`, leaving the process-global parser's borrow held, so
+/// every later XML `css`/`at_css`/`matches?` would fail `Busy` for the life of
+/// the process. The second assertion is what tells an ordinary refusal from a
+/// lost borrow.
+#[cfg(feature = "lexbor")]
+#[test]
+fn a_deeply_nested_selector_is_refused_and_leaves_the_parser_usable() {
+    let depth = crate::css::MAX_SELECTOR_NESTING as usize + 8;
+    let nested = format!("{}a{}", ":not(".repeat(depth), ")".repeat(depth));
+    assert_eq!(css(&nested), Answer::Err(ErrorKind::Limit));
+    assert_eq!(css("a"), nodes(&["a", "a"]));
+}
+
 /// With no room in the string-value cache, comparisons build their values
 /// uncached and still answer as with the cache.
 #[test]
