@@ -59,11 +59,12 @@ pub(crate) const MAX_COMPOUNDS: usize = 64;
 /// another - recurses through several frames, and Lexbor's parser accepts a
 /// much deeper chain than the AST depth limit would ever see, because
 /// `check_ast_depth` runs on the way UP: by the time it can refuse, the descent
-/// has already spent the stack. That overflow is not a clean error: Ruby's
-/// stack-overflow handling longjmps past Rust's frames, so `Parsed`'s `Drop`
-/// never runs and its borrow of the process-global parser is never released -
-/// `Busy`, and every later XML `css`/`at_css`/`matches?` fails for the rest of
-/// the process. This bound is checked on the way DOWN, far below `MAX_AST_DEPTH`.
+/// has already spent the stack. This bound is checked on the way DOWN, far
+/// below `MAX_AST_DEPTH` - but a count alone assumes the caller's stack was
+/// full-sized to begin with, which `crate::stack::exhausted()` (also checked
+/// on the way down, see [`Build::enter_selector_nesting`]) does not have to
+/// assume: see its module doc for why an unchecked overflow is not an ordinary
+/// error (it skips `Drop`, wedging the process-global CSS parser `Busy`).
 pub(crate) const MAX_SELECTOR_NESTING: u32 = 128;
 
 /// What every builder in this module carries: where to charge AST nodes, where
@@ -92,11 +93,14 @@ impl Drop for Nesting<'_, '_> {
 }
 
 impl<'a> Build<'a> {
-    /// Descend one selector-list nesting level, or refuse at the cap. Hold the
-    /// returned guard across the descent; it releases the level when dropped.
+    /// Descend one selector-list nesting level, or refuse at the cap - or, if
+    /// the current execution context's native stack is already low whatever
+    /// the count says (a small `Fiber`, a deep caller), refuse there too. Hold
+    /// the returned guard across the descent; it releases the level when
+    /// dropped.
     pub(crate) fn enter_selector_nesting(&self) -> Result<Nesting<'_, 'a>, Reported> {
         let depth = self.nesting.get();
-        if depth >= MAX_SELECTOR_NESTING {
+        if depth >= MAX_SELECTOR_NESTING || crate::stack::exhausted() {
             return Err(self.fail(ErrorKind::Limit, "CSS selector nesting too deep"));
         }
         self.nesting.set(depth + 1);

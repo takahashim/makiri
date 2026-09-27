@@ -467,6 +467,11 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     crate::glue::query::init_xpath()?;
     crate::glue::stylesheet::init_lexbor_css(ruby)?;
 
+    /* The recursion checks in css/ and xpath/ consult this without knowing
+     * Ruby exists; see crate::stack for why a depth count alone does not
+     * bound the native stack. */
+    crate::stack::install(crate::bridge::stack::low);
+
     makiri.define_singleton_method("__alloc_inject?", function!(alloc_inject_p, 0))?;
     makiri.define_singleton_method("__panic", function!(panic_probe, 1))?;
     makiri.define_singleton_method("__alloc_inject", function!(alloc_inject, 1))?;

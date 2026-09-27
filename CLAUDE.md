@@ -651,7 +651,15 @@ Fail-closed: a build OOM leaves it unbuilt and the walk fallback serves.
 recursive-descent parser → AST → evaluator + 26 built-in functions. The only
 external hook is `Dom::qualified_name` (in `xpath/dom.rs`). Per-evaluate
 budgets (op count, recursion depth, step/predicate/arg counts, node-set & string
-caps) live in `xpath/limits.rs` and fail closed with `Status::Limit`. Ruby:
+caps) live in `xpath/limits.rs` and fail closed with `Status::Limit`.
+`enter_recursion` also asks `crate::stack::exhausted()` (installed by
+`bridge::stack` at `Init_makiri`; see its module doc): a depth COUNT alone
+assumes the caller's frame started with a full-sized native stack, which a
+small `Fiber` (`RUBY_FIBER_MACHINE_STACK_SIZE`) or a caller already deep in its
+own recursion does not have - there the count refuses too late, and Ruby's
+`SystemStackError` handling longjmps past `Drop`. The CSS lowering's
+`Build::enter_selector_nesting` (`css/mod.rs`) checks the same way, for the
+same reason. Ruby:
 `Node#{xpath,at_xpath}(expr, handler=nil)`, `Makiri::XPathContext`
 (`.new`, `#evaluate`, `#register_namespace`/`#register_ns`, `#register_variable`).
 `#xpath` returns a NodeSet for node-sets, else String/Float/boolean. Errors map

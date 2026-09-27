@@ -22,6 +22,10 @@ pub mod alloc;
 
 pub mod gvl;
 
+/// `ruby_stack_check`, installed into `crate::stack` at `Init_makiri` so the
+/// engine's recursion checks can consult it without depending on Ruby.
+pub mod stack;
+
 /// The Ruby <-> Lexbor DOM seam.
 /// The node and Document wrappers, their TypedData types, and the
 /// representation-agnostic accessors.

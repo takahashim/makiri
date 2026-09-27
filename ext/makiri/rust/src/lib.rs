@@ -95,6 +95,12 @@ pub mod text;
 /// Bounds shared across layers (`NODE_SET_MAX`). Unconditional and Ruby-free.
 pub mod limits;
 
+/// The native-stack-exhaustion probe the engine's recursion checks consult,
+/// installed by `bridge::stack` at `Init_makiri`. Unconditional and Ruby-free
+/// itself - see the module doc for why a depth count alone does not bound the
+/// stack.
+pub mod stack;
+
 /// The engine error vocabulary - the kind, the message buffer and the sink -
 /// shared by XPath and the CSS lowering that feeds it. Unconditional and
 /// Ruby-free.

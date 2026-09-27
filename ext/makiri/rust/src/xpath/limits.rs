@@ -184,9 +184,22 @@ impl Budget {
 
     /// Enter one recursion level; a refused entry is not counted, so it needs no
     /// matching [`leave_recursion`](Self::leave_recursion).
+    ///
+    /// The count alone assumes the caller's own frame started with a
+    /// full-sized stack, which is not true in a small `Fiber` or a caller
+    /// already deep in its own recursion - there `max_recursion_depth`'s
+    /// generous default (256) is not generous at all, and `eval_node`/
+    /// `parse_expr` overflow the REAL native stack before the count ever
+    /// refuses. `crate::stack::exhausted()` is the check that does not assume
+    /// a stack size; see its module doc for why an unchecked overflow is not
+    /// an ordinary error (it skips `Drop`, past `rb_protect`). Measured at a
+    /// few ns/call (`rake bench`'s predicate rows), so it stays in this hot
+    /// path rather than being sampled.
     #[inline]
     pub fn enter_recursion(&self) -> Result<(), Reported> {
-        if self.recursion_depth.get() >= self.limits.max_recursion_depth {
+        if self.recursion_depth.get() >= self.limits.max_recursion_depth
+            || crate::stack::exhausted()
+        {
             return Err(over_recursion(self.limits.max_recursion_depth, self.sink()));
         }
         self.recursion_depth.set(self.recursion_depth.get() + 1);
