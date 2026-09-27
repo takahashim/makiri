@@ -17,7 +17,8 @@ use crate::init::{
     CLASS_HTML_PROCESSING_INSTRUCTION, CLASS_HTML_TEXT, CLASS_XML_DOCUMENT,
 };
 use crate::lexbor::adapter::html::{
-    HtmlNode, HtmlNodeMut, Insertion, NodeType, Place, PreInsertError, RawDoc, RawNode,
+    ForeignNode, HtmlNode, HtmlNodeKey, HtmlNodeMut, Insertion, NodeType, Place, PreInsertError,
+    RawDoc, RawNode,
 };
 use crate::lexbor::fragment::import_with_fixup;
 
@@ -170,6 +171,26 @@ impl HtmlSelf {
     pub fn raw(&self) -> RawNode {
         self.raw
     }
+
+    /// Run `f` over the receiver's node, resolving it from a key minted against
+    /// the receiver's document.
+    ///
+    /// TRANSITIONAL: the key is minted here on every call. Once `NodeData`
+    /// stores the wrapper's own key, this resolves the stored one and the mint
+    /// disappears.
+    pub fn with_node<R>(
+        &self,
+        f: impl FnOnce(HtmlNode<'_>) -> Result<R, Error>,
+    ) -> Result<R, Error> {
+        let key = with_html_parsed_known(self.document, |parsed| {
+            // SAFETY: `self.raw` is a live node of the receiver's document - a
+            // wrapper's node comes from a safe constructor, and the receiver
+            // keeps the document alive for this call.
+            unsafe { parsed.mint_key(self.raw) }
+        })
+        .map_err(|ForeignNode| foreign_node_error())?;
+        with_html_node(self.document, key, f)?
+    }
 }
 
 /// An HTML node argument, for the length of the borrow of `v`.
@@ -183,6 +204,40 @@ pub fn arg_node(v: &Value) -> Result<HtmlNode<'_>, Error> {
 /// [`wrap_html_node`] for an optional handle.
 pub fn wrap_node(node: Option<HtmlNode<'_>>, document: Value) -> Option<Value> {
     node.map(|n| wrap_html_node(RawNode::from(n), document))
+}
+
+/* ------------------------------------------------------------------ *
+ * resolving a long-lived key                                          *
+ * ------------------------------------------------------------------ */
+
+/// A key paired with the wrong Document: an internal invariant broken, not a
+/// bad argument, so `InternalError` rather than `Makiri::Error`.
+fn foreign_node_error() -> Error {
+    Error::new(
+        crate::init::EXC_INTERNAL_ERROR.exception(),
+        "an HTML node key belongs to a different document",
+    )
+}
+
+/// Run `f` over the node `key` names, after checking that node belongs to
+/// `rb_doc`'s document.
+///
+/// `rb_doc` is the node's keepalive Document, and `key` was minted from a node
+/// of that document, so the check fails only if a caller paired a key with the
+/// wrong Document - hence `InternalError`. `f` runs inside the document borrow,
+/// so it must not run Ruby that could re-enter this document, and must not
+/// return a borrowed handle or slice.
+pub(in crate::bridge) fn with_html_node<R>(
+    rb_doc: Value,
+    key: HtmlNodeKey,
+    f: impl FnOnce(HtmlNode<'_>) -> R,
+) -> Result<R, Error> {
+    with_html_parsed_known(rb_doc, |parsed| {
+        parsed
+            .resolve(key)
+            .map(f)
+            .map_err(|ForeignNode| foreign_node_error())
+    })
 }
 
 /* ------------------------------------------------------------------ *

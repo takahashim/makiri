@@ -36,7 +36,9 @@ use crate::lexbor::abi::{
 };
 use crate::lexbor::adapter::arena_bytes::document_capacity;
 use crate::lexbor::adapter::dom_index::DomIndex;
-use crate::lexbor::adapter::html::{HtmlDoc as DomDoc, HtmlNode, RawDoc, RawNode, TagId};
+use crate::lexbor::adapter::html::{
+    ForeignNode, HtmlDoc as DomDoc, HtmlDocIdentity, HtmlNode, HtmlNodeKey, RawDoc, RawNode, TagId,
+};
 use crate::lexbor::adapter::source_loc::{lines_build, Lines, Stamper};
 use crate::lexbor::adapter::text_index::{TextBuildError, TextIndex, TextRun};
 use crate::lexbor::adapter::tree_guard::{DepthLimit, GuardStop, TokenHook};
@@ -212,6 +214,54 @@ impl HtmlParsed {
         // SAFETY: the caller's contract.
         let offset = unsafe { node.as_node() }.source_offset()?;
         Some(lines.lookup(offset))
+    }
+
+    /* ---- long-lived node handles ---- */
+
+    /// The identity of this document, for a long-lived node key. See
+    /// `HtmlDocIdentity`: the stable address of this handle.
+    #[cfg_attr(not(feature = "ruby"), allow(dead_code))]
+    #[inline]
+    pub(crate) fn identity(&self) -> HtmlDocIdentity {
+        HtmlDocIdentity::of(self)
+    }
+
+    /// The key for `node`, which must be a node this document owns.
+    ///
+    /// `Err(ForeignNode)` for a live node of another document. This is the one
+    /// checked producer of keys: the safe `resolve` trusts every key to have
+    /// come from here (or from `HtmlNodeKey::new` under its contract).
+    ///
+    /// # Safety
+    /// `node` must be a live node - the contract [`RawNode::as_node`] states,
+    /// which this function reads the node's owner document through.
+    #[cfg_attr(not(feature = "ruby"), allow(dead_code))]
+    pub(crate) unsafe fn mint_key(&self, node: RawNode) -> Result<HtmlNodeKey, ForeignNode> {
+        // SAFETY: the caller's contract - `node` is live.
+        let owner = unsafe { node.as_node() }.owner_document();
+        if owner.as_raw() != self.doc().as_raw() {
+            return Err(ForeignNode);
+        }
+        // SAFETY: `node` is live (the caller's contract) and its owner is this
+        // document (just checked).
+        Ok(unsafe { HtmlNodeKey::new(self.identity(), node) })
+    }
+
+    /// The node `key` names, when it belongs to this document.
+    ///
+    /// The owner identity is compared BEFORE the node pointer is touched, so a
+    /// key minted under another document is refused rather than dereferenced.
+    /// Sound because a key exists only through `mint_key`, or through
+    /// `HtmlNodeKey::new` under its own (unsafe) contract, and both require a
+    /// live node of the owner document.
+    #[cfg_attr(not(feature = "ruby"), allow(dead_code))]
+    pub(crate) fn resolve(&self, key: HtmlNodeKey) -> Result<HtmlNode<'_>, ForeignNode> {
+        if key.owner() != self.identity() {
+            return Err(ForeignNode);
+        }
+        // SAFETY: a key's node is a live node of the document its owner names -
+        // the key's construction contract - and `self` is that document.
+        Ok(unsafe { key.node().as_node() })
     }
 }
 

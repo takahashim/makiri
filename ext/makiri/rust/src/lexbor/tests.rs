@@ -465,3 +465,49 @@ mod tree_depth {
         assert_eq!(frag(3000, DepthLimit::UNLIMITED), Ok(()));
     }
 }
+
+mod node_key {
+    use crate::lexbor::adapter::html::RawNode;
+    use crate::lexbor::adapter::post_parse::{parse_html, HtmlParsed};
+    use crate::lexbor::adapter::tree_guard::DepthLimit;
+
+    fn doc(html: &[u8]) -> Box<HtmlParsed> {
+        parse_html(html, true, DepthLimit::DEFAULT).expect("a document parses")
+    }
+
+    fn root(parsed: &HtmlParsed) -> RawNode {
+        // SAFETY: `parsed` is live for the call.
+        let doc = unsafe { parsed.raw_doc().as_doc() };
+        RawNode::from(
+            doc.as_node()
+                .document_root()
+                .expect("the parser always inserts a root"),
+        )
+    }
+
+    #[test]
+    fn a_key_resolves_to_its_own_node() {
+        let parsed = doc(b"<div id=x>y</div>");
+        let node = root(&parsed);
+        // SAFETY: `node` is a live node of `parsed`.
+        let key = unsafe { parsed.mint_key(node) }.expect("its own node mints");
+        assert!(RawNode::from(parsed.resolve(key).expect("mints, so it resolves")) == node);
+    }
+
+    #[test]
+    fn a_node_of_another_document_is_refused() {
+        let a = doc(b"<p>a</p>");
+        let b = doc(b"<p>b</p>");
+        let node = root(&a);
+        // SAFETY: `node` is a live node (of `a`).
+        assert!(
+            unsafe { b.mint_key(node) }.is_err(),
+            "another document's node must not mint"
+        );
+        let key = unsafe { a.mint_key(node) }.expect("its own node mints");
+        assert!(
+            b.resolve(key).is_err(),
+            "a key must not resolve under another document"
+        );
+    }
+}
