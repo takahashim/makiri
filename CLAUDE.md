@@ -745,6 +745,46 @@ reference (`lexbor::tests::selector_port_spike::agrees_with_the_old_lexbor_engin
 and its randomized sibling) - it is not on `Node#css`'s path any more, kept
 deliberately for comparison rather than deleted yet
 (`notes/css_selectors_crate_migration_plan.ja.md`).
+**`:has()` nesting is heap-based too, not just `:is`/`:where`/`:not`.** An
+earlier version of this port answered `:has()` with ordinary Rust recursion
+(`has_forward`), reasoning that `MAX_COMPOUNDS` (64) bounded it safely - true
+for ONE `:has()` chain's own compound-by-compound depth, but not for `:has()`
+NESTED inside another `:has()`'s argument: `check_simple`'s `Has` arm called
+`has_matches` EAGERLY (unlike `:is`/`:where`/`:not`, already deferred to the
+heap `Frame`/`Cont` stack), so each nesting level added a fresh native call
+chain with its own 64-deep budget, unbounded by nesting depth. Confirmed as a
+real, reachable crash: `:has(` × 300 `div` `)` × 300 against a 302-deep
+document, inside a `Fiber` given only `RUBY_FIBER_MACHINE_STACK_SIZE`'s
+documented minimum (128 KiB), crashed the WHOLE PROCESS with an uncaught
+`SystemStackError` that escaped every `rescue` (exit code 1) - worse than an
+ordinary raise, since Ruby's stack-overflow handling `longjmp`s past every
+Rust frame between the overflow and the nearest `rb_protect`, skipping `Drop`
+(`crate::stack`'s module doc): for `selector_cache::Session`, whose `Drop`
+releases the process-global CSS engine's `GvlCell` busy flag, a `longjmp`
+mid-match would have left it stuck `true` forever, wedging `Node#css`/
+`#at_css`/`#matches?` for the rest of the process - not just crashing the one
+call. Lexbor's own C engine never had this problem: `:has()`/`:is()` nesting
+is handled by `lxb_selectors_nested_t`, a heap structure, not C recursion
+(`notes/css_selectors_crate_migration_plan.ja.md` §1.1). Fixed the same way:
+`Frame::HasStep`/`HasCursor` (`selector_port.rs`) answer `:has()`'s forward
+search - candidate iteration over Descendant/Child/NextSibling/
+SubsequentSibling, multi-compound stepping, and nesting - entirely on the
+SAME heap stack `run()` already uses for `:is()`, with NO nesting-depth cap
+(matching `:is()`'s own "verified safe at 500,000 levels" guarantee, not a
+new arbitrary limit). Verified: the differential fuzzer
+(`agrees_with_the_old_engine_on_randomly_generated_selectors`, which
+generates nested `:has()`/`:is()`/`:where()`/`:not()` with all four
+combinators) still agrees with the OLD engine;
+`has_nested_inside_has_is_heap_based_not_native_recursion` reproduces the
+crash fixture on a 128 KiB thread stack and gets a correct answer, not an
+overflow; the original Ruby-level repro (small `Fiber`, depth-300 nesting)
+now raises a catchable `Makiri::Error` (`WorkExceeded` - `:has()`'s own
+Descendant search exploring a genuinely large candidate space for this
+adversarial shape, the SAME pre-existing budget mechanic the old
+native-recursive design also relied on, just no longer reachable via a crash
+first) and leaves the CSS engine fully usable afterward, never
+`SystemStackError`.
+
 `select_all`/`select_first`/`matches_any` are **descendant-only** (context node
 excluded, like Nokogiri) and in document order; `select_all` is capped at
 `NODE_SET_MAX`, and every entry point shares one per-call work `Budget`
