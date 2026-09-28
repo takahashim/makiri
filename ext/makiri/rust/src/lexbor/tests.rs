@@ -909,6 +909,47 @@ mod selector_port_spike {
         assert!(unstarved.is_empty());
     }
 
+    /// `sibling_position` (behind `:nth-of-type`/`:first-of-type`/
+    /// `:last-of-type`/`:only-of-type`/`:nth-child` without `of S`) is
+    /// O(siblings), same as `:has()`'s search - a wide sibling list under a
+    /// query that checks one of these on every sibling costs work
+    /// proportional to siblings² if uncounted. Same proof shape as the
+    /// `:has()` test above: a small `select_all_with_work_limit` limit
+    /// against a small fixture, since a real sibling list wide enough to
+    /// exhaust the shipped 10-million default would be impractical to build
+    /// here.
+    #[test]
+    fn wide_sibling_lists_under_of_type_checks_charge_the_work_budget_too() {
+        use crate::lexbor::selector_port::select_all_with_work_limit;
+
+        const SIBLINGS: usize = 30;
+
+        let mut html = String::from("<!doctype html><html><body>");
+        for _ in 0..SIBLINGS {
+            html.push_str("<span></span>");
+        }
+        html.push_str("</body></html>");
+        let doc = parsed(html.as_bytes());
+
+        let gvl = Gvl::exclusive();
+        let text = VerifiedText::from_bytes(b"span:last-of-type").expect("verified");
+        let parsed_sel =
+            css_parser::parse(&gvl, text).unwrap_or_else(|_| panic!("selector fails to parse"));
+
+        // `:last-of-type` on the FIRST of 30 same-type siblings walks all 29
+        // that follow before answering `false` - well past a limit of 10.
+        let starved = select_all_with_work_limit(root(&doc), parsed_sel.groups(), 10);
+        assert!(matches!(
+            starved,
+            Err(crate::lexbor::selector_port::QueryFailure::WorkExceeded)
+        ));
+
+        // With room to spare it answers correctly: exactly the last <span>.
+        let unstarved = select_all_with_work_limit(root(&doc), parsed_sel.groups(), 10_000)
+            .expect("comfortably within budget");
+        assert_eq!(unstarved.len(), 1);
+    }
+
     /// Phase 2's differential check: the port and the OLD Lexbor-callback
     /// engine (`lexbor::selectors`), run over the same document, must agree
     /// - in document order - on every standard selector this port supports.

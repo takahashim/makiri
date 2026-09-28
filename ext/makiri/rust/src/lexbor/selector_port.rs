@@ -431,7 +431,18 @@ fn name_matches_type(a: HtmlNode<'_>, b: HtmlNode<'_>) -> bool {
     }
 }
 
-fn sibling_position(node: HtmlNode<'_>, from_end: bool, of_type: bool) -> u64 {
+/// `node`'s 1-based position among its (`from_end`-directed) siblings,
+/// counting only same-type ones when `of_type`. O(siblings), uncached (the
+/// plan's `NthIndexCache`-equivalent optimization is still open - see the
+/// module doc) - but every sibling visited charges `budget`, so a wide
+/// sibling list under repeated `:nth-of-type`-family checks costs the SAME
+/// budget `:has()`'s search does, not an uncounted O(siblings) per check.
+fn sibling_position(
+    node: HtmlNode<'_>,
+    from_end: bool,
+    of_type: bool,
+    budget: &Budget,
+) -> Result<u64, WorkExceeded> {
     let same_type = |n: HtmlNode<'_>| !of_type || name_matches_type(n, node);
     let mut pos: u64 = 1;
     let mut cur = if from_end {
@@ -440,6 +451,7 @@ fn sibling_position(node: HtmlNode<'_>, from_end: bool, of_type: bool) -> u64 {
         prev_sibling_element(node)
     };
     while let Some(n) = cur {
+        budget.charge()?;
         if same_type(n) {
             pos += 1;
         }
@@ -449,7 +461,7 @@ fn sibling_position(node: HtmlNode<'_>, from_end: bool, of_type: bool) -> u64 {
             prev_sibling_element(n)
         };
     }
-    pos
+    Ok(pos)
 }
 
 /// §D-1's `of S`: `node`'s 1-based position counting only elements matching
@@ -639,8 +651,12 @@ fn is_read_write(node: HtmlNode<'_>) -> bool {
         && !is_disabled(node)
 }
 
-fn plain_pseudo_matches(pc: PseudoClass, node: HtmlNode<'_>) -> bool {
-    match pc {
+fn plain_pseudo_matches(
+    pc: PseudoClass,
+    node: HtmlNode<'_>,
+    budget: &Budget,
+) -> Result<bool, WorkExceeded> {
+    Ok(match pc {
         PseudoClass::FirstChild => prev_sibling_element(node).is_none(),
         PseudoClass::LastChild => next_sibling_element(node).is_none(),
         PseudoClass::OnlyChild => {
@@ -648,10 +664,11 @@ fn plain_pseudo_matches(pc: PseudoClass, node: HtmlNode<'_>) -> bool {
         }
         PseudoClass::Empty => is_empty(node),
         PseudoClass::Root => is_root(node),
-        PseudoClass::FirstOfType => sibling_position(node, false, true) == 1,
-        PseudoClass::LastOfType => sibling_position(node, true, true) == 1,
+        PseudoClass::FirstOfType => sibling_position(node, false, true, budget)? == 1,
+        PseudoClass::LastOfType => sibling_position(node, true, true, budget)? == 1,
         PseudoClass::OnlyOfType => {
-            sibling_position(node, false, true) == 1 && sibling_position(node, true, true) == 1
+            sibling_position(node, false, true, budget)? == 1
+                && sibling_position(node, true, true, budget)? == 1
         }
         PseudoClass::AnyLink => is_any_link(node, false),
         PseudoClass::Link => is_any_link(node, true),
@@ -680,7 +697,7 @@ fn plain_pseudo_matches(pc: PseudoClass, node: HtmlNode<'_>) -> bool {
                 && has_attr(node, b"placeholder")
         }
         PseudoClass::Other => false,
-    }
+    })
 }
 
 fn nth_matches(
@@ -688,10 +705,13 @@ fn nth_matches(
     from_end: bool,
     of_type: bool,
     anb: Option<crate::lexbor::css_parser::Nth<'_>>,
-) -> bool {
-    let Some(anb) = anb else { return false };
-    let pos = sibling_position(node, from_end, of_type) as i64;
-    anb_matches(anb, pos)
+    budget: &Budget,
+) -> Result<bool, WorkExceeded> {
+    let Some(anb) = anb else {
+        return Ok(false);
+    };
+    let pos = sibling_position(node, from_end, of_type, budget)? as i64;
+    Ok(anb_matches(anb, pos))
 }
 
 /// §D-3 `lxb_selectors_anb_calc`, done with integer arithmetic instead of
@@ -910,7 +930,7 @@ fn check_simple<'p>(
                 explicit_ci,
             ))
         }
-        Simple::PseudoClass(pc) => SimpleCheck::Result(plain_pseudo_matches(pc, node)),
+        Simple::PseudoClass(pc) => SimpleCheck::Result(plain_pseudo_matches(pc, node, budget)?),
         Simple::PseudoClassFunction(FunctionArg::Nth {
             from_end,
             of_type,
@@ -918,7 +938,7 @@ fn check_simple<'p>(
         }) => {
             let matched = match anb.and_then(|a| a.of_list.map(|l| (a, l))) {
                 Some((a, list)) => nth_of_s_matches(node, from_end, list, Some(a), budget)?,
-                None => nth_matches(node, from_end, of_type, anb),
+                None => nth_matches(node, from_end, of_type, anb, budget)?,
             };
             SimpleCheck::Result(matched)
         }
