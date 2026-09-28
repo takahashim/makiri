@@ -6,6 +6,7 @@
 
 use super::*;
 use crate::dom_rules::{self, At, Hierarchy, Tree, Violation};
+use crate::falloc::OomOption;
 
 /// Where an insertion puts its node, relative to the node it is made on.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -206,7 +207,7 @@ impl<'doc> HtmlNodeMut<'doc> {
             let text_node = if text.is_empty() {
                 None
             } else {
-                Some(node.owner_document().create_text(text).ok_or(AdapterOom)?)
+                Some(node.owner_document().create_text(text).or_oom()?)
             };
             while let Some(c) = self.first_child() {
                 c.detach();

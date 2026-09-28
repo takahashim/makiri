@@ -25,7 +25,7 @@ use super::order::nodeset_unique_sorted;
 use super::value::Focus;
 use super::value::*;
 use crate::err_setf;
-use crate::falloc::Reserve;
+use crate::falloc::try_vec_with_capacity;
 use core::ops::ControlFlow;
 
 /// Names the CSS lowering EMITS and the evaluator RESOLVES for an untyped
@@ -508,16 +508,15 @@ fn advance_chars(s: &[u8], n: usize) -> usize {
 /// the abort a plain `Vec` growth gives (std's allocation failure aborts, it
 /// does not unwind).
 fn try_vec<T>(n: usize, err: ErrSink, what: &str) -> FnResult<Vec<T>> {
-    let mut v: Vec<T> = Vec::new();
-    if v.falloc_reserve_exact(n).is_err() {
-        return Err(err_setf!(
-            err,
-            ErrorKind::Oom,
-            "out of memory in {}()",
-            what
-        ));
+    if let Some(v) = try_vec_with_capacity(n) {
+        return Ok(v);
     }
-    Ok(v)
+    Err(err_setf!(
+        err,
+        ErrorKind::Oom,
+        "out of memory in {}()",
+        what
+    ))
 }
 
 /* ---------- node-set functions ---------- */

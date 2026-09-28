@@ -9,9 +9,9 @@
 
 use super::bindings::{Bindings, Prefix};
 use super::out::{put, put_pi, C14N, W};
-use super::{Failure, OrOom};
+use super::Failure;
 use crate::cbuf::Buf;
-use crate::falloc::Reserve;
+use crate::falloc::{OomResult, VecPush};
 use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeFlags, NodeId, MAX_DEPTH};
 use crate::xml::qname::xmlns_prefix;
 
@@ -113,8 +113,7 @@ impl<'d> Writer<'d, '_> {
             if prefix == b"xml" || (prefix.is_empty() && uri.is_empty()) {
                 continue;
             }
-            out.falloc_reserve(1).or_oom()?;
-            out.push(Ns { prefix, uri });
+            out.falloc_push(Ns { prefix, uri }).or_oom()?;
         }
         sort_by_prefix(&mut out);
         Ok(out)
@@ -138,8 +137,7 @@ impl<'d> Writer<'d, '_> {
                         !(p.is_empty() && u.is_empty()) || above.is_some_and(|a| !a.is_empty())
                     };
                     if keep {
-                        out.falloc_reserve(1).or_oom()?;
-                        out.push(Ns { prefix: p, uri: u });
+                        out.falloc_push(Ns { prefix: p, uri: u }).or_oom()?;
                     }
                 }
             }
@@ -196,8 +194,7 @@ impl<'d> Writer<'d, '_> {
         let mut up = doc.parent(n);
         while let Some(id) = up {
             if doc.type_(id) == Some(ArenaKind::Element) {
-                chain.falloc_reserve(1).or_oom()?;
-                chain.push(id);
+                chain.falloc_push(id).or_oom()?;
             }
             up = doc.parent(id);
         }
@@ -275,8 +272,7 @@ fn sorted_attributes(doc: &XmlDoc, n: NodeId) -> Result<Vec<NodeId>, Failure> {
     let mut attrs: Vec<NodeId> = Vec::new();
     for at in doc.attributes(n) {
         if xmlns_decl(doc, at).is_none() {
-            attrs.falloc_reserve(1).or_oom()?;
-            attrs.push(at);
+            attrs.falloc_push(at).or_oom()?;
         }
     }
     /* In place (see clippy.toml): an element's attributes are distinct by

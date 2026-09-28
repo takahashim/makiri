@@ -37,7 +37,7 @@
 #![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
-use crate::falloc::{self, VecPush};
+use crate::falloc::{self, OomOption, OomResult, VecPush};
 use crate::lexbor::abi as lxb;
 use crate::lexbor::abi::consts as k;
 
@@ -99,6 +99,13 @@ pub enum Fail {
     Serialize,
 }
 
+impl crate::falloc::Oom for Fail {
+    #[inline]
+    fn oom() -> Self {
+        Fail::Oom
+    }
+}
+
 /* ---- serialization ---- */
 
 /// Drive one of Lexbor's `*_serialize` callbacks into an owned buffer.
@@ -122,7 +129,7 @@ unsafe fn serialize_with(
     if st != 0 {
         return Err(Fail::Serialize);
     }
-    falloc::try_to_vec(scratch).ok_or(Fail::Oom)
+    falloc::try_to_vec(scratch).or_oom()
 }
 
 /* ---- specificity ---- */
@@ -166,7 +173,7 @@ fn as_written(c: &Conv, text: Vec<u8>, begin: usize, end: usize) -> Result<Vec<u
     if c.parsed.is_none() || begin > end || end > c.css.len() {
         return Ok(text);
     }
-    falloc::try_to_vec(&c.css[begin..end]).ok_or(Fail::Oom)
+    falloc::try_to_vec(&c.css[begin..end]).or_oom()
 }
 
 unsafe fn declarations(
@@ -267,7 +274,7 @@ fn slice_trim(css: &[u8], begin: usize, end: usize) -> Result<Vec<u8>, Fail> {
         }
         s = rest;
     }
-    falloc::try_to_vec(s).ok_or(Fail::Oom)
+    falloc::try_to_vec(s).or_oom()
 }
 
 /// The at-rule keyword, without the `@`.
@@ -277,7 +284,7 @@ fn slice_trim(css: &[u8], begin: usize, end: usize) -> Result<Vec<u8>, Fail> {
 /// @layer, @keyframes) keeps the verbatim ident. The on-rule `name_begin`
 /// offset is NOT used: it is not reset between sibling rules.
 unsafe fn at_name(at: *mut lxb::lxb_css_rule_at_t) -> Result<Vec<u8>, Fail> {
-    let lit = |s: &[u8]| falloc::try_to_vec(s).ok_or(Fail::Oom);
+    let lit = |s: &[u8]| falloc::try_to_vec(s).or_oom();
     match (*at).type_ {
         k::AT_RULE_MEDIA => lit(b"media"),
         k::AT_RULE_FONT_FACE => lit(b"font-face"),
@@ -343,7 +350,7 @@ unsafe fn rules(
                 // rather than lose the rule.
                 let bad = r as *mut lxb::lxb_css_rule_bad_style_t;
                 let text = match lexbor_str(&(*bad).selectors) {
-                    Some(b) => falloc::try_to_vec(b).ok_or(Fail::Oom)?,
+                    Some(b) => falloc::try_to_vec(b).or_oom()?,
                     None => Vec::new(),
                 };
                 Some(Rule::BadStyle {
@@ -355,9 +362,7 @@ unsafe fn rules(
             _ => None,
         };
         if let Some(e) = entry {
-            if out.falloc_push(e).is_err() {
-                return Err(Fail::Oom);
-            }
+            out.falloc_push(e).or_oom()?;
         }
         r = (*r).next;
     }

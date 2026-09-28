@@ -15,7 +15,7 @@
 
 #![forbid(unsafe_code)]
 
-use crate::falloc::VecPush;
+use crate::falloc::{OomResult, VecPush};
 use crate::xml::qname::{xmlns_prefix, Split};
 use crate::xml::{ArenaKind, AttrNs, Document, MutError, NodeFlags, NodeId, Span};
 
@@ -153,9 +153,7 @@ fn plan_node_ns(
             connected,
         )?;
         if r.ns != doc.node(e).ns_uri {
-            plan.names
-                .falloc_push((e, r.ns))
-                .map_err(|()| MutError::Oom)?;
+            plan.names.falloc_push((e, r.ns)).or_oom::<MutError>()?;
         }
     }
     /* Every attribute's key as it will stand - a re-resolved one's new
@@ -177,12 +175,10 @@ fn plan_node_ns(
             (Some(doc.node(attr).ns_uri), None)
         };
         if let Some(ns) = key {
-            keys.falloc_push((ns, attr)).map_err(|()| MutError::Oom)?;
+            keys.falloc_push((ns, attr)).or_oom::<MutError>()?;
         }
         if let Some(r) = write {
-            plan.attrs
-                .falloc_push((attr, r))
-                .map_err(|()| MutError::Oom)?;
+            plan.attrs.falloc_push((attr, r)).or_oom::<MutError>()?;
         }
     }
     if crate::xml::attr_key::keys_repeat(doc, &mut keys) {

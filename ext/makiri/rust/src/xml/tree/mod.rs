@@ -13,7 +13,7 @@ mod decl;
 mod dtd;
 mod scope;
 
-use crate::falloc::Reserve;
+use crate::falloc::{OomResult, Reserve, VecPush};
 use crate::xml::arena::AppendError;
 use crate::xml::chars::{
     expand_into, is_reserved_pi_target, normalize_newlines, ExpandErr, ExpandMode,
@@ -192,10 +192,9 @@ impl<'a> Parser<'a> {
             if self.ratt.len() + 1 > MAX_ATTRS {
                 return self.cur.limit();
             }
-            if self.ratt.falloc_reserve(1).is_err() {
-                return Err(ParseError::Oom);
-            }
-            self.ratt.push(RawAttr { name, val });
+            self.ratt
+                .falloc_push(RawAttr { name, val })
+                .or_oom::<ParseError>()?;
         }
     }
 
@@ -484,9 +483,8 @@ impl<'a> Parser<'a> {
             if self.stack.len() + 1 > MAX_DEPTH {
                 return self.cur.limit();
             }
-            if self.stack.falloc_reserve(1).is_err() || self.frames.falloc_reserve(1).is_err() {
-                return Err(ParseError::Oom);
-            }
+            self.stack.falloc_reserve(1).or_oom::<ParseError>()?;
+            self.frames.falloc_reserve(1).or_oom::<ParseError>()?;
             self.stack.push(el);
             self.frames.push(frame);
         } else {

@@ -13,7 +13,7 @@
 use super::abi::*;
 use super::dom::Dom;
 use super::eval;
-use crate::falloc::{MapInsert, Reserve};
+use crate::falloc::{MapInsert, OomOption, OomResult, Reserve};
 use crate::token::Token;
 use core::cell::{Cell, Ref, RefCell, RefMut};
 use core::marker::PhantomData;
@@ -106,18 +106,15 @@ impl Names {
         }
         /* The cap is one failure and memory another: a reserve that fails is
          * out of memory, not too many registrations. */
-        if self.ns.falloc_reserve(1).is_err() || self.ns_index.falloc_reserve(1).is_err() {
-            return Err(ContextError::Oom);
-        }
-        let key = crate::falloc::try_to_boxed_slice(prefix).ok_or(ContextError::Oom)?;
+        self.ns.falloc_reserve(1).or_oom()?;
+        self.ns_index.falloc_reserve(1).or_oom()?;
+        let key = crate::falloc::try_to_boxed_slice(prefix).or_oom()?;
         let entry = NsEntry { uri: copy(uri)? };
         /* Both are reserved above, so neither write below can fail. The index
          * still goes first: if one ever could, a failed insert must not leave
          * a pushed entry the lookup cannot reach but the cap counts. */
         let at = self.ns.len();
-        self.ns_index
-            .falloc_insert(key, at)
-            .map_err(|()| ContextError::Oom)?;
+        self.ns_index.falloc_insert(key, at).or_oom()?;
         self.ns.push(entry);
         Ok(())
     }
@@ -135,19 +132,16 @@ impl Names {
         }
         /* The cap is one failure and memory another: a reserve that fails is
          * out of memory, not too many registrations. */
-        if self.vars.falloc_reserve(1).is_err() || self.vars_index.falloc_reserve(1).is_err() {
-            return Err(ContextError::Oom);
-        }
-        let key = crate::falloc::try_to_boxed_slice(name).ok_or(ContextError::Oom)?;
+        self.vars.falloc_reserve(1).or_oom()?;
+        self.vars_index.falloc_reserve(1).or_oom()?;
+        let key = crate::falloc::try_to_boxed_slice(name).or_oom()?;
         let entry = VarEntry {
             value: copy(value)?,
         };
         /* Both are reserved above, and the index goes first for the same reason
          * as `bind_ns`. */
         let at = self.vars.len();
-        self.vars_index
-            .falloc_insert(key, at)
-            .map_err(|()| ContextError::Oom)?;
+        self.vars_index.falloc_insert(key, at).or_oom()?;
         self.vars.push(entry);
         Ok(())
     }
@@ -202,6 +196,13 @@ pub enum ContextError {
     TooMany,
     /// Out of memory copying a registration or a binding.
     Oom,
+}
+
+impl crate::falloc::Oom for ContextError {
+    #[inline]
+    fn oom() -> Self {
+        ContextError::Oom
+    }
 }
 
 /// What an expression is evaluated under, apart from the document: the context
@@ -452,7 +453,7 @@ impl<'d, D: Dom<'d>> core::ops::DerefMut for Context<'d, D> {
 }
 
 fn copy(bytes: &[u8]) -> Result<Text, ContextError> {
-    Text::try_copy(bytes).ok_or(ContextError::Oom)
+    Text::try_copy(bytes).or_oom()
 }
 
 /// The result of an evaluate, owned: dropping it frees the node-set's array or

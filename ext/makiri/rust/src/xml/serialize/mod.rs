@@ -72,17 +72,10 @@ pub enum Failure {
     UnboundPrefix,
 }
 
-/// A `crate::falloc` reservation for the writers' own bookkeeping, whose `()`
-/// on OOM is refused as [`Failure::Oom`], so an allocation failure is never
-/// confused with the output cap.
-pub(super) trait OrOom {
-    fn or_oom(self) -> Result<(), Failure>;
-}
-
-impl OrOom for Result<(), ()> {
+impl crate::falloc::Oom for Failure {
     #[inline]
-    fn or_oom(self) -> Result<(), Failure> {
-        self.map_err(|()| Failure::Oom)
+    fn oom() -> Self {
+        Failure::Oom
     }
 }
 

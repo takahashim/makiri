@@ -31,6 +31,7 @@
 #![allow(unsafe_code)]
 
 use super::*;
+use crate::falloc::OomOption;
 
 /// Which of Lexbor's two attribute shortcuts an attribute is, in the DOM's
 /// terms: the element's ID (no namespace, local name exactly `id`) or its
@@ -162,7 +163,7 @@ impl<'doc> HtmlElement<'doc> {
         // copied by Lexbor, and the attribute is one nothing else holds.
         unsafe {
             let at = lxb::lxb_dom_attr_interface_create(self.node().owner_document().as_raw());
-            let at = HtmlAttr::link(at).ok_or(AdapterOom)?;
+            let at = HtmlAttr::link(at).or_oom()?;
             let named = match ns {
                 Some(uri) => lxb::lxb_dom_attr_set_name_ns(
                     at.raw(),
@@ -374,7 +375,7 @@ unsafe fn repair_element(
             // SAFETY: a live source attribute, only read; the clone is made in
             // `doc` and is unlinked.
             let copy = unsafe { lxb::lxb_dom_attr_interface_clone(doc.as_raw(), sa.raw()) };
-            let copy = HtmlAttr::link(copy).ok_or(AdapterOom)?;
+            let copy = HtmlAttr::link(copy).or_oom()?;
             // SAFETY: per the contract; `copy` is unlinked. The shortcuts are
             // set below.
             unsafe { de.link_attr(copy, None) };

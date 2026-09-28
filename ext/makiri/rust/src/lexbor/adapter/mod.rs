@@ -27,3 +27,33 @@ pub mod tree_guard;
 /// closed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AdapterOom;
+
+impl crate::falloc::Oom for AdapterOom {
+    #[inline]
+    fn oom() -> Self {
+        AdapterOom
+    }
+}
+
+/// `cross_import` is the one place an [`AdapterOom`] meets the XML side; this
+/// lets it propagate one with a bare `?` instead of a `.map_err(|_|
+/// MutError::Oom)` at each crossing, the same shape as
+/// `From<BudgetError> for MutError` in `xml::model`. It lives here, not
+/// there: `xml` stays Lexbor-free, so the conversion has to sit on the side
+/// that already depends on both.
+impl From<AdapterOom> for crate::xml::model::MutError {
+    #[inline]
+    fn from(_: AdapterOom) -> Self {
+        crate::xml::model::MutError::Oom
+    }
+}
+
+/// As above, for the XPath engine's own error kind - the other place an
+/// [`AdapterOom`] (rebuilding the element index for `//tag`) needs to become
+/// something the rest of the engine understands.
+impl From<AdapterOom> for crate::engine_error::ErrorKind {
+    #[inline]
+    fn from(_: AdapterOom) -> Self {
+        crate::engine_error::ErrorKind::Oom
+    }
+}

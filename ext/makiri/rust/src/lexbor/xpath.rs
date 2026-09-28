@@ -232,7 +232,7 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
         // SAFETY: `new`'s contract, and nothing borrowed from the handle is
         // live: this evaluation has not started, and an outer one would have
         // built the index already.
-        unsafe { (*self.parsed).ensure_dom_index() }.map_err(|_| ErrorKind::Oom)
+        unsafe { (*self.parsed).ensure_dom_index() }.map_err(Into::into)
     }
 
     /// Served only for a document with no foreign element, where lax and

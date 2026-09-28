@@ -8,7 +8,7 @@
 
 #![forbid(unsafe_code)]
 
-use crate::falloc::Reserve;
+use crate::falloc::try_vec_with_capacity;
 use crate::xml::{AttrNs, Document, NodeId, Span};
 
 /// How an attribute is looked up: by its raw qualified name, or by the DOM's
@@ -83,8 +83,7 @@ pub(crate) fn has_duplicate(doc: &Document, element: NodeId) -> Option<bool> {
         });
         return Some(found);
     }
-    let mut ids: Vec<NodeId> = Vec::new();
-    ids.falloc_reserve_exact(count).ok()?;
+    let mut ids: Vec<NodeId> = try_vec_with_capacity(count)?;
     ids.extend(attrs());
     let key = |x: NodeId| (doc.ns(x), doc.local(x));
     ids.sort_unstable_by(|&x, &y| key(x).cmp(&key(y)));

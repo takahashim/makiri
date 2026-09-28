@@ -19,7 +19,7 @@
 
 #![forbid(unsafe_code)]
 
-use crate::falloc::try_vec_with_capacity;
+use crate::falloc::{try_vec_with_capacity, OomOption};
 
 /// The MurmurHash3 fmix64 finalizer over a pointer value.
 ///
@@ -181,6 +181,13 @@ impl<K: TableKey, V: Copy> PtrTable<K, V> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InsertRefused;
 
+impl crate::falloc::Oom for InsertRefused {
+    #[inline]
+    fn oom() -> Self {
+        InsertRefused
+    }
+}
+
 /// A key -> `V` map that grows as it is filled, for a cache or an index whose
 /// size is not known up front. Insert-only, like [`PtrTable`].
 pub struct PtrMap<K, V> {
@@ -256,7 +263,7 @@ impl<K: TableKey, V: Copy + Default> PtrMap<K, V> {
             0 => Self::MIN_SLOTS,
             n => n.checked_mul(2).ok_or(InsertRefused)?,
         };
-        let mut slots: Vec<(K, V)> = try_vec_with_capacity(cap).ok_or(InsertRefused)?;
+        let mut slots: Vec<(K, V)> = try_vec_with_capacity(cap).or_oom()?;
         slots.resize(cap, (K::EMPTY, V::default())); /* reserved above */
         for &(k, v) in self.slots.iter().filter(|(k, _)| *k != K::EMPTY) {
             let i = probe(&slots, k);

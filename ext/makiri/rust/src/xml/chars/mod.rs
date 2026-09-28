@@ -11,7 +11,7 @@
 
 mod expand;
 
-use crate::falloc::Reserve;
+use crate::falloc::{try_vec_with_capacity, OomOption};
 use crate::xml::ParseError;
 /* The engine is reached ONLY through these three names, so there is never a
  * second equally-correct way to spell one of them. */
@@ -169,9 +169,7 @@ pub fn normalize_newlines(src: &[u8]) -> Result<Option<Vec<u8>>, ParseError> {
     if !src.contains(&b'\r') {
         return Ok(None);
     }
-    let mut out: Vec<u8> = Vec::new();
-    out.falloc_reserve_exact(src.len())
-        .map_err(|_| ParseError::Oom)?;
+    let mut out: Vec<u8> = try_vec_with_capacity(src.len()).or_oom::<ParseError>()?;
     /* Each CR becomes an LF, and swallows an LF right after it (CRLF -> LF).
      * Reserved exactly above, and the output only shrinks, so nothing here
      * reallocates. */
