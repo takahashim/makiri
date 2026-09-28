@@ -47,6 +47,7 @@ fn query_error(err: QueryFailure) -> Error {
         QueryFailure::WorkExceeded => match_error(MatchFailure::WorkExceeded),
         QueryFailure::Unsupported => match_error(MatchFailure::Unsupported),
         QueryFailure::TooComplex => match_error(MatchFailure::TooComplex),
+        QueryFailure::Oom => match_error(MatchFailure::Oom),
     }
 }
 
@@ -66,6 +67,7 @@ fn match_error(err: MatchFailure) -> Error {
         MatchFailure::TooComplex => makiri_error(format!(
             "CSS selector chain too complex (more than {MAX_COMPOUNDS} compounds)"
         )),
+        MatchFailure::Oom => makiri_error("out of memory matching CSS selector"),
     }
 }
 
@@ -105,7 +107,6 @@ fn css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Value, Error> {
         let sv = selector_text(selector)?;
         let gvl = held(ruby);
         let matched = selector_cache::with_compiled(&gvl, sv.as_bytes(), |groups| {
-            selector_port::validate(groups)?;
             selector_port::select_all(this.node(), groups)
         })
         .map_err(|e| parse_error(e, selector))?;
@@ -128,7 +129,6 @@ fn at_css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Option<Value>, 
         let sv = selector_text(selector)?;
         let gvl = held(ruby);
         let matched = selector_cache::with_compiled(&gvl, sv.as_bytes(), |groups| {
-            selector_port::validate(groups)?;
             selector_port::select_first(this.node(), groups)
         })
         .map_err(|e| parse_error(e, selector))?;
@@ -150,10 +150,11 @@ fn matches(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<bool, Error> {
         let gvl = held(ruby);
         let element = this.node().element();
         let matched = selector_cache::with_compiled(&gvl, sv.as_bytes(), |groups| {
-            selector_port::validate(groups)?;
             match element {
                 Some(el) => selector_port::matches_any(groups, el),
-                None => Ok(false),
+                // Still compiled: a selector the matcher refuses is refused
+                // whatever node it is asked about.
+                None => selector_port::compile(groups).map(|_| false),
             }
         })
         .map_err(|e| parse_error(e, selector))?;
