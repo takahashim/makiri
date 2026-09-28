@@ -760,17 +760,20 @@ mod selector_port_spike {
               <fieldset disabled><legend><button>ok</button></legend><button>no</button></fieldset>\
               <fieldset disabled><button>also-no</button></fieldset>\
               <p></p><p> </p><p>x</p>\
+              <input placeholder='x'><input placeholder=''><input>\
+              <textarea placeholder='y'></textarea>\
+              <select placeholder='z'></select>\
               </body></html>",
         );
         assert_eq!(select_all(&doc, ":any-link").len(), 1);
         assert_eq!(select_all(&doc, ":link").len(), 1);
         assert_eq!(select_all(&doc, "input:checked").len(), 1);
         assert_eq!(select_all(&doc, "input:required").len(), 1);
-        // 6 <input>s total, all but the `required` one are :optional.
-        assert_eq!(select_all(&doc, "input:optional").len(), 5);
+        // 9 <input>s total, all but the `required` one are :optional.
+        assert_eq!(select_all(&doc, "input:optional").len(), 8);
         assert_eq!(select_all(&doc, "input:read-only").len(), 1);
-        // 6 <input>s total, all but the `readonly` one are :read-write.
-        assert_eq!(select_all(&doc, "input:read-write").len(), 5);
+        // 9 <input>s total, all but the `readonly` one are :read-write.
+        assert_eq!(select_all(&doc, "input:read-write").len(), 8);
         assert_eq!(select_all(&doc, "button:disabled").len(), 3); // own attr + 2 inherited
         assert_eq!(select_all(&doc, "button:enabled").len(), 1); // the one under <legend>
         assert_eq!(select_all(&doc, "p:empty").len(), 1);
@@ -778,6 +781,12 @@ mod selector_port_spike {
                                                           // :active/:focus/:hover are literal attribute-presence checks (§C-1),
                                                           // not "always false" - none of this fixture's markup has them.
         assert_eq!(select_all(&doc, ":hover").len(), 0);
+        // §C-1 (`SEL.c:1863-1872`): `input`/`textarea` only, PRESENCE of
+        // `placeholder` only - the empty-valued one still counts, and the
+        // `<select placeholder>` (not a real HTML attribute there, but
+        // Lexbor doesn't validate that) must NOT, since it is neither tag.
+        assert_eq!(select_all(&doc, ":placeholder-shown").len(), 3);
+        assert_eq!(select_all(&doc, "select:placeholder-shown").len(), 0);
     }
 
     #[test]
@@ -870,6 +879,7 @@ mod selector_port_spike {
                     <svg><circle r="1"/></svg>
                     <input type="checkbox" checked>
                     <input required>
+                    <input placeholder="name">
                 </main>
             </body></html>"#,
         );
@@ -917,6 +927,8 @@ mod selector_port_spike {
             "circle",
             "input:checked",
             "input:required",
+            "input:placeholder-shown",
+            "main:placeholder-shown",
             "a:any-link",
             "a:link",
         ];

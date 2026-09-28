@@ -592,6 +592,16 @@ fn plain_pseudo_matches(pc: PseudoClass, node: HtmlNode<'_>) -> bool {
         PseudoClass::Active => has_attr(node, b"active"),
         PseudoClass::Focus => has_attr(node, b"focus"),
         PseudoClass::Hover => has_attr(node, b"hover"),
+        // §C-1 (`SEL.c:1863-1872`): `input`/`textarea` only (not `select`,
+        // unlike `:optional`/`:required`), and only whether `placeholder` is
+        // PRESENT - Lexbor never looks at its value or whether the field is
+        // actually showing it empty, so an `<input placeholder>` with no
+        // value written at all still matches, faithfully reproduced here.
+        PseudoClass::PlaceholderShown => {
+            node.element()
+                .is_some_and(|el| matches!(el.dom_local_name(), b"input" | b"textarea"))
+                && has_attr(node, b"placeholder")
+        }
         PseudoClass::Other => false,
     }
 }
