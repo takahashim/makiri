@@ -72,6 +72,7 @@ use crate::lexbor::adapter::html::{HtmlElement, HtmlNode, NsId};
 use crate::lexbor::css_parser::{
     AttrMatch, Combinator, FunctionArg, ListPseudo, Lists, PseudoClass, Selector, Simple,
 };
+use crate::limits::NODE_SET_MAX;
 
 /// A complexity bound on compounds per chain, mirroring `css::MAX_COMPOUNDS`.
 ///
@@ -1163,4 +1164,71 @@ pub fn matches(first: Option<Selector<'_>>, element: HtmlElement<'_>) -> bool {
         node,
         k: Cont::Root,
     }])
+}
+
+/* ------------------------------------------------------------------ *
+ * whole-query entry points: matches_any / select_all / select_first,  *
+ * over a full (possibly comma-separated) `Lists` rather than one      *
+ * chain - what `Node#{matches?,css,at_css}` each want                 *
+ * ------------------------------------------------------------------ */
+
+/// Does `element` match any comma-separated alternative of `groups`? The
+/// entry point for `Node#matches?`: no traversal, just [`list_matches`]
+/// (already the machinery `:is`/`:where` use internally) applied to the
+/// query's own top-level groups.
+pub fn matches_any(groups: Lists<'_>, element: HtmlElement<'_>) -> bool {
+    list_matches(groups, element.node())
+}
+
+/// [`select_all`] stopped before the whole subtree was walked: more
+/// descendants matched than a Makiri result set is allowed to hold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Overflow;
+
+/// Every ELEMENT in `root`'s subtree - descendants only, `root` itself
+/// excluded, exactly as the Lexbor-backed engine's `find` does (see
+/// `lexbor::selectors::find_cb`) - that matches any alternative of `groups`,
+/// in document order. A node matching more than one comma alternative is
+/// reported once: `list_matches` is a plain OR over the alternatives for
+/// ONE node, so no `MATCH_FIRST`-style dedup flag is needed the way
+/// Lexbor's C API wants one.
+///
+/// `<template>` contents are not entered (`preorder_next`, not
+/// `preorder_next_with_contents`) - the DOM's own rule for a descendant
+/// walk, which `children`/`content=` already follow.
+///
+/// Capped at [`NODE_SET_MAX`], matching every other Makiri result set.
+/// `falloc` is not yet used for the result vector (see the module doc):
+/// the same tracked gap as everywhere else in this file, not a new one.
+pub fn select_all<'doc>(
+    root: HtmlNode<'doc>,
+    groups: Lists<'_>,
+) -> Result<Vec<HtmlNode<'doc>>, Overflow> {
+    let mut out = Vec::new();
+    let mut n = root;
+    while let Some(next) = n.preorder_next(root) {
+        n = next;
+        if n.element().is_some() && list_matches(groups, n) {
+            if out.len() >= NODE_SET_MAX {
+                return Err(Overflow);
+            }
+            out.push(n);
+        }
+    }
+    Ok(out)
+}
+
+/// The first descendant of `root`, in document order, that matches any
+/// alternative of `groups` - `root` itself excluded. Stops at the first hit
+/// instead of building the whole set, as `Node#at_css` wants (see
+/// `lexbor::selectors::first_cb`).
+pub fn select_first<'doc>(root: HtmlNode<'doc>, groups: Lists<'_>) -> Option<HtmlNode<'doc>> {
+    let mut n = root;
+    while let Some(next) = n.preorder_next(root) {
+        n = next;
+        if n.element().is_some() && list_matches(groups, n) {
+            return Some(n);
+        }
+    }
+    None
 }
