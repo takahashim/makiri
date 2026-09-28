@@ -37,10 +37,20 @@
 //! - `lxb_selectors_anb_calc` (§D-3) tests `:nth-*`'s `An+B` with a `double`
 //!   division, which risks float rounding for large indices; this port uses
 //!   integer arithmetic instead.
-//! - `:nth-child(of S)` is a single flat pass here (count every earlier
-//!   S-matching sibling), not Lexbor's streaming nested-matcher loop
-//!   (§D-1) - the semantics documented there are equivalent; the C control
-//!   flow is not.
+//! - `:nth-child(An+B of S)` / `:nth-last-child(An+B of S)` (§D-1) count by
+//!   the CSS definition - an element in `S`, ranked among its element
+//!   siblings that are in `S` - where Lexbor miscounts in many shapes: a
+//!   comma list in `S` (it starts from the LAST list, `anb->of->last`, so
+//!   `p:nth-child(2 of ul, p)` and `(2 of p, ul)` answer differently), a
+//!   combinator in `S` (`span:nth-child(2 of li span)` finds a `<span>` that
+//!   is first among `li span` siblings), and even simple pseudos such as
+//!   `:enabled` or `:empty` in `S`, or the ORDER of simple selectors in its
+//!   compound (`[data-n^='1']:nth-child(odd)` vs `:nth-child(odd)[data-n^='1']`).
+//!   This port's answer is checked against a spec oracle rather than Lexbor
+//!   (`lexbor::tests::selector_port_spike::nth_child_of_s_agrees_with_a_spec_oracle`);
+//!   the Lexbor differential fuzzer leaves `of S` out. The walk itself is
+//!   Lexbor's shape - candidate in `S`, then siblings one at a time
+//!   (`Frame::NthOfStep`) on the explicit stack.
 //!
 //! Still open (tracked in the plan, not silent gaps): `::pseudo-elements`,
 //! `:lexbor-contains()` (decided not to reimplement), `:current()` (deferred,
@@ -95,7 +105,7 @@ use std::rc::Rc;
 
 use crate::lexbor::adapter::html::{HtmlElement, HtmlNode, NodeType, NsId};
 use crate::lexbor::css_parser::{
-    AttrMatch, Combinator, FunctionArg, ListPseudo, Lists, PseudoClass, Selector, Simple,
+    AttrMatch, Combinator, FunctionArg, ListPseudo, Lists, Nth, PseudoClass, Selector, Simple,
 };
 use crate::limits::NODE_SET_MAX;
 
@@ -616,48 +626,20 @@ fn sibling_position(
     Ok(pos)
 }
 
-/// §D-1's `of S`: `node`'s 1-based position counting only elements matching
-/// `list` among its (`from_end`-directed) siblings, or `None` if `node`
-/// itself does not match `list`. A flat pass, not Lexbor's streaming nested
-/// matcher (module doc) - the position it computes is the same number.
-fn sibling_position_of(
-    node: HtmlNode<'_>,
-    from_end: bool,
-    list: Lists<'_>,
-    budget: &Budget,
-) -> Result<Option<u64>, MatchFailure> {
-    // Hoisted once for the whole sibling scan below - see `CompiledList`'s
-    // doc: without it, every sibling visited re-collected `list`'s compounds
-    // from scratch, the same per-candidate cost `select_all`/`select_first`
-    // had.
-    let compiled = compile_list(list);
-    if !list_matches_compiled(&compiled, node, budget)? {
-        return Ok(None);
-    }
-    let mut pos: u64 = 1;
-    let mut cur = if from_end {
+/// The next sibling ELEMENT in `:nth-*(of S)`'s counting direction - toward
+/// the end for `:nth-last-child`, toward the start otherwise (§D-1).
+fn nth_of_sibling(node: HtmlNode<'_>, from_end: bool) -> Option<HtmlNode<'_>> {
+    if from_end {
         next_sibling_element(node)
     } else {
         prev_sibling_element(node)
-    };
-    while let Some(n) = cur {
-        if list_matches_compiled(&compiled, n, budget)? {
-            pos += 1;
-        }
-        cur = if from_end {
-            next_sibling_element(n)
-        } else {
-            prev_sibling_element(n)
-        };
     }
-    Ok(Some(pos))
 }
 
-/// Does ANY alternative of `list` match `node`? Used by `:nth-child(of S)`
-/// and (via [`matches_one_compound`]) nowhere else - kept separate from the
-/// `Frame`/`Cont` machine because `of S` is evaluated OUTSIDE the compound
-/// being matched (against arbitrary siblings, not just `node` itself), so it
-/// cannot defer through the normal per-node `Cont` chain.
+/// Does ANY alternative of `list` match `node`? The top-level OR for
+/// `matches_any` - one node, one query. Inside a match, the same OR is
+/// `Frame::TryAlternatives` (`:is()`, and `of S` since it moved onto the
+/// explicit stack).
 fn list_matches(
     list: Lists<'_>,
     node: HtmlNode<'_>,
@@ -889,23 +871,6 @@ fn anb_matches(anb: crate::lexbor::css_parser::Nth<'_>, pos: i64) -> bool {
     k % anb.a == 0 && k / anb.a >= 0
 }
 
-/// §D-1's `of S`: `pos` is `node`'s 1-based rank among `S`-matching siblings.
-fn nth_of_s_matches(
-    node: HtmlNode<'_>,
-    from_end: bool,
-    list: Lists<'_>,
-    anb: Option<crate::lexbor::css_parser::Nth<'_>>,
-    budget: &Budget,
-) -> Result<bool, MatchFailure> {
-    let Some(anb) = anb else {
-        return Ok(false);
-    };
-    let Some(pos) = sibling_position_of(node, from_end, list, budget)? else {
-        return Ok(false);
-    };
-    Ok(anb_matches(anb, pos as i64))
-}
-
 /* ------------------------------------------------------------------ *
  * :has() - §A-4: heap-based forward search (module doc)              *
  * ------------------------------------------------------------------ */
@@ -1018,6 +983,20 @@ enum SimpleCheck<'p> {
         lists: Lists<'p>,
         rest: Option<Selector<'p>>,
     },
+    /// `:nth-*(an+b of S)` (§D-1): deferred to `Cont::NthOfSelf`/
+    /// `Frame::NthOfStep` - does `node` match `S`, then how many siblings
+    /// before it (after it, `from_end`) do. `S` is matched by the same
+    /// `Frame::TryAlternatives` `:is()` uses, so `of S` nested inside `of S`
+    /// costs heap, not native stack, the way Lexbor's own nested state for it
+    /// (`lxb_selectors_state_after_nth_child`) does. It used to be a native
+    /// call from here into a fresh `run` per sibling, and 300 levels of it
+    /// crashed a 128 KiB Fiber with `SystemStackError`.
+    NthOf {
+        anb: Nth<'p>,
+        from_end: bool,
+        lists: Lists<'p>,
+        rest: Option<Selector<'p>>,
+    },
 }
 
 fn check_simple<'p>(
@@ -1070,13 +1049,15 @@ fn check_simple<'p>(
             from_end,
             of_type,
             anb,
-        }) => {
-            let matched = match anb.and_then(|a| a.of_list.map(|l| (a, l))) {
-                Some((a, list)) => nth_of_s_matches(node, from_end, list, Some(a), budget)?,
-                None => nth_matches(node, from_end, of_type, anb, budget)?,
-            };
-            SimpleCheck::Result(matched)
-        }
+        }) => match anb.and_then(|a| a.of_list.map(|l| (a, l))) {
+            Some((anb, lists)) => SimpleCheck::NthOf {
+                anb,
+                from_end,
+                lists,
+                rest: None,
+            },
+            None => SimpleCheck::Result(nth_matches(node, from_end, of_type, anb, budget)?),
+        },
         Simple::PseudoClassFunction(FunctionArg::Selectors {
             pseudo: ListPseudo::Has,
             lists,
@@ -1138,6 +1119,19 @@ fn check_from<'p>(
             SimpleCheck::Has { lists, .. } => {
                 return Ok(SimpleCheck::Has { lists, rest: next });
             }
+            SimpleCheck::NthOf {
+                anb,
+                from_end,
+                lists,
+                ..
+            } => {
+                return Ok(SimpleCheck::NthOf {
+                    anb,
+                    from_end,
+                    lists,
+                    rest: next,
+                });
+            }
             SimpleCheck::Result(true) => match next {
                 Some(n) => sel = n,
                 None => return Ok(SimpleCheck::Result(true)),
@@ -1187,6 +1181,17 @@ enum Frame<'p, 'doc> {
         chain: Chain<'p>,
         idx: usize,
         cursor: HasCursor<'doc>,
+        k: Cont<'p, 'doc>,
+    },
+    /// `of S`'s sibling count (§D-1): `pos` is the rank so far; test
+    /// `sibling` against `S`, or - once there is none - deliver whether `pos`
+    /// satisfies `anb`.
+    NthOfStep {
+        anb: Nth<'p>,
+        from_end: bool,
+        lists: Lists<'p>,
+        sibling: Option<HtmlNode<'doc>>,
+        pos: u64,
         k: Cont<'p, 'doc>,
     },
 }
@@ -1265,6 +1270,26 @@ enum Cont<'p, 'doc> {
     HasAlternativeRetry {
         lists: Lists<'p>,
         node: HtmlNode<'doc>,
+        k: Box<Cont<'p, 'doc>>,
+    },
+    /// `of S`: whether the candidate `node` itself matches `S` just
+    /// resolved. It must (§D-1), or the pseudo-class is false; if it does,
+    /// start counting its siblings at rank 1.
+    NthOfSelf {
+        anb: Nth<'p>,
+        from_end: bool,
+        lists: Lists<'p>,
+        node: HtmlNode<'doc>,
+        k: Box<Cont<'p, 'doc>>,
+    },
+    /// `of S`: whether `sibling` matches `S` just resolved; count it, and
+    /// move on to the next sibling.
+    NthOfSibling {
+        anb: Nth<'p>,
+        from_end: bool,
+        lists: Lists<'p>,
+        sibling: HtmlNode<'doc>,
+        pos: u64,
         k: Box<Cont<'p, 'doc>>,
     },
 }
@@ -1450,6 +1475,64 @@ fn try_has_alternative<'p, 'doc>(
     }
 }
 
+/// Act on `chain[idx]`'s compound check at `node`: a settled verdict goes to
+/// [`advance`]; a deferred list-pseudo is pushed onto `stack` with a
+/// `Cont::CompoundRest` that resumes the compound's remaining simple
+/// selectors once it resolves. The one place both a fresh compound
+/// (`Frame::EvalCompound`) and a resumed one (`Cont::CompoundRest`) dispatch,
+/// so a new deferred kind is added once.
+fn settle<'p, 'doc>(
+    stack: &mut Vec<Frame<'p, 'doc>>,
+    check: SimpleCheck<'p>,
+    chain: Chain<'p>,
+    idx: usize,
+    node: HtmlNode<'doc>,
+    k: Cont<'p, 'doc>,
+) -> Result<(), MatchFailure> {
+    if let SimpleCheck::Result(m) = check {
+        return advance(stack, chain, idx, node, k, m);
+    }
+    let resume = |rest| Cont::CompoundRest {
+        rest,
+        chain,
+        idx,
+        node,
+        k: boxed(k),
+    };
+    match check {
+        SimpleCheck::Result(_) => {}
+        SimpleCheck::Defer {
+            negate,
+            lists,
+            rest,
+        } => stack.push(Frame::TryAlternatives {
+            lists,
+            node,
+            negate,
+            k: resume(rest),
+        }),
+        SimpleCheck::Has { lists, rest } => try_has_alternative(stack, lists, node, resume(rest))?,
+        SimpleCheck::NthOf {
+            anb,
+            from_end,
+            lists,
+            rest,
+        } => stack.push(Frame::TryAlternatives {
+            lists,
+            node,
+            negate: false,
+            k: Cont::NthOfSelf {
+                anb,
+                from_end,
+                lists,
+                node,
+                k: boxed(resume(rest)),
+            },
+        }),
+    }
+    Ok(())
+}
+
 /// Run the machine to completion. `stack` starts with exactly one frame; the
 /// loop is the WHOLE control flow - no Rust-level recursion anywhere here,
 /// regardless of how deeply the selector nests. Charges `budget` once per
@@ -1467,36 +1550,35 @@ fn run(mut stack: Vec<Frame<'_, '_>>, budget: &Budget) -> Result<bool, MatchFail
                 idx,
                 node,
                 k,
-            } => match check_compound(chain[idx], node, budget)? {
-                SimpleCheck::Result(m) => advance(&mut stack, chain, idx, node, k, m)?,
-                SimpleCheck::Defer {
-                    negate,
+            } => {
+                let check = check_compound(chain[idx], node, budget)?;
+                settle(&mut stack, check, chain, idx, node, k)?;
+            }
+            Frame::NthOfStep {
+                anb,
+                from_end,
+                lists,
+                sibling,
+                pos,
+                k,
+            } => match sibling {
+                None => stack.push(Frame::Deliver(
+                    anb_matches(anb, i64::try_from(pos).unwrap_or(i64::MAX)),
+                    k,
+                )),
+                Some(sibling) => stack.push(Frame::TryAlternatives {
                     lists,
-                    rest,
-                } => stack.push(Frame::TryAlternatives {
-                    lists,
-                    node,
-                    negate,
-                    k: Cont::CompoundRest {
-                        rest,
-                        chain,
-                        idx,
-                        node,
+                    node: sibling,
+                    negate: false,
+                    k: Cont::NthOfSibling {
+                        anb,
+                        from_end,
+                        lists,
+                        sibling,
+                        pos,
                         k: boxed(k),
                     },
                 }),
-                SimpleCheck::Has { lists, rest } => try_has_alternative(
-                    &mut stack,
-                    lists,
-                    node,
-                    Cont::CompoundRest {
-                        rest,
-                        chain,
-                        idx,
-                        node,
-                        k: boxed(k),
-                    },
-                )?,
             },
             Frame::TryAlternatives {
                 lists,
@@ -1537,43 +1619,10 @@ fn run(mut stack: Vec<Frame<'_, '_>>, budget: &Budget) -> Result<bool, MatchFail
                     } else {
                         match rest {
                             None => advance(&mut stack, chain, idx, node, *k, true)?,
-                            Some(next) => match check_from(next, node, budget)? {
-                                SimpleCheck::Result(m) => {
-                                    advance(&mut stack, chain, idx, node, *k, m)?
-                                }
-                                SimpleCheck::Defer {
-                                    negate,
-                                    lists,
-                                    rest,
-                                } => {
-                                    stack.push(Frame::TryAlternatives {
-                                        lists,
-                                        node,
-                                        negate,
-                                        k: Cont::CompoundRest {
-                                            rest,
-                                            chain,
-                                            idx,
-                                            node,
-                                            k,
-                                        },
-                                    });
-                                }
-                                SimpleCheck::Has { lists, rest } => {
-                                    try_has_alternative(
-                                        &mut stack,
-                                        lists,
-                                        node,
-                                        Cont::CompoundRest {
-                                            rest,
-                                            chain,
-                                            idx,
-                                            node,
-                                            k,
-                                        },
-                                    )?;
-                                }
-                            },
+                            Some(next) => {
+                                let check = check_from(next, node, budget)?;
+                                settle(&mut stack, check, chain, idx, node, *k)?;
+                            }
                         }
                     }
                 }
@@ -1709,6 +1758,41 @@ fn run(mut stack: Vec<Frame<'_, '_>>, budget: &Budget) -> Result<bool, MatchFail
                         try_has_alternative(&mut stack, lists, node, *k)?;
                     }
                 }
+                Cont::NthOfSelf {
+                    anb,
+                    from_end,
+                    lists,
+                    node,
+                    k,
+                } => {
+                    if result {
+                        stack.push(Frame::NthOfStep {
+                            anb,
+                            from_end,
+                            lists,
+                            sibling: nth_of_sibling(node, from_end),
+                            pos: 1,
+                            k: *k,
+                        });
+                    } else {
+                        stack.push(Frame::Deliver(false, *k));
+                    }
+                }
+                Cont::NthOfSibling {
+                    anb,
+                    from_end,
+                    lists,
+                    sibling,
+                    pos,
+                    k,
+                } => stack.push(Frame::NthOfStep {
+                    anb,
+                    from_end,
+                    lists,
+                    sibling: nth_of_sibling(sibling, from_end),
+                    pos: pos + u64::from(result),
+                    k: *k,
+                }),
             },
         }
     }

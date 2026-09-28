@@ -745,6 +745,18 @@ reference (`lexbor::tests::selector_port_spike::agrees_with_the_old_lexbor_engin
 and its randomized sibling) - it is not on `Node#css`'s path any more, kept
 deliberately for comparison rather than deleted yet
 (`notes/css_selectors_crate_migration_plan.ja.md`).
+**`:nth-child(... of S)` is on the heap stack too** (`Frame::NthOfStep`,
+`Cont::NthOfSelf`/`NthOfSibling`): it used to call a fresh `run` natively per
+sibling from `check_simple`, so `of S` nested 300 deep raised
+`SystemStackError` in a 128 KiB Fiber and wedged the shared CSS engine for
+the process. It also counts by the CSS definition where Lexbor does not (a
+comma list, a combinator or a pseudo-class in `S` - `selector_port`'s module
+doc lists them), so it is checked against a spec oracle
+(`nth_child_of_s_agrees_with_a_spec_oracle`), and the Lexbor differential
+fuzzer leaves `of S` out. **Every deferred simple selector is dispatched in
+one place, `settle`** - a new deferred kind goes there, not into `run`'s two
+call sites.
+
 **`:has()` nesting is heap-based too, not just `:is`/`:where`/`:not`.** An
 earlier version of this port answered `:has()` with ordinary Rust recursion
 (`has_forward`), reasoning that `MAX_COMPOUNDS` (64) bounded it safely - true
