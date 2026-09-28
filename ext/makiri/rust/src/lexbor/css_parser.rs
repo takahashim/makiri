@@ -259,6 +259,14 @@ impl<'p> List<'p> {
         // SAFETY: a list's links point into its own arena.
         unsafe { arena(self.0.first) }.map(Selector)
     }
+
+    /// This list's identity - its address in the parse arena, type-erased -
+    /// for a caller that compiles each list once and looks it up again while
+    /// matching (`lexbor::selector_port::Compiled`). Stable for `'p`, never
+    /// null, and never dereferenced by anyone holding it.
+    pub(crate) fn key(self) -> *const () {
+        core::ptr::from_ref(self.0).cast()
+    }
 }
 
 /// Selector lists followed through their `next` links.

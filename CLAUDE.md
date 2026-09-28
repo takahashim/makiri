@@ -406,7 +406,7 @@ by the check that concluded "every undefined symbol is legitimate".
   allocator, or - for the glue's Ruby-side storage - through Ruby's xmalloc;
   ASan red-zones both per allocation.
 - **The fallible-allocation line.** The engine (`xml`, `xpath`, `css`,
-  `lexbor/adapter`, `cbuf`) allocates only through `falloc`: `clippy.toml` bans the
+  `lexbor/adapter`, `lexbor/selector_port`, `cbuf`) allocates only through `falloc`: `clippy.toml` bans the
   infallible `Box::new` / `Vec::with_capacity` / `reserve`, and `rake oom` fails
   each site in turn, so an OOM there raises instead of aborting. The glue's
   Ruby-side storage - TypedData wrappers (`bridge::typed::wrap_built`, freed by
@@ -745,6 +745,21 @@ reference (`lexbor::tests::selector_port_spike::agrees_with_the_old_lexbor_engin
 and its randomized sibling) - it is not on `Node#css`'s path any more, kept
 deliberately for comparison rather than deleted yet
 (`notes/css_selectors_crate_migration_plan.ja.md`).
+**A query's matching state is query-local and fallible** (`selector_port`'s
+`Compiled` and `Query`). `compile` splits every chain - top level and every
+nested list - into one compound table once, and looks a nested list's chain
+up by the list's identity (`List::key`, a `PtrMap`) while matching; a `Chain`
+is an index range into that table, not an `Rc`. Continuations that wait on
+another are parked in a slab by `ContId`, not boxed - each is resumed exactly
+once, so a resumed slot is reused and the slab holds only live ones. The work
+stack and the slab are cleared, not freed, between candidates. Every growth is
+`falloc`'s (`MatchFailure::Oom` -> `Makiri::Error`), `rake oom`'s `css`
+scenario reaches each site, and there is no `Box::new`/`Rc`/`vec!` left in the
+file. Measured with a counting allocator over the same document at 500 and
+1,000 `<li>`: 0 allocations per extra candidate, where the `Rc`/`Box` version
+made 1-4 (`ul li.item` 1.33, `li:has(> span.meta)` 3.67) and `of S` made one
+per sibling per candidate (1,002 per candidate at 1,000 siblings).
+
 **`:nth-child(... of S)` is on the heap stack too** (`Frame::NthOfStep`,
 `Cont::NthOfSelf`/`NthOfSibling`): it used to call a fresh `run` natively per
 sibling from `check_simple`, so `of S` nested 300 deep raised
@@ -808,12 +823,13 @@ either raises `Makiri::Error`. A malformed selector raises
 matcher cannot evaluate (deliberately, and because Lexbor's own traversal
 can't run the latter either) - raised as "could not be run", never answered as
 a silent empty result. **Both that and the 64-compound chain cap are decided
-by `selector_port::validate`, over the WHOLE selector tree, before any node is
-matched** - the glue calls it first in all three methods. Found lazily
-mid-match they depended on evaluation order: `collect_compounds` returns
-`None` for an over-cap chain exactly as for an empty one, so `:not(<65
+by `selector_port::compile`, over the WHOLE selector tree, before any node is
+matched** - every entry point (`select_all`/`select_first`/`matches_any`)
+compiles first, and `matches?` on a non-element compiles too. Found lazily
+mid-match they depended on evaluation order: the old `collect_compounds`
+returned `None` for an over-cap chain exactly as for an empty one, so `:not(<65
 compounds>)` lost its only alternative and matched EVERY element, and `p, x
-|| y` answered the `<p>`s because `p` matched first. `validate` walks nested
+|| y` answered the `<p>`s because `p` matched first. `compile` walks nested
 lists on an explicit work list, not recursion - a recursive first version
 turned `:is()` nested 2000 deep into a `SystemStackError` in a 128 KiB Fiber,
 which wedged the shared CSS engine for the rest of the process
@@ -927,7 +943,7 @@ encounter-order (**not** doc-order), `#{css,xpath,search}` run per node and unio
 ## Performance
 
 **Makiri beats Nokogiri/libxml2 on every `rake bench` row.** Measured
-against Nokogiri: parse ~4.6×, css ~3×, at_css ~3000×, `//tag` ~4×,
+against Nokogiri: parse ~4.6×, css ~5×, at_css ~3700×, `//tag` ~4×,
 `//*[@id=…]` ~8×, `[@attr='v']` ~4.3×, attribute axis ~3×, serialize ~6×,
 full-text extraction ~3.5×. **traverse** (children walk) used to be the one row
 that only met Nokogiri (within measurement error); as of the v0.10.0 bench it
@@ -978,53 +994,30 @@ Key decisions that got there, worth not regressing:
   tag names fall through. See the element index note above.
 
 - **HTML CSS matches over the typed adapter, not Lexbor's own matcher**
-  (`lexbor::selector_port`, see the subsystem note): after the switch, `css`/
-  `at_css` were narrower over nokolexbor than the OLD engine's own ~5×
-  nokolexbor on `at_css` - the compiled-selector cache
-  (`lexbor::selector_cache`, below) was expected to close that and, measurably,
-  **did not** (re-benching after adding it moved `at_css` from ~630k to ~630k
-  i/s - noise; `at_css('#main')`'s own parse was already cheap relative to
-  matching for a selector this short). **The real cause was found by a
-  Ruby-free, in-process probe** (`lexbor::selectors` vs `lexbor::selector_port`
-  matching the same parsed document directly, no Ruby/benchmark-ips/nokolexbor
-  in the loop - the throwaway-probe pattern `examples/nest_probe.rs` set,
-  deleted once its numbers were extracted): the trampoline was a consistent
-  ~6× slower than Lexbor's C matcher PER CANDIDATE NODE (the same ratio at two
-  very different candidate counts - `css`'s whole-tree scan and `at_css`'s
-  first-match). `collect_compounds` walked the parsed selector chain into a
-  fresh heap-allocated `Vec<Compound>` - and `matches_one_compound_chain`
-  allocated a second `Vec` for `run`'s initial frame stack - **again for every
-  element node the tree walk visited**, even though the compound chain is the
-  same for every candidate of one query; Lexbor's C matcher parses its
-  selector into an arena-resident list ONCE and walks that same structure per
-  candidate with no allocation at all. **Fixed**: `collect_compounds` now
-  returns `Rc<[Compound]>` (`type Chain`) instead of an owned `Vec<Compound>`,
-  so `Frame`/`Cont`'s copies of it (`advance`'s `Descendant`/
-  `SubsequentSibling` retries already `chain.clone()`d on every step) are a
-  refcount bump, not a Vec copy; and a new `CompiledList` (`compile_list`/
-  `list_matches_compiled`) collects each alternative's `Chain` ONCE, before
-  `select_all`/`select_first`'s tree walk and `sibling_position_of`'s
-  per-sibling scan (`:nth-child(of S)`) start, instead of on every candidate.
-  Reduced the Ruby-free probe's per-call cost by ~1.5× on `css` (574μs →
-  393μs, ratio 5.9× → 4.0× of the old engine) and ~1.1× on `at_css` (620ns →
-  544ns, ratio 6.0× → 5.1×) - a real, if partial, win: the frame-stack `Vec`
-  `run` still allocates per call, and `advance`'s `boxed(k)` continuation is
-  still a fresh `Box` per combinator step, both untouched by this fix and both
-  candidates for a further pass if the ratio needs to close further.
-  `bench`'s own (noisier, Ruby-level) numbers moved with it: `css` 1.02k →
-  2.36k i/s (~2.3×), `at_css` 630k → 1.35M i/s (~2.15×) - both now further
-  ahead of nokolexbor than before (nokolexbor's own number still swings
-  noticeably run to run, so read the RATIO as "still ahead", not to a second
-  decimal place; makiri's own absolute i/s is the number this fix should be
-  judged against). The cache stays regardless (it is correct,
-  `spec/css_selector_cache_spec.rb` needs it to mean something again, and a
-  longer/more complex selector under heavy reuse may still benefit from it).
-  `at_css` wraps the single first match directly (no NodeSet / no Ruby
-  `#first` - `select_first` stops at the first hit). Verify with `bench`'s
-  `at_css`/`css` rows, `lexbor::tests::selector_port_spike`'s randomized
-  differential fuzzer (unaffected by this change - it re-runs against the OLD
-  engine and stayed green), and
-  `FUZZ_ARGS="--target css" bundle exec rake fuzz:sanitize`.
+  (`lexbor::selector_port`, see the subsystem note), and **allocates per
+  query, not per candidate**. Right after the switch it was ~6x slower than
+  Lexbor's C matcher PER CANDIDATE NODE (a Ruby-free in-process probe, same
+  parsed document, same ratio for `css`'s whole-tree scan and `at_css`'s
+  first match): the chain was re-collected into a fresh `Vec` and `run` got a
+  fresh frame stack for every element visited, and every descendant/`~`
+  retry boxed a continuation. Lexbor parses once into an arena and resets an
+  object pool per candidate. The fix is the same shape (`Compiled`/`Query`,
+  the subsystem note): 0 allocations per extra candidate. The compiled-
+  selector cache was tried first and moved nothing (`at_css('#main')`'s parse
+  was never the cost).
+
+  Measured against the OLD engine on the same Ruby-free probe (new/old
+  time): `ul li.item` 4.5 -> 3.1, `:is(li, p) > a.link` 5.1 -> 2.7,
+  `li:has(> span.meta)` 6.3 -> 3.2, `at_css('#main')` 4.9 -> 2.8,
+  `at_css('#bot p')` 3.6 -> 2.4; `matches?` on one candidate stays ~1.8 (the
+  per-query compile is its whole cost). `bench`: `css` 2.36k -> 4.01k i/s,
+  `at_css` 1.35M -> 1.75M i/s - ~3.1x / ~2.3x nokolexbor, ~4.9x / ~3700x
+  Nokogiri (nokolexbor's own number swings run to run; judge by makiri's
+  absolute i/s). The remaining gap to Lexbor's matcher is per-candidate work
+  (name/attribute lookups by bytes - followup item 7 - and frame dispatch),
+  not allocation. Verify with `bench`'s `at_css`/`css` rows, the differential
+  fuzzer, `rake oom` and `FUZZ_ARGS="--target css" bundle exec rake
+  fuzz:sanitize`.
 - **The compiled-selector cache is back, over its own separate engine**
   (`lexbor::selector_cache`): `Node#css`/`#at_css`/`#matches?` no longer
   re-parse a repeated selector string from scratch - a near-verbatim port of

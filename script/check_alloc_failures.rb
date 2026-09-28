@@ -305,18 +305,30 @@ SCENARIOS = {
       "|" + other.to_html
   end,
 
-  # CSS: a comma list with combinators through the reused engine, plus the
-  # at_css first-match path.
+  # CSS: a comma list with combinators through the reused engine, the at_css
+  # first-match path, and matches?. The selectors reach every allocation the
+  # HTML matcher (`lexbor::selector_port`) makes: the compiled chain tables,
+  # the nested-list map (:is/:not/:has/of S), the parked continuations
+  # (descendant and `~` retries, list pseudos, :has() backtracking, of S), the
+  # work stack and the result vector.
   "css" => lambda do
     doc = Makiri::HTML::Document.parse(<<~HTML)
       <html><body>
         <p class="c">one</p><p>skip</p><p class="c">two</p>
         <div><span>in</span></div><span>out</span>
         <section id="x">target</section>
+        <ul><li class="a">1</li><li>2</li><li class="a">3</li><li class="a">4</li></ul>
       </body></html>
     HTML
-    doc.css("p.c, div > span").map { |n| n.name }.join(",") +
-      doc.at_css("#x")&.name.to_s
+    [
+      "p.c, div > span",
+      "body :is(ul, div) > :not(.a, p) ~ li",
+      "section:has(~ ul > li.a), div:has(> span), ul:has(li + li.a li, li.a)",
+      "li:nth-child(2 of .a), li:nth-last-child(odd of :is(.a, :not(p)))",
+      "body li:not(:has(*)):is(.a):nth-child(n of li)",
+    ].map { |s| doc.css(s).map(&:text).join(",") }.join("|") +
+      doc.at_css("#x")&.name.to_s + doc.at_css("li:has(~ li.a)").text +
+      doc.at_css("li").matches?("ul > li:is(.a):not(:has(p))").to_s
   end,
 
   # CSS on XML: a different engine from the HTML one above - the selector is
