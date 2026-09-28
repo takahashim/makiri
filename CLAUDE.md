@@ -795,7 +795,17 @@ either raises `Makiri::Error`. A malformed selector raises
 `:lexbor-contains()` and the column combinator (`||`) are constructs this
 matcher cannot evaluate (deliberately, and because Lexbor's own traversal
 can't run the latter either) - raised as "could not be run", never answered as
-a silent empty result. **Not yet ported from the old engine's design**: a
+a silent empty result. **Both that and the 64-compound chain cap are decided
+by `selector_port::validate`, over the WHOLE selector tree, before any node is
+matched** - the glue calls it first in all three methods. Found lazily
+mid-match they depended on evaluation order: `collect_compounds` returns
+`None` for an over-cap chain exactly as for an empty one, so `:not(<65
+compounds>)` lost its only alternative and matched EVERY element, and `p, x
+|| y` answered the `<p>`s because `p` matched first. `validate` walks nested
+lists on an explicit work list, not recursion - a recursive first version
+turned `:is()` nested 2000 deep into a `SystemStackError` in a 128 KiB Fiber,
+which wedged the shared CSS engine for the rest of the process
+(`spec/native_stack_guard_spec.rb` pins the Fiber case). **Not yet ported from the old engine's design**: a
 `NthIndexCache`-equivalent for the sibling-position family (currently a plain
 O(siblings) scan, same asymptotic cost the old engine had, just not yet
 optimised) - deliberately deferred until there is a `rake bench` number to

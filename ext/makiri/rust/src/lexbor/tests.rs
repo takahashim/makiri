@@ -524,7 +524,7 @@ mod selector_port_spike {
     use crate::lexbor::adapter::tree_guard::DepthLimit;
     use crate::lexbor::css_parser;
     use crate::lexbor::selector_port::{
-        matches_any, select_all as port_select_all, select_first as port_select_first,
+        matches_any, select_all as port_select_all, select_first as port_select_first, validate,
         MAX_COMPOUNDS,
     };
     use crate::text::VerifiedText;
@@ -775,6 +775,153 @@ mod selector_port_spike {
                 result.is_ok()
             );
         }
+    }
+
+    /// A chain over [`MAX_COMPOUNDS`] used to be silently treated the same
+    /// as an EMPTY one (`collect_compounds`'s own `None`) - fine for
+    /// top-level `select_all` (an alternative that cannot match just
+    /// contributes nothing), wrong wherever an OR/AND-negated construct
+    /// treats "no alternatives left" as a verdict of its own: `:not()`'s
+    /// "found none that matched, so it holds" answered `true` for a
+    /// too-complex argument, exactly as if `:not()` had been written empty.
+    /// [`validate`] catches this UP FRONT, wherever the over-limit chain is
+    /// nested, so the query never reaches that silent path at all.
+    #[test]
+    fn too_complex_chains_are_caught_wherever_they_are_nested() {
+        use crate::lexbor::selector_port::MatchFailure;
+
+        let chain_of = |n: usize| -> String {
+            let mut s = String::from("div");
+            for _ in 1..n {
+                s.push_str(" > div");
+            }
+            s
+        };
+
+        let shapes: &[fn(String) -> String] = &[
+            |c| c,
+            |c| format!(":is({c})"),
+            |c| format!(":not({c})"),
+            |c| format!(":has({c})"),
+            |c| format!(":nth-child(2 of {c})"),
+        ];
+
+        for shape in shapes {
+            // Exactly at the cap: must still validate cleanly. Each
+            // acquisition is scoped to its own block: `Gvl::exclusive`'s
+            // stand-in mutex is NOT reentrant, and shadowing a `let gvl = ..`
+            // binding does not drop the shadowed guard early - two live in
+            // the same scope would self-deadlock on the second acquisition.
+            let ok_sel = shape(chain_of(MAX_COMPOUNDS));
+            {
+                let gvl = Gvl::exclusive();
+                let text = VerifiedText::from_bytes(ok_sel.as_bytes()).expect("verified");
+                let parsed_sel = css_parser::parse(&gvl, text)
+                    .unwrap_or_else(|_| panic!("{ok_sel:?} fails to parse"));
+                assert!(
+                    validate(parsed_sel.groups()).is_ok(),
+                    "{ok_sel:?} (exactly {MAX_COMPOUNDS} compounds) should validate"
+                );
+            }
+
+            // One past the cap: must be caught, not silently dropped.
+            let bad_sel = shape(chain_of(MAX_COMPOUNDS + 1));
+            let gvl = Gvl::exclusive();
+            let text = VerifiedText::from_bytes(bad_sel.as_bytes()).expect("verified");
+            let parsed_sel = css_parser::parse(&gvl, text)
+                .unwrap_or_else(|_| panic!("{bad_sel:?} fails to parse"));
+            assert!(
+                matches!(validate(parsed_sel.groups()), Err(MatchFailure::TooComplex)),
+                "{bad_sel:?} ({} compounds) should be TooComplex",
+                MAX_COMPOUNDS + 1
+            );
+        }
+    }
+
+    /// The concrete bug [`too_complex_chains_are_caught_wherever_they_are_nested`]
+    /// closes, through actual matching rather than `validate` alone:
+    /// `:not()` wrapping a too-complex chain used to answer `true` for EVERY
+    /// element (no alternatives left to disprove it), because the
+    /// over-complex alternative was invisible to `:not()`'s own "found none
+    /// that matched" logic. With `validate` run first (as the glue now
+    /// does), this raises instead of silently matching everything.
+    #[test]
+    fn not_with_a_too_complex_chain_raises_instead_of_matching_everything() {
+        use crate::lexbor::selector_port::MatchFailure;
+
+        let mut chain = String::from("div");
+        for _ in 1..=MAX_COMPOUNDS + 1 {
+            chain.push_str(" > div");
+        }
+        let sel = format!(":not({chain})");
+
+        let gvl = Gvl::exclusive();
+        let text = VerifiedText::from_bytes(sel.as_bytes()).expect("verified");
+        let parsed_sel =
+            css_parser::parse(&gvl, text).unwrap_or_else(|_| panic!("selector fails to parse"));
+
+        assert!(matches!(
+            validate(parsed_sel.groups()),
+            Err(MatchFailure::TooComplex)
+        ));
+    }
+
+    /// [`validate`] must find `:lexbor-contains()`/`||` wherever they sit -
+    /// leading or trailing a comma list, or nested inside `:not`/`:has`/
+    /// `of S` - and MUST NOT depend on whether an earlier alternative or an
+    /// earlier simple selector in the SAME compound would have already
+    /// settled the query. Regression for exactly the inconsistency found:
+    /// `nosuch:lexbor-contains("x")` used to answer empty (a type mismatch
+    /// short-circuited first), `p:lexbor-contains("x")` raised (the type
+    /// matched), and `p, nosuch:lexbor-contains("x")` against a document
+    /// with a `<p>` answered a match instead of raising, purely because `p`
+    /// happened to come first.
+    #[test]
+    fn unsupported_constructs_are_found_regardless_of_position_or_short_circuit() {
+        use crate::lexbor::selector_port::MatchFailure;
+
+        let shapes = [
+            "nosuch:lexbor-contains(\"x\")",
+            "p:lexbor-contains(\"x\")",
+            "p, nosuch:lexbor-contains(\"x\")",
+            "nosuch:lexbor-contains(\"x\"), p",
+            ":not(p:lexbor-contains(\"x\"))",
+            ":has(p:lexbor-contains(\"x\"))",
+            ":nth-child(2 of p:lexbor-contains(\"x\"))",
+            "col || td",
+            "p, col || td",
+            "col || td, p",
+        ];
+        for sel in shapes {
+            let gvl = Gvl::exclusive();
+            let text = VerifiedText::from_bytes(sel.as_bytes()).expect("verified");
+            let parsed_sel =
+                css_parser::parse(&gvl, text).unwrap_or_else(|_| panic!("{sel:?} fails to parse"));
+            assert!(
+                matches!(
+                    validate(parsed_sel.groups()),
+                    Err(MatchFailure::Unsupported)
+                ),
+                "{sel:?} should be Unsupported regardless of position"
+            );
+        }
+
+        // The actual query, against a document where `p` WOULD match first
+        // if evaluation order mattered - it must not.
+        let doc = parsed(
+            b"<html><body><table><col><tr><td>x</td></tr></table><p>hello</p></body></html>",
+        );
+        // Mirrors the glue's order: `validate` first, matching only after.
+        // `p` alone matches this document, so an order-dependent check would
+        // answer a node here instead of raising.
+        let sel = "p, nosuch:lexbor-contains(\"x\")";
+        let gvl = Gvl::exclusive();
+        let text = VerifiedText::from_bytes(sel.as_bytes()).expect("verified");
+        let parsed_sel =
+            css_parser::parse(&gvl, text).unwrap_or_else(|_| panic!("selector fails to parse"));
+        let via_glue_order = validate(parsed_sel.groups())
+            .and_then(|()| port_select_first(root(&doc), parsed_sel.groups()));
+        assert!(matches!(via_glue_order, Err(MatchFailure::Unsupported)));
     }
 
     #[test]

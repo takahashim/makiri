@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Changed
+
+* HTML `#css`/`#at_css`/`#matches?` now cap one selector chain at 64
+  compounds, as `Makiri::XML` already did, and raise `Makiri::Error` ("CSS
+  selector chain too complex") past it - at the top level or nested in
+  `:is()`/`:where()`/`:not()`/`:has()`/`:nth-child(... of S)`. Lexbor's own
+  matcher had no cap. Selector NESTING stays unbounded.
+* An unsupported construct (`:lexbor-contains()`, the column combinator `||`)
+  now raises from all three methods wherever it appears in the selector.
+  Before, it raised only if matching happened to reach it: `p, x || y`
+  answered the `<p>`s, and `nosuch:lexbor-contains("x")` answered empty.
+
 ### Removed
 
 * `:lexbor-contains("text")` on HTML `#css`/`#at_css`/`#matches?`. HTML CSS

@@ -131,18 +131,40 @@ RSpec.describe "Makiri CSS" do
     end
   end
 
-  # HTML query goes straight through Lexbor's own matcher and has no equivalent
-  # to `Makiri::XML`'s fixed `comps[64]` combinator-chain bound (see
-  # `xml_css_spec.rb`'s "fails closed on an over-long :is()/:not() argument").
-  # Pin the current (uncapped) baseline so the selectors-crate migration can
-  # tell a genuine regression from an intended new limit - see
-  # notes/css_selectors_crate_migration_plan.ja.md, which also records a
-  # 500,000-level `:is()` nesting probe with no stack overflow.
-  describe "resource limits (HTML currently has none, unlike XML)" do
-    it "does not fail on a combinator chain far past XML's 64-compound bound" do
-      d = Makiri::HTML("<p>x</p>")
-      over65 = ":is(#{(['a'] * 65).join(' ')})"
-      expect { d.css(over65) }.not_to raise_error
+  # HTML matching (`lexbor::selector_port`) caps one compound chain at 64
+  # compounds, the same bound `Makiri::XML` has (see `xml_css_spec.rb`'s
+  # "fails closed on an over-long :is()/:not() argument"). Over the cap is a
+  # raise, found before any node is matched, wherever the chain is nested -
+  # never a silently dropped alternative (which made `:not(<65 compounds>)`
+  # match every element). Selector NESTING stays unbounded: see the `:is()`
+  # probe below and notes/css_selectors_crate_migration_plan.ja.md.
+  describe "resource limits" do
+    def chain(n) = (["div"] * n).join(" > ")
+
+    let(:deep) { Makiri::HTML("<body>#{'<div>' * 70}x#{'</div>' * 70}</body>") }
+    let(:shapes) do
+      [->(c) { c }, ->(c) { ":is(#{c})" }, ->(c) { "body :not(#{c})" },
+       ->(c) { "body:has(#{c})" }, ->(c) { ":nth-child(1 of #{c})" }]
+    end
+
+    it "answers a 64-compound chain wherever it is nested" do
+      expect(deep.css(chain(64)).length).to eq(7)
+      expect(deep.css(":is(#{chain(64)})").length).to eq(7)
+      expect(deep.css("body:has(#{chain(64)})").length).to eq(1)
+    end
+
+    it "raises the same error from css, at_css and matches? at 65 compounds, at every nesting" do
+      target = deep.at_css("div")
+      shapes.each do |shape|
+        sel = shape.call(chain(65))
+        expect { deep.css(sel) }.to raise_error(Makiri::Error, /too complex/), sel
+        expect { deep.at_css(sel) }.to raise_error(Makiri::Error, /too complex/), sel
+        expect { target.matches?(sel) }.to raise_error(Makiri::Error, /too complex/), sel
+      end
+    end
+
+    it "does not let an earlier matching alternative hide an over-long one" do
+      expect { deep.at_css("div, #{chain(65)}") }.to raise_error(Makiri::Error, /too complex/)
     end
 
     it "does not stack-overflow on deeply nested :is()" do
@@ -180,6 +202,23 @@ RSpec.describe "Makiri CSS" do
       expect { d.at_css("td").matches?("col || td") }
         .to raise_error(Makiri::Error, /could not be run/)
       expect(d.css("td").length).to eq(1)
+    end
+
+    # The unsupported construct is found before matching, so the answer does
+    # not depend on document content, alternative order, an earlier simple
+    # selector's mismatch, or at_css's first-match stop.
+    it "raises for an unsupported construct wherever it sits in the selector" do
+      d = Makiri::HTML("<table><col><tr><td>x</td></tr></table><p>hello</p>")
+      p = d.at_css("p")
+      [%(nosuch:lexbor-contains("x")), %(p:lexbor-contains("x")),
+       %(p, nosuch:lexbor-contains("x")), %(nosuch:lexbor-contains("x"), p),
+       %(:not(p:lexbor-contains("x"))), %(body:has(p:lexbor-contains("x"))),
+       %(:nth-child(1 of p:lexbor-contains("x"))),
+       "p, col || td", "col || td, p", "body:has(col || td)"].each do |sel|
+        expect { d.css(sel) }.to raise_error(Makiri::Error, /could not be run/), sel
+        expect { d.at_css(sel) }.to raise_error(Makiri::Error, /could not be run/), sel
+        expect { p.matches?(sel) }.to raise_error(Makiri::Error, /could not be run/), sel
+      end
     end
   end
 
