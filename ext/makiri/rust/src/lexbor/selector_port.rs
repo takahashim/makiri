@@ -42,10 +42,10 @@
 //!
 //! Still open (tracked in the plan, not silent gaps): `::pseudo-elements`,
 //! `:lexbor-contains()` (decided not to reimplement), a work budget on
-//! `:has()`'s search, `falloc` (this file still uses the ordinary allocator
-//! - `Box`/`Vec` - like the earlier spike did; see the one `#[allow]`ed
-//! `boxed()` helper), and the final selector-nesting cap sized from an
-//! actual 256 KB `Fiber` measurement.
+//! `:has()`'s search, and `falloc` (this file still uses the ordinary
+//! allocator - `Box`/`Vec` - like the earlier spike did; see the one
+//! `#[allow]`ed `boxed()` helper). The selector-nesting cap question is
+//! closed, not open - see the next section.
 //!
 //! # Why an explicit stack, not "just write it recursively"
 //!
@@ -63,8 +63,20 @@
 //! is a deliberate, bounded exception, not an oversight: the recursion depth
 //! there is bounded by `MAX_COMPOUNDS` (64, a fixed complexity cap already
 //! enforced by `collect_compounds`), never by attacker-controlled selector
-//! NESTING the way `:is()` is. 64 native stack frames is negligible even on
-//! a 256 KB `Fiber`.
+//! NESTING the way `:is()` is. **Measured, not just argued**: a `:has()`
+//! argument built to force exactly 64 levels of `has_forward` (a distinct
+//! class per level, so no early mismatch can cut it short) still answers
+//! correctly on a thread given only 64 KiB of stack, and only overflows at
+//! 32 KiB - a >=2x margin below Ruby's smallest documented `Fiber` machine
+//! stack (`RUBY_FIBER_MACHINE_STACK_SIZE`, as small as 128 KiB - see
+//! `crate::stack`'s module doc), and in an unoptimized DEBUG build, which
+//! uses far more stack per frame than the release build this ships as
+//! (`lexbor::tests::selector_port_spike::has_forward_at_max_compounds_fits_the_smallest_fiber_stack`).
+//! That test cannot exercise being called from PARTWAY into a Fiber's own
+//! stack (this port has no Ruby entry point yet to do that through) - the
+//! number is a lower bound on the margin, not the in-Ruby one - but it
+//! answers what Phase 1 could only argue: 64 native frames really is
+//! negligible, not merely assumed to be.
 
 #![forbid(unsafe_code)]
 
@@ -79,7 +91,7 @@ use crate::limits::NODE_SET_MAX;
 /// Not itself a stack-safety mechanism (this design needs none for nesting) -
 /// just a sanity cap so a single compound chain can't grow unboundedly, AND
 /// (see the module doc) what makes `:has()`'s bounded recursion safe.
-const MAX_COMPOUNDS: usize = 64;
+pub(crate) const MAX_COMPOUNDS: usize = 64;
 
 /// `Box::new`, allocator-scoped: `clippy.toml` bans it crate-wide in engine
 /// layers (aborts on OOM; `falloc::try_box` is the real one), and this
