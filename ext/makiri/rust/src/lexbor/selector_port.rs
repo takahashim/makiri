@@ -7,9 +7,11 @@
 //! the existing `lexbor::css_parser` typed view, the same one the XML
 //! CSS->XPath lowering already uses.
 //!
-//! Not wired into `Node#css`/`#at_css`/`#matches?` yet - see
-//! `lexbor::selector_element` (the rejected (A) exploration) for why (B) was
-//! chosen instead.
+//! Wired into `Node#css`/`#at_css`/`#matches?` (`glue::html_node::css`), which
+//! is Phase 3 of `notes/css_selectors_crate_migration_plan.ja.md` - see that
+//! plan's §1.1 for why this port (its "(B)-as-port") was chosen over adopting
+//! the `selectors`/`cssparser` crates ("(A)", explored then discarded; its
+//! spike code is gone, findable only through git history).
 //!
 //! # This is a semantic port of Lexbor's `selectors.c`, not a code port
 //!
@@ -106,27 +108,43 @@ const DEFAULT_WORK_BUDGET: u64 = 10 * 1000 * 1000;
 /// One top-level call's work budget: every step that can cost MORE than the
 /// input document/selector's own size bounds already (concretely: each node
 /// [`has_forward`]'s own search visits, and each frame [`run`]'s trampoline
-/// pops) charges it once. Exceeding it is [`WorkExceeded`] - a hard stop
-/// propagated all the way back to the caller, never a silent `false` for
-/// just the one `:has()` that happened to hit it: a `:has()` inside a larger
-/// compound answering `false` because ITS OWN search ran out of budget would
-/// be a wrong verdict for that compound, not merely an incomplete one, and
-/// CLAUDE.md's fail-closed rule is "raise instead" of that.
+/// pops) charges it once. Exceeding it is [`MatchFailure::WorkExceeded`] - a
+/// hard stop propagated all the way back to the caller, never a silent
+/// `false` for just the one `:has()` that happened to hit it: a `:has()`
+/// inside a larger compound answering `false` because ITS OWN search ran out
+/// of budget would be a wrong verdict for that compound, not merely an
+/// incomplete one, and CLAUDE.md's fail-closed rule is "raise instead" of
+/// that.
 ///
 /// A plain `Cell`, not `xpath::limits::Budget`'s `Rc<RefCell<Error>>` sink:
-/// this file has no Ruby-facing diagnostic error to build yet (not wired in -
-/// module doc), and one `u64` counter local to a single call needs no shared
-/// ownership.
+/// the Ruby glue (`glue::html_node::css`) only needs to know WHICH failure
+/// happened, not a formatted diagnostic, so one `u64` counter local to a
+/// single call needs no shared ownership.
 struct Budget {
     spent: std::cell::Cell<u64>,
     limit: u64,
 }
 
-/// [`Budget`] ran out: some step - most likely `:has()`'s own search -
-/// charged past its call's cap. Propagated as a hard failure, not folded into
-/// a `bool`; see [`Budget`]'s doc.
+/// Why a match/query could not be answered - propagated as a hard failure,
+/// never folded into a silent `false`/empty result (CLAUDE.md's fail-closed
+/// rule: a wrong answer is worse than a raise).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WorkExceeded;
+pub enum MatchFailure {
+    /// [`Budget`] ran out: some step - most likely `:has()`'s own search -
+    /// charged past its call's cap.
+    WorkExceeded,
+    /// A construct this port cannot evaluate at all - not "always false" the
+    /// way an unimplemented-in-Lexbor-too functional pseudo-class is
+    /// (`FunctionArg::Other`, `check_simple`'s doc), but one Lexbor itself
+    /// either cannot run (the column combinator `||`, `Combinator::Other` -
+    /// Lexbor's own traversal reports an error status for it too) or
+    /// implements and this port deliberately does not
+    /// (`:lexbor-contains()`, `FunctionArg::Contains` - decided in
+    /// `notes/css_selectors_crate_migration_plan.ja.md` §1.1). Answering
+    /// `false` for either would be indistinguishable from "genuinely no
+    /// element satisfies this", which it is not.
+    Unsupported,
+}
 
 impl Budget {
     fn new() -> Self {
@@ -136,15 +154,15 @@ impl Budget {
         }
     }
 
-    /// Charge one step. `Err(WorkExceeded)` once the limit is reached - the
-    /// caller must stop and propagate it, not answer as if this step had
-    /// simply failed to match.
+    /// Charge one step. `Err` once the limit is reached - the caller must
+    /// stop and propagate it, not answer as if this step had simply failed
+    /// to match.
     #[inline]
-    fn charge(&self) -> Result<(), WorkExceeded> {
+    fn charge(&self) -> Result<(), MatchFailure> {
         let n = self.spent.get() + 1;
         self.spent.set(n);
         if n > self.limit {
-            return Err(WorkExceeded);
+            return Err(MatchFailure::WorkExceeded);
         }
         Ok(())
     }
@@ -488,7 +506,7 @@ fn sibling_position(
     from_end: bool,
     of_type: bool,
     budget: &Budget,
-) -> Result<u64, WorkExceeded> {
+) -> Result<u64, MatchFailure> {
     // Element-only would agree for `of_type` (a non-element never satisfies
     // `name_matches_type`) but is WRONG for the plain (`of_type == false`)
     // case - see `counts_toward_child_position`'s doc. One walk serves both,
@@ -523,7 +541,7 @@ fn sibling_position_of(
     from_end: bool,
     list: Lists<'_>,
     budget: &Budget,
-) -> Result<Option<u64>, WorkExceeded> {
+) -> Result<Option<u64>, MatchFailure> {
     if !list_matches(list, node, budget)? {
         return Ok(None);
     }
@@ -555,7 +573,7 @@ fn list_matches(
     list: Lists<'_>,
     node: HtmlNode<'_>,
     budget: &Budget,
-) -> Result<bool, WorkExceeded> {
+) -> Result<bool, MatchFailure> {
     for l in list {
         if let Some(first) = l.first() {
             if matches_one_compound_chain(first, node, budget)? {
@@ -576,7 +594,7 @@ fn matches_one_compound_chain(
     first: Selector<'_>,
     node: HtmlNode<'_>,
     budget: &Budget,
-) -> Result<bool, WorkExceeded> {
+) -> Result<bool, MatchFailure> {
     let Some(compounds) = collect_compounds(Some(first)) else {
         return Ok(false);
     };
@@ -592,22 +610,24 @@ fn matches_one_compound_chain(
     )
 }
 
+/// §C-1 `:empty` (`SEL.c:1749-1774`): a child of ANY type OTHER than Comment
+/// disqualifies it, not just Element/non-empty-text - a processing-instruction
+/// child does too (found by `spec/xml_css_spec.rb`'s HTML/XML agreement
+/// check: `<i><?pi x?></i>` was wrongly treated as `:empty`, since neither
+/// `element()` nor `char_data()` sees a PI, and it fell through unnoticed).
 fn is_empty(node: HtmlNode<'_>) -> bool {
-    // §C-1 `:empty`: no element child, and no non-empty text/CDATA child
-    // (comments don't count either way).
-    !node
-        .children()
-        .any(|c| c.element().is_some() || c.char_data().is_some_and(|t| !t.is_empty()))
+    !node.children().any(|c| c.node_type() != NodeType::Comment)
 }
 
-/// §C-1 `:blank`: as `:empty`, but whitespace-only text children don't
-/// disqualify it (Lexbor's `lxb_dom_node_is_empty`) - more permissive than
-/// `:empty`.
+/// §C-1 `:blank` (`lxb_dom_node_is_empty`, `node.c:1700-1737`): as `:empty`,
+/// but a Text child only disqualifies it when it holds a non-whitespace byte -
+/// still stricter than "ignore text entirely", and a PI (or anything else
+/// that is neither Text nor Comment) disqualifies it unconditionally, same
+/// bug/fix as `is_empty` above.
 fn is_blank(node: HtmlNode<'_>) -> bool {
-    !node.children().any(|c| {
-        c.element().is_some()
-            || c.char_data()
-                .is_some_and(|t| t.iter().any(|&b| !is_lexbor_whitespace(b)))
+    !node.children().any(|c| match c.char_data() {
+        Some(t) => t.iter().any(|&b| !is_lexbor_whitespace(b)),
+        None => c.node_type() != NodeType::Comment,
     })
 }
 
@@ -705,7 +725,7 @@ fn plain_pseudo_matches(
     pc: PseudoClass,
     node: HtmlNode<'_>,
     budget: &Budget,
-) -> Result<bool, WorkExceeded> {
+) -> Result<bool, MatchFailure> {
     Ok(match pc {
         // Not `prev_sibling_element`/`next_sibling_element` - see
         // `counts_toward_child_position`'s doc; a preceding/following
@@ -760,7 +780,7 @@ fn nth_matches(
     of_type: bool,
     anb: Option<crate::lexbor::css_parser::Nth<'_>>,
     budget: &Budget,
-) -> Result<bool, WorkExceeded> {
+) -> Result<bool, MatchFailure> {
     let Some(anb) = anb else {
         return Ok(false);
     };
@@ -786,7 +806,7 @@ fn nth_of_s_matches(
     list: Lists<'_>,
     anb: Option<crate::lexbor::css_parser::Nth<'_>>,
     budget: &Budget,
-) -> Result<bool, WorkExceeded> {
+) -> Result<bool, MatchFailure> {
     let Some(anb) = anb else {
         return Ok(false);
     };
@@ -806,7 +826,7 @@ fn has_matches(
     lists: Lists<'_>,
     node: HtmlNode<'_>,
     budget: &Budget,
-) -> Result<bool, WorkExceeded> {
+) -> Result<bool, MatchFailure> {
     for list in lists {
         if let Some(first) = list.first() {
             if has_matches_one(first, node, budget)? {
@@ -826,7 +846,7 @@ fn has_matches_one(
     first: Selector<'_>,
     node: HtmlNode<'_>,
     budget: &Budget,
-) -> Result<bool, WorkExceeded> {
+) -> Result<bool, MatchFailure> {
     let Some(compounds) = collect_compounds(Some(first)) else {
         return Ok(false);
     };
@@ -845,10 +865,10 @@ fn has_forward(
     idx: usize,
     node: HtmlNode<'_>,
     budget: &Budget,
-) -> Result<bool, WorkExceeded> {
+) -> Result<bool, MatchFailure> {
     let compound = chain[idx];
     let is_last = idx + 1 == chain.len();
-    let candidate_ok = |c: HtmlNode<'_>| -> Result<bool, WorkExceeded> {
+    let candidate_ok = |c: HtmlNode<'_>| -> Result<bool, MatchFailure> {
         budget.charge()?;
         Ok(matches_compound_here(compound, c, budget)?
             && (is_last || has_forward(chain, idx + 1, c, budget)?))
@@ -896,7 +916,14 @@ fn has_forward(
             }
             Ok(false)
         }
-        Combinator::Close | Combinator::Other => Ok(false),
+        // `Close` never actually reaches a compound BOUNDARY combinator -
+        // `collect_compounds` only starts a new `Compound` at a real
+        // structural combinator - so this is defensive, not a real case.
+        Combinator::Close => Ok(false),
+        // The column combinator `||`: Lexbor's OWN traversal cannot run it
+        // either (`MatchFailure::Unsupported`'s doc) - raised, not answered
+        // as a `:has()` that simply found nothing.
+        Combinator::Other => Err(MatchFailure::Unsupported),
     }
 }
 
@@ -908,7 +935,7 @@ fn matches_compound_here(
     compound: Compound<'_>,
     c: HtmlNode<'_>,
     budget: &Budget,
-) -> Result<bool, WorkExceeded> {
+) -> Result<bool, MatchFailure> {
     // Deliberately NOT `matches_one_compound_chain(compound.first, c)`: that
     // re-derives the chain via `collect_compounds`, which walks PAST this
     // one compound to whatever the ORIGINAL selector chained after it (e.g.
@@ -955,7 +982,7 @@ fn check_simple<'p>(
     sel: Selector<'p>,
     node: HtmlNode<'_>,
     budget: &Budget,
-) -> Result<SimpleCheck<'p>, WorkExceeded> {
+) -> Result<SimpleCheck<'p>, MatchFailure> {
     Ok(match sel.simple() {
         // `*` matches an ELEMENT, never a text/comment/doctype/PI node -
         // found by the same randomized differential test as
@@ -1021,11 +1048,18 @@ fn check_simple<'p>(
                 rest: None,
             }
         }
-        // `:lexbor-contains()` and any other functional pseudo-class are
-        // simply unsupported here.
-        Simple::PseudoClassFunction(FunctionArg::Contains(_) | FunctionArg::Other) => {
-            SimpleCheck::Result(false)
+        // `:lexbor-contains()`: Lexbor itself matches with it (§D-5) - this
+        // port deliberately does not (`MatchFailure::Unsupported`'s doc) -
+        // so answering `false` would be indistinguishable from a selector
+        // that legitimately matches nothing. Raised instead.
+        Simple::PseudoClassFunction(FunctionArg::Contains(_)) => {
+            return Err(MatchFailure::Unsupported)
         }
+        // Any OTHER functional pseudo-class (`:dir()`, `:lang()`,
+        // `:nth-col()`, `:nth-last-col()`) is unimplemented in LEXBOR TOO
+        // (§D-6's `default:` case) - a real, agreed "always false", not a
+        // gap this port introduces.
+        Simple::PseudoClassFunction(FunctionArg::Other) => SimpleCheck::Result(false),
         Simple::PseudoElement | Simple::Other => SimpleCheck::Result(false),
     })
 }
@@ -1042,7 +1076,7 @@ fn check_from<'p>(
     mut sel: Selector<'p>,
     node: HtmlNode<'_>,
     budget: &Budget,
-) -> Result<SimpleCheck<'p>, WorkExceeded> {
+) -> Result<SimpleCheck<'p>, MatchFailure> {
     loop {
         let next = sel.next().filter(|n| n.combinator() == Combinator::Close);
         match check_simple(sel, node, budget)? {
@@ -1067,7 +1101,7 @@ fn check_compound<'p>(
     compound: Compound<'p>,
     node: HtmlNode<'_>,
     budget: &Budget,
-) -> Result<SimpleCheck<'p>, WorkExceeded> {
+) -> Result<SimpleCheck<'p>, MatchFailure> {
     check_from(compound.first, node, budget)
 }
 
@@ -1149,14 +1183,14 @@ fn advance<'p, 'doc>(
     node: HtmlNode<'doc>,
     k: Cont<'p, 'doc>,
     matched: bool,
-) {
+) -> Result<(), MatchFailure> {
     if !matched {
         stack.push(Frame::Deliver(false, k));
-        return;
+        return Ok(());
     }
     if idx == 0 {
         stack.push(Frame::Deliver(true, k));
-        return;
+        return Ok(());
     }
     let comb = chain[idx].comb;
     let next_idx = idx - 1;
@@ -1207,8 +1241,12 @@ fn advance<'p, 'doc>(
             }),
             None => stack.push(Frame::Deliver(false, k)),
         },
-        Combinator::Other => stack.push(Frame::Deliver(false, k)), // column combinator etc.: fail closed
+        // The column combinator `||`: see `Combinator::Other`'s handling in
+        // `has_forward` (this file's other combinator dispatch) - same
+        // reasoning, same error.
+        Combinator::Other => return Err(MatchFailure::Unsupported),
     }
+    Ok(())
 }
 
 fn try_alternative<'p, 'doc>(
@@ -1252,7 +1290,7 @@ fn try_alternative<'p, 'doc>(
 /// next candidate re-enters this loop with a fresh frame, so a `:is()`
 /// alternative or a long ancestor climb is bounded by the same budget
 /// `:has()`'s own search is, not just by depth counts.
-fn run(mut stack: Vec<Frame<'_, '_>>, budget: &Budget) -> Result<bool, WorkExceeded> {
+fn run(mut stack: Vec<Frame<'_, '_>>, budget: &Budget) -> Result<bool, MatchFailure> {
     let mut answer = false;
     while let Some(frame) = stack.pop() {
         budget.charge()?;
@@ -1263,7 +1301,7 @@ fn run(mut stack: Vec<Frame<'_, '_>>, budget: &Budget) -> Result<bool, WorkExcee
                 node,
                 k,
             } => match check_compound(chain[idx], node, budget)? {
-                SimpleCheck::Result(m) => advance(&mut stack, chain, idx, node, k, m),
+                SimpleCheck::Result(m) => advance(&mut stack, chain, idx, node, k, m)?,
                 SimpleCheck::Defer {
                     negate,
                     lists,
@@ -1297,13 +1335,13 @@ fn run(mut stack: Vec<Frame<'_, '_>>, budget: &Budget) -> Result<bool, WorkExcee
                     k,
                 } => {
                     if !result {
-                        advance(&mut stack, chain, idx, node, *k, false);
+                        advance(&mut stack, chain, idx, node, *k, false)?;
                     } else {
                         match rest {
-                            None => advance(&mut stack, chain, idx, node, *k, true),
+                            None => advance(&mut stack, chain, idx, node, *k, true)?,
                             Some(next) => match check_from(next, node, budget)? {
                                 SimpleCheck::Result(m) => {
-                                    advance(&mut stack, chain, idx, node, *k, m)
+                                    advance(&mut stack, chain, idx, node, *k, m)?
                                 }
                                 SimpleCheck::Defer {
                                     negate,
@@ -1401,12 +1439,12 @@ fn run(mut stack: Vec<Frame<'_, '_>>, budget: &Budget) -> Result<bool, WorkExcee
 
 /// Does `element` match the selector chain starting at `first` (as
 /// `css_parser` links it, left to right - i.e. `first` is the LEFTMOST
-/// compound as written)? A fresh [`Budget`] each call - see its doc for why
-/// exceeding it is [`WorkExceeded`], not a plain `false`.
+/// compound as written)? A fresh [`Budget`] each call - see [`MatchFailure`]'s
+/// doc for why a failure is raised, not answered as a plain `false`.
 pub fn matches(
     first: Option<Selector<'_>>,
     element: HtmlElement<'_>,
-) -> Result<bool, WorkExceeded> {
+) -> Result<bool, MatchFailure> {
     let Some(compounds) = collect_compounds(first) else {
         return Ok(false);
     };
@@ -1433,12 +1471,13 @@ pub fn matches(
 /// entry point for `Node#matches?`: no traversal, just [`list_matches`]
 /// (already the machinery `:is`/`:where` use internally) applied to the
 /// query's own top-level groups, under a fresh [`Budget`].
-pub fn matches_any(groups: Lists<'_>, element: HtmlElement<'_>) -> Result<bool, WorkExceeded> {
+pub fn matches_any(groups: Lists<'_>, element: HtmlElement<'_>) -> Result<bool, MatchFailure> {
     list_matches(groups, element.node(), &Budget::new())
 }
 
 /// Why [`select_all`]/[`select_first`]/[`matches_any`]/[`matches`] stopped
-/// before answering the whole query.
+/// before answering the whole query. [`select_all`]'s own [`Overflow`] plus
+/// whatever [`MatchFailure`] carries - see its doc for the other two.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QueryFailure {
     /// More descendants matched than a Makiri result set is allowed to hold.
@@ -1446,12 +1485,17 @@ pub enum QueryFailure {
     /// The per-query work budget ran out - see [`Budget`]'s doc (mainly a
     /// `:has()` search costing more than the input's own size bounds).
     WorkExceeded,
+    /// See [`MatchFailure::Unsupported`].
+    Unsupported,
 }
 
-impl From<WorkExceeded> for QueryFailure {
+impl From<MatchFailure> for QueryFailure {
     #[inline]
-    fn from(_: WorkExceeded) -> Self {
-        QueryFailure::WorkExceeded
+    fn from(e: MatchFailure) -> Self {
+        match e {
+            MatchFailure::WorkExceeded => QueryFailure::WorkExceeded,
+            MatchFailure::Unsupported => QueryFailure::Unsupported,
+        }
     }
 }
 
@@ -1529,7 +1573,7 @@ pub(crate) fn select_all_with_work_limit<'doc>(
 pub fn select_first<'doc>(
     root: HtmlNode<'doc>,
     groups: Lists<'_>,
-) -> Result<Option<HtmlNode<'doc>>, WorkExceeded> {
+) -> Result<Option<HtmlNode<'doc>>, MatchFailure> {
     let budget = Budget::new();
     let mut n = root;
     while let Some(next) = n.preorder_next(root) {

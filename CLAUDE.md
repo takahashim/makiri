@@ -718,20 +718,41 @@ policy is a new item stated in each `impl`. The HTML backend reports the DOM's
 case-preserved `localName` (`refX`, `foreignObject`), not Lexbor's lower-cased
 stored name.
 
-**CSS** (`lexbor/selectors.rs`). `Node#{css,at_css,matches?}` via Lexbor's
-`lxb_selectors`. The engine (`css_memory`+`css_parser`+`css_selectors` and the
-`selectors` traversal object) is **built once and reused for every query** -
-safe with no locking because CSS holds the GVL throughout (it never releases
-it), so calls are serialized; between calls only the parsed list's arena is
-reset (`lxb_css_memory_clean`) and the parser returned to its CLEAN stage
-(`lxb_css_parser_clean`), and the traversal engine self-cleans after each
-find/match. Per-call create/destroy used to dominate a cheap query and lost to
-nokolexbor on `at_css('#id')`; reuse makes it ~5× faster than nokolexbor.
-`lxb_selectors_find` runs with `MATCH_FIRST` to dedup comma lists; `at_css`
-**stops at the first match and wraps that one node** (no NodeSet / no Ruby
-`#first`). Results are **descendant-only** (context node excluded, like Nokogiri)
-and in document order; capped at `NODE_SET_MAX`; malformed →
-`Makiri::CSS::SyntaxError` (the shared engine is reset, so it recovers).
+**CSS** (`lexbor/selector_port.rs` + `lexbor/css_parser.rs`). `Node#{css,at_css,
+matches?}` (`glue::html_node::css`) match over the typed HTML adapter through
+`selector_port` - an original, `#![forbid(unsafe_code)]` Rust port of Lexbor's
+`lxb_selectors_*` state machine (an explicit `Frame`/`Cont` heap work stack;
+never native recursion for selector nesting - `notes/
+css_selectors_crate_migration_plan.ja.md` §1.1), NOT Lexbor's own matcher.
+Selector PARSING is unchanged: `css_parser::parse` is Lexbor's own CSS parser,
+the SAME one the XML CSS->XPath lowering and the stylesheet reader use, over
+the shared process-global parser/arena `lexbor::css_engine` assembles
+(`ParserParts`, `Owned<T>`) - the GVL argument, `!Send` cell and busy-flag
+details below are that layer's, unaffected by the switch. `lexbor/selectors.rs`
+(the OLD `lxb_selectors`-callback engine this replaced for HTML) still exists,
+used only as the differential-testing reference
+(`lexbor::tests::selector_port_spike::agrees_with_the_old_lexbor_engine_on_standard_selectors`
+and its randomized sibling) - it is not on `Node#css`'s path any more, and is
+a Phase 3 cleanup candidate once that confidence is trusted enough to delete
+it (`notes/css_selectors_crate_migration_plan.ja.md`).
+`select_all`/`select_first`/`matches_any` are **descendant-only** (context node
+excluded, like Nokogiri) and in document order; `select_all` is capped at
+`NODE_SET_MAX`, and every entry point shares one per-call work `Budget`
+(`:has()`'s own search and the plain `:nth-child`-family's sibling scan are
+the two places cost can multiply past the document's own size) - exceeding
+either raises `Makiri::Error`. A malformed selector raises
+`Makiri::CSS::SyntaxError` from the parse step, before matching starts.
+`:lexbor-contains()` and the column combinator (`||`) are constructs this
+matcher cannot evaluate (deliberately, and because Lexbor's own traversal
+can't run the latter either) - raised as "could not be run", never answered as
+a silent empty result. **Not yet ported from the old engine's design**: a
+compiled-selector cache (the old engine's `CachePolicy`/`SelectorCache` kept a
+parsed selector list across repeat `at_css('#id')`-style calls; the new path
+re-parses every call) and a `NthIndexCache`-equivalent for the sibling-position
+family (currently a plain O(siblings) scan, same asymptotic cost the old
+engine had, just not yet optimised) - both known, deliberately deferred until
+there is a `rake bench` number to chase (CLAUDE.md's own performance-work
+rule), not silent gaps.
 **The GVL is an argument, not a comment**: the two process-global engines live
 in `crate::gvl::GvlCell`, whose `borrow` takes a `&Gvl` - minted from a
 `magnus::Ruby` by `bridge::gvl::held`, and `!Send`, so `without_gvl` (which
@@ -739,11 +760,6 @@ requires a `Send` body) cannot carry one across a release. The cell's busy
 flag turns a re-entrant second borrow into `Busy` rather than a second
 `&mut`. Outside Ruby (cargo tests, fuzz) `Gvl::exclusive()` stands in with a
 process-wide mutex; it does not exist in the extension build.
-The parser/arena/table trio is assembled by `lexbor::css_engine`
-(`ParserParts`, `Owned<T>`), which the selector-lowering parser
-(`css_parser`) and the stylesheet reader share; the compiled-selector cache's
-decision and storage are `CachePolicy` / `SelectorCache`, and the arena and the
-map are only ever emptied together (`spec/css_selector_cache_spec.rb`).
 
 **Serialization** (`lexbor/serialize.rs`). `Node#{to_html,to_s,outer_html}` =
 Lexbor `serialize_tree_cb`, `#inner_html` = `serialize_deep_cb`; the callback
@@ -840,11 +856,14 @@ encounter-order (**not** doc-order), `#{css,xpath,search}` run per node and unio
 ## Performance
 
 **Makiri beats Nokogiri/libxml2 on every `rake bench` row.** Measured
-against Nokogiri: parse ~4.6×, css ~12×, at_css ~9400×, `//tag` ~4×,
+against Nokogiri: parse ~4.6×, css ~2×, at_css ~2000×, `//tag` ~4×,
 `//*[@id=…]` ~8×, `[@attr='v']` ~4.3×, attribute axis ~3×, serialize ~6×,
 full-text extraction ~3.5×. **traverse** (children walk) used to be the one row
 that only met Nokogiri (within measurement error); as of the v0.10.0 bench it
-beats it too.
+beats it too. (`css`/`at_css` were remeasured after HTML CSS matching moved
+from Lexbor's engine to `lexbor::selector_port` - see the note below; the
+`~12×`/`~9400×` figures an earlier revision of this file quoted were the OLD
+engine's.)
 
 Treat these as indicative, not precise. Two consecutive runs on the same machine
 put full-text extraction at 2.9× and 3.5×, and threaded parse scaling at 2.4×
@@ -887,16 +906,22 @@ Key decisions that got there, worth not regressing:
   `CompiledTest`, so the result is identical to the walk; custom/unknown
   tag names fall through. See the element index note above.
 
-- **The CSS engine is built once and reused** (`lexbor/selectors.rs`, see the
-  subsystem note): the per-call create/init/destroy of the Lexbor CSS object
-  graph dominated a cheap query and lost to nokolexbor on `at_css('#id')`; a
-  process-global engine (safe because CSS holds the GVL throughout) reset with
-  `lxb_css_memory_clean` + `lxb_css_parser_clean` between calls makes `at_css`
-  ~6000× Nokogiri / ~5× nokolexbor (was ~1.16× *slower* than nokolexbor). `at_css`
-  also wraps the single first match directly (no NodeSet / no Ruby `#first`). Do
-  not reintroduce per-call engine teardown; verify with `bench`'s `at_css`/`css`
-  rows and `FUZZ_ARGS="--target css" bundle exec rake fuzz:sanitize`
-  (the reuse is the memory-safety risk).
+- **HTML CSS matches over the typed adapter, not Lexbor's own matcher**
+  (`lexbor::selector_port`, see the subsystem note): remeasured after the
+  switch at makiri ~2× Nokogiri / ~4.2× nokolexbor on `css`, and ~2000×
+  Nokogiri / ~1.3× nokolexbor on `at_css` (down from the old engine's ~5×
+  nokolexbor - still a win, just a smaller one). `at_css` wraps the single
+  first match directly (no NodeSet / no Ruby `#first` - `select_first` stops
+  at the first hit). The likely reason `at_css` narrowed more than `css` did:
+  `at_css('#main')` in the bench loop repeats the SAME selector string many
+  times, which the OLD engine's compiled-selector cache (`CachePolicy`/
+  `SelectorCache`) served without re-parsing after the first call; the new
+  path has no such cache yet (the subsystem note's "not yet ported" list) and
+  reparses every call through Lexbor's CSS parser. That cache is the leading
+  performance candidate if this gap needs closing - per CLAUDE.md's own rule,
+  add it only against a fresh `bench` baseline, not speculatively. Verify
+  with `bench`'s `at_css`/`css` rows and
+  `FUZZ_ARGS="--target css" bundle exec rake fuzz:sanitize`.
 - **`Node#text` is served from the text index** (`lexbor/adapter/text_index.rs`,
   see the subsystem note): a per-document, lazily-built, mutation-invalidated
   map from node → its document-order text-slice run, turning text extraction

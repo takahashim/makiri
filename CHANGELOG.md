@@ -4,6 +4,17 @@
 
 ### Removed
 
+* `:lexbor-contains("text")` on HTML `#css`/`#at_css`/`#matches?`. HTML CSS
+  matching moved from Lexbor's own `lxb_selectors` engine to
+  `lexbor::selector_port`, an original, non-recursive Rust implementation
+  (parsing is unchanged - still Lexbor's CSS parser); the port deliberately
+  does not reimplement `:lexbor-contains()`. A well-formed
+  `:lexbor-contains()` still parses, but now raises `Makiri::Error` ("could
+  not be run") instead of ever matching - the same treatment an unsupported
+  combinator already got (below), not a silent empty result, which would be
+  indistinguishable from "no element matches". `Makiri::XML`'s `#css` is
+  unaffected - it still lowers `:lexbor-contains()` to XPath `contains()`.
+  See NOKOGIRI_DIFFERENCES.md.
 * `Node#name=` and `Node#node_name=`, on both HTML and XML nodes. The DOM has
   no way to rename an element, and Lexbor keeps many elements in structs of
   their own (`<template>` its contents, `<option>` its selectedness): renaming
@@ -45,6 +56,15 @@
   combinator, which answered "nothing matched") raises `Makiri::Error`. An
   allocation failure while parsing a selector is reported as out of memory,
   not as `Makiri::CSS::SyntaxError`.
+* HTML CSS matching (`#css`/`#at_css`/`#matches?`) now carries a per-query
+  work budget: `:has()`'s own search, and the sibling scan behind
+  `:nth-of-type`/`:first-of-type`/`:last-of-type`/`:only-of-type`/`:nth-child`
+  without an `of S` clause, can each cost more than the document's own size
+  bounds already, multiplying per candidate element in a broader query. Past
+  the budget, the query raises `Makiri::Error` ("CSS query exceeded its work
+  budget") rather than running unbounded or answering a `:has()` as `false`
+  because its own search alone ran out (which would be a wrong verdict, not
+  an incomplete one).
 * HTML parsing bounds the tree depth (`max_tree_depth:`, default 400; a
   negative value disables it) and the `<option>`s one `<select>` receives
   (10,000), raising `Makiri::Error` past either. Both shapes made Lexbor's tree
