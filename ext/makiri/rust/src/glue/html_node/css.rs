@@ -23,7 +23,7 @@ use crate::init::MOD_HTML_NODE_METHODS;
 use crate::lexbor::adapter::html::RawNode;
 use crate::lexbor::css_parser::ParseError;
 use crate::lexbor::selector_cache;
-use crate::lexbor::selector_port::{self, MatchFailure, QueryFailure};
+use crate::lexbor::selector_port::{self, MatchFailure, QueryFailure, MAX_COMPOUNDS};
 use crate::limits::NODE_SET_MAX;
 
 /// A parse failure as the Ruby exception it maps to.
@@ -46,6 +46,7 @@ fn query_error(err: QueryFailure) -> Error {
         )),
         QueryFailure::WorkExceeded => match_error(MatchFailure::WorkExceeded),
         QueryFailure::Unsupported => match_error(MatchFailure::Unsupported),
+        QueryFailure::TooComplex => match_error(MatchFailure::TooComplex),
     }
 }
 
@@ -62,6 +63,9 @@ fn match_error(err: MatchFailure) -> Error {
     match err {
         MatchFailure::WorkExceeded => makiri_error("CSS query exceeded its work budget"),
         MatchFailure::Unsupported => makiri_error("CSS selector could not be run"),
+        MatchFailure::TooComplex => makiri_error(format!(
+            "CSS selector chain too complex (more than {MAX_COMPOUNDS} compounds)"
+        )),
     }
 }
 
@@ -101,6 +105,7 @@ fn css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Value, Error> {
         let sv = selector_text(selector)?;
         let gvl = held(ruby);
         let matched = selector_cache::with_compiled(&gvl, sv.as_bytes(), |groups| {
+            selector_port::validate(groups)?;
             selector_port::select_all(this.node(), groups)
         })
         .map_err(|e| parse_error(e, selector))?;
@@ -123,6 +128,7 @@ fn at_css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Option<Value>, 
         let sv = selector_text(selector)?;
         let gvl = held(ruby);
         let matched = selector_cache::with_compiled(&gvl, sv.as_bytes(), |groups| {
+            selector_port::validate(groups)?;
             selector_port::select_first(this.node(), groups)
         })
         .map_err(|e| parse_error(e, selector))?;
@@ -143,9 +149,12 @@ fn matches(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<bool, Error> {
         let sv = selector_text(selector)?;
         let gvl = held(ruby);
         let element = this.node().element();
-        let matched = selector_cache::with_compiled(&gvl, sv.as_bytes(), |groups| match element {
-            Some(el) => selector_port::matches_any(groups, el),
-            None => Ok(false),
+        let matched = selector_cache::with_compiled(&gvl, sv.as_bytes(), |groups| {
+            selector_port::validate(groups)?;
+            match element {
+                Some(el) => selector_port::matches_any(groups, el),
+                None => Ok(false),
+            }
         })
         .map_err(|e| parse_error(e, selector))?;
         drop(sv);

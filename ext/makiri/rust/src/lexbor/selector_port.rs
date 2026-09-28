@@ -155,6 +155,10 @@ pub enum MatchFailure {
     /// `false` for either would be indistinguishable from "genuinely no
     /// element satisfies this", which it is not.
     Unsupported,
+    /// A chain somewhere in the selector has more than [`MAX_COMPOUNDS`]
+    /// compounds - see [`validate`]'s doc for why this is caught up front
+    /// rather than left to `collect_compounds`'s own silent `None`.
+    TooComplex,
 }
 
 impl Budget {
@@ -1711,6 +1715,103 @@ fn run(mut stack: Vec<Frame<'_, '_>>, budget: &Budget) -> Result<bool, MatchFail
     Ok(answer)
 }
 
+/* ------------------------------------------------------------------ *
+ * up-front validation - checked ONCE, over the WHOLE selector tree,   *
+ * before any candidate is matched                                    *
+ * ------------------------------------------------------------------ */
+
+/// Is `groups` compilable at all - no chain anywhere over [`MAX_COMPOUNDS`],
+/// no `:lexbor-contains()` or column combinator (`||`) anywhere - checked
+/// over EVERY comma alternative and EVERY nested `:is()`/`:where()`/`:not()`/
+/// `:has()`/`of S` list, recursively, before any node is tested?
+///
+/// Two bugs this closes, both about a check that used to happen only
+/// LAZILY, mid-match, and so gave an answer that depended on things it never
+/// should have:
+///
+/// - **A too-complex chain used to be silently treated as ABSENT.**
+///   `collect_compounds` returns `None` for both an EMPTY chain and one over
+///   [`MAX_COMPOUNDS`], and every caller ties that to "this alternative
+///   cannot match" - correct for empty, wrong for over-limit: an alternative
+///   `:not()`/`:is()`/`:has()` drops as if it were never written is invisible
+///   to the OR/AND-negated logic around it, so `:not(` a 65-compound chain `)`
+///   answered `true` for EVERY element (no alternatives left to disprove it),
+///   not "too complex to evaluate".
+/// - **`:lexbor-contains()`/`||` used to be found only if matching actually
+///   reached them.** A type mismatch earlier in the SAME compound, an
+///   earlier comma alternative that already answered the query, or
+///   `at_css`'s own first-match short-circuit could all mean the unsupported
+///   construct was never reached at all - so `nosuch:lexbor-contains("x")`
+///   answered empty (the type check failed first) while
+///   `p:lexbor-contains("x")` raised (the type check passed), and
+///   `p, nosuch:lexbor-contains("x")` against a document with a `<p>`
+///   answered a NodeSet rather than raising, purely because `p` matched
+///   first. The exception a caller gets must not depend on document content,
+///   comma-alternative order, or `at_css`'s early termination.
+///
+/// Cheap relative to matching itself (pure counting and dispatch, no node
+/// touched, no allocation) - run on every call through
+/// `lexbor::selector_cache`, cache hit or not, rather than once per distinct
+/// selector text, since the cost is negligible next to a real tree walk.
+///
+/// Iterative, like the matcher it guards: nested lists wait on an explicit
+/// work list, so a selector nested 500,000 deep costs heap, not native stack
+/// (a recursive walk here would reintroduce exactly the `SystemStackError`
+/// the matcher's own `Frame`/`Cont` design exists to avoid).
+pub fn validate(groups: Lists<'_>) -> Result<(), MatchFailure> {
+    let mut pending = vec![groups];
+    while let Some(lists) = pending.pop() {
+        for list in lists {
+            if let Some(first) = list.first() {
+                validate_chain(first, &mut pending)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// One chain's compound count and combinators; any nested list its simple
+/// selectors carry is queued on `pending` rather than walked here.
+fn validate_chain<'p>(
+    first: Selector<'p>,
+    pending: &mut Vec<Lists<'p>>,
+) -> Result<(), MatchFailure> {
+    let mut count = 0usize;
+    let mut cur = Some(first);
+    while let Some(start) = cur {
+        count += 1;
+        if count > MAX_COMPOUNDS {
+            return Err(MatchFailure::TooComplex);
+        }
+        if start.combinator() == Combinator::Other {
+            return Err(MatchFailure::Unsupported);
+        }
+        let mut sel = start;
+        loop {
+            match sel.simple() {
+                Simple::PseudoClassFunction(FunctionArg::Contains(_)) => {
+                    return Err(MatchFailure::Unsupported)
+                }
+                Simple::PseudoClassFunction(FunctionArg::Selectors { lists, .. }) => {
+                    pending.push(lists)
+                }
+                Simple::PseudoClassFunction(FunctionArg::Nth { anb, .. }) => {
+                    if let Some(of_list) = anb.and_then(|a| a.of_list) {
+                        pending.push(of_list);
+                    }
+                }
+                _ => {}
+            }
+            match sel.next().filter(|n| n.combinator() == Combinator::Close) {
+                Some(n) => sel = n,
+                None => break,
+            }
+        }
+        cur = sel.next();
+    }
+    Ok(())
+}
+
 /// Does `element` match the selector chain starting at `first` (as
 /// `css_parser` links it, left to right - i.e. `first` is the LEFTMOST
 /// compound as written)? A fresh [`Budget`] each call - see [`MatchFailure`]'s
@@ -1761,6 +1862,8 @@ pub enum QueryFailure {
     WorkExceeded,
     /// See [`MatchFailure::Unsupported`].
     Unsupported,
+    /// See [`MatchFailure::TooComplex`].
+    TooComplex,
 }
 
 impl From<MatchFailure> for QueryFailure {
@@ -1769,6 +1872,7 @@ impl From<MatchFailure> for QueryFailure {
         match e {
             MatchFailure::WorkExceeded => QueryFailure::WorkExceeded,
             MatchFailure::Unsupported => QueryFailure::Unsupported,
+            MatchFailure::TooComplex => QueryFailure::TooComplex,
         }
     }
 }
