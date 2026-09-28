@@ -83,6 +83,8 @@
 
 #![forbid(unsafe_code)]
 
+use std::rc::Rc;
+
 use crate::lexbor::adapter::html::{HtmlElement, HtmlNode, NodeType, NsId};
 use crate::lexbor::css_parser::{
     AttrMatch, Combinator, FunctionArg, ListPseudo, Lists, PseudoClass, Selector, Simple,
@@ -196,9 +198,27 @@ struct Compound<'p> {
     comb: Combinator,
 }
 
+/// A whole compound chain, shared rather than owned: `Frame`/`Cont` used to
+/// carry `Vec<Compound<'p>>` by value, so `advance`'s `Descendant`/
+/// `SubsequentSibling` retries - which keep matching the SAME chain against a
+/// new ancestor/sibling on failure - paid a full `Vec` clone (allocation +
+/// copy) on every step of the climb. `Compound` is `Copy` and small, so the
+/// clone was never about the DATA; it was about `Vec` not being shareable.
+/// `Rc<[Compound]>` fixes that: cloning it is a refcount bump, `[idx]`/`.len()`
+/// still work via `Deref<Target = [Compound]>`, and building one is done ONCE
+/// per selector (`collect_compounds`) rather than once per retry.
+type Chain<'p> = Rc<[Compound<'p>]>;
+
 /// Split a chain into compounds, left to right (the order `css_parser` links
 /// them in). `None` for an empty chain or one over `MAX_COMPOUNDS`.
-fn collect_compounds(first: Option<Selector<'_>>) -> Option<Vec<Compound<'_>>> {
+///
+/// Collected into an `Rc<[Compound]>` via `FromIterator` (one exact-sized
+/// allocation - `Vec`'s iterator is `ExactSizeIterator`) rather than
+/// `Vec::into()`, which goes through `Vec::into_boxed_slice`'s
+/// allocate-then-shrink and is exactly the pattern `clippy.toml`'s
+/// `into_boxed_slice` ban calls out (its `.into()` spelling "cannot be named"
+/// by that lint, but the reason still applies here).
+fn collect_compounds(first: Option<Selector<'_>>) -> Option<Chain<'_>> {
     let mut v = Vec::new();
     let mut cur = first;
     while let Some(start) = cur {
@@ -216,8 +236,59 @@ fn collect_compounds(first: Option<Selector<'_>>) -> Option<Vec<Compound<'_>>> {
     if v.is_empty() {
         None
     } else {
-        Some(v)
+        Some(v.into_iter().collect())
     }
+}
+
+/// A comma-separated selector list, each alternative pre-split into a
+/// [`Chain`] ONCE - the per-QUERY half of the hoist `select_all`/
+/// `select_first`'s tree walk and `sibling_position_of`'s per-sibling loop
+/// both need: without it, [`list_matches`] (via [`matches_one_compound_chain`]
+/// -> `collect_compounds`) re-walked the parsed selector AST and allocated a
+/// fresh [`Chain`] for every CANDIDATE node, even though the chain is fixed
+/// for the whole query. A direct Ruby-free timing comparison against
+/// Lexbor's own (arena-parsed-once) matcher measured this as a consistent
+/// ~6x per-candidate slowdown on both `css` and `at_css` before this fix
+/// (see CLAUDE.md's CSS performance note); handing a [`Chain`] to `run`'s
+/// initial frame is now `Rc::clone`, not a rebuild.
+struct CompiledList<'p>(Vec<Chain<'p>>);
+
+/// Build a [`CompiledList`] once, before the per-candidate loop starts.
+fn compile_list(list: Lists<'_>) -> CompiledList<'_> {
+    let mut v = Vec::new();
+    for l in list {
+        if let Some(chain) = collect_compounds(l.first()) {
+            v.push(chain);
+        }
+    }
+    CompiledList(v)
+}
+
+/// As [`list_matches`], over a [`compile_list`]d [`Lists`] - the per-candidate
+/// half of the hoist (see [`CompiledList`]'s doc). Semantically identical to
+/// `list_matches(list, node, budget)` for the `Lists` `compiled` was built
+/// from: a plain OR over its alternatives.
+fn list_matches_compiled(
+    compiled: &CompiledList<'_>,
+    node: HtmlNode<'_>,
+    budget: &Budget,
+) -> Result<bool, MatchFailure> {
+    for chain in &compiled.0 {
+        let idx = chain.len() - 1;
+        let matched = run(
+            vec![Frame::EvalCompound {
+                chain: Rc::clone(chain),
+                idx,
+                node,
+                k: Cont::Root,
+            }],
+            budget,
+        )?;
+        if matched {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /* ------------------------------------------------------------------ *
@@ -542,7 +613,12 @@ fn sibling_position_of(
     list: Lists<'_>,
     budget: &Budget,
 ) -> Result<Option<u64>, MatchFailure> {
-    if !list_matches(list, node, budget)? {
+    // Hoisted once for the whole sibling scan below - see `CompiledList`'s
+    // doc: without it, every sibling visited re-collected `list`'s compounds
+    // from scratch, the same per-candidate cost `select_all`/`select_first`
+    // had.
+    let compiled = compile_list(list);
+    if !list_matches_compiled(&compiled, node, budget)? {
         return Ok(None);
     }
     let mut pos: u64 = 1;
@@ -552,7 +628,7 @@ fn sibling_position_of(
         prev_sibling_element(node)
     };
     while let Some(n) = cur {
-        if list_matches(list, n, budget)? {
+        if list_matches_compiled(&compiled, n, budget)? {
             pos += 1;
         }
         cur = if from_end {
@@ -948,10 +1024,10 @@ fn matches_compound_here(
     // nesting-safe via `run`), never following `.first.next()`.
     run(
         vec![Frame::EvalCompound {
-            chain: vec![Compound {
+            chain: Rc::from([Compound {
                 first: compound.first,
                 comb: Combinator::Close,
-            }],
+            }]),
             idx: 0,
             node: c,
             k: Cont::Root,
@@ -1114,7 +1190,7 @@ enum Frame<'p, 'doc> {
     /// (`idx - 1`) per `chain[idx].comb`, or - if `idx == 0` - report success
     /// to `k`.
     EvalCompound {
-        chain: Vec<Compound<'p>>,
+        chain: Chain<'p>,
         idx: usize,
         node: HtmlNode<'doc>,
         k: Cont<'p, 'doc>,
@@ -1142,7 +1218,7 @@ enum Cont<'p, 'doc> {
     /// match would (the idx==0 / combinator dispatch `advance` does).
     CompoundRest {
         rest: Option<Selector<'p>>,
-        chain: Vec<Compound<'p>>,
+        chain: Chain<'p>,
         idx: usize,
         node: HtmlNode<'doc>,
         k: Box<Cont<'p, 'doc>>,
@@ -1150,14 +1226,14 @@ enum Cont<'p, 'doc> {
     /// Retry `chain[idx]` at the next ancestor of `from` on failure; forward
     /// success as-is.
     AncestorRetry {
-        chain: Vec<Compound<'p>>,
+        chain: Chain<'p>,
         idx: usize,
         from: HtmlNode<'doc>,
         k: Box<Cont<'p, 'doc>>,
     },
     /// As `AncestorRetry`, over preceding sibling elements (`~`).
     SiblingRetry {
-        chain: Vec<Compound<'p>>,
+        chain: Chain<'p>,
         idx: usize,
         from: HtmlNode<'doc>,
         k: Box<Cont<'p, 'doc>>,
@@ -1178,7 +1254,7 @@ enum Cont<'p, 'doc> {
 /// success, continue left (or report success, at `idx == 0`).
 fn advance<'p, 'doc>(
     stack: &mut Vec<Frame<'p, 'doc>>,
-    chain: Vec<Compound<'p>>,
+    chain: Chain<'p>,
     idx: usize,
     node: HtmlNode<'doc>,
     k: Cont<'p, 'doc>,
@@ -1532,11 +1608,13 @@ fn select_all_with_budget<'doc>(
     groups: Lists<'_>,
     budget: &Budget,
 ) -> Result<Vec<HtmlNode<'doc>>, QueryFailure> {
+    // Hoisted once for the whole tree walk below - see `CompiledList`'s doc.
+    let compiled = compile_list(groups);
     let mut out = Vec::new();
     let mut n = root;
     while let Some(next) = n.preorder_next(root) {
         n = next;
-        if n.element().is_some() && list_matches(groups, n, budget)? {
+        if n.element().is_some() && list_matches_compiled(&compiled, n, budget)? {
             if out.len() >= NODE_SET_MAX {
                 return Err(QueryFailure::Overflow);
             }
@@ -1575,10 +1653,12 @@ pub fn select_first<'doc>(
     groups: Lists<'_>,
 ) -> Result<Option<HtmlNode<'doc>>, MatchFailure> {
     let budget = Budget::new();
+    // Hoisted once for the whole search below - see `CompiledList`'s doc.
+    let compiled = compile_list(groups);
     let mut n = root;
     while let Some(next) = n.preorder_next(root) {
         n = next;
-        if n.element().is_some() && list_matches(groups, n, &budget)? {
+        if n.element().is_some() && list_matches_compiled(&compiled, n, &budget)? {
             return Ok(Some(n));
         }
     }
