@@ -232,6 +232,22 @@ impl Parsed<'_> {
     }
 }
 
+/// As [`Parsed::groups`], for a selector list some OTHER caller parsed and
+/// keeps alive - `lexbor::selector_cache`'s own long-lived compiled-selector
+/// cache, which manages its own separate parser/arena (module doc: this
+/// module's `Parsed` is not the only way to own one) and only invalidates a
+/// list when it flushes or evicts it, never per-call the way `Parsed`'s
+/// `Drop` does.
+///
+/// # Safety
+/// `p` must be null or point into an arena the caller keeps alive and does
+/// not mutate for `'p`.
+#[cfg_attr(not(feature = "ruby"), allow(dead_code))]
+pub(crate) unsafe fn list_from_raw<'p>(p: *mut SelectorList) -> Lists<'p> {
+    // SAFETY: forwarded to the caller's contract.
+    Lists(unsafe { arena(p) }.map(List))
+}
+
 /// A selector list: a comma group of the query, or the argument of a
 /// functional pseudo-class.
 #[derive(Clone, Copy)]

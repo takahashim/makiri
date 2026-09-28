@@ -718,23 +718,33 @@ policy is a new item stated in each `impl`. The HTML backend reports the DOM's
 case-preserved `localName` (`refX`, `foreignObject`), not Lexbor's lower-cased
 stored name.
 
-**CSS** (`lexbor/selector_port.rs` + `lexbor/css_parser.rs`). `Node#{css,at_css,
-matches?}` (`glue::html_node::css`) match over the typed HTML adapter through
-`selector_port` - an original, `#![forbid(unsafe_code)]` Rust port of Lexbor's
-`lxb_selectors_*` state machine (an explicit `Frame`/`Cont` heap work stack;
-never native recursion for selector nesting - `notes/
-css_selectors_crate_migration_plan.ja.md` §1.1), NOT Lexbor's own matcher.
-Selector PARSING is unchanged: `css_parser::parse` is Lexbor's own CSS parser,
-the SAME one the XML CSS->XPath lowering and the stylesheet reader use, over
-the shared process-global parser/arena `lexbor::css_engine` assembles
-(`ParserParts`, `Owned<T>`) - the GVL argument, `!Send` cell and busy-flag
-details below are that layer's, unaffected by the switch. `lexbor/selectors.rs`
-(the OLD `lxb_selectors`-callback engine this replaced for HTML) still exists,
-used only as the differential-testing reference
-(`lexbor::tests::selector_port_spike::agrees_with_the_old_lexbor_engine_on_standard_selectors`
-and its randomized sibling) - it is not on `Node#css`'s path any more, and is
-a Phase 3 cleanup candidate once that confidence is trusted enough to delete
-it (`notes/css_selectors_crate_migration_plan.ja.md`).
+**CSS** (`lexbor/selector_port.rs` + `lexbor/selector_cache.rs` +
+`lexbor/css_parser.rs`). `Node#{css,at_css,matches?}` (`glue::html_node::css`)
+match over the typed HTML adapter through `selector_port` - an original,
+`#![forbid(unsafe_code)]` Rust port of Lexbor's `lxb_selectors_*` state
+machine (an explicit `Frame`/`Cont` heap work stack; never native recursion
+for selector nesting - `notes/css_selectors_crate_migration_plan.ja.md`
+§1.1), NOT Lexbor's own matcher. Selector PARSING is still Lexbor's own CSS
+parser (`css_engine::SelectorParser::parse`, unchanged), but the glue reaches
+it through `lexbor::selector_cache`, not `css_parser::parse` directly:
+`selector_cache` owns its OWN process-global parser/arena
+(`css_engine::ParserParts::build()`, the same factory `css_parser` and the
+stylesheet reader each call independently) plus an adaptive compiled-selector
+cache (`CachePolicy`, a near-verbatim port of the OLD HTML engine's - same
+constants, same flush-on-cap/bypass-on-low-hit-rate/retest behavior), so a
+repeated selector string is not re-parsed every call. `css_parser::parse`
+itself is unaffected - still what the XML CSS->XPath lowering and the
+stylesheet reader use - and lends `selector_cache` exactly one thing,
+`list_from_raw`: a `Lists` view over a raw pointer `selector_cache`'s OWN
+cache keeps alive, the same shape `Parsed::groups()` builds over one a
+`Parsed` keeps alive (a `Parsed`'s `Drop` cleans the WHOLE shared arena, which
+is exactly why HTML needed its own separate one to cache anything past one
+call). `lexbor/selectors.rs` (the OLD `lxb_selectors`-callback engine this
+replaced for HTML) still exists, used only as the differential-testing
+reference (`lexbor::tests::selector_port_spike::agrees_with_the_old_lexbor_engine_on_standard_selectors`
+and its randomized sibling) - it is not on `Node#css`'s path any more, kept
+deliberately for comparison rather than deleted yet
+(`notes/css_selectors_crate_migration_plan.ja.md`).
 `select_all`/`select_first`/`matches_any` are **descendant-only** (context node
 excluded, like Nokogiri) and in document order; `select_all` is capped at
 `NODE_SET_MAX`, and every entry point shares one per-call work `Budget`
@@ -746,15 +756,14 @@ either raises `Makiri::Error`. A malformed selector raises
 matcher cannot evaluate (deliberately, and because Lexbor's own traversal
 can't run the latter either) - raised as "could not be run", never answered as
 a silent empty result. **Not yet ported from the old engine's design**: a
-compiled-selector cache (the old engine's `CachePolicy`/`SelectorCache` kept a
-parsed selector list across repeat `at_css('#id')`-style calls; the new path
-re-parses every call) and a `NthIndexCache`-equivalent for the sibling-position
-family (currently a plain O(siblings) scan, same asymptotic cost the old
-engine had, just not yet optimised) - both known, deliberately deferred until
-there is a `rake bench` number to chase (CLAUDE.md's own performance-work
-rule), not silent gaps.
-**The GVL is an argument, not a comment**: the two process-global engines live
-in `crate::gvl::GvlCell`, whose `borrow` takes a `&Gvl` - minted from a
+`NthIndexCache`-equivalent for the sibling-position family (currently a plain
+O(siblings) scan, same asymptotic cost the old engine had, just not yet
+optimised) - deliberately deferred until there is a `rake bench` number to
+chase (CLAUDE.md's own performance-work rule), not a silent gap.
+**The GVL is an argument, not a comment**: each process-global engine
+(`css_parser`'s, `selector_cache`'s, the OLD `selectors`'s, the stylesheet
+reader's) lives in its own `crate::gvl::GvlCell`, whose `borrow` takes a
+`&Gvl` - minted from a
 `magnus::Ruby` by `bridge::gvl::held`, and `!Send`, so `without_gvl` (which
 requires a `Send` body) cannot carry one across a release. The cell's busy
 flag turns a re-entrant second borrow into `Busy` rather than a second
@@ -908,20 +917,43 @@ Key decisions that got there, worth not regressing:
 
 - **HTML CSS matches over the typed adapter, not Lexbor's own matcher**
   (`lexbor::selector_port`, see the subsystem note): remeasured after the
-  switch at makiri ~2× Nokogiri / ~4.2× nokolexbor on `css`, and ~2000×
-  Nokogiri / ~1.3× nokolexbor on `at_css` (down from the old engine's ~5×
-  nokolexbor - still a win, just a smaller one). `at_css` wraps the single
-  first match directly (no NodeSet / no Ruby `#first` - `select_first` stops
-  at the first hit). The likely reason `at_css` narrowed more than `css` did:
-  `at_css('#main')` in the bench loop repeats the SAME selector string many
-  times, which the OLD engine's compiled-selector cache (`CachePolicy`/
-  `SelectorCache`) served without re-parsing after the first call; the new
-  path has no such cache yet (the subsystem note's "not yet ported" list) and
-  reparses every call through Lexbor's CSS parser. That cache is the leading
-  performance candidate if this gap needs closing - per CLAUDE.md's own rule,
-  add it only against a fresh `bench` baseline, not speculatively. Verify
-  with `bench`'s `at_css`/`css` rows and
+  switch at makiri ~2× Nokogiri / ~4.2× nokolexbor on `css`, and ~2500×
+  Nokogiri / ~1.7× nokolexbor on `at_css` (nokolexbor's own number swings
+  noticeably run to run on the same machine - a second run put `css` at
+  ~1.4× and `at_css` at ~1.7×, the numbers used here - so read these ratios
+  as "still ahead", not to a second decimal place). This is narrower than the
+  OLD engine's own ~5× nokolexbor on `at_css`, which reintroducing its
+  compiled-selector cache (`lexbor::selector_cache`, below) was expected to
+  close - **it did not, measurably**: re-benching after adding the cache
+  moved `at_css` from ~630k to ~630k i/s (noise, not a win), because
+  `at_css('#main')`'s own parse was already cheap relative to matching for a
+  selector this short - caching it removes work that was never the
+  bottleneck. The cache stays (it is correct, `spec/css_selector_cache_spec.rb`
+  needs it to mean something again, and a longer/more complex selector may
+  still benefit), but the `at_css` gap's actual cause is still open - most
+  likely the trampoline's own per-call overhead relative to Lexbor's tight C
+  callback loop, not yet profiled. `at_css` wraps the single first match
+  directly (no NodeSet / no Ruby `#first` - `select_first` stops at the first
+  hit). Verify with `bench`'s `at_css`/`css` rows and
   `FUZZ_ARGS="--target css" bundle exec rake fuzz:sanitize`.
+- **The compiled-selector cache is back, over its own separate engine**
+  (`lexbor::selector_cache`): `Node#css`/`#at_css`/`#matches?` no longer
+  re-parse a repeated selector string from scratch - a near-verbatim port of
+  the OLD engine's adaptive `CachePolicy`/`SelectorCache` (same constants,
+  same flush-on-cap/bypass-on-low-hit-rate/retest behavior), but over its OWN
+  `css_engine::ParserParts`-built parser/arena, NOT `css_parser::ENGINE`:
+  that one is shared with the XML CSS->XPath lowering, whose `Parsed` cleans
+  the WHOLE arena on every drop, which would dangle a cached entry the
+  moment an XML query ran between two HTML ones. `css_parser::list_from_raw`
+  is the one piece of API this borrows from there - a `Lists` view over a
+  raw pointer THIS cache keeps alive instead of a `Parsed` guard. Measured
+  effect: none for short selectors (above) - it exists for correctness and
+  architectural parity with the OLD engine, not because it was shown to be a
+  `bench` win; a longer/more complex selector under heavy reuse is the
+  remaining case where it might matter, unmeasured. Verify with
+  `spec/css_selector_cache_spec.rb` (flush, bypass/retest, and
+  reject-without-disturbing-the-cache) and the Rust-level
+  `lexbor::tests::selector_cache_spike`.
 - **`Node#text` is served from the text index** (`lexbor/adapter/text_index.rs`,
   see the subsystem note): a per-document, lazily-built, mutation-invalidated
   map from node → its document-order text-slice run, turning text extraction

@@ -1362,3 +1362,100 @@ mod selector_port_spike {
         }
     }
 }
+
+/// `lexbor::selector_cache` - the compiled-selector cache reintroduced for
+/// `Node#css`/`#at_css`/`#matches?` once they moved to `selector_port`,
+/// mirroring `lexbor::selectors`'s adaptive `CachePolicy`/`SelectorCache` over
+/// its OWN separate parser/arena (module doc). `Gvl::exclusive()` stands in
+/// for the real GVL proof here, same as `selector_port_spike`'s differential
+/// tests do against the old engine.
+///
+/// The adaptive bypass/retest window (40,000-iteration territory in
+/// `spec/css_selector_cache_spec.rb`) is NOT re-tested here - that spec
+/// already covers it end to end through the real glue, and duplicating a
+/// slow, iteration-heavy test at this level buys little; this module checks
+/// the parts a fast, ASan-friendly Rust test is good for: a hit answers the
+/// same as a miss would, filling the cache past its cap doesn't lose
+/// correctness, and a rejected selector does not disturb what is already
+/// cached.
+mod selector_cache_spike {
+    use crate::gvl::Gvl;
+    use crate::lexbor::adapter::html::{HtmlNode, RawNode};
+    use crate::lexbor::adapter::post_parse::{parse_html, HtmlParsed};
+    use crate::lexbor::adapter::tree_guard::DepthLimit;
+    use crate::lexbor::selector_cache::with_compiled;
+    use crate::lexbor::selector_port::select_all;
+
+    fn parsed(html: &[u8]) -> Box<HtmlParsed> {
+        parse_html(html, true, DepthLimit::DEFAULT).expect("a document parses")
+    }
+
+    fn root(doc: &HtmlParsed) -> HtmlNode<'_> {
+        // SAFETY: `doc` outlives the borrow this returns.
+        let d = unsafe { doc.raw_doc().as_doc() };
+        d.as_node()
+    }
+
+    /// Every matching descendant's node identity, through the cache.
+    fn select_all_cached(doc: &HtmlParsed, selector: &str) -> Vec<RawNode> {
+        with_compiled(&Gvl::exclusive(), selector.as_bytes(), |groups| {
+            select_all(root(doc), groups)
+        })
+        .unwrap_or_else(|_| panic!("{selector:?} fails to parse"))
+        .unwrap_or_else(|e| panic!("{selector:?} failed: {e:?}"))
+        .into_iter()
+        .map(RawNode::from)
+        .collect()
+    }
+
+    #[test]
+    fn a_cache_hit_answers_the_same_as_the_first_miss_did() {
+        let doc = parsed(b"<html><body><p class=x>a</p><p>b</p><p class=x>c</p></body></html>");
+        let first = select_all_cached(&doc, "p.x");
+        let second = select_all_cached(&doc, "p.x"); // same bytes: a cache hit
+        assert_eq!(first.len(), 2);
+        assert!(
+            first == second,
+            "a hit must answer exactly what the miss did"
+        );
+    }
+
+    #[test]
+    fn filling_the_cache_past_its_cap_does_not_lose_correctness() {
+        // 300 distinct selectors against the 256-entry cap (mirrors
+        // spec/css_selector_cache_spec.rb): the 257th flushes it, and every
+        // one - before and after the flush - must still answer right.
+        let mut html = String::from("<html><body>");
+        for i in 1..=300 {
+            html.push_str(&format!("<p id=n{i}>{i}</p>"));
+        }
+        html.push_str("</body></html>");
+        let doc = parsed(html.as_bytes());
+
+        for i in 1..=300 {
+            let sel = format!("#n{i}");
+            let found = select_all_cached(&doc, &sel);
+            assert_eq!(found.len(), 1, "selector {sel:?} should match exactly one");
+        }
+        // A second pass re-hits everything, including the ones the cap
+        // already flushed out and back in once.
+        for i in 1..=300 {
+            let sel = format!("#n{i}");
+            assert_eq!(select_all_cached(&doc, &sel).len(), 1);
+        }
+    }
+
+    #[test]
+    fn a_rejected_selector_does_not_disturb_what_is_already_cached() {
+        let doc = parsed(b"<html><body><p class=x>a</p><p class=x>b</p></body></html>");
+        assert_eq!(select_all_cached(&doc, "p.x").len(), 2);
+
+        let rejected = with_compiled(&Gvl::exclusive(), b"p[", |groups| {
+            select_all(root(&doc), groups)
+        });
+        assert!(rejected.is_err(), "a malformed selector must not parse");
+
+        // The previously cached entry must still answer correctly.
+        assert_eq!(select_all_cached(&doc, "p.x").len(), 2);
+    }
+}

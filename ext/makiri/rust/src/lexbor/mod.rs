@@ -31,14 +31,23 @@ pub mod contains_guard;
 pub(crate) mod css_tokens;
 /// HTML fragment parsing and import/fixup operations.
 pub mod fragment;
-/// Phase 1 spike, option (B)-as-port
-/// (notes/css_selectors_crate_migration_plan.ja.md §1.1): a CSS matcher
-/// structured as Lexbor's own `lxb_selectors_*` state machine is - an
-/// explicit heap work stack instead of native recursion - over the typed
-/// HTML adapter, reusing `css_parser`'s existing selector AST reader. Not
-/// wired into `Node#css`/`#at_css`/`#matches?` yet - see the module doc.
+/// This module's compiled-selector cache - its own process-global
+/// parser/arena, separate from `css_parser`'s (shared with XML lowering) and
+/// from the OLD `selectors` engine's below.
+pub(crate) mod selector_cache;
+/// The CSS matcher (B)-as-port
+/// (notes/css_selectors_crate_migration_plan.ja.md §1.1) settled on: an
+/// explicit heap work stack, not native recursion, structured as Lexbor's own
+/// `lxb_selectors_*` state machine is - over the typed HTML adapter, reusing
+/// `css_parser`'s existing selector AST reader. Wired into
+/// `Node#css`/`#at_css`/`#matches?` (`glue::html_node::css`) via
+/// `selector_cache`.
 pub mod selector_port;
-/// Selector traversal engine, including its Lexbor callbacks.
+/// The OLD `lxb_selectors`-callback engine `selector_port` replaced for HTML
+/// query. No longer on `Node#css`'s path; kept as the differential-testing
+/// reference (`lexbor::tests::selector_port_spike`) until that confidence is
+/// trusted enough to remove it
+/// (`notes/css_selectors_crate_migration_plan.ja.md` Phase 3).
 pub mod selectors;
 /// Lexbor's HTML serialization callbacks and buffer traversal.
 pub mod serialize;

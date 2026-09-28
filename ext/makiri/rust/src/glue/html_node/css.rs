@@ -1,11 +1,13 @@
 //! `Node#css` / `#at_css` / `#matches?`.
 //!
 //! The selector engine lives in [`crate::lexbor::selector_port`] (matching,
-//! over the typed adapter, non-recursive) plus [`crate::lexbor::css_parser`]
-//! (parsing - Lexbor's own C parser, the same one the XML CSS->XPath lowering
-//! uses), neither of which knows about Ruby. This module verifies the
-//! selector, maps an engine failure to its exception, and fills the NodeSet
-//! (`css`) or wraps the one node `at_css` found.
+//! over the typed adapter, non-recursive) plus [`crate::lexbor::selector_cache`]
+//! (parsing AND caching - Lexbor's own C parser, kept warm across repeat
+//! calls with the same selector string, its own process-global engine
+//! separate from [`crate::lexbor::css_parser`]'s), neither of which knows
+//! about Ruby. This module verifies the selector, maps an engine failure to
+//! its exception, and fills the NodeSet (`css`) or wraps the one node
+//! `at_css` found.
 
 #![forbid(unsafe_code)]
 
@@ -19,7 +21,8 @@ use crate::bridge::ruby::makiri_error;
 use crate::bridge::string::{ruby_verified_text, RubyText};
 use crate::init::MOD_HTML_NODE_METHODS;
 use crate::lexbor::adapter::html::RawNode;
-use crate::lexbor::css_parser::{self, ParseError};
+use crate::lexbor::css_parser::ParseError;
+use crate::lexbor::selector_cache;
 use crate::lexbor::selector_port::{self, MatchFailure, QueryFailure};
 use crate::limits::NODE_SET_MAX;
 
@@ -97,10 +100,12 @@ fn css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Value, Error> {
         let selector = css_args(ruby, args)?;
         let sv = selector_text(selector)?;
         let gvl = held(ruby);
-        let parsed = css_parser::parse(&gvl, sv.text()).map_err(|e| parse_error(e, selector))?;
-        let nodes = selector_port::select_all(this.node(), parsed.groups()).map_err(query_error)?;
-        drop(parsed);
+        let matched = selector_cache::with_compiled(&gvl, sv.as_bytes(), |groups| {
+            selector_port::select_all(this.node(), groups)
+        })
+        .map_err(|e| parse_error(e, selector))?;
         drop(sv);
+        let nodes = matched.map_err(query_error)?;
         node_set_from(
             this.document,
             nodes.into_iter().map(|n| RawNode::from(n).into()),
@@ -117,11 +122,12 @@ fn at_css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Option<Value>, 
         let selector = css_args(ruby, args)?;
         let sv = selector_text(selector)?;
         let gvl = held(ruby);
-        let parsed = css_parser::parse(&gvl, sv.text()).map_err(|e| parse_error(e, selector))?;
-        let found =
-            selector_port::select_first(this.node(), parsed.groups()).map_err(match_error)?;
-        drop(parsed);
+        let matched = selector_cache::with_compiled(&gvl, sv.as_bytes(), |groups| {
+            selector_port::select_first(this.node(), groups)
+        })
+        .map_err(|e| parse_error(e, selector))?;
         drop(sv);
+        let found = matched.map_err(match_error)?;
         Ok(found.map(|n| wrap_html_node(RawNode::from(n), this.document)))
     })
 }
@@ -136,15 +142,14 @@ fn matches(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<bool, Error> {
         let selector = css_args(ruby, args)?;
         let sv = selector_text(selector)?;
         let gvl = held(ruby);
-        let parsed = css_parser::parse(&gvl, sv.text()).map_err(|e| parse_error(e, selector))?;
-        let groups = parsed.groups();
-        let result = match this.node().element() {
-            Some(el) => selector_port::matches_any(groups, el).map_err(match_error)?,
-            None => false,
-        };
-        drop(parsed);
+        let element = this.node().element();
+        let matched = selector_cache::with_compiled(&gvl, sv.as_bytes(), |groups| match element {
+            Some(el) => selector_port::matches_any(groups, el),
+            None => Ok(false),
+        })
+        .map_err(|e| parse_error(e, selector))?;
         drop(sv);
-        Ok(result)
+        matched.map_err(match_error)
     })
 }
 
