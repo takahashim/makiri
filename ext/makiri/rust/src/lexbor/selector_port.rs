@@ -41,11 +41,12 @@
 //!   flow is not.
 //!
 //! Still open (tracked in the plan, not silent gaps): `::pseudo-elements`,
-//! `:lexbor-contains()` (decided not to reimplement), a work budget on
-//! `:has()`'s search, and `falloc` (this file still uses the ordinary
-//! allocator - `Box`/`Vec` - like the earlier spike did; see the one
-//! `#[allow]`ed `boxed()` helper). The selector-nesting cap question is
-//! closed, not open - see the next section.
+//! `:lexbor-contains()` (decided not to reimplement), `:current()` (deferred,
+//! not ruled out - `notes/css_selectors_crate_migration_plan.ja.md`), and
+//! `falloc` (this file still uses the ordinary allocator - `Box`/`Vec` - like
+//! the earlier spike did; see the one `#[allow]`ed `boxed()` helper). The
+//! selector-nesting cap question is closed, not open - see the next section -
+//! and so is the work budget: see [`Budget`].
 //!
 //! # Why an explicit stack, not "just write it recursively"
 //!
@@ -92,6 +93,62 @@ use crate::limits::NODE_SET_MAX;
 /// just a sanity cap so a single compound chain can't grow unboundedly, AND
 /// (see the module doc) what makes `:has()`'s bounded recursion safe.
 pub(crate) const MAX_COMPOUNDS: usize = 64;
+
+/// The per-query work budget's default cap - the count [`Budget::charge`]
+/// compares against. On the same scale as [`NODE_SET_MAX`]: this bounds not
+/// the RESULT set but the total number of steps one top-level call
+/// ([`matches`], [`matches_any`], [`select_all`], [`select_first`]) may take
+/// charging it, which is what stops a `:has()` search from multiplying its
+/// cost per candidate element into something unbounded by the document's own
+/// size.
+const DEFAULT_WORK_BUDGET: u64 = 10 * 1000 * 1000;
+
+/// One top-level call's work budget: every step that can cost MORE than the
+/// input document/selector's own size bounds already (concretely: each node
+/// [`has_forward`]'s own search visits, and each frame [`run`]'s trampoline
+/// pops) charges it once. Exceeding it is [`WorkExceeded`] - a hard stop
+/// propagated all the way back to the caller, never a silent `false` for
+/// just the one `:has()` that happened to hit it: a `:has()` inside a larger
+/// compound answering `false` because ITS OWN search ran out of budget would
+/// be a wrong verdict for that compound, not merely an incomplete one, and
+/// CLAUDE.md's fail-closed rule is "raise instead" of that.
+///
+/// A plain `Cell`, not `xpath::limits::Budget`'s `Rc<RefCell<Error>>` sink:
+/// this file has no Ruby-facing diagnostic error to build yet (not wired in -
+/// module doc), and one `u64` counter local to a single call needs no shared
+/// ownership.
+struct Budget {
+    spent: std::cell::Cell<u64>,
+    limit: u64,
+}
+
+/// [`Budget`] ran out: some step - most likely `:has()`'s own search -
+/// charged past its call's cap. Propagated as a hard failure, not folded into
+/// a `bool`; see [`Budget`]'s doc.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WorkExceeded;
+
+impl Budget {
+    fn new() -> Self {
+        Budget {
+            spent: std::cell::Cell::new(0),
+            limit: DEFAULT_WORK_BUDGET,
+        }
+    }
+
+    /// Charge one step. `Err(WorkExceeded)` once the limit is reached - the
+    /// caller must stop and propagate it, not answer as if this step had
+    /// simply failed to match.
+    #[inline]
+    fn charge(&self) -> Result<(), WorkExceeded> {
+        let n = self.spent.get() + 1;
+        self.spent.set(n);
+        if n > self.limit {
+            return Err(WorkExceeded);
+        }
+        Ok(())
+    }
+}
 
 /// `Box::new`, allocator-scoped: `clippy.toml` bans it crate-wide in engine
 /// layers (aborts on OOM; `falloc::try_box` is the real one), and this
@@ -399,9 +456,14 @@ fn sibling_position(node: HtmlNode<'_>, from_end: bool, of_type: bool) -> u64 {
 /// `list` among its (`from_end`-directed) siblings, or `None` if `node`
 /// itself does not match `list`. A flat pass, not Lexbor's streaming nested
 /// matcher (module doc) - the position it computes is the same number.
-fn sibling_position_of(node: HtmlNode<'_>, from_end: bool, list: Lists<'_>) -> Option<u64> {
-    if !list_matches(list, node) {
-        return None;
+fn sibling_position_of(
+    node: HtmlNode<'_>,
+    from_end: bool,
+    list: Lists<'_>,
+    budget: &Budget,
+) -> Result<Option<u64>, WorkExceeded> {
+    if !list_matches(list, node, budget)? {
+        return Ok(None);
     }
     let mut pos: u64 = 1;
     let mut cur = if from_end {
@@ -410,7 +472,7 @@ fn sibling_position_of(node: HtmlNode<'_>, from_end: bool, list: Lists<'_>) -> O
         prev_sibling_element(node)
     };
     while let Some(n) = cur {
-        if list_matches(list, n) {
+        if list_matches(list, n, budget)? {
             pos += 1;
         }
         cur = if from_end {
@@ -419,7 +481,7 @@ fn sibling_position_of(node: HtmlNode<'_>, from_end: bool, list: Lists<'_>) -> O
             prev_sibling_element(n)
         };
     }
-    Some(pos)
+    Ok(Some(pos))
 }
 
 /// Does ANY alternative of `list` match `node`? Used by `:nth-child(of S)`
@@ -427,11 +489,19 @@ fn sibling_position_of(node: HtmlNode<'_>, from_end: bool, list: Lists<'_>) -> O
 /// `Frame`/`Cont` machine because `of S` is evaluated OUTSIDE the compound
 /// being matched (against arbitrary siblings, not just `node` itself), so it
 /// cannot defer through the normal per-node `Cont` chain.
-fn list_matches(list: Lists<'_>, node: HtmlNode<'_>) -> bool {
-    list.into_iter().any(|l| {
-        l.first()
-            .is_some_and(|first| matches_one_compound_chain(first, node))
-    })
+fn list_matches(
+    list: Lists<'_>,
+    node: HtmlNode<'_>,
+    budget: &Budget,
+) -> Result<bool, WorkExceeded> {
+    for l in list {
+        if let Some(first) = l.first() {
+            if matches_one_compound_chain(first, node, budget)? {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 /// Does `node` satisfy the WHOLE (possibly multi-compound) chain starting at
@@ -440,17 +510,24 @@ fn list_matches(list: Lists<'_>, node: HtmlNode<'_>) -> bool {
 /// `of S` and by `:has()`'s per-compound checks (`has_matches`) so both go
 /// through the exact same `:is`/`:where`/`:not`-nesting-safe machinery
 /// `matches` does, rather than a second, weaker implementation.
-fn matches_one_compound_chain(first: Selector<'_>, node: HtmlNode<'_>) -> bool {
+fn matches_one_compound_chain(
+    first: Selector<'_>,
+    node: HtmlNode<'_>,
+    budget: &Budget,
+) -> Result<bool, WorkExceeded> {
     let Some(compounds) = collect_compounds(Some(first)) else {
-        return false;
+        return Ok(false);
     };
     let idx = compounds.len() - 1;
-    run(vec![Frame::EvalCompound {
-        chain: compounds,
-        idx,
-        node,
-        k: Cont::Root,
-    }])
+    run(
+        vec![Frame::EvalCompound {
+            chain: compounds,
+            idx,
+            node,
+            k: Cont::Root,
+        }],
+        budget,
+    )
 }
 
 fn is_empty(node: HtmlNode<'_>) -> bool {
@@ -634,11 +711,15 @@ fn nth_of_s_matches(
     from_end: bool,
     list: Lists<'_>,
     anb: Option<crate::lexbor::css_parser::Nth<'_>>,
-) -> bool {
-    let (Some(anb), Some(pos)) = (anb, sibling_position_of(node, from_end, list)) else {
-        return false;
+    budget: &Budget,
+) -> Result<bool, WorkExceeded> {
+    let Some(anb) = anb else {
+        return Ok(false);
     };
-    anb_matches(anb, pos as i64)
+    let Some(pos) = sibling_position_of(node, from_end, list, budget)? else {
+        return Ok(false);
+    };
+    Ok(anb_matches(anb, pos as i64))
 }
 
 /* ------------------------------------------------------------------ *
@@ -647,11 +728,19 @@ fn nth_of_s_matches(
 
 /// §A-4: does ANY alternative of `lists` (`:has(a, b)` = OR) match, relative
 /// to `node`?
-fn has_matches(lists: Lists<'_>, node: HtmlNode<'_>) -> bool {
-    lists.into_iter().any(|list| {
-        list.first()
-            .is_some_and(|first| has_matches_one(first, node))
-    })
+fn has_matches(
+    lists: Lists<'_>,
+    node: HtmlNode<'_>,
+    budget: &Budget,
+) -> Result<bool, WorkExceeded> {
+    for list in lists {
+        if let Some(first) = list.first() {
+            if has_matches_one(first, node, budget)? {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 /// One `:has()` alternative: `first` is the chain's ANCHOR (leftmost, as
@@ -659,46 +748,75 @@ fn has_matches(lists: Lists<'_>, node: HtmlNode<'_>) -> bool {
 /// Descendant by default when no leading combinator was written -
 /// `notes/lexbor_selectors_c_semantics.ja.md` §A-4). Bounded recursion over
 /// `MAX_COMPOUNDS` compounds - see the module doc for why that's safe here.
-fn has_matches_one(first: Selector<'_>, node: HtmlNode<'_>) -> bool {
+fn has_matches_one(
+    first: Selector<'_>,
+    node: HtmlNode<'_>,
+    budget: &Budget,
+) -> Result<bool, WorkExceeded> {
     let Some(compounds) = collect_compounds(Some(first)) else {
-        return false;
+        return Ok(false);
     };
-    has_forward(&compounds, 0, node)
+    has_forward(&compounds, 0, node, budget)
 }
 
-fn has_forward(chain: &[Compound<'_>], idx: usize, node: HtmlNode<'_>) -> bool {
+/// `:has()`'s own search, over EVERY candidate `comb` reaches from `node` -
+/// the one place a `:has()` argument's cost can multiply per candidate
+/// element of a broader query, rather than being bounded by the input's own
+/// size the way everything else here is (module doc, `Budget`'s doc). Every
+/// candidate visited - matched or not - charges `budget` once, and a charge
+/// failure aborts the search immediately rather than answering as if no
+/// candidate had matched.
+fn has_forward(
+    chain: &[Compound<'_>],
+    idx: usize,
+    node: HtmlNode<'_>,
+    budget: &Budget,
+) -> Result<bool, WorkExceeded> {
     let compound = chain[idx];
     let is_last = idx + 1 == chain.len();
-    let candidate_ok = |c: HtmlNode<'_>| {
-        matches_compound_here(compound, c) && (is_last || has_forward(chain, idx + 1, c))
+    let candidate_ok = |c: HtmlNode<'_>| -> Result<bool, WorkExceeded> {
+        budget.charge()?;
+        Ok(matches_compound_here(compound, c, budget)?
+            && (is_last || has_forward(chain, idx + 1, c, budget)?))
     };
     match compound.comb {
         // The whole subtree - `HtmlNode::subtree`'s own doc: "climbs by
         // parent links rather than recursing", so an adversarially deep OR
-        // wide document cannot exhaust the stack here either.
-        Combinator::Descendant => node.subtree().skip(1).any(candidate_ok),
+        // wide document cannot exhaust the stack here either (`budget`
+        // bounds its cost instead).
+        Combinator::Descendant => {
+            for c in node.subtree().skip(1) {
+                if candidate_ok(c)? {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
         Combinator::Child => {
             let mut cur = node.first_child();
             while let Some(c) = cur {
-                if c.element().is_some() && candidate_ok(c) {
-                    return true;
+                if c.element().is_some() && candidate_ok(c)? {
+                    return Ok(true);
                 }
                 cur = c.next();
             }
-            false
+            Ok(false)
         }
-        Combinator::NextSibling => next_sibling_element(node).is_some_and(candidate_ok),
+        Combinator::NextSibling => match next_sibling_element(node) {
+            Some(c) => candidate_ok(c),
+            None => Ok(false),
+        },
         Combinator::SubsequentSibling => {
             let mut cur = next_sibling_element(node);
             while let Some(s) = cur {
-                if candidate_ok(s) {
-                    return true;
+                if candidate_ok(s)? {
+                    return Ok(true);
                 }
                 cur = next_sibling_element(s);
             }
-            false
+            Ok(false)
         }
-        Combinator::Close | Combinator::Other => false,
+        Combinator::Close | Combinator::Other => Ok(false),
     }
 }
 
@@ -706,7 +824,11 @@ fn has_forward(chain: &[Compound<'_>], idx: usize, node: HtmlNode<'_>) -> bool {
 /// `:is`/`:where`/`:not` it carries - via [`matches_one_compound_chain`], so
 /// `:has(:is(a))`-style nesting inside a `:has()` argument's compound is
 /// resolved through the same nesting-safe machine as everywhere else.
-fn matches_compound_here(compound: Compound<'_>, c: HtmlNode<'_>) -> bool {
+fn matches_compound_here(
+    compound: Compound<'_>,
+    c: HtmlNode<'_>,
+    budget: &Budget,
+) -> Result<bool, WorkExceeded> {
     // Deliberately NOT `matches_one_compound_chain(compound.first, c)`: that
     // re-derives the chain via `collect_compounds`, which walks PAST this
     // one compound to whatever the ORIGINAL selector chained after it (e.g.
@@ -717,15 +839,18 @@ fn matches_compound_here(compound: Compound<'_>, c: HtmlNode<'_>) -> bool {
     // Wrapping `compound` in a length-1 chain checks ONLY its own simple
     // selectors (including any `:is`/`:where`/`:not` it carries, still fully
     // nesting-safe via `run`), never following `.first.next()`.
-    run(vec![Frame::EvalCompound {
-        chain: vec![Compound {
-            first: compound.first,
-            comb: Combinator::Close,
+    run(
+        vec![Frame::EvalCompound {
+            chain: vec![Compound {
+                first: compound.first,
+                comb: Combinator::Close,
+            }],
+            idx: 0,
+            node: c,
+            k: Cont::Root,
         }],
-        idx: 0,
-        node: c,
-        k: Cont::Root,
-    }])
+        budget,
+    )
 }
 
 /* ------------------------------------------------------------------ *
@@ -746,8 +871,12 @@ enum SimpleCheck<'p> {
     },
 }
 
-fn check_simple<'p>(sel: Selector<'p>, node: HtmlNode<'_>) -> SimpleCheck<'p> {
-    match sel.simple() {
+fn check_simple<'p>(
+    sel: Selector<'p>,
+    node: HtmlNode<'_>,
+    budget: &Budget,
+) -> Result<SimpleCheck<'p>, WorkExceeded> {
+    Ok(match sel.simple() {
         Simple::Universal => SimpleCheck::Result(true),
         Simple::Type => SimpleCheck::Result(name_eq(node, sel.name())),
         Simple::Id => {
@@ -788,7 +917,7 @@ fn check_simple<'p>(sel: Selector<'p>, node: HtmlNode<'_>) -> SimpleCheck<'p> {
             anb,
         }) => {
             let matched = match anb.and_then(|a| a.of_list.map(|l| (a, l))) {
-                Some((a, list)) => nth_of_s_matches(node, from_end, list, Some(a)),
+                Some((a, list)) => nth_of_s_matches(node, from_end, list, Some(a), budget)?,
                 None => nth_matches(node, from_end, of_type, anb),
             };
             SimpleCheck::Result(matched)
@@ -796,7 +925,7 @@ fn check_simple<'p>(sel: Selector<'p>, node: HtmlNode<'_>) -> SimpleCheck<'p> {
         Simple::PseudoClassFunction(FunctionArg::Selectors {
             pseudo: ListPseudo::Has,
             lists,
-        }) => SimpleCheck::Result(has_matches(lists, node)),
+        }) => SimpleCheck::Result(has_matches(lists, node, budget)?),
         Simple::PseudoClassFunction(FunctionArg::Selectors { pseudo, lists }) => {
             SimpleCheck::Defer {
                 negate: pseudo == ListPseudo::Not,
@@ -812,7 +941,7 @@ fn check_simple<'p>(sel: Selector<'p>, node: HtmlNode<'_>) -> SimpleCheck<'p> {
             SimpleCheck::Result(false)
         }
         Simple::PseudoElement | Simple::Other => SimpleCheck::Result(false),
-    }
+    })
 }
 
 /// Check `sel`, then every `Close`-linked simple selector after it, in
@@ -823,29 +952,37 @@ fn check_simple<'p>(sel: Selector<'p>, node: HtmlNode<'_>) -> SimpleCheck<'p> {
 /// which defers to the explicit stack; `rest` then carries whatever
 /// `Close`-linked selectors remain, to run back through THIS function once
 /// the deferred verdict is known (see `Cont::CompoundRest`).
-fn check_from<'p>(mut sel: Selector<'p>, node: HtmlNode<'_>) -> SimpleCheck<'p> {
+fn check_from<'p>(
+    mut sel: Selector<'p>,
+    node: HtmlNode<'_>,
+    budget: &Budget,
+) -> Result<SimpleCheck<'p>, WorkExceeded> {
     loop {
         let next = sel.next().filter(|n| n.combinator() == Combinator::Close);
-        match check_simple(sel, node) {
-            SimpleCheck::Result(false) => return SimpleCheck::Result(false),
+        match check_simple(sel, node, budget)? {
+            SimpleCheck::Result(false) => return Ok(SimpleCheck::Result(false)),
             SimpleCheck::Defer { negate, lists, .. } => {
-                return SimpleCheck::Defer {
+                return Ok(SimpleCheck::Defer {
                     negate,
                     lists,
                     rest: next,
-                };
+                });
             }
             SimpleCheck::Result(true) => match next {
                 Some(n) => sel = n,
-                None => return SimpleCheck::Result(true),
+                None => return Ok(SimpleCheck::Result(true)),
             },
         }
     }
 }
 
 /// Does `compound` match `node`, in full?
-fn check_compound<'p>(compound: Compound<'p>, node: HtmlNode<'_>) -> SimpleCheck<'p> {
-    check_from(compound.first, node)
+fn check_compound<'p>(
+    compound: Compound<'p>,
+    node: HtmlNode<'_>,
+    budget: &Budget,
+) -> Result<SimpleCheck<'p>, WorkExceeded> {
+    check_from(compound.first, node, budget)
 }
 
 /* ------------------------------------------------------------------ *
@@ -1024,17 +1161,22 @@ fn try_alternative<'p, 'doc>(
 
 /// Run the machine to completion. `stack` starts with exactly one frame; the
 /// loop is the WHOLE control flow - no Rust-level recursion anywhere here,
-/// regardless of how deeply the selector nests.
-fn run(mut stack: Vec<Frame<'_, '_>>) -> bool {
+/// regardless of how deeply the selector nests. Charges `budget` once per
+/// frame popped - an ancestor/sibling retry that failed and is trying the
+/// next candidate re-enters this loop with a fresh frame, so a `:is()`
+/// alternative or a long ancestor climb is bounded by the same budget
+/// `:has()`'s own search is, not just by depth counts.
+fn run(mut stack: Vec<Frame<'_, '_>>, budget: &Budget) -> Result<bool, WorkExceeded> {
     let mut answer = false;
     while let Some(frame) = stack.pop() {
+        budget.charge()?;
         match frame {
             Frame::EvalCompound {
                 chain,
                 idx,
                 node,
                 k,
-            } => match check_compound(chain[idx], node) {
+            } => match check_compound(chain[idx], node, budget)? {
                 SimpleCheck::Result(m) => advance(&mut stack, chain, idx, node, k, m),
                 SimpleCheck::Defer {
                     negate,
@@ -1073,7 +1215,7 @@ fn run(mut stack: Vec<Frame<'_, '_>>) -> bool {
                     } else {
                         match rest {
                             None => advance(&mut stack, chain, idx, node, *k, true),
-                            Some(next) => match check_from(next, node) {
+                            Some(next) => match check_from(next, node, budget)? {
                                 SimpleCheck::Result(m) => {
                                     advance(&mut stack, chain, idx, node, *k, m)
                                 }
@@ -1168,24 +1310,31 @@ fn run(mut stack: Vec<Frame<'_, '_>>) -> bool {
             },
         }
     }
-    answer
+    Ok(answer)
 }
 
 /// Does `element` match the selector chain starting at `first` (as
 /// `css_parser` links it, left to right - i.e. `first` is the LEFTMOST
-/// compound as written)?
-pub fn matches(first: Option<Selector<'_>>, element: HtmlElement<'_>) -> bool {
+/// compound as written)? A fresh [`Budget`] each call - see its doc for why
+/// exceeding it is [`WorkExceeded`], not a plain `false`.
+pub fn matches(
+    first: Option<Selector<'_>>,
+    element: HtmlElement<'_>,
+) -> Result<bool, WorkExceeded> {
     let Some(compounds) = collect_compounds(first) else {
-        return false;
+        return Ok(false);
     };
     let idx = compounds.len() - 1;
     let node = element.node();
-    run(vec![Frame::EvalCompound {
-        chain: compounds,
-        idx,
-        node,
-        k: Cont::Root,
-    }])
+    run(
+        vec![Frame::EvalCompound {
+            chain: compounds,
+            idx,
+            node,
+            k: Cont::Root,
+        }],
+        &Budget::new(),
+    )
 }
 
 /* ------------------------------------------------------------------ *
@@ -1197,15 +1346,28 @@ pub fn matches(first: Option<Selector<'_>>, element: HtmlElement<'_>) -> bool {
 /// Does `element` match any comma-separated alternative of `groups`? The
 /// entry point for `Node#matches?`: no traversal, just [`list_matches`]
 /// (already the machinery `:is`/`:where` use internally) applied to the
-/// query's own top-level groups.
-pub fn matches_any(groups: Lists<'_>, element: HtmlElement<'_>) -> bool {
-    list_matches(groups, element.node())
+/// query's own top-level groups, under a fresh [`Budget`].
+pub fn matches_any(groups: Lists<'_>, element: HtmlElement<'_>) -> Result<bool, WorkExceeded> {
+    list_matches(groups, element.node(), &Budget::new())
 }
 
-/// [`select_all`] stopped before the whole subtree was walked: more
-/// descendants matched than a Makiri result set is allowed to hold.
+/// Why [`select_all`]/[`select_first`]/[`matches_any`]/[`matches`] stopped
+/// before answering the whole query.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Overflow;
+pub enum QueryFailure {
+    /// More descendants matched than a Makiri result set is allowed to hold.
+    Overflow,
+    /// The per-query work budget ran out - see [`Budget`]'s doc (mainly a
+    /// `:has()` search costing more than the input's own size bounds).
+    WorkExceeded,
+}
+
+impl From<WorkExceeded> for QueryFailure {
+    #[inline]
+    fn from(_: WorkExceeded) -> Self {
+        QueryFailure::WorkExceeded
+    }
+}
 
 /// Every ELEMENT in `root`'s subtree - descendants only, `root` itself
 /// excluded, exactly as the Lexbor-backed engine's `find` does (see
@@ -1219,20 +1381,34 @@ pub struct Overflow;
 /// `preorder_next_with_contents`) - the DOM's own rule for a descendant
 /// walk, which `children`/`content=` already follow.
 ///
-/// Capped at [`NODE_SET_MAX`], matching every other Makiri result set.
-/// `falloc` is not yet used for the result vector (see the module doc):
-/// the same tracked gap as everywhere else in this file, not a new one.
+/// Capped at [`NODE_SET_MAX`], matching every other Makiri result set, and
+/// at one shared [`Budget`] for the whole call (its doc). `falloc` is not
+/// yet used for the result vector (see the module doc): the same tracked
+/// gap as everywhere else in this file, not a new one.
 pub fn select_all<'doc>(
     root: HtmlNode<'doc>,
     groups: Lists<'_>,
-) -> Result<Vec<HtmlNode<'doc>>, Overflow> {
+) -> Result<Vec<HtmlNode<'doc>>, QueryFailure> {
+    select_all_with_budget(root, groups, &Budget::new())
+}
+
+/// [`select_all`]'s body, taking its [`Budget`] rather than making one - so
+/// `#[cfg(test)]`'s [`select_all_with_work_limit`] can hand it a small one to
+/// exercise the "the budget actually stops something" path without an
+/// enormous fixture (10 million steps is right to ship, wrong to build a
+/// document around in a test).
+fn select_all_with_budget<'doc>(
+    root: HtmlNode<'doc>,
+    groups: Lists<'_>,
+    budget: &Budget,
+) -> Result<Vec<HtmlNode<'doc>>, QueryFailure> {
     let mut out = Vec::new();
     let mut n = root;
     while let Some(next) = n.preorder_next(root) {
         n = next;
-        if n.element().is_some() && list_matches(groups, n) {
+        if n.element().is_some() && list_matches(groups, n, budget)? {
             if out.len() >= NODE_SET_MAX {
-                return Err(Overflow);
+                return Err(QueryFailure::Overflow);
             }
             out.push(n);
         }
@@ -1240,17 +1416,41 @@ pub fn select_all<'doc>(
     Ok(out)
 }
 
+/// Test-only: [`select_all`] with a caller-chosen work-budget limit instead
+/// of [`DEFAULT_WORK_BUDGET`], so a test can prove the budget actually stops
+/// an expensive `:has()` search without needing a document big enough to
+/// exhaust the real, shipped limit.
+#[cfg(test)]
+pub(crate) fn select_all_with_work_limit<'doc>(
+    root: HtmlNode<'doc>,
+    groups: Lists<'_>,
+    limit: u64,
+) -> Result<Vec<HtmlNode<'doc>>, QueryFailure> {
+    select_all_with_budget(
+        root,
+        groups,
+        &Budget {
+            spent: std::cell::Cell::new(0),
+            limit,
+        },
+    )
+}
+
 /// The first descendant of `root`, in document order, that matches any
 /// alternative of `groups` - `root` itself excluded. Stops at the first hit
 /// instead of building the whole set, as `Node#at_css` wants (see
-/// `lexbor::selectors::first_cb`).
-pub fn select_first<'doc>(root: HtmlNode<'doc>, groups: Lists<'_>) -> Option<HtmlNode<'doc>> {
+/// `lexbor::selectors::first_cb`). One [`Budget`] for the whole search.
+pub fn select_first<'doc>(
+    root: HtmlNode<'doc>,
+    groups: Lists<'_>,
+) -> Result<Option<HtmlNode<'doc>>, WorkExceeded> {
+    let budget = Budget::new();
     let mut n = root;
     while let Some(next) = n.preorder_next(root) {
         n = next;
-        if n.element().is_some() && list_matches(groups, n) {
-            return Some(n);
+        if n.element().is_some() && list_matches(groups, n, &budget)? {
+            return Ok(Some(n));
         }
     }
-    None
+    Ok(None)
 }

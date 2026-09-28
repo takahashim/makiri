@@ -551,6 +551,7 @@ mod selector_port_spike {
         let parsed = css_parser::parse(&gvl, text)
             .unwrap_or_else(|_| panic!("selector {selector:?} failed to parse"));
         matches_any(parsed.groups(), element)
+            .unwrap_or_else(|_| panic!("selector {selector:?} exceeded its work budget"))
     }
 
     /// Through the production `select_all`/`matches_any` entry points, not a
@@ -563,7 +564,7 @@ mod selector_port_spike {
         let parsed = css_parser::parse(&gvl, text)
             .unwrap_or_else(|_| panic!("selector {selector:?} failed to parse"));
         port_select_all(root(doc), parsed.groups())
-            .unwrap_or_else(|_| panic!("selector {selector:?} overflowed NODE_SET_MAX"))
+            .unwrap_or_else(|e| panic!("selector {selector:?} failed: {e:?}"))
             .into_iter()
             .filter_map(HtmlNode::element)
             .collect()
@@ -857,6 +858,57 @@ mod selector_port_spike {
         );
     }
 
+    /// `:has()`'s search is the one place a query's cost can multiply per
+    /// candidate rather than being bounded by the document's own size
+    /// (module doc, `Budget`'s doc): each of N candidates here runs its OWN
+    /// `:has(span.missing)` search over its own M descendants, none of which
+    /// ever matches, so the search never short-circuits early - a real
+    /// document could not be built big enough to hit the SHIPPED 10-million
+    /// limit in a fast test, so this drives `select_all_with_work_limit`
+    /// (`#[cfg(test)]`-only) with one small enough to actually exceed.
+    #[test]
+    fn a_has_search_that_cannot_find_anything_fails_closed_once_the_work_budget_is_spent() {
+        use crate::lexbor::selector_port::select_all_with_work_limit;
+
+        const CANDIDATES: usize = 5;
+        const DESCENDANTS_EACH: usize = 20;
+
+        let mut html = String::from("<!doctype html><html><body>");
+        for _ in 0..CANDIDATES {
+            html.push_str("<li>");
+            for _ in 0..DESCENDANTS_EACH {
+                html.push_str("<span></span>");
+            }
+            html.push_str("</li>");
+        }
+        html.push_str("</body></html>");
+        let doc = parsed(html.as_bytes());
+
+        let gvl = Gvl::exclusive();
+        let text = VerifiedText::from_bytes(b"li:has(span.missing)").expect("verified");
+        let parsed_sel =
+            css_parser::parse(&gvl, text).unwrap_or_else(|_| panic!("selector fails to parse"));
+
+        // Comfortably below what `CANDIDATES * DESCENDANTS_EACH` (100) charges
+        // (each candidate's `:has()` visits all `DESCENDANTS_EACH` of its own
+        // descendants, since `span.missing` never matches and so never
+        // short-circuits): must fail closed with `WorkExceeded`, never a
+        // truncated or empty `Ok` - a shorter search would be a wrong answer,
+        // not merely an incomplete one (module doc).
+        let starved = select_all_with_work_limit(root(&doc), parsed_sel.groups(), 10);
+        assert!(matches!(
+            starved,
+            Err(crate::lexbor::selector_port::QueryFailure::WorkExceeded)
+        ));
+
+        // The same query with room to spare still answers correctly (empty:
+        // no `<li>` actually has a `span.missing`) - the limit is what
+        // tripped it above, not a bug in the search itself.
+        let unstarved = select_all_with_work_limit(root(&doc), parsed_sel.groups(), 10_000)
+            .expect("comfortably within budget");
+        assert!(unstarved.is_empty());
+    }
+
     /// Phase 2's differential check: the port and the OLD Lexbor-callback
     /// engine (`lexbor::selectors`), run over the same document, must agree
     /// - in document order - on every standard selector this port supports.
@@ -1023,8 +1075,10 @@ mod selector_port_spike {
             let gvl = Gvl::exclusive();
             let parsed_sel = css_parser::parse(&gvl, text)
                 .unwrap_or_else(|_| panic!("selector {sel:?} failed to parse"));
-            let new_first = port_select_first(list.node(), parsed_sel.groups());
-            let new_matches = matches_any(parsed_sel.groups(), list);
+            let new_first = port_select_first(list.node(), parsed_sel.groups())
+                .unwrap_or_else(|_| panic!("selector {sel:?} exceeded its work budget"));
+            let new_matches = matches_any(parsed_sel.groups(), list)
+                .unwrap_or_else(|_| panic!("selector {sel:?} exceeded its work budget"));
 
             assert!(
                 new_first.map(RawNode::from) == old_first,
