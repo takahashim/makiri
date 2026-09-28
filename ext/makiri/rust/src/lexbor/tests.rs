@@ -1186,7 +1186,7 @@ mod selector_port_spike {
         // under test, so it does not need to prove anything about stack
         // safety; that is `deeply_nested_is_does_not_grow_the_native_stack`'s
         // job with a purpose-built input).
-        if depth < 3 && rng.next_u64() % 3 == 0 {
+        if depth < 3 && rng.next_u64().is_multiple_of(3) {
             const LIST_PSEUDOS: &[&str] = &[":is(", ":where(", ":not(", ":has("];
             s.push_str(rng.pick(LIST_PSEUDOS));
             s.push_str(&random_chain(rng, depth + 1));
@@ -1213,7 +1213,7 @@ mod selector_port_spike {
     /// `select_all`/`matches_any` actually take (`Lists`, not one chain).
     fn random_selector(rng: &mut Rng) -> String {
         let mut s = random_chain(rng, 0);
-        if rng.next_u64() % 3 == 0 {
+        if rng.next_u64().is_multiple_of(3) {
             s.push_str(", ");
             s.push_str(&random_chain(rng, 0));
         }
