@@ -167,15 +167,6 @@ pub trait VecPush<T> {
     /// so a push per node of a walk is one injection point per growth.
     /// `Err(())` leaves the vector unchanged.
     fn falloc_push(&mut self, item: T) -> Result<(), ()>;
-    /// Append a slice. `Err(())` leaves the vector unchanged.
-    ///
-    /// `T: Copy`, not `Clone`: `extend_from_slice` clones each element, and a
-    /// non-`Copy` element's `clone` can allocate through the global allocator,
-    /// outside the sweep and aborting on failure. `Copy`'s clone is a bitwise
-    /// copy, so the reserve above is the only allocation.
-    fn falloc_extend(&mut self, s: &[T]) -> Result<(), ()>
-    where
-        T: Copy;
 }
 
 impl<T> VecPush<T> for Vec<T> {
@@ -183,15 +174,6 @@ impl<T> VecPush<T> for Vec<T> {
     fn falloc_push(&mut self, item: T) -> Result<(), ()> {
         self.falloc_reserve(1)?;
         self.push(item);
-        Ok(())
-    }
-    #[inline]
-    fn falloc_extend(&mut self, s: &[T]) -> Result<(), ()>
-    where
-        T: Copy,
-    {
-        self.falloc_reserve(s.len())?;
-        self.extend_from_slice(s);
         Ok(())
     }
 }

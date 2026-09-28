@@ -13,7 +13,7 @@ use core::ffi::c_void;
 
 use crate::caught::PanicLatch;
 use crate::cbuf::Buf;
-use crate::falloc::VecPush;
+use crate::falloc::Reserve;
 use crate::lexbor::abi::consts as k;
 
 /// Something serializer output is appended to. `false` refuses the chunk -
@@ -30,7 +30,14 @@ impl ChunkSink for Buf {
 
 impl ChunkSink for Vec<u8> {
     fn take(&mut self, bytes: &[u8]) -> bool {
-        self.falloc_extend(bytes).is_ok()
+        // `VecPush::falloc_extend` inlined: it was `falloc` reserve-then-copy
+        // for one caller (the stylesheet reader's Vec sink), the only one
+        // left once `Buf::append` above took over the HTML serializer's.
+        if self.falloc_reserve(bytes.len()).is_err() {
+            return false;
+        }
+        self.extend_from_slice(bytes);
+        true
     }
 }
 

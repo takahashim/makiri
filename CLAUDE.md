@@ -23,8 +23,8 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   exports only `Init_makiri` and `ruby_abi_version`, so every other item is
   named as Rust. (The `mkr_` prefix was the C ABI's symbol convention and went
   with it.) The ONE surviving prefix is `falloc`'s extension methods
-  (`falloc_reserve` / `_reserve_exact` / `falloc_push` / `_extend` /
-  `falloc_insert`), and it cannot be dropped: `Vec::try_reserve` and
+  (`falloc_reserve` / `_reserve_exact` / `falloc_push` / `falloc_insert`), and
+  it cannot be dropped: `Vec::try_reserve` and
   `try_reserve_exact` are inherent std methods, so a trait method by either
   name would be silently shadowed by the ABORTING one - which is the bug
   `falloc` exists to prevent. It was `mkr_` and now names the policy instead.
