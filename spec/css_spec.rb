@@ -111,6 +111,39 @@ RSpec.describe "Makiri CSS" do
     end
   end
 
+  # Tag and attribute names are resolved to Lexbor's interned ids once per
+  # query, in the queried document - so a name the document only gained by
+  # mutation after the parse (a new custom element, a new attribute name) must
+  # still be found, by every entry point, in either case.
+  describe "names added after the parse" do
+    it "finds a new element name and a new attribute name" do
+      d = Makiri::HTML("<!doctype html><body><p>x</p></body>")
+      el = d.create_element("late-el")
+      el["brand-new"] = "v"
+      d.at_css("body") << el
+      %w[late-el LATE-EL [brand-new] [BRAND-NEW] late-el[brand-new=v] body>late-el].each do |sel|
+        expect(d.css(sel).map(&:name)).to eq(%w[late-el]), sel
+        expect(d.at_css(sel)&.name).to eq("late-el"), sel
+        expect(el.matches?(sel)).to be(true), sel
+      end
+      expect(d.css("late-el-2, [brand-old]")).to be_empty
+    end
+  end
+
+  # An attribute selector's name is ASCII case-insensitive only on an HTML
+  # element in an HTML document (the HTML Standard's rule for Selectors); on
+  # SVG/MathML it is case-sensitive. Lexbor's own matcher folded case
+  # everywhere, so `[viewbox]` found an SVG `viewBox` there.
+  describe "attribute name case on foreign elements" do
+    it "folds case on HTML elements only" do
+      d = Makiri::HTML(%(<!doctype html><body><p Data-X="1"></p><svg viewBox="0 0 1 1" data-x="2"></svg></body>))
+      expect(d.css("[DATA-X]").map(&:name)).to eq(%w[p])
+      expect(d.css("[data-x]").map(&:name)).to eq(%w[p svg])
+      expect(d.css("[viewBox]").map(&:name)).to eq(%w[svg])
+      expect(d.css("[viewbox]")).to be_empty
+    end
+  end
+
   # SVG (foreign content) is under-covered relative to Makiri::XML's CSS specs -
   # see notes/css_selectors_crate_migration_plan.ja.md Phase 0 gap list.
   describe "SVG (foreign content) type selectors" do

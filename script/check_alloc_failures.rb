@@ -326,6 +326,9 @@ SCENARIOS = {
       "section:has(~ ul > li.a), div:has(> span), ul:has(li + li.a li, li.a)",
       "li:nth-child(2 of .a), li:nth-last-child(odd of :is(.a, :not(p)))",
       "body li:not(:has(*)):is(.a):nth-child(n of li)",
+      # Past the query tables' inline capacity (`Small`): more than four
+      # alternatives, eight simple selectors and eight compounds.
+      "p, div, span, section, html body ul li.a.a.a.a.a.a.a.a, body ul > li, html li",
     ].map { |s| doc.css(s).map(&:text).join(",") }.join("|") +
       doc.at_css("#x")&.name.to_s + doc.at_css("li:has(~ li.a)").text +
       doc.at_css("li").matches?("ul > li:is(.a):not(:has(p))").to_s

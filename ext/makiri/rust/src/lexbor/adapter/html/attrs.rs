@@ -83,6 +83,28 @@ impl<'doc> HtmlElement<'doc> {
         }
     }
 
+    /// [`attr_by_name`](Self::attr_by_name) with `qname` resolved once
+    /// ([`HtmlDoc::resolve_attr_name`]): an attribute whose local-name id
+    /// differs is passed over without reading its name, and one that shares
+    /// it is confirmed by exactly `attr_by_name`'s comparison - so the answer
+    /// is `attr_by_name`'s. An id from another document's table is not
+    /// trusted: that element is looked up by name.
+    pub fn attr_by_resolved_name(self, qname: &[u8], name: AttrName) -> Option<HtmlAttr<'doc>> {
+        if name.doc != Some(self.node().owner_document().raw) {
+            return self.attr_by_name(qname);
+        }
+        let id = name.id?;
+        let html = self.is_html_in_html_doc();
+        self.attrs().find(|a| {
+            a.local_id() == id
+                && if html {
+                    eq_lowered(a.qualified_name(), qname)
+                } else {
+                    a.qualified_name() == qname
+                }
+        })
+    }
+
     /// DOM "get an attribute by namespace and local name". `ns` is the
     /// attribute's OWN namespace ([`HtmlAttr::own_ns`]), `None` for none; the
     /// local name is compared case-preserved and case-sensitively.

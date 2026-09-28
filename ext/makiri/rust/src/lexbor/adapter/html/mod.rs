@@ -113,6 +113,19 @@ impl NsId {
     }
 }
 
+/// An attribute name resolved against one document - see
+/// [`HtmlDoc::resolve_attr_name`]. Carries the document, so a lookup on an
+/// element of another document falls back to comparing names rather than
+/// trusting an answer from the wrong table.
+#[derive(Clone, Copy)]
+pub struct AttrName {
+    /// `None`: not resolvable (a prefixed or empty name) - look up by name.
+    doc: Option<NonNull<LxbDoc>>,
+    /// The lower-cased local name's id there; `None`: no attribute of that
+    /// document has the name.
+    id: Option<usize>,
+}
+
 /// A tag id, as Lexbor interns an element's name - never `LXB_TAG__UNDEF`,
 /// which reads as `None`.
 ///
@@ -619,6 +632,32 @@ impl<'doc> HtmlDoc<'doc> {
         }
         // SAFETY: `tags` is the document's own tag table, `name` a live slice.
         TagId::from_raw(unsafe { lxb::lxb_tag_id_by_name_noi(tags, name.as_ptr(), name.len()) })
+    }
+
+    /// `name` resolved once for [`HtmlElement::attr_by_resolved_name`] on this
+    /// document's elements. Lexbor keys an attribute's local name by its ASCII
+    /// lower-cased form, in the static table or this document's own, so the
+    /// id is a NECESSARY condition for any attribute a by-qualified-name
+    /// lookup of an unprefixed `name` can find (no id: none can). A prefixed or
+    /// empty name stays unresolved, for the plain by-name lookup.
+    pub fn resolve_attr_name(self, name: &[u8]) -> AttrName {
+        // SAFETY: a live document handle, read for this call.
+        let attrs = unsafe { (*self.raw.as_ptr()).attrs };
+        if name.is_empty() || name.contains(&b':') || attrs.is_null() {
+            return AttrName {
+                doc: None,
+                id: None,
+            };
+        }
+        // SAFETY: `attrs` is the document's own attribute-name table, `name`
+        // a live slice; the entry, if any, lives as long as the table.
+        let data =
+            unsafe { lxb::lxb_dom_attr_data_by_local_name(attrs, name.as_ptr(), name.len()) };
+        AttrName {
+            doc: Some(self.raw),
+            // SAFETY: a non-null entry of the table above.
+            id: (!data.is_null()).then(|| unsafe { (*data).attr_id }),
+        }
     }
 
     /// The document as a node: an `lxb_dom_document_t` leads with its node.
@@ -1197,6 +1236,12 @@ impl<'doc> HtmlAttr<'doc> {
     pub fn qualified_name(self) -> &'doc [u8] {
         // SAFETY: a live attribute.
         unsafe { named(self.raw(), lxb::lxb_dom_attr_qualified_name) }
+    }
+    /// The id of the lower-cased local name, in the owner document's table.
+    #[inline]
+    pub(in crate::lexbor::adapter) fn local_id(self) -> usize {
+        // SAFETY: a live attribute; one field read.
+        unsafe { (*self.raw()).node.local_name }
     }
     #[inline]
     pub fn local_name(self) -> &'doc [u8] {

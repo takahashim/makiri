@@ -519,7 +519,7 @@ mod node_key {
 /// verified at 500,000 levels below).
 mod selector_port_spike {
     use crate::gvl::Gvl;
-    use crate::lexbor::adapter::html::{HtmlElement, HtmlNode, RawNode};
+    use crate::lexbor::adapter::html::{HtmlElement, HtmlNode, NsId, RawNode};
     use crate::lexbor::adapter::post_parse::{parse_html, HtmlParsed};
     use crate::lexbor::adapter::tree_guard::DepthLimit;
     use crate::lexbor::css_parser;
@@ -1631,6 +1631,119 @@ mod selector_port_spike {
             previous = Some(q);
         }
         assert!(checked > 1000, "only {checked} rounds parsed");
+    }
+
+    /// Type and attribute names are resolved to Lexbor ids once per query
+    /// (`selector_port::Name`) on the walking entry points, and compared as
+    /// bytes on `matches_any`. Both must answer as the old engine does across
+    /// what makes names tricky: foreign (SVG/MathML) elements with
+    /// case-preserved names, quirks vs no-quirks documents, custom elements
+    /// (dynamic tag ids), and names the document does not contain at all.
+    #[test]
+    fn resolved_names_agree_with_the_old_engine() {
+        use crate::lexbor::selectors as old_engine;
+
+        let body = r##"<body><my-el data-x="1" class="Foo">c</my-el><x-y id="Main"></x-y>
+            <svg viewBox="0 0 1 1"><foreignObject data-x="2"><p class="foo">f</p></foreignObject>
+            <circle r="1" CLASS="k"/><a xlink:href="#h" href="#g"></a></svg>
+            <math><mi mathvariant="bold">x</mi></math>
+            <input type="TEXT" Data-Y="Q"><div id="main" class="foo bar"></div></body>"##;
+        let selectors = [
+            "my-el",
+            "MY-EL",
+            "x-y",
+            "nosuch-el",
+            "foreignObject",
+            "foreignobject",
+            "FOREIGNOBJECT",
+            "circle",
+            "svg circle",
+            "mi",
+            "math mi",
+            "p",
+            "div",
+            "[data-x]",
+            "[DATA-X]",
+            "[data-y]",
+            "[Data-Y]",
+            "[viewBox]",
+            "[viewbox]",
+            "[r]",
+            "[href]",
+            "[type=text]",
+            "[type=TEXT s]",
+            "[mathvariant]",
+            "[nosuch]",
+            "#main",
+            "#Main",
+            ".foo",
+            ".Foo",
+            ".k",
+            ".nosuch",
+            "my-el[data-x='1']",
+            "svg [data-x]",
+            ":is(circle, mi)[r]",
+        ];
+        const FOREIGN_CASE: &[&str] = &["[DATA-X]", "[viewbox]"];
+        for prefix in ["<!doctype html><html>", "<html>"] {
+            let html = format!("{prefix}{body}</html>");
+            let doc = parsed(html.as_bytes());
+            let d = unsafe { doc.raw_doc().as_doc() };
+            let raw_root = RawNode::from(d.as_node());
+            for sel in selectors {
+                let gvl = Gvl::exclusive();
+                let old = old_engine::select_all(&gvl, raw_root, sel.as_bytes())
+                    .unwrap_or_else(|_| panic!("old engine rejected {sel:?}"));
+                let old_first = old_engine::select_first(&gvl, raw_root, sel.as_bytes())
+                    .unwrap_or_else(|_| panic!("old engine rejected {sel:?}"));
+                drop(gvl);
+                let new: Vec<RawNode> = select_all(&doc, sel)
+                    .into_iter()
+                    .map(|e| RawNode::from(e.node()))
+                    .collect();
+                if FOREIGN_CASE.contains(&sel) {
+                    // The HTML Standard's rule, not Lexbor's: an attribute
+                    // name is case-insensitive only on an HTML element in an
+                    // HTML document. Lexbor folds it everywhere, so it also
+                    // finds the SVG `viewBox`/`data-x` - and only those.
+                    let extra: Vec<HtmlNode<'_>> = root(&doc)
+                        .subtree()
+                        .filter(|&n| {
+                            old.contains(&RawNode::from(n)) && !new.contains(&RawNode::from(n))
+                        })
+                        .collect();
+                    assert!(
+                        new.iter().all(|n| old.contains(n))
+                            && !extra.is_empty()
+                            && extra.iter().all(|n| n.ns_id() != Some(NsId::HTML)),
+                        "{prefix} {sel:?}: expected Lexbor to add foreign elements only"
+                    );
+                    continue;
+                }
+                assert!(
+                    new == old,
+                    "{prefix} {sel:?}: new {} old {}",
+                    new.len(),
+                    old.len()
+                );
+                let gvl = Gvl::exclusive();
+                let text = VerifiedText::from_bytes(sel.as_bytes()).expect("verified");
+                let p = css_parser::parse(&gvl, text).unwrap_or_else(|_| panic!("parse"));
+                let first = port_select_first(root(&doc), p.groups())
+                    .unwrap_or_else(|_| panic!("{sel:?} failed"))
+                    .map(RawNode::from);
+                assert!(first == old_first, "{prefix} {sel:?}: select_first differs");
+                for n in root(&doc).subtree().filter_map(HtmlNode::element) {
+                    let one = matches_any(p.groups(), n).unwrap_or_else(|_| panic!("{sel:?}"));
+                    assert_eq!(
+                        one,
+                        old.contains(&RawNode::from(n.node())),
+                        "{prefix} {sel:?}: matches_any differs on <{}>",
+                        String::from_utf8_lossy(n.qualified_name())
+                    );
+                }
+            }
+        }
     }
 
     /// `select_first`/`matches_any` are entry points of their own (not just
