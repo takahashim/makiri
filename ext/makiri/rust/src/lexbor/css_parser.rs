@@ -189,6 +189,8 @@ mod raw {
         l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_ACTIVE;
     pub const FOCUS: Pc = l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_FOCUS;
     pub const HOVER: Pc = l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_HOVER;
+    pub const PLACEHOLDER_SHOWN: Pc =
+        l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_PLACEHOLDER_SHOWN;
 
     type Pf = l::lxb_css_selector_pseudo_class_function_id_t;
     pub const NTH_CHILD: Pf =
@@ -353,6 +355,7 @@ pub enum PseudoClass {
     Active,
     Focus,
     Hover,
+    PlaceholderShown,
     Other,
 }
 
@@ -522,6 +525,7 @@ impl<'p> Selector<'p> {
             raw::ACTIVE => PseudoClass::Active,
             raw::FOCUS => PseudoClass::Focus,
             raw::HOVER => PseudoClass::Hover,
+            raw::PLACEHOLDER_SHOWN => PseudoClass::PlaceholderShown,
             _ => PseudoClass::Other,
         }
     }
