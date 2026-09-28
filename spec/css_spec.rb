@@ -69,6 +69,90 @@ RSpec.describe "Makiri CSS" do
     end
   end
 
+  # NOKOGIRI_DIFFERENCES.md: a selector under a node matches the way
+  # `Element#querySelectorAll` does in a browser - against the whole document,
+  # with only the results filtered to descendants of the context node. So the
+  # context node itself CAN satisfy an earlier compound in the selector, unlike
+  # Nokogiri (and `Makiri::XML`, which lowers to an XPath scoped from the node).
+  # Pinned here because notes/css_selectors_crate_migration_plan.ja.md's
+  # matcher migration must reproduce this, not "fix" it into XPath-style scoping.
+  describe "query scope (whole-document matching, not scoped to the context node)" do
+    it "lets the context node itself satisfy an earlier compound" do
+      c = doc.at_css("#main") # #main is itself a div
+      expect(c.css("div p").map(&:text)).to eq(%w[one two])
+    end
+  end
+
+  # Lexbor's matcher has no `:scope` (NOKOGIRI_DIFFERENCES.md). Pin the exact
+  # failure so the migration can decide, rather than discover, whether to keep
+  # rejecting it or to implement it (`selectors::Element` has a scope-element
+  # concept; see notes/css_selectors_crate_migration_plan.ja.md §3).
+  describe ":scope" do
+    it "is rejected as an unsupported CSS selector" do
+      c = doc.at_css("#main")
+      expect { c.css(":scope p") }.to raise_error(Makiri::CSS::SyntaxError)
+      expect { c.at_css(":scope") }.to raise_error(Makiri::CSS::SyntaxError)
+      expect { c.matches?(":scope") }.to raise_error(Makiri::CSS::SyntaxError)
+    end
+  end
+
+  # NOKOGIRI_DIFFERENCES.md: `#matches?` answers for a detached node; Nokogiri
+  # raises there because it implements `#matches?` as a search from
+  # `ancestors.last`, which a detached node has none of.
+  describe "detached nodes" do
+    it "answers css/at_css/matches? without an owner tree" do
+      detached = doc.create_element("p")
+      expect(detached.css("p")).to be_empty       # no descendants to search
+      expect(detached.at_css("p")).to be_nil
+      expect(detached.matches?("p")).to be(true)  # self-match needs no tree
+      expect(detached.matches?("div p")).to be(false) # no ancestor to satisfy "div"
+    end
+  end
+
+  # SVG (foreign content) is under-covered relative to Makiri::XML's CSS specs -
+  # see notes/css_selectors_crate_migration_plan.ja.md Phase 0 gap list.
+  describe "SVG (foreign content) type selectors" do
+    let(:svg_doc) { Makiri::HTML("<html><body><svg><circle r='1'/></svg></body></html>") }
+
+    it "matches an SVG element by its local (unprefixed) type name" do
+      expect(svg_doc.css("circle").map(&:name)).to eq(%w[circle])
+      expect(svg_doc.css("svg circle").map(&:name)).to eq(%w[circle])
+    end
+
+    # query_args_spec.rb pins the loose namespace ignore for a bare `svg|path`;
+    # this is the same loose ignore inside compound/functional selectors.
+    it "keeps the namespace binding ignored inside :is() / :has() / attribute selectors" do
+      ns = { "svg" => "http://www.w3.org/2000/svg" }
+      expect(svg_doc.css(":is(svg|circle)", ns).map(&:name)).to eq(%w[circle])
+      expect(svg_doc.css("body:has(svg|circle)", ns).map(&:name)).to eq(%w[body])
+      expect(svg_doc.css("[svg|r]", ns).map(&:name)).to eq(%w[circle])
+    end
+  end
+
+  # HTML query goes straight through Lexbor's own matcher and has no equivalent
+  # to `Makiri::XML`'s fixed `comps[64]` combinator-chain bound (see
+  # `xml_css_spec.rb`'s "fails closed on an over-long :is()/:not() argument").
+  # Pin the current (uncapped) baseline so the selectors-crate migration can
+  # tell a genuine regression from an intended new limit - see
+  # notes/css_selectors_crate_migration_plan.ja.md, which also records a
+  # 500,000-level `:is()` nesting probe with no stack overflow.
+  describe "resource limits (HTML currently has none, unlike XML)" do
+    it "does not fail on a combinator chain far past XML's 64-compound bound" do
+      d = Makiri::HTML("<p>x</p>")
+      over65 = ":is(#{(['a'] * 65).join(' ')})"
+      expect { d.css(over65) }.not_to raise_error
+    end
+
+    it "does not stack-overflow on deeply nested :is()" do
+      # Kept small for suite speed; notes/css_selectors_crate_migration_plan.ja.md
+      # records the same shape measured to 500,000 levels.
+      d = Makiri::HTML("<html><body><a>x</a></body></html>")
+      depth = 2000
+      nested = (":is(" * depth) + "a" + (")" * depth)
+      expect(d.css(nested).map(&:name)).to eq(%w[a])
+    end
+  end
+
   describe "errors" do
     it "raises CSS::SyntaxError on a malformed selector" do
       expect { doc.css(">>>bad") }.to raise_error(Makiri::CSS::SyntaxError)
@@ -159,6 +243,15 @@ RSpec.describe "Makiri CSS" do
       x = Makiri::XML("<r><a>hello</a><b>bye</b></r>")
       expect(x.css(%(:lexbor-contains("hello"))).length).to eq(1)
       expect(x.css(%(:lexbor-contains("HELLO" i))).length).to eq(1)
+    end
+
+    it "handles a long needle (Lexbor >v3.0.0 heap-overflow fix in the parser)" do
+      # Mirrors xml_css_spec.rb's equivalent test - HTML and XML reach the same
+      # Lexbor CSS parser here (`lexbor::contains_guard`), so pin it on the HTML
+      # side too rather than relying on the XML test alone.
+      needle = "A" * 200
+      big = Makiri::HTML("<p>#{needle}</p><p>x</p>")
+      expect(big.css(%(p:lexbor-contains("#{needle}"))).map { |n| n.text.length }).to eq([200])
     end
   end
 

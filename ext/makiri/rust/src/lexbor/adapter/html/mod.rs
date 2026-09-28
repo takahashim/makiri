@@ -337,6 +337,16 @@ impl RawNode {
         self.0.as_ptr().cast()
     }
 
+    /// As [`as_ptr`](Self::as_ptr), but as a `NonNull` rather than a raw
+    /// pointer - for `selectors::OpaqueElement`'s identity
+    /// (`lexbor::selector_element`), which wants one without an `unwrap`/
+    /// `expect` at the call site re-asserting what this type already
+    /// guarantees.
+    #[inline]
+    pub fn as_non_null(self) -> NonNull<core::ffi::c_void> {
+        self.0.cast()
+    }
+
     /// `nodes`, lent as typed nodes for `'doc` - a reinterpretation, not a
     /// copy: both types are a transparent non-null node pointer.
     ///

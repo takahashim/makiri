@@ -511,3 +511,372 @@ mod node_key {
         );
     }
 }
+
+/// `lexbor::selector_port` - a semantic port of Lexbor's `selectors.c`
+/// (`notes/lexbor_selectors_c_semantics.ja.md`), not a `selectors`-crate-based
+/// approach (rejected - see the plan's §1.1). Parses via the existing `css_parser`, matches via an
+/// explicit heap work stack (never native recursion for selector nesting -
+/// verified at 500,000 levels below).
+mod selector_port_spike {
+    use crate::gvl::Gvl;
+    use crate::lexbor::adapter::html::{HtmlElement, HtmlNode, RawNode};
+    use crate::lexbor::adapter::post_parse::{parse_html, HtmlParsed};
+    use crate::lexbor::adapter::tree_guard::DepthLimit;
+    use crate::lexbor::css_parser;
+    use crate::lexbor::selector_port::matches;
+    use crate::text::VerifiedText;
+
+    fn parsed(html: &[u8]) -> Box<HtmlParsed> {
+        parse_html(html, true, DepthLimit::DEFAULT).expect("a document parses")
+    }
+
+    fn root(doc: &HtmlParsed) -> HtmlNode<'_> {
+        // SAFETY: `doc` outlives the borrow this returns.
+        let d = unsafe { doc.raw_doc().as_doc() };
+        d.as_node()
+            .document_root()
+            .expect("the parser always inserts a root")
+    }
+
+    fn matches_selector(element: HtmlElement<'_>, selector: &str) -> bool {
+        let gvl = Gvl::exclusive();
+        let text = VerifiedText::from_bytes(selector.as_bytes()).expect("verified");
+        let parsed = css_parser::parse(&gvl, text)
+            .unwrap_or_else(|_| panic!("selector {selector:?} failed to parse"));
+        parsed.groups().any(|list| matches(list.first(), element))
+    }
+
+    fn select_all<'d>(doc: &'d HtmlParsed, selector: &str) -> Vec<HtmlElement<'d>> {
+        root(doc)
+            .subtree()
+            .filter_map(HtmlNode::element)
+            .filter(|&e| matches_selector(e, selector))
+            .collect()
+    }
+
+    fn texts(doc: &HtmlParsed, selector: &str) -> Vec<String> {
+        select_all(doc, selector)
+            .into_iter()
+            .map(|e| {
+                let text = e.node().children().find_map(HtmlNode::char_data);
+                String::from_utf8_lossy(text.unwrap_or(b"")).into_owned()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn type_selector_folds_ascii_case_unconditionally() {
+        // §B-1: Lexbor folds type-selector case UNCONDITIONALLY - even on
+        // foreign (SVG) content, unlike class/id (quirks-only) or attributes
+        // (HTML-namespace-gated). Reproduced for engine parity.
+        let doc = parsed(b"<html><body><p>1</p><span>2</span><p>3</p></body></html>");
+        assert_eq!(texts(&doc, "p"), ["1", "3"]);
+        assert_eq!(texts(&doc, "P"), ["1", "3"]);
+
+        let svg = parsed(b"<html><body><svg><circle r='1'/></svg></body></html>");
+        assert_eq!(select_all(&svg, "CIRCLE").len(), 1);
+    }
+
+    #[test]
+    fn class_and_id_fold_case_only_in_quirks_mode() {
+        // §B-2/§B-3, §E-1 point 5 (`match_id_class_case`).
+        let quirks = parsed(b"<html><body><div class='Test' id='Foo'></div></body></html>");
+        assert_eq!(select_all(&quirks, ".test").len(), 1);
+        assert_eq!(select_all(&quirks, "#foo").len(), 1);
+
+        let no_quirks =
+            parsed(b"<!doctype html><html><body><div class='Test' id='Foo'></div></body></html>");
+        assert_eq!(select_all(&no_quirks, ".test").len(), 0);
+        assert_eq!(select_all(&no_quirks, "#foo").len(), 0);
+        assert_eq!(select_all(&no_quirks, ".Test").len(), 1);
+        assert_eq!(select_all(&no_quirks, "#Foo").len(), 1);
+    }
+
+    #[test]
+    fn html_attribute_value_case_insensitivity_table() {
+        // §B-5, §E-1 point 9 (`match_html_case_insensitive_attributes`):
+        // `type` is in the table (HTML, no modifier -> CI); `data-x` is not
+        // (always CS); `s` forces case-sensitive even for a table attribute;
+        // the table does not apply inside SVG (foreign content).
+        let doc = parsed(
+            b"<!doctype html><html><body>\
+              <input type='TEXT'><div data-x='ABC'></div>\
+              <svg><a rel='NOFOLLOW'></a></svg>\
+              </body></html>",
+        );
+        assert_eq!(select_all(&doc, "[type=TEXT]").len(), 1);
+        assert_eq!(select_all(&doc, "[type=text]").len(), 1); // table default: CI
+        assert_eq!(select_all(&doc, "[type=text s]").len(), 0); // explicit s forces CS
+        assert_eq!(select_all(&doc, "[data-x=abc]").len(), 0); // not in the table: CS
+        assert_eq!(select_all(&doc, "[data-x=ABC]").len(), 1);
+        assert_eq!(select_all(&doc, "[rel=nofollow]").len(), 0); // SVG: table doesn't apply
+        assert_eq!(select_all(&doc, "[rel=NOFOLLOW]").len(), 1);
+    }
+
+    #[test]
+    fn lexbor_whitespace_set_excludes_vertical_tab() {
+        // §E-2 point 9: space/tab/LF/FF/CR are separators; vertical tab
+        // (0x0B) is NOT, unlike Rust's `is_ascii_whitespace`.
+        let doc = parsed(b"<html><body><div class='a\x0Bb'></div></body></html>");
+        // "a\x0Bb" is ONE token (VT doesn't split it), so `.a`/`.b` alone
+        // don't match, but the whole token does.
+        assert_eq!(select_all(&doc, ".a").len(), 0);
+        assert_eq!(select_all(&doc, "[class~=\"a\x0Bb\"]").len(), 1);
+    }
+
+    #[test]
+    fn attribute_operators() {
+        let doc = parsed(
+            b"<html><body>\
+              <a href='/x'>x</a><a>y</a>\
+              <a rel='next prev'>z</a>\
+              <a lang='en-GB'>w</a>\
+              <a data-p='foobar'>v</a>\
+              </body></html>",
+        );
+        assert_eq!(select_all(&doc, "a[href]").len(), 1);
+        assert_eq!(select_all(&doc, "a[href='/x']").len(), 1);
+        assert_eq!(select_all(&doc, "a[rel~='next']").len(), 1);
+        assert_eq!(select_all(&doc, "a[rel~='nex']").len(), 0);
+        assert_eq!(select_all(&doc, "a[lang|='en']").len(), 1);
+        assert_eq!(select_all(&doc, "a[lang|='eng']").len(), 0);
+        assert_eq!(select_all(&doc, "a[data-p^='foo']").len(), 1);
+        assert_eq!(select_all(&doc, "a[data-p$='bar']").len(), 1);
+        assert_eq!(select_all(&doc, "a[data-p*='oob']").len(), 1);
+        assert_eq!(select_all(&doc, "a[data-p^='']").len(), 0); // empty operand never matches
+    }
+
+    #[test]
+    fn descendant_and_child_combinators() {
+        let doc =
+            parsed(b"<html><body><div><p>1</p><span><p>2</p></span></div><p>3</p></body></html>");
+        assert_eq!(texts(&doc, "div p"), ["1", "2"]);
+        assert_eq!(texts(&doc, "div > p"), ["1"]);
+    }
+
+    #[test]
+    fn sibling_combinators() {
+        let doc = parsed(b"<html><body><p>1</p><p>2</p><span></span><p>3</p></body></html>");
+        assert_eq!(texts(&doc, "p + p"), ["2"]);
+        assert_eq!(texts(&doc, "p ~ p"), ["2", "3"]);
+    }
+
+    #[test]
+    fn nth_child_family() {
+        let doc = parsed(b"<html><body><ul><li>a</li><li>b</li><li>c</li></ul></body></html>");
+        assert_eq!(texts(&doc, "li:nth-child(2)"), ["b"]);
+        assert_eq!(texts(&doc, "li:nth-child(odd)"), ["a", "c"]);
+        assert_eq!(texts(&doc, "li:nth-last-child(1)"), ["c"]);
+        assert_eq!(texts(&doc, "li:first-child"), ["a"]);
+        assert_eq!(texts(&doc, "li:last-child"), ["c"]);
+    }
+
+    #[test]
+    fn nth_child_of_s() {
+        // §D-1: position counted only among siblings matching `S`.
+        let doc = parsed(
+            b"<html><body><main>\
+              <h2 class='mark'>1</h2><h2>2</h2><h2 class='mark'>3</h2>\
+              <h2 class='mark'>4</h2><h2>5</h2>\
+              </main></body></html>",
+        );
+        assert_eq!(texts(&doc, "h2:nth-child(2 of .mark)"), ["3"]);
+        assert_eq!(texts(&doc, "h2:nth-child(even of .mark)"), ["3"]);
+        assert_eq!(texts(&doc, "h2:nth-child(odd of .mark)"), ["1", "4"]);
+    }
+
+    #[test]
+    fn of_type_family() {
+        let doc =
+            parsed(b"<html><body><div><p>1</p><span>x</span><p>2</p><p>3</p></div></body></html>");
+        assert_eq!(texts(&doc, "p:first-of-type"), ["1"]);
+        assert_eq!(texts(&doc, "p:last-of-type"), ["3"]);
+        assert_eq!(texts(&doc, "span:only-of-type"), ["x"]);
+        assert_eq!(texts(&doc, "p:nth-of-type(2)"), ["2"]);
+        assert_eq!(texts(&doc, "p:nth-last-of-type(1)"), ["3"]);
+    }
+
+    #[test]
+    fn is_where_not_match_correctly_including_nesting() {
+        let doc = parsed(
+            b"<html><body><div><p class='a'>1</p><span>2</span><p>3</p></div></body></html>",
+        );
+        assert_eq!(texts(&doc, "div :is(p, span)"), ["1", "2", "3"]);
+        assert_eq!(texts(&doc, "div :is(:is(:is(p.a)))"), ["1"]);
+        assert_eq!(texts(&doc, "div :where(.a)"), ["1"]);
+        assert_eq!(texts(&doc, "div :not(p)"), ["2"]);
+        assert_eq!(texts(&doc, "div :not(:is(p, span))"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn has_single_and_multi_compound() {
+        let doc =
+            parsed(b"<html><body><div><p>x</p></div><div></div><ul><li>a</li></ul></body></html>");
+        assert_eq!(select_all(&doc, "div:has(p)").len(), 1);
+        assert_eq!(select_all(&doc, "ul:has(> li)").len(), 1);
+        assert_eq!(select_all(&doc, "div:has(> p)").len(), 1);
+
+        // §A-4: multi-compound `:has()` argument, now supported via the
+        // bounded forward search (`has_forward`) - the (A) exploration and
+        // the first cut of this port both left this unimplemented.
+        let nested = parsed(
+            b"<html><body>\
+              <div><section><p class='x'>hit</p></section></div>\
+              <div><section><p>miss</p></section></div>\
+              </body></html>",
+        );
+        assert_eq!(select_all(&nested, "div:has(section > p.x)").len(), 1);
+        assert_eq!(select_all(&nested, "div:has(section > p.nope)").len(), 0);
+
+        let sib = parsed(b"<html><body><p></p><span>hit</span><p></p><p></p></body></html>");
+        assert_eq!(texts(&sib, "p:has(+ span)").len(), 1);
+        assert_eq!(select_all(&sib, "p:has(~ span)").len(), 1);
+    }
+
+    #[test]
+    fn expanded_pseudo_classes() {
+        let doc = parsed(
+            b"<html><body>\
+              <a href='/x'>link</a><a>nolink</a>\
+              <input type='checkbox' checked><input type='checkbox'>\
+              <input required><input>\
+              <input readonly><input>\
+              <button disabled></button>\
+              <fieldset disabled><legend><button>ok</button></legend><button>no</button></fieldset>\
+              <fieldset disabled><button>also-no</button></fieldset>\
+              <p></p><p> </p><p>x</p>\
+              </body></html>",
+        );
+        assert_eq!(select_all(&doc, ":any-link").len(), 1);
+        assert_eq!(select_all(&doc, ":link").len(), 1);
+        assert_eq!(select_all(&doc, "input:checked").len(), 1);
+        assert_eq!(select_all(&doc, "input:required").len(), 1);
+        // 6 <input>s total, all but the `required` one are :optional.
+        assert_eq!(select_all(&doc, "input:optional").len(), 5);
+        assert_eq!(select_all(&doc, "input:read-only").len(), 1);
+        // 6 <input>s total, all but the `readonly` one are :read-write.
+        assert_eq!(select_all(&doc, "input:read-write").len(), 5);
+        assert_eq!(select_all(&doc, "button:disabled").len(), 3); // own attr + 2 inherited
+        assert_eq!(select_all(&doc, "button:enabled").len(), 1); // the one under <legend>
+        assert_eq!(select_all(&doc, "p:empty").len(), 1);
+        assert_eq!(select_all(&doc, "p:blank").len(), 2); // :blank tolerates whitespace-only text
+                                                          // :active/:focus/:hover are literal attribute-presence checks (§C-1),
+                                                          // not "always false" - none of this fixture's markup has them.
+        assert_eq!(select_all(&doc, ":hover").len(), 0);
+    }
+
+    #[test]
+    fn deeply_nested_is_does_not_grow_the_native_stack() {
+        // The one property this module exists to prove (contrast the (A)
+        // exploration's sibling test, which crashes in a release build at a
+        // nesting depth of only ~2,000-2,500 -
+        // notes/css_selectors_crate_migration_plan.ja.md §1.1/§4 Phase 1).
+        // 500,000 mirrors the depth already measured safe for Lexbor's own C
+        // matcher (§4 Phase 0).
+        let doc = parsed(b"<html><body><a>x</a></body></html>");
+        let depth = 500_000;
+        let nested = format!("{}a{}", ":is(".repeat(depth), ")".repeat(depth));
+        assert_eq!(texts(&doc, &nested), ["x"]);
+    }
+
+    /// Phase 2's differential check: the port and the OLD Lexbor-callback
+    /// engine (`lexbor::selectors`), run over the same document, must agree
+    /// - in document order - on every standard selector this port supports.
+    #[test]
+    fn agrees_with_the_old_lexbor_engine_on_standard_selectors() {
+        use crate::lexbor::selectors as old_engine;
+
+        let doc = parsed(
+            br#"<!doctype html><html><body>
+                <main id="main" class="container Box">
+                    <ul>
+                        <li class="item first" data-n="1"><a href="/p/1">one</a></li>
+                        <li class="item" data-n="2"><a href="/p/2" rel="next">two</a></li>
+                        <li class="item last" data-n="3"><span>three</span></li>
+                    </ul>
+                    <p class="lead" title="Hello World">intro</p>
+                    <p>body</p>
+                    <div class="empty"></div>
+                    <img src="x.png">
+                    <svg><circle r="1"/></svg>
+                    <input type="checkbox" checked>
+                    <input required>
+                </main>
+            </body></html>"#,
+        );
+
+        let selectors = [
+            "main",
+            "MAIN",
+            "*",
+            ".item",
+            ".Box",
+            "#main",
+            "li.item.first",
+            "a[href]",
+            "a[href='/p/1']",
+            "a[rel~='next']",
+            "li[data-n='1']",
+            "[data-n^='1']",
+            "[data-n$='1']",
+            "[data-n*='1']",
+            "[title='hello world' i]",
+            "ul li",
+            "ul > li",
+            "li + li",
+            "li ~ li",
+            "li:nth-child(2)",
+            "li:nth-child(odd)",
+            "li:nth-last-child(1)",
+            "li:first-child",
+            "li:last-child",
+            "li:only-child",
+            "p:first-of-type",
+            "p:last-of-type",
+            "div.empty:empty",
+            "html:root",
+            ":is(p, li)",
+            ":where(.lead, .item)",
+            "li:not(.first)",
+            ":not(:is(p, li))",
+            ":is(:is(:is(li.first)))",
+            "main:has(img)",
+            "main:has(> p)",
+            "li:has(+ li)",
+            "li:has(~ li)",
+            "p, li.first",
+            "circle",
+            "input:checked",
+            "input:required",
+            "a:any-link",
+            "a:link",
+        ];
+
+        fn old_select_all(doc: &HtmlParsed, selector: &str) -> Vec<RawNode> {
+            let gvl = Gvl::exclusive();
+            // SAFETY: `doc` outlives the call, `root` is a live node of it.
+            let d = unsafe { doc.raw_doc().as_doc() };
+            let root = RawNode::from(d.as_node());
+            old_engine::select_all(&gvl, root, selector.as_bytes())
+                .unwrap_or_else(|_| panic!("old engine rejected {selector:?}"))
+        }
+
+        fn new_select_all(doc: &HtmlParsed, selector: &str) -> Vec<RawNode> {
+            select_all(doc, selector)
+                .into_iter()
+                .map(|e| RawNode::from(e.node()))
+                .collect()
+        }
+
+        for sel in selectors {
+            let old = old_select_all(&doc, sel);
+            let new = new_select_all(&doc, sel);
+            assert!(
+                new == old,
+                "mismatch for selector {sel:?}: new has {} match(es), old has {}",
+                new.len(),
+                old.len()
+            );
+        }
+    }
+}
