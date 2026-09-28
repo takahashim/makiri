@@ -930,12 +930,34 @@ Key decisions that got there, worth not regressing:
   selector this short - caching it removes work that was never the
   bottleneck. The cache stays (it is correct, `spec/css_selector_cache_spec.rb`
   needs it to mean something again, and a longer/more complex selector may
-  still benefit), but the `at_css` gap's actual cause is still open - most
-  likely the trampoline's own per-call overhead relative to Lexbor's tight C
-  callback loop, not yet profiled. `at_css` wraps the single first match
-  directly (no NodeSet / no Ruby `#first` - `select_first` stops at the first
-  hit). Verify with `bench`'s `at_css`/`css` rows and
-  `FUZZ_ARGS="--target css" bundle exec rake fuzz:sanitize`.
+  still benefit). **The gap's actual cause was found and confirmed** by a
+  Ruby-free, in-process probe (`lexbor::selectors` vs `lexbor::selector_port`
+  matching the same parsed document directly, no Ruby/benchmark-ips/nokolexbor
+  in the loop - the throwaway-probe pattern `examples/nest_probe.rs` set,
+  deleted once its number was extracted): the trampoline is a consistent
+  **~6×** slower per candidate node than Lexbor's C matcher, on both `css`
+  (`"ul li.item"`, whole-tree scan: ~97μs vs ~574μs per call) and `at_css`
+  (`"#main"`, first-match: ~103ns vs ~620ns per call) - the same ratio at two
+  very different candidate counts, which is what per-CANDIDATE (not per-query)
+  overhead looks like. The cause is `collect_compounds` (`selector_port.rs`):
+  it walks the parsed selector chain into a fresh heap-allocated
+  `Vec<Compound>`, and `matches_one_compound_chain` allocates a second `Vec`
+  for `run`'s initial frame stack - **both done again for every element node
+  the tree walk visits**, even though the compound chain is the same for
+  every candidate of one query. Lexbor's C matcher instead parses the
+  selector into its own arena-resident list ONCE and walks that same
+  structure per candidate with no allocation at all - so its per-candidate
+  cost is pure state-machine dispatch, ours is dispatch plus two heap
+  round-trips. `at_css` wraps the single first match directly (no NodeSet /
+  no Ruby `#first` - `select_first` stops at the first hit). **Not yet
+  fixed** - the fix is hoisting compound collection to once per query
+  (per alternative in `Lists`, not per node) and sharing it across candidates
+  cheaply (e.g. `Rc<[Compound]>` in `Frame`/`Cont` instead of an owned
+  `Vec<Compound>`, since `advance`'s `Descendant`/`SubsequentSibling` retries
+  already `chain.clone()` on every step and would become a refcount bump
+  instead of a Vec copy) - tracked as the next `selector_port` perf work, not
+  done in the session that found it. Verify with `bench`'s `at_css`/`css` rows
+  and `FUZZ_ARGS="--target css" bundle exec rake fuzz:sanitize`.
 - **The compiled-selector cache is back, over its own separate engine**
   (`lexbor::selector_cache`): `Node#css`/`#at_css`/`#matches?` no longer
   re-parse a repeated selector string from scratch - a near-verbatim port of
