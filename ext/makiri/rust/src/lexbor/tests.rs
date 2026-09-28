@@ -1065,6 +1065,190 @@ mod selector_port_spike {
         }
     }
 
+    /// A tiny, dependency-free xorshift64* generator - this crate takes no
+    /// `rand`-family dependency, and a fixed seed makes a failure
+    /// reproducible (print the seed and the counter, per the assertion
+    /// message) without needing to persist a corpus.
+    struct Rng(u64);
+
+    impl Rng {
+        fn next_u64(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+
+        fn pick<'a, T>(&mut self, items: &'a [T]) -> &'a T {
+            &items[(self.next_u64() as usize) % items.len()]
+        }
+    }
+
+    /// One randomly generated compound (`tag.class#id[...]:pseudo`-shaped) -
+    /// always syntactically valid CSS, since it is a concatenation of
+    /// hand-picked well-formed pieces rather than free-form text.
+    fn random_compound(rng: &mut Rng, depth: u32) -> String {
+        const TYPES: &[&str] = &["li", "a", "span", "div", "p", "input", "*"];
+        const CLASSES: &[&str] = &[".item", ".first", ".last", ".lead", ".Box", ".empty"];
+        const IDS: &[&str] = &["#main"];
+        const ATTRS: &[&str] = &[
+            "[href]",
+            "[data-n='1']",
+            "[data-n^='1']",
+            "[data-n$='1']",
+            "[data-n*='1']",
+            "[rel~='next']",
+            "[title='hello world' i]",
+            "[type='checkbox']",
+        ];
+        const PLAIN_PSEUDOS: &[&str] = &[
+            ":first-child",
+            ":last-child",
+            ":only-child",
+            ":first-of-type",
+            ":last-of-type",
+            ":only-of-type",
+            ":empty",
+            ":root",
+            ":checked",
+            ":required",
+            ":disabled",
+            ":enabled",
+            ":any-link",
+            ":link",
+        ];
+        const NTH: &[&str] = &[
+            ":nth-child(2)",
+            ":nth-child(odd)",
+            ":nth-child(even)",
+            ":nth-child(2n+1)",
+            ":nth-child(-n+2)",
+            ":nth-last-child(1)",
+            ":nth-of-type(2)",
+        ];
+
+        let mut s = String::new();
+        s.push_str(rng.pick(TYPES));
+        // 0-2 extra pieces on top of the type selector, each independently
+        // chosen - a compound like `li.item[href]:first-child` is ordinary
+        // CSS, so pieces are allowed to repeat or combine freely.
+        for _ in 0..(rng.next_u64() % 3) {
+            match rng.next_u64() % 5 {
+                0 => s.push_str(rng.pick(CLASSES)),
+                1 => s.push_str(rng.pick(IDS)),
+                2 => s.push_str(rng.pick(ATTRS)),
+                3 => s.push_str(rng.pick(PLAIN_PSEUDOS)),
+                _ => s.push_str(rng.pick(NTH)),
+            }
+        }
+        // A functional list-pseudo wraps a nested chain - bounded depth so
+        // generation itself terminates (this is generation, not the engine
+        // under test, so it does not need to prove anything about stack
+        // safety; that is `deeply_nested_is_does_not_grow_the_native_stack`'s
+        // job with a purpose-built input).
+        if depth < 3 && rng.next_u64() % 3 == 0 {
+            const LIST_PSEUDOS: &[&str] = &[":is(", ":where(", ":not(", ":has("];
+            s.push_str(rng.pick(LIST_PSEUDOS));
+            s.push_str(&random_chain(rng, depth + 1));
+            s.push(')');
+        }
+        s
+    }
+
+    /// A chain of 1-3 compounds joined by combinators - descendant, `>`,
+    /// `+`, `~` - the shapes `:has()`'s own combinator dispatch
+    /// (`Combinator::{Descendant,Child,NextSibling,SubsequentSibling}`)
+    /// distinguishes.
+    fn random_chain(rng: &mut Rng, depth: u32) -> String {
+        const COMBINATORS: &[&str] = &[" ", " > ", " + ", " ~ "];
+        let mut s = random_compound(rng, depth);
+        for _ in 0..(rng.next_u64() % 3) {
+            s.push_str(rng.pick(COMBINATORS));
+            s.push_str(&random_compound(rng, depth));
+        }
+        s
+    }
+
+    /// A full query: 1-2 comma-separated chains, matching what
+    /// `select_all`/`matches_any` actually take (`Lists`, not one chain).
+    fn random_selector(rng: &mut Rng) -> String {
+        let mut s = random_chain(rng, 0);
+        if rng.next_u64() % 3 == 0 {
+            s.push_str(", ");
+            s.push_str(&random_chain(rng, 0));
+        }
+        s
+    }
+
+    /// Phase 2's differential check, broadened past the fixed 44-selector
+    /// list above into randomly generated queries over a richer, more
+    /// deeply nested fixture - closer to "differential/fuzz scale" (the
+    /// plan's own wording for this item) than a fixed list can be, without
+    /// standing up a full `cargo-fuzz` harness (no Ruby entry point exists
+    /// yet to fuzz through - module doc). A fixed seed keeps a failure
+    /// reproducible: rerun with the printed seed to get the same query.
+    #[test]
+    fn agrees_with_the_old_engine_on_randomly_generated_selectors() {
+        use crate::lexbor::selectors as old_engine;
+
+        let doc = parsed(
+            br#"<!doctype html><html><body>
+                <main id="main" class="container Box">
+                    <ul>
+                        <li class="item first" data-n="1"><a href="/p/1">one</a></li>
+                        <li class="item" data-n="2"><a href="/p/2" rel="next">two</a></li>
+                        <li class="item" data-n="3"><a href="/p/3">three</a><span>x</span></li>
+                        <li class="item last" data-n="4"><span>four</span></li>
+                    </ul>
+                    <ul>
+                        <li class="item first" data-n="1"><a href="/p/5">five</a></li>
+                    </ul>
+                    <p class="lead" title="Hello World">intro</p>
+                    <p>body</p>
+                    <div class="empty"></div>
+                    <div><div><div class="item">deep</div></div></div>
+                    <input type="checkbox" checked>
+                    <input required>
+                    <input disabled>
+                </main>
+            </body></html>"#,
+        );
+
+        const ITERATIONS: u32 = 5000;
+        let mut rng = Rng(0x5EED_1DEA_u64);
+
+        for i in 0..ITERATIONS {
+            let sel = random_selector(&mut rng);
+
+            let old = {
+                let gvl = Gvl::exclusive();
+                // SAFETY: `doc` outlives the call, `root` is a live node of it.
+                let d = unsafe { doc.raw_doc().as_doc() };
+                let root = RawNode::from(d.as_node());
+                match old_engine::select_all(&gvl, root, sel.as_bytes()) {
+                    Ok(v) => v,
+                    // A generated shape the old engine's parser refuses (e.g.
+                    // an operator combination it is stricter about) is not
+                    // this port's concern to reproduce byte-for-byte; skip
+                    // rather than assert agreement on a rejected selector.
+                    Err(_) => continue,
+                }
+            };
+            let new: Vec<RawNode> = select_all(&doc, &sel)
+                .into_iter()
+                .map(|e| RawNode::from(e.node()))
+                .collect();
+
+            assert!(
+                new == old,
+                "iteration {i} (seed 0x5EED1DEA) mismatch for generated selector {sel:?}: \
+                 new has {} match(es), old has {}",
+                new.len(),
+                old.len()
+            );
+        }
+    }
+
     /// `select_first`/`matches_any` are entry points of their own (not just
     /// `select_all().first()`/`.is_empty()`), and from an arbitrary ELEMENT
     /// root - not only the document - which is where "descendants only, the

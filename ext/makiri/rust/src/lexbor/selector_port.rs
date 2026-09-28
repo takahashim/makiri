@@ -81,7 +81,7 @@
 
 #![forbid(unsafe_code)]
 
-use crate::lexbor::adapter::html::{HtmlElement, HtmlNode, NsId};
+use crate::lexbor::adapter::html::{HtmlElement, HtmlNode, NodeType, NsId};
 use crate::lexbor::css_parser::{
     AttrMatch, Combinator, FunctionArg, ListPseudo, Lists, PseudoClass, Selector, Simple,
 };
@@ -394,6 +394,13 @@ fn attribute_matches(
     }
 }
 
+/// The next/previous sibling that is an ELEMENT - for combinator dispatch
+/// (`+`, `~`, and the ancestor/parent climb) and `:nth-of-type`-family
+/// checks, where the CSS spec (and Lexbor's own structural matching) only
+/// ever considers actual elements. NOT for the plain `:nth-child`/
+/// `:first-child`/`:last-child`/`:only-child` family - see
+/// `next_position_sibling`/`prev_position_sibling` below for why those need
+/// a different filter.
 fn next_sibling_element(node: HtmlNode<'_>) -> Option<HtmlNode<'_>> {
     let mut cur = node.next();
     while let Some(n) = cur {
@@ -420,6 +427,45 @@ fn parent_element(node: HtmlNode<'_>) -> Option<HtmlNode<'_>> {
     node.parent().filter(|p| p.element().is_some())
 }
 
+/// Does `n` count as "a sibling" for the plain (no `of_type`, no `of S`)
+/// `:nth-child`/`:nth-last-child`/`:first-child`/`:last-child`/`:only-child`
+/// family? Lexbor's own rule (`SEL.c:2055-2080`'s loop condition, and
+/// `lxb_selectors_pseudo_class_first_child`/`last_child` the same way,
+/// §C-2/§D-1): everything except Text and Comment - NOT "is an element".
+/// A `<!doctype html>` (a `DocumentType` node, `<html>`'s own preceding
+/// "sibling" under the Document) or an HTML processing-instruction sibling
+/// counts here even though neither is an element - found by
+/// `agrees_with_the_old_engine_on_randomly_generated_selectors` generating
+/// `*:nth-child(2n+1)` and disagreeing with the old engine on `<html>`
+/// itself: this port's `prev_sibling_element`/`next_sibling_element`
+/// (element-only, correct for combinators and `of_type`/`of S`, WRONG here)
+/// skipped the doctype and undercounted its position by one.
+fn counts_toward_child_position(n: HtmlNode<'_>) -> bool {
+    !matches!(n.node_type(), NodeType::Text | NodeType::Comment)
+}
+
+fn next_position_sibling(node: HtmlNode<'_>) -> Option<HtmlNode<'_>> {
+    let mut cur = node.next();
+    while let Some(n) = cur {
+        if counts_toward_child_position(n) {
+            return Some(n);
+        }
+        cur = n.next();
+    }
+    None
+}
+
+fn prev_position_sibling(node: HtmlNode<'_>) -> Option<HtmlNode<'_>> {
+    let mut cur = node.prev();
+    while let Some(n) = cur {
+        if counts_toward_child_position(n) {
+            return Some(n);
+        }
+        cur = n.prev();
+    }
+    None
+}
+
 fn name_matches_type(a: HtmlNode<'_>, b: HtmlNode<'_>) -> bool {
     // §C-2 (`first_of_type` etc.): namespace-aware, unlike the type selector
     // itself (§B-1, name-only).
@@ -443,12 +489,16 @@ fn sibling_position(
     of_type: bool,
     budget: &Budget,
 ) -> Result<u64, WorkExceeded> {
+    // Element-only would agree for `of_type` (a non-element never satisfies
+    // `name_matches_type`) but is WRONG for the plain (`of_type == false`)
+    // case - see `counts_toward_child_position`'s doc. One walk serves both,
+    // since `same_type` already answers `false` for a non-element itself.
     let same_type = |n: HtmlNode<'_>| !of_type || name_matches_type(n, node);
     let mut pos: u64 = 1;
     let mut cur = if from_end {
-        next_sibling_element(node)
+        next_position_sibling(node)
     } else {
-        prev_sibling_element(node)
+        prev_position_sibling(node)
     };
     while let Some(n) = cur {
         budget.charge()?;
@@ -456,9 +506,9 @@ fn sibling_position(
             pos += 1;
         }
         cur = if from_end {
-            next_sibling_element(n)
+            next_position_sibling(n)
         } else {
-            prev_sibling_element(n)
+            prev_position_sibling(n)
         };
     }
     Ok(pos)
@@ -657,10 +707,14 @@ fn plain_pseudo_matches(
     budget: &Budget,
 ) -> Result<bool, WorkExceeded> {
     Ok(match pc {
-        PseudoClass::FirstChild => prev_sibling_element(node).is_none(),
-        PseudoClass::LastChild => next_sibling_element(node).is_none(),
+        // Not `prev_sibling_element`/`next_sibling_element` - see
+        // `counts_toward_child_position`'s doc; a preceding/following
+        // doctype or processing-instruction sibling disqualifies these, in
+        // Lexbor and so here.
+        PseudoClass::FirstChild => prev_position_sibling(node).is_none(),
+        PseudoClass::LastChild => next_position_sibling(node).is_none(),
         PseudoClass::OnlyChild => {
-            prev_sibling_element(node).is_none() && next_sibling_element(node).is_none()
+            prev_position_sibling(node).is_none() && next_position_sibling(node).is_none()
         }
         PseudoClass::Empty => is_empty(node),
         PseudoClass::Root => is_root(node),
@@ -806,7 +860,13 @@ fn has_forward(
         // bounds its cost instead).
         Combinator::Descendant => {
             for c in node.subtree().skip(1) {
-                if candidate_ok(c)? {
+                // Element-only, as `Combinator::Child` below already was -
+                // `Simple::Universal`'s own fix (its doc) makes this belt
+                // and suspenders rather than load-bearing, but it keeps
+                // `candidate_ok`'s budget charge (and a real compound check)
+                // from being spent on text/comment nodes a compound can
+                // never match anyway.
+                if c.element().is_some() && candidate_ok(c)? {
                     return Ok(true);
                 }
             }
@@ -897,7 +957,13 @@ fn check_simple<'p>(
     budget: &Budget,
 ) -> Result<SimpleCheck<'p>, WorkExceeded> {
     Ok(match sel.simple() {
-        Simple::Universal => SimpleCheck::Result(true),
+        // `*` matches an ELEMENT, never a text/comment/doctype/PI node -
+        // found by the same randomized differential test as
+        // `counts_toward_child_position`: `:has(*)` used `*` against every
+        // node `has_forward`'s Descendant search visits (see there), and an
+        // unconditional `true` here made a `<p>` with only text content
+        // wrongly "have" that text node as a `*`-matching descendant.
+        Simple::Universal => SimpleCheck::Result(node.element().is_some()),
         Simple::Type => SimpleCheck::Result(name_eq(node, sel.name())),
         Simple::Id => {
             let ci = document_is_quirks(node);
