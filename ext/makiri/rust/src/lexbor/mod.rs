@@ -31,6 +31,13 @@ pub mod contains_guard;
 pub(crate) mod css_tokens;
 /// HTML fragment parsing and import/fixup operations.
 pub mod fragment;
+/// Phase 1 spike, option (B)-as-port
+/// (notes/css_selectors_crate_migration_plan.ja.md §1.1): a CSS matcher
+/// structured as Lexbor's own `lxb_selectors_*` state machine is - an
+/// explicit heap work stack instead of native recursion - over the typed
+/// HTML adapter, reusing `css_parser`'s existing selector AST reader. Not
+/// wired into `Node#css`/`#at_css`/`#matches?` yet - see the module doc.
+pub mod selector_port;
 /// Selector traversal engine, including its Lexbor callbacks.
 pub mod selectors;
 /// Lexbor's HTML serialization callbacks and buffer traversal.

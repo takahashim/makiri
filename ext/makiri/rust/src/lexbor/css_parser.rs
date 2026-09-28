@@ -165,6 +165,30 @@ mod raw {
         l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_LAST_OF_TYPE;
     pub const ONLY_OF_TYPE: Pc =
         l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_ONLY_OF_TYPE;
+    // The rest are for `lexbor::selector_port` (HTML matching), not the XML
+    // lowering, which treats all of them as unsupported (`PseudoClass::Other`).
+    pub const ANY_LINK: Pc =
+        l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_ANY_LINK;
+    pub const LINK: Pc = l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_LINK;
+    pub const BLANK: Pc = l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_BLANK;
+    pub const CHECKED: Pc =
+        l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_CHECKED;
+    pub const DISABLED: Pc =
+        l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_DISABLED;
+    pub const ENABLED: Pc =
+        l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_ENABLED;
+    pub const OPTIONAL: Pc =
+        l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_OPTIONAL;
+    pub const REQUIRED: Pc =
+        l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_REQUIRED;
+    pub const READ_ONLY: Pc =
+        l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_READ_ONLY;
+    pub const READ_WRITE: Pc =
+        l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_READ_WRITE;
+    pub const ACTIVE: Pc =
+        l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_ACTIVE;
+    pub const FOCUS: Pc = l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_FOCUS;
+    pub const HOVER: Pc = l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_HOVER;
 
     type Pf = l::lxb_css_selector_pseudo_class_function_id_t;
     pub const NTH_CHILD: Pf =
@@ -286,8 +310,18 @@ pub struct Attribute<'p> {
     pub op: AttrMatch,
     /// Whether an `i` modifier was written: match the value ASCII
     /// case-insensitively. `s`, case-sensitive, is how values compare anyway,
-    /// so it reads as no modifier.
+    /// so it reads as no modifier - for the XML lowering, the sole consumer
+    /// when this was added, XML attribute values are always case-sensitive
+    /// regardless, so `s` and unset need no distinguishing there.
     pub case_insensitive: bool,
+    /// Whether an explicit `s` modifier was written, as opposed to no
+    /// modifier at all - a distinction `case_insensitive` alone cannot make
+    /// (both read `false`), needed by `lexbor::selector_port`'s HTML
+    /// case-insensitive-attribute-value table (§B-4/B-5 in
+    /// `notes/lexbor_selectors_c_semantics.ja.md`): an explicit `s` forces
+    /// case-sensitive even for a table attribute like `type`, but no
+    /// modifier at all defers to the table's default.
+    pub explicit_sensitive: bool,
     /// None for `[name]`, an existence test.
     pub value: Option<&'p [u8]>,
 }
@@ -303,16 +337,38 @@ pub enum PseudoClass {
     FirstOfType,
     LastOfType,
     OnlyOfType,
+    // The rest are for `lexbor::selector_port` (HTML matching) only; the XML
+    // lowering's exhaustive match (`css::lower::lower_pseudo_simple`) groups
+    // them with `Other` - unsupported, same as before this was added.
+    AnyLink,
+    Link,
+    Blank,
+    Checked,
+    Disabled,
+    Enabled,
+    Optional,
+    Required,
+    ReadOnly,
+    ReadWrite,
+    Active,
+    Focus,
+    Hover,
     Other,
 }
 
 /// `:nth-*(an+b [of S])`.
 #[derive(Clone, Copy)]
-pub struct Nth {
+pub struct Nth<'p> {
     pub a: c_long,
     pub b: c_long,
-    /// Whether an `of S` clause was written.
+    /// Whether an `of S` clause was written. The XML lowering only needs to
+    /// know that much (it refuses `of S` outright); `of_list` is the actual
+    /// clause, for `lexbor::selector_port`'s HTML matching.
     pub of: bool,
+    /// The `S` in `of S`, or `None` when no clause was written (same
+    /// condition as `of`, kept separate rather than folding `of` into
+    /// `of_list.is_some()` so the XML lowering's check reads as a plain bool).
+    pub of_list: Option<Lists<'p>>,
 }
 
 /// `:lexbor-contains(needle [i])`.
@@ -343,7 +399,7 @@ pub enum FunctionArg<'p> {
         from_end: bool,
         /// `:nth-*-of-type`: counted among same-type siblings.
         of_type: bool,
-        anb: Option<Nth>,
+        anb: Option<Nth<'p>>,
     },
     /// `:not`, `:is`, `:where` and `:has`.
     Selectors {
@@ -435,6 +491,7 @@ impl<'p> Selector<'p> {
                 _ => AttrMatch::Other,
             },
             case_insensitive: at.modifier != raw::MOD_UNSET && at.modifier != raw::MOD_S,
+            explicit_sensitive: at.modifier == raw::MOD_S,
             // SAFETY: as in `name`.
             value: unsafe { lexbor_str(&at.value) },
         }
@@ -452,6 +509,19 @@ impl<'p> Selector<'p> {
             raw::FIRST_OF_TYPE => PseudoClass::FirstOfType,
             raw::LAST_OF_TYPE => PseudoClass::LastOfType,
             raw::ONLY_OF_TYPE => PseudoClass::OnlyOfType,
+            raw::ANY_LINK => PseudoClass::AnyLink,
+            raw::LINK => PseudoClass::Link,
+            raw::BLANK => PseudoClass::Blank,
+            raw::CHECKED => PseudoClass::Checked,
+            raw::DISABLED => PseudoClass::Disabled,
+            raw::ENABLED => PseudoClass::Enabled,
+            raw::OPTIONAL => PseudoClass::Optional,
+            raw::REQUIRED => PseudoClass::Required,
+            raw::READ_ONLY => PseudoClass::ReadOnly,
+            raw::READ_WRITE => PseudoClass::ReadWrite,
+            raw::ACTIVE => PseudoClass::Active,
+            raw::FOCUS => PseudoClass::Focus,
+            raw::HOVER => PseudoClass::Hover,
             _ => PseudoClass::Other,
         }
     }
@@ -473,6 +543,10 @@ impl<'p> Selector<'p> {
                     a: n.anb.a,
                     b: n.anb.b,
                     of: !n.of.is_null(),
+                    // SAFETY: as in `name`/other `arena` calls - the list, if
+                    // any, lives in the same arena.
+                    of_list: unsafe { arena(n.of as *const SelectorList) }
+                        .map(|r| Lists(Some(List(r)))),
                 }),
             }
         };

@@ -301,7 +301,7 @@ fn only(b: &Build, set: Siblings) -> Built {
 
 /// The `:nth-*(an+b)` match condition over the position among `set` along
 /// `axis`.
-fn nth(b: &Build, axis: Axis, set: Siblings, anb: Nth) -> Built {
+fn nth(b: &Build, axis: Axis, set: Siblings, anb: Nth<'_>) -> Built {
     /* `c_long` from Lexbor's `lxb_css_syntax_anb_t` - 64-bit on LP64, 32-bit on
      * LLP64 - so the `as f64` below is a real conversion on either. */
     let (a, bb) = (anb.a as f64, anb.b as f64);
@@ -365,7 +365,22 @@ fn lower_pseudo_simple(b: &Build, pc: PseudoClass) -> Built {
         ),
         /* The document element, not merely a parentless one - see [`root_test`]. */
         PseudoClass::Root => root_test(b),
-        PseudoClass::Other => Err(b.fail(ErrorKind::Syntax, "unsupported CSS pseudo-class")),
+        /* Added to `PseudoClass` for `lexbor::selector_port` (HTML matching);
+         * the XML lowering doesn't implement any of them, same as before. */
+        PseudoClass::AnyLink
+        | PseudoClass::Link
+        | PseudoClass::Blank
+        | PseudoClass::Checked
+        | PseudoClass::Disabled
+        | PseudoClass::Enabled
+        | PseudoClass::Optional
+        | PseudoClass::Required
+        | PseudoClass::ReadOnly
+        | PseudoClass::ReadWrite
+        | PseudoClass::Active
+        | PseudoClass::Focus
+        | PseudoClass::Hover
+        | PseudoClass::Other => Err(b.fail(ErrorKind::Syntax, "unsupported CSS pseudo-class")),
     }
 }
 
