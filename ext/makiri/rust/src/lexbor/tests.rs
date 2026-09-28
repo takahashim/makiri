@@ -525,6 +525,7 @@ mod selector_port_spike {
     use crate::lexbor::css_parser;
     use crate::lexbor::selector_port::{
         matches_any, select_all as port_select_all, select_first as port_select_first,
+        MAX_COMPOUNDS,
     };
     use crate::text::VerifiedText;
 
@@ -791,6 +792,60 @@ mod selector_port_spike {
         let depth = 500_000;
         let nested = format!("{}a{}", ":is(".repeat(depth), ")".repeat(depth));
         assert_eq!(texts(&doc, &nested), ["x"]);
+    }
+
+    /// `has_forward` is the one place in this file that DOES use native Rust
+    /// recursion (module doc), bounded by `MAX_COMPOUNDS` (64) rather than by
+    /// stack-safety - the plan's remaining open item is confirming that bound
+    /// is actually safe on Ruby's smallest documented `Fiber` machine stack
+    /// (`RUBY_FIBER_MACHINE_STACK_SIZE`, as small as 128 KiB - see
+    /// `crate::stack`'s module doc), not just "negligible" by inspection.
+    ///
+    /// Measured directly: a thread sized to that 128 KiB budget (smaller than
+    /// what any real Fiber call would have left after Ruby's, magnus's and
+    /// `bridge::gvl`'s own frames - this is a lower bound on the margin, not
+    /// the exact in-Ruby number, since the port is not wired into `Node#css`
+    /// yet to measure that directly) runs a `:has()` argument built to force
+    /// EXACTLY 64 levels of `has_forward` - a distinct class per nesting
+    /// level, so a short-circuit on an early mismatch cannot cut the
+    /// recursion short. A real stack overflow kills the thread outright
+    /// (`join()` returns `Err`, not a wrong `bool`), so this either times out
+    /// on the join, or answers `Ok(true)`.
+    #[test]
+    fn has_forward_at_max_compounds_fits_the_smallest_fiber_stack() {
+        const FIBER_SIZED_STACK: usize = 128 * 1024;
+
+        let handle = std::thread::Builder::new()
+            .stack_size(FIBER_SIZED_STACK)
+            .spawn(move || {
+                let mut html = String::from("<!doctype html><html><body><div id=root>");
+                let mut chain = String::new();
+                for i in 0..MAX_COMPOUNDS {
+                    html.push_str(&format!("<div class=c{i}>"));
+                    if i > 0 {
+                        chain.push(' ');
+                    }
+                    chain.push_str(&format!(".c{i}"));
+                }
+                for _ in 0..MAX_COMPOUNDS {
+                    html.push_str("</div>");
+                }
+                html.push_str("</div></body></html>");
+
+                let doc = parsed(html.as_bytes());
+                let target = root(&doc)
+                    .subtree()
+                    .filter_map(HtmlNode::element)
+                    .find(|e| e.qualified_name() == b"div")
+                    .expect("the outer #root div");
+                matches_selector(target, &format!("#root:has({chain})"))
+            })
+            .expect("spawn a Fiber-sized-stack thread");
+
+        assert!(
+            handle.join().expect("must not overflow a 128 KiB stack"),
+            "a 64-level :has() argument should match its exactly-64-deep fixture"
+        );
     }
 
     /// Phase 2's differential check: the port and the OLD Lexbor-callback
