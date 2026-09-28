@@ -51,7 +51,7 @@ fn query_error(err: QueryFailure) -> Error {
 
 /// As [`query_error`], for the entry points that cannot overflow the result
 /// set ([`selector_port::select_first`], [`selector_port::matches_any`] -
-/// one node each, never a `Vec`) and so only ever fail the other two ways.
+/// one node each, never a `Vec`) and so only ever fail the other way.
 ///
 /// The message for `Unsupported` (the column combinator `||`, or
 /// `:lexbor-contains()`) matches the OLD engine's own wording for the same

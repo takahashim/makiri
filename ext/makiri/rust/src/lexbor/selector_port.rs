@@ -61,25 +61,33 @@
 //! call-stack growth - verified at 500,000 levels in
 //! `lexbor::tests::selector_port_spike`.
 //!
-//! `:has()`'s own compound-by-compound forward search (§A-4, `has_matches`)
-//! DOES use ordinary Rust recursion, unlike everything else here - and that
-//! is a deliberate, bounded exception, not an oversight: the recursion depth
-//! there is bounded by `MAX_COMPOUNDS` (64, a fixed complexity cap already
-//! enforced by `collect_compounds`), never by attacker-controlled selector
-//! NESTING the way `:is()` is. **Measured, not just argued**: a `:has()`
-//! argument built to force exactly 64 levels of `has_forward` (a distinct
-//! class per level, so no early mismatch can cut it short) still answers
-//! correctly on a thread given only 64 KiB of stack, and only overflows at
-//! 32 KiB - a >=2x margin below Ruby's smallest documented `Fiber` machine
-//! stack (`RUBY_FIBER_MACHINE_STACK_SIZE`, as small as 128 KiB - see
-//! `crate::stack`'s module doc), and in an unoptimized DEBUG build, which
-//! uses far more stack per frame than the release build this ships as
-//! (`lexbor::tests::selector_port_spike::has_forward_at_max_compounds_fits_the_smallest_fiber_stack`).
-//! That test cannot exercise being called from PARTWAY into a Fiber's own
-//! stack (this port has no Ruby entry point yet to do that through) - the
-//! number is a lower bound on the margin, not the in-Ruby one - but it
-//! answers what Phase 1 could only argue: 64 native frames really is
-//! negligible, not merely assumed to be.
+//! `:has()`'s own forward search (§A-4) is heap-based too, for the same
+//! reason and the same way: `Frame::HasStep`/`HasCursor` walk candidates and
+//! `:has()`-inside-`:has()` nesting without ever making a native Rust call
+//! that itself recurses. This was NOT the original design - an earlier
+//! version answered `:has()` with ordinary Rust recursion (`has_forward`),
+//! reasoning that `MAX_COMPOUNDS` (64, a fixed complexity cap already
+//! enforced by `collect_compounds`) bounded it safely. That bound was real
+//! for ONE `:has()` chain's own compound-by-compound depth, but said nothing
+//! about `:has()` NESTED inside another `:has()`'s argument: `check_simple`'s
+//! `Has` arm called `has_matches` EAGERLY (unlike `:is`/`:where`/`:not`,
+//! which already deferred to this file's heap stack), so each nesting level
+//! added a fresh native call chain with its OWN 64-deep budget, unbounded by
+//! nesting depth - confirmed as a real, reachable crash: `:has(` × 300 `div`
+//! `)` × 300 against a 302-deep document, inside a `Fiber` given only
+//! `RUBY_FIBER_MACHINE_STACK_SIZE`'s documented minimum (128 KiB), crashed
+//! the WHOLE PROCESS with an uncaught `SystemStackError` that escaped every
+//! `rescue`. Lexbor's own C engine never had this problem: `:has()`/`:is()`
+//! nesting is handled by `lxb_selectors_nested_t`, a heap structure, not C
+//! recursion (`notes/css_selectors_crate_migration_plan.ja.md` §1.1) - the
+//! fix here is bringing `:has()` in line with what Lexbor (and this file's
+//! own `:is()`/`:where()`/`:not()`) already do, not inventing a new
+//! technique. `MAX_COMPOUNDS` still bounds one `:has()` chain's length (a
+//! sanity cap, not a stack-safety one - see its doc), but nesting depth is
+//! now unbounded the same way `:is()` nesting is, verified the same way (a
+//! stress test at a depth far beyond the crash threshold, on a
+//! `RUBY_FIBER_MACHINE_STACK_SIZE`-sized thread stack, in
+//! `lexbor::tests::selector_port_spike`).
 
 #![forbid(unsafe_code)]
 
@@ -93,9 +101,10 @@ use crate::limits::NODE_SET_MAX;
 
 /// A complexity bound on compounds per chain, mirroring `css::MAX_COMPOUNDS`.
 ///
-/// Not itself a stack-safety mechanism (this design needs none for nesting) -
-/// just a sanity cap so a single compound chain can't grow unboundedly, AND
-/// (see the module doc) what makes `:has()`'s bounded recursion safe.
+/// Not a stack-safety mechanism (this design needs none, for `:has()` nesting
+/// or any other - see the module doc) - just a sanity cap so a single
+/// compound chain (either the main match or one `:has()` alternative) can't
+/// grow unboundedly.
 pub(crate) const MAX_COMPOUNDS: usize = 64;
 
 /// The per-query work budget's default cap - the count [`Budget::charge`]
@@ -108,15 +117,15 @@ pub(crate) const MAX_COMPOUNDS: usize = 64;
 const DEFAULT_WORK_BUDGET: u64 = 10 * 1000 * 1000;
 
 /// One top-level call's work budget: every step that can cost MORE than the
-/// input document/selector's own size bounds already (concretely: each node
-/// [`has_forward`]'s own search visits, and each frame [`run`]'s trampoline
-/// pops) charges it once. Exceeding it is [`MatchFailure::WorkExceeded`] - a
-/// hard stop propagated all the way back to the caller, never a silent
-/// `false` for just the one `:has()` that happened to hit it: a `:has()`
-/// inside a larger compound answering `false` because ITS OWN search ran out
-/// of budget would be a wrong verdict for that compound, not merely an
-/// incomplete one, and CLAUDE.md's fail-closed rule is "raise instead" of
-/// that.
+/// input document/selector's own size bounds already (concretely: each
+/// candidate [`Frame::HasStep`]'s search visits, and each frame [`run`]'s
+/// trampoline pops) charges it once. Exceeding it is
+/// [`MatchFailure::WorkExceeded`] - a hard stop propagated all the way back
+/// to the caller, never a silent `false` for just the one `:has()` that
+/// happened to hit it: a `:has()` inside a larger compound answering `false`
+/// because ITS OWN search ran out of budget would be a wrong verdict for that
+/// compound, not merely an incomplete one, and CLAUDE.md's fail-closed rule
+/// is "raise instead" of that.
 ///
 /// A plain `Cell`, not `xpath::limits::Budget`'s `Rc<RefCell<Error>>` sink:
 /// the Ruby glue (`glue::html_node::css`) only needs to know WHICH failure
@@ -663,9 +672,10 @@ fn list_matches(
 /// Does `node` satisfy the WHOLE (possibly multi-compound) chain starting at
 /// `first`, matched right-to-left as an ordinary (non-`:has`) selector would
 /// be? This is [`matches`] without the `HtmlElement` wrapper, reused by
-/// `of S` and by `:has()`'s per-compound checks (`has_matches`) so both go
-/// through the exact same `:is`/`:where`/`:not`-nesting-safe machinery
-/// `matches` does, rather than a second, weaker implementation.
+/// [`list_matches`] (so `of S`, `select_all`/`select_first`, and
+/// `matches_any` all go through the exact same `:is`/`:where`/`:not`/`:has`-
+/// nesting-safe machinery `matches` does, rather than a second, weaker
+/// implementation).
 fn matches_one_compound_chain(
     first: Selector<'_>,
     node: HtmlNode<'_>,
@@ -893,147 +903,91 @@ fn nth_of_s_matches(
 }
 
 /* ------------------------------------------------------------------ *
- * :has() - §A-4: forward search, bounded recursion (module doc)      *
+ * :has() - §A-4: heap-based forward search (module doc)              *
  * ------------------------------------------------------------------ */
 
-/// §A-4: does ANY alternative of `lists` (`:has(a, b)` = OR) match, relative
-/// to `node`?
-fn has_matches(
-    lists: Lists<'_>,
-    node: HtmlNode<'_>,
-    budget: &Budget,
-) -> Result<bool, MatchFailure> {
-    for list in lists {
-        if let Some(first) = list.first() {
-            if has_matches_one(first, node, budget)? {
-                return Ok(true);
+/// A resumable position in `:has()`'s forward search for ONE compound step -
+/// the heap state [`Frame::HasStep`] carries so a `:has()` argument's
+/// candidate search (potentially many candidates, unlike the main matcher's
+/// single-path ancestor/sibling climbs) never recurses natively, whatever the
+/// combinator - the same property `Frame`/`Cont` already give `:is`/`:where`/
+/// `:not` nesting (module doc). Built once per compound step
+/// ([`HasCursor::start`]) from the node the search starts FROM, then
+/// [`HasCursor::next`] repeatedly for each candidate - same candidates, same
+/// order, same element-only filtering as Lexbor's own forward search
+/// (§A-4)/this port's earlier native-recursive `has_forward`.
+enum HasCursor<'doc> {
+    /// The combinator can never find anything (`Close` - defensive, per
+    /// `collect_compounds`'s own doc: a compound boundary is always a real
+    /// structural combinator, so this is not a real case in practice).
+    Empty,
+    /// `Combinator::Descendant`: the whole subtree, via
+    /// [`HtmlNode::preorder_next`] directly (not [`HtmlNode::subtree`], which
+    /// bundles the `.skip(1)` this cursor needs to resume mid-walk instead
+    /// of re-deriving on every step).
+    Subtree {
+        current: HtmlNode<'doc>,
+        root: HtmlNode<'doc>,
+    },
+    /// `Combinator::Child`: the next child to try.
+    Child(Option<HtmlNode<'doc>>),
+    /// `Combinator::NextSibling`: exactly one candidate, taken then spent.
+    NextSibling(Option<HtmlNode<'doc>>),
+    /// `Combinator::SubsequentSibling`: the next following sibling to try.
+    SubsequentSibling(Option<HtmlNode<'doc>>),
+}
+
+impl<'doc> HasCursor<'doc> {
+    /// Start searching for `comb`'s candidates from `from`. `Err(Unsupported)`
+    /// for the column combinator `||`, exactly as the original `has_forward`
+    /// raised it - Lexbor's own traversal cannot run it either.
+    fn start(comb: Combinator, from: HtmlNode<'doc>) -> Result<Self, MatchFailure> {
+        Ok(match comb {
+            Combinator::Descendant => HasCursor::Subtree {
+                current: from,
+                root: from,
+            },
+            Combinator::Child => HasCursor::Child(from.first_child()),
+            Combinator::NextSibling => HasCursor::NextSibling(next_sibling_element(from)),
+            Combinator::SubsequentSibling => {
+                HasCursor::SubsequentSibling(next_sibling_element(from))
+            }
+            Combinator::Close => HasCursor::Empty,
+            Combinator::Other => return Err(MatchFailure::Unsupported),
+        })
+    }
+
+    /// The next ELEMENT candidate, or `None` once the search is exhausted -
+    /// `run`'s own per-frame-pop charge (its doc) is what bills `budget` for
+    /// each one, exactly as the original `has_forward`'s `candidate_ok`
+    /// closure charged once per candidate visited.
+    fn next(&mut self) -> Option<HtmlNode<'doc>> {
+        match self {
+            HasCursor::Empty => None,
+            HasCursor::Subtree { current, root } => {
+                while let Some(n) = current.preorder_next(*root) {
+                    *current = n;
+                    if n.element().is_some() {
+                        return Some(n);
+                    }
+                }
+                None
+            }
+            HasCursor::Child(cur) => loop {
+                let n = (*cur)?;
+                *cur = n.next();
+                if n.element().is_some() {
+                    return Some(n);
+                }
+            },
+            HasCursor::NextSibling(cur) => cur.take(),
+            HasCursor::SubsequentSibling(cur) => {
+                let n = cur.take()?;
+                *cur = next_sibling_element(n);
+                Some(n)
             }
         }
     }
-    Ok(false)
-}
-
-/// One `:has()` alternative: `first` is the chain's ANCHOR (leftmost, as
-/// written), whose OWN combinator connects it to `node` (Lexbor sets this to
-/// Descendant by default when no leading combinator was written -
-/// `notes/lexbor_selectors_c_semantics.ja.md` §A-4). Bounded recursion over
-/// `MAX_COMPOUNDS` compounds - see the module doc for why that's safe here.
-fn has_matches_one(
-    first: Selector<'_>,
-    node: HtmlNode<'_>,
-    budget: &Budget,
-) -> Result<bool, MatchFailure> {
-    let Some(compounds) = collect_compounds(Some(first)) else {
-        return Ok(false);
-    };
-    has_forward(&compounds, 0, node, budget)
-}
-
-/// `:has()`'s own search, over EVERY candidate `comb` reaches from `node` -
-/// the one place a `:has()` argument's cost can multiply per candidate
-/// element of a broader query, rather than being bounded by the input's own
-/// size the way everything else here is (module doc, `Budget`'s doc). Every
-/// candidate visited - matched or not - charges `budget` once, and a charge
-/// failure aborts the search immediately rather than answering as if no
-/// candidate had matched.
-fn has_forward(
-    chain: &[Compound<'_>],
-    idx: usize,
-    node: HtmlNode<'_>,
-    budget: &Budget,
-) -> Result<bool, MatchFailure> {
-    let compound = chain[idx];
-    let is_last = idx + 1 == chain.len();
-    let candidate_ok = |c: HtmlNode<'_>| -> Result<bool, MatchFailure> {
-        budget.charge()?;
-        Ok(matches_compound_here(compound, c, budget)?
-            && (is_last || has_forward(chain, idx + 1, c, budget)?))
-    };
-    match compound.comb {
-        // The whole subtree - `HtmlNode::subtree`'s own doc: "climbs by
-        // parent links rather than recursing", so an adversarially deep OR
-        // wide document cannot exhaust the stack here either (`budget`
-        // bounds its cost instead).
-        Combinator::Descendant => {
-            for c in node.subtree().skip(1) {
-                // Element-only, as `Combinator::Child` below already was -
-                // `Simple::Universal`'s own fix (its doc) makes this belt
-                // and suspenders rather than load-bearing, but it keeps
-                // `candidate_ok`'s budget charge (and a real compound check)
-                // from being spent on text/comment nodes a compound can
-                // never match anyway.
-                if c.element().is_some() && candidate_ok(c)? {
-                    return Ok(true);
-                }
-            }
-            Ok(false)
-        }
-        Combinator::Child => {
-            let mut cur = node.first_child();
-            while let Some(c) = cur {
-                if c.element().is_some() && candidate_ok(c)? {
-                    return Ok(true);
-                }
-                cur = c.next();
-            }
-            Ok(false)
-        }
-        Combinator::NextSibling => match next_sibling_element(node) {
-            Some(c) => candidate_ok(c),
-            None => Ok(false),
-        },
-        Combinator::SubsequentSibling => {
-            let mut cur = next_sibling_element(node);
-            while let Some(s) = cur {
-                if candidate_ok(s)? {
-                    return Ok(true);
-                }
-                cur = next_sibling_element(s);
-            }
-            Ok(false)
-        }
-        // `Close` never actually reaches a compound BOUNDARY combinator -
-        // `collect_compounds` only starts a new `Compound` at a real
-        // structural combinator - so this is defensive, not a real case.
-        Combinator::Close => Ok(false),
-        // The column combinator `||`: Lexbor's OWN traversal cannot run it
-        // either (`MatchFailure::Unsupported`'s doc) - raised, not answered
-        // as a `:has()` that simply found nothing.
-        Combinator::Other => Err(MatchFailure::Unsupported),
-    }
-}
-
-/// A single compound (no further leftward chain) against `c`, including any
-/// `:is`/`:where`/`:not` it carries - via [`matches_one_compound_chain`], so
-/// `:has(:is(a))`-style nesting inside a `:has()` argument's compound is
-/// resolved through the same nesting-safe machine as everywhere else.
-fn matches_compound_here(
-    compound: Compound<'_>,
-    c: HtmlNode<'_>,
-    budget: &Budget,
-) -> Result<bool, MatchFailure> {
-    // Deliberately NOT `matches_one_compound_chain(compound.first, c)`: that
-    // re-derives the chain via `collect_compounds`, which walks PAST this
-    // one compound to whatever the ORIGINAL selector chained after it (e.g.
-    // for `:has(section > p.x)`, `compound` is "section" alone, but
-    // `compound.first.next()` is "p.x" via a `Child` combinator - re-parsing
-    // from there would ask "is `c` a `p.x` whose parent is `section`",
-    // exactly the wrong question `has_forward` already answers one level up).
-    // Wrapping `compound` in a length-1 chain checks ONLY its own simple
-    // selectors (including any `:is`/`:where`/`:not` it carries, still fully
-    // nesting-safe via `run`), never following `.first.next()`.
-    run(
-        vec![Frame::EvalCompound {
-            chain: Rc::from([Compound {
-                first: compound.first,
-                comb: Combinator::Close,
-            }]),
-            idx: 0,
-            node: c,
-            k: Cont::Root,
-        }],
-        budget,
-    )
 }
 
 /* ------------------------------------------------------------------ *
@@ -1052,6 +1006,14 @@ enum SimpleCheck<'p> {
         lists: Lists<'p>,
         rest: Option<Selector<'p>>,
     },
+    /// `:has()`: deferred to a heap-based forward search FROM `node` (see
+    /// `Frame::HasStep`'s doc) - kept distinct from `Defer` because `:has()`'s
+    /// alternatives are resolved by SEARCHING from `node`, not by matching AT
+    /// `node` the way `:is`/`:where`/`:not`'s `Defer` alternatives are.
+    Has {
+        lists: Lists<'p>,
+        rest: Option<Selector<'p>>,
+    },
 }
 
 fn check_simple<'p>(
@@ -1063,9 +1025,9 @@ fn check_simple<'p>(
         // `*` matches an ELEMENT, never a text/comment/doctype/PI node -
         // found by the same randomized differential test as
         // `counts_toward_child_position`: `:has(*)` used `*` against every
-        // node `has_forward`'s Descendant search visits (see there), and an
-        // unconditional `true` here made a `<p>` with only text content
-        // wrongly "have" that text node as a `*`-matching descendant.
+        // node a `:has()` Descendant search visits, and an unconditional
+        // `true` here made a `<p>` with only text content wrongly "have"
+        // that text node as a `*`-matching descendant.
         Simple::Universal => SimpleCheck::Result(node.element().is_some()),
         Simple::Type => SimpleCheck::Result(name_eq(node, sel.name())),
         Simple::Id => {
@@ -1114,7 +1076,12 @@ fn check_simple<'p>(
         Simple::PseudoClassFunction(FunctionArg::Selectors {
             pseudo: ListPseudo::Has,
             lists,
-        }) => SimpleCheck::Result(has_matches(lists, node, budget)?),
+        }) => SimpleCheck::Has {
+            lists,
+            // `check_from` (not this function) knows the compound's chain
+            // and fills the real value in.
+            rest: None,
+        },
         Simple::PseudoClassFunction(FunctionArg::Selectors { pseudo, lists }) => {
             SimpleCheck::Defer {
                 negate: pseudo == ListPseudo::Not,
@@ -1164,6 +1131,9 @@ fn check_from<'p>(
                     rest: next,
                 });
             }
+            SimpleCheck::Has { lists, .. } => {
+                return Ok(SimpleCheck::Has { lists, rest: next });
+            }
             SimpleCheck::Result(true) => match next {
                 Some(n) => sel = n,
                 None => return Ok(SimpleCheck::Result(true)),
@@ -1205,6 +1175,16 @@ enum Frame<'p, 'doc> {
     },
     /// A sub-computation finished with `bool`; propagate it to `k`.
     Deliver(bool, Cont<'p, 'doc>),
+    /// `:has()`'s forward search: pull the next candidate from `cursor` and
+    /// check `chain[idx]`'s own compound against it, or - once `cursor` is
+    /// exhausted - report the whole search as false to `k`. See
+    /// [`HasCursor`]'s doc.
+    HasStep {
+        chain: Chain<'p>,
+        idx: usize,
+        cursor: HasCursor<'doc>,
+        k: Cont<'p, 'doc>,
+    },
 }
 
 enum Cont<'p, 'doc> {
@@ -1245,6 +1225,42 @@ enum Cont<'p, 'doc> {
         lists: Lists<'p>,
         node: HtmlNode<'doc>,
         negate: bool,
+        k: Box<Cont<'p, 'doc>>,
+    },
+    /// A `:has()` search candidate for `chain[idx]` just had its OWN compound
+    /// checked (via [`single_compound_frame`]); on success, either the
+    /// `:has()` succeeds (`idx` was the chain's last compound) or the search
+    /// descends to `chain[idx + 1]` FROM this candidate (a fresh
+    /// [`Frame::HasStep`], with [`Cont::HasBacktrack`] as ITS `k` so a
+    /// failure down there resumes `cursor` here); on failure, resume `cursor`
+    /// directly for the next candidate at this SAME level. Never a native
+    /// call either way - this is what replaces `has_forward`'s own
+    /// compound-by-compound recursion (module doc).
+    HasCandidateChecked {
+        chain: Chain<'p>,
+        idx: usize,
+        cursor: HasCursor<'doc>,
+        candidate: HtmlNode<'doc>,
+        k: Box<Cont<'p, 'doc>>,
+    },
+    /// The descent into `chain[idx + 1]` (from a candidate that matched
+    /// `chain[idx]`) just concluded; on success the whole `:has()`
+    /// alternative succeeds, on failure resume `cursor` - the OUTER level's
+    /// remaining candidates for `chain[idx]` - exactly the backtrack
+    /// `has_forward`'s own recursion return value used to drive natively.
+    HasBacktrack {
+        chain: Chain<'p>,
+        idx: usize,
+        cursor: HasCursor<'doc>,
+        k: Box<Cont<'p, 'doc>>,
+    },
+    /// One `:has()` alternative's search (`:has(a, b)` = OR) just concluded;
+    /// on failure, try the next alternative ([`try_has_alternative`]) -
+    /// `:has()` has no `:not`-style negation at this level, unlike
+    /// `AlternativeRetry`.
+    HasAlternativeRetry {
+        lists: Lists<'p>,
+        node: HtmlNode<'doc>,
         k: Box<Cont<'p, 'doc>>,
     },
 }
@@ -1359,6 +1375,77 @@ fn try_alternative<'p, 'doc>(
     }
 }
 
+/// A [`Frame::EvalCompound`] checking ONLY `compound`'s own simple selectors
+/// (never anything chained after it) against `node`, delivering into `k` -
+/// the building block [`Frame::HasStep`]'s handling uses to check one
+/// `:has()` chain compound against one candidate, reusing the exact same
+/// simple-selector + nested-`:is`/`:where`/`:not`/`:has` resolution machinery
+/// every other compound check here already goes through.
+///
+/// Deliberately NOT wrapping `compound.first` via `collect_compounds`/
+/// [`matches_one_compound_chain`]: that would walk PAST this one compound to
+/// whatever the ORIGINAL selector chained after it (e.g. for
+/// `:has(section > p.x)`, `compound` is "section" alone, but
+/// `compound.first.next()` is "p.x" via a `Child` combinator - re-deriving
+/// from there would ask "is `node` a `p.x` whose parent is `section`", the
+/// wrong question - `Frame::HasStep`'s own `idx` stepping already answers one
+/// level up). Wrapping `compound` in a length-1 chain (`comb: Close`, as
+/// `idx == 0` never reads it - see `advance`) checks ONLY its own simple
+/// selectors.
+fn single_compound_frame<'p, 'doc>(
+    compound: Compound<'p>,
+    node: HtmlNode<'doc>,
+    k: Cont<'p, 'doc>,
+) -> Frame<'p, 'doc> {
+    Frame::EvalCompound {
+        chain: Rc::from([Compound {
+            first: compound.first,
+            comb: Combinator::Close,
+        }]),
+        idx: 0,
+        node,
+        k,
+    }
+}
+
+/// Try `:has()`'s comma-separated alternatives (`:has(a, b)` = OR) in order,
+/// each a FORWARD SEARCH from `node` - unlike [`try_alternative`]'s `:is`/
+/// `:where`/`:not` alternatives, which match AT `node` itself. Heap-based
+/// throughout (module doc): starting a search can only fail on the column
+/// combinator (`Combinator::Other`, [`HasCursor::start`]), propagated
+/// immediately since nothing about THIS alternative has been pushed onto
+/// `stack` yet for it to unwind through.
+fn try_has_alternative<'p, 'doc>(
+    stack: &mut Vec<Frame<'p, 'doc>>,
+    mut lists: Lists<'p>,
+    node: HtmlNode<'doc>,
+    k: Cont<'p, 'doc>,
+) -> Result<(), MatchFailure> {
+    loop {
+        let Some(list) = lists.next() else {
+            // Out of alternatives: :has() found nothing.
+            stack.push(Frame::Deliver(false, k));
+            return Ok(());
+        };
+        let Some(chain) = collect_compounds(list.first()) else {
+            // An empty or over-complex alternative never matches; try the rest.
+            continue;
+        };
+        let cursor = HasCursor::start(chain[0].comb, node)?;
+        stack.push(Frame::HasStep {
+            chain,
+            idx: 0,
+            cursor,
+            k: Cont::HasAlternativeRetry {
+                lists,
+                node,
+                k: boxed(k),
+            },
+        });
+        return Ok(());
+    }
+}
+
 /// Run the machine to completion. `stack` starts with exactly one frame; the
 /// loop is the WHOLE control flow - no Rust-level recursion anywhere here,
 /// regardless of how deeply the selector nests. Charges `budget` once per
@@ -1394,6 +1481,18 @@ fn run(mut stack: Vec<Frame<'_, '_>>, budget: &Budget) -> Result<bool, MatchFail
                         k: boxed(k),
                     },
                 }),
+                SimpleCheck::Has { lists, rest } => try_has_alternative(
+                    &mut stack,
+                    lists,
+                    node,
+                    Cont::CompoundRest {
+                        rest,
+                        chain,
+                        idx,
+                        node,
+                        k: boxed(k),
+                    },
+                )?,
             },
             Frame::TryAlternatives {
                 lists,
@@ -1401,6 +1500,25 @@ fn run(mut stack: Vec<Frame<'_, '_>>, budget: &Budget) -> Result<bool, MatchFail
                 negate,
                 k,
             } => try_alternative(&mut stack, lists, node, negate, k),
+            Frame::HasStep {
+                chain,
+                idx,
+                mut cursor,
+                k,
+            } => match cursor.next() {
+                None => stack.push(Frame::Deliver(false, k)),
+                Some(candidate) => stack.push(single_compound_frame(
+                    chain[idx],
+                    candidate,
+                    Cont::HasCandidateChecked {
+                        chain,
+                        idx,
+                        cursor,
+                        candidate,
+                        k: boxed(k),
+                    },
+                )),
+            },
             Frame::Deliver(result, cont) => match cont {
                 Cont::Root => answer = result,
                 Cont::CompoundRest {
@@ -1436,6 +1554,20 @@ fn run(mut stack: Vec<Frame<'_, '_>>, budget: &Budget) -> Result<bool, MatchFail
                                             k,
                                         },
                                     });
+                                }
+                                SimpleCheck::Has { lists, rest } => {
+                                    try_has_alternative(
+                                        &mut stack,
+                                        lists,
+                                        node,
+                                        Cont::CompoundRest {
+                                            rest,
+                                            chain,
+                                            idx,
+                                            node,
+                                            k,
+                                        },
+                                    )?;
                                 }
                             },
                         }
@@ -1505,6 +1637,72 @@ fn run(mut stack: Vec<Frame<'_, '_>>, budget: &Budget) -> Result<bool, MatchFail
                         stack.push(Frame::Deliver(!negate, *k));
                     } else {
                         try_alternative(&mut stack, lists, node, negate, *k);
+                    }
+                }
+                Cont::HasCandidateChecked {
+                    chain,
+                    idx,
+                    cursor,
+                    candidate,
+                    k,
+                } => {
+                    if result {
+                        if idx + 1 == chain.len() {
+                            // This candidate satisfied the WHOLE :has()
+                            // chain - the alternative succeeds.
+                            stack.push(Frame::Deliver(true, *k));
+                        } else {
+                            // Descend to chain[idx + 1] FROM this candidate;
+                            // a failure down there resumes `cursor` here
+                            // (HasBacktrack), never a native call.
+                            let next_cursor = HasCursor::start(chain[idx + 1].comb, candidate)?;
+                            stack.push(Frame::HasStep {
+                                chain: Rc::clone(&chain),
+                                idx: idx + 1,
+                                cursor: next_cursor,
+                                k: Cont::HasBacktrack {
+                                    chain,
+                                    idx,
+                                    cursor,
+                                    k,
+                                },
+                            });
+                        }
+                    } else {
+                        // This candidate's own compound didn't match; try
+                        // the next one at the SAME level.
+                        stack.push(Frame::HasStep {
+                            chain,
+                            idx,
+                            cursor,
+                            k: *k,
+                        });
+                    }
+                }
+                Cont::HasBacktrack {
+                    chain,
+                    idx,
+                    cursor,
+                    k,
+                } => {
+                    if result {
+                        stack.push(Frame::Deliver(true, *k));
+                    } else {
+                        // The deeper search found nothing from THIS
+                        // candidate; try the next one at THIS level.
+                        stack.push(Frame::HasStep {
+                            chain,
+                            idx,
+                            cursor,
+                            k: *k,
+                        });
+                    }
+                }
+                Cont::HasAlternativeRetry { lists, node, k } => {
+                    if result {
+                        stack.push(Frame::Deliver(true, *k));
+                    } else {
+                        try_has_alternative(&mut stack, lists, node, *k)?;
                     }
                 }
             },

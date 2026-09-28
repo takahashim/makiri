@@ -844,23 +844,22 @@ mod selector_port_spike {
         assert_eq!(texts(&doc, &nested), ["x"]);
     }
 
-    /// `has_forward` is the one place in this file that DOES use native Rust
-    /// recursion (module doc), bounded by `MAX_COMPOUNDS` (64) rather than by
-    /// stack-safety - the plan's remaining open item is confirming that bound
-    /// is actually safe on Ruby's smallest documented `Fiber` machine stack
-    /// (`RUBY_FIBER_MACHINE_STACK_SIZE`, as small as 128 KiB - see
-    /// `crate::stack`'s module doc), not just "negligible" by inspection.
+    /// A `:has()` chain at exactly [`MAX_COMPOUNDS`] (64) compounds -
+    /// `Frame::HasStep`'s own compound-by-compound stepping (module doc), not
+    /// native recursion (an earlier design answered `:has()` with ordinary
+    /// Rust recursion here, `has_forward`; ITS OWN stack-safety margin was
+    /// what this test originally measured - see
+    /// `has_nested_inside_has_is_heap_based_not_native_recursion` for the
+    /// nesting-depth counterpart, and this file's git history for the
+    /// pre-conversion version of this test). Kept as a correctness regression
+    /// (does a 64-compound chain still match its exactly-64-deep fixture?)
+    /// and still run on a `Fiber`-sized stack as belt-and-braces, since
+    /// nothing here should need more stack than that any more, at any depth.
     ///
-    /// Measured directly: a thread sized to that 128 KiB budget (smaller than
-    /// what any real Fiber call would have left after Ruby's, magnus's and
-    /// `bridge::gvl`'s own frames - this is a lower bound on the margin, not
-    /// the exact in-Ruby number, since the port is not wired into `Node#css`
-    /// yet to measure that directly) runs a `:has()` argument built to force
-    /// EXACTLY 64 levels of `has_forward` - a distinct class per nesting
-    /// level, so a short-circuit on an early mismatch cannot cut the
-    /// recursion short. A real stack overflow kills the thread outright
-    /// (`join()` returns `Err`, not a wrong `bool`), so this either times out
-    /// on the join, or answers `Ok(true)`.
+    /// A distinct class per compound, not a shared one, so a short-circuit on
+    /// an early mismatch cannot cut the search short and hide a real bug. A
+    /// stack overflow (were one to reappear) kills the thread outright
+    /// (`join()` returns `Err`, not a wrong `bool`).
     #[test]
     fn has_forward_at_max_compounds_fits_the_smallest_fiber_stack() {
         const FIBER_SIZED_STACK: usize = 128 * 1024;
@@ -947,6 +946,75 @@ mod selector_port_spike {
         let unstarved = select_all_with_work_limit(root(&doc), parsed_sel.groups(), 10_000)
             .expect("comfortably within budget");
         assert!(unstarved.is_empty());
+    }
+
+    /// `:has()` NESTED inside `:has()` used to grow the REAL native call
+    /// stack one level per nesting: `check_simple`'s `Has` arm answered it
+    /// EAGERLY, in ordinary Rust recursion, unlike `:is`/`:where`/`:not`
+    /// (already deferred to this file's heap `Frame`/`Cont` stack). Confirmed
+    /// as a real, reachable crash before the fix: `:has(` x 300 `div` `)` x
+    /// 300 against a 302-deep document, inside a `Fiber` given only
+    /// `RUBY_FIBER_MACHINE_STACK_SIZE`'s documented minimum (128 KiB),
+    /// crashed the WHOLE PROCESS with an uncaught `SystemStackError` that
+    /// escaped every `rescue` (exit code 1). Lexbor's own C engine never had
+    /// this problem (`lxb_selectors_nested_t`, a heap structure - module
+    /// doc), so the fix brings `:has()` in line with that, not a depth cap:
+    /// `Frame::HasStep`/`HasCursor` now answer it the same heap-based way as
+    /// `:is()`, with no nesting limit at all.
+    ///
+    /// Measured the same way `has_forward_at_max_compounds_fits_the_-
+    /// smallest_fiber_stack` measured the OLD design's own bound: a depth past
+    /// the 300-level crash threshold above (comfortably beyond what the OLD,
+    /// native-recursive design could survive on this stack - it died before
+    /// 302), capped by the HTML parser's own `DepthLimit::DEFAULT` (400) for
+    /// this test's fixture rather than a limit of the matcher's, on a thread
+    /// given only a `RUBY_FIBER_MACHINE_STACK_SIZE`-sized (128 KiB) stack,
+    /// must still answer correctly rather than overflow - proving the
+    /// conversion actually removed the native recursion, not just moved where
+    /// it fails. A linear chain of plain, unlabelled `<div>`s is enough: each
+    /// `:has()`'s
+    /// own argument is bare (an implicit-universal compound holding only the
+    /// next `:has()`), so ANY element candidate lets the search descend one
+    /// level deeper, and a document nested exactly as deep as the selector
+    /// guarantees the search always has one more candidate to offer, at every
+    /// level - so this actually EXERCISES the full depth, rather than
+    /// short-circuiting on an empty subtree a few levels in.
+    #[test]
+    fn has_nested_inside_has_is_heap_based_not_native_recursion() {
+        // Past the 300-level crash threshold measured against the OLD design
+        // (see this test's doc), comfortably under the HTML parser's own
+        // `DepthLimit::DEFAULT` (400) so `parsed()` need not raise that
+        // separately - the property under test is the MATCHER's stack
+        // safety, not the parser's (already covered elsewhere).
+        const DEPTH: usize = 350;
+
+        let handle = std::thread::Builder::new()
+            .stack_size(128 * 1024)
+            .spawn(move || {
+                let selector = format!("{}div{}", ":has(".repeat(DEPTH), ")".repeat(DEPTH));
+                let mut html = String::from("<!doctype html><html><body>");
+                for _ in 0..DEPTH {
+                    html.push_str("<div>");
+                }
+                for _ in 0..DEPTH {
+                    html.push_str("</div>");
+                }
+                html.push_str("</body></html>");
+                let doc = parsed(html.as_bytes());
+
+                let target = root(&doc)
+                    .subtree()
+                    .filter_map(HtmlNode::element)
+                    .next()
+                    .expect("the outermost div");
+                matches_selector(target, &selector)
+            })
+            .expect("spawn a Fiber-sized-stack thread");
+
+        assert!(
+            handle.join().expect("must not overflow a 128 KiB stack"),
+            "{DEPTH} levels of :has() nesting should still match its exactly-{DEPTH}-deep fixture"
+        );
     }
 
     /// `sibling_position` (behind `:nth-of-type`/`:first-of-type`/
@@ -1360,6 +1428,62 @@ mod selector_port_spike {
                 "matches_any mismatch for {sel:?} on <ul> itself"
             );
         }
+    }
+
+    /// `:has()` nesting evaluated via `select_all` (which tests EVERY
+    /// element, not just the one node shaped to match): every candidate but
+    /// the outermost div lacks enough remaining depth to satisfy the whole
+    /// nested chain, and `:has()`'s Descendant search - "try every descendant
+    /// as a candidate" (§A-4), inherent to what that combinator means, not an
+    /// artifact of this file's design - explores many combinations before
+    /// concluding that for each one. This is the SAME exponential-in-depth
+    /// search space the OLD native-recursive `has_forward` had for this
+    /// shape (confirmed by measuring `try_has_alternative` call counts while
+    /// developing this fix: ~24/42/76/142/272/530/2070 at depth 3-10, each
+    /// roughly double the last) - the heap conversion changed how the search
+    /// is STORED (never the native stack), not its complexity. The work
+    /// budget - already in place before this session's `:has()` conversion,
+    /// see `a_has_search_that_cannot_find_anything_fails_closed_...` above -
+    /// is what bounds it; this proves the fix didn't accidentally remove that
+    /// protection. `select_all_with_work_limit` keeps the fixture small and
+    /// fast rather than needing a document big enough to exhaust the real,
+    /// shipped 10-million limit.
+    #[test]
+    fn has_nesting_against_an_ambiguous_document_fails_closed_on_the_work_budget() {
+        use crate::lexbor::selector_port::{select_all_with_work_limit, QueryFailure};
+
+        const DEPTH: usize = 10;
+        let selector = format!("{}div{}", ":has(".repeat(DEPTH), ")".repeat(DEPTH));
+        let mut html = String::from("<!doctype html><html><body>");
+        for _ in 0..DEPTH {
+            html.push_str("<div>");
+        }
+        for _ in 0..DEPTH {
+            html.push_str("</div>");
+        }
+        html.push_str("</body></html>");
+        let doc = parsed(html.as_bytes());
+
+        let gvl = Gvl::exclusive();
+        let text = VerifiedText::from_bytes(selector.as_bytes()).expect("verified");
+        let parsed_sel =
+            css_parser::parse(&gvl, text).unwrap_or_else(|_| panic!("selector fails to parse"));
+
+        // Comfortably below what querying EVERY element in this small
+        // fixture actually costs (measured ~6,200 for the full walk) - must
+        // fail closed, never a truncated/empty `Ok`.
+        let starved = select_all_with_work_limit(root(&doc), parsed_sel.groups(), 100);
+        assert!(matches!(starved, Err(QueryFailure::WorkExceeded)));
+
+        // The same query with room to spare still answers correctly: SOME
+        // element (the outermost div at least, and its own ancestors - the
+        // implicit `<html>`/`<body>` - via the exact same chain) has enough
+        // depth below it to satisfy the whole `:has()` chain; the point here
+        // is that a shorter limit fails closed and a longer one doesn't
+        // (this test's other half), not the exact count.
+        let unstarved = select_all_with_work_limit(root(&doc), parsed_sel.groups(), 10_000)
+            .expect("comfortably within budget");
+        assert!(!unstarved.is_empty());
     }
 }
 
