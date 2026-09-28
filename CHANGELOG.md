@@ -9,6 +9,16 @@
   selector chain too complex") past it - at the top level or nested in
   `:is()`/`:where()`/`:not()`/`:has()`/`:nth-child(... of S)`. Lexbor's own
   matcher had no cap. Selector NESTING stays unbounded.
+* HTML `:nth-child(An+B of S)` / `:nth-last-child(An+B of S)` count by the
+  CSS definition (an element in `S`, ranked among its siblings in `S`).
+  Lexbor's own matcher miscounted when `S` was a comma list (the answer
+  depended on the alternatives' order), held a combinator (`li span`), or
+  carried pseudo-classes such as `:enabled` or `:empty`.
+* HTML `:has()` and `:nth-child(... of S)` nested hundreds deep no longer
+  exhaust a small `Fiber`'s stack. `:has()` crashed the whole process with an
+  uncaught `SystemStackError`; `of S` raised one that left every later
+  `#css`/`#at_css`/`#matches?` in the process failing with "CSS selector
+  engine is already in use".
 * An unsupported construct (`:lexbor-contains()`, the column combinator `||`)
   now raises from all three methods wherever it appears in the selector.
   Before, it raised only if matching happened to reach it: `p, x || y`

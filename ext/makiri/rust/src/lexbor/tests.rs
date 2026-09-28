@@ -1402,9 +1402,16 @@ mod selector_port_spike {
         // safety; that is `deeply_nested_is_does_not_grow_the_native_stack`'s
         // job with a purpose-built input).
         if depth < 3 && rng.next_u64().is_multiple_of(3) {
+            // `of S` is left out: Lexbor's own `of S` counts differently from
+            // the spec in many shapes (module doc), so it is checked against a
+            // spec oracle instead (`nth_child_of_s_agrees_with_a_spec_oracle`).
             const LIST_PSEUDOS: &[&str] = &[":is(", ":where(", ":not(", ":has("];
             s.push_str(rng.pick(LIST_PSEUDOS));
             s.push_str(&random_chain(rng, depth + 1));
+            if rng.next_u64().is_multiple_of(4) {
+                s.push_str(", ");
+                s.push_str(&random_chain(rng, depth + 1));
+            }
             s.push(')');
         }
         s
@@ -1504,6 +1511,128 @@ mod selector_port_spike {
         }
     }
 
+    /// `:nth-child(An+B of S)` / `:nth-last-child(An+B of S)` checked against
+    /// the CSS definition itself, not against Lexbor: Lexbor's own `of S`
+    /// miscounts in many shapes - a comma list in `S` (it starts from the
+    /// LAST list, so `2 of ul, p` and `2 of p, ul` answer differently), a
+    /// combinator in `S` (`span:nth-child(2 of li span)`), even plain
+    /// `:enabled`/`:empty` in `S` - which the module doc records as a
+    /// departure. The oracle: an element matches iff it is in `S` (computed
+    /// with `select_all(S)`) and its rank among the element siblings in `S`,
+    /// counted from its own end, satisfies `An+B`. Every fifth `S` is the
+    /// previous round's whole `of S` query, so `of S` nested in `of S` is
+    /// covered too (the inner level having been checked the round before).
+    #[test]
+    fn nth_child_of_s_agrees_with_a_spec_oracle() {
+        let doc = parsed(
+            br#"<!doctype html><html><body>
+                <main id="main" class="container Box">
+                    <ul>
+                        <li class="item first" data-n="1"><a href="/p/1">one</a></li>
+                        <li class="item" data-n="2"><a href="/p/2" rel="next">two</a></li>
+                        <li class="item" data-n="3"><a href="/p/3">three</a><span>x</span></li>
+                        <li class="item last" data-n="4"><span>four</span></li>
+                    </ul>
+                    <ul>
+                        <li class="item first" data-n="1"><a href="/p/5">five</a></li>
+                    </ul>
+                    <p class="lead" title="Hello World">intro</p>
+                    <p>body</p>
+                    <div class="empty"></div>
+                    <div><div><div class="item">deep</div></div></div>
+                    <input type="checkbox" checked>
+                    <input required>
+                    <input disabled>
+                </main>
+            </body></html>"#,
+        );
+        let try_select = |sel: &str| -> Option<Vec<RawNode>> {
+            let gvl = Gvl::exclusive();
+            let text = VerifiedText::from_bytes(sel.as_bytes())?;
+            let parsed_sel = css_parser::parse(&gvl, text).ok()?;
+            let found = port_select_all(root(&doc), parsed_sel.groups()).ok()?;
+            Some(found.into_iter().map(RawNode::from).collect())
+        };
+        let elements: Vec<HtmlNode<'_>> = root(&doc)
+            .subtree()
+            .skip(1)
+            .filter(|n| n.element().is_some())
+            .collect();
+        fn sibling(n: HtmlNode<'_>, from_end: bool) -> Option<HtmlNode<'_>> {
+            let mut cur = if from_end { n.next() } else { n.prev() };
+            while let Some(c) = cur {
+                if c.element().is_some() {
+                    return Some(c);
+                }
+                cur = if from_end { c.next() } else { c.prev() };
+            }
+            None
+        }
+
+        const ANBS: &[(&str, i64, i64)] = &[
+            ("1", 0, 1),
+            ("2", 0, 2),
+            ("odd", 2, 1),
+            ("even", 2, 0),
+            ("-n+2", -1, 2),
+            ("3n", 3, 0),
+        ];
+        let mut rng = Rng(0x0F5E_1DEA_u64);
+        let mut previous: Option<String> = None;
+        let mut checked = 0u32;
+        for i in 0..1500u32 {
+            let s = match previous.take() {
+                Some(q) if i % 5 == 0 => q,
+                _ => random_selector(&mut rng),
+            };
+            let Some(in_s) = try_select(&s) else {
+                continue;
+            };
+            let (anb, a, b) = *rng.pick(ANBS);
+            let from_end = rng.next_u64().is_multiple_of(2);
+            let pseudo = if from_end {
+                "nth-last-child"
+            } else {
+                "nth-child"
+            };
+            let q = format!("*:{pseudo}({anb} of {s})");
+            let got = try_select(&q).unwrap_or_else(|| panic!("{q:?} failed"));
+
+            let expected: Vec<RawNode> = elements
+                .iter()
+                .copied()
+                .filter(|&e| {
+                    if !in_s.contains(&RawNode::from(e)) {
+                        return false;
+                    }
+                    let mut pos = 1i64;
+                    let mut cur = sibling(e, from_end);
+                    while let Some(c) = cur {
+                        if in_s.contains(&RawNode::from(c)) {
+                            pos += 1;
+                        }
+                        cur = sibling(c, from_end);
+                    }
+                    if a == 0 {
+                        pos == b
+                    } else {
+                        (pos - b) % a == 0 && (pos - b) / a >= 0
+                    }
+                })
+                .map(RawNode::from)
+                .collect();
+            assert!(
+                got == expected,
+                "round {i}: {q:?} answered {} element(s), the spec {}",
+                got.len(),
+                expected.len()
+            );
+            checked += 1;
+            previous = Some(q);
+        }
+        assert!(checked > 1000, "only {checked} rounds parsed");
+    }
+
     /// `select_first`/`matches_any` are entry points of their own (not just
     /// `select_all().first()`/`.is_empty()`), and from an arbitrary ELEMENT
     /// root - not only the document - which is where "descendants only, the
@@ -1575,6 +1704,29 @@ mod selector_port_spike {
                 "matches_any mismatch for {sel:?} on <ul> itself"
             );
         }
+    }
+
+    /// `:nth-child(1 of ...)` nested inside itself used to call a fresh `run`
+    /// natively per sibling from `check_simple` - 300 levels raised
+    /// `SystemStackError` in a 128 KiB Fiber, which left the shared CSS
+    /// engine's busy flag set for the rest of the process. `Frame::NthOfStep`
+    /// keeps it on the heap stack; this runs it 20,000 deep on a
+    /// `RUBY_FIBER_MACHINE_STACK_SIZE`-sized thread.
+    #[test]
+    fn nth_child_of_s_nesting_is_heap_based_not_native_recursion() {
+        const DEPTH: usize = 20_000;
+        let handle = std::thread::Builder::new()
+            .stack_size(128 * 1024)
+            .spawn(move || {
+                let doc = parsed(b"<html><body><a>x</a></body></html>");
+                let sel = format!("{}a{}", ":nth-child(1 of ".repeat(DEPTH), ")".repeat(DEPTH));
+                texts(&doc, &sel)
+            })
+            .expect("spawn a Fiber-sized-stack thread");
+        assert_eq!(
+            handle.join().expect("must not overflow a 128 KiB stack"),
+            ["x"]
+        );
     }
 
     /// `:has()` nesting evaluated via `select_all` (which tests EVERY

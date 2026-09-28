@@ -85,10 +85,12 @@ RSpec.describe "native stack guard" do
 
   # HTML matching needs no guard at all: `lexbor::selector_port` keeps every
   # nesting level (`:is`/`:where`/`:not`, and `:has()` since it moved to
-  # `Frame::HasStep`) on its own heap stack. `:has()` nested 300 deep used to
-  # recurse natively and crash the whole process with an uncaught
-  # SystemStackError here. Now it answers, or raises the work budget - and
-  # the shared CSS engine stays usable either way.
+  # `Frame::HasStep`, `of S` since `Frame::NthOfStep`) on its own heap stack.
+  # `:has()` and `:nth-child(1 of ...)` nested 300 deep each used to recurse
+  # natively: `:has()` crashed the whole process with an uncaught
+  # SystemStackError, `of S` raised one that wedged the shared CSS engine for
+  # the rest of the process. Now they answer, or raise the work budget - and
+  # the engine stays usable either way.
   describe "HTML CSS matching, inside a small Fiber" do
     it "answers deep :has()/:is()/:not() nesting or raises the budget, never SystemStackError" do
       status, out, err = run_isolated({ "RUBY_FIBER_MACHINE_STACK_SIZE" => "131072" }, <<~RUBY)
@@ -103,10 +105,11 @@ RSpec.describe "native stack guard" do
         mixed = "body" + ":is(:not(p):has(" * 100 + "div" + "))" * 100
         run(deep, mixed)
         run(Makiri::HTML("<a>x</a>"), ":is(" * 2000 + "a" + ")" * 2000)
+        run(Makiri::HTML("<a>x</a>"), ":nth-child(1 of " * 2000 + "a" + ")" * 2000)
         print "after=\#{deep.css('div').length}"
       RUBY
       expect(status).to be_success, err
-      expect(out).to eq("Makiri::Error:budget;n=1;n=1;after=302"), err
+      expect(out).to eq("Makiri::Error:budget;n=1;n=1;n=1;after=302"), err
     end
   end
 
