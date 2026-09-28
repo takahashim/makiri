@@ -749,6 +749,34 @@ mod selector_port_spike {
         assert_eq!(select_all(&sib, "p:has(~ span)").len(), 1);
     }
 
+    /// A construct this engine cannot evaluate at all - the column
+    /// combinator `||` (Lexbor's OWN traversal reports an error for it too)
+    /// and `:lexbor-contains()` (Lexbor itself matches with it; this port
+    /// deliberately does not) - must be RAISED, never silently answered as
+    /// "no element matches" (`MatchFailure`'s doc): either would otherwise
+    /// look exactly like a legitimate empty result.
+    #[test]
+    fn unsupported_constructs_are_raised_not_answered_as_empty() {
+        use crate::lexbor::selector_port::QueryFailure;
+
+        let doc = parsed(
+            b"<html><body><table><col><tr><td>x</td></tr></table><p>hello</p></body></html>",
+        );
+
+        for sel in ["col || td", "p:lexbor-contains(\"x\")"] {
+            let gvl = Gvl::exclusive();
+            let text = VerifiedText::from_bytes(sel.as_bytes()).expect("verified");
+            let parsed_sel =
+                css_parser::parse(&gvl, text).unwrap_or_else(|_| panic!("{sel:?} fails to parse"));
+            let result = port_select_all(root(&doc), parsed_sel.groups());
+            assert!(
+                matches!(result, Err(QueryFailure::Unsupported)),
+                "{sel:?} should be Unsupported, was {:?}",
+                result.is_ok()
+            );
+        }
+    }
+
     #[test]
     fn expanded_pseudo_classes() {
         let doc = parsed(
@@ -779,8 +807,20 @@ mod selector_port_spike {
         assert_eq!(select_all(&doc, "button:enabled").len(), 1); // the one under <legend>
         assert_eq!(select_all(&doc, "p:empty").len(), 1);
         assert_eq!(select_all(&doc, "p:blank").len(), 2); // :blank tolerates whitespace-only text
-                                                          // :active/:focus/:hover are literal attribute-presence checks (§C-1),
-                                                          // not "always false" - none of this fixture's markup has them.
+        {
+            // §C-1: `:empty`/`:blank` ignore a COMMENT child but not a
+            // processing-instruction one (`SEL.c:1749-1774`/`node.c:1700-1737`
+            // check `local_name != EM_COMMENT`, not "is an element or
+            // non-empty text") - found by `spec/xml_css_spec.rb`'s HTML/XML
+            // agreement check.
+            let pi_doc = parsed(b"<html><body><b><!--c--></b><i><?pi x?></i></body></html>");
+            assert_eq!(select_all(&pi_doc, "b:empty").len(), 1);
+            assert_eq!(select_all(&pi_doc, "i:empty").len(), 0);
+            assert_eq!(select_all(&pi_doc, "b:blank").len(), 1);
+            assert_eq!(select_all(&pi_doc, "i:blank").len(), 0);
+        }
+        // :active/:focus/:hover are literal attribute-presence checks (§C-1),
+        // not "always false" - none of this fixture's markup has them.
         assert_eq!(select_all(&doc, ":hover").len(), 0);
         // §C-1 (`SEL.c:1863-1872`): `input`/`textarea` only, PRESENCE of
         // `placeholder` only - the empty-valued one still counts, and the
