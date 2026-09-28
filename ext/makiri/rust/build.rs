@@ -179,6 +179,7 @@ fn main() {
         .allowlist_function("lxb_dom_element_next_attribute")
         .allowlist_function("lxb_dom_attr_qualified_name")
         .allowlist_function("lxb_dom_attr_local_name")
+        .allowlist_function("lxb_dom_attr_data_by_local_name")
         .allowlist_function("lxb_dom_attr_value")
         .allowlist_function("lxb_dom_node_name")
         .allowlist_function("lxb_dom_document_type_public_id")

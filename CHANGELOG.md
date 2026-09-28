@@ -14,6 +14,10 @@
   Lexbor's own matcher miscounted when `S` was a comma list (the answer
   depended on the alternatives' order), held a combinator (`li span`), or
   carried pseudo-classes such as `:enabled` or `:empty`.
+* HTML attribute selector names are case-sensitive on SVG/MathML elements,
+  as the HTML Standard specifies: `[viewbox]` no longer finds an SVG
+  `viewBox`. Lexbor's own matcher folded case everywhere. On HTML elements
+  in an HTML document they stay case-insensitive.
 * HTML `:has()` and `:nth-child(... of S)` nested hundreds deep no longer
   exhaust a small `Fiber`'s stack. `:has()` crashed the whole process with an
   uncaught `SystemStackError`; `of S` raised one that left every later

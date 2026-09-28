@@ -760,6 +760,26 @@ file. Measured with a counting allocator over the same document at 500 and
 made 1-4 (`ul li.item` 1.33, `li:has(> span.meta)` 3.67) and `of S` made one
 per sibling per candidate (1,002 per candidate at 1,000 siblings).
 
+**Tag and attribute names are resolved to Lexbor's ids once per query** -
+Lexbor's own `entry->id` (`selector_port::Name`, `HtmlDoc::resolve_attr_name`,
+`HtmlElement::attr_by_resolved_name`). Lexbor keys element and attribute
+local names by their ASCII-lower-cased form, so a tag-id match IS the
+case-folded name comparison, and an attribute local-id match is a pre-filter
+the adapter confirms with exactly `attr_by_name`'s comparison - the answer
+never changes, only how many name reads it takes. Ids are the document's own
+(custom elements and new attribute names are interned per document), so they
+are resolved per query in the queried document, a candidate from another
+document falls back to bytes, and nothing document-specific is kept in the
+process-global `selector_cache`. `matches?` (one candidate) does not resolve:
+the lookups cost more than the byte comparisons they save there. A query's
+tables (`simples`/`compounds`/`top` and the names) are `Small`, inline for up
+to 8 (4 for `top`) entries, so a small selector allocates nothing to compile.
+Measured on the Ruby-free probe against the previous commit: attribute scans
+-27 to -31%, type scans -12%, `matches?` -13 to -16%, `.class` and `*` within
++/-6%. Name lookup matches Lexbor's except one documented departure: an
+attribute NAME is case-sensitive on SVG/MathML (the HTML Standard), where
+Lexbor folds it (`resolved_names_agree_with_the_old_engine`).
+
 **`:nth-child(... of S)` is on the heap stack too** (`Frame::NthOfStep`,
 `Cont::NthOfSelf`/`NthOfSibling`): it used to call a fresh `run` natively per
 sibling from `check_simple`, so `of S` nested 300 deep raised

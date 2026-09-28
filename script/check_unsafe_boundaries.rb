@@ -57,7 +57,7 @@ UNSAFE_ISLANDS = {
   "lexbor/adapter/cross_import.rs" => 4,
   "lexbor/adapter/html/attrs.rs" => 19,
   "lexbor/adapter/html/build.rs" => 19,
-  "lexbor/adapter/html/mod.rs" => 53,
+  "lexbor/adapter/html/mod.rs" => 57,
   "lexbor/adapter/html/mutate.rs" => 9,
   "lexbor/adapter/post_parse.rs" => 13,
   "lexbor/adapter/source_loc.rs" => 2,
@@ -72,7 +72,7 @@ UNSAFE_ISLANDS = {
   "lexbor/selectors.rs" => 12,
   "lexbor/serialize.rs" => 2,
   "lexbor/stylesheet.rs" => 7,
-  "lexbor/tests.rs" => 11,
+  "lexbor/tests.rs" => 12,
   "lexbor/xpath.rs" => 9,
   "token.rs" => 1,
 }.freeze

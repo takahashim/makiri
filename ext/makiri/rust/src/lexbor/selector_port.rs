@@ -26,7 +26,7 @@
 //! below is the safe-Rust shape of the SAME algorithm (heap continuations
 //! instead of pointers), not a stylistic choice.
 //!
-//! Three deliberate, documented departures from a byte-for-byte semantic
+//! Deliberate, documented departures from a byte-for-byte semantic
 //! match, plus what is still open:
 //!
 //! - `lxb_selectors_pseudo_class_disabled`'s `fieldset` inheritance check
@@ -51,6 +51,14 @@
 //!   the Lexbor differential fuzzer leaves `of S` out. The walk itself is
 //!   Lexbor's shape - candidate in `S`, then siblings one at a time
 //!   (`Frame::NthOfStep`) on the explicit stack.
+//! - An attribute selector's NAME is looked up as the DOM's `getAttribute`
+//!   does - ASCII case-insensitive on an HTML element in an HTML document,
+//!   case-sensitive otherwise, the HTML Standard's rule for Selectors - where
+//!   Lexbor folds case everywhere (so `[viewbox]` finds an SVG `viewBox`
+//!   there, not here). Resolving names to Lexbor's ids ([`Name`]) keeps this
+//!   rule exactly (an id match is only a pre-filter);
+//!   `lexbor::tests::selector_port_spike::resolved_names_agree_with_the_old_engine`
+//!   pins that this is the ONLY name-lookup difference.
 //!
 //! Still open (tracked in the plan, not silent gaps): `::pseudo-elements`,
 //! `:lexbor-contains()` (decided not to reimplement), `:current()` (deferred,
@@ -102,8 +110,10 @@
 
 #![forbid(unsafe_code)]
 
-use crate::falloc::{OomResult, VecPush};
-use crate::lexbor::adapter::html::{HtmlElement, HtmlNode, NodeType, NsId};
+use crate::falloc::{OomResult, Reserve, VecPush};
+use crate::lexbor::adapter::html::{
+    AttrName, HtmlAttr, HtmlDoc, HtmlElement, HtmlNode, NodeType, NsId, TagId,
+};
 use crate::lexbor::css_parser::{
     AttrMatch, Combinator, FunctionArg, List, ListPseudo, Lists, Nth, PseudoClass, Selector, Simple,
 };
@@ -196,16 +206,74 @@ impl crate::falloc::Oom for MatchFailure {
     }
 }
 
+/// A vector that keeps its first `N` items inline and moves to a `falloc`
+/// vector past them: a query's tables are small for nearly every selector,
+/// and a `matches?` or an early `at_css` hit would otherwise pay an
+/// allocation per table per call.
+struct Small<T: Copy, const N: usize> {
+    inline: [Option<T>; N],
+    len: usize,
+    heap: Vec<T>,
+}
+
+impl<T: Copy, const N: usize> Small<T, N> {
+    fn new() -> Self {
+        Small {
+            inline: [None; N],
+            len: 0,
+            heap: Vec::new(),
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    fn push(&mut self, v: T) -> Result<(), MatchFailure> {
+        if self.len < N {
+            if let Some(slot) = self.inline.get_mut(self.len) {
+                *slot = Some(v);
+            }
+        } else {
+            if self.len == N {
+                self.heap.falloc_reserve(N * 2).or_oom()?;
+                for x in self.inline.iter().flatten() {
+                    self.heap.falloc_push(*x).or_oom()?;
+                }
+            }
+            self.heap.falloc_push(v).or_oom()?;
+        }
+        self.len += 1;
+        Ok(())
+    }
+
+    #[inline]
+    fn get(&self, i: usize) -> Option<T> {
+        if self.len <= N {
+            self.inline.get(i).copied().flatten()
+        } else {
+            self.heap.get(i).copied()
+        }
+    }
+
+    fn iter(&self) -> impl Iterator<Item = T> + '_ {
+        (0..self.len).filter_map(|i| self.get(i))
+    }
+}
+
 /* ------------------------------------------------------------------ *
  * compiling a selector: every chain, once, into query-local tables    *
  * ------------------------------------------------------------------ */
 
-/// A compound (a `Close`-linked run of simple selectors) plus the combinator
+/// A compound (a `Close`-linked run of simple selectors, `simples[start ..
+/// end]` of the [`Compiled`] table, in written order) plus the combinator
 /// that attaches it to the compound BEFORE it (to its left - more
-/// ancestor/earlier-sibling-ward) in the written selector.
+/// ancestor/earlier-sibling-ward) in the written selector. The same index
+/// keeps a [`Query`]'s resolved names.
 #[derive(Clone, Copy)]
-struct Compound<'p> {
-    first: Selector<'p>,
+struct Compound {
+    start: u32,
+    end: u32,
     comb: Combinator,
 }
 
@@ -252,9 +320,12 @@ impl Chain {
 /// Every table grows through `falloc`: an out-of-memory is
 /// [`MatchFailure::Oom`], not an abort.
 pub struct Compiled<'p> {
-    compounds: Vec<Compound<'p>>,
+    /// Every simple selector, compound by compound, in the order the
+    /// compounds number them.
+    simples: Small<Selector<'p>, 8>,
+    compounds: Small<Compound, 8>,
     /// The top-level comma alternatives, in order.
-    top: Vec<Chain>,
+    top: Small<Chain, 4>,
     /// Each nested list's chain, by the list's identity ([`List::key`]).
     nested: PtrMap<*const (), Chain>,
 }
@@ -289,14 +360,15 @@ pub struct Compiled<'p> {
 /// 128 KiB `Fiber`, which wedged the shared CSS engine for the process.
 pub fn compile(groups: Lists<'_>) -> Result<Compiled<'_>, MatchFailure> {
     let mut c = Compiled {
-        compounds: Vec::new(),
-        top: Vec::new(),
+        simples: Small::new(),
+        compounds: Small::new(),
+        top: Small::new(),
         nested: PtrMap::new(),
     };
     let mut pending: Vec<Lists<'_>> = Vec::new();
     for list in groups {
         let chain = c.add_chain(list, &mut pending)?;
-        c.top.falloc_push(chain).or_oom()?;
+        c.top.push(chain)?;
     }
     while let Some(lists) = pending.pop() {
         for list in lists {
@@ -337,8 +409,10 @@ impl<'p> Compiled<'p> {
             if comb == Combinator::Other {
                 return Err(MatchFailure::Unsupported);
             }
+            let simple_start = self.simple_index()?;
             let mut sel = first;
             loop {
+                self.simples.push(sel)?;
                 match sel.simple() {
                     Simple::PseudoClassFunction(FunctionArg::Contains(_)) => {
                         return Err(MatchFailure::Unsupported)
@@ -358,16 +432,27 @@ impl<'p> Compiled<'p> {
                     None => break,
                 }
             }
-            self.compounds
-                .falloc_push(Compound { first, comb })
-                .or_oom()?;
+            let compound = Compound {
+                start: simple_start,
+                end: self.simple_index()?,
+                comb,
+            };
+            self.compounds.push(compound)?;
             cur = sel.next();
         }
         Ok(Chain { start, len })
     }
 
-    fn compound(&self, chain: Chain, idx: usize) -> Compound<'p> {
-        self.compounds[chain.start as usize + idx]
+    fn simple_index(&self) -> Result<u32, MatchFailure> {
+        u32::try_from(self.simples.len()).map_err(|_| MatchFailure::TooComplex)
+    }
+
+    /// `chain[idx]`. Out of range is a broken invariant, raised rather than
+    /// answered.
+    fn compound(&self, chain: Chain, idx: usize) -> Result<Compound, MatchFailure> {
+        self.compounds
+            .get(chain.start as usize + idx)
+            .ok_or(MatchFailure::Unsupported)
     }
 
     /// The chain compiled for the nested `list`. One `compile` never saw is
@@ -529,11 +614,12 @@ fn attribute_case_insensitive_by_default(node: HtmlNode<'_>, name: &[u8]) -> boo
 fn attribute_matches(
     node: HtmlNode<'_>,
     name: &[u8],
+    value: Option<&[u8]>,
     op: AttrMatch,
     at_value: Option<&[u8]>,
     explicit_ci: Option<bool>,
 ) -> bool {
-    let Some(value) = get_attr(node, name) else {
+    let Some(value) = value else {
         return false;
     };
     let Some(want) = at_value else {
@@ -991,7 +1077,7 @@ enum SimpleCheck<'p> {
     Defer {
         negate: bool,
         lists: Lists<'p>,
-        rest: Option<Selector<'p>>,
+        rest: Option<u32>,
     },
     /// `:has()`: deferred to a heap-based forward search FROM `node` (see
     /// `Frame::HasStep`'s doc) - kept distinct from `Defer` because `:has()`'s
@@ -999,7 +1085,7 @@ enum SimpleCheck<'p> {
     /// `node` the way `:is`/`:where`/`:not`'s `Defer` alternatives are.
     Has {
         lists: Lists<'p>,
-        rest: Option<Selector<'p>>,
+        rest: Option<u32>,
     },
     /// `:nth-*(an+b of S)` (§D-1): deferred to `Cont::NthOfSelf`/
     /// `Frame::NthOfStep` - does `node` match `S`, then how many siblings
@@ -1013,12 +1099,13 @@ enum SimpleCheck<'p> {
         anb: Nth<'p>,
         from_end: bool,
         lists: Lists<'p>,
-        rest: Option<Selector<'p>>,
+        rest: Option<u32>,
     },
 }
 
 fn check_simple<'p>(
     sel: Selector<'p>,
+    name: Name<'_>,
     node: HtmlNode<'_>,
     budget: &Budget,
 ) -> Result<SimpleCheck<'p>, MatchFailure> {
@@ -1030,15 +1117,17 @@ fn check_simple<'p>(
         // `true` here made a `<p>` with only text content wrongly "have"
         // that text node as a `*`-matching descendant.
         Simple::Universal => SimpleCheck::Result(node.element().is_some()),
-        Simple::Type => SimpleCheck::Result(name_eq(node, sel.name())),
+        Simple::Type => SimpleCheck::Result(type_matches(node, sel.name(), name)),
         Simple::Id => {
             let ci = document_is_quirks(node);
-            SimpleCheck::Result(get_attr(node, b"id").is_some_and(|v| eq_bytes(v, sel.name(), ci)))
+            SimpleCheck::Result(
+                attr_value(node, b"id", name).is_some_and(|v| eq_bytes(v, sel.name(), ci)),
+            )
         }
         Simple::Class => {
             let ci = document_is_quirks(node);
-            let has =
-                get_attr(node, b"class").is_some_and(|c| has_whitespace_token(c, sel.name(), ci));
+            let has = attr_value(node, b"class", name)
+                .is_some_and(|c| has_whitespace_token(c, sel.name(), ci));
             SimpleCheck::Result(has)
         }
         Simple::Attribute(at) => {
@@ -1057,6 +1146,7 @@ fn check_simple<'p>(
             SimpleCheck::Result(attribute_matches(
                 node,
                 sel.name(),
+                attr_value(node, sel.name(), name),
                 at.op,
                 at.value,
                 explicit_ci,
@@ -1110,61 +1200,78 @@ fn check_simple<'p>(
     })
 }
 
-/// Check `sel`, then every `Close`-linked simple selector after it, in
-/// order, eagerly - an ordinary iterative loop (bounded by how many simple
-/// selectors one compound chains, e.g. `.a.b.c...`; a large count costs
-/// time, never native stack, same as everything else in this module) -
-/// until either one fails, they all pass, or a `:is`/`:where`/`:not` is hit,
-/// which defers to the explicit stack; `rest` then carries whatever
-/// `Close`-linked selectors remain, to run back through THIS function once
-/// the deferred verdict is known (see `Cont::CompoundRest`).
-fn check_from<'p>(
-    mut sel: Selector<'p>,
-    node: HtmlNode<'_>,
-    budget: &Budget,
-) -> Result<SimpleCheck<'p>, MatchFailure> {
-    loop {
-        let next = sel.next().filter(|n| n.combinator() == Combinator::Close);
-        match check_simple(sel, node, budget)? {
-            SimpleCheck::Result(false) => return Ok(SimpleCheck::Result(false)),
-            SimpleCheck::Defer { negate, lists, .. } => {
-                return Ok(SimpleCheck::Defer {
-                    negate,
-                    lists,
-                    rest: next,
-                });
-            }
-            SimpleCheck::Has { lists, .. } => {
-                return Ok(SimpleCheck::Has { lists, rest: next });
-            }
-            SimpleCheck::NthOf {
-                anb,
-                from_end,
-                lists,
-                ..
-            } => {
-                return Ok(SimpleCheck::NthOf {
-                    anb,
-                    from_end,
-                    lists,
-                    rest: next,
-                });
-            }
-            SimpleCheck::Result(true) => match next {
-                Some(n) => sel = n,
-                None => return Ok(SimpleCheck::Result(true)),
-            },
+/// A simple selector's name resolved once against the query's document -
+/// Lexbor's own `entry->id` - for the kinds that look a name up on every
+/// candidate. Lexbor keys element and attribute names by their ASCII
+/// lower-cased form, so an id match is exactly the case-folded comparison
+/// the byte path makes (a type selector), or a necessary condition that the
+/// adapter then confirms (an attribute: `attr_by_resolved_name`). A
+/// candidate from another document is compared by name.
+#[derive(Clone, Copy)]
+enum Name<'doc> {
+    None,
+    /// A type selector's tag id in that document; `None`: no element of the
+    /// document has the name.
+    Tag(HtmlDoc<'doc>, Option<TagId>),
+    /// An attribute's name - `[a]`, and the `id` / `class` behind `#x` / `.x`.
+    Attr(AttrName),
+}
+
+impl<'doc> Name<'doc> {
+    fn resolve(sel: Selector<'_>, doc: HtmlDoc<'doc>) -> Name<'doc> {
+        match sel.simple() {
+            Simple::Type => Name::Tag(doc, doc.tag_id(sel.name())),
+            Simple::Attribute(_) => Name::Attr(doc.resolve_attr_name(sel.name())),
+            Simple::Id => Name::Attr(doc.resolve_attr_name(b"id")),
+            Simple::Class => Name::Attr(doc.resolve_attr_name(b"class")),
+            _ => Name::None,
         }
     }
 }
 
-/// Does `compound` match `node`, in full?
-fn check_compound<'p>(
-    compound: Compound<'p>,
-    node: HtmlNode<'_>,
-    budget: &Budget,
-) -> Result<SimpleCheck<'p>, MatchFailure> {
-    check_from(compound.first, node, budget)
+/// A query's resolved [`Name`]s, by simple-selector index - empty for a
+/// query that compares names as bytes.
+type Names<'doc> = Small<Name<'doc>, 8>;
+
+impl<'doc> Names<'doc> {
+    /// Every simple selector of `compiled`, resolved in `doc`.
+    fn resolve(compiled: &Compiled<'_>, doc: HtmlDoc<'doc>) -> Result<Self, MatchFailure> {
+        let mut names = Names::new();
+        for sel in compiled.simples.iter() {
+            names.push(Name::resolve(sel, doc))?;
+        }
+        Ok(names)
+    }
+
+    #[inline]
+    fn name(&self, i: u32) -> Name<'doc> {
+        self.get(i as usize).unwrap_or(Name::None)
+    }
+}
+
+/// §B-1 through [`Name`]: one id comparison where the document is the one
+/// the name was resolved in, [`name_eq`] otherwise.
+#[inline]
+fn type_matches(node: HtmlNode<'_>, want: &[u8], name: Name<'_>) -> bool {
+    match name {
+        Name::Tag(doc, id) if node.owner_document() == doc => {
+            node.element().is_some() && id.is_some() && node.tag_id() == id
+        }
+        _ => name_eq(node, want),
+    }
+}
+
+/// The value of `node`'s attribute `qname` (DOM `getAttribute`), through
+/// the resolved [`Name`] when there is one.
+#[inline]
+fn attr_value<'doc>(node: HtmlNode<'doc>, qname: &[u8], name: Name<'_>) -> Option<&'doc [u8]> {
+    let el = node.element()?;
+    match name {
+        Name::Attr(resolved) => el
+            .attr_by_resolved_name(qname, resolved)
+            .map(HtmlAttr::value),
+        _ => el.get_attribute(qname),
+    }
 }
 
 /* ------------------------------------------------------------------ *
@@ -1231,7 +1338,7 @@ enum Cont<'p, 'doc> {
     /// `a:not(x):is(y)`), and only once the WHOLE compound is settled, finish
     /// it exactly as a plain compound match would (`advance`).
     CompoundRest {
-        rest: Option<Selector<'p>>,
+        rest: Option<u32>,
         chain: Chain,
         idx: usize,
         node: HtmlNode<'doc>,
@@ -1355,6 +1462,8 @@ fn single_compound_frame<'p, 'doc>(
 /// `Box` had, without an allocation that aborts on failure.
 struct Query<'c, 'p, 'doc> {
     compiled: &'c Compiled<'p>,
+    /// The simple selectors' names, resolved in the query's document.
+    names: Names<'doc>,
     budget: Budget,
     stack: Vec<Frame<'p, 'doc>>,
     conts: Vec<Slot<'p, 'doc>>,
@@ -1362,9 +1471,25 @@ struct Query<'c, 'p, 'doc> {
 }
 
 impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
-    fn new(compiled: &'c Compiled<'p>, limit: u64) -> Self {
-        Query {
+    /// A query over `compiled`. With `resolve_in`, names are resolved in that
+    /// document once, up front ([`Name`]) - worth it for a walk over many
+    /// candidates, a loss for one: resolving costs more than the byte
+    /// comparisons it saves on a single node (measured: `matches?` went from
+    /// ~110-130 ns to ~170-190 ns), so `matches_any` passes `None` and
+    /// compares names as bytes. A candidate from another document is
+    /// compared by name either way.
+    fn new(
+        compiled: &'c Compiled<'p>,
+        resolve_in: Option<HtmlDoc<'doc>>,
+        limit: u64,
+    ) -> Result<Self, MatchFailure> {
+        let names = match resolve_in {
+            Some(doc) => Names::resolve(compiled, doc)?,
+            None => Names::new(),
+        };
+        Ok(Query {
             compiled,
+            names,
             budget: Budget {
                 spent: std::cell::Cell::new(0),
                 limit,
@@ -1372,6 +1497,57 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
             stack: Vec::new(),
             conts: Vec::new(),
             free: None,
+        })
+    }
+
+    /// Check `compound`'s simple selectors from index `from` against `node`,
+    /// in order, eagerly - until one fails, they all pass, or a list-pseudo
+    /// defers to the explicit stack; `rest` then carries the index to resume
+    /// from once its verdict is known (`Cont::CompoundRest`).
+    fn check_from(
+        &self,
+        compound: Compound,
+        from: u32,
+        node: HtmlNode<'doc>,
+    ) -> Result<SimpleCheck<'p>, MatchFailure> {
+        let mut i = from;
+        loop {
+            let next = (i + 1 < compound.end).then_some(i + 1);
+            let sel = self
+                .compiled
+                .simples
+                .get(i as usize)
+                .ok_or(MatchFailure::Unsupported)?;
+            match check_simple(sel, self.names.name(i), node, &self.budget)? {
+                SimpleCheck::Result(false) => return Ok(SimpleCheck::Result(false)),
+                SimpleCheck::Defer { negate, lists, .. } => {
+                    return Ok(SimpleCheck::Defer {
+                        negate,
+                        lists,
+                        rest: next,
+                    })
+                }
+                SimpleCheck::Has { lists, .. } => {
+                    return Ok(SimpleCheck::Has { lists, rest: next })
+                }
+                SimpleCheck::NthOf {
+                    anb,
+                    from_end,
+                    lists,
+                    ..
+                } => {
+                    return Ok(SimpleCheck::NthOf {
+                        anb,
+                        from_end,
+                        lists,
+                        rest: next,
+                    })
+                }
+                SimpleCheck::Result(true) => match next {
+                    Some(n) => i = n,
+                    None => return Ok(SimpleCheck::Result(true)),
+                },
+            }
         }
     }
 
@@ -1430,7 +1606,7 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
     /// Does `node` match any top-level alternative?
     fn matches_top(&mut self, node: HtmlNode<'doc>) -> Result<bool, MatchFailure> {
         for i in 0..self.compiled.top.len() {
-            let chain = self.compiled.top[i];
+            let chain = self.compiled.top.get(i).ok_or(MatchFailure::Unsupported)?;
             if chain.len != 0
                 && self.run(Frame::EvalCompound {
                     chain,
@@ -1463,7 +1639,7 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
             return self.push(Frame::Deliver(true, k));
         }
         let next_idx = idx - 1;
-        match self.compiled.compound(chain, idx).comb {
+        match self.compiled.compound(chain, idx)?.comb {
             Combinator::Close | Combinator::Child => match parent_element(node) {
                 Some(p) => self.push(Frame::EvalCompound {
                     chain,
@@ -1572,7 +1748,7 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
             // Out of alternatives: :has() found nothing.
             return self.push(Frame::Deliver(false, k));
         };
-        let cursor = HasCursor::start(self.compiled.compound(chain, 0).comb, node)?;
+        let cursor = HasCursor::start(self.compiled.compound(chain, 0)?.comb, node)?;
         let k = self.park(k)?;
         self.push(Frame::HasStep {
             chain,
@@ -1678,8 +1854,8 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
                     node,
                     k,
                 } => {
-                    let check =
-                        check_compound(self.compiled.compound(chain, idx), node, &self.budget)?;
+                    let compound = self.compiled.compound(chain, idx)?;
+                    let check = self.check_from(compound, compound.start, node)?;
                     self.settle(check, chain, idx, node, k)?;
                 }
                 Frame::NthOfStep {
@@ -1770,7 +1946,8 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
                     (false, _) => self.advance(chain, idx, node, k, false),
                     (true, None) => self.advance(chain, idx, node, k, true),
                     (true, Some(next)) => {
-                        let check = check_from(next, node, &self.budget)?;
+                        let compound = self.compiled.compound(chain, idx)?;
+                        let check = self.check_from(compound, next, node)?;
                         self.settle(check, chain, idx, node, k)
                     }
                 }
@@ -1862,7 +2039,7 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
                 // Descend to chain[idx + 1] FROM this candidate; a failure
                 // down there resumes `cursor` here (HasBacktrack).
                 let next_cursor =
-                    HasCursor::start(self.compiled.compound(chain, idx + 1).comb, candidate)?;
+                    HasCursor::start(self.compiled.compound(chain, idx + 1)?.comb, candidate)?;
                 self.push(Frame::HasStep {
                     chain,
                     idx: idx + 1,
@@ -1971,7 +2148,8 @@ enum Deferred<'p> {
 /// entry point for `Node#matches?`: no traversal, under a fresh budget.
 pub fn matches_any(groups: Lists<'_>, element: HtmlElement<'_>) -> Result<bool, MatchFailure> {
     let compiled = compile(groups)?;
-    Query::new(&compiled, DEFAULT_WORK_BUDGET).matches_top(element.node())
+    let node = element.node();
+    Query::new(&compiled, None, DEFAULT_WORK_BUDGET)?.matches_top(node)
 }
 
 /// Why [`select_all`]/[`select_first`]/[`matches_any`] stopped before
@@ -2030,7 +2208,7 @@ fn select_all_with_limit<'doc>(
     limit: u64,
 ) -> Result<Vec<HtmlNode<'doc>>, QueryFailure> {
     let compiled = compile(groups)?;
-    let mut query = Query::new(&compiled, limit);
+    let mut query = Query::new(&compiled, Some(root.owner_document()), limit)?;
     let mut out = Vec::new();
     let mut n = root;
     while let Some(next) = n.preorder_next(root) {
@@ -2067,7 +2245,7 @@ pub fn select_first<'doc>(
     groups: Lists<'_>,
 ) -> Result<Option<HtmlNode<'doc>>, MatchFailure> {
     let compiled = compile(groups)?;
-    let mut query = Query::new(&compiled, DEFAULT_WORK_BUDGET);
+    let mut query = Query::new(&compiled, Some(root.owner_document()), DEFAULT_WORK_BUDGET)?;
     let mut n = root;
     while let Some(next) = n.preorder_next(root) {
         n = next;
