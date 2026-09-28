@@ -36,7 +36,7 @@
 
 #![allow(unsafe_code)]
 
-use crate::falloc::{try_vec_with_capacity, VecPush};
+use crate::falloc::{try_vec_with_capacity, OomOption, OomResult, VecPush};
 use crate::ptr_table::PtrTable;
 use core::ptr::NonNull;
 
@@ -160,6 +160,13 @@ pub(crate) enum TextBuildError {
     Oom,
 }
 
+impl crate::falloc::Oom for TextBuildError {
+    #[inline]
+    fn oom() -> Self {
+        TextBuildError::Oom
+    }
+}
+
 impl TextIndex {
     /// Build over `root` (the document root element). `NotApplicable` when the
     /// index does not fit this document, `Oom` when an allocation failed.
@@ -193,9 +200,9 @@ impl TextIndex {
             .checked_add(1)
             .ok_or(TextBuildError::NotApplicable)?;
         let mut t = TextIndex {
-            slices: try_vec_with_capacity(nslices).ok_or(TextBuildError::Oom)?,
-            prefix: try_vec_with_capacity(prefix_cap).ok_or(TextBuildError::Oom)?,
-            runs: PtrTable::with_keys(ncont, empty).ok_or(TextBuildError::Oom)?,
+            slices: try_vec_with_capacity(nslices).or_oom()?,
+            prefix: try_vec_with_capacity(prefix_cap).or_oom()?,
+            runs: PtrTable::with_keys(ncont, empty).or_oom()?,
         };
         t.prefix.push(0);
 
@@ -204,7 +211,7 @@ impl TextIndex {
          * bounded by tree DEPTH, not node count), so it grows through falloc.
          * The run table was sized for exactly the containers pass 1 counted, so
          * a refused insert means the tree changed under us: fail closed. */
-        let mut stack: Vec<Frame<'_>> = try_vec_with_capacity(1).ok_or(TextBuildError::Oom)?;
+        let mut stack: Vec<Frame<'_>> = try_vec_with_capacity(1).or_oom()?;
         let slot = t
             .runs
             .insert(Some(RawNode::from(root)), empty)
@@ -256,7 +263,7 @@ impl TextIndex {
                         child: child.first_child(),
                         slot,
                     })
-                    .map_err(|()| TextBuildError::Oom)?;
+                    .or_oom()?;
             }
             /* Other kinds (comment / PI / doctype) are childless leaves. */
         }

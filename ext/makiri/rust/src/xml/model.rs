@@ -32,6 +32,13 @@ pub enum ParseError {
     Unsupported,
 }
 
+impl crate::falloc::Oom for ParseError {
+    #[inline]
+    fn oom() -> Self {
+        ParseError::Oom
+    }
+}
+
 /// Why a bounded allocation was refused: a document's own budget (`max_bytes` /
 /// `max_nodes`), a stack's cap (`MAX_NS`), or the machine's memory.
 ///
@@ -42,6 +49,13 @@ pub enum ParseError {
 pub enum BudgetError {
     Limit,
     Oom,
+}
+
+impl crate::falloc::Oom for BudgetError {
+    #[inline]
+    fn oom() -> Self {
+        BudgetError::Oom
+    }
 }
 
 impl From<BudgetError> for ParseError {
@@ -232,6 +246,13 @@ pub enum MutError {
     /// (the DOM's "validate and extract"): a prefix without a namespace, `xml`
     /// or `xmlns` with another one, or the XMLNS namespace on another name.
     BadNsName,
+}
+
+impl crate::falloc::Oom for MutError {
+    #[inline]
+    fn oom() -> Self {
+        MutError::Oom
+    }
 }
 
 /* ---- budgets (§4) ---- */

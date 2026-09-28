@@ -19,6 +19,7 @@ use crate::lexbor::abi::consts::STATUS_OK as LXB_STATUS_OK;
  * fragments                                                          *
  * ------------------------------------------------------------------ */
 
+use crate::falloc::OomOption;
 use crate::lexbor::adapter::html::{
     BuildingNode, HtmlDoc, HtmlElement, HtmlNode, NsId, RawDoc, RawNode, TagId,
 };
@@ -80,7 +81,7 @@ fn fixup_template_content(
          * through here. */
         match s.template_content() {
             Some(sc) => {
-                let cc = c.template_content().ok_or(AdapterOom)?;
+                let cc = c.template_content().or_oom()?;
                 for child in sc.children() {
                     let Some(imp) = doc.import_node(child, true) else {
                         // Lexbor could not copy a content child. Giving up
@@ -379,7 +380,7 @@ fn import_fixed<'d>(
     hsrc: HtmlNode<'_>,
     deep: bool,
 ) -> Result<BuildingNode<'d>, AdapterOom> {
-    let himp = hdoc.import_node(hsrc, deep).ok_or(AdapterOom)?;
+    let himp = hdoc.import_node(hsrc, deep).or_oom()?;
     if !deep {
         himp.copy_written_name_from(hsrc)?;
     }

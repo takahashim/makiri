@@ -17,7 +17,7 @@
 #![forbid(unsafe_code)]
 
 use super::cursor::{find, Cursor, InSlice, R};
-use crate::falloc::Reserve;
+use crate::falloc::{OomResult, VecPush};
 use crate::xml::chars::is_reserved_pi_target;
 use crate::xml::chars::validate_name;
 use crate::xml::{ParseError, MAX_DEPTH};
@@ -424,10 +424,10 @@ impl<'c, 'a> Subset<'c, 'a> {
         }
         self.end_decl()?;
         if !pe {
-            if self.declared.names.falloc_reserve(1).is_err() {
-                return Err(ParseError::Oom);
-            }
-            self.declared.names.push(name);
+            self.declared
+                .names
+                .falloc_push(name)
+                .or_oom::<ParseError>()?;
         }
         Ok(())
     }

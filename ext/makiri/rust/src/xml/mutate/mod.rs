@@ -20,6 +20,7 @@ mod insert;
 mod ns;
 pub use ns::{ignored_default_decl, namespace_in_scope};
 
+use crate::falloc::OomOption;
 use crate::xml::qname::Split;
 use crate::xml::{Document, MutError, NodeId};
 
@@ -38,7 +39,7 @@ pub use insert::{
 /// abort on OOM; this path must fail closed instead, like every other
 /// allocation here.
 pub(super) fn copy_span(bytes: &[u8]) -> Result<Vec<u8>, MutError> {
-    crate::falloc::try_to_vec(bytes).ok_or(MutError::Oom)
+    crate::falloc::try_to_vec(bytes).or_oom()
 }
 
 #[inline]

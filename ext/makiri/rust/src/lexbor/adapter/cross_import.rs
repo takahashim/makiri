@@ -19,7 +19,7 @@
 #![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
-use crate::falloc::{try_vec_with_capacity, VecPush};
+use crate::falloc::{try_vec_with_capacity, OomOption, OomResult, VecPush};
 use crate::lexbor::adapter::html::{
     BuildingElement, BuildingNode, HtmlDoc, HtmlElement, HtmlNode, NsId, RawDoc, RawNode,
 };
@@ -185,7 +185,7 @@ fn h2x_make<'a>(
     };
     let data = |n: HtmlNode<'a>| {
         let d = n.data().unwrap_or(&[]);
-        fits_u32(d.len()).map(|_| d).ok_or(MutError::Oom)
+        fits_u32(d.len()).map(|_| d).or_oom::<MutError>()
     };
 
     if let Some(e) = s.element() {
@@ -301,14 +301,14 @@ pub unsafe fn cross_html_to_xml(
 
     if deep {
         let mut stack: Vec<Frame<'_, HtmlNode<'_>, NodeId>> =
-            try_vec_with_capacity(1).ok_or(MutError::Oom)?;
+            try_vec_with_capacity(1).or_oom::<MutError>()?;
         stack
             .falloc_push(Frame {
                 s: src,
                 d: root.node,
                 def: root.child_default,
             })
-            .map_err(|_| MutError::Oom)?;
+            .or_oom::<MutError>()?;
 
         while let Some(f) = stack.pop() {
             let mut c = h2x_first_child(f.s);
@@ -323,7 +323,7 @@ pub unsafe fn cross_html_to_xml(
                                 d: made.node,
                                 def: made.child_default,
                             })
-                            .map_err(|_| MutError::Oom)?;
+                            .or_oom::<MutError>()?;
                     }
                 }
                 c = child.next();
@@ -349,8 +349,7 @@ fn x2h_copy_attrs(doc: &XmlDoc, s: NodeId, el: BuildingElement<'_>) -> Result<()
     let mut a = doc.first_attr(s);
     while let Some(attr) = a {
         let (val, qname, ns) = (doc.value(attr), doc.qname(attr), doc.ns(attr));
-        el.append_attribute((!ns.is_empty()).then_some(ns), qname, val)
-            .map_err(|_| MutError::Oom)?;
+        el.append_attribute((!ns.is_empty()).then_some(ns), qname, val)?;
         a = doc.next(attr);
     }
     Ok(())
@@ -366,7 +365,7 @@ fn x2h_make<'doc>(
     doc: &XmlDoc,
     s: NodeId,
 ) -> Result<Option<BuildingNode<'doc>>, MutError> {
-    let made = |n: Option<BuildingNode<'doc>>| n.map(Some).ok_or(MutError::Oom);
+    let made = |n: Option<BuildingNode<'doc>>| n.map(Some).or_oom::<MutError>();
 
     match doc.type_(s) {
         Some(ArenaKind::Element) => {
@@ -377,12 +376,12 @@ fn x2h_make<'doc>(
              * XHTML element is an HTML element, whose name is lower case. */
             let (prefix, ns) = (doc.prefix(s), doc.ns(s));
             let el = if prefix.is_empty() && hdoc.lookup_ns(ns) == Some(NsId::HTML) {
-                let el = hdoc.create_element(doc.qname(s)).ok_or(MutError::Oom)?;
+                let el = hdoc.create_element(doc.qname(s)).or_oom::<MutError>()?;
                 el.set_ns(NsId::HTML);
                 el
             } else {
                 hdoc.create_element_ns(doc.local(s), ns, prefix)
-                    .ok_or(MutError::Oom)?
+                    .or_oom::<MutError>()?
             };
 
             x2h_copy_attrs(doc, s, el)?;
@@ -415,14 +414,14 @@ pub unsafe fn cross_xml_to_html(
 
     if deep {
         let mut stack: Vec<Frame<NodeId, BuildingNode<'_>>> =
-            try_vec_with_capacity(1).ok_or(MutError::Oom)?;
+            try_vec_with_capacity(1).or_oom::<MutError>()?;
         stack
             .falloc_push(Frame {
                 s: src,
                 d: root.link_target(),
                 def: None,
             })
-            .map_err(|_| MutError::Oom)?;
+            .or_oom::<MutError>()?;
 
         while let Some(f) = stack.pop() {
             let mut c = doc.first_child(f.s);
@@ -437,7 +436,7 @@ pub unsafe fn cross_xml_to_html(
                                 d: dc.link_target(),
                                 def: None,
                             })
-                            .map_err(|_| MutError::Oom)?;
+                            .or_oom::<MutError>()?;
                     }
                 }
                 c = doc.next(cid);

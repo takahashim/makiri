@@ -11,7 +11,7 @@
 #![forbid(unsafe_code)]
 
 use super::copy_span;
-use crate::falloc::Reserve;
+use crate::falloc::{OomResult, VecPush};
 use crate::xml::qname::Split;
 use crate::xml::{ArenaKind, AttrNs, Document, MutError, NodeFlags, NodeId, Span};
 
@@ -104,8 +104,9 @@ impl CopiedNode {
 
         let mut attrs: Vec<CopiedNode> = Vec::new();
         for attr in doc.attributes(src) {
-            attrs.falloc_reserve(1).map_err(|_| MutError::Oom)?;
-            attrs.push(CopiedNode::read(doc, attr)?);
+            attrs
+                .falloc_push(CopiedNode::read(doc, attr)?)
+                .or_oom::<MutError>()?;
         }
 
         Ok(CopiedNode {
@@ -183,16 +184,14 @@ fn copy_one(dst: &mut Document, from: ReadFrom<'_>, src: NodeId) -> Result<NodeI
 fn deep_copy(dst: &mut Document, from: ReadFrom<'_>, src: NodeId) -> Result<NodeId, MutError> {
     let root = copy_one(dst, from, src)?;
     let mut stack: Vec<(NodeId, NodeId)> = Vec::new();
-    stack.falloc_reserve(1).map_err(|_| MutError::Oom)?;
-    stack.push((src, root));
+    stack.falloc_push((src, root)).or_oom::<MutError>()?;
     while let Some((s, d)) = stack.pop() {
         let mut sc = source(dst, from).first_child(s);
         while let Some(child) = sc {
             let dc = copy_one(dst, from, child)?;
             dst.append_child(d, dc);
             if source(dst, from).first_child(child).is_some() {
-                stack.falloc_reserve(1).map_err(|_| MutError::Oom)?;
-                stack.push((child, dc));
+                stack.falloc_push((child, dc)).or_oom::<MutError>()?;
             }
             sc = source(dst, from).next(child);
         }

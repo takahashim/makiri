@@ -29,7 +29,7 @@
 
 use core::ptr::NonNull;
 
-use crate::falloc::try_box;
+use crate::falloc::{try_box, OomOption, OomResult};
 use crate::lexbor::abi::{
     self as lxb, lxb_html_document_destroy, lxb_html_parse_chunk_begin, lxb_html_parse_chunk_end,
     lxb_html_parse_chunk_process,
@@ -114,8 +114,8 @@ impl HtmlParsed {
     /// what they lend cannot be overlapped by a rebuild.
     pub fn ensure_dom_index(&mut self) -> Result<(), AdapterOom> {
         if self.dom_index.is_none() {
-            let built = crate::lexbor::adapter::dom_index::build(self.doc()).ok_or(AdapterOom)?;
-            self.dom_index = Some(try_box(built).map_err(|()| AdapterOom)?);
+            let built = crate::lexbor::adapter::dom_index::build(self.doc()).or_oom()?;
+            self.dom_index = Some(try_box(built).or_oom()?);
         }
         Ok(())
     }
@@ -159,8 +159,7 @@ impl HtmlParsed {
             };
             match TextIndex::build(root) {
                 Ok(built) => {
-                    self.text_index =
-                        TextIndexState::Built(try_box(built).map_err(|()| AdapterOom)?);
+                    self.text_index = TextIndexState::Built(try_box(built).or_oom()?);
                 }
                 Err(TextBuildError::NotApplicable) => {
                     self.text_index = TextIndexState::Inapplicable;

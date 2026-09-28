@@ -22,7 +22,7 @@ use super::step_index::{try_descendant_index, try_descendant_index_nth};
 use super::value::*;
 use crate::engine_error::Bytes;
 use crate::err_setf;
-use crate::falloc::{try_vec_with_capacity, Reserve, VecPush};
+use crate::falloc::{try_vec_with_capacity, VecPush};
 use core::ops::ControlFlow;
 
 /// An evaluation step: the value, or proof its error was written to the
@@ -683,14 +683,16 @@ fn eval_fncall<'e, 'd, D: Dom<'d>>(
     /* The arguments are evaluated once and reused by either path. They are owned
      * here, so every way out - an argument failing part-way included - clears
      * them when `vals` drops. */
-    let mut vals: Vec<Val<D::Node>> = Vec::new();
-    if !args.is_empty() && vals.falloc_reserve_exact(args.len()).is_err() {
-        return Err(err_setf!(
-            ev.budget.sink(),
-            ErrorKind::Oom,
-            "out of memory allocating function arguments"
-        ));
-    }
+    let mut vals: Vec<Val<D::Node>> = match try_vec_with_capacity(args.len()) {
+        Some(v) => v,
+        None => {
+            return Err(err_setf!(
+                ev.budget.sink(),
+                ErrorKind::Oom,
+                "out of memory allocating function arguments"
+            ))
+        }
+    };
     for a in args {
         vals.push(eval_node::<D>(ev, a, focus)?);
     }
@@ -729,10 +731,10 @@ impl<'e, 'd, D: Dom<'d>> Evaluation<'e, 'd, D> {
         let Some(handler) = self.handler else {
             return Ok(None);
         };
-        let mut token_args: Vec<Val> = Vec::new();
-        if token_args.falloc_reserve_exact(args.len()).is_err() {
-            return Err(handler_oom(&mut self.budget));
-        }
+        let mut token_args: Vec<Val> = match try_vec_with_capacity(args.len()) {
+            Some(v) => v,
+            None => return Err(handler_oom(&mut self.budget)),
+        };
         for v in args {
             let Some(t) = val_copy_to_tokens::<D>(v) else {
                 return Err(handler_oom(&mut self.budget));

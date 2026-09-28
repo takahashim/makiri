@@ -239,3 +239,10 @@ pub enum ErrorKind {
     /// A budget or cap was exceeded.
     Limit,
 }
+
+impl crate::falloc::Oom for ErrorKind {
+    #[inline]
+    fn oom() -> Self {
+        ErrorKind::Oom
+    }
+}

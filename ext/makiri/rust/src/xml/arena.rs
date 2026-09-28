@@ -20,7 +20,7 @@
 
 #![forbid(unsafe_code)]
 
-use crate::falloc::Reserve;
+use crate::falloc::{OomResult, Reserve, VecPush};
 use crate::xml::qname::Split;
 use crate::xml::{
     ArenaKind, BudgetError, Document, Link, Node, NodeId, Span, MAX_BYTES, MAX_NODES,
@@ -83,7 +83,7 @@ impl Document {
             name_index: core::cell::OnceCell::new(),
             has_encoding_decl: false,
         };
-        let mut doc = crate::falloc::try_box(doc).map_err(|_| BudgetError::Oom)?;
+        let mut doc = crate::falloc::try_box(doc).or_oom()?;
         doc.xml_ns = doc.store(crate::xml::XML_NS_URI)?;
         doc.xmlns_ns = doc.store(crate::xml::XMLNS_NS_URI)?;
         /* Slot 0 is reserved, and it is the 4-byte `Link` that forces it: a
@@ -308,9 +308,7 @@ impl Document {
             });
         }
         self.charge(src.len())?;
-        self.bytes
-            .falloc_reserve(src.len())
-            .map_err(|_| BudgetError::Oom)?;
+        self.bytes.falloc_reserve(src.len()).or_oom()?;
         let off = self.bytes.len() as u32;
         self.bytes.extend_from_slice(src);
         Ok(Span {
@@ -389,9 +387,8 @@ impl Document {
             return Err(BudgetError::Limit);
         }
         self.charge(NODE_COST)?;
-        self.nodes.falloc_reserve(1).map_err(|_| BudgetError::Oom)?;
         let index = self.nodes.len() as u32;
-        self.nodes.push(Node::zeroed(type_));
+        self.nodes.falloc_push(Node::zeroed(type_)).or_oom()?;
         Ok(index)
     }
 
@@ -408,9 +405,7 @@ impl Document {
         fill: impl FnOnce(&mut [u8]) -> Result<usize, E>,
     ) -> Result<Span, AppendError<E>> {
         self.charge(cap)?;
-        self.bytes
-            .falloc_reserve(cap)
-            .map_err(|_| BudgetError::Oom)?;
+        self.bytes.falloc_reserve(cap).or_oom::<BudgetError>()?;
         let off = self.bytes.len();
         self.bytes.resize(off + cap, 0);
         match fill(&mut self.bytes[off..]) {
@@ -453,9 +448,7 @@ impl Document {
              * store. Reserved first, so the copies cannot reallocate. */
             let total = old.len.checked_add(span.len).ok_or(BudgetError::Limit)?;
             self.charge(total as usize)?;
-            self.bytes
-                .falloc_reserve(total as usize)
-                .map_err(|_| BudgetError::Oom)?;
+            self.bytes.falloc_reserve(total as usize).or_oom()?;
             let off = self.bytes.len() as u32;
             for s in [old, span] {
                 if !s.is_absent() {

@@ -36,6 +36,7 @@ use rb_sys::{StableApiDefinition, VALUE};
 
 /// The shared owned buffer.
 use crate::cbuf::OwnedBuf;
+use crate::falloc::OomOption;
 
 use crate::bridge::ruby::string_of;
 
@@ -130,6 +131,13 @@ enum Refusal<P> {
     Raised(Error),
 }
 
+impl<P> crate::falloc::Oom for Refusal<P> {
+    #[inline]
+    fn oom() -> Self {
+        Refusal::Oom
+    }
+}
+
 /// Whether `e` is `rb_str_locktmp`'s own refusal of an already locked String,
 /// rather than an exception delivered while that refusal was being raised.
 ///
@@ -207,7 +215,7 @@ impl<C: Checked> RubyStr<C> {
         view.owns_lock = owns_lock;
         if !owns_lock && !frozen {
             // SAFETY: as above - no Ruby since the borrow.
-            let copy = OwnedBuf::copy_from(unsafe { bytes_at(ptr, len) }).ok_or(Refusal::Oom)?;
+            let copy = OwnedBuf::copy_from(unsafe { bytes_at(ptr, len) }).or_oom()?;
             /* The copy's heap storage does not move with the view. */
             view.ptr = copy.as_slice().as_ptr();
             view._copy = Some(copy);

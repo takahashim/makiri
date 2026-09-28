@@ -355,6 +355,54 @@ impl<K: core::hash::Hash + Eq, V, S: core::hash::BuildHasher> MapInsert<K, V> fo
     }
 }
 
+/// A domain error with one variant meaning "an allocation failed" - the
+/// target of [`OomResult::or_oom`] / [`OomOption::or_oom`] below.
+///
+/// One `impl` per error enum, each naming its own variant. NOT for an enum
+/// whose allocation failures are not all the same case (`SelectError` has
+/// three - `CacheOom`/`CollectOom`/`ParseOom`, each meaning something
+/// different to the caller): forcing those through one generic conversion
+/// would erase which one happened, so they stay spelled out at the call site.
+pub trait Oom {
+    fn oom() -> Self;
+}
+
+/// `Result<T, ()>` from a growth op ([`Reserve`], [`VecPush`], [`MapInsert`])
+/// -> a domain `Result<T, E>`, naming only which error type - not which
+/// variant, since [`Oom::oom`] already knows that.
+///
+/// This, [`OomOption`] and the local `impl Oom` per error type replace three
+/// styles that had accumulated at call sites for the same conversion -
+/// `.map_err(|_| E::Oom)`, `.ok_or(E::Oom)`/`.ok_or_else(...)`, and a manual
+/// `if ... .is_err() { return Err(E::Oom); }` (sometimes two such calls
+/// joined by `||`, which reads as one check but is really "try the first,
+/// and only the first's failure decides whether the second runs at all" -
+/// `.or_oom()?` on each, in sequence, says that directly).
+pub trait OomResult<T> {
+    fn or_oom<E: Oom>(self) -> Result<T, E>;
+}
+
+impl<T> OomResult<T> for Result<T, ()> {
+    #[inline]
+    fn or_oom<E: Oom>(self) -> Result<T, E> {
+        self.map_err(|()| E::oom())
+    }
+}
+
+/// `Option<T>` from a construction op (`try_vec_with_capacity`, `try_to_vec`,
+/// `try_to_boxed_slice`, `try_box`) -> a domain `Result<T, E>`. See
+/// [`OomResult`].
+pub trait OomOption<T> {
+    fn or_oom<E: Oom>(self) -> Result<T, E>;
+}
+
+impl<T> OomOption<T> for Option<T> {
+    #[inline]
+    fn or_oom<E: Oom>(self) -> Result<T, E> {
+        self.ok_or_else(E::oom)
+    }
+}
+
 /// Geometric growth for a hand-managed array: start from the current capacity
 /// (or 8 when there is none and 8 elements fit), double until it covers `need`,
 /// and fall back to exactly `need` when doubling would overshoot what `elem`

@@ -10,6 +10,7 @@
 
 #![allow(unsafe_code)]
 
+use crate::falloc::OomOption;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
@@ -22,6 +23,13 @@ pub enum BufError {
     Oom,
     /// The content would pass the buffer's ceiling.
     Limit,
+}
+
+impl crate::falloc::Oom for BufError {
+    #[inline]
+    fn oom() -> Self {
+        BufError::Oom
+    }
 }
 
 /// A growable buffer, NUL-terminated whenever it holds an allocation.
@@ -164,20 +172,19 @@ impl Buf {
         if n == 0 {
             return Ok(());
         }
-        let need = self.len.checked_add(n).ok_or(BufError::Oom)?;
+        let need = self.len.checked_add(n).or_oom()?;
         let limit = self.content_limit();
         if need > limit {
             return Err(BufError::Limit);
         }
         /* Room for the NUL terminator too. */
-        let need_term = need.checked_add(1).ok_or(BufError::Oom)?;
+        let need_term = need.checked_add(1).or_oom()?;
 
         if need_term > self.cap {
             /* Geometric growth can overshoot to ~2x need_term; the realloc
              * clamps it to the ceiling. This append passed `need <= limit`, so
              * `need_term <= limit + 1` and the clamp never cuts below it. */
-            let new_cap =
-                crate::falloc::grow_capacity(self.cap, need_term, 1).ok_or(BufError::Oom)?;
+            let new_cap = crate::falloc::grow_capacity(self.cap, need_term, 1).or_oom()?;
             self.realloc_within_ceiling(need_term, new_cap)?;
         }
 
@@ -209,7 +216,7 @@ impl Buf {
     /// append still fails closed if the real output exceeds it.
     pub fn reserve(&mut self, n: usize) -> Result<(), BufError> {
         let n = n.min(self.content_limit());
-        let need_term = n.checked_add(1).ok_or(BufError::Oom)?;
+        let need_term = n.checked_add(1).or_oom()?;
         if need_term <= self.cap {
             return Ok(()); /* already have room */
         }
@@ -229,7 +236,7 @@ impl Buf {
             /* `str_alloc(0)` returns null or one NUL byte from libc, which the
              * `OwnedBuf` frees. */
             let p = crate::falloc::cstr::str_alloc(0) as *mut u8;
-            let ptr = NonNull::new(p).ok_or(BufError::Oom)?;
+            let ptr = NonNull::new(p).or_oom()?;
             return Ok(OwnedBuf { ptr, len: 0 });
         };
         let len = self.len;

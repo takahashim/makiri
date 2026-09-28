@@ -6,8 +6,8 @@
 
 #![forbid(unsafe_code)]
 
-use super::{Failure, OrOom};
-use crate::falloc::Reserve;
+use super::Failure;
+use crate::falloc::{try_vec_with_capacity, OomOption, OomResult, Reserve};
 
 /// The total prefix-resolution steps one serialization may take. Generous - an
 /// ordinary document uses a handful - but finite, so namespace planning cannot
@@ -140,8 +140,7 @@ impl<'d> Bindings<'d> {
             .checked_mul(4)
             .map(|n| n.next_power_of_two().max(16))
             .ok_or(Failure::ScopeOverflow)?;
-        let mut slots: Vec<u32> = Vec::new();
-        slots.falloc_reserve_exact(size).or_oom()?;
+        let mut slots: Vec<u32> = try_vec_with_capacity(size).or_oom()?;
         slots.resize(size, EMPTY);
         let old = core::mem::replace(&mut self.slots, slots);
         self.filled = 0;
