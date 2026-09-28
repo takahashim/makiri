@@ -523,19 +523,25 @@ mod selector_port_spike {
     use crate::lexbor::adapter::post_parse::{parse_html, HtmlParsed};
     use crate::lexbor::adapter::tree_guard::DepthLimit;
     use crate::lexbor::css_parser;
-    use crate::lexbor::selector_port::matches;
+    use crate::lexbor::selector_port::{
+        matches_any, select_all as port_select_all, select_first as port_select_first,
+    };
     use crate::text::VerifiedText;
 
     fn parsed(html: &[u8]) -> Box<HtmlParsed> {
         parse_html(html, true, DepthLimit::DEFAULT).expect("a document parses")
     }
 
+    /// The node `Node#css` etc. would actually be called on for "the whole
+    /// document" - the Document node itself, matching `old_select_all`'s
+    /// `d.as_node()` below - NOT `document_root()` (`<html>`). `<html>` is a
+    /// genuine descendant of this and so a legitimate match for `*`; rooting
+    /// here instead of there previously undercounted it by one against the
+    /// old engine.
     fn root(doc: &HtmlParsed) -> HtmlNode<'_> {
         // SAFETY: `doc` outlives the borrow this returns.
         let d = unsafe { doc.raw_doc().as_doc() };
         d.as_node()
-            .document_root()
-            .expect("the parser always inserts a root")
     }
 
     fn matches_selector(element: HtmlElement<'_>, selector: &str) -> bool {
@@ -543,14 +549,22 @@ mod selector_port_spike {
         let text = VerifiedText::from_bytes(selector.as_bytes()).expect("verified");
         let parsed = css_parser::parse(&gvl, text)
             .unwrap_or_else(|_| panic!("selector {selector:?} failed to parse"));
-        parsed.groups().any(|list| matches(list.first(), element))
+        matches_any(parsed.groups(), element)
     }
 
+    /// Through the production `select_all`/`matches_any` entry points, not a
+    /// second reimplementation of the subtree walk: this and `matches_selector`
+    /// above are what the differential test further down cross-checks against
+    /// the old Lexbor engine.
     fn select_all<'d>(doc: &'d HtmlParsed, selector: &str) -> Vec<HtmlElement<'d>> {
-        root(doc)
-            .subtree()
+        let gvl = Gvl::exclusive();
+        let text = VerifiedText::from_bytes(selector.as_bytes()).expect("verified");
+        let parsed = css_parser::parse(&gvl, text)
+            .unwrap_or_else(|_| panic!("selector {selector:?} failed to parse"));
+        port_select_all(root(doc), parsed.groups())
+            .unwrap_or_else(|_| panic!("selector {selector:?} overflowed NODE_SET_MAX"))
+            .into_iter()
             .filter_map(HtmlNode::element)
-            .filter(|&e| matches_selector(e, selector))
             .collect()
     }
 
@@ -876,6 +890,88 @@ mod selector_port_spike {
                 "mismatch for selector {sel:?}: new has {} match(es), old has {}",
                 new.len(),
                 old.len()
+            );
+            // Self-consistency: `select_all`'s filter and `matches_any` asked
+            // directly of each result must agree - a `select_all` that found
+            // something `matches_any` denies (or vice versa) would mean the
+            // two don't share the same underlying `list_matches`, silently.
+            for element in select_all(&doc, sel) {
+                assert!(
+                    matches_selector(element, sel),
+                    "select_all found {:?} for {sel:?}, but matches_any denies it",
+                    element.qualified_name(),
+                );
+            }
+        }
+    }
+
+    /// `select_first`/`matches_any` are entry points of their own (not just
+    /// `select_all().first()`/`.is_empty()`), and from an arbitrary ELEMENT
+    /// root - not only the document - which is where "descendants only, the
+    /// root itself excluded" actually has something to get wrong. Checked
+    /// against the old engine from that same non-document root.
+    #[test]
+    fn select_first_and_matches_any_agree_with_the_old_engine_from_a_non_document_root() {
+        use crate::lexbor::selectors as old_engine;
+
+        let doc = parsed(
+            br#"<!doctype html><html><body>
+                <ul id="list">
+                    <li class="item first" data-n="1"><a href="/p/1">one</a></li>
+                    <li class="item" data-n="2"><a href="/p/2" rel="next">two</a></li>
+                    <li class="item last" data-n="3"><span>three</span></li>
+                </ul>
+            </body></html>"#,
+        );
+
+        let list = root(&doc)
+            .subtree()
+            .filter_map(HtmlNode::element)
+            .find(|e| e.qualified_name() == b"ul")
+            .expect("the fixture has a <ul>");
+
+        let selectors = [
+            "li",
+            "li.first",
+            ".item",
+            "ul",
+            "#list",
+            "li:last-child",
+            "li:not(.first)",
+            "a[href]",
+            "span",
+            "missing",
+        ];
+
+        for sel in selectors {
+            let gvl = Gvl::exclusive();
+            let raw_root = RawNode::from(list.node());
+            let old_first = old_engine::select_first(&gvl, raw_root, sel.as_bytes())
+                .unwrap_or_else(|_| panic!("old engine rejected {sel:?}"));
+            let old_matches = old_engine::matches_node(&gvl, raw_root, sel.as_bytes())
+                .unwrap_or_else(|_| panic!("old engine rejected {sel:?}"));
+            drop(gvl);
+
+            let text = VerifiedText::from_bytes(sel.as_bytes()).expect("verified");
+            let gvl = Gvl::exclusive();
+            let parsed_sel = css_parser::parse(&gvl, text)
+                .unwrap_or_else(|_| panic!("selector {sel:?} failed to parse"));
+            let new_first = port_select_first(list.node(), parsed_sel.groups());
+            let new_matches = matches_any(parsed_sel.groups(), list);
+
+            assert!(
+                new_first.map(RawNode::from) == old_first,
+                "select_first mismatch for {sel:?} rooted at <ul>: new {:?}, old {:?}",
+                new_first.is_some(),
+                old_first.is_some()
+            );
+            // `matches_any` asks whether `list` (the `<ul>`) itself matches -
+            // no traversal - so this checks it against the old engine's own
+            // `matches_node` asked the identical question of the identical
+            // node, `sel: "ul"` included (where the answer is `true`).
+            assert_eq!(
+                new_matches, old_matches,
+                "matches_any mismatch for {sel:?} on <ul> itself"
             );
         }
     }
