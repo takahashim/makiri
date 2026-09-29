@@ -97,11 +97,15 @@ impl<'doc> HtmlElement<'doc> {
         let html = self.is_html_in_html_doc();
         self.attrs().find(|a| {
             a.local_id() == id
-                && if html {
-                    eq_lowered(a.qualified_name(), qname)
-                } else {
-                    a.qualified_name() == qname
-                }
+                // Named by its lower-cased local name, which is `qname`'s
+                // lower-cased form (the id says so): `qname` itself when the
+                // lookup lower-cases or `qname` has no upper case.
+                && (a.named_by_local() && (html || name.lower)
+                    || if html {
+                        eq_lowered(a.qualified_name(), qname)
+                    } else {
+                        a.qualified_name() == qname
+                    })
         })
     }
 
@@ -111,6 +115,26 @@ impl<'doc> HtmlElement<'doc> {
     pub fn attr_by_ns(self, ns: Option<NsId>, local: &[u8]) -> Option<HtmlAttr<'doc>> {
         self.attrs()
             .find(|a| a.own_ns() == ns && a.dom_local_name() == local)
+    }
+
+    /// The element's ID: its no-namespace attribute whose local name is
+    /// exactly `id`, read from Lexbor's `attr_id` shortcut (which
+    /// [`link_attr`](Self::link_attr) keeps pointing at exactly that) - what
+    /// Lexbor's own `#id` matching reads. Unlike `get_attribute(b"id")` it
+    /// does not find an unprefixed `id` set IN a namespace.
+    #[inline]
+    pub fn id_attr(self) -> Option<HtmlAttr<'doc>> {
+        // SAFETY: a live element; the shortcut is null or one of its own
+        // attributes, live for 'doc.
+        HtmlAttr::link(unsafe { (*self.raw()).attr_id })
+    }
+
+    /// As [`id_attr`](Self::id_attr), for the class attribute
+    /// (`attr_class`).
+    #[inline]
+    pub fn class_attr(self) -> Option<HtmlAttr<'doc>> {
+        // SAFETY: as `id_attr`.
+        HtmlAttr::link(unsafe { (*self.raw()).attr_class })
     }
 
     /// DOM `hasAttribute(qname)`.
