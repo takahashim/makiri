@@ -201,11 +201,9 @@ INFALLIBLE_ALLOC = /\.to_owned\(\)|\.to_vec\(\)|String::from\(|\bformat!\(/
 # Empty: the `selectors`-crate exploration
 # (notes/css_selectors_crate_migration_plan.ja.md §1.1) that once held an
 # accepted exception here was rejected in favour of porting Lexbor's own
-# `lxb_selectors_*` state machine instead - a design that, unlike that crate,
-# keeps every allocation on a path `falloc` can eventually cover. See the
-# plan's §1.1 for why, and `lexbor/selector_port.rs` for the replacement
-# (still on the ordinary allocator for now - `Box`/`Vec`, not yet `falloc` -
-# but via one `#[allow(clippy::disallowed_methods)]` helper, not this table).
+# `lxb_selectors_*` state machine instead - `lexbor/selector_port.rs`, which
+# allocates only through `falloc` like the rest of the engine (and `rake oom`
+# sweeps it).
 INFALLIBLE_ALLOC_COUNTS = {}.freeze
 
 def rust_code(path)
