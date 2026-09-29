@@ -788,7 +788,10 @@ for up to 4 (2 for `top`/`alts`) entries, so a small selector allocates
 nothing to compile - and small, because the tables are moved by value and a
 larger inline size measured as `memmove` time on `at_css`. An attribute whose
 Lexbor `qualified_name` is 0 is named by its lower-cased local name, so a
-local-id match confirms without reading the name. A lone top-level chain whose
+local-id match confirms without reading the name. Whether a value compares
+case-insensitively by default (§B-5's 46-name table) is settled per selector at
+compile time (`Step::value_ci`), as Lexbor's per-id `switch` is - the per-node
+table scan it replaced cost `[type=text]` ~40%. A lone top-level chain whose
 rightmost compound has a type selector refuses other tags before the machine
 starts (`Query::tag_filter`).
 Measured on the Ruby-free probe against the previous commit: attribute scans

@@ -623,6 +623,8 @@ mod selector_port_spike {
         assert_eq!(select_all(&doc, "[type=TEXT]").len(), 1);
         assert_eq!(select_all(&doc, "[type=text]").len(), 1); // table default: CI
         assert_eq!(select_all(&doc, "[type=text s]").len(), 0); // explicit s forces CS
+        assert_eq!(select_all(&doc, "[TYPE=text]").len(), 1); // the table is keyed case-insensitively
+        assert_eq!(select_all(&doc, "[type=text i]").len(), 1);
         assert_eq!(select_all(&doc, "[data-x=abc]").len(), 0); // not in the table: CS
         assert_eq!(select_all(&doc, "[data-x=ABC]").len(), 1);
         assert_eq!(select_all(&doc, "[rel=nofollow]").len(), 0); // SVG: table doesn't apply

@@ -386,6 +386,9 @@
   loop over a chain's compounds that backtracks on failure, with nested
   pseudo-classes as contexts on a heap stack - instead of a general
   continuation machine. `rake bench`: `css` ~2x faster, `at_css` ~15%.
+* An HTML attribute selector that compares a value (`[type=text]`) no longer
+  scans the case-insensitive-attribute table for every element; the table is
+  consulted once per selector. ~25-30% faster on such selectors.
 * `NodeSet#at_css` / `#at_xpath` stop at the first node with a match instead of
   querying every node and building the union.
 * `XML::Node#canonicalize` no longer walks up the ancestors for each namespace

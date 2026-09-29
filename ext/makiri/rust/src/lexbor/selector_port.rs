@@ -343,6 +343,11 @@ struct Step<'p> {
     /// alts + n_alts]` of the [`Compiled`] table.
     alts: u32,
     n_alts: u32,
+    /// An attribute selector's value comparison: `Some(ci)` settled at
+    /// compile time (an `i` / `s` modifier, or a name outside the §B-5
+    /// table), `None` for a table name, case-insensitive on an HTML element
+    /// only - Lexbor's per-id `switch`, decided once rather than per node.
+    value_ci: Option<bool>,
 }
 
 impl Default for Step<'_> {
@@ -352,6 +357,7 @@ impl Default for Step<'_> {
             name: &[],
             alts: 0,
             n_alts: 0,
+            value_ci: Some(false),
         }
     }
 }
@@ -481,11 +487,22 @@ impl<'p> Compiled<'p> {
                     }
                     pending.falloc_push((lists, alts)).or_oom()?;
                 }
+                let value_ci = match simple {
+                    Simple::Attribute(at) if at.case_insensitive => Some(true),
+                    Simple::Attribute(at) if at.explicit_sensitive => Some(false),
+                    Simple::Attribute(at)
+                        if at.value.is_some() && is_html_ci_attribute(sel.name()) =>
+                    {
+                        None
+                    }
+                    _ => Some(false),
+                };
                 self.simples.push(Step {
                     simple,
                     name: sel.name(),
                     alts,
                     n_alts,
+                    value_ci,
                 })?;
                 match sel.next().filter(|n| n.combinator() == Combinator::Close) {
                     Some(n) => sel = n,
@@ -601,90 +618,88 @@ fn has_attr(node: HtmlNode<'_>, name: &[u8]) -> bool {
         .is_some_and(|el| el.get_attribute(name).is_some())
 }
 
-/// §B-5: the 40 HTML attributes whose VALUE compares ASCII case-insensitively
+/// §B-5: the 46 HTML attributes whose VALUE compares ASCII case-insensitively
 /// when no `i`/`s` modifier is written, and only on an HTML-namespace element
-/// of an HTML document (checked by the caller, `attribute_case_insensitive`).
+/// of an HTML document (`attribute_matches`). Asked once per selector, by
+/// `compile`.
 fn is_html_ci_attribute(name: &[u8]) -> bool {
     // Compared case-insensitively against the selector's own attribute name
-    // spelling (an author can write `[TYPE=x]`), matching the DOM's own
-    // by-name attribute lookup convention elsewhere in this codebase.
-    const NAMES: &[&[u8]] = &[
-        b"accept",
-        b"accept-charset",
-        b"align",
-        b"alink",
-        b"axis",
-        b"bgcolor",
-        b"charset",
-        b"checked",
-        b"clear",
-        b"codetype",
-        b"color",
-        b"compact",
-        b"declare",
-        b"defer",
-        b"dir",
-        b"direction",
-        b"disabled",
-        b"enctype",
-        b"face",
-        b"frame",
-        b"hreflang",
-        b"http-equiv",
-        b"lang",
-        b"language",
-        b"link",
-        b"media",
-        b"method",
-        b"multiple",
-        b"nohref",
-        b"noresize",
-        b"noshade",
-        b"nowrap",
-        b"readonly",
-        b"rel",
-        b"rev",
-        b"rules",
-        b"scope",
-        b"scrolling",
-        b"selected",
-        b"shape",
-        b"target",
-        b"text",
-        b"type",
-        b"valign",
-        b"valuetype",
-        b"vlink",
-    ];
-    NAMES.iter().any(|n| n.eq_ignore_ascii_case(name))
-}
-
-/// §B-5: whether `node`'s attribute `name` compares case-insensitively by
-/// DEFAULT (no explicit `i`/`s` modifier written).
-fn attribute_case_insensitive_by_default(node: HtmlNode<'_>, name: &[u8]) -> bool {
-    // §B-5's condition is "element is HTML-namespace AND owner document is
-    // an HTML document" - the second half needs a raw document-type read
-    // this `#![forbid(unsafe_code)]` module cannot make (see `attrs.rs`'s
-    // private `is_html_in_html_doc`). It is dropped rather than
-    // approximated: this matcher is only ever invoked for
-    // `Makiri::HTML` documents (XML's CSS query goes through `css::lower`
-    // instead - see the plan §2), so "owner document is HTML" always holds
-    // in practice, and `is_html_namespace` alone correctly tells HTML
-    // elements from foreign (SVG/MathML) content within one.
-    is_html_namespace(node) && is_html_ci_attribute(name)
+    // spelling (an author can write `[TYPE=x]`). Lower-cased into a buffer
+    // as long as the longest entry, so the table is one `match` (a switch on
+    // length, then a compare), not 46 folded compares.
+    let mut lower = [0u8; 14];
+    let Some(buf) = lower.get_mut(..name.len()) else {
+        return false;
+    };
+    for (d, s) in buf.iter_mut().zip(name) {
+        *d = s.to_ascii_lowercase();
+    }
+    matches!(
+        &*buf,
+        b"accept"
+            | b"accept-charset"
+            | b"align"
+            | b"alink"
+            | b"axis"
+            | b"bgcolor"
+            | b"charset"
+            | b"checked"
+            | b"clear"
+            | b"codetype"
+            | b"color"
+            | b"compact"
+            | b"declare"
+            | b"defer"
+            | b"dir"
+            | b"direction"
+            | b"disabled"
+            | b"enctype"
+            | b"face"
+            | b"frame"
+            | b"hreflang"
+            | b"http-equiv"
+            | b"lang"
+            | b"language"
+            | b"link"
+            | b"media"
+            | b"method"
+            | b"multiple"
+            | b"nohref"
+            | b"noresize"
+            | b"noshade"
+            | b"nowrap"
+            | b"readonly"
+            | b"rel"
+            | b"rev"
+            | b"rules"
+            | b"scope"
+            | b"scrolling"
+            | b"selected"
+            | b"shape"
+            | b"target"
+            | b"text"
+            | b"type"
+            | b"valign"
+            | b"valuetype"
+            | b"vlink"
+    )
 }
 
 /// §B-4: `[name op value]` (or `[name]`, existence, when `at.value` is
-/// `None`). `Attribute::case_insensitive` is the selector's own `i`/`s`; when
-/// neither was written, `attribute_case_insensitive_by_default` supplies the
-/// HTML table default.
+/// `None`). `value_ci` is [`Step::value_ci`]: `None` - a §B-5 table name with
+/// no `i`/`s` - compares case-insensitively on an HTML-namespace element.
+///
+/// §B-5 also asks that the owner document be an HTML document, a raw
+/// document-type read this `#![forbid(unsafe_code)]` module cannot make; it
+/// always holds here, since this matcher only ever runs on `Makiri::HTML`
+/// documents (XML's CSS goes through `css::lower`), and the namespace alone
+/// tells HTML elements from foreign (SVG/MathML) content within one.
 fn attribute_matches(
     node: HtmlNode<'_>,
-    name: &[u8],
     value: Option<&[u8]>,
     op: AttrMatch,
     at_value: Option<&[u8]>,
-    explicit_ci: Option<bool>,
+    value_ci: Option<bool>,
 ) -> bool {
     let Some(value) = value else {
         return false;
@@ -692,7 +707,7 @@ fn attribute_matches(
     let Some(want) = at_value else {
         return true; // `[name]`: existence only (§B-4)
     };
-    let ci = explicit_ci.unwrap_or_else(|| attribute_case_insensitive_by_default(node, name));
+    let ci = value_ci.unwrap_or_else(|| is_html_namespace(node));
     match op {
         AttrMatch::Equal => eq_bytes(value, want, ci),
         // §B-4's `~=` literally reuses the class-token matcher.
@@ -1172,28 +1187,16 @@ fn check_simple(
                     has_whitespace_token(a.value(), sel.name, document_is_quirks(node))
                 }),
         ),
-        Simple::Attribute(at) => {
-            // §B-4: explicit `i` -> case-insensitive; explicit `s` -> forced
-            // case-sensitive; no modifier at all -> the HTML table decides
-            // (`attribute_matches`'s `None` case). `Attribute::explicit_sensitive`
-            // is what makes the third case distinguishable from the second
-            // (see its doc in `css_parser.rs`).
-            let explicit_ci = if at.case_insensitive {
-                Some(true)
-            } else if at.explicit_sensitive {
-                Some(false)
-            } else {
-                None
-            };
-            SimpleCheck::Result(attribute_matches(
-                node,
-                sel.name,
-                attr_value(node, sel.name, name),
-                at.op,
-                at.value,
-                explicit_ci,
-            ))
-        }
+        // §B-4: explicit `i` -> case-insensitive; explicit `s` -> forced
+        // case-sensitive; no modifier -> the HTML table decides. `compile`
+        // settled which in `Step::value_ci`.
+        Simple::Attribute(at) => SimpleCheck::Result(attribute_matches(
+            node,
+            attr_value(node, sel.name, name),
+            at.op,
+            at.value,
+            sel.value_ci,
+        )),
         Simple::PseudoClass(pc) => SimpleCheck::Result(plain_pseudo_matches(pc, node, budget)?),
         Simple::PseudoClassFunction(FunctionArg::Nth {
             from_end,
