@@ -296,14 +296,15 @@ pub(super) fn check_simple(
 /// condition that the adapter then confirms (an attribute:
 /// `attr_by_resolved_name`).
 ///
-/// A tag id is compared WITHOUT asking each node for its document, as
-/// Lexbor's `entry->id` is: every node a walking query reaches - the walk
-/// itself, a combinator's climb, `:has()`'s search, `of S`'s siblings - is
-/// in the walked tree, so of the walked document, since Makiri never moves a
-/// node between documents (inserting one from another document inserts a
-/// copy, `bridge::html::insert`). The per-node check this replaced read
-/// `owner_document` on every candidate, which cost `css("li")` ~10% on a
-/// document not in cache.
+/// A resolved name - tag id or attribute id - is used WITHOUT asking each
+/// node for its document, as Lexbor's `entry->id` is: every node a walking
+/// query reaches - the walk itself, a combinator's climb, `:has()`'s search,
+/// `of S`'s siblings - is in the walked tree, so of the walked document,
+/// since Makiri never moves a node between documents (inserting one from
+/// another document inserts a copy, `bridge::html::insert`). The attribute
+/// side is `attr_by_resolved_name`'s precondition, asserted in debug builds.
+/// The per-node check this replaced read `owner_document` on every
+/// candidate, which cost `css("li")` ~10% on a document not in cache.
 #[derive(Clone, Copy, Default)]
 pub(super) enum Name {
     /// Not looked up yet.
