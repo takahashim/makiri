@@ -1272,7 +1272,16 @@ impl<'doc> HtmlAttr<'doc> {
     pub fn value(self) -> &'doc [u8] {
         // SAFETY: a live attribute; the value is only changed by a mutator,
         // which the handle's contract rules out for 'doc.
-        unsafe { named_mut(self.raw(), lxb::lxb_dom_attr_value_noi) }
+        // `lxb_dom_attr_value`, a header inline (the `_noi` twin is its
+        // out-of-line copy): the same two field reads, without the call.
+        unsafe {
+            let v = (*self.raw()).value;
+            if v.is_null() {
+                &[]
+            } else {
+                seen((*v).data, (*v).length)
+            }
+        }
     }
     /// Replace the attribute's value. `Err` when Lexbor could not store it,
     /// in which case the attribute keeps what it had.
