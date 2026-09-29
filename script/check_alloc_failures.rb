@@ -307,7 +307,7 @@ SCENARIOS = {
 
   # CSS: a comma list with combinators through the reused engine, the at_css
   # first-match path, and matches?. The selectors reach every allocation the
-  # HTML matcher (`lexbor::selector_port`) makes: the compiled tables and the
+  # HTML matcher (`lexbor::css_match`) makes: the compiled tables and the
   # compile work list, the chain positions, the task stack (:is/:not/:has/
   # of S, :has() cursors), the resolved names, the remembered `:nth-*`
   # sibling positions, and the result vector. Most are borrowed from a

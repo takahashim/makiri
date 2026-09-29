@@ -1,4 +1,4 @@
-//! The compiled-selector cache for `lexbor::selector_port`'s HTML query, over
+//! The compiled-selector cache for `lexbor::css_match`'s HTML query, over
 //! its OWN process-global parser/arena, built the way the stylesheet reader's
 //! is (`css_engine::ParserParts::build()`).
 //!
@@ -42,8 +42,8 @@ use std::collections::HashMap;
 use crate::falloc::{try_to_boxed_slice, Reserve};
 use crate::gvl::{Gvl, GvlCell, GvlRef};
 use crate::lexbor::css_engine::{ParseFail, ParserParts, SelectorParser};
+use crate::lexbor::css_match::Scratch;
 use crate::lexbor::css_parser::{list_from_raw, Lists, ParseError};
-use crate::lexbor::selector_port::Scratch;
 
 type SelectorList = crate::lexbor::abi::lxb_css_selector_list_t;
 

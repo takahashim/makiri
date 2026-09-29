@@ -365,7 +365,7 @@ fn lower_pseudo_simple(b: &Build, pc: PseudoClass) -> Built {
         ),
         /* The document element, not merely a parentless one - see [`root_test`]. */
         PseudoClass::Root => root_test(b),
-        /* Added to `PseudoClass` for `lexbor::selector_port` (HTML matching);
+        /* Added to `PseudoClass` for `lexbor::css_match` (HTML matching);
          * the XML lowering doesn't implement any of them, same as before. */
         PseudoClass::AnyLink
         | PseudoClass::Link

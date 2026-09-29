@@ -216,7 +216,7 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
     match. (Nokogiri's name `:contains` is not an alias.) **XML only**: it
     lowers to XPath `child::text()[contains(., "text")]`, testing the
     element's immediate child text nodes, not the deep string-value. HTML no
-    longer supports it - `lexbor::selector_port`, the safe-Rust port that
+    longer supports it - `lexbor::css_match`, the safe-Rust port that
     replaced Lexbor's own matcher for HTML, deliberately does not reimplement
     it, so a well-formed `:lexbor-contains()` now raises `Makiri::Error`
     ("could not be run") on HTML rather than ever matching (it still PARSES,

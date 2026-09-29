@@ -512,21 +512,21 @@ mod node_key {
     }
 }
 
-/// `lexbor::selector_port` - a semantic port of Lexbor's `selectors.c`
+/// `lexbor::css_match` - a semantic port of Lexbor's `selectors.c`
 /// (`notes/lexbor_selectors_c_semantics.ja.md`), not a `selectors`-crate-based
 /// approach (rejected - see the plan's §1.1). Parses via the existing `css_parser`, matches via an
 /// explicit heap work stack (never native recursion for selector nesting -
 /// verified at 500,000 levels below).
-mod selector_port_spike {
+mod css_match {
     use crate::gvl::Gvl;
     use crate::lexbor::adapter::html::{HtmlElement, HtmlNode, NsId, RawNode};
     use crate::lexbor::adapter::post_parse::{parse_html, HtmlParsed};
     use crate::lexbor::adapter::tree_guard::DepthLimit;
-    use crate::lexbor::css_parser;
-    use crate::lexbor::selector_port::{
+    use crate::lexbor::css_match::{
         matches_any, select_all as port_select_all, select_first as port_select_first, validate,
         MAX_COMPOUNDS,
     };
+    use crate::lexbor::css_parser;
     use crate::text::VerifiedText;
 
     fn parsed(html: &[u8]) -> Box<HtmlParsed> {
@@ -785,7 +785,7 @@ mod selector_port_spike {
     /// look exactly like a legitimate empty result.
     #[test]
     fn unsupported_constructs_are_raised_not_answered_as_empty() {
-        use crate::lexbor::selector_port::QueryFailure;
+        use crate::lexbor::css_match::QueryFailure;
 
         let doc = parsed(
             b"<html><body><table><col><tr><td>x</td></tr></table><p>hello</p></body></html>",
@@ -816,7 +816,7 @@ mod selector_port_spike {
     /// nested, so the query never reaches that silent path at all.
     #[test]
     fn too_complex_chains_are_caught_wherever_they_are_nested() {
-        use crate::lexbor::selector_port::MatchFailure;
+        use crate::lexbor::css_match::MatchFailure;
 
         let chain_of = |n: usize| -> String {
             let mut s = String::from("div");
@@ -875,7 +875,7 @@ mod selector_port_spike {
     /// does), this raises instead of silently matching everything.
     #[test]
     fn not_with_a_too_complex_chain_raises_instead_of_matching_everything() {
-        use crate::lexbor::selector_port::MatchFailure;
+        use crate::lexbor::css_match::MatchFailure;
 
         let mut chain = String::from("div");
         for _ in 1..=MAX_COMPOUNDS + 1 {
@@ -906,7 +906,7 @@ mod selector_port_spike {
     /// happened to come first.
     #[test]
     fn unsupported_constructs_are_found_regardless_of_position_or_short_circuit() {
-        use crate::lexbor::selector_port::MatchFailure;
+        use crate::lexbor::css_match::MatchFailure;
 
         let shapes = [
             "nosuch:lexbor-contains(\"x\")",
@@ -1082,7 +1082,7 @@ mod selector_port_spike {
     /// (`#[cfg(test)]`-only) with one small enough to actually exceed.
     #[test]
     fn a_has_search_that_cannot_find_anything_fails_closed_once_the_work_budget_is_spent() {
-        use crate::lexbor::selector_port::select_all_with_work_limit;
+        use crate::lexbor::css_match::select_all_with_work_limit;
 
         const CANDIDATES: usize = 5;
         const DESCENDANTS_EACH: usize = 20;
@@ -1112,7 +1112,7 @@ mod selector_port_spike {
         let starved = select_all_with_work_limit(root(&doc), parsed_sel.groups(), 10);
         assert!(matches!(
             starved,
-            Err(crate::lexbor::selector_port::QueryFailure::WorkExceeded)
+            Err(crate::lexbor::css_match::QueryFailure::WorkExceeded)
         ));
 
         // The same query with room to spare still answers correctly (empty:
@@ -1203,7 +1203,7 @@ mod selector_port_spike {
     /// here.
     #[test]
     fn wide_sibling_lists_under_of_type_checks_charge_the_work_budget_too() {
-        use crate::lexbor::selector_port::select_all_with_work_limit;
+        use crate::lexbor::css_match::select_all_with_work_limit;
 
         const SIBLINGS: usize = 30;
 
@@ -1224,7 +1224,7 @@ mod selector_port_spike {
         let starved = select_all_with_work_limit(root(&doc), parsed_sel.groups(), 10);
         assert!(matches!(
             starved,
-            Err(crate::lexbor::selector_port::QueryFailure::WorkExceeded)
+            Err(crate::lexbor::css_match::QueryFailure::WorkExceeded)
         ));
 
         // With room to spare it answers correctly: exactly the last <span>.
@@ -1387,7 +1387,7 @@ mod selector_port_spike {
     /// (`tr:nth-child(odd)` over ~4,500 rows failed the 10 million default).
     #[test]
     fn nth_over_a_wide_list_costs_work_linear_in_the_list() {
-        use crate::lexbor::selector_port::select_all_with_work_limit;
+        use crate::lexbor::css_match::select_all_with_work_limit;
         const ROWS: usize = 5000;
         let mut html = String::from("<!doctype html><table><tbody>");
         for _ in 0..ROWS {
@@ -1572,7 +1572,7 @@ mod selector_port_spike {
             ":empty",
             ":root",
             // `:checked`, `:disabled` and `:enabled` are left out: they follow
-            // the HTML Standard, not Lexbor (`selector_port`'s module doc),
+            // the HTML Standard, not Lexbor (`css_match`'s module doc),
             // and are checked against it instead
             // (`form_state_pseudo_classes_follow_the_html_standard`).
             ":required",
@@ -1841,7 +1841,7 @@ mod selector_port_spike {
     }
 
     /// Type and attribute names are resolved to Lexbor ids once per query
-    /// (`selector_port::Name`) on the walking entry points, and compared as
+    /// (`css_match::Name`) on the walking entry points, and compared as
     /// bytes on `matches_any`. Both must answer as the old engine does across
     /// what makes names tricky: foreign (SVG/MathML) elements with
     /// case-preserved names, quirks vs no-quirks documents, custom elements
@@ -2069,7 +2069,7 @@ mod selector_port_spike {
     /// shipped 10-million limit.
     #[test]
     fn has_nesting_against_an_ambiguous_document_fails_closed_on_the_work_budget() {
-        use crate::lexbor::selector_port::{select_all_with_work_limit, QueryFailure};
+        use crate::lexbor::css_match::{select_all_with_work_limit, QueryFailure};
 
         const DEPTH: usize = 10;
         let selector = format!("{}div{}", ":has(".repeat(DEPTH), ")".repeat(DEPTH));
@@ -2107,10 +2107,10 @@ mod selector_port_spike {
 }
 
 /// `lexbor::selector_cache` - the compiled-selector cache reintroduced for
-/// `Node#css`/`#at_css`/`#matches?` once they moved to `selector_port`,
+/// `Node#css`/`#at_css`/`#matches?` once they moved to `css_match`,
 /// mirroring `lexbor::selectors`'s adaptive `CachePolicy`/`SelectorCache` over
 /// its OWN separate parser/arena (module doc). `Gvl::exclusive()` stands in
-/// for the real GVL proof here, same as `selector_port_spike`'s differential
+/// for the real GVL proof here, same as `css_match`'s differential
 /// tests do against the old engine.
 ///
 /// The adaptive bypass/retest window (40,000-iteration territory in
@@ -2121,13 +2121,13 @@ mod selector_port_spike {
 /// same as a miss would, filling the cache past its cap doesn't lose
 /// correctness, and a rejected selector does not disturb what is already
 /// cached.
-mod selector_cache_spike {
+mod selector_cache {
     use crate::gvl::Gvl;
     use crate::lexbor::adapter::html::{HtmlNode, RawNode};
     use crate::lexbor::adapter::post_parse::{parse_html, HtmlParsed};
     use crate::lexbor::adapter::tree_guard::DepthLimit;
+    use crate::lexbor::css_match::select_all_in;
     use crate::lexbor::selector_cache::with_compiled;
-    use crate::lexbor::selector_port::select_all_in;
 
     fn parsed(html: &[u8]) -> Box<HtmlParsed> {
         parse_html(html, true, DepthLimit::DEFAULT).expect("a document parses")

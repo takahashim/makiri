@@ -388,7 +388,7 @@ RSpec.describe "Makiri::XML CSS selectors" do
       "[lang|=en]", "[data-k^=pre]", "[data-k$=suf]", "[data-k*=mid]", "[class~=b]", ":not(p)",
       "p:not(:first-child)", ":is(p, span)", ":where(div > span)", ":has(> span)", ":has(+ p)", ":has(~ em)",
       "*:not(:has(*))",
-      # NOT :lexbor-contains() - the HTML matcher (`lexbor::selector_port`)
+      # NOT :lexbor-contains() - the HTML matcher (`lexbor::css_match`)
       # deliberately does not implement it, so it raises there instead of
       # ever answering; see the dedicated divergence test below, and
       # css_spec.rb's ":lexbor-contains()" describe block.
@@ -410,7 +410,7 @@ RSpec.describe "Makiri::XML CSS selectors" do
 
     # A deliberate, permanent divergence (not "not yet ported"): XML's CSS
     # still lowers :lexbor-contains() to XPath contains(), but the HTML
-    # matcher (`lexbor::selector_port`) does not implement it at all and
+    # matcher (`lexbor::css_match`) does not implement it at all and
     # raises instead of ever answering - see css_spec.rb's
     # ":lexbor-contains()" describe block for why.
     it "raises on the HTML side where XML still answers, for :lexbor-contains()" do
@@ -423,7 +423,7 @@ RSpec.describe "Makiri::XML CSS selectors" do
 
   describe ":lexbor-contains() text containment (XML only)" do
     # Makiri's XML CSS matches :lexbor-contains() by lowering to XPath's
-    # contains(); the HTML matcher (`lexbor::selector_port`) does not
+    # contains(); the HTML matcher (`lexbor::css_match`) does not
     # implement it at all (raises instead - see the divergence test above and
     # css_spec.rb), so this describes the XML behavior alone, not parity with
     # the HTML side.

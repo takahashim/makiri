@@ -83,7 +83,7 @@ RSpec.describe "native stack guard" do
     end
   end
 
-  # HTML matching needs no guard at all: `lexbor::selector_port` keeps every
+  # HTML matching needs no guard at all: `lexbor::css_match` keeps every
   # nesting level (`:is`/`:where`/`:not`, and `:has()` since it moved to
   # `Frame::HasStep`, `of S` since `Frame::NthOfStep`) on its own heap stack.
   # `:has()` and `:nth-child(1 of ...)` nested 300 deep each used to recurse

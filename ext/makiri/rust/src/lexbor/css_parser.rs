@@ -165,7 +165,7 @@ mod raw {
         l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_LAST_OF_TYPE;
     pub const ONLY_OF_TYPE: Pc =
         l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_ONLY_OF_TYPE;
-    // The rest are for `lexbor::selector_port` (HTML matching), not the XML
+    // The rest are for `lexbor::css_match` (HTML matching), not the XML
     // lowering, which treats all of them as unsupported (`PseudoClass::Other`).
     pub const ANY_LINK: Pc =
         l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_ANY_LINK;
@@ -334,7 +334,7 @@ pub struct Attribute<'p> {
     pub case_insensitive: bool,
     /// Whether an explicit `s` modifier was written, as opposed to no
     /// modifier at all - a distinction `case_insensitive` alone cannot make
-    /// (both read `false`), needed by `lexbor::selector_port`'s HTML
+    /// (both read `false`), needed by `lexbor::css_match`'s HTML
     /// case-insensitive-attribute-value table (§B-4/B-5 in
     /// `notes/lexbor_selectors_c_semantics.ja.md`): an explicit `s` forces
     /// case-sensitive even for a table attribute like `type`, but no
@@ -355,7 +355,7 @@ pub enum PseudoClass {
     FirstOfType,
     LastOfType,
     OnlyOfType,
-    // The rest are for `lexbor::selector_port` (HTML matching) only; the XML
+    // The rest are for `lexbor::css_match` (HTML matching) only; the XML
     // lowering's exhaustive match (`css::lower::lower_pseudo_simple`) groups
     // them with `Other` - unsupported, same as before this was added.
     AnyLink,
@@ -382,7 +382,7 @@ pub struct Nth<'p> {
     pub b: c_long,
     /// Whether an `of S` clause was written. The XML lowering only needs to
     /// know that much (it refuses `of S` outright); `of_list` is the actual
-    /// clause, for `lexbor::selector_port`'s HTML matching.
+    /// clause, for `lexbor::css_match`'s HTML matching.
     pub of: bool,
     /// The `S` in `of S`, or `None` when no clause was written (same
     /// condition as `of`, kept separate rather than folding `of` into

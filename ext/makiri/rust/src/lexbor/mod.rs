@@ -27,29 +27,22 @@ pub mod chunks;
 /// An input restriction on `:lexbor-contains()`, applied before the CSS parser
 /// sees the text, decided on Lexbor's own CSS tokens.
 pub mod contains_guard;
+/// The HTML CSS matcher behind `Node#css`/`#at_css`/`#matches?`
+/// (`glue::html_node::css`, via `selector_cache`): Lexbor's `lxb_selectors_*`
+/// control flow in safe Rust, over the typed HTML adapter, on an explicit
+/// heap work stack rather than native recursion. Parsing is `css_parser`'s.
+pub mod css_match;
 /// Lexbor's CSS syntax tokenizer, run on its own for `contains_guard`.
 pub(crate) mod css_tokens;
 /// HTML fragment parsing and import/fixup operations.
 pub mod fragment;
-/// This module's compiled-selector cache - its own process-global
-/// parser/arena, separate from `css_parser`'s (shared with XML lowering) and
-/// from the OLD `selectors` engine's below.
+/// The compiled-selector cache in front of `css_match`: its own
+/// process-global parser/arena, separate from `css_parser`'s (shared with the
+/// XML lowering), and the matcher's kept `Scratch`.
 pub(crate) mod selector_cache;
-/// The CSS matcher (B)-as-port
-/// (notes/css_selectors_crate_migration_plan.ja.md §1.1) settled on: an
-/// explicit heap work stack, not native recursion, structured as Lexbor's own
-/// `lxb_selectors_*` state machine is - over the typed HTML adapter, reusing
-/// `css_parser`'s existing selector AST reader. Wired into
-/// `Node#css`/`#at_css`/`#matches?` (`glue::html_node::css`) via
-/// `selector_cache`.
-pub mod selector_port;
-/// The OLD `lxb_selectors`-callback engine `selector_port` replaced for HTML
-/// query. No longer on `Node#css`'s path; kept as the differential-testing
-/// reference (`lexbor::tests::selector_port_spike`) until that confidence is
-/// trusted enough to remove it
-/// (`notes/css_selectors_crate_migration_plan.ja.md` Phase 3).
-// The OLD `lxb_selectors`-backed engine: the differential tests' reference
-// for `selector_port`, which is what ships.
+/// The OLD `lxb_selectors`-callback engine `css_match` replaced: compiled
+/// into tests only, as the reference the differential tests
+/// (`lexbor::tests::css_match`) hold `css_match` to.
 #[cfg(test)]
 pub mod selectors;
 /// Lexbor's HTML serialization callbacks and buffer traversal.

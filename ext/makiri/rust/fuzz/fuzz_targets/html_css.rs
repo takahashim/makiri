@@ -3,7 +3,7 @@
 //! `css` covers `Makiri::XML`'s CSS (the lowering to XPath) and `html` the HTML
 //! parse. This is the pair `Node#css` / `#at_css` / `#matches?` run: Lexbor's
 //! selector parser behind `contains_guard` (`css_parser::parse`), then
-//! `lexbor::selector_port` - `compile`, the chain loop and its backtracking,
+//! `lexbor::css_match` - `compile`, the chain loop and its backtracking,
 //! the task stack for `:is()` / `:not()` / `:has()` / `of S`, the sibling-
 //! position memo, the lazily resolved names and the adapter reads they make -
 //! over an arbitrary document, with one `Scratch` reused across the calls as
@@ -31,7 +31,7 @@ use makiri::lexbor::adapter::html::HtmlNode;
 use makiri::lexbor::adapter::post_parse::parse_html;
 use makiri::lexbor::adapter::tree_guard::DepthLimit;
 use makiri::lexbor::css_parser;
-use makiri::lexbor::selector_port::{matches_any_in, select_all_in, select_first_in, Scratch};
+use makiri::lexbor::css_match::{matches_any_in, select_all_in, select_first_in, Scratch};
 
 /// How many elements are asked `matches?` each: each is a full query, with
 /// its own budget, so this bounds the run, not the check.

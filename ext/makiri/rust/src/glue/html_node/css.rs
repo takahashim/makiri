@@ -1,6 +1,6 @@
 //! `Node#css` / `#at_css` / `#matches?`.
 //!
-//! The selector engine lives in [`crate::lexbor::selector_port`] (matching,
+//! The selector engine lives in [`crate::lexbor::css_match`] (matching,
 //! over the typed adapter, non-recursive) plus [`crate::lexbor::selector_cache`]
 //! (parsing AND caching - Lexbor's own C parser, kept warm across repeat
 //! calls with the same selector string, its own process-global engine
@@ -21,9 +21,9 @@ use crate::bridge::ruby::makiri_error;
 use crate::bridge::string::{ruby_verified_text, RubyText};
 use crate::init::MOD_HTML_NODE_METHODS;
 use crate::lexbor::adapter::html::RawNode;
+use crate::lexbor::css_match::{self, MatchFailure, QueryFailure, MAX_COMPOUNDS};
 use crate::lexbor::css_parser::ParseError;
 use crate::lexbor::selector_cache;
-use crate::lexbor::selector_port::{self, MatchFailure, QueryFailure, MAX_COMPOUNDS};
 use crate::limits::NODE_SET_MAX;
 
 /// A parse failure as the Ruby exception it maps to.
@@ -37,7 +37,7 @@ fn parse_error(err: ParseError, selector: Value) -> Error {
     }
 }
 
-/// A whole-query failure ([`crate::lexbor::selector_port::select_all`]'s
+/// A whole-query failure ([`crate::lexbor::css_match::select_all`]'s
 /// error) as the Ruby exception it maps to.
 fn query_error(err: QueryFailure) -> Error {
     match err {
@@ -52,7 +52,7 @@ fn query_error(err: QueryFailure) -> Error {
 }
 
 /// As [`query_error`], for the entry points that cannot overflow the result
-/// set ([`selector_port::select_first`], [`selector_port::matches_any`] -
+/// set ([`css_match::select_first`], [`css_match::matches_any`] -
 /// one node each, never a `Vec`) and so only ever fail the other way.
 ///
 /// The message for `Unsupported` (the column combinator `||`, or
@@ -107,7 +107,7 @@ fn css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Value, Error> {
         let sv = selector_text(selector)?;
         let gvl = held(ruby);
         let matched = selector_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
-            selector_port::select_all_in(scratch, this.node(), groups)
+            css_match::select_all_in(scratch, this.node(), groups)
         })
         .map_err(|e| parse_error(e, selector))?;
         drop(sv);
@@ -129,7 +129,7 @@ fn at_css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Option<Value>, 
         let sv = selector_text(selector)?;
         let gvl = held(ruby);
         let matched = selector_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
-            selector_port::select_first_in(scratch, this.node(), groups)
+            css_match::select_first_in(scratch, this.node(), groups)
         })
         .map_err(|e| parse_error(e, selector))?;
         drop(sv);
@@ -141,7 +141,7 @@ fn at_css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Option<Value>, 
 /// `Node#matches?`: does THIS node match? Tested against the node itself, not
 /// its descendants, like Nokogiri. A non-element node (there is no CSS
 /// selector, not even `*`, that an element-only engine can match it with -
-/// see `selector_port`'s `Simple::Universal` fix) never matches, without
+/// see `css_match`'s `Simple::Universal` fix) never matches, without
 /// asking the engine.
 fn matches(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<bool, Error> {
     crate::bridge::ruby::entry(|| {
@@ -151,10 +151,10 @@ fn matches(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<bool, Error> {
         let element = this.node().element();
         let matched = selector_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
             match element {
-                Some(el) => selector_port::matches_any_in(scratch, groups, el),
+                Some(el) => css_match::matches_any_in(scratch, groups, el),
                 // Still compiled: a selector the matcher refuses is refused
                 // whatever node it is asked about.
-                None => selector_port::check_compiles(scratch, groups).map(|()| false),
+                None => css_match::check_compiles(scratch, groups).map(|()| false),
             }
         })
         .map_err(|e| parse_error(e, selector))?;

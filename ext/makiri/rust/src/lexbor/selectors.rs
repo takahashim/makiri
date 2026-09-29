@@ -1,8 +1,8 @@
 //! The OLD CSS selector engine, over Lexbor's own `lxb_selectors` - kept only
-//! as the reference the differential tests hold `lexbor::selector_port` to
-//! (`lexbor::tests::selector_port_spike`), so it is compiled into tests alone
+//! as the reference the differential tests hold `lexbor::css_match` to
+//! (`lexbor::tests::css_match`), so it is compiled into tests alone
 //! (`lexbor/mod.rs`). `Node#css` / `#at_css` / `#matches?` run on
-//! `selector_port`, with the compiled-selector cache in `selector_cache`.
+//! `css_match`, with the compiled-selector cache in `selector_cache`.
 //!
 //! The selector parser, its arena and the traversal engine are process-global,
 //! each query borrowing them through a [`GvlCell`]; a query parses its

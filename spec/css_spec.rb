@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# M7: CSS selector queries, matched by `lexbor::selector_port` (a safe-Rust
+# M7: CSS selector queries, matched by `lexbor::css_match` (a safe-Rust
 # port of Lexbor's `lxb_selectors` state machine - selector PARSING still goes
 # through Lexbor's own CSS parser, matching does not).
 RSpec.describe "Makiri CSS" do
@@ -164,7 +164,7 @@ RSpec.describe "Makiri CSS" do
     end
   end
 
-  # HTML matching (`lexbor::selector_port`) caps one compound chain at 64
+  # HTML matching (`lexbor::css_match`) caps one compound chain at 64
   # compounds, the same bound `Makiri::XML` has (see `xml_css_spec.rb`'s
   # "fails closed on an over-long :is()/:not() argument"). Over the cap is a
   # raise, found before any node is matched, wherever the chain is nested -
@@ -258,7 +258,7 @@ RSpec.describe "Makiri CSS" do
   # Which arguments reach the CSS parser is `lexbor::contains_guard`'s
   # decision, unchanged - `:lexbor-contains()` still PARSES on the HTML side
   # (or is rejected as a syntax error, same as before). MATCHING it is what
-  # changed: `lexbor::selector_port` deliberately does not implement it
+  # changed: `lexbor::css_match` deliberately does not implement it
   # (notes/css_selectors_crate_migration_plan.ja.md §1.1), so a well-formed
   # `:lexbor-contains()` now raises `Makiri::Error` ("could not be run") on
   # HTML instead of ever answering - the same fail-closed treatment as an

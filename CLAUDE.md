@@ -407,7 +407,7 @@ by the check that concluded "every undefined symbol is legitimate".
   allocator, or - for the glue's Ruby-side storage - through Ruby's xmalloc;
   ASan red-zones both per allocation.
 - **The fallible-allocation line.** The engine (`xml`, `xpath`, `css`,
-  `lexbor/adapter`, `lexbor/selector_port`, `cbuf`) allocates only through `falloc`: `clippy.toml` bans the
+  `lexbor/adapter`, `lexbor/css_match`, `cbuf`) allocates only through `falloc`: `clippy.toml` bans the
   infallible `Box::new` / `Vec::with_capacity` / `reserve`, and `rake oom` fails
   each site in turn, so an OOM there raises instead of aborting. The glue's
   Ruby-side storage - TypedData wrappers (`bridge::typed::wrap_built`, freed by
@@ -468,8 +468,9 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            file that needs it carries an `allow` and the script
                            holds each one's count exactly - a new file fails even
                            where a parent module's `allow` kept rustc quiet - plus
-                           the 56 `forbid` files. `glue/**`, `xpath/**` and
-                           `css/**` are fully safe (their module roots carry
+                           the 56 `forbid` files. `glue/**`, `xpath/**`,
+                           `css/**` and `lexbor/css_match/**` are fully safe
+                           (their module roots carry
                            `#![forbid(unsafe_code)]`, which the gate pins), and
                            `rb_sys::`, `Value::from_raw` and raising C calls are
                            0 outside `bridge/`
@@ -513,7 +514,9 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            Lexbor's DOM structs, plus the element index,
                            text index, source location and post-parse - and the
                            selectors/stylesheet/serialize/fragment facades, the
-                           CSS selector parser (`css_parser.rs`) and the XPath
+                           CSS selector parser (`css_parser.rs`), the HTML CSS
+                           matcher (`css_match/`, `#![forbid(unsafe_code)]`
+                           at its root) and the XPath
                            HTML backend (`xpath.rs`); every `lxb_*`/`Lxb*` name
                            outside it is 0
     css/                   CSS selector lowering over the lexbor-owned selector
@@ -721,9 +724,9 @@ policy is a new item stated in each `impl`. The HTML backend reports the DOM's
 case-preserved `localName` (`refX`, `foreignObject`), not Lexbor's lower-cased
 stored name.
 
-**CSS** (`lexbor/selector_port.rs` + `lexbor/selector_cache.rs` +
+**CSS** (`lexbor/css_match/` + `lexbor/selector_cache.rs` +
 `lexbor/css_parser.rs`). `Node#{css,at_css,matches?}` (`glue::html_node::css`)
-match over the typed HTML adapter through `selector_port` - an original,
+match over the typed HTML adapter through `css_match` - an original,
 `#![forbid(unsafe_code)]` Rust port of Lexbor's `lxb_selectors_*` state
 machine (its `find`/`found_check`/`not_found` loop over a chain's compounds,
 with nested list-pseudos as contexts on a heap task stack; never native
@@ -745,11 +748,11 @@ cache keeps alive, the same shape `Parsed::groups()` builds over one a
 is exactly why HTML needed its own separate one to cache anything past one
 call). `lexbor/selectors.rs` (the OLD `lxb_selectors`-callback engine this
 replaced for HTML) is the differential-testing reference
-(`lexbor::tests::selector_port_spike::agrees_with_the_old_lexbor_engine_on_standard_selectors`
+(`lexbor::tests::css_match::agrees_with_the_old_lexbor_engine_on_standard_selectors`
 and its randomized sibling) and nothing else: `#[cfg(test)]`, so no build
 that ships carries it, and without a cache of its own - parse, run, clean
 per query. The adaptive cache policy lives only in `selector_cache`.
-**The matcher is Lexbor's control flow, in safe Rust** (`selector_port`'s
+**The matcher is Lexbor's control flow, in safe Rust** (`css_match`'s
 `Compiled` and `Query`). `compile` decodes every simple selector once into a
 `Step` (Lexbor's entry) and splits every chain - top level and every nested
 list - into one compound table; a list-pseudo's `Step` holds the index range
@@ -792,7 +795,7 @@ name lookup used before took it when it was the only `id`.
 
 **Tag and attribute names are resolved to Lexbor's ids once per query**, each
 the first time a candidate reaches it - Lexbor's own lazily set `entry->id`
-(`selector_port::Name`, `HtmlDoc::resolve_attr_name`,
+(`css_match::simple::Name`, `HtmlDoc::resolve_attr_name`,
 `HtmlElement::attr_by_resolved_name`). Lexbor keys element and attribute
 local names by their ASCII-lower-cased form, so a tag-id match IS the
 case-folded name comparison, and an attribute local-id match is a pre-filter
@@ -823,7 +826,7 @@ call a fresh `run` natively per
 sibling from `check_simple`, so `of S` nested 300 deep raised
 `SystemStackError` in a 128 KiB Fiber and wedged the shared CSS engine for
 the process. It also counts by the CSS definition where Lexbor does not (a
-comma list, a combinator or a pseudo-class in `S` - `selector_port`'s module
+comma list, a combinator or a pseudo-class in `S` - `css_match`'s module
 doc lists them), so it is checked against a spec oracle
 (`nth_child_of_s_agrees_with_a_spec_oracle`), and the Lexbor differential
 fuzzer leaves `of S` out. **Every deferred simple selector becomes a task in
@@ -850,7 +853,7 @@ mid-match would have left it stuck `true` forever, wedging `Node#css`/
 call. Lexbor's own C engine never had this problem: `:has()`/`:is()` nesting
 is handled by `lxb_selectors_nested_t`, a heap structure, not C recursion
 (`notes/css_selectors_crate_migration_plan.ja.md` §1.1). Fixed the same way:
-`ForwardTask`/`HasCursor` (`selector_port.rs`) answer `:has()`'s forward
+`ForwardTask`/`HasCursor` (`css_match/query.rs`) answer `:has()`'s forward
 search - candidate iteration over Descendant/Child/NextSibling/
 SubsequentSibling, multi-compound stepping, and nesting - entirely on the
 SAME heap task stack `:is()` uses, with NO nesting-depth cap
@@ -880,7 +883,7 @@ either raises `Makiri::Error`. A malformed selector raises
 matcher cannot evaluate (deliberately, and because Lexbor's own traversal
 can't run the latter either) - raised as "could not be run", never answered as
 a silent empty result. **Both that and the 64-compound chain cap are decided
-by `selector_port::compile`, over the WHOLE selector tree, before any node is
+by `css_match::compile`, over the WHOLE selector tree, before any node is
 matched** - every entry point (`select_all`/`select_first`/`matches_any`)
 compiles first, and `matches?` on a non-element compiles too. Found lazily
 mid-match they depended on evaluation order: the old `collect_compounds`
@@ -891,7 +894,7 @@ lists on an explicit work list, not recursion - a recursive first version
 turned `:is()` nested 2000 deep into a `SystemStackError` in a 128 KiB Fiber,
 which wedged the shared CSS engine for the rest of the process
 (`spec/native_stack_guard_spec.rb` pins the Fiber case). **A walking query
-remembers the sibling positions it has counted** (`selector_port::Positions`,
+remembers the sibling positions it has counted** (`css_match::positions::Positions`,
 one memo per `:nth-*` kind): the scan is charged to the budget, and counted
 afresh per candidate it made `:nth-child` over a wide list quadratic in that
 budget - `tr:nth-child(odd)` over ~4,500 rows raised "exceeded its work
@@ -1014,7 +1017,7 @@ against Nokogiri: parse ~4.6×, css ~10×, at_css ~7000×, `//tag` ~4×,
 full-text extraction ~3.5×. **traverse** (children walk) used to be the one row
 that only met Nokogiri (within measurement error); as of the v0.10.0 bench it
 beats it too. (`css`/`at_css` were remeasured after HTML CSS matching moved
-from Lexbor's engine to `lexbor::selector_port`, then after the
+from Lexbor's engine to `lexbor::css_match`, then after the
 per-candidate allocation fix and the move to Lexbor's own loop below - see
 that note; the `~12×`/`~9400×` figures an earlier revision of this file
 quoted were the OLD engine's.)
@@ -1061,7 +1064,7 @@ Key decisions that got there, worth not regressing:
   tag names fall through. See the element index note above.
 
 - **HTML CSS matches over the typed adapter, not Lexbor's own matcher**
-  (`lexbor::selector_port`, see the subsystem note), and **allocates per
+  (`lexbor::css_match`, see the subsystem note), and **allocates per
   query, not per candidate**. Right after the switch it was ~6x slower than
   Lexbor's C matcher PER CANDIDATE NODE (a Ruby-free in-process probe, same
   parsed document, same ratio for `css`'s whole-tree scan and `at_css`'s
@@ -1107,7 +1110,7 @@ Key decisions that got there, worth not regressing:
   remaining case where it might matter, unmeasured. Verify with
   `spec/css_selector_cache_spec.rb` (flush, bypass/retest, and
   reject-without-disturbing-the-cache) and the Rust-level
-  `lexbor::tests::selector_cache_spike`.
+  `lexbor::tests::selector_cache`.
 - **`Node#text` is served from the text index** (`lexbor/adapter/text_index.rs`,
   see the subsystem note): a per-document, lazily-built, mutation-invalidated
   map from node → its document-order text-slice run, turning text extraction

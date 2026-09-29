@@ -85,7 +85,7 @@ UNSAFE_ISLANDS = {
 # The subtree roots in FORBID_ROOTS make whole directories compiler-forbidden:
 # `forbid` is inherited, so a new file under `glue/` or `xpath/` cannot slip in
 # with an `allow`, however few its `unsafe`s.
-FORBID_ROOTS = %w[css/mod.rs glue/mod.rs xml/mod.rs xpath/mod.rs].freeze
+FORBID_ROOTS = %w[css/mod.rs glue/mod.rs lexbor/css_match/mod.rs xml/mod.rs xpath/mod.rs].freeze
 
 FORBID_FILES = %w[
   css/build.rs css/lower.rs css/mod.rs
@@ -97,7 +97,7 @@ FORBID_FILES = %w[
   glue/xml_doc.rs glue/xml_node/css.rs glue/xml_node/mod.rs
   glue/xml_node/mutate.rs glue/xml_node/ns.rs glue/xml_node/read.rs
   glue/xml_node/serialize.rs glue/xml_node/strings.rs glue/xpath_context.rs
-  lexbor/adapter/dom_index.rs lexbor/contains_guard.rs lexbor/selector_port.rs
+  lexbor/adapter/dom_index.rs lexbor/contains_guard.rs lexbor/css_match/mod.rs
   limits.rs node_type.rs ptr_table.rs
   rust_tests.rs stack.rs text.rs
   utf8_input.rs xml/arena.rs xml/attr_key.rs
@@ -201,7 +201,7 @@ INFALLIBLE_ALLOC = /\.to_owned\(\)|\.to_vec\(\)|String::from\(|\bformat!\(/
 # Empty: the `selectors`-crate exploration
 # (notes/css_selectors_crate_migration_plan.ja.md §1.1) that once held an
 # accepted exception here was rejected in favour of porting Lexbor's own
-# `lxb_selectors_*` state machine instead - `lexbor/selector_port.rs`, which
+# `lxb_selectors_*` state machine instead - `lexbor/css_match/`, which
 # allocates only through `falloc` like the rest of the engine (and `rake oom`
 # sweeps it).
 INFALLIBLE_ALLOC_COUNTS = {}.freeze

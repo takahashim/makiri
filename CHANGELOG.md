@@ -46,7 +46,7 @@
 
 * `:lexbor-contains("text")` on HTML `#css`/`#at_css`/`#matches?`. HTML CSS
   matching moved from Lexbor's own `lxb_selectors` engine to
-  `lexbor::selector_port`, an original, non-recursive Rust implementation
+  `lexbor::css_match`, an original, non-recursive Rust implementation
   (parsing is unchanged - still Lexbor's CSS parser); the port deliberately
   does not reimplement `:lexbor-contains()`. A well-formed
   `:lexbor-contains()` still parses, but now raises `Makiri::Error` ("could
