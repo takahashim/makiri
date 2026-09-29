@@ -857,7 +857,7 @@ namespace :fuzz do
   # library and headers (the crate's build.rs links the archive and generates
   # the layout from the headers), which `rake compile` produces - hence the
   # dependency, which is about Lexbor rather than about the bundle.
-  FUZZ_TARGETS = %w[xml xpath xml_xpath css html html_xpath].freeze
+  FUZZ_TARGETS = %w[xml xpath xml_xpath css html html_xpath html_css].freeze
 
   # The local mode: TARGETS=css,html_xpath narrows the run to what you touched,
   # and the time is FUZZ_TIME seconds per target (default 60) or FUZZ_BUDGET
