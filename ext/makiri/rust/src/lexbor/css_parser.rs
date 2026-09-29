@@ -165,6 +165,32 @@ mod raw {
         l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_LAST_OF_TYPE;
     pub const ONLY_OF_TYPE: Pc =
         l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_ONLY_OF_TYPE;
+    // The rest are for `lexbor::css_match` (HTML matching), not the XML
+    // lowering, which treats all of them as unsupported (`PseudoClass::Other`).
+    pub const ANY_LINK: Pc =
+        l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_ANY_LINK;
+    pub const LINK: Pc = l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_LINK;
+    pub const BLANK: Pc = l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_BLANK;
+    pub const CHECKED: Pc =
+        l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_CHECKED;
+    pub const DISABLED: Pc =
+        l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_DISABLED;
+    pub const ENABLED: Pc =
+        l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_ENABLED;
+    pub const OPTIONAL: Pc =
+        l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_OPTIONAL;
+    pub const REQUIRED: Pc =
+        l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_REQUIRED;
+    pub const READ_ONLY: Pc =
+        l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_READ_ONLY;
+    pub const READ_WRITE: Pc =
+        l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_READ_WRITE;
+    pub const ACTIVE: Pc =
+        l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_ACTIVE;
+    pub const FOCUS: Pc = l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_FOCUS;
+    pub const HOVER: Pc = l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_HOVER;
+    pub const PLACEHOLDER_SHOWN: Pc =
+        l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_PLACEHOLDER_SHOWN;
 
     type Pf = l::lxb_css_selector_pseudo_class_function_id_t;
     pub const NTH_CHILD: Pf =
@@ -204,6 +230,22 @@ impl Parsed<'_> {
         // keeps until `self` drops.
         Lists(unsafe { arena(self.first) }.map(List))
     }
+}
+
+/// As [`Parsed::groups`], for a selector list some OTHER caller parsed and
+/// keeps alive - `lexbor::selector_cache`'s own long-lived compiled-selector
+/// cache, which manages its own separate parser/arena (module doc: this
+/// module's `Parsed` is not the only way to own one) and only invalidates a
+/// list when it flushes or evicts it, never per-call the way `Parsed`'s
+/// `Drop` does.
+///
+/// # Safety
+/// `p` must be null or point into an arena the caller keeps alive and does
+/// not mutate for `'p`.
+#[cfg_attr(not(feature = "ruby"), allow(dead_code))]
+pub(crate) unsafe fn list_from_raw<'p>(p: *mut SelectorList) -> Lists<'p> {
+    // SAFETY: forwarded to the caller's contract.
+    Lists(unsafe { arena(p) }.map(List))
 }
 
 /// A selector list: a comma group of the query, or the argument of a
@@ -284,12 +326,28 @@ pub enum AttrMatch {
 #[derive(Clone, Copy)]
 pub struct Attribute<'p> {
     pub op: AttrMatch,
-    /// Whether an `i` modifier was written: match the value ASCII
-    /// case-insensitively. `s`, case-sensitive, is how values compare anyway,
-    /// so it reads as no modifier.
-    pub case_insensitive: bool,
+    pub case: CaseModifier,
     /// None for `[name]`, an existence test.
     pub value: Option<&'p [u8]>,
+}
+
+/// The case modifier written after an attribute selector's value.
+///
+/// Three states, not a flag: `lexbor::css_match` needs `Unset` and `Sensitive`
+/// apart, because an explicit `s` forces a case-sensitive compare even for an
+/// attribute in HTML's case-insensitive table
+/// (`lxb_selectors_match_attribute_html_case_insensitive`, `type` for one),
+/// while no modifier defers to that table. The XML lowering refuses
+/// `Insensitive` and treats the other two alike: XML attribute values always
+/// compare case-sensitively.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CaseModifier {
+    /// No modifier written.
+    Unset,
+    /// `i`: compare the value ASCII case-insensitively.
+    Insensitive,
+    /// `s`: compare the value case-sensitively.
+    Sensitive,
 }
 
 /// The non-functional pseudo-classes the lowering can express.
@@ -303,16 +361,33 @@ pub enum PseudoClass {
     FirstOfType,
     LastOfType,
     OnlyOfType,
+    // The rest are for `lexbor::css_match` (HTML matching) only; the XML
+    // lowering's exhaustive match (`css::lower::lower_pseudo_simple`) groups
+    // them with `Other` - unsupported, same as before this was added.
+    AnyLink,
+    Link,
+    Blank,
+    Checked,
+    Disabled,
+    Enabled,
+    Optional,
+    Required,
+    ReadOnly,
+    ReadWrite,
+    Active,
+    Focus,
+    Hover,
+    PlaceholderShown,
     Other,
 }
 
 /// `:nth-*(an+b [of S])`.
 #[derive(Clone, Copy)]
-pub struct Nth {
+pub struct Nth<'p> {
     pub a: c_long,
     pub b: c_long,
-    /// Whether an `of S` clause was written.
-    pub of: bool,
+    /// The `S` of an `of S` clause, `None` when none was written.
+    pub of: Option<Lists<'p>>,
 }
 
 /// `:lexbor-contains(needle [i])`.
@@ -343,7 +418,7 @@ pub enum FunctionArg<'p> {
         from_end: bool,
         /// `:nth-*-of-type`: counted among same-type siblings.
         of_type: bool,
-        anb: Option<Nth>,
+        anb: Option<Nth<'p>>,
     },
     /// `:not`, `:is`, `:where` and `:has`.
     Selectors {
@@ -434,7 +509,12 @@ impl<'p> Selector<'p> {
                 raw::SUBSTRING => AttrMatch::Substring,
                 _ => AttrMatch::Other,
             },
-            case_insensitive: at.modifier != raw::MOD_UNSET && at.modifier != raw::MOD_S,
+            case: match at.modifier {
+                raw::MOD_UNSET => CaseModifier::Unset,
+                raw::MOD_S => CaseModifier::Sensitive,
+                /* `i`, the one other modifier Lexbor's parser produces. */
+                _ => CaseModifier::Insensitive,
+            },
             // SAFETY: as in `name`.
             value: unsafe { lexbor_str(&at.value) },
         }
@@ -452,6 +532,20 @@ impl<'p> Selector<'p> {
             raw::FIRST_OF_TYPE => PseudoClass::FirstOfType,
             raw::LAST_OF_TYPE => PseudoClass::LastOfType,
             raw::ONLY_OF_TYPE => PseudoClass::OnlyOfType,
+            raw::ANY_LINK => PseudoClass::AnyLink,
+            raw::LINK => PseudoClass::Link,
+            raw::BLANK => PseudoClass::Blank,
+            raw::CHECKED => PseudoClass::Checked,
+            raw::DISABLED => PseudoClass::Disabled,
+            raw::ENABLED => PseudoClass::Enabled,
+            raw::OPTIONAL => PseudoClass::Optional,
+            raw::REQUIRED => PseudoClass::Required,
+            raw::READ_ONLY => PseudoClass::ReadOnly,
+            raw::READ_WRITE => PseudoClass::ReadWrite,
+            raw::ACTIVE => PseudoClass::Active,
+            raw::FOCUS => PseudoClass::Focus,
+            raw::HOVER => PseudoClass::Hover,
+            raw::PLACEHOLDER_SHOWN => PseudoClass::PlaceholderShown,
             _ => PseudoClass::Other,
         }
     }
@@ -472,7 +566,9 @@ impl<'p> Selector<'p> {
                 anb: anb.map(|n| Nth {
                     a: n.anb.a,
                     b: n.anb.b,
-                    of: !n.of.is_null(),
+                    // SAFETY: as in `name`/other `arena` calls - the list, if
+                    // any, lives in the same arena.
+                    of: unsafe { arena(n.of as *const SelectorList) }.map(|r| Lists(Some(List(r)))),
                 }),
             }
         };

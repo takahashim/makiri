@@ -24,8 +24,8 @@ use super::build::{self, Built};
 use super::{Build, MAX_COMPOUNDS};
 use crate::engine_error::{ErrorKind, Reported};
 use crate::lexbor::css_parser::{
-    AttrMatch, Attribute, Combinator, FunctionArg, ListPseudo, Lists, Nth, PseudoClass, Selector,
-    Simple,
+    AttrMatch, Attribute, CaseModifier, Combinator, FunctionArg, ListPseudo, Lists, Nth,
+    PseudoClass, Selector, Simple,
 };
 use crate::xpath::ast::{Axis, Expr, NodeTest, Op, Step};
 
@@ -110,7 +110,7 @@ fn lower_universal(
 fn lower_attribute(b: &Build, s: Selector<'_>, at: Attribute<'_>) -> Built {
     let name = s.name();
 
-    if at.case_insensitive {
+    if at.case == CaseModifier::Insensitive {
         return Err(b.fail(
             ErrorKind::Syntax,
             "CSS attribute case modifier i ([a=v i]) is not supported for XML",
@@ -301,7 +301,7 @@ fn only(b: &Build, set: Siblings) -> Built {
 
 /// The `:nth-*(an+b)` match condition over the position among `set` along
 /// `axis`.
-fn nth(b: &Build, axis: Axis, set: Siblings, anb: Nth) -> Built {
+fn nth(b: &Build, axis: Axis, set: Siblings, anb: Nth<'_>) -> Built {
     /* `c_long` from Lexbor's `lxb_css_syntax_anb_t` - 64-bit on LP64, 32-bit on
      * LLP64 - so the `as f64` below is a real conversion on either. */
     let (a, bb) = (anb.a as f64, anb.b as f64);
@@ -365,7 +365,23 @@ fn lower_pseudo_simple(b: &Build, pc: PseudoClass) -> Built {
         ),
         /* The document element, not merely a parentless one - see [`root_test`]. */
         PseudoClass::Root => root_test(b),
-        PseudoClass::Other => Err(b.fail(ErrorKind::Syntax, "unsupported CSS pseudo-class")),
+        /* Added to `PseudoClass` for `lexbor::css_match` (HTML matching);
+         * the XML lowering doesn't implement any of them, same as before. */
+        PseudoClass::AnyLink
+        | PseudoClass::Link
+        | PseudoClass::Blank
+        | PseudoClass::Checked
+        | PseudoClass::Disabled
+        | PseudoClass::Enabled
+        | PseudoClass::Optional
+        | PseudoClass::Required
+        | PseudoClass::ReadOnly
+        | PseudoClass::ReadWrite
+        | PseudoClass::Active
+        | PseudoClass::Focus
+        | PseudoClass::Hover
+        | PseudoClass::PlaceholderShown
+        | PseudoClass::Other => Err(b.fail(ErrorKind::Syntax, "unsupported CSS pseudo-class")),
     }
 }
 
@@ -415,7 +431,7 @@ fn lower_pseudo_func(b: &Build, arg: FunctionArg<'_>) -> Built {
             let Some(anb) = anb else {
                 return Err(b.fail(ErrorKind::Syntax, "malformed :nth-*()"));
             };
-            if anb.of {
+            if anb.of.is_some() {
                 return Err(b.fail(ErrorKind::Syntax, ":nth-*(... of S) is not supported"));
             }
             let axis = if from_end {

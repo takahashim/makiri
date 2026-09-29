@@ -1,9 +1,13 @@
 //! `Node#css` / `#at_css` / `#matches?`.
 //!
-//! The selector engine, its process-global cache and its Lexbor callbacks live
-//! in [`crate::lexbor::selectors`], which does not know about Ruby. This module
-//! verifies the selector, maps an engine failure to its exception, and fills the
-//! NodeSet (`css`) or wraps the one node `at_css` found.
+//! The selector engine lives in [`crate::lexbor::css_match`] (matching,
+//! over the typed adapter, non-recursive) plus [`crate::lexbor::selector_cache`]
+//! (parsing AND caching - Lexbor's own C parser, kept warm across repeat
+//! calls with the same selector string, its own process-global engine
+//! separate from [`crate::lexbor::css_parser`]'s), neither of which knows
+//! about Ruby. This module verifies the selector, maps an engine failure to
+//! its exception, and fills the NodeSet (`css`) or wraps the one node
+//! `at_css` found.
 
 #![forbid(unsafe_code)]
 
@@ -16,23 +20,51 @@ use crate::bridge::node_set::node_set_from;
 use crate::bridge::ruby::makiri_error;
 use crate::bridge::string::{ruby_verified_text, RubyText};
 use crate::init::MOD_HTML_NODE_METHODS;
-use crate::lexbor::selectors::{matches_node, select_all, select_first, SelectError};
+use crate::lexbor::adapter::html::RawNode;
+use crate::lexbor::css_match::{self, MatchFailure, QueryFailure, MAX_COMPOUNDS};
+use crate::lexbor::css_parser::ParseError;
+use crate::lexbor::selector_cache;
 use crate::limits::NODE_SET_MAX;
 
-/// An engine failure as the Ruby exception it maps to.
-fn select_error(err: SelectError, selector: Value) -> Error {
+/// A parse failure as the Ruby exception it maps to.
+fn parse_error(err: ParseError, selector: Value) -> Error {
     match err {
-        /* Lexbor's matcher reports no reason of its own. */
-        SelectError::Syntax => crate::glue::css::syntax_error(selector, None),
-        SelectError::Overflow => makiri_error(format!(
+        /* Lexbor's parser reports no reason of its own. */
+        ParseError::Syntax => crate::glue::css::syntax_error(selector, None),
+        ParseError::Oom => makiri_error("out of memory parsing CSS selector"),
+        ParseError::Busy => makiri_error("CSS selector engine is already in use"),
+        ParseError::NotReady => makiri_error("failed to initialise CSS selector engine"),
+    }
+}
+
+/// A whole-query failure ([`crate::lexbor::css_match::select_all`]'s
+/// error) as the Ruby exception it maps to.
+fn query_error(err: QueryFailure) -> Error {
+    match err {
+        QueryFailure::Overflow => makiri_error(format!(
             "CSS result set exceeded the node limit ({NODE_SET_MAX})"
         )),
-        SelectError::CollectOom => makiri_error("out of memory collecting CSS results"),
-        SelectError::CacheOom => makiri_error("out of memory caching CSS selector"),
-        SelectError::ParseOom => makiri_error("out of memory parsing CSS selector"),
-        SelectError::Traversal => makiri_error("CSS selector could not be run"),
-        SelectError::Unavailable => makiri_error("failed to initialise CSS selector engine"),
-        SelectError::Busy => makiri_error("CSS selector engine is already in use"),
+        QueryFailure::Match(e) => match_error(e),
+    }
+}
+
+/// As [`query_error`], for the entry points that cannot overflow the result
+/// set ([`css_match::select_first`], [`css_match::matches_any`] -
+/// one node each, never a `Vec`) and so only ever fail the other way.
+///
+/// The message for `Unsupported` (the column combinator `||`, or
+/// `:lexbor-contains()`) matches the OLD engine's own wording for the same
+/// case (`SelectError::Traversal`'s "CSS selector could not be run") on
+/// purpose: it is the same fact - this engine could not run the selector
+/// either - not a new one.
+fn match_error(err: MatchFailure) -> Error {
+    match err {
+        MatchFailure::WorkExceeded => makiri_error("CSS query exceeded its work budget"),
+        MatchFailure::Unsupported => makiri_error("CSS selector could not be run"),
+        MatchFailure::TooComplex => makiri_error(format!(
+            "CSS selector chain too complex (more than {MAX_COMPOUNDS} compounds)"
+        )),
+        MatchFailure::Oom => makiri_error("out of memory matching CSS selector"),
     }
 }
 
@@ -45,7 +77,7 @@ fn selector_text(selector: Value) -> Result<RubyText, Error> {
 /// `(selector, namespaces = nil)`, the argument list `Makiri::XML`'s CSS
 /// methods and Nokogiri's take - so one call works on either representation.
 ///
-/// The bindings are ACCEPTED AND UNUSED here: Lexbor's matcher resolves a
+/// The bindings are ACCEPTED AND UNUSED here: the matcher resolves a
 /// selector's names itself, and its prefix handling is loose (`svg|path` and
 /// `path` match the same elements whatever a caller binds). Refusing them
 /// instead would break the common `node.css(selector, ns)` written for both
@@ -70,10 +102,17 @@ fn css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let selector = css_args(ruby, args)?;
         let sv = selector_text(selector)?;
-        let nodes = select_all(&held(ruby), this.raw(), sv.as_bytes())
-            .map_err(|e| select_error(e, selector))?;
+        let gvl = held(ruby);
+        let matched = selector_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
+            css_match::select_all(scratch, this.node(), groups)
+        })
+        .map_err(|e| parse_error(e, selector))?;
         drop(sv);
-        node_set_from(this.document, nodes.iter().map(|&n| n.into()))
+        let nodes = matched.map_err(query_error)?;
+        node_set_from(
+            this.document,
+            nodes.into_iter().map(|n| RawNode::from(n).into()),
+        )
     })
 }
 
@@ -85,20 +124,39 @@ fn at_css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Option<Value>, 
     crate::bridge::ruby::entry(|| {
         let selector = css_args(ruby, args)?;
         let sv = selector_text(selector)?;
-        let found = select_first(&held(ruby), this.raw(), sv.as_bytes())
-            .map_err(|e| select_error(e, selector))?;
+        let gvl = held(ruby);
+        let matched = selector_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
+            css_match::select_first(scratch, this.node(), groups)
+        })
+        .map_err(|e| parse_error(e, selector))?;
         drop(sv);
-        Ok(found.map(|n| wrap_html_node(n, this.document)))
+        let found = matched.map_err(match_error)?;
+        Ok(found.map(|n| wrap_html_node(RawNode::from(n), this.document)))
     })
 }
 
 /// `Node#matches?`: does THIS node match? Tested against the node itself, not
-/// its descendants, like Nokogiri.
+/// its descendants, like Nokogiri. A non-element node (there is no CSS
+/// selector, not even `*`, that an element-only engine can match it with -
+/// see `css_match`'s `Simple::Universal` fix) never matches, without
+/// asking the engine.
 fn matches(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<bool, Error> {
     crate::bridge::ruby::entry(|| {
         let selector = css_args(ruby, args)?;
         let sv = selector_text(selector)?;
-        matches_node(&held(ruby), this.raw(), sv.as_bytes()).map_err(|e| select_error(e, selector))
+        let gvl = held(ruby);
+        let element = this.node().element();
+        let matched = selector_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
+            match element {
+                Some(el) => css_match::matches_any(scratch, groups, el),
+                // Still compiled: a selector the matcher refuses is refused
+                // whatever node it is asked about.
+                None => css_match::check_compiles(scratch, groups).map(|()| false),
+            }
+        })
+        .map_err(|e| parse_error(e, selector))?;
+        drop(sv);
+        matched.map_err(match_error)
     })
 }
 

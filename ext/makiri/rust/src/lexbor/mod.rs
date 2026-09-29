@@ -27,11 +27,26 @@ pub mod chunks;
 /// An input restriction on `:lexbor-contains()`, applied before the CSS parser
 /// sees the text, decided on Lexbor's own CSS tokens.
 pub mod contains_guard;
+/// The HTML CSS matcher behind `Node#css`/`#at_css`/`#matches?`
+/// (`glue::html_node::css`, via `selector_cache`): Lexbor's `lxb_selectors_*`
+/// control flow in safe Rust, over the typed HTML adapter, on an explicit
+/// heap work stack rather than native recursion. Parsing is `css_parser`'s.
+pub mod css_match;
 /// Lexbor's CSS syntax tokenizer, run on its own for `contains_guard`.
 pub(crate) mod css_tokens;
 /// HTML fragment parsing and import/fixup operations.
 pub mod fragment;
-/// Selector traversal engine, including its Lexbor callbacks.
+/// Lexbor's allocator, padded so a small overrun past a heap block is
+/// contained (hardening; the module doc).
+pub mod memory;
+/// The compiled-selector cache in front of `css_match`: its own
+/// process-global parser/arena, separate from `css_parser`'s (shared with the
+/// XML lowering), and the matcher's kept `Scratch`.
+pub mod selector_cache;
+/// The OLD `lxb_selectors`-callback engine `css_match` replaced: compiled
+/// into tests only, as the reference the differential tests
+/// (`lexbor::tests::css_match`) hold `css_match` to.
+#[cfg(test)]
 pub mod selectors;
 /// Lexbor's HTML serialization callbacks and buffer traversal.
 pub mod serialize;

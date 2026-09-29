@@ -387,7 +387,12 @@ RSpec.describe "Makiri::XML CSS selectors" do
       ":nth-last-of-type(1)", "span:nth-child(odd)", "p + p", "p ~ div", "div > span", ".a", ".b.a", "#p3",
       "[lang|=en]", "[data-k^=pre]", "[data-k$=suf]", "[data-k*=mid]", "[class~=b]", ":not(p)",
       "p:not(:first-child)", ":is(p, span)", ":where(div > span)", ":has(> span)", ":has(+ p)", ":has(~ em)",
-      "*:not(:has(*))", %(:lexbor-contains("y")), %(:lexbor-contains("three" i)),
+      "*:not(:has(*))",
+      # NOT :lexbor-contains() - the HTML matcher (`lexbor::css_match`)
+      # deliberately does not implement it, so it raises there instead of
+      # ever answering; see the dedicated divergence test below, and
+      # css_spec.rb's ":lexbor-contains()" describe block.
+      #
       # An empty value "represents nothing" (and so does whitespace in ~=); the
       # lowering matched every element, attribute or not.
       %([data-k^=""]), %([zz*=""]), %([zz$=""]), %([class~=""]), %([class~="a b"]),
@@ -402,12 +407,26 @@ RSpec.describe "Makiri::XML CSS selectors" do
         expect(xml.css(sel).map { |n| n["id"] }).to eq(html.css(sel).map { |n| n["id"] })
       end
     end
+
+    # A deliberate, permanent divergence (not "not yet ported"): XML's CSS
+    # still lowers :lexbor-contains() to XPath contains(), but the HTML
+    # matcher (`lexbor::css_match`) does not implement it at all and
+    # raises instead of ever answering - see css_spec.rb's
+    # ":lexbor-contains()" describe block for why.
+    it "raises on the HTML side where XML still answers, for :lexbor-contains()" do
+      xml = Makiri::XML(body).root
+      html = Makiri::HTML("<!doctype html><html><head></head><body>#{body}</body></html>").at_css("#m")
+      expect(xml.css(%(:lexbor-contains("y"))).map { |n| n["id"] }).to eq(["s2"])
+      expect { html.css(%(:lexbor-contains("y"))) }.to raise_error(Makiri::Error, /could not be run/)
+    end
   end
 
-  describe ":lexbor-contains() text containment (parity with the HTML side)" do
-    # Makiri's HTML CSS exposes Lexbor's :lexbor-contains() jQuery-style text
-    # filter; XML matches it by lowering to XPath contains() on the element's
-    # string-value, so the same selector works (and agrees) on both hosts.
+  describe ":lexbor-contains() text containment (XML only)" do
+    # Makiri's XML CSS matches :lexbor-contains() by lowering to XPath's
+    # contains(); the HTML matcher (`lexbor::css_match`) does not
+    # implement it at all (raises instead - see the divergence test above and
+    # css_spec.rb), so this describes the XML behavior alone, not parity with
+    # the HTML side.
     let(:doc) do
       Makiri::XML("<r><i>apple PIE</i><i>banana</i><i>cherry pie</i></r>")
     end
@@ -437,15 +456,13 @@ RSpec.describe "Makiri::XML CSS selectors" do
     end
 
     it "scans only immediate child text nodes, not the deep string-value" do
-      # Faithful to Lexbor's matcher: <r> contains "cherry" only via a descendant
-      # text node, not a direct child one, so <r> does NOT match - only <i> does.
-      # (This is what makes HTML and XML agree; the deep string-value would also
-      # match every ancestor.)
+      # Faithful to Lexbor's OWN matcher's rule (the one the XML lowering
+      # mirrors, even though HTML no longer reaches Lexbor's matcher itself -
+      # see the divergence test above): <r> contains "cherry" only via a
+      # descendant text node, not a direct child one, so <r> does NOT match -
+      # only <i> does. The deep string-value would also match every ancestor.
       nested = Makiri::XML("<r><i>cherry pie</i></r>")
       expect(nested.css(%(:lexbor-contains("cherry"))).map(&:name)).to eq(%w[i])
-      html = Makiri::HTML("<html><body><r><i>cherry pie</i></r></body></html>")
-      expect(html.css(%(:lexbor-contains("cherry"))).map(&:name))
-        .to eq(nested.css(%(:lexbor-contains("cherry"))).map(&:name))
     end
 
     it "does not treat an XML CDATA section as a text node" do

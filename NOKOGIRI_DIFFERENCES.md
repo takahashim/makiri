@@ -210,13 +210,18 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
     text-containment extension. Use XPath (`xpath("//p[contains(., 'x')]")`) or
     Enumerable (`css('li')[1]`) for the rest.
     Standard Level-4 selectors (`:is` / `:where` / `:has`) are supported; some of which Nokogiri rejects.
-  * `:lexbor-contains("text")` is supported (on both HTML and XML) - Lexbor's
-    spelling of the jQuery `:contains()` substring filter, matching an element
-    whose text contains the string; append ` i` (`:lexbor-contains("text" i)`)
-    for an ASCII case-insensitive match. (Nokogiri's name `:contains` is not an
-    alias.) Like Lexbor's matcher, it tests the element's immediate child text
-    nodes (not the deep string-value), so HTML and XML agree; on XML it lowers
-    to XPath `child::text()[contains(., "text")]`.
+  * `:lexbor-contains("text")` - Lexbor's spelling of the jQuery `:contains()`
+    substring filter, matching an element whose text contains the string;
+    append ` i` (`:lexbor-contains("text" i)`) for an ASCII case-insensitive
+    match. (Nokogiri's name `:contains` is not an alias.) **XML only**: it
+    lowers to XPath `child::text()[contains(., "text")]`, testing the
+    element's immediate child text nodes, not the deep string-value. HTML no
+    longer supports it - `lexbor::css_match`, the safe-Rust port that
+    replaced Lexbor's own matcher for HTML, deliberately does not reimplement
+    it, so a well-formed `:lexbor-contains()` now raises `Makiri::Error`
+    ("could not be run") on HTML rather than ever matching (it still PARSES,
+    and an actually malformed one still raises `Makiri::CSS::SyntaxError`, as
+    before).
 * Untyped `:*-of-type` (`:first-of-type`, `:nth-of-type(an+b)`, ... with no type
   selector) is supported and correct on both HTML and XML - the "type" is the
   element's own expanded name.

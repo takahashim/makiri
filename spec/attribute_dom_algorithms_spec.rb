@@ -137,6 +137,23 @@ RSpec.describe "HTML attribute DOM algorithms" do
       expect(doc.css("#z, #u, #w")).to be_empty
     end
 
+    # The DOM's ID is the no-namespace `id`, so an unprefixed `id` set in a
+    # namespace is not one - even when it is the only attribute named `id`,
+    # and though `[id=w]` (by qualified name) still finds it.
+    it "does not take a namespaced unprefixed id as the ID when it is the only one" do
+      doc = Makiri::HTML("<div></div><p class='x'></p>")
+      div = doc.at_css("div")
+      div.set_attribute_ns("urn:x", "id", "w")
+      p = doc.at_css("p")
+      p.set_attribute_ns(XHTML, "class", "k")
+      p.delete("class")
+      expect(doc.css("#w")).to be_empty
+      expect(div.matches?("#w")).to be(false)
+      expect(doc.css("[id=w]").to_a).to eq([div])
+      expect(doc.css(".k")).to be_empty
+      expect(doc.css("[class=k]").to_a).to eq([p])
+    end
+
     it "ignores a class set in the XHTML namespace" do
       doc = Makiri::HTML('<div class="c"></div>')
       div = doc.at_css("div")

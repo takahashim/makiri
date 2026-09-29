@@ -66,10 +66,7 @@ impl<'doc> HtmlElement<'doc> {
     /// Whether this is an HTML element in an HTML document - the DOM's
     /// condition for ASCII-lowercasing a by-name lookup or a set's name.
     fn is_html_in_html_doc(self) -> bool {
-        self.node().ns_id() == Some(NsId::HTML)
-            // SAFETY: a live element's live owner document; one field read.
-            && unsafe { (*self.node().owner_document().as_raw()).type_ }
-                == lxb::lxb_dom_document_dtype_t_LXB_DOM_DOCUMENT_DTYPE_HTML
+        self.node().ns_id() == Some(NsId::HTML) && self.node().owner_document().is_html_document()
     }
 
     /// DOM "get an attribute by name": the first attribute whose QUALIFIED
@@ -83,12 +80,65 @@ impl<'doc> HtmlElement<'doc> {
         }
     }
 
+    /// [`attr_by_name`](Self::attr_by_name) with `qname` resolved once
+    /// ([`HtmlDoc::resolve_attr_name`]): an attribute whose local-name id
+    /// differs is passed over without reading its name, and one that shares
+    /// it is confirmed by exactly `attr_by_name`'s comparison - so the answer
+    /// is `attr_by_name`'s.
+    ///
+    /// `self` must be an element of the document `name` was resolved in, as
+    /// every node a walking CSS query reaches is: that is not read from the
+    /// element, which would cost a document read per candidate. Another
+    /// document's element would be answered from the wrong table - a wrong
+    /// answer, not an unsound one (ids are plain integers) - and a debug
+    /// build asserts it cannot happen.
+    pub fn attr_by_resolved_name(self, qname: &[u8], name: AttrName) -> Option<HtmlAttr<'doc>> {
+        let Some(doc) = name.doc else {
+            return self.attr_by_name(qname);
+        };
+        debug_assert!(self.node().owner_document().raw == doc);
+        let id = name.id?;
+        let html = name.html_doc && self.node().ns_id() == Some(NsId::HTML);
+        self.attrs().find(|a| {
+            a.local_id() == id
+                // Named by its lower-cased local name, which is `qname`'s
+                // lower-cased form (the id says so): `qname` itself when the
+                // lookup lower-cases or `qname` has no upper case.
+                && (a.named_by_local() && (html || name.lower)
+                    || if html {
+                        eq_lowered(a.qualified_name(), qname)
+                    } else {
+                        a.qualified_name() == qname
+                    })
+        })
+    }
+
     /// DOM "get an attribute by namespace and local name". `ns` is the
     /// attribute's OWN namespace ([`HtmlAttr::own_ns`]), `None` for none; the
     /// local name is compared case-preserved and case-sensitively.
     pub fn attr_by_ns(self, ns: Option<NsId>, local: &[u8]) -> Option<HtmlAttr<'doc>> {
         self.attrs()
             .find(|a| a.own_ns() == ns && a.dom_local_name() == local)
+    }
+
+    /// The element's ID: its no-namespace attribute whose local name is
+    /// exactly `id`, read from Lexbor's `attr_id` shortcut (which
+    /// [`link_attr`](Self::link_attr) keeps pointing at exactly that) - what
+    /// Lexbor's own `#id` matching reads. Unlike `get_attribute(b"id")` it
+    /// does not find an unprefixed `id` set IN a namespace.
+    #[inline]
+    pub fn id_attr(self) -> Option<HtmlAttr<'doc>> {
+        // SAFETY: a live element; the shortcut is null or one of its own
+        // attributes, live for 'doc.
+        HtmlAttr::link(unsafe { (*self.raw()).attr_id })
+    }
+
+    /// As [`id_attr`](Self::id_attr), for the class attribute
+    /// (`attr_class`).
+    #[inline]
+    pub fn class_attr(self) -> Option<HtmlAttr<'doc>> {
+        // SAFETY: as `id_attr`.
+        HtmlAttr::link(unsafe { (*self.raw()).attr_class })
     }
 
     /// DOM `hasAttribute(qname)`.

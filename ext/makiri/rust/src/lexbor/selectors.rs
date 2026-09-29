@@ -1,50 +1,26 @@
-//! The CSS selector engine, over Lexbor's `lxb_selectors`: the process-global
-//! parser/arena/traversal, the adaptive compiled-selector cache, and the safe
-//! `select_all` / `select_first` / `matches_node` entries.
+//! The OLD CSS selector engine, over Lexbor's own `lxb_selectors` - kept only
+//! as the reference the differential tests hold `lexbor::css_match` to
+//! (`lexbor::tests::css_match`), so it is compiled into tests alone
+//! (`lexbor/mod.rs`). `Node#css` / `#at_css` / `#matches?` run on
+//! `css_match`, with the compiled-selector cache in `selector_cache`.
 //!
-//! The Ruby methods (`Node#css` / `#at_css` / `#matches?`) and the NodeSet they
-//! fill live in [`crate::bridge::selectors`]; keeping them there is what stops
-//! this module from depending on `bridge::html`/`bridge::node_set`, which are
-//! built on top of it.
+//! The selector parser, its arena and the traversal engine are process-global,
+//! each query borrowing them through a [`GvlCell`]; a query parses its
+//! selector, runs it, and cleans the parser and the arena. (It used to cache
+//! compiled selectors, adaptively; that policy now lives only in
+//! `selector_cache`, whose module doc keeps its reasons.)
+//!
 //! Every Lexbor type here stays opaque: the parser's status and the setters
 //! this needs are `lxb_inline`, and Lexbor publishes a `_noi` twin of each for
-//! exactly this case. So, as in `lexbor::serialize`, there is no vendored layout
-//! to cross-check.
-//!
-//! # The engine is built once and reused
-//!
-//! The selector parser, its arena, and the traversal engine are process-global.
-//! CSS evaluation always holds the GVL - it never releases it - so every query
-//! is serialized and one shared engine needs no locking. Each entry takes the
-//! [`Gvl`] that proves it, and the engine lives in a [`GvlCell`]. Creating and destroying
-//! it per call (four create/init/destroy triples) dominated a cheap query like
-//! `at_css('#id')`, where the match is found almost immediately and setup IS the
-//! cost. Between calls only the parser returns to its CLEAN stage; the traversal
-//! engine self-cleans after each find.
-//!
-//! # The compiled-selector cache adapts
-//!
-//! Parsing the selector dominates when the same one is queried repeatedly, so
-//! compiled lists are cached in a map keyed by the selector bytes ([`SelectorCache`];
-//! a Rust map rather than a Ruby Hash, which saves a `VALUE` round-trip on every
-//! lookup - it measured ~12% of `matches?`). But
-//! holding many distinct lists in the shared arena makes each new parse slower,
-//! so a flood of one-off selectors - `getElementById` on unique React `useId`
-//! ids, never requeried - turned the cache into a net loss (~22% slower per
-//! call). The hit rate is tracked over a window ([`CachePolicy`]); below a
-//! floor, the cache is BYPASSED (parse + clean per call, so the arena stays
-//! small and the worst case is merely "as fast as no cache"), and caching is
-//! periodically re-tested so a workload that starts repeating selectors regains
-//! it.
+//! exactly this case.
 
 #![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
 use crate::caught::PanicLatch;
-use crate::falloc::{try_to_boxed_slice, Reserve, VecPush};
+use crate::falloc::VecPush;
 use core::ffi::c_void;
 use core::ptr::NonNull;
-use std::collections::HashMap;
 
 use crate::gvl::{Gvl, GvlCell, GvlRef};
 use crate::lexbor::abi::consts::{
@@ -69,8 +45,6 @@ pub enum SelectError {
     Overflow,
     /// Out of memory collecting the matches.
     CollectOom,
-    /// Out of memory in the compiled-selector cache's bookkeeping.
-    CacheOom,
     /// Out of memory parsing the selector (`contains_guard`'s copy, or
     /// Lexbor's parser) - not a verdict on the selector.
     ParseOom,
@@ -83,14 +57,6 @@ pub enum SelectError {
     /// A query on this thread is still using the engine.
     Busy,
 }
-
-const CACHE_CAP: usize = 256;
-/// Re-evaluate the hit rate every N lookups.
-const WIN: usize = 1024;
-/// Below this hit rate (percent), bypass the cache.
-const MIN_HIT_PCT: usize = 15;
-/// Re-test caching every N bypass windows.
-const RETEST_GAP: usize = 32;
 
 const LXB_SELECTORS_OPT_MATCH_FIRST: crate::lexbor::abi::lxb_selectors_opt_t =
     crate::lexbor::abi::lxb_selectors_opt_t_LXB_SELECTORS_OPT_MATCH_FIRST;
@@ -110,89 +76,18 @@ type SelectorCb = unsafe extern "C" fn(*mut LxbNode, u32, *mut c_void) -> u32;
 
 /// The selector parser and the traversal engine, as plain pointers.
 ///
-/// `Copy`, and handed out BY VALUE rather than as a reference into [`Globals`]:
-/// that is what lets a caller hold the engine while it also touches the policy
-/// and the cache, which a reference would make a second live borrow of the one
-/// `Globals`.
+/// `Copy`, and handed out BY VALUE rather than as a reference into
+/// [`Globals`], so holding it keeps no second borrow of the globals alive.
 #[derive(Clone, Copy)]
 struct Engine {
     parser: SelectorParser,
     selectors: *mut Selectors,
 }
 
-/// Whether the compiled-selector cache is paying for itself.
-///
-/// Counts lookups over a window of [`WIN`]; at a window's end, a hit rate
-/// under [`MIN_HIT_PCT`] switches caching off, and after [`RETEST_GAP`] such
-/// windows it is switched back on to be measured again.
-struct CachePolicy {
-    win: usize,
-    win_hits: usize,
-    bypass: bool,
-    bypass_runs: usize,
-}
-
-impl CachePolicy {
-    const fn new() -> Self {
-        CachePolicy {
-            win: 0,
-            win_hits: 0,
-            bypass: false,
-            bypass_runs: 0,
-        }
-    }
-
-    /// Count one lookup. `true` when this lookup ends a window in which caching
-    /// did not pay, so caching is now off and the cached lists must go.
-    fn tick(&mut self) -> bool {
-        self.win += 1;
-        if self.win <= WIN {
-            return false;
-        }
-        let mut switched_off = false;
-        if !self.bypass {
-            if self.win_hits * 100 < WIN * MIN_HIT_PCT {
-                self.bypass = true;
-                self.bypass_runs = 0;
-                switched_off = true;
-            }
-        } else {
-            self.bypass_runs += 1;
-            if self.bypass_runs >= RETEST_GAP {
-                self.bypass = false; /* re-test caching over the next window */
-            }
-        }
-        self.win = 1;
-        self.win_hits = 0;
-        switched_off
-    }
-
-    fn hit(&mut self) {
-        self.win_hits += 1;
-    }
-
-    fn bypassing(&self) -> bool {
-        self.bypass
-    }
-}
-
-/// A compiled selector list in the engine's shared CSS arena.
-///
-/// The arena owns it, not this: Lexbor never frees one list on its own, and
-/// cleaning the arena - [`SelectorCache::flush`], or the bypass path's
-/// `clean_all` - invalidates every list in it at once. So this is not `Box`-like
-/// and has no `Drop`; what it adds over the raw pointer is that it is non-null,
-/// and neither `Copy` nor `Clone`, so a list is only ever LENT. A cached one is
-/// lent by [`SelectorCache::with_list`] from a `&mut` borrow of the cache, and
-/// [`SelectorCache::flush`] needs that same borrow - so the compiler rules out
-/// flushing THROUGH THE CACHE under a list in use. It does not rule out
-/// cleaning the arena directly: the arena belongs to `SelectorParser`, a `Copy`
-/// value, and its `clean_arena`/`clean_all` are callable wherever an `Engine`
-/// is - `with_list`'s closure included. What keeps them out is that
-/// `with_compiled_selector` calls them in exactly two places (the bypass path,
-/// on a list it has already dropped, and [`Session`]'s unwind reset), and no
-/// closure it passes does. A bypass-path list is a local that goes out of
-/// scope before its `clean_all`.
+/// A compiled selector list in the engine's shared CSS arena, which owns it:
+/// cleaning the arena invalidates it, so it is a local that goes out of scope
+/// before `with_compiled_selector` cleans. Non-null, and neither `Copy` nor
+/// `Clone`.
 struct CompiledList(NonNull<SelectorList>);
 
 impl CompiledList {
@@ -207,124 +102,12 @@ impl CompiledList {
     }
 }
 
-/// Selector bytes -> the compiled list, which lives in the shared arena.
-///
-/// The map and the arena are only consistent together, so everything that
-/// empties the arena here also empties the map: no entry can outlive the memory
-/// it points into.
-struct SelectorCache {
-    map: Option<HashMap<Box<[u8]>, CompiledList>>,
-}
-
-impl SelectorCache {
-    const fn new() -> Self {
-        SelectorCache { map: None }
-    }
-
-    /// The map, created on first use.
-    fn map(&mut self) -> &mut HashMap<Box<[u8]>, CompiledList> {
-        self.map.get_or_insert_with(HashMap::new)
-    }
-
-    /// Run `f` over the compiled list for `selector` - the cached one, which
-    /// counts as a hit in `policy`, or one compiled and cached now.
-    ///
-    /// A closure rather than a returned `&CompiledList`: a reference returned
-    /// from the hit arm would keep the cache borrowed into the miss arm's
-    /// `compile`, which the borrow checker refuses, and looking the key up a
-    /// second time would cost the hot path a hash. The list's borrow ends with
-    /// `f`.
-    ///
-    /// # Safety
-    /// The globals' borrow is live.
-    unsafe fn with_list<R>(
-        &mut self,
-        policy: &mut CachePolicy,
-        p: SelectorParser,
-        selector: &[u8],
-        f: impl FnOnce(&CompiledList) -> R,
-    ) -> Result<R, SelectError> {
-        if let Some(list) = self.map().get(selector) {
-            policy.hit();
-            return Ok(f(list));
-        }
-        let list = self.compile(p, selector)?;
-        Ok(f(list))
-    }
-
-    /// Drop every compiled list: the arena they live in and the map.
-    ///
-    /// # Safety
-    /// The globals' borrow is live, and no cached list is used afterwards.
-    unsafe fn flush(&mut self, p: SelectorParser) {
-        p.clean_arena();
-        self.map().clear();
-    }
-
-    /// Parse `selector`, cache it, and hand the list back.
-    ///
-    /// # Safety
-    /// The globals' borrow is live.
-    unsafe fn compile(
-        &mut self,
-        p: SelectorParser,
-        selector: &[u8],
-    ) -> Result<&CompiledList, SelectError> {
-        /* Bound the cache BEFORE parsing: when it is full, drop every compiled
-         * list at once, so the new list is parsed into the now-empty arena.
-         * Flushing after the parse would free the very list just produced. */
-        if self.map().len() >= CACHE_CAP {
-            self.flush(p);
-        }
-
-        /* Prepare the owned key and reserve the map before Lexbor allocates the
-         * compiled list, so a bookkeeping OOM cannot strand a live list in the
-         * shared arena. The key is copied: the borrow points into a Ruby String
-         * that may be collected or mutated, while the entry outlives the call. */
-        let key = try_to_boxed_slice(selector).ok_or(SelectError::CacheOom)?;
-        if self.map().falloc_reserve(1).is_err() {
-            return Err(SelectError::CacheOom);
-        }
-
-        let list = CompiledList::new(p.parse(selector));
-        /* Return the parser to its CLEAN stage, but do NOT clean the arena -
-         * the list just parsed lives there and is about to be cached. */
-        p.clean_parser();
-        let list = match list {
-            Ok(list) => list,
-            /* The guard could not allocate, so the parser never ran and the
-             * arena holds exactly the cached lists it held before: nothing to
-             * flush, and not a verdict on the selector. */
-            Err(ParseFail::GuardOom) => return Err(SelectError::ParseOom),
-            /* A parse that reached Lexbor and failed drops the cached lists
-             * instead of keeping them. This belongs to the same decision as
-             * `super::contains_guard` and goes with it; errors are not a hot
-             * path, so the cost is a cold cache. See CLAUDE.md. */
-            Err(fail) => {
-                self.flush(p);
-                return Err(select_error(fail));
-            }
-        };
-
-        /* Reserved above, so the vacant entry is written without allocating:
-         * nothing between the parse and here can fail. `or_insert` rather than
-         * an insert so the entry hands back the list it now holds. */
-        Ok(self.map().entry(key).or_insert(list))
-    }
-}
-
 struct Globals {
     engine: Option<Engine>,
-    policy: CachePolicy,
-    cache: SelectorCache,
 }
 
 /// The one process-global, borrowed once per query by [`Session`].
-static G: GvlCell<Globals> = GvlCell::new(Globals {
-    engine: None,
-    policy: CachePolicy::new(),
-    cache: SelectorCache::new(),
-});
+static G: GvlCell<Globals> = GvlCell::new(Globals { engine: None });
 
 /// Build the shared engine on first use, and hand it back by value. On failure
 /// everything is torn down and the globals stay unset, so a later call retries.
@@ -481,16 +264,14 @@ impl Run {
 /// unwinds (`panic = "unwind"`, so magnus turns a panic into a Ruby exception),
 /// and a plain statement after the parse is exactly what unwinding skips.
 ///
-/// It resets the parser, the arena and the cache as a unit, because they are
-/// only consistent together. The cost is one cold cache after a panic, which is
-/// the right trade for a process-global.
-///
-/// On the ordinary path it does nothing: each `clean` below has its own meaning
-/// and its own place, and this is not a substitute for them.
+/// On the ordinary path it does nothing: the query cleans after itself, and
+/// this is not a substitute for that.
 /// It is also what holds the borrow of the globals for the query, so the reset
-/// uses that borrow rather than taking a second one while the stack unwinds.
+/// runs under that borrow rather than taking a second one while the stack
+/// unwinds.
 struct Session<'g> {
-    g: GvlRef<'g, Globals>,
+    /// Held, not read: the borrow of the globals, for the whole query.
+    _g: GvlRef<'g, Globals>,
     engine: Engine,
 }
 
@@ -499,13 +280,9 @@ impl Drop for Session<'_> {
         if !std::thread::panicking() {
             return;
         }
-        let parser = self.engine.parser;
-        // SAFETY: the borrow in `g` is live, and nothing reads a cached list
-        // after the query that is unwinding.
-        unsafe {
-            self.g.cache.flush(parser);
-            parser.clean_parser();
-        }
+        // SAFETY: the borrow in `_g` is live, and nothing reads the list after
+        // the query that is unwinding.
+        unsafe { self.engine.parser.clean_all() }
     }
 }
 
@@ -528,30 +305,15 @@ unsafe fn with_compiled_selector(
      * a second borrow alive. */
     let mut g = G.borrow(gvl).map_err(|_| SelectError::Busy)?;
     let e = engine_in(&mut g)?;
-    let mut session = Session { g, engine: e };
-    let g = &mut *session.g;
-
-    if g.policy.tick() {
-        g.cache.flush(e.parser);
-    }
-
-    if g.policy.bypassing() {
-        /* Parse + clean per call - the behaviour before the cache existed - so
-         * the arena stays small and a one-off-selector flood is no slower than
-         * having no cache at all. */
-        let parsed = match CompiledList::new(e.parser.parse(selector)) {
-            Ok(list) => run.call(&e, node, &list, ctx),
-            Err(fail) => Err(select_error(fail)),
-        }; /* the list is out of scope before the arena it lives in is cleaned */
-        e.parser.clean_all();
-        return parsed;
-    }
-
-    /* The traversal engine self-cleans; the cached list and its arena stay. */
-    g.cache
-        .with_list(&mut g.policy, e.parser, selector, |list| {
-            run.call(&e, node, list, ctx)
-        })?
+    let _session = Session { _g: g, engine: e };
+    /* The traversal engine self-cleans; the parser and its arena are cleaned
+     * here, with the list out of scope before the arena it lives in goes. */
+    let ran = match CompiledList::new(e.parser.parse(selector)) {
+        Ok(list) => run.call(&e, node, &list, ctx),
+        Err(fail) => Err(select_error(fail)),
+    };
+    e.parser.clean_all();
+    ran
 }
 
 /// The error a failed parse is reported as.

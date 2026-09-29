@@ -2,8 +2,59 @@
 
 ## [Unreleased]
 
+### Changed
+
+* HTML `#css`/`#at_css`/`#matches?` now cap one selector chain at 64
+  compounds, as `Makiri::XML` already did, and raise `Makiri::Error` ("CSS
+  selector chain too complex") past it - at the top level or nested in
+  `:is()`/`:where()`/`:not()`/`:has()`/`:nth-child(... of S)`. Lexbor's own
+  matcher had no cap. Selector NESTING stays unbounded.
+* HTML `:nth-child(An+B of S)` / `:nth-last-child(An+B of S)` count by the
+  CSS definition (an element in `S`, ranked among its siblings in `S`).
+  Lexbor's own matcher miscounted when `S` was a comma list (the answer
+  depended on the alternatives' order), held a combinator (`li span`), or
+  carried pseudo-classes such as `:enabled` or `:empty`.
+* HTML attribute selector names are case-sensitive on SVG/MathML elements,
+  as the HTML Standard specifies: `[viewbox]` no longer finds an SVG
+  `viewBox`. Lexbor's own matcher folded case everywhere. On HTML elements
+  in an HTML document they stay case-insensitive.
+* HTML `:has()` and `:nth-child(... of S)` nested hundreds deep no longer
+  exhaust a small `Fiber`'s stack. `:has()` crashed the whole process with an
+  uncaught `SystemStackError`; `of S` raised one that left every later
+  `#css`/`#at_css`/`#matches?` in the process failing with "CSS selector
+  engine is already in use".
+* An unsupported construct (`:lexbor-contains()`, the column combinator `||`)
+  now raises from all three methods wherever it appears in the selector.
+  Before, it raised only if matching happened to reach it: `p, x || y`
+  answered the `<p>`s, and `nosuch:lexbor-contains("x")` answered empty.
+* HTML `:disabled`, `:enabled` and `:checked` follow the HTML Standard's
+  definitions. `:disabled` now covers an `<input>`/`<button>`/`<select>`/
+  `<textarea>`/`<fieldset>` inside a `<fieldset disabled>` (except inside
+  that fieldset's first `<legend>` child), and `<option>`/`<optgroup>`;
+  `:enabled` matches only those form elements, not every other element;
+  an element with a custom tag no longer matches `:disabled`/`:checked`
+  through its `disabled`/`checked` attribute alone. Lexbor's own matcher
+  required the attribute on the element itself and decided the legend
+  exemption from the fieldset's first child node.
+* HTML `#id` and `.class` selectors match the DOM's ID and class attributes -
+  the no-namespace `id` / `class` - as Lexbor's own matcher did. An
+  unprefixed `id` set in a namespace (`set_attribute_ns("urn:x", "id", v)`)
+  is not the ID, even when it is the element's only `id`; `[id=v]` still
+  finds it.
+
 ### Removed
 
+* `:lexbor-contains("text")` on HTML `#css`/`#at_css`/`#matches?`. HTML CSS
+  matching moved from Lexbor's own `lxb_selectors` engine to
+  `lexbor::css_match`, an original, non-recursive Rust implementation
+  (parsing is unchanged - still Lexbor's CSS parser); the port deliberately
+  does not reimplement `:lexbor-contains()`. A well-formed
+  `:lexbor-contains()` still parses, but now raises `Makiri::Error` ("could
+  not be run") instead of ever matching - the same treatment an unsupported
+  combinator already got (below), not a silent empty result, which would be
+  indistinguishable from "no element matches". `Makiri::XML`'s `#css` is
+  unaffected - it still lowers `:lexbor-contains()` to XPath `contains()`.
+  See NOKOGIRI_DIFFERENCES.md.
 * `Node#name=` and `Node#node_name=`, on both HTML and XML nodes. The DOM has
   no way to rename an element, and Lexbor keeps many elements in structs of
   their own (`<template>` its contents, `<option>` its selectedness): renaming
@@ -20,6 +71,10 @@
 
 ### Security
 
+* Hardening: every heap block the vendored Lexbor allocates carries 16 bytes
+  of slack past its end (through Lexbor's own `lexbor_memory_setup`), so a
+  small write past the end of a block cannot reach neighbouring memory. Not
+  applied in sanitizer builds, which exist to see such writes.
 * An HTML attribute set with the local name `id` or `class` beside an existing
   one - `set_attribute_ns(nil, "ID", v)`, a namespaced `id`, a `class` in the
   XHTML namespace - no longer frees the existing attribute (Lexbor's append
@@ -45,6 +100,16 @@
   combinator, which answered "nothing matched") raises `Makiri::Error`. An
   allocation failure while parsing a selector is reported as out of memory,
   not as `Makiri::CSS::SyntaxError`.
+* HTML CSS matching (`#css`/`#at_css`/`#matches?`) now carries a per-query
+  work budget of 50M steps (XPath's own limit), charged by every compound
+  tested - `:has()`'s search, the `:nth-*` sibling scans and a combinator's
+  walk over ancestors or siblings alike. Past it, the query raises
+  `Makiri::Error` ("CSS query exceeded its work budget") rather than running
+  unbounded or answering a `:has()` as `false` because its own search alone
+  ran out (which would be a wrong verdict, not an incomplete one). A chain
+  that fails no longer retries every combination of ancestors and siblings
+  (`x div div div div div div p` did, exponentially): a left part that
+  failed at every ancestor or sibling is not tried again from a further one.
 * HTML parsing bounds the tree depth (`max_tree_depth:`, default 400; a
   negative value disables it) and the `<option>`s one `<select>` receives
   (10,000), raising `Makiri::Error` past either. Both shapes made Lexbor's tree
@@ -331,6 +396,19 @@
 
 ### Performance
 
+* HTML `#css`/`#at_css`/`#matches?` match with Lexbor's own control flow - a
+  loop over a chain's compounds that backtracks on failure, with nested
+  pseudo-classes as contexts on a heap stack - instead of a general
+  continuation machine. `rake bench`: `css` ~2x faster, `at_css` ~15%.
+* HTML `#matches?` and `#at_css` reuse the matcher's tables and stacks from
+  one call to the next instead of allocating them each time, and a simple
+  `:is()`/`:where()`/`:not()` (each alternative one compound, such as
+  `:not(.x)`) is answered in place. `#matches?` with a nested selector is up
+  to ~2.5x faster, `rake bench`'s `at_css` ~33%, and `css("li:not(.x)")`
+  ~35%.
+* An HTML attribute selector that compares a value (`[type=text]`) no longer
+  scans the case-insensitive-attribute table for every element; the table is
+  consulted once per selector. ~25-30% faster on such selectors.
 * `NodeSet#at_css` / `#at_xpath` stop at the first node with a match instead of
   querying every node and building the union.
 * `XML::Node#canonicalize` no longer walks up the ancestors for each namespace

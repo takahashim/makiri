@@ -221,6 +221,19 @@ impl<K: TableKey, V: Copy + Default> PtrMap<K, V> {
         self.len == 0
     }
 
+    /// The slots allocated: 0 before the first insert.
+    pub fn capacity(&self) -> usize {
+        self.slots.len()
+    }
+
+    /// Remove every entry, keeping the allocation for the next fill.
+    pub fn clear(&mut self) {
+        if self.len != 0 {
+            self.slots.fill((K::EMPTY, V::default()));
+            self.len = 0;
+        }
+    }
+
     /// The value `key` maps to.
     #[inline]
     pub fn get(&self, key: K) -> Option<V> {

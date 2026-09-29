@@ -55,9 +55,9 @@ UNSAFE_ISLANDS = {
   "lexbor/abi.rs" => 4,
   "lexbor/adapter/arena_bytes.rs" => 11,
   "lexbor/adapter/cross_import.rs" => 2,
-  "lexbor/adapter/html/attrs.rs" => 19,
+  "lexbor/adapter/html/attrs.rs" => 20,
   "lexbor/adapter/html/build.rs" => 19,
-  "lexbor/adapter/html/mod.rs" => 53,
+  "lexbor/adapter/html/mod.rs" => 60,
   "lexbor/adapter/html/mutate.rs" => 9,
   "lexbor/adapter/post_parse.rs" => 13,
   "lexbor/adapter/source_loc.rs" => 2,
@@ -65,13 +65,15 @@ UNSAFE_ISLANDS = {
   "lexbor/adapter/tree_guard.rs" => 8,
   "lexbor/chunks.rs" => 2,
   "lexbor/css_engine.rs" => 14,
-  "lexbor/css_parser.rs" => 18,
+  "lexbor/css_parser.rs" => 21,
   "lexbor/css_tokens.rs" => 10,
   "lexbor/fragment.rs" => 7,
-  "lexbor/selectors.rs" => 12,
+  "lexbor/memory.rs" => 9,
+  "lexbor/selector_cache.rs" => 15,
+  "lexbor/selectors.rs" => 9,
   "lexbor/serialize.rs" => 2,
   "lexbor/stylesheet.rs" => 7,
-  "lexbor/tests.rs" => 7,
+  "lexbor/tests.rs" => 14,
   "lexbor/xpath.rs" => 9,
   "token.rs" => 1,
 }.freeze
@@ -84,7 +86,7 @@ UNSAFE_ISLANDS = {
 # The subtree roots in FORBID_ROOTS make whole directories compiler-forbidden:
 # `forbid` is inherited, so a new file under `glue/` or `xpath/` cannot slip in
 # with an `allow`, however few its `unsafe`s.
-FORBID_ROOTS = %w[css/mod.rs glue/mod.rs xml/mod.rs xpath/mod.rs].freeze
+FORBID_ROOTS = %w[css/mod.rs glue/mod.rs lexbor/css_match/mod.rs xml/mod.rs xpath/mod.rs].freeze
 
 FORBID_FILES = %w[
   css/build.rs css/lower.rs css/mod.rs
@@ -96,27 +98,27 @@ FORBID_FILES = %w[
   glue/xml_doc.rs glue/xml_node/css.rs glue/xml_node/mod.rs
   glue/xml_node/mutate.rs glue/xml_node/ns.rs glue/xml_node/read.rs
   glue/xml_node/serialize.rs glue/xml_node/strings.rs glue/xpath_context.rs
-  lexbor/adapter/dom_index.rs lexbor/contains_guard.rs limits.rs
-  node_type.rs ptr_table.rs rust_tests.rs
-  stack.rs text.rs utf8_input.rs
-  xml/arena.rs xml/attr_key.rs xml/chars/expand.rs
-  xml/chars/mod.rs xml/dom_name.rs xml/encoding_sniff.rs
-  xml/index.rs xml/mod.rs xml/model.rs
-  xml/mutate/attr.rs xml/mutate/copy.rs xml/mutate/edit.rs
-  xml/mutate/factory.rs xml/mutate/insert.rs xml/mutate/mod.rs
-  xml/mutate/ns.rs xml/qname.rs xml/selftest.rs
-  xml/serialize/bindings.rs xml/serialize/c14n.rs xml/serialize/mod.rs
-  xml/serialize/out.rs xml/serialize/xml.rs xml/tree/cursor.rs
-  xml/tree/decl.rs xml/tree/dtd.rs xml/tree/mod.rs
-  xml/tree/scope.rs xml/verify.rs xml/xpath.rs
-  xpath/abi.rs xpath/ast.rs xpath/ast_ops.rs
-  xpath/attr_pred.rs xpath/axis.rs xpath/ctx.rs
-  xpath/dom.rs xpath/eval.rs xpath/funcs/ext.rs
-  xpath/funcs/mod.rs xpath/lex.rs xpath/limits.rs
-  xpath/mod.rs xpath/nodetest.rs xpath/number.rs
-  xpath/order.rs xpath/parse.rs xpath/step_index.rs
-  xpath/str_cache.rs xpath/tests.rs xpath/value.rs
-  xpath/verify.rs
+  lexbor/adapter/dom_index.rs lexbor/contains_guard.rs lexbor/css_match/mod.rs
+  limits.rs node_type.rs ptr_table.rs
+  rust_tests.rs stack.rs text.rs
+  utf8_input.rs xml/arena.rs xml/attr_key.rs
+  xml/chars/expand.rs xml/chars/mod.rs xml/dom_name.rs
+  xml/encoding_sniff.rs xml/index.rs xml/mod.rs
+  xml/model.rs xml/mutate/attr.rs xml/mutate/copy.rs
+  xml/mutate/edit.rs xml/mutate/factory.rs xml/mutate/insert.rs
+  xml/mutate/mod.rs xml/mutate/ns.rs xml/qname.rs
+  xml/selftest.rs xml/serialize/bindings.rs xml/serialize/c14n.rs
+  xml/serialize/mod.rs xml/serialize/out.rs xml/serialize/xml.rs
+  xml/tree/cursor.rs xml/tree/decl.rs xml/tree/dtd.rs
+  xml/tree/mod.rs xml/tree/scope.rs xml/verify.rs
+  xml/xpath.rs xpath/abi.rs xpath/ast.rs
+  xpath/ast_ops.rs xpath/attr_pred.rs xpath/axis.rs
+  xpath/ctx.rs xpath/dom.rs xpath/eval.rs
+  xpath/funcs/ext.rs xpath/funcs/mod.rs xpath/lex.rs
+  xpath/limits.rs xpath/mod.rs xpath/nodetest.rs
+  xpath/number.rs xpath/order.rs xpath/parse.rs
+  xpath/step_index.rs xpath/str_cache.rs xpath/tests.rs
+  xpath/value.rs xpath/verify.rs
 ].freeze
 
 UNSAFE_USE = /\bunsafe\s*(?:\{|fn\b|impl\b|trait\b|extern\b)/
@@ -196,6 +198,12 @@ RUBY_LAYER_COUNTS = {}.freeze
 # the engine's only infallible allocations - and the crate-wide lint that would
 # have caught them fired on five legitimate glue sites too.
 INFALLIBLE_ALLOC = /\.to_owned\(\)|\.to_vec\(\)|String::from\(|\bformat!\(/
+#
+# Empty: the `selectors`-crate exploration that once held an
+# accepted exception here was rejected in favour of porting Lexbor's own
+# `lxb_selectors_*` state machine instead - `lexbor/css_match/`, which
+# allocates only through `falloc` like the rest of the engine (and `rake oom`
+# sweeps it).
 INFALLIBLE_ALLOC_COUNTS = {}.freeze
 
 def rust_code(path)

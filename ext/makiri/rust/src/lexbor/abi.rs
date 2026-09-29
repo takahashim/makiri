@@ -148,6 +148,18 @@ extern "C" {
     ) -> u32;
 }
 
+/* The C allocator, which `lexbor::memory` wraps for Lexbor. Written here
+ * rather than generated: the platform headers spell `size_t` through their
+ * own typedefs (`__darwin_size_t`), which bindgen renders as `c_ulong` -
+ * 32 bits on Windows. `size_t` is `usize` on every target Rust supports,
+ * and Lexbor's own hook types (`lexbor_memory_*_f`) say `usize` too. */
+extern "C" {
+    pub fn malloc(size: usize) -> *mut core::ffi::c_void;
+    pub fn realloc(ptr: *mut core::ffi::c_void, size: usize) -> *mut core::ffi::c_void;
+    pub fn calloc(num: usize, size: usize) -> *mut core::ffi::c_void;
+    pub fn free(ptr: *mut core::ffi::c_void);
+}
+
 /// `lxb_ns_data_t`, of which only `ns_id` is read. It is `lexbor_hash_entry_t
 /// entry; lxb_ns_id_t ns_id; ...`, and the entry's layout is Lexbor's business -
 /// so the id is reached through the generated struct rather than guessed at.

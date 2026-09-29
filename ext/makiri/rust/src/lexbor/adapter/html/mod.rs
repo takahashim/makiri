@@ -113,6 +113,23 @@ impl NsId {
     }
 }
 
+/// An attribute name resolved against one document - see
+/// [`HtmlDoc::resolve_attr_name`]. For that document's elements only: the
+/// id is its table's, and whether a lookup lower-cases is decided by its
+/// type once rather than read from each element's document.
+#[derive(Clone, Copy)]
+pub struct AttrName {
+    /// `None`: not resolvable (a prefixed or empty name) - look up by name.
+    doc: Option<NonNull<LxbDoc>>,
+    /// The document is an HTML document (half of `is_html_in_html_doc`).
+    html_doc: bool,
+    /// The lower-cased local name's id there; `None`: no attribute of that
+    /// document has the name.
+    id: Option<usize>,
+    /// The name has no ASCII upper case: it is its own lower-cased form.
+    lower: bool,
+}
+
 /// A tag id, as Lexbor interns an element's name - never `LXB_TAG__UNDEF`,
 /// which reads as `None`.
 ///
@@ -590,6 +607,15 @@ impl<'doc> HtmlDoc<'doc> {
         self.raw.as_ptr()
     }
 
+    /// An HTML document, as opposed to an XML one - the DOM's condition,
+    /// with the element's own namespace, for lower-casing a by-name lookup.
+    #[inline]
+    pub fn is_html_document(self) -> bool {
+        // SAFETY: a live document handle, read for this call.
+        let dtype = unsafe { (*self.raw.as_ptr()).type_ };
+        dtype == lxb::lxb_dom_document_dtype_t_LXB_DOM_DOCUMENT_DTYPE_HTML
+    }
+
     /// Lexbor's quirks mode: 0 no-quirks, 1 quirks, 2 limited-quirks. Set by the
     /// parser from the doctype.
     #[inline]
@@ -609,6 +635,36 @@ impl<'doc> HtmlDoc<'doc> {
         }
         // SAFETY: `tags` is the document's own tag table, `name` a live slice.
         TagId::from_raw(unsafe { lxb::lxb_tag_id_by_name_noi(tags, name.as_ptr(), name.len()) })
+    }
+
+    /// `name` resolved once for [`HtmlElement::attr_by_resolved_name`] on this
+    /// document's elements. Lexbor keys an attribute's local name by its ASCII
+    /// lower-cased form, in the static table or this document's own, so the
+    /// id is a NECESSARY condition for any attribute a by-qualified-name
+    /// lookup of an unprefixed `name` can find (no id: none can). A prefixed or
+    /// empty name stays unresolved, for the plain by-name lookup.
+    pub fn resolve_attr_name(self, name: &[u8]) -> AttrName {
+        // SAFETY: a live document handle, read for this call.
+        let attrs = unsafe { (*self.raw.as_ptr()).attrs };
+        if name.is_empty() || name.contains(&b':') || attrs.is_null() {
+            return AttrName {
+                doc: None,
+                html_doc: false,
+                id: None,
+                lower: false,
+            };
+        }
+        // SAFETY: `attrs` is the document's own attribute-name table, `name`
+        // a live slice; the entry, if any, lives as long as the table.
+        let data =
+            unsafe { lxb::lxb_dom_attr_data_by_local_name(attrs, name.as_ptr(), name.len()) };
+        AttrName {
+            doc: Some(self.raw),
+            html_doc: self.is_html_document(),
+            // SAFETY: a non-null entry of the table above.
+            id: (!data.is_null()).then(|| unsafe { (*data).attr_id }),
+            lower: !name.iter().any(u8::is_ascii_uppercase),
+        }
     }
 
     /// The document as a node: an `lxb_dom_document_t` leads with its node.
@@ -686,6 +742,24 @@ impl<'doc> HtmlNode<'doc> {
         // SAFETY: as `node_type`.
         Self::link(unsafe { (*self.as_raw()).parent })
     }
+    /// `parent`, read directly with none of [`HtmlNode::parent`]'s
+    /// attribute-owner branch. Correct only where `self` is known to never be
+    /// an attribute - which every climb by `first_child`/`next`/`parent`
+    /// already establishes, since Lexbor links attributes through
+    /// `element->first_attr`/`attr->next`, never through a node's own
+    /// `first_child` (`HtmlNode::document_order`'s doc comment states the
+    /// same fact). Perf on the 400-document/110 MB `rake bench` corpus
+    /// (uncached, `nosuchtag`/`li` `Node#css`) attributed ~37% of
+    /// `preorder_next`'s climb-loop cycles to `parent()`'s
+    /// check-then-computed-offset-load for this one branch, which is never
+    /// taken here; Lexbor's own C traversal (`lxb_selectors_tree`) reads
+    /// `node->parent` as a plain field for the same reason. Do not call this
+    /// on a node whose attribute-ness has not been ruled out.
+    #[inline]
+    fn tree_parent(self) -> Option<Self> {
+        // SAFETY: as `node_type`.
+        Self::link(unsafe { (*self.as_raw()).parent })
+    }
     #[inline]
     pub fn first_child(self) -> Option<Self> {
         // SAFETY: as `node_type`.
@@ -739,7 +813,9 @@ impl<'doc> HtmlNode<'doc> {
             if let Some(s) = n.next() {
                 return Some(s);
             }
-            n = n.parent()?;
+            // `n` was reached by `first_child`/`next` from `self`, never an
+            // attribute - `tree_parent` over `parent` is sound here.
+            n = n.tree_parent()?;
         }
     }
 
@@ -774,7 +850,8 @@ impl<'doc> HtmlNode<'doc> {
             if let Some(s) = n.next() {
                 return Some(s);
             }
-            n = match n.parent() {
+            // Same as `preorder_next`'s climb: `n` is never an attribute.
+            n = match n.tree_parent() {
                 Some(p) => p,
                 None => {
                     /* Out of a template's contents: its host's own children
@@ -1188,6 +1265,20 @@ impl<'doc> HtmlAttr<'doc> {
         // SAFETY: a live attribute.
         unsafe { named(self.raw(), lxb::lxb_dom_attr_qualified_name) }
     }
+    /// Whether the attribute's qualified name is its lower-cased local name
+    /// itself - no prefix, no spelling of its own (Lexbor sets
+    /// `qualified_name` for either).
+    #[inline]
+    pub(in crate::lexbor::adapter) fn named_by_local(self) -> bool {
+        // SAFETY: a live attribute; one field read.
+        unsafe { (*self.raw()).qualified_name == 0 }
+    }
+    /// The id of the lower-cased local name, in the owner document's table.
+    #[inline]
+    pub(in crate::lexbor::adapter) fn local_id(self) -> usize {
+        // SAFETY: a live attribute; one field read.
+        unsafe { (*self.raw()).node.local_name }
+    }
     #[inline]
     pub fn local_name(self) -> &'doc [u8] {
         // SAFETY: a live attribute.
@@ -1205,7 +1296,16 @@ impl<'doc> HtmlAttr<'doc> {
     pub fn value(self) -> &'doc [u8] {
         // SAFETY: a live attribute; the value is only changed by a mutator,
         // which the handle's contract rules out for 'doc.
-        unsafe { named_mut(self.raw(), lxb::lxb_dom_attr_value_noi) }
+        // `lxb_dom_attr_value`, a header inline (the `_noi` twin is its
+        // out-of-line copy): the same two field reads, without the call.
+        unsafe {
+            let v = (*self.raw()).value;
+            if v.is_null() {
+                &[]
+            } else {
+                seen((*v).data, (*v).length)
+            }
+        }
     }
     /// Replace the attribute's value. `Err` when Lexbor could not store it,
     /// in which case the attribute keeps what it had.

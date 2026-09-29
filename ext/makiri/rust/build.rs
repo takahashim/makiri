@@ -179,6 +179,7 @@ fn main() {
         .allowlist_function("lxb_dom_element_next_attribute")
         .allowlist_function("lxb_dom_attr_qualified_name")
         .allowlist_function("lxb_dom_attr_local_name")
+        .allowlist_function("lxb_dom_attr_data_by_local_name")
         .allowlist_function("lxb_dom_attr_value")
         .allowlist_function("lxb_dom_node_name")
         .allowlist_function("lxb_dom_document_type_public_id")
@@ -292,6 +293,8 @@ fn main() {
         .allowlist_function("lxb_selectors_find")
         .allowlist_function("lxb_selectors_match_node")
         .allowlist_function("lxb_selectors_opt_set_noi")
+        // Lexbor's allocator hook (`lexbor::memory`).
+        .allowlist_function("lexbor_memory_setup")
         .allowlist_type("lxb_selectors_opt_t")
         // Top-level consts, not modules: the names then match the headers
         // exactly and do not depend on bindgen's numbering of anonymous types.
