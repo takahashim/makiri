@@ -48,8 +48,8 @@
 //!   childless fieldset as having no `<legend>`, which is what the HTML
 //!   Standard's algorithm implies; the C bug is not reproduced.
 //! - `lxb_selectors_anb_calc` (§D-3) tests `:nth-*`'s `An+B` with a `double`
-//!   division, which risks float rounding for large indices; this port uses
-//!   integer arithmetic instead.
+//!   division, which past 2^53 answers "divisible" for everything; this port
+//!   computes exactly, in `i128` (`anb_matches`'s doc).
 //! - `:nth-child(An+B of S)` / `:nth-last-child(An+B of S)` (§D-1) count by
 //!   the CSS definition - an element in `S`, ranked among its element
 //!   siblings that are in `S` - where Lexbor miscounts in many shapes: a
@@ -128,12 +128,13 @@
 
 use crate::falloc::{OomResult, VecPush};
 use crate::lexbor::adapter::html::{
-    AttrName, HtmlAttr, HtmlDoc, HtmlElement, HtmlNode, NodeType, NsId, TagId,
+    AttrName, HtmlAttr, HtmlDoc, HtmlElement, HtmlNode, NodeType, NsId, RawNode, TagId,
 };
 use crate::lexbor::css_parser::{
     AttrMatch, Combinator, FunctionArg, List, ListPseudo, Lists, PseudoClass, Simple,
 };
 use crate::limits::NODE_SET_MAX;
+use crate::ptr_table::PtrMap;
 use core::ffi::c_long;
 
 /// A complexity bound on compounds per chain, mirroring `css::MAX_COMPOUNDS`.
@@ -921,40 +922,124 @@ fn name_matches_type(a: HtmlNode<'_>, b: HtmlNode<'_>) -> bool {
     }
 }
 
+/// Sibling positions a walking query has counted, so `:nth-child` and its
+/// family over a wide sibling list costs O(siblings) per list rather than
+/// O(siblings) per candidate - which, charged to the budget, made
+/// `tr:nth-child(odd)` over ~4,500 rows raise. One memo per counting kind
+/// (`from_end` x `of_type`), keyed by node; a walk records every counted
+/// sibling it passes, so no list is counted twice (see [`sibling_position`]).
+///
+/// Only a walking query keeps one: a one-candidate `matches?` counts afresh,
+/// as recording positions it never reads again would cost it more. Lexbor
+/// keeps none (it recounts every time, with no budget to exhaust).
+struct Positions {
+    walking: bool,
+    /// One per kind, made on first use: a query that never counts
+    /// positions - most - pays nothing for them, and `Query` stays small
+    /// enough to move cheaply (a fixed array of four here measured ~5% on
+    /// `matches?`).
+    memo: Vec<PtrMap<*const (), u64>>,
+    /// A walk's counted siblings, nearest first.
+    visited: Vec<*const ()>,
+}
+
+/// A memo past this many entries is dropped and refilled, bounding it: the
+/// positions are recounted on demand, so this costs time, never an answer.
+const POSITIONS_MAX: usize = 1 << 16;
+
+impl Positions {
+    fn new(walking: bool) -> Self {
+        Positions {
+            walking,
+            memo: Vec::new(),
+            visited: Vec::new(),
+        }
+    }
+}
+
+fn node_key(node: HtmlNode<'_>) -> *const () {
+    RawNode::from(node).as_ptr().cast_const().cast()
+}
+
 /// `node`'s 1-based position among its (`from_end`-directed) siblings,
-/// counting only same-type ones when `of_type`. O(siblings), uncached (the
-/// plan's `NthIndexCache`-equivalent optimization is still open - see the
-/// module doc) - but every sibling visited charges `budget`, so a wide
-/// sibling list under repeated `:nth-of-type`-family checks costs the SAME
-/// budget `:has()`'s search does, not an uncounted O(siblings) per check.
-fn sibling_position(
-    node: HtmlNode<'_>,
+/// counting only same-type ones when `of_type`. Every sibling stepped over
+/// charges `budget`.
+///
+/// With a memo ([`Positions`]): the walk in the counting direction stops at
+/// the first counted sibling whose position is known (or at the end of the
+/// list), and every counted sibling it passed gets its position recorded
+/// too - so each is stepped over once per kind, not once per candidate.
+fn sibling_position<'doc>(
+    node: HtmlNode<'doc>,
     from_end: bool,
     of_type: bool,
     budget: &Budget,
+    positions: &mut Positions,
 ) -> Result<u64, MatchFailure> {
     // Element-only would agree for `of_type` (a non-element never satisfies
     // `name_matches_type`) but is WRONG for the plain (`of_type == false`)
     // case - see `counts_toward_child_position`'s doc. One walk serves both,
     // since `same_type` already answers `false` for a non-element itself.
     let same_type = |n: HtmlNode<'_>| !of_type || name_matches_type(n, node);
-    let mut pos: u64 = 1;
-    let mut cur = if from_end {
-        next_position_sibling(node)
-    } else {
-        prev_position_sibling(node)
-    };
-    while let Some(n) = cur {
-        budget.charge()?;
-        if same_type(n) {
-            pos += 1;
-        }
-        cur = if from_end {
+    let step = |n: HtmlNode<'doc>| {
+        if from_end {
             next_position_sibling(n)
         } else {
             prev_position_sibling(n)
-        };
+        }
+    };
+    let kind = usize::from(from_end) << 1 | usize::from(of_type);
+    let walking = positions.walking;
+    let Positions { memo, visited, .. } = positions;
+    let memo = if walking {
+        while memo.len() < 4 {
+            memo.falloc_push(PtrMap::new()).or_oom()?;
+        }
+        memo.get_mut(kind)
+    } else {
+        None
+    };
+    let Some(memo) = memo else {
+        let mut pos: u64 = 1;
+        let mut cur = step(node);
+        while let Some(n) = cur {
+            budget.charge()?;
+            if same_type(n) {
+                pos += 1;
+            }
+            cur = step(n);
+        }
+        return Ok(pos);
+    };
+    if let Some(pos) = memo.get(node_key(node)) {
+        return Ok(pos);
     }
+    visited.clear();
+    let mut base = 0;
+    let mut cur = step(node);
+    while let Some(n) = cur {
+        budget.charge()?;
+        if same_type(n) {
+            if let Some(pos) = memo.get(node_key(n)) {
+                base = pos;
+                break;
+            }
+            visited.falloc_push(node_key(n)).or_oom()?;
+        }
+        cur = step(n);
+    }
+    if memo.len() + visited.len() + 1 > POSITIONS_MAX {
+        *memo = PtrMap::new();
+    }
+    // The farthest one passed sits next to `base`; `node` after the nearest.
+    let passed = visited.len() as u64;
+    for (i, &k) in visited.iter().enumerate() {
+        memo.insert(k, base + passed - i as u64)
+            .map_err(|_| MatchFailure::Oom)?;
+    }
+    let pos = base + passed + 1;
+    memo.insert(node_key(node), pos)
+        .map_err(|_| MatchFailure::Oom)?;
     Ok(pos)
 }
 
@@ -1083,6 +1168,7 @@ fn plain_pseudo_matches(
     pc: PseudoClass,
     node: HtmlNode<'_>,
     budget: &Budget,
+    positions: &mut Positions,
 ) -> Result<bool, MatchFailure> {
     Ok(match pc {
         // Not `prev_sibling_element`/`next_sibling_element` - see
@@ -1096,11 +1182,11 @@ fn plain_pseudo_matches(
         }
         PseudoClass::Empty => is_empty(node),
         PseudoClass::Root => is_root(node),
-        PseudoClass::FirstOfType => sibling_position(node, false, true, budget)? == 1,
-        PseudoClass::LastOfType => sibling_position(node, true, true, budget)? == 1,
+        PseudoClass::FirstOfType => sibling_position(node, false, true, budget, positions)? == 1,
+        PseudoClass::LastOfType => sibling_position(node, true, true, budget, positions)? == 1,
         PseudoClass::OnlyOfType => {
-            sibling_position(node, false, true, budget)? == 1
-                && sibling_position(node, true, true, budget)? == 1
+            sibling_position(node, false, true, budget, positions)? == 1
+                && sibling_position(node, true, true, budget, positions)? == 1
         }
         PseudoClass::AnyLink => is_any_link(node, false),
         PseudoClass::Link => is_any_link(node, true),
@@ -1138,23 +1224,29 @@ fn nth_matches(
     of_type: bool,
     anb: Option<crate::lexbor::css_parser::Nth<'_>>,
     budget: &Budget,
+    positions: &mut Positions,
 ) -> Result<bool, MatchFailure> {
     let Some(anb) = anb else {
         return Ok(false);
     };
-    let pos = sibling_position(node, from_end, of_type, budget)? as i64;
+    let pos = sibling_position(node, from_end, of_type, budget, positions)?;
     Ok(anb_matches(anb.a, anb.b, pos))
 }
 
-/// §D-3 `lxb_selectors_anb_calc`, done with integer arithmetic instead of
-/// Lexbor's `double` division (module doc: avoids float-rounding risk for
-/// large indices).
-// `c_long` is 32 bits on Windows.
-#[allow(clippy::useless_conversion)]
-fn anb_matches(a: c_long, b: c_long, pos: i64) -> bool {
-    let (a, b) = (i64::from(a), i64::from(b));
+/// §D-3 `lxb_selectors_anb_calc`: is `pos` = `a*n + b` for some `n >= 0`?
+/// Exact, where Lexbor divides in `double` - past 2^53 every `double` is an
+/// integer, so its divisibility test there always passes (module doc).
+///
+/// In `i128`: `a` and `b` reach `LONG_MAX` in magnitude (Lexbor clamps them
+/// there) and `pos` is a `u64`, so `pos - b` overflows 64 bits - and a
+/// release build checks overflow, so `:nth-child(n-9223372036854775807)`
+/// panicked. Nothing here can overflow 128 bits: `|k| < 2^65`. Treating an
+/// overflow as "no match" instead would be a wrong answer, not a safe one -
+/// that selector (a = 1) matches every element.
+fn anb_matches(a: c_long, b: c_long, pos: u64) -> bool {
+    let (a, b, pos) = (i128::from(a), i128::from(b), i128::from(pos));
     if a == 0 {
-        return b >= 0 && pos == b;
+        return pos == b;
     }
     let k = pos - b;
     k % a == 0 && k / a >= 0
@@ -1263,6 +1355,7 @@ fn check_simple(
     name: Name<'_>,
     node: HtmlNode<'_>,
     budget: &Budget,
+    positions: &mut Positions,
 ) -> Result<SimpleCheck, MatchFailure> {
     Ok(match sel.simple {
         // `*` matches an ELEMENT, never a text/comment/doctype/PI node -
@@ -1297,14 +1390,18 @@ fn check_simple(
             at.value,
             sel.value_ci,
         )),
-        Simple::PseudoClass(pc) => SimpleCheck::Result(plain_pseudo_matches(pc, node, budget)?),
+        Simple::PseudoClass(pc) => {
+            SimpleCheck::Result(plain_pseudo_matches(pc, node, budget, positions)?)
+        }
         Simple::PseudoClassFunction(FunctionArg::Nth {
             from_end,
             of_type,
             anb,
         }) => match anb {
             Some(a) if a.of_list.is_some() => SimpleCheck::Deferred,
-            _ => SimpleCheck::Result(nth_matches(node, from_end, of_type, anb, budget)?),
+            _ => SimpleCheck::Result(nth_matches(
+                node, from_end, of_type, anb, budget, positions,
+            )?),
         },
         Simple::PseudoClassFunction(FunctionArg::Selectors { .. }) => SimpleCheck::Deferred,
         // `:lexbor-contains()`: Lexbor itself matches with it (§D-5) - this
@@ -1488,6 +1585,8 @@ struct Query<'c, 'p, 'doc> {
     at: Vec<Option<HtmlNode<'doc>>>,
     /// [`ForwardTask`]s' per-level candidate cursors.
     cursors: Vec<HasCursor<'doc>>,
+    /// Sibling positions counted so far (walking queries only).
+    positions: Positions,
     /// The resolved type selector of a lone top-level chain's rightmost
     /// compound: a candidate of that document with another tag is refused
     /// before the machine starts.
@@ -1541,6 +1640,7 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
             tasks: recycle(core::mem::take(&mut scratch.tasks), usize::MAX),
             at: recycle(core::mem::take(&mut scratch.at), usize::MAX),
             cursors: recycle(core::mem::take(&mut scratch.cursors), usize::MAX),
+            positions: Positions::new(walk_in.is_some()),
         })
     }
 
@@ -1818,7 +1918,7 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
             .ok_or(MatchFailure::Unsupported)?;
         for (i, sel) in (from..).zip(steps) {
             let name = self.name(i, sel, node);
-            match check_simple(sel, name, node, &self.budget)? {
+            match check_simple(sel, name, node, &self.budget, &mut self.positions)? {
                 SimpleCheck::Result(true) => {}
                 SimpleCheck::Result(false) => return Ok(Check::Done(false)),
                 SimpleCheck::Deferred => return Ok(Check::Defer(i)),
@@ -2074,8 +2174,7 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
                         t.node = s;
                     }
                     None => {
-                        let pos = i64::try_from(t.pos).unwrap_or(i64::MAX);
-                        return Ok(Outcome::Done(anb_matches(t.a, t.b, pos)));
+                        return Ok(Outcome::Done(anb_matches(t.a, t.b, t.pos)));
                     }
                 }
             }
@@ -2297,5 +2396,60 @@ mod scratch_tests {
         assert_eq!((w.as_ptr() as usize, w.capacity()), (ptr, cap));
         let dropped: Vec<Option<&'static u8>> = recycle(w, 4);
         assert_eq!(dropped.capacity(), 0);
+    }
+}
+
+#[cfg(test)]
+mod anb_tests {
+    use super::*;
+
+    /// The `n >= 0` definition, by search: the reference for small values.
+    fn by_definition(a: i64, b: i64, pos: u64) -> bool {
+        (0..=64i64).any(|n| i128::from(a) * i128::from(n) + i128::from(b) == i128::from(pos))
+    }
+
+    #[test]
+    fn small_values_follow_the_definition() {
+        for a in -5i64..=5 {
+            for b in -12i64..=12 {
+                for pos in 1u64..=30 {
+                    assert_eq!(
+                        anb_matches(a as c_long, b as c_long, pos),
+                        by_definition(a, b, pos),
+                        "{a}n{b:+} at {pos}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The extremes Lexbor's parser clamps to, which overflowed 64 bits
+    /// (and panicked in a release build) before.
+    #[test]
+    fn extreme_values_answer_without_overflow() {
+        let (max, min) = (c_long::MAX, c_long::MIN);
+        for pos in [1u64, 2, 3, 1 << 40, u64::MAX] {
+            // n - MAX: every position (n = pos + MAX).
+            assert!(anb_matches(1, -max, pos), "n-MAX at {pos}");
+            assert!(anb_matches(1, min, pos), "n+MIN at {pos}");
+            // -n + MIN / -n - MAX: none (n would be negative).
+            assert!(!anb_matches(-1, min, pos));
+            assert!(!anb_matches(-1, -max, pos));
+            // MAX n + MAX, MIN n + MIN: none of these positions.
+            assert!(!anb_matches(max, max, pos) || pos == max as u64);
+            assert!(!anb_matches(min, min, pos));
+        }
+        // 2n - MAX: MAX is odd, so exactly the odd positions.
+        assert!(anb_matches(2, -max, 1));
+        assert!(!anb_matches(2, -max, 2));
+        assert!(anb_matches(2, -max, 3));
+        // -n + MAX: every position up to MAX.
+        assert!(anb_matches(-1, max, 1));
+        assert!(anb_matches(-1, max, max as u64));
+        assert!(!anb_matches(-1, max, max as u64 + 1));
+        // a = 0 with an extreme b: never a position.
+        assert!(!anb_matches(0, min, 1));
+        assert!(!anb_matches(0, max, 1));
+        assert!(anb_matches(0, 3, 3));
     }
 }

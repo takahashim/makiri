@@ -593,6 +593,32 @@ mod selector_port_spike {
         assert_eq!(select_all(&svg, "CIRCLE").len(), 1);
     }
 
+    /// `:nth-*` with a B at the edge of what Lexbor's parser clamps to
+    /// (`LONG_MAX`, for a number past it written as its own token - `2n-99...`
+    /// without spaces is a syntax error there): answered, where `pos - b` in
+    /// 64 bits panicked in a release build.
+    #[test]
+    fn nth_child_with_extreme_coefficients_is_answered() {
+        let doc = parsed(b"<ul><li>1</li><li>2</li><li>3</li></ul>");
+        assert_eq!(
+            texts(&doc, "li:nth-child(n-9223372036854775807)"),
+            ["1", "2", "3"]
+        );
+        assert_eq!(
+            texts(&doc, "li:nth-child(2n - 99999999999999999999)"),
+            ["1", "3"]
+        );
+        assert_eq!(
+            texts(&doc, "li:nth-last-child(-n + 99999999999999999999)"),
+            ["1", "2", "3"]
+        );
+        assert!(texts(&doc, "li:nth-child(-n-9223372036854775807)").is_empty());
+        assert_eq!(
+            texts(&doc, "li:nth-child(n-9223372036854775807 of li)"),
+            ["1", "2", "3"]
+        );
+    }
+
     #[test]
     fn class_and_id_fold_case_only_in_quirks_mode() {
         // §B-2/§B-3, §E-1 point 5 (`match_id_class_case`).
@@ -1205,6 +1231,89 @@ mod selector_port_spike {
         let unstarved = select_all_with_work_limit(root(&doc), parsed_sel.groups(), 10_000)
             .expect("comfortably within budget");
         assert_eq!(unstarved.len(), 1);
+    }
+
+    /// `select_all` counts sibling positions once per list (a memo); one
+    /// `matches?` counts afresh. Both must answer the same for every
+    /// `:nth-*` kind, over a list mixing types, text, comments and nesting.
+    #[test]
+    fn remembered_sibling_positions_agree_with_counting_afresh() {
+        let mut html = String::from("<!doctype html><html><body><div id=list>");
+        for i in 0..120 {
+            match i % 5 {
+                0 => html.push_str("<p>p</p> "),
+                1 => html.push_str("<span>s<p>inner</p><p>inner</p></span>"),
+                2 => html.push_str("<!-- c --><p>p</p>"),
+                3 => html.push_str("<em>e</em>\n"),
+                _ => html.push_str("<p><span>x</span></p>"),
+            }
+        }
+        html.push_str("</div></body></html>");
+        let doc = parsed(html.as_bytes());
+        for sel in [
+            ":nth-child(3n+1)",
+            ":nth-last-child(odd)",
+            ":nth-of-type(2n)",
+            ":nth-last-of-type(3)",
+            "p:first-of-type",
+            "p:last-of-type",
+            "span:only-of-type",
+            "div > :nth-child(-n+7)",
+            "span ~ p:nth-of-type(odd)",
+            "p:nth-child(2n+1) + em",
+            ":is(p, em):nth-last-child(4n)",
+        ] {
+            let walked: Vec<RawNode> = select_all(&doc, sel)
+                .into_iter()
+                .map(|e| RawNode::from(e.node()))
+                .collect();
+            let afresh: Vec<RawNode> = root(&doc)
+                .subtree()
+                .filter_map(HtmlNode::element)
+                .filter(|&e| matches_selector(e, sel))
+                .map(|e| RawNode::from(e.node()))
+                .collect();
+            assert!(
+                !afresh.is_empty(),
+                "{sel}: the fixture should match something"
+            );
+            assert!(
+                walked == afresh,
+                "{sel}: {} walked vs {} afresh",
+                walked.len(),
+                afresh.len()
+            );
+        }
+    }
+
+    /// With the memo, a whole wide list under `:nth-*` costs work linear in
+    /// the list, not quadratic: 5,000 rows fit in a budget of a few steps per
+    /// row. Counted afresh per row this needed ~12.5 million and raised
+    /// (`tr:nth-child(odd)` over ~4,500 rows failed the 10 million default).
+    #[test]
+    fn nth_over_a_wide_list_costs_work_linear_in_the_list() {
+        use crate::lexbor::selector_port::select_all_with_work_limit;
+        const ROWS: usize = 5000;
+        let mut html = String::from("<!doctype html><table><tbody>");
+        for _ in 0..ROWS {
+            html.push_str("<tr><td>x</td></tr>\n");
+        }
+        html.push_str("</tbody></table>");
+        let doc = parsed(html.as_bytes());
+        for (sel, expect) in [
+            ("tr:nth-child(odd)", ROWS / 2),
+            ("tr:nth-last-child(2n)", ROWS / 2),
+            ("tr:nth-of-type(3n)", ROWS / 3),
+            ("tr:nth-last-of-type(-n+10)", 10),
+            ("tr:last-of-type", 1),
+        ] {
+            let gvl = Gvl::exclusive();
+            let text = VerifiedText::from_bytes(sel.as_bytes()).expect("verified");
+            let p = css_parser::parse(&gvl, text).unwrap_or_else(|_| panic!("{sel} parses"));
+            let found = select_all_with_work_limit(root(&doc), p.groups(), 10 * ROWS as u64)
+                .unwrap_or_else(|e| panic!("{sel}: {e:?}"));
+            assert_eq!(found.len(), expect, "{sel}");
+        }
     }
 
     /// Phase 2's differential check: the port and the OLD Lexbor-callback
