@@ -523,11 +523,31 @@ mod css_match {
     use crate::lexbor::adapter::post_parse::{parse_html, HtmlParsed};
     use crate::lexbor::adapter::tree_guard::DepthLimit;
     use crate::lexbor::css_match::{
-        matches_any, select_all as port_select_all, select_first as port_select_first, validate,
-        MAX_COMPOUNDS,
+        self as port, validate, MatchFailure, QueryFailure, Scratch, MAX_COMPOUNDS,
     };
-    use crate::lexbor::css_parser;
+    use crate::lexbor::css_parser::{self, Lists};
     use crate::text::VerifiedText;
+
+    /* The engine's entry points take the `Scratch` a caller keeps; each test
+     * query here starts from a fresh one, as a cold call would. */
+
+    fn port_select_all<'doc>(
+        root: HtmlNode<'doc>,
+        groups: Lists<'_>,
+    ) -> Result<Vec<HtmlNode<'doc>>, QueryFailure> {
+        port::select_all(&mut Scratch::new(), root, groups)
+    }
+
+    fn port_select_first<'doc>(
+        root: HtmlNode<'doc>,
+        groups: Lists<'_>,
+    ) -> Result<Option<HtmlNode<'doc>>, MatchFailure> {
+        port::select_first(&mut Scratch::new(), root, groups)
+    }
+
+    fn matches_any(groups: Lists<'_>, element: HtmlElement<'_>) -> Result<bool, MatchFailure> {
+        port::matches_any(&mut Scratch::new(), groups, element)
+    }
 
     fn parsed(html: &[u8]) -> Box<HtmlParsed> {
         parse_html(html, true, DepthLimit::DEFAULT).expect("a document parses")
@@ -2126,7 +2146,7 @@ mod selector_cache {
     use crate::lexbor::adapter::html::{HtmlNode, RawNode};
     use crate::lexbor::adapter::post_parse::{parse_html, HtmlParsed};
     use crate::lexbor::adapter::tree_guard::DepthLimit;
-    use crate::lexbor::css_match::select_all_in;
+    use crate::lexbor::css_match::select_all;
     use crate::lexbor::selector_cache::with_compiled;
 
     fn parsed(html: &[u8]) -> Box<HtmlParsed> {
@@ -2142,7 +2162,7 @@ mod selector_cache {
     /// Every matching descendant's node identity, through the cache.
     fn select_all_cached(doc: &HtmlParsed, selector: &str) -> Vec<RawNode> {
         with_compiled(&Gvl::exclusive(), selector.as_bytes(), |groups, scratch| {
-            select_all_in(scratch, root(doc), groups)
+            select_all(scratch, root(doc), groups)
         })
         .unwrap_or_else(|_| panic!("{selector:?} fails to parse"))
         .unwrap_or_else(|e| panic!("{selector:?} failed: {e:?}"))
@@ -2194,7 +2214,7 @@ mod selector_cache {
         assert_eq!(select_all_cached(&doc, "p.x").len(), 2);
 
         let rejected = with_compiled(&Gvl::exclusive(), b"p[", |groups, scratch| {
-            select_all_in(scratch, root(&doc), groups)
+            select_all(scratch, root(&doc), groups)
         });
         assert!(rejected.is_err(), "a malformed selector must not parse");
 

@@ -72,8 +72,8 @@ impl<T: Copy> Table<T> {
 /// The tables and stacks a query leaves behind for the next one - Lexbor's
 /// `lxb_selectors_t` keeps its entry and nested-state pools across calls the
 /// same way, so a warm call allocates nothing. The Ruby glue keeps one in
-/// the process-global selector engine (`selector_cache`), under the GVL; the
-/// plain entry points ([`select_all`](super::select_all) etc.) start from an empty one.
+/// the process-global selector engine (`selector_cache`), under the GVL, and
+/// every entry point ([`select_all`](super::select_all) etc.) takes one.
 ///
 /// Empty between queries: only the capacity carries over, moved between
 /// lifetimes by [`recycle`].

@@ -70,7 +70,7 @@ pub(super) struct Step<'p> {
 /// (its doc), so the entry points built on it never start matching one.
 /// Every table grows through `falloc`: an out-of-memory is
 /// [`MatchFailure::Oom`], not an abort.
-pub struct Compiled<'p> {
+pub(super) struct Compiled<'p> {
     /// Every simple selector, compound by compound, in the order the
     /// compounds number them.
     pub(super) simples: Table<Step<'p>>,
@@ -109,13 +109,10 @@ pub struct Compiled<'p> {
 /// nested 500,000 deep costs heap, not native stack. A recursive first
 /// version turned `:is()` nested 2000 deep into a `SystemStackError` in a
 /// 128 KiB `Fiber`, which wedged the shared CSS engine for the process.
-pub fn compile(groups: Lists<'_>) -> Result<Compiled<'_>, MatchFailure> {
-    compile_in(&mut Scratch::new(), groups)
-}
-
-/// [`compile`], into `scratch`'s tables ([`Compiled::give_back`] returns
-/// them).
-pub fn compile_in<'p>(
+///
+/// The tables are `scratch`'s, lent for the query ([`Compiled::give_back`]
+/// returns them).
+pub(super) fn compile<'p>(
     scratch: &mut Scratch,
     groups: Lists<'p>,
 ) -> Result<Compiled<'p>, MatchFailure> {
@@ -153,13 +150,13 @@ pub fn compile_in<'p>(
 /// a node no selector can match, which still refuses a selector the matcher
 /// would refuse.
 pub fn check_compiles(scratch: &mut Scratch, groups: Lists<'_>) -> Result<(), MatchFailure> {
-    compile_in(scratch, groups).map(|c| c.give_back(scratch))
+    compile(scratch, groups).map(|c| c.give_back(scratch))
 }
 
 /// [`compile`]'s verdict alone, for tests that check it without matching.
 #[cfg(test)]
 pub(crate) fn validate(groups: Lists<'_>) -> Result<(), MatchFailure> {
-    compile(groups).map(drop)
+    compile(&mut Scratch::new(), groups).map(drop)
 }
 
 impl<'p> Compiled<'p> {

@@ -30,7 +30,7 @@ use makiri::gvl::Gvl;
 use makiri::lexbor::adapter::html::HtmlNode;
 use makiri::lexbor::adapter::post_parse::parse_html;
 use makiri::lexbor::adapter::tree_guard::DepthLimit;
-use makiri::lexbor::css_match::{matches_any_in, select_all_in, select_first_in, Scratch};
+use makiri::lexbor::css_match::{matches_any, select_all, select_first, Scratch};
 use makiri::lexbor::css_parser;
 
 /// How many elements are asked `matches?` each: each is a full query, with
@@ -60,8 +60,8 @@ fuzz_target!(|data: &[u8]| {
     let root = unsafe { p.raw_doc().as_doc() }.as_node();
     let mut scratch = Scratch::new();
 
-    let all = select_all_in(&mut scratch, root, groups);
-    let first = select_first_in(&mut scratch, root, groups);
+    let all = select_all(&mut scratch, root, groups);
+    let first = select_first(&mut scratch, root, groups);
     let Ok(all) = all else {
         return;
     };
@@ -76,7 +76,7 @@ fuzz_target!(|data: &[u8]| {
         .filter_map(HtmlNode::element)
         .take(ONE_BY_ONE)
     {
-        let Ok(matched) = matches_any_in(&mut scratch, groups, el) else {
+        let Ok(matched) = matches_any(&mut scratch, groups, el) else {
             return;
         };
         assert_eq!(

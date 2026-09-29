@@ -140,9 +140,9 @@ mod simple;
 mod state;
 mod tree;
 
+pub use compile::check_compiles;
 #[cfg(test)]
 pub(crate) use compile::validate;
-pub use compile::{check_compiles, compile, compile_in, Compiled};
 pub use scratch::Scratch;
 
 use crate::falloc::VecPush;
@@ -150,6 +150,7 @@ use crate::lexbor::adapter::html::{HtmlElement, HtmlNode};
 use crate::lexbor::css_parser::Lists;
 use crate::limits::NODE_SET_MAX;
 
+use compile::{compile, Compiled};
 use query::Query;
 
 /// A complexity bound on compounds per chain, mirroring `css::MAX_COMPOUNDS`.
@@ -209,7 +210,7 @@ pub enum MatchFailure {
     /// element satisfies this", which it is not.
     Unsupported,
     /// A chain somewhere in the selector has more than [`MAX_COMPOUNDS`]
-    /// compounds - see [`compile()`]'s doc for why this is caught up front
+    /// compounds - see [`compile()`](compile::compile)'s doc for why this is caught up front
     /// rather than left to a silent never-matching chain.
     TooComplex,
     /// An allocation the match needed failed (`falloc`). Raised, like every
@@ -247,18 +248,14 @@ impl crate::falloc::Oom for MatchFailure {
  * ------------------------------------------------------------------ */
 
 /// Does `element` match any comma-separated alternative of `groups`? The
-/// entry point for `Node#matches?`: no traversal, under a fresh budget.
-pub fn matches_any(groups: Lists<'_>, element: HtmlElement<'_>) -> Result<bool, MatchFailure> {
-    matches_any_in(&mut Scratch::new(), groups, element)
-}
-
-/// [`matches_any`], over `scratch`'s stacks.
-pub fn matches_any_in(
+/// entry point for `Node#matches?`: no traversal, under a fresh budget, over
+/// `scratch`'s tables and stacks.
+pub fn matches_any(
     scratch: &mut Scratch,
     groups: Lists<'_>,
     element: HtmlElement<'_>,
 ) -> Result<bool, MatchFailure> {
-    let compiled = compile_in(scratch, groups)?;
+    let compiled = compile(scratch, groups)?;
     let answer = Query::new(&compiled, None, DEFAULT_WORK_BUDGET, scratch).and_then(|mut query| {
         let answer = query.matches_top(element.node());
         query.finish(scratch);
@@ -310,16 +307,9 @@ impl From<MatchFailure> for QueryFailure {
 /// walk, which `children`/`content=` already follow.
 ///
 /// Capped at [`NODE_SET_MAX`], matching every other Makiri result set, and
-/// at one shared work budget for the whole call (`Budget`'s doc).
+/// at one shared work budget for the whole call (`Budget`'s doc). The
+/// tables and stacks are `scratch`'s.
 pub fn select_all<'doc>(
-    root: HtmlNode<'doc>,
-    groups: Lists<'_>,
-) -> Result<Vec<HtmlNode<'doc>>, QueryFailure> {
-    select_all_in(&mut Scratch::new(), root, groups)
-}
-
-/// [`select_all`], over `scratch`'s stacks.
-pub fn select_all_in<'doc>(
     scratch: &mut Scratch,
     root: HtmlNode<'doc>,
     groups: Lists<'_>,
@@ -333,7 +323,7 @@ fn select_all_with_limit<'doc>(
     groups: Lists<'_>,
     limit: u64,
 ) -> Result<Vec<HtmlNode<'doc>>, QueryFailure> {
-    let compiled = compile_in(scratch, groups)?;
+    let compiled = compile(scratch, groups)?;
     let found = select_all_compiled(scratch, &compiled, root, limit);
     compiled.give_back(scratch);
     found
@@ -381,21 +371,14 @@ pub(crate) fn select_all_with_work_limit<'doc>(
 /// The first descendant of `root`, in document order, that matches any
 /// alternative of `groups` - `root` itself excluded. Stops at the first hit
 /// instead of building the whole set, as `Node#at_css` wants (see
-/// `lexbor::selectors::first_cb`). One work budget for the whole search.
+/// `lexbor::selectors::first_cb`). One work budget for the whole search,
+/// over `scratch`'s tables and stacks.
 pub fn select_first<'doc>(
-    root: HtmlNode<'doc>,
-    groups: Lists<'_>,
-) -> Result<Option<HtmlNode<'doc>>, MatchFailure> {
-    select_first_in(&mut Scratch::new(), root, groups)
-}
-
-/// [`select_first`], over `scratch`'s stacks.
-pub fn select_first_in<'doc>(
     scratch: &mut Scratch,
     root: HtmlNode<'doc>,
     groups: Lists<'_>,
 ) -> Result<Option<HtmlNode<'doc>>, MatchFailure> {
-    let compiled = compile_in(scratch, groups)?;
+    let compiled = compile(scratch, groups)?;
     let found = select_first_compiled(scratch, &compiled, root);
     compiled.give_back(scratch);
     found
