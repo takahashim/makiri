@@ -310,6 +310,9 @@ fn seal_leaves(methods: RModule, leaves: &[RClass]) -> Result<(), Error> {
 /// found the wrong symbol.
 #[magnus::init(name = "makiri")]
 fn init(ruby: &Ruby) -> Result<(), Error> {
+    // Before anything can parse: Lexbor's heap blocks carry slack past their
+    // end (`lexbor::memory`).
+    crate::lexbor::memory::install();
     let makiri = ruby.define_module("Makiri")?;
 
     /* The abstract bases. Concrete nodes are the HTML::* / XML::* leaves

@@ -283,7 +283,9 @@ unless sanitize.empty?
             "(-Zsanitizer is unstable): rustup toolchain install nightly."
     end
     cargo_env["RUSTUP_TOOLCHAIN"] = "nightly"
-    rustflags += ["-Zsanitizer=address", "-Cllvm-args=-asan-stack=0"]
+    # `makiri_asan`: `lexbor::memory` leaves Lexbor's allocator unpadded, so
+    # ASan sees a write past the end of a Lexbor block instead of the slack.
+    rustflags += ["-Zsanitizer=address", "-Cllvm-args=-asan-stack=0", "--cfg", "makiri_asan"]
     # Only one ASan runtime may be linked; reference clang's rather than
     # linking Rust's own copy.
     # NOT -Zexternal-clangrt. That flag says "do not link a runtime, one is

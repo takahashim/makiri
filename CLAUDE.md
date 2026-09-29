@@ -155,6 +155,12 @@ WPT, so the data pin cannot gain the new expectation).
 Still **vanilla, NEVER patched** - the constraint that relaxed is "release tag
 only", not "no fork".
 
+**Lexbor's heap blocks carry 16 bytes of slack** (`lexbor::memory`, installed
+at `Init_makiri` through Lexbor's own `lexbor_memory_setup`): hardening, so a
+small overrun past the end of a block in the vendored C lands in the slack
+rather than in the next allocation. Off under the sanitizer (`--cfg
+makiri_asan`, from extconf), where such a write must stay visible.
+
 **`lexbor::contains_guard` decides which `:lexbor-contains()` arguments reach
 the vendored CSS parser, and it is not optional.** Its module doc states the
 three properties that must hold and why; `lexbor/tests.rs` pins the load-bearing

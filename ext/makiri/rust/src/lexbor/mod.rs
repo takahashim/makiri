@@ -36,6 +36,9 @@ pub mod css_match;
 pub(crate) mod css_tokens;
 /// HTML fragment parsing and import/fixup operations.
 pub mod fragment;
+/// Lexbor's allocator, padded so a small overrun past a heap block is
+/// contained (hardening; the module doc).
+pub mod memory;
 /// The compiled-selector cache in front of `css_match`: its own
 /// process-global parser/arena, separate from `css_parser`'s (shared with the
 /// XML lowering), and the matcher's kept `Scratch`.

@@ -71,6 +71,10 @@
 
 ### Security
 
+* Hardening: every heap block the vendored Lexbor allocates carries 16 bytes
+  of slack past its end (through Lexbor's own `lexbor_memory_setup`), so a
+  small write past the end of a block cannot reach neighbouring memory. Not
+  applied in sanitizer builds, which exist to see such writes.
 * An HTML attribute set with the local name `id` or `class` beside an existing
   one - `set_attribute_ns(nil, "ID", v)`, a namespaced `id`, a `class` in the
   XHTML namespace - no longer frees the existing attribute (Lexbor's append
