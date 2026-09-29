@@ -4,420 +4,125 @@
 
 ### Changed
 
-* HTML `#css`/`#at_css`/`#matches?` now cap one selector chain at 64
-  compounds, as `Makiri::XML` already did, and raise `Makiri::Error` ("CSS
-  selector chain too complex") past it - at the top level or nested in
-  `:is()`/`:where()`/`:not()`/`:has()`/`:nth-child(... of S)`. Lexbor's own
-  matcher had no cap. Selector NESTING stays unbounded.
-* HTML `:nth-child(An+B of S)` / `:nth-last-child(An+B of S)` count by the
-  CSS definition (an element in `S`, ranked among its siblings in `S`).
-  Lexbor's own matcher miscounted when `S` was a comma list (the answer
-  depended on the alternatives' order), held a combinator (`li span`), or
-  carried pseudo-classes such as `:enabled` or `:empty`.
-* HTML attribute selector names are case-sensitive on SVG/MathML elements,
-  as the HTML Standard specifies: `[viewbox]` no longer finds an SVG
-  `viewBox`. Lexbor's own matcher folded case everywhere. On HTML elements
-  in an HTML document they stay case-insensitive.
-* HTML `:has()` and `:nth-child(... of S)` nested hundreds deep no longer
-  exhaust a small `Fiber`'s stack. `:has()` crashed the whole process with an
-  uncaught `SystemStackError`; `of S` raised one that left every later
-  `#css`/`#at_css`/`#matches?` in the process failing with "CSS selector
-  engine is already in use".
-* An unsupported construct (`:lexbor-contains()`, the column combinator `||`)
-  now raises from all three methods wherever it appears in the selector.
-  Before, it raised only if matching happened to reach it: `p, x || y`
-  answered the `<p>`s, and `nosuch:lexbor-contains("x")` answered empty.
-* HTML `:disabled`, `:enabled` and `:checked` follow the HTML Standard's
-  definitions. `:disabled` now covers an `<input>`/`<button>`/`<select>`/
-  `<textarea>`/`<fieldset>` inside a `<fieldset disabled>` (except inside
-  that fieldset's first `<legend>` child), and `<option>`/`<optgroup>`;
-  `:enabled` matches only those form elements, not every other element;
-  an element with a custom tag no longer matches `:disabled`/`:checked`
-  through its `disabled`/`checked` attribute alone. Lexbor's own matcher
-  required the attribute on the element itself and decided the legend
-  exemption from the fieldset's first child node.
-* HTML `#id` and `.class` selectors match the DOM's ID and class attributes -
-  the no-namespace `id` / `class` - as Lexbor's own matcher did. An
-  unprefixed `id` set in a namespace (`set_attribute_ns("urn:x", "id", v)`)
-  is not the ID, even when it is the element's only `id`; `[id=v]` still
-  finds it.
+* HTML `#css` / `#at_css` / `#matches?` now match with Makiri's own Rust
+  implementation instead of Lexbor's `lxb_selectors` (selectors are still
+  parsed by Lexbor). Where the answers differ:
+  * `:nth-child(An+B of S)` / `:nth-last-child(... of S)` count by the CSS
+    definition; Lexbor miscounted when `S` was a comma list, held a
+    combinator, or carried pseudo-classes such as `:enabled`.
+  * `:disabled`, `:enabled` and `:checked` follow the HTML Standard: a
+    control inside a `<fieldset disabled>` (outside its first `<legend>`) is
+    disabled, `<option>` / `<optgroup>` count, and `:enabled` matches only
+    form elements.
+  * Attribute selector names are matched by qualified name, and
+    case-sensitively on SVG/MathML elements: `[href]` no longer finds
+    `xlink:href`, nor `[viewbox]` an SVG `viewBox`.
+  * `#id` / `.class` match only the no-namespace `id` / `class` attribute.
+  * A selector chain is capped at 64 compounds (as `Makiri::XML` already
+    was), and a query at 50M steps of work (XPath's limit); past either,
+    `Makiri::Error`.
+  * The column combinator `||` raises `Makiri::Error` instead of matching
+    nothing.
 
 ### Removed
 
-* `:lexbor-contains("text")` on HTML `#css`/`#at_css`/`#matches?`. HTML CSS
-  matching moved from Lexbor's own `lxb_selectors` engine to
-  `lexbor::css_match`, an original, non-recursive Rust implementation
-  (parsing is unchanged - still Lexbor's CSS parser); the port deliberately
-  does not reimplement `:lexbor-contains()`. A well-formed
-  `:lexbor-contains()` still parses, but now raises `Makiri::Error` ("could
-  not be run") instead of ever matching - the same treatment an unsupported
-  combinator already got (below), not a silent empty result, which would be
-  indistinguishable from "no element matches". `Makiri::XML`'s `#css` is
-  unaffected - it still lowers `:lexbor-contains()` to XPath `contains()`.
-  See NOKOGIRI_DIFFERENCES.md.
-* `Node#name=` and `Node#node_name=`, on both HTML and XML nodes. The DOM has
-  no way to rename an element, and Lexbor keeps many elements in structs of
-  their own (`<template>` its contents, `<option>` its selectedness): renaming
-  a `<div>` to `template` in place left it read as a template, and serializing
-  it segfaulted. To change an element's name, make one and put it in the old
-  one's place, as the DOM does:
-
-  ```ruby
-  new_el = doc.create_element("section")
-  old_el.attribute_nodes.each { |a| new_el[a.name] = a.value }
-  old_el.children.each { |c| new_el << c }
-  old_el.replace(new_el)
-  ```
+* `:lexbor-contains()` in HTML `#css` / `#at_css` / `#matches?`: it still
+  parses, but raises `Makiri::Error`. `Makiri::XML`'s `#css` keeps it. See
+  NOKOGIRI_DIFFERENCES.md.
+* `Node#name=` / `#node_name=`. The DOM cannot rename an element, and renaming
+  a Lexbor element in place could crash (`div` to `template`). Create a new
+  element and `replace` the old one.
 
 ### Security
 
 * Hardening: every heap block the vendored Lexbor allocates carries 16 bytes
-  of slack past its end (through Lexbor's own `lexbor_memory_setup`), so a
-  small write past the end of a block cannot reach neighbouring memory. Not
-  applied in sanitizer builds, which exist to see such writes.
-* An HTML attribute set with the local name `id` or `class` beside an existing
-  one - `set_attribute_ns(nil, "ID", v)`, a namespaced `id`, a `class` in the
-  XHTML namespace - no longer frees the existing attribute (Lexbor's append
-  destroyed it), which left a held `Attr` reading freed memory. HTML attribute
-  lookups and writes now follow the DOM's algorithms:
-  * `#[]`, `#key?`, `#[]=` and `#delete` match the qualified name (lower-cased
-    on an HTML element), not the local name: `svg_a["href"]` no longer returns
-    `xlink:href`, and `svg_a["href"] = v` adds a plain `href` instead of
-    overwriting it. XPath `id()` and `lang()` read attributes the same way.
-  * CSS `#id` / `.class` match the no-namespace `id` / `class` attribute only.
-  * An XML element imported into HTML, or an HTML element cloned or imported,
-    keeps every attribute; an imported no-namespace name keeps its case.
-  * `set_attribute_ns(nil, "MixedCase", v)` serializes as `MixedCase`, as
-    `#keys` already reported it, rather than `mixedcase`.
-* `Makiri::Lexbor::CSS.parse_stylesheet` no longer crashes (Bus Error) on a
-  `:lexbor-contains()` that follows a string ended by CR, FF or a newline. The
-  guard that decides which `:lexbor-contains()` arguments reach Lexbor now
-  reads the text with Lexbor's own CSS tokenizer instead of a scanner of its
-  own, which disagreed with it about where strings end.
-* A CSS query whose Lexbor traversal fails no longer answers with what it had
-  collected so far: an allocation failure raises the out-of-memory
-  `Makiri::Error`, and a selector Lexbor parses but cannot run (the `||` column
-  combinator, which answered "nothing matched") raises `Makiri::Error`. An
-  allocation failure while parsing a selector is reported as out of memory,
-  not as `Makiri::CSS::SyntaxError`.
-* HTML CSS matching (`#css`/`#at_css`/`#matches?`) now carries a per-query
-  work budget of 50M steps (XPath's own limit), charged by every compound
-  tested - `:has()`'s search, the `:nth-*` sibling scans and a combinator's
-  walk over ancestors or siblings alike. Past it, the query raises
-  `Makiri::Error` ("CSS query exceeded its work budget") rather than running
-  unbounded or answering a `:has()` as `false` because its own search alone
-  ran out (which would be a wrong verdict, not an incomplete one). A chain
-  that fails no longer retries every combination of ancestors and siblings
-  (`x div div div div div div p` did, exponentially): a left part that
-  failed at every ancestor or sibling is not tried again from a further one.
-* HTML parsing bounds the tree depth (`max_tree_depth:`, default 400; a
-  negative value disables it) and the `<option>`s one `<select>` receives
-  (10,000), raising `Makiri::Error` past either. Both shapes made Lexbor's tree
-  construction quadratic, and a parse cannot be interrupted: 400 KB took 4-5 s.
-  `inner_html=` and `outer_html=` use the default depth. A failed fragment parse
-  no longer leaks its throwaway document.
-* Binding namespaces no longer costs the square of their number. Each
-  registration scanned the prefixes already bound, so a query's namespace Hash
-  of 65,000 pairs held the GVL for six seconds of CPU; prefixes are indexed
-  now (0.02 s), and a Hash with more pairs than a context may hold (65,536)
-  is refused before any is read.
-* `content=` on an HTML element and `delete(name)` no longer free the nodes they
-  remove. Both went through Lexbor calls that destroy them, while a Ruby
-  wrapper may still hold one: the wrapper then read freed memory, and the next
-  node allocated there came back under it - a text node answering as an
-  Element or an Attr. They detach now, as every other mutator does.
-* `el[name] = value` on an attribute the element already has no longer goes
-  through `lxb_dom_element_set_attribute`, which destroys the attribute - still
-  linked into the element - when storing the new value runs out of memory. The
-  value is set directly, and a failure leaves the attribute as it was.
-* A checked argument String is locked while its bytes are borrowed. A call
-  converts its arguments one at a time, and a later argument's `#to_s` could
-  rewrite an earlier one - putting a NUL into a name that had passed its
-  check, or growing it so the view read freed memory into the DOM. Such a
-  `#to_s` now raises "can't modify string; temporarily locked".
-* A receiver frozen by its own argument's `#to_s` is no longer edited.
-* HTML element and attribute names follow the WHATWG DOM's rules:
-  `create_element`, `[]=` and `set_attribute_ns` raise `ArgumentError` for a
-  name holding whitespace, `/`, `>` (or `=`), which was written into the markup
-  as it stood - `create_element("img src=x onerror=alert(1)")` serialized as
-  that tag. See NOKOGIRI_DIFFERENCES.md.
-* More inputs whose cost outgrew their size: a single-context reverse-axis
-  step (`preceding-sibling`, `ancestor`) is reversed rather than merge-sorted
-  (4000 siblings: 3.9 s); XML CSS `:nth-child` / `:nth-of-type` /
-  `:first-of-type` and kin read a per-parent memo of positions (a 10k-entry
-  sitemap took seconds, or hit the budget); a CDATA value full of `]]>` and a
-  stylesheet full of rewritten `:lexbor-contains()` rules are linear again.
-
-* A mutator's argument can no longer rebuild the document's indexes in the
-  middle of the edit. Arguments are converted with `#to_s`, which is arbitrary
-  Ruby; a query made there rebuilt the indexes from the tree the edit was about
-  to change, after which `#text` read text storage the edit had released (a
-  read of freed memory) and `//p` found removed nodes. Both representations;
-  every mutator.
-* Inputs whose cost grew faster than their size, with no budget to stop them,
-  are linear or budgeted now: the `preceding` axis (depth 2000 took 8.8 s),
-  `Makiri::Lexbor::CSS.parse_stylesheet` after one rejected
-  `:lexbor-contains()` (186 KB took 4.6 s), the XML parser's duplicate-attribute
-  check (100 elements of 4096 attributes took 16.6 s), `contains` /
-  `substring-before` / `substring-after` and `translate` over long strings, and
-  - charged to the op budget, so they raise `XPath::LimitExceeded` - a node's
-  string-value, `lang()` and CSS `:nth-of-type` over XML.
-* A panic below mutators, factories, `clone_node` / `import_node`,
-  `XPathContext.new` and its setters, `Node#line`, `Attr#parent` and `#<=>` -
-  all of which walk a tree built from input - raises `Makiri::InternalError`
-  rather than `fatal`, as parsing and querying already did.
+  of slack past its end, so a small overrun cannot reach neighbouring memory
+  (not in sanitizer builds).
+* Adding an `id` or `class` attribute beside an existing one
+  (`set_attribute_ns(nil, "ID", v)`, a namespaced `id`) no longer frees the
+  existing one under a held `Attr`. HTML attribute reads and writes follow the
+  DOM: `#[]`, `#key?`, `#[]=` and `#delete` match the qualified name
+  (`svg_a["href"]` no longer returns `xlink:href`), copies and imports keep
+  every attribute, and a no-namespace name keeps its case.
+* `content=` on an HTML element and `delete(name)` detach the nodes they
+  remove instead of freeing them under a live wrapper.
+* `el[name] = value` on an existing attribute no longer leaves a destroyed
+  attribute linked when storing the value runs out of memory.
+* A checked argument String is locked while its bytes are in use, so a later
+  argument's `#to_s` cannot rewrite it (it raises instead); a receiver frozen
+  by an argument's `#to_s` is not edited; and a mutator's argument can no
+  longer rebuild the document's indexes in the middle of the edit.
+* HTML element and attribute names follow the DOM's rules:
+  `create_element("img src=x onerror=alert(1)")` raises `ArgumentError`
+  instead of writing that markup. See NOKOGIRI_DIFFERENCES.md.
+* HTML parsing bounds the tree depth (`max_tree_depth:`, default 400) and the
+  `<option>`s one `<select>` receives (10,000), raising `Makiri::Error` past
+  either; both made the parse quadratic.
+* `Makiri::Lexbor::CSS.parse_stylesheet` no longer crashes on a
+  `:lexbor-contains()` after a string ended by CR, FF or a newline.
+* A CSS query that runs out of memory raises instead of answering with what it
+  had collected; a selector-parse OOM is reported as OOM, not
+  `CSS::SyntaxError`.
+* Inputs whose cost grew faster than their size are linear or budgeted: many
+  namespace bindings, the `preceding` axis and reverse-axis steps, XML
+  duplicate-attribute checks, `contains` / `substring-*` / `translate` on long
+  strings, XML CSS `:nth-*`, CDATA full of `]]>`, and stylesheets with
+  rejected `:lexbor-contains()`.
+* A panic in any Ruby method Makiri defines raises `Makiri::InternalError`
+  (rescuable), not `fatal`.
 
 ### Fixed
 
-* CSS selectors over XML agree with the HTML matcher in three more places:
-  * `.class` with an escaped space (`.x\\ y`) matches no element - a whitespace
-    token "represents nothing" (Selectors 4 §6.2), the rule `[class~="x y"]`
-    already followed. It went straight to a token match and matched every
-    element whose `class` held those tokens.
-  * `:root` matches the document element, not any parentless one. A detached
-    element, or a fragment's top element, no longer matches - Lexbor's matcher
-    answers `lxb_dom_document_root(owner_document) == node`.
-  * `:lexbor-contains()` does not read an XML CDATA section. XPath's `text()`
-    matches both TEXT and CDATA, but Lexbor's matcher scans
-    `LXB_DOM_NODE_TYPE_TEXT` alone.
-* Insertion follows the WHATWG DOM's "ensure pre-insertion validity" in both
-  representations, from one implementation. What it changes:
-  * HTML: `template.content_fragment.add_child(template)` (or into any node of
-    the contents) raises. It made a cycle through the contents' host link,
-    after which `dup` and `import_node` looped forever with the GVL held.
-  * HTML: a Text, Comment, ProcessingInstruction, DocumentType or Attr node no
-    longer takes children; `doctype.add_child(el)` put `el` at document level
-    beside `<html>`.
-  * XML: Text or CDATA as a child of the Document raises, as HTML already did;
-    `doc << text` wrote the text outside the root, and the output did not parse.
-  * XML: a DocumentFragment takes children (`fragment.add_child(el)`, and
-    `before` / `after` / `replace` on its children), as the DOM and Nokogiri
-    allow. A prefix unbound there stays undecided until the fragment is
-    spliced, and a splice whose prefixes do not all bind changes nothing.
-    `XML::Document#import_node` of an HTML DocumentFragment, which raised,
-    now copies it.
-  * Both: `add_previous_sibling` / `add_next_sibling` / `replace` on an
-    attribute raise: an attribute has no parent in the tree. In XML they
-    spliced the node into the owner element's children and lost the
-    element's old ones.
-* `Element#inner_html` and `#inner_html=` on an HTML `<template>` now target its
-  template contents, as the WHATWG DOM special-cases `innerHTML` for a template.
-  The getter read the element's (empty) children while `#to_html` serialized the
-  contents, so `template.inner_html` answered `""` for a template that
-  `#to_html` wrote with content, and `template.inner_html = ...` added a stray
-  direct child instead of replacing the contents. `inner_html`, `inner_html=`,
-  `#to_html` and `Element#content_fragment` agree now. Other APIs keep the
-  specification's non-special-cased behavior: `append_child`, `content=`, and
-  `children` still use the element's own (empty) children, and the contents are
-  reached through `content_fragment`.
-* HTML `Node#keys` and `#values` propagate an allocation failure instead of
-  returning a truncated Array. They discarded the result of each `Array#push`,
-  so an out-of-memory answered with the attribute names (or values) collected so
-  far rather than raising, against the fail-closed contract the XML twins keep.
-* A namespace Hash is read through its storage (`rb_hash_foreach`/
-  `rb_hash_aset`), not a Ruby `#dup`/`#delete`/`#merge` a Hash subclass can
-  redefine, and `Node#parse` reads a fragment's children natively rather than
-  through a `children` dispatch.
-* `dup`, `clone_node` and HTML-to-HTML `import_node` keep an element's name as
-  written: a copied SVG `linearGradient` came back `lineargradient`, and a
-  prefixed `q:Bar` came back `bar` (Lexbor's copy keeps the tag, not the
-  spelling).
-* `XML::Node#canonicalize` of a detached element refuses an attribute whose
-  namespace was given with `set_attribute_ns` and cannot be written as it is;
-  it wrote the attribute under whatever its prefix meant there, or without
-  its namespace.
-* `XML::Node#[]=` on an attribute the element already has changes its value
-  and nothing else, as the DOM's `setAttribute` does. It re-derived the
-  attribute's namespace from the current scope, which could give it the key
-  of another attribute - `to_xml` then wrote two attributes with one
-  (namespace, local name), which does not parse - and dropped a namespace
-  `set_attribute_ns` had given.
-* A namespace Hash given to a query is read as a Hash, not through a `to_a`
-  a subclass may redefine (a non-pair raised `Makiri::InternalError`), and
-  each prefix and URI is read with `String()`, preferring `to_str`, as other
-  arguments are. `XPathContext#register_namespace` refuses inside a handler
-  before converting its arguments.
-* An XML attribute compares equal to itself with `<=>`, as an HTML one does.
-* XPath `string()` of a number follows libxml2's rule, as Nokogiri does:
-  exponential notation above 1e9 and below 1e-5 (`1234567890.5` is
-  `1.2345678905e+09`, `0.00001` stays `0.00001`), and integer form only inside
-  C's `int` (`2147483647` is `2.147483647e+09`). It was C's `%.15g`, which
-  disagreed with Nokogiri outside `[1e-4, 1e15)`.
-* HTML-to-XML `import_node` no longer moves an element into another namespace
-  when one of its attributes uses the element's prefix for a different URI
-  (`p:e` in `urn:p` with an attribute `p:x` in `urn:other` came out in
-  `urn:other`). Namespaced attributes cross with their namespace given
-  directly, and a prefixed element is declared once, not on every descendant.
-  No `xmlns` attribute is copied any more: every name crosses with its
-  namespace already, so a copied declaration could only restate one or move
-  one (`<svg><g xmlns="urn:evil">` put `g` and its children in `urn:evil`).
-  A malformed attribute name (`:class`) is refused with `ArgumentError` again.
-* A namespace given with `XML::Node#set_attribute_ns` on a detached element
-  survives the element's insertion. The insertion re-derived it from the
-  prefix, so `set_attribute_ns("urn:a", "x", v)` ended up in no namespace.
-* `Makiri::XML` CSS reads `[|a]` as the no-namespace attribute, as the
-  Selectors spec does; it was refused as the unsupported `[*|a]`. The `s`
-  attribute modifier is accepted (XML values compare case-sensitively anyway);
-  `i` is still refused.
-* XPath resolves the `xml` prefix to its fixed namespace (`//@xml:lang`), with
-  no registration and whatever one says, as Namespaces in XML binds it and
-  Nokogiri answers. It raised "unknown namespace prefix".
-* `Makiri::XML` nodes compare by document order with `<=>`, as HTML nodes
-  do, so they sort; `<=>` returned nil for every pair.
-* `XPathContext#register_namespace` reads its arguments as a namespace Hash
-  does: both converted with `to_s` before either is checked, the same
-  string-length cap, and the same "invalid namespace mapping" message. It
-  had no cap, and worded a refusal differently.
-* Every Ruby method Makiri defines turns an internal panic into
-  `Makiri::InternalError`. Readers such as `children`, `[]`, `keys`,
-  `NodeSet#each` and `Document#title` still raised `fatal`, which cannot be
-  rescued in the frame that called them. `rake unsafe:boundaries` now fails on
-  a method whose body does not go through `entry`.
-* Namespaces across `import_node` between HTML and XML:
-  * HTML to XML reads each attribute's own namespace, as `Attr#namespace_uri`
-    does. A parsed `q:y` inside `<svg>` (no namespace) was put in SVG.
-  * An HTML attribute in no namespace whose name has a prefix other than `xml`
-    (`fb:like`, a parsed `xlink:href` on an HTML element) has no XML form, and
-    the import now refuses it. The copy used to be made with a prefix bound
-    to nothing, and then could be neither inserted nor serialized.
-  * An HTML element named with a colon (`<fb:like>`) crosses as a DOM-loose
-    name, like other names XML cannot write: it can be inserted, and
-    `to_xml` refuses it.
-  * XML to HTML makes a prefixed element with its prefix, so `p:e` has the
-    local name `e` and `//q:e` finds it. It used to have the local name `p:e`.
-    An element outside XHTML also keeps the case of its name: an SVG
-    `linearGradient` came across as `lineargradient`.
-  * An attribute set by `set_attribute_ns` in its element's own namespace
-    (`set_attribute_ns(SVG, "q:x")` on an SVG element) reports that namespace;
-    it read as none.
-* An XPath comparison over node string-values no longer raises `LimitExceeded`
-  because the values it compared added up past 64 MB. That total was the
-  per-string cap reused for the evaluation's string-value cache, so
-  `//*[. = "x"]` raised on a page where `//*[string(.) = "x"]` answered. The
-  cache has its own cap now and stops keeping values past it. A value the
-  full cache could not keep and that is then built AGAIN is charged to the op
-  budget by its size (one op per 64 bytes), so a comparison that rebuilds
-  large values fails fast rather than copying gigabytes; a value built once
-  costs what it always did.
-* A refused XML namespace declaration says which rule it broke - declaring
-  `xmlns`, binding `xml` elsewhere, binding a reserved namespace to another
-  prefix or as the default, or binding a prefix to the empty namespace -
-  instead of one message listing all of them.
-* A rejected stylesheet rule's `selector_text` is sliced by Lexbor's own
-  offsets, so it can no longer come from an identical piece elsewhere in the
-  sheet, and a declaration value no longer shows the `:lexbor-contains()`
-  guard's `zzzz` rewrite.
-* An HTML attribute's parent is Lexbor's `attr->owner`, read live: a detached
-  element's attribute had a parent or not depending on whether the document
-  had been queried first, and a fragment's attributes had none.
-* XML namespaces: an attribute whose prefix was unbound on a detached element
-  is resolved when the element is inserted (it was written as `xmlns:ns1=""`),
-  insertion refuses two attributes that end up with one (namespace, local
-  name), both writers refuse
-  a prefix bound to nothing, and `set_attribute_ns` refuses a namespace that
-  does not fit the name (a prefix with none, the XML namespace under another
-  prefix, ...).
-
-* `Makiri::XML#to_xml` output re-parses in cases it did not: a CDATA value
-  holding `]]>` (adjacent sections merge, as in libxml2) is split across two
-  sections as libxml2 writes it; a SYSTEM id holding `"` is single-quoted; an
-  attribute with a namespace but no prefix gets a declared prefix instead of
-  losing its namespace; an `xmlns` attribute contradicting a no-namespace
-  element is left out rather than inventing `xmlns:ns1=""` (see
-  NOKOGIRI_DIFFERENCES.md); and an element copied in but not yet inserted keeps
-  its own declaration.
-* The XML mutators enforce the rules the parser does. `[]=` and
-  `set_attribute_ns` refuse a namespace declaration Namespaces in
-  XML §3 forbids (`xmlns:xml` to another URI, `xmlns:xmlns`, a reserved URI
-  under another prefix) and a second attribute with the same namespace and
-  local name; `create_document_type` refuses a name that is no QName and a
-  PUBLIC id outside PubidChar.
-* `Makiri::XML::Node#canonicalize` raises when the document's declarations no
-  longer give a name its namespace (a node moved from under its declaration,
-  one removed), where it rendered a different namespace or an unbound prefix.
-* Importing HTML into XML no longer writes `xmlns:xmlns` for a foreign
-  element's `xmlns:xlink`, which made the output unreadable, and no longer turns
-  an HTML element's `xmlns` attribute into a declaration that moved it out of
-  XHTML.
-* An HTML document refuses a second root element and a text child, as the DOM
-  requires and the XML side already did.
-* XPath: `substring()` rounds each argument by `round()`'s rule, as §4.2 says
-  (`substring("12345", 1.5, 2.6)` is `"234"`, was `"23"`); `<`, `>`, `<=`, `>=`
-  between a node-set and a boolean compare the node-set's boolean (§3.4), as
-  `=` did; and a string beginning with U+0000 is true.
-* CSS over XML agrees with the HTML matcher on an empty attribute value
-  (`[a^=""]` matched every element, attribute or not) and whitespace in `~=`
-  (both match nothing), on `$=` with a non-ASCII value, and on `:empty` beside
-  a comment.
-* `Node#line` of a node copied from another document is nil, where it
-  answered with a line of this document the node was never on.
-
-* `Node#path` round-trips through `#at_xpath` for CDATA sections and processing
-  instructions, and for text next to a CDATA section. A CDATA section is a
-  `text()` step counted among its text siblings, and a PI is
-  `processing-instruction('target')`, as Nokogiri writes them; before, the path
-  was `#cdata-section` (a syntax error) or the PI's target as an element name.
-  A node XPath cannot reach - a doctype, a namespace declaration, or a node
-  inside a `DocumentFragment` - answers `"?"`, as Nokogiri does, instead of
-  `/#document-fragment/...`. So does a node not attached to its document, which
-  Nokogiri does not do: its `/div/p` could name the document's own `/div/p`
-  (see NOKOGIRI_DIFFERENCES.md).
-* `Node#path` round-trips for namespaced nodes too: SVG and MathML in HTML,
-  default-namespace and prefixed XML, and namespaced attributes (`xlink:href`).
-  These are named by expanded name -
-  `*[local-name()='path' and namespace-uri()='http://www.w3.org/2000/svg']` -
-  which needs no prefix registered; before, the path found nothing, or raised
-  `unknown namespace prefix`. An SVG `<a>` no longer shares a position count
-  with the HTML `<a>`s beside it. The same holds for HTML names that are no
-  plain XPath name: Word's `<o:p>`, `xml:lang`, `xmlns:v` on an HTML element,
-  and Vue's `@click` / `:href` / `v-on:x`, whose paths raised
-  `unknown namespace prefix` or `XPath::SyntaxError`.
-* Copying an XML doctype (`import_node`, `clone_node`, and so `Document#dup`)
-  keeps its PUBLIC id. The copy read the id's length as a name-prefix length:
-  the PUBLIC id came back as the name's bytes and whatever followed them, an
-  absent one as `PUBLIC ""` - and where that ran past the end of the new
-  document's store, the first `#public_id` raised `fatal`.
-* `Makiri::XML::Document#dup` / `#clone` return a copy. They returned the
-  document itself, so `xml.clone(freeze: true)` froze the original. `#dup`
-  re-parses the serialisation, as `Makiri::HTML::Document#dup` does (a document
-  with no root yet is copied node by node), with the default `max_bytes`.
-* `Node#clone_node` on a Document raises `Makiri::Error` in both
-  representations, instead of returning the document itself as its "copy"
-  (and, in XML, leaving a stray node in the arena).
-* `NodeSet#xpath` / `#at_xpath` / `#search` with an expression that evaluates
-  to a string, number or boolean raise `ArgumentError`, as Nokogiri does,
-  instead of `NoMethodError` from inside the union.
-* `Makiri::XML::Builder` and its `NodeBuilder` no longer claim Ruby's implicit
-  conversions (`to_ary`, `to_str`, ...) through `respond_to?`, so `Array(builder)`,
-  `puts` and splats no longer build a `<to_ary>` element or add a `to_ary` class.
-* `NodeSet#css` / `#xpath` / `#at_css` / `#at_xpath` pass their further
-  arguments (a namespace map, a handler, `namespace_matching:`) to each node's
-  query, as `Node`'s take them; they used to accept the expression alone.
+* Insertion follows the DOM's pre-insertion rules in HTML and XML alike: no
+  cycles through a template's contents (which hung `dup`), no children on
+  Text/Comment/PI/DocumentType/Attr, no Text directly under an XML Document,
+  and an XML `DocumentFragment` takes children.
+* `inner_html` / `inner_html=` on a `<template>` target its contents, agreeing
+  with `#to_html` and `content_fragment`.
+* HTML `#keys` / `#values` raise on out-of-memory instead of returning a
+  truncated Array.
+* `dup`, `clone_node` and `import_node` keep an element's name as written
+  (`linearGradient`, `q:Bar`), and a copied XML doctype keeps its PUBLIC id.
+* Namespaces across HTML <-> XML `import_node`: attributes keep their own
+  namespace, a prefixed element keeps its prefix and case, names XML cannot
+  write are refused where they would be written, and copied `xmlns`
+  attributes no longer move elements between namespaces.
+* XML namespaces: `set_attribute_ns` on a detached element survives insertion;
+  `[]=` on an existing attribute changes only its value; the mutators refuse
+  what the parser refuses (forbidden declarations, duplicate expanded names,
+  bad doctype names and PUBLIC ids); `canonicalize` raises instead of writing a
+  wrong namespace; and a refused declaration says which rule it broke.
+* `to_xml` output re-parses: CDATA holding `]]>`, a SYSTEM id holding `"`, and
+  attributes with a namespace but no prefix.
+* XPath: `string()` of a number follows libxml2 (as Nokogiri does);
+  `substring()` rounds per spec; node-set vs boolean comparisons follow §3.4;
+  the `xml` prefix is always bound; a comparison no longer raises
+  `LimitExceeded` because its values added up past 64 MB.
+* `Node#path` round-trips through `#at_xpath` for CDATA, PIs, and namespaced
+  nodes (SVG/MathML, XML namespaces, `xlink:href`, Vue/Word-style names); an
+  unreachable node answers `"?"` as in Nokogiri.
+* CSS over XML agrees with the HTML matcher on `.x\ y`, `:root`, empty and
+  whitespace attribute values, `$=` with non-ASCII, `:empty` beside a comment,
+  and `[|a]`; the `s` modifier is accepted.
+* An HTML document refuses a second root element or a text child; an
+  attribute's parent is always its owner element.
+* `Node#line` of a node copied from another document is nil.
+* `Makiri::XML` nodes compare with `<=>` in document order (an attribute with
+  itself too), and `XML::Document#dup` / `#clone` return a copy.
+* `clone_node` on a Document raises instead of returning the document.
+* `NodeSet#css` / `#xpath` / `#at_css` / `#at_xpath` pass their extra
+  arguments through; `#xpath` of a non-node-set expression raises
+  `ArgumentError`, as in Nokogiri.
+* `XML::Builder` no longer answers `respond_to?` for `to_ary` and similar.
+* Namespace Hashes and `register_namespace` arguments are read as a Hash and
+  with `String()`, with one length cap and one error message.
+* A rejected stylesheet rule's `selector_text` is sliced by Lexbor's offsets.
 
 ### Performance
 
-* HTML `#css`/`#at_css`/`#matches?` match with Lexbor's own control flow - a
-  loop over a chain's compounds that backtracks on failure, with nested
-  pseudo-classes as contexts on a heap stack - instead of a general
-  continuation machine. `rake bench`: `css` ~2x faster, `at_css` ~15%.
-* HTML `#matches?` and `#at_css` reuse the matcher's tables and stacks from
-  one call to the next instead of allocating them each time, and a simple
-  `:is()`/`:where()`/`:not()` (each alternative one compound, such as
-  `:not(.x)`) is answered in place. `#matches?` with a nested selector is up
-  to ~2.5x faster, `rake bench`'s `at_css` ~33%, and `css("li:not(.x)")`
-  ~35%.
-* An HTML attribute selector that compares a value (`[type=text]`) no longer
-  scans the case-insensitive-attribute table for every element; the table is
-  consulted once per selector. ~25-30% faster on such selectors.
-* `NodeSet#at_css` / `#at_xpath` stop at the first node with a match instead of
-  querying every node and building the union.
-* `XML::Node#canonicalize` no longer walks up the ancestors for each namespace
-  declaration it renders; it reads the scope it already keeps, and that scope
-  is indexed by prefix, so a lookup no longer costs the depth of the
-  declarations in scope. A 1000-deep document of declarations went from 0.7 s
-  to 0.02 s, and documents with thousands of declarations in scope, which ran
-  both `to_xml` and `canonicalize` out of their namespace step budget, now
-  serialize.
+* `NodeSet#at_css` / `#at_xpath` stop at the first node with a match.
+* `XML::Node#canonicalize` looks namespaces up by prefix in the scope it keeps:
+  a 1000-deep document of declarations went from 0.7 s to 0.02 s.
 
 ## [0.10.0] - 2026-09-22
 
