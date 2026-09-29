@@ -77,10 +77,15 @@
 //!   does - ASCII case-insensitive on an HTML element in an HTML document,
 //!   case-sensitive otherwise, the HTML Standard's rule for Selectors - where
 //!   Lexbor folds case everywhere (so `[viewbox]` finds an SVG `viewBox`
-//!   there, not here). Resolving names to Lexbor's ids ([`Name`]) keeps this
-//!   rule exactly (an id match is only a pre-filter);
-//!   `lexbor::tests::css_match::resolved_names_agree_with_the_old_engine`
-//!   pins that this is the ONLY name-lookup difference.
+//!   there, not here) - and by QUALIFIED name, so `[href]` does not find a
+//!   prefixed `xlink:href`, which Lexbor takes by its local name (Selectors:
+//!   a name without a namespace prefix means no namespace). Resolving names
+//!   to Lexbor's ids ([`Name`]) keeps this rule exactly (an id match is only
+//!   a pre-filter); `lexbor::tests::css_match::resolved_names_agree_with_the_old_engine`
+//!   pins that case is the only difference for an unprefixed attribute.
+//!   The pseudo-classes Lexbor answers from an attribute's presence
+//!   (`:any-link`, `:required`, `:placeholder-shown`, `:hover`, ...) keep
+//!   Lexbor's local-name rule, `xlink:href` included.
 //! - `#id` / `.class` read the DOM's ID and class attributes - the
 //!   no-namespace `id` / `class` - through Lexbor's shortcut, as Lexbor
 //!   does; a lookup by qualified name would also take an unprefixed `id` set

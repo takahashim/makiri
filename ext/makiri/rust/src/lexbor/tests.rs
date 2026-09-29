@@ -1703,6 +1703,12 @@ mod css_match {
             // and are checked against it instead
             // (`form_state_pseudo_classes_follow_the_html_standard`).
             ":required",
+            ":optional",
+            ":read-only",
+            ":read-write",
+            ":placeholder-shown",
+            ":hover",
+            ":focus",
             ":any-link",
             ":link",
         ];
@@ -1805,6 +1811,10 @@ mod css_match {
                     <input type="checkbox" checked>
                     <input required>
                     <input disabled>
+                    <input readonly placeholder="p" hover>
+                    <textarea required placeholder="t" focus></textarea>
+                    <select required><option>o</option></select>
+                    <svg><a required hover>s</a></svg>
                 </main>
             </body></html>"#,
         );

@@ -5,7 +5,7 @@
 //! knows about selectors; the form states that walk the tree charge the
 //! query's work budget as they go.
 
-use crate::lexbor::adapter::html::{HtmlNode, NodeType, NsId};
+use crate::lexbor::adapter::html::{HtmlElement, HtmlNode, NodeType, NsId};
 
 use super::tree::parent_element;
 use super::{Budget, MatchFailure};
@@ -23,13 +23,22 @@ pub(super) fn is_html_namespace(node: HtmlNode<'_>) -> bool {
     node.ns_id() == Some(NsId::HTML)
 }
 
-fn get_attr<'doc>(node: HtmlNode<'doc>, name: &[u8]) -> Option<&'doc [u8]> {
-    node.element().and_then(|el| el.get_attribute(name))
+/// DOM `hasAttribute`, false for a non-element: the Standard's form states
+/// ask for an element's own (no-namespace) attributes this way.
+fn has_attr(node: HtmlNode<'_>, name: &[u8]) -> bool {
+    node.element().is_some_and(|el| el.has_attribute(name))
 }
 
-pub(super) fn has_attr(node: HtmlNode<'_>, name: &[u8]) -> bool {
-    node.element()
-        .is_some_and(|el| el.get_attribute(name).is_some())
+/// Lexbor's tag test (`node->local_name == LXB_TAG_*`): the tag id, so the
+/// stored lower-cased local name, in any namespace.
+fn lexbor_tag(el: HtmlElement<'_>, tags: &[&[u8]]) -> bool {
+    tags.contains(&el.local_name())
+}
+
+/// `lxb_dom_element_attr_by_id`: an attribute whose (lower-cased) local name
+/// is `local`, in any namespace - so `xlink:href` counts as `href`.
+fn lexbor_attr(el: HtmlElement<'_>, local: &[u8]) -> bool {
+    el.attrs().any(|a| a.local_name() == local)
 }
 
 /// `:empty` (`lxb_selectors_pseudo_class`'s `EMPTY` case): a child of ANY type
@@ -72,7 +81,33 @@ pub(super) fn is_any_link(node: HtmlNode<'_>, link_tag: bool) -> bool {
     } else {
         [b"a", b"area", b"map"]
     };
-    tags.contains(&el.local_name()) && el.attrs().any(|a| a.local_name() == b"href")
+    lexbor_tag(el, &tags) && lexbor_attr(el, b"href")
+}
+
+/// `:required` (`required == true`) / `:optional`, exactly as
+/// `lxb_selectors_pseudo_class` has them: an `input`, `select` or
+/// `textarea` ([`lexbor_tag`]) with / without a `required` attribute
+/// ([`lexbor_attr`]).
+pub(super) fn is_required(node: HtmlNode<'_>, required: bool) -> bool {
+    node.element().is_some_and(|el| {
+        lexbor_tag(el, &[b"input", b"select", b"textarea"])
+            && lexbor_attr(el, b"required") == required
+    })
+}
+
+/// `:placeholder-shown`, exactly as `lxb_selectors_pseudo_class` has it: an
+/// `input` or `textarea` with a `placeholder` attribute - not `select`, and
+/// whether the field is empty is not looked at.
+pub(super) fn is_placeholder_shown(node: HtmlNode<'_>) -> bool {
+    node.element().is_some_and(|el| {
+        lexbor_tag(el, &[b"input", b"textarea"]) && lexbor_attr(el, b"placeholder")
+    })
+}
+
+/// `:active` / `:focus` / `:hover` as Lexbor answers them for a document
+/// nobody interacts with: an element carrying an attribute of that name.
+pub(super) fn has_state_attr(node: HtmlNode<'_>, local: &[u8]) -> bool {
+    node.element().is_some_and(|el| lexbor_attr(el, local))
 }
 
 /// An HTML element named one of `names` (the stored, lower-cased local name).
@@ -182,25 +217,26 @@ pub(super) fn is_checked(node: HtmlNode<'_>) -> bool {
         return has_attr(node, b"selected");
     }
     if html_named(node, &[b"input"]) {
-        let checkable = get_attr(node, b"type").is_some_and(|t| {
-            t.eq_ignore_ascii_case(b"checkbox") || t.eq_ignore_ascii_case(b"radio")
-        });
+        let checkable = node
+            .element()
+            .and_then(|el| el.get_attribute(b"type"))
+            .is_some_and(|t| {
+                t.eq_ignore_ascii_case(b"checkbox") || t.eq_ignore_ascii_case(b"radio")
+            });
         return checkable && has_attr(node, b"checked");
     }
     false
 }
 
-/// `:optional`/`:required` (`lxb_selectors_pseudo_class`): `input`/`select`/
-/// `textarea` only.
-pub(super) fn is_form_field(node: HtmlNode<'_>) -> bool {
-    node.element()
-        .is_some_and(|el| matches!(el.dom_local_name(), b"input" | b"select" | b"textarea"))
-}
-
+/// `:read-write` (`lxb_selectors_pseudo_class_read_write`): an `input` or
+/// `textarea` ([`lexbor_tag`]) without a `readonly` attribute
+/// ([`lexbor_attr`]) that is not disabled - disabled by the HTML Standard,
+/// as `:disabled` is ([`is_disabled`]).
 pub(super) fn is_read_write(node: HtmlNode<'_>, budget: &Budget) -> Result<bool, MatchFailure> {
-    Ok(node
-        .element()
-        .is_some_and(|el| matches!(el.dom_local_name(), b"input" | b"textarea"))
-        && !has_attr(node, b"readonly")
+    let Some(el) = node.element() else {
+        return Ok(false);
+    };
+    Ok(lexbor_tag(el, &[b"input", b"textarea"])
+        && !lexbor_attr(el, b"readonly")
         && !is_disabled(node, budget)?)
 }

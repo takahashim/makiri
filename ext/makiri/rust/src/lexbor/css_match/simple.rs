@@ -11,8 +11,9 @@ use super::compile::Step;
 use super::positions::{sibling_position, Positions};
 use super::scratch::Table;
 use super::state::{
-    has_attr, is_any_link, is_blank, is_checked, is_disabled, is_empty, is_enabled, is_form_field,
-    is_html_namespace, is_lexbor_whitespace, is_read_write, is_root,
+    has_state_attr, is_any_link, is_blank, is_checked, is_disabled, is_empty, is_enabled,
+    is_html_namespace, is_lexbor_whitespace, is_placeholder_shown, is_read_write, is_required,
+    is_root,
 };
 use super::tree::{next_position_sibling, prev_position_sibling};
 use super::{Budget, MatchFailure};
@@ -170,24 +171,14 @@ fn plain_pseudo_matches(
         PseudoClass::Checked => is_checked(node),
         PseudoClass::Disabled => is_disabled(node, budget)?,
         PseudoClass::Enabled => is_enabled(node, budget)?,
-        PseudoClass::Optional => is_form_field(node) && !has_attr(node, b"required"),
-        PseudoClass::Required => is_form_field(node) && has_attr(node, b"required"),
+        PseudoClass::Optional => is_required(node, false),
+        PseudoClass::Required => is_required(node, true),
         PseudoClass::ReadOnly => !is_read_write(node, budget)?,
         PseudoClass::ReadWrite => is_read_write(node, budget)?,
-        PseudoClass::Active => has_attr(node, b"active"),
-        PseudoClass::Focus => has_attr(node, b"focus"),
-        PseudoClass::Hover => has_attr(node, b"hover"),
-        // `lxb_selectors_pseudo_class`'s `PLACEHOLDER_SHOWN` case:
-        // `input`/`textarea` only (not `select`, unlike
-        // `:optional`/`:required`), and only whether `placeholder` is PRESENT -
-        // Lexbor never looks at its value or whether the field is actually
-        // showing it empty, so an `<input placeholder>` with no value written
-        // at all still matches, faithfully reproduced here.
-        PseudoClass::PlaceholderShown => {
-            node.element()
-                .is_some_and(|el| matches!(el.dom_local_name(), b"input" | b"textarea"))
-                && has_attr(node, b"placeholder")
-        }
+        PseudoClass::Active => has_state_attr(node, b"active"),
+        PseudoClass::Focus => has_state_attr(node, b"focus"),
+        PseudoClass::Hover => has_state_attr(node, b"hover"),
+        PseudoClass::PlaceholderShown => is_placeholder_shown(node),
         PseudoClass::Other => false,
     })
 }
