@@ -7,10 +7,12 @@
 //!
 //! # Two functions here are the HTML node's front door
 //!
-//! [`crate::bridge::html::wrap_html_node`] and
-//! [`crate::bridge::html::html_node_unwrap`] are how every glue module wraps
-//! and unwraps an HTML node; they live in [`crate::bridge::html`], the one seam
-//! that knows both the Ruby wrapper and the Lexbor handle.
+//! [`crate::bridge::html::wrap_html_node`] wraps an HTML node, and
+//! [`crate::bridge::html::HtmlSelf`] (a receiver) and
+//! [`crate::bridge::html::with_arg_node`] (an argument, for the length of a
+//! closure) reach the node a wrapper names, through its document-bound key;
+//! they live in [`crate::bridge::html`], the one seam that knows both the Ruby
+//! wrapper and the Lexbor handle.
 //!
 //! # Nothing here is declared twice
 //!
@@ -45,7 +47,7 @@ use crate::init::{CLASS_HTML_DOCUMENT_TYPE, CLASS_HTML_ELEMENT};
 
 /* The receiver and argument handles, from the Ruby <-> Lexbor seam
  * (`bridge::html`), for the readers and for `glue::html_doc`. */
-pub use crate::bridge::html::{arg_node, wrap_node, HtmlSelf};
+pub use crate::bridge::html::{with_arg_node, wrap_node, HtmlSelf};
 
 /* ------------------------------------------------------------------ *
  * registration                                                       *

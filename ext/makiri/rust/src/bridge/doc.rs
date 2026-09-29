@@ -23,11 +23,11 @@ use magnus::{prelude::*, Error, RString, Ruby, Value};
 use crate::bridge::ruby::makiri_error;
 
 use crate::bridge::html::import_copy;
-use crate::bridge::html::{html_node_unwrap, wrap_html_node};
+use crate::bridge::html::{html_node_key, with_arg_node, with_html_node, wrap_html_node};
 use crate::bridge::string::HtmlSource;
 use crate::bridge::wrapper::{
-    ensure_document_mutable, html_doc, html_doc_unwrap, keepalive_document, node_repr, DocKind,
-    DocumentShell, NodeRepr, DOC_TYPE,
+    ensure_document_mutable, html_doc, html_doc_unwrap, node_repr, DocKind, DocumentShell,
+    NodeRepr, DOC_TYPE,
 };
 use crate::bridge::xml::doc_of;
 use crate::bridge::xml::xml_node_document;
@@ -155,9 +155,12 @@ pub fn import_node(rb_self: Value, node_v: Value, deep: bool) -> Result<Value, E
         return Ok(wrap_html_node(imp, rb_self));
     }
 
-    let src = html_node_unwrap(node_v)?; /* Err on a non-node */
-    // SAFETY: `src` is a live node; the copy is imported into `doc`.
-    let imp = unsafe { import_copy(doc, src, deep, "import node") }?;
+    /* Err on a non-node. The copy is a Lexbor import into `doc`, which runs
+     * no Ruby, so it is made inside the source's borrow. */
+    let imp = with_arg_node(node_v, |src| {
+        // SAFETY: `doc` is the receiver's live document.
+        unsafe { import_copy(doc, src, deep, "import node") }
+    })??;
     Ok(wrap_html_node(imp, rb_self))
 }
 
@@ -168,8 +171,7 @@ pub fn import_node(rb_self: Value, node_v: Value, deep: bool) -> Result<Value, E
 /// so a deep-cloned `<template>` carries its contents (which `import_node` alone
 /// omits). Fails closed: a null import is an error rather than a partial node.
 pub fn clone_node(rb_self: Value, deep: bool) -> Result<Value, Error> {
-    let node = html_node_unwrap(rb_self)?;
-    let document = keepalive_document(rb_self)?;
+    let (key, document) = html_node_key(rb_self)?;
     /* A Document's copy would wrap back to the receiver itself - the original
      * handed out as a copy. `HTML::Document#dup` is the document copy. */
     if crate::bridge::ruby::same_value(rb_self, document) {
@@ -177,10 +179,10 @@ pub fn clone_node(rb_self: Value, deep: bool) -> Result<Value, Error> {
     }
     /* The copy is made in this document: refused while a handler reads it. */
     ensure_document_mutable(document)?;
-    // SAFETY: the node of a live wrapper, which keeps its document alive.
-    let doc = RawDoc::from(unsafe { node.as_node() }.owner_document());
-
-    // SAFETY: `node` belongs to `doc`, the document the copy is imported into.
-    let clone = unsafe { import_copy(doc, node, deep, "clone node") }?;
+    let clone = with_html_node(document, key, |node| {
+        let doc = RawDoc::from(node.owner_document());
+        // SAFETY: `doc` is `node`'s own document, live while `node` is.
+        unsafe { import_copy(doc, node, deep, "clone node") }
+    })??;
     Ok(wrap_html_node(clone, document))
 }

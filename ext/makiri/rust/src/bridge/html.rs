@@ -133,38 +133,15 @@ fn mint_html_key(node: RawNode, document: Value) -> HtmlNodeKey {
     .expect("wrap_html_node: the node must belong to the document it is wrapped under")
 }
 
-/// The HTML node handle behind an HTML node or HTML Document.
-///
-/// `Err(TypeError)` for an XML node or Document: the typed-data check is against
-/// [`HTML_NODE_TYPE`], which an XML node (wrapped under `XML_NODE_TYPE`) does
-/// not satisfy.
-pub fn html_node_unwrap(rb_node: Value) -> Result<RawNode, Error> {
-    if crate::bridge::ruby::is_kind_of(rb_node, &CLASS_DOCUMENT) {
-        if crate::bridge::ruby::is_kind_of(rb_node, &CLASS_XML_DOCUMENT) {
-            return Err(crate::bridge::ruby::type_error(
-                "expected an HTML node, got a Makiri::XML::Document",
-            ));
-        }
-        return Ok(html_doc_unwrap(rb_node)?.into());
-    }
-    let nd: &NodeData = HTML_NODE_TYPE.get(&rb_node)?;
-    /* An HTML wrapper stores a key minted from the node of the Document it
-     * marks (the type check above), so its node pointer is live; no check is
-     * needed here. */
-    nd.node
-        .html()
-        .map(HtmlNodeKey::raw_node)
-        .ok_or_else(uninitialized)
-}
-
 fn uninitialized() -> Error {
     crate::bridge::ruby::type_error("uninitialized HTML node")
 }
 
 /// The key and keepalive Document of an HTML node or HTML Document.
 ///
-/// `Err(TypeError)` for an XML node or Document, as [`html_node_unwrap`]. The
-/// Document node is keyed too: Lexbor sets its `owner_document` to itself, so
+/// `Err(TypeError)` for an XML node or Document: the typed-data check is
+/// against [`HTML_NODE_TYPE`], which an XML node (wrapped under
+/// `XML_NODE_TYPE`) does not satisfy. The Document node is keyed too: Lexbor sets its `owner_document` to itself, so
 /// `mint_key` accepts it.
 pub(in crate::bridge) fn html_node_key(rb_node: Value) -> Result<(HtmlNodeKey, Value), Error> {
     if crate::bridge::ruby::is_kind_of(rb_node, &CLASS_DOCUMENT) {
@@ -246,12 +223,17 @@ impl HtmlSelf {
     }
 }
 
-/// An HTML node argument, for the length of the borrow of `v`.
+/// Run `f` over the HTML node (or Document node) `v` wraps, resolved against
+/// `v`'s own Document - the checked boundary for a node ARGUMENT, as
+/// [`HtmlSelf::with_node`] is for a receiver. The handle lives only as long
+/// as `f`, inside the document's borrow ([`with_html_node`]), so `f` must not
+/// run Ruby or wrap a node of that document (wrapping mints a key, which
+/// borrows the document again): hand a [`RawNode`] out and wrap after.
 ///
 /// `Err(TypeError)` for anything that is not an HTML node or HTML Document.
-pub fn arg_node(v: &Value) -> Result<HtmlNode<'_>, Error> {
-    // SAFETY: `v` is a method argument, which keeps its node's document alive.
-    Ok(unsafe { html_node_unwrap(*v)?.as_node() })
+pub fn with_arg_node<R>(v: Value, f: impl FnOnce(HtmlNode<'_>) -> R) -> Result<R, Error> {
+    let (key, document) = html_node_key(v)?;
+    with_html_node(document, key, f)
 }
 
 /// [`wrap_html_node`] for an optional handle.
@@ -354,21 +336,21 @@ impl<'a> HtmlEdit<'a> {
 /// copy every import, adopt and clone makes, so none can grow its own variant.
 ///
 /// # Safety
-/// `doc` must be a live document and `src` a live node, both held by the
-/// caller for the call.
+/// `doc` must be a live document, held by the caller for the call.
 pub unsafe fn import_copy(
     doc: RawDoc,
-    src: RawNode,
+    src: HtmlNode<'_>,
     deep: bool,
     what: &str,
 ) -> Result<RawNode, Error> {
-    import_with_fixup(doc, src, deep).map_err(|_| makiri_error(format!("failed to {what}")))
+    import_with_fixup(doc, RawNode::from(src), deep)
+        .map_err(|_| makiri_error(format!("failed to {what}")))
 }
 
 /// Copy `node` into `doc`, for a node that came from another document.
 fn adopt_copy<'d>(doc: RawDoc, node: HtmlNode<'_>) -> Result<HtmlNode<'d>, Error> {
-    // SAFETY: `doc` is a live document and `node` its caller's live source.
-    let imp = unsafe { import_copy(doc, RawNode::from(node), true, "import node") }?;
+    // SAFETY: `doc` is a live document, the caller's target.
+    let imp = unsafe { import_copy(doc, node, true, "import node") }?;
     // SAFETY: a node just imported into `doc`, which outlives this call.
     Ok(unsafe { imp.as_node() })
 }
@@ -378,10 +360,12 @@ fn adopt_copy<'d>(doc: RawDoc, node: HtmlNode<'_>) -> Result<HtmlNode<'d>, Error
 /// document's indexes, which still list it. A structural change to a document
 /// invalidates ITS indexes; this is one, made from another document's method.
 fn adopt_release(src: Value) -> Result<(), Error> {
-    /* SAFETY: the source document was cleared for editing by `take_incoming`
-     * before anything was copied out of it. */
-    let node = unsafe { HtmlNodeMut::assume_mutable(arg_node(&src)?) };
-    release_from_tree(node);
+    with_arg_node(src, |node| {
+        /* SAFETY: the source document was cleared for editing by
+         * `take_incoming` before anything was copied out of it. */
+        release_from_tree(unsafe { HtmlNodeMut::assume_mutable(node) });
+    })?;
+    /* After the borrow `with_arg_node` held: dropping them borrows again. */
     invalidate_indexes(keepalive_document(src)?);
     Ok(())
 }
@@ -408,7 +392,7 @@ fn release_from_tree(node: HtmlNodeMut<'_>) {
 /// too runs before a link is touched.
 pub fn insert(this: &HtmlSelf, rb_incoming: Value, place: Place) -> Result<Value, Error> {
     let target = edit(this)?.node()?;
-    let incoming = arg_node(&rb_incoming)?;
+    let (key, incoming_doc) = html_node_key(rb_incoming)?;
     /* The argument is relinked too - `place` changes its parent and siblings, and
      * an adoption removes it from its own document - so a frozen argument is a
      * frozen node being modified. The receiver check alone let it through, which
@@ -417,18 +401,23 @@ pub fn insert(this: &HtmlSelf, rb_incoming: Value, place: Place) -> Result<Value
      * checked, because frozenness lives on the Ruby object and there is no map
      * from a node back to its wrapper. */
     crate::bridge::ruby::check_frozen(rb_incoming)?;
-    Insertion::new(target.node(), place, incoming)
-        .and_then(|i| i.check())
-        .map_err(|e| refused(e, place))?;
-    let (node, adopted_from) = take_incoming(target, rb_incoming, incoming)?;
-    target.place(node, place);
-    match adopted_from {
-        None => Ok(rb_incoming),
-        Some(src) => {
-            adopt_release(src)?;
-            Ok(wrap_html_node(RawNode::from(node.node()), this.document))
-        }
+    /* The argument, resolved against its own Document, for the checks, the
+     * copy or move, and the placing - none of which runs Ruby or wraps a
+     * node. Releasing an adopted original and wrapping its copy borrow a
+     * document again, so they come after. */
+    let (placed, adopted) = with_html_node(incoming_doc, key, |incoming| {
+        Insertion::new(target.node(), place, incoming)
+            .and_then(|i| i.check())
+            .map_err(|e| refused(e, place))?;
+        let (node, adopted) = take_incoming(target, incoming_doc, incoming)?;
+        target.place(node, place);
+        Ok::<_, Error>((RawNode::from(node.node()), adopted))
+    })??;
+    if !adopted {
+        return Ok(rb_incoming);
     }
+    adopt_release(rb_incoming)?;
+    Ok(wrap_html_node(placed, this.document))
 }
 
 /// A refused insertion, worded. The one place these messages live.
@@ -464,30 +453,28 @@ fn refused(e: PreInsertError, place: Place) -> Error {
 }
 
 /// The node to put in the tree for `incoming`: itself, taken out of where it
-/// was, or - from another document - a copy made in `target`'s, with the
-/// original's wrapper to release once the copy is in (see [`adopt_release`]).
+/// was, or - from another document - a copy made in `target`'s, with `true`
+/// for "release the original once the copy is in" (see [`adopt_release`]).
+/// `incoming_doc` is the argument's own Document.
 fn take_incoming<'d>(
     target: HtmlNodeMut<'d>,
-    rb_incoming: Value,
+    incoming_doc: Value,
     incoming: HtmlNode<'_>,
-) -> Result<(HtmlNodeMut<'d>, Option<Value>), Error> {
+) -> Result<(HtmlNodeMut<'d>, bool), Error> {
     if !target.node().same_document(incoming) {
         /* Adopting takes the node out of the document it came from, so that
          * document changes too - refuse before anything is copied. */
-        ensure_document_mutable(keepalive_document(rb_incoming)?)?;
+        ensure_document_mutable(incoming_doc)?;
         let copy = adopt_copy(RawDoc::from(target.node().owner_document()), incoming)?;
         // SAFETY: a copy this call just made in `target`'s document.
-        return Ok((
-            unsafe { HtmlNodeMut::assume_mutable(copy) },
-            Some(rb_incoming),
-        ));
+        return Ok((unsafe { HtmlNodeMut::assume_mutable(copy) }, true));
     }
     // SAFETY: a node of `target`'s document, which `edit` cleared.
     let incoming = unsafe { HtmlNodeMut::assume_mutable(RawNode::from(incoming).as_node()) };
     if incoming.parent().is_some() {
         incoming.detach();
     }
-    Ok((incoming, None))
+    Ok((incoming, false))
 }
 
 /* ------------------------------------------------------------------ *
