@@ -1,13 +1,19 @@
 //! CSS selectors over a Lexbor-parsed HTML document, through the HTML matcher.
 //!
 //! `css` covers `Makiri::XML`'s CSS (the lowering to XPath) and `html` the HTML
-//! parse. This is the pair `Node#css` / `#at_css` / `#matches?` run: Lexbor's
-//! selector parser behind `contains_guard` (`css_parser::parse`), then
+//! parse. This is the path `Node#css` / `#at_css` / `#matches?` run: the
+//! compiled-selector cache (`selector_cache::with_compiled` - its own Lexbor
+//! parser behind `contains_guard`, the cached lists, the flush at the cap,
+//! the bypass and its re-test, and the engine's kept `Scratch`), then
 //! `lexbor::css_match` - `compile`, the chain loop and its backtracking,
 //! the task stack for `:is()` / `:not()` / `:has()` / `of S`, the sibling-
 //! position memo, the lazily resolved names and the adapter reads they make -
-//! over an arbitrary document, with one `Scratch` reused across the calls as
-//! the selector engine reuses its own.
+//! over an arbitrary document.
+//!
+//! Each input queries its selector twice, as a repeated `Node#css` would: a
+//! miss (or a bypassed parse) and then, while caching is on, a hit. The cache
+//! is process-global, so its state - and which of its paths an input takes -
+//! carries from one input to the next, as it does in a Ruby process.
 //!
 //! The bytes up to the first NUL are the selector (a selector cannot hold one:
 //! the bridge refuses it, as `VerifiedText` does), and the rest is the document
@@ -31,7 +37,8 @@ use makiri::lexbor::adapter::html::HtmlNode;
 use makiri::lexbor::adapter::post_parse::parse_html;
 use makiri::lexbor::adapter::tree_guard::DepthLimit;
 use makiri::lexbor::css_match::{matches_any, select_all, select_first, Scratch};
-use makiri::lexbor::css_parser;
+use makiri::lexbor::css_parser::Lists;
+use makiri::lexbor::selector_cache;
 
 /// How many elements are asked `matches?` each: each is a full query, with
 /// its own budget, so this bounds the run, not the check.
@@ -52,16 +59,22 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
     let gvl = Gvl::exclusive();
-    let Ok(parsed) = css_parser::parse(&gvl, text) else {
-        return;
-    };
-    let groups = parsed.groups();
     // SAFETY: `p` owns the document and outlives every handle made here.
     let root = unsafe { p.raw_doc().as_doc() }.as_node();
-    let mut scratch = Scratch::new();
+    for _ in 0..2 {
+        let checked = selector_cache::with_compiled(&gvl, text.as_bytes(), |groups, scratch| {
+            check(root, groups, scratch)
+        });
+        if checked.is_err() {
+            return;
+        }
+    }
+});
 
-    let all = select_all(&mut scratch, root, groups);
-    let first = select_first(&mut scratch, root, groups);
+/// The walking query and the one-candidate query agree (module doc).
+fn check(root: HtmlNode<'_>, groups: Lists<'_>, scratch: &mut Scratch) {
+    let all = select_all(scratch, root, groups);
+    let first = select_first(scratch, root, groups);
     let Ok(all) = all else {
         return;
     };
@@ -76,7 +89,7 @@ fuzz_target!(|data: &[u8]| {
         .filter_map(HtmlNode::element)
         .take(ONE_BY_ONE)
     {
-        let Ok(matched) = matches_any(&mut scratch, groups, el) else {
+        let Ok(matched) = matches_any(scratch, groups, el) else {
             return;
         };
         assert_eq!(
@@ -85,4 +98,4 @@ fuzz_target!(|data: &[u8]| {
             "matches? and css disagree on an element"
         );
     }
-});
+}

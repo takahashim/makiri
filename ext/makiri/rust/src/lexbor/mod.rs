@@ -39,7 +39,7 @@ pub mod fragment;
 /// The compiled-selector cache in front of `css_match`: its own
 /// process-global parser/arena, separate from `css_parser`'s (shared with the
 /// XML lowering), and the matcher's kept `Scratch`.
-pub(crate) mod selector_cache;
+pub mod selector_cache;
 /// The OLD `lxb_selectors`-callback engine `css_match` replaced: compiled
 /// into tests only, as the reference the differential tests
 /// (`lexbor::tests::css_match`) hold `css_match` to.

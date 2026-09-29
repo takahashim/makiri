@@ -30,11 +30,8 @@
 
 #![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
-// Its one entry point (`with_compiled`) is called from the Ruby glue
-// (`glue::html_node::css`) only, so a Ruby-free build (Kani, the fuzz crate,
-// `cargo test --features lexbor` without `ruby`) sees this whole file unused -
-// same reasoning as `text.rs`'s `VerifiedText` impl.
-#![cfg_attr(not(feature = "ruby"), allow(dead_code))]
+// Its one entry point (`with_compiled`) is the Ruby glue's
+// (`glue::html_node::css`) and the `html_css` fuzz harness's.
 
 use core::ptr::NonNull;
 use std::collections::HashMap;
@@ -305,7 +302,7 @@ impl Drop for Session<'_> {
 /// Three ways: a window that ended with caching off flushes the cache;
 /// bypassing parses and cleans per call; otherwise the list comes from the
 /// cache, compiled into it on a miss.
-pub(crate) fn with_compiled<R>(
+pub fn with_compiled<R>(
     gvl: &Gvl,
     selector: &[u8],
     f: impl FnOnce(Lists<'_>, &mut Scratch) -> R,
