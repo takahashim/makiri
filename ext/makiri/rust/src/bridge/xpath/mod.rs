@@ -15,7 +15,7 @@ use magnus::rb_sys::AsRawValue;
 use crate::bridge::ruby::makiri_error;
 use magnus::{prelude::*, Error, Value};
 
-use crate::bridge::html::html_node_unwrap;
+use crate::bridge::html::{html_node_key, with_html_node};
 use crate::bridge::node_set::{node_set_with_fill, PushError};
 use crate::bridge::node_wrap::wrap_doc_node;
 use crate::bridge::ruby::VALUE;
@@ -27,6 +27,7 @@ use crate::engine_error::{Error as XPathError, ErrorKind};
 use crate::init::EXC_ERROR;
 pub use crate::init::{CLASS_XPATH_CONTEXT, EXC_XPATH_LIMIT_EXCEEDED, EXC_XPATH_SYNTAX_ERROR};
 use crate::lexbor::adapter::post_parse::HtmlParsed;
+use crate::lexbor::xpath::HtmlDom;
 use crate::token::Token;
 use crate::xml::model::Document as XmlDoc;
 use crate::xpath::ast::Ast;
@@ -187,11 +188,13 @@ pub fn context_for(rb_node: Value, document: Value) -> Result<Cx, Error> {
         });
     }
 
-    let raw = html_node_unwrap(rb_node)?;
-    // SAFETY: `html_node_unwrap` returned a live node of `document`.
-    let node = unsafe { NodeWord::from(raw).token(DocKind::Html) };
+    let (key, _) = html_node_key(rb_node)?;
     /* TypeError for a Document that is not HTML. */
     html_doc_unwrap(document)?;
+    /* Resolved against `document` - checked, not assumed, to own the node -
+     * and kept as the context's token, which `document` keeps alive for as
+     * long as the context lives. */
+    let node = with_html_node(document, key, |n| <HtmlDom<'_> as Dom<'_>>::token(n))?;
     let Content::Html(parsed) = content else {
         return Err(makiri_error("XPath context with no document"));
     };

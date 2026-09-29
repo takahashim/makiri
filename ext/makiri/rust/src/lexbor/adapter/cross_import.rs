@@ -283,18 +283,14 @@ fn h2x_first_child(s: HtmlNode<'_>) -> Option<HtmlNode<'_>> {
     s.first_child()
 }
 
-/// Deep- or shallow-copy an HTML subtree into the XML arena, detached.
-///
-/// # Safety
-/// `src` is a live node whose document is not restructured during the call.
-pub unsafe fn cross_html_to_xml(
+/// Deep- or shallow-copy an HTML subtree into the XML arena, detached. `src`
+/// is a typed handle, so live for the call by its own contract.
+pub fn cross_html_to_xml(
     xdoc: &mut XmlDoc,
-    src: RawNode,
+    src: HtmlNode<'_>,
     deep: bool,
 ) -> Result<NodeId, MutError> {
     let doc = xdoc;
-    // SAFETY: the caller's contract.
-    let src = unsafe { src.as_node() };
 
     /* `None`: the root's type has no XML counterpart. */
     let root = h2x_make(doc, src, None, None)?.ok_or(MutError::Type)?;

@@ -13,7 +13,7 @@
 #![forbid(unsafe_code)]
 
 use crate::bridge::fragment;
-use crate::bridge::wrapper::keepalive_document;
+use crate::glue::html_node::HtmlSelf;
 use crate::lexbor::adapter::html::NodeType;
 use magnus::{method, prelude::*, Error, Ruby, Value};
 
@@ -40,13 +40,13 @@ fn doc_title(ruby: &Ruby, self_: Value) -> Result<magnus::RString, Error> {
 
 /// The `<!DOCTYPE ...>` node, or nil - Nokogiri's `#internal_subset`. It is a
 /// child of the document node (typically first), so a short scan finds it.
-fn doc_internal_subset(_ruby: &Ruby, self_: Value) -> Result<Option<Value>, Error> {
+fn doc_internal_subset(_ruby: &Ruby, this: HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        let doc = crate::glue::html_node::arg_node(&self_)?;
-        let doctype = doc
+        let doctype = this
+            .node()
             .children()
             .find(|c| c.node_type() == NodeType::DocumentType);
-        Ok(crate::glue::html_node::wrap_node(doctype, self_))
+        Ok(crate::glue::html_node::wrap_node(doctype, this.document))
     })
 }
 
@@ -96,20 +96,17 @@ fn frag_s_parse(ruby: &Ruby, _klass: Value, args: &[Value]) -> Result<Value, Err
 /// `node.parse(html)` -> a NodeSet of nodes parsed as a fragment in this
 /// element's context. Nokogiri-compatible, and the way to reach a foreign
 /// (SVG/MathML) fragment context.
-fn node_parse(ruby: &Ruby, self_: Value, rb_html: Value) -> Result<Value, Error> {
+fn node_parse(ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         /* Only the context's tag and namespace ids are needed, read before the
          * fragment parse runs. */
-        let Some(at) = crate::glue::html_node::arg_node(&self_)?
-            .element()
-            .and_then(fragment::FragmentTag::of)
-        else {
+        let Some(at) = this.node().element().and_then(fragment::FragmentTag::of) else {
             return Err(Error::new(
                 ruby.exception_arg_error(),
                 "Node#parse requires an element context",
             ));
         };
-        let document = keepalive_document(self_)?;
+        let document = this.document;
         /* No keyword here, as in Nokogiri: the default limit. */
         let frag = fragment::build_fragment(document, rb_html, at, fragment::DepthLimit::DEFAULT)?;
         /* The native children reader, not a Ruby `children` dispatch: the
