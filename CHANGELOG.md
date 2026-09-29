@@ -386,6 +386,12 @@
   loop over a chain's compounds that backtracks on failure, with nested
   pseudo-classes as contexts on a heap stack - instead of a general
   continuation machine. `rake bench`: `css` ~2x faster, `at_css` ~15%.
+* HTML `#matches?` and `#at_css` reuse the matcher's tables and stacks from
+  one call to the next instead of allocating them each time, and a simple
+  `:is()`/`:where()`/`:not()` (each alternative one compound, such as
+  `:not(.x)`) is answered in place. `#matches?` with a nested selector is up
+  to ~2.5x faster, `rake bench`'s `at_css` ~33%, and `css("li:not(.x)")`
+  ~35%.
 * An HTML attribute selector that compares a value (`[type=text]`) no longer
   scans the case-insensitive-attribute table for every element; the table is
   consulted once per selector. ~25-30% faster on such selectors.

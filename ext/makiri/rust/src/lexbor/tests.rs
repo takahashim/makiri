@@ -1922,7 +1922,7 @@ mod selector_cache_spike {
     use crate::lexbor::adapter::post_parse::{parse_html, HtmlParsed};
     use crate::lexbor::adapter::tree_guard::DepthLimit;
     use crate::lexbor::selector_cache::with_compiled;
-    use crate::lexbor::selector_port::select_all;
+    use crate::lexbor::selector_port::select_all_in;
 
     fn parsed(html: &[u8]) -> Box<HtmlParsed> {
         parse_html(html, true, DepthLimit::DEFAULT).expect("a document parses")
@@ -1936,8 +1936,8 @@ mod selector_cache_spike {
 
     /// Every matching descendant's node identity, through the cache.
     fn select_all_cached(doc: &HtmlParsed, selector: &str) -> Vec<RawNode> {
-        with_compiled(&Gvl::exclusive(), selector.as_bytes(), |groups| {
-            select_all(root(doc), groups)
+        with_compiled(&Gvl::exclusive(), selector.as_bytes(), |groups, scratch| {
+            select_all_in(scratch, root(doc), groups)
         })
         .unwrap_or_else(|_| panic!("{selector:?} fails to parse"))
         .unwrap_or_else(|e| panic!("{selector:?} failed: {e:?}"))
@@ -1988,8 +1988,8 @@ mod selector_cache_spike {
         let doc = parsed(b"<html><body><p class=x>a</p><p class=x>b</p></body></html>");
         assert_eq!(select_all_cached(&doc, "p.x").len(), 2);
 
-        let rejected = with_compiled(&Gvl::exclusive(), b"p[", |groups| {
-            select_all(root(&doc), groups)
+        let rejected = with_compiled(&Gvl::exclusive(), b"p[", |groups, scratch| {
+            select_all_in(scratch, root(&doc), groups)
         });
         assert!(rejected.is_err(), "a malformed selector must not parse");
 

@@ -757,8 +757,24 @@ subsequent-sibling combinator to its right (exhaustive, like Lexbor's). A
 `:is()`/`:where()`/`:not()`/`:has()`/`of S` is a nested context - a `Task` on a
 heap stack, Lexbor's `lxb_selectors_nested_t` - that the loop returns to with
 its verdict, and the rightmost compound is tested before any of that is set
-up, so most candidates cost one compound test. The stacks are cleared, not
-freed, between candidates; every growth is `falloc`'s (`MatchFailure::Oom` ->
+up, so most candidates cost one compound test. An `:is()`/`:where()`/`:not()`
+whose every alternative is one compound with nothing nested in it
+(`Step::inline`, decided by `compile`) is answered in place, with no task -
+`li:not(.r1)` went from 1.37x to 0.84x Lexbor's time. It goes through
+`check_compound` rather than calling `check_simple` itself: with a second
+caller rustc stopped inlining `check_simple`, and every plain scan got ~10%
+slower (`.item`, `main a`) - keep `check_simple` single-caller. **Every table
+and stack a query uses is borrowed from a `Scratch`** that the Ruby glue keeps
+in `selector_cache`'s process-global engine (under the GVL) and hands back
+after the query, as Lexbor keeps its entry/nested pools in `lxb_selectors_t`:
+a warm `css`/`at_css`/`matches?` allocates nothing but its result. The
+vectors cross lifetimes empty, through `recycle` (std's in-place collect,
+which reuses the allocation and can never allocate); one grown past
+`SCRATCH_KEEP` items is dropped rather than kept. `matches?` was 1.2-2.9x
+Lexbor's time before (the allocations - a `Small` spill, the stacks, the
+compile work list - were most of a one-candidate call) and is 0.8-1.2x after.
+The stacks are cleared, not freed, between candidates; every growth is
+`falloc`'s (`MatchFailure::Oom` ->
 `Makiri::Error`), `rake oom`'s `css` scenario reaches each site, and there is
 no `Box::new`/`Rc`/`vec!` in the file. **Do not bring back a general
 continuation machine for plain chains**: the previous design (a frame stack
@@ -771,8 +787,9 @@ attributes, the no-namespace ones - an unprefixed `id` set IN a namespace is
 not the ID (`spec/attribute_dom_algorithms_spec.rb`), where the by-qualified-
 name lookup used before took it when it was the only `id`.
 
-**Tag and attribute names are resolved to Lexbor's ids once per query** -
-Lexbor's own `entry->id` (`selector_port::Name`, `HtmlDoc::resolve_attr_name`,
+**Tag and attribute names are resolved to Lexbor's ids once per query**, each
+the first time a candidate reaches it - Lexbor's own lazily set `entry->id`
+(`selector_port::Name`, `HtmlDoc::resolve_attr_name`,
 `HtmlElement::attr_by_resolved_name`). Lexbor keys element and attribute
 local names by their ASCII-lower-cased form, so a tag-id match IS the
 case-folded name comparison, and an attribute local-id match is a pre-filter
@@ -781,12 +798,10 @@ never changes, only how many name reads it takes. Ids are the document's own
 (custom elements and new attribute names are interned per document), so they
 are resolved per query in the queried document, a candidate from another
 document falls back to bytes, and nothing document-specific is kept in the
-process-global `selector_cache`. `matches?` (one candidate) does not resolve:
-the lookups cost more than the byte comparisons they save there. A query's
-tables (`simples`/`compounds`/`top`/`alts` and the names) are `Small`, inline
-for up to 4 (2 for `top`/`alts`) entries, so a small selector allocates
-nothing to compile - and small, because the tables are moved by value and a
-larger inline size measured as `memmove` time on `at_css`. An attribute whose
+process-global `selector_cache`. `matches?` (one candidate) does not resolve,
+even lazily: a lookup costs more than the one comparison it saves
+(`ul > li.item` 85 -> 117 ns when tried); it compares the stored local name,
+one Lexbor call rather than the two `dom_local_name` makes. An attribute whose
 Lexbor `qualified_name` is 0 is named by its lower-cased local name, so a
 local-id match confirms without reading the name. Whether a value compares
 case-insensitively by default (§B-5's 46-name table) is settled per selector at
@@ -982,7 +997,7 @@ encounter-order (**not** doc-order), `#{css,xpath,search}` run per node and unio
 ## Performance
 
 **Makiri beats Nokogiri/libxml2 on every `rake bench` row.** Measured
-against Nokogiri: parse ~4.6×, css ~10×, at_css ~5000×, `//tag` ~4×,
+against Nokogiri: parse ~4.6×, css ~10×, at_css ~7000×, `//tag` ~4×,
 `//*[@id=…]` ~8×, `[@attr='v']` ~4.3×, attribute axis ~3×, serialize ~6×,
 full-text extraction ~3.5×. **traverse** (children walk) used to be the one row
 that only met Nokogiri (within measurement error); as of the v0.10.0 bench it
@@ -1058,7 +1073,9 @@ Key decisions that got there, worth not regressing:
   `li > a.link`, `:is()`, `:not()`, `:has()` and both `at_css` rows (from
   1.7-3.5), and `bench` `css` 4.01k -> 7.95k i/s, `at_css` 1.75M -> 2.02M
   i/s - ~6.6x / ~2.9x nokolexbor, ~10x / ~5000x Nokogiri (nokolexbor's own
-  number swings run to run; judge by makiri's absolute i/s). Verify with
+  number swings run to run; judge by makiri's absolute i/s). Reusing the
+  tables and stacks across calls (`Scratch`, the subsystem note) then took
+  `at_css` to 2.70M i/s (~3.8x nokolexbor), `css` 8.38k. Verify with
   `bench`'s `at_css`/`css` rows, the differential fuzzer, `rake oom` and
   `FUZZ_ARGS="--target css" bundle exec rake fuzz:sanitize`.
 - **The compiled-selector cache is back, over its own separate engine**
