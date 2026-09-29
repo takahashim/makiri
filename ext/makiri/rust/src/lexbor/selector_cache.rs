@@ -1,10 +1,22 @@
-//! A compiled-selector cache for `lexbor::selector_port`'s HTML query,
-//! mirroring `lexbor::selectors`'s OLD `CachePolicy`/`SelectorCache` design
-//! (same constants, same adaptive bypass strategy - see its module doc for
-//! the measurements that justified both the cache and the bypass) over its
-//! OWN separate process-global parser/arena, built the same way the OLD
-//! engine's and the stylesheet reader's are
-//! (`css_engine::ParserParts::build()`).
+//! The compiled-selector cache for `lexbor::selector_port`'s HTML query, over
+//! its OWN process-global parser/arena, built the way the stylesheet reader's
+//! is (`css_engine::ParserParts::build()`).
+//!
+//! # The cache adapts
+//!
+//! Parsing the selector dominates when the same one is queried repeatedly, so
+//! compiled lists are cached in a map keyed by the selector bytes (a Rust map
+//! rather than a Ruby Hash, which saves a `VALUE` round-trip on every lookup -
+//! it measured ~12% of `matches?`). But holding many distinct lists in the
+//! shared arena makes each new parse slower, so a flood of one-off selectors -
+//! `getElementById` on unique React `useId` ids, never requeried - turned the
+//! cache into a net loss (~22% slower per call). The hit rate is tracked over
+//! a window ([`CachePolicy`]); below a floor, the cache is BYPASSED (parse +
+//! clean per call, so the arena stays small and the worst case is merely "as
+//! fast as no cache"), and caching is periodically re-tested so a workload
+//! that starts repeating selectors regains it. (Measured on the OLD
+//! `lxb_selectors` engine, whose cache this was; the numbers are the parser's,
+//! which both share.)
 //!
 //! Deliberately NOT `css_parser::ENGINE`: that one is shared with the XML
 //! CSS->XPath lowering, whose `Parsed` cleans the WHOLE arena on every drop
@@ -44,9 +56,11 @@ const MIN_HIT_PCT: usize = 15;
 /// Re-test caching every N bypass windows.
 const RETEST_GAP: usize = 32;
 
-/// Whether the compiled-selector cache is paying for itself - a direct copy
-/// of `lexbor::selectors::CachePolicy` (same constants, same behavior); see
-/// there for the measurements behind the numbers.
+/// Whether the compiled-selector cache is paying for itself.
+///
+/// Counts lookups over a window of [`WIN`]; at a window's end, a hit rate
+/// under [`MIN_HIT_PCT`] switches caching off, and after [`RETEST_GAP`] such
+/// windows it is switched back on to be measured again.
 struct CachePolicy {
     win: usize,
     win_hits: usize,
@@ -212,15 +226,13 @@ impl Cache {
              * flush, and not a verdict on the selector. */
             Err(ParseFail::GuardOom) => return Err(ParseError::Oom),
             /* A parse that reached Lexbor and failed drops the cached lists
-             * instead of keeping them - the same decision `contains_guard`'s
-             * caller and `lexbor::selectors::SelectorCache::compile` make. */
+             * instead of keeping them. This belongs to the same decision as
+             * `contains_guard` and goes with it; errors are not a hot path, so
+             * the cost is a cold cache. See CLAUDE.md. */
             Err(fail) => {
                 // SAFETY: forwarded.
                 unsafe { self.flush(p) };
-                return Err(match fail {
-                    ParseFail::Rejected => ParseError::Syntax,
-                    ParseFail::GuardOom | ParseFail::ParserOom => ParseError::Oom,
-                });
+                return Err(parse_error(fail));
             }
         };
 
@@ -259,9 +271,11 @@ fn engine_in(g: &mut Globals) -> Result<SelectorParser, ParseError> {
 }
 
 /// Holds the borrow of the globals for one query, and flushes the cache on a
-/// PANIC unwind - the same reasoning as `lexbor::selectors::Session`: nothing
-/// reads a cached list once the query that would have used it has unwound,
-/// but leaving a half-used parser/arena for the NEXT query would not be safe.
+/// PANIC unwind: the engine outlives every call, so a panic mid-parse would
+/// leave the shared parser in a non-CLEAN stage and a half-parsed list in the
+/// shared arena for every LATER query. Nothing reads a cached list once the
+/// query that would have used it has unwound. On the ordinary path it does
+/// nothing.
 struct Session<'g> {
     g: GvlRef<'g, Globals>,
 }
@@ -288,8 +302,9 @@ impl Drop for Session<'_> {
 /// with the matcher's kept [`Scratch`] - then leave the engine ready for the
 /// next call.
 ///
-/// Mirrors `lexbor::selectors::with_compiled_selector`'s three-way dispatch
-/// (flush-on-window-end, bypass, cached) exactly - see its doc.
+/// Three ways: a window that ended with caching off flushes the cache;
+/// bypassing parses and cleans per call; otherwise the list comes from the
+/// cache, compiled into it on a miss.
 pub(crate) fn with_compiled<R>(
     gvl: &Gvl,
     selector: &[u8],
@@ -316,11 +331,7 @@ pub(crate) fn with_compiled<R>(
             // this call by the session's live borrow; `list_from_raw`'s
             // contract.
             Ok(list) => Ok(f(unsafe { list_from_raw(list.as_ptr()) }, &mut g.scratch)),
-            Err(ParseFail::GuardOom) => Err(ParseError::Oom),
-            Err(fail) => Err(match fail {
-                ParseFail::Rejected => ParseError::Syntax,
-                ParseFail::GuardOom | ParseFail::ParserOom => ParseError::Oom,
-            }),
+            Err(fail) => Err(parse_error(fail)),
         };
         // SAFETY: `list` (if any) is out of scope before the arena it lives
         // in is cleaned; the session's borrow is live.
@@ -335,5 +346,14 @@ pub(crate) fn with_compiled<R>(
         g.cache.with_list(&mut g.policy, e, selector, |list| {
             f(list_from_raw(list.as_ptr()), &mut g.scratch)
         })
+    }
+}
+
+/// The error a failed parse is reported as: an allocation failure is not a
+/// verdict on the selector.
+fn parse_error(fail: ParseFail) -> ParseError {
+    match fail {
+        ParseFail::Rejected => ParseError::Syntax,
+        ParseFail::GuardOom | ParseFail::ParserOom => ParseError::Oom,
     }
 }

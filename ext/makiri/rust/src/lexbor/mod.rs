@@ -48,6 +48,9 @@ pub mod selector_port;
 /// reference (`lexbor::tests::selector_port_spike`) until that confidence is
 /// trusted enough to remove it
 /// (`notes/css_selectors_crate_migration_plan.ja.md` Phase 3).
+// The OLD `lxb_selectors`-backed engine: the differential tests' reference
+// for `selector_port`, which is what ships.
+#[cfg(test)]
 pub mod selectors;
 /// Lexbor's HTML serialization callbacks and buffer traversal.
 pub mod serialize;

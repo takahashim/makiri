@@ -65,7 +65,8 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   and returns the stop status, and the caller re-raises once C has unwound.
   `caught::PanicLatch` is that, and it is deliberately the same shape the
   callbacks already used for the node cap and OOM. It is installed in all eight:
-  the CSS traversal (`find_cb`/`first_cb`/`match_cb`), the serializer sink
+  the OLD CSS engine's traversal (`find_cb`/`first_cb`/`match_cb`, in
+  `lexbor::selectors`, now compiled into tests only), the serializer sink
   (`lexbor::chunks::chunk_cb`, one generic function for the HTML and stylesheet
   serializers),
   the tokenizer's `tree_guard::hook_token_cb` (its whole Rust body is one
@@ -741,11 +742,11 @@ cache keeps alive, the same shape `Parsed::groups()` builds over one a
 `Parsed` keeps alive (a `Parsed`'s `Drop` cleans the WHOLE shared arena, which
 is exactly why HTML needed its own separate one to cache anything past one
 call). `lexbor/selectors.rs` (the OLD `lxb_selectors`-callback engine this
-replaced for HTML) still exists, used only as the differential-testing
-reference (`lexbor::tests::selector_port_spike::agrees_with_the_old_lexbor_engine_on_standard_selectors`
-and its randomized sibling) - it is not on `Node#css`'s path any more, kept
-deliberately for comparison rather than deleted yet
-(`notes/css_selectors_crate_migration_plan.ja.md`).
+replaced for HTML) is the differential-testing reference
+(`lexbor::tests::selector_port_spike::agrees_with_the_old_lexbor_engine_on_standard_selectors`
+and its randomized sibling) and nothing else: `#[cfg(test)]`, so no build
+that ships carries it, and without a cache of its own - parse, run, clean
+per query. The adaptive cache policy lives only in `selector_cache`.
 **The matcher is Lexbor's control flow, in safe Rust** (`selector_port`'s
 `Compiled` and `Query`). `compile` decodes every simple selector once into a
 `Step` (Lexbor's entry) and splits every chain - top level and every nested
