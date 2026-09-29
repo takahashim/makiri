@@ -887,11 +887,15 @@ compounds>)` lost its only alternative and matched EVERY element, and `p, x
 lists on an explicit work list, not recursion - a recursive first version
 turned `:is()` nested 2000 deep into a `SystemStackError` in a 128 KiB Fiber,
 which wedged the shared CSS engine for the rest of the process
-(`spec/native_stack_guard_spec.rb` pins the Fiber case). **Not yet ported from the old engine's design**: a
-`NthIndexCache`-equivalent for the sibling-position family (currently a plain
-O(siblings) scan, same asymptotic cost the old engine had, just not yet
-optimised) - deliberately deferred until there is a `rake bench` number to
-chase (CLAUDE.md's own performance-work rule), not a silent gap.
+(`spec/native_stack_guard_spec.rb` pins the Fiber case). **A walking query
+remembers the sibling positions it has counted** (`selector_port::Positions`,
+one memo per `:nth-*` kind): the scan is charged to the budget, and counted
+afresh per candidate it made `:nth-child` over a wide list quadratic in that
+budget - `tr:nth-child(odd)` over ~4,500 rows raised "exceeded its work
+budget". A walk records every counted sibling it passes and stops at the
+first known one, so each list is walked once per kind
+(`nth_over_a_wide_list_costs_work_linear_in_the_list`); the memo is dropped
+and refilled past `POSITIONS_MAX` entries. `matches?` keeps none.
 **The GVL is an argument, not a comment**: each process-global engine
 (`css_parser`'s, `selector_cache`'s, the OLD `selectors`'s, the stylesheet
 reader's) lives in its own `crate::gvl::GvlCell`, whose `borrow` takes a

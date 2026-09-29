@@ -307,10 +307,11 @@ SCENARIOS = {
 
   # CSS: a comma list with combinators through the reused engine, the at_css
   # first-match path, and matches?. The selectors reach every allocation the
-  # HTML matcher (`lexbor::selector_port`) makes: the compiled chain tables,
-  # the nested-list map (:is/:not/:has/of S), the parked continuations
-  # (descendant and `~` retries, list pseudos, :has() backtracking, of S), the
-  # work stack and the result vector.
+  # HTML matcher (`lexbor::selector_port`) makes: the compiled tables and the
+  # compile work list, the chain positions, the task stack (:is/:not/:has/
+  # of S, :has() cursors), the resolved names, the remembered `:nth-*`
+  # sibling positions, and the result vector. Most are borrowed from a
+  # Scratch the engine keeps, so they allocate on the first query only.
   "css" => lambda do
     doc = Makiri::HTML::Document.parse(<<~HTML)
       <html><body>
@@ -326,9 +327,10 @@ SCENARIOS = {
       "section:has(~ ul > li.a), div:has(> span), ul:has(li + li.a li, li.a)",
       "li:nth-child(2 of .a), li:nth-last-child(odd of :is(.a, :not(p)))",
       "body li:not(:has(*)):is(.a):nth-child(n of li)",
-      # Past the query tables' inline capacity (`Small`): more than four
-      # alternatives, eight simple selectors and eight compounds.
+      # A wide selector: many alternatives, simple selectors and compounds.
       "p, div, span, section, html body ul li.a.a.a.a.a.a.a.a, body ul > li, html li",
+      # The remembered sibling positions, for each counting kind.
+      "li:nth-child(odd), p:nth-last-of-type(2), li:last-of-type, li:nth-last-child(-n+2)",
     ].map { |s| doc.css(s).map(&:text).join(",") }.join("|") +
       doc.at_css("#x")&.name.to_s + doc.at_css("li:has(~ li.a)").text +
       doc.at_css("li").matches?("ul > li:is(.a):not(:has(p))").to_s
