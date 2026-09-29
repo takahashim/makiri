@@ -27,6 +27,11 @@
   now raises from all three methods wherever it appears in the selector.
   Before, it raised only if matching happened to reach it: `p, x || y`
   answered the `<p>`s, and `nosuch:lexbor-contains("x")` answered empty.
+* HTML `#id` and `.class` selectors match the DOM's ID and class attributes -
+  the no-namespace `id` / `class` - as Lexbor's own matcher did. An
+  unprefixed `id` set in a namespace (`set_attribute_ns("urn:x", "id", v)`)
+  is not the ID, even when it is the element's only `id`; `[id=v]` still
+  finds it.
 
 ### Removed
 
@@ -377,6 +382,10 @@
 
 ### Performance
 
+* HTML `#css`/`#at_css`/`#matches?` match with Lexbor's own control flow - a
+  loop over a chain's compounds that backtracks on failure, with nested
+  pseudo-classes as contexts on a heap stack - instead of a general
+  continuation machine. `rake bench`: `css` ~2x faster, `at_css` ~15%.
 * `NodeSet#at_css` / `#at_xpath` stop at the first node with a match instead of
   querying every node and building the union.
 * `XML::Node#canonicalize` no longer walks up the ancestors for each namespace

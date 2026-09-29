@@ -19,12 +19,25 @@
 //! `vendor/lexbor/source/lexbor/selectors/selectors.c` (matching logic) and
 //! its test suite (`vendor/lexbor/test/lexbor/selectors/selectors.c`); every
 //! matching rule below is cross-referenced against it by section letter
-//! (`§B-1` etc.). What is NOT carried over is the C file's data structures
-//! (an intrusive `prev`/`next`/`following` linked list over a hand-written
-//! object pool) - translating those directly would mean `unsafe` Rust, which
-//! defeats the point of this migration. The explicit `Frame`/`Cont` stack
-//! below is the safe-Rust shape of the SAME algorithm (heap continuations
-//! instead of pointers), not a stylistic choice.
+//! (`§B-1` etc.).
+//!
+//! The control flow is Lexbor's too, in safe Rust: a chain is matched right
+//! to left by the `find` / `found_check` / `not_found` loop over its compounds
+//! (`Query::step_chain`, backtracking to the nearest descendant / subsequent-
+//! sibling combinator on a failure), each simple selector is decoded once
+//! (`Step`, Lexbor's entry), names are resolved once per query (`Name`,
+//! Lexbor's `entry->id`), and `#id` / `.class` read the element's own
+//! `attr_id` / `attr_class` shortcut. A nested list-pseudo is a nested context
+//! on a heap stack (`Task`, Lexbor's `lxb_selectors_nested_t`) that the loop
+//! returns to with its verdict. What is NOT carried over is the C file's
+//! intrusive linked lists over a hand-written object pool: the tables are
+//! index-addressed (`Compiled`), and the stacks are `falloc` vectors.
+//!
+//! An earlier version drove everything - every compound of every chain -
+//! through a general continuation machine (a frame stack plus a slab of
+//! parked continuations). It was correct and recursion-free, and it was the
+//! whole gap to Lexbor: 1.7-3.5x Lexbor's time on the probes, against
+//! 1.0-1.6x once the loop above took over.
 //!
 //! Deliberate, documented departures from a byte-for-byte semantic
 //! match, plus what is still open:
@@ -50,7 +63,7 @@
 //!   (`lexbor::tests::selector_port_spike::nth_child_of_s_agrees_with_a_spec_oracle`);
 //!   the Lexbor differential fuzzer leaves `of S` out. The walk itself is
 //!   Lexbor's shape - candidate in `S`, then siblings one at a time
-//!   (`Frame::NthOfStep`) on the explicit stack.
+//!   (`NthOfTask`) on the task stack.
 //! - An attribute selector's NAME is looked up as the DOM's `getAttribute`
 //!   does - ASCII case-insensitive on an HTML element in an HTML document,
 //!   case-sensitive otherwise, the HTML Standard's rule for Selectors - where
@@ -59,12 +72,16 @@
 //!   rule exactly (an id match is only a pre-filter);
 //!   `lexbor::tests::selector_port_spike::resolved_names_agree_with_the_old_engine`
 //!   pins that this is the ONLY name-lookup difference.
+//! - `#id` / `.class` read the DOM's ID and class attributes - the
+//!   no-namespace `id` / `class` - through Lexbor's shortcut, as Lexbor
+//!   does; a lookup by qualified name would also take an unprefixed `id` set
+//!   IN a namespace (`setAttributeNS("urn:x", "id")`), which is not the ID.
 //!
 //! Still open (tracked in the plan, not silent gaps): `::pseudo-elements`,
 //! `:lexbor-contains()` (decided not to reimplement), `:current()` (deferred,
 //! not ruled out - `notes/css_selectors_crate_migration_plan.ja.md`). Closed,
 //! not open: the selector-nesting cap (see the next section), the work budget
-//! ([`Budget`]), and allocation - every table, stack and continuation a query
+//! ([`Budget`]), and allocation - every table and stack a query
 //! uses is query-local and grows through `falloc` ([`Compiled`], `Query`), so
 //! an out-of-memory raises [`MatchFailure::Oom`] instead of aborting, and
 //! `rake oom`'s `css` scenario fails each site in turn.
@@ -75,13 +92,12 @@
 //! checks a compound and, on hitting a nested list-pseudo, calls itself
 //! again for the nested list - reproduces exactly the `selectors`/
 //! `cssparser` crate's problem (measured stack-overflowing at a nesting
-//! depth of only ~2,000-2,500 in a release build). The `Frame`/`Cont`
-//! machinery below avoids that: nesting depth becomes heap growth, never
-//! call-stack growth - verified at 500,000 levels in
-//! `lexbor::tests::selector_port_spike`.
+//! depth of only ~2,000-2,500 in a release build). The task stack below
+//! avoids that: nesting depth becomes heap growth, never call-stack growth -
+//! verified at 500,000 levels in `lexbor::tests::selector_port_spike`.
 //!
 //! `:has()`'s own forward search (§A-4) is heap-based too, for the same
-//! reason and the same way: `Frame::HasStep`/`HasCursor` walk candidates and
+//! reason and the same way: `ForwardTask`/`HasCursor` walk candidates and
 //! `:has()`-inside-`:has()` nesting without ever making a native Rust call
 //! that itself recurses. This was NOT the original design - an earlier
 //! version answered `:has()` with ordinary Rust recursion (`has_forward`),
@@ -90,7 +106,7 @@
 //! for ONE `:has()` chain's own compound-by-compound depth, but said nothing
 //! about `:has()` NESTED inside another `:has()`'s argument: `check_simple`'s
 //! `Has` arm called `has_matches` EAGERLY (unlike `:is`/`:where`/`:not`,
-//! which already deferred to this file's heap stack), so each nesting level
+//! which already deferred to a heap stack), so each nesting level
 //! added a fresh native call chain with its OWN 64-deep budget, unbounded by
 //! nesting depth - confirmed as a real, reachable crash: `:has(` × 300 `div`
 //! `)` × 300 against a 302-deep document, inside a `Fiber` given only
@@ -115,10 +131,10 @@ use crate::lexbor::adapter::html::{
     AttrName, HtmlAttr, HtmlDoc, HtmlElement, HtmlNode, NodeType, NsId, TagId,
 };
 use crate::lexbor::css_parser::{
-    AttrMatch, Combinator, FunctionArg, List, ListPseudo, Lists, Nth, PseudoClass, Selector, Simple,
+    AttrMatch, Combinator, FunctionArg, List, ListPseudo, Lists, PseudoClass, Simple,
 };
 use crate::limits::NODE_SET_MAX;
-use crate::ptr_table::PtrMap;
+use core::ffi::c_long;
 
 /// A complexity bound on compounds per chain, mirroring `css::MAX_COMPOUNDS`.
 ///
@@ -131,7 +147,7 @@ pub(crate) const MAX_COMPOUNDS: usize = 64;
 /// The per-query work budget's default cap - the count [`Budget::charge`]
 /// compares against. On the same scale as [`NODE_SET_MAX`]: this bounds not
 /// the RESULT set but the total number of steps one top-level call
-/// ([`matches`], [`matches_any`], [`select_all`], [`select_first`]) may take
+/// ([`matches_any`], [`select_all`], [`select_first`]) may take
 /// charging it, which is what stops a `:has()` search from multiplying its
 /// cost per candidate element into something unbounded by the document's own
 /// size.
@@ -139,8 +155,8 @@ const DEFAULT_WORK_BUDGET: u64 = 10 * 1000 * 1000;
 
 /// One top-level call's work budget: every step that can cost MORE than the
 /// input document/selector's own size bounds already (concretely: each
-/// candidate [`Frame::HasStep`]'s search visits, and each frame [`run`]'s
-/// trampoline pops) charges it once. Exceeding it is
+/// compound tested, each `:has()` candidate visited, each alternative tried
+/// and each sibling `:nth-*` counts) charges it once. Exceeding it is
 /// [`MatchFailure::WorkExceeded`] - a hard stop propagated all the way back
 /// to the caller, never a silent `false` for just the one `:has()` that
 /// happened to hit it: a `:has()` inside a larger compound answering `false`
@@ -210,16 +226,16 @@ impl crate::falloc::Oom for MatchFailure {
 /// vector past them: a query's tables are small for nearly every selector,
 /// and a `matches?` or an early `at_css` hit would otherwise pay an
 /// allocation per table per call.
-struct Small<T: Copy, const N: usize> {
-    inline: [Option<T>; N],
+struct Small<T: Copy + Default, const N: usize> {
+    inline: [T; N],
     len: usize,
     heap: Vec<T>,
 }
 
-impl<T: Copy, const N: usize> Small<T, N> {
+impl<T: Copy + Default, const N: usize> Small<T, N> {
     fn new() -> Self {
         Small {
-            inline: [None; N],
+            inline: [T::default(); N],
             len: 0,
             heap: Vec::new(),
         }
@@ -232,13 +248,13 @@ impl<T: Copy, const N: usize> Small<T, N> {
     fn push(&mut self, v: T) -> Result<(), MatchFailure> {
         if self.len < N {
             if let Some(slot) = self.inline.get_mut(self.len) {
-                *slot = Some(v);
+                *slot = v;
             }
         } else {
             if self.len == N {
                 self.heap.falloc_reserve(N * 2).or_oom()?;
-                for x in self.inline.iter().flatten() {
-                    self.heap.falloc_push(*x).or_oom()?;
+                for x in self.inline {
+                    self.heap.falloc_push(x).or_oom()?;
                 }
             }
             self.heap.falloc_push(v).or_oom()?;
@@ -248,16 +264,28 @@ impl<T: Copy, const N: usize> Small<T, N> {
     }
 
     #[inline]
-    fn get(&self, i: usize) -> Option<T> {
+    fn as_slice(&self) -> &[T] {
         if self.len <= N {
-            self.inline.get(i).copied().flatten()
+            self.inline.get(..self.len).unwrap_or(&[])
         } else {
-            self.heap.get(i).copied()
+            &self.heap
         }
     }
 
-    fn iter(&self) -> impl Iterator<Item = T> + '_ {
-        (0..self.len).filter_map(|i| self.get(i))
+    /// Replace item `i` (< `len`).
+    fn set(&mut self, i: usize, v: T) -> Result<(), MatchFailure> {
+        let slot = if self.len <= N {
+            self.inline.get_mut(..self.len).and_then(|s| s.get_mut(i))
+        } else {
+            self.heap.get_mut(i)
+        };
+        *slot.ok_or(MatchFailure::Unsupported)? = v;
+        Ok(())
+    }
+
+    #[inline]
+    fn get(&self, i: usize) -> Option<T> {
+        self.as_slice().get(i).copied()
     }
 }
 
@@ -281,11 +309,7 @@ struct Compound {
 /// [`Compiled`] table, left to right as written. `len == 0` is an empty
 /// chain, which never matches.
 ///
-/// `Copy`, so a retry that keeps matching the SAME chain against a new
-/// ancestor/sibling (`advance`'s `Descendant`/`SubsequentSibling`) carries
-/// two integers. It used to be an `Rc<[Compound]>` (and before that an owned
-/// `Vec`), neither of which can be built without an allocation that aborts
-/// on failure.
+/// `Copy`: two integers into the table, which a task carries as it is.
 #[derive(Clone, Copy, Default)]
 struct Chain {
     start: u32,
@@ -296,14 +320,38 @@ impl Chain {
     fn len(self) -> usize {
         self.len as usize
     }
+}
 
-    /// `chain[idx]` alone, as a chain of its own - see
-    /// [`single_compound_frame`]. `idx < len`, so this stays inside the
-    /// table.
-    fn only(self, idx: usize) -> Chain {
-        Chain {
-            start: self.start + idx as u32,
-            len: 1,
+impl Default for Compound {
+    fn default() -> Self {
+        Compound {
+            start: 0,
+            end: 0,
+            comb: Combinator::Close,
+        }
+    }
+}
+
+/// One simple selector, decoded once at compile time - Lexbor's own
+/// `entry->selector`, read through its `type` switch per candidate, is what
+/// this saves re-decoding on every node.
+#[derive(Clone, Copy)]
+struct Step<'p> {
+    simple: Simple<'p>,
+    name: &'p [u8],
+    /// A list-pseudo's or `of S`'s alternatives: `alts[alts ..
+    /// alts + n_alts]` of the [`Compiled`] table.
+    alts: u32,
+    n_alts: u32,
+}
+
+impl Default for Step<'_> {
+    fn default() -> Self {
+        Step {
+            simple: Simple::Other,
+            name: &[],
+            alts: 0,
+            n_alts: 0,
         }
     }
 }
@@ -322,12 +370,12 @@ impl Chain {
 pub struct Compiled<'p> {
     /// Every simple selector, compound by compound, in the order the
     /// compounds number them.
-    simples: Small<Selector<'p>, 8>,
-    compounds: Small<Compound, 8>,
+    simples: Small<Step<'p>, 4>,
+    compounds: Small<Compound, 4>,
     /// The top-level comma alternatives, in order.
-    top: Small<Chain, 4>,
-    /// Each nested list's chain, by the list's identity ([`List::key`]).
-    nested: PtrMap<*const (), Chain>,
+    top: Small<Chain, 2>,
+    /// Every nested list's alternatives, each list's in order ([`Step::alts`]).
+    alts: Small<Chain, 2>,
 }
 
 /// Compile `groups` - see [`Compiled`] - or refuse it: no chain anywhere
@@ -363,19 +411,17 @@ pub fn compile(groups: Lists<'_>) -> Result<Compiled<'_>, MatchFailure> {
         simples: Small::new(),
         compounds: Small::new(),
         top: Small::new(),
-        nested: PtrMap::new(),
+        alts: Small::new(),
     };
-    let mut pending: Vec<Lists<'_>> = Vec::new();
+    let mut pending: Vec<(Lists<'_>, u32)> = Vec::new();
     for list in groups {
         let chain = c.add_chain(list, &mut pending)?;
         c.top.push(chain)?;
     }
-    while let Some(lists) = pending.pop() {
-        for list in lists {
+    while let Some((lists, at)) = pending.pop() {
+        for (k, list) in (at..).zip(lists) {
             let chain = c.add_chain(list, &mut pending)?;
-            c.nested
-                .insert(list.key(), chain)
-                .map_err(|_| MatchFailure::Oom)?;
+            c.alts.set(k as usize, chain)?;
         }
     }
     Ok(c)
@@ -395,7 +441,7 @@ impl<'p> Compiled<'p> {
     fn add_chain(
         &mut self,
         list: List<'p>,
-        pending: &mut Vec<Lists<'p>>,
+        pending: &mut Vec<(Lists<'p>, u32)>,
     ) -> Result<Chain, MatchFailure> {
         let start = u32::try_from(self.compounds.len()).map_err(|_| MatchFailure::TooComplex)?;
         let mut len = 0u32;
@@ -412,21 +458,35 @@ impl<'p> Compiled<'p> {
             let simple_start = self.simple_index()?;
             let mut sel = first;
             loop {
-                self.simples.push(sel)?;
-                match sel.simple() {
+                let simple = sel.simple();
+                let nested = match simple {
                     Simple::PseudoClassFunction(FunctionArg::Contains(_)) => {
                         return Err(MatchFailure::Unsupported)
                     }
                     Simple::PseudoClassFunction(FunctionArg::Selectors { lists, .. }) => {
-                        pending.falloc_push(lists).or_oom()?
+                        Some(lists)
                     }
                     Simple::PseudoClassFunction(FunctionArg::Nth { anb, .. }) => {
-                        if let Some(of_list) = anb.and_then(|a| a.of_list) {
-                            pending.falloc_push(of_list).or_oom()?;
-                        }
+                        anb.and_then(|a| a.of_list)
                     }
-                    _ => {}
+                    _ => None,
+                };
+                let alts = u32::try_from(self.alts.len()).map_err(|_| MatchFailure::TooComplex)?;
+                let mut n_alts = 0u32;
+                if let Some(lists) = nested {
+                    // Slots now, filled when `pending` reaches the list.
+                    for _ in lists {
+                        self.alts.push(Chain::default())?;
+                        n_alts += 1;
+                    }
+                    pending.falloc_push((lists, alts)).or_oom()?;
                 }
+                self.simples.push(Step {
+                    simple,
+                    name: sel.name(),
+                    alts,
+                    n_alts,
+                })?;
                 match sel.next().filter(|n| n.combinator() == Combinator::Close) {
                     Some(n) => sel = n,
                     None => break,
@@ -453,13 +513,6 @@ impl<'p> Compiled<'p> {
         self.compounds
             .get(chain.start as usize + idx)
             .ok_or(MatchFailure::Unsupported)
-    }
-
-    /// The chain compiled for the nested `list`. One `compile` never saw is
-    /// a broken invariant - answered as "could not be run", never as an
-    /// empty, never-matching chain.
-    fn nested_chain(&self, list: List<'p>) -> Result<Chain, MatchFailure> {
-        self.nested.get(list.key()).ok_or(MatchFailure::Unsupported)
     }
 }
 
@@ -500,9 +553,23 @@ fn has_whitespace_token(target: &[u8], want: &[u8], case_insensitive: bool) -> b
     if want.is_empty() {
         return false; // an empty class name/token never matches (§B-2)
     }
-    target
-        .split(|&b| is_lexbor_whitespace(b))
-        .any(|tok| !tok.is_empty() && eq_bytes(tok, want, case_insensitive))
+    // Lexbor's own loop: a token is compared only when its length matches.
+    let mut rest = target;
+    loop {
+        let start = rest.iter().position(|&b| !is_lexbor_whitespace(b));
+        let Some(tail) = start.and_then(|s| rest.get(s..)) else {
+            return false;
+        };
+        let len = tail
+            .iter()
+            .position(|&b| is_lexbor_whitespace(b))
+            .unwrap_or(tail.len());
+        let (tok, after) = tail.split_at(len);
+        if len == want.len() && eq_bytes(tok, want, case_insensitive) {
+            return true;
+        }
+        rest = after;
+    }
 }
 
 /* ------------------------------------------------------------------ *
@@ -961,18 +1028,21 @@ fn nth_matches(
         return Ok(false);
     };
     let pos = sibling_position(node, from_end, of_type, budget)? as i64;
-    Ok(anb_matches(anb, pos))
+    Ok(anb_matches(anb.a, anb.b, pos))
 }
 
 /// §D-3 `lxb_selectors_anb_calc`, done with integer arithmetic instead of
 /// Lexbor's `double` division (module doc: avoids float-rounding risk for
 /// large indices).
-fn anb_matches(anb: crate::lexbor::css_parser::Nth<'_>, pos: i64) -> bool {
-    if anb.a == 0 {
-        return anb.b >= 0 && pos == anb.b;
+// `c_long` is 32 bits on Windows.
+#[allow(clippy::useless_conversion)]
+fn anb_matches(a: c_long, b: c_long, pos: i64) -> bool {
+    let (a, b) = (i64::from(a), i64::from(b));
+    if a == 0 {
+        return b >= 0 && pos == b;
     }
-    let k = pos - anb.b;
-    k % anb.a == 0 && k / anb.a >= 0
+    let k = pos - b;
+    k % a == 0 && k / a >= 0
 }
 
 /* ------------------------------------------------------------------ *
@@ -980,11 +1050,10 @@ fn anb_matches(anb: crate::lexbor::css_parser::Nth<'_>, pos: i64) -> bool {
  * ------------------------------------------------------------------ */
 
 /// A resumable position in `:has()`'s forward search for ONE compound step -
-/// the heap state [`Frame::HasStep`] carries so a `:has()` argument's
+/// the heap state a [`ForwardTask`] keeps per level so a `:has()` argument's
 /// candidate search (potentially many candidates, unlike the main matcher's
 /// single-path ancestor/sibling climbs) never recurses natively, whatever the
-/// combinator - the same property `Frame`/`Cont` already give `:is`/`:where`/
-/// `:not` nesting (module doc). Built once per compound step
+/// combinator (module doc). Built once per compound step
 /// ([`HasCursor::start`]) from the node the search starts FROM, then
 /// [`HasCursor::next`] repeatedly for each candidate - same candidates, same
 /// order, same element-only filtering as Lexbor's own forward search
@@ -1031,9 +1100,7 @@ impl<'doc> HasCursor<'doc> {
     }
 
     /// The next ELEMENT candidate, or `None` once the search is exhausted -
-    /// `run`'s own per-frame-pop charge (its doc) is what bills `budget` for
-    /// each one, exactly as the original `has_forward`'s `candidate_ok`
-    /// closure charged once per candidate visited.
+    /// [`Query::step_forward`] charges the budget for each one.
     fn next(&mut self) -> Option<HtmlNode<'doc>> {
         match self {
             HasCursor::Empty => None,
@@ -1067,49 +1134,22 @@ impl<'doc> HasCursor<'doc> {
  * simple-selector dispatch                                            *
  * ------------------------------------------------------------------ */
 
-/// The verdict for one simple selector (or a run of them), or a request to
-/// defer to the explicit stack: a `:is`/`:where`/`:not` was hit, and `rest`
-/// is whatever `Close`-linked simple selectors of the SAME compound remain
-/// after it (checked, eagerly again, once the deferred verdict is back -
-/// see [`check_from`]).
-enum SimpleCheck<'p> {
+/// One simple selector's verdict at a node, or `Deferred`: it is a
+/// `:is()`/`:where()`/`:not()`/`:has()`/`of S`, which a nested [`Task`]
+/// answers.
+enum SimpleCheck {
     Result(bool),
-    Defer {
-        negate: bool,
-        lists: Lists<'p>,
-        rest: Option<u32>,
-    },
-    /// `:has()`: deferred to a heap-based forward search FROM `node` (see
-    /// `Frame::HasStep`'s doc) - kept distinct from `Defer` because `:has()`'s
-    /// alternatives are resolved by SEARCHING from `node`, not by matching AT
-    /// `node` the way `:is`/`:where`/`:not`'s `Defer` alternatives are.
-    Has {
-        lists: Lists<'p>,
-        rest: Option<u32>,
-    },
-    /// `:nth-*(an+b of S)` (§D-1): deferred to `Cont::NthOfSelf`/
-    /// `Frame::NthOfStep` - does `node` match `S`, then how many siblings
-    /// before it (after it, `from_end`) do. `S` is matched by the same
-    /// `Frame::TryAlternatives` `:is()` uses, so `of S` nested inside `of S`
-    /// costs heap, not native stack, the way Lexbor's own nested state for it
-    /// (`lxb_selectors_state_after_nth_child`) does. It used to be a native
-    /// call from here into a fresh `run` per sibling, and 300 levels of it
-    /// crashed a 128 KiB Fiber with `SystemStackError`.
-    NthOf {
-        anb: Nth<'p>,
-        from_end: bool,
-        lists: Lists<'p>,
-        rest: Option<u32>,
-    },
+    Deferred,
 }
 
-fn check_simple<'p>(
-    sel: Selector<'p>,
+#[inline]
+fn check_simple(
+    sel: &Step<'_>,
     name: Name<'_>,
     node: HtmlNode<'_>,
     budget: &Budget,
-) -> Result<SimpleCheck<'p>, MatchFailure> {
-    Ok(match sel.simple() {
+) -> Result<SimpleCheck, MatchFailure> {
+    Ok(match sel.simple {
         // `*` matches an ELEMENT, never a text/comment/doctype/PI node -
         // found by the same randomized differential test as
         // `counts_toward_child_position`: `:has(*)` used `*` against every
@@ -1117,19 +1157,21 @@ fn check_simple<'p>(
         // `true` here made a `<p>` with only text content wrongly "have"
         // that text node as a `*`-matching descendant.
         Simple::Universal => SimpleCheck::Result(node.element().is_some()),
-        Simple::Type => SimpleCheck::Result(type_matches(node, sel.name(), name)),
-        Simple::Id => {
-            let ci = document_is_quirks(node);
-            SimpleCheck::Result(
-                attr_value(node, b"id", name).is_some_and(|v| eq_bytes(v, sel.name(), ci)),
-            )
-        }
-        Simple::Class => {
-            let ci = document_is_quirks(node);
-            let has = attr_value(node, b"class", name)
-                .is_some_and(|c| has_whitespace_token(c, sel.name(), ci));
-            SimpleCheck::Result(has)
-        }
+        Simple::Type => SimpleCheck::Result(type_matches(node, sel.name, name)),
+        // §B-3/§B-2 through the element's own `id` / `class` shortcut, as
+        // Lexbor reads them (`HtmlElement::id_attr`) - no attribute-list scan.
+        Simple::Id => SimpleCheck::Result(
+            node.element()
+                .and_then(HtmlElement::id_attr)
+                .is_some_and(|a| eq_bytes(a.value(), sel.name, document_is_quirks(node))),
+        ),
+        Simple::Class => SimpleCheck::Result(
+            node.element()
+                .and_then(HtmlElement::class_attr)
+                .is_some_and(|a| {
+                    has_whitespace_token(a.value(), sel.name, document_is_quirks(node))
+                }),
+        ),
         Simple::Attribute(at) => {
             // §B-4: explicit `i` -> case-insensitive; explicit `s` -> forced
             // case-sensitive; no modifier at all -> the HTML table decides
@@ -1145,8 +1187,8 @@ fn check_simple<'p>(
             };
             SimpleCheck::Result(attribute_matches(
                 node,
-                sel.name(),
-                attr_value(node, sel.name(), name),
+                sel.name,
+                attr_value(node, sel.name, name),
                 at.op,
                 at.value,
                 explicit_ci,
@@ -1157,33 +1199,11 @@ fn check_simple<'p>(
             from_end,
             of_type,
             anb,
-        }) => match anb.and_then(|a| a.of_list.map(|l| (a, l))) {
-            Some((anb, lists)) => SimpleCheck::NthOf {
-                anb,
-                from_end,
-                lists,
-                rest: None,
-            },
-            None => SimpleCheck::Result(nth_matches(node, from_end, of_type, anb, budget)?),
+        }) => match anb {
+            Some(a) if a.of_list.is_some() => SimpleCheck::Deferred,
+            _ => SimpleCheck::Result(nth_matches(node, from_end, of_type, anb, budget)?),
         },
-        Simple::PseudoClassFunction(FunctionArg::Selectors {
-            pseudo: ListPseudo::Has,
-            lists,
-        }) => SimpleCheck::Has {
-            lists,
-            // `check_from` (not this function) knows the compound's chain
-            // and fills the real value in.
-            rest: None,
-        },
-        Simple::PseudoClassFunction(FunctionArg::Selectors { pseudo, lists }) => {
-            SimpleCheck::Defer {
-                negate: pseudo == ListPseudo::Not,
-                lists,
-                // `check_from` (not this function) knows the compound's
-                // chain and fills the real value in.
-                rest: None,
-            }
-        }
+        Simple::PseudoClassFunction(FunctionArg::Selectors { .. }) => SimpleCheck::Deferred,
         // `:lexbor-contains()`: Lexbor itself matches with it (§D-5) - this
         // port deliberately does not (`MatchFailure::Unsupported`'s doc) -
         // so answering `false` would be indistinguishable from a selector
@@ -1207,23 +1227,22 @@ fn check_simple<'p>(
 /// the byte path makes (a type selector), or a necessary condition that the
 /// adapter then confirms (an attribute: `attr_by_resolved_name`). A
 /// candidate from another document is compared by name.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 enum Name<'doc> {
+    #[default]
     None,
     /// A type selector's tag id in that document; `None`: no element of the
     /// document has the name.
     Tag(HtmlDoc<'doc>, Option<TagId>),
-    /// An attribute's name - `[a]`, and the `id` / `class` behind `#x` / `.x`.
+    /// An attribute selector's name.
     Attr(AttrName),
 }
 
 impl<'doc> Name<'doc> {
-    fn resolve(sel: Selector<'_>, doc: HtmlDoc<'doc>) -> Name<'doc> {
-        match sel.simple() {
-            Simple::Type => Name::Tag(doc, doc.tag_id(sel.name())),
-            Simple::Attribute(_) => Name::Attr(doc.resolve_attr_name(sel.name())),
-            Simple::Id => Name::Attr(doc.resolve_attr_name(b"id")),
-            Simple::Class => Name::Attr(doc.resolve_attr_name(b"class")),
+    fn resolve(sel: &Step<'_>, doc: HtmlDoc<'doc>) -> Name<'doc> {
+        match sel.simple {
+            Simple::Type => Name::Tag(doc, doc.tag_id(sel.name)),
+            Simple::Attribute(_) => Name::Attr(doc.resolve_attr_name(sel.name)),
             _ => Name::None,
         }
     }
@@ -1231,21 +1250,16 @@ impl<'doc> Name<'doc> {
 
 /// A query's resolved [`Name`]s, by simple-selector index - empty for a
 /// query that compares names as bytes.
-type Names<'doc> = Small<Name<'doc>, 8>;
+type Names<'doc> = Small<Name<'doc>, 4>;
 
 impl<'doc> Names<'doc> {
     /// Every simple selector of `compiled`, resolved in `doc`.
     fn resolve(compiled: &Compiled<'_>, doc: HtmlDoc<'doc>) -> Result<Self, MatchFailure> {
         let mut names = Names::new();
-        for sel in compiled.simples.iter() {
+        for sel in compiled.simples.as_slice() {
             names.push(Name::resolve(sel, doc))?;
         }
         Ok(names)
-    }
-
-    #[inline]
-    fn name(&self, i: u32) -> Name<'doc> {
-        self.get(i as usize).unwrap_or(Name::None)
     }
 }
 
@@ -1275,199 +1289,113 @@ fn attr_value<'doc>(node: HtmlNode<'doc>, qname: &[u8], name: Name<'_>) -> Optio
 }
 
 /* ------------------------------------------------------------------ *
- * the explicit work stack - THE point of this module                  *
+ * the task stack - THE point of this module                           *
  * ------------------------------------------------------------------ */
 
-/// A parked continuation: its slot in [`Query`]'s slab.
+/// A range of [`Compiled::alts`]: one nested list's alternatives.
 #[derive(Clone, Copy)]
-struct ContId(u32);
-
-enum Frame<'p, 'doc> {
-    /// Check `chain[idx]` against `node`; on success, continue leftward
-    /// (`idx - 1`) per `chain[idx].comb`, or - if `idx == 0` - report success
-    /// to `k`.
-    EvalCompound {
-        chain: Chain,
-        idx: usize,
-        node: HtmlNode<'doc>,
-        k: Cont<'p, 'doc>,
-    },
-    /// Try the alternatives of `lists`, in order (`:is`/`:where` = OR,
-    /// `negate` flips it for `:not`), against `node`.
-    TryAlternatives {
-        lists: Lists<'p>,
-        node: HtmlNode<'doc>,
-        negate: bool,
-        k: Cont<'p, 'doc>,
-    },
-    /// A sub-computation finished with `bool`; propagate it to `k`.
-    Deliver(bool, Cont<'p, 'doc>),
-    /// `:has()`'s forward search: pull the next candidate from `cursor` and
-    /// check `chain[idx]`'s own compound against it, or - once `cursor` is
-    /// exhausted - report the whole search as false to `k`. See
-    /// [`HasCursor`]'s doc.
-    HasStep {
-        chain: Chain,
-        idx: usize,
-        cursor: HasCursor<'doc>,
-        k: Cont<'p, 'doc>,
-    },
-    /// `of S`'s sibling count (§D-1): `pos` is the rank so far; test
-    /// `sibling` against `S`, or - once there is none - deliver whether `pos`
-    /// satisfies `anb`.
-    NthOfStep {
-        anb: Nth<'p>,
-        from_end: bool,
-        lists: Lists<'p>,
-        sibling: Option<HtmlNode<'doc>>,
-        pos: u64,
-        k: Cont<'p, 'doc>,
-    },
+struct Alts {
+    next: u32,
+    end: u32,
 }
 
-/// What to do with a sub-computation's `bool`. A continuation that waits on
-/// another holds it as a [`ContId`] into [`Query`]'s slab rather than a
-/// `Box`, so parking one can fail cleanly ([`MatchFailure::Oom`]) instead of
-/// aborting.
-enum Cont<'p, 'doc> {
-    Root,
-    /// A deferred list-pseudo inside `chain[idx]`'s compound just resolved;
-    /// on failure the whole compound fails (AND semantics), on success check
-    /// `rest` - the compound's remaining `Close`-linked simple selectors, if
-    /// any - via [`check_from`] again (which may itself defer again, e.g.
-    /// `a:not(x):is(y)`), and only once the WHOLE compound is settled, finish
-    /// it exactly as a plain compound match would (`advance`).
-    CompoundRest {
-        rest: Option<u32>,
-        chain: Chain,
-        idx: usize,
-        node: HtmlNode<'doc>,
-        k: ContId,
-    },
-    /// Retry `chain[idx]` at the next ancestor of `from` on failure; forward
-    /// success as-is.
-    AncestorRetry {
-        chain: Chain,
-        idx: usize,
-        from: HtmlNode<'doc>,
-        k: ContId,
-    },
-    /// As `AncestorRetry`, over preceding sibling elements (`~`).
-    SiblingRetry {
-        chain: Chain,
-        idx: usize,
-        from: HtmlNode<'doc>,
-        k: ContId,
-    },
-    /// One alternative of an `:is`/`:where`/`:not` list just resolved;
-    /// stop (match found, or - for `:not` - disproved) or try the next.
-    AlternativeRetry {
-        lists: Lists<'p>,
-        node: HtmlNode<'doc>,
-        negate: bool,
-        k: ContId,
-    },
-    /// A `:has()` search candidate for `chain[idx]` just had its OWN compound
-    /// checked ([`single_compound_frame`]); on success, either the `:has()`
-    /// alternative succeeds (`idx` was the chain's last compound) or the
-    /// search descends to `chain[idx + 1]` FROM this candidate, with
-    /// [`Cont::HasBacktrack`] resuming `cursor` here if that fails; on
-    /// failure, resume `cursor` for the next candidate at this SAME level.
-    HasCandidateChecked {
-        chain: Chain,
-        idx: usize,
-        cursor: HasCursor<'doc>,
-        candidate: HtmlNode<'doc>,
-        k: ContId,
-    },
-    /// The descent into `chain[idx + 1]` just concluded; on success the whole
-    /// `:has()` alternative succeeds, on failure resume `cursor` - the OUTER
-    /// level's remaining candidates for `chain[idx]`.
-    HasBacktrack {
-        chain: Chain,
-        idx: usize,
-        cursor: HasCursor<'doc>,
-        k: ContId,
-    },
-    /// One `:has()` alternative's search (`:has(a, b)` = OR) just concluded;
-    /// on failure, try the next alternative ([`Query::try_has_alternative`]).
-    HasAlternativeRetry {
-        lists: Lists<'p>,
-        node: HtmlNode<'doc>,
-        k: ContId,
-    },
-    /// `of S`: whether the candidate `node` itself matches `S` just resolved.
-    /// It must (§D-1), or the pseudo-class is false; if it does, start
-    /// counting its siblings at rank 1.
-    NthOfSelf {
-        anb: Nth<'p>,
-        from_end: bool,
-        lists: Lists<'p>,
-        node: HtmlNode<'doc>,
-        k: ContId,
-    },
-    /// `of S`: whether `sibling` matches `S` just resolved; count it, and
-    /// move on to the next sibling.
-    NthOfSibling {
-        anb: Nth<'p>,
-        from_end: bool,
-        lists: Lists<'p>,
-        sibling: HtmlNode<'doc>,
-        pos: u64,
-        k: ContId,
-    },
-}
-
-/// A continuation slot: in use, or free and linking to the next free one.
-enum Slot<'p, 'doc> {
-    Used(Cont<'p, 'doc>),
-    Free(Option<u32>),
-}
-
-/// A [`Frame::EvalCompound`] checking ONLY `chain[idx]`'s own simple
-/// selectors (never anything chained after it) against `node`, delivering
-/// into `k` - how [`Frame::HasStep`] checks one `:has()` chain compound
-/// against one candidate, through the same simple-selector and nested
-/// list-pseudo machinery every other compound check uses.
-///
-/// The sub-chain `chain.only(idx)` is length 1, so `advance` settles it at
-/// `idx == 0` without ever reading its combinator - and it follows nothing
-/// the ORIGINAL selector chained after this compound (for
-/// `:has(section > p.x)`, checking "section" must not become "is `node` a
-/// `p.x` whose parent is `section`"). It points into the compiled table, so
-/// it costs no allocation.
-fn single_compound_frame<'p, 'doc>(
+/// Match `chain` right to left - Lexbor's `lxb_selectors_state_find` /
+/// `found_check` / `not_found` over its entries: compound `idx` at `cur`,
+/// its simple selectors from `rest` on. `at[at_base + i]` is where compound
+/// `i` currently stands, which is what a backtrack moves on.
+#[derive(Clone, Copy)]
+struct ChainTask<'doc> {
     chain: Chain,
-    idx: usize,
-    node: HtmlNode<'doc>,
-    k: Cont<'p, 'doc>,
-) -> Frame<'p, 'doc> {
-    Frame::EvalCompound {
-        chain: chain.only(idx),
-        idx: 0,
-        node,
-        k,
-    }
+    idx: u32,
+    cur: HtmlNode<'doc>,
+    rest: u32,
+    at_base: u32,
 }
 
-/// One top-level call's matching state: the compiled selector, the work
-/// [`Budget`], and the work stack and continuation slab [`Query::run`]
-/// uses - both kept (cleared, capacity retained) from one candidate to the
-/// next, so a walk over many candidates allocates for the deepest match it
-/// needed, not once per candidate. Lexbor does the same with its entry /
-/// nested-state object pool, reset between candidates.
-///
-/// Every continuation is resumed exactly once, so a resumed slot goes back
-/// on the free list and the slab holds only the live ones - the property
-/// `Box` had, without an allocation that aborts on failure.
+/// One `:has()` alternative's forward search from its anchor (§A-4):
+/// compound `level` tested at `cand`, from simple selector `rest`; each
+/// level's candidates come from `cursors[cur_base + level]`.
+#[derive(Clone, Copy)]
+struct ForwardTask<'doc> {
+    chain: Chain,
+    level: u32,
+    cand: HtmlNode<'doc>,
+    rest: u32,
+    cur_base: u32,
+}
+
+/// `of S` (§D-1): is `node` in `S` (`counting == false`), then how many of
+/// its siblings in the counting direction are - `pos` so far.
+#[derive(Clone, Copy)]
+struct NthOfTask<'doc> {
+    a: c_long,
+    b: c_long,
+    from_end: bool,
+    alts: Alts,
+    node: HtmlNode<'doc>,
+    pos: u64,
+    counting: bool,
+}
+
+/// One pending piece of a match on [`Query`]'s task stack - Lexbor's entry
+/// walk plus its `lxb_selectors_nested_t` contexts, each of which records
+/// where to go back to (`return_state`). The task on top runs; one that
+/// needs a nested answer pushes the task computing it and waits; a finished
+/// one pops and hands its `bool` to the one below. Nesting depth is stack
+/// length, never native recursion (module doc).
+#[derive(Clone, Copy)]
+enum Task<'doc> {
+    Chain(ChainTask<'doc>),
+    /// Does `node` match one of `alts` (`:is()`/`:where()`, and `S` of `of
+    /// S`), or - `negate`, `:not()` - none of them?
+    Alternatives {
+        alts: Alts,
+        node: HtmlNode<'doc>,
+        negate: bool,
+    },
+    /// `:has()`: does one of `alts`' forward searches from `anchor` succeed?
+    Has {
+        alts: Alts,
+        anchor: HtmlNode<'doc>,
+    },
+    Forward(ForwardTask<'doc>),
+    NthOf(NthOfTask<'doc>),
+}
+
+/// What a task step did: finished with a verdict, or wants `Task` answered
+/// first (and is then resumed with that answer).
+enum Outcome<'doc> {
+    Done(bool),
+    Spawn(Task<'doc>),
+}
+
+/// A compound's simple selectors checked from some index: settled, or
+/// stopped at the deferred one at this index.
+enum Check {
+    Done(bool),
+    Defer(u32),
+}
+
+/// One top-level call's matching state: the compiled selector, the resolved
+/// names, the work [`Budget`], and the task stack with the two side stacks
+/// its tasks keep their positions in - all kept (cleared, capacity retained)
+/// from one candidate to the next, so a walk over many candidates allocates
+/// for the deepest match it needed, not once per candidate. Lexbor does the
+/// same with its entry / nested-state pools, reset between candidates.
 struct Query<'c, 'p, 'doc> {
     compiled: &'c Compiled<'p>,
     /// The simple selectors' names, resolved in the query's document.
     names: Names<'doc>,
     budget: Budget,
-    stack: Vec<Frame<'p, 'doc>>,
-    conts: Vec<Slot<'p, 'doc>>,
-    free: Option<u32>,
+    tasks: Vec<Task<'doc>>,
+    /// [`ChainTask`]s' compound positions.
+    at: Vec<Option<HtmlNode<'doc>>>,
+    /// [`ForwardTask`]s' per-level candidate cursors.
+    cursors: Vec<HasCursor<'doc>>,
+    /// The resolved type selector of a lone top-level chain's rightmost
+    /// compound: a candidate of that document with another tag is refused
+    /// before the machine starts.
+    tag_filter: Option<(HtmlDoc<'doc>, Option<TagId>)>,
 }
 
 impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
@@ -1487,653 +1415,476 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
             Some(doc) => Names::resolve(compiled, doc)?,
             None => Names::new(),
         };
+        let tag_filter = match compiled.top.as_slice() {
+            [chain] if chain.len != 0 => {
+                let last = compiled.compound(*chain, chain.len() - 1)?;
+                (last.start..last.end).find_map(|i| match names.get(i as usize) {
+                    Some(Name::Tag(doc, id)) => Some((doc, id)),
+                    _ => None,
+                })
+            }
+            _ => None,
+        };
         Ok(Query {
             compiled,
             names,
+            tag_filter,
             budget: Budget {
                 spent: std::cell::Cell::new(0),
                 limit,
             },
-            stack: Vec::new(),
-            conts: Vec::new(),
-            free: None,
+            tasks: Vec::new(),
+            at: Vec::new(),
+            cursors: Vec::new(),
         })
-    }
-
-    /// Check `compound`'s simple selectors from index `from` against `node`,
-    /// in order, eagerly - until one fails, they all pass, or a list-pseudo
-    /// defers to the explicit stack; `rest` then carries the index to resume
-    /// from once its verdict is known (`Cont::CompoundRest`).
-    fn check_from(
-        &self,
-        compound: Compound,
-        from: u32,
-        node: HtmlNode<'doc>,
-    ) -> Result<SimpleCheck<'p>, MatchFailure> {
-        let mut i = from;
-        loop {
-            let next = (i + 1 < compound.end).then_some(i + 1);
-            let sel = self
-                .compiled
-                .simples
-                .get(i as usize)
-                .ok_or(MatchFailure::Unsupported)?;
-            match check_simple(sel, self.names.name(i), node, &self.budget)? {
-                SimpleCheck::Result(false) => return Ok(SimpleCheck::Result(false)),
-                SimpleCheck::Defer { negate, lists, .. } => {
-                    return Ok(SimpleCheck::Defer {
-                        negate,
-                        lists,
-                        rest: next,
-                    })
-                }
-                SimpleCheck::Has { lists, .. } => {
-                    return Ok(SimpleCheck::Has { lists, rest: next })
-                }
-                SimpleCheck::NthOf {
-                    anb,
-                    from_end,
-                    lists,
-                    ..
-                } => {
-                    return Ok(SimpleCheck::NthOf {
-                        anb,
-                        from_end,
-                        lists,
-                        rest: next,
-                    })
-                }
-                SimpleCheck::Result(true) => match next {
-                    Some(n) => i = n,
-                    None => return Ok(SimpleCheck::Result(true)),
-                },
-            }
-        }
-    }
-
-    fn push(&mut self, frame: Frame<'p, 'doc>) -> Result<(), MatchFailure> {
-        self.stack.falloc_push(frame).or_oom()
-    }
-
-    /// Park `k` in the slab, for a continuation that waits on it.
-    fn park(&mut self, k: Cont<'p, 'doc>) -> Result<ContId, MatchFailure> {
-        if let Some(i) = self.free {
-            let slot = self
-                .conts
-                .get_mut(i as usize)
-                .ok_or(MatchFailure::Unsupported)?;
-            return match core::mem::replace(slot, Slot::Used(k)) {
-                Slot::Free(next) => {
-                    self.free = next;
-                    Ok(ContId(i))
-                }
-                // A used slot on the free list is a broken invariant; the
-                // query ends here rather than answer from a clobbered state.
-                Slot::Used(_) => Err(MatchFailure::Unsupported),
-            };
-        }
-        let i = u32::try_from(self.conts.len()).map_err(|_| MatchFailure::Oom)?;
-        self.conts.falloc_push(Slot::Used(k)).or_oom()?;
-        Ok(ContId(i))
-    }
-
-    /// Take the parked continuation back, freeing its slot.
-    fn resume(&mut self, id: ContId) -> Result<Cont<'p, 'doc>, MatchFailure> {
-        let free = self.free;
-        let slot = self
-            .conts
-            .get_mut(id.0 as usize)
-            .ok_or(MatchFailure::Unsupported)?;
-        match core::mem::replace(slot, Slot::Free(free)) {
-            Slot::Used(k) => {
-                self.free = Some(id.0);
-                Ok(k)
-            }
-            Slot::Free(next) => {
-                // Resumed twice: a broken invariant, reported, not answered.
-                *slot = Slot::Free(next);
-                Err(MatchFailure::Unsupported)
-            }
-        }
-    }
-
-    /// Hand `result` to the parked continuation `k`.
-    fn deliver(&mut self, result: bool, k: ContId) -> Result<(), MatchFailure> {
-        let k = self.resume(k)?;
-        self.push(Frame::Deliver(result, k))
     }
 
     /// Does `node` match any top-level alternative?
     fn matches_top(&mut self, node: HtmlNode<'doc>) -> Result<bool, MatchFailure> {
+        // `type_matches`' own verdict, taken before anything else is set up.
+        if let Some((doc, id)) = self.tag_filter {
+            if node.owner_document() == doc && (id.is_none() || node.tag_id() != id) {
+                return Ok(false);
+            }
+        }
         for i in 0..self.compiled.top.len() {
             let chain = self.compiled.top.get(i).ok_or(MatchFailure::Unsupported)?;
-            if chain.len != 0
-                && self.run(Frame::EvalCompound {
-                    chain,
-                    idx: chain.len() - 1,
-                    node,
-                    k: Cont::Root,
-                })?
-            {
+            if chain.len != 0 && self.run(chain, node)? {
                 return Ok(true);
             }
         }
         Ok(false)
     }
 
-    /// After `chain[idx]` is known to match (or not) at `node`, do what an
-    /// ordinary (non-deferred) hit would: on failure, fail the whole chain;
-    /// on success, continue left (or report success, at `idx == 0`).
-    fn advance(
-        &mut self,
-        chain: Chain,
-        idx: usize,
-        node: HtmlNode<'doc>,
-        k: Cont<'p, 'doc>,
-        matched: bool,
-    ) -> Result<(), MatchFailure> {
-        if !matched {
-            return self.push(Frame::Deliver(false, k));
-        }
-        if idx == 0 {
-            return self.push(Frame::Deliver(true, k));
-        }
-        let next_idx = idx - 1;
-        match self.compiled.compound(chain, idx)?.comb {
-            Combinator::Close | Combinator::Child => match parent_element(node) {
-                Some(p) => self.push(Frame::EvalCompound {
-                    chain,
-                    idx: next_idx,
-                    node: p,
-                    k,
-                }),
-                None => self.push(Frame::Deliver(false, k)),
-            },
-            Combinator::Descendant => match parent_element(node) {
-                Some(p) => {
-                    let k = self.park(k)?;
-                    self.push(Frame::EvalCompound {
-                        chain,
-                        idx: next_idx,
-                        node: p,
-                        k: Cont::AncestorRetry {
-                            chain,
-                            idx: next_idx,
-                            from: p,
-                            k,
-                        },
-                    })
+    /// Run the machine from matching `chain` at `node` to its verdict. The
+    /// loop is the WHOLE control flow - no Rust-level recursion anywhere here, however deeply
+    /// the selector nests.
+    fn run(&mut self, chain: Chain, node: HtmlNode<'doc>) -> Result<bool, MatchFailure> {
+        // The rightmost compound first, with nothing set up: most candidates
+        // fail it, and a one-compound chain needs nothing more.
+        let idx = chain.len - 1;
+        let last = self.compiled.compound(chain, idx as usize)?;
+        self.budget.charge()?;
+        let (rest, deferred) = match self.check_compound(last, last.start, node)? {
+            Check::Done(false) => return Ok(false),
+            Check::Done(true) if idx == 0 => return Ok(true),
+            Check::Done(true) => (last.end, None),
+            Check::Defer(i) => (i + 1, Some(i)),
+        };
+        let mut first = self.chain_task(chain, node)?;
+        first.rest = rest;
+        let child = match deferred {
+            Some(i) => self.deferred_task(i, node)?,
+            // Resumed as matched: `rest` is past the compound's end.
+            None => match self.step_chain(&mut first, Some(true))? {
+                Outcome::Done(verdict) => {
+                    self.at.truncate(first.at_base as usize);
+                    return Ok(verdict);
                 }
-                None => self.push(Frame::Deliver(false, k)),
+                Outcome::Spawn(child) => child,
             },
-            Combinator::NextSibling => match prev_sibling_element(node) {
-                Some(s) => self.push(Frame::EvalCompound {
-                    chain,
-                    idx: next_idx,
-                    node: s,
-                    k,
-                }),
-                None => self.push(Frame::Deliver(false, k)),
-            },
-            Combinator::SubsequentSibling => match prev_sibling_element(node) {
-                Some(s) => {
-                    let k = self.park(k)?;
-                    self.push(Frame::EvalCompound {
-                        chain,
-                        idx: next_idx,
-                        node: s,
-                        k: Cont::SiblingRetry {
-                            chain,
-                            idx: next_idx,
-                            from: s,
-                            k,
-                        },
-                    })
+        };
+        // An earlier run that failed ended the query; this only drops what
+        // that left behind.
+        self.tasks.clear();
+        self.tasks.falloc_push(Task::Chain(first)).or_oom()?;
+        self.tasks.falloc_push(child).or_oom()?;
+        let mut event = None;
+        loop {
+            let top = self.tasks.len().wrapping_sub(1);
+            let mut task = *self.tasks.get(top).ok_or(MatchFailure::Unsupported)?;
+            match self.step(&mut task, event)? {
+                Outcome::Spawn(child) => {
+                    if let Some(slot) = self.tasks.get_mut(top) {
+                        *slot = task;
+                    }
+                    self.tasks.falloc_push(child).or_oom()?;
+                    event = None;
                 }
-                None => self.push(Frame::Deliver(false, k)),
-            },
-            // The column combinator `||`: `compile` refuses it before
-            // matching starts; this is the belt to that brace.
-            Combinator::Other => Err(MatchFailure::Unsupported),
+                Outcome::Done(verdict) => {
+                    self.tasks.pop();
+                    self.release(task);
+                    if self.tasks.is_empty() {
+                        return Ok(verdict);
+                    }
+                    event = Some(verdict);
+                }
+            }
         }
     }
 
-    /// The first non-empty alternative left in `lists`, or `None`.
-    fn next_alternative(&self, lists: &mut Lists<'p>) -> Result<Option<Chain>, MatchFailure> {
-        for list in lists.by_ref() {
-            let chain = self.compiled.nested_chain(list)?;
+    /// Give back the side-stack entries a finished `task` held.
+    fn release(&mut self, task: Task<'doc>) {
+        match task {
+            Task::Chain(t) => self.at.truncate(t.at_base as usize),
+            Task::Forward(t) => self.cursors.truncate(t.cur_base as usize),
+            _ => {}
+        }
+    }
+
+    /// Advance `task`: from its start (`event == None`) or with the verdict
+    /// of the task it spawned.
+    fn step(
+        &mut self,
+        task: &mut Task<'doc>,
+        event: Option<bool>,
+    ) -> Result<Outcome<'doc>, MatchFailure> {
+        match task {
+            Task::Chain(t) => self.step_chain(t, event),
+            Task::Alternatives { alts, node, negate } => {
+                if event == Some(true) {
+                    // This alternative matched: :is/:where succeeds; :not is
+                    // disproved. Either way, the rest need not be tried.
+                    return Ok(Outcome::Done(!*negate));
+                }
+                Ok(match self.next_alternative(alts)? {
+                    Some(chain) => Outcome::Spawn(Task::Chain(self.chain_task(chain, *node)?)),
+                    // Out of alternatives: :is/:where found none (false);
+                    // :not found none that matched, so it holds (true).
+                    None => Outcome::Done(*negate),
+                })
+            }
+            Task::Has { alts, anchor } => {
+                if event == Some(true) {
+                    return Ok(Outcome::Done(true));
+                }
+                Ok(match self.next_alternative(alts)? {
+                    Some(chain) => Outcome::Spawn(self.forward_task(chain, *anchor)?),
+                    None => Outcome::Done(false),
+                })
+            }
+            Task::Forward(t) => self.step_forward(t, event),
+            Task::NthOf(t) => self.step_nth_of(t, event),
+        }
+    }
+
+    /// The first non-empty chain left in `alts`, or `None`.
+    fn next_alternative(&self, alts: &mut Alts) -> Result<Option<Chain>, MatchFailure> {
+        while alts.next < alts.end {
+            let chain = self
+                .compiled
+                .alts
+                .get(alts.next as usize)
+                .ok_or(MatchFailure::Unsupported)?;
+            alts.next += 1;
             if chain.len != 0 {
+                self.budget.charge()?;
                 return Ok(Some(chain));
             }
         }
         Ok(None)
     }
 
-    fn try_alternative(
+    /// A [`ChainTask`] matching `chain` (non-empty) at `node`.
+    fn chain_task(
         &mut self,
-        mut lists: Lists<'p>,
-        node: HtmlNode<'doc>,
-        negate: bool,
-        k: Cont<'p, 'doc>,
-    ) -> Result<(), MatchFailure> {
-        let Some(chain) = self.next_alternative(&mut lists)? else {
-            // Out of alternatives: :is/:where found none (false); :not found
-            // none that matched, so it holds (true).
-            return self.push(Frame::Deliver(negate, k));
-        };
-        let k = self.park(k)?;
-        self.push(Frame::EvalCompound {
-            chain,
-            idx: chain.len() - 1,
-            node,
-            k: Cont::AlternativeRetry {
-                lists,
-                node,
-                negate,
-                k,
-            },
-        })
-    }
-
-    /// Try `:has()`'s comma-separated alternatives (`:has(a, b)` = OR) in
-    /// order, each a FORWARD SEARCH from `node` - unlike
-    /// [`Query::try_alternative`]'s, which match AT `node` itself.
-    fn try_has_alternative(
-        &mut self,
-        mut lists: Lists<'p>,
-        node: HtmlNode<'doc>,
-        k: Cont<'p, 'doc>,
-    ) -> Result<(), MatchFailure> {
-        let Some(chain) = self.next_alternative(&mut lists)? else {
-            // Out of alternatives: :has() found nothing.
-            return self.push(Frame::Deliver(false, k));
-        };
-        let cursor = HasCursor::start(self.compiled.compound(chain, 0)?.comb, node)?;
-        let k = self.park(k)?;
-        self.push(Frame::HasStep {
-            chain,
-            idx: 0,
-            cursor,
-            k: Cont::HasAlternativeRetry { lists, node, k },
-        })
-    }
-
-    /// Act on `chain[idx]`'s compound check at `node`: a settled verdict goes
-    /// to [`Query::advance`]; a deferred list-pseudo is pushed with a
-    /// `Cont::CompoundRest` that resumes the compound's remaining simple
-    /// selectors once it resolves. The one place both a fresh compound
-    /// (`Frame::EvalCompound`) and a resumed one (`Cont::CompoundRest`)
-    /// dispatch, so a new deferred kind is added once.
-    fn settle(
-        &mut self,
-        check: SimpleCheck<'p>,
         chain: Chain,
-        idx: usize,
         node: HtmlNode<'doc>,
-        k: Cont<'p, 'doc>,
-    ) -> Result<(), MatchFailure> {
-        let (rest, deferred) = match check {
-            SimpleCheck::Result(m) => return self.advance(chain, idx, node, k, m),
-            SimpleCheck::Defer {
-                negate,
-                lists,
-                rest,
-            } => (rest, Deferred::Alternatives { negate, lists }),
-            SimpleCheck::Has { lists, rest } => (rest, Deferred::Has { lists }),
-            SimpleCheck::NthOf {
-                anb,
-                from_end,
-                lists,
-                rest,
-            } => (
-                rest,
-                Deferred::NthOf {
-                    anb,
-                    from_end,
-                    lists,
-                },
-            ),
-        };
-        let k = self.park(k)?;
-        let resume = Cont::CompoundRest {
-            rest,
+    ) -> Result<ChainTask<'doc>, MatchFailure> {
+        let at_base = u32::try_from(self.at.len()).map_err(|_| MatchFailure::Oom)?;
+        // Compounds `0 .. len - 1`: the last one's node never moves.
+        for _ in 1..chain.len() {
+            self.at.falloc_push(None).or_oom()?;
+        }
+        let idx = chain.len - 1;
+        Ok(ChainTask {
             chain,
             idx,
-            node,
-            k,
-        };
-        match deferred {
-            Deferred::Alternatives { negate, lists } => self.push(Frame::TryAlternatives {
-                lists,
-                node,
-                negate,
-                k: resume,
-            }),
-            Deferred::Has { lists } => self.try_has_alternative(lists, node, resume),
-            Deferred::NthOf {
-                anb,
-                from_end,
-                lists,
-            } => {
-                let k = self.park(resume)?;
-                self.push(Frame::TryAlternatives {
-                    lists,
-                    node,
-                    negate: false,
-                    k: Cont::NthOfSelf {
-                        anb,
-                        from_end,
-                        lists,
-                        node,
-                        k,
-                    },
-                })
-            }
-        }
+            cur: node,
+            rest: self.compiled.compound(chain, idx as usize)?.start,
+            at_base,
+        })
     }
 
-    /// Run the machine from `first` to completion. The loop is the WHOLE
-    /// control flow - no Rust-level recursion anywhere here, however deeply
-    /// the selector nests. Charges the budget once per frame popped, so a
-    /// `:is()` alternative, a long ancestor climb or a `:has()` candidate is
-    /// bounded by the same budget.
-    fn run(&mut self, first: Frame<'p, 'doc>) -> Result<bool, MatchFailure> {
-        // Nothing survives from one run to the next; an earlier run that
-        // failed ended the query, so this only drops what that left behind.
-        self.stack.clear();
-        self.conts.clear();
-        self.free = None;
-        self.push(first)?;
-        let mut answer = false;
-        while let Some(frame) = self.stack.pop() {
-            self.budget.charge()?;
-            match frame {
-                Frame::EvalCompound {
-                    chain,
-                    idx,
-                    node,
-                    k,
-                } => {
-                    let compound = self.compiled.compound(chain, idx)?;
-                    let check = self.check_from(compound, compound.start, node)?;
-                    self.settle(check, chain, idx, node, k)?;
-                }
-                Frame::NthOfStep {
-                    anb,
-                    from_end,
-                    lists,
-                    sibling,
-                    pos,
-                    k,
-                } => match sibling {
-                    None => self.push(Frame::Deliver(
-                        anb_matches(anb, i64::try_from(pos).unwrap_or(i64::MAX)),
-                        k,
-                    ))?,
-                    Some(sibling) => {
-                        let k = self.park(k)?;
-                        self.push(Frame::TryAlternatives {
-                            lists,
-                            node: sibling,
-                            negate: false,
-                            k: Cont::NthOfSibling {
-                                anb,
-                                from_end,
-                                lists,
-                                sibling,
-                                pos,
-                                k,
-                            },
-                        })?;
-                    }
-                },
-                Frame::TryAlternatives {
-                    lists,
-                    node,
-                    negate,
-                    k,
-                } => self.try_alternative(lists, node, negate, k)?,
-                Frame::HasStep {
-                    chain,
-                    idx,
-                    mut cursor,
-                    k,
-                } => match cursor.next() {
-                    None => self.push(Frame::Deliver(false, k))?,
-                    Some(candidate) => {
-                        let k = self.park(k)?;
-                        self.push(single_compound_frame(
-                            chain,
-                            idx,
-                            candidate,
-                            Cont::HasCandidateChecked {
-                                chain,
-                                idx,
-                                cursor,
-                                candidate,
-                                k,
-                            },
-                        ))?;
-                    }
-                },
-                Frame::Deliver(result, cont) => self.deliver_to(result, cont, &mut answer)?,
-            }
-        }
-        Ok(answer)
-    }
-
-    /// `run`'s `Frame::Deliver`: hand `result` to `cont`.
-    fn deliver_to(
+    /// A [`ForwardTask`] searching for `chain` (non-empty) from `anchor`.
+    fn forward_task(
         &mut self,
-        result: bool,
-        cont: Cont<'p, 'doc>,
-        answer: &mut bool,
-    ) -> Result<(), MatchFailure> {
-        match cont {
-            Cont::Root => {
-                *answer = result;
-                Ok(())
+        chain: Chain,
+        anchor: HtmlNode<'doc>,
+    ) -> Result<Task<'doc>, MatchFailure> {
+        let cur_base = u32::try_from(self.cursors.len()).map_err(|_| MatchFailure::Oom)?;
+        let cursor = HasCursor::start(self.compiled.compound(chain, 0)?.comb, anchor)?;
+        self.cursors.falloc_push(cursor).or_oom()?;
+        Ok(Task::Forward(ForwardTask {
+            chain,
+            level: 0,
+            cand: anchor,
+            rest: 0,
+            cur_base,
+        }))
+    }
+
+    /// The task answering the deferred simple selector `i` at `node`.
+    fn deferred_task(&self, i: u32, node: HtmlNode<'doc>) -> Result<Task<'doc>, MatchFailure> {
+        let sel = self
+            .compiled
+            .simples
+            .get(i as usize)
+            .ok_or(MatchFailure::Unsupported)?;
+        let alts = Alts {
+            next: sel.alts,
+            end: sel.alts + sel.n_alts,
+        };
+        Ok(match sel.simple {
+            Simple::PseudoClassFunction(FunctionArg::Selectors {
+                pseudo: ListPseudo::Has,
+                ..
+            }) => Task::Has { alts, anchor: node },
+            Simple::PseudoClassFunction(FunctionArg::Selectors { pseudo, .. }) => {
+                Task::Alternatives {
+                    alts,
+                    node,
+                    negate: pseudo == ListPseudo::Not,
+                }
             }
-            Cont::CompoundRest {
-                rest,
-                chain,
-                idx,
+            Simple::PseudoClassFunction(FunctionArg::Nth {
+                from_end,
+                anb: Some(anb),
+                ..
+            }) => Task::NthOf(NthOfTask {
+                a: anb.a,
+                b: anb.b,
+                from_end,
+                alts,
                 node,
-                k,
-            } => {
-                let k = self.resume(k)?;
-                match (result, rest) {
-                    (false, _) => self.advance(chain, idx, node, k, false),
-                    (true, None) => self.advance(chain, idx, node, k, true),
-                    (true, Some(next)) => {
-                        let compound = self.compiled.compound(chain, idx)?;
-                        let check = self.check_from(compound, next, node)?;
-                        self.settle(check, chain, idx, node, k)
+                pos: 0,
+                counting: false,
+            }),
+            // `check_simple` defers nothing else: a broken invariant.
+            _ => return Err(MatchFailure::Unsupported),
+        })
+    }
+
+    /// `compound`'s simple selectors from `from` at `node`, until one fails,
+    /// all pass, or one defers.
+    #[inline]
+    fn check_compound(
+        &self,
+        compound: Compound,
+        from: u32,
+        node: HtmlNode<'doc>,
+    ) -> Result<Check, MatchFailure> {
+        let steps = self
+            .compiled
+            .simples
+            .as_slice()
+            .get(from as usize..compound.end as usize)
+            .ok_or(MatchFailure::Unsupported)?;
+        let names = self.names.as_slice();
+        for (i, sel) in (from..).zip(steps) {
+            let name = names.get(i as usize).copied().unwrap_or_default();
+            match check_simple(sel, name, node, &self.budget)? {
+                SimpleCheck::Result(true) => {}
+                SimpleCheck::Result(false) => return Ok(Check::Done(false)),
+                SimpleCheck::Deferred => return Ok(Check::Defer(i)),
+            }
+        }
+        Ok(Check::Done(true))
+    }
+
+    fn set_at(&mut self, i: u32, node: HtmlNode<'doc>) {
+        if let Some(slot) = self.at.get_mut(i as usize) {
+            *slot = Some(node);
+        }
+    }
+
+    /// [`ChainTask`]: a compound that matches moves left along its
+    /// combinator; one that fails backtracks to the nearest choice at or
+    /// right of it - a `Descendant` or `SubsequentSibling` combinator whose
+    /// compound can move on to the next ancestor / preceding sibling. That
+    /// is exhaustive, as Lexbor's `not_found` state is. Every compound test
+    /// charges the budget.
+    ///
+    /// `at[at_base + i]` records where compound `i` last matched; it is read
+    /// only when a backtrack comes back to `i` from the left, which only a
+    /// match of `i` can have led to.
+    fn step_chain(
+        &mut self,
+        t: &mut ChainTask<'doc>,
+        event: Option<bool>,
+    ) -> Result<Outcome<'doc>, MatchFailure> {
+        let compiled = self.compiled;
+        let compounds = compiled
+            .compounds
+            .as_slice()
+            .get(t.chain.start as usize..(t.chain.start + t.chain.len) as usize)
+            .ok_or(MatchFailure::Unsupported)?;
+        let compound = |i: u32| {
+            compounds
+                .get(i as usize)
+                .copied()
+                .ok_or(MatchFailure::Unsupported)
+        };
+        let last = t.chain.len - 1;
+        let mut resumed = event;
+        loop {
+            let current = compound(t.idx)?;
+            let matched = match resumed.take() {
+                Some(false) => false,
+                r => {
+                    if r.is_none() {
+                        self.budget.charge()?;
+                    }
+                    match self.check_compound(current, t.rest, t.cur)? {
+                        Check::Done(m) => m,
+                        Check::Defer(i) => {
+                            t.rest = i + 1;
+                            let child = self.deferred_task(i, t.cur)?;
+                            return Ok(Outcome::Spawn(child));
+                        }
                     }
                 }
-            }
-            Cont::AncestorRetry {
-                chain,
-                idx,
-                from,
-                k,
-            } => {
-                if result {
-                    return self.deliver(true, k);
+            };
+            if matched {
+                if t.idx == 0 {
+                    return Ok(Outcome::Done(true));
                 }
-                match parent_element(from) {
-                    Some(p) => self.push(Frame::EvalCompound {
-                        chain,
-                        idx,
-                        node: p,
-                        k: Cont::AncestorRetry {
-                            chain,
-                            idx,
-                            from: p,
-                            k,
-                        },
-                    }),
-                    None => self.deliver(false, k),
-                }
-            }
-            Cont::SiblingRetry {
-                chain,
-                idx,
-                from,
-                k,
-            } => {
-                if result {
-                    return self.deliver(true, k);
-                }
-                match prev_sibling_element(from) {
-                    Some(s) => self.push(Frame::EvalCompound {
-                        chain,
-                        idx,
-                        node: s,
-                        k: Cont::SiblingRetry {
-                            chain,
-                            idx,
-                            from: s,
-                            k,
-                        },
-                    }),
-                    None => self.deliver(false, k),
+                let next = match current.comb {
+                    Combinator::Close | Combinator::Child | Combinator::Descendant => {
+                        parent_element(t.cur)
+                    }
+                    Combinator::NextSibling | Combinator::SubsequentSibling => {
+                        prev_sibling_element(t.cur)
+                    }
+                    // The column combinator `||`: `compile` refuses it
+                    // before matching starts; this is the belt to that brace.
+                    Combinator::Other => return Err(MatchFailure::Unsupported),
+                };
+                if let Some(n) = next {
+                    if t.idx < last {
+                        self.set_at(t.at_base + t.idx, t.cur);
+                    }
+                    t.idx -= 1;
+                    t.cur = n;
+                    t.rest = compound(t.idx)?.start;
+                    continue;
                 }
             }
-            Cont::AlternativeRetry {
-                lists,
-                node,
-                negate,
-                k,
-            } => {
-                if result {
-                    // This alternative matched: :is/:where succeeds; :not is
-                    // disproved. Either way, the rest need not be tried.
-                    return self.deliver(!negate, k);
+            // `not_found`: move the nearest choice at or right of `idx` on.
+            loop {
+                if t.idx >= last {
+                    return Ok(Outcome::Done(false));
                 }
-                let k = self.resume(k)?;
-                self.try_alternative(lists, node, negate, k)
-            }
-            Cont::HasCandidateChecked {
-                chain,
-                idx,
-                cursor,
-                candidate,
-                k,
-            } => {
-                if !result {
-                    // This candidate's own compound didn't match; try the
-                    // next one at the SAME level.
-                    let k = self.resume(k)?;
-                    return self.push(Frame::HasStep {
-                        chain,
-                        idx,
-                        cursor,
-                        k,
-                    });
+                let moved = match compound(t.idx + 1)?.comb {
+                    Combinator::Descendant => parent_element(t.cur),
+                    Combinator::SubsequentSibling => prev_sibling_element(t.cur),
+                    _ => None,
+                };
+                if let Some(n) = moved {
+                    t.cur = n;
+                    t.rest = compound(t.idx)?.start;
+                    break;
                 }
-                if idx + 1 == chain.len() {
-                    // This candidate satisfied the WHOLE :has() chain.
-                    return self.deliver(true, k);
+                t.idx += 1;
+                if t.idx < last {
+                    t.cur = self
+                        .at
+                        .get((t.at_base + t.idx) as usize)
+                        .copied()
+                        .flatten()
+                        .ok_or(MatchFailure::Unsupported)?;
                 }
-                // Descend to chain[idx + 1] FROM this candidate; a failure
-                // down there resumes `cursor` here (HasBacktrack).
-                let next_cursor =
-                    HasCursor::start(self.compiled.compound(chain, idx + 1)?.comb, candidate)?;
-                self.push(Frame::HasStep {
-                    chain,
-                    idx: idx + 1,
-                    cursor: next_cursor,
-                    k: Cont::HasBacktrack {
-                        chain,
-                        idx,
-                        cursor,
-                        k,
-                    },
-                })
-            }
-            Cont::HasBacktrack {
-                chain,
-                idx,
-                cursor,
-                k,
-            } => {
-                if result {
-                    return self.deliver(true, k);
-                }
-                // The deeper search found nothing from THIS candidate; try
-                // the next one at THIS level.
-                let k = self.resume(k)?;
-                self.push(Frame::HasStep {
-                    chain,
-                    idx,
-                    cursor,
-                    k,
-                })
-            }
-            Cont::HasAlternativeRetry { lists, node, k } => {
-                if result {
-                    return self.deliver(true, k);
-                }
-                let k = self.resume(k)?;
-                self.try_has_alternative(lists, node, k)
-            }
-            Cont::NthOfSelf {
-                anb,
-                from_end,
-                lists,
-                node,
-                k,
-            } => {
-                let k = self.resume(k)?;
-                if !result {
-                    return self.push(Frame::Deliver(false, k));
-                }
-                self.push(Frame::NthOfStep {
-                    anb,
-                    from_end,
-                    lists,
-                    sibling: nth_of_sibling(node, from_end),
-                    pos: 1,
-                    k,
-                })
-            }
-            Cont::NthOfSibling {
-                anb,
-                from_end,
-                lists,
-                sibling,
-                pos,
-                k,
-            } => {
-                let k = self.resume(k)?;
-                self.push(Frame::NthOfStep {
-                    anb,
-                    from_end,
-                    lists,
-                    sibling: nth_of_sibling(sibling, from_end),
-                    pos: pos + u64::from(result),
-                    k,
-                })
             }
         }
     }
-}
 
-/// [`Query::settle`]'s deferred kinds, split from their shared `rest`.
-enum Deferred<'p> {
-    Alternatives {
-        negate: bool,
-        lists: Lists<'p>,
-    },
-    Has {
-        lists: Lists<'p>,
-    },
-    NthOf {
-        anb: Nth<'p>,
-        from_end: bool,
-        lists: Lists<'p>,
-    },
+    /// [`ForwardTask`]: take the next candidate at the current level (or,
+    /// out of them, back to the level before), test that level's compound on
+    /// it, and on a match go one level deeper from it. The same candidates,
+    /// in the same order, as Lexbor's forward search (§A-4).
+    fn step_forward(
+        &mut self,
+        t: &mut ForwardTask<'doc>,
+        event: Option<bool>,
+    ) -> Result<Outcome<'doc>, MatchFailure> {
+        let mut resumed = event;
+        loop {
+            let from = match resumed.take() {
+                Some(false) => None,
+                Some(true) => Some(t.rest),
+                None => loop {
+                    let cursor = self
+                        .cursors
+                        .get_mut((t.cur_base + t.level) as usize)
+                        .ok_or(MatchFailure::Unsupported)?;
+                    match cursor.next() {
+                        Some(c) => {
+                            self.budget.charge()?;
+                            t.cand = c;
+                            break Some(self.compiled.compound(t.chain, t.level as usize)?.start);
+                        }
+                        None if t.level == 0 => {
+                            return Ok(Outcome::Done(false));
+                        }
+                        None => {
+                            self.cursors.pop();
+                            t.level -= 1;
+                        }
+                    }
+                },
+            };
+            let Some(from) = from else {
+                continue;
+            };
+            let compound = self.compiled.compound(t.chain, t.level as usize)?;
+            match self.check_compound(compound, from, t.cand)? {
+                Check::Defer(i) => {
+                    t.rest = i + 1;
+                    let child = self.deferred_task(i, t.cand)?;
+                    return Ok(Outcome::Spawn(child));
+                }
+                Check::Done(false) => {}
+                Check::Done(true) => {
+                    if t.level + 1 == t.chain.len {
+                        return Ok(Outcome::Done(true));
+                    }
+                    let next = self.compiled.compound(t.chain, t.level as usize + 1)?;
+                    let cursor = HasCursor::start(next.comb, t.cand)?;
+                    self.cursors.falloc_push(cursor).or_oom()?;
+                    t.level += 1;
+                }
+            }
+        }
+    }
+
+    /// [`NthOfTask`]: `S` at the candidate itself first - it must match
+    /// (§D-1) - then at each sibling in the counting direction.
+    fn step_nth_of(
+        &mut self,
+        t: &mut NthOfTask<'doc>,
+        event: Option<bool>,
+    ) -> Result<Outcome<'doc>, MatchFailure> {
+        match event {
+            None => {}
+            Some(in_s) => {
+                if !t.counting {
+                    if !in_s {
+                        return Ok(Outcome::Done(false));
+                    }
+                    t.counting = true;
+                    t.pos = 1;
+                } else {
+                    t.pos += u64::from(in_s);
+                }
+                match nth_of_sibling(t.node, t.from_end) {
+                    Some(s) => {
+                        self.budget.charge()?;
+                        t.node = s;
+                    }
+                    None => {
+                        let pos = i64::try_from(t.pos).unwrap_or(i64::MAX);
+                        return Ok(Outcome::Done(anb_matches(t.a, t.b, pos)));
+                    }
+                }
+            }
+        }
+        let child = Task::Alternatives {
+            alts: t.alts,
+            node: t.node,
+            negate: false,
+        };
+        Ok(Outcome::Spawn(child))
+    }
 }
 
 /* ------------------------------------------------------------------ *

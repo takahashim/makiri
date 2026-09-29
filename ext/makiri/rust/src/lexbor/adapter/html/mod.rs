@@ -124,6 +124,8 @@ pub struct AttrName {
     /// The lower-cased local name's id there; `None`: no attribute of that
     /// document has the name.
     id: Option<usize>,
+    /// The name has no ASCII upper case: it is its own lower-cased form.
+    lower: bool,
 }
 
 /// A tag id, as Lexbor interns an element's name - never `LXB_TAG__UNDEF`,
@@ -647,6 +649,7 @@ impl<'doc> HtmlDoc<'doc> {
             return AttrName {
                 doc: None,
                 id: None,
+                lower: false,
             };
         }
         // SAFETY: `attrs` is the document's own attribute-name table, `name`
@@ -657,6 +660,7 @@ impl<'doc> HtmlDoc<'doc> {
             doc: Some(self.raw),
             // SAFETY: a non-null entry of the table above.
             id: (!data.is_null()).then(|| unsafe { (*data).attr_id }),
+            lower: !name.iter().any(u8::is_ascii_uppercase),
         }
     }
 
@@ -1236,6 +1240,14 @@ impl<'doc> HtmlAttr<'doc> {
     pub fn qualified_name(self) -> &'doc [u8] {
         // SAFETY: a live attribute.
         unsafe { named(self.raw(), lxb::lxb_dom_attr_qualified_name) }
+    }
+    /// Whether the attribute's qualified name is its lower-cased local name
+    /// itself - no prefix, no spelling of its own (Lexbor sets
+    /// `qualified_name` for either).
+    #[inline]
+    pub(in crate::lexbor::adapter) fn named_by_local(self) -> bool {
+        // SAFETY: a live attribute; one field read.
+        unsafe { (*self.raw()).qualified_name == 0 }
     }
     /// The id of the lower-cased local name, in the owner document's table.
     #[inline]
