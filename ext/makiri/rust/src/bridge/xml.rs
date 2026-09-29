@@ -21,7 +21,7 @@ use magnus::rb_sys::AsRawValue;
 use crate::bridge::ruby::makiri_error;
 use magnus::{prelude::*, Error, Value};
 
-use crate::bridge::html::html_node_unwrap;
+use crate::bridge::html::with_arg_node;
 use crate::bridge::ruby::{check_frozen, is_kind_of, value};
 use crate::bridge::string::{ruby_verified_text, RubyText};
 use crate::bridge::wrapper::*;
@@ -72,7 +72,17 @@ pub fn wrap_xml_node(id: NodeId, document: Value) -> Value {
     }
     let klass = XML_NODE_CLASSES.class_for(ty.map_or(CrateKind::Other, Into::into));
 
-    crate::bridge::wrapper::wrap_cached(&XML_NODE_TYPE, klass, id.into(), document)
+    crate::bridge::wrapper::wrap_cached(&XML_NODE_TYPE, klass, id, document)
+}
+
+impl crate::bridge::wrapper::NodeHandleSource for NodeId {
+    fn identity(&self) -> usize {
+        self.to_token()
+    }
+
+    fn into_handle(self, _document: Value) -> NodeHandle {
+        NodeHandle::Xml(self)
+    }
 }
 
 /// The arena node behind a wrapper.
@@ -616,10 +626,14 @@ pub fn import_copy(rb_self: Value, node_v: Value, deep: bool) -> Result<NodeId, 
             }
         }
         NodeRepr::Html => {
-            let src = html_node_unwrap(node_v)?;
-            // SAFETY: the target arena, and the HTML source node - live, and
-            // nothing restructures its document during the copy.
-            xml_mut_result(unsafe { cross_html_to_xml(&mut *xd, src, deep) })?
+            /* The HTML source, live for the closure; the copy goes into the
+             * receiver's arena, another document. */
+            let copied = with_arg_node(node_v, |src| {
+                // SAFETY: the receiver's live arena - another document than
+                // the source's, so the source's borrow does not overlap it.
+                cross_html_to_xml(unsafe { &mut *xd }, src, deep)
+            })?;
+            xml_mut_result(copied)?
         }
         NodeRepr::Other => {
             return Err(crate::bridge::ruby::type_error(

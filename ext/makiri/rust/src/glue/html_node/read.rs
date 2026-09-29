@@ -17,7 +17,7 @@
 
 use magnus::{prelude::*, Error, Ruby, Value};
 
-use super::{arg_node, wrap_node};
+use super::{with_arg_node, wrap_node};
 use crate::bridge::html::{dom_str, text_index_string};
 use crate::bridge::node_set::node_set_with_fill;
 use crate::bridge::ruby::is_kind_of;
@@ -141,7 +141,7 @@ pub fn tag_name(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Er
 /// nil for a non-PI. The PI's data is read with `#content` like any
 /// character-data node.
 pub fn pi_target(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| Ok(this.node().pi_target().map(dom_str)))
+    crate::bridge::ruby::entry(|| this.with_node(|node| Ok(node.pi_target().map(dom_str))))
 }
 
 /// `#node_type`: the numeric DOM node type (`LXB_DOM_NODE_TYPE_*`).
@@ -501,7 +501,7 @@ pub fn line(this: super::HtmlSelf) -> Result<Option<usize>, Error> {
 pub fn spaceship(_ruby: &Ruby, this: super::HtmlSelf, other: Value) -> Result<Option<i64>, Error> {
     crate::bridge::ruby::entry(|| {
         /* A non-node, or an XML node - never order-comparable to an HTML one, and
-         * asking is how we avoid arg_node's TypeError below. */
+         * asking is how we avoid with_arg_node's TypeError below. */
         let comparable = is_kind_of(other, &CLASS_NODE)
             && !is_kind_of(
                 crate::bridge::wrapper::keepalive_document(other)?,
@@ -510,7 +510,7 @@ pub fn spaceship(_ruby: &Ruby, this: super::HtmlSelf, other: Value) -> Result<Op
         if !comparable {
             return Ok(None);
         }
-        let order = this.node().document_order(arg_node(&other)?);
+        let order = with_arg_node(other, |o| this.node().document_order(o))?;
         Ok(order.map(|o| o as i64))
     })
 }

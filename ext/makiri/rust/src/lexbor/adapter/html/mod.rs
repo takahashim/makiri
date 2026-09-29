@@ -24,6 +24,11 @@ use core::num::NonZeroUsize;
 use core::ptr::NonNull;
 
 use crate::lexbor::abi::{self as lxb, LxbAttr, LxbDoc, LxbElement, LxbNode};
+/* `HtmlDocIdentity` names the parsed handle as its compare-only token, so the
+ * DOM facade refers to the parse type by name and the two modules refer to
+ * each other. The mutual reference is intentional: the key types belong to the
+ * facade, the mint/resolve impl to the type that owns the document. */
+use crate::lexbor::adapter::post_parse::HtmlParsed;
 pub use crate::node_type::NodeType;
 
 mod attrs;
@@ -443,6 +448,91 @@ impl<'doc> From<HtmlDoc<'doc>> for RawDoc {
     #[inline]
     fn from(d: HtmlDoc<'doc>) -> Self {
         RawDoc(d.raw)
+    }
+}
+
+/* ------------------------------------------------------------------ *
+ * long-lived node handles                                            *
+ * ------------------------------------------------------------------ */
+
+/// The identity of a live parsed document: the address of its `HtmlParsed`,
+/// stable for as long as the Ruby Document that owns it.
+///
+/// Compare-only. It is never dereferenced and never hashed as a pointer; a
+/// key carries one so `HtmlParsed::resolve` can refuse a node of another
+/// document before touching the node pointer. The address is stable because
+/// `DocumentShell::install_html` leaks the `Box<HtmlParsed>` and the Document's
+/// `Content::Html` holds that pointer for the Document's life.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct HtmlDocIdentity(NonNull<HtmlParsed>);
+
+#[cfg_attr(not(feature = "ruby"), allow(dead_code))]
+impl HtmlDocIdentity {
+    /// The identity of `parsed`, a live parsed document.
+    #[inline]
+    pub(in crate::lexbor::adapter) fn of(parsed: &HtmlParsed) -> Self {
+        HtmlDocIdentity(NonNull::from(parsed))
+    }
+}
+
+/// A node that is not a node of the document it was keyed or resolved against.
+///
+/// The one failure of `HtmlParsed::mint_key` and `HtmlParsed::resolve`: a node
+/// pointer the document does not own. The bridge turns it into
+/// `Makiri::InternalError` - a broken invariant, not a bad input.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ForeignNode;
+
+/// A long-lived HTML node handle: the node and the identity of the document
+/// that owns it.
+///
+/// The fields are private to `lexbor::adapter` and the constructor is not
+/// public, so nothing above this layer can read the node pointer or forge a
+/// key. A key is minted only by `HtmlParsed::mint_key`, which checks the node's
+/// owner document, and turned back into a live node only by
+/// `HtmlParsed::resolve`, which checks the owner identity before it
+/// dereferences anything.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct HtmlNodeKey {
+    owner: HtmlDocIdentity,
+    node: RawNode,
+}
+
+#[cfg_attr(not(feature = "ruby"), allow(dead_code))]
+impl HtmlNodeKey {
+    /// The key for `node` under `owner`, with no owner check of its own.
+    ///
+    /// # Safety
+    /// `node` must be a live node of the document `owner` names, and that
+    /// document must stay alive at the address `owner` holds until the key is
+    /// no longer used. A key built with a mismatched owner, from a dead node,
+    /// or used after its owner is gone (the address could be reused), makes the
+    /// safe `HtmlParsed::resolve` unsound - it compares the owner address and
+    /// then dereferences the node, trusting every key to come from here under
+    /// this contract. `HtmlParsed::mint_key` is the checked producer; the
+    /// visibility reaches `lexbor::adapter` only because Rust cannot narrow a
+    /// constructor to a sibling module.
+    #[inline]
+    pub(in crate::lexbor::adapter) unsafe fn new(owner: HtmlDocIdentity, node: RawNode) -> Self {
+        HtmlNodeKey { owner, node }
+    }
+
+    /// The owner identity, compared by `HtmlParsed::resolve`.
+    #[inline]
+    pub(in crate::lexbor::adapter) fn owner(self) -> HtmlDocIdentity {
+        self.owner
+    }
+
+    /// The node pointer, for `HtmlParsed::resolve` and for the bridge's node
+    /// identity, wrapper transport and XPath token. Never dereferenced from
+    /// outside `lexbor`.
+    ///
+    /// Named `raw_node` so the one way a key yields its raw handle is specific
+    /// enough for `script/check_unsafe_boundaries.rb` to count every bridge use
+    /// of it.
+    #[inline]
+    pub(crate) fn raw_node(self) -> RawNode {
+        self.node
     }
 }
 

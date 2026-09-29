@@ -14,7 +14,7 @@ use magnus::{prelude::*, Error, RString, Value};
 
 use crate::bridge::ruby::makiri_error;
 
-use crate::bridge::html::{html_node_unwrap, wrap_html_node};
+use crate::bridge::html::{with_arg_node, wrap_html_node};
 use crate::bridge::ruby::{is_kind_of, string_of};
 use crate::bridge::string::{ruby_verified_text, HtmlSource};
 use crate::bridge::wrapper::{ensure_document_mutable, html_doc_unwrap, DocKind, DocumentShell};
@@ -49,11 +49,10 @@ pub fn resolve_fragment_context(
     };
 
     if is_kind_of(context, &CLASS_NODE) {
-        /* Reject an XML node before any Lexbor use. */
-        // SAFETY: `unwrap` checked it is an HTML node, which `context` keeps
-        // alive for this call.
-        let cn = unsafe { html_node_unwrap(context)?.as_node() };
-        return cn.element().and_then(FragmentTag::of).ok_or_else(|| {
+        /* Rejects an XML node before any Lexbor use; only the context's tag
+         * and namespace ids come out. */
+        let tag = with_arg_node(context, |cn| cn.element().and_then(FragmentTag::of))?;
+        return tag.ok_or_else(|| {
             crate::bridge::ruby::arg_error("fragment context node must be an element")
         });
     }

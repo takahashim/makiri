@@ -30,10 +30,10 @@ RUST = File.join(ROOT, "ext/makiri/rust/src")
 # summary prints the `glue/` + `xpath/` subtotal that must reach 0.
 UNSAFE_ISLANDS = {
   "bridge/alloc.rs" => 4,
-  "bridge/doc.rs" => 4,
-  "bridge/fragment.rs" => 6,
+  "bridge/doc.rs" => 3,
+  "bridge/fragment.rs" => 5,
   "bridge/gvl.rs" => 5,
-  "bridge/html.rs" => 16,
+  "bridge/html.rs" => 17,
   "bridge/node_set.rs" => 8,
   "bridge/node_wrap.rs" => 1,
   "bridge/ruby.rs" => 18,
@@ -45,7 +45,7 @@ UNSAFE_ISLANDS = {
   "bridge/xml_decode.rs" => 7,
   "bridge/xpath/context_object.rs" => 3,
   "bridge/xpath/handler.rs" => 7,
-  "bridge/xpath/mod.rs" => 6,
+  "bridge/xpath/mod.rs" => 5,
   "cbuf.rs" => 16,
   "cbuf/verify.rs" => 8,
   "falloc/cstr.rs" => 1,
@@ -54,12 +54,12 @@ UNSAFE_ISLANDS = {
   "gvl.rs" => 4,
   "lexbor/abi.rs" => 4,
   "lexbor/adapter/arena_bytes.rs" => 11,
-  "lexbor/adapter/cross_import.rs" => 4,
+  "lexbor/adapter/cross_import.rs" => 2,
   "lexbor/adapter/html/attrs.rs" => 19,
   "lexbor/adapter/html/build.rs" => 19,
-  "lexbor/adapter/html/mod.rs" => 52,
+  "lexbor/adapter/html/mod.rs" => 53,
   "lexbor/adapter/html/mutate.rs" => 9,
-  "lexbor/adapter/post_parse.rs" => 9,
+  "lexbor/adapter/post_parse.rs" => 13,
   "lexbor/adapter/source_loc.rs" => 2,
   "lexbor/adapter/text_index.rs" => 1,
   "lexbor/adapter/tree_guard.rs" => 8,
@@ -71,7 +71,7 @@ UNSAFE_ISLANDS = {
   "lexbor/selectors.rs" => 12,
   "lexbor/serialize.rs" => 2,
   "lexbor/stylesheet.rs" => 7,
-  "lexbor/tests.rs" => 3,
+  "lexbor/tests.rs" => 7,
   "lexbor/xpath.rs" => 9,
   "token.rs" => 1,
 }.freeze
@@ -144,6 +144,25 @@ RAISING_COUNTS = {}.freeze
 # direct `Value::from_raw` above the bridge fails.
 VALUE_FROM_RAW = /\bValue::from_raw\b/
 VALUE_FROM_RAW_COUNTS = {}.freeze
+
+# Raw HTML node crossings in `bridge/`: `RawNode::from(<typed>)` turns a
+# borrowed handle into a lifetime-erased pointer, `RawNode::from_ptr` turns an
+# arbitrary pointer into one, and `HtmlNodeKey::raw_node()` takes the raw handle
+# back out of a long-lived key. They are how a raw node pointer crosses or
+# escapes the bridge, and the `unsafe` count table cannot see a SAFE one - a
+# `RawNode::from(node)` returned out of a closure, or a new place that reads a
+# key, is exactly what the handle API exists to keep countable. Pinned per file,
+# exact: a new crossing is a deliberate edit, and the checked entry
+# (`with_html_node` / `HtmlParsed::mint_key` / `HtmlParsed::resolve`) is what to
+# reach for instead.
+RAW_NODE_CROSSING =
+  /\bRawNode::from\s*\(|\bRawNode::from_ptr\b|\.raw_node\(\)|\bHtmlNodeKey::raw_node\b/
+RAW_NODE_CROSSING_COUNTS = {
+  "bridge/doc.rs" => 1,
+  "bridge/fragment.rs" => 3,
+  "bridge/html.rs" => 7,
+  "bridge/wrapper.rs" => 3,
+}.freeze
 
 # Lexbor ABI names outside `lexbor/` are forbidden. `lexbor` is the sole owner
 # of the vendored C ABI (notes/rust_third_architecture.ja.md): the bindgen types
@@ -370,6 +389,18 @@ Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
 end
 if value_from_raw != VALUE_FROM_RAW_COUNTS
   errors << "Value::from_raw outside bridge/ changed: #{table_diff(VALUE_FROM_RAW_COUNTS, value_from_raw)}"
+end
+
+raw_node_crossing = Hash.new(0)
+Dir.glob(File.join(RUST, "bridge", "**", "*.rs")).sort.each do |path|
+  relative = path.delete_prefix("#{RUST}/")
+  count = comments_removed(File.binread(path)).scan(RAW_NODE_CROSSING).length
+  raw_node_crossing[relative] = count unless count.zero?
+end
+if raw_node_crossing != RAW_NODE_CROSSING_COUNTS
+  errors << "raw-node crossings in bridge/ changed: " \
+            "#{table_diff(RAW_NODE_CROSSING_COUNTS, raw_node_crossing)} " \
+            "(reach for with_html_node / HtmlParsed::mint_key / HtmlParsed::resolve, or record the crossing here)"
 end
 
 lexbor_abi = Hash.new(0)
@@ -700,6 +731,7 @@ puts "unsafe-boundaries: #{forbidding.length} forbid files; " \
      "#{value_from_raw.values.sum} Value::from_raw and " \
      "#{lexbor_abi.values.sum} Lexbor ABI names outside their layer and " \
      "#{lexbor_decls.values.sum} Lexbor declarations outside lexbor/abi.rs; " \
+     "#{raw_node_crossing.values.sum} raw-node crossings in bridge/; " \
      "#{ruby_layer.values.sum} Ruby-layer uses inside the engine; " \
      "#{ruby_surface.values.sum} Ruby methods in bridge/; " \
      "every registered method but #{ENTRY_EXEMPT.length} exempt runs under entry"
