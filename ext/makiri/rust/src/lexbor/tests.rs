@@ -1233,6 +1233,65 @@ mod selector_port_spike {
         assert_eq!(unstarved.len(), 1);
     }
 
+    /// `:disabled`, `:enabled` and `:checked` by the HTML Standard's
+    /// definitions, including where Lexbor's matcher differs: a legend after
+    /// whitespace, fieldset inheritance for controls without the attribute,
+    /// nested fieldsets, `option`/`optgroup`, custom elements and `<div>`.
+    #[test]
+    fn form_state_pseudo_classes_follow_the_html_standard() {
+        let doc = parsed(
+            b"<!doctype html><body>\
+              <fieldset disabled>\n <legend><input id=in-legend></legend>\
+                <input id=inherits><div><button id=deep></button></div>\
+                <legend><input id=second-legend></legend>\
+                <fieldset id=inner><legend><input id=inner-legend></legend></fieldset>\
+              </fieldset>\
+              <fieldset disabled><div></div><legend><select id=legend-after-div></select></legend></fieldset>\
+              <fieldset disabled></fieldset>\
+              <select><optgroup disabled id=og><option id=in-og>a</option></optgroup>\
+                <option disabled id=opt>b</option><option id=opt-ok selected>c</option></select>\
+              <textarea id=ta></textarea><div id=plain disabled></div>\
+              <my-el id=custom disabled checked></my-el>\
+              <input type=RADIO checked id=radio><input type=text checked id=text>\
+              <svg><input disabled id=svg-input></input></svg>\
+              </body>",
+        );
+        let ids = |sel: &str| -> Vec<String> {
+            select_all(&doc, sel)
+                .into_iter()
+                .filter_map(|e| {
+                    e.get_attribute(b"id")
+                        .map(|v| String::from_utf8_lossy(v).into_owned())
+                })
+                .collect()
+        };
+        assert_eq!(
+            ids(":disabled"),
+            [
+                "inherits",
+                "deep",
+                "second-legend",
+                "inner",
+                "inner-legend",
+                "og",
+                "in-og",
+                "opt"
+            ]
+        );
+        assert_eq!(
+            ids(":enabled"),
+            [
+                "in-legend",
+                "legend-after-div",
+                "opt-ok",
+                "ta",
+                "radio",
+                "text"
+            ]
+        );
+        assert_eq!(ids(":checked"), ["opt-ok", "radio"]);
+    }
+
     /// `select_all` counts sibling positions once per list (a memo); one
     /// `matches?` counts afresh. Both must answer the same for every
     /// `:nth-*` kind, over a list mixing types, text, comments and nesting.
@@ -1476,10 +1535,11 @@ mod selector_port_spike {
             ":only-of-type",
             ":empty",
             ":root",
-            ":checked",
+            // `:checked`, `:disabled` and `:enabled` are left out: they follow
+            // the HTML Standard, not Lexbor (`selector_port`'s module doc),
+            // and are checked against it instead
+            // (`form_state_pseudo_classes_follow_the_html_standard`).
             ":required",
-            ":disabled",
-            ":enabled",
             ":any-link",
             ":link",
         ];
