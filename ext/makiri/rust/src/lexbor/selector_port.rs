@@ -484,6 +484,13 @@ pub fn compile_in<'p>(
     }
 }
 
+/// [`compile`]'s verdict alone, over `scratch`'s tables - for `matches?` on
+/// a node no selector can match, which still refuses a selector the matcher
+/// would refuse.
+pub fn check_compiles(scratch: &mut Scratch, groups: Lists<'_>) -> Result<(), MatchFailure> {
+    compile_in(scratch, groups).map(|c| c.give_back(scratch))
+}
+
 /// [`compile`]'s verdict alone, for tests that check it without matching.
 #[cfg(test)]
 pub(crate) fn validate(groups: Lists<'_>) -> Result<(), MatchFailure> {

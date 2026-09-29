@@ -154,7 +154,7 @@ fn matches(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<bool, Error> {
                 Some(el) => selector_port::matches_any_in(scratch, groups, el),
                 // Still compiled: a selector the matcher refuses is refused
                 // whatever node it is asked about.
-                None => selector_port::compile(groups).map(|_| false),
+                None => selector_port::check_compiles(scratch, groups).map(|()| false),
             }
         })
         .map_err(|e| parse_error(e, selector))?;
