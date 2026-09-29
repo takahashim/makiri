@@ -374,11 +374,11 @@ pub fn query_result(value: XPathValue, document: Value, answer: Answer) -> Resul
              * wrap, which allocates and so can raise past this frame. */
             let first = set.as_slice().first().map(|&n| NodeWord::of_token(n));
             drop(value);
-            return Ok(match first {
+            return match first {
                 // SAFETY: a node the query found in `document`.
                 Some(n) => unsafe { wrap_doc_node(DocKind::of(document), n, document) },
-                None => crate::bridge::ruby::nil(),
-            });
+                None => Ok(crate::bridge::ruby::nil()),
+            };
         }
     }
     value_to_ruby(value, document)

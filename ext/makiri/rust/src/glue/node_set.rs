@@ -78,7 +78,7 @@ fn each(ruby: &Ruby, s: &NodeSet) -> Result<Value, Error> {
             return Ok(this.enumeratorize("each", ()).as_value());
         }
         for node in s.snapshot(ruby)?.wrapped() {
-            let _: Value = ruby.yield_value(node)?;
+            let _: Value = ruby.yield_value(node?)?;
         }
         Ok(this)
     })

@@ -24,8 +24,8 @@ use crate::bridge::node_set::node_set_with_fill;
 use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId};
 
 /// Wrap an optional reached node under the receiver's Document (None -> nil).
-fn wrap_rel(this: XmlSelf, rel: Option<NodeId>) -> Option<Value> {
-    rel.map(|n| wrap(n, this.document))
+fn wrap_rel(this: XmlSelf, rel: Option<NodeId>) -> Result<Option<Value>, Error> {
+    rel.map(|n| wrap(n, this.document)).transpose()
 }
 
 /// A byte field as a String, or None (nil) when there is none.
@@ -184,16 +184,16 @@ pub fn content(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
 /* ---- navigation ---- */
 
 pub fn parent(this: XmlSelf) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| Ok(wrap_rel(this, this.doc_ref().parent(this.id))))
+    crate::bridge::ruby::entry(|| wrap_rel(this, this.doc_ref().parent(this.id)))
 }
 pub fn next(this: XmlSelf) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| Ok(wrap_rel(this, this.doc_ref().next(this.id))))
+    crate::bridge::ruby::entry(|| wrap_rel(this, this.doc_ref().next(this.id)))
 }
 pub fn previous(this: XmlSelf) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| Ok(wrap_rel(this, this.doc_ref().prev(this.id))))
+    crate::bridge::ruby::entry(|| wrap_rel(this, this.doc_ref().prev(this.id)))
 }
 pub fn first_child(this: XmlSelf) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| Ok(wrap_rel(this, this.doc_ref().first_child(this.id))))
+    crate::bridge::ruby::entry(|| wrap_rel(this, this.doc_ref().first_child(this.id)))
 }
 
 /// The first element from `start` along `step`.
@@ -208,37 +208,28 @@ fn first_element(
 pub fn next_element(this: XmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
         let d = this.doc_ref();
-        Ok(wrap_rel(
-            this,
-            first_element(d, d.next(this.id), |n| d.next(n)),
-        ))
+        wrap_rel(this, first_element(d, d.next(this.id), |n| d.next(n)))
     })
 }
 pub fn previous_element(this: XmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
         let d = this.doc_ref();
-        Ok(wrap_rel(
-            this,
-            first_element(d, d.prev(this.id), |n| d.prev(n)),
-        ))
+        wrap_rel(this, first_element(d, d.prev(this.id), |n| d.prev(n)))
     })
 }
 pub fn first_element_child(this: XmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
         let d = this.doc_ref();
-        Ok(wrap_rel(
+        wrap_rel(
             this,
             first_element(d, d.first_child(this.id), |n| d.next(n)),
-        ))
+        )
     })
 }
 pub fn last_element_child(this: XmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
         let d = this.doc_ref();
-        Ok(wrap_rel(
-            this,
-            first_element(d, d.last_child(this.id), |n| d.prev(n)),
-        ))
+        wrap_rel(this, first_element(d, d.last_child(this.id), |n| d.prev(n)))
     })
 }
 
@@ -294,7 +285,7 @@ pub fn aref(ruby: &Ruby, this: XmlSelf, rb_name: Value) -> Result<Option<Value>,
 pub fn attribute_by_qualified_name(this: XmlSelf, rb_name: Value) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
         let a = crate::bridge::xml::find_attribute(this, rb_name)?;
-        Ok(wrap_rel(this, a))
+        wrap_rel(this, a)
     })
 }
 

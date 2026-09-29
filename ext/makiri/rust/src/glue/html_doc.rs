@@ -31,7 +31,7 @@ fn doc_s_parse(ruby: &Ruby, _klass: Value, source: Value, depth: Value) -> Resul
 /* ---- read-only accessors ---- */
 
 fn doc_root(_ruby: &Ruby, self_: Value) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| Ok(crate::bridge::doc::document_root(self_)))
+    crate::bridge::ruby::entry(|| crate::bridge::doc::document_root(self_))
 }
 
 fn doc_title(ruby: &Ruby, self_: Value) -> Result<magnus::RString, Error> {
@@ -46,7 +46,7 @@ fn doc_internal_subset(_ruby: &Ruby, this: HtmlSelf) -> Result<Option<Value>, Er
             .node()
             .children()
             .find(|c| c.node_type() == NodeType::DocumentType);
-        Ok(crate::glue::html_node::wrap_node(doctype, this.document))
+        crate::glue::html_node::wrap_node(doctype, this.document)
     })
 }
 

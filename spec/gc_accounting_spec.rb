@@ -63,6 +63,20 @@ RSpec.describe "GC accounting of document arenas" do
     expect(GC.count).to be > before
   end
 
+  # A parse reports its size once; what an edit adds later is reported when
+  # enough has accumulated. Without that, a document grown from nothing stays
+  # "small" to the GC however large its arena gets.
+  it "lets memory pressure from documents grown by editing trigger a collection" do
+    markup = (("<li class=item>" + ("x" * 60) + "</li>") * 2500).freeze
+    GC.start
+    before = GC.count
+    8.times do
+      ul = Makiri::HTML("<ul></ul>").at_css("ul")
+      20.times { ul.inner_html = markup }
+    end
+    expect(GC.count).to be > before
+  end
+
   it "takes the report back when the document is freed, so RSS stays bounded" do
     # The report is balanced on free, so after a collection the next parse
     # reuses the freed arena instead of faulting a fresh one: the resident set

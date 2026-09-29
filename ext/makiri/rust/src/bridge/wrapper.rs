@@ -18,7 +18,7 @@ use magnus::{Error, Value};
 
 use crate::bridge::ruby::{value, VALUE};
 use crate::bridge::typed::{Hooks, Marker, Relocator, TypedType};
-use crate::falloc::MapInsert;
+use crate::falloc::{MapInsert, Reserve};
 use crate::init::{RbConst, CLASS_DOCUMENT};
 use crate::lexbor::adapter::html::{HtmlDoc, HtmlNodeKey, RawDoc, RawNode};
 use crate::lexbor::adapter::post_parse::HtmlParsed;
@@ -273,14 +273,16 @@ impl NodeCache {
         self.map.get(&token).copied()
     }
 
-    /// Remember `wrapper` as the one wrapper for `token`.
-    ///
-    /// A failed insert leaves the node uncached, so the next navigation builds
-    /// another wrapper and identity is lost for it. That only happens when the
-    /// allocator is refusing, where the process is already failing; the
-    /// alternative is raising out of a wrap that has no error path.
-    fn insert(&mut self, token: usize, wrapper: VALUE) {
-        let _ = self.map.falloc_insert(token, wrapper);
+    /// Room for one more wrapper, so the [`NodeCache::insert`] after it
+    /// cannot fail - see [`DocData::reserve_node`].
+    fn reserve(&mut self) -> Result<(), ()> {
+        self.map.falloc_reserve(1)
+    }
+
+    /// Remember `wrapper` as the one wrapper for `token`. After
+    /// [`NodeCache::reserve`] this allocates nothing, so it does not fail.
+    fn insert(&mut self, token: usize, wrapper: VALUE) -> Result<(), ()> {
+        self.map.falloc_insert(token, wrapper)
     }
 
     /// MOVABLE, not pinned: a document walked end to end holds one entry per
@@ -316,6 +318,10 @@ pub struct DocData {
     /// The external bytes this wrapper has told the GC about, so `Drop` takes
     /// back exactly what [`account_document`] reported.
     reported: usize,
+    /// An HTML document's pool chunk count when `reported` was measured:
+    /// what [`account_growth`] compares against, since the byte count
+    /// itself costs a walk of every chunk.
+    reported_chunks: usize,
     /// One wrapper per node; see [`NodeCache`].
     ///
     /// Boxed and optional so a document nobody navigates never allocates a
@@ -329,25 +335,60 @@ impl DocData {
         self.nodes.as_ref()?.get(token)
     }
 
-    /// Remember `wrapper` for `token`, allocating the cache on first use.
-    fn cache(&mut self, token: usize, wrapper: VALUE) {
+    /// Make room in the cache (allocating it on first use) for the wrapper
+    /// about to be built. This is the step that can fail, and it comes
+    /// BEFORE the wrapper exists: a wrapper made and then not cached would be
+    /// a second object for its node on the next navigation, without the
+    /// first one's `freeze`, instance variables or singleton methods.
+    fn reserve_node(&mut self) -> Result<(), ()> {
         if self.nodes.is_none() {
-            let Ok(fresh) = crate::falloc::try_box(NodeCache {
-                map: HashMap::with_hasher(BuildHasherDefault::default()),
-            }) else {
-                return; /* see NodeCache::insert on a refusing allocator */
-            };
-            self.nodes = Some(fresh);
+            self.nodes = Some(
+                crate::falloc::try_box(NodeCache {
+                    map: HashMap::with_hasher(BuildHasherDefault::default()),
+                })
+                .map_err(|_| ())?,
+            );
         }
-        if let Some(cache) = self.nodes.as_mut() {
-            cache.insert(token, wrapper);
-        }
+        self.nodes.as_mut().ok_or(())?.reserve()
+    }
+
+    /// Remember `wrapper` for `token`, in the room [`DocData::reserve_node`]
+    /// made.
+    fn cache(&mut self, token: usize, wrapper: VALUE) -> Result<(), ()> {
+        self.nodes.as_mut().ok_or(())?.insert(token, wrapper)
     }
 
     /// The Document's parse-warning Array.
     pub fn errors(&self) -> Value {
         // SAFETY: the live Array this wrapper marks.
         unsafe { value(self.errors) }
+    }
+
+    /// Whether the content has grown enough since the last report to measure
+    /// and report it again ([`account_growth`]): by an eighth, and at least
+    /// [`GROWTH_MIN_CHUNKS`] chunks (HTML) or [`GROWTH_MIN_BYTES`] (XML).
+    fn grown_enough(&self) -> bool {
+        // SAFETY: the content is owned by this object and live for the call.
+        unsafe {
+            match self.content {
+                Content::Empty => false,
+                Content::Html(p) => {
+                    let then = self.reported_chunks;
+                    p.as_ref().arena_chunks()
+                        >= then.saturating_add((then / 8).max(GROWTH_MIN_CHUNKS))
+                }
+                Content::Xml(d) => {
+                    let then = self.reported;
+                    d.as_ref().memsize() >= then.saturating_add((then / 8).max(GROWTH_MIN_BYTES))
+                }
+            }
+        }
+    }
+
+    /// The HTML content's chunk count, 0 for XML.
+    fn arena_chunks(&self) -> usize {
+        // SAFETY: as `grown_enough`.
+        unsafe { self.content.html().map_or(0, |p| p.as_ref().arena_chunks()) }
     }
 
     /// The bytes the content holds outside Ruby's allocator, or 0 with none.
@@ -435,9 +476,39 @@ fn account_document(rb_doc: VALUE) {
         return;
     };
     let diff = now_i.wrapping_sub(then_i);
+    d.reported_chunks = d.arena_chunks();
     if diff != 0 {
         d.reported = now;
         crate::bridge::ruby::report_external_bytes(diff);
+    }
+}
+
+/// Chunks an HTML document's pools must gain before [`account_growth`]
+/// measures it again (Lexbor's node pool grows in chunks of tens of KiB).
+const GROWTH_MIN_CHUNKS: usize = 16;
+/// Bytes an XML document must gain before [`account_growth`] reports again.
+const GROWTH_MIN_BYTES: usize = 512 * 1024;
+
+/// Tell the GC about what `rb_doc` has grown by since its last report, once
+/// that is enough to matter ([`DocData::grown_enough`]: an eighth, and a floor).
+///
+/// A parse reports its document's size once; mutation grows the arena after
+/// that - nodes appended in a loop, `inner_html=` of a large string - and
+/// without a new report the GC keeps judging a large document by its size at
+/// parse time. Measuring an HTML document walks every chunk of its pools, too
+/// costly for every edit, so an O(1) chunk count decides when; growth by a
+/// fraction also keeps the measurements logarithmic in the final size.
+///
+/// Called where an edit begins (`bridge::html::edit`, `bridge::xml::
+/// begin_edit`): the growth it sees is the previous edits', and a document's
+/// last edit is reported at its next one or not at all - an under-report, the
+/// safe direction, as it was before this existed. It may run a collection,
+/// so, like [`account_document`], it must be called with `rb_doc` on the
+/// caller's stack and no borrowed Ruby String held - which is so at the start
+/// of an edit, before any argument is converted.
+pub fn account_growth(rb_doc: Value) {
+    if with_doc_data_known(rb_doc, |d| d.grown_enough()) {
+        account_document(rb_doc.as_raw());
     }
 }
 
@@ -518,6 +589,7 @@ impl DocumentShell {
                     evaluating: 0,
                     errors: QFALSE,
                     reported: 0,
+                    reported_chunks: 0,
                     nodes: None,
                 },
                 |d| d.errors = errors.as_raw(),
@@ -677,7 +749,9 @@ impl NodeClasses {
 /// One wrapper per node: navigating to a node twice must give the SAME object,
 /// or everything that lives on a Ruby object is silently lost - `equal?`, an
 /// instance variable, a singleton method, `freeze`. A Document is already its
-/// own wrapper, which is why it needs no entry.
+/// own wrapper, which is why it needs no entry. So a wrapper is handed out
+/// only once it is cached: `Err` (out of memory) when the cache cannot make
+/// room, never an uncached object.
 ///
 /// The caller vouches that the node is a node of `document` of the
 /// representation `ty` wraps, and `klass` a class of it: only the two
@@ -687,11 +761,14 @@ pub(in crate::bridge) fn wrap_cached(
     klass: VALUE,
     source: impl NodeHandleSource,
     document: Value,
-) -> Value {
+) -> Result<Value, Error> {
     let token = source.identity();
     if let Some(cached) = cached_node(document, token) {
-        return cached;
+        return Ok(cached);
     }
+    /* Room for the entry first: a failure after the wrap would hand out a
+     * wrapper the cache does not know (DocData::reserve_node). */
+    with_doc_data_known(document, DocData::reserve_node).map_err(|_| wrap_oom())?;
     let node = source.into_handle(document);
     /* The Document is stored after the wrap: see `TypedType::wrap`. */
     // SAFETY: a fresh wrapper; the store closure only moves a live VALUE in.
@@ -705,10 +782,15 @@ pub(in crate::bridge) fn wrap_cached(
             |nd| nd.document = document.as_raw(),
         ))
     };
-    /* After the wrap, so the VALUE exists; `fresh` is on the stack, where the
-     * conservative scan pins it across the cache's own allocation. */
-    cache_node(document, token, fresh);
-    fresh
+    /* After the wrap, so the VALUE exists, into the room reserved above - no
+     * allocation. Were it to fail anyway, `fresh` is dropped unseen rather
+     * than handed out uncached. */
+    cache_node(document, token, fresh).map_err(|_| wrap_oom())?;
+    Ok(fresh)
+}
+
+fn wrap_oom() -> Error {
+    makiri_error("out of memory wrapping a node")
 }
 
 /// The one wrapper for `token` under `rb_doc`, or None the first time.
@@ -723,8 +805,8 @@ fn cached_node(rb_doc: Value, token: usize) -> Option<Value> {
 }
 
 /// Remember `wrapper` as the one wrapper for `token` under `rb_doc`.
-fn cache_node(rb_doc: Value, token: usize, wrapper: Value) {
-    with_doc_data_known(rb_doc, |d| d.cache(token, wrapper.as_raw()));
+fn cache_node(rb_doc: Value, token: usize, wrapper: Value) -> Result<(), ()> {
+    with_doc_data_known(rb_doc, |d| d.cache(token, wrapper.as_raw()))
 }
 
 /// Run `f` over a Document's wrapper data, for the fields that are the

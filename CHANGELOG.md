@@ -73,6 +73,12 @@
 
 ### Fixed
 
+* A document that grows by editing (appended nodes, `inner_html=`) reports
+  its new size to the GC, so memory pressure from it triggers collections; it
+  was reported once, at parse time.
+* A node wrapped while memory runs out raises `Makiri::Error` instead of
+  coming back as a second Ruby object for the same node, without the first
+  one's `freeze`, instance variables or singleton methods.
 * Insertion follows the DOM's pre-insertion rules in HTML and XML alike: no
   cycles through a template's contents (which hung `dup`), no children on
   Text/Comment/PI/DocumentType/Attr, no Text directly under an XML Document,

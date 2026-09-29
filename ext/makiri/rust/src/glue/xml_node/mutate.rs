@@ -153,7 +153,7 @@ fn insert(this: XmlSelf, arg: Value, at: Place) -> Result<Value, Error> {
     if let Some(a) = adoption {
         a.finish();
     }
-    Ok(wrap(node, this.document))
+    wrap(node, this.document)
 }
 
 pub fn add_child(_ruby: &Ruby, this: XmlSelf, arg: Value) -> Result<Value, Error> {
@@ -200,7 +200,7 @@ pub fn clone_node(this: XmlSelf, args: &[Value]) -> Result<Value, Error> {
         let copy = xml_mut_result(with_arena_for_new_node(this.document, |d| {
             mutate::clone_node(d, this.id, deep)
         })?)?;
-        Ok(wrap(copy, this.document))
+        wrap(copy, this.document)
     })
 }
 
@@ -239,7 +239,7 @@ pub fn create_element(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Val
          * wrapper allocation, the attribute loop's `to_s`), so no borrow of a
          * Ruby String is held across a GC point. */
         drop((nv, cv));
-        let rb_el = wrap(el, rb_self);
+        let rb_el = wrap(el, rb_self)?;
         if let Some(h) = attrs {
             /* Keys and values are stringified - Nokogiri accepts symbol keys and
              * non-string values - then go through the normal validated setter,
@@ -279,7 +279,7 @@ pub fn create_loose_dom_element(
         let el = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
             mutate::new_loose_dom_element(d, qname, sp, ns)
         })?)?;
-        Ok(wrap(el, rb_self))
+        wrap(el, rb_self)
     })
 }
 
@@ -307,7 +307,7 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
         let dt = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
             mutate::new_document_type(d, name, pub_id, sys_id)
         })?)?;
-        Ok(wrap(dt, rb_self))
+        wrap(dt, rb_self)
     })
 }
 
@@ -323,7 +323,7 @@ fn create_chardata(
     let n = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
         mutate::new_chardata(d, type_, bytes)
     })?)?;
-    Ok(wrap(n, rb_self))
+    wrap(n, rb_self)
 }
 
 pub fn create_text_node(_ruby: &Ruby, rb_self: Value, t: Value) -> Result<Value, Error> {
@@ -348,7 +348,7 @@ pub fn create_pi(_ruby: &Ruby, rb_self: Value, target: Value, data: Value) -> Re
         let pi = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
             mutate::new_pi(d, target, data)
         })?)?;
-        Ok(wrap(pi, rb_self))
+        wrap(pi, rb_self)
     })
 }
 
@@ -357,6 +357,6 @@ pub fn import_node(_ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value
     crate::bridge::ruby::entry(|| {
         let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), (), ()>(args)?;
         let deep = a.optional.0.is_some_and(|v| v.to_bool());
-        Ok(wrap(import_copy(rb_self, a.required.0, deep)?, rb_self))
+        wrap(import_copy(rb_self, a.required.0, deep)?, rb_self)
     })
 }

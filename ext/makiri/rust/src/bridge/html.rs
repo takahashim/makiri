@@ -96,13 +96,13 @@ static HTML_NODE_CLASSES: NodeClasses = NodeClasses {
 /// A DOCUMENT node maps back onto the Ruby Document rather than getting a
 /// second wrapper; a node type with no specific leaf (entity/notation, which
 /// Lexbor's HTML parser does not produce) falls back to `Makiri::HTML::Node`.
-pub fn wrap_html_node(node: RawNode, document: Value) -> Value {
+pub fn wrap_html_node(node: RawNode, document: Value) -> Result<Value, Error> {
     /* SAFETY: a `RawNode` is live - the safe constructors are `From<HtmlNode>`
      * and `From<Building*>`, and the only raw one, `from_ptr`, is unsafe. */
     let handle = unsafe { node.as_node() };
     let node_type = handle.node_type();
     if node_type == NodeType::Document {
-        return document;
+        return Ok(document);
     }
     let klass = HTML_NODE_CLASSES.class_for(node_type);
     crate::bridge::wrapper::wrap_cached(&HTML_NODE_TYPE, klass, node, document)
@@ -237,8 +237,9 @@ pub fn with_arg_node<R>(v: Value, f: impl FnOnce(HtmlNode<'_>) -> R) -> Result<R
 }
 
 /// [`wrap_html_node`] for an optional handle.
-pub fn wrap_node(node: Option<HtmlNode<'_>>, document: Value) -> Option<Value> {
+pub fn wrap_node(node: Option<HtmlNode<'_>>, document: Value) -> Result<Option<Value>, Error> {
     node.map(|n| wrap_html_node(RawNode::from(n), document))
+        .transpose()
 }
 
 /* ------------------------------------------------------------------ *
@@ -298,6 +299,8 @@ pub struct HtmlEdit<'a> {
 pub fn edit(this: &HtmlSelf) -> Result<HtmlEdit<'_>, Error> {
     crate::bridge::ruby::check_frozen(this.value)?;
     ensure_document_mutable(this.document)?;
+    /* Before any argument is converted: see `account_growth`. */
+    crate::bridge::wrapper::account_growth(this.document);
     Ok(HtmlEdit { this })
 }
 
@@ -417,7 +420,7 @@ pub fn insert(this: &HtmlSelf, rb_incoming: Value, place: Place) -> Result<Value
         return Ok(rb_incoming);
     }
     adopt_release(rb_incoming)?;
-    Ok(wrap_html_node(placed, this.document))
+    wrap_html_node(placed, this.document)
 }
 
 /// A refused insertion, worded. The one place these messages live.

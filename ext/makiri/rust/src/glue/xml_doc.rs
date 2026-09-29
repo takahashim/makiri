@@ -89,7 +89,7 @@ fn s_parse(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
 }
 
 fn doc_root(_ruby: &Ruby, rb_self: Value) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| Ok(crate::bridge::xml::document_root(rb_self)))
+    crate::bridge::ruby::entry(|| crate::bridge::xml::document_root(rb_self))
 }
 
 /// The document's DOCTYPE, or nil.
@@ -99,7 +99,7 @@ fn doc_root(_ruby: &Ruby, rb_self: Value) -> Result<Option<Value>, Error> {
 /// undefined-entity error and no external subset is fetched. The node is kept
 /// off the tree, so XPath never sees it (XPath 1.0 has no doctype node type).
 fn doc_internal_subset(_ruby: &Ruby, rb_self: Value) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| Ok(crate::bridge::xml::document_internal_subset(rb_self)))
+    crate::bridge::ruby::entry(|| crate::bridge::xml::document_internal_subset(rb_self))
 }
 
 /// `Makiri::XML::Document.new` - an empty document to build up programmatically.
@@ -117,7 +117,7 @@ fn fragment_s_parse(_klass: Value, source: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let doc_obj = crate::bridge::xml::new_empty_xml_document()?;
         let frag = crate::bridge::xml::fragment_into(doc_obj, source, false)?;
-        Ok(wrap(frag, doc_obj))
+        wrap(frag, doc_obj)
     })
 }
 
@@ -126,7 +126,7 @@ fn fragment_s_parse(_klass: Value, source: Value) -> Result<Value, Error> {
 fn doc_fragment(rb_self: Value, source: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let frag = crate::bridge::xml::fragment_into(rb_self, source, true)?;
-        Ok(wrap(frag, rb_self))
+        wrap(frag, rb_self)
     })
 }
 

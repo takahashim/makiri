@@ -106,9 +106,11 @@ pub fn parse_document(source: Value, limit: DepthLimit) -> Result<Value, Error> 
 
 /// `Document#root`: the root Element node, or nil (unreachable today - the HTML
 /// parser inserts html/head/body even for empty input).
-pub fn document_root(rb_doc: Value) -> Option<Value> {
-    let root = html_doc(&rb_doc).as_node().document_root()?;
-    Some(wrap_html_node(RawNode::from(root), rb_doc))
+pub fn document_root(rb_doc: Value) -> Result<Option<Value>, Error> {
+    let Some(root) = html_doc(&rb_doc).as_node().document_root() else {
+        return Ok(None);
+    };
+    wrap_html_node(RawNode::from(root), rb_doc).map(Some)
 }
 
 /// `Document#title`: the document `<title>`, or `""`.
@@ -152,7 +154,7 @@ pub fn import_node(rb_self: Value, node_v: Value, deep: bool) -> Result<Value, E
         let src = xml_node_unwrap(node_v)?;
         // SAFETY: two live arenas, and the translation validates the target.
         let imp = xml_mut_result(unsafe { cross_xml_to_html(doc, &*xdoc, src, deep) })?;
-        return Ok(wrap_html_node(imp, rb_self));
+        return wrap_html_node(imp, rb_self);
     }
 
     /* Err on a non-node. The copy is a Lexbor import into `doc`, which runs
@@ -161,7 +163,7 @@ pub fn import_node(rb_self: Value, node_v: Value, deep: bool) -> Result<Value, E
         // SAFETY: `doc` is the receiver's live document.
         unsafe { import_copy(doc, src, deep, "import node") }
     })??;
-    Ok(wrap_html_node(imp, rb_self))
+    wrap_html_node(imp, rb_self)
 }
 
 /// `Node#clone_node(deep = false)`: a copy owned by the same document and
@@ -184,5 +186,5 @@ pub fn clone_node(rb_self: Value, deep: bool) -> Result<Value, Error> {
         // SAFETY: `doc` is `node`'s own document, live while `node` is.
         unsafe { import_copy(doc, node, deep, "clone node") }
     })??;
-    Ok(wrap_html_node(clone, document))
+    wrap_html_node(clone, document)
 }

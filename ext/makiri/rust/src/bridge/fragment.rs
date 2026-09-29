@@ -203,7 +203,7 @@ pub fn build_fragment(
     // SAFETY: `frag` was just made in `doc`, which nothing else is editing.
     unsafe { parsed.import_into(doc, frag) }
         .map_err(|_| makiri_error("failed to import a fragment child"))?;
-    Ok(wrap_html_node(frag, document))
+    wrap_html_node(frag, document)
 }
 
 /// The standalone fragment's backing document: a throwaway
