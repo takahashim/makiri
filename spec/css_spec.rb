@@ -76,8 +76,9 @@ RSpec.describe "Makiri CSS" do
   # with only the results filtered to descendants of the context node. So the
   # context node itself CAN satisfy an earlier compound in the selector, unlike
   # Nokogiri (and `Makiri::XML`, which lowers to an XPath scoped from the node).
-  # Pinned here because notes/css_selectors_crate_migration_plan.ja.md's
-  # matcher migration must reproduce this, not "fix" it into XPath-style scoping.
+  # Pinned here so a change of matcher (as the move from Lexbor's engine to
+  # `lexbor::css_match` was) reproduces this, not "fix" it into XPath-style
+  # scoping.
   describe "query scope (whole-document matching, not scoped to the context node)" do
     it "lets the context node itself satisfy an earlier compound" do
       c = doc.at_css("#main") # #main is itself a div
@@ -86,9 +87,8 @@ RSpec.describe "Makiri CSS" do
   end
 
   # Lexbor's matcher has no `:scope` (NOKOGIRI_DIFFERENCES.md). Pin the exact
-  # failure so the migration can decide, rather than discover, whether to keep
-  # rejecting it or to implement it (`selectors::Element` has a scope-element
-  # concept; see notes/css_selectors_crate_migration_plan.ja.md §3).
+  # failure so a change of matcher decides, rather than discovers, whether to
+  # keep rejecting it or to implement it.
   describe ":scope" do
     it "is rejected as an unsupported CSS selector" do
       c = doc.at_css("#main")
@@ -144,8 +144,8 @@ RSpec.describe "Makiri CSS" do
     end
   end
 
-  # SVG (foreign content) is under-covered relative to Makiri::XML's CSS specs -
-  # see notes/css_selectors_crate_migration_plan.ja.md Phase 0 gap list.
+  # SVG (foreign content) was under-covered relative to Makiri::XML's CSS
+  # specs; these close that gap.
   describe "SVG (foreign content) type selectors" do
     let(:svg_doc) { Makiri::HTML("<html><body><svg><circle r='1'/></svg></body></html>") }
 
@@ -170,7 +170,7 @@ RSpec.describe "Makiri CSS" do
   # raise, found before any node is matched, wherever the chain is nested -
   # never a silently dropped alternative (which made `:not(<65 compounds>)`
   # match every element). Selector NESTING stays unbounded: see the `:is()`
-  # probe below and notes/css_selectors_crate_migration_plan.ja.md.
+  # probe below.
   describe "resource limits" do
     def chain(n) = (["div"] * n).join(" > ")
 
@@ -201,8 +201,8 @@ RSpec.describe "Makiri CSS" do
     end
 
     it "does not stack-overflow on deeply nested :is()" do
-      # Kept small for suite speed; notes/css_selectors_crate_migration_plan.ja.md
-      # records the same shape measured to 500,000 levels.
+      # Kept small for suite speed; `lexbor::tests::css_match` runs the same
+      # shape at 500,000 levels.
       d = Makiri::HTML("<html><body><a>x</a></body></html>")
       depth = 2000
       nested = (":is(" * depth) + "a" + (")" * depth)
@@ -258,8 +258,8 @@ RSpec.describe "Makiri CSS" do
   # Which arguments reach the CSS parser is `lexbor::contains_guard`'s
   # decision, unchanged - `:lexbor-contains()` still PARSES on the HTML side
   # (or is rejected as a syntax error, same as before). MATCHING it is what
-  # changed: `lexbor::css_match` deliberately does not implement it
-  # (notes/css_selectors_crate_migration_plan.ja.md §1.1), so a well-formed
+  # changed: `lexbor::css_match` deliberately does not implement it (a Lexbor
+  # extension, not CSS), so a well-formed
   # `:lexbor-contains()` now raises `Makiri::Error` ("could not be run") on
   # HTML instead of ever answering - the same fail-closed treatment as an
   # unsupported combinator (`col || td`, below), and deliberately NOT a

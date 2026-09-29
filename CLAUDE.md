@@ -730,8 +730,8 @@ match over the typed HTML adapter through `css_match` - an original,
 `#![forbid(unsafe_code)]` Rust port of Lexbor's `lxb_selectors_*` state
 machine (its `find`/`found_check`/`not_found` loop over a chain's compounds,
 with nested list-pseudos as contexts on a heap task stack; never native
-recursion for selector nesting - `notes/css_selectors_crate_migration_plan.ja.md`
-§1.1), NOT Lexbor's own matcher. Selector PARSING is still Lexbor's own CSS
+recursion for selector nesting, as `lxb_selectors_run`'s loop never recurses
+either), NOT Lexbor's own matcher. Selector PARSING is still Lexbor's own CSS
 parser (`css_engine::SelectorParser::parse`, unchanged), but the glue reaches
 it through `lexbor::selector_cache`, not `css_parser::parse` directly:
 `selector_cache` owns its OWN process-global parser/arena
@@ -810,7 +810,8 @@ even lazily: a lookup costs more than the one comparison it saves
 one Lexbor call rather than the two `dom_local_name` makes. An attribute whose
 Lexbor `qualified_name` is 0 is named by its lower-cased local name, so a
 local-id match confirms without reading the name. Whether a value compares
-case-insensitively by default (§B-5's 46-name table) is settled per selector at
+case-insensitively by default (the 46-name table of
+`lxb_selectors_match_attribute_html_case_insensitive`) is settled per selector at
 compile time (`Step::value_ci`), as Lexbor's per-id `switch` is - the per-node
 table scan it replaced cost `[type=text]` ~40%. A lone top-level chain whose
 rightmost compound has a type selector refuses other tags before the machine
@@ -852,7 +853,7 @@ mid-match would have left it stuck `true` forever, wedging `Node#css`/
 `#at_css`/`#matches?` for the rest of the process - not just crashing the one
 call. Lexbor's own C engine never had this problem: `:has()`/`:is()` nesting
 is handled by `lxb_selectors_nested_t`, a heap structure, not C recursion
-(`notes/css_selectors_crate_migration_plan.ja.md` §1.1). Fixed the same way:
+(`lxb_selectors_run`'s loop). Fixed the same way:
 `ForwardTask`/`HasCursor` (`css_match/query.rs`) answer `:has()`'s forward
 search - candidate iteration over Descendant/Child/NextSibling/
 SubsequentSibling, multi-compound stepping, and nesting - entirely on the

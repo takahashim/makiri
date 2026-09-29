@@ -48,10 +48,11 @@ pub(super) struct Step<'p> {
     /// alts + n_alts]` of the [`Compiled`] table.
     pub(super) alts: u32,
     pub(super) n_alts: u32,
-    /// An attribute selector's value comparison: `Some(ci)` settled at
-    /// compile time (an `i` / `s` modifier, or a name outside the §B-5
-    /// table), `None` for a table name, case-insensitive on an HTML element
-    /// only - Lexbor's per-id `switch`, decided once rather than per node.
+    /// An attribute selector's value comparison: `Some(ci)` settled at compile
+    /// time (an `i` / `s` modifier, or a name outside the table in
+    /// [`is_html_ci_attribute`]), `None` for a table name, case-insensitive on
+    /// an HTML element only - Lexbor's per-id `switch`, decided once rather
+    /// than per node.
     pub(super) value_ci: Option<bool>,
     /// An `:is()` / `:where()` / `:not()` whose every alternative is one
     /// compound with nothing nested in it: answered in place by
@@ -307,10 +308,10 @@ impl<'p> Compiled<'p> {
     }
 }
 
-/// §B-5: the 46 HTML attributes whose VALUE compares ASCII case-insensitively
-/// when no `i`/`s` modifier is written, and only on an HTML-namespace element
-/// of an HTML document (`attribute_matches`). Asked once per selector, by
-/// `compile`.
+/// The 46 HTML attributes whose VALUE compares ASCII case-insensitively
+/// (`lxb_selectors_match_attribute_html_case_insensitive`) when no `i`/`s`
+/// modifier is written, and only on an HTML-namespace element of an HTML
+/// document (`attribute_matches`). Asked once per selector, by `compile`.
 fn is_html_ci_attribute(name: &[u8]) -> bool {
     // Compared case-insensitively against the selector's own attribute name
     // spelling (an author can write `[TYPE=x]`). Lower-cased into a buffer

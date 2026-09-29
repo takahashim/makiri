@@ -19,11 +19,12 @@ use super::{Budget, MatchFailure};
 /// the heap state a [`ForwardTask`] keeps per level so a `:has()` argument's
 /// candidate search (potentially many candidates, unlike the main matcher's
 /// single-path ancestor/sibling climbs) never recurses natively, whatever the
-/// combinator (module doc). Built once per compound step
-/// ([`HasCursor::start`]) from the node the search starts FROM, then
-/// [`HasCursor::next`] repeatedly for each candidate - same candidates, same
-/// order, same element-only filtering as Lexbor's own forward search
-/// (§A-4)/this port's earlier native-recursive `has_forward`.
+/// combinator (module doc). Built once per compound step ([`HasCursor::start`])
+/// from the node the search starts FROM, then [`HasCursor::next`] repeatedly
+/// for each candidate - same candidates, same order, same element-only
+/// filtering as Lexbor's own forward search
+/// (`lxb_selectors_state_found_check_forward`)/this port's earlier
+/// native-recursive `has_forward`.
 pub(super) enum HasCursor<'doc> {
     /// The combinator can never find anything (`Close` - defensive, per
     /// `Compiled::add_chain`: a compound boundary is always a real
@@ -116,9 +117,9 @@ pub(super) struct ChainTask<'doc> {
     at_base: u32,
 }
 
-/// One `:has()` alternative's forward search from its anchor (§A-4):
-/// compound `level` tested at `cand`, from simple selector `rest`; each
-/// level's candidates come from `cursors[cur_base + level]`.
+/// One `:has()` alternative's forward search from its anchor (Lexbor's
+/// `*_forward` states): compound `level` tested at `cand`, from simple selector
+/// `rest`; each level's candidates come from `cursors[cur_base + level]`.
 #[derive(Clone, Copy)]
 pub(super) struct ForwardTask<'doc> {
     chain: Chain,
@@ -128,8 +129,9 @@ pub(super) struct ForwardTask<'doc> {
     cur_base: u32,
 }
 
-/// `of S` (§D-1): is `node` in `S` (`counting == false`), then how many of
-/// its siblings in the counting direction are - `pos` so far.
+/// `of S` (`lxb_selectors_pseudo_class_function`'s `NTH_CHILD`): is `node` in
+/// `S` (`counting == false`), then how many of its siblings in the counting
+/// direction are - `pos` so far.
 #[derive(Clone, Copy)]
 pub(super) struct NthOfTask<'doc> {
     a: c_long,
@@ -701,10 +703,11 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
         }
     }
 
-    /// [`ForwardTask`]: take the next candidate at the current level (or,
-    /// out of them, back to the level before), test that level's compound on
-    /// it, and on a match go one level deeper from it. The same candidates,
-    /// in the same order, as Lexbor's forward search (§A-4).
+    /// [`ForwardTask`]: take the next candidate at the current level (or, out
+    /// of them, back to the level before), test that level's compound on it,
+    /// and on a match go one level deeper from it. The same candidates, in the
+    /// same order, as Lexbor's forward search
+    /// (`lxb_selectors_state_found_check_forward`).
     fn step_forward(
         &mut self,
         t: &mut ForwardTask<'doc>,
@@ -760,8 +763,8 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
         }
     }
 
-    /// [`NthOfTask`]: `S` at the candidate itself first - it must match
-    /// (§D-1) - then at each sibling in the counting direction.
+    /// [`NthOfTask`]: `S` at the candidate itself first - it must match (as in
+    /// Lexbor) - then at each sibling in the counting direction.
     fn step_nth_of(
         &mut self,
         t: &mut NthOfTask<'doc>,

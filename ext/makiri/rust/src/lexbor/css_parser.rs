@@ -332,12 +332,12 @@ pub struct Attribute<'p> {
     /// when this was added, XML attribute values are always case-sensitive
     /// regardless, so `s` and unset need no distinguishing there.
     pub case_insensitive: bool,
-    /// Whether an explicit `s` modifier was written, as opposed to no
-    /// modifier at all - a distinction `case_insensitive` alone cannot make
-    /// (both read `false`), needed by `lexbor::css_match`'s HTML
-    /// case-insensitive-attribute-value table (§B-4/B-5 in
-    /// `notes/lexbor_selectors_c_semantics.ja.md`): an explicit `s` forces
-    /// case-sensitive even for a table attribute like `type`, but no
+    /// Whether an explicit `s` modifier was written, as opposed to no modifier
+    /// at all - a distinction `case_insensitive` alone cannot make (both read
+    /// `false`), needed by `lexbor::css_match`'s HTML
+    /// case-insensitive-attribute-value table
+    /// (`lxb_selectors_match_attribute_html_case_insensitive`): an explicit `s`
+    /// forces case-sensitive even for a table attribute like `type`, but no
     /// modifier at all defers to the table's default.
     pub explicit_sensitive: bool,
     /// None for `[name]`, an existence test.

@@ -1,25 +1,27 @@
 //! CSS selector matcher over the typed HTML adapter, structured as an
 //! explicit (heap) work stack rather than native recursion - the same
 //! architectural property Lexbor's own `lxb_selectors_*` state machine has
-//! (`notes/css_selectors_crate_migration_plan.ja.md` §1.1: `do { entry =
-//! selectors->state(...) } while (entry != NULL);` never recurses on
-//! selector nesting). Selector PARSING is not reimplemented: it goes through
+//! (`lxb_selectors_run`'s loop,
+//! `do { entry = selectors->state(...) } while (entry != NULL);`, never
+//! recurses on selector nesting). Selector PARSING is not reimplemented: it
+//! goes through
 //! the existing `lexbor::css_parser` typed view, the same one the XML
 //! CSS->XPath lowering already uses.
 //!
-//! Wired into `Node#css`/`#at_css`/`#matches?` (`glue::html_node::css`), which
-//! is Phase 3 of `notes/css_selectors_crate_migration_plan.ja.md` - see that
-//! plan's §1.1 for why this port (its "(B)-as-port") was chosen over adopting
-//! the `selectors`/`cssparser` crates ("(A)", explored then discarded; its
-//! spike code is gone, findable only through git history).
+//! Wired into `Node#css`/`#at_css`/`#matches?` (`glue::html_node::css`). A
+//! port was chosen over adopting the `selectors`/`cssparser` crates, which
+//! were explored and discarded: their matcher recurses natively on selector
+//! nesting ("Why an explicit stack" below). The spike code is gone, findable
+//! only through git history.
 //!
 //! # This is a semantic port of Lexbor's `selectors.c`, not a code port
 //!
-//! `notes/lexbor_selectors_c_semantics.ja.md` records a systematic reading of
-//! `vendor/lexbor/source/lexbor/selectors/selectors.c` (matching logic) and
-//! its test suite (`vendor/lexbor/test/lexbor/selectors/selectors.c`); every
-//! matching rule in this module is cross-referenced against it by section letter
-//! (`§B-1` etc.).
+//! Every matching rule here is read off
+//! `vendor/lexbor/source/lexbor/selectors/selectors.c` and its test suite
+//! (`vendor/lexbor/test/lexbor/selectors/selectors.c`), and each names the
+//! Lexbor function or test it follows (`lxb_selectors_match_element`,
+//! `match_id_class_case`, ...), so it can be checked against the vendored
+//! source rather than against a summary of it.
 //!
 //! The control flow is Lexbor's too, in safe Rust: a chain is matched right
 //! to left by the `find` / `found_check` / `not_found` loop over its compounds
@@ -47,16 +49,17 @@
 //!   an `<input>` in a `<fieldset disabled>` is disabled, the legend
 //!   exemption is the fieldset's first `legend` element child (Lexbor reads
 //!   `first_child`, so whitespace defeats it and an empty fieldset is a NULL
-//!   read, §C-2), `option`/`optgroup` count, `:enabled` is only for the
-//!   elements `:disabled` is defined for (Lexbor: any element), and an
+//!   read - `lxb_selectors_pseudo_class_disabled`), `option`/`optgroup`
+//!   count, `:enabled` is only for the elements `:disabled` is defined for
+//!   (Lexbor: any element), and an
 //!   element with a custom tag is neither `:disabled` nor `:checked` by its
 //!   attribute alone. Checked against the Standard
 //!   (`form_state_pseudo_classes_follow_the_html_standard`); the Lexbor
 //!   differential fuzzer leaves them out.
-//! - `lxb_selectors_anb_calc` (§D-3) tests `:nth-*`'s `An+B` with a `double`
+//! - `lxb_selectors_anb_calc` tests `:nth-*`'s `An+B` with a `double`
 //!   division, which past 2^53 answers "divisible" for everything; this port
 //!   computes exactly, in `i128` (`anb_matches`'s doc).
-//! - `:nth-child(An+B of S)` / `:nth-last-child(An+B of S)` (§D-1) count by
+//! - `:nth-child(An+B of S)` / `:nth-last-child(An+B of S)` count by
 //!   the CSS definition - an element in `S`, ranked among its element
 //!   siblings that are in `S` - where Lexbor miscounts in many shapes: a
 //!   comma list in `S` (it starts from the LAST list, `anb->of->last`, so
@@ -83,9 +86,10 @@
 //!   does; a lookup by qualified name would also take an unprefixed `id` set
 //!   IN a namespace (`setAttributeNS("urn:x", "id")`), which is not the ID.
 //!
-//! Still open (tracked in the plan, not silent gaps): `::pseudo-elements`,
-//! `:lexbor-contains()` (decided not to reimplement), `:current()` (deferred,
-//! not ruled out - `notes/css_selectors_crate_migration_plan.ja.md`). Closed,
+//! Still open, and never a silent wrong answer: `::pseudo-elements` (never
+//! match), `:lexbor-contains()` (raised - a Lexbor extension, not CSS,
+//! deliberately not reimplemented; see `CHANGELOG.md`), `:current()`
+//! (deferred, not ruled out). Closed,
 //! not open: the selector-nesting cap (see the next section), the work budget
 //! ([`Budget`]), and allocation - every table and stack a query
 //! uses is query-local and grows through `falloc` ([`Compiled`], `Query`), so
@@ -102,8 +106,9 @@
 //! avoids that: nesting depth becomes heap growth, never call-stack growth -
 //! verified at 500,000 levels in `lexbor::tests::css_match`.
 //!
-//! `:has()`'s own forward search (§A-4) is heap-based too, for the same
-//! reason and the same way: `ForwardTask`/`HasCursor` walk candidates and
+//! `:has()`'s own forward search (Lexbor's `*_forward` states,
+//! `lxb_selectors_state_found_check_forward` and the rest) is heap-based
+//! too, for the same reason and the same way: `ForwardTask`/`HasCursor` walk candidates and
 //! `:has()`-inside-`:has()` nesting without ever making a native Rust call
 //! that itself recurses. This was NOT the original design - an earlier
 //! version answered `:has()` with ordinary Rust recursion (`has_forward`),
@@ -120,7 +125,7 @@
 //! the WHOLE PROCESS with an uncaught `SystemStackError` that escaped every
 //! `rescue`. Lexbor's own C engine never had this problem: `:has()`/`:is()`
 //! nesting is handled by `lxb_selectors_nested_t`, a heap structure, not C
-//! recursion (`notes/css_selectors_crate_migration_plan.ja.md` §1.1) - the
+//! recursion (`lxb_selectors_run`'s loop, above) - the
 //! fix here is bringing `:has()` in line with what Lexbor (and this module's
 //! own `:is()`/`:where()`/`:not()`) already do, not inventing a new
 //! technique. `MAX_COMPOUNDS` still bounds one `:has()` chain's length (a
@@ -204,8 +209,8 @@ pub enum MatchFailure {
     /// either cannot run (the column combinator `||`, `Combinator::Other` -
     /// Lexbor's own traversal reports an error status for it too) or
     /// implements and this port deliberately does not
-    /// (`:lexbor-contains()`, `FunctionArg::Contains` - decided in
-    /// `notes/css_selectors_crate_migration_plan.ja.md` §1.1). Answering
+    /// (`:lexbor-contains()`, `FunctionArg::Contains` - a Lexbor extension,
+    /// not CSS; `CHANGELOG.md` records the removal). Answering
     /// `false` for either would be indistinguishable from "genuinely no
     /// element satisfies this", which it is not.
     Unsupported,

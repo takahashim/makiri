@@ -31,15 +31,15 @@ fn eq_bytes(a: &[u8], b: &[u8], case_insensitive: bool) -> bool {
     }
 }
 
-/// §B-2: Lexbor's `lxb_selectors_match_class` - whitespace-tokenize `target`
-/// and look for a token equal to `want`. Also the engine behind `~=`
-/// (§B-4's `Include`), which is why this takes a `case_insensitive` flag
-/// rather than baking in quirks mode itself - the caller decides which rule
-/// supplies it (document quirks mode for a bare class selector, `i`/`s`/the
-/// HTML case-insensitive attribute table for `~=`).
+/// Lexbor's `lxb_selectors_match_class` - whitespace-tokenize `target` and look
+/// for a token equal to `want`. Also the engine behind `~=`
+/// (`lxb_selectors_match_attribute`'s `INCLUDE`), which is why this takes a
+/// `case_insensitive` flag rather than baking in quirks mode itself - the
+/// caller decides which rule supplies it (document quirks mode for a bare class
+/// selector, `i`/`s`/the HTML case-insensitive attribute table for `~=`).
 fn has_whitespace_token(target: &[u8], want: &[u8], case_insensitive: bool) -> bool {
     if want.is_empty() {
-        return false; // an empty class name/token never matches (§B-2)
+        return false; // an empty class name/token never matches, as in Lexbor
     }
     // Lexbor's own loop: a token is compared only when its length matches.
     let mut rest = target;
@@ -60,13 +60,14 @@ fn has_whitespace_token(target: &[u8], want: &[u8], case_insensitive: bool) -> b
     }
 }
 
-/// §B-1: `lxb_selectors_match_element` folds ASCII case UNCONDITIONALLY (tag
-/// lookup always searches lower-cased), regardless of namespace or quirks
-/// mode - unlike class/id (§B-2/B-3, quirks-only) or attributes (§B-5,
-/// HTML-namespace-and-document-type-gated). This is a known Lexbor
-/// deviation from the CSS spec for foreign content (documented in
-/// `NOKOGIRI_DIFFERENCES.md`'s namespace section already), reproduced here
-/// for engine parity, not "fixed".
+/// `lxb_selectors_match_element` folds ASCII case UNCONDITIONALLY (tag lookup
+/// always searches lower-cased), regardless of namespace or quirks mode -
+/// unlike class/id (`lxb_selectors_match_class`/`_id`, quirks-only) or
+/// attribute values (`lxb_selectors_match_attribute_html_case_insensitive`,
+/// HTML-namespace-and-document-type-gated). This is a known Lexbor deviation
+/// from the CSS spec for foreign content (documented in
+/// `NOKOGIRI_DIFFERENCES.md`'s namespace section already), reproduced here for
+/// engine parity, not "fixed".
 fn name_eq(node: HtmlNode<'_>, want: &[u8]) -> bool {
     // The stored (lower-cased) local name: the DOM's case-preserved one
     // differs from it only in case, which this comparison folds anyway.
@@ -74,11 +75,12 @@ fn name_eq(node: HtmlNode<'_>, want: &[u8]) -> bool {
         .is_some_and(|el| el.local_name().eq_ignore_ascii_case(want))
 }
 
-/// §B-4: `[name op value]` (or `[name]`, existence, when `at.value` is
-/// `None`). `value_ci` is [`Step::value_ci`]: `None` - a §B-5 table name with
-/// no `i`/`s` - compares case-insensitively on an HTML-namespace element.
+/// `lxb_selectors_match_attribute`: `[name op value]` (or `[name]`, existence,
+/// when `at.value` is `None`). `value_ci` is [`Step::value_ci`]: `None` - a
+/// name in Lexbor's case-insensitive table with no `i`/`s` - compares
+/// case-insensitively on an HTML-namespace element.
 ///
-/// §B-5 also asks that the owner document be an HTML document, a raw
+/// Lexbor also asks that the owner document be an HTML document, a raw
 /// document-type read `css_match` (which forbids `unsafe`) cannot make; it
 /// always holds here, since this matcher only ever runs on `Makiri::HTML`
 /// documents (XML's CSS goes through `css::lower`), and the namespace alone
@@ -94,12 +96,12 @@ fn attribute_matches(
         return false;
     };
     let Some(want) = at_value else {
-        return true; // `[name]`: existence only (§B-4)
+        return true; // `[name]`: existence only
     };
     let ci = value_ci.unwrap_or_else(|| is_html_namespace(node));
     match op {
         AttrMatch::Equal => eq_bytes(value, want, ci),
-        // §B-4's `~=` literally reuses the class-token matcher.
+        // Lexbor's `~=` literally reuses the class-token matcher.
         AttrMatch::Include => has_whitespace_token(value, want, ci),
         AttrMatch::Dash => {
             eq_bytes(value, want, ci)
@@ -164,11 +166,12 @@ fn plain_pseudo_matches(
         PseudoClass::Active => has_attr(node, b"active"),
         PseudoClass::Focus => has_attr(node, b"focus"),
         PseudoClass::Hover => has_attr(node, b"hover"),
-        // §C-1 (`SEL.c:1863-1872`): `input`/`textarea` only (not `select`,
-        // unlike `:optional`/`:required`), and only whether `placeholder` is
-        // PRESENT - Lexbor never looks at its value or whether the field is
-        // actually showing it empty, so an `<input placeholder>` with no
-        // value written at all still matches, faithfully reproduced here.
+        // `lxb_selectors_pseudo_class`'s `PLACEHOLDER_SHOWN` case:
+        // `input`/`textarea` only (not `select`, unlike
+        // `:optional`/`:required`), and only whether `placeholder` is PRESENT -
+        // Lexbor never looks at its value or whether the field is actually
+        // showing it empty, so an `<input placeholder>` with no value written
+        // at all still matches, faithfully reproduced here.
         PseudoClass::PlaceholderShown => {
             node.element()
                 .is_some_and(|el| matches!(el.dom_local_name(), b"input" | b"textarea"))
@@ -193,9 +196,9 @@ fn nth_matches(
     Ok(anb_matches(anb.a, anb.b, pos))
 }
 
-/// §D-3 `lxb_selectors_anb_calc`: is `pos` = `a*n + b` for some `n >= 0`?
-/// Exact, where Lexbor divides in `double` - past 2^53 every `double` is an
-/// integer, so its divisibility test there always passes (module doc).
+/// `lxb_selectors_anb_calc`: is `pos` = `a*n + b` for some `n >= 0`? Exact,
+/// where Lexbor divides in `double` - past 2^53 every `double` is an integer,
+/// so its divisibility test there always passes (module doc).
 ///
 /// In `i128`: `a` and `b` reach `LONG_MAX` in magnitude (Lexbor clamps them
 /// there) and `pos` is a `u64`, so `pos - b` overflows 64 bits - and a
@@ -237,8 +240,9 @@ pub(super) fn check_simple(
         // that text node as a `*`-matching descendant.
         Simple::Universal => SimpleCheck::Result(node.element().is_some()),
         Simple::Type => SimpleCheck::Result(type_matches(node, sel.name, name)),
-        // §B-3/§B-2 through the element's own `id` / `class` shortcut, as
-        // Lexbor reads them (`HtmlElement::id_attr`) - no attribute-list scan.
+        // `lxb_selectors_match_id` / `_class` through the element's own `id` /
+        // `class` shortcut, as Lexbor reads them (`HtmlElement::id_attr`) - no
+        // attribute-list scan.
         Simple::Id => SimpleCheck::Result(
             node.element()
                 .and_then(HtmlElement::id_attr)
@@ -251,9 +255,9 @@ pub(super) fn check_simple(
                     has_whitespace_token(a.value(), sel.name, document_is_quirks(node))
                 }),
         ),
-        // §B-4: explicit `i` -> case-insensitive; explicit `s` -> forced
-        // case-sensitive; no modifier -> the HTML table decides. `compile`
-        // settled which in `Step::value_ci`.
+        // `lxb_selectors_match_attribute`: explicit `i` -> case-insensitive;
+        // explicit `s` -> forced case-sensitive; no modifier -> the HTML table
+        // decides. `compile` settled which in `Step::value_ci`.
         Simple::Attribute(at) => SimpleCheck::Result(attribute_matches(
             node,
             attr_value(node, sel.name, name),
@@ -275,17 +279,18 @@ pub(super) fn check_simple(
             )?),
         },
         Simple::PseudoClassFunction(FunctionArg::Selectors { .. }) => SimpleCheck::Deferred,
-        // `:lexbor-contains()`: Lexbor itself matches with it (§D-5) - this
-        // port deliberately does not (`MatchFailure::Unsupported`'s doc) -
-        // so answering `false` would be indistinguishable from a selector
-        // that legitimately matches nothing. Raised instead.
+        // `:lexbor-contains()`: Lexbor itself matches with it
+        // (`lxb_selectors_pseudo_class_function`'s `LEXBOR_CONTAINS`) - this
+        // port deliberately does not (`MatchFailure::Unsupported`'s doc) - so
+        // answering `false` would be indistinguishable from a selector that
+        // legitimately matches nothing. Raised instead.
         Simple::PseudoClassFunction(FunctionArg::Contains(_)) => {
             return Err(MatchFailure::Unsupported)
         }
-        // Any OTHER functional pseudo-class (`:dir()`, `:lang()`,
-        // `:nth-col()`, `:nth-last-col()`) is unimplemented in LEXBOR TOO
-        // (§D-6's `default:` case) - a real, agreed "always false", not a
-        // gap this port introduces.
+        // Any OTHER functional pseudo-class (`:dir()`, `:lang()`, `:nth-col()`,
+        // `:nth-last-col()`) is unimplemented in LEXBOR TOO
+        // (`lxb_selectors_pseudo_class_function`'s `default:` case) - a real,
+        // agreed "always false", not a gap this port introduces.
         Simple::PseudoClassFunction(FunctionArg::Other) => SimpleCheck::Result(false),
         Simple::PseudoElement | Simple::Other => SimpleCheck::Result(false),
     })
@@ -327,8 +332,8 @@ impl<'doc> Name<'doc> {
 /// selector, each resolved when it is first reached.
 pub(super) type Names<'doc> = Table<Name<'doc>>;
 
-/// §B-1 through [`Name`]: one id comparison where the document is the one
-/// the name was resolved in, [`name_eq`] otherwise.
+/// `lxb_selectors_match_element` through [`Name`]: one id comparison where the
+/// document is the one the name was resolved in, [`name_eq`] otherwise.
 #[inline]
 fn type_matches(node: HtmlNode<'_>, want: &[u8], name: Name<'_>) -> bool {
     match name {

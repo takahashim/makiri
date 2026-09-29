@@ -512,11 +512,11 @@ mod node_key {
     }
 }
 
-/// `lexbor::css_match` - a semantic port of Lexbor's `selectors.c`
-/// (`notes/lexbor_selectors_c_semantics.ja.md`), not a `selectors`-crate-based
-/// approach (rejected - see the plan's §1.1). Parses via the existing `css_parser`, matches via an
-/// explicit heap work stack (never native recursion for selector nesting -
-/// verified at 500,000 levels below).
+/// `lexbor::css_match` - a semantic port of Lexbor's `selectors.c`, not a
+/// `selectors`-crate-based approach (rejected: that matcher recurses natively
+/// on selector nesting - `css_match`'s module doc). Parses via the existing
+/// `css_parser`, matches via an explicit heap work stack (never native
+/// recursion for selector nesting - verified at 500,000 levels below).
 mod css_match {
     use crate::gvl::Gvl;
     use crate::lexbor::adapter::html::{HtmlElement, HtmlNode, NsId, RawNode};
@@ -602,9 +602,10 @@ mod css_match {
 
     #[test]
     fn type_selector_folds_ascii_case_unconditionally() {
-        // §B-1: Lexbor folds type-selector case UNCONDITIONALLY - even on
-        // foreign (SVG) content, unlike class/id (quirks-only) or attributes
-        // (HTML-namespace-gated). Reproduced for engine parity.
+        // `lxb_selectors_match_element` folds type-selector case
+        // UNCONDITIONALLY - even on foreign (SVG) content, unlike class/id
+        // (quirks-only) or attributes (HTML-namespace-gated). Reproduced for
+        // engine parity.
         let doc = parsed(b"<html><body><p>1</p><span>2</span><p>3</p></body></html>");
         assert_eq!(texts(&doc, "p"), ["1", "3"]);
         assert_eq!(texts(&doc, "P"), ["1", "3"]);
@@ -641,7 +642,8 @@ mod css_match {
 
     #[test]
     fn class_and_id_fold_case_only_in_quirks_mode() {
-        // §B-2/§B-3, §E-1 point 5 (`match_id_class_case`).
+        // `lxb_selectors_match_class`/`_id`, and Lexbor's own test
+        // `match_id_class_case`.
         let quirks = parsed(b"<html><body><div class='Test' id='Foo'></div></body></html>");
         assert_eq!(select_all(&quirks, ".test").len(), 1);
         assert_eq!(select_all(&quirks, "#foo").len(), 1);
@@ -656,10 +658,11 @@ mod css_match {
 
     #[test]
     fn html_attribute_value_case_insensitivity_table() {
-        // §B-5, §E-1 point 9 (`match_html_case_insensitive_attributes`):
-        // `type` is in the table (HTML, no modifier -> CI); `data-x` is not
-        // (always CS); `s` forces case-sensitive even for a table attribute;
-        // the table does not apply inside SVG (foreign content).
+        // `lxb_selectors_match_attribute_html_case_insensitive`, and Lexbor's
+        // own test `match_html_case_insensitive_attributes`: `type` is in the
+        // table (HTML, no modifier -> CI); `data-x` is not (always CS); `s`
+        // forces case-sensitive even for a table attribute; the table does not
+        // apply inside SVG (foreign content).
         let doc = parsed(
             b"<!doctype html><html><body>\
               <input type='TEXT'><div data-x='ABC'></div>\
@@ -679,8 +682,8 @@ mod css_match {
 
     #[test]
     fn lexbor_whitespace_set_excludes_vertical_tab() {
-        // §E-2 point 9: space/tab/LF/FF/CR are separators; vertical tab
-        // (0x0B) is NOT, unlike Rust's `is_ascii_whitespace`.
+        // `lexbor_utils_whitespace`: space/tab/LF/FF/CR are separators;
+        // vertical tab (0x0B) is NOT, unlike Rust's `is_ascii_whitespace`.
         let doc = parsed(b"<html><body><div class='a\x0Bb'></div></body></html>");
         // "a\x0Bb" is ONE token (VT doesn't split it), so `.a`/`.b` alone
         // don't match, but the whole token does.
@@ -737,7 +740,7 @@ mod css_match {
 
     #[test]
     fn nth_child_of_s() {
-        // §D-1: position counted only among siblings matching `S`.
+        // Position counted only among siblings matching `S`.
         let doc = parsed(
             b"<html><body><main>\
               <h2 class='mark'>1</h2><h2>2</h2><h2 class='mark'>3</h2>\
@@ -780,9 +783,10 @@ mod css_match {
         assert_eq!(select_all(&doc, "ul:has(> li)").len(), 1);
         assert_eq!(select_all(&doc, "div:has(> p)").len(), 1);
 
-        // §A-4: multi-compound `:has()` argument, now supported via the
-        // bounded forward search (`has_forward`) - the (A) exploration and
-        // the first cut of this port both left this unimplemented.
+        // A multi-compound `:has()` argument (Lexbor's forward search), now
+        // supported via the bounded forward search (`has_forward`) - the
+        // `selectors`-crate exploration and the first cut of this port both
+        // left this unimplemented.
         let nested = parsed(
             b"<html><body>\
               <div><section><p class='x'>hit</p></section></div>\
@@ -1003,36 +1007,37 @@ mod css_match {
         assert_eq!(select_all(&doc, "p:empty").len(), 1);
         assert_eq!(select_all(&doc, "p:blank").len(), 2); // :blank tolerates whitespace-only text
         {
-            // §C-1: `:empty`/`:blank` ignore a COMMENT child but not a
-            // processing-instruction one (`SEL.c:1749-1774`/`node.c:1700-1737`
-            // check `local_name != EM_COMMENT`, not "is an element or
-            // non-empty text") - found by `spec/xml_css_spec.rb`'s HTML/XML
-            // agreement check.
+            // `:empty`/`:blank` ignore a COMMENT child but not a
+            // processing-instruction one (`lxb_selectors_pseudo_class`'s
+            // `EMPTY` case and `lxb_dom_node_is_empty` check
+            // `local_name != EM_COMMENT`, not "is an element or non-empty
+            // text") - found by `spec/xml_css_spec.rb`'s HTML/XML agreement
+            // check.
             let pi_doc = parsed(b"<html><body><b><!--c--></b><i><?pi x?></i></body></html>");
             assert_eq!(select_all(&pi_doc, "b:empty").len(), 1);
             assert_eq!(select_all(&pi_doc, "i:empty").len(), 0);
             assert_eq!(select_all(&pi_doc, "b:blank").len(), 1);
             assert_eq!(select_all(&pi_doc, "i:blank").len(), 0);
         }
-        // :active/:focus/:hover are literal attribute-presence checks (§C-1),
-        // not "always false" - none of this fixture's markup has them.
+        // :active/:focus/:hover are literal attribute-presence checks
+        // (`lxb_selectors_pseudo_class`), not "always false" - none of this
+        // fixture's markup has them.
         assert_eq!(select_all(&doc, ":hover").len(), 0);
-        // §C-1 (`SEL.c:1863-1872`): `input`/`textarea` only, PRESENCE of
-        // `placeholder` only - the empty-valued one still counts, and the
-        // `<select placeholder>` (not a real HTML attribute there, but
-        // Lexbor doesn't validate that) must NOT, since it is neither tag.
+        // `lxb_selectors_pseudo_class`'s `PLACEHOLDER_SHOWN` case:
+        // `input`/`textarea` only, PRESENCE of `placeholder` only - the
+        // empty-valued one still counts, and the `<select placeholder>` (not a
+        // real HTML attribute there, but Lexbor doesn't validate that) must
+        // NOT, since it is neither tag.
         assert_eq!(select_all(&doc, ":placeholder-shown").len(), 3);
         assert_eq!(select_all(&doc, "select:placeholder-shown").len(), 0);
     }
 
     #[test]
     fn deeply_nested_is_does_not_grow_the_native_stack() {
-        // The one property this module exists to prove (contrast the (A)
-        // exploration's sibling test, which crashes in a release build at a
-        // nesting depth of only ~2,000-2,500 -
-        // notes/css_selectors_crate_migration_plan.ja.md §1.1/§4 Phase 1).
-        // 500,000 mirrors the depth already measured safe for Lexbor's own C
-        // matcher (§4 Phase 0).
+        // The one property this module exists to prove (contrast the
+        // `selectors`-crate exploration's sibling test, which crashed in a
+        // release build at a nesting depth of only ~2,000-2,500). 500,000
+        // mirrors the depth already measured safe for Lexbor's own C matcher.
         let doc = parsed(b"<html><body><a>x</a></body></html>");
         let depth = 500_000;
         let nested = format!("{}a{}", ":is(".repeat(depth), ")".repeat(depth));
@@ -1431,7 +1436,7 @@ mod css_match {
         }
     }
 
-    /// Phase 2's differential check: the port and the OLD Lexbor-callback
+    /// The differential check: the port and the OLD Lexbor-callback
     /// engine (`lexbor::selectors`), run over the same document, must agree
     /// - in document order - on every standard selector this port supports.
     #[test]
@@ -1669,12 +1674,11 @@ mod css_match {
         s
     }
 
-    /// Phase 2's differential check, broadened past the fixed 44-selector
+    /// The differential check, broadened past the fixed 44-selector
     /// list above into randomly generated queries over a richer, more
-    /// deeply nested fixture - closer to "differential/fuzz scale" (the
-    /// plan's own wording for this item) than a fixed list can be, without
-    /// standing up a full `cargo-fuzz` harness (no Ruby entry point exists
-    /// yet to fuzz through - module doc). A fixed seed keeps a failure
+    /// deeply nested fixture - closer to fuzz scale than a fixed list can
+    /// be, inside `cargo test` (the coverage-guided counterpart is the
+    /// `html_css` cargo-fuzz target). A fixed seed keeps a failure
     /// reproducible: rerun with the printed seed to get the same query.
     #[test]
     fn agrees_with_the_old_engine_on_randomly_generated_selectors() {
@@ -2073,7 +2077,8 @@ mod css_match {
     /// element, not just the one node shaped to match): every candidate but
     /// the outermost div lacks enough remaining depth to satisfy the whole
     /// nested chain, and `:has()`'s Descendant search - "try every descendant
-    /// as a candidate" (§A-4), inherent to what that combinator means, not an
+    /// as a candidate", as Lexbor's forward search does - inherent to what that
+    /// combinator means, not an
     /// artifact of this file's design - explores many combinations before
     /// concluding that for each one. This is the SAME exponential-in-depth
     /// search space the OLD native-recursive `has_forward` had for this

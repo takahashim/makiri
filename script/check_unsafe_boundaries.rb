@@ -198,8 +198,7 @@ RUBY_LAYER_COUNTS = {}.freeze
 # have caught them fired on five legitimate glue sites too.
 INFALLIBLE_ALLOC = /\.to_owned\(\)|\.to_vec\(\)|String::from\(|\bformat!\(/
 #
-# Empty: the `selectors`-crate exploration
-# (notes/css_selectors_crate_migration_plan.ja.md §1.1) that once held an
+# Empty: the `selectors`-crate exploration that once held an
 # accepted exception here was rejected in favour of porting Lexbor's own
 # `lxb_selectors_*` state machine instead - `lexbor/css_match/`, which
 # allocates only through `falloc` like the rest of the engine (and `rake oom`

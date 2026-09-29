@@ -8,11 +8,11 @@ use crate::lexbor::adapter::html::{HtmlNode, NodeType, NsId};
 
 use super::tree::parent_element;
 
-/// Lexbor's own whitespace set for tokenizing an attribute value (`class`,
-/// or any `~=` operand) - `lexbor_utils_whitespace`: space, tab, LF, FF, CR.
-/// Deliberately NOT `u8::is_ascii_whitespace`, which also matches vertical
-/// tab (0x0B) - a real behavioural difference documented in
-/// `notes/lexbor_selectors_c_semantics.ja.md` §E-2 point 9.
+/// Lexbor's own whitespace set for tokenizing an attribute value (`class`, or
+/// any `~=` operand) - `lexbor_utils_whitespace`: space, tab, LF, FF, CR.
+/// Deliberately NOT `u8::is_ascii_whitespace`, which also matches vertical tab
+/// (0x0B) - a real behavioural difference, which `lexbor::tests::css_match`
+/// pins.
 pub(super) fn is_lexbor_whitespace(b: u8) -> bool {
     matches!(b, b' ' | b'\t' | b'\n' | 0x0C | b'\r')
 }
@@ -30,20 +30,21 @@ pub(super) fn has_attr(node: HtmlNode<'_>, name: &[u8]) -> bool {
         .is_some_and(|el| el.get_attribute(name).is_some())
 }
 
-/// §C-1 `:empty` (`SEL.c:1749-1774`): a child of ANY type OTHER than Comment
-/// disqualifies it, not just Element/non-empty-text - a processing-instruction
-/// child does too (found by `spec/xml_css_spec.rb`'s HTML/XML agreement
-/// check: `<i><?pi x?></i>` was wrongly treated as `:empty`, since neither
-/// `element()` nor `char_data()` sees a PI, and it fell through unnoticed).
+/// `:empty` (`lxb_selectors_pseudo_class`'s `EMPTY` case): a child of ANY type
+/// OTHER than Comment disqualifies it, not just Element/non-empty-text - a
+/// processing-instruction child does too (found by `spec/xml_css_spec.rb`'s
+/// HTML/XML agreement check: `<i><?pi x?></i>` was wrongly treated as `:empty`,
+/// since neither `element()` nor `char_data()` sees a PI, and it fell through
+/// unnoticed).
 pub(super) fn is_empty(node: HtmlNode<'_>) -> bool {
     !node.children().any(|c| c.node_type() != NodeType::Comment)
 }
 
-/// §C-1 `:blank` (`lxb_dom_node_is_empty`, `node.c:1700-1737`): as `:empty`,
-/// but a Text child only disqualifies it when it holds a non-whitespace byte -
-/// still stricter than "ignore text entirely", and a PI (or anything else
-/// that is neither Text nor Comment) disqualifies it unconditionally, same
-/// bug/fix as `is_empty` above.
+/// `:blank` (`lxb_dom_node_is_empty`, in Lexbor's `dom/interfaces/node.c`): as
+/// `:empty`, but a Text child only disqualifies it when it holds a
+/// non-whitespace byte - still stricter than "ignore text entirely", and a PI
+/// (or anything else that is neither Text nor Comment) disqualifies it
+/// unconditionally, same bug/fix as `is_empty` above.
 pub(super) fn is_blank(node: HtmlNode<'_>) -> bool {
     !node.children().any(|c| match c.char_data() {
         Some(t) => t.iter().any(|&b| !is_lexbor_whitespace(b)),
@@ -55,10 +56,10 @@ pub(super) fn is_root(node: HtmlNode<'_>) -> bool {
     node.owner_document().as_node().document_root() == Some(node)
 }
 
-/// §C-1 `:any-link` / `:link`, exactly as Lexbor has them: an element whose
-/// tag is `a`, `area` or `map` (`:any-link`) / `a`, `area` or `link`
-/// (`:link`), in any namespace (Lexbor compares the tag id alone, so an SVG
-/// `<a>` counts), with an attribute whose local name is `href`, in any
+/// `:any-link` / `:link`, exactly as `lxb_selectors_pseudo_class` has them: an
+/// element whose tag is `a`, `area` or `map` (`:any-link`) / `a`, `area` or
+/// `link` (`:link`), in any namespace (Lexbor compares the tag id alone, so an
+/// SVG `<a>` counts), with an attribute whose local name is `href`, in any
 /// namespace (`lxb_dom_element_attr_by_id`, so `xlink:href` counts).
 pub(super) fn is_any_link(node: HtmlNode<'_>, link_tag: bool) -> bool {
     let Some(el) = node.element() else {
@@ -172,7 +173,8 @@ pub(super) fn is_checked(node: HtmlNode<'_>) -> bool {
     false
 }
 
-/// §C-1 `:optional`/`:required`: `input`/`select`/`textarea` only.
+/// `:optional`/`:required` (`lxb_selectors_pseudo_class`): `input`/`select`/
+/// `textarea` only.
 pub(super) fn is_form_field(node: HtmlNode<'_>) -> bool {
     node.element()
         .is_some_and(|el| matches!(el.dom_local_name(), b"input" | b"select" | b"textarea"))
