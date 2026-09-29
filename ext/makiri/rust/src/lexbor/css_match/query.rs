@@ -143,17 +143,22 @@ pub(super) struct ForwardTask<'doc> {
     cur_base: u32,
 }
 
-/// `of S` (`lxb_selectors_pseudo_class_function`'s `NTH_CHILD`): is `node` in
-/// `S` (`counting == false`), then how many of its siblings in the counting
-/// direction are - `pos` so far.
+/// `of S` (`lxb_selectors_pseudo_class_function`'s `NTH_CHILD`): is
+/// `candidate` in `S` (`counting == false`), then how many of its siblings
+/// in the counting direction are - each tested at `node` in turn, noted in
+/// [`Positions`]' `of_seen` from `seen_base` on, until the list ends or a
+/// sibling whose rank a walking query already knows.
 #[derive(Clone, Copy)]
 pub(super) struct NthOfTask<'doc> {
     a: c_long,
     b: c_long,
     from_end: bool,
     alts: Alts,
+    /// The `of S` simple selector's index: its ranks' memo key.
+    sel: u32,
+    candidate: HtmlNode<'doc>,
     node: HtmlNode<'doc>,
-    pos: u64,
+    seen_base: u32,
     counting: bool,
 }
 
@@ -361,6 +366,7 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
         match task {
             Task::Chain(t) => self.at.truncate(t.at_base as usize),
             Task::Forward(t) => self.cursors.truncate(t.cur_base as usize),
+            Task::NthOf(t) => self.positions.of_seen_truncate(t.seen_base),
             _ => {}
         }
     }
@@ -490,8 +496,10 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
                 b: anb.b,
                 from_end,
                 alts,
+                sel: i,
+                candidate: node,
                 node,
-                pos: 0,
+                seen_base: self.positions.of_seen_base(),
                 counting: false,
             }),
             // `check_simple` defers nothing else: a broken invariant.
@@ -810,32 +818,45 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
     }
 
     /// [`NthOfTask`]: `S` at the candidate itself first - it must match (as in
-    /// Lexbor) - then at each sibling in the counting direction.
+    /// Lexbor) - then at each sibling in the counting direction, up to the
+    /// first whose rank is known: each sibling list is tested once per `of
+    /// S` in a walking query, not once per candidate.
     fn step_nth_of(
         &mut self,
         t: &mut NthOfTask<'doc>,
         event: Option<bool>,
     ) -> Result<Outcome<'doc>, MatchFailure> {
         match event {
-            None => {}
+            None => {
+                if let Some((rank, in_s)) = self.positions.of_rank(t.sel, t.candidate) {
+                    return Ok(Outcome::Done(in_s && anb_matches(t.a, t.b, rank)));
+                }
+            }
             Some(in_s) => {
                 if !t.counting {
                     if !in_s {
                         return Ok(Outcome::Done(false));
                     }
                     t.counting = true;
-                    t.pos = 1;
                 } else {
-                    t.pos += u64::from(in_s);
+                    self.positions.of_seen_push(t.node, in_s)?;
                 }
-                match nth_of_sibling(t.node, t.from_end) {
+                let end_rank = match nth_of_sibling(t.node, t.from_end) {
                     Some(s) => {
                         self.budget.charge()?;
-                        t.node = s;
+                        let known = self.positions.of_rank(t.sel, s);
+                        if known.is_none() {
+                            t.node = s;
+                        }
+                        known.map(|(rank, _)| rank)
                     }
-                    None => {
-                        return Ok(Outcome::Done(anb_matches(t.a, t.b, t.pos)));
-                    }
+                    None => Some(0),
+                };
+                if let Some(end_rank) = end_rank {
+                    let pos =
+                        self.positions
+                            .of_finish(t.sel, t.seen_base, t.candidate, end_rank)?;
+                    return Ok(Outcome::Done(anb_matches(t.a, t.b, pos)));
                 }
             }
         }

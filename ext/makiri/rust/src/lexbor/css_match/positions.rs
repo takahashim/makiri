@@ -27,6 +27,15 @@ pub(super) struct Positions {
     memo: Vec<PtrMap<*const (), u64>>,
     /// A walk's counted siblings, nearest first.
     visited: Vec<*const ()>,
+    /// `of S` ranks, one map per `of S` simple selector (its index), made
+    /// on first use: a node's value is `rank << 1 | in_s`, `rank` being how
+    /// many of it and the siblings before it (in the counting direction)
+    /// are in `S`. Walking queries only, as `memo`.
+    of_memo: Vec<(u32, PtrMap<*const (), u64>)>,
+    /// The siblings `of S` counts have tested and not yet recorded, with
+    /// whether each is in `S`, nearest first; a count's own run starts at
+    /// its task's `seen_base`, as `Query::at` is shared by chains.
+    of_seen: Vec<(*const (), bool)>,
 }
 
 /// A memo past this many entries is dropped and refilled, bounding it: the
@@ -39,7 +48,76 @@ impl Positions {
             walking,
             memo: Vec::new(),
             visited: Vec::new(),
+            of_memo: Vec::new(),
+            of_seen: Vec::new(),
         }
+    }
+
+    /// Where the next `of S` count's run in `of_seen` starts.
+    pub(super) fn of_seen_base(&self) -> u32 {
+        self.of_seen.len() as u32
+    }
+
+    /// Drop what a finished (or abandoned) count left in `of_seen`.
+    pub(super) fn of_seen_truncate(&mut self, base: u32) {
+        self.of_seen.truncate(base as usize);
+    }
+
+    /// Note that a count tested `node` and found it in `S` or not.
+    pub(super) fn of_seen_push(
+        &mut self,
+        node: HtmlNode<'_>,
+        in_s: bool,
+    ) -> Result<(), MatchFailure> {
+        self.of_seen.falloc_push((node_key(node), in_s)).or_oom()
+    }
+
+    /// `node`'s recorded `(rank, in_s)` for the `of S` selector `sel`.
+    pub(super) fn of_rank(&self, sel: u32, node: HtmlNode<'_>) -> Option<(u64, bool)> {
+        let (_, map) = self.of_memo.iter().find(|(k, _)| *k == sel)?;
+        map.get(node_key(node)).map(|v| (v >> 1, v & 1 == 1))
+    }
+
+    /// Finish a count for `candidate` (in `S`): the run of tested siblings
+    /// from `seen_base` on ends where the rank is `end_rank` (a known
+    /// sibling's, or 0 at the end of the list). Returns the candidate's
+    /// rank - its position among the siblings in `S` - and, in a walking
+    /// query, records every sibling passed and the candidate itself.
+    pub(super) fn of_finish(
+        &mut self,
+        sel: u32,
+        seen_base: u32,
+        candidate: HtmlNode<'_>,
+        end_rank: u64,
+    ) -> Result<u64, MatchFailure> {
+        let run = self.of_seen.get(seen_base as usize..).unwrap_or_default();
+        let members = run.iter().filter(|(_, in_s)| *in_s).count() as u64;
+        let pos = end_rank + members + 1;
+        if self.walking {
+            let at = match self.of_memo.iter().position(|(k, _)| *k == sel) {
+                Some(at) => at,
+                None => {
+                    self.of_memo.falloc_push((sel, PtrMap::new())).or_oom()?;
+                    self.of_memo.len() - 1
+                }
+            };
+            if let Some((_, map)) = self.of_memo.get_mut(at) {
+                if map.len() + run.len() + 1 > POSITIONS_MAX {
+                    *map = PtrMap::new();
+                }
+                // The farthest one passed sits next to `end_rank`.
+                let mut rank = end_rank;
+                for &(k, in_s) in run.iter().rev() {
+                    rank += u64::from(in_s);
+                    map.insert(k, rank << 1 | u64::from(in_s))
+                        .map_err(|_| MatchFailure::Oom)?;
+                }
+                map.insert(node_key(candidate), pos << 1 | 1)
+                    .map_err(|_| MatchFailure::Oom)?;
+            }
+        }
+        self.of_seen.truncate(seen_base as usize);
+        Ok(pos)
     }
 }
 

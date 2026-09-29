@@ -1105,6 +1105,36 @@ mod css_match {
     /// document could not be built big enough to hit the SHIPPED 50-million
     /// limit in a fast test, so this drives `select_all_with_work_limit`
     /// (`#[cfg(test)]`-only) with one small enough to actually exceed.
+    /// `:nth-child(An+B of S)` remembers the ranks it has counted, as the
+    /// plain `:nth-child` does (`Positions`): each candidate stops at the
+    /// first sibling already counted, so a sibling list is tested against
+    /// `S` once per query rather than once per candidate. Without it, 3,000
+    /// items spent the shipped budget.
+    #[test]
+    fn nth_child_of_s_over_a_wide_list_costs_linear_work() {
+        use crate::lexbor::css_match::select_all_with_work_limit;
+        const N: usize = 20_000;
+
+        let html = format!(
+            "<ul>{}</ul>",
+            r#"<li class="a"></li><li></li>"#.repeat(N / 2)
+        );
+        let doc = parsed(html.as_bytes());
+        let gvl = Gvl::exclusive();
+        for (sel, expected) in [
+            ("li:nth-child(odd of .a)", N / 4),
+            ("li:nth-last-child(2n of .a)", N / 4),
+            ("li:nth-child(-n+3 of :not(.a))", 3),
+        ] {
+            let text = VerifiedText::from_bytes(sel.as_bytes()).expect("verified");
+            let parsed_sel =
+                css_parser::parse(&gvl, text).unwrap_or_else(|_| panic!("{sel} parses"));
+            let found = select_all_with_work_limit(root(&doc), parsed_sel.groups(), 20 * N as u64)
+                .unwrap_or_else(|_| panic!("{sel:?} exceeded work linear in the list"));
+            assert_eq!(found.len(), expected, "{sel}");
+        }
+    }
+
     /// `:disabled`'s fieldset inheritance asks whether the child on the way
     /// up is the first `legend`, not which child is: finding the first
     /// legend scanned a wide fieldset once per control in it, quadratic and
