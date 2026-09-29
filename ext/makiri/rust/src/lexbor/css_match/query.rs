@@ -191,7 +191,7 @@ enum Check {
 pub(super) struct Query<'c, 'p, 'doc> {
     compiled: &'c Compiled<'p>,
     /// The simple selectors' names, resolved in the query's document.
-    names: Names<'doc>,
+    names: Names,
     budget: Budget,
     tasks: Vec<Task<'doc>>,
     /// [`ChainTask`]s' compound positions.
@@ -201,9 +201,11 @@ pub(super) struct Query<'c, 'p, 'doc> {
     /// Sibling positions counted so far (walking queries only).
     positions: Positions,
     /// The resolved type selector of a lone top-level chain's rightmost
-    /// compound: a candidate of that document with another tag is refused
-    /// before the machine starts.
-    tag_filter: Option<(HtmlDoc<'doc>, Option<TagId>)>,
+    /// compound: a candidate with another tag is refused before the machine
+    /// starts. (Of the walked document, as every candidate is - [`Name`].)
+    tag_filter: Option<Option<TagId>>,
+    /// The document a walking query walks, which its names are resolved in.
+    walked: Option<HtmlDoc<'doc>>,
 }
 
 impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
@@ -234,9 +236,9 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
                     let Some(sel) = compiled.simples.as_slice().get(i as usize) else {
                         continue;
                     };
-                    if let Name::Tag(d, id) = Name::resolve(sel, doc) {
-                        names.set(i as usize, Name::Tag(d, id))?;
-                        tag_filter = Some((d, id));
+                    if let Name::Tag(id) = Name::resolve(sel, doc) {
+                        names.set(i as usize, Name::Tag(id))?;
+                        tag_filter = Some(id);
                         break;
                     }
                 }
@@ -246,6 +248,7 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
             compiled,
             names,
             tag_filter,
+            walked: walk_in,
             budget: Budget {
                 spent: std::cell::Cell::new(0),
                 limit,
@@ -268,8 +271,8 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
     /// Does `node` match any top-level alternative?
     pub(super) fn matches_top(&mut self, node: HtmlNode<'doc>) -> Result<bool, MatchFailure> {
         // `type_matches`' own verdict, taken before anything else is set up.
-        if let Some((doc, id)) = self.tag_filter {
-            if node.owner_document() == doc && (id.is_none() || node.tag_id() != id) {
+        if let Some(id) = self.tag_filter {
+            if id.is_none() || node.tag_id() != id {
                 return Ok(false);
             }
         }
@@ -530,7 +533,7 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
             .get(from as usize..compound.end as usize)
             .ok_or(MatchFailure::Unsupported)?;
         for (i, sel) in (from..).zip(steps) {
-            let name = self.name(i, sel, node);
+            let name = self.name(i, sel);
             match check_simple(sel, name, node, &self.budget, &mut self.positions)? {
                 SimpleCheck::Result(true) => {}
                 SimpleCheck::Result(false) => return Ok(Check::Done(false)),
@@ -540,18 +543,18 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
         Ok(Check::Done(true))
     }
 
-    /// Simple selector `i`'s [`Name`], resolved in `node`'s document the
+    /// Simple selector `i`'s [`Name`], resolved in the walked document the
     /// first time; `Name::None` in a query that compares names as bytes
     /// (it keeps no slots - `Query::new`).
     #[inline]
-    fn name(&mut self, i: u32, sel: &Step<'_>, node: HtmlNode<'doc>) -> Name<'doc> {
-        match self.names.get_mut(i as usize) {
-            Some(slot @ Name::Unresolved) => {
-                *slot = Name::resolve(sel, node.owner_document());
+    fn name(&mut self, i: u32, sel: &Step<'_>) -> Name {
+        match (self.names.get_mut(i as usize), self.walked) {
+            (Some(slot @ Name::Unresolved), Some(doc)) => {
+                *slot = Name::resolve(sel, doc);
                 *slot
             }
-            Some(n) => *n,
-            None => Name::None,
+            (Some(n), _) => *n,
+            (None, _) => Name::None,
         }
     }
 

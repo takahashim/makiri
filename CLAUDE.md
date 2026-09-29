@@ -802,9 +802,14 @@ case-folded name comparison, and an attribute local-id match is a pre-filter
 the adapter confirms with exactly `attr_by_name`'s comparison - the answer
 never changes, only how many name reads it takes. Ids are the document's own
 (custom elements and new attribute names are interned per document), so they
-are resolved per query in the queried document, a candidate from another
-document falls back to bytes, and nothing document-specific is kept in the
-process-global `selector_cache`. `matches?` (one candidate) does not resolve,
+are resolved per query in the walked document, and nothing document-specific
+is kept in the process-global `selector_cache`. A tag id is compared without
+asking each node for its document, as Lexbor's `entry->id` is: every node a
+walking query reaches is in the walked tree, and Makiri never moves a node
+between documents (an insert from another document inserts a copy). The
+per-node `owner_document` read it replaced cost `css("li")` ~5% (~10% on a
+document not in cache). An attribute id is still confirmed by the adapter,
+which falls back to bytes for another document's element. `matches?` (one candidate) does not resolve,
 even lazily: a lookup costs more than the one comparison it saves
 (`ul > li.item` 85 -> 117 ns when tried); it compares the stored local name,
 one Lexbor call rather than the two `dom_local_name` makes. An attribute whose

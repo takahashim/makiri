@@ -83,7 +83,7 @@ pub struct Scratch {
     pub(super) top: Vec<Chain>,
     pub(super) alts: Vec<Chain>,
     pub(super) pending: Vec<(Lists<'static>, u32)>,
-    pub(super) names: Vec<Name<'static>>,
+    pub(super) names: Vec<Name>,
     pub(super) tasks: Vec<Task<'static>>,
     pub(super) at: Vec<Option<HtmlNode<'static>>>,
     pub(super) cursors: Vec<HasCursor<'static>>,

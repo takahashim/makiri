@@ -226,7 +226,7 @@ pub(super) enum SimpleCheck {
 #[inline]
 pub(super) fn check_simple(
     sel: &Step<'_>,
-    name: Name<'_>,
+    name: Name,
     node: HtmlNode<'_>,
     budget: &Budget,
     positions: &mut Positions,
@@ -296,32 +296,41 @@ pub(super) fn check_simple(
     })
 }
 
-/// A simple selector's name resolved against the document of the first
-/// candidate it is tested on, and kept for the rest of the query - Lexbor's
-/// own lazily set `entry->id` - for the kinds that look a name up on every
-/// candidate. Lexbor keys element and attribute names by their ASCII
-/// lower-cased form, so an id match is exactly the case-folded comparison
-/// the byte path makes (a type selector), or a necessary condition that the
-/// adapter then confirms (an attribute: `attr_by_resolved_name`). A
-/// candidate from another document is compared by name.
+/// A simple selector's name resolved in the document a walking query walks,
+/// the first time a candidate reaches it, and kept for the rest of the
+/// query - Lexbor's own lazily set `entry->id` - for the kinds that look a
+/// name up on every candidate. Lexbor keys element and attribute names by
+/// their ASCII lower-cased form, so an id match is exactly the case-folded
+/// comparison the byte path makes (a type selector), or a necessary
+/// condition that the adapter then confirms (an attribute:
+/// `attr_by_resolved_name`).
+///
+/// A tag id is compared WITHOUT asking each node for its document, as
+/// Lexbor's `entry->id` is: every node a walking query reaches - the walk
+/// itself, a combinator's climb, `:has()`'s search, `of S`'s siblings - is
+/// in the walked tree, so of the walked document, since Makiri never moves a
+/// node between documents (inserting one from another document inserts a
+/// copy, `bridge::html::insert`). The per-node check this replaced read
+/// `owner_document` on every candidate, which cost `css("li")` ~10% on a
+/// document not in cache.
 #[derive(Clone, Copy, Default)]
-pub(super) enum Name<'doc> {
+pub(super) enum Name {
     /// Not looked up yet.
     #[default]
     Unresolved,
     /// Nothing to look up: not a type or attribute selector.
     None,
-    /// A type selector's tag id in that document; `None`: no element of the
-    /// document has the name.
-    Tag(HtmlDoc<'doc>, Option<TagId>),
+    /// A type selector's tag id in the walked document; `None`: no element
+    /// of the document has the name.
+    Tag(Option<TagId>),
     /// An attribute selector's name.
     Attr(AttrName),
 }
 
-impl<'doc> Name<'doc> {
-    pub(super) fn resolve(sel: &Step<'_>, doc: HtmlDoc<'doc>) -> Name<'doc> {
+impl Name {
+    pub(super) fn resolve(sel: &Step<'_>, doc: HtmlDoc<'_>) -> Name {
         match sel.simple {
-            Simple::Type => Name::Tag(doc, doc.tag_id(sel.name)),
+            Simple::Type => Name::Tag(doc.tag_id(sel.name)),
             Simple::Attribute(_) => Name::Attr(doc.resolve_attr_name(sel.name)),
             _ => Name::None,
         }
@@ -330,16 +339,15 @@ impl<'doc> Name<'doc> {
 
 /// A query's [`Name`]s, by simple-selector index: one per simple
 /// selector, each resolved when it is first reached.
-pub(super) type Names<'doc> = Table<Name<'doc>>;
+pub(super) type Names = Table<Name>;
 
-/// `lxb_selectors_match_element` through [`Name`]: one id comparison where the
-/// document is the one the name was resolved in, [`name_eq`] otherwise.
+/// `lxb_selectors_match_element` through [`Name`]: one id comparison in a
+/// walking query (the node is of the walked document - [`Name`]'s doc),
+/// [`name_eq`] otherwise.
 #[inline]
-fn type_matches(node: HtmlNode<'_>, want: &[u8], name: Name<'_>) -> bool {
+fn type_matches(node: HtmlNode<'_>, want: &[u8], name: Name) -> bool {
     match name {
-        Name::Tag(doc, id) if node.owner_document() == doc => {
-            node.element().is_some() && id.is_some() && node.tag_id() == id
-        }
+        Name::Tag(id) => node.element().is_some() && id.is_some() && node.tag_id() == id,
         _ => name_eq(node, want),
     }
 }
@@ -347,7 +355,7 @@ fn type_matches(node: HtmlNode<'_>, want: &[u8], name: Name<'_>) -> bool {
 /// The value of `node`'s attribute `qname` (DOM `getAttribute`), through
 /// the resolved [`Name`] when there is one.
 #[inline]
-fn attr_value<'doc>(node: HtmlNode<'doc>, qname: &[u8], name: Name<'_>) -> Option<&'doc [u8]> {
+fn attr_value<'doc>(node: HtmlNode<'doc>, qname: &[u8], name: Name) -> Option<&'doc [u8]> {
     let el = node.element()?;
     match name {
         Name::Attr(resolved) => el
