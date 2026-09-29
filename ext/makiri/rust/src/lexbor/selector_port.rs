@@ -1585,8 +1585,9 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
         node: HtmlNode<'doc>,
     ) -> Result<ChainTask<'doc>, MatchFailure> {
         let at_base = u32::try_from(self.at.len()).map_err(|_| MatchFailure::Oom)?;
-        // Compounds `0 .. len - 1`: the last one's node never moves.
-        for _ in 1..chain.len() {
+        // Compounds `1 .. len - 1`: a backtrack only ever comes back to
+        // those (never to the first, never to the last).
+        for _ in 2..chain.len() {
             self.at.falloc_push(None).or_oom()?;
         }
         let idx = chain.len - 1;
@@ -1755,7 +1756,7 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
                 };
                 if let Some(n) = next {
                     if t.idx < last {
-                        self.set_at(t.at_base + t.idx, t.cur);
+                        self.set_at(t.at_base + t.idx - 1, t.cur);
                     }
                     t.idx -= 1;
                     t.cur = n;
@@ -1782,7 +1783,7 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
                 if t.idx < last {
                     t.cur = self
                         .at
-                        .get((t.at_base + t.idx) as usize)
+                        .get((t.at_base + t.idx - 1) as usize)
                         .copied()
                         .flatten()
                         .ok_or(MatchFailure::Unsupported)?;
