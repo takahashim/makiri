@@ -97,14 +97,15 @@
   allocation failure while parsing a selector is reported as out of memory,
   not as `Makiri::CSS::SyntaxError`.
 * HTML CSS matching (`#css`/`#at_css`/`#matches?`) now carries a per-query
-  work budget: `:has()`'s own search, and the sibling scan behind
-  `:nth-of-type`/`:first-of-type`/`:last-of-type`/`:only-of-type`/`:nth-child`
-  without an `of S` clause, can each cost more than the document's own size
-  bounds already, multiplying per candidate element in a broader query. Past
-  the budget, the query raises `Makiri::Error` ("CSS query exceeded its work
-  budget") rather than running unbounded or answering a `:has()` as `false`
-  because its own search alone ran out (which would be a wrong verdict, not
-  an incomplete one).
+  work budget of 50M steps (XPath's own limit), charged by every compound
+  tested - `:has()`'s search, the `:nth-*` sibling scans and a combinator's
+  walk over ancestors or siblings alike. Past it, the query raises
+  `Makiri::Error` ("CSS query exceeded its work budget") rather than running
+  unbounded or answering a `:has()` as `false` because its own search alone
+  ran out (which would be a wrong verdict, not an incomplete one). A chain
+  that fails no longer retries every combination of ancestors and siblings
+  (`x div div div div div div p` did, exponentially): a left part that
+  failed at every ancestor or sibling is not tried again from a further one.
 * HTML parsing bounds the tree depth (`max_tree_depth:`, default 400; a
   negative value disables it) and the `<option>`s one `<select>` receives
   (10,000), raising `Makiri::Error` past either. Both shapes made Lexbor's tree

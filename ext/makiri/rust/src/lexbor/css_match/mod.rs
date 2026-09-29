@@ -167,18 +167,20 @@ use query::Query;
 pub(crate) const MAX_COMPOUNDS: usize = 64;
 
 /// The per-query work budget's default cap - the count [`Budget::charge`]
-/// compares against. On the same scale as [`NODE_SET_MAX`]: this bounds not
-/// the RESULT set but the total number of steps one top-level call
-/// ([`matches_any`], [`select_all`], [`select_first`]) may take
-/// charging it, which is what stops a `:has()` search from multiplying its
-/// cost per candidate element into something unbounded by the document's own
-/// size.
-const DEFAULT_WORK_BUDGET: u64 = 10 * 1000 * 1000;
+/// compares against: the total number of steps one top-level call
+/// ([`matches_any`], [`select_all`], [`select_first`]) may take. The same
+/// 50M as XPath's `max_eval_ops`; a step is a few nanoseconds, so this is a
+/// few hundred milliseconds of matching. It has to be far above what an
+/// ordinary query costs, which is not the document's size: an unmatched
+/// `.x ~ li` over n siblings tests n^2/2 compounds, `.none p` candidates
+/// times depth.
+const DEFAULT_WORK_BUDGET: u64 = 50 * 1000 * 1000;
 
-/// One top-level call's work budget: every step that can cost MORE than the
-/// input document/selector's own size bounds already (concretely: each
+/// One top-level call's work budget: every step charges it once - each
 /// compound tested, each `:has()` candidate visited, each alternative tried
-/// and each sibling `:nth-*` counts) charges it once. Exceeding it is
+/// and each sibling `:nth-*` counts. Plain chains are charged too, not only
+/// `:has()` and `:nth-*`: their backtracking is bounded by pruning
+/// (`Query::step_chain`), not by the document's size. Exceeding it is
 /// [`MatchFailure::WorkExceeded`] - a hard stop propagated all the way back
 /// to the caller, never a silent `false` for just the one `:has()` that
 /// happened to hit it: a `:has()` inside a larger compound answering `false`
