@@ -729,6 +729,24 @@ impl<'doc> HtmlNode<'doc> {
         // SAFETY: as `node_type`.
         Self::link(unsafe { (*self.as_raw()).parent })
     }
+    /// `parent`, read directly with none of [`HtmlNode::parent`]'s
+    /// attribute-owner branch. Correct only where `self` is known to never be
+    /// an attribute - which every climb by `first_child`/`next`/`parent`
+    /// already establishes, since Lexbor links attributes through
+    /// `element->first_attr`/`attr->next`, never through a node's own
+    /// `first_child` (`HtmlNode::document_order`'s doc comment states the
+    /// same fact). Perf on the 400-document/110 MB `rake bench` corpus
+    /// (uncached, `nosuchtag`/`li` `Node#css`) attributed ~37% of
+    /// `preorder_next`'s climb-loop cycles to `parent()`'s
+    /// check-then-computed-offset-load for this one branch, which is never
+    /// taken here; Lexbor's own C traversal (`lxb_selectors_tree`) reads
+    /// `node->parent` as a plain field for the same reason. Do not call this
+    /// on a node whose attribute-ness has not been ruled out.
+    #[inline]
+    fn tree_parent(self) -> Option<Self> {
+        // SAFETY: as `node_type`.
+        Self::link(unsafe { (*self.as_raw()).parent })
+    }
     #[inline]
     pub fn first_child(self) -> Option<Self> {
         // SAFETY: as `node_type`.
@@ -782,7 +800,9 @@ impl<'doc> HtmlNode<'doc> {
             if let Some(s) = n.next() {
                 return Some(s);
             }
-            n = n.parent()?;
+            // `n` was reached by `first_child`/`next` from `self`, never an
+            // attribute - `tree_parent` over `parent` is sound here.
+            n = n.tree_parent()?;
         }
     }
 
@@ -817,7 +837,8 @@ impl<'doc> HtmlNode<'doc> {
             if let Some(s) = n.next() {
                 return Some(s);
             }
-            n = match n.parent() {
+            // Same as `preorder_next`'s climb: `n` is never an attribute.
+            n = match n.tree_parent() {
                 Some(p) => p,
                 None => {
                     /* Out of a template's contents: its host's own children
