@@ -27,6 +27,15 @@
   now raises from all three methods wherever it appears in the selector.
   Before, it raised only if matching happened to reach it: `p, x || y`
   answered the `<p>`s, and `nosuch:lexbor-contains("x")` answered empty.
+* HTML `:disabled`, `:enabled` and `:checked` follow the HTML Standard's
+  definitions. `:disabled` now covers an `<input>`/`<button>`/`<select>`/
+  `<textarea>`/`<fieldset>` inside a `<fieldset disabled>` (except inside
+  that fieldset's first `<legend>` child), and `<option>`/`<optgroup>`;
+  `:enabled` matches only those form elements, not every other element;
+  an element with a custom tag no longer matches `:disabled`/`:checked`
+  through its `disabled`/`checked` attribute alone. Lexbor's own matcher
+  required the attribute on the element itself and decided the legend
+  exemption from the fieldset's first child node.
 * HTML `#id` and `.class` selectors match the DOM's ID and class attributes -
   the no-namespace `id` / `class` - as Lexbor's own matcher did. An
   unprefixed `id` set in a namespace (`set_attribute_ns("urn:x", "id", v)`)

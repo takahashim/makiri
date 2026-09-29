@@ -42,11 +42,17 @@
 //! Deliberate, documented departures from a byte-for-byte semantic
 //! match, plus what is still open:
 //!
-//! - `lxb_selectors_pseudo_class_disabled`'s `fieldset` inheritance check
-//!   dereferences `first_child` unconditionally (`SEL.c:2207-2208`, §C-2) -
-//!   a null pointer read on an empty `<fieldset>`. This port treats a
-//!   childless fieldset as having no `<legend>`, which is what the HTML
-//!   Standard's algorithm implies; the C bug is not reproduced.
+//! - `:disabled`, `:enabled` and `:checked` follow the HTML Standard's
+//!   definitions (`is_disabled`'s doc), not `lxb_selectors_pseudo_class*`:
+//!   an `<input>` in a `<fieldset disabled>` is disabled, the legend
+//!   exemption is the fieldset's first `legend` element child (Lexbor reads
+//!   `first_child`, so whitespace defeats it and an empty fieldset is a NULL
+//!   read, §C-2), `option`/`optgroup` count, `:enabled` is only for the
+//!   elements `:disabled` is defined for (Lexbor: any element), and an
+//!   element with a custom tag is neither `:disabled` nor `:checked` by its
+//!   attribute alone. Checked against the Standard
+//!   (`form_state_pseudo_classes_follow_the_html_standard`); the Lexbor
+//!   differential fuzzer leaves them out.
 //! - `lxb_selectors_anb_calc` (§D-3) tests `:nth-*`'s `An+B` with a `double`
 //!   division, which past 2^53 answers "divisible" for everything; this port
 //!   computes exactly, in `i128` (`anb_matches`'s doc).
@@ -1088,66 +1094,103 @@ fn is_any_link(node: HtmlNode<'_>, include_link_tag: bool) -> bool {
         && has_attr(node, b"href")
 }
 
-/// §C-2 `lxb_selectors_pseudo_class_disabled`, WITHOUT the C implementation's
-/// null-pointer read on a childless `<fieldset>` (module doc).
-fn is_disabled(node: HtmlNode<'_>) -> bool {
-    let Some(el) = node.element() else {
-        return false;
-    };
-    let local = el.dom_local_name();
-    let is_form_control = matches!(local, b"button" | b"input" | b"select" | b"textarea");
-    if !is_form_control {
-        return false;
-    }
-    if has_attr(node, b"disabled") {
-        return true;
-    }
-    // Inherit from an enclosing <fieldset disabled> - unless this element is
-    // (or comes after) that fieldset's own <legend>.
+/// An HTML element named one of `names` (the stored, lower-cased local name).
+fn html_named(node: HtmlNode<'_>, names: &[&[u8]]) -> bool {
+    is_html_namespace(node)
+        && node
+            .element()
+            .is_some_and(|el| names.contains(&el.local_name()))
+}
+
+/// Whether `node` is inside a `<fieldset disabled>` without being inside
+/// that fieldset's first `legend` element child - the HTML Standard's
+/// inheritance for form controls and fieldsets. The first `legend` CHILD,
+/// not the first child: whitespace or another element may come before it.
+/// Every disabled fieldset on the way up counts, so a legend exempts only
+/// from its own fieldset.
+fn in_disabled_fieldset(node: HtmlNode<'_>) -> bool {
+    let mut child = node;
     let mut ancestor = parent_element(node);
     while let Some(a) = ancestor {
-        if a.element()
-            .is_some_and(|e| e.dom_local_name() == b"fieldset")
-            && has_attr(a, b"disabled")
-        {
-            // The HTML Standard: a descendant of the fieldset's first
-            // <legend> is exempt; anything else (including a childless
-            // fieldset, which safely has no legend) is disabled.
-            let first_legend = a
-                .first_child()
-                .filter(|c| c.element().is_some_and(|e| e.dom_local_name() == b"legend"));
-            if let Some(legend) = first_legend {
-                let mut n = Some(node);
-                while let Some(cur) = n {
-                    if cur == legend {
-                        return false;
-                    }
-                    n = cur.parent();
-                }
+        if html_named(a, &[b"fieldset"]) && has_attr(a, b"disabled") {
+            let first_legend = a.children().find(|c| html_named(*c, &[b"legend"]));
+            if first_legend != Some(child) {
+                return true;
             }
-            return true;
         }
+        child = a;
         ancestor = parent_element(a);
     }
     false
 }
 
+/// `:disabled`, as the HTML Standard defines it (§4.16.3 and "disabled" for
+/// each element): a `button`/`input`/`select`/`textarea` or `fieldset` with
+/// a `disabled` attribute or inside a disabled fieldset
+/// ([`in_disabled_fieldset`]), an `optgroup` with the attribute, an `option`
+/// with it or in an `optgroup` with it. HTML elements only.
+///
+/// Deliberately NOT Lexbor's `lxb_selectors_pseudo_class_disabled` (module
+/// doc), which
+/// needs the attribute on the element itself (so an `<input>` inside a
+/// disabled fieldset is enabled), counts any element with a custom tag, and
+/// decides the legend exemption from the fieldset's `first_child` - a
+/// whitespace text node defeats it, and an empty fieldset is a NULL read.
+///
+/// Form-associated custom elements are left out: whether a custom element is
+/// form-associated is decided by a script's class definition, which a
+/// parsed document does not have. As everywhere else here, the content
+/// attribute stands for the element's state: the document as parsed.
+fn is_disabled(node: HtmlNode<'_>) -> bool {
+    if html_named(
+        node,
+        &[b"button", b"input", b"select", b"textarea", b"fieldset"],
+    ) {
+        return has_attr(node, b"disabled") || in_disabled_fieldset(node);
+    }
+    if html_named(node, &[b"optgroup"]) {
+        return has_attr(node, b"disabled");
+    }
+    if html_named(node, &[b"option"]) {
+        return has_attr(node, b"disabled")
+            || parent_element(node)
+                .is_some_and(|p| html_named(p, &[b"optgroup"]) && has_attr(p, b"disabled"));
+    }
+    false
+}
+
+/// `:enabled`: the elements `:disabled` is defined for, when not disabled -
+/// not every other element, as Lexbor's unconditional `!disabled` has it.
+fn is_enabled(node: HtmlNode<'_>) -> bool {
+    html_named(
+        node,
+        &[
+            b"button",
+            b"input",
+            b"select",
+            b"textarea",
+            b"fieldset",
+            b"optgroup",
+            b"option",
+        ],
+    ) && !is_disabled(node)
+}
+
+/// `:checked`, as the HTML Standard defines it: an `input` whose type is
+/// Checkbox or Radio and which is checked, or an `option` that is
+/// selected - by the `checked` / `selected` attribute, the parsed state.
+/// HTML elements only. Lexbor also takes an element with a custom tag and a
+/// `checked` attribute; the Standard does not.
 fn is_checked(node: HtmlNode<'_>) -> bool {
-    let Some(el) = node.element() else {
-        return false;
-    };
-    let local = el.dom_local_name();
-    if local == b"option" {
+    if html_named(node, &[b"option"]) {
         return has_attr(node, b"selected");
     }
-    if local == b"input" {
-        let ty = get_attr(node, b"type");
-        let is_checkable = ty.is_some_and(|t| {
+    if html_named(node, &[b"input"]) {
+        let checkable = get_attr(node, b"type").is_some_and(|t| {
             t.eq_ignore_ascii_case(b"checkbox") || t.eq_ignore_ascii_case(b"radio")
         });
-        return is_checkable && has_attr(node, b"checked");
+        return checkable && has_attr(node, b"checked");
     }
-    // §C-1: an unknown/custom element also honours a literal `checked`.
     false
 }
 
@@ -1193,10 +1236,7 @@ fn plain_pseudo_matches(
         PseudoClass::Blank => is_blank(node),
         PseudoClass::Checked => is_checked(node),
         PseudoClass::Disabled => is_disabled(node),
-        // §C-1: unconditional `!disabled`, NOT gated to form fields the way
-        // `:optional`/`:required` are (`SEL.c:1776-1777`) - a plain `<div>`
-        // is `:enabled` too, faithfully reproducing Lexbor here.
-        PseudoClass::Enabled => !is_disabled(node),
+        PseudoClass::Enabled => is_enabled(node),
         PseudoClass::Optional => is_form_field(node) && !has_attr(node, b"required"),
         PseudoClass::Required => is_form_field(node) && has_attr(node, b"required"),
         PseudoClass::ReadOnly => !is_read_write(node),
