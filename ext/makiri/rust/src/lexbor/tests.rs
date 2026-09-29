@@ -1233,6 +1233,42 @@ mod selector_port_spike {
         assert_eq!(unstarved.len(), 1);
     }
 
+    /// `:any-link` / `:link` answer exactly as Lexbor's matcher does: `map`
+    /// counts for `:any-link`, `link` for `:link`, the tag in any namespace,
+    /// and `href` in any namespace (`xlink:href`).
+    #[test]
+    fn any_link_and_link_agree_with_lexbor() {
+        use crate::lexbor::selectors as old_engine;
+        let doc = parsed(
+            br##"<!doctype html><html><head><link href=s.css rel=stylesheet><link rel=icon></head><body>
+                <a href=/x>a</a><a>no-href</a><area href=/y><map href=/m></map><map></map>
+                <svg><a xlink:href="#p">svg-xlink</a><a href="#q">svg-plain</a><a>svg-none</a></svg>
+                <div href=/z>div</div>
+                </body></html>"##,
+        );
+        for sel in [
+            ":any-link",
+            ":link",
+            "a:any-link",
+            "svg :link",
+            ":not(:any-link)",
+        ] {
+            let old = {
+                let gvl = Gvl::exclusive();
+                // SAFETY: `doc` outlives the call, and its root is a live node.
+                let d = unsafe { doc.raw_doc().as_doc() };
+                old_engine::select_all(&gvl, RawNode::from(d.as_node()), sel.as_bytes())
+                    .unwrap_or_else(|_| panic!("{sel}: old engine"))
+            };
+            let new: Vec<RawNode> = select_all(&doc, sel)
+                .into_iter()
+                .map(|e| RawNode::from(e.node()))
+                .collect();
+            assert!(!new.is_empty(), "{sel}");
+            assert!(new == old, "{sel}: new {} old {}", new.len(), old.len());
+        }
+    }
+
     /// `:disabled`, `:enabled` and `:checked` by the HTML Standard's
     /// definitions, including where Lexbor's matcher differs: a legend after
     /// whitespace, fieldset inheritance for controls without the attribute,

@@ -896,9 +896,11 @@ budget". A walk records every counted sibling it passes and stops at the
 first known one, so each list is walked once per kind
 (`nth_over_a_wide_list_costs_work_linear_in_the_list`); the memo is dropped
 and refilled past `POSITIONS_MAX` entries. `matches?` keeps none. **Form
-state follows the HTML Standard**: `:disabled` / `:enabled` / `:checked`
-are the Standard's definitions (fieldset inheritance, first `legend`
-element child, `option`/`optgroup`), which Lexbor only approximates.
+state follows the HTML Standard, links follow Lexbor**: `:disabled` /
+`:enabled` / `:checked` are the Standard's definitions (fieldset
+inheritance, first `legend` element child, `option`/`optgroup`), which
+Lexbor only approximates; `:any-link` / `:link` are Lexbor's exactly
+(`map` counts, any namespace, `xlink:href`).
 **The GVL is an argument, not a comment**: each process-global engine
 (`css_parser`'s, `selector_cache`'s, the OLD `selectors`'s, the stylesheet
 reader's) lives in its own `crate::gvl::GvlCell`, whose `borrow` takes a

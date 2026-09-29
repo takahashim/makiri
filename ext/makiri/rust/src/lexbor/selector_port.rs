@@ -1084,14 +1084,21 @@ fn is_root(node: HtmlNode<'_>) -> bool {
     node.owner_document().as_node().document_root() == Some(node)
 }
 
-/// §C-1 `:any-link`/`:link`: `a`/`area`/(`:link` only) `link`, with an `href`.
-fn is_any_link(node: HtmlNode<'_>, include_link_tag: bool) -> bool {
-    is_html_namespace(node)
-        && node.element().is_some_and(|el| {
-            let n = el.dom_local_name();
-            n == b"a" || n == b"area" || (include_link_tag && n == b"link")
-        })
-        && has_attr(node, b"href")
+/// §C-1 `:any-link` / `:link`, exactly as Lexbor has them: an element whose
+/// tag is `a`, `area` or `map` (`:any-link`) / `a`, `area` or `link`
+/// (`:link`), in any namespace (Lexbor compares the tag id alone, so an SVG
+/// `<a>` counts), with an attribute whose local name is `href`, in any
+/// namespace (`lxb_dom_element_attr_by_id`, so `xlink:href` counts).
+fn is_any_link(node: HtmlNode<'_>, link_tag: bool) -> bool {
+    let Some(el) = node.element() else {
+        return false;
+    };
+    let tags: [&[u8]; 3] = if link_tag {
+        [b"a", b"area", b"link"]
+    } else {
+        [b"a", b"area", b"map"]
+    };
+    tags.contains(&el.local_name()) && el.attrs().any(|a| a.local_name() == b"href")
 }
 
 /// An HTML element named one of `names` (the stored, lower-cased local name).
