@@ -126,7 +126,7 @@
 
 #![forbid(unsafe_code)]
 
-use crate::falloc::{OomResult, Reserve, VecPush};
+use crate::falloc::{OomResult, VecPush};
 use crate::lexbor::adapter::html::{
     AttrName, HtmlAttr, HtmlDoc, HtmlElement, HtmlNode, NodeType, NsId, TagId,
 };
@@ -222,71 +222,114 @@ impl crate::falloc::Oom for MatchFailure {
     }
 }
 
-/// A vector that keeps its first `N` items inline and moves to a `falloc`
-/// vector past them: a query's tables are small for nearly every selector,
-/// and a `matches?` or an early `at_css` hit would otherwise pay an
-/// allocation per table per call.
-struct Small<T: Copy + Default, const N: usize> {
-    inline: [T; N],
-    len: usize,
-    heap: Vec<T>,
-}
+/// One of a query's tables: a `falloc` vector, borrowed from a [`Scratch`]
+/// for the query and handed back after it, so a warm call reuses the last
+/// one's allocation instead of making its own - Lexbor's pools, reset
+/// between calls, do the same. (It used to keep its first few items inline,
+/// which spared the allocation only for small selectors and cost every
+/// call the initialisation and the moves of those inline arrays.)
+struct Table<T>(Vec<T>);
 
-impl<T: Copy + Default, const N: usize> Small<T, N> {
-    fn new() -> Self {
-        Small {
-            inline: [T::default(); N],
-            len: 0,
-            heap: Vec::new(),
-        }
+impl<T: Copy> Table<T> {
+    /// A table over `v`'s allocation (its items are dropped).
+    fn reuse<U>(v: &mut Vec<U>) -> Self {
+        Table(recycle(core::mem::take(v), usize::MAX))
     }
 
+    /// Give the allocation back to `v`, unless it grew past
+    /// [`SCRATCH_KEEP`].
+    fn give_back<U>(self, v: &mut Vec<U>) {
+        *v = recycle(self.0, SCRATCH_KEEP);
+    }
+
+    #[inline]
     fn len(&self) -> usize {
-        self.len
+        self.0.len()
     }
 
+    #[inline]
     fn push(&mut self, v: T) -> Result<(), MatchFailure> {
-        if self.len < N {
-            if let Some(slot) = self.inline.get_mut(self.len) {
-                *slot = v;
-            }
-        } else {
-            if self.len == N {
-                self.heap.falloc_reserve(N * 2).or_oom()?;
-                for x in self.inline {
-                    self.heap.falloc_push(x).or_oom()?;
-                }
-            }
-            self.heap.falloc_push(v).or_oom()?;
-        }
-        self.len += 1;
-        Ok(())
+        self.0.falloc_push(v).or_oom()
     }
 
     #[inline]
     fn as_slice(&self) -> &[T] {
-        if self.len <= N {
-            self.inline.get(..self.len).unwrap_or(&[])
-        } else {
-            &self.heap
-        }
+        &self.0
+    }
+
+    #[inline]
+    fn get_mut(&mut self, i: usize) -> Option<&mut T> {
+        self.0.get_mut(i)
     }
 
     /// Replace item `i` (< `len`).
     fn set(&mut self, i: usize, v: T) -> Result<(), MatchFailure> {
-        let slot = if self.len <= N {
-            self.inline.get_mut(..self.len).and_then(|s| s.get_mut(i))
-        } else {
-            self.heap.get_mut(i)
-        };
-        *slot.ok_or(MatchFailure::Unsupported)? = v;
+        *self.get_mut(i).ok_or(MatchFailure::Unsupported)? = v;
         Ok(())
     }
 
     #[inline]
     fn get(&self, i: usize) -> Option<T> {
-        self.as_slice().get(i).copied()
+        self.0.get(i).copied()
     }
+}
+
+/// The tables and stacks a query leaves behind for the next one - Lexbor's
+/// `lxb_selectors_t` keeps its entry and nested-state pools across calls the
+/// same way, so a warm call allocates nothing. The Ruby glue keeps one in
+/// the process-global selector engine (`selector_cache`), under the GVL; the
+/// plain entry points ([`select_all`] etc.) start from an empty one.
+///
+/// Empty between queries: only the capacity carries over, moved between
+/// lifetimes by [`recycle`].
+pub struct Scratch {
+    simples: Vec<Step<'static>>,
+    compounds: Vec<Compound>,
+    top: Vec<Chain>,
+    alts: Vec<Chain>,
+    pending: Vec<(Lists<'static>, u32)>,
+    names: Vec<Name<'static>>,
+    tasks: Vec<Task<'static>>,
+    at: Vec<Option<HtmlNode<'static>>>,
+    cursors: Vec<HasCursor<'static>>,
+}
+
+/// A [`Scratch`] vector over this many items is dropped rather than kept, so
+/// one pathological query does not pin its memory for the process's life.
+const SCRATCH_KEEP: usize = 1024;
+
+impl Scratch {
+    pub const fn new() -> Self {
+        Scratch {
+            simples: Vec::new(),
+            compounds: Vec::new(),
+            top: Vec::new(),
+            alts: Vec::new(),
+            pending: Vec::new(),
+            names: Vec::new(),
+            tasks: Vec::new(),
+            at: Vec::new(),
+            cursors: Vec::new(),
+        }
+    }
+}
+
+impl Default for Scratch {
+    fn default() -> Self {
+        Scratch::new()
+    }
+}
+
+/// `v`, emptied, as a vector of `U` - or an empty one if its capacity is
+/// over `keep`. `T` and `U` differ only in a lifetime here, so the collect
+/// reuses `v`'s allocation (std's in-place iteration); were it not to, it
+/// would make an empty vector - it never allocates.
+fn recycle<T, U>(mut v: Vec<T>, keep: usize) -> Vec<U> {
+    if v.capacity() > keep {
+        return Vec::new();
+    }
+    v.clear();
+    v.into_iter().filter_map(|_| None).collect()
 }
 
 /* ------------------------------------------------------------------ *
@@ -322,16 +365,6 @@ impl Chain {
     }
 }
 
-impl Default for Compound {
-    fn default() -> Self {
-        Compound {
-            start: 0,
-            end: 0,
-            comb: Combinator::Close,
-        }
-    }
-}
-
 /// One simple selector, decoded once at compile time - Lexbor's own
 /// `entry->selector`, read through its `type` switch per candidate, is what
 /// this saves re-decoding on every node.
@@ -348,18 +381,10 @@ struct Step<'p> {
     /// table), `None` for a table name, case-insensitive on an HTML element
     /// only - Lexbor's per-id `switch`, decided once rather than per node.
     value_ci: Option<bool>,
-}
-
-impl Default for Step<'_> {
-    fn default() -> Self {
-        Step {
-            simple: Simple::Other,
-            name: &[],
-            alts: 0,
-            n_alts: 0,
-            value_ci: Some(false),
-        }
-    }
+    /// An `:is()` / `:where()` / `:not()` whose every alternative is one
+    /// compound with nothing nested in it: answered in place by
+    /// [`Query::check_compound`], with no task.
+    inline: bool,
 }
 
 /// A selector, compiled for matching: every chain in it - the top-level
@@ -376,12 +401,12 @@ impl Default for Step<'_> {
 pub struct Compiled<'p> {
     /// Every simple selector, compound by compound, in the order the
     /// compounds number them.
-    simples: Small<Step<'p>, 4>,
-    compounds: Small<Compound, 4>,
+    simples: Table<Step<'p>>,
+    compounds: Table<Compound>,
     /// The top-level comma alternatives, in order.
-    top: Small<Chain, 2>,
+    top: Table<Chain>,
     /// Every nested list's alternatives, each list's in order ([`Step::alts`]).
-    alts: Small<Chain, 2>,
+    alts: Table<Chain>,
 }
 
 /// Compile `groups` - see [`Compiled`] - or refuse it: no chain anywhere
@@ -413,24 +438,43 @@ pub struct Compiled<'p> {
 /// version turned `:is()` nested 2000 deep into a `SystemStackError` in a
 /// 128 KiB `Fiber`, which wedged the shared CSS engine for the process.
 pub fn compile(groups: Lists<'_>) -> Result<Compiled<'_>, MatchFailure> {
+    compile_in(&mut Scratch::new(), groups)
+}
+
+/// [`compile`], into `scratch`'s tables ([`Compiled::give_back`] returns
+/// them).
+pub fn compile_in<'p>(
+    scratch: &mut Scratch,
+    groups: Lists<'p>,
+) -> Result<Compiled<'p>, MatchFailure> {
     let mut c = Compiled {
-        simples: Small::new(),
-        compounds: Small::new(),
-        top: Small::new(),
-        alts: Small::new(),
+        simples: Table::reuse(&mut scratch.simples),
+        compounds: Table::reuse(&mut scratch.compounds),
+        top: Table::reuse(&mut scratch.top),
+        alts: Table::reuse(&mut scratch.alts),
     };
-    let mut pending: Vec<(Lists<'_>, u32)> = Vec::new();
-    for list in groups {
-        let chain = c.add_chain(list, &mut pending)?;
-        c.top.push(chain)?;
-    }
-    while let Some((lists, at)) = pending.pop() {
-        for (k, list) in (at..).zip(lists) {
+    let mut pending: Table<(Lists<'p>, u32)> = Table::reuse(&mut scratch.pending);
+    let built = (|| {
+        for list in groups {
             let chain = c.add_chain(list, &mut pending)?;
-            c.alts.set(k as usize, chain)?;
+            c.top.push(chain)?;
+        }
+        while let Some((lists, at)) = pending.0.pop() {
+            for (k, list) in (at..).zip(lists) {
+                let chain = c.add_chain(list, &mut pending)?;
+                c.alts.set(k as usize, chain)?;
+            }
+        }
+        c.mark_inline()
+    })();
+    pending.give_back(&mut scratch.pending);
+    match built {
+        Ok(()) => Ok(c),
+        Err(e) => {
+            c.give_back(scratch);
+            Err(e)
         }
     }
-    Ok(c)
 }
 
 /// [`compile`]'s verdict alone, for tests that check it without matching.
@@ -447,7 +491,7 @@ impl<'p> Compiled<'p> {
     fn add_chain(
         &mut self,
         list: List<'p>,
-        pending: &mut Vec<(Lists<'p>, u32)>,
+        pending: &mut Table<(Lists<'p>, u32)>,
     ) -> Result<Chain, MatchFailure> {
         let start = u32::try_from(self.compounds.len()).map_err(|_| MatchFailure::TooComplex)?;
         let mut len = 0u32;
@@ -485,7 +529,7 @@ impl<'p> Compiled<'p> {
                         self.alts.push(Chain::default())?;
                         n_alts += 1;
                     }
-                    pending.falloc_push((lists, alts)).or_oom()?;
+                    pending.push((lists, alts))?;
                 }
                 let value_ci = match simple {
                     Simple::Attribute(at) if at.case_insensitive => Some(true),
@@ -503,6 +547,7 @@ impl<'p> Compiled<'p> {
                     alts,
                     n_alts,
                     value_ci,
+                    inline: false,
                 })?;
                 match sel.next().filter(|n| n.combinator() == Combinator::Close) {
                     Some(n) => sel = n,
@@ -518,6 +563,59 @@ impl<'p> Compiled<'p> {
             cur = sel.next();
         }
         Ok(Chain { start, len })
+    }
+
+    /// Hand the tables back to `scratch` for the next query.
+    fn give_back(self, scratch: &mut Scratch) {
+        self.simples.give_back(&mut scratch.simples);
+        self.compounds.give_back(&mut scratch.compounds);
+        self.top.give_back(&mut scratch.top);
+        self.alts.give_back(&mut scratch.alts);
+    }
+
+    /// Set [`Step::inline`] where it holds, once every chain exists.
+    fn mark_inline(&mut self) -> Result<(), MatchFailure> {
+        for s in 0..self.simples.len() {
+            let Some(sel) = self.simples.get(s) else {
+                continue;
+            };
+            let Simple::PseudoClassFunction(FunctionArg::Selectors { pseudo, .. }) = sel.simple
+            else {
+                continue;
+            };
+            if pseudo == ListPseudo::Has {
+                continue;
+            }
+            let mut inline = true;
+            for k in sel.alts..sel.alts + sel.n_alts {
+                let chain = self.alts.get(k as usize).ok_or(MatchFailure::Unsupported)?;
+                inline &= match chain.len {
+                    0 => true,
+                    1 => self.compound_is_flat(self.compound(chain, 0)?)?,
+                    _ => false,
+                };
+            }
+            if inline {
+                self.simples.set(s, Step { inline, ..sel })?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Nothing in `compound` defers ([`check_simple`]'s `Deferred`).
+    fn compound_is_flat(&self, compound: Compound) -> Result<bool, MatchFailure> {
+        let steps = self
+            .simples
+            .as_slice()
+            .get(compound.start as usize..compound.end as usize)
+            .ok_or(MatchFailure::Unsupported)?;
+        Ok(steps.iter().all(|s| match s.simple {
+            Simple::PseudoClassFunction(FunctionArg::Selectors { .. }) => false,
+            Simple::PseudoClassFunction(FunctionArg::Nth { anb, .. }) => {
+                anb.and_then(|a| a.of_list).is_none()
+            }
+            _ => true,
+        }))
     }
 
     fn simple_index(&self) -> Result<u32, MatchFailure> {
@@ -605,8 +703,10 @@ fn is_html_namespace(node: HtmlNode<'_>) -> bool {
 /// `NOKOGIRI_DIFFERENCES.md`'s namespace section already), reproduced here
 /// for engine parity, not "fixed".
 fn name_eq(node: HtmlNode<'_>, want: &[u8]) -> bool {
+    // The stored (lower-cased) local name: the DOM's case-preserved one
+    // differs from it only in case, which this comparison folds anyway.
     node.element()
-        .is_some_and(|el| el.dom_local_name().eq_ignore_ascii_case(want))
+        .is_some_and(|el| el.local_name().eq_ignore_ascii_case(want))
 }
 
 fn get_attr<'doc>(node: HtmlNode<'doc>, name: &[u8]) -> Option<&'doc [u8]> {
@@ -1223,8 +1323,9 @@ fn check_simple(
     })
 }
 
-/// A simple selector's name resolved once against the query's document -
-/// Lexbor's own `entry->id` - for the kinds that look a name up on every
+/// A simple selector's name resolved against the document of the first
+/// candidate it is tested on, and kept for the rest of the query - Lexbor's
+/// own lazily set `entry->id` - for the kinds that look a name up on every
 /// candidate. Lexbor keys element and attribute names by their ASCII
 /// lower-cased form, so an id match is exactly the case-folded comparison
 /// the byte path makes (a type selector), or a necessary condition that the
@@ -1232,7 +1333,10 @@ fn check_simple(
 /// candidate from another document is compared by name.
 #[derive(Clone, Copy, Default)]
 enum Name<'doc> {
+    /// Not looked up yet.
     #[default]
+    Unresolved,
+    /// Nothing to look up: not a type or attribute selector.
     None,
     /// A type selector's tag id in that document; `None`: no element of the
     /// document has the name.
@@ -1251,20 +1355,9 @@ impl<'doc> Name<'doc> {
     }
 }
 
-/// A query's resolved [`Name`]s, by simple-selector index - empty for a
-/// query that compares names as bytes.
-type Names<'doc> = Small<Name<'doc>, 4>;
-
-impl<'doc> Names<'doc> {
-    /// Every simple selector of `compiled`, resolved in `doc`.
-    fn resolve(compiled: &Compiled<'_>, doc: HtmlDoc<'doc>) -> Result<Self, MatchFailure> {
-        let mut names = Names::new();
-        for sel in compiled.simples.as_slice() {
-            names.push(Name::resolve(sel, doc))?;
-        }
-        Ok(names)
-    }
-}
+/// A query's [`Name`]s, by simple-selector index: one per simple
+/// selector, each resolved when it is first reached.
+type Names<'doc> = Table<Name<'doc>>;
 
 /// §B-1 through [`Name`]: one id comparison where the document is the one
 /// the name was resolved in, [`name_eq`] otherwise.
@@ -1402,32 +1495,41 @@ struct Query<'c, 'p, 'doc> {
 }
 
 impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
-    /// A query over `compiled`. With `resolve_in`, names are resolved in that
-    /// document once, up front ([`Name`]) - worth it for a walk over many
-    /// candidates, a loss for one: resolving costs more than the byte
-    /// comparisons it saves on a single node (measured: `matches?` went from
-    /// ~110-130 ns to ~170-190 ns), so `matches_any` passes `None` and
-    /// compares names as bytes. A candidate from another document is
-    /// compared by name either way.
+    /// A query over `compiled`. With `walk_in`, the query walks that
+    /// document: names are resolved lazily ([`Name`]), each the first time a
+    /// candidate reaches it, as Lexbor's entries are, and the rightmost type
+    /// selector of a lone chain is resolved now, for [`Query::tag_filter`].
+    /// Without it (`matches?`, one candidate) names are compared as bytes:
+    /// a lookup costs more than the one comparison it would save - measured
+    /// even resolved lazily, `ul > li.item` 85 -> 117 ns.
     fn new(
         compiled: &'c Compiled<'p>,
-        resolve_in: Option<HtmlDoc<'doc>>,
+        walk_in: Option<HtmlDoc<'doc>>,
         limit: u64,
+        scratch: &mut Scratch,
     ) -> Result<Self, MatchFailure> {
-        let names = match resolve_in {
-            Some(doc) => Names::resolve(compiled, doc)?,
-            None => Names::new(),
-        };
-        let tag_filter = match compiled.top.as_slice() {
-            [chain] if chain.len != 0 => {
-                let last = compiled.compound(*chain, chain.len() - 1)?;
-                (last.start..last.end).find_map(|i| match names.get(i as usize) {
-                    Some(Name::Tag(doc, id)) => Some((doc, id)),
-                    _ => None,
-                })
+        let mut names = Names::reuse(&mut scratch.names);
+        if walk_in.is_some() {
+            for _ in compiled.simples.as_slice() {
+                names.push(Name::Unresolved)?;
             }
-            _ => None,
-        };
+        }
+        let mut tag_filter = None;
+        if let (Some(doc), [chain]) = (walk_in, compiled.top.as_slice()) {
+            if chain.len != 0 {
+                let last = compiled.compound(*chain, chain.len() - 1)?;
+                for i in last.start..last.end {
+                    let Some(sel) = compiled.simples.as_slice().get(i as usize) else {
+                        continue;
+                    };
+                    if let Name::Tag(d, id) = Name::resolve(sel, doc) {
+                        names.set(i as usize, Name::Tag(d, id))?;
+                        tag_filter = Some((d, id));
+                        break;
+                    }
+                }
+            }
+        }
         Ok(Query {
             compiled,
             names,
@@ -1436,10 +1538,18 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
                 spent: std::cell::Cell::new(0),
                 limit,
             },
-            tasks: Vec::new(),
-            at: Vec::new(),
-            cursors: Vec::new(),
+            tasks: recycle(core::mem::take(&mut scratch.tasks), usize::MAX),
+            at: recycle(core::mem::take(&mut scratch.at), usize::MAX),
+            cursors: recycle(core::mem::take(&mut scratch.cursors), usize::MAX),
         })
+    }
+
+    /// Hand the names and stacks back to `scratch` for the next query.
+    fn finish(self, scratch: &mut Scratch) {
+        self.names.give_back(&mut scratch.names);
+        scratch.tasks = recycle(self.tasks, SCRATCH_KEEP);
+        scratch.at = recycle(self.at, SCRATCH_KEEP);
+        scratch.cursors = recycle(self.cursors, SCRATCH_KEEP);
     }
 
     /// Does `node` match any top-level alternative?
@@ -1468,7 +1578,7 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
         let idx = chain.len - 1;
         let last = self.compiled.compound(chain, idx as usize)?;
         self.budget.charge()?;
-        let (rest, deferred) = match self.check_compound(last, last.start, node)? {
+        let (rest, deferred) = match self.check(last, last.start, node)? {
             Check::Done(false) => return Ok(false),
             Check::Done(true) if idx == 0 => return Ok(true),
             Check::Done(true) => (last.end, None),
@@ -1659,24 +1769,55 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
         })
     }
 
+    /// [`Query::check_compound`], with a [`Step::inline`] list-pseudo
+    /// answered in place rather than deferred. Kept out of that function's
+    /// loop on purpose: the branch there, never taken by a flat compound,
+    /// still cost plain scans ~10% (`.item`, `main a`).
+    #[inline]
+    fn check(
+        &mut self,
+        compound: Compound,
+        mut from: u32,
+        node: HtmlNode<'doc>,
+    ) -> Result<Check, MatchFailure> {
+        loop {
+            let i = match self.check_compound(compound, from, node)? {
+                Check::Defer(i) => i,
+                done => return Ok(done),
+            };
+            let compiled = self.compiled;
+            let sel = compiled
+                .simples
+                .as_slice()
+                .get(i as usize)
+                .ok_or(MatchFailure::Unsupported)?;
+            if !sel.inline {
+                return Ok(Check::Defer(i));
+            }
+            if !self.inline_alternatives(sel, node)? {
+                return Ok(Check::Done(false));
+            }
+            from = i + 1;
+        }
+    }
+
     /// `compound`'s simple selectors from `from` at `node`, until one fails,
     /// all pass, or one defers.
     #[inline]
     fn check_compound(
-        &self,
+        &mut self,
         compound: Compound,
         from: u32,
         node: HtmlNode<'doc>,
     ) -> Result<Check, MatchFailure> {
-        let steps = self
-            .compiled
+        let compiled = self.compiled;
+        let steps = compiled
             .simples
             .as_slice()
             .get(from as usize..compound.end as usize)
             .ok_or(MatchFailure::Unsupported)?;
-        let names = self.names.as_slice();
         for (i, sel) in (from..).zip(steps) {
-            let name = names.get(i as usize).copied().unwrap_or_default();
+            let name = self.name(i, sel, node);
             match check_simple(sel, name, node, &self.budget)? {
                 SimpleCheck::Result(true) => {}
                 SimpleCheck::Result(false) => return Ok(Check::Done(false)),
@@ -1684,6 +1825,63 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
             }
         }
         Ok(Check::Done(true))
+    }
+
+    /// Simple selector `i`'s [`Name`], resolved in `node`'s document the
+    /// first time; `Name::None` in a query that compares names as bytes
+    /// (it keeps no slots - `Query::new`).
+    #[inline]
+    fn name(&mut self, i: u32, sel: &Step<'_>, node: HtmlNode<'doc>) -> Name<'doc> {
+        match self.names.get_mut(i as usize) {
+            Some(slot @ Name::Unresolved) => {
+                *slot = Name::resolve(sel, node.owner_document());
+                *slot
+            }
+            Some(n) => *n,
+            None => Name::None,
+        }
+    }
+
+    /// A [`Step::inline`] `:is()` / `:where()` / `:not()` at `node`: each
+    /// alternative is one flat compound, checked here directly - what an
+    /// `Alternatives` task would do, without the task. Every alternative
+    /// tried charges the budget, as [`Query::next_alternative`] does.
+    #[inline(never)]
+    fn inline_alternatives(
+        &mut self,
+        sel: &Step<'_>,
+        node: HtmlNode<'doc>,
+    ) -> Result<bool, MatchFailure> {
+        let negate = matches!(
+            sel.simple,
+            Simple::PseudoClassFunction(FunctionArg::Selectors {
+                pseudo: ListPseudo::Not,
+                ..
+            })
+        );
+        let compiled = self.compiled;
+        for k in sel.alts..sel.alts + sel.n_alts {
+            let chain = compiled
+                .alts
+                .get(k as usize)
+                .ok_or(MatchFailure::Unsupported)?;
+            if chain.len == 0 {
+                continue;
+            }
+            self.budget.charge()?;
+            // Flat (`mark_inline`), so this never defers - and it keeps
+            // `check_compound` the one caller of `check_simple`, which is
+            // what lets that be inlined into the hot loop.
+            let compound = compiled.compound(chain, 0)?;
+            let matched = match self.check_compound(compound, compound.start, node)? {
+                Check::Done(m) => m,
+                Check::Defer(_) => return Err(MatchFailure::Unsupported),
+            };
+            if matched {
+                return Ok(!negate);
+            }
+        }
+        Ok(negate)
     }
 
     fn set_at(&mut self, i: u32, node: HtmlNode<'doc>) {
@@ -1729,7 +1927,7 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
                     if r.is_none() {
                         self.budget.charge()?;
                     }
-                    match self.check_compound(current, t.rest, t.cur)? {
+                    match self.check(current, t.rest, t.cur)? {
                         Check::Done(m) => m,
                         Check::Defer(i) => {
                             t.rest = i + 1;
@@ -1831,7 +2029,7 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
                 continue;
             };
             let compound = self.compiled.compound(t.chain, t.level as usize)?;
-            match self.check_compound(compound, from, t.cand)? {
+            match self.check(compound, from, t.cand)? {
                 Check::Defer(i) => {
                     t.rest = i + 1;
                     let child = self.deferred_task(i, t.cand)?;
@@ -1902,9 +2100,23 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
 /// Does `element` match any comma-separated alternative of `groups`? The
 /// entry point for `Node#matches?`: no traversal, under a fresh budget.
 pub fn matches_any(groups: Lists<'_>, element: HtmlElement<'_>) -> Result<bool, MatchFailure> {
-    let compiled = compile(groups)?;
-    let node = element.node();
-    Query::new(&compiled, None, DEFAULT_WORK_BUDGET)?.matches_top(node)
+    matches_any_in(&mut Scratch::new(), groups, element)
+}
+
+/// [`matches_any`], over `scratch`'s stacks.
+pub fn matches_any_in(
+    scratch: &mut Scratch,
+    groups: Lists<'_>,
+    element: HtmlElement<'_>,
+) -> Result<bool, MatchFailure> {
+    let compiled = compile_in(scratch, groups)?;
+    let answer = Query::new(&compiled, None, DEFAULT_WORK_BUDGET, scratch).and_then(|mut query| {
+        let answer = query.matches_top(element.node());
+        query.finish(scratch);
+        answer
+    });
+    compiled.give_back(scratch);
+    answer
 }
 
 /// Why [`select_all`]/[`select_first`]/[`matches_any`] stopped before
@@ -1954,28 +2166,54 @@ pub fn select_all<'doc>(
     root: HtmlNode<'doc>,
     groups: Lists<'_>,
 ) -> Result<Vec<HtmlNode<'doc>>, QueryFailure> {
-    select_all_with_limit(root, groups, DEFAULT_WORK_BUDGET)
+    select_all_in(&mut Scratch::new(), root, groups)
+}
+
+/// [`select_all`], over `scratch`'s stacks.
+pub fn select_all_in<'doc>(
+    scratch: &mut Scratch,
+    root: HtmlNode<'doc>,
+    groups: Lists<'_>,
+) -> Result<Vec<HtmlNode<'doc>>, QueryFailure> {
+    select_all_with_limit(scratch, root, groups, DEFAULT_WORK_BUDGET)
 }
 
 fn select_all_with_limit<'doc>(
+    scratch: &mut Scratch,
     root: HtmlNode<'doc>,
     groups: Lists<'_>,
     limit: u64,
 ) -> Result<Vec<HtmlNode<'doc>>, QueryFailure> {
-    let compiled = compile(groups)?;
-    let mut query = Query::new(&compiled, Some(root.owner_document()), limit)?;
-    let mut out = Vec::new();
-    let mut n = root;
-    while let Some(next) = n.preorder_next(root) {
-        n = next;
-        if n.element().is_some() && query.matches_top(n)? {
-            if out.len() >= NODE_SET_MAX {
-                return Err(QueryFailure::Overflow);
+    let compiled = compile_in(scratch, groups)?;
+    let found = select_all_compiled(scratch, &compiled, root, limit);
+    compiled.give_back(scratch);
+    found
+}
+
+fn select_all_compiled<'doc>(
+    scratch: &mut Scratch,
+    compiled: &Compiled<'_>,
+    root: HtmlNode<'doc>,
+    limit: u64,
+) -> Result<Vec<HtmlNode<'doc>>, QueryFailure> {
+    let mut query = Query::new(compiled, Some(root.owner_document()), limit, scratch)?;
+    let mut walk = || {
+        let mut out = Vec::new();
+        let mut n = root;
+        while let Some(next) = n.preorder_next(root) {
+            n = next;
+            if n.element().is_some() && query.matches_top(n)? {
+                if out.len() >= NODE_SET_MAX {
+                    return Err(QueryFailure::Overflow);
+                }
+                out.falloc_push(n).map_err(|()| QueryFailure::Oom)?;
             }
-            out.falloc_push(n).map_err(|()| QueryFailure::Oom)?;
         }
-    }
-    Ok(out)
+        Ok(out)
+    };
+    let found = walk();
+    query.finish(scratch);
+    found
 }
 
 /// Test-only: [`select_all`] with a caller-chosen work-budget limit instead
@@ -1988,7 +2226,7 @@ pub(crate) fn select_all_with_work_limit<'doc>(
     groups: Lists<'_>,
     limit: u64,
 ) -> Result<Vec<HtmlNode<'doc>>, QueryFailure> {
-    select_all_with_limit(root, groups, limit)
+    select_all_with_limit(&mut Scratch::new(), root, groups, limit)
 }
 
 /// The first descendant of `root`, in document order, that matches any
@@ -1999,14 +2237,65 @@ pub fn select_first<'doc>(
     root: HtmlNode<'doc>,
     groups: Lists<'_>,
 ) -> Result<Option<HtmlNode<'doc>>, MatchFailure> {
-    let compiled = compile(groups)?;
-    let mut query = Query::new(&compiled, Some(root.owner_document()), DEFAULT_WORK_BUDGET)?;
-    let mut n = root;
-    while let Some(next) = n.preorder_next(root) {
-        n = next;
-        if n.element().is_some() && query.matches_top(n)? {
-            return Ok(Some(n));
+    select_first_in(&mut Scratch::new(), root, groups)
+}
+
+/// [`select_first`], over `scratch`'s stacks.
+pub fn select_first_in<'doc>(
+    scratch: &mut Scratch,
+    root: HtmlNode<'doc>,
+    groups: Lists<'_>,
+) -> Result<Option<HtmlNode<'doc>>, MatchFailure> {
+    let compiled = compile_in(scratch, groups)?;
+    let found = select_first_compiled(scratch, &compiled, root);
+    compiled.give_back(scratch);
+    found
+}
+
+fn select_first_compiled<'doc>(
+    scratch: &mut Scratch,
+    compiled: &Compiled<'_>,
+    root: HtmlNode<'doc>,
+) -> Result<Option<HtmlNode<'doc>>, MatchFailure> {
+    let mut query = Query::new(
+        compiled,
+        Some(root.owner_document()),
+        DEFAULT_WORK_BUDGET,
+        scratch,
+    )?;
+    let mut walk = || {
+        let mut n = root;
+        while let Some(next) = n.preorder_next(root) {
+            n = next;
+            if n.element().is_some() && query.matches_top(n)? {
+                return Ok(Some(n));
+            }
         }
+        Ok(None)
+    };
+    let found = walk();
+    query.finish(scratch);
+    found
+}
+
+#[cfg(test)]
+mod scratch_tests {
+    use super::*;
+    use crate::falloc::Reserve;
+
+    /// [`recycle`] carries the allocation across the lifetime change - the
+    /// point of [`Scratch`] - and drops one past its keep limit.
+    #[test]
+    fn recycle_keeps_the_allocation() {
+        let byte = 7u8;
+        let mut v: Vec<Option<&u8>> = Vec::new();
+        v.falloc_reserve(16).expect("reserve");
+        v.falloc_push(Some(&byte)).expect("push");
+        let (ptr, cap) = (v.as_ptr() as usize, v.capacity());
+        let w: Vec<Option<&'static u8>> = recycle(v, usize::MAX);
+        assert!(w.is_empty());
+        assert_eq!((w.as_ptr() as usize, w.capacity()), (ptr, cap));
+        let dropped: Vec<Option<&'static u8>> = recycle(w, 4);
+        assert_eq!(dropped.capacity(), 0);
     }
-    Ok(None)
 }

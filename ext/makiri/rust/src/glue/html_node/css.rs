@@ -106,8 +106,8 @@ fn css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Value, Error> {
         let selector = css_args(ruby, args)?;
         let sv = selector_text(selector)?;
         let gvl = held(ruby);
-        let matched = selector_cache::with_compiled(&gvl, sv.as_bytes(), |groups| {
-            selector_port::select_all(this.node(), groups)
+        let matched = selector_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
+            selector_port::select_all_in(scratch, this.node(), groups)
         })
         .map_err(|e| parse_error(e, selector))?;
         drop(sv);
@@ -128,8 +128,8 @@ fn at_css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Option<Value>, 
         let selector = css_args(ruby, args)?;
         let sv = selector_text(selector)?;
         let gvl = held(ruby);
-        let matched = selector_cache::with_compiled(&gvl, sv.as_bytes(), |groups| {
-            selector_port::select_first(this.node(), groups)
+        let matched = selector_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
+            selector_port::select_first_in(scratch, this.node(), groups)
         })
         .map_err(|e| parse_error(e, selector))?;
         drop(sv);
@@ -149,9 +149,9 @@ fn matches(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<bool, Error> {
         let sv = selector_text(selector)?;
         let gvl = held(ruby);
         let element = this.node().element();
-        let matched = selector_cache::with_compiled(&gvl, sv.as_bytes(), |groups| {
+        let matched = selector_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
             match element {
-                Some(el) => selector_port::matches_any(groups, el),
+                Some(el) => selector_port::matches_any_in(scratch, groups, el),
                 // Still compiled: a selector the matcher refuses is refused
                 // whatever node it is asked about.
                 None => selector_port::compile(groups).map(|_| false),

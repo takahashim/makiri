@@ -31,6 +31,7 @@ use crate::falloc::{try_to_boxed_slice, Reserve};
 use crate::gvl::{Gvl, GvlCell, GvlRef};
 use crate::lexbor::css_engine::{ParseFail, ParserParts, SelectorParser};
 use crate::lexbor::css_parser::{list_from_raw, Lists, ParseError};
+use crate::lexbor::selector_port::Scratch;
 
 type SelectorList = crate::lexbor::abi::lxb_css_selector_list_t;
 
@@ -234,6 +235,8 @@ struct Globals {
     engine: Option<SelectorParser>,
     policy: CachePolicy,
     cache: Cache,
+    /// The matcher's stacks, kept from one query to the next (its doc).
+    scratch: Scratch,
 }
 
 /// The one process-global, borrowed once per query by [`Session`] - separate
@@ -242,6 +245,7 @@ static G: GvlCell<Globals> = GvlCell::new(Globals {
     engine: None,
     policy: CachePolicy::new(),
     cache: Cache::new(),
+    scratch: Scratch::new(),
 });
 
 /// Build the shared engine on first use, and hand it back by value. On failure
@@ -280,15 +284,16 @@ impl Drop for Session<'_> {
 }
 
 /// Parse `selector` with this module's own shared engine (or serve it from
-/// the cache), hand the compiled selector list to `f` as a [`Lists`] view,
-/// then leave the engine ready for the next call.
+/// the cache), hand the compiled selector list to `f` as a [`Lists`] view -
+/// with the matcher's kept [`Scratch`] - then leave the engine ready for the
+/// next call.
 ///
 /// Mirrors `lexbor::selectors::with_compiled_selector`'s three-way dispatch
 /// (flush-on-window-end, bypass, cached) exactly - see its doc.
 pub(crate) fn with_compiled<R>(
     gvl: &Gvl,
     selector: &[u8],
-    f: impl FnOnce(Lists<'_>) -> R,
+    f: impl FnOnce(Lists<'_>, &mut Scratch) -> R,
 ) -> Result<R, ParseError> {
     let mut g = G.borrow(gvl).map_err(|_| ParseError::Busy)?;
     let e = engine_in(&mut g)?;
@@ -310,7 +315,7 @@ pub(crate) fn with_compiled<R>(
             // SAFETY: `list` points into the arena `e` owns, kept alive for
             // this call by the session's live borrow; `list_from_raw`'s
             // contract.
-            Ok(list) => Ok(f(unsafe { list_from_raw(list.as_ptr()) })),
+            Ok(list) => Ok(f(unsafe { list_from_raw(list.as_ptr()) }, &mut g.scratch)),
             Err(ParseFail::GuardOom) => Err(ParseError::Oom),
             Err(fail) => Err(match fail {
                 ParseFail::Rejected => ParseError::Syntax,
@@ -328,7 +333,7 @@ pub(crate) fn with_compiled<R>(
     // SAFETY: the session's borrow is live.
     unsafe {
         g.cache.with_list(&mut g.policy, e, selector, |list| {
-            f(list_from_raw(list.as_ptr()))
+            f(list_from_raw(list.as_ptr()), &mut g.scratch)
         })
     }
 }
