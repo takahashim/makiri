@@ -34,7 +34,7 @@ use crate::lexbor::abi::{
     self as lxb, lxb_html_document_destroy, lxb_html_parse_chunk_begin, lxb_html_parse_chunk_end,
     lxb_html_parse_chunk_process,
 };
-use crate::lexbor::adapter::arena_bytes::document_capacity;
+use crate::lexbor::adapter::arena_bytes::{document_capacity, document_chunks};
 use crate::lexbor::adapter::dom_index::DomIndex;
 use crate::lexbor::adapter::html::{
     ForeignNode, HtmlDoc as DomDoc, HtmlDocIdentity, HtmlNode, HtmlNodeKey, RawDoc, RawNode, TagId,
@@ -198,6 +198,13 @@ impl HtmlParsed {
     /// arena CAPACITY, not the bytes in use, because the pages are what cost.
     pub fn external_bytes(&self) -> usize {
         document_capacity(self.doc())
+    }
+
+    /// How many chunks the document's pools hold: an O(1) stand-in for
+    /// [`external_bytes`](Self::external_bytes), for deciding when to measure
+    /// it again.
+    pub fn arena_chunks(&self) -> usize {
+        document_chunks(self.doc())
     }
 
     /// The 1-based source line for `node`, or `None` when unknown.

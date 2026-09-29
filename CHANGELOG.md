@@ -73,6 +73,9 @@
 
 ### Fixed
 
+* A document that grows by editing (appended nodes, `inner_html=`) reports
+  its new size to the GC, so memory pressure from it triggers collections; it
+  was reported once, at parse time.
 * A node wrapped while memory runs out raises `Makiri::Error` instead of
   coming back as a second Ruby object for the same node, without the first
   one's `freeze`, instance variables or singleton methods.

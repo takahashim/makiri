@@ -299,6 +299,8 @@ pub struct HtmlEdit<'a> {
 pub fn edit(this: &HtmlSelf) -> Result<HtmlEdit<'_>, Error> {
     crate::bridge::ruby::check_frozen(this.value)?;
     ensure_document_mutable(this.document)?;
+    /* Before any argument is converted: see `account_growth`. */
+    crate::bridge::wrapper::account_growth(this.document);
     Ok(HtmlEdit { this })
 }
 

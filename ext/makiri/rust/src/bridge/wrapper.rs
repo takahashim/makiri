@@ -318,6 +318,10 @@ pub struct DocData {
     /// The external bytes this wrapper has told the GC about, so `Drop` takes
     /// back exactly what [`account_document`] reported.
     reported: usize,
+    /// An HTML document's pool chunk count when `reported` was measured:
+    /// what [`account_growth`] compares against, since the byte count
+    /// itself costs a walk of every chunk.
+    reported_chunks: usize,
     /// One wrapper per node; see [`NodeCache`].
     ///
     /// Boxed and optional so a document nobody navigates never allocates a
@@ -358,6 +362,33 @@ impl DocData {
     pub fn errors(&self) -> Value {
         // SAFETY: the live Array this wrapper marks.
         unsafe { value(self.errors) }
+    }
+
+    /// Whether the content has grown enough since the last report to measure
+    /// and report it again ([`account_growth`]): by an eighth, and at least
+    /// [`GROWTH_MIN_CHUNKS`] chunks (HTML) or [`GROWTH_MIN_BYTES`] (XML).
+    fn grown_enough(&self) -> bool {
+        // SAFETY: the content is owned by this object and live for the call.
+        unsafe {
+            match self.content {
+                Content::Empty => false,
+                Content::Html(p) => {
+                    let then = self.reported_chunks;
+                    p.as_ref().arena_chunks()
+                        >= then.saturating_add((then / 8).max(GROWTH_MIN_CHUNKS))
+                }
+                Content::Xml(d) => {
+                    let then = self.reported;
+                    d.as_ref().memsize() >= then.saturating_add((then / 8).max(GROWTH_MIN_BYTES))
+                }
+            }
+        }
+    }
+
+    /// The HTML content's chunk count, 0 for XML.
+    fn arena_chunks(&self) -> usize {
+        // SAFETY: as `grown_enough`.
+        unsafe { self.content.html().map_or(0, |p| p.as_ref().arena_chunks()) }
     }
 
     /// The bytes the content holds outside Ruby's allocator, or 0 with none.
@@ -445,9 +476,39 @@ fn account_document(rb_doc: VALUE) {
         return;
     };
     let diff = now_i.wrapping_sub(then_i);
+    d.reported_chunks = d.arena_chunks();
     if diff != 0 {
         d.reported = now;
         crate::bridge::ruby::report_external_bytes(diff);
+    }
+}
+
+/// Chunks an HTML document's pools must gain before [`account_growth`]
+/// measures it again (Lexbor's node pool grows in chunks of tens of KiB).
+const GROWTH_MIN_CHUNKS: usize = 16;
+/// Bytes an XML document must gain before [`account_growth`] reports again.
+const GROWTH_MIN_BYTES: usize = 512 * 1024;
+
+/// Tell the GC about what `rb_doc` has grown by since its last report, once
+/// that is enough to matter ([`DocData::grown_enough`]: an eighth, and a floor).
+///
+/// A parse reports its document's size once; mutation grows the arena after
+/// that - nodes appended in a loop, `inner_html=` of a large string - and
+/// without a new report the GC keeps judging a large document by its size at
+/// parse time. Measuring an HTML document walks every chunk of its pools, too
+/// costly for every edit, so an O(1) chunk count decides when; growth by a
+/// fraction also keeps the measurements logarithmic in the final size.
+///
+/// Called where an edit begins (`bridge::html::edit`, `bridge::xml::
+/// begin_edit`): the growth it sees is the previous edits', and a document's
+/// last edit is reported at its next one or not at all - an under-report, the
+/// safe direction, as it was before this existed. It may run a collection,
+/// so, like [`account_document`], it must be called with `rb_doc` on the
+/// caller's stack and no borrowed Ruby String held - which is so at the start
+/// of an edit, before any argument is converted.
+pub fn account_growth(rb_doc: Value) {
+    if with_doc_data_known(rb_doc, |d| d.grown_enough()) {
+        account_document(rb_doc.as_raw());
     }
 }
 
@@ -528,6 +589,7 @@ impl DocumentShell {
                     evaluating: 0,
                     errors: QFALSE,
                     reported: 0,
+                    reported_chunks: 0,
                     nodes: None,
                 },
                 |d| d.errors = errors.as_raw(),

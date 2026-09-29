@@ -208,6 +208,29 @@ pub fn document_capacity(doc: HtmlDoc<'_>) -> usize {
     owned_arena(doc, Measure::Capacity).total()
 }
 
+/// How many chunks `doc`'s node and text pools hold - 0 when it owns none
+/// (made with an owner). O(1): Lexbor counts them (`chunk_length`), so this
+/// is the cheap signal that a document has grown, where
+/// [`document_capacity`] walks every chunk to say by how much.
+pub fn document_chunks(doc: HtmlDoc<'_>) -> usize {
+    let doc = doc.as_raw();
+    // SAFETY: a live document; only its own fields are read.
+    if unsafe { (*doc).node.owner_document } != doc {
+        return 0;
+    }
+    // SAFETY: a live document that owns these pools; each is null or
+    // initialised, with its `mem` set by that initialisation.
+    let pool = |p: *mut lxb::lexbor_mraw_t| unsafe {
+        if p.is_null() || (*p).mem.is_null() {
+            0
+        } else {
+            (*(*p).mem).chunk_length
+        }
+    };
+    // SAFETY: as above.
+    unsafe { pool((*doc).mraw).saturating_add(pool((*doc).text)) }
+}
+
 /// The document whose arena `doc` allocates from: `doc` itself, or the owner
 /// it was made with.
 fn arena_owner(doc: HtmlDoc<'_>) -> HtmlDoc<'_> {

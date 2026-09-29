@@ -1193,8 +1193,12 @@ Key decisions that got there, worth not regressing:
   both halves. The report is the capacity of everything the document OWNS -
   pools and the four name tables (~23 KB of tables for an empty document); a
   document made with an owner shares its owner's and reports 0. Growth through
-  mutation/fragment import is NOT re-reported
-  (an approximation, in the safe direction of under-reporting).
+  mutation is re-reported where an edit begins (`account_growth`, from
+  `bridge::html::edit` / `bridge::xml::begin_edit`) once it reaches an eighth
+  of the last report (and a floor): an O(1) chunk count decides for HTML,
+  since measuring walks every chunk. A document's last edit may go unreported
+  (under-reporting, the safe direction). Without it, 60 documents grown by
+  `inner_html=` ran with zero GCs to ~700 MB RSS; with it, ~200 MB.
 - Tree-walk speed is structurally capped by Lexbor's 96-byte node (we can't
   shrink it); investigated nodeset-pool / prefetch follow-ups were **not** shipped
   because, with no remaining slower-than-Nokogiri row, they'd add lifetime /

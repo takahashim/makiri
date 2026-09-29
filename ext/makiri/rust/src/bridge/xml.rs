@@ -346,6 +346,8 @@ pub fn begin_edit(this: XmlSelf) -> Result<Editing, Error> {
     /* The evaluation guard, checked now so it is reported before a bad
      * argument; `with_arena` checks it again at the change. */
     with_arena_for_new_node(this.document, |_| ())?;
+    /* Before any argument is converted: see `account_growth`. */
+    crate::bridge::wrapper::account_growth(this.document);
     Ok(Editing {
         receiver: this.value,
         document: this.document,
