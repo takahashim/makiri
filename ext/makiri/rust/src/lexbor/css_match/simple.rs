@@ -24,17 +24,6 @@ fn document_is_quirks(node: HtmlNode<'_>) -> bool {
     node.owner_document().compat_mode() == 1
 }
 
-/// Whether `#id` / `.class` compare case-insensitively at `node`: the
-/// resolved [`Name::Quirks`] in a walking query, the node's document
-/// otherwise.
-#[inline]
-fn quirks(node: HtmlNode<'_>, name: Name) -> bool {
-    match name {
-        Name::Quirks(q) => q,
-        _ => document_is_quirks(node),
-    }
-}
-
 fn eq_bytes(a: &[u8], b: &[u8], case_insensitive: bool) -> bool {
     if case_insensitive {
         a.eq_ignore_ascii_case(b)
@@ -245,17 +234,17 @@ pub(super) fn check_simple(
         // `lxb_selectors_match_id` / `_class` through the element's own `id` /
         // `class` shortcut, as Lexbor reads them (`HtmlElement::id_attr`) - no
         // attribute-list scan.
-        // Quirks mode (case-insensitive) is the walked document's, resolved
-        // once ([`Name::Quirks`]); `matches?` reads it from the node.
         Simple::Id => SimpleCheck::Result(
             node.element()
                 .and_then(HtmlElement::id_attr)
-                .is_some_and(|a| eq_bytes(a.value(), sel.name, quirks(node, name))),
+                .is_some_and(|a| eq_bytes(a.value(), sel.name, document_is_quirks(node))),
         ),
         Simple::Class => SimpleCheck::Result(
             node.element()
                 .and_then(HtmlElement::class_attr)
-                .is_some_and(|a| has_whitespace_token(a.value(), sel.name, quirks(node, name))),
+                .is_some_and(|a| {
+                    has_whitespace_token(a.value(), sel.name, document_is_quirks(node))
+                }),
         ),
         // `lxb_selectors_match_attribute`: explicit `i` -> case-insensitive;
         // explicit `s` -> forced case-sensitive; no modifier -> the HTML table
@@ -305,10 +294,9 @@ pub(super) fn check_simple(
 /// their ASCII lower-cased form, so an id match is exactly the case-folded
 /// comparison the byte path makes (a type selector), or a necessary
 /// condition that the adapter then confirms (an attribute:
-/// `attr_by_resolved_name`). `#id` / `.class` resolve to the document's
-/// quirks mode, which decides whether they fold case.
+/// `attr_by_resolved_name`).
 ///
-/// A resolved name is used WITHOUT asking each node for its document, as
+/// A tag id is compared WITHOUT asking each node for its document, as
 /// Lexbor's `entry->id` is: every node a walking query reaches - the walk
 /// itself, a combinator's climb, `:has()`'s search, `of S`'s siblings - is
 /// in the walked tree, so of the walked document, since Makiri never moves a
@@ -328,9 +316,6 @@ pub(super) enum Name {
     Tag(Option<TagId>),
     /// An attribute selector's name.
     Attr(AttrName),
-    /// An `#id` / `.class` selector: whether the walked document is in
-    /// quirks mode, where they compare case-insensitively.
-    Quirks(bool),
 }
 
 impl Name {
@@ -338,7 +323,6 @@ impl Name {
         match sel.simple {
             Simple::Type => Name::Tag(doc.tag_id(sel.name)),
             Simple::Attribute(_) => Name::Attr(doc.resolve_attr_name(sel.name)),
-            Simple::Id | Simple::Class => Name::Quirks(doc.compat_mode() == 1),
             _ => Name::None,
         }
     }
