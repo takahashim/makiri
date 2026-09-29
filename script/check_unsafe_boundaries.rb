@@ -72,7 +72,7 @@ UNSAFE_ISLANDS = {
   "lexbor/selectors.rs" => 9,
   "lexbor/serialize.rs" => 2,
   "lexbor/stylesheet.rs" => 7,
-  "lexbor/tests.rs" => 13,
+  "lexbor/tests.rs" => 14,
   "lexbor/xpath.rs" => 9,
   "token.rs" => 1,
 }.freeze

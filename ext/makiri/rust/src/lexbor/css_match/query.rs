@@ -117,6 +117,20 @@ pub(super) struct ChainTask<'doc> {
     at_base: u32,
 }
 
+/// How far a failed left part of a chain is known to fail - Blink's
+/// `SelectorChecker` match statuses. A `Descendant` step turns running out
+/// of ancestors into `Completely`, a `SubsequentSibling` step running out of
+/// siblings into `AllSiblings`; `>` and `+` pass either through.
+#[derive(Clone, Copy)]
+enum Fail {
+    /// At this position only.
+    Locally,
+    /// At this position and every preceding sibling of it.
+    AllSiblings,
+    /// At this position, and at every ancestor and their preceding siblings.
+    Completely,
+}
+
 /// One `:has()` alternative's forward search from its anchor (Lexbor's
 /// `*_forward` states): compound `level` tested at `cand`, from simple selector
 /// `rest`; each level's candidates come from `cursors[cur_base + level]`.
@@ -609,9 +623,17 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
     /// [`ChainTask`]: a compound that matches moves left along its
     /// combinator; one that fails backtracks to the nearest choice at or
     /// right of it - a `Descendant` or `SubsequentSibling` combinator whose
-    /// compound can move on to the next ancestor / preceding sibling. That
-    /// is exhaustive, as Lexbor's `not_found` state is. Every compound test
-    /// charges the budget.
+    /// compound can move on to the next ancestor / preceding sibling. Every
+    /// compound test charges the budget.
+    ///
+    /// Lexbor's `not_found` is exhaustive, which is exponential in the
+    /// chain: `x div div div div div div p` over one `<p>` 40 deep tries
+    /// every choice of six ancestors. A failure therefore carries how far it
+    /// holds ([`Fail`], Blink's `SelectorChecker` statuses): a left part that
+    /// failed at every ancestor fails at every ancestor of an ancestor too,
+    /// so no move right of a `Descendant` can help, and likewise for every
+    /// preceding sibling and a `SubsequentSibling`. Only moves that cannot
+    /// change the answer are skipped - the verdict is Lexbor's.
     ///
     /// `at[at_base + i]` records where compound `i` last matched; it is read
     /// only when a backtrack comes back to `i` from the left, which only a
@@ -636,6 +658,7 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
         let last = t.chain.len - 1;
         let mut resumed = event;
         loop {
+            let mut fail = Fail::Locally;
             let current = compound(t.idx)?;
             let matched = match resumed.take() {
                 Some(false) => false,
@@ -677,15 +700,35 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
                     t.rest = compound(t.idx)?.start;
                     continue;
                 }
+                // Nowhere left to look: out of ancestors, or of siblings.
+                fail = match current.comb {
+                    Combinator::NextSibling | Combinator::SubsequentSibling => Fail::AllSiblings,
+                    _ => Fail::Completely,
+                };
             }
-            // `not_found`: move the nearest choice at or right of `idx` on.
+            // `not_found`: move the nearest choice at or right of `idx` on,
+            // unless `fail` already holds for every place it could move to.
             loop {
                 if t.idx >= last {
                     return Ok(Outcome::Done(false));
                 }
-                let moved = match compound(t.idx + 1)?.comb {
-                    Combinator::Descendant => parent_element(t.cur),
-                    Combinator::SubsequentSibling => prev_sibling_element(t.cur),
+                let moved = match (compound(t.idx + 1)?.comb, fail) {
+                    (Combinator::Descendant, Fail::Locally | Fail::AllSiblings) => {
+                        let n = parent_element(t.cur);
+                        if n.is_none() {
+                            fail = Fail::Completely;
+                        }
+                        n
+                    }
+                    (Combinator::SubsequentSibling, Fail::Locally) => {
+                        let n = prev_sibling_element(t.cur);
+                        if n.is_none() {
+                            fail = Fail::AllSiblings;
+                        }
+                        n
+                    }
+                    // `>` and `+` have no choice to move; a failure that
+                    // already holds everywhere passes through unchanged.
                     _ => None,
                 };
                 if let Some(n) = moved {

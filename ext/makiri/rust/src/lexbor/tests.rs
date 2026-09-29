@@ -1102,9 +1102,38 @@ mod css_match {
     /// (module doc, `Budget`'s doc): each of N candidates here runs its OWN
     /// `:has(span.missing)` search over its own M descendants, none of which
     /// ever matches, so the search never short-circuits early - a real
-    /// document could not be built big enough to hit the SHIPPED 10-million
+    /// document could not be built big enough to hit the SHIPPED 50-million
     /// limit in a fast test, so this drives `select_all_with_work_limit`
     /// (`#[cfg(test)]`-only) with one small enough to actually exceed.
+    /// A chain that fails does not retry every combination of ancestors:
+    /// `x` fails at every ancestor of the sixth `div`, so it fails at every
+    /// ancestor of any higher one too (`Query::step_chain`'s `Fail`).
+    /// Exhaustive backtracking tried C(40, 6) placements here and spent the
+    /// whole shipped budget; pruned, one `<p>` costs about the depth. The
+    /// placements that CAN match still do.
+    #[test]
+    fn a_failing_descendant_chain_does_not_try_every_combination_of_ancestors() {
+        use crate::lexbor::css_match::select_all_with_work_limit;
+
+        let html = format!("{}<p></p>{}", "<div>".repeat(40), "</div>".repeat(40));
+        let doc = parsed(html.as_bytes());
+        let gvl = Gvl::exclusive();
+        for (sel, expected) in [
+            ("x div div div div div div p", 0),
+            ("div div div div div div div div p", 1),
+            ("body > div div div div div div > div p", 1),
+            ("body > div div div div > x div div p", 0),
+            ("html > div div p", 0),
+        ] {
+            let text = VerifiedText::from_bytes(sel.as_bytes()).expect("verified");
+            let parsed_sel =
+                css_parser::parse(&gvl, text).unwrap_or_else(|_| panic!("{sel} parses"));
+            let found = select_all_with_work_limit(root(&doc), parsed_sel.groups(), 10_000)
+                .unwrap_or_else(|_| panic!("{sel:?} exceeded a 10,000-step budget"));
+            assert_eq!(found.len(), expected, "{sel}");
+        }
+    }
+
     #[test]
     fn a_has_search_that_cannot_find_anything_fails_closed_once_the_work_budget_is_spent() {
         use crate::lexbor::css_match::select_all_with_work_limit;
@@ -1744,6 +1773,142 @@ mod css_match {
                 old.len()
             );
         }
+    }
+
+    /// Long chains over a deep, repetitive tree - where a failed left part
+    /// is pruned (`Query::step_chain`'s `Fail`) rather than retried from
+    /// every further ancestor or sibling. The pruning must never change a
+    /// verdict, so it is checked against the old engine's exhaustive
+    /// backtracking. Random chains almost never match, which would leave the
+    /// pruning nothing to get wrong, so each selector is read off a real
+    /// path - up through ancestors and back through preceding siblings from
+    /// a random element - and half of them then have one compound or
+    /// combinator changed: a near miss, whose other placements are what a
+    /// wrong prune would skip.
+    #[test]
+    fn pruned_long_chains_agree_with_the_old_engine() {
+        use crate::lexbor::selectors as old_engine;
+
+        let mut html = String::from("<!doctype html><html><body>");
+        for i in 0..12 {
+            let class = ["a", "b", "item"][i % 3];
+            html.push_str(&format!(
+                r#"<div class="{class}"><ul><li class="item">x</li>"#
+            ));
+            html.push_str(
+                r#"<li class="a"><a href="/p">y</a></li><li><span>z</span></li><p>w</p></ul>"#,
+            );
+            if i % 4 == 3 {
+                html.push_str(r#"<p class="b">q</p>"#);
+            }
+        }
+        html.push_str(&"</div>".repeat(12));
+        html.push_str("</body></html>");
+        let doc = parsed(html.as_bytes());
+        let elements: Vec<HtmlElement> =
+            root(&doc).subtree().filter_map(HtmlNode::element).collect();
+        fn parent(e: HtmlElement<'_>) -> Option<HtmlElement<'_>> {
+            e.node().parent().and_then(HtmlNode::element)
+        }
+        fn prev(e: HtmlElement<'_>) -> Option<HtmlElement<'_>> {
+            let mut n = e.node().prev();
+            while let Some(m) = n {
+                if let Some(el) = m.element() {
+                    return Some(el);
+                }
+                n = m.prev();
+            }
+            None
+        }
+
+        const TYPES: &[&str] = &["div", "ul", "li", "p", "a", "*"];
+        const CLASSES: &[&str] = &["", ".a", ".b", ".item"];
+        const COMBINATORS: &[&str] = &[" ", " > ", " + ", " ~ "];
+        let mut rng = Rng(0x0DEE_9C4A_u64);
+        let (mut compared, mut matched) = (0, 0);
+        for i in 0..3000 {
+            // Right to left: a compound for the element, then a combinator
+            // and the element it leads to.
+            let mut at = *rng.pick(&elements);
+            let mut parts: Vec<String> = Vec::new();
+            let len = 2 + rng.next_u64() % 7;
+            loop {
+                let mut compound = String::from_utf8_lossy(at.node().qualified_name()).into_owned();
+                if rng.next_u64().is_multiple_of(4) {
+                    compound = "*".into();
+                }
+                if let Some(class) = at.get_attribute(b"class") {
+                    if rng.next_u64().is_multiple_of(2) {
+                        let first = class.split(|b| *b == b' ').next().unwrap_or_default();
+                        compound.push('.');
+                        compound.push_str(&String::from_utf8_lossy(first));
+                    }
+                }
+                parts.push(compound);
+                if parts.len() as u64 >= 2 * len - 1 {
+                    break;
+                }
+                let (comb, next) = match rng.next_u64() % 4 {
+                    0 => (" > ", parent(at)),
+                    1 => (" + ", prev(at)),
+                    2 => {
+                        let mut n = parent(at);
+                        for _ in 0..rng.next_u64() % 3 {
+                            n = n.and_then(parent);
+                        }
+                        (" ", n)
+                    }
+                    _ => {
+                        let mut n = prev(at);
+                        for _ in 0..rng.next_u64() % 3 {
+                            n = n.and_then(prev);
+                        }
+                        (" ~ ", n)
+                    }
+                };
+                let Some(next) = next else { break };
+                parts.push(comb.into());
+                at = next;
+            }
+            parts.reverse();
+            if parts.len() > 1 && rng.next_u64().is_multiple_of(2) {
+                let k = (rng.next_u64() as usize) % parts.len();
+                parts[k] = if k % 2 == 0 {
+                    format!("{}{}", rng.pick(TYPES), rng.pick(CLASSES))
+                } else {
+                    (*rng.pick(COMBINATORS)).into()
+                };
+            }
+            let sel = parts.concat();
+            let old = {
+                let gvl = Gvl::exclusive();
+                // SAFETY: `doc` outlives the call, `root` is a live node of it.
+                let d = unsafe { doc.raw_doc().as_doc() };
+                let root = RawNode::from(d.as_node());
+                match old_engine::select_all(&gvl, root, sel.as_bytes()) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                }
+            };
+            let new: Vec<RawNode> = select_all(&doc, &sel)
+                .into_iter()
+                .map(|e| RawNode::from(e.node()))
+                .collect();
+            assert!(
+                new == old,
+                "iteration {i}: {sel:?}: new {} old {}",
+                new.len(),
+                old.len()
+            );
+            compared += 1;
+            matched += usize::from(!new.is_empty());
+        }
+        // The generator is what makes this test worth running: most of what
+        // it compares must match something.
+        assert!(
+            compared > 2900 && matched > compared / 2,
+            "{compared} compared, {matched} matched"
+        );
     }
 
     /// `:nth-child(An+B of S)` / `:nth-last-child(An+B of S)` checked against
