@@ -880,10 +880,16 @@ first) and leaves the CSS engine fully usable afterward, never
 
 `select_all`/`select_first`/`matches_any` are **descendant-only** (context node
 excluded, like Nokogiri) and in document order; `select_all` is capped at
-`NODE_SET_MAX`, and every entry point shares one per-call work `Budget`
-(`:has()`'s own search and the plain `:nth-child`-family's sibling scan are
-the two places cost can multiply past the document's own size) - exceeding
-either raises `Makiri::Error`. A malformed selector raises
+`NODE_SET_MAX`, and every entry point shares one per-call work `Budget` of
+50M steps (XPath's `max_eval_ops`), charged by every compound tested,
+`:has()` candidate, sibling counted and fieldset ancestor climbed - exceeding
+either raises `Makiri::Error`. It counts a plain chain too, so what keeps
+ordinary queries far below it is that no step is repeated needlessly:
+`step_chain` does not retry a left part that failed at every ancestor (or
+every preceding sibling) from a further one (`Fail`, Blink's
+`SelectorChecker` statuses - Lexbor's exhaustive backtracking is exponential
+in the chain), and `:nth-child(... of S)` remembers the ranks it counted as
+the plain `:nth-*` family remembers positions. A malformed selector raises
 `Makiri::CSS::SyntaxError` from the parse step, before matching starts.
 `:lexbor-contains()` and the column combinator (`||`) are constructs this
 matcher cannot evaluate (deliberately, and because Lexbor's own traversal
