@@ -6,7 +6,7 @@
 
 #![allow(unsafe_code)]
 
-use magnus::Value;
+use magnus::{Error, Value};
 
 use crate::bridge::wrapper::{DocKind, NodeWord};
 
@@ -20,15 +20,15 @@ pub(in crate::bridge) unsafe fn wrap_doc_node(
     kind: DocKind,
     node: NodeWord,
     document: Value,
-) -> Value {
+) -> Result<Value, Error> {
     match kind {
         DocKind::Xml => match node.xml() {
             Some(id) => crate::bridge::xml::wrap_xml_node(id, document),
-            None => crate::bridge::ruby::nil(),
+            None => Ok(crate::bridge::ruby::nil()),
         },
         DocKind::Html => match node.html() {
             Some(n) => crate::bridge::html::wrap_html_node(n, document),
-            None => crate::bridge::ruby::nil(),
+            None => Ok(crate::bridge::ruby::nil()),
         },
     }
 }

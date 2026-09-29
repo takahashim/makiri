@@ -365,8 +365,9 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
-    /// The nodes as Ruby objects, in the set's order.
-    pub fn wrapped(&self) -> impl Iterator<Item = Value> + '_ {
+    /// The nodes as Ruby objects, in the set's order - each `Err` if its
+    /// wrapper could not be made.
+    pub fn wrapped(&self) -> impl Iterator<Item = Result<Value, Error>> + '_ {
         // SAFETY: nodes a set of this document stored, so `kind` is the
         // representation they were stored as, and `document` roots them.
         self.nodes
@@ -387,11 +388,12 @@ impl NodeSet {
     /// before the wrap, which allocates and so can run arbitrary Ruby.
     pub fn at(&self, ruby: &Ruby, i: usize) -> Result<Option<Value>, Error> {
         let node = self.read()?.as_slice().get(i).copied();
-        Ok(node.map(|n| {
+        node.map(|n| {
             // SAFETY: a node this set stored, under its own `kind`, and its
             // document is rooted by the set.
             unsafe { wrap_doc_node(self.kind, n, self.document(ruby)) }
-        }))
+        })
+        .transpose()
     }
 
     /// A new set of `len` nodes from `beg`, clamped to the end; `None` when

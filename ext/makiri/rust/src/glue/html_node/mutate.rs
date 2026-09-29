@@ -295,7 +295,7 @@ pub fn set_outer_html(_ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Va
 /// A node the factory made, or the error naming what failed.
 fn created(node: Option<RawNode>, rb_self: Value, what: &str) -> Result<Value, Error> {
     match node {
-        Some(n) => Ok(wrap_html_node(n, rb_self)),
+        Some(n) => wrap_html_node(n, rb_self),
         None => Err(makiri_error(format!("failed to create {what}"))),
     }
 }

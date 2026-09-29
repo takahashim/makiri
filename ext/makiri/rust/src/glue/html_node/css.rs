@@ -131,7 +131,9 @@ fn at_css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Option<Value>, 
         .map_err(|e| parse_error(e, selector))?;
         drop(sv);
         let found = matched.map_err(match_error)?;
-        Ok(found.map(|n| wrap_html_node(RawNode::from(n), this.document)))
+        found
+            .map(|n| wrap_html_node(RawNode::from(n), this.document))
+            .transpose()
     })
 }
 

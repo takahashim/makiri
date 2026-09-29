@@ -174,7 +174,7 @@ pub fn doctype_system_id(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<V
 /// DOM, and unavoidable for CSS, which runs Lexbor's selector engine over the
 /// real tree - so query the fragment instead.
 pub fn content_fragment(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| Ok(wrap_node(this.node().template_content(), this.document)))
+    crate::bridge::ruby::entry(|| wrap_node(this.node().template_content(), this.document))
 }
 
 /// `#content` / `#text` / `#inner_text`: the concatenated text of this node and
@@ -256,15 +256,15 @@ pub fn get_document(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error>
 /// answers nil and nothing needs building. (It used to go through an index
 /// whose build could fail, which is why this returned `Result`.)
 pub fn parent(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| Ok(wrap_node(this.node().parent(), this.document)))
+    crate::bridge::ruby::entry(|| wrap_node(this.node().parent(), this.document))
 }
 
 pub fn next(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| Ok(wrap_node(this.node().next(), this.document)))
+    crate::bridge::ruby::entry(|| wrap_node(this.node().next(), this.document))
 }
 
 pub fn previous(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| Ok(wrap_node(this.node().prev(), this.document)))
+    crate::bridge::ruby::entry(|| wrap_node(this.node().prev(), this.document))
 }
 
 /// The first node from `start` along `step` that is an element. `step` is a
@@ -287,33 +287,33 @@ fn first_element<'d>(
 pub fn next_element(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
         let found = first_element(this.node().next(), HtmlNode::next);
-        Ok(wrap_node(found, this.document))
+        wrap_node(found, this.document)
     })
 }
 
 pub fn previous_element(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
         let found = first_element(this.node().prev(), HtmlNode::prev);
-        Ok(wrap_node(found, this.document))
+        wrap_node(found, this.document)
     })
 }
 
 /// `#child`: the first child node of any type, or nil.
 pub fn child(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| Ok(wrap_node(this.node().first_child(), this.document)))
+    crate::bridge::ruby::entry(|| wrap_node(this.node().first_child(), this.document))
 }
 
 pub fn first_element_child(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
         let found = first_element(this.node().first_child(), HtmlNode::next);
-        Ok(wrap_node(found, this.document))
+        wrap_node(found, this.document)
     })
 }
 
 pub fn last_element_child(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
         let found = first_element(this.node().last_child(), HtmlNode::prev);
-        Ok(wrap_node(found, this.document))
+        wrap_node(found, this.document)
     })
 }
 
@@ -438,7 +438,7 @@ pub fn attribute_by_qualified_name(
         let found = el.attrs().find(|at| at.qualified_name() == name);
         /* The name is not read past here; wrapping allocates, so it happens after. */
         drop(nv);
-        Ok(wrap_node(found.map(|at| at.node()), this.document))
+        wrap_node(found.map(|at| at.node()), this.document)
     })
 }
 

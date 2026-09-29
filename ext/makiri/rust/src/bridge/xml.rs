@@ -65,10 +65,10 @@ static XML_NODE_CLASSES: NodeClasses = NodeClasses {
 /// second wrapper, so the arena has exactly one owner. The id resolves through
 /// `document`'s arena; a caller with no node holds an `Option` and maps `None`
 /// to nil itself.
-pub fn wrap_xml_node(id: NodeId, document: Value) -> Value {
+pub fn wrap_xml_node(id: NodeId, document: Value) -> Result<Value, Error> {
     let ty = arena_ref(&document).type_(id);
     if ty == Some(ArenaKind::Document) {
-        return document;
+        return Ok(document);
     }
     let klass = XML_NODE_CLASSES.class_for(ty.map_or(CrateKind::Other, Into::into));
 
@@ -448,17 +448,19 @@ pub fn parse_xml_document(source: Value, limits: ParseLimits) -> Result<Value, E
 }
 
 /// `Document#root` for an XML document: the root element, or nil.
-pub fn document_root(rb_self: Value) -> Option<Value> {
+pub fn document_root(rb_self: Value) -> Result<Option<Value>, Error> {
     arena_ref(&rb_self)
         .root()
         .map(|n| wrap_xml_node(n, rb_self))
+        .transpose()
 }
 
 /// `Document#internal_subset` for an XML document: the DOCTYPE node, or nil.
-pub fn document_internal_subset(rb_self: Value) -> Option<Value> {
+pub fn document_internal_subset(rb_self: Value) -> Result<Option<Value>, Error> {
     arena_ref(&rb_self)
         .doctype()
         .map(|n| wrap_xml_node(n, rb_self))
+        .transpose()
 }
 
 /// A fresh, empty XML Document: an arena holding a DOCUMENT node and no root.

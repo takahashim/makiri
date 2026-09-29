@@ -18,7 +18,7 @@ use magnus::{Error, Value};
 
 use crate::bridge::ruby::{value, VALUE};
 use crate::bridge::typed::{Hooks, Marker, Relocator, TypedType};
-use crate::falloc::MapInsert;
+use crate::falloc::{MapInsert, Reserve};
 use crate::init::{RbConst, CLASS_DOCUMENT};
 use crate::lexbor::adapter::html::{HtmlDoc, HtmlNodeKey, RawDoc, RawNode};
 use crate::lexbor::adapter::post_parse::HtmlParsed;
@@ -273,14 +273,16 @@ impl NodeCache {
         self.map.get(&token).copied()
     }
 
-    /// Remember `wrapper` as the one wrapper for `token`.
-    ///
-    /// A failed insert leaves the node uncached, so the next navigation builds
-    /// another wrapper and identity is lost for it. That only happens when the
-    /// allocator is refusing, where the process is already failing; the
-    /// alternative is raising out of a wrap that has no error path.
-    fn insert(&mut self, token: usize, wrapper: VALUE) {
-        let _ = self.map.falloc_insert(token, wrapper);
+    /// Room for one more wrapper, so the [`NodeCache::insert`] after it
+    /// cannot fail - see [`DocData::reserve_node`].
+    fn reserve(&mut self) -> Result<(), ()> {
+        self.map.falloc_reserve(1)
+    }
+
+    /// Remember `wrapper` as the one wrapper for `token`. After
+    /// [`NodeCache::reserve`] this allocates nothing, so it does not fail.
+    fn insert(&mut self, token: usize, wrapper: VALUE) -> Result<(), ()> {
+        self.map.falloc_insert(token, wrapper)
     }
 
     /// MOVABLE, not pinned: a document walked end to end holds one entry per
@@ -329,19 +331,27 @@ impl DocData {
         self.nodes.as_ref()?.get(token)
     }
 
-    /// Remember `wrapper` for `token`, allocating the cache on first use.
-    fn cache(&mut self, token: usize, wrapper: VALUE) {
+    /// Make room in the cache (allocating it on first use) for the wrapper
+    /// about to be built. This is the step that can fail, and it comes
+    /// BEFORE the wrapper exists: a wrapper made and then not cached would be
+    /// a second object for its node on the next navigation, without the
+    /// first one's `freeze`, instance variables or singleton methods.
+    fn reserve_node(&mut self) -> Result<(), ()> {
         if self.nodes.is_none() {
-            let Ok(fresh) = crate::falloc::try_box(NodeCache {
-                map: HashMap::with_hasher(BuildHasherDefault::default()),
-            }) else {
-                return; /* see NodeCache::insert on a refusing allocator */
-            };
-            self.nodes = Some(fresh);
+            self.nodes = Some(
+                crate::falloc::try_box(NodeCache {
+                    map: HashMap::with_hasher(BuildHasherDefault::default()),
+                })
+                .map_err(|_| ())?,
+            );
         }
-        if let Some(cache) = self.nodes.as_mut() {
-            cache.insert(token, wrapper);
-        }
+        self.nodes.as_mut().ok_or(())?.reserve()
+    }
+
+    /// Remember `wrapper` for `token`, in the room [`DocData::reserve_node`]
+    /// made.
+    fn cache(&mut self, token: usize, wrapper: VALUE) -> Result<(), ()> {
+        self.nodes.as_mut().ok_or(())?.insert(token, wrapper)
     }
 
     /// The Document's parse-warning Array.
@@ -677,7 +687,9 @@ impl NodeClasses {
 /// One wrapper per node: navigating to a node twice must give the SAME object,
 /// or everything that lives on a Ruby object is silently lost - `equal?`, an
 /// instance variable, a singleton method, `freeze`. A Document is already its
-/// own wrapper, which is why it needs no entry.
+/// own wrapper, which is why it needs no entry. So a wrapper is handed out
+/// only once it is cached: `Err` (out of memory) when the cache cannot make
+/// room, never an uncached object.
 ///
 /// The caller vouches that the node is a node of `document` of the
 /// representation `ty` wraps, and `klass` a class of it: only the two
@@ -687,11 +699,14 @@ pub(in crate::bridge) fn wrap_cached(
     klass: VALUE,
     source: impl NodeHandleSource,
     document: Value,
-) -> Value {
+) -> Result<Value, Error> {
     let token = source.identity();
     if let Some(cached) = cached_node(document, token) {
-        return cached;
+        return Ok(cached);
     }
+    /* Room for the entry first: a failure after the wrap would hand out a
+     * wrapper the cache does not know (DocData::reserve_node). */
+    with_doc_data_known(document, DocData::reserve_node).map_err(|_| wrap_oom())?;
     let node = source.into_handle(document);
     /* The Document is stored after the wrap: see `TypedType::wrap`. */
     // SAFETY: a fresh wrapper; the store closure only moves a live VALUE in.
@@ -705,10 +720,15 @@ pub(in crate::bridge) fn wrap_cached(
             |nd| nd.document = document.as_raw(),
         ))
     };
-    /* After the wrap, so the VALUE exists; `fresh` is on the stack, where the
-     * conservative scan pins it across the cache's own allocation. */
-    cache_node(document, token, fresh);
-    fresh
+    /* After the wrap, so the VALUE exists, into the room reserved above - no
+     * allocation. Were it to fail anyway, `fresh` is dropped unseen rather
+     * than handed out uncached. */
+    cache_node(document, token, fresh).map_err(|_| wrap_oom())?;
+    Ok(fresh)
+}
+
+fn wrap_oom() -> Error {
+    makiri_error("out of memory wrapping a node")
 }
 
 /// The one wrapper for `token` under `rb_doc`, or None the first time.
@@ -723,8 +743,8 @@ fn cached_node(rb_doc: Value, token: usize) -> Option<Value> {
 }
 
 /// Remember `wrapper` as the one wrapper for `token` under `rb_doc`.
-fn cache_node(rb_doc: Value, token: usize, wrapper: Value) {
-    with_doc_data_known(rb_doc, |d| d.cache(token, wrapper.as_raw()));
+fn cache_node(rb_doc: Value, token: usize, wrapper: Value) -> Result<(), ()> {
+    with_doc_data_known(rb_doc, |d| d.cache(token, wrapper.as_raw()))
 }
 
 /// Run `f` over a Document's wrapper data, for the fields that are the
