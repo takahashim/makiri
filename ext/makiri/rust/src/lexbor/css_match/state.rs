@@ -2,11 +2,13 @@
 //! rather than its place in a selector: `:empty`/`:blank`/`:root`, the link
 //! pseudo-classes, and the form states (`:disabled`, `:checked`, ...) - by
 //! the HTML Standard or by Lexbor, as each function's doc says. None of it
-//! knows about selectors.
+//! knows about selectors; the form states that walk the tree charge the
+//! query's work budget as they go.
 
 use crate::lexbor::adapter::html::{HtmlNode, NodeType, NsId};
 
 use super::tree::parent_element;
+use super::{Budget, MatchFailure};
 
 /// Lexbor's own whitespace set for tokenizing an attribute value (`class`, or
 /// any `~=` operand) - `lexbor_utils_whitespace`: space, tab, LF, FF, CR.
@@ -87,20 +89,35 @@ fn html_named(node: HtmlNode<'_>, names: &[&[u8]]) -> bool {
 /// not the first child: whitespace or another element may come before it.
 /// Every disabled fieldset on the way up counts, so a legend exempts only
 /// from its own fieldset.
-fn in_disabled_fieldset(node: HtmlNode<'_>) -> bool {
+///
+/// Asked from the child's side - is the child on the way up a `legend` with
+/// no `legend` before it - rather than by finding the fieldset's first
+/// legend: that scanned the fieldset's children for every control in it,
+/// quadratic in a wide fieldset. Each ancestor and each sibling looked at
+/// charges `budget`, so a shape that is still wide (many legends, each
+/// holding controls) fails closed instead of running on.
+fn in_disabled_fieldset(node: HtmlNode<'_>, budget: &Budget) -> Result<bool, MatchFailure> {
     let mut child = node;
     let mut ancestor = parent_element(node);
     while let Some(a) = ancestor {
+        budget.charge()?;
         if html_named(a, &[b"fieldset"]) && has_attr(a, b"disabled") {
-            let first_legend = a.children().find(|c| html_named(*c, &[b"legend"]));
-            if first_legend != Some(child) {
-                return true;
+            let mut exempt = html_named(child, &[b"legend"]);
+            let mut prev = child.prev();
+            while exempt {
+                let Some(p) = prev else { break };
+                budget.charge()?;
+                exempt = !html_named(p, &[b"legend"]);
+                prev = p.prev();
+            }
+            if !exempt {
+                return Ok(true);
             }
         }
         child = a;
         ancestor = parent_element(a);
     }
-    false
+    Ok(false)
 }
 
 /// `:disabled`, as the HTML Standard defines it (§4.16.3 and "disabled" for
@@ -120,28 +137,28 @@ fn in_disabled_fieldset(node: HtmlNode<'_>) -> bool {
 /// form-associated is decided by a script's class definition, which a
 /// parsed document does not have. As everywhere else here, the content
 /// attribute stands for the element's state: the document as parsed.
-pub(super) fn is_disabled(node: HtmlNode<'_>) -> bool {
+pub(super) fn is_disabled(node: HtmlNode<'_>, budget: &Budget) -> Result<bool, MatchFailure> {
     if html_named(
         node,
         &[b"button", b"input", b"select", b"textarea", b"fieldset"],
     ) {
-        return has_attr(node, b"disabled") || in_disabled_fieldset(node);
+        return Ok(has_attr(node, b"disabled") || in_disabled_fieldset(node, budget)?);
     }
     if html_named(node, &[b"optgroup"]) {
-        return has_attr(node, b"disabled");
+        return Ok(has_attr(node, b"disabled"));
     }
     if html_named(node, &[b"option"]) {
-        return has_attr(node, b"disabled")
+        return Ok(has_attr(node, b"disabled")
             || parent_element(node)
-                .is_some_and(|p| html_named(p, &[b"optgroup"]) && has_attr(p, b"disabled"));
+                .is_some_and(|p| html_named(p, &[b"optgroup"]) && has_attr(p, b"disabled")));
     }
-    false
+    Ok(false)
 }
 
 /// `:enabled`: the elements `:disabled` is defined for, when not disabled -
 /// not every other element, as Lexbor's unconditional `!disabled` has it.
-pub(super) fn is_enabled(node: HtmlNode<'_>) -> bool {
-    html_named(
+pub(super) fn is_enabled(node: HtmlNode<'_>, budget: &Budget) -> Result<bool, MatchFailure> {
+    Ok(html_named(
         node,
         &[
             b"button",
@@ -152,7 +169,7 @@ pub(super) fn is_enabled(node: HtmlNode<'_>) -> bool {
             b"optgroup",
             b"option",
         ],
-    ) && !is_disabled(node)
+    ) && !is_disabled(node, budget)?)
 }
 
 /// `:checked`, as the HTML Standard defines it: an `input` whose type is
@@ -180,9 +197,10 @@ pub(super) fn is_form_field(node: HtmlNode<'_>) -> bool {
         .is_some_and(|el| matches!(el.dom_local_name(), b"input" | b"select" | b"textarea"))
 }
 
-pub(super) fn is_read_write(node: HtmlNode<'_>) -> bool {
-    node.element()
+pub(super) fn is_read_write(node: HtmlNode<'_>, budget: &Budget) -> Result<bool, MatchFailure> {
+    Ok(node
+        .element()
         .is_some_and(|el| matches!(el.dom_local_name(), b"input" | b"textarea"))
         && !has_attr(node, b"readonly")
-        && !is_disabled(node)
+        && !is_disabled(node, budget)?)
 }

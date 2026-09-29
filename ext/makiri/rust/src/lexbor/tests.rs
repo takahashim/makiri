@@ -1105,6 +1105,45 @@ mod css_match {
     /// document could not be built big enough to hit the SHIPPED 50-million
     /// limit in a fast test, so this drives `select_all_with_work_limit`
     /// (`#[cfg(test)]`-only) with one small enough to actually exceed.
+    /// `:disabled`'s fieldset inheritance asks whether the child on the way
+    /// up is the first `legend`, not which child is: finding the first
+    /// legend scanned a wide fieldset once per control in it, quadratic and
+    /// uncharged (40,000 inputs took seconds). A wide fieldset now costs work
+    /// linear in its width. Controls in a legend that many siblings precede
+    /// still scan back over them, each - and charge for it, so that shape
+    /// fails closed.
+    #[test]
+    fn a_wide_disabled_fieldset_costs_linear_work() {
+        use crate::lexbor::css_match::select_all_with_work_limit;
+        const N: usize = 20_000;
+
+        let gvl = Gvl::exclusive();
+        let query = |html: String, limit: u64| {
+            let doc = parsed(html.as_bytes());
+            let text = VerifiedText::from_bytes(b"input:disabled").expect("verified");
+            let sel = css_parser::parse(&gvl, text).unwrap_or_else(|_| panic!("parses"));
+            select_all_with_work_limit(root(&doc), sel.groups(), limit).map(|v| v.len())
+        };
+
+        let wide = format!(
+            "<fieldset disabled><legend>t</legend>{}</fieldset>",
+            "<input>".repeat(N)
+        );
+        assert_eq!(query(wide, 20 * N as u64).ok(), Some(N));
+
+        let late_legend = format!(
+            "<fieldset disabled>{}<legend>{}</legend></fieldset>",
+            "<div></div>".repeat(N),
+            "<input>".repeat(N)
+        );
+        assert!(matches!(
+            query(late_legend, 20 * N as u64),
+            Err(crate::lexbor::css_match::QueryFailure::Match(
+                crate::lexbor::css_match::MatchFailure::WorkExceeded
+            ))
+        ));
+    }
+
     /// A chain that fails does not retry every combination of ancestors:
     /// `x` fails at every ancestor of the sixth `div`, so it fails at every
     /// ancestor of any higher one too (`Query::step_chain`'s `Fail`).
