@@ -66,10 +66,7 @@ impl<'doc> HtmlElement<'doc> {
     /// Whether this is an HTML element in an HTML document - the DOM's
     /// condition for ASCII-lowercasing a by-name lookup or a set's name.
     fn is_html_in_html_doc(self) -> bool {
-        self.node().ns_id() == Some(NsId::HTML)
-            // SAFETY: a live element's live owner document; one field read.
-            && unsafe { (*self.node().owner_document().as_raw()).type_ }
-                == lxb::lxb_dom_document_dtype_t_LXB_DOM_DOCUMENT_DTYPE_HTML
+        self.node().ns_id() == Some(NsId::HTML) && self.node().owner_document().is_html_document()
     }
 
     /// DOM "get an attribute by name": the first attribute whose QUALIFIED
@@ -87,14 +84,21 @@ impl<'doc> HtmlElement<'doc> {
     /// ([`HtmlDoc::resolve_attr_name`]): an attribute whose local-name id
     /// differs is passed over without reading its name, and one that shares
     /// it is confirmed by exactly `attr_by_name`'s comparison - so the answer
-    /// is `attr_by_name`'s. An id from another document's table is not
-    /// trusted: that element is looked up by name.
+    /// is `attr_by_name`'s.
+    ///
+    /// `self` must be an element of the document `name` was resolved in, as
+    /// every node a walking CSS query reaches is: that is not read from the
+    /// element, which would cost a document read per candidate. Another
+    /// document's element would be answered from the wrong table - a wrong
+    /// answer, not an unsound one (ids are plain integers) - and a debug
+    /// build asserts it cannot happen.
     pub fn attr_by_resolved_name(self, qname: &[u8], name: AttrName) -> Option<HtmlAttr<'doc>> {
-        if name.doc != Some(self.node().owner_document().raw) {
+        let Some(doc) = name.doc else {
             return self.attr_by_name(qname);
-        }
+        };
+        debug_assert!(self.node().owner_document().raw == doc);
         let id = name.id?;
-        let html = self.is_html_in_html_doc();
+        let html = name.html_doc && self.node().ns_id() == Some(NsId::HTML);
         self.attrs().find(|a| {
             a.local_id() == id
                 // Named by its lower-cased local name, which is `qname`'s

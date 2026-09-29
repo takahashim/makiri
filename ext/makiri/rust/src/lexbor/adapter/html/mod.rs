@@ -114,13 +114,15 @@ impl NsId {
 }
 
 /// An attribute name resolved against one document - see
-/// [`HtmlDoc::resolve_attr_name`]. Carries the document, so a lookup on an
-/// element of another document falls back to comparing names rather than
-/// trusting an answer from the wrong table.
+/// [`HtmlDoc::resolve_attr_name`]. For that document's elements only: the
+/// id is its table's, and whether a lookup lower-cases is decided by its
+/// type once rather than read from each element's document.
 #[derive(Clone, Copy)]
 pub struct AttrName {
     /// `None`: not resolvable (a prefixed or empty name) - look up by name.
     doc: Option<NonNull<LxbDoc>>,
+    /// The document is an HTML document (half of `is_html_in_html_doc`).
+    html_doc: bool,
     /// The lower-cased local name's id there; `None`: no attribute of that
     /// document has the name.
     id: Option<usize>,
@@ -605,6 +607,15 @@ impl<'doc> HtmlDoc<'doc> {
         self.raw.as_ptr()
     }
 
+    /// An HTML document, as opposed to an XML one - the DOM's condition,
+    /// with the element's own namespace, for lower-casing a by-name lookup.
+    #[inline]
+    pub fn is_html_document(self) -> bool {
+        // SAFETY: a live document handle, read for this call.
+        let dtype = unsafe { (*self.raw.as_ptr()).type_ };
+        dtype == lxb::lxb_dom_document_dtype_t_LXB_DOM_DOCUMENT_DTYPE_HTML
+    }
+
     /// Lexbor's quirks mode: 0 no-quirks, 1 quirks, 2 limited-quirks. Set by the
     /// parser from the doctype.
     #[inline]
@@ -638,6 +649,7 @@ impl<'doc> HtmlDoc<'doc> {
         if name.is_empty() || name.contains(&b':') || attrs.is_null() {
             return AttrName {
                 doc: None,
+                html_doc: false,
                 id: None,
                 lower: false,
             };
@@ -648,6 +660,7 @@ impl<'doc> HtmlDoc<'doc> {
             unsafe { lxb::lxb_dom_attr_data_by_local_name(attrs, name.as_ptr(), name.len()) };
         AttrName {
             doc: Some(self.raw),
+            html_doc: self.is_html_document(),
             // SAFETY: a non-null entry of the table above.
             id: (!data.is_null()).then(|| unsafe { (*data).attr_id }),
             lower: !name.iter().any(u8::is_ascii_uppercase),
