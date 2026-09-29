@@ -3,7 +3,9 @@
 //! into compounds once, into query-local tables, before any node is tested;
 //! and the one place a selector this matcher will not run is refused.
 
-use crate::lexbor::css_parser::{Combinator, FunctionArg, List, ListPseudo, Lists, Simple};
+use crate::lexbor::css_parser::{
+    CaseModifier, Combinator, FunctionArg, List, ListPseudo, Lists, Simple,
+};
 
 use super::scratch::{Scratch, Table};
 use super::{MatchFailure, MAX_COMPOUNDS};
@@ -194,7 +196,7 @@ impl<'p> Compiled<'p> {
                         Some(lists)
                     }
                     Simple::PseudoClassFunction(FunctionArg::Nth { anb, .. }) => {
-                        anb.and_then(|a| a.of_list)
+                        anb.and_then(|a| a.of)
                     }
                     _ => None,
                 };
@@ -209,8 +211,8 @@ impl<'p> Compiled<'p> {
                     pending.push((lists, alts))?;
                 }
                 let value_ci = match simple {
-                    Simple::Attribute(at) if at.case_insensitive => Some(true),
-                    Simple::Attribute(at) if at.explicit_sensitive => Some(false),
+                    Simple::Attribute(at) if at.case == CaseModifier::Insensitive => Some(true),
+                    Simple::Attribute(at) if at.case == CaseModifier::Sensitive => Some(false),
                     Simple::Attribute(at)
                         if at.value.is_some() && is_html_ci_attribute(sel.name()) =>
                     {
@@ -289,7 +291,7 @@ impl<'p> Compiled<'p> {
         Ok(steps.iter().all(|s| match s.simple {
             Simple::PseudoClassFunction(FunctionArg::Selectors { .. }) => false,
             Simple::PseudoClassFunction(FunctionArg::Nth { anb, .. }) => {
-                anb.and_then(|a| a.of_list).is_none()
+                anb.and_then(|a| a.of).is_none()
             }
             _ => true,
         }))

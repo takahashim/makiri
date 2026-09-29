@@ -273,7 +273,7 @@ pub(super) fn check_simple(
             of_type,
             anb,
         }) => match anb {
-            Some(a) if a.of_list.is_some() => SimpleCheck::Deferred,
+            Some(a) if a.of.is_some() => SimpleCheck::Deferred,
             _ => SimpleCheck::Result(nth_matches(
                 node, from_end, of_type, anb, budget, positions,
             )?),

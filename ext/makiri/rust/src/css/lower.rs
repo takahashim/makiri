@@ -24,8 +24,8 @@ use super::build::{self, Built};
 use super::{Build, MAX_COMPOUNDS};
 use crate::engine_error::{ErrorKind, Reported};
 use crate::lexbor::css_parser::{
-    AttrMatch, Attribute, Combinator, FunctionArg, ListPseudo, Lists, Nth, PseudoClass, Selector,
-    Simple,
+    AttrMatch, Attribute, CaseModifier, Combinator, FunctionArg, ListPseudo, Lists, Nth,
+    PseudoClass, Selector, Simple,
 };
 use crate::xpath::ast::{Axis, Expr, NodeTest, Op, Step};
 
@@ -110,7 +110,7 @@ fn lower_universal(
 fn lower_attribute(b: &Build, s: Selector<'_>, at: Attribute<'_>) -> Built {
     let name = s.name();
 
-    if at.case_insensitive {
+    if at.case == CaseModifier::Insensitive {
         return Err(b.fail(
             ErrorKind::Syntax,
             "CSS attribute case modifier i ([a=v i]) is not supported for XML",
@@ -431,7 +431,7 @@ fn lower_pseudo_func(b: &Build, arg: FunctionArg<'_>) -> Built {
             let Some(anb) = anb else {
                 return Err(b.fail(ErrorKind::Syntax, "malformed :nth-*()"));
             };
-            if anb.of {
+            if anb.of.is_some() {
                 return Err(b.fail(ErrorKind::Syntax, ":nth-*(... of S) is not supported"));
             }
             let axis = if from_end {

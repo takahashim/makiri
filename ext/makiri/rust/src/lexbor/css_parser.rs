@@ -326,22 +326,28 @@ pub enum AttrMatch {
 #[derive(Clone, Copy)]
 pub struct Attribute<'p> {
     pub op: AttrMatch,
-    /// Whether an `i` modifier was written: match the value ASCII
-    /// case-insensitively. `s`, case-sensitive, is how values compare anyway,
-    /// so it reads as no modifier - for the XML lowering, the sole consumer
-    /// when this was added, XML attribute values are always case-sensitive
-    /// regardless, so `s` and unset need no distinguishing there.
-    pub case_insensitive: bool,
-    /// Whether an explicit `s` modifier was written, as opposed to no modifier
-    /// at all - a distinction `case_insensitive` alone cannot make (both read
-    /// `false`), needed by `lexbor::css_match`'s HTML
-    /// case-insensitive-attribute-value table
-    /// (`lxb_selectors_match_attribute_html_case_insensitive`): an explicit `s`
-    /// forces case-sensitive even for a table attribute like `type`, but no
-    /// modifier at all defers to the table's default.
-    pub explicit_sensitive: bool,
+    pub case: CaseModifier,
     /// None for `[name]`, an existence test.
     pub value: Option<&'p [u8]>,
+}
+
+/// The case modifier written after an attribute selector's value.
+///
+/// Three states, not a flag: `lexbor::css_match` needs `Unset` and `Sensitive`
+/// apart, because an explicit `s` forces a case-sensitive compare even for an
+/// attribute in HTML's case-insensitive table
+/// (`lxb_selectors_match_attribute_html_case_insensitive`, `type` for one),
+/// while no modifier defers to that table. The XML lowering refuses
+/// `Insensitive` and treats the other two alike: XML attribute values always
+/// compare case-sensitively.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CaseModifier {
+    /// No modifier written.
+    Unset,
+    /// `i`: compare the value ASCII case-insensitively.
+    Insensitive,
+    /// `s`: compare the value case-sensitively.
+    Sensitive,
 }
 
 /// The non-functional pseudo-classes the lowering can express.
@@ -380,14 +386,8 @@ pub enum PseudoClass {
 pub struct Nth<'p> {
     pub a: c_long,
     pub b: c_long,
-    /// Whether an `of S` clause was written. The XML lowering only needs to
-    /// know that much (it refuses `of S` outright); `of_list` is the actual
-    /// clause, for `lexbor::css_match`'s HTML matching.
-    pub of: bool,
-    /// The `S` in `of S`, or `None` when no clause was written (same
-    /// condition as `of`, kept separate rather than folding `of` into
-    /// `of_list.is_some()` so the XML lowering's check reads as a plain bool).
-    pub of_list: Option<Lists<'p>>,
+    /// The `S` of an `of S` clause, `None` when none was written.
+    pub of: Option<Lists<'p>>,
 }
 
 /// `:lexbor-contains(needle [i])`.
@@ -509,8 +509,12 @@ impl<'p> Selector<'p> {
                 raw::SUBSTRING => AttrMatch::Substring,
                 _ => AttrMatch::Other,
             },
-            case_insensitive: at.modifier != raw::MOD_UNSET && at.modifier != raw::MOD_S,
-            explicit_sensitive: at.modifier == raw::MOD_S,
+            case: match at.modifier {
+                raw::MOD_UNSET => CaseModifier::Unset,
+                raw::MOD_S => CaseModifier::Sensitive,
+                /* `i`, the one other modifier Lexbor's parser produces. */
+                _ => CaseModifier::Insensitive,
+            },
             // SAFETY: as in `name`.
             value: unsafe { lexbor_str(&at.value) },
         }
@@ -562,11 +566,9 @@ impl<'p> Selector<'p> {
                 anb: anb.map(|n| Nth {
                     a: n.anb.a,
                     b: n.anb.b,
-                    of: !n.of.is_null(),
                     // SAFETY: as in `name`/other `arena` calls - the list, if
                     // any, lives in the same arena.
-                    of_list: unsafe { arena(n.of as *const SelectorList) }
-                        .map(|r| Lists(Some(List(r)))),
+                    of: unsafe { arena(n.of as *const SelectorList) }.map(|r| Lists(Some(List(r)))),
                 }),
             }
         };

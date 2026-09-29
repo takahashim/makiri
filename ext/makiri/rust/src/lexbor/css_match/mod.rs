@@ -270,32 +270,21 @@ pub fn matches_any(
     answer
 }
 
-/// Why [`select_all`]/[`select_first`]/[`matches_any`] stopped before
-/// answering the whole query. [`select_all`]'s own `Overflow` plus whatever
-/// [`MatchFailure`] carries.
+/// Why [`select_all`] stopped before answering the whole query: the one
+/// failure only a result SET can have, or any failure matching can.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QueryFailure {
     /// More descendants matched than a Makiri result set is allowed to hold.
     Overflow,
-    /// See [`MatchFailure::WorkExceeded`].
-    WorkExceeded,
-    /// See [`MatchFailure::Unsupported`].
-    Unsupported,
-    /// See [`MatchFailure::TooComplex`].
-    TooComplex,
-    /// See [`MatchFailure::Oom`].
-    Oom,
+    /// Matching failed ([`select_first`] and [`matches_any`] report these
+    /// alone).
+    Match(MatchFailure),
 }
 
 impl From<MatchFailure> for QueryFailure {
     #[inline]
     fn from(e: MatchFailure) -> Self {
-        match e {
-            MatchFailure::WorkExceeded => QueryFailure::WorkExceeded,
-            MatchFailure::Unsupported => QueryFailure::Unsupported,
-            MatchFailure::TooComplex => QueryFailure::TooComplex,
-            MatchFailure::Oom => QueryFailure::Oom,
-        }
+        QueryFailure::Match(e)
     }
 }
 
@@ -350,7 +339,8 @@ fn select_all_compiled<'doc>(
                 if out.len() >= NODE_SET_MAX {
                     return Err(QueryFailure::Overflow);
                 }
-                out.falloc_push(n).map_err(|()| QueryFailure::Oom)?;
+                out.falloc_push(n)
+                    .map_err(|()| QueryFailure::Match(MatchFailure::Oom))?;
             }
         }
         Ok(out)

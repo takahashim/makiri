@@ -44,10 +44,7 @@ fn query_error(err: QueryFailure) -> Error {
         QueryFailure::Overflow => makiri_error(format!(
             "CSS result set exceeded the node limit ({NODE_SET_MAX})"
         )),
-        QueryFailure::WorkExceeded => match_error(MatchFailure::WorkExceeded),
-        QueryFailure::Unsupported => match_error(MatchFailure::Unsupported),
-        QueryFailure::TooComplex => match_error(MatchFailure::TooComplex),
-        QueryFailure::Oom => match_error(MatchFailure::Oom),
+        QueryFailure::Match(e) => match_error(e),
     }
 }
 

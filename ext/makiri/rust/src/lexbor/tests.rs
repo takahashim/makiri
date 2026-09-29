@@ -822,7 +822,7 @@ mod css_match {
                 css_parser::parse(&gvl, text).unwrap_or_else(|_| panic!("{sel:?} fails to parse"));
             let result = port_select_all(root(&doc), parsed_sel.groups());
             assert!(
-                matches!(result, Err(QueryFailure::Unsupported)),
+                matches!(result, Err(QueryFailure::Match(MatchFailure::Unsupported))),
                 "{sel:?} should be Unsupported, was {:?}",
                 result.is_ok()
             );
@@ -1137,7 +1137,9 @@ mod css_match {
         let starved = select_all_with_work_limit(root(&doc), parsed_sel.groups(), 10);
         assert!(matches!(
             starved,
-            Err(crate::lexbor::css_match::QueryFailure::WorkExceeded)
+            Err(crate::lexbor::css_match::QueryFailure::Match(
+                crate::lexbor::css_match::MatchFailure::WorkExceeded
+            ))
         ));
 
         // The same query with room to spare still answers correctly (empty:
@@ -1249,7 +1251,9 @@ mod css_match {
         let starved = select_all_with_work_limit(root(&doc), parsed_sel.groups(), 10);
         assert!(matches!(
             starved,
-            Err(crate::lexbor::css_match::QueryFailure::WorkExceeded)
+            Err(crate::lexbor::css_match::QueryFailure::Match(
+                crate::lexbor::css_match::MatchFailure::WorkExceeded
+            ))
         ));
 
         // With room to spare it answers correctly: exactly the last <span>.
@@ -2117,7 +2121,10 @@ mod css_match {
         // fixture actually costs (measured ~6,200 for the full walk) - must
         // fail closed, never a truncated/empty `Ok`.
         let starved = select_all_with_work_limit(root(&doc), parsed_sel.groups(), 100);
-        assert!(matches!(starved, Err(QueryFailure::WorkExceeded)));
+        assert!(matches!(
+            starved,
+            Err(QueryFailure::Match(MatchFailure::WorkExceeded))
+        ));
 
         // The same query with room to spare still answers correctly: SOME
         // element (the outermost div at least, and its own ancestors - the
