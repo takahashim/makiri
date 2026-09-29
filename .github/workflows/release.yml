@@ -86,9 +86,18 @@ jobs:
           # names the GNU triple; this installs the std that goes with it.
           # Empty elsewhere, so the other runners are unaffected.
           targets: ${{ runner.os == 'Windows' && 'x86_64-pc-windows-gnu' || '' }}
-      - name: Install libclang (bindgen, via rb-sys)
+      # clang/lld/llvm are for the vendored Lexbor's LTO, not for bindgen: on
+      # Linux the whole chain has to be LLVM or extconf turns LTO off (gcc
+      # emits GIMPLE, which rust-lld cannot read - see the note in
+      # extconf.rb). It DETECTS them, so a runner without them still builds,
+      # just without LTO - which is what this job used to ship, silently,
+      # to every user who installs the precompiled gem (see the measured win
+      # in CLAUDE.md's "Vendored Lexbor is built with LTO" section: this is
+      # the job that produces those gems, and `ci.yml` installing the chain
+      # only exercises the fast path in CI, it does not ship it).
+      - name: Install libclang (bindgen) and the LLVM chain (Lexbor LTO)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libclang-dev
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev clang lld llvm
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: ${{ matrix.ruby }}
