@@ -13,8 +13,8 @@ libfuzzer-sys = "0.4"
 # No Ruby: the glue needs magnus -> rb-sys -> a live Ruby, which a fuzz binary
 # has no business linking. The targets drive the engine's front door the glue
 # drives - the XML reader, the HTML parse and its indexes, XPath over both
-# engine instances, and the CSS lowering - and so need `lexbor`, which is what
-# carries the HTML instance and `css`.
+# engine instances, the CSS lowering, and the HTML CSS matcher - and so need
+# `lexbor`, which is what carries the HTML instance, `css` and the matcher.
 [dependencies.makiri_rs]
 path = ".."
 default-features = false
@@ -58,6 +58,13 @@ bench = false
 [[bin]]
 name = "html_xpath"
 path = "fuzz_targets/html_xpath.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "html_css"
+path = "fuzz_targets/html_css.rs"
 test = false
 doc = false
 bench = false

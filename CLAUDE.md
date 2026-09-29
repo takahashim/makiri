@@ -519,7 +519,9 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
     css/                   CSS selector lowering over the lexbor-owned selector
                            parser (safe Rust, no Lexbor ABI names)
   fuzz/                    cargo-fuzz harnesses (xml/html, xpath/xml_xpath/
-                           html_xpath, css; built on PRs, run nightly)
+                           html_xpath, css = the XML lowering, html_css = the
+                           HTML matcher over an arbitrary document, asserting
+                           css and matches? agree; built on PRs, run nightly)
 vendor/lexbor/             git submodule, pinned 05b5d37 (v3.0.0-66), NEVER patched
 spec/fuzz/                 grammar-aware robustness fuzzer
 spec/invariants/           randomized property checks (see its README)
