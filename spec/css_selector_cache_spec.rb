@@ -35,6 +35,20 @@ RSpec.describe "CSS compiled-selector cache" do
     expect_answers(doc, ids)
   end
 
+  # The `:nth-*` memos' tables are kept from one query to the next too
+  # (css_match's Scratch) - but never what they counted: a node moved between
+  # two queries keeps its address and changes its position.
+  it "counts :nth-* positions afresh after the tree changes" do
+    d = Makiri::HTML("<ul>#{(1..5).map { |i| "<li>#{i}</li>" }.join}</ul>")
+    ul = d.at_css("ul")
+    5.times do
+      order = ul.children.map(&:text)
+      expect(d.css("li:nth-child(odd)").map(&:text)).to eq(order.values_at(0, 2, 4))
+      expect(d.css("li:nth-last-child(2)").map(&:text)).to eq([order[3]])
+      ul << ul.children.first
+    end
+  end
+
   it "rejects a bad selector without disturbing the cached ones" do
     expect_answers(doc, ids.first(10))
     expect { doc.css("p[") }.to raise_error(Makiri::CSS::SyntaxError)

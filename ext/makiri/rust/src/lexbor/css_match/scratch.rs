@@ -8,6 +8,7 @@ use crate::lexbor::adapter::html::HtmlNode;
 use crate::lexbor::css_parser::Lists;
 
 use super::compile::{Chain, Compound, Step};
+use super::positions::Positions;
 use super::query::{HasCursor, Task};
 use super::simple::Name;
 use super::MatchFailure;
@@ -87,6 +88,7 @@ pub struct Scratch {
     pub(super) tasks: Vec<Task<'static>>,
     pub(super) at: Vec<Option<HtmlNode<'static>>>,
     pub(super) cursors: Vec<HasCursor<'static>>,
+    pub(super) positions: Positions,
 }
 
 /// A [`Scratch`] vector over this many items is dropped rather than kept, so
@@ -105,6 +107,7 @@ impl Scratch {
             tasks: Vec::new(),
             at: Vec::new(),
             cursors: Vec::new(),
+            positions: Positions::new(),
         }
     }
 }

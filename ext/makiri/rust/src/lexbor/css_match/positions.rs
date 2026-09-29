@@ -5,6 +5,7 @@ use crate::falloc::{OomResult, VecPush};
 use crate::lexbor::adapter::html::{HtmlNode, RawNode};
 use crate::ptr_table::PtrMap;
 
+use super::scratch::{recycle, SCRATCH_KEEP};
 use super::tree::{name_matches_type, next_position_sibling, prev_position_sibling};
 use super::{Budget, MatchFailure};
 
@@ -42,15 +43,50 @@ pub(super) struct Positions {
 /// positions are recounted on demand, so this costs time, never an answer.
 const POSITIONS_MAX: usize = 1 << 16;
 
+/// A memo table kept in a [`Scratch`](super::Scratch) past this many slots
+/// is dropped instead: emptying one costs its size, paid by the next query.
+const KEEP_SLOTS: usize = 4 * SCRATCH_KEEP;
+
 impl Positions {
-    pub(super) fn new(walking: bool) -> Self {
+    pub(super) const fn new() -> Self {
         Positions {
-            walking,
+            walking: false,
             memo: Vec::new(),
             visited: Vec::new(),
             of_memo: Vec::new(),
             of_seen: Vec::new(),
         }
+    }
+
+    /// A query's positions, over the allocations `kept` holds (a
+    /// [`Scratch`](super::Scratch)'s), so a warm `:nth-*` query makes no
+    /// tables of its own.
+    pub(super) fn reuse(kept: &mut Positions, walking: bool) -> Self {
+        let mut p = core::mem::replace(kept, Positions::new());
+        p.walking = walking;
+        p
+    }
+
+    /// Hand the allocations back to `kept`, EMPTIED: a position holds only
+    /// in the tree it was counted in, and after the query a node's address
+    /// can belong to another node. Nothing counted outlives its query. The
+    /// `of S` memos are keyed by the query's own selector indexes, so they
+    /// go too.
+    pub(super) fn give_back(mut self, kept: &mut Positions) {
+        for m in &mut self.memo {
+            if m.capacity() > KEEP_SLOTS {
+                *m = PtrMap::new();
+            } else {
+                m.clear();
+            }
+        }
+        *kept = Positions {
+            walking: false,
+            memo: self.memo,
+            visited: recycle(self.visited, SCRATCH_KEEP),
+            of_memo: Vec::new(),
+            of_seen: recycle(self.of_seen, SCRATCH_KEEP),
+        };
     }
 
     /// Where the next `of S` count's run in `of_seen` starts.

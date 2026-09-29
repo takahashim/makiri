@@ -275,7 +275,7 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
             tasks: recycle(core::mem::take(&mut scratch.tasks), usize::MAX),
             at: recycle(core::mem::take(&mut scratch.at), usize::MAX),
             cursors: recycle(core::mem::take(&mut scratch.cursors), usize::MAX),
-            positions: Positions::new(walk_in.is_some()),
+            positions: Positions::reuse(&mut scratch.positions, walk_in.is_some()),
         })
     }
 
@@ -285,6 +285,7 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
         scratch.tasks = recycle(self.tasks, SCRATCH_KEEP);
         scratch.at = recycle(self.at, SCRATCH_KEEP);
         scratch.cursors = recycle(self.cursors, SCRATCH_KEEP);
+        self.positions.give_back(&mut scratch.positions);
     }
 
     /// Does `node` match any top-level alternative?
