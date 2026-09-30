@@ -949,8 +949,16 @@ flag turns a re-entrant second borrow into `Busy` rather than a second
 `&mut`. Outside Ruby (cargo tests, fuzz) `Gvl::exclusive()` stands in with a
 process-wide mutex; it does not exist in the extension build.
 
-**Serialization** (`lexbor/serialize.rs`). `Node#{to_html,to_s,outer_html}` =
-Lexbor `serialize_tree_cb`, `#inner_html` = `serialize_deep_cb`; the callback
+**Serialization** (`lexbor/serialize.rs`). `Node#{to_html,to_s,outer_html}` and
+`#inner_html` are Lexbor's tree / deep serializers with the WALK driven from
+Rust (`HtmlNode::serialize_to`, `adapter/html/serialize.rs`): each node's own
+markup is Lexbor's `lxb_html_serialize_cb`, an end tag is what Lexbor's
+(unexported) closer writes, and a `<template>` writes its CONTENTS and not its
+own children, as the HTML Standard's fragment serializing does - Lexbor walked
+into both. The void test is a Rust read of the tag id (`shape`), not the
+`_noi` FFI twin, which cost ~10%; the walk costs ~3% over Lexbor's own loop.
+`pretty: true` is still Lexbor's walk (its own format, not the Standard's).
+The callback
 collects Lexbor's many small chunks into one growing C buffer (`cbuf::Buf`,
 **pre-reserved** via `Buf::reserve` so the per-chunk appends don't realloc on
 every geometric step - but only for the document or its root element: the

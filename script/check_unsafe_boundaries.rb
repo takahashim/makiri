@@ -59,6 +59,7 @@ UNSAFE_ISLANDS = {
   "lexbor/adapter/html/build.rs" => 19,
   "lexbor/adapter/html/mod.rs" => 60,
   "lexbor/adapter/html/mutate.rs" => 9,
+  "lexbor/adapter/html/serialize.rs" => 9,
   "lexbor/adapter/post_parse.rs" => 13,
   "lexbor/adapter/source_loc.rs" => 2,
   "lexbor/adapter/text_index.rs" => 1,

@@ -15,9 +15,8 @@
 use crate::cbuf::{Buf, BufError};
 use crate::lexbor::abi::consts::STATUS_OK as LXB_STATUS_OK;
 use crate::lexbor::abi::{
-    lxb_html_serialize_deep_cb, lxb_html_serialize_opt_LXB_HTML_SERIALIZE_OPT_UNDEF,
-    lxb_html_serialize_pretty_deep_cb, lxb_html_serialize_pretty_tree_cb,
-    lxb_html_serialize_tree_cb,
+    lxb_html_serialize_opt_LXB_HTML_SERIALIZE_OPT_UNDEF, lxb_html_serialize_pretty_deep_cb,
+    lxb_html_serialize_pretty_tree_cb,
 };
 use crate::lexbor::adapter::arena_bytes::{document_size, DocumentSize};
 use crate::lexbor::adapter::html::{HtmlDoc, HtmlNode, RawNode};
@@ -129,7 +128,8 @@ fn sink_for(node: HtmlNode<'_>) -> Sink<'_> {
 /// output. `None` is a Lexbor status failure (the buffer is freed).
 pub fn serialize(node: RawNode, deep: bool, pretty: bool) -> Option<Buf> {
     // SAFETY: `node` came from a live wrapper, so it and its document are live.
-    let mut c = Chunks::new(sink_for(unsafe { node.as_node() }));
+    let handle = unsafe { node.as_node() };
+    let mut c = Chunks::new(sink_for(handle));
     let node = node.as_lxb_mut();
 
     // SAFETY: the buffer is freed by `Buf`'s Drop however this exits, including
@@ -144,7 +144,10 @@ pub fn serialize(node: RawNode, deep: bool, pretty: bool) -> Option<Buf> {
                 Some(chunk_cb::<Sink>),
                 ctx,
             ),
-            (true, false) => lxb_html_serialize_deep_cb(node, Some(chunk_cb::<Sink>), ctx),
+            /* The plain forms walk here (`HtmlNode::serialize_to`), so a
+             * <template> writes its contents and not its own children; the
+             * pretty ones are Lexbor's own format, left as Lexbor writes it. */
+            (_, false) => handle.serialize_to(deep, Some(chunk_cb::<Sink>), ctx),
             (false, true) => lxb_html_serialize_pretty_tree_cb(
                 node,
                 LXB_HTML_SERIALIZE_OPT_UNDEF,
@@ -152,7 +155,6 @@ pub fn serialize(node: RawNode, deep: bool, pretty: bool) -> Option<Buf> {
                 Some(chunk_cb::<Sink>),
                 ctx,
             ),
-            (false, false) => lxb_html_serialize_tree_cb(node, Some(chunk_cb::<Sink>), ctx),
         };
 
         /* Lexbor has returned, so this is the first frame where a panic the

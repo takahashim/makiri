@@ -15,6 +15,10 @@
   (`x-on:click`, `:href`, `@click`, `xlink:href` on an HTML element) crosses
   as it is instead of raising; `to_xml` raises while it is present.
   `xml:lang` still becomes the XML namespace's.
+* HTML `to_html` / `inner_html` write a `<template>`'s contents and not the
+  template's own children (added with `add_child`), as the HTML Standard and
+  browsers do; both were written. `import_node` of such a template into XML
+  keeps the own children after the contents instead of dropping them.
 * `Node#path` of an element round-trips when a sibling with a different
   prefix or case answers the same XPath step.
 * XML documents hold the character data the DOM allows: text and attribute
