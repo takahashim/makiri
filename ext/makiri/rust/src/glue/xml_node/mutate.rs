@@ -93,6 +93,29 @@ pub fn set_attribute_ns(
     })
 }
 
+/// `element.set_loose_dom_attribute(qualified_name, value)` -> value.
+///
+/// The DOM's `setAttribute` for a caller building a browser's tree over XML -
+/// `create_loose_dom_element`'s counterpart: the name is not split, and a new
+/// attribute is in no namespace. `ArgumentError` for a name the DOM refuses.
+pub fn set_loose_dom_attribute(
+    _ruby: &Ruby,
+    this: XmlSelf,
+    name: Value,
+    val: Value,
+) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| {
+        let edit = element_for(this)?;
+        let nv = verified_name(name, "attribute name")?;
+        let vv = verified_text(val, "attribute value")?;
+        let (name, value) = (nv.as_bytes(), vv.as_bytes());
+        xml_mut_result(
+            edit.with_arena(|d, n| mutate::set_loose_dom_attribute(d, n, name, value))?,
+        )?;
+        Ok(val)
+    })
+}
+
 /// `element.remove_attribute_ns(namespace_or_nil, local_name)` -> self.
 pub fn remove_attribute_ns(
     _ruby: &Ruby,

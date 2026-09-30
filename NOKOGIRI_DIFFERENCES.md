@@ -107,6 +107,10 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
     invents one (`ns1`, `ns2`, ...) rather than shadow the other, as browsers do.
   * An element in no namespace stays that way under a default namespace,
     serialized as `xmlns=""`.
+  * `set_attribute_ns(XMLNS_NS, "xmlns:foo", "")` - a declaration Namespaces in
+    XML forbids, which the DOM's `setAttributeNS` accepts - is kept as an
+    attribute that binds nothing, and `to_xml` refuses the tree while it is
+    there. `root["xmlns:foo"] = ""` still raises.
   * An attribute in the XML namespace is written as `xml:local`, whatever
     prefix it was given (`set_attribute_ns(XML_NS, "a:bb")`, as the DOM
     allows): Namespaces in XML binds that namespace to `xml` alone. It re-reads
@@ -169,7 +173,8 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
     The names HTML actually uses (`data-*`, `aria-*`, `@click`, `:href`,
     `v-on:x`, custom elements) are accepted.
   * `set_attribute_ns(nil, "x:y")` raises, as the DOM's `setAttributeNS` does:
-    a prefix needs a namespace.
+    a prefix needs a namespace. `[]=` (HTML) and `set_loose_dom_attribute`
+    (XML) are the DOM's `setAttribute`, which makes such an attribute.
   * A refused name raises `ArgumentError` - a NUL in it too - and a namespace
     that does not fit the name (`set_attribute_ns`, `create_element_ns`)
     raises `Makiri::Error`. Invalid UTF-8 raises `Makiri::Error` for every

@@ -23,7 +23,6 @@ use super::out::{put, put_pi, W, XML};
 use super::Failure;
 use crate::cbuf::Buf;
 use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeFlags, NodeId, MAX_DEPTH};
-use crate::xml::qname::xmlns_prefix;
 use crate::xml::XML_NS_URI;
 
 use super::bindings::{Bindings, Prefix, PREFIX_CAP};
@@ -33,7 +32,7 @@ use super::bindings::{Bindings, Prefix, PREFIX_CAP};
 /// The declaration for `prefix` on `el` ITSELF (not in scope), or None.
 fn own_decl(doc: &XmlDoc, el: NodeId, prefix: &[u8]) -> Option<NodeId> {
     for at in doc.attributes(el) {
-        if let Some(p) = xmlns_prefix(doc.qname(at)) {
+        if let Some(p) = doc.decl_prefix(at) {
             if p == prefix {
                 return Some(at);
             }
@@ -56,7 +55,7 @@ fn prefix_seen(doc: &XmlDoc, el: NodeId, stop: NodeId, prefix: &[u8]) -> Option<
             break;
         }
         if doc.node(at).prefix.len != 0
-            && xmlns_prefix(doc.qname(at)).is_none()
+            && doc.decl_prefix(at).is_none()
             && !in_xml_ns(doc, at)
             && doc.prefix(at) == prefix
         {
@@ -164,7 +163,7 @@ fn plan_attr<'d>(
         declare: false,
     };
 
-    let is_decl = xmlns_prefix(doc.qname(a)).is_some();
+    let is_decl = doc.decl_prefix(a).is_some();
     if is_decl {
         return Ok(plan);
     }
@@ -386,7 +385,7 @@ impl<'d, 'b> Writer<'d, 'b> {
         /* This element's own xmlns declarations bind from here down. */
         let kept = |&at: &NodeId| Some(at) != dropped;
         for at in doc.attributes(n).filter(kept) {
-            if let Some(p) = xmlns_prefix(doc.qname(at)) {
+            if let Some(p) = doc.decl_prefix(at) {
                 binds.push(Prefix::Own(p), doc.span(doc.node(at).value))?;
             }
         }

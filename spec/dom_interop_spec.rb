@@ -140,4 +140,131 @@ RSpec.describe "browser-DOM interop" do
       end
     end
   end
+
+  # WPT XMLSerializer-serializeToString.html, "Check if a prefix bound to an
+  # empty namespace URI ("no namespace") serialize": the DOM holds
+  # setAttributeNS(XMLNS, "xmlns:foo", "") as an attribute. Namespaces in XML
+  # forbids the declaration, so it is kept as one that binds nothing.
+  describe "XML set_attribute_ns with a declaration XML forbids" do
+    let(:doc) { Makiri::XML(%(<root xmlns="" xmlns:foo="urn:bar"><c/></root>)) }
+    let(:root) { doc.root }
+
+    it "holds it as an XMLNS attribute that binds nothing" do
+      root.set_attribute_ns(XMLNS_NS, "xmlns:foo", "")
+      expect(root.attribute_nodes.map { [_1.name, _1.namespace_uri, _1.value] })
+        .to eq([["xmlns", XMLNS_NS, ""], ["xmlns:foo", XMLNS_NS, ""]])
+      expect(root.namespace_definitions.map(&:prefix)).to eq([nil])
+      expect { root.at_xpath("c") << doc.create_element("foo:e") }.to raise_error(Makiri::Error, /not bound/)
+      expect(root.xpath("@*").map(&:name)).to eq(["xmlns:foo"])
+      expect { doc.to_xml }.to raise_error(Makiri::Error, /namespace declaration XML forbids/)
+    end
+
+    it "binds again once it is given a value it can hold" do
+      root.set_attribute_ns(XMLNS_NS, "xmlns:foo", "")
+      root.set_attribute_ns(XMLNS_NS, "xmlns:foo", "urn:q")
+      expect(root.namespace_definitions.map { [_1.prefix, _1.href] }).to eq([[nil, ""], ["foo", "urn:q"]])
+      expect(doc.to_xml).to include(%(xmlns:foo="urn:q"))
+    end
+
+    it "judges an existing attribute by its own name" do
+      # xmlns:xmlns has the default declaration's key (XMLNS, "xmlns")
+      root.set_attribute_ns(XMLNS_NS, "xmlns:xmlns", "urn:y")
+      expect(root.namespace_definitions.map { [_1.prefix, _1.href] }).to include([nil, "urn:y"])
+    end
+
+    it "leaves []= refusing it: that names a declaration to make" do
+      expect { root["xmlns:foo"] = "" }.to raise_error(Makiri::Error, /not permitted/)
+      root.set_attribute_ns(XMLNS_NS, "xmlns:foo", "")
+      expect { root["xmlns:foo"] = "" }.to raise_error(Makiri::Error, /not permitted/)
+    end
+
+    # Whether it binds is read from its value, whichever setter gave it: []=
+    # once left a valid URI binding nothing, because only set_attribute_ns
+    # recomputed a flag.
+    it "binds or not by its value, whichever setter gave the value" do
+      root.set_attribute_ns(XMLNS_NS, "xmlns:foo", "")
+      root["xmlns:foo"] = "urn:foo"
+      expect(root.namespace_definitions.map { [_1.prefix, _1.href] }).to include(["foo", "urn:foo"])
+      root.at_xpath("c") << doc.create_element("foo:x")
+      expect(doc.to_xml).to include(%(xmlns:foo="urn:foo"))
+      root.set_loose_dom_attribute("xmlns:foo", "")
+      expect(root.namespace_definitions.map(&:prefix)).not_to include("foo")
+      root.set_loose_dom_attribute("xmlns:foo", "urn:z")
+      expect(root.namespace_definitions.map { [_1.prefix, _1.href] }).to include(["foo", "urn:z"])
+    end
+  end
+
+  describe "XML Element#set_loose_dom_attribute" do
+    let(:doc) { Makiri::XML(%(<r xmlns:p="urn:p"><c/></r>)) }
+    let(:root) { doc.root }
+
+    def attrs_of(el)
+      el.attribute_nodes.map { [_1.name, _1.namespace_uri, _1.local_name] }
+    end
+
+    it "makes a no-namespace attribute named by the whole qualified name" do
+      %w[xmlns xml:lang xlink:href v-on:click : foo:bar].each { |n| root.set_loose_dom_attribute(n, "v") }
+      expect(attrs_of(root).drop(1)).to eq(
+        [["xmlns", nil, "xmlns"], ["xml:lang", nil, "xml:lang"], ["xlink:href", nil, "xlink:href"],
+         ["v-on:click", nil, "v-on:click"], [":", nil, ":"], ["foo:bar", nil, "foo:bar"]]
+      )
+      expect(root["xlink:href"]).to eq("v")
+    end
+
+    it "does not make a declaration of an attribute named xmlns" do
+      root.set_loose_dom_attribute("xmlns", "urn:d")
+      root.set_loose_dom_attribute("xmlns:q", "urn:q")
+      expect(root.namespace_definitions.map { [_1.prefix, _1.href] }).to eq([["p", "urn:p"]])
+      added = doc.create_element("d")
+      root.at_xpath("c") << added
+      expect(added.namespace_uri).to be_nil
+      expect { root.at_xpath("c").add_child(doc.create_element("q:e")) }.to raise_error(Makiri::Error, /not bound/)
+      expect(root.xpath("@*").map(&:name)).to eq(%w[xmlns xmlns:q])
+    end
+
+    it "sets the value of the first attribute with that qualified name" do
+      root.set_loose_dom_attribute("xmlns:p", "urn:p2")
+      expect(root.namespace_definitions.map { [_1.prefix, _1.href] }).to eq([["p", "urn:p2"]])
+      root.set_loose_dom_attribute("xmlns", "a")
+      root["xmlns"] = "b"
+      root.set_loose_dom_attribute("xmlns", "c")
+      expect(attrs_of(root).map(&:first)).to eq(%w[xmlns:p xmlns])
+      expect(root["xmlns"]).to eq("c")
+    end
+
+    it "makes a plain attribute of a name XML can write" do
+      root.set_loose_dom_attribute("plain", "v")
+      expect(doc.to_xml).to include(%(plain="v"))
+    end
+
+    it "refuses to serialize an attribute XML cannot write, and not after it is gone" do
+      root.set_loose_dom_attribute("v-on:click", "f")
+      expect { doc.to_xml }.to raise_error(Makiri::Error, /DOM-loose/)
+      expect { root.to_xml }.to raise_error(Makiri::Error, /DOM-loose/)
+      expect { doc.canonicalize }.to raise_error(Makiri::Error, /DOM-loose/)
+      expect { root.dup.to_xml }.to raise_error(Makiri::Error, /DOM-loose/)
+      root.remove_attribute_ns(nil, "v-on:click")
+      expect(doc.to_xml).to eq(%(<?xml version="1.0"?>\n<r xmlns:p="urn:p"><c/></r>\n))
+    end
+
+    it "crosses into HTML as the no-namespace attribute it is" do
+      root.set_loose_dom_attribute("xmlns", "urn:d")
+      html = Makiri::HTML("<body></body>")
+      el = html.import_node(root, false)
+      expect(el.attribute_nodes.map { [_1.name, _1.namespace_uri] })
+        .to eq([["xmlns:p", XMLNS_NS], ["xmlns", nil]])
+    end
+
+    it "holds the name to the DOM's rule and the value to XML's characters" do
+      expect { root.set_loose_dom_attribute("a b", "v") }.to raise_error(ArgumentError, /invalid DOM attribute name/)
+      expect { root.set_loose_dom_attribute("a=b", "v") }.to raise_error(ArgumentError)
+      expect { root.set_loose_dom_attribute("", "v") }.to raise_error(ArgumentError)
+      expect { root.set_loose_dom_attribute("a", "\u0001") }.to raise_error(Makiri::Error, /not permitted in XML/)
+    end
+
+    it "leaves set_attribute_ns the DOM's setAttributeNS" do
+      expect { root.set_attribute_ns(nil, "foo:bar", "v") }.to raise_error(Makiri::Error, /does not fit/)
+      expect { root.set_attribute_ns(nil, "xmlns", "v") }.to raise_error(Makiri::Error, /does not fit/)
+    end
+  end
 end

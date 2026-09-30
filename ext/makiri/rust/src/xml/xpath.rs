@@ -22,10 +22,9 @@ use crate::xpath::dom::{Bucket, Dom, NodeType};
 /// DOM attribute (Node#attribute_nodes reads `attrs` directly, matching DOM
 /// Level 2); only the XPath iteration below skips it.
 fn is_ns_decl(doc: &xml::Document, a: xml::NodeId) -> bool {
-    let q = doc.qname(a);
-    /* `qname::xmlns_prefix` is the ONE definition of the shape; spelling the
-     * prefix test out again here would be a third copy of it. */
-    crate::xml::qname::xmlns_prefix(q).is_some()
+    /* `Document::decl_prefix` is the ONE test; spelling it out again here
+     * would be a second copy of it. */
+    doc.decl_prefix(a).is_some()
 }
 
 fn skip_ns_decls(doc: &xml::Document, mut a: xml::NodeId) -> Option<xml::NodeId> {

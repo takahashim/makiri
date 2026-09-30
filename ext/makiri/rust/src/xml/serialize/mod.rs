@@ -38,6 +38,12 @@ pub enum Failure {
     /// A DOM-loose element name - created through the browser-DOM interop
     /// hatch - has no XML form.
     DomLooseName,
+    /// The same for an attribute (`set_loose_dom_attribute`).
+    DomLooseAttributeName,
+    /// A namespace declaration holding a value Namespaces in XML forbids it
+    /// to declare (`set_attribute_ns(XMLNS, "xmlns:p", "")`, which the DOM
+    /// allows): its name is fine, and no XML can hold it.
+    ForbiddenDeclaration,
     /// A PI target with a colon: the DOM creates one, but Namespaces in XML §7
     /// makes every PI target an NCName, and DOM Parsing's serializer refuses
     /// it too.
@@ -119,18 +125,43 @@ fn write_with(
     Ok(buf)
 }
 
+/// Why attribute `a` has no XML form, if it has none: a DOM-loose name, or a
+/// declaration holding a value it may not declare.
+fn unwritable_attr(doc: &XmlDoc, a: NodeId) -> Option<Failure> {
+    if doc
+        .node(a)
+        .flags
+        .contains(crate::xml::NodeFlags::DOM_LOOSE_NAME)
+    {
+        Some(Failure::DomLooseAttributeName)
+    } else if doc.forbidden_declaration(a) {
+        Some(Failure::ForbiddenDeclaration)
+    } else {
+        None
+    }
+}
+
 /// The first name under `root` that has no namespace-well-formed XML form.
 fn unserializable_name(doc: &XmlDoc, root: NodeId) -> Option<Failure> {
     let mut cur = Some(root);
+    let loose = |id| {
+        doc.node(id)
+            .flags
+            .contains(crate::xml::NodeFlags::DOM_LOOSE_NAME)
+    };
     while let Some(id) = cur {
         match doc.type_(id) {
-            Some(ArenaKind::Element)
-                if doc
-                    .node(id)
-                    .flags
-                    .contains(crate::xml::NodeFlags::DOM_LOOSE_NAME) =>
-            {
-                return Some(Failure::DomLooseName)
+            Some(ArenaKind::Element) if loose(id) => return Some(Failure::DomLooseName),
+            Some(ArenaKind::Element) => {
+                if let Some(f) = doc.attributes(id).find_map(|a| unwritable_attr(doc, a)) {
+                    return Some(f);
+                }
+            }
+            /* An Attr serialized on its own is written by its name too. */
+            Some(ArenaKind::Attribute) => {
+                if let Some(f) = unwritable_attr(doc, id) {
+                    return Some(f);
+                }
             }
             Some(ArenaKind::Pi) if doc.span(doc.node(id).local).contains(&b':') => {
                 return Some(Failure::PiTargetColon)

@@ -16,23 +16,37 @@
   `import_node` of such an XHTML element from XML, prefixed or not, now raises
   the same way instead of making it, and an unprefixed XHTML element named
   with upper case otherwise keeps its case (`Foo` was renamed `foo`).
+* `Makiri::XML::Element#set_loose_dom_attribute(qualified_name, value)`, the
+  DOM's `setAttribute`: a new attribute is in no namespace, with the whole
+  name as its local name (`xmlns`, `xlink:href`, `v-on:click`). An attribute
+  named `xmlns` this way is not a namespace declaration. A name XML cannot
+  write makes `to_xml` / `canonicalize` raise, as `create_loose_dom_element`
+  does. `set_attribute_ns(nil, "x:y")` still raises, as `setAttributeNS` does.
 
 ### Changed
 
 * A NUL in a name given to a factory or setter (`create_element`,
   `create_element_ns`, `create_loose_dom_element`, `create_document_type`,
-  `create_processing_instruction`, `[]=`, `set_attribute_ns`) raises
-  `ArgumentError`, as every other refused name does, instead of
-  `Makiri::Error`. The two classes of refusal are now documented: a name the
-  rules refuse raises `ArgumentError` (the DOM's InvalidCharacterError), a
-  namespace that does not fit the name raises `Makiri::Error` (NamespaceError).
-  Invalid UTF-8 still raises `Makiri::Error` for every argument.
+  `create_processing_instruction`, `[]=`, `set_attribute_ns`,
+  `set_loose_dom_attribute`) raises `ArgumentError`, as every other refused
+  name does, instead of `Makiri::Error`. The two classes of refusal are now
+  documented: a name the rules refuse raises `ArgumentError` (the DOM's
+  InvalidCharacterError), a namespace that does not fit the name raises
+  `Makiri::Error` (NamespaceError). Invalid UTF-8 still raises `Makiri::Error`
+  for every argument.
 * `set_attribute_ns` takes the XML namespace under any prefix or none
   (`set_attribute_ns(XML_NS, "a:bb", v)`, `(XML_NS, "bb", v)`), as the DOM's
   `setAttributeNS` does and 0.10 did; 0.11.0.rc1 refused it. Only `xml`
   itself is still held to its namespace. `to_xml` and `canonicalize` write
   such an attribute as `xml:bb`, as DOM Parsing does, and `import_node` from
   HTML to XML keeps it in the XML namespace.
+* XML `set_attribute_ns` holds a namespace declaration that Namespaces in XML
+  forbids (`set_attribute_ns(XMLNS_NS, "xmlns:foo", "")`) as the DOM's
+  `setAttributeNS` does, as an attribute that binds nothing; `to_xml` /
+  `canonicalize` then raise. It raised. Whether such an attribute binds is
+  read from its value, so any setter that gives it an allowed one
+  (`set_attribute_ns`, `[]=`, `set_loose_dom_attribute`) makes it a
+  declaration again. `[]=` still refuses a forbidden value.
 
 ## [0.11.0.rc1] - 2026-09-29
 

@@ -624,6 +624,7 @@ RSpec.describe "Makiri mutation" do
       x = Makiri::XML("<r/>")
       expect { x.root["a\x00b"] = "v" }.to raise_error(ArgumentError)
       expect { x.root.set_attribute_ns(nil, "a\x00b", "v") }.to raise_error(ArgumentError)
+      expect { x.root.set_loose_dom_attribute("a\x00b", "v") }.to raise_error(ArgumentError)
       expect { x.create_element("a\x00b") }.to raise_error(ArgumentError)
       expect { x.create_loose_dom_element("a\x00b", nil, "a\x00b", nil) }.to raise_error(ArgumentError)
       expect { x.create_processing_instruction("a\x00b", "d") }.to raise_error(ArgumentError)

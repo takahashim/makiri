@@ -428,6 +428,7 @@ module Makiri::XML::NodeMethods
   def remove_attribute_ns(2)
   def replace(1)
   def set_attribute_ns(3)
+  def set_loose_dom_attribute(2)
   def tag_name(0)
   def target(0)
   def text(0)

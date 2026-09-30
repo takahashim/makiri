@@ -126,8 +126,9 @@ impl From<ArenaKind> for crate::node_type::NodeType {
     }
 }
 
-/// An ELEMENT's state bits. A set of named bits rather than a bare integer, so
-/// a site says which state it tests, sets or clears instead of spelling the
+/// A node's state bits - an element's, and for [`NodeFlags::DOM_LOOSE_NAME`]
+/// an attribute's too. A set of named bits rather than a bare integer, so a
+/// site says which state it tests, sets or clears instead of spelling the
 /// mask. An ATTRIBUTE's namespace state is a separate [`AttrNs`], not a bit
 /// here: its three values are exclusive.
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
@@ -137,9 +138,14 @@ impl NodeFlags {
     /// No state.
     pub const EMPTY: NodeFlags = NodeFlags(0);
 
-    /// Set on an element built by `create_loose_dom_element`: its name is a
-    /// WHATWG DOM name that need not be an XML QName, so the serializer refuses
-    /// to write it (see [`crate::xml::dom_name`]).
+    /// Set on an element built by `create_loose_dom_element`, or an attribute
+    /// by `set_loose_dom_attribute`: its name is a WHATWG DOM name that need
+    /// not be an XML QName, so the serializer refuses to write it (see
+    /// [`crate::xml::dom_name`]). A loose attribute is in no namespace and is
+    /// never a declaration, whatever its name (`Document::decl_prefix`). (A
+    /// declaration `set_attribute_ns` gave a value XML forbids, `xmlns:p=""`,
+    /// carries no flag: its value decides that, on every read -
+    /// `Document::forbidden_declaration`.)
     pub const DOM_LOOSE_NAME: NodeFlags = NodeFlags(0x01);
 
     /// Set on an ELEMENT once its namespace URI has been decided - by the parser,
@@ -246,6 +252,11 @@ pub enum MutError {
     /// (the DOM's "validate and extract"): a prefix without a namespace, `xml`
     /// or `xmlns` with another one, or the XMLNS namespace on another name.
     BadNsName,
+    /// A name the WHATWG DOM's rule for it refuses (`set_loose_dom_attribute`,
+    /// `create_document_type`), with the refusal's wording. Its own variant,
+    /// not [`MutError::BadName`], whose "not a well-formed XML name" is the
+    /// XML rule - the wrong one to report for a DOM name.
+    BadDomName(&'static str),
     /// An element Lexbor would make as another one: an HTML-namespace name in
     /// upper case that lower-cases to a known tag (`BR` made void `br`), met
     /// by the XML-to-HTML import (`HtmlDoc::misreads_html_name`).

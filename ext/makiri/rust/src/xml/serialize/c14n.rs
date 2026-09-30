@@ -13,10 +13,9 @@ use super::Failure;
 use crate::cbuf::Buf;
 use crate::falloc::{OomResult, VecPush};
 use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeFlags, NodeId, MAX_DEPTH};
-use crate::xml::qname::xmlns_prefix;
 
 fn xmlns_decl(doc: &XmlDoc, a: NodeId) -> Option<(&[u8], &[u8])> {
-    let p = xmlns_prefix(doc.qname(a))?;
+    let p = doc.decl_prefix(a)?;
     Some((p, doc.span(doc.node(a).value)))
 }
 

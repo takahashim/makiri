@@ -142,7 +142,12 @@ SCENARIOS = {
     el = doc.create_element("made")
     el.add_child(doc.create_text_node("inner"))
     el["k"] = "v"
+    el.set_loose_dom_attribute("v-on:x", "1")
+    el.set_loose_dom_attribute("xmlns", "urn:loose")
+    el.set_loose_dom_attribute("k", "v2")
     doc.root.add_child(el)
+    el.remove_attribute_ns(nil, "v-on:x")
+    el.delete("xmlns")
     el.content = "rewritten"
     el.add_previous_sibling(doc.create_element("before"))
     el.add_next_sibling(doc.create_element("after"))

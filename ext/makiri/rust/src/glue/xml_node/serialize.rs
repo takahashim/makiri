@@ -32,7 +32,16 @@ fn to_xml_opts(ruby: &Ruby, args: &[Value]) -> Result<(i32, Value), Error> {
 /// A serialization failure as `Makiri::Error`, worded for `verb`.
 fn failure_error(f: Failure, verb: &str) -> Error {
     let msg = match f {
-        Failure::DomLooseName => format!("cannot {verb} XML containing a DOM-loose element name"),
+        Failure::DomLooseName => {
+            format!("cannot {verb} XML containing a DOM-loose element name")
+        }
+        Failure::ForbiddenDeclaration => format!(
+            "cannot {verb} XML containing a namespace declaration XML forbids \
+(such as xmlns:p=\"\", held as set_attribute_ns made it)"
+        ),
+        Failure::DomLooseAttributeName => {
+            format!("cannot {verb} XML containing a DOM-loose attribute name")
+        }
         Failure::PiTargetColon => {
             format!("cannot {verb} XML containing a processing-instruction target with a colon")
         }

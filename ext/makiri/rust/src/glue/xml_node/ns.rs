@@ -43,7 +43,7 @@ fn declarations(d: &XmlDoc, id: NodeId) -> impl Iterator<Item = (NodeId, &[u8], 
         .into_iter()
         .flatten()
         .filter_map(move |a| {
-            let p = crate::xml::qname::xmlns_prefix(d.qname(a))?;
+            let p = d.decl_prefix(a)?;
             Some((a, p, d.value(a)))
         })
 }

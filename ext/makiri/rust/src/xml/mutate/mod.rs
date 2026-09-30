@@ -24,7 +24,9 @@ use crate::falloc::OomOption;
 use crate::xml::qname::Split;
 use crate::xml::{Document, MutError, NodeId};
 
-pub use attr::{remove_attribute, remove_attribute_ns, set_attribute, set_attribute_ns};
+pub use attr::{
+    remove_attribute, remove_attribute_ns, set_attribute, set_attribute_ns, set_loose_dom_attribute,
+};
 pub use copy::{clone_node, copy_node_from, import_subtree};
 pub use edit::set_content;
 pub use factory::{

@@ -744,6 +744,32 @@ fn a_declaration_binds_the_prefix_for_a_later_attribute() {
 }
 
 #[test]
+fn a_loose_attribute_named_like_a_declaration_declares_nothing() {
+    let (mut doc, r) = detached_element(b"r");
+    let decl = mutate::set_attribute(&mut doc, r, b"xmlns:p", b"urn:p").expect("a declaration");
+    let loose = mutate::set_loose_dom_attribute(&mut doc, r, b"xmlns", b"urn:d")
+        .expect("the DOM's setAttribute takes xmlns");
+    let prefixed =
+        mutate::set_loose_dom_attribute(&mut doc, r, b"xmlns:q", b"urn:q").expect("and xmlns:q");
+    assert_eq!(doc.decl_prefix(decl), Some(&b"p"[..]));
+    assert_eq!(doc.decl_prefix(loose), None, "no namespace, no declaration");
+    assert_eq!(doc.decl_prefix(prefixed), None);
+    assert!(doc.ns(loose).is_empty() && doc.local(loose) == b"xmlns");
+    assert_eq!(
+        doc.local(prefixed),
+        b"xmlns:q",
+        "the whole name is the local name"
+    );
+    assert_eq!(mutate::namespace_in_scope(&doc, r, b""), b"");
+    assert_eq!(mutate::namespace_in_scope(&doc, r, b"q"), b"");
+    assert_eq!(mutate::namespace_in_scope(&doc, r, b"p"), b"urn:p");
+    let again = mutate::set_loose_dom_attribute(&mut doc, r, b"xmlns:p", b"urn:p2")
+        .expect("an existing declaration takes a new value");
+    assert_eq!(again, decl);
+    assert_eq!(mutate::namespace_in_scope(&doc, r, b"p"), b"urn:p2");
+}
+
+#[test]
 fn removing_an_attribute_is_idempotent() {
     let (mut doc, r) = detached_element(b"r");
     mutate::set_attribute(&mut doc, r, b"id", b"x").expect("an attribute to remove");

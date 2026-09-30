@@ -132,6 +132,10 @@ fn init_mutate() -> Result<(), Error> {
     }
     m.define_method("set_attribute_ns", method!(mutate::set_attribute_ns, 3))?;
     m.define_method(
+        "set_loose_dom_attribute",
+        method!(mutate::set_loose_dom_attribute, 2),
+    )?;
+    m.define_method(
         "remove_attribute_ns",
         method!(mutate::remove_attribute_ns, 2),
     )?;

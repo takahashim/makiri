@@ -208,6 +208,7 @@ fn xml_mut_error(st: MutError) -> Error {
         MutError::BadName => {
             return crate::bridge::ruby::arg_error("not a well-formed XML name");
         }
+        MutError::BadDomName(why) => return crate::bridge::ruby::arg_error(why),
         MutError::BadChars => "value contains a character or sequence not permitted in XML",
         MutError::UnboundNs => "namespace prefix is not bound in this scope",
         MutError::Type => "operation unsupported for this node type",
