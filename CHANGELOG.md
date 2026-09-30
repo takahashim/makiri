@@ -4,61 +4,35 @@
 
 ### Added
 
-* `Makiri::HTML::Document#create_element_ns(namespace_uri, qualified_name)`,
-  the DOM's `createElementNS`: an SVG or MathML element made this way is the
-  element the parser makes (its name keeps its case, `#[]` / `#[]=` keep an
-  attribute name's case, `#css` matches it as foreign). The name is split at
-  its first colon and follows the DOM's rules, not `create_element`'s, so
-  `"0:a"` is prefix `0` and local name `a`. An HTML-namespace name in upper
-  case that lower-cases to an element Lexbor knows (`BR`, `SCRIPT`, `DIV`)
-  raises `Makiri::Error`: Lexbor would make it as that element (`BR` void),
-  where the DOM makes an unknown element. `MY-EL` and the like are made.
-  `import_node` of such an XHTML element from XML, prefixed or not, now raises
-  the same way instead of making it, and an unprefixed XHTML element named
-  with upper case otherwise keeps its case (`Foo` was renamed `foo`).
-* `Makiri::XML::Element#set_loose_dom_attribute(qualified_name, value)`, the
-  DOM's `setAttribute`: a new attribute is in no namespace, with the whole
-  name as its local name (`xmlns`, `xlink:href`, `v-on:click`). An attribute
-  named `xmlns` this way is not a namespace declaration. A name XML cannot
-  write makes `to_xml` / `canonicalize` raise, as `create_loose_dom_element`
-  does. `set_attribute_ns(nil, "x:y")` still raises, as `setAttributeNS` does.
+* `Makiri::HTML::Document#create_element_ns(namespace_uri, qualified_name)`
+  (DOM `createElementNS`). An SVG or MathML element made this way keeps its
+  name's case and behaves like a parsed one. An upper-case name in the HTML
+  namespace that names a known element (`BR`, `DIV`) raises `Makiri::Error`.
+* `Makiri::XML::Element#set_loose_dom_attribute(qualified_name, value)` (DOM
+  `setAttribute`): the attribute is in no namespace and keeps the name as
+  given (`xmlns`, `xlink:href`, `v-on:click`). `to_xml` raises while the
+  document holds one XML cannot write.
 
 ### Changed
 
-* A NUL in a name given to a factory or setter (`create_element`,
-  `create_element_ns`, `create_loose_dom_element`, `create_document_type`,
-  `create_processing_instruction`, `[]=`, `set_attribute_ns`,
-  `set_loose_dom_attribute`) raises `ArgumentError`, as every other refused
-  name does, instead of `Makiri::Error`. The two classes of refusal are now
-  documented: a name the rules refuse raises `ArgumentError` (the DOM's
-  InvalidCharacterError), a namespace that does not fit the name raises
-  `Makiri::Error` (NamespaceError). Invalid UTF-8 still raises `Makiri::Error`
-  for every argument.
-* `set_attribute_ns` takes the XML namespace under any prefix or none
-  (`set_attribute_ns(XML_NS, "a:bb", v)`, `(XML_NS, "bb", v)`), as the DOM's
-  `setAttributeNS` does and 0.10 did; 0.11.0.rc1 refused it. Only `xml`
-  itself is still held to its namespace. `to_xml` and `canonicalize` write
-  such an attribute as `xml:bb`, as DOM Parsing does, and `import_node` from
-  HTML to XML keeps it in the XML namespace.
-* XML `create_document_type` checks the name by the DOM's rule (no ASCII
-  whitespace, NUL or `>`; `ArgumentError` otherwise) and takes any public and
-  system id, as `createDocumentType` does. A doctype XML cannot write - a name
-  that is no QName, a public id outside PubidChar, a system id with both
-  quotes - is made DOM-loose: `to_xml` of its document raises, and
-  `canonicalize`, which omits the doctype, does not. They raised when made, so
-  a browser-style `createDocument(nil, nil, doctype)` could not hold one.
-* XML `set_attribute_ns` holds a namespace declaration that Namespaces in XML
-  forbids (`set_attribute_ns(XMLNS_NS, "xmlns:foo", "")`) as the DOM's
-  `setAttributeNS` does, as an attribute that binds nothing; `to_xml` /
-  `canonicalize` then raise. It raised. Whether such an attribute binds is
-  read from its value, so any setter that gives it an allowed one
-  (`set_attribute_ns`, `[]=`, `set_loose_dom_attribute`) makes it a
-  declaration again. `[]=` still refuses a forbidden value.
-* HTML `#css` / `#at_css` / `#matches?` compare a type selector as browsers
-  do (the HTML Standard's case-sensitivity of selectors): lower-cased for an
-  HTML element, as written for SVG/MathML and other elements. `fegaussianblur`
-  and `FEGAUSSIANBLUR` no longer match SVG `feGaussianBlur`, nor `MI` MathML
-  `mi`; Lexbor's matcher, which Makiri followed, folds case on every element.
+* A NUL in an element, attribute, doctype or PI target name raises
+  `ArgumentError`, like any other invalid name. A namespace that does not fit
+  the name still raises `Makiri::Error`.
+* HTML type selectors are case-sensitive on SVG and MathML elements, as in
+  browsers: `fegaussianblur` no longer matches `feGaussianBlur`.
+* `set_attribute_ns` accepts the XML namespace with any prefix or none again
+  (rc1 raised); `to_xml` writes such an attribute as `xml:name`.
+* XML `set_attribute_ns` accepts a namespace declaration XML forbids, such as
+  `xmlns:foo=""`. It binds nothing, and `to_xml` raises while it is present.
+* XML `create_document_type` accepts any public and system id, and any name
+  without whitespace, NUL or `>`. `to_xml` raises if the doctype cannot be
+  written as XML.
+
+### Fixed
+
+* `import_node` from XML to HTML keeps an upper-case XHTML element name
+  (`Foo`) instead of lower-casing it, and raises for one that names a known
+  element (`BR`).
 
 ## [0.11.0.rc1] - 2026-09-29
 
