@@ -21,7 +21,8 @@ use crate::bridge::ruby::{makiri_error, string_of};
 use crate::bridge::fragment::{set_template_inner_html, stage_fragment_in};
 use crate::bridge::html::{edit, insert, owning_doc, wrap_html_node, HtmlEdit, HtmlSelf};
 use crate::bridge::string::{
-    namespace_arg, ruby_verified_data, ruby_verified_text, ruby_verified_text_opt,
+    namespace_arg, ruby_verified_data, ruby_verified_name, ruby_verified_text,
+    ruby_verified_text_opt,
 };
 use crate::lexbor::adapter::html::{HtmlElementMut, NodeType, Place, RawNode};
 use crate::xml::dom_name;
@@ -116,7 +117,7 @@ pub fn aset(ruby: &Ruby, this: HtmlSelf, rb_name: Value, rb_value: Value) -> Res
         if edit.node_type() != NodeType::Element {
             return Err(makiri_error(REFUSAL));
         }
-        let nv = ruby_verified_text(rb_name, "attribute name")?;
+        let nv = ruby_verified_name(rb_name, "attribute name")?;
         let vv = ruby_verified_data(rb_value, "attribute value")?;
         check_dom_name(ruby, &nv, dom_name::valid_attribute_local_name, "attribute")?;
         let el = element_of(edit, REFUSAL)?;
@@ -140,7 +141,7 @@ pub fn set_attribute_ns(
         if edit.node_type() != NodeType::Element {
             return Err(makiri_error(REFUSAL));
         }
-        let qv = ruby_verified_text(rb_qname, "attribute qualified name")?;
+        let qv = ruby_verified_name(rb_qname, "attribute qualified name")?;
         let vv = ruby_verified_data(rb_value, "attribute value")?;
         let nv = namespace_arg(rb_ns, "namespace")?;
         /* The DOM's "validate and extract": split at the first colon, check
@@ -304,7 +305,7 @@ fn created(node: Option<RawNode>, rb_self: Value, what: &str) -> Result<Value, E
 pub fn create_element(ruby: &Ruby, rb_self: Value, rb_name: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let doc = owning_doc(&rb_self)?;
-        let nv = ruby_verified_text(rb_name, "element name")?;
+        let nv = ruby_verified_name(rb_name, "element name")?;
         check_dom_name(ruby, &nv, dom_name::valid_element_local_name, "element")?;
         created(
             crate::bridge::html::create_element(doc, &nv),
@@ -349,7 +350,7 @@ pub fn create_pi(
 ) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let doc = owning_doc(&rb_self)?;
-        let tv = ruby_verified_text(rb_target, "processing instruction target")?;
+        let tv = ruby_verified_name(rb_target, "processing instruction target")?;
         let dv = ruby_verified_text(rb_data, "processing instruction data")?;
         /* DOM createProcessingInstruction: the target must match the XML Name
          * production. Lexbor leaves that check as a TODO, and an unchecked
@@ -383,7 +384,7 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
         let (rb_pub, rb_sys_) = args.optional;
 
         let doc = owning_doc(&rb_self)?;
-        let nv = ruby_verified_text(rb_name, "doctype name")?;
+        let nv = ruby_verified_name(rb_name, "doctype name")?;
         if !crate::bridge::html::valid_doctype_name(&nv) {
             /* The caller's error, not Lexbor's, so the exception class is picked
              * here - the check itself is the DOM layer's. */

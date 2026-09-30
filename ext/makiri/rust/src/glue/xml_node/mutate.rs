@@ -16,8 +16,9 @@ use crate::bridge::ruby::makiri_error;
 use crate::bridge::string::namespace_arg;
 
 use crate::bridge::xml::{
-    begin_edit, import_copy, incoming_node, verified_text, verified_text_opt,
-    with_arena_for_new_node, wrap_xml_node as wrap, xml_mut_result, Editing, XmlSelf,
+    begin_edit, import_copy, incoming_node, verified_name, verified_name_opt, verified_text,
+    verified_text_opt, with_arena_for_new_node, wrap_xml_node as wrap, xml_mut_result, Editing,
+    XmlSelf,
 };
 use crate::init::CLASS_XML_DOCUMENT;
 use crate::xml::dom_name::split_loose_dom_name;
@@ -61,7 +62,7 @@ fn element_for(this: XmlSelf) -> Result<Editing, Error> {
 pub fn aset(_ruby: &Ruby, this: XmlSelf, name: Value, val: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let edit = element_for(this)?;
-        let nv = verified_text(name, "attribute name")?;
+        let nv = verified_name(name, "attribute name")?;
         let vv = verified_text(val, "attribute value")?;
         let (name, value) = (nv.as_bytes(), vv.as_bytes());
         xml_mut_result(edit.with_arena(|d, n| mutate::set_attribute(d, n, name, value))?)?;
@@ -79,7 +80,7 @@ pub fn set_attribute_ns(
 ) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let edit = element_for(this)?;
-        let qv = verified_text(qname, "attribute qualified name")?;
+        let qv = verified_name(qname, "attribute qualified name")?;
         let vv = verified_text(val, "attribute value")?;
         let nv = namespace_arg(ns, "namespace")?;
         let (ns, qname, value) = (
@@ -223,7 +224,7 @@ pub fn create_element(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Val
             }
         }
 
-        let nv = verified_text(name, "element name")?;
+        let nv = verified_name(name, "element name")?;
         let cv = verified_text_opt(content, "element content")?;
         let name = nv.as_bytes();
         let el = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
@@ -267,9 +268,9 @@ pub fn create_loose_dom_element(
     ns: Value,
 ) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let qv = verified_text(qname, "qualified name")?;
-        let lv = verified_text(local, "local name")?;
-        let pv = verified_text_opt(prefix, "prefix")?;
+        let qv = verified_name(qname, "qualified name")?;
+        let lv = verified_name(local, "local name")?;
+        let pv = verified_name_opt(prefix, "prefix")?;
         let nv = namespace_arg(ns, "namespace URI")?;
 
         let qname = qv.as_bytes();
@@ -296,7 +297,7 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
         >(args)?;
         let name = a.required.0;
         let nil = ruby.qnil().as_value();
-        let nv = verified_text(name, "doctype name")?;
+        let nv = verified_name(name, "doctype name")?;
         let pv = verified_text_opt(a.optional.0.unwrap_or(nil), "doctype public id")?;
         let sv = verified_text_opt(a.optional.1.unwrap_or(nil), "doctype system id")?;
         /* An empty id is absent, like nil, matching the HTML factory and Nokogiri. */
@@ -342,7 +343,7 @@ pub fn create_cdata(_ruby: &Ruby, rb_self: Value, t: Value) -> Result<Value, Err
 
 pub fn create_pi(_ruby: &Ruby, rb_self: Value, target: Value, data: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let tg = verified_text(target, "PI target")?;
+        let tg = verified_name(target, "PI target")?;
         let dt = verified_text(data, "PI data")?;
         let (target, data) = (tg.as_bytes(), dt.as_bytes());
         let pi = xml_mut_result(with_arena_for_new_node(rb_self, |d| {

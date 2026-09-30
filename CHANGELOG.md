@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+* A NUL in a name given to a factory or setter (`create_element`,
+  `create_loose_dom_element`, `create_document_type`,
+  `create_processing_instruction`, `[]=`, `set_attribute_ns`) raises
+  `ArgumentError`, as every other refused name does, instead of
+  `Makiri::Error`. The two classes of refusal are now documented: a name the
+  rules refuse raises `ArgumentError` (the DOM's InvalidCharacterError), a
+  namespace that does not fit the name raises `Makiri::Error` (NamespaceError).
+  Invalid UTF-8 still raises `Makiri::Error` for every argument.
+
 ## [0.11.0.rc1] - 2026-09-29
 
 ### Changed

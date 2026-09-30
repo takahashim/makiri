@@ -358,11 +358,30 @@ pub fn begin_edit(this: XmlSelf) -> Result<Editing, Error> {
 /// A String argument verified as an engine string - valid UTF-8, no NUL - and
 /// short enough for an arena span (4 GiB).
 pub fn verified_text(v: Value, what: &str) -> Result<RubyText, Error> {
-    let t = ruby_verified_text(v, what)?;
+    fits_xml_node(ruby_verified_text(v, what)?)
+}
+
+/// `t`, unless it is too long for an XML node's `u32` span.
+fn fits_xml_node(t: RubyText) -> Result<RubyText, Error> {
     if u32::try_from(t.len()).is_err() {
         return Err(makiri_error("string too long for an XML node (max 4 GiB)"));
     }
     Ok(t)
+}
+
+/// [`verified_text`] for a name given to a factory or a setter: a NUL raises
+/// `ArgumentError`, as any other refused name does
+/// ([`crate::bridge::string::ruby_verified_name`]).
+pub fn verified_name(v: Value, what: &str) -> Result<RubyText, Error> {
+    fits_xml_node(crate::bridge::string::ruby_verified_name(v, what)?)
+}
+
+/// [`verified_name`] for an optional argument: `nil` is `None`.
+pub fn verified_name_opt(v: Value, what: &str) -> Result<Option<RubyText>, Error> {
+    if v.is_nil() {
+        return Ok(None);
+    }
+    verified_name(v, what).map(Some)
 }
 
 /// [`verified_text`] for an optional argument: `nil` is `None` - the same

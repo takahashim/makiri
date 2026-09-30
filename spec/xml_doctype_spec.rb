@@ -196,7 +196,7 @@ RSpec.describe "Makiri::XML DOCTYPE / internal_subset" do
 
     it "fails closed on an invalid name, embedded NUL, or a '\"' in an id" do
       expect { doc.create_document_type("1 bad") }.to raise_error(ArgumentError)
-      expect { doc.create_document_type("a\x00b") }.to raise_error(Makiri::Error)
+      expect { doc.create_document_type("a\x00b") }.to raise_error(ArgumentError)
       expect { doc.create_document_type("ok", %(a"b)) }.to raise_error(Makiri::Error)
     end
 

@@ -166,6 +166,9 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
     `v-on:x`, custom elements) are accepted.
   * `set_attribute_ns(nil, "x:y")` raises, as the DOM's `setAttributeNS` does:
     a prefix needs a namespace.
+  * A refused name raises `ArgumentError` - a NUL in it too - and a namespace
+    that does not fit the name (`set_attribute_ns`) raises `Makiri::Error`.
+    Invalid UTF-8 raises `Makiri::Error` for every argument, names included.
 * An HTML `<template>` follows the WHATWG content model, which Nokogiri does
   not: its parsed contents live in the separate fragment `Element#content_fragment`
   returns, `template.children` is empty, and `inner_html` / `inner_html=`
@@ -285,7 +288,10 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
   and attribute values (`[]=`, `set_attribute_ns`) - and stored/read back
   verbatim, matching the WHATWG DOM / browsers (`document.createTextNode("\0")`).
   It is still rejected in names, tag names, namespaces, PI target/data, CSS
-  selectors, and XPath expressions/variable names (a NUL there raises).
+  selectors, and XPath expressions/variable names. A NUL in a name given to a
+  factory or setter (element, attribute, doctype and PI target names) raises
+  `ArgumentError`, as any other refused name does; anywhere else it raises
+  `Makiri::Error`.
   * On re-parse, the HTML tokenizer replaces a U+0000 in text/attributes with
     U+FFFD (WHATWG), so a serialized-then-reparsed round-trip is not byte-identical.
   * `Makiri::XML` rejects NUL everywhere: XML 1.0 has no legal U+0000 character,

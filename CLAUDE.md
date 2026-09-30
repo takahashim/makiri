@@ -576,6 +576,11 @@ data-family** - text/comment node content (`create_text_node`/`create_comment`/
 `content=`) and attribute values (`[]=`/`set_attribute_ns`) - so the DOM can hold
 U+0000 like browsers. Those data-family sites go through `ruby_verified_data`
 (distinct type `RubyData`, UTF-8-validated but NUL-permitting), never
+`ruby_verified_text`. A NAME given to a factory or setter goes through
+`ruby_verified_name` (XML: `bridge::xml::verified_name`): the same `RubyText`
+contract, but its NUL refusal is `ArgumentError`, like every other name
+refusal there (the DOM's InvalidCharacterError), so a caller mapping
+`ArgumentError` to a DOMException misses none. Removers and readers keep
 `ruby_verified_text`. Both checked views (`RubyText`, `RubyData`) deref to
 `&str`: each holds its String `rb_str_locktmp`ed for its life, or - when someone
 else already holds that lock (the same String passed twice, an IO) - reads its

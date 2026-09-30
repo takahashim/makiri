@@ -90,7 +90,7 @@ RSpec.describe "UTF-8 text-input contract" do
     # everywhere, including the relaxed data-family sites.
     {
       "attribute value (invalid UTF-8)" => -> (d, e) { e["k"] = INVALID.dup.force_encoding("BINARY") },
-      "attribute name (NUL)"            => -> (d, e) { e["a#{NUL}b"] = "v" },
+      "attribute name (invalid UTF-8)"  => -> (d, e) { e[INVALID.dup.force_encoding("BINARY")] = "v" },
       "element content (invalid UTF-8)" => -> (d, e) { e.content = INVALID.dup.force_encoding("BINARY") },
       "create_element (invalid UTF-8)"  => -> (d, e) { d.create_element(INVALID.dup.force_encoding("BINARY")) },
       "create_text_node (invalid UTF-8)" => -> (d, e) { d.create_text_node(INVALID.dup.force_encoding("BINARY")) },
@@ -108,6 +108,12 @@ RSpec.describe "UTF-8 text-input contract" do
       it "rejects #{desc} with Makiri::Error" do
         expect { body.call(doc, el) }.to raise_error(Makiri::Error)
       end
+    end
+
+    # A NUL in a name given to a factory or setter is a naming refusal, and
+    # raises what every other one does.
+    it "rejects attribute name (NUL) with ArgumentError" do
+      expect { el["a#{NUL}b"] = "v" }.to raise_error(ArgumentError, /must not contain a NUL byte/)
     end
 
     # DOM data-family (text/comment content, attribute values) accepts U+0000,
