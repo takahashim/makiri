@@ -141,8 +141,10 @@ impl NodeFlags {
     /// Set on an element built by `create_loose_dom_element`, or an attribute
     /// by `set_loose_dom_attribute`: its name is a WHATWG DOM name that need
     /// not be an XML QName, so the serializer refuses to write it (see
-    /// [`crate::xml::dom_name`]). A loose attribute is in no namespace and is
-    /// never a declaration, whatever its name (`Document::decl_prefix`). On a
+    /// [`crate::xml::dom_name`]). A loose attribute is never a declaration,
+    /// whatever its name (`Document::decl_prefix`); it is in no namespace when
+    /// `set_loose_dom_attribute` made it, and in the one it was given when
+    /// `set_attribute_ns` did (`p:a}b`, a local name that is no NCName). On a
     /// DOCTYPE made by `create_document_type`, the same for a name or id XML
     /// cannot write. (A declaration `set_attribute_ns` gave a value XML
     /// forbids, `xmlns:p=""`, carries no flag: its value decides that, on
@@ -221,7 +223,6 @@ pub enum AttrNs {
 pub enum MutError {
     Oom,
     BadName,
-    BadChars,
     UnboundNs,
     Type,
     Cycle,
@@ -258,10 +259,12 @@ pub enum MutError {
     /// not [`MutError::BadName`], whose "not a well-formed XML name" is the
     /// XML rule - the wrong one to report for a DOM name.
     BadDomName(&'static str),
-    /// An element Lexbor would make as another one: an HTML-namespace name in
-    /// upper case that lower-cases to a known tag (`BR` made void `br`), met
-    /// by the XML-to-HTML import (`HtmlDoc::misreads_html_name`).
-    HtmlNameCase,
+    /// Data the DOM's factory refuses - `]]>` in `createCDATASection`, `?>` in
+    /// `createProcessingInstruction` - with the refusal's wording: the DOM's
+    /// InvalidCharacterError, so `ArgumentError`. Nothing else about data is
+    /// refused when it is set: what XML cannot write is refused when it is
+    /// written (`serialize::Failure::UnwritableData`).
+    InvalidCharacter(&'static str),
 }
 
 impl crate::falloc::Oom for MutError {

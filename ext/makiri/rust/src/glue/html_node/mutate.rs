@@ -209,6 +209,10 @@ pub fn set_content(_ruby: &Ruby, this: HtmlSelf, rb_text: Value) -> Result<Value
         let edit = edit(&this)?;
         let tv = ruby_verified_data(rb_text, "node content")?;
         let node = edit.node()?;
+        /* A template's text is a child of its own, not its contents. */
+        if node.node().is_html_template() {
+            crate::bridge::wrapper::note_template_children(this.document);
+        }
         crate::bridge::html::set_text_content(node, &tv)
             .map_err(|_| makiri_error("failed to set node content"))?;
         Ok(rb_text)
@@ -284,6 +288,9 @@ pub fn set_outer_html(_ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Va
                 "outer_html= requires a node with a parent element",
             ));
         };
+        if parent.node().is_html_template() {
+            crate::bridge::wrapper::note_template_children(this.document);
+        }
         let staged = stage_fragment_in(parent, html)?;
         node.place(staged, Place::Replace);
         Ok(rb_html)
@@ -336,9 +343,6 @@ pub fn create_element_ns(
         let ns = nv.as_ref().map_or(&b""[..], |n| n.as_bytes());
         let (prefix, local) =
             extract(ruby, ns, &qv, dom_name::valid_element_local_name, "element")?;
-        if doc.misreads_html_name(local, ns) {
-            return Err(makiri_error(crate::bridge::html::HTML_NAME_CASE));
-        }
         created(
             crate::bridge::html::create_element_ns(doc, local, ns, prefix),
             rb_self,

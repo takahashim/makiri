@@ -4,35 +4,35 @@
 
 #![forbid(unsafe_code)]
 
-use crate::xml::chars::validate_chars;
 use crate::xml::{ArenaKind, Document, MutError, NodeId};
 
-/// Whether `text` is free of the SEQUENCE its node kind cannot hold: "--" (or
-/// a trailing "-") in a comment, "]]>" in CDATA, "?>" in a PI. Each would close
-/// the construct early, so the value is refused rather than escaped.
+/// The DOM's refusal of `data` for a new node of kind `ty`, if it refuses it:
+/// `]]>` in a CDATA section, `?>` in a processing instruction - the only data
+/// `createCDATASection` and `createProcessingInstruction` refuse. A comment's
+/// `--`, and every character, the DOM takes; what XML cannot write is refused
+/// by the serializers instead (`serialize::Failure::UnwritableData`).
 ///
-/// A mutation precondition, not a naming rule: the parser never needs it,
-/// because it finds those sequences structurally while scanning.
-pub(super) fn value_seq_ok(node_type: ArenaKind, text: &[u8]) -> bool {
-    match node_type {
-        ArenaKind::Comment => text.last() != Some(&b'-') && !text.windows(2).any(|w| w == b"--"),
-        ArenaKind::CDataSection => !text.windows(3).any(|w| w == b"]]>"),
-        ArenaKind::Pi => !text.windows(2).any(|w| w == b"?>"),
-        _ => true,
+/// A factory's precondition, not a setter's: the DOM's `data` setter checks
+/// nothing, so `content=` does not either.
+pub(super) fn dom_refuses_data(ty: ArenaKind, data: &[u8]) -> Option<&'static str> {
+    match ty {
+        ArenaKind::CDataSection if data.windows(3).any(|w| w == b"]]>") => {
+            Some("CDATA section data must not contain ]]>")
+        }
+        ArenaKind::Pi if data.windows(2).any(|w| w == b"?>") => {
+            Some("processing instruction data must not contain ?>")
+        }
+        _ => None,
     }
 }
 
+/// The DOM's `textContent` / `data` setter: any text, as the DOM takes it. What
+/// XML cannot write (a character outside XML's, `--` in a comment, `?>` in a
+/// PI) is refused by the serializers, not here: the mutators used to refuse
+/// it, which the DOM does not, and a browser's tree could not be built.
 pub fn set_content(doc: &mut Document, node: NodeId, text: &[u8]) -> Result<(), MutError> {
-    if !validate_chars(text) {
-        return Err(MutError::BadChars);
-    }
     match doc.type_(node) {
-        Some(
-            ty @ (ArenaKind::Text | ArenaKind::CDataSection | ArenaKind::Comment | ArenaKind::Pi),
-        ) => {
-            if !value_seq_ok(ty, text) {
-                return Err(MutError::BadChars);
-            }
+        Some(ArenaKind::Text | ArenaKind::CDataSection | ArenaKind::Comment | ArenaKind::Pi) => {
             doc.set_value_bytes(node, text).map_err(MutError::from)
         }
         Some(ArenaKind::Element) => {

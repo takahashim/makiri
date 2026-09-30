@@ -49,40 +49,13 @@ fn html_ns_uri(n: HtmlNode<'_>) -> Option<&[u8]> {
 
 /* ---- the work stack, shared by both directions ---- */
 
-/// One pending subtree, plus the default namespace in scope for its children.
-///
-/// `def` borrows the source document's interned namespace table, which is
-/// [`html_ns_uri`]'s documented contract and outlives the walk. Carrying that
-/// lifetime here rather than erasing it to `'static` is what keeps the
-/// laundering in the one accessor that states the contract.
-struct Frame<'a, S, D> {
+/// One pending subtree: its source node and the copy its children go under.
+struct Frame<S, D> {
     s: S,
     d: D,
-    def: Option<&'a [u8]>,
 }
 
 /* ================= HTML (lxb) -> XML (mkr) ========================== */
-
-/// Declare `xmlns` (no prefix) or `xmlns:PREFIX` = `uri` on the detached mkr
-/// element, as an ordinary attribute.
-fn declare_ns(doc: &mut XmlDoc, el: NodeId, prefix: &[u8], uri: &[u8]) -> Result<(), MutError> {
-    if prefix.is_empty() {
-        mutate::set_attribute(doc, el, b"xmlns", uri)?;
-        return Ok(());
-    }
-    let nlen = match 6usize.checked_add(prefix.len()).and_then(fits_u32) {
-        Some(_) => 6 + prefix.len(),
-        None => return Err(MutError::Oom),
-    };
-    let mut name: Vec<u8> = match try_vec_with_capacity(nlen) {
-        Some(v) => v,
-        None => return Err(MutError::Oom),
-    };
-    name.extend_from_slice(b"xmlns:");
-    name.extend_from_slice(prefix);
-    mutate::set_attribute(doc, el, &name, uri)?;
-    Ok(())
-}
 
 /// Copy the source element's attributes onto the translated mkr element.
 ///
@@ -102,12 +75,12 @@ fn declare_ns(doc: &mut XmlDoc, el: NodeId, prefix: &[u8], uri: &[u8]) -> Result
 ///   namespace itself and gives each attribute its own, so a copied
 ///   declaration could only restate one or move one (`<div xmlns="urn:bogus">`
 ///   came out in `urn:bogus`, `<svg><g xmlns="urn:evil">` in `urn:evil`);
-/// * one in NO namespace whose name has a prefix other than `xml` (`fb:like`)
-///   has no XML form: written as it stands it is a prefix with no binding, so
-///   the copy was made and then could be neither inserted nor serialized. It is
-///   refused here instead, as `MutError::BadNsName` - or `BadName` when the
-///   name is not a QName at all. `xml:` keeps its fixed meaning, as the XML
-///   reader gives it.
+/// * one in NO namespace whose name XML cannot write as such - `fb:like`
+///   (a prefix with no binding), `:href`, `@click` - crosses DOM-loose, named
+///   as it is, as the DOM's clone has it: held, and refused by the
+///   serializers. It was refused here, so a tree with Vue's or Alpine's
+///   attributes could not be imported at all. `xml:` keeps its fixed meaning,
+///   as the XML reader gives it.
 fn h2x_copy_attrs(doc: &mut XmlDoc, s: HtmlElement<'_>, el: NodeId) -> Result<(), MutError> {
     for a in s.attrs() {
         let (name, value) = (a.qualified_name(), a.value());
@@ -132,14 +105,17 @@ fn h2x_copy_attrs(doc: &mut XmlDoc, s: HtmlElement<'_>, el: NodeId) -> Result<()
             (Some(NsId::XML), _) => {
                 mutate::set_attribute_ns(doc, el, crate::xml::XML_NS_URI, name, value)?;
             }
+            /* `xml:` keeps its fixed meaning, as the XML reader gives it:
+             * an HTML `xml:lang` becomes the XML attribute. Any other name
+             * crosses as the DOM's clone has it - in no namespace, named as
+             * it is - which for `xlink:href`, `x-on:click`, `:href` or
+             * `@click` is DOM-loose, as `set_loose_dom_attribute` makes it:
+             * held, and refused by the serializers. */
+            (None, _) if name.starts_with(b"xml:") => {
+                mutate::set_attribute(doc, el, name, value)?;
+            }
             (None, _) => {
-                let colon = name.iter().position(|&b| b == b':');
-                match colon {
-                    Some(c) if &name[..c] != b"xml" => return Err(no_namespace_colon(name)),
-                    _ => {
-                        mutate::set_attribute(doc, el, name, value)?;
-                    }
-                }
+                mutate::set_loose_dom_attribute(doc, el, name, value)?;
             }
             _ => {
                 match a.own_ns_uri() {
@@ -152,48 +128,19 @@ fn h2x_copy_attrs(doc: &mut XmlDoc, s: HtmlElement<'_>, el: NodeId) -> Result<()
     Ok(())
 }
 
-/// The refusal for a no-namespace attribute named with a colon: `BadNsName`
-/// when it reads as `prefix:local` (it has a prefix and no namespace), and
-/// `BadName` when it is no QName at all (`:class`, `a:b:c`), as a malformed
-/// name is refused everywhere else.
-fn no_namespace_colon(name: &[u8]) -> MutError {
-    if crate::xml::qname::split_checked(name).is_some() {
-        MutError::BadNsName
-    } else {
-        MutError::BadName
-    }
-}
-
-/// What [`h2x_make`] produced, plus the default namespace in scope for the new
-/// node's children.
-struct Made<'a> {
-    node: NodeId,
-    child_default: Option<&'a [u8]>,
-}
-
 /// Translate ONE Lexbor node into a fresh mkr node - its own fields and
 /// attributes, NOT its children.
 ///
 /// `None` to SKIP an unsupported type; an `Err` status fails the whole import.
-fn h2x_make<'a>(
-    doc: &mut XmlDoc,
-    s: HtmlNode<'a>,
-    parent_default: Option<&'a [u8]>,
-    parent: Option<NodeId>,
-) -> Result<Option<Made<'a>>, MutError> {
-    let unchanged = |node| {
-        Ok(Some(Made {
-            node,
-            child_default: parent_default,
-        }))
-    };
+fn h2x_make<'a>(doc: &mut XmlDoc, s: HtmlNode<'a>) -> Result<Option<NodeId>, MutError> {
+    let unchanged = |node| Ok(Some(node));
     let data = |n: HtmlNode<'a>| {
         let d = n.data().unwrap_or(&[]);
         fits_u32(d.len()).map(|_| d).or_oom::<MutError>()
     };
 
     if let Some(e) = s.element() {
-        return h2x_element(doc, e, parent_default, parent).map(Some);
+        return h2x_element(doc, e).map(Some);
     }
     let ty = match s.node_type() {
         NodeType::Text => ArenaKind::Text,
@@ -213,14 +160,16 @@ fn h2x_make<'a>(
     unchanged(mutate::new_chardata(doc, ty, data(s)?)?)
 }
 
-/// [`h2x_make`] for an element: its name, the namespace declaration its copy
-/// needs, and its attributes.
-fn h2x_element<'a>(
-    doc: &mut XmlDoc,
-    e: HtmlElement<'a>,
-    parent_default: Option<&'a [u8]>,
-    parent: Option<NodeId>,
-) -> Result<Made<'a>, MutError> {
+/// [`h2x_make`] for an element: its name, in its namespace, and its
+/// attributes.
+///
+/// No `xmlns` declaration is added: the DOM's importNode adds no attribute,
+/// and the copy's namespace is its own from the start (`new_element_in`). It
+/// used to carry one - visible as an attribute a browser's copy does not have,
+/// which a DOM layer could not tell from one it was given - so insertion could
+/// resolve the name, and `canonicalize` render it; the first is gone, and
+/// `canonicalize` adds the declaration a name needs itself.
+fn h2x_element(doc: &mut XmlDoc, e: HtmlElement<'_>) -> Result<NodeId, MutError> {
     let name = e.qualified_name();
     let Some(nl) = fits_u32(name.len()) else {
         return Err(MutError::Oom);
@@ -228,7 +177,7 @@ fn h2x_element<'a>(
     let euri = html_ns_uri(e.node());
 
     /* Three kinds of name. A PREFIXED one (an element that came from
-     * XML) is made as written and its prefix declared on it. An
+     * XML) is made as written, prefix and namespace. An
      * unprefixed name with a colon (a parsed `fb:like`) is one DOM
      * local name, which XML cannot write as it stands: it is taken
      * VERBATIM as a DOM-loose name, so the copy is the DOM's element
@@ -250,41 +199,43 @@ fn h2x_element<'a>(
     let mut made = if colon.is_some() && !prefixed {
         loose(doc)
     } else {
-        mutate::new_element(doc, name)
+        /* Its namespace decided now, as the DOM's clone has its own: made
+         * undecided, it had none until inserted. */
+        mutate::new_element_in(doc, name, euri.unwrap_or(&[]))
     };
     if made.as_ref().err() == Some(&MutError::BadName) && !name.is_empty() {
         made = loose(doc);
     }
     let el = made?;
-
-    let mut child_default = parent_default;
-    if let (true, Some(c)) = (prefixed, colon) {
-        /* Declared where the copy will sit unless its parent's scope
-         * already binds the prefix to the same URI. */
-        let (p, uri) = (&name[..c], euri.unwrap_or(&[]));
-        let bound = parent.is_some_and(|up| mutate::namespace_in_scope(doc, up, p) == uri);
-        if !bound {
-            declare_ns(doc, el, p, uri)?;
-        }
-    } else if euri.unwrap_or(&[]) != parent_default.unwrap_or(&[]) {
-        declare_ns(doc, el, &[], euri.unwrap_or(&[]))?;
-        child_default = Some(euri.unwrap_or(&[]));
-    }
-
     h2x_copy_attrs(doc, e, el)?;
-    Ok(Made {
-        node: el,
-        child_default,
-    })
+    Ok(el)
 }
 
-/// The first child to translate under `s`: a `<template>` descends into its
-/// contents fragment, and has none when that fragment is missing.
+/// The first child to translate under `s`. A `<template>` gives its contents
+/// first, then its own children ([`h2x_next`]): XML has no template contents,
+/// so both become the copy's children, contents first - as XHTML writes them.
 fn h2x_first_child(s: HtmlNode<'_>) -> Option<HtmlNode<'_>> {
     if s.is_html_template() {
-        return s.template_content()?.first_child();
+        if let Some(c) = s.template_content().and_then(HtmlNode::first_child) {
+            return Some(c);
+        }
     }
     s.first_child()
+}
+
+/// The child to translate after `cur` under `s`: its next sibling, and after a
+/// `<template>`'s last content node, the template's own first child. Its own
+/// children (`appendChild` on the template) were dropped - only the contents
+/// crossed, and the rest of the data vanished without a word.
+fn h2x_next<'a>(s: HtmlNode<'a>, cur: HtmlNode<'a>) -> Option<HtmlNode<'a>> {
+    if let Some(n) = cur.next() {
+        return Some(n);
+    }
+    /* `cur` was in the contents fragment, not a child of the template. */
+    if s.is_html_template() && cur.parent() != Some(s) {
+        return s.first_child();
+    }
+    None
 }
 
 /// Deep- or shallow-copy an HTML subtree into the XML arena, detached. `src`
@@ -297,41 +248,33 @@ pub fn cross_html_to_xml(
     let doc = xdoc;
 
     /* `None`: the root's type has no XML counterpart. */
-    let root = h2x_make(doc, src, None, None)?.ok_or(MutError::Type)?;
+    let root = h2x_make(doc, src)?.ok_or(MutError::Type)?;
 
     if deep {
-        let mut stack: Vec<Frame<'_, HtmlNode<'_>, NodeId>> =
+        let mut stack: Vec<Frame<HtmlNode<'_>, NodeId>> =
             try_vec_with_capacity(1).or_oom::<MutError>()?;
         stack
-            .falloc_push(Frame {
-                s: src,
-                d: root.node,
-                def: root.child_default,
-            })
+            .falloc_push(Frame { s: src, d: root })
             .or_oom::<MutError>()?;
 
         while let Some(f) = stack.pop() {
             let mut c = h2x_first_child(f.s);
             while let Some(child) = c {
                 /* An error abandons the partial subtree. */
-                if let Some(made) = h2x_make(doc, child, f.def, Some(f.d))? {
-                    mutate::insert_child(doc, f.d, made.node)?;
+                if let Some(made) = h2x_make(doc, child)? {
+                    mutate::insert_child(doc, f.d, made)?;
                     if h2x_first_child(child).is_some() {
                         stack
-                            .falloc_push(Frame {
-                                s: child,
-                                d: made.node,
-                                def: made.child_default,
-                            })
+                            .falloc_push(Frame { s: child, d: made })
                             .or_oom::<MutError>()?;
                     }
                 }
-                c = child.next();
+                c = h2x_next(f.s, child);
             }
         }
     }
 
-    Ok(root.node)
+    Ok(root)
 }
 
 /* ================= XML (mkr) -> HTML (lxb) ========================== */
@@ -387,9 +330,6 @@ fn x2h_make<'doc>(
                 el.set_ns(NsId::HTML);
                 el
             } else {
-                if hdoc.misreads_html_name(doc.local(s), ns) {
-                    return Err(MutError::HtmlNameCase);
-                }
                 hdoc.create_element_ns(doc.local(s), ns, prefix)
                     .or_oom::<MutError>()?
             };
@@ -429,7 +369,6 @@ pub unsafe fn cross_xml_to_html(
             .falloc_push(Frame {
                 s: src,
                 d: root.link_target(),
-                def: None,
             })
             .or_oom::<MutError>()?;
 
@@ -444,7 +383,6 @@ pub unsafe fn cross_xml_to_html(
                             .falloc_push(Frame {
                                 s: cid,
                                 d: dc.link_target(),
-                                def: None,
                             })
                             .or_oom::<MutError>()?;
                     }

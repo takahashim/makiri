@@ -34,6 +34,7 @@ pub use crate::node_type::NodeType;
 mod attrs;
 mod build;
 mod mutate;
+mod serialize;
 pub use build::{BuildingElement, BuildingNode};
 pub use mutate::{HtmlElementMut, HtmlNodeMut, HtmlTree, Insertion, Place, PreInsertError};
 
@@ -766,7 +767,7 @@ impl<'doc> HtmlNode<'doc> {
     /// `node->parent` as a plain field for the same reason. Do not call this
     /// on a node whose attribute-ness has not been ruled out.
     #[inline]
-    fn tree_parent(self) -> Option<Self> {
+    pub(in crate::lexbor::adapter) fn tree_parent(self) -> Option<Self> {
         // SAFETY: as `node_type`.
         Self::link(unsafe { (*self.as_raw()).parent })
     }
@@ -878,7 +879,7 @@ impl<'doc> HtmlNode<'doc> {
 
     /// The `<template>` whose contents fragment this is, or None - for any
     /// other node, and for a fragment that is not a template's contents.
-    fn template_host(self) -> Option<HtmlNode<'doc>> {
+    pub(in crate::lexbor::adapter) fn template_host(self) -> Option<HtmlNode<'doc>> {
         if self.node_type() != NodeType::DocumentFragment {
             return None;
         }

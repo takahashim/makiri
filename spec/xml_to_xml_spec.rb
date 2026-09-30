@@ -291,18 +291,32 @@ RSpec.describe "Makiri::XML#to_xml" do
   end
 
   describe "#canonicalize" do
-    # c14n renders the declarations the document holds; when they no longer
-    # give a name its namespace it refuses, where it wrote p:x under u2's
-    # declaration - a different namespace - or an unbound prefix.
-    it "refuses names their declarations no longer describe" do
+    # c14n renders the declarations the document holds, and adds the
+    # declaration of a name's own prefix where its namespace was set rather
+    # than declared (DOM Level 3 namespace normalization): it wrote p:x under
+    # u2's declaration - a different namespace - and refused an attribute
+    # set_attribute_ns gave a namespace.
+    it "declares a name's own prefix where the document does not" do
       moved = Makiri::XML(%(<r><a xmlns:p="u1"><p:x/></a><b xmlns:p="u2"/></r>))
       moved.at_xpath("//b").add_child(moved.at_xpath("//*[local-name()='x']"))
-      expect { moved.canonicalize }.to raise_error(Makiri::Error, /no longer match/)
-      expect(Makiri::XML(moved.to_xml).at_xpath("//*[local-name()='x']").namespace_uri).to eq("u1")
+      canonical = moved.canonicalize
+      expect(canonical).to eq(%(<r><a xmlns:p="u1"></a><b xmlns:p="u2"><p:x xmlns:p="u1"></p:x></b></r>))
+      expect(Makiri::XML(canonical).at_xpath("//*[local-name()='x']").namespace_uri).to eq("u1")
 
       nsattr = Makiri::XML("<r/>")
       nsattr.root.set_attribute_ns("urn:q", "q:a", "v")
-      expect { nsattr.canonicalize }.to raise_error(Makiri::Error, /bound to nothing/)
+      expect(nsattr.canonicalize).to eq(%(<r xmlns:q="urn:q" q:a="v"></r>))
+    end
+
+    # It invents no prefix: that would change the names in the canonical form.
+    it "refuses what only an invented prefix could write" do
+      clash = Makiri::XML(%(<r xmlns:q="urn:q"/>))
+      clash.root.set_attribute_ns("urn:a", "q:k", "v") # q is urn:q on this element
+      expect { clash.canonicalize }.to raise_error(Makiri::Error, /two namespaces/)
+      bare = Makiri::XML("<r/>")
+      bare.root.set_attribute_ns("urn:a", "k", "v") # unprefixed, with a namespace
+      expect { bare.canonicalize }.to raise_error(Makiri::Error, /invents no prefix/)
+      expect(Makiri::XML(bare.to_xml).root.attribute_nodes.last.namespace_uri).to eq("urn:a")
     end
 
     it "still renders a consistent document and a subtree under its ancestors' declarations" do

@@ -8,7 +8,7 @@
 #![forbid(unsafe_code)]
 
 use super::assign_qname;
-use super::edit::value_seq_ok;
+use super::edit::dom_refuses_data;
 use crate::xml::chars::validate_chars;
 use crate::xml::qname::{split_checked, Split};
 use crate::xml::{ArenaKind, Document, MutError, NodeFlags, NodeId};
@@ -24,6 +24,20 @@ pub fn new_element(doc: &mut Document, name: &[u8]) -> Result<NodeId, MutError> 
     let el = doc.new_node(ArenaKind::Element)?;
     assign_qname(doc, el, name, &sp)?;
     Ok(el) /* ns_uri stays unresolved until insertion */
+}
+
+/// A detached element named `name` in `ns` ("" = none), its namespace decided
+/// now - as the DOM's clone has its own from the moment it exists. For a copy
+/// from another document (the HTML-to-XML import): [`new_element`]'s element
+/// takes its namespace from where it is first inserted, which left an
+/// imported `<p>` with none until then, where the DOM's is XHTML at once.
+pub fn new_element_in(doc: &mut Document, name: &[u8], ns: &[u8]) -> Result<NodeId, MutError> {
+    let el = new_element(doc, name)?;
+    if !ns.is_empty() {
+        doc.set_ns_bytes(el, ns)?;
+    }
+    doc.node_mut(el).flags.insert(NodeFlags::NS_RESOLVED);
+    Ok(el)
 }
 
 /// A DOM-loose element: `name` may not be a valid XML QName (`":good:times:"`,
@@ -59,11 +73,8 @@ pub fn new_chardata(doc: &mut Document, ty: ArenaKind, text: &[u8]) -> Result<No
     if ty != ArenaKind::Text && ty != ArenaKind::CDataSection && ty != ArenaKind::Comment {
         return Err(MutError::Type);
     }
-    if !validate_chars(text) {
-        return Err(MutError::BadChars);
-    }
-    if !value_seq_ok(ty, text) {
-        return Err(MutError::BadChars);
+    if let Some(why) = dom_refuses_data(ty, text) {
+        return Err(MutError::InvalidCharacter(why));
     }
     let n = doc.new_node(ty)?;
     doc.set_value_bytes(n, text)?;
@@ -75,11 +86,8 @@ pub fn new_pi(doc: &mut Document, target: &[u8], data: &[u8]) -> Result<NodeId, 
     {
         return Err(MutError::BadName);
     }
-    if !validate_chars(data) {
-        return Err(MutError::BadChars);
-    }
-    if !value_seq_ok(ArenaKind::Pi, data) {
-        return Err(MutError::BadChars);
+    if let Some(why) = dom_refuses_data(ArenaKind::Pi, data) {
+        return Err(MutError::InvalidCharacter(why));
     }
     let pi = doc.new_node(ArenaKind::Pi)?;
     let t = doc.store(target)?;

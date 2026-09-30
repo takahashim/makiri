@@ -209,7 +209,7 @@ fn xml_mut_error(st: MutError) -> Error {
             return crate::bridge::ruby::arg_error("not a well-formed XML name");
         }
         MutError::BadDomName(why) => return crate::bridge::ruby::arg_error(why),
-        MutError::BadChars => "value contains a character or sequence not permitted in XML",
+        MutError::InvalidCharacter(why) => return crate::bridge::ruby::arg_error(why),
         MutError::UnboundNs => "namespace prefix is not bound in this scope",
         MutError::Type => "operation unsupported for this node type",
         MutError::Cycle => "cannot insert a node into its own subtree",
@@ -244,7 +244,6 @@ namespace (only xmlns=\"\" undeclares, and only the default)"
             "the namespace does not fit the qualified name (a prefix needs a namespace; \
 xml and xmlns take only their own)"
         }
-        MutError::HtmlNameCase => crate::bridge::html::HTML_NAME_CASE,
         MutError::Internal => "internal error mutating XML (no document)",
         /* The document's own budget, not the machine's memory - so the same
          * exception a parse raises for the same cause. */
@@ -364,7 +363,7 @@ pub fn verified_text(v: Value, what: &str) -> Result<RubyText, Error> {
 }
 
 /// `t`, unless it is too long for an XML node's `u32` span.
-fn fits_xml_node(t: RubyText) -> Result<RubyText, Error> {
+fn fits_xml_node<T: core::ops::Deref<Target = str>>(t: T) -> Result<T, Error> {
     if u32::try_from(t.len()).is_err() {
         return Err(makiri_error("string too long for an XML node (max 4 GiB)"));
     }
@@ -376,6 +375,26 @@ fn fits_xml_node(t: RubyText) -> Result<RubyText, Error> {
 /// ([`crate::bridge::string::ruby_verified_name`]).
 pub fn verified_name(v: Value, what: &str) -> Result<RubyText, Error> {
     fits_xml_node(crate::bridge::string::ruby_verified_name(v, what)?)
+}
+
+/// [`verified_text`] for DATA - text, comment, CDATA and PI content, an
+/// attribute value: valid UTF-8, and NUL allowed, as the DOM allows it there
+/// ([`crate::bridge::string::ruby_verified_data`], what HTML's data takes).
+/// XML cannot write U+0000, so the serializers refuse a tree holding one, as
+/// they refuse any character XML has no `Char` for.
+pub fn verified_data(v: Value, what: &str) -> Result<crate::bridge::string::RubyData, Error> {
+    fits_xml_node(crate::bridge::string::ruby_verified_data(v, what)?)
+}
+
+/// [`verified_data`] for an optional argument: `nil` is `None`.
+pub fn verified_data_opt(
+    v: Value,
+    what: &str,
+) -> Result<Option<crate::bridge::string::RubyData>, Error> {
+    if v.is_nil() {
+        return Ok(None);
+    }
+    verified_data(v, what).map(Some)
 }
 
 /// [`verified_name`] for an optional argument: `nil` is `None`.

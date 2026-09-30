@@ -75,34 +75,55 @@ RSpec.describe "browser-DOM interop" do
       expect(div.attribute_nodes.map(&:name)).to eq(["id"])
     end
 
-    # Lexbor makes an element from its lower-cased name, so `BR` would be the
-    # void `br` (a child appended to it vanished from to_html), `SCRIPT` a
-    # raw-text element. The DOM makes an unknown element; Makiri refuses.
-    it "refuses an upper-case HTML name that lower-cases to a known element" do
-      %w[BR SCRIPT TEMPLATE DIV h:BR].each do |name|
-        expect { doc.create_element_ns(XHTML_NS, name) }.to raise_error(Makiri::Error, /upper-case name/)
+    # The HTML Standard's "element interface" and "serializes as void" compare
+    # names case-sensitively: createElementNS(XHTML, "BR") is an unknown
+    # element named BR, not a void br. Lexbor keys a tag by its lower-cased
+    # name, which made BR the void br (a child appended to it vanished from
+    # to_html) and SCRIPT a raw-text element; such a name now gets a tag of
+    # its own. (0.11.0 refused these names.)
+    it "makes an upper-case HTML name the unknown element the DOM makes" do
+      body = doc.body
+      made = %w[BR SCRIPT TEMPLATE INPUT DIV MY-EL h:BR].to_h do |name|
+        el = doc.create_element_ns(XHTML_NS, name)
+        el << doc.create_text_node("t<&")
+        body << el
+        [name, el]
       end
-      el = doc.create_element_ns(XHTML_NS, "MY-EL")
-      el << doc.create_text_node("kept")
-      expect(el.to_html).to eq("<MY-EL>kept</MY-EL>")
-      expect(doc.create_element_ns(SVG_NS, "BR").name).to eq("BR")
-      xml = Makiri::XML(%(<r xmlns:h="#{XHTML_NS}"><h:BR>t</h:BR></r>))
-      expect { doc.import_node(xml.root.element_children.first, true) }
-        .to raise_error(Makiri::Error, /upper-case name/)
+      made.each do |name, el|
+        expect([el.name, el.namespace_uri]).to eq([name, XHTML_NS])
+        expect(el.to_html).to eq("<#{name}>t&lt;&amp;</#{name}>") # not void, not raw text
+      end
+      expect(made["TEMPLATE"].content_fragment).to be_nil
+      expect(doc.css(":enabled")).to be_empty # INPUT is no input
+      expect(made["h:BR"].prefix).to eq("h")
     end
 
-    # The same through import_node of an UNPREFIXED XHTML element, which was
-    # made by its lower-cased name: `BR` came out the void `br` with its text
-    # gone, and `Foo` renamed `foo`.
-    it "imports an unprefixed upper-case XHTML name as createElementNS would" do
-      %w[BR INPUT].each do |name|
-        xml = Makiri::XML(%(<#{name} xmlns="#{XHTML_NS}">t</#{name}>))
-        expect { doc.import_node(xml.root, true) }.to raise_error(Makiri::Error, /upper-case name/)
-      end
-      { "Foo" => "Foo", "MY-EL" => "MY-EL", "div" => "div" }.each do |name, want|
+    it "keeps such an element distinct from the lower-case one of that name" do
+      body = Makiri::HTML("<body><div>d</div><br></body>").body
+      d = body.document
+      div = d.create_element_ns(XHTML_NS, "DIV")
+      br = d.create_element_ns(XHTML_NS, "BR")
+      body << div << br
+      expect(d.css("div").map(&:name)).to eq(%w[div]) # type selectors: see below
+      expect(div.matches?("div")).to be(false)
+      # XPath name tests fold case on HTML elements, as browsers match them,
+      # whether the tag index or the walk answers
+      expect(d.xpath("//div").map(&:name)).to eq(%w[div DIV])
+      expect(d.xpath("/html/body/br").map(&:name)).to eq(%w[br BR])
+      [div, br].each { |el| expect(d.at_xpath(el.path)).to eq(el) }
+      expect([div.dup.name, Makiri::HTML("").import_node(br, true).to_html]).to eq(["DIV", "<BR></BR>"])
+      expect(Makiri::XML("<r/>").import_node(div, true).name).to eq("DIV")
+    end
+
+    it "imports an upper-case XHTML name from XML as createElementNS would" do
+      %w[BR INPUT Foo MY-EL div].each do |name|
         el = doc.import_node(Makiri::XML(%(<#{name} xmlns="#{XHTML_NS}">t</#{name}>)).root, true)
-        expect([el.name, el.namespace_uri, el.text]).to eq([want, XHTML_NS, "t"])
+        expect([el.name, el.namespace_uri, el.text]).to eq([name, XHTML_NS, "t"])
+        expect(el.to_html).to end_with(">t</#{name}>") # children kept: not void
       end
+      xml = Makiri::XML(%(<r xmlns:h="#{XHTML_NS}"><h:BR>t</h:BR></r>))
+      el = doc.import_node(xml.root.element_children.first, true)
+      expect([el.name, el.to_html]).to eq(["h:BR", "<h:BR>t</h:BR>"])
     end
 
     it "keeps a prefix" do
@@ -235,6 +256,76 @@ RSpec.describe "browser-DOM interop" do
     end
   end
 
+  # The DOM's setAttributeNS takes any valid attribute local name, which is
+  # far looser than an NCName: `a}b` is one. XML's set_attribute_ns refused it
+  # as no XML name; it is now held DOM-loose, as the HTML side already took it.
+  describe "XML set_attribute_ns with a name XML cannot write" do
+    let(:doc) { Makiri::XML("<r/>") }
+    let(:root) { doc.root }
+
+    it "splits it by the DOM's rule and keys it by namespace and local name" do
+      root.set_attribute_ns("urn:u", "p:a}b", "v")
+      attr = root.attribute_nodes.last
+      expect([attr.name, attr.namespace_uri, attr.prefix, attr.local_name]).to eq(["p:a}b", "urn:u", "p", "a}b"])
+      root.set_attribute_ns("urn:u", "a}b", "w") # the same (namespace, local name)
+      expect(root.attribute_nodes.map { [_1.name, _1.value] }).to eq([["p:a}b", "w"]])
+      root.set_attribute_ns("urn:u", "q:a:b", "v")
+      expect(root.attribute_nodes.last.local_name).to eq("a:b")
+    end
+
+    it "refuses to serialize it, and not once it is gone" do
+      root.set_attribute_ns("urn:u", "p:a}b", "v")
+      expect { doc.to_xml }.to raise_error(Makiri::Error, /DOM-loose attribute/)
+      expect { doc.canonicalize }.to raise_error(Makiri::Error, /DOM-loose attribute/)
+      root.remove_attribute_ns("urn:u", "a}b")
+      expect(doc.to_xml).to eq(%(<?xml version="1.0"?>\n<r/>\n))
+    end
+
+    it "still refuses what the DOM refuses" do
+      expect { root.set_attribute_ns("urn:u", "a b", "v") }.to raise_error(ArgumentError)
+      expect { root.set_attribute_ns("urn:u", ":a", "v") }.to raise_error(ArgumentError)
+      expect { root.set_attribute_ns(nil, "p:a}b", "v") }.to raise_error(Makiri::Error, /does not fit/)
+    end
+  end
+
+  # DOM importNode: the clone is in its namespace, and its attributes are named
+  # as they are, from the moment it exists.
+  describe "import_node from HTML into XML" do
+    let(:html) { Makiri::HTML("<body></body>") }
+    let(:xml) { Makiri::XML("<r/>") }
+
+    it "gives the copy its namespace at once, before it is inserted" do
+      expect(xml.import_node(html.create_element("p")).namespace_uri).to eq(XHTML_NS)
+      svg = xml.import_node(Makiri::HTML("<svg><rect/></svg>").at_css("svg"), true)
+      expect([svg.namespace_uri, svg.element_children.first.namespace_uri]).to eq([SVG_NS, SVG_NS])
+      other = Makiri::XML(%(<r xmlns="urn:other"/>))
+      p = other.import_node(html.create_element("p"))
+      other.root << p
+      expect(p.namespace_uri).to eq(XHTML_NS)
+    end
+
+    # The DOM's importNode adds no attribute. The copy carried an xmlns
+    # declaration, which a DOM layer could not tell from one it was given;
+    # to_xml and canonicalize write the declarations the output needs.
+    it "adds no xmlns attribute, and still writes and canonicalizes as XHTML" do
+      copy = xml.import_node(html.create_element("p"))
+      expect(copy.attribute_nodes).to be_empty
+      xml.root << copy
+      expect(xml.to_xml).to include(%(<p xmlns="#{XHTML_NS}"/>))
+      expect(xml.canonicalize).to eq(%(<r><p xmlns="#{XHTML_NS}"></p></r>))
+      expect(Makiri::XML(xml.to_xml).root.element_children.first.namespace_uri).to eq(XHTML_NS)
+    end
+
+    it "carries an attribute in no namespace named as it is" do
+      el = html.create_element("p")
+      el["xlink:href"] = "1"
+      el["x-on:click"] = "f"
+      copy = xml.import_node(el, true)
+      expect(copy.attribute_nodes.map { [_1.name, _1.namespace_uri] })
+        .to include(["xlink:href", nil], ["x-on:click", nil])
+    end
+  end
+
   describe "XML Element#set_loose_dom_attribute" do
     let(:doc) { Makiri::XML(%(<r xmlns:p="urn:p"><c/></r>)) }
     let(:root) { doc.root }
@@ -296,11 +387,12 @@ RSpec.describe "browser-DOM interop" do
         .to eq([["xmlns:p", XMLNS_NS], ["xmlns", nil]])
     end
 
-    it "holds the name to the DOM's rule and the value to XML's characters" do
+    it "holds the name to the DOM's rule, and the value to none (to_xml refuses)" do
       expect { root.set_loose_dom_attribute("a b", "v") }.to raise_error(ArgumentError, /invalid DOM attribute name/)
       expect { root.set_loose_dom_attribute("a=b", "v") }.to raise_error(ArgumentError)
       expect { root.set_loose_dom_attribute("", "v") }.to raise_error(ArgumentError)
-      expect { root.set_loose_dom_attribute("a", "\u0001") }.to raise_error(Makiri::Error, /not permitted in XML/)
+      root.set_loose_dom_attribute("a", "\u0001")
+      expect { doc.to_xml }.to raise_error(Makiri::Error, /character data XML cannot hold/)
     end
 
     it "leaves set_attribute_ns the DOM's setAttributeNS" do

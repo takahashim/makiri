@@ -127,9 +127,10 @@ fn sink_for(node: HtmlNode<'_>) -> Sink<'_> {
 /// Serialize `node` into owned UTF-8 bytes. `deep` selects the children-only
 /// (inner) serializer over the tree (outer) one; `pretty` selects indented
 /// output. `None` is a Lexbor status failure (the buffer is freed).
-pub fn serialize(node: RawNode, deep: bool, pretty: bool) -> Option<Buf> {
+pub fn serialize(node: RawNode, deep: bool, pretty: bool, template_aware: bool) -> Option<Buf> {
     // SAFETY: `node` came from a live wrapper, so it and its document are live.
-    let mut c = Chunks::new(sink_for(unsafe { node.as_node() }));
+    let handle = unsafe { node.as_node() };
+    let mut c = Chunks::new(sink_for(handle));
     let node = node.as_lxb_mut();
 
     // SAFETY: the buffer is freed by `Buf`'s Drop however this exits, including
@@ -144,7 +145,14 @@ pub fn serialize(node: RawNode, deep: bool, pretty: bool) -> Option<Buf> {
                 Some(chunk_cb::<Sink>),
                 ctx,
             ),
+            /* The plain forms walk here (`HtmlNode::serialize_to`) once a
+             * template of the document may have children of its own, so it
+             * writes its contents and not them; until then Lexbor's own walk
+             * writes the same, ~5% faster. The pretty ones are Lexbor's own
+             * format, left as Lexbor writes it. */
+            (_, false) if template_aware => handle.serialize_to(deep, Some(chunk_cb::<Sink>), ctx),
             (true, false) => lxb_html_serialize_deep_cb(node, Some(chunk_cb::<Sink>), ctx),
+            (false, false) => lxb_html_serialize_tree_cb(node, Some(chunk_cb::<Sink>), ctx),
             (false, true) => lxb_html_serialize_pretty_tree_cb(
                 node,
                 LXB_HTML_SERIALIZE_OPT_UNDEF,
@@ -152,7 +160,6 @@ pub fn serialize(node: RawNode, deep: bool, pretty: bool) -> Option<Buf> {
                 Some(chunk_cb::<Sink>),
                 ctx,
             ),
-            (false, false) => lxb_html_serialize_tree_cb(node, Some(chunk_cb::<Sink>), ctx),
         };
 
         /* Lexbor has returned, so this is the first frame where a panic the

@@ -163,6 +163,12 @@ pub fn import_node(rb_self: Value, node_v: Value, deep: bool) -> Result<Value, E
         // SAFETY: `doc` is the receiver's live document.
         unsafe { import_copy(doc, src, deep, "import node") }
     })??;
+    /* The copy carries whatever its source held. */
+    if crate::bridge::wrapper::may_hold_template_children(
+        crate::bridge::wrapper::keepalive_document(node_v)?,
+    ) {
+        crate::bridge::wrapper::note_template_children(rb_self);
+    }
     wrap_html_node(imp, rb_self)
 }
 

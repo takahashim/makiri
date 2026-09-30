@@ -895,6 +895,25 @@ pub fn ensure_document_mutable(rb_doc: Value) -> Result<(), Error> {
 
 /// Drop the DOM and text indexes so the next query rebuilds them. An XML
 /// Document keeps none.
+/// Record that `rb_doc` may now hold a `<template>` with children of its own
+/// (`HtmlParsed::note_template_children`): an edit placed one under a
+/// template, or a copy came from a document that may hold one.
+pub fn note_template_children(rb_doc: Value) {
+    if let Content::Html(_) = doc_content_known(rb_doc) {
+        with_html_parsed_known(rb_doc, HtmlParsed::note_template_children);
+    }
+}
+
+/// Whether `rb_doc` may hold a `<template>` with children of its own. True for
+/// anything that is no parsed HTML document, which the template-aware
+/// serializer is right for too.
+pub fn may_hold_template_children(rb_doc: Value) -> bool {
+    match doc_content_known(rb_doc) {
+        Content::Html(_) => with_html_parsed_known(rb_doc, |p| p.may_hold_template_children()),
+        _ => true,
+    }
+}
+
 pub fn invalidate_indexes(rb_doc: Value) {
     if let Content::Html(_) = doc_content_known(rb_doc) {
         with_html_parsed_known(rb_doc, HtmlParsed::invalidate_indexes);

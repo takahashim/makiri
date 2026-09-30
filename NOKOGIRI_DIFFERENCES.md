@@ -184,11 +184,11 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
     that does not fit the name (`set_attribute_ns`, `create_element_ns`)
     raises `Makiri::Error`. Invalid UTF-8 raises `Makiri::Error` for every
     argument, names included.
-  * `create_element_ns` refuses an HTML-namespace name in upper case that
-    lower-cases to an element Lexbor knows (`BR`, `DIV`), where the DOM makes
-    an unknown element: Lexbor would make that element (`BR` void, its
-    children never written). Other names keep their case (`MY-EL`). Nokogiri
-    has no `create_element_ns`.
+  * `create_element_ns` keeps the case of an HTML-namespace name, as the DOM
+    does: `create_element_ns(XHTML, "BR")` is an unknown element named `BR`,
+    not a void `br`, and type selectors do not match it (XPath name tests do,
+    folding case on HTML elements as browsers do). Nokogiri has no
+    `create_element_ns`.
 * An HTML `<template>` follows the WHATWG content model, which Nokogiri does
   not: its parsed contents live in the separate fragment `Element#content_fragment`
   returns, `template.children` is empty, and `inner_html` / `inner_html=`
@@ -198,6 +198,11 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
   ordinary element, with the parsed nodes as its children, so
   `template.inner_html` and `template.children` answer the other way round and
   there is no `content_fragment`.
+  * `Makiri::XML` has no template contents: an XHTML `<template>`'s children
+    are its children. Crossing into HTML they become its contents, and back
+    they become children - what a browser's XML parser, which puts them in the
+    contents, and its importNode give for the same document. An XML
+    `<template>` whose children should stay children has no way to say so.
 * An HTML document has one root element and no text child, as the DOM requires;
   `doc << element` beside an existing root raises.
 * An insertion the DOM refuses - a child under a text, comment, PI, doctype
@@ -205,13 +210,20 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
   `Makiri::Error` in both representations. Nokogiri refuses the same ones with
   `ArgumentError` (or `RuntimeError` for a second XML root).
 * Moving HTML into an XML document (`xml_doc.import_node(html_node)`, or
-  inserting one) keeps every name's namespace, and refuses what XML cannot
-  write that way. An attribute in no namespace whose name has a prefix other
-  than `xml` - `v-on:click`, `fb:like`, an `xlink:href` on an HTML (not SVG)
-  element - raises `Makiri::Error`: as XML it would be a prefix bound to
-  nothing. Nokogiri copies it and writes `v-on:click="..."` into output that is
-  not namespace-well-formed. An element named with a colon (`<fb:like>`)
-  crosses as a DOM-loose name, which `to_xml` refuses.
+  inserting one) copies it as the DOM's clone does: every element in its
+  namespace from the start (an imported `<p>` is XHTML before it is
+  inserted), every attribute named as it is, and no `xmlns` attribute added -
+  `to_xml` and `canonicalize` write the declarations the output needs.
+  Nokogiri's copy of an HTML5 `<div>` is in no namespace, and libxml2
+  declares `xmlns:svg` on it for an SVG child (in `namespace_definitions`),
+  writing the child as `<svg:svg>`. One XML cannot write that way -
+  in no namespace with a colon or no XML name, `v-on:click`, `:href`,
+  `@click`, `fb:like` - crosses DOM-loose, and `to_xml` refuses the tree
+  while it is there; so does an element named with a colon (`<fb:like>`).
+  Nokogiri copies them and writes output that is not namespace-well-formed.
+  * One exception to the DOM: an HTML attribute named `xml:lang` (in no
+    namespace) becomes the XML namespace's `xml:lang`, as the XML reader reads
+    that name, so XHTML-style HTML still writes as XML.
 * A known gap, in Lexbor's tag table: an HTML document that already holds a
   parsed element named with a colon (`<x:y>`, one local name) and then
   receives, by `import_node` from another document, a prefixed element
@@ -284,7 +296,7 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
   case-sensitivity rule, as browsers do: lower-cased for an HTML element (`LI`
   matches `<li>`), as written for any other (`feGaussianBlur` matches the SVG
   element, `fegaussianblur` does not). An HTML element named in upper case
-  (`create_element_ns(XHTML, "MY-EL")`, which keeps its name as the DOM does)
+  (`create_element_ns(XHTML, "DIV")`, which keeps its name as the DOM does)
   therefore matches no type selector.
   * `Nokogiri::HTML5` is case-sensitive on HTML elements too, so `LI` does not
     match `<li>` there. `Makiri::XML`'s `#css` is case-sensitive, as XML names
@@ -321,5 +333,12 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
   `Makiri::Error`.
   * On re-parse, the HTML tokenizer replaces a U+0000 in text/attributes with
     U+FFFD (WHATWG), so a serialized-then-reparsed round-trip is not byte-identical.
-  * `Makiri::XML` rejects NUL everywhere: XML 1.0 has no legal U+0000 character,
-    so admitting it would produce non-well-formed XML.
+  * `Makiri::XML` holds the character data the DOM holds, NUL included:
+    text or an attribute value with a character XML has no `Char` for (`\f`,
+    U+0001, U+0000), a comment with `--`. Nokogiri takes the same, but NUL
+    (`ArgumentError`, a Ruby C-string limit). Where they part is the output. `to_xml` / `canonicalize` raise for such a tree; Nokogiri writes
+    `\f` in text as U+FFFD (the data changes) and a comment's `--` or an
+    attribute value's `\f` as it stands (the output does not parse).
+    `create_cdata` refuses `]]>` and `create_processing_instruction` `?>`,
+    raising `ArgumentError` as the DOM's factories do; Nokogiri takes the PI
+    and writes `<?t a?>b?>`, which re-reads as another tree.

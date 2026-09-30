@@ -396,6 +396,15 @@ fn release_from_tree(node: HtmlNodeMut<'_>) {
 pub fn insert(this: &HtmlSelf, rb_incoming: Value, place: Place) -> Result<Value, Error> {
     let target = edit(this)?.node()?;
     let (key, incoming_doc) = html_node_key(rb_incoming)?;
+    /* A child placed under a template is one of its own, not its contents
+     * (see `HtmlParsed::note_template_children`). */
+    let parent_after = match place {
+        Place::Child => Some(target.node()),
+        Place::Before | Place::After | Place::Replace => target.node().parent(),
+    };
+    if parent_after.is_some_and(HtmlNode::is_html_template) {
+        crate::bridge::wrapper::note_template_children(this.document);
+    }
     /* The argument is relinked too - `place` changes its parent and siblings, and
      * an adoption removes it from its own document - so a frozen argument is a
      * frozen node being modified. The receiver check alone let it through, which
@@ -418,6 +427,10 @@ pub fn insert(this: &HtmlSelf, rb_incoming: Value, place: Place) -> Result<Value
     })??;
     if !adopted {
         return Ok(rb_incoming);
+    }
+    /* The copy carries whatever its source held. */
+    if crate::bridge::wrapper::may_hold_template_children(incoming_doc) {
+        crate::bridge::wrapper::note_template_children(this.document);
     }
     adopt_release(rb_incoming)?;
     wrap_html_node(placed, this.document)
@@ -562,12 +575,6 @@ pub fn set_text_content(node: HtmlNodeMut<'_>, text: &RubyData) -> Result<(), Ad
 pub fn create_element<'d>(doc: HtmlDoc<'d>, name: &RubyText) -> Option<RawNode> {
     doc.create_element(name.as_bytes()).map(RawNode::from)
 }
-
-/// The refusal of an HTML-namespace name Lexbor would make as another element
-/// (`HtmlDoc::misreads_html_name`), from `create_element_ns` and the
-/// XML-to-HTML import alike.
-pub const HTML_NAME_CASE: &str = "cannot make an HTML element whose upper-case name \
-lower-cases to a known element (BR, SCRIPT, ...): it would be made as that element";
 
 /// A new element named `local` in namespace `ns` ("" = none), with `prefix`
 /// ("" = none) - the DOM's createElementNS, once the caller has validated and

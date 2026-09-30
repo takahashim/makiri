@@ -44,6 +44,11 @@ pub enum Failure {
     /// to declare (`set_attribute_ns(XMLNS, "xmlns:p", "")`, which the DOM
     /// allows): its name is fine, and no XML can hold it.
     ForbiddenDeclaration,
+    /// Character data XML cannot hold: a character outside XML 1.0's `Char`
+    /// (`\f`, U+0001) in text, an attribute value, a comment, CDATA or a PI,
+    /// or `--` in a comment, `?>` in a PI. The DOM holds all of it, so the
+    /// mutators take it; it is refused where it would be written.
+    UnwritableData,
     /// A DOM-loose DOCTYPE (`create_document_type`): a name or an id XML
     /// cannot write. Only [`to_xml`] refuses it; canonical form omits the
     /// document type declaration, so it has nothing to write wrong.
@@ -69,12 +74,12 @@ pub enum Failure {
     /// re-declares prefixes deeply enough that resolving them all is not worth
     /// doing. Fails closed rather than running on.
     NamespaceBudget,
-    /// Canonical XML renders the declarations the document holds, and they
-    /// no longer give some name the namespace it has - an element moved out
-    /// from under its declaration, one removed, or an attribute given a
-    /// namespace by `set_attribute_ns`. Rendered anyway, the output named a
-    /// different namespace or an unbound prefix; canonical form cannot add
-    /// declarations the document lacks, so it refuses.
+    /// Canonical XML renders the declarations the document holds, adding the
+    /// declaration of a name's own prefix where one is missing - but it
+    /// invents no prefix, so it refuses a tree where one prefix would have to
+    /// mean two namespaces on one element (its own declaration says otherwise,
+    /// or two of its names need it), or an unprefixed attribute has a
+    /// namespace. Rendered anyway, the output named a different namespace.
     NamespaceMismatch,
     /// A name's prefix is bound to nothing - a detached element built with
     /// `q:e`, or an attribute whose prefix never resolved - so it has no

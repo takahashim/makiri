@@ -508,12 +508,13 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            NOT XML naming), `mutate`, `index`, `encoding_sniff`,
                            and `serialize/` (`out` = buffer + one escape table,
                            `xml` = plans a prefix per name, `c14n` = renders the
-                           document's own declarations)
+                           document's own declarations, adding a name's own
+                           prefix where its namespace was set, never inventing one)
     lexbor/                the Lexbor boundary: `abi` - the generated layout and
                            functions (the `_noi` twins included), the ONE place
                            a Lexbor function is declared (a second `extern "C"`
                            spelling is a second Rust type for the symbol;
-                           `rake unsafe:boundaries` fails on one). Only the three
+                           `rake unsafe:boundaries` fails on one). Only the four
                            exports no header declares are written by hand, and
                            build.rs's `UNDECLARED_EXPORTS` fails the build if
                            their C definitions change - `adapter`, the one reader of
@@ -588,9 +589,12 @@ own copy, since a lock it does not own can be released under it; a frozen
 String, which no Ruby can change, is borrowed as it is. The bytes are
 borrowed and CHECKED only after that (`RubyStr::acquire`): a failed lock attempt
 raises, and raising runs Ruby that can change the String. Only the lock's own
-refusal is swallowed - anything else raised there (an interrupt) propagates. `Makiri::XML` keeps
-rejecting NUL everywhere (its `crate::xml` engine enforces the XML 1.0 char class,
-independent of the bridge; U+0000 can't be well-formed XML). Don't drop the
+refusal is swallowed - anything else raised there (an interrupt) propagates. `Makiri::XML`'s data
+takes NUL too (`bridge::xml::verified_data`), as the DOM does, and so does every
+character XML has no `Char` for: the XML mutators hold what the DOM holds, and
+the serializers refuse a tree XML cannot write, deciding from the data as it is
+written (`serialize::out`'s byte-class table), never from a flag a setter could
+leave stale. XML names stay NUL-strict, like HTML's. Don't drop the
 UTF-8 checks or route a name/engine string through the data path; see
 `docs/string_types.md`.
 
@@ -946,8 +950,24 @@ flag turns a re-entrant second borrow into `Busy` rather than a second
 `&mut`. Outside Ruby (cargo tests, fuzz) `Gvl::exclusive()` stands in with a
 process-wide mutex; it does not exist in the extension build.
 
-**Serialization** (`lexbor/serialize.rs`). `Node#{to_html,to_s,outer_html}` =
-Lexbor `serialize_tree_cb`, `#inner_html` = `serialize_deep_cb`; the callback
+**Serialization** (`lexbor/serialize.rs`). `Node#{to_html,to_s,outer_html}` and
+`#inner_html` are Lexbor's tree / deep serializers with the WALK driven from
+Rust (`HtmlNode::serialize_to`, `adapter/html/serialize.rs`): each node's own
+markup is Lexbor's `lxb_html_serialize_cb`, an end tag is what Lexbor's
+(unexported) closer writes, and a `<template>` writes its CONTENTS and not its
+own children, as the HTML Standard's fragment serializing does - Lexbor walked
+into both. The void test is a Rust read of the tag id (`shape`), not the
+`_noi` FFI twin, which cost ~10%; the walk still costs ~5% over Lexbor's own
+loop on the bench document, so it runs only once a template of the document
+MAY have a child of its own (`HtmlParsed::note_template_children`, a sticky
+flag the parser leaves false; set where an insert's parent is a template,
+by `content=` / `outer_html=` there, and by a copy from a document that has
+it). Until then Lexbor's walk, which writes the same. A scan of the subtree
+instead of the flag cost ~15% - cache-bound, like every walk over Lexbor's
+96-byte nodes. A new way to give a template an own child must set the flag
+(`spec/template_contents_contract_spec.rb` has one example per way).
+`pretty: true` is still Lexbor's walk (its own format, not the Standard's).
+The callback
 collects Lexbor's many small chunks into one growing C buffer (`cbuf::Buf`,
 **pre-reserved** via `Buf::reserve` so the per-chunk appends don't realloc on
 every geometric step - but only for the document or its root element: the

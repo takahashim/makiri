@@ -40,6 +40,10 @@ fn failure_error(f: Failure, verb: &str) -> Error {
                 "cannot {verb} XML containing a DOM-loose doctype (a name or id XML cannot write)"
             )
         }
+        Failure::UnwritableData => format!(
+            "cannot {verb} XML containing character data XML cannot hold (a character \
+outside XML's, -- in a comment, or ?> in a processing instruction)"
+        ),
         Failure::ForbiddenDeclaration => format!(
             "cannot {verb} XML containing a namespace declaration XML forbids \
 (such as xmlns:p=\"\", held as set_attribute_ns made it)"
@@ -74,9 +78,9 @@ fn failure_error(f: Failure, verb: &str) -> Error {
 or insert the node where it is declared)"
         ),
         Failure::NamespaceMismatch => format!(
-            "cannot {verb} XML whose namespace declarations no longer match its names \
-(a node moved from under its declaration, or one removed); to_xml writes the \
-declarations it needs"
+            "cannot {verb} XML where one prefix would have to mean two namespaces on an \
+element, or an unprefixed attribute has a namespace (canonical form invents no \
+prefix); to_xml writes such a tree"
         ),
     };
     makiri_error(msg)

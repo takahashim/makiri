@@ -19,7 +19,7 @@
 
 #![forbid(unsafe_code)]
 
-use super::out::{put, put_pi, W, XML};
+use super::out::{put, put_comment, put_pi, writable_chars, W, XML};
 use super::Failure;
 use crate::cbuf::Buf;
 use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeFlags, NodeId, MAX_DEPTH};
@@ -298,6 +298,7 @@ impl<'d, 'b> Writer<'d, 'b> {
     /// across two sections instead - `]]` ends one, `>` starts the next - which
     /// is what libxml2 writes, and re-parses (and re-merges) to the same value.
     fn cdata(&mut self, value: &[u8]) -> W {
+        writable_chars(value)?;
         self.put(b"<![CDATA[")?;
         let mut rest = value;
         /* A byte scan resumed after each match: linear in the value. (A UTF-8
@@ -321,11 +322,7 @@ impl<'d, 'b> Writer<'d, 'b> {
             Some(ArenaKind::Element) => self.element(n, depth, binds),
             Some(ArenaKind::Text) => self.escape(doc.span(doc.node(n).value), false),
             Some(ArenaKind::CDataSection) => self.cdata(doc.span(doc.node(n).value)),
-            Some(ArenaKind::Comment) => {
-                self.put(b"<!--")?;
-                self.put(doc.span(doc.node(n).value))?;
-                self.put(b"-->")
-            }
+            Some(ArenaKind::Comment) => put_comment(self.b, doc.span(doc.node(n).value)),
             Some(ArenaKind::Pi) => put_pi(self.b, doc, n),
             Some(ArenaKind::DocumentFragment) => {
                 for cid in doc.children(n) {
