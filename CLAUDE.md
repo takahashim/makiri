@@ -956,7 +956,15 @@ markup is Lexbor's `lxb_html_serialize_cb`, an end tag is what Lexbor's
 (unexported) closer writes, and a `<template>` writes its CONTENTS and not its
 own children, as the HTML Standard's fragment serializing does - Lexbor walked
 into both. The void test is a Rust read of the tag id (`shape`), not the
-`_noi` FFI twin, which cost ~10%; the walk costs ~3% over Lexbor's own loop.
+`_noi` FFI twin, which cost ~10%; the walk still costs ~5% over Lexbor's own
+loop on the bench document, so it runs only once a template of the document
+MAY have a child of its own (`HtmlParsed::note_template_children`, a sticky
+flag the parser leaves false; set where an insert's parent is a template,
+by `content=` / `outer_html=` there, and by a copy from a document that has
+it). Until then Lexbor's walk, which writes the same. A scan of the subtree
+instead of the flag cost ~15% - cache-bound, like every walk over Lexbor's
+96-byte nodes. A new way to give a template an own child must set the flag
+(`spec/template_contents_contract_spec.rb` has one example per way).
 `pretty: true` is still Lexbor's walk (its own format, not the Standard's).
 The callback
 collects Lexbor's many small chunks into one growing C buffer (`cbuf::Buf`,

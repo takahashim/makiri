@@ -23,9 +23,16 @@ fn pretty_opt(ruby: &Ruby, args: &[Value]) -> Result<bool, Error> {
 
 /// The receiver's serialization as a UTF-8 String, or `Makiri::Error` on a
 /// Lexbor status failure.
-fn render(ruby: &Ruby, node: RawNode, deep: bool, pretty: bool) -> Result<RString, Error> {
-    let buf =
-        serialize(node, deep, pretty).ok_or_else(|| makiri_error("HTML serialization failed"))?;
+fn render(
+    ruby: &Ruby,
+    document: Value,
+    node: RawNode,
+    deep: bool,
+    pretty: bool,
+) -> Result<RString, Error> {
+    let aware = crate::bridge::wrapper::may_hold_template_children(document);
+    let buf = serialize(node, deep, pretty, aware)
+        .ok_or_else(|| makiri_error("HTML serialization failed"))?;
     /* Lexbor emits UTF-8, so the String is tagged UTF-8 rather than built as
      * binary and re-tagged. */
     Ok(ruby.enc_str_new(buf.as_slice(), ruby.utf8_encoding()))
@@ -39,7 +46,7 @@ fn to_html(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<RString, Error
          * children: the deep serializer is the right one (the tree serializer
          * rejects a fragment node). */
         let deep = this.node().node_type() == NodeType::DocumentFragment;
-        render(ruby, this.raw(), deep, pretty)
+        render(ruby, this.document, this.raw(), deep, pretty)
     })
 }
 
@@ -56,7 +63,7 @@ fn inner_html(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<RString, Er
             .node()
             .template_content()
             .map_or(this.raw(), RawNode::from);
-        render(ruby, target, true, pretty)
+        render(ruby, this.document, target, true, pretty)
     })
 }
 

@@ -70,6 +70,14 @@ pub struct HtmlParsed {
     lines: Option<Box<Lines>>,
     /// node -> descendant-text slice run.
     text_index: TextIndexState,
+    /// Whether a `<template>` of this document - in its tree, its template
+    /// contents, or detached - may have children of its OWN (added with
+    /// `add_child`, where the HTML parser puts every child in the contents).
+    /// Sticky: set by the edits and copies that can make one
+    /// (`bridge::wrapper::note_template_children`), never cleared. The HTML
+    /// serializer takes Lexbor's own walk while it is false, and its
+    /// template-aware one (`HtmlNode::serialize_to`, ~5% slower) once it is set.
+    template_children: bool,
 }
 
 /// The text index's state, so a document the index cannot serve does not rebuild
@@ -182,6 +190,17 @@ impl HtmlParsed {
             TextIndexState::Built(index) => index.slices_of(node),
             TextIndexState::Unbuilt | TextIndexState::Inapplicable => None,
         }
+    }
+
+    /// Note that a `<template>` of this document may now have children of its
+    /// own (see the field). Never undone.
+    pub fn note_template_children(&mut self) {
+        self.template_children = true;
+    }
+
+    /// Whether a `<template>` of this document may have children of its own.
+    pub fn may_hold_template_children(&self) -> bool {
+        self.template_children
     }
 
     /// Drop the indices so the next query rebuilds them.
@@ -406,6 +425,8 @@ pub fn parse_html(
         dom_index: None,
         lines,
         text_index: TextIndexState::Unbuilt,
+        /* The parser gives a template no children of its own. */
+        template_children: false,
     };
     /* On OOM the handle drops, and with it the document. */
     try_box(parsed).map_err(|()| HtmlParseError::Failed)

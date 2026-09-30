@@ -69,6 +69,56 @@ RSpec.describe "HTML template contents (contract)" do
     expect(nested.body.inner_html).to eq("<template><div><template><i></i></template></div></template>")
   end
 
+  # Lexbor's own walk serializes until a template of the document may have a
+  # child of its own; each way to give it one switches the document over.
+  describe "every way to give a template its own child is written as contents only" do
+    let(:fresh) { Makiri::HTML("<body><div><template><s></s></template></div></body>") }
+    let(:tpl) { fresh.at_css("template") }
+    let(:want) { "<template><s></s></template>" }
+
+    it "add_child, and a sibling placed next to an own child" do
+      tpl.add_child(fresh.create_element("k"))
+      tpl.children.first.add_next_sibling(fresh.create_element("m"))
+      expect(tpl.to_html).to eq(want)
+    end
+
+    it "content=" do
+      tpl.content = "text"
+      expect(tpl.children.size).to eq(1)
+      expect(tpl.to_html).to eq(want)
+    end
+
+    it "outer_html= on an own child" do
+      k = fresh.create_element("k")
+      tpl << k
+      k.outer_html = "<b>x</b>"
+      expect(tpl.to_html).to eq(want)
+    end
+
+    it "a detached template" do
+      made = fresh.create_element("template")
+      made.content_fragment << fresh.create_element("s")
+      made << fresh.create_element("k")
+      expect(made.to_html).to eq(want)
+    end
+
+    it "a copy into another document, by import_node and by insertion" do
+      tpl << fresh.create_element("k")
+      other = Makiri::HTML("<body></body>")
+      expect(other.import_node(tpl, true).to_html).to eq(want)
+      moved = Makiri::HTML("<body></body>")
+      moved.body << tpl
+      expect(moved.body.inner_html).to eq(want)
+    end
+
+    it "a nested template inside another's contents" do
+      outer = Makiri::HTML("<body><template><template><i></i></template></template></body>")
+      inner = outer.at_css("template").content_fragment.children.first
+      inner << outer.create_element("k")
+      expect(outer.body.inner_html).to eq("<template><template><i></i></template></template>")
+    end
+  end
+
   # XML has no template contents: crossing into XML, the contents become the
   # copy's children, and the template's own children follow them. They were
   # dropped.
