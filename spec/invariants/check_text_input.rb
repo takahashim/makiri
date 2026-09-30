@@ -33,8 +33,9 @@
 #                         sequences, through Makiri)
 #   E4 equivalence        raw bytes == transcoding in Ruby first
 #   E5 strict APIs        invalid UTF-8 raises at XPath / CSS / attributes / content=
-#   E6 the NUL two-tier   accepted in HTML data content, refused in names and
-#                         engine input; Makiri::XML refuses it everywhere
+#   E6 the NUL two-tier   accepted in data content (HTML and XML alike, as the
+#                         DOM holds it), refused in names and engine input;
+#                         Makiri::XML's serializers refuse a tree that holds it
 
 require_relative "support"
 
@@ -249,13 +250,14 @@ expect_raise("  attribute name") { p1[NUL] = "v" }
 expect_raise("  xpath")          { d.xpath("//#{NUL}") }
 expect_raise("  css")            { d.css(NUL) }
 
-puts "  Makiri::XML refuses it everywhere"
+puts "  Makiri::XML data holds it, names refuse it, to_xml refuses the tree"
 x = Makiri::XML("<r><a k='v'/></r>")
 xa = x.root.children.first
-expect_raise("  create_text_node") { x.create_text_node(NUL) }
-expect_raise("  content=")         { xa.content = NUL }
-expect_raise("  attribute value")  { xa["k"] = NUL }
-expect_raise("  create_element")   { x.create_element(NUL) }
+expect_ok("  create_text_node", NUL) { x.create_text_node(NUL).content }
+expect_ok("  content=", NUL)         { xa.content = NUL; xa.text }
+expect_ok("  attribute value", NUL)  { xa["k"] = NUL; xa["k"] }
+expect_raise("  create_element")     { x.create_element(NUL) }
+expect_raise("  to_xml")             { x.to_xml }
 
 puts
 puts "=" * 72
