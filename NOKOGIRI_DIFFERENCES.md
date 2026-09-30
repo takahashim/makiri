@@ -321,12 +321,10 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
   `Makiri::Error`.
   * On re-parse, the HTML tokenizer replaces a U+0000 in text/attributes with
     U+FFFD (WHATWG), so a serialized-then-reparsed round-trip is not byte-identical.
-  * `Makiri::XML` rejects NUL everywhere: XML 1.0 has no legal U+0000 character,
-    so admitting it would produce non-well-formed XML.
-  * Any other character data the DOM holds, `Makiri::XML` holds too, as
-    Nokogiri does: text or an attribute value with a character XML has no
-    `Char` for (`\f`, U+0001), a comment with `--`. Where they part is the
-    output. `to_xml` / `canonicalize` raise for such a tree; Nokogiri writes
+  * `Makiri::XML` holds the character data the DOM holds, NUL included:
+    text or an attribute value with a character XML has no `Char` for (`\f`,
+    U+0001, U+0000), a comment with `--`. Nokogiri takes the same, but NUL
+    (`ArgumentError`, a Ruby C-string limit). Where they part is the output. `to_xml` / `canonicalize` raise for such a tree; Nokogiri writes
     `\f` in text as U+FFFD (the data changes) and a comment's `--` or an
     attribute value's `\f` as it stands (the output does not parse).
     `create_cdata` refuses `]]>` and `create_processing_instruction` `?>`,

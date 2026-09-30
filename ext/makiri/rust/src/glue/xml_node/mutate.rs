@@ -16,9 +16,9 @@ use crate::bridge::ruby::makiri_error;
 use crate::bridge::string::namespace_arg;
 
 use crate::bridge::xml::{
-    begin_edit, import_copy, incoming_node, verified_name, verified_name_opt, verified_text,
-    verified_text_opt, with_arena_for_new_node, wrap_xml_node as wrap, xml_mut_result, Editing,
-    XmlSelf,
+    begin_edit, import_copy, incoming_node, verified_data, verified_data_opt, verified_name,
+    verified_name_opt, verified_text, verified_text_opt, with_arena_for_new_node,
+    wrap_xml_node as wrap, xml_mut_result, Editing, XmlSelf,
 };
 use crate::init::CLASS_XML_DOCUMENT;
 use crate::xml::dom_name::split_loose_dom_name;
@@ -63,7 +63,7 @@ pub fn aset(_ruby: &Ruby, this: XmlSelf, name: Value, val: Value) -> Result<Valu
     crate::bridge::ruby::entry(|| {
         let edit = element_for(this)?;
         let nv = verified_name(name, "attribute name")?;
-        let vv = verified_text(val, "attribute value")?;
+        let vv = verified_data(val, "attribute value")?;
         let (name, value) = (nv.as_bytes(), vv.as_bytes());
         xml_mut_result(edit.with_arena(|d, n| mutate::set_attribute(d, n, name, value))?)?;
         Ok(val)
@@ -81,7 +81,7 @@ pub fn set_attribute_ns(
     crate::bridge::ruby::entry(|| {
         let edit = element_for(this)?;
         let qv = verified_name(qname, "attribute qualified name")?;
-        let vv = verified_text(val, "attribute value")?;
+        let vv = verified_data(val, "attribute value")?;
         let nv = namespace_arg(ns, "namespace")?;
         let (ns, qname, value) = (
             nv.as_ref().map_or(&b""[..], |n| n.as_bytes()),
@@ -107,7 +107,7 @@ pub fn set_loose_dom_attribute(
     crate::bridge::ruby::entry(|| {
         let edit = element_for(this)?;
         let nv = verified_name(name, "attribute name")?;
-        let vv = verified_text(val, "attribute value")?;
+        let vv = verified_data(val, "attribute value")?;
         let (name, value) = (nv.as_bytes(), vv.as_bytes());
         xml_mut_result(
             edit.with_arena(|d, n| mutate::set_loose_dom_attribute(d, n, name, value))?,
@@ -157,7 +157,7 @@ pub fn delete(_ruby: &Ruby, this: XmlSelf, name: Value) -> Result<Value, Error> 
 pub fn set_content(_ruby: &Ruby, this: XmlSelf, text: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let edit = begin_edit(this)?;
-        let tv = verified_text(text, "node content")?;
+        let tv = verified_data(text, "node content")?;
         let bytes = tv.as_bytes();
         xml_mut_result(edit.with_arena(|d, n| mutate::set_content(d, n, bytes))?)?;
         Ok(text)
@@ -248,7 +248,7 @@ pub fn create_element(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Val
         }
 
         let nv = verified_name(name, "element name")?;
-        let cv = verified_text_opt(content, "element content")?;
+        let cv = verified_data_opt(content, "element content")?;
         let name = nv.as_bytes();
         let el = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
             mutate::new_element(d, name)
@@ -342,7 +342,7 @@ fn create_chardata(
     type_: ArenaKind,
     what: &str,
 ) -> Result<Value, Error> {
-    let tv = verified_text(text, what)?;
+    let tv = verified_data(text, what)?;
     let bytes = tv.as_bytes();
     let n = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
         mutate::new_chardata(d, type_, bytes)
@@ -367,7 +367,7 @@ pub fn create_cdata(_ruby: &Ruby, rb_self: Value, t: Value) -> Result<Value, Err
 pub fn create_pi(_ruby: &Ruby, rb_self: Value, target: Value, data: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let tg = verified_name(target, "PI target")?;
-        let dt = verified_text(data, "PI data")?;
+        let dt = verified_data(data, "PI data")?;
         let (target, data) = (tg.as_bytes(), dt.as_bytes());
         let pi = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
             mutate::new_pi(d, target, data)

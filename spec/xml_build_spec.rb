@@ -119,15 +119,36 @@ RSpec.describe "Makiri::XML building (Phase 2)" do
       expect { other.to_xml }.to raise_error(Makiri::Error, /DOM-loose/)
     end
 
-    it "rejects an embedded NUL in XML data (U+0000 is not a legal XML char)" do
-      # Unlike the HTML DOM, XML 1.0 cannot represent U+0000, so the data-family
-      # NUL relaxation deliberately does NOT apply here: text/CDATA/comment content
-      # and attribute values keep rejecting NUL, fail-closed, to stay well-formed.
-      expect { doc.create_text_node("a\x00b") }.to raise_error(Makiri::Error)
-      expect { doc.create_cdata("a\x00b") }.to raise_error(Makiri::Error)
-      expect { doc.create_comment("a\x00b") }.to raise_error(Makiri::Error)
-      expect { doc.root["k"] = "a\x00b" }.to raise_error(Makiri::Error)
-      expect { doc.root.content = "a\x00b" }.to raise_error(Makiri::Error)
+    # The DOM holds U+0000 in data, as HTML already does here; XML 1.0 has no
+    # Char for it, so the serializers refuse a tree that holds one, as they do
+    # any character outside XML's. Names stay NUL-strict.
+    it "holds an embedded NUL in XML data, and refuses to write it" do
+      doc.root << doc.create_text_node("a\x00b")
+      doc.root << doc.create_cdata("a\x00b")
+      doc.root << doc.create_comment("a\x00b")
+      doc.root["k"] = "a\x00b"
+      expect(doc.root["k"]).to eq("a\x00b")
+      expect(doc.root.children.to_a.last(3).map(&:content)).to all(eq("a\x00b"))
+      expect { doc.to_xml }.to raise_error(Makiri::Error, /character data XML cannot hold/)
+      expect { doc.canonicalize }.to raise_error(Makiri::Error, /character data XML cannot hold/)
+      expect { doc.create_element("a\x00b") }.to raise_error(ArgumentError, /NUL/)
+    end
+
+    # A NUL crosses into HTML, where the DOM holds it as well - through
+    # Lexbor's own text, comment, attribute and PI factories.
+    it "carries a NUL in data across import into HTML" do
+      x = Makiri::XML("<r/>")
+      x.root << x.create_text_node("a\x00b")
+      x.root << x.create_comment("c\x00d")
+      x.root << x.create_processing_instruction("t", "g\x00h")
+      x.root["k"] = "x\x00y"
+      html = Makiri::HTML("<body></body>")
+      el = html.import_node(x.root, true)
+      html.body << el
+      expect(el["k"]).to eq("x\x00y")
+      expect(el.children.map(&:content)).to eq(["a\x00b", "c\x00d", "g\x00h"])
+      expect(Makiri::XML("<r/>").import_node(el, true).children.map(&:content))
+        .to eq(["a\x00b", "c\x00d", "g\x00h"])
     end
 
     # The DOM holds any comment and any data; only createCDATASection (`]]>`)
@@ -138,7 +159,7 @@ RSpec.describe "Makiri::XML building (Phase 2)" do
       expect(doc.create_comment("trailing-").content).to eq("trailing-")
       expect { doc.create_comment("a--b").to_xml }.to raise_error(Makiri::Error, /character data XML cannot hold/)
       expect { doc.create_comment("trailing-").to_xml }.to raise_error(Makiri::Error, /character data XML cannot hold/)
-      expect { doc.create_cdata("a]]>b") }.to raise_error(ArgumentError, /]]>/)
+      expect { doc.create_cdata("a]]>b") }.to raise_error(ArgumentError, /\]\]>/)
       # the data setter checks nothing, as the DOM's does
       comment = doc.create_comment("ok")
       comment.content = "x--y"

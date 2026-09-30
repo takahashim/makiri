@@ -588,9 +588,12 @@ own copy, since a lock it does not own can be released under it; a frozen
 String, which no Ruby can change, is borrowed as it is. The bytes are
 borrowed and CHECKED only after that (`RubyStr::acquire`): a failed lock attempt
 raises, and raising runs Ruby that can change the String. Only the lock's own
-refusal is swallowed - anything else raised there (an interrupt) propagates. `Makiri::XML` keeps
-rejecting NUL everywhere (its `crate::xml` engine enforces the XML 1.0 char class,
-independent of the bridge; U+0000 can't be well-formed XML). Don't drop the
+refusal is swallowed - anything else raised there (an interrupt) propagates. `Makiri::XML`'s data
+takes NUL too (`bridge::xml::verified_data`), as the DOM does, and so does every
+character XML has no `Char` for: the XML mutators hold what the DOM holds, and
+the serializers refuse a tree XML cannot write, deciding from the data as it is
+written (`serialize::out`'s byte-class table), never from a flag a setter could
+leave stale. XML names stay NUL-strict, like HTML's. Don't drop the
 UTF-8 checks or route a name/engine string through the data path; see
 `docs/string_types.md`.
 

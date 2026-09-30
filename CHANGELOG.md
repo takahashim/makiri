@@ -12,11 +12,11 @@
 * `Node#path` of an element round-trips when a sibling with a different
   prefix or case answers the same XPath step.
 * XML documents hold the character data the DOM allows: text and attribute
-  values with a character XML has none for (`"\f"`, U+0001) and comments
-  with `--`, which raised `Makiri::Error`. `to_xml` / `canonicalize` raise
-  while such data is present. `create_cdata` with `]]>` and
-  `create_processing_instruction` with `?>` still raise, now `ArgumentError`.
-  NUL is still refused.
+  values with a character XML has none for (`"\f"`, U+0001, NUL) and
+  comments with `--`, which raised `Makiri::Error`. `to_xml` /
+  `canonicalize` raise while such data is present. `create_cdata` with `]]>`
+  and `create_processing_instruction` with `?>` still raise, now
+  `ArgumentError`. Names still refuse NUL.
 * XML `set_attribute_ns` accepts a name the DOM allows but XML cannot write,
   such as `p:a}b` (DOM `setAttributeNS`); it raised `ArgumentError`. `to_xml`
   raises while such an attribute is present.
