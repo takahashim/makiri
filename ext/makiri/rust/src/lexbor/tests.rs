@@ -600,18 +600,32 @@ mod css_match {
             .collect()
     }
 
+    /// Selectors 4 and the HTML Standard ("case-sensitivity of selectors"):
+    /// a type selector is lower-cased and compared to an HTML element's
+    /// localName, and compared as written to any other element's.
+    /// `lxb_selectors_match_element` folds case on every element, so this is
+    /// a departure from the old engine, and the one `matches_any` makes too.
     #[test]
-    fn type_selector_folds_ascii_case_unconditionally() {
-        // `lxb_selectors_match_element` folds type-selector case
-        // UNCONDITIONALLY - even on foreign (SVG) content, unlike class/id
-        // (quirks-only) or attributes (HTML-namespace-gated). Reproduced for
-        // engine parity.
+    fn type_selector_case_follows_the_element_namespace() {
         let doc = parsed(b"<html><body><p>1</p><span>2</span><p>3</p></body></html>");
         assert_eq!(texts(&doc, "p"), ["1", "3"]);
         assert_eq!(texts(&doc, "P"), ["1", "3"]);
 
-        let svg = parsed(b"<html><body><svg><circle r='1'/></svg></body></html>");
-        assert_eq!(select_all(&svg, "CIRCLE").len(), 1);
+        let svg = parsed(
+            b"<html><body><svg><circle r='1'/><linearGradient/></svg><math><mi/></math></body></html>",
+        );
+        assert_eq!(select_all(&svg, "circle").len(), 1);
+        assert_eq!(select_all(&svg, "CIRCLE").len(), 0);
+        assert_eq!(select_all(&svg, "linearGradient").len(), 1);
+        assert_eq!(select_all(&svg, "lineargradient").len(), 0);
+        assert_eq!(select_all(&svg, "MI").len(), 0);
+        let grad = root(&svg)
+            .subtree()
+            .filter_map(HtmlNode::element)
+            .find(|e| e.local_name() == b"lineargradient")
+            .expect("the gradient");
+        assert!(matches_selector(grad, "linearGradient"));
+        assert!(!matches_selector(grad, "lineargradient"));
     }
 
     /// `:nth-*` with a B at the edge of what Lexbor's parser clamps to
@@ -2163,7 +2177,7 @@ mod css_match {
             "svg [data-x]",
             ":is(circle, mi)[r]",
         ];
-        const FOREIGN_CASE: &[&str] = &["[DATA-X]", "[viewbox]"];
+        const FOREIGN_CASE: &[&str] = &["[DATA-X]", "[viewbox]", "foreignobject", "FOREIGNOBJECT"];
         for prefix in ["<!doctype html><html>", "<html>"] {
             let html = format!("{prefix}{body}</html>");
             let doc = parsed(html.as_bytes());
@@ -2182,9 +2196,10 @@ mod css_match {
                     .collect();
                 if FOREIGN_CASE.contains(&sel) {
                     // The HTML Standard's rule, not Lexbor's: an attribute
-                    // name is case-insensitive only on an HTML element in an
-                    // HTML document. Lexbor folds it everywhere, so it also
-                    // finds the SVG `viewBox`/`data-x` - and only those.
+                    // name, and a type selector's name, is case-insensitive
+                    // only on an HTML element in an HTML document. Lexbor
+                    // folds both everywhere, so it also finds the SVG
+                    // `viewBox`/`data-x` and `foreignObject` - and only those.
                     let extra: Vec<HtmlNode<'_>> = root(&doc)
                         .subtree()
                         .filter(|&n| {

@@ -834,9 +834,15 @@ rightmost compound has a type selector refuses other tags before the machine
 starts (`Query::tag_filter`).
 Measured on the Ruby-free probe against the previous commit: attribute scans
 -27 to -31%, type scans -12%, `matches?` -13 to -16%, `.class` and `*` within
-+/-6%. Name lookup matches Lexbor's except one documented departure: an
-attribute NAME is case-sensitive on SVG/MathML (the HTML Standard), where
-Lexbor folds it (`resolved_names_agree_with_the_old_engine`).
++/-6%. Name lookup matches Lexbor's except two documented departures, both the HTML
+Standard's case-sensitivity rule where Lexbor folds case on every element: an
+attribute NAME is case-sensitive on SVG/MathML, and a TYPE selector is compared
+as written to a non-HTML element's localName (lower-cased to an HTML one's), so
+`fegaussianblur` misses SVG `feGaussianBlur` (`resolved_names_agree_with_the_old_engine`,
+`type_selector_case_follows_the_element_namespace`). The tag-id compare stays
+the first test; `written_case_holds` confirms it, and reads no name on an
+element with no written name - keep its slow half out of line (inline, it cost
+every plain type scan 5-10%).
 
 **`:nth-child(... of S)` is on the heap stack too** (`NthOfTask`): it used to
 call a fresh `run` natively per

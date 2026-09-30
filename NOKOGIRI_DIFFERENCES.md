@@ -275,8 +275,15 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
   .matches?("p")` is true, on both representations). Nokogiri raises
   `NoMethodError` there - it implements `#matches?` as a search from
   `ancestors.last`, which a detached node does not have.
-* * Type selectors are ASCII case-insensitive (CSS-correct for HTML; `LI` matches `<li>`)
-  * `Nokogiri::HTML5` is case-sensitive there.
+* Type selectors in an HTML document follow the HTML Standard's
+  case-sensitivity rule, as browsers do: lower-cased for an HTML element (`LI`
+  matches `<li>`), as written for any other (`feGaussianBlur` matches the SVG
+  element, `fegaussianblur` does not). An HTML element named in upper case
+  (`create_element_ns(XHTML, "MY-EL")`, which keeps its name as the DOM does)
+  therefore matches no type selector.
+  * `Nokogiri::HTML5` is case-sensitive on HTML elements too, so `LI` does not
+    match `<li>` there. `Makiri::XML`'s `#css` is case-sensitive, as XML names
+    are.
 
 ## Serialization
 

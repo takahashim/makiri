@@ -47,6 +47,11 @@
   read from its value, so any setter that gives it an allowed one
   (`set_attribute_ns`, `[]=`, `set_loose_dom_attribute`) makes it a
   declaration again. `[]=` still refuses a forbidden value.
+* HTML `#css` / `#at_css` / `#matches?` compare a type selector as browsers
+  do (the HTML Standard's case-sensitivity of selectors): lower-cased for an
+  HTML element, as written for SVG/MathML and other elements. `fegaussianblur`
+  and `FEGAUSSIANBLUR` no longer match SVG `feGaussianBlur`, nor `MI` MathML
+  `mi`; Lexbor's matcher, which Makiri followed, folds case on every element.
 
 ## [0.11.0.rc1] - 2026-09-29
 

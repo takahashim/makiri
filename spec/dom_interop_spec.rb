@@ -111,6 +111,47 @@ RSpec.describe "browser-DOM interop" do
     end
   end
 
+  # Selectors 4 / the HTML Standard ("case-sensitivity of selectors"): a type
+  # selector is lower-cased for an HTML element and compared to its localName,
+  # and compared as written to any other element's. Lexbor folded case on
+  # every element.
+  describe "type selector case in an HTML document" do
+    let(:doc) do
+      d = Makiri::HTML(%(<p></p><svg><feGaussianBlur/><foreignObject><div></div></foreignObject></svg><math><mi/></math>))
+      d.body << d.create_element_ns(XHTML_NS, "MY-EL")
+      d
+    end
+
+    {
+      "feGaussianBlur" => %w[feGaussianBlur],
+      "fegaussianblur" => [],
+      "FEGAUSSIANBLUR" => [],
+      "foreignobject" => [],
+      "foreignObject" => %w[foreignObject],
+      "MI" => [],
+      "mi" => %w[mi],
+      "P" => %w[p],
+      "div" => %w[div],
+      "DIV" => %w[div],
+      # an HTML element named in upper case matches no type selector
+      "my-el" => [],
+      "MY-EL" => []
+    }.each do |sel, names|
+      it "matches #{sel.inspect} as a browser does" do
+        expect(doc.css(sel).map(&:name)).to eq(names)
+      end
+    end
+
+    it "answers matches? and :is() by the same rule" do
+      blur = doc.at_css("feGaussianBlur")
+      expect(blur.matches?("feGaussianBlur")).to be(true)
+      expect(blur.matches?("fegaussianblur")).to be(false)
+      expect(doc.css(":is(fegaussianblur, mi)").map(&:name)).to eq(%w[mi])
+      expect(doc.css("svg|fegaussianblur", "svg" => SVG_NS)).to be_empty
+      expect(doc.css("svg|feGaussianBlur", "svg" => SVG_NS).size).to eq(1)
+    end
+  end
+
   describe "set_attribute_ns and the XML namespace" do
     # WPT Element-removeAttributeNS.html / attributes.html ("XML-namespaced
     # attributes don't need an xml prefix"): the DOM's validate and extract
