@@ -348,7 +348,9 @@ RSpec.describe "cross-kind import_node" do
       reread = Makiri::XML(xml.to_xml)
       expect(reread.xpath("count(//q:e/q:f)", "q" => "urn:p")).to eq(1.0)
       expect(reread.xpath("string(//@*[namespace-uri()='urn:other'])")).to eq("1")
-      expect(xml.to_xml.scan('xmlns:p="urn:p"').length).to eq(2) # root and e, not f
+      # the root's declaration serves e and f: the copy carries no xmlns of its
+      # own (the DOM's importNode adds no attribute), and to_xml adds none
+      expect(xml.to_xml.scan('xmlns:p="urn:p"').length).to eq(1)
     end
 
     it "keeps each attribute's own namespace, prefixed or not" do

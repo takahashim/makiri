@@ -11,10 +11,16 @@
   from XML works the same way.
 * `import_node` from HTML into XML copies as the DOM's importNode does: the
   copy is in its namespace at once (an imported `<p>` was in none until
-  inserted), and an attribute in no namespace whose name XML cannot write
-  (`x-on:click`, `:href`, `@click`, `xlink:href` on an HTML element) crosses
-  as it is instead of raising; `to_xml` raises while it is present.
-  `xml:lang` still becomes the XML namespace's.
+  inserted), it gets no `xmlns` attribute the source did not have (one was
+  added, visible in `attribute_nodes`), and an attribute in no namespace
+  whose name XML cannot write (`x-on:click`, `:href`, `@click`, `xlink:href`
+  on an HTML element) crosses as it is instead of raising; `to_xml` raises
+  while it is present. `xml:lang` still becomes the XML namespace's.
+* XML `canonicalize` declares a name's own prefix where its namespace was set
+  rather than declared (DOM Level 3 namespace normalization) - an element
+  moved from under its declaration, an attribute given a namespace by
+  `set_attribute_ns`, an import from HTML - instead of raising. It still
+  raises where only an invented prefix could keep a name.
 * HTML `to_html` / `inner_html` write a `<template>`'s contents and not the
   template's own children (added with `add_child`), as the HTML Standard and
   browsers do; both were written. `import_node` of such a template into XML

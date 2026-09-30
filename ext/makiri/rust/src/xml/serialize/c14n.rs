@@ -3,7 +3,9 @@
 //! Its namespace handling is not the XML writer's: c14n RENDERS the declarations
 //! the document holds (§2.2's rendered-prefix rules) rather than planning a
 //! prefix per name, so the two share the output buffer and the escape table and
-//! nothing else.
+//! nothing else. Where a name's namespace was set rather than declared, it adds
+//! the declaration of that name's own prefix (`Writer::fixups`), and never
+//! invents one.
 
 #![forbid(unsafe_code)]
 
@@ -143,52 +145,81 @@ impl<'d> Writer<'d, '_> {
         Ok(out)
     }
 
-    /// That the declarations in scope bind every prefix `n` and its
-    /// attributes use - [`Failure::UnboundPrefix`] when one is bound to
-    /// nothing, which no rendering can repair - and, for a decided element,
-    /// give each the namespace it has, [`Failure::NamespaceMismatch`] when
-    /// they do not. An unresolved one (a detached copy) takes its namespace
-    /// FROM those declarations, so only the binding is checked.
-    fn ensure_names_agree(&mut self, n: NodeId) -> W {
+    /// The declarations `n` needs and does not hold, pushed onto the scope as
+    /// they are found: DOM Level 3's namespace normalization, made where the
+    /// canonical form is written. A decided element or attribute (one whose
+    /// namespace is its own - `NS_RESOLVED`, or given by `set_attribute_ns`)
+    /// whose prefix does not mean its namespace here gets a declaration of that
+    /// prefix, on this element. Canonical XML reads the declarations a
+    /// document holds, so without it a tree whose namespaces were set rather
+    /// than declared - an import from HTML, which the DOM's importNode leaves
+    /// with no `xmlns` attribute - could not be canonicalized at all.
+    ///
+    /// What no declaration here can repair is still refused: a prefix this
+    /// element declares for another namespace, one prefix needed for two
+    /// ([`Failure::NamespaceMismatch`]); an unprefixed attribute with a
+    /// namespace, which only an invented prefix would keep, and inventing one
+    /// changes the names in the canonical form (also `NamespaceMismatch`); a
+    /// prefix bound to nothing, on a name not decided yet
+    /// ([`Failure::UnboundPrefix`]).
+    fn fixups(&mut self, n: NodeId) -> Result<Vec<Ns<'d>>, Failure> {
         let doc = self.doc;
+        let mut out: Vec<Ns> = Vec::new();
         let decided = doc.node(n).flags.contains(NodeFlags::NS_RESOLVED);
         let el_prefix = doc.span(doc.node(n).prefix);
-        let Some(el_uri) = self.binds.resolve(el_prefix)? else {
+        if decided {
+            self.need(n, &mut out, el_prefix, doc.span(doc.node(n).ns_uri))?;
+        } else if self.binds.resolve(el_prefix)?.is_none() {
+            /* Undecided, it takes its namespace from the declarations. */
             return Err(Failure::UnboundPrefix);
-        };
-        if decided && el_uri != doc.span(doc.node(n).ns_uri) {
-            return Err(Failure::NamespaceMismatch);
         }
         for at in doc.attributes(n) {
-            let prefix = doc.span(doc.node(at).prefix);
-            /* An attribute's namespace is its own once its element is decided -
-             * or once it was GIVEN (`set_attribute_ns`), which holds on a
-             * detached element too: compared only through its element, a given
-             * `urn:a` was written under whatever the prefix meant here, or
-             * dropped from an unprefixed name. */
-            let decided = decided || doc.node(at).attr_ns == crate::xml::AttrNs::Explicit;
             /* The XML namespace is always bound to `xml`, and to nothing else
              * (Namespaces in XML §3), so an attribute in it is written as
              * `xml:local` whatever its own prefix (`set_attribute_ns(XML,
-             * "a:bb")`), as `to_xml` does - checked against `a` it was refused
-             * as unbound, which no declaration could repair. */
-            if in_xml_ns(doc, at) {
+             * "a:bb")`), as `to_xml` does. */
+            if xmlns_decl(doc, at).is_some() || in_xml_ns(doc, at) {
                 continue;
             }
-            if xmlns_decl(doc, at).is_none() && !prefix.is_empty() {
-                let Some(expected) = self.binds.resolve(prefix)? else {
+            let prefix = doc.span(doc.node(at).prefix);
+            let uri = doc.span(doc.node(at).ns_uri);
+            let decided = decided || doc.node(at).attr_ns == crate::xml::AttrNs::Explicit;
+            if !prefix.is_empty() {
+                if decided {
+                    self.need(n, &mut out, prefix, uri)?;
+                } else if self.binds.resolve(prefix)?.is_none() {
                     return Err(Failure::UnboundPrefix);
-                };
-                if decided && expected != doc.span(doc.node(at).ns_uri) {
-                    return Err(Failure::NamespaceMismatch);
                 }
-            } else if decided && xmlns_decl(doc, at).is_none() && doc.node(at).ns_uri.len != 0 {
-                /* Unprefixed means no namespace; one with a namespace has no
-                 * canonical form that keeps it. */
+            } else if decided && !uri.is_empty() {
+                /* Unprefixed means no namespace (§6.2): only an invented
+                 * prefix keeps this one. */
                 return Err(Failure::NamespaceMismatch);
             }
         }
-        Ok(())
+        sort_by_prefix(&mut out);
+        Ok(out)
+    }
+
+    /// That `prefix` means `uri` on `n`: nothing when it already does, else a
+    /// declaration of it into `out` and the scope - or the refusal when none
+    /// can be made (see [`fixups`](Self::fixups)).
+    fn need(&mut self, n: NodeId, out: &mut Vec<Ns<'d>>, prefix: &'d [u8], uri: &'d [u8]) -> W {
+        if self.binds.resolve(prefix)? == Some(uri) {
+            return Ok(());
+        }
+        if !prefix.is_empty() && uri.is_empty() {
+            /* `xmlns:p=""` is forbidden (§3): a prefix cannot mean none. */
+            return Err(Failure::UnboundPrefix);
+        }
+        let doc = self.doc;
+        let declared_here = doc
+            .attributes(n)
+            .any(|at| doc.decl_prefix(at) == Some(prefix));
+        if declared_here || out.iter().any(|f| f.prefix == prefix) {
+            return Err(Failure::NamespaceMismatch);
+        }
+        out.falloc_push(Ns { prefix, uri }).or_oom()?;
+        self.binds.push(Prefix::Own(prefix), uri)
     }
 
     /// The scope for the apex: every ancestor's declarations, outermost first,
@@ -231,13 +262,18 @@ impl<'d> Writer<'d, '_> {
          * it changes, so it reads the scope before. */
         let rendered = if is_apex {
             self.push_decls(n)?;
+            /* The added declarations join the scope, which the apex renders. */
+            self.fixups(n)?;
             self.apex_namespaces()?
         } else {
-            let own = self.own_namespaces(n)?;
+            let mut own = self.own_namespaces(n)?;
             self.push_decls(n)?;
+            for f in self.fixups(n)? {
+                own.falloc_push(f).or_oom()?;
+            }
+            sort_by_prefix(&mut own);
             own
         };
-        self.ensure_names_agree(n)?;
         self.put(b"<")?;
         self.qname(n)?;
 

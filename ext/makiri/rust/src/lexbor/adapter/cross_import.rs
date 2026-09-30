@@ -49,40 +49,13 @@ fn html_ns_uri(n: HtmlNode<'_>) -> Option<&[u8]> {
 
 /* ---- the work stack, shared by both directions ---- */
 
-/// One pending subtree, plus the default namespace in scope for its children.
-///
-/// `def` borrows the source document's interned namespace table, which is
-/// [`html_ns_uri`]'s documented contract and outlives the walk. Carrying that
-/// lifetime here rather than erasing it to `'static` is what keeps the
-/// laundering in the one accessor that states the contract.
-struct Frame<'a, S, D> {
+/// One pending subtree: its source node and the copy its children go under.
+struct Frame<S, D> {
     s: S,
     d: D,
-    def: Option<&'a [u8]>,
 }
 
 /* ================= HTML (lxb) -> XML (mkr) ========================== */
-
-/// Declare `xmlns` (no prefix) or `xmlns:PREFIX` = `uri` on the detached mkr
-/// element, as an ordinary attribute.
-fn declare_ns(doc: &mut XmlDoc, el: NodeId, prefix: &[u8], uri: &[u8]) -> Result<(), MutError> {
-    if prefix.is_empty() {
-        mutate::set_attribute(doc, el, b"xmlns", uri)?;
-        return Ok(());
-    }
-    let nlen = match 6usize.checked_add(prefix.len()).and_then(fits_u32) {
-        Some(_) => 6 + prefix.len(),
-        None => return Err(MutError::Oom),
-    };
-    let mut name: Vec<u8> = match try_vec_with_capacity(nlen) {
-        Some(v) => v,
-        None => return Err(MutError::Oom),
-    };
-    name.extend_from_slice(b"xmlns:");
-    name.extend_from_slice(prefix);
-    mutate::set_attribute(doc, el, &name, uri)?;
-    Ok(())
-}
 
 /// Copy the source element's attributes onto the translated mkr element.
 ///
@@ -155,36 +128,19 @@ fn h2x_copy_attrs(doc: &mut XmlDoc, s: HtmlElement<'_>, el: NodeId) -> Result<()
     Ok(())
 }
 
-/// What [`h2x_make`] produced, plus the default namespace in scope for the new
-/// node's children.
-struct Made<'a> {
-    node: NodeId,
-    child_default: Option<&'a [u8]>,
-}
-
 /// Translate ONE Lexbor node into a fresh mkr node - its own fields and
 /// attributes, NOT its children.
 ///
 /// `None` to SKIP an unsupported type; an `Err` status fails the whole import.
-fn h2x_make<'a>(
-    doc: &mut XmlDoc,
-    s: HtmlNode<'a>,
-    parent_default: Option<&'a [u8]>,
-    parent: Option<NodeId>,
-) -> Result<Option<Made<'a>>, MutError> {
-    let unchanged = |node| {
-        Ok(Some(Made {
-            node,
-            child_default: parent_default,
-        }))
-    };
+fn h2x_make<'a>(doc: &mut XmlDoc, s: HtmlNode<'a>) -> Result<Option<NodeId>, MutError> {
+    let unchanged = |node| Ok(Some(node));
     let data = |n: HtmlNode<'a>| {
         let d = n.data().unwrap_or(&[]);
         fits_u32(d.len()).map(|_| d).or_oom::<MutError>()
     };
 
     if let Some(e) = s.element() {
-        return h2x_element(doc, e, parent_default, parent).map(Some);
+        return h2x_element(doc, e).map(Some);
     }
     let ty = match s.node_type() {
         NodeType::Text => ArenaKind::Text,
@@ -204,14 +160,16 @@ fn h2x_make<'a>(
     unchanged(mutate::new_chardata(doc, ty, data(s)?)?)
 }
 
-/// [`h2x_make`] for an element: its name, the namespace declaration its copy
-/// needs, and its attributes.
-fn h2x_element<'a>(
-    doc: &mut XmlDoc,
-    e: HtmlElement<'a>,
-    parent_default: Option<&'a [u8]>,
-    parent: Option<NodeId>,
-) -> Result<Made<'a>, MutError> {
+/// [`h2x_make`] for an element: its name, in its namespace, and its
+/// attributes.
+///
+/// No `xmlns` declaration is added: the DOM's importNode adds no attribute,
+/// and the copy's namespace is its own from the start (`new_element_in`). It
+/// used to carry one - visible as an attribute a browser's copy does not have,
+/// which a DOM layer could not tell from one it was given - so insertion could
+/// resolve the name, and `canonicalize` render it; the first is gone, and
+/// `canonicalize` adds the declaration a name needs itself.
+fn h2x_element(doc: &mut XmlDoc, e: HtmlElement<'_>) -> Result<NodeId, MutError> {
     let name = e.qualified_name();
     let Some(nl) = fits_u32(name.len()) else {
         return Err(MutError::Oom);
@@ -219,7 +177,7 @@ fn h2x_element<'a>(
     let euri = html_ns_uri(e.node());
 
     /* Three kinds of name. A PREFIXED one (an element that came from
-     * XML) is made as written and its prefix declared on it. An
+     * XML) is made as written, prefix and namespace. An
      * unprefixed name with a colon (a parsed `fb:like`) is one DOM
      * local name, which XML cannot write as it stands: it is taken
      * VERBATIM as a DOM-loose name, so the copy is the DOM's element
@@ -249,26 +207,8 @@ fn h2x_element<'a>(
         made = loose(doc);
     }
     let el = made?;
-
-    let mut child_default = parent_default;
-    if let (true, Some(c)) = (prefixed, colon) {
-        /* Declared where the copy will sit unless its parent's scope
-         * already binds the prefix to the same URI. */
-        let (p, uri) = (&name[..c], euri.unwrap_or(&[]));
-        let bound = parent.is_some_and(|up| mutate::namespace_in_scope(doc, up, p) == uri);
-        if !bound {
-            declare_ns(doc, el, p, uri)?;
-        }
-    } else if euri.unwrap_or(&[]) != parent_default.unwrap_or(&[]) {
-        declare_ns(doc, el, &[], euri.unwrap_or(&[]))?;
-        child_default = Some(euri.unwrap_or(&[]));
-    }
-
     h2x_copy_attrs(doc, e, el)?;
-    Ok(Made {
-        node: el,
-        child_default,
-    })
+    Ok(el)
 }
 
 /// The first child to translate under `s`. A `<template>` gives its contents
@@ -308,32 +248,24 @@ pub fn cross_html_to_xml(
     let doc = xdoc;
 
     /* `None`: the root's type has no XML counterpart. */
-    let root = h2x_make(doc, src, None, None)?.ok_or(MutError::Type)?;
+    let root = h2x_make(doc, src)?.ok_or(MutError::Type)?;
 
     if deep {
-        let mut stack: Vec<Frame<'_, HtmlNode<'_>, NodeId>> =
+        let mut stack: Vec<Frame<HtmlNode<'_>, NodeId>> =
             try_vec_with_capacity(1).or_oom::<MutError>()?;
         stack
-            .falloc_push(Frame {
-                s: src,
-                d: root.node,
-                def: root.child_default,
-            })
+            .falloc_push(Frame { s: src, d: root })
             .or_oom::<MutError>()?;
 
         while let Some(f) = stack.pop() {
             let mut c = h2x_first_child(f.s);
             while let Some(child) = c {
                 /* An error abandons the partial subtree. */
-                if let Some(made) = h2x_make(doc, child, f.def, Some(f.d))? {
-                    mutate::insert_child(doc, f.d, made.node)?;
+                if let Some(made) = h2x_make(doc, child)? {
+                    mutate::insert_child(doc, f.d, made)?;
                     if h2x_first_child(child).is_some() {
                         stack
-                            .falloc_push(Frame {
-                                s: child,
-                                d: made.node,
-                                def: made.child_default,
-                            })
+                            .falloc_push(Frame { s: child, d: made })
                             .or_oom::<MutError>()?;
                     }
                 }
@@ -342,7 +274,7 @@ pub fn cross_html_to_xml(
         }
     }
 
-    Ok(root.node)
+    Ok(root)
 }
 
 /* ================= XML (mkr) -> HTML (lxb) ========================== */
@@ -437,7 +369,6 @@ pub unsafe fn cross_xml_to_html(
             .falloc_push(Frame {
                 s: src,
                 d: root.link_target(),
-                def: None,
             })
             .or_oom::<MutError>()?;
 
@@ -452,7 +383,6 @@ pub unsafe fn cross_xml_to_html(
                             .falloc_push(Frame {
                                 s: cid,
                                 d: dc.link_target(),
-                                def: None,
                             })
                             .or_oom::<MutError>()?;
                     }

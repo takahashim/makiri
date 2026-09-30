@@ -78,9 +78,9 @@ outside XML's, -- in a comment, or ?> in a processing instruction)"
 or insert the node where it is declared)"
         ),
         Failure::NamespaceMismatch => format!(
-            "cannot {verb} XML whose namespace declarations no longer match its names \
-(a node moved from under its declaration, or one removed); to_xml writes the \
-declarations it needs"
+            "cannot {verb} XML where one prefix would have to mean two namespaces on an \
+element, or an unprefixed attribute has a namespace (canonical form invents no \
+prefix); to_xml writes such a tree"
         ),
     };
     makiri_error(msg)

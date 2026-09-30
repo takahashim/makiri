@@ -157,7 +157,7 @@ x2h[xml-lang].deep=false.ns = ["r", nil]
 x2h[xml-lang].deep=false.attrs = []
 x2h.fragment = DocumentFragment:"<a>1</a><b>2</b>"
 roundtrip.xml = Element:"<div xmlns=\"http://www.w3.org/1999/xhtml\"><svg xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M0 0\"/></svg><p>t</p></div>"
-roundtrip.html = Element:"<div xmlns=\"http://www.w3.org/1999/xhtml\"><svg xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M0 0\"></path></svg><p>t</p></div>"
+roundtrip.html = Element:"<div><svg><path d=\"M0 0\"></path></svg><p>t</p></div>"
 ---- branch counts ----
 h2x=15
 h2x_leaves=1

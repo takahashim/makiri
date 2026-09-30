@@ -304,6 +304,18 @@ RSpec.describe "browser-DOM interop" do
       expect(p.namespace_uri).to eq(XHTML_NS)
     end
 
+    # The DOM's importNode adds no attribute. The copy carried an xmlns
+    # declaration, which a DOM layer could not tell from one it was given;
+    # to_xml and canonicalize write the declarations the output needs.
+    it "adds no xmlns attribute, and still writes and canonicalizes as XHTML" do
+      copy = xml.import_node(html.create_element("p"))
+      expect(copy.attribute_nodes).to be_empty
+      xml.root << copy
+      expect(xml.to_xml).to include(%(<p xmlns="#{XHTML_NS}"/>))
+      expect(xml.canonicalize).to eq(%(<r><p xmlns="#{XHTML_NS}"></p></r>))
+      expect(Makiri::XML(xml.to_xml).root.element_children.first.namespace_uri).to eq(XHTML_NS)
+    end
+
     it "carries an attribute in no namespace named as it is" do
       el = html.create_element("p")
       el["xlink:href"] = "1"

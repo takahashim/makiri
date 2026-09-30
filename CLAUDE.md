@@ -508,7 +508,8 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            NOT XML naming), `mutate`, `index`, `encoding_sniff`,
                            and `serialize/` (`out` = buffer + one escape table,
                            `xml` = plans a prefix per name, `c14n` = renders the
-                           document's own declarations)
+                           document's own declarations, adding a name's own
+                           prefix where its namespace was set, never inventing one)
     lexbor/                the Lexbor boundary: `abi` - the generated layout and
                            functions (the `_noi` twins included), the ONE place
                            a Lexbor function is declared (a second `extern "C"`

@@ -212,7 +212,11 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
 * Moving HTML into an XML document (`xml_doc.import_node(html_node)`, or
   inserting one) copies it as the DOM's clone does: every element in its
   namespace from the start (an imported `<p>` is XHTML before it is
-  inserted), every attribute named as it is. One XML cannot write that way -
+  inserted), every attribute named as it is, and no `xmlns` attribute added -
+  `to_xml` and `canonicalize` write the declarations the output needs.
+  Nokogiri's copy of an HTML5 `<div>` is in no namespace, and libxml2
+  declares `xmlns:svg` on it for an SVG child (in `namespace_definitions`),
+  writing the child as `<svg:svg>`. One XML cannot write that way -
   in no namespace with a colon or no XML name, `v-on:click`, `:href`,
   `@click`, `fb:like` - crosses DOM-loose, and `to_xml` refuses the tree
   while it is there; so does an element named with a colon (`<fb:like>`).
