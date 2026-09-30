@@ -35,6 +35,11 @@ fn failure_error(f: Failure, verb: &str) -> Error {
         Failure::DomLooseName => {
             format!("cannot {verb} XML containing a DOM-loose element name")
         }
+        Failure::DomLooseDoctype => {
+            format!(
+                "cannot {verb} XML containing a DOM-loose doctype (a name or id XML cannot write)"
+            )
+        }
         Failure::ForbiddenDeclaration => format!(
             "cannot {verb} XML containing a namespace declaration XML forbids \
 (such as xmlns:p=\"\", held as set_attribute_ns made it)"

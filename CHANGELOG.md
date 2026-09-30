@@ -40,6 +40,13 @@
   itself is still held to its namespace. `to_xml` and `canonicalize` write
   such an attribute as `xml:bb`, as DOM Parsing does, and `import_node` from
   HTML to XML keeps it in the XML namespace.
+* XML `create_document_type` checks the name by the DOM's rule (no ASCII
+  whitespace, NUL or `>`; `ArgumentError` otherwise) and takes any public and
+  system id, as `createDocumentType` does. A doctype XML cannot write - a name
+  that is no QName, a public id outside PubidChar, a system id with both
+  quotes - is made DOM-loose: `to_xml` of its document raises, and
+  `canonicalize`, which omits the doctype, does not. They raised when made, so
+  a browser-style `createDocument(nil, nil, doctype)` could not hold one.
 * XML `set_attribute_ns` holds a namespace declaration that Namespaces in XML
   forbids (`set_attribute_ns(XMLNS_NS, "xmlns:foo", "")`) as the DOM's
   `setAttributeNS` does, as an attribute that binds nothing; `to_xml` /

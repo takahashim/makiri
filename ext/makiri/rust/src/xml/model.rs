@@ -142,10 +142,11 @@ impl NodeFlags {
     /// by `set_loose_dom_attribute`: its name is a WHATWG DOM name that need
     /// not be an XML QName, so the serializer refuses to write it (see
     /// [`crate::xml::dom_name`]). A loose attribute is in no namespace and is
-    /// never a declaration, whatever its name (`Document::decl_prefix`). (A
-    /// declaration `set_attribute_ns` gave a value XML forbids, `xmlns:p=""`,
-    /// carries no flag: its value decides that, on every read -
-    /// `Document::forbidden_declaration`.)
+    /// never a declaration, whatever its name (`Document::decl_prefix`). On a
+    /// DOCTYPE made by `create_document_type`, the same for a name or id XML
+    /// cannot write. (A declaration `set_attribute_ns` gave a value XML
+    /// forbids, `xmlns:p=""`, carries no flag: its value decides that, on
+    /// every read - `Document::forbidden_declaration`.)
     pub const DOM_LOOSE_NAME: NodeFlags = NodeFlags(0x01);
 
     /// Set on an ELEMENT once its namespace URI has been decided - by the parser,

@@ -107,6 +107,11 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
     invents one (`ns1`, `ns2`, ...) rather than shadow the other, as browsers do.
   * An element in no namespace stays that way under a default namespace,
     serialized as `xmlns=""`.
+  * `create_document_type` takes what the DOM's `createDocumentType` takes -
+    any id, and a name without whitespace, NUL or `>` - and `to_xml` refuses a
+    doctype XML cannot write (`create_document_type("q", "abcde", %(x"'y))`).
+    Nokogiri writes that system id as `"x&quot;'y"`, which parses but reads
+    back as the id `x&quot;'y` - a literal expands no references.
   * `set_attribute_ns(XMLNS_NS, "xmlns:foo", "")` - a declaration Namespaces in
     XML forbids, which the DOM's `setAttributeNS` accepts - is kept as an
     attribute that binds nothing, and `to_xml` refuses the tree while it is

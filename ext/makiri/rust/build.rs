@@ -267,7 +267,6 @@ fn main() {
         .allowlist_function("lxb_dom_document_create_processing_instruction")
         .allowlist_function("lxb_dom_document_create_document_fragment")
         .allowlist_function("lxb_dom_document_type_create")
-        .allowlist_function("lxb_dom_document_type_valid_name")
         .allowlist_function("lxb_dom_document_import_node")
         .allowlist_function("lexbor_str_init")
         .allowlist_function("lxb_html_document_destroy")

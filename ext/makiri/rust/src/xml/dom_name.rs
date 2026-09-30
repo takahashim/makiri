@@ -69,6 +69,17 @@ pub fn valid_attribute_local_name(name: &[u8]) -> bool {
     !name.is_empty() && !name.iter().any(|&c| forbidden(c) || c == b'=')
 }
 
+/// Whether `name` is a WHATWG DOM "valid doctype name" - what
+/// `createDocumentType` checks, and all it checks: no ASCII whitespace, NUL or
+/// `>`. The DOM allows the empty name; Makiri refuses it, as the HTML factory
+/// must (Lexbor reads an empty name as absent), so both answer alike.
+pub fn valid_doctype_name(name: &[u8]) -> bool {
+    !name.is_empty()
+        && !name
+            .iter()
+            .any(|&c| matches!(c, 0 | b'\t' | b'\n' | 0x0C | b'\r' | b' ' | b'>'))
+}
+
 /// Whether `prefix` is a WHATWG DOM "valid namespace prefix".
 pub fn valid_namespace_prefix(prefix: &[u8]) -> bool {
     prefix_ok(prefix)

@@ -44,6 +44,10 @@ pub enum Failure {
     /// to declare (`set_attribute_ns(XMLNS, "xmlns:p", "")`, which the DOM
     /// allows): its name is fine, and no XML can hold it.
     ForbiddenDeclaration,
+    /// A DOM-loose DOCTYPE (`create_document_type`): a name or an id XML
+    /// cannot write. Only [`to_xml`] refuses it; canonical form omits the
+    /// document type declaration, so it has nothing to write wrong.
+    DomLooseDoctype,
     /// A PI target with a colon: the DOM creates one, but Namespaces in XML §7
     /// makes every PI target an NCName, and DOM Parsing's serializer refuses
     /// it too.
@@ -101,6 +105,9 @@ pub fn to_xml(
     indent: i32,
     encoding: Option<&[u8]>,
 ) -> Result<Buf, Failure> {
+    if loose_doctype_under(doc, n) {
+        return Err(Failure::DomLooseDoctype);
+    }
     write_with(doc, n, |b| xml::write(b, doc, n, indent, encoding))
 }
 
@@ -123,6 +130,23 @@ fn write_with(
     let mut buf = Buf::new(output_cap(doc));
     write(&mut buf)?;
     Ok(buf)
+}
+
+/// Whether `n`'s output would hold a DOM-loose DOCTYPE: `n` is one, or the
+/// Document holding one. Nothing else has a doctype below it.
+fn loose_doctype_under(doc: &XmlDoc, n: NodeId) -> bool {
+    let dt = match doc.type_(n) {
+        Some(ArenaKind::DocumentType) => Some(n),
+        Some(ArenaKind::Document) => doc
+            .children(n)
+            .find(|&c| doc.type_(c) == Some(ArenaKind::DocumentType)),
+        _ => None,
+    };
+    dt.is_some_and(|dt| {
+        doc.node(dt)
+            .flags
+            .contains(crate::xml::NodeFlags::DOM_LOOSE_NAME)
+    })
 }
 
 /// Why attribute `a` has no XML form, if it has none: a DOM-loose name, or a

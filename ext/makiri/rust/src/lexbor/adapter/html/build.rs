@@ -221,16 +221,13 @@ impl<'doc> HtmlDoc<'doc> {
     /// Whether `name` satisfies the DOM's doctype-name production, which
     /// [`create_doctype`](Self::create_doctype) requires of its caller.
     ///
-    /// Lexbor's check is a scan for the bytes a doctype name may not hold -
-    /// whitespace, NUL and `>` - so this reads the slice and touches no
-    /// document. An empty name is rejected without asking, because Lexbor reads
-    /// a null pointer as absent and an empty Rust slice's pointer is not null.
+    /// [`crate::xml::dom_name::valid_doctype_name`], the rule the XML factory
+    /// applies too, so the two answer alike from one definition. It is byte
+    /// for byte `lxb_dom_document_type_valid_name` - whitespace, NUL and `>`
+    /// refused, and the empty name, which Lexbor reads as absent - which this
+    /// once called through FFI (and which Lexbor's create still applies).
     pub fn valid_doctype_name(name: &[u8]) -> bool {
-        if name.is_empty() {
-            return false;
-        }
-        // SAFETY: a slice the caller holds; Lexbor only reads it.
-        unsafe { lxb::lxb_dom_document_type_valid_name(name.as_ptr(), name.len()) }
+        crate::xml::dom_name::valid_doctype_name(name)
     }
 
     /// An empty detached DocumentFragment. `None` on allocation failure.
