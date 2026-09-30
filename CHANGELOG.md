@@ -9,6 +9,12 @@
   it makes an unknown element of that name, which is not void and not matched
   by type selectors. 0.11.0 raised. `import_node` of such an XHTML element
   from XML works the same way.
+* `import_node` from HTML into XML copies as the DOM's importNode does: the
+  copy is in its namespace at once (an imported `<p>` was in none until
+  inserted), and an attribute in no namespace whose name XML cannot write
+  (`x-on:click`, `:href`, `@click`, `xlink:href` on an HTML element) crosses
+  as it is instead of raising; `to_xml` raises while it is present.
+  `xml:lang` still becomes the XML namespace's.
 * `Node#path` of an element round-trips when a sibling with a different
   prefix or case answers the same XPath step.
 * XML documents hold the character data the DOM allows: text and attribute

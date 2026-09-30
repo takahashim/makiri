@@ -198,6 +198,11 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
   ordinary element, with the parsed nodes as its children, so
   `template.inner_html` and `template.children` answer the other way round and
   there is no `content_fragment`.
+  * `Makiri::XML` has no template contents: an XHTML `<template>`'s children
+    are its children. Crossing into HTML they become its contents, and back
+    they become children - what a browser's XML parser, which puts them in the
+    contents, and its importNode give for the same document. An XML
+    `<template>` whose children should stay children has no way to say so.
 * An HTML document has one root element and no text child, as the DOM requires;
   `doc << element` beside an existing root raises.
 * An insertion the DOM refuses - a child under a text, comment, PI, doctype
@@ -205,13 +210,16 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
   `Makiri::Error` in both representations. Nokogiri refuses the same ones with
   `ArgumentError` (or `RuntimeError` for a second XML root).
 * Moving HTML into an XML document (`xml_doc.import_node(html_node)`, or
-  inserting one) keeps every name's namespace, and refuses what XML cannot
-  write that way. An attribute in no namespace whose name has a prefix other
-  than `xml` - `v-on:click`, `fb:like`, an `xlink:href` on an HTML (not SVG)
-  element - raises `Makiri::Error`: as XML it would be a prefix bound to
-  nothing. Nokogiri copies it and writes `v-on:click="..."` into output that is
-  not namespace-well-formed. An element named with a colon (`<fb:like>`)
-  crosses as a DOM-loose name, which `to_xml` refuses.
+  inserting one) copies it as the DOM's clone does: every element in its
+  namespace from the start (an imported `<p>` is XHTML before it is
+  inserted), every attribute named as it is. One XML cannot write that way -
+  in no namespace with a colon or no XML name, `v-on:click`, `:href`,
+  `@click`, `fb:like` - crosses DOM-loose, and `to_xml` refuses the tree
+  while it is there; so does an element named with a colon (`<fb:like>`).
+  Nokogiri copies them and writes output that is not namespace-well-formed.
+  * One exception to the DOM: an HTML attribute named `xml:lang` (in no
+    namespace) becomes the XML namespace's `xml:lang`, as the XML reader reads
+    that name, so XHTML-style HTML still writes as XML.
 * A known gap, in Lexbor's tag table: an HTML document that already holds a
   parsed element named with a colon (`<x:y>`, one local name) and then
   receives, by `import_node` from another document, a prefixed element

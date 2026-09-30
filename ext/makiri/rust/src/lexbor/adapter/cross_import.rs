@@ -102,12 +102,12 @@ fn declare_ns(doc: &mut XmlDoc, el: NodeId, prefix: &[u8], uri: &[u8]) -> Result
 ///   namespace itself and gives each attribute its own, so a copied
 ///   declaration could only restate one or move one (`<div xmlns="urn:bogus">`
 ///   came out in `urn:bogus`, `<svg><g xmlns="urn:evil">` in `urn:evil`);
-/// * one in NO namespace whose name has a prefix other than `xml` (`fb:like`)
-///   has no XML form: written as it stands it is a prefix with no binding, so
-///   the copy was made and then could be neither inserted nor serialized. It is
-///   refused here instead, as `MutError::BadNsName` - or `BadName` when the
-///   name is not a QName at all. `xml:` keeps its fixed meaning, as the XML
-///   reader gives it.
+/// * one in NO namespace whose name XML cannot write as such - `fb:like`
+///   (a prefix with no binding), `:href`, `@click` - crosses DOM-loose, named
+///   as it is, as the DOM's clone has it: held, and refused by the
+///   serializers. It was refused here, so a tree with Vue's or Alpine's
+///   attributes could not be imported at all. `xml:` keeps its fixed meaning,
+///   as the XML reader gives it.
 fn h2x_copy_attrs(doc: &mut XmlDoc, s: HtmlElement<'_>, el: NodeId) -> Result<(), MutError> {
     for a in s.attrs() {
         let (name, value) = (a.qualified_name(), a.value());
@@ -132,14 +132,17 @@ fn h2x_copy_attrs(doc: &mut XmlDoc, s: HtmlElement<'_>, el: NodeId) -> Result<()
             (Some(NsId::XML), _) => {
                 mutate::set_attribute_ns(doc, el, crate::xml::XML_NS_URI, name, value)?;
             }
+            /* `xml:` keeps its fixed meaning, as the XML reader gives it:
+             * an HTML `xml:lang` becomes the XML attribute. Any other name
+             * crosses as the DOM's clone has it - in no namespace, named as
+             * it is - which for `xlink:href`, `x-on:click`, `:href` or
+             * `@click` is DOM-loose, as `set_loose_dom_attribute` makes it:
+             * held, and refused by the serializers. */
+            (None, _) if name.starts_with(b"xml:") => {
+                mutate::set_attribute(doc, el, name, value)?;
+            }
             (None, _) => {
-                let colon = name.iter().position(|&b| b == b':');
-                match colon {
-                    Some(c) if &name[..c] != b"xml" => return Err(no_namespace_colon(name)),
-                    _ => {
-                        mutate::set_attribute(doc, el, name, value)?;
-                    }
-                }
+                mutate::set_loose_dom_attribute(doc, el, name, value)?;
             }
             _ => {
                 match a.own_ns_uri() {
@@ -150,18 +153,6 @@ fn h2x_copy_attrs(doc: &mut XmlDoc, s: HtmlElement<'_>, el: NodeId) -> Result<()
         }
     }
     Ok(())
-}
-
-/// The refusal for a no-namespace attribute named with a colon: `BadNsName`
-/// when it reads as `prefix:local` (it has a prefix and no namespace), and
-/// `BadName` when it is no QName at all (`:class`, `a:b:c`), as a malformed
-/// name is refused everywhere else.
-fn no_namespace_colon(name: &[u8]) -> MutError {
-    if crate::xml::qname::split_checked(name).is_some() {
-        MutError::BadNsName
-    } else {
-        MutError::BadName
-    }
 }
 
 /// What [`h2x_make`] produced, plus the default namespace in scope for the new
@@ -250,7 +241,9 @@ fn h2x_element<'a>(
     let mut made = if colon.is_some() && !prefixed {
         loose(doc)
     } else {
-        mutate::new_element(doc, name)
+        /* Its namespace decided now, as the DOM's clone has its own: made
+         * undecided, it had none until inserted. */
+        mutate::new_element_in(doc, name, euri.unwrap_or(&[]))
     };
     if made.as_ref().err() == Some(&MutError::BadName) && !name.is_empty() {
         made = loose(doc);

@@ -276,12 +276,19 @@ RSpec.describe "cross-kind import_node" do
     svg_ns = "http://www.w3.org/2000/svg"
 
     # Lexbor stores a plain attribute under its element's namespace; the copy
-    # read that, and a parsed q:y inside <svg> came out in SVG.
-    it "refuses an HTML attribute whose prefix has no namespace instead of inventing one" do
+    # read that, and a parsed q:y inside <svg> came out in SVG. It crosses as
+    # the DOM's clone has it - in no namespace, named q:y - which XML cannot
+    # write, so it is DOM-loose: held, and refused by to_xml. (It was refused
+    # at the import, so Vue's or Alpine's attributes could not cross at all.)
+    it "carries an HTML attribute whose prefix has no namespace as it is, DOM-loose" do
       html = Makiri.HTML(%(<svg q:y="2"></svg>))
       expect(html.xpath("namespace-uri(//@*)")).to eq("")
-      expect { Makiri::XML("<r/>").import_node(html.at_xpath("//*[local-name()='svg']"), true) }
-        .to raise_error(Makiri::Error, /does not fit the qualified name/)
+      xml = Makiri::XML("<r/>")
+      svg = xml.import_node(html.at_xpath("//*[local-name()='svg']"), true)
+      attr = svg.attribute_nodes.find { |a| a.name == "q:y" }
+      expect([attr.namespace_uri, attr.local_name, attr.value]).to eq([nil, "q:y", "2"])
+      xml.root << svg
+      expect { xml.to_xml }.to raise_error(Makiri::Error, /DOM-loose attribute/)
     end
 
     it "keeps xml:lang in the XML namespace" do
@@ -355,10 +362,14 @@ RSpec.describe "cross-kind import_node" do
       expect(attrs).to eq([%w[x urn:a], %w[y urn:b], %w[z urn:a]])
     end
 
-    it "refuses a malformed attribute name as a malformed name" do
-      %w[:class a:b:c].each do |name|
+    it "carries an attribute name XML cannot write as it is (Vue, Alpine), DOM-loose" do
+      %w[:class a:b:c @click x-on:click].each do |name|
         html = Makiri.HTML(%(<div #{name}="1"></div>))
-        expect { Makiri::XML("<r/>").import_node(html.at_css("div"), true) }.to raise_error(ArgumentError)
+        xml = Makiri::XML("<r/>")
+        div = xml.import_node(html.at_css("div"), true)
+        expect(div.attribute_nodes.map { [_1.name, _1.namespace_uri] }).to include([name, nil])
+        xml.root << div
+        expect { xml.to_xml }.to raise_error(Makiri::Error, /DOM-loose attribute/)
       end
     end
   end

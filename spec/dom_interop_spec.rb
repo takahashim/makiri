@@ -288,6 +288,32 @@ RSpec.describe "browser-DOM interop" do
     end
   end
 
+  # DOM importNode: the clone is in its namespace, and its attributes are named
+  # as they are, from the moment it exists.
+  describe "import_node from HTML into XML" do
+    let(:html) { Makiri::HTML("<body></body>") }
+    let(:xml) { Makiri::XML("<r/>") }
+
+    it "gives the copy its namespace at once, before it is inserted" do
+      expect(xml.import_node(html.create_element("p")).namespace_uri).to eq(XHTML_NS)
+      svg = xml.import_node(Makiri::HTML("<svg><rect/></svg>").at_css("svg"), true)
+      expect([svg.namespace_uri, svg.element_children.first.namespace_uri]).to eq([SVG_NS, SVG_NS])
+      other = Makiri::XML(%(<r xmlns="urn:other"/>))
+      p = other.import_node(html.create_element("p"))
+      other.root << p
+      expect(p.namespace_uri).to eq(XHTML_NS)
+    end
+
+    it "carries an attribute in no namespace named as it is" do
+      el = html.create_element("p")
+      el["xlink:href"] = "1"
+      el["x-on:click"] = "f"
+      copy = xml.import_node(el, true)
+      expect(copy.attribute_nodes.map { [_1.name, _1.namespace_uri] })
+        .to include(["xlink:href", nil], ["x-on:click", nil])
+    end
+  end
+
   describe "XML Element#set_loose_dom_attribute" do
     let(:doc) { Makiri::XML(%(<r xmlns:p="urn:p"><c/></r>)) }
     let(:root) { doc.root }

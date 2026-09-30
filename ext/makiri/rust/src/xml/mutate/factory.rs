@@ -26,6 +26,20 @@ pub fn new_element(doc: &mut Document, name: &[u8]) -> Result<NodeId, MutError> 
     Ok(el) /* ns_uri stays unresolved until insertion */
 }
 
+/// A detached element named `name` in `ns` ("" = none), its namespace decided
+/// now - as the DOM's clone has its own from the moment it exists. For a copy
+/// from another document (the HTML-to-XML import): [`new_element`]'s element
+/// takes its namespace from where it is first inserted, which left an
+/// imported `<p>` with none until then, where the DOM's is XHTML at once.
+pub fn new_element_in(doc: &mut Document, name: &[u8], ns: &[u8]) -> Result<NodeId, MutError> {
+    let el = new_element(doc, name)?;
+    if !ns.is_empty() {
+        doc.set_ns_bytes(el, ns)?;
+    }
+    doc.node_mut(el).flags.insert(NodeFlags::NS_RESOLVED);
+    Ok(el)
+}
+
 /// A DOM-loose element: `name` may not be a valid XML QName (`":good:times:"`,
 /// `"x<"`), so the caller supplies the prefix/local split explicitly and the
 /// namespace URI directly.
