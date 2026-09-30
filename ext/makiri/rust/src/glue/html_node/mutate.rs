@@ -26,7 +26,6 @@ use crate::bridge::string::{
 };
 use crate::lexbor::adapter::html::{HtmlElementMut, NodeType, Place, RawNode};
 use crate::xml::dom_name;
-use crate::xml::qname::Split;
 
 /// `name` held to the WHATWG DOM rule `ok`, else `ArgumentError` - the DOM's
 /// InvalidCharacterError, and what the XML side raises for a bad name.
@@ -167,37 +166,16 @@ pub fn set_attribute_ns(
         let qv = ruby_verified_name(rb_qname, "attribute qualified name")?;
         let vv = ruby_verified_data(rb_value, "attribute value")?;
         let nv = namespace_arg(rb_ns, "namespace")?;
-        /* The DOM's "validate and extract": split at the first colon, check
-         * both halves, then that the namespace fits them - the rule XML's
-         * set_attribute_ns applies too (`xml::qname::ns_fits_name`). It named
-         * `(nil, "x:y")` a prefixed attribute in no namespace. */
-        let q = qv.as_bytes();
-        let colon = q.iter().position(|&b| b == b':');
-        let (prefix, local) = match colon {
-            Some(i) => (&q[..i], &q[i + 1..]),
-            None => (&b""[..], q),
-        };
-        let names_ok = dom_name::valid_attribute_local_name(local)
-            && (colon.is_none() || dom_name::valid_namespace_prefix(prefix));
-        check_dom_name(ruby, &qv, |_| names_ok, "attribute")?;
+        /* The DOM's "validate and extract". It named `(nil, "x:y")` a
+         * prefixed attribute in no namespace. */
         let ns = nv.as_ref().map_or(&b""[..], |n| n.as_bytes());
-        /* `Split` holds u32 lengths; a name past that would be split wrong, so
-         * it is refused rather than truncated (each `as u32` below is exact). */
-        if u32::try_from(q.len()).is_err() {
-            return Err(makiri_error(
-                "attribute qualified name too long (max 4 GiB)",
-            ));
-        }
-        let split = match colon {
-            Some(i) => Split::prefixed(i as u32, (q.len() - i - 1) as u32),
-            None => Split::unprefixed(q.len() as u32),
-        };
-        if !crate::xml::qname::ns_fits_name(ns, q, &split) {
-            return Err(makiri_error(
-                "the namespace does not fit the qualified name (a prefix needs a namespace; \
-xml and xmlns take only their own)",
-            ));
-        }
+        extract(
+            ruby,
+            ns,
+            &qv,
+            dom_name::valid_attribute_local_name,
+            "attribute",
+        )?;
         let el = element_of(edit, REFUSAL)?;
         crate::bridge::html::set_attribute_ns(el, nv.as_ref().map(|n| n.as_bytes()), &qv, &vv)
             .map_err(|_| makiri_error("failed to set namespaced attribute"))?;

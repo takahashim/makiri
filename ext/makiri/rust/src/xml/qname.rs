@@ -104,28 +104,6 @@ pub fn split_checked(name: &[u8]) -> Option<Split> {
     split_scanned(name)
 }
 
-/// Whether `ns` may name the namespace of an attribute called `name` (split per
-/// `sp`) - the DOM's "validate and extract": a prefix needs a namespace, `xml`
-/// and its namespace take only each other, and `xmlns` (as the name or the
-/// prefix) takes only the XMLNS namespace, which in turn takes nothing else. `set_attribute_ns`
-/// checked none of it, and wrote `xmlns:p=""` or an `xml:` attribute that
-/// re-read in another namespace.
-pub fn ns_fits_name(ns: &[u8], name: &[u8], sp: &Split) -> bool {
-    let prefix = &name[..sp.prefix_len as usize];
-    let is_xmlns = name == b"xmlns" || prefix == b"xmlns";
-    if !prefix.is_empty() && ns.is_empty() {
-        return false;
-    }
-    /* The DOM stops at "xml takes only its own namespace"; the converse is
-     * Namespaces in XML's (§3: the XML namespace is bound to no other prefix),
-     * and without it the attribute could only be written under a declaration
-     * no parser accepts. */
-    if (prefix == b"xml") != (ns == XML_NS_URI) {
-        return false;
-    }
-    is_xmlns == (ns == XMLNS_NS_URI)
-}
-
 /// Which clause of the §3 declaration rule a declaration breaks.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum NsDeclError {

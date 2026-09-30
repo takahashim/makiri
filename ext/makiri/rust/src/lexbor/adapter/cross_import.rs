@@ -125,11 +125,14 @@ fn h2x_copy_attrs(doc: &mut XmlDoc, s: HtmlElement<'_>, el: NodeId) -> Result<()
              * restate one, or move one: `<svg><g xmlns="urn:evil">` put `g`
              * and its children in `urn:evil`. */
             (Some(NsId::XMLNS), _) | (_, Some(_)) => {}
-            /* An attribute in the XML namespace is always named `xml:`: the
-             * parser's foreign-attribute table gives it that prefix, and
-             * `set_attribute_ns` refuses the XML namespace under any other
-             * name (`ns_fits_name`), so `set_attribute` resolves it back. */
-            (None | Some(NsId::XML), _) => {
+            /* An attribute in the XML namespace crosses WITH it: the DOM's
+             * setAttributeNS gives it any prefix or none (`lang`, `p:lang`),
+             * so its name alone does not say so, and the XML serializer
+             * writes it as `xml:` whatever it is called. */
+            (Some(NsId::XML), _) => {
+                mutate::set_attribute_ns(doc, el, crate::xml::XML_NS_URI, name, value)?;
+            }
+            (None, _) => {
                 let colon = name.iter().position(|&b| b == b':');
                 match colon {
                     Some(c) if &name[..c] != b"xml" => return Err(no_namespace_colon(name)),

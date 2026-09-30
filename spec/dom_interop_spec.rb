@@ -110,4 +110,34 @@ RSpec.describe "browser-DOM interop" do
       expect([el.name, el.namespace_uri, el.to_html]).to eq(["s:rect", SVG_NS, "<s:rect></s:rect>"])
     end
   end
+
+  describe "set_attribute_ns and the XML namespace" do
+    # WPT Element-removeAttributeNS.html / attributes.html ("XML-namespaced
+    # attributes don't need an xml prefix"): the DOM's validate and extract
+    # binds `xml` to the XML namespace, not the namespace to `xml`.
+    it "takes it under another prefix on an HTML element, keyed by local name" do
+      el = Makiri::HTML("<p></p>").at_css("p")
+      el.set_attribute_ns(XML_NS, "a:bb", "pass")
+      attr = el.attribute_nodes.first
+      expect([attr.name, attr.namespace_uri, attr.local_name, attr.prefix, attr.value])
+        .to eq(["a:bb", XML_NS, "bb", "a", "pass"])
+      el.remove_attribute_ns(XML_NS, "a:bb")
+      expect(el.attribute_nodes.size).to eq(1)
+      el.remove_attribute_ns(XML_NS, "bb")
+      expect(el.attribute_nodes).to be_empty
+    end
+
+    it "takes it with no prefix, on HTML and XML elements alike" do
+      [Makiri::HTML("<p></p>").at_css("p"), Makiri::XML("<r/>").root].each do |el|
+        el.set_attribute_ns(XML_NS, "bb", "v")
+        expect(el.attribute_nodes.map { [_1.name, _1.namespace_uri, _1.local_name] }).to eq([["bb", XML_NS, "bb"]])
+      end
+    end
+
+    it "still refuses xml under another namespace" do
+      [Makiri::HTML("<p></p>").at_css("p"), Makiri::XML("<r/>").root].each do |el|
+        expect { el.set_attribute_ns("urn:x", "xml:bb", "v") }.to raise_error(Makiri::Error, /does not fit/)
+      end
+    end
+  end
 end

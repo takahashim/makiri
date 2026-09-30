@@ -134,7 +134,8 @@ pub fn set_attribute_ns(
         return Err(MutError::Type);
     }
     let sp = split_checked(name).ok_or(MutError::BadName)?;
-    if !crate::xml::qname::ns_fits_name(ns, name, &sp) {
+    let prefix = &name[..sp.prefix_len as usize];
+    if !crate::xml::dom_name::namespace_fits(ns, name, prefix) {
         return Err(MutError::BadNsName);
     }
     decl_check(name, val)?;

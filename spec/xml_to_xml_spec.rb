@@ -375,7 +375,6 @@ RSpec.describe "Makiri::XML#to_xml" do
     {
       ["", "p:a"] => "a prefix without a namespace",
       ["urn:x", "xml:lang"] => "xml with another namespace",
-      ["http://www.w3.org/XML/1998/namespace", "p:a"] => "the XML namespace under another prefix",
       ["urn:x", "xmlns:p"] => "xmlns with another namespace",
       ["http://www.w3.org/2000/xmlns/", "a"] => "the XMLNS namespace on another name"
     }.each do |(ns, qname), what|
@@ -389,6 +388,29 @@ RSpec.describe "Makiri::XML#to_xml" do
       doc = Makiri::XML("<r/>")
       doc.root.set_attribute_ns("http://www.w3.org/XML/1998/namespace", "xml:lang", "en")
       expect(doc.root.to_xml).to eq(%(<r xml:lang="en"/>))
+    end
+
+    # The DOM's setAttributeNS takes the XML namespace under any prefix, or
+    # none (WPT attributes.html, "XML-namespaced attributes don't need an xml
+    # prefix"). Namespaces in XML binds that namespace to `xml` alone, so it is
+    # written as `xml:` - DOM Parsing's rule - and re-reads to the same
+    # (namespace, local name).
+    it "takes the XML namespace under another prefix or none, and writes it as xml:" do
+      xml_ns = "http://www.w3.org/XML/1998/namespace"
+      doc = Makiri::XML(%(<r xmlns:a="urn:a" a:k="1"/>))
+      doc.root.set_attribute_ns(xml_ns, "a:bb", "1")
+      doc.root.set_attribute_ns(xml_ns, "cc", "2")
+      expect(doc.root.attribute_nodes.map { [_1.name, _1.namespace_uri, _1.local_name] }.last(2))
+        .to eq([["a:bb", xml_ns, "bb"], ["cc", xml_ns, "cc"]])
+      doc.root.set_attribute_ns(xml_ns, "bb", "3") # the same (namespace, local name)
+      out = doc.to_xml
+      expect(out).to include(%(a:k="1" xml:bb="3" xml:cc="2"))
+      reread = Makiri::XML(out).root.attribute_nodes.map { [_1.name, _1.namespace_uri, _1.value] }
+      expect(reread.last(2)).to eq([["xml:bb", xml_ns, "3"], ["xml:cc", xml_ns, "2"]])
+      # canonical form writes it as xml: too, sorted by namespace URI (§3.3)
+      canonical = doc.canonicalize
+      expect(canonical).to eq(%(<r xmlns:a="urn:a" xml:bb="3" xml:cc="2" a:k="1"></r>))
+      expect(Makiri::XML(canonical).canonicalize).to eq(canonical)
     end
   end
 

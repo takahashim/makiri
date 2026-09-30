@@ -118,9 +118,11 @@ pub fn validate_and_extract<'q>(
 /// namespace, `xml` takes only the XML namespace, and `xmlns` (as the name or
 /// the prefix) takes only the XMLNS namespace, which takes nothing else.
 ///
-/// The DOM's rule and no more. [`crate::xml::qname::ns_fits_name`] adds
-/// Namespaces in XML's converse (the XML namespace only under `xml`), which an
-/// XML tree needs to be written at all and an HTML tree does not.
+/// The DOM's rule and no more, for elements and attributes, in HTML and XML
+/// alike. Namespaces in XML's converse - the XML namespace only under `xml` -
+/// is not a naming rule here: rc1 applied it to `set_attribute_ns`, and
+/// refused the DOM's `setAttributeNS(XML, "a:bb")`. The XML serializer writes
+/// such an attribute as `xml:bb` instead, as DOM Parsing does.
 pub fn namespace_fits(ns: &[u8], qname: &[u8], prefix: &[u8]) -> bool {
     use crate::xml::{XMLNS_NS_URI, XML_NS_URI};
     let is_xmlns = qname == b"xmlns" || prefix == b"xmlns";

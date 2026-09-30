@@ -107,6 +107,10 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
     invents one (`ns1`, `ns2`, ...) rather than shadow the other, as browsers do.
   * An element in no namespace stays that way under a default namespace,
     serialized as `xmlns=""`.
+  * An attribute in the XML namespace is written as `xml:local`, whatever
+    prefix it was given (`set_attribute_ns(XML_NS, "a:bb")`, as the DOM
+    allows): Namespaces in XML binds that namespace to `xml` alone. It re-reads
+    to the same namespace and local name. `canonicalize` writes it so too.
   * Nodes from the factories (`create_element` and friends) still take their
     namespace from the context they are first inserted into, so a subtree can be
     built detached and attached afterwards. Only later moves carry.

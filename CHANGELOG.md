@@ -27,6 +27,12 @@
   rules refuse raises `ArgumentError` (the DOM's InvalidCharacterError), a
   namespace that does not fit the name raises `Makiri::Error` (NamespaceError).
   Invalid UTF-8 still raises `Makiri::Error` for every argument.
+* `set_attribute_ns` takes the XML namespace under any prefix or none
+  (`set_attribute_ns(XML_NS, "a:bb", v)`, `(XML_NS, "bb", v)`), as the DOM's
+  `setAttributeNS` does and 0.10 did; 0.11.0.rc1 refused it. Only `xml`
+  itself is still held to its namespace. `to_xml` and `canonicalize` write
+  such an attribute as `xml:bb`, as DOM Parsing does, and `import_node` from
+  HTML to XML keeps it in the XML namespace.
 
 ## [0.11.0.rc1] - 2026-09-29
 
