@@ -65,7 +65,7 @@ impl<'doc> HtmlDoc<'doc> {
             ))
         }?;
         /* With a prefix, Lexbor recorded `prefix:local` as written already. */
-        if prefix.is_empty() && local.iter().any(u8::is_ascii_uppercase) {
+        if prefix.is_empty() && has_ascii_uppercase(local) {
             // SAFETY: an element just made in this document, in no tree; the
             // name is copied.
             let st = unsafe {
@@ -82,6 +82,23 @@ impl<'doc> HtmlDoc<'doc> {
             }
         }
         Some(el)
+    }
+
+    /// Whether [`create_element_ns`](Self::create_element_ns) would make
+    /// `local` in `ns` as an element it is not: an HTML-namespace name with
+    /// upper case whose lower-cased form is one of Lexbor's known tags.
+    ///
+    /// Lexbor picks an element's tag id, struct and serialization from the
+    /// lower-cased name, so `BR` became the void `br` (a child appended to it
+    /// vanished from `to_html`), `SCRIPT` a raw-text element, `TEMPLATE` one
+    /// with contents - where the DOM's createElementNS makes an unknown
+    /// element of that name. There is no Lexbor element that is both, so the
+    /// callers refuse it. A name Lexbor does not know (`MY-EL`) gets an id of
+    /// its own and is the unknown element it should be.
+    pub fn misreads_html_name(self, local: &[u8], ns: &[u8]) -> bool {
+        self.lookup_ns(ns) == Some(NsId::HTML)
+            && has_ascii_uppercase(local)
+            && self.tag_id(local).and_then(TagId::static_index).is_some()
     }
 
     /// A detached text node holding `text`. `None` on allocation failure.

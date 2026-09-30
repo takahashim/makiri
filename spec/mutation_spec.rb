@@ -618,6 +618,7 @@ RSpec.describe "Makiri mutation" do
       expect { div["a\x00b"] = "v" }
         .to raise_error(ArgumentError, /must not contain a NUL byte/)
       expect { div.set_attribute_ns(nil, "a\x00b", "v") }.to raise_error(ArgumentError)
+      expect { doc.create_element_ns(nil, "a\x00b") }.to raise_error(ArgumentError)
       expect { doc.create_document_type("a\x00b") }.to raise_error(ArgumentError)
       expect { doc.create_processing_instruction("a\x00b", "d") }.to raise_error(ArgumentError)
       x = Makiri::XML("<r/>")

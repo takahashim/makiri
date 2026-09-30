@@ -237,6 +237,16 @@ pub(in crate::lexbor) fn lexbor_ok(st: lxb::lxb_status_t) -> Result<(), AdapterO
 
 /* ---------- borrowed bytes ---------- */
 
+/// Whether `name` holds an ASCII upper-case letter - so whether Lexbor, which
+/// keys element and attribute names by their ASCII lower-cased form, stores it
+/// as something other than itself. The one spelling of that question: where a
+/// name keeps a written form beside its key, whether a type selector can match
+/// it, whether a name would be made as another element.
+#[inline]
+pub fn has_ascii_uppercase(name: &[u8]) -> bool {
+    name.iter().any(u8::is_ascii_uppercase)
+}
+
 /// A DOM `localName` from a qualified name and Lexbor's stored local name: the
 /// qualified name's tail, at the stored name's length, so its case is kept.
 fn case_preserved_tail<'a>(qualified: &'a [u8], local: &'a [u8]) -> &'a [u8] {
@@ -663,7 +673,7 @@ impl<'doc> HtmlDoc<'doc> {
             html_doc: self.is_html_document(),
             // SAFETY: a non-null entry of the table above.
             id: (!data.is_null()).then(|| unsafe { (*data).attr_id }),
-            lower: !name.iter().any(u8::is_ascii_uppercase),
+            lower: !has_ascii_uppercase(name),
         }
     }
 

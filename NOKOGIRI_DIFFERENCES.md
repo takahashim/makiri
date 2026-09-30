@@ -167,8 +167,14 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
   * `set_attribute_ns(nil, "x:y")` raises, as the DOM's `setAttributeNS` does:
     a prefix needs a namespace.
   * A refused name raises `ArgumentError` - a NUL in it too - and a namespace
-    that does not fit the name (`set_attribute_ns`) raises `Makiri::Error`.
-    Invalid UTF-8 raises `Makiri::Error` for every argument, names included.
+    that does not fit the name (`set_attribute_ns`, `create_element_ns`)
+    raises `Makiri::Error`. Invalid UTF-8 raises `Makiri::Error` for every
+    argument, names included.
+  * `create_element_ns` refuses an HTML-namespace name in upper case that
+    lower-cases to an element Lexbor knows (`BR`, `DIV`), where the DOM makes
+    an unknown element: Lexbor would make that element (`BR` void, its
+    children never written). Other names keep their case (`MY-EL`). Nokogiri
+    has no `create_element_ns`.
 * An HTML `<template>` follows the WHATWG content model, which Nokogiri does
   not: its parsed contents live in the separate fragment `Element#content_fragment`
   returns, `template.children` is empty, and `inner_html` / `inner_html=`

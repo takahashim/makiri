@@ -50,6 +50,29 @@ fn check_dom_name(
     ))
 }
 
+/// The refusal of a namespace that does not fit the qualified name it came with.
+const NS_MISFIT: &str =
+    "the namespace does not fit the qualified name (a prefix needs a namespace; \
+xml and xmlns take only their own)";
+
+/// [`dom_name::validate_and_extract`] with its refusals as the method raises
+/// them: `ArgumentError` for a name, `Makiri::Error` for a namespace.
+fn extract<'q>(
+    ruby: &Ruby,
+    ns: &[u8],
+    qname: &'q crate::bridge::string::RubyText,
+    local_ok: fn(&[u8]) -> bool,
+    what: &str,
+) -> Result<(&'q [u8], &'q [u8]), Error> {
+    dom_name::validate_and_extract(ns, qname.as_bytes(), local_ok).map_err(|e| match e {
+        dom_name::ExtractError::Name => Error::new(
+            ruby.exception_arg_error(),
+            format!("invalid HTML {what} name"),
+        ),
+        dom_name::ExtractError::Namespace => makiri_error(NS_MISFIT),
+    })
+}
+
 /// The receiver as an element, once every argument is converted. Its node type
 /// was checked before the conversion (an argument cannot change it), so the
 /// `None` arm is unreachable - it answers `refusal` rather than assuming so.
@@ -309,6 +332,37 @@ pub fn create_element(ruby: &Ruby, rb_self: Value, rb_name: Value) -> Result<Val
         check_dom_name(ruby, &nv, dom_name::valid_element_local_name, "element")?;
         created(
             crate::bridge::html::create_element(doc, &nv),
+            rb_self,
+            "element",
+        )
+    })
+}
+
+/// `Document#create_element_ns(namespace_uri, qualified_name)` -> Element.
+///
+/// The DOM's createElementNS: the name is split at its first colon and each
+/// half held to the DOM's rule (`ArgumentError`), then the namespace to the
+/// name (`Makiri::Error`). Not `create_element`'s rule - `"0:a"` is prefix `0`
+/// and local name `a` - and the name keeps its case, as a parsed foreign
+/// element's does.
+pub fn create_element_ns(
+    ruby: &Ruby,
+    rb_self: Value,
+    rb_ns: Value,
+    rb_qname: Value,
+) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| {
+        let doc = owning_doc(&rb_self)?;
+        let nv = namespace_arg(rb_ns, "namespace")?;
+        let qv = ruby_verified_name(rb_qname, "element qualified name")?;
+        let ns = nv.as_ref().map_or(&b""[..], |n| n.as_bytes());
+        let (prefix, local) =
+            extract(ruby, ns, &qv, dom_name::valid_element_local_name, "element")?;
+        if doc.misreads_html_name(local, ns) {
+            return Err(makiri_error(crate::bridge::html::HTML_NAME_CASE));
+        }
+        created(
+            crate::bridge::html::create_element_ns(doc, local, ns, prefix),
             rb_self,
             "element",
         )

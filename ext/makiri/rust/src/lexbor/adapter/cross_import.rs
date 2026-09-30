@@ -21,7 +21,8 @@
 
 use crate::falloc::{try_vec_with_capacity, OomOption, OomResult, VecPush};
 use crate::lexbor::adapter::html::{
-    BuildingElement, BuildingNode, HtmlDoc, HtmlElement, HtmlNode, NsId, RawDoc, RawNode,
+    has_ascii_uppercase, BuildingElement, BuildingNode, HtmlDoc, HtmlElement, HtmlNode, NsId,
+    RawDoc, RawNode,
 };
 use crate::xml::model::{ArenaKind, Document as XmlDoc, MutError, NodeId};
 use crate::xml::mutate;
@@ -369,13 +370,23 @@ fn x2h_make<'doc>(
              * with its prefix, so the copy's localName is `e` and not `p:e`
              * (as `//q:e` and local-name() read it), and with its case, so an
              * SVG `linearGradient` does not come back `lineargradient`. An
-             * XHTML element is an HTML element, whose name is lower case. */
+             * XHTML element named in lower case is the HTML element of that
+             * name. One with upper case is not: it goes the createElementNS
+             * way too, keeping its case (`Foo`, where lower-casing it renamed
+             * it `foo`) - or refused when Lexbor would make it as a known
+             * element (`BR` came out the void `br`, its children gone). */
             let (prefix, ns) = (doc.prefix(s), doc.ns(s));
-            let el = if prefix.is_empty() && hdoc.lookup_ns(ns) == Some(NsId::HTML) {
+            let el = if prefix.is_empty()
+                && !has_ascii_uppercase(doc.local(s))
+                && hdoc.lookup_ns(ns) == Some(NsId::HTML)
+            {
                 let el = hdoc.create_element(doc.qname(s)).or_oom::<MutError>()?;
                 el.set_ns(NsId::HTML);
                 el
             } else {
+                if hdoc.misreads_html_name(doc.local(s), ns) {
+                    return Err(MutError::HtmlNameCase);
+                }
                 hdoc.create_element_ns(doc.local(s), ns, prefix)
                     .or_oom::<MutError>()?
             };

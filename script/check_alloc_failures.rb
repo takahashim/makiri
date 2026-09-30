@@ -263,6 +263,7 @@ SCENARIOS = {
     d = Makiri::HTML::Document.parse("<html><body><div id='a'><p>one</p></div></body></html>")
     a = d.at_css("#a")
     a.add_child(d.create_element("made"))
+    a.add_child(d.create_element_ns("http://www.w3.org/2000/svg", "s:feBlend"))
     a.add_child(d.create_text_node("inner"))
     a.add_child(d.create_comment(" note "))
     a.add_child(d.create_processing_instruction("tgt", "pd"))

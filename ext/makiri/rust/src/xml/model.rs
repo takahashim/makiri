@@ -246,6 +246,10 @@ pub enum MutError {
     /// (the DOM's "validate and extract"): a prefix without a namespace, `xml`
     /// or `xmlns` with another one, or the XMLNS namespace on another name.
     BadNsName,
+    /// An element Lexbor would make as another one: an HTML-namespace name in
+    /// upper case that lower-cases to a known tag (`BR` made void `br`), met
+    /// by the XML-to-HTML import (`HtmlDoc::misreads_html_name`).
+    HtmlNameCase,
 }
 
 impl crate::falloc::Oom for MutError {

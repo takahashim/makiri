@@ -2,10 +2,25 @@
 
 ## [Unreleased]
 
+### Added
+
+* `Makiri::HTML::Document#create_element_ns(namespace_uri, qualified_name)`,
+  the DOM's `createElementNS`: an SVG or MathML element made this way is the
+  element the parser makes (its name keeps its case, `#[]` / `#[]=` keep an
+  attribute name's case, `#css` matches it as foreign). The name is split at
+  its first colon and follows the DOM's rules, not `create_element`'s, so
+  `"0:a"` is prefix `0` and local name `a`. An HTML-namespace name in upper
+  case that lower-cases to an element Lexbor knows (`BR`, `SCRIPT`, `DIV`)
+  raises `Makiri::Error`: Lexbor would make it as that element (`BR` void),
+  where the DOM makes an unknown element. `MY-EL` and the like are made.
+  `import_node` of such an XHTML element from XML, prefixed or not, now raises
+  the same way instead of making it, and an unprefixed XHTML element named
+  with upper case otherwise keeps its case (`Foo` was renamed `foo`).
+
 ### Changed
 
 * A NUL in a name given to a factory or setter (`create_element`,
-  `create_loose_dom_element`, `create_document_type`,
+  `create_element_ns`, `create_loose_dom_element`, `create_document_type`,
   `create_processing_instruction`, `[]=`, `set_attribute_ns`) raises
   `ArgumentError`, as every other refused name does, instead of
   `Makiri::Error`. The two classes of refusal are now documented: a name the

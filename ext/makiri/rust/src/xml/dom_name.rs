@@ -74,6 +74,65 @@ pub fn valid_namespace_prefix(prefix: &[u8]) -> bool {
     prefix_ok(prefix)
 }
 
+/// Why [`validate_and_extract`] refused a name: a half the naming rule
+/// refuses (the DOM's InvalidCharacterError), or a namespace that does not
+/// fit the name (NamespaceError).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExtractError {
+    Name,
+    Namespace,
+}
+
+/// The DOM's "validate and extract": `qname` split at its first colon into
+/// (prefix, local name) - prefix empty when there is none - with the prefix
+/// held to "valid namespace prefix", the local name to `local_ok` (the
+/// element or the attribute rule), and then `ns` ("" = null) to the name
+/// ([`namespace_fits`]). One body for every caller, so the rule is changed in
+/// one place.
+pub fn validate_and_extract<'q>(
+    ns: &[u8],
+    qname: &'q [u8],
+    local_ok: fn(&[u8]) -> bool,
+) -> Result<(&'q [u8], &'q [u8]), ExtractError> {
+    let (prefix, local) = match qname.iter().position(|&b| b == b':') {
+        Some(i) => {
+            let (prefix, local) = (&qname[..i], &qname[i + 1..]);
+            if !valid_namespace_prefix(prefix) {
+                return Err(ExtractError::Name);
+            }
+            (prefix, local)
+        }
+        None => (&b""[..], qname),
+    };
+    if !local_ok(local) {
+        return Err(ExtractError::Name);
+    }
+    if !namespace_fits(ns, qname, prefix) {
+        return Err(ExtractError::Namespace);
+    }
+    Ok((prefix, local))
+}
+
+/// Whether `ns` ("" = null) fits a name with this `prefix` ("" = none) - the
+/// namespace clauses of the DOM's "validate and extract": a prefix needs a
+/// namespace, `xml` takes only the XML namespace, and `xmlns` (as the name or
+/// the prefix) takes only the XMLNS namespace, which takes nothing else.
+///
+/// The DOM's rule and no more. [`crate::xml::qname::ns_fits_name`] adds
+/// Namespaces in XML's converse (the XML namespace only under `xml`), which an
+/// XML tree needs to be written at all and an HTML tree does not.
+pub fn namespace_fits(ns: &[u8], qname: &[u8], prefix: &[u8]) -> bool {
+    use crate::xml::{XMLNS_NS_URI, XML_NS_URI};
+    let is_xmlns = qname == b"xmlns" || prefix == b"xmlns";
+    if !prefix.is_empty() && ns.is_empty() {
+        return false;
+    }
+    if prefix == b"xml" && ns != XML_NS_URI {
+        return false;
+    }
+    is_xmlns == (ns == XMLNS_NS_URI)
+}
+
 /// Check that `qname`, `prefix` and `local` describe one DOM element name -
 /// valid under the WHATWG rules, and `qname` exactly `prefix:local` (or
 /// `local` when there is no prefix) - and split it.
