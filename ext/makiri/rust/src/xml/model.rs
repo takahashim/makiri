@@ -223,7 +223,6 @@ pub enum AttrNs {
 pub enum MutError {
     Oom,
     BadName,
-    BadChars,
     UnboundNs,
     Type,
     Cycle,
@@ -260,6 +259,12 @@ pub enum MutError {
     /// not [`MutError::BadName`], whose "not a well-formed XML name" is the
     /// XML rule - the wrong one to report for a DOM name.
     BadDomName(&'static str),
+    /// Data the DOM's factory refuses - `]]>` in `createCDATASection`, `?>` in
+    /// `createProcessingInstruction` - with the refusal's wording: the DOM's
+    /// InvalidCharacterError, so `ArgumentError`. Nothing else about data is
+    /// refused when it is set: what XML cannot write is refused when it is
+    /// written (`serialize::Failure::UnwritableData`).
+    InvalidCharacter(&'static str),
 }
 
 impl crate::falloc::Oom for MutError {

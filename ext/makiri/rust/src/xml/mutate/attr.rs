@@ -11,7 +11,6 @@
 use super::assign_qname;
 use super::ns::{resolve_ns, Ns, Resolved, NO_NS};
 use crate::xml::attr_key::{key_taken, AttrKey};
-use crate::xml::chars::validate_chars;
 use crate::xml::qname::{ns_decl_check, split_checked, xmlns_prefix, Split};
 use crate::xml::{ArenaKind, AttrNs, Document, MutError, NodeFlags, NodeId};
 
@@ -75,9 +74,6 @@ pub fn set_attribute(
         return Err(MutError::Type);
     }
     let sp = split_checked(name).ok_or(MutError::BadName)?;
-    if !validate_chars(val) {
-        return Err(MutError::BadChars);
-    }
     /* An attribute with this qualified name gets the value and nothing else,
      * as the DOM's setAttribute does: its namespace is its own, decided when
      * it was named. Re-deriving it here gave a second attribute the key of
@@ -132,8 +128,9 @@ fn set_existing_value(
 /// serializers refuse it, as they refuse a DOM-loose element. Any other name
 /// makes the plain attribute `set_attribute_ns(nil, name)` would.
 ///
-/// `name` is held to the DOM's "valid attribute local name" only; the value
-/// to XML's characters, since the tree is still an XML one.
+/// `name` is held to the DOM's "valid attribute local name" only, and the
+/// value to nothing: a value XML cannot write is refused by the serializers,
+/// as every attribute value is.
 pub fn set_loose_dom_attribute(
     doc: &mut Document,
     el: NodeId,
@@ -149,9 +146,6 @@ pub fn set_loose_dom_attribute(
     let Ok(len) = u32::try_from(name.len()) else {
         return Err(MutError::BadName);
     };
-    if !validate_chars(val) {
-        return Err(MutError::BadChars);
-    }
     /* The DOM's setAttribute checks no value: a declaration given one it
      * cannot hold (`xmlns:p=""`) binds nothing from then on
      * (`Document::decl_prefix`), as `set_attribute_ns` leaves one. */
@@ -227,9 +221,6 @@ pub fn set_attribute_ns(
         }
         None => (dom_split(ns, name)?, true),
     };
-    if !validate_chars(val) {
-        return Err(MutError::BadChars);
-    }
     let local = &name[sp.local_off as usize..];
     let tail = match find_attr(doc, el, AttrKey::Ns { ns, local }) {
         AttrSlot::Found { attr, .. } => {

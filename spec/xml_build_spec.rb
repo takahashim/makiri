@@ -58,9 +58,9 @@ RSpec.describe "Makiri::XML building (Phase 2)" do
       %w[f:o:o : foo: f<oo f}oo].each do |name|
         expect { doc.create_element(name) }.to raise_error(ArgumentError)
       end
-      expect { doc.create_text_node("xy") }.to raise_error(Makiri::Error) # non-XML-Char
+      expect(doc.create_text_node("x\u0001y").content).to eq("x\u0001y") # held (to_xml refuses it)
       expect { doc.create_processing_instruction("xml", "x") }.to raise_error(ArgumentError) # reserved
-      expect { doc.create_processing_instruction("ok", "a?>b") }.to raise_error(Makiri::Error) # "?>"
+      expect { doc.create_processing_instruction("ok", "a?>b") }.to raise_error(ArgumentError) # "?>"
     end
 
     it "creates DOM-loose elements for browser-DOM interop without loosening XML factories" do
@@ -130,13 +130,22 @@ RSpec.describe "Makiri::XML building (Phase 2)" do
       expect { doc.root.content = "a\x00b" }.to raise_error(Makiri::Error)
     end
 
-    it "rejects content that would serialize to invalid XML (comment '--', CDATA ']]>')" do
-      expect { doc.create_comment("a--b") }.to raise_error(Makiri::Error)      # "--" in a comment
-      expect { doc.create_comment("trailing-") }.to raise_error(Makiri::Error) # a trailing "-"
-      expect { doc.create_cdata("a]]>b") }.to raise_error(Makiri::Error)       # "]]>" closes the section
-      # the same rules apply through #content=, not just the factories
-      expect { doc.create_comment("ok").content = "x--y" }.to raise_error(Makiri::Error)
-      expect { doc.create_cdata("ok").content = "x]]>y" }.to raise_error(Makiri::Error)
+    # The DOM holds any comment and any data; only createCDATASection (`]]>`)
+    # and createProcessingInstruction (`?>`) refuse, as InvalidCharacterError.
+    # What XML cannot write is refused when it is written.
+    it "holds what the DOM holds and refuses to write what XML cannot" do
+      expect(doc.create_comment("a--b").content).to eq("a--b")
+      expect(doc.create_comment("trailing-").content).to eq("trailing-")
+      expect { doc.create_comment("a--b").to_xml }.to raise_error(Makiri::Error, /character data XML cannot hold/)
+      expect { doc.create_comment("trailing-").to_xml }.to raise_error(Makiri::Error, /character data XML cannot hold/)
+      expect { doc.create_cdata("a]]>b") }.to raise_error(ArgumentError, /]]>/)
+      # the data setter checks nothing, as the DOM's does
+      comment = doc.create_comment("ok")
+      comment.content = "x--y"
+      expect { comment.to_xml }.to raise_error(Makiri::Error, /character data XML cannot hold/)
+      cdata = doc.create_cdata("ok")
+      cdata.content = "x]]>y"
+      expect(cdata.to_xml).to eq("<![CDATA[x]]]]><![CDATA[>y]]>") # split: CDATA can carry it
       # valid content is still accepted and round-trips
       expect(doc.create_comment("a-b").to_xml).to eq("<!--a-b-->")
       expect(doc.create_cdata("a < b").to_xml).to eq("<![CDATA[a < b]]>")
@@ -171,8 +180,8 @@ RSpec.describe "Makiri::XML building (Phase 2)" do
     it "keeps the factory validation and Document type-check on the .new delegators" do
       expect { Makiri::XML::Element.new("e", "not a doc") }.to raise_error(TypeError)
       expect { Makiri::XML::Comment.new("not a doc", "x") }.to raise_error(TypeError)
-      expect { Makiri::XML::Comment.new(doc, "a--b") }.to raise_error(Makiri::Error) # "--"
-      expect { Makiri::XML::CDATASection.new(doc, "a]]>b") }.to raise_error(Makiri::Error)  # "]]>"
+      expect(Makiri::XML::Comment.new(doc, "a--b").content).to eq("a--b") # the DOM holds it
+      expect { Makiri::XML::CDATASection.new(doc, "a]]>b") }.to raise_error(ArgumentError)  # "]]>"
     end
   end
 

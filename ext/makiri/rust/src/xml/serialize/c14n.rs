@@ -8,7 +8,7 @@
 #![forbid(unsafe_code)]
 
 use super::bindings::{Bindings, Prefix};
-use super::out::{put, put_pi, C14N, W};
+use super::out::{put, put_comment, put_pi, C14N, W};
 use super::Failure;
 use crate::cbuf::Buf;
 use crate::falloc::{OomResult, VecPush};
@@ -65,9 +65,7 @@ impl<'d> Writer<'d, '_> {
             }
             Some(ArenaKind::Comment) => {
                 if self.comments {
-                    self.put(b"<!--")?;
-                    self.put(doc.span(doc.node(n).value))?;
-                    self.put(b"-->")?;
+                    put_comment(self.b, doc.span(doc.node(n).value))?;
                 }
                 Ok(())
             }

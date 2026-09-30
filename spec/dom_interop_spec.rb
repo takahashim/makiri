@@ -349,11 +349,12 @@ RSpec.describe "browser-DOM interop" do
         .to eq([["xmlns:p", XMLNS_NS], ["xmlns", nil]])
     end
 
-    it "holds the name to the DOM's rule and the value to XML's characters" do
+    it "holds the name to the DOM's rule, and the value to none (to_xml refuses)" do
       expect { root.set_loose_dom_attribute("a b", "v") }.to raise_error(ArgumentError, /invalid DOM attribute name/)
       expect { root.set_loose_dom_attribute("a=b", "v") }.to raise_error(ArgumentError)
       expect { root.set_loose_dom_attribute("", "v") }.to raise_error(ArgumentError)
-      expect { root.set_loose_dom_attribute("a", "\u0001") }.to raise_error(Makiri::Error, /not permitted in XML/)
+      root.set_loose_dom_attribute("a", "\u0001")
+      expect { doc.to_xml }.to raise_error(Makiri::Error, /character data XML cannot hold/)
     end
 
     it "leaves set_attribute_ns the DOM's setAttributeNS" do

@@ -40,6 +40,10 @@ fn failure_error(f: Failure, verb: &str) -> Error {
                 "cannot {verb} XML containing a DOM-loose doctype (a name or id XML cannot write)"
             )
         }
+        Failure::UnwritableData => format!(
+            "cannot {verb} XML containing character data XML cannot hold (a character \
+outside XML's, -- in a comment, or ?> in a processing instruction)"
+        ),
         Failure::ForbiddenDeclaration => format!(
             "cannot {verb} XML containing a namespace declaration XML forbids \
 (such as xmlns:p=\"\", held as set_attribute_ns made it)"

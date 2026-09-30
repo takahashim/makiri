@@ -666,39 +666,40 @@ fn setting_an_attribute_twice_replaces_its_value() {
 }
 
 #[test]
-fn an_attribute_value_that_is_not_xml_char_is_refused() {
+fn data_the_dom_takes_is_held_and_refused_when_written() {
+    /* The DOM's createTextNode / createComment / setAttribute / data setter
+     * take any string; XML cannot hold a character outside its class, nor a
+     * comment's `--`. The mutators hold it and the serializer refuses it. */
     let (mut doc, r) = detached_element(b"r");
+    mutate::set_attribute(&mut doc, r, b"k", b"\x01").expect("the DOM's setAttribute takes it");
+    let text = mutate::new_chardata(&mut doc, ArenaKind::Text, b"a\x0cb").expect("createTextNode");
+    let comment =
+        mutate::new_chardata(&mut doc, ArenaKind::Comment, b"a--b").expect("createComment");
+    assert_eq!(doc.value(text), b"a\x0cb");
+    assert_eq!(doc.value(comment), b"a--b");
+    let ok = mutate::new_chardata(&mut doc, ArenaKind::Comment, b"a-b").expect("a comment");
+    mutate::set_content(&mut doc, ok, b"x-").expect("the data setter checks nothing");
     assert_eq!(
-        mutate::set_attribute(&mut doc, r, b"k", b"\x01"),
-        Err(MutError::BadChars)
+        crate::xml::serialize::to_xml(&doc, r, 0, None).err(),
+        Some(crate::xml::serialize::Failure::UnwritableData),
+        "an attribute value outside XML's characters has no XML form"
     );
 }
 
 #[test]
-fn a_leaf_value_holding_its_own_close_sequence_is_refused() {
+fn the_dom_factories_refuse_only_their_close_sequences() {
     let mut doc = doc_new();
-    /* Each of these would end the construct early once serialized, so the value
-     * is refused rather than escaped. */
-    assert_eq!(
-        mutate::new_chardata(&mut doc, ArenaKind::Comment, b"a--b"),
-        Err(MutError::BadChars)
-    );
-    assert_eq!(
-        mutate::new_chardata(&mut doc, ArenaKind::Comment, b"x-"),
-        Err(MutError::BadChars),
-        "a trailing '-' would make '-->' out of the close"
-    );
-    assert_eq!(
+    assert!(matches!(
         mutate::new_chardata(&mut doc, ArenaKind::CDataSection, b"a]]>b"),
-        Err(MutError::BadChars)
-    );
-
-    let ok = mutate::new_chardata(&mut doc, ArenaKind::Comment, b"a-b").expect("one '-' is fine");
-    assert_eq!(
-        mutate::set_content(&mut doc, ok, b"x--y"),
-        Err(MutError::BadChars),
-        "and the rule holds on a later write, not just at creation"
-    );
+        Err(MutError::InvalidCharacter(_))
+    ));
+    assert!(matches!(
+        mutate::new_pi(&mut doc, b"t", b"a?>b"),
+        Err(MutError::InvalidCharacter(_))
+    ));
+    let cdata =
+        mutate::new_chardata(&mut doc, ArenaKind::CDataSection, b"a]]b").expect("no ]]> in it");
+    mutate::set_content(&mut doc, cdata, b"a]]>b").expect("the data setter checks nothing");
 }
 
 #[test]

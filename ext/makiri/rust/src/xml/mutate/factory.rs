@@ -8,7 +8,7 @@
 #![forbid(unsafe_code)]
 
 use super::assign_qname;
-use super::edit::value_seq_ok;
+use super::edit::dom_refuses_data;
 use crate::xml::chars::validate_chars;
 use crate::xml::qname::{split_checked, Split};
 use crate::xml::{ArenaKind, Document, MutError, NodeFlags, NodeId};
@@ -59,11 +59,8 @@ pub fn new_chardata(doc: &mut Document, ty: ArenaKind, text: &[u8]) -> Result<No
     if ty != ArenaKind::Text && ty != ArenaKind::CDataSection && ty != ArenaKind::Comment {
         return Err(MutError::Type);
     }
-    if !validate_chars(text) {
-        return Err(MutError::BadChars);
-    }
-    if !value_seq_ok(ty, text) {
-        return Err(MutError::BadChars);
+    if let Some(why) = dom_refuses_data(ty, text) {
+        return Err(MutError::InvalidCharacter(why));
     }
     let n = doc.new_node(ty)?;
     doc.set_value_bytes(n, text)?;
@@ -75,11 +72,8 @@ pub fn new_pi(doc: &mut Document, target: &[u8], data: &[u8]) -> Result<NodeId, 
     {
         return Err(MutError::BadName);
     }
-    if !validate_chars(data) {
-        return Err(MutError::BadChars);
-    }
-    if !value_seq_ok(ArenaKind::Pi, data) {
-        return Err(MutError::BadChars);
+    if let Some(why) = dom_refuses_data(ArenaKind::Pi, data) {
+        return Err(MutError::InvalidCharacter(why));
     }
     let pi = doc.new_node(ArenaKind::Pi)?;
     let t = doc.store(target)?;

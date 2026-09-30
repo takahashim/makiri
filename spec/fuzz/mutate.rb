@@ -277,14 +277,28 @@ module MutateFuzz
     # `a"b`). That refusal is the fail-closed outcome, and only for a document
     # that holds a doctype; the root element, which excludes it, is checked
     # instead (the doctype may be frozen, so it is not removed).
+    #
+    # Character data the DOM holds and XML cannot (`\x01`, a comment's `--`)
+    # is refused only when the tree really holds some; then there is no
+    # well-formed output to re-parse, and nothing further to check. The root
+    # element tried after a loose doctype may be refused for it too.
+    data_refused = ->(err) { err.message.include?("character data XML cannot hold") && unwritable_data?(nodes) }
     xml1 = begin
       doc.to_xml
     rescue Makiri::Error => e
+      return if data_refused.(e)
+
       doctype = doc.children.find { |c| c.is_a?(Makiri::XML::DocumentType) }
       raise unless e.message.include?("DOM-loose doctype") && doctype
       return unless doc.root
 
-      doc.root.to_xml
+      begin
+        doc.root.to_xml
+      rescue Makiri::Error => e2
+        return if data_refused.(e2)
+
+        raise
+      end
     end
 
     # The constructed tree may not be a well-formed XML document (the API allows
@@ -303,6 +317,33 @@ module MutateFuzz
     raise InvariantError, "serialization not a fixed point" unless canonical == Makiri::XML(canonical).to_xml
   rescue Makiri::Error => e
     raise InvariantError, "serialize/re-parse failed: #{e.class}: #{e.message}"
+  end
+
+  # Characters XML 1.0 has no Char for (C0 controls but tab, LF and CR;
+  # U+FFFE and U+FFFF), which the DOM - and so the mutators - still hold.
+  NON_XML_CHAR = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/
+
+  # Whether any node holds data no XML can write: a character outside XML's in
+  # text, CDATA, a comment, a PI or an attribute value, `--` or a trailing `-`
+  # in a comment, `?>` in a PI. Decided here from the contents, independently
+  # of the serializer it checks.
+  def unwritable_data?(nodes)
+    nodes.any? do |n|
+      case n
+      when Makiri::XML::Comment
+        v = n.content
+        v.match?(NON_XML_CHAR) || v.include?("--") || v.end_with?("-")
+      when Makiri::XML::ProcessingInstruction
+        v = n.content
+        v.match?(NON_XML_CHAR) || v.include?("?>")
+      when Makiri::XML::Text, Makiri::XML::CDATASection
+        n.content.match?(NON_XML_CHAR)
+      when Makiri::XML::Element
+        n.attribute_nodes.any? { |a| a.value.match?(NON_XML_CHAR) }
+      else
+        false
+      end
+    end
   end
 
   # A document is structurally well-formed when exactly one of its top-level

@@ -44,6 +44,11 @@ pub enum Failure {
     /// to declare (`set_attribute_ns(XMLNS, "xmlns:p", "")`, which the DOM
     /// allows): its name is fine, and no XML can hold it.
     ForbiddenDeclaration,
+    /// Character data XML cannot hold: a character outside XML 1.0's `Char`
+    /// (`\f`, U+0001) in text, an attribute value, a comment, CDATA or a PI,
+    /// or `--` in a comment, `?>` in a PI. The DOM holds all of it, so the
+    /// mutators take it; it is refused where it would be written.
+    UnwritableData,
     /// A DOM-loose DOCTYPE (`create_document_type`): a name or an id XML
     /// cannot write. Only [`to_xml`] refuses it; canonical form omits the
     /// document type declaration, so it has nothing to write wrong.
