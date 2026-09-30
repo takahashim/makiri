@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.11.0] - 2026-09-30
+
+No code changes since 0.11.0.rc2. Coming from 0.10.x, read the rc2 and rc1
+notes below as well.
+
 ## [0.11.0.rc2] - 2026-09-30
 
 ### Added
