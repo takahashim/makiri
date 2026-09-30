@@ -271,13 +271,31 @@ fn h2x_element<'a>(
     })
 }
 
-/// The first child to translate under `s`: a `<template>` descends into its
-/// contents fragment, and has none when that fragment is missing.
+/// The first child to translate under `s`. A `<template>` gives its contents
+/// first, then its own children ([`h2x_next`]): XML has no template contents,
+/// so both become the copy's children, contents first - as XHTML writes them.
 fn h2x_first_child(s: HtmlNode<'_>) -> Option<HtmlNode<'_>> {
     if s.is_html_template() {
-        return s.template_content()?.first_child();
+        if let Some(c) = s.template_content().and_then(HtmlNode::first_child) {
+            return Some(c);
+        }
     }
     s.first_child()
+}
+
+/// The child to translate after `cur` under `s`: its next sibling, and after a
+/// `<template>`'s last content node, the template's own first child. Its own
+/// children (`appendChild` on the template) were dropped - only the contents
+/// crossed, and the rest of the data vanished without a word.
+fn h2x_next<'a>(s: HtmlNode<'a>, cur: HtmlNode<'a>) -> Option<HtmlNode<'a>> {
+    if let Some(n) = cur.next() {
+        return Some(n);
+    }
+    /* `cur` was in the contents fragment, not a child of the template. */
+    if s.is_html_template() && cur.parent() != Some(s) {
+        return s.first_child();
+    }
+    None
 }
 
 /// Deep- or shallow-copy an HTML subtree into the XML arena, detached. `src`
@@ -319,7 +337,7 @@ pub fn cross_html_to_xml(
                             .or_oom::<MutError>()?;
                     }
                 }
-                c = child.next();
+                c = h2x_next(f.s, child);
             }
         }
     }
