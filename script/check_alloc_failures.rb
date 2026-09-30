@@ -142,7 +142,12 @@ SCENARIOS = {
     el = doc.create_element("made")
     el.add_child(doc.create_text_node("inner"))
     el["k"] = "v"
+    el.set_loose_dom_attribute("v-on:x", "1")
+    el.set_loose_dom_attribute("xmlns", "urn:loose")
+    el.set_loose_dom_attribute("k", "v2")
     doc.root.add_child(el)
+    el.remove_attribute_ns(nil, "v-on:x")
+    el.delete("xmlns")
     el.content = "rewritten"
     el.add_previous_sibling(doc.create_element("before"))
     el.add_next_sibling(doc.create_element("after"))
@@ -263,6 +268,7 @@ SCENARIOS = {
     d = Makiri::HTML::Document.parse("<html><body><div id='a'><p>one</p></div></body></html>")
     a = d.at_css("#a")
     a.add_child(d.create_element("made"))
+    a.add_child(d.create_element_ns("http://www.w3.org/2000/svg", "s:feBlend"))
     a.add_child(d.create_text_node("inner"))
     a.add_child(d.create_comment(" note "))
     a.add_child(d.create_processing_instruction("tgt", "pd"))

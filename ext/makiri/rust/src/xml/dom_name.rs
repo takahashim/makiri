@@ -69,9 +69,81 @@ pub fn valid_attribute_local_name(name: &[u8]) -> bool {
     !name.is_empty() && !name.iter().any(|&c| forbidden(c) || c == b'=')
 }
 
+/// Whether `name` is a WHATWG DOM "valid doctype name" - what
+/// `createDocumentType` checks, and all it checks: no ASCII whitespace, NUL or
+/// `>`. The DOM allows the empty name; Makiri refuses it, as the HTML factory
+/// must (Lexbor reads an empty name as absent), so both answer alike.
+pub fn valid_doctype_name(name: &[u8]) -> bool {
+    !name.is_empty()
+        && !name
+            .iter()
+            .any(|&c| matches!(c, 0 | b'\t' | b'\n' | 0x0C | b'\r' | b' ' | b'>'))
+}
+
 /// Whether `prefix` is a WHATWG DOM "valid namespace prefix".
 pub fn valid_namespace_prefix(prefix: &[u8]) -> bool {
     prefix_ok(prefix)
+}
+
+/// Why [`validate_and_extract`] refused a name: a half the naming rule
+/// refuses (the DOM's InvalidCharacterError), or a namespace that does not
+/// fit the name (NamespaceError).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExtractError {
+    Name,
+    Namespace,
+}
+
+/// The DOM's "validate and extract": `qname` split at its first colon into
+/// (prefix, local name) - prefix empty when there is none - with the prefix
+/// held to "valid namespace prefix", the local name to `local_ok` (the
+/// element or the attribute rule), and then `ns` ("" = null) to the name
+/// ([`namespace_fits`]). One body for every caller, so the rule is changed in
+/// one place.
+pub fn validate_and_extract<'q>(
+    ns: &[u8],
+    qname: &'q [u8],
+    local_ok: fn(&[u8]) -> bool,
+) -> Result<(&'q [u8], &'q [u8]), ExtractError> {
+    let (prefix, local) = match qname.iter().position(|&b| b == b':') {
+        Some(i) => {
+            let (prefix, local) = (&qname[..i], &qname[i + 1..]);
+            if !valid_namespace_prefix(prefix) {
+                return Err(ExtractError::Name);
+            }
+            (prefix, local)
+        }
+        None => (&b""[..], qname),
+    };
+    if !local_ok(local) {
+        return Err(ExtractError::Name);
+    }
+    if !namespace_fits(ns, qname, prefix) {
+        return Err(ExtractError::Namespace);
+    }
+    Ok((prefix, local))
+}
+
+/// Whether `ns` ("" = null) fits a name with this `prefix` ("" = none) - the
+/// namespace clauses of the DOM's "validate and extract": a prefix needs a
+/// namespace, `xml` takes only the XML namespace, and `xmlns` (as the name or
+/// the prefix) takes only the XMLNS namespace, which takes nothing else.
+///
+/// The DOM's rule and no more, for elements and attributes, in HTML and XML
+/// alike. Namespaces in XML's converse - the XML namespace only under `xml` -
+/// is not a naming rule here: rc1 applied it to `set_attribute_ns`, and
+/// refused the DOM's `setAttributeNS(XML, "a:bb")`. The XML serializer writes
+/// such an attribute as `xml:bb` instead, as DOM Parsing does.
+pub fn namespace_fits(ns: &[u8], qname: &[u8], prefix: &[u8]) -> bool {
+    use crate::xml::{XMLNS_NS_URI, XML_NS_URI};
+    let is_xmlns = qname == b"xmlns" || prefix == b"xmlns";
+    if !prefix.is_empty() && ns.is_empty() {
+        return false;
+    }
+    if prefix == b"xml" && ns != XML_NS_URI {
+        return false;
+    }
+    is_xmlns == (ns == XMLNS_NS_URI)
 }
 
 /// Check that `qname`, `prefix` and `local` describe one DOM element name -

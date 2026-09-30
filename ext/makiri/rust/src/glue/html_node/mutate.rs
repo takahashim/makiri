@@ -21,11 +21,11 @@ use crate::bridge::ruby::{makiri_error, string_of};
 use crate::bridge::fragment::{set_template_inner_html, stage_fragment_in};
 use crate::bridge::html::{edit, insert, owning_doc, wrap_html_node, HtmlEdit, HtmlSelf};
 use crate::bridge::string::{
-    namespace_arg, ruby_verified_data, ruby_verified_text, ruby_verified_text_opt,
+    namespace_arg, ruby_verified_data, ruby_verified_name, ruby_verified_text,
+    ruby_verified_text_opt,
 };
 use crate::lexbor::adapter::html::{HtmlElementMut, NodeType, Place, RawNode};
 use crate::xml::dom_name;
-use crate::xml::qname::Split;
 
 /// `name` held to the WHATWG DOM rule `ok`, else `ArgumentError` - the DOM's
 /// InvalidCharacterError, and what the XML side raises for a bad name.
@@ -47,6 +47,29 @@ fn check_dom_name(
         ruby.exception_arg_error(),
         format!("invalid HTML {what} name"),
     ))
+}
+
+/// The refusal of a namespace that does not fit the qualified name it came with.
+const NS_MISFIT: &str =
+    "the namespace does not fit the qualified name (a prefix needs a namespace; \
+xml and xmlns take only their own)";
+
+/// [`dom_name::validate_and_extract`] with its refusals as the method raises
+/// them: `ArgumentError` for a name, `Makiri::Error` for a namespace.
+fn extract<'q>(
+    ruby: &Ruby,
+    ns: &[u8],
+    qname: &'q crate::bridge::string::RubyText,
+    local_ok: fn(&[u8]) -> bool,
+    what: &str,
+) -> Result<(&'q [u8], &'q [u8]), Error> {
+    dom_name::validate_and_extract(ns, qname.as_bytes(), local_ok).map_err(|e| match e {
+        dom_name::ExtractError::Name => Error::new(
+            ruby.exception_arg_error(),
+            format!("invalid HTML {what} name"),
+        ),
+        dom_name::ExtractError::Namespace => makiri_error(NS_MISFIT),
+    })
 }
 
 /// The receiver as an element, once every argument is converted. Its node type
@@ -116,7 +139,7 @@ pub fn aset(ruby: &Ruby, this: HtmlSelf, rb_name: Value, rb_value: Value) -> Res
         if edit.node_type() != NodeType::Element {
             return Err(makiri_error(REFUSAL));
         }
-        let nv = ruby_verified_text(rb_name, "attribute name")?;
+        let nv = ruby_verified_name(rb_name, "attribute name")?;
         let vv = ruby_verified_data(rb_value, "attribute value")?;
         check_dom_name(ruby, &nv, dom_name::valid_attribute_local_name, "attribute")?;
         let el = element_of(edit, REFUSAL)?;
@@ -140,40 +163,19 @@ pub fn set_attribute_ns(
         if edit.node_type() != NodeType::Element {
             return Err(makiri_error(REFUSAL));
         }
-        let qv = ruby_verified_text(rb_qname, "attribute qualified name")?;
+        let qv = ruby_verified_name(rb_qname, "attribute qualified name")?;
         let vv = ruby_verified_data(rb_value, "attribute value")?;
         let nv = namespace_arg(rb_ns, "namespace")?;
-        /* The DOM's "validate and extract": split at the first colon, check
-         * both halves, then that the namespace fits them - the rule XML's
-         * set_attribute_ns applies too (`xml::qname::ns_fits_name`). It named
-         * `(nil, "x:y")` a prefixed attribute in no namespace. */
-        let q = qv.as_bytes();
-        let colon = q.iter().position(|&b| b == b':');
-        let (prefix, local) = match colon {
-            Some(i) => (&q[..i], &q[i + 1..]),
-            None => (&b""[..], q),
-        };
-        let names_ok = dom_name::valid_attribute_local_name(local)
-            && (colon.is_none() || dom_name::valid_namespace_prefix(prefix));
-        check_dom_name(ruby, &qv, |_| names_ok, "attribute")?;
+        /* The DOM's "validate and extract". It named `(nil, "x:y")` a
+         * prefixed attribute in no namespace. */
         let ns = nv.as_ref().map_or(&b""[..], |n| n.as_bytes());
-        /* `Split` holds u32 lengths; a name past that would be split wrong, so
-         * it is refused rather than truncated (each `as u32` below is exact). */
-        if u32::try_from(q.len()).is_err() {
-            return Err(makiri_error(
-                "attribute qualified name too long (max 4 GiB)",
-            ));
-        }
-        let split = match colon {
-            Some(i) => Split::prefixed(i as u32, (q.len() - i - 1) as u32),
-            None => Split::unprefixed(q.len() as u32),
-        };
-        if !crate::xml::qname::ns_fits_name(ns, q, &split) {
-            return Err(makiri_error(
-                "the namespace does not fit the qualified name (a prefix needs a namespace; \
-xml and xmlns take only their own)",
-            ));
-        }
+        extract(
+            ruby,
+            ns,
+            &qv,
+            dom_name::valid_attribute_local_name,
+            "attribute",
+        )?;
         let el = element_of(edit, REFUSAL)?;
         crate::bridge::html::set_attribute_ns(el, nv.as_ref().map(|n| n.as_bytes()), &qv, &vv)
             .map_err(|_| makiri_error("failed to set namespaced attribute"))?;
@@ -304,10 +306,41 @@ fn created(node: Option<RawNode>, rb_self: Value, what: &str) -> Result<Value, E
 pub fn create_element(ruby: &Ruby, rb_self: Value, rb_name: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let doc = owning_doc(&rb_self)?;
-        let nv = ruby_verified_text(rb_name, "element name")?;
+        let nv = ruby_verified_name(rb_name, "element name")?;
         check_dom_name(ruby, &nv, dom_name::valid_element_local_name, "element")?;
         created(
             crate::bridge::html::create_element(doc, &nv),
+            rb_self,
+            "element",
+        )
+    })
+}
+
+/// `Document#create_element_ns(namespace_uri, qualified_name)` -> Element.
+///
+/// The DOM's createElementNS: the name is split at its first colon and each
+/// half held to the DOM's rule (`ArgumentError`), then the namespace to the
+/// name (`Makiri::Error`). Not `create_element`'s rule - `"0:a"` is prefix `0`
+/// and local name `a` - and the name keeps its case, as a parsed foreign
+/// element's does.
+pub fn create_element_ns(
+    ruby: &Ruby,
+    rb_self: Value,
+    rb_ns: Value,
+    rb_qname: Value,
+) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| {
+        let doc = owning_doc(&rb_self)?;
+        let nv = namespace_arg(rb_ns, "namespace")?;
+        let qv = ruby_verified_name(rb_qname, "element qualified name")?;
+        let ns = nv.as_ref().map_or(&b""[..], |n| n.as_bytes());
+        let (prefix, local) =
+            extract(ruby, ns, &qv, dom_name::valid_element_local_name, "element")?;
+        if doc.misreads_html_name(local, ns) {
+            return Err(makiri_error(crate::bridge::html::HTML_NAME_CASE));
+        }
+        created(
+            crate::bridge::html::create_element_ns(doc, local, ns, prefix),
             rb_self,
             "element",
         )
@@ -349,7 +382,7 @@ pub fn create_pi(
 ) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let doc = owning_doc(&rb_self)?;
-        let tv = ruby_verified_text(rb_target, "processing instruction target")?;
+        let tv = ruby_verified_name(rb_target, "processing instruction target")?;
         let dv = ruby_verified_text(rb_data, "processing instruction data")?;
         /* DOM createProcessingInstruction: the target must match the XML Name
          * production. Lexbor leaves that check as a TODO, and an unchecked
@@ -383,7 +416,7 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
         let (rb_pub, rb_sys_) = args.optional;
 
         let doc = owning_doc(&rb_self)?;
-        let nv = ruby_verified_text(rb_name, "doctype name")?;
+        let nv = ruby_verified_name(rb_name, "doctype name")?;
         if !crate::bridge::html::valid_doctype_name(&nv) {
             /* The caller's error, not Lexbor's, so the exception class is picked
              * here - the check itself is the DOM layer's. */

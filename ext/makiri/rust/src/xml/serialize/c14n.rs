@@ -13,10 +13,9 @@ use super::Failure;
 use crate::cbuf::Buf;
 use crate::falloc::{OomResult, VecPush};
 use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeFlags, NodeId, MAX_DEPTH};
-use crate::xml::qname::xmlns_prefix;
 
 fn xmlns_decl(doc: &XmlDoc, a: NodeId) -> Option<(&[u8], &[u8])> {
-    let p = xmlns_prefix(doc.qname(a))?;
+    let p = doc.decl_prefix(a)?;
     Some((p, doc.span(doc.node(a).value)))
 }
 
@@ -170,6 +169,14 @@ impl<'d> Writer<'d, '_> {
              * `urn:a` was written under whatever the prefix meant here, or
              * dropped from an unprefixed name. */
             let decided = decided || doc.node(at).attr_ns == crate::xml::AttrNs::Explicit;
+            /* The XML namespace is always bound to `xml`, and to nothing else
+             * (Namespaces in XML §3), so an attribute in it is written as
+             * `xml:local` whatever its own prefix (`set_attribute_ns(XML,
+             * "a:bb")`), as `to_xml` does - checked against `a` it was refused
+             * as unbound, which no declaration could repair. */
+            if in_xml_ns(doc, at) {
+                continue;
+            }
             if xmlns_decl(doc, at).is_none() && !prefix.is_empty() {
                 let Some(expected) = self.binds.resolve(prefix)? else {
                     return Err(Failure::UnboundPrefix);
@@ -250,7 +257,12 @@ impl<'d> Writer<'d, '_> {
 
         for at in sorted_attributes(doc, n)? {
             self.put(b" ")?;
-            self.qname(at)?;
+            if in_xml_ns(doc, at) {
+                self.put(b"xml:")?;
+                self.put(doc.span(doc.node(at).local))?;
+            } else {
+                self.qname(at)?;
+            }
             self.put(b"=\"")?;
             self.escape(doc.span(doc.node(at).value), true)?;
             self.put(b"\"")?;
@@ -264,6 +276,11 @@ impl<'d> Writer<'d, '_> {
         self.qname(n)?;
         self.put(b">")
     }
+}
+
+/// Whether attribute `at` is in the XML namespace, which is written as `xml:`.
+fn in_xml_ns(doc: &XmlDoc, at: NodeId) -> bool {
+    doc.span(doc.node(at).ns_uri) == crate::xml::XML_NS_URI
 }
 
 /// §3.3: an element's non-declaration attributes, ordered by namespace URI then

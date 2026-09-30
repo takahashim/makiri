@@ -3,7 +3,9 @@
 //! that nest a selector list deferred to a task (`query`). Names are
 //! resolved once per query ([`Name`]).
 
-use crate::lexbor::adapter::html::{AttrName, HtmlAttr, HtmlDoc, HtmlElement, HtmlNode, TagId};
+use crate::lexbor::adapter::html::{
+    has_ascii_uppercase, AttrName, HtmlAttr, HtmlDoc, HtmlElement, HtmlNode, NsId, TagId,
+};
 use crate::lexbor::css_parser::{AttrMatch, FunctionArg, PseudoClass, Simple};
 use core::ffi::c_long;
 
@@ -61,19 +63,57 @@ fn has_whitespace_token(target: &[u8], want: &[u8], case_insensitive: bool) -> b
     }
 }
 
-/// `lxb_selectors_match_element` folds ASCII case UNCONDITIONALLY (tag lookup
-/// always searches lower-cased), regardless of namespace or quirks mode -
-/// unlike class/id (`lxb_selectors_match_class`/`_id`, quirks-only) or
-/// attribute values (`lxb_selectors_match_attribute_html_case_insensitive`,
-/// HTML-namespace-and-document-type-gated). This is a known Lexbor deviation
-/// from the CSS spec for foreign content (documented in
-/// `NOKOGIRI_DIFFERENCES.md`'s namespace section already), reproduced here for
-/// engine parity, not "fixed".
+/// A type selector `want`, compared as bytes (`matches?`, which resolves no
+/// ids): the case-folded comparison Lexbor makes, then [`written_case_holds`].
 fn name_eq(node: HtmlNode<'_>, want: &[u8]) -> bool {
-    // The stored (lower-cased) local name: the DOM's case-preserved one
-    // differs from it only in case, which this comparison folds anyway.
-    node.element()
-        .is_some_and(|el| el.local_name().eq_ignore_ascii_case(want))
+    node.element().is_some_and(|el| {
+        el.local_name().eq_ignore_ascii_case(want) && written_case_holds(node, el, want)
+    })
+}
+
+/// Given that `el`'s name equals the type selector `want` with ASCII case
+/// folded - which is all a Lexbor tag id says - whether it equals it as
+/// Selectors 4 and the HTML Standard ("case-sensitivity of selectors") compare:
+/// for an HTML element, `want` lower-cased against its localName; for any
+/// other, `want` as written against its localName.
+///
+/// `lxb_selectors_match_element` folds case on every element, so
+/// `fegaussianblur` matched SVG `feGaussianBlur`, and `div` an element made
+/// `DIV` by createElementNS - neither of which a browser matches. The fold
+/// stays as the first test, since it is the tag-id compare a walking query
+/// makes; this only confirms it. An element with no written name - nearly
+/// every one the parser makes - has its lower-cased stored name as its
+/// localName, so no name is read: the fold is the answer on an HTML element,
+/// and on another it holds exactly when `want` has no upper case.
+///
+/// Only that first case is inline. With the whole test inline, every plain
+/// type scan (`li`, `ul li a`) measured 5-10% slower, on an HTML element that
+/// never gets past the first branch.
+#[inline]
+fn written_case_holds(node: HtmlNode<'_>, el: HtmlElement<'_>, want: &[u8]) -> bool {
+    (!el.has_written_name() && node.ns_id() == Some(NsId::HTML))
+        || written_case_holds_slow(node, el, want)
+}
+
+#[inline(never)]
+fn written_case_holds_slow(node: HtmlNode<'_>, el: HtmlElement<'_>, want: &[u8]) -> bool {
+    if !el.has_written_name() {
+        /* A foreign element (an HTML one answered inline), whose localName is
+         * its stored, lower-cased name: equal to `want` as written, given the
+         * fold, exactly when `want` has no upper case. Reading the name to
+         * compare (`el.local_name() == want`) says the same and measured 8%
+         * slower on an SVG scan - a Lexbor call per candidate. */
+        return !has_ascii_uppercase(want);
+    }
+    let local = el.dom_local_name();
+    if node.ns_id() == Some(NsId::HTML) {
+        /* `want` lower-cased against the localName. Given the fold, that
+         * holds exactly when the localName has no upper case - and needs no
+         * lower-cased copy of `want`. */
+        !has_ascii_uppercase(local)
+    } else {
+        local == want
+    }
 }
 
 /// `lxb_selectors_match_attribute`: `[name op value]` (or `[name]`, existence,
@@ -335,11 +375,17 @@ pub(super) type Names = Table<Name>;
 
 /// `lxb_selectors_match_element` through [`Name`]: one id comparison in a
 /// walking query (the node is of the walked document - [`Name`]'s doc),
-/// [`name_eq`] otherwise.
+/// [`name_eq`] otherwise; either way confirmed by [`written_case_holds`].
 #[inline]
 fn type_matches(node: HtmlNode<'_>, want: &[u8], name: Name) -> bool {
     match name {
-        Name::Tag(id) => node.element().is_some() && id.is_some() && node.tag_id() == id,
+        Name::Tag(id) => {
+            id.is_some()
+                && node.tag_id() == id
+                && node
+                    .element()
+                    .is_some_and(|el| written_case_holds(node, el, want))
+        }
         _ => name_eq(node, want),
     }
 }

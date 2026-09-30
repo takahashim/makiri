@@ -13,7 +13,7 @@ use super::ns::{resolve_ns, Ns, Resolved, NO_NS};
 use crate::xml::attr_key::{key_taken, AttrKey};
 use crate::xml::chars::validate_chars;
 use crate::xml::qname::{ns_decl_check, split_checked, xmlns_prefix, Split};
-use crate::xml::{ArenaKind, AttrNs, Document, MutError, NodeId};
+use crate::xml::{ArenaKind, AttrNs, Document, MutError, NodeFlags, NodeId};
 
 /// Build a fresh ATTRIBUTE (qname + value + namespace) and link it onto `el`
 /// after `tail`, the last entry the caller's own scan reached.
@@ -75,7 +75,6 @@ pub fn set_attribute(
         return Err(MutError::Type);
     }
     let sp = split_checked(name).ok_or(MutError::BadName)?;
-    decl_check(name, val)?;
     if !validate_chars(val) {
         return Err(MutError::BadChars);
     }
@@ -86,11 +85,12 @@ pub fn set_attribute(
      * namespace), silently, and dropped a namespace set_attribute_ns gave. */
     let tail = match find_attr(doc, el, AttrKey::QName(name)) {
         AttrSlot::Found { attr, .. } => {
-            doc.set_value_bytes(attr, val)?;
+            set_existing_value(doc, attr, name, val)?;
             return Ok(attr);
         }
         AttrSlot::Absent { tail } => tail,
     };
+    decl_check(name, val)?;
     let connected = doc.is_connected(el);
     let r = resolve_ns(doc, Some(el), name, &sp, true, connected)?;
     /* No attribute has this QName, but one may have its key under another
@@ -101,6 +101,74 @@ pub fn set_attribute(
         return Err(MutError::DuplicateAttr);
     }
     build_attr(doc, el, name, &sp, val, r, tail)
+}
+
+/// `[]=` on the existing attribute `attr`, named `name`: the value `val`, held
+/// to the declaration rules when the attribute is named as one - whether or
+/// not its current value binds (`set_attribute_ns` may have given it one that
+/// does not), since `[]=` names a declaration to make. A DOM-loose attribute
+/// merely named `xmlns` declares nothing, so its value is no URI to check.
+fn set_existing_value(
+    doc: &mut Document,
+    attr: NodeId,
+    name: &[u8],
+    val: &[u8],
+) -> Result<(), MutError> {
+    if doc.declaration_named(attr).is_some() {
+        decl_check(name, val)?;
+    }
+    doc.set_value_bytes(attr, val)?;
+    Ok(())
+}
+
+/// The DOM's `setAttribute` on a non-HTML element, name for name: the first
+/// attribute whose qualified name is `name` gets the value; with none, a new
+/// one in NO namespace whose local name is the whole of `name`, colons and all.
+///
+/// XML has no such attribute when `name` is not an NCName or is `xmlns` -
+/// written out, `xlink:href` in no namespace names an unbound prefix and
+/// `xmlns` a declaration - so that one is marked DOM-loose: it stays an
+/// attribute and not a declaration (`Document::decl_prefix`), and the
+/// serializers refuse it, as they refuse a DOM-loose element. Any other name
+/// makes the plain attribute `set_attribute_ns(nil, name)` would.
+///
+/// `name` is held to the DOM's "valid attribute local name" only; the value
+/// to XML's characters, since the tree is still an XML one.
+pub fn set_loose_dom_attribute(
+    doc: &mut Document,
+    el: NodeId,
+    name: &[u8],
+    val: &[u8],
+) -> Result<NodeId, MutError> {
+    if doc.type_(el) != Some(ArenaKind::Element) {
+        return Err(MutError::Type);
+    }
+    if !crate::xml::dom_name::valid_attribute_local_name(name) {
+        return Err(MutError::BadDomName("invalid DOM attribute name"));
+    }
+    let Ok(len) = u32::try_from(name.len()) else {
+        return Err(MutError::BadName);
+    };
+    if !validate_chars(val) {
+        return Err(MutError::BadChars);
+    }
+    /* The DOM's setAttribute checks no value: a declaration given one it
+     * cannot hold (`xmlns:p=""`) binds nothing from then on
+     * (`Document::decl_prefix`), as `set_attribute_ns` leaves one. */
+    let tail = match find_attr(doc, el, AttrKey::QName(name)) {
+        AttrSlot::Found { attr, .. } => {
+            doc.set_value_bytes(attr, val)?;
+            return Ok(attr);
+        }
+        AttrSlot::Absent { tail } => tail,
+    };
+    let loose = name == b"xmlns" || split_checked(name).is_none_or(|sp| sp.prefix_len != 0);
+    let sp = Split::unprefixed(len);
+    let attr = build_attr(doc, el, name, &sp, val, Resolved::decided(NO_NS), tail)?;
+    let n = doc.node_mut(attr);
+    n.attr_ns = AttrNs::Explicit;
+    n.flags.set(NodeFlags::DOM_LOOSE_NAME, loose);
+    Ok(attr)
 }
 
 /// Remove `el`'s attribute named `name`; `true` when one was removed.
@@ -123,6 +191,15 @@ fn remove_attr_by(doc: &mut Document, el: NodeId, key: AttrKey<'_>) -> bool {
     }
 }
 
+/// The DOM's `setAttributeNS`: the attribute keyed by (`ns`, local name) gets
+/// `val`, or a new one is made with `ns` as its own namespace.
+///
+/// A declaration Namespaces in XML §3 forbids - `xmlns:p=""` above all, which
+/// the DOM makes (WPT `XMLSerializer-serializeToString.html`) - is not refused
+/// but held: an attribute in the XMLNS namespace that binds nothing
+/// (`Document::decl_prefix` decides from its value, so a later allowed value
+/// makes it a declaration again) and that the serializers refuse. `[]=`
+/// ([`set_attribute`]) still refuses one: it names a declaration to make.
 pub fn set_attribute_ns(
     doc: &mut Document,
     el: NodeId,
@@ -134,16 +211,19 @@ pub fn set_attribute_ns(
         return Err(MutError::Type);
     }
     let sp = split_checked(name).ok_or(MutError::BadName)?;
-    if !crate::xml::qname::ns_fits_name(ns, name, &sp) {
+    let prefix = &name[..sp.prefix_len as usize];
+    if !crate::xml::dom_name::namespace_fits(ns, name, prefix) {
         return Err(MutError::BadNsName);
     }
-    decl_check(name, val)?;
     if !validate_chars(val) {
         return Err(MutError::BadChars);
     }
     let local = &name[sp.local_off as usize..];
     let tail = match find_attr(doc, el, AttrKey::Ns { ns, local }) {
         AttrSlot::Found { attr, .. } => {
+            /* Whether it binds is read from its OWN name and the new value
+             * (`Document::decl_prefix`): `xmlns:xmlns` finds the default
+             * declaration `xmlns` (both are XMLNS + `xmlns`). */
             doc.set_value_bytes(attr, val)?;
             return Ok(attr);
         }

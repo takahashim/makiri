@@ -572,7 +572,7 @@ impl<'a> Parser<'a> {
         for attr in self.doc.attributes(root) {
             /* The prefix borrows `self.doc`, which the scope does not touch, so
              * it is passed as is: `Scope::bind` makes its own copy. */
-            if let Some(p) = xmlns_prefix(self.doc.qname(attr)) {
+            if let Some(p) = self.doc.decl_prefix(attr) {
                 let uri = self.doc.node(attr).value;
                 self.scope.bind(p, uri)?;
             }

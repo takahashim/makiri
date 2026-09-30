@@ -21,7 +21,8 @@
 
 use crate::falloc::{try_vec_with_capacity, OomOption, OomResult, VecPush};
 use crate::lexbor::adapter::html::{
-    BuildingElement, BuildingNode, HtmlDoc, HtmlElement, HtmlNode, NsId, RawDoc, RawNode,
+    has_ascii_uppercase, BuildingElement, BuildingNode, HtmlDoc, HtmlElement, HtmlNode, NsId,
+    RawDoc, RawNode,
 };
 use crate::xml::model::{ArenaKind, Document as XmlDoc, MutError, NodeId};
 use crate::xml::mutate;
@@ -124,11 +125,14 @@ fn h2x_copy_attrs(doc: &mut XmlDoc, s: HtmlElement<'_>, el: NodeId) -> Result<()
              * restate one, or move one: `<svg><g xmlns="urn:evil">` put `g`
              * and its children in `urn:evil`. */
             (Some(NsId::XMLNS), _) | (_, Some(_)) => {}
-            /* An attribute in the XML namespace is always named `xml:`: the
-             * parser's foreign-attribute table gives it that prefix, and
-             * `set_attribute_ns` refuses the XML namespace under any other
-             * name (`ns_fits_name`), so `set_attribute` resolves it back. */
-            (None | Some(NsId::XML), _) => {
+            /* An attribute in the XML namespace crosses WITH it: the DOM's
+             * setAttributeNS gives it any prefix or none (`lang`, `p:lang`),
+             * so its name alone does not say so, and the XML serializer
+             * writes it as `xml:` whatever it is called. */
+            (Some(NsId::XML), _) => {
+                mutate::set_attribute_ns(doc, el, crate::xml::XML_NS_URI, name, value)?;
+            }
+            (None, _) => {
                 let colon = name.iter().position(|&b| b == b':');
                 match colon {
                     Some(c) if &name[..c] != b"xml" => return Err(no_namespace_colon(name)),
@@ -369,13 +373,23 @@ fn x2h_make<'doc>(
              * with its prefix, so the copy's localName is `e` and not `p:e`
              * (as `//q:e` and local-name() read it), and with its case, so an
              * SVG `linearGradient` does not come back `lineargradient`. An
-             * XHTML element is an HTML element, whose name is lower case. */
+             * XHTML element named in lower case is the HTML element of that
+             * name. One with upper case is not: it goes the createElementNS
+             * way too, keeping its case (`Foo`, where lower-casing it renamed
+             * it `foo`) - or refused when Lexbor would make it as a known
+             * element (`BR` came out the void `br`, its children gone). */
             let (prefix, ns) = (doc.prefix(s), doc.ns(s));
-            let el = if prefix.is_empty() && hdoc.lookup_ns(ns) == Some(NsId::HTML) {
+            let el = if prefix.is_empty()
+                && !has_ascii_uppercase(doc.local(s))
+                && hdoc.lookup_ns(ns) == Some(NsId::HTML)
+            {
                 let el = hdoc.create_element(doc.qname(s)).or_oom::<MutError>()?;
                 el.set_ns(NsId::HTML);
                 el
             } else {
+                if hdoc.misreads_html_name(doc.local(s), ns) {
+                    return Err(MutError::HtmlNameCase);
+                }
                 hdoc.create_element_ns(doc.local(s), ns, prefix)
                     .or_oom::<MutError>()?
             };

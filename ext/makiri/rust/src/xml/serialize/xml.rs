@@ -23,7 +23,7 @@ use super::out::{put, put_pi, W, XML};
 use super::Failure;
 use crate::cbuf::Buf;
 use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeFlags, NodeId, MAX_DEPTH};
-use crate::xml::qname::xmlns_prefix;
+use crate::xml::XML_NS_URI;
 
 use super::bindings::{Bindings, Prefix, PREFIX_CAP};
 
@@ -32,7 +32,7 @@ use super::bindings::{Bindings, Prefix, PREFIX_CAP};
 /// The declaration for `prefix` on `el` ITSELF (not in scope), or None.
 fn own_decl(doc: &XmlDoc, el: NodeId, prefix: &[u8]) -> Option<NodeId> {
     for at in doc.attributes(el) {
-        if let Some(p) = xmlns_prefix(doc.qname(at)) {
+        if let Some(p) = doc.decl_prefix(at) {
             if p == prefix {
                 return Some(at);
             }
@@ -41,14 +41,22 @@ fn own_decl(doc: &XmlDoc, el: NodeId, prefix: &[u8]) -> Option<NodeId> {
     None
 }
 
+/// Whether attribute `at` is in the XML namespace, which is written under
+/// `xml` whatever prefix it was given (see [`plan_attr`]).
+fn in_xml_ns(doc: &XmlDoc, at: NodeId) -> bool {
+    doc.span(doc.node(at).ns_uri) == XML_NS_URI
+}
+
 /// The first attribute of `el` before `stop` that carries `prefix`, or None.
+/// One in the XML namespace carries `xml` in the output, not its own prefix.
 fn prefix_seen(doc: &XmlDoc, el: NodeId, stop: NodeId, prefix: &[u8]) -> Option<NodeId> {
     for at in doc.attributes(el) {
         if at == stop {
             break;
         }
         if doc.node(at).prefix.len != 0
-            && xmlns_prefix(doc.qname(at)).is_none()
+            && doc.decl_prefix(at).is_none()
+            && !in_xml_ns(doc, at)
             && doc.prefix(at) == prefix
         {
             return Some(at);
@@ -101,8 +109,11 @@ impl Plan<'_> {
     fn bytes(&self) -> &[u8] {
         self.prefix.bytes()
     }
-    fn renamed(&self) -> bool {
-        self.prefix.is_invented()
+    /// Whether the name is written under a prefix other than `own`, the
+    /// node's own: an invented one, or `xml` for an attribute in the XML
+    /// namespace that was given another.
+    fn renamed(&self, own: &[u8]) -> bool {
+        self.prefix.is_invented() || self.prefix.bytes() != own
     }
 }
 
@@ -152,11 +163,21 @@ fn plan_attr<'d>(
         declare: false,
     };
 
-    let is_decl = xmlns_prefix(doc.qname(a)).is_some();
+    let is_decl = doc.decl_prefix(a).is_some();
     if is_decl {
         return Ok(plan);
     }
     let uri = doc.span(doc.node(a).ns_uri);
+    /* The XML namespace is bound to `xml` everywhere and may be declared for
+     * no other prefix (Namespaces in XML §3), so an attribute in it is written
+     * as `xml:local` - DOM Parsing's rule - whatever it was called:
+     * `set_attribute_ns(XML, "a:bb")` and `(XML, "bb")` are the DOM's, and
+     * `xml:bb` re-reads to the same (namespace, local name). The element's
+     * key uniqueness keeps a second `xml:bb` off it. */
+    if uri == XML_NS_URI {
+        plan.prefix = Prefix::Own(b"xml");
+        return Ok(plan);
+    }
     if own_prefix.is_empty() {
         if uri.is_empty() {
             return Ok(plan);
@@ -238,7 +259,7 @@ impl<'d, 'b> Writer<'d, 'b> {
     /// `n`'s own name, under the plan's prefix.
     fn name(&mut self, n: NodeId, plan: &Plan) -> W {
         let doc = self.doc;
-        if !plan.renamed() {
+        if !plan.renamed(doc.span(doc.node(n).prefix)) {
             return self.put(doc.span(doc.node(n).qname));
         }
         self.put(plan.bytes())?;
@@ -364,7 +385,7 @@ impl<'d, 'b> Writer<'d, 'b> {
         /* This element's own xmlns declarations bind from here down. */
         let kept = |&at: &NodeId| Some(at) != dropped;
         for at in doc.attributes(n).filter(kept) {
-            if let Some(p) = xmlns_prefix(doc.qname(at)) {
+            if let Some(p) = doc.decl_prefix(at) {
                 binds.push(Prefix::Own(p), doc.span(doc.node(at).value))?;
             }
         }

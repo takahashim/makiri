@@ -60,10 +60,12 @@ module MutateFuzz
   ATTR_NAMES = ["id", "class", "p:role", "xmlns:q", "1bad", "data-x", "a b", "", "dc:id"].freeze
   ATTR_VALS  = ["v", %(a"b), "x<y", "", "p q", "\x00", "&amp;"].freeze
   PI_TARGETS = ["xml-stylesheet", "php", "xml", "1bad", "ok-target"].freeze
-  # DOCTYPE factory inputs: valid + invalid names, and ids with a '"' / NUL that
-  # must be rejected cleanly. Inserting the resulting node exercises the doctype
-  # placement guards (document-only, pre-root, at most one) - most positions are
-  # rejected, a before-root insert is accepted.
+  # DOCTYPE factory inputs: valid + invalid names, and ids with a '"' / NUL. A
+  # name the DOM refuses, or a NUL, is rejected cleanly; a name or id XML
+  # cannot write makes a DOM-loose doctype that `to_xml` refuses (see verify).
+  # Inserting the resulting node exercises the doctype placement guards
+  # (document-only, pre-root, at most one) - most positions are rejected, a
+  # before-root insert is accepted.
   DOCTYPE_NAMES = ["r", "root", "svg", "p:doc", "1bad", "a b", "", "SVG"].freeze
   DOCTYPE_IDS   = [nil, "", "-//W3C//DTD", "sys.dtd", %(a"b), "\x00", "urn:x"].freeze
   # HTML element names for the cross-representation import op: a mix of valid
@@ -270,8 +272,20 @@ module MutateFuzz
     # (b) every child points back to its container
     verify_links(doc, nodes)
 
-    # (c) serialization terminates
-    xml1 = doc.to_xml
+    # (c) serialization terminates - or refuses a DOM-loose doctype, the
+    # DOM's createDocumentType with a name or id XML cannot write (`1bad`,
+    # `a"b`). That refusal is the fail-closed outcome, and only for a document
+    # that holds a doctype; the root element, which excludes it, is checked
+    # instead (the doctype may be frozen, so it is not removed).
+    xml1 = begin
+      doc.to_xml
+    rescue Makiri::Error => e
+      doctype = doc.children.find { |c| c.is_a?(Makiri::XML::DocumentType) }
+      raise unless e.message.include?("DOM-loose doctype") && doctype
+      return unless doc.root
+
+      doc.root.to_xml
+    end
 
     # The constructed tree may not be a well-formed XML document (the API allows
     # top-level character data / no single root); then its serialization need not

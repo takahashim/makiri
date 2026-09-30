@@ -60,7 +60,7 @@ RSpec.describe "Makiri mutation" do
         # conformance); the qualified name and namespace stay NUL-strict.
         div.set_attribute_ns("urn:x", "x:y", "v\x00")
         expect(div.attribute_nodes.find { |a| a.name == "x:y" }.value.bytesize).to eq(2)
-        expect { div.set_attribute_ns("urn:x", "x\x00:y", "v") }.to raise_error(Makiri::Error)
+        expect { div.set_attribute_ns("urn:x", "x\x00:y", "v") }.to raise_error(ArgumentError)
         expect { div.set_attribute_ns("urn\x00", "x:y", "v") }.to raise_error(Makiri::Error)
       end
     end
@@ -127,7 +127,7 @@ RSpec.describe "Makiri mutation" do
 
       it "rejects an embedded NUL or invalid UTF-8 in target or data" do
         expect { doc.create_processing_instruction("t\x00", "d") }
-          .to raise_error(Makiri::Error)
+          .to raise_error(ArgumentError)
         expect { doc.create_processing_instruction("t", "d\xFF".b) }
           .to raise_error(Makiri::Error)
       end
@@ -609,11 +609,29 @@ RSpec.describe "Makiri mutation" do
       expect(reparsed["data-x"]).not_to be_nil
     end
 
-    it "still rejects a NUL in a NAME / tag (fail closed)" do
+    # ArgumentError, the DOM's InvalidCharacterError, like any other character
+    # a naming rule refuses - not Makiri::Error, which a caller translating
+    # ArgumentError into a DOMException would let through.
+    it "still rejects a NUL in a NAME / tag (fail closed), as ArgumentError" do
       expect { doc.create_element("a\x00b") }
-        .to raise_error(Makiri::Error, /must not contain a NUL byte/)
+        .to raise_error(ArgumentError, /must not contain a NUL byte/)
       expect { div["a\x00b"] = "v" }
-        .to raise_error(Makiri::Error, /must not contain a NUL byte/)
+        .to raise_error(ArgumentError, /must not contain a NUL byte/)
+      expect { div.set_attribute_ns(nil, "a\x00b", "v") }.to raise_error(ArgumentError)
+      expect { doc.create_element_ns(nil, "a\x00b") }.to raise_error(ArgumentError)
+      expect { doc.create_document_type("a\x00b") }.to raise_error(ArgumentError)
+      expect { doc.create_processing_instruction("a\x00b", "d") }.to raise_error(ArgumentError)
+      x = Makiri::XML("<r/>")
+      expect { x.root["a\x00b"] = "v" }.to raise_error(ArgumentError)
+      expect { x.root.set_attribute_ns(nil, "a\x00b", "v") }.to raise_error(ArgumentError)
+      expect { x.root.set_loose_dom_attribute("a\x00b", "v") }.to raise_error(ArgumentError)
+      expect { x.create_element("a\x00b") }.to raise_error(ArgumentError)
+      expect { x.create_loose_dom_element("a\x00b", nil, "a\x00b", nil) }.to raise_error(ArgumentError)
+      expect { x.create_processing_instruction("a\x00b", "d") }.to raise_error(ArgumentError)
+    end
+
+    it "keeps Makiri::Error for invalid UTF-8 in a name: that is the String contract" do
+      expect { div["a\xFFb".b] = "v" }.to raise_error(Makiri::Error, /must be valid UTF-8/)
     end
 
     it "still rejects invalid UTF-8 in the relaxed data-family sites" do

@@ -23,7 +23,7 @@
 use crate::falloc::{OomResult, Reserve, VecPush};
 use crate::xml::qname::Split;
 use crate::xml::{
-    ArenaKind, BudgetError, Document, Link, Node, NodeId, Span, MAX_BYTES, MAX_NODES,
+    ArenaKind, BudgetError, Document, Link, Node, NodeFlags, NodeId, Span, MAX_BYTES, MAX_NODES,
 };
 use core::num::NonZeroU32;
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -237,6 +237,47 @@ impl Document {
     #[inline]
     pub fn value(&self, id: NodeId) -> &[u8] {
         self.try_node(id).map_or(&[], |n| self.span(n.value))
+    }
+
+    /// If attribute `id` is a namespace declaration, the prefix it declares
+    /// ("" for the default namespace), else None. This is the one test of "is
+    /// a declaration" over the tree; `xmlns_prefix` itself is for a name that
+    /// is not in it yet.
+    ///
+    /// [`declaration_named`](Self::declaration_named), and then only while
+    /// its value is one Namespaces in XML §3 lets it declare: the DOM's
+    /// `setAttributeNS` holds `xmlns:p=""` as an attribute, which binds
+    /// nothing. Decided from the value on every read rather than kept in a
+    /// flag, so no setter can leave it stale - a flag only `set_attribute_ns`
+    /// recomputed left `[]=` making `xmlns:p` a URI that bound nothing.
+    pub fn decl_prefix(&self, id: NodeId) -> Option<&[u8]> {
+        let p = self.declaration_named(id)?;
+        crate::xml::qname::ns_decl_check(p, self.value(id))
+            .is_ok()
+            .then_some(p)
+    }
+
+    /// If attribute `id` is NAMED as a declaration, the prefix it names -
+    /// [`xmlns_prefix`](crate::xml::qname::xmlns_prefix) of its name, unless
+    /// that name is DOM-loose: an attribute named `xmlns` in no namespace, as
+    /// the DOM's `setAttribute` makes one (`set_loose_dom_attribute`), is not
+    /// one. Every other such name is in the XMLNS namespace. Read by shape at
+    /// every site, the loose one rebound the prefix for its element's subtree,
+    /// vanished from the XPath attribute axis, and was written as a
+    /// declaration.
+    pub fn declaration_named(&self, id: NodeId) -> Option<&[u8]> {
+        let n = self.try_node(id)?;
+        if n.type_ != ArenaKind::Attribute || n.flags.contains(NodeFlags::DOM_LOOSE_NAME) {
+            return None;
+        }
+        crate::xml::qname::xmlns_prefix(self.span(n.qname))
+    }
+
+    /// Whether attribute `id` is named as a declaration but holds a value that
+    /// Namespaces in XML forbids it to declare (`xmlns:p=""`), so it binds
+    /// nothing and has no XML form.
+    pub fn forbidden_declaration(&self, id: NodeId) -> bool {
+        self.declaration_named(id).is_some() && self.decl_prefix(id).is_none()
     }
 
     /* ---- names and ids, by node kind ----

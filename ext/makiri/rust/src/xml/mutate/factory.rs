@@ -92,28 +92,35 @@ pub fn new_pi(doc: &mut Document, target: &[u8], data: &[u8]) -> Result<NodeId, 
     Ok(pi)
 }
 
+/// A detached DOCTYPE, the DOM's `createDocumentType`: the name is held to the
+/// DOM's "valid doctype name" and the ids to nothing.
+///
+/// One XML cannot write is still made, and marked DOM-loose, so `to_xml`
+/// refuses it (the DOM leaves that to a serializer asked for well-formed
+/// output): the parser's rules decide which. The name is a QName (not any
+/// Name: "a:b:c" and ":a" do not re-parse); a PUBLIC id is PubidChar only; a
+/// SYSTEM id may hold either quote, since the writer picks the other one, but
+/// not both, which no literal can hold. Refused outright, as they were, these
+/// kept a browser's `createDocument(null, null, doctype)` from getting its
+/// doctype at all (WPT `dom/common.js` makes one with the id `x"'y`).
 pub fn new_document_type(
     doc: &mut Document,
     name: &[u8],
     pub_id: Option<&[u8]>,
     sys_id: Option<&[u8]>,
 ) -> Result<NodeId, MutError> {
-    /* The parser's rules, not looser ones: a DOCTYPE the factory accepted but
-     * the parser rejects made `to_xml` output that did not re-parse. The name
-     * is a QName (not any Name: "a:b:c" and ":a" were accepted); a PUBLIC id is
-     * PubidChar only; a SYSTEM id may hold either quote, since the writer picks
-     * the other one, but not both, which no literal can hold. */
-    if crate::xml::qname::split_checked(name).is_none() {
-        return Err(MutError::BadName);
+    if !crate::xml::dom_name::valid_doctype_name(name) {
+        return Err(MutError::BadDomName("invalid doctype name"));
     }
-    if pub_id.is_some_and(|id| !crate::xml::chars::is_pubid(id)) {
-        return Err(MutError::BadChars);
-    }
-    if sys_id.is_some_and(|id| !validate_chars(id) || (id.contains(&b'"') && id.contains(&b'\''))) {
-        return Err(MutError::BadChars);
-    }
-    doc.new_doctype(name, pub_id, sys_id)
-        .map_err(MutError::from)
+    let writable = split_checked(name).is_some()
+        && pub_id.is_none_or(crate::xml::chars::is_pubid)
+        && sys_id
+            .is_none_or(|id| validate_chars(id) && !(id.contains(&b'"') && id.contains(&b'\'')));
+    let dt = doc.new_doctype(name, pub_id, sys_id)?;
+    doc.node_mut(dt)
+        .flags
+        .set(NodeFlags::DOM_LOOSE_NAME, !writable);
+    Ok(dt)
 }
 
 /// A detached, empty DOCUMENT_FRAGMENT.

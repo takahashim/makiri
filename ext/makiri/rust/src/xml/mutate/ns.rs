@@ -296,7 +296,7 @@ pub fn ignored_default_decl(doc: &Document, el: NodeId) -> Option<NodeId> {
         return None;
     }
     for at in doc.attributes(el) {
-        if xmlns_prefix(doc.qname(at)) == Some(&b""[..]) {
+        if doc.decl_prefix(at) == Some(&b""[..]) {
             return (doc.node(at).value.len != 0).then_some(at);
         }
     }
@@ -327,7 +327,7 @@ fn resolve_in_scope(doc: &Document, node: Option<NodeId>, prefix: &[u8]) -> Span
         if doc.type_(id) == Some(ArenaKind::Element) {
             let ignored = ignored_default_decl(doc, id);
             for at in doc.attributes(id) {
-                if let Some(p) = xmlns_prefix(doc.qname(at)) {
+                if let Some(p) = doc.decl_prefix(at) {
                     if p == prefix && Some(at) != ignored {
                         return doc.try_node(at).map_or(Span::EMPTY, |n| n.value);
                     }

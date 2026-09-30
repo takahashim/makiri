@@ -194,10 +194,11 @@ RSpec.describe "Makiri::XML DOCTYPE / internal_subset" do
       expect(doc.create_document_type("SVG").name).to eq("SVG")
     end
 
-    it "fails closed on an invalid name, embedded NUL, or a '\"' in an id" do
-      expect { doc.create_document_type("1 bad") }.to raise_error(ArgumentError)
-      expect { doc.create_document_type("a\x00b") }.to raise_error(Makiri::Error)
-      expect { doc.create_document_type("ok", %(a"b)) }.to raise_error(Makiri::Error)
+    it "refuses a name the DOM refuses, or a NUL, as ArgumentError" do
+      expect { doc.create_document_type("1 bad") }.to raise_error(ArgumentError, /invalid doctype name/)
+      expect { doc.create_document_type("a>b") }.to raise_error(ArgumentError, /invalid doctype name/)
+      expect { doc.create_document_type("") }.to raise_error(ArgumentError, /invalid doctype name/)
+      expect { doc.create_document_type("a\x00b") }.to raise_error(ArgumentError)
     end
 
     it "assembles a createDocument-style tree: [doctype, documentElement]" do
@@ -295,26 +296,54 @@ RSpec.describe "Makiri::XML DOCTYPE / internal_subset" do
     end
   end
 
-  # The factory accepted what the parser rejects - a name that is no QName, a
-  # PUBLIC id outside PubidChar - and to_xml wrote a DOCTYPE that did not parse.
-  describe "#create_document_type validates as the parser does" do
+  # The DOM's createDocumentType checks the name's doctype-name rule and
+  # nothing else (WPT dom/common.js builds one with the id `x"'y`). A DOCTYPE
+  # XML cannot write - a name that is no QName, a PUBLIC id outside PubidChar,
+  # a SYSTEM id with both quotes - is made DOM-loose, and to_xml refuses it
+  # rather than writing a DOCTYPE that does not parse, which the factory once
+  # did. The parser's rules decide which one is loose.
+  describe "#create_document_type: what XML cannot write is DOM-loose" do
     let(:doc) { Makiri::XML::Document.new }
 
-    it "refuses a name that is no QName" do
-      expect { doc.create_document_type("a:b:c") }.to raise_error(ArgumentError)
-      expect { doc.create_document_type(":a") }.to raise_error(ArgumentError)
+    def refused_by_to_xml(dt)
+      doc.add_child(dt)
+      doc.add_child(doc.create_element("r"))
+      expect { doc.to_xml }.to raise_error(Makiri::Error, /DOM-loose doctype/)
+      expect { dt.to_xml }.to raise_error(Makiri::Error, /DOM-loose doctype/)
+      expect { dt.clone_node.to_xml }.to raise_error(Makiri::Error, /DOM-loose doctype/)
+      # canonical form omits the document type declaration
+      expect(doc.canonicalize).to eq("<r></r>")
+      expect(doc.root.to_xml).to eq("<r/>")
     end
 
-    it "refuses a PUBLIC id outside PubidChar" do
-      expect { doc.create_document_type("r", "a<b", nil) }.to raise_error(Makiri::Error)
-      expect { doc.create_document_type("r", "é", nil) }.to raise_error(Makiri::Error)
+    [["a:b:c", nil, nil], [":a", nil, nil], ["1q", nil, nil], ["a/b", nil, nil],
+     ["r", "a<b", nil], ["r", "é", nil], ["r", "a{b}", "s"], ["r", %(a"b), "s"],
+     ["r", nil, %(a"b'c)], ["qorflesnorf", "abcde", %(x"'y)]].each do |name, pub, sys|
+      it "makes #{[name, pub, sys].inspect} and refuses to write it" do
+        dt = doc.create_document_type(name, pub, sys)
+        expect([dt.name, dt.public_id, dt.system_id]).to eq([name, pub, sys])
+        refused_by_to_xml(dt)
+      end
     end
 
     it "takes a SYSTEM id holding one kind of quote, which the writer can quote" do
       doc.add_child(doc.create_document_type("r", nil, %(a"b)))
       doc.add_child(doc.create_element("r"))
       expect(Makiri::XML(doc.to_xml).internal_subset.system_id).to eq(%(a"b))
-      expect { doc.create_document_type("r", nil, %(a"b'c)) }.to raise_error(Makiri::Error)
+    end
+
+    it "writes a DOCTYPE XML can hold, as before" do
+      doc.add_child(doc.create_document_type("html", "-//W3C//DTD XHTML 1.0//EN", "x.dtd"))
+      doc.add_child(doc.create_element("html"))
+      expect(doc.to_xml).to include(%(<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0//EN" "x.dtd">))
+    end
+
+    # dom/common.js: createDocument(null, null, doctype) gets its doctype.
+    it "lets a browser-style createDocument hold it" do
+      dt = doc.create_document_type("qorflesnorf", "abcde", %(x"'y))
+      doc.add_child(dt)
+      expect(doc.children.to_a).to eq([dt])
+      expect(dt.parent).to equal(doc)
     end
   end
 end

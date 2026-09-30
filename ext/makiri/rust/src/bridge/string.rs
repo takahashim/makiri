@@ -435,9 +435,41 @@ pub fn namespace_arg(in_: Value, what: &str) -> Result<Option<RubyText>, Error> 
 /// Coerce to a String and enforce the strict contract (valid UTF-8, no NUL),
 /// naming `what` in the error. The names-and-engine-input path.
 pub fn ruby_verified_text(in_: Value, what: &str) -> Result<RubyText, Error> {
+    verified_text_raising(in_, what, makiri_error)
+}
+
+/// [`ruby_verified_text`] for a NAME given to a factory or a setter: the same
+/// contract, but a NUL raises `ArgumentError` - the DOM's
+/// InvalidCharacterError, which is what every other character a naming rule
+/// refuses raises. It raised `Makiri::Error` from here, before any naming rule
+/// ran, so a caller translating `ArgumentError` into a DOMException let that
+/// one through. Invalid UTF-8 stays `Makiri::Error`: it breaks the String
+/// contract every input shares, not a naming rule.
+pub fn ruby_verified_name(in_: Value, what: &str) -> Result<RubyText, Error> {
+    verified_text_raising(in_, what, crate::bridge::ruby::arg_error)
+}
+
+/// The one acquisition behind [`ruby_verified_text`] and
+/// [`ruby_verified_name`], which differ only in what a NUL raises: `on_nul`
+/// is handed the message. Everything else - invalid UTF-8, a copy that ran out
+/// of memory, a raise while locking - is answered the same way for both.
+fn verified_text_raising(
+    in_: Value,
+    what: &str,
+    on_nul: fn(String) -> Error,
+) -> Result<RubyText, Error> {
+    use crate::cutf8::TextVerdict;
     let s = string_of(in_)?;
-    RubyText::acquire(s, |s, b| text_check(s, b).problem()).map_err(|r| match r {
-        Refusal::Check(problem) => text_error(what, problem),
+    RubyText::acquire(s, |s, b| {
+        let v = text_check(s, b);
+        (v != TextVerdict::Ok).then_some(v)
+    })
+    .map_err(|r| match r {
+        Refusal::Check(TextVerdict::HasNul) => on_nul(format!(
+            "{what} {}",
+            TextVerdict::HasNul.problem().unwrap_or_default()
+        )),
+        Refusal::Check(v) => text_error(what, v.problem().unwrap_or_default()),
         Refusal::Oom => oom_reading(),
         Refusal::Raised(e) => e,
     })

@@ -107,6 +107,19 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
     invents one (`ns1`, `ns2`, ...) rather than shadow the other, as browsers do.
   * An element in no namespace stays that way under a default namespace,
     serialized as `xmlns=""`.
+  * `create_document_type` takes what the DOM's `createDocumentType` takes -
+    any id, and a name without whitespace, NUL or `>` - and `to_xml` refuses a
+    doctype XML cannot write (`create_document_type("q", "abcde", %(x"'y))`).
+    Nokogiri writes that system id as `"x&quot;'y"`, which parses but reads
+    back as the id `x&quot;'y` - a literal expands no references.
+  * `set_attribute_ns(XMLNS_NS, "xmlns:foo", "")` - a declaration Namespaces in
+    XML forbids, which the DOM's `setAttributeNS` accepts - is kept as an
+    attribute that binds nothing, and `to_xml` refuses the tree while it is
+    there. `root["xmlns:foo"] = ""` still raises.
+  * An attribute in the XML namespace is written as `xml:local`, whatever
+    prefix it was given (`set_attribute_ns(XML_NS, "a:bb")`, as the DOM
+    allows): Namespaces in XML binds that namespace to `xml` alone. It re-reads
+    to the same namespace and local name. `canonicalize` writes it so too.
   * Nodes from the factories (`create_element` and friends) still take their
     namespace from the context they are first inserted into, so a subtree can be
     built detached and attached afterwards. Only later moves carry.
@@ -165,7 +178,17 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
     The names HTML actually uses (`data-*`, `aria-*`, `@click`, `:href`,
     `v-on:x`, custom elements) are accepted.
   * `set_attribute_ns(nil, "x:y")` raises, as the DOM's `setAttributeNS` does:
-    a prefix needs a namespace.
+    a prefix needs a namespace. `[]=` (HTML) and `set_loose_dom_attribute`
+    (XML) are the DOM's `setAttribute`, which makes such an attribute.
+  * A refused name raises `ArgumentError` - a NUL in it too - and a namespace
+    that does not fit the name (`set_attribute_ns`, `create_element_ns`)
+    raises `Makiri::Error`. Invalid UTF-8 raises `Makiri::Error` for every
+    argument, names included.
+  * `create_element_ns` refuses an HTML-namespace name in upper case that
+    lower-cases to an element Lexbor knows (`BR`, `DIV`), where the DOM makes
+    an unknown element: Lexbor would make that element (`BR` void, its
+    children never written). Other names keep their case (`MY-EL`). Nokogiri
+    has no `create_element_ns`.
 * An HTML `<template>` follows the WHATWG content model, which Nokogiri does
   not: its parsed contents live in the separate fragment `Element#content_fragment`
   returns, `template.children` is empty, and `inner_html` / `inner_html=`
@@ -257,8 +280,15 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
   .matches?("p")` is true, on both representations). Nokogiri raises
   `NoMethodError` there - it implements `#matches?` as a search from
   `ancestors.last`, which a detached node does not have.
-* * Type selectors are ASCII case-insensitive (CSS-correct for HTML; `LI` matches `<li>`)
-  * `Nokogiri::HTML5` is case-sensitive there.
+* Type selectors in an HTML document follow the HTML Standard's
+  case-sensitivity rule, as browsers do: lower-cased for an HTML element (`LI`
+  matches `<li>`), as written for any other (`feGaussianBlur` matches the SVG
+  element, `fegaussianblur` does not). An HTML element named in upper case
+  (`create_element_ns(XHTML, "MY-EL")`, which keeps its name as the DOM does)
+  therefore matches no type selector.
+  * `Nokogiri::HTML5` is case-sensitive on HTML elements too, so `LI` does not
+    match `<li>` there. `Makiri::XML`'s `#css` is case-sensitive, as XML names
+    are.
 
 ## Serialization
 
@@ -285,7 +315,10 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
   and attribute values (`[]=`, `set_attribute_ns`) - and stored/read back
   verbatim, matching the WHATWG DOM / browsers (`document.createTextNode("\0")`).
   It is still rejected in names, tag names, namespaces, PI target/data, CSS
-  selectors, and XPath expressions/variable names (a NUL there raises).
+  selectors, and XPath expressions/variable names. A NUL in a name given to a
+  factory or setter (element, attribute, doctype and PI target names) raises
+  `ArgumentError`, as any other refused name does; anywhere else it raises
+  `Makiri::Error`.
   * On re-parse, the HTML tokenizer replaces a U+0000 in text/attributes with
     U+FFFD (WHATWG), so a serialized-then-reparsed round-trip is not byte-identical.
   * `Makiri::XML` rejects NUL everywhere: XML 1.0 has no legal U+0000 character,

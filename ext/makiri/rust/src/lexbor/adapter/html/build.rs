@@ -65,7 +65,7 @@ impl<'doc> HtmlDoc<'doc> {
             ))
         }?;
         /* With a prefix, Lexbor recorded `prefix:local` as written already. */
-        if prefix.is_empty() && local.iter().any(u8::is_ascii_uppercase) {
+        if prefix.is_empty() && has_ascii_uppercase(local) {
             // SAFETY: an element just made in this document, in no tree; the
             // name is copied.
             let st = unsafe {
@@ -82,6 +82,23 @@ impl<'doc> HtmlDoc<'doc> {
             }
         }
         Some(el)
+    }
+
+    /// Whether [`create_element_ns`](Self::create_element_ns) would make
+    /// `local` in `ns` as an element it is not: an HTML-namespace name with
+    /// upper case whose lower-cased form is one of Lexbor's known tags.
+    ///
+    /// Lexbor picks an element's tag id, struct and serialization from the
+    /// lower-cased name, so `BR` became the void `br` (a child appended to it
+    /// vanished from `to_html`), `SCRIPT` a raw-text element, `TEMPLATE` one
+    /// with contents - where the DOM's createElementNS makes an unknown
+    /// element of that name. There is no Lexbor element that is both, so the
+    /// callers refuse it. A name Lexbor does not know (`MY-EL`) gets an id of
+    /// its own and is the unknown element it should be.
+    pub fn misreads_html_name(self, local: &[u8], ns: &[u8]) -> bool {
+        self.lookup_ns(ns) == Some(NsId::HTML)
+            && has_ascii_uppercase(local)
+            && self.tag_id(local).and_then(TagId::static_index).is_some()
     }
 
     /// A detached text node holding `text`. `None` on allocation failure.
@@ -204,16 +221,13 @@ impl<'doc> HtmlDoc<'doc> {
     /// Whether `name` satisfies the DOM's doctype-name production, which
     /// [`create_doctype`](Self::create_doctype) requires of its caller.
     ///
-    /// Lexbor's check is a scan for the bytes a doctype name may not hold -
-    /// whitespace, NUL and `>` - so this reads the slice and touches no
-    /// document. An empty name is rejected without asking, because Lexbor reads
-    /// a null pointer as absent and an empty Rust slice's pointer is not null.
+    /// [`crate::xml::dom_name::valid_doctype_name`], the rule the XML factory
+    /// applies too, so the two answer alike from one definition. It is byte
+    /// for byte `lxb_dom_document_type_valid_name` - whitespace, NUL and `>`
+    /// refused, and the empty name, which Lexbor reads as absent - which this
+    /// once called through FFI (and which Lexbor's create still applies).
     pub fn valid_doctype_name(name: &[u8]) -> bool {
-        if name.is_empty() {
-            return false;
-        }
-        // SAFETY: a slice the caller holds; Lexbor only reads it.
-        unsafe { lxb::lxb_dom_document_type_valid_name(name.as_ptr(), name.len()) }
+        crate::xml::dom_name::valid_doctype_name(name)
     }
 
     /// An empty detached DocumentFragment. `None` on allocation failure.
