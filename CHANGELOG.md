@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.12.0] - 2026-10-01
 
 Most changes accept what the DOM allows where 0.11.0 raised. The XML
 serializers (`to_xml`, `canonicalize`) raise instead when the tree holds
