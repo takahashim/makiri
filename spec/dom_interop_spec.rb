@@ -75,34 +75,55 @@ RSpec.describe "browser-DOM interop" do
       expect(div.attribute_nodes.map(&:name)).to eq(["id"])
     end
 
-    # Lexbor makes an element from its lower-cased name, so `BR` would be the
-    # void `br` (a child appended to it vanished from to_html), `SCRIPT` a
-    # raw-text element. The DOM makes an unknown element; Makiri refuses.
-    it "refuses an upper-case HTML name that lower-cases to a known element" do
-      %w[BR SCRIPT TEMPLATE DIV h:BR].each do |name|
-        expect { doc.create_element_ns(XHTML_NS, name) }.to raise_error(Makiri::Error, /upper-case name/)
+    # The HTML Standard's "element interface" and "serializes as void" compare
+    # names case-sensitively: createElementNS(XHTML, "BR") is an unknown
+    # element named BR, not a void br. Lexbor keys a tag by its lower-cased
+    # name, which made BR the void br (a child appended to it vanished from
+    # to_html) and SCRIPT a raw-text element; such a name now gets a tag of
+    # its own. (0.11.0 refused these names.)
+    it "makes an upper-case HTML name the unknown element the DOM makes" do
+      body = doc.body
+      made = %w[BR SCRIPT TEMPLATE INPUT DIV MY-EL h:BR].to_h do |name|
+        el = doc.create_element_ns(XHTML_NS, name)
+        el << doc.create_text_node("t<&")
+        body << el
+        [name, el]
       end
-      el = doc.create_element_ns(XHTML_NS, "MY-EL")
-      el << doc.create_text_node("kept")
-      expect(el.to_html).to eq("<MY-EL>kept</MY-EL>")
-      expect(doc.create_element_ns(SVG_NS, "BR").name).to eq("BR")
-      xml = Makiri::XML(%(<r xmlns:h="#{XHTML_NS}"><h:BR>t</h:BR></r>))
-      expect { doc.import_node(xml.root.element_children.first, true) }
-        .to raise_error(Makiri::Error, /upper-case name/)
+      made.each do |name, el|
+        expect([el.name, el.namespace_uri]).to eq([name, XHTML_NS])
+        expect(el.to_html).to eq("<#{name}>t&lt;&amp;</#{name}>") # not void, not raw text
+      end
+      expect(made["TEMPLATE"].content_fragment).to be_nil
+      expect(doc.css(":enabled")).to be_empty # INPUT is no input
+      expect(made["h:BR"].prefix).to eq("h")
     end
 
-    # The same through import_node of an UNPREFIXED XHTML element, which was
-    # made by its lower-cased name: `BR` came out the void `br` with its text
-    # gone, and `Foo` renamed `foo`.
-    it "imports an unprefixed upper-case XHTML name as createElementNS would" do
-      %w[BR INPUT].each do |name|
-        xml = Makiri::XML(%(<#{name} xmlns="#{XHTML_NS}">t</#{name}>))
-        expect { doc.import_node(xml.root, true) }.to raise_error(Makiri::Error, /upper-case name/)
-      end
-      { "Foo" => "Foo", "MY-EL" => "MY-EL", "div" => "div" }.each do |name, want|
+    it "keeps such an element distinct from the lower-case one of that name" do
+      body = Makiri::HTML("<body><div>d</div><br></body>").body
+      d = body.document
+      div = d.create_element_ns(XHTML_NS, "DIV")
+      br = d.create_element_ns(XHTML_NS, "BR")
+      body << div << br
+      expect(d.css("div").map(&:name)).to eq(%w[div]) # type selectors: see below
+      expect(div.matches?("div")).to be(false)
+      # XPath name tests fold case on HTML elements, as browsers match them,
+      # whether the tag index or the walk answers
+      expect(d.xpath("//div").map(&:name)).to eq(%w[div DIV])
+      expect(d.xpath("/html/body/br").map(&:name)).to eq(%w[br BR])
+      [div, br].each { |el| expect(d.at_xpath(el.path)).to eq(el) }
+      expect([div.dup.name, Makiri::HTML("").import_node(br, true).to_html]).to eq(["DIV", "<BR></BR>"])
+      expect(Makiri::XML("<r/>").import_node(div, true).name).to eq("DIV")
+    end
+
+    it "imports an upper-case XHTML name from XML as createElementNS would" do
+      %w[BR INPUT Foo MY-EL div].each do |name|
         el = doc.import_node(Makiri::XML(%(<#{name} xmlns="#{XHTML_NS}">t</#{name}>)).root, true)
-        expect([el.name, el.namespace_uri, el.text]).to eq([want, XHTML_NS, "t"])
+        expect([el.name, el.namespace_uri, el.text]).to eq([name, XHTML_NS, "t"])
+        expect(el.to_html).to end_with(">t</#{name}>") # children kept: not void
       end
+      xml = Makiri::XML(%(<r xmlns:h="#{XHTML_NS}"><h:BR>t</h:BR></r>))
+      el = doc.import_node(xml.root.element_children.first, true)
+      expect([el.name, el.to_html]).to eq(["h:BR", "<h:BR>t</h:BR>"])
     end
 
     it "keeps a prefix" do

@@ -236,11 +236,12 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
     }
 
     /// Served only for a document with no foreign element, where lax and
-    /// strict admit the same elements.
+    /// strict admit the same elements, and no HTML element named with upper
+    /// case as written, which no bucket holds but a folded name test finds.
     fn name_bucket(self, local: &[u8], ns_uri: Option<&[u8]>) -> Option<Bucket<'d, HtmlNode<'d>>> {
         let parsed = self.parsed();
         let index = parsed.dom_index()?;
-        if ns_uri.is_some() || index.has_foreign() {
+        if ns_uri.is_some() || index.has_foreign() || index.has_case_kept() {
             return None;
         }
         let tag = self.doc.tag_id(local)?;

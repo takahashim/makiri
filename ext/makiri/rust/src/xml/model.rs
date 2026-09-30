@@ -260,10 +260,6 @@ pub enum MutError {
     /// not [`MutError::BadName`], whose "not a well-formed XML name" is the
     /// XML rule - the wrong one to report for a DOM name.
     BadDomName(&'static str),
-    /// An element Lexbor would make as another one: an HTML-namespace name in
-    /// upper case that lower-cases to a known tag (`BR` made void `br`), met
-    /// by the XML-to-HTML import (`HtmlDoc::misreads_html_name`).
-    HtmlNameCase,
 }
 
 impl crate::falloc::Oom for MutError {

@@ -22,5 +22,21 @@ module Makiri
     def path_step
       name_step("", unprefixed_element_namespace)
     end
+
+    # See {NodePath#path}. An element step selects by expanded name, not by the
+    # string of the test: `*[local-name()='BR' and ...]`, written for `h:BR`,
+    # also selects the unprefixed `BR` beside it. A bare name test on an HTML
+    # element folds ASCII case, as the engine (and browsers) match it, so `div`
+    # also selects the `DIV` createElementNS makes. Compared as strings, each
+    # pair was counted apart, and the path found the other one first.
+    def path_selects?(other, test)
+      return false unless other.element? && other.namespace_uri.to_s == namespace_uri.to_s
+
+      mine = local_name
+      theirs = other.local_name
+      return mine == theirs unless test == name && unprefixed_element_namespace
+
+      mine.downcase(:ascii) == theirs.downcase(:ascii)
+    end
   end
 end

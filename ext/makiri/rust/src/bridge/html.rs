@@ -563,12 +563,6 @@ pub fn create_element<'d>(doc: HtmlDoc<'d>, name: &RubyText) -> Option<RawNode> 
     doc.create_element(name.as_bytes()).map(RawNode::from)
 }
 
-/// The refusal of an HTML-namespace name Lexbor would make as another element
-/// (`HtmlDoc::misreads_html_name`), from `create_element_ns` and the
-/// XML-to-HTML import alike.
-pub const HTML_NAME_CASE: &str = "cannot make an HTML element whose upper-case name \
-lower-cases to a known element (BR, SCRIPT, ...): it would be made as that element";
-
 /// A new element named `local` in namespace `ns` ("" = none), with `prefix`
 /// ("" = none) - the DOM's createElementNS, once the caller has validated and
 /// split the name.

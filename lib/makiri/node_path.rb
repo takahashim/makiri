@@ -48,7 +48,7 @@ module Makiri
       parent_node = parent
       return test unless parent_node # a detached top: #path answers "?" anyway
 
-      siblings = parent_node.children.select { |c| c.path_node_test == test }
+      siblings = parent_node.children.select { |c| path_selects?(c, test) }
       return test if siblings.length <= 1
 
       "#{test}[#{siblings.index(self) + 1}]"
@@ -71,6 +71,13 @@ module Makiri
     # CDATASection, Comment and ProcessingInstruction override it.
     def path_step
       nil
+    end
+
+    # Whether +test+, this node's own step, selects +other+, a sibling: the
+    # position counts exactly those. By default the tests are compared, which
+    # is the engine's answer for every kind but an element (see Element).
+    def path_selects?(other, test)
+      other.path_node_test == test
     end
 
     # The name test for an element (+axis+ "") or attribute (+axis+ "@"): the

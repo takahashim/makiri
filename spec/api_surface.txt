@@ -41,6 +41,7 @@ class Makiri::DocumentType < Makiri::Node
 
 class Makiri::Element < Makiri::Node
   def self.new(2 req:name,req:document)
+  private def path_selects?(2 req:other,req:test)
   private def path_step(0)
 
 class Makiri::Error < StandardError
@@ -229,6 +230,7 @@ module Makiri::NodePath (private_constant)
   protected def path_node_test(0)
   protected def path_segment(0)
   private def name_step(2 req:axis,req:plain_namespace)
+  private def path_selects?(2 req:other,req:test)
   private def path_step(0)
   private def unprefixed_element_namespace(0)
 

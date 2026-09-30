@@ -262,6 +262,14 @@ fn main() {
         .allowlist_function("lxb_dom_attr_set_name")
         .allowlist_function("lxb_dom_document_create_element")
         .allowlist_function("lxb_dom_element_create")
+        // An HTML element named as written (`DIV`, not `div`): its case-kept
+        // tag is Lexbor's `lxb_tag_append` (UNDECLARED_EXPORTS), and the rest
+        // is `lxb_dom_element_create`'s own steps with that tag.
+        .allowlist_function("lxb_dom_document_create_interface_noi")
+        .allowlist_function("lxb_dom_document_destroy_interface_noi")
+        .allowlist_function("lxb_ns_prefix_append")
+        .allowlist_type("lxb_tag_data_t")
+        .allowlist_type("lxb_ns_prefix_data_t")
         .allowlist_function("lxb_dom_document_create_text_node")
         .allowlist_function("lxb_dom_document_create_comment")
         .allowlist_function("lxb_dom_document_create_processing_instruction")
@@ -381,6 +389,12 @@ const UNDECLARED_EXPORTS: &[(&str, &str, &str, &str)] = &[
         "lxb_dom_attr_data_t *",
         "lxb_dom_attr_qualified_name_append",
         "lexbor_hash_t *hash, const lxb_char_t *name, size_t length",
+    ),
+    (
+        "lexbor/tag/tag.c",
+        "LXB_API const lxb_tag_data_t *",
+        "lxb_tag_append",
+        "lexbor_hash_t *hash, lxb_tag_id_t tag_id, const lxb_char_t *name, size_t length",
     ),
     (
         "lexbor/dom/interfaces/element.c",

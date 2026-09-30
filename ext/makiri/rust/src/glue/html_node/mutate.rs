@@ -336,9 +336,6 @@ pub fn create_element_ns(
         let ns = nv.as_ref().map_or(&b""[..], |n| n.as_bytes());
         let (prefix, local) =
             extract(ruby, ns, &qv, dom_name::valid_element_local_name, "element")?;
-        if doc.misreads_html_name(local, ns) {
-            return Err(makiri_error(crate::bridge::html::HTML_NAME_CASE));
-        }
         created(
             crate::bridge::html::create_element_ns(doc, local, ns, prefix),
             rb_self,

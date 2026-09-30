@@ -4,6 +4,13 @@
 
 ### Changed
 
+* `Makiri::HTML::Document#create_element_ns` accepts an upper-case name in the
+  HTML namespace that names a known element (`BR`, `DIV`), as the DOM does:
+  it makes an unknown element of that name, which is not void and not matched
+  by type selectors. 0.11.0 raised. `import_node` of such an XHTML element
+  from XML works the same way.
+* `Node#path` of an element round-trips when a sibling with a different
+  prefix or case answers the same XPath step.
 * XML `set_attribute_ns` accepts a name the DOM allows but XML cannot write,
   such as `p:a}b` (DOM `setAttributeNS`); it raised `ArgumentError`. `to_xml`
   raises while such an attribute is present.

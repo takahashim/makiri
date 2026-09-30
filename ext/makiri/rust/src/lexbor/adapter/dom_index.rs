@@ -27,7 +27,8 @@
 use crate::falloc::try_vec_with_capacity;
 
 use super::html::{
-    HtmlDoc, HtmlElement, HtmlNode, NsId, RawNode, TagId, TAG_LAST_ENTRY as TAG_INDEX_CAP,
+    has_ascii_uppercase, HtmlDoc, HtmlElement, HtmlNode, NsId, RawNode, TagId,
+    TAG_LAST_ENTRY as TAG_INDEX_CAP,
 };
 
 pub struct DomIndex {
@@ -39,6 +40,11 @@ pub struct DomIndex {
     tag_max: usize,
     /// Any element with a namespace other than HTML.
     has_foreign: bool,
+    /// Any HTML element whose tag is its name as written (`DIV`, made by
+    /// createElementNS - `HtmlDoc::create_element_ns`). Its tag is not `div`'s,
+    /// so no bucket holds it, while an XPath name test folds case on HTML
+    /// elements and `//div` must find it: such a document is walked.
+    has_case_kept: bool,
 }
 
 /// An element's tag id as a bucket index, when it is one this index buckets.
@@ -63,15 +69,19 @@ pub(crate) fn build(doc: HtmlDoc<'_>) -> Option<DomIndex> {
     let mut n_indexed = 0usize;
     let mut tag_max = 0usize;
     let mut has_foreign = false;
+    let mut has_case_kept = false;
 
     for el in elements(root) {
-        if el.node().ns_id() != Some(NsId::HTML) {
+        let html = el.node().ns_id() == Some(NsId::HTML);
+        if !html {
             has_foreign = true;
         }
         if let Some(tag) = indexable_tag(el) {
             counts[tag] += 1;
             n_indexed += 1;
             tag_max = tag_max.max(tag);
+        } else if html && el.has_written_name() && has_ascii_uppercase(el.dom_local_name()) {
+            has_case_kept = true;
         }
     }
 
@@ -80,6 +90,7 @@ pub(crate) fn build(doc: HtmlDoc<'_>) -> Option<DomIndex> {
         tag_off: Vec::new(),
         tag_max,
         has_foreign,
+        has_case_kept,
     };
 
     /* The tag CSR. `cursor` is scratch: a copy of the offsets, advanced as
@@ -141,5 +152,11 @@ impl DomIndex {
     /// only taken for a document known to be pure HTML.
     pub fn has_foreign(&self) -> bool {
         self.has_foreign
+    }
+
+    /// Whether the document holds an HTML element named with upper case as
+    /// written (see the field). The `//tag` fast path is not taken then either.
+    pub fn has_case_kept(&self) -> bool {
+        self.has_case_kept
     }
 }

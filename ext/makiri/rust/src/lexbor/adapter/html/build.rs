@@ -32,13 +32,21 @@ impl<'doc> HtmlDoc<'doc> {
     /// written is recorded beside it. An empty `ns` is no namespace. `None`
     /// when Lexbor could not make one.
     ///
+    /// An HTML-namespace name with upper case is the exception: its lower-cased
+    /// tag would make it that tag's element (`BR` the void `br`), so it takes
+    /// a tag of its own ([`create_html_element_as_written`]).
+    ///
     /// [`create_element`]: Self::create_element
+    /// [`create_html_element_as_written`]: Self::create_html_element_as_written
     pub fn create_element_ns(
         self,
         local: &[u8],
         ns: &[u8],
         prefix: &[u8],
     ) -> Option<BuildingElement<'doc>> {
+        if has_ascii_uppercase(local) && self.lookup_ns(ns) == Some(NsId::HTML) {
+            return self.create_html_element_as_written(local, prefix);
+        }
         let or_null = |s: &[u8]| {
             if s.is_empty() {
                 core::ptr::null()
@@ -84,21 +92,73 @@ impl<'doc> HtmlDoc<'doc> {
         Some(el)
     }
 
-    /// Whether [`create_element_ns`](Self::create_element_ns) would make
-    /// `local` in `ns` as an element it is not: an HTML-namespace name with
-    /// upper case whose lower-cased form is one of Lexbor's known tags.
+    /// An HTML-namespace element named `local` as written, with `prefix` when
+    /// it is not empty - for a `local` with upper case, which the DOM's
+    /// createElementNS makes an unknown element of that name (the HTML
+    /// Standard's "element interface" and "serializes as void" compare names
+    /// case-sensitively). `None` when Lexbor could not make one.
     ///
-    /// Lexbor picks an element's tag id, struct and serialization from the
-    /// lower-cased name, so `BR` became the void `br` (a child appended to it
-    /// vanished from `to_html`), `SCRIPT` a raw-text element, `TEMPLATE` one
-    /// with contents - where the DOM's createElementNS makes an unknown
-    /// element of that name. There is no Lexbor element that is both, so the
-    /// callers refuse it. A name Lexbor does not know (`MY-EL`) gets an id of
-    /// its own and is the unknown element it should be.
-    pub fn misreads_html_name(self, local: &[u8], ns: &[u8]) -> bool {
-        self.lookup_ns(ns) == Some(NsId::HTML)
-            && has_ascii_uppercase(local)
-            && self.tag_id(local).and_then(TagId::static_index).is_some()
+    /// `lxb_dom_element_create` cannot: it takes the tag from the lower-cased
+    /// name, and the struct and serialization from the tag, so `BR` was made
+    /// the void `br` (a child appended to it vanished from `to_html`) and
+    /// `SCRIPT` a raw-text element. Here the tag is interned as written
+    /// (`lxb_tag_append`), which gives `BR` a tag of its own, past Lexbor's
+    /// static range - and Lexbor makes an HTML element with such a tag an
+    /// HTMLUnknownElement, copies it by that name, and never matches it by
+    /// `br`. The rest is `lxb_dom_element_create`'s own steps, in its order.
+    fn create_html_element_as_written(
+        self,
+        local: &[u8],
+        prefix: &[u8],
+    ) -> Option<BuildingElement<'doc>> {
+        if local.is_empty() {
+            return None;
+        }
+        // SAFETY: a live document; Lexbor copies every name into its own
+        // tables (none is empty, so no hash reads past one). The element is
+        // fresh, in no tree, and destroyed here if a later step fails.
+        unsafe {
+            let doc = self.as_raw();
+            let tag = lxb::lxb_tag_append(
+                (*doc).tags,
+                lxb::lxb_tag_id_enum_t_LXB_TAG__UNDEF as lxb::lxb_tag_id_t,
+                local.as_ptr(),
+                local.len(),
+            );
+            if tag.is_null() {
+                return None;
+            }
+            let el =
+                lxb::lxb_dom_document_create_interface_noi(doc, (*tag).tag_id, NsId::HTML.raw())
+                    as *mut LxbElement;
+            if el.is_null() {
+                return None;
+            }
+            let abandon = |el: *mut LxbElement| {
+                lxb::lxb_dom_document_destroy_interface_noi(el as *mut core::ffi::c_void);
+                None
+            };
+            let (p, p_len) = if prefix.is_empty() {
+                (core::ptr::null(), 0)
+            } else {
+                let data = lxb::lxb_ns_prefix_append((*doc).prefix, prefix.as_ptr(), prefix.len());
+                if data.is_null() {
+                    return abandon(el);
+                }
+                (*el).node.prefix = (*data).prefix_id;
+                (prefix.as_ptr(), prefix.len())
+            };
+            /* The written name beside the tag, as the other paths record one:
+             * the readers take the DOM's name from it. */
+            if lxb::lxb_dom_element_qualified_name_set(el, p, p_len, local.as_ptr(), local.len())
+                != lxb::consts::STATUS_OK
+            {
+                return abandon(el);
+            }
+            (*el).custom_state =
+                lxb::lxb_dom_element_custom_state_t_LXB_DOM_ELEMENT_CUSTOM_STATE_UNCUSTOMIZED;
+            BuildingElement::from_raw(el)
+        }
     }
 
     /// A detached text node holding `text`. `None` on allocation failure.

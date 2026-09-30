@@ -387,9 +387,6 @@ fn x2h_make<'doc>(
                 el.set_ns(NsId::HTML);
                 el
             } else {
-                if hdoc.misreads_html_name(doc.local(s), ns) {
-                    return Err(MutError::HtmlNameCase);
-                }
                 hdoc.create_element_ns(doc.local(s), ns, prefix)
                     .or_oom::<MutError>()?
             };

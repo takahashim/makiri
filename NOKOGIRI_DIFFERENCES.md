@@ -184,11 +184,11 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
     that does not fit the name (`set_attribute_ns`, `create_element_ns`)
     raises `Makiri::Error`. Invalid UTF-8 raises `Makiri::Error` for every
     argument, names included.
-  * `create_element_ns` refuses an HTML-namespace name in upper case that
-    lower-cases to an element Lexbor knows (`BR`, `DIV`), where the DOM makes
-    an unknown element: Lexbor would make that element (`BR` void, its
-    children never written). Other names keep their case (`MY-EL`). Nokogiri
-    has no `create_element_ns`.
+  * `create_element_ns` keeps the case of an HTML-namespace name, as the DOM
+    does: `create_element_ns(XHTML, "BR")` is an unknown element named `BR`,
+    not a void `br`, and type selectors do not match it (XPath name tests do,
+    folding case on HTML elements as browsers do). Nokogiri has no
+    `create_element_ns`.
 * An HTML `<template>` follows the WHATWG content model, which Nokogiri does
   not: its parsed contents live in the separate fragment `Element#content_fragment`
   returns, `template.children` is empty, and `inner_html` / `inner_html=`
@@ -284,7 +284,7 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
   case-sensitivity rule, as browsers do: lower-cased for an HTML element (`LI`
   matches `<li>`), as written for any other (`feGaussianBlur` matches the SVG
   element, `fegaussianblur` does not). An HTML element named in upper case
-  (`create_element_ns(XHTML, "MY-EL")`, which keeps its name as the DOM does)
+  (`create_element_ns(XHTML, "DIV")`, which keeps its name as the DOM does)
   therefore matches no type selector.
   * `Nokogiri::HTML5` is case-sensitive on HTML elements too, so `LI` does not
     match `<li>` there. `Makiri::XML`'s `#css` is case-sensitive, as XML names
