@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+* XML `set_attribute_ns` accepts a name the DOM allows but XML cannot write,
+  such as `p:a}b` (DOM `setAttributeNS`); it raised `ArgumentError`. `to_xml`
+  raises while such an attribute is present.
+
 ## [0.11.0] - 2026-09-30
 
 No code changes since 0.11.0.rc2. Coming from 0.10.x, read the rc2 and rc1

@@ -141,8 +141,10 @@ impl NodeFlags {
     /// Set on an element built by `create_loose_dom_element`, or an attribute
     /// by `set_loose_dom_attribute`: its name is a WHATWG DOM name that need
     /// not be an XML QName, so the serializer refuses to write it (see
-    /// [`crate::xml::dom_name`]). A loose attribute is in no namespace and is
-    /// never a declaration, whatever its name (`Document::decl_prefix`). On a
+    /// [`crate::xml::dom_name`]). A loose attribute is never a declaration,
+    /// whatever its name (`Document::decl_prefix`); it is in no namespace when
+    /// `set_loose_dom_attribute` made it, and in the one it was given when
+    /// `set_attribute_ns` did (`p:a}b`, a local name that is no NCName). On a
     /// DOCTYPE made by `create_document_type`, the same for a name or id XML
     /// cannot write. (A declaration `set_attribute_ns` gave a value XML
     /// forbids, `xmlns:p=""`, carries no flag: its value decides that, on

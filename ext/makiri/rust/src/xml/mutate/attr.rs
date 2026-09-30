@@ -200,6 +200,13 @@ fn remove_attr_by(doc: &mut Document, el: NodeId, key: AttrKey<'_>) -> bool {
 /// (`Document::decl_prefix` decides from its value, so a later allowed value
 /// makes it a declaration again) and that the serializers refuse. `[]=`
 /// ([`set_attribute`]) still refuses one: it names a declaration to make.
+///
+/// A name the DOM takes and XML cannot write - `p:a}b`, whose local name is
+/// no NCName - is split by the DOM's rule instead
+/// ([`crate::xml::dom_name::validate_and_extract`], as HTML's
+/// `set_attribute_ns` splits every name) and made DOM-loose, so the
+/// serializers refuse it. It was refused as no XML name, where the DOM's
+/// setAttributeNS succeeds.
 pub fn set_attribute_ns(
     doc: &mut Document,
     el: NodeId,
@@ -210,11 +217,16 @@ pub fn set_attribute_ns(
     if doc.type_(el) != Some(ArenaKind::Element) {
         return Err(MutError::Type);
     }
-    let sp = split_checked(name).ok_or(MutError::BadName)?;
-    let prefix = &name[..sp.prefix_len as usize];
-    if !crate::xml::dom_name::namespace_fits(ns, name, prefix) {
-        return Err(MutError::BadNsName);
-    }
+    let (sp, loose) = match split_checked(name) {
+        Some(sp) => {
+            let prefix = &name[..sp.prefix_len as usize];
+            if !crate::xml::dom_name::namespace_fits(ns, name, prefix) {
+                return Err(MutError::BadNsName);
+            }
+            (sp, false)
+        }
+        None => (dom_split(ns, name)?, true),
+    };
     if !validate_chars(val) {
         return Err(MutError::BadChars);
     }
@@ -232,8 +244,32 @@ pub fn set_attribute_ns(
     /* no match: copy the namespace into the arena only now */
     let nsv: Ns = if ns.is_empty() { NO_NS } else { doc.store(ns)? };
     let attr = build_attr(doc, el, name, &sp, val, Resolved::decided(nsv), tail)?;
-    doc.node_mut(attr).attr_ns = AttrNs::Explicit;
+    let n = doc.node_mut(attr);
+    n.attr_ns = AttrNs::Explicit;
+    n.flags.set(NodeFlags::DOM_LOOSE_NAME, loose);
     Ok(attr)
+}
+
+/// `name` split by the DOM's "validate and extract" for an attribute in `ns`,
+/// for one that is no XML QName: [`MutError::BadDomName`] when the DOM refuses
+/// the name, [`MutError::BadNsName`] when the namespace does not fit it.
+fn dom_split(ns: &[u8], name: &[u8]) -> Result<Split, MutError> {
+    use crate::xml::dom_name::{valid_attribute_local_name, validate_and_extract, ExtractError};
+    let (prefix, local) =
+        validate_and_extract(ns, name, valid_attribute_local_name).map_err(|e| match e {
+            ExtractError::Name => MutError::BadDomName("invalid DOM attribute name"),
+            ExtractError::Namespace => MutError::BadNsName,
+        })?;
+    let (Ok(p), Ok(l)) = (u32::try_from(prefix.len()), u32::try_from(local.len())) else {
+        return Err(MutError::BadName);
+    };
+    /* `validate_and_extract` splits at the first colon, and an empty prefix
+     * is no valid one: a name with a colon has a prefix here. */
+    Ok(if prefix.is_empty() {
+        Split::unprefixed(l)
+    } else {
+        Split::prefixed(p, l)
+    })
 }
 
 /// Remove `el`'s attribute keyed by `(ns, local)`; `true` when one was removed.

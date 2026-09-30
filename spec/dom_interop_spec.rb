@@ -235,6 +235,38 @@ RSpec.describe "browser-DOM interop" do
     end
   end
 
+  # The DOM's setAttributeNS takes any valid attribute local name, which is
+  # far looser than an NCName: `a}b` is one. XML's set_attribute_ns refused it
+  # as no XML name; it is now held DOM-loose, as the HTML side already took it.
+  describe "XML set_attribute_ns with a name XML cannot write" do
+    let(:doc) { Makiri::XML("<r/>") }
+    let(:root) { doc.root }
+
+    it "splits it by the DOM's rule and keys it by namespace and local name" do
+      root.set_attribute_ns("urn:u", "p:a}b", "v")
+      attr = root.attribute_nodes.last
+      expect([attr.name, attr.namespace_uri, attr.prefix, attr.local_name]).to eq(["p:a}b", "urn:u", "p", "a}b"])
+      root.set_attribute_ns("urn:u", "a}b", "w") # the same (namespace, local name)
+      expect(root.attribute_nodes.map { [_1.name, _1.value] }).to eq([["p:a}b", "w"]])
+      root.set_attribute_ns("urn:u", "q:a:b", "v")
+      expect(root.attribute_nodes.last.local_name).to eq("a:b")
+    end
+
+    it "refuses to serialize it, and not once it is gone" do
+      root.set_attribute_ns("urn:u", "p:a}b", "v")
+      expect { doc.to_xml }.to raise_error(Makiri::Error, /DOM-loose attribute/)
+      expect { doc.canonicalize }.to raise_error(Makiri::Error, /DOM-loose attribute/)
+      root.remove_attribute_ns("urn:u", "a}b")
+      expect(doc.to_xml).to eq(%(<?xml version="1.0"?>\n<r/>\n))
+    end
+
+    it "still refuses what the DOM refuses" do
+      expect { root.set_attribute_ns("urn:u", "a b", "v") }.to raise_error(ArgumentError)
+      expect { root.set_attribute_ns("urn:u", ":a", "v") }.to raise_error(ArgumentError)
+      expect { root.set_attribute_ns(nil, "p:a}b", "v") }.to raise_error(Makiri::Error, /does not fit/)
+    end
+  end
+
   describe "XML Element#set_loose_dom_attribute" do
     let(:doc) { Makiri::XML(%(<r xmlns:p="urn:p"><c/></r>)) }
     let(:root) { doc.root }
