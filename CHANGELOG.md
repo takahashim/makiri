@@ -2,40 +2,45 @@
 
 ## [Unreleased]
 
+Most changes accept what the DOM allows where 0.11.0 raised. The XML
+serializers (`to_xml`, `canonicalize`) raise instead when the tree holds
+something XML cannot write.
+
 ### Changed
 
-* `Makiri::HTML::Document#create_element_ns` accepts an upper-case name in the
-  HTML namespace that names a known element (`BR`, `DIV`), as the DOM does:
-  it makes an unknown element of that name, which is not void and not matched
-  by type selectors. 0.11.0 raised. `import_node` of such an XHTML element
-  from XML works the same way.
-* `import_node` from HTML into XML copies as the DOM's importNode does: the
-  copy is in its namespace at once (an imported `<p>` was in none until
-  inserted), it gets no `xmlns` attribute the source did not have (one was
-  added, visible in `attribute_nodes`), and an attribute in no namespace
-  whose name XML cannot write (`x-on:click`, `:href`, `@click`, `xlink:href`
-  on an HTML element) crosses as it is instead of raising; `to_xml` raises
-  while it is present. `xml:lang` still becomes the XML namespace's.
-* XML `canonicalize` declares a name's own prefix where its namespace was set
-  rather than declared (DOM Level 3 namespace normalization) - an element
-  moved from under its declaration, an attribute given a namespace by
-  `set_attribute_ns`, an import from HTML - instead of raising. It still
-  raises where only an invented prefix could keep a name.
-* HTML `to_html` / `inner_html` write a `<template>`'s contents and not the
-  template's own children (added with `add_child`), as the HTML Standard and
-  browsers do; both were written. `import_node` of such a template into XML
-  keeps the own children after the contents instead of dropping them.
-* `Node#path` of an element round-trips when a sibling with a different
-  prefix or case answers the same XPath step.
-* XML documents hold the character data the DOM allows: text and attribute
-  values with a character XML has none for (`"\f"`, U+0001, NUL) and
-  comments with `--`, which raised `Makiri::Error`. `to_xml` /
-  `canonicalize` raise while such data is present. `create_cdata` with `]]>`
-  and `create_processing_instruction` with `?>` still raise, now
-  `ArgumentError`. Names still refuse NUL.
-* XML `set_attribute_ns` accepts a name the DOM allows but XML cannot write,
-  such as `p:a}b` (DOM `setAttributeNS`); it raised `ArgumentError`. `to_xml`
-  raises while such an attribute is present.
+HTML:
+
+* `to_html` / `inner_html` write a `<template>`'s contents, not its own
+  children (added with `add_child`), as browsers do.
+* `create_element_ns` in the HTML namespace accepts an upper-case name
+  (`BR`, `DIV`), as the DOM does. It makes an unknown element: not void, and
+  not matched by type selectors. Importing such an XHTML element from XML
+  behaves the same way.
+
+XML:
+
+* Text, attribute values and comments accept the characters the DOM allows:
+  `"\f"`, U+0001, NUL, and `--` in a comment.
+* `set_attribute_ns` accepts names XML cannot write, such as `p:a}b`.
+* `to_xml` and `canonicalize` raise while any of the above is in the tree.
+* `create_cdata` with `]]>` and `create_processing_instruction` with `?>`
+  now raise `ArgumentError`.
+* `canonicalize` adds the namespace declarations a name needs instead of
+  raising. It still raises where it would have to invent a prefix.
+
+HTML to XML (`import_node`):
+
+* The copy is in its namespace at once. Before, it was in none until
+  inserted.
+* The copy gets no `xmlns` attribute.
+* An attribute XML cannot write (`x-on:click`, `@click`) is copied as it is
+  instead of raising.
+* A `<template>` keeps its own children, after its contents.
+
+Other:
+
+* `Node#path` round-trips when a sibling with a different prefix or case
+  would also match the same XPath step.
 
 ## [0.11.0] - 2026-09-30
 
