@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+* Passing a string literal from a file without
+  `# frozen_string_literal: true` no longer warns "literal string will be
+  frozen in the future" on Ruby 3.4+ (with deprecation warnings enabled).
+
 ## [0.12.0] - 2026-10-01
 
 Most changes accept what the DOM allows where 0.11.0 raised. The XML

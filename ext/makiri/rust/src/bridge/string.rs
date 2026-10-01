@@ -138,6 +138,28 @@ impl<P> crate::falloc::Oom for Refusal<P> {
     }
 }
 
+/// Whether `s` is chilled: a String literal from a file without the
+/// `frozen_string_literal` comment (or a `Symbol#to_s`), on Ruby 3.4 and later.
+/// Such a String is read from a copy: locking it warns "literal string will be
+/// frozen" (the lock's frozen check counts as a change), and unlike a frozen
+/// one Ruby can still change it, so it cannot be borrowed as it is.
+///
+/// The bits are the ones Ruby's own public `rb_check_frozen_inline` tests, and
+/// the answer only picks between two safe ways to hold the bytes: a chilled
+/// String misread as plain is locked (and warns), a plain one misread as
+/// chilled is copied.
+fn is_chilled(s: RString) -> bool {
+    use rb_sys::{RUBY_API_VERSION_MAJOR as MAJOR, RUBY_API_VERSION_MINOR as MINOR};
+    if (MAJOR, MINOR) < (3, 4) {
+        return false;
+    }
+    let chilled = (rb_sys::ruby_fl_type::RUBY_FL_USER2 as VALUE)
+        | (rb_sys::ruby_fl_type::RUBY_FL_USER3 as VALUE);
+    // SAFETY: `s` is a live String, a heap object, so it begins with RBasic.
+    let flags = unsafe { (*(s.as_raw() as *const rb_sys::RBasic)).flags };
+    flags & chilled != 0
+}
+
 /// Whether `e` is `rb_str_locktmp`'s own refusal of an already locked String,
 /// rather than an exception delivered while that refusal was being raised.
 ///
@@ -196,6 +218,8 @@ impl<C: Checked> RubyStr<C> {
          * FrozenError) and no copy. */
         let (frozen, owns_lock) = if s.is_frozen() {
             (true, false)
+        } else if is_chilled(s) {
+            (false, false)
         } else {
             // SAFETY: `value` is the live String `s`; `protect` turns a raise
             // into `Err`.
