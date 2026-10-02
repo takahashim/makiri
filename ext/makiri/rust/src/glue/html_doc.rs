@@ -100,13 +100,15 @@ fn node_parse(ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Value, Erro
     crate::bridge::ruby::entry(|| {
         /* Only the context's tag and namespace ids are needed, read before the
          * fragment parse runs. */
-        let Some(at) = this.node().element().and_then(fragment::FragmentTag::of) else {
+        if this.node().element().is_none() {
             return Err(Error::new(
                 ruby.exception_arg_error(),
                 "Node#parse requires an element context",
             ));
-        };
+        }
         let document = this.document;
+        let node = this.node();
+        let at = fragment::resolve_node_context(document, node, node.owner_document())?;
         /* No keyword here, as in Nokogiri: the default limit. */
         let frag = fragment::build_fragment(document, rb_html, at, fragment::DepthLimit::DEFAULT)?;
         /* The native children reader, not a Ruby `children` dispatch: the

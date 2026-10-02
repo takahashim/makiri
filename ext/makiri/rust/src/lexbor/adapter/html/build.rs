@@ -456,6 +456,26 @@ impl<'doc> BuildingNode<'doc> {
         self.0.preorder_next_with_contents(root.0).map(BuildingNode)
     }
 
+    /// Put every element of this subtree - template contents included - that
+    /// is in no namespace into `ns`, an id of this node's document.
+    ///
+    /// For a fragment parsed with no namespace in place of its context's (see
+    /// `lexbor::fragment::FragmentTag::parse_ns`): the parser makes no
+    /// element in no namespace except by inheriting the context's, so these
+    /// are exactly the elements that inherited it. The struct Lexbor chose for
+    /// each is the one it chooses for any namespace outside its built-in ones.
+    pub fn give_namespace(self, ns: NsId) {
+        let mut next = Some(self);
+        while let Some(n) = next {
+            if n.0.node_type() == NodeType::Element && n.0.ns_id().is_none() {
+                // SAFETY: an element still being built, which nothing else
+                // refers to; `ns` is interned in its document.
+                unsafe { (*n.0.as_raw()).ns = ns.raw() };
+            }
+            next = n.preorder_next_with_contents(self);
+        }
+    }
+
     /// Link `child` in as the last child.
     #[inline]
     pub fn insert_child(self, child: Self) {

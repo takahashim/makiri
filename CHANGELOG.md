@@ -7,6 +7,12 @@
 * Passing a string literal from a file without
   `# frozen_string_literal: true` no longer warns "literal string will be
   frozen in the future" on Ruby 3.4+ (with deprecation warnings enabled).
+* A fragment parsed with a context element from another document
+  (`fragment(context:)`, `DocumentFragment.parse(context:)`) no longer keeps
+  a reference into that document, which could be read after that document was
+  freed.
+* A String `context:` naming a node that is not an element (`"#text"`,
+  `"!--"`, ...) raises `ArgumentError`.
 
 ## [0.12.0] - 2026-10-01
 

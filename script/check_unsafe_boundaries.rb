@@ -31,7 +31,7 @@ RUST = File.join(ROOT, "ext/makiri/rust/src")
 UNSAFE_ISLANDS = {
   "bridge/alloc.rs" => 4,
   "bridge/doc.rs" => 3,
-  "bridge/fragment.rs" => 5,
+  "bridge/fragment.rs" => 6,
   "bridge/gvl.rs" => 5,
   "bridge/html.rs" => 17,
   "bridge/node_set.rs" => 8,
@@ -56,8 +56,8 @@ UNSAFE_ISLANDS = {
   "lexbor/adapter/arena_bytes.rs" => 14,
   "lexbor/adapter/cross_import.rs" => 2,
   "lexbor/adapter/html/attrs.rs" => 20,
-  "lexbor/adapter/html/build.rs" => 19,
-  "lexbor/adapter/html/mod.rs" => 60,
+  "lexbor/adapter/html/build.rs" => 20,
+  "lexbor/adapter/html/mod.rs" => 62,
   "lexbor/adapter/html/mutate.rs" => 9,
   "lexbor/adapter/html/serialize.rs" => 9,
   "lexbor/adapter/post_parse.rs" => 13,
@@ -462,7 +462,7 @@ end
 # is generated, so its signature is Lexbor's. A new hand declaration of a
 # header-declared function belongs in build.rs's allowlist instead; one with no
 # header belongs in build.rs's UNDECLARED_EXPORTS as well as here.
-LEXBOR_HAND_DECLS = 4
+LEXBOR_HAND_DECLS = 5
 abi_decls = comments_removed(File.binread(File.join(RUST, "lexbor/abi.rs"))).scan(LEXBOR_DECL).length
 if abi_decls != LEXBOR_HAND_DECLS
   errors << "lexbor/abi.rs hand-declares #{abi_decls} Lexbor functions (expected " \

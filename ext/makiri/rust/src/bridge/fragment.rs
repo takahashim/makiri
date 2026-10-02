@@ -19,7 +19,7 @@ use crate::bridge::ruby::{is_kind_of, string_of};
 use crate::bridge::string::{ruby_verified_text, HtmlSource};
 use crate::bridge::wrapper::{ensure_document_mutable, html_doc_unwrap, DocKind, DocumentShell};
 use crate::init::CLASS_NODE;
-use crate::lexbor::adapter::html::{HtmlDoc, HtmlNodeMut, Place, RawDoc, RawNode};
+use crate::lexbor::adapter::html::{HtmlDoc, HtmlNode, HtmlNodeMut, Place, RawDoc, RawNode};
 use crate::lexbor::adapter::post_parse::parse_html;
 pub use crate::lexbor::adapter::tree_guard::DepthLimit;
 pub use crate::lexbor::fragment::FragmentTag;
@@ -50,17 +50,25 @@ pub fn resolve_fragment_context(
 
     if is_kind_of(context, &CLASS_NODE) {
         /* Rejects an XML node before any Lexbor use; only the context's tag
-         * and namespace ids come out. */
-        let tag = with_arg_node(context, |cn| cn.element().and_then(FragmentTag::of))?;
-        return tag.ok_or_else(|| {
-            crate::bridge::ruby::arg_error("fragment context node must be an element")
-        });
+         * and namespace come out, as ids of `document`. The node may belong to
+         * another document - `DocumentFragment.parse`'s always does. */
+        let target = html_doc_unwrap(document)?;
+        return with_arg_node(context, |cn| {
+            // SAFETY: a live HTML Document, kept alive by `document` for this call.
+            resolve_node_context(document, cn, unsafe { target.as_doc() })
+        })?;
     }
 
     /* A context tag name is a programmatic control string, not parsed HTML, so
      * it follows the strict text-input contract (valid UTF-8, no NUL). */
     let cv = ruby_verified_text(context, "fragment context element")?;
     let name = cv.as_bytes();
+    /* Lexbor's name table also holds the special ids it gives non-elements
+     * (`#text`, `#document`, `!--`, ...), which would make the context a
+     * node of that kind: only a name an element can have is a context. */
+    if !crate::xml::dom_name::valid_element_local_name(name) {
+        return Err(unknown_context(name));
+    }
     if name == b"svg" {
         return Ok(FragmentTag::SVG);
     }
@@ -70,12 +78,40 @@ pub fn resolve_fragment_context(
     let doc = html_doc_unwrap(document)?;
     // SAFETY: a live HTML Document, kept alive by `document` for this call.
     let Some(tag) = (unsafe { doc.as_doc() }).tag_id(name) else {
-        return Err(crate::bridge::ruby::arg_error(format!(
-            "unknown fragment context element: {}",
-            String::from_utf8_lossy(name)
-        )));
+        return Err(unknown_context(name));
     };
     Ok(FragmentTag::html(tag))
+}
+
+fn unknown_context(name: &[u8]) -> Error {
+    crate::bridge::ruby::arg_error(format!(
+        "unknown fragment context element: {}",
+        String::from_utf8_lossy(name)
+    ))
+}
+
+/// The context the node `node` provides to a fragment parsed into `target`
+/// (the HTML document `document` wraps), as `target`'s ids - see
+/// [`FragmentTag::resolve`]. Resolving may intern a name in `target`, a write,
+/// so it is refused while an XPath evaluation with a handler reads `document`.
+pub fn resolve_node_context(
+    document: Value,
+    node: HtmlNode<'_>,
+    target: HtmlDoc<'_>,
+) -> Result<FragmentTag, Error> {
+    ensure_document_mutable(document)?;
+    let Some(el) = node.element() else {
+        return Err(crate::bridge::ruby::arg_error(
+            "fragment context node must be an element",
+        ));
+    };
+    match FragmentTag::resolve(el, target) {
+        Ok(Some(at)) => Ok(at),
+        Ok(None) => Err(crate::bridge::ruby::arg_error(
+            "fragment context node must be an element",
+        )),
+        Err(_) => Err(makiri_error(FragmentError::Context.message())),
+    }
 }
 
 /// Parse `html` as a fragment in `context`. Nothing is changed yet: a String
