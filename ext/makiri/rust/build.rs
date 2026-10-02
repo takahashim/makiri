@@ -287,12 +287,15 @@ fn main() {
         .allowlist_function("lxb_css_property_serialize")
         .allowlist_function("lxb_css_property_serialize_name")
         .allowlist_function("lxb_css_selector_serialize_chain")
-        // The HTML serializers `lexbor::serialize` drives through its sink.
-        .allowlist_function("lxb_html_serialize_tree_cb")
-        // One node's own markup: Makiri drives the walk
+        // One node's own markup, plain and pretty: Makiri drives the walk
         // itself (`adapter::html::serialize`), so a <template> writes its
-        // contents and not its own children, as the HTML Standard says.
+        // contents and not its own children, as the HTML Standard says, and
+        // no tree depth grows the native stack.
         .allowlist_function("lxb_html_serialize_cb")
+        .allowlist_function("lxb_html_serialize_pretty_cb")
+        // Lexbor's own walks, which those replaced: the reference the
+        // `serialize_walk` tests compare against, and called nowhere else.
+        .allowlist_function("lxb_html_serialize_tree_cb")
         .allowlist_function("lxb_html_serialize_deep_cb")
         .allowlist_function("lxb_html_serialize_pretty_tree_cb")
         .allowlist_function("lxb_html_serialize_pretty_deep_cb")
@@ -406,6 +409,12 @@ const UNDECLARED_EXPORTS: &[(&str, &str, &str, &str)] = &[
         "lxb_dom_element_qualified_name_set",
         "lxb_dom_element_t *element, const lxb_char_t *prefix, size_t prefix_len, \
          const lxb_char_t *lname, size_t lname_len",
+    ),
+    (
+        "lexbor/ns/ns.c",
+        "LXB_API const lxb_ns_data_t *",
+        "lxb_ns_append",
+        "lexbor_hash_t *hash, const lxb_char_t *link, size_t length",
     ),
 ];
 

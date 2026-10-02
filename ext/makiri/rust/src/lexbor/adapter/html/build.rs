@@ -54,10 +54,13 @@ impl<'doc> HtmlDoc<'doc> {
                 s.as_ptr()
             }
         };
+        /* The prefix steps are taken here, in Lexbor's order, rather than by
+         * its create (hardening): without a prefix nothing can fail once the
+         * element exists, and a failure among these leaves the element to the
+         * arena, as every abandoned build here does, rather than destroying
+         * it. */
         // SAFETY: a live document; Lexbor copies every name into its own
-        // storage, and a failure destroys the half-made element itself. A null
-        // prefix is "none" - a non-null empty one would be interned as a
-        // prefix of its own.
+        // storage.
         let el = unsafe {
             BuildingElement::from_raw(lxb::lxb_dom_element_create(
                 self.as_raw(),
@@ -65,29 +68,46 @@ impl<'doc> HtmlDoc<'doc> {
                 local.len(),
                 or_null(ns),
                 ns.len(),
-                or_null(prefix),
-                prefix.len(),
+                core::ptr::null(),
+                0,
                 core::ptr::null(),
                 0,
                 false,
             ))
         }?;
-        /* With a prefix, Lexbor recorded `prefix:local` as written already. */
-        if prefix.is_empty() && has_ascii_uppercase(local) {
-            // SAFETY: an element just made in this document, in no tree; the
-            // name is copied.
-            let st = unsafe {
-                lxb::lxb_dom_element_qualified_name_set(
-                    el.0.raw(),
-                    core::ptr::null(),
-                    0,
-                    local.as_ptr(),
-                    local.len(),
-                )
+        let (p, p_len) = if prefix.is_empty() {
+            if !has_ascii_uppercase(local) {
+                return Some(el);
+            }
+            (core::ptr::null(), 0)
+        } else {
+            // SAFETY: a live document; the prefix is copied into its table.
+            let data = unsafe {
+                lxb::lxb_ns_prefix_append((*self.as_raw()).prefix, prefix.as_ptr(), prefix.len())
             };
-            if st != lxb::consts::STATUS_OK {
+            if data.is_null() {
                 return None;
             }
+            // SAFETY: an element just made in this document, in no tree, and a
+            // live entry of the document's prefix table.
+            unsafe { (*el.0.raw()).node.prefix = (*data).prefix_id };
+            (prefix.as_ptr(), prefix.len())
+        };
+        /* The name as written beside the lower-cased tag: `prefix:local`, or
+         * an unprefixed `local` with upper case. */
+        // SAFETY: an element just made in this document, in no tree; the names
+        // are copied.
+        let st = unsafe {
+            lxb::lxb_dom_element_qualified_name_set(
+                el.0.raw(),
+                p,
+                p_len,
+                local.as_ptr(),
+                local.len(),
+            )
+        };
+        if st != lxb::consts::STATUS_OK {
+            return None;
         }
         Some(el)
     }
@@ -311,7 +331,34 @@ impl<'doc> HtmlDoc<'doc> {
     /// Lexbor's copy appends attributes by its own rules, which can drop one;
     /// `attrs::repair_import` puts the copy's attributes right before it is
     /// handed out, and a copy it cannot repair is `None` too.
+    ///
+    /// An attribute and a document fragment are copied by steps of their
+    /// own (hardening): an attribute by Lexbor's attribute clone, a fragment
+    /// made afresh and given copies of the children. Lexbor's importNode is
+    /// given every other kind.
     pub fn import_node(self, src: HtmlNode<'_>, deep: bool) -> Option<BuildingNode<'doc>> {
+        match src.node_type() {
+            NodeType::Attribute => {
+                // SAFETY: a live attribute, only read; the clone is made in
+                // this document, unlinked and owned by no element.
+                let copy = unsafe {
+                    lxb::lxb_dom_attr_interface_clone(self.as_raw(), src.as_raw() as *mut LxbAttr)
+                };
+                // SAFETY: Lexbor's attribute begins with its node.
+                return unsafe { BuildingNode::from_raw(copy as *mut LxbNode) };
+            }
+            NodeType::DocumentFragment => {
+                let copy = self.create_fragment()?;
+                if deep {
+                    /* A child is never a fragment, so this goes one level. */
+                    for child in src.children() {
+                        copy.insert_child(self.import_node(child, true)?);
+                    }
+                }
+                return Some(copy);
+            }
+            _ => {}
+        }
         // SAFETY: two live documents' nodes; Lexbor allocates the copy in this
         // one and leaves the source alone. The copy is unshared until
         // returned, which is what the repair asks.
@@ -454,6 +501,26 @@ impl<'doc> BuildingNode<'doc> {
     #[inline]
     pub fn preorder_next_with_contents(self, root: Self) -> Option<Self> {
         self.0.preorder_next_with_contents(root.0).map(BuildingNode)
+    }
+
+    /// Put every element of this subtree - template contents included - that
+    /// is in no namespace into `ns`, an id of this node's document.
+    ///
+    /// For a fragment parsed with no namespace in place of its context's (see
+    /// `lexbor::fragment::FragmentTag::parse_ns`): the parser makes no
+    /// element in no namespace except by inheriting the context's, so these
+    /// are exactly the elements that inherited it. The struct Lexbor chose for
+    /// each is the one it chooses for any namespace outside its built-in ones.
+    pub fn give_namespace(self, ns: NsId) {
+        let mut next = Some(self);
+        while let Some(n) = next {
+            if n.0.node_type() == NodeType::Element && n.0.ns_id().is_none() {
+                // SAFETY: an element still being built, which nothing else
+                // refers to; `ns` is interned in its document.
+                unsafe { (*n.0.as_raw()).ns = ns.raw() };
+            }
+            next = n.preorder_next_with_contents(self);
+        }
     }
 
     /// Link `child` in as the last child.

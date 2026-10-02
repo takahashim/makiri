@@ -112,7 +112,18 @@ impl NsId {
     pub(in crate::lexbor) fn raw(self) -> usize {
         self.0.get()
     }
+
+    /// One of Lexbor's built-in namespaces, below [`NS_LAST_ENTRY`] - as
+    /// opposed to one a document interned, whose id is a pointer into that
+    /// document's table and means nothing in another.
+    #[inline]
+    pub fn is_static(self) -> bool {
+        self.0.get() < NS_LAST_ENTRY
+    }
 }
+
+/// `LXB_NS__LAST_ENTRY` - the end of Lexbor's built-in namespace ids.
+pub const NS_LAST_ENTRY: usize = lxb::lxb_ns_id_enum_t_LXB_NS__LAST_ENTRY as usize;
 
 /// An attribute name resolved against one document - see
 /// [`HtmlDoc::resolve_attr_name`]. For that document's elements only: the
@@ -391,7 +402,8 @@ impl RawNode {
 
     /// The typed node pointer, for the facades that hand it to a Lexbor call.
     /// Typed rather than [`as_ptr`](RawNode::as_ptr)'s `c_void`, so no caller
-    /// casts it back.
+    /// casts it back. Only the tests' reference CSS engine has one now.
+    #[cfg(test)]
     #[inline]
     pub(in crate::lexbor) fn as_lxb_mut(self) -> *mut LxbNode {
         self.0.as_ptr()
@@ -596,6 +608,57 @@ impl<'doc> HtmlDoc<'doc> {
             (*d).ns_id
         };
         NsId::from_raw(id)
+    }
+
+    /// The id of `uri` in this document's namespace table, interning it if
+    /// the table does not hold it yet. `None` for an empty URI or when Lexbor
+    /// could not intern it. Case is folded as in [`lookup_ns`](Self::lookup_ns).
+    pub fn intern_ns(self, uri: &[u8]) -> Option<NsId> {
+        if uri.is_empty() {
+            return None;
+        }
+        // SAFETY: a live document; Lexbor copies the URI into its own table,
+        // which keeps the entry for the document's lifetime.
+        let id = unsafe {
+            let table = (*self.as_raw()).ns;
+            if table.is_null() {
+                return None;
+            }
+            let d = lxb::lxb_ns_append(table, uri.as_ptr(), uri.len());
+            if d.is_null() {
+                return None;
+            }
+            (*d).ns_id
+        };
+        NsId::from_raw(id)
+    }
+
+    /// A tag id of this document's own for `name`, interned as written and
+    /// past Lexbor's static range unless `name` is, case for case, a static
+    /// name. `None` for an empty name or when Lexbor could not intern it.
+    pub fn intern_tag(self, name: &[u8]) -> Option<TagId> {
+        if name.is_empty() {
+            return None;
+        }
+        // SAFETY: a live document; Lexbor copies the name into its own table,
+        // which keeps the entry for the document's lifetime.
+        let id = unsafe {
+            let tags = (*self.as_raw()).tags;
+            if tags.is_null() {
+                return None;
+            }
+            let d = lxb::lxb_tag_append(
+                tags,
+                lxb::lxb_tag_id_enum_t_LXB_TAG__UNDEF as lxb::lxb_tag_id_t,
+                name.as_ptr(),
+                name.len(),
+            );
+            if d.is_null() {
+                return None;
+            }
+            (*d).tag_id
+        };
+        TagId::from_raw(id)
     }
 
     /// # Safety
@@ -883,9 +946,10 @@ impl<'doc> HtmlNode<'doc> {
         if self.node_type() != NodeType::DocumentFragment {
             return None;
         }
-        // SAFETY: every Lexbor node of type DOCUMENT_FRAGMENT is allocated as
-        // a `lxb_dom_document_fragment_t` (`lxb_dom_document_fragment_
-        // interface_create`); `host` is null or an element of the document.
+        // SAFETY: every DOCUMENT_FRAGMENT node here is allocated as a
+        // `lxb_dom_document_fragment_t` (`lxb_dom_document_fragment_
+        // interface_create`, which `HtmlDoc::import_node` uses for a copy
+        // too); `host` is null or an element of the document.
         let host = Self::link(unsafe {
             (*(self.as_raw() as *mut lxb::lxb_dom_document_fragment_t)).host as *mut LxbNode
         })?;
@@ -1166,10 +1230,11 @@ impl<'doc> HtmlNode<'doc> {
         if self.node_type() != NodeType::DocumentFragment {
             return None;
         }
-        // SAFETY: Lexbor allocates every DOCUMENT_FRAGMENT node as an
+        // SAFETY: every DOCUMENT_FRAGMENT node here is allocated as an
         // `lxb_dom_document_fragment_t` (`document_fragment_interface_create`,
-        // the only constructor), which leads with its node; `host` is set only
-        // by the template constructor, to a template the document owns.
+        // which `HtmlDoc::import_node` uses for a copy too), which leads with
+        // its node; `host` is set only by the template constructor, to a
+        // template the document owns.
         Self::link(unsafe {
             (*(self.as_raw() as *mut lxb::lxb_dom_document_fragment_t)).host as *mut LxbNode
         })

@@ -32,7 +32,9 @@ use crate::lexbor::abi::{
     lxb_html_parse_fragment_chunk_begin, lxb_html_parse_fragment_chunk_end,
     lxb_html_parse_fragment_chunk_process, TransientDoc,
 };
-use crate::lexbor::adapter::tree_guard::{fragment_document, DepthLimit, GuardStop, TokenHook};
+use crate::lexbor::adapter::tree_guard::{
+    fragment_document, DepthLimit, GuardStop, OptionContext, TokenHook,
+};
 
 /* The HTML parser's lifecycle, from the generated bindings. Declared here first
  * over an opaque parser, which was fine until the source-location port needed
@@ -113,6 +115,8 @@ pub enum FragmentError {
     Decode,
     /// The parse itself returned no fragment.
     Parse,
+    /// The context's tag or namespace could not be interned in the document.
+    Context,
     /// The tree grew deeper than the [`DepthLimit`] allowed.
     TooDeep,
     /// A `<select>` received more than `MAX_SELECT_OPTIONS` options.
@@ -128,6 +132,7 @@ impl FragmentError {
             FragmentError::Parser => "failed to create HTML parser",
             FragmentError::Decode => "out of memory decoding fragment HTML",
             FragmentError::Parse => "failed to parse HTML fragment",
+            FragmentError::Context => "failed to resolve the fragment context",
             FragmentError::TooDeep => "document tree depth limit exceeded",
             FragmentError::TooManyOptions => "too many option elements in one select element",
         }
@@ -170,6 +175,10 @@ unsafe fn import_fragment_children(
 pub struct TransientFragment {
     root: RawNode,
     _doc: Option<crate::lexbor::abi::TransientDoc>,
+    /// The context's namespace when the parser was given none in its place
+    /// (see [`FragmentTag::parse_ns`]): the elements that inherited it are
+    /// given it back as they are imported.
+    inherit: Option<NsId>,
 }
 
 impl TransientFragment {
@@ -197,7 +206,11 @@ impl TransientFragment {
     /// `doc` must be live, and `into` a detached fragment of `doc` that nothing
     /// else refers to.
     pub unsafe fn import_into(self, doc: RawDoc, into: RawNode) -> Result<(), AdapterOom> {
-        import_fragment_children(doc, self.root, into)
+        import_fragment_children(doc, self.root, into)?;
+        if let Some(ns) = self.inherit {
+            BuildingNode::from_raw_node(into).give_namespace(ns);
+        }
+        Ok(())
     }
 }
 
@@ -215,6 +228,12 @@ pub enum FragmentContext {
     /// `DocumentFragment.parse`, where no such element exists yet.
     Tag { doc: RawDoc, at: FragmentTag },
 }
+
+/// The tag a context gets when its own cannot be handed to the parser - see
+/// [`FragmentTag::resolve`]. No element can be named by it (a DOM element name
+/// does not start with `#`), so it is a tag of the document's own that no
+/// element carries and no static entry has.
+const STANDIN_TAG: &[u8] = b"#fragment-context";
 
 /// The context a fragment is parsed "inside of", per the WHATWG algorithm, as
 /// the tag and namespace ids the parser takes - a pair that used to travel as
@@ -244,13 +263,61 @@ impl FragmentTag {
         ns: Some(NsId::MATH),
     };
 
-    /// The context an element provides: its own tag and namespace. `None`
-    /// only for an element Lexbor gave no tag id, which it never makes.
-    pub fn of(el: HtmlElement<'_>) -> Option<FragmentTag> {
-        Some(FragmentTag {
-            tag: el.node().tag_id()?,
-            ns: el.node().ns_id(),
-        })
+    /// The context the element `el` provides, as ids of `doc` - the document
+    /// the fragment is parsed into or, for an element context, `el`'s own.
+    /// `Ok(None)` only for an element Lexbor gave no tag id, which it never
+    /// makes; `Err` when an id could not be interned.
+    ///
+    /// The ids are not simply `el`'s. A namespace or tag `el`'s document
+    /// interned is a pointer into THAT document's table, meaningless in `doc`
+    /// and dangling once `el`'s document is gone:
+    ///
+    /// - such a namespace is interned in `doc` (a no-op when `el` is `doc`'s),
+    ///   to be given to what inherits it (see [`parse_ns`](Self::parse_ns));
+    /// - such a tag - one not in Lexbor's static table - becomes
+    ///   [`STANDIN_TAG`], a tag of `doc`'s own that the parser does not know
+    ///   either. It decides nothing: a context of an unknown name is no
+    ///   special context, in any namespace.
+    pub fn resolve(
+        el: HtmlElement<'_>,
+        doc: HtmlDoc<'_>,
+    ) -> Result<Option<FragmentTag>, AdapterOom> {
+        let node = el.node();
+        let Some(tag) = node.tag_id() else {
+            return Ok(None);
+        };
+        let ns = match node.ns_id() {
+            Some(ns) if !ns.is_static() && node.owner_document() != doc => {
+                Some(doc.intern_ns(node.ns_uri().or_oom()?).or_oom()?)
+            }
+            ns => ns,
+        };
+        let tag = match tag.static_index() {
+            Some(_) => tag,
+            None => doc.intern_tag(STANDIN_TAG).or_oom()?,
+        };
+        Ok(Some(FragmentTag { tag, ns }))
+    }
+
+    /// The namespace the parser is given: the context's own when it is one of
+    /// Lexbor's built-in namespaces, and NONE in place of any other.
+    ///
+    /// The parse is the same either way - the tree builder tells HTML, SVG
+    /// and MathML apart and nothing else, so an element in no namespace and
+    /// one in `urn:x` are the same foreign context to it. Lexbor is handed
+    /// only the namespaces it builds in (hardening), and
+    /// [`inherit`](Self::inherit) is given to the elements that inherited the
+    /// context's on import.
+    fn parse_ns(self) -> usize {
+        match self.ns {
+            Some(ns) if ns.is_static() => ns.raw(),
+            _ => 0,
+        }
+    }
+
+    /// The namespace [`parse_ns`](Self::parse_ns) held back, if any.
+    fn inherit(self) -> Option<NsId> {
+        self.ns.filter(|ns| !ns.is_static())
     }
 
     /// An HTML-namespace tag.
@@ -264,35 +331,52 @@ impl FragmentTag {
 
 impl FragmentContext {
     /// What `lxb_html_parse_fragment_chunk_begin` takes: the owner document
-    /// for the fragment's own, and the context's tag and namespace ids.
+    /// for the fragment's own, and the context's tag and namespace ids - the
+    /// namespace as [`FragmentTag::parse_ns`] gives it, with the one it held
+    /// back.
     ///
     /// The element context passes NO owner - as `lxb_html_parse_fragment` does,
     /// handing over a fresh parser's tree document, which is NULL - so its
     /// fragment is built in a standalone document; the tag context passes the
     /// TARGET document, so its fragment is made inside that document's memory.
     ///
+    /// The element context is resolved here, against its own document (see
+    /// [`FragmentTag::resolve`]); a tag context arrives resolved. `Err` when
+    /// that resolution could not intern an id.
+    ///
     /// # Safety
     /// The context element, if that is the context, must be live.
-    unsafe fn begin_args(&self) -> (*mut crate::lexbor::abi::lxb_html_document_t, usize, usize) {
-        match *self {
+    unsafe fn begin_args(&self) -> Result<BeginArgs, FragmentError> {
+        let (owner, at) = match *self {
             FragmentContext::Element(el) => {
                 // SAFETY: the caller's contract - the context element is live.
                 let node = unsafe { el.as_node() };
-                (
-                    core::ptr::null_mut(),
-                    node.tag_id().map_or(0, TagId::raw),
-                    node.ns_id().map_or(0, NsId::raw),
-                )
+                let at = match node.element() {
+                    Some(e) => FragmentTag::resolve(e, node.owner_document())
+                        .map_err(|_| FragmentError::Context)?,
+                    None => None,
+                };
+                (core::ptr::null_mut(), at)
             }
             /* A document handle is untyped; this entry takes the HTML document
              * it is. */
-            FragmentContext::Tag { doc, at } => (
-                doc.as_ptr().cast(),
-                at.tag.raw(),
-                at.ns.map_or(0, NsId::raw),
-            ),
-        }
+            FragmentContext::Tag { doc, at } => (doc.as_ptr().cast(), Some(at)),
+        };
+        Ok(BeginArgs {
+            owner,
+            tag: at.map_or(0, |at| at.tag.raw()),
+            ns: at.map_or(0, FragmentTag::parse_ns),
+            inherit: at.and_then(FragmentTag::inherit),
+        })
     }
+}
+
+/// [`FragmentContext::begin_args`]'s answer.
+struct BeginArgs {
+    owner: *mut crate::lexbor::abi::lxb_html_document_t,
+    tag: usize,
+    ns: usize,
+    inherit: Option<NsId>,
 }
 
 /// Run a fragment parse with a fresh parser, under the tree-depth guard.
@@ -319,7 +403,12 @@ unsafe fn run_fragment_parser(
     let src = sanitize(input, known_valid).ok_or(FragmentError::Decode)?;
     let bytes = src.as_slice();
 
-    let (owner, tag, ns) = context.begin_args();
+    let BeginArgs {
+        owner,
+        tag,
+        ns,
+        inherit,
+    } = context.begin_args()?;
     if lxb_html_parse_fragment_chunk_begin(parser.as_ptr(), owner, tag, ns) != LXB_STATUS_OK {
         return Err(FragmentError::Parse);
     }
@@ -333,6 +422,10 @@ unsafe fn run_fragment_parser(
     /* A fragment keeps one synthetic `<html>` root below its first element,
      * which the depth does not count (see `tree_guard`). */
     let mut hook = TokenHook::new(limit, 1, None);
+    hook.set_option_context(match *context {
+        FragmentContext::Element(el) => OptionContext::Element(el),
+        FragmentContext::Tag { at, .. } => OptionContext::Tag(Some(at.tag), at.ns),
+    });
     if !hook.install(parser.as_ptr()) {
         return Err(FragmentError::Parse); /* never unguarded */
     }
@@ -353,7 +446,11 @@ unsafe fn run_fragment_parser(
         None => {}
     }
     let root = RawNode::from_ptr(root.cast()).ok_or(FragmentError::Parse)?;
-    Ok(TransientFragment { root, _doc: owned })
+    Ok(TransientFragment {
+        root,
+        _doc: owned,
+        inherit,
+    })
 }
 
 /// Copy `src` into `doc`, `<template>` contents included, or `Err` on failure.

@@ -7,6 +7,24 @@
 * Passing a string literal from a file without
   `# frozen_string_literal: true` no longer warns "literal string will be
   frozen in the future" on Ruby 3.4+ (with deprecation warnings enabled).
+* A fragment parsed with a context element from another document
+  (`fragment(context:)`, `DocumentFragment.parse(context:)`) no longer keeps
+  a reference into that document, which could be read after that document was
+  freed.
+* The 10,000-option limit per `<select>` now also counts the options a
+  fragment parsed in a select context receives (`inner_html=` and
+  `outer_html=` on or inside a select, `fragment(context: "select")`).
+  Before, they went uncounted, and inserting them took time quadratic in
+  their number.
+* A String `context:` naming a node that is not an element (`"#text"`,
+  `"!--"`, ...) raises `ArgumentError`.
+
+### Security
+
+* Hardening against Lexbor edge cases in fragment parsing, node copying,
+  element creation and serialization. Serialization is now always Makiri's
+  own walk, which uses no native recursion, so `to_html` / `inner_html` are
+  about 3% slower.
 
 ## [0.12.0] - 2026-10-01
 

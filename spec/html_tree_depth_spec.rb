@@ -221,6 +221,26 @@ RSpec.describe "HTML tree depth limit" do
       expect { doc.at_css("div").inner_html = options(10_001) }.to raise_error(Makiri::Error, message)
       expect(doc.at_css("div").inner_html).to eq("<b>old</b>")
     end
+
+    # A fragment's top level is parsed under a synthetic root, with no select
+    # above it; placed, its options land in the context, and each one inserted
+    # re-runs that select's selectedness all the same.
+    it "counts a fragment's top-level options against the select its context is or is in" do
+      doc = Makiri::HTML("<select id=s><option id=o></select><select id=t><optgroup id=g></optgroup></select>")
+      flood = "<option>x" * 10_001
+      expect { doc.at_css("#t").inner_html = flood }.to raise_error(Makiri::Error, message)
+      expect { doc.at_css("#g").inner_html = flood }.to raise_error(Makiri::Error, message)
+      expect { doc.at_css("#o").outer_html = flood }.to raise_error(Makiri::Error, message)
+      expect { doc.fragment(flood, context: "select") }.to raise_error(Makiri::Error, message)
+      expect { doc.fragment(flood, context: doc.at_css("#s")) }.to raise_error(Makiri::Error, message)
+      expect { Makiri::HTML::DocumentFragment.parse("<div>#{flood}", context: doc.at_css("#s")) }
+        .to raise_error(Makiri::Error, message)
+      expect(doc.at_css("#s").css("option").size).to eq(1)
+
+      doc.at_css("#t").inner_html = "<option>x" * 10_000
+      expect(doc.at_css("#t").css("option").size).to eq(10_000)
+      expect(doc.fragment(flood, context: "div").children.size).to eq(10_001)
+    end
   end
 
   describe "the XML side" do
