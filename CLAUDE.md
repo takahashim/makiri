@@ -531,7 +531,9 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
   fuzz/                    cargo-fuzz harnesses (xml/html, xpath/xml_xpath/
                            html_xpath, css = the XML lowering, html_css = the
                            HTML matcher over an arbitrary document, asserting
-                           css and matches? agree; built on PRs, run nightly)
+                           css and matches? agree, html_css_diff = the same
+                           matcher against Lexbor's own engine; built on PRs,
+                           run nightly. css-match.yml owns the two html_css*)
 vendor/lexbor/             git submodule, pinned 05b5d37 (v3.0.0-66), NEVER patched
 spec/fuzz/                 grammar-aware robustness fuzzer
 spec/invariants/           randomized property checks (see its README)
@@ -540,12 +542,14 @@ bench/                     Nokogiri-comparison benchmark
 docs/design_doc.ja.md      authoritative design (read this)
 ```
 
-Three features, one per layer, and the default is the extension: **`ruby`** (the
+Four features, and the default is the extension: **`ruby`** (the
 magnus boundary + `glue` + `init`; implies `lexbor`), **`lexbor`** (the layers
 that read Lexbor's DOM: the generated ABI, `css`, `lexbor/adapter`, the XPath HTML
-instance) and **`alloc-inject`** (the `rake oom` hook, off in any normal build).
+instance), **`alloc-inject`** (the `rake oom` hook, off in any normal build) and
+**`css-reference`** (the OLD CSS engine, `lexbor::selectors`, for the
+`html_css_diff` fuzz target; in no build that ships).
 The engine - `xml`, `xpath`, `falloc`, `cbuf`, `cutf8` - is behind no gate at
-all. So the fuzz crate builds `--no-default-features --features lexbor` and Kani
+all. So the fuzz crate builds `--no-default-features --features lexbor,css-reference` and Kani
 builds `--no-default-features`. The ~30 features that used to stand here were
 migration scaffolding, one per ported C file, and went with the C.
 
@@ -764,7 +768,8 @@ is exactly why HTML needed its own separate one to cache anything past one
 call). `lexbor/selectors.rs` (the OLD `lxb_selectors`-callback engine this
 replaced for HTML) is the differential-testing reference
 (`lexbor::tests::css_match::agrees_with_the_old_lexbor_engine_on_standard_selectors`
-and its randomized sibling) and nothing else: `#[cfg(test)]`, so no build
+and its randomized siblings, and the `html_css_diff` fuzz target) and
+nothing else: `#[cfg(test)]` or the `css-reference` feature, so no build
 that ships carries it, and without a cache of its own - parse, run, clean
 per query. The adaptive cache policy lives only in `selector_cache`.
 **The matcher is Lexbor's control flow, in safe Rust** (`css_match`'s

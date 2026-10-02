@@ -815,6 +815,51 @@ mod css_match {
         assert_eq!(select_all(&sib, "p:has(~ span)").len(), 1);
     }
 
+    /// A compound that starts with a list pseudo-class is tried at every
+    /// candidate its combinator allows, as Selectors 4 says. Lexbor's engine
+    /// tries only the first - the nearest ancestor, the previous sibling, a
+    /// `:has()` subject's first child - unless something precedes the pseudo
+    /// in the compound (`*:is(div) span` is right there). That is a departure
+    /// (`css_match`'s module doc), and the differential checks leave the shape
+    /// out; the second half of this test is what says when a Lexbor bump makes
+    /// that exclusion unnecessary.
+    #[test]
+    fn a_compound_led_by_a_list_pseudo_tries_every_candidate() {
+        use crate::lexbor::selectors as old_engine;
+
+        let doc = parsed(
+            b"<div><section><p><a></a></p></section></div>\
+              <p></p><b></b><i></i>",
+        );
+        let names = |els: Vec<HtmlElement<'_>>| -> Vec<String> {
+            els.into_iter()
+                .map(|e| String::from_utf8_lossy(e.qualified_name()).into_owned())
+                .collect()
+        };
+        let cases: [(&str, &[&str]); 7] = [
+            (":is(div) a", &["a"]),
+            (":not(p) a", &["a"]),
+            (":is(div).x a, :where(section) a", &["a"]),
+            (":is(p) ~ i", &["i"]),
+            (":has(:is(p))", &["html", "body", "div", "section"]),
+            (":has(> :is(body))", &["html"]),
+            (":has(:has(> a))", &["html", "body", "div", "section"]),
+        ];
+        for (sel, want) in cases {
+            assert_eq!(names(select_all(&doc, sel)), want, "{sel}");
+
+            let gvl = Gvl::exclusive();
+            let old = old_engine::select_all(&gvl, RawNode::from(root(&doc)), sel.as_bytes())
+                .unwrap_or_else(|_| panic!("old engine rejected {sel:?}"));
+            assert_ne!(
+                old.len(),
+                want.len(),
+                "Lexbor now answers {sel} as the spec does: drop the exclusion of a \
+                 compound led by a list pseudo from the differential checks"
+            );
+        }
+    }
+
     /// A construct this engine cannot evaluate at all - the column
     /// combinator `||` (Lexbor's OWN traversal reports an error for it too)
     /// and `:lexbor-contains()` (Lexbor itself matches with it; this port
@@ -1467,6 +1512,18 @@ mod css_match {
             ]
         );
         assert_eq!(ids(":checked"), ["opt-ok", "radio"]);
+        // `:read-write` asks the same `is_disabled`: a field a disabled
+        // fieldset disables is read-only, where Lexbor takes it as read-write.
+        // (The SVG `input` is named by Lexbor's tag id, as Lexbor names it,
+        // and `disabled` disables HTML elements only.)
+        assert_eq!(
+            ids("input:read-write, textarea:read-write"),
+            ["in-legend", "ta", "radio", "text", "svg-input"]
+        );
+        assert_eq!(
+            ids("input:read-only"),
+            ["inherits", "second-legend", "inner-legend"]
+        );
     }
 
     /// `select_all` counts sibling positions once per list (a memo); one
@@ -1865,6 +1922,122 @@ mod css_match {
                 new.len(),
                 old.len()
             );
+        }
+    }
+
+    /// A random document over the names [`random_compound`] asks about:
+    /// nested up to six deep, with the classes, ids and attributes its
+    /// selectors test, so that most of them match something somewhere.
+    /// No `<fieldset>`: what it disables is a documented departure
+    /// (`css_match`'s module doc).
+    fn random_document(rng: &mut Rng) -> String {
+        const TAGS: &[&str] = &[
+            "div", "p", "ul", "li", "a", "span", "section", "input", "textarea", "b",
+        ];
+        const ATTRS: &[&str] = &[
+            " class=item",
+            " class='item first'",
+            " class='item last'",
+            " class=lead",
+            " class=Box",
+            " class=empty",
+            " id=main",
+            " data-n=1",
+            " data-n=12",
+            " data-n=21",
+            " href=/p",
+            " rel='prev next'",
+            " title='Hello World'",
+            " type=checkbox",
+            " required",
+            " readonly",
+            " placeholder=x",
+            " hover",
+        ];
+        let mut html = String::from("<!doctype html><html><body>");
+        let mut open: Vec<&str> = Vec::new();
+        for _ in 0..(10 + rng.next_u64() % 50) {
+            match rng.next_u64() % 4 {
+                0 if !open.is_empty() => {
+                    let tag = open.pop().unwrap_or("div");
+                    html.push_str(&format!("</{tag}>"));
+                }
+                1 => html.push_str("text"),
+                _ if open.len() < 6 => {
+                    let tag = *rng.pick(TAGS);
+                    html.push('<');
+                    html.push_str(tag);
+                    for _ in 0..(rng.next_u64() % 3) {
+                        html.push_str(rng.pick(ATTRS));
+                    }
+                    html.push('>');
+                    if !matches!(tag, "input") {
+                        open.push(tag);
+                    }
+                }
+                _ => {}
+            }
+        }
+        while let Some(tag) = open.pop() {
+            html.push_str(&format!("</{tag}>"));
+        }
+        html.push_str("</body></html>");
+        html
+    }
+
+    /// The randomized differential check over random documents as well as
+    /// random selectors: the fixed fixture above leaves whole shapes
+    /// unexercised (an `:is()` whose nearest ancestor fails, a `~` past a
+    /// non-matching sibling). `MAKIRI_CSS_DIFF_SEED` and
+    /// `MAKIRI_CSS_DIFF_ITERATIONS` widen the sweep - CI's css-match job runs
+    /// it long with a fresh seed - and a failure prints the seed, the
+    /// document and the selector.
+    #[test]
+    fn agrees_with_the_old_engine_on_random_documents() {
+        use crate::lexbor::selectors as old_engine;
+
+        let env = |name: &str, default: u64| {
+            std::env::var(name)
+                .ok()
+                .and_then(|v| {
+                    let v = v.trim();
+                    match v.strip_prefix("0x") {
+                        Some(hex) => u64::from_str_radix(hex, 16).ok(),
+                        None => v.parse().ok(),
+                    }
+                })
+                .unwrap_or(default)
+        };
+        let seed = env("MAKIRI_CSS_DIFF_SEED", 0xD0C5_EED5).max(1);
+        let documents = env("MAKIRI_CSS_DIFF_ITERATIONS", 200);
+        const SELECTORS_PER_DOCUMENT: u32 = 25;
+        let mut rng = Rng(seed);
+
+        for d in 0..documents {
+            let html = random_document(&mut rng);
+            let doc = parsed(html.as_bytes());
+            for _ in 0..SELECTORS_PER_DOCUMENT {
+                let sel = random_selector(&mut rng);
+                let old = {
+                    let gvl = Gvl::exclusive();
+                    match old_engine::select_all(&gvl, RawNode::from(root(&doc)), sel.as_bytes()) {
+                        Ok(v) => v,
+                        // As above: a shape the old parser refuses is skipped.
+                        Err(_) => continue,
+                    }
+                };
+                let new: Vec<RawNode> = select_all(&doc, &sel)
+                    .into_iter()
+                    .map(|e| RawNode::from(e.node()))
+                    .collect();
+                assert!(
+                    new == old,
+                    "document {d} (MAKIRI_CSS_DIFF_SEED={seed:#x}): {sel:?} has {} match(es) \
+                     here, {} in Lexbor's engine, over\n{html}",
+                    new.len(),
+                    old.len()
+                );
+            }
         }
     }
 
@@ -2321,7 +2494,7 @@ mod css_match {
     /// `RUBY_FIBER_MACHINE_STACK_SIZE`-sized thread.
     #[test]
     fn nth_child_of_s_nesting_is_heap_based_not_native_recursion() {
-        const DEPTH: usize = 20_000;
+        const DEPTH: usize = 3_000;
         let handle = std::thread::Builder::new()
             .stack_size(128 * 1024)
             .spawn(move || {

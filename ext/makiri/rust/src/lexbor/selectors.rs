@@ -1,6 +1,7 @@
 //! The OLD CSS selector engine, over Lexbor's own `lxb_selectors` - kept only
 //! as the reference the differential tests hold `lexbor::css_match` to
-//! (`lexbor::tests::css_match`), so it is compiled into tests alone
+//! (`lexbor::tests::css_match`) and the `html_css_diff` fuzz harness, so it
+//! is compiled into tests and the `css-reference` feature alone
 //! (`lexbor/mod.rs`). `Node#css` / `#at_css` / `#matches?` run on
 //! `css_match`, with the compiled-selector cache in `selector_cache`.
 //!

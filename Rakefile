@@ -857,7 +857,9 @@ namespace :fuzz do
   # library and headers (the crate's build.rs links the archive and generates
   # the layout from the headers), which `rake compile` produces - hence the
   # dependency, which is about Lexbor rather than about the bundle.
-  FUZZ_TARGETS = %w[xml xpath xml_xpath css html html_xpath html_css].freeze
+  FUZZ_TARGETS = %w[xml xpath xml_xpath css html html_xpath html_css html_css_diff].freeze
+  # The targets whose input starts with a CSS selector take its dictionary.
+  FUZZ_CSS_DICT = %w[html_css html_css_diff].freeze
 
   # The local mode: TARGETS=css,html_xpath narrows the run to what you touched,
   # and the time is FUZZ_TIME seconds per target (default 60) or FUZZ_BUDGET
@@ -916,8 +918,9 @@ namespace :fuzz do
     env, sanitizer = libfuzzer_invocation
     Dir.chdir("ext/makiri/rust/fuzz") do
       targets.each do |target|
+        dict = FUZZ_CSS_DICT.include?(target) ? ["-dict=css.dict"] : []
         sh env, "cargo", "fuzz", "run", *sanitizer, target, "--",
-           "-max_total_time=#{time}", "-max_len=4096"
+           "-max_total_time=#{time}", "-max_len=4096", *dict
       end
     end
   end

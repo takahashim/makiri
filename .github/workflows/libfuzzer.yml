@@ -25,7 +25,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [xml, xpath, xml_xpath, css, html, html_xpath, html_css]
+        # html_css and html_css_diff run in css-match.yml, with the selector
+        # dictionary and a longer budget.
+        target: [xml, xpath, xml_xpath, css, html, html_xpath]
 
     steps:
       - name: Checkout (with vendored Lexbor submodule)
