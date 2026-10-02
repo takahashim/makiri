@@ -32,7 +32,9 @@ use crate::lexbor::abi::{
     lxb_html_parse_fragment_chunk_begin, lxb_html_parse_fragment_chunk_end,
     lxb_html_parse_fragment_chunk_process, TransientDoc,
 };
-use crate::lexbor::adapter::tree_guard::{fragment_document, DepthLimit, GuardStop, TokenHook};
+use crate::lexbor::adapter::tree_guard::{
+    fragment_document, DepthLimit, GuardStop, OptionContext, TokenHook,
+};
 
 /* The HTML parser's lifecycle, from the generated bindings. Declared here first
  * over an opaque parser, which was fine until the source-location port needed
@@ -420,6 +422,10 @@ unsafe fn run_fragment_parser(
     /* A fragment keeps one synthetic `<html>` root below its first element,
      * which the depth does not count (see `tree_guard`). */
     let mut hook = TokenHook::new(limit, 1, None);
+    hook.set_option_context(match *context {
+        FragmentContext::Element(el) => OptionContext::Element(el),
+        FragmentContext::Tag { at, .. } => OptionContext::Tag(Some(at.tag), at.ns),
+    });
     if !hook.install(parser.as_ptr()) {
         return Err(FragmentError::Parse); /* never unguarded */
     }

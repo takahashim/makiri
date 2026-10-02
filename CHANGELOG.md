@@ -11,6 +11,11 @@
   (`fragment(context:)`, `DocumentFragment.parse(context:)`) no longer keeps
   a reference into that document, which could be read after that document was
   freed.
+* The 10,000-option limit per `<select>` now also counts the options a
+  fragment parsed in a select context receives (`inner_html=` and
+  `outer_html=` on or inside a select, `fragment(context: "select")`).
+  Before, they went uncounted, and inserting them took time quadratic in
+  their number.
 * A String `context:` naming a node that is not an element (`"#text"`,
   `"!--"`, ...) raises `ArgumentError`.
 

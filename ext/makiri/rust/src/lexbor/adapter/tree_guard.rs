@@ -115,6 +115,9 @@ struct HookState {
     /// open, and once closed a select receives no more.
     select: *const c_void,
     options: usize,
+    /// What a fragment's top level is parsed inside, for [`nearest_select`]:
+    /// an option there lands in the context once the fragment is placed.
+    context: OptionContext,
     stopped: Option<GuardStop>,
     /// The document parse's position stamper; `None` for a fragment.
     stamper: Option<Stamper>,
@@ -140,11 +143,19 @@ impl<const PANIC_PROBE: bool> TokenHook<PANIC_PROBE> {
                 max_open: limit.max_open(synthetic),
                 select: core::ptr::null(),
                 options: 0,
+                context: OptionContext::None,
                 stopped: None,
                 stamper,
             },
             panic: PanicLatch::new(),
         }
+    }
+
+    /// Count the options a fragment's top level receives against the select
+    /// its context is or is in - see [`OptionContext`]. A document parse has
+    /// none.
+    pub fn set_option_context(&mut self, context: OptionContext) {
+        self.state.context = context;
     }
 
     /// Install on `parser`'s tokenizer, CHAINING the tree builder's own
@@ -233,10 +244,9 @@ impl HookState {
         if option.tag_id() != Some(TagId::OPTION) || option.ns_id() != Some(NsId::HTML) {
             return false; /* not inserted as an element that updates a select */
         }
-        let Some(select) = nearest_select(option) else {
+        let Some(key) = nearest_select(option, self.context) else {
             return false;
         };
-        let key = RawNode::from(select).as_ptr() as *const c_void;
         if key == self.select {
             self.options += 1;
         } else {
@@ -312,25 +322,89 @@ impl HookState {
     }
 }
 
-/// The `<select>` an inserted `<option>` updates, if any. Lexbor's static
-/// `lxb_html_option_element_nearest_ancestor_select`, restated; keep it that
-/// rule.
-fn nearest_select(option: HtmlNode<'_>) -> Option<HtmlNode<'_>> {
+/// What a fragment is parsed inside, as far as the options it receives go.
+///
+/// A fragment's top level sits under a synthetic root, so an option parsed
+/// there has no select above it - yet placing the fragment puts it in the
+/// context, where each inserted option re-runs that select's selectedness as
+/// any other does. The walk in [`nearest_select`] carries on into the context
+/// for that reason: `select.inner_html = "<option>" * n` must meet the same
+/// limit as the same markup in a document.
+#[derive(Clone, Copy)]
+pub enum OptionContext {
+    /// A document parse: the tree is the whole story.
+    None,
+    /// The context element itself (`inner_html=`, `outer_html=`), whose
+    /// ancestors count too. Live for the parse.
+    Element(RawNode),
+    /// A context named by tag and namespace (`fragment(context:)`), which has
+    /// no ancestors yet.
+    Tag(Option<TagId>, Option<NsId>),
+}
+
+/// One step of the nearest-select walk, over an element's tag and namespace.
+enum Step {
+    Stop,
+    Select,
+    Up,
+}
+
+fn select_step(tag: Option<TagId>, ns: Option<NsId>, optgroup: &mut bool) -> Step {
+    if ns != Some(NsId::HTML) {
+        return Step::Up;
+    }
+    match tag {
+        Some(TagId::DATALIST | TagId::HR | TagId::OPTION) => Step::Stop,
+        Some(TagId::OPTGROUP) if *optgroup => Step::Stop,
+        Some(TagId::OPTGROUP) => {
+            *optgroup = true;
+            Step::Up
+        }
+        Some(TagId::SELECT) => Step::Select,
+        _ => Step::Up,
+    }
+}
+
+/// The `<select>` an inserted `<option>` updates, if any, as a key for the
+/// count. Lexbor's static `lxb_html_option_element_nearest_ancestor_select`,
+/// restated - keep it that rule - and continued past a fragment's synthetic
+/// root into `context` (see [`OptionContext`]).
+fn nearest_select(option: HtmlNode<'_>, context: OptionContext) -> Option<*const c_void> {
+    let key = |n: HtmlNode<'_>| RawNode::from(n).as_ptr() as *const c_void;
     let mut optgroup = false;
     let mut node = option.parent();
     while let Some(n) = node {
-        if n.ns_id() == Some(NsId::HTML) {
-            match n.tag_id() {
-                Some(TagId::DATALIST | TagId::HR | TagId::OPTION) => return None,
-                Some(TagId::OPTGROUP) if optgroup => return None,
-                Some(TagId::OPTGROUP) => optgroup = true,
-                Some(TagId::SELECT) => return Some(n),
-                _ => {}
-            }
+        match select_step(n.tag_id(), n.ns_id(), &mut optgroup) {
+            Step::Stop => return None,
+            Step::Select => return Some(key(n)),
+            Step::Up => {}
         }
         node = n.parent();
     }
-    None
+    /* Off the top of the tree. In a fragment that was the synthetic root,
+     * whose children land in the context. */
+    match context {
+        OptionContext::None => None,
+        OptionContext::Element(el) => {
+            // SAFETY: the context element is live for the parse, and only read.
+            let mut node = Some(unsafe { el.as_node() });
+            while let Some(n) = node {
+                match select_step(n.tag_id(), n.ns_id(), &mut optgroup) {
+                    Step::Stop => return None,
+                    Step::Select => return Some(key(n)),
+                    Step::Up => {}
+                }
+                node = n.parent();
+            }
+            None
+        }
+        OptionContext::Tag(tag, ns) => match select_step(tag, ns, &mut optgroup) {
+            /* No node stands for it; any constant key will do, since a parse
+             * has one context. */
+            Step::Select => Some(core::ptr::dangling::<c_void>()),
+            Step::Stop | Step::Up => None,
+        },
+    }
 }
 
 /// The chained token-done callback: [`HookState::on_token`], under the latch.
