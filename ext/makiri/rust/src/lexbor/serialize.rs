@@ -14,20 +14,10 @@
 
 use crate::cbuf::{Buf, BufError};
 use crate::lexbor::abi::consts::STATUS_OK as LXB_STATUS_OK;
-use crate::lexbor::abi::{
-    lxb_html_serialize_deep_cb, lxb_html_serialize_opt_LXB_HTML_SERIALIZE_OPT_UNDEF,
-    lxb_html_serialize_pretty_deep_cb, lxb_html_serialize_pretty_tree_cb,
-    lxb_html_serialize_tree_cb,
-};
 use crate::lexbor::adapter::arena_bytes::{document_size, DocumentSize};
 use crate::lexbor::adapter::html::{HtmlDoc, HtmlNode, RawNode};
 use crate::lexbor::chunks::{chunk_cb, ChunkSink, Chunks};
 use crate::node_type::NodeType;
-
-/// No pretty-printing option. The functions take the `int` typedef, the enum
-/// is its own type, so the one conversion is spelled here.
-const LXB_HTML_SERIALIZE_OPT_UNDEF: crate::lexbor::abi::lxb_html_serialize_opt_t =
-    lxb_html_serialize_opt_LXB_HTML_SERIALIZE_OPT_UNDEF as _;
 
 /// Every document's ceiling is at least this, so a serialization can start
 /// under it before the document has been measured.
@@ -127,39 +117,21 @@ fn sink_for(node: HtmlNode<'_>) -> Sink<'_> {
 /// Serialize `node` into owned UTF-8 bytes. `deep` selects the children-only
 /// (inner) serializer over the tree (outer) one; `pretty` selects indented
 /// output. `None` is a Lexbor status failure (the buffer is freed).
-pub fn serialize(node: RawNode, deep: bool, pretty: bool, template_aware: bool) -> Option<Buf> {
+pub fn serialize(node: RawNode, deep: bool, pretty: bool) -> Option<Buf> {
     // SAFETY: `node` came from a live wrapper, so it and its document are live.
     let handle = unsafe { node.as_node() };
     let mut c = Chunks::new(sink_for(handle));
-    let node = node.as_lxb_mut();
 
-    // SAFETY: the buffer is freed by `Buf`'s Drop however this exits, including
-    // the panic the latch re-raises below.
+    // SAFETY: a live node (above); the sink accepts every chunk with its own
+    // context, and nothing changes the tree while Ruby is not running.
     unsafe {
         let ctx = c.ctx();
-        let st = match (deep, pretty) {
-            (true, true) => lxb_html_serialize_pretty_deep_cb(
-                node,
-                LXB_HTML_SERIALIZE_OPT_UNDEF,
-                0,
-                Some(chunk_cb::<Sink>),
-                ctx,
-            ),
-            /* The plain forms walk here (`HtmlNode::serialize_to`) once a
-             * template of the document may have children of its own, so it
-             * writes its contents and not them; until then Lexbor's own walk
-             * writes the same, ~5% faster. The pretty ones are Lexbor's own
-             * format, left as Lexbor writes it. */
-            (_, false) if template_aware => handle.serialize_to(deep, Some(chunk_cb::<Sink>), ctx),
-            (true, false) => lxb_html_serialize_deep_cb(node, Some(chunk_cb::<Sink>), ctx),
-            (false, false) => lxb_html_serialize_tree_cb(node, Some(chunk_cb::<Sink>), ctx),
-            (false, true) => lxb_html_serialize_pretty_tree_cb(
-                node,
-                LXB_HTML_SERIALIZE_OPT_UNDEF,
-                0,
-                Some(chunk_cb::<Sink>),
-                ctx,
-            ),
+        /* The walks are ours (`HtmlNode::serialize_to`), Lexbor writing each
+         * node: see `adapter::html::serialize` for what they decide. */
+        let st = if pretty {
+            handle.serialize_pretty_to(deep, Some(chunk_cb::<Sink>), ctx)
+        } else {
+            handle.serialize_to(deep, Some(chunk_cb::<Sink>), ctx)
         };
 
         /* Lexbor has returned, so this is the first frame where a panic the

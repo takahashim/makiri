@@ -19,6 +19,13 @@
 * A String `context:` naming a node that is not an element (`"#text"`,
   `"!--"`, ...) raises `ArgumentError`.
 
+### Security
+
+* Hardening against Lexbor edge cases in fragment parsing, node copying,
+  element creation and serialization. Serialization is now always Makiri's
+  own walk, which uses no native recursion, so `to_html` / `inner_html` are
+  about 3% slower.
+
 ## [0.12.0] - 2026-10-01
 
 Most changes accept what the DOM allows where 0.11.0 raised. The XML

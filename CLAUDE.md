@@ -957,16 +957,16 @@ markup is Lexbor's `lxb_html_serialize_cb`, an end tag is what Lexbor's
 (unexported) closer writes, and a `<template>` writes its CONTENTS and not its
 own children, as the HTML Standard's fragment serializing does - Lexbor walked
 into both. The void test is a Rust read of the tag id (`shape`), not the
-`_noi` FFI twin, which cost ~10%; the walk still costs ~5% over Lexbor's own
-loop on the bench document, so it runs only once a template of the document
-MAY have a child of its own (`HtmlParsed::note_template_children`, a sticky
-flag the parser leaves false; set where an insert's parent is a template,
-by `content=` / `outer_html=` there, and by a copy from a document that has
-it). Until then Lexbor's walk, which writes the same. A scan of the subtree
-instead of the flag cost ~15% - cache-bound, like every walk over Lexbor's
-96-byte nodes. A new way to give a template an own child must set the flag
-(`spec/template_contents_contract_spec.rb` has one example per way).
-`pretty: true` is still Lexbor's walk (its own format, not the Standard's).
+`_noi` FFI twin, which cost ~10%. `pretty: true` is the same kind of walk
+(`serialize_pretty_to`) over Lexbor's per-node `lxb_html_serialize_pretty_cb`,
+in Lexbor's own layout (not the Standard's). BOTH forms always walk here, never
+Lexbor's own loops (hardening; ~3% on `to_html` against Lexbor's plain loop,
+which the template flag that once chose between them saved): iterative, with a
+template's contents walked as children, so no tree depth grows the native
+stack; and which text is written unescaped follows the Standard's rule, checked
+in the walk (`escaped_here`). `lexbor::tests::serialize_walk` holds both walks
+byte-identical to Lexbor's on parsed documents - Lexbor's walks stay generated
+for that test alone.
 The callback
 collects Lexbor's many small chunks into one growing C buffer (`cbuf::Buf`,
 **pre-reserved** via `Buf::reserve` so the per-chunk appends don't realloc on
@@ -991,9 +991,8 @@ took `to_html` from ~1.1x slower than `nokolexbor` to ~1.5x faster; profile
 never "C vs FFI" but what each call costs. (Serializing
 straight into a growing Ruby String avoids the final copy but measured *slower* -
 the intermediate growth is GC-tracked; the untracked C buffer + one copy wins.)
-`pretty: true` uses `serialize_pretty_*` (Lexbor
-quotes text nodes in that mode). A `DocumentFragment` serializes via the deep
-serializer (the tree serializer rejects a fragment node). `#inner_html` and
+In `pretty: true` Lexbor quotes text nodes. A `DocumentFragment` serializes
+as its children (the deep form). `#inner_html` and
 `#inner_html=` special-case an HTML `<template>` to its contents fragment, as
 the WHATWG DOM special-cases `innerHTML` alone - so `inner_html`, `inner_html=`,
 `#to_html` and `content_fragment` agree, while `children`/`content=` keep the

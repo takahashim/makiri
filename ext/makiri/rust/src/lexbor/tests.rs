@@ -2493,3 +2493,108 @@ mod selector_cache {
         assert_eq!(select_all_cached(&doc, "p.x").len(), 2);
     }
 }
+
+/// The serializer's walks (`adapter::html::serialize`) against the Lexbor
+/// walks they replaced: byte for byte the same on every node of documents the
+/// parser builds.
+mod serialize_walk {
+    use crate::lexbor::abi as lxb;
+    use crate::lexbor::adapter::html::{HtmlNode, RawNode};
+    use crate::lexbor::adapter::post_parse::{parse_html, HtmlParsed};
+    use crate::lexbor::adapter::tree_guard::DepthLimit;
+    use crate::lexbor::chunks::{chunk_cb, ChunkSink, Chunks};
+    use crate::node_type::NodeType;
+
+    const OK: lxb::lxb_status_t = lxb::consts::STATUS_OK as lxb::lxb_status_t;
+    const OPT: lxb::lxb_html_serialize_opt_t =
+        lxb::lxb_html_serialize_opt_LXB_HTML_SERIALIZE_OPT_UNDEF as _;
+
+    struct Bytes(Vec<u8>);
+
+    impl ChunkSink for Bytes {
+        fn take(&mut self, bytes: &[u8]) -> bool {
+            self.0.extend_from_slice(bytes);
+            true
+        }
+    }
+
+    /// What `write` sends through a collecting sink.
+    fn collect(
+        write: impl FnOnce(lxb::lxb_html_serialize_cb_f, *mut core::ffi::c_void) -> lxb::lxb_status_t,
+    ) -> Vec<u8> {
+        let mut c = Chunks::new(Bytes(Vec::new()));
+        let st = write(Some(chunk_cb::<Bytes>), c.ctx());
+        assert_eq!(st, OK);
+        c.sink.0
+    }
+
+    /// Ours and Lexbor's, as (plain, pretty), for `n` and - with `deep` - its
+    /// children only.
+    fn both(n: HtmlNode<'_>, deep: bool) -> [(Vec<u8>, Vec<u8>); 2] {
+        let raw = RawNode::from(n).as_lxb_mut();
+        // SAFETY: a live node of a live document, which nothing changes; the
+        // sink takes every chunk with its own context.
+        unsafe {
+            let ours = (
+                collect(|cb, ctx| n.serialize_to(deep, cb, ctx)),
+                collect(|cb, ctx| n.serialize_pretty_to(deep, cb, ctx)),
+            );
+            let lexbor = if deep {
+                (
+                    collect(|cb, ctx| lxb::lxb_html_serialize_deep_cb(raw, cb, ctx)),
+                    collect(|cb, ctx| lxb::lxb_html_serialize_pretty_deep_cb(raw, OPT, 0, cb, ctx)),
+                )
+            } else {
+                (
+                    collect(|cb, ctx| lxb::lxb_html_serialize_tree_cb(raw, cb, ctx)),
+                    collect(|cb, ctx| lxb::lxb_html_serialize_pretty_tree_cb(raw, OPT, 0, cb, ctx)),
+                )
+            };
+            [ours, lexbor]
+        }
+    }
+
+    fn doc(html: &[u8]) -> Box<HtmlParsed> {
+        parse_html(html, true, DepthLimit::UNLIMITED).expect("a document parses")
+    }
+
+    #[test]
+    fn ours_write_what_lexbor_writes() {
+        let corpus: &[&[u8]] = &[
+            b"<!doctype html><html><head><title>t &amp; u</title><style>a<b{}</style>\
+              <script>if (a < b && c) {}</script></head><body><p class=x id=\"q\">a &lt; b\xc2\xa0c</p>\
+              <!-- c --><br><img src=x alt='a\"b'><ul><li>1<li>2</ul><table><tr><td>x</table>\
+              <textarea>\n t</textarea><pre>\n\nx</pre><xmp><b></xmp><noscript><i>n</i></noscript>\
+              <iframe><b></iframe><noembed>&</noembed><plaintext>x<y",
+            b"<template><p>a</p><template><i>b</i></template></template><div><template></template></div>",
+            b"<svg viewBox='0 0 1 1'><foreignObject><p>x</p></foreignObject><style>plain</style>\
+              <script>also plain</script><desc>d</desc><path d='M0'/></svg><math><mi>x</mi>\
+              <annotation-xml encoding='text/html'><p>y</p></annotation-xml></math>",
+            b"<p>line\nbreak\r\nand\ttab</p><?php echo 1 ?><div><span><b>deep</b></span></div>",
+            b"",
+        ];
+        for html in corpus {
+            let parsed = doc(html);
+            // SAFETY: `parsed` is live for the loop.
+            let root = unsafe { parsed.raw_doc().as_doc() }.as_node();
+            let mut node = Some(root);
+            while let Some(n) = node {
+                let fragment = n.node_type() == NodeType::DocumentFragment;
+                if !fragment {
+                    let [ours, lexbor] = both(n, false);
+                    assert_eq!(ours, lexbor, "tree of a {:?} in {html:?}", n.node_type());
+                }
+                if n.first_child().is_some() || fragment {
+                    let [ours, lexbor] = both(n, true);
+                    assert_eq!(
+                        ours,
+                        lexbor,
+                        "children of a {:?} in {html:?}",
+                        n.node_type()
+                    );
+                }
+                node = n.preorder_next_with_contents(root);
+            }
+        }
+    }
+}
