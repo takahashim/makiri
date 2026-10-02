@@ -945,9 +945,10 @@ impl<'doc> HtmlNode<'doc> {
         if self.node_type() != NodeType::DocumentFragment {
             return None;
         }
-        // SAFETY: every Lexbor node of type DOCUMENT_FRAGMENT is allocated as
-        // a `lxb_dom_document_fragment_t` (`lxb_dom_document_fragment_
-        // interface_create`); `host` is null or an element of the document.
+        // SAFETY: every DOCUMENT_FRAGMENT node here is allocated as a
+        // `lxb_dom_document_fragment_t` (`lxb_dom_document_fragment_
+        // interface_create`, which `HtmlDoc::import_node` uses for a copy
+        // too); `host` is null or an element of the document.
         let host = Self::link(unsafe {
             (*(self.as_raw() as *mut lxb::lxb_dom_document_fragment_t)).host as *mut LxbNode
         })?;
@@ -1228,10 +1229,11 @@ impl<'doc> HtmlNode<'doc> {
         if self.node_type() != NodeType::DocumentFragment {
             return None;
         }
-        // SAFETY: Lexbor allocates every DOCUMENT_FRAGMENT node as an
+        // SAFETY: every DOCUMENT_FRAGMENT node here is allocated as an
         // `lxb_dom_document_fragment_t` (`document_fragment_interface_create`,
-        // the only constructor), which leads with its node; `host` is set only
-        // by the template constructor, to a template the document owns.
+        // which `HtmlDoc::import_node` uses for a copy too), which leads with
+        // its node; `host` is set only by the template constructor, to a
+        // template the document owns.
         Self::link(unsafe {
             (*(self.as_raw() as *mut lxb::lxb_dom_document_fragment_t)).host as *mut LxbNode
         })
