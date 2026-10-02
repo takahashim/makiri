@@ -41,15 +41,17 @@ pub fn alloc_inject_call_count() -> u64 {
 /// violating that mis-numbers the sweep, which is not a soundness problem.
 pub fn alloc_inject_should_fail() -> bool {
     /* One read-modify-write: bump the attempt count and drop the countdown. The
-     * consultation that takes the countdown from 1 to 0 is the one that fails. */
-    let previous = STATE.fetch_update(Ordering::AcqRel, Ordering::Acquire, |state| {
+     * consultation that takes the countdown from 1 to 0 is the one that fails.
+     * Written as the compare-exchange loop rather than `fetch_update`, which
+     * newer toolchains deprecate for `try_update` - a name older ones lack. */
+    let mut state = STATE.load(Ordering::Acquire);
+    loop {
         let attempts = (state >> 32).wrapping_add(1);
         let countdown = state & COUNTDOWN_MASK;
-        Some((attempts << 32) | countdown.saturating_sub(1))
-    });
-    match previous {
-        Ok(state) => (state & COUNTDOWN_MASK) == 1,
-        // Unreachable: the closure always returns `Some`.
-        Err(_) => false,
+        let next = (attempts << 32) | countdown.saturating_sub(1);
+        match STATE.compare_exchange_weak(state, next, Ordering::AcqRel, Ordering::Acquire) {
+            Ok(_) => return countdown == 1,
+            Err(seen) => state = seen,
+        }
     }
 }
