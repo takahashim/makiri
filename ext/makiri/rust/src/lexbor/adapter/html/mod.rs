@@ -402,8 +402,8 @@ impl RawNode {
 
     /// The typed node pointer, for the facades that hand it to a Lexbor call.
     /// Typed rather than [`as_ptr`](RawNode::as_ptr)'s `c_void`, so no caller
-    /// casts it back. Only the tests' reference CSS engine has one now.
-    #[cfg(test)]
+    /// casts it back. Only the reference CSS engine has one now.
+    #[cfg(any(test, feature = "css-reference"))]
     #[inline]
     pub(in crate::lexbor) fn as_lxb_mut(self) -> *mut LxbNode {
         self.0.as_ptr()

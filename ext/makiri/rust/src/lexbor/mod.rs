@@ -44,9 +44,10 @@ pub mod memory;
 /// XML lowering), and the matcher's kept `Scratch`.
 pub mod selector_cache;
 /// The OLD `lxb_selectors`-callback engine `css_match` replaced: compiled
-/// into tests only, as the reference the differential tests
+/// into tests only - and into the `html_css_diff` fuzz harness, through the
+/// `css-reference` feature - as the reference the differential checks
 /// (`lexbor::tests::css_match`) hold `css_match` to.
-#[cfg(test)]
+#[cfg(any(test, feature = "css-reference"))]
 pub mod selectors;
 /// Lexbor's HTML serialization callbacks and buffer traversal.
 pub mod serialize;

@@ -18,7 +18,9 @@ libfuzzer-sys = "0.4"
 [dependencies.makiri_rs]
 path = ".."
 default-features = false
-features = ["lexbor"]
+# `css-reference` adds the OLD CSS engine, the reference `html_css_diff`
+# compares against; it ships in no build of the extension.
+features = ["lexbor", "css-reference"]
 
 [[bin]]
 name = "xml"
@@ -65,6 +67,13 @@ bench = false
 [[bin]]
 name = "html_css"
 path = "fuzz_targets/html_css.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "html_css_diff"
+path = "fuzz_targets/html_css_diff.rs"
 test = false
 doc = false
 bench = false

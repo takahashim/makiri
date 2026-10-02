@@ -53,9 +53,11 @@
 //!   count, `:enabled` is only for the elements `:disabled` is defined for
 //!   (Lexbor: any element), and an
 //!   element with a custom tag is neither `:disabled` nor `:checked` by its
-//!   attribute alone. Checked against the Standard
+//!   attribute alone. `:read-write` / `:read-only` ask the same
+//!   `is_disabled`, so an `<input>` in a `<fieldset disabled>` is read-only
+//!   here and read-write to Lexbor. Checked against the Standard
 //!   (`form_state_pseudo_classes_follow_the_html_standard`); the Lexbor
-//!   differential fuzzer leaves them out.
+//!   differential fuzzer leaves all five out.
 //! - `lxb_selectors_anb_calc` tests `:nth-*`'s `An+B` with a `double`
 //!   division, which past 2^53 answers "divisible" for everything; this port
 //!   computes exactly, in `i128` (`anb_matches`'s doc).
@@ -86,6 +88,16 @@
 //!   The pseudo-classes Lexbor answers from an attribute's presence
 //!   (`:any-link`, `:required`, `:placeholder-shown`, `:hover`, ...) keep
 //!   Lexbor's local-name rule, `xlink:href` included.
+//! - A compound that STARTS with `:is()` / `:where()` / `:not()` / `:has()`
+//!   is tried at every candidate its combinator allows - every ancestor for
+//!   a descendant combinator, every preceding sibling for `~`, and in a
+//!   `:has()` argument every child, descendant or following sibling - where
+//!   Lexbor tries only the first: `:is(div) span` misses a `<span>` whose
+//!   parent is a `<p>` in a `<div>`, and `:has(:has(a))` misses `<html>`.
+//!   (`*:is(div) span` is answered correctly there.) Found by the
+//!   `html_css_diff` fuzz target; pinned by
+//!   `lexbor::tests::css_match::a_compound_led_by_a_list_pseudo_tries_every_candidate`,
+//!   and the differential checks leave the shape out.
 //! - `#id` / `.class` read the DOM's ID and class attributes - the
 //!   no-namespace `id` / `class` - through Lexbor's shortcut, as Lexbor
 //!   does; a lookup by qualified name would also take an unprefixed `id` set

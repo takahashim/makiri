@@ -44,8 +44,9 @@ expect_used = "warn"
 panic = "warn"
 
 [features]
-# Three features, and each names a real optional dependency rather than a step
-# of the C port: a Ruby runtime, a vendored C library, and a test hook.
+# Four features. Three name a real optional dependency rather than a step of
+# the C port - a Ruby runtime, a vendored C library, and a test hook - and the
+# fourth, `css-reference`, a test reference (below).
 #
 # The port's thirty-seven per-file flags are gone. They existed so one C file at
 # a time could be replaced behind an identical ABI; there is no C left to
@@ -67,6 +68,11 @@ lexbor = []
 # Allocation-failure injection, the Rust half of `rake oom`. Off,
 # `falloc::should_fail` is a const false and the branch disappears.
 alloc-inject = []
+
+# The OLD `lxb_selectors` engine (`lexbor::selectors`) outside `cfg(test)`, as
+# the reference the `html_css_diff` fuzz harness holds `css_match` to. Never
+# part of a build that ships.
+css-reference = ["lexbor"]
 
 [dependencies]
 # Only the `ruby` feature needs these; the engine builds without them, which is
