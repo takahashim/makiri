@@ -62,23 +62,25 @@ fuzz_target!(|data: &[u8]| {
     // SAFETY: `p` owns the document and outlives every handle made here.
     let root = unsafe { p.raw_doc().as_doc() }.as_node();
     for _ in 0..2 {
-        let checked = selector_cache::with_compiled(&gvl, text.as_bytes(), |groups, scratch| {
+        let answered = selector_cache::with_compiled(&gvl, text.as_bytes(), |groups, scratch| {
             check(root, groups, scratch)
         });
-        if checked.is_err() {
+        // A refusal is the budget doing its job, and each refused query spends
+        // the whole of it: asking again (or the same query a second way) only
+        // multiplies the run, which under ASan went past libFuzzer's timeout.
+        if !matches!(answered, Ok(true)) {
             return;
         }
     }
 });
 
-/// The walking query and the one-candidate query agree (module doc).
-fn check(root: HtmlNode<'_>, groups: Lists<'_>, scratch: &mut Scratch) {
-    let all = select_all(scratch, root, groups);
-    let first = select_first(scratch, root, groups);
-    let Ok(all) = all else {
-        return;
+/// The walking query and the one-candidate query agree (module doc). False
+/// when a query refused, so the caller stops.
+fn check(root: HtmlNode<'_>, groups: Lists<'_>, scratch: &mut Scratch) -> bool {
+    let Ok(all) = select_all(scratch, root, groups) else {
+        return false;
     };
-    if let Ok(first) = first {
+    if let Ok(first) = select_first(scratch, root, groups) {
         assert!(
             first == all.first().copied(),
             "select_first is not the first of select_all"
@@ -90,7 +92,7 @@ fn check(root: HtmlNode<'_>, groups: Lists<'_>, scratch: &mut Scratch) {
         .take(ONE_BY_ONE)
     {
         let Ok(matched) = matches_any(scratch, groups, el) else {
-            return;
+            return false;
         };
         assert_eq!(
             matched,
@@ -98,4 +100,5 @@ fn check(root: HtmlNode<'_>, groups: Lists<'_>, scratch: &mut Scratch) {
             "matches? and css disagree on an element"
         );
     }
+    true
 }
