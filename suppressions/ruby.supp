@@ -161,6 +161,20 @@
   ...
 }
 
+# The global symbol table (`global_symbols.ids`) grows in chunks as symbols are
+# interned, and lives for the life of the VM: RUBY_FREE_AT_EXIT reports its
+# chunk arrays as "definitely lost" whenever the growth happened under one of
+# our cfuncs - `parse_stylesheet` interns its hash keys with `rb_intern` on the
+# first call, and whether that call crosses a chunk boundary depends on how many
+# symbols the process made before it. Not ours to free.
+{
+  ruby-global-symbol-table
+  Memcheck:Leak
+  ...
+  fun:set_id_entry*
+  ...
+}
+
 # ---- Makiri's process-lifetime CSS compiled-selector cache ----
 # `lexbor::selector_cache` keeps compiled selector lists in a process-global
 # `HashMap<Box<[u8]>, _>` (bounded by CACHE_CAP) that lives until exit by
