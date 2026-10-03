@@ -281,9 +281,9 @@ fn merge_sort<T: Copy>(items: &mut [T], cmp: impl FnMut(&T, &T) -> Ordering) {
     merge_runs(items, &mut scratch, cmp);
 }
 
-/// The merge half of `merge_sort`, apart so that it can be proved without
-/// std's fallback sort (`xpath::verify`). `scratch` is `items`' length.
-pub(super) fn merge_runs<T: Copy>(
+/// The merge half of `merge_sort`, apart so that its tests reach it without
+/// std's fallback sort. `scratch` is `items`' length.
+fn merge_runs<T: Copy>(
     items: &mut [T],
     scratch: &mut [T],
     mut cmp: impl FnMut(&T, &T) -> Ordering,
@@ -354,8 +354,77 @@ pub fn nodeset_unique_sorted<'e, 'd, D: Dom<'d>>(
 
 #[cfg(test)]
 mod tests {
-    use super::merge_sort;
+    use super::{merge_runs, merge_sort};
     use core::cmp::Ordering;
+
+    /// Every sequence of `n` keys drawn from `0..keys`, each paired with its
+    /// position, passed to `f` in turn.
+    fn each_sequence(n: usize, keys: u32, mut f: impl FnMut(&[(u32, usize)])) {
+        let mut seq: Vec<(u32, usize)> = (0..n).map(|i| (0, i)).collect();
+        loop {
+            f(&seq);
+            /* The next sequence, counting in base `keys`. */
+            let mut i = 0;
+            loop {
+                if i == n {
+                    return;
+                }
+                seq[i].0 += 1;
+                if seq[i].0 < keys {
+                    break;
+                }
+                seq[i].0 = 0;
+                i += 1;
+            }
+        }
+    }
+
+    /// Sorted by key, equal keys in input order, and a permutation of `input`:
+    /// a stable sort. The position each element carries makes the three one
+    /// comparison against an ascending order of (key, position).
+    fn assert_stably_sorted(got: &[(u32, usize)], input: &[(u32, usize)]) {
+        let mut seen = vec![false; input.len()];
+        for (i, &(key, from)) in got.iter().enumerate() {
+            assert!(
+                from < input.len() && !seen[from] && input[from].0 == key,
+                "not a permutation of {input:?}: {got:?}"
+            );
+            seen[from] = true;
+            assert!(
+                i == 0 || got[i - 1] < got[i],
+                "not a stable sort of {input:?}: {got:?}"
+            );
+        }
+    }
+
+    /// The stable-sort property over EVERY input in its range, the property a
+    /// Kani harness proved on 1-3 keys from 0..3 (`xpath::verify` says why it
+    /// moved here). Up to six elements every key is from `0..n`, which is
+    /// every ordering of them, ties included; seven and eight take keys from
+    /// `0..3`, so several merge passes over runs full of ties are reached too.
+    /// `merge_runs` is the merge path alone, `merge_sort` with its scratch.
+    #[test]
+    fn merge_sort_is_a_stable_sort_on_every_small_input() {
+        let ranges = (0..=6)
+            .map(|n| (n, (n as u32).max(1)))
+            .chain([(7, 3), (8, 3)]);
+        let mut inputs = 0usize;
+        for (n, keys) in ranges {
+            each_sequence(n, keys, |input| {
+                let mut items: Vec<_> = input.iter().copied().collect();
+                let mut scratch = items.clone();
+                merge_runs(&mut items, &mut scratch, |a, b| a.0.cmp(&b.0));
+                assert_stably_sorted(&items, input);
+
+                let mut items: Vec<_> = input.iter().copied().collect();
+                merge_sort(&mut items, |a, b| a.0.cmp(&b.0));
+                assert_stably_sorted(&items, input);
+                inputs += 1;
+            });
+        }
+        /* 1 + 1 + 4 + 27 + 256 + 3125 + 46656 + 3^7 + 3^8 */
+        assert_eq!(inputs, 58_818);
+    }
 
     /// Pairs of (key, original position), in a deterministic scramble.
     fn scrambled(n: usize, keys: u32) -> Vec<(u32, usize)> {
