@@ -4,11 +4,6 @@
 
 ### Added
 
-* `Node#child_count`, `#element_child_count`, `#child_at(i)`,
-  `#element_child_at(i)` and `#last_child` (HTML and XML): what `children` /
-  `element_children` answer, without building a NodeSet. An index no child
-  has (negative or past the end) is nil; a non-Integer is a `TypeError`.
-
 * `Node#interned_local_name`, `#interned_namespace_uri` and
   `#interned_tag_name` (HTML and XML): the same answers as `local_name`,
   `namespace_uri` and `tag_name`, as interned, frozen Strings - the same

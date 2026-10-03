@@ -22,7 +22,6 @@ use super::strings::{str_field, utf8};
 use super::{wrap, XmlSelf};
 use crate::bridge::node_set::node_set_with_fill;
 use crate::bridge::xml::interned_str;
-use crate::glue::node::child_index;
 use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId};
 
 /// Wrap an optional reached node under the receiver's Document (None -> nil).
@@ -280,51 +279,6 @@ fn set_of(this: XmlSelf, nodes: impl Iterator<Item = NodeId>) -> Result<Value, E
 
 fn children_of(d: &XmlDoc, id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
     core::iter::successors(d.first_child(id), move |&n| d.next(n))
-}
-
-/// `#last_child`: the last child node of any type, or nil.
-pub fn last_child(this: XmlSelf) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| wrap_rel(this, this.doc_ref().last_child(this.id)))
-}
-
-/// `#child_count`: `children.size`, without building the set.
-pub fn child_count(this: XmlSelf) -> Result<usize, Error> {
-    crate::bridge::ruby::entry(|| Ok(children_of(this.doc_ref(), this.id).count()))
-}
-
-/// `#element_child_count` (DOM `childElementCount`): `element_children.size`,
-/// without building the set.
-pub fn element_child_count(this: XmlSelf) -> Result<usize, Error> {
-    crate::bridge::ruby::entry(|| {
-        let d = this.doc_ref();
-        Ok(children_of(d, this.id)
-            .filter(|&n| is_element(d, n))
-            .count())
-    })
-}
-
-/// `#child_at(i)`: `children[i]` without building the set, or nil for an
-/// index no child has (a negative one included). Walks from the first child.
-pub fn child_at(ruby: &Ruby, this: XmlSelf, i: Value) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| {
-        let Some(i) = child_index(ruby, i)? else {
-            return Ok(None);
-        };
-        wrap_rel(this, children_of(this.doc_ref(), this.id).nth(i))
-    })
-}
-
-/// `#element_child_at(i)`: `element_children[i]` without building the set,
-/// or nil for an index no child element has.
-pub fn element_child_at(ruby: &Ruby, this: XmlSelf, i: Value) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| {
-        let Some(i) = child_index(ruby, i)? else {
-            return Ok(None);
-        };
-        let d = this.doc_ref();
-        let found = children_of(d, this.id).filter(|&n| is_element(d, n)).nth(i);
-        wrap_rel(this, found)
-    })
 }
 
 /// `#children`: every child node.

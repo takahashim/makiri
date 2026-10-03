@@ -22,7 +22,6 @@ use crate::bridge::html::{dom_interned_str, dom_str, text_index_string};
 use crate::bridge::node_set::node_set_with_fill;
 use crate::bridge::ruby::is_kind_of;
 use crate::bridge::string::ruby_verified_text;
-use crate::glue::node::child_index;
 use crate::init::{CLASS_NODE, CLASS_XML_DOCUMENT};
 use crate::lexbor::adapter::html::{HtmlNode, NodeType, RawNode};
 
@@ -319,60 +318,6 @@ pub fn previous_element(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Va
 /// `#child`: the first child node of any type, or nil.
 pub fn child(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| wrap_node(this.node().first_child(), this.document))
-}
-
-/// `#last_child`: the last child node of any type, or nil.
-pub fn last_child(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| wrap_node(this.node().last_child(), this.document))
-}
-
-/// `#child_count`: `children.size`, without building the set - so a
-/// `childNodes.length` read costs a walk of the links and no allocation.
-pub fn child_count(_ruby: &Ruby, this: super::HtmlSelf) -> Result<usize, Error> {
-    crate::bridge::ruby::entry(|| Ok(this.node().children().count()))
-}
-
-/// `#element_child_count` (DOM `childElementCount`): `element_children.size`,
-/// without building the set.
-pub fn element_child_count(_ruby: &Ruby, this: super::HtmlSelf) -> Result<usize, Error> {
-    crate::bridge::ruby::entry(|| {
-        Ok(this
-            .node()
-            .children()
-            .filter(|n| n.element().is_some())
-            .count())
-    })
-}
-
-/// `#child_at(i)`: `children[i]` without building the set, or nil for an
-/// index no child has (a negative one included). Walks from the first child.
-pub fn child_at(ruby: &Ruby, this: super::HtmlSelf, i: Value) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| {
-        let Some(i) = child_index(ruby, i)? else {
-            return Ok(None);
-        };
-        wrap_node(this.node().children().nth(i), this.document)
-    })
-}
-
-/// `#element_child_at(i)`: `element_children[i]` without building the set,
-/// or nil for an index no child element has.
-pub fn element_child_at(
-    ruby: &Ruby,
-    this: super::HtmlSelf,
-    i: Value,
-) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| {
-        let Some(i) = child_index(ruby, i)? else {
-            return Ok(None);
-        };
-        let found = this
-            .node()
-            .children()
-            .filter(|n| n.element().is_some())
-            .nth(i);
-        wrap_node(found, this.document)
-    })
 }
 
 pub fn first_element_child(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
