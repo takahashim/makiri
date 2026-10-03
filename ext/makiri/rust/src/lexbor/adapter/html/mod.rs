@@ -75,6 +75,20 @@ const fn nonzero(v: usize) -> NonZeroUsize {
     }
 }
 
+/// The built-in namespace whose URI is exactly `uri`, as Lexbor spells it.
+/// Byte for byte: Lexbor's own static lookup folds ASCII case.
+fn static_ns(uri: &[u8]) -> Option<NsId> {
+    /* From HTML: `UNDEF` and `ANY` have no URI. */
+    (lxb::lxb_ns_id_enum_t_LXB_NS_HTML as usize..lxb::lxb_ns_id_enum_t_LXB_NS__LAST_ENTRY as usize)
+        .find_map(|id| {
+            let mut len = 0;
+            // SAFETY: a static id, which `lxb_ns_by_id` answers from Lexbor's
+            // static table without reading the (here null) document table.
+            let link = unsafe { seen(lxb::lxb_ns_by_id(core::ptr::null_mut(), id, &mut len), len) };
+            (link == uri).then(|| NsId::from_raw(id)).flatten()
+        })
+}
+
 /// An interned namespace id of a document's namespace table - never
 /// `LXB_NS__UNDEF`, which reads as `None`.
 ///
@@ -589,19 +603,31 @@ impl<'doc> HtmlDoc<'doc> {
     /// interning it. `None` for an empty URI and for one never interned - no
     /// node or attribute can carry a namespace the table does not hold.
     ///
-    /// Lexbor folds ASCII case in namespace URIs (it stores and looks them up
-    /// lower-cased), so `URN:X` finds what `urn:x` interned.
+    /// Exact, as the DOM compares namespaces: `fooNamespace` is not
+    /// `foonamespace`, and `HTTP://WWW.W3.ORG/1999/XHTML` is not the HTML
+    /// namespace. Lexbor's own `lxb_ns_data_by_link` folds ASCII case in both,
+    /// so neither it nor `lxb_ns_append` is called with a URI from outside;
+    /// see [`intern_ns`](Self::intern_ns).
     pub fn lookup_ns(self, uri: &[u8]) -> Option<NsId> {
         if uri.is_empty() {
             return None;
         }
-        // SAFETY: a live document; the table and the URI are only read.
+        if let Some(id) = static_ns(uri) {
+            return Some(id);
+        }
+        // SAFETY: a live document; the table and the URI are only read, and
+        // every entry of the namespace table is an `lxb_ns_data_t`.
         let id = unsafe {
             let table = (*self.as_raw()).ns;
             if table.is_null() {
                 return None;
             }
-            let d = lxb::lxb_ns_data_by_link(table, uri.as_ptr(), uri.len());
+            let d = lxb::lexbor_hash_search(
+                table,
+                lxb::lexbor_hash_search_raw,
+                uri.as_ptr(),
+                uri.len(),
+            ) as *const lxb::lxb_ns_data_t;
             if d.is_null() {
                 return None;
             }
@@ -610,24 +636,42 @@ impl<'doc> HtmlDoc<'doc> {
         NsId::from_raw(id)
     }
 
-    /// The id of `uri` in this document's namespace table, interning it if
-    /// the table does not hold it yet. `None` for an empty URI or when Lexbor
-    /// could not intern it. Case is folded as in [`lookup_ns`](Self::lookup_ns).
+    /// The id of `uri` in this document's namespace table, interning it AS
+    /// WRITTEN if the table does not hold it yet. `None` for an empty URI or
+    /// when Lexbor could not intern it.
+    ///
+    /// A built-in namespace is its static id only for its exact URI; any other
+    /// URI gets an entry of its own, keyed case-sensitively - what
+    /// `lxb_ns_append` makes, but without its case folding. A URI equal to one
+    /// Lexbor interned lower-cased (all its entries are) finds that entry, so
+    /// the two kinds share one table without colliding.
     pub fn intern_ns(self, uri: &[u8]) -> Option<NsId> {
+        if let Some(id) = self.lookup_ns(uri) {
+            return Some(id);
+        }
         if uri.is_empty() {
             return None;
         }
         // SAFETY: a live document; Lexbor copies the URI into its own table,
-        // which keeps the entry for the document's lifetime.
+        // which keeps the entry for the document's lifetime, and the table was
+        // made with `lxb_ns_data_t` entries (`lxb_dom_document_init`).
         let id = unsafe {
             let table = (*self.as_raw()).ns;
             if table.is_null() {
                 return None;
             }
-            let d = lxb::lxb_ns_append(table, uri.as_ptr(), uri.len());
-            if d.is_null() {
+            let d = lxb::lexbor_hash_insert(
+                table,
+                lxb::lexbor_hash_insert_raw,
+                uri.as_ptr(),
+                uri.len(),
+            ) as *mut lxb::lxb_ns_data_t;
+            /* The same guard `lxb_ns_append` applies: an id must lie past the
+             * static range, which a real allocation always does. */
+            if (d as usize) <= lxb::lxb_ns_id_enum_t_LXB_NS__LAST_ENTRY as usize {
                 return None;
             }
+            (*d).ns_id = d as usize;
             (*d).ns_id
         };
         NsId::from_raw(id)

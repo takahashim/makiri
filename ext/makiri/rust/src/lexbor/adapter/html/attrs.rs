@@ -209,21 +209,31 @@ impl<'doc> HtmlElement<'doc> {
         value: &[u8],
         lower: bool,
     ) -> Result<HtmlAttr<'doc>, AdapterOom> {
+        /* Interned as written first: Lexbor's set_name_ns below interns the
+         * URI too, case-folded, and its id is replaced by this one. */
+        let ns_id = match ns {
+            Some(uri) => Some(self.node().owner_document().intern_ns(uri).or_oom()?),
+            None => None,
+        };
         // SAFETY: a live element of a live document; every slice is read and
         // copied by Lexbor, and the attribute is one nothing else holds.
         unsafe {
             let at = lxb::lxb_dom_attr_interface_create(self.node().owner_document().as_raw());
             let at = HtmlAttr::link(at).or_oom()?;
-            let named = match ns {
-                Some(uri) => lxb::lxb_dom_attr_set_name_ns(
-                    at.raw(),
-                    uri.as_ptr(),
-                    uri.len(),
-                    qname.as_ptr(),
-                    qname.len(),
-                    false,
-                ),
-                None => {
+            let named = match (ns, ns_id) {
+                (Some(uri), Some(id)) => {
+                    let st = lxb::lxb_dom_attr_set_name_ns(
+                        at.raw(),
+                        uri.as_ptr(),
+                        uri.len(),
+                        qname.as_ptr(),
+                        qname.len(),
+                        false,
+                    );
+                    (*at.raw()).node.ns = id.raw();
+                    st
+                }
+                _ => {
                     (*at.raw()).node.ns = (*self.raw()).node.ns;
                     lxb::lxb_dom_attr_set_name(at.raw(), qname.as_ptr(), qname.len(), lower)
                 }
@@ -431,6 +441,21 @@ unsafe fn repair_element(
             unsafe { de.link_attr(copy, None) };
         }
     }
+    /* Lexbor's copy re-interns a namespace past the built-in ones in this
+     * document case-folded (`lxb_dom_node_interface_copy`), so `fooNamespace`
+     * would arrive as `foonamespace`: such a copy gets its source's URI as
+     * written, element and attributes alike. An attribute with no namespace
+     * of its own carries its element's, and gets the same id the element
+     * does. */
+    if se.node().owner_document() != doc {
+        // SAFETY: the copy is unshared, per the contract.
+        unsafe {
+            restore_ns(doc, se.node(), de.node())?;
+            for (sa, da) in se.attrs().zip(de.attrs()) {
+                restore_ns(doc, sa.node(), da.node())?;
+            }
+        }
+    }
     /* The lists now match one for one, so each shortcut goes to the copy of
      * the attribute that holds it in the source - which the source keeps as
      * the DOM's ID / class attribute. */
@@ -448,5 +473,25 @@ unsafe fn repair_element(
             }
         }
     }
+    Ok(())
+}
+
+/// Give `dst`, a copy of `src` from another document, `src`'s namespace as
+/// written - for one past the built-in ones, whose id Lexbor's copy re-interned
+/// case-folded. A built-in id is the same number in every document.
+///
+/// # Safety
+/// `dst` is a node of a copy nothing but the caller holds, in `doc`.
+unsafe fn restore_ns(
+    doc: HtmlDoc<'_>,
+    src: HtmlNode<'_>,
+    dst: HtmlNode<'_>,
+) -> Result<(), AdapterOom> {
+    if src.ns_id().is_none_or(|id| id.is_static()) {
+        return Ok(());
+    }
+    let id = doc.intern_ns(src.ns_uri().or_oom()?).or_oom()?;
+    // SAFETY: per the contract; `id` is interned in `doc`'s table.
+    unsafe { (*dst.as_raw()).ns = id.raw() };
     Ok(())
 }

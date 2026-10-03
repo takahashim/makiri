@@ -186,7 +186,13 @@ fn main() {
         .allowlist_function("lxb_dom_document_type_system_id")
         .allowlist_function("lxb_dom_processing_instruction_target")
         .allowlist_function("lxb_ns_by_id")
-        .allowlist_function("lxb_ns_data_by_link")
+        // A namespace URI interned and looked up AS WRITTEN: Lexbor's own
+        // `lxb_ns_append` / `lxb_ns_data_by_link` fold ASCII case, where the
+        // DOM keeps a namespace an opaque string (`HtmlDoc::intern_ns`).
+        .allowlist_function("lexbor_hash_search")
+        .allowlist_function("lexbor_hash_insert")
+        .allowlist_var("lexbor_hash_search_raw")
+        .allowlist_var("lexbor_hash_insert_raw")
         .allowlist_function("lxb_dom_document_root")
         .allowlist_type("lxb_html_token_t")
         .allowlist_type("lxb_html_token_type_t")

@@ -10,6 +10,14 @@
   Attribute edits leave it alone. Unchanged, it means no child list changed,
   so a reader can cache a child count or position under it.
 
+### Fixed
+
+* An HTML document keeps a namespace URI as written. `create_element_ns`,
+  `set_attribute_ns` and `import_node` folded it to ASCII lower case
+  (`fooNamespace` read back `foonamespace`), so two URIs differing only in
+  case were one namespace, and `HTTP://WWW.W3.ORG/1999/XHTML` made an HTML
+  element. Namespaces now compare exactly, as the DOM's do.
+
 ## [0.12.1] - 2026-10-02
 
 ### Fixed
