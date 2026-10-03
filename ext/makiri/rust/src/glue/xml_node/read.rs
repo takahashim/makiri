@@ -281,6 +281,34 @@ pub fn aref(ruby: &Ruby, this: XmlSelf, rb_name: Value) -> Result<Option<Value>,
     })
 }
 
+/// `#attribute_value_ns(ns, local)` (DOM `getAttributeNS`): the value of the
+/// attribute in namespace `ns` (nil or "" for none) with local name `local`,
+/// or nil - for a non-element too.
+pub fn attribute_value_ns(
+    ruby: &Ruby,
+    this: XmlSelf,
+    rb_ns: Value,
+    rb_local: Value,
+) -> Result<Option<Value>, Error> {
+    crate::bridge::ruby::entry(|| {
+        let found = crate::bridge::xml::find_attribute_ns(this, rb_ns, rb_local)?;
+        Ok(str_or_nil(ruby, found.map(|at| this.doc_ref().value(at))))
+    })
+}
+
+/// `#attribute_node_ns(ns, local)` (DOM `getAttributeNodeNS`): the Attr
+/// [`attribute_value_ns`] reads, or nil.
+pub fn attribute_node_ns(
+    this: XmlSelf,
+    rb_ns: Value,
+    rb_local: Value,
+) -> Result<Option<Value>, Error> {
+    crate::bridge::ruby::entry(|| {
+        let found = crate::bridge::xml::find_attribute_ns(this, rb_ns, rb_local)?;
+        wrap_rel(this, found)
+    })
+}
+
 /// The Attr NODE with that qualified name.
 pub fn attribute_by_qualified_name(this: XmlSelf, rb_name: Value) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {

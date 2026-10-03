@@ -10,6 +10,11 @@
   Attribute edits leave it alone. Unchanged, it means no child list changed,
   so a reader can cache a child count or position under it.
 
+* `Element#attribute_value_ns(ns, local)` and `#attribute_node_ns(ns, local)`
+  (HTML and XML): the DOM's `getAttributeNS` / `getAttributeNodeNS` - the
+  attribute keyed by namespace (nil or "" for none) and local name, the key
+  `set_attribute_ns` / `remove_attribute_ns` use.
+
 ### Fixed
 
 * An HTML document keeps a namespace URI as written. `create_element_ns`,

@@ -23,7 +23,7 @@ use crate::bridge::node_set::node_set_with_fill;
 use crate::bridge::ruby::is_kind_of;
 use crate::bridge::string::ruby_verified_text;
 use crate::init::{CLASS_NODE, CLASS_XML_DOCUMENT};
-use crate::lexbor::adapter::html::{HtmlNode, NodeType, RawNode};
+use crate::lexbor::adapter::html::{HtmlAttr, HtmlElement, HtmlNode, NodeType, RawNode};
 
 /* ------------------------------------------------------------------ *
  * small helpers                                                      *
@@ -466,6 +466,63 @@ pub fn attribute_value_by_qualified_name(
             .map(|at| at.value());
         drop(nv);
         Ok(value.map(dom_str))
+    })
+}
+
+/// The attribute of `el` in namespace `rb_ns` (nil or "" for none) with local
+/// name `rb_local` - DOM "get an attribute by namespace and local name", the
+/// key `remove_attribute_ns` removes by. The namespace compares exactly.
+fn attr_by_ns_arg<'d>(
+    el: HtmlElement<'d>,
+    rb_ns: Value,
+    rb_local: Value,
+) -> Result<Option<HtmlAttr<'d>>, Error> {
+    let lv = ruby_verified_text(rb_local, "attribute local name")?;
+    let nv = crate::bridge::string::namespace_arg(rb_ns, "namespace")?;
+    /* Looked up, not interned: a namespace the document never interned is
+     * one no attribute here carries. */
+    let want_ns = match nv.as_ref() {
+        Some(uri) => match el.node().owner_document().lookup_ns(uri.as_bytes()) {
+            Some(id) => Some(id),
+            None => return Ok(None),
+        },
+        None => None,
+    };
+    Ok(el.attr_by_ns(want_ns, lv.as_bytes()))
+}
+
+/// `#attribute_value_ns(ns, local)` (DOM `getAttributeNS`): the value of the
+/// attribute in namespace `ns` (nil or "" for none) with local name `local`,
+/// or nil - for a non-element too.
+pub fn attribute_value_ns(
+    _ruby: &Ruby,
+    this: super::HtmlSelf,
+    rb_ns: Value,
+    rb_local: Value,
+) -> Result<Option<Value>, Error> {
+    crate::bridge::ruby::entry(|| {
+        let Some(el) = this.node().element() else {
+            return Ok(None);
+        };
+        let found = attr_by_ns_arg(el, rb_ns, rb_local)?;
+        Ok(found.map(|at| dom_str(at.value())))
+    })
+}
+
+/// `#attribute_node_ns(ns, local)` (DOM `getAttributeNodeNS`): the Attr
+/// [`attribute_value_ns`] reads, or nil.
+pub fn attribute_node_ns(
+    _ruby: &Ruby,
+    this: super::HtmlSelf,
+    rb_ns: Value,
+    rb_local: Value,
+) -> Result<Option<Value>, Error> {
+    crate::bridge::ruby::entry(|| {
+        let Some(el) = this.node().element() else {
+            return Ok(None);
+        };
+        let found = attr_by_ns_arg(el, rb_ns, rb_local)?;
+        wrap_node(found.map(|at| at.node()), this.document)
     })
 }
 
