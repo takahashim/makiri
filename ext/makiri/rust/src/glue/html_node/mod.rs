@@ -124,7 +124,6 @@ fn init_read() -> Result<(), Error> {
         "attribute_value_by_qualified_name",
         method!(read::attribute_value_by_qualified_name, 1),
     )?;
-    m.define_method("attribute_value_ns", method!(read::attribute_value_ns, 2))?;
     m.define_method("value", method!(read::value, 0))?;
     m.define_method("line", method!(read::line, 0))?;
 

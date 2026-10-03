@@ -13,11 +13,6 @@
   a DocumentFragment (a template's contents included), or the top of a
   detached subtree - in one call. An attribute is its own root.
 
-* `Element#attribute_value_ns(ns, local)` (HTML and XML): the DOM's
-  `getAttributeNS` - the value of the attribute keyed by namespace (nil or ""
-  for none) and local name, the key `set_attribute_ns` / `remove_attribute_ns`
-  use.
-
 * `Node#interned_local_name`, `#interned_namespace_uri` and
   `#interned_tag_name` (HTML and XML): the same answers as `local_name`,
   `namespace_uri` and `tag_name`, as interned, frozen Strings - the same

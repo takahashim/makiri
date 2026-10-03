@@ -590,25 +590,6 @@ pub fn find_attribute(this: XmlSelf, name: Value) -> Result<Option<NodeId>, Erro
     Ok(find_attribute_bytes(this.doc_ref(), id, bytes))
 }
 
-/// The attribute of `el` in namespace `ns` (nil or "" for none) with local
-/// name `local` - DOM "get an attribute by namespace and local name", the key
-/// `remove_attribute_ns` removes by. Converted before the arena is borrowed,
-/// as [`find_attribute`].
-pub fn find_attribute_ns(this: XmlSelf, ns: Value, local: Value) -> Result<Option<NodeId>, Error> {
-    let id = this.id;
-    if this.doc_ref().type_(id) != Some(ArenaKind::Element) {
-        return Ok(None);
-    }
-    let lv = ruby_verified_text(local, "attribute local name")?;
-    let nv = crate::bridge::string::namespace_arg(ns, "namespace")?;
-    let key = crate::xml::attr_key::AttrKey::Ns {
-        ns: nv.as_ref().map_or(&b""[..], |n| n.as_bytes()),
-        local: lv.as_bytes(),
-    };
-    let d = this.doc_ref();
-    Ok(d.attributes(id).find(|&a| key.matches(d, a)))
-}
-
 /// The attribute of `el` whose qualified name is `name`.
 ///
 /// Namespace declarations included: in the DOM an `xmlns` / `xmlns:p` is an

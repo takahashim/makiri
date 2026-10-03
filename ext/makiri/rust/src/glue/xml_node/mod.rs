@@ -97,7 +97,6 @@ fn init_read() -> Result<(), Error> {
         "attribute_by_qualified_name",
         method!(read::attribute_by_qualified_name, 1),
     )?;
-    m.define_method("attribute_value_ns", method!(read::attribute_value_ns, 2))?;
 
     /* Node identity by the underlying pointer, so #path, NodeSet dedup, Set and
      * Hash all work - the same contract HTML nodes have, from the same code. */
