@@ -21,8 +21,8 @@ use magnus::{prelude::*, Error, Ruby, Value};
 use super::strings::{str_field, utf8};
 use super::{wrap, XmlSelf};
 use crate::bridge::node_set::node_set_with_fill;
-use crate::glue::node::child_index;
 use crate::bridge::xml::interned_str;
+use crate::glue::node::child_index;
 use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId};
 
 /// Wrap an optional reached node under the receiver's Document (None -> nil).
