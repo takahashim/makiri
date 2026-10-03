@@ -90,6 +90,7 @@ class Makiri::HTML::Document < Makiri::Document
   def title(0)
   def title=(1 req:text)
   def tree_version(0)
+  private def _empty_copy(0)
   private def ensure_in_head(2 req:css_query,req:tag)
 
 class Makiri::HTML::DocumentFragment < Makiri::DocumentFragment

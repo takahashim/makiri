@@ -51,6 +51,9 @@ outside XML's, -- in a comment, or ?> in a processing instruction)"
         Failure::DomLooseAttributeName => {
             format!("cannot {verb} XML containing a DOM-loose attribute name")
         }
+        Failure::XmlnsElement => {
+            format!("cannot {verb} XML containing an element in the XMLNS namespace")
+        }
         Failure::PiTargetColon => {
             format!("cannot {verb} XML containing a processing-instruction target with a colon")
         }

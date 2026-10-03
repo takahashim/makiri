@@ -478,11 +478,13 @@ unsafe fn repair_element(
 
 /// Give `dst`, a copy of `src` from another document, `src`'s namespace as
 /// written - for one past the built-in ones, whose id Lexbor's copy re-interned
-/// case-folded. A built-in id is the same number in every document.
+/// case-folded. A built-in id is the same number in every document. For an
+/// element's copy and its attributes ([`repair_import`]) and for an attribute
+/// imported on its own (`HtmlDoc::import_node`).
 ///
 /// # Safety
 /// `dst` is a node of a copy nothing but the caller holds, in `doc`.
-unsafe fn restore_ns(
+pub(super) unsafe fn restore_ns(
     doc: HtmlDoc<'_>,
     src: HtmlNode<'_>,
     dst: HtmlNode<'_>,

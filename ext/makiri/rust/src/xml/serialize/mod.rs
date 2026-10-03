@@ -53,6 +53,10 @@ pub enum Failure {
     /// cannot write. Only [`to_xml`] refuses it; canonical form omits the
     /// document type declaration, so it has nothing to write wrong.
     DomLooseDoctype,
+    /// An element in the XMLNS namespace (the DOM's `createElementNS(XMLNS,
+    /// "xmlns")`): Namespaces in XML reserves it for declarations, so no
+    /// element can be written in it.
+    XmlnsElement,
     /// A PI target with a colon: the DOM creates one, but Namespaces in XML §7
     /// makes every PI target an NCName, and DOM Parsing's serializer refuses
     /// it too.
@@ -181,6 +185,11 @@ fn unserializable_name(doc: &XmlDoc, root: NodeId) -> Option<Failure> {
     while let Some(id) = cur {
         match doc.type_(id) {
             Some(ArenaKind::Element) if loose(id) => return Some(Failure::DomLooseName),
+            Some(ArenaKind::Element)
+                if doc.span(doc.node(id).ns_uri) == crate::xml::XMLNS_NS_URI =>
+            {
+                return Some(Failure::XmlnsElement)
+            }
             Some(ArenaKind::Element) => {
                 if let Some(f) = doc.attributes(id).find_map(|a| unwritable_attr(doc, a)) {
                     return Some(f);

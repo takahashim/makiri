@@ -95,10 +95,12 @@ pub fn replace(_ruby: &Ruby, this: HtmlSelf, rb_other: Value) -> Result<Value, E
 /// `node.remove` / `node.unlink` -> node.
 pub fn remove(_ruby: &Ruby, this: HtmlSelf) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let node = edit(&this)?.node()?;
-        if node.node().node_type() == NodeType::Attribute {
+        let edit = edit(&this)?;
+        /* Refused before `node()`, which counts the edit. */
+        if edit.node_type() == NodeType::Attribute {
             return Err(makiri_error("use delete(name) to remove an attribute"));
         }
+        let node = edit.node()?;
         if node.parent().is_some() {
             node.detach();
         }

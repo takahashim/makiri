@@ -127,6 +127,16 @@ fn plan_element<'d>(
 ) -> Result<Plan<'d>, Failure> {
     let own_prefix = doc.span(doc.node(el).prefix);
     let uri = doc.span(doc.node(el).ns_uri);
+    /* The XML namespace is bound to `xml` everywhere and may be declared for
+     * no other prefix, so an element in it is written as `xml:local`, as an
+     * attribute is (`plan_attr`): `create_element_ns(XML, "x")` wrote
+     * `<x xmlns="...XML/1998/namespace">`, which does not parse. */
+    if uri == XML_NS_URI {
+        return Ok(Plan {
+            prefix: Prefix::Own(b"xml"),
+            declare: false,
+        });
+    }
     let mut plan = Plan {
         prefix: Prefix::Own(own_prefix),
         declare: !doc.node(el).flags.contains(NodeFlags::DOM_LOOSE_NAME)

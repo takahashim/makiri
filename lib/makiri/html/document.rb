@@ -26,26 +26,21 @@ module Makiri
         _parse(String(source), max_tree_depth)
       end
 
-      # An independent copy of the whole document (like Nokogiri's Document#dup).
-      # Built by serialising and re-parsing, so the copy shares no nodes with the
-      # original - Node#dup's clone_node delegation is wrong for a document node,
-      # hence this override. (A DOM mutated into a shape the HTML parser would not
-      # itself produce, e.g. a foster-parented table cell, may be re-normalised on
-      # re-parse; a freshly parsed document round-trips unchanged.) Any level
-      # argument is ignored. #clone is this too (see {CloneViaDup}).
+      # An independent copy of the whole document (like Nokogiri's Document#dup):
+      # an empty document in the same quirks mode, given a deep copy of each of
+      # this one's children (+import_node+, which carries a <template>'s
+      # contents too), so the copy shares no nodes with the original and has
+      # the same tree - whatever shape it was built into, which a re-parse of
+      # +to_html+ would not keep (a Document.new without an <html> root gained
+      # the html/head/body shell and quirks mode). Node#dup's clone_node
+      # delegation is wrong for a document node, hence this override. Any
+      # level argument is ignored. #clone is this too (see {CloneViaDup}).
       #
-      # Node#line on the copy is the line in the SERIALISED text it was parsed
-      # from, not in the original source: `to_html` does not keep the original
-      # line breaks between tags, so the two differ.
-      #
-      # The re-parse has no tree-depth limit: the tree is already here, however
-      # it was built, and a copy must not fail where the original stands.
+      # Node#line is nil on the copy: its nodes were not parsed from a source.
       def dup(*)
-        # An empty document (Document.new) would re-parse as an html/head/body
-        # shell.
-        return self.class.new if children.empty?
-
-        self.class.parse(to_html, max_tree_depth: -1)
+        _empty_copy.tap do |copy|
+          children.each { |child| copy.add_child(copy.import_node(child, true)) }
+        end
       end
 
       # Whether the document is in quirks mode - the mode a missing or legacy
