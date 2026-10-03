@@ -411,14 +411,22 @@ pub fn parse_html(
     try_box(parsed).map_err(|()| HtmlParseError::Failed)
 }
 
-/// A new HTML document with no children, in no-quirks mode - what
-/// `Makiri::HTML::Document.new` holds, as the DOM's `createHTMLDocument` starts
-/// from before it adds its skeleton. Made by Lexbor's document constructor, not
-/// a parse, so nothing is stamped and there is no line table.
-pub fn empty_html_document() -> Result<Box<HtmlParsed>, HtmlParseError> {
+/// A new HTML document with no children, in `compat_mode` (Lexbor's: 0
+/// no-quirks, 1 quirks, 2 limited-quirks) - what `Makiri::HTML::Document.new`
+/// holds (no-quirks, as the DOM's `createHTMLDocument` starts from before it
+/// adds its skeleton), and what `Document#dup` copies into (the source's
+/// mode). Made by Lexbor's document constructor, not a parse, so nothing is
+/// stamped and there is no line table.
+pub fn empty_html_document(compat_mode: u32) -> Result<Box<HtmlParsed>, HtmlParseError> {
     // SAFETY: the constructor takes nothing and returns a new document, or
-    // null when it cannot allocate one.
-    let raw = unsafe { lxb_html_document_create() };
+    // null when it cannot allocate one; a non-null one is ours to write.
+    let raw = unsafe {
+        let raw = lxb_html_document_create();
+        if !raw.is_null() {
+            (*raw).dom_document.compat_mode = compat_mode.min(2);
+        }
+        raw
+    };
     let doc = DocOwner(NonNull::new(raw).ok_or(HtmlParseError::Failed)?);
     let parsed = HtmlParsed {
         doc: doc.release(),

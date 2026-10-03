@@ -64,6 +64,24 @@ RSpec.describe "HTML and XML Document APIs" do
         expect(bare.namespace_uri).to be_nil
       end
 
+      # Namespaces in XML binds the XML namespace to `xml` and no other prefix,
+      # and reserves the XMLNS namespace for declarations: the DOM makes such
+      # elements, so the serializers write the one and refuse the other rather
+      # than writing a declaration that does not parse.
+      it "writes an element in the XML namespace as xml:local, and refuses one in XMLNS" do
+        xml_ns = "http://www.w3.org/XML/1998/namespace"
+        r = Makiri::XML('<r xmlns:p="urn:p"/>')
+        %w[x xml:x p:x].each { |q| r.root << r.create_element_ns(xml_ns, q) }
+        expect(r.root.to_xml).to eq(%(<r xmlns:p="urn:p"><xml:x/><xml:x/><xml:x/></r>))
+        expect(r.canonicalize).to eq(%(<r xmlns:p="urn:p"><xml:x></xml:x><xml:x></xml:x><xml:x></xml:x></r>))
+        expect(Makiri::XML(r.to_xml).root.children.map(&:namespace_uri).uniq).to eq([xml_ns])
+
+        x = Makiri::XML::Document.new
+        x.root = x.create_element_ns(XMLNS, "xmlns")
+        expect { x.to_xml }.to raise_error(Makiri::Error, /XMLNS namespace/)
+        expect { x.canonicalize }.to raise_error(Makiri::Error, /XMLNS namespace/)
+      end
+
       it "makes an element XML cannot name, which to_xml then refuses" do
         doc.root << doc.create_element_ns(nil, "f}oo")
         expect { doc.to_xml }.to raise_error(Makiri::Error, /DOM-loose/)
@@ -151,6 +169,8 @@ RSpec.describe "HTML and XML Document APIs" do
         bumps(doc) { para.remove_attribute_ns("urn:k", "c") }
         bumps(doc) { para.delete("b") }
         bumps(doc) { doc.create_element("q")["x"] = "1" }
+        bumps(doc) { para.attribute_nodes.first.remove }
+        expect(para["a"]).to be_nil
       end
 
       it "is left alone by child-list and character-data edits" do
@@ -237,6 +257,38 @@ RSpec.describe "HTML and XML Document APIs" do
       doc.meta_encoding = "utf-8"
       expect(doc.children.size).to eq(0)
       expect(doc.dup.children.size).to eq(0)
+    end
+
+    # A re-parse of to_html would wrap a root-less tree in html/head/body and
+    # put it in quirks mode; dup copies the tree as it is.
+    it "dups a tree with no html root as it is" do
+      doc << doc.create_comment("c")
+      doc << doc.create_element("div")
+      copy = doc.dup
+      expect([copy.to_html, copy.quirks_mode]).to eq(["<!--c--><div></div>", 0])
+    end
+  end
+
+  describe "HTML Document#dup" do
+    it "copies the tree, template contents and quirks mode, sharing no node" do
+      {
+        "<p>x<template><b>t</b></template>" => 1,
+        "<!DOCTYPE html><p>x</p>" => 0,
+        '<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd"><p>' => 2,
+      }.each do |source, mode|
+        doc = Makiri::HTML(source)
+        copy = doc.dup
+        expect([copy.to_html, copy.quirks_mode]).to eq([doc.to_html, mode])
+        expect(copy.at_css("p")).not_to eql(doc.at_css("p"))
+        copy.at_css("p")["x"] = "1"
+        expect(doc.at_css("p")["x"]).to be_nil
+      end
+      tpl = Makiri::HTML("<template><b>t</b></template>").dup.at_css("template")
+      expect(tpl.content_fragment.children.map(&:name)).to eq(["b"])
+    end
+
+    it "has no source lines: its nodes were not parsed" do
+      expect(Makiri::HTML("<p>x</p>").dup.at_css("p").line).to be_nil
     end
 
     it "survives a GC.compact with live wrappers" do

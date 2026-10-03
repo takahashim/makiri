@@ -38,8 +38,15 @@ pub fn remove(this: XmlSelf) -> Result<Value, Error> {
         if crate::bridge::ruby::is_kind_of(rb_self, &CLASS_XML_DOCUMENT) {
             return Err(makiri_error("cannot remove the document node"));
         }
+        /* An Attr leaves its element's attribute list: an attribute edit,
+         * which changes no child list. */
+        let attr = this.doc_ref().type_(this.id) == Some(ArenaKind::Attribute);
         let edit = begin_edit(this)?;
-        edit.with_arena(mutate::remove)?;
+        if attr {
+            edit.with_attributes(mutate::remove)?;
+        } else {
+            edit.with_arena(mutate::remove)?;
+        }
         Ok(rb_self)
     })
 }
@@ -321,14 +328,11 @@ pub fn create_element_ns(
             dom_name::valid_element_local_name,
             "DOM element",
         )?;
-        let too_long = || makiri_error("element qualified name is too long");
+        /* `verified_name` held the name to `u32`, and both halves are in it. */
         let sp = if prefix.is_empty() {
-            Split::unprefixed(u32::try_from(qname.len()).map_err(|_| too_long())?)
+            Split::unprefixed(qname.len() as u32)
         } else {
-            Split::prefixed(
-                u32::try_from(prefix.len()).map_err(|_| too_long())?,
-                u32::try_from(local.len()).map_err(|_| too_long())?,
-            )
+            Split::prefixed(prefix.len() as u32, local.len() as u32)
         };
         let el = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
             mutate::new_dom_element_ns(d, qname, sp, ns)

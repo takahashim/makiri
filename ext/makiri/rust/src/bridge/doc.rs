@@ -100,13 +100,14 @@ pub fn parse_document(source: Value, limit: DepthLimit) -> Result<Value, Error> 
     Ok(shell.install_html(parsed))
 }
 
-/// `Makiri::HTML::Document.new`: an empty HTML document - no children,
-/// no-quirks mode.
-pub fn new_empty_document() -> Result<Value, Error> {
+/// An empty HTML document - no children - in `compat_mode` (Lexbor's
+/// numbering): `Makiri::HTML::Document.new` (no-quirks) and the copy
+/// `Document#dup` fills.
+pub fn new_empty_document(compat_mode: u32) -> Result<Value, Error> {
     /* The wrapper first, while nothing needs freeing - see DocumentShell. */
     let shell = DocumentShell::new(DocKind::Html);
-    let parsed =
-        empty_html_document().map_err(|_| makiri_error("failed to create HTML document"))?;
+    let parsed = empty_html_document(compat_mode)
+        .map_err(|_| makiri_error("failed to create HTML document"))?;
     Ok(shell.install_html(parsed))
 }
 

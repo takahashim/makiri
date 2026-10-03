@@ -366,7 +366,15 @@ impl<'doc> HtmlDoc<'doc> {
                     lxb::lxb_dom_attr_interface_clone(self.as_raw(), src.as_raw() as *mut LxbAttr)
                 };
                 // SAFETY: Lexbor's attribute begins with its node.
-                return unsafe { BuildingNode::from_raw(copy as *mut LxbNode) };
+                let copy = unsafe { BuildingNode::from_raw(copy as *mut LxbNode) }?;
+                /* The clone re-interns a namespace from another document
+                 * case-folded, as an element's copy does: give it the
+                 * source's as written. */
+                if src.owner_document() != self {
+                    // SAFETY: the clone is unlinked and nothing else holds it.
+                    unsafe { super::attrs::restore_ns(self, src, copy.0) }.ok()?;
+                }
+                return Some(copy);
             }
             NodeType::DocumentFragment => {
                 let copy = self.create_fragment()?;

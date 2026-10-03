@@ -51,8 +51,15 @@ impl<'d> Writer<'d, '_> {
     fn escape(&mut self, s: &[u8], attr: bool) -> W {
         C14N.write(self.b, s, attr)
     }
+    /// `n`'s name as written: its own, or `xml:local` for an element or
+    /// attribute in the XML namespace, which is bound to `xml` and to nothing
+    /// else (Namespaces in XML §3), as `to_xml` writes it.
     fn qname(&mut self, n: NodeId) -> W {
         let doc = self.doc;
+        if in_xml_ns(doc, n) {
+            self.put(b"xml:")?;
+            return self.put(doc.span(doc.node(n).local));
+        }
         self.put(doc.span(doc.node(n).qname))
     }
 
@@ -167,7 +174,9 @@ impl<'d> Writer<'d, '_> {
         let mut out: Vec<Ns> = Vec::new();
         let decided = doc.node(n).flags.contains(NodeFlags::NS_RESOLVED);
         let el_prefix = doc.span(doc.node(n).prefix);
-        if decided {
+        if in_xml_ns(doc, n) {
+            /* Written as `xml:local` (`qname`), which needs no declaration. */
+        } else if decided {
             self.need(n, &mut out, el_prefix, doc.span(doc.node(n).ns_uri))?;
         } else if self.binds.resolve(el_prefix)?.is_none() {
             /* Undecided, it takes its namespace from the declarations. */
@@ -291,12 +300,7 @@ impl<'d> Writer<'d, '_> {
 
         for at in sorted_attributes(doc, n)? {
             self.put(b" ")?;
-            if in_xml_ns(doc, at) {
-                self.put(b"xml:")?;
-                self.put(doc.span(doc.node(at).local))?;
-            } else {
-                self.qname(at)?;
-            }
+            self.qname(at)?;
             self.put(b"=\"")?;
             self.escape(doc.span(doc.node(at).value), true)?;
             self.put(b"\"")?;
@@ -312,7 +316,8 @@ impl<'d> Writer<'d, '_> {
     }
 }
 
-/// Whether attribute `at` is in the XML namespace, which is written as `xml:`.
+/// Whether element or attribute `at` is in the XML namespace, which is written
+/// as `xml:`.
 fn in_xml_ns(doc: &XmlDoc, at: NodeId) -> bool {
     doc.span(doc.node(at).ns_uri) == crate::xml::XML_NS_URI
 }

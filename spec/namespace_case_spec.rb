@@ -65,6 +65,17 @@ RSpec.describe "namespace URIs keep their case in an HTML document" do
     expect([moved.namespace_uri, moved.child.namespace_uri]).to eq(%w[fooNamespace childNamespace])
   end
 
+  it "keeps the namespace of an Attr imported on its own from another HTML document" do
+    p = html.at_css("p")
+    p.set_attribute_ns("attrNamespace", "a:x", "1")
+    p.set_attribute_ns("HTTP://WWW.W3.ORG/1999/XHTML", "b:y", "2")
+    other = Makiri::HTML("<p></p>")
+    [["attrNamespace", "x"], ["HTTP://WWW.W3.ORG/1999/XHTML", "y"]].each do |ns, local|
+      [other.import_node(p.attribute_node_ns(ns, local)), p.attribute_node_ns(ns, local).clone_node]
+        .each { |copy| expect(copy.namespace_uri).to eq(ns) }
+    end
+  end
+
   it "leaves parsed content in the built-in namespaces" do
     doc = Makiri::HTML(%(<svg><a xlink:href="#x"/></svg><math></math>))
     expect(doc.at_css("svg").namespace_uri).to eq("http://www.w3.org/2000/svg")

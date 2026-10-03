@@ -93,7 +93,7 @@ fn static_ns(uri: &[u8]) -> Option<NsId> {
 /// `LXB_NS__UNDEF`, which reads as `None`.
 ///
 /// Not an array index, like [`TagId`]: a built-in namespace is a small enum
-/// number, but one `lxb_ns_append` adds gets a POINTER VALUE
+/// number, but one interned past them ([`HtmlDoc::intern_ns`]) gets a POINTER VALUE
 /// (`(lxb_ns_id_t) data`), and ids are unique to their document. The raw number
 /// is only for handing back to Lexbor.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

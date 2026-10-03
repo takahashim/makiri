@@ -417,12 +417,6 @@ const UNDECLARED_EXPORTS: &[(&str, &str, &str, &str)] = &[
         "lxb_dom_element_t *element, const lxb_char_t *prefix, size_t prefix_len, \
          const lxb_char_t *lname, size_t lname_len",
     ),
-    (
-        "lexbor/ns/ns.c",
-        "LXB_API const lxb_ns_data_t *",
-        "lxb_ns_append",
-        "lexbor_hash_t *hash, const lxb_char_t *link, size_t length",
-    ),
 ];
 
 fn check_undeclared_exports(include: &std::path::Path) {

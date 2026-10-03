@@ -52,7 +52,16 @@ fn doc_internal_subset(_ruby: &Ruby, this: HtmlSelf) -> Result<Option<Value>, Er
 
 /// `Makiri::HTML::Document.new`: an empty document - no children, no-quirks.
 fn doc_s_new(_ruby: &Ruby, _klass: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(crate::bridge::doc::new_empty_document)
+    crate::bridge::ruby::entry(|| crate::bridge::doc::new_empty_document(0))
+}
+
+/// `Document#_empty_copy` (private): an empty document in this one's quirks
+/// mode, for `#dup` to copy the children into.
+fn doc_empty_copy(_ruby: &Ruby, this: HtmlSelf) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| {
+        let mode = u32::try_from(this.node().owner_document().compat_mode()).unwrap_or(0);
+        crate::bridge::doc::new_empty_document(mode)
+    })
 }
 
 fn doc_quirks_mode(ruby: &Ruby, self_: Value) -> Result<Value, Error> {
@@ -166,6 +175,7 @@ pub fn init_html_doc() -> Result<(), Error> {
 
     html_doc.define_singleton_method("_parse", method!(doc_s_parse, 2))?;
     html_doc.define_singleton_method("new", method!(doc_s_new, 0))?;
+    html_doc.define_private_method("_empty_copy", method!(doc_empty_copy, 0))?;
     html_doc.define_method("root", method!(doc_root, 0))?;
     html_doc.define_method("title", method!(doc_title, 0))?;
     html_doc.define_method("errors", method!(doc_errors, 0))?;

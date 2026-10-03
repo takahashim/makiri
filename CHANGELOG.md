@@ -12,8 +12,8 @@
   that is not an XML QName (`f}oo`) makes an element that `to_xml` refuses.
 * `Document#attribute_version` (HTML and XML): an Integer that increases with
   every attribute edit - an attribute added, removed or its value set (to the
-  same value too), including an Attr node's `content=`. Child-list and
-  character-data edits leave it unchanged.
+  same value too), including an Attr node's `content=` and an XML Attr
+  node's `remove`. Child-list and character-data edits leave it unchanged.
 * `Makiri::HTML::Document.new`: an empty HTML document - no children,
   no-quirks mode. `title=` and `meta_encoding=` do nothing until it has a root
   element.
@@ -31,6 +31,24 @@
 * `tree_version` no longer counts character-data edits (a Text, Comment,
   CDATA or PI node's `content=`), which change no child list. A cache of child
   lists keyed by it is no longer refilled on every text edit.
+* `Makiri::HTML::Document#dup` copies the tree node by node into an empty
+  document in the same quirks mode, instead of re-parsing `to_html`. The copy
+  has the same tree whatever shape it was built into (a re-parse wrapped a
+  tree with no `<html>` root in html/head/body and changed its quirks mode),
+  and `Node#line` on it is `nil`.
+
+### Fixed
+
+* An HTML Attr imported on its own from another HTML document
+  (`Document#import_node(attr)`) keeps its namespace URI as written. It came
+  back lower-cased, and a differently cased XHTML namespace became the HTML
+  namespace.
+* `to_xml` and `canonicalize` write an element in the XML namespace as
+  `xml:local`, as they already wrote such an attribute. They wrote a
+  declaration binding the XML namespace to another prefix or as the default,
+  which does not parse. An element in the XMLNS namespace, which no XML can
+  hold, is refused with `Makiri::Error`.
+* A refused HTML `Attr#remove` no longer increases `tree_version`.
 
 ## [0.13.0] - 2026-10-03
 
