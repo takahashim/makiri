@@ -187,12 +187,14 @@ pub fn set_content(_ruby: &Ruby, this: HtmlSelf, rb_text: Value) -> Result<Value
     crate::bridge::ruby::entry(|| {
         let edit = edit(&this)?;
         let tv = ruby_verified_data(rb_text, "node content")?;
-        /* An Attr's content is its value: an attribute edit, which changes no
-         * child list. */
-        let node = if edit.node_type() == NodeType::Attribute {
-            edit.node_for_attributes()?
-        } else {
-            edit.node()?
+        /* An Attr's content is its value, an attribute edit; a Text, Comment,
+         * CDATA or PI node's is its data. Neither changes a child list. */
+        let node = match edit.node_type() {
+            NodeType::Attribute => edit.node_for_attributes()?,
+            NodeType::Text | NodeType::Comment | NodeType::CDataSection | NodeType::Pi => {
+                edit.node_for_data()?
+            }
+            _ => edit.node()?,
         };
         crate::bridge::html::set_text_content(node, &tv)
             .map_err(|_| makiri_error("failed to set node content"))?;

@@ -13,7 +13,7 @@
 * `Document#attribute_version` (HTML and XML): an Integer that increases with
   every attribute edit - an attribute added, removed or its value set (to the
   same value too), including an Attr node's `content=`. Child-list and
-  character-data edits leave it unchanged; they count toward `tree_version`.
+  character-data edits leave it unchanged.
 * `Makiri::HTML::Document.new`: an empty HTML document - no children,
   no-quirks mode. `title=` and `meta_encoding=` do nothing until it has a root
   element.
@@ -28,15 +28,9 @@
 * Documented: `namespace_uri` and `prefix` of elements and attributes are
   `nil` when there is no namespace or no prefix - never `""` - whether the
   node was parsed or created, in HTML and XML.
-* `tree_version` is now documented as also counting character-data edits (a
-  Text, Comment, CDATA or PI node's `content=`), which it already did.
-
-### Deprecated
-
-* `Makiri::XML::Document#create_loose_dom_element`: use `create_element_ns`,
-  which makes the same element from the namespace and the qualified name and
-  also checks the namespace against the name. It will be removed in a later
-  release.
+* `tree_version` no longer counts character-data edits (a Text, Comment,
+  CDATA or PI node's `content=`), which change no child list. A cache of child
+  lists keyed by it is no longer refilled on every text edit.
 
 ## [0.13.0] - 2026-10-03
 

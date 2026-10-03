@@ -160,10 +160,21 @@ pub fn delete(_ruby: &Ruby, this: XmlSelf, name: Value) -> Result<Value, Error> 
 /// `node.content = text` -> text.
 pub fn set_content(_ruby: &Ruby, this: XmlSelf, text: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
+        /* A node's type never changes, so it is read before the argument's
+         * conversion: a Text, Comment, CDATA or PI node's content is its data,
+         * which changes no child list. */
+        let data = matches!(
+            this.doc_ref().type_(this.id),
+            Some(ArenaKind::Text | ArenaKind::CDataSection | ArenaKind::Comment | ArenaKind::Pi)
+        );
         let edit = begin_edit(this)?;
         let tv = verified_data(text, "node content")?;
         let bytes = tv.as_bytes();
-        xml_mut_result(edit.with_arena(|d, n| mutate::set_content(d, n, bytes))?)?;
+        xml_mut_result(if data {
+            edit.with_data(|d, n| mutate::set_content(d, n, bytes))?
+        } else {
+            edit.with_arena(|d, n| mutate::set_content(d, n, bytes))?
+        })?;
         Ok(text)
     })
 }
@@ -327,8 +338,12 @@ pub fn create_element_ns(
 }
 
 /// `create_loose_dom_element(qualified_name, prefix, local_name, namespace_uri)`
-/// -> Element. Deprecated: [`create_element_ns`] makes the same element from
-/// the namespace and the qualified name alone, and checks the namespace too.
+/// -> Element.
+///
+/// The name is not parsed: the caller gives its split. That is what the DOM's
+/// `createElement` needs - its argument is a local name whole, colons and all
+/// (`"foo:"`, `"xmlns:foo"`), which neither [`create_element`] (an XML QName)
+/// nor [`create_element_ns`] (split at the first colon) can make.
 pub fn create_loose_dom_element(
     ruby: &Ruby,
     rb_self: Value,

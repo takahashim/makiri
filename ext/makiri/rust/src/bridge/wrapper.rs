@@ -893,8 +893,9 @@ pub fn keepalive_document(rb_node: Value) -> Result<Value, Error> {
 /// Count a change to a child list of a node `rb_doc` owns - attached,
 /// detached or inside a fragment alike. Called where an edit is handed its
 /// mutable node (`HtmlEdit::node`, `Editing::with_arena`) and for the source
-/// of an adoption, so no structural mutator can miss it; attribute edits take
-/// the paths that skip it, as they change no child list.
+/// of an adoption, so no structural mutator can miss it; attribute and
+/// character-data edits take the paths that skip it, as they change no child
+/// list (see [`EditKind`]).
 ///
 /// Bumped inside the edit, with no Ruby run between the bump and the change,
 /// so nothing can read the tree in between and cache it under the new number.
@@ -913,12 +914,35 @@ pub fn tree_version(rb_doc: Value) -> Result<u64, Error> {
 /// Count an edit of an attribute - added, removed, its value set (to the same
 /// value too) - of an element `rb_doc` owns. Called where an attribute edit is
 /// handed its mutable node (`HtmlEdit::node_for_attributes`,
-/// `Editing::with_attributes`), the paths that skip [`bump_tree_version`], so
-/// every edit is counted by exactly one of the two.
+/// `Editing::with_attributes`), the paths that skip [`bump_tree_version`].
 pub fn bump_attribute_version(rb_doc: Value) {
     with_doc_data_known(rb_doc, |d| {
         d.attribute_version = d.attribute_version.wrapping_add(1)
     });
+}
+
+/// What an edit changes, and so which version counts it: each edit is counted
+/// by at most one, so a reader keying a cache by one version is not refilled
+/// for another's edits.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum EditKind {
+    /// A child list: [`bump_tree_version`].
+    ChildList,
+    /// An attribute, or an Attr's value: [`bump_attribute_version`].
+    Attributes,
+    /// A Text, Comment, CDATA or PI node's data. No version counts it: no
+    /// reader has asked for one, and `tree_version` counting it made every
+    /// keystroke in a text field refill every child-list cache.
+    CharacterData,
+}
+
+/// Count `kind`'s edit of a node `rb_doc` owns, by the version that counts it.
+pub fn count_edit(rb_doc: Value, kind: EditKind) {
+    match kind {
+        EditKind::ChildList => bump_tree_version(rb_doc),
+        EditKind::Attributes => bump_attribute_version(rb_doc),
+        EditKind::CharacterData => {}
+    }
 }
 
 /// `Document#attribute_version`: how many attribute edits the document has

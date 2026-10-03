@@ -4,7 +4,8 @@ require "spec_helper"
 
 # `Document#tree_version` is the key a child-list cache is kept under: it grows
 # with every edit that can change a child list of a node the document owns -
-# attached, detached or in a fragment - and attribute edits leave it alone. The
+# attached, detached or in a fragment - and attribute and character-data edits
+# (a Text, Comment, CDATA or PI node's `content=`) leave it alone. The
 # promise a cache relies on is the converse: an unchanged version means no
 # child list changed, which the randomized example at the bottom checks.
 RSpec.describe "Document#tree_version" do
@@ -43,7 +44,6 @@ RSpec.describe "Document#tree_version" do
       bumps(doc) { div.inner_html = "<p>new</p>" }
       bumps(doc) { div.at_css("p").outer_html = "<em>e</em>" }
       bumps(doc) { div.content = "plain" }
-      bumps(doc) { div.child.content = "text data" }
       bumps(doc) { div.child.remove }
       bumps(doc) { doc.at_css("template").inner_html = "<s>2</s>" }
     end
@@ -67,6 +67,21 @@ RSpec.describe "Document#tree_version" do
       frag = doc.fragment("<a>1</a><a>2</a>")
       bumps(doc) { div.add_child(frag) }
       expect(frag.children.size).to eq(0)
+    end
+
+    it "is left alone by character-data edits" do
+      text = para.child
+      comment = doc.create_comment("c")
+      para << comment
+      pi = doc.create_processing_instruction("t", "d")
+      para << pi
+      keeps(doc) do
+        text.content = "text data"
+        text.content = ""
+        comment.content = "c2"
+        pi.content = "d2"
+      end
+      expect(para.text).to eq("")
     end
 
     it "is left alone by attribute edits and by reads" do
@@ -107,6 +122,20 @@ RSpec.describe "Document#tree_version" do
     it "grows for the source and the target of a move between documents" do
       other = Makiri::XML("<o><s/></o>")
       bumps(doc) { bumps(other) { root.add_child(other.root.at_xpath("s")) } }
+    end
+
+    it "is left alone by character-data edits" do
+      para << doc.create_comment("c")
+      para << doc.create_cdata("x")
+      para << doc.create_processing_instruction("t", "d")
+      text, comment, cdata, pi = para.children.to_a
+      keeps(doc) do
+        text.content = "text data"
+        comment.content = "c2"
+        cdata.content = "y"
+        pi.content = "d2"
+      end
+      expect(para.children.map(&:content)).to eq(["text data", "c2", "y", "d2"])
     end
 
     it "is left alone by attribute edits" do

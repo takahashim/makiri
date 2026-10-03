@@ -71,18 +71,18 @@ pub fn node_hash(ruby: &Ruby, rb_self: Value) -> Result<Integer, magnus::Error> 
 
 /// `Document#tree_version`: an Integer that grows with every edit that can
 /// change a child list of a node the document owns (attached, detached or in
-/// a fragment) - add, remove, replace, `inner_html=`, `content=` and the
-/// like, and both documents of a move between them - and with every edit of
-/// character data (a Text, Comment, CDATA or PI node's `content=`). Attribute
-/// edits leave it alone; they are `attribute_version`'s. A reader caching a child list keys it by this.
+/// a fragment) - add, remove, replace, `inner_html=`, an element's
+/// `content=` and the like, and both documents of a move between them.
+/// Attribute edits (`attribute_version`'s) and character-data edits (a Text,
+/// Comment, CDATA or PI node's `content=`) leave it alone. A reader caching a child list keys it by this.
 pub fn document_tree_version(rb_self: Value) -> Result<u64, magnus::Error> {
     crate::bridge::ruby::entry(|| crate::bridge::wrapper::tree_version(rb_self))
 }
 
 /// `Document#attribute_version`: an Integer that grows with every edit of an
 /// attribute of an element the document owns - added, removed, its value set
-/// (to the same value too), an Attr's `content=` included. Child-list and
-/// character-data edits leave it alone; they are `tree_version`'s. A reader
+/// (to the same value too), an Attr's `content=` included. Child-list edits
+/// (`tree_version`'s) and character-data edits leave it alone. A reader
 /// caching what depends on attributes keys it by this.
 pub fn document_attribute_version(rb_self: Value) -> Result<u64, magnus::Error> {
     crate::bridge::ruby::entry(|| crate::bridge::wrapper::attribute_version(rb_self))

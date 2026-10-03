@@ -69,6 +69,17 @@ RSpec.describe "HTML and XML Document APIs" do
         expect { doc.to_xml }.to raise_error(Makiri::Error, /DOM-loose/)
       end
 
+      # The DOM's createElement takes its argument as a local name whole, which
+      # only create_loose_dom_element can make in an XML Document.
+      it "leaves createElement's unsplit names to create_loose_dom_element" do
+        %w[foo: f::oo xmlns:foo a:b].each do |n|
+          el = doc.create_loose_dom_element(n, nil, n, nil)
+          expect([el.name, el.prefix, el.local_name, el.namespace_uri]).to eq([n, nil, n, nil])
+        end
+        expect { doc.create_element_ns(nil, "foo:") }.to raise_error(ArgumentError)
+        expect { doc.create_element("foo:") }.to raise_error(ArgumentError)
+      end
+
       it "makes what create_loose_dom_element made" do
         made = doc.create_element_ns("urn:u", "a:b:c")
         loose = doc.create_loose_dom_element("a:b:c", "a", "b:c", "urn:u")
