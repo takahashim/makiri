@@ -50,7 +50,7 @@ doc = Makiri::HTML(<<~HTML)
   </body></html>
 HTML
 
-# CSS selectors (Lexbor's selector engine)
+# CSS selectors (Lexbor's selector parser, Makiri's own matcher)
 doc.css("a").map { |a| a["href"] }      # => ["/a", "/b"]
 doc.at_css("p.lead").text               # => "Hello"
 
@@ -224,6 +224,7 @@ See also [`spec/conformance/README.md`](spec/conformance/README.md).
 | XPath 1.0 | XML | `Nokogiri::XML` — differential | `conformance:xpath_xml` |
 | Parsed tree (property-based) | XML | `Nokogiri::XML` — differential | `conformance:xml_pbt` |
 | CSS selectors | XML | `Nokogiri::XML` — differential | `conformance:css_xml` |
+| XML Builder | Ruby DSL | `Nokogiri::XML::Builder` — differential | `conformance:builder` |
 
 ## Requirements
 

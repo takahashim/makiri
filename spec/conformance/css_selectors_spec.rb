@@ -1,12 +1,12 @@
 # frozen_string_literal: true
 
 # CSS Selectors conformance - a resident, browser-authoritative regression for
-# Makiri's CSS query surface (Node#css, backed by Lexbor's selector engine).
-# Pure Ruby, no Nokogiri, so it runs under `rake spec`. The matching engine is
-# Lexbor's (mature); these specs pin the supported selector surface and Makiri's
-# glue (descendant-only scope, document order, comma de-duplication), and record
-# the deliberate non-support of jQuery extensions plus one known Lexbor
-# divergence (class/id case-sensitivity).
+# Makiri's CSS query surface (Node#css: Lexbor's selector parser, matched by
+# Makiri's own `css_match`). Pure Ruby, no Nokogiri, so it runs under
+# `rake spec`. These specs pin the supported selector surface and Makiri's glue
+# (descendant-only scope, document order, comma de-duplication), and record the
+# deliberate non-support of jQuery extensions and the quirks-mode rule for
+# class/id case-sensitivity.
 #
 # Companion differential: spec/conformance/css_diff.rb (vs Nokogiri::HTML5).
 
