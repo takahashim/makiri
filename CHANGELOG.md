@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+* `Node#child_count`, `#element_child_count`, `#child_at(i)`,
+  `#element_child_at(i)` and `#last_child` (HTML and XML): what `children` /
+  `element_children` answer, without building a NodeSet. An index no child
+  has (negative or past the end) is nil; a non-Integer is a `TypeError`.
+
 ## [0.12.1] - 2026-10-02
 
 ### Fixed

@@ -72,6 +72,12 @@ fn init_read() -> Result<(), Error> {
     }
     m.define_method("first_element_child", method!(read::first_element_child, 0))?;
     m.define_method("last_element_child", method!(read::last_element_child, 0))?;
+    m.define_method("last_child", method!(read::last_child, 0))?;
+    /* Counted and indexed in place: no NodeSet for a length or one child. */
+    m.define_method("child_count", method!(read::child_count, 0))?;
+    m.define_method("element_child_count", method!(read::element_child_count, 0))?;
+    m.define_method("child_at", method!(read::child_at, 1))?;
+    m.define_method("element_child_at", method!(read::element_child_at, 1))?;
 
     for name in ["[]", "attribute_value_by_qualified_name"] {
         m.define_method(name, method!(read::aref, 1))?;
