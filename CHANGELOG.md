@@ -15,6 +15,11 @@
   attribute keyed by namespace (nil or "" for none) and local name, the key
   `set_attribute_ns` / `remove_attribute_ns` use.
 
+* `Element#set_loose_dom_attribute(name, value)` on HTML nodes too (it was
+  XML only): the DOM's `setAttribute` - a no-namespace attribute whose local
+  name is the whole of `name`, colons and all (`v-on:click`) - under one name
+  for both representations. On HTML it is `[]=`.
+
 ### Fixed
 
 * An HTML document keeps a namespace URI as written. `create_element_ns`,

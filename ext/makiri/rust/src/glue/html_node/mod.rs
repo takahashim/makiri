@@ -160,7 +160,12 @@ fn init_mutate() -> Result<(), Error> {
     m.define_method("inner_html=", method!(mutate::set_inner_html, 1))?;
     m.define_method("outer_html=", method!(mutate::set_outer_html, 1))?;
 
-    m.define_method("[]=", method!(mutate::aset, 2))?;
+    /* `[]=` is the DOM's setAttribute already (no-namespace, the whole name as
+     * the local name, lower-cased on an HTML element); the XML name for that
+     * is `set_loose_dom_attribute`, so it answers here too. */
+    for name in ["[]=", "set_loose_dom_attribute"] {
+        m.define_method(name, method!(mutate::aset, 2))?;
+    }
     m.define_method("set_attribute_ns", method!(mutate::set_attribute_ns, 3))?;
     m.define_method(
         "remove_attribute_ns",
