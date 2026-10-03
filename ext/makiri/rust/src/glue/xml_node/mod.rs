@@ -46,6 +46,13 @@ fn init_read() -> Result<(), Error> {
     m.define_method("prefix", method!(read::prefix, 0))?;
     m.define_method("namespace_uri", method!(read::namespace_uri, 0))?;
     m.define_method("tag_name", method!(read::tag_name, 0))?;
+    /* The same names as interned, frozen Strings: no allocation per read. */
+    m.define_method("interned_local_name", method!(read::interned_local_name, 0))?;
+    m.define_method(
+        "interned_namespace_uri",
+        method!(read::interned_namespace_uri, 0),
+    )?;
+    m.define_method("interned_tag_name", method!(read::interned_tag_name, 0))?;
     m.define_method("target", method!(read::pi_target, 0))?;
     m.define_method("node_type", method!(read::node_type, 0))?;
 
