@@ -100,14 +100,6 @@ pub struct Cx {
 }
 
 impl Cx {
-    /// Which backend this context walks, for minting a node token.
-    pub fn doc_kind(&self) -> DocKind {
-        match self.doc {
-            DocPtr::Html(_) => DocKind::Html,
-            DocPtr::Xml(_) => DocKind::Xml,
-        }
-    }
-
     /// Evaluate `ast` over the document, borrowed for this call alone.
     ///
     /// The caller holds the Document for the call, and the document does not
@@ -210,17 +202,62 @@ pub fn context_for(rb_node: Value, document: Value) -> Result<Cx, Error> {
     })
 }
 
-/// Parse `expr` for one query under `cx`'s caps, on a budget of the query's own;
-/// a failure is that budget's error as the exception.
+/// Parse `text` under `limits`, on a budget of its own - every parse, cached
+/// or not, charges one made from the caps - answering the budget's error on
+/// failure. The one parse step for [`parse_query`] and `XPathContext`'s cache.
+#[allow(clippy::result_large_err)]
+fn parse_with_limits(
+    limits: crate::xpath::limits::Limits,
+    text: crate::text::VerifiedText<'_>,
+) -> Result<Box<Ast>, XPathError> {
+    let mut budget = Budget::with_limits(limits);
+    crate::xpath::parse::parse_owned(text, &mut budget).map_err(|_| budget.take_error())
+}
+
+/// Parse `expr` for one query under `cx`'s caps; a failure is the parse's
+/// error as the exception.
 pub fn parse_query(cx: &Cx, expr: Value) -> Result<Box<Ast>, Error> {
     let ev = ruby_verified_text(expr, "XPath expression")?;
-    let mut budget = Budget::with_limits(cx.limits());
     /* `ev` holds the String rooted and locked; `text`'s borrow keeps it live for the
      * parse. */
-    let parsed = crate::xpath::parse::parse_owned(ev.text(), &mut budget);
+    let parsed = parse_with_limits(cx.limits(), ev.text());
     /* No borrowed bytes across the exception's allocation. */
     drop(ev);
-    parsed.map_err(|_| xpath_error(&budget.take_error()))
+    parsed.map_err(|error| xpath_error(&error))
+}
+
+/// The compiled expression one evaluation runs: the query's own, or one an
+/// `XPathContext`'s cache keeps - which frees nothing before the context goes,
+/// so it outlives an evaluation on that context.
+pub struct QueryAst(QueryAstRepr);
+
+enum QueryAstRepr {
+    Owned(Box<Ast>),
+    Cached(NonNull<Ast>),
+}
+
+impl QueryAst {
+    /// An AST the query owns, freed when this is.
+    pub fn owned(ast: Box<Ast>) -> Self {
+        QueryAst(QueryAstRepr::Owned(ast))
+    }
+
+    /// An AST someone else owns.
+    ///
+    /// # Safety
+    /// `ast` stays alive and unchanged until this value is dropped - as an
+    /// `XPathContext`'s cached AST does for an evaluation on that context.
+    unsafe fn cached(ast: &Ast) -> Self {
+        QueryAst(QueryAstRepr::Cached(NonNull::from(ast)))
+    }
+
+    fn get(&self) -> &Ast {
+        match &self.0 {
+            QueryAstRepr::Owned(ast) => ast,
+            // SAFETY: alive and unchanged for this value's life, per `cached`.
+            QueryAstRepr::Cached(ast) => unsafe { ast.as_ref() },
+        }
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -288,8 +325,9 @@ fn value_to_ruby(v: XPathValue, document: Value) -> Result<Value, Error> {
 /* the query path every entry point shares                            */
 /* ------------------------------------------------------------------ */
 /* `Node#xpath` / `#at_xpath` for both representations, the XML `#css` family
- * and `XPathContext#evaluate` all run parse -> evaluate -> convert through
- * these three; they differ only in how the context is built and who owns it. */
+ * and `XPathContext#evaluate` all parse, then end in `evaluate_to_ruby`; they
+ * differ only in how the context is built and who owns it. The XML `matches?`
+ * reads a boolean from `evaluate_query` and converts nothing. */
 
 /// Evaluate `ast` under `ctx`, with `handler` (if any) answering unknown
 /// functions for this evaluation only. [`Answer::First`] takes the `at_xpath` fast
@@ -317,7 +355,6 @@ pub fn evaluate_query(
         Some(handler) => Some(Bridge {
             handler: handler.as_raw(),
             document: document.as_raw(),
-            kind: ctx.doc_kind(),
             _reading: crate::bridge::wrapper::DocumentEvaluation::enter(document)?,
             raised: core::cell::OnceCell::new(),
         }),
@@ -340,6 +377,27 @@ pub fn evaluate_query(
         Some(e) => with_cause(xpath_error(&error), &e),
         None => xpath_error(&error),
     })
+}
+
+/// Evaluate `ast` under `ctx` and convert the value for Ruby: every query that
+/// answers a Ruby value - `Node#xpath` / `#at_xpath`, the XML `#css` family,
+/// `XPathContext#evaluate` - ends here.
+///
+/// The AST and the context - owned (`Cx`, a query's throwaway) or borrowed
+/// (`&Cx`, an `XPathContext`'s) - are dropped BEFORE the conversion, which
+/// allocates Ruby objects and so may raise or collect: the value owns its data
+/// and references neither, so nothing is held that a raise would leak.
+pub fn evaluate_to_ruby<C: core::borrow::Borrow<Cx>>(
+    ctx: C,
+    ast: QueryAst,
+    handler: Option<Value>,
+    document: Value,
+    answer: Answer,
+) -> Result<Value, Error> {
+    let value = evaluate_query(ctx.borrow(), ast.get(), handler, document, answer);
+    drop(ast);
+    drop(ctx);
+    query_result(value?, document, answer)
 }
 
 /// `error` with `cause` - the handler's own StandardError - as its `#cause`.

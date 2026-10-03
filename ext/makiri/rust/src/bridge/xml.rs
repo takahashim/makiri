@@ -37,6 +37,7 @@ use crate::init::{
 };
 use crate::lexbor::adapter::cross_import::cross_html_to_xml;
 use crate::node_type::NodeType as CrateKind;
+use crate::xml::attr_key::AttrKey;
 use crate::xml::model::{ArenaKind, Document as XmlDoc, MutError, NodeId, ParseError, ParseLimits};
 use crate::xml::mutate::{clone_node, copy_node_from, import_subtree, remove as remove_node};
 use crate::xml::qname::NsDeclError;
@@ -331,7 +332,7 @@ impl Editing {
     /// runs `#to_s`, and a query there rebuilt the index from the tree about to
     /// change - `//a` then kept finding an element renamed to `b`.
     ///
-    /// It counts as a change to a child list ([`bump_tree_version`]); an
+    /// It counts as a change to a child list ([`record_edit`]); an
     /// attribute edit takes [`Editing::with_attributes`] instead, and a
     /// character-data edit [`Editing::with_data`].
     pub fn with_arena<R>(&self, f: impl FnOnce(&mut XmlDoc, NodeId) -> R) -> Result<R, Error> {
@@ -340,7 +341,7 @@ impl Editing {
 
     /// [`Editing::with_arena`] for an edit of ATTRIBUTES only - an element's,
     /// or an Attr node's value - which changes no child list: it counts
-    /// towards the attribute version ([`bump_attribute_version`]) instead of
+    /// towards the attribute version ([`record_edit`]) instead of
     /// the tree version.
     pub fn with_attributes<R>(&self, f: impl FnOnce(&mut XmlDoc, NodeId) -> R) -> Result<R, Error> {
         self.lend(EditKind::Attributes, f)
@@ -367,7 +368,7 @@ impl Editing {
         /* After the arena call, which refuses an evaluated document first -
          * and that, like the frozen check, leaves the tree as it was. */
         if r.is_ok() {
-            count_edit(self.document, kind);
+            record_edit(self.document, kind);
         }
         r
     }
@@ -379,7 +380,7 @@ pub fn begin_edit(this: XmlSelf) -> Result<Editing, Error> {
     check_frozen(this.value)?;
     /* The evaluation guard, checked now so it is reported before a bad
      * argument; `with_arena` checks it again at the change. */
-    with_arena_for_new_node(this.document, |_| ())?;
+    ensure_document_mutable(this.document)?;
     /* Before any argument is converted: see `account_growth`. */
     crate::bridge::wrapper::account_growth(this.document);
     Ok(Editing {
@@ -576,7 +577,8 @@ pub fn fragment_into(
 /* attribute lookup                                                   *
  * ------------------------------------------------------------------ */
 
-/// The attribute of `el` whose qualified name is exactly the verified `name`.
+/// The attribute of `el` whose qualified name is exactly the verified `name`
+/// (`AttrKey::find_in`, which counts namespace declarations as the DOM does).
 ///
 /// `None` for a non-element (the name is then not even verified, matching the
 /// readers' nil-returning behaviour). The name is converted BEFORE the arena is
@@ -588,8 +590,7 @@ pub fn find_attribute(this: XmlSelf, name: Value) -> Result<Option<NodeId>, Erro
         return Ok(None);
     }
     let nv = ruby_verified_text(name, "attribute name")?;
-    let bytes = nv.as_bytes();
-    Ok(find_attribute_bytes(this.doc_ref(), id, bytes))
+    Ok(AttrKey::QName(nv.as_bytes()).find_in(this.doc_ref(), id))
 }
 
 /// The attribute of `el` in namespace `ns` (nil or "" for none) with local
@@ -603,25 +604,11 @@ pub fn find_attribute_ns(this: XmlSelf, ns: Value, local: Value) -> Result<Optio
     }
     let lv = ruby_verified_text(local, "attribute local name")?;
     let nv = crate::bridge::string::namespace_arg(ns, "namespace")?;
-    let key = crate::xml::attr_key::AttrKey::Ns {
+    let key = AttrKey::Ns {
         ns: nv.as_ref().map_or(&b""[..], |n| n.as_bytes()),
         local: lv.as_bytes(),
     };
-    let d = this.doc_ref();
-    Ok(d.attributes(id).find(|&a| key.matches(d, a)))
-}
-
-/// The attribute of `el` whose qualified name is `name`.
-///
-/// Namespace declarations included: in the DOM an `xmlns` / `xmlns:p` is an
-/// attribute, so `node["xmlns:p"]` reads it as `getAttribute` does. XPath's data
-/// model is the one that hides them (`xml::xpath` skips them on the attribute
-/// axis), which is why `@xmlns:p` finds nothing while this does.
-fn find_attribute_bytes(d: &XmlDoc, el: NodeId, name: &[u8]) -> Option<NodeId> {
-    if d.type_(el) != Some(ArenaKind::Element) {
-        return None;
-    }
-    d.attributes(el).find(|&id| d.qname(id) == name)
+    Ok(key.find_in(this.doc_ref(), id))
 }
 
 /* ------------------------------------------------------------------ */
@@ -660,7 +647,7 @@ impl Adoption {
             remove_node(sdoc, self.src);
         }
         sdoc.invalidate_name_index();
-        bump_tree_version(self.src_document);
+        record_edit(self.src_document, EditKind::ChildList);
     }
 }
 

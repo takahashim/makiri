@@ -22,11 +22,10 @@ use crate::bridge::ruby::makiri_error;
 use crate::bridge::string::ruby_try_verified_text_pair;
 use crate::bridge::wrapper::keepalive_document;
 use crate::bridge::xpath::{
-    context_for, evaluate_query, parse_query, query_result, Answer, Cx, XPathCtx,
+    context_for, evaluate_to_ruby, parse_query, Answer, Cx, QueryAst, XPathCtx,
 };
 use crate::glue::kwargs::Kwargs;
 use crate::init::{MOD_HTML_NODE_METHODS, MOD_XML_NODE_METHODS};
-use crate::xpath::ast::Ast;
 
 /// A query's arguments, read once for every entry point.
 pub struct QueryArgs {
@@ -243,24 +242,6 @@ pub fn query_context(rb_self: Value, document: Value, q: &QueryArgs) -> Result<C
     Ok(ctx)
 }
 
-/// Evaluate `ast` under `ctx` and convert the value for Ruby.
-///
-/// Both are taken by value and dropped BEFORE the conversion, which allocates
-/// Ruby objects and so may raise or collect: the value owns its data and
-/// references neither, so nothing is held that a raise would leak.
-pub fn run_query(
-    ctx: Cx,
-    ast: Box<Ast>,
-    handler: Option<Value>,
-    document: Value,
-    answer: Answer,
-) -> Result<Value, Error> {
-    let value = evaluate_query(&ctx, &ast, handler, document, answer);
-    drop(ast);
-    drop(ctx);
-    query_result(value?, document, answer)
-}
-
 /// A throwaway context per call, so `Node#xpath` caches nothing;
 /// `Makiri::XPathContext` is what a caller reaches for when many queries share
 /// one namespace set and one set of compiled expressions.
@@ -270,7 +251,7 @@ fn xpath_run(rb_self: Value, q: QueryArgs, answer: Answer) -> Result<Value, Erro
     /* Parsed AFTER the namespaces are registered: that step runs Ruby and may
      * collect, and the borrowed expression bytes must not be live across it. */
     let ast = parse_query(&ctx, q.text)?;
-    run_query(ctx, ast, q.handler, document, answer)
+    evaluate_to_ruby(ctx, QueryAst::owned(ast), q.handler, document, answer)
 }
 
 fn node_xpath(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {

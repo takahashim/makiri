@@ -21,10 +21,10 @@ use core::ffi::{c_int, c_long};
 use crate::bridge::ruby::makiri_error;
 use magnus::rb_sys::AsRawValue;
 use magnus::{Error, RString};
-use rb_sys::{rb_encoding, VALUE};
+use rb_sys::VALUE;
 
 use super::ruby::exception_message;
-use super::string::{ruby_bytes_view, text_check};
+use super::string::{ruby_bytes_view, text_check, Encoding};
 use crate::init::{EXC_XML_LIMIT_EXCEEDED, EXC_XML_SYNTAX_ERROR};
 use crate::xml::encoding_sniff::sniff;
 
@@ -41,72 +41,62 @@ unsafe extern "C" fn strict_transcode_thunk(str: VALUE) -> VALUE {
     )
 }
 
-/// `rb_enc_find` for a name the sniffers produced; null for one Ruby does not
-/// know, which is not an error here. May autoload an encoding - a GC point - so
-/// it runs only once every borrow of the input is over.
-///
-/// `rb_enc_find` wants a C string and a sniffed name is bytes, so the NUL is
-/// added HERE rather than in the sniffer, whose business is byte reading. A name
-/// too long to fit, or holding a NUL, is not an encoding Ruby knows, so it reads
-/// as "none" explicitly instead of being silently truncated at the NUL.
-unsafe fn find_encoding(name: &[u8]) -> *mut rb_encoding {
-    let mut buf = [0u8; 64];
-    if name.is_empty() || name.len() >= buf.len() || name.contains(&0) {
-        return core::ptr::null_mut();
-    }
-    buf[..name.len()].copy_from_slice(name);
-    match core::ffi::CStr::from_bytes_with_nul(&buf[..name.len() + 1]) {
-        Ok(c) => rb_sys::rb_enc_find(c.as_ptr()),
-        Err(_) => core::ptr::null_mut(),
-    }
-}
-
 /// Two encodings agree, for conflict purposes, when identical or when either is
 /// US-ASCII (a subset of UTF-8 and of the single-byte encodings).
-unsafe fn compatible(a: *mut rb_encoding, b: *mut rb_encoding) -> bool {
-    a == b || a == rb_sys::rb_usascii_encoding() || b == rb_sys::rb_usascii_encoding()
+fn compatible(a: Encoding, b: Encoding) -> bool {
+    a == b || a.is_usascii() || b.is_usascii()
 }
 
-/// Phase 1: the input's single effective byte encoding (XML 1.0 Appendix F).
-///
-/// A BOM wins, else the `<?xml encoding=?>` declaration, else the String's own
-/// declared encoding - except ASCII-8BIT and US-ASCII, which claim no encoding
-/// for the document and so are decoded by whatever was detected. Any
-/// disagreement between the three is a fatal `Makiri::XML::SyntaxError`, so the
-/// caller only ever sees one self-consistent answer.
+/// Whether a String's own tag claims no encoding for the document it holds:
+/// ASCII-8BIT, and US-ASCII - an XML rule, not the HTML reader's. A String
+/// tagged either is decoded by what its bytes declare (the BOM, then
+/// `encoding=`), and validated as UTF-8 when they declare nothing.
 ///
 /// US-ASCII is in that group because it is what a String gets with no claim
 /// behind it - `File.read` under `LANG=C` - not a promise about the bytes: a
 /// UTF-16 file with its BOM, or a Latin-1 one declaring ISO-8859-1, read that
 /// way was validated as UTF-8 and refused, where the same bytes tagged
-/// ASCII-8BIT decoded. With neither a BOM nor a declaration both still end up
-/// validated as UTF-8, of which US-ASCII is a subset.
-unsafe fn effective_encoding(str: RString) -> Result<*mut rb_encoding, Error> {
-    let tag = rb_sys::rb_enc_get(str.as_raw());
+/// ASCII-8BIT decoded.
+fn claims_no_encoding(tag: Encoding) -> bool {
+    tag.is_ascii8bit() || tag.is_usascii()
+}
+
+/// Phase 1: the input's single effective byte encoding (XML 1.0 Appendix F).
+///
+/// A BOM wins, else the `<?xml encoding=?>` declaration, else the String's own
+/// declared encoding - unless that claims none ([`claims_no_encoding`]), when
+/// the input is decoded by whatever was detected. Any disagreement between the
+/// three is a fatal `Makiri::XML::SyntaxError`, so the caller only ever sees one
+/// self-consistent answer.
+fn effective_encoding(str: RString) -> Result<Encoding, Error> {
+    let tag = Encoding::of(str);
     /* Read everything first, while the bytes are borrowed and nothing can run
      * a GC; the name lookups - which can - come after the borrow ends. */
     let (bom, decl) = {
-        let anchor = ruby_bytes_view(str);
-        let raw = anchor.bytes();
-        sniff(raw)
+        // SAFETY: a live String, by type; the view, and the bytes borrowed
+        // from it, are dropped before the lookups below can allocate.
+        unsafe {
+            let anchor = ruby_bytes_view(str);
+            sniff(anchor.bytes())
+        }
     };
-    let bom = bom.map_or(core::ptr::null_mut(), |b| {
-        find_encoding(b.name().as_bytes())
-    });
-    let decl = decl.map_or(core::ptr::null_mut(), |d| find_encoding(d.as_bytes()));
-    let is_binary = tag == rb_sys::rb_ascii8bit_encoding() || tag == rb_sys::rb_usascii_encoding();
+    let bom = bom.and_then(|b| Encoding::find(b.name().as_bytes()));
+    let decl = decl.and_then(|d| Encoding::find(d.as_bytes()));
+    let claimed = !claims_no_encoding(tag);
 
-    if !bom.is_null() && !decl.is_null() && !compatible(bom, decl) {
-        return Err(syntax_error(
-            "XML encoding conflict: the byte-order mark and the encoding declaration disagree",
-        ));
+    if let (Some(b), Some(d)) = (bom, decl) {
+        if !compatible(b, d) {
+            return Err(syntax_error(
+                "XML encoding conflict: the byte-order mark and the encoding declaration disagree",
+            ));
+        }
     }
-    if !is_binary && !bom.is_null() && !compatible(bom, tag) {
+    if claimed && bom.is_some_and(|b| !compatible(b, tag)) {
         return Err(syntax_error(
             "XML encoding conflict: the byte-order mark disagrees with the string's encoding",
         ));
     }
-    if !is_binary && !decl.is_null() && !compatible(decl, tag) {
+    if claimed && decl.is_some_and(|d| !compatible(d, tag)) {
         /* A concrete String encoding is authoritative for decoding, so the
          * declaration is not used to transcode - but one naming a different
          * encoding than the String carries (a Shift_JIS String declaring
@@ -117,16 +107,10 @@ unsafe fn effective_encoding(str: RString) -> Result<*mut rb_encoding, Error> {
         ));
     }
 
-    if !is_binary {
+    if claimed {
         return Ok(tag);
     }
-    if !bom.is_null() {
-        return Ok(bom);
-    }
-    if !decl.is_null() {
-        return Ok(decl);
-    }
-    Ok(rb_sys::rb_utf8_encoding())
+    Ok(bom.or(decl).unwrap_or_else(Encoding::utf8))
 }
 
 /// A `Makiri::XML::SyntaxError` carrying `msg`.
@@ -152,19 +136,16 @@ fn decoded_string(v: VALUE) -> Result<RString, Error> {
 unsafe fn xml_decode_input(str: RString, max_bytes: Option<usize>) -> Result<RString, Error> {
     let eff = effective_encoding(str)?;
 
-    /* Phase 2: decode to UTF-8, strictly. UTF-8 / US-ASCII / ASCII-8BIT are
-     * already UTF-8 bytes (validated below); anything else is transcoded in a
-     * mode that raises instead of substituting U+FFFD. */
-    let s = if eff == rb_sys::rb_utf8_encoding()
-        || eff == rb_sys::rb_usascii_encoding()
-        || eff == rb_sys::rb_ascii8bit_encoding()
-    {
+    /* Phase 2: decode to UTF-8, strictly. What is read as UTF-8 bytes is
+     * validated below; anything else is transcoded in a mode that raises
+     * instead of substituting U+FFFD. */
+    let s = if eff.reads_as_utf8_bytes() {
         str
     } else {
         let mut input = str.as_raw();
-        if rb_sys::rb_enc_get(input) != eff {
+        if Encoding::of(str) != eff {
             input = rb_sys::rb_str_dup(input);
-            rb_sys::rb_enc_associate(input, eff);
+            rb_sys::rb_enc_associate(input, eff.as_raw());
         }
         let mut state: c_int = 0;
         let out = rb_sys::rb_protect(Some(strict_transcode_thunk), input, &mut state);

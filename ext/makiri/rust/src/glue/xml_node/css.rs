@@ -14,10 +14,10 @@ use magnus::{method, prelude::*, Error, RHash, Ruby, Value};
 
 use crate::bridge::string::ruby_verified_text;
 use crate::bridge::wrapper::keepalive_document;
-use crate::bridge::xpath::{evaluate_query, xpath_error, Answer, Cx};
+use crate::bridge::xpath::{evaluate_query, evaluate_to_ruby, xpath_error, Answer, Cx, QueryAst};
 use crate::css::{CssNs, Form, DEFAULT_NS_PREFIX};
 use crate::engine_error::ErrorKind;
-use crate::glue::query::{query_context, run_query, QueryArgs};
+use crate::glue::query::{query_context, QueryArgs};
 use crate::init::MOD_XML_NODE_METHODS;
 use crate::xpath::ast::Ast;
 use crate::xpath::ctx::XPathValue;
@@ -67,7 +67,7 @@ fn css_run(ruby: &Ruby, rb_self: Value, q: QueryArgs, answer: Answer) -> Result<
     let document = keepalive_document(rb_self)?;
     let ctx = query_context(rb_self, document, &q)?;
     let ast = compile(ruby, &ctx, &q, Form::Select)?;
-    run_query(ctx, ast, q.handler, document, answer)
+    evaluate_to_ruby(ctx, QueryAst::owned(ast), q.handler, document, answer)
 }
 
 fn css(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Result<Value, Error> {
