@@ -542,6 +542,36 @@ pub fn attribute_value_by_qualified_name(
     })
 }
 
+/// `#attribute_value_ns(ns, local)` (DOM `getAttributeNS`): the value of the
+/// attribute in namespace `ns` (nil or "" for none) with local name `local`,
+/// or nil - for a non-element too. The key `remove_attribute_ns` removes by.
+pub fn attribute_value_ns(
+    _ruby: &Ruby,
+    this: super::HtmlSelf,
+    rb_ns: Value,
+    rb_local: Value,
+) -> Result<Option<Value>, Error> {
+    crate::bridge::ruby::entry(|| {
+        let Some(el) = this.node().element() else {
+            return Ok(None);
+        };
+        let lv = ruby_verified_text(rb_local, "attribute local name")?;
+        let nv = crate::bridge::string::namespace_arg(rb_ns, "namespace")?;
+        /* Looked up, not interned: a namespace the document never interned is
+         * one no attribute here carries. */
+        let want_ns = match nv.as_ref() {
+            Some(uri) => match el.node().owner_document().lookup_ns(uri.as_bytes()) {
+                Some(id) => Some(id),
+                None => return Ok(None),
+            },
+            None => None,
+        };
+        let value = el.attr_by_ns(want_ns, lv.as_bytes()).map(|at| at.value());
+        drop((lv, nv));
+        Ok(value.map(dom_str))
+    })
+}
+
 /// `attr.value`. For a non-attribute node this falls back to text content,
 /// matching the loose Nokogiri-ish meaning of `#value`.
 pub fn value(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
