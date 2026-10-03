@@ -4,12 +4,6 @@
 
 ### Added
 
-* `Node#interned_local_name`, `#interned_namespace_uri` and
-  `#interned_tag_name` (HTML and XML): the same answers as `local_name`,
-  `namespace_uri` and `tag_name`, as interned, frozen Strings - the same
-  object for the same name, with no allocation per read. The plain readers
-  still return a fresh, unfrozen String.
-
 * `Document#tree_version` (HTML and XML): an Integer that grows with every
   edit that can change a child list of a node the document owns - attached,
   detached or in a fragment - and on both documents of a move between them.

@@ -40,12 +40,6 @@ pub fn dom_str(bytes: &[u8]) -> Value {
     unsafe { value(crate::bridge::string::ruby_str_from_utf8(bytes)) }
 }
 
-/// [`dom_str`]'s interned, frozen twin, for the `interned_*` name readers.
-pub fn dom_interned_str(bytes: &[u8]) -> Value {
-    // SAFETY: valid UTF-8 by the text-input contract; the String copies it.
-    unsafe { value(crate::bridge::string::ruby_interned_str_from_utf8(bytes)) }
-}
-
 /// The indexed descendant text of `node` as one Ruby String.
 ///
 /// `Ok(None)` when the text index cannot serve this node (it is outside the
