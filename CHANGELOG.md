@@ -9,10 +9,6 @@
   `element_children` answer, without building a NodeSet. An index no child
   has (negative or past the end) is nil; a non-Integer is a `TypeError`.
 
-* `Node#root_node` (HTML and XML): the DOM's `getRootNode()` - the Document,
-  a DocumentFragment (a template's contents included), or the top of a
-  detached subtree - in one call. An attribute is its own root.
-
 * `Node#interned_local_name`, `#interned_namespace_uri` and
   `#interned_tag_name` (HTML and XML): the same answers as `local_name`,
   `namespace_uri` and `tag_name`, as interned, frozen Strings - the same

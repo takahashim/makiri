@@ -415,24 +415,6 @@ pub fn element_children(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Er
     crate::bridge::ruby::entry(|| set_of(this.document, this.node().children(), true))
 }
 
-/// `#root_node` (DOM `getRootNode()`, not shadow-including): the node the
-/// parent links end at - the Document for a connected node, a
-/// DocumentFragment (a template's contents included) for one inside it, or
-/// the topmost node of a detached subtree. An attribute is its own root, as
-/// the DOM gives it no parent.
-pub fn root_node(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        let mut root = this.node();
-        if root.attr().is_some() {
-            return Ok(this.value);
-        }
-        while let Some(p) = root.parent() {
-            root = p;
-        }
-        Ok(wrap_node(Some(root), this.document)?.unwrap_or(this.value))
-    })
-}
-
 /// `#ancestors`: the ancestor elements, nearest first.
 pub fn ancestors(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| set_of(this.document, this.node().ancestors(), true))

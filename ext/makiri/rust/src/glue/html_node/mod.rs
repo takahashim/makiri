@@ -109,7 +109,6 @@ fn init_read() -> Result<(), Error> {
     m.define_method("child_at", method!(read::child_at, 1))?;
     m.define_method("element_child_at", method!(read::element_child_at, 1))?;
     m.define_method("ancestors", method!(read::ancestors, 0))?;
-    m.define_method("root_node", method!(read::root_node, 0))?;
 
     m.define_method("[]", method!(read::aref, 1))?;
     m.define_method("key?", method!(read::has_key, 1))?;
