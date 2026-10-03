@@ -1,0 +1,252 @@
+# frozen_string_literal: true
+
+require "spec_helper"
+
+# The API an HTML and an XML Document answer alike, for a caller building a
+# DOM over both: createElementNS, the attribute version, "no namespace is nil",
+# and the HTML Document's empty constructor and compat mode.
+RSpec.describe "HTML and XML Document APIs" do
+  XHTML = "http://www.w3.org/1999/xhtml"
+  XMLNS = "http://www.w3.org/2000/xmlns/"
+
+  documents = {
+    "HTML" => -> { Makiri::HTML("<p>") },
+    "XML" => -> { Makiri::XML::Document.new },
+  }
+
+  describe "Document#create_element_ns" do
+    documents.each do |kind, make|
+      context kind do
+        let(:doc) { make.call }
+
+        it "splits at the first colon and keeps the case" do
+          el = doc.create_element_ns("urn:u", "a:B:c")
+          expect([el.name, el.prefix, el.local_name, el.namespace_uri]).to eq(["a:B:c", "a", "B:c", "urn:u"])
+          el = doc.create_element_ns(nil, "fooBar")
+          expect([el.name, el.prefix, el.local_name, el.namespace_uri]).to eq(["fooBar", nil, "fooBar", nil])
+        end
+
+        it "takes the DOM's names, which are looser than XML's" do
+          expect(doc.create_element_ns(nil, "f}oo").name).to eq("f}oo")
+        end
+
+        it "raises ArgumentError for a name the DOM refuses" do
+          ["1bad", "a b", ":x", "x:", ""].each do |q|
+            expect { doc.create_element_ns("urn:u", q) }.to raise_error(ArgumentError), q.inspect
+          end
+        end
+
+        it "raises Makiri::Error for a namespace that does not fit the name" do
+          [[nil, "p:x"], ["urn:u", "xml:x"], ["urn:u", "xmlns:x"], [XMLNS, "x"]].each do |ns, q|
+            expect { doc.create_element_ns(ns, q) }.to raise_error(Makiri::Error, /does not fit/), q
+          end
+          expect(doc.create_element_ns(XMLNS, "xmlns:x").namespace_uri).to eq(XMLNS)
+        end
+
+        it "reads nil and an empty namespace alike as no namespace" do
+          [nil, ""].each do |ns|
+            expect(doc.create_element_ns(ns, "x").namespace_uri).to be_nil
+          end
+        end
+      end
+    end
+
+    context "XML" do
+      let(:doc) { Makiri::XML('<r xmlns:p="urn:other"/>') }
+
+      it "keeps the namespace it was given wherever the element is inserted" do
+        el = doc.create_element_ns("urn:u", "p:x")
+        doc.root << el
+        expect(el.namespace_uri).to eq("urn:u")
+        expect(doc.root.to_xml).to eq(%(<r xmlns:p="urn:other"><p:x xmlns:p="urn:u"/></r>))
+        bare = doc.create_element_ns(nil, "y")
+        el << bare
+        expect(bare.namespace_uri).to be_nil
+      end
+
+      it "makes an element XML cannot name, which to_xml then refuses" do
+        doc.root << doc.create_element_ns(nil, "f}oo")
+        expect { doc.to_xml }.to raise_error(Makiri::Error, /DOM-loose/)
+      end
+
+      it "makes what create_loose_dom_element made" do
+        made = doc.create_element_ns("urn:u", "a:b:c")
+        loose = doc.create_loose_dom_element("a:b:c", "a", "b:c", "urn:u")
+        expect([made.name, made.prefix, made.local_name, made.namespace_uri])
+          .to eq([loose.name, loose.prefix, loose.local_name, loose.namespace_uri])
+      end
+    end
+  end
+
+  describe "Document#attribute_version" do
+    def bumps(doc)
+      before = [doc.attribute_version, doc.tree_version]
+      yield
+      expect(doc.attribute_version).to be > before[0]
+      expect(doc.tree_version).to eq(before[1])
+    end
+
+    def keeps(doc)
+      before = doc.attribute_version
+      yield
+      expect(doc.attribute_version).to eq(before)
+    end
+
+    it "is an Integer read without allocating" do
+      doc = Makiri::HTML("<p>")
+      expect(doc.attribute_version).to be_a(Integer)
+      doc.attribute_version
+      before = GC.stat(:total_allocated_objects)
+      100.times { doc.attribute_version }
+      expect(GC.stat(:total_allocated_objects) - before).to be < 10
+    end
+
+    context "HTML" do
+      let(:doc) { Makiri::HTML(%(<div><p a="1">t</p></div>)) }
+      let(:para) { doc.at_css("p") }
+
+      it "grows with every attribute edit, and only with those" do
+        bumps(doc) { para["b"] = "2" }
+        bumps(doc) { para["b"] = "2" }
+        bumps(doc) { para.set_loose_dom_attribute("v:x", "1") }
+        bumps(doc) { para.set_attribute_ns("urn:k", "k:a", "1") }
+        bumps(doc) { para.remove_attribute_ns("urn:k", "a") }
+        bumps(doc) { para.delete("b") }
+        bumps(doc) { para.attribute_nodes.first.content = "3" }
+        bumps(doc) { doc.create_element("q")["x"] = "1" }
+      end
+
+      it "is left alone by child-list and character-data edits and by reads" do
+        keeps(doc) do
+          para << doc.create_element("b")
+          para.child.content = "data"
+          para.content = "x"
+          para.remove
+          doc.css("p")
+          para["a"]
+        end
+      end
+    end
+
+    context "XML" do
+      let(:doc) { Makiri::XML(%(<r xmlns:k="urn:k"><p a="1">t</p></r>)) }
+      let(:para) { doc.root.at_xpath("p") }
+
+      it "grows with every attribute edit, and only with those" do
+        bumps(doc) { para["b"] = "2" }
+        bumps(doc) { para["b"] = "2" }
+        bumps(doc) { para.set_loose_dom_attribute("v:x", "1") }
+        bumps(doc) { para.set_attribute_ns("urn:k", "k:c", "3") }
+        bumps(doc) { para.remove_attribute_ns("urn:k", "c") }
+        bumps(doc) { para.delete("b") }
+        bumps(doc) { doc.create_element("q")["x"] = "1" }
+      end
+
+      it "is left alone by child-list and character-data edits" do
+        keeps(doc) do
+          para << doc.create_element("b")
+          para.child.content = "data"
+          para.content = "x"
+          para.remove
+        end
+      end
+    end
+
+    # The cache's promise: while the version stands still, every attribute is
+    # as it was.
+    {
+      "HTML" => -> { Makiri::HTML("<div a=1><p b=2>a</p><p>b</p></div>") },
+      "XML" => -> { Makiri::XML("<r a='1'><p b='2'>a</p><p>b</p></r>") },
+    }.each do |kind, make|
+      it "an unchanged version means unchanged attributes (#{kind})" do
+        rng = Random.new(20_261_003)
+        doc = make.call
+        nodes = [doc.root, *doc.root.children.select(&:element?)]
+        snapshot = -> { nodes.map { |n| n.attribute_nodes.map { [_1.name, _1.value] } } }
+        300.times do
+          before = [doc.attribute_version, snapshot.call]
+          n = nodes.sample(random: rng)
+          case rng.rand(5)
+          when 0 then n["a#{rng.rand(3)}"] = "v#{rng.rand(2)}"
+          when 1 then n.delete("a#{rng.rand(3)}")
+          when 2 then n.set_loose_dom_attribute("x:#{rng.rand(2)}", "v")
+          when 3 then n << doc.create_element("c")
+          when 4 then n.content = "t"
+          end
+          expect(doc.attribute_version).to be > before[0] if snapshot.call != before[1]
+        end
+      end
+    end
+  end
+
+  # No namespace and no prefix read as nil, never as "".
+  describe "namespace_uri and prefix without a namespace" do
+    it "are nil on elements and attributes, however they were made" do
+      xml = Makiri::XML(%(<r xmlns:p="u" a="1"><b xmlns=""/></r>))
+      html = Makiri::HTML("<p>")
+      html.at_css("p")["a"] = "1"
+      els = [xml.root.children.first, xml.create_element_ns("", "x"), html.create_element_ns("", "x"),
+             xml.create_element("x"),]
+      [xml.root, html.at_css("p")].each do |e|
+        e.set_attribute_ns("", "c", "1")
+        e.set_attribute_ns(nil, "d", "1")
+      end
+      attrs = [xml.root, html.at_css("p")].flat_map { |e| e.attribute_nodes.reject { _1.name.start_with?("xmlns") } }
+      expect(attrs.size).to be >= 5
+      expect((els + attrs).map { [_1.namespace_uri, _1.prefix] }.uniq).to eq([[nil, nil]])
+      expect([xml.root.prefix, html.at_css("p").prefix]).to eq([nil, nil])
+    end
+  end
+
+  describe "Makiri::HTML::Document.new" do
+    let(:doc) { Makiri::HTML::Document.new }
+
+    it "is an empty HTML document in no-quirks mode" do
+      expect(doc).to be_a(Makiri::HTML::Document)
+      expect(doc.children.size).to eq(0)
+      expect(doc.root).to be_nil
+      expect([doc.quirks_mode, doc.quirks_mode?, doc.compat_mode]).to eq([0, false, "CSS1Compat"])
+      expect([doc.to_html, doc.text, doc.title, doc.body]).to eq(["", "", "", nil])
+    end
+
+    it "builds into a document that queries and serializes like a parsed one" do
+      doc << doc.create_document_type("html")
+      html = doc.create_element("html")
+      doc << html
+      html << doc.create_element("body")
+      doc.body.inner_html = %(<p class="a">x</p>)
+      expect(doc.to_html).to eq(%(<!DOCTYPE html><html><body><p class="a">x</p></body></html>))
+      expect(doc.css("p.a").size).to eq(1)
+      expect(doc.at_xpath("//p").text).to eq("x")
+      expect(doc.at_css("p").line).to be_nil
+    end
+
+    it "takes no title or charset while it has no root, and dups as empty" do
+      doc.title = "t"
+      doc.meta_encoding = "utf-8"
+      expect(doc.children.size).to eq(0)
+      expect(doc.dup.children.size).to eq(0)
+    end
+
+    it "survives a GC.compact with live wrappers" do
+      docs = Array.new(20) { Makiri::HTML::Document.new.tap { _1 << _1.create_element("html") } }
+      GC.start
+      GC.compact if GC.respond_to?(:compact)
+      expect(docs.map { _1.root.name }.uniq).to eq(["html"])
+    end
+  end
+
+  describe "HTML Document#quirks_mode? and #compat_mode" do
+    {
+      "<p>" => [1, true, "BackCompat"],
+      "<!DOCTYPE html>" => [0, false, "CSS1Compat"],
+      '<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">' =>
+        [2, false, "CSS1Compat"],
+    }.each do |source, expected|
+      it "reads #{expected.last} for #{source[0, 30]}" do
+        doc = Makiri::HTML(source)
+        expect([doc.quirks_mode, doc.quirks_mode?, doc.compat_mode]).to eq(expected)
+      end
+    end
+  end
+end

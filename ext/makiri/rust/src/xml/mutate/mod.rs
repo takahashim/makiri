@@ -30,7 +30,7 @@ pub use attr::{
 pub use copy::{clone_node, copy_node_from, import_subtree};
 pub use edit::set_content;
 pub use factory::{
-    new_chardata, new_document_type, new_element, new_element_in, new_fragment,
+    new_chardata, new_document_type, new_dom_element_ns, new_element, new_element_in, new_fragment,
     new_loose_dom_element, new_pi,
 };
 pub use insert::{

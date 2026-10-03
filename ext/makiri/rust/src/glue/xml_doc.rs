@@ -144,6 +144,10 @@ pub fn init_xml_doc() -> Result<(), Error> {
         "tree_version",
         method!(crate::glue::node::document_tree_version, 0),
     )?;
+    doc.define_method(
+        "attribute_version",
+        method!(crate::glue::node::document_attribute_version, 0),
+    )?;
 
     CLASS_XML_DOCUMENT_FRAGMENT
         .defined()?

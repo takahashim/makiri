@@ -69,6 +69,26 @@ pub fn new_loose_dom_element(
     Ok(el)
 }
 
+/// The DOM's `createElementNS` element, its name already held to the DOM's
+/// rule and split by it (`sp`), in `ns` ("" = none) decided now. A name that is
+/// also an XML QName, split the same way, is an ordinary element
+/// ([`new_element_in`]) that `to_xml` writes; any other is DOM-loose
+/// ([`new_loose_dom_element`]), as the DOM allows and XML cannot write.
+pub fn new_dom_element_ns(
+    doc: &mut Document,
+    name: &[u8],
+    sp: Split,
+    ns: &[u8],
+) -> Result<NodeId, MutError> {
+    let xml_name = split_checked(name)
+        .is_some_and(|x| x == sp && !(x.prefix_len == 5 && name.starts_with(b"xmlns")));
+    if xml_name {
+        new_element_in(doc, name, ns)
+    } else {
+        new_loose_dom_element(doc, name, sp, ns)
+    }
+}
+
 pub fn new_chardata(doc: &mut Document, ty: ArenaKind, text: &[u8]) -> Result<NodeId, MutError> {
     if ty != ArenaKind::Text && ty != ArenaKind::CDataSection && ty != ArenaKind::Comment {
         return Err(MutError::Type);

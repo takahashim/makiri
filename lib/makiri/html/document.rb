@@ -41,7 +41,27 @@ module Makiri
       # The re-parse has no tree-depth limit: the tree is already here, however
       # it was built, and a copy must not fail where the original stands.
       def dup(*)
+        # An empty document (Document.new) would re-parse as an html/head/body
+        # shell.
+        return self.class.new if children.empty?
+
         self.class.parse(to_html, max_tree_depth: -1)
+      end
+
+      # Whether the document is in quirks mode - the mode a missing or legacy
+      # doctype puts it in. Limited-quirks mode is not quirks mode here, as the
+      # DOM's +compatMode+ has it. (#quirks_mode is the raw value: 0 no-quirks,
+      # 1 quirks, 2 limited-quirks.)
+      # @return [Boolean]
+      def quirks_mode?
+        quirks_mode == 1
+      end
+
+      # The DOM's +document.compatMode+: "BackCompat" in quirks mode, else
+      # "CSS1Compat".
+      # @return [String]
+      def compat_mode
+        quirks_mode? ? "BackCompat" : "CSS1Compat"
       end
 
       # The document's <body> element, or nil.
@@ -56,11 +76,13 @@ module Makiri
         at_css("head")
       end
 
-      # Set the document title, creating <title> (in <head>) if absent.
+      # Set the document title, creating <title> (in <head>) if absent. A
+      # document with no root element (Document.new) is left as it is, as the
+      # DOM's title setter leaves it.
       # @param text [String]
       # @return [String]
       def title=(text)
-        ensure_in_head("title", "title").content = text
+        ensure_in_head("title", "title")&.content = text
         text
       end
 
@@ -93,17 +115,22 @@ module Makiri
       # @param value [String]
       # @return [String]
       def meta_encoding=(value)
-        ensure_in_head("meta[charset]", "meta")["charset"] = value
+        ensure_in_head("meta[charset]", "meta")&.[]=("charset", value)
         value
       end
 
       private
 
       # The first node matching +css_query+, or a freshly created <+tag+>
-      # appended to <head> (or the root when the document has no head). Shared by
-      # #title= and #meta_encoding=, which then set content / attributes on it.
+      # appended to <head> (or the root when the document has no head); nil when
+      # there is neither a match nor a root. Shared by #title= and
+      # #meta_encoding=, which then set content / attributes on it.
       def ensure_in_head(css_query, tag)
-        at_css(css_query) || Element.new(tag, self).tap { |el| (head || root).add_child(el) }
+        found = at_css(css_query)
+        return found if found
+
+        parent = head || root
+        parent && Element.new(tag, self).tap { |el| parent.add_child(el) }
       end
     end
   end

@@ -24,6 +24,7 @@ use crate::bridge::string::{
     namespace_arg, ruby_verified_data, ruby_verified_name, ruby_verified_text,
     ruby_verified_text_opt,
 };
+use crate::glue::node::dom_extract as extract;
 use crate::lexbor::adapter::html::{HtmlElementMut, NodeType, Place, RawNode};
 use crate::xml::dom_name;
 
@@ -47,29 +48,6 @@ fn check_dom_name(
         ruby.exception_arg_error(),
         format!("invalid HTML {what} name"),
     ))
-}
-
-/// The refusal of a namespace that does not fit the qualified name it came with.
-const NS_MISFIT: &str =
-    "the namespace does not fit the qualified name (a prefix needs a namespace; \
-xml and xmlns take only their own)";
-
-/// [`dom_name::validate_and_extract`] with its refusals as the method raises
-/// them: `ArgumentError` for a name, `Makiri::Error` for a namespace.
-fn extract<'q>(
-    ruby: &Ruby,
-    ns: &[u8],
-    qname: &'q crate::bridge::string::RubyText,
-    local_ok: fn(&[u8]) -> bool,
-    what: &str,
-) -> Result<(&'q [u8], &'q [u8]), Error> {
-    dom_name::validate_and_extract(ns, qname.as_bytes(), local_ok).map_err(|e| match e {
-        dom_name::ExtractError::Name => Error::new(
-            ruby.exception_arg_error(),
-            format!("invalid HTML {what} name"),
-        ),
-        dom_name::ExtractError::Namespace => makiri_error(NS_MISFIT),
-    })
 }
 
 /// The receiver as an element, once every argument is converted. Its node type
@@ -173,9 +151,9 @@ pub fn set_attribute_ns(
         extract(
             ruby,
             ns,
-            &qv,
+            qv.as_bytes(),
             dom_name::valid_attribute_local_name,
-            "attribute",
+            "HTML attribute",
         )?;
         let el = element_of(edit, REFUSAL)?;
         crate::bridge::html::set_attribute_ns(el, nv.as_ref().map(|n| n.as_bytes()), &qv, &vv)
@@ -209,7 +187,13 @@ pub fn set_content(_ruby: &Ruby, this: HtmlSelf, rb_text: Value) -> Result<Value
     crate::bridge::ruby::entry(|| {
         let edit = edit(&this)?;
         let tv = ruby_verified_data(rb_text, "node content")?;
-        let node = edit.node()?;
+        /* An Attr's content is its value: an attribute edit, which changes no
+         * child list. */
+        let node = if edit.node_type() == NodeType::Attribute {
+            edit.node_for_attributes()?
+        } else {
+            edit.node()?
+        };
         crate::bridge::html::set_text_content(node, &tv)
             .map_err(|_| makiri_error("failed to set node content"))?;
         Ok(rb_text)
@@ -335,8 +319,13 @@ pub fn create_element_ns(
         let nv = namespace_arg(rb_ns, "namespace")?;
         let qv = ruby_verified_name(rb_qname, "element qualified name")?;
         let ns = nv.as_ref().map_or(&b""[..], |n| n.as_bytes());
-        let (prefix, local) =
-            extract(ruby, ns, &qv, dom_name::valid_element_local_name, "element")?;
+        let (prefix, local) = extract(
+            ruby,
+            ns,
+            qv.as_bytes(),
+            dom_name::valid_element_local_name,
+            "HTML element",
+        )?;
         created(
             crate::bridge::html::create_element_ns(doc, local, ns, prefix),
             rb_self,

@@ -337,8 +337,10 @@ impl Editing {
         self.lend(true, f)
     }
 
-    /// [`Editing::with_arena`] for an edit of the element's ATTRIBUTES only,
-    /// which changes no child list and so leaves the tree version alone.
+    /// [`Editing::with_arena`] for an edit of ATTRIBUTES only - an element's,
+    /// or an Attr node's value - which changes no child list: it counts
+    /// towards the attribute version ([`bump_attribute_version`]) instead of
+    /// the tree version.
     pub fn with_attributes<R>(&self, f: impl FnOnce(&mut XmlDoc, NodeId) -> R) -> Result<R, Error> {
         self.lend(false, f)
     }
@@ -356,8 +358,12 @@ impl Editing {
         });
         /* After the arena call, which refuses an evaluated document first -
          * and that, like the frozen check, leaves the tree as it was. */
-        if structural && r.is_ok() {
-            bump_tree_version(self.document);
+        if r.is_ok() {
+            if structural {
+                bump_tree_version(self.document);
+            } else {
+                bump_attribute_version(self.document);
+            }
         }
         r
     }

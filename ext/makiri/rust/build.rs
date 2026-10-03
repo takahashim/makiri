@@ -283,6 +283,7 @@ fn main() {
         .allowlist_function("lxb_dom_document_type_create")
         .allowlist_function("lxb_dom_document_import_node")
         .allowlist_function("lexbor_str_init")
+        .allowlist_function("lxb_html_document_create")
         .allowlist_function("lxb_html_document_destroy")
         // The document title reader, generated rather than hand-declared like
         // the rest of this list.

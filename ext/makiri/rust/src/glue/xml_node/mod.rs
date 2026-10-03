@@ -159,6 +159,7 @@ fn init_mutate() -> Result<(), Error> {
     /* Document factories. The node-class .new constructors and Document#root=
      * are pure delegations to these, defined once in the Ruby layer. */
     doc.define_method("create_element", method!(mutate::create_element, -1))?;
+    doc.define_method("create_element_ns", method!(mutate::create_element_ns, 2))?;
     doc.define_method(
         "create_loose_dom_element",
         method!(mutate::create_loose_dom_element, 4),

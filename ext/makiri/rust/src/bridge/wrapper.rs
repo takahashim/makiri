@@ -325,6 +325,9 @@ pub struct DocData {
     /// `Document#tree_version`: bumped by every edit that can change a child
     /// list of a node this document owns (see [`bump_tree_version`]).
     tree_version: u64,
+    /// `Document#attribute_version`: bumped by every edit of an attribute of
+    /// an element this document owns (see [`bump_attribute_version`]).
+    attribute_version: u64,
     /// One wrapper per node; see [`NodeCache`].
     ///
     /// Boxed and optional so a document nobody navigates never allocates a
@@ -594,6 +597,7 @@ impl DocumentShell {
                     reported: 0,
                     reported_chunks: 0,
                     tree_version: 0,
+                    attribute_version: 0,
                     nodes: None,
                 },
                 |d| d.errors = errors.as_raw(),
@@ -904,6 +908,23 @@ pub fn bump_tree_version(rb_doc: Value) {
 /// `TypeError` for a non-Document.
 pub fn tree_version(rb_doc: Value) -> Result<u64, Error> {
     Ok(DOC_TYPE.get(&rb_doc)?.tree_version)
+}
+
+/// Count an edit of an attribute - added, removed, its value set (to the same
+/// value too) - of an element `rb_doc` owns. Called where an attribute edit is
+/// handed its mutable node (`HtmlEdit::node_for_attributes`,
+/// `Editing::with_attributes`), the paths that skip [`bump_tree_version`], so
+/// every edit is counted by exactly one of the two.
+pub fn bump_attribute_version(rb_doc: Value) {
+    with_doc_data_known(rb_doc, |d| {
+        d.attribute_version = d.attribute_version.wrapping_add(1)
+    });
+}
+
+/// `Document#attribute_version`: how many attribute edits the document has
+/// seen. `TypeError` for a non-Document.
+pub fn attribute_version(rb_doc: Value) -> Result<u64, Error> {
+    Ok(DOC_TYPE.get(&rb_doc)?.attribute_version)
 }
 
 /* ---- the document's mutation gate ---- */

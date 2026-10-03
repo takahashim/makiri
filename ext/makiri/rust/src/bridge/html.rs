@@ -331,8 +331,10 @@ impl<'a> HtmlEdit<'a> {
         self.mutable(true)
     }
 
-    /// [`HtmlEdit::node`] for an edit of the element's ATTRIBUTES only, which
-    /// changes no child list and so leaves the tree version alone.
+    /// [`HtmlEdit::node`] for an edit of ATTRIBUTES only - an element's, or an
+    /// Attr node's value - which changes no child list: it counts towards the
+    /// attribute version ([`bump_attribute_version`]) instead of the tree
+    /// version.
     pub fn node_for_attributes(self) -> Result<HtmlNodeMut<'a>, Error> {
         self.mutable(false)
     }
@@ -343,6 +345,8 @@ impl<'a> HtmlEdit<'a> {
         invalidate_indexes(self.this.document);
         if structural {
             bump_tree_version(self.this.document);
+        } else {
+            bump_attribute_version(self.this.document);
         }
         // SAFETY: the receiver is not frozen and no XPath evaluation is
         // reading its document - both checked just now.

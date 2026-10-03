@@ -1,5 +1,43 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+* `Makiri::XML::Document#create_element_ns(namespace_uri, qualified_name)`,
+  the DOM's `createElementNS` as the HTML Document's already is: the name is
+  split at its first colon and checked by the DOM's rules (`ArgumentError`),
+  and then the namespace is checked against the name (`Makiri::Error`). The
+  element keeps the namespace it was given wherever it is inserted. A name
+  that is not an XML QName (`f}oo`) makes an element that `to_xml` refuses.
+* `Document#attribute_version` (HTML and XML): an Integer that increases with
+  every attribute edit - an attribute added, removed or its value set (to the
+  same value too), including an Attr node's `content=`. Child-list and
+  character-data edits leave it unchanged; they count toward `tree_version`.
+* `Makiri::HTML::Document.new`: an empty HTML document - no children,
+  no-quirks mode. `title=` and `meta_encoding=` do nothing until it has a root
+  element.
+* `Makiri::HTML::Document#quirks_mode?` (true in quirks mode only) and
+  `#compat_mode` (`"BackCompat"` / `"CSS1Compat"`, like the DOM's
+  `compatMode`).
+
+### Changed
+
+* An HTML Attr node's `content=` now increases `attribute_version` instead of
+  `tree_version`.
+* Documented: `namespace_uri` and `prefix` of elements and attributes are
+  `nil` when there is no namespace or no prefix - never `""` - whether the
+  node was parsed or created, in HTML and XML.
+* `tree_version` is now documented as also counting character-data edits (a
+  Text, Comment, CDATA or PI node's `content=`), which it already did.
+
+### Deprecated
+
+* `Makiri::XML::Document#create_loose_dom_element`: use `create_element_ns`,
+  which makes the same element from the namespace and the qualified name and
+  also checks the namespace against the name. It will be removed in a later
+  release.
+
 ## [0.13.0] - 2026-10-03
 
 ### Added

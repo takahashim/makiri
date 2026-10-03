@@ -31,8 +31,8 @@ use core::ptr::NonNull;
 
 use crate::falloc::{try_box, OomOption, OomResult};
 use crate::lexbor::abi::{
-    self as lxb, lxb_html_document_destroy, lxb_html_parse_chunk_begin, lxb_html_parse_chunk_end,
-    lxb_html_parse_chunk_process,
+    self as lxb, lxb_html_document_create, lxb_html_document_destroy, lxb_html_parse_chunk_begin,
+    lxb_html_parse_chunk_end, lxb_html_parse_chunk_process,
 };
 use crate::lexbor::adapter::arena_bytes::{document_capacity, document_chunks};
 use crate::lexbor::adapter::dom_index::DomIndex;
@@ -405,6 +405,25 @@ pub fn parse_html(
         doc,
         dom_index: None,
         lines,
+        text_index: TextIndexState::Unbuilt,
+    };
+    /* On OOM the handle drops, and with it the document. */
+    try_box(parsed).map_err(|()| HtmlParseError::Failed)
+}
+
+/// A new HTML document with no children, in no-quirks mode - what
+/// `Makiri::HTML::Document.new` holds, as the DOM's `createHTMLDocument` starts
+/// from before it adds its skeleton. Made by Lexbor's document constructor, not
+/// a parse, so nothing is stamped and there is no line table.
+pub fn empty_html_document() -> Result<Box<HtmlParsed>, HtmlParseError> {
+    // SAFETY: the constructor takes nothing and returns a new document, or
+    // null when it cannot allocate one.
+    let raw = unsafe { lxb_html_document_create() };
+    let doc = DocOwner(NonNull::new(raw).ok_or(HtmlParseError::Failed)?);
+    let parsed = HtmlParsed {
+        doc: doc.release(),
+        dom_index: None,
+        lines: None,
         text_index: TextIndexState::Unbuilt,
     };
     /* On OOM the handle drops, and with it the document. */
