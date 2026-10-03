@@ -318,9 +318,9 @@ fn x2h_make<'doc>(
              * SVG `linearGradient` does not come back `lineargradient`. An
              * XHTML element named in lower case is the HTML element of that
              * name. One with upper case is not: it goes the createElementNS
-             * way too, keeping its case (`Foo`, where lower-casing it renamed
-             * it `foo`) - or refused when Lexbor would make it as a known
-             * element (`BR` came out the void `br`, its children gone). */
+             * way too, keeping its case (`Foo` does not come back `foo`; `BR`
+             * is an unknown element named `BR`, not the void `br` whose
+             * children vanished). */
             let (prefix, ns) = (doc.prefix(s), doc.ns(s));
             let el = if prefix.is_empty()
                 && !has_ascii_uppercase(doc.local(s))
