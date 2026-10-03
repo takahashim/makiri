@@ -21,6 +21,7 @@ use magnus::{prelude::*, Error, Ruby, Value};
 use super::strings::{str_field, utf8};
 use super::{wrap, XmlSelf};
 use crate::bridge::node_set::node_set_with_fill;
+use crate::bridge::xml::interned_str;
 use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId};
 
 /// Wrap an optional reached node under the receiver's Document (None -> nil).
@@ -68,6 +69,16 @@ pub fn local_name(ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
     })
 }
 
+/// `#interned_local_name`: [`local_name`] as an interned, frozen String.
+pub fn interned_local_name(_ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
+    crate::bridge::ruby::entry(|| {
+        Ok(this
+            .doc_ref()
+            .name_parts(this.id)
+            .map(|n| interned_str(n.local)))
+    })
+}
+
 /// `#prefix`: nil when unprefixed - the distinction `#namespace` depends on -
 /// and for any kind but Element and Attribute.
 pub fn prefix(ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
@@ -90,6 +101,17 @@ pub fn namespace_uri(ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error>
     })
 }
 
+/// `#interned_namespace_uri`: [`namespace_uri`] as an interned, frozen String.
+pub fn interned_namespace_uri(_ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
+    crate::bridge::ruby::entry(|| {
+        Ok(this
+            .doc_ref()
+            .name_parts(this.id)
+            .and_then(|n| n.ns_uri)
+            .map(interned_str))
+    })
+}
+
 /// `Element#tag_name` (DOM `tagName`): the qualified name - XML keeps its case
 /// - or nil for a non-element.
 pub fn tag_name(ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
@@ -97,6 +119,15 @@ pub fn tag_name(ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
         let d = this.doc_ref();
         let tag = d.name_parts(this.id).filter(|_| is_element(d, this.id));
         Ok(str_or_nil(ruby, tag.map(|n| n.qname)))
+    })
+}
+
+/// `Element#interned_tag_name`: [`tag_name`] as an interned, frozen String.
+pub fn interned_tag_name(_ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
+    crate::bridge::ruby::entry(|| {
+        let d = this.doc_ref();
+        let tag = d.name_parts(this.id).filter(|_| is_element(d, this.id));
+        Ok(tag.map(|n| interned_str(n.qname)))
     })
 }
 

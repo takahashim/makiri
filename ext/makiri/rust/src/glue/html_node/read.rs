@@ -18,7 +18,7 @@
 use magnus::{prelude::*, Error, Ruby, Value};
 
 use super::{with_arg_node, wrap_node};
-use crate::bridge::html::{dom_str, text_index_string};
+use crate::bridge::html::{dom_interned_str, dom_str, text_index_string};
 use crate::bridge::node_set::node_set_with_fill;
 use crate::bridge::ruby::is_kind_of;
 use crate::bridge::string::ruby_verified_text;
@@ -76,17 +76,24 @@ pub fn name(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
 /// `<div>`, `path` for an SVG `<path>`, `href` for an `xlink:href` attribute.
 /// Element and Attribute only; the DOM gives a Text/Comment/Document none.
 pub fn local_name(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| {
-        /* The DOM's case-preserved name - `foreignObject`, `refX` - where Lexbor
-         * stores a lower-cased one; the same answer XPath's `local-name()` gives. */
-        let node = this.node();
-        let local = match (node.element(), node.attr()) {
-            (Some(el), _) => el.dom_local_name(),
-            (None, Some(at)) => at.dom_local_name(),
-            (None, None) => return Ok(None),
-        };
-        Ok(Some(dom_str(local)))
-    })
+    crate::bridge::ruby::entry(|| Ok(local_name_as(this, dom_str)))
+}
+
+/// `#interned_local_name`: [`local_name`] as an interned, frozen String.
+pub fn interned_local_name(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
+    crate::bridge::ruby::entry(|| Ok(local_name_as(this, dom_interned_str)))
+}
+
+fn local_name_as(this: super::HtmlSelf, mk: fn(&[u8]) -> Value) -> Option<Value> {
+    /* The DOM's case-preserved name - `foreignObject`, `refX` - where Lexbor
+     * stores a lower-cased one; the same answer XPath's `local-name()` gives. */
+    let node = this.node();
+    let local = match (node.element(), node.attr()) {
+        (Some(el), _) => el.dom_local_name(),
+        (None, Some(at)) => at.dom_local_name(),
+        (None, None) => return None,
+    };
+    Some(mk(local))
 }
 
 /// `#prefix` (DOM `prefix`): nil unless the qualified name is `prefix:local` -
@@ -112,15 +119,22 @@ pub fn prefix(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Erro
 ///
 /// Other kinds: nil.
 pub fn namespace_uri(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| {
-        let node = this.node();
-        let uri = match (node.element(), node.attr()) {
-            (Some(_), _) => node.ns_uri(),
-            (None, Some(at)) => at.own_ns_uri(),
-            (None, None) => None,
-        };
-        Ok(uri.map(dom_str))
-    })
+    crate::bridge::ruby::entry(|| Ok(namespace_uri_as(this, dom_str)))
+}
+
+/// `#interned_namespace_uri`: [`namespace_uri`] as an interned, frozen String.
+pub fn interned_namespace_uri(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
+    crate::bridge::ruby::entry(|| Ok(namespace_uri_as(this, dom_interned_str)))
+}
+
+fn namespace_uri_as(this: super::HtmlSelf, mk: fn(&[u8]) -> Value) -> Option<Value> {
+    let node = this.node();
+    let uri = match (node.element(), node.attr()) {
+        (Some(_), _) => node.ns_uri(),
+        (None, Some(at)) => at.own_ns_uri(),
+        (None, None) => None,
+    };
+    uri.map(mk)
 }
 
 /// `Element#tag_name` (DOM `tagName`): the qualified name, uppercased for an
@@ -128,13 +142,16 @@ pub fn namespace_uri(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value
 /// `#name`, which is the lowercase qualified name. SVG/MathML elements keep
 /// their case. nil for a non-element.
 pub fn tag_name(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| {
-        Ok(this
-            .node()
-            .element()
-            .and_then(|el| el.tag_name())
-            .map(dom_str))
-    })
+    crate::bridge::ruby::entry(|| Ok(tag_name_as(this, dom_str)))
+}
+
+/// `Element#interned_tag_name`: [`tag_name`] as an interned, frozen String.
+pub fn interned_tag_name(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
+    crate::bridge::ruby::entry(|| Ok(tag_name_as(this, dom_interned_str)))
+}
+
+fn tag_name_as(this: super::HtmlSelf, mk: fn(&[u8]) -> Value) -> Option<Value> {
+    this.node().element().and_then(|el| el.tag_name()).map(mk)
 }
 
 /// `ProcessingInstruction#target` (DOM `target`): the `xml` in `<?xml ...?>`.
