@@ -10,13 +10,12 @@ use std::collections::HashMap;
 use magnus::gc::Marker;
 
 use crate::bridge::ruby::makiri_error;
-use magnus::rb_sys::AsRawValue;
 use magnus::value::{Opaque, ReprValue};
 use magnus::{DataTypeFunctions, Error, Ruby, TypedData, Value};
 
 use crate::bridge::string::ruby_try_verified_text;
 use crate::bridge::string::{ruby_verified_text, RubyText};
-use crate::bridge::wrapper::{keepalive_document, node_raw};
+use crate::bridge::wrapper::{keepalive_document, node_token_in, NotInDocument};
 use crate::engine_error::ErrorKind;
 use crate::falloc::{try_to_boxed_slice, MapInsert, Reserve};
 use crate::xpath::ast::Ast;
@@ -181,17 +180,11 @@ impl XPathCtx {
         if self.ctx.is_evaluating() {
             return Err(refused(ContextError::Evaluating, BUSY, BUSY));
         }
-        if keepalive_document(rb_node)?.as_raw() != ruby.get_inner(self.document).as_raw() {
-            return Err(makiri_error(
-                "context node must belong to the same document",
-            ));
-        }
+        let token = node_token_in(rb_node, ruby.get_inner(self.document)).map_err(|e| match e {
+            NotInDocument::Unusable(e) => e,
+            NotInDocument::Foreign => makiri_error("context node must belong to the same document"),
+        })?;
         self.node.set(rb_node.into()); /* keepalive; marked above */
-        /* Same-document is verified, so rb_node is a node of the context's
-         * document; mint the token for whichever backend that document is. */
-        let raw = node_raw(rb_node)?;
-        // SAFETY: a live node of this context's document.
-        let token = unsafe { raw.token(self.ctx.doc_kind()) };
         self.ctx
             .set_context_node(token)
             .map_err(|e| refused(e, BUSY, BUSY))

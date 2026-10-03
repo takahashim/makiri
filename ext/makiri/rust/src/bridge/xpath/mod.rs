@@ -100,14 +100,6 @@ pub struct Cx {
 }
 
 impl Cx {
-    /// Which backend this context walks, for minting a node token.
-    pub fn doc_kind(&self) -> DocKind {
-        match self.doc {
-            DocPtr::Html(_) => DocKind::Html,
-            DocPtr::Xml(_) => DocKind::Xml,
-        }
-    }
-
     /// Evaluate `ast` over the document, borrowed for this call alone.
     ///
     /// The caller holds the Document for the call, and the document does not
@@ -363,7 +355,6 @@ pub fn evaluate_query(
         Some(handler) => Some(Bridge {
             handler: handler.as_raw(),
             document: document.as_raw(),
-            kind: ctx.doc_kind(),
             _reading: crate::bridge::wrapper::DocumentEvaluation::enter(document)?,
             raised: core::cell::OnceCell::new(),
         }),

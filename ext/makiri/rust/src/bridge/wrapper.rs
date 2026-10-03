@@ -868,6 +868,33 @@ fn with_doc_data_known<R>(rb_doc: Value, f: impl FnOnce(&mut DocData) -> R) -> R
     unsafe { f(&mut *DOC_TYPE.known_ptr(rb_doc)) }
 }
 
+/// Why [`node_token_in`] refused a node.
+pub enum NotInDocument {
+    /// Not a usable Makiri node - the `TypeError` or `Makiri::Error` its
+    /// wrapper raised.
+    Unusable(Error),
+    /// A node of another document.
+    Foreign,
+}
+
+/// The engine token of `rb_node`, which must be a node of `document` (the
+/// document node included).
+///
+/// The check behind every token minted for one document's engine - a handler's
+/// result node, an `XPathContext`'s context node - made here once, so the
+/// `unsafe` mint never rests on a caller having made it. The token's kind is
+/// `document`'s own, not one a caller passes alongside.
+pub fn node_token_in(rb_node: Value, document: Value) -> Result<Token, NotInDocument> {
+    let node_document = keepalive_document(rb_node).map_err(NotInDocument::Unusable)?;
+    if node_document.as_raw() != document.as_raw() {
+        return Err(NotInDocument::Foreign);
+    }
+    let raw = node_raw(rb_node).map_err(NotInDocument::Unusable)?;
+    // SAFETY: a live node of `document` - its wrapper holds that document -
+    // minted for `document`'s own kind.
+    Ok(unsafe { raw.token(DocKind::of(document)) })
+}
+
 /// The kind-AGNOSTIC node word (the base type, so HTML or XML). Only for the
 /// few sites where the representation is irrelevant (identity comparison) or
 /// already guaranteed by an external same-document check (the XPath context

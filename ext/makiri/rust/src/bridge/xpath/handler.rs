@@ -11,7 +11,7 @@ use magnus::{Error, Ruby, Value};
 use crate::bridge::node_set::NodeSet as RubyNodeSet;
 use crate::bridge::ruby::VALUE;
 use crate::bridge::string::ruby_try_verified_text;
-use crate::bridge::wrapper::{keepalive_document, node_raw, DocKind};
+use crate::bridge::wrapper::{node_token_in, NotInDocument};
 use crate::engine_error::{ErrorKind, Reported};
 use crate::init::{CLASS_NODE, CLASS_NODE_SET};
 use crate::xpath::ctx::{Resolver, ResolverCall};
@@ -42,8 +42,6 @@ pub(super) struct Bridge {
     pub(super) handler: VALUE,
     /// Keepalive, and the document node-set arguments are wrapped under.
     pub(super) document: VALUE,
-    /// Which backend the document is, for minting a handler's node token.
-    pub(super) kind: DocKind,
     /// Every mutator on `document` refuses while this lives.
     pub(super) _reading: crate::bridge::wrapper::DocumentEvaluation,
     /// The first Ruby exception (or `throw`) a handler-side call ended in.
@@ -138,18 +136,16 @@ fn push_result_node(
     rb_node: Value,
     set: &mut NodeSet,
 ) -> Result<(), HandlerFailure> {
-    let node_document = keepalive_document(rb_node)
-        .map_err(|e| HandlerFailure::Raised(e, Some("handler returned an unusable node")))?;
-    if node_document.as_raw() != bridge.document {
-        return Err(HandlerFailure::Msg(
-            "handler returned a node from a different document",
-        ));
-    }
-    let n = node_raw(rb_node)
-        .map_err(|e| HandlerFailure::Raised(e, Some("handler returned an unusable node")))?;
-    /* Same-document is checked above, so this is a node of the context's kind. */
-    // SAFETY: a live node of the context's own document.
-    let token = unsafe { n.token(bridge.kind) };
+    // SAFETY: the live Document the bridge holds for this evaluation.
+    let document = unsafe { crate::bridge::ruby::value(bridge.document) };
+    let token = node_token_in(rb_node, document).map_err(|e| match e {
+        NotInDocument::Unusable(e) => {
+            HandlerFailure::Raised(e, Some("handler returned an unusable node"))
+        }
+        NotInDocument::Foreign => {
+            HandlerFailure::Msg("handler returned a node from a different document")
+        }
+    })?;
     set.push(token, budget)
         .map_err(|_| HandlerFailure::Msg("out of memory building handler result"))
 }
