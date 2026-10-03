@@ -37,6 +37,7 @@ use crate::init::{
 };
 use crate::lexbor::adapter::cross_import::cross_html_to_xml;
 use crate::node_type::NodeType as CrateKind;
+use crate::xml::attr_key::AttrKey;
 use crate::xml::model::{ArenaKind, Document as XmlDoc, MutError, NodeId, ParseError, ParseLimits};
 use crate::xml::mutate::{clone_node, copy_node_from, import_subtree, remove as remove_node};
 use crate::xml::qname::NsDeclError;
@@ -576,7 +577,8 @@ pub fn fragment_into(
 /* attribute lookup                                                   *
  * ------------------------------------------------------------------ */
 
-/// The attribute of `el` whose qualified name is exactly the verified `name`.
+/// The attribute of `el` whose qualified name is exactly the verified `name`
+/// (`AttrKey::find_in`, which counts namespace declarations as the DOM does).
 ///
 /// `None` for a non-element (the name is then not even verified, matching the
 /// readers' nil-returning behaviour). The name is converted BEFORE the arena is
@@ -588,8 +590,7 @@ pub fn find_attribute(this: XmlSelf, name: Value) -> Result<Option<NodeId>, Erro
         return Ok(None);
     }
     let nv = ruby_verified_text(name, "attribute name")?;
-    let bytes = nv.as_bytes();
-    Ok(find_attribute_bytes(this.doc_ref(), id, bytes))
+    Ok(AttrKey::QName(nv.as_bytes()).find_in(this.doc_ref(), id))
 }
 
 /// The attribute of `el` in namespace `ns` (nil or "" for none) with local
@@ -603,25 +604,11 @@ pub fn find_attribute_ns(this: XmlSelf, ns: Value, local: Value) -> Result<Optio
     }
     let lv = ruby_verified_text(local, "attribute local name")?;
     let nv = crate::bridge::string::namespace_arg(ns, "namespace")?;
-    let key = crate::xml::attr_key::AttrKey::Ns {
+    let key = AttrKey::Ns {
         ns: nv.as_ref().map_or(&b""[..], |n| n.as_bytes()),
         local: lv.as_bytes(),
     };
-    let d = this.doc_ref();
-    Ok(d.attributes(id).find(|&a| key.matches(d, a)))
-}
-
-/// The attribute of `el` whose qualified name is `name`.
-///
-/// Namespace declarations included: in the DOM an `xmlns` / `xmlns:p` is an
-/// attribute, so `node["xmlns:p"]` reads it as `getAttribute` does. XPath's data
-/// model is the one that hides them (`xml::xpath` skips them on the attribute
-/// axis), which is why `@xmlns:p` finds nothing while this does.
-fn find_attribute_bytes(d: &XmlDoc, el: NodeId, name: &[u8]) -> Option<NodeId> {
-    if d.type_(el) != Some(ArenaKind::Element) {
-        return None;
-    }
-    d.attributes(el).find(|&id| d.qname(id) == name)
+    Ok(key.find_in(this.doc_ref(), id))
 }
 
 /* ------------------------------------------------------------------ */
