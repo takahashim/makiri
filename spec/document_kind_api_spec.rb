@@ -259,6 +259,21 @@ RSpec.describe "HTML and XML Document APIs" do
       expect(doc.dup.children.size).to eq(0)
     end
 
+    # Lexbor's own document-root lookup falls back to the first child when
+    # there is no <html>; the DOM's documentElement is the element child.
+    it "answers root with its element child, never another node" do
+      doc << doc.create_comment("c")
+      expect(doc.root).to be_nil
+      doc.title = "t"
+      doc.meta_encoding = "utf-8"
+      expect(doc.to_html).to eq("<!--c-->")
+
+      svg = Makiri::HTML::Document.new
+      svg << svg.create_document_type("html")
+      svg << svg.create_element_ns("http://www.w3.org/2000/svg", "svg")
+      expect([svg.root.name, svg.at_css(":root").name]).to eq(%w[svg svg])
+    end
+
     # A re-parse of to_html would wrap a root-less tree in html/head/body and
     # put it in quirks mode; dup copies the tree as it is.
     it "dups a tree with no html root as it is" do

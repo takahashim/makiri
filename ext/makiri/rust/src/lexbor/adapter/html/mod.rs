@@ -1284,13 +1284,19 @@ impl<'doc> HtmlNode<'doc> {
         })
     }
 
-    /// A document node's root element, or None.
+    /// A document node's root element - the DOM's `documentElement`, its
+    /// element child (it has at most one) - or None.
+    ///
+    /// Not Lexbor's `lxb_dom_document_root`: that one falls back to the
+    /// document's FIRST CHILD when it has no `html` element, so a document
+    /// holding only a comment, or a doctype and an `<svg>`, answered the comment
+    /// or the doctype. A parsed document always has `<html>`, which hid it until
+    /// `Document.new` made a document with any children at all.
     pub fn document_root(self) -> Option<HtmlNode<'doc>> {
         if self.node_type() != NodeType::Document {
             return None;
         }
-        // SAFETY: a live document node, which leads its document struct.
-        Self::link(unsafe { lxb::lxb_dom_document_root(self.as_raw() as *mut LxbDoc) })
+        self.children().find(|c| c.node_type() == NodeType::Element)
     }
 }
 
