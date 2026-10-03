@@ -30,6 +30,21 @@ RSpec.describe "Makiri serialization" do
       d = Makiri::HTML("<p>a &amp; b &lt;c&gt;</p>")
       expect(d.at_css("p").inner_html).to eq("a &amp; b &lt;c&gt;")
     end
+
+    it "writes escaped foreign text and pretty line breaks exactly" do
+      el = doc.create_element_ns("urn:x", "script")
+      el << doc.create_text_node("A&<>\u00a0B\nC\rD")
+
+      expect(el.to_html).to eq("<script>A&amp;&lt;&gt;&nbsp;B\nC\rD</script>")
+      # Lexbor's pretty layout quotes text and indents after both LF and CR.
+      expect(el.to_html(pretty: true)).to eq(<<~HTML)
+        <script>
+          "A&amp;&lt;&gt;&nbsp;B
+          C
+          D"
+        </script>
+      HTML
+    end
   end
 
   describe "pretty printing" do

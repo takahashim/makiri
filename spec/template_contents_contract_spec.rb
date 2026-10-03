@@ -69,6 +69,38 @@ RSpec.describe "HTML template contents (contract)" do
     expect(nested.body.inner_html).to eq("<template><div><template><i></i></template></div></template>")
   end
 
+  it "pretty-prints contents before own children, at their respective depths" do
+    template.content_fragment << doc.create_element("i")
+    own = doc.create_element("b")
+    own << doc.create_text_node("own")
+    template << own
+    doc.body << doc.create_element("p")
+
+    pretty = <<~HTML
+      <template id="t">
+        #document-fragment
+          <s>
+            "1"
+          </s>
+          <i>
+          </i>
+        <b>
+          "own"
+        </b>
+      </template>
+    HTML
+    expect(template.to_html(pretty: true)).to eq(pretty)
+    expect(doc.body.inner_html(pretty: true)).to eq(pretty + "<p>\n</p>\n")
+    # inner_html starts at the contents fragment, so own children stay out.
+    expect(template.inner_html(pretty: true)).to eq(<<~HTML)
+      <s>
+        "1"
+      </s>
+      <i>
+      </i>
+    HTML
+  end
+
   # Lexbor's own walk serializes until a template of the document may have a
   # child of its own; each way to give it one switches the document over.
   describe "every way to give a template its own child is written as contents only" do
