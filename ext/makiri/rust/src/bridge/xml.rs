@@ -331,7 +331,7 @@ impl Editing {
     /// runs `#to_s`, and a query there rebuilt the index from the tree about to
     /// change - `//a` then kept finding an element renamed to `b`.
     ///
-    /// It counts as a change to a child list ([`bump_tree_version`]); an
+    /// It counts as a change to a child list ([`record_edit`]); an
     /// attribute edit takes [`Editing::with_attributes`] instead, and a
     /// character-data edit [`Editing::with_data`].
     pub fn with_arena<R>(&self, f: impl FnOnce(&mut XmlDoc, NodeId) -> R) -> Result<R, Error> {
@@ -340,7 +340,7 @@ impl Editing {
 
     /// [`Editing::with_arena`] for an edit of ATTRIBUTES only - an element's,
     /// or an Attr node's value - which changes no child list: it counts
-    /// towards the attribute version ([`bump_attribute_version`]) instead of
+    /// towards the attribute version ([`record_edit`]) instead of
     /// the tree version.
     pub fn with_attributes<R>(&self, f: impl FnOnce(&mut XmlDoc, NodeId) -> R) -> Result<R, Error> {
         self.lend(EditKind::Attributes, f)
@@ -367,7 +367,7 @@ impl Editing {
         /* After the arena call, which refuses an evaluated document first -
          * and that, like the frozen check, leaves the tree as it was. */
         if r.is_ok() {
-            count_edit(self.document, kind);
+            record_edit(self.document, kind);
         }
         r
     }
@@ -379,7 +379,7 @@ pub fn begin_edit(this: XmlSelf) -> Result<Editing, Error> {
     check_frozen(this.value)?;
     /* The evaluation guard, checked now so it is reported before a bad
      * argument; `with_arena` checks it again at the change. */
-    with_arena_for_new_node(this.document, |_| ())?;
+    ensure_document_mutable(this.document)?;
     /* Before any argument is converted: see `account_growth`. */
     crate::bridge::wrapper::account_growth(this.document);
     Ok(Editing {
@@ -660,7 +660,7 @@ impl Adoption {
             remove_node(sdoc, self.src);
         }
         sdoc.invalidate_name_index();
-        bump_tree_version(self.src_document);
+        record_edit(self.src_document, EditKind::ChildList);
     }
 }
 

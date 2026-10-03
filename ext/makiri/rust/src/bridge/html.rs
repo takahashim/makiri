@@ -325,7 +325,7 @@ impl<'a> HtmlEdit<'a> {
     /// to engine calls and checks that call no Ruby (`insert` reads its
     /// argument's node and frozen flag there, and nothing more).
     ///
-    /// It counts as a change to a child list ([`bump_tree_version`]); an
+    /// It counts as a change to a child list ([`record_edit`]); an
     /// attribute edit takes [`HtmlEdit::node_for_attributes`] instead, and a
     /// character-data edit [`HtmlEdit::node_for_data`].
     pub fn node(self) -> Result<HtmlNodeMut<'a>, Error> {
@@ -334,7 +334,7 @@ impl<'a> HtmlEdit<'a> {
 
     /// [`HtmlEdit::node`] for an edit of ATTRIBUTES only - an element's, or an
     /// Attr node's value - which changes no child list: it counts towards the
-    /// attribute version ([`bump_attribute_version`]) instead of the tree
+    /// attribute version ([`record_edit`]) instead of the tree
     /// version.
     pub fn node_for_attributes(self) -> Result<HtmlNodeMut<'a>, Error> {
         self.mutable(EditKind::Attributes)
@@ -351,7 +351,7 @@ impl<'a> HtmlEdit<'a> {
         crate::bridge::ruby::check_frozen(self.this.value)?;
         ensure_document_mutable(self.this.document)?;
         invalidate_indexes(self.this.document);
-        count_edit(self.this.document, kind);
+        record_edit(self.this.document, kind);
         // SAFETY: the receiver is not frozen and no XPath evaluation is
         // reading its document - both checked just now.
         Ok(unsafe { HtmlNodeMut::assume_mutable(self.this.raw().as_node()) })
@@ -395,7 +395,7 @@ fn adopt_release(src: Value) -> Result<(), Error> {
     /* After the borrow `with_arg_node` held: dropping them borrows again. */
     let src_doc = keepalive_document(src)?;
     invalidate_indexes(src_doc);
-    bump_tree_version(src_doc);
+    record_edit(src_doc, EditKind::ChildList);
     Ok(())
 }
 
