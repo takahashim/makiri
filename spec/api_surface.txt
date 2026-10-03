@@ -85,6 +85,7 @@ class Makiri::HTML::Document < Makiri::Document
   def root(0)
   def title(0)
   def title=(1 req:text)
+  def tree_version(0)
   private def ensure_in_head(2 req:css_query,req:tag)
 
 class Makiri::HTML::DocumentFragment < Makiri::DocumentFragment
@@ -347,6 +348,7 @@ class Makiri::XML::Document < Makiri::Document
   def internal_subset(0)
   def root(0)
   def root=(1 req:node)
+  def tree_version(0)
 
 class Makiri::XML::DocumentFragment < Makiri::DocumentFragment
   include Makiri::XML::NodeMethods

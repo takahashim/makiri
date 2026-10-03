@@ -338,13 +338,36 @@ impl Editing {
     /// it indexes. Not in `begin_edit`: the argument conversion between the two
     /// runs `#to_s`, and a query there rebuilt the index from the tree about to
     /// change - `//a` then kept finding an element renamed to `b`.
+    ///
+    /// It counts as a change to a child list ([`bump_tree_version`]); an
+    /// attribute edit takes [`Editing::with_attributes`] instead.
     pub fn with_arena<R>(&self, f: impl FnOnce(&mut XmlDoc, NodeId) -> R) -> Result<R, Error> {
+        self.lend(true, f)
+    }
+
+    /// [`Editing::with_arena`] for an edit of the element's ATTRIBUTES only,
+    /// which changes no child list and so leaves the tree version alone.
+    pub fn with_attributes<R>(&self, f: impl FnOnce(&mut XmlDoc, NodeId) -> R) -> Result<R, Error> {
+        self.lend(false, f)
+    }
+
+    fn lend<R>(
+        &self,
+        structural: bool,
+        f: impl FnOnce(&mut XmlDoc, NodeId) -> R,
+    ) -> Result<R, Error> {
         let id = self.id;
         check_frozen(self.receiver)?;
-        with_arena_for_new_node(self.document, |d| {
+        let r = with_arena_for_new_node(self.document, |d| {
             d.invalidate_name_index();
             f(d, id)
-        })
+        });
+        /* After the arena call, which refuses an evaluated document first -
+         * and that, like the frozen check, leaves the tree as it was. */
+        if structural && r.is_ok() {
+            bump_tree_version(self.document);
+        }
+        r
     }
 }
 
@@ -612,6 +635,8 @@ fn find_attribute_bytes(d: &XmlDoc, el: NodeId, name: &[u8]) -> Option<NodeId> {
 /// cannot fail - there is nothing left to look up.
 pub struct Adoption {
     src_doc: *mut XmlDoc,
+    /// The source's Document, whose tree version the removal bumps.
+    src_document: Value,
     src: NodeId,
     /// The source node's wrapper, which keeps its document - and so
     /// `src_doc` - alive until the adoption is finished.
@@ -633,6 +658,7 @@ impl Adoption {
             remove_node(sdoc, self.src);
         }
         sdoc.invalidate_name_index();
+        bump_tree_version(self.src_document);
     }
 }
 
@@ -671,6 +697,7 @@ pub fn incoming_node(target_doc: Value, arg: Value) -> Result<(NodeId, Option<Ad
         copy,
         Some(Adoption {
             src_doc,
+            src_document,
             src,
             _keep: arg,
         }),

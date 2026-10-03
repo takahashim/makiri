@@ -24,6 +24,12 @@
   object for the same name, with no allocation per read. The plain readers
   still return a fresh, unfrozen String.
 
+* `Document#tree_version` (HTML and XML): an Integer that grows with every
+  edit that can change a child list of a node the document owns - attached,
+  detached or in a fragment - and on both documents of a move between them.
+  Attribute edits leave it alone. Unchanged, it means no child list changed,
+  so a reader can cache a child count or position under it.
+
 ## [0.12.1] - 2026-10-02
 
 ### Fixed

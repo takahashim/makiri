@@ -65,7 +65,7 @@ pub fn aset(_ruby: &Ruby, this: XmlSelf, name: Value, val: Value) -> Result<Valu
         let nv = verified_name(name, "attribute name")?;
         let vv = verified_data(val, "attribute value")?;
         let (name, value) = (nv.as_bytes(), vv.as_bytes());
-        xml_mut_result(edit.with_arena(|d, n| mutate::set_attribute(d, n, name, value))?)?;
+        xml_mut_result(edit.with_attributes(|d, n| mutate::set_attribute(d, n, name, value))?)?;
         Ok(val)
     })
 }
@@ -88,7 +88,9 @@ pub fn set_attribute_ns(
             qv.as_bytes(),
             vv.as_bytes(),
         );
-        xml_mut_result(edit.with_arena(|d, n| mutate::set_attribute_ns(d, n, ns, qname, value))?)?;
+        xml_mut_result(
+            edit.with_attributes(|d, n| mutate::set_attribute_ns(d, n, ns, qname, value))?,
+        )?;
         Ok(val)
     })
 }
@@ -110,7 +112,7 @@ pub fn set_loose_dom_attribute(
         let vv = verified_data(val, "attribute value")?;
         let (name, value) = (nv.as_bytes(), vv.as_bytes());
         xml_mut_result(
-            edit.with_arena(|d, n| mutate::set_loose_dom_attribute(d, n, name, value))?,
+            edit.with_attributes(|d, n| mutate::set_loose_dom_attribute(d, n, name, value))?,
         )?;
         Ok(val)
     })
@@ -133,7 +135,7 @@ pub fn remove_attribute_ns(
         let nv = namespace_arg(ns, "namespace")?;
         let ns = nv.as_ref().map_or(&b""[..], |n| n.as_bytes());
         let local = lv.as_bytes();
-        edit.with_arena(|d, n| mutate::remove_attribute_ns(d, n, ns, local))?;
+        edit.with_attributes(|d, n| mutate::remove_attribute_ns(d, n, ns, local))?;
         Ok(rb_self)
     })
 }
@@ -148,7 +150,7 @@ pub fn delete(_ruby: &Ruby, this: XmlSelf, name: Value) -> Result<Value, Error> 
         }
         let nv = verified_text(name, "attribute name")?;
         let name = nv.as_bytes();
-        edit.with_arena(|d, n| mutate::remove_attribute(d, n, name))?;
+        edit.with_attributes(|d, n| mutate::remove_attribute(d, n, name))?;
         Ok(rb_self)
     })
 }

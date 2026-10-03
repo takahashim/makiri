@@ -322,6 +322,9 @@ pub struct DocData {
     /// what [`account_growth`] compares against, since the byte count
     /// itself costs a walk of every chunk.
     reported_chunks: usize,
+    /// `Document#tree_version`: bumped by every edit that can change a child
+    /// list of a node this document owns (see [`bump_tree_version`]).
+    tree_version: u64,
     /// One wrapper per node; see [`NodeCache`].
     ///
     /// Boxed and optional so a document nobody navigates never allocates a
@@ -590,6 +593,7 @@ impl DocumentShell {
                     errors: QFALSE,
                     reported: 0,
                     reported_chunks: 0,
+                    tree_version: 0,
                     nodes: None,
                 },
                 |d| d.errors = errors.as_raw(),
@@ -878,6 +882,28 @@ pub fn keepalive_document(rb_node: Value) -> Result<Value, Error> {
     let nd: &NodeData = NODE_DATA_TYPE.get(&rb_node)?;
     // SAFETY: `nd.document` is the live Document the wrapper marks.
     Ok(unsafe { value(nd.document) })
+}
+
+/* ---- the tree version ---- */
+
+/// Count a change to a child list of a node `rb_doc` owns - attached,
+/// detached or inside a fragment alike. Called where an edit is handed its
+/// mutable node (`HtmlEdit::node`, `Editing::with_arena`) and for the source
+/// of an adoption, so no structural mutator can miss it; attribute edits take
+/// the paths that skip it, as they change no child list.
+///
+/// Bumped inside the edit, with no Ruby run between the bump and the change,
+/// so nothing can read the tree in between and cache it under the new number.
+/// An edit that then fails costs a reader a cache refill, never a stale
+/// answer.
+pub fn bump_tree_version(rb_doc: Value) {
+    with_doc_data_known(rb_doc, |d| d.tree_version = d.tree_version.wrapping_add(1));
+}
+
+/// `Document#tree_version`: how many structural edits the document has seen.
+/// `TypeError` for a non-Document.
+pub fn tree_version(rb_doc: Value) -> Result<u64, Error> {
+    Ok(DOC_TYPE.get(&rb_doc)?.tree_version)
 }
 
 /* ---- the document's mutation gate ---- */
