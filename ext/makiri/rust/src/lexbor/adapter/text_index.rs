@@ -151,10 +151,10 @@ struct Frame<'d> {
 /// index" (cache it, never retry) from "the build could not allocate" (retry on
 /// the next request). Both are fail-closed: the caller walks instead.
 pub(crate) enum TextBuildError {
-    /// The build does not apply: `root` is not a container
-    /// (`lxb_dom_document_root` answers with the first child when the document
-    /// has no `<html>`, and that can be a leaf), the document holds more slices
-    /// than a run can index, or the tree changed under the build.
+    /// The build does not apply: `root` is not a container (a defence -
+    /// `HtmlNode::document_root` answers an element or nothing), the document
+    /// holds more slices than a run can index, or the tree changed under the
+    /// build.
     NotApplicable,
     /// An allocation the build needed failed.
     Oom,
@@ -173,11 +173,11 @@ impl TextIndex {
     pub(crate) fn build(root: HtmlNode<'_>) -> Result<TextIndex, TextBuildError> {
         /* The index is ROOTED at a container: pass 2 opens `root`'s own run
          * before it looks at anything, and the run table is sized from the
-         * container count, which does not count `root` when it is a leaf. The
-         * caller can hand us one: `lxb_dom_document_root` answers with the
-         * document's first child when the document has no `<html>`, and a
-         * script can put a comment or a processing instruction there. Walk
-         * instead. */
+         * container count, which does not count `root` when it is a leaf.
+         * `HtmlNode::document_root` answers an element or nothing, but
+         * Lexbor's own `lxb_dom_document_root`, which it replaced, answered a
+         * document's first child - a comment or a processing instruction -
+         * when there was no `<html>`. Kept as a defence: walk instead. */
         if !is_container(root) {
             return Err(TextBuildError::NotApplicable);
         }
