@@ -193,7 +193,6 @@ fn main() {
         .allowlist_function("lexbor_hash_insert")
         .allowlist_var("lexbor_hash_search_raw")
         .allowlist_var("lexbor_hash_insert_raw")
-        .allowlist_function("lxb_dom_document_root")
         .allowlist_type("lxb_html_token_t")
         .allowlist_type("lxb_html_token_type_t")
         // The token-type FLAGS are in `enum lxb_html_token_type` - no trailing
