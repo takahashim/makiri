@@ -59,14 +59,6 @@ static XML_NODE_CLASSES: NodeClasses = NodeClasses {
     fragment: &CLASS_XML_DOCUMENT_FRAGMENT,
 };
 
-/// An interned, frozen UTF-8 String of arena bytes, for the `interned_*` name
-/// readers.
-pub fn interned_str(bytes: &[u8]) -> Value {
-    // SAFETY: arena bytes are valid UTF-8 - the reader validates on the way
-    // in, and every mutator validates what it stores.
-    unsafe { value(crate::bridge::string::ruby_interned_str_from_utf8(bytes)) }
-}
-
 /// Wrap an arena node into its `Makiri::XML::*` leaf.
 ///
 /// The DOCUMENT node maps back onto the Ruby Document rather than getting a
@@ -338,13 +330,36 @@ impl Editing {
     /// it indexes. Not in `begin_edit`: the argument conversion between the two
     /// runs `#to_s`, and a query there rebuilt the index from the tree about to
     /// change - `//a` then kept finding an element renamed to `b`.
+    ///
+    /// It counts as a change to a child list ([`bump_tree_version`]); an
+    /// attribute edit takes [`Editing::with_attributes`] instead.
     pub fn with_arena<R>(&self, f: impl FnOnce(&mut XmlDoc, NodeId) -> R) -> Result<R, Error> {
+        self.lend(true, f)
+    }
+
+    /// [`Editing::with_arena`] for an edit of the element's ATTRIBUTES only,
+    /// which changes no child list and so leaves the tree version alone.
+    pub fn with_attributes<R>(&self, f: impl FnOnce(&mut XmlDoc, NodeId) -> R) -> Result<R, Error> {
+        self.lend(false, f)
+    }
+
+    fn lend<R>(
+        &self,
+        structural: bool,
+        f: impl FnOnce(&mut XmlDoc, NodeId) -> R,
+    ) -> Result<R, Error> {
         let id = self.id;
         check_frozen(self.receiver)?;
-        with_arena_for_new_node(self.document, |d| {
+        let r = with_arena_for_new_node(self.document, |d| {
             d.invalidate_name_index();
             f(d, id)
-        })
+        });
+        /* After the arena call, which refuses an evaluated document first -
+         * and that, like the frozen check, leaves the tree as it was. */
+        if structural && r.is_ok() {
+            bump_tree_version(self.document);
+        }
+        r
     }
 }
 
@@ -567,6 +582,25 @@ pub fn find_attribute(this: XmlSelf, name: Value) -> Result<Option<NodeId>, Erro
     Ok(find_attribute_bytes(this.doc_ref(), id, bytes))
 }
 
+/// The attribute of `el` in namespace `ns` (nil or "" for none) with local
+/// name `local` - DOM "get an attribute by namespace and local name", the key
+/// `remove_attribute_ns` removes by. Converted before the arena is borrowed,
+/// as [`find_attribute`].
+pub fn find_attribute_ns(this: XmlSelf, ns: Value, local: Value) -> Result<Option<NodeId>, Error> {
+    let id = this.id;
+    if this.doc_ref().type_(id) != Some(ArenaKind::Element) {
+        return Ok(None);
+    }
+    let lv = ruby_verified_text(local, "attribute local name")?;
+    let nv = crate::bridge::string::namespace_arg(ns, "namespace")?;
+    let key = crate::xml::attr_key::AttrKey::Ns {
+        ns: nv.as_ref().map_or(&b""[..], |n| n.as_bytes()),
+        local: lv.as_bytes(),
+    };
+    let d = this.doc_ref();
+    Ok(d.attributes(id).find(|&a| key.matches(d, a)))
+}
+
 /// The attribute of `el` whose qualified name is `name`.
 ///
 /// Namespace declarations included: in the DOM an `xmlns` / `xmlns:p` is an
@@ -593,6 +627,8 @@ fn find_attribute_bytes(d: &XmlDoc, el: NodeId, name: &[u8]) -> Option<NodeId> {
 /// cannot fail - there is nothing left to look up.
 pub struct Adoption {
     src_doc: *mut XmlDoc,
+    /// The source's Document, whose tree version the removal bumps.
+    src_document: Value,
     src: NodeId,
     /// The source node's wrapper, which keeps its document - and so
     /// `src_doc` - alive until the adoption is finished.
@@ -614,6 +650,7 @@ impl Adoption {
             remove_node(sdoc, self.src);
         }
         sdoc.invalidate_name_index();
+        bump_tree_version(self.src_document);
     }
 }
 
@@ -652,6 +689,7 @@ pub fn incoming_node(target_doc: Value, arg: Value) -> Result<(NodeId, Option<Ad
         copy,
         Some(Adoption {
             src_doc,
+            src_document,
             src,
             _keep: arg,
         }),

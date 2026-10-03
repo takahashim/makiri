@@ -184,6 +184,27 @@ and unusually large documents can raise it with `max_bytes:`.
 Makiri::XML(huge_xml, max_bytes: 512 * 1024 * 1024)   # also Makiri::XML::Document.parse(..., max_bytes:)
 ```
 
+### Node identity
+
+Navigating to the same node always gives the same Ruby object, for as long as
+its document is alive. The document keeps every wrapper it has handed out, so
+instance variables, singleton methods and `freeze` set on a node survive
+garbage collection and are there the next time the node is reached.
+
+That makes a node a safe place to keep per-node state, such as a wrapper
+object of your own:
+
+```ruby
+el = doc.at_css("p")
+el.instance_variable_set(:@wrapper, MyElement.new(el))
+doc.at_css("p").instance_variable_get(:@wrapper)   # => the same MyElement
+```
+
+A node created by `clone_node` or `import_node` is a new node with no state.
+`pointer_id` is unique only among live nodes: once a document is freed, a node
+of another document may reuse its value. So key a pointer-based cache per
+document, not across documents.
+
 ## Non-goals (v1.0)
 
 * XSLT, DTD / Schema / RelaxNG validation, XPointer, XInclude.

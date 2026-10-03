@@ -75,8 +75,9 @@ fn extract<'q>(
 /// The receiver as an element, once every argument is converted. Its node type
 /// was checked before the conversion (an argument cannot change it), so the
 /// `None` arm is unreachable - it answers `refusal` rather than assuming so.
+/// For the attribute mutators only: it leaves the tree version alone.
 fn element_of<'a>(edit: HtmlEdit<'a>, refusal: &'static str) -> Result<HtmlElementMut<'a>, Error> {
-    edit.node()?
+    edit.node_for_attributes()?
         .element_mut()
         .ok_or_else(|| makiri_error(refusal))
 }

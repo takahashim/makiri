@@ -167,6 +167,10 @@ pub fn init_html_doc() -> Result<(), Error> {
     html_doc.define_method("quirks_mode", method!(doc_quirks_mode, 0))?;
     html_doc.define_method("fragment", method!(doc_fragment, -1))?;
     html_doc.define_method("import_node", method!(doc_import_node, -1))?;
+    html_doc.define_method(
+        "tree_version",
+        method!(crate::glue::node::document_tree_version, 0),
+    )?;
 
     let frag = crate::init::CLASS_DOCUMENT_FRAGMENT.defined()?;
     frag.define_singleton_method("parse", method!(frag_s_parse, -1))?;

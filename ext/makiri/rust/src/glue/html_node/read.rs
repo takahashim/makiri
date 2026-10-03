@@ -18,12 +18,12 @@
 use magnus::{prelude::*, Error, Ruby, Value};
 
 use super::{with_arg_node, wrap_node};
-use crate::bridge::html::{dom_interned_str, dom_str, text_index_string};
+use crate::bridge::html::{dom_str, text_index_string};
 use crate::bridge::node_set::node_set_with_fill;
 use crate::bridge::ruby::is_kind_of;
 use crate::bridge::string::ruby_verified_text;
 use crate::init::{CLASS_NODE, CLASS_XML_DOCUMENT};
-use crate::lexbor::adapter::html::{HtmlNode, NodeType, RawNode};
+use crate::lexbor::adapter::html::{HtmlAttr, HtmlElement, HtmlNode, NodeType, RawNode};
 
 /* ------------------------------------------------------------------ *
  * small helpers                                                      *
@@ -76,24 +76,17 @@ pub fn name(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
 /// `<div>`, `path` for an SVG `<path>`, `href` for an `xlink:href` attribute.
 /// Element and Attribute only; the DOM gives a Text/Comment/Document none.
 pub fn local_name(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| Ok(local_name_as(this, dom_str)))
-}
-
-/// `#interned_local_name`: [`local_name`] as an interned, frozen String.
-pub fn interned_local_name(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| Ok(local_name_as(this, dom_interned_str)))
-}
-
-fn local_name_as(this: super::HtmlSelf, mk: fn(&[u8]) -> Value) -> Option<Value> {
-    /* The DOM's case-preserved name - `foreignObject`, `refX` - where Lexbor
-     * stores a lower-cased one; the same answer XPath's `local-name()` gives. */
-    let node = this.node();
-    let local = match (node.element(), node.attr()) {
-        (Some(el), _) => el.dom_local_name(),
-        (None, Some(at)) => at.dom_local_name(),
-        (None, None) => return None,
-    };
-    Some(mk(local))
+    crate::bridge::ruby::entry(|| {
+        /* The DOM's case-preserved name - `foreignObject`, `refX` - where Lexbor
+         * stores a lower-cased one; the same answer XPath's `local-name()` gives. */
+        let node = this.node();
+        let local = match (node.element(), node.attr()) {
+            (Some(el), _) => el.dom_local_name(),
+            (None, Some(at)) => at.dom_local_name(),
+            (None, None) => return Ok(None),
+        };
+        Ok(Some(dom_str(local)))
+    })
 }
 
 /// `#prefix` (DOM `prefix`): nil unless the qualified name is `prefix:local` -
@@ -119,22 +112,15 @@ pub fn prefix(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Erro
 ///
 /// Other kinds: nil.
 pub fn namespace_uri(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| Ok(namespace_uri_as(this, dom_str)))
-}
-
-/// `#interned_namespace_uri`: [`namespace_uri`] as an interned, frozen String.
-pub fn interned_namespace_uri(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| Ok(namespace_uri_as(this, dom_interned_str)))
-}
-
-fn namespace_uri_as(this: super::HtmlSelf, mk: fn(&[u8]) -> Value) -> Option<Value> {
-    let node = this.node();
-    let uri = match (node.element(), node.attr()) {
-        (Some(_), _) => node.ns_uri(),
-        (None, Some(at)) => at.own_ns_uri(),
-        (None, None) => None,
-    };
-    uri.map(mk)
+    crate::bridge::ruby::entry(|| {
+        let node = this.node();
+        let uri = match (node.element(), node.attr()) {
+            (Some(_), _) => node.ns_uri(),
+            (None, Some(at)) => at.own_ns_uri(),
+            (None, None) => None,
+        };
+        Ok(uri.map(dom_str))
+    })
 }
 
 /// `Element#tag_name` (DOM `tagName`): the qualified name, uppercased for an
@@ -142,16 +128,13 @@ fn namespace_uri_as(this: super::HtmlSelf, mk: fn(&[u8]) -> Value) -> Option<Val
 /// `#name`, which is the lowercase qualified name. SVG/MathML elements keep
 /// their case. nil for a non-element.
 pub fn tag_name(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| Ok(tag_name_as(this, dom_str)))
-}
-
-/// `Element#interned_tag_name`: [`tag_name`] as an interned, frozen String.
-pub fn interned_tag_name(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| Ok(tag_name_as(this, dom_interned_str)))
-}
-
-fn tag_name_as(this: super::HtmlSelf, mk: fn(&[u8]) -> Value) -> Option<Value> {
-    this.node().element().and_then(|el| el.tag_name()).map(mk)
+    crate::bridge::ruby::entry(|| {
+        Ok(this
+            .node()
+            .element()
+            .and_then(|el| el.tag_name())
+            .map(dom_str))
+    })
 }
 
 /// `ProcessingInstruction#target` (DOM `target`): the `xml` in `<?xml ...?>`.
@@ -483,6 +466,63 @@ pub fn attribute_value_by_qualified_name(
             .map(|at| at.value());
         drop(nv);
         Ok(value.map(dom_str))
+    })
+}
+
+/// The attribute of `el` in namespace `rb_ns` (nil or "" for none) with local
+/// name `rb_local` - DOM "get an attribute by namespace and local name", the
+/// key `remove_attribute_ns` removes by. The namespace compares exactly.
+fn attr_by_ns_arg<'d>(
+    el: HtmlElement<'d>,
+    rb_ns: Value,
+    rb_local: Value,
+) -> Result<Option<HtmlAttr<'d>>, Error> {
+    let lv = ruby_verified_text(rb_local, "attribute local name")?;
+    let nv = crate::bridge::string::namespace_arg(rb_ns, "namespace")?;
+    /* Looked up, not interned: a namespace the document never interned is
+     * one no attribute here carries. */
+    let want_ns = match nv.as_ref() {
+        Some(uri) => match el.node().owner_document().lookup_ns(uri.as_bytes()) {
+            Some(id) => Some(id),
+            None => return Ok(None),
+        },
+        None => None,
+    };
+    Ok(el.attr_by_ns(want_ns, lv.as_bytes()))
+}
+
+/// `#attribute_value_ns(ns, local)` (DOM `getAttributeNS`): the value of the
+/// attribute in namespace `ns` (nil or "" for none) with local name `local`,
+/// or nil - for a non-element too.
+pub fn attribute_value_ns(
+    _ruby: &Ruby,
+    this: super::HtmlSelf,
+    rb_ns: Value,
+    rb_local: Value,
+) -> Result<Option<Value>, Error> {
+    crate::bridge::ruby::entry(|| {
+        let Some(el) = this.node().element() else {
+            return Ok(None);
+        };
+        let found = attr_by_ns_arg(el, rb_ns, rb_local)?;
+        Ok(found.map(|at| dom_str(at.value())))
+    })
+}
+
+/// `#attribute_node_ns(ns, local)` (DOM `getAttributeNodeNS`): the Attr
+/// [`attribute_value_ns`] reads, or nil.
+pub fn attribute_node_ns(
+    _ruby: &Ruby,
+    this: super::HtmlSelf,
+    rb_ns: Value,
+    rb_local: Value,
+) -> Result<Option<Value>, Error> {
+    crate::bridge::ruby::entry(|| {
+        let Some(el) = this.node().element() else {
+            return Ok(None);
+        };
+        let found = attr_by_ns_arg(el, rb_ns, rb_local)?;
+        wrap_node(found.map(|at| at.node()), this.document)
     })
 }
 

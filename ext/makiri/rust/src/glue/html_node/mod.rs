@@ -71,13 +71,6 @@ fn init_read() -> Result<(), Error> {
     m.define_method("prefix", method!(read::prefix, 0))?;
     m.define_method("local_name", method!(read::local_name, 0))?;
     m.define_method("tag_name", method!(read::tag_name, 0))?;
-    /* The same names as interned, frozen Strings: no allocation per read. */
-    m.define_method("interned_local_name", method!(read::interned_local_name, 0))?;
-    m.define_method(
-        "interned_namespace_uri",
-        method!(read::interned_namespace_uri, 0),
-    )?;
-    m.define_method("interned_tag_name", method!(read::interned_tag_name, 0))?;
     m.define_method("target", method!(read::pi_target, 0))?;
     m.define_method("node_type", method!(read::node_type, 0))?;
     for name in ["content", "text", "inner_text"] {
@@ -117,6 +110,8 @@ fn init_read() -> Result<(), Error> {
         "attribute_value_by_qualified_name",
         method!(read::attribute_value_by_qualified_name, 1),
     )?;
+    m.define_method("attribute_value_ns", method!(read::attribute_value_ns, 2))?;
+    m.define_method("attribute_node_ns", method!(read::attribute_node_ns, 2))?;
     m.define_method("value", method!(read::value, 0))?;
     m.define_method("line", method!(read::line, 0))?;
 
@@ -165,7 +160,12 @@ fn init_mutate() -> Result<(), Error> {
     m.define_method("inner_html=", method!(mutate::set_inner_html, 1))?;
     m.define_method("outer_html=", method!(mutate::set_outer_html, 1))?;
 
-    m.define_method("[]=", method!(mutate::aset, 2))?;
+    /* `[]=` is the DOM's setAttribute already (no-namespace, the whole name as
+     * the local name, lower-cased on an HTML element); the XML name for that
+     * is `set_loose_dom_attribute`, so it answers here too. */
+    for name in ["[]=", "set_loose_dom_attribute"] {
+        m.define_method(name, method!(mutate::aset, 2))?;
+    }
     m.define_method("set_attribute_ns", method!(mutate::set_attribute_ns, 3))?;
     m.define_method(
         "remove_attribute_ns",

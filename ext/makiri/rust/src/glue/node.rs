@@ -40,3 +40,12 @@ pub fn node_pointer_id(ruby: &Ruby, rb_self: Value) -> Result<Integer, magnus::E
 pub fn node_hash(ruby: &Ruby, rb_self: Value) -> Result<Integer, magnus::Error> {
     crate::bridge::ruby::entry(|| node_pointer_id(ruby, rb_self))
 }
+
+/// `Document#tree_version`: an Integer that grows with every edit that can
+/// change a child list of a node the document owns (attached, detached or in
+/// a fragment) - add, remove, replace, `inner_html=`, `content=` and the
+/// like, and both documents of a move between them. Attribute edits leave it
+/// alone. A reader caching a child list keys it by this.
+pub fn document_tree_version(rb_self: Value) -> Result<u64, magnus::Error> {
+    crate::bridge::ruby::entry(|| crate::bridge::wrapper::tree_version(rb_self))
+}

@@ -47,6 +47,22 @@ impl<'doc> HtmlDoc<'doc> {
         if has_ascii_uppercase(local) && self.lookup_ns(ns) == Some(NsId::HTML) {
             return self.create_html_element_as_written(local, prefix);
         }
+        /* The namespace is interned here, as written, and only a built-in
+         * one is named to Lexbor - by its exact URI, which its case-folding
+         * lookup maps back to the same id. Any other is created in no
+         * namespace and given its id after: handed to Lexbor, `fooNamespace`
+         * would be interned lower-cased, and `HTTP://WWW.W3.ORG/1999/XHTML`
+         * would make an HTML element. In no namespace and in a namespace past
+         * the built-in ones, Lexbor builds the same plain element struct. */
+        let ns_id = if ns.is_empty() {
+            None
+        } else {
+            Some(self.intern_ns(ns)?)
+        };
+        let lexbor_ns: &[u8] = match ns_id {
+            Some(id) if id.is_static() => ns,
+            _ => &[],
+        };
         let or_null = |s: &[u8]| {
             if s.is_empty() {
                 core::ptr::null()
@@ -66,8 +82,8 @@ impl<'doc> HtmlDoc<'doc> {
                 self.as_raw(),
                 local.as_ptr(),
                 local.len(),
-                or_null(ns),
-                ns.len(),
+                or_null(lexbor_ns),
+                lexbor_ns.len(),
                 core::ptr::null(),
                 0,
                 core::ptr::null(),
@@ -75,6 +91,11 @@ impl<'doc> HtmlDoc<'doc> {
                 false,
             ))
         }?;
+        if let Some(id) = ns_id.filter(|id| !id.is_static()) {
+            // SAFETY: an element just made in this document, in no tree; `id`
+            // is interned in its namespace table.
+            unsafe { (*el.0.raw()).node.ns = id.raw() };
+        }
         let (p, p_len) = if prefix.is_empty() {
             if !has_ascii_uppercase(local) {
                 return Some(el);

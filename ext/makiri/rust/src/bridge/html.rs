@@ -40,12 +40,6 @@ pub fn dom_str(bytes: &[u8]) -> Value {
     unsafe { value(crate::bridge::string::ruby_str_from_utf8(bytes)) }
 }
 
-/// [`dom_str`]'s interned, frozen twin, for the `interned_*` name readers.
-pub fn dom_interned_str(bytes: &[u8]) -> Value {
-    // SAFETY: valid UTF-8 by the text-input contract; the String copies it.
-    unsafe { value(crate::bridge::string::ruby_interned_str_from_utf8(bytes)) }
-}
-
 /// The indexed descendant text of `node` as one Ruby String.
 ///
 /// `Ok(None)` when the text index cannot serve this node (it is outside the
@@ -330,10 +324,26 @@ impl<'a> HtmlEdit<'a> {
     /// not the token's - so a caller keeps the span from here to the change
     /// to engine calls and checks that call no Ruby (`insert` reads its
     /// argument's node and frozen flag there, and nothing more).
+    ///
+    /// It counts as a change to a child list ([`bump_tree_version`]); an
+    /// attribute edit takes [`HtmlEdit::node_for_attributes`] instead.
     pub fn node(self) -> Result<HtmlNodeMut<'a>, Error> {
+        self.mutable(true)
+    }
+
+    /// [`HtmlEdit::node`] for an edit of the element's ATTRIBUTES only, which
+    /// changes no child list and so leaves the tree version alone.
+    pub fn node_for_attributes(self) -> Result<HtmlNodeMut<'a>, Error> {
+        self.mutable(false)
+    }
+
+    fn mutable(self, structural: bool) -> Result<HtmlNodeMut<'a>, Error> {
         crate::bridge::ruby::check_frozen(self.this.value)?;
         ensure_document_mutable(self.this.document)?;
         invalidate_indexes(self.this.document);
+        if structural {
+            bump_tree_version(self.this.document);
+        }
         // SAFETY: the receiver is not frozen and no XPath evaluation is
         // reading its document - both checked just now.
         Ok(unsafe { HtmlNodeMut::assume_mutable(self.this.raw().as_node()) })
@@ -375,7 +385,9 @@ fn adopt_release(src: Value) -> Result<(), Error> {
         release_from_tree(unsafe { HtmlNodeMut::assume_mutable(node) });
     })?;
     /* After the borrow `with_arg_node` held: dropping them borrows again. */
-    invalidate_indexes(keepalive_document(src)?);
+    let src_doc = keepalive_document(src)?;
+    invalidate_indexes(src_doc);
+    bump_tree_version(src_doc);
     Ok(())
 }
 

@@ -140,6 +140,10 @@ pub fn init_xml_doc() -> Result<(), Error> {
     doc.define_method("root", method!(doc_root, 0))?;
     doc.define_method("internal_subset", method!(doc_internal_subset, 0))?;
     doc.define_method("fragment", method!(doc_fragment, 1))?;
+    doc.define_method(
+        "tree_version",
+        method!(crate::glue::node::document_tree_version, 0),
+    )?;
 
     CLASS_XML_DOCUMENT_FRAGMENT
         .defined()?
