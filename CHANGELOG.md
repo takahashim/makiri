@@ -1,32 +1,28 @@
 # Changelog
 
-## [Unreleased]
+## [0.13.0] - 2026-10-03
 
 ### Added
 
-* `Document#tree_version` (HTML and XML): an Integer that grows with every
-  edit that can change a child list of a node the document owns - attached,
-  detached or in a fragment - and on both documents of a move between them.
-  Attribute edits leave it alone. Unchanged, it means no child list changed,
-  so a reader can cache a child count or position under it.
-
+* `Document#tree_version` (HTML and XML): an Integer that increases whenever
+  a child list in the document changes - nodes added, removed or replaced,
+  `inner_html=`, `content=`, and both documents when a node moves between
+  them. Attribute changes leave it as it is, so it can key a cache of child
+  lists.
 * `Element#attribute_value_ns(ns, local)` and `#attribute_node_ns(ns, local)`
-  (HTML and XML): the DOM's `getAttributeNS` / `getAttributeNodeNS` - the
-  attribute keyed by namespace (nil or "" for none) and local name, the key
-  `set_attribute_ns` / `remove_attribute_ns` use.
-
-* `Element#set_loose_dom_attribute(name, value)` on HTML nodes too (it was
-  XML only): the DOM's `setAttribute` - a no-namespace attribute whose local
-  name is the whole of `name`, colons and all (`v-on:click`) - under one name
-  for both representations. On HTML it is `[]=`.
+  (HTML and XML): the attribute's value or Attr node by namespace and local
+  name, like the DOM's `getAttributeNS` / `getAttributeNodeNS`. `nil` or `""`
+  means no namespace.
+* `Element#set_loose_dom_attribute(name, value)` now works on HTML nodes too.
+  Like the DOM's `setAttribute`, it sets an attribute in no namespace whose
+  name may contain a colon (`v-on:click`).
 
 ### Fixed
 
-* An HTML document keeps a namespace URI as written. `create_element_ns`,
-  `set_attribute_ns` and `import_node` folded it to ASCII lower case
-  (`fooNamespace` read back `foonamespace`), so two URIs differing only in
-  case were one namespace, and `HTTP://WWW.W3.ORG/1999/XHTML` made an HTML
-  element. Namespaces now compare exactly, as the DOM's do.
+* HTML documents keep namespace URIs as written. `create_element_ns`,
+  `set_attribute_ns` and `import_node` lower-cased them (`fooNamespace` read
+  back as `foonamespace`), and a differently cased XHTML namespace URI made
+  an HTML element.
 
 ## [0.12.1] - 2026-10-02
 
