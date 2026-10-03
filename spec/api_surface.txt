@@ -63,8 +63,11 @@ class Makiri::HTML::Comment < Makiri::Comment
 class Makiri::HTML::Document < Makiri::Document
   include Makiri::HTML::NodeMethods
   def self._parse(2)
+  def self.new(0)
   def self.parse(-2 req:source,key:max_tree_depth)
+  def attribute_version(0)
   def body(0)
+  def compat_mode(0)
   def create_comment(1)
   def create_document_fragment(0)
   def create_document_type(-1)
@@ -82,6 +85,7 @@ class Makiri::HTML::Document < Makiri::Document
   def meta_encoding(0)
   def meta_encoding=(1 req:value)
   def quirks_mode(0)
+  def quirks_mode?(0)
   def root(0)
   def title(0)
   def title=(1 req:text)
@@ -327,11 +331,13 @@ class Makiri::XML::Document < Makiri::Document
   include Makiri::XML::NodeMethods
   def self.new(-1)
   def self.parse(-1)
+  def attribute_version(0)
   def create_cdata(1)
   def create_cdata_node(1)
   def create_comment(1)
   def create_document_type(-1)
   def create_element(-1)
+  def create_element_ns(2)
   def create_loose_dom_element(4)
   def create_processing_instruction(2)
   def create_text_node(1)

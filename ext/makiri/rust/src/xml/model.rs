@@ -138,7 +138,8 @@ impl NodeFlags {
     /// No state.
     pub const EMPTY: NodeFlags = NodeFlags(0);
 
-    /// Set on an element built by `create_loose_dom_element`, or an attribute
+    /// Set on an element built by `create_loose_dom_element`, or by
+    /// `create_element_ns` with a name that is no XML QName, or an attribute
     /// by `set_loose_dom_attribute`: its name is a WHATWG DOM name that need
     /// not be an XML QName, so the serializer refuses to write it (see
     /// [`crate::xml::dom_name`]). A loose attribute is never a declaration,

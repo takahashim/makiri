@@ -34,7 +34,7 @@ use crate::bridge::xml::xml_node_document;
 use crate::bridge::xml::{xml_mut_result, xml_node_unwrap};
 use crate::lexbor::adapter::cross_import::cross_xml_to_html;
 use crate::lexbor::adapter::html::{RawDoc, RawNode};
-use crate::lexbor::adapter::post_parse::{parse_html, HtmlParseError};
+use crate::lexbor::adapter::post_parse::{empty_html_document, parse_html, HtmlParseError};
 use crate::lexbor::adapter::tree_guard::{DepthLimit, MAX_SELECT_OPTIONS};
 
 /* ------------------------------------------------------------------ *
@@ -100,12 +100,23 @@ pub fn parse_document(source: Value, limit: DepthLimit) -> Result<Value, Error> 
     Ok(shell.install_html(parsed))
 }
 
+/// `Makiri::HTML::Document.new`: an empty HTML document - no children,
+/// no-quirks mode.
+pub fn new_empty_document() -> Result<Value, Error> {
+    /* The wrapper first, while nothing needs freeing - see DocumentShell. */
+    let shell = DocumentShell::new(DocKind::Html);
+    let parsed =
+        empty_html_document().map_err(|_| makiri_error("failed to create HTML document"))?;
+    Ok(shell.install_html(parsed))
+}
+
 /* ------------------------------------------------------------------ *
  * read-only accessors                                                *
  * ------------------------------------------------------------------ */
 
-/// `Document#root`: the root Element node, or nil (unreachable today - the HTML
-/// parser inserts html/head/body even for empty input).
+/// `Document#root`: the root Element node, or nil - for `Document.new`, or once
+/// the root is removed (the HTML parser inserts html/head/body even for empty
+/// input).
 pub fn document_root(rb_doc: Value) -> Result<Option<Value>, Error> {
     let Some(root) = html_doc(&rb_doc).as_node().document_root() else {
         return Ok(None);

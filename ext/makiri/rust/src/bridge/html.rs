@@ -326,24 +326,32 @@ impl<'a> HtmlEdit<'a> {
     /// argument's node and frozen flag there, and nothing more).
     ///
     /// It counts as a change to a child list ([`bump_tree_version`]); an
-    /// attribute edit takes [`HtmlEdit::node_for_attributes`] instead.
+    /// attribute edit takes [`HtmlEdit::node_for_attributes`] instead, and a
+    /// character-data edit [`HtmlEdit::node_for_data`].
     pub fn node(self) -> Result<HtmlNodeMut<'a>, Error> {
-        self.mutable(true)
+        self.mutable(EditKind::ChildList)
     }
 
-    /// [`HtmlEdit::node`] for an edit of the element's ATTRIBUTES only, which
-    /// changes no child list and so leaves the tree version alone.
+    /// [`HtmlEdit::node`] for an edit of ATTRIBUTES only - an element's, or an
+    /// Attr node's value - which changes no child list: it counts towards the
+    /// attribute version ([`bump_attribute_version`]) instead of the tree
+    /// version.
     pub fn node_for_attributes(self) -> Result<HtmlNodeMut<'a>, Error> {
-        self.mutable(false)
+        self.mutable(EditKind::Attributes)
     }
 
-    fn mutable(self, structural: bool) -> Result<HtmlNodeMut<'a>, Error> {
+    /// [`HtmlEdit::node`] for an edit of a Text, Comment, CDATA or PI node's
+    /// DATA, which changes no child list and no attribute: no version counts
+    /// it (see [`EditKind::CharacterData`]).
+    pub fn node_for_data(self) -> Result<HtmlNodeMut<'a>, Error> {
+        self.mutable(EditKind::CharacterData)
+    }
+
+    fn mutable(self, kind: EditKind) -> Result<HtmlNodeMut<'a>, Error> {
         crate::bridge::ruby::check_frozen(self.this.value)?;
         ensure_document_mutable(self.this.document)?;
         invalidate_indexes(self.this.document);
-        if structural {
-            bump_tree_version(self.this.document);
-        }
+        count_edit(self.this.document, kind);
         // SAFETY: the receiver is not frozen and no XPath evaluation is
         // reading its document - both checked just now.
         Ok(unsafe { HtmlNodeMut::assume_mutable(self.this.raw().as_node()) })

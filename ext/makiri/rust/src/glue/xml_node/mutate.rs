@@ -20,10 +20,12 @@ use crate::bridge::xml::{
     verified_name_opt, verified_text, verified_text_opt, with_arena_for_new_node,
     wrap_xml_node as wrap, xml_mut_result, Editing, XmlSelf,
 };
+use crate::glue::node::dom_extract;
 use crate::init::CLASS_XML_DOCUMENT;
-use crate::xml::dom_name::split_loose_dom_name;
+use crate::xml::dom_name::{self, split_loose_dom_name};
 use crate::xml::model::{ArenaKind, NodeId};
 use crate::xml::mutate::{self, place, Place};
+use crate::xml::qname::Split;
 
 /* ------------------------------------------------------------------ */
 /* in-place edits                                                     */
@@ -158,10 +160,21 @@ pub fn delete(_ruby: &Ruby, this: XmlSelf, name: Value) -> Result<Value, Error> 
 /// `node.content = text` -> text.
 pub fn set_content(_ruby: &Ruby, this: XmlSelf, text: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
+        /* A node's type never changes, so it is read before the argument's
+         * conversion: a Text, Comment, CDATA or PI node's content is its data,
+         * which changes no child list. */
+        let data = matches!(
+            this.doc_ref().type_(this.id),
+            Some(ArenaKind::Text | ArenaKind::CDataSection | ArenaKind::Comment | ArenaKind::Pi)
+        );
         let edit = begin_edit(this)?;
         let tv = verified_data(text, "node content")?;
         let bytes = tv.as_bytes();
-        xml_mut_result(edit.with_arena(|d, n| mutate::set_content(d, n, bytes))?)?;
+        xml_mut_result(if data {
+            edit.with_data(|d, n| mutate::set_content(d, n, bytes))?
+        } else {
+            edit.with_arena(|d, n| mutate::set_content(d, n, bytes))?
+        })?;
         Ok(text)
     })
 }
@@ -282,8 +295,55 @@ pub fn create_element(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Val
     })
 }
 
+/// `Document#create_element_ns(namespace_uri, qualified_name)` -> Element.
+///
+/// The DOM's createElementNS, as the HTML Document's is: the name split at
+/// its first colon and each half held to the DOM's rule (`ArgumentError`),
+/// then the namespace to the name (`Makiri::Error`). The DOM's naming rule,
+/// not XML's: `"f}oo"` is an element too, made DOM-loose, which `to_xml`
+/// refuses (`mutate::new_dom_element_ns`). Its namespace is decided at once,
+/// as the DOM's is, and not re-derived from where it is inserted.
+pub fn create_element_ns(
+    ruby: &Ruby,
+    rb_self: Value,
+    ns: Value,
+    qname: Value,
+) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| {
+        let nv = namespace_arg(ns, "namespace")?;
+        let qv = verified_name(qname, "element qualified name")?;
+        let ns = nv.as_ref().map_or(&b""[..], |n| n.as_bytes());
+        let qname = qv.as_bytes();
+        let (prefix, local) = dom_extract(
+            ruby,
+            ns,
+            qname,
+            dom_name::valid_element_local_name,
+            "DOM element",
+        )?;
+        let too_long = || makiri_error("element qualified name is too long");
+        let sp = if prefix.is_empty() {
+            Split::unprefixed(u32::try_from(qname.len()).map_err(|_| too_long())?)
+        } else {
+            Split::prefixed(
+                u32::try_from(prefix.len()).map_err(|_| too_long())?,
+                u32::try_from(local.len()).map_err(|_| too_long())?,
+            )
+        };
+        let el = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
+            mutate::new_dom_element_ns(d, qname, sp, ns)
+        })?)?;
+        wrap(el, rb_self)
+    })
+}
+
 /// `create_loose_dom_element(qualified_name, prefix, local_name, namespace_uri)`
 /// -> Element.
+///
+/// The name is not parsed: the caller gives its split. That is what the DOM's
+/// `createElement` needs - its argument is a local name whole, colons and all
+/// (`"foo:"`, `"xmlns:foo"`), which neither [`create_element`] (an XML QName)
+/// nor [`create_element_ns`] (split at the first colon) can make.
 pub fn create_loose_dom_element(
     ruby: &Ruby,
     rb_self: Value,

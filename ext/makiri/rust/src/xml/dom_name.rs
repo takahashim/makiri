@@ -2,9 +2,10 @@
 //! far looser than an XML Name - but not unchecked. The HTML mutators apply it
 //! to every element and attribute name they are given.
 //!
-//! Its own module because it is not XML naming. `Document#create_loose_dom_element`
-//! exists so a caller can build the element a browser would - `":good:times:"`,
-//! `"x<"` - and the XML serializer refuses such a name later
+//! Its own module because it is not XML naming. `Document#create_element_ns`
+//! and `create_loose_dom_element` exist so a caller can build the element a
+//! browser would - `"f}oo"`, `"x<"` - and the XML serializer refuses such a
+//! name later
 //! (`NodeFlags::DOM_LOOSE_NAME`, `serialize::Failure::DomLooseName`). Keeping it out
 //! of [`crate::xml::qname`] means an XML rule can never be relaxed by reading
 //! this file's rules as the same thing.

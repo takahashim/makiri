@@ -50,6 +50,11 @@ fn doc_internal_subset(_ruby: &Ruby, this: HtmlSelf) -> Result<Option<Value>, Er
     })
 }
 
+/// `Makiri::HTML::Document.new`: an empty document - no children, no-quirks.
+fn doc_s_new(_ruby: &Ruby, _klass: Value) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(crate::bridge::doc::new_empty_document)
+}
+
 fn doc_quirks_mode(ruby: &Ruby, self_: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| Ok(crate::bridge::doc::document_quirks_mode(ruby, self_)))
 }
@@ -160,6 +165,7 @@ pub fn init_html_doc() -> Result<(), Error> {
     let html_doc = crate::init::CLASS_HTML_DOCUMENT.defined()?;
 
     html_doc.define_singleton_method("_parse", method!(doc_s_parse, 2))?;
+    html_doc.define_singleton_method("new", method!(doc_s_new, 0))?;
     html_doc.define_method("root", method!(doc_root, 0))?;
     html_doc.define_method("title", method!(doc_title, 0))?;
     html_doc.define_method("errors", method!(doc_errors, 0))?;
@@ -170,6 +176,10 @@ pub fn init_html_doc() -> Result<(), Error> {
     html_doc.define_method(
         "tree_version",
         method!(crate::glue::node::document_tree_version, 0),
+    )?;
+    html_doc.define_method(
+        "attribute_version",
+        method!(crate::glue::node::document_attribute_version, 0),
     )?;
 
     let frag = crate::init::CLASS_DOCUMENT_FRAGMENT.defined()?;

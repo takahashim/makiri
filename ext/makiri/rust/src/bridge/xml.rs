@@ -332,20 +332,30 @@ impl Editing {
     /// change - `//a` then kept finding an element renamed to `b`.
     ///
     /// It counts as a change to a child list ([`bump_tree_version`]); an
-    /// attribute edit takes [`Editing::with_attributes`] instead.
+    /// attribute edit takes [`Editing::with_attributes`] instead, and a
+    /// character-data edit [`Editing::with_data`].
     pub fn with_arena<R>(&self, f: impl FnOnce(&mut XmlDoc, NodeId) -> R) -> Result<R, Error> {
-        self.lend(true, f)
+        self.lend(EditKind::ChildList, f)
     }
 
-    /// [`Editing::with_arena`] for an edit of the element's ATTRIBUTES only,
-    /// which changes no child list and so leaves the tree version alone.
+    /// [`Editing::with_arena`] for an edit of ATTRIBUTES only - an element's,
+    /// or an Attr node's value - which changes no child list: it counts
+    /// towards the attribute version ([`bump_attribute_version`]) instead of
+    /// the tree version.
     pub fn with_attributes<R>(&self, f: impl FnOnce(&mut XmlDoc, NodeId) -> R) -> Result<R, Error> {
-        self.lend(false, f)
+        self.lend(EditKind::Attributes, f)
+    }
+
+    /// [`Editing::with_arena`] for an edit of a Text, Comment, CDATA or PI
+    /// node's DATA, which changes no child list and no attribute: no version
+    /// counts it (see [`EditKind::CharacterData`]).
+    pub fn with_data<R>(&self, f: impl FnOnce(&mut XmlDoc, NodeId) -> R) -> Result<R, Error> {
+        self.lend(EditKind::CharacterData, f)
     }
 
     fn lend<R>(
         &self,
-        structural: bool,
+        kind: EditKind,
         f: impl FnOnce(&mut XmlDoc, NodeId) -> R,
     ) -> Result<R, Error> {
         let id = self.id;
@@ -356,8 +366,8 @@ impl Editing {
         });
         /* After the arena call, which refuses an evaluated document first -
          * and that, like the frozen check, leaves the tree as it was. */
-        if structural && r.is_ok() {
-            bump_tree_version(self.document);
+        if r.is_ok() {
+            count_edit(self.document, kind);
         }
         r
     }
