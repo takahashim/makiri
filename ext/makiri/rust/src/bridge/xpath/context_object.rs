@@ -21,7 +21,6 @@ use crate::engine_error::ErrorKind;
 use crate::falloc::{try_to_boxed_slice, MapInsert, Reserve};
 use crate::xpath::ast::Ast;
 use crate::xpath::ctx::ContextError;
-use crate::xpath::limits::Budget;
 
 use super::*;
 
@@ -215,7 +214,7 @@ impl XPathCtx {
          * Holding the borrow across the walk would turn all four into one
          * generic "already in use", which is how the handler specs first caught
          * this. */
-        let (ast, owned) = {
+        let ast = {
             /* Verify BEFORE borrowing: coercing the expression can run Ruby
              * (`to_s`), which may re-enter this context, and a borrow held across
              * that would turn the re-entry into "already in use". */
@@ -225,17 +224,11 @@ impl XPathCtx {
             /* Release the borrow before building the exception: that allocates,
              * and a NoMemoryError there would longjmp past the RefMut. */
             drop(cache);
-            let (ast, owned, added) = parsed.map_err(|error| xpath_error(&error))?;
+            let (ast, added) = parsed.map_err(|error| xpath_error(&error))?;
             self.account_cache(added);
-            (ast, owned)
+            ast
         };
-
-        /* A cached AST outlives this call: the context is live (it is `self`),
-         * and its cache frees nothing before the context goes. */
-        // SAFETY: as above - the AST the cache just handed back.
-        let value = evaluate_query(&self.ctx, unsafe { &*ast }, handler, document, Answer::All);
-        drop(owned);
-        query_result(value?, document, Answer::All)
+        evaluate_to_ruby(&self.ctx, ast, handler, document, Answer::All)
     }
 
     /// The engine caps this context evaluates under, for a caller that must
@@ -286,38 +279,36 @@ impl XPathCtx {
     }
 }
 
-/// The compiled AST for `expr`, parsing and caching it on first use.
+/// The AST for `expr`, from the cache or freshly parsed and cached, with the
+/// bytes it newly added to the cache (0 for a hit, or an AST not cached - one
+/// the query then owns).
 ///
-/// Returns a pointer to the AST plus its owner when it could not be cached. A
-/// cached AST lives as long as the context (see [`AstCache`]).
+/// A cached AST is handed out borrowed: the cache frees nothing before the
+/// context goes ([`AstCache`]), so it outlives the evaluation it is for, which
+/// runs on this live context.
 #[allow(clippy::result_large_err)]
-/// The AST for `expr`, from the cache or freshly parsed, with the bytes it
-/// newly added to the cache (0 for a hit, or an AST not cached).
 fn cached_ast(
     cache: &mut AstCache,
     limits: crate::xpath::limits::Limits,
     expr: RubyText,
-) -> Result<(*const Ast, Option<Box<Ast>>, usize), crate::engine_error::Error> {
+) -> Result<(QueryAst, usize), crate::engine_error::Error> {
     // SAFETY: `expr` holds its String rooted for this lookup.
     let key = expr.as_bytes();
     if let Some(ast) = cache.0.get(key) {
-        return Ok((&**ast as *const Ast, None, 0));
+        // SAFETY: cached, so alive and unchanged while the context is.
+        return Ok((unsafe { QueryAst::cached(ast) }, 0));
     }
 
-    /* Each parse charges a budget of its own, made from the context's caps. */
-    let mut budget = Budget::with_limits(limits);
-    let Ok(ast) = crate::xpath::parse::parse_owned(expr.text(), &mut budget) else {
-        return Err(budget.take_error());
-    };
+    let ast = parse_with_limits(limits, expr.text())?;
     if cache.0.len() >= AST_CACHE_MAX || cache.0.falloc_reserve(1).is_err() {
-        return Ok((&*ast as *const Ast, Some(ast), 0));
+        return Ok((QueryAst::owned(ast), 0));
     }
     let Some(owned_key) = try_to_boxed_slice(key) else {
-        return Ok((&*ast as *const Ast, Some(ast), 0));
+        return Ok((QueryAst::owned(ast), 0));
     };
     /* The Box's heap address is what the cache keeps; moving the Box into the
      * map does not move the AST, so the pointer is taken before the insert. */
-    let ptr = &*ast as *const Ast;
+    let ptr = NonNull::from(&*ast);
     let added = owned_key.len().saturating_add(ast.heap_estimate());
     if cache.0.falloc_insert(owned_key, ast).is_err() {
         return Err(XPathError::with(
@@ -325,5 +316,6 @@ fn cached_ast(
             format_args!("out of memory caching XPath expression"),
         ));
     }
-    Ok((ptr, None, added))
+    // SAFETY: just cached, so alive and unchanged while the context is.
+    Ok((unsafe { QueryAst::cached(ptr.as_ref()) }, added))
 }
