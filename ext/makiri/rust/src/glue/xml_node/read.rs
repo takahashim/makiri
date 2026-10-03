@@ -234,6 +234,24 @@ pub fn last_element_child(this: XmlSelf) -> Result<Option<Value>, Error> {
     })
 }
 
+/// `#root_node` (DOM `getRootNode()`): the node the parent links end at - the
+/// Document for a connected node, a DocumentFragment for one inside it, or
+/// the topmost node of a detached subtree. An attribute is its own root, as
+/// the DOM gives it no parent.
+pub fn root_node(this: XmlSelf) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| {
+        let d = this.doc_ref();
+        if d.type_(this.id) == Some(ArenaKind::Attribute) {
+            return Ok(this.value);
+        }
+        let mut root = this.id;
+        while let Some(p) = d.parent(root) {
+            root = p;
+        }
+        Ok(wrap_rel(this, Some(root))?.unwrap_or(this.value))
+    })
+}
+
 pub fn get_document(this: XmlSelf) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| Ok(this.document))
 }

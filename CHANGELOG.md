@@ -9,6 +9,10 @@
   `element_children` answer, without building a NodeSet. An index no child
   has (negative or past the end) is nil; a non-Integer is a `TypeError`.
 
+* `Node#root_node` (HTML and XML): the DOM's `getRootNode()` - the Document,
+  a DocumentFragment (a template's contents included), or the top of a
+  detached subtree - in one call. An attribute is its own root.
+
 ## [0.12.1] - 2026-10-02
 
 ### Fixed
