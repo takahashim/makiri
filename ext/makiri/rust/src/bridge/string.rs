@@ -411,6 +411,21 @@ pub unsafe fn ruby_str_from_utf8(bytes: &[u8]) -> VALUE {
     rb_sys::rb_utf8_str_new(bytes.as_ptr() as *const c_char, bytes.len() as c_long)
 }
 
+/// The interned, frozen UTF-8 String with `bytes` as content: Ruby's own
+/// fstring, so equal content is the same object and a repeated read allocates
+/// nothing once the first has interned it.
+///
+/// # Safety
+/// As [`ruby_str_from_utf8`]: `bytes` must be valid UTF-8.
+pub unsafe fn ruby_interned_str_from_utf8(bytes: &[u8]) -> VALUE {
+    /* A slice's pointer is never null, even when it is empty. */
+    rb_sys::rb_enc_interned_str(
+        bytes.as_ptr() as *const c_char,
+        bytes.len() as c_long,
+        rb_sys::rb_utf8_encoding(),
+    )
+}
+
 /* ---- the strict text contract ---- */
 
 /// Check `bytes` against the strict contract, returning the specific

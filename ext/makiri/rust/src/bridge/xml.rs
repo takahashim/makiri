@@ -59,6 +59,14 @@ static XML_NODE_CLASSES: NodeClasses = NodeClasses {
     fragment: &CLASS_XML_DOCUMENT_FRAGMENT,
 };
 
+/// An interned, frozen UTF-8 String of arena bytes, for the `interned_*` name
+/// readers.
+pub fn interned_str(bytes: &[u8]) -> Value {
+    // SAFETY: arena bytes are valid UTF-8 - the reader validates on the way
+    // in, and every mutator validates what it stores.
+    unsafe { value(crate::bridge::string::ruby_interned_str_from_utf8(bytes)) }
+}
+
 /// Wrap an arena node into its `Makiri::XML::*` leaf.
 ///
 /// The DOCUMENT node maps back onto the Ruby Document rather than getting a
