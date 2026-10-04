@@ -239,7 +239,8 @@ impl<'doc> HtmlElement<'doc> {
                 }
             };
             lexbor_ok(named)?;
-            at.set_value(value)?;
+            /* A new attribute: nothing has read its value yet. */
+            at.set_value_unchecked(value)?;
             Ok(at)
         }
     }
@@ -258,7 +259,9 @@ impl<'doc> HtmlElement<'doc> {
         value: &[u8],
     ) -> Result<HtmlAttr<'doc>, AdapterOom> {
         if let Some(at) = self.attr_by_name(qname) {
-            return at.set_value(value).map(|()| at);
+            // SAFETY: per the contract - the element, and so its attribute,
+            // may be changed.
+            return unsafe { at.set_value_unchecked(value) }.map(|()| at);
         }
         let at = self.create_attr(None, qname, value, self.is_html_in_html_doc())?;
         // SAFETY: per the contract; `at` was just made and is unlinked, with
@@ -296,7 +299,9 @@ impl<'doc> HtmlElement<'doc> {
             None => self.attr_by_ns(None, local),
         };
         if let Some(at) = existing {
-            return at.set_value(value);
+            // SAFETY: per the contract - the element, and so its attribute,
+            // may be changed.
+            return unsafe { at.set_value_unchecked(value) };
         }
         // SAFETY: per the contract - the element may be changed.
         unsafe { self.append_attribute(ns, qname, value) }

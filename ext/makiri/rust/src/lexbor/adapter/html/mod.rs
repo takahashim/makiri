@@ -1436,12 +1436,18 @@ impl<'doc> HtmlAttr<'doc> {
     /// Replace the attribute's value. `Err` when Lexbor could not store it,
     /// in which case the attribute keeps what it had.
     ///
-    /// Lexbor frees the old value here, which is why an XPath evaluation may not
-    /// be reading this document - the borrowed slices it holds would dangle.
-    /// Reaching this through [`HtmlElementMut`] is what says that was checked.
-    pub fn set_value(self, value: &[u8]) -> Result<(), AdapterOom> {
+    /// Lexbor frees the old value here, and [`value`](Self::value) hands out a
+    /// slice of it for the document's lifetime - so this is not a safe method
+    /// of a reading handle. The safe way in is [`HtmlElementMut`]'s attribute
+    /// setters, which hold the document cleared for editing.
+    ///
+    /// # Safety
+    /// Nothing may be reading this attribute's value: the caller holds the
+    /// element's document cleared for editing (no XPath evaluation is
+    /// borrowing from it).
+    pub(super) unsafe fn set_value_unchecked(self, value: &[u8]) -> Result<(), AdapterOom> {
         // SAFETY: a live attribute; Lexbor copies the bytes before anything
-        // else runs.
+        // else runs, and per the contract no borrow of the old value is live.
         lexbor_ok(unsafe { lxb::lxb_dom_attr_set_value(self.raw(), value.as_ptr(), value.len()) })
     }
 
