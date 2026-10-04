@@ -166,6 +166,18 @@ impl<'doc> HtmlNodeMut<'doc> {
         self.0.parent().map(HtmlNodeMut)
     }
 
+    /// Take this ATTRIBUTE off its owner element - the DOM's "remove an
+    /// attribute", by the node rather than by its name. The arena keeps it, as
+    /// [`HtmlElementMut::attr_remove`] does. A no-op for a non-attribute and
+    /// for an attribute with no owner.
+    pub fn remove_from_owner(self) {
+        if let (Some(attr), Some(owner)) =
+            (self.0.attr(), self.parent().and_then(Self::element_mut))
+        {
+            owner.attr_remove(attr);
+        }
+    }
+
     #[inline]
     pub fn first_child(self) -> Option<Self> {
         self.0.first_child().map(HtmlNodeMut)

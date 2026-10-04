@@ -4,6 +4,9 @@
 
 ### Added
 
+* HTML `Attr#remove` / `#unlink` take the attribute off its element, as on
+  XML, and move only `attribute_version`. It raised "use delete(name) to
+  remove an attribute".
 * `Makiri::XML::Document#create_element_ns(namespace_uri, qualified_name)`,
   the DOM's `createElementNS` as the HTML Document's already is: the name is
   split at its first colon and checked by the DOM's rules (`ArgumentError`),

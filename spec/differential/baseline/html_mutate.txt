@@ -43,11 +43,11 @@ after.orphan = UTF-8:"RAISE Makiri::Error: cannot add a sibling to a node with n
 remove.ret = Element/p
 remove.tree = UTF-8:"<html><head></head><body><div id=\"a\"><p id=\"p2\">two</p></div></body></html>"
 remove.twice = Element/p
-remove.attr = UTF-8:"RAISE Makiri::Error: use delete(name) to remove an attribute"
+remove.attr = Attr/id
 unlink.ret = Element/p
 unlink.tree = UTF-8:"<html><head></head><body><div id=\"a\"><p id=\"p2\">two</p></div></body></html>"
 unlink.twice = Element/p
-unlink.attr = UTF-8:"RAISE Makiri::Error: use delete(name) to remove an attribute"
+unlink.attr = Attr/id
 replace.ret = Element/r
 replace.tree = UTF-8:"<html><head></head><body><div id=\"a\"><r></r><p id=\"p2\">two</p></div></body></html>"
 replace.frag = DocumentFragment/#document-fragment
@@ -163,6 +163,6 @@ invalidation=1
 move=2
 nul_value=1
 outer_html=1
-raised=31
+raised=29
 remove_attribute_ns=1
 set_attribute_ns=1
