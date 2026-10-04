@@ -28,6 +28,16 @@ RSpec.describe "Attr#content=" do
         expect(doc.attribute_version).to be > before[1]
       end
 
+      # An Attr's edit changes its owner's attribute list, so a frozen owner
+      # refuses it as it refuses `delete`.
+      it "refuses content= and remove when the owner element is frozen" do
+        before = [doc.tree_version, doc.attribute_version]
+        owner.freeze
+        expect { attr.content = "z" }.to raise_error(FrozenError)
+        expect { attr.remove }.to raise_error(FrozenError)
+        expect([owner["a"], doc.tree_version, doc.attribute_version]).to eq(["1", *before])
+      end
+
       it "refuses on a frozen Attr, changing nothing" do
         before = [doc.tree_version, doc.attribute_version]
         attr.freeze

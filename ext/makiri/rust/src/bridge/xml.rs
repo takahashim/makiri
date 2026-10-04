@@ -356,6 +356,7 @@ impl Editing {
     fn lend<R>(self, kind: EditKind, f: impl FnOnce(&mut XmlDoc, NodeId) -> R) -> Result<R, Error> {
         let id = self.id;
         check_frozen(self.receiver)?;
+        check_attr_owner_frozen(self.document, id)?;
         ensure_document_mutable(self.document)?;
         /* Recorded once both refusals are past and BEFORE the change, with no
          * Ruby run in between (`record_edit`): an edit that then fails, or a
@@ -368,10 +369,24 @@ impl Editing {
     }
 }
 
+/// An Attr receiver's edit changes its OWNER's attribute list, so a frozen
+/// owner refuses it as it refuses `delete` - checked with the receiver's own
+/// frozen flag, before and after the arguments are converted.
+fn check_attr_owner_frozen(document: Value, id: NodeId) -> Result<(), Error> {
+    let doc = arena_ref(&document);
+    match (doc.type_(id), doc.parent(id)) {
+        (Some(ArenaKind::Attribute), Some(owner)) => {
+            crate::bridge::wrapper::check_node_frozen(document, owner)
+        }
+        _ => Ok(()),
+    }
+}
+
 /// The receiver cleared for an edit - not frozen, its document not under
 /// evaluation. The name index is dropped later, by [`Editing::with_arena`].
 pub fn begin_edit(this: XmlSelf) -> Result<Editing, Error> {
     check_frozen(this.value)?;
+    check_attr_owner_frozen(this.document, this.id)?;
     /* The evaluation guard, checked now so it is reported before a bad
      * argument; `with_arena` checks it again at the change. */
     ensure_document_mutable(this.document)?;

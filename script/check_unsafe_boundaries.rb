@@ -164,7 +164,9 @@ RAW_NODE_CROSSING =
 RAW_NODE_CROSSING_COUNTS = {
   "bridge/doc.rs" => 1,
   "bridge/fragment.rs" => 3,
-  "bridge/html.rs" => 7,
+  # 8th: an Attr's owner, read as the wrapper cache's identity key for the
+  # owner-frozen check (`check_attr_owner_frozen`); it does not escape.
+  "bridge/html.rs" => 8,
   "bridge/wrapper.rs" => 3,
 }.freeze
 
