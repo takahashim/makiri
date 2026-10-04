@@ -9,14 +9,14 @@
 //! A decided URI is the node's IDENTITY from then on (`NodeFlags::NS_RESOLVED`): moving
 //! the node does not change it, and the serializer emits whatever declarations
 //! the output needs to reproduce it. So resolution happens exactly once per
-//! element, and [`resolve_subtree`] is all-or-nothing - a pass that plans every
+//! element, and [`resolve_into`] is all-or-nothing - a pass that plans every
 //! resolution over the unchanged tree, and, only if every prefix binds, a pass
 //! that applies the plan.
 
 #![forbid(unsafe_code)]
 
 use crate::falloc::{OomResult, VecPush};
-use crate::xml::ns_scope::resolve_in_scope;
+use crate::xml::ns_scope::{resolve_in_scope, Placement};
 use crate::xml::qname::{name_ns, NameNs, NameRole, ReservedPrefix, Split};
 use crate::xml::{ArenaKind, AttrNs, Document, MutError, NodeFlags, NodeId, Span};
 
@@ -51,6 +51,15 @@ impl Resolved {
     }
 }
 
+/// Under what a resolution runs: whether the node is (or is about to be)
+/// connected - an unbound prefix is then refused rather than deferred - and,
+/// for a subtree about to be placed, where ([`Placement`]).
+#[derive(Clone, Copy)]
+pub(super) struct Resolution {
+    pub(super) connected: bool,
+    pub(super) placed: Option<Placement>,
+}
+
 /// Resolve `name` (split per `sp`) applied at `scope`, by the parser's rules
 /// ([`name_ns`]) with the declarations at or above `scope`. An unbound prefix
 /// is an error only when connected; deferred - and reported pending -
@@ -61,17 +70,17 @@ pub(super) fn resolve_ns(
     name: &[u8],
     sp: &Split,
     is_attr: bool,
-    connected: bool,
+    how: Resolution,
 ) -> Result<Resolved, MutError> {
     let role = if is_attr {
         NameRole::Attribute
     } else {
         NameRole::Element
     };
-    let lookup = |prefix: &[u8]| Some(resolve_in_scope(doc, scope, prefix));
+    let lookup = |prefix: &[u8]| Some(resolve_in_scope(doc, scope, prefix, how.placed));
     match name_ns(doc, name, sp, role, lookup).map_err(|ReservedPrefix| MutError::BadName)? {
         NameNs::Uri(ns) => Ok(Resolved::decided(ns)),
-        NameNs::Unbound if connected => Err(MutError::UnboundNs),
+        NameNs::Unbound if how.connected => Err(MutError::UnboundNs),
         NameNs::Unbound => Ok(Resolved {
             ns: NO_NS,
             pending: true,
@@ -127,19 +136,12 @@ struct NsPlan {
 fn plan_node_ns(
     doc: &Document,
     e: NodeId,
-    connected: bool,
+    how: Resolution,
     part: Part,
     plan: &mut NsPlan,
 ) -> Result<(), MutError> {
     if resolves_name(doc, e, part) {
-        let r = resolve_ns(
-            doc,
-            Some(e),
-            doc.qname(e),
-            &doc.split_of(e),
-            false,
-            connected,
-        )?;
+        let r = resolve_ns(doc, Some(e), doc.qname(e), &doc.split_of(e), false, how)?;
         if r.ns != doc.node(e).ns_uri {
             plan.names.falloc_push((e, r.ns)).or_oom::<MutError>()?;
         }
@@ -156,7 +158,7 @@ fn plan_node_ns(
                 doc.qname(attr),
                 &doc.split_of(attr),
                 true,
-                connected,
+                how,
             )?;
             ((!r.pending).then_some(r.ns), Some(r))
         } else {
@@ -213,9 +215,34 @@ fn has_pending_attr(doc: &Document, e: NodeId) -> bool {
     false
 }
 
-/// Re-resolve every element in `root`'s subtree, all-or-nothing: build the plan
-/// over the unchanged tree, and only when every prefix binds, apply it.
-fn resolve_subtree(doc: &mut Document, root: NodeId, connected: bool) -> Result<(), MutError> {
+/// Resolve `node`'s subtree as if it were a child of `context`, without
+/// linking it, all-or-nothing: plan every element over the tree as it stands,
+/// reading `node`'s ancestors as `context`'s ([`Placement`]) - and only when
+/// every prefix binds, apply the plan. For a DOCUMENT_FRAGMENT that is every
+/// child about to be spliced, planned as one.
+///
+/// Only the apply writes: the planning reads the tree, as it is - an earlier
+/// version linked `node` under `context` for the walk and restored the link
+/// after, which a panic between the two would have left in place.
+pub(super) fn resolve_into(
+    doc: &mut Document,
+    node: NodeId,
+    context: NodeId,
+) -> Result<(), MutError> {
+    let how = Resolution {
+        connected: doc.is_connected(context),
+        placed: Some(Placement {
+            root: node,
+            context,
+        }),
+    };
+    let plan = plan_subtree(doc, node, how)?;
+    apply_ns_plan(doc, node, how.connected, plan);
+    Ok(())
+}
+
+/// The plan for every element in `root`'s subtree, over the unchanged tree.
+fn plan_subtree(doc: &Document, root: NodeId, how: Resolution) -> Result<NsPlan, MutError> {
     let mut plan = NsPlan::default();
     let mut cur = Some(root);
     while let Some(c) = cur {
@@ -229,26 +256,10 @@ fn resolve_subtree(doc: &mut Document, root: NodeId, connected: bool) -> Result<
                 } else {
                     Part::Whole
                 };
-                plan_node_ns(doc, c, connected, part, &mut plan)?;
+                plan_node_ns(doc, c, how, part, &mut plan)?;
             }
         }
         cur = doc.preorder_next(root, c);
     }
-    apply_ns_plan(doc, root, connected, plan);
-    Ok(())
-}
-
-/// Resolve `node`'s subtree as if it were a child of `context`, WITHOUT linking
-/// it (borrow node.parent for the ancestor walk, then restore). For a
-/// DOCUMENT_FRAGMENT that is every child about to be spliced, planned as one.
-pub(super) fn resolve_into(
-    doc: &mut Document,
-    node: NodeId,
-    context: NodeId,
-) -> Result<(), MutError> {
-    let saved = doc.parent(node);
-    doc.set_parent(node, Some(context));
-    let st = resolve_subtree(doc, node, doc.is_connected(node));
-    doc.set_parent(node, saved);
-    st
+    Ok(plan)
 }

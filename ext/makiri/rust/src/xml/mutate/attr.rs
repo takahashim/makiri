@@ -9,7 +9,7 @@
 #![forbid(unsafe_code)]
 
 use super::assign_qname;
-use super::ns::{resolve_ns, Ns, Resolved, NO_NS};
+use super::ns::{resolve_ns, Ns, Resolution, Resolved, NO_NS};
 use crate::xml::attr_key::{key_taken, AttrKey};
 use crate::xml::qname::{ns_decl_check, split_checked, xmlns_prefix, Split};
 use crate::xml::{ArenaKind, AttrNs, Document, MutError, NodeFlags, NodeId};
@@ -87,8 +87,11 @@ pub fn set_attribute(
         AttrSlot::Absent { tail } => tail,
     };
     decl_check(name, val)?;
-    let connected = doc.is_connected(el);
-    let r = resolve_ns(doc, Some(el), name, &sp, true, connected)?;
+    let how = Resolution {
+        connected: doc.is_connected(el),
+        placed: None,
+    };
+    let r = resolve_ns(doc, Some(el), name, &sp, true, how)?;
     /* No attribute has this QName, but one may have its key under another
      * prefix for the same URI (p:a beside q:a, both bound to one URI). A
      * pending one has no key yet: the insertion that decides it checks. */

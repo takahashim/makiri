@@ -13,6 +13,16 @@
 
 use crate::xml::{ArenaKind, Document, NodeId, Span};
 
+/// A subtree about to be placed under `context`, read as if it already were:
+/// past `root`, its ancestors are `context` and those above it, whatever
+/// `root`'s own parent is. What lets a placement plan its names over the tree
+/// as it stands, before anything is linked.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Placement {
+    pub(crate) root: NodeId,
+    pub(crate) context: NodeId,
+}
+
 /// An `xmlns="X"` attribute (X non-empty) on an unprefixed element DECIDED to
 /// be in no namespace - a declaration that contradicts its own element, which
 /// `root["xmlns"] = "urn:x"` makes. It is ignored, by the serializer and the
@@ -50,10 +60,11 @@ pub(crate) fn ignored_default_decl(doc: &Document, el: NodeId) -> Option<NodeId>
 /// asks.
 #[cfg(test)]
 pub(crate) fn namespace_in_scope<'d>(doc: &'d Document, node: NodeId, prefix: &[u8]) -> &'d [u8] {
-    doc.span(resolve_in_scope(doc, Some(node), prefix))
+    doc.span(resolve_in_scope(doc, Some(node), prefix, None))
 }
 
-/// Nearest in-scope binding for `prefix` ("" = default) at or above `node`;
+/// Nearest in-scope binding for `prefix` ("" = default) at or above `node` -
+/// above a [`Placement`]'s root, at or above its context;
 /// [`Span::EMPTY`] when there is none, which callers treat like an empty
 /// binding. Not an `Option<Span>`: `None` leaves the payload undefined, and LLVM
 /// folds the caller's `Some(s) if s.len > 0` into one branch that reads it -
@@ -64,7 +75,17 @@ pub(crate) fn namespace_in_scope<'d>(doc: &'d Document, node: NodeId, prefix: &[
 /// stores nodes rather than interpreting them. Moving it also made it go through
 /// the CHECKED accessors, which is the right thing at this layer - it used to
 /// index links raw, which only the arena's own private accessors may do.
-pub(super) fn resolve_in_scope(doc: &Document, node: Option<NodeId>, prefix: &[u8]) -> Span {
+pub(super) fn resolve_in_scope(
+    doc: &Document,
+    node: Option<NodeId>,
+    prefix: &[u8],
+    placed: Option<Placement>,
+) -> Span {
+    /* The walk upward, through `placed`'s context past its root. */
+    let up = |id: NodeId| match placed {
+        Some(p) if p.root == id => Some(p.context),
+        _ => doc.parent(id),
+    };
     let mut e = node;
     while let Some(id) = e {
         if doc.type_(id) == Some(ArenaKind::Element) {
@@ -77,7 +98,7 @@ pub(super) fn resolve_in_scope(doc: &Document, node: Option<NodeId>, prefix: &[u
                 }
             }
         }
-        e = doc.parent(id);
+        e = up(id);
     }
     Span::EMPTY
 }
