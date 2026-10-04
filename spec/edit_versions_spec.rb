@@ -34,6 +34,44 @@ RSpec.describe "edit versions, HTML and XML alike" do
     ["Attr#remove", ->(_d, p) { p.attribute_nodes.first.remove }, false, true],
     ["Text#content=", ->(_d, p) { p.children.first.content = "x" }, false, false],
     ["Comment#content=", ->(_d, p) { p.children.last.content = "x" }, false, false],
+    # Refused before the edit is recorded: a frozen or non-node argument to an
+    # insertion, and a name no attribute can have.
+    ["add_child of a frozen node", lambda { |d, p|
+      n = d.create_element("n").freeze
+      begin
+        p.add_child(n)
+      rescue FrozenError
+        nil
+      end
+    }, false, false,],
+    ["add_child of a non-node", lambda { |_d, p|
+      begin
+        p.add_child(Object.new)
+      rescue TypeError
+        nil
+      end
+    }, false, false,],
+    ["[]= with a bad name", lambda { |_d, p|
+      begin
+        p["a b"] = "1"
+      rescue ArgumentError, Makiri::Error
+        nil
+      end
+    }, false, false,],
+    ["set_attribute_ns with a name its namespace refuses", lambda { |_d, p|
+      begin
+        p.set_attribute_ns(nil, "p:x", "1")
+      rescue ArgumentError, Makiri::Error
+        nil
+      end
+    }, false, false,],
+    ["set_loose_dom_attribute with an empty name", lambda { |_d, p|
+      begin
+        p.set_loose_dom_attribute("", "1")
+      rescue ArgumentError, Makiri::Error
+        nil
+      end
+    }, false, false,],
     ["an edit of a frozen node", lambda { |_d, p|
       p.freeze
       begin

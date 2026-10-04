@@ -53,12 +53,30 @@
   with no prefix an invented `ns1:` prefix and declaration), copies data XML
   cannot write instead of failing on it, and keeps the original's
   `max_bytes` budget instead of the default.
+* `Makiri::XML::Document#create_processing_instruction` makes a PI whose
+  target is `xml` in any case, as the DOM's `createProcessingInstruction`
+  does; `to_xml` and `canonicalize` refuse a tree holding one, as DOM
+  Parsing's serializer does. It raised `ArgumentError` with "not a
+  well-formed XML name".
+* HTML `Document#create_processing_instruction` raises `ArgumentError` for
+  data holding `?>`, as the XML side does (the DOM's InvalidCharacterError).
+  It raised `Makiri::Error` "failed to create processing instruction".
 * An XML insertion the DOM's rules refuse names the rule, in the same words
   as HTML ("the document already has a root element", "a doctype node can
   only be a child of the document", ...). It said "invalid placement" for
   every rule but a cycle and Text under the document.
 
 ### Fixed
+
+* An XML copy that runs out of its document's byte budget - `import_node`,
+  `clone_node`, an insertion from another document, HTML into XML - gives
+  back what it took. The document could not be edited any further after one.
+* An HTML insertion refused for its argument (a frozen node, a non-node, an
+  argument whose document is being evaluated) and an XML `[]=`,
+  `set_attribute_ns` or `set_loose_dom_attribute` refused for its name no
+  longer move a version.
+* Importing HTML into an XML document stores each namespace URI once, not
+  once per element, which counted against the byte budget.
 
 * An Attr's `content=` and `remove` refuse with `FrozenError` when the
   element that owns the attribute is frozen, in HTML and XML, as that

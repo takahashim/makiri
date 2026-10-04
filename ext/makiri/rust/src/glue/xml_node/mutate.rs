@@ -75,6 +75,8 @@ pub fn aset(_ruby: &Ruby, this: XmlSelf, name: Value, val: Value) -> Result<Valu
         let nv = verified_name(name, "attribute name")?;
         let vv = verified_data(val, "attribute value")?;
         let (name, value) = (nv.as_bytes(), vv.as_bytes());
+        /* A bad name is refused before the edit is recorded. */
+        xml_mut_result(mutate::checked_attribute_name(name))?;
         xml_mut_result(edit.with_attributes(|d, n| mutate::set_attribute(d, n, name, value))?)?;
         Ok(val)
     })
@@ -98,6 +100,8 @@ pub fn set_attribute_ns(
             qv.as_bytes(),
             vv.as_bytes(),
         );
+        /* A bad name is refused before the edit is recorded. */
+        xml_mut_result(mutate::checked_attribute_ns_name(ns, qname))?;
         xml_mut_result(
             edit.with_attributes(|d, n| mutate::set_attribute_ns(d, n, ns, qname, value))?,
         )?;
@@ -121,6 +125,8 @@ pub fn set_loose_dom_attribute(
         let nv = verified_name(name, "attribute name")?;
         let vv = verified_data(val, "attribute value")?;
         let (name, value) = (nv.as_bytes(), vv.as_bytes());
+        /* A bad name is refused before the edit is recorded. */
+        xml_mut_result(mutate::checked_loose_dom_attribute_name(name))?;
         xml_mut_result(
             edit.with_attributes(|d, n| mutate::set_loose_dom_attribute(d, n, name, value))?,
         )?;

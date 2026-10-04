@@ -414,13 +414,6 @@ impl Document {
         }
     }
 
-    /// Set a node's namespace URI to `uri` ([`Document::store_ns_uri`]).
-    pub(super) fn set_ns_bytes(&mut self, id: NodeId, uri: &[u8]) -> Result<(), BudgetError> {
-        let span = self.store_ns_uri(uri)?;
-        self.node_mut(id).ns_uri = span;
-        Ok(())
-    }
-
     /// The prefix/local split of `id`'s qualified name.
     ///
     /// The three name spans all point into ONE arena copy (see

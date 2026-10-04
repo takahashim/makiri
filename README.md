@@ -184,6 +184,12 @@ and unusually large documents can raise it with `max_bytes:`.
 Makiri::XML(huge_xml, max_bytes: 512 * 1024 * 1024)   # also Makiri::XML::Document.parse(..., max_bytes:)
 ```
 
+The limit covers the document's whole life, not only the parse: nodes and
+values made by editing it count too, and a replaced value or a removed node
+keeps its bytes until the document is gone. A document edited for a long time
+can be compacted with `dup`, which copies only what is in it now, under the
+same limit.
+
 ### Node identity
 
 Navigating to the same node always gives the same Ruby object, for as long as

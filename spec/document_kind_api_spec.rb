@@ -341,3 +341,29 @@ RSpec.describe "HTML and XML Document APIs" do
     end
   end
 end
+
+# The DOM's createProcessingInstruction refuses data holding `?>` with
+# InvalidCharacterError, which Makiri words as ArgumentError on both
+# representations; a target XML reserves is made on both.
+RSpec.describe "Document#create_processing_instruction, HTML and XML alike" do
+  { "HTML" => -> { Makiri::HTML::Document.new }, "XML" => -> { Makiri::XML::Document.new } }.each do |kind, make|
+    it "#{kind}: refuses ?> in the data with ArgumentError and makes an xml target" do
+      doc = make.call
+      expect { doc.create_processing_instruction("t", "a?>b") }
+        .to raise_error(ArgumentError, /must not contain \?>/)
+      expect(doc.create_processing_instruction("xml", "d").name).to eq("xml")
+    end
+  end
+
+  # Importing an HTML xml-target processing instruction into XML holds it,
+  # and to_xml refuses it rather than the import.
+  it "imports an HTML xml-target processing instruction into XML" do
+    hdoc = Makiri::HTML("<div></div>")
+    html = hdoc.at_css("div")
+    html << hdoc.create_processing_instruction("xml", %(version="1.0"))
+    xml = Makiri::XML("<r/>")
+    xml.root << xml.import_node(html, true)
+    expect(xml.root.children.first.children.first.name).to eq("xml")
+    expect { xml.to_xml }.to raise_error(Makiri::Error, /target is xml/)
+  end
+end
