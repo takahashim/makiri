@@ -31,8 +31,8 @@ use core::ptr::NonNull;
 
 use crate::falloc::{try_box, OomOption, OomResult};
 use crate::lexbor::abi::{
-    self as lxb, lxb_html_document_create, lxb_html_document_destroy, lxb_html_parse_chunk_begin,
-    lxb_html_parse_chunk_end, lxb_html_parse_chunk_process,
+    self as lxb, lxb_html_document_destroy, lxb_html_parse_chunk_begin, lxb_html_parse_chunk_end,
+    lxb_html_parse_chunk_process,
 };
 use crate::lexbor::adapter::arena_bytes::{document_capacity, document_chunks};
 use crate::lexbor::adapter::dom_index::DomIndex;
@@ -414,16 +414,7 @@ pub fn parse_html(
 /// mode). Made by Lexbor's document constructor, not a parse, so nothing is
 /// stamped and there is no line table.
 pub fn empty_html_document(compat_mode: u32) -> Result<Box<HtmlParsed>, HtmlParseError> {
-    // SAFETY: the constructor takes nothing and returns a new document, or
-    // null when it cannot allocate one; a non-null one is ours to write.
-    let raw = unsafe {
-        let raw = lxb_html_document_create();
-        if !raw.is_null() {
-            (*raw).dom_document.compat_mode = compat_mode.min(2);
-        }
-        raw
-    };
-    let doc = DocOwner(NonNull::new(raw).ok_or(HtmlParseError::Failed)?);
+    let doc = DocOwner(DomDoc::create_empty(compat_mode).ok_or(HtmlParseError::Failed)?);
     let parsed = HtmlParsed {
         doc: doc.release(),
         dom_index: None,
