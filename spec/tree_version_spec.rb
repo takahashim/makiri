@@ -84,11 +84,10 @@ RSpec.describe "Document#tree_version" do
       expect(para.text).to eq("")
     end
 
-    it "is left alone by a refused Attr#remove" do
+    it "is left alone by Attr#remove, an attribute edit" do
       para["k"] = "v"
-      keeps(doc) do
-        expect { para.attribute_nodes.first.remove }.to raise_error(Makiri::Error)
-      end
+      keeps(doc) { para.attribute_nodes.find { |a| a.name == "k" }.remove }
+      expect(para["k"]).to be_nil
     end
 
     it "is left alone by attribute edits and by reads" do

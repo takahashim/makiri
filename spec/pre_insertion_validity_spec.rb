@@ -149,7 +149,7 @@ RSpec.describe "pre-insertion validity" do
       it "refuses a doctype, and a fragment going into its own child" do
         frag.add_child(doc.create_element("a"))
         expect { frag.add_child(doc.create_document_type("r")) }
-          .to raise_error(Makiri::Error, /invalid placement/)
+          .to raise_error(Makiri::Error, /doctype node can only be a child of the document/)
         expect { frag.children.first.add_child(frag) }.to raise_error(Makiri::Error, /own subtree/)
         expect { frag.add_child(frag) }.to raise_error(Makiri::Error, /own subtree/)
         expect(frag.children.map(&:name)).to eq(%w[a])
@@ -185,6 +185,35 @@ RSpec.describe "pre-insertion validity" do
         holder.add_child(frag)
         expect(bound.namespace_uri).to eq("urn:other")
         expect(unbound.namespace_uri).to eq("urn:q")
+      end
+    end
+  end
+  # Both representations keep the reason for a refusal to the error, worded
+  # once (bridge::dom_error): the same broken rule reads the same in either.
+  describe "the same refusal, the same message, in HTML and XML" do
+    builders = {
+      "HTML" => -> { Makiri::HTML("<p></p>").then { |d| [d, d.at_css("p")] } },
+      "XML" => -> { Makiri::XML("<p/>").then { |d| [d, d.root] } },
+    }
+    cases = {
+      "a cycle" => ->(_d, p) { p.add_child(p) },
+      "a second root" => ->(d, _p) { d.add_child(d.create_element("q")) },
+      "a doctype under an element" => ->(d, p) { p.add_child(d.create_document_type("x")) },
+      "text under the document" => ->(d, _p) { d.add_child(d.create_text_node("t")) },
+      "a sibling of a detached node" => ->(d, _p) { d.create_element("a").add_next_sibling(d.create_element("b")) },
+      "a replace of a detached node" => ->(d, _p) { d.create_element("a").replace(d.create_element("b")) },
+    }
+    cases.each do |what, edit|
+      it "for #{what}" do
+        messages = builders.transform_values do |make|
+          doc, para = make.call
+          edit.call(doc, para)
+          nil
+        rescue Makiri::Error => e
+          e.message
+        end
+        expect(messages["HTML"]).not_to be_nil
+        expect(messages["XML"]).to eq(messages["HTML"])
       end
     end
   end

@@ -81,7 +81,7 @@ pub fn set_attribute(
      * namespace), silently, and dropped a namespace set_attribute_ns gave. */
     let tail = match find_attr(doc, el, AttrKey::QName(name)) {
         AttrSlot::Found { attr, .. } => {
-            set_existing_value(doc, attr, name, val)?;
+            set_existing_value(doc, attr, val)?;
             return Ok(attr);
         }
         AttrSlot::Absent { tail } => tail,
@@ -102,19 +102,22 @@ pub fn set_attribute(
     build_attr(doc, el, name, &sp, val, r, tail)
 }
 
-/// `[]=` on the existing attribute `attr`, named `name`: the value `val`, held
-/// to the declaration rules when the attribute is named as one - whether or
-/// not its current value binds (`set_attribute_ns` may have given it one that
-/// does not), since `[]=` names a declaration to make. A DOM-loose attribute
-/// merely named `xmlns` declares nothing, so its value is no URI to check.
-fn set_existing_value(
+/// A new value `val` for the existing attribute `attr` - `[]=` on one it
+/// finds, and an Attr's own `content=` - held to the declaration rules when the
+/// attribute is named as one, whether or not its current value binds
+/// (`set_attribute_ns` may have given it one that does not), since setting it
+/// names a declaration to make. A DOM-loose attribute merely named `xmlns`
+/// declares nothing, so its value is no URI to check.
+///
+/// Rebinding a declaration moves no node already decided: a decided URI is a
+/// node's identity (`ns`), as with any declaration change.
+pub(super) fn set_existing_value(
     doc: &mut Document,
     attr: NodeId,
-    name: &[u8],
     val: &[u8],
 ) -> Result<(), MutError> {
-    if doc.declaration_named(attr).is_some() {
-        decl_check(name, val)?;
+    if let Some(prefix) = doc.declaration_named(attr) {
+        ns_decl_check(prefix, val).map_err(MutError::BadNsDecl)?;
     }
     doc.set_value_bytes(attr, val)?;
     Ok(())

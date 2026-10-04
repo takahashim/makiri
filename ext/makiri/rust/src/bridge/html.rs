@@ -17,8 +17,7 @@ use crate::init::{
     CLASS_HTML_PROCESSING_INSTRUCTION, CLASS_HTML_TEXT, CLASS_XML_DOCUMENT,
 };
 use crate::lexbor::adapter::html::{
-    ForeignNode, HtmlNode, HtmlNodeKey, HtmlNodeMut, Insertion, NodeType, Place, PreInsertError,
-    RawDoc, RawNode,
+    ForeignNode, HtmlNode, HtmlNodeKey, HtmlNodeMut, Insertion, NodeType, Place, RawDoc, RawNode,
 };
 use crate::lexbor::fragment::import_with_fixup;
 
@@ -282,7 +281,8 @@ pub(in crate::bridge) fn with_html_node<R>(
 
 /// The receiver cleared for an edit - not frozen, its document not under
 /// evaluation - and the PROOF of it: [`edit`] is the only way to build one and
-/// [`HtmlEdit::node`] the only way to spend it. The XML side's `Editing`.
+/// [`HtmlEdit::node`] (or its attribute and data twins) the only way to spend
+/// it, ONCE - they take `self`. The XML side's `Editing`, spent the same way.
 ///
 /// The checks and the index drop are two steps on purpose. The checks come
 /// first, so a frozen receiver is reported before a bad argument. The drop
@@ -387,16 +387,16 @@ fn adopt_copy<'d>(doc: RawDoc, node: HtmlNode<'_>) -> Result<HtmlNode<'d>, Error
 /// document's indexes, which still list it. A structural change to a document
 /// invalidates ITS indexes; this is one, made from another document's method.
 fn adopt_release(src: Value) -> Result<(), Error> {
+    /* Invalidated and recorded before the release (`record_edit`); the node
+     * borrow below is taken after, as dropping the indexes borrows too. */
+    let src_doc = keepalive_document(src)?;
+    invalidate_indexes(src_doc);
+    record_edit(src_doc, EditKind::ChildList);
     with_arg_node(src, |node| {
         /* SAFETY: the source document was cleared for editing by
          * `take_incoming` before anything was copied out of it. */
         release_from_tree(unsafe { HtmlNodeMut::assume_mutable(node) });
-    })?;
-    /* After the borrow `with_arg_node` held: dropping them borrows again. */
-    let src_doc = keepalive_document(src)?;
-    invalidate_indexes(src_doc);
-    record_edit(src_doc, EditKind::ChildList);
-    Ok(())
+    })
 }
 
 fn release_from_tree(node: HtmlNodeMut<'_>) {
@@ -437,7 +437,7 @@ pub fn insert(this: &HtmlSelf, rb_incoming: Value, place: Place) -> Result<Value
     let (placed, adopted) = with_html_node(incoming_doc, key, |incoming| {
         Insertion::new(target.node(), place, incoming)
             .and_then(|i| i.check())
-            .map_err(|e| refused(e, place))?;
+            .map_err(crate::bridge::dom_error::pre_insert_error)?;
         let (node, adopted) = take_incoming(target, incoming_doc, incoming)?;
         target.place(node, place);
         Ok::<_, Error>((RawNode::from(node.node()), adopted))
@@ -447,38 +447,6 @@ pub fn insert(this: &HtmlSelf, rb_incoming: Value, place: Place) -> Result<Value
     }
     adopt_release(rb_incoming)?;
     wrap_html_node(placed, this.document)
-}
-
-/// A refused insertion, worded. The one place these messages live.
-fn refused(e: PreInsertError, place: Place) -> Error {
-    use crate::dom_rules::{Hierarchy as H, Violation};
-    makiri_error(match e {
-        PreInsertError::NoParent if place == Place::Replace => {
-            "cannot replace a node with no parent"
-        }
-        PreInsertError::NoParent => "cannot add a sibling to a node with no parent",
-        /* Unreachable through `Insertion::new`, which takes the reference child
-         * from the parent it names; worded all the same. */
-        PreInsertError::Rule(Violation::NotFound) => {
-            "the reference node is not a child of the parent"
-        }
-        PreInsertError::Rule(Violation::HierarchyRequest(h)) => match h {
-            H::ParentNotContainer => {
-                "only a document, a document fragment or an element can have children"
-            }
-            H::Ancestor => "cannot insert a node into its own subtree",
-            H::AttributeNode => "an attribute node cannot be inserted into the tree",
-            H::DocumentNode => "a document node cannot be inserted into the tree",
-            H::UnsupportedNode => "this kind of node cannot be inserted into the tree",
-            H::DoctypeParent => "a doctype node can only be a child of the document",
-            H::DuplicateDoctype => "the document already has a doctype",
-            H::DoctypeAfterElement | H::ElementBeforeDoctype => {
-                "a doctype must precede the document element"
-            }
-            H::SecondDocumentElement => "the document already has a root element",
-            H::TextUnderDocument => "text cannot be a child of the document",
-        },
-    })
 }
 
 /// The node to put in the tree for `incoming`: itself, taken out of where it

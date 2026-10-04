@@ -16,15 +16,15 @@ use crate::bridge::ruby::makiri_error;
 use crate::bridge::string::namespace_arg;
 
 use crate::bridge::xml::{
-    begin_edit, import_copy, incoming_node, verified_data, verified_data_opt, verified_name,
+    begin_edit, import_copy, insert, verified_data, verified_data_opt, verified_name,
     verified_name_opt, verified_text, verified_text_opt, with_arena_for_new_node,
     wrap_xml_node as wrap, xml_mut_result, Editing, XmlSelf,
 };
 use crate::glue::node::dom_extract;
 use crate::init::CLASS_XML_DOCUMENT;
 use crate::xml::dom_name::{self, split_loose_dom_name};
-use crate::xml::model::{ArenaKind, NodeId};
-use crate::xml::mutate::{self, place, Place};
+use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId};
+use crate::xml::mutate::{self, Place};
 use crate::xml::qname::Split;
 
 /* ------------------------------------------------------------------ */
@@ -169,18 +169,18 @@ pub fn set_content(_ruby: &Ruby, this: XmlSelf, text: Value) -> Result<Value, Er
     crate::bridge::ruby::entry(|| {
         /* A node's type never changes, so it is read before the argument's
          * conversion: a Text, Comment, CDATA or PI node's content is its data,
-         * which changes no child list. */
-        let data = matches!(
-            this.doc_ref().type_(this.id),
-            Some(ArenaKind::Text | ArenaKind::CDataSection | ArenaKind::Comment | ArenaKind::Pi)
-        );
+         * and an Attr's its value - neither changes a child list. */
+        let kind = this.doc_ref().type_(this.id);
         let edit = begin_edit(this)?;
         let tv = verified_data(text, "node content")?;
         let bytes = tv.as_bytes();
-        xml_mut_result(if data {
-            edit.with_data(|d, n| mutate::set_content(d, n, bytes))?
-        } else {
-            edit.with_arena(|d, n| mutate::set_content(d, n, bytes))?
+        let set = |d: &mut XmlDoc, n| mutate::set_content(d, n, bytes);
+        xml_mut_result(match kind {
+            Some(
+                ArenaKind::Text | ArenaKind::CDataSection | ArenaKind::Comment | ArenaKind::Pi,
+            ) => edit.with_data(set)?,
+            Some(ArenaKind::Attribute) => edit.with_attributes(set)?,
+            _ => edit.with_arena(set)?,
         })?;
         Ok(text)
     })
@@ -189,18 +189,9 @@ pub fn set_content(_ruby: &Ruby, this: XmlSelf, text: Value) -> Result<Value, Er
 /* ------------------------------------------------------------------ */
 /* building: insertion                                                */
 /* ------------------------------------------------------------------ */
-
-/// Put `arg` at `at` relative to the receiver - moved when it is of this
-/// document, adopted from its own otherwise - and return it.
-fn insert(this: XmlSelf, arg: Value, at: Place) -> Result<Value, Error> {
-    let edit = begin_edit(this)?;
-    let (node, adoption) = incoming_node(edit.document(), arg)?;
-    xml_mut_result(edit.with_arena(|d, target| place(d, target, node, at))?)?;
-    if let Some(a) = adoption {
-        a.finish();
-    }
-    wrap(node, this.document)
-}
+/* Every verb is `bridge::xml::insert` at its own `Place`: the checks, the
+ * adoption and its completion are the bridge's, as `bridge::html::insert`'s
+ * are on the HTML side. */
 
 pub fn add_child(_ruby: &Ruby, this: XmlSelf, arg: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| insert(this, arg, Place::Child))

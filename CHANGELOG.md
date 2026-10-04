@@ -4,6 +4,9 @@
 
 ### Added
 
+* HTML `Attr#remove` / `#unlink` take the attribute off its element, as on
+  XML, and move only `attribute_version`. It raised "use delete(name) to
+  remove an attribute".
 * `Makiri::XML::Document#create_element_ns(namespace_uri, qualified_name)`,
   the DOM's `createElementNS` as the HTML Document's already is: the name is
   split at its first colon and checked by the DOM's rules (`ArgumentError`),
@@ -28,6 +31,12 @@
 * Documented: `namespace_uri` and `prefix` of elements and attributes are
   `nil` when there is no namespace or no prefix - never `""` - whether the
   node was parsed or created, in HTML and XML.
+* `tree_version` and `attribute_version` are documented as cache keys rather
+  than edit counts: an unchanged version means the child lists (or the
+  attributes) did not change, and a changed one may be conservative - an
+  edit that is refused after its arguments are checked, or stops part-way,
+  still moves it. Both are recorded just before the change, in HTML and XML
+  alike.
 * `tree_version` no longer counts character-data edits (a Text, Comment,
   CDATA or PI node's `content=`), which change no child list. A cache of child
   lists keyed by it is no longer refilled on every text edit.
@@ -36,9 +45,23 @@
   has the same tree whatever shape it was built into (a re-parse wrapped a
   tree with no `<html>` root in html/head/body and changed its quirks mode),
   and `Node#line` on it is `nil`.
+* `Makiri::XML::Document#dup` copies the document node for node instead of
+  re-parsing `to_xml`. The copy keeps every name, namespace and attribute as
+  the original holds them (a re-parse gave an attribute set in a namespace
+  with no prefix an invented `ns1:` prefix and declaration), copies data XML
+  cannot write instead of failing on it, and keeps the original's
+  `max_bytes` budget instead of the default.
+* An XML insertion the DOM's rules refuse names the rule, in the same words
+  as HTML ("the document already has a root element", "a doctype node can
+  only be a child of the document", ...). It said "invalid placement" for
+  every rule but a cycle and Text under the document.
 
 ### Fixed
 
+* XML `Attr#content=` sets the attribute's value - a namespace
+  declaration's new value held to the declaration rules - and moves only
+  `attribute_version`. It raised "operation unsupported" and still moved
+  `tree_version`.
 * An HTML Attr imported on its own from another HTML document
   (`Document#import_node(attr)`) keeps its namespace URI as written. It came
   back lower-cased, and a differently cased XHTML namespace became the HTML

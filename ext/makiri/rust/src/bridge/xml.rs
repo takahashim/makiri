@@ -213,12 +213,7 @@ fn xml_mut_error(st: MutError) -> Error {
         MutError::InvalidCharacter(why) => return crate::bridge::ruby::arg_error(why),
         MutError::UnboundNs => "namespace prefix is not bound in this scope",
         MutError::Type => "operation unsupported for this node type",
-        MutError::Cycle => "cannot insert a node into its own subtree",
-        MutError::TextUnderDocument => "text cannot be a child of the document",
-        MutError::Hierarchy => {
-            "invalid placement (an attribute/document node cannot be a tree child, a document \
-allows a single root element, and a sibling target must have a parent)"
-        }
+        MutError::PreInsert(e) => return crate::bridge::dom_error::pre_insert_error(e),
         MutError::BadNsDecl(why) => match why {
             NsDeclError::Xmlns => "namespace declaration not permitted: xmlns cannot be declared",
             NsDeclError::XmlElsewhere => {
@@ -293,10 +288,14 @@ pub fn with_arena_for_new_node<R>(
 
 /// The receiver cleared for an edit, and the PROOF of it.
 ///
-/// [`begin_edit`] is the only way to build one and [`Editing::with_arena`] the
-/// only way to spend it, so a tree edit cannot reach the arena without the two
-/// things that must happen first: the frozen check, and dropping the name index
-/// the edit is about to invalidate.
+/// [`begin_edit`] is the only way to build one and [`Editing::with_arena`] (or
+/// its attribute and data twins) the only way to spend it, so a tree edit
+/// cannot reach the arena without the two things that must happen first: the
+/// frozen check, and dropping the name index the edit is about to invalidate.
+///
+/// Spent ONCE - the three take `self` - as `HtmlEdit` is: one permit, one
+/// edit, one record of it. Each spending checks again, so a second would not
+/// be unsound; taking the permit narrows what a caller can get wrong.
 ///
 /// [`with_arena_for_new_node`] stays for the FACTORIES, which build a detached node -
 /// not in the tree, so not in the index, and with no receiver to freeze. The
@@ -335,7 +334,7 @@ impl Editing {
     /// It counts as a change to a child list ([`record_edit`]); an
     /// attribute edit takes [`Editing::with_attributes`] instead, and a
     /// character-data edit [`Editing::with_data`].
-    pub fn with_arena<R>(&self, f: impl FnOnce(&mut XmlDoc, NodeId) -> R) -> Result<R, Error> {
+    pub fn with_arena<R>(self, f: impl FnOnce(&mut XmlDoc, NodeId) -> R) -> Result<R, Error> {
         self.lend(EditKind::ChildList, f)
     }
 
@@ -343,34 +342,29 @@ impl Editing {
     /// or an Attr node's value - which changes no child list: it counts
     /// towards the attribute version ([`record_edit`]) instead of
     /// the tree version.
-    pub fn with_attributes<R>(&self, f: impl FnOnce(&mut XmlDoc, NodeId) -> R) -> Result<R, Error> {
+    pub fn with_attributes<R>(self, f: impl FnOnce(&mut XmlDoc, NodeId) -> R) -> Result<R, Error> {
         self.lend(EditKind::Attributes, f)
     }
 
     /// [`Editing::with_arena`] for an edit of a Text, Comment, CDATA or PI
     /// node's DATA, which changes no child list and no attribute: no version
     /// counts it (see [`EditKind::CharacterData`]).
-    pub fn with_data<R>(&self, f: impl FnOnce(&mut XmlDoc, NodeId) -> R) -> Result<R, Error> {
+    pub fn with_data<R>(self, f: impl FnOnce(&mut XmlDoc, NodeId) -> R) -> Result<R, Error> {
         self.lend(EditKind::CharacterData, f)
     }
 
-    fn lend<R>(
-        &self,
-        kind: EditKind,
-        f: impl FnOnce(&mut XmlDoc, NodeId) -> R,
-    ) -> Result<R, Error> {
+    fn lend<R>(self, kind: EditKind, f: impl FnOnce(&mut XmlDoc, NodeId) -> R) -> Result<R, Error> {
         let id = self.id;
         check_frozen(self.receiver)?;
-        let r = with_arena_for_new_node(self.document, |d| {
+        ensure_document_mutable(self.document)?;
+        /* Recorded once both refusals are past and BEFORE the change, with no
+         * Ruby run in between (`record_edit`): an edit that then fails, or a
+         * panic in it, still invalidates what it may have changed. */
+        record_edit(self.document, kind);
+        with_arena_for_new_node(self.document, |d| {
             d.invalidate_name_index();
             f(d, id)
-        });
-        /* After the arena call, which refuses an evaluated document first -
-         * and that, like the frozen check, leaves the tree as it was. */
-        if r.is_ok() {
-            record_edit(self.document, kind);
-        }
-        r
+        })
     }
 }
 
@@ -541,6 +535,16 @@ pub fn document_internal_subset(rb_self: Value) -> Result<Option<Value>, Error> 
         .transpose()
 }
 
+/// `Document#_copy`: a whole-document copy of `document`, node for node
+/// (`mutate::copy_document`, where what it keeps is stated).
+pub fn copy_xml_document(document: Value) -> Result<Value, Error> {
+    /* The wrapper first, while nothing needs freeing - see DocumentShell. The
+     * copy then reads `document` and runs no Ruby. */
+    let shell = DocumentShell::new(DocKind::Xml);
+    let arena = crate::xml::mutate::copy_document(arena_ref(&document)).map_err(xml_mut_error)?;
+    Ok(shell.install_xml(arena))
+}
+
 /// A fresh, empty XML Document: an arena holding a DOCUMENT node and no root.
 pub fn new_empty_xml_document() -> Result<Value, Error> {
     let shell = DocumentShell::new(DocKind::Xml);
@@ -624,7 +628,7 @@ pub fn find_attribute_ns(this: XmlSelf, ns: Value, local: Value) -> Result<Optio
 /// second half of the move `appendChild` performs across arenas. It carries
 /// the source arena and node [`incoming_node`] already resolved, so finishing
 /// cannot fail - there is nothing left to look up.
-pub struct Adoption {
+struct Adoption {
     src_doc: *mut XmlDoc,
     /// The source's Document, whose tree version the removal bumps.
     src_document: Value,
@@ -636,11 +640,14 @@ pub struct Adoption {
 
 impl Adoption {
     /// Empty the node out of its old document, whose name index goes with it.
-    pub fn finish(self) {
+    fn finish(self) {
         // SAFETY: `src_doc` is the live arena `incoming_node` found and cleared
         // for writing; `_keep` holds it, and the caller ran only engine code
         // on the OTHER arena since.
         let sdoc = unsafe { &mut *self.src_doc };
+        /* Invalidated and recorded before the removal (`record_edit`). */
+        sdoc.invalidate_name_index();
+        record_edit(self.src_document, EditKind::ChildList);
         if sdoc.type_(self.src) == Some(ArenaKind::DocumentFragment) {
             while let Some(c) = sdoc.first_child(self.src) {
                 remove_node(sdoc, c);
@@ -648,15 +655,33 @@ impl Adoption {
         } else {
             remove_node(sdoc, self.src);
         }
-        sdoc.invalidate_name_index();
-        record_edit(self.src_document, EditKind::ChildList);
     }
+}
+
+/// `node.add_child(arg)` and its siblings: put `arg` at `at` relative to the
+/// receiver - moved within the document, or adopted from its own - and hand
+/// back what is now in the tree: the argument, or for an adopted node its copy.
+/// The HTML twin is `bridge::html::insert`.
+///
+/// The whole edit is the bridge's: the receiver cleared for editing, the
+/// argument resolved (and copied, when it is another document's), every rule
+/// checked and the namespaces resolved by the placing, and - only once that
+/// has succeeded - the adopted original taken out of its own document
+/// ([`Adoption::finish`]), which nothing outside this module can call.
+pub fn insert(this: XmlSelf, arg: Value, at: crate::xml::mutate::Place) -> Result<Value, Error> {
+    let edit = begin_edit(this)?;
+    let (node, adoption) = incoming_node(edit.document(), arg)?;
+    xml_mut_result(edit.with_arena(|d, target| crate::xml::mutate::place(d, target, node, at))?)?;
+    if let Some(a) = adoption {
+        a.finish();
+    }
+    wrap_xml_node(node, this.document)
 }
 
 /// `arg` as a node of `target_doc`'s arena: itself when it already lives there
 /// (a move), or a copy imported from its own document plus the [`Adoption`]
 /// that takes it out of there once it is placed.
-pub fn incoming_node(target_doc: Value, arg: Value) -> Result<(NodeId, Option<Adoption>), Error> {
+fn incoming_node(target_doc: Value, arg: Value) -> Result<(NodeId, Option<Adoption>), Error> {
     if !is_kind_of(arg, &CLASS_NODE) || !is_kind_of(xml_node_document(arg)?, &CLASS_XML_DOCUMENT) {
         return Err(crate::bridge::ruby::type_error(
             "expected a Makiri::XML node (NodeSet / String arguments are a later phase)",

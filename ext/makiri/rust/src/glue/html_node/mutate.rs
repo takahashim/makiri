@@ -96,9 +96,11 @@ pub fn replace(_ruby: &Ruby, this: HtmlSelf, rb_other: Value) -> Result<Value, E
 pub fn remove(_ruby: &Ruby, this: HtmlSelf) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let edit = edit(&this)?;
-        /* Refused before `node()`, which counts the edit. */
+        /* An Attr leaves its element's attribute list: an attribute edit,
+         * which changes no child list - as the XML side's `remove` is. */
         if edit.node_type() == NodeType::Attribute {
-            return Err(makiri_error("use delete(name) to remove an attribute"));
+            edit.node_for_attributes()?.remove_from_owner();
+            return Ok(this.value);
         }
         let node = edit.node()?;
         if node.parent().is_some() {

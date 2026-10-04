@@ -264,3 +264,32 @@ pub fn clone_node(doc: &mut Document, src: NodeId, deep: bool) -> Result<NodeId,
         copy_one(doc, None, src)
     }
 }
+
+/// A copy of the whole of `src` as a new document - `Document#dup` - node for
+/// node rather than through its markup: the top-level children in their order
+/// (the DOCTYPE, comments and PIs around the root included), every QName,
+/// namespace URI and namespace state as `src` holds them, attributes with their
+/// provenance, character data as stored.
+///
+/// What a re-parse of `to_xml` decided instead is stated here:
+/// - no namespace is resolved again - every element of a document is decided,
+///   and the copy carries the decision (a re-parse gave an attribute set in a
+///   namespace with no prefix an invented `ns1:` and a declaration for it);
+/// - nothing has to be WRITABLE: data the DOM holds and XML cannot write is
+///   copied, where the re-parse failed on it;
+/// - the byte and node budgets are `src`'s, not the default - its content
+///   fits them - and whether it carried an `encoding` declaration too;
+/// - no source position: a copied node was not parsed.
+pub fn copy_document(src: &Document) -> Result<Box<Document>, MutError> {
+    let mut dst = Document::create(None)?;
+    dst.inherit_meta(src);
+    let doc_node = dst.doc_node();
+    let mut child = src.first_child(src.doc_node());
+    while let Some(c) = child {
+        let copy = deep_copy(&mut dst, Some(src), c)?;
+        dst.append_child(doc_node, copy);
+        child = src.next(c);
+    }
+    dst.sync_doc_meta(doc_node);
+    Ok(dst)
+}

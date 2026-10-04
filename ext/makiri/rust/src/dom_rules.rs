@@ -75,6 +75,24 @@ pub enum Hierarchy {
     SecondDocumentElement,
 }
 
+/// Why an insertion is refused, before any link changes: a place with no
+/// parent to resolve to, or one of the DOM's own rules ([`check`]). Both
+/// representations keep it to the error they raise, so the reason reaches the
+/// caller rather than a summary of it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PreInsertError {
+    /// A sibling place, or a replace (`replacing`), on a node with no parent.
+    NoParent { replacing: bool },
+    /// A rule of the WHATWG DOM's "ensure pre-insertion validity".
+    Rule(Violation),
+}
+
+impl From<Violation> for PreInsertError {
+    fn from(v: Violation) -> Self {
+        PreInsertError::Rule(v)
+    }
+}
+
 impl From<Hierarchy> for Violation {
     fn from(h: Hierarchy) -> Self {
         Violation::HierarchyRequest(h)
