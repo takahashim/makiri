@@ -1,117 +1,77 @@
 # Changelog
 
-## [Unreleased]
+## [0.14.0] - 2026-10-04
 
 ### Added
 
-* HTML `Attr#remove` / `#unlink` take the attribute off its element, as on
-  XML, and move only `attribute_version`. It raised "use delete(name) to
-  remove an attribute".
+* `Document#attribute_version` (HTML and XML): an Integer that increases
+  whenever an attribute is added, removed or set (to the same value too),
+  including through an Attr node's `content=` or `remove`. Child-list and
+  text edits leave it as it is, so it can key a cache of attributes.
 * `Makiri::XML::Document#create_element_ns(namespace_uri, qualified_name)`,
-  the DOM's `createElementNS` as the HTML Document's already is: the name is
-  split at its first colon and checked by the DOM's rules (`ArgumentError`),
-  and then the namespace is checked against the name (`Makiri::Error`). The
-  element keeps the namespace it was given wherever it is inserted. A name
-  that is not an XML QName (`f}oo`) makes an element that `to_xml` refuses.
-* `Document#attribute_version` (HTML and XML): an Integer that increases with
-  every attribute edit - an attribute added, removed or its value set (to the
-  same value too), including an Attr node's `content=` and an XML Attr
-  node's `remove`, and an XML insertion that decides a namespace for an
-  attribute set with a prefix on a detached element. Child-list and
-  character-data edits leave it unchanged.
-* `Makiri::HTML::Document.new`: an empty HTML document - no children,
-  no-quirks mode. `title=` and `meta_encoding=` do nothing until it has a
-  `<head>`.
-* `Makiri::HTML::Document#quirks_mode?` (true in quirks mode only) and
-  `#compat_mode` (`"BackCompat"` / `"CSS1Compat"`, like the DOM's
-  `compatMode`).
+  like the HTML Document's and the DOM's `createElementNS`. The element keeps
+  its namespace wherever it is inserted; a name that is not an XML QName
+  (`f}oo`) makes an element that `to_xml` refuses.
+* `Makiri::HTML::Document.new`: an empty HTML document in no-quirks mode.
+* `Makiri::HTML::Document#quirks_mode?` and `#compat_mode` (`"BackCompat"` /
+  `"CSS1Compat"`, like the DOM's `compatMode`).
+* HTML `Attr#remove` / `#unlink` remove the attribute from its element, as on
+  XML. They raised "use delete(name) to remove an attribute".
 
 ### Changed
 
-* An HTML Attr node's `content=` now increases `attribute_version` instead of
-  `tree_version`.
-* Documented: `namespace_uri` and `prefix` of elements and attributes are
-  `nil` when there is no namespace or no prefix - never `""` - whether the
-  node was parsed or created, in HTML and XML.
-* `tree_version` and `attribute_version` are documented as cache keys rather
-  than edit counts: an unchanged version means the child lists (or the
-  attributes) did not change, and a changed one may be conservative - an
-  edit that is refused after its arguments are checked, or stops part-way,
-  still moves it. Both are recorded just before the change, in HTML and XML
-  alike.
-* `tree_version` no longer counts character-data edits (a Text, Comment,
-  CDATA or PI node's `content=`), which change no child list. A cache of child
-  lists keyed by it is no longer refilled on every text edit.
-* `Makiri::HTML::Document#dup` copies the tree node by node into an empty
-  document in the same quirks mode, instead of re-parsing `to_html`. The copy
-  has the same tree whatever shape it was built into (a re-parse wrapped a
-  tree with no `<html>` root in html/head/body and changed its quirks mode),
-  and `Node#line` on it is `nil`.
-* `Makiri::XML::Document#dup` copies the document node for node instead of
-  re-parsing `to_xml`. The copy keeps every name, namespace and attribute as
-  the original holds them (a re-parse gave an attribute set in a namespace
-  with no prefix an invented `ns1:` prefix and declaration), copies data XML
-  cannot write instead of failing on it, and keeps the original's
-  `max_bytes` budget instead of the default.
-* `Makiri::XML::Document#create_processing_instruction` makes a PI whose
-  target is `xml` in any case, as the DOM's `createProcessingInstruction`
-  does; `to_xml` and `canonicalize` refuse a tree holding one, as DOM
-  Parsing's serializer does. It raised `ArgumentError` with "not a
-  well-formed XML name".
-* HTML `Document#create_processing_instruction` raises `ArgumentError` for
-  data holding `?>`, as the XML side does (the DOM's InvalidCharacterError).
-  It raised `Makiri::Error` "failed to create processing instruction".
-* An XML insertion the DOM's rules refuse names the rule, in the same words
-  as HTML ("the document already has a root element", "a doctype node can
-  only be a child of the document", ...). It said "invalid placement" for
-  every rule but a cycle and Text under the document.
+* `tree_version` counts child-list changes only. A Text, Comment, CDATA or
+  PI node's `content=` no longer moves it, and an HTML Attr node's
+  `content=` moves `attribute_version` instead.
+* `tree_version` and `attribute_version` are documented as cache keys: an
+  unchanged version means nothing it covers changed, while a changed one may
+  be conservative (an edit refused part-way can still move it).
+* `namespace_uri` and `prefix` are documented as `nil`, never `""`, when
+  there is no namespace or prefix, in HTML and XML.
+* `Document#dup` copies the tree node by node instead of re-parsing its
+  serialization. An HTML copy keeps a tree with no `<html>` root as it is and
+  keeps the quirks mode, and `Node#line` on it is `nil`. An XML copy keeps
+  every name and namespace as written (a re-parse invented `ns1:` prefixes),
+  copies data XML cannot write, and keeps the original's `max_bytes`.
+* XML `create_processing_instruction` accepts the target `xml` (in any case),
+  as the DOM does; `to_xml` and `canonicalize` refuse a tree holding one.
+* HTML `create_processing_instruction` raises `ArgumentError`, as XML does,
+  for data containing `?>`. It raised `Makiri::Error`.
+* A refused XML insertion names the DOM rule it breaks, in the same words as
+  HTML. It said "invalid placement".
 
 ### Fixed
 
-* An XML copy that runs out of its document's byte budget - `import_node`,
-  `clone_node`, an insertion from another document, HTML into XML - gives
-  back what it took. The document could not be edited any further after one.
-* An HTML insertion refused for its argument (a frozen node, a non-node, an
-  argument whose document is being evaluated) and an XML `[]=`,
-  `set_attribute_ns` or `set_loose_dom_attribute` refused for its name no
-  longer move a version.
-* Importing HTML into an XML document stores each namespace URI once, not
-  once per element, which counted against the byte budget.
-
-* An Attr's `content=` and `remove` refuse with `FrozenError` when the
-  element that owns the attribute is frozen, in HTML and XML, as that
-  element's own `delete` and `[]=` do. Only the Attr's own frozen flag was
-  checked.
-* XML `Attr#content=` sets the attribute's value - a namespace
-  declaration's new value held to the declaration rules - and moves only
-  `attribute_version`. It raised "operation unsupported" and still moved
-  `tree_version`.
-* An HTML Attr imported on its own from another HTML document
-  (`Document#import_node(attr)`) keeps its namespace URI as written. It came
-  back lower-cased, and a differently cased XHTML namespace became the HTML
-  namespace.
-* `to_xml` and `canonicalize` write an element in the XML namespace as
-  `xml:local`, as they already wrote such an attribute. They wrote a
-  declaration binding the XML namespace to another prefix or as the default,
-  which does not parse. An element in the XMLNS namespace, which no XML can
-  hold, is refused with `Makiri::Error`.
-* A refused HTML `Attr#remove` no longer increases `tree_version`.
+* An Attr's `content=` and `remove` raise `FrozenError` when the element
+  that owns it is frozen, in HTML and XML.
+* XML `Attr#content=` sets the attribute's value. It raised "operation
+  unsupported".
 * HTML `title=` and `meta_encoding=` do nothing on a document with no
-  `<head>`, as the DOM's title setter does. They put the new element straight
+  `<head>`, as the DOM's title setter does. They inserted the element directly
   under the root element.
-* HTML `Document#root` (and CSS `:root`) answers the document's element child,
-  or `nil`. With no `<html>` element it answered the document's first child
-  of any kind - a comment or a doctype - so `title=` and `meta_encoding=`
-  raised on such a document.
-* XML XPath: an attribute whose namespace is not decided yet - a prefixed
-  one on a detached element - no longer matches an unprefixed name test.
-  `@a` found an unresolved `p:a`, which the DOM's lookup by namespace and
-  local name does not.
-* XML: a reference is read by one grammar wherever it occurs. A literal in
-  the internal subset accepted a character reference to a character XML has
-  no `Char` for (`<!ENTITY x "&#0;">`), and a malformed reference next to a
-  declared or external entity (`&#0;&x;`, `&bad name;` with an external
-  subset) was reported as an unsupported DTD construct instead of as
+* HTML `Document#root` and CSS `:root` return the document element, or `nil`.
+  Without an `<html>` element they returned the first child of any kind, such
+  as a comment, and `title=` raised on such a document.
+* An edit refused for its arguments - a frozen or non-node argument to an
+  HTML insertion, an invalid name given to XML `[]=`, `set_attribute_ns` or
+  `set_loose_dom_attribute`, a refused HTML `Attr#remove` - no longer moves a
+  version.
+* An XML copy that runs out of the document's byte budget (`import_node`,
+  `clone_node`, an insertion from another document) gives back what it used.
+  The document could not be edited any more after one.
+* Importing HTML into an XML document stores each namespace URI once instead
+  of once per element, which used up the byte budget faster.
+* An HTML Attr imported on its own from another HTML document keeps its
+  namespace URI as written. It was lower-cased.
+* `to_xml` and `canonicalize` write an element in the XML namespace as
+  `xml:local`. They wrote a declaration that does not parse. An element in
+  the XMLNS namespace is refused with `Makiri::Error`.
+* XML XPath: a prefixed attribute on a detached element, whose namespace is
+  not decided yet, no longer matches an unprefixed name test.
+* XML: references are read by one grammar everywhere. The internal subset
+  accepted a character reference to a character XML does not allow
+  (`<!ENTITY x "&#0;">`), and a malformed reference next to an entity
+  reference was reported as an unsupported DTD construct instead of as
   malformed XML.
 
 ## [0.13.0] - 2026-10-03
