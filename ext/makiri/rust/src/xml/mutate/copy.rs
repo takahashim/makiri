@@ -213,11 +213,22 @@ struct UriSpans {
 }
 
 impl UriSpans {
-    fn new(from: ReadFrom<'_>) -> Self {
-        UriSpans {
+    /// The table for copying from `from` into `dst`, which already holds the
+    /// reserved `xml:` and `xmlns:` URIs: the source's reserved spans map to
+    /// those rather than storing them a second time.
+    fn new(dst: &Document, from: ReadFrom<'_>) -> Self {
+        let mut uris = UriSpans {
             same_doc: from.is_none(),
             stored: HashMap::new(),
+        };
+        if let Some(src) = from {
+            for (s, d) in [(src.xml_ns, dst.xml_ns), (src.xmlns_ns, dst.xmlns_ns)] {
+                /* As in `span_for`: a table that cannot grow only stops the
+                 * sharing. */
+                let _ = uris.stored.falloc_insert((s.off, s.len), d);
+            }
         }
+        uris
     }
 
     /// The span in `dst` for the URI `uri`, which the source keeps at `src`.
@@ -301,7 +312,12 @@ pub fn import_subtree(
     src: NodeId,
 ) -> Result<NodeId, MutError> {
     debug_assert_distinct(dst, src_doc);
-    deep_copy(dst, Some(src_doc), src, &mut UriSpans::new(Some(src_doc)))
+    deep_copy(
+        dst,
+        Some(src_doc),
+        src,
+        &mut UriSpans::new(dst, Some(src_doc)),
+    )
 }
 
 /// Cross-document `copyNode`: shallow or deep, source in `src_doc`.
@@ -312,7 +328,7 @@ pub fn copy_node_from(
     deep: bool,
 ) -> Result<NodeId, MutError> {
     debug_assert_distinct(dst, src_doc);
-    let uris = &mut UriSpans::new(Some(src_doc));
+    let uris = &mut UriSpans::new(dst, Some(src_doc));
     if deep {
         deep_copy(dst, Some(src_doc), src, uris)
     } else {
@@ -322,7 +338,7 @@ pub fn copy_node_from(
 
 /// Same-document `cloneNode`: shallow or deep, reading the arena it writes.
 pub fn clone_node(doc: &mut Document, src: NodeId, deep: bool) -> Result<NodeId, MutError> {
-    let uris = &mut UriSpans::new(None);
+    let uris = &mut UriSpans::new(doc, None);
     if deep {
         deep_copy(doc, None, src, uris)
     } else {
@@ -352,7 +368,7 @@ pub fn copy_document(src: &Document) -> Result<Box<Document>, MutError> {
     let doc_node = dst.doc_node();
     /* One table for the whole document, so a URI is stored once however many
      * top-level subtrees use it. */
-    let uris = &mut UriSpans::new(Some(src));
+    let uris = &mut UriSpans::new(&dst, Some(src));
     let mut child = src.first_child(src.doc_node());
     while let Some(c) = child {
         let copy = deep_copy(&mut dst, Some(src), c, uris)?;
