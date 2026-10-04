@@ -14,7 +14,7 @@ use super::out::{put, put_comment, put_pi, C14N, W};
 use super::Failure;
 use crate::cbuf::Buf;
 use crate::falloc::{OomResult, VecPush};
-use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeFlags, NodeId, MAX_DEPTH};
+use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId, MAX_DEPTH};
 
 fn xmlns_decl(doc: &XmlDoc, a: NodeId) -> Option<(&[u8], &[u8])> {
     let p = doc.decl_prefix(a)?;
@@ -92,7 +92,12 @@ impl<'d> Writer<'d, '_> {
         Ok(())
     }
 
-    /// Push `el`'s own xmlns declarations onto the scope.
+    /// Push `el`'s own xmlns declarations onto the scope - ALL of them,
+    /// including one `ns_scope::ignored_default_decl` names, which `to_xml`
+    /// leaves out. Canonical form renders the document's declarations rather
+    /// than planning them, so such a declaration, contradicting its element,
+    /// is refused where the element needs no namespace (`fixups`), not
+    /// dropped.
     fn push_decls(&mut self, el: NodeId) -> W {
         let doc = self.doc;
         for at in doc.attributes(el) {
@@ -172,7 +177,7 @@ impl<'d> Writer<'d, '_> {
     fn fixups(&mut self, n: NodeId) -> Result<Vec<Ns<'d>>, Failure> {
         let doc = self.doc;
         let mut out: Vec<Ns> = Vec::new();
-        let decided = doc.node(n).flags.contains(NodeFlags::NS_RESOLVED);
+        let decided = doc.element_ns_decided(n);
         let el_prefix = doc.span(doc.node(n).prefix);
         if in_xml_ns(doc, n) {
             /* Written as `xml:local` (`qname`), which needs no declaration. */
@@ -192,7 +197,7 @@ impl<'d> Writer<'d, '_> {
             }
             let prefix = doc.span(doc.node(at).prefix);
             let uri = doc.span(doc.node(at).ns_uri);
-            let decided = decided || doc.node(at).attr_ns == crate::xml::AttrNs::Explicit;
+            let decided = decided || doc.attr_ns_state(at) == Some(crate::xml::AttrNs::Explicit);
             if !prefix.is_empty() {
                 if decided {
                     self.need(n, &mut out, prefix, uri)?;

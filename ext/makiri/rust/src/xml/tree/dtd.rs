@@ -16,10 +16,10 @@
 
 #![forbid(unsafe_code)]
 
-use super::cursor::{find, Cursor, InSlice, R};
+use super::cursor::{Cursor, InSlice, R};
 use crate::falloc::{OomResult, VecPush};
 use crate::xml::chars::is_reserved_pi_target;
-use crate::xml::chars::validate_name;
+use crate::xml::chars::{only_unexpanded, scan_reference};
 use crate::xml::{ParseError, MAX_DEPTH};
 
 /// An ExternalID's identifiers (§4.2.2). Either may be absent, and which one is
@@ -78,21 +78,14 @@ pub(super) fn scan_ref_literal(cur: &mut Cursor<'_>, att_value: bool) -> R {
             b'%' if !att_value => return cur.syntax(),
             b'<' if att_value => return cur.syntax(),
             b'&' => {
-                let Some(end) = find(&v[i..], b';') else {
+                /* The builder's own reading of a Reference: a character
+                 * reference must name a `Char` (WFC: Legal Character) - "&#0;"
+                 * in a literal is as malformed as in content. Whether a named
+                 * one is declared is asked where it is used, not here. */
+                let Ok((_, used)) = scan_reference(&v[i + 1..]) else {
                     return cur.syntax();
                 };
-                let body = &v[i + 1..i + end];
-                let ok = match body.strip_prefix(b"#") {
-                    Some(num) => match num.strip_prefix(b"x") {
-                        Some(hex) => !hex.is_empty() && hex.iter().all(u8::is_ascii_hexdigit),
-                        None => !num.is_empty() && num.iter().all(u8::is_ascii_digit),
-                    },
-                    None => validate_name(body),
-                };
-                if !ok {
-                    return cur.syntax();
-                }
-                i += end;
+                i += used;
             }
             _ => {}
         }
@@ -126,24 +119,13 @@ impl Declared {
     /// [`InSlice`], and `Cursor::slice` is how every other one is read. Handing
     /// the whole input out instead was the only reason `Cursor::input` existed.
     pub(super) fn refs_unexpanded_entity(&self, cur: &Cursor<'_>, s: &[u8]) -> bool {
-        let mut i = 0;
-        while let Some(at) = find(&s[i..], b'&') {
-            i += at + 1;
-            if s.get(i) == Some(&b'#') {
-                continue;
-            }
-            let Some(end) = find(&s[i..], b';') else {
-                return false;
-            };
-            let name = &s[i..i + end];
-            if !matches!(name, b"lt" | b"gt" | b"amp" | b"apos" | b"quot")
-                && (self.external_subset || self.names.iter().any(|&n| cur.slice(n) == name))
-            {
-                return true;
-            }
-            i += end;
-        }
-        false
+        /* Read by the expansion's own grammar, so a malformed input - a
+         * character outside `Char`, a malformed reference ("&bad name;"), a
+         * bad character reference beside a declared entity ("&#0;&x;") - is
+         * never reported as merely unexpanded. */
+        only_unexpanded(s, |name| {
+            self.external_subset || self.names.iter().any(|&n| cur.slice(n) == name)
+        })
     }
 }
 

@@ -9,14 +9,15 @@
 //! A decided URI is the node's IDENTITY from then on (`NodeFlags::NS_RESOLVED`): moving
 //! the node does not change it, and the serializer emits whatever declarations
 //! the output needs to reproduce it. So resolution happens exactly once per
-//! element, and [`resolve_subtree`] is all-or-nothing - a pass that plans every
+//! element, and [`resolve_into`] is all-or-nothing - a pass that plans every
 //! resolution over the unchanged tree, and, only if every prefix binds, a pass
 //! that applies the plan.
 
 #![forbid(unsafe_code)]
 
 use crate::falloc::{OomResult, VecPush};
-use crate::xml::qname::{xmlns_prefix, Split};
+use crate::xml::ns_scope::{resolve_in_scope, Placement};
+use crate::xml::qname::{name_ns, NameNs, NameRole, ReservedPrefix, Split};
 use crate::xml::{ArenaKind, AttrNs, Document, MutError, NodeFlags, NodeId, Span};
 
 /// A resolved namespace: a byte-store span (empty = no namespace).
@@ -50,44 +51,40 @@ impl Resolved {
     }
 }
 
-/// Resolve `name` (split per `sp`) applied at `scope` (mirrors the parser's §7
-/// rules). An unbound prefix is an error only when connected; deferred - and
-/// reported pending - otherwise.
+/// Under what a resolution runs: whether the node is (or is about to be)
+/// connected - an unbound prefix is then refused rather than deferred - and,
+/// for a subtree about to be placed, where ([`Placement`]).
+#[derive(Clone, Copy)]
+pub(super) struct Resolution {
+    pub(super) connected: bool,
+    pub(super) placed: Option<Placement>,
+}
+
+/// Resolve `name` (split per `sp`) applied at `scope`, by the parser's rules
+/// ([`name_ns`]) with the declarations at or above `scope`. An unbound prefix
+/// is an error only when connected; deferred - and reported pending -
+/// otherwise.
 pub(super) fn resolve_ns(
     doc: &Document,
     scope: Option<NodeId>,
     name: &[u8],
     sp: &Split,
     is_attr: bool,
-    connected: bool,
+    how: Resolution,
 ) -> Result<Resolved, MutError> {
-    let prefix = &name[..sp.prefix_len as usize];
-    if is_attr && xmlns_prefix(name).is_some() {
-        return Ok(Resolved::decided(doc.xmlns_ns_span()));
-    }
-    if sp.prefix_len == 0 {
-        if is_attr {
-            return Ok(Resolved::decided(NO_NS)); /* unprefixed attribute -> no namespace */
-        }
-        let s = resolve_in_scope(doc, scope, b"");
-        return Ok(Resolved::decided(if s.len > 0 { s } else { NO_NS }));
-    }
-    if prefix == b"xml" {
-        return Ok(Resolved::decided(doc.xml_ns_span()));
-    }
-    if prefix == b"xmlns" {
-        return Err(MutError::BadName);
-    }
-    let s = resolve_in_scope(doc, scope, prefix);
-    if s.len > 0 {
-        Ok(Resolved::decided(s))
-    } else if connected {
-        Err(MutError::UnboundNs)
+    let role = if is_attr {
+        NameRole::Attribute
     } else {
-        Ok(Resolved {
+        NameRole::Element
+    };
+    let lookup = |prefix: &[u8]| Some(resolve_in_scope(doc, scope, prefix, how.placed));
+    match name_ns(doc, name, sp, role, lookup).map_err(|ReservedPrefix| MutError::BadName)? {
+        NameNs::Uri(ns) => Ok(Resolved::decided(ns)),
+        NameNs::Unbound if how.connected => Err(MutError::UnboundNs),
+        NameNs::Unbound => Ok(Resolved {
             ns: NO_NS,
             pending: true,
-        })
+        }),
     }
 }
 
@@ -105,13 +102,13 @@ enum Part {
 /// own and is never derived again; everything else is, unless only the
 /// pending ones are being looked at.
 fn rederives(doc: &Document, attr: NodeId, part: Part) -> bool {
-    let state = doc.node(attr).attr_ns;
-    state != AttrNs::Explicit && (part == Part::Whole || state == AttrNs::Pending)
+    let state = doc.attr_ns_state(attr);
+    state != Some(AttrNs::Explicit) && (part == Part::Whole || state == Some(AttrNs::Pending))
 }
 
 /// Whether `e`'s own name is resolved for this `part`.
 fn resolves_name(doc: &Document, e: NodeId, part: Part) -> bool {
-    part == Part::Whole && !doc.node(e).flags.contains(NodeFlags::DOM_LOOSE_NAME)
+    part == Part::Whole && !doc.is_loose_name(e)
 }
 
 /// The all-or-nothing plan the check pass produces and the apply pass writes:
@@ -139,19 +136,12 @@ struct NsPlan {
 fn plan_node_ns(
     doc: &Document,
     e: NodeId,
-    connected: bool,
+    how: Resolution,
     part: Part,
     plan: &mut NsPlan,
 ) -> Result<(), MutError> {
     if resolves_name(doc, e, part) {
-        let r = resolve_ns(
-            doc,
-            Some(e),
-            doc.qname(e),
-            &doc.split_of(e),
-            false,
-            connected,
-        )?;
+        let r = resolve_ns(doc, Some(e), doc.qname(e), &doc.split_of(e), false, how)?;
         if r.ns != doc.node(e).ns_uri {
             plan.names.falloc_push((e, r.ns)).or_oom::<MutError>()?;
         }
@@ -168,7 +158,7 @@ fn plan_node_ns(
                 doc.qname(attr),
                 &doc.split_of(attr),
                 true,
-                connected,
+                how,
             )?;
             ((!r.pending).then_some(r.ns), Some(r))
         } else {
@@ -218,123 +208,58 @@ fn apply_ns_plan(doc: &mut Document, root: NodeId, connected: bool, plan: NsPlan
 /// Whether any attribute of `e` still has a pending namespace.
 fn has_pending_attr(doc: &Document, e: NodeId) -> bool {
     for attr in doc.attributes(e) {
-        if doc.node(attr).attr_ns == AttrNs::Pending {
+        if doc.attr_ns_state(attr) == Some(AttrNs::Pending) {
             return true;
         }
     }
     false
 }
 
-/// True once `e`'s namespace has been decided - by the parser, or by resolving
-/// it against the context it was first inserted into.
-fn ns_is_decided(doc: &Document, e: NodeId) -> bool {
-    doc.node(e).flags.contains(NodeFlags::NS_RESOLVED)
+/// Resolve `node`'s subtree as if it were a child of `context`, without
+/// linking it, all-or-nothing: plan every element over the tree as it stands,
+/// reading `node`'s ancestors as `context`'s ([`Placement`]) - and only when
+/// every prefix binds, apply the plan. For a DOCUMENT_FRAGMENT that is every
+/// child about to be spliced, planned as one.
+///
+/// Only the apply writes: the planning reads the tree, as it is - an earlier
+/// version linked `node` under `context` for the walk and restored the link
+/// after, which a panic between the two would have left in place.
+pub(super) fn resolve_into(
+    doc: &mut Document,
+    node: NodeId,
+    context: NodeId,
+) -> Result<(), MutError> {
+    let how = Resolution {
+        connected: doc.is_connected(context),
+        placed: Some(Placement {
+            root: node,
+            context,
+        }),
+    };
+    let plan = plan_subtree(doc, node, how)?;
+    apply_ns_plan(doc, node, how.connected, plan);
+    Ok(())
 }
 
-/// Re-resolve every element in `root`'s subtree, all-or-nothing: build the plan
-/// over the unchanged tree, and only when every prefix binds, apply it.
-fn resolve_subtree(doc: &mut Document, root: NodeId, connected: bool) -> Result<(), MutError> {
+/// The plan for every element in `root`'s subtree, over the unchanged tree.
+fn plan_subtree(doc: &Document, root: NodeId, how: Resolution) -> Result<NsPlan, MutError> {
     let mut plan = NsPlan::default();
     let mut cur = Some(root);
     while let Some(c) = cur {
         if doc.type_(c) == Some(ArenaKind::Element) {
             /* A decided element keeps its own namespace; its attributes set
              * while it was detached may still be pending. */
-            let decided = ns_is_decided(doc, c);
+            let decided = doc.element_ns_decided(c);
             if !decided || has_pending_attr(doc, c) {
                 let part = if decided {
                     Part::PendingAttrs
                 } else {
                     Part::Whole
                 };
-                plan_node_ns(doc, c, connected, part, &mut plan)?;
+                plan_node_ns(doc, c, how, part, &mut plan)?;
             }
         }
         cur = doc.preorder_next(root, c);
     }
-    apply_ns_plan(doc, root, connected, plan);
-    Ok(())
-}
-
-/// Resolve `node`'s subtree as if it were a child of `context`, WITHOUT linking
-/// it (borrow node.parent for the ancestor walk, then restore). For a
-/// DOCUMENT_FRAGMENT that is every child about to be spliced, planned as one.
-pub(super) fn resolve_into(
-    doc: &mut Document,
-    node: NodeId,
-    context: NodeId,
-) -> Result<(), MutError> {
-    let saved = doc.parent(node);
-    doc.set_parent(node, Some(context));
-    let st = resolve_subtree(doc, node, doc.is_connected(node));
-    doc.set_parent(node, saved);
-    st
-}
-
-/// An `xmlns="X"` attribute (X non-empty) on an unprefixed element DECIDED to
-/// be in no namespace - a declaration that contradicts its own element, which
-/// `root["xmlns"] = "urn:x"` makes. It is ignored, by the serializer and the
-/// mutators alike.
-///
-/// Written, it would put the element in X on re-parse; planning a prefix for
-/// the element instead gave `xmlns:ns1=""`, which Namespaces 1.0 forbids. The
-/// DOM Parsing and Serialization spec ignores such a declaration and writes
-/// `xmlns=""` where an inherited default would otherwise claim the element.
-/// Only the serializer did, so a later rename (since removed) or a new child
-/// still resolved against it - `e.name = "e"` moved `e` into X. Now [`resolve_in_scope`] skips
-/// it as well. (Nokogiri writes the attribute, and the element moves.)
-///
-/// Only a DECIDED no-namespace: an unresolved element's empty URI means "not
-/// decided yet", and its own declaration is what decides it.
-pub fn ignored_default_decl(doc: &Document, el: NodeId) -> Option<NodeId> {
-    let node = doc.node(el);
-    if node.prefix.len != 0
-        || node.ns_uri.len != 0
-        || node.flags.contains(NodeFlags::DOM_LOOSE_NAME)
-        || !node.flags.contains(NodeFlags::NS_RESOLVED)
-    {
-        return None;
-    }
-    for at in doc.attributes(el) {
-        if doc.decl_prefix(at) == Some(&b""[..]) {
-            return (doc.node(at).value.len != 0).then_some(at);
-        }
-    }
-    None
-}
-
-/// What `prefix` ("" = default) is bound to at or above `node`, by the
-/// declarations the mutators resolve against; empty when unbound. For a caller
-/// deciding whether a declaration it is about to add would repeat one in scope.
-pub fn namespace_in_scope<'d>(doc: &'d Document, node: NodeId, prefix: &[u8]) -> &'d [u8] {
-    doc.span(resolve_in_scope(doc, Some(node), prefix))
-}
-
-/// Nearest in-scope binding for `prefix` ("" = default) at or above `node`;
-/// [`Span::EMPTY`] when there is none, which callers treat like an empty
-/// binding. Not an `Option<Span>`: `None` leaves the payload undefined, and LLVM
-/// folds the caller's `Some(s) if s.len > 0` into one branch that reads it -
-/// harmless, but Valgrind reports it as an uninitialised-value jump.
-///
-/// A free function here rather than a `Document` method in `arena`: walking the
-/// ancestors for an `xmlns` declaration is a NAMESPACE rule, and the arena
-/// stores nodes rather than interpreting them. Moving it also made it go through
-/// the CHECKED accessors, which is the right thing at this layer - it used to
-/// index links raw, which only the arena's own private accessors may do.
-fn resolve_in_scope(doc: &Document, node: Option<NodeId>, prefix: &[u8]) -> Span {
-    let mut e = node;
-    while let Some(id) = e {
-        if doc.type_(id) == Some(ArenaKind::Element) {
-            let ignored = ignored_default_decl(doc, id);
-            for at in doc.attributes(id) {
-                if let Some(p) = doc.decl_prefix(at) {
-                    if p == prefix && Some(at) != ignored {
-                        return doc.try_node(at).map_or(Span::EMPTY, |n| n.value);
-                    }
-                }
-            }
-        }
-        e = doc.parent(id);
-    }
-    Span::EMPTY
+    Ok(plan)
 }

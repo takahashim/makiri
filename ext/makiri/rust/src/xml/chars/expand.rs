@@ -3,12 +3,14 @@
 //!
 //! Its own module because it is an ENGINE, not a character class: it has a
 //! cursor, a mode, a bounded writer and its own error domain, none of which the
-//! classification half of [`super`] knows about. `xml::arena`'s `Document::expand`
-//! is the only consumer.
+//! classification half of [`super`] knows about. Its consumers are the XML
+//! builder (`tree::Parser::expand`, which writes through it) and the DTD reader
+//! (`tree::dtd`, which checks references with [`scan_reference`] and asks
+//! [`only_unexpanded`] why an expansion failed) - one grammar for all three.
 
 #![forbid(unsafe_code)]
 
-use super::{is_char, Utf8Char};
+use super::{is_char, validate_name, Utf8Char};
 use crate::cutf8::decode1;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -59,6 +61,37 @@ impl<'a> Writer<'a> {
             }
             None => Err(ExpandErr::Overflow),
         }
+    }
+}
+
+/// Where a walk's output goes: the caller's buffer, or nowhere when the walk
+/// only checks the input ([`only_unexpanded`]).
+trait Sink {
+    fn put(&mut self, b: u8) -> Result<(), ExpandErr>;
+    fn put_slice(&mut self, s: &[u8]) -> Result<(), ExpandErr>;
+}
+
+impl Sink for Writer<'_> {
+    #[inline]
+    fn put(&mut self, b: u8) -> Result<(), ExpandErr> {
+        Writer::put(self, b)
+    }
+    #[inline]
+    fn put_slice(&mut self, s: &[u8]) -> Result<(), ExpandErr> {
+        Writer::put_slice(self, s)
+    }
+}
+
+struct Discard;
+
+impl Sink for Discard {
+    #[inline]
+    fn put(&mut self, _: u8) -> Result<(), ExpandErr> {
+        Ok(())
+    }
+    #[inline]
+    fn put_slice(&mut self, _: &[u8]) -> Result<(), ExpandErr> {
+        Ok(())
     }
 }
 
@@ -118,12 +151,58 @@ fn scan_char_ref(src: &[u8]) -> Result<(u32, usize), ExpandErr> {
     Ok((cp, i + 1))
 }
 
-/// Expand the 5 predefined entities + numeric character references in `src`
-/// into `out` (which must hold at least `src.len()` bytes - the output is never
-/// longer than the input), validating XML Char and, in Attr mode, folding
-/// literal whitespace. Returns the number of bytes written.
-pub fn expand_into(src: &[u8], mode: ExpandMode, out: &mut [u8]) -> Result<usize, ExpandErr> {
-    let mut w = Writer { out, pos: 0 };
+/// One Reference (§4.1), as [`scan_reference`] reads it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Reference<'a> {
+    /// A character reference, to a code point that is an XML `Char`.
+    Char(u32),
+    /// An entity reference, by a name that is an XML `Name`. Whether it can be
+    /// expanded is the caller's question - the grammar does not say.
+    Named(&'a [u8]),
+}
+
+/// One Reference (§4.1) after its `&`: what it refers to, and how many bytes
+/// it occupied INCLUDING the closing ';'. `Err(Syntax)` for a malformed one -
+/// a character reference without digits or to a code point XML has no `Char`
+/// for (WFC: Legal Character), a name that is not a `Name`, no ';'. The one
+/// reading of the grammar: the builder's expansion, the DTD's literals and the
+/// classification of a failed expansion all go through it.
+pub fn scan_reference(src: &[u8]) -> Result<(Reference<'_>, usize), ExpandErr> {
+    if let Some(rest) = src.strip_prefix(b"#") {
+        let (cp, used) = scan_char_ref(rest)?;
+        return Ok((Reference::Char(cp), used + 1));
+    }
+    let nlen = src
+        .iter()
+        .position(|&b| b == b';')
+        .ok_or(ExpandErr::Syntax)?;
+    let name = &src[..nlen];
+    if !validate_name(name) {
+        return Err(ExpandErr::Syntax);
+    }
+    Ok((Reference::Named(name), nlen + 1))
+}
+
+/// What a named reference stands for, as the walk's caller rules.
+enum Named {
+    /// One of the five predefined entities: the byte it expands to.
+    Byte(u8),
+    /// An entity a DTD declares (or may, in an external subset), which Makiri
+    /// does not expand.
+    Unexpanded,
+}
+
+/// The one walk over character data: every character a `Char`, every '&' a
+/// well-formed [`Reference`] - a character reference written out, a named one
+/// as `named` rules (`None`: not a name it knows, a well-formedness error).
+/// `Ok(true)` when some reference was [`Named::Unexpanded`].
+fn walk<S: Sink>(
+    src: &[u8],
+    mode: ExpandMode,
+    out: &mut S,
+    mut named: impl FnMut(&[u8]) -> Option<Named>,
+) -> Result<bool, ExpandErr> {
+    let mut unexpanded = false;
     let mut i = 0usize;
     while i < src.len() {
         if src[i] != b'&' {
@@ -132,28 +211,48 @@ pub fn expand_into(src: &[u8], mode: ExpandMode, out: &mut [u8]) -> Result<usize
                 return Err(ExpandErr::Syntax);
             }
             if mode == ExpandMode::Attr && (cp == 0x9 || cp == 0xA || cp == 0xD) {
-                w.put(b' ')?;
+                out.put(b' ')?;
             } else {
-                w.put_slice(&src[i..i + bl])?;
+                out.put_slice(&src[i..i + bl])?;
             }
             i += bl;
             continue;
         }
-        i += 1; /* past '&' */
-        if src.get(i) == Some(&b'#') {
-            i += 1;
-            let (cp, used) = scan_char_ref(&src[i..])?;
-            i += used;
-            w.put_slice(Utf8Char::encode(cp).as_bytes())?;
-        } else {
-            let nlen = src[i..]
-                .iter()
-                .position(|&b| b == b';')
-                .ok_or(ExpandErr::Syntax)?;
-            let name = &src[i..i + nlen];
-            i += nlen + 1;
-            w.put(predefined_entity(name).ok_or(ExpandErr::Syntax)?)?;
+        let (reference, used) = scan_reference(&src[i + 1..])?;
+        i += 1 + used;
+        match reference {
+            Reference::Char(cp) => out.put_slice(Utf8Char::encode(cp).as_bytes())?,
+            Reference::Named(name) => match named(name).ok_or(ExpandErr::Syntax)? {
+                Named::Byte(b) => out.put(b)?,
+                Named::Unexpanded => unexpanded = true,
+            },
         }
     }
+    Ok(unexpanded)
+}
+
+/// Expand the 5 predefined entities + numeric character references in `src`
+/// into `out` (which must hold at least `src.len()` bytes - the output is never
+/// longer than the input), validating XML Char and, in Attr mode, folding
+/// literal whitespace. Returns the number of bytes written.
+pub fn expand_into(src: &[u8], mode: ExpandMode, out: &mut [u8]) -> Result<usize, ExpandErr> {
+    let mut w = Writer { out, pos: 0 };
+    walk(src, mode, &mut w, |name| {
+        predefined_entity(name).map(Named::Byte)
+    })?;
     Ok(w.pos)
+}
+
+/// Why [`expand_into`] refused `src`, when it did: `true` when the only thing
+/// it could not expand is a reference to an entity `unexpanded` accepts - one
+/// a DTD declares, which Makiri does not expand - and `false` when `src` is
+/// malformed anyway: a character that is no `Char`, a malformed reference, or
+/// a name nothing declares. A malformed input is never reported as merely
+/// unexpanded.
+pub fn only_unexpanded(src: &[u8], unexpanded: impl Fn(&[u8]) -> bool) -> bool {
+    let named = |name: &[u8]| match predefined_entity(name) {
+        Some(b) => Some(Named::Byte(b)),
+        None => unexpanded(name).then_some(Named::Unexpanded),
+    };
+    walk(src, ExpandMode::Text, &mut Discard, named) == Ok(true)
 }

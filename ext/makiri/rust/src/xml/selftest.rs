@@ -761,13 +761,19 @@ fn a_loose_attribute_named_like_a_declaration_declares_nothing() {
         b"xmlns:q",
         "the whole name is the local name"
     );
-    assert_eq!(mutate::namespace_in_scope(&doc, r, b""), b"");
-    assert_eq!(mutate::namespace_in_scope(&doc, r, b"q"), b"");
-    assert_eq!(mutate::namespace_in_scope(&doc, r, b"p"), b"urn:p");
+    assert_eq!(crate::xml::ns_scope::namespace_in_scope(&doc, r, b""), b"");
+    assert_eq!(crate::xml::ns_scope::namespace_in_scope(&doc, r, b"q"), b"");
+    assert_eq!(
+        crate::xml::ns_scope::namespace_in_scope(&doc, r, b"p"),
+        b"urn:p"
+    );
     let again = mutate::set_loose_dom_attribute(&mut doc, r, b"xmlns:p", b"urn:p2")
         .expect("an existing declaration takes a new value");
     assert_eq!(again, decl);
-    assert_eq!(mutate::namespace_in_scope(&doc, r, b"p"), b"urn:p2");
+    assert_eq!(
+        crate::xml::ns_scope::namespace_in_scope(&doc, r, b"p"),
+        b"urn:p2"
+    );
 }
 
 #[test]

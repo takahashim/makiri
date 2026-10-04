@@ -423,26 +423,32 @@ impl Link {
 
 /// One node in the document's slot array.
 ///
+/// Its fields are the XML engine's alone (`pub(in crate::xml)`): outside it, a
+/// node is read through `Document`'s accessors and changed through
+/// `xml::mutate`, which keep the links, the namespace state and the indexes
+/// consistent - a raw field write from the glue or the bridge would bypass
+/// every one of those rules.
+///
 /// Links are compact [`Link`]s and byte fields are spans, so a `Node` is plain
 /// data with no pointer to chase and no per-node document stamp (the stamp lives
 /// once on the [`Document`]).
 pub struct Node {
-    pub type_: ArenaKind,
-    pub parent: Option<Link>,
-    pub first_child: Option<Link>,
-    pub last_child: Option<Link>,
-    pub prev: Option<Link>,
-    pub next: Option<Link>,
-    pub attrs: Option<Link>,
-    pub qname: Span,
-    pub local: Span,
-    pub prefix: Span,
-    pub ns_uri: Span,
-    pub value: Span,
-    pub line: u32,
-    pub col: u32,
-    pub flags: NodeFlags,
-    pub attr_ns: AttrNs,
+    pub(in crate::xml) type_: ArenaKind,
+    pub(in crate::xml) parent: Option<Link>,
+    pub(in crate::xml) first_child: Option<Link>,
+    pub(in crate::xml) last_child: Option<Link>,
+    pub(in crate::xml) prev: Option<Link>,
+    pub(in crate::xml) next: Option<Link>,
+    pub(in crate::xml) attrs: Option<Link>,
+    pub(in crate::xml) qname: Span,
+    pub(in crate::xml) local: Span,
+    pub(in crate::xml) prefix: Span,
+    pub(in crate::xml) ns_uri: Span,
+    pub(in crate::xml) value: Span,
+    pub(in crate::xml) line: u32,
+    pub(in crate::xml) col: u32,
+    pub(in crate::xml) flags: NodeFlags,
+    pub(in crate::xml) attr_ns: AttrNs,
 }
 
 /* A node is the arena's unit of cost (`NODE_COST`), so its size is pinned:
@@ -493,16 +499,16 @@ impl ParseLimits {
 /// every name and value the nodes span. Keeping byte *offsets* rather than
 /// pointers means a growing `Vec` never invalidates a node.
 pub struct Document {
-    pub(crate) nodes: Vec<Node>,
-    pub(crate) bytes: Vec<u8>,
+    pub(in crate::xml) nodes: Vec<Node>,
+    pub(in crate::xml) bytes: Vec<u8>,
     /// The reserved `xml:` / `xmlns:` URIs, stored once so bindings can name
     /// them by span like any other URI.
-    pub(crate) xml_ns: Span,
-    pub(crate) xmlns_ns: Span,
+    pub(in crate::xml) xml_ns: Span,
+    pub(in crate::xml) xmlns_ns: Span,
     /// This document's unique stamp, carried in every `NodeId` the document
     /// issues (the high half) so [`Document::try_node`] rejects a handle built
     /// for another document. Node links carry only the slot index.
-    pub(crate) stamp: u32,
+    pub(in crate::xml) stamp: u32,
     /// Running total counted against `max_bytes` (nodes + bytes).
     pub(super) arena_bytes: usize,
     pub(super) max_bytes: usize,
@@ -511,6 +517,6 @@ pub struct Document {
     pub(super) doc_node: NodeId,
     pub(super) doctype: Option<NodeId>,
     /// Rust-owned cache; mutation drops it before changing links.
-    pub(crate) name_index: core::cell::OnceCell<Box<crate::xml::index::NameIndex>>,
+    pub(in crate::xml) name_index: core::cell::OnceCell<Box<crate::xml::index::NameIndex>>,
     pub(super) has_encoding_decl: bool,
 }

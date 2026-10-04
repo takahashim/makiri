@@ -18,7 +18,9 @@ use crate::xml::arena::AppendError;
 use crate::xml::chars::{
     expand_into, is_reserved_pi_target, normalize_newlines, ExpandErr, ExpandMode,
 };
-use crate::xml::qname::{split_scanned, xmlns_prefix, Split};
+use crate::xml::qname::{
+    name_ns, split_scanned, xmlns_prefix, NameNs, NameRole, ReservedPrefix, Split,
+};
 use crate::xml::{
     ArenaKind, Document, NodeFlags, NodeId, ParseError, ParseLimits, Span, MAX_ATTRS, MAX_DEPTH,
 };
@@ -120,15 +122,6 @@ impl<'a> Parser<'a> {
 
     /* ---- namespaces (§7) ---- */
 
-    /// The in-scope URI for `pfx`. `xml` is bound without a declaration, and to
-    /// a URI the DOCUMENT owns, which is why the scope itself cannot answer it.
-    fn ns_lookup(&self, pfx: &[u8]) -> Option<Span> {
-        if pfx == b"xml" {
-            return Some(self.doc.xml_ns_span());
-        }
-        self.scope.lookup(pfx)
-    }
-
     fn push_binding(&mut self, pfx: &[u8], uri: Span) -> R {
         Ok(self.scope.bind(pfx, uri)?)
     }
@@ -217,22 +210,24 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
+    /// The namespace `name` is in as `role`, by the shared rules
+    /// ([`name_ns`]) with the open scope's bindings; `None` for a name the
+    /// parse refuses - an unbound prefix, or an element prefixed `xmlns`.
+    fn name_ns(&self, name: &[u8], sp: &Split, role: NameRole) -> Option<Span> {
+        match name_ns(self.doc, name, sp, role, |p| self.scope.lookup(p)) {
+            Ok(NameNs::Uri(uri)) => Some(uri),
+            Ok(NameNs::Unbound) | Err(ReservedPrefix) => None,
+        }
+    }
+
     /// Phase 3: the element's own namespace URI.
     fn resolve_element_ns(&mut self, el: NodeId) -> R {
-        let pfx_span = self.doc.node(el).prefix;
-        if pfx_span.len > 0 {
-            let pfx = self.doc.span(pfx_span);
-            if pfx == b"xmlns" {
-                return self.cur.syntax();
-            }
-            match self.ns_lookup(pfx) {
-                Some(span) => self.doc.node_mut(el).ns_uri = span,
-                None => return self.cur.syntax(), /* unbound prefix */
-            }
-        } else if let Some(span) = self.ns_lookup(b"") {
-            if span.len > 0 {
-                self.doc.node_mut(el).ns_uri = span;
-            }
+        let sp = self.doc.split_of(el);
+        let Some(uri) = self.name_ns(self.doc.qname(el), &sp, NameRole::Element) else {
+            return self.cur.syntax();
+        };
+        if uri.len > 0 {
+            self.doc.node_mut(el).ns_uri = uri;
         }
         /* Decided: from here the URI is the node's identity (lib.rs). A
          * parsed element in no namespace is resolved too - "no namespace" is
@@ -254,14 +249,11 @@ impl<'a> Parser<'a> {
             };
             let attr = self.new_node(ArenaKind::Attribute)?;
             self.set_node_qname(attr, name, &sp)?;
-            if xmlns_prefix(name).is_some() {
-                let span = self.doc.xmlns_ns_span();
-                self.doc.node_mut(attr).ns_uri = span;
-            } else if sp.prefix_len > 0 {
-                match self.ns_lookup(&name[..sp.prefix_len as usize]) {
-                    Some(span) => self.doc.node_mut(attr).ns_uri = span,
-                    None => return self.cur.syntax(), /* unbound prefix */
-                }
+            let Some(uri) = self.name_ns(name, &sp, NameRole::Attribute) else {
+                return self.cur.syntax(); /* unbound prefix */
+            };
+            if uri.len > 0 {
+                self.doc.node_mut(attr).ns_uri = uri;
             }
             let val = self.cur.slice(r.val);
             let v = self.expand(val, ExpandMode::Attr)?;

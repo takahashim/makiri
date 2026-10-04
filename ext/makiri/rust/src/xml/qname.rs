@@ -9,7 +9,7 @@
 #![forbid(unsafe_code)]
 
 use crate::xml::chars::{decode1, is_name_start, validate_name};
-use crate::xml::{XMLNS_NS_URI, XML_NS_URI};
+use crate::xml::{Document, Span, XMLNS_NS_URI, XML_NS_URI};
 
 /// A QName split into its parts as OFFSETS into the name (prefix is always
 /// at offset 0; prefix_len 0 = unprefixed).
@@ -168,4 +168,69 @@ pub fn xmlns_prefix(name: &[u8]) -> Option<&[u8]> {
     } else {
         None
     }
+}
+
+/* ---- a name's namespace (Namespaces in XML §5, §6) ---- */
+
+/// Whether a name is an element's or an attribute's, which Namespaces in XML
+/// treats differently: an unprefixed attribute is in no namespace and an
+/// unprefixed element in the default one, and only an attribute can be a
+/// declaration.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum NameRole {
+    Element,
+    Attribute,
+}
+
+/// The namespace a name is in, by [`name_ns`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum NameNs {
+    /// The URI, `Span::EMPTY` for no namespace.
+    Uri(Span),
+    /// A prefix nothing in scope binds: the caller's to refuse (the parser,
+    /// a connected placement) or to leave pending (a detached build).
+    Unbound,
+}
+
+/// An element named with the `xmlns` prefix, which Namespaces in XML reserves
+/// for declarations (§3).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct ReservedPrefix;
+
+/// The namespace `name` (split per `sp`) is in, as `role`, where `lookup`
+/// answers the URI bound to a prefix in scope ("" for the default namespace).
+///
+/// Namespaces in XML's rules in one place, for the parser and the mutators
+/// alike - only WHERE a prefix is looked up (the parser's open scope, a
+/// placement's ancestors) and what an unbound one means are theirs:
+/// an `xmlns` / `xmlns:p` attribute is in the XMLNS namespace; the `xml`
+/// prefix is bound to the XML namespace with no declaration; an unprefixed
+/// attribute is in none and an unprefixed element in the default namespace,
+/// if one is in scope (an empty binding undeclares it); an element may not
+/// carry the `xmlns` prefix.
+pub(crate) fn name_ns(
+    doc: &Document,
+    name: &[u8],
+    sp: &Split,
+    role: NameRole,
+    lookup: impl Fn(&[u8]) -> Option<Span>,
+) -> Result<NameNs, ReservedPrefix> {
+    if role == NameRole::Attribute && xmlns_prefix(name).is_some() {
+        return Ok(NameNs::Uri(doc.xmlns_ns_span()));
+    }
+    let bound = |prefix: &[u8]| lookup(prefix).filter(|s| s.len > 0);
+    let prefix = &name[..sp.prefix_len as usize];
+    if prefix.is_empty() {
+        return Ok(NameNs::Uri(match role {
+            NameRole::Attribute => Span::EMPTY,
+            NameRole::Element => bound(b"").unwrap_or(Span::EMPTY),
+        }));
+    }
+    if prefix == b"xml" {
+        return Ok(NameNs::Uri(doc.xml_ns_span()));
+    }
+    if prefix == b"xmlns" {
+        return Err(ReservedPrefix);
+    }
+    Ok(bound(prefix).map_or(NameNs::Unbound, NameNs::Uri))
 }

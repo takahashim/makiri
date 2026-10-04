@@ -15,8 +15,8 @@ use crate::falloc::{OomResult, VecPush};
 use crate::xml::qname::Split;
 use crate::xml::{ArenaKind, AttrNs, Document, MutError, NodeFlags, NodeId, Span};
 
-/// A copied `value` span. XML distinguishes "never set" from "set to empty" - a
-/// doctype's `PUBLIC ""` is present - so a copy has to carry the difference.
+/// A copied `value` span. XML distinguishes "never set" from "set to empty",
+/// so a copy has to carry the difference.
 enum CopiedValue {
     Absent,
     Empty,
@@ -44,6 +44,16 @@ impl CopiedValue {
     }
 }
 
+/// A DOCTYPE's name and ids, owned - read by `Document::doctype_ids` and
+/// written by `Document::new_doctype`, the arena's one reader and writer of the
+/// fields a DOCTYPE repurposes. An id is `None` when omitted and `Some(empty)`
+/// for `PUBLIC ""`, which `new_doctype` stores as present.
+struct CopiedDoctype {
+    name: Vec<u8>,
+    public: Option<Vec<u8>>,
+    system: Option<Vec<u8>>,
+}
+
 /// One node's own fields, owned, out of any arena. Attributes come with it,
 /// since they are part of the node's identity rather than its children.
 struct CopiedNode {
@@ -53,9 +63,10 @@ struct CopiedNode {
     /// A bare local name (a PI target, a doctype name) on a node with no qname.
     local: Option<Vec<u8>>,
     value: CopiedValue,
-    /// A DOCTYPE's PUBLIC id, which it keeps in the `prefix` field (see
-    /// `Document::doctype_ids`); Absent for every other kind.
-    public: CopiedValue,
+    /// A DOCTYPE's own fields, which it keeps in the name fields: copied
+    /// through the arena's DOCTYPE accessors rather than as names. `None`
+    /// for every other kind.
+    doctype: Option<CopiedDoctype>,
     ns_uri: Option<Vec<u8>>,
     flags: NodeFlags,
     /// An attribute's namespace state; `Derived` for anything else. Copied
@@ -71,31 +82,44 @@ impl CopiedNode {
             return Err(MutError::Type);
         };
         let (type_, flags, attr_ns) = (node.type_, node.flags, node.attr_ns);
-        let (qname_span, local_span, value_span, ns_span, prefix_span) =
-            (node.qname, node.local, node.value, node.ns_uri, node.prefix);
-        /* A DOCTYPE repurposes `prefix` for its PUBLIC id, so its name is no
-         * qname to split: splitting it read the id's LENGTH as a prefix length
-         * and carried the name's bytes plus whatever followed them in the store
-         * into the copy as its PUBLIC id. Its name travels as a bare local and
-         * the id as a value of its own. */
-        let doctype = type_ == ArenaKind::DocumentType;
+        let (qname_span, local_span, value_span, ns_span) =
+            (node.qname, node.local, node.value, node.ns_uri);
 
-        let qname = if qname_span.len > 0 && !doctype {
+        /* A DOCTYPE repurposes the name fields for its ids, so it is read by
+         * kind (`doctype_ids`) and never as a name: splitting its "qname" once
+         * read the PUBLIC id's length as a prefix length and copied the name's
+         * bytes, plus whatever followed them in the store, as the id. */
+        if type_ == ArenaKind::DocumentType {
+            let ids = doc.doctype_ids(src).ok_or(MutError::Type)?;
+            let owned = |v: Option<&[u8]>| v.map(copy_span).transpose();
+            return Ok(CopiedNode {
+                type_,
+                qname: None,
+                local: None,
+                value: CopiedValue::Absent,
+                doctype: Some(CopiedDoctype {
+                    name: copy_span(doc.local(src))?,
+                    public: owned(ids.public)?,
+                    system: owned(ids.system)?,
+                }),
+                ns_uri: None,
+                flags,
+                attr_ns,
+                attrs: Vec::new(),
+            });
+        }
+
+        let qname = if qname_span.len > 0 {
             Some((copy_span(doc.qname(src))?, doc.split_of(src)))
         } else {
             None
         };
-        let local = if (qname_span.len == 0 || doctype) && local_span.len > 0 {
+        let local = if qname_span.len == 0 && local_span.len > 0 {
             Some(copy_span(doc.local(src))?)
         } else {
             None
         };
         let value = CopiedValue::read(doc, value_span)?;
-        let public = if doctype {
-            CopiedValue::read(doc, prefix_span)?
-        } else {
-            CopiedValue::Absent
-        };
         let ns_uri = if ns_span.len > 0 {
             Some(copy_span(doc.ns(src))?)
         } else {
@@ -114,7 +138,7 @@ impl CopiedNode {
             qname,
             local,
             value,
-            public,
+            doctype: None,
             ns_uri,
             flags,
             attr_ns,
@@ -122,28 +146,26 @@ impl CopiedNode {
         })
     }
 
-    /// Write these fields as a fresh, detached node in `dst`.
-    fn write(&self, dst: &mut Document) -> Result<NodeId, MutError> {
+    /// A fresh node of any kind but DOCTYPE, its name and value written.
+    fn write_fields(&self, dst: &mut Document) -> Result<NodeId, MutError> {
         let n = dst.new_node(self.type_)?;
         if let Some((name, sp)) = &self.qname {
             dst.assign_qname(n, name, sp.prefix_len, sp.local_off, sp.local_len)?;
         } else if let Some(local) = &self.local {
             let span = dst.store(local)?;
-            let node = dst.node_mut(n);
-            node.local = span;
-            /* A doctype's name is both, as `new_document_type` stores it. */
-            if self.type_ == ArenaKind::DocumentType {
-                node.qname = span;
-            }
+            dst.node_mut(n).local = span;
         }
         let value = self.value.write(dst)?;
         dst.node_mut(n).value = value;
-        /* Only a doctype: anything else's `prefix` is the split `assign_qname`
-         * just wrote. */
-        if self.type_ == ArenaKind::DocumentType {
-            let public = self.public.write(dst)?;
-            dst.node_mut(n).prefix = public;
-        }
+        Ok(n)
+    }
+
+    /// Write these fields as a fresh, detached node in `dst`.
+    fn write(&self, dst: &mut Document) -> Result<NodeId, MutError> {
+        let n = match &self.doctype {
+            Some(dt) => dst.new_doctype(&dt.name, dt.public.as_deref(), dt.system.as_deref())?,
+            None => self.write_fields(dst)?,
+        };
         let node = dst.node_mut(n);
         node.flags = self.flags;
         node.attr_ns = self.attr_ns;

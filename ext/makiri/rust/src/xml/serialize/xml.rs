@@ -22,7 +22,7 @@
 use super::out::{put, put_comment, put_pi, writable_chars, W, XML};
 use super::Failure;
 use crate::cbuf::Buf;
-use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeFlags, NodeId, MAX_DEPTH};
+use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId, MAX_DEPTH};
 use crate::xml::XML_NS_URI;
 
 use super::bindings::{Bindings, Prefix, PREFIX_CAP};
@@ -139,10 +139,9 @@ fn plan_element<'d>(
     }
     let mut plan = Plan {
         prefix: Prefix::Own(own_prefix),
-        declare: !doc.node(el).flags.contains(NodeFlags::DOM_LOOSE_NAME)
-            && !binds.bound_to(own_prefix, uri)?,
+        declare: !doc.is_loose_name(el) && !binds.bound_to(own_prefix, uri)?,
     };
-    let resolved = doc.node(el).flags.contains(NodeFlags::NS_RESOLVED);
+    let resolved = doc.element_ns_decided(el);
     if !resolved && own_decl(doc, el, own_prefix).is_some() {
         /* Not resolved yet (a detached copy or build): its URI reads empty only
          * because nothing has decided it, and its own declaration is what will -
@@ -153,7 +152,7 @@ fn plan_element<'d>(
     } else if plan.declare && !uri.is_empty() && own_decl(doc, el, own_prefix).is_some() {
         /* The element declares this prefix for a DIFFERENT URI, so its own name
          * needs one of ours. Not for no namespace: no prefix binds to "" -
-         * that declaration is ignored instead (`mutate::ignored_default_decl`). */
+         * that declaration is ignored instead (`ns_scope::ignored_default_decl`). */
         plan.prefix = gen_prefix(binds, gen)?;
     }
     Ok(plan)
@@ -347,16 +346,17 @@ impl<'d, 'b> Writer<'d, 'b> {
     fn doctype(&mut self, dt: NodeId) -> W {
         let doc = self.doc;
         self.put(b"<!DOCTYPE ")?;
-        self.put(doc.span(doc.node(dt).local))?;
-        let (prefix, value) = (doc.node(dt).prefix, doc.node(dt).value);
-        if !prefix.is_absent() {
+        self.put(doc.local(dt))?;
+        let ids = doc.doctype_ids(dt).unwrap_or_default();
+        if let Some(public) = ids.public {
             self.put(b" PUBLIC ")?;
-            self.literal(doc.span(prefix))?;
+            self.literal(public)?;
             self.put(b" ")?;
-            self.literal(doc.span(value))?;
-        } else if !value.is_absent() {
+            /* PUBLIC needs a system literal; an omitted one is written "". */
+            self.literal(ids.system.unwrap_or_default())?;
+        } else if let Some(system) = ids.system {
             self.put(b" SYSTEM ")?;
-            self.literal(doc.span(value))?;
+            self.literal(system)?;
         }
         self.put(b">")
     }
@@ -387,7 +387,7 @@ impl<'d, 'b> Writer<'d, 'b> {
     /// popping them, so an early `?` cannot leave the scope stack unbalanced.
     fn element_in_scope(&mut self, n: NodeId, depth: u32, binds: &mut Bindings<'d>) -> W {
         let doc = self.doc;
-        let dropped = crate::xml::mutate::ignored_default_decl(doc, n);
+        let dropped = crate::xml::ns_scope::ignored_default_decl(doc, n);
 
         /* This element's own xmlns declarations bind from here down. */
         let kept = |&at: &NodeId| Some(at) != dropped;
