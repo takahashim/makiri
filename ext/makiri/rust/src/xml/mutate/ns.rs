@@ -16,7 +16,7 @@
 #![forbid(unsafe_code)]
 
 use crate::falloc::{OomResult, VecPush};
-use crate::xml::qname::{xmlns_prefix, Split};
+use crate::xml::qname::{name_ns, NameNs, NameRole, ReservedPrefix, Split};
 use crate::xml::{ArenaKind, AttrNs, Document, MutError, NodeFlags, NodeId, Span};
 
 /// A resolved namespace: a byte-store span (empty = no namespace).
@@ -50,9 +50,10 @@ impl Resolved {
     }
 }
 
-/// Resolve `name` (split per `sp`) applied at `scope` (mirrors the parser's §7
-/// rules). An unbound prefix is an error only when connected; deferred - and
-/// reported pending - otherwise.
+/// Resolve `name` (split per `sp`) applied at `scope`, by the parser's rules
+/// ([`name_ns`]) with the declarations at or above `scope`. An unbound prefix
+/// is an error only when connected; deferred - and reported pending -
+/// otherwise.
 pub(super) fn resolve_ns(
     doc: &Document,
     scope: Option<NodeId>,
@@ -61,33 +62,19 @@ pub(super) fn resolve_ns(
     is_attr: bool,
     connected: bool,
 ) -> Result<Resolved, MutError> {
-    let prefix = &name[..sp.prefix_len as usize];
-    if is_attr && xmlns_prefix(name).is_some() {
-        return Ok(Resolved::decided(doc.xmlns_ns_span()));
-    }
-    if sp.prefix_len == 0 {
-        if is_attr {
-            return Ok(Resolved::decided(NO_NS)); /* unprefixed attribute -> no namespace */
-        }
-        let s = resolve_in_scope(doc, scope, b"");
-        return Ok(Resolved::decided(if s.len > 0 { s } else { NO_NS }));
-    }
-    if prefix == b"xml" {
-        return Ok(Resolved::decided(doc.xml_ns_span()));
-    }
-    if prefix == b"xmlns" {
-        return Err(MutError::BadName);
-    }
-    let s = resolve_in_scope(doc, scope, prefix);
-    if s.len > 0 {
-        Ok(Resolved::decided(s))
-    } else if connected {
-        Err(MutError::UnboundNs)
+    let role = if is_attr {
+        NameRole::Attribute
     } else {
-        Ok(Resolved {
+        NameRole::Element
+    };
+    let lookup = |prefix: &[u8]| Some(resolve_in_scope(doc, scope, prefix));
+    match name_ns(doc, name, sp, role, lookup).map_err(|ReservedPrefix| MutError::BadName)? {
+        NameNs::Uri(ns) => Ok(Resolved::decided(ns)),
+        NameNs::Unbound if connected => Err(MutError::UnboundNs),
+        NameNs::Unbound => Ok(Resolved {
             ns: NO_NS,
             pending: true,
-        })
+        }),
     }
 }
 
