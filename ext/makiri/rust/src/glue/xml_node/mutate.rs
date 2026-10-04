@@ -23,7 +23,7 @@ use crate::bridge::xml::{
 use crate::glue::node::dom_extract;
 use crate::init::CLASS_XML_DOCUMENT;
 use crate::xml::dom_name::{self, split_loose_dom_name};
-use crate::xml::model::{ArenaKind, NodeId};
+use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId};
 use crate::xml::mutate::{self, place, Place};
 use crate::xml::qname::Split;
 
@@ -169,18 +169,18 @@ pub fn set_content(_ruby: &Ruby, this: XmlSelf, text: Value) -> Result<Value, Er
     crate::bridge::ruby::entry(|| {
         /* A node's type never changes, so it is read before the argument's
          * conversion: a Text, Comment, CDATA or PI node's content is its data,
-         * which changes no child list. */
-        let data = matches!(
-            this.doc_ref().type_(this.id),
-            Some(ArenaKind::Text | ArenaKind::CDataSection | ArenaKind::Comment | ArenaKind::Pi)
-        );
+         * and an Attr's its value - neither changes a child list. */
+        let kind = this.doc_ref().type_(this.id);
         let edit = begin_edit(this)?;
         let tv = verified_data(text, "node content")?;
         let bytes = tv.as_bytes();
-        xml_mut_result(if data {
-            edit.with_data(|d, n| mutate::set_content(d, n, bytes))?
-        } else {
-            edit.with_arena(|d, n| mutate::set_content(d, n, bytes))?
+        let set = |d: &mut XmlDoc, n| mutate::set_content(d, n, bytes);
+        xml_mut_result(match kind {
+            Some(
+                ArenaKind::Text | ArenaKind::CDataSection | ArenaKind::Comment | ArenaKind::Pi,
+            ) => edit.with_data(set)?,
+            Some(ArenaKind::Attribute) => edit.with_attributes(set)?,
+            _ => edit.with_arena(set)?,
         })?;
         Ok(text)
     })

@@ -35,6 +35,8 @@ pub fn set_content(doc: &mut Document, node: NodeId, text: &[u8]) -> Result<(), 
         Some(ArenaKind::Text | ArenaKind::CDataSection | ArenaKind::Comment | ArenaKind::Pi) => {
             doc.set_value_bytes(node, text).map_err(MutError::from)
         }
+        /* An Attr's content is its value, by `[]=`'s rule for one it finds. */
+        Some(ArenaKind::Attribute) => super::attr::set_existing_value(doc, node, text),
         Some(ArenaKind::Element) => {
             /* build the replacement TEXT node FIRST, so an OOM leaves the
              * children intact */
