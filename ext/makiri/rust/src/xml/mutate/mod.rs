@@ -36,6 +36,7 @@ pub use insert::{
     detach, insert_after, insert_before, insert_child, place, remove, replace_node,
     replace_with_fragment, Place,
 };
+pub use ns::decides_attr_ns;
 
 /// Copy a node's span out of the arena before taking `&mut doc`. `to_vec` would
 /// abort on OOM; this path must fail closed instead, like every other

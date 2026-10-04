@@ -16,10 +16,12 @@
 * `Document#attribute_version` (HTML and XML): an Integer that increases with
   every attribute edit - an attribute added, removed or its value set (to the
   same value too), including an Attr node's `content=` and an XML Attr
-  node's `remove`. Child-list and character-data edits leave it unchanged.
+  node's `remove`, and an XML insertion that decides a namespace for an
+  attribute set with a prefix on a detached element. Child-list and
+  character-data edits leave it unchanged.
 * `Makiri::HTML::Document.new`: an empty HTML document - no children,
-  no-quirks mode. `title=` and `meta_encoding=` do nothing until it has a root
-  element.
+  no-quirks mode. `title=` and `meta_encoding=` do nothing until it has a
+  `<head>`.
 * `Makiri::HTML::Document#quirks_mode?` (true in quirks mode only) and
   `#compat_mode` (`"BackCompat"` / `"CSS1Compat"`, like the DOM's
   `compatMode`).

@@ -57,4 +57,32 @@ RSpec.describe "edit versions, HTML and XML alike" do
       end
     end
   end
+
+  # An XML insertion that decides an attribute's namespace changes what that
+  # attribute reads, so it is an attribute edit too; moving a node whose
+  # attributes are already decided is not.
+  context "XML insertion" do
+    let(:doc) { Makiri::XML(%(<r xmlns:p="urn:p"/>)) }
+
+    it "moves attribute_version when it decides a pending attribute's namespace" do
+      e = doc.create_element("e")
+      e["p:a"] = "1"
+      attr = e.attribute_nodes.first
+      expect(attr.namespace_uri).to be_nil
+      before = doc.attribute_version
+      doc.root.add_child(e)
+      expect(attr.namespace_uri).to eq("urn:p")
+      expect(doc.attribute_version).to be > before
+    end
+
+    it "leaves attribute_version when the attributes are already decided" do
+      e = doc.create_element("e")
+      e["a"] = "1"
+      doc.root.add_child(e)
+      before = doc.attribute_version
+      doc.root.add_child(doc.create_element("f"))
+      doc.root.add_child(e)
+      expect(doc.attribute_version).to eq(before)
+    end
+  end
 end
