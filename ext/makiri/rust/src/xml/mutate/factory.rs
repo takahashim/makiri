@@ -9,6 +9,7 @@
 
 use super::assign_qname;
 use super::edit::dom_refuses_data;
+use crate::xml::arena::DoctypeId;
 use crate::xml::chars::validate_chars;
 use crate::xml::qname::{split_checked, Split};
 use crate::xml::{ArenaKind, Document, MutError, NodeFlags, NodeId};
@@ -134,16 +135,17 @@ pub fn new_pi(doc: &mut Document, target: &[u8], data: &[u8]) -> Result<NodeId, 
 pub fn new_document_type(
     doc: &mut Document,
     name: &[u8],
-    pub_id: Option<&[u8]>,
-    sys_id: Option<&[u8]>,
+    pub_id: DoctypeId<'_>,
+    sys_id: DoctypeId<'_>,
 ) -> Result<NodeId, MutError> {
     if !crate::xml::dom_name::valid_doctype_name(name) {
         return Err(MutError::BadDomName("invalid doctype name"));
     }
+    let (public, system) = (pub_id.bytes(), sys_id.bytes());
     let writable = split_checked(name).is_some()
-        && pub_id.is_none_or(crate::xml::chars::is_pubid)
-        && sys_id
-            .is_none_or(|id| validate_chars(id) && !(id.contains(&b'"') && id.contains(&b'\'')));
+        && (!pub_id.is_written() || crate::xml::chars::is_pubid(public))
+        && (!sys_id.is_written()
+            || (validate_chars(system) && !(system.contains(&b'"') && system.contains(&b'\''))));
     let dt = doc.new_doctype(name, pub_id, sys_id)?;
     doc.node_mut(dt)
         .flags

@@ -22,6 +22,7 @@ use crate::bridge::xml::{
 };
 use crate::glue::node::dom_extract;
 use crate::init::CLASS_XML_DOCUMENT;
+use crate::xml::arena::DoctypeId;
 use crate::xml::dom_name::{self, split_loose_dom_name};
 use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId};
 use crate::xml::mutate::{self, Place};
@@ -380,9 +381,14 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
         let nv = verified_name(name, "doctype name")?;
         let pv = verified_text_opt(a.optional.0.unwrap_or(nil), "doctype public id")?;
         let sv = verified_text_opt(a.optional.1.unwrap_or(nil), "doctype system id")?;
-        /* An empty id is absent, like nil, matching the HTML factory and Nokogiri. */
-        fn id(v: &Option<crate::bridge::string::RubyText>) -> Option<&[u8]> {
-            v.as_ref().map(|v| v.as_bytes()).filter(|b| !b.is_empty())
+        /* An empty id is absent, like nil, matching the HTML factory and
+         * Nokogiri. Built as a `DoctypeId`, never an `Option<&[u8]>` (its doc
+         * says why). */
+        fn id(v: &Option<crate::bridge::string::RubyText>) -> DoctypeId<'_> {
+            match v {
+                Some(t) if !t.is_empty() => DoctypeId::written(t.as_bytes()),
+                _ => DoctypeId::omitted(),
+            }
         }
         let (name, pub_id, sys_id) = (nv.as_bytes(), id(&pv), id(&sv));
         let dt = xml_mut_result(with_arena_for_new_node(rb_self, |d| {

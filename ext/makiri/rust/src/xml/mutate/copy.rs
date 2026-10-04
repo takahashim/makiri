@@ -12,6 +12,7 @@
 
 use super::copy_span;
 use crate::falloc::{OomResult, VecPush};
+use crate::xml::arena::DoctypeId;
 use crate::xml::qname::Split;
 use crate::xml::{ArenaKind, AttrNs, Document, MutError, NodeFlags, NodeId, Span};
 
@@ -163,7 +164,15 @@ impl CopiedNode {
     /// Write these fields as a fresh, detached node in `dst`.
     fn write(&self, dst: &mut Document) -> Result<NodeId, MutError> {
         let n = match &self.doctype {
-            Some(dt) => dst.new_doctype(&dt.name, dt.public.as_deref(), dt.system.as_deref())?,
+            Some(dt) => {
+                fn id(v: &Option<Vec<u8>>) -> DoctypeId<'_> {
+                    match v {
+                        Some(b) => DoctypeId::written(b),
+                        None => DoctypeId::omitted(),
+                    }
+                }
+                dst.new_doctype(&dt.name, id(&dt.public), id(&dt.system))?
+            }
             None => self.write_fields(dst)?,
         };
         let node = dst.node_mut(n);
