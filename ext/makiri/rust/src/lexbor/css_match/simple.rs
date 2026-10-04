@@ -9,7 +9,7 @@ use crate::lexbor::adapter::html::{
 use crate::lexbor::css_parser::{AttrMatch, FunctionArg, PseudoClass, Simple};
 use core::ffi::c_long;
 
-use super::compile::Step;
+use super::compile::{Nest, Step};
 use super::positions::{sibling_position, Positions};
 use super::scratch::Table;
 use super::state::{
@@ -303,11 +303,11 @@ pub(super) fn check_simple(
             from_end,
             of_type,
             anb,
-        }) => match anb {
-            Some(a) if a.of.is_some() => SimpleCheck::Deferred,
-            _ => SimpleCheck::Result(nth_matches(
+        }) => match sel.nest {
+            Nest::None => SimpleCheck::Result(nth_matches(
                 node, from_end, of_type, anb, budget, positions,
             )?),
+            _ => SimpleCheck::Deferred,
         },
         Simple::PseudoClassFunction(FunctionArg::Selectors { .. }) => SimpleCheck::Deferred,
         // `:lexbor-contains()`: Lexbor itself matches with it

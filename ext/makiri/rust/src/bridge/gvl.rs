@@ -107,8 +107,7 @@ pub fn without_gvl<F: FnOnce() -> R + Send, R>(f: F) -> Result<R, magnus::Error>
         }
         if slot.f.is_none() {
             /* It ran and neither answered nor panicked - which `run` cannot do. */
-            return Err(magnus::Error::new(
-                crate::init::EXC_INTERNAL_ERROR.exception(),
+            return Err(crate::bridge::ruby::internal_error(
                 "the GVL-released body ran without a result",
             ));
         }

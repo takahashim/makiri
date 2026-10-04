@@ -1,9 +1,10 @@
-//! The generated Lexbor layout, plus the agreement checks over it.
+//! The generated Lexbor layout and functions.
 //!
-//! `build.rs` runs bindgen over the vendored headers; this module includes the
-//! result and pins the facts the rest of the crate depends on. See
-//! notes/rust_port_remaining.ja.md step 5 for why generated rather than
-//! hand-written, and for what this does not remove.
+//! `build.rs` runs bindgen over the vendored headers, and this module includes
+//! the result: every Lexbor function the crate calls has the signature Lexbor's
+//! own header gives it, so a change to one fails the build. The few exports no
+//! header declares are written below and checked against their C definitions
+//! by `build.rs`'s `UNDECLARED_EXPORTS`.
 
 #![allow(unsafe_code)]
 

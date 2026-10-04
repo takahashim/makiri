@@ -1032,6 +1032,22 @@ impl<'doc> HtmlNode<'doc> {
         NsId::from_raw(unsafe { (*self.as_raw()).ns })
     }
 
+    /// Put this node in the namespace `id` - the one write of a node's
+    /// namespace id. Every namespace Makiri gives a node is one
+    /// [`HtmlDoc::intern_ns`] interned AS WRITTEN; Lexbor's own steps intern a
+    /// URI past the built-in ones case-folded (`fooNamespace` as
+    /// `foonamespace`), so a node they named or copied takes its id from here.
+    ///
+    /// # Safety
+    /// Nothing else refers to this node yet - it is being built, or a copy
+    /// only the caller holds - and `id` was interned in its document's table.
+    #[inline]
+    pub(super) unsafe fn set_ns_id(self, id: NsId) {
+        // SAFETY: per the contract: an unshared node, and an id its own
+        // document's table handed out.
+        unsafe { (*self.as_raw()).ns = id.raw() };
+    }
+
     /// The source byte offset the parse stamped on this element, or None when
     /// it could not be placed.
     ///
@@ -1436,12 +1452,18 @@ impl<'doc> HtmlAttr<'doc> {
     /// Replace the attribute's value. `Err` when Lexbor could not store it,
     /// in which case the attribute keeps what it had.
     ///
-    /// Lexbor frees the old value here, which is why an XPath evaluation may not
-    /// be reading this document - the borrowed slices it holds would dangle.
-    /// Reaching this through [`HtmlElementMut`] is what says that was checked.
-    pub fn set_value(self, value: &[u8]) -> Result<(), AdapterOom> {
+    /// Lexbor frees the old value here, and [`value`](Self::value) hands out a
+    /// slice of it for the document's lifetime - so this is not a safe method
+    /// of a reading handle. The safe way in is [`HtmlElementMut`]'s attribute
+    /// setters, which hold the document cleared for editing.
+    ///
+    /// # Safety
+    /// Nothing may be reading this attribute's value: the caller holds the
+    /// element's document cleared for editing (no XPath evaluation is
+    /// borrowing from it).
+    pub(super) unsafe fn set_value_unchecked(self, value: &[u8]) -> Result<(), AdapterOom> {
         // SAFETY: a live attribute; Lexbor copies the bytes before anything
-        // else runs.
+        // else runs, and per the contract no borrow of the old value is live.
         lexbor_ok(unsafe { lxb::lxb_dom_attr_set_value(self.raw(), value.as_ptr(), value.len()) })
     }
 

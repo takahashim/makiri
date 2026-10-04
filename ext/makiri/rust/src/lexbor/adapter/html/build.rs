@@ -94,7 +94,7 @@ impl<'doc> HtmlDoc<'doc> {
         if let Some(id) = ns_id.filter(|id| !id.is_static()) {
             // SAFETY: an element just made in this document, in no tree; `id`
             // is interned in its namespace table.
-            unsafe { (*el.0.raw()).node.ns = id.raw() };
+            unsafe { el.0.node().set_ns_id(id) };
         }
         let (p, p_len) = if prefix.is_empty() {
             if !has_ascii_uppercase(local) {
@@ -546,7 +546,7 @@ impl<'doc> BuildingNode<'doc> {
             if n.0.node_type() == NodeType::Element && n.0.ns_id().is_none() {
                 // SAFETY: an element still being built, which nothing else
                 // refers to; `ns` is interned in its document.
-                unsafe { (*n.0.as_raw()).ns = ns.raw() };
+                unsafe { n.0.set_ns_id(ns) };
             }
             next = n.preorder_next_with_contents(self);
         }
@@ -600,7 +600,7 @@ impl<'doc> BuildingElement<'doc> {
     pub fn set_ns(self, ns: NsId) {
         // SAFETY: an element nothing else holds; `ns` is an id this
         // document's own namespace table handed out.
-        unsafe { (*self.0.raw()).node.ns = ns.raw() };
+        unsafe { self.0.node().set_ns_id(ns) };
     }
 
     /// DOM "append an attribute" of a new one named `qname` (case preserved)

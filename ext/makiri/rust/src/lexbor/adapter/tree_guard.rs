@@ -8,7 +8,7 @@
 //!   `max_tree_depth` (default 400) with its boundary: an element's depth
 //!   counts itself and its ancestors, `<html>` being 1 in a document and the
 //!   top level 1 in a fragment (whose parser keeps a synthetic `<html>` below
-//!   it - [`TokenHook::new`]'s `synthetic`). Checked on the open-element stack
+//!   it - the `synthetic` of [`TokenHook::for_document`] / [`TokenHook::for_fragment`]). Checked on the open-element stack
 //!   after each token; a token that pushes several elements is bounded by what
 //!   the previous check accepted.
 //! - **Options per select.** Each inserted `<option>` re-runs the select's
@@ -124,17 +124,28 @@ struct HookState {
 }
 
 impl TokenHook {
-    /// A hook enforcing `limit`, where the parser keeps `synthetic` entries on
-    /// its stack below the first real element (0 for a document, 1 for a
-    /// fragment's `<html>` root).
-    pub fn new(limit: DepthLimit, synthetic: usize, stamper: Option<Stamper>) -> TokenHook {
-        TokenHook::build(limit, synthetic, stamper)
+    /// The hook a fragment parse installs: `limit` over the fragment's own
+    /// elements (the parser keeps one synthetic `<html>` root below the first),
+    /// with its top-level options counted against the select `context` is or
+    /// is in. No position stamper: a fragment's elements have no line.
+    pub fn for_fragment(limit: DepthLimit, context: OptionContext) -> TokenHook {
+        let mut hook = TokenHook::build(limit, 1, None);
+        hook.state.context = context;
+        hook
     }
 }
 
 impl<const PANIC_PROBE: bool> TokenHook<PANIC_PROBE> {
-    /// [`TokenHook::new`], for either value of the probe.
-    pub fn build(limit: DepthLimit, synthetic: usize, stamper: Option<Stamper>) -> Self {
+    /// The hook a document parse installs: `limit` from the root (nothing
+    /// synthetic below it), and `stamper` recording each element's position.
+    pub fn for_document(limit: DepthLimit, stamper: Stamper) -> Self {
+        TokenHook::build(limit, 0, Some(stamper))
+    }
+
+    /// A hook enforcing `limit`, where the parser keeps `synthetic` entries on
+    /// its stack below the first real element (0 for a document, 1 for a
+    /// fragment's `<html>` root).
+    fn build(limit: DepthLimit, synthetic: usize, stamper: Option<Stamper>) -> Self {
         TokenHook {
             state: HookState {
                 delegate: None,
@@ -149,13 +160,6 @@ impl<const PANIC_PROBE: bool> TokenHook<PANIC_PROBE> {
             },
             panic: PanicLatch::new(),
         }
-    }
-
-    /// Count the options a fragment's top level receives against the select
-    /// its context is or is in - see [`OptionContext`]. A document parse has
-    /// none.
-    pub fn set_option_context(&mut self, context: OptionContext) {
-        self.state.context = context;
     }
 
     /// Install on `parser`'s tokenizer, CHAINING the tree builder's own
@@ -187,15 +191,18 @@ impl<const PANIC_PROBE: bool> TokenHook<PANIC_PROBE> {
         true
     }
 
-    /// What stopped the parse, if the hook did.
-    pub fn stopped(&self) -> Option<GuardStop> {
-        self.state.stopped
-    }
-
-    /// Re-raise a panic the hook caught, now that Lexbor's frames are gone. A
-    /// no-op when nothing panicked.
-    pub fn resume_panic(&mut self) {
+    /// The guard's verdict on a parse that has returned: re-raise a panic the
+    /// hook caught - now that Lexbor's frames are gone, the first frame where
+    /// that is safe - and then `Err` with what stopped the parse, if the hook
+    /// did. Before the caller's own status check: a panic is not a parse
+    /// failure, and neither is a refusal - the hook stops the parse by failing
+    /// its status.
+    pub fn finish(&mut self) -> Result<(), GuardStop> {
         self.panic.resume();
+        match self.state.stopped {
+            Some(stop) => Err(stop),
+            None => Ok(()),
+        }
     }
 }
 
@@ -416,7 +423,7 @@ fn nearest_select(option: HtmlNode<'_>, context: OptionContext) -> Option<*const
 /// nothing of ours, so a catch around it changes nothing about how the tree is
 /// built. A caught panic returns NULL for the token, which stops the parse the
 /// way a refused token does; the caller re-raises it once the parse has
-/// returned ([`TokenHook::resume_panic`]). A token after a panic - none is
+/// returned ([`TokenHook::finish`]). A token after a panic - none is
 /// expected, the tokenizer stops - is refused without running anything.
 ///
 /// # Safety

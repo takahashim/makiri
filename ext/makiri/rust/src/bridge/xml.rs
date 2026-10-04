@@ -463,8 +463,10 @@ fn parse_status_error(status: ParseError, unit: Unit) -> Error {
              non-CDATA attribute types, expand parameter entities, or expand entities \
              a DTD declares",
         ),
-        /* The generic "failed to parse" bucket. */
-        ParseError::Oom | ParseError::Internal => makiri_error(unit.failed()),
+        ParseError::Oom => makiri_error(unit.failed()),
+        /* The parser's own invariant (`ExpandErr::Overflow`: an expansion
+         * outgrew its input), never the input's fault. */
+        ParseError::Internal => crate::bridge::ruby::internal_error(unit.failed()),
     }
 }
 

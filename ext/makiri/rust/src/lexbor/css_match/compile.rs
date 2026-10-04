@@ -7,6 +7,8 @@ use crate::lexbor::css_parser::{
     CaseModifier, Combinator, FunctionArg, List, ListPseudo, Lists, Simple,
 };
 
+use core::ffi::c_long;
+
 use super::scratch::{Scratch, Table};
 use super::{MatchFailure, MAX_COMPOUNDS};
 
@@ -60,6 +62,63 @@ pub(super) struct Step<'p> {
     /// compound with nothing nested in it: answered in place by
     /// [`Query::check_compound`](super::query::Query::check_compound), with no task.
     pub(super) inline: bool,
+    /// Whether - and how - this simple selector is answered by a nested
+    /// selector list: decided once, here, and read by everything that
+    /// treats a nested selector differently (`check_simple`'s deferral,
+    /// [`Compiled::compound_is_flat`], `mark_inline`, `Query::deferred_task`).
+    pub(super) nest: Nest,
+}
+
+/// How a simple selector with a nested selector list is answered - the one
+/// classification of them ([`nest_of`]). A new list-bearing pseudo-class is
+/// added here and in `Query::deferred_task`, which builds its task.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Nest {
+    /// No nested list: the simple selector answers itself.
+    None,
+    /// `:is()` / `:where()` (`negate` false) or `:not()` (`negate` true):
+    /// one of the alternatives matches the node.
+    List { negate: bool },
+    /// `:has()`: a forward search from the node.
+    Has,
+    /// `:nth-child(An+B of S)` / `:nth-last-child(...)`: the node's rank among
+    /// the siblings `S` matches.
+    NthOf {
+        a: c_long,
+        b: c_long,
+        from_end: bool,
+    },
+}
+
+/// `simple`'s nested selector lists and how they answer it - or `Unsupported`
+/// for `:lexbor-contains()`, which this matcher never evaluates.
+fn nest_of<'p>(simple: Simple<'p>) -> Result<(Nest, Option<Lists<'p>>), MatchFailure> {
+    Ok(match simple {
+        Simple::PseudoClassFunction(FunctionArg::Contains(_)) => {
+            return Err(MatchFailure::Unsupported)
+        }
+        Simple::PseudoClassFunction(FunctionArg::Selectors { pseudo, lists }) => {
+            let nest = match pseudo {
+                ListPseudo::Has => Nest::Has,
+                ListPseudo::Not => Nest::List { negate: true },
+                _ => Nest::List { negate: false },
+            };
+            (nest, Some(lists))
+        }
+        Simple::PseudoClassFunction(FunctionArg::Nth {
+            from_end,
+            anb: Some(anb),
+            ..
+        }) if anb.of.is_some() => (
+            Nest::NthOf {
+                a: anb.a,
+                b: anb.b,
+                from_end,
+            },
+            anb.of,
+        ),
+        _ => (Nest::None, None),
+    })
 }
 
 /// A selector, compiled for matching: every chain in it - the top-level
@@ -188,18 +247,7 @@ impl<'p> Compiled<'p> {
             let mut sel = first;
             loop {
                 let simple = sel.simple();
-                let nested = match simple {
-                    Simple::PseudoClassFunction(FunctionArg::Contains(_)) => {
-                        return Err(MatchFailure::Unsupported)
-                    }
-                    Simple::PseudoClassFunction(FunctionArg::Selectors { lists, .. }) => {
-                        Some(lists)
-                    }
-                    Simple::PseudoClassFunction(FunctionArg::Nth { anb, .. }) => {
-                        anb.and_then(|a| a.of)
-                    }
-                    _ => None,
-                };
+                let (nest, nested) = nest_of(simple)?;
                 let alts = u32::try_from(self.alts.len()).map_err(|_| MatchFailure::TooComplex)?;
                 let mut n_alts = 0u32;
                 if let Some(lists) = nested {
@@ -227,6 +275,7 @@ impl<'p> Compiled<'p> {
                     n_alts,
                     value_ci,
                     inline: false,
+                    nest,
                 })?;
                 match sel.next().filter(|n| n.combinator() == Combinator::Close) {
                     Some(n) => sel = n,
@@ -258,16 +307,14 @@ impl<'p> Compiled<'p> {
             let Some(sel) = self.simples.get(s) else {
                 continue;
             };
-            let Simple::PseudoClassFunction(FunctionArg::Selectors { pseudo, .. }) = sel.simple
-            else {
+            /* `:is()` / `:where()` / `:not()` only: a `:has()` searches
+             * forward from the node, which no compound check can do. */
+            let Nest::List { .. } = sel.nest else {
                 continue;
             };
-            if pseudo == ListPseudo::Has {
-                continue;
-            }
             let mut inline = true;
             for k in sel.alts..sel.alts + sel.n_alts {
-                let chain = self.alts.get(k as usize).ok_or(MatchFailure::Unsupported)?;
+                let chain = self.alts.get(k as usize).ok_or(MatchFailure::Internal)?;
                 inline &= match chain.len {
                     0 => true,
                     1 => self.compound_is_flat(self.compound(chain, 0)?)?,
@@ -281,20 +328,16 @@ impl<'p> Compiled<'p> {
         Ok(())
     }
 
-    /// Nothing in `compound` defers ([`check_simple`](super::simple::check_simple)'s `Deferred`).
+    /// Nothing in `compound` has a nested list, so nothing in it defers
+    /// ([`check_simple`](super::simple::check_simple)'s `Deferred` is exactly
+    /// a step whose [`Step::nest`] is not [`Nest::None`]).
     fn compound_is_flat(&self, compound: Compound) -> Result<bool, MatchFailure> {
         let steps = self
             .simples
             .as_slice()
             .get(compound.start as usize..compound.end as usize)
-            .ok_or(MatchFailure::Unsupported)?;
-        Ok(steps.iter().all(|s| match s.simple {
-            Simple::PseudoClassFunction(FunctionArg::Selectors { .. }) => false,
-            Simple::PseudoClassFunction(FunctionArg::Nth { anb, .. }) => {
-                anb.and_then(|a| a.of).is_none()
-            }
-            _ => true,
-        }))
+            .ok_or(MatchFailure::Internal)?;
+        Ok(steps.iter().all(|s| s.nest == Nest::None))
     }
 
     fn simple_index(&self) -> Result<u32, MatchFailure> {
@@ -306,7 +349,7 @@ impl<'p> Compiled<'p> {
     pub(super) fn compound(&self, chain: Chain, idx: usize) -> Result<Compound, MatchFailure> {
         self.compounds
             .get(chain.start as usize + idx)
-            .ok_or(MatchFailure::Unsupported)
+            .ok_or(MatchFailure::Internal)
     }
 }
 

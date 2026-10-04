@@ -33,6 +33,13 @@ pub fn makiri_error(msg: impl Into<std::borrow::Cow<'static, str>>) -> Error {
     Error::new(error_class(), msg)
 }
 
+/// A `Makiri::InternalError` carrying `msg`: a broken invariant of Makiri
+/// itself, which a bare `rescue` (StandardError) passes through - see
+/// [`entry`].
+pub fn internal_error(msg: impl Into<std::borrow::Cow<'static, str>>) -> Error {
+    Error::new(crate::init::EXC_INTERNAL_ERROR.exception(), msg)
+}
+
 /// Is `v` an instance of the class in `klass`? `false` before `Init_makiri`,
 /// when no class of ours exists for it to be an instance of.
 #[inline]
@@ -280,8 +287,7 @@ pub fn bool_value(v: VALUE) -> Option<bool> {
 pub fn entry<T>(f: impl FnOnce() -> Result<T, Error>) -> Result<T, Error> {
     match std::panic::catch_unwind(core::panic::AssertUnwindSafe(f)) {
         Ok(out) => out,
-        Err(payload) => Err(Error::new(
-            crate::init::EXC_INTERNAL_ERROR.exception(),
+        Err(payload) => Err(internal_error(
             crate::caught::message(payload.as_ref()).to_owned(),
         )),
     }

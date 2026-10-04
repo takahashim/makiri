@@ -54,8 +54,10 @@ pub fn select_options_error() -> Error {
 pub fn tree_depth_error(limit: DepthLimit) -> Error {
     match limit.max_depth() {
         Some(n) => makiri_error(format!("document tree depth limit exceeded ({n})")),
-        /* Unreachable: an unlimited parse is never refused for depth. */
-        None => makiri_error("document tree depth limit exceeded"),
+        /* An unlimited parse is never refused for depth. */
+        None => crate::bridge::ruby::internal_error(
+            "a parse with no tree-depth limit was refused for depth",
+        ),
     }
 }
 

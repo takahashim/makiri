@@ -373,28 +373,32 @@ unsafe fn rules(
  * entry point                                                        *
  * ------------------------------------------------------------------ */
 
-/// Parse a verified UTF-8 stylesheet into owned Rust data.
+/// A stylesheet Lexbor parsed from what [`contains_guard`] let through, with
+/// the parser that built it. Fields drop in declaration order: the parser
+/// before the stylesheet, as the parse left them.
 ///
-/// This is the safe boundary consumed by the Ruby glue: all Lexbor-owned
-/// pointers and callback state have been dropped before it returns.
-///
-/// The parser and the stylesheet are owned by [`Owned`] for the length of phase
-/// one, so every path out frees exactly what was created. That `Drop` is sound
-/// because nothing between construction and drop can `longjmp`: phase one calls
-/// Lexbor and the allocator, never Ruby.
-pub fn parse(css: &[u8]) -> Result<Vec<Rule>, Fail> {
-    /* `contains_guard` decides what reaches the parser. Its rewrite keeps byte
-     * length, so `conv.css` below stays the CALLER's text and every span Lexbor
-     * reports still lands on it. */
-    let guarded = crate::lexbor::contains_guard::neutralized(css).map_err(|_| Fail::Oom)?;
-    let source = guarded.as_deref().unwrap_or(css);
+/// [`contains_guard`]: crate::lexbor::contains_guard
+struct GuardedSheet {
+    /// Held only to be dropped, first: nothing reads it after the parse.
+    _parser: Owned<lxb::lxb_css_parser_t>,
+    sheet: Owned<lxb::lxb_css_stylesheet_t>,
+    /// The guard's rewrite - what Lexbor parsed - when it made one; `None`
+    /// when Lexbor parsed the caller's text as it is, the usual case. A
+    /// rewrite keeps byte length, so every span Lexbor reports still lands on
+    /// the caller's text.
+    parsed: Option<Vec<u8>>,
+}
 
-    // SAFETY: one contract for the whole body. Every pointer here is created by
-    // the Lexbor calls below and owned by an `Owned` from then on. `css` is a
-    // Rust slice, which the parser only reads, and nothing in here runs Ruby.
+/// Parse `css` with Lexbor's stylesheet parser - the one call of it in the
+/// crate (`rake unsafe:boundaries` pins it here), so no stylesheet reaches the
+/// parser without going through `contains_guard` first, as no selector reaches
+/// its parser without `css_engine::SelectorParser::parse`.
+fn guarded_stylesheet(css: &[u8]) -> Result<GuardedSheet, Fail> {
+    let parsed = crate::lexbor::contains_guard::neutralized(css).map_err(|_| Fail::Oom)?;
+    // SAFETY: every pointer is created by the Lexbor calls below and owned by
+    // an `Owned` from then on; the text is a live slice the parser only reads.
     unsafe {
-        /* Declared stylesheet-first, so the parser drops first. */
-        let sst = Owned::new(
+        let sheet = Owned::new(
             lxb::lxb_css_stylesheet_create(core::ptr::null_mut()),
             lxb::lxb_css_stylesheet_destroy,
         )
@@ -404,22 +408,45 @@ pub fn parse(css: &[u8]) -> Result<Vec<Rule>, Fail> {
         if lxb_css_parser_init(parser.as_ptr(), core::ptr::null_mut()) != k::STATUS_OK {
             return Err(Fail::Init);
         }
+        let source = parsed.as_deref().unwrap_or(css);
         if lxb::lxb_css_stylesheet_parse(
-            sst.as_ptr(),
-            parser.as_ptr() as *mut lxb::lxb_css_parser_t,
+            sheet.as_ptr(),
+            parser.as_ptr(),
             source.as_ptr(),
             source.len(),
         ) != k::STATUS_OK
         {
             return Err(Fail::Parse);
         }
-        let root = (*sst.as_ptr()).root;
+        Ok(GuardedSheet {
+            _parser: parser,
+            sheet,
+            parsed,
+        })
+    }
+}
+
+/// Parse a verified UTF-8 stylesheet into owned Rust data.
+///
+/// This is the safe boundary consumed by the Ruby glue: all Lexbor-owned
+/// pointers and callback state have been dropped before it returns.
+///
+/// The parser and the stylesheet are owned by [`GuardedSheet`] for the length
+/// of phase one, so every path out frees exactly what was created. That `Drop`
+/// is sound because nothing between construction and drop can `longjmp`: phase
+/// one calls Lexbor and the allocator, never Ruby.
+pub fn parse(css: &[u8]) -> Result<Vec<Rule>, Fail> {
+    let sheet = guarded_stylesheet(css)?;
+    // SAFETY: the stylesheet `sheet` owns, live until it drops at the end of
+    // this function; nothing in here runs Ruby.
+    unsafe {
+        let root = (*sheet.sheet.as_ptr()).root;
         if root.is_null() {
             return Ok(Vec::new());
         }
         let mut conv = Conv {
             css,
-            parsed: guarded.as_deref(),
+            parsed: sheet.parsed.as_deref(),
             scratch: Vec::new(),
         };
         let first = (*(root as *mut lxb::lxb_css_rule_list_t)).first;

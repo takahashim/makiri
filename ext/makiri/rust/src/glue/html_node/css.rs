@@ -65,6 +65,9 @@ fn match_error(err: MatchFailure) -> Error {
             "CSS selector chain too complex (more than {MAX_COMPOUNDS} compounds)"
         )),
         MatchFailure::Oom => makiri_error("out of memory matching CSS selector"),
+        MatchFailure::Internal => {
+            crate::bridge::ruby::internal_error("CSS matcher reached a broken invariant")
+        }
     }
 }
 
