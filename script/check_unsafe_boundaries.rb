@@ -73,7 +73,7 @@ UNSAFE_ISLANDS = {
   "lexbor/selector_cache.rs" => 15,
   "lexbor/selectors.rs" => 9,
   "lexbor/serialize.rs" => 2,
-  "lexbor/stylesheet.rs" => 7,
+  "lexbor/stylesheet.rs" => 8,
   "lexbor/tests.rs" => 16,
   "lexbor/xpath.rs" => 9,
   "token.rs" => 1,
@@ -425,7 +425,7 @@ if lexbor_abi != LEXBOR_ABI_COUNTS
 end
 
 # A Lexbor function is DECLARED in one place, `lexbor/abi.rs` (bindgen's output
-# plus the three exports no header declares). A second `extern "C"` declaration of the
+# plus the exports no header declares). A second `extern "C"` declaration of the
 # same symbol gives it a second Rust type, which nothing checks agree, and on
 # macOS a declaration that matches no symbol is a NULL call rather than a link
 # error. `post_parse.rs` re-declared four generated functions that way.
@@ -440,6 +440,31 @@ Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
 end
 unless lexbor_decls.empty?
   errors << "Lexbor functions declared outside lexbor/abi.rs: #{lexbor_decls.inspect}"
+end
+
+# Lexbor's CSS parsers are CALLED in one place each - the function that puts
+# their input through `contains_guard` first (CLAUDE.md: the guard is not
+# optional, and a new parse entry must go through it). A type alone cannot
+# say so: the raw ABI is reachable crate-wide, so a second call site would
+# compile and reach the parser unguarded. Pinned here instead.
+GUARDED_PARSES = {
+  "lxb_css_selectors_parse" => "lexbor/css_engine.rs",   # SelectorParser::parse
+  "lxb_css_stylesheet_parse" => "lexbor/stylesheet.rs",  # guarded_stylesheet
+}.freeze
+guarded_calls = Hash.new { |h, k| h[k] = Hash.new(0) }
+Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
+  relative = path.delete_prefix("#{RUST}/")
+  code = comments_removed(File.binread(path))
+  GUARDED_PARSES.each_key do |name|
+    count = code.scan(/\b#{name}\s*\(/).length
+    guarded_calls[name][relative] = count unless count.zero?
+  end
+end
+GUARDED_PARSES.each do |name, home|
+  next if guarded_calls[name] == { home => 1 }
+
+  errors << "#{name} must be called exactly once, in #{home} (behind contains_guard): " \
+            "#{guarded_calls[name].inspect}"
 end
 
 # magnus's `RHash::foreach` runs its closure under magnus's own `protect`, below

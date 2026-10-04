@@ -169,7 +169,9 @@ syntax tokenizer (`lexbor::css_tokens`), never on a scanner of ours: the hand
 scanner it replaced ended strings where the tokenizer did not (CR, FF,
 backslash-newline), so a `:lexbor-contains(#x)` after such a string reached the
 parser unseen and `parse_stylesheet` crashed serializing what it left behind. Both call sites go through it - `css_engine::parse`
-(so HTML `#css` and the XML lowering) and `stylesheet.rs` - and a new one must.
+(so HTML `#css` and the XML lowering) and `stylesheet.rs`'s
+`guarded_stylesheet` - and a new one must: `rake unsafe:boundaries` allows
+each Lexbor CSS parse function exactly one call site, the guarded one.
 `SelectorCache::compile`'s flush after a rejected parse belongs to the same
 decision. The guard, that flush and their tests come out together or not at all,
 and only once the pin has moved past what they stand in for.
