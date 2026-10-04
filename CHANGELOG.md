@@ -53,6 +53,16 @@
   or `nil`. With no `<html>` element it answered the document's first child
   of any kind - a comment or a doctype - so `title=` and `meta_encoding=`
   raised on such a document.
+* XML XPath: an attribute whose namespace is not decided yet - a prefixed
+  one on a detached element - no longer matches an unprefixed name test.
+  `@a` found an unresolved `p:a`, which the DOM's lookup by namespace and
+  local name does not.
+* XML: a reference is read by one grammar wherever it occurs. A literal in
+  the internal subset accepted a character reference to a character XML has
+  no `Char` for (`<!ENTITY x "&#0;">`), and a malformed reference next to a
+  declared or external entity (`&#0;&x;`, `&bad name;` with an external
+  subset) was reported as an unsupported DTD construct instead of as
+  malformed XML.
 
 ## [0.13.0] - 2026-10-03
 
