@@ -78,6 +78,9 @@
   which does not parse. An element in the XMLNS namespace, which no XML can
   hold, is refused with `Makiri::Error`.
 * A refused HTML `Attr#remove` no longer increases `tree_version`.
+* HTML `title=` and `meta_encoding=` do nothing on a document with no
+  `<head>`, as the DOM's title setter does. They put the new element straight
+  under the root element.
 * HTML `Document#root` (and CSS `:root`) answers the document's element child,
   or `nil`. With no `<html>` element it answered the document's first child
   of any kind - a comment or a doctype - so `title=` and `meta_encoding=`

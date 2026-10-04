@@ -259,6 +259,19 @@ RSpec.describe "HTML and XML Document APIs" do
       expect(doc.dup.children.size).to eq(0)
     end
 
+    # The DOM's title setter does nothing while the document has no head;
+    # neither setter puts its element straight under the root.
+    it "takes no title or charset while it has a root but no head" do
+      doc << doc.create_element("html")
+      doc.title = "t"
+      doc.meta_encoding = "utf-8"
+      expect(doc.to_html).to eq("<html></html>")
+      doc.root << doc.create_element("head")
+      doc.title = "t"
+      doc.meta_encoding = "utf-8"
+      expect(doc.to_html).to eq(%(<html><head><title>t</title><meta charset="utf-8"></head></html>))
+    end
+
     # Lexbor's own document-root lookup falls back to the first child when
     # there is no <html>; the DOM's documentElement is the element child.
     it "answers root with its element child, never another node" do
