@@ -541,22 +541,46 @@ pub struct Encoding(*mut rb_sys::rb_encoding);
 
 impl Encoding {
     /// The encoding `str` is tagged with.
-    fn of(str: RString) -> Encoding {
+    pub(super) fn of(str: RString) -> Encoding {
         // SAFETY: a live String, by type; reading its tag runs no Ruby.
         Encoding(unsafe { rb_sys::rb_enc_get(str.as_raw()) })
     }
 
-    fn utf8() -> Encoding {
+    pub(super) fn utf8() -> Encoding {
         // SAFETY: Ruby's immutable global encoding.
         Encoding(unsafe { rb_sys::rb_utf8_encoding() })
     }
 
-    fn is_usascii(self) -> bool {
+    /// The encoding Ruby knows by `name`, or None for a name it does not
+    /// know - not an error. MAY AUTOLOAD the encoding, a Ruby allocation and so
+    /// a GC point: call it with no borrow of a String's bytes held.
+    ///
+    /// `rb_enc_find` wants a C string and the name is bytes, so the NUL is
+    /// added here. A name too long to fit, or holding a NUL, is not one Ruby
+    /// knows, so it reads as None rather than being truncated at the NUL.
+    pub(super) fn find(name: &[u8]) -> Option<Encoding> {
+        let mut buf = [0u8; 64];
+        if name.is_empty() || name.len() >= buf.len() || name.contains(&0) {
+            return None;
+        }
+        buf[..name.len()].copy_from_slice(name);
+        let c = core::ffi::CStr::from_bytes_with_nul(&buf[..name.len() + 1]).ok()?;
+        // SAFETY: a NUL-terminated name; the lookup raises nothing.
+        let enc = unsafe { rb_sys::rb_enc_find(c.as_ptr()) };
+        (!enc.is_null()).then_some(Encoding(enc))
+    }
+
+    /// The raw encoding, for a C call in the bridge that takes one.
+    pub(super) fn as_raw(self) -> *mut rb_sys::rb_encoding {
+        self.0
+    }
+
+    pub(super) fn is_usascii(self) -> bool {
         // SAFETY: Ruby's immutable global encoding.
         self.0 == unsafe { rb_sys::rb_usascii_encoding() }
     }
 
-    fn is_ascii8bit(self) -> bool {
+    pub(super) fn is_ascii8bit(self) -> bool {
         // SAFETY: Ruby's immutable global encoding.
         self.0 == unsafe { rb_sys::rb_ascii8bit_encoding() }
     }
@@ -573,10 +597,12 @@ impl Encoding {
         !self.is_utf8_compatible()
     }
 
-    /// Whether HTML input in this encoding is parsed as it is: UTF-8, US-ASCII,
-    /// or ASCII-8BIT - deliberately raw bytes, which the parser decodes
-    /// leniently. Anything else is transcoded to UTF-8 first.
-    fn parses_as_is(self) -> bool {
+    /// Whether input in this encoding is read as UTF-8 bytes with no
+    /// transcode: UTF-8, US-ASCII, or ASCII-8BIT - deliberately raw bytes.
+    /// Anything else is transcoded to UTF-8 first. How the bytes are then
+    /// checked is each reader's own: HTML repairs invalid UTF-8 to U+FFFD
+    /// (`ruby_to_utf8`), XML refuses it (`xml_decode`).
+    pub(super) fn reads_as_utf8_bytes(self) -> bool {
         self.is_utf8_compatible() || self.is_ascii8bit()
     }
 
@@ -631,7 +657,7 @@ pub fn to_encoding(v: Value) -> Result<Encoding, Error> {
 /// [`ruby_to_utf8_value`]. Called bare, that raise would `longjmp` over the
 /// Rust frames above it.
 unsafe fn ruby_to_utf8(str: RString) -> VALUE {
-    if Encoding::of(str).parses_as_is() {
+    if Encoding::of(str).reads_as_utf8_bytes() {
         return str.as_raw();
     }
     const REPLACE: c_int = rb_sys::ruby_econv_flag_type::RUBY_ECONV_INVALID_REPLACE as c_int

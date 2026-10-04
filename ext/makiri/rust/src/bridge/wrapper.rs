@@ -305,29 +305,83 @@ impl NodeCache {
     }
 }
 
+/// A Document's edit bookkeeping: the mutation gate an XPath evaluation with
+/// a handler holds closed, and the versions readers key their caches by. Kept
+/// together because they answer one question - may this document change, and
+/// has it - and only [`record_edit`] and [`DocumentEvaluation`] write them.
+#[derive(Default)]
+struct EditState {
+    /// How many XPath evaluations that can run Ruby (ones with a handler) are
+    /// reading this document right now. Every mutator refuses while it is
+    /// non-zero - see [`DocumentEvaluation`].
+    evaluating: usize,
+    /// `Document#tree_version`: the child-list edits ([`EditKind::ChildList`]).
+    tree_version: u64,
+    /// `Document#attribute_version`: the attribute edits
+    /// ([`EditKind::Attributes`]).
+    attribute_version: u64,
+}
+
+impl EditState {
+    /// Count `kind`'s edit by the version that counts it - by at most one, so
+    /// a reader keying a cache by one version is not refilled for another's
+    /// edits.
+    fn record(&mut self, kind: EditKind) {
+        match kind {
+            EditKind::ChildList => self.tree_version = self.tree_version.wrapping_add(1),
+            EditKind::Attributes => self.attribute_version = self.attribute_version.wrapping_add(1),
+            EditKind::CharacterData => {}
+        }
+    }
+}
+
+/// What the GC was last told about a Document's content, which lives outside
+/// Ruby's allocator ([`account_document`]): `Drop` takes back exactly `bytes`,
+/// and [`account_growth`] compares against it.
+#[derive(Default)]
+struct ExternalReport {
+    /// The external bytes reported.
+    bytes: usize,
+    /// An HTML document's pool chunk count when `bytes` was measured: what
+    /// [`account_growth`] compares against, since the byte count itself costs
+    /// a walk of every chunk.
+    chunks: usize,
+}
+
+impl ExternalReport {
+    /// Record a measurement of `now` bytes in `chunks` chunks, and answer the
+    /// difference from the last one for the GC - `None` when there is none to
+    /// report, or a size Ruby could not address (a truncated difference would
+    /// unbalance the release).
+    fn update(&mut self, now: usize, chunks: usize) -> Option<isize> {
+        let (Ok(now_i), Ok(then_i)) = (isize::try_from(now), isize::try_from(self.bytes)) else {
+            return None;
+        };
+        self.chunks = chunks;
+        let diff = now_i.wrapping_sub(then_i);
+        if diff == 0 {
+            return None;
+        }
+        self.bytes = now;
+        Some(diff)
+    }
+
+    /// What to report when the content is freed: everything reported, back.
+    fn release(&self) -> Option<isize> {
+        isize::try_from(self.bytes).ok().map(isize::wrapping_neg)
+    }
+}
+
 /// A Document wrapper's data: the parsed content (owned - GC frees it), the
 /// mutation gate's count, and the reserved errors Array.
 pub struct DocData {
     /// Set once, by `DocumentShell::install`; read through the accessors below.
     content: Content,
-    /// How many XPath evaluations that can run Ruby (ones with a handler) are
-    /// reading this document right now. Every mutator refuses while it is
-    /// non-zero - see [`DocumentEvaluation`].
-    evaluating: usize,
+    /// The mutation gate and the edit versions ([`EditState`]).
+    edits: EditState,
     errors: VALUE,
-    /// The external bytes this wrapper has told the GC about, so `Drop` takes
-    /// back exactly what [`account_document`] reported.
-    reported: usize,
-    /// An HTML document's pool chunk count when `reported` was measured:
-    /// what [`account_growth`] compares against, since the byte count
-    /// itself costs a walk of every chunk.
-    reported_chunks: usize,
-    /// `Document#tree_version`: bumped by every edit that can change a child
-    /// list of a node this document owns (see [`bump_tree_version`]).
-    tree_version: u64,
-    /// `Document#attribute_version`: bumped by every edit of an attribute of
-    /// an element this document owns (see [`bump_attribute_version`]).
-    attribute_version: u64,
+    /// What the GC has been told about the content ([`ExternalReport`]).
+    report: ExternalReport,
     /// One wrapper per node; see [`NodeCache`].
     ///
     /// Boxed and optional so a document nobody navigates never allocates a
@@ -379,12 +433,12 @@ impl DocData {
             match self.content {
                 Content::Empty => false,
                 Content::Html(p) => {
-                    let then = self.reported_chunks;
+                    let then = self.report.chunks;
                     p.as_ref().arena_chunks()
                         >= then.saturating_add((then / 8).max(GROWTH_MIN_CHUNKS))
                 }
                 Content::Xml(d) => {
-                    let then = self.reported;
+                    let then = self.report.bytes;
                     d.as_ref().memsize() >= then.saturating_add((then / 8).max(GROWTH_MIN_BYTES))
                 }
             }
@@ -453,8 +507,8 @@ impl Drop for DocData {
          * and collects ever more eagerly. A plain C call, as this hook has to
          * be: it only subtracts, and Ruby's own `xfree` does the same from
          * here. */
-        if let Ok(diff) = isize::try_from(self.reported) {
-            crate::bridge::ruby::report_external_bytes(diff.wrapping_neg());
+        if let Some(diff) = self.report.release() {
+            crate::bridge::ruby::report_external_bytes(diff);
         }
     }
 }
@@ -475,16 +529,8 @@ impl Drop for DocData {
 fn account_document(rb_doc: VALUE) {
     // SAFETY: `rb_doc` is a Document (the base type matches either leaf).
     let d = unsafe { &mut *(DOC_TYPE.known_ptr(value(rb_doc))) };
-    let now = d.external_bytes();
-    /* Clamp rather than saturate the report: a document Ruby cannot address
-     * is not one we will see, and a truncated diff would unbalance `release`. */
-    let (Ok(now_i), Ok(then_i)) = (isize::try_from(now), isize::try_from(d.reported)) else {
-        return;
-    };
-    let diff = now_i.wrapping_sub(then_i);
-    d.reported_chunks = d.arena_chunks();
-    if diff != 0 {
-        d.reported = now;
+    let (now, chunks) = (d.external_bytes(), d.arena_chunks());
+    if let Some(diff) = d.report.update(now, chunks) {
         crate::bridge::ruby::report_external_bytes(diff);
     }
 }
@@ -592,12 +638,9 @@ impl DocumentShell {
                 klass,
                 || DocData {
                     content: Content::Empty,
-                    evaluating: 0,
+                    edits: EditState::default(),
                     errors: QFALSE,
-                    reported: 0,
-                    reported_chunks: 0,
-                    tree_version: 0,
-                    attribute_version: 0,
+                    report: ExternalReport::default(),
                     nodes: None,
                 },
                 |d| d.errors = errors.as_raw(),
@@ -825,6 +868,33 @@ fn with_doc_data_known<R>(rb_doc: Value, f: impl FnOnce(&mut DocData) -> R) -> R
     unsafe { f(&mut *DOC_TYPE.known_ptr(rb_doc)) }
 }
 
+/// Why [`node_token_in`] refused a node.
+pub enum NotInDocument {
+    /// Not a usable Makiri node - the `TypeError` or `Makiri::Error` its
+    /// wrapper raised.
+    Unusable(Error),
+    /// A node of another document.
+    Foreign,
+}
+
+/// The engine token of `rb_node`, which must be a node of `document` (the
+/// document node included).
+///
+/// The check behind every token minted for one document's engine - a handler's
+/// result node, an `XPathContext`'s context node - made here once, so the
+/// `unsafe` mint never rests on a caller having made it. The token's kind is
+/// `document`'s own, not one a caller passes alongside.
+pub fn node_token_in(rb_node: Value, document: Value) -> Result<Token, NotInDocument> {
+    let node_document = keepalive_document(rb_node).map_err(NotInDocument::Unusable)?;
+    if node_document.as_raw() != document.as_raw() {
+        return Err(NotInDocument::Foreign);
+    }
+    let raw = node_raw(rb_node).map_err(NotInDocument::Unusable)?;
+    // SAFETY: a live node of `document` - its wrapper holds that document -
+    // minted for `document`'s own kind.
+    Ok(unsafe { raw.token(DocKind::of(document)) })
+}
+
 /// The kind-AGNOSTIC node word (the base type, so HTML or XML). Only for the
 /// few sites where the representation is irrelevant (identity comparison) or
 /// already guaranteed by an external same-document check (the XPath context
@@ -888,47 +958,17 @@ pub fn keepalive_document(rb_node: Value) -> Result<Value, Error> {
     Ok(unsafe { value(nd.document) })
 }
 
-/* ---- the tree version ---- */
+/* ---- the edit versions ---- */
 
-/// Count a change to a child list of a node `rb_doc` owns - attached,
-/// detached or inside a fragment alike. Called where an edit is handed its
-/// mutable node (`HtmlEdit::node`, `Editing::with_arena`) and for the source
-/// of an adoption, so no structural mutator can miss it; attribute and
-/// character-data edits take the paths that skip it, as they change no child
-/// list (see [`EditKind`]).
-///
-/// Bumped inside the edit, with no Ruby run between the bump and the change,
-/// so nothing can read the tree in between and cache it under the new number.
-/// An edit that then fails costs a reader a cache refill, never a stale
-/// answer.
-pub fn bump_tree_version(rb_doc: Value) {
-    with_doc_data_known(rb_doc, |d| d.tree_version = d.tree_version.wrapping_add(1));
-}
-
-/// `Document#tree_version`: how many structural edits the document has seen.
-/// `TypeError` for a non-Document.
-pub fn tree_version(rb_doc: Value) -> Result<u64, Error> {
-    Ok(DOC_TYPE.get(&rb_doc)?.tree_version)
-}
-
-/// Count an edit of an attribute - added, removed, its value set (to the same
-/// value too) - of an element `rb_doc` owns. Called where an attribute edit is
-/// handed its mutable node (`HtmlEdit::node_for_attributes`,
-/// `Editing::with_attributes`), the paths that skip [`bump_tree_version`].
-pub fn bump_attribute_version(rb_doc: Value) {
-    with_doc_data_known(rb_doc, |d| {
-        d.attribute_version = d.attribute_version.wrapping_add(1)
-    });
-}
-
-/// What an edit changes, and so which version counts it: each edit is counted
-/// by at most one, so a reader keying a cache by one version is not refilled
-/// for another's edits.
+/// What an edit changes, and so which version counts it ([`record_edit`]).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum EditKind {
-    /// A child list: [`bump_tree_version`].
+    /// A child list of a node the document owns - attached, detached or inside
+    /// a fragment alike: `Document#tree_version`.
     ChildList,
-    /// An attribute, or an Attr's value: [`bump_attribute_version`].
+    /// An attribute of an element the document owns - added, removed, its
+    /// value set (to the same value too) - or an Attr's value:
+    /// `Document#attribute_version`.
     Attributes,
     /// A Text, Comment, CDATA or PI node's data. No version counts it: no
     /// reader has asked for one, and `tree_version` counting it made every
@@ -936,19 +976,31 @@ pub enum EditKind {
     CharacterData,
 }
 
-/// Count `kind`'s edit of a node `rb_doc` owns, by the version that counts it.
-pub fn count_edit(rb_doc: Value, kind: EditKind) {
-    match kind {
-        EditKind::ChildList => bump_tree_version(rb_doc),
-        EditKind::Attributes => bump_attribute_version(rb_doc),
-        EditKind::CharacterData => {}
-    }
+/// Count an edit of `kind` to a node `rb_doc` owns: the one way a version
+/// moves. Called where an edit is handed its mutable node (`HtmlEdit`,
+/// `Editing`) and for the source document of an adoption, so no mutator can
+/// miss it. Dropping what the edit invalidates is the representation's own
+/// step, taken beside this one: an HTML document's indexes
+/// ([`invalidate_indexes`]), the XML arena's name index (the arena's).
+///
+/// Counted inside the edit, with no Ruby run between the count and the
+/// change, so nothing can read the tree in between and cache it under the new
+/// number. An edit that then fails costs a reader a cache refill, never a
+/// stale answer.
+pub fn record_edit(rb_doc: Value, kind: EditKind) {
+    with_doc_data_known(rb_doc, |d| d.edits.record(kind));
+}
+
+/// `Document#tree_version`: how many child-list edits the document has seen.
+/// `TypeError` for a non-Document.
+pub fn tree_version(rb_doc: Value) -> Result<u64, Error> {
+    Ok(DOC_TYPE.get(&rb_doc)?.edits.tree_version)
 }
 
 /// `Document#attribute_version`: how many attribute edits the document has
 /// seen. `TypeError` for a non-Document.
 pub fn attribute_version(rb_doc: Value) -> Result<u64, Error> {
-    Ok(DOC_TYPE.get(&rb_doc)?.attribute_version)
+    Ok(DOC_TYPE.get(&rb_doc)?.edits.attribute_version)
 }
 
 /* ---- the document's mutation gate ---- */
@@ -956,7 +1008,7 @@ pub fn attribute_version(rb_doc: Value) -> Result<u64, Error> {
 /// `Err(Makiri::Error)` while an evaluation with a handler is reading `rb_doc`.
 /// Every mutator checks this before it changes anything.
 pub fn ensure_document_mutable(rb_doc: Value) -> Result<(), Error> {
-    if with_doc_data_known(rb_doc, |d| d.evaluating) != 0 {
+    if with_doc_data_known(rb_doc, |d| d.edits.evaluating) != 0 {
         return Err(makiri_error(
             "cannot modify a document while evaluating XPath over it (re-entrant mutation from a handler)",
         ));
@@ -996,14 +1048,14 @@ pub struct DocumentEvaluation(
 impl DocumentEvaluation {
     pub fn enter(rb_doc: Value) -> Result<Self, Error> {
         DOC_TYPE.get(&rb_doc)?; /* TypeError for a non-Document */
-        with_doc_data_known(rb_doc, |d| d.evaluating += 1);
+        with_doc_data_known(rb_doc, |d| d.edits.evaluating += 1);
         Ok(DocumentEvaluation(rb_doc))
     }
 }
 
 impl Drop for DocumentEvaluation {
     fn drop(&mut self) {
-        with_doc_data_known(self.0, |d| d.evaluating -= 1);
+        with_doc_data_known(self.0, |d| d.edits.evaluating -= 1);
         /* Read the Document here, so the guard demonstrably holds it: the field
          * is there to keep it reachable, and a field nothing reads is one the
          * compiler is free to treat as absent. */

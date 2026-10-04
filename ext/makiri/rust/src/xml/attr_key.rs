@@ -26,6 +26,22 @@ impl AttrKey<'_> {
             AttrKey::Ns { ns, local } => attr_matches_ns(doc, a, ns, local),
         }
     }
+
+    /// The first attribute of `el` this key names - the DOM's "get an
+    /// attribute by name" or "by namespace and local name" - or None, for a
+    /// non-element too.
+    ///
+    /// Namespace declarations included: in the DOM an `xmlns` / `xmlns:p` is
+    /// an attribute, so `node["xmlns:p"]` reads it as `getAttribute` does.
+    /// XPath's data model is the one that hides them (`xml::xpath` skips them
+    /// on the attribute axis), which is why `@xmlns:p` finds nothing while
+    /// this does.
+    pub(crate) fn find_in(self, doc: &Document, el: NodeId) -> Option<NodeId> {
+        if doc.type_(el) != Some(crate::xml::ArenaKind::Element) {
+            return None;
+        }
+        doc.attributes(el).find(|&a| self.matches(doc, a))
+    }
 }
 
 /// `a` is keyed by (ns, local) - the DOM key; an empty wanted namespace
