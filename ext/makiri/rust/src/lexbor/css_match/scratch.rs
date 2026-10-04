@@ -60,7 +60,7 @@ impl<T: Copy> Table<T> {
 
     /// Replace item `i` (< `len`).
     pub(super) fn set(&mut self, i: usize, v: T) -> Result<(), MatchFailure> {
-        *self.get_mut(i).ok_or(MatchFailure::Unsupported)? = v;
+        *self.get_mut(i).ok_or(MatchFailure::Internal)? = v;
         Ok(())
     }
 

@@ -297,7 +297,7 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
             }
         }
         for i in 0..self.compiled.top.len() {
-            let chain = self.compiled.top.get(i).ok_or(MatchFailure::Unsupported)?;
+            let chain = self.compiled.top.get(i).ok_or(MatchFailure::Internal)?;
             if chain.len != 0 && self.run(chain, node)? {
                 return Ok(true);
             }
@@ -341,7 +341,7 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
         let mut event = None;
         loop {
             let top = self.tasks.len().wrapping_sub(1);
-            let mut task = *self.tasks.get(top).ok_or(MatchFailure::Unsupported)?;
+            let mut task = *self.tasks.get(top).ok_or(MatchFailure::Internal)?;
             match self.step(&mut task, event)? {
                 Outcome::Spawn(child) => {
                     if let Some(slot) = self.tasks.get_mut(top) {
@@ -368,7 +368,8 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
             Task::Chain(t) => self.at.truncate(t.at_base as usize),
             Task::Forward(t) => self.cursors.truncate(t.cur_base as usize),
             Task::NthOf(t) => self.positions.of_seen_truncate(t.seen_base),
-            _ => {}
+            /* No side stack: a new kind that holds one must say so here. */
+            Task::Alternatives { .. } | Task::Has { .. } => {}
         }
     }
 
@@ -415,7 +416,7 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
                 .compiled
                 .alts
                 .get(alts.next as usize)
-                .ok_or(MatchFailure::Unsupported)?;
+                .ok_or(MatchFailure::Internal)?;
             alts.next += 1;
             if chain.len != 0 {
                 self.budget.charge()?;
@@ -471,7 +472,7 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
             .compiled
             .simples
             .get(i as usize)
-            .ok_or(MatchFailure::Unsupported)?;
+            .ok_or(MatchFailure::Internal)?;
         let alts = Alts {
             next: sel.alts,
             end: sel.alts + sel.n_alts,
@@ -491,7 +492,7 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
                 counting: false,
             }),
             // Only a nested selector defers: a broken invariant.
-            Nest::None => return Err(MatchFailure::Unsupported),
+            Nest::None => return Err(MatchFailure::Internal),
         })
     }
 
@@ -516,7 +517,7 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
                 .simples
                 .as_slice()
                 .get(i as usize)
-                .ok_or(MatchFailure::Unsupported)?;
+                .ok_or(MatchFailure::Internal)?;
             if !sel.inline {
                 return Ok(Check::Defer(i));
             }
@@ -541,7 +542,7 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
             .simples
             .as_slice()
             .get(from as usize..compound.end as usize)
-            .ok_or(MatchFailure::Unsupported)?;
+            .ok_or(MatchFailure::Internal)?;
         for (i, sel) in (from..).zip(steps) {
             let name = self.name(i, sel);
             match check_simple(sel, name, node, &self.budget, &mut self.positions)? {
@@ -579,14 +580,14 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
         node: HtmlNode<'doc>,
     ) -> Result<bool, MatchFailure> {
         let Nest::List { negate } = sel.nest else {
-            return Err(MatchFailure::Unsupported); /* only a list is inline */
+            return Err(MatchFailure::Internal); /* only a list is inline */
         };
         let compiled = self.compiled;
         for k in sel.alts..sel.alts + sel.n_alts {
             let chain = compiled
                 .alts
                 .get(k as usize)
-                .ok_or(MatchFailure::Unsupported)?;
+                .ok_or(MatchFailure::Internal)?;
             if chain.len == 0 {
                 continue;
             }
@@ -597,7 +598,7 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
             let compound = compiled.compound(chain, 0)?;
             let matched = match self.check_compound(compound, compound.start, node)? {
                 Check::Done(m) => m,
-                Check::Defer(_) => return Err(MatchFailure::Unsupported),
+                Check::Defer(_) => return Err(MatchFailure::Internal),
             };
             if matched {
                 return Ok(!negate);
@@ -640,12 +641,12 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
             .compounds
             .as_slice()
             .get(t.chain.start as usize..(t.chain.start + t.chain.len) as usize)
-            .ok_or(MatchFailure::Unsupported)?;
+            .ok_or(MatchFailure::Internal)?;
         let compound = |i: u32| {
             compounds
                 .get(i as usize)
                 .copied()
-                .ok_or(MatchFailure::Unsupported)
+                .ok_or(MatchFailure::Internal)
         };
         let last = t.chain.len - 1;
         let mut resumed = event;
@@ -735,7 +736,7 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
                         .get((t.at_base + t.idx - 1) as usize)
                         .copied()
                         .flatten()
-                        .ok_or(MatchFailure::Unsupported)?;
+                        .ok_or(MatchFailure::Internal)?;
                 }
             }
         }
@@ -760,7 +761,7 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
                     let cursor = self
                         .cursors
                         .get_mut((t.cur_base + t.level) as usize)
-                        .ok_or(MatchFailure::Unsupported)?;
+                        .ok_or(MatchFailure::Internal)?;
                     match cursor.next() {
                         Some(c) => {
                             self.budget.charge()?;

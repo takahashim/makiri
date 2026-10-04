@@ -314,7 +314,7 @@ impl<'p> Compiled<'p> {
             };
             let mut inline = true;
             for k in sel.alts..sel.alts + sel.n_alts {
-                let chain = self.alts.get(k as usize).ok_or(MatchFailure::Unsupported)?;
+                let chain = self.alts.get(k as usize).ok_or(MatchFailure::Internal)?;
                 inline &= match chain.len {
                     0 => true,
                     1 => self.compound_is_flat(self.compound(chain, 0)?)?,
@@ -336,7 +336,7 @@ impl<'p> Compiled<'p> {
             .simples
             .as_slice()
             .get(compound.start as usize..compound.end as usize)
-            .ok_or(MatchFailure::Unsupported)?;
+            .ok_or(MatchFailure::Internal)?;
         Ok(steps.iter().all(|s| s.nest == Nest::None))
     }
 
@@ -349,7 +349,7 @@ impl<'p> Compiled<'p> {
     pub(super) fn compound(&self, chain: Chain, idx: usize) -> Result<Compound, MatchFailure> {
         self.compounds
             .get(chain.start as usize + idx)
-            .ok_or(MatchFailure::Unsupported)
+            .ok_or(MatchFailure::Internal)
     }
 }
 

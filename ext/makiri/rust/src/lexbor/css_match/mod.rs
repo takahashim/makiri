@@ -240,6 +240,12 @@ pub enum MatchFailure {
     /// An allocation the match needed failed (`falloc`). Raised, like every
     /// other failure here, never answered as a partial result.
     Oom,
+    /// A broken invariant of the matcher itself - a table lookup out of range,
+    /// a task for a step that cannot defer - never a property of the selector.
+    /// Raised as `Makiri::InternalError` rather than as `Unsupported`'s
+    /// "selector could not be run": the selector is not at fault, and a bare
+    /// `rescue` must not take a matcher bug for a bad selector.
+    Internal,
 }
 
 impl Budget {
