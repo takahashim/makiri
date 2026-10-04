@@ -28,6 +28,12 @@
 * Documented: `namespace_uri` and `prefix` of elements and attributes are
   `nil` when there is no namespace or no prefix - never `""` - whether the
   node was parsed or created, in HTML and XML.
+* `tree_version` and `attribute_version` are documented as cache keys rather
+  than edit counts: an unchanged version means the child lists (or the
+  attributes) did not change, and a changed one may be conservative - an
+  edit that is refused after its arguments are checked, or stops part-way,
+  still moves it. Both are recorded just before the change, in HTML and XML
+  alike.
 * `tree_version` no longer counts character-data edits (a Text, Comment,
   CDATA or PI node's `content=`), which change no child list. A cache of child
   lists keyed by it is no longer refilled on every text edit.

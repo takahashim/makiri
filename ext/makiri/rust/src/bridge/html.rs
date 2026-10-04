@@ -387,16 +387,16 @@ fn adopt_copy<'d>(doc: RawDoc, node: HtmlNode<'_>) -> Result<HtmlNode<'d>, Error
 /// document's indexes, which still list it. A structural change to a document
 /// invalidates ITS indexes; this is one, made from another document's method.
 fn adopt_release(src: Value) -> Result<(), Error> {
+    /* Invalidated and recorded before the release (`record_edit`); the node
+     * borrow below is taken after, as dropping the indexes borrows too. */
+    let src_doc = keepalive_document(src)?;
+    invalidate_indexes(src_doc);
+    record_edit(src_doc, EditKind::ChildList);
     with_arg_node(src, |node| {
         /* SAFETY: the source document was cleared for editing by
          * `take_incoming` before anything was copied out of it. */
         release_from_tree(unsafe { HtmlNodeMut::assume_mutable(node) });
-    })?;
-    /* After the borrow `with_arg_node` held: dropping them borrows again. */
-    let src_doc = keepalive_document(src)?;
-    invalidate_indexes(src_doc);
-    record_edit(src_doc, EditKind::ChildList);
-    Ok(())
+    })
 }
 
 fn release_from_tree(node: HtmlNodeMut<'_>) {

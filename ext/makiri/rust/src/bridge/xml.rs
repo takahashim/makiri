@@ -361,16 +361,15 @@ impl Editing {
     ) -> Result<R, Error> {
         let id = self.id;
         check_frozen(self.receiver)?;
-        let r = with_arena_for_new_node(self.document, |d| {
+        ensure_document_mutable(self.document)?;
+        /* Recorded once both refusals are past and BEFORE the change, with no
+         * Ruby run in between (`record_edit`): an edit that then fails, or a
+         * panic in it, still invalidates what it may have changed. */
+        record_edit(self.document, kind);
+        with_arena_for_new_node(self.document, |d| {
             d.invalidate_name_index();
             f(d, id)
-        });
-        /* After the arena call, which refuses an evaluated document first -
-         * and that, like the frozen check, leaves the tree as it was. */
-        if r.is_ok() {
-            record_edit(self.document, kind);
-        }
-        r
+        })
     }
 }
 
@@ -641,6 +640,9 @@ impl Adoption {
         // for writing; `_keep` holds it, and the caller ran only engine code
         // on the OTHER arena since.
         let sdoc = unsafe { &mut *self.src_doc };
+        /* Invalidated and recorded before the removal (`record_edit`). */
+        sdoc.invalidate_name_index();
+        record_edit(self.src_document, EditKind::ChildList);
         if sdoc.type_(self.src) == Some(ArenaKind::DocumentFragment) {
             while let Some(c) = sdoc.first_child(self.src) {
                 remove_node(sdoc, c);
@@ -648,8 +650,6 @@ impl Adoption {
         } else {
             remove_node(sdoc, self.src);
         }
-        sdoc.invalidate_name_index();
-        record_edit(self.src_document, EditKind::ChildList);
     }
 }
 

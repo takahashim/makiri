@@ -976,17 +976,28 @@ pub enum EditKind {
     CharacterData,
 }
 
-/// Count an edit of `kind` to a node `rb_doc` owns: the one way a version
+/// Record an edit of `kind` to a node `rb_doc` owns: the one way a version
 /// moves. Called where an edit is handed its mutable node (`HtmlEdit`,
 /// `Editing`) and for the source document of an adoption, so no mutator can
 /// miss it. Dropping what the edit invalidates is the representation's own
 /// step, taken beside this one: an HTML document's indexes
 /// ([`invalidate_indexes`]), the XML arena's name index (the arena's).
 ///
-/// Counted inside the edit, with no Ruby run between the count and the
-/// change, so nothing can read the tree in between and cache it under the new
-/// number. An edit that then fails costs a reader a cache refill, never a
-/// stale answer.
+/// The versions are INVALIDATION keys, not edit counts. The contract, for HTML
+/// and XML alike:
+///
+/// - an unchanged version means the data it keys did not change -
+///   `tree_version` the child lists, `attribute_version` the attributes;
+/// - a changed one may be conservative: an edit that then fails, or stops
+///   part-way, still moved it;
+/// - it is recorded once the edit's refusals are past - the frozen check, the
+///   evaluation guard - and its arguments converted, immediately BEFORE the
+///   change, with the representation's indexes dropped at the same point;
+/// - no Ruby runs between the record and the change, so nothing can read the
+///   tree in between and cache it under the new number.
+///
+/// Recording after the change instead would miss an edit that panics, or
+/// fails having changed something, and leave a reader trusting a stale cache.
 pub fn record_edit(rb_doc: Value, kind: EditKind) {
     with_doc_data_known(rb_doc, |d| d.edits.record(kind));
 }
