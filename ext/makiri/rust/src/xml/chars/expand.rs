@@ -177,7 +177,9 @@ pub fn scan_reference(src: &[u8]) -> Result<(Reference<'_>, usize), ExpandErr> {
         .position(|&b| b == b';')
         .ok_or(ExpandErr::Syntax)?;
     let name = &src[..nlen];
-    if !validate_name(name) {
+    /* The five predefined names are Names already, and they are nearly every
+     * reference a document holds: the full Name check is for the rest. */
+    if predefined_entity(name).is_none() && !validate_name(name) {
         return Err(ExpandErr::Syntax);
     }
     Ok((Reference::Named(name), nlen + 1))

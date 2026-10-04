@@ -121,14 +121,14 @@ fn fragment_s_parse(_klass: Value, source: Value) -> Result<Value, Error> {
     })
 }
 
-/// `doc.fragment(source)` - a fragment bound to this document, resolving names
-/// against its in-scope (root) namespaces, so the nodes can be spliced in.
 /// `Document#_copy` (private): the whole document, copied node for node - what
 /// `#dup` returns.
 fn doc_copy(rb_self: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| crate::bridge::xml::copy_xml_document(rb_self))
 }
 
+/// `doc.fragment(source)` - a fragment bound to this document, resolving names
+/// against its in-scope (root) namespaces, so the nodes can be spliced in.
 fn doc_fragment(rb_self: Value, source: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let frag = crate::bridge::xml::fragment_into(rb_self, source, true)?;

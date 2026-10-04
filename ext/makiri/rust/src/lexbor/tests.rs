@@ -426,7 +426,7 @@ mod guard_agreement {
 /// reported as the limit rather than as a generic failure.
 mod tree_depth {
     use crate::lexbor::adapter::post_parse::{parse_html, HtmlParseError};
-    use crate::lexbor::adapter::tree_guard::DepthLimit;
+    use crate::lexbor::adapter::tree_guard::{DepthLimit, GuardStop};
     use crate::lexbor::fragment::{FragmentContext, FragmentError, FragmentTag, TransientFragment};
 
     fn divs(n: usize) -> Vec<u8> {
@@ -441,12 +441,21 @@ mod tree_depth {
     fn a_document_counts_html_and_body() {
         /* html (1) + body (2) + 398 divs = 400. */
         assert_eq!(doc(398, DepthLimit::DEFAULT), Ok(()));
-        assert_eq!(doc(399, DepthLimit::DEFAULT), Err(HtmlParseError::TooDeep));
+        assert_eq!(
+            doc(399, DepthLimit::DEFAULT),
+            Err(HtmlParseError::Guard(GuardStop::TooDeep))
+        );
         assert_eq!(doc(3, DepthLimit::at_most(5)), Ok(()));
-        assert_eq!(doc(4, DepthLimit::at_most(5)), Err(HtmlParseError::TooDeep));
+        assert_eq!(
+            doc(4, DepthLimit::at_most(5)),
+            Err(HtmlParseError::Guard(GuardStop::TooDeep))
+        );
         assert_eq!(doc(3000, DepthLimit::UNLIMITED), Ok(()));
         /* Nothing is accepted under a zero limit: `<html>` is already 1. */
-        assert_eq!(doc(0, DepthLimit::at_most(0)), Err(HtmlParseError::TooDeep));
+        assert_eq!(
+            doc(0, DepthLimit::at_most(0)),
+            Err(HtmlParseError::Guard(GuardStop::TooDeep))
+        );
     }
 
     #[test]
@@ -461,7 +470,10 @@ mod tree_depth {
             unsafe { TransientFragment::parse(&divs(n), true, &ctx, limit) }.map(drop)
         };
         assert_eq!(frag(400, DepthLimit::DEFAULT), Ok(()));
-        assert_eq!(frag(401, DepthLimit::DEFAULT), Err(FragmentError::TooDeep));
+        assert_eq!(
+            frag(401, DepthLimit::DEFAULT),
+            Err(FragmentError::Guard(GuardStop::TooDeep))
+        );
         assert_eq!(frag(3000, DepthLimit::UNLIMITED), Ok(()));
     }
 }
@@ -469,7 +481,7 @@ mod tree_depth {
 mod node_key {
     use crate::lexbor::adapter::html::RawNode;
     use crate::lexbor::adapter::post_parse::{parse_html, HtmlParsed};
-    use crate::lexbor::adapter::tree_guard::DepthLimit;
+    use crate::lexbor::adapter::tree_guard::{DepthLimit, GuardStop};
 
     fn doc(html: &[u8]) -> Box<HtmlParsed> {
         parse_html(html, true, DepthLimit::DEFAULT).expect("a document parses")
@@ -521,7 +533,7 @@ mod css_match {
     use crate::gvl::Gvl;
     use crate::lexbor::adapter::html::{HtmlElement, HtmlNode, NsId, RawNode};
     use crate::lexbor::adapter::post_parse::{parse_html, HtmlParsed};
-    use crate::lexbor::adapter::tree_guard::DepthLimit;
+    use crate::lexbor::adapter::tree_guard::{DepthLimit, GuardStop};
     use crate::lexbor::css_match::{
         self as port, validate, MatchFailure, QueryFailure, Scratch, MAX_COMPOUNDS,
     };
@@ -2589,7 +2601,7 @@ mod selector_cache {
     use crate::gvl::Gvl;
     use crate::lexbor::adapter::html::{HtmlNode, RawNode};
     use crate::lexbor::adapter::post_parse::{parse_html, HtmlParsed};
-    use crate::lexbor::adapter::tree_guard::DepthLimit;
+    use crate::lexbor::adapter::tree_guard::{DepthLimit, GuardStop};
     use crate::lexbor::css_match::select_all;
     use crate::lexbor::selector_cache::with_compiled;
 
@@ -2674,7 +2686,7 @@ mod serialize_walk {
     use crate::lexbor::abi as lxb;
     use crate::lexbor::adapter::html::{HtmlNode, RawNode};
     use crate::lexbor::adapter::post_parse::{parse_html, HtmlParsed};
-    use crate::lexbor::adapter::tree_guard::DepthLimit;
+    use crate::lexbor::adapter::tree_guard::{DepthLimit, GuardStop};
     use crate::lexbor::chunks::{chunk_cb, ChunkSink, Chunks};
     use crate::node_type::NodeType;
 
