@@ -219,19 +219,19 @@ pub enum AttrNs {
 /// exception. There is deliberately no success variant: success is `Ok`.
 /// Kept distinct from [`ParseError`] because the failure domains differ (a mutation
 /// never fails with [`ParseError::Syntax`], a parse never with
-/// [`MutError::Cycle`]).
+/// [`MutError::PreInsert`]).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MutError {
     Oom,
     BadName,
     UnboundNs,
     Type,
-    Cycle,
-    Hierarchy,
-    /// Text (or CDATA) as a child of the Document node, which the DOM
-    /// refuses and no XML document can hold: it serialized outside the root
-    /// element, and the output did not parse.
-    TextUnderDocument,
+    /// An insertion the DOM's rules refuse, with the rule
+    /// ([`crate::dom_rules::PreInsertError`]): a cycle, Text under the
+    /// Document (which no XML document can hold - it serialized outside the
+    /// root element, and the output did not parse), a second root, a sibling
+    /// of a node with no parent, and the rest.
+    PreInsert(crate::dom_rules::PreInsertError),
     BadNsDecl(crate::xml::qname::NsDeclError),
     /// A null / stale document handle reached a mutator; its own variant, so
     /// it cannot be mistaken for [`MutError::UnboundNs`].

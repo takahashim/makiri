@@ -5,7 +5,7 @@
 #![allow(clippy::missing_safety_doc)]
 
 use super::*;
-use crate::dom_rules::{self, At, Hierarchy, Tree, Violation};
+use crate::dom_rules::{self, At, Hierarchy, PreInsertError, Tree, Violation};
 use crate::falloc::OomOption;
 
 /// Where an insertion puts its node, relative to the node it is made on.
@@ -19,17 +19,6 @@ pub enum Place {
     After,
     /// In the target's place.
     Replace,
-}
-
-/// Why an insertion is refused: a place with no parent to resolve to, or one
-/// of the DOM's own rules ([`crate::dom_rules`]). Checked before any link
-/// changes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PreInsertError {
-    /// A sibling place, or a replace, on a node with no parent.
-    NoParent,
-    /// A rule of the WHATWG DOM's "ensure pre-insertion validity".
-    Rule(Violation),
 }
 
 /// The Lexbor tree as [`crate::dom_rules`] reads it: the nodes carry their
@@ -92,7 +81,9 @@ impl<'d> Insertion<'d> {
         let parent = || {
             HtmlTree::default()
                 .tree_parent(target)
-                .ok_or(PreInsertError::NoParent)
+                .ok_or(PreInsertError::NoParent {
+                    replacing: place == Place::Replace,
+                })
         };
         let (parent, at) = match place {
             Place::Child => (target, At::Before(None)),

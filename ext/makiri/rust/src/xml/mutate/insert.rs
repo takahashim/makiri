@@ -10,7 +10,7 @@
 #![forbid(unsafe_code)]
 
 use super::ns::resolve_into;
-use crate::dom_rules::{self, At, Hierarchy, Tree, Violation};
+use crate::dom_rules::{self, At, PreInsertError, Tree, Violation};
 use crate::node_type::NodeType;
 use crate::xml::{ArenaKind, Document, MutError, NodeId};
 
@@ -88,7 +88,7 @@ fn place_fragment(
     splice: Splice,
 ) -> Result<(), MutError> {
     let Some(site) = splice_site(doc, target, splice) else {
-        return Err(MutError::Hierarchy);
+        return Err(no_parent(false));
     };
     /* The fragment is checked as ONE node - the DOM's rules read its children
      * - and its subtree resolved as one, so every child passes before any
@@ -236,15 +236,16 @@ impl Tree for Document {
     }
 }
 
-/// A refused insertion as the mutators report it: the own-subtree rule as
-/// [`MutError::Cycle`], Text under the Document as its own status, and every
-/// other rule as the one [`MutError::Hierarchy`] they have always shared.
+/// A refused insertion as the mutators report it: with its rule, which the
+/// bridge words as the HTML side does (`bridge::dom_error`).
 fn refusal(v: Violation) -> MutError {
-    match v {
-        Violation::HierarchyRequest(Hierarchy::Ancestor) => MutError::Cycle,
-        Violation::HierarchyRequest(Hierarchy::TextUnderDocument) => MutError::TextUnderDocument,
-        _ => MutError::Hierarchy,
-    }
+    MutError::PreInsert(PreInsertError::Rule(v))
+}
+
+/// The refusal of a sibling place (`replacing` false) or a replace on a node
+/// with no tree parent.
+fn no_parent(replacing: bool) -> MutError {
+    MutError::PreInsert(PreInsertError::NoParent { replacing })
 }
 
 /// Validation + namespace resolution for inserting `node` at `site`. No
@@ -286,7 +287,7 @@ pub fn insert_before(doc: &mut Document, r: NodeId, node: NodeId) -> Result<(), 
      * up among the children and the element lost its old ones. */
     match doc.tree_parent(r) {
         Some(container) => insert_at(doc, Site::before(container, r), node),
-        None => Err(MutError::Hierarchy),
+        None => Err(no_parent(false)),
     }
 }
 
@@ -296,7 +297,7 @@ pub fn insert_after(doc: &mut Document, r: NodeId, node: NodeId) -> Result<(), M
     }
     match doc.tree_parent(r) {
         Some(container) => insert_at(doc, Site::after(container, r), node),
-        None => Err(MutError::Hierarchy),
+        None => Err(no_parent(false)),
     }
 }
 
@@ -304,7 +305,7 @@ pub fn replace_node(doc: &mut Document, r: NodeId, node: NodeId) -> Result<(), M
     /* The parent check comes FIRST here, unlike the sibling verbs: replacing a
      * DETACHED node is a hierarchy error even when it is replaced by itself. */
     let Some(container) = doc.tree_parent(r) else {
-        return Err(MutError::Hierarchy);
+        return Err(no_parent(true));
     };
     if node == r {
         return Ok(());
@@ -333,7 +334,7 @@ pub fn replace_with_fragment(
     frag: NodeId,
 ) -> Result<(), MutError> {
     let Some(container) = doc.tree_parent(target) else {
-        return Err(MutError::Hierarchy);
+        return Err(no_parent(true));
     };
     /* --- validation pass: no links change until it all passes */
     prepare_insert(doc, Site::replacing(container, target), frag)?;

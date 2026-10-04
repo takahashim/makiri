@@ -48,6 +48,10 @@
   with no prefix an invented `ns1:` prefix and declaration), copies data XML
   cannot write instead of failing on it, and keeps the original's
   `max_bytes` budget instead of the default.
+* An XML insertion the DOM's rules refuse names the rule, in the same words
+  as HTML ("the document already has a root element", "a doctype node can
+  only be a child of the document", ...). It said "invalid placement" for
+  every rule but a cycle and Text under the document.
 
 ### Fixed
 

@@ -323,7 +323,7 @@ RSpec.describe "Makiri::XML building (Phase 2)" do
       target = Makiri::XML("<r/>")
 
       expect { target.add_child(other.at_xpath("//deep")) }
-        .to raise_error(Makiri::Error, /single root/)
+        .to raise_error(Makiri::Error, /already has a root element/)
       expect(other.to_xml).to include("<deep/>")
     end
 
@@ -342,7 +342,7 @@ RSpec.describe "Makiri::XML building (Phase 2)" do
     it "rejects a cycle, a second document root, and a foreign-representation node" do
       expect { doc.root.add_child(doc.root) }.to raise_error(Makiri::Error, /subtree/)
       expect { doc.add_child(doc.create_element("second")) }
-        .to raise_error(Makiri::Error, /single root/)
+        .to raise_error(Makiri::Error, /already has a root element/)
       html_node = Makiri::HTML("<p/>").at_xpath("//p")
       expect { doc.root.add_child(html_node) }.to raise_error(TypeError)
     end
@@ -392,7 +392,7 @@ RSpec.describe "Makiri::XML building (Phase 2)" do
     it "root= replaces an existing root; the single-root rule still holds" do
       d = Makiri::XML::Document.new
       d.add_child(d.create_element("a"))
-      expect { d.add_child(d.create_element("b")) }.to raise_error(Makiri::Error, /single root/)
+      expect { d.add_child(d.create_element("b")) }.to raise_error(Makiri::Error, /already has a root element/)
       d.root = d.create_element("c") # replace, not a second root
       expect(d.root.name).to eq("c")
       expect(d.xpath("/c").length).to eq(1)

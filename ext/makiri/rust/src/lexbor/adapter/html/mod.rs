@@ -36,7 +36,7 @@ mod build;
 mod mutate;
 mod serialize;
 pub use build::{BuildingElement, BuildingNode};
-pub use mutate::{HtmlElementMut, HtmlNodeMut, HtmlTree, Insertion, Place, PreInsertError};
+pub use mutate::{HtmlElementMut, HtmlNodeMut, HtmlTree, Insertion, Place};
 
 /* A node handle is cast to an element or attribute handle, which is sound only
  * while the node sits FIRST in both. That is a claim about the absolute offset,

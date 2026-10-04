@@ -13,6 +13,7 @@
 
 #![forbid(unsafe_code)]
 
+use crate::dom_rules::{Hierarchy, PreInsertError, Violation};
 use crate::xml::mutate;
 use crate::xml::qname;
 use crate::xml::tree::{parse, parse_ex, parse_fragment};
@@ -964,7 +965,12 @@ fn resolution_is_deferred_until_the_subtree_joins_the_document() {
 #[test]
 fn inserting_an_ancestor_into_its_own_descendant_is_a_cycle() {
     let (mut doc, _docn, pr, ne) = connected_tree();
-    assert_eq!(mutate::insert_child(&mut doc, ne, pr), Err(MutError::Cycle));
+    assert_eq!(
+        mutate::insert_child(&mut doc, ne, pr),
+        Err(MutError::PreInsert(PreInsertError::Rule(
+            Violation::HierarchyRequest(Hierarchy::Ancestor)
+        )))
+    );
 }
 
 #[test]
@@ -1022,7 +1028,9 @@ fn a_document_takes_only_one_root_element() {
     let root2 = mutate::new_element(&mut doc, b"root2").expect("a second root");
     assert_eq!(
         mutate::insert_child(&mut doc, docn, root2),
-        Err(MutError::Hierarchy)
+        Err(MutError::PreInsert(PreInsertError::Rule(
+            Violation::HierarchyRequest(Hierarchy::SecondDocumentElement)
+        )))
     );
 }
 

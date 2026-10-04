@@ -59,6 +59,9 @@ pub mod node_set;
 #[cfg(feature = "lexbor")]
 pub mod node_wrap;
 
+/// The errors the DOM's insertion rules raise, for HTML and XML alike.
+pub mod dom_error;
+
 /// The Ruby <-> XPath engine seam: which backend a query runs on, and
 /// building the engine context for a Ruby node or document.
 #[cfg(feature = "lexbor")]

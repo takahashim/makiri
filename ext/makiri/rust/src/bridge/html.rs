@@ -17,8 +17,7 @@ use crate::init::{
     CLASS_HTML_PROCESSING_INSTRUCTION, CLASS_HTML_TEXT, CLASS_XML_DOCUMENT,
 };
 use crate::lexbor::adapter::html::{
-    ForeignNode, HtmlNode, HtmlNodeKey, HtmlNodeMut, Insertion, NodeType, Place, PreInsertError,
-    RawDoc, RawNode,
+    ForeignNode, HtmlNode, HtmlNodeKey, HtmlNodeMut, Insertion, NodeType, Place, RawDoc, RawNode,
 };
 use crate::lexbor::fragment::import_with_fixup;
 
@@ -437,7 +436,7 @@ pub fn insert(this: &HtmlSelf, rb_incoming: Value, place: Place) -> Result<Value
     let (placed, adopted) = with_html_node(incoming_doc, key, |incoming| {
         Insertion::new(target.node(), place, incoming)
             .and_then(|i| i.check())
-            .map_err(|e| refused(e, place))?;
+            .map_err(crate::bridge::dom_error::pre_insert_error)?;
         let (node, adopted) = take_incoming(target, incoming_doc, incoming)?;
         target.place(node, place);
         Ok::<_, Error>((RawNode::from(node.node()), adopted))
@@ -447,38 +446,6 @@ pub fn insert(this: &HtmlSelf, rb_incoming: Value, place: Place) -> Result<Value
     }
     adopt_release(rb_incoming)?;
     wrap_html_node(placed, this.document)
-}
-
-/// A refused insertion, worded. The one place these messages live.
-fn refused(e: PreInsertError, place: Place) -> Error {
-    use crate::dom_rules::{Hierarchy as H, Violation};
-    makiri_error(match e {
-        PreInsertError::NoParent if place == Place::Replace => {
-            "cannot replace a node with no parent"
-        }
-        PreInsertError::NoParent => "cannot add a sibling to a node with no parent",
-        /* Unreachable through `Insertion::new`, which takes the reference child
-         * from the parent it names; worded all the same. */
-        PreInsertError::Rule(Violation::NotFound) => {
-            "the reference node is not a child of the parent"
-        }
-        PreInsertError::Rule(Violation::HierarchyRequest(h)) => match h {
-            H::ParentNotContainer => {
-                "only a document, a document fragment or an element can have children"
-            }
-            H::Ancestor => "cannot insert a node into its own subtree",
-            H::AttributeNode => "an attribute node cannot be inserted into the tree",
-            H::DocumentNode => "a document node cannot be inserted into the tree",
-            H::UnsupportedNode => "this kind of node cannot be inserted into the tree",
-            H::DoctypeParent => "a doctype node can only be a child of the document",
-            H::DuplicateDoctype => "the document already has a doctype",
-            H::DoctypeAfterElement | H::ElementBeforeDoctype => {
-                "a doctype must precede the document element"
-            }
-            H::SecondDocumentElement => "the document already has a root element",
-            H::TextUnderDocument => "text cannot be a child of the document",
-        },
-    })
 }
 
 /// The node to put in the tree for `incoming`: itself, taken out of where it

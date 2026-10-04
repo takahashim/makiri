@@ -213,12 +213,7 @@ fn xml_mut_error(st: MutError) -> Error {
         MutError::InvalidCharacter(why) => return crate::bridge::ruby::arg_error(why),
         MutError::UnboundNs => "namespace prefix is not bound in this scope",
         MutError::Type => "operation unsupported for this node type",
-        MutError::Cycle => "cannot insert a node into its own subtree",
-        MutError::TextUnderDocument => "text cannot be a child of the document",
-        MutError::Hierarchy => {
-            "invalid placement (an attribute/document node cannot be a tree child, a document \
-allows a single root element, and a sibling target must have a parent)"
-        }
+        MutError::PreInsert(e) => return crate::bridge::dom_error::pre_insert_error(e),
         MutError::BadNsDecl(why) => match why {
             NsDeclError::Xmlns => "namespace declaration not permitted: xmlns cannot be declared",
             NsDeclError::XmlElsewhere => {
