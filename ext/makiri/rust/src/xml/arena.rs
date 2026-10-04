@@ -131,7 +131,7 @@ impl Document {
     }
     /// As [`Document::node`], for mutation.
     #[inline]
-    pub(crate) fn node_mut(&mut self, id: NodeId) -> &mut Node {
+    pub(in crate::xml) fn node_mut(&mut self, id: NodeId) -> &mut Node {
         debug_assert_eq!(id.stamp(), self.stamp, "NodeId from another document");
         &mut self.nodes[id.index() as usize]
     }
