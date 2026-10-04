@@ -628,7 +628,7 @@ pub fn find_attribute_ns(this: XmlSelf, ns: Value, local: Value) -> Result<Optio
 /// second half of the move `appendChild` performs across arenas. It carries
 /// the source arena and node [`incoming_node`] already resolved, so finishing
 /// cannot fail - there is nothing left to look up.
-pub struct Adoption {
+struct Adoption {
     src_doc: *mut XmlDoc,
     /// The source's Document, whose tree version the removal bumps.
     src_document: Value,
@@ -640,7 +640,7 @@ pub struct Adoption {
 
 impl Adoption {
     /// Empty the node out of its old document, whose name index goes with it.
-    pub fn finish(self) {
+    fn finish(self) {
         // SAFETY: `src_doc` is the live arena `incoming_node` found and cleared
         // for writing; `_keep` holds it, and the caller ran only engine code
         // on the OTHER arena since.
@@ -658,10 +658,30 @@ impl Adoption {
     }
 }
 
+/// `node.add_child(arg)` and its siblings: put `arg` at `at` relative to the
+/// receiver - moved within the document, or adopted from its own - and hand
+/// back what is now in the tree: the argument, or for an adopted node its copy.
+/// The HTML twin is `bridge::html::insert`.
+///
+/// The whole edit is the bridge's: the receiver cleared for editing, the
+/// argument resolved (and copied, when it is another document's), every rule
+/// checked and the namespaces resolved by the placing, and - only once that
+/// has succeeded - the adopted original taken out of its own document
+/// ([`Adoption::finish`]), which nothing outside this module can call.
+pub fn insert(this: XmlSelf, arg: Value, at: crate::xml::mutate::Place) -> Result<Value, Error> {
+    let edit = begin_edit(this)?;
+    let (node, adoption) = incoming_node(edit.document(), arg)?;
+    xml_mut_result(edit.with_arena(|d, target| crate::xml::mutate::place(d, target, node, at))?)?;
+    if let Some(a) = adoption {
+        a.finish();
+    }
+    wrap_xml_node(node, this.document)
+}
+
 /// `arg` as a node of `target_doc`'s arena: itself when it already lives there
 /// (a move), or a copy imported from its own document plus the [`Adoption`]
 /// that takes it out of there once it is placed.
-pub fn incoming_node(target_doc: Value, arg: Value) -> Result<(NodeId, Option<Adoption>), Error> {
+fn incoming_node(target_doc: Value, arg: Value) -> Result<(NodeId, Option<Adoption>), Error> {
     if !is_kind_of(arg, &CLASS_NODE) || !is_kind_of(xml_node_document(arg)?, &CLASS_XML_DOCUMENT) {
         return Err(crate::bridge::ruby::type_error(
             "expected a Makiri::XML node (NodeSet / String arguments are a later phase)",

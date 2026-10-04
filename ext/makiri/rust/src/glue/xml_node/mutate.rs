@@ -16,7 +16,7 @@ use crate::bridge::ruby::makiri_error;
 use crate::bridge::string::namespace_arg;
 
 use crate::bridge::xml::{
-    begin_edit, import_copy, incoming_node, verified_data, verified_data_opt, verified_name,
+    begin_edit, import_copy, insert, verified_data, verified_data_opt, verified_name,
     verified_name_opt, verified_text, verified_text_opt, with_arena_for_new_node,
     wrap_xml_node as wrap, xml_mut_result, Editing, XmlSelf,
 };
@@ -24,7 +24,7 @@ use crate::glue::node::dom_extract;
 use crate::init::CLASS_XML_DOCUMENT;
 use crate::xml::dom_name::{self, split_loose_dom_name};
 use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId};
-use crate::xml::mutate::{self, place, Place};
+use crate::xml::mutate::{self, Place};
 use crate::xml::qname::Split;
 
 /* ------------------------------------------------------------------ */
@@ -189,18 +189,9 @@ pub fn set_content(_ruby: &Ruby, this: XmlSelf, text: Value) -> Result<Value, Er
 /* ------------------------------------------------------------------ */
 /* building: insertion                                                */
 /* ------------------------------------------------------------------ */
-
-/// Put `arg` at `at` relative to the receiver - moved when it is of this
-/// document, adopted from its own otherwise - and return it.
-fn insert(this: XmlSelf, arg: Value, at: Place) -> Result<Value, Error> {
-    let edit = begin_edit(this)?;
-    let (node, adoption) = incoming_node(edit.document(), arg)?;
-    xml_mut_result(edit.with_arena(|d, target| place(d, target, node, at))?)?;
-    if let Some(a) = adoption {
-        a.finish();
-    }
-    wrap(node, this.document)
-}
+/* Every verb is `bridge::xml::insert` at its own `Place`: the checks, the
+ * adoption and its completion are the bridge's, as `bridge::html::insert`'s
+ * are on the HTML side. */
 
 pub fn add_child(_ruby: &Ruby, this: XmlSelf, arg: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| insert(this, arg, Place::Child))
