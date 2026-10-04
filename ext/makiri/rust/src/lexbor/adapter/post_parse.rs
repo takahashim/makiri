@@ -323,6 +323,15 @@ pub enum HtmlParseError {
     TooManyOptions,
 }
 
+impl From<GuardStop> for HtmlParseError {
+    fn from(stop: GuardStop) -> Self {
+        match stop {
+            GuardStop::TooDeep => HtmlParseError::TooDeep,
+            GuardStop::TooManyOptions => HtmlParseError::TooManyOptions,
+        }
+    }
+}
+
 /// Drive the low-level pipeline so element offsets can be captured and the
 /// tree depth bounded, then build the line table.
 ///
@@ -347,7 +356,7 @@ unsafe fn parse_tracked<const PANIC_PROBE: bool>(
      * declared after the parser, so it outlives nothing that can still call
      * it; it stays put until the parse calls below have returned. A document
      * keeps nothing below `<html>` on the open-element stack. */
-    let mut hook = TokenHook::<PANIC_PROBE>::build(limit, 0, Some(Stamper::new(src)));
+    let mut hook = TokenHook::<PANIC_PROBE>::for_document(limit, Stamper::new(src));
     if !hook.install(parser.as_ptr()) {
         return Err(HtmlParseError::Failed); /* never unguarded */
     }
@@ -358,18 +367,10 @@ unsafe fn parse_tracked<const PANIC_PROBE: bool>(
     }
 
     /* The tokenizer's callback cannot unwind into Lexbor, so a panic in the
-     * hook was latched instead, and stopped the parse. Lexbor has returned, so this is
-     * the first frame where raising it is safe - and it raises BEFORE the
-     * status check, because a panic is not a parse failure. `doc`'s Drop and
-     * the parser's release it all on the way out. */
-    hook.resume_panic();
-
-    /* `doc`'s Drop destroys it on either refusal. */
-    match hook.stopped() {
-        Some(GuardStop::TooDeep) => return Err(HtmlParseError::TooDeep),
-        Some(GuardStop::TooManyOptions) => return Err(HtmlParseError::TooManyOptions),
-        None => {}
-    }
+     * hook was latched instead, and stopped the parse: `finish` raises it
+     * here, before the status check. `doc`'s Drop and the parser's release it
+     * all on the way out, and on a refusal. */
+    hook.finish()?;
     if st != LXB_STATUS_OK {
         return Err(HtmlParseError::Failed);
     }

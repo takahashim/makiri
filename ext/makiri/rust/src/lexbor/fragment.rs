@@ -123,6 +123,15 @@ pub enum FragmentError {
     TooManyOptions,
 }
 
+impl From<GuardStop> for FragmentError {
+    fn from(stop: GuardStop) -> Self {
+        match stop {
+            GuardStop::TooDeep => FragmentError::TooDeep,
+            GuardStop::TooManyOptions => FragmentError::TooManyOptions,
+        }
+    }
+}
+
 impl FragmentError {
     /// The message, for every error but [`TooDeep`](FragmentError::TooDeep)
     /// and [`TooManyOptions`](FragmentError::TooManyOptions), whose messages
@@ -419,13 +428,13 @@ unsafe fn run_fragment_parser(
         owned = TransientDoc::own(fragment_document(parser.as_ptr()).cast());
     }
 
-    /* A fragment keeps one synthetic `<html>` root below its first element,
-     * which the depth does not count (see `tree_guard`). */
-    let mut hook = TokenHook::new(limit, 1, None);
-    hook.set_option_context(match *context {
-        FragmentContext::Element(el) => OptionContext::Element(el),
-        FragmentContext::Tag { at, .. } => OptionContext::Tag(Some(at.tag), at.ns),
-    });
+    let mut hook = TokenHook::for_fragment(
+        limit,
+        match *context {
+            FragmentContext::Element(el) => OptionContext::Element(el),
+            FragmentContext::Tag { at, .. } => OptionContext::Tag(Some(at.tag), at.ns),
+        },
+    );
     if !hook.install(parser.as_ptr()) {
         return Err(FragmentError::Parse); /* never unguarded */
     }
@@ -435,16 +444,11 @@ unsafe fn run_fragment_parser(
     } else {
         core::ptr::null_mut()
     };
-    hook.resume_panic(); /* none can be latched without a recorder; kept uniform */
+    /* `owned` drops, freeing it, on a refusal - after the parser, which was
+     * declared after it. */
+    hook.finish()?;
     drop(src); /* the parse consumed it; the buffer goes on every path */
     drop(parser); /* the fragment belongs to its document, not to the parser */
-
-    /* `owned` drops, freeing it, on either refusal. */
-    match hook.stopped() {
-        Some(GuardStop::TooDeep) => return Err(FragmentError::TooDeep),
-        Some(GuardStop::TooManyOptions) => return Err(FragmentError::TooManyOptions),
-        None => {}
-    }
     let root = RawNode::from_ptr(root.cast()).ok_or(FragmentError::Parse)?;
     Ok(TransientFragment {
         root,
