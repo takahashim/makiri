@@ -151,21 +151,13 @@ fn loose_doctype_under(doc: &XmlDoc, n: NodeId) -> bool {
             .find(|&c| doc.type_(c) == Some(ArenaKind::DocumentType)),
         _ => None,
     };
-    dt.is_some_and(|dt| {
-        doc.node(dt)
-            .flags
-            .contains(crate::xml::NodeFlags::DOM_LOOSE_NAME)
-    })
+    dt.is_some_and(|dt| doc.is_loose_name(dt))
 }
 
 /// Why attribute `a` has no XML form, if it has none: a DOM-loose name, or a
 /// declaration holding a value it may not declare.
 fn unwritable_attr(doc: &XmlDoc, a: NodeId) -> Option<Failure> {
-    if doc
-        .node(a)
-        .flags
-        .contains(crate::xml::NodeFlags::DOM_LOOSE_NAME)
-    {
+    if doc.is_loose_name(a) {
         Some(Failure::DomLooseAttributeName)
     } else if doc.forbidden_declaration(a) {
         Some(Failure::ForbiddenDeclaration)
@@ -177,11 +169,7 @@ fn unwritable_attr(doc: &XmlDoc, a: NodeId) -> Option<Failure> {
 /// The first name under `root` that has no namespace-well-formed XML form.
 fn unserializable_name(doc: &XmlDoc, root: NodeId) -> Option<Failure> {
     let mut cur = Some(root);
-    let loose = |id| {
-        doc.node(id)
-            .flags
-            .contains(crate::xml::NodeFlags::DOM_LOOSE_NAME)
-    };
+    let loose = |id| doc.is_loose_name(id);
     while let Some(id) = cur {
         match doc.type_(id) {
             Some(ArenaKind::Element) if loose(id) => return Some(Failure::DomLooseName),

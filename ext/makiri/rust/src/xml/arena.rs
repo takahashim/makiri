@@ -210,14 +210,39 @@ impl Document {
 
     /* ---- byte store ---- */
 
-    /// Whether `id` is an attribute whose namespace is not decided yet
-    /// ([`AttrNs::Pending`]): its `ns` reads empty only because nothing has
-    /// resolved its prefix, which is not "no namespace" - so it has no
-    /// `(namespace, local name)` key to match by.
-    pub fn attr_ns_pending(&self, id: NodeId) -> bool {
+    /* ---- what a node's namespace means ----
+     *
+     * `ns` is the URI a node has now; these say what it MEANS, so no reader
+     * decodes the flags and fields that record it. The two kinds differ:
+     * an element's namespace is decided by being placed where it is
+     * connected, an attribute's by where it came from. */
+
+    /// Whether element `id`'s namespace is decided - by the parser, or by the
+    /// first placement that connected it ([`NodeFlags::NS_RESOLVED`]). Until
+    /// then its URI (empty, or one a detached build derived provisionally) is
+    /// derived again, attributes and all, where it is next placed. False for
+    /// any other kind.
+    pub fn element_ns_decided(&self, id: NodeId) -> bool {
         self.try_node(id).is_some_and(|n| {
-            n.type_ == ArenaKind::Attribute && n.attr_ns == crate::xml::AttrNs::Pending
+            n.type_ == ArenaKind::Element && n.flags.contains(NodeFlags::NS_RESOLVED)
         })
+    }
+
+    /// Attribute `id`'s namespace state ([`AttrNs`]): derived from its
+    /// prefix, given (`set_attribute_ns`, never derived again), or pending -
+    /// no URI yet, which is not "no namespace". None for any other kind.
+    pub fn attr_ns_state(&self, id: NodeId) -> Option<crate::xml::AttrNs> {
+        let n = self.try_node(id)?;
+        (n.type_ == ArenaKind::Attribute).then_some(n.attr_ns)
+    }
+
+    /// Whether `id` carries a DOM-loose name ([`NodeFlags::DOM_LOOSE_NAME`]):
+    /// one the DOM allows and XML cannot write. An element's namespace is then
+    /// the one it was given, never derived from its name; an attribute's is
+    /// never a declaration. On a DOCTYPE, a name or id XML cannot write.
+    pub fn is_loose_name(&self, id: NodeId) -> bool {
+        self.try_node(id)
+            .is_some_and(|n| n.flags.contains(NodeFlags::DOM_LOOSE_NAME))
     }
 
     /// Borrow the bytes a span names. An absent or zero-length span is empty.
@@ -277,7 +302,7 @@ impl Document {
     /// declaration.
     pub fn declaration_named(&self, id: NodeId) -> Option<&[u8]> {
         let n = self.try_node(id)?;
-        if n.type_ != ArenaKind::Attribute || n.flags.contains(NodeFlags::DOM_LOOSE_NAME) {
+        if n.type_ != ArenaKind::Attribute || self.is_loose_name(id) {
             return None;
         }
         crate::xml::qname::xmlns_prefix(self.span(n.qname))

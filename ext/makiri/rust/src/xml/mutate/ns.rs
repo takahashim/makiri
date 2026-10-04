@@ -105,13 +105,13 @@ enum Part {
 /// own and is never derived again; everything else is, unless only the
 /// pending ones are being looked at.
 fn rederives(doc: &Document, attr: NodeId, part: Part) -> bool {
-    let state = doc.node(attr).attr_ns;
-    state != AttrNs::Explicit && (part == Part::Whole || state == AttrNs::Pending)
+    let state = doc.attr_ns_state(attr);
+    state != Some(AttrNs::Explicit) && (part == Part::Whole || state == Some(AttrNs::Pending))
 }
 
 /// Whether `e`'s own name is resolved for this `part`.
 fn resolves_name(doc: &Document, e: NodeId, part: Part) -> bool {
-    part == Part::Whole && !doc.node(e).flags.contains(NodeFlags::DOM_LOOSE_NAME)
+    part == Part::Whole && !doc.is_loose_name(e)
 }
 
 /// The all-or-nothing plan the check pass produces and the apply pass writes:
@@ -218,17 +218,11 @@ fn apply_ns_plan(doc: &mut Document, root: NodeId, connected: bool, plan: NsPlan
 /// Whether any attribute of `e` still has a pending namespace.
 fn has_pending_attr(doc: &Document, e: NodeId) -> bool {
     for attr in doc.attributes(e) {
-        if doc.node(attr).attr_ns == AttrNs::Pending {
+        if doc.attr_ns_state(attr) == Some(AttrNs::Pending) {
             return true;
         }
     }
     false
-}
-
-/// True once `e`'s namespace has been decided - by the parser, or by resolving
-/// it against the context it was first inserted into.
-fn ns_is_decided(doc: &Document, e: NodeId) -> bool {
-    doc.node(e).flags.contains(NodeFlags::NS_RESOLVED)
 }
 
 /// Re-resolve every element in `root`'s subtree, all-or-nothing: build the plan
@@ -240,7 +234,7 @@ fn resolve_subtree(doc: &mut Document, root: NodeId, connected: bool) -> Result<
         if doc.type_(c) == Some(ArenaKind::Element) {
             /* A decided element keeps its own namespace; its attributes set
              * while it was detached may still be pending. */
-            let decided = ns_is_decided(doc, c);
+            let decided = doc.element_ns_decided(c);
             if !decided || has_pending_attr(doc, c) {
                 let part = if decided {
                     Part::PendingAttrs
@@ -287,11 +281,10 @@ pub(super) fn resolve_into(
 /// Only a DECIDED no-namespace: an unresolved element's empty URI means "not
 /// decided yet", and its own declaration is what decides it.
 pub fn ignored_default_decl(doc: &Document, el: NodeId) -> Option<NodeId> {
-    let node = doc.node(el);
-    if node.prefix.len != 0
-        || node.ns_uri.len != 0
-        || node.flags.contains(NodeFlags::DOM_LOOSE_NAME)
-        || !node.flags.contains(NodeFlags::NS_RESOLVED)
+    if !doc.prefix(el).is_empty()
+        || !doc.ns(el).is_empty()
+        || doc.is_loose_name(el)
+        || !doc.element_ns_decided(el)
     {
         return None;
     }

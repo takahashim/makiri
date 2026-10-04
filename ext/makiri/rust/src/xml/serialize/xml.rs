@@ -22,7 +22,7 @@
 use super::out::{put, put_comment, put_pi, writable_chars, W, XML};
 use super::Failure;
 use crate::cbuf::Buf;
-use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeFlags, NodeId, MAX_DEPTH};
+use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId, MAX_DEPTH};
 use crate::xml::XML_NS_URI;
 
 use super::bindings::{Bindings, Prefix, PREFIX_CAP};
@@ -139,10 +139,9 @@ fn plan_element<'d>(
     }
     let mut plan = Plan {
         prefix: Prefix::Own(own_prefix),
-        declare: !doc.node(el).flags.contains(NodeFlags::DOM_LOOSE_NAME)
-            && !binds.bound_to(own_prefix, uri)?,
+        declare: !doc.is_loose_name(el) && !binds.bound_to(own_prefix, uri)?,
     };
-    let resolved = doc.node(el).flags.contains(NodeFlags::NS_RESOLVED);
+    let resolved = doc.element_ns_decided(el);
     if !resolved && own_decl(doc, el, own_prefix).is_some() {
         /* Not resolved yet (a detached copy or build): its URI reads empty only
          * because nothing has decided it, and its own declaration is what will -

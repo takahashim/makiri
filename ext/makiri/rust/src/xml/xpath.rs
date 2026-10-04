@@ -166,7 +166,7 @@ impl<'d> Dom<'d> for &'d xml::Document {
     /// (`attr_key`).
     #[inline]
     fn unprefixed_matches(self, n: xml::NodeId, is_attr: bool, _lax: bool) -> bool {
-        !(is_attr && self.attr_ns_pending(n)) && self.ns(n).is_empty()
+        !(is_attr && self.attr_ns_state(n) == Some(xml::AttrNs::Pending)) && self.ns(n).is_empty()
     }
 
     /// An attribute node carries its own namespace.

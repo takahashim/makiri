@@ -49,10 +49,7 @@ impl AttrKey<'_> {
 fn attr_matches_ns(doc: &Document, a: NodeId, ns: &[u8], local: &[u8]) -> bool {
     /* A pending attribute's namespace is undecided, not empty: it has no key
      * to match (`set_attribute_ns("", "a")` used to overwrite a pending p:a). */
-    doc.node(a).attr_ns != AttrNs::Pending
-        && doc.node(a).ns_uri.len as usize == ns.len()
-        && (ns.is_empty() || doc.ns(a) == ns)
-        && doc.local(a) == local
+    doc.attr_ns_state(a) != Some(AttrNs::Pending) && doc.ns(a) == ns && doc.local(a) == local
 }
 
 /// Whether an attribute of `el` other than `except` already has the key
