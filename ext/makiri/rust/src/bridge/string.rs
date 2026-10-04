@@ -678,7 +678,7 @@ pub fn ruby_to_utf8_value(s: RString) -> Result<RString, Error> {
     let raw = protect(|| unsafe { ruby_to_utf8(s) })?;
     // SAFETY: `rb_str_encode` returns a live value; checked to be a String.
     RString::from_value(unsafe { crate::bridge::ruby::value(raw) })
-        .ok_or_else(|| makiri_error("transcoding returned a non-String"))
+        .ok_or_else(|| crate::bridge::ruby::internal_error("transcoding returned a non-String"))
 }
 
 /// A Ruby String as HTML parser input, under the text-input contract: its

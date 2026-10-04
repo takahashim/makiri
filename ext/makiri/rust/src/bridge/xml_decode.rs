@@ -18,7 +18,6 @@
 
 use core::ffi::{c_int, c_long};
 
-use crate::bridge::ruby::makiri_error;
 use magnus::rb_sys::AsRawValue;
 use magnus::{Error, RString};
 use rb_sys::VALUE;
@@ -123,7 +122,7 @@ fn syntax_error(msg: impl Into<std::borrow::Cow<'static, str>>) -> Error {
 fn decoded_string(v: VALUE) -> Result<RString, Error> {
     // SAFETY: a live value the call just returned.
     RString::from_value(unsafe { crate::bridge::ruby::value(v) })
-        .ok_or_else(|| makiri_error("XML input decoded to a non-String"))
+        .ok_or_else(|| crate::bridge::ruby::internal_error("XML input decoded to a non-String"))
 }
 
 /// Decode `str` to a validated, UTF-8-tagged, BOM-stripped String, or the

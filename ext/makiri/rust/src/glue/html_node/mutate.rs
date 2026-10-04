@@ -52,12 +52,12 @@ fn check_dom_name(
 
 /// The receiver as an element, once every argument is converted. Its node type
 /// was checked before the conversion (an argument cannot change it), so the
-/// `None` arm is unreachable - it answers `refusal` rather than assuming so.
+/// `None` arm is a broken invariant - raised as one rather than assumed away.
 /// For the attribute mutators only: it leaves the tree version alone.
-fn element_of<'a>(edit: HtmlEdit<'a>, refusal: &'static str) -> Result<HtmlElementMut<'a>, Error> {
-    edit.node_for_attributes()?
-        .element_mut()
-        .ok_or_else(|| makiri_error(refusal))
+fn element_of(edit: HtmlEdit<'_>) -> Result<HtmlElementMut<'_>, Error> {
+    edit.node_for_attributes()?.element_mut().ok_or_else(|| {
+        crate::bridge::ruby::internal_error("an attribute edit's checked element is not one")
+    })
 }
 
 /* ------------------------------------------------------------------ *
@@ -123,7 +123,7 @@ pub fn aset(ruby: &Ruby, this: HtmlSelf, rb_name: Value, rb_value: Value) -> Res
         let nv = ruby_verified_name(rb_name, "attribute name")?;
         let vv = ruby_verified_data(rb_value, "attribute value")?;
         check_dom_name(ruby, &nv, dom_name::valid_attribute_local_name, "attribute")?;
-        let el = element_of(edit, REFUSAL)?;
+        let el = element_of(edit)?;
         crate::bridge::html::set_attribute(el, &nv, &vv)
             .map_err(|_| makiri_error("failed to set attribute"))?;
         Ok(rb_value)
@@ -157,7 +157,7 @@ pub fn set_attribute_ns(
             dom_name::valid_attribute_local_name,
             "HTML attribute",
         )?;
-        let el = element_of(edit, REFUSAL)?;
+        let el = element_of(edit)?;
         crate::bridge::html::set_attribute_ns(el, nv.as_ref().map(|n| n.as_bytes()), &qv, &vv)
             .map_err(|_| makiri_error("failed to set namespaced attribute"))?;
         Ok(rb_value)
@@ -178,7 +178,7 @@ pub fn remove_attribute_ns(
         }
         let lv = ruby_verified_text(rb_local, "attribute local name")?;
         let nv = namespace_arg(rb_ns, "namespace")?;
-        let el = element_of(edit, "remove_attribute_ns requires an element")?;
+        let el = element_of(edit)?;
         crate::bridge::html::remove_attribute_ns(el, nv.as_ref().map(|n| n.as_bytes()), &lv);
         Ok(ruby.qnil().as_value())
     })
@@ -213,7 +213,7 @@ pub fn delete(_ruby: &Ruby, this: HtmlSelf, rb_name: Value) -> Result<Value, Err
             return Ok(rb_self);
         }
         let nv = ruby_verified_text(rb_name, "attribute name")?;
-        let el = element_of(edit, "delete requires an element")?;
+        let el = element_of(edit)?;
         crate::bridge::html::remove_attribute(el, &nv);
         Ok(rb_self)
     })
