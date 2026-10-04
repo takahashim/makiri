@@ -5,10 +5,10 @@
 
 use crate::falloc::{OomResult, VecPush};
 use crate::lexbor::adapter::html::{HtmlDoc, HtmlNode, TagId};
-use crate::lexbor::css_parser::{Combinator, FunctionArg, ListPseudo, Simple};
+use crate::lexbor::css_parser::Combinator;
 use core::ffi::c_long;
 
-use super::compile::{Chain, Compiled, Compound, Step};
+use super::compile::{Chain, Compiled, Compound, Nest, Step};
 use super::positions::Positions;
 use super::scratch::{recycle, Scratch, SCRATCH_KEEP};
 use super::simple::{anb_matches, check_simple, Name, Names, SimpleCheck};
@@ -476,25 +476,12 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
             next: sel.alts,
             end: sel.alts + sel.n_alts,
         };
-        Ok(match sel.simple {
-            Simple::PseudoClassFunction(FunctionArg::Selectors {
-                pseudo: ListPseudo::Has,
-                ..
-            }) => Task::Has { alts, anchor: node },
-            Simple::PseudoClassFunction(FunctionArg::Selectors { pseudo, .. }) => {
-                Task::Alternatives {
-                    alts,
-                    node,
-                    negate: pseudo == ListPseudo::Not,
-                }
-            }
-            Simple::PseudoClassFunction(FunctionArg::Nth {
-                from_end,
-                anb: Some(anb),
-                ..
-            }) => Task::NthOf(NthOfTask {
-                a: anb.a,
-                b: anb.b,
+        Ok(match sel.nest {
+            Nest::Has => Task::Has { alts, anchor: node },
+            Nest::List { negate } => Task::Alternatives { alts, node, negate },
+            Nest::NthOf { a, b, from_end } => Task::NthOf(NthOfTask {
+                a,
+                b,
                 from_end,
                 alts,
                 sel: i,
@@ -503,8 +490,8 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
                 seen_base: self.positions.of_seen_base(),
                 counting: false,
             }),
-            // `check_simple` defers nothing else: a broken invariant.
-            _ => return Err(MatchFailure::Unsupported),
+            // Only a nested selector defers: a broken invariant.
+            Nest::None => return Err(MatchFailure::Unsupported),
         })
     }
 
@@ -591,13 +578,9 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
         sel: &Step<'_>,
         node: HtmlNode<'doc>,
     ) -> Result<bool, MatchFailure> {
-        let negate = matches!(
-            sel.simple,
-            Simple::PseudoClassFunction(FunctionArg::Selectors {
-                pseudo: ListPseudo::Not,
-                ..
-            })
-        );
+        let Nest::List { negate } = sel.nest else {
+            return Err(MatchFailure::Unsupported); /* only a list is inline */
+        };
         let compiled = self.compiled;
         for k in sel.alts..sel.alts + sel.n_alts {
             let chain = compiled
