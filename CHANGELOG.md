@@ -42,9 +42,19 @@
   has the same tree whatever shape it was built into (a re-parse wrapped a
   tree with no `<html>` root in html/head/body and changed its quirks mode),
   and `Node#line` on it is `nil`.
+* `Makiri::XML::Document#dup` copies the document node for node instead of
+  re-parsing `to_xml`. The copy keeps every name, namespace and attribute as
+  the original holds them (a re-parse gave an attribute set in a namespace
+  with no prefix an invented `ns1:` prefix and declaration), copies data XML
+  cannot write instead of failing on it, and keeps the original's
+  `max_bytes` budget instead of the default.
 
 ### Fixed
 
+* XML `Attr#content=` sets the attribute's value - a namespace
+  declaration's new value held to the declaration rules - and moves only
+  `attribute_version`. It raised "operation unsupported" and still moved
+  `tree_version`.
 * An HTML Attr imported on its own from another HTML document
   (`Document#import_node(attr)`) keeps its namespace URI as written. It came
   back lower-cased, and a differently cased XHTML namespace became the HTML

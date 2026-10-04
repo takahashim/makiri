@@ -540,6 +540,16 @@ pub fn document_internal_subset(rb_self: Value) -> Result<Option<Value>, Error> 
         .transpose()
 }
 
+/// `Document#_copy`: a whole-document copy of `document`, node for node
+/// (`mutate::copy_document`, where what it keeps is stated).
+pub fn copy_xml_document(document: Value) -> Result<Value, Error> {
+    /* The wrapper first, while nothing needs freeing - see DocumentShell. The
+     * copy then reads `document` and runs no Ruby. */
+    let shell = DocumentShell::new(DocKind::Xml);
+    let arena = crate::xml::mutate::copy_document(arena_ref(&document)).map_err(xml_mut_error)?;
+    Ok(shell.install_xml(arena))
+}
+
 /// A fresh, empty XML Document: an arena holding a DOCUMENT node and no root.
 pub fn new_empty_xml_document() -> Result<Value, Error> {
     let shell = DocumentShell::new(DocKind::Xml);

@@ -349,6 +349,7 @@ class Makiri::XML::Document < Makiri::Document
   def root(0)
   def root=(1 req:node)
   def tree_version(0)
+  private def _copy(0)
 
 class Makiri::XML::DocumentFragment < Makiri::DocumentFragment
   include Makiri::XML::NodeMethods

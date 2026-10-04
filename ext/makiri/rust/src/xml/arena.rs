@@ -789,6 +789,14 @@ impl Document {
         self.has_encoding_decl = true;
     }
 
+    /// Take `src`'s document-wide settings, for a whole-document copy: its byte
+    /// and node budgets, and whether it carried an `encoding` declaration.
+    pub(super) fn inherit_meta(&mut self, src: &Document) {
+        self.max_bytes = src.max_bytes;
+        self.max_nodes = src.max_nodes;
+        self.has_encoding_decl = src.has_encoding_decl;
+    }
+
     /// Re-derive root / doctype from the tree after a change at the document
     /// node.
     pub(super) fn sync_doc_meta(&mut self, container: NodeId) {
