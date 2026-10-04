@@ -742,6 +742,22 @@ impl<'doc> HtmlDoc<'doc> {
         unsafe { (*self.raw.as_ptr()).compat_mode as i64 }
     }
 
+    /// A new HTML document with no children, from Lexbor's constructor, in
+    /// `compat_mode` ([`HtmlDoc::compat_mode`]'s values; anything past 2 is
+    /// limited-quirks). `None` when Lexbor cannot allocate one. The one write
+    /// of that field, kept beside its reader. The caller owns the document.
+    pub(in crate::lexbor::adapter) fn create_empty(
+        compat_mode: u32,
+    ) -> Option<NonNull<lxb::lxb_html_document_t>> {
+        // SAFETY: the constructor takes nothing and returns a new document, or
+        // null when it cannot allocate one.
+        let raw = NonNull::new(unsafe { lxb::lxb_html_document_create() })?;
+        // SAFETY: a document just made and not yet shared, so its field is
+        // ours to write.
+        unsafe { (*raw.as_ptr()).dom_document.compat_mode = compat_mode.min(2) };
+        Some(raw)
+    }
+
     /// The tag id Lexbor knows `name` by, or `None` for an unknown or empty
     /// name. Custom-element ids are pointer values past [`TAG_LAST_ENTRY`],
     /// which callers bucketing by id must allow for.

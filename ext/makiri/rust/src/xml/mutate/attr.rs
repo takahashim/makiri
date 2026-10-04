@@ -64,6 +64,37 @@ fn find_attr(doc: &Document, el: NodeId, key: AttrKey<'_>) -> AttrSlot {
     AttrSlot::Absent { tail: prev }
 }
 
+/// The name check of [`set_attribute`]: an XML QName, split. Exposed so a
+/// caller can refuse a bad name before it starts an edit; reads no document.
+pub fn checked_attribute_name(name: &[u8]) -> Result<Split, MutError> {
+    split_checked(name).ok_or(MutError::BadName)
+}
+
+/// The name check of [`set_loose_dom_attribute`] - the DOM's valid
+/// attribute local name, short enough for a span - as
+/// [`checked_attribute_name`].
+pub fn checked_loose_dom_attribute_name(name: &[u8]) -> Result<u32, MutError> {
+    if !crate::xml::dom_name::valid_attribute_local_name(name) {
+        return Err(MutError::BadDomName("invalid DOM attribute name"));
+    }
+    u32::try_from(name.len()).map_err(|_| MutError::BadName)
+}
+
+/// The name check of [`set_attribute_ns`]: `name` split for `ns`, and
+/// whether it is DOM-loose - as [`checked_attribute_name`].
+pub fn checked_attribute_ns_name(ns: &[u8], name: &[u8]) -> Result<(Split, bool), MutError> {
+    match split_checked(name) {
+        Some(sp) => {
+            let prefix = &name[..sp.prefix_len as usize];
+            if !crate::xml::dom_name::namespace_fits(ns, name, prefix) {
+                return Err(MutError::BadNsName);
+            }
+            Ok((sp, false))
+        }
+        None => Ok((dom_split(ns, name)?, true)),
+    }
+}
+
 pub fn set_attribute(
     doc: &mut Document,
     el: NodeId,
@@ -73,7 +104,7 @@ pub fn set_attribute(
     if doc.type_(el) != Some(ArenaKind::Element) {
         return Err(MutError::Type);
     }
-    let sp = split_checked(name).ok_or(MutError::BadName)?;
+    let sp = checked_attribute_name(name)?;
     /* An attribute with this qualified name gets the value and nothing else,
      * as the DOM's setAttribute does: its namespace is its own, decided when
      * it was named. Re-deriving it here gave a second attribute the key of
@@ -146,12 +177,7 @@ pub fn set_loose_dom_attribute(
     if doc.type_(el) != Some(ArenaKind::Element) {
         return Err(MutError::Type);
     }
-    if !crate::xml::dom_name::valid_attribute_local_name(name) {
-        return Err(MutError::BadDomName("invalid DOM attribute name"));
-    }
-    let Ok(len) = u32::try_from(name.len()) else {
-        return Err(MutError::BadName);
-    };
+    let len = checked_loose_dom_attribute_name(name)?;
     /* The DOM's setAttribute checks no value: a declaration given one it
      * cannot hold (`xmlns:p=""`) binds nothing from then on
      * (`Document::decl_prefix`), as `set_attribute_ns` leaves one. */
@@ -217,16 +243,7 @@ pub fn set_attribute_ns(
     if doc.type_(el) != Some(ArenaKind::Element) {
         return Err(MutError::Type);
     }
-    let (sp, loose) = match split_checked(name) {
-        Some(sp) => {
-            let prefix = &name[..sp.prefix_len as usize];
-            if !crate::xml::dom_name::namespace_fits(ns, name, prefix) {
-                return Err(MutError::BadNsName);
-            }
-            (sp, false)
-        }
-        None => (dom_split(ns, name)?, true),
-    };
+    let (sp, loose) = checked_attribute_ns_name(ns, name)?;
     let local = &name[sp.local_off as usize..];
     let tail = match find_attr(doc, el, AttrKey::Ns { ns, local }) {
         AttrSlot::Found { attr, .. } => {
@@ -239,7 +256,11 @@ pub fn set_attribute_ns(
         AttrSlot::Absent { tail } => tail,
     };
     /* no match: copy the namespace into the arena only now */
-    let nsv: Ns = if ns.is_empty() { NO_NS } else { doc.store(ns)? };
+    let nsv: Ns = if ns.is_empty() {
+        NO_NS
+    } else {
+        doc.store_ns_uri(ns)?
+    };
     let attr = build_attr(doc, el, name, &sp, val, Resolved::decided(nsv), tail)?;
     let n = doc.node_mut(attr);
     n.attr_ns = AttrNs::Explicit;

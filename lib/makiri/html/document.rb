@@ -72,8 +72,8 @@ module Makiri
       end
 
       # Set the document title, creating <title> (in <head>) if absent. A
-      # document with no root element (Document.new) is left as it is, as the
-      # DOM's title setter leaves it.
+      # document with no <head> - a Document.new one before it has one - is
+      # left as it is, as the DOM's title setter leaves it.
       # @param text [String]
       # @return [String]
       def title=(text)
@@ -106,7 +106,8 @@ module Makiri
         nil
       end
 
-      # Set (or insert) a <meta charset> declaration.
+      # Set (or insert, in <head>) a <meta charset> declaration. Like #title=,
+      # it leaves a document with no <head> as it is.
       # @param value [String]
       # @return [String]
       def meta_encoding=(value)
@@ -117,14 +118,15 @@ module Makiri
       private
 
       # The first node matching +css_query+, or a freshly created <+tag+>
-      # appended to <head> (or the root when the document has no head); nil when
-      # there is neither a match nor a root. Shared by #title= and
-      # #meta_encoding=, which then set content / attributes on it.
+      # appended to <head>; nil when there is neither a match nor a head - never
+      # an element put straight under the root, which the DOM's title setter
+      # does not do either. Shared by #title= and #meta_encoding=, which then
+      # set content / attributes on it.
       def ensure_in_head(css_query, tag)
         found = at_css(css_query)
         return found if found
 
-        parent = head || root
+        parent = head
         parent && Element.new(tag, self).tap { |el| parent.add_child(el) }
       end
     end

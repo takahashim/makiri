@@ -34,6 +34,44 @@ RSpec.describe "edit versions, HTML and XML alike" do
     ["Attr#remove", ->(_d, p) { p.attribute_nodes.first.remove }, false, true],
     ["Text#content=", ->(_d, p) { p.children.first.content = "x" }, false, false],
     ["Comment#content=", ->(_d, p) { p.children.last.content = "x" }, false, false],
+    # Refused before the edit is recorded: a frozen or non-node argument to an
+    # insertion, and a name no attribute can have.
+    ["add_child of a frozen node", lambda { |d, p|
+      n = d.create_element("n").freeze
+      begin
+        p.add_child(n)
+      rescue FrozenError
+        nil
+      end
+    }, false, false,],
+    ["add_child of a non-node", lambda { |_d, p|
+      begin
+        p.add_child(Object.new)
+      rescue TypeError
+        nil
+      end
+    }, false, false,],
+    ["[]= with a bad name", lambda { |_d, p|
+      begin
+        p["a b"] = "1"
+      rescue ArgumentError, Makiri::Error
+        nil
+      end
+    }, false, false,],
+    ["set_attribute_ns with a name its namespace refuses", lambda { |_d, p|
+      begin
+        p.set_attribute_ns(nil, "p:x", "1")
+      rescue ArgumentError, Makiri::Error
+        nil
+      end
+    }, false, false,],
+    ["set_loose_dom_attribute with an empty name", lambda { |_d, p|
+      begin
+        p.set_loose_dom_attribute("", "1")
+      rescue ArgumentError, Makiri::Error
+        nil
+      end
+    }, false, false,],
     ["an edit of a frozen node", lambda { |_d, p|
       p.freeze
       begin
@@ -55,6 +93,34 @@ RSpec.describe "edit versions, HTML and XML alike" do
           expect([after[0] > before[0], after[1] > before[1]]).to eq([tree, attrs])
         end
       end
+    end
+  end
+
+  # An XML insertion that decides an attribute's namespace changes what that
+  # attribute reads, so it is an attribute edit too; moving a node whose
+  # attributes are already decided is not.
+  context "XML insertion" do
+    let(:doc) { Makiri::XML(%(<r xmlns:p="urn:p"/>)) }
+
+    it "moves attribute_version when it decides a pending attribute's namespace" do
+      e = doc.create_element("e")
+      e["p:a"] = "1"
+      attr = e.attribute_nodes.first
+      expect(attr.namespace_uri).to be_nil
+      before = doc.attribute_version
+      doc.root.add_child(e)
+      expect(attr.namespace_uri).to eq("urn:p")
+      expect(doc.attribute_version).to be > before
+    end
+
+    it "leaves attribute_version when the attributes are already decided" do
+      e = doc.create_element("e")
+      e["a"] = "1"
+      doc.root.add_child(e)
+      before = doc.attribute_version
+      doc.root.add_child(doc.create_element("f"))
+      doc.root.add_child(e)
+      expect(doc.attribute_version).to eq(before)
     end
   end
 end

@@ -66,6 +66,10 @@ struct CopiedNode {
     /// A bare local name (a PI target, a doctype name) on a node with no qname.
     local: Option<Vec<u8>>,
     value: CopiedValue,
+    /// For a namespace declaration, the span its value has in the SOURCE: the
+    /// URI the nodes it binds hold, by the same span, so the copy shares it
+    /// with them ([`UriSpans`]) as the source does.
+    decl_value: Option<Span>,
     /// A DOCTYPE's own fields, which it keeps in the name fields: copied
     /// through the arena's DOCTYPE accessors rather than as names. `None`
     /// for every other kind.
@@ -102,6 +106,7 @@ impl CopiedNode {
                 qname: None,
                 local: None,
                 value: CopiedValue::Absent,
+                decl_value: None,
                 doctype: Some(CopiedDoctype {
                     name: copy_span(doc.local(src))?,
                     public: owned(ids.public)?,
@@ -125,6 +130,9 @@ impl CopiedNode {
             None
         };
         let value = CopiedValue::read(doc, value_span)?;
+        let decl_value =
+            (type_ == ArenaKind::Attribute && value_span.len > 0 && doc.decl_prefix(src).is_some())
+                .then_some(value_span);
         let ns_uri = if ns_span.len > 0 {
             Some((ns_span, copy_span(doc.ns(src))?))
         } else {
@@ -143,6 +151,7 @@ impl CopiedNode {
             qname,
             local,
             value,
+            decl_value,
             doctype: None,
             ns_uri,
             flags,
@@ -152,7 +161,7 @@ impl CopiedNode {
     }
 
     /// A fresh node of any kind but DOCTYPE, its name and value written.
-    fn write_fields(&self, dst: &mut Document) -> Result<NodeId, MutError> {
+    fn write_fields(&self, dst: &mut Document, uris: &mut UriSpans) -> Result<NodeId, MutError> {
         let n = dst.new_node(self.type_)?;
         if let Some((name, sp)) = &self.qname {
             dst.assign_qname(n, name, sp.prefix_len, sp.local_off, sp.local_len)?;
@@ -160,7 +169,10 @@ impl CopiedNode {
             let span = dst.store(local)?;
             dst.node_mut(n).local = span;
         }
-        let value = self.value.write(dst)?;
+        let value = match (&self.value, self.decl_value) {
+            (CopiedValue::Bytes(v), Some(src)) => uris.span_for(dst, src, v)?,
+            _ => self.value.write(dst)?,
+        };
         dst.node_mut(n).value = value;
         Ok(n)
     }
@@ -178,7 +190,7 @@ impl CopiedNode {
                 }
                 dst.new_doctype(&dt.name, id(&dt.public), id(&dt.system))?
             }
-            None => self.write_fields(dst)?,
+            None => self.write_fields(dst, uris)?,
         };
         let node = dst.node_mut(n);
         node.flags = self.flags;
@@ -205,6 +217,11 @@ impl CopiedNode {
 /// namespace needed far more bytes than their source, and `Document#dup`,
 /// which keeps the source's budget, refused a document that had parsed.
 ///
+/// A namespace declaration's value is the same span as the URI of every node
+/// it binds, when those were resolved against it; it goes through the same
+/// table, so a document built by mutation - where nothing but that one span
+/// holds the URI - is copied in the bytes it holds.
+///
 /// A copy within one document needs no table: the source's span is the
 /// destination's, and the bytes it names never move.
 struct UriSpans {
@@ -229,7 +246,8 @@ impl UriSpans {
         if let Some(&span) = self.stored.get(&key) {
             return Ok(span);
         }
-        let span = dst.store(uri)?;
+        /* The reserved URIs are already in `dst` (`store_ns_uri`). */
+        let span = dst.store_ns_uri(uri)?;
         /* A table that cannot grow only stops the sharing; the copy is right
          * either way. */
         let _ = self.stored.falloc_insert(key, span);
@@ -294,6 +312,23 @@ fn debug_assert_distinct(dst: &Document, src_doc: &Document) {
     );
 }
 
+/// `copy` run on `dst`, all or nothing: a copy that fails - the budget ran
+/// out halfway - gives back every node and byte it took, so the document can
+/// still be edited within what it had. Sound for [`Document::rewind`]: a copy
+/// only appends, links nothing into the tree and hands out no node until it
+/// has succeeded.
+fn undone_on_failure(
+    dst: &mut Document,
+    copy: impl FnOnce(&mut Document) -> Result<NodeId, MutError>,
+) -> Result<NodeId, MutError> {
+    let mark = dst.mark();
+    let result = copy(dst);
+    if result.is_err() {
+        dst.rewind(mark);
+    }
+    result
+}
+
 /// Cross-document deep import (`importNode`).
 pub fn import_subtree(
     dst: &mut Document,
@@ -301,7 +336,9 @@ pub fn import_subtree(
     src: NodeId,
 ) -> Result<NodeId, MutError> {
     debug_assert_distinct(dst, src_doc);
-    deep_copy(dst, Some(src_doc), src, &mut UriSpans::new(Some(src_doc)))
+    undone_on_failure(dst, |dst| {
+        deep_copy(dst, Some(src_doc), src, &mut UriSpans::new(Some(src_doc)))
+    })
 }
 
 /// Cross-document `copyNode`: shallow or deep, source in `src_doc`.
@@ -313,21 +350,25 @@ pub fn copy_node_from(
 ) -> Result<NodeId, MutError> {
     debug_assert_distinct(dst, src_doc);
     let uris = &mut UriSpans::new(Some(src_doc));
-    if deep {
-        deep_copy(dst, Some(src_doc), src, uris)
-    } else {
-        copy_one(dst, Some(src_doc), src, uris)
-    }
+    undone_on_failure(dst, |dst| {
+        if deep {
+            deep_copy(dst, Some(src_doc), src, uris)
+        } else {
+            copy_one(dst, Some(src_doc), src, uris)
+        }
+    })
 }
 
 /// Same-document `cloneNode`: shallow or deep, reading the arena it writes.
 pub fn clone_node(doc: &mut Document, src: NodeId, deep: bool) -> Result<NodeId, MutError> {
     let uris = &mut UriSpans::new(None);
-    if deep {
-        deep_copy(doc, None, src, uris)
-    } else {
-        copy_one(doc, None, src, uris)
-    }
+    undone_on_failure(doc, |doc| {
+        if deep {
+            deep_copy(doc, None, src, uris)
+        } else {
+            copy_one(doc, None, src, uris)
+        }
+    })
 }
 
 /// A copy of the whole of `src` as a new document - `Document#dup` - node for

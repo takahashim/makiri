@@ -69,6 +69,20 @@ RSpec.describe "Makiri::XML::Document#dup" do
     expect(doc.dup.to_xml).to eq(doc.to_xml)
   end
 
+  # The reserved xml: and xmlns: URIs are in every arena from its start, so
+  # the copy names them there rather than storing them again.
+  it "copies a document using the reserved namespaces within its budget" do
+    [%(<r xmlns='urn:x'><a/></r>), %(<r xml:lang='en'/>)].each do |xml|
+      budget = (1..4096).find do |b|
+        Makiri::XML::Document.parse(xml, max_bytes: b)
+      rescue Makiri::XML::LimitExceeded
+        nil
+      end
+      doc = Makiri::XML::Document.parse(xml, max_bytes: budget)
+      expect(doc.dup.to_xml).to eq(doc.to_xml)
+    end
+  end
+
   it "copies a document still being built, before its root" do
     built = Makiri::XML::Document.new
     built << built.create_comment("first")

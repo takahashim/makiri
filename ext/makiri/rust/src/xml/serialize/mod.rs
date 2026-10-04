@@ -61,6 +61,9 @@ pub enum Failure {
     /// makes every PI target an NCName, and DOM Parsing's serializer refuses
     /// it too.
     PiTargetColon,
+    /// A PI target that is `xml` in any case: the DOM creates one, XML 1.0
+    /// §2.6 reserves the name, and DOM Parsing's serializer refuses it too.
+    PiTargetReserved,
     /// The output exceeded its ceiling.
     OutputCap,
     /// The machine ran out of memory while serializing.
@@ -191,6 +194,11 @@ fn unserializable_name(doc: &XmlDoc, root: NodeId) -> Option<Failure> {
             }
             Some(ArenaKind::Pi) if doc.span(doc.node(id).local).contains(&b':') => {
                 return Some(Failure::PiTargetColon)
+            }
+            Some(ArenaKind::Pi)
+                if crate::xml::chars::is_reserved_pi_target(doc.span(doc.node(id).local)) =>
+            {
+                return Some(Failure::PiTargetReserved)
             }
             _ => {}
         }

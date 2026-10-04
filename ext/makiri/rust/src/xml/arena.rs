@@ -400,11 +400,18 @@ impl Document {
         Ok(())
     }
 
-    /// Set a node's namespace URI to a fresh copy of `uri`.
-    pub(super) fn set_ns_bytes(&mut self, id: NodeId, uri: &[u8]) -> Result<(), BudgetError> {
-        let span = self.store(uri)?;
-        self.node_mut(id).ns_uri = span;
-        Ok(())
+    /// The span for namespace URI `uri`: the reserved `xml:` or `xmlns:` one
+    /// when it is that URI, else a fresh copy. Every URI a caller hands in is
+    /// stored through this, so the reserved URIs are held once however they
+    /// arrive - parsed, set with `set_attribute_ns`, copied or imported.
+    pub(in crate::xml) fn store_ns_uri(&mut self, uri: &[u8]) -> Result<Span, BudgetError> {
+        if uri == crate::xml::XML_NS_URI {
+            Ok(self.xml_ns)
+        } else if uri == crate::xml::XMLNS_NS_URI {
+            Ok(self.xmlns_ns)
+        } else {
+            self.store(uri)
+        }
     }
 
     /// The prefix/local split of `id`'s qualified name.

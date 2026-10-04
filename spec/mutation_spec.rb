@@ -109,9 +109,10 @@ RSpec.describe "Makiri mutation" do
         expect(el.to_html).to include("<?php echo 1;?>")
       end
 
+      # DOM: InvalidCharacterError, which Makiri words as ArgumentError.
       it "fails closed when the data contains the PI terminator '?>'" do
         expect { doc.create_processing_instruction("t", "a?>b") }
-          .to raise_error(Makiri::Error)
+          .to raise_error(ArgumentError, /must not contain \?>/)
       end
 
       # DOM: the target must match the XML Name production. Lexbor does not

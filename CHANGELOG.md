@@ -16,10 +16,12 @@
 * `Document#attribute_version` (HTML and XML): an Integer that increases with
   every attribute edit - an attribute added, removed or its value set (to the
   same value too), including an Attr node's `content=` and an XML Attr
-  node's `remove`. Child-list and character-data edits leave it unchanged.
+  node's `remove`, and an XML insertion that decides a namespace for an
+  attribute set with a prefix on a detached element. Child-list and
+  character-data edits leave it unchanged.
 * `Makiri::HTML::Document.new`: an empty HTML document - no children,
-  no-quirks mode. `title=` and `meta_encoding=` do nothing until it has a root
-  element.
+  no-quirks mode. `title=` and `meta_encoding=` do nothing until it has a
+  `<head>`.
 * `Makiri::HTML::Document#quirks_mode?` (true in quirks mode only) and
   `#compat_mode` (`"BackCompat"` / `"CSS1Compat"`, like the DOM's
   `compatMode`).
@@ -51,12 +53,30 @@
   with no prefix an invented `ns1:` prefix and declaration), copies data XML
   cannot write instead of failing on it, and keeps the original's
   `max_bytes` budget instead of the default.
+* `Makiri::XML::Document#create_processing_instruction` makes a PI whose
+  target is `xml` in any case, as the DOM's `createProcessingInstruction`
+  does; `to_xml` and `canonicalize` refuse a tree holding one, as DOM
+  Parsing's serializer does. It raised `ArgumentError` with "not a
+  well-formed XML name".
+* HTML `Document#create_processing_instruction` raises `ArgumentError` for
+  data holding `?>`, as the XML side does (the DOM's InvalidCharacterError).
+  It raised `Makiri::Error` "failed to create processing instruction".
 * An XML insertion the DOM's rules refuse names the rule, in the same words
   as HTML ("the document already has a root element", "a doctype node can
   only be a child of the document", ...). It said "invalid placement" for
   every rule but a cycle and Text under the document.
 
 ### Fixed
+
+* An XML copy that runs out of its document's byte budget - `import_node`,
+  `clone_node`, an insertion from another document, HTML into XML - gives
+  back what it took. The document could not be edited any further after one.
+* An HTML insertion refused for its argument (a frozen node, a non-node, an
+  argument whose document is being evaluated) and an XML `[]=`,
+  `set_attribute_ns` or `set_loose_dom_attribute` refused for its name no
+  longer move a version.
+* Importing HTML into an XML document stores each namespace URI once, not
+  once per element, which counted against the byte budget.
 
 * An Attr's `content=` and `remove` refuse with `FrozenError` when the
   element that owns the attribute is frozen, in HTML and XML, as that
@@ -76,6 +96,9 @@
   which does not parse. An element in the XMLNS namespace, which no XML can
   hold, is refused with `Makiri::Error`.
 * A refused HTML `Attr#remove` no longer increases `tree_version`.
+* HTML `title=` and `meta_encoding=` do nothing on a document with no
+  `<head>`, as the DOM's title setter does. They put the new element straight
+  under the root element.
 * HTML `Document#root` (and CSS `:root`) answers the document's element child,
   or `nil`. With no `<html>` element it answered the document's first child
   of any kind - a comment or a doctype - so `title=` and `meta_encoding=`

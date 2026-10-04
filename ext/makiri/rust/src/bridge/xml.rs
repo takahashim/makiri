@@ -338,6 +338,21 @@ impl Editing {
         self.lend(EditKind::ChildList, f)
     }
 
+    /// [`Editing::with_arena`] for an insertion, which also counts as an
+    /// attribute edit when placing the subtree may decide an attribute's
+    /// namespace ([`crate::xml::mutate::decides_attr_ns`]): an attribute set
+    /// with a prefix unbound on a detached element reads a new
+    /// `namespace_uri` once its element is placed under a declaration.
+    fn with_insertion<R>(
+        self,
+        node: NodeId,
+        f: impl FnOnce(&mut XmlDoc, NodeId) -> R,
+    ) -> Result<R, Error> {
+        let attrs = crate::xml::mutate::decides_attr_ns(arena_ref(&self.document), node);
+        let also = attrs.then_some(EditKind::Attributes);
+        self.lend_recording(EditKind::ChildList, also, f)
+    }
+
     /// [`Editing::with_arena`] for an edit of ATTRIBUTES only - an element's,
     /// or an Attr node's value - which changes no child list: it counts
     /// towards the attribute version ([`record_edit`]) instead of
@@ -354,6 +369,17 @@ impl Editing {
     }
 
     fn lend<R>(self, kind: EditKind, f: impl FnOnce(&mut XmlDoc, NodeId) -> R) -> Result<R, Error> {
+        self.lend_recording(kind, None, f)
+    }
+
+    /// [`Editing::lend`], recording `also` beside `kind` when the edit is
+    /// both.
+    fn lend_recording<R>(
+        self,
+        kind: EditKind,
+        also: Option<EditKind>,
+        f: impl FnOnce(&mut XmlDoc, NodeId) -> R,
+    ) -> Result<R, Error> {
         let id = self.id;
         check_frozen(self.receiver)?;
         check_attr_owner_frozen(self.document, id)?;
@@ -362,6 +388,9 @@ impl Editing {
          * Ruby run in between (`record_edit`): an edit that then fails, or a
          * panic in it, still invalidates what it may have changed. */
         record_edit(self.document, kind);
+        if let Some(also) = also {
+            record_edit(self.document, also);
+        }
         with_arena_for_new_node(self.document, |d| {
             d.invalidate_name_index();
             f(d, id)
@@ -686,7 +715,9 @@ impl Adoption {
 pub fn insert(this: XmlSelf, arg: Value, at: crate::xml::mutate::Place) -> Result<Value, Error> {
     let edit = begin_edit(this)?;
     let (node, adoption) = incoming_node(edit.document(), arg)?;
-    xml_mut_result(edit.with_arena(|d, target| crate::xml::mutate::place(d, target, node, at))?)?;
+    xml_mut_result(edit.with_insertion(node, |d, target| {
+        crate::xml::mutate::place(d, target, node, at)
+    })?)?;
     if let Some(a) = adoption {
         a.finish();
     }

@@ -241,6 +241,30 @@ pub(super) fn resolve_into(
     Ok(())
 }
 
+/// Whether placing `root`'s subtree may (re-)derive an attribute's namespace:
+/// an attribute still pending, or a derived one on an element not yet decided.
+/// What [`plan_subtree`] would plan for attributes, read without planning, so
+/// the caller can count the edit as an attribute change BEFORE it is made. It
+/// may answer yes for a placing that leaves every namespace as it was, which
+/// only invalidates more than needed.
+pub fn decides_attr_ns(doc: &Document, root: NodeId) -> bool {
+    let mut cur = Some(root);
+    while let Some(c) = cur {
+        if doc.type_(c) == Some(ArenaKind::Element) {
+            let part = if doc.element_ns_decided(c) {
+                Part::PendingAttrs
+            } else {
+                Part::Whole
+            };
+            if doc.attributes(c).any(|a| rederives(doc, a, part)) {
+                return true;
+            }
+        }
+        cur = doc.preorder_next(root, c);
+    }
+    false
+}
+
 /// The plan for every element in `root`'s subtree, over the unchanged tree.
 fn plan_subtree(doc: &Document, root: NodeId, how: Resolution) -> Result<NsPlan, MutError> {
     let mut plan = NsPlan::default();

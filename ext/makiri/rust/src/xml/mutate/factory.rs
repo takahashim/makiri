@@ -12,7 +12,7 @@ use super::edit::dom_refuses_data;
 use crate::xml::arena::DoctypeId;
 use crate::xml::chars::validate_chars;
 use crate::xml::qname::{split_checked, Split};
-use crate::xml::{ArenaKind, Document, MutError, NodeFlags, NodeId};
+use crate::xml::{ArenaKind, Document, MutError, NodeFlags, NodeId, Span};
 
 pub fn new_element(doc: &mut Document, name: &[u8]) -> Result<NodeId, MutError> {
     let sp = match split_checked(name) {
@@ -33,12 +33,30 @@ pub fn new_element(doc: &mut Document, name: &[u8]) -> Result<NodeId, MutError> 
 /// takes its namespace from where it is first inserted, which left an
 /// imported `<p>` with none until then, where the DOM's is XHTML at once.
 pub fn new_element_in(doc: &mut Document, name: &[u8], ns: &[u8]) -> Result<NodeId, MutError> {
+    let span = stored_ns(doc, ns)?;
+    new_element_in_span(doc, name, span)
+}
+
+/// [`new_element_in`] for a namespace URI already in `doc` at `ns`
+/// ([`stored_ns`]), so an import that makes many elements in one namespace
+/// stores it once. `ns` must be a span of `doc`'s, or empty.
+pub fn new_element_in_span(doc: &mut Document, name: &[u8], ns: Span) -> Result<NodeId, MutError> {
     let el = new_element(doc, name)?;
-    if !ns.is_empty() {
-        doc.set_ns_bytes(el, ns)?;
-    }
-    doc.node_mut(el).flags.insert(NodeFlags::NS_RESOLVED);
+    let n = doc.node_mut(el);
+    n.ns_uri = ns;
+    n.flags.insert(NodeFlags::NS_RESOLVED);
     Ok(el)
+}
+
+/// The span of namespace URI `ns` in `doc`, for the `_span` factories: for ""
+/// (none) the absent span a new node starts with, else
+/// [`Document::store_ns_uri`]'s.
+pub fn stored_ns(doc: &mut Document, ns: &[u8]) -> Result<Span, MutError> {
+    if ns.is_empty() {
+        Ok(Span::ABSENT)
+    } else {
+        Ok(doc.store_ns_uri(ns)?)
+    }
 }
 
 /// A DOM-loose element: `name` may not be a valid XML QName (`":good:times:"`,
@@ -49,6 +67,18 @@ pub fn new_loose_dom_element(
     name: &[u8],
     sp: Split,
     ns: &[u8],
+) -> Result<NodeId, MutError> {
+    let span = stored_ns(doc, ns)?;
+    new_loose_dom_element_span(doc, name, sp, span)
+}
+
+/// [`new_loose_dom_element`] for a namespace URI already in `doc` at `ns`, as
+/// [`new_element_in_span`].
+pub fn new_loose_dom_element_span(
+    doc: &mut Document,
+    name: &[u8],
+    sp: Split,
+    ns: Span,
 ) -> Result<NodeId, MutError> {
     let Split {
         prefix_len,
@@ -63,10 +93,9 @@ pub fn new_loose_dom_element(
     }
     let el = doc.new_node(ArenaKind::Element)?;
     doc.assign_qname(el, name, prefix_len, local_off, local_len)?;
-    if !ns.is_empty() {
-        doc.set_ns_bytes(el, ns)?;
-    }
-    doc.node_mut(el).flags.insert(NodeFlags::DOM_LOOSE_NAME);
+    let n = doc.node_mut(el);
+    n.ns_uri = ns;
+    n.flags.insert(NodeFlags::DOM_LOOSE_NAME);
     Ok(el)
 }
 
@@ -102,9 +131,12 @@ pub fn new_chardata(doc: &mut Document, ty: ArenaKind, text: &[u8]) -> Result<No
     Ok(n)
 }
 
+/// The DOM's `createProcessingInstruction`: `target` must be an XML Name and
+/// `data` must not hold `?>`. A target the DOM takes and XML reserves (`xml`
+/// in any case) is made, as `create_document_type` makes a doctype XML cannot
+/// write, and the serializers refuse it.
 pub fn new_pi(doc: &mut Document, target: &[u8], data: &[u8]) -> Result<NodeId, MutError> {
-    if !crate::xml::chars::validate_name(target) || crate::xml::chars::is_reserved_pi_target(target)
-    {
+    if !crate::xml::chars::validate_name(target) {
         return Err(MutError::BadName);
     }
     if let Some(why) = dom_refuses_data(ArenaKind::Pi, data) {

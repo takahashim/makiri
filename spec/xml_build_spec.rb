@@ -59,7 +59,17 @@ RSpec.describe "Makiri::XML building (Phase 2)" do
         expect { doc.create_element(name) }.to raise_error(ArgumentError)
       end
       expect(doc.create_text_node("x\u0001y").content).to eq("x\u0001y") # held (to_xml refuses it)
-      expect { doc.create_processing_instruction("xml", "x") }.to raise_error(ArgumentError) # reserved
+      # `xml` is a Name the DOM takes and XML reserves: made, and refused by
+      # the serializer, as the DOM's createProcessingInstruction and
+      # XMLSerializer do.
+      %w[xml XmL].each do |t|
+        pi = doc.create_processing_instruction(t, "x")
+        expect(pi.name).to eq(t)
+        doc.root << pi
+        expect { doc.to_xml }.to raise_error(Makiri::Error, /target is xml/)
+        expect { doc.canonicalize }.to raise_error(Makiri::Error, /target is xml/)
+        pi.remove
+      end
       expect { doc.create_processing_instruction("ok", "a?>b") }.to raise_error(ArgumentError) # "?>"
     end
 

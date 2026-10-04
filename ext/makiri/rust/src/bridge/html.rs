@@ -435,7 +435,7 @@ fn release_from_tree(node: HtmlNodeMut<'_>) {
 /// [`Insertion::check`], the shared `crate::dom_rules`); after that only the adoption copy can fail, and it
 /// too runs before a link is touched.
 pub fn insert(this: &HtmlSelf, rb_incoming: Value, place: Place) -> Result<Value, Error> {
-    let target = edit(this)?.node()?;
+    let edit = edit(this)?;
     let (key, incoming_doc) = html_node_key(rb_incoming)?;
     /* The argument is relinked too - `place` changes its parent and siblings, and
      * an adoption removes it from its own document - so a frozen argument is a
@@ -445,6 +445,12 @@ pub fn insert(this: &HtmlSelf, rb_incoming: Value, place: Place) -> Result<Value
      * checked, because frozenness lives on the Ruby object and there is no map
      * from a node back to its wrapper. */
     crate::bridge::ruby::check_frozen(rb_incoming)?;
+    /* An adoption changes the argument's own document too (see
+     * `take_incoming`, which checks again). Refused here as well, so every
+     * refusal about the argument comes before `node` records the edit, as the
+     * XML side's does. */
+    ensure_document_mutable(incoming_doc)?;
+    let target = edit.node()?;
     /* The argument, resolved against its own Document, for the checks, the
      * copy or move, and the placing - none of which runs Ruby or wraps a
      * node. Releasing an adopted original and wrapping its copy borrow a

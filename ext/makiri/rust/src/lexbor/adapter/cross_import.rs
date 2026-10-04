@@ -24,7 +24,7 @@ use crate::lexbor::adapter::html::{
     has_ascii_uppercase, BuildingElement, BuildingNode, HtmlDoc, HtmlElement, HtmlNode, NsId,
     RawDoc, RawNode,
 };
-use crate::xml::model::{ArenaKind, Document as XmlDoc, MutError, NodeId};
+use crate::xml::model::{ArenaKind, Document as XmlDoc, MutError, NodeId, Span};
 use crate::xml::mutate;
 
 /* ---- the node kinds on both sides ----
@@ -132,7 +132,32 @@ fn h2x_copy_attrs(doc: &mut XmlDoc, s: HtmlElement<'_>, el: NodeId) -> Result<()
 /// attributes, NOT its children.
 ///
 /// `None` to SKIP an unsupported type; an `Err` status fails the whole import.
-fn h2x_make<'a>(doc: &mut XmlDoc, s: HtmlNode<'a>) -> Result<Option<NodeId>, MutError> {
+/// The element namespace URIs one import has stored, so every element in
+/// a namespace shares one copy of its URI - as the source shares one
+/// Lexbor namespace id. A handful at most (HTML, SVG, MathML), so a list.
+#[derive(Default)]
+struct NsSpans<'a> {
+    seen: Vec<(&'a [u8], Span)>,
+}
+
+impl<'a> NsSpans<'a> {
+    /// The span of `uri` in `doc`, stored the first time it is asked for.
+    fn span(&mut self, doc: &mut XmlDoc, uri: &'a [u8]) -> Result<Span, MutError> {
+        if let Some(&(_, span)) = self.seen.iter().find(|(u, _)| *u == uri) {
+            return Ok(span);
+        }
+        let span = mutate::stored_ns(doc, uri)?;
+        /* A list that cannot grow only stops the sharing. */
+        let _ = self.seen.falloc_push((uri, span));
+        Ok(span)
+    }
+}
+
+fn h2x_make<'a>(
+    doc: &mut XmlDoc,
+    s: HtmlNode<'a>,
+    ns: &mut NsSpans<'a>,
+) -> Result<Option<NodeId>, MutError> {
     let unchanged = |node| Ok(Some(node));
     let data = |n: HtmlNode<'a>| {
         let d = n.data().unwrap_or(&[]);
@@ -140,7 +165,7 @@ fn h2x_make<'a>(doc: &mut XmlDoc, s: HtmlNode<'a>) -> Result<Option<NodeId>, Mut
     };
 
     if let Some(e) = s.element() {
-        return h2x_element(doc, e).map(Some);
+        return h2x_element(doc, e, ns).map(Some);
     }
     let ty = match s.node_type() {
         NodeType::Text => ArenaKind::Text,
@@ -169,12 +194,16 @@ fn h2x_make<'a>(doc: &mut XmlDoc, s: HtmlNode<'a>) -> Result<Option<NodeId>, Mut
 /// which a DOM layer could not tell from one it was given - so insertion could
 /// resolve the name, and `canonicalize` render it; the first is gone, and
 /// `canonicalize` adds the declaration a name needs itself.
-fn h2x_element(doc: &mut XmlDoc, e: HtmlElement<'_>) -> Result<NodeId, MutError> {
+fn h2x_element<'a>(
+    doc: &mut XmlDoc,
+    e: HtmlElement<'a>,
+    ns: &mut NsSpans<'a>,
+) -> Result<NodeId, MutError> {
     let name = e.qualified_name();
     let Some(nl) = fits_u32(name.len()) else {
         return Err(MutError::Oom);
     };
-    let euri = html_ns_uri(e.node());
+    let euri = ns.span(doc, html_ns_uri(e.node()).unwrap_or(&[]))?;
 
     /* Three kinds of name. A PREFIXED one (an element that came from
      * XML) is made as written, prefix and namespace. An
@@ -189,11 +218,11 @@ fn h2x_element(doc: &mut XmlDoc, e: HtmlElement<'_>) -> Result<NodeId, MutError>
     let prefixed = e.node().has_prefix();
     let colon = name.iter().position(|&b| b == b':');
     let loose = |doc: &mut XmlDoc| {
-        mutate::new_loose_dom_element(
+        mutate::new_loose_dom_element_span(
             doc,
             name,
             crate::xml::qname::Split::unprefixed(nl),
-            euri.unwrap_or(&[]),
+            euri,
         )
     };
     let mut made = if colon.is_some() && !prefixed {
@@ -201,7 +230,7 @@ fn h2x_element(doc: &mut XmlDoc, e: HtmlElement<'_>) -> Result<NodeId, MutError>
     } else {
         /* Its namespace decided now, as the DOM's clone has its own: made
          * undecided, it had none until inserted. */
-        mutate::new_element_in(doc, name, euri.unwrap_or(&[]))
+        mutate::new_element_in_span(doc, name, euri)
     };
     if made.as_ref().err() == Some(&MutError::BadName) && !name.is_empty() {
         made = loose(doc);
@@ -245,10 +274,23 @@ pub fn cross_html_to_xml(
     src: HtmlNode<'_>,
     deep: bool,
 ) -> Result<NodeId, MutError> {
-    let doc = xdoc;
+    /* All or nothing, as the XML copies are: a copy that fails halfway -
+     * the budget ran out - gives back what it took (`Document::rewind`,
+     * sound here because nothing made below is linked into the tree or
+     * handed out before the copy returns). */
+    let mark = xdoc.mark();
+    let copied = h2x_subtree(xdoc, src, deep);
+    if copied.is_err() {
+        xdoc.rewind(mark);
+    }
+    copied
+}
 
+/// [`cross_html_to_xml`]'s copy.
+fn h2x_subtree(doc: &mut XmlDoc, src: HtmlNode<'_>, deep: bool) -> Result<NodeId, MutError> {
+    let ns = &mut NsSpans::default();
     /* `None`: the root's type has no XML counterpart. */
-    let root = h2x_make(doc, src)?.ok_or(MutError::Type)?;
+    let root = h2x_make(doc, src, ns)?.ok_or(MutError::Type)?;
 
     if deep {
         let mut stack: Vec<Frame<HtmlNode<'_>, NodeId>> =
@@ -261,7 +303,7 @@ pub fn cross_html_to_xml(
             let mut c = h2x_first_child(f.s);
             while let Some(child) = c {
                 /* An error abandons the partial subtree. */
-                if let Some(made) = h2x_make(doc, child)? {
+                if let Some(made) = h2x_make(doc, child, ns)? {
                     mutate::insert_child(doc, f.d, made)?;
                     if h2x_first_child(child).is_some() {
                         stack

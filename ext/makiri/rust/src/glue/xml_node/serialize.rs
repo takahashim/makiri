@@ -57,6 +57,9 @@ outside XML's, -- in a comment, or ?> in a processing instruction)"
         Failure::PiTargetColon => {
             format!("cannot {verb} XML containing a processing-instruction target with a colon")
         }
+        Failure::PiTargetReserved => {
+            format!("cannot {verb} XML containing a processing instruction whose target is xml")
+        }
         Failure::OutputCap => {
             format!("failed to {verb} XML: output exceeded the size limit")
         }

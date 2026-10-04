@@ -24,18 +24,22 @@ use crate::xml::qname::Split;
 use crate::xml::{Document, MutError, NodeId};
 
 pub use attr::{
-    remove_attribute, remove_attribute_ns, set_attribute, set_attribute_ns, set_loose_dom_attribute,
+    checked_attribute_name, checked_attribute_ns_name, checked_loose_dom_attribute_name,
+    remove_attribute, remove_attribute_ns, set_attribute, set_attribute_ns,
+    set_loose_dom_attribute,
 };
 pub use copy::{clone_node, copy_document, copy_node_from, import_subtree};
 pub use edit::set_content;
 pub use factory::{
-    new_chardata, new_document_type, new_dom_element_ns, new_element, new_element_in, new_fragment,
-    new_loose_dom_element, new_pi,
+    new_chardata, new_document_type, new_dom_element_ns, new_element, new_element_in,
+    new_element_in_span, new_fragment, new_loose_dom_element, new_loose_dom_element_span, new_pi,
+    stored_ns,
 };
 pub use insert::{
     detach, insert_after, insert_before, insert_child, place, remove, replace_node,
     replace_with_fragment, Place,
 };
+pub use ns::decides_attr_ns;
 
 /// Copy a node's span out of the arena before taking `&mut doc`. `to_vec` would
 /// abort on OOM; this path must fail closed instead, like every other

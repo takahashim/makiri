@@ -386,6 +386,14 @@ pub fn create_pi(
             crate::xml::chars::validate_name,
             "processing instruction target",
         )?;
+        /* ... and the data must not hold `?>`, which Lexbor refused only as a
+         * failed creation. The message is the XML side's. */
+        if dv.as_bytes().windows(2).any(|w| w == b"?>") {
+            return Err(Error::new(
+                ruby.exception_arg_error(),
+                "processing instruction data must not contain ?>",
+            ));
+        }
         created(
             crate::bridge::html::create_pi(doc, &tv, &dv),
             rb_self,

@@ -280,9 +280,14 @@ module MutateFuzz
     #
     # Character data the DOM holds and XML cannot (`\x01`, a comment's `--`)
     # is refused only when the tree really holds some; then there is no
-    # well-formed output to re-parse, and nothing further to check. The root
-    # element tried after a loose doctype may be refused for it too.
-    data_refused = ->(err) { err.message.include?("character data XML cannot hold") && unwritable_data?(nodes) }
+    # well-formed output to re-parse, and nothing further to check. So is a
+    # processing instruction whose target XML reserves (`xml`), which the DOM
+    # makes. The root element tried after a loose doctype may be refused for
+    # either too.
+    data_refused = lambda do |err|
+      (err.message.include?("character data XML cannot hold") && unwritable_data?(nodes)) ||
+        (err.message.include?("target is xml") && reserved_pi_target?(nodes))
+    end
     xml1 = begin
       doc.to_xml
     rescue Makiri::Error => e
@@ -327,6 +332,10 @@ module MutateFuzz
   # text, CDATA, a comment, a PI or an attribute value, `--` or a trailing `-`
   # in a comment, `?>` in a PI. Decided here from the contents, independently
   # of the serializer it checks.
+  def reserved_pi_target?(nodes)
+    nodes.any? { |n| n.is_a?(Makiri::XML::ProcessingInstruction) && n.name.casecmp?("xml") }
+  end
+
   def unwritable_data?(nodes)
     nodes.any? do |n|
       case n
