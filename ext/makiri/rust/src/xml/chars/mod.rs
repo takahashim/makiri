@@ -15,7 +15,7 @@ use crate::falloc::{try_vec_with_capacity, OomOption};
 use crate::xml::ParseError;
 /* The engine is reached ONLY through these three names, so there is never a
  * second equally-correct way to spell one of them. */
-pub use expand::{expand_into, ExpandErr, ExpandMode};
+pub use expand::{expand_into, only_unexpanded, scan_reference, ExpandErr, ExpandMode, Reference};
 
 /// XML 1.0 §2.2 Char.
 #[inline]

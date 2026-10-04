@@ -114,6 +114,29 @@ RSpec.describe "Makiri::XML DOCTYPE / internal_subset" do
         .to raise_error(Makiri::XML::SyntaxError, unsupported)
     end
 
+    # A reference is read by one grammar wherever it occurs - in content, in an
+    # attribute, in a declaration's literal - and a malformed input is never
+    # reported as merely using an entity Makiri does not expand.
+    it "holds a character reference in a literal to XML's Char, as in content" do
+      ['<!DOCTYPE r [<!ENTITY x "&#0;">]><r/>',
+       '<!DOCTYPE r [<!ATTLIST r a CDATA "&#xFFFE;">]><r/>',
+       '<!DOCTYPE r [<!ENTITY x "&#;">]><r/>',].each do |xml|
+        expect { Makiri::XML(xml) }.to raise_error(Makiri::XML::SyntaxError, /malformed/), xml
+      end
+      expect(Makiri::XML('<!DOCTYPE r [<!ENTITY x "a&#65;&#x42;&lt;&y;">]><r/>').root.name).to eq("r")
+    end
+
+    it "reports a malformed reference beside an unexpanded entity as malformed" do
+      ['<!DOCTYPE r SYSTEM "x.dtd"><r>&bad name;</r>',
+       '<!DOCTYPE r [<!ENTITY x "y">]><r>&#0;&x;</r>',
+       "<!DOCTYPE r [<!ENTITY x \"y\">]><r>\u0001&x;</r>",
+       '<!DOCTYPE r [<!ENTITY x "y">]><r a="&#0;&x;"/>',].each do |xml|
+        expect { Makiri::XML(xml) }.to raise_error(Makiri::XML::SyntaxError, /malformed/), xml
+      end
+      expect { Makiri::XML('<!DOCTYPE r SYSTEM "x.dtd"><r>&u;&amp;&#65;</r>') }
+        .to raise_error(Makiri::XML::SyntaxError, /unsupported DTD construct/)
+    end
+
     it "still reports an undeclared entity as malformed" do
       expect { Makiri::XML("<a>&e;</a>") }.to raise_error(Makiri::XML::SyntaxError, /malformed/)
       expect { Makiri::XML(%(<!DOCTYPE a [<!ENTITY f "x">]><a>&e;</a>)) }
