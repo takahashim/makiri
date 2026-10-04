@@ -14,7 +14,7 @@ mod dtd;
 mod scope;
 
 use crate::falloc::{OomResult, Reserve, VecPush};
-use crate::xml::arena::AppendError;
+use crate::xml::arena::{AppendError, DoctypeId};
 use crate::xml::chars::{
     expand_into, is_reserved_pi_target, normalize_newlines, ExpandErr, ExpandMode,
 };
@@ -417,10 +417,11 @@ impl<'a> Parser<'a> {
             return self.cur.unsupported();
         }
 
-        let (public, system) = (
-            ids.public.map(|p| self.cur.slice(p)),
-            ids.system.map(|s| self.cur.slice(s)),
-        );
+        let id = |s: Option<InSlice>| match s {
+            Some(s) => DoctypeId::written(self.cur.slice(s)),
+            None => DoctypeId::omitted(),
+        };
+        let (public, system) = (id(ids.public), id(ids.system));
         let dt = self.doc.new_doctype(self.cur.slice(name), public, system)?;
         let dn = self.doc.doc_node();
         self.doc.append_child(dn, dt);

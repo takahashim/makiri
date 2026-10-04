@@ -117,33 +117,27 @@ pub enum FragmentError {
     Parse,
     /// The context's tag or namespace could not be interned in the document.
     Context,
-    /// The tree grew deeper than the [`DepthLimit`] allowed.
-    TooDeep,
-    /// A `<select>` received more than `MAX_SELECT_OPTIONS` options.
-    TooManyOptions,
+    /// The parse guard refused it ([`GuardStop`]), as it refuses a document.
+    Guard(GuardStop),
 }
 
 impl From<GuardStop> for FragmentError {
     fn from(stop: GuardStop) -> Self {
-        match stop {
-            GuardStop::TooDeep => FragmentError::TooDeep,
-            GuardStop::TooManyOptions => FragmentError::TooManyOptions,
-        }
+        FragmentError::Guard(stop)
     }
 }
 
 impl FragmentError {
-    /// The message, for every error but [`TooDeep`](FragmentError::TooDeep)
-    /// and [`TooManyOptions`](FragmentError::TooManyOptions), whose messages
-    /// name their limit and are the bridge's to word.
+    /// The message, for every error but [`Guard`](FragmentError::Guard),
+    /// whose message names its limit and is the bridge's to word
+    /// (`bridge::doc::guard_error`, shared with a document parse).
     pub fn message(self) -> &'static str {
         match self {
             FragmentError::Parser => "failed to create HTML parser",
             FragmentError::Decode => "out of memory decoding fragment HTML",
             FragmentError::Parse => "failed to parse HTML fragment",
             FragmentError::Context => "failed to resolve the fragment context",
-            FragmentError::TooDeep => "document tree depth limit exceeded",
-            FragmentError::TooManyOptions => "too many option elements in one select element",
+            FragmentError::Guard(_) => "the parse guard refused the fragment",
         }
     }
 }

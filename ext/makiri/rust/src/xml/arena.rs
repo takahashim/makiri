@@ -353,20 +353,20 @@ impl Document {
     pub(super) fn new_doctype(
         &mut self,
         name: &[u8],
-        public: Option<&[u8]>,
-        system: Option<&[u8]>,
+        public: DoctypeId<'_>,
+        system: DoctypeId<'_>,
     ) -> Result<NodeId, BudgetError> {
         let dt = self.new_node(ArenaKind::DocumentType)?;
         let name = self.store(name)?;
         let node = self.node_mut(dt);
         node.local = name;
         node.qname = name;
-        if let Some(p) = public {
-            let p = self.store(p)?;
+        if public.is_written() {
+            let p = self.store(public.bytes())?;
             self.node_mut(dt).prefix = p;
         }
-        if let Some(s) = system {
-            let s = self.store(s)?;
+        if system.is_written() {
+            let s = self.store(system.bytes())?;
             self.node_mut(dt).value = s;
         }
         Ok(dt)
@@ -886,6 +886,50 @@ pub struct NameParts<'a> {
 
 /// A DOCTYPE's identifiers: [`Document::doctype_ids`]. An omitted id is None;
 /// one written as `""` is `Some(b"")`.
+/// A DOCTYPE's PUBLIC or SYSTEM id as it is handed to be stored: whether one
+/// was written, and its bytes - empty when it was not, and for `PUBLIC ""`,
+/// which is written.
+///
+/// Not an `Option<&[u8]>`: a `None` leaves its length undefined, and LLVM
+/// folded "is it `Some`" and the store's own length test into one branch that
+/// read it. Harmless - no Rust reads the length of a `None` - but Valgrind
+/// reported an uninitialised-value jump in `new_document_type` and
+/// `new_doctype`, from the `None` `create_document_type` built on its stack
+/// (the same class as `ns_scope::resolve_in_scope`'s `Span`). Both fields of
+/// this one are always written.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DoctypeId<'a> {
+    written: bool,
+    bytes: &'a [u8],
+}
+
+impl<'a> DoctypeId<'a> {
+    /// An id written as `bytes` (empty for `""`).
+    pub fn written(bytes: &'a [u8]) -> Self {
+        DoctypeId {
+            written: true,
+            bytes,
+        }
+    }
+
+    /// No id: the DOCTYPE leaves it out.
+    pub fn omitted() -> Self {
+        DoctypeId {
+            written: false,
+            bytes: &[],
+        }
+    }
+
+    pub fn is_written(self) -> bool {
+        self.written
+    }
+
+    /// Its bytes - empty when it was not written.
+    pub fn bytes(self) -> &'a [u8] {
+        self.bytes
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DoctypeIds<'a> {
     pub public: Option<&'a [u8]>,

@@ -55,6 +55,20 @@ RSpec.describe "Makiri::XML::Document#dup" do
     expect { copy.root << copy.create_text_node("y" * 5000) }.to raise_error(Makiri::XML::LimitExceeded)
   end
 
+  # The parser stores a namespace URI once for every node in it; the copy shares
+  # it the same way, so a document that fits its budget is copied within it.
+  it "copies within the budget the original was parsed under" do
+    xml = %(<r xmlns="urn:a-rather-long-default-namespace-uri" xmlns:p="urn:p-long-uri">) +
+          (%(<e p:a="1"/>) * 2000) + "</r>"
+    budget = (64..2000).map { |k| k * 1024 }.find do |b|
+      Makiri::XML::Document.parse(xml, max_bytes: b)
+    rescue Makiri::XML::LimitExceeded
+      nil
+    end
+    doc = Makiri::XML::Document.parse(xml, max_bytes: budget)
+    expect(doc.dup.to_xml).to eq(doc.to_xml)
+  end
+
   it "copies a document still being built, before its root" do
     built = Makiri::XML::Document.new
     built << built.create_comment("first")

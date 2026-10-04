@@ -317,18 +317,13 @@ impl Drop for DocOwner {
 pub enum HtmlParseError {
     /// Out of memory, or Lexbor refused the input.
     Failed,
-    /// The tree grew deeper than the [`DepthLimit`] allowed.
-    TooDeep,
-    /// A `<select>` received more than `MAX_SELECT_OPTIONS` options.
-    TooManyOptions,
+    /// The parse guard refused it ([`GuardStop`]), as it refuses a fragment.
+    Guard(GuardStop),
 }
 
 impl From<GuardStop> for HtmlParseError {
     fn from(stop: GuardStop) -> Self {
-        match stop {
-            GuardStop::TooDeep => HtmlParseError::TooDeep,
-            GuardStop::TooManyOptions => HtmlParseError::TooManyOptions,
-        }
+        HtmlParseError::Guard(stop)
     }
 }
 

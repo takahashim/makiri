@@ -28,8 +28,7 @@ use crate::lexbor::fragment::{FragmentContext, FragmentError, TransientFragment}
 /// A fragment-parse failure as `Makiri::Error`.
 fn fragment_error(e: FragmentError, limit: DepthLimit) -> Error {
     match e {
-        FragmentError::TooDeep => crate::bridge::doc::tree_depth_error(limit),
-        FragmentError::TooManyOptions => crate::bridge::doc::select_options_error(),
+        FragmentError::Guard(stop) => crate::bridge::doc::guard_error(stop, limit),
         _ => makiri_error(e.message()),
     }
 }

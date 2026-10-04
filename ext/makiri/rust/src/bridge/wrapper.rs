@@ -855,6 +855,20 @@ fn cached_node(rb_doc: Value, token: usize) -> Option<Value> {
     v.map(|v| unsafe { value(v) })
 }
 
+/// `FrozenError` when the node `source` names has a wrapper and that wrapper is
+/// frozen. A node with no wrapper yet cannot have been frozen. For an edit
+/// that reaches a node other than its receiver - an Attr's owner element,
+/// whose attribute list an Attr's `remove` or `content=` changes.
+pub(in crate::bridge) fn check_node_frozen(
+    rb_doc: Value,
+    source: impl NodeHandleSource,
+) -> Result<(), Error> {
+    match cached_node(rb_doc, source.identity()) {
+        Some(wrapper) => crate::bridge::ruby::check_frozen(wrapper),
+        None => Ok(()),
+    }
+}
+
 /// Remember `wrapper` as the one wrapper for `token` under `rb_doc`.
 fn cache_node(rb_doc: Value, token: usize, wrapper: Value) -> Result<(), ()> {
     with_doc_data_known(rb_doc, |d| d.cache(token, wrapper.as_raw()))

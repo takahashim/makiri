@@ -35,7 +35,7 @@ use crate::bridge::xml::{xml_mut_result, xml_node_unwrap};
 use crate::lexbor::adapter::cross_import::cross_xml_to_html;
 use crate::lexbor::adapter::html::{RawDoc, RawNode};
 use crate::lexbor::adapter::post_parse::{empty_html_document, parse_html, HtmlParseError};
-use crate::lexbor::adapter::tree_guard::{DepthLimit, MAX_SELECT_OPTIONS};
+use crate::lexbor::adapter::tree_guard::{DepthLimit, GuardStop, MAX_SELECT_OPTIONS};
 
 /* ------------------------------------------------------------------ *
  * parsing                                                            *
@@ -47,6 +47,15 @@ pub fn select_options_error() -> Error {
     makiri_error(format!(
         "too many option elements in one select element (limit {MAX_SELECT_OPTIONS})"
     ))
+}
+
+/// The error for a parse the guard refused (`GuardStop`), for a document and
+/// a fragment alike: the one place that maps a stop to its exception.
+pub fn guard_error(stop: GuardStop, limit: DepthLimit) -> Error {
+    match stop {
+        GuardStop::TooDeep => tree_depth_error(limit),
+        GuardStop::TooManyOptions => select_options_error(),
+    }
 }
 
 /// The error for a parse the tree-depth limit refused: `Makiri::Error`, naming
@@ -93,8 +102,7 @@ pub fn parse_document(source: Value, limit: DepthLimit) -> Result<Value, Error> 
     drop(owned);
 
     let parsed = result.map_err(|e| match e {
-        HtmlParseError::TooDeep => tree_depth_error(limit),
-        HtmlParseError::TooManyOptions => select_options_error(),
+        HtmlParseError::Guard(stop) => guard_error(stop, limit),
         HtmlParseError::Failed => makiri_error("failed to parse HTML document"),
     })?;
     /* The GC learns the arena's size in `install`; `owned` is already gone, so

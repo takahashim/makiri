@@ -298,10 +298,24 @@ pub struct HtmlEdit<'a> {
 /// before [`HtmlEdit::node`].
 pub fn edit(this: &HtmlSelf) -> Result<HtmlEdit<'_>, Error> {
     crate::bridge::ruby::check_frozen(this.value)?;
+    check_attr_owner_frozen(this)?;
     ensure_document_mutable(this.document)?;
     /* Before any argument is converted: see `account_growth`. */
     crate::bridge::wrapper::account_growth(this.document);
     Ok(HtmlEdit { this })
+}
+
+/// An Attr receiver's edit changes its OWNER's attribute list, so a frozen
+/// owner refuses it as it refuses `delete` - checked with the receiver's own
+/// frozen flag, before and after the arguments are converted.
+fn check_attr_owner_frozen(this: &HtmlSelf) -> Result<(), Error> {
+    let node = this.node();
+    match (node.node_type(), node.parent()) {
+        (NodeType::Attribute, Some(owner)) => {
+            crate::bridge::wrapper::check_node_frozen(this.document, RawNode::from(owner))
+        }
+        _ => Ok(()),
+    }
 }
 
 impl<'a> HtmlEdit<'a> {
@@ -349,6 +363,7 @@ impl<'a> HtmlEdit<'a> {
 
     fn mutable(self, kind: EditKind) -> Result<HtmlNodeMut<'a>, Error> {
         crate::bridge::ruby::check_frozen(self.this.value)?;
+        check_attr_owner_frozen(self.this)?;
         ensure_document_mutable(self.this.document)?;
         invalidate_indexes(self.this.document);
         record_edit(self.this.document, kind);

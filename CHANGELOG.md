@@ -58,6 +58,10 @@
 
 ### Fixed
 
+* An Attr's `content=` and `remove` refuse with `FrozenError` when the
+  element that owns the attribute is frozen, in HTML and XML, as that
+  element's own `delete` and `[]=` do. Only the Attr's own frozen flag was
+  checked.
 * XML `Attr#content=` sets the attribute's value - a namespace
   declaration's new value held to the declaration rules - and moves only
   `attribute_version`. It raised "operation unsupported" and still moved
