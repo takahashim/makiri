@@ -230,7 +230,8 @@ impl<'doc> HtmlElement<'doc> {
                         qname.len(),
                         false,
                     );
-                    (*at.raw()).node.ns = id.raw();
+                    /* Over the case-folded id set_name_ns interned. */
+                    at.node().set_ns_id(id);
                     st
                 }
                 _ => {
@@ -499,6 +500,6 @@ pub(super) unsafe fn restore_ns(
     }
     let id = doc.intern_ns(src.ns_uri().or_oom()?).or_oom()?;
     // SAFETY: per the contract; `id` is interned in `doc`'s table.
-    unsafe { (*dst.as_raw()).ns = id.raw() };
+    unsafe { dst.set_ns_id(id) };
     Ok(())
 }

@@ -1032,6 +1032,22 @@ impl<'doc> HtmlNode<'doc> {
         NsId::from_raw(unsafe { (*self.as_raw()).ns })
     }
 
+    /// Put this node in the namespace `id` - the one write of a node's
+    /// namespace id. Every namespace Makiri gives a node is one
+    /// [`HtmlDoc::intern_ns`] interned AS WRITTEN; Lexbor's own steps intern a
+    /// URI past the built-in ones case-folded (`fooNamespace` as
+    /// `foonamespace`), so a node they named or copied takes its id from here.
+    ///
+    /// # Safety
+    /// Nothing else refers to this node yet - it is being built, or a copy
+    /// only the caller holds - and `id` was interned in its document's table.
+    #[inline]
+    pub(super) unsafe fn set_ns_id(self, id: NsId) {
+        // SAFETY: per the contract: an unshared node, and an id its own
+        // document's table handed out.
+        unsafe { (*self.as_raw()).ns = id.raw() };
+    }
+
     /// The source byte offset the parse stamped on this element, or None when
     /// it could not be placed.
     ///
