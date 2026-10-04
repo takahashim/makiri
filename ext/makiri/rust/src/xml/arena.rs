@@ -853,7 +853,7 @@ pub struct NameParts<'a> {
 
 /// A DOCTYPE's identifiers: [`Document::doctype_ids`]. An omitted id is None;
 /// one written as `""` is `Some(b"")`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DoctypeIds<'a> {
     pub public: Option<&'a [u8]>,
     pub system: Option<&'a [u8]>,

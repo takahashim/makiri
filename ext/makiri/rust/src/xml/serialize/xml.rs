@@ -347,16 +347,17 @@ impl<'d, 'b> Writer<'d, 'b> {
     fn doctype(&mut self, dt: NodeId) -> W {
         let doc = self.doc;
         self.put(b"<!DOCTYPE ")?;
-        self.put(doc.span(doc.node(dt).local))?;
-        let (prefix, value) = (doc.node(dt).prefix, doc.node(dt).value);
-        if !prefix.is_absent() {
+        self.put(doc.local(dt))?;
+        let ids = doc.doctype_ids(dt).unwrap_or_default();
+        if let Some(public) = ids.public {
             self.put(b" PUBLIC ")?;
-            self.literal(doc.span(prefix))?;
+            self.literal(public)?;
             self.put(b" ")?;
-            self.literal(doc.span(value))?;
-        } else if !value.is_absent() {
+            /* PUBLIC needs a system literal; an omitted one is written "". */
+            self.literal(ids.system.unwrap_or_default())?;
+        } else if let Some(system) = ids.system {
             self.put(b" SYSTEM ")?;
-            self.literal(doc.span(value))?;
+            self.literal(system)?;
         }
         self.put(b">")
     }

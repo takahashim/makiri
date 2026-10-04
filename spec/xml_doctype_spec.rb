@@ -301,13 +301,17 @@ RSpec.describe "Makiri::XML DOCTYPE / internal_subset" do
       %(<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "x.dtd"><html/>) =>
         ["-//W3C//DTD XHTML 1.0 Strict//EN", "x.dtd"],
       %(<!DOCTYPE r SYSTEM "r.dtd"><r/>) => [nil, "r.dtd"],
-      %(<!DOCTYPE r><r/>) => [nil, nil]
+      %(<!DOCTYPE r><r/>) => [nil, nil],
+      # A written-empty id is present, not omitted, in the copy too.
+      %(<!DOCTYPE r PUBLIC "" ""><r/>) => ["", ""],
+      %(<!DOCTYPE r SYSTEM ""><r/>) => [nil, ""],
     }.each do |source, (public_id, system_id)|
       it "keeps the name and both ids of #{source[/<!DOCTYPE[^>]*>/]}" do
         dt = Makiri::XML(source).internal_subset
         copies = [Makiri::XML::Document.new.import_node(dt, true), dt.clone_node(true)]
         copies.each do |copy|
           expect([copy.name, copy.public_id, copy.system_id]).to eq([dt.name, public_id, system_id])
+          expect(copy.to_xml).to eq(dt.to_xml)
         end
       end
     end
