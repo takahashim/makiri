@@ -92,7 +92,12 @@ impl<'d> Writer<'d, '_> {
         Ok(())
     }
 
-    /// Push `el`'s own xmlns declarations onto the scope.
+    /// Push `el`'s own xmlns declarations onto the scope - ALL of them,
+    /// including one `ns_scope::ignored_default_decl` names, which `to_xml`
+    /// leaves out. Canonical form renders the document's declarations rather
+    /// than planning them, so such a declaration, contradicting its element,
+    /// is refused where the element needs no namespace (`fixups`), not
+    /// dropped.
     fn push_decls(&mut self, el: NodeId) -> W {
         let doc = self.doc;
         for at in doc.attributes(el) {

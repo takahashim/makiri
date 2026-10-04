@@ -152,7 +152,7 @@ fn plan_element<'d>(
     } else if plan.declare && !uri.is_empty() && own_decl(doc, el, own_prefix).is_some() {
         /* The element declares this prefix for a DIFFERENT URI, so its own name
          * needs one of ours. Not for no namespace: no prefix binds to "" -
-         * that declaration is ignored instead (`mutate::ignored_default_decl`). */
+         * that declaration is ignored instead (`ns_scope::ignored_default_decl`). */
         plan.prefix = gen_prefix(binds, gen)?;
     }
     Ok(plan)
@@ -387,7 +387,7 @@ impl<'d, 'b> Writer<'d, 'b> {
     /// popping them, so an early `?` cannot leave the scope stack unbalanced.
     fn element_in_scope(&mut self, n: NodeId, depth: u32, binds: &mut Bindings<'d>) -> W {
         let doc = self.doc;
-        let dropped = crate::xml::mutate::ignored_default_decl(doc, n);
+        let dropped = crate::xml::ns_scope::ignored_default_decl(doc, n);
 
         /* This element's own xmlns declarations bind from here down. */
         let kept = |&at: &NodeId| Some(at) != dropped;
