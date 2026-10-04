@@ -239,7 +239,11 @@ pub fn set_attribute_ns(
         AttrSlot::Absent { tail } => tail,
     };
     /* no match: copy the namespace into the arena only now */
-    let nsv: Ns = if ns.is_empty() { NO_NS } else { doc.store(ns)? };
+    let nsv: Ns = if ns.is_empty() {
+        NO_NS
+    } else {
+        doc.store_ns_uri(ns)?
+    };
     let attr = build_attr(doc, el, name, &sp, val, Resolved::decided(nsv), tail)?;
     let n = doc.node_mut(attr);
     n.attr_ns = AttrNs::Explicit;
