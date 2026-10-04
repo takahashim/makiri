@@ -232,6 +232,24 @@ RSpec.describe "Makiri::XML namespace model" do
       expect_round_trips(doc)
     end
 
+    # Its namespace is undecided, which is not "no namespace": a name test
+    # does not take `p:a` for an unprefixed `a`, as the DOM's attribute
+    # lookup by (namespace, local name) does not.
+    it "matches no name test while its namespace is undecided" do
+      doc = Makiri::XML(%(<r xmlns:p="urn:p"/>))
+      e = doc.create_element("e")
+      e["p:a"] = "v"
+      expect(e.xpath("@a")).to be_empty
+      expect(e.xpath("self::*[@a]")).to be_empty
+      expect(e.xpath("@*").map(&:name)).to eq(["p:a"])
+      expect(e.attribute_value_ns(nil, "a")).to be_nil
+
+      doc.root << e
+      ns = { "p" => "urn:p" }
+      expect(e.xpath("@p:a", ns).map(&:value)).to eq(["v"])
+      expect(e.xpath("@a")).to be_empty
+    end
+
     it "refuses an unbound prefix, leaving the subtree untouched" do
       doc = Makiri::XML(%(<r xmlns:p="urn:p"><host/></r>))
       wrap = doc.create_element("p:wrap")

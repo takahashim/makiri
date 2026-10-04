@@ -71,8 +71,7 @@ impl<'d> Dom<'d> for &'d xml::Document {
     }
     #[inline]
     fn node_type(self, n: xml::NodeId) -> NodeType {
-        self.try_node(n)
-            .map_or(NodeType::Other, |x| NodeType::from(x.type_))
+        self.type_(n).map_or(NodeType::Other, NodeType::from)
     }
 
     #[inline]
@@ -110,9 +109,7 @@ impl<'d> Dom<'d> for &'d xml::Document {
     }
     #[inline]
     fn as_attr(self, n: xml::NodeId) -> Option<xml::NodeId> {
-        self.try_node(n)
-            .is_some_and(|x| x.type_ == xml::ArenaKind::Attribute)
-            .then_some(n)
+        (self.type_(n) == Some(xml::ArenaKind::Attribute)).then_some(n)
     }
     #[inline]
     fn attr_value(self, a: xml::NodeId) -> &'d [u8] {
@@ -163,9 +160,13 @@ impl<'d> Dom<'d> for &'d xml::Document {
 
     /// An unprefixed test matches a node in no namespace only, element or
     /// attribute - lax included, since `Nokogiri::XML` (libxml2) is as strict.
+    /// An attribute whose namespace is not decided yet (a prefixed one on a
+    /// detached element) is in no namespace NOR in one: it matches no name
+    /// test, as the DOM's attribute lookup finds no key for it either
+    /// (`attr_key`).
     #[inline]
-    fn unprefixed_matches(self, n: xml::NodeId, _is_attr: bool, _lax: bool) -> bool {
-        self.try_node(n).is_some_and(|x| x.ns_uri.len == 0)
+    fn unprefixed_matches(self, n: xml::NodeId, is_attr: bool, _lax: bool) -> bool {
+        !(is_attr && self.attr_ns_pending(n)) && self.ns(n).is_empty()
     }
 
     /// An attribute node carries its own namespace.
@@ -182,7 +183,7 @@ impl<'d> Dom<'d> for &'d xml::Document {
 
     #[inline]
     fn has_ns(self, n: xml::NodeId) -> bool {
-        self.try_node(n).is_some_and(|x| x.ns_uri.len != 0)
+        !self.ns(n).is_empty()
     }
 
     #[inline]
