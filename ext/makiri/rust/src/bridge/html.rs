@@ -281,7 +281,8 @@ pub(in crate::bridge) fn with_html_node<R>(
 
 /// The receiver cleared for an edit - not frozen, its document not under
 /// evaluation - and the PROOF of it: [`edit`] is the only way to build one and
-/// [`HtmlEdit::node`] the only way to spend it. The XML side's `Editing`.
+/// [`HtmlEdit::node`] (or its attribute and data twins) the only way to spend
+/// it, ONCE - they take `self`. The XML side's `Editing`, spent the same way.
 ///
 /// The checks and the index drop are two steps on purpose. The checks come
 /// first, so a frozen receiver is reported before a bad argument. The drop

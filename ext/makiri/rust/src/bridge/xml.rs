@@ -288,10 +288,14 @@ pub fn with_arena_for_new_node<R>(
 
 /// The receiver cleared for an edit, and the PROOF of it.
 ///
-/// [`begin_edit`] is the only way to build one and [`Editing::with_arena`] the
-/// only way to spend it, so a tree edit cannot reach the arena without the two
-/// things that must happen first: the frozen check, and dropping the name index
-/// the edit is about to invalidate.
+/// [`begin_edit`] is the only way to build one and [`Editing::with_arena`] (or
+/// its attribute and data twins) the only way to spend it, so a tree edit
+/// cannot reach the arena without the two things that must happen first: the
+/// frozen check, and dropping the name index the edit is about to invalidate.
+///
+/// Spent ONCE - the three take `self` - as `HtmlEdit` is: one permit, one
+/// edit, one record of it. Each spending checks again, so a second would not
+/// be unsound; taking the permit narrows what a caller can get wrong.
 ///
 /// [`with_arena_for_new_node`] stays for the FACTORIES, which build a detached node -
 /// not in the tree, so not in the index, and with no receiver to freeze. The
@@ -330,7 +334,7 @@ impl Editing {
     /// It counts as a change to a child list ([`record_edit`]); an
     /// attribute edit takes [`Editing::with_attributes`] instead, and a
     /// character-data edit [`Editing::with_data`].
-    pub fn with_arena<R>(&self, f: impl FnOnce(&mut XmlDoc, NodeId) -> R) -> Result<R, Error> {
+    pub fn with_arena<R>(self, f: impl FnOnce(&mut XmlDoc, NodeId) -> R) -> Result<R, Error> {
         self.lend(EditKind::ChildList, f)
     }
 
@@ -338,22 +342,18 @@ impl Editing {
     /// or an Attr node's value - which changes no child list: it counts
     /// towards the attribute version ([`record_edit`]) instead of
     /// the tree version.
-    pub fn with_attributes<R>(&self, f: impl FnOnce(&mut XmlDoc, NodeId) -> R) -> Result<R, Error> {
+    pub fn with_attributes<R>(self, f: impl FnOnce(&mut XmlDoc, NodeId) -> R) -> Result<R, Error> {
         self.lend(EditKind::Attributes, f)
     }
 
     /// [`Editing::with_arena`] for an edit of a Text, Comment, CDATA or PI
     /// node's DATA, which changes no child list and no attribute: no version
     /// counts it (see [`EditKind::CharacterData`]).
-    pub fn with_data<R>(&self, f: impl FnOnce(&mut XmlDoc, NodeId) -> R) -> Result<R, Error> {
+    pub fn with_data<R>(self, f: impl FnOnce(&mut XmlDoc, NodeId) -> R) -> Result<R, Error> {
         self.lend(EditKind::CharacterData, f)
     }
 
-    fn lend<R>(
-        &self,
-        kind: EditKind,
-        f: impl FnOnce(&mut XmlDoc, NodeId) -> R,
-    ) -> Result<R, Error> {
+    fn lend<R>(self, kind: EditKind, f: impl FnOnce(&mut XmlDoc, NodeId) -> R) -> Result<R, Error> {
         let id = self.id;
         check_frozen(self.receiver)?;
         ensure_document_mutable(self.document)?;
