@@ -340,6 +340,50 @@ pub fn create_element_ns(
     })
 }
 
+/// `create_loose_dom_element(qualified_name, prefix, local_name, namespace_uri)`
+/// -> Element.
+///
+/// The XML Document's factory of the same name: the name is not parsed, the
+/// caller gives its split, so a local name keeps its colons (`"foo:"`) and its
+/// case. Neither [`create_element`] (lower-cased, in the HTML namespace) nor
+/// [`create_element_ns`] (split at the first colon) can make that. The names
+/// are held to the DOM's rule (`ArgumentError`); the namespace is not checked
+/// against the prefix, as on XML.
+pub fn create_loose_dom_element(
+    ruby: &Ruby,
+    rb_self: Value,
+    rb_qname: Value,
+    rb_prefix: Value,
+    rb_local: Value,
+    rb_ns: Value,
+) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| {
+        let doc = owning_doc(&rb_self)?;
+        let qv = ruby_verified_name(rb_qname, "qualified name")?;
+        let lv = ruby_verified_name(rb_local, "local name")?;
+        let pv = if rb_prefix.is_nil() {
+            None
+        } else {
+            Some(ruby_verified_name(rb_prefix, "prefix")?)
+        };
+        let nv = namespace_arg(rb_ns, "namespace URI")?;
+        let prefix = pv.as_ref().map(|p| p.as_bytes());
+        dom_name::split_loose_dom_name(qv.as_bytes(), prefix, lv.as_bytes())
+            .map_err(|e| Error::new(ruby.exception_arg_error(), e.message()))?;
+        let ns = nv.as_ref().map_or(&b""[..], |n| n.as_bytes());
+        created(
+            crate::bridge::html::create_element_ns(
+                doc,
+                lv.as_bytes(),
+                ns,
+                prefix.unwrap_or_default(),
+            ),
+            rb_self,
+            "element",
+        )
+    })
+}
+
 /// `Document#create_text_node(content)` -> Text.
 pub fn create_text_node(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
