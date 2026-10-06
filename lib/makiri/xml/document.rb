@@ -34,6 +34,21 @@ module Makiri
       def dup(*)
         _copy
       end
+
+      # Always false: an XML document is in no-quirks mode, as the DOM has it.
+      # The same name as {Makiri::HTML::Document#quirks_mode?}, so a caller
+      # need not ask which kind of document it holds.
+      # @return [false]
+      def quirks_mode?
+        false
+      end
+
+      # The DOM's +document.compatMode+, which is always "CSS1Compat" for an
+      # XML document.
+      # @return [String]
+      def compat_mode
+        "CSS1Compat"
+      end
     end
   end
 end

@@ -179,6 +179,10 @@ fn init_mutate() -> Result<(), Error> {
     doc.define_method("create_element", method!(mutate::create_element, 1))?;
     doc.define_method("create_element_ns", method!(mutate::create_element_ns, 2))?;
     doc.define_method(
+        "create_loose_dom_element",
+        method!(mutate::create_loose_dom_element, 4),
+    )?;
+    doc.define_method(
         "create_document_type",
         method!(mutate::create_document_type, -1),
     )?;

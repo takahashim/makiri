@@ -340,6 +340,70 @@ RSpec.describe "HTML and XML Document APIs" do
       end
     end
   end
+
+  describe "XML Document#quirks_mode? and #compat_mode" do
+    it "is never in quirks mode" do
+      [Makiri::XML::Document.new, Makiri::XML("<r/>")].each do |doc|
+        expect([doc.quirks_mode?, doc.compat_mode]).to eq([false, "CSS1Compat"])
+      end
+    end
+  end
+
+  # The DOM's createElement over an HTML-backed document whose type is not
+  # HTML: the local name whole, its case kept, in the namespace given.
+  describe "HTML Document#create_loose_dom_element" do
+    let(:doc) { Makiri::HTML("<!DOCTYPE html><body></body>") }
+    let(:html_ns) { "http://www.w3.org/1999/xhtml" }
+
+    it "keeps a local name's colons and case" do
+      [[%w[foo: foo:], nil], [%w[f::oo f::oo], nil], [%w[xmlns:foo xmlns:foo], nil],
+       [%w[Foo:Bar Foo:Bar], nil], [%w[f::oo f::oo], "urn:u"], [%w[Foo:Bar Foo:Bar], html_ns]].each do |(q, local), ns|
+        el = doc.create_loose_dom_element(q, nil, local, ns)
+        expect([el.name, el.prefix, el.local_name, el.namespace_uri]).to eq([q, nil, local, ns])
+      end
+    end
+
+    it "makes what create_element_ns makes for a split name" do
+      made = doc.create_element_ns("urn:u", "a:b:c")
+      loose = doc.create_loose_dom_element("a:b:c", "a", "b:c", "urn:u")
+      expect([loose.name, loose.prefix, loose.local_name, loose.namespace_uri])
+        .to eq([made.name, made.prefix, made.local_name, made.namespace_uri])
+      expect([loose.name, loose.prefix, loose.local_name]).to eq(%w[a:b:c a b:c])
+    end
+
+    it "keeps an upper-case HTML-namespace name its own element" do
+      el = doc.create_loose_dom_element("BR", nil, "BR", html_ns)
+      doc.body << el
+      expect(el.local_name).to eq("BR")
+      expect(doc.body.inner_html).to eq("<BR></BR>")
+    end
+
+    it "is found by CSS and XPath and serialized as written" do
+      el = doc.create_loose_dom_element("f::oo", nil, "f::oo", nil)
+      el["id"] = "x"
+      doc.body << el
+      expect(doc.at_css("#x")).to eq(el)
+      expect(doc.at_xpath("//*[local-name() = 'f::oo']")).to eq(el)
+      expect(doc.body.inner_html).to eq(%(<f::oo id="x"></f::oo>))
+    end
+
+    it "refuses names the DOM refuses, or a split that is not the name, with ArgumentError" do
+      [["1bad", nil, "1bad"], ["a b", nil, "a b"], ["a:b", nil, "b"], ["a:b", "a", "c"],
+       ["p q:b", "p q", "b"]].each do |q, p, l|
+        expect { doc.create_loose_dom_element(q, p, l, nil) }.to raise_error(ArgumentError)
+      end
+    end
+
+    it "agrees with the XML Document's" do
+      xml = Makiri::XML::Document.new
+      [["foo:", nil, "foo:", nil], ["p:Q", "p", "Q", "urn:u"], ["xmlns:foo", nil, "xmlns:foo", nil]].each do |args|
+        h = doc.create_loose_dom_element(*args)
+        x = xml.create_loose_dom_element(*args)
+        expect([h.name, h.prefix, h.local_name, h.namespace_uri])
+          .to eq([x.name, x.prefix, x.local_name, x.namespace_uri])
+      end
+    end
+  end
 end
 
 # The DOM's createProcessingInstruction refuses data holding `?>` with

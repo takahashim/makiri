@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+* `Makiri::HTML::Document#create_loose_dom_element(qualified_name, prefix,
+  local_name, namespace_uri)`, like the XML Document's: the name is not
+  split, so a local name keeps its colons and case (`"foo:"`, `"Foo:Bar"`) in
+  the namespace given. Names the DOM refuses raise `ArgumentError`; the
+  namespace is not checked against the prefix.
+* `Makiri::XML::Document#quirks_mode?` (always `false`) and `#compat_mode`
+  (always `"CSS1Compat"`), the HTML Document's names, since the DOM puts
+  every XML document in no-quirks mode.
+
 ## [0.14.0] - 2026-10-04
 
 ### Added
