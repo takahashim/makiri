@@ -345,8 +345,8 @@ SCENARIOS = {
   # CSS on XML: a different engine from the HTML one above - the selector is
   # lowered (css/) into an XPath AST, every node of which is a falloc site. One
   # selector per lowering shape: combinators, attribute operators, the nth and
-  # of-type arithmetic, the selector-list pseudo-classes, :lexbor-contains and
-  # namespaced type/universal selectors.
+  # of-type arithmetic, the selector-list pseudo-classes and namespaced
+  # type/universal selectors.
   "xml_css" => lambda do
     doc = Makiri::XML::Document.parse(<<~XML)
       <root xmlns:p="urn:p">
@@ -362,7 +362,7 @@ SCENARIOS = {
       ":nth-child(2n+1):not(:last-child)",
       "a:nth-last-of-type(1), :first-of-type:only-of-type",
       ":is(root > a, p|*):where(a) :empty",
-      "root:has(> b + a) a:lexbor-contains(\"BETA\" i)",
+      "root:has(> b + a) a",
       "*|a, |b, p|*",
     ].map { |s| doc.css(s, ns).map { |n| n.name }.join(",") }.join("\n")
   end,
@@ -771,7 +771,7 @@ guard_docs = {
   "html" => Makiri::HTML::Document.parse("<p>hello</p>"),
   "xml" => Makiri::XML::Document.parse("<r><p>hello</p></r>")
 }
-[":lexbor-contains(#x)", "p:LEXBOR-CONTAINS(*)"].each do |sel|
+[":lexbor-contains(#x)", "p:LEXBOR-CONTAINS(*)", %(p:lexbor-contains("x"))].each do |sel|
   guard_docs.each do |kind, doc|
     disarm
     3.times do

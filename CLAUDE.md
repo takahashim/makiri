@@ -161,10 +161,15 @@ small overrun past the end of a block in the vendored C lands in the slack
 rather than in the next allocation. Off under the sanitizer (`--cfg
 makiri_asan`, from extconf), where such a write must stay visible.
 
-**`lexbor::contains_guard` decides which `:lexbor-contains()` arguments reach
-the vendored CSS parser, and it is not optional.** Its module doc states the
-three properties that must hold and why; `lexbor/tests.rs` pins the load-bearing
-one against the real parser. It decides on the tokens of Lexbor's OWN CSS
+**`:lexbor-contains()` is not supported, and `lexbor::contains_guard` keeps
+every one from the vendored CSS parser - it is not optional.** Its argument
+parser is where the v3.0.0 heap overflow was, and a failed argument parse left
+a pseudo-class the serializer crashed on; deciding which arguments were safe
+kept failing, so the guard renames EVERY `lexbor-contains(` function, whatever
+its argument, and the parser rejects it as an unknown pseudo-class (a selector
+is a `CSS::SyntaxError`, a stylesheet rule `bad_style`). Its module doc states
+the two properties that must hold and why; `lexbor/tests.rs` pins them against
+the real parser. It finds the name on the tokens of Lexbor's OWN CSS
 syntax tokenizer (`lexbor::css_tokens`), never on a scanner of ours: the hand
 scanner it replaced ended strings where the tokenizer did not (CR, FF,
 backslash-newline), so a `:lexbor-contains(#x)` after such a string reached the
@@ -921,10 +926,11 @@ every preceding sibling) from a further one (`Fail`, Blink's
 in the chain), and `:nth-child(... of S)` remembers the ranks it counted as
 the plain `:nth-*` family remembers positions. A malformed selector raises
 `Makiri::CSS::SyntaxError` from the parse step, before matching starts.
-`:lexbor-contains()` and the column combinator (`||`) are constructs this
+`:current()` and the column combinator (`||`) are constructs this
 matcher cannot evaluate (deliberately, and because Lexbor's own traversal
 can't run the latter either) - raised as "could not be run", never answered as
-a silent empty result. **Both that and the 64-compound chain cap are decided
+a silent empty result (`:lexbor-contains()` never gets this far - see
+`contains_guard`). **Both that and the 64-compound chain cap are decided
 by `css_match::compile`, over the WHOLE selector tree, before any node is
 matched** - every entry point (`select_all`/`select_first`/`matches_any`)
 compiles first, and `matches?` on a non-element compiles too. Found lazily

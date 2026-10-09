@@ -44,11 +44,6 @@ pub const FN_OF_TYPE_POS_LAST: &[u8] = b"\x01of-type-pos-last";
 /// candidate it is n^2 over a flat list; the hook reads a per-parent memo.
 pub const FN_CHILD_POS: &[u8] = b"\x01child-pos";
 pub const FN_CHILD_POS_LAST: &[u8] = b"\x01child-pos-last";
-/// True when the context node is a TEXT node and not a CDATA SECTION. XPath's
-/// `text()` matches both (a CDATA section is text in the XPath data model), but
-/// Lexbor's `:lexbor-contains` matcher scans only `LXB_DOM_NODE_TYPE_TEXT`, so
-/// the CSS lowering filters CDATA out with this. XML host only.
-pub const FN_IS_TEXT: &[u8] = b"\x01is-text";
 
 /// Namespace URI registered from Nokogiri's XPath context, so prefixed names
 /// like "nokogiri-builtin:css-class" resolve.
@@ -145,7 +140,6 @@ enum Builtin {
     OfTypePosLast,
     ChildPos,
     ChildPosLast,
-    IsText,
 }
 
 /// One [`BUILTINS`] row.
@@ -228,7 +222,6 @@ const BUILTINS: &[Entry] = {
         e(Core, FN_OF_TYPE_POS_LAST, OfTypePosLast, Impure, 0, usize::MAX),
         e(Core, FN_CHILD_POS, ChildPos, Impure, 0, usize::MAX),
         e(Core, FN_CHILD_POS_LAST, ChildPosLast, Impure, 0, usize::MAX),
-        e(Core, FN_IS_TEXT, IsText, Impure, 0, usize::MAX),
         /* Nokogiri's builtins, in its builtin namespace */
         e(Nokogiri, b"css-class", CssClass, Impure, 2, 2),
         e(Nokogiri, b"local-name-is", LocalNameIs, Impure, 1, 1),
@@ -271,7 +264,6 @@ impl Builtin {
             Builtin::OfTypePosLast => ext::fn_of_type_pos_last::<D> as FnImpl<'e, 'd, D>,
             Builtin::ChildPos => ext::fn_child_pos::<D> as FnImpl<'e, 'd, D>,
             Builtin::ChildPosLast => ext::fn_child_pos_last::<D> as FnImpl<'e, 'd, D>,
-            Builtin::IsText => ext::fn_is_text::<D> as FnImpl<'e, 'd, D>,
         }
     }
 }

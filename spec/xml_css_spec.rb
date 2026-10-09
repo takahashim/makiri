@@ -407,72 +407,15 @@ RSpec.describe "Makiri::XML CSS selectors" do
         expect(xml.css(sel).map { |n| n["id"] }).to eq(html.css(sel).map { |n| n["id"] })
       end
     end
-
-    # A deliberate, permanent divergence (not "not yet ported"): XML's CSS
-    # still lowers :lexbor-contains() to XPath contains(), but the HTML
-    # matcher (`lexbor::css_match`) does not implement it at all and
-    # raises instead of ever answering - see css_spec.rb's
-    # ":lexbor-contains()" describe block for why.
-    it "raises on the HTML side where XML still answers, for :lexbor-contains()" do
-      xml = Makiri::XML(body).root
-      html = Makiri::HTML("<!doctype html><html><head></head><body>#{body}</body></html>").at_css("#m")
-      expect(xml.css(%(:lexbor-contains("y"))).map { |n| n["id"] }).to eq(["s2"])
-      expect { html.css(%(:lexbor-contains("y"))) }.to raise_error(Makiri::Error, /could not be run/)
-    end
   end
 
-  describe ":lexbor-contains() text containment (XML only)" do
-    # Makiri's XML CSS matches :lexbor-contains() by lowering to XPath's
-    # contains(); the HTML matcher (`lexbor::css_match`) does not
-    # implement it at all (raises instead - see the divergence test above and
-    # css_spec.rb), so this describes the XML behavior alone, not parity with
-    # the HTML side.
-    let(:doc) do
-      Makiri::XML("<r><i>apple PIE</i><i>banana</i><i>cherry pie</i></r>")
+  # Not supported on either side - see css_spec.rb's ":lexbor-contains()".
+  it "rejects :lexbor-contains() as a syntax error" do
+    doc = Makiri::XML("<r><i>apple PIE</i><i>banana</i></r>")
+    [%(i:lexbor-contains("pie")), %(i:lexbor-contains("pie" i)), %(:lexbor-contains("#{"A" * 200}"))].each do |sel|
+      expect { doc.css(sel) }.to raise_error(Makiri::CSS::SyntaxError), sel
     end
-
-    it "matches the substring case-sensitively" do
-      expect(doc.css(%(i:lexbor-contains("pie"))).map(&:text)).to eq(["cherry pie"])
-      expect(doc.css(%(i:lexbor-contains("PIE"))).map(&:text)).to eq(["apple PIE"])
-    end
-
-    it "is ASCII case-insensitive with the ` i` flag" do
-      expect(doc.css(%(i:lexbor-contains("pie" i))).map(&:text))
-        .to eq(["apple PIE", "cherry pie"])
-    end
-
-    it "handles a long needle (Lexbor >v3.0.0 heap-overflow fix in the parser)" do
-      # Pre-fix, Lexbor allocated sizeof(lexbor_str_t) (~16 B) for the needle but
-      # copied its full length, overflowing the arena for any needle >15 bytes.
-      # Makiri reaches Lexbor's CSS parser for :lexbor-contains, so guard it here.
-      needle = "A" * 200
-      big = Makiri::XML("<r><i>#{needle}</i><i>x</i></r>")
-      expect(big.css(%(i:lexbor-contains("#{needle}"))).map { |n| n.text.length }).to eq([200])
-    end
-
-    it "matches a direct child text node like XPath child::text()[contains()]" do
-      expect(doc.css(%(i:lexbor-contains("pie"))).map(&:text))
-        .to eq(doc.xpath(%(//i[text()[contains(., "pie")]])).map(&:text))
-    end
-
-    it "scans only immediate child text nodes, not the deep string-value" do
-      # Faithful to Lexbor's OWN matcher's rule (the one the XML lowering
-      # mirrors, even though HTML no longer reaches Lexbor's matcher itself -
-      # see the divergence test above): <r> contains "cherry" only via a
-      # descendant text node, not a direct child one, so <r> does NOT match -
-      # only <i> does. The deep string-value would also match every ancestor.
-      nested = Makiri::XML("<r><i>cherry pie</i></r>")
-      expect(nested.css(%(:lexbor-contains("cherry"))).map(&:name)).to eq(%w[i])
-    end
-
-    it "does not treat an XML CDATA section as a text node" do
-      # XPath's text() matches both TEXT and CDATA, but Lexbor's matcher scans
-      # LXB_DOM_NODE_TYPE_TEXT alone. Without the CDATA filter the XML answer
-      # would match the CDATA <a> too and diverge from the HTML side (which has
-      # no CDATA at all).
-      doc = Makiri::XML("<r><a><![CDATA[needle]]></a><a>needle</a></r>")
-      expect(doc.css(%(a:lexbor-contains("needle"))).map(&:text)).to eq(["needle"])
-    end
+    expect(doc.css("i").length).to eq(2)
   end
 
   describe "class names with whitespace and :root (parity with the HTML side)" do

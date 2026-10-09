@@ -91,11 +91,11 @@ pub(super) enum Nest {
 }
 
 /// `simple`'s nested selector lists and how they answer it - or `Unsupported`
-/// for `:lexbor-contains()` and `:current()`, which this matcher never
-/// evaluates.
+/// for `:current()`, which this matcher never evaluates, and for a
+/// `:lexbor-contains()` (which `contains_guard` keeps from ever parsing).
 fn nest_of<'p>(simple: Simple<'p>) -> Result<(Nest, Option<Lists<'p>>), MatchFailure> {
     Ok(match simple {
-        Simple::PseudoClassFunction(FunctionArg::Contains(_) | FunctionArg::Current(_)) => {
+        Simple::PseudoClassFunction(FunctionArg::Contains | FunctionArg::Current(_)) => {
             return Err(MatchFailure::Unsupported)
         }
         Simple::PseudoClassFunction(FunctionArg::Selectors { pseudo, lists }) => {
@@ -145,7 +145,7 @@ pub(super) struct Compiled<'p> {
 }
 
 /// Compile `groups` - see [`Compiled`] - or refuse it: no chain anywhere
-/// over [`MAX_COMPOUNDS`], no `:lexbor-contains()`, `:current()` or column
+/// over [`MAX_COMPOUNDS`], no `:current()` or column
 /// combinator (`||`) anywhere, checked over EVERY comma alternative and EVERY nested
 /// list before any node is tested.
 ///
@@ -160,12 +160,12 @@ pub(super) struct Compiled<'p> {
 ///   `:not()`/`:is()`/`:has()` drops as if it were never written is invisible
 ///   to the OR/AND-negated logic around it, so `:not(` a 65-compound chain
 ///   `)` answered `true` for EVERY element.
-/// - **`:lexbor-contains()`/`||` used to be found only if matching reached
-///   them.** A type mismatch earlier in the SAME compound, an earlier comma
+/// - **An unsupported construct used to be found only if matching reached
+///   it.** A type mismatch earlier in the SAME compound, an earlier comma
 ///   alternative that already answered, or `at_css`'s first-match stop could
-///   each skip the construct: `nosuch:lexbor-contains("x")` answered empty
-///   while `p:lexbor-contains("x")` raised, and `p, nosuch:lexbor-contains("x")`
-///   answered the `<p>`s. The exception must not depend on document content,
+///   each skip the construct: `nosuch:lexbor-contains("x")` (which no longer
+///   parses at all) answered empty while `p:lexbor-contains("x")` raised, and
+///   `p, nosuch:lexbor-contains("x")` answered the `<p>`s. The exception must not depend on document content,
 ///   comma-alternative order, or `at_css`'s early termination.
 ///
 /// Iterative: nested lists wait on an explicit work list, so a selector

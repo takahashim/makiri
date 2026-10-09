@@ -31,9 +31,7 @@ use crate::xpath::ast::{Axis, Expr, NodeTest, Op, Step};
 
 /// The internal of-type position functions, whose names carry a leading \x01 so
 /// no user expression can name them.
-use crate::xpath::funcs::{
-    FN_CHILD_POS, FN_CHILD_POS_LAST, FN_IS_TEXT, FN_OF_TYPE_POS, FN_OF_TYPE_POS_LAST,
-};
+use crate::xpath::funcs::{FN_CHILD_POS, FN_CHILD_POS_LAST, FN_OF_TYPE_POS, FN_OF_TYPE_POS_LAST};
 
 /* ------------------------------------------------------------------ *
  * simple selectors                                                   *
@@ -353,8 +351,7 @@ fn lower_pseudo_simple(b: &Build, pc: PseudoClass) -> Built {
          *
          * `NodeTest::Text` matches a CDATA section as well, and that is wanted
          * HERE: Lexbor's `:empty` ignores comments alone, so any other child -
-         * a CDATA section included - makes the element non-empty. The
-         * CDATA-excluding rule is `:lexbor-contains`'s, not this one. */
+         * a CDATA section included - makes the element non-empty. */
         PseudoClass::Empty => build::fold(
             b,
             Op::And,
@@ -398,29 +395,8 @@ pub(crate) fn selector_list_selftest(b: &Build, lists: Lists<'_>) -> Built {
     )
 }
 
-/// `child::text()[is-text()][pred]` - the element's direct child TEXT nodes
-/// satisfying `pred`, which is consumed.
-///
-/// In predicate position a non-empty node-set is truthy, so this reads "some
-/// direct child text node matches" - exactly how Lexbor's `:lexbor-contains`
-/// matcher scans, which looks at immediate child TEXT nodes only and not at the
-/// deep string value. Matching that is what keeps the XML path's answer equal to
-/// the HTML one.
-///
-/// The `is-text()` filter drops CDATA sections, which XPath's `text()` matches
-/// but Lexbor's matcher does not: it scans `LXB_DOM_NODE_TYPE_TEXT` alone, so an
-/// XML `:lexbor-contains` must not see a CDATA section either.
-fn child_text_pred(b: &Build, pred: Built) -> Built {
-    let pred = pred?;
-    let mut step = Step::new(Axis::Child, NodeTest::Text);
-    let is_text = build::call0(b, FN_IS_TEXT);
-    build::push(b, &mut step.predicates, is_text?)?;
-    build::push(b, &mut step.predicates, pred)?;
-    build::single_step_path(b, step)
-}
-
 /// The functional pseudo-classes: `:nth-*(an+b)`, `:not()`, `:is()`/`:where()`,
-/// `:has()`, `:lexbor-contains()`.
+/// `:has()`.
 fn lower_pseudo_func(b: &Build, arg: FunctionArg<'_>) -> Built {
     match arg {
         FunctionArg::Nth {
@@ -460,43 +436,7 @@ fn lower_pseudo_func(b: &Build, arg: FunctionArg<'_>) -> Built {
             ),
         },
 
-        FunctionArg::Contains(c) => {
-            let Some(c) = c else {
-                return Err(b.fail(ErrorKind::Syntax, "malformed :lexbor-contains()"));
-            };
-            let needle = c.needle;
-
-            if !c.insensitive {
-                let dot = build::step_path(b, Axis::SelfAxis, NodeTest::Node); /* "." */
-                return child_text_pred(
-                    b,
-                    build::call2(b, b"contains", || dot, || build::literal(b, needle)),
-                );
-            }
-
-            /* ASCII case-insensitive: fold both sides with translate(). The
-             * flag is ASCII-only, which is what Lexbor's matcher does. */
-            const UPPER: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-            const LOWER: &[u8] = b"abcdefghijklmnopqrstuvwxyz";
-            let Some(mut low) = crate::falloc::try_vec_with_capacity::<u8>(needle.len()) else {
-                return Err(b.oom());
-            };
-            low.extend(needle.iter().map(|&ch| ch.to_ascii_lowercase()));
-
-            let folded = build::call3(
-                b,
-                b"translate",
-                || build::step_path(b, Axis::SelfAxis, NodeTest::Node),
-                || build::literal(b, UPPER),
-                || build::literal(b, LOWER),
-            );
-            child_text_pred(
-                b,
-                build::call2(b, b"contains", || folded, || build::literal(b, &low)),
-            )
-        }
-
-        FunctionArg::Current(_) | FunctionArg::Other => {
+        FunctionArg::Contains | FunctionArg::Current(_) | FunctionArg::Other => {
             Err(b.fail(ErrorKind::Syntax, "unsupported functional CSS pseudo-class"))
         }
     }

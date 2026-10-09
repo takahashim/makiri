@@ -53,7 +53,7 @@ fn query_error(err: QueryFailure) -> Error {
 /// one node each, never a `Vec`) and so only ever fail the other way.
 ///
 /// The message for `Unsupported` (the column combinator `||`, or
-/// `:lexbor-contains()`) matches the OLD engine's own wording for the same
+/// `:current()`) matches the OLD engine's own wording for the same
 /// case (`SelectError::Traversal`'s "CSS selector could not be run") on
 /// purpose: it is the same fact - this engine could not run the selector
 /// either - not a new one.

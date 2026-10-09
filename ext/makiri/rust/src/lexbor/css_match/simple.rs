@@ -310,14 +310,15 @@ pub(super) fn check_simple(
             _ => SimpleCheck::Deferred,
         },
         Simple::PseudoClassFunction(FunctionArg::Selectors { .. }) => SimpleCheck::Deferred,
-        // `:lexbor-contains()` and `:current()`: Lexbor itself matches with
-        // both (`lxb_selectors_pseudo_class_function`, `:current(S)` as
-        // `:is(S)`) - this port deliberately does not
-        // (`MatchFailure::Unsupported`'s doc) - so answering `false` would be
-        // indistinguishable from a selector that legitimately matches
-        // nothing. Raised instead; `compile` refuses both before any node is
-        // tested, so this arm is the backstop.
-        Simple::PseudoClassFunction(FunctionArg::Contains(_) | FunctionArg::Current(_)) => {
+        // `:current()`: Lexbor itself matches it as `:is(S)`
+        // (`lxb_selectors_pseudo_class_function`) - this port deliberately
+        // does not (`MatchFailure::Unsupported`'s doc) - so answering `false`
+        // would be indistinguishable from a selector that legitimately
+        // matches nothing. Raised instead; `compile` refuses it before any
+        // node is tested, so this arm is the backstop. `:lexbor-contains()`
+        // never parses (`contains_guard`); were it decoded, it is refused
+        // the same way.
+        Simple::PseudoClassFunction(FunctionArg::Contains | FunctionArg::Current(_)) => {
             return Err(MatchFailure::Unsupported)
         }
         // Any OTHER functional pseudo-class (`:dir()`, `:lang()`, `:nth-col()`,

@@ -286,9 +286,10 @@ RSpec.describe Makiri::Lexbor::CSS do
       expect { parse("a{}\0x") }.to raise_error(Makiri::Error, /NUL/)
     end
 
-    # `lexbor::contains_guard` rewrites these, so the rule degrades the way any
-    # unparseable selector does and the rest of the sheet is unaffected.
-    describe "a :lexbor-contains() Lexbor would reject" do
+    # `:lexbor-contains()` is not supported: `lexbor::contains_guard` renames
+    # every one, so the rule degrades the way a rule with any unknown
+    # pseudo-class does and the rest of the sheet is unaffected.
+    describe "a :lexbor-contains()" do
       it "degrades to :bad_style and leaves the rest of the sheet standing" do
         rules = parse(".a{color:red}:lexbor-contains(#x){color:blue}.b{color:green}")
         expect(rules.map { |r| r[:type] }).to eq(%i[style bad_style style])
@@ -303,10 +304,19 @@ RSpec.describe Makiri::Lexbor::CSS do
           .to eq([{ name: "color", value: "blue", important: false }])
       end
 
-      it "keeps a well-formed :lexbor-contains() working" do
+      it "is a bad rule even with a well-formed argument" do
         rules = parse(%(.a{color:red}:lexbor-contains("x"){color:blue}.b{color:green}))
-        expect(rules.map { |r| r[:type] }).to eq(%i[style style style])
-        expect(rules[1][:selectors].map { |s| s[:text] }).to eq([%(:lexbor-contains("x"))])
+        expect(rules.map { |r| r[:type] }).to eq(%i[style bad_style style])
+        expect(rules[1][:selector_text]).to eq(%(:lexbor-contains("x")))
+      end
+
+      # A forgiving list drops it as it drops any unknown pseudo-class.
+      it "is dropped from a forgiving list like any unknown pseudo-class" do
+        [":is(.a, :lexbor-contains(\"x\"))", ":is(.a, :zz-unknown(\"x\"))"].each do |sel|
+          rules = parse("#{sel}{color:blue}")
+          expect(rules.map { |r| r[:type] }).to eq(%i[style]), sel
+          expect(rules[0][:selectors].map { |s| s[:text] }).to eq([":is(.a)"]), sel
+        end
       end
 
       it "sees through the identifier escapes Lexbor decodes" do

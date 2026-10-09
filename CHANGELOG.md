@@ -15,6 +15,16 @@
 
 ### Changed
 
+* `:lexbor-contains()` is no longer supported anywhere. It raises
+  `Makiri::CSS::SyntaxError` from `Makiri::XML` `#css` (which lowered it to
+  XPath `contains()`) and from HTML `#css` / `#at_css` / `#matches?` (which
+  already refused a well-formed one, as "could not be run"), and
+  `parse_stylesheet` reports its rule as `:bad_style` (inside `:is()`,
+  `:where()` or `:has()` the alternative is dropped, as for any unknown
+  pseudo-class). Lexbor's parser for its argument is where the v3.0.0 heap
+  overflow and a later serializer crash were; rather than decide which
+  arguments it may see, it now sees none - `contains_guard` renames every
+  occurrence before the parser runs. Use XPath `contains()` instead.
 * HTML `#css` / `#at_css` / `#matches?` raise `Makiri::Error` ("could not be
   run") for `:current(S)`, anywhere in the selector, as for
   `:lexbor-contains()`. It matched nothing. Selectors Level 5 (which took the
