@@ -62,7 +62,7 @@ impl<'doc> HasCursor<'doc> {
                 HasCursor::SubsequentSibling(next_sibling_element(from))
             }
             Combinator::Close => HasCursor::Empty,
-            Combinator::Other => return Err(MatchFailure::Unsupported),
+            Combinator::Column | Combinator::Other => return Err(MatchFailure::Unsupported),
         })
     }
 
@@ -682,7 +682,9 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
                     }
                     // The column combinator `||`: `compile` refuses it
                     // before matching starts; this is the belt to that brace.
-                    Combinator::Other => return Err(MatchFailure::Unsupported),
+                    Combinator::Column | Combinator::Other => {
+                        return Err(MatchFailure::Unsupported)
+                    }
                 };
                 if let Some(n) = next {
                     if t.idx < last {

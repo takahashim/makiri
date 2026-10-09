@@ -258,13 +258,17 @@ unsafe fn selectors(sel: *mut lxb::lxb_css_selector_list_t) -> Result<Option<Vec
     Ok(Some(out))
 }
 
-/// Slice `[begin, end)` out of the original input, trimming ASCII whitespace.
-/// Empty when the offsets are unusable - fail closed, never a wrong slice.
+/// Slice `[begin, end)` out of the original input, trimmed (`trim`). Empty
+/// when the offsets are unusable - fail closed, never a wrong slice.
 fn slice_trim(css: &[u8], begin: usize, end: usize) -> Result<Vec<u8>, Fail> {
     if begin > end || end > css.len() {
         return Ok(Vec::new());
     }
-    let mut s = &css[begin..end];
+    falloc::try_to_vec(trim(&css[begin..end])).or_oom()
+}
+
+/// `s` without its leading and trailing ASCII whitespace (and controls).
+fn trim(mut s: &[u8]) -> &[u8] {
     while let Some((&b, rest)) = s.split_first() {
         if b > b' ' {
             break;
@@ -277,7 +281,7 @@ fn slice_trim(css: &[u8], begin: usize, end: usize) -> Result<Vec<u8>, Fail> {
         }
         s = rest;
     }
-    falloc::try_to_vec(s).or_oom()
+    s
 }
 
 /// The at-rule keyword, without the `@`.
@@ -365,8 +369,11 @@ unsafe fn rules(
                     Some(b) => falloc::try_to_vec(b).or_oom()?,
                     None => Vec::new(),
                 };
+                // Trimmed like the prelude of a rule `selectors` refuses, so
+                // a `:bad_style` reads the same whichever refused it.
+                let text = as_written(c, text, (*bad).prelude_begin, (*bad).prelude_end)?;
                 Some(Rule::BadStyle {
-                    selector_text: as_written(c, text, (*bad).prelude_begin, (*bad).prelude_end)?,
+                    selector_text: falloc::try_to_vec(trim(&text)).or_oom()?,
                     declarations: declarations(c, (*bad).declarations)?,
                 })
             }

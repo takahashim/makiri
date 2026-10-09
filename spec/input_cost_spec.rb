@@ -100,7 +100,7 @@ RSpec.describe "Cost proportional to input", :timing do
     it "shows each rejected prelude as written" do
       sheet = "a:lexbor-contains(1), b {x:y} a:lexbor-contains(1), b {x:y} c:lexbor\\-contains(2) {x:y}"
       texts = Makiri::Lexbor::CSS.parse_stylesheet(sheet).map { |r| r[:selector_text] }
-      expect(texts).to eq(["a:lexbor-contains(1), b ", "a:lexbor-contains(1), b ", "c:lexbor\\-contains(2) "])
+      expect(texts).to eq(["a:lexbor-contains(1), b", "a:lexbor-contains(1), b", "c:lexbor\\-contains(2)"])
     end
   end
 

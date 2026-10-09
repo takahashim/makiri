@@ -211,7 +211,7 @@ impl Shape {
     fn simple<'p>(&mut self, s: Selector<'p>, in_has: bool, work: &mut Vec<(Lists<'p>, bool)>) {
         match s.combinator() {
             Combinator::Descendant | Combinator::SubsequentSibling => self.backtracks += 1,
-            Combinator::Other => self.departs = true,
+            Combinator::Column | Combinator::Other => self.departs = true,
             _ => {}
         }
         let upper = s.name().iter().any(u8::is_ascii_uppercase);
@@ -246,7 +246,7 @@ impl Shape {
                     work.push((lists, in_has || has));
                 }
                 FunctionArg::Contains(_) => self.departs = true,
-                FunctionArg::Other => {}
+                FunctionArg::Current(_) | FunctionArg::Other => {}
             },
             _ => {}
         }

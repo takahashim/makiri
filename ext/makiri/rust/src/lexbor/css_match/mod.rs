@@ -225,7 +225,7 @@ pub enum MatchFailure {
     /// A construct this port cannot evaluate at all - not "always false" the
     /// way an unimplemented-in-Lexbor-too functional pseudo-class is
     /// (`FunctionArg::Other`, `check_simple`'s doc), but one Lexbor itself
-    /// either cannot run (the column combinator `||`, `Combinator::Other` -
+    /// either cannot run (the column combinator `||`, `Combinator::Column` -
     /// Lexbor's own traversal reports an error status for it too) or
     /// implements and this port deliberately does not
     /// (`:lexbor-contains()`, `FunctionArg::Contains` - a Lexbor extension,

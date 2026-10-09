@@ -216,6 +216,28 @@ RSpec.describe Makiri::Lexbor::CSS do
       end
     end
 
+    it "writes pseudo-class names in Lexbor's lower case" do
+      expect(texts(":HOVER, :IS(A), :Nth-Child(2)")).to eq([":hover", ":is(A)", ":nth-child(2)"])
+    end
+
+    it "keeps the column combinator" do
+      expect(texts("col || td")).to eq(["col || td"])
+    end
+
+    # Lexbor stores `[|a]` (no namespace) as `*`, which would read back as any
+    # namespace; the rule is handed back as written instead.
+    it "reports an attribute it cannot write back as :bad_style, as written" do
+      rules = parse(".x{color:red} [|a] { color: blue } .y{color:green}")
+      expect(rules.map { |r| r[:type] }).to eq(%i[style bad_style style])
+      expect(rules[1][:selector_text]).to eq("[|a]")
+      expect(rules[1][:declarations]).to eq([{ name: "color", value: "blue", important: false }])
+    end
+
+    it "trims a :bad_style prelude whichever side refused it" do
+      expect(parse("  :focus-within  {x:y}")[0][:selector_text]).to eq(":focus-within")
+      expect(parse("  [|a]  {x:y}")[0][:selector_text]).to eq("[|a]")
+    end
+
     it "leaves selectors without escapes as Lexbor wrote them" do
       expect(texts("div.a, #b > span, a + b, a ~ b, ns|a, *|*, |a")).to eq(
         ["div.a", "#b > span", "a + b", "a ~ b", "ns|a", "*|*", "|a"]

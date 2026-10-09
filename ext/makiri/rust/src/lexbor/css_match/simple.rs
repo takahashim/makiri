@@ -322,7 +322,12 @@ pub(super) fn check_simple(
         // `:nth-last-col()`) is unimplemented in LEXBOR TOO
         // (`lxb_selectors_pseudo_class_function`'s `default:` case) - a real,
         // agreed "always false", not a gap this port introduces.
-        Simple::PseudoClassFunction(FunctionArg::Other) => SimpleCheck::Result(false),
+        // `:current()` is NOT one of those - Lexbor matches it as `:is()` -
+        // but stays false here, as before it had a variant of its own: the
+        // module doc lists it as still open.
+        Simple::PseudoClassFunction(FunctionArg::Current(_) | FunctionArg::Other) => {
+            SimpleCheck::Result(false)
+        }
         Simple::PseudoElement | Simple::Other => SimpleCheck::Result(false),
     })
 }
