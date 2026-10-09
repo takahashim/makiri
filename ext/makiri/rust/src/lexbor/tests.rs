@@ -856,23 +856,26 @@ mod css_match {
 
     /// In a `:has()` argument, `L + R` is looked for over every pair, as
     /// Selectors 4 says. Lexbor's engine gives up after the first pair when
-    /// `R`'s compound holds a list pseudo-class that pair fails - unless a
-    /// type selector in front of it already refused the pair (`b:not(li)` is
-    /// right there), and only for `+` (`~`, `>` and descendant search on).
-    /// Here the first pair is `i + li`, refused by `:not(li)`; `a + b` is the
-    /// one that matches. A departure (`css_match`'s module doc) the
-    /// differential checks leave out (`departs_from_lexbor`); found by the
-    /// randomized check with seed 0x1edc5eefe8ad.
+    /// `R`'s compound holds a list pseudo-class (`:is()`, `:not()`,
+    /// `:where()`, `:has()`) that pair fails - unless a type selector in front
+    /// of it already refused the pair (`a:not(li)` is right there), and only
+    /// for `+` (`~`, `>` and descendant search on). Here the pairs are
+    /// `i + li`, `li + a` and `a + b`, and each selector is satisfied only by
+    /// a later pair than the first. A departure (`css_match`'s module doc)
+    /// the differential checks leave out (`departs_from_lexbor`); found by
+    /// the randomized check with seed 0x1edc5eefe8ad - with `:not()`, then
+    /// with `:has()`.
     #[test]
     fn a_sibling_compound_with_a_list_pseudo_in_has_tries_every_pair() {
         use crate::lexbor::selectors as old_engine;
 
-        let doc = parsed(b"<span><i></i><li><a></a><b></b></li></span>");
+        let doc = parsed(b"<span><i></i><li></li><a></a><b><u></u></b></span>");
         for sel in [
             "span:has(* + :not(li))",
             "span:has(* + *:not(li))",
             "span:has(* + *:is(b))",
             "span:has(* + *:where(b, p))",
+            "span:has(* + *:has(u))",
         ] {
             assert!(departs_from_lexbor(sel), "{sel}");
             assert_eq!(select_all(&doc, sel).len(), 1, "{sel}");
@@ -1918,7 +1921,7 @@ mod css_match {
     /// Whether `sel` reaches a shape where `css_match` departs from Lexbor on
     /// purpose and the random generator can produce it: in a `:has()`
     /// argument, a compound attached by `+` that holds `:is()` / `:not()` /
-    /// `:where()` (`css_match`'s module doc;
+    /// `:where()` / `:has()` (`css_match`'s module doc;
     /// `a_sibling_compound_with_a_list_pseudo_in_has_tries_every_pair`).
     /// A selector that does not parse is not one - the caller skips it anyway.
     fn departs_from_lexbor(sel: &str) -> bool {
@@ -1943,10 +1946,7 @@ mod css_match {
                     if let Simple::PseudoClassFunction(FunctionArg::Selectors { pseudo, lists }) =
                         cur.simple()
                     {
-                        if in_has
-                            && attached == Combinator::NextSibling
-                            && pseudo != ListPseudo::Has
-                        {
+                        if in_has && attached == Combinator::NextSibling {
                             return true;
                         }
                         work.push((lists, in_has || pseudo == ListPseudo::Has));

@@ -205,14 +205,16 @@ impl Shape {
                         }
                     }
                     // In a `:has()` argument, a compound attached by `+` that
-                    // holds `:is()` / `:not()` / `:where()`: Lexbor stops after
-                    // the first pair that fails it.
-                    if in_has && attached == Combinator::NextSibling {
-                        if let Simple::PseudoClassFunction(FunctionArg::Selectors { pseudo, .. }) =
-                            s.simple()
-                        {
-                            shape.departs |= pseudo != ListPseudo::Has;
-                        }
+                    // holds `:is()` / `:not()` / `:where()` / `:has()`: Lexbor
+                    // stops after the first pair that fails it.
+                    if in_has
+                        && attached == Combinator::NextSibling
+                        && matches!(
+                            s.simple(),
+                            Simple::PseudoClassFunction(FunctionArg::Selectors { .. })
+                        )
+                    {
+                        shape.departs = true;
                     }
                     first = false;
                     shape.simple(s, in_has, &mut work);
