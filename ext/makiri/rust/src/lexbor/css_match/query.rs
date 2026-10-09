@@ -37,6 +37,8 @@ pub(super) enum HasCursor<'doc> {
     Subtree {
         current: HtmlNode<'doc>,
         root: HtmlNode<'doc>,
+        /// The next step leaves `current`'s subtree out ([`HasCursor::prune`]).
+        past: bool,
     },
     /// `Combinator::Child`: the next child to try.
     Child(Option<HtmlNode<'doc>>),
@@ -55,6 +57,7 @@ impl<'doc> HasCursor<'doc> {
             Combinator::Descendant => HasCursor::Subtree {
                 current: from,
                 root: from,
+                past: false,
             },
             Combinator::Child => HasCursor::Child(from.first_child()),
             Combinator::NextSibling => HasCursor::NextSibling(next_sibling_element(from)),
@@ -71,12 +74,22 @@ impl<'doc> HasCursor<'doc> {
     fn next(&mut self) -> Option<HtmlNode<'doc>> {
         match self {
             HasCursor::Empty => None,
-            HasCursor::Subtree { current, root } => {
-                while let Some(n) = current.preorder_next(*root) {
+            HasCursor::Subtree {
+                current,
+                root,
+                past,
+            } => {
+                let mut step = if core::mem::take(past) {
+                    current.preorder_next_past(*root)
+                } else {
+                    current.preorder_next(*root)
+                };
+                while let Some(n) = step {
                     *current = n;
                     if n.element().is_some() {
                         return Some(n);
                     }
+                    step = n.preorder_next(*root);
                 }
                 None
             }
@@ -93,6 +106,17 @@ impl<'doc> HasCursor<'doc> {
                 *cur = next_sibling_element(n);
                 Some(n)
             }
+        }
+    }
+}
+
+impl HasCursor<'_> {
+    /// Leave the subtree of the candidate last returned out of the rest of
+    /// the walk. Only a [`HasCursor::Subtree`] has candidates inside an
+    /// earlier one's subtree; the others are left as they are.
+    fn prune(&mut self) {
+        if let HasCursor::Subtree { past, .. } = self {
+            *past = true;
         }
     }
 }
@@ -774,8 +798,23 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
                             return Ok(Outcome::Done(false));
                         }
                         None => {
-                            self.cursors.pop();
+                            // Level `level` searched the whole subtree of the
+                            // candidate below it (a descendant combinator) and
+                            // the rest of the chain matched nowhere in it. That
+                            // depends only on where `level` stands, so no
+                            // candidate inside that subtree can do better: the
+                            // level below skips it. Without this, `:has(* x)`
+                            // over a chain n deep walked n^2 nodes per subject,
+                            // and `:has(* * x)` ran into the work budget.
+                            let exhausted = self.cursors.pop();
                             t.level -= 1;
+                            if matches!(exhausted, Some(HasCursor::Subtree { .. })) {
+                                if let Some(below) =
+                                    self.cursors.get_mut((t.cur_base + t.level) as usize)
+                                {
+                                    below.prune();
+                                }
+                            }
                         }
                     }
                 },

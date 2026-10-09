@@ -939,6 +939,13 @@ impl<'doc> HtmlNode<'doc> {
         if let Some(c) = self.first_child() {
             return Some(c);
         }
+        self.preorder_next_past(root)
+    }
+
+    /// The node after this one's whole subtree in a pre-order walk of
+    /// `root`'s subtree: [`preorder_next`](Self::preorder_next) without going
+    /// down into this node's children. None past the last.
+    pub fn preorder_next_past(self, root: Self) -> Option<Self> {
         let mut n = self;
         loop {
             if n == root {

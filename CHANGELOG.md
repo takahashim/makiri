@@ -28,6 +28,8 @@
 * `parse_stylesheet` trims only CSS whitespace and never an escaped one:
   `screen\ ` came back as `screen\`. A `:bad_style`'s `selector_text` no
   longer keeps the whitespace before its `{`.
+* HTML `:has()` with a descendant combinator is no longer slow on deep
+  documents: `:has(* * x)` exceeded the work budget at 200 levels.
 
 ## [0.14.0] - 2026-10-04
 
