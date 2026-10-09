@@ -16,8 +16,8 @@
 //! The layout is Lexbor's (`#b > span`, `, ` between alternatives, `odd` /
 //! `even`, lower-case pseudo names), so selectors without escapes read as
 //! they did. What this cannot write faithfully - a pseudo-element function,
-//! whose argument Lexbor does not keep, an attribute in the `*` namespace
-//! (see `simple`), or a kind the typed view does not know - is
+//! whose argument Lexbor does not keep, or a kind the typed view does not
+//! know - is
 //! [`Fail::Lossy`], never a wrong text: the stylesheet reader reports that
 //! rule as `:bad_style` with the caller's own prelude.
 //!
@@ -150,14 +150,17 @@ fn simple<'p>(out: &mut Vec<u8>, s: Selector<'p>) -> Result<Option<Lists<'p>>, F
             ident(out, s.name())?;
         }
         Simple::Attribute(at) => {
-            // Lexbor stores `*` for `[|a]` (no namespace) as well as for an
-            // escaped `\*|` prefix, and rejects `[*|a]` itself, so `*` here
-            // cannot be written back as any of them.
-            if s.ns() == Some(b"*") {
-                return Err(Fail::Lossy);
-            }
             put(out, b"[")?;
-            namespace(out, s)?;
+            // Lexbor stores `*` for `[|a]` - no namespace - and rejects
+            // `[*|a]` itself, so `*` here is `[|a]`, as the XML lowering
+            // reads it. An escaped `\*|` prefix is stored the same way and
+            // comes back as `|`: as for a type selector (`namespace`), a
+            // prefix named `*` needs an `@namespace` that declares one.
+            if s.ns() == Some(b"*") {
+                put(out, b"|")?;
+            } else {
+                namespace(out, s)?;
+            }
             ident(out, s.name())?;
             if let Some(value) = at.value {
                 put(
