@@ -13,6 +13,16 @@
   (always `"CSS1Compat"`), the HTML Document's names, since the DOM puts
   every XML document in no-quirks mode.
 
+### Fixed
+
+* `Makiri::Lexbor::CSS.parse_stylesheet`: a selector's `:text` keeps its
+  escapes. Identifiers were written decoded, so `.md\:block` came back as
+  `.md:block` and `.a\,b` as `.a,b`, which read back as a different selector
+  or not at all; an attribute value's `\` or newline went out unescaped; and
+  `:current(S)` lost its argument. The text is now CSSOM's serialization
+  (`[a="x" i]` gains the space before its flag); selectors without escapes
+  read as before.
+
 ## [0.14.0] - 2026-10-04
 
 ### Added

@@ -2783,3 +2783,101 @@ mod serialize_walk {
         }
     }
 }
+
+mod selector_text {
+    //! [`crate::lexbor::selector_text`] against Lexbor's own parser: the text
+    //! written for a selector parses back to the same selector, whatever
+    //! characters its names and values hold.
+    use crate::lexbor::selector_text::{ident, string};
+    use crate::lexbor::stylesheet::{parse, Rule};
+
+    /// The `:text` of each selector of `css`'s first rule, which must be a
+    /// style rule.
+    fn texts(css: &[u8]) -> Vec<Vec<u8>> {
+        let Ok(rules) = parse(css) else {
+            panic!("{:?} failed to parse", String::from_utf8_lossy(css));
+        };
+        match rules.into_iter().next() {
+            Some(Rule::Style { selectors, .. }) => selectors.into_iter().map(|s| s.text).collect(),
+            _ => panic!("{:?}: not a style rule", String::from_utf8_lossy(css)),
+        }
+    }
+
+    fn rule(sel: &[u8]) -> Vec<u8> {
+        [sel, b"{x:y}"].concat()
+    }
+
+    #[test]
+    fn written_text_reads_back_as_itself() {
+        for sel in [
+            r".md\:block",
+            r".a\,b",
+            r"#x\.y",
+            r".\31 0",
+            r#"[data-x="a\"b"]"#,
+            r#"[a="x\\y"]"#,
+            r#"[a="a\a b"]"#,
+            r":is(.md\:block, #x\.y)",
+            r":nth-child(2n+1 of .a\:b)",
+            r":current(.a\:b)",
+            r":has(> a\+b)",
+            "div.a, #b > span",
+        ] {
+            let first = texts(&rule(sel.as_bytes()));
+            let joined = first.join(&b", "[..]);
+            assert_eq!(texts(&rule(&joined)), first, "{sel}");
+        }
+    }
+
+    /// A tiny xorshift64*, as in `css_match`'s randomized tests: a fixed seed
+    /// keeps a failure reproducible.
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self) -> usize {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0 as usize
+        }
+    }
+
+    /// Text from characters that mean something in a selector, or need an
+    /// escape, or are not ASCII.
+    fn random_text(rng: &mut Rng) -> String {
+        const CHARS: &[char] = &[
+            'a', 'Z', '0', '9', '-', '_', ':', '/', '[', ']', ',', ' ', '.', '#', '+', '>', '~',
+            '\\', '"', '\'', '(', ')', '@', '!', '*', '|', '=', '{', '}', ';', 'é', '日', '\t',
+            '\n', '\r', '\u{7f}', '\u{1}', '\u{fffd}',
+        ];
+        let len = 1 + rng.next() % 6;
+        (0..len).map(|_| CHARS[rng.next() % CHARS.len()]).collect()
+    }
+
+    #[test]
+    fn any_name_or_value_survives_the_round_trip() {
+        let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
+        for i in 0..5000 {
+            let raw = random_text(&mut rng);
+            let raw = raw.as_bytes();
+
+            // As a class, an id and an attribute name: written by us from
+            // the raw name, so Lexbor decoding it and us writing it again
+            // must give the same text back.
+            for lead in [&b"."[..], b"#", b"["] {
+                let mut sel = lead.to_vec();
+                ident(&mut sel, raw).unwrap_or_else(|_| panic!("oom"));
+                if lead == b"[" {
+                    sel.push(b']');
+                }
+                assert_eq!(texts(&rule(&sel)), vec![sel.clone()], "#{i} {raw:?}");
+            }
+
+            // As an attribute value.
+            let mut sel = b"[a=".to_vec();
+            string(&mut sel, raw).unwrap_or_else(|_| panic!("oom"));
+            sel.push(b']');
+            assert_eq!(texts(&rule(&sel)), vec![sel.clone()], "#{i} {raw:?}");
+        }
+    }
+}

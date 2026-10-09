@@ -16,8 +16,9 @@
 //!
 //! Error recovery follows css-syntax-3: a malformed declaration is dropped, an
 //! unknown at-rule skipped, a selector list Lexbor rejects surfaces as
-//! `:bad_style` with its raw prelude for the caller to re-validate. A broken
-//! stylesheet never raises; only a hard parser failure does.
+//! `:bad_style` with its raw prelude for the caller to re-validate - as does
+//! one Lexbor accepted but `selector_text` cannot write back faithfully. A
+//! broken stylesheet never raises; only a hard parser failure does.
 //!
 //! # Two phases, and why
 //!
@@ -44,6 +45,8 @@ use crate::lexbor::abi::consts as k;
 use crate::lexbor::abi::{lxb_css_parser_create, lxb_css_parser_destroy, lxb_css_parser_init};
 use crate::lexbor::chunks::{chunk_cb, Chunks};
 use crate::lexbor::css_engine::{lexbor_str, Owned};
+use crate::lexbor::css_parser::list_from_raw;
+use crate::lexbor::selector_text;
 
 /// Bound on at-rule nesting: fail closed rather than recurse without limit on a
 /// pathologically nested stylesheet.
@@ -227,32 +230,32 @@ unsafe fn declarations(
     Ok(out)
 }
 
-unsafe fn selectors(
-    c: &mut Conv,
-    sel: *mut lxb::lxb_css_selector_list_t,
-) -> Result<Vec<Selector>, Fail> {
+/// Each comma alternative of a style rule's selector list, as text
+/// (`lexbor::selector_text`) with its specificity - or None when one of them
+/// cannot be written back as it was written, for the caller to report the
+/// rule as `:bad_style` rather than hand out a selector that means something
+/// else.
+///
+/// # Safety
+/// `sel` is null or the list of a style rule in a stylesheet that outlives
+/// the call.
+unsafe fn selectors(sel: *mut lxb::lxb_css_selector_list_t) -> Result<Option<Vec<Selector>>, Fail> {
     let mut out = Vec::new();
-    let mut l = sel;
-    while !l.is_null() {
-        // One comma branch only: serialize THIS list's chain without following
-        // list->next, which would re-emit the whole comma list.
-        let first = (*l).first;
-        let text = serialize_with(&mut c.scratch, |s| {
-            lxb::lxb_css_selector_serialize_chain(first, Some(chunk_cb::<Vec<u8>>), s.ctx())
-        })?;
-        let sp = specificity((*l).specificity);
-        if out
-            .falloc_push(Selector {
-                text,
-                specificity: sp,
-            })
-            .is_err()
-        {
-            return Err(Fail::Oom);
+    // SAFETY: forwarded; the stylesheet is not touched while the view lives.
+    for list in unsafe { list_from_raw(sel) } {
+        let mut text = Vec::new();
+        match selector_text::write(list, &mut text) {
+            Ok(()) => {}
+            Err(selector_text::Fail::Lossy) => return Ok(None),
+            Err(selector_text::Fail::Oom) => return Err(Fail::Oom),
         }
-        l = (*l).next;
+        out.falloc_push(Selector {
+            text,
+            specificity: specificity(list.specificity()),
+        })
+        .or_oom()?;
     }
-    Ok(out)
+    Ok(Some(out))
 }
 
 /// Slice `[begin, end)` out of the original input, trimming ASCII whitespace.
@@ -325,9 +328,18 @@ unsafe fn rules(
         let entry = match (*r).type_ as usize {
             k::CSS_RULE_STYLE => {
                 let st = r as *mut lxb::lxb_css_rule_style_t;
-                Some(Rule::Style {
-                    selectors: selectors(c, (*st).selector)?,
-                    declarations: declarations(c, (*st).declarations)?,
+                let declarations = declarations(c, (*st).declarations)?;
+                Some(match selectors((*st).selector)? {
+                    Some(selectors) => Rule::Style {
+                        selectors,
+                        declarations,
+                    },
+                    // Not writable as text: the caller re-validates the
+                    // prelude as written, as for a selector Lexbor rejected.
+                    None => Rule::BadStyle {
+                        selector_text: slice_trim(c.css, (*st).prelude_begin, (*st).prelude_end)?,
+                        declarations,
+                    },
                 })
             }
             k::CSS_RULE_AT_RULE => {

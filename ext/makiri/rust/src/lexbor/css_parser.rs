@@ -211,6 +211,8 @@ mod raw {
         l::lxb_css_selector_pseudo_class_function_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_FUNCTION_HAS;
     pub const LEXBOR_CONTAINS: Pf =
         l::lxb_css_selector_pseudo_class_function_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_FUNCTION_LEXBOR_CONTAINS;
+    pub const CURRENT: Pf =
+        l::lxb_css_selector_pseudo_class_function_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_FUNCTION_CURRENT;
 }
 
 /// A reference into the arena a parse built.
@@ -242,7 +244,6 @@ impl Parsed<'_> {
 /// # Safety
 /// `p` must be null or point into an arena the caller keeps alive and does
 /// not mutate for `'p`.
-#[cfg_attr(not(feature = "ruby"), allow(dead_code))]
 pub(crate) unsafe fn list_from_raw<'p>(p: *mut SelectorList) -> Lists<'p> {
     // SAFETY: forwarded to the caller's contract.
     Lists(unsafe { arena(p) }.map(List))
@@ -258,6 +259,12 @@ impl<'p> List<'p> {
     pub fn first(self) -> Option<Selector<'p>> {
         // SAFETY: a list's links point into its own arena.
         unsafe { arena(self.0.first) }.map(Selector)
+    }
+
+    /// Lexbor's packed specificity for this list - `[a, b, c]` in 9-bit
+    /// fields, with flags above them (`stylesheet::specificity` unpacks it).
+    pub fn specificity(self) -> u32 {
+        self.0.specificity
     }
 }
 
@@ -493,6 +500,33 @@ impl<'p> Selector<'p> {
     pub fn next(self) -> Option<Selector<'p>> {
         // SAFETY: a selector's links point into its own arena.
         unsafe { arena(self.0.next) }.map(Selector)
+    }
+
+    /// `::x()` rather than `::x`; `simple` reports both as
+    /// [`Simple::PseudoElement`].
+    pub fn is_pseudo_element_function(self) -> bool {
+        self.0.type_ == raw::PSEUDO_ELEMENT_FUNCTION
+    }
+
+    /// `:current()`'s argument: the one functional pseudo-class
+    /// [`FunctionArg::Other`] covers that stores a selector list, which only
+    /// the stylesheet's selector text (`lexbor::selector_text`) reads - the
+    /// matchers answer `:current()` as `Other`. None for any other selector;
+    /// an empty `Lists` for `:current()` with nothing in it.
+    pub fn current_arg(self) -> Option<Lists<'p>> {
+        if self.0.type_ != raw::PSEUDO_CLASS_FUNCTION {
+            return None;
+        }
+        // SAFETY: Lexbor fills `u.pseudo` for a functional pseudo-class.
+        let pseudo = unsafe { self.0.u.pseudo };
+        if pseudo.type_ != raw::CURRENT {
+            return None;
+        }
+        // SAFETY: for `:current()` Lexbor stores a selector list (or
+        // nothing), in the arena.
+        Some(Lists(
+            unsafe { arena(pseudo.data as *const SelectorList) }.map(List),
+        ))
     }
 
     /// An attribute selector's parts; `simple` calls it for no other kind.
