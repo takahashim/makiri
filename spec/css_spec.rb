@@ -254,11 +254,12 @@ RSpec.describe "Makiri CSS" do
       expect(d.css("td").length).to eq(1)
     end
 
-    # `:current()` is not in Selectors Level 4 (the time-dimensional
-    # pseudo-classes were deferred to Level 5). Lexbor matches `:current(S)`
-    # as `:is(S)`; answering that, or "nothing", would be a guess, so it is
-    # refused like `:lexbor-contains()`. The argument-less form is already a
-    # syntax error, from Lexbor's parser.
+    # Selectors 5 §6 (the time-dimensional pseudo-classes left Level 4 for
+    # it) has `:current(S)` match nothing on an element with no timeline,
+    # which HTML defines for none; Lexbor matches it as `:is(S)`; and the
+    # argument-less form is a syntax error, from Lexbor's parser. Makiri
+    # takes neither answer and refuses it, like `:lexbor-contains()` - as
+    # the XML side does.
     it "refuses :current() as unsupported" do
       d = Makiri::HTML("<p><a>x</a></p>")
       expect { d.css(":current(a)") }.to raise_error(Makiri::Error, /could not be run/)

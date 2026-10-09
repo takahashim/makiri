@@ -106,9 +106,11 @@
 //! Still open, and never a silent wrong answer: `::pseudo-elements` (never
 //! match), `:lexbor-contains()` (raised - a Lexbor extension, not CSS,
 //! deliberately not reimplemented; see `CHANGELOG.md`), `:current()`
-//! (raised - not in Selectors Level 4, which deferred the time-dimensional
-//! pseudo-classes to Level 5; Lexbor matches it as `:is()`, and its parser
-//! already refuses the argument-less `:current`/`:past`/`:future`). Closed,
+//! (raised - Selectors 5 §6, where the time-dimensional pseudo-classes went
+//! from Level 4, has it match nothing on an element with no timeline, which
+//! is every HTML element; Lexbor matches it as `:is()`; and Lexbor's parser
+//! refuses the argument-less `:current`/`:past`/`:future`. Refused rather
+//! than answered with either). Closed,
 //! not open: the selector-nesting cap (see the next section), the work budget
 //! ([`Budget`]), and allocation - every table and stack a query
 //! uses is query-local and grows through `falloc` ([`Compiled`], `Query`), so
@@ -232,8 +234,8 @@ pub enum MatchFailure {
     /// implements and this port deliberately does not
     /// (`:lexbor-contains()`, `FunctionArg::Contains` - a Lexbor extension,
     /// not CSS; `CHANGELOG.md` records the removal - and `:current()`,
-    /// `FunctionArg::Current`, which Lexbor matches as `:is()` and Selectors
-    /// Level 4 does not define). Answering
+    /// `FunctionArg::Current`, which Lexbor matches as `:is()` where
+    /// Selectors 5 has it match nothing - the module doc). Answering
     /// `false` for either would be indistinguishable from "genuinely no
     /// element satisfies this", which it is not.
     Unsupported,
