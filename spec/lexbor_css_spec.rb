@@ -303,6 +303,21 @@ RSpec.describe Makiri::Lexbor::CSS do
           .to eq([{ name: "color", value: "blue", important: false }])
       end
 
+      it "refuses the rule when a forgiving list would drop the rewritten alternative" do
+        [":is(.a, :lexbor-contains(#x))", ":where(.a, :lexbor-contains(1 2))",
+         "a:has(.a, :lexbor-contains(#x))"].each do |sel|
+          rules = parse("#{sel}{color:blue}.b{color:green}")
+          expect(rules.map { |r| r[:type] }).to eq(%i[bad_style style]), sel
+          expect(rules[0][:selector_text]).to eq(sel)
+        end
+      end
+
+      it "keeps a rule whose own text reads like the rewrite" do
+        rules = parse(".zzzzzzzzzzzzzzz{color:blue}:lexbor-contains(#x){color:red}")
+        expect(rules.map { |r| r[:type] }).to eq(%i[style bad_style])
+        expect(rules[0][:selectors].map { |s| s[:text] }).to eq([".zzzzzzzzzzzzzzz"])
+      end
+
       it "keeps a well-formed :lexbor-contains() working" do
         rules = parse(%(.a{color:red}:lexbor-contains("x"){color:blue}.b{color:green}))
         expect(rules.map { |r| r[:type] }).to eq(%i[style style style])

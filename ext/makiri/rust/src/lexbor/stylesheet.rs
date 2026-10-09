@@ -344,15 +344,30 @@ unsafe fn rules(
             k::CSS_RULE_STYLE => {
                 let st = r as *mut lxb::lxb_css_rule_style_t;
                 let declarations = declarations(c, (*st).declarations)?;
-                Some(match selectors((*st).selector)? {
+                let (begin, end) = ((*st).prelude_begin, (*st).prelude_end);
+                /* A rewrite in the prelude is a :lexbor-contains() the guard
+                 * refused. A forgiving list (`:is()`, `:where()`, `:has()`)
+                 * drops that alternative and keeps the rule, so the selectors
+                 * Lexbor parsed are fewer than the caller wrote: the rule is
+                 * refused as written, never handed out narrowed. */
+                let rewritten = c
+                    .parsed
+                    .is_some_and(|p| p.get(begin..end) != c.css.get(begin..end));
+                let selectors = if rewritten {
+                    None
+                } else {
+                    selectors((*st).selector)?
+                };
+                Some(match selectors {
                     Some(selectors) => Rule::Style {
                         selectors,
                         declarations,
                     },
-                    // Not writable as text: the caller re-validates the
-                    // prelude as written, as for a selector Lexbor rejected.
+                    // Rewritten, or not writable as text: the caller
+                    // re-validates the prelude as written, as for a selector
+                    // Lexbor rejected.
                     None => Rule::BadStyle {
-                        selector_text: slice_trim(c.css, (*st).prelude_begin, (*st).prelude_end)?,
+                        selector_text: slice_trim(c.css, begin, end)?,
                         declarations,
                     },
                 })

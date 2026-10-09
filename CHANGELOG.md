@@ -26,6 +26,12 @@
 
 ### Fixed
 
+* `Makiri::Lexbor::CSS.parse_stylesheet`: a style rule whose selector holds a
+  `:lexbor-contains()` with an argument it refuses is `:bad_style`, with the
+  selector as written, wherever that sits. Inside `:is()`, `:where()` or
+  `:has()` - forgiving lists, which drop an alternative they cannot parse -
+  the rule came back as `:style` without that alternative:
+  `:is(.a, :lexbor-contains(#x))` as `:is(.a)`.
 * `Makiri::Lexbor::CSS.parse_stylesheet`: a selector's `:text` keeps its
   escapes. Identifiers were written decoded, so `.md\:block` came back as
   `.md:block` and `.a\,b` as `.a,b`, which read back as a different selector
