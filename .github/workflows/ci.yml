@@ -5,6 +5,13 @@ on:
     branches: [main, master]
   pull_request:
 
+# A new push to a pull request supersedes the run on its previous head. The
+# event is in the group so a push to main never queues behind (or replaces) a
+# nightly run of the same workflow.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     name: Ruby ${{ matrix.ruby }} on ${{ matrix.os }}

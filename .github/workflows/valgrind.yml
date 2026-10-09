@@ -23,6 +23,13 @@ on:
     - cron: "0 2 * * *"
   workflow_dispatch:
 
+# A new push to a pull request supersedes the run on its previous head. The
+# event is in the group so a push to main never queues behind (or replaces) a
+# nightly run of the same workflow.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # Valgrind memcheck on the full spec suite.  Complements ASan by catching
   # layout-independent errors ASan misses: use of uninitialised values, and
@@ -111,8 +118,8 @@ jobs:
   # (parse/drop cycles) scale their iteration count down under stress
   # (`gc_churn_iters` / `GC_COMPACT_ITERS`) because each stressed iteration is
   # orders of magnitude heavier; `GC_COMPACT_ITERS` below tunes the total runtime
-  # (~6-9 min on CI at 200).  An earlier version forced GC.stress onto the
-  # *entire* suite (~800 examples): it ran 1h40m+ and never finished, while
+  # (~14.5 min on CI at 200 in one job, hence the three shards below).  An
+  # earlier version forced GC.stress onto the *entire* suite (~800 examples): it ran 1h40m+ and never finished, while
   # testing borrowed-pointer discipline on hundreds of examples that have none.
   # The rest of the suite still runs in ci.yml.
   #
@@ -123,7 +130,7 @@ jobs:
     # Pull requests, nightly and on demand - not on push (the valgrind job is the
     # post-merge gate). See the note under `on:` for why pull requests.
     if: github.event_name != 'push'
-    name: GC.auto_compact + GC.stress (Ruby ${{ matrix.ruby }})
+    name: GC.auto_compact + GC.stress (Ruby ${{ matrix.ruby }}, ${{ matrix.shard.name }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -137,6 +144,17 @@ jobs:
       fail-fast: false
       matrix:
         ruby: ["3.4"]
+        # Split by spec file into three ~equal parts (measured per file: the
+        # handler spec alone is a third, attribute + source_location another).
+        # The last shard is everything ELSE, so a newly tagged file lands
+        # there rather than in no shard; rebalance if it grows past the others.
+        shard:
+          - name: xpath_handler
+            args: spec/xpath_handler_spec.rb
+          - name: attribute
+            args: spec/attribute_spec.rb spec/source_location_spec.rb
+          - name: rest
+            args: --exclude-pattern "spec/{xpath_handler,attribute,source_location}_spec.rb" spec
 
     steps:
       - name: Checkout (with vendored Lexbor submodule)
@@ -166,4 +184,4 @@ jobs:
       # auto_compact globally and wrap each example in GC.stress; --tag gc_compact
       # limits the run to the borrowed-pointer examples.
       - name: Run GC-sensitive examples under GC.auto_compact + GC.stress
-        run: bundle exec rspec --tag gc_compact spec
+        run: bundle exec rspec --tag gc_compact ${{ matrix.shard.args }}

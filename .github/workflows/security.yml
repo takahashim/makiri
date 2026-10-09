@@ -8,6 +8,13 @@ on:
     - cron: "17 19 * * *"
   workflow_dispatch:
 
+# A new push to a pull request supersedes the run on its previous head. The
+# event is in the group so a push to main never queues behind (or replaces) a
+# nightly run of the same workflow.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # A "C safety lint" job stood here (`rake security:clint`, over
   # script/check_c_safety.rb). It enforced rules about C that no longer exists -
