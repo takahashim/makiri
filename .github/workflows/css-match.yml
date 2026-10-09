@@ -171,6 +171,24 @@ jobs:
             -dict=css.dict \
             -print_final_stats=1
 
+      # The cache saves this directory after every run, so without this it
+      # only grows: every nightly hour adds units and nothing ever drops one.
+      # It reached ~58k files (with the sibling, ~107k units replayed before
+      # the first mutation) of which libFuzzer kept ~2.8k, and a short run
+      # spent its whole 180 s replaying - 0 new units, no fuzzing at all.
+      # Minimizing before the save keeps only what adds coverage. The first
+      # run after a long gap pays one replay of the backlog; later ones a
+      # few thousand units.
+      - name: Minimize the corpus before it is cached
+        working-directory: ext/makiri/rust/fuzz
+        run: |
+          before=$(ls corpus/${{ matrix.target }} | wc -l)
+          cargo fuzz cmin ${{ matrix.target }} corpus/${{ matrix.target }} -- \
+            -max_len=4096 \
+            -timeout=30
+          after=$(ls corpus/${{ matrix.target }} | wc -l)
+          echo "corpus/${{ matrix.target }}: $before -> $after files"
+
       - name: Upload reproducers
         if: failure()
         uses: actions/upload-artifact@v4
