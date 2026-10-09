@@ -113,6 +113,23 @@ RSpec.describe "native stack guard" do
     end
   end
 
+  # The selector text `parse_stylesheet` returns is written on a heap work
+  # list (`lexbor::selector_text`); Lexbor's own serializer it replaced
+  # recursed once per nested list.
+  describe "stylesheet selector text, inside a small Fiber" do
+    it "writes deeply nested selector lists back in full" do
+      status, out, err = run_isolated({ "RUBY_FIBER_MACHINE_STACK_SIZE" => "131072" }, <<~RUBY)
+        [":is(", ":not(", ":has(", ":nth-child(1 of "].each do |open|
+          sel = open * 5000 + ".a\\\\:b" + ")" * 5000
+          r = Fiber.new { Makiri::Lexbor::CSS.parse_stylesheet(sel + "{x:y}") }.resume
+          print r[0][:selectors][0][:text] == sel ? "ok;" : "differs;"
+        end
+      RUBY
+      expect(status).to be_success, err
+      expect(out).to eq("ok;ok;ok;ok;"), err
+    end
+  end
+
   describe "at the default Fiber stack size" do
     it "is unaffected: the same inputs answer exactly as outside a Fiber" do
       x = Makiri::XML("<r><a/></r>")

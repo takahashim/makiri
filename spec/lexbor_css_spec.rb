@@ -153,6 +153,79 @@ RSpec.describe Makiri::Lexbor::CSS do
     end
   end
 
+  # `:text` is CSSOM's serialization (`lexbor::selector_text`): identifiers and
+  # strings are escaped, so the text means what the selector did. Lexbor's own
+  # serializer wrote names decoded - `.md\:block` as `.md:block` - and a caller
+  # re-parsing the text (dommy's cascade) lost or misapplied the rule.
+  describe "selector text" do
+    def texts(css)
+      rule = parse("#{css}{x:y}").first
+      expect(rule[:type]).to eq(:style), css
+      rule[:selectors].map { |s| s[:text] }
+    end
+
+    {
+      '.md\:block' => '.md\:block',
+      '.hover\:bg-red:hover' => '.hover\:bg-red:hover',
+      '.w-1\/2' => '.w-1\/2',
+      '.\[mask-type\:alpha\]' => '.\[mask-type\:alpha\]',
+      '.\31 0' => '.\31 0',
+      '.\@container' => '.\@container',
+      '.\!important' => '.\!important',
+      '.a\ b' => '.a\ b',
+      '#x\.y' => '#x\.y',
+      '.a\#b' => '.a\#b',
+      '.a\+b' => '.a\+b',
+      '.a\,b' => '.a\,b',
+      '.\-\-x' => ".--x",
+      '.-\31' => '.-\31 ',
+      'd\69 v' => "div",
+      '[data-x="a\"b"]' => '[data-x="a\"b"]',
+      '[a="x\\\\y"]' => '[a="x\\\\y"]',
+      '[a="a\a b"]' => '[a="a\a b"]',
+      '[a="x" i]' => '[a="x" i]',
+      ':is(.md\:block)' => ':is(.md\:block)',
+      ':not(#x\.y)' => ':not(#x\.y)',
+      ':has(> .a\,b)' => ':has(> .a\,b)',
+      ':nth-child(2n+1 of .a\:b)' => ':nth-child(odd of .a\:b)',
+      ':current(.a\:b)' => ':current(.a\:b)',
+    }.each do |css, text|
+      it "writes #{css} as #{text}, which reads back the same" do
+        expect(texts(css)).to eq([text])
+        expect(texts(text)).to eq([text])
+        orig = parse("#{css}{x:y}")[0][:selectors][0][:specificity]
+        expect(parse("#{text}{x:y}")[0][:selectors][0][:specificity]).to eq(orig)
+      end
+    end
+
+    it "keeps an escaped comma or combinator inside one selector" do
+      expect(texts('.a\,b, .a\+b, .a\ b')).to eq(['.a\,b', '.a\+b', '.a\ b'])
+    end
+
+    it "gives text that matches the elements the original selector matches" do
+      doc = Makiri::HTML(<<~HTML)
+        <div class="md:block w-1/2 10 a,b a+b" id="x.y" data-x='a"b' data-y="x\\y">
+          <p class="a b hidden md:block">t</p><b>u</b>
+        </div>
+      HTML
+      ['.md\:block', '.w-1\/2', '.\31 0', '.a\,b', '.a\+b', '#x\.y', '.a\ b',
+       '[data-x="a\"b"]', '[data-y="x\\\\y"]', ':is(.md\:block) > p', 'div:has(> .md\:block)',
+       ':not(.md\:block)'].each do |css|
+        text = texts(css).first
+        expect(doc.css(text).to_a).to eq(doc.css(css).to_a), "#{css} -> #{text}"
+      end
+    end
+
+    it "leaves selectors without escapes as Lexbor wrote them" do
+      expect(texts("div.a, #b > span, a + b, a ~ b, ns|a, *|*, |a")).to eq(
+        ["div.a", "#b > span", "a + b", "a ~ b", "ns|a", "*|*", "|a"]
+      )
+      expect(texts(":nth-child(2n), :nth-last-child(-n+3), :nth-of-type(5)")).to eq(
+        [":nth-child(even)", ":nth-last-child(-n+3)", ":nth-of-type(5)"]
+      )
+    end
+  end
+
   describe "input contract" do
     it "rejects a NUL byte" do
       expect { parse("a{}\0x") }.to raise_error(Makiri::Error, /NUL/)

@@ -43,6 +43,8 @@ pub mod memory;
 /// process-global parser/arena, separate from `css_parser`'s (shared with the
 /// XML lowering), and the matcher's kept `Scratch`.
 pub mod selector_cache;
+/// A parsed selector written back as CSSOM text, for the stylesheet reader.
+pub mod selector_text;
 /// The OLD `lxb_selectors`-callback engine `css_match` replaced: compiled
 /// into tests only - and into the `html_css_diff` fuzz harness, through the
 /// `css-reference` feature - as the reference the differential checks

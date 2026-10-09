@@ -292,7 +292,6 @@ fn main() {
         .allowlist_function("lxb_css_stylesheet_destroy")
         .allowlist_function("lxb_css_property_serialize")
         .allowlist_function("lxb_css_property_serialize_name")
-        .allowlist_function("lxb_css_selector_serialize_chain")
         // One node's own markup, plain and pretty: Makiri drives the walk
         // itself (`adapter::html::serialize`), so a <template> writes its
         // contents and not its own children, as the HTML Standard says, and

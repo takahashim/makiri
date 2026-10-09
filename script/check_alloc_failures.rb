@@ -428,6 +428,7 @@ SCENARIOS = {
   "css_stylesheet" => lambda do
     css = <<~CSS
       div.a, p#b > span { color: red; margin: 0 !important }
+      .md\\:block, :is(.a\\,b, :not(#x\\.y)) > [a="q\\\\"] { color: red }
       p::before { content: "x" }
       @media (min-width: 600px) { .x { color: blue } }
       @font-face { font-family: F; src: url(f.woff) }
