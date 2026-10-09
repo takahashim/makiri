@@ -563,7 +563,7 @@ fn combinator_axis(b: &Build, c: Combinator, reverse: bool) -> Result<Axis, Repo
         (Combinator::Child, true) => Axis::Parent,
         (Combinator::SubsequentSibling, false) => Axis::FollowingSibling,
         (Combinator::SubsequentSibling, true) => Axis::PrecedingSibling,
-        (Combinator::NextSibling | Combinator::Other, _) => {
+        (Combinator::NextSibling | Combinator::Column | Combinator::Other, _) => {
             return Err(b.fail(ErrorKind::Syntax, "unsupported CSS combinator"));
         }
     })

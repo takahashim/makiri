@@ -21,7 +21,10 @@
   or not at all; an attribute value's `\` or newline went out unescaped; and
   `:current(S)` lost its argument. The text is now CSSOM's serialization
   (`[a="x" i]` gains the space before its flag); selectors without escapes
-  read as before.
+  read as before. A selector it cannot write back as written (`[|a]`, which
+  Lexbor stores as the any-namespace `*`) is reported as `:bad_style`.
+* `:bad_style`'s `selector_text` is trimmed: a rule Lexbor rejected kept the
+  whitespace before its `{`.
 
 ## [0.14.0] - 2026-10-04
 

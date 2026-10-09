@@ -211,7 +211,7 @@ impl Shape {
     fn simple<'p>(&mut self, s: Selector<'p>, in_has: bool, work: &mut Vec<(Lists<'p>, bool)>) {
         match s.combinator() {
             Combinator::Descendant | Combinator::SubsequentSibling => self.backtracks += 1,
-            Combinator::Other => self.departs = true,
+            Combinator::Column | Combinator::Other => self.departs = true,
             _ => {}
         }
         let upper = s.name().iter().any(u8::is_ascii_uppercase);

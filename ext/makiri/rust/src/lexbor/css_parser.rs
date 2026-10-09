@@ -136,6 +136,7 @@ mod raw {
     pub const SIBLING: Comb = l::lxb_css_selector_combinator_t_LXB_CSS_SELECTOR_COMBINATOR_SIBLING;
     pub const FOLLOWING: Comb =
         l::lxb_css_selector_combinator_t_LXB_CSS_SELECTOR_COMBINATOR_FOLLOWING;
+    pub const CELL: Comb = l::lxb_css_selector_combinator_t_LXB_CSS_SELECTOR_COMBINATOR_CELL;
 
     type Match = l::lxb_css_selector_match_t;
     pub const EQUAL: Match = l::lxb_css_selector_match_t_LXB_CSS_SELECTOR_MATCH_EQUAL;
@@ -307,7 +308,10 @@ pub enum Combinator {
     NextSibling,
     /// `~`
     SubsequentSibling,
-    /// Anything else Lexbor parses - the column combinator `||`.
+    /// `||`, the column combinator.
+    Column,
+    /// A value this view does not know - none today; a Lexbor update could
+    /// add one.
     Other,
 }
 
@@ -480,6 +484,7 @@ impl<'p> Selector<'p> {
             raw::CHILD => Combinator::Child,
             raw::SIBLING => Combinator::NextSibling,
             raw::FOLLOWING => Combinator::SubsequentSibling,
+            raw::CELL => Combinator::Column,
             _ => Combinator::Other,
         }
     }

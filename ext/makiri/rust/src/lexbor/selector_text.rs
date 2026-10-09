@@ -14,11 +14,12 @@
 //! simply not called.
 //!
 //! The layout is Lexbor's (`#b > span`, `, ` between alternatives, `odd` /
-//! `even`), so selectors without escapes read as they did. What this cannot
-//! write faithfully - a pseudo-element function, whose argument Lexbor does
-//! not keep, or a kind the typed view does not know - is [`Fail::Lossy`],
-//! never a wrong text: the stylesheet reader reports that rule as
-//! `:bad_style` with the caller's own prelude.
+//! `even`, lower-case pseudo names), so selectors without escapes read as
+//! they did. What this cannot write faithfully - a pseudo-element function,
+//! whose argument Lexbor does not keep, an attribute in the `*` namespace
+//! (see `simple`), or a kind the typed view does not know - is
+//! [`Fail::Lossy`], never a wrong text: the stylesheet reader reports that
+//! rule as `:bad_style` with the caller's own prelude.
 //!
 //! Nested lists (`:is()`, `:not()`, `:where()`, `:has()`, `:current()`,
 //! `of S`) are walked on a heap work list, not by recursion, for the reason
@@ -117,8 +118,8 @@ fn combinator(out: &mut Vec<u8>, c: Combinator, lead: bool) -> Result<(), Fail> 
         Combinator::Child => b">",
         Combinator::NextSibling => b"+",
         Combinator::SubsequentSibling => b"~",
-        // The one other combinator Lexbor's parser builds.
-        Combinator::Other => b"||",
+        Combinator::Column => b"||",
+        Combinator::Other => return Err(Fail::Lossy),
     };
     if !lead {
         put(out, b" ")?;
@@ -149,6 +150,12 @@ fn simple<'p>(out: &mut Vec<u8>, s: Selector<'p>) -> Result<Option<Lists<'p>>, F
             ident(out, s.name())?;
         }
         Simple::Attribute(at) => {
+            // Lexbor stores `*` for `[|a]` (no namespace) as well as for an
+            // escaped `\*|` prefix, and rejects `[*|a]` itself, so `*` here
+            // cannot be written back as any of them.
+            if s.ns() == Some(b"*") {
+                return Err(Fail::Lossy);
+            }
             put(out, b"[")?;
             namespace(out, s)?;
             ident(out, s.name())?;
@@ -176,11 +183,11 @@ fn simple<'p>(out: &mut Vec<u8>, s: Selector<'p>) -> Result<Option<Lists<'p>>, F
         }
         Simple::PseudoClass(_) => {
             put(out, b":")?;
-            ident(out, s.name())?;
+            pseudo_name(out, s.name())?;
         }
         Simple::PseudoClassFunction(arg) => {
             put(out, b":")?;
-            ident(out, s.name())?;
+            pseudo_name(out, s.name())?;
             put(out, b"(")?;
             match arg {
                 FunctionArg::Selectors { lists, .. } => return Ok(Some(lists)),
@@ -211,15 +218,28 @@ fn simple<'p>(out: &mut Vec<u8>, s: Selector<'p>) -> Result<Option<Lists<'p>>, F
                 return Err(Fail::Lossy);
             }
             put(out, b"::")?;
-            ident(out, s.name())?;
+            pseudo_name(out, s.name())?;
         }
         Simple::Other => return Err(Fail::Lossy),
     }
     Ok(None)
 }
 
+/// A pseudo-class or pseudo-element name, in the lower case Lexbor's own name
+/// table spells it: it matched one of those ASCII names ignoring case, so
+/// `:HOVER` is written `:hover`, as Lexbor's serializer wrote it.
+fn pseudo_name(out: &mut Vec<u8>, name: &[u8]) -> Result<(), Fail> {
+    let start = out.len();
+    ident(out, name)?;
+    out[start..].make_ascii_lowercase();
+    Ok(())
+}
+
 /// `ns|` when a namespace was written: `|` alone for no namespace, `*|` for
-/// any.
+/// any. On a type selector `*` is taken as the any-namespace wildcard,
+/// although an escaped prefix (`\*|a`) is stored the same way: refusing it
+/// would refuse every `*|a`, and a prefix named `*` needs an `@namespace`
+/// that declares one.
 fn namespace(out: &mut Vec<u8>, s: Selector<'_>) -> Result<(), Fail> {
     let Some(ns) = s.ns() else { return Ok(()) };
     if ns == b"*" {

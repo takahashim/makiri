@@ -240,7 +240,7 @@ impl<'p> Compiled<'p> {
                 return Err(MatchFailure::TooComplex);
             }
             let comb = first.combinator();
-            if comb == Combinator::Other {
+            if matches!(comb, Combinator::Column | Combinator::Other) {
                 return Err(MatchFailure::Unsupported);
             }
             let simple_start = self.simple_index()?;
