@@ -24,8 +24,8 @@ pub mod abi;
 pub mod adapter;
 /// Lexbor's serializer callback, shared by every serializer below.
 pub mod chunks;
-/// An input restriction on `:lexbor-contains()`, applied before the CSS parser
-/// sees the text, decided on Lexbor's own CSS tokens.
+/// Keeps `:lexbor-contains()` from the CSS parser: every occurrence is
+/// renamed before the parser sees the text, found on Lexbor's own CSS tokens.
 pub mod contains_guard;
 /// The HTML CSS matcher behind `Node#css`/`#at_css`/`#matches?`
 /// (`glue::html_node::css`, via `selector_cache`): Lexbor's `lxb_selectors_*`

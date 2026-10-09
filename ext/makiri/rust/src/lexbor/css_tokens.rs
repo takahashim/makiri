@@ -4,7 +4,7 @@
 //! scanner and the tokenizer disagreed about where a string ends (CR and FF end
 //! one too; backslash-newline continues it; the tokenizer resumes after a bad
 //! string, the scanner stopped). Every disagreement was a `:lexbor-contains()`
-//! the guard never saw. So the guard now reads the tokens the parser reads,
+//! the guard never saw. So the guard reads the tokens the parser reads,
 //! produced by the same code over the same bytes: this module is the only
 //! place that touches the tokenizer, and it hands out nothing but a safe
 //! [`Tok`] per token.
@@ -22,10 +22,6 @@ use crate::lexbor::abi::consts::STATUS_OK;
 use crate::lexbor::abi::{
     lxb_css_syntax_token, lxb_css_syntax_token_consume,
     lxb_css_syntax_token_type_t_LXB_CSS_SYNTAX_TOKEN_FUNCTION as FUNCTION,
-    lxb_css_syntax_token_type_t_LXB_CSS_SYNTAX_TOKEN_IDENT as IDENT,
-    lxb_css_syntax_token_type_t_LXB_CSS_SYNTAX_TOKEN_R_PARENTHESIS as R_PARENTHESIS,
-    lxb_css_syntax_token_type_t_LXB_CSS_SYNTAX_TOKEN_STRING as STRING,
-    lxb_css_syntax_token_type_t_LXB_CSS_SYNTAX_TOKEN_WHITESPACE as WHITESPACE,
     lxb_css_syntax_token_type_t_LXB_CSS_SYNTAX_TOKEN__END as END,
     lxb_css_syntax_token_type_t_LXB_CSS_SYNTAX_TOKEN__EOF as EOF, lxb_css_syntax_tokenizer_clean,
     lxb_css_syntax_tokenizer_create, lxb_css_syntax_tokenizer_destroy,
@@ -36,17 +32,12 @@ use crate::lexbor::abi::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Kind {
     Function,
-    Ident,
-    String,
-    Whitespace,
-    RParen,
     Other,
 }
 
 /// One token: its kind, the `[start, end)` byte span it was read from (after
-/// any comment the tokenizer dropped in front of it), and - for an ident, a
-/// function or a string - its DECODED value, escapes resolved. A function's
-/// value is its name, without the `(`.
+/// any comment the tokenizer dropped in front of it), and - for a function -
+/// its DECODED name, escapes resolved, without the `(`.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Tok<'a> {
     pub kind: Kind,
@@ -150,13 +141,10 @@ fn run(
         if t.type_ == EOF || t.type_ == END {
             return Ok(());
         }
-        let kind = match t.type_ {
-            FUNCTION => Kind::Function,
-            IDENT => Kind::Ident,
-            STRING => Kind::String,
-            WHITESPACE => Kind::Whitespace,
-            R_PARENTHESIS => Kind::RParen,
-            _ => Kind::Other,
+        let kind = if t.type_ == FUNCTION {
+            Kind::Function
+        } else {
+            Kind::Other
         };
         // SAFETY: `base` is the member every token carries first; the tokenizer
         // sets it for every token it produces.
@@ -174,9 +162,9 @@ fn run(
             return Err(Failed);
         }
         let value: &[u8] = match kind {
-            Kind::Function | Kind::Ident | Kind::String => {
-                // SAFETY: for these three kinds the union holds a string
-                // token, whose `data`/`length` Lexbor has just written.
+            Kind::Function => {
+                // SAFETY: for a function the union holds a string token,
+                // whose `data`/`length` Lexbor has just written.
                 let s = unsafe { t.types.string };
                 if s.data.is_null() {
                     &[]

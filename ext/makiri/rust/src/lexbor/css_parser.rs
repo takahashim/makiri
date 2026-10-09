@@ -401,13 +401,6 @@ pub struct Nth<'p> {
     pub of: Option<Lists<'p>>,
 }
 
-/// `:lexbor-contains(needle [i])`.
-#[derive(Clone, Copy)]
-pub struct Contains<'p> {
-    pub needle: &'p [u8],
-    pub insensitive: bool,
-}
-
 /// The functional pseudo-classes that take a selector list.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ListPseudo {
@@ -436,8 +429,11 @@ pub enum FunctionArg<'p> {
         pseudo: ListPseudo,
         lists: Lists<'p>,
     },
-    /// `:lexbor-contains`, or None when Lexbor stored nothing.
-    Contains(Option<Contains<'p>>),
+    /// `:lexbor-contains()`, Lexbor's extension. Makiri does not support it,
+    /// and `contains_guard` renames it before any text reaches the parser,
+    /// so this is never decoded; were it, every consumer refuses it, and
+    /// nothing reads the argument Lexbor stored.
+    Contains,
     /// `:current(S)`. Kept apart from [`FunctionArg::Selectors`] so no
     /// consumer gives it `:is(S)`'s answer by falling into a catch-all arm:
     /// Lexbor's matcher does match it as `:is(S)`, but `css_match` refuses
@@ -613,16 +609,7 @@ impl<'p> Selector<'p> {
             raw::IS => selectors(ListPseudo::Is),
             raw::WHERE => selectors(ListPseudo::Where),
             raw::HAS => selectors(ListPseudo::Has),
-            raw::LEXBOR_CONTAINS => {
-                // SAFETY: Lexbor stores an `lxb_css_selector_contains_t`, in the
-                // arena.
-                let c = unsafe { arena(data as *const lxb::lxb_css_selector_contains_t) };
-                FunctionArg::Contains(c.map(|c| Contains {
-                    // SAFETY: as in `name`.
-                    needle: unsafe { lexbor_str(&c.str_) }.unwrap_or(&[]),
-                    insensitive: c.insensitive,
-                }))
-            }
+            raw::LEXBOR_CONTAINS => FunctionArg::Contains,
             raw::CURRENT => FunctionArg::Current(lists()),
             _ => FunctionArg::Other,
         }

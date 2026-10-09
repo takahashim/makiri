@@ -59,8 +59,10 @@ CSS_SEED = [
   # complex (combinator) arguments inside :is/:where/:not + :has variants
   "a:not(nav a)", ":is(div > p, section a)", ":where(ul li)", "li:has(> a)",
   "p:has(+ span)", "div:not(.x):not(.y)",
-  # jQuery-style text containment (Lexbor extension, both hosts); the long needle
-  # exercises Lexbor's >v3.0.0 :lexbor-contains() parser heap-overflow fix.
+  # Lexbor's :lexbor-contains() extension, which Makiri does not support:
+  # `contains_guard` renames each one before the parser runs, so these must
+  # all be syntax errors. The long needle is the shape of Lexbor's v3.0.0
+  # heap overflow in that parser.
   'p:lexbor-contains("text")', 'li:lexbor-contains("X" i)', ':lexbor-contains("a")',
   'span:lexbor-contains("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")',
 ].freeze

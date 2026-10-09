@@ -202,13 +202,7 @@ fn simple<'p>(out: &mut Vec<u8>, s: Selector<'p>) -> Result<Option<Lists<'p>>, F
                     }
                 }
                 FunctionArg::Nth { anb: None, .. } => return Err(Fail::Lossy),
-                FunctionArg::Contains(Some(c)) => {
-                    string(out, c.needle)?;
-                    if c.insensitive {
-                        put(out, b" i")?;
-                    }
-                }
-                FunctionArg::Contains(None) => return Err(Fail::Lossy),
+                FunctionArg::Contains => return Err(Fail::Lossy),
                 FunctionArg::Current(lists) => return Ok(Some(lists)),
                 FunctionArg::Other => return Err(Fail::Lossy),
             }

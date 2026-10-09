@@ -104,8 +104,7 @@
 //!   IN a namespace (`setAttributeNS("urn:x", "id")`), which is not the ID.
 //!
 //! Still open, and never a silent wrong answer: `::pseudo-elements` (never
-//! match), `:lexbor-contains()` (raised - a Lexbor extension, not CSS,
-//! deliberately not reimplemented; see `CHANGELOG.md`), `:current()`
+//! match), `:current()`
 //! (raised - Selectors 5 §6, where the time-dimensional pseudo-classes went
 //! from Level 4, has it match nothing on an element with no timeline, which
 //! is every HTML element; Lexbor matches it as `:is()`; and Lexbor's parser
@@ -231,9 +230,7 @@ pub enum MatchFailure {
     /// (`FunctionArg::Other`, `check_simple`'s doc), but one Lexbor itself
     /// either cannot run (the column combinator `||`, `Combinator::Column` -
     /// Lexbor's own traversal reports an error status for it too) or
-    /// implements and this port deliberately does not
-    /// (`:lexbor-contains()`, `FunctionArg::Contains` - a Lexbor extension,
-    /// not CSS; `CHANGELOG.md` records the removal - and `:current()`,
+    /// implements and this port deliberately does not (`:current()`,
     /// `FunctionArg::Current`, which Lexbor matches as `:is()` where
     /// Selectors 5 has it match nothing - the module doc). Answering
     /// `false` for either would be indistinguishable from "genuinely no

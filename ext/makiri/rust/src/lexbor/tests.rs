@@ -46,40 +46,26 @@ mod guard {
     }
 
     #[test]
-    fn leaves_a_well_formed_argument_alone() {
+    fn rewrites_every_argument_well_formed_or_not() {
         for s in [
             ":lexbor-contains(\"x\")",
             "p:lexbor-contains(\"x\")",
             ":lexbor-contains('x')",
             ":lexbor-contains(ident)",
-            ":lexbor-contains( ident )",
             ":lexbor-contains(\"x\" i)",
-            ":lexbor-contains(\"x\" I)",
-            ":lexbor-contains(  \"x\"  i  )",
-            ":lexbor-contains(\"\")",
             ":LEXBOR-CONTAINS(\"x\")",
             ":lexbor-contains(/* c */ \"x\")",
-        ] {
-            untouched(s);
-        }
-    }
-
-    #[test]
-    fn rewrites_every_failing_argument() {
-        for s in [
             ":lexbor-contains()",
             ":lexbor-contains())",
-            ":lexbor-contains( ))",
             ":lexbor-contains(123)",
             ":lexbor-contains(#x)",
-            ":lexbor-contains(.x)",
             ":lexbor-contains(*)",
-            ":lexbor-contains(,)",
             ":lexbor-contains(\"s\" junk)",
-            ":lexbor-contains(id junk)",
             ":lexbor-contains(foo(bar))",
             ":lexbor-contains(\"unterminated)",
+            ":lexbor-contains(",
             "p,:lexbor-contains()),q",
+            "a{--x: :lexbor-contains(\"x\")}",
         ] {
             rewritten(s);
         }
@@ -121,11 +107,11 @@ mod guard {
         for s in [
             ".md\\:flex{display:flex;color:rgb(0 0 0)}",
             ".w-1\\/2{width:calc(100% / 2)}",
-            "a{content:\"\\201C\"}p:lexbor-contains(\"x\"){}",
+            "a{content:\"\\201C\"}p:contains(\"x\"){}",
         ] {
             untouched(s);
         }
-        rewritten(".md\\:flex{}p:lexbor-contains(#x){}");
+        rewritten(".md\\:flex{}p:lexbor-contains(\"x\"){}");
     }
 
     #[test]
@@ -134,8 +120,8 @@ mod guard {
         assert!(got.starts_with(".a{color:red}:"), "{got}");
         assert!(got.ends_with("(#x){color:blue}.b{color:green}"), "{got}");
 
-        let both = out(":lexbor-contains(#x),:lexbor-contains(\"ok\"),:lexbor-contains(*)");
-        assert_eq!(both.matches("lexbor-contains").count(), 1, "{both}");
+        let all = out(":lexbor-contains(#x),:lexbor-contains(\"ok\"),:lexbor-contains(*)");
+        assert_eq!(all.matches("lexbor-contains").count(), 0, "{all}");
     }
 
     #[test]
@@ -169,7 +155,7 @@ mod guard {
                     "a{{content:{q}x{nl}}}b:lexbor-contains(#x){{color:red}}"
                 ));
                 rewritten(&format!("[title={q}x{nl}], :lexbor-contains(#x)"));
-                untouched(&format!("{q}x{nl}:lexbor-contains(\"ok\")"));
+                rewritten(&format!("{q}x{nl}:lexbor-contains(\"ok\")"));
             }
         }
     }
@@ -188,7 +174,7 @@ mod guard {
     }
 
     #[test]
-    fn an_unterminated_string_or_argument_is_not_accepted() {
+    fn an_unterminated_string_or_argument_is_rewritten_too() {
         untouched("p[title=\"x :lexbor-contains(#x)");
         untouched("/* :lexbor-contains(#x)");
         for s in [
@@ -308,10 +294,11 @@ mod guard_tokens {
 }
 
 mod guard_agreement {
-    //! [`crate::lexbor::contains_guard`]'s second rule, checked against the real
-    //! parser rather than against a second reading of the grammar: whatever the
-    //! guard leaves untouched, the parser must accept. Only the untouched ones
-    //! are handed to it here.
+    //! [`crate::lexbor::contains_guard`] checked against the real parser
+    //! rather than against a second reading of the grammar: whatever argument
+    //! follows the name, the guard rewrites it, and the parser then reads the
+    //! rewritten function as the unknown one it is and rejects the selector -
+    //! it never builds a `:lexbor-contains()`.
 
     use crate::lexbor::contains_guard::neutralized;
     use crate::lexbor::css_engine::ParserParts;
@@ -382,7 +369,7 @@ mod guard_agreement {
     ];
 
     #[test]
-    fn nothing_the_guard_keeps_makes_lexbor_fail() {
+    fn every_argument_is_rewritten_and_the_parser_rejects_the_result() {
         let gvl = crate::gvl::Gvl::exclusive();
         /* Borrowed, not `into_parser`: `parts` must still free all three when
          * this returns, or the run leaks under LeakSanitizer. */
@@ -390,34 +377,29 @@ mod guard_agreement {
         let parser = parts.as_parser();
         let _ = &gvl;
 
-        let mut checked = 0;
         for arg in ARGUMENTS {
-            for shape in [
-                format!(":lexbor-contains({arg})"),
-                format!("p:lexbor-contains({arg})"),
-                format!(":lexbor-contains({arg}) a"),
-                format!("a, :lexbor-contains({arg}), b"),
-            ] {
-                let bytes = shape.as_bytes();
-                if neutralized(bytes).expect("no oom").is_some() {
-                    continue; /* rewritten: never handed to Lexbor */
+            for name in ["lexbor-contains", "LEXBOR-Contains", "\\6C exbor-contains"] {
+                for shape in [
+                    format!(":{name}({arg})"),
+                    format!("p:{name}({arg})"),
+                    format!(":{name}({arg}) a"),
+                    format!("a, :{name}({arg}), b"),
+                ] {
+                    let Some(out) = neutralized(shape.as_bytes()).expect("no oom") else {
+                        panic!("the guard let {shape:?} through");
+                    };
+                    // SAFETY: the parser is live and exclusively ours for this call.
+                    let list = unsafe { parser.parse(&out) };
+                    // SAFETY: same, and no list is read after the clean.
+                    unsafe { parser.clean_all() };
+                    assert!(
+                        list.is_err(),
+                        "{shape:?} was rewritten to {:?}, which the parser accepted",
+                        String::from_utf8_lossy(&out)
+                    );
                 }
-                checked += 1;
-                // SAFETY: the parser is live and exclusively ours for this call.
-                let list = unsafe { parser.parse(bytes) };
-                // SAFETY: same, and no list is read after the clean.
-                unsafe { parser.clean_all() };
-                assert!(
-                    list.is_ok(),
-                    "the guard kept {shape:?}, but the parser rejects it - the guard \
-                     must never be laxer than the parser"
-                );
             }
         }
-        assert!(
-            checked > 0,
-            "the guard rewrote everything; nothing was checked"
-        );
     }
 }
 
@@ -874,7 +856,7 @@ mod css_match {
 
     /// A construct this engine cannot evaluate at all - the column
     /// combinator `||` (Lexbor's OWN traversal reports an error for it too)
-    /// and `:lexbor-contains()` (Lexbor itself matches with it; this port
+    /// and `:current()` (Lexbor itself matches it as `:is()`; this port
     /// deliberately does not) - must be RAISED, never silently answered as
     /// "no element matches" (`MatchFailure`'s doc): either would otherwise
     /// look exactly like a legitimate empty result.
@@ -886,7 +868,7 @@ mod css_match {
             b"<html><body><table><col><tr><td>x</td></tr></table><p>hello</p></body></html>",
         );
 
-        for sel in ["col || td", "p:lexbor-contains(\"x\")", ":current(p)"] {
+        for sel in ["col || td", ":current(p)"] {
             let gvl = Gvl::exclusive();
             let text = VerifiedText::from_bytes(sel.as_bytes()).expect("verified");
             let parsed_sel =
@@ -896,6 +878,27 @@ mod css_match {
                 matches!(result, Err(QueryFailure::Match(MatchFailure::Unsupported))),
                 "{sel:?} should be Unsupported, was {:?}",
                 result.is_ok()
+            );
+        }
+    }
+
+    /// `:lexbor-contains()` is not supported in any form: `contains_guard`
+    /// renames it before the parser runs, so a selector holding it is a
+    /// syntax error - well-formed argument or not, wherever it sits.
+    #[test]
+    fn lexbor_contains_does_not_parse() {
+        for sel in [
+            "p:lexbor-contains(\"x\")",
+            ":lexbor-contains(\"x\" i)",
+            "p, :lexbor-contains(x)",
+            ":not(:lexbor-contains(\"x\"))",
+            ":has(p:lexbor-contains(\"x\"))",
+        ] {
+            let gvl = Gvl::exclusive();
+            let text = VerifiedText::from_bytes(sel.as_bytes()).expect("verified");
+            assert!(
+                css_parser::parse(&gvl, text).is_err(),
+                "{sel:?} should not parse"
             );
         }
     }
@@ -989,28 +992,27 @@ mod css_match {
         ));
     }
 
-    /// [`validate`] must find `:lexbor-contains()`/`||` wherever they sit -
+    /// [`validate`] must find `:current()`/`||` wherever they sit -
     /// leading or trailing a comma list, or nested inside `:not`/`:has`/
     /// `of S` - and MUST NOT depend on whether an earlier alternative or an
     /// earlier simple selector in the SAME compound would have already
-    /// settled the query. Regression for exactly the inconsistency found:
-    /// `nosuch:lexbor-contains("x")` used to answer empty (a type mismatch
-    /// short-circuited first), `p:lexbor-contains("x")` raised (the type
-    /// matched), and `p, nosuch:lexbor-contains("x")` against a document
-    /// with a `<p>` answered a match instead of raising, purely because `p`
-    /// happened to come first.
+    /// settled the query. Regression for exactly the inconsistency found
+    /// (then with `:lexbor-contains()`, which no longer parses at all):
+    /// `nosuch:X` used to answer empty (a type mismatch short-circuited
+    /// first), `p:X` raised (the type matched), and `p, nosuch:X` against a
+    /// document with a `<p>` answered a match instead of raising, purely
+    /// because `p` happened to come first.
     #[test]
     fn unsupported_constructs_are_found_regardless_of_position_or_short_circuit() {
         use crate::lexbor::css_match::MatchFailure;
 
         let shapes = [
-            "nosuch:lexbor-contains(\"x\")",
-            "p:lexbor-contains(\"x\")",
-            "p, nosuch:lexbor-contains(\"x\")",
-            "nosuch:lexbor-contains(\"x\"), p",
-            ":not(p:lexbor-contains(\"x\"))",
-            ":has(p:lexbor-contains(\"x\"))",
-            ":nth-child(2 of p:lexbor-contains(\"x\"))",
+            "nosuch:current(p)",
+            "p:current(p)",
+            "p, nosuch:current(p)",
+            "nosuch:current(p), p",
+            ":not(p:current(p))",
+            ":nth-child(2 of p:current(p))",
             "col || td",
             "p, col || td",
             "col || td, p",
@@ -1042,7 +1044,7 @@ mod css_match {
         // Mirrors the glue's order: `validate` first, matching only after.
         // `p` alone matches this document, so an order-dependent check would
         // answer a node here instead of raising.
-        let sel = "p, nosuch:lexbor-contains(\"x\")";
+        let sel = "p, nosuch:current(p)";
         let gvl = Gvl::exclusive();
         let text = VerifiedText::from_bytes(sel.as_bytes()).expect("verified");
         let parsed_sel =

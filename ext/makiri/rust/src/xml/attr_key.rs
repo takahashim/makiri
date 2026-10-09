@@ -36,6 +36,9 @@ impl AttrKey<'_> {
     /// XPath's data model is the one that hides them (`xml::xpath` skips them
     /// on the attribute axis), which is why `@xmlns:p` finds nothing while
     /// this does.
+    ///
+    /// The DOM's lookup, so only the Ruby boundary asks it.
+    #[cfg(feature = "ruby")]
     pub(crate) fn find_in(self, doc: &Document, el: NodeId) -> Option<NodeId> {
         if doc.type_(el) != Some(crate::xml::ArenaKind::Element) {
             return None;

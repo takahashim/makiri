@@ -276,10 +276,8 @@ RSpec.describe "Makiri CSS" do
     it "raises for an unsupported construct wherever it sits in the selector" do
       d = Makiri::HTML("<table><col><tr><td>x</td></tr></table><p>hello</p>")
       p = d.at_css("p")
-      [%(nosuch:lexbor-contains("x")), %(p:lexbor-contains("x")),
-       %(p, nosuch:lexbor-contains("x")), %(nosuch:lexbor-contains("x"), p),
-       %(:not(p:lexbor-contains("x"))), %(body:has(p:lexbor-contains("x"))),
-       %(:nth-child(1 of p:lexbor-contains("x"))),
+      ["nosuch:current(p)", "p:current(p)", "p, nosuch:current(p)", "nosuch:current(p), p",
+       ":not(p:current(p))", ":nth-child(1 of p:current(p))",
        "p, col || td", "col || td, p", "body:has(col || td)",
        ":current(p)", "p, :current(nosuch)", ":not(:current(p))"].each do |sel|
         expect { d.css(sel) }.to raise_error(Makiri::Error, /could not be run/), sel
@@ -289,17 +287,11 @@ RSpec.describe "Makiri CSS" do
     end
   end
 
-  # Which arguments reach the CSS parser is `lexbor::contains_guard`'s
-  # decision, unchanged - `:lexbor-contains()` still PARSES on the HTML side
-  # (or is rejected as a syntax error, same as before). MATCHING it is what
-  # changed: `lexbor::css_match` deliberately does not implement it (a Lexbor
-  # extension, not CSS), so a well-formed
-  # `:lexbor-contains()` now raises `Makiri::Error` ("could not be run") on
-  # HTML instead of ever answering - the same fail-closed treatment as an
-  # unsupported combinator (`col || td`, below), and deliberately NOT a
-  # silent empty result, which would be indistinguishable from "no element
-  # matches". XML is unaffected (`Makiri::XML` still lowers it to XPath
-  # `contains()` - see xml_css_spec.rb).
+  # `:lexbor-contains()` - Lexbor's extension, not CSS - is not supported in
+  # any form, on HTML or XML. Its argument parser is where Lexbor's v3.0.0
+  # heap overflow was, so `lexbor::contains_guard` renames every occurrence
+  # before the parser runs, and the selector is a syntax error like any
+  # other unknown pseudo-class.
   describe ":lexbor-contains()" do
     it "keeps answering after a rejected one" do
       d = Makiri::HTML("<p>x")
@@ -322,26 +314,33 @@ RSpec.describe "Makiri CSS" do
       end
     end
 
-    it "parses a well-formed one, but no longer matches with it" do
+    it "is a syntax error, well-formed or not, on HTML and XML" do
       d = Makiri::HTML("<p>hello</p><p>bye</p>")
-      expect { d.css(':lexbor-contains())') }.to raise_error(Makiri::CSS::SyntaxError)
-      expect { d.css('p:lexbor-contains("hello")') }.to raise_error(Makiri::Error, /could not be run/)
-      expect { d.css('p:lexbor-contains("HELLO" i)') }.to raise_error(Makiri::Error, /could not be run/)
-      expect { d.css("p:lexbor-contains(hello)") }.to raise_error(Makiri::Error, /could not be run/)
-      # The document is unaffected - the very next query still answers.
+      x = Makiri::XML("<r><a>hello</a><b>bye</b></r>")
+      p = d.at_css("p")
+      [%(p:lexbor-contains("hello")), %(:lexbor-contains("HELLO" i)),
+       "p:lexbor-contains(hello)", %(p, :lexbor-contains("x")),
+       %(:not(:lexbor-contains("x"))), %(body:has(p:lexbor-contains("x")))].each do |sel|
+        expect { d.css(sel) }.to raise_error(Makiri::CSS::SyntaxError), sel
+        expect { d.at_css(sel) }.to raise_error(Makiri::CSS::SyntaxError), sel
+        expect { p.matches?(sel) }.to raise_error(Makiri::CSS::SyntaxError), sel
+        expect { x.css(sel) }.to raise_error(Makiri::CSS::SyntaxError), sel
+      end
+      # The documents are unaffected - the very next query still answers.
       expect(d.css("p").length).to eq(2)
+      expect(x.css("a").length).to eq(1)
     end
 
     # The escapes matter: the parser decodes them, so none of the last three
     # contain the substring "lexbor-contains" at all.
-    it "rejects every malformed form, escapes included" do
+    it "rejects every form, escapes included" do
       d = Makiri::HTML("<p>hello</p>")
       x = Makiri::XML("<r><a>hello</a></r>")
       [':lexbor-contains()', ':lexbor-contains())', ':lexbor-contains(*)',
        ':lexbor-contains(#x)', ':lexbor-contains(123)', ':lexbor-contains(foo(bar))',
        %(:lexbor-contains("s" junk)), ':lexbor-contains(id junk)',
        %q(:lexbor\\-contains(#x)), %q(:\\6C exbor-contains(#x)),
-       ':LEXBOR-CONTAINS(#x)'].each do |sel|
+       ':LEXBOR-CONTAINS(#x)', %q(:\\6C exbor-contains("x"))].each do |sel|
         expect { d.css(sel) }.to raise_error(Makiri::CSS::SyntaxError), sel
         expect { x.css(sel) }.to raise_error(Makiri::CSS::SyntaxError), sel
         expect(d.css("p").length).to eq(1), "document still answers after #{sel}"
@@ -356,28 +355,14 @@ RSpec.describe "Makiri CSS" do
         sel = %([title="x#{nl}], p:lexbor-contains(#x))
         expect { d.css(sel) }.to raise_error(Makiri::CSS::SyntaxError), sel.dump
       end
-      # A well-formed one still parses cleanly after those rejections - it
-      # just no longer matches with it (see above).
-      expect { d.css(%(p:lexbor-contains("hello"))) }.to raise_error(Makiri::Error, /could not be run/)
+      expect(d.css("p").length).to eq(1)
     end
 
-    it "works on XML too" do
-      x = Makiri::XML("<r><a>hello</a><b>bye</b></r>")
-      expect(x.css(%(:lexbor-contains("hello"))).length).to eq(1)
-      expect(x.css(%(:lexbor-contains("HELLO" i))).length).to eq(1)
-    end
-
-    it "handles a long needle (Lexbor >v3.0.0 heap-overflow fix in the parser)" do
-      # Mirrors xml_css_spec.rb's equivalent test - HTML and XML reach the same
-      # Lexbor CSS parser here (`lexbor::contains_guard`), so pin it on the HTML
-      # side too rather than relying on the XML test alone. It PARSES this
-      # (the fix is in the parser, unaffected by matching support), then
-      # raises the same "could not be run" every well-formed :lexbor-contains()
-      # does on HTML - not a crash, not a truncated/wrong match.
+    it "rejects a long needle without reaching the parser" do
       needle = "A" * 200
       big = Makiri::HTML("<p>#{needle}</p><p>x</p>")
-      expect { big.css(%(p:lexbor-contains("#{needle}"))) }
-        .to raise_error(Makiri::Error, /could not be run/)
+      expect { big.css(%(p:lexbor-contains("#{needle}"))) }.to raise_error(Makiri::CSS::SyntaxError)
+      expect(big.css("p").length).to eq(2)
     end
   end
 
