@@ -854,6 +854,52 @@ mod css_match {
         }
     }
 
+    /// In a `:has()` argument, `L + R` is looked for over every pair, as
+    /// Selectors 4 says. Lexbor's engine gives up after the first pair when
+    /// `R`'s compound holds a list pseudo-class (`:is()`, `:not()`,
+    /// `:where()`, `:has()`) that pair fails - unless a type selector in front
+    /// of it already refused the pair (`a:not(li)` is right there), and only
+    /// for `+` (`~`, `>` and descendant search on). Here the pairs are
+    /// `i + li`, `li + a` and `a + b`, and each selector is satisfied only by
+    /// a later pair than the first. A departure (`css_match`'s module doc)
+    /// the differential checks leave out (`departs_from_lexbor`); found by
+    /// the randomized check with seed 0x1edc5eefe8ad - with `:not()`, then
+    /// with `:has()`.
+    #[test]
+    fn a_sibling_compound_with_a_list_pseudo_in_has_tries_every_pair() {
+        use crate::lexbor::selectors as old_engine;
+
+        let doc = parsed(b"<span><i></i><li></li><a></a><b><u></u></b></span>");
+        for sel in [
+            "span:has(* + :not(li))",
+            "span:has(* + *:not(li))",
+            "span:has(* + *:is(b))",
+            "span:has(* + *:where(b, p))",
+            "span:has(* + *:has(u))",
+        ] {
+            assert!(departs_from_lexbor(sel), "{sel}");
+            assert_eq!(select_all(&doc, sel).len(), 1, "{sel}");
+
+            let gvl = Gvl::exclusive();
+            let old = old_engine::select_all(&gvl, RawNode::from(root(&doc)), sel.as_bytes())
+                .unwrap_or_else(|_| panic!("old engine rejected {sel:?}"));
+            assert_eq!(
+                old.len(),
+                0,
+                "Lexbor now answers {sel} as the spec does: drop `departs_from_lexbor` \
+                 and the matching exclusion in the html_css_diff fuzz target"
+            );
+        }
+        // The shapes around it agree, and stay in the differential checks.
+        for sel in [
+            "span:has(* ~ *:not(li))",
+            "span:has(li > *:not(a))",
+            "* + *:not(li)",
+        ] {
+            assert!(!departs_from_lexbor(sel), "{sel}");
+        }
+    }
+
     /// A construct this engine cannot evaluate at all - the column
     /// combinator `||` (Lexbor's OWN traversal reports an error for it too)
     /// and `:current()` (Lexbor itself matches it as `:is()`; this port
@@ -1872,6 +1918,46 @@ mod css_match {
         s
     }
 
+    /// Whether `sel` reaches a shape where `css_match` departs from Lexbor on
+    /// purpose and the random generator can produce it: in a `:has()`
+    /// argument, a compound attached by `+` that holds `:is()` / `:not()` /
+    /// `:where()` / `:has()` (`css_match`'s module doc;
+    /// `a_sibling_compound_with_a_list_pseudo_in_has_tries_every_pair`).
+    /// A selector that does not parse is not one - the caller skips it anyway.
+    fn departs_from_lexbor(sel: &str) -> bool {
+        use crate::lexbor::css_parser::{Combinator, FunctionArg, ListPseudo, Simple};
+
+        let gvl = Gvl::exclusive();
+        let Some(text) = VerifiedText::from_bytes(sel.as_bytes()) else {
+            return false;
+        };
+        let Ok(parsed) = css_parser::parse(&gvl, text) else {
+            return false;
+        };
+        let mut work: Vec<(Lists<'_>, bool)> = vec![(parsed.groups(), false)];
+        while let Some((lists, in_has)) = work.pop() {
+            for list in lists {
+                let mut attached = Combinator::Descendant;
+                let mut s = list.first();
+                while let Some(cur) = s {
+                    if cur.combinator() != Combinator::Close {
+                        attached = cur.combinator();
+                    }
+                    if let Simple::PseudoClassFunction(FunctionArg::Selectors { pseudo, lists }) =
+                        cur.simple()
+                    {
+                        if in_has && attached == Combinator::NextSibling {
+                            return true;
+                        }
+                        work.push((lists, in_has || pseudo == ListPseudo::Has));
+                    }
+                    s = cur.next();
+                }
+            }
+        }
+        false
+    }
+
     /// The differential check, broadened past the fixed 44-selector
     /// list above into randomly generated queries over a richer, more
     /// deeply nested fixture - closer to fuzz scale than a fixed list can
@@ -1914,6 +2000,9 @@ mod css_match {
 
         for i in 0..ITERATIONS {
             let sel = random_selector(&mut rng);
+            if departs_from_lexbor(&sel) {
+                continue;
+            }
 
             let old = {
                 let gvl = Gvl::exclusive();
@@ -2037,6 +2126,9 @@ mod css_match {
             let doc = parsed(html.as_bytes());
             for _ in 0..SELECTORS_PER_DOCUMENT {
                 let sel = random_selector(&mut rng);
+                if departs_from_lexbor(&sel) {
+                    continue;
+                }
                 let old = {
                     let gvl = Gvl::exclusive();
                     match old_engine::select_all(&gvl, RawNode::from(root(&doc)), sel.as_bytes()) {

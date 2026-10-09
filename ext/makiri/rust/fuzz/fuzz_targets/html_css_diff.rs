@@ -22,7 +22,9 @@
 //! (`:checked` / `:disabled` / `:enabled`, and `:read-only` / `:read-write`,
 //! which ask the same `is_disabled`), `of S`, `An+B` past 2^53, a
 //! compound that starts with a list pseudo-class where it has several
-//! candidates (Lexbor tries only the first - found by this target), and,
+//! candidates (Lexbor tries only the first - found by this target), a
+//! compound holding one after `+` in a `:has()` argument (Lexbor stops after
+//! the first pair it fails), and,
 //! on a document with foreign elements, the HTML Standard's case-sensitivity
 //! and qualified-name rules for type and attribute selectors. A selector either engine refuses is not compared either.
 //!
@@ -173,6 +175,8 @@ impl Shape {
                 // Whether the compound being walked starts with a list
                 // pseudo-class (`:is()`, `:where()`, `:not()`, `:has()`).
                 let mut leads_with_list = false;
+                // How the compound being walked attaches to the one before.
+                let mut attached = Combinator::Descendant;
                 let mut first = true;
                 let mut sel: Option<Selector<'_>> = list.first();
                 while let Some(s) = sel {
@@ -182,6 +186,7 @@ impl Shape {
                     }
                     let combinator = s.combinator();
                     if first || combinator != Combinator::Close {
+                        attached = combinator;
                         // The compound before this one is searched over every
                         // ancestor / preceding sibling when this one attaches
                         // by a descendant or `~` combinator.
@@ -198,6 +203,18 @@ impl Shape {
                         if leads_with_list && in_has && is_multi(combinator, true) {
                             shape.departs = true;
                         }
+                    }
+                    // In a `:has()` argument, a compound attached by `+` that
+                    // holds `:is()` / `:not()` / `:where()` / `:has()`: Lexbor
+                    // stops after the first pair that fails it.
+                    if in_has
+                        && attached == Combinator::NextSibling
+                        && matches!(
+                            s.simple(),
+                            Simple::PseudoClassFunction(FunctionArg::Selectors { .. })
+                        )
+                    {
+                        shape.departs = true;
                     }
                     first = false;
                     shape.simple(s, in_has, &mut work);

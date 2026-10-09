@@ -98,6 +98,16 @@
 //!   `html_css_diff` fuzz target; pinned by
 //!   `lexbor::tests::css_match::a_compound_led_by_a_list_pseudo_tries_every_candidate`,
 //!   and the differential checks leave the shape out.
+//! - In a `:has()` argument, `L + R` is looked for over every pair, where
+//!   Lexbor stops after the first pair that fails a list pseudo-class
+//!   (`:is()`, `:not()`, `:where()`, `:has()`) in `R`'s compound - unless a
+//!   type selector in front of it refused that pair first:
+//!   `span:has(* + :not(li))` misses `<span><i></i><li></li><a></a></span>`,
+//!   whose first pair is `i + li` (`a:not(li)` is answered correctly). Only
+//!   for `+`. Found by the randomized differential check;
+//!   pinned by
+//!   `lexbor::tests::css_match::a_sibling_compound_with_a_list_pseudo_in_has_tries_every_pair`,
+//!   and the differential checks leave the shape out.
 //! - `#id` / `.class` read the DOM's ID and class attributes - the
 //!   no-namespace `id` / `class` - through Lexbor's shortcut, as Lexbor
 //!   does; a lookup by qualified name would also take an unprefixed `id` set
