@@ -30,7 +30,7 @@ RSpec.describe "native stack guard" do
     # in (as xml_html_boundary_spec.rb does, for a different noise source)
     # would prefix it. stderr is returned for the failure message instead.
     out, err, status = Open3.capture3(
-      env.merge("RUBY_FREE_AT_EXIT" => nil),
+      { "RUBY_FREE_AT_EXIT" => nil }.merge(env),
       RbConfig.ruby, "-I#{lib}", "-e", %(require "makiri"\n#{code})
     )
     [status, out, err]
@@ -118,7 +118,14 @@ RSpec.describe "native stack guard" do
   # recursed once per nested list.
   describe "stylesheet selector text, inside a small Fiber" do
     it "writes deeply nested selector lists back in full" do
-      status, out, err = run_isolated({ "RUBY_FIBER_MACHINE_STACK_SIZE" => "131072" }, <<~RUBY)
+      # The child keeps RUBY_FREE_AT_EXIT when spec:valgrind sets it: ruby_memcheck
+      # tells a leak from a live object only by Ruby freeing everything at exit,
+      # and these selector texts are tens of KB of heap Strings our extension
+      # made - without the teardown, each one still alive at exit is reported
+      # "definitely lost". (stderr's free-at-exit warning is not compared.)
+      env = { "RUBY_FIBER_MACHINE_STACK_SIZE" => "131072",
+              "RUBY_FREE_AT_EXIT" => ENV.fetch("RUBY_FREE_AT_EXIT", nil) }
+      status, out, err = run_isolated(env, <<~RUBY)
         [":is(", ":not(", ":has(", ":nth-child(1 of "].each do |open|
           sel = open * 5000 + ".a\\\\:b" + ")" * 5000
           r = Fiber.new { Makiri::Lexbor::CSS.parse_stylesheet(sel + "{x:y}") }.resume
