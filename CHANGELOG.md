@@ -25,6 +25,11 @@
   Lexbor stores as the any-namespace `*`) is reported as `:bad_style`.
 * `:bad_style`'s `selector_text` is trimmed: a rule Lexbor rejected kept the
   whitespace before its `{`.
+* `parse_stylesheet` trims only CSS whitespace (space, tab, LF, CR, FF), and
+  never the whitespace an escape owns. An at-rule's `prelude`, a value taken
+  from the source and `selector_text` lost an escaped trailing space and kept
+  its `\` (`screen\ ` came back as `screen\`, which reads as `screen` +
+  U+FFFD), and any other control byte at either end went too.
 
 ## [0.14.0] - 2026-10-04
 

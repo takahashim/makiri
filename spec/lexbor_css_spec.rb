@@ -238,6 +238,36 @@ RSpec.describe Makiri::Lexbor::CSS do
       expect(parse("  [|a]  {x:y}")[0][:selector_text]).to eq("[|a]")
     end
 
+    # Trimming used to drop every byte up to 0x20 and an escaped space with it,
+    # leaving a lone `\` at the end - an escape at EOF, U+FFFD - so a prelude
+    # Lexbor rejected came back as a different, valid selector.
+    describe "trimming whitespace that an escape owns" do
+      it "keeps an escaped trailing space, whichever side refused the selector" do
+        expect(parse('::foo .a\  {x:y}')[0][:selector_text]).to eq('::foo .a\ ')
+        expect(parse('[|a] .b\  {x:y}')[0][:selector_text]).to eq('[|a] .b\ ')
+      end
+
+      it "never leaves a lone trailing backslash" do
+        expect(parse(".a\\\n{x:y}")[0][:selector_text]).to eq(".a\\\n")
+        expect(parse("::foo .a\\\\ {x:y}")[0][:selector_text]).to eq("::foo .a\\\\")
+      end
+
+      it "keeps it in an at-rule prelude" do
+        expect(parse('@media screen\  { a { x: y } }')[0][:prelude]).to eq('screen\ ')
+      end
+
+      it "keeps it in a value taken from the source" do
+        decl = parse('a{--x: :lexbor-contains(1) \ ;}')[0][:declarations][0]
+        expect(decl[:value]).to eq(':lexbor-contains(1) \ ')
+      end
+
+      it "trims only CSS whitespace" do
+        expect(parse("::foo .a\x01 {x:y}")[0][:selector_text]).to eq("::foo .a\x01")
+        expect(parse("::foo .a\v {x:y}")[0][:selector_text]).to eq("::foo .a\v")
+        expect(parse("\t\f\r\n ::foo\t\f\r\n {x:y}")[0][:selector_text]).to eq("::foo")
+      end
+    end
+
     it "leaves selectors without escapes as Lexbor wrote them" do
       expect(texts("div.a, #b > span, a + b, a ~ b, ns|a, *|*, |a")).to eq(
         ["div.a", "#b > span", "a + b", "a ~ b", "ns|a", "*|*", "|a"]
