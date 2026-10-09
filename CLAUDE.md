@@ -206,8 +206,10 @@ bundle exec rake fuzz:libfuzzer    # cargo-fuzz harnesses (needs cargo-fuzz + ni
                                    # an ASan harness deadlocks in dyld on macOS, so
                                    # macOS runs `-s none` (see the Rakefile)
 bundle exec rake leaks             # macOS malloc-leak gate (ASan runs detect_leaks=0,
-                                   # so this is the ONLY leak check; flags per-call
-                                   # leak stacks through the ext incl. rescued raises)
+                                   # so this and Linux Valgrind (`spec:valgrind`, any
+                                   # "definitely lost" through the ext) are the leak
+                                   # checks; flags per-call leak stacks through the
+                                   # ext incl. rescued raises)
 bundle exec rake oom               # OOM-injection sweep: rebuilds with
                                    # MAKIRI_ALLOC_INJECT=1 and fails each core alloc
                                    # site in turn - every OOM branch must fail closed
