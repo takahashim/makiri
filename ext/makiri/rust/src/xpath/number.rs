@@ -134,7 +134,7 @@ pub fn to_text(d: f64, out: &mut [u8]) -> Option<usize> {
     let abs = d.abs();
     let mut scratch = [0u8; 64];
 
-    if abs > UPPER || abs < LOWER {
+    if !(LOWER..=UPPER).contains(&abs) {
         /* %.14e, then C's exponent: a sign and at least two digits, where Rust
          * writes "1.5e20". */
         let mut w = Fixed::new(&mut scratch);
