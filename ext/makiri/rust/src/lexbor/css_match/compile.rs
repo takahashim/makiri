@@ -91,10 +91,11 @@ pub(super) enum Nest {
 }
 
 /// `simple`'s nested selector lists and how they answer it - or `Unsupported`
-/// for `:lexbor-contains()`, which this matcher never evaluates.
+/// for `:lexbor-contains()` and `:current()`, which this matcher never
+/// evaluates.
 fn nest_of<'p>(simple: Simple<'p>) -> Result<(Nest, Option<Lists<'p>>), MatchFailure> {
     Ok(match simple {
-        Simple::PseudoClassFunction(FunctionArg::Contains(_)) => {
+        Simple::PseudoClassFunction(FunctionArg::Contains(_) | FunctionArg::Current(_)) => {
             return Err(MatchFailure::Unsupported)
         }
         Simple::PseudoClassFunction(FunctionArg::Selectors { pseudo, lists }) => {
@@ -144,8 +145,8 @@ pub(super) struct Compiled<'p> {
 }
 
 /// Compile `groups` - see [`Compiled`] - or refuse it: no chain anywhere
-/// over [`MAX_COMPOUNDS`], no `:lexbor-contains()` or column combinator
-/// (`||`) anywhere, checked over EVERY comma alternative and EVERY nested
+/// over [`MAX_COMPOUNDS`], no `:lexbor-contains()`, `:current()` or column
+/// combinator (`||`) anywhere, checked over EVERY comma alternative and EVERY nested
 /// list before any node is tested.
 ///
 /// Two bugs the up-front check closes, both about a check that used to

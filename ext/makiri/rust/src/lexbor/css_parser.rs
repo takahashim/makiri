@@ -440,9 +440,9 @@ pub enum FunctionArg<'p> {
     Contains(Option<Contains<'p>>),
     /// `:current(S)`. Kept apart from [`FunctionArg::Selectors`] so no
     /// consumer gives it `:is(S)`'s answer by falling into a catch-all arm:
-    /// Lexbor's matcher does match it as `:is(S)`, but `css_match` answers
-    /// false and lists it as still open (its module doc), and the XML
-    /// lowering refuses it. Each consumer decides here, explicitly.
+    /// Lexbor's matcher does match it as `:is(S)`, but `css_match` refuses
+    /// it as unsupported (its module doc), and so does the XML lowering.
+    /// Each consumer decides here, explicitly.
     Current(Lists<'p>),
     /// Any other functional pseudo-class - one whose argument, if any,
     /// Lexbor does not keep.

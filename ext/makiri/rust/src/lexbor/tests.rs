@@ -886,7 +886,7 @@ mod css_match {
             b"<html><body><table><col><tr><td>x</td></tr></table><p>hello</p></body></html>",
         );
 
-        for sel in ["col || td", "p:lexbor-contains(\"x\")"] {
+        for sel in ["col || td", "p:lexbor-contains(\"x\")", ":current(p)"] {
             let gvl = Gvl::exclusive();
             let text = VerifiedText::from_bytes(sel.as_bytes()).expect("verified");
             let parsed_sel =
@@ -1014,6 +1014,11 @@ mod css_match {
             "col || td",
             "p, col || td",
             "col || td, p",
+            ":current(p)",
+            "p, :current(nosuch)",
+            ":not(:current(p))",
+            ":is(p, :current(p))",
+            ":has(:current(p))",
         ];
         for sel in shapes {
             let gvl = Gvl::exclusive();

@@ -254,6 +254,21 @@ RSpec.describe "Makiri CSS" do
       expect(d.css("td").length).to eq(1)
     end
 
+    # `:current()` is not in Selectors Level 4 (the time-dimensional
+    # pseudo-classes were deferred to Level 5). Lexbor matches `:current(S)`
+    # as `:is(S)`; answering that, or "nothing", would be a guess, so it is
+    # refused like `:lexbor-contains()`. The argument-less form is already a
+    # syntax error, from Lexbor's parser.
+    it "refuses :current() as unsupported" do
+      d = Makiri::HTML("<p><a>x</a></p>")
+      expect { d.css(":current(a)") }.to raise_error(Makiri::Error, /could not be run/)
+      expect { d.at_css("a:not(:current(a))") }.to raise_error(Makiri::Error, /could not be run/)
+      expect { d.at_css("a").matches?(":current(a)") }.to raise_error(Makiri::Error, /could not be run/)
+      expect { d.css(":current(a b)") }.to raise_error(Makiri::Error, /could not be run/)
+      expect { d.css(":current") }.to raise_error(Makiri::CSS::SyntaxError)
+      expect { Makiri::XML("<r><a/></r>").css(":current(a)") }.to raise_error(Makiri::CSS::SyntaxError)
+    end
+
     # The unsupported construct is found before matching, so the answer does
     # not depend on document content, alternative order, an earlier simple
     # selector's mismatch, or at_css's first-match stop.
@@ -264,7 +279,8 @@ RSpec.describe "Makiri CSS" do
        %(p, nosuch:lexbor-contains("x")), %(nosuch:lexbor-contains("x"), p),
        %(:not(p:lexbor-contains("x"))), %(body:has(p:lexbor-contains("x"))),
        %(:nth-child(1 of p:lexbor-contains("x"))),
-       "p, col || td", "col || td, p", "body:has(col || td)"].each do |sel|
+       "p, col || td", "col || td, p", "body:has(col || td)",
+       ":current(p)", "p, :current(nosuch)", ":not(:current(p))"].each do |sel|
         expect { d.css(sel) }.to raise_error(Makiri::Error, /could not be run/), sel
         expect { d.at_css(sel) }.to raise_error(Makiri::Error, /could not be run/), sel
         expect { p.matches?(sel) }.to raise_error(Makiri::Error, /could not be run/), sel

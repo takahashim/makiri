@@ -13,6 +13,15 @@
   (always `"CSS1Compat"`), the HTML Document's names, since the DOM puts
   every XML document in no-quirks mode.
 
+### Changed
+
+* HTML `#css` / `#at_css` / `#matches?` raise `Makiri::Error` ("could not be
+  run") for `:current(S)`, anywhere in the selector, as for
+  `:lexbor-contains()`. It matched nothing: Selectors Level 4 does not define
+  it (Level 5 took the time-dimensional pseudo-classes), Lexbor matches it as
+  `:is(S)`, and the argument-less `:current` was already a syntax error. The
+  XML side refused it before. `parse_stylesheet` still writes it back.
+
 ### Fixed
 
 * `Makiri::Lexbor::CSS.parse_stylesheet`: a selector's `:text` keeps its
