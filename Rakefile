@@ -94,10 +94,12 @@ end
 # the report down to errors whose stack touches our extension, so we no longer
 # have to fetch ruby.supp from ruby/ruby (that path was removed upstream).
 #
-# We keep this job's historical contract: catch *use of uninitialised values*
-# and *invalid reads/writes* (incl. intra-arena overflows) - NOT leaks (leak
-# detection stays with `rake leaks`). So we override ruby_memcheck's defaults,
-# which disable undef-value errors and turn on full leak-check.
+# The job catches *use of uninitialised values* and *invalid reads/writes*
+# (incl. intra-arena overflows), and also any "definitely lost" block whose
+# stack touches our extension - the one leak gate with no frequency threshold
+# (`rake leaks`, macOS, flags only stacks repeated >= 30x). It once meant to
+# leave leaks out and could not: see `--leak-check` below. ruby_memcheck's
+# defaults disable undef-value errors, so we override them.
 #
 # `filter_all_errors: true` is essential: by default ruby_memcheck only applies
 # its "stack must touch the makiri binary" filter to *leak*-kind errors
@@ -146,7 +148,19 @@ begin
       # post-merge push gate turns it off (VALGRIND_TRACK_ORIGINS=no) to run in
       # ~half the time, while the nightly / manual runs keep it on for the backtrace.
       "--track-origins=#{ENV.fetch('VALGRIND_TRACK_ORIGINS', 'yes')}",
-      "--leak-check=no",        # leaks are `rake leaks`' job, not this one
+      # Leaks ARE checked here, whatever this says: ruby_memcheck always runs
+      # valgrind with --xml=yes, and in XML mode memcheck writes its leak
+      # records even under --leak-check=no (a "definitely lost" in a spec's
+      # child process failed run 37864917248 that way). So say what happens,
+      # and keep ruby_memcheck's own leak kinds - these options REPLACE its
+      # defaults rather than adding to them, and without the line below
+      # valgrind's default (definite,possible) fails the job on a "possibly
+      # lost" too. A spec that runs Ruby in a child must leave
+      # RUBY_FREE_AT_EXIT set there (it is inherited): without it the child's
+      # live strings at exit are reported as definitely lost through our
+      # frames (PR #55).
+      "--leak-check=full",
+      "--show-leak-kinds=definite",
     ],
   )
 

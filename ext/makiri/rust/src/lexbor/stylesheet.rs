@@ -152,7 +152,8 @@ fn specificity(sp: u32) -> [u32; 3] {
 /* ---- the walk ---- */
 
 struct Conv<'a> {
-    /// The original input, borrowed. At-rule preludes are byte ranges into it.
+    /// The original input, borrowed. Preludes - and a value a rewrite
+    /// touched - are taken from it by Lexbor's offsets (`slice_trim`).
     css: &'a [u8],
     /// What Lexbor was actually given, when [`contains_guard`] rewrote a name.
     /// `None` when the two are the same, which is the usual case.
@@ -160,23 +161,6 @@ struct Conv<'a> {
     /// [`contains_guard`]: crate::lexbor::contains_guard
     parsed: Option<&'a [u8]>,
     scratch: Vec<u8>,
-}
-
-/// `text` - Lexbor's copy of the input between `begin` and `end` - as the
-/// CALLER wrote it.
-///
-/// Lexbor copied it out of the buffer it read, which after a `contains_guard`
-/// rewrite is not what the caller typed; the offsets are into that buffer, and
-/// the rewrite keeps every byte where it was, so the same range of the ORIGINAL
-/// is the caller's text - exactly, with no search. (A search for the copy,
-/// here before, was quadratic in the sheet and could pick an identical piece
-/// from another place, spelled differently in the original.) Offsets that do
-/// not fit keep Lexbor's text: the rewritten name beats a wrong range.
-fn as_written(c: &Conv, text: Vec<u8>, begin: usize, end: usize) -> Result<Vec<u8>, Fail> {
-    if c.parsed.is_none() || begin > end || end > c.css.len() {
-        return Ok(text);
-    }
-    falloc::try_to_vec(&c.css[begin..end]).or_oom()
 }
 
 unsafe fn declarations(
@@ -258,30 +242,57 @@ unsafe fn selectors(sel: *mut lxb::lxb_css_selector_list_t) -> Result<Option<Vec
     Ok(Some(out))
 }
 
-/// Slice `[begin, end)` out of the original input, trimmed (`trim`). Empty
-/// when the offsets are unusable - fail closed, never a wrong slice.
+/// Slice `[begin, end)` out of the original input, trimmed (`trim`) - the
+/// one copy. Empty when the offsets are unusable - fail closed, never a wrong
+/// slice.
+///
+/// Always the ORIGINAL input, never Lexbor's copy of the range: after a
+/// `contains_guard` rewrite that copy is not what the caller typed, and
+/// otherwise it is these very bytes (Lexbor copies `[begin, end)` of what it
+/// read, and the rewrite keeps every byte where it was). Lexbor takes the
+/// offsets from the tokens it read, so a range that does not fit is not
+/// expected; were one to arise, the empty text is a value the caller already
+/// has to refuse, unlike a range of someone else's text.
 fn slice_trim(css: &[u8], begin: usize, end: usize) -> Result<Vec<u8>, Fail> {
-    if begin > end || end > css.len() {
-        return Ok(Vec::new());
+    match css.get(begin..end) {
+        Some(s) => falloc::try_to_vec(trim(s)).or_oom(),
+        None => Ok(Vec::new()),
     }
-    falloc::try_to_vec(trim(&css[begin..end])).or_oom()
 }
 
-/// `s` without its leading and trailing ASCII whitespace (and controls).
+/// `s` without its leading and trailing CSS whitespace - space, tab, LF, CR
+/// and FF, nothing else (css-syntax-3; VT and the other controls are not
+/// whitespace there). A trailing whitespace byte that an odd run of
+/// backslashes precedes is kept, with everything before it: `.a\ ` is the
+/// escaped space, and even where the pair is not an escape (`\` + LF) a `\`
+/// left at the end would be one - an escape at EOF, which reads as U+FFFD, so
+/// a prelude Lexbor rejected would come back as a different, valid selector.
+/// (Trimming the space that ends a hex escape, `\31 `, leaves the escape at
+/// the end, where it means the same.)
 fn trim(mut s: &[u8]) -> &[u8] {
     while let Some((&b, rest)) = s.split_first() {
-        if b > b' ' {
+        if !is_css_whitespace(b) {
             break;
         }
         s = rest;
     }
     while let Some((&b, rest)) = s.split_last() {
-        if b > b' ' {
+        if !is_css_whitespace(b) || escapes_next(rest) {
             break;
         }
         s = rest;
     }
     s
+}
+
+fn is_css_whitespace(b: u8) -> bool {
+    matches!(b, b' ' | b'\t' | b'\n' | b'\r' | 0x0C)
+}
+
+/// Whether `before` ends in an odd run of backslashes: one that escapes the
+/// byte after it.
+fn escapes_next(before: &[u8]) -> bool {
+    before.iter().rev().take_while(|&&b| b == b'\\').count() % 2 == 1
 }
 
 /// The at-rule keyword, without the `@`.
@@ -365,15 +376,11 @@ unsafe fn rules(
                 // prelude so the caller can re-validate with its own parser
                 // rather than lose the rule.
                 let bad = r as *mut lxb::lxb_css_rule_bad_style_t;
-                let text = match lexbor_str(&(*bad).selectors) {
-                    Some(b) => falloc::try_to_vec(b).or_oom()?,
-                    None => Vec::new(),
-                };
-                // Trimmed like the prelude of a rule `selectors` refuses, so
-                // a `:bad_style` reads the same whichever refused it.
-                let text = as_written(c, text, (*bad).prelude_begin, (*bad).prelude_end)?;
+                // As written and trimmed, like the prelude of a rule
+                // `selectors` refuses, so a `:bad_style` reads the same
+                // whichever refused it.
                 Some(Rule::BadStyle {
-                    selector_text: falloc::try_to_vec(trim(&text)).or_oom()?,
+                    selector_text: slice_trim(c.css, (*bad).prelude_begin, (*bad).prelude_end)?,
                     declarations: declarations(c, (*bad).declarations)?,
                 })
             }

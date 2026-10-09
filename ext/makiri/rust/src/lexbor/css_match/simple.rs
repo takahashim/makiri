@@ -310,24 +310,21 @@ pub(super) fn check_simple(
             _ => SimpleCheck::Deferred,
         },
         Simple::PseudoClassFunction(FunctionArg::Selectors { .. }) => SimpleCheck::Deferred,
-        // `:lexbor-contains()`: Lexbor itself matches with it
-        // (`lxb_selectors_pseudo_class_function`'s `LEXBOR_CONTAINS`) - this
-        // port deliberately does not (`MatchFailure::Unsupported`'s doc) - so
-        // answering `false` would be indistinguishable from a selector that
-        // legitimately matches nothing. Raised instead.
-        Simple::PseudoClassFunction(FunctionArg::Contains(_)) => {
+        // `:lexbor-contains()` and `:current()`: Lexbor itself matches with
+        // both (`lxb_selectors_pseudo_class_function`, `:current(S)` as
+        // `:is(S)`) - this port deliberately does not
+        // (`MatchFailure::Unsupported`'s doc) - so answering `false` would be
+        // indistinguishable from a selector that legitimately matches
+        // nothing. Raised instead; `compile` refuses both before any node is
+        // tested, so this arm is the backstop.
+        Simple::PseudoClassFunction(FunctionArg::Contains(_) | FunctionArg::Current(_)) => {
             return Err(MatchFailure::Unsupported)
         }
         // Any OTHER functional pseudo-class (`:dir()`, `:lang()`, `:nth-col()`,
         // `:nth-last-col()`) is unimplemented in LEXBOR TOO
         // (`lxb_selectors_pseudo_class_function`'s `default:` case) - a real,
         // agreed "always false", not a gap this port introduces.
-        // `:current()` is NOT one of those - Lexbor matches it as `:is()` -
-        // but stays false here, as before it had a variant of its own: the
-        // module doc lists it as still open.
-        Simple::PseudoClassFunction(FunctionArg::Current(_) | FunctionArg::Other) => {
-            SimpleCheck::Result(false)
-        }
+        Simple::PseudoClassFunction(FunctionArg::Other) => SimpleCheck::Result(false),
         Simple::PseudoElement | Simple::Other => SimpleCheck::Result(false),
     })
 }

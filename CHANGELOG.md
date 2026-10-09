@@ -13,6 +13,17 @@
   (always `"CSS1Compat"`), the HTML Document's names, since the DOM puts
   every XML document in no-quirks mode.
 
+### Changed
+
+* HTML `#css` / `#at_css` / `#matches?` raise `Makiri::Error` ("could not be
+  run") for `:current(S)`, anywhere in the selector, as for
+  `:lexbor-contains()`. It matched nothing. Selectors Level 5 (which took the
+  time-dimensional pseudo-classes from Level 4) says it matches nothing where
+  the host language defines no timeline, as HTML does not; Lexbor matches it
+  as `:is(S)`; and the argument-less `:current` was already a syntax error.
+  Rather than pick one of those answers, it is refused, as the XML side
+  already did. `parse_stylesheet` still writes it back.
+
 ### Fixed
 
 * `Makiri::Lexbor::CSS.parse_stylesheet`: a selector's `:text` keeps its
@@ -21,10 +32,15 @@
   or not at all; an attribute value's `\` or newline went out unescaped; and
   `:current(S)` lost its argument. The text is now CSSOM's serialization
   (`[a="x" i]` gains the space before its flag); selectors without escapes
-  read as before. A selector it cannot write back as written (`[|a]`, which
-  Lexbor stores as the any-namespace `*`) is reported as `:bad_style`.
+  read as before; `[|a]` (Lexbor stores its "no namespace" as `*`) is
+  written `[|a]`.
 * `:bad_style`'s `selector_text` is trimmed: a rule Lexbor rejected kept the
   whitespace before its `{`.
+* `parse_stylesheet` trims only CSS whitespace (space, tab, LF, CR, FF), and
+  never the whitespace an escape owns. An at-rule's `prelude`, a value taken
+  from the source and `selector_text` lost an escaped trailing space and kept
+  its `\` (`screen\ ` came back as `screen\`, which reads as `screen` +
+  U+FFFD), and any other control byte at either end went too.
 
 ## [0.14.0] - 2026-10-04
 

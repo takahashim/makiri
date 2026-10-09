@@ -245,8 +245,9 @@ impl Shape {
                     }
                     work.push((lists, in_has || has));
                 }
-                FunctionArg::Contains(_) => self.departs = true,
-                FunctionArg::Current(_) | FunctionArg::Other => {}
+                // Both raised by the port and matched by Lexbor.
+                FunctionArg::Contains(_) | FunctionArg::Current(_) => self.departs = true,
+                FunctionArg::Other => {}
             },
             _ => {}
         }

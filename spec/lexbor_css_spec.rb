@@ -224,18 +224,51 @@ RSpec.describe Makiri::Lexbor::CSS do
       expect(texts("col || td")).to eq(["col || td"])
     end
 
-    # Lexbor stores `[|a]` (no namespace) as `*`, which would read back as any
-    # namespace; the rule is handed back as written instead.
-    it "reports an attribute it cannot write back as :bad_style, as written" do
+    # Lexbor stores `[|a]` (no namespace) with the namespace `*` and refuses
+    # `[*|a]`, so a `*` there is `[|a]`. It used to be reported as :bad_style.
+    # An escaped `\*|` prefix is stored the same way and reads back as `|`,
+    # as `\*|a` reads back as `*|a` on a type selector.
+    it "writes an attribute in no namespace back as [|a]" do
       rules = parse(".x{color:red} [|a] { color: blue } .y{color:green}")
-      expect(rules.map { |r| r[:type] }).to eq(%i[style bad_style style])
-      expect(rules[1][:selector_text]).to eq("[|a]")
-      expect(rules[1][:declarations]).to eq([{ name: "color", value: "blue", important: false }])
+      expect(rules.map { |r| r[:type] }).to eq(%i[style style style])
+      expect(rules[1][:selectors]).to eq([{ text: "[|a]", specificity: [0, 1, 0] }])
+      expect(texts("[|a=x], p[|a]")).to eq(['[|a="x"]', "p[|a]"])
+      expect(texts('[\*|a]')).to eq(["[|a]"])
+      expect(parse("[*|a]{x:y}")[0][:type]).to eq(:bad_style)
     end
 
-    it "trims a :bad_style prelude whichever side refused it" do
+    it "trims a :bad_style prelude" do
       expect(parse("  :focus-within  {x:y}")[0][:selector_text]).to eq(":focus-within")
-      expect(parse("  [|a]  {x:y}")[0][:selector_text]).to eq("[|a]")
+      expect(parse(" \t ::before \n {x:y}")[0][:selector_text]).to eq("::before")
+    end
+
+    # Trimming used to drop every byte up to 0x20 and an escaped space with it,
+    # leaving a lone `\` at the end - an escape at EOF, U+FFFD - so a prelude
+    # Lexbor rejected came back as a different, valid selector.
+    describe "trimming whitespace that an escape owns" do
+      it "keeps an escaped trailing space" do
+        expect(parse('::foo .a\  {x:y}')[0][:selector_text]).to eq('::foo .a\ ')
+      end
+
+      it "never leaves a lone trailing backslash" do
+        expect(parse(".a\\\n{x:y}")[0][:selector_text]).to eq(".a\\\n")
+        expect(parse("::foo .a\\\\ {x:y}")[0][:selector_text]).to eq("::foo .a\\\\")
+      end
+
+      it "keeps it in an at-rule prelude" do
+        expect(parse('@media screen\  { a { x: y } }')[0][:prelude]).to eq('screen\ ')
+      end
+
+      it "keeps it in a value taken from the source" do
+        decl = parse('a{--x: :lexbor-contains(1) \ ;}')[0][:declarations][0]
+        expect(decl[:value]).to eq(':lexbor-contains(1) \ ')
+      end
+
+      it "trims only CSS whitespace" do
+        expect(parse("::foo .a\x01 {x:y}")[0][:selector_text]).to eq("::foo .a\x01")
+        expect(parse("::foo .a\v {x:y}")[0][:selector_text]).to eq("::foo .a\v")
+        expect(parse("\t\f\r\n ::foo\t\f\r\n {x:y}")[0][:selector_text]).to eq("::foo")
+      end
     end
 
     it "leaves selectors without escapes as Lexbor wrote them" do
