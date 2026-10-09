@@ -37,6 +37,13 @@ on:
     - cron: "41 4 * * *"
   workflow_dispatch:
 
+# A new push to a pull request supersedes the run on its previous head. The
+# event is in the group so a push to main never queues behind (or replaces) a
+# nightly run of the same workflow.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   # Short on a push or PR, long on the nightly schedule.
   LONG: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
@@ -139,8 +146,12 @@ jobs:
       # also starts from the other's corpus (read-only: new units go to the
       # first directory). The cache prefix is libfuzzer.yml's, so the corpus
       # accumulated there carries over.
+      # Restored here, saved after the minimization below - and not on a pull
+      # request: a cache a PR saves is scoped to that PR's ref, so main and the
+      # nightly never read it, and minimizing it (~5 min) only bought a cache
+      # nobody restores.
       - name: Restore the corpus
-        uses: actions/cache@v6
+        uses: actions/cache/restore@v6
         with:
           path: ext/makiri/rust/fuzz/corpus/${{ matrix.target }}
           key: cargo-fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
@@ -171,7 +182,7 @@ jobs:
             -dict=css.dict \
             -print_final_stats=1
 
-      # The cache saves this directory after every run, so without this it
+      # The corpus is saved after every main/nightly run, so without this it
       # only grows: every nightly hour adds units and nothing ever drops one.
       # It reached ~58k files (with the sibling, ~107k units replayed before
       # the first mutation) of which libFuzzer kept ~2.8k, and a short run
@@ -180,6 +191,7 @@ jobs:
       # run after a long gap pays one replay of the backlog; later ones a
       # few thousand units.
       - name: Minimize the corpus before it is cached
+        if: github.event_name != 'pull_request'
         working-directory: ext/makiri/rust/fuzz
         run: |
           before=$(ls corpus/${{ matrix.target }} | wc -l)
@@ -188,6 +200,13 @@ jobs:
             -timeout=30
           after=$(ls corpus/${{ matrix.target }} | wc -l)
           echo "corpus/${{ matrix.target }}: $before -> $after files"
+
+      - name: Save the corpus
+        if: github.event_name != 'pull_request'
+        uses: actions/cache/save@v6
+        with:
+          path: ext/makiri/rust/fuzz/corpus/${{ matrix.target }}
+          key: cargo-fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
 
       - name: Upload reproducers
         if: failure()

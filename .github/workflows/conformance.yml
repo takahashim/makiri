@@ -15,6 +15,13 @@ on:
     - cron: "37 5 * * *" # nightly, offset from the other workflows
   workflow_dispatch:
 
+# A new push to a pull request supersedes the run on its previous head. The
+# event is in the group so a push to main never queues behind (or replaces) a
+# nightly run of the same workflow.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # PR + push: HTML5 parsing conformance, plus the XPath and CSS differentials
   # over the curated corpus and a moderate batch of generated XPath expressions.

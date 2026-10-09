@@ -1,10 +1,36 @@
 name: Verify
 
 on:
+  # Ten minutes of proofs, over the Ruby-free engine only - so they run when
+  # that engine (or how it is built) changes, not on every push.
   push:
     branches: [main, master]
+    paths: &kani-paths
+      # The proofs build `--no-default-features`, so the Ruby/Lexbor layers
+      # below are compiled out of them; a change confined to those cannot
+      # change a proof's outcome. Everything else under src/ stays in, since
+      # the harnesses reach the engine's shared modules (limits, text, ...).
+      - "ext/makiri/rust/src/**"
+      - "!ext/makiri/rust/src/bridge/**"
+      - "!ext/makiri/rust/src/glue/**"
+      - "!ext/makiri/rust/src/lexbor/**"
+      - "!ext/makiri/rust/src/css/**"
+      - "!ext/makiri/rust/src/init.rs"
+      - "ext/makiri/rust/build.rs"
+      - "ext/makiri/rust/Cargo.toml"
+      - "ext/makiri/rust/Cargo.lock"
+      - "Rakefile"
+      - ".github/workflows/verify.yml"
   pull_request:
+    paths: *kani-paths
   workflow_dispatch:
+
+# A new push to a pull request supersedes the run on its previous head. The
+# event is in the group so a push to main never queues behind (or replaces) a
+# nightly run of the same workflow.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # A CBMC job stood here and proved ext/makiri/{core,xml,xpath}/*.c. Those
