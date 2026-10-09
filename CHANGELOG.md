@@ -5,52 +5,29 @@
 ### Added
 
 * `Makiri::HTML::Document#create_loose_dom_element(qualified_name, prefix,
-  local_name, namespace_uri)`, like the XML Document's: the name is not
-  split, so a local name keeps its colons and case (`"foo:"`, `"Foo:Bar"`) in
-  the namespace given. Names the DOM refuses raise `ArgumentError`; the
-  namespace is not checked against the prefix.
+  local_name, namespace_uri)`, like the XML Document's: the local name is
+  taken as given (`"Foo:Bar"` keeps its colon and case). Names the DOM
+  refuses raise `ArgumentError`.
 * `Makiri::XML::Document#quirks_mode?` (always `false`) and `#compat_mode`
-  (always `"CSS1Compat"`), the HTML Document's names, since the DOM puts
-  every XML document in no-quirks mode.
+  (always `"CSS1Compat"`), as on the HTML Document.
 
 ### Changed
 
-* `:lexbor-contains()` is no longer supported anywhere. It raises
-  `Makiri::CSS::SyntaxError` from `Makiri::XML` `#css` (which lowered it to
-  XPath `contains()`) and from HTML `#css` / `#at_css` / `#matches?` (which
-  already refused a well-formed one, as "could not be run"), and
-  `parse_stylesheet` reports its rule as `:bad_style` (inside `:is()`,
-  `:where()` or `:has()` the alternative is dropped, as for any unknown
-  pseudo-class). Lexbor's parser for its argument is where the v3.0.0 heap
-  overflow and a later serializer crash were; rather than decide which
-  arguments it may see, it now sees none - `contains_guard` renames every
-  occurrence before the parser runs. Use XPath `contains()` instead.
+* `:lexbor-contains()` is no longer supported. `#css` / `#at_css` /
+  `#matches?` raise `Makiri::CSS::SyntaxError` for it (HTML and XML), and
+  `parse_stylesheet` reports its rule as `:bad_style`. Use XPath `contains()`
+  instead.
 * HTML `#css` / `#at_css` / `#matches?` raise `Makiri::Error` ("could not be
-  run") for `:current(S)`, anywhere in the selector, as for
-  `:lexbor-contains()`. It matched nothing. Selectors Level 5 (which took the
-  time-dimensional pseudo-classes from Level 4) says it matches nothing where
-  the host language defines no timeline, as HTML does not; Lexbor matches it
-  as `:is(S)`; and the argument-less `:current` was already a syntax error.
-  Rather than pick one of those answers, it is refused, as the XML side
-  already did. `parse_stylesheet` still writes it back.
+  run") for `:current(S)` instead of matching nothing.
 
 ### Fixed
 
-* `Makiri::Lexbor::CSS.parse_stylesheet`: a selector's `:text` keeps its
-  escapes. Identifiers were written decoded, so `.md\:block` came back as
-  `.md:block` and `.a\,b` as `.a,b`, which read back as a different selector
-  or not at all; an attribute value's `\` or newline went out unescaped; and
-  `:current(S)` lost its argument. The text is now CSSOM's serialization
-  (`[a="x" i]` gains the space before its flag); selectors without escapes
-  read as before; `[|a]` (Lexbor stores its "no namespace" as `*`) is
-  written `[|a]`.
-* `:bad_style`'s `selector_text` is trimmed: a rule Lexbor rejected kept the
-  whitespace before its `{`.
-* `parse_stylesheet` trims only CSS whitespace (space, tab, LF, CR, FF), and
-  never the whitespace an escape owns. An at-rule's `prelude`, a value taken
-  from the source and `selector_text` lost an escaped trailing space and kept
-  its `\` (`screen\ ` came back as `screen\`, which reads as `screen` +
-  U+FFFD), and any other control byte at either end went too.
+* `parse_stylesheet` keeps escapes in a selector's `:text`: `.md\:block` came
+  back as `.md:block`. `:current(S)` keeps its argument, and a rule
+  with `[|a]` is no longer reported as `:bad_style`.
+* `parse_stylesheet` trims only CSS whitespace and never an escaped one:
+  `screen\ ` came back as `screen\`. A `:bad_style`'s `selector_text` no
+  longer keeps the whitespace before its `{`.
 
 ## [0.14.0] - 2026-10-04
 
