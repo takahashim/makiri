@@ -900,6 +900,75 @@ mod css_match {
         }
     }
 
+    /// `:has()`'s forward search skips the rest of a subtree it has already
+    /// searched for the rest of a chain behind a descendant combinator
+    /// (`Query::step_forward`): nothing inside it can succeed where the
+    /// subtree as a whole did not. Before, `:has(* x)` over a chain n deep
+    /// walked n^2 nodes per subject and `:has(* * x)` ran out of the work
+    /// budget at n = 200 - found by the `html_css` fuzz target as a timeout.
+    /// The skip must never cost an answer: a later sibling branch is still
+    /// searched, which the old engine (exhaustive) checks.
+    #[test]
+    fn has_descendant_search_skips_a_subtree_already_searched() {
+        use crate::lexbor::selectors as old_engine;
+
+        let n = 390;
+        let deep =
+            parsed(format!("<body>{}{}</body>", "<z>".repeat(n), "</z>".repeat(n)).as_bytes());
+        for sel in [
+            ":has(* :disabled)",
+            ":has(* * :disabled)",
+            ":has(* * * :disabled)",
+        ] {
+            assert_eq!(select_all(&deep, sel).len(), 0, "{sel}");
+        }
+        let hit = parsed(
+            format!(
+                "<body>{}<input disabled>{}</body>",
+                "<z>".repeat(n),
+                "</z>".repeat(n)
+            )
+            .as_bytes(),
+        );
+        // Every element with at least two levels below it before the input:
+        // html, body and the z's but the last.
+        assert_eq!(select_all(&hit, ":has(* :disabled)").len(), n + 1);
+        assert_eq!(select_all(&hit, ":has(* * :disabled)").len(), n);
+
+        let branchy = parsed(
+            b"<div id=d><p><a><i></i></a></p><p><b><x></x></b></p>\
+              <section><p><u></u></p><p><q><x></x></q></p></section></div>",
+        );
+        for sel in [
+            "div:has(* * x)",
+            "div:has(p * x)",
+            "div:has(* x)",
+            "section:has(* * x)",
+            "div:has(* > * x)",
+            "div:has(* * > x)",
+            "div:has(p ~ p * x)",
+            "div:has(* + * x)",
+            ":has(* * * x)",
+            ":has(a * x)",
+        ] {
+            let old = {
+                let gvl = Gvl::exclusive();
+                old_engine::select_all(&gvl, RawNode::from(root(&branchy)), sel.as_bytes())
+                    .unwrap_or_else(|_| panic!("old engine rejected {sel:?}"))
+            };
+            let new: Vec<RawNode> = select_all(&branchy, sel)
+                .into_iter()
+                .map(|e| RawNode::from(e.node()))
+                .collect();
+            assert!(
+                new == old,
+                "{sel}: {} here, {} in Lexbor's engine",
+                new.len(),
+                old.len()
+            );
+        }
+    }
+
     /// A construct this engine cannot evaluate at all - the column
     /// combinator `||` (Lexbor's OWN traversal reports an error for it too)
     /// and `:current()` (Lexbor itself matches it as `:is()`; this port
