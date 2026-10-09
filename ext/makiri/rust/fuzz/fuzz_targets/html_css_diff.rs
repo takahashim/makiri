@@ -246,7 +246,7 @@ impl Shape {
                     work.push((lists, in_has || has));
                 }
                 FunctionArg::Contains(_) => self.departs = true,
-                FunctionArg::Other => {}
+                FunctionArg::Current(_) | FunctionArg::Other => {}
             },
             _ => {}
         }

@@ -438,7 +438,14 @@ pub enum FunctionArg<'p> {
     },
     /// `:lexbor-contains`, or None when Lexbor stored nothing.
     Contains(Option<Contains<'p>>),
-    /// Any other functional pseudo-class.
+    /// `:current(S)`. Kept apart from [`FunctionArg::Selectors`] so no
+    /// consumer gives it `:is(S)`'s answer by falling into a catch-all arm:
+    /// Lexbor's matcher does match it as `:is(S)`, but `css_match` answers
+    /// false and lists it as still open (its module doc), and the XML
+    /// lowering refuses it. Each consumer decides here, explicitly.
+    Current(Lists<'p>),
+    /// Any other functional pseudo-class - one whose argument, if any,
+    /// Lexbor does not keep.
     Other,
 }
 
@@ -511,27 +518,6 @@ impl<'p> Selector<'p> {
     /// [`Simple::PseudoElement`].
     pub fn is_pseudo_element_function(self) -> bool {
         self.0.type_ == raw::PSEUDO_ELEMENT_FUNCTION
-    }
-
-    /// `:current()`'s argument: the one functional pseudo-class
-    /// [`FunctionArg::Other`] covers that stores a selector list, which only
-    /// the stylesheet's selector text (`lexbor::selector_text`) reads - the
-    /// matchers answer `:current()` as `Other`. None for any other selector;
-    /// an empty `Lists` for `:current()` with nothing in it.
-    pub fn current_arg(self) -> Option<Lists<'p>> {
-        if self.0.type_ != raw::PSEUDO_CLASS_FUNCTION {
-            return None;
-        }
-        // SAFETY: Lexbor fills `u.pseudo` for a functional pseudo-class.
-        let pseudo = unsafe { self.0.u.pseudo };
-        if pseudo.type_ != raw::CURRENT {
-            return None;
-        }
-        // SAFETY: for `:current()` Lexbor stores a selector list (or
-        // nothing), in the arena.
-        Some(Lists(
-            unsafe { arena(pseudo.data as *const SelectorList) }.map(List),
-        ))
     }
 
     /// An attribute selector's parts; `simple` calls it for no other kind.
@@ -611,10 +597,12 @@ impl<'p> Selector<'p> {
                 }),
             }
         };
+        // SAFETY: for `:not`/`:is`/`:where`/`:has`/`:current` Lexbor stores
+        // a selector list (or nothing), in the arena.
+        let lists = || Lists(unsafe { arena(data as *const SelectorList) }.map(List));
         let selectors = |pseudo: ListPseudo| FunctionArg::Selectors {
             pseudo,
-            // SAFETY: for these Lexbor stores a selector list, in the arena.
-            lists: Lists(unsafe { arena(data as *const SelectorList) }.map(List)),
+            lists: lists(),
         };
         match pseudo.type_ {
             raw::NTH_CHILD => nth(false, false),
@@ -635,6 +623,7 @@ impl<'p> Selector<'p> {
                     insensitive: c.insensitive,
                 }))
             }
+            raw::CURRENT => FunctionArg::Current(lists()),
             _ => FunctionArg::Other,
         }
     }

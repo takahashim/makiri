@@ -206,10 +206,8 @@ fn simple<'p>(out: &mut Vec<u8>, s: Selector<'p>) -> Result<Option<Lists<'p>>, F
                     }
                 }
                 FunctionArg::Contains(None) => return Err(Fail::Lossy),
-                FunctionArg::Other => match s.current_arg() {
-                    Some(lists) => return Ok(Some(lists)),
-                    None => return Err(Fail::Lossy),
-                },
+                FunctionArg::Current(lists) => return Ok(Some(lists)),
+                FunctionArg::Other => return Err(Fail::Lossy),
             }
             put(out, b")")?;
         }
