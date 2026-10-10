@@ -2,34 +2,33 @@
 
 require_relative "makiri/version"
 
-# Native extension (a Rust crate). Located at lib/makiri/<ruby_abi>/makiri.{so,bundle}
-# (created by rake-compiler). Loading is gated so the gem can be required
-# in environments where the binary is not yet built (the require error
-# is then surfaced clearly).
-begin
-  RUBY_VERSION =~ /(\d+\.\d+)/
-  require_relative "makiri/#{Regexp.last_match(1)}/makiri"
-rescue LoadError
+# Native extension (a Rust crate): lib/makiri/<major.minor>/makiri.<dlext> in a
+# precompiled gem (one per Ruby), else lib/makiri/makiri.<dlext> (a source
+# install, or a checkout's `rake compile`). The versioned one is required only
+# if it is there: rescuing LoadError instead would also swallow the extension's
+# own refusal (a binary built for another Ruby raises LoadError from its init)
+# and load the fallback over it.
+versioned = "makiri/#{RUBY_VERSION[/\A\d+\.\d+/]}/makiri"
+if File.exist?(File.join(__dir__, "#{versioned}.#{RbConfig::CONFIG["DLEXT"]}"))
+  require_relative versioned
+else
   require_relative "makiri/makiri"
 end
 
-# The fallback above loads lib/makiri/makiri.{so,bundle} whichever version of
-# this gem's Ruby code is asking: a checkout (or a Bundler `path:` gem) keeps
-# one binary from its last compile, and one from another gem version lacks or
-# misnames methods. The extension states what it was built as, and a
-# mismatch stops here. (A binary for another Ruby is refused earlier, by the
-# extension itself before it defines anything.) A binary older than the
-# constants defines neither, which is a mismatch too.
+# The fallback loads lib/makiri/makiri.<dlext> whichever version of this gem's
+# Ruby code is asking: a checkout (or a Bundler `path:` gem) keeps one binary
+# from its last compile, and one from another gem version lacks or misnames
+# methods. The extension states what it was built as, and a mismatch stops
+# here; a binary older than the constant states nothing, a mismatch too. (A
+# binary for another Ruby never gets this far: the extension refuses it
+# before it defines anything.)
 module Makiri
-  native_ruby = RUBY_VERSION[/\A\d+\.\d+/]
   native_version = const_defined?(:NATIVE_VERSION, false) ? NATIVE_VERSION : "(unknown)"
-  native_api = const_defined?(:NATIVE_RUBY_API_VERSION, false) ? NATIVE_RUBY_API_VERSION : "(unknown)"
-  if native_version != VERSION || native_api != native_ruby
+  if native_version != VERSION
     raise LoadError,
-          "makiri's native extension was built as makiri #{native_version} for Ruby " \
-          "#{native_api}, but was loaded by makiri #{VERSION} on Ruby " \
-          "#{native_ruby}; rebuild it (`bundle exec rake clean compile` in a checkout, " \
-          "or reinstall the gem)"
+          "makiri's native extension was built as makiri #{native_version}, but was " \
+          "loaded by makiri #{VERSION}; rebuild it (`bundle exec rake clean compile` in a " \
+          "checkout, or reinstall the gem)"
   end
 end
 

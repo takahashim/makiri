@@ -3,8 +3,9 @@
 require "open3"
 require "rbconfig"
 
-# lib/makiri.rb refuses a native extension built as another makiri version or
-# for another Ruby (see the check after the extension's require).
+# lib/makiri.rb refuses a native extension built as another makiri version
+# (the check after the extension's require); one built for another Ruby is
+# refused by the extension's own init, before it defines anything.
 RSpec.describe "native extension build check" do
   it "states the gem version and Ruby API version it was built as" do
     expect(Makiri::NATIVE_VERSION).to eq(Makiri::VERSION)
@@ -35,7 +36,7 @@ RSpec.describe "native extension build check" do
       { "RUBY_FREE_AT_EXIT" => nil }, RbConfig.ruby, "-I#{lib}", "-e", code
     )
     expect(status).to be_success, err
-    expect(out).to include("LoadError: makiri's native extension was built as makiri (unknown)")
+    expect(out).to include("LoadError: makiri's native extension was built as makiri (unknown),")
   end
 
   it "raises LoadError when the binary was built as another gem version" do
@@ -55,7 +56,7 @@ RSpec.describe "native extension build check" do
       { "RUBY_FREE_AT_EXIT" => nil }, RbConfig.ruby, "-I#{lib}", "-e", code
     )
     expect(status).to be_success, err
-    expect(out).to include("built as makiri #{Makiri::VERSION} for Ruby")
+    expect(out).to include("built as makiri #{Makiri::VERSION}, but")
     expect(out).to include("loaded by makiri 0.0.0-stale")
   end
 end
