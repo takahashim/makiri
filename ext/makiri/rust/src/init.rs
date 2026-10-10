@@ -310,6 +310,9 @@ fn seal_leaves(methods: RModule, leaves: &[RClass]) -> Result<(), Error> {
 /// found the wrong symbol.
 #[magnus::init(name = "makiri")]
 fn init(ruby: &Ruby) -> Result<(), Error> {
+    // Before anything touches the interpreter's structs: a binary built for
+    // another Ruby misreads them (`check_running_ruby_api`).
+    crate::bridge::ruby::check_running_ruby_api(ruby)?;
     // Before anything can parse: Lexbor's heap blocks carry slack past their
     // end (`lexbor::memory`).
     crate::lexbor::memory::install();

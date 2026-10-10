@@ -488,13 +488,24 @@ fn gem_version() {
     println!("cargo:rerun-if-changed={}", path.display());
     let source = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+    /* `VERSION = "x"` or `VERSION = 'x'`, a trailing `.freeze` or comment
+     * allowed: the literal is what is between the first quote and its match. */
     let version = source
         .lines()
         .find_map(|line| {
             let rest = line.trim().strip_prefix("VERSION")?.trim_start();
-            let rest = rest.strip_prefix('=')?.trim();
-            rest.strip_prefix('"')?.split('"').next()
+            let rest = rest.strip_prefix('=')?.trim_start();
+            let quote = rest.chars().next().filter(|c| *c == '"' || *c == '\'')?;
+            let body = &rest[1..];
+            body.find(quote).map(|end| &body[..end])
         })
-        .unwrap_or_else(|| panic!("no VERSION = \"...\" in {}", path.display()));
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| {
+            panic!(
+                "build.rs reads the gem version from a `VERSION = \"x.y.z\"` line in {}, \
+                 and found none",
+                path.display()
+            )
+        });
     println!("cargo:rustc-env=MAKIRI_GEM_VERSION={version}");
 }

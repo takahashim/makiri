@@ -13,18 +13,21 @@ rescue LoadError
   require_relative "makiri/makiri"
 end
 
-# The fallback above loads lib/makiri/makiri.{so,bundle} whichever Ruby, and
-# whichever version of this gem's Ruby code, is asking: a checkout (or a
-# Bundler `path:` gem) keeps one binary from its last compile. A binary built
-# for another Ruby is not refused by Ruby itself and misreads the interpreter;
-# one from another gem version lacks or misnames methods. The extension states
-# what it was built as, and a mismatch stops here.
+# The fallback above loads lib/makiri/makiri.{so,bundle} whichever version of
+# this gem's Ruby code is asking: a checkout (or a Bundler `path:` gem) keeps
+# one binary from its last compile, and one from another gem version lacks or
+# misnames methods. The extension states what it was built as, and a
+# mismatch stops here. (A binary for another Ruby is refused earlier, by the
+# extension itself before it defines anything.) A binary older than the
+# constants defines neither, which is a mismatch too.
 module Makiri
   native_ruby = RUBY_VERSION[/\A\d+\.\d+/]
-  if NATIVE_VERSION != VERSION || NATIVE_RUBY_API_VERSION != native_ruby
+  native_version = const_defined?(:NATIVE_VERSION, false) ? NATIVE_VERSION : "(unknown)"
+  native_api = const_defined?(:NATIVE_RUBY_API_VERSION, false) ? NATIVE_RUBY_API_VERSION : "(unknown)"
+  if native_version != VERSION || native_api != native_ruby
     raise LoadError,
-          "makiri's native extension was built as makiri #{NATIVE_VERSION} for Ruby " \
-          "#{NATIVE_RUBY_API_VERSION}, but was loaded by makiri #{VERSION} on Ruby " \
+          "makiri's native extension was built as makiri #{native_version} for Ruby " \
+          "#{native_api}, but was loaded by makiri #{VERSION} on Ruby " \
           "#{native_ruby}; rebuild it (`bundle exec rake clean compile` in a checkout, " \
           "or reinstall the gem)"
   end
