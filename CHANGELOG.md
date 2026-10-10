@@ -15,8 +15,6 @@
 * `Node#first_child` (an alias of `#child`) and `#last_child`.
 * `Node#root_node`, DOM `getRootNode()`: the Document, a DocumentFragment, or
   the top of a detached subtree. An Attr is its own root.
-* `Node#user_data` / `#user_data=`: one value per node, kept for as long as
-  the node's document lives. A copy of the node starts with none.
 
 ### Changed
 

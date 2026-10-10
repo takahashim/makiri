@@ -1,6 +1,6 @@
-//! The node identity methods both representations share - with `user_data`,
-//! keyed by that identity - the argument readers they share, and the pieces
-//! of the DOM's naming rules their factories raise alike.
+//! The node identity methods both representations share, the argument
+//! readers they share, and the pieces of the DOM's naming rules their
+//! factories raise alike.
 //!
 //! HTML (Lexbor) and XML (custom-arena) nodes are two representations of one
 //! Ruby-facing Node. `==`/`eql?`, `hash` and `pointer_id` never dereference
@@ -68,22 +68,6 @@ pub fn node_pointer_id(ruby: &Ruby, rb_self: Value) -> Result<Integer, magnus::E
 /// `#pointer_id`; an HTML and an XML node may share it, which a hash allows.
 pub fn node_hash(ruby: &Ruby, rb_self: Value) -> Result<Integer, magnus::Error> {
     crate::bridge::ruby::entry(|| node_pointer_id(ruby, rb_self))
-}
-
-/// `#user_data`: the one value a caller stored on this node with
-/// `#user_data=`, or nil. It lives as long as the node's document and is
-/// never seen through another node: a copy (`import_node`, `clone_node`)
-/// starts with none.
-pub fn node_user_data(rb_self: Value) -> Result<Value, magnus::Error> {
-    crate::bridge::ruby::entry(|| crate::bridge::wrapper::user_data(rb_self))
-}
-
-/// `#user_data=`: store `v` (nil forgets it); `FrozenError` on a frozen node.
-pub fn node_set_user_data(rb_self: Value, v: Value) -> Result<Value, magnus::Error> {
-    crate::bridge::ruby::entry(|| {
-        crate::bridge::wrapper::set_user_data(rb_self, v)?;
-        Ok(v)
-    })
 }
 
 /// A `child_at` / `element_child_at` index argument: None (so nil) for a
