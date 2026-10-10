@@ -16,7 +16,10 @@ pub mod strings;
 
 use magnus::{method, prelude::*, Error, RModule};
 
-use crate::glue::node::{node_equals, node_hash, node_pointer_id};
+use crate::glue::node::{
+    child_at, child_count, element_child_at, element_child_count, node_equals, node_hash,
+    node_pointer_id,
+};
 use crate::init::{CLASS_XML_DOCUMENT, CLASS_XML_DOCUMENT_TYPE, MOD_XML_NODE_METHODS};
 
 /* The wrapper and the receiver handle live in the Ruby <-> XML-arena seam
@@ -69,10 +72,14 @@ fn init_read() -> Result<(), Error> {
         m.define_method(name, method!(read::first_child, 0))?;
     }
     m.define_method("last_child", method!(read::last_child, 0))?;
-    m.define_method("child_count", method!(read::child_count, 0))?;
-    m.define_method("child_at", method!(read::child_at, 1))?;
-    m.define_method("element_child_count", method!(read::element_child_count, 0))?;
-    m.define_method("element_child_at", method!(read::element_child_at, 1))?;
+    /* Written once, over `ChildListHost` (`glue::node`). */
+    m.define_method("child_count", method!(child_count::<XmlSelf>, 0))?;
+    m.define_method("child_at", method!(child_at::<XmlSelf>, 1))?;
+    m.define_method(
+        "element_child_count",
+        method!(element_child_count::<XmlSelf>, 0),
+    )?;
+    m.define_method("element_child_at", method!(element_child_at::<XmlSelf>, 1))?;
     m.define_method("root_node", method!(read::root_node, 0))?;
     m.define_method("children", method!(read::children, 0))?;
     for name in ["element_children", "elements"] {

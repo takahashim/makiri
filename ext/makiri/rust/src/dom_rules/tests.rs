@@ -40,11 +40,20 @@ impl Tree for Mini {
     fn first_child(&self, n: usize) -> Option<usize> {
         self.children[n].first().copied()
     }
+    fn last_child(&self, n: usize) -> Option<usize> {
+        self.children[n].last().copied()
+    }
     fn next_sibling(&self, n: usize) -> Option<usize> {
         let p = self.parent[n]?;
         let s = &self.children[p];
         let i = s.iter().position(|&c| c == n)?;
         s.get(i + 1).copied()
+    }
+    fn prev_sibling(&self, n: usize) -> Option<usize> {
+        let p = self.parent[n]?;
+        let s = &self.children[p];
+        let i = s.iter().position(|&c| c == n)?;
+        s.get(i.checked_sub(1)?).copied()
     }
 }
 

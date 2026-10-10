@@ -18,7 +18,7 @@ use magnus::{Error, Value};
 
 use crate::bridge::ruby::{value, VALUE};
 use crate::bridge::typed::{Hooks, Marker, Relocator, TypedType};
-use crate::child_index::ChildPositionMemo;
+use crate::child_index::{ChildList, ChildPositionMemo, Children, TokenTree};
 use crate::falloc::{MapInsert, Reserve};
 use crate::init::{RbConst, CLASS_DOCUMENT};
 use crate::lexbor::adapter::html::{HtmlDoc, HtmlNodeKey, RawDoc, RawNode};
@@ -1048,10 +1048,7 @@ pub fn attribute_version(rb_doc: Value) -> Result<u64, Error> {
 ///
 /// `f` runs inside the document's borrow, so it must not run Ruby; a walk of
 /// the child links does not.
-pub(in crate::bridge) fn with_child_memo<R>(
-    rb_doc: Value,
-    f: impl FnOnce(&mut ChildPositionMemo, u64) -> R,
-) -> R {
+fn with_child_memo<R>(rb_doc: Value, f: impl FnOnce(&mut ChildPositionMemo, u64) -> R) -> R {
     with_doc_data_known(rb_doc, |d| {
         let version = d.edits.tree_version;
         if d.child_memo.is_none() {
@@ -1062,6 +1059,34 @@ pub(in crate::bridge) fn with_child_memo<R>(
             None => f(&mut ChildPositionMemo::default(), version),
         }
     })
+}
+
+/// [`Children::count`] through `rb_doc`'s memo.
+pub(in crate::bridge) fn count_children<T: TokenTree>(
+    rb_doc: Value,
+    children: Children<'_, T>,
+) -> usize {
+    with_child_memo(rb_doc, |memo, version| children.count(memo, version))
+}
+
+/// [`Children::at`] through `rb_doc`'s memo.
+pub(in crate::bridge) fn child_at_index<T: TokenTree>(
+    rb_doc: Value,
+    children: Children<'_, T>,
+    index: usize,
+) -> Option<T::Node> {
+    with_child_memo(rb_doc, |memo, version| children.at(memo, version, index))
+}
+
+/// A receiver whose child lists `#child_count` / `#child_at` and their
+/// element twins read - an HTML or XML node or Document. Each representation
+/// says only which tree and node it is and how a child is wrapped; the four
+/// methods are written once, over this, in `glue::node`.
+pub trait ChildListHost: magnus::TryConvert {
+    /// How many children are in `list`.
+    fn child_count(&self, list: ChildList) -> usize;
+    /// The wrapped child at `index` in `list`, or nil past the end.
+    fn child_at(&self, list: ChildList, index: usize) -> Result<Option<Value>, Error>;
 }
 
 /* ---- the document's mutation gate ---- */

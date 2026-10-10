@@ -166,7 +166,7 @@ RAW_NODE_CROSSING_COUNTS = {
   "bridge/fragment.rs" => 3,
   # 8th: an Attr's owner, read as the wrapper cache's identity key for the
   # owner-frozen check (`check_attr_owner_frozen`); it does not escape.
-  # 9th/10th: `HtmlChildren` (`child_count` / `child_at`), a node's pointer as
+  # 9th/10th: `TokenTree for HtmlTree` (`child_count` / `child_at`), a node's pointer as
   # the child-position memo's token and back. `child_index::ChildPositionMemo`
   # answers only for the `tree_version` it was filled under, so a token read
   # back is still that child; the node is never handed out raw, only wrapped.
@@ -722,6 +722,10 @@ def unwrapped_entries(rust)
     code.to_enum(:scan, REGISTRATION).each do
       m = Regexp.last_match
       fpath = first_argument(code, m.end(0) - 1)
+      # A generic function registered per representation
+      # (`child_count::<HtmlSelf>`) is one definition: resolve it without its
+      # type arguments.
+      fpath = fpath&.sub(/::<[\w:, ]+>\z/, "")
       unless fpath&.match?(/\A[\w:]+\z/)
         missing << "#{rel}: registration of `#{fpath}` is not a function path"
         next

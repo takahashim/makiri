@@ -29,7 +29,7 @@ use crate::bridge::wrapper::{
     ensure_document_mutable, node_repr, DocKind, DocumentShell, NodeRepr,
 };
 use crate::bridge::xml_decode::xml_decode_input_value;
-use crate::child_index::ChildList;
+use crate::child_index::{ChildList, Children, TokenTree};
 use crate::init::{CLASS_NODE, CLASS_XML_DOCUMENT, EXC_XML_LIMIT_EXCEEDED, EXC_XML_SYNTAX_ERROR};
 use crate::init::{
     CLASS_XML_ATTR, CLASS_XML_CDATA_SECTION, CLASS_XML_COMMENT, CLASS_XML_DOCUMENT_FRAGMENT,
@@ -87,33 +87,10 @@ impl crate::bridge::wrapper::NodeHandleSource for NodeId {
     }
 }
 
-/// An XML node's child list for [`crate::child_index`]: the arena's
-/// child links, which `#children` follows (attributes are not on them).
-struct XmlChildren<'d> {
-    d: &'d XmlDoc,
-    parent: NodeId,
-}
-
-impl crate::child_index::ChildWalk for XmlChildren<'_> {
-    type Node = NodeId;
-    fn parent_token(&self) -> usize {
-        self.parent.to_token()
-    }
-    fn first(&self) -> Option<NodeId> {
-        self.d.first_child(self.parent)
-    }
-    fn last(&self) -> Option<NodeId> {
-        self.d.last_child(self.parent)
-    }
-    fn next(&self, n: NodeId) -> Option<NodeId> {
-        self.d.next(n)
-    }
-    fn prev(&self, n: NodeId) -> Option<NodeId> {
-        self.d.prev(n)
-    }
-    fn is_element(&self, n: NodeId) -> bool {
-        self.d.type_(n) == Some(ArenaKind::Element)
-    }
+/// The arena for [`crate::child_index`]: a node's token is its `NodeId`'s,
+/// which the arena never reuses. The links are the arena's `Tree` ones,
+/// which `#children` follows (attributes are not on them).
+impl TokenTree for XmlDoc {
     fn token(&self, n: NodeId) -> usize {
         n.to_token()
     }
@@ -122,28 +99,25 @@ impl crate::child_index::ChildWalk for XmlChildren<'_> {
     }
 }
 
-/// `#child_count` / `#element_child_count`: how many children are in `list`.
-pub fn child_count(this: &XmlSelf, list: ChildList) -> usize {
-    let w = XmlChildren {
-        d: this.doc_ref(),
-        parent: this.id,
-    };
-    with_child_memo(this.document, |memo, version| {
-        crate::child_index::child_count(memo, version, &w, list)
-    })
-}
-
-/// `#child_at(index)` / `#element_child_at(index)`: the wrapped child at
-/// `index` in `list`, or nil past the end.
-pub fn child_at(this: &XmlSelf, list: ChildList, index: usize) -> Result<Option<Value>, Error> {
-    let w = XmlChildren {
-        d: this.doc_ref(),
-        parent: this.id,
-    };
-    let found = with_child_memo(this.document, |memo, version| {
-        crate::child_index::child_at(memo, version, &w, list, index)
-    });
-    found.map(|id| wrap_xml_node(id, this.document)).transpose()
+impl ChildListHost for XmlSelf {
+    fn child_count(&self, list: ChildList) -> usize {
+        let children = Children {
+            tree: self.doc_ref(),
+            parent: self.id,
+            list,
+        };
+        count_children(self.document, children)
+    }
+    fn child_at(&self, list: ChildList, index: usize) -> Result<Option<Value>, Error> {
+        let children = Children {
+            tree: self.doc_ref(),
+            parent: self.id,
+            list,
+        };
+        child_at_index(self.document, children, index)
+            .map(|id| wrap_xml_node(id, self.document))
+            .transpose()
+    }
 }
 
 /// The arena node behind a wrapper.

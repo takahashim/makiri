@@ -17,13 +17,14 @@ use crate::init::{
     CLASS_HTML_PROCESSING_INSTRUCTION, CLASS_HTML_TEXT, CLASS_XML_DOCUMENT,
 };
 use crate::lexbor::adapter::html::{
-    ForeignNode, HtmlNode, HtmlNodeKey, HtmlNodeMut, Insertion, NodeType, Place, RawDoc, RawNode,
+    ForeignNode, HtmlNode, HtmlNodeKey, HtmlNodeMut, HtmlTree, Insertion, NodeType, Place, RawDoc,
+    RawNode,
 };
 use crate::lexbor::fragment::import_with_fixup;
 
 use crate::bridge::string::{RubyData, RubyText};
 use crate::bridge::wrapper::*;
-use crate::child_index::ChildList;
+use crate::child_index::{ChildList, Children, TokenTree};
 use crate::lexbor::adapter::html::{HtmlDoc, HtmlElementMut};
 use crate::lexbor::adapter::AdapterOom;
 
@@ -246,64 +247,46 @@ pub fn wrap_node(node: Option<HtmlNode<'_>>, document: Value) -> Result<Option<V
  * indexing a child list                                               *
  * ------------------------------------------------------------------ */
 
-/// An HTML node's child list for [`crate::child_index`]. The links are
-/// the raw ones `#children` follows, so the two agree - a `<template>`'s own
-/// (empty) child list included.
-struct HtmlChildren<'d>(HtmlNode<'d>);
-
-fn html_token(n: HtmlNode<'_>) -> usize {
-    RawNode::from(n).as_ptr() as usize
-}
-
-impl<'d> crate::child_index::ChildWalk for HtmlChildren<'d> {
-    type Node = HtmlNode<'d>;
-    fn parent_token(&self) -> usize {
-        html_token(self.0)
-    }
-    fn first(&self) -> Option<HtmlNode<'d>> {
-        self.0.first_child()
-    }
-    fn last(&self) -> Option<HtmlNode<'d>> {
-        self.0.last_child()
-    }
-    fn next(&self, n: HtmlNode<'d>) -> Option<HtmlNode<'d>> {
-        n.next()
-    }
-    fn prev(&self, n: HtmlNode<'d>) -> Option<HtmlNode<'d>> {
-        n.prev()
-    }
-    fn is_element(&self, n: HtmlNode<'d>) -> bool {
-        n.element().is_some()
-    }
+/// The Lexbor tree for [`crate::child_index`]: a node's pointer is its token.
+/// The links are [`HtmlTree`]'s, the raw ones `#children` follows, so the two
+/// agree - a `<template>`'s own (empty) child list included.
+impl<'d> TokenTree for HtmlTree<'d> {
     fn token(&self, n: HtmlNode<'d>) -> usize {
-        html_token(n)
+        RawNode::from(n).as_ptr() as usize
     }
     fn node_of(&self, token: usize) -> Option<HtmlNode<'d>> {
         let raw = RawNode::from_ptr(token as *mut core::ffi::c_void)?;
-        // SAFETY: `token` is one `child_index` recorded for this list, so by
-        // `ChildPositionMemo`'s invariant it names a node that is still a
-        // child of `self.0` - in the document the receiver keeps alive for
-        // `'d`. Lexbor detaches rather than frees, so it was never released.
+        // SAFETY: `child_index` asks only for a token it recorded for a list
+        // of this document, so by `ChildPositionMemo`'s invariant it names a
+        // node that is still a child there - in the document the receiver
+        // keeps alive for `'d`. Lexbor detaches rather than frees, so it was
+        // never released.
         Some(unsafe { raw.as_node() })
     }
 }
 
-/// `#child_count` / `#element_child_count`: how many children are in `list`.
-pub fn child_count(this: &HtmlSelf, list: ChildList) -> usize {
-    let w = HtmlChildren(this.node());
-    with_child_memo(this.document, |memo, version| {
-        crate::child_index::child_count(memo, version, &w, list)
-    })
-}
-
-/// `#child_at(index)` / `#element_child_at(index)`: the wrapped child at
-/// `index` in `list`, or nil past the end.
-pub fn child_at(this: &HtmlSelf, list: ChildList, index: usize) -> Result<Option<Value>, Error> {
-    let w = HtmlChildren(this.node());
-    let found = with_child_memo(this.document, |memo, version| {
-        crate::child_index::child_at(memo, version, &w, list, index)
-    });
-    wrap_node(found, this.document)
+impl ChildListHost for HtmlSelf {
+    fn child_count(&self, list: ChildList) -> usize {
+        let tree = HtmlTree::default();
+        let children = Children {
+            tree: &tree,
+            parent: self.node(),
+            list,
+        };
+        count_children(self.document, children)
+    }
+    fn child_at(&self, list: ChildList, index: usize) -> Result<Option<Value>, Error> {
+        let tree = HtmlTree::default();
+        let children = Children {
+            tree: &tree,
+            parent: self.node(),
+            list,
+        };
+        wrap_node(
+            child_at_index(self.document, children, index),
+            self.document,
+        )
+    }
 }
 
 /* ------------------------------------------------------------------ *

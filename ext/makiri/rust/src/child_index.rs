@@ -1,8 +1,10 @@
 //! Counting and indexing a child list without building it - `child_count` /
 //! `child_at` and their element-only twins - once for both representations.
 //!
-//! A representation describes one parent's child list through [`ChildWalk`]
-//! (the XPath `Dom` / `dom_rules::Tree` pattern); this module decides where a
+//! The child links are the ones the insertion rules read, [`Tree`]'s - one
+//! description of each representation's tree, so `#children`, `child_at`
+//! and the insertion rules cannot disagree about it. A representation adds
+//! only what the memo needs ([`TokenTree`]); this module decides where a
 //! walk starts and remembers where it ended, in a [`ChildPositionMemo`] the
 //! document keeps. A loop that reads the count and then each index in turn
 //! (`for (i = 0; i < n.childNodes.length; i++) n.childNodes[i]`) therefore
@@ -18,27 +20,24 @@
 //! every child-list edit changes anything (`bridge::wrapper::record_edit`),
 //! so an entry that survives describes the tree as it is. This is what lets
 //! a representation turn a recorded token back into a node
-//! ([`ChildWalk::node_of`]) - for HTML, a raw pointer.
+//! ([`TokenTree::node_of`]) - for HTML, a raw pointer.
 //!
 //! Lexbor/Ruby-free and safe, like the engine.
 
 #![forbid(unsafe_code)]
 
-/// One parent's child list, as a representation reads it.
-pub trait ChildWalk {
-    type Node: Copy;
-    /// The parent's token - with the [`ChildList`], the key the memo is
-    /// stored under.
-    fn parent_token(&self) -> usize;
-    fn first(&self) -> Option<Self::Node>;
-    fn last(&self) -> Option<Self::Node>;
-    fn next(&self, n: Self::Node) -> Option<Self::Node>;
-    fn prev(&self, n: Self::Node) -> Option<Self::Node>;
-    fn is_element(&self, n: Self::Node) -> bool;
+use crate::dom_rules::Tree;
+use crate::node_type::NodeType;
+
+/// A [`Tree`] whose nodes the memo can record: a node as a token word and
+/// back.
+pub trait TokenTree: Tree {
+    /// The node's token - for a parent, with the [`ChildList`], the key the
+    /// memo is stored under.
     fn token(&self, n: Self::Node) -> usize;
-    /// The node behind a token this module recorded for this parent's list.
-    /// By the memo's invariant it is still one of the parent's children.
-    /// None only for a token no node has, which is never recorded.
+    /// The node behind a token this module recorded. By the memo's invariant
+    /// it is still a child of the parent it was recorded under. None only for
+    /// a token no node has, which is never recorded.
     fn node_of(&self, token: usize) -> Option<Self::Node>;
 }
 
@@ -52,10 +51,10 @@ pub enum ChildList {
 
 impl ChildList {
     /// Whether `n` is in this list.
-    fn counts<W: ChildWalk>(self, w: &W, n: W::Node) -> bool {
+    fn counts<T: Tree>(self, tree: &T, n: T::Node) -> bool {
         match self {
             ChildList::Nodes => true,
-            ChildList::Elements => w.is_element(n),
+            ChildList::Elements => tree.node_type(n) == NodeType::Element,
         }
     }
 }
@@ -164,100 +163,96 @@ pub fn choose_start(index: usize, known: ChildListMemo) -> Start {
     best.1
 }
 
-/// The first node from `n` (inclusive) along `step` that is in `list`.
-fn kept<W: ChildWalk>(
-    w: &W,
-    list: ChildList,
-    mut n: Option<W::Node>,
-    step: impl Fn(&W, W::Node) -> Option<W::Node>,
-) -> Option<W::Node> {
-    while let Some(x) = n {
-        if list.counts(w, x) {
-            return Some(x);
+/// One list of one parent: what `child_count` / `child_at` read.
+pub struct Children<'t, T: TokenTree> {
+    pub tree: &'t T,
+    pub parent: T::Node,
+    pub list: ChildList,
+}
+
+impl<T: TokenTree> Children<'_, T> {
+    fn key(&self) -> ChildListKey {
+        ChildListKey {
+            parent: self.tree.token(self.parent),
+            list: self.list,
         }
-        n = step(w, x);
     }
-    None
-}
 
-/// `steps` nodes of `list` on from `n` along `step`.
-fn walk<W: ChildWalk>(
-    w: &W,
-    list: ChildList,
-    mut n: W::Node,
-    steps: usize,
-    step: impl Fn(&W, W::Node) -> Option<W::Node> + Copy,
-) -> Option<W::Node> {
-    for _ in 0..steps {
-        n = kept(w, list, step(w, n), step)?;
-    }
-    Some(n)
-}
-
-fn key_of<W: ChildWalk>(w: &W, list: ChildList) -> ChildListKey {
-    ChildListKey {
-        parent: w.parent_token(),
-        list,
-    }
-}
-
-/// How many children are in the parent's `list`.
-pub fn child_count<W: ChildWalk>(
-    memo: &mut ChildPositionMemo,
-    version: u64,
-    w: &W,
-    list: ChildList,
-) -> usize {
-    let key = key_of(w, list);
-    let mut known = memo.lookup(version, key);
-    if let Some(n) = known.count {
-        return n;
-    }
-    let mut count = 0usize;
-    let mut n = kept(w, list, w.first(), W::next);
-    while let Some(x) = n {
-        count += 1;
-        n = kept(w, list, w.next(x), W::next);
-    }
-    known.count = Some(count);
-    memo.record(version, key, known);
-    count
-}
-
-/// The child at `index` in the parent's `list`, or None past the end.
-pub fn child_at<W: ChildWalk>(
-    memo: &mut ChildPositionMemo,
-    version: u64,
-    w: &W,
-    list: ChildList,
-    index: usize,
-) -> Option<W::Node> {
-    let key = key_of(w, list);
-    let mut known = memo.lookup(version, key);
-    if known.count.is_some_and(|n| index >= n) {
-        return None;
-    }
-    let found = match choose_start(index, known) {
-        Start::Front => {
-            let first = kept(w, list, w.first(), W::next)?;
-            walk(w, list, first, index, W::next)
-        }
-        Start::Back { steps } => {
-            let last = kept(w, list, w.last(), W::prev)?;
-            walk(w, list, last, steps, W::prev)
-        }
-        Start::Memo { from, token } => {
-            let at = w.node_of(token)?;
-            if index >= from {
-                walk(w, list, at, index - from, W::next)
-            } else {
-                walk(w, list, at, from - index, W::prev)
+    /// The first node from `n` (inclusive) along `step` that is in the list.
+    fn kept(
+        &self,
+        mut n: Option<T::Node>,
+        step: impl Fn(&T, T::Node) -> Option<T::Node>,
+    ) -> Option<T::Node> {
+        while let Some(x) = n {
+            if self.list.counts(self.tree, x) {
+                return Some(x);
             }
+            n = step(self.tree, x);
         }
-    }?;
-    known.at = Some((index, w.token(found)));
-    memo.record(version, key, known);
-    Some(found)
+        None
+    }
+
+    /// `steps` nodes of the list on from `n` along `step`.
+    fn walk(
+        &self,
+        mut n: T::Node,
+        steps: usize,
+        step: impl Fn(&T, T::Node) -> Option<T::Node> + Copy,
+    ) -> Option<T::Node> {
+        for _ in 0..steps {
+            n = self.kept(step(self.tree, n), step)?;
+        }
+        Some(n)
+    }
+
+    /// How many children are in the list.
+    pub fn count(&self, memo: &mut ChildPositionMemo, version: u64) -> usize {
+        let key = self.key();
+        let mut known = memo.lookup(version, key);
+        if let Some(n) = known.count {
+            return n;
+        }
+        let mut count = 0usize;
+        let mut n = self.kept(self.tree.first_child(self.parent), T::next_sibling);
+        while let Some(x) = n {
+            count += 1;
+            n = self.kept(self.tree.next_sibling(x), T::next_sibling);
+        }
+        known.count = Some(count);
+        memo.record(version, key, known);
+        count
+    }
+
+    /// The child at `index` in the list, or None past the end.
+    pub fn at(&self, memo: &mut ChildPositionMemo, version: u64, index: usize) -> Option<T::Node> {
+        let key = self.key();
+        let mut known = memo.lookup(version, key);
+        if known.count.is_some_and(|n| index >= n) {
+            return None;
+        }
+        let found = match choose_start(index, known) {
+            Start::Front => {
+                let first = self.kept(self.tree.first_child(self.parent), T::next_sibling)?;
+                self.walk(first, index, T::next_sibling)
+            }
+            Start::Back { steps } => {
+                let last = self.kept(self.tree.last_child(self.parent), T::prev_sibling)?;
+                self.walk(last, steps, T::prev_sibling)
+            }
+            Start::Memo { from, token } => {
+                let at = self.tree.node_of(token)?;
+                if index >= from {
+                    self.walk(at, index - from, T::next_sibling)
+                } else {
+                    self.walk(at, from - index, T::prev_sibling)
+                }
+            }
+        }?;
+        known.at = Some((index, self.tree.token(found)));
+        memo.record(version, key, known);
+        Some(found)
+    }
 }
 
 #[cfg(test)]

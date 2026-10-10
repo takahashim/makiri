@@ -3,15 +3,20 @@
 //! invariant (versions, eviction).
 
 use super::*;
+use crate::dom_rules::Tree;
+use crate::node_type::NodeType;
 
-/// One parent's children as a slice of "is an element" flags. Nodes are
-/// indices; a node's token is its index + 1 (a token of 0 names nothing);
-/// the parent's token is `parent`. `steps` counts link reads.
+/// One parent's children as a slice of "is an element" flags. Children are
+/// their indices and the parent is [`PARENT`]; a child's token is its index
+/// + 1 (a token of 0 names nothing), the parent's is `parent`. `steps`
+/// counts sibling-link reads.
 struct List<'a> {
     parent: usize,
     kinds: &'a [bool],
     steps: core::cell::Cell<usize>,
 }
+
+const PARENT: usize = usize::MAX;
 
 impl<'a> List<'a> {
     fn new(parent: usize, kinds: &'a [bool]) -> Self {
@@ -35,32 +40,79 @@ impl<'a> List<'a> {
     }
 }
 
-impl ChildWalk for List<'_> {
+impl Tree for List<'_> {
     type Node = usize;
-    fn parent_token(&self) -> usize {
-        self.parent
+    fn node_type(&self, n: usize) -> NodeType {
+        if n == PARENT || self.kinds[n] {
+            NodeType::Element
+        } else {
+            NodeType::Text
+        }
     }
-    fn first(&self) -> Option<usize> {
-        (!self.kinds.is_empty()).then_some(0)
+    fn tree_parent(&self, n: usize) -> Option<usize> {
+        (n != PARENT).then_some(PARENT)
     }
-    fn last(&self) -> Option<usize> {
-        self.kinds.len().checked_sub(1)
+    fn host(&self, _n: usize) -> Option<usize> {
+        None
     }
-    fn next(&self, n: usize) -> Option<usize> {
+    fn first_child(&self, n: usize) -> Option<usize> {
+        (n == PARENT && !self.kinds.is_empty()).then_some(0)
+    }
+    fn last_child(&self, n: usize) -> Option<usize> {
+        if n == PARENT {
+            self.kinds.len().checked_sub(1)
+        } else {
+            None
+        }
+    }
+    fn next_sibling(&self, n: usize) -> Option<usize> {
         self.step((n + 1 < self.kinds.len()).then_some(n + 1))
     }
-    fn prev(&self, n: usize) -> Option<usize> {
+    fn prev_sibling(&self, n: usize) -> Option<usize> {
         self.step(n.checked_sub(1))
     }
-    fn is_element(&self, n: usize) -> bool {
-        self.kinds[n]
-    }
+}
+
+impl TokenTree for List<'_> {
     fn token(&self, n: usize) -> usize {
-        n + 1
+        if n == PARENT {
+            self.parent
+        } else {
+            n + 1
+        }
     }
     fn node_of(&self, token: usize) -> Option<usize> {
         token.checked_sub(1)
     }
+}
+
+fn child_count(
+    memo: &mut ChildPositionMemo,
+    version: u64,
+    tree: &List<'_>,
+    list: ChildList,
+) -> usize {
+    Children {
+        tree,
+        parent: PARENT,
+        list,
+    }
+    .count(memo, version)
+}
+
+fn child_at(
+    memo: &mut ChildPositionMemo,
+    version: u64,
+    tree: &List<'_>,
+    list: ChildList,
+    index: usize,
+) -> Option<usize> {
+    Children {
+        tree,
+        parent: PARENT,
+        list,
+    }
+    .at(memo, version, index)
 }
 
 /// Text, element, comment-ish (non-element), element, text, element.

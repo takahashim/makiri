@@ -50,8 +50,16 @@ impl<'d> Tree for HtmlTree<'d> {
         n.first_child()
     }
     #[inline]
+    fn last_child(&self, n: HtmlNode<'d>) -> Option<HtmlNode<'d>> {
+        n.last_child()
+    }
+    #[inline]
     fn next_sibling(&self, n: HtmlNode<'d>) -> Option<HtmlNode<'d>> {
         n.next()
+    }
+    #[inline]
+    fn prev_sibling(&self, n: HtmlNode<'d>) -> Option<HtmlNode<'d>> {
+        n.prev()
     }
 }
 

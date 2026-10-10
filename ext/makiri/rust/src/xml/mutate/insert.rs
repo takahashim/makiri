@@ -231,8 +231,16 @@ impl Tree for Document {
         Document::first_child(self, n)
     }
     #[inline]
+    fn last_child(&self, n: NodeId) -> Option<NodeId> {
+        Document::last_child(self, n)
+    }
+    #[inline]
     fn next_sibling(&self, n: NodeId) -> Option<NodeId> {
         Document::next(self, n)
+    }
+    #[inline]
+    fn prev_sibling(&self, n: NodeId) -> Option<NodeId> {
+        Document::prev(self, n)
     }
 }
 
