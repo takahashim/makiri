@@ -67,6 +67,46 @@ impl ChildList {
             ChildList::Elements => tree.node_type(n) == NodeType::Element,
         }
     }
+
+    /// The first node from `n` (inclusive) along `step` that is in this
+    /// list. `step` is a generic, not a `fn` pointer, so each walk inlines its
+    /// link read.
+    #[inline]
+    fn first_from<T: Tree>(
+        self,
+        tree: &T,
+        mut n: Option<T::Node>,
+        step: impl Fn(&T, T::Node) -> Option<T::Node>,
+    ) -> Option<T::Node> {
+        while let Some(x) = n {
+            if self.counts(tree, x) {
+                return Some(x);
+            }
+            n = step(tree, x);
+        }
+        None
+    }
+}
+
+/* The DOM's element-only navigation - `firstElementChild`,
+ * `lastElementChild`, `nextElementSibling`, `previousElementSibling` - over
+ * the same links and the same element test as `child_at`'s `Elements` list,
+ * so the readers cannot disagree with it. */
+
+pub fn first_element_child<T: Tree>(tree: &T, n: T::Node) -> Option<T::Node> {
+    ChildList::Elements.first_from(tree, tree.first_child(n), T::next_sibling)
+}
+
+pub fn last_element_child<T: Tree>(tree: &T, n: T::Node) -> Option<T::Node> {
+    ChildList::Elements.first_from(tree, tree.last_child(n), T::prev_sibling)
+}
+
+pub fn next_element_sibling<T: Tree>(tree: &T, n: T::Node) -> Option<T::Node> {
+    ChildList::Elements.first_from(tree, tree.next_sibling(n), T::next_sibling)
+}
+
+pub fn previous_element_sibling<T: Tree>(tree: &T, n: T::Node) -> Option<T::Node> {
+    ChildList::Elements.first_from(tree, tree.prev_sibling(n), T::prev_sibling)
 }
 
 /// Which list of which parent.
@@ -205,16 +245,10 @@ impl<T: TokenTree> Children<'_, T> {
     /// The first node from `n` (inclusive) along `step` that is in the list.
     fn kept(
         &self,
-        mut n: Option<T::Node>,
+        n: Option<T::Node>,
         step: impl Fn(&T, T::Node) -> Option<T::Node>,
     ) -> Option<T::Node> {
-        while let Some(x) = n {
-            if self.list.counts(self.tree, x) {
-                return Some(x);
-            }
-            n = step(self.tree, x);
-        }
-        None
+        self.list.first_from(self.tree, n, step)
     }
 
     /// `steps` nodes of the list on from `n` along `step`.

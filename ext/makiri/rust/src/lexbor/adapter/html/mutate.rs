@@ -26,6 +26,14 @@ pub enum Place {
 #[derive(Clone, Copy, Default)]
 pub struct HtmlTree<'d>(core::marker::PhantomData<HtmlNode<'d>>);
 
+impl HtmlTree<'_> {
+    /// `const`, so a caller can lend one as `&'static` (the type holds
+    /// nothing, and is covariant in `'d`).
+    pub const fn new() -> Self {
+        HtmlTree(core::marker::PhantomData)
+    }
+}
+
 impl<'d> Tree for HtmlTree<'d> {
     type Node = HtmlNode<'d>;
     #[inline]

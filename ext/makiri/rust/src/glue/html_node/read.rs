@@ -22,6 +22,7 @@ use crate::bridge::html::{dom_str, text_index_string, wrap_html_node};
 use crate::bridge::node_set::node_set_with_fill;
 use crate::bridge::ruby::is_kind_of;
 use crate::bridge::string::{dom_name_str, ruby_verified_text};
+use crate::child_index;
 use crate::init::{CLASS_NODE, CLASS_XML_DOCUMENT};
 use crate::lexbor::adapter::html::{HtmlAttr, HtmlElement, HtmlNode, HtmlTree, NodeType, RawNode};
 
@@ -267,33 +268,16 @@ pub fn previous(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Er
     crate::bridge::ruby::entry(|| wrap_node(this.node().prev(), this.document))
 }
 
-/// The first node from `start` along `step` that is an element. `step` is a
-/// generic rather than a `fn` pointer, so each walk inlines its link read.
-#[inline]
-fn first_element<'d>(
-    start: Option<HtmlNode<'d>>,
-    step: impl Fn(HtmlNode<'d>) -> Option<HtmlNode<'d>>,
-) -> Option<HtmlNode<'d>> {
-    let mut n = start;
-    while let Some(x) = n {
-        if x.element().is_some() {
-            return Some(x);
-        }
-        n = step(x);
-    }
-    None
-}
-
 pub fn next_element(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        let found = first_element(this.node().next(), HtmlNode::next);
+        let found = child_index::next_element_sibling(&HtmlTree::default(), this.node());
         wrap_node(found, this.document)
     })
 }
 
 pub fn previous_element(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        let found = first_element(this.node().prev(), HtmlNode::prev);
+        let found = child_index::previous_element_sibling(&HtmlTree::default(), this.node());
         wrap_node(found, this.document)
     })
 }
@@ -305,14 +289,14 @@ pub fn child(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error
 
 pub fn first_element_child(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        let found = first_element(this.node().first_child(), HtmlNode::next);
+        let found = child_index::first_element_child(&HtmlTree::default(), this.node());
         wrap_node(found, this.document)
     })
 }
 
 pub fn last_element_child(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        let found = first_element(this.node().last_child(), HtmlNode::prev);
+        let found = child_index::last_element_child(&HtmlTree::default(), this.node());
         wrap_node(found, this.document)
     })
 }

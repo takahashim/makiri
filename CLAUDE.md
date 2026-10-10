@@ -692,7 +692,9 @@ pointer read back - a recorded raw-node crossing) sound, so keep every
 child-list edit moving the version BEFORE it changes anything
 (`record_edit`). Any edit empties the whole memo (the module doc's known
 limit). The four Ruby methods are generic over `bridge::wrapper::ChildListHost`
-in `glue::node`.
+in `glue::node`, and the element-only navigation (`first_element_child`,
+`next_element`, ...) is `child_index`'s too, over the same links and element
+test.
 
 **XPath engine** (`src/xpath/`). Original implementation: lexer →
 recursive-descent parser → AST → evaluator + 26 built-in functions. The only

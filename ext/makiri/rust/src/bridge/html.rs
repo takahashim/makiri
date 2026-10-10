@@ -265,27 +265,23 @@ impl<'d> TokenTree for HtmlTree<'d> {
     }
 }
 
+/// The tree every HTML receiver lends its child lists: it holds nothing.
+const HTML_TREE: HtmlTree<'static> = HtmlTree::new();
+
 impl ChildListHost for HtmlSelf {
-    fn child_count(&self, list: ChildList) -> usize {
-        let tree = HtmlTree::default();
-        let children = Children {
-            tree: &tree,
-            parent: self.node(),
-            list,
-        };
-        count_children(self.document, children)
+    type Tree<'a> = HtmlTree<'a>;
+    fn document(&self) -> Value {
+        self.document
     }
-    fn child_at(&self, list: ChildList, index: usize) -> Result<Option<Value>, Error> {
-        let tree = HtmlTree::default();
-        let children = Children {
-            tree: &tree,
+    fn children(&self, list: ChildList) -> Children<'_, HtmlTree<'_>> {
+        Children {
+            tree: &HTML_TREE,
             parent: self.node(),
             list,
-        };
-        wrap_node(
-            child_at_index(self.document, children, index),
-            self.document,
-        )
+        }
+    }
+    fn wrap_child(&self, n: Option<HtmlNode<'_>>) -> Result<Option<Value>, Error> {
+        wrap_node(n, self.document)
     }
 }
 

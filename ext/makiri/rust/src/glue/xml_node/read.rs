@@ -22,6 +22,7 @@ use super::strings::{str_field, utf8};
 use super::{wrap, XmlSelf};
 use crate::bridge::node_set::node_set_with_fill;
 use crate::bridge::string::dom_name_str;
+use crate::child_index;
 use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId};
 
 /// Wrap an optional reached node under the receiver's Document (None -> nil).
@@ -206,40 +207,28 @@ pub fn root_node(this: XmlSelf) -> Result<Value, Error> {
     })
 }
 
-/// The first element from `start` along `step`.
-fn first_element(
-    d: &XmlDoc,
-    start: Option<NodeId>,
-    step: impl Fn(NodeId) -> Option<NodeId>,
-) -> Option<NodeId> {
-    core::iter::successors(start, |&n| step(n)).find(|&n| is_element(d, n))
-}
-
 pub fn next_element(this: XmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
         let d = this.doc_ref();
-        wrap_rel(this, first_element(d, d.next(this.id), |n| d.next(n)))
+        wrap_rel(this, child_index::next_element_sibling(d, this.id))
     })
 }
 pub fn previous_element(this: XmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
         let d = this.doc_ref();
-        wrap_rel(this, first_element(d, d.prev(this.id), |n| d.prev(n)))
+        wrap_rel(this, child_index::previous_element_sibling(d, this.id))
     })
 }
 pub fn first_element_child(this: XmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
         let d = this.doc_ref();
-        wrap_rel(
-            this,
-            first_element(d, d.first_child(this.id), |n| d.next(n)),
-        )
+        wrap_rel(this, child_index::first_element_child(d, this.id))
     })
 }
 pub fn last_element_child(this: XmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
         let d = this.doc_ref();
-        wrap_rel(this, first_element(d, d.last_child(this.id), |n| d.prev(n)))
+        wrap_rel(this, child_index::last_element_child(d, this.id))
     })
 }
 

@@ -19,6 +19,7 @@ use magnus::{Error, Value};
 use crate::bridge::ruby::{value, VALUE};
 use crate::bridge::typed::{Hooks, Marker, Relocator, TypedType};
 use crate::child_index::{ChildList, ChildPositionMemo, Children, TokenTree};
+use crate::dom_rules::Tree;
 use crate::falloc::{MapInsert, Reserve};
 use crate::init::{RbConst, CLASS_DOCUMENT};
 use crate::lexbor::adapter::html::{HtmlDoc, HtmlNodeKey, RawDoc, RawNode};
@@ -1064,14 +1065,32 @@ pub(in crate::bridge) fn child_at_index<T: TokenTree>(
 }
 
 /// A receiver whose child lists `#child_count` / `#child_at` and their
-/// element twins read - an HTML or XML node or Document. Each representation
-/// says only which tree and node it is and how a child is wrapped; the four
-/// methods are written once, over this, in `glue::node`.
+/// element twins read - an HTML or XML node or Document. A representation
+/// says which tree and node it is and how a child is wrapped; counting and
+/// indexing are written once, here, and the four Ruby methods once, over
+/// this, in `glue::node`.
 pub trait ChildListHost: magnus::TryConvert {
+    type Tree<'a>: TokenTree
+    where
+        Self: 'a;
+
+    /// The Document whose memo the lists use.
+    fn document(&self) -> Value;
+    /// The receiver's `list`.
+    fn children(&self, list: ChildList) -> Children<'_, Self::Tree<'_>>;
+    /// A child of the receiver as its Ruby wrapper; None is nil.
+    fn wrap_child(&self, n: Option<<Self::Tree<'_> as Tree>::Node>)
+        -> Result<Option<Value>, Error>;
+
     /// How many children are in `list`.
-    fn child_count(&self, list: ChildList) -> usize;
+    fn child_count(&self, list: ChildList) -> usize {
+        count_children(self.document(), self.children(list))
+    }
+
     /// The wrapped child at `index` in `list`, or nil past the end.
-    fn child_at(&self, list: ChildList, index: usize) -> Result<Option<Value>, Error>;
+    fn child_at(&self, list: ChildList, index: usize) -> Result<Option<Value>, Error> {
+        self.wrap_child(child_at_index(self.document(), self.children(list), index))
+    }
 }
 
 /* ---- the document's mutation gate ---- */

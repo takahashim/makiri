@@ -100,23 +100,19 @@ impl TokenTree for XmlDoc {
 }
 
 impl ChildListHost for XmlSelf {
-    fn child_count(&self, list: ChildList) -> usize {
-        let children = Children {
-            tree: self.doc_ref(),
-            parent: self.id,
-            list,
-        };
-        count_children(self.document, children)
+    type Tree<'a> = XmlDoc;
+    fn document(&self) -> Value {
+        self.document
     }
-    fn child_at(&self, list: ChildList, index: usize) -> Result<Option<Value>, Error> {
-        let children = Children {
+    fn children(&self, list: ChildList) -> Children<'_, XmlDoc> {
+        Children {
             tree: self.doc_ref(),
             parent: self.id,
             list,
-        };
-        child_at_index(self.document, children, index)
-            .map(|id| wrap_xml_node(id, self.document))
-            .transpose()
+        }
+    }
+    fn wrap_child(&self, n: Option<NodeId>) -> Result<Option<Value>, Error> {
+        n.map(|id| wrap_xml_node(id, self.document)).transpose()
     }
 }
 
