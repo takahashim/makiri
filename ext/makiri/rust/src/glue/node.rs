@@ -1,5 +1,6 @@
-//! The node identity methods both representations share, and the pieces of
-//! the DOM's naming rules their factories raise alike.
+//! The node identity methods both representations share, the argument
+//! readers they share, and the pieces of the DOM's naming rules their
+//! factories raise alike.
 //!
 //! HTML (Lexbor) and XML (custom-arena) nodes are two representations of one
 //! Ruby-facing Node. `==`/`eql?`, `hash` and `pointer_id` never dereference
@@ -67,6 +68,13 @@ pub fn node_pointer_id(ruby: &Ruby, rb_self: Value) -> Result<Integer, magnus::E
 /// `#pointer_id`; an HTML and an XML node may share it, which a hash allows.
 pub fn node_hash(ruby: &Ruby, rb_self: Value) -> Result<Integer, magnus::Error> {
     crate::bridge::ruby::entry(|| node_pointer_id(ruby, rb_self))
+}
+
+/// A `child_at` / `element_child_at` index argument: None (so nil) for a
+/// negative one, or one too large for any list. Not an Integer is the
+/// `TypeError` magnus raises converting it.
+pub fn child_index_arg(i: Integer) -> Option<usize> {
+    i.to_u64().ok().and_then(|n| usize::try_from(n).ok())
 }
 
 /// `Document#tree_version`: an Integer that grows with every edit that can

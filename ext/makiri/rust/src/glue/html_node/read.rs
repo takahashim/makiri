@@ -15,13 +15,15 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{prelude::*, Error, Ruby, Value};
+use magnus::{prelude::*, Error, Integer, Ruby, Value};
 
 use super::{with_arg_node, wrap_node};
 use crate::bridge::html::{dom_str, text_index_string};
 use crate::bridge::node_set::node_set_with_fill;
 use crate::bridge::ruby::is_kind_of;
 use crate::bridge::string::ruby_verified_text;
+use crate::child_index::ChildList;
+use crate::glue::node::child_index_arg;
 use crate::init::{CLASS_NODE, CLASS_XML_DOCUMENT};
 use crate::lexbor::adapter::html::{HtmlAttr, HtmlElement, HtmlNode, NodeType, RawNode};
 
@@ -314,6 +316,44 @@ pub fn last_element_child(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<
     crate::bridge::ruby::entry(|| {
         let found = first_element(this.node().last_child(), HtmlNode::prev);
         wrap_node(found, this.document)
+    })
+}
+
+/// `#last_child`: the last child node of any type, or nil.
+pub fn last_child(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
+    crate::bridge::ruby::entry(|| wrap_node(this.node().last_child(), this.document))
+}
+
+/// `#child_count` (DOM `childNodes.length`): every child node, counted
+/// without building `#children`.
+pub fn child_count(_ruby: &Ruby, this: super::HtmlSelf) -> Result<usize, Error> {
+    crate::bridge::ruby::entry(|| Ok(crate::bridge::html::child_count(&this, ChildList::Nodes)))
+}
+
+/// `#element_child_count` (DOM `childElementCount`).
+pub fn element_child_count(_ruby: &Ruby, this: super::HtmlSelf) -> Result<usize, Error> {
+    crate::bridge::ruby::entry(|| Ok(crate::bridge::html::child_count(&this, ChildList::Elements)))
+}
+
+/// `#child_at(i)` (DOM `childNodes[i]`): the child node at `i`, or nil when
+/// `i` is negative or past the end.
+pub fn child_at(_ruby: &Ruby, this: super::HtmlSelf, i: Integer) -> Result<Option<Value>, Error> {
+    crate::bridge::ruby::entry(|| match child_index_arg(i) {
+        Some(i) => crate::bridge::html::child_at(&this, ChildList::Nodes, i),
+        None => Ok(None),
+    })
+}
+
+/// `#element_child_at(i)` (DOM `children[i]`): the child element at `i`, or
+/// nil.
+pub fn element_child_at(
+    _ruby: &Ruby,
+    this: super::HtmlSelf,
+    i: Integer,
+) -> Result<Option<Value>, Error> {
+    crate::bridge::ruby::entry(|| match child_index_arg(i) {
+        Some(i) => crate::bridge::html::child_at(&this, ChildList::Elements, i),
+        None => Ok(None),
     })
 }
 

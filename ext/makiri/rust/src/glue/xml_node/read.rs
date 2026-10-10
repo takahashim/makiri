@@ -16,11 +16,13 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{prelude::*, Error, Ruby, Value};
+use magnus::{prelude::*, Error, Integer, Ruby, Value};
 
 use super::strings::{str_field, utf8};
 use super::{wrap, XmlSelf};
 use crate::bridge::node_set::node_set_with_fill;
+use crate::child_index::ChildList;
+use crate::glue::node::child_index_arg;
 use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId};
 
 /// Wrap an optional reached node under the receiver's Document (None -> nil).
@@ -194,6 +196,36 @@ pub fn previous(this: XmlSelf) -> Result<Option<Value>, Error> {
 }
 pub fn first_child(this: XmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| wrap_rel(this, this.doc_ref().first_child(this.id)))
+}
+
+pub fn last_child(this: XmlSelf) -> Result<Option<Value>, Error> {
+    crate::bridge::ruby::entry(|| wrap_rel(this, this.doc_ref().last_child(this.id)))
+}
+
+/// `#child_count` (DOM `childNodes.length`), without building `#children`.
+pub fn child_count(this: XmlSelf) -> Result<usize, Error> {
+    crate::bridge::ruby::entry(|| Ok(crate::bridge::xml::child_count(&this, ChildList::Nodes)))
+}
+
+/// `#element_child_count` (DOM `childElementCount`).
+pub fn element_child_count(this: XmlSelf) -> Result<usize, Error> {
+    crate::bridge::ruby::entry(|| Ok(crate::bridge::xml::child_count(&this, ChildList::Elements)))
+}
+
+/// `#child_at(i)` (DOM `childNodes[i]`), or nil when negative or past the end.
+pub fn child_at(this: XmlSelf, i: Integer) -> Result<Option<Value>, Error> {
+    crate::bridge::ruby::entry(|| match child_index_arg(i) {
+        Some(i) => crate::bridge::xml::child_at(&this, ChildList::Nodes, i),
+        None => Ok(None),
+    })
+}
+
+/// `#element_child_at(i)` (DOM `children[i]`), or nil.
+pub fn element_child_at(this: XmlSelf, i: Integer) -> Result<Option<Value>, Error> {
+    crate::bridge::ruby::entry(|| match child_index_arg(i) {
+        Some(i) => crate::bridge::xml::child_at(&this, ChildList::Elements, i),
+        None => Ok(None),
+    })
 }
 
 /// The first element from `start` along `step`.

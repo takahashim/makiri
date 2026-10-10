@@ -18,6 +18,7 @@ use magnus::{Error, Value};
 
 use crate::bridge::ruby::{value, VALUE};
 use crate::bridge::typed::{Hooks, Marker, Relocator, TypedType};
+use crate::child_index::ChildPositionMemo;
 use crate::falloc::{MapInsert, Reserve};
 use crate::init::{RbConst, CLASS_DOCUMENT};
 use crate::lexbor::adapter::html::{HtmlDoc, HtmlNodeKey, RawDoc, RawNode};
@@ -387,6 +388,9 @@ pub struct DocData {
     /// Boxed and optional so a document nobody navigates never allocates a
     /// cache, and its wrapper stays one pointer wide.
     nodes: Option<Box<NodeCache>>,
+    /// Where `child_count` / `child_at` last were
+    /// ([`ChildPositionMemo`]). Allocated by the first of them.
+    child_memo: Option<Box<ChildPositionMemo>>,
 }
 
 impl DocData {
@@ -482,6 +486,11 @@ impl Hooks for DocData {
         core::mem::size_of::<DocData>()
             .saturating_add(self.external_bytes())
             .saturating_add(self.nodes.as_ref().map_or(0, |c| c.memsize()))
+            .saturating_add(
+                self.child_memo
+                    .as_ref()
+                    .map_or(0, |_| core::mem::size_of::<ChildPositionMemo>()),
+            )
     }
 }
 
@@ -642,6 +651,7 @@ impl DocumentShell {
                     errors: QFALSE,
                     report: ExternalReport::default(),
                     nodes: None,
+                    child_memo: None,
                 },
                 |d| d.errors = errors.as_raw(),
             )
@@ -1026,6 +1036,32 @@ pub fn tree_version(rb_doc: Value) -> Result<u64, Error> {
 /// seen. `TypeError` for a non-Document.
 pub fn attribute_version(rb_doc: Value) -> Result<u64, Error> {
     Ok(DOC_TYPE.get(&rb_doc)?.edits.attribute_version)
+}
+
+/* ---- the child-position memo ---- */
+
+/// Run `f` over the document's [`ChildPositionMemo`] and its current
+/// `tree_version`, which every use of the memo must pass it - the memo keeps
+/// its own invariant from that (`crate::child_index`). Out of memory for the
+/// memo, `f` gets an empty one that is then dropped: the memo only saves
+/// walks.
+///
+/// `f` runs inside the document's borrow, so it must not run Ruby; a walk of
+/// the child links does not.
+pub(in crate::bridge) fn with_child_memo<R>(
+    rb_doc: Value,
+    f: impl FnOnce(&mut ChildPositionMemo, u64) -> R,
+) -> R {
+    with_doc_data_known(rb_doc, |d| {
+        let version = d.edits.tree_version;
+        if d.child_memo.is_none() {
+            d.child_memo = crate::falloc::try_box(ChildPositionMemo::default()).ok();
+        }
+        match d.child_memo.as_deref_mut() {
+            Some(memo) => f(memo, version),
+            None => f(&mut ChildPositionMemo::default(), version),
+        }
+    })
 }
 
 /* ---- the document's mutation gate ---- */

@@ -23,6 +23,7 @@ use crate::lexbor::fragment::import_with_fixup;
 
 use crate::bridge::string::{RubyData, RubyText};
 use crate::bridge::wrapper::*;
+use crate::child_index::ChildList;
 use crate::lexbor::adapter::html::{HtmlDoc, HtmlElementMut};
 use crate::lexbor::adapter::AdapterOom;
 
@@ -239,6 +240,70 @@ pub fn with_arg_node<R>(v: Value, f: impl FnOnce(HtmlNode<'_>) -> R) -> Result<R
 pub fn wrap_node(node: Option<HtmlNode<'_>>, document: Value) -> Result<Option<Value>, Error> {
     node.map(|n| wrap_html_node(RawNode::from(n), document))
         .transpose()
+}
+
+/* ------------------------------------------------------------------ *
+ * indexing a child list                                               *
+ * ------------------------------------------------------------------ */
+
+/// An HTML node's child list for [`crate::child_index`]. The links are
+/// the raw ones `#children` follows, so the two agree - a `<template>`'s own
+/// (empty) child list included.
+struct HtmlChildren<'d>(HtmlNode<'d>);
+
+fn html_token(n: HtmlNode<'_>) -> usize {
+    RawNode::from(n).as_ptr() as usize
+}
+
+impl<'d> crate::child_index::ChildWalk for HtmlChildren<'d> {
+    type Node = HtmlNode<'d>;
+    fn parent_token(&self) -> usize {
+        html_token(self.0)
+    }
+    fn first(&self) -> Option<HtmlNode<'d>> {
+        self.0.first_child()
+    }
+    fn last(&self) -> Option<HtmlNode<'d>> {
+        self.0.last_child()
+    }
+    fn next(&self, n: HtmlNode<'d>) -> Option<HtmlNode<'d>> {
+        n.next()
+    }
+    fn prev(&self, n: HtmlNode<'d>) -> Option<HtmlNode<'d>> {
+        n.prev()
+    }
+    fn is_element(&self, n: HtmlNode<'d>) -> bool {
+        n.element().is_some()
+    }
+    fn token(&self, n: HtmlNode<'d>) -> usize {
+        html_token(n)
+    }
+    fn node_of(&self, token: usize) -> Option<HtmlNode<'d>> {
+        let raw = RawNode::from_ptr(token as *mut core::ffi::c_void)?;
+        // SAFETY: `token` is one `child_index` recorded for this list, so by
+        // `ChildPositionMemo`'s invariant it names a node that is still a
+        // child of `self.0` - in the document the receiver keeps alive for
+        // `'d`. Lexbor detaches rather than frees, so it was never released.
+        Some(unsafe { raw.as_node() })
+    }
+}
+
+/// `#child_count` / `#element_child_count`: how many children are in `list`.
+pub fn child_count(this: &HtmlSelf, list: ChildList) -> usize {
+    let w = HtmlChildren(this.node());
+    with_child_memo(this.document, |memo, version| {
+        crate::child_index::child_count(memo, version, &w, list)
+    })
+}
+
+/// `#child_at(index)` / `#element_child_at(index)`: the wrapped child at
+/// `index` in `list`, or nil past the end.
+pub fn child_at(this: &HtmlSelf, list: ChildList, index: usize) -> Result<Option<Value>, Error> {
+    let w = HtmlChildren(this.node());
+    let found = with_child_memo(this.document, |memo, version| {
+        crate::child_index::child_at(memo, version, &w, list, index)
+    });
+    wrap_node(found, this.document)
 }
 
 /* ------------------------------------------------------------------ *
