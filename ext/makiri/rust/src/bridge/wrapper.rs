@@ -32,6 +32,7 @@ use std::collections::HashMap;
 /// The placeholder a wrapper's VALUE field holds until `TypedType::wrap`'s
 /// store step writes the real one: `Qfalse`, which the mark ignores.
 const QFALSE: VALUE = rb_sys::Qfalse as VALUE;
+const QNIL: VALUE = rb_sys::Qnil as VALUE;
 
 /* ------------------------------------------------------------------ *
  * the node wrapper                                                   *
@@ -306,6 +307,51 @@ impl NodeCache {
     }
 }
 
+/// `Node#user_data`: one Ruby value per node, for a library layered on
+/// Makiri (a DOM implementation keeping its own wrapper per node).
+///
+/// A side table rather than a field of [`NodeData`], so a document whose nodes
+/// never get one pays nothing and the wrapper keeps its size. Keyed by the
+/// node token, as [`NodeCache`] is, and for the same reason sound: a token is
+/// never reused while its document lives, so an entry cannot be read through
+/// another node. It dies with the document; a copy made by `import_node` or
+/// `clone_node` is a new node and starts with none. MOVABLE marks, like
+/// [`NodeCache`]'s.
+struct UserData {
+    map: HashMap<usize, VALUE, BuildHasherDefault<crate::ptr_table::MixHasher>>,
+}
+
+impl UserData {
+    fn get(&self, token: usize) -> Option<VALUE> {
+        self.map.get(&token).copied()
+    }
+
+    fn set(&mut self, token: usize, v: VALUE) -> Result<(), ()> {
+        self.map.falloc_reserve(1)?;
+        self.map.falloc_insert(token, v)
+    }
+
+    fn remove(&mut self, token: usize) {
+        self.map.remove(&token);
+    }
+
+    fn mark(&self, marker: &Marker) {
+        for v in self.map.values() {
+            marker.mark_movable(*v);
+        }
+    }
+
+    fn compact(&mut self, relocator: &Relocator) {
+        for v in self.map.values_mut() {
+            *v = relocator.location(*v);
+        }
+    }
+
+    fn memsize(&self) -> usize {
+        self.map.capacity() * (core::mem::size_of::<usize>() + core::mem::size_of::<VALUE>())
+    }
+}
+
 /// A Document's edit bookkeeping: the mutation gate an XPath evaluation with
 /// a handler holds closed, and the versions readers key their caches by. Kept
 /// together because they answer one question - may this document change, and
@@ -388,6 +434,12 @@ pub struct DocData {
     /// Boxed and optional so a document nobody navigates never allocates a
     /// cache, and its wrapper stays one pointer wide.
     nodes: Option<Box<NodeCache>>,
+    /// `Node#user_data` for the document's nodes; see [`UserData`]. Allocated
+    /// by the first one set.
+    user_data: Option<Box<UserData>>,
+    /// The Document's own `user_data` (nil when unset). A Document is its own
+    /// wrapper, not a node wrapper, so it has no token to key the table by.
+    own_user_data: VALUE,
     /// Where `child_count` / `child_at` last were
     /// ([`ChildPositionMemo`]). Allocated by the first of them.
     child_memo: Option<Box<ChildPositionMemo>>,
@@ -420,6 +472,42 @@ impl DocData {
     /// made.
     fn cache(&mut self, token: usize, wrapper: VALUE) -> Result<(), ()> {
         self.nodes.as_mut().ok_or(())?.insert(token, wrapper)
+    }
+
+    /// The `user_data` in `slot`, nil when none is stored.
+    fn user_data(&self, slot: UserDataSlot) -> VALUE {
+        match slot {
+            UserDataSlot::Document => self.own_user_data,
+            UserDataSlot::Node(token) => self
+                .user_data
+                .as_ref()
+                .and_then(|u| u.get(token))
+                .unwrap_or(QNIL),
+        }
+    }
+
+    /// Store `v` in `slot`; nil forgets it. The table is allocated by the
+    /// first value stored, and `Err` only when that or its growth fails.
+    fn set_user_data(&mut self, slot: UserDataSlot, v: VALUE) -> Result<(), ()> {
+        let token = match slot {
+            UserDataSlot::Document => {
+                self.own_user_data = v;
+                return Ok(());
+            }
+            UserDataSlot::Node(token) => token,
+        };
+        if v == QNIL {
+            if let Some(u) = self.user_data.as_mut() {
+                u.remove(token);
+            }
+            return Ok(());
+        }
+        if self.user_data.is_none() {
+            self.user_data = Some(crate::falloc::try_box(UserData {
+                map: HashMap::with_hasher(BuildHasherDefault::default()),
+            })?);
+        }
+        self.user_data.as_mut().ok_or(())?.set(token, v)
     }
 
     /// The Document's parse-warning Array.
@@ -471,14 +559,22 @@ impl DocData {
 impl Hooks for DocData {
     fn mark(&self, marker: &Marker) {
         marker.mark(self.errors);
+        marker.mark_movable(self.own_user_data);
         if let Some(cache) = self.nodes.as_ref() {
             cache.mark(marker);
+        }
+        if let Some(data) = self.user_data.as_ref() {
+            data.mark(marker);
         }
     }
 
     fn compact(&mut self, relocator: &Relocator) {
+        self.own_user_data = relocator.location(self.own_user_data);
         if let Some(cache) = self.nodes.as_mut() {
             cache.compact(relocator);
+        }
+        if let Some(data) = self.user_data.as_mut() {
+            data.compact(relocator);
         }
     }
 
@@ -486,6 +582,7 @@ impl Hooks for DocData {
         core::mem::size_of::<DocData>()
             .saturating_add(self.external_bytes())
             .saturating_add(self.nodes.as_ref().map_or(0, |c| c.memsize()))
+            .saturating_add(self.user_data.as_ref().map_or(0, |u| u.memsize()))
             .saturating_add(
                 self.child_memo
                     .as_ref()
@@ -651,6 +748,8 @@ impl DocumentShell {
                     errors: QFALSE,
                     report: ExternalReport::default(),
                     nodes: None,
+                    user_data: None,
+                    own_user_data: QNIL,
                     child_memo: None,
                 },
                 |d| d.errors = errors.as_raw(),
@@ -1036,6 +1135,43 @@ pub fn tree_version(rb_doc: Value) -> Result<u64, Error> {
 /// seen. `TypeError` for a non-Document.
 pub fn attribute_version(rb_doc: Value) -> Result<u64, Error> {
     Ok(DOC_TYPE.get(&rb_doc)?.edits.attribute_version)
+}
+
+/* ---- per-node user data ---- */
+
+/// Where a node's `user_data` lives in its document: the Document's own
+/// field, or the [`UserData`] table under the node's token.
+#[derive(Clone, Copy)]
+enum UserDataSlot {
+    Document,
+    Node(usize),
+}
+
+/// The keepalive Document of `rb_node` (a node or a Document) and the slot
+/// its `user_data` lives in. `Err(TypeError)` for a non-node.
+fn user_data_slot(rb_node: Value) -> Result<(Value, UserDataSlot), Error> {
+    let document = keepalive_document(rb_node)?;
+    if document.as_raw() == rb_node.as_raw() {
+        return Ok((document, UserDataSlot::Document));
+    }
+    Ok((document, UserDataSlot::Node(node_identity(rb_node)?)))
+}
+
+/// `Node#user_data`: the value stored for `rb_node`, or nil.
+pub fn user_data(rb_node: Value) -> Result<Value, Error> {
+    let (document, slot) = user_data_slot(rb_node)?;
+    let raw = with_doc_data_known(document, |d| d.user_data(slot));
+    // SAFETY: nil, or a VALUE the document marks.
+    Ok(unsafe { value(raw) })
+}
+
+/// `Node#user_data=`: store `v` for `rb_node`, or forget it for nil. Refused
+/// for a frozen receiver, as an instance variable would be.
+pub fn set_user_data(rb_node: Value, v: Value) -> Result<(), Error> {
+    crate::bridge::ruby::check_frozen(rb_node)?;
+    let (document, slot) = user_data_slot(rb_node)?;
+    with_doc_data_known(document, |d| d.set_user_data(slot, v.as_raw()))
+        .map_err(|()| makiri_error("out of memory storing user_data"))
 }
 
 /* ---- the child-position memo ---- */
