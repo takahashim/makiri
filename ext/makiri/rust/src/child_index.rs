@@ -174,11 +174,14 @@ impl ChildPositionMemo {
         self.lists.get(key).unwrap_or_default()
     }
 
-    /// Remember `memo` for `key`'s list at `version`; a memo filled under
-    /// another version, or grown to [`CHILD_MEMO_MAX`], is emptied first.
-    /// Out of memory, nothing is remembered - the memo only saves walks.
+    /// Remember `memo` for `key`'s list at `version`. A memo filled under
+    /// another version is emptied first, and so is one at
+    /// [`CHILD_MEMO_MAX`] about to take a NEW list - refining a list it
+    /// holds evicts nothing. Out of memory, nothing is remembered: the memo
+    /// only saves walks.
     pub fn record(&mut self, version: u64, key: ChildListKey, memo: ChildListMemo) {
-        if self.version != version || self.lists.len() >= CHILD_MEMO_MAX {
+        let full = self.lists.len() >= CHILD_MEMO_MAX && self.lists.get(key).is_none();
+        if self.version != version || full {
             self.version = version;
             if self.lists.capacity() > CHILD_MEMO_KEEP_SLOTS {
                 self.lists = PtrMap::new();
@@ -242,29 +245,42 @@ impl<T: TokenTree> Children<'_, T> {
         }
     }
 
-    /// The first node from `n` (inclusive) along `step` that is in the list.
-    fn kept(
-        &self,
-        n: Option<T::Node>,
-        step: impl Fn(&T, T::Node) -> Option<T::Node>,
-    ) -> Option<T::Node> {
-        self.list.first_from(self.tree, n, step)
+    /// The first child in the list, or the last.
+    fn first(&self) -> Option<T::Node> {
+        self.list.first_from(
+            self.tree,
+            self.tree.first_child(self.parent),
+            T::next_sibling,
+        )
+    }
+    fn last(&self) -> Option<T::Node> {
+        self.list.first_from(
+            self.tree,
+            self.tree.last_child(self.parent),
+            T::prev_sibling,
+        )
     }
 
-    /// `steps` nodes of the list on from `n` along `step`.
+    /// `steps` nodes of the list on from `n` along `step`: the node reached,
+    /// or - when the list ends first - how many steps were taken and the
+    /// last node, which tell a forward walk the list's length.
     fn walk(
         &self,
         mut n: T::Node,
         steps: usize,
         step: impl Fn(&T, T::Node) -> Option<T::Node> + Copy,
-    ) -> Option<T::Node> {
-        for _ in 0..steps {
-            n = self.kept(step(self.tree, n), step)?;
+    ) -> Result<T::Node, (usize, T::Node)> {
+        for taken in 0..steps {
+            match self.list.first_from(self.tree, step(self.tree, n), step) {
+                Some(next) => n = next,
+                None => return Err((taken, n)),
+            }
         }
-        Some(n)
+        Ok(n)
     }
 
-    /// How many children are in the list.
+    /// How many children are in the list. A count that walks the list also
+    /// remembers its last child, the position a reverse loop starts from.
     pub fn count(&self, memo: &mut ChildPositionMemo, version: u64) -> usize {
         let key = self.key();
         let mut known = memo.lookup(version, key);
@@ -272,44 +288,68 @@ impl<T: TokenTree> Children<'_, T> {
             return n;
         }
         let mut count = 0usize;
-        let mut n = self.kept(self.tree.first_child(self.parent), T::next_sibling);
+        let mut last = None;
+        let mut n = self.first();
         while let Some(x) = n {
             count += 1;
-            n = self.kept(self.tree.next_sibling(x), T::next_sibling);
+            last = Some(x);
+            n = self
+                .list
+                .first_from(self.tree, self.tree.next_sibling(x), T::next_sibling);
         }
         known.count = Some(count);
+        if let Some(x) = last {
+            known.at = Some((count - 1, self.tree.token(x)));
+        }
         memo.record(version, key, known);
         count
     }
 
-    /// The child at `index` in the list, or None past the end.
+    /// The child at `index` in the list, or None past the end. A walk that
+    /// runs off the end remembers the length it found, so the next probe
+    /// past it is answered at once.
     pub fn at(&self, memo: &mut ChildPositionMemo, version: u64, index: usize) -> Option<T::Node> {
         let key = self.key();
         let mut known = memo.lookup(version, key);
         if known.count.is_some_and(|n| index >= n) {
             return None;
         }
-        let found = match choose_start(index, known) {
-            Start::Front => {
-                let first = self.kept(self.tree.first_child(self.parent), T::next_sibling)?;
-                self.walk(first, index, T::next_sibling)
-            }
-            Start::Back { steps } => {
-                let last = self.kept(self.tree.last_child(self.parent), T::prev_sibling)?;
-                self.walk(last, steps, T::prev_sibling)
-            }
-            Start::Memo { from, token } => {
-                let at = self.tree.node_of(token)?;
-                if index >= from {
-                    self.walk(at, index - from, T::next_sibling)
-                } else {
-                    self.walk(at, from - index, T::prev_sibling)
+        /* Where the walk starts: the index of its first node, and the node. */
+        let (from, start) = match choose_start(index, known) {
+            Start::Front => match self.first() {
+                Some(first) => (0, first),
+                None => {
+                    known.count = Some(0);
+                    memo.record(version, key, known);
+                    return None;
                 }
+            },
+            /* `steps` is `count - 1 - index`, so this starts at `count - 1`. */
+            Start::Back { steps } => (index + steps, self.last()?),
+            Start::Memo { from, token } => (from, self.tree.node_of(token)?),
+        };
+        let walked = if index >= from {
+            self.walk(start, index - from, T::next_sibling)
+        } else {
+            self.walk(start, from - index, T::prev_sibling)
+        };
+        match walked {
+            Ok(found) => {
+                known.at = Some((index, self.tree.token(found)));
+                memo.record(version, key, known);
+                Some(found)
             }
-        }?;
-        known.at = Some((index, self.tree.token(found)));
-        memo.record(version, key, known);
-        Some(found)
+            /* Only a forward walk runs off the end: the list is that long. */
+            Err((taken, last)) => {
+                if index >= from {
+                    let end = from + taken;
+                    known.count = Some(end + 1);
+                    known.at = Some((end, self.tree.token(last)));
+                    memo.record(version, key, known);
+                }
+                None
+            }
+        }
     }
 }
 

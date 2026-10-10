@@ -22,7 +22,9 @@ pub enum Place {
 }
 
 /// The Lexbor tree as [`crate::dom_rules`] reads it: the nodes carry their
-/// own links, so there is nothing to hold but the lifetime.
+/// own links, so there is nothing to hold but the lifetime. Callers write
+/// [`HtmlTree::new`] (`const`); `Default` is the same value, for clippy's
+/// `new_without_default`.
 #[derive(Clone, Copy, Default)]
 pub struct HtmlTree<'d>(core::marker::PhantomData<HtmlNode<'d>>);
 
@@ -95,7 +97,7 @@ impl<'d> Insertion<'d> {
         node: HtmlNode<'d>,
     ) -> Result<Self, PreInsertError> {
         let parent = || {
-            HtmlTree::default()
+            HtmlTree::new()
                 .tree_parent(target)
                 .ok_or(PreInsertError::NoParent {
                     replacing: place == Place::Replace,
@@ -126,7 +128,7 @@ impl<'d> Insertion<'d> {
                 Hierarchy::Ancestor,
             )));
         }
-        dom_rules::check(&HtmlTree::default(), self.parent, self.node, self.at)
+        dom_rules::check(&HtmlTree::new(), self.parent, self.node, self.at)
             .map_err(PreInsertError::Rule)
     }
 }

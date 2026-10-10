@@ -1,5 +1,5 @@
-//! The child index against lists that implement [`ChildWalk`] and nothing
-//! else: the answers against a direct read, the start choice, and the memo's
+//! The child index against lists that implement [`Tree`] and [`TokenTree`]
+//! and nothing else: the answers against a direct read, the start choice, and the memo's
 //! invariant (versions, eviction).
 
 use super::*;
@@ -341,4 +341,67 @@ fn neighbouring_keys_hash_apart() {
     let k = |parent, list| ChildListKey { parent, list }.table_hash();
     assert_ne!(k(4, ChildList::Elements), k(5, ChildList::Nodes));
     assert_ne!(k(4, ChildList::Nodes), k(4, ChildList::Elements));
+}
+
+/// The DOM-diff loop at the cap: refining a list the memo holds must not
+/// evict the others, or the outer lists lose their positions.
+#[test]
+fn refining_a_held_list_at_the_cap_evicts_nothing() {
+    let key = |parent| ChildListKey {
+        parent,
+        list: ChildList::Nodes,
+    };
+    let known = |n| ChildListMemo {
+        count: Some(n),
+        at: None,
+    };
+    let mut memo = ChildPositionMemo::default();
+    for p in 1..=CHILD_MEMO_MAX {
+        memo.record(0, key(p), known(1));
+    }
+    memo.record(0, key(1), known(2));
+    assert_eq!(memo.lookup(0, key(1)), known(2));
+    assert_eq!(memo.lookup(0, key(2)), known(1));
+    assert_eq!(memo.lookup(0, key(CHILD_MEMO_MAX)), known(1));
+}
+
+/// `while (c = n.child_at(i))` with no count first: the probe that runs off
+/// the end learns the length, so a second probe past it walks nothing.
+#[test]
+fn a_walk_off_the_end_remembers_the_length() {
+    let kinds = [false; 50];
+    let list = List::new(3, &kinds);
+    let mut memo = ChildPositionMemo::default();
+    assert_eq!(child_at(&mut memo, 0, &list, ChildList::Nodes, 80), None);
+    let steps = list.steps.get();
+    assert_eq!(child_at(&mut memo, 0, &list, ChildList::Nodes, 50), None);
+    assert_eq!(child_at(&mut memo, 0, &list, ChildList::Nodes, 99), None);
+    assert_eq!(list.steps.get(), steps, "past-the-end probes walked again");
+    assert_eq!(child_count(&mut memo, 0, &list, ChildList::Nodes), 50);
+    assert_eq!(
+        child_at(&mut memo, 0, &list, ChildList::Nodes, 49),
+        Some(49)
+    );
+    /* A walk off the end of a counted-elements list stops the same way. */
+    let none = List::new(4, &[false, false]);
+    assert_eq!(child_at(&mut memo, 0, &none, ChildList::Elements, 0), None);
+    assert_eq!(child_count(&mut memo, 0, &none, ChildList::Elements), 0);
+}
+
+/// A count remembers the last child, so a reverse loop starts there.
+#[test]
+fn a_count_remembers_the_last_child() {
+    let kinds = [false; 30];
+    let list = List::new(3, &kinds);
+    let mut memo = ChildPositionMemo::default();
+    assert_eq!(child_count(&mut memo, 0, &list, ChildList::Nodes), 30);
+    let steps = list.steps.get();
+    for i in (0..30).rev() {
+        assert_eq!(child_at(&mut memo, 0, &list, ChildList::Nodes, i), Some(i));
+    }
+    assert!(
+        list.steps.get() - steps <= 30,
+        "{} steps",
+        list.steps.get() - steps
+    );
 }

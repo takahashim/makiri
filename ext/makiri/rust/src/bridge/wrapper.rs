@@ -1047,23 +1047,6 @@ fn with_child_memo<R>(rb_doc: Value, f: impl FnOnce(&mut ChildPositionMemo, u64)
     with_doc_data_known(rb_doc, |d| f(&mut d.child_memo, d.edits.tree_version))
 }
 
-/// [`Children::count`] through `rb_doc`'s memo.
-pub(in crate::bridge) fn count_children<T: TokenTree>(
-    rb_doc: Value,
-    children: Children<'_, T>,
-) -> usize {
-    with_child_memo(rb_doc, |memo, version| children.count(memo, version))
-}
-
-/// [`Children::at`] through `rb_doc`'s memo.
-pub(in crate::bridge) fn child_at_index<T: TokenTree>(
-    rb_doc: Value,
-    children: Children<'_, T>,
-    index: usize,
-) -> Option<T::Node> {
-    with_child_memo(rb_doc, |memo, version| children.at(memo, version, index))
-}
-
 /// A receiver whose child lists `#child_count` / `#child_at` and their
 /// element twins read - an HTML or XML node or Document. A representation
 /// says which tree and node it is and how a child is wrapped; counting and
@@ -1084,12 +1067,17 @@ pub trait ChildListHost: magnus::TryConvert {
 
     /// How many children are in `list`.
     fn child_count(&self, list: ChildList) -> usize {
-        count_children(self.document(), self.children(list))
+        with_child_memo(self.document(), |memo, version| {
+            self.children(list).count(memo, version)
+        })
     }
 
     /// The wrapped child at `index` in `list`, or nil past the end.
     fn child_at(&self, list: ChildList, index: usize) -> Result<Option<Value>, Error> {
-        self.wrap_child(child_at_index(self.document(), self.children(list), index))
+        let found = with_child_memo(self.document(), |memo, version| {
+            self.children(list).at(memo, version, index)
+        });
+        self.wrap_child(found)
     }
 }
 

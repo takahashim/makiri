@@ -265,7 +265,9 @@ impl<'d> TokenTree for HtmlTree<'d> {
     }
 }
 
-/// The tree every HTML receiver lends its child lists: it holds nothing.
+/// The tree every HTML receiver lends its child lists, as `&'static`: a
+/// `const` item is what may be borrowed for that long (the type holds
+/// nothing).
 const HTML_TREE: HtmlTree<'static> = HtmlTree::new();
 
 impl ChildListHost for HtmlSelf {

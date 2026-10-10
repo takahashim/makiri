@@ -270,14 +270,14 @@ pub fn previous(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Er
 
 pub fn next_element(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        let found = child_index::next_element_sibling(&HtmlTree::default(), this.node());
+        let found = child_index::next_element_sibling(&HtmlTree::new(), this.node());
         wrap_node(found, this.document)
     })
 }
 
 pub fn previous_element(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        let found = child_index::previous_element_sibling(&HtmlTree::default(), this.node());
+        let found = child_index::previous_element_sibling(&HtmlTree::new(), this.node());
         wrap_node(found, this.document)
     })
 }
@@ -289,14 +289,14 @@ pub fn child(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error
 
 pub fn first_element_child(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        let found = child_index::first_element_child(&HtmlTree::default(), this.node());
+        let found = child_index::first_element_child(&HtmlTree::new(), this.node());
         wrap_node(found, this.document)
     })
 }
 
 pub fn last_element_child(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        let found = child_index::last_element_child(&HtmlTree::default(), this.node());
+        let found = child_index::last_element_child(&HtmlTree::new(), this.node());
         wrap_node(found, this.document)
     })
 }
@@ -311,7 +311,7 @@ pub fn last_child(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, 
 /// answers its element.
 pub fn root_node(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let root = crate::dom_rules::root(&HtmlTree::default(), this.node());
+        let root = crate::dom_rules::root(&HtmlTree::new(), this.node());
         wrap_html_node(RawNode::from(root), this.document)
     })
 }
