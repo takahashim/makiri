@@ -228,6 +228,17 @@ pub fn element_child_at(this: XmlSelf, i: Integer) -> Result<Option<Value>, Erro
     })
 }
 
+/// `#root_node` (DOM `getRootNode()`) - see [`crate::dom_rules::root`]; an
+/// Attr is its own root.
+pub fn root_node(this: XmlSelf) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| {
+        wrap(
+            crate::dom_rules::root(this.doc_ref(), this.id),
+            this.document,
+        )
+    })
+}
+
 /// The first element from `start` along `step`.
 fn first_element(
     d: &XmlDoc,

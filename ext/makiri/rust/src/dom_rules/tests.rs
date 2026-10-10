@@ -320,3 +320,26 @@ fn step6_existing_root_blocks_a_fragment_element() {
     let empty = d.t.add(K::DocumentFragment, None);
     assert_eq!(check(&d.t, d.doc, empty, APPEND), Ok(()));
 }
+
+/// `root`: the end of the tree-parent chain. A fragment is a root even with a
+/// host (the host is not its parent), and an attribute is its own root.
+#[test]
+fn root_ends_the_tree_parent_chain() {
+    let d = doc();
+    let mut t = d.t;
+    assert_eq!(root(&t, d.body), d.doc);
+    assert_eq!(root(&t, d.doc), d.doc);
+
+    let template = t.add(K::Element, Some(d.body));
+    let contents = t.add(K::DocumentFragment, None);
+    t.host[contents] = Some(template);
+    let inside = t.add(K::Element, Some(contents));
+    assert_eq!(root(&t, inside), contents);
+
+    let detached = t.add(K::Element, None);
+    let leaf = t.add(K::Text, Some(detached));
+    assert_eq!(root(&t, leaf), detached);
+
+    let attr = t.add(K::Attribute, None);
+    assert_eq!(root(&t, attr), attr);
+}

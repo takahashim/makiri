@@ -96,6 +96,7 @@ fn init_read() -> Result<(), Error> {
     m.define_method("child_at", method!(read::child_at, 1))?;
     m.define_method("element_child_count", method!(read::element_child_count, 0))?;
     m.define_method("element_child_at", method!(read::element_child_at, 1))?;
+    m.define_method("root_node", method!(read::root_node, 0))?;
     m.define_method("children", method!(read::children, 0))?;
     for name in ["element_children", "elements"] {
         m.define_method(name, method!(read::element_children, 0))?;

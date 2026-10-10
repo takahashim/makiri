@@ -18,14 +18,14 @@
 use magnus::{prelude::*, Error, Integer, Ruby, Value};
 
 use super::{with_arg_node, wrap_node};
-use crate::bridge::html::{dom_str, text_index_string};
+use crate::bridge::html::{dom_str, text_index_string, wrap_html_node};
 use crate::bridge::node_set::node_set_with_fill;
 use crate::bridge::ruby::is_kind_of;
 use crate::bridge::string::ruby_verified_text;
 use crate::child_index::ChildList;
 use crate::glue::node::child_index_arg;
 use crate::init::{CLASS_NODE, CLASS_XML_DOCUMENT};
-use crate::lexbor::adapter::html::{HtmlAttr, HtmlElement, HtmlNode, NodeType, RawNode};
+use crate::lexbor::adapter::html::{HtmlAttr, HtmlElement, HtmlNode, HtmlTree, NodeType, RawNode};
 
 /* ------------------------------------------------------------------ *
  * small helpers                                                      *
@@ -354,6 +354,16 @@ pub fn element_child_at(
     crate::bridge::ruby::entry(|| match child_index_arg(i) {
         Some(i) => crate::bridge::html::child_at(&this, ChildList::Elements, i),
         None => Ok(None),
+    })
+}
+
+/// `#root_node` (DOM `getRootNode()`, not shadow-including) - see
+/// [`crate::dom_rules::root`]. An Attr is its own root, though `#parent`
+/// answers its element.
+pub fn root_node(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| {
+        let root = crate::dom_rules::root(&HtmlTree::default(), this.node());
+        wrap_html_node(RawNode::from(root), this.document)
     })
 }
 

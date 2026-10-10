@@ -13,6 +13,8 @@
   building `#children`. A loop over the indexes in order costs O(1) a step.
   `child_at` returns nil for a negative index or one past the end.
 * `Node#first_child` (an alias of `#child`) and `#last_child`.
+* `Node#root_node`, DOM `getRootNode()`: the Document, a DocumentFragment, or
+  the top of a detached subtree. An Attr is its own root.
 
 ## [0.15.0] - 2026-10-09
 

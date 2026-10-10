@@ -38,6 +38,18 @@ pub trait Tree {
     fn next_sibling(&self, n: Self::Node) -> Option<Self::Node>;
 }
 
+/// DOM `getRootNode()` (not shadow-including): the end of `n`'s tree-parent
+/// chain - a Document, a DocumentFragment (a `<template>`'s contents
+/// included: the host is not a tree parent), or the top of a detached
+/// subtree. An attribute is its own root, having no tree parent.
+pub fn root<T: Tree>(tree: &T, n: T::Node) -> T::Node {
+    let mut n = n;
+    while let Some(p) = tree.tree_parent(n) {
+        n = p;
+    }
+    n
+}
+
 /// Why an insertion is refused, named after the DOM exception it raises there.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Violation {
