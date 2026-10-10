@@ -315,6 +315,17 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     crate::lexbor::memory::install();
     let makiri = ruby.define_module("Makiri")?;
 
+    // What this binary was built as, for `lib/makiri.rb` to check against the
+    // gem it was loaded by and the Ruby it was loaded into - a stale
+    // `lib/makiri/makiri.bundle` in a checkout is read by whichever Ruby, and
+    // whichever version of the Ruby code, requires it.
+    let native_version = ruby.str_new(env!("MAKIRI_GEM_VERSION"));
+    native_version.freeze();
+    makiri.const_set("NATIVE_VERSION", native_version)?;
+    let native_ruby = ruby.str_new(&crate::bridge::ruby::ruby_api_version());
+    native_ruby.freeze();
+    makiri.const_set("NATIVE_RUBY_API_VERSION", native_ruby)?;
+
     /* The abstract bases. Concrete nodes are the HTML::* / XML::* leaves
      * below; these exist so `is_a?(Makiri::Element)` holds across both. The
      * exported ones register as they are defined; the rest are local. */

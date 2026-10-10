@@ -3,6 +3,8 @@
 module Makiri
   const CDATA = Makiri::CDATASection
   const DTD = Makiri::DocumentType
+  const NATIVE_RUBY_API_VERSION : String
+  const NATIVE_VERSION : String
   const VERSION : String
   def self.HTML(-2 req:source,keyrest:opts)
   def self.XML(-2 req:source,keyrest:opts)
