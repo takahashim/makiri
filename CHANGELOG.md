@@ -10,8 +10,11 @@
   gem and Ruby (e.g. a stale `lib/makiri/makiri.bundle` in a checkout).
 * `Node#child_count`, `#child_at(i)`, `#element_child_count` and
   `#element_child_at(i)` (HTML and XML): count and index a child list without
-  building `#children`. A loop over the indexes in order costs O(1) a step.
-  `child_at` returns nil for a negative index or one past the end.
+  building `#children`. A loop over the indexes in order costs O(1) a step,
+  also while other lists are read in between. Any child-list edit in the
+  document resets that, so a loop that edits as it indexes walks from the
+  nearer end after each edit. `child_at` returns nil for a negative index or
+  one past the end.
 * `Node#first_child` (an alias of `#child`) and `#last_child`.
 * `Node#root_node`, DOM `getRootNode()`: the Document, a DocumentFragment, or
   the top of a detached subtree. An Attr is its own root.

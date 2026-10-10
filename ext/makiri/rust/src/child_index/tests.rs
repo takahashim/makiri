@@ -8,7 +8,7 @@ use crate::node_type::NodeType;
 
 /// One parent's children as a slice of "is an element" flags. Children are
 /// their indices and the parent is [`PARENT`]; a child's token is its index
-/// + 1 (a token of 0 names nothing), the parent's is `parent`. `steps`
+/// plus one (a token of 0 names nothing), the parent's is `parent`. `steps`
 /// counts sibling-link reads.
 struct List<'a> {
     parent: usize,
@@ -243,27 +243,69 @@ fn the_two_lists_of_one_parent_are_kept_apart() {
     assert_eq!(child_count(&mut memo, 0, &list, ChildList::Nodes), 6);
 }
 
+/// The DOM-diff shape the review raised: walk an outer list by index while
+/// reading many other lists between steps. Every list read since the last
+/// edit is kept, so the outer list's position survives and the loop stays
+/// linear however many inner lists it reads.
 #[test]
-fn the_least_recently_used_list_is_evicted() {
+fn an_outer_position_survives_reading_many_other_lists() {
+    let kinds = [false; 500];
+    let outer = List::new(7, &kinds);
+    let inner_kinds = [true; 3];
+    let inners: Vec<List<'_>> = (0..40).map(|p| List::new(1000 + p, &inner_kinds)).collect();
     let mut memo = ChildPositionMemo::default();
-    let key = |parent| ChildListKey {
-        parent,
+    let n = child_count(&mut memo, 0, &outer, ChildList::Nodes);
+    for i in 0..n {
+        assert_eq!(child_at(&mut memo, 0, &outer, ChildList::Nodes, i), Some(i));
+        for inner in &inners {
+            child_count(&mut memo, 0, inner, ChildList::Nodes);
+            child_at(&mut memo, 0, inner, ChildList::Nodes, 1);
+        }
+    }
+    assert!(
+        outer.steps.get() <= 2 * kinds.len(),
+        "{} steps",
+        outer.steps.get()
+    );
+}
+
+#[test]
+fn a_record_refines_the_entry_for_its_list() {
+    let key = ChildListKey {
+        parent: 5,
         list: ChildList::Nodes,
     };
-    let known = |n| ChildListMemo {
-        count: Some(n),
+    let mut memo = ChildPositionMemo::default();
+    let counted = ChildListMemo {
+        count: Some(4),
         at: None,
     };
-    for p in 1..=CHILD_MEMO_ENTRIES {
-        memo.record(0, key(p), known(p));
+    memo.record(0, key, counted);
+    let refined = ChildListMemo {
+        count: Some(4),
+        at: Some((2, 9)),
+    };
+    memo.record(0, key, refined);
+    assert_eq!(memo.lookup(0, key), refined);
+}
+
+#[test]
+fn past_the_cap_the_memo_starts_over() {
+    let key = |parent| ChildListKey {
+        parent,
+        list: ChildList::Elements,
+    };
+    let known = ChildListMemo {
+        count: Some(1),
+        at: None,
+    };
+    let mut memo = ChildPositionMemo::default();
+    for p in 1..=CHILD_MEMO_MAX {
+        memo.record(0, key(p), known);
     }
-    /* Touch the oldest, then one more list: the second oldest goes. */
-    memo.record(0, key(1), known(1));
-    memo.record(0, key(99), known(99));
-    assert_eq!(memo.lookup(0, key(1)), known(1));
-    assert_eq!(memo.lookup(0, key(2)), ChildListMemo::default());
-    for p in 3..=CHILD_MEMO_ENTRIES {
-        assert_eq!(memo.lookup(0, key(p)), known(p), "parent {p}");
-    }
-    assert_eq!(memo.lookup(0, key(99)), known(99));
+    assert_eq!(memo.lookup(0, key(1)), known);
+    assert_eq!(memo.lookup(0, key(CHILD_MEMO_MAX)), known);
+    memo.record(0, key(CHILD_MEMO_MAX + 1), known);
+    assert_eq!(memo.lookup(0, key(1)), ChildListMemo::default());
+    assert_eq!(memo.lookup(0, key(CHILD_MEMO_MAX + 1)), known);
 }

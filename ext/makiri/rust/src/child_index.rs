@@ -22,12 +22,22 @@
 //! a representation turn a recorded token back into a node
 //! ([`TokenTree::node_of`]) - for HTML, a raw pointer.
 //!
+//! # Its known limit
+//!
+//! The version is the whole document's, so ANY child-list edit empties the
+//! memo, not just one to a list it holds. A loop that edits one list while
+//! indexing another (a diff applied as it is computed) re-walks from the
+//! nearest end after every edit: O(min(i, n - i)) a step rather than O(1).
+//! Dropping only the edited lists would need every edit to report the
+//! parents it changed; `record_edit` knows only that a child list changed.
+//!
 //! Lexbor/Ruby-free and safe, like the engine.
 
 #![forbid(unsafe_code)]
 
 use crate::dom_rules::Tree;
 use crate::node_type::NodeType;
+use crate::ptr_table::{mix64, PtrMap, TableKey};
 
 /// A [`Tree`] whose nodes the memo can record: a node as a token word and
 /// back.
@@ -66,6 +76,20 @@ pub struct ChildListKey {
     pub list: ChildList,
 }
 
+/// Keyed in a [`PtrMap`] by the parent's token, which is never 0 - an HTML
+/// node pointer is not null, and XML arena slot 0 is reserved - so a 0
+/// parent marks an empty slot.
+impl TableKey for ChildListKey {
+    const EMPTY: Self = ChildListKey {
+        parent: 0,
+        list: ChildList::Nodes,
+    };
+    #[inline]
+    fn table_hash(self) -> u64 {
+        mix64((self.parent as u64) ^ (self.list as u64))
+    }
+}
+
 /// What the memo knows about one list. Empty until a count or a position is
 /// recorded.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
@@ -76,27 +100,20 @@ pub struct ChildListMemo {
     pub at: Option<(usize, usize)>,
 }
 
-/// How many lists are remembered. Several, not one: a DOM diff walks a list
-/// while recursing into each child's list, and a single slot would let the
-/// inner lists evict the outer one's count at every step. Sixteen covers that
-/// recursion to that depth; it is a judgement, not a measurement.
-pub const CHILD_MEMO_ENTRIES: usize = 16;
+/// How many lists the memo holds before it starts over. Every list read
+/// since the last child-list edit is kept - a DOM diff reads a list, then
+/// every child's list under it, and must find the outer list's position when
+/// it comes back - so this bounds only a long run of reads with no edit in
+/// between (a full walk of a large document), where starting over costs one
+/// re-walk per list still in use, once per this many lists.
+pub const CHILD_MEMO_MAX: usize = 16_384;
 
-/// The document's remembered child lists, most recently used first, valid
-/// for one `tree_version` (the module doc's invariant).
-#[derive(Clone)]
+/// The document's remembered child lists, valid for one `tree_version` (the
+/// module doc's invariant).
+#[derive(Default)]
 pub struct ChildPositionMemo {
     version: u64,
-    entries: [Option<(ChildListKey, ChildListMemo)>; CHILD_MEMO_ENTRIES],
-}
-
-impl Default for ChildPositionMemo {
-    fn default() -> Self {
-        ChildPositionMemo {
-            version: 0,
-            entries: [None; CHILD_MEMO_ENTRIES],
-        }
-    }
+    lists: PtrMap<ChildListKey, ChildListMemo>,
 }
 
 impl ChildPositionMemo {
@@ -106,28 +123,23 @@ impl ChildPositionMemo {
         if self.version != version {
             return ChildListMemo::default();
         }
-        self.entries
-            .iter()
-            .flatten()
-            .find(|(k, _)| *k == key)
-            .map_or_else(ChildListMemo::default, |&(_, m)| m)
+        self.lists.get(key).unwrap_or_default()
     }
 
-    /// Remember `memo` for `key`'s list at `version`, as the most recently
-    /// used; a memo filled under another version is emptied first.
+    /// Remember `memo` for `key`'s list at `version`; a memo filled under
+    /// another version, or grown to [`CHILD_MEMO_MAX`], is emptied first.
+    /// Out of memory, nothing is remembered - the memo only saves walks.
     pub fn record(&mut self, version: u64, key: ChildListKey, memo: ChildListMemo) {
-        if self.version != version {
+        if self.version != version || self.lists.len() >= CHILD_MEMO_MAX {
             self.version = version;
-            self.entries = [None; CHILD_MEMO_ENTRIES];
+            self.lists.clear();
         }
-        /* Move to the front: the key's old slot, or the least recently used. */
-        let slot = self
-            .entries
-            .iter()
-            .position(|e| e.is_some_and(|(k, _)| k == key))
-            .unwrap_or(CHILD_MEMO_ENTRIES - 1);
-        self.entries.copy_within(0..slot, 1);
-        self.entries[0] = Some((key, memo));
+        let _ = self.lists.set(key, memo);
+    }
+
+    /// The bytes the memo's table holds, for the Document's `memsize`.
+    pub fn memsize(&self) -> usize {
+        self.lists.capacity() * core::mem::size_of::<(ChildListKey, ChildListMemo)>()
     }
 }
 

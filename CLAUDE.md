@@ -681,6 +681,19 @@ can never point at reallocated/detached text storage. Reached via
 `HtmlParsed::text_slices` (None → caller walks: fragments, build OOM).
 Fail-closed: a build OOM leaves it unbuilt and the walk fallback serves.
 
+**Child counting and indexing** (`src/child_index.rs`). `#child_count` /
+`#child_at` and their element twins walk `dom_rules::Tree`'s links - the
+insertion rules' description of each tree, so the three cannot disagree -
+and remember where they were in a per-document `ChildPositionMemo` (a
+`PtrMap` per list, emptied past `CHILD_MEMO_MAX`), so an index loop is O(1)
+a step. The memo answers only for the `tree_version` it was filled under;
+that invariant is what makes HTML's `TokenTree::node_of` (a recorded node
+pointer read back - a recorded raw-node crossing) sound, so keep every
+child-list edit moving the version BEFORE it changes anything
+(`record_edit`). Any edit empties the whole memo (the module doc's known
+limit). The four Ruby methods are generic over `bridge::wrapper::ChildListHost`
+in `glue::node`.
+
 **XPath engine** (`src/xpath/`). Original implementation: lexer →
 recursive-descent parser → AST → evaluator + 26 built-in functions. The only
 external hook is `Dom::qualified_name` (in `xpath/dom.rs`). Per-evaluate
