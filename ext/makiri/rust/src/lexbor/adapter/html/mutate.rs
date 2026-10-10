@@ -22,9 +22,19 @@ pub enum Place {
 }
 
 /// The Lexbor tree as [`crate::dom_rules`] reads it: the nodes carry their
-/// own links, so there is nothing to hold but the lifetime.
+/// own links, so there is nothing to hold but the lifetime. Callers write
+/// [`HtmlTree::new`] (`const`); `Default` is the same value, for clippy's
+/// `new_without_default`.
 #[derive(Clone, Copy, Default)]
 pub struct HtmlTree<'d>(core::marker::PhantomData<HtmlNode<'d>>);
+
+impl HtmlTree<'_> {
+    /// `const`, so a caller can lend one as `&'static` (the type holds
+    /// nothing, and is covariant in `'d`).
+    pub const fn new() -> Self {
+        HtmlTree(core::marker::PhantomData)
+    }
+}
 
 impl<'d> Tree for HtmlTree<'d> {
     type Node = HtmlNode<'d>;
@@ -50,8 +60,16 @@ impl<'d> Tree for HtmlTree<'d> {
         n.first_child()
     }
     #[inline]
+    fn last_child(&self, n: HtmlNode<'d>) -> Option<HtmlNode<'d>> {
+        n.last_child()
+    }
+    #[inline]
     fn next_sibling(&self, n: HtmlNode<'d>) -> Option<HtmlNode<'d>> {
         n.next()
+    }
+    #[inline]
+    fn prev_sibling(&self, n: HtmlNode<'d>) -> Option<HtmlNode<'d>> {
+        n.prev()
     }
 }
 
@@ -79,7 +97,7 @@ impl<'d> Insertion<'d> {
         node: HtmlNode<'d>,
     ) -> Result<Self, PreInsertError> {
         let parent = || {
-            HtmlTree::default()
+            HtmlTree::new()
                 .tree_parent(target)
                 .ok_or(PreInsertError::NoParent {
                     replacing: place == Place::Replace,
@@ -110,7 +128,7 @@ impl<'d> Insertion<'d> {
                 Hierarchy::Ancestor,
             )));
         }
-        dom_rules::check(&HtmlTree::default(), self.parent, self.node, self.at)
+        dom_rules::check(&HtmlTree::new(), self.parent, self.node, self.at)
             .map_err(PreInsertError::Rule)
     }
 }

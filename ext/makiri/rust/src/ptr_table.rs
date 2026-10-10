@@ -269,6 +269,20 @@ impl<K: TableKey, V: Copy + Default> PtrMap<K, V> {
         Ok(())
     }
 
+    /// Map `key` to `value`, replacing the value a key already present has -
+    /// for a cache whose entries are refined, where [`insert`](Self::insert)
+    /// keeps the first. `Err` as `insert`'s; a replacement never allocates.
+    pub fn set(&mut self, key: K, value: V) -> Result<(), InsertRefused> {
+        if key != K::EMPTY && !self.slots.is_empty() {
+            let i = probe(&self.slots, key);
+            if self.slots[i].0 == key {
+                self.slots[i].1 = value;
+                return Ok(());
+            }
+        }
+        self.insert(key, value)
+    }
+
     /// Double the table (or make the first one), re-placing every entry. The
     /// new table is built whole before it replaces the old one.
     fn grow(&mut self) -> Result<(), InsertRefused> {

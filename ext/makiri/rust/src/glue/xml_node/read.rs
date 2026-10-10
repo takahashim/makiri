@@ -21,6 +21,8 @@ use magnus::{prelude::*, Error, Ruby, Value};
 use super::strings::{str_field, utf8};
 use super::{wrap, XmlSelf};
 use crate::bridge::node_set::node_set_with_fill;
+use crate::bridge::string::dom_name_str;
+use crate::child_index;
 use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId};
 
 /// Wrap an optional reached node under the receiver's Document (None -> nil).
@@ -59,44 +61,38 @@ pub fn name(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
 }
 
 /// `#local_name`: Element and Attribute only.
-pub fn local_name(ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
+pub fn local_name(_ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        Ok(str_or_nil(
-            ruby,
-            this.doc_ref().name_parts(this.id).map(|n| n.local),
-        ))
+        let local = this.doc_ref().name_parts(this.id).map(|n| n.local);
+        Ok(local.map(dom_name_str))
     })
 }
 
 /// `#prefix`: nil when unprefixed - the distinction `#namespace` depends on -
 /// and for any kind but Element and Attribute.
-pub fn prefix(ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
+pub fn prefix(_ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        Ok(str_or_nil(
-            ruby,
-            this.doc_ref().name_parts(this.id).and_then(|n| n.prefix),
-        ))
+        let prefix = this.doc_ref().name_parts(this.id).and_then(|n| n.prefix);
+        Ok(prefix.map(dom_name_str))
     })
 }
 
 /// `#namespace_uri`: nil in no namespace, and for any kind but Element and
 /// Attribute.
-pub fn namespace_uri(ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
+pub fn namespace_uri(_ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        Ok(str_or_nil(
-            ruby,
-            this.doc_ref().name_parts(this.id).and_then(|n| n.ns_uri),
-        ))
+        let uri = this.doc_ref().name_parts(this.id).and_then(|n| n.ns_uri);
+        Ok(uri.map(dom_name_str))
     })
 }
 
 /// `Element#tag_name` (DOM `tagName`): the qualified name - XML keeps its case
 /// - or nil for a non-element.
-pub fn tag_name(ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
+pub fn tag_name(_ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
         let d = this.doc_ref();
         let tag = d.name_parts(this.id).filter(|_| is_element(d, this.id));
-        Ok(str_or_nil(ruby, tag.map(|n| n.qname)))
+        Ok(tag.map(|n| dom_name_str(n.qname)))
     })
 }
 
@@ -196,40 +192,43 @@ pub fn first_child(this: XmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| wrap_rel(this, this.doc_ref().first_child(this.id)))
 }
 
-/// The first element from `start` along `step`.
-fn first_element(
-    d: &XmlDoc,
-    start: Option<NodeId>,
-    step: impl Fn(NodeId) -> Option<NodeId>,
-) -> Option<NodeId> {
-    core::iter::successors(start, |&n| step(n)).find(|&n| is_element(d, n))
+pub fn last_child(this: XmlSelf) -> Result<Option<Value>, Error> {
+    crate::bridge::ruby::entry(|| wrap_rel(this, this.doc_ref().last_child(this.id)))
+}
+
+/// `#root_node` (DOM `getRootNode()`) - see [`crate::dom_rules::root`]; an
+/// Attr is its own root.
+pub fn root_node(this: XmlSelf) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| {
+        wrap(
+            crate::dom_rules::root(this.doc_ref(), this.id),
+            this.document,
+        )
+    })
 }
 
 pub fn next_element(this: XmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
         let d = this.doc_ref();
-        wrap_rel(this, first_element(d, d.next(this.id), |n| d.next(n)))
+        wrap_rel(this, child_index::next_element_sibling(d, this.id))
     })
 }
 pub fn previous_element(this: XmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
         let d = this.doc_ref();
-        wrap_rel(this, first_element(d, d.prev(this.id), |n| d.prev(n)))
+        wrap_rel(this, child_index::previous_element_sibling(d, this.id))
     })
 }
 pub fn first_element_child(this: XmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
         let d = this.doc_ref();
-        wrap_rel(
-            this,
-            first_element(d, d.first_child(this.id), |n| d.next(n)),
-        )
+        wrap_rel(this, child_index::first_element_child(d, this.id))
     })
 }
 pub fn last_element_child(this: XmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
         let d = this.doc_ref();
-        wrap_rel(this, first_element(d, d.last_child(this.id), |n| d.prev(n)))
+        wrap_rel(this, child_index::last_element_child(d, this.id))
     })
 }
 

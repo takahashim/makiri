@@ -22,16 +22,43 @@ pub use rb_sys::{ID, VALUE};
 
 /// The `MAJOR.MINOR` of the Ruby whose headers this extension was compiled
 /// against - its ABI, since a teeny release keeps it. Published as
-/// `Makiri::NATIVE_RUBY_API_VERSION` so `lib/makiri.rb` can refuse a binary
-/// built for another Ruby: a release Ruby does not check `ruby_abi_version`
-/// itself, and under macOS's `-undefined dynamic_lookup` such a binary loads
-/// and then misreads the interpreter's structs.
+/// `Makiri::NATIVE_RUBY_API_VERSION`.
 pub fn ruby_api_version() -> String {
     format!(
         "{}.{}",
         rb_sys::RUBY_API_VERSION_MAJOR,
         rb_sys::RUBY_API_VERSION_MINOR
     )
+}
+
+/// `Err(LoadError)` when the running Ruby's API `MAJOR.MINOR` is not the one
+/// this extension was compiled for.
+///
+/// The FIRST thing `Init_makiri` does. A release Ruby does not check
+/// `ruby_abi_version` itself, and under macOS's `-undefined dynamic_lookup`
+/// a binary built for another Ruby loads and then misreads the interpreter's
+/// structs - defining one class could already corrupt it, so the check
+/// cannot wait for `lib/makiri.rb`. It reads the running Ruby's exported
+/// `ruby_api_version` (three ints, whose layout no Ruby changes) and nothing
+/// else; only a mismatch goes on to build the exception.
+pub fn check_running_ruby_api(ruby: &Ruby) -> Result<(), Error> {
+    // SAFETY: an immutable `const int[3]` libruby exports, read by value.
+    let running = unsafe { (rb_sys::ruby_api_version[0], rb_sys::ruby_api_version[1]) };
+    let built = (
+        rb_sys::RUBY_API_VERSION_MAJOR as core::ffi::c_int,
+        rb_sys::RUBY_API_VERSION_MINOR as core::ffi::c_int,
+    );
+    if running == built {
+        return Ok(());
+    }
+    Err(Error::new(
+        ruby.exception_load_error(),
+        format!(
+            "makiri's native extension was built for Ruby {}.{}, but this is Ruby {}.{}; \
+             rebuild it (`bundle exec rake clean compile` in a checkout, or reinstall the gem)",
+            built.0, built.1, running.0, running.1
+        ),
+    ))
 }
 
 /// `Makiri::Error` - the one definition; the modules that each kept a private

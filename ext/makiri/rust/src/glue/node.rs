@@ -1,5 +1,6 @@
-//! The node identity methods both representations share, and the pieces of
-//! the DOM's naming rules their factories raise alike.
+//! The node methods both representations share - identity, and the child
+//! list readers over `ChildListHost` - and the pieces of the DOM's naming
+//! rules their factories raise alike.
 //!
 //! HTML (Lexbor) and XML (custom-arena) nodes are two representations of one
 //! Ruby-facing Node. `==`/`eql?`, `hash` and `pointer_id` never dereference
@@ -15,7 +16,8 @@ use crate::xml::dom_name;
 
 use crate::init::CLASS_NODE;
 
-use crate::bridge::wrapper::{node_identity, node_key};
+use crate::bridge::wrapper::{node_identity, node_key, ChildListHost};
+use crate::child_index::ChildList;
 
 /// The refusal of a namespace that does not fit the qualified name it came with.
 const NS_MISFIT: &str =
@@ -67,6 +69,45 @@ pub fn node_pointer_id(ruby: &Ruby, rb_self: Value) -> Result<Integer, magnus::E
 /// `#pointer_id`; an HTML and an XML node may share it, which a hash allows.
 pub fn node_hash(ruby: &Ruby, rb_self: Value) -> Result<Integer, magnus::Error> {
     crate::bridge::ruby::entry(|| node_pointer_id(ruby, rb_self))
+}
+
+/// A `child_at` / `element_child_at` index argument: None (so nil) for a
+/// negative one, or one too large for any list. Not an Integer is the
+/// `TypeError` magnus raises converting it.
+fn child_index_arg(i: Integer) -> Option<usize> {
+    i.to_u64().ok().and_then(|n| usize::try_from(n).ok())
+}
+
+/// `#child_count` (DOM `childNodes.length`): every child node, counted
+/// without building `#children`.
+pub fn child_count<S: ChildListHost>(this: S) -> Result<usize, magnus::Error> {
+    crate::bridge::ruby::entry(|| Ok(this.child_count(ChildList::Nodes)))
+}
+
+/// `#element_child_count` (DOM `childElementCount`).
+pub fn element_child_count<S: ChildListHost>(this: S) -> Result<usize, magnus::Error> {
+    crate::bridge::ruby::entry(|| Ok(this.child_count(ChildList::Elements)))
+}
+
+/// `#child_at(i)` (DOM `childNodes[i]`): the child node at `i`, or nil when
+/// `i` is negative or past the end.
+pub fn child_at<S: ChildListHost>(this: S, i: Integer) -> Result<Option<Value>, magnus::Error> {
+    crate::bridge::ruby::entry(|| match child_index_arg(i) {
+        Some(i) => this.child_at(ChildList::Nodes, i),
+        None => Ok(None),
+    })
+}
+
+/// `#element_child_at(i)` (DOM `children[i]`): the child element at `i`, or
+/// nil.
+pub fn element_child_at<S: ChildListHost>(
+    this: S,
+    i: Integer,
+) -> Result<Option<Value>, magnus::Error> {
+    crate::bridge::ruby::entry(|| match child_index_arg(i) {
+        Some(i) => this.child_at(ChildList::Elements, i),
+        None => Ok(None),
+    })
 }
 
 /// `Document#tree_version`: an Integer that grows with every edit that can

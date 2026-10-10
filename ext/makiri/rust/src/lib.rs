@@ -123,6 +123,10 @@ pub mod node_type;
 /// XML arena alike. Unconditional, like `node_type`.
 pub mod dom_rules;
 
+/// Counting and indexing a child list without building it, with the
+/// position memo a document keeps. Unconditional, like `dom_rules`.
+pub mod child_index;
+
 /// The Ruby boundary - the only part of the crate that depends on magnus.
 #[cfg(feature = "ruby")]
 pub mod bridge;

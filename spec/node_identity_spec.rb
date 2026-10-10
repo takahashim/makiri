@@ -43,6 +43,22 @@ RSpec.describe "node wrapper identity" do
       expect(node.call).to be_frozen
     end
 
+    # The README's contract for per-node state ("Node identity"): a library
+    # layered on Makiri keeps its own wrapper in an instance variable, and
+    # reads it back through any later navigation.
+    it "keeps an instance variable after every reference is dropped and the heap compacted" do
+      node.call.instance_variable_set(:@wrapper, Object.new.tap { |o| o.instance_variable_set(:@x, "kept") })
+      GC.start
+      GC.compact if GC.respond_to?(:compact)
+      GC.start
+      expect(node.call.instance_variable_get(:@wrapper).instance_variable_get(:@x)).to eq("kept")
+    end
+
+    it "does not carry instance variables to a copy" do
+      node.call.instance_variable_set(:@wrapper, :mine)
+      expect(node.call.clone_node(true).instance_variable_get(:@wrapper)).to be_nil
+    end
+
     it "still works as a Hash key and in a Set" do
       require "set"
       expect(Set[node.call, node.call].size).to eq(1)

@@ -33,12 +33,12 @@ UNSAFE_ISLANDS = {
   "bridge/doc.rs" => 3,
   "bridge/fragment.rs" => 6,
   "bridge/gvl.rs" => 5,
-  "bridge/html.rs" => 17,
+  "bridge/html.rs" => 18,
   "bridge/node_set.rs" => 8,
   "bridge/node_wrap.rs" => 1,
-  "bridge/ruby.rs" => 18,
+  "bridge/ruby.rs" => 19,
   "bridge/stack.rs" => 1,
-  "bridge/string.rs" => 30,
+  "bridge/string.rs" => 31,
   "bridge/typed.rs" => 21,
   "bridge/wrapper.rs" => 20,
   "bridge/xml.rs" => 11,
@@ -90,37 +90,37 @@ UNSAFE_ISLANDS = {
 FORBID_ROOTS = %w[css/mod.rs glue/mod.rs lexbor/css_match/mod.rs xml/mod.rs xpath/mod.rs].freeze
 
 FORBID_FILES = %w[
-  bridge/dom_error.rs css/build.rs css/lower.rs
-  css/mod.rs cutf8.rs cutf8/verify.rs
-  dom_rules.rs engine_error.rs falloc/verify.rs
-  glue/css.rs glue/html_doc.rs glue/html_node/css.rs
-  glue/html_node/mutate.rs glue/html_node/read.rs glue/html_node/serialize.rs
-  glue/mod.rs glue/node.rs glue/node_set.rs
-  glue/query.rs glue/xml_doc.rs glue/xml_node/css.rs
-  glue/xml_node/mod.rs glue/xml_node/mutate.rs glue/xml_node/ns.rs
-  glue/xml_node/read.rs glue/xml_node/serialize.rs glue/xml_node/strings.rs
-  glue/xpath_context.rs lexbor/adapter/dom_index.rs lexbor/contains_guard.rs
-  lexbor/css_match/mod.rs lexbor/selector_text.rs limits.rs
-  node_type.rs ptr_table.rs rust_tests.rs
-  stack.rs text.rs utf8_input.rs
-  xml/arena.rs xml/attr_key.rs xml/chars/expand.rs
-  xml/chars/mod.rs xml/dom_name.rs xml/encoding_sniff.rs
-  xml/index.rs xml/mod.rs xml/model.rs
-  xml/mutate/attr.rs xml/mutate/copy.rs xml/mutate/edit.rs
-  xml/mutate/factory.rs xml/mutate/insert.rs xml/mutate/mod.rs
-  xml/mutate/ns.rs xml/ns_scope.rs xml/qname.rs
-  xml/selftest.rs xml/serialize/bindings.rs xml/serialize/c14n.rs
-  xml/serialize/mod.rs xml/serialize/out.rs xml/serialize/xml.rs
-  xml/tree/cursor.rs xml/tree/decl.rs xml/tree/dtd.rs
-  xml/tree/mod.rs xml/tree/scope.rs xml/verify.rs
-  xml/xpath.rs xpath/abi.rs xpath/ast.rs
-  xpath/ast_ops.rs xpath/attr_pred.rs xpath/axis.rs
-  xpath/ctx.rs xpath/dom.rs xpath/eval.rs
-  xpath/funcs/ext.rs xpath/funcs/mod.rs xpath/lex.rs
-  xpath/limits.rs xpath/mod.rs xpath/nodetest.rs
-  xpath/number.rs xpath/order.rs xpath/parse.rs
-  xpath/step_index.rs xpath/str_cache.rs xpath/tests.rs
-  xpath/value.rs xpath/verify.rs
+  bridge/dom_error.rs child_index.rs css/build.rs
+  css/lower.rs css/mod.rs cutf8.rs
+  cutf8/verify.rs dom_rules.rs engine_error.rs
+  falloc/verify.rs glue/css.rs glue/html_doc.rs
+  glue/html_node/css.rs glue/html_node/mutate.rs glue/html_node/read.rs
+  glue/html_node/serialize.rs glue/mod.rs glue/node.rs
+  glue/node_set.rs glue/query.rs glue/xml_doc.rs
+  glue/xml_node/css.rs glue/xml_node/mod.rs glue/xml_node/mutate.rs
+  glue/xml_node/ns.rs glue/xml_node/read.rs glue/xml_node/serialize.rs
+  glue/xml_node/strings.rs glue/xpath_context.rs lexbor/adapter/dom_index.rs
+  lexbor/contains_guard.rs lexbor/css_match/mod.rs lexbor/selector_text.rs
+  limits.rs node_type.rs ptr_table.rs
+  rust_tests.rs stack.rs text.rs
+  utf8_input.rs xml/arena.rs xml/attr_key.rs
+  xml/chars/expand.rs xml/chars/mod.rs xml/dom_name.rs
+  xml/encoding_sniff.rs xml/index.rs xml/mod.rs
+  xml/model.rs xml/mutate/attr.rs xml/mutate/copy.rs
+  xml/mutate/edit.rs xml/mutate/factory.rs xml/mutate/insert.rs
+  xml/mutate/mod.rs xml/mutate/ns.rs xml/ns_scope.rs
+  xml/qname.rs xml/selftest.rs xml/serialize/bindings.rs
+  xml/serialize/c14n.rs xml/serialize/mod.rs xml/serialize/out.rs
+  xml/serialize/xml.rs xml/tree/cursor.rs xml/tree/decl.rs
+  xml/tree/dtd.rs xml/tree/mod.rs xml/tree/scope.rs
+  xml/verify.rs xml/xpath.rs xpath/abi.rs
+  xpath/ast.rs xpath/ast_ops.rs xpath/attr_pred.rs
+  xpath/axis.rs xpath/ctx.rs xpath/dom.rs
+  xpath/eval.rs xpath/funcs/ext.rs xpath/funcs/mod.rs
+  xpath/lex.rs xpath/limits.rs xpath/mod.rs
+  xpath/nodetest.rs xpath/number.rs xpath/order.rs
+  xpath/parse.rs xpath/step_index.rs xpath/str_cache.rs
+  xpath/tests.rs xpath/value.rs xpath/verify.rs
 ].freeze
 
 UNSAFE_USE = /\bunsafe\s*(?:\{|fn\b|impl\b|trait\b|extern\b)/
@@ -166,7 +166,11 @@ RAW_NODE_CROSSING_COUNTS = {
   "bridge/fragment.rs" => 3,
   # 8th: an Attr's owner, read as the wrapper cache's identity key for the
   # owner-frozen check (`check_attr_owner_frozen`); it does not escape.
-  "bridge/html.rs" => 8,
+  # 9th/10th: `TokenTree for HtmlTree` (`child_count` / `child_at`), a node's pointer as
+  # the child-position memo's token and back. `child_index::ChildPositionMemo`
+  # answers only for the `tree_version` it was filled under, so a token read
+  # back is still that child; the node is never handed out raw, only wrapped.
+  "bridge/html.rs" => 10,
   "bridge/wrapper.rs" => 3,
 }.freeze
 
@@ -718,6 +722,10 @@ def unwrapped_entries(rust)
     code.to_enum(:scan, REGISTRATION).each do
       m = Regexp.last_match
       fpath = first_argument(code, m.end(0) - 1)
+      # A generic function registered per representation
+      # (`child_count::<HtmlSelf>`) is one definition: resolve it without its
+      # type arguments.
+      fpath = fpath&.sub(/::<[\w:, ]+>\z/, "")
       unless fpath&.match?(/\A[\w:]+\z/)
         missing << "#{rel}: registration of `#{fpath}` is not a function path"
         next

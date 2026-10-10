@@ -17,12 +17,14 @@ use crate::init::{
     CLASS_HTML_PROCESSING_INSTRUCTION, CLASS_HTML_TEXT, CLASS_XML_DOCUMENT,
 };
 use crate::lexbor::adapter::html::{
-    ForeignNode, HtmlNode, HtmlNodeKey, HtmlNodeMut, Insertion, NodeType, Place, RawDoc, RawNode,
+    ForeignNode, HtmlNode, HtmlNodeKey, HtmlNodeMut, HtmlTree, Insertion, NodeType, Place, RawDoc,
+    RawNode,
 };
 use crate::lexbor::fragment::import_with_fixup;
 
 use crate::bridge::string::{RubyData, RubyText};
 use crate::bridge::wrapper::*;
+use crate::child_index::{ChildList, Children, TokenTree};
 use crate::lexbor::adapter::html::{HtmlDoc, HtmlElementMut};
 use crate::lexbor::adapter::AdapterOom;
 
@@ -239,6 +241,50 @@ pub fn with_arg_node<R>(v: Value, f: impl FnOnce(HtmlNode<'_>) -> R) -> Result<R
 pub fn wrap_node(node: Option<HtmlNode<'_>>, document: Value) -> Result<Option<Value>, Error> {
     node.map(|n| wrap_html_node(RawNode::from(n), document))
         .transpose()
+}
+
+/* ------------------------------------------------------------------ *
+ * indexing a child list                                               *
+ * ------------------------------------------------------------------ */
+
+/// The Lexbor tree for [`crate::child_index`]: a node's pointer is its token.
+/// The links are [`HtmlTree`]'s, the raw ones `#children` follows, so the two
+/// agree - a `<template>`'s own (empty) child list included.
+impl<'d> TokenTree for HtmlTree<'d> {
+    fn token(&self, n: HtmlNode<'d>) -> usize {
+        RawNode::from(n).as_ptr() as usize
+    }
+    fn node_of(&self, token: usize) -> Option<HtmlNode<'d>> {
+        let raw = RawNode::from_ptr(token as *mut core::ffi::c_void)?;
+        // SAFETY: `child_index` asks only for a token it recorded for a list
+        // of this document, so by `ChildPositionMemo`'s invariant it names a
+        // node that is still a child there - in the document the receiver
+        // keeps alive for `'d`. Lexbor detaches rather than frees, so it was
+        // never released.
+        Some(unsafe { raw.as_node() })
+    }
+}
+
+/// The tree every HTML receiver lends its child lists, as `&'static`: a
+/// `const` item is what may be borrowed for that long (the type holds
+/// nothing).
+const HTML_TREE: HtmlTree<'static> = HtmlTree::new();
+
+impl ChildListHost for HtmlSelf {
+    type Tree<'a> = HtmlTree<'a>;
+    fn document(&self) -> Value {
+        self.document
+    }
+    fn children(&self, list: ChildList) -> Children<'_, HtmlTree<'_>> {
+        Children {
+            tree: &HTML_TREE,
+            parent: self.node(),
+            list,
+        }
+    }
+    fn wrap_child(&self, n: Option<HtmlNode<'_>>) -> Result<Option<Value>, Error> {
+        wrap_node(n, self.document)
+    }
 }
 
 /* ------------------------------------------------------------------ *

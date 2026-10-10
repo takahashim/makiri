@@ -18,12 +18,13 @@
 use magnus::{prelude::*, Error, Ruby, Value};
 
 use super::{with_arg_node, wrap_node};
-use crate::bridge::html::{dom_str, text_index_string};
+use crate::bridge::html::{dom_str, text_index_string, wrap_html_node};
 use crate::bridge::node_set::node_set_with_fill;
 use crate::bridge::ruby::is_kind_of;
-use crate::bridge::string::ruby_verified_text;
+use crate::bridge::string::{dom_name_str, ruby_verified_text};
+use crate::child_index;
 use crate::init::{CLASS_NODE, CLASS_XML_DOCUMENT};
-use crate::lexbor::adapter::html::{HtmlAttr, HtmlElement, HtmlNode, NodeType, RawNode};
+use crate::lexbor::adapter::html::{HtmlAttr, HtmlElement, HtmlNode, HtmlTree, NodeType, RawNode};
 
 /* ------------------------------------------------------------------ *
  * small helpers                                                      *
@@ -85,7 +86,7 @@ pub fn local_name(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, 
             (None, Some(at)) => at.dom_local_name(),
             (None, None) => return Ok(None),
         };
-        Ok(Some(dom_str(local)))
+        Ok(Some(dom_name_str(local)))
     })
 }
 
@@ -95,7 +96,7 @@ pub fn prefix(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Erro
     crate::bridge::ruby::entry(|| {
         Ok(qname(this.node())
             .and_then(|(q, local)| qname_prefix(q, local.len()))
-            .map(dom_str))
+            .map(dom_name_str))
     })
 }
 
@@ -119,7 +120,7 @@ pub fn namespace_uri(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value
             (None, Some(at)) => at.own_ns_uri(),
             (None, None) => None,
         };
-        Ok(uri.map(dom_str))
+        Ok(uri.map(dom_name_str))
     })
 }
 
@@ -133,7 +134,7 @@ pub fn tag_name(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Er
             .node()
             .element()
             .and_then(|el| el.tag_name())
-            .map(dom_str))
+            .map(dom_name_str))
     })
 }
 
@@ -267,33 +268,16 @@ pub fn previous(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Er
     crate::bridge::ruby::entry(|| wrap_node(this.node().prev(), this.document))
 }
 
-/// The first node from `start` along `step` that is an element. `step` is a
-/// generic rather than a `fn` pointer, so each walk inlines its link read.
-#[inline]
-fn first_element<'d>(
-    start: Option<HtmlNode<'d>>,
-    step: impl Fn(HtmlNode<'d>) -> Option<HtmlNode<'d>>,
-) -> Option<HtmlNode<'d>> {
-    let mut n = start;
-    while let Some(x) = n {
-        if x.element().is_some() {
-            return Some(x);
-        }
-        n = step(x);
-    }
-    None
-}
-
 pub fn next_element(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        let found = first_element(this.node().next(), HtmlNode::next);
+        let found = child_index::next_element_sibling(&HtmlTree::new(), this.node());
         wrap_node(found, this.document)
     })
 }
 
 pub fn previous_element(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        let found = first_element(this.node().prev(), HtmlNode::prev);
+        let found = child_index::previous_element_sibling(&HtmlTree::new(), this.node());
         wrap_node(found, this.document)
     })
 }
@@ -305,15 +289,30 @@ pub fn child(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error
 
 pub fn first_element_child(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        let found = first_element(this.node().first_child(), HtmlNode::next);
+        let found = child_index::first_element_child(&HtmlTree::new(), this.node());
         wrap_node(found, this.document)
     })
 }
 
 pub fn last_element_child(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        let found = first_element(this.node().last_child(), HtmlNode::prev);
+        let found = child_index::last_element_child(&HtmlTree::new(), this.node());
         wrap_node(found, this.document)
+    })
+}
+
+/// `#last_child`: the last child node of any type, or nil.
+pub fn last_child(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
+    crate::bridge::ruby::entry(|| wrap_node(this.node().last_child(), this.document))
+}
+
+/// `#root_node` (DOM `getRootNode()`, not shadow-including) - see
+/// [`crate::dom_rules::root`]. An Attr is its own root, though `#parent`
+/// answers its element.
+pub fn root_node(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| {
+        let root = crate::dom_rules::root(&HtmlTree::new(), this.node());
+        wrap_html_node(RawNode::from(root), this.document)
     })
 }
 

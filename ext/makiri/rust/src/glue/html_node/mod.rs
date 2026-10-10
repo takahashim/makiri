@@ -42,7 +42,10 @@ use crate::init::CLASS_HTML_DOCUMENT;
  * ------------------------------------------------------------------ */
 
 use crate::glue::html_doc::node_clone_node;
-use crate::glue::node::{node_equals, node_hash, node_pointer_id};
+use crate::glue::node::{
+    child_at, child_count, element_child_at, element_child_count, node_equals, node_hash,
+    node_pointer_id,
+};
 use crate::init::{CLASS_HTML_DOCUMENT_TYPE, CLASS_HTML_ELEMENT};
 
 /* The receiver and argument handles, from the Ruby <-> Lexbor seam
@@ -88,7 +91,19 @@ fn init_read() -> Result<(), Error> {
     m.define_method("next_element", method!(read::next_element, 0))?;
     m.define_method("previous_element", method!(read::previous_element, 0))?;
 
-    m.define_method("child", method!(read::child, 0))?;
+    for name in ["child", "first_child"] {
+        m.define_method(name, method!(read::child, 0))?;
+    }
+    m.define_method("last_child", method!(read::last_child, 0))?;
+    /* Written once, over `ChildListHost` (`glue::node`). */
+    m.define_method("child_count", method!(child_count::<HtmlSelf>, 0))?;
+    m.define_method("child_at", method!(child_at::<HtmlSelf>, 1))?;
+    m.define_method(
+        "element_child_count",
+        method!(element_child_count::<HtmlSelf>, 0),
+    )?;
+    m.define_method("element_child_at", method!(element_child_at::<HtmlSelf>, 1))?;
+    m.define_method("root_node", method!(read::root_node, 0))?;
     m.define_method("children", method!(read::children, 0))?;
     for name in ["element_children", "elements"] {
         m.define_method(name, method!(read::element_children, 0))?;

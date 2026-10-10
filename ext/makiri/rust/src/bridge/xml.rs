@@ -29,6 +29,7 @@ use crate::bridge::wrapper::{
     ensure_document_mutable, node_repr, DocKind, DocumentShell, NodeRepr,
 };
 use crate::bridge::xml_decode::xml_decode_input_value;
+use crate::child_index::{ChildList, Children, TokenTree};
 use crate::init::{CLASS_NODE, CLASS_XML_DOCUMENT, EXC_XML_LIMIT_EXCEEDED, EXC_XML_SYNTAX_ERROR};
 use crate::init::{
     CLASS_XML_ATTR, CLASS_XML_CDATA_SECTION, CLASS_XML_COMMENT, CLASS_XML_DOCUMENT_FRAGMENT,
@@ -83,6 +84,35 @@ impl crate::bridge::wrapper::NodeHandleSource for NodeId {
 
     fn into_handle(self, _document: Value) -> NodeHandle {
         NodeHandle::Xml(self)
+    }
+}
+
+/// The arena for [`crate::child_index`]: a node's token is its `NodeId`'s,
+/// which the arena never reuses. The links are the arena's `Tree` ones,
+/// which `#children` follows (attributes are not on them).
+impl TokenTree for XmlDoc {
+    fn token(&self, n: NodeId) -> usize {
+        n.to_token()
+    }
+    fn node_of(&self, token: usize) -> Option<NodeId> {
+        NodeId::from_token(token)
+    }
+}
+
+impl ChildListHost for XmlSelf {
+    type Tree<'a> = XmlDoc;
+    fn document(&self) -> Value {
+        self.document
+    }
+    fn children(&self, list: ChildList) -> Children<'_, XmlDoc> {
+        Children {
+            tree: self.doc_ref(),
+            parent: self.id,
+            list,
+        }
+    }
+    fn wrap_child(&self, n: Option<NodeId>) -> Result<Option<Value>, Error> {
+        n.map(|id| wrap_xml_node(id, self.document)).transpose()
     }
 }
 

@@ -18,6 +18,8 @@ use magnus::{Error, Value};
 
 use crate::bridge::ruby::{value, VALUE};
 use crate::bridge::typed::{Hooks, Marker, Relocator, TypedType};
+use crate::child_index::{ChildList, ChildPositionMemo, Children, TokenTree};
+use crate::dom_rules::Tree;
 use crate::falloc::{MapInsert, Reserve};
 use crate::init::{RbConst, CLASS_DOCUMENT};
 use crate::lexbor::adapter::html::{HtmlDoc, HtmlNodeKey, RawDoc, RawNode};
@@ -387,6 +389,9 @@ pub struct DocData {
     /// Boxed and optional so a document nobody navigates never allocates a
     /// cache, and its wrapper stays one pointer wide.
     nodes: Option<Box<NodeCache>>,
+    /// Where `child_count` / `child_at` last were ([`ChildPositionMemo`]).
+    /// Allocates nothing until the first of them records.
+    child_memo: ChildPositionMemo,
 }
 
 impl DocData {
@@ -482,6 +487,7 @@ impl Hooks for DocData {
         core::mem::size_of::<DocData>()
             .saturating_add(self.external_bytes())
             .saturating_add(self.nodes.as_ref().map_or(0, |c| c.memsize()))
+            .saturating_add(self.child_memo.memsize())
     }
 }
 
@@ -642,6 +648,7 @@ impl DocumentShell {
                     errors: QFALSE,
                     report: ExternalReport::default(),
                     nodes: None,
+                    child_memo: ChildPositionMemo::default(),
                 },
                 |d| d.errors = errors.as_raw(),
             )
@@ -1026,6 +1033,52 @@ pub fn tree_version(rb_doc: Value) -> Result<u64, Error> {
 /// seen. `TypeError` for a non-Document.
 pub fn attribute_version(rb_doc: Value) -> Result<u64, Error> {
     Ok(DOC_TYPE.get(&rb_doc)?.edits.attribute_version)
+}
+
+/* ---- the child-position memo ---- */
+
+/// Run `f` over the document's [`ChildPositionMemo`] and its current
+/// `tree_version`, which every use of the memo must pass it - the memo keeps
+/// its own invariant from that (`crate::child_index`).
+///
+/// `f` runs inside the document's borrow, so it must not run Ruby; a walk of
+/// the child links does not.
+fn with_child_memo<R>(rb_doc: Value, f: impl FnOnce(&mut ChildPositionMemo, u64) -> R) -> R {
+    with_doc_data_known(rb_doc, |d| f(&mut d.child_memo, d.edits.tree_version))
+}
+
+/// A receiver whose child lists `#child_count` / `#child_at` and their
+/// element twins read - an HTML or XML node or Document. A representation
+/// says which tree and node it is and how a child is wrapped; counting and
+/// indexing are written once, here, and the four Ruby methods once, over
+/// this, in `glue::node`.
+pub trait ChildListHost: magnus::TryConvert {
+    type Tree<'a>: TokenTree
+    where
+        Self: 'a;
+
+    /// The Document whose memo the lists use.
+    fn document(&self) -> Value;
+    /// The receiver's `list`.
+    fn children(&self, list: ChildList) -> Children<'_, Self::Tree<'_>>;
+    /// A child of the receiver as its Ruby wrapper; None is nil.
+    fn wrap_child(&self, n: Option<<Self::Tree<'_> as Tree>::Node>)
+        -> Result<Option<Value>, Error>;
+
+    /// How many children are in `list`.
+    fn child_count(&self, list: ChildList) -> usize {
+        with_child_memo(self.document(), |memo, version| {
+            self.children(list).count(memo, version)
+        })
+    }
+
+    /// The wrapped child at `index` in `list`, or nil past the end.
+    fn child_at(&self, list: ChildList, index: usize) -> Result<Option<Value>, Error> {
+        let found = with_child_memo(self.document(), |memo, version| {
+            self.children(list).at(memo, version, index)
+        });
+        self.wrap_child(found)
+    }
 }
 
 /* ---- the document's mutation gate ---- */
