@@ -1,13 +1,15 @@
 # Changelog
 
-## Unreleased
+## [0.16.0] - 2026-10-10
 
 ### Added
 
 * `Makiri::NATIVE_VERSION` and `Makiri::NATIVE_RUBY_API_VERSION`: the gem
   version and Ruby `MAJOR.MINOR` the native extension was built as.
-  `require "makiri"` raises `LoadError` when either does not match the loading
-  gem and Ruby (e.g. a stale `lib/makiri/makiri.bundle` in a checkout).
+  `require "makiri"` raises `LoadError` for an extension built for another
+  Ruby (refused by the extension itself, before it defines anything) or as
+  another makiri version (e.g. a stale `lib/makiri/makiri.bundle` in a
+  checkout).
 * `Node#child_count`, `#child_at(i)`, `#element_child_count` and
   `#element_child_at(i)` (HTML and XML): count and index a child list without
   building `#children`. A loop over the indexes in order costs O(1) a step,
