@@ -86,7 +86,9 @@ impl TableKey for ChildListKey {
     };
     #[inline]
     fn table_hash(self) -> u64 {
-        mix64((self.parent as u64) ^ (self.list as u64))
+        /* Mixed first, so the list bit cannot cancel against a neighbouring
+         * parent's low bit (XML tokens are consecutive slot indices). */
+        mix64(self.parent as u64) ^ (self.list as u64)
     }
 }
 
@@ -105,8 +107,14 @@ pub struct ChildListMemo {
 /// every child's list under it, and must find the outer list's position when
 /// it comes back - so this bounds only a long run of reads with no edit in
 /// between (a full walk of a large document), where starting over costs one
-/// re-walk per list still in use, once per this many lists.
-pub const CHILD_MEMO_MAX: usize = 16_384;
+/// re-walk per list still in use, once per this many lists. It also bounds
+/// what a Document holds here outside the GC's view: ~230 KB at most.
+pub const CHILD_MEMO_MAX: usize = 2_048;
+
+/// A table bigger than this many slots is released, not cleared, when the
+/// memo starts over: clearing writes every slot, which after one large walk
+/// would make each later edit-then-read pay for the whole table.
+const CHILD_MEMO_KEEP_SLOTS: usize = 256;
 
 /// The document's remembered child lists, valid for one `tree_version` (the
 /// module doc's invariant).
@@ -132,7 +140,11 @@ impl ChildPositionMemo {
     pub fn record(&mut self, version: u64, key: ChildListKey, memo: ChildListMemo) {
         if self.version != version || self.lists.len() >= CHILD_MEMO_MAX {
             self.version = version;
-            self.lists.clear();
+            if self.lists.capacity() > CHILD_MEMO_KEEP_SLOTS {
+                self.lists = PtrMap::new();
+            } else {
+                self.lists.clear();
+            }
         }
         let _ = self.lists.set(key, memo);
     }

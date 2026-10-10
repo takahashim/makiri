@@ -309,3 +309,36 @@ fn past_the_cap_the_memo_starts_over() {
     assert_eq!(memo.lookup(0, key(1)), ChildListMemo::default());
     assert_eq!(memo.lookup(0, key(CHILD_MEMO_MAX + 1)), known);
 }
+
+/// A memo grown by one large walk does not keep (and clear) its whole table
+/// at every later version: it is released and starts small.
+#[test]
+fn a_large_table_is_released_when_the_memo_starts_over() {
+    let key = |parent| ChildListKey {
+        parent,
+        list: ChildList::Nodes,
+    };
+    let mut memo = ChildPositionMemo::default();
+    for p in 1..=1000 {
+        memo.record(0, key(p), ChildListMemo::default());
+    }
+    let grown = memo.memsize();
+    memo.record(1, key(1), ChildListMemo::default());
+    assert!(
+        memo.memsize() < grown / 4,
+        "{} -> {}",
+        grown,
+        memo.memsize()
+    );
+    assert_eq!(memo.lookup(0, key(2)), ChildListMemo::default());
+}
+
+/// The two lists of one parent and neighbouring XML-like tokens do not
+/// collapse onto one hash.
+#[test]
+fn neighbouring_keys_hash_apart() {
+    use crate::ptr_table::TableKey;
+    let k = |parent, list| ChildListKey { parent, list }.table_hash();
+    assert_ne!(k(4, ChildList::Elements), k(5, ChildList::Nodes));
+    assert_ne!(k(4, ChildList::Nodes), k(4, ChildList::Elements));
+}
