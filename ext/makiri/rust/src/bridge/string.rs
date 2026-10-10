@@ -411,6 +411,30 @@ pub unsafe fn ruby_str_from_utf8(bytes: &[u8]) -> VALUE {
     rb_sys::rb_utf8_str_new(bytes.as_ptr() as *const c_char, bytes.len() as c_long)
 }
 
+/// A DOM name as a Ruby String: frozen and deduplicated, tagged UTF-8 -
+/// Ruby's own `-"div"`, so every read of one name answers the same object and
+/// allocates nothing once Ruby has it.
+///
+/// THE contract for the name readers of both representations: `local_name`,
+/// `prefix`, `namespace_uri` and `tag_name` answer through this, and only
+/// `#name` (Nokogiri's, which callers may edit) answers a fresh String.
+/// Character data - text, attribute values - is never interned.
+///
+/// Safe to call with any bytes: `rb_enc_interned_str` copies them, and bytes
+/// that were not UTF-8 would make a wrong String, never a memory error. Every
+/// caller passes a document's name, which is UTF-8 by the text-input contract.
+pub fn dom_name_str(bytes: &[u8]) -> Value {
+    // SAFETY: a slice's pointer and length, read for the call; the encoding
+    // is Ruby's static UTF-8 one. The result is a live String.
+    unsafe {
+        crate::bridge::ruby::value(rb_sys::rb_enc_interned_str(
+            bytes.as_ptr() as *const c_char,
+            bytes.len() as c_long,
+            rb_sys::rb_utf8_encoding(),
+        ))
+    }
+}
+
 /* ---- the strict text contract ---- */
 
 /// Check `bytes` against the strict contract, returning the specific

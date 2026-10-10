@@ -21,6 +21,7 @@ use magnus::{prelude::*, Error, Integer, Ruby, Value};
 use super::strings::{str_field, utf8};
 use super::{wrap, XmlSelf};
 use crate::bridge::node_set::node_set_with_fill;
+use crate::bridge::string::dom_name_str;
 use crate::child_index::ChildList;
 use crate::glue::node::child_index_arg;
 use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId};
@@ -61,44 +62,38 @@ pub fn name(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
 }
 
 /// `#local_name`: Element and Attribute only.
-pub fn local_name(ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
+pub fn local_name(_ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        Ok(str_or_nil(
-            ruby,
-            this.doc_ref().name_parts(this.id).map(|n| n.local),
-        ))
+        let local = this.doc_ref().name_parts(this.id).map(|n| n.local);
+        Ok(local.map(dom_name_str))
     })
 }
 
 /// `#prefix`: nil when unprefixed - the distinction `#namespace` depends on -
 /// and for any kind but Element and Attribute.
-pub fn prefix(ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
+pub fn prefix(_ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        Ok(str_or_nil(
-            ruby,
-            this.doc_ref().name_parts(this.id).and_then(|n| n.prefix),
-        ))
+        let prefix = this.doc_ref().name_parts(this.id).and_then(|n| n.prefix);
+        Ok(prefix.map(dom_name_str))
     })
 }
 
 /// `#namespace_uri`: nil in no namespace, and for any kind but Element and
 /// Attribute.
-pub fn namespace_uri(ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
+pub fn namespace_uri(_ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        Ok(str_or_nil(
-            ruby,
-            this.doc_ref().name_parts(this.id).and_then(|n| n.ns_uri),
-        ))
+        let uri = this.doc_ref().name_parts(this.id).and_then(|n| n.ns_uri);
+        Ok(uri.map(dom_name_str))
     })
 }
 
 /// `Element#tag_name` (DOM `tagName`): the qualified name - XML keeps its case
 /// - or nil for a non-element.
-pub fn tag_name(ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
+pub fn tag_name(_ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
         let d = this.doc_ref();
         let tag = d.name_parts(this.id).filter(|_| is_element(d, this.id));
-        Ok(str_or_nil(ruby, tag.map(|n| n.qname)))
+        Ok(tag.map(|n| dom_name_str(n.qname)))
     })
 }
 

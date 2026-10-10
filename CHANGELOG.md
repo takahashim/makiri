@@ -18,6 +18,12 @@
 * `Node#user_data` / `#user_data=`: one value per node, kept for as long as
   the node's document lives. A copy of the node starts with none.
 
+### Changed
+
+* `#local_name`, `#prefix`, `#namespace_uri` and `#tag_name` return frozen,
+  interned Strings: every read of one name returns the same object. `#name`
+  still returns a new, mutable String.
+
 ## [0.15.0] - 2026-10-09
 
 ### Added

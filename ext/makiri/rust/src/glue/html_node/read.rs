@@ -21,7 +21,7 @@ use super::{with_arg_node, wrap_node};
 use crate::bridge::html::{dom_str, text_index_string, wrap_html_node};
 use crate::bridge::node_set::node_set_with_fill;
 use crate::bridge::ruby::is_kind_of;
-use crate::bridge::string::ruby_verified_text;
+use crate::bridge::string::{dom_name_str, ruby_verified_text};
 use crate::child_index::ChildList;
 use crate::glue::node::child_index_arg;
 use crate::init::{CLASS_NODE, CLASS_XML_DOCUMENT};
@@ -87,7 +87,7 @@ pub fn local_name(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, 
             (None, Some(at)) => at.dom_local_name(),
             (None, None) => return Ok(None),
         };
-        Ok(Some(dom_str(local)))
+        Ok(Some(dom_name_str(local)))
     })
 }
 
@@ -97,7 +97,7 @@ pub fn prefix(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Erro
     crate::bridge::ruby::entry(|| {
         Ok(qname(this.node())
             .and_then(|(q, local)| qname_prefix(q, local.len()))
-            .map(dom_str))
+            .map(dom_name_str))
     })
 }
 
@@ -121,7 +121,7 @@ pub fn namespace_uri(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value
             (None, Some(at)) => at.own_ns_uri(),
             (None, None) => None,
         };
-        Ok(uri.map(dom_str))
+        Ok(uri.map(dom_name_str))
     })
 }
 
@@ -135,7 +135,7 @@ pub fn tag_name(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Er
             .node()
             .element()
             .and_then(|el| el.tag_name())
-            .map(dom_str))
+            .map(dom_name_str))
     })
 }
 
