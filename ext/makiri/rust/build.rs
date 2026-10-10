@@ -41,6 +41,10 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=MAKIRI_LEXBOR_INCLUDE");
 
+    if std::env::var_os("CARGO_FEATURE_RUBY").is_some() {
+        gem_version();
+    }
+
     // Only a build that reads Lexbor's layout pays for this. Kani builds with
     // `--no-default-features` and has no Lexbor headers to point at, which is
     // the whole reason `rake kani` needs no `rake compile` first.
@@ -471,4 +475,26 @@ fn definition(text: &str, name: &str) -> Option<(String, String)> {
         }
     }
     None
+}
+
+/// Embed the gem's version (`lib/makiri/version.rb`, the one place it is
+/// written) as `MAKIRI_GEM_VERSION`, which `init` publishes as
+/// `Makiri::NATIVE_VERSION` for `lib/makiri.rb` to check the loaded binary
+/// against. Read from the source rather than passed in by extconf, so every
+/// cargo build of the extension carries it and none can carry a stale one.
+fn gem_version() {
+    let manifest = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+    let path = manifest.join("../../../lib/makiri/version.rb");
+    println!("cargo:rerun-if-changed={}", path.display());
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+    let version = source
+        .lines()
+        .find_map(|line| {
+            let rest = line.trim().strip_prefix("VERSION")?.trim_start();
+            let rest = rest.strip_prefix('=')?.trim();
+            rest.strip_prefix('"')?.split('"').next()
+        })
+        .unwrap_or_else(|| panic!("no VERSION = \"...\" in {}", path.display()));
+    println!("cargo:rustc-env=MAKIRI_GEM_VERSION={version}");
 }

@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+* `Makiri::NATIVE_VERSION` and `Makiri::NATIVE_RUBY_API_VERSION`: the gem
+  version and Ruby `MAJOR.MINOR` the native extension was built as.
+  `require "makiri"` raises `LoadError` when either does not match the loading
+  gem and Ruby (e.g. a stale `lib/makiri/makiri.bundle` in a checkout).
+
 ## [0.15.0] - 2026-10-09
 
 ### Added

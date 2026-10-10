@@ -13,6 +13,23 @@ rescue LoadError
   require_relative "makiri/makiri"
 end
 
+# The fallback above loads lib/makiri/makiri.{so,bundle} whichever Ruby, and
+# whichever version of this gem's Ruby code, is asking: a checkout (or a
+# Bundler `path:` gem) keeps one binary from its last compile. A binary built
+# for another Ruby is not refused by Ruby itself and misreads the interpreter;
+# one from another gem version lacks or misnames methods. The extension states
+# what it was built as, and a mismatch stops here.
+module Makiri
+  native_ruby = RUBY_VERSION[/\A\d+\.\d+/]
+  if NATIVE_VERSION != VERSION || NATIVE_RUBY_API_VERSION != native_ruby
+    raise LoadError,
+          "makiri's native extension was built as makiri #{NATIVE_VERSION} for Ruby " \
+          "#{NATIVE_RUBY_API_VERSION}, but was loaded by makiri #{VERSION} on Ruby " \
+          "#{native_ruby}; rebuild it (`bundle exec rake clean compile` in a checkout, " \
+          "or reinstall the gem)"
+  end
+end
+
 require_relative "makiri/error"
 require_relative "makiri/clone_via_dup"
 require_relative "makiri/xpath_syntax"

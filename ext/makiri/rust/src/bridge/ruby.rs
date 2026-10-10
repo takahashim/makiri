@@ -20,6 +20,20 @@ pub use rb_sys::{ID, VALUE};
 
 /* The two conveniences every bridge and glue module shares. */
 
+/// The `MAJOR.MINOR` of the Ruby whose headers this extension was compiled
+/// against - its ABI, since a teeny release keeps it. Published as
+/// `Makiri::NATIVE_RUBY_API_VERSION` so `lib/makiri.rb` can refuse a binary
+/// built for another Ruby: a release Ruby does not check `ruby_abi_version`
+/// itself, and under macOS's `-undefined dynamic_lookup` such a binary loads
+/// and then misreads the interpreter's structs.
+pub fn ruby_api_version() -> String {
+    format!(
+        "{}.{}",
+        rb_sys::RUBY_API_VERSION_MAJOR,
+        rb_sys::RUBY_API_VERSION_MINOR
+    )
+}
+
 /// `Makiri::Error` - the one definition; the modules that each kept a private
 /// copy of this now import it.
 pub fn error_class() -> magnus::ExceptionClass {
