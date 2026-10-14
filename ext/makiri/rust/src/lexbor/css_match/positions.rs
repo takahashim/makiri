@@ -37,11 +37,21 @@ pub(super) struct Positions {
     /// whether each is in `S`, nearest first; a count's own run starts at
     /// its task's `seen_base`, as `Query::at` is shared by chains.
     of_seen: Vec<(*const (), bool)>,
+    /// Candidates found NOT in `S`, one set per `of S` simple selector. Such
+    /// a candidate's test ends its count, so it gets no rank in `of_memo`,
+    /// and without this every `:has()` that reaches it again tests `S`
+    /// again - nested `of S` over nested `:has()` was 2.7x Lexbor's time.
+    /// Walking queries only, as `memo`.
+    of_out: Vec<(u32, PtrMap<*const (), ()>)>,
 }
 
 /// A memo past this many entries is dropped and refilled, bounding it: the
 /// positions are recounted on demand, so this costs time, never an answer.
 const POSITIONS_MAX: usize = 1 << 16;
+
+/// A sibling position this close to the start of its list (in the counting
+/// direction) is counted, not looked up ([`sibling_position`]).
+const SHORT_LIST: u32 = 4;
 
 /// A memo table kept in a [`Scratch`](super::Scratch) past this many slots
 /// is dropped instead: emptying one costs its size, paid by the next query.
@@ -55,6 +65,7 @@ impl Positions {
             visited: Vec::new(),
             of_memo: Vec::new(),
             of_seen: Vec::new(),
+            of_out: Vec::new(),
         }
     }
 
@@ -86,6 +97,7 @@ impl Positions {
             visited: recycle(self.visited, SCRATCH_KEEP),
             of_memo: Vec::new(),
             of_seen: recycle(self.of_seen, SCRATCH_KEEP),
+            of_out: Vec::new(),
         };
     }
 
@@ -112,6 +124,36 @@ impl Positions {
     pub(super) fn of_rank(&self, sel: u32, node: HtmlNode<'_>) -> Option<(u64, bool)> {
         let (_, map) = self.of_memo.iter().find(|(k, _)| *k == sel)?;
         map.get(node_key(node)).map(|v| (v >> 1, v & 1 == 1))
+    }
+
+    /// Is `node` known not to be in the `of S` selector `sel`'s `S`?
+    pub(super) fn of_known_out(&self, sel: u32, node: HtmlNode<'_>) -> bool {
+        self.of_out
+            .iter()
+            .find(|(k, _)| *k == sel)
+            .is_some_and(|(_, set)| set.get(node_key(node)).is_some())
+    }
+
+    /// Record that `node` is not in `sel`'s `S` (a walking query only).
+    pub(super) fn of_note_out(&mut self, sel: u32, node: HtmlNode<'_>) -> Result<(), MatchFailure> {
+        if !self.walking {
+            return Ok(());
+        }
+        let at = match self.of_out.iter().position(|(k, _)| *k == sel) {
+            Some(at) => at,
+            None => {
+                self.of_out.falloc_push((sel, PtrMap::new())).or_oom()?;
+                self.of_out.len() - 1
+            }
+        };
+        if let Some((_, set)) = self.of_out.get_mut(at) {
+            if set.len() + 1 > POSITIONS_MAX {
+                *set = PtrMap::new();
+            }
+            set.insert(node_key(node), ())
+                .map_err(|_| MatchFailure::Oom)?;
+        }
+        Ok(())
     }
 
     /// Finish a count for `candidate` (in `S`): the run of tested siblings
@@ -188,6 +230,27 @@ pub(super) fn sibling_position<'doc>(
             prev_position_sibling(n)
         }
     };
+    // A short list is counted outright, as Lexbor does: cheaper than the
+    // memo's lookups, and nothing to record.
+    {
+        let mut pos: u64 = 1;
+        let mut cur = step(node);
+        let mut left = SHORT_LIST;
+        while let Some(n) = cur {
+            if left == 0 {
+                break;
+            }
+            left -= 1;
+            budget.charge()?;
+            if same_type(n) {
+                pos += 1;
+            }
+            cur = step(n);
+        }
+        if cur.is_none() {
+            return Ok(pos);
+        }
+    }
     let kind = usize::from(from_end) << 1 | usize::from(of_type);
     let walking = positions.walking;
     let Positions { memo, visited, .. } = positions;

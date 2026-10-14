@@ -2479,6 +2479,52 @@ mod css_match {
         assert!(checked > 1000, "only {checked} rounds parsed");
     }
 
+    /// A walking query remembers which candidates an `of S` found outside
+    /// `S` (`Positions::of_note_out`), and a later count skips them without
+    /// testing `S`; `:has()` is what asks a candidate again. `matches_any`
+    /// keeps no memo, so each element's verdict there is the reference.
+    #[test]
+    fn nth_of_s_memo_agrees_with_matches_any_under_has() {
+        let doc = parsed(
+            br#"<!doctype html><html><body>
+                <ul><li class="a">1</li><li>2</li><li class="a">3</li><li>4</li>
+                    <li class="a b">5</li><li class="b">6</li><li class="a">7</li></ul>
+                <div><p class="a">x</p><p>y</p><span class="a">z</span><p class="a">w</p></div>
+                <section><div><p class="a">q</p><p class="a">r</p></div></section>
+            </body></html>"#,
+        );
+        let selectors = [
+            "*:has(> :nth-child(2 of .a))",
+            "*:has(*:has(> :nth-child(odd of .a)))",
+            "*:has(> :nth-last-child(1 of .a))",
+            "*:has(> :nth-child(2 of :nth-child(odd of .a)))",
+            "*:has(*:has(> :nth-child(1 of :nth-last-child(1 of .a.b))))",
+            ":is(li, p):nth-child(2 of .a), *:has(> :nth-child(3 of .a))",
+            "*:has(:nth-child(1 of .b))",
+            "*:has(:nth-last-child(2 of .b))",
+        ];
+        let gvl = Gvl::exclusive();
+        for sel in selectors {
+            let text = VerifiedText::from_bytes(sel.as_bytes()).expect("verified");
+            let p = css_parser::parse(&gvl, text).unwrap_or_else(|_| panic!("{sel:?}"));
+            let all: Vec<RawNode> = port_select_all(root(&doc), p.groups())
+                .unwrap_or_else(|_| panic!("{sel:?} failed"))
+                .into_iter()
+                .map(RawNode::from)
+                .collect();
+            assert!(!all.is_empty(), "{sel:?}: matched nothing");
+            for n in root(&doc).subtree().filter_map(HtmlNode::element) {
+                let one = matches_any(p.groups(), n).unwrap_or_else(|_| panic!("{sel:?}"));
+                assert_eq!(
+                    one,
+                    all.contains(&RawNode::from(n.node())),
+                    "{sel:?}: select_all and matches_any differ on <{}>",
+                    String::from_utf8_lossy(n.qualified_name())
+                );
+            }
+        }
+    }
+
     /// Type and attribute names are resolved to Lexbor ids once per query
     /// (`css_match::Name`) on the walking entry points, and compared as
     /// bytes on `matches_any`. Both must answer as the old engine does across

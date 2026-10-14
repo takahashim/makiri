@@ -857,32 +857,44 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
                 if let Some((rank, in_s)) = self.positions.of_rank(t.sel, t.candidate) {
                     return Ok(Outcome::Done(in_s && anb_matches(t.a, t.b, rank)));
                 }
+                if self.positions.of_known_out(t.sel, t.candidate) {
+                    return Ok(Outcome::Done(false));
+                }
             }
             Some(in_s) => {
                 if !t.counting {
                     if !in_s {
+                        self.positions.of_note_out(t.sel, t.candidate)?;
                         return Ok(Outcome::Done(false));
                     }
                     t.counting = true;
                 } else {
                     self.positions.of_seen_push(t.node, in_s)?;
                 }
-                let end_rank = match nth_of_sibling(t.node, t.from_end) {
-                    Some(s) => {
-                        self.budget.charge()?;
-                        let known = self.positions.of_rank(t.sel, s);
-                        if known.is_none() {
-                            t.node = s;
+                // A sibling already known not to be in `S` is noted without
+                // testing `S` again.
+                loop {
+                    let end_rank = match nth_of_sibling(t.node, t.from_end) {
+                        Some(s) => {
+                            self.budget.charge()?;
+                            let known = self.positions.of_rank(t.sel, s);
+                            if known.is_none() {
+                                t.node = s;
+                            }
+                            known.map(|(rank, _)| rank)
                         }
-                        known.map(|(rank, _)| rank)
+                        None => Some(0),
+                    };
+                    if let Some(end_rank) = end_rank {
+                        let pos =
+                            self.positions
+                                .of_finish(t.sel, t.seen_base, t.candidate, end_rank)?;
+                        return Ok(Outcome::Done(anb_matches(t.a, t.b, pos)));
                     }
-                    None => Some(0),
-                };
-                if let Some(end_rank) = end_rank {
-                    let pos =
-                        self.positions
-                            .of_finish(t.sel, t.seen_base, t.candidate, end_rank)?;
-                    return Ok(Outcome::Done(anb_matches(t.a, t.b, pos)));
+                    if !self.positions.of_known_out(t.sel, t.node) {
+                        break;
+                    }
+                    self.positions.of_seen_push(t.node, false)?;
                 }
             }
         }
