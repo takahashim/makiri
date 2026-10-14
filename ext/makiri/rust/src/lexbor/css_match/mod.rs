@@ -204,7 +204,15 @@ pub(crate) const MAX_COMPOUNDS: usize = 64;
 /// ordinary query costs, which is not the document's size: an unmatched
 /// `.x ~ li` over n siblings tests n^2/2 compounds, `.none p` candidates
 /// times depth.
+#[cfg(not(fuzzing))]
 const DEFAULT_WORK_BUDGET: u64 = 50 * 1000 * 1000;
+/// Under cargo-fuzz (`--cfg fuzzing`) the cap is lower: `html_css` runs up to
+/// ~130 queries per input, and a few that each stay just under 50M - triply
+/// nested `:has()` over a 4 KiB document - took 42 s under ASan, past
+/// libFuzzer's timeout. Ordinary queries on such a document cost far less,
+/// and an expensive one now reaches the refusal path instead.
+#[cfg(fuzzing)]
+const DEFAULT_WORK_BUDGET: u64 = 250 * 1000;
 
 /// One top-level call's work budget: every step charges it once - each
 /// compound tested, each `:has()` candidate visited, each alternative tried
