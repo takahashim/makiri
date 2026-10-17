@@ -28,7 +28,29 @@ module ParserData
                         commit: "c777c408b61078ea2eb4acefc2535f54dbc8b28a",
                         path: "tokenizer", glob: "*.test")
 
+  # The named character references. The list is closed by the HTML Standard
+  # ("this list is static and will not be expanded or changed in the
+  # future"), and html-build generates the file rather than keeping it in git,
+  # so it is pinned by its digest instead of a commit.
+  ENTITIES_URL = "https://html.spec.whatwg.org/entities.json"
+  ENTITIES_SHA256 = "d741d877ac77c4194c4ad526b5b4a19aef8dfe411ab840a466891cdbb9f362e6"
+  ENTITIES_PATH = File.expand_path("data/whatwg/entities.json", __dir__)
+
   module_function
+
+  # Fetch entities.json unless the pinned copy is there.
+  def ensure_entities!
+    require "digest"
+    return if File.exist?(ENTITIES_PATH) && Digest::SHA256.file(ENTITIES_PATH).hexdigest == ENTITIES_SHA256
+
+    require "open-uri"
+    puts "fetching #{ENTITIES_URL} -> #{ENTITIES_PATH}"
+    body = URI.parse(ENTITIES_URL).open("rb", &:read)
+    got = Digest::SHA256.hexdigest(body)
+    abort "entities.json digest #{got} is not the pinned #{ENTITIES_SHA256}" unless got == ENTITIES_SHA256
+    FileUtils.mkdir_p(File.dirname(ENTITIES_PATH))
+    File.binwrite(ENTITIES_PATH, body)
+  end
 
   # Fetch `src` unless its files are there and checked out at the pinned commit.
   def ensure!(src)
@@ -61,4 +83,5 @@ end
 if $PROGRAM_NAME == __FILE__
   ParserData.ensure!(ParserData::WPT)
   ParserData.ensure!(ParserData::HTML5LIB)
+  ParserData.ensure_entities!
 end

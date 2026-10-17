@@ -267,6 +267,13 @@ fn main() {
         .allowlist_function("lxb_html_token_attr_name")
         .allowlist_function("lxb_tag_name_by_id_noi")
         .allowlist_type("lxb_dom_attr_id_enum_t")
+        // Lexbor's static name tables by id, which the port's generated tables
+        // (`html::res`) are checked against, entry by entry.
+        .allowlist_function("lxb_tag_name_upper_by_id_noi")
+        .allowlist_function("lxb_dom_attr_data_by_id")
+        .allowlist_function("lxb_ns_data_by_id")
+        .allowlist_function("lxb_ns_prefix_data_by_id")
+        .allowlist_type("lxb_ns_prefix_data_t")
         // The fragment parse, CHUNKED - begin/process/end rather than the
         // one-shot `lxb_html_parse_fragment*`, because only between `begin` and
         // `process` can the tree-depth guard be installed on the tokenizer

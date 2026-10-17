@@ -143,6 +143,10 @@ pub mod lexbor;
 #[cfg(feature = "lexbor")]
 pub mod html_dom;
 
+/// The HTML parser ported from Lexbor to Rust (`docs/rewrite_parser.ja.md`):
+/// Lexbor-free and Ruby-free.
+pub mod html;
+
 /// The XML reader and its arena. Ruby-free and Lexbor-free.
 pub mod xml;
 
