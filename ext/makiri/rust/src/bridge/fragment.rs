@@ -158,7 +158,7 @@ pub fn stage_fragment_in<'d>(
 fn new_staged_fragment<'d>(doc: HtmlDoc<'d>) -> Option<HtmlNodeMut<'d>> {
     let staged = doc.create_fragment().map(RawNode::from)?;
     // SAFETY: just made in `doc`, detached, and nothing else refers to it.
-    Some(unsafe { HtmlNodeMut::assume_mutable(staged.as_node()) })
+    Some(unsafe { HtmlNodeMut::assume_mutable(doc.node(staged)) })
 }
 
 /// Parse `html` in the context of the element `context` and import the result

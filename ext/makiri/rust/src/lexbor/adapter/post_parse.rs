@@ -219,7 +219,7 @@ impl HtmlParsed {
     pub unsafe fn node_line(&self, node: RawNode) -> Option<usize> {
         let lines = self.lines.as_deref()?;
         // SAFETY: the caller's contract.
-        let offset = unsafe { node.as_node() }.source_offset()?;
+        let offset = unsafe { self.doc().node(node) }.source_offset()?;
         Some(lines.lookup(offset))
     }
 
@@ -275,7 +275,7 @@ impl HtmlParsed {
         }
         // SAFETY: a key's node is a live node of the document its owner names -
         // the key's construction contract - and `self` is that document.
-        Ok(unsafe { key.raw_node().as_node() })
+        Ok(unsafe { self.doc().node(key.raw_node()) })
     }
 }
 

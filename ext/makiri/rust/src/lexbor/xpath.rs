@@ -78,7 +78,7 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
         let raw = RawNode::from_ptr(t.as_ptr()).expect("a resolved token names a node");
         // SAFETY: an HTML token names a live node of the document it was made
         // over, and `self` is that document.
-        unsafe { raw.as_node() }
+        unsafe { self.doc.node(raw) }
     }
 
     #[inline]

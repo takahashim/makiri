@@ -22,17 +22,33 @@ pub enum Place {
 }
 
 /// The Lexbor tree as [`crate::dom_rules`] reads it: the nodes carry their
-/// own links, so there is nothing to hold but the lifetime. Callers write
+/// own links, so the walks need nothing but the lifetime. Callers write
 /// [`HtmlTree::new`] (`const`); `Default` is the same value, for clippy's
 /// `new_without_default`.
+///
+/// A tree that must also turn a recorded node token back into a node
+/// (`child_index`'s memo) is made with [`HtmlTree::of`], which holds the
+/// document the token is resolved in.
 #[derive(Clone, Copy, Default)]
-pub struct HtmlTree<'d>(core::marker::PhantomData<HtmlNode<'d>>);
+pub struct HtmlTree<'d> {
+    doc: Option<HtmlDoc<'d>>,
+}
 
-impl HtmlTree<'_> {
-    /// `const`, so a caller can lend one as `&'static` (the type holds
-    /// nothing, and is covariant in `'d`).
+impl<'d> HtmlTree<'d> {
+    /// `const`, so a caller can lend one as `&'static` (the type is covariant
+    /// in `'d`).
     pub const fn new() -> Self {
-        HtmlTree(core::marker::PhantomData)
+        HtmlTree { doc: None }
+    }
+
+    /// The tree of `doc`, which can resolve a node token of that document.
+    pub fn of(doc: HtmlDoc<'d>) -> Self {
+        HtmlTree { doc: Some(doc) }
+    }
+
+    /// The document a token is resolved in, when the tree has one.
+    pub fn doc(&self) -> Option<HtmlDoc<'d>> {
+        self.doc
     }
 }
 

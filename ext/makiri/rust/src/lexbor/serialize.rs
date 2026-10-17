@@ -15,7 +15,7 @@
 use crate::cbuf::{Buf, BufError};
 use crate::lexbor::abi::consts::STATUS_OK as LXB_STATUS_OK;
 use crate::lexbor::adapter::arena_bytes::{document_size, DocumentSize};
-use crate::lexbor::adapter::html::{HtmlDoc, HtmlNode, RawNode};
+use crate::lexbor::adapter::html::{HtmlDoc, HtmlNode};
 use crate::lexbor::chunks::{chunk_cb, ChunkSink, Chunks};
 use crate::node_type::NodeType;
 
@@ -117,9 +117,7 @@ fn sink_for(node: HtmlNode<'_>) -> Sink<'_> {
 /// Serialize `node` into owned UTF-8 bytes. `deep` selects the children-only
 /// (inner) serializer over the tree (outer) one; `pretty` selects indented
 /// output. `None` is a Lexbor status failure (the buffer is freed).
-pub fn serialize(node: RawNode, deep: bool, pretty: bool) -> Option<Buf> {
-    // SAFETY: `node` came from a live wrapper, so it and its document are live.
-    let handle = unsafe { node.as_node() };
+pub fn serialize(handle: HtmlNode<'_>, deep: bool, pretty: bool) -> Option<Buf> {
     let mut c = Chunks::new(sink_for(handle));
 
     // SAFETY: a live node (above); the sink accepts every chunk with its own

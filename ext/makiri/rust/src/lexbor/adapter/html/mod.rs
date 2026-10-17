@@ -423,13 +423,15 @@ impl RawNode {
         self.0.as_ptr()
     }
 
-    /// The typed node, lent for `'doc`.
+    /// The typed node, lent for `'doc`, read from the pointer alone. Inside
+    /// the adapter only: everywhere else a node is resolved against its
+    /// document ([`HtmlDoc::node`]).
     ///
     /// # Safety
     /// The node must be live and its document must outlive `'doc` without being
     /// restructured while `'doc` lasts - the [`HtmlNode`] contract.
     #[inline]
-    pub unsafe fn as_node<'doc>(self) -> HtmlNode<'doc> {
+    pub(in crate::lexbor) unsafe fn as_node<'doc>(self) -> HtmlNode<'doc> {
         HtmlNode {
             raw: self.0,
             _doc: PhantomData,
@@ -798,6 +800,24 @@ impl<'doc> HtmlDoc<'doc> {
             // SAFETY: a non-null entry of the table above.
             id: (!data.is_null()).then(|| unsafe { (*data).attr_id }),
             lower: !has_ascii_uppercase(name),
+        }
+    }
+
+    /// The node `raw` names in this document.
+    ///
+    /// The one way a [`RawNode`] becomes a handle outside the adapter: a
+    /// `RawNode` is a reference INTO a document, which means nothing without
+    /// it - in Lexbor it is a pointer that could be read alone, but the parser
+    /// port's arena (`docs/rewrite_parser.ja.md`) identifies a node by its index
+    /// in its document, and the code above the adapter is written for both.
+    ///
+    /// # Safety
+    /// `raw` names a live node of this document.
+    #[inline]
+    pub unsafe fn node(self, raw: RawNode) -> HtmlNode<'doc> {
+        HtmlNode {
+            raw: raw.0,
+            _doc: PhantomData,
         }
     }
 

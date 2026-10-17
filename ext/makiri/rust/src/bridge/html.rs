@@ -99,8 +99,9 @@ static HTML_NODE_CLASSES: NodeClasses = NodeClasses {
 /// Lexbor's HTML parser does not produce) falls back to `Makiri::HTML::Node`.
 pub fn wrap_html_node(node: RawNode, document: Value) -> Result<Value, Error> {
     /* SAFETY: a `RawNode` is live - the safe constructors are `From<HtmlNode>`
-     * and `From<Building*>`, and the only raw one, `from_ptr`, is unsafe. */
-    let handle = unsafe { node.as_node() };
+     * and `From<Building*>`, and the only raw one, `from_ptr`, is unsafe - and
+     * the caller hands it with the Document it belongs to. */
+    let handle = unsafe { crate::bridge::wrapper::html_doc(&document).node(node) };
     let node_type = handle.node_type();
     if node_type == NodeType::Document {
         return Ok(document);
@@ -170,24 +171,33 @@ pub(in crate::bridge) fn html_node_key(rb_node: Value) -> Result<(HtmlNodeKey, V
 ///
 /// The field is the receiver's opaque key, not a raw pointer: a long-lived
 /// wrapper stores one, and a Document receiver's key is minted for the call.
-/// `node()` resolves it without a check - the receiver's own Document, kept
-/// alive by the argument, is what makes that sound - while `with_node` is the
-/// checked boundary.
+/// `node()` resolves it against the receiver's document without a check - the
+/// receiver's own Document, kept alive by the argument, is what makes that
+/// sound - while `with_node` is the checked boundary.
 #[derive(Clone, Copy)]
 pub struct HtmlSelf {
     pub value: Value,
     key: HtmlNodeKey,
     /// The keepalive Document (the receiver itself for a Document).
     pub document: Value,
+    /// That Document's tree, which resolves the receiver's key and the child
+    /// lists' recorded tokens. `'static` only in name: a receiver lives for one
+    /// method call, inside which `document` keeps it alive, and every borrow
+    /// handed out is bounded by `&self`.
+    tree: HtmlTree<'static>,
 }
 
 impl magnus::TryConvert for HtmlSelf {
     fn try_convert(value: Value) -> Result<Self, Error> {
         let (key, document) = html_node_key(value)?;
+        let doc = crate::bridge::wrapper::html_doc_known(document);
         Ok(HtmlSelf {
             value,
             key,
             document,
+            // SAFETY: the live document of `document`, which the method call
+            // this receiver belongs to keeps alive (see the field).
+            tree: HtmlTree::of(unsafe { doc.as_doc() }),
         })
     }
 }
@@ -200,9 +210,20 @@ impl HtmlSelf {
     /// alive; the borrow of `self` ends the handle with the call.
     #[inline]
     pub fn node(&self) -> HtmlNode<'_> {
+        let doc = self.doc();
         // SAFETY: the receiver keeps `key`'s owner document alive for this
         // call, and `key` was minted from a live node of it.
-        unsafe { self.key.raw_node().as_node() }
+        unsafe { doc.node(self.key.raw_node()) }
+    }
+
+    /// The receiver's document, for the length of this method call.
+    #[inline]
+    pub fn doc(&self) -> HtmlDoc<'_> {
+        #[allow(
+            clippy::expect_used,
+            reason = "`try_convert` always makes the tree with its document"
+        )]
+        self.tree.doc().expect("a receiver's tree has its document")
     }
 
     /// The receiver's node as the boundary handle, for the mutators.
@@ -256,19 +277,15 @@ impl<'d> TokenTree for HtmlTree<'d> {
     }
     fn node_of(&self, token: usize) -> Option<HtmlNode<'d>> {
         let raw = RawNode::from_ptr(token as *mut core::ffi::c_void)?;
+        let doc = self.doc()?;
         // SAFETY: `child_index` asks only for a token it recorded for a list
         // of this document, so by `ChildPositionMemo`'s invariant it names a
         // node that is still a child there - in the document the receiver
         // keeps alive for `'d`. Lexbor detaches rather than frees, so it was
         // never released.
-        Some(unsafe { raw.as_node() })
+        Some(unsafe { doc.node(raw) })
     }
 }
-
-/// The tree every HTML receiver lends its child lists, as `&'static`: a
-/// `const` item is what may be borrowed for that long (the type holds
-/// nothing).
-const HTML_TREE: HtmlTree<'static> = HtmlTree::new();
 
 impl ChildListHost for HtmlSelf {
     type Tree<'a> = HtmlTree<'a>;
@@ -277,7 +294,7 @@ impl ChildListHost for HtmlSelf {
     }
     fn children(&self, list: ChildList) -> Children<'_, HtmlTree<'_>> {
         Children {
-            tree: &HTML_TREE,
+            tree: &self.tree,
             parent: self.node(),
             list,
         }
@@ -415,7 +432,7 @@ impl<'a> HtmlEdit<'a> {
         record_edit(self.this.document, kind);
         // SAFETY: the receiver is not frozen and no XPath evaluation is
         // reading its document - both checked just now.
-        Ok(unsafe { HtmlNodeMut::assume_mutable(self.this.raw().as_node()) })
+        Ok(unsafe { HtmlNodeMut::assume_mutable(self.this.node()) })
     }
 }
 
@@ -440,7 +457,7 @@ fn adopt_copy<'d>(doc: RawDoc, node: HtmlNode<'_>) -> Result<HtmlNode<'d>, Error
     // SAFETY: `doc` is a live document, the caller's target.
     let imp = unsafe { import_copy(doc, node, true, "import node") }?;
     // SAFETY: a node just imported into `doc`, which outlives this call.
-    Ok(unsafe { imp.as_node() })
+    Ok(unsafe { doc.as_doc().node(imp) })
 }
 
 /// Take the node `src` wraps out of the document it came from, so the whole
@@ -533,8 +550,11 @@ fn take_incoming<'d>(
         // SAFETY: a copy this call just made in `target`'s document.
         return Ok((unsafe { HtmlNodeMut::assume_mutable(copy) }, true));
     }
-    // SAFETY: a node of `target`'s document, which `edit` cleared.
-    let incoming = unsafe { HtmlNodeMut::assume_mutable(RawNode::from(incoming).as_node()) };
+    // SAFETY: a node of `target`'s document (`same_document` above), which
+    // `edit` cleared.
+    let incoming = unsafe {
+        HtmlNodeMut::assume_mutable(target.node().owner_document().node(RawNode::from(incoming)))
+    };
     if incoming.parent().is_some() {
         incoming.detach();
     }
