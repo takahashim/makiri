@@ -48,6 +48,11 @@ fn same_lower(stored: &[u8], input: &[u8]) -> bool {
             .all(|(k, c)| *k == c.to_ascii_lowercase())
 }
 
+#[inline]
+fn has_upper(name: &[u8]) -> bool {
+    name.iter().any(u8::is_ascii_uppercase)
+}
+
 /// Open-addressing slots for a static table: `id + 1`, 0 empty. `N` is a power
 /// of two at least twice the number of names.
 const fn static_slots<const N: usize>(names: &[&[u8]]) -> [u16; N] {
@@ -85,6 +90,12 @@ fn static_id(slots: &[u16], names: &[&[u8]], name: &[u8], h: u32) -> Option<usiz
 }
 
 /// One table: names appended past the static ones.
+///
+/// An entry is stored lower-cased (Lexbor's `lexbor_hash_insert_lower`) or
+/// as given (`lexbor_hash_insert_raw`). Lookups hash ASCII case-insensitively
+/// either way, so both kinds share the slots; a lower-casing lookup compares
+/// the stored key against the lower-cased input, which an entry holding
+/// upper case never equals - exactly Lexbor's one table of both kinds.
 #[derive(Default)]
 struct Appended {
     /// Open addressing over `names`: index + 1, 0 empty; empty or a power of
@@ -92,10 +103,26 @@ struct Appended {
     slots: Vec<u32>,
     names: Vec<Vec<u8>>,
     hashes: Vec<u32>,
+    /// Each entry's ASCII upper-case form, when the table keeps them (tags,
+    /// for the HTML `tagName`; qualified names). Empty otherwise.
+    uppers: Vec<Vec<u8>>,
+}
+
+/// How a table compares an input with a stored key.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Match {
+    /// The stored key against the lower-cased input.
+    Lower,
+    /// Byte for byte.
+    Exact,
 }
 
 impl Appended {
     fn find(&self, name: &[u8], h: u32) -> Option<usize> {
+        self.find_by(name, h, Match::Lower)
+    }
+
+    fn find_by(&self, name: &[u8], h: u32, how: Match) -> Option<usize> {
         if self.slots.is_empty() {
             return None;
         }
@@ -106,8 +133,15 @@ impl Appended {
             if i == 0 {
                 return None;
             }
-            if self.hashes.get(i - 1) == Some(&h) && same_lower(self.names.get(i - 1)?, name) {
-                return Some(i - 1);
+            if self.hashes.get(i - 1) == Some(&h) {
+                let stored = self.names.get(i - 1)?;
+                let same = match how {
+                    Match::Lower => same_lower(stored, name),
+                    Match::Exact => stored.as_slice() == name,
+                };
+                if same {
+                    return Some(i - 1);
+                }
             }
             slot = (slot + 1) & mask;
         }
@@ -140,19 +174,60 @@ impl Appended {
     /// The id for `name`, appending its lower-cased form at `first + index`
     /// when new.
     fn append(&mut self, name: &[u8], h: u32, first: usize) -> Result<usize, NamesOom> {
-        if let Some(i) = self.find(name, h) {
+        self.append_by(name, h, first, Match::Lower, false)
+    }
+
+    /// [`append`](Self::append), comparing and storing as `how` says, and
+    /// keeping the upper-case form when `upper`.
+    fn append_by(
+        &mut self,
+        name: &[u8],
+        h: u32,
+        first: usize,
+        how: Match,
+        upper: bool,
+    ) -> Result<usize, NamesOom> {
+        if let Some(i) = self.find_by(name, h, how) {
             return Ok(first + i);
         }
         self.grow()?;
-        let mut lower: Vec<u8> = try_vec_with_capacity(name.len()).ok_or(NamesOom)?;
-        lower.extend(name.iter().map(u8::to_ascii_lowercase));
+        let mut stored: Vec<u8> = try_vec_with_capacity(name.len()).ok_or(NamesOom)?;
+        match how {
+            Match::Lower => stored.extend(name.iter().map(u8::to_ascii_lowercase)),
+            Match::Exact => stored.extend_from_slice(name),
+        }
+        let up = if upper {
+            let mut u: Vec<u8> = try_vec_with_capacity(name.len()).ok_or(NamesOom)?;
+            u.extend(name.iter().map(u8::to_ascii_uppercase));
+            self.uppers.falloc_reserve(1).map_err(|()| NamesOom)?;
+            Some(u)
+        } else {
+            None
+        };
         self.names.falloc_reserve(1).map_err(|()| NamesOom)?;
         self.hashes.falloc_reserve(1).map_err(|()| NamesOom)?;
         let index = self.names.len();
-        self.names.push(lower);
+        self.names.push(stored);
         self.hashes.push(h);
+        if let Some(u) = up {
+            /* A table keeps an upper-case form for every entry or none, so
+             * the index is the same. */
+            self.uppers.push(u);
+        }
         Self::place(&mut self.slots, h, index);
         Ok(first + index)
+    }
+
+    fn upper(&self, id: usize, first: usize) -> Option<&[u8]> {
+        self.uppers.get(id.checked_sub(first)?).map(Vec::as_slice)
+    }
+
+    fn bytes(&self) -> usize {
+        self.slots.capacity() * 4
+            + self.hashes.capacity() * 4
+            + self.names.iter().map(Vec::capacity).sum::<usize>()
+            + self.uppers.iter().map(Vec::capacity).sum::<usize>()
+            + (self.names.capacity() + self.uppers.capacity()) * core::mem::size_of::<Vec<u8>>()
     }
 
     fn name(&self, id: usize, first: usize) -> Option<&[u8]> {
@@ -165,13 +240,21 @@ impl Appended {
 pub struct Names {
     tags: Appended,
     attrs: Appended,
+    /// Qualified names as written (Lexbor's `qualified_name` entries, which
+    /// it keeps in the tag and attribute tables, raw), with their upper-case
+    /// forms. Ids from 1.
+    quals: Appended,
 }
 
 /// The first id an appended tag gets. Lexbor reserves `LAST_ENTRY` itself
 /// (its by-id lookup answers "none" for it), so appended ids start past it.
 pub const FIRST_APPENDED_TAG: usize = res::TAG__LAST_ENTRY + 1;
-/// As [`FIRST_APPENDED_TAG`], for attribute names.
-pub const FIRST_APPENDED_ATTR: usize = res::ATTR__LAST_ENTRY + 1;
+/// As [`FIRST_APPENDED_TAG`], for attribute names - in a range of their own,
+/// far past every tag id. Lexbor's appended ids are pointers into two
+/// different tables, so an appended attribute id never equals a tag id; a
+/// node's `local_name` is read as a tag id whatever kind the node is, and the
+/// two must not meet there either.
+pub const FIRST_APPENDED_ATTR: usize = 0x4000_0000;
 
 impl Names {
     /// `lxb_tag_append_lower`: the tag id for `name`, ASCII case-insensitively,
@@ -182,7 +265,8 @@ impl Names {
         if let Some(id) = static_id(&TAG_SLOTS, &res::TAG_NAMES, name, h) {
             return Ok(id);
         }
-        self.tags.append(name, h, FIRST_APPENDED_TAG)
+        self.tags
+            .append_by(name, h, FIRST_APPENDED_TAG, Match::Lower, true)
     }
 
     /// `lxb_dom_attr_local_name_append`: as [`tag_append_lower`](Self::tag_append_lower),
@@ -194,6 +278,60 @@ impl Names {
             return Ok(id);
         }
         self.attrs.append(name, h, FIRST_APPENDED_ATTR)
+    }
+
+    /// `lxb_tag_append` with a new name: the tag id for `name` EXACTLY as
+    /// written, appended as written when new - the tag `createElementNS`
+    /// gives an HTML element whose name has upper case, so that `BR` is not
+    /// the void `br`. A lower-casing lookup never finds such an entry.
+    pub fn tag_append_raw(&mut self, name: &[u8]) -> Result<usize, NamesOom> {
+        let h = hash_lower(name);
+        if !has_upper(name) {
+            if let Some(id) = static_id(&TAG_SLOTS, &res::TAG_NAMES, name, h) {
+                return Ok(id);
+            }
+        }
+        self.tags
+            .append_by(name, h, FIRST_APPENDED_TAG, Match::Exact, true)
+    }
+
+    /// The id of the qualified name `name` as written, interned when new.
+    pub fn qualified_append(&mut self, name: &[u8]) -> Result<u32, NamesOom> {
+        let h = hash_lower(name);
+        let id = self.quals.append_by(name, h, 1, Match::Exact, true)?;
+        u32::try_from(id).map_err(|_| NamesOom)
+    }
+
+    /// A qualified name's text.
+    pub fn qualified(&self, id: u32) -> Option<&[u8]> {
+        self.quals.name(id as usize, 1)
+    }
+
+    /// A qualified name's ASCII upper-case form.
+    pub fn qualified_upper(&self, id: u32) -> Option<&[u8]> {
+        self.quals.upper(id as usize, 1)
+    }
+
+    /// A tag id's upper-case name: Lexbor's static one, or an appended
+    /// tag's.
+    pub fn tag_upper(&self, id: usize) -> Option<&[u8]> {
+        match res::TAG_UPPER_NAMES.get(id) {
+            Some(n) => (!n.is_empty()).then_some(*n),
+            None => self.tags.upper(id, FIRST_APPENDED_TAG),
+        }
+    }
+
+    /// The attribute id for `name` if it is already known
+    /// (`lxb_dom_attr_data_by_local_name`), without appending.
+    pub fn attr_id(&self, name: &[u8]) -> Option<usize> {
+        let h = hash_lower(name);
+        static_id(&ATTR_SLOTS, &res::ATTR_NAMES, name, h)
+            .or_else(|| self.attrs.find(name, h).map(|i| FIRST_APPENDED_ATTR + i))
+    }
+
+    /// Bytes the tables own.
+    pub fn owned_bytes(&self) -> usize {
+        self.tags.bytes() + self.attrs.bytes() + self.quals.bytes()
     }
 
     /// The tag id for `name` if it is already known (`lxb_tag_id_by_name`),

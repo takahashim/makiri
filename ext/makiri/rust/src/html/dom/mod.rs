@@ -112,7 +112,8 @@ struct Node {
     parent: Option<NodeId>,
     first_child: Option<NodeId>,
     last_child: Option<NodeId>,
-    /// For an attribute: the next and previous in its element's list.
+    /// The tree siblings. An attribute has none: its element's list is
+    /// linked through [`AttrData`], as Lexbor links `attr->next`.
     next: Option<NodeId>,
     prev: Option<NodeId>,
     /// The start tag's byte offset + 1; 0 when the node has none.
@@ -123,8 +124,9 @@ struct Node {
 /// An element's own fields.
 #[derive(Clone, Copy, Debug)]
 pub struct ElementData {
-    /// The qualified name as written, when Lexbor would keep one.
-    written: Option<Span>,
+    /// The qualified name as written, when Lexbor would keep one: an id of
+    /// [`Names::qualified`], 0 for none.
+    written: u32,
     first_attr: Option<NodeId>,
     last_attr: Option<NodeId>,
     /// The no-namespace `id` and `class` attributes (Lexbor's `attr_id` /
@@ -138,8 +140,12 @@ pub struct ElementData {
 /// An attribute's own fields.
 #[derive(Clone, Copy, Debug)]
 pub struct AttrData {
-    written: Option<Span>,
+    /// As [`ElementData`]'s.
+    written: u32,
     value: Span,
+    /// The next and previous attribute of its element's list.
+    next: Option<NodeId>,
+    prev: Option<NodeId>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -215,6 +221,7 @@ impl Document {
             + self.attrs.capacity() * core::mem::size_of::<AttrData>()
             + self.doctypes.capacity() * core::mem::size_of::<DoctypeData>()
             + self.bytes.capacity()
+            + self.names.owned_bytes()
     }
 
     /* ---- storing ---- */
@@ -347,6 +354,33 @@ impl Document {
 
     /* ---- making nodes (detached) ---- */
 
+    fn intern_written(&mut self, written: Option<&[u8]>) -> Result<u32, DomOom> {
+        match written {
+            Some(w) if !w.is_empty() => self.names.qualified_append(w).map_err(|_| DomOom),
+            _ => Ok(0),
+        }
+    }
+
+    /// Set the element's or attribute's qualified name as written (`None`:
+    /// it has none of its own).
+    pub fn set_written(&mut self, n: NodeId, written: Option<&[u8]>) -> Result<(), DomOom> {
+        let id = self.intern_written(written)?;
+        match self.node(n).map(|x| x.payload) {
+            Some(Payload::Element(i)) => {
+                if let Some(e) = self.elements.get_mut(i as usize) {
+                    e.written = id;
+                }
+            }
+            Some(Payload::Attr(i)) => {
+                if let Some(a) = self.attrs.get_mut(i as usize) {
+                    a.written = id;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     /// A new element: local name `tag` (an id of [`Document::names`]), in
     /// `ns` (0 none), with `prefix` (0 none), and its qualified name as
     /// written when that differs from the lower-cased local name.
@@ -357,10 +391,7 @@ impl Document {
         prefix: PrefixIndex,
         written: Option<&[u8]>,
     ) -> Result<NodeId, DomOom> {
-        let written = match written {
-            Some(w) => Some(self.store(w)?),
-            None => None,
-        };
+        let written = self.intern_written(written)?;
         let idx = u32::try_from(self.elements.len()).map_err(|_| DomOom)?;
         oom!(self.elements.falloc_reserve(1));
         let id = self.push(NodeType::Element, Payload::Element(idx))?;
@@ -385,16 +416,18 @@ impl Document {
         written: Option<&[u8]>,
         value: &[u8],
     ) -> Result<NodeId, DomOom> {
-        let written = match written {
-            Some(w) => Some(self.store(w)?),
-            None => None,
-        };
+        let written = self.intern_written(written)?;
         let value = self.store(value)?;
         let idx = u32::try_from(self.attrs.len()).map_err(|_| DomOom)?;
         oom!(self.attrs.falloc_reserve(1));
         let id = self.push(NodeType::Attribute, Payload::Attr(idx))?;
         self.set_names(id, local, ns, prefix);
-        self.attrs.push(AttrData { written, value });
+        self.attrs.push(AttrData {
+            written,
+            value,
+            next: None,
+            prev: None,
+        });
         Ok(id)
     }
 
@@ -585,12 +618,17 @@ impl Document {
         let Some(last) = self.element(el).map(|e| e.last_attr) else {
             return;
         };
+        if self.attr(attr).is_none() {
+            return;
+        }
         if let Some(a) = self.node_mut(attr) {
             a.parent = Some(el);
+        }
+        if let Some(a) = self.attr_mut(attr) {
             a.prev = last;
             a.next = None;
         }
-        match last.and_then(|l| self.node_mut(l)) {
+        match last.and_then(|l| self.attr_mut(l)) {
             Some(l) => l.next = Some(attr),
             None => {
                 if let Some(e) = self.element_mut(el) {
@@ -612,16 +650,16 @@ impl Document {
 
     /// Take `attr` off its element (kept in the arena).
     pub fn attr_remove(&mut self, attr: NodeId) {
-        let Some(a) = self.node(attr).copied() else {
+        let Some(el) = self.parent(attr) else { return };
+        let Some((next, prev)) = self.attr(attr).map(|a| (a.next, a.prev)) else {
             return;
         };
-        let Some(el) = a.parent else { return };
         if let Some(e) = self.element_mut(el) {
             if e.first_attr == Some(attr) {
-                e.first_attr = a.next;
+                e.first_attr = next;
             }
             if e.last_attr == Some(attr) {
-                e.last_attr = a.prev;
+                e.last_attr = prev;
             }
             if e.id_attr == Some(attr) {
                 e.id_attr = None;
@@ -630,16 +668,18 @@ impl Document {
                 e.class_attr = None;
             }
         }
-        if let Some(p) = a.prev.and_then(|x| self.node_mut(x)) {
-            p.next = a.next;
+        if let Some(p) = prev.and_then(|x| self.attr_mut(x)) {
+            p.next = next;
         }
-        if let Some(n) = a.next.and_then(|x| self.node_mut(x)) {
-            n.prev = a.prev;
+        if let Some(n) = next.and_then(|x| self.attr_mut(x)) {
+            n.prev = prev;
+        }
+        if let Some(a) = self.attr_mut(attr) {
+            a.next = None;
+            a.prev = None;
         }
         if let Some(me) = self.node_mut(attr) {
             me.parent = None;
-            me.next = None;
-            me.prev = None;
         }
     }
 
@@ -704,7 +744,8 @@ impl Document {
     pub fn last_child(&self, n: NodeId) -> Option<NodeId> {
         self.node(n)?.last_child
     }
-    /// The next sibling; for an attribute, the next attribute.
+    /// The next sibling; none for an attribute (see
+    /// [`next_attr`](Self::next_attr)).
     #[inline]
     pub fn next(&self, n: NodeId) -> Option<NodeId> {
         self.node(n)?.next
@@ -737,6 +778,25 @@ impl Document {
     }
 
     #[inline]
+    fn attr_mut(&mut self, n: NodeId) -> Option<&mut AttrData> {
+        match self.node(n)?.payload {
+            Payload::Attr(i) => self.attrs.get_mut(i as usize),
+            _ => None,
+        }
+    }
+
+    /// The next attribute of the same element.
+    #[inline]
+    pub fn next_attr(&self, n: NodeId) -> Option<NodeId> {
+        self.attr(n)?.next
+    }
+    /// The previous attribute of the same element.
+    #[inline]
+    pub fn prev_attr(&self, n: NodeId) -> Option<NodeId> {
+        self.attr(n)?.prev
+    }
+
+    #[inline]
     pub fn attr(&self, n: NodeId) -> Option<&AttrData> {
         match self.node(n)?.payload {
             Payload::Attr(i) => self.attrs.get(i as usize),
@@ -746,7 +806,11 @@ impl Document {
 
     /// An element's qualified name as written, when it has one of its own.
     pub fn element_written(&self, n: NodeId) -> Option<&[u8]> {
-        self.element(n)?.written.map(|s| self.bytes_of(s))
+        self.names.qualified(self.element(n)?.written)
+    }
+    /// [`element_written`](Self::element_written) in ASCII upper case.
+    pub fn element_written_upper(&self, n: NodeId) -> Option<&[u8]> {
+        self.names.qualified_upper(self.element(n)?.written)
     }
     /// An element's first attribute.
     pub fn first_attr(&self, n: NodeId) -> Option<NodeId> {
@@ -766,7 +830,7 @@ impl Document {
     }
     /// An attribute's qualified name as written, when it has one of its own.
     pub fn attr_written(&self, n: NodeId) -> Option<&[u8]> {
-        self.attr(n)?.written.map(|s| self.bytes_of(s))
+        self.names.qualified(self.attr(n)?.written)
     }
     /// An attribute's OWN namespace (0 for none), as the adapter's
     /// `HtmlAttr::own_ns` decides it: the stored one when the attribute has a
@@ -845,6 +909,12 @@ impl Document {
         }
     }
 }
+
+mod handle;
+pub use handle::{
+    has_ascii_uppercase, Ancestors, AttrName, Attrs, HtmlAttr, HtmlDoc, HtmlElement, HtmlNode,
+    NsId, RawNode, Siblings, TagId, NS_LAST_ENTRY, TAG_EM_DOCTYPE, TAG_LAST_ENTRY,
+};
 
 #[cfg(test)]
 pub mod conformance;

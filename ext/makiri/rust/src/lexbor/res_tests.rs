@@ -116,12 +116,11 @@ fn generate_names() -> String {
             let mut len = 0;
             let p = lxb::lxb_tag_name_by_id_noi(id, &mut len);
             tn.push(core::slice::from_raw_parts(p, len).to_vec());
-            let p = lxb::lxb_tag_name_upper_by_id_noi(id, &mut len);
-            tu.push(if p.is_null() {
-                Vec::new()
-            } else {
-                core::slice::from_raw_parts(p, len).to_vec()
-            });
+            /* What `lxb_dom_element_qualified_name_upper` interns for an
+             * element named by the tag alone (`lexbor_hash_insert_upper`).
+             * Not `lxb_tag_name_upper_by_id`: for a static id that answers
+             * the static entry, which is lower case. */
+            tu.push(core::slice::from_raw_parts(p, len).to_ascii_uppercase());
         }
         let an: Vec<Vec<u8>> = (0..attr_last)
             .map(|id| entry_str(&(*lxb::lxb_dom_attr_data_by_id(core::ptr::null_mut(), id)).entry))
@@ -150,7 +149,7 @@ fn generate_names() -> String {
     );
     table(
         &mut out,
-        "Each tag id's upper-case name (the HTML `tagName`).",
+        "Each tag id's name in ASCII upper case (an HTML element's `tagName`).",
         "TAG_UPPER_NAMES",
         "TAG__LAST_ENTRY",
         &tag_upper,

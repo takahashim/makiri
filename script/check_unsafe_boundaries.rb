@@ -65,6 +65,7 @@ UNSAFE_ISLANDS = {
   "lexbor/adapter/source_loc.rs" => 2,
   "lexbor/adapter/text_index.rs" => 1,
   "lexbor/adapter/tree_guard.rs" => 9,
+  "lexbor/arena_tests.rs" => 1,
   "lexbor/chunks.rs" => 2,
   "lexbor/conformance_tests.rs" => 24,
   "lexbor/css_engine.rs" => 14,

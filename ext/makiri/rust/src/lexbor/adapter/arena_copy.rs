@@ -22,6 +22,7 @@ fn prefix_of(qname: &[u8]) -> Option<&[u8]> {
 pub fn copy_document(src: HtmlDoc<'_>) -> Result<Document, DomOom> {
     let mode = u8::try_from(src.compat_mode()).unwrap_or(2);
     let mut doc = Document::new(mode)?;
+    copy_names(&mut doc, src.as_node(), NodeId::DOCUMENT)?;
     copy_children(&mut doc, src.as_node(), NodeId::DOCUMENT)?;
     Ok(doc)
 }

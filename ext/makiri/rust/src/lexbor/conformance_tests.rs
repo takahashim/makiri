@@ -1080,7 +1080,7 @@ fn assert_same_name_fields(input: &[u8]) {
                     );
                     let name = a.names.attr_name(a.local(y) as usize).unwrap_or_default();
                     assert_eq!(x.local_name(), name, "attr local on {}", what());
-                    aa = a.next(y);
+                    aa = a.next_attr(y);
                 }
                 assert!(aa.is_none(), "as many attributes on {}", what());
             }

@@ -84,7 +84,7 @@ fn read(d: &Document, n: NodeId) -> Node {
                         value,
                     },
                 });
-                a = d.next(x);
+                a = d.next_attr(x);
             }
             Node::Element(Element {
                 ns: d.ns_uri(d.ns(n)).map(<[u8]>::to_vec),
