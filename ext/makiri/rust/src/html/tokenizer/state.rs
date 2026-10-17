@@ -1024,24 +1024,32 @@ fn char_ref_named(t: &mut Tokenizer<'_, '_>, mut data: usize, end: usize) -> usi
     let begin = data;
     let mut entry = t.entity;
     let mut stopped = false;
+    let input: &[u8] = t.input;
+    let (mut matched_end, mut matched) = (None, None);
     while data < end {
-        match sbst_find(&ENTITIES, entry, t.at(data)) {
+        let c = input.get(data).copied().unwrap_or(0);
+        match sbst_find(&ENTITIES, entry, c) {
             None => {
-                let consumed = t.input_slice(begin, data - begin);
-                try_or!(t.append(consumed), end);
                 stopped = true;
                 break;
             }
-            Some(i) => {
-                let e = &ENTITIES[i];
-                if e.value.is_some() {
-                    t.entity_end = t.buf.len() + (data - begin);
-                    t.entity_match = Some(i);
+            Some((i, e)) => {
+                if e.value != 0 {
+                    matched_end = Some(data - begin);
+                    matched = Some(i);
                 }
                 entry = e.next as usize;
             }
         }
         data += 1;
+    }
+    if let (Some(off), Some(i)) = (matched_end, matched) {
+        t.entity_end = t.buf.len() + off;
+        t.entity_match = Some(i);
+    }
+    if stopped {
+        let consumed = t.input_slice(begin, data - begin);
+        try_or!(t.append(consumed), end);
     }
     if !stopped {
         /* Wait for the next chunk. */
@@ -1072,7 +1080,7 @@ fn char_ref_named(t: &mut Tokenizer<'_, '_>, mut data: usize, end: usize) -> usi
     if matched.key != 0x3B {
         t.error(data, ErrorId::Miseafchre);
     }
-    let value = matched.value.unwrap_or_default();
+    let value = matched.value().unwrap_or_default();
     let tail_start = t.entity_end + 1;
     let tail_len = t.buf.len().saturating_sub(tail_start);
     let new_tail = t.entity_start + value.len();

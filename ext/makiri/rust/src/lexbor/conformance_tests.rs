@@ -808,3 +808,201 @@ fn tokenizer_traces_carry_errors_and_positions() {
         crate::html::tokenizer::tests::tokenize_traced(input, State::Data, None)
     );
 }
+
+/// The document `bench/bench.rb` builds, with `items` list items.
+fn bench_html(items: usize) -> Vec<u8> {
+    let mut rows = String::new();
+    for i in 1..=items {
+        rows.push_str(&format!(
+            "<li class=\"item r{}\" data-id=\"{i}\" data-rank=\"{}\"><a href=\"/p/{i}\" class=\"link\">item {i}</a><span class=\"meta\">tag{} &amp; more</span></li>\n",
+            i % 7,
+            i % 100,
+            i % 13
+        ));
+    }
+    format!(
+        "<!doctype html><html><head><title>bench</title>\n<meta charset=\"utf-8\"></head>\n<body>\n<header id=\"top\"><nav><a href=\"/\">home</a><a href=\"/about\">about</a></nav></header>\n<main id=\"main\" class=\"container\">\n<section class=\"list\"><ul>{rows}</ul></section>\n</main>\n<footer id=\"bot\"><p>&copy; bench</p></footer>\n</body></html>\n"
+    )
+    .into_bytes()
+}
+
+/// Lexbor's tokenizer and the port's over the bench document, timed. Run with
+/// `cargo test --release ... tokenizer_speed -- --ignored --nocapture`.
+#[test]
+#[ignore = "a measurement, not a check"]
+fn tokenizer_speed() {
+    let inputs: Vec<(&str, Vec<u8>)> = vec![
+        ("bench document", bench_html(20_000)),
+        (
+            "plain text",
+            "lorem ipsum dolor sit amet ".repeat(100_000).into_bytes(),
+        ),
+        ("bare tags", "<p><b></b></p>".repeat(200_000).into_bytes()),
+        (
+            "static attrs",
+            "<a href=x class=y id=z>".repeat(100_000).into_bytes(),
+        ),
+        (
+            "custom names",
+            "<my-el data-a=x data-b=y>".repeat(100_000).into_bytes(),
+        ),
+        (
+            "references",
+            "a&amp;b&lt;c&#65;".repeat(200_000).into_bytes(),
+        ),
+        ("named refs", "a&amp;b&lt;".repeat(300_000).into_bytes()),
+        ("numeric refs", "a&#65;b&#x42;".repeat(300_000).into_bytes()),
+        (
+            "long named",
+            "&CounterClockwiseContourIntegral;"
+                .repeat(100_000)
+                .into_bytes(),
+        ),
+        (
+            "long named in tags",
+            "<b>&CounterClockwiseContourIntegral;</b>"
+                .repeat(80_000)
+                .into_bytes(),
+        ),
+        ("one big text", "abcdefgh&lt;".repeat(300_000).into_bytes()),
+    ];
+    for (label, input) in &inputs {
+        tokenizer_speed_on(label, input);
+    }
+}
+
+fn tokenizer_speed_on(label: &str, input: &[u8]) {
+    use std::time::Instant;
+
+    unsafe extern "C" fn count_cb(
+        _tkz: *mut lxb::lxb_html_tokenizer_t,
+        token: *mut lxb::lxb_html_token_t,
+        ctx: *mut c_void,
+    ) -> *mut lxb::lxb_html_token_t {
+        // SAFETY: `ctx` is the counter the caller registered.
+        unsafe { *(ctx as *mut usize) += 1 };
+        token
+    }
+    struct Count(usize);
+    impl crate::html::tokenizer::TokenSink for Count {
+        fn token(
+            &mut self,
+            _t: &mut crate::html::tokenizer::Tokenizer<'_, '_>,
+        ) -> Result<(), crate::html::tokenizer::Stop> {
+            self.0 += 1;
+            Ok(())
+        }
+    }
+    let rounds = 15;
+    let lexbor = || {
+        let mut n = 0usize;
+        // SAFETY: as `tokenize_traced`, with a counting callback.
+        unsafe {
+            let tkz = Tkz(lxb::lxb_html_tokenizer_create());
+            lxb::lxb_html_tokenizer_init(tkz.0);
+            lxb::lxb_html_tokenizer_tags_make(tkz.0, 128);
+            lxb::lxb_html_tokenizer_attrs_make(tkz.0, 128);
+            lxb::lxb_html_tokenizer_callback_token_done_set_noi(
+                tkz.0,
+                Some(count_cb),
+                &mut n as *mut usize as *mut c_void,
+            );
+            lxb::lxb_html_tokenizer_begin(tkz.0);
+            lxb::lxb_html_tokenizer_chunk(tkz.0, input.as_ptr(), input.len());
+            lxb::lxb_html_tokenizer_end(tkz.0);
+        }
+        n
+    };
+    let port = || {
+        let mut names = crate::html::names::Names::default();
+        let mut sink = Count(0);
+        {
+            let mut t = crate::html::tokenizer::Tokenizer::new(input, &mut names, &mut sink);
+            t.chunk();
+            t.end();
+        }
+        sink.0
+    };
+    assert_eq!(lexbor(), port(), "the two count the same tokens");
+    let time = |f: &dyn Fn() -> usize| {
+        let mut best = f64::MAX;
+        for _ in 0..rounds {
+            let t0 = Instant::now();
+            std::hint::black_box(f());
+            best = best.min(t0.elapsed().as_secs_f64());
+        }
+        best
+    };
+    let (l, p) = (time(&lexbor), time(&port));
+    let mb = input.len() as f64 / 1e6;
+    eprintln!(
+        "{label:>15} {:.1} MB: lexbor {:.2} ms ({:.0} MB/s), port {:.2} ms ({:.0} MB/s), port/lexbor {:.2}",
+        mb,
+        l * 1e3,
+        mb / l,
+        p * 1e3,
+        mb / p,
+        p / l
+    );
+}
+
+/// A long loop of the port alone, for a sampling profiler to attach to.
+#[test]
+#[ignore = "a profiling target"]
+fn tokenizer_profile_target() {
+    struct Count(usize);
+    impl crate::html::tokenizer::TokenSink for Count {
+        fn token(
+            &mut self,
+            _t: &mut crate::html::tokenizer::Tokenizer<'_, '_>,
+        ) -> Result<(), crate::html::tokenizer::Stop> {
+            self.0 += 1;
+            Ok(())
+        }
+    }
+    let input = std::env::var("PROFILE_INPUT")
+        .unwrap_or_else(|_| "&CounterClockwiseContourIntegral;".to_string())
+        .repeat(100_000);
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(8);
+    while std::time::Instant::now() < until {
+        let mut names = crate::html::names::Names::default();
+        let mut sink = Count(0);
+        let mut t = crate::html::tokenizer::Tokenizer::new(input.as_bytes(), &mut names, &mut sink);
+        t.chunk();
+        t.end();
+    }
+}
+
+/// Lexbor's tokenizer in a long loop, for a sampling profiler.
+#[test]
+#[ignore = "a profiling target"]
+fn tokenizer_profile_target_lexbor() {
+    unsafe extern "C" fn count_cb(
+        _tkz: *mut lxb::lxb_html_tokenizer_t,
+        token: *mut lxb::lxb_html_token_t,
+        _ctx: *mut c_void,
+    ) -> *mut lxb::lxb_html_token_t {
+        token
+    }
+    let input = std::env::var("PROFILE_INPUT")
+        .unwrap_or_else(|_| "&CounterClockwiseContourIntegral;".to_string())
+        .repeat(100_000);
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(8);
+    while std::time::Instant::now() < until {
+        // SAFETY: as `tokenize_traced`, with a callback that keeps nothing.
+        unsafe {
+            let tkz = Tkz(lxb::lxb_html_tokenizer_create());
+            lxb::lxb_html_tokenizer_init(tkz.0);
+            lxb::lxb_html_tokenizer_tags_make(tkz.0, 128);
+            lxb::lxb_html_tokenizer_attrs_make(tkz.0, 128);
+            lxb::lxb_html_tokenizer_callback_token_done_set_noi(
+                tkz.0,
+                Some(count_cb),
+                core::ptr::null_mut(),
+            );
+            lxb::lxb_html_tokenizer_begin(tkz.0);
+            lxb::lxb_html_tokenizer_chunk(tkz.0, input.as_ptr(), input.len());
+            lxb::lxb_html_tokenizer_end(tkz.0);
+        }
+    }
+}

@@ -24,24 +24,41 @@ pub mod names;
 /// `lexbor_sbst_entry_static_t`): within one layer the nodes form a binary
 /// search tree on `key` through `left` and `right`, and `next` is the root of
 /// the layer for the following byte. Index 0 is the "none" node.
+///
+/// The replacement is an index into a separate table rather than a slice in
+/// the entry, so the tree the tokenizer walks is ten bytes a node.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SbstEntry {
     pub key: u8,
-    /// The replacement for the name that ends here, if one does.
-    pub value: Option<&'static [u8]>,
+    /// 1 + the index in [`entities::ENTITY_VALUES`] of the replacement for the
+    /// name that ends here; 0 when none does.
+    pub value: u16,
     pub left: u16,
     pub right: u16,
     pub next: u16,
 }
 
-/// The index of the entry for `key` in the layer rooted at `root`, or `None`
-/// (`lexbor_sbst_entry_static_find`, which answers the entry itself).
+impl SbstEntry {
+    /// The replacement for the name that ends here, if one does.
+    #[inline]
+    pub fn value(&self) -> Option<&'static [u8]> {
+        let i = (self.value as usize).checked_sub(1)?;
+        entities::ENTITY_VALUES.get(i).copied()
+    }
+}
+
+/// The entry for `key` in the layer rooted at `root`, with its index, or
+/// `None` (`lexbor_sbst_entry_static_find`).
 #[inline]
-pub fn sbst_find(table: &[SbstEntry], mut root: usize, key: u8) -> Option<usize> {
+pub fn sbst_find(
+    table: &'static [SbstEntry],
+    mut root: usize,
+    key: u8,
+) -> Option<(usize, &'static SbstEntry)> {
     while root != 0 {
         let e = table.get(root)?;
         if e.key == key {
-            return Some(root);
+            return Some((root, e));
         }
         root = if key > e.key { e.right } else { e.left } as usize;
     }

@@ -290,7 +290,7 @@ pub const NS_XMLNS: usize = 7;
 pub const NS__LAST_ENTRY: usize = 8;
 
 /// Each tag id's name, lower case.
-pub static TAG_NAMES: [&[u8]; TAG__LAST_ENTRY] = [
+pub const TAG_NAMES: [&[u8]; TAG__LAST_ENTRY] = [
     b"#undef",
     b"#end-of-file",
     b"#text",
@@ -493,7 +493,7 @@ pub static TAG_NAMES: [&[u8]; TAG__LAST_ENTRY] = [
 ];
 
 /// Each tag id's upper-case name (the HTML `tagName`).
-pub static TAG_UPPER_NAMES: [&[u8]; TAG__LAST_ENTRY] = [
+pub const TAG_UPPER_NAMES: [&[u8]; TAG__LAST_ENTRY] = [
     b"#undef",
     b"#end-of-file",
     b"#text",
@@ -696,7 +696,7 @@ pub static TAG_UPPER_NAMES: [&[u8]; TAG__LAST_ENTRY] = [
 ];
 
 /// Each attribute id's local name, lower case.
-pub static ATTR_NAMES: [&[u8]; ATTR__LAST_ENTRY] = [
+pub const ATTR_NAMES: [&[u8]; ATTR__LAST_ENTRY] = [
     b"#undef",
     b"accept",
     b"accept-charset",
@@ -773,7 +773,7 @@ pub static ATTR_NAMES: [&[u8]; ATTR__LAST_ENTRY] = [
 ];
 
 /// Each namespace id's URI.
-pub static NS_LINKS: [&[u8]; NS__LAST_ENTRY] = [
+pub const NS_LINKS: [&[u8]; NS__LAST_ENTRY] = [
     b"",
     b"",
     b"http://www.w3.org/1999/xhtml",
@@ -785,7 +785,7 @@ pub static NS_LINKS: [&[u8]; NS__LAST_ENTRY] = [
 ];
 
 /// Each namespace id's prefix.
-pub static NS_PREFIXES: [&[u8]; NS__LAST_ENTRY] = [
+pub const NS_PREFIXES: [&[u8]; NS__LAST_ENTRY] = [
     b"#undef",
     b"#any",
     b"html",
