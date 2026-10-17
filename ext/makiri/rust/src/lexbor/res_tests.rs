@@ -189,26 +189,22 @@ fn generate_names() -> String {
         }
         out.push_str("];\n");
     };
-    /* Element names start after the special ids (#text, !--, ...), which no
-     * start tag can name; every attribute id but `_UNDEF` is a name. */
-    let first_tag = tags
-        .iter()
-        .find(|(n, _)| n == "A")
-        .map(|(_, v)| *v)
-        .expect("LXB_TAG_A");
+    /* Every static id, the special ones included: Lexbor's static lookup
+     * (`lexbor_shs_entry_get_lower_static`) holds them all, so an attribute
+     * named `#undef` resolves to id 0 there, and here. */
     by_name(
         &mut out,
-        "Element names to tag ids, sorted by name.",
+        "Static tag names to tag ids, sorted by name.",
         "TAG_BY_NAME",
         &tag_names,
-        first_tag,
+        0,
     );
     by_name(
         &mut out,
-        "Attribute local names to attribute ids, sorted by name.",
+        "Static attribute local names to attribute ids, sorted by name.",
         "ATTR_BY_NAME",
         &attr_names,
-        1,
+        0,
     );
     out
 }
@@ -487,7 +483,8 @@ fn the_generated_tables_answer_like_lexbor() {
         tag_id_by_lower_name(b"annotation-xml"),
         Some(names::TAG_ANNOTATION_XML)
     );
-    assert_eq!(tag_id_by_lower_name(b"#text"), None);
+    assert_eq!(tag_id_by_lower_name(b"#text"), Some(names::TAG__TEXT));
+    assert_eq!(attr_id_by_lower_name(b"#undef"), Some(names::ATTR__UNDEF));
     assert_eq!(
         attr_id_by_lower_name(b"class"),
         Some(lxb::lxb_dom_attr_id_enum_t_LXB_DOM_ATTR_CLASS as usize)
@@ -501,7 +498,7 @@ fn the_generated_tables_answer_like_lexbor() {
     let mut root = 1;
     let mut last = None;
     for &c in b"amp;" {
-        let e = sbst_find(t, root, c).expect("a step of &amp;");
+        let e = &t[sbst_find(t, root, c).expect("a step of &amp;")];
         last = e.value;
         root = e.next as usize;
     }

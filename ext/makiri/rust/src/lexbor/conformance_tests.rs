@@ -261,7 +261,28 @@ use core::ffi::c_void;
 /// What the token callback fills.
 struct Collect {
     tokens: Vec<Token>,
+    positions: Vec<(Option<usize>, Option<usize>)>,
+    /// The input, to turn Lexbor's pointers into offsets.
+    base: *const u8,
+    len: usize,
     panic: PanicLatch,
+}
+
+impl Collect {
+    /// A Lexbor position as an offset into the input: one in the input (or at
+    /// its end) as itself, one in Lexbor's end-of-file buffer as the input's
+    /// length - where the port puts its virtual end-of-file byte.
+    fn offset(&self, p: *const u8) -> Option<usize> {
+        if p.is_null() {
+            return None;
+        }
+        let (p, base) = (p as usize, self.base as usize);
+        Some(if p >= base && p <= base + self.len {
+            p - base
+        } else {
+            self.len
+        })
+    }
 }
 
 /// `len` bytes at `p`, or nothing for a null pointer.
@@ -396,11 +417,22 @@ unsafe extern "C" fn collect_cb(
     if c.panic.caught() {
         return core::ptr::null_mut();
     }
-    let Collect { tokens, panic } = c;
+    let (begin, end) = {
+        // SAFETY: the tokenizer's current token, live for the callback.
+        let tk = unsafe { &*token };
+        (c.offset(tk.begin), c.offset(tk.end))
+    };
+    let Collect {
+        tokens,
+        positions,
+        panic,
+        ..
+    } = c;
     panic.guard(core::ptr::null_mut(), || {
         // SAFETY: inside the callback, on the tokenizer's current token.
         if let Some(t) = unsafe { read_token(token) } {
             tokens.push(t);
+            positions.push((begin, end));
         }
         /* The same token back: the tokenizer cleans and reuses it. */
         token
@@ -425,11 +457,24 @@ impl Drop for Tkz {
 /// html5lib harness sets it up, with `last_start_tag` as the tag an end tag
 /// must match to be appropriate.
 pub fn tokenize(input: &[u8], state: State, last_start_tag: Option<&[u8]>) -> Vec<Token> {
+    tokenize_traced(input, state, last_start_tag).tokens
+}
+
+/// [`tokenize`], with positions and parse errors, in the port's `Trace`.
+pub fn tokenize_traced(
+    input: &[u8],
+    state: State,
+    last_start_tag: Option<&[u8]>,
+) -> crate::html::tokenizer::tests::Trace {
     use lxb::*;
     let mut collect = Collect {
         tokens: Vec::new(),
+        positions: Vec::new(),
+        base: input.as_ptr(),
+        len: input.len(),
         panic: PanicLatch::default(),
     };
+    let mut errors = Vec::new();
     // SAFETY: a tokenizer this function owns (`Tkz`), driven start to end
     // here; the callback's context is `collect`, which outlives the run.
     unsafe {
@@ -461,11 +506,23 @@ pub fn tokenize(input: &[u8], state: State, last_start_tag: Option<&[u8]>) -> Ve
         assert_eq!(lxb_html_tokenizer_begin(tkz.0), 0, "tokenizer begin");
         let st = lxb_html_tokenizer_chunk(tkz.0, input.as_ptr(), input.len());
         let end = lxb_html_tokenizer_end(tkz.0);
+        let list = (*tkz.0).parse_errors;
+        if !list.is_null() {
+            let l = &*list;
+            for i in 0..l.length {
+                let e = &*(l.list.add(i * l.struct_size) as *const lxb_html_tokenizer_error_t);
+                errors.push((e.id, collect.offset(e.pos)));
+            }
+        }
         drop(tkz);
         collect.panic.resume();
         assert_eq!((st, end), (0, 0), "tokenizer status");
     }
-    collect.tokens
+    crate::html::tokenizer::tests::Trace {
+        tokens: collect.tokens,
+        positions: collect.positions,
+        errors,
+    }
 }
 
 #[test]
@@ -575,5 +632,179 @@ fn html5lib_tokenizer() {
     assert!(
         now_passing.is_empty(),
         "listed as known but now passing - remove from the list and the table: {now_passing:?}"
+    );
+}
+
+/* ------------------------------------------------------------------ *
+ * the port's tokenizer against Lexbor's                               *
+ * ------------------------------------------------------------------ */
+
+/// Compare the port with Lexbor token for token - boundaries, attribute order
+/// and all - on one input from one state; the first difference, if any.
+fn tokenizer_difference(input: &[u8], state: State, last: Option<&[u8]>) -> Option<String> {
+    let lexbor = tokenize_traced(input, state, last);
+    let port = crate::html::tokenizer::tests::tokenize_traced(input, state, last);
+    (lexbor != port).then(|| {
+        format!(
+            "input {:?} from {state:?} (last start tag {:?})\n  lexbor {lexbor:?}\n  port   {port:?}",
+            String::from_utf8_lossy(input),
+            last.map(String::from_utf8_lossy)
+        )
+    })
+}
+
+/// Every html5lib tokenizer input, from every state the test names.
+#[test]
+#[ignore = "needs the fetched html5lib-tests data; run by `rake conformance:parser`"]
+fn port_tokenizer_matches_lexbor_on_html5lib_inputs() {
+    let tests: Vec<TokenizerTest> =
+        tok::read_dir(&tokenizer_dir()).expect("html5lib tokenizer tests");
+    let mut diffs = Vec::new();
+    for t in tests.iter().filter(|t| !t.unrepresentable) {
+        for &state in &t.states {
+            if let Some(d) = tokenizer_difference(&t.input, state, t.last_start_tag.as_deref()) {
+                diffs.push(format!("{}: {d}", t.key()));
+            }
+        }
+    }
+    assert!(
+        diffs.is_empty(),
+        "{} differ:\n{}",
+        diffs.len(),
+        diffs
+            .iter()
+            .take(10)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+/// Inputs assembled at random from fragments that reach every state's edge
+/// cases (CR/LF pairs, NUL, references cut short, keywords cut short, end tags
+/// in raw text), from every initial state.
+#[test]
+fn port_tokenizer_matches_lexbor_on_random_inputs() {
+    const PIECES: &[&[u8]] = &[
+        b"<",
+        b">",
+        b"/",
+        b"</",
+        b"<!",
+        b"<!-",
+        b"<!--",
+        b"-->",
+        b"--!>",
+        b"-",
+        b"!",
+        b"?",
+        b"<?",
+        b"?>",
+        b"<?xml",
+        b"<?php",
+        b" ",
+        b"\t",
+        b"\n",
+        b"\r",
+        b"\r\n",
+        b"\x0c",
+        b"\0",
+        b"a",
+        b"Z",
+        b"x",
+        b"1",
+        b"=",
+        b"\"",
+        b"'",
+        b"`",
+        b"&",
+        b"&amp",
+        b"&amp;",
+        b"&not",
+        b"&noti;",
+        b"&#",
+        b"&#x",
+        b"&#X41;",
+        b"&#65",
+        b"&#0;",
+        b"&#x110000;",
+        b"&#xD800;",
+        b"&#128;",
+        b";",
+        b"<a",
+        b"<a b",
+        b"<a b=c",
+        b"<a b='c'",
+        b"<a b=\"c\"",
+        b"<A B=C D>",
+        b"</a>",
+        b"</title>",
+        b"</script>",
+        b"</style>",
+        b"<script>",
+        b"<!--<script>",
+        b"</scrIpt",
+        b"<!DOCTYPE",
+        b"<!doctype html",
+        b" PUBLIC",
+        b" SYSTEM",
+        b" \"pub\"",
+        b" 'sys'",
+        b"<![CDATA[",
+        b"]]>",
+        b"]",
+        b"\xc3\xa9",
+        b"\xef\xbf\xbd",
+        b"<b/>",
+        b"<br/ >",
+        b"<p a=1 a=2>",
+        b"x=",
+        b"title",
+    ];
+    let states = [
+        State::Data,
+        State::Plaintext,
+        State::Rcdata,
+        State::Rawtext,
+        State::ScriptData,
+        State::CdataSection,
+    ];
+    let lasts: [Option<&[u8]>; 4] = [None, Some(b"title"), Some(b"script"), Some(b"a")];
+    let mut seed: u64 = 0x9E37_79B9_7F4A_7C15;
+    let mut next = || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed
+    };
+    let mut diffs = Vec::new();
+    for _ in 0..20_000 {
+        let len = (next() % 12) as usize;
+        let mut input = Vec::new();
+        for _ in 0..len {
+            input.extend_from_slice(PIECES[(next() % PIECES.len() as u64) as usize]);
+        }
+        let state = states[(next() % states.len() as u64) as usize];
+        let last = lasts[(next() % lasts.len() as u64) as usize];
+        if let Some(d) = tokenizer_difference(&input, state, last) {
+            diffs.push(d);
+            if diffs.len() >= 10 {
+                break;
+            }
+        }
+    }
+    assert!(diffs.is_empty(), "{}", diffs.join("\n"));
+}
+
+/// The traces the differential compares do carry errors and positions.
+#[test]
+fn tokenizer_traces_carry_errors_and_positions() {
+    let input = b"<a b=1 b=2>x\0&noti;</a/>";
+    let lexbor = tokenize_traced(input, State::Data, None);
+    assert!(lexbor.errors.len() >= 3, "{lexbor:?}");
+    assert_eq!(lexbor.positions[0], (Some(1), Some(2)), "{lexbor:?}");
+    assert_eq!(
+        lexbor,
+        crate::html::tokenizer::tests::tokenize_traced(input, State::Data, None)
     );
 }

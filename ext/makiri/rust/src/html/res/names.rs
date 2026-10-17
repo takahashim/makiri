@@ -796,8 +796,15 @@ pub static NS_PREFIXES: [&[u8]; NS__LAST_ENTRY] = [
     b"xmlns",
 ];
 
-/// Element names to tag ids, sorted by name.
-pub static TAG_BY_NAME: [(&[u8], usize); 192] = [
+/// Static tag names to tag ids, sorted by name.
+pub static TAG_BY_NAME: [(&[u8], usize); 199] = [
+    (b"!--", 4),
+    (b"!doctype", 5),
+    (b"#document", 3),
+    (b"#end-of-file", 1),
+    (b"#text", 2),
+    (b"#undef", 0),
+    (b"?ProcessingInstruction", 6),
     (b"a", 7),
     (b"abbr", 8),
     (b"acronym", 9),
@@ -992,8 +999,9 @@ pub static TAG_BY_NAME: [(&[u8], usize); 192] = [
     (b"xmp", 198),
 ];
 
-/// Attribute local names to attribute ids, sorted by name.
-pub static ATTR_BY_NAME: [(&[u8], usize); 72] = [
+/// Static attribute local names to attribute ids, sorted by name.
+pub static ATTR_BY_NAME: [(&[u8], usize); 73] = [
+    (b"#undef", 0),
     (b"accept", 1),
     (b"accept-charset", 2),
     (b"active", 3),

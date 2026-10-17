@@ -34,25 +34,23 @@ pub struct SbstEntry {
     pub next: u16,
 }
 
-/// The entry for `key` in the layer rooted at `root`, or `None`
-/// (`lexbor_sbst_entry_static_find`).
+/// The index of the entry for `key` in the layer rooted at `root`, or `None`
+/// (`lexbor_sbst_entry_static_find`, which answers the entry itself).
 #[inline]
-pub fn sbst_find(
-    table: &'static [SbstEntry],
-    mut root: usize,
-    key: u8,
-) -> Option<&'static SbstEntry> {
+pub fn sbst_find(table: &[SbstEntry], mut root: usize, key: u8) -> Option<usize> {
     while root != 0 {
         let e = table.get(root)?;
         if e.key == key {
-            return Some(e);
+            return Some(root);
         }
         root = if key > e.key { e.right } else { e.left } as usize;
     }
     None
 }
 
-/// The static tag id for an ASCII-lower-case `name`, if Lexbor has one.
+/// The static tag id for an ASCII-lower-case `name`, if Lexbor has one -
+/// the special ids (`#text`, `!--`, ...) included, as Lexbor's static lookup
+/// holds them.
 pub fn tag_id_by_lower_name(name: &[u8]) -> Option<usize> {
     names::TAG_BY_NAME
         .binary_search_by(|(n, _)| (*n).cmp(name))

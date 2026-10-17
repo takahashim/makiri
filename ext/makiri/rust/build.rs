@@ -274,6 +274,9 @@ fn main() {
         .allowlist_function("lxb_ns_data_by_id")
         .allowlist_function("lxb_ns_prefix_data_by_id")
         .allowlist_type("lxb_ns_prefix_data_t")
+        // The tokenizer's recorded parse errors, which the port's are compared
+        // with (`lexbor::conformance_tests`).
+        .allowlist_type("lxb_html_tokenizer_error_t")
         // The fragment parse, CHUNKED - begin/process/end rather than the
         // one-shot `lxb_html_parse_fragment*`, because only between `begin` and
         // `process` can the tree-depth guard be installed on the tokenizer
