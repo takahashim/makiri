@@ -8,7 +8,9 @@ Some tasks fetch external test data. Others compare Makiri with Nokogiri/libxml2
 The pure Ruby specs listed below are part of the normal spec suite.
 
 ```bash
-rake conformance:html5     # HTML tree construction vs html5lib-tests
+rake conformance:html5     # HTML tree construction vs the WPT .dat data
+rake conformance:parser    # the same data + html5lib tokenizer tests, in the crate
+rake conformance:browsers  # HTML parsing vs Chromium/Firefox/WebKit (evidence)
 rake conformance:xpath     # HTML XPath 1.0 vs Nokogiri::HTML5
 rake conformance:css       # HTML CSS selectors vs Nokogiri::HTML5
 rake conformance:xmlconf   # XML 1.0 well-formedness vs W3C XML Test Suite
@@ -86,6 +88,23 @@ Scope:
 This runner mainly checks Makiri's Lexbor integration. It also checks that the
 post-parse indexes, source-location stamping, and Ruby wrappers do not change
 the HTML5 tree.
+
+### Parser harness in the crate - `rake conformance:parser`
+
+The same WPT tree-construction data, and the html5lib tokenizer tests, run
+through each parser the crate can build (today Lexbor) as Rust tests. A parser
+is read into a parser-neutral tree (`ext/makiri/rust/src/conformance/`) that
+also records namespaces, attribute order, text node boundaries and quirks mode,
+so a second parser can be compared with Lexbor as a tree, not as serialized
+text. `parser_data.rb` fetches both pinned data sets.
+
+### Browsers as evidence - `rake conformance:browsers`
+
+`browser_diff.rb` parses the same inputs in Makiri and in Chromium, Firefox and
+WebKit through Playwright (`spec/conformance/browser`, Node.js), with scripting
+disabled, and reports where the trees differ and who agrees with whom. It is
+evidence for classifying a difference, not an arbiter: the pinned HTML Standard
+is. Pass options with `BROWSER_ARGS` (`--browsers`, `--file`, `--verbose`).
 
 ---
 

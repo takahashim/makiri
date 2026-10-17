@@ -751,7 +751,7 @@ task "bench:xml" => :compile do
 end
 
 namespace :conformance do
-  desc "WHATWG HTML5 parsing conformance: run html5lib-tests through Makiri"
+  desc "WHATWG HTML parsing conformance: the WPT tree-construction data through Makiri"
   task html5: :compile do
     sh "#{FileUtils::RUBY} -Ilib spec/conformance/html5lib_runner.rb #{ENV['H5_ARGS']}"
   end
@@ -762,6 +762,17 @@ namespace :conformance do
     Dir.chdir("ext/makiri/rust") do
       sh "cargo test --no-default-features --features lexbor conformance -- --include-ignored"
     end
+  end
+
+  # Evidence, not a gate: docs/rewrite_parser.ja.md makes the pinned HTML
+  # Standard the authority, and browsers can all predate a spec change.
+  desc "HTML parser vs Chromium/Firefox/WebKit (Playwright; needs Node.js)"
+  task browsers: :compile do
+    dir = "spec/conformance/browser"
+    unless File.directory?("#{dir}/node_modules/playwright-core")
+      sh "npm", "install", "--no-audit", "--no-fund", "--prefix", dir
+    end
+    sh "#{FileUtils::RUBY} -Ilib spec/conformance/browser_diff.rb #{ENV['BROWSER_ARGS']}"
   end
 
   desc "XPath 1.0 differential conformance vs Nokogiri (libxml2 reference)"
