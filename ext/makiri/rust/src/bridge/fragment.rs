@@ -20,7 +20,7 @@ use crate::bridge::string::{ruby_verified_text, HtmlSource};
 use crate::bridge::wrapper::{ensure_document_mutable, html_doc_unwrap, DocKind, DocumentShell};
 pub use crate::html_dom::fragment::FragmentTag;
 use crate::html_dom::fragment::{FragmentContext, FragmentError, TransientFragment};
-use crate::html_dom::html::{HtmlDoc, HtmlNode, HtmlNodeMut, Place, RawDoc, RawNode};
+use crate::html_dom::html::{HtmlDoc, HtmlDocMut, HtmlNode, Place, RawNode};
 use crate::html_dom::post_parse::parse_html;
 pub use crate::html_dom::tree_guard::DepthLimit;
 use crate::init::CLASS_NODE;
@@ -131,56 +131,48 @@ fn parse(
         .map_err(|e| fragment_error(e, limit))
 }
 
-/// Parse `rb_html` in the context of the element `context`, for `inner_html=`
-/// and `outer_html=`, and import the result into a fresh DOCUMENT_FRAGMENT of
-/// `context`'s document - detached, so the tree is still as it was.
+/// Parse `html` in the context of the element `context` (WHATWG fragment
+/// parsing, as `inner_html=` and `outer_html=` do), and import the result into
+/// a fresh DOCUMENT_FRAGMENT of the edited document - detached, so the tree is
+/// still as it was.
 ///
 /// That is what makes those two all-or-nothing. The import copies node by node
 /// and can fail part-way; into the tree, that left the old content gone and the
 /// new half in. Staged, a failure changes nothing a reader can see (the
 /// abandoned fragment stays in the arena, which reclaims it with the document),
-/// and what comes back is put in place with `HtmlNodeMut::place`, which only
+/// and what comes back is put in place with `HtmlDocMut::place`, which only
 /// relinks and cannot fail.
-pub fn stage_fragment_in<'d>(
-    context: HtmlNodeMut<'d>,
+pub fn stage_fragment_in(
+    d: &mut HtmlDocMut<'_>,
+    context: RawNode,
     html: RString,
-) -> Result<HtmlNodeMut<'d>, Error> {
-    let doc = context.node().owner_document();
-    let Some(staged) = new_staged_fragment(doc) else {
+) -> Result<RawNode, Error> {
+    let Some(staged) = d.create_fragment() else {
         return Err(makiri_error("failed to create document fragment"));
     };
-    import_into(context, staged, html)?;
+    import_into(d, context, staged, html)?;
     Ok(staged)
-}
-
-/// A fresh, detached DOCUMENT_FRAGMENT of `doc`, cleared for editing - the
-/// staging target both fragment setters fill and place.
-fn new_staged_fragment<'d>(doc: HtmlDoc<'d>) -> Option<HtmlNodeMut<'d>> {
-    let staged = doc.create_fragment().map(RawNode::from)?;
-    // SAFETY: just made in `doc`, detached, and nothing else refers to it.
-    Some(unsafe { HtmlNodeMut::assume_mutable(doc.node(staged)) })
 }
 
 /// Parse `html` in the context of the element `context` and import the result
 /// into the DETACHED fragment `into`. Nothing in `into` is cleared first: on a
 /// failure it is left as it was (a parse failure) or partly filled (an import
 /// failure), and the caller only places it once this returned `Ok`.
-fn import_into<'d>(
-    context: HtmlNodeMut<'d>,
-    into: HtmlNodeMut<'d>,
+fn import_into(
+    d: &mut HtmlDocMut<'_>,
+    context: RawNode,
+    into: RawNode,
     html: RString,
 ) -> Result<(), Error> {
     /* The setters take no keyword, so they parse under the default limit, as
      * Nokogiri's do. */
     let parsed = parse(
         html,
-        &FragmentContext::Element(RawNode::from(context.node())),
+        &FragmentContext::Element(context),
         DepthLimit::DEFAULT,
     )?;
-    let doc = context.node().owner_document();
-    // SAFETY: `into` is a detached fragment of `context`'s document, which the
-    // caller cleared for editing.
-    unsafe { parsed.import_into(RawDoc::from(doc), RawNode::from(into.node())) }
+    parsed
+        .import_into_doc(d, into)
         .map_err(|_| makiri_error("failed to import a fragment child"))
 }
 
@@ -193,19 +185,14 @@ fn import_into<'d>(
 /// All or nothing, as [`stage_fragment_in`]: the contents change only after the
 /// parse has succeeded.
 pub fn set_template_inner_html(
-    template: HtmlNodeMut<'_>,
-    content: HtmlNodeMut<'_>,
+    d: &mut HtmlDocMut<'_>,
+    template: RawNode,
+    content: RawNode,
     html: RString,
 ) -> Result<(), Error> {
-    let doc = template.node().owner_document();
-    let Some(staged) = new_staged_fragment(doc) else {
-        return Err(makiri_error("failed to create document fragment"));
-    };
-    import_into(template, staged, html)?;
-    while let Some(c) = content.first_child() {
-        c.detach();
-    }
-    content.place(staged, Place::Child);
+    let staged = stage_fragment_in(d, template, html)?;
+    d.detach_children(content);
+    d.place(content, staged, Place::Child);
     Ok(())
 }
 
@@ -231,13 +218,15 @@ pub fn build_fragment(
     let doc = html_doc_unwrap(document)?;
     let parsed = parse(html, &FragmentContext::Tag { doc, at }, limit)?;
 
-    let Some(frag) = crate::bridge::wrapper::html_doc(&document).create_fragment() else {
-        return Err(makiri_error("failed to create document fragment"));
-    };
-    let frag = RawNode::from(frag);
-    // SAFETY: `frag` was just made in `doc`, which nothing else is editing.
-    unsafe { parsed.import_into(doc, frag) }
-        .map_err(|_| makiri_error("failed to import a fragment child"))?;
+    let frag = crate::bridge::html::new_node(&document, |d| {
+        let Some(frag) = d.create_fragment() else {
+            return Err(makiri_error("failed to create document fragment"));
+        };
+        parsed
+            .import_into_doc(d, frag)
+            .map_err(|_| makiri_error("failed to import a fragment child"))?;
+        Ok(frag)
+    })??;
     wrap_html_node(frag, document)
 }
 

@@ -217,6 +217,21 @@ impl TransientFragment {
     }
 }
 
+impl TransientFragment {
+    /// [`import_into`](Self::import_into) for an edit holding the target
+    /// document: every child goes into `into`, a detached fragment of that
+    /// document.
+    pub fn import_into_doc(
+        self,
+        d: &mut crate::lexbor::adapter::html::HtmlDocMut<'_>,
+        into: RawNode,
+    ) -> Result<(), AdapterOom> {
+        // SAFETY: `d` is the document cleared for this edit, and `into` a
+        // detached fragment of it that the caller made for this import.
+        unsafe { self.import_into(d.raw_doc(), into) }
+    }
+}
+
 #[cfg(test)]
 impl TransientFragment {
     /// The node whose children the parse produced, for the parser

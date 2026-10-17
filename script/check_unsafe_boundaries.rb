@@ -30,10 +30,10 @@ RUST = File.join(ROOT, "ext/makiri/rust/src")
 # summary prints the `glue/` + `xpath/` subtotal that must reach 0.
 UNSAFE_ISLANDS = {
   "bridge/alloc.rs" => 4,
-  "bridge/doc.rs" => 3,
-  "bridge/fragment.rs" => 6,
+  "bridge/doc.rs" => 1,
+  "bridge/fragment.rs" => 3,
   "bridge/gvl.rs" => 5,
-  "bridge/html.rs" => 19,
+  "bridge/html.rs" => 13,
   "bridge/node_set.rs" => 8,
   "bridge/node_wrap.rs" => 1,
   "bridge/ruby.rs" => 19,
@@ -57,6 +57,7 @@ UNSAFE_ISLANDS = {
   "lexbor/adapter/cross_import.rs" => 2,
   "lexbor/adapter/html/attrs.rs" => 25,
   "lexbor/adapter/html/build.rs" => 26,
+  "lexbor/adapter/html/doc_mut.rs" => 6,
   "lexbor/adapter/html/mod.rs" => 68,
   "lexbor/adapter/html/mutate.rs" => 9,
   "lexbor/adapter/html/serialize.rs" => 18,
@@ -69,7 +70,7 @@ UNSAFE_ISLANDS = {
   "lexbor/css_engine.rs" => 14,
   "lexbor/css_parser.rs" => 19,
   "lexbor/css_tokens.rs" => 10,
-  "lexbor/fragment.rs" => 7,
+  "lexbor/fragment.rs" => 8,
   "lexbor/memory.rs" => 9,
   "lexbor/res_tests.rs" => 3,
   "lexbor/selector_cache.rs" => 15,
@@ -167,14 +168,18 @@ RAW_NODE_CROSSING =
   /\bRawNode::from\s*\(|\bRawNode::from_ptr\b|\.raw_node\(\)|\bHtmlNodeKey::raw_node\b/
 RAW_NODE_CROSSING_COUNTS = {
   "bridge/doc.rs" => 1,
-  "bridge/fragment.rs" => 3,
+  # `node_ref`: a checked key as a reference INTO its document, for an edit
+  # that holds that document by `&mut` (`HtmlDocMut`) and reads the node
+  # through it - the one exit, so an edit never holds a second handle. The
+  # fragment staging that used to cross three times now passes references
+  # inside the edit and crosses none.
   # 8th: an Attr's owner, read as the wrapper cache's identity key for the
   # owner-frozen check (`check_attr_owner_frozen`); it does not escape.
   # 9th/10th: `TokenTree for HtmlTree` (`child_count` / `child_at`), a node's pointer as
   # the child-position memo's token and back. `child_index::ChildPositionMemo`
   # answers only for the `tree_version` it was filled under, so a token read
   # back is still that child; the node is never handed out raw, only wrapped.
-  "bridge/html.rs" => 10,
+  "bridge/html.rs" => 9,
   "bridge/wrapper.rs" => 3,
 }.freeze
 

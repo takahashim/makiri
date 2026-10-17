@@ -1060,9 +1060,16 @@ generic over a small `Tree` trait (the XPath `Dom` pattern) that the adapter
 (`HtmlTree`: a template's contents reach it through `host`, an attribute has no
 tree parent) and the XML arena both implement; each side keeps only its linking
 (and XML its namespace resolution), and checks a fragment as one node before
-any link changes. The placing is `HtmlNodeMut::place`. **Every edit goes through `bridge::html::edit` and then
-`HtmlEdit::node`, which drops the indexes** (`HtmlParsed::invalidate_indexes`) -
-so no mutator calls it, and none can forget to on an error path. The two are
+any link changes. The placing is `HtmlDocMut::place`. **Every edit goes through `bridge::html::edit` and then
+`HtmlEdit::with_tree` (or `with_attributes` / `with_data`), which drops the indexes**
+(`HtmlParsed::invalidate_indexes`) and lends the document as `&mut HtmlDocMut`
+for a closure that runs no Ruby - so no mutator calls it, and none can forget to
+on an error path. The factories, copies and fragment imports reach the document
+through `bridge::html::new_node` the same way; nothing outside the Lexbor layer
+can name `HtmlNodeMut`'s constructor or `HtmlDoc::create_*`. A `RawNode` is a
+reference INTO a document and becomes a handle only through `HtmlDoc::node` (or
+`HtmlDocMut::node` inside an edit): the shape the parser port's index arena
+needs (`docs/rewrite_parser.ja.md`). The two are
 separate on purpose: `edit` checks (frozen, evaluating) so those errors come
 first, and every argument is converted BETWEEN the two, because a conversion is
 the argument's `#to_s` - arbitrary Ruby - and a query there rebuilt the indexes

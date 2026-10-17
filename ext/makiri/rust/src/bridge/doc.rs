@@ -22,18 +22,16 @@ use magnus::{prelude::*, Error, RString, Ruby, Value};
 
 use crate::bridge::ruby::makiri_error;
 
-use crate::bridge::html::import_copy;
-use crate::bridge::html::{html_node_key, with_arg_node, with_html_node, wrap_html_node};
+use crate::bridge::html::new_node;
+use crate::bridge::html::{html_node_key, with_html_node, wrap_html_node};
 use crate::bridge::string::HtmlSource;
 use crate::bridge::wrapper::{
-    ensure_document_mutable, html_doc, html_doc_unwrap, node_repr, DocKind, DocumentShell,
-    NodeRepr, DOC_TYPE,
+    ensure_document_mutable, html_doc, node_repr, DocKind, DocumentShell, NodeRepr, DOC_TYPE,
 };
 use crate::bridge::xml::doc_of;
 use crate::bridge::xml::xml_node_document;
 use crate::bridge::xml::{xml_mut_result, xml_node_unwrap};
-use crate::html_dom::cross_import::cross_xml_to_html;
-use crate::html_dom::html::{RawDoc, RawNode};
+use crate::html_dom::html::RawNode;
 use crate::html_dom::post_parse::{empty_html_document, parse_html, HtmlParseError};
 use crate::html_dom::tree_guard::{DepthLimit, GuardStop, MAX_SELECT_OPTIONS};
 
@@ -165,26 +163,33 @@ pub fn document_errors(rb_doc: Value) -> Value {
 /// to bring a node across documents (Makiri never moves one between arenas). The
 /// source is untouched and the copy is detached.
 pub fn import_node(rb_self: Value, node_v: Value, deep: bool) -> Result<Value, Error> {
-    let doc = html_doc_unwrap(rb_self)?;
     /* The copy is made in this document: refused while a handler reads it. */
-    ensure_document_mutable(rb_self)?;
+    crate::bridge::html::check_owning_doc(&rb_self)?;
 
     /* An XML node is TRANSLATED across representations (mkr -> lxb) into a
      * detached lxb subtree owned by this document. */
     if node_repr(node_v) == NodeRepr::Xml {
         let xdoc = doc_of(xml_node_document(node_v)?);
         let src = xml_node_unwrap(node_v)?;
-        // SAFETY: two live arenas, and the translation validates the target.
-        let imp = xml_mut_result(unsafe { cross_xml_to_html(doc, &*xdoc, src, deep) })?;
-        return wrap_html_node(imp, rb_self);
+        // SAFETY: a live arena of another document, read for the call.
+        let xdoc = unsafe { &*xdoc };
+        let imp = new_node(&rb_self, |d| d.import_xml(xdoc, src, deep))?;
+        return wrap_html_node(xml_mut_result(imp)?, rb_self);
     }
 
-    /* Err on a non-node. The copy is a Lexbor import into `doc`, which runs
-     * no Ruby, so it is made inside the source's borrow. */
-    let imp = with_arg_node(node_v, |src| {
-        // SAFETY: `doc` is the receiver's live document.
-        unsafe { import_copy(doc, src, deep, "import node") }
-    })??;
+    /* Err on a non-node. A node of THIS document is copied by reference -
+     * the edit holds the document, and reads it through its own borrow; one
+     * of another document is read through that document's. */
+    let (key, src_doc) = html_node_key(node_v)?;
+    let raw = crate::bridge::html::node_ref(src_doc, key)?;
+    let imp = if crate::bridge::ruby::same_value(src_doc, rb_self) {
+        new_node(&rb_self, |d| d.copy(raw, deep))?
+    } else {
+        with_html_node(src_doc, key, |src| {
+            new_node(&rb_self, |d| d.import(src, deep))
+        })??
+    };
+    let imp = imp.map_err(|_| makiri_error("failed to import node"))?;
     wrap_html_node(imp, rb_self)
 }
 
@@ -203,10 +208,8 @@ pub fn clone_node(rb_self: Value, deep: bool) -> Result<Value, Error> {
     }
     /* The copy is made in this document: refused while a handler reads it. */
     ensure_document_mutable(document)?;
-    let clone = with_html_node(document, key, |node| {
-        let doc = RawDoc::from(node.owner_document());
-        // SAFETY: `doc` is `node`'s own document, live while `node` is.
-        unsafe { import_copy(doc, node, deep, "clone node") }
-    })??;
+    let raw = crate::bridge::html::node_ref(document, key)?;
+    let clone = new_node(&document, |d| d.copy(raw, deep))?
+        .map_err(|_| makiri_error("failed to clone node"))?;
     wrap_html_node(clone, document)
 }

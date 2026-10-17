@@ -170,7 +170,7 @@ impl<'doc> HtmlNodeMut<'doc> {
     /// The caller has established that `node`'s document may be changed now:
     /// the receiver is not frozen, and no XPath evaluation is reading it.
     #[inline]
-    pub unsafe fn assume_mutable(node: HtmlNode<'doc>) -> Self {
+    pub(in crate::lexbor) unsafe fn assume_mutable(node: HtmlNode<'doc>) -> Self {
         HtmlNodeMut(node)
     }
 

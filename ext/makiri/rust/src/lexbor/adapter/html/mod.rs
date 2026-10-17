@@ -33,9 +33,11 @@ pub use crate::node_type::NodeType;
 
 mod attrs;
 mod build;
+mod doc_mut;
 mod mutate;
 mod serialize;
 pub use build::{BuildingElement, BuildingNode};
+pub use doc_mut::HtmlDocMut;
 pub use mutate::{HtmlElementMut, HtmlNodeMut, HtmlTree, Insertion, Place};
 
 /* A node handle is cast to an element or attribute handle, which is sound only
