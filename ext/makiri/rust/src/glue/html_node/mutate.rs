@@ -25,7 +25,7 @@ use crate::bridge::string::{
     ruby_verified_text_opt,
 };
 use crate::glue::node::dom_extract as extract;
-use crate::lexbor::adapter::html::{HtmlElementMut, NodeType, Place, RawNode};
+use crate::html_dom::html::{HtmlElementMut, NodeType, Place, RawNode};
 use crate::xml::dom_name;
 
 /// `name` held to the WHATWG DOM rule `ok`, else `ArgumentError` - the DOM's

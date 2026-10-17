@@ -11,22 +11,22 @@ use crate::bridge::ruby::makiri_error;
 use magnus::{Error, Value};
 
 use crate::bridge::ruby::value;
+use crate::html_dom::fragment::import_with_fixup;
+use crate::html_dom::html::{
+    ForeignNode, HtmlNode, HtmlNodeKey, HtmlNodeMut, HtmlTree, Insertion, NodeType, Place, RawDoc,
+    RawNode,
+};
 use crate::init::{
     CLASS_DOCUMENT, CLASS_HTML_ATTR, CLASS_HTML_CDATA_SECTION, CLASS_HTML_COMMENT,
     CLASS_HTML_DOCUMENT_FRAGMENT, CLASS_HTML_DOCUMENT_TYPE, CLASS_HTML_ELEMENT, CLASS_HTML_NODE,
     CLASS_HTML_PROCESSING_INSTRUCTION, CLASS_HTML_TEXT, CLASS_XML_DOCUMENT,
 };
-use crate::lexbor::adapter::html::{
-    ForeignNode, HtmlNode, HtmlNodeKey, HtmlNodeMut, HtmlTree, Insertion, NodeType, Place, RawDoc,
-    RawNode,
-};
-use crate::lexbor::fragment::import_with_fixup;
 
 use crate::bridge::string::{RubyData, RubyText};
 use crate::bridge::wrapper::*;
 use crate::child_index::{ChildList, Children, TokenTree};
-use crate::lexbor::adapter::html::{HtmlDoc, HtmlElementMut};
-use crate::lexbor::adapter::AdapterOom;
+use crate::html_dom::html::{HtmlDoc, HtmlElementMut};
+use crate::html_dom::AdapterOom;
 
 /* ---- the document's own bytes and text ---- */
 

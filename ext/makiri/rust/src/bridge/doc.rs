@@ -32,10 +32,10 @@ use crate::bridge::wrapper::{
 use crate::bridge::xml::doc_of;
 use crate::bridge::xml::xml_node_document;
 use crate::bridge::xml::{xml_mut_result, xml_node_unwrap};
-use crate::lexbor::adapter::cross_import::cross_xml_to_html;
-use crate::lexbor::adapter::html::{RawDoc, RawNode};
-use crate::lexbor::adapter::post_parse::{empty_html_document, parse_html, HtmlParseError};
-use crate::lexbor::adapter::tree_guard::{DepthLimit, GuardStop, MAX_SELECT_OPTIONS};
+use crate::html_dom::cross_import::cross_xml_to_html;
+use crate::html_dom::html::{RawDoc, RawNode};
+use crate::html_dom::post_parse::{empty_html_document, parse_html, HtmlParseError};
+use crate::html_dom::tree_guard::{DepthLimit, GuardStop, MAX_SELECT_OPTIONS};
 
 /* ------------------------------------------------------------------ *
  * parsing                                                            *
@@ -75,7 +75,7 @@ pub fn tree_depth_error(limit: DepthLimit) -> Error {
 ///
 /// The Ruby-level `Document.parse` coerces `source` to a String (and reads IO)
 /// before calling this. Source locations for `Node#line` are always tracked.
-/// A tree deeper than `limit` fails the parse (see `lexbor::adapter::tree_guard`).
+/// A tree deeper than `limit` fails the parse (see `html_dom::tree_guard`).
 pub fn parse_document(source: Value, limit: DepthLimit) -> Result<Value, Error> {
     let s = source.to_r_string()?;
     /* Honour the input's encoding: UTF-8/US-ASCII/binary pass through,

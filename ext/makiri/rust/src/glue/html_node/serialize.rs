@@ -2,7 +2,7 @@
 //!
 //! Reads the receiver and the `pretty:` option, picks the tree or deep
 //! serializer, and copies the owned bytes into a String. The Lexbor callbacks
-//! and the buffer live in [`crate::lexbor::serialize`], which does not know
+//! and the buffer live in [`crate::html_dom::serialize`], which does not know
 //! about Ruby.
 
 #![forbid(unsafe_code)]
@@ -12,9 +12,9 @@ use magnus::{method, prelude::*, Error, RString, Ruby, Value};
 use super::HtmlSelf;
 use crate::bridge::ruby::makiri_error;
 use crate::glue::kwargs::Kwargs;
+use crate::html_dom::html::{NodeType, RawNode};
+use crate::html_dom::serialize::serialize;
 use crate::init::MOD_HTML_NODE_METHODS;
-use crate::lexbor::adapter::html::{NodeType, RawNode};
-use crate::lexbor::serialize::serialize;
 
 /// The optional `pretty:` keyword.
 fn pretty_opt(ruby: &Ruby, args: &[Value]) -> Result<bool, Error> {

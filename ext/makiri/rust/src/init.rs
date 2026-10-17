@@ -244,7 +244,7 @@ fn panic_probe(ruby: &Ruby, kind: i64) -> Result<(), Error> {
              * parse runs: the hook latches it and stops the parse, the parse
              * re-raises it, and `entry` makes it `Makiri::InternalError`. */
             return crate::bridge::ruby::entry(|| -> Result<(), Error> {
-                crate::lexbor::adapter::post_parse::parse_with_panicking_hook();
+                crate::html_dom::post_parse::parse_with_panicking_hook();
                 Ok(())
             });
         }

@@ -138,6 +138,11 @@ pub mod glue;
 #[cfg(feature = "lexbor")]
 pub mod lexbor;
 
+/// The HTML DOM as the rest of the crate reaches it: one path, whichever
+/// implementation the build carries (today Lexbor's).
+#[cfg(feature = "lexbor")]
+pub mod html_dom;
+
 /// The XML reader and its arena. Ruby-free and Lexbor-free.
 pub mod xml;
 

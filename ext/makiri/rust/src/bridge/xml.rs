@@ -30,13 +30,13 @@ use crate::bridge::wrapper::{
 };
 use crate::bridge::xml_decode::xml_decode_input_value;
 use crate::child_index::{ChildList, Children, TokenTree};
+use crate::html_dom::cross_import::cross_html_to_xml;
 use crate::init::{CLASS_NODE, CLASS_XML_DOCUMENT, EXC_XML_LIMIT_EXCEEDED, EXC_XML_SYNTAX_ERROR};
 use crate::init::{
     CLASS_XML_ATTR, CLASS_XML_CDATA_SECTION, CLASS_XML_COMMENT, CLASS_XML_DOCUMENT_FRAGMENT,
     CLASS_XML_DOCUMENT_TYPE, CLASS_XML_ELEMENT, CLASS_XML_NODE, CLASS_XML_PROCESSING_INSTRUCTION,
     CLASS_XML_TEXT,
 };
-use crate::lexbor::adapter::cross_import::cross_html_to_xml;
 use crate::node_type::NodeType as CrateKind;
 use crate::xml::attr_key::AttrKey;
 use crate::xml::model::{ArenaKind, Document as XmlDoc, MutError, NodeId, ParseError, ParseLimits};

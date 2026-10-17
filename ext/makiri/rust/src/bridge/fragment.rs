@@ -5,7 +5,7 @@
 //! [`HtmlSource`] (converted under protect, its encoding honoured), the parse
 //! into a [`TransientFragment`] that owns Lexbor's throwaway document, and
 //! nothing in the target document changes until the parse has succeeded. The
-//! Lexbor parsers and the import primitives are [`crate::lexbor::fragment`]'s;
+//! Lexbor parsers and the import primitives are [`crate::html_dom::fragment`]'s;
 //! reading the Ruby arguments is the glue's.
 
 #![allow(unsafe_code)]
@@ -18,12 +18,12 @@ use crate::bridge::html::{with_arg_node, wrap_html_node};
 use crate::bridge::ruby::{is_kind_of, string_of};
 use crate::bridge::string::{ruby_verified_text, HtmlSource};
 use crate::bridge::wrapper::{ensure_document_mutable, html_doc_unwrap, DocKind, DocumentShell};
+pub use crate::html_dom::fragment::FragmentTag;
+use crate::html_dom::fragment::{FragmentContext, FragmentError, TransientFragment};
+use crate::html_dom::html::{HtmlDoc, HtmlNode, HtmlNodeMut, Place, RawDoc, RawNode};
+use crate::html_dom::post_parse::parse_html;
+pub use crate::html_dom::tree_guard::DepthLimit;
 use crate::init::CLASS_NODE;
-use crate::lexbor::adapter::html::{HtmlDoc, HtmlNode, HtmlNodeMut, Place, RawDoc, RawNode};
-use crate::lexbor::adapter::post_parse::parse_html;
-pub use crate::lexbor::adapter::tree_guard::DepthLimit;
-pub use crate::lexbor::fragment::FragmentTag;
-use crate::lexbor::fragment::{FragmentContext, FragmentError, TransientFragment};
 
 /// A fragment-parse failure as `Makiri::Error`.
 fn fragment_error(e: FragmentError, limit: DepthLimit) -> Error {
