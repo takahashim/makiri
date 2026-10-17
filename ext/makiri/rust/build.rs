@@ -244,6 +244,29 @@ fn main() {
         .allowlist_function("lxb_css_parser_status_noi")
         .allowlist_function("lxb_css_parser_memory_set_noi")
         .allowlist_function("lxb_css_parser_selectors_set_noi")
+        // The tokenizer on its own, for the parser conformance harness only
+        // (`lexbor::conformance_tests`): the html5lib tokenizer tests drive it
+        // from a given initial state with no tree builder behind it. Nothing
+        // that ships calls these, so they add declarations and no link.
+        .allowlist_function("lxb_html_tokenizer_create")
+        .allowlist_function("lxb_html_tokenizer_init")
+        .allowlist_function("lxb_html_tokenizer_destroy")
+        .allowlist_function("lxb_html_tokenizer_tags_make")
+        .allowlist_function("lxb_html_tokenizer_tags_destroy")
+        .allowlist_function("lxb_html_tokenizer_attrs_make")
+        .allowlist_function("lxb_html_tokenizer_attrs_destroy")
+        .allowlist_function("lxb_html_tokenizer_begin")
+        .allowlist_function("lxb_html_tokenizer_chunk")
+        .allowlist_function("lxb_html_tokenizer_end")
+        .allowlist_function("lxb_html_tokenizer_state_data_before")
+        .allowlist_function("lxb_html_tokenizer_state_plaintext_before")
+        .allowlist_function("lxb_html_tokenizer_state_rcdata_before")
+        .allowlist_function("lxb_html_tokenizer_state_rawtext_before")
+        .allowlist_function("lxb_html_tokenizer_state_script_data_before")
+        .allowlist_function("lxb_html_tokenizer_state_cdata_section_before")
+        .allowlist_function("lxb_html_token_attr_name")
+        .allowlist_function("lxb_tag_name_by_id_noi")
+        .allowlist_type("lxb_dom_attr_id_enum_t")
         // The fragment parse, CHUNKED - begin/process/end rather than the
         // one-shot `lxb_html_parse_fragment*`, because only between `begin` and
         // `process` can the tree-depth guard be installed on the tokenizer

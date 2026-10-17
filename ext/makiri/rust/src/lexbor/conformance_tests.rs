@@ -247,3 +247,333 @@ fn wpt_tree_construction() {
         "a listed test was not found in the data"
     );
 }
+
+/* ------------------------------------------------------------------ *
+ * the tokenizer on its own                                            *
+ * ------------------------------------------------------------------ */
+
+use crate::caught::PanicLatch;
+use crate::conformance::tokenizer_dir;
+use crate::conformance::tokens::{self as tok, State, Token, TokenizerTest};
+use crate::lexbor::abi as lxb;
+use core::ffi::c_void;
+
+/// What the token callback fills.
+struct Collect {
+    tokens: Vec<Token>,
+    panic: PanicLatch,
+}
+
+/// `len` bytes at `p`, or nothing for a null pointer.
+///
+/// # Safety
+/// A non-null `p` points at `len` readable bytes for the returned lifetime.
+unsafe fn slice<'a>(p: *const u8, len: usize) -> &'a [u8] {
+    if p.is_null() || len == 0 {
+        &[]
+    } else {
+        // SAFETY: the caller's contract.
+        unsafe { core::slice::from_raw_parts(p, len) }
+    }
+}
+
+/// `[start, end)` of a token's text.
+///
+/// # Safety
+/// Both null, or both into one live buffer with `start <= end`.
+unsafe fn span<'a>(start: *const u8, end: *const u8) -> &'a [u8] {
+    if start.is_null() {
+        return &[];
+    }
+    // SAFETY: the caller's contract.
+    unsafe { slice(start, end.offset_from(start) as usize) }
+}
+
+/// A Lexbor token as an html5lib one; `None` for end-of-file.
+///
+/// # Safety
+/// `token` is the tokenizer's current token, inside its token-done callback.
+unsafe fn read_token(token: *const lxb::lxb_html_token_t) -> Option<Token> {
+    use lxb::*;
+    // SAFETY: the function's contract; every pointer read below is the
+    // token's own, live for the callback.
+    unsafe {
+        let t = &*token;
+        let text = span(t.text_start, t.text_end);
+        let tag = t.tag_id;
+        let tag_is = |id: lxb_tag_id_enum_t| tag == id as lxb_tag_id_t;
+        if tag_is(lxb_tag_id_enum_t_LXB_TAG__END_OF_FILE) {
+            return None;
+        }
+        if tag_is(lxb_tag_id_enum_t_LXB_TAG__TEXT) {
+            return Some(Token::Character(text.to_vec()));
+        }
+        if tag_is(lxb_tag_id_enum_t_LXB_TAG__EM_COMMENT) {
+            return Some(Token::Comment(text.to_vec()));
+        }
+        if tag_is(lxb_tag_id_enum_t_LXB_TAG__PROCESSINGINSTRUCTION) {
+            /* `null_count` is the target's length here (see `lxb_html_token_t`). */
+            let at = t.null_count.min(text.len());
+            return Some(Token::Pi {
+                target: text[..at].to_vec(),
+                data: text[at..].to_vec(),
+            });
+        }
+        let attr_name = |a: *mut lxb_html_token_attr_t| {
+            let mut len = 0;
+            let p = lxb_html_token_attr_name(a, &mut len);
+            slice(p, len).to_vec()
+        };
+        let attr_value = |a: &lxb_html_token_attr_t| slice(a.value, a.value_size).to_vec();
+        /* A DOCTYPE id Lexbor saw the keyword for but no identifier after
+         * keeps a null value: missing, as Lexbor's own harness reads it. */
+        let id_value = |a: &lxb_html_token_attr_t| (!a.value.is_null()).then(|| attr_value(a));
+        if tag_is(lxb_tag_id_enum_t_LXB_TAG__EM_DOCTYPE) {
+            /* As `lxb_html_token_doctype_parse` reads it: the name, then an
+             * optional PUBLIC or SYSTEM attribute, then the system id. */
+            let first = t.attr_first;
+            let name =
+                (!first.is_null() && !(*first).name_begin.is_null()).then(|| attr_name(first));
+            let (mut public_id, mut system_id) = (None, None);
+            let second = if first.is_null() {
+                first
+            } else {
+                (*first).next
+            };
+            if !second.is_null() {
+                let id = (*(*second).name).attr_id;
+                if id == lxb_dom_attr_id_enum_t_LXB_DOM_ATTR_PUBLIC as usize {
+                    public_id = id_value(&*second);
+                    let third = (*second).next;
+                    if !third.is_null() {
+                        system_id = id_value(&*third);
+                    }
+                } else if id == lxb_dom_attr_id_enum_t_LXB_DOM_ATTR_SYSTEM as usize {
+                    system_id = id_value(&*second);
+                }
+            }
+            let force_quirks = t.type_
+                & lxb_html_token_type_LXB_HTML_TOKEN_TYPE_FORCE_QUIRKS as lxb_html_token_type_t
+                != 0;
+            return Some(Token::Doctype {
+                name,
+                public_id,
+                system_id,
+                force_quirks,
+            });
+        }
+        let mut len = 0;
+        let name = slice(lxb_tag_name_by_id_noi(tag, &mut len), len).to_vec();
+        if t.type_ & lxb_html_token_type_LXB_HTML_TOKEN_TYPE_CLOSE as lxb_html_token_type_t != 0 {
+            return Some(Token::EndTag { name });
+        }
+        let mut attrs = Vec::new();
+        let mut a = t.attr_first;
+        while !a.is_null() {
+            attrs.push((attr_name(a), attr_value(&*a)));
+            a = (*a).next;
+        }
+        Some(Token::StartTag {
+            name,
+            attrs,
+            self_closing: t.type_
+                & lxb_html_token_type_LXB_HTML_TOKEN_TYPE_CLOSE_SELF as lxb_html_token_type_t
+                != 0,
+        })
+    }
+}
+
+/// # Safety
+/// Called by Lexbor's tokenizer only, with `ctx` the live [`Collect`]
+/// [`tokenize`] registered.
+unsafe extern "C" fn collect_cb(
+    _tkz: *mut lxb::lxb_html_tokenizer_t,
+    token: *mut lxb::lxb_html_token_t,
+    ctx: *mut c_void,
+) -> *mut lxb::lxb_html_token_t {
+    // SAFETY: the function's contract.
+    let c = unsafe { &mut *(ctx as *mut Collect) };
+    if c.panic.caught() {
+        return core::ptr::null_mut();
+    }
+    let Collect { tokens, panic } = c;
+    panic.guard(core::ptr::null_mut(), || {
+        // SAFETY: inside the callback, on the tokenizer's current token.
+        if let Some(t) = unsafe { read_token(token) } {
+            tokens.push(t);
+        }
+        /* The same token back: the tokenizer cleans and reuses it. */
+        token
+    })
+}
+
+/// Owns a standalone tokenizer and its name tables.
+struct Tkz(*mut lxb::lxb_html_tokenizer_t);
+
+impl Drop for Tkz {
+    fn drop(&mut self) {
+        // SAFETY: made by `tokenize`, destroyed once, in Lexbor's own order.
+        unsafe {
+            lxb::lxb_html_tokenizer_tags_destroy(self.0);
+            lxb::lxb_html_tokenizer_attrs_destroy(self.0);
+            lxb::lxb_html_tokenizer_destroy(self.0);
+        }
+    }
+}
+
+/// Run Lexbor's tokenizer alone over `input` from `state`, as Lexbor's own
+/// html5lib harness sets it up, with `last_start_tag` as the tag an end tag
+/// must match to be appropriate.
+pub fn tokenize(input: &[u8], state: State, last_start_tag: Option<&[u8]>) -> Vec<Token> {
+    use lxb::*;
+    let mut collect = Collect {
+        tokens: Vec::new(),
+        panic: PanicLatch::default(),
+    };
+    // SAFETY: a tokenizer this function owns (`Tkz`), driven start to end
+    // here; the callback's context is `collect`, which outlives the run.
+    unsafe {
+        let tkz = Tkz(lxb_html_tokenizer_create());
+        assert!(!tkz.0.is_null(), "Lexbor makes a tokenizer");
+        assert_eq!(lxb_html_tokenizer_init(tkz.0), 0, "tokenizer init");
+        assert_eq!(lxb_html_tokenizer_tags_make(tkz.0, 128), 0, "tag table");
+        assert_eq!(lxb_html_tokenizer_attrs_make(tkz.0, 128), 0, "attr table");
+        lxb_html_tokenizer_callback_token_done_set_noi(
+            tkz.0,
+            Some(collect_cb),
+            &mut collect as *mut Collect as *mut c_void,
+        );
+        let last = last_start_tag
+            .map(|n| lxb_tag_id_by_name_noi((*tkz.0).tags, n.as_ptr(), n.len()))
+            .filter(|&id| id != lxb_tag_id_enum_t_LXB_TAG__UNDEF as lxb_tag_id_t);
+        let (f, wants_last): (lxb_html_tokenizer_state_f, bool) = match state {
+            State::Data => (Some(lxb_html_tokenizer_state_data_before), false),
+            State::Plaintext => (Some(lxb_html_tokenizer_state_plaintext_before), false),
+            State::Rcdata => (Some(lxb_html_tokenizer_state_rcdata_before), true),
+            State::Rawtext => (Some(lxb_html_tokenizer_state_rawtext_before), true),
+            State::ScriptData => (Some(lxb_html_tokenizer_state_script_data_before), true),
+            State::CdataSection => (Some(lxb_html_tokenizer_state_cdata_section_before), false),
+        };
+        (*tkz.0).state = f;
+        if let (true, Some(id)) = (wants_last, last) {
+            (*tkz.0).tmp_tag_id = id;
+        }
+        assert_eq!(lxb_html_tokenizer_begin(tkz.0), 0, "tokenizer begin");
+        let st = lxb_html_tokenizer_chunk(tkz.0, input.as_ptr(), input.len());
+        let end = lxb_html_tokenizer_end(tkz.0);
+        drop(tkz);
+        collect.panic.resume();
+        assert_eq!((st, end), (0, 0), "tokenizer status");
+    }
+    collect.tokens
+}
+
+#[test]
+fn tokenizes_from_each_initial_state() {
+    let toks = tokenize(
+        b"<a href='x&amp;y' b>t</a><!--c--><?p q?>",
+        State::Data,
+        None,
+    );
+    assert_eq!(
+        toks,
+        vec![
+            Token::StartTag {
+                name: b"a".to_vec(),
+                attrs: vec![(b"href".to_vec(), b"x&y".to_vec()), (b"b".to_vec(), vec![])],
+                self_closing: false
+            },
+            Token::Character(b"t".to_vec()),
+            Token::EndTag {
+                name: b"a".to_vec()
+            },
+            Token::Comment(b"c".to_vec()),
+            Token::Pi {
+                target: b"p".to_vec(),
+                data: b"q".to_vec()
+            },
+        ]
+    );
+    let raw = tok::coalesce(&tokenize(
+        b"<b>x</title></b>",
+        State::Rcdata,
+        Some(b"title"),
+    ));
+    assert_eq!(
+        raw,
+        vec![
+            Token::Character(b"<b>x".to_vec()),
+            Token::EndTag {
+                name: b"title".to_vec()
+            },
+            /* An appropriate end tag returns the tokenizer to the data state. */
+            Token::EndTag {
+                name: b"b".to_vec()
+            },
+        ]
+    );
+}
+
+/// Every html5lib tokenizer test, through Lexbor's tokenizer, from each of
+/// the test's initial states.
+#[test]
+#[ignore = "needs the fetched html5lib-tests data; run by `rake conformance:parser`"]
+fn html5lib_tokenizer() {
+    let dir = tokenizer_dir();
+    let tests: Vec<TokenizerTest> = tok::read_dir(&dir).unwrap_or_else(|| {
+        panic!(
+            "no .test files in {} - run `rake conformance:parser`",
+            dir.display()
+        )
+    });
+    let known = known::load();
+    let (mut pass, mut known_hit, mut skipped) = (0, 0, 0);
+    let mut failures = Vec::new();
+    let mut now_passing = Vec::new();
+    for t in &tests {
+        if t.unrepresentable {
+            skipped += 1;
+            continue;
+        }
+        let mut bad = Vec::new();
+        for &state in &t.states {
+            let actual = tokenize(&t.input, state, t.last_start_tag.as_deref());
+            if !tok::html5lib_eq(&actual, &t.output) {
+                bad.push(format!(
+                    "  {state:?}:\n    expected {:?}\n    actual   {:?}",
+                    tok::coalesce(&t.output),
+                    tok::coalesce(&actual)
+                ));
+            }
+        }
+        match (bad.is_empty(), known.get(&t.key())) {
+            (true, None) => pass += 1,
+            (true, Some(id)) => now_passing.push(format!("{} ({id})", t.key())),
+            (false, Some(_)) => known_hit += 1,
+            (false, None) => failures.push(format!(
+                "{} {:?}\n  input {:?}\n{}",
+                t.key(),
+                t.description,
+                String::from_utf8_lossy(&t.input),
+                bad.join("\n")
+            )),
+        }
+    }
+    eprintln!(
+        "html5lib tokenizer through Lexbor: {} tests, {pass} pass, {known_hit} known, \
+         {skipped} unrepresentable skipped, {} fail, {} now passing",
+        tests.len(),
+        failures.len(),
+        now_passing.len()
+    );
+    assert!(
+        failures.is_empty(),
+        "{} failing:\n{}",
+        failures.len(),
+        failures.join("\n\n")
+    );
+    assert!(
+        now_passing.is_empty(),
+        "listed as known but now passing - remove from the list and the table: {now_passing:?}"
+    );
+}
