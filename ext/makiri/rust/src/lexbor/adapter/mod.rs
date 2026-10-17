@@ -10,6 +10,8 @@
 //! tree-depth guard, and cross-import.
 
 pub mod arena_bytes;
+/// A Lexbor document copied into the parser port's arena.
+pub mod arena_copy;
 pub mod cross_import;
 pub mod dom_index;
 pub mod html;

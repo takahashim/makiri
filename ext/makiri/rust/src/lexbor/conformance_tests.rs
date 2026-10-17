@@ -1006,3 +1006,84 @@ fn tokenizer_profile_target_lexbor() {
         }
     }
 }
+
+/* ------------------------------------------------------------------ *
+ * the arena, filled from Lexbor                                       *
+ * ------------------------------------------------------------------ */
+
+/// Lexbor's tree and its copy in the arena, read the same way.
+fn lexbor_and_arena(input: &[u8]) -> (Tree, Tree) {
+    let parsed = parse_html(input, false, DepthLimit::UNLIMITED).expect("Lexbor parses a document");
+    // SAFETY: `parsed` owns the document and outlives every handle read here.
+    let doc = unsafe { parsed.raw_doc().as_doc() };
+    let arena = crate::lexbor::adapter::arena_copy::copy_document(doc).expect("the copy");
+    (
+        parse_document(input),
+        crate::html::dom::conformance::read_document(&arena),
+    )
+}
+
+#[test]
+fn the_arena_copy_is_the_same_tree() {
+    let (l, a) = lexbor_and_arena(
+        b"<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01//EN\"><title>t</title>\
+          <svg viewBox='0 0 1 1'><foreignObject><p id=x class=y>p</p></foreignObject>\
+          <a xlink:href=z></a></svg><math><mi>x</mi></math><template><b>t</b></template>\
+          <!--c--><?pi d?>",
+    );
+    assert_eq!(l, a, "\n{}\n---\n{}", tree::full(&l), tree::full(&a));
+}
+
+/// Every WPT document input, copied into the arena, reads back as Lexbor's.
+#[test]
+#[ignore = "needs the fetched WPT data; run by `rake conformance:parser`"]
+fn the_arena_copy_matches_lexbor_on_wpt_inputs() {
+    let tests = dat::read_dir(&tree_construction_dir()).expect("WPT data");
+    let mut diffs = Vec::new();
+    for t in tests
+        .iter()
+        .filter(|t| t.fragment.is_none() && t.scripting != Scripting::On)
+    {
+        let (l, a) = lexbor_and_arena(&t.data);
+        if l != a {
+            diffs.push(format!(
+                "{}\n{}\n---\n{}",
+                t.key(),
+                tree::full(&l),
+                tree::full(&a)
+            ));
+        }
+    }
+    assert!(
+        diffs.is_empty(),
+        "{} differ:\n{}",
+        diffs.len(),
+        diffs
+            .iter()
+            .take(3)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    );
+}
+
+/// The bench document's footprint in Lexbor and in the arena copy.
+#[test]
+#[ignore = "a measurement, not a check"]
+fn arena_footprint() {
+    let input = bench_html(20_000);
+    let parsed = parse_html(&input, false, DepthLimit::UNLIMITED).expect("parses");
+    // SAFETY: `parsed` owns the document for the reads below.
+    let doc = unsafe { parsed.raw_doc().as_doc() };
+    let lexbor = crate::lexbor::adapter::arena_bytes::document_size(doc);
+    let arena = crate::lexbor::adapter::arena_copy::copy_document(doc).expect("copy");
+    let nodes = arena.node_count();
+    eprintln!(
+        "{} bytes in, {nodes} nodes (attributes included): lexbor {} B ({:.0} B/node), arena {} B ({:.0} B/node)",
+        input.len(),
+        lexbor.live,
+        lexbor.live as f64 / nodes as f64,
+        arena.owned_bytes(),
+        arena.owned_bytes() as f64 / nodes as f64
+    );
+}
