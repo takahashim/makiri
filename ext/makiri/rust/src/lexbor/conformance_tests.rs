@@ -1034,6 +1034,107 @@ fn the_arena_copy_is_the_same_tree() {
     assert_eq!(l, a, "\n{}\n---\n{}", tree::full(&l), tree::full(&a));
 }
 
+/// Every node of the arena copy carries Lexbor's own name fields -
+/// `local_name`, `ns`, whether there is a prefix - for elements, attributes
+/// and every other kind alike, template contents included.
+fn assert_same_name_fields(input: &[u8]) {
+    use crate::html::dom::{Document, NodeId};
+    use crate::lexbor::adapter::html::HtmlNode;
+    let parsed = parse_html(input, false, DepthLimit::UNLIMITED).expect("Lexbor parses a document");
+    // SAFETY: `parsed` owns the document and outlives every handle read here.
+    let doc = unsafe { parsed.raw_doc().as_doc() };
+    let arena = crate::lexbor::adapter::arena_copy::copy_document(doc).expect("the copy");
+    fn same(l: HtmlNode<'_>, a: &Document, n: NodeId) {
+        let what = || {
+            format!(
+                "{:?} {:?}",
+                l.node_type(),
+                String::from_utf8_lossy(l.node_name())
+            )
+        };
+        assert_eq!(l.node_type(), a.kind(n), "{}", what());
+        assert_eq!(l.ns_uri(), a.ns_uri(a.ns(n)), "ns of {}", what());
+        assert_eq!(l.has_prefix(), a.prefix(n) != 0, "prefix of {}", what());
+        match l.element() {
+            Some(e) => {
+                let local = a.names.tag_name(a.local(n) as usize).unwrap_or_default();
+                assert!(
+                    local.eq_ignore_ascii_case(e.local_name()),
+                    "local of {}",
+                    what()
+                );
+                let (mut la, mut aa) = (e.attrs(), a.first_attr(n));
+                for x in la.by_ref() {
+                    let y = aa.expect("as many attributes");
+                    assert_eq!(
+                        x.node().ns_uri(),
+                        a.ns_uri(a.ns(y)),
+                        "attr ns on {}",
+                        what()
+                    );
+                    assert_eq!(
+                        x.node().has_prefix(),
+                        a.prefix(y) != 0,
+                        "attr prefix on {}",
+                        what()
+                    );
+                    let name = a.names.attr_name(a.local(y) as usize).unwrap_or_default();
+                    assert_eq!(x.local_name(), name, "attr local on {}", what());
+                    aa = a.next(y);
+                }
+                assert!(aa.is_none(), "as many attributes on {}", what());
+            }
+            None => assert_eq!(
+                l.tag_id().and_then(|t| t.static_index()).unwrap_or(0),
+                a.local(n) as usize,
+                "local of {}",
+                what()
+            ),
+        }
+        if let Some(c) = l.template_content() {
+            same(c, a, a.template_content(n).expect("template contents"));
+        }
+        let (mut lc, mut ac) = (l.first_child(), a.first_child(n));
+        while let Some(x) = lc {
+            let y = ac.expect("as many children");
+            same(x, a, y);
+            lc = x.next();
+            ac = a.next(y);
+        }
+        assert!(ac.is_none(), "as many children of {}", what());
+    }
+    let mut c = doc.as_node().first_child();
+    let mut d = arena.first_child(NodeId::DOCUMENT);
+    while let Some(x) = c {
+        let y = d.expect("as many top-level nodes");
+        same(x, &arena, y);
+        c = x.next();
+        d = arena.next(y);
+    }
+}
+
+#[test]
+fn the_arena_copy_keeps_lexbor_name_fields() {
+    assert_same_name_fields(
+        b"<!DOCTYPE html><title>t</title><svg viewBox='0 0 1 1' xmlns:q=u q:r=s>\
+          <foreignObject><p id=x class=y>p</p></foreignObject><a xlink:href=z></a></svg>\
+          <math><mi definitionURL=d>x</mi></math><template><b>t</b><my-el x=1></my-el></template>\
+          <!--c--><?pi d?>",
+    );
+}
+
+#[test]
+#[ignore = "needs the fetched WPT data; run by `rake conformance:parser`"]
+fn the_arena_copy_keeps_lexbor_name_fields_on_wpt_inputs() {
+    let tests = dat::read_dir(&tree_construction_dir()).expect("WPT data");
+    for t in tests
+        .iter()
+        .filter(|t| t.fragment.is_none() && t.scripting != Scripting::On)
+    {
+        assert_same_name_fields(&t.data);
+    }
+}
+
 /// Every WPT document input, copied into the arena, reads back as Lexbor's.
 #[test]
 #[ignore = "needs the fetched WPT data; run by `rake conformance:parser`"]

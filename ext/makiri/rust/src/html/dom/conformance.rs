@@ -53,10 +53,9 @@ fn children(d: &Document, n: NodeId) -> Vec<Node> {
 fn read(d: &Document, n: NodeId) -> Node {
     match d.kind(n) {
         NodeType::Element => {
-            let e = d.element(n).expect("an element's data");
-            let local = d.names.tag_name(e.tag).unwrap_or_default();
+            let local = d.names.tag_name(d.local(n) as usize).unwrap_or_default();
             let qualified = d.element_written(n).unwrap_or(local);
-            let prefix = if e.prefix != 0 {
+            let prefix = if d.prefix(n) != 0 {
                 prefix_of(qualified)
             } else {
                 None
@@ -64,14 +63,17 @@ fn read(d: &Document, n: NodeId) -> Node {
             let mut attrs = Vec::new();
             let mut a = d.first_attr(n);
             while let Some(x) = a {
-                let ad = d.attr(x).expect("an attribute's data");
-                let alocal = d.names.attr_name(ad.local).unwrap_or_default();
+                let alocal = d.names.attr_name(d.local(x) as usize).unwrap_or_default();
                 let aq = d.attr_written(x).unwrap_or(alocal);
                 let value = d.attr_value(x).unwrap_or_default().to_vec();
-                attrs.push(match d.ns_uri(ad.ns) {
+                attrs.push(match d.ns_uri(d.attr_own_ns(x)) {
                     Some(uri) => Attr {
                         ns: Some(uri.to_vec()),
-                        prefix: if ad.prefix != 0 { prefix_of(aq) } else { None },
+                        prefix: if d.prefix(x) != 0 {
+                            prefix_of(aq)
+                        } else {
+                            None
+                        },
                         local: tail(aq, alocal).to_vec(),
                         value,
                     },
@@ -85,7 +87,7 @@ fn read(d: &Document, n: NodeId) -> Node {
                 a = d.next(x);
             }
             Node::Element(Element {
-                ns: d.ns_uri(e.ns).map(<[u8]>::to_vec),
+                ns: d.ns_uri(d.ns(n)).map(<[u8]>::to_vec),
                 prefix,
                 local: tail(qualified, local).to_vec(),
                 attrs,

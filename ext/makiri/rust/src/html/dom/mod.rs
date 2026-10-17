@@ -98,6 +98,17 @@ enum Payload {
 #[derive(Clone, Copy, Debug)]
 struct Node {
     kind: NodeType,
+    /// Lexbor's `node.local_name`, for every kind of node: an element's tag
+    /// id, an attribute's local-name id, the special tag id Lexbor's parser
+    /// gives a text, comment or doctype node (`#text`, `!--`, ...), 0 where
+    /// Lexbor leaves it unset.
+    local: u32,
+    /// Lexbor's `node.ns`: the namespace, 0 for none. An attribute in no
+    /// namespace of its own carries its element's (see
+    /// [`Document::attr_own_ns`]).
+    ns: NsIndex,
+    /// Lexbor's `node.prefix`, 0 for none.
+    prefix: PrefixIndex,
     parent: Option<NodeId>,
     first_child: Option<NodeId>,
     last_child: Option<NodeId>,
@@ -112,12 +123,6 @@ struct Node {
 /// An element's own fields.
 #[derive(Clone, Copy, Debug)]
 pub struct ElementData {
-    /// The lower-cased local name's tag id.
-    pub tag: usize,
-    /// The namespace, 0 for none.
-    pub ns: NsIndex,
-    /// The prefix, 0 for none.
-    pub prefix: PrefixIndex,
     /// The qualified name as written, when Lexbor would keep one.
     written: Option<Span>,
     first_attr: Option<NodeId>,
@@ -133,11 +138,6 @@ pub struct ElementData {
 /// An attribute's own fields.
 #[derive(Clone, Copy, Debug)]
 pub struct AttrData {
-    /// The lower-cased local name's attribute id.
-    pub local: usize,
-    /// The attribute's own namespace, 0 for none.
-    pub ns: NsIndex,
-    pub prefix: PrefixIndex,
     written: Option<Span>,
     value: Span,
 }
@@ -178,6 +178,9 @@ impl Document {
         let mut nodes: Vec<Node> = try_vec_with_capacity(16).ok_or(DomOom)?;
         nodes.push(Node {
             kind: NodeType::Document,
+            local: res::TAG__DOCUMENT as u32,
+            ns: 0,
+            prefix: 0,
             parent: None,
             first_child: None,
             last_child: None,
@@ -237,6 +240,9 @@ impl Document {
         let id = NodeId::from_index(self.nodes.len()).ok_or(DomOom)?;
         oom!(self.nodes.falloc_push(Node {
             kind,
+            local: 0,
+            ns: 0,
+            prefix: 0,
             parent: None,
             first_child: None,
             last_child: None,
@@ -358,10 +364,8 @@ impl Document {
         let idx = u32::try_from(self.elements.len()).map_err(|_| DomOom)?;
         oom!(self.elements.falloc_reserve(1));
         let id = self.push(NodeType::Element, Payload::Element(idx))?;
+        self.set_names(id, tag, ns, prefix);
         self.elements.push(ElementData {
-            tag,
-            ns,
-            prefix,
             written,
             first_attr: None,
             last_attr: None,
@@ -389,13 +393,8 @@ impl Document {
         let idx = u32::try_from(self.attrs.len()).map_err(|_| DomOom)?;
         oom!(self.attrs.falloc_reserve(1));
         let id = self.push(NodeType::Attribute, Payload::Attr(idx))?;
-        self.attrs.push(AttrData {
-            local,
-            ns,
-            prefix,
-            written,
-            value,
-        });
+        self.set_names(id, local, ns, prefix);
+        self.attrs.push(AttrData { written, value });
         Ok(id)
     }
 
@@ -438,6 +437,15 @@ impl Document {
     /// A new, empty DocumentFragment, hosted by `host` (a template) or none.
     pub fn create_fragment(&mut self, host: Option<NodeId>) -> Result<NodeId, DomOom> {
         self.push(NodeType::DocumentFragment, Payload::Fragment { host })
+    }
+
+    /// Set a node's Lexbor name fields: `local_name`, `ns`, `prefix`.
+    pub fn set_names(&mut self, n: NodeId, local: usize, ns: NsIndex, prefix: PrefixIndex) {
+        if let Some(node) = self.node_mut(n) {
+            node.local = u32::try_from(local).unwrap_or(0);
+            node.ns = ns;
+            node.prefix = prefix;
+        }
     }
 
     /// Give the template element `el` its contents fragment.
@@ -590,13 +598,13 @@ impl Document {
                 }
             }
         }
-        let (local, ns) = self.attr(attr).map_or((0, 0), |a| (a.local, a.ns));
+        let (local, ns) = (self.local(attr), self.own_ns_if_on(attr, el));
         if let Some(e) = self.element_mut(el) {
             e.last_attr = Some(attr);
-            if ns == 0 && local == res::ATTR_ID && e.id_attr.is_none() {
+            if ns == 0 && local == res::ATTR_ID as u32 && e.id_attr.is_none() {
                 e.id_attr = Some(attr);
             }
-            if ns == 0 && local == res::ATTR_CLASS && e.class_attr.is_none() {
+            if ns == 0 && local == res::ATTR_CLASS as u32 && e.class_attr.is_none() {
                 e.class_attr = Some(attr);
             }
         }
@@ -760,6 +768,43 @@ impl Document {
     pub fn attr_written(&self, n: NodeId) -> Option<&[u8]> {
         self.attr(n)?.written.map(|s| self.bytes_of(s))
     }
+    /// An attribute's OWN namespace (0 for none), as the adapter's
+    /// `HtmlAttr::own_ns` decides it: the stored one when the attribute has a
+    /// prefix or differs from its element's, none otherwise.
+    pub fn attr_own_ns(&self, n: NodeId) -> NsIndex {
+        match self.parent(n) {
+            Some(el) => self.own_ns_if_on(n, el),
+            None if self.prefix(n) != 0 => self.ns(n),
+            None => 0,
+        }
+    }
+
+    /// [`attr_own_ns`](Self::attr_own_ns) of `attr` as if on `el`.
+    fn own_ns_if_on(&self, attr: NodeId, el: NodeId) -> NsIndex {
+        let ns = self.ns(attr);
+        if self.prefix(attr) != 0 || self.ns(el) != ns {
+            ns
+        } else {
+            0
+        }
+    }
+
+    /// Lexbor's `local_name` of any node (see the field).
+    #[inline]
+    pub fn local(&self, n: NodeId) -> u32 {
+        self.node(n).map_or(0, |x| x.local)
+    }
+    /// Lexbor's `ns` of any node, 0 for none.
+    #[inline]
+    pub fn ns(&self, n: NodeId) -> NsIndex {
+        self.node(n).map_or(0, |x| x.ns)
+    }
+    /// Lexbor's `prefix` of any node, 0 for none.
+    #[inline]
+    pub fn prefix(&self, n: NodeId) -> PrefixIndex {
+        self.node(n).map_or(0, |x| x.prefix)
+    }
+
     /// An attribute's value.
     pub fn attr_value(&self, n: NodeId) -> Option<&[u8]> {
         self.attr(n).map(|a| self.bytes_of(a.value))

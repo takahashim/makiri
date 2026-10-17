@@ -44,6 +44,7 @@ pub fn copy_children(doc: &mut Document, src: HtmlNode<'_>, dst: NodeId) -> Resu
         doc.append_child(parent, made);
         if let Some(contents) = s.template_content() {
             let frag = doc.create_fragment(Some(made))?;
+            copy_names(doc, contents, frag)?;
             doc.set_template_content(made, frag);
             stack
                 .falloc_push((contents.first_child(), frag))
@@ -58,19 +59,19 @@ pub fn copy_children(doc: &mut Document, src: HtmlNode<'_>, dst: NodeId) -> Resu
     Ok(())
 }
 
-/// One node, detached, without its children.
+/// One node, detached, without its children, with Lexbor's name fields.
 fn copy_one(doc: &mut Document, s: HtmlNode<'_>) -> Result<NodeId, DomOom> {
     let made = match s.node_type() {
         NodeType::Element => {
+            let ns = match s.ns_uri() {
+                Some(uri) => doc.intern_ns(uri)?.unwrap_or(0),
+                None => 0,
+            };
             let el = s.element().ok_or(DomOom)?;
             let tag = doc
                 .names
                 .tag_append_lower(el.local_name())
                 .map_err(|_| DomOom)?;
-            let ns = match s.ns_uri() {
-                Some(uri) => doc.intern_ns(uri)?.unwrap_or(0),
-                None => 0,
-            };
             let qname = el.qualified_name();
             let prefix = match (s.has_prefix(), prefix_of(qname)) {
                 (true, Some(p)) => doc.intern_prefix(p)?.unwrap_or(0),
@@ -93,25 +94,45 @@ fn copy_one(doc: &mut Document, s: HtmlNode<'_>) -> Result<NodeId, DomOom> {
             doc.set_shortcuts(id, new_id, new_class);
             id
         }
-        NodeType::Text | NodeType::Comment | NodeType::CDataSection => {
-            doc.create_data(s.node_type(), s.data().unwrap_or_default())?
+        kind => {
+            let id = match kind {
+                NodeType::Text | NodeType::Comment | NodeType::CDataSection => {
+                    doc.create_data(kind, s.data().unwrap_or_default())?
+                }
+                NodeType::Pi => doc.create_pi(
+                    s.pi_target().unwrap_or_default(),
+                    s.data().unwrap_or_default(),
+                )?,
+                NodeType::DocumentType => doc.create_doctype(
+                    s.node_name(),
+                    s.doctype_public_id().unwrap_or_default(),
+                    s.doctype_system_id().unwrap_or_default(),
+                )?,
+                NodeType::DocumentFragment => doc.create_fragment(None)?,
+                _ => return Err(DomOom),
+            };
+            copy_names(doc, s, id)?;
+            id
         }
-        NodeType::Pi => doc.create_pi(
-            s.pi_target().unwrap_or_default(),
-            s.data().unwrap_or_default(),
-        )?,
-        NodeType::DocumentType => doc.create_doctype(
-            s.node_name(),
-            s.doctype_public_id().unwrap_or_default(),
-            s.doctype_system_id().unwrap_or_default(),
-        )?,
-        NodeType::DocumentFragment => doc.create_fragment(None)?,
-        _ => return Err(DomOom),
     };
     if let Some(off) = s.source_offset() {
         doc.set_source_offset(made, off);
     }
     Ok(made)
+}
+
+/// Lexbor's name fields of a node that is neither an element nor an
+/// attribute: the special tag ids Lexbor gives these (`#text`, `!--`, ...)
+/// are all static, and the namespace is whatever creation left there (a
+/// template's contents fragment is in the HTML namespace).
+fn copy_names(doc: &mut Document, s: HtmlNode<'_>, id: NodeId) -> Result<(), DomOom> {
+    let ns = match s.ns_uri() {
+        Some(uri) => doc.intern_ns(uri)?.unwrap_or(0),
+        None => 0,
+    };
+    let local = s.tag_id().and_then(|t| t.static_index()).unwrap_or(0);
+    doc.set_names(id, local, ns, 0);
+    Ok(())
 }
 
 /// One attribute, not on any element.
@@ -120,7 +141,10 @@ fn copy_attr(doc: &mut Document, a: HtmlAttr<'_>) -> Result<NodeId, DomOom> {
         .names
         .attr_local_name_append(a.local_name())
         .map_err(|_| DomOom)?;
-    let ns = match a.own_ns_uri() {
+    /* The namespace Lexbor stores on the node - an element's for an
+     * attribute with none of its own - so `attr_own_ns` decides as the
+     * adapter does. */
+    let ns = match a.node().ns_uri() {
         Some(uri) => doc.intern_ns(uri)?.unwrap_or(0),
         None => 0,
     };
