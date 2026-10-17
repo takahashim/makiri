@@ -102,8 +102,8 @@ module Html5libDump
       lines << pad + "<!-- #{node.content} -->"
     when 10 # doctype
       lines << pad + doctype(node)
-    when 7 # processing instruction (not produced by the HTML parser; be explicit)
-      raise Unsupported, "processing instruction"
+    when 7 # processing instruction: the HTML Standard's PI token
+      lines << pad + "<?#{node.name} #{node.content}?>"
     else
       raise Unsupported, "node_type #{node.node_type}"
     end

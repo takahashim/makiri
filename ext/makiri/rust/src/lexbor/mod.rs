@@ -18,6 +18,9 @@
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+pub mod conformance_tests;
+
 /// Lexbor's generated layout and constants, plus the wrappers that own a raw
 /// Lexbor object. The one module allowed to hold `lxb_*` bindings.
 pub mod abi;

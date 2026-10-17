@@ -1,0 +1,22 @@
+# HTML tree-construction tests where Makiri's parser disagrees with the pinned
+# data, each classified against the pinned HTML Standard. One per line:
+#
+#   <file>#<index> <id>
+#
+# The id names the entry in docs/parser_differences.ja.md that gives the spec
+# step deciding it. Read by spec/conformance/html5lib_runner.rb and by the
+# crate's parser conformance tests (ext/makiri/rust/src/conformance/known.rs).
+# A listed test that starts passing fails both runners: remove it here and in
+# the table. A difference nobody has classified is a failure, not an entry.
+#
+# P1: implicit <body> resets frameset-ok (whatwg/html#12908)
+template.dat#44 P1
+template.dat#45 P1
+template.dat#46 P1
+# P2: the form element pointer and "parsing template contents"
+template.dat#117 P2
+template.dat#120 P2
+template.dat#124 P2
+# P3: U+FFFD in foreign content sets frameset-ok to "not ok"
+tests19.dat#51 P3
+plain-text-unsafe.dat#24 P3

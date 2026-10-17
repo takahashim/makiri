@@ -217,6 +217,15 @@ impl TransientFragment {
     }
 }
 
+#[cfg(test)]
+impl TransientFragment {
+    /// The node whose children the parse produced, for the parser
+    /// conformance reader (`lexbor::conformance_tests`).
+    pub(crate) fn root(&self) -> RawNode {
+        self.root
+    }
+}
+
 /// Which Lexbor fragment parser to run, and the context it needs.
 ///
 /// Both implement the same WHATWG algorithm - tokenizer state for

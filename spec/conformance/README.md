@@ -58,15 +58,16 @@ as investigation signals, and follow the exit policy of that runner.
 
 ## 1. HTML5 parsing - `html5lib_runner.rb`
 
-This runner uses the WHATWG
-[html5lib-tests](https://github.com/html5lib/html5lib-tests)
-`tree-construction` corpus. It parses each case with `Makiri::HTML(...)` or
+This runner uses the html5lib-format tree-construction corpus, which
+[html5lib-tests](https://github.com/html5lib/html5lib-tests) moved into WPT
+(`html/syntax/parsing/resources`) in 2026-06. It parses each case with `Makiri::HTML(...)` or
 `Makiri::DocumentFragment.parse(...)`. Then it dumps Makiri's DOM and compares
 that dump with the expected html5lib tree.
 
 The test data is not vendored. On the first run, the runner fetches a pinned
-commit of `html5lib/html5lib-tests` into `spec/conformance/data/`. That directory
-is gitignored. To update the corpus, update `DATA_COMMIT` in the runner.
+commit of `web-platform-tests/wpt` (sparse) into `spec/conformance/data/wpt`.
+That directory is gitignored. To update the corpus, update `DATA_COMMIT` in the
+runner together with the pins in `docs/parser_differences.ja.md`.
 
 Scope:
 
@@ -78,6 +79,9 @@ Scope:
   and scripting changes tree construction.
 - If an expected node cannot be represented by Makiri's Ruby API, the case is
   counted as `unsupported`. The current corpus should keep this count at zero.
+- A difference already classified against the pinned HTML Standard is listed in
+  `KNOWN_DIVERGENCES` with its id in `docs/parser_differences.ja.md`. It is
+  reported, not failed; the run fails when a listed test starts passing.
 
 This runner mainly checks Makiri's Lexbor integration. It also checks that the
 post-parse indexes, source-location stamping, and Ruby wrappers do not change

@@ -147,10 +147,11 @@ input is a `ProcessingInstruction` node where it used to be a Comment, `#to_html
 writes `<?target data?>`, and `<?` at EOF is ignored (the spec's
 "eof-in-processing-instruction"). `Nokogiri::HTML5` still answers the old way -
 see NOKOGIRI_DIFFERENCES.md. The differential baseline's 81 affected lines were
-edited with the bump, and `spec/conformance/html5lib_runner.rb`'s
-`STALE_EXPECTATIONS` records the one pinned html5lib test whose expectation
-predates the spec change (that suite's tree-construction tests have moved to
-WPT, so the data pin cannot gain the new expectation).
+edited with the bump. `spec/conformance/html5lib_runner.rb` reads its
+tree-construction data from WPT (`html/syntax/parsing/resources`, where the
+html5lib .dat files have lived since 2026-06), which carries the new
+expectations; what this Lexbor pin still answers the old way is listed in
+`KNOWN_DIVERGENCES` there and in `docs/parser_differences.ja.md`.
 
 Still **vanilla, NEVER patched** - the constraint that relaxed is "release tag
 only", not "no fork".

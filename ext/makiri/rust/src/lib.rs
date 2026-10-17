@@ -156,3 +156,8 @@ pub mod init;
 // on every representative CI build.
 #[cfg(test)]
 mod rust_tests;
+
+/// The HTML parser conformance harness: a parser-neutral DOM tree, the
+/// html5lib formats, and the classified known divergences.
+#[cfg(test)]
+pub mod conformance;

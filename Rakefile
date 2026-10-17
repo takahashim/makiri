@@ -756,6 +756,14 @@ namespace :conformance do
     sh "#{FileUtils::RUBY} -Ilib spec/conformance/html5lib_runner.rb #{ENV['H5_ARGS']}"
   end
 
+  desc "HTML parser conformance in the crate: WPT tree construction through each parser"
+  task :parser do
+    sh "#{FileUtils::RUBY} spec/conformance/parser_data.rb"
+    Dir.chdir("ext/makiri/rust") do
+      sh "cargo test --no-default-features --features lexbor conformance -- --include-ignored"
+    end
+  end
+
   desc "XPath 1.0 differential conformance vs Nokogiri (libxml2 reference)"
   task xpath: :compile do
     # Like `bench`, run outside the bundle so the bench-only Nokogiri resolves
