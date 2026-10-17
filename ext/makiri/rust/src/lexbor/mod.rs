@@ -15,6 +15,9 @@
 //! in `bridge::string::HtmlSource` and `glue::stylesheet`. Nothing here names a
 //! Ruby type, and `rake unsafe:boundaries` holds it to that.
 
+/// Parsing into the arena DOM through Lexbor's tree builder.
+pub mod arena_parse;
+
 #[cfg(test)]
 mod tests;
 

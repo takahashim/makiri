@@ -62,7 +62,7 @@ UNSAFE_ISLANDS = {
   "lexbor/adapter/html/mutate.rs" => 9,
   "lexbor/adapter/html/serialize.rs" => 18,
   "lexbor/adapter/post_parse.rs" => 13,
-  "lexbor/adapter/source_loc.rs" => 2,
+  "lexbor/adapter/source_loc.rs" => 1,
   "lexbor/adapter/text_index.rs" => 1,
   "lexbor/adapter/tree_guard.rs" => 9,
   "lexbor/arena_tests.rs" => 3,
@@ -80,6 +80,7 @@ UNSAFE_ISLANDS = {
   "lexbor/stylesheet.rs" => 9,
   "lexbor/tests.rs" => 16,
   "lexbor/xpath.rs" => 9,
+  "source_lines.rs" => 1,
   "token.rs" => 1,
 }.freeze
 

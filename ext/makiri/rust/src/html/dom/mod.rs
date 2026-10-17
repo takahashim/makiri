@@ -946,11 +946,15 @@ impl Document {
 mod copy;
 mod edit;
 mod handle;
+mod parsed;
+/// HTML serialization.
+pub mod serialize;
 pub use edit::{HtmlDocMut, HtmlTree, Insertion, Place};
 pub use handle::{
     has_ascii_uppercase, Ancestors, AttrName, Attrs, HtmlAttr, HtmlDoc, HtmlElement, HtmlNode,
     NsId, RawNode, Siblings, TagId, NS_LAST_ENTRY, TAG_EM_DOCTYPE, TAG_LAST_ENTRY,
 };
+pub use parsed::{DomIndex, ForeignNode, HtmlDocIdentity, HtmlNodeKey, HtmlParsed, TextRun};
 
 #[cfg(test)]
 pub mod conformance;

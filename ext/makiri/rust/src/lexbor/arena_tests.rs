@@ -289,6 +289,22 @@ fn compare_docs(ld: lex::HtmlDoc<'_>, ad: arena::HtmlDoc<'_>, ctx: &str) {
         }
     }
 
+    /* Serialization, every form, of every node Lexbor serializes. */
+    for (i, (&l, &a)) in p.l.iter().zip(&p.a).enumerate() {
+        for (deep, pretty) in [(false, false), (true, false), (false, true), (true, true)] {
+            let lo = crate::lexbor::serialize::serialize(l, deep, pretty);
+            let ao = arena::serialize::serialize_buf(a, deep, pretty);
+            assert_eq!(
+                lo.as_ref()
+                    .map(|b| String::from_utf8_lossy(b.as_slice()).into_owned()),
+                ao.as_ref()
+                    .map(|b| String::from_utf8_lossy(b.as_slice()).into_owned()),
+                "serialize(deep {deep}, pretty {pretty}) of node {i} ({:?}) of {ctx}",
+                l.node_type()
+            );
+        }
+    }
+
     /* Document order, over a spread of pairs. */
     let n = p.l.len();
     let step = (n / 40).max(1);

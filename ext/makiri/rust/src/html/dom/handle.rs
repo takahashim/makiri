@@ -57,6 +57,8 @@ impl NsId {
     pub const XML: NsId = NsId(nonzero32(res::NS_XML));
     /// The namespace of `xmlns` / `xmlns:*` declarations.
     pub const XMLNS: NsId = NsId(nonzero32(res::NS_XMLNS));
+    /// The XLink namespace, whose attributes Lexbor writes as `xlink:`.
+    pub const XLINK: NsId = NsId(nonzero32(res::NS_XLINK));
 
     /// The arena's number as an id; `None` for 0.
     #[inline]

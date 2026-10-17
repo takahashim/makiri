@@ -100,6 +100,12 @@ impl HtmlParsed {
         RawDoc::from(self.doc())
     }
 
+    /// The document as a handle, borrowed for as long as this is - for the
+    /// arena copy, which reads it whole.
+    pub(crate) fn doc_handle(&self) -> DomDoc<'_> {
+        self.doc()
+    }
+
     /// The document as a handle, borrowed for as long as this is.
     fn doc(&self) -> DomDoc<'_> {
         // SAFETY: the handle owns a live document, and it is not restructured
@@ -182,6 +188,12 @@ impl HtmlParsed {
             TextIndexState::Built(index) => index.slices_of(node),
             TextIndexState::Unbuilt | TextIndexState::Inapplicable => None,
         }
+    }
+
+    /// The line table, taken out - for the arena DOM, which copies this
+    /// document and keeps the table.
+    pub fn take_lines(&mut self) -> Option<Box<Lines>> {
+        self.lines.take()
     }
 
     /// Drop the indices so the next query rebuilds them.

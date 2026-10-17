@@ -106,6 +106,8 @@ struct Appended {
     /// Each entry's ASCII upper-case form, when the table keeps them (tags,
     /// for the HTML `tagName`; qualified names). Empty otherwise.
     uppers: Vec<Vec<u8>>,
+    /// The longest entry's length.
+    longest: usize,
 }
 
 /// How a table compares an input with a stored key.
@@ -207,6 +209,7 @@ impl Appended {
         self.names.falloc_reserve(1).map_err(|()| NamesOom)?;
         self.hashes.falloc_reserve(1).map_err(|()| NamesOom)?;
         let index = self.names.len();
+        self.longest = self.longest.max(stored.len());
         self.names.push(stored);
         self.hashes.push(h);
         if let Some(u) = up {
@@ -327,6 +330,16 @@ impl Names {
         let h = hash_lower(name);
         static_id(&ATTR_SLOTS, &res::ATTR_NAMES, name, h)
             .or_else(|| self.attrs.find(name, h).map(|i| FIRST_APPENDED_ATTR + i))
+    }
+
+    /// The longest name any table holds, static ones included.
+    pub fn longest(&self) -> usize {
+        /* No static tag or attribute name is longer than this. */
+        const STATIC_LONGEST: usize = 32;
+        STATIC_LONGEST
+            .max(self.tags.longest)
+            .max(self.attrs.longest)
+            .max(self.quals.longest)
     }
 
     /// Bytes the tables own.

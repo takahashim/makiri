@@ -88,6 +88,9 @@ pub mod cutf8;
 /// it.
 pub mod utf8_input;
 
+/// The source line table (byte offset -> line).
+pub mod source_lines;
+
 /// `VerifiedText`: a borrowed engine input, valid UTF-8 with no NUL.
 /// Unconditional: the engine, the DOM adapter and the glue all pass it.
 pub mod text;
