@@ -235,6 +235,20 @@ impl Document {
         Ok(Span { start, len })
     }
 
+    /// A second copy of the stored bytes `s`.
+    fn dup(&mut self, s: Span) -> Result<Span, DomOom> {
+        let start = u32::try_from(self.bytes.len()).map_err(|_| DomOom)?;
+        start.checked_add(s.len).ok_or(DomOom)?;
+        let from = s.start as usize;
+        let to = from + s.len as usize;
+        if to > self.bytes.len() {
+            return Err(DomOom);
+        }
+        oom!(self.bytes.falloc_reserve(s.len as usize));
+        self.bytes.extend_from_within(from..to);
+        Ok(Span { start, len: s.len })
+    }
+
     #[inline]
     fn bytes_of(&self, s: Span) -> &[u8] {
         let start = s.start as usize;
@@ -404,6 +418,14 @@ impl Document {
             class_attr: None,
             template: None,
         });
+        /* An HTML `<template>` is made with its contents fragment, as
+         * Lexbor's template interface is: in the HTML namespace, hosted by
+         * the template. */
+        if tag == res::TAG_TEMPLATE && ns == res::NS_HTML as u32 {
+            let contents = self.create_fragment(Some(id))?;
+            self.set_names(contents, 0, ns, 0);
+            self.set_template_content(id, contents);
+        }
         Ok(id)
     }
 
@@ -615,11 +637,28 @@ impl Document {
     /// `id`/`class` shortcuts as Lexbor's `lxb_dom_element_attr_append`
     /// does for an attribute in no namespace.
     pub fn attr_append(&mut self, el: NodeId, attr: NodeId) {
-        let Some(last) = self.element(el).map(|e| e.last_attr) else {
+        if !self.attr_link(el, attr) {
             return;
+        }
+        let (local, ns) = (self.local(attr), self.own_ns_if_on(attr, el));
+        if let Some(e) = self.element_mut(el) {
+            if ns == 0 && local == res::ATTR_ID as u32 && e.id_attr.is_none() {
+                e.id_attr = Some(attr);
+            }
+            if ns == 0 && local == res::ATTR_CLASS as u32 && e.class_attr.is_none() {
+                e.class_attr = Some(attr);
+            }
+        }
+    }
+
+    /// Link the attribute `attr` last in `el`'s list, leaving the shortcuts
+    /// alone; whether both were what they must be.
+    pub fn attr_link(&mut self, el: NodeId, attr: NodeId) -> bool {
+        let Some(last) = self.element(el).map(|e| e.last_attr) else {
+            return false;
         };
         if self.attr(attr).is_none() {
-            return;
+            return false;
         }
         if let Some(a) = self.node_mut(attr) {
             a.parent = Some(el);
@@ -636,16 +675,10 @@ impl Document {
                 }
             }
         }
-        let (local, ns) = (self.local(attr), self.own_ns_if_on(attr, el));
         if let Some(e) = self.element_mut(el) {
             e.last_attr = Some(attr);
-            if ns == 0 && local == res::ATTR_ID as u32 && e.id_attr.is_none() {
-                e.id_attr = Some(attr);
-            }
-            if ns == 0 && local == res::ATTR_CLASS as u32 && e.class_attr.is_none() {
-                e.class_attr = Some(attr);
-            }
         }
+        true
     }
 
     /// Take `attr` off its element (kept in the arena).
@@ -910,7 +943,10 @@ impl Document {
     }
 }
 
+mod copy;
+mod edit;
 mod handle;
+pub use edit::{HtmlDocMut, HtmlTree, Insertion, Place};
 pub use handle::{
     has_ascii_uppercase, Ancestors, AttrName, Attrs, HtmlAttr, HtmlDoc, HtmlElement, HtmlNode,
     NsId, RawNode, Siblings, TagId, NS_LAST_ENTRY, TAG_EM_DOCTYPE, TAG_LAST_ENTRY,

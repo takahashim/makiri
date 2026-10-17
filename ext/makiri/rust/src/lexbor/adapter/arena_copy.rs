@@ -44,9 +44,10 @@ pub fn copy_children(doc: &mut Document, src: HtmlNode<'_>, dst: NodeId) -> Resu
         let made = copy_one(doc, s)?;
         doc.append_child(parent, made);
         if let Some(contents) = s.template_content() {
-            let frag = doc.create_fragment(Some(made))?;
+            /* The arena made the contents with the template, as Lexbor
+             * does. */
+            let frag = doc.template_content(made).ok_or(DomOom)?;
             copy_names(doc, contents, frag)?;
-            doc.set_template_content(made, frag);
             stack
                 .falloc_push((contents.first_child(), frag))
                 .map_err(|()| DomOom)?;

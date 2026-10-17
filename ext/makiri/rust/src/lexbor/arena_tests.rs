@@ -77,15 +77,23 @@ fn s(b: Option<&[u8]>) -> Option<String> {
     b.map(|b| String::from_utf8_lossy(b).into_owned())
 }
 
-/// Every read the adapter answers, asked of both documents.
+/// Every read the adapter answers, asked of a parse of `input` and of its
+/// arena copy.
 fn compare(input: &[u8]) {
     let parsed = parse_html(input, false, DepthLimit::UNLIMITED).expect("Lexbor parses");
     // SAFETY: `parsed` owns the document and outlives every handle read here.
     let ld = unsafe { parsed.raw_doc().as_doc() };
     let copy = crate::lexbor::adapter::arena_copy::copy_document(ld).expect("the copy");
-    let ad = arena::HtmlDoc::of(&copy);
+    compare_docs(
+        ld,
+        arena::HtmlDoc::of(&copy),
+        &String::from_utf8_lossy(input),
+    );
+}
+
+/// Every read the adapter answers, asked of both documents.
+fn compare_docs(ld: lex::HtmlDoc<'_>, ad: arena::HtmlDoc<'_>, ctx: &str) {
     let p = Pair::new(ld, ad);
-    let ctx = String::from_utf8_lossy(input);
 
     assert_eq!(ld.compat_mode(), ad.compat_mode(), "{ctx}");
     assert_eq!(s(ld.title()), s(ad.title().as_deref()), "title of {ctx}");
@@ -131,11 +139,19 @@ fn compare(input: &[u8]) {
             "ns static: {what}"
         );
         assert_eq!(l.has_prefix(), a.has_prefix(), "prefix: {what}");
-        assert_eq!(
-            l.tag_id().and_then(|t| t.static_index()),
-            a.tag_id().and_then(|t| t.static_index()),
-            "tag: {what}"
-        );
+        /* Lexbor's `lxb_dom_attr_set_name_ns` stores the name entry's
+         * POINTER as a prefixed attribute's local name, not its id, so a
+         * static name reads as an appended one there. Every name read
+         * resolves either to the same text, and a lookup by name compares
+         * the qualified name, which a prefixed attribute's never equals
+         * alone; the arena keeps the id. */
+        if !(l.attr().is_some() && l.has_prefix()) {
+            assert_eq!(
+                l.tag_id().and_then(|t| t.static_index()),
+                a.tag_id().and_then(|t| t.static_index()),
+                "tag: {what}"
+            );
+        }
         assert_eq!(
             l.tag_id().is_some(),
             a.tag_id().is_some(),
@@ -313,4 +329,259 @@ fn the_arena_reads_as_lexbor_does_on_wpt_inputs() {
     {
         compare(&t.data);
     }
+}
+
+/* ---------- edits ---------- */
+
+static PLACED: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+/// xorshift64*, seeded, so a failure names its seed and step.
+struct Rng(u64);
+
+impl Rng {
+    fn next(&mut self) -> u64 {
+        self.0 ^= self.0 >> 12;
+        self.0 ^= self.0 << 25;
+        self.0 ^= self.0 >> 27;
+        self.0.wrapping_mul(0x2545_F491_4F6C_DD1D)
+    }
+    fn below(&mut self, n: usize) -> usize {
+        (self.next() % n.max(1) as u64) as usize
+    }
+    fn pick<'a, T>(&mut self, v: &'a [T]) -> &'a T {
+        &v[self.below(v.len())]
+    }
+}
+
+const NAMES: &[&[u8]] = &[
+    b"id",
+    b"ID",
+    b"class",
+    b"Class",
+    b"href",
+    b"data-x",
+    b"viewBox",
+    b"xlink:href",
+    b"p:id",
+    b"q:Foo",
+];
+const NSS: &[Option<&[u8]>] = &[
+    None,
+    Some(b"http://www.w3.org/1999/xhtml"),
+    Some(b"http://www.w3.org/2000/svg"),
+    Some(b"http://www.w3.org/1999/xlink"),
+    Some(b"urn:Mixed:Case"),
+];
+const TAGS: &[&[u8]] = &[
+    b"div",
+    b"DIV",
+    b"template",
+    b"Template",
+    b"my-el",
+    b"br",
+    b"BR",
+    b"linearGradient",
+    b"svg",
+    b"p",
+];
+const PREFIXES: &[&[u8]] = &[b"", b"", b"x", b"svg", b"Q"];
+const TEXTS: &[&[u8]] = &[b"", b"t", b"two words", b"a\0b", b"<&>"];
+
+/// A node of each side at the same walk position.
+fn at<'l, 'a>(
+    ld: lex::HtmlDoc<'l>,
+    ad: arena::HtmlDoc<'a>,
+    i: usize,
+) -> (lex::HtmlNode<'l>, arena::HtmlNode<'a>) {
+    let (l, a) = (lex_walk(ld), arena_walk(ad));
+    assert_eq!(l.len(), a.len());
+    let i = i % l.len();
+    (l[i], a[i])
+}
+
+/// `steps` random edits on a parse of `input` and on its arena copy, all
+/// reads compared after each. `other` is a second document both sides import
+/// from.
+fn edit_sequence(input: &[u8], other: &[u8], seed: u64, steps: usize) {
+    use crate::lexbor::adapter::html::HtmlDocMut as LexMut;
+    let parsed = parse_html(input, false, DepthLimit::UNLIMITED).expect("Lexbor parses");
+    let other_parsed = parse_html(other, false, DepthLimit::UNLIMITED).expect("Lexbor parses");
+    // SAFETY: each parse owns its document and outlives every handle here;
+    // only this test reads or writes them.
+    let (ld, lo) = unsafe { (parsed.raw_doc().as_doc(), other_parsed.raw_doc().as_doc()) };
+    let mut ac = crate::lexbor::adapter::arena_copy::copy_document(ld).expect("copy");
+    let ao_doc = crate::lexbor::adapter::arena_copy::copy_document(lo).expect("copy");
+    let ao = arena::HtmlDoc::of(&ao_doc);
+    // SAFETY: as above; the test is the only editor.
+    let mut lm = unsafe { LexMut::assume_exclusive(ld) };
+    let mut rng = Rng(seed);
+    for step in 0..steps {
+        let ctx = format!("seed {seed:#x} step {step}");
+        let op = rng.below(13);
+        let i = rng.below(1 << 20);
+        let mut am = arena::HtmlDocMut::new(&mut ac);
+        let (ln, an) = at(ld, am.read(), i);
+        let (lr, ar) = (lex::RawNode::from(ln), arena::RawNode::from(an));
+        let mut made: Option<(lex::RawNode, arena::RawNode)> = None;
+        match op {
+            0 => {
+                let (name, value) = (*rng.pick(NAMES), *rng.pick(TEXTS));
+                let l = lm.set_attribute(lr, name, value).is_ok();
+                let a = am.set_attribute(ar, name, value).is_ok();
+                assert_eq!(l, a, "set_attribute: {ctx}");
+            }
+            1 => {
+                let (ns, name, value) = (*rng.pick(NSS), *rng.pick(NAMES), *rng.pick(TEXTS));
+                let l = lm.set_attribute_ns(lr, ns, name, value).is_ok();
+                let a = am.set_attribute_ns(ar, ns, name, value).is_ok();
+                assert_eq!(l, a, "set_attribute_ns: {ctx}");
+            }
+            2 => {
+                let name = *rng.pick(NAMES);
+                lm.remove_attribute(lr, name);
+                am.remove_attribute(ar, name);
+            }
+            3 => {
+                lm.remove_from_owner(lr);
+                am.remove_from_owner(ar);
+            }
+            4 => {
+                let t = *rng.pick(TEXTS);
+                let l = lm.set_text_content(lr, t).is_ok();
+                let a = am.set_text_content(ar, t).is_ok();
+                assert_eq!(l, a, "set_text_content: {ctx}");
+            }
+            5 => {
+                let t = *rng.pick(TAGS);
+                made = lm.create_element(t).zip(am.create_element(t));
+            }
+            6 => {
+                let (t, ns, p) = (
+                    *rng.pick(TAGS),
+                    rng.pick(NSS).unwrap_or_default(),
+                    *rng.pick(PREFIXES),
+                );
+                let l = lm.create_element_ns(t, ns, p);
+                let a = am.create_element_ns(t, ns, p);
+                assert_eq!(l.is_some(), a.is_some(), "create_element_ns: {ctx}");
+                made = l.zip(a);
+            }
+            7 => {
+                let t = *rng.pick(TEXTS);
+                made = match rng.below(5) {
+                    0 => lm.create_text(t).zip(am.create_text(t)),
+                    1 => lm.create_comment(t).zip(am.create_comment(t)),
+                    2 => {
+                        let data: &[u8] = if rng.below(2) == 0 { t } else { b"x?>y" };
+                        let l = lm.create_pi(b"pi", data);
+                        let a = am.create_pi(b"pi", data);
+                        assert_eq!(l.is_some(), a.is_some(), "create_pi: {ctx}");
+                        l.zip(a)
+                    }
+                    3 => lm
+                        .create_doctype(b"Html", Some(t), None)
+                        .zip(am.create_doctype(b"Html", Some(t), None)),
+                    _ => {
+                        let f = lm.create_fragment().zip(am.create_fragment());
+                        if let Some((lf, af)) = f {
+                            for _ in 0..rng.below(3) {
+                                let c = lm.create_text(b"f").zip(am.create_text(b"f"));
+                                if let Some((lc, ac2)) = c {
+                                    lm.place(lf, lc, lex::Place::Child);
+                                    am.place(af, ac2, arena::Place::Child);
+                                }
+                            }
+                        }
+                        f
+                    }
+                };
+            }
+            8 => {
+                let deep = rng.below(2) == 0;
+                if ln.node_type() != crate::node_type::NodeType::Document {
+                    let l = lm.copy(lr, deep);
+                    let a = am.copy(ar, deep);
+                    assert_eq!(l.is_ok(), a.is_ok(), "copy: {ctx}");
+                    made = l.ok().zip(a.ok());
+                }
+            }
+            9 => {
+                let j = rng.below(1 << 20);
+                let (lsrc, asrc) = at(lo, ao, j);
+                if lsrc.node_type() != crate::node_type::NodeType::Document {
+                    let deep = rng.below(2) == 0;
+                    let l = lm.import(lsrc, deep);
+                    let a = am.import(asrc, deep);
+                    assert_eq!(l.is_ok(), a.is_ok(), "import: {ctx}");
+                    made = l.ok().zip(a.ok());
+                }
+            }
+            10 => {
+                if ln.parent().is_some() && ln.attr().is_none() {
+                    lm.detach(lr);
+                    am.detach(ar);
+                }
+            }
+            _ => {
+                /* Move an existing node. */
+                let j = rng.below(1 << 20);
+                let (lt, at2) = at(ld, am.read(), j);
+                made = Some((lex::RawNode::from(lt), arena::RawNode::from(at2)))
+                    .filter(|_| lt.attr().is_none());
+            }
+        }
+        if let Some((lnew, anew)) = made {
+            /* Put it somewhere, if the DOM allows it there. */
+            let k = rng.below(1 << 20);
+            let place = *rng.pick(&[0usize, 1, 2, 3]);
+            let (lt, atg) = at(ld, am.read(), k);
+            let (lp, ap) = match place {
+                0 => (lex::Place::Child, arena::Place::Child),
+                1 => (lex::Place::Before, arena::Place::Before),
+                2 => (lex::Place::After, arena::Place::After),
+                _ => (lex::Place::Replace, arena::Place::Replace),
+            };
+            let lc = lex::Insertion::new(lt, lp, lm.node(lnew)).and_then(|x| x.check());
+            let ac2 = {
+                let r = am.read();
+                arena::Insertion::new(atg, ap, r.node(anew)).and_then(|x| x.check())
+            };
+            let (lt, atg) = (lex::RawNode::from(lt), arena::RawNode::from(atg));
+            assert_eq!(lc, ac2, "insertion check: {ctx}");
+            if lc.is_ok() {
+                PLACED.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                if lm.node(lnew).parent().is_some() {
+                    lm.detach(lnew);
+                    am.detach(anew);
+                }
+                lm.place(lt, lnew, lp);
+                am.place(atg, anew, ap);
+            }
+        }
+        compare_docs(ld, am.read(), &ctx);
+    }
+}
+
+const EDIT_INPUT: &[u8] = b"<!DOCTYPE html><title>t</title><div id=a class=b><p>one<b>two</b></p>\
+    <svg viewBox='0 0 1 1'><a xlink:href=z></a></svg><template><i>x</i></template><!--c--></div>";
+const EDIT_OTHER: &[u8] = b"<svg xmlns:q=urn:Q q:x=1><linearGradient/><foreignObject><b id=z>z</b>\
+    </foreignObject></svg><template><u>u</u></template><my-el data-x=1>m</my-el>";
+
+/// `ARENA_SEEDS` runs more sequences than the default 40.
+#[test]
+fn edits_leave_the_arena_reading_as_lexbor_does() {
+    let seeds: u64 = std::env::var("ARENA_SEEDS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(40);
+    for seed in 1..=seeds {
+        edit_sequence(
+            EDIT_INPUT,
+            EDIT_OTHER,
+            seed.wrapping_mul(0x9E37_79B9_7F4A_7C15),
+            60,
+        );
+    }
+    /* The sequences must actually move nodes around, not only fail checks. */
+    assert!(PLACED.load(core::sync::atomic::Ordering::Relaxed) > seeds as usize * 5);
 }
