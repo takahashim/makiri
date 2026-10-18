@@ -565,6 +565,74 @@ impl<'a> Parser<'a> {
         Some(token)
     }
 
+    /// Consume a declaration, step 6, where Lexbor found no `!important`:
+    /// the value's last two top-level tokens, comments and whitespace
+    /// aside, are a `!` delim and an ident whose value is "important" in any
+    /// ASCII case (C12). Lexbor matched the bytes after the `!`, so it
+    /// missed `! important`, `!/**/important` and `!imp\ortant`. `None` only
+    /// when re-reading the value ran out of memory.
+    fn important_by_tokens(&mut self, r: usize) -> Option<()> {
+        if self.rules[r].important || !compat::fixed(Fix::C12) {
+            return Some(());
+        }
+        let begin = self.offset.value_begin;
+        let Some(src) = self.tkz.input().get(begin..self.offset.end) else {
+            return Some(());
+        };
+        #[derive(Clone, Copy, PartialEq)]
+        enum Last {
+            Bang(usize),
+            Important,
+            Other,
+        }
+        let mut t = Tokenizer::new(src);
+        t.with_comment = true;
+        let mut last = [Last::Other, Last::Other];
+        let mut depth = 0usize;
+        loop {
+            let Some(tok) = t.token() else {
+                if t.status == Status::ErrorMemoryAllocation {
+                    self.status = Status::ErrorMemoryAllocation;
+                    return None;
+                }
+                return Some(());
+            };
+            t.consume();
+            let seen = match tok.ty {
+                T::Eof => break,
+                T::Whitespace | T::Comment => continue,
+                T::RcBracket | T::RsBracket | T::RParenthesis if depth > 0 => {
+                    depth -= 1;
+                    continue;
+                }
+                _ if depth > 0 => {
+                    if matches!(
+                        tok.ty,
+                        T::Function | T::LParenthesis | T::LsBracket | T::LcBracket
+                    ) {
+                        depth += 1;
+                    }
+                    continue;
+                }
+                T::Function | T::LParenthesis | T::LsBracket | T::LcBracket => {
+                    depth += 1;
+                    Last::Other
+                }
+                T::Delim if tok.delim == u32::from(b'!') => Last::Bang(tok.begin),
+                T::Ident if t.string(tok.string).eq_ignore_ascii_case(b"important") => {
+                    Last::Important
+                }
+                _ => Last::Other,
+            };
+            last = [last[1], seen];
+        }
+        if let [Last::Bang(at), Last::Important] = last {
+            self.offset.value_end = begin + at;
+            self.rules[r].important = true;
+        }
+        Some(())
+    }
+
     /// `lxb_css_syntax_parser_declarations_value`.
     pub(super) fn phase_declarations_value(&mut self, mut token: Token, r: usize) -> Option<Token> {
         if self.rules[r].offset > token.offset {
@@ -608,11 +676,17 @@ impl<'a> Parser<'a> {
                         self.offset.important_begin = 0;
                         self.offset.important_end = 0;
                     }
+                    self.important_by_tokens(r)?;
                     self.tkz.consume();
                     return Some(Self::token_end(offset));
                 }
                 T::Delim => {
                     if token.delim != u32::from(b'!') {
+                        return Some(token);
+                    }
+                    /* An `!important` inside a block or function is part of
+                     * it, not the declaration's (C13). */
+                    if deep != 0 && compat::fixed(Fix::C13) {
                         return Some(token);
                     }
                     let stop = self.rules[r].block_end;
@@ -645,6 +719,7 @@ impl<'a> Parser<'a> {
             self.offset.important_begin = 0;
             self.offset.important_end = 0;
         }
+        self.important_by_tokens(r)?;
         self.rules[r].phase = Phase::DeclarationEnd;
         self.rules[r].skip_consume = true;
         Some(Self::token_end(token.offset))

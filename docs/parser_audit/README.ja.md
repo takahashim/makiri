@@ -76,8 +76,8 @@ CSS の項目も、すべて Lexbor の振る舞いを移植版が写したも�
 | C9 | css_syntax F1 | ブロックの中で `ident:` で始まる規則を宣言として読む | 未着手 |
 | C10 | css_syntax F2 | ブロックのないまま終わる qualified rule を規則にする | 未着手 |
 | C11 | css_syntax F3 | 最上位の `--foo:hover {}` を style rule にする | 未着手 |
-| C12 | css_syntax F4 | `!important` を byte で探す（`! important` を見落とす） | 未着手 |
-| C13 | css_syntax F5 | 括弧の中の `!important;` で値を切る | 未着手 |
+| C12 | css_syntax F4 | `!important` を byte で探す（`! important` を見落とす） | 直した |
+| C13 | css_syntax F5 | 括弧の中の `!important;` で値を切る | 直した |
 | C14 | css_syntax F6 | 名前とコロンの間のコメントで宣言でなくなる | 未着手 |
 | C15 | css_syntax F7 | 値の正規化が `\` の後の改行を空白に変え、意味を変える | 直した |
 | C16 | css_syntax U1 | at-rule のブロックの中の宣言を出力しない | 未実装 |

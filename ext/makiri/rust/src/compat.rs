@@ -103,6 +103,11 @@ pub enum Fix {
     C8,
     /// A value keeps a newline after a backslash delim.
     C15,
+    /// `!important` is found on tokens, comments, whitespace and escapes
+    /// and all.
+    C12,
+    /// An `!important` inside a block or function is not the declaration's.
+    C13,
     /// `:has()` is unforgiving: an invalid item invalidates the selector.
     C19,
     /// `:has()` is not valid inside `:has()`.
@@ -210,6 +215,11 @@ pub fn css_explains(input: &[u8]) -> Vec<Fix> {
     /* C8: a `url(` the input ends after. */
     if has(input, b"url(") {
         fixes.push(Fix::C8);
+    }
+    /* C12, C13: a `!`. */
+    if input.contains(&b'!') {
+        fixes.push(Fix::C12);
+        fixes.push(Fix::C13);
     }
     /* C18: an `:is()` or `:where()` left empty. */
     if has(input, b"is(") || has(input, b"where(") {

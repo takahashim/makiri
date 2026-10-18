@@ -89,4 +89,20 @@ RSpec.describe "CSS Syntax 3 and Selectors 4 steps the CSS parser follows" do
     values = Makiri::Lexbor::CSS.parse_stylesheet("a{b: c\\\nd; e: x \\\n}").first[:declarations].map { |d| d[:value] }
     expect(values).to eq(["c\\\nd", "x \\\n"])
   end
+  def declarations(css)
+    Makiri::Lexbor::CSS.parse_stylesheet(css).first[:declarations].map { |d| [d[:value], d[:important]] }
+  end
+
+  # C12: consume a declaration, step 6: the last two tokens, whitespace and
+  # comments aside, are "!" and an ident "important".
+  it "finds !important on tokens" do
+    expect(declarations("a { x: y ! important }")).to eq([["y", true]])
+    expect(declarations("a{b: c !/**/important}")).to eq([["c", true]])
+    expect(declarations("a{b: c !imp\\ortant}")).to eq([["c", true]])
+  end
+
+  # C13: an !important inside a block or function is the block's content.
+  it "leaves an !important inside brackets in the value" do
+    expect(declarations("a{b: (x !important; y); c:d}")).to eq([["(x !important; y)", false], ["d", false]])
+  end
 end

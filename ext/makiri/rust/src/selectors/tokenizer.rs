@@ -118,6 +118,11 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
+    /// The input the tokenizer reads.
+    pub fn input(&self) -> &'a [u8] {
+        self.input
+    }
+
     /// The bytes of a token's string.
     pub fn string(&self, s: Span) -> &[u8] {
         let start = s.start as usize;

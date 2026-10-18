@@ -362,6 +362,22 @@ CSS Syntax Level 3 と Selectors Level 4（w3c/csswg-drafts の `7b4c69ecaf9289d
 - **移植版**：`lexbor/stylesheet.rs` の `normalize_value` が、`\` の delim の後に改行を書き、続く空白はその改行で表す。値の範囲の末尾にエスケープされていない `\` があり、元の入力でその後が改行なら、改行を足す。比較のテストは規則の構造だけを比べるので、許可は要らない。
 - **テスト**：`spec/css_standard_steps_spec.rb`。
 
+### C12 `!important` の判定
+
+- **分類**：参照実装の未対応（監査の css_syntax F4）。移植版で直した（第 8 段）。
+- **仕様**：consume a declaration の step 6。値の末尾の二つの token（空白を除く。コメントは token にならない）が `!` の delim と、値が "important" に ASCII case-insensitive に一致する ident なら、important を立てて二つを値から除く。
+- **再現**：`a { x: y ! important }`、`a{b: c !/**/important}`、`a{b: c !important /**/ }`、`a{b: c !imp\ortant}`。仕様ではどれも値 `c`（`y`）で important。Lexbor は `!` の直後の byte 列を `important` と比べ、その後に空白、`;`、`}`、入力の終わりしか許さないので、どれも important でなく、`!important` が値に残る。
+- **移植版**：`selectors/parser/syntax.rs` の `important_by_tokens` が、Lexbor の判定が important を見つけなかった宣言の値を token として読み直し、末尾の二つを確かめる。差分の許可は、入力に `!` があるとき。
+- **テスト**：`spec/css_standard_steps_spec.rb`。
+
+### C13 括弧の中の `!important`
+
+- **分類**：参照実装の未対応（監査の css_syntax F5）。移植版で直した（第 8 段）。
+- **仕様**：step 6 が見るのは値の top-level の token で、simple block や function の中の `!` と `important` はその中身である。括弧の中の `;` も値を終えない。
+- **再現**：`a{b: (x !important; y); c:d}`。仕様では `b` の値は `(x !important; y)` で important でない。Lexbor は深さを見ずに `!` の後を調べ、`;` が続くので値を `(x` で切って important にする。
+- **移植版**：`selectors/parser/syntax.rs` の値の phase が、括弧の中の `!` で `!important` を探さない。差分の許可は C12 と同じ。
+- **テスト**：`spec/css_standard_steps_spec.rb`。
+
 ## パーサの外の項目
 
 次の差は HTML パーサではなく、DOM の上の層（CSS マッチャ、XPath の名前照合）にある。
