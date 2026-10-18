@@ -74,8 +74,8 @@ CSS の項目も、すべて Lexbor の振る舞いを移植版が写したも�
 | C7 | css_tokenizer F5、css_selectors F5 | hash token に type flag がなく、`#1a` を ID セレクタとして受け付ける | 直した |
 | C8 | css_tokenizer F6 | 空白だけが続いて終わる `url(` を function token にする | 直した |
 | C9 | css_syntax F1 | ブロックの中で `ident:` で始まる規則を宣言として読む | 直した |
-| C10 | css_syntax F2 | ブロックのないまま終わる qualified rule を規則にする | 未着手 |
-| C11 | css_syntax F3 | 最上位の `--foo:hover {}` を style rule にする | 未着手 |
+| C10 | css_syntax F2 | ブロックのないまま終わる qualified rule を規則にする | 直した |
+| C11 | css_syntax F3 | 最上位の `--foo:hover {}` を style rule にする | 直した |
 | C12 | css_syntax F4 | `!important` を byte で探す（`! important` を見落とす） | 直した |
 | C13 | css_syntax F5 | 括弧の中の `!important;` で値を切る | 直した |
 | C14 | css_syntax F6 | 名前とコロンの間のコメントで宣言でなくなる | 直した |

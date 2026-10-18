@@ -210,6 +210,8 @@ struct Rule {
     begin: usize,
     nested: bool,
     important: bool,
+    /// The qualified rule returns nothing (C10, C11).
+    discard: bool,
 }
 
 impl Default for Rule {
@@ -233,6 +235,7 @@ impl Default for Rule {
             begin: 0,
             nested: false,
             important: false,
+            discard: false,
         }
     }
 }

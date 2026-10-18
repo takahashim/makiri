@@ -116,4 +116,18 @@ RSpec.describe "CSS Syntax 3 and Selectors 4 steps the CSS parser follows" do
   it "reads a declaration with a comment before its colon" do
     expect(declarations("a{x:y; c /**/ : d; e:f}").size).to eq(3)
   end
+  # C10: consume a qualified rule, <EOF-token> / stop token / nested <}-token>:
+  # return nothing.
+  it "makes nothing of a qualified rule that ends without a block" do
+    sheet = Makiri::Lexbor::CSS.parse_stylesheet("a{b:c} d")
+    expect(sheet.map { |r| r[:selectors].map { |s| s[:text] } }).to eq([["a"]])
+    expect(declarations("a { c: d; b; e: f }")).to eq([["d", false], ["f", false]])
+  end
+
+  # C11: consume a qualified rule, <{-token>: a top-level prelude starting
+  # "--name:" consumes its block and returns nothing.
+  it "makes nothing of a top-level rule whose prelude looks like a custom property" do
+    sheet = Makiri::Lexbor::CSS.parse_stylesheet("--foo:hover { color: blue } a{b:c}")
+    expect(sheet.map { |r| r[:selectors].map { |s| s[:text] } }).to eq([["a"]])
+  end
 end

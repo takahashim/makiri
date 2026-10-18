@@ -113,6 +113,10 @@ pub enum Fix {
     /// A declaration whose value holds a top-level `{}` block beside other
     /// values is not one: the rule is read as a qualified rule.
     C9,
+    /// A qualified rule that ends without a block is nothing.
+    C10,
+    /// A top-level qualified rule whose prelude starts `--name:` is nothing.
+    C11,
     /// `:has()` is unforgiving: an invalid item invalidates the selector.
     C19,
     /// `:has()` is not valid inside `:has()`.
@@ -249,6 +253,19 @@ pub fn css_explains(input: &[u8]) -> Vec<Fix> {
     /* C21: a token after an `An+B`. */
     if has(input, b"nth-") {
         fixes.push(Fix::C21);
+    }
+    fixes
+}
+
+/// [`css_explains`] for a stylesheet, with the fixes only a stylesheet
+/// reaches: C10, a qualified rule with no block, which any input can end
+/// in; C11, a `--name:` prelude.
+#[cfg(any(test, feature = "lexbor-reference"))]
+pub fn stylesheet_explains(input: &[u8]) -> Vec<Fix> {
+    let mut fixes = css_explains(input);
+    fixes.push(Fix::C10);
+    if has(input, b"--") {
+        fixes.push(Fix::C11);
     }
     fixes
 }

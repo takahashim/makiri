@@ -394,6 +394,22 @@ CSS Syntax Level 3 と Selectors Level 4（w3c/csswg-drafts の `7b4c69ecaf9289d
 - **移植版**：`lookup_declaration` が `:` も token として探す。コメントで分かれた空白は二つの空白 token になるので、宣言名の phase は空白を続けて読み飛ばす。差分の許可は、入力に `/*` があるとき。
 - **テスト**：`spec/css_standard_steps_spec.rb`。
 
+### C10 block のない qualified rule
+
+- **分類**：参照実装の未対応（監査の css_syntax F2）。移植版で直した（第 8 段）。
+- **仕様**：consume a qualified rule は、block の前に EOF、stop token（block の中では `;`）、入れ子の `}` に達すると何も返さない。consume a block's contents は、何も返らなければ何もしない（宣言の列も分けない）。
+- **再現**：`a{b:c} d` は仕様では規則 `a` だけ。Lexbor は style rule `d`（宣言なし）も返す。`@media x { b c; a{b:c} }` も `b c` を返す。`a { c: d; b; e: f }` は仕様の宣言が `c: d` と `e: f`。Lexbor は規則 `b` が宣言の列を分けるので、`e: f` が出力から消える。
+- **移植版**：`selectors/parser/syntax.rs` の `phase_qualified_prelude_end`（block のない終わり）が規則に `discard` を付け、`qualified_rule_end` が何も返さない。block の中では、その後の宣言を直前の宣言の列に続ける（`phase_block_declarations`）。差分の許可は、stylesheet のすべての入力（`stylesheet_explains`。どの入力も block のない規則で終わりうる）。
+- **テスト**：`spec/css_standard_steps_spec.rb`。
+
+### C11 最上位の `--name:` で始まる prelude
+
+- **分類**：参照実装の未対応（監査の css_syntax F3）。移植版で直した（第 8 段）。
+- **仕様**：consume a qualified rule の `<{-token>`。prelude の最初の二つの空白でない値が `--` で始まる ident と `:` なら、最上位では block を読んで何も返さない（`--foo:hover { color: blue; }` はどこでも無効）。block の中では宣言として読まれる。
+- **再現**：`--foo:hover { color: blue } a{b:c}`。仕様では規則 `a` だけ。Lexbor は `--foo:hover` を型セレクタと擬似クラスとして読み、style rule にする。
+- **移植版**：`selectors/parser/syntax.rs` の `phase_qualified_block` が、最上位の prelude を `custom_property_prelude`（`selectors/tokenizer.rs`）で確かめ、当たれば `discard` を付ける。差分の許可は、入力に `--` があるとき。
+- **テスト**：`spec/css_standard_steps_spec.rb`。
+
 ## パーサの外の項目
 
 次の差は HTML パーサではなく、DOM の上の層（CSS マッチャ、XPath の名前照合）にある。

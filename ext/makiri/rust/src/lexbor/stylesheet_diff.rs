@@ -319,7 +319,7 @@ pub fn check(css: &[u8]) {
     let fixed = port_dump(css);
     if fixed != port {
         assert!(
-            !crate::compat::css_explains(css).is_empty(),
+            !crate::compat::stylesheet_explains(css).is_empty(),
             "the port's fixes change {:?}, which no fix explains: {port:?} / {fixed:?}",
             String::from_utf8_lossy(css)
         );

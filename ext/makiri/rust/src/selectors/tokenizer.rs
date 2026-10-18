@@ -278,6 +278,30 @@ impl<'a> Tokenizer<'a> {
         Ok(!(block && others > 0))
     }
 
+    /// Whether the qualified rule prelude starting at input index `begin`
+    /// opens with an ident starting `--` and a colon, whitespace and
+    /// comments aside (consume a qualified rule, `<{-token>`; C11).
+    pub fn custom_property_prelude(&self, begin: usize) -> Result<bool, Status> {
+        let Some(rest) = self.input.get(begin..) else {
+            return Ok(false);
+        };
+        let mut t = Tokenizer::new(rest);
+        t.with_comment = true;
+        let mut seen = 0;
+        loop {
+            let tok = t.token().ok_or(t.status)?;
+            t.consume();
+            match tok.ty {
+                TokenType::Whitespace | TokenType::Comment => {}
+                TokenType::Ident if seen == 0 && t.string(tok.string).starts_with(b"--") => {
+                    seen = 1;
+                }
+                TokenType::Colon if seen == 1 => return Ok(true),
+                _ => return Ok(false),
+            }
+        }
+    }
+
     /// `lxb_css_syntax_tokenizer_lookup_colon`: whether a `:` follows the
     /// current token, past whitespace. Read from the tokens read ahead when
     /// there are any, else from the input.

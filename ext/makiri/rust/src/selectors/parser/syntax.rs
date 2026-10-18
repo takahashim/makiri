@@ -126,6 +126,10 @@ impl<'a> Parser<'a> {
         let last = match self.sheet.item_mut(list) {
             Item::List { first, last } | Item::DeclarationList { first, last } => {
                 let prev = *last;
+                /* A declaration list taken up again (C10) is already last. */
+                if prev == Some(rule) {
+                    return;
+                }
                 if first.is_none() {
                     *first = Some(rule);
                 }
@@ -355,6 +359,27 @@ impl<'a> Parser<'a> {
     /// `lxb_css_syntax_parser_qualified_rule_block`.
     pub(super) fn phase_qualified_block(&mut self, token: Token, r: usize) -> Option<Token> {
         let (item, failed) = (self.rules[r].item, self.rules[r].failed);
+        /* A top-level prelude that starts `--name:` is what a custom
+         * property would be: its block is read and the rule is nothing
+         * (C11). */
+        if !self.rules[r].nested && compat::fixed(Fix::C11) {
+            let begin = match item.map(|id| self.sheet.item(id)) {
+                Some(Item::Style { prelude_begin, .. } | Item::BadStyle { prelude_begin, .. }) => {
+                    Some(*prelude_begin)
+                }
+                _ => None,
+            };
+            if let Some(begin) = begin {
+                match self.tkz.custom_property_prelude(begin) {
+                    Ok(true) => self.rules[r].discard = true,
+                    Ok(false) => {}
+                    Err(st) => {
+                        self.status = st;
+                        return None;
+                    }
+                }
+            }
+        }
         self.status = self.qualified_prelude_end(item, token, failed);
         if self.status != Status::Ok {
             return None;
@@ -365,6 +390,11 @@ impl<'a> Parser<'a> {
     /// `lxb_css_syntax_parser_qualified_prelude_end`.
     pub(super) fn phase_qualified_prelude_end(&mut self, token: Token, r: usize) -> Option<Token> {
         let (item, failed) = (self.rules[r].item, self.rules[r].failed);
+        /* A qualified rule that ends before a block - at the end of the
+         * input, at the stop token or at a nested `}` - is nothing (C10). */
+        if compat::fixed(Fix::C10) {
+            self.rules[r].discard = true;
+        }
         self.status = self.qualified_prelude_end(item, token, failed);
         if self.status != Status::Ok {
             return None;
@@ -434,10 +464,21 @@ impl<'a> Parser<'a> {
     /// `lxb_css_state_declarations_begin`.
     pub(super) fn phase_block_declarations(&mut self, r: usize) -> Option<Token> {
         self.rules[r].skip_consume = false;
-        let list = self.item_create(Item::DeclarationList {
-            first: None,
-            last: None,
-        })?;
+        /* Declarations after a rule that came to nothing (C10) continue the
+         * list before it, which nothing ended. */
+        let resume = match self.rules[r].item.map(|id| self.sheet.item(id)) {
+            Some(Item::List { last: Some(l), .. }) if compat::fixed(Fix::C10) => {
+                matches!(self.sheet.item(*l), Item::DeclarationList { .. }).then_some(*l)
+            }
+            _ => None,
+        };
+        let list = match resume {
+            Some(l) => l,
+            None => self.item_create(Item::DeclarationList {
+                first: None,
+                last: None,
+            })?,
+        };
         let rule = Rule {
             phase: Phase::DeclarationsBegin,
             state: St::Blank,
@@ -1027,7 +1068,11 @@ impl<'a> Parser<'a> {
                 _ => {}
             }
         }
-        self.set_return(item);
+        if self.rules[self.r].discard {
+            self.set_return(None);
+        } else {
+            self.set_return(item);
+        }
         Some(Status::Ok)
     }
 
