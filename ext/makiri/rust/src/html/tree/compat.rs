@@ -28,6 +28,9 @@ pub enum Fix {
     /// "In column group" inserts every whitespace character of a text token,
     /// not only the leading run, when the current node is not a `colgroup`.
     P6,
+    /// "After after frameset" processes the whitespace of a text token that
+    /// also holds other characters, using the "in body" rules.
+    P7,
     /// An element carries its start tag's offset when it was created for
     /// that tag's token, and no other (`Node#line`); not a tree change, so
     /// [`explains`] never names it: the harnesses compare the trees without
@@ -115,6 +118,10 @@ pub fn explains(input: &[u8], context: Option<&str>) -> Vec<Fix> {
      * no colgroup as the current node: a template's, or a colgroup context. */
     if colgroup || (has(input, b"col") && has(input, b"template")) {
         fixes.push(Fix::P6);
+    }
+    /* P7: text after `</html>` in a frameset document. */
+    if has(input, b"frameset") {
+        fixes.push(Fix::P7);
     }
     fixes
 }

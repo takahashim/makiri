@@ -85,6 +85,14 @@ P で始まる項目は HTML パーサの振る舞いである。
 - **移植版**：`html/tree/modes/in_column_group.rs` が、colgroup のないとき残りの空白を挿入する。差分の許可は context が colgroup のときか、入力に `col` と `template` があるとき。
 - **テスト**：WPT にない。`spec/html_standard_steps_spec.rb`。
 
+### P7 "after after frameset" の空白と、それ以外の文字を含む文字 token
+
+- **分類**：参照実装の未対応（監査で見つけた）。移植版で直した。
+- **仕様**：空白の文字は "in body" の規則で処理し（active formatting elements の再構築と挿入）、それ以外は parse error として無視する。
+- **再現**：`<frameset></frameset></html> x `。仕様では html の下に空白二つの text ができ、Lexbor は token ごと捨てる（"after frameset" は仕様どおり）。
+- **移植版**：`html/tree/modes/after_after_frameset.rs` が空白だけを "in body" の規則で挿入する。差分の許可は入力に `frameset` があるとき。
+- **テスト**：WPT にない。`spec/html_standard_steps_spec.rb`。
+
 ### L1 ソース位置の規則
 
 - **分類**：意図した変更（移植計画の「ソース位置の規則」）。Lexbor の DOM のビルドは旧来の答えのまま。

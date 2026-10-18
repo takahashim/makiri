@@ -59,4 +59,9 @@ RSpec.describe "HTML Standard steps the port takes and Lexbor does not" do
     frag = Makiri::DocumentFragment.parse("a b<col>", context: "colgroup")
     expect(frag.to_html).to eq(" <col>")
   end
+  # P7: "after after frameset", whitespace characters go to "in body".
+  it "keeps the whitespace of mixed text after a frameset document" do
+    doc = Makiri::HTML("<frameset></frameset></html> x ")
+    expect(doc.to_html).to eq("<html><head></head><frameset></frameset>  </html>")
+  end
 end
