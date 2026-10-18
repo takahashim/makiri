@@ -42,6 +42,12 @@ mod selector_port_tests;
 #[cfg(any(test, feature = "lexbor-reference"))]
 pub mod tree_diff;
 
+/// The ported selector parser beside Lexbor's, for its tests and the
+/// `selector_diff` fuzz target. Lexbor's parser is a process global behind
+/// the GVL, which outside Ruby is `Gvl::exclusive` - so not in a Ruby build.
+#[cfg(any(test, all(feature = "lexbor-reference", not(feature = "ruby"))))]
+pub mod selector_diff;
+
 /// Lexbor's generated layout and constants, plus the wrappers that own a raw
 /// Lexbor object. The one module allowed to hold `lxb_*` bindings.
 pub mod abi;

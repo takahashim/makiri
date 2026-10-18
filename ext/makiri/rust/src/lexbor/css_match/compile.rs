@@ -3,7 +3,7 @@
 //! into compounds once, into query-local tables, before any node is tested;
 //! and the one place a selector this matcher will not run is refused.
 
-use crate::lexbor::css_parser::{
+use crate::selectors::ast::{
     CaseModifier, Combinator, FunctionArg, List, ListPseudo, Lists, Simple,
 };
 
@@ -92,7 +92,7 @@ pub(super) enum Nest {
 
 /// `simple`'s nested selector lists and how they answer it - or `Unsupported`
 /// for `:current()`, which this matcher never evaluates, and for a
-/// `:lexbor-contains()` (which `contains_guard` keeps from ever parsing).
+/// `:lexbor-contains()` (which the parser rejects as an unknown function).
 fn nest_of<'p>(simple: Simple<'p>) -> Result<(Nest, Option<Lists<'p>>), MatchFailure> {
     Ok(match simple {
         Simple::PseudoClassFunction(FunctionArg::Contains | FunctionArg::Current(_)) => {
@@ -224,7 +224,7 @@ pub(crate) fn validate(groups: Lists<'_>) -> Result<(), MatchFailure> {
 
 impl<'p> Compiled<'p> {
     /// Split `list`'s chain into compounds, left to right (the order
-    /// `css_parser` links them in), appending them to `compounds`; any list
+    /// the parser links them in), appending them to `compounds`; any list
     /// nested in its simple selectors is queued on `pending`, not walked
     /// here.
     fn add_chain(

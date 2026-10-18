@@ -69,13 +69,12 @@ UNSAFE_ISLANDS = {
   "lexbor/arena_tests.rs" => 21,
   "lexbor/chunks.rs" => 2,
   "lexbor/conformance_tests.rs" => 24,
-  "lexbor/css_engine.rs" => 14,
+  "lexbor/css_engine.rs" => 10,
   "lexbor/css_parser.rs" => 19,
   "lexbor/css_tokens.rs" => 10,
   "lexbor/fragment.rs" => 10,
   "lexbor/memory.rs" => 9,
   "lexbor/res_tests.rs" => 3,
-  "lexbor/selector_cache.rs" => 15,
   "lexbor/selector_port_tests.rs" => 1,
   "lexbor/selectors.rs" => 9,
   "lexbor/serialize.rs" => 1,
@@ -109,28 +108,28 @@ FORBID_FILES = %w[
   glue/xml_node/serialize.rs glue/xml_node/strings.rs glue/xpath_context.rs
   html/dom/mod.rs html/mod.rs html/tokenizer/mod.rs
   html/tree/mod.rs html_dom.rs lexbor/adapter/dom_index.rs
-  lexbor/contains_guard.rs lexbor/css_match/mod.rs lexbor/selector_text.rs
-  limits.rs node_type.rs ptr_table.rs
-  rust_tests.rs selectors/mod.rs stack.rs
-  text.rs utf8_input.rs xml/arena.rs
-  xml/attr_key.rs xml/chars/expand.rs xml/chars/mod.rs
-  xml/dom_name.rs xml/encoding_sniff.rs xml/index.rs
-  xml/mod.rs xml/model.rs xml/mutate/attr.rs
-  xml/mutate/copy.rs xml/mutate/edit.rs xml/mutate/factory.rs
-  xml/mutate/insert.rs xml/mutate/mod.rs xml/mutate/ns.rs
-  xml/ns_scope.rs xml/qname.rs xml/selftest.rs
-  xml/serialize/bindings.rs xml/serialize/c14n.rs xml/serialize/mod.rs
-  xml/serialize/out.rs xml/serialize/xml.rs xml/tree/cursor.rs
-  xml/tree/decl.rs xml/tree/dtd.rs xml/tree/mod.rs
-  xml/tree/scope.rs xml/verify.rs xml/xpath.rs
-  xpath/abi.rs xpath/ast.rs xpath/ast_ops.rs
-  xpath/attr_pred.rs xpath/axis.rs xpath/ctx.rs
-  xpath/dom.rs xpath/eval.rs xpath/funcs/ext.rs
-  xpath/funcs/mod.rs xpath/lex.rs xpath/limits.rs
-  xpath/mod.rs xpath/nodetest.rs xpath/number.rs
-  xpath/order.rs xpath/parse.rs xpath/step_index.rs
-  xpath/str_cache.rs xpath/tests.rs xpath/value.rs
-  xpath/verify.rs
+  lexbor/contains_guard.rs lexbor/css_match/mod.rs lexbor/selector_cache.rs
+  lexbor/selector_text.rs limits.rs node_type.rs
+  ptr_table.rs rust_tests.rs selectors/mod.rs
+  stack.rs text.rs utf8_input.rs
+  xml/arena.rs xml/attr_key.rs xml/chars/expand.rs
+  xml/chars/mod.rs xml/dom_name.rs xml/encoding_sniff.rs
+  xml/index.rs xml/mod.rs xml/model.rs
+  xml/mutate/attr.rs xml/mutate/copy.rs xml/mutate/edit.rs
+  xml/mutate/factory.rs xml/mutate/insert.rs xml/mutate/mod.rs
+  xml/mutate/ns.rs xml/ns_scope.rs xml/qname.rs
+  xml/selftest.rs xml/serialize/bindings.rs xml/serialize/c14n.rs
+  xml/serialize/mod.rs xml/serialize/out.rs xml/serialize/xml.rs
+  xml/tree/cursor.rs xml/tree/decl.rs xml/tree/dtd.rs
+  xml/tree/mod.rs xml/tree/scope.rs xml/verify.rs
+  xml/xpath.rs xpath/abi.rs xpath/ast.rs
+  xpath/ast_ops.rs xpath/attr_pred.rs xpath/axis.rs
+  xpath/ctx.rs xpath/dom.rs xpath/eval.rs
+  xpath/funcs/ext.rs xpath/funcs/mod.rs xpath/lex.rs
+  xpath/limits.rs xpath/mod.rs xpath/nodetest.rs
+  xpath/number.rs xpath/order.rs xpath/parse.rs
+  xpath/step_index.rs xpath/str_cache.rs xpath/tests.rs
+  xpath/value.rs xpath/verify.rs
 ].freeze
 
 UNSAFE_USE = /\bunsafe\s*(?:\{|fn\b|impl\b|trait\b|extern\b)/
@@ -211,7 +210,7 @@ LEXBOR_ABI_COUNTS = {}.freeze
 # along - so the table is empty and any such use fails.
 # The crate-root modules the engine is built on sit outside those directories
 # and are held to the same two rules.
-ENGINE_DIRS = %w[lexbor/ xml/ xpath/ css/ falloc/ cbuf.rs cutf8.rs dom_rules.rs dom_rules/ limits.rs node_type.rs ptr_table.rs text.rs token.rs utf8_input.rs].freeze
+ENGINE_DIRS = %w[lexbor/ xml/ xpath/ css/ selectors/ falloc/ cbuf.rs cutf8.rs dom_rules.rs dom_rules/ limits.rs node_type.rs ptr_table.rs text.rs token.rs utf8_input.rs].freeze
 RUBY_LAYER = /crate::(?:bridge|glue|init)|magnus::/
 RUBY_LAYER_COUNTS = {}.freeze
 
@@ -539,10 +538,10 @@ Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
   relative = path.delete_prefix("#{RUST}/")
   next unless relative.start_with?(*ENGINE_DIRS)
   next if relative.end_with?("selftest.rs", "verify.rs", "tests.rs")
-  # Built only for the tests and the `html_diff` fuzz target
-  # (`lexbor-reference`), never in a build that ships - a test file by
+  # Built only for the tests and the `html_diff` / `selector_diff` fuzz
+  # targets (`lexbor-reference`), never in a build that ships - test files by
   # another name.
-  next if relative == "lexbor/tree_diff.rs"
+  next if %w[lexbor/tree_diff.rs lexbor/selector_diff.rs].include?(relative)
 
   count = comments_removed(File.binread(path)).scan(INFALLIBLE_ALLOC).length
   infallible[relative] = count unless count.zero?

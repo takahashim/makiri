@@ -29,9 +29,13 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 #![allow(clippy::missing_safety_doc)]
 
+#[cfg(any(test, feature = "lexbor-reference"))]
 use crate::gvl::{Gvl, GvlCell, GvlRef};
 use crate::lexbor::abi as lxb;
-use crate::lexbor::css_engine::{lexbor_str, ParseFail, ParserParts, SelectorParser};
+use crate::lexbor::css_engine::lexbor_str;
+#[cfg(any(test, feature = "lexbor-reference"))]
+use crate::lexbor::css_engine::{ParseFail, ParserParts, SelectorParser};
+#[cfg(any(test, feature = "lexbor-reference"))]
 use crate::text::VerifiedText;
 use core::ffi::c_long;
 
@@ -51,10 +55,12 @@ pub enum ParseError {
     Oom,
 }
 
+#[cfg(any(test, feature = "lexbor-reference"))]
 /// The process-global parser, built on first use. A build failure leaves it
 /// unset, so a later call tries again.
 static ENGINE: GvlCell<Option<SelectorParser>> = GvlCell::new(None);
 
+#[cfg(any(test, feature = "lexbor-reference"))]
 /// A parsed selector list, borrowed from the engine's arena.
 ///
 /// Dropping it cleans the arena and returns the parser to its CLEAN stage, which
@@ -68,6 +74,7 @@ pub struct Parsed<'g> {
     _slot: GvlRef<'g, Option<SelectorParser>>,
 }
 
+#[cfg(any(test, feature = "lexbor-reference"))]
 impl Drop for Parsed<'_> {
     fn drop(&mut self) {
         // SAFETY: the borrow in `_slot` is live, and the list is not read after
@@ -76,6 +83,7 @@ impl Drop for Parsed<'_> {
     }
 }
 
+#[cfg(any(test, feature = "lexbor-reference"))]
 /// Parse `selector` into the engine's arena.
 pub fn parse<'g>(gvl: &'g Gvl, selector: VerifiedText) -> Result<Parsed<'g>, ParseError> {
     let mut slot = ENGINE.borrow(gvl).map_err(|_| ParseError::Busy)?;
@@ -226,6 +234,7 @@ unsafe fn arena<'p, T>(p: *const T) -> Option<&'p T> {
     unsafe { p.as_ref() }
 }
 
+#[cfg(any(test, feature = "lexbor-reference"))]
 impl Parsed<'_> {
     /// The selector's comma groups, in order.
     pub fn groups(&self) -> Lists<'_> {
@@ -296,7 +305,7 @@ impl PartialEq for Selector<'_> {
 }
 
 /// How a simple selector attaches to the one before it.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Combinator {
     /// Whitespace.
     Descendant,
@@ -316,7 +325,7 @@ pub enum Combinator {
 }
 
 /// An attribute selector's operator.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum AttrMatch {
     /// `=`
     Equal,
@@ -362,7 +371,7 @@ pub enum CaseModifier {
 }
 
 /// The non-functional pseudo-classes the lowering can express.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PseudoClass {
     FirstChild,
     LastChild,
@@ -402,7 +411,7 @@ pub struct Nth<'p> {
 }
 
 /// The functional pseudo-classes that take a selector list.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ListPseudo {
     Not,
     Is,

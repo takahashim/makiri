@@ -302,3 +302,487 @@ fn the_tokenizer_reads_lexbors_tokens_on_random_inputs() {
         same_tokens(&random_input(&mut rng));
     }
 }
+
+/* ---- the parser ---- */
+
+use crate::lexbor::selector_diff::{check as same_parse, port_dump};
+
+const SELECTORS: &[&str] = &[
+    "*",
+    "div",
+    "DIV",
+    "a b",
+    "a  >  b",
+    "a+b",
+    "a ~ b",
+    "a || b",
+    "a|b",
+    "*|*",
+    "|a",
+    "ns|*",
+    "|*",
+    "*|a",
+    ".a.b#c",
+    "#1",
+    "#-a",
+    ".1",
+    "a, b",
+    "a,",
+    ",a",
+    "a,,b",
+    "",
+    " ",
+    "a ",
+    " a",
+    ">a",
+    "a >",
+    "a > > b",
+    "[a]",
+    "[ a ]",
+    "[a=b]",
+    "[a='b']",
+    "[a=\"b\" i]",
+    "[a=b s]",
+    "[a=b x]",
+    "[a=b ii]",
+    "[a|=b]",
+    "[a~=b]",
+    "[a^=b]",
+    "[a$=b]",
+    "[a*=b]",
+    "[|a]",
+    "[*|a]",
+    "[ns|a=b]",
+    "[a|b|=c]",
+    "[a",
+    "[a=",
+    "[a=b",
+    "[a=b i",
+    "[=b]",
+    "[a==b]",
+    "[a=1]",
+    "[a= b ]",
+    "a[b][c]",
+    "[a=b]x",
+    ":first-child",
+    ":FIRST-CHILD",
+    ":root",
+    ":hover",
+    ":visited",
+    ":target",
+    ":scope",
+    ":foo",
+    "::before",
+    "::foo",
+    "a::before",
+    "::x()",
+    ":nth-child(2)",
+    ":nth-child(2n+1)",
+    ":nth-child(-n+3)",
+    ":nth-child(odd)",
+    ":nth-child(EVEN)",
+    ":nth-child(n)",
+    ":nth-child(-n)",
+    ":nth-child(+n)",
+    ":nth-child(+ n)",
+    ":nth-child(n-1)",
+    ":nth-child(n - 1)",
+    ":nth-child(n -1)",
+    ":nth-child(n- 1)",
+    ":nth-child(2n - 1)",
+    ":nth-child(3n+ 2)",
+    ":nth-child(1.5)",
+    ":nth-child(2.0n)",
+    ":nth-child()",
+    ":nth-child( 2 )",
+    ":nth-child(2 of .a)",
+    ":nth-child(2n of .a, .b)",
+    ":nth-child(of .a)",
+    ":nth-child(2 of)",
+    ":nth-last-child(1)",
+    ":nth-of-type(2)",
+    ":nth-last-of-type(2n)",
+    ":nth-of-type(2 of .a)",
+    ":nth-col(1)",
+    ":nth-child(n-a)",
+    ":nth-child(9223372036854774784)",
+    ":nth-child(-9223372036854775807)",
+    ":nth-child(99999999999999999999)",
+    ":nth-child(n-99999999999999999999)",
+    ":nth-child(1e3)",
+    ":nth-child(10n-3)",
+    ":nth-child(n+-3)",
+    ":not(a)",
+    ":not(a, b)",
+    ":not()",
+    ":not(:not(a))",
+    ":not(a b > c)",
+    ":not(a,)",
+    ":not(,a)",
+    ":is(a, b)",
+    ":is()",
+    ":is(a, $, b)",
+    ":is($)",
+    ":where(a, .b)",
+    ":where(#x)",
+    ":where($)",
+    ":has(a)",
+    ":has(> a)",
+    ":has(+ a, ~ b)",
+    ":has(a b)",
+    ":has()",
+    ":has(:has(a))",
+    ":has(> > a)",
+    ":current(a)",
+    ":dir(ltr)",
+    ":lang(en)",
+    ":lexbor-contains(a)",
+    ":contains('x')",
+    ":is(a",
+    ":not(a",
+    "a:is(.b, .c) > d:not(.e)",
+    ":is(:is(:is(a)))",
+    ":where(a, :is(b, c))",
+    "a:has(b, c) d",
+    ":nth-child(2 of :is(a, b))",
+    ":is(a,, b)",
+    ":is(a, (b), c)",
+    ":is([a, b)",
+    "a /* c */ b",
+    "a/**/b",
+    "\\61",
+    "\\31 23",
+    "#\\31",
+    ".\\-",
+    "a\\:b",
+    "é",
+    ".é",
+    "#€",
+    "a(b)",
+    "a)",
+    "a]",
+    "a}",
+    "{a}",
+    "a;b",
+    "a!b",
+    "@a",
+    "a@b",
+    "url(a)",
+    "a url(b)",
+    ":is(url(x))",
+    "--a",
+    "-a",
+    "-",
+    "_a",
+    "a--b",
+    "a\tb",
+    "a\nb",
+    "a\rb",
+    "a\u{c}b",
+];
+
+/// Where the port answers otherwise on purpose (docs/parser_differences.ja.md,
+/// S2): `An+B` values Lexbor converts with C's undefined double-to-long cast.
+/// The port saturates; Lexbor's answer is the platform's.
+const DIVERGENT: &[(&str, &str)] = &[(
+    ":nth-child(9223372036854775807)",
+    "L200[Descendant<nth-child>N(false,false,0,9223372036854775807) ]",
+)];
+
+#[test]
+fn the_parser_builds_lexbors_selectors() {
+    for s in SELECTORS {
+        same_parse(s);
+    }
+    for (s, port) in DIVERGENT {
+        assert_eq!(port_dump(s).as_deref(), Some(*port), "{s:?}");
+    }
+}
+
+/// A random selector-ish string: mostly grammatical, with nesting, odd
+/// whitespace and stray tokens, so both the parse and the error recovery are
+/// exercised.
+fn random_selector(rng: &mut Rng, depth: u32) -> String {
+    const NAMES: &[&str] = &[
+        "a", "div", "LI", "x-y", "\\61", "é", "-z", "_", "svg", "n", "of", "odd",
+    ];
+    const PSEUDO: &[&str] = &[
+        "first-child",
+        "last-child",
+        "only-child",
+        "empty",
+        "root",
+        "hover",
+        "checked",
+        "disabled",
+        "enabled",
+        "link",
+        "any-link",
+        "visited",
+        "target",
+        "scope",
+        "focus-within",
+        "foo",
+        "FIRST-OF-TYPE",
+        "blank",
+    ];
+    const FUNCS: &[&str] = &[
+        "not",
+        "is",
+        "where",
+        "has",
+        "nth-child",
+        "nth-last-child",
+        "nth-of-type",
+        "nth-last-of-type",
+        "current",
+        "dir",
+        "lang",
+        "nth-col",
+        "lexbor-contains",
+        "foo",
+        "NOT",
+        "Is",
+    ];
+    const ANB: &[&str] = &[
+        "1",
+        "2n",
+        "2n+1",
+        "-n+3",
+        "odd",
+        "even",
+        "n",
+        "+n",
+        "-n",
+        "n-1",
+        "n - 1",
+        "2n -1",
+        "+ 1",
+        "1.5",
+        "",
+        " 3 ",
+        "n+",
+        "3n-",
+        "-2n-2",
+        "N",
+        "0n+0",
+        "99999999999999999999",
+        "+5",
+        "-5",
+        "n- 2",
+        "+n+1",
+    ];
+    const WS: &[&str] = &["", "", "", " ", "  ", "\t", "\n", "/**/", " /* c */ "];
+    const COMB: &[&str] = &[" ", ">", "+", "~", "||", " > ", " + ", " ~ ", "|", ">>", ""];
+    const STRAY: &[&str] = &[
+        ",", ")", "(", "[", "]", "$", "!", "{", "}", ";", "@x", "'", "\"", "#", ".", ":", "::", "1",
+    ];
+
+    let mut out = String::new();
+    let groups = 1 + rng.below(3);
+    for g in 0..groups {
+        if g > 0 {
+            out.push_str(rng.pick(WS));
+            out.push(',');
+            out.push_str(rng.pick(WS));
+        }
+        let compounds = 1 + rng.below(3);
+        for c in 0..compounds {
+            if c > 0 {
+                out.push_str(rng.pick(WS));
+                out.push_str(rng.pick(COMB));
+                out.push_str(rng.pick(WS));
+            }
+            let simples = 1 + rng.below(3);
+            for i in 0..simples {
+                let kind = rng.below(if depth < 3 { 12 } else { 9 });
+                match kind {
+                    0 if i == 0 => out.push_str(rng.pick(NAMES)),
+                    1 if i == 0 => out.push('*'),
+                    2 if i == 0 => {
+                        out.push_str(rng.pick(&["*", "", "ns"]));
+                        out.push('|');
+                        out.push_str(rng.pick(&["*", "a", "B"]));
+                    }
+                    3 => {
+                        out.push('#');
+                        out.push_str(rng.pick(NAMES));
+                    }
+                    4 => {
+                        out.push('.');
+                        out.push_str(rng.pick(NAMES));
+                    }
+                    5 => {
+                        out.push('[');
+                        out.push_str(rng.pick(WS));
+                        out.push_str(rng.pick(&["", "", "|", "*|", "ns|"]));
+                        out.push_str(rng.pick(NAMES));
+                        out.push_str(rng.pick(WS));
+                        if rng.below(3) > 0 {
+                            out.push_str(
+                                rng.pick(&["=", "~=", "|=", "^=", "$=", "*=", "==", "!="]),
+                            );
+                            out.push_str(rng.pick(WS));
+                            out.push_str(rng.pick(&["b", "'b c'", "\"\"", "1", "x-y", "'", "é"]));
+                            out.push_str(rng.pick(WS));
+                            out.push_str(rng.pick(&["", "", "i", "S", "x", "ii"]));
+                            out.push_str(rng.pick(WS));
+                        }
+                        if rng.below(10) > 0 {
+                            out.push(']');
+                        }
+                    }
+                    6 | 7 => {
+                        out.push(':');
+                        out.push_str(rng.pick(PSEUDO));
+                    }
+                    8 => {
+                        out.push_str("::");
+                        out.push_str(rng.pick(&["before", "after", "x", "selection"]));
+                    }
+                    _ => {
+                        let f = *rng.pick(FUNCS);
+                        out.push(':');
+                        out.push_str(f);
+                        out.push('(');
+                        out.push_str(rng.pick(WS));
+                        if f.to_ascii_lowercase().starts_with("nth") {
+                            out.push_str(rng.pick(ANB));
+                            if rng.below(3) == 0 {
+                                out.push_str(rng.pick(&[" of ", " OF ", " of", "of "]));
+                                out.push_str(&random_selector(rng, depth + 1));
+                            }
+                        } else if f.eq_ignore_ascii_case("has") && rng.below(2) == 0 {
+                            out.push_str(rng.pick(COMB));
+                            out.push_str(&random_selector(rng, depth + 1));
+                        } else if rng.below(8) > 0 {
+                            out.push_str(&random_selector(rng, depth + 1));
+                        }
+                        out.push_str(rng.pick(WS));
+                        if rng.below(10) > 0 {
+                            out.push(')');
+                        }
+                    }
+                }
+                if rng.below(30) == 0 {
+                    out.push_str(rng.pick(STRAY));
+                }
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn the_parser_builds_lexbors_selectors_on_random_inputs() {
+    let count = std::env::var("SELECTOR_PORT_COUNT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(20_000);
+    let mut rng = Rng(0xC55_5E1);
+    for _ in 0..count {
+        let s = random_selector(&mut rng, 0);
+        same_parse(&s);
+    }
+}
+
+/// Every selector the specs and tests use: the double-quoted arguments of
+/// `css(`, `at_css(`, `matches?(`, `search(` and `at(` in `spec/`, and of the
+/// Rust tests' selector helpers.
+#[test]
+fn the_parser_builds_lexbors_selectors_on_the_repository_corpus() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let mut files = Vec::new();
+    let mut stack = vec![root.join("spec"), root.join("ext/makiri/rust/src")];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                if !p.ends_with("data") {
+                    stack.push(p);
+                }
+            } else if p.extension().is_some_and(|x| x == "rb" || x == "rs") {
+                files.push(p);
+            }
+        }
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for f in files {
+        let Ok(text) = std::fs::read_to_string(&f) else {
+            continue;
+        };
+        for call in [
+            "css(\"",
+            "at_css(\"",
+            "matches?(\"",
+            "search(\"",
+            "selector(\"",
+            "select_all(&doc, \"",
+            "parse_sel(\"",
+        ] {
+            let mut rest = text.as_str();
+            while let Some(i) = rest.find(call) {
+                rest = &rest[i + call.len()..];
+                let Some(end) = rest.find('"') else {
+                    break;
+                };
+                let lit = &rest[..end];
+                if !lit.contains("#{") {
+                    seen.insert(lit.to_string());
+                }
+            }
+        }
+    }
+    assert!(seen.len() > 200, "found only {} selectors", seen.len());
+    for s in &seen {
+        same_parse(s);
+    }
+    eprintln!("selector corpus: {} selectors", seen.len());
+}
+
+/// Parse time against Lexbor's, on typical selectors (a measurement, not a
+/// check): `cargo test --release ... selector_parse_speed -- --ignored --nocapture`.
+#[test]
+#[ignore = "a measurement, not a check"]
+fn selector_parse_speed() {
+    use crate::gvl::Gvl;
+    use crate::lexbor::css_parser;
+    use crate::text::VerifiedText;
+    use std::time::Instant;
+    const SAMPLE: &[&str] = &[
+        "div",
+        "#main",
+        ".item",
+        "ul li.item",
+        "main > section a[href^='/p']",
+        "li:nth-child(2n+1 of .x)",
+        ":is(li, p) > a.link:not(.ext)",
+        "li:has(> span.meta), p ~ p:last-of-type",
+    ];
+    let rounds = 50_000;
+    for s in SAMPLE {
+        let t = Instant::now();
+        for _ in 0..rounds {
+            let p = crate::selectors::parse(s.as_bytes()).expect("parses");
+            core::hint::black_box(&p);
+        }
+        let port = t.elapsed();
+        let gvl = Gvl::exclusive();
+        let t = Instant::now();
+        for _ in 0..rounds {
+            let text = VerifiedText::from_bytes(s.as_bytes()).expect("text");
+            let p = css_parser::parse(&gvl, text).ok().expect("parses");
+            core::hint::black_box(&p);
+        }
+        let lexbor = t.elapsed();
+        eprintln!(
+            "{s:48} port {:6.0} ns  lexbor {:6.0} ns  ratio {:.2}",
+            port.as_nanos() as f64 / rounds as f64,
+            lexbor.as_nanos() as f64 / rounds as f64,
+            port.as_secs_f64() / lexbor.as_secs_f64()
+        );
+    }
+}

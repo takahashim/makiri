@@ -27,7 +27,7 @@ jobs:
       matrix:
         # html_css and html_css_diff run in css-match.yml, with the selector
         # dictionary and a longer budget.
-        target: [xml, xpath, xml_xpath, css, html, html_xpath, html_diff]
+        target: [xml, xpath, xml_xpath, css, html, html_xpath, html_diff, selector_diff]
 
     steps:
       - name: Checkout (with vendored Lexbor submodule)

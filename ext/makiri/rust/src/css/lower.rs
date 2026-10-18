@@ -14,16 +14,16 @@
 //! reverse axes. The path it builds is non-empty - hence truthy - exactly when
 //! self matches the selector.
 //!
-//! The parsed selectors are read only through `css_parser`'s typed views, so
-//! this module holds no pointer into Lexbor's arena, sees none of its enum
-//! values, and forbids unsafe.
+//! The parsed selectors are read only through the parser's typed views
+//! (`crate::selectors::ast`), so this module sees none of its arena's
+//! encoding, and forbids unsafe.
 
 #![forbid(unsafe_code)]
 
 use super::build::{self, Built};
 use super::{Build, MAX_COMPOUNDS};
 use crate::engine_error::{ErrorKind, Reported};
-use crate::lexbor::css_parser::{
+use crate::selectors::ast::{
     AttrMatch, Attribute, CaseModifier, Combinator, FunctionArg, ListPseudo, Lists, Nth,
     PseudoClass, Selector, Simple,
 };

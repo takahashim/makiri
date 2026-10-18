@@ -523,7 +523,18 @@ mod css_match {
     use crate::lexbor::css_match::{
         self as port, validate, MatchFailure, QueryFailure, Scratch, MAX_COMPOUNDS,
     };
-    use crate::lexbor::css_parser::{self, Lists};
+    use crate::selectors::ast::Lists;
+
+    /// The parse the matcher is fed by in a build that ships: the port's
+    /// (`crate::selectors`), under the name these tests have always called.
+    mod css_parser {
+        pub fn parse(
+            _gvl: &crate::gvl::Gvl,
+            text: crate::text::VerifiedText<'_>,
+        ) -> Result<crate::selectors::Parsed, crate::selectors::Status> {
+            crate::selectors::parse(text.as_bytes())
+        }
+    }
     use crate::text::VerifiedText;
 
     /* The engine's entry points take the `Scratch` a caller keeps; each test
@@ -1998,7 +2009,7 @@ mod css_match {
     /// `a_sibling_compound_with_a_list_pseudo_in_has_tries_every_pair`).
     /// A selector that does not parse is not one - the caller skips it anyway.
     fn departs_from_lexbor(sel: &str) -> bool {
-        use crate::lexbor::css_parser::{Combinator, FunctionArg, ListPseudo, Simple};
+        use crate::selectors::ast::{Combinator, FunctionArg, ListPseudo, Simple};
 
         let gvl = Gvl::exclusive();
         let Some(text) = VerifiedText::from_bytes(sel.as_bytes()) else {

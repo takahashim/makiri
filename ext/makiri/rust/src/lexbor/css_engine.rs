@@ -1,17 +1,24 @@
-//! What the three users of Lexbor's CSS parser share: owning a Lexbor object
-//! until it is handed on, and the parser wired to its arena and selector table.
-//! The process-global cell the two long-lived ones keep it in is
+//! What the users of Lexbor's CSS parser share: owning a Lexbor object until it
+//! is handed on, and the parser wired to its arena and selector table. The
+//! process-global cell the long-lived ones keep it in is
 //! [`crate::gvl::GvlCell`].
 //!
-//! The selector matcher (`selectors`), the selector lowering's parser
-//! (`css_parser`) and the stylesheet reader (`stylesheet`) each built these by
-//! hand, three ways: an RAII owner in one, `if !x.is_null() { destroy }` arms in
+//! A build that ships has one user, the stylesheet reader: selectors are
+//! parsed by the port (`crate::selectors`). The selector parser here is
+//! built only for the references the port is tested against - the OLD
+//! matcher (`css-reference`) and `css_parser::parse` (`lexbor-reference`).
+//!
+//! The OLD selector matcher (`selectors`), the selector parser (`css_parser`)
+//! and the stylesheet reader (`stylesheet`) each built these by hand, three
+//! ways: an RAII owner in one, `if !x.is_null() { destroy }` arms in
 //! another, null checks in a `Drop` in the third. The order the pieces are torn
 //! down in, and that a half-built set is freed at all, now live here once.
 
 #![allow(unsafe_code)]
 
+#[cfg(any(test, feature = "lexbor-reference", feature = "css-reference"))]
 use crate::lexbor::abi::consts::{STATUS_ERROR_MEMORY_ALLOCATION, STATUS_OK};
+#[cfg(any(test, feature = "lexbor-reference", feature = "css-reference"))]
 use crate::lexbor::abi::{
     lxb_css_memory_clean, lxb_css_memory_create, lxb_css_memory_destroy, lxb_css_memory_init,
     lxb_css_parser_clean, lxb_css_parser_create, lxb_css_parser_destroy, lxb_css_parser_init,
@@ -45,6 +52,7 @@ impl<T> Owned<T> {
         self.0
     }
 
+    #[cfg(any(test, feature = "lexbor-reference", feature = "css-reference"))]
     /// Hand the pointer on; this stops owning it.
     pub(crate) fn into_raw(self) -> *mut T {
         core::mem::ManuallyDrop::new(self).0
@@ -59,6 +67,7 @@ impl<T> Drop for Owned<T> {
     }
 }
 
+#[cfg(any(test, feature = "lexbor-reference", feature = "css-reference"))]
 /// A selector parser with its arena and selector table, built but not yet
 /// handed on. Dropping it destroys all three.
 ///
@@ -70,6 +79,7 @@ pub(crate) struct ParserParts {
     mem: Owned<CssMemory>,
 }
 
+#[cfg(any(test, feature = "lexbor-reference", feature = "css-reference"))]
 impl ParserParts {
     /// Create, initialise and wire the three. `None` if any step failed, with
     /// whatever was built already destroyed.
@@ -127,6 +137,7 @@ impl ParserParts {
     }
 }
 
+#[cfg(any(test, feature = "lexbor-reference", feature = "css-reference"))]
 /// Why [`SelectorParser::parse`] produced no list.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ParseFail {
@@ -139,6 +150,7 @@ pub(crate) enum ParseFail {
     ParserOom,
 }
 
+#[cfg(any(test, feature = "lexbor-reference", feature = "css-reference"))]
 /// A process-lifetime selector parser: its pieces are never destroyed.
 ///
 /// It lives in a [`crate::gvl::GvlCell`], and every method's contract is that
@@ -158,6 +170,7 @@ pub(crate) struct SelectorParser {
     mem: *mut CssMemory,
 }
 
+#[cfg(any(test, feature = "lexbor-reference", feature = "css-reference"))]
 impl SelectorParser {
     /// Parse `selector` into the arena: the list, or why there is none.
     ///
@@ -189,25 +202,6 @@ impl SelectorParser {
                 _ => Err(ParseFail::Rejected),
             }
         }
-    }
-
-    /// Empty the arena, freeing every list parsed into it.
-    ///
-    /// # Safety
-    /// Its cell's borrow is live, and no list parsed into the arena is used
-    /// afterwards.
-    pub(crate) unsafe fn clean_arena(self) {
-        // SAFETY: a live arena, used under its cell's borrow; the caller keeps no list.
-        unsafe { lxb_css_memory_clean(self.mem) };
-    }
-
-    /// Return the parser to its CLEAN stage, keeping what the arena holds.
-    ///
-    /// # Safety
-    /// Its cell's borrow is live.
-    pub(crate) unsafe fn clean_parser(self) {
-        // SAFETY: a live parser, used under its cell's borrow.
-        unsafe { lxb_css_parser_clean(self.parser) };
     }
 
     /// Empty the arena - every list parsed into it is gone - and return the

@@ -759,12 +759,14 @@ STATEFUL_SCENARIOS.each do |name, spec|
 end
 
 # An allocation failure while deciding a selector is not a verdict on it. For
-# a selector `lexbor::contains_guard` rewrites (so the parse ends in a syntax
-# error when nothing fails), every injected failure - the cache key, the
-# guard's copy - must surface as an out-of-memory Makiri::Error, never as
-# CSS::SyntaxError: the guard's OOM used to become a rejected parse, which
-# ALLOWED above cannot tell apart (SyntaxError is a Makiri::Error), so this is
-# checked on its own. Warmed twice first, as the scenarios are: a cold call
+# a selector the parser rejects (`:lexbor-contains()` is not in the port's
+# function table, as `lexbor::contains_guard` kept it from Lexbor's), every
+# injected failure - the cache key, the tokens, the parser's stacks - must
+# surface as an out-of-memory Makiri::Error, never as CSS::SyntaxError (the
+# guard's OOM once became a rejected parse) nor as an answer (the parser's
+# own OOM once ended the parse as a success; parser_differences.ja.md S3).
+# ALLOWED above cannot tell a SyntaxError apart (it is a Makiri::Error), so
+# this is checked on its own. Warmed twice first, as the scenarios are: a cold call
 # also allocates the engines and the error report's one-time state, which
 # fail after the verdict and so may keep the SyntaxError.
 guard_docs = {

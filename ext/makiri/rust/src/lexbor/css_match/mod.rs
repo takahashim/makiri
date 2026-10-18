@@ -3,10 +3,9 @@
 //! architectural property Lexbor's own `lxb_selectors_*` state machine has
 //! (`lxb_selectors_run`'s loop,
 //! `do { entry = selectors->state(...) } while (entry != NULL);`, never
-//! recurses on selector nesting). Selector PARSING is not reimplemented: it
-//! goes through
-//! the existing `lexbor::css_parser` typed view, the same one the XML
-//! CSS->XPath lowering already uses.
+//! recurses on selector nesting). Selector PARSING is the parser port's
+//! (`crate::selectors`), read through its typed views, the same ones the XML
+//! CSS->XPath lowering uses.
 //!
 //! Wired into `Node#css`/`#at_css`/`#matches?` (`glue::html_node::css`). A
 //! port was chosen over adopting the `selectors`/`cssparser` crates, which
@@ -182,8 +181,8 @@ pub use scratch::Scratch;
 
 use crate::falloc::VecPush;
 use crate::html_dom::html::{HtmlElement, HtmlNode};
-use crate::lexbor::css_parser::Lists;
 use crate::limits::NODE_SET_MAX;
+use crate::selectors::ast::Lists;
 
 use compile::{compile, Compiled};
 use query::Query;

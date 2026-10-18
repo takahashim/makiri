@@ -2,10 +2,9 @@
 //!
 //! The selector engine lives in [`crate::lexbor::css_match`] (matching,
 //! over the typed adapter, non-recursive) plus [`crate::lexbor::selector_cache`]
-//! (parsing AND caching - Lexbor's own C parser, kept warm across repeat
-//! calls with the same selector string, its own process-global engine
-//! separate from [`crate::lexbor::css_parser`]'s), neither of which knows
-//! about Ruby. This module verifies the selector, maps an engine failure to
+//! (parsing, with the parser port [`crate::selectors`], AND caching the
+//! parse across repeat calls with the same selector string), neither of
+//! which knows about Ruby. This module verifies the selector, maps an engine failure to
 //! its exception, and fills the NodeSet (`css`) or wraps the one node
 //! `at_css` found.
 

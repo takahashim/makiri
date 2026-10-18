@@ -7,9 +7,14 @@
 
 #![forbid(unsafe_code)]
 
+pub mod ast;
+pub mod parser;
+pub mod pseudo;
 mod strtod;
 pub mod token;
 pub mod tokenizer;
+
+pub use parser::{parse, Parsed};
 
 /// `lxb_status_t`, the values the parser reports.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

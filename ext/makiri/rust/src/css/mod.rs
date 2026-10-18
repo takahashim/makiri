@@ -1,5 +1,5 @@
-//! CSS selector front end: lowers a Lexbor-parsed selector
-//! list into the native XPath engine's AST.
+//! CSS selector front end: lowers a parsed selector list into the native
+//! XPath engine's AST.
 //!
 //! No new evaluator opcodes. Every selector becomes existing PATH / step /
 //! predicate nodes, so the shared evaluator's budgets, document order, dedup and
@@ -7,13 +7,10 @@
 //!
 //! # This is a lowering, not a parser
 //!
-//! Lexbor parses the selector; this walks the result. The design doc lists
-//! "re-implementing what Lexbor already provides - parsing, DOM, **selectors**,
-//! encoding, serialization" among the things deliberately avoided, so replacing
-//! the parser would be a separate decision with its own migration.
-//!
-//! Lexbor's selector parser is used rather than its matcher for one further
-//! reason: unlike the matcher, it preserves name case.
+//! The parser port (`crate::selectors`, Lexbor's selector parser in Rust,
+//! `docs/rewrite_parser.ja.md` stage 5) parses the selector; this walks the
+//! result. Like Lexbor's parser, and unlike Lexbor's matcher, it preserves
+//! name case.
 //!
 //! # Ownership
 //!
@@ -26,8 +23,6 @@
 mod build;
 mod lower;
 
-use crate::gvl::Gvl;
-use crate::lexbor::css_parser;
 use crate::xpath::ast::{Ast, Op};
 use core::cell::Cell;
 
@@ -141,10 +136,7 @@ pub enum Form {
 /// `Err` with the budget's error slot filled: SYNTAX for a malformed selector or an
 /// unsupported construct (jQuery extensions, pseudo-elements, the case
 /// modifier), OOM or LIMIT for an allocation failure or the complexity cap.
-///
-/// `gvl` is the proof that Lexbor's process-global selector parser may be used.
 pub fn compile_owned(
-    gvl: &Gvl,
     selector: VerifiedText,
     ns: &CssNs,
     form: Form,
@@ -158,26 +150,17 @@ pub fn compile_owned(
         nesting: Cell::new(0),
     };
 
-    let parsed = match css_parser::parse(gvl, selector) {
+    let parsed = match crate::selectors::parse(selector.as_bytes()) {
         Ok(p) => p,
-        /* `ParserParts::build` returns None only when a Lexbor allocation or
-         * init failed, so this is an OOM, not a broken invariant. */
-        Err(css_parser::ParseError::NotReady) => {
-            return Err(b.fail(ErrorKind::Oom, "out of memory initialising CSS parser"));
-        }
-        Err(css_parser::ParseError::Syntax) => {
-            return Err(b.fail(ErrorKind::Syntax, "invalid CSS selector"));
-        }
-        Err(css_parser::ParseError::Busy) => {
-            return Err(b.fail(ErrorKind::Internal, "CSS parser is already in use"));
-        }
-        Err(css_parser::ParseError::Oom) => {
+        Err(crate::selectors::Status::ErrorMemoryAllocation) => {
             return Err(b.fail(ErrorKind::Oom, "out of memory parsing CSS selector"));
+        }
+        Err(_) => {
+            return Err(b.fail(ErrorKind::Syntax, "invalid CSS selector"));
         }
     };
 
-    /* `parsed` cleans the parser's arena when it drops, on every path out of
-     * this function. Lexbor rejects an empty selector list before it gets here. */
+    /* The parser rejects an empty selector list before it gets here. */
     let root = match form {
         /* Each comma-group as a PATH, unioned. Top level: the first compound
          * is a descendant of the context node. */

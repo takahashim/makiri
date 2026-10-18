@@ -37,8 +37,8 @@ use makiri::lexbor::adapter::html::HtmlNode;
 use makiri::lexbor::adapter::post_parse::parse_html;
 use makiri::lexbor::adapter::tree_guard::DepthLimit;
 use makiri::lexbor::css_match::{matches_any, select_all, select_first, Scratch};
-use makiri::lexbor::css_parser::Lists;
 use makiri::lexbor::selector_cache;
+use makiri::selectors::ast::Lists;
 
 /// How many elements are asked `matches?` each: each is a full query, with
 /// its own budget, so this bounds the run, not the check.

@@ -42,11 +42,11 @@ use makiri::lexbor::adapter::html::{HtmlNode, RawNode};
 use makiri::lexbor::adapter::post_parse::parse_html;
 use makiri::lexbor::adapter::tree_guard::DepthLimit;
 use makiri::lexbor::css_match::{select_all, Scratch};
-use makiri::lexbor::css_parser::{
-    Combinator, FunctionArg, ListPseudo, Lists, PseudoClass, Selector, Simple,
-};
 use makiri::lexbor::selector_cache;
 use makiri::lexbor::selectors as old_engine;
+use makiri::selectors::ast::{
+    Combinator, FunctionArg, ListPseudo, Lists, PseudoClass, Selector, Simple,
+};
 
 const XHTML: &[u8] = b"http://www.w3.org/1999/xhtml";
 

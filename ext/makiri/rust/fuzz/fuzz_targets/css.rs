@@ -67,10 +67,9 @@ fuzz_target!(|data: &[u8]| {
 
         /* Both forms: the selection `css` runs and the self-test `matches?`
          * runs, which lowers the same chain along the reverse axes. */
-        let gvl = makiri::gvl::Gvl::exclusive();
         for form in [Form::Select, Form::SelfTest] {
             let mut budget = Budget::with_limits(ctx.limits());
-            let Ok(ast) = compile_owned(&gvl, text, &ns, form, &mut budget) else {
+            let Ok(ast) = compile_owned(text, &ns, form, &mut budget) else {
                 return;
             };
             evaluate_both(&ctx, &ast);

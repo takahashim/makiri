@@ -5,7 +5,7 @@
 
 use crate::falloc::{OomResult, VecPush};
 use crate::html_dom::html::HtmlNode;
-use crate::lexbor::css_parser::Lists;
+use crate::selectors::ast::Lists;
 
 use super::compile::{Chain, Compound, Step};
 use super::positions::Positions;
