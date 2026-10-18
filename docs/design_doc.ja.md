@@ -5,13 +5,21 @@
 ### 達成すべきゴール
 
 * HTML5 scraping で使われる範囲で Nokogiri 互換の API を持つ
-* HTML5 parsing には Lexbor を使い高速化する
+* HTML5 parsing は WHATWG HTML Standard に沿ったパーサで高速に行う。
+  現在は vendored Lexbor が既定で、Lexbor の tokenizer と tree builder を
+  Rust に移植した自前のパーサと、添字で引く index アリーナの DOM を
+  `arena-dom` フィーチャの裏で育てている。両者は一つの facade
+  (`crate::html_dom`) の後ろにあり、facade の上のコード (bridge、XPath、
+  CSS の照合) はどちらでも変わらない。移植版は Lexbor と木が一致すること
+  を検証してから既定に切り替える。移植の計画と現在地は
+  `docs/rewrite_parser.ja.md` に置く
 * XPath 1.0 には仕様に準拠した独自エンジンを作成し、libxml2 等を持ち込まない
-* CSS selectors は selector の構文解析を Lexbor に任せる。HTML の照合は
-  Lexbor の state machine を安全な Rust に移植した独自 matcher で行い、
-  selector のネストを native stack に載せない・照合前に selector 全体を
-  検査する・確保はすべて fallible、を守る。XML は自前の XPath エンジン上の
-  評価に落とす
+* CSS selectors は、Lexbor の CSS 構文 tokenizer とセレクタパーサを Rust に
+  移植した自前のパーサで解析する (stylesheet の読み取りだけは Lexbor の
+  パーサのまま)。HTML の照合は Lexbor の state machine を安全な Rust に
+  移植した独自 matcher で行い、selector のネストを native stack に
+  載せない・照合前に selector 全体を検査する・確保はすべて fallible、を
+  守る。XML は自前の XPath エンジン上の評価に落とす
 * HTML の要素について source location (開始タグの行番号、1 始まり) を
   サポートする。行を特定できない node (parser が補った要素、fragment
   など) は推測せず nil を返す。column / byte offset は公開しない
@@ -23,8 +31,9 @@
   操作などプログラム API に渡す文字列は valid UTF-8 を要求し、違反は
   `Makiri::Error` で fail-closed する。NUL (U+0000) は二層契約:
   名前系 (要素/属性名・namespace・PI target/data・selector・XPath) と
-  engine 入力は NUL 厳格、HTML の data 系 (text/comment 内容・属性値) は
-  DOM 準拠のため NUL 許容。XML はXML 1.0 の文字クラス上 U+0000 を表現できないため全面 NUL 拒否
+  engine 入力は NUL 厳格、data 系 (text/comment 内容・属性値) は HTML も
+  XML も DOM 準拠のため NUL を保持する。XML 1.0 の文字クラスにない文字を
+  持つ木は XML のシリアライザが書く時点で拒む
 * スレッドセーフ: parse は GVL を解放して並列スケール、XPath 評価は
   GVL 保持で共有 document/context のメモリ破壊を構造的に防ぐ
 * 内部の不変条件違反で host process 全体を落とさない。Ruby に公開する
@@ -33,7 +42,10 @@
   では、後始末 (ensure / at_exit / 資源解放) を走らせてから当該スレッド
   だけを終わらせる。GC から呼ばれる処理だけは例外を投げられる場所では
   ないので中断 (abort) を選び、そのぶん処理を自明な範囲に保つ
-* robustness fuzz と手で curate した差分 spec で検証する
+* robustness fuzz と手で curate した差分 spec で検証する。パーサの移植は
+  参照実装 (Lexbor) との差分 fuzz と、仕様の固定した版の conformance
+  データ (WPT の tree construction、html5lib の tokenizer テスト)、
+  ブラウザ、実際の Web ページで検証する
 
 ### 対応しないこと
 
@@ -50,7 +62,10 @@
 ### 意図的に避けていること
 
 * Lexbor の fork。Lexbor の不具合や欠落は自分たちの adapter 層で吸収し、
-  同時に上流に報告して直してもらう
+  同時に上流に報告して直してもらう。移植版では、Lexbor の意味論と制御
+  フローを保って書き、仕様適合のための振る舞いの変更は所有権や安全性の
+  ための変更と分けて、独立した変更として入れる
+  (`docs/parser_differences.ja.md` が既知の差分とその分類を持つ)
 * libxml2 互換を売りにすること。libxml2 と HTML5/XPath spec
   が衝突するときは spec 準拠を優先し、差分は document 化する
 
@@ -116,7 +131,7 @@ Node の method (scraping idiom の 9 割をカバー):
 #name #node_name  #attributes #to_h
 #[] #[]= #delete                   #key? #keys #values
 #attr #get_attribute #set_attribute #attribute #has_attribute? #remove_attribute
-#node_type #type #element? #elem? #text? #comment? #document? #fragment? #blank? ...
+#node_type #element? #elem? #text? #comment? #document? #fragment? #blank? ...
 #classes #add_class #append_class #remove_class  (class 属性 helper)
 #parent #children #element_children #traverse
 #next #previous #next_element #previous_element
@@ -193,10 +208,12 @@ common case では変換も copy もしない)。そのうえで境界での挙�
   違反は `Makiri::Error` を上げる。切り詰め・修復・解釈はしない。
 * NUL (U+0000) は二層契約。名前系 (要素/属性名・qualified/local 名・
   namespace・PI target/data)・selector・XPath 式/変数名・engine 入力は
-  NUL 厳格。HTML の data 系: text/comment
+  NUL 厳格。data 系: text/comment
   内容 (`create_text_node`/`create_comment`/`content=`) と属性値
-  (`[]=`/`set_attribute_ns`) — のみ DOM 準拠のため NUL を許容する。
-  XML は全面 NUL 拒否: XML 1.0 の文字クラス上 U+0000 は表現不能で拒否する。
+  (`[]=`/`set_attribute_ns`) — は HTML も XML も DOM 準拠のため NUL を
+  保持する。XML 1.0 の文字クラスにない文字 (U+0000 を含む) を持つ木は、
+  XML のシリアライザが書く時点で `Makiri::Error` で拒む。setter が flag を
+  残す方式ではなく、書くときのデータから判定する。
 
 handler 例外の message 取得も fail-closed する
 (NUL を含んでも ArgumentError を leak しない)。
@@ -204,12 +221,24 @@ handler 例外の message 取得も fail-closed する
 ## 4. メモリモデル
 
 * DOM node は document ごとの arena に確保し、arena 単位で一括解放する。
-  木に入った node を個別に free することはしない (HTML は Lexbor の
-  arena、XML は自前の arena。以降どちらにも同じ規約を課す)。
+  木に入った node を個別に free することはしない。XML と `arena-dom` の
+  HTML は自前の index アリーナ (node は `Vec` の添字、文字列は byte store
+  の span) で、`unsafe` を含まない。既定の HTML は Lexbor の arena である。
+  以降どちらにも同じ規約を課す。
+* index アリーナの node を Ruby 側へ渡す語は、document ごとの一意な
+  stamp と node の添字を 1 語に詰めたもので、document をまたいでも衝突
+  しない (Lexbor の node pointer が持っていた性質を保つ)。別の document
+  の語を解決しようとすると、別の node を指すのではなく拒む。
+* index アリーナの byte store は追記型で、`set_data` の置き換えが残した
+  死んだ byte を数える。死んだ byte が生きた byte と node 数に応じた
+  下限の両方を超えたら、編集の開始点 (索引を捨てた直後) で store を
+  書き直す。span は添字なので、書き直しで handle は無効にならない。
 * 木からの取り外しは detach であって destroy ではない。生存している
   Ruby wrapper が取り外し済みの node を指していても dangling しない。
-* 解放順序は「索引・cache → document」に固定する。索引は node とその
-  文字列を borrow するので、document より後に生き残ってはならない。
+* 解放順序は「索引・cache → document」に固定する。Lexbor の索引は node
+  とその文字列を borrow するので、document より後に生き残ってはならない。
+  index アリーナの索引は id と span を持ち borrow しないが、同じ hook で
+  捨て、同じ順序で解放する。
 * Ruby wrapper は自分が属する document を GC mark し、wrapper が
   生きている限り arena を keepalive する (HTML/XML 共通)。
 * wrapper は node ごとに 1 つとし、document がその対応表を持つ。同じ
@@ -273,6 +302,15 @@ CSS/serialize/読み取りアクセサも GVL を保持する。`spec/threading_
 * 最適化フラグは platform ごとに「そのツールチェーンで実際に通るか」で
   決め、計測で得があるものだけ採用する。判断はビルド側で検出し、
   検出できない環境では黙って従来の経路に落ちる。
+* 移植版のパーサが持つ静的な表 (タグ名、属性名、名前空間、文字参照の
+  探索木、tree builder のタグの分類と調整表) は、Lexbor のヘッダとソース
+  と WHATWG の `entities.json` から生成し、手で転記しない。生成物は
+  Lexbor の表と要素ごとに一致することをテストで確かめる。
+* crate のフィーチャは六つ。`ruby` (Ruby との境界、既定)、`lexbor`
+  (vendored Lexbor を読む層)、`alloc-inject` (OOM 注入)、`arena-dom`
+  (移植版のパーサと index アリーナを facade の後ろに選ぶ。
+  `MAKIRI_ARENA_DOM=1` で configure する)、`css-reference` と
+  `lexbor-reference` (差分 fuzz の参照実装で、出荷するビルドには入らない)。
 
 ## 6. Testing
 
@@ -289,14 +327,20 @@ grammar-aware に XPath / CSS 式を生成 + mutation し、Makiri が
 `Makiri::Error` 以外を絶対に上げない (foreign exception / crash /
 hang なし) ことを assertする。
 
+cargo-fuzz の harness (`ext/makiri/rust/fuzz/`) は Ruby なしで engine を
+叩く。壊れないことを見るもの (`html`、`xml`、`xpath`、`xml_xpath`、
+`html_xpath`、`css`、`html_css`) に加えて、参照実装との一致を見る差分
+harness を持つ: `html_diff` (移植版の tree builder と Lexbor の木)、
+`selector_diff` (移植版と Lexbor のセレクタ解析)、`html_css_diff` (自前の
+matcher と Lexbor の matcher)。参照実装は `lexbor-reference` /
+`css-reference` フィーチャでだけ link する。
+
 > 当初構想にあった「Nokogiri を oracle にした diff モードを fuzz に持たせる」
 > 案は採っていない。Lexbor と libxml2 は HTML5 semantics が異なり、ランダム
-> 入力の構造 diff は偽陽性が多いため、fuzz は「壊れない」ことの検証に絞る。
-> Nokogiri との突き合わせは、fuzz とは別の conformance 検査として持つ
-> (XPath / CSS / XML / Builder のそれぞれを Nokogiri と比較し、HTML parse は
-> html5lib のテスト、XML は W3C の XML Test Suite と照合する)。食い違いは
-> 0 件を期待値とし、意図した差分は方針として明示的に列挙したものだけを
-> 許し、手で curate した spec と差分文書に固定する。
+> 入力の構造 diff は偽陽性が多い。差分 fuzz の相手は、同じ意味論を持つはずの
+> 参照実装 (移植元の Lexbor) に限り、食い違いは 0 件を期待値とする。
+> 許す差は安全性のための修正だけで、差分表に列挙したものに限る。
+> Nokogiri との突き合わせは、fuzz とは別の conformance 検査として持つ (§6.4)。
 
 ### 6.3 Property / 差分 (`spec/invariants/`, `spec/differential/`)
 
@@ -306,7 +350,34 @@ baseline として固定し、現在のビルドと突き合わせる。baseline
 食い違いは調査対象として扱う。意図した変更なら振る舞いの変更と同じ commit
 で baseline を書き換え、差分として review できるようにする。
 
-### 6.4 メモリ安全性と資源 (sanitizer / leak / OOM)
+### 6.4 Conformance と参照実装との差分
+
+仕様と参照実装に対する検査は `rake conformance:*` にまとめる。
+
+* HTML parse: WPT の tree-construction データ (html5lib のテストの現在の
+  置き場) を Ruby の runner (`conformance:html5`) と crate の runner
+  (`conformance:parser`) で通す。両者は同じ既知差分の一覧
+  (`spec/conformance/parser_known_divergences.txt`) を読み、一覧にある
+  テストが通ってしまえばそれも失敗とする。tokenizer は html5lib の
+  tokenizer テストを通す。
+* パーサの移植版は Lexbor を参照実装として、WPT の全入力、無作為な文書と
+  fragment、実際の Web ページ (web100k、`conformance:web100k`、CI では
+  回さない) で木が一致することを見る (`lexbor::tree_diff`)。index アリーナ
+  は Lexbor アダプタと、読み取り・編集後の状態・シリアライズのバイト列・
+  fragment・XPath・CSS で一致することを見る (`lexbor::arena_tests`)。
+  セレクタパーサの移植版は Lexbor の解析結果と一致することを見る
+  (`lexbor::selector_diff`)。
+* ブラウザ (Chromium、Firefox、WebKit) は証拠として使い、合格基準には
+  しない (`conformance:browsers`)。オラクル同士の食い違いは差分表に記録する。
+* Nokogiri との突き合わせ: XPath / CSS / XML / Builder のそれぞれを
+  Nokogiri と比較し、XML は W3C の XML Test Suite と照合する。食い違いは
+  0 件を期待値とし、意図した差分は方針として明示的に列挙したものだけを
+  許し、手で curate した spec と差分文書 (§7、`docs/parser_differences.ja.md`、
+  `NOKOGIRI_DIFFERENCES.md`) に固定する。
+* 仕様、WPT、html5lib-tests、`entities.json` の版は固定し、
+  `docs/parser_differences.ja.md` に記録する。
+
+### 6.5 メモリ安全性と資源 (sanitizer / leak / OOM)
 
 * address sanitizer 下で spec と fuzz を通す。自前の arena は、大きな
   領域を切り出して渡す bump 方式ではなく、node と文字列を添字で引く構造に
@@ -323,16 +394,20 @@ baseline として固定し、現在のビルドと突き合わせる。baseline
 * Ruby に依存しない中核 (確保、buffer、UTF-8 の検証と decode) は
   形式検証を併用する。
 
-### 6.5 Performance (`bench/`)
+### 6.6 Performance (`bench/`)
 
 `rake bench` で Makiri vs Nokogiri を比較する。最適化は計測ゲート:
 bench で実測の改善があり spec/fuzz/sanitizer が green なときだけ採用、
-そうでなければその変更を revert する。
+そうでなければその変更を revert する。移植版のパーサは、既定の切り替えの
+前に bench の各行で種類としての退行 (Nokogiri と同等以下に落ちる行) が
+ないことを確かめる。
 
-### 6.6 CI
+### 6.7 CI
 
 GitHub Actions で Ruby の各バージョンと OS とで実行する。
-sanitizer は Linux のみで実行する。
+sanitizer は Linux のみで実行する。`arena-dom` のビルドは別の job で
+crate のテスト、`rake diff`、spec、OOM 注入を通し、conformance の job が
+`conformance:parser` を回す。
 
 ## 7. 互換性に関する考慮
 
@@ -355,6 +430,10 @@ Makiri では spec 準拠を取り、差分を curated spec で固定する:
 Nokogiri 列の HTML4 / HTML5 は `Nokogiri::HTML4` / `Nokogiri::HTML5` を指す
 (Nokogiri 1.19 / libxml2 2.13 で確認)。
 
+HTML パーサが仕様の固定した版から逸脱している点 (既定の Lexbor と移植版の
+両方)、移植版が安全性のために Lexbor と違えた点、オラクル同士の食い違いは
+`docs/parser_differences.ja.md` に番号を付けて置く。
+
 HTML名前テストとHTML属性ではASCII caseを畳み込み、SVG/MathMLの名称は
 保持する。HTML の XPath 属性軸からは、foreign 要素 (SVG/MathML) の
 `xmlns` / `xmlns:*` 属性 (XMLNS namespace の属性) を除外する。HTML 要素に
@@ -367,6 +446,22 @@ HTML名前テストとHTML属性ではASCII caseを畳み込み、SVG/MathMLの�
 状況が変われば変更することもある。
 
 * `HTML()` が定義の実体、`parse()` は alias。Nokogiri に揃える。
+* HTML パーサは Lexbor を Rust に移植する。html5ever は採らない: 確保が
+  失敗を返せず (fail-closed の規約と合わない)、atom の表がプロセス全体で
+  共有され、`unsafe` を含む tendril が `falloc` と噛み合わないため。移植は
+  Lexbor の状態関数と insertion mode を一対一で写し、Lexbor との一致を
+  差分 fuzz で見られる形にする。仕様への適合は一致を確かめた後に、独立
+  した変更として入れる。
+* 移植版の DOM は最初から添字の index アリーナにし、ポインタを保つ DOM を
+  経由しない。node あたりの byte は Lexbor の DOM の半分ほどで、範囲外
+  アクセスは境界検査で捕まる。bridge は node を「document への参照」
+  (`RawNode`) として扱い、document を `&mut` で借りた閉包の中でだけ編集
+  する形に先に直し、二つの backend を一つの facade で差し替えられるように
+  した。bridge が両者で違う箇所は `bridge::dom` の一つのモジュールに置く。
+* セレクタの構文解析も Lexbor のパーサを移植して自前にした。Lexbor の
+  共有アリーナの寿命に縛られずに解析結果をキャッシュで所有できる。
+  stylesheet の読み取り (`parse_stylesheet`) は、API を保つか変えるかを
+  決めるまで Lexbor のパーサのまま残す。
 * Node の wrapper は node ごとに 1 つとし、document が対応表で cache する
   (§4)。当初は wrapper を cache せず node の identity で比較していたが、
   同じ node を辿るたびに別の object が返ると、`equal?`・instance variable・
