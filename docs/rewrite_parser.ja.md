@@ -451,4 +451,6 @@ bench（release、同一マシン）でのアリーナ構成と Lexbor 構成の
 
 - **既定の切り替え（第 6 段の完了）**：出荷するビルドを arena-dom にした。extconf は `arena-dom` を足し、`MAKIRI_LEXBOR_DOM=1` のときだけ Lexbor の DOM でビルドする。CI の既定の job（OS と Ruby の行列、ASan、OOM 注入、不変条件、`GC.stress`、Valgrind、conformance）はすべて arena DOM を回し、Lexbor の DOM は `lexbor-dom` の job が spec と `rake diff` で保つ。Lexbor を ASan で計装する夜間の job（`sanitize:lexbor`）は Lexbor の DOM でビルドする。`rake rust:test` は `lexbor,arena-dom` の構成も回す。Lexbor は参照として、また CSS の参照実装と比較用の構成のために残り、出荷する依存から外すのは第 9 段である。
 
-次は第 7 段（仕様適合の変更）で、差分表の「参照実装の未対応」（P1〜P3）とソース位置の規則の切り替えを、一件ずつ入れる。
+- **仕様適合の変更（第 7 段）**：差分表の P1〜P3 と、ソース位置の規則（L1）を、一件ずつ独立したコミットで入れた。仕組みは `html/tree/compat.rs` で、仕様に寄せた分岐はそれぞれ `fixed(Fix::…)` を問う。出荷するビルドは常に仕様どおりに進む。比較のテストと `html_diff` fuzz は `as_lexbor` で Lexbor 互換の実行を作って Lexbor と完全に一致させ、仕様どおりの実行との木の差は `explains` の述語（P1 は `frameset` と `template`、P2 は `form` と template、P3 は `frameset` と foreign content と U+FFFD の源）が説明できる入力でだけ許す。L1 は木を変えないので、印の位置が自分の名前の開始タグを指すことを別に確かめる（`offsets_name_their_tags`。これが `</br>` と、はぐれた `<td>` が作る `<tr>` の扱いを見つけた）。既知差分の一覧には、まだ食い違うパーサの欄を足し、移植版の WPT の実行（`wpt_tree_construction_through_the_port`）と、Ruby の runner がビルドに応じて読む一覧（`Makiri.__lexbor_dom?`）を置いた。移植版は、WPT の tree construction で実行する 1,959 件をすべて通す。Lexbor の DOM のビルドは 8 件を既知差分として残す。
+
+次は第 8 段（仕様全体の監査）で、固定した版の HTML Standard の tree construction と tokenizer の各 step と実装の対応表を作り、どのオラクルも覆っていない逸脱を探す。
