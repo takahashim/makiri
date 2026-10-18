@@ -1,12 +1,12 @@
-//! Fragment parsing for the arena DOM (`crate::html::dom`), while the tree
-//! builder is still Lexbor's: the fragment is parsed by Lexbor in a document
-//! of its own, in the context's tag and namespace, under the same guard, and
-//! its children are then copied into the arena - the arena's counterpart of
-//! `lexbor::fragment`, with its API.
+//! Fragment parsing for the arena DOM (`crate::html::dom`): the fragment is
+//! parsed by the ported tree builder (`crate::html::tree::parse_fragment`)
+//! in an arena document of its own, in the context's tag and namespace, under
+//! the same guard, and its children are then copied into the target - the
+//! arena's counterpart of `lexbor::fragment`, with its API.
 //!
-//! A context is only ever a tag and a namespace to Lexbor's fragment parser.
-//! One Lexbor does not know - a tag past its static range, a namespace past
-//! its built-in ones - decides nothing in the parse (an unknown name is no
+//! A context is only ever a tag and a namespace to the fragment parser. One
+//! outside the static tables - a tag past the static range, a namespace past
+//! the built-in ones - decides nothing in the parse (an unknown name is no
 //! special context, an unknown namespace a foreign one), so the parser is given
 //! a plain `div` and no namespace in their place, and the elements that
 //! inherited the namespace get it back on import, as the Lexbor DOM does.
@@ -18,9 +18,10 @@ use crate::html::dom::{
     DomOom, HtmlDoc, HtmlDocMut, HtmlElement, HtmlNode, NodeId, NodeType, NsId, RawNode, TagId,
 };
 use crate::html::res::names as res;
+use crate::html::tree::guard::ContextOptions;
+use crate::html::tree::{parse_fragment, FragmentFailure, ParsedFragment};
 use crate::lexbor::adapter::html as lex;
 use crate::lexbor::adapter::tree_guard::{resolve_option_chain, DepthLimit, OptionContext};
-use crate::lexbor::fragment as lf;
 
 /// A context's namespace.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -88,25 +89,16 @@ impl FragmentTag {
         Ok(Some(FragmentTag { tag, ns }))
     }
 
-    /// The tag Lexbor's parser is given: the same static id, or `div`.
-    fn parse_tag(&self) -> lex::TagId {
-        let raw = self.tag.static_index().unwrap_or(res::TAG_DIV);
-        lex::TagId::from_raw(raw).unwrap_or(lex::TagId::BODY)
+    /// The tag the parser is given: the same static id, or `div`.
+    fn parse_tag(&self) -> usize {
+        self.tag.static_index().unwrap_or(res::TAG_DIV)
     }
 
-    /// The namespace Lexbor's parser is given: a built-in one, or none.
-    fn parse_ns(&self) -> Option<lex::NsId> {
+    /// The namespace the parser is given: a built-in one, or none (0).
+    fn parse_ns(&self) -> usize {
         match &self.ns {
-            FragNs::Id(Some(ns)) if ns.is_static() => lex::NsId::from_raw(ns.number() as usize),
-            _ => None,
-        }
-    }
-
-    /// The Lexbor parser's context.
-    fn lexbor(&self) -> lf::FragmentTag {
-        lf::FragmentTag {
-            tag: self.parse_tag(),
-            ns: self.parse_ns(),
+            FragNs::Id(Some(ns)) if ns.is_static() => ns.number() as usize,
+            _ => 0,
         }
     }
 }
@@ -164,9 +156,10 @@ impl FragmentContext {
     }
 }
 
-/// A fragment parsed by Lexbor, not yet copied into the arena.
+/// A fragment parsed into an arena document of its own, not yet copied into
+/// the target.
 pub struct TransientFragment {
-    parsed: lf::TransientFragment,
+    parsed: ParsedFragment,
     /// The context's namespace when the parser was given none in its place.
     inherit: FragNs,
 }
@@ -180,20 +173,33 @@ impl TransientFragment {
         limit: DepthLimit,
     ) -> Result<TransientFragment, FragmentError> {
         let at = context.at();
+        let (tag, ns) = at.map_or((res::TAG__UNDEF, 0), |a| (a.parse_tag(), a.parse_ns()));
         let options = match context {
-            FragmentContext::Element { options, .. } => *options,
-            FragmentContext::Tag { at } => {
-                let l = at.lexbor();
-                OptionContext::Tag(Some(l.tag), l.ns)
+            FragmentContext::Element { options, .. } => match *options {
+                OptionContext::Resolved {
+                    fresh,
+                    after_optgroup,
+                } => ContextOptions {
+                    fresh,
+                    after_optgroup,
+                },
+                _ => ContextOptions::default(),
+            },
+            /* A named context reaches a select only by being one. */
+            FragmentContext::Tag { .. } => {
+                let select = tag == res::TAG_SELECT && ns == res::NS_HTML;
+                ContextOptions {
+                    fresh: select,
+                    after_optgroup: select,
+                }
             }
         };
-        let parsed = lf::TransientFragment::parse_standalone(
-            input,
-            known_valid,
-            at.map(FragmentTag::lexbor),
-            options,
-            limit,
-        )?;
+        let parsed =
+            parse_fragment(input, known_valid, tag, ns, options, limit).map_err(|f| match f {
+                FragmentFailure::Decode => FragmentError::Decode,
+                FragmentFailure::Parse => FragmentError::Parse,
+                FragmentFailure::Guard(stop) => FragmentError::Guard(stop),
+            })?;
         let inherit = match at.map(|a| &a.ns) {
             Some(FragNs::Id(Some(ns))) if !ns.is_static() => FragNs::Id(Some(*ns)),
             Some(FragNs::Uri(u)) => FragNs::Uri(try_to_vec(u).ok_or(FragmentError::Context)?),
@@ -210,9 +216,13 @@ impl TransientFragment {
             FragNs::Uri(u) => Some(d.intern_ns(u).ok_or(DomOom)?),
         };
         let arena = d.arena();
-        self.parsed.with_root(|root| {
-            crate::lexbor::adapter::arena_copy::copy_children(arena, root, into.id(), false)
-        })?;
+        let src = &self.parsed.doc;
+        let mut child = src.first_child(self.parsed.root);
+        while let Some(c) = child {
+            let made = arena.copy_from(src, c, true)?;
+            arena.append_child(into.id(), made);
+            child = src.next(c);
+        }
         if let Some(ns) = inherit {
             give_namespace(d, into.id(), ns)?;
         }

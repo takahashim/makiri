@@ -31,13 +31,18 @@
 
 mod actions;
 mod error;
+mod fragment;
+pub mod guard;
 mod modes;
 mod parse;
 mod select;
 mod stacks;
 
 pub use error::{TreeError, TreeErrorId};
-pub use parse::{parse_document, ParseFailure, Parsed};
+pub use fragment::{parse_fragment, FragmentFailure, ParsedFragment};
+pub use parse::{
+    empty_html_document, parse_document, parse_html, HtmlParseError, ParseFailure, Parsed,
+};
 
 use crate::falloc::VecPush;
 use crate::html::dom::{Document, NodeId};
@@ -280,6 +285,8 @@ pub struct TreeBuilder<'d> {
     pub(crate) valueless: NodeSet,
     /// The options whose selectedness is true (`select.rs`).
     pub(crate) selected: NodeSet,
+    /// The parse guard and the source-position stamps (`guard.rs`).
+    pub(crate) guard: guard::Guard,
 }
 
 impl<'d> TreeBuilder<'d> {
@@ -304,6 +311,7 @@ impl<'d> TreeBuilder<'d> {
             status: TreeStatus::Ok,
             valueless: NodeSet::default(),
             selected: NodeSet::default(),
+            guard: guard::Guard::default(),
         }
     }
 
@@ -452,8 +460,14 @@ impl<'d> TreeBuilder<'d> {
     /// a mode consumes it.
     pub(crate) fn process(&mut self, tkz: &mut Tokenizer<'_, '_>) -> TreeStatus {
         let mut tok = Tok::of(tkz);
+        /* The guard reads the token as the tokenizer handed it over. */
+        let handed = tok;
+        let before = self.guard_before(&handed);
         while !self.dispatch(tkz, &mut tok) {}
         tkz.current_ns = self.current_namespace();
+        if self.status == TreeStatus::Ok && !self.guard_after(before, &handed) {
+            self.status = TreeStatus::Error;
+        }
         self.status
     }
 }

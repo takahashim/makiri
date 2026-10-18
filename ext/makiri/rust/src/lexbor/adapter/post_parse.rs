@@ -41,7 +41,7 @@ use crate::lexbor::adapter::html::{
 };
 use crate::lexbor::adapter::source_loc::{lines_build, Lines, Stamper};
 use crate::lexbor::adapter::text_index::{TextBuildError, TextIndex, TextRun};
-use crate::lexbor::adapter::tree_guard::{DepthLimit, GuardStop, TokenHook};
+use crate::lexbor::adapter::tree_guard::{DepthLimit, TokenHook};
 use crate::utf8_input::sanitize;
 
 type HtmlDoc = lxb::lxb_html_document_t;
@@ -318,20 +318,8 @@ impl Drop for DocOwner {
     }
 }
 
-/// Why an HTML document parse produced no document.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum HtmlParseError {
-    /// Out of memory, or Lexbor refused the input.
-    Failed,
-    /// The parse guard refused it ([`GuardStop`]), as it refuses a fragment.
-    Guard(GuardStop),
-}
-
-impl From<GuardStop> for HtmlParseError {
-    fn from(stop: GuardStop) -> Self {
-        HtmlParseError::Guard(stop)
-    }
-}
+/* The error is the ported parser's, so both parsers answer with one type. */
+pub use crate::html::tree::HtmlParseError;
 
 /// Drive the low-level pipeline so element offsets can be captured and the
 /// tree depth bounded, then build the line table.
