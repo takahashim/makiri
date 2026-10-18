@@ -639,13 +639,13 @@ pub fn ruby_try_verified_text_pair(
 /// The non-raising form: the checked view, or a static reason on rejection.
 /// Nothing is coerced: `sv` is a String by type.
 pub fn ruby_try_verified_text(sv: RString, max_bytes: usize) -> Result<RubyText, &'static str> {
-    RubyText::acquire(sv, |s, b| {
-        if b.len() > max_bytes {
-            return Some("string exceeds the maximum length");
-        }
-        text_check(s, b).reason()
-    })
-    .map_err(|r| match r {
+    /* Refused on its length before it is copied: a String past the cap is
+     * never worth the copy. Nothing runs between this and the copy, so the
+     * copy has this length. */
+    if sv.len() > max_bytes {
+        return Err("string exceeds the maximum length");
+    }
+    RubyText::acquire(sv, |s, b| text_check(s, b).reason()).map_err(|r| match r {
         Refusal::Check(reason) => reason,
         Refusal::Oom => "could not be copied (out of memory)",
     })

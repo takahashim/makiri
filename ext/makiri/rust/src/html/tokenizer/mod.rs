@@ -178,6 +178,10 @@ pub struct Tokenizer<'i, 's> {
     /// repeated attributes on rather than dropping them. Lexbor's parser
     /// sets it, and its tree builder drops a repeat by name and namespace.
     pub keep_duplicate: bool,
+    /// Whether parse errors are recorded ([`errors`](Self::errors)). A parse
+    /// whose errors nobody reads turns it off: a record per error is 24
+    /// bytes, and input of nothing but U+0000 is one error a byte.
+    pub record_errors: bool,
 }
 
 impl<'i, 's> Tokenizer<'i, 's> {
@@ -209,6 +213,7 @@ impl<'i, 's> Tokenizer<'i, 's> {
             is_eof: false,
             current_ns: res::NS__UNDEF,
             keep_duplicate: false,
+            record_errors: true,
         }
     }
 
@@ -462,6 +467,9 @@ impl<'i, 's> Tokenizer<'i, 's> {
 
     #[inline]
     pub(crate) fn error_at(&mut self, pos: Option<usize>, id: ErrorId) {
+        if !self.record_errors {
+            return;
+        }
         let _ = self.errors.falloc_push(ParseError { pos, id });
     }
 

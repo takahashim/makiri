@@ -18,9 +18,9 @@
 
 use magnus::{prelude::*, Error, Ruby, Value};
 
-use crate::bridge::ruby::{makiri_error, string_of};
+use crate::bridge::ruby::makiri_error;
 
-use crate::bridge::fragment::{set_template_inner_html, stage_fragment_in};
+use crate::bridge::fragment::{fragment_source, set_template_inner_html, stage_fragment_in};
 use crate::bridge::html::{
     check_owning_doc, edit, insert, new_node, wrap_html_node, HtmlEdit, HtmlSelf,
 };
@@ -251,17 +251,18 @@ pub fn set_inner_html(_ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Va
         if edit.node_type() != NodeType::Element {
             return Err(makiri_error("inner_html= requires an element"));
         }
-        /* `to_str`/`to_s` is Ruby code that may raise: converted under protect. */
-        let html = string_of(rb_html)?;
+        /* `to_str`/`to_s` and the transcode are Ruby that may raise: taken
+         * under protect, and before the edit lends the document. */
+        let src = fragment_source(rb_html)?;
         edit.with_tree(|d, node| {
             /* WHATWG: a `<template>`'s inner HTML is its contents fragment, not
              * the element's (empty) children - the same node
              * `Element#content_fragment` exposes and `#to_html` serializes, so
              * `inner_html`/`inner_html=`/`to_html` all agree. */
             match d.node(node).template_content().map(RawNode::from) {
-                Some(content) => set_template_inner_html(d, node, content, html),
+                Some(content) => set_template_inner_html(d, node, content, &src),
                 None => {
-                    let staged = stage_fragment_in(d, node, html)?;
+                    let staged = stage_fragment_in(d, node, &src)?;
                     /* Detached, not destroyed: the arena reclaims them with the
                      * document. */
                     d.detach_children(node);
@@ -283,8 +284,8 @@ pub fn set_inner_html(_ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Va
 pub fn set_outer_html(_ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let edit = edit(&this)?;
-        /* `to_str`/`to_s` is Ruby code that may raise: converted under protect. */
-        let html = string_of(rb_html)?;
+        /* As `inner_html=`: the source is taken before the document is lent. */
+        let src = fragment_source(rb_html)?;
         edit.with_tree(|d, node| {
             /* An attribute's `parent()` is its owner element, but it is no child
              * of it: the replace below would drop the new content and report
@@ -300,7 +301,7 @@ pub fn set_outer_html(_ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Va
                     "outer_html= requires a node with a parent element",
                 ));
             };
-            let staged = stage_fragment_in(d, parent, html)?;
+            let staged = stage_fragment_in(d, parent, &src)?;
             d.place(node, staged, Place::Replace);
             Ok(())
         })??;
