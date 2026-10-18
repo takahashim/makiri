@@ -62,6 +62,9 @@ pub enum Fix {
     /// A fragment's MathML `annotation-xml` context is an HTML integration
     /// point when its `encoding` says so.
     P18,
+    /// A fragment's form element pointer is the context's nearest form,
+    /// itself or an ancestor.
+    P20,
     /// An element carries its start tag's offset when it was created for
     /// that tag's token, and no other (`Node#line`); not a tree change, so
     /// [`explains`] never names it: the harnesses compare the trees without

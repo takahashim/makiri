@@ -141,7 +141,12 @@ impl FragmentContext {
                     v.eq_ignore_ascii_case(b"text/html")
                         || v.eq_ignore_ascii_case(b"application/xhtml+xml")
                 });
+        let in_form = core::iter::successors(Some(node), |n| n.parent()).any(|n| {
+            n.ns_id() == Some(NsId::HTML)
+                && n.tag_id().and_then(TagId::static_index) == Some(res::TAG_FORM)
+        });
         let facts = ContextFacts {
+            in_form,
             compat_mode: u8::try_from(doc.compat_mode()).unwrap_or(0),
             html_integration_point: integration,
         };

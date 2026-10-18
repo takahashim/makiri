@@ -41,6 +41,9 @@ pub struct ContextFacts {
     /// an HTML integration point (P18): the attributes the Standard's
     /// context start tag token carries, as far as the parse reads them.
     pub html_integration_point: bool,
+    /// The context or one of its ancestors is an HTML `form`, which the form
+    /// element pointer is set to (P20).
+    pub in_form: bool,
 }
 
 /// Parse `input` as a fragment in the context of an element with tag id
@@ -86,7 +89,8 @@ pub fn parse_fragment(
     tree.fragment = Some(context);
     tree.context_integration_point = facts.html_integration_point && compat::fixed(Fix::P18);
     tree.reset_insertion_mode_appropriately();
-    if tag == res::TAG_FORM && ns == res::NS_HTML {
+    let own_form = tag == res::TAG_FORM && ns == res::NS_HTML;
+    if own_form || (facts.in_form && compat::fixed(Fix::P20)) {
         let form = tree
             .create_element_node(res::TAG_FORM, res::NS_HTML)
             .map_err(|_| FragmentFailure::Parse)?;

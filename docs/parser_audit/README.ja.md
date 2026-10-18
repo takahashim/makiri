@@ -52,7 +52,7 @@ in body の監査は、parse5（scripting off）との無作為な比較も使�
 | P17 | foreign F3 | fragment の解析の文書が、context の文書の quirks mode を写さない | 直した |
 | P18 | foreign F4 | fragment の context 要素を属性なしで作る（`annotation-xml` の `encoding` が効かない） | 直した |
 | P19 | foreign F5 | 独自の名前空間の context 要素を名前空間なしとして渡す | 未着手 |
-| P20 | foreign F6 | form element pointer を、祖先の form ではなく context 自身が form のときだけ設定する | 未着手 |
+| P20 | foreign F6 | form element pointer を、祖先の form ではなく context 自身が form のときだけ設定する | 直した |
 | R1 | foreign F7 | 子を持つ void 要素の `inner_html` が子を返す（仕様は空） | 未着手 |
 | R2 | foreign F8 | 接頭辞を持つ HTML、SVG、MathML の要素を修飾名で直列化する（仕様は local name） | 未着手 |
 | U1 | tree_core 未実装 2 | `<template for>` による content patching | 未実装（Lexbor にもない） |

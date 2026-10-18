@@ -181,6 +181,14 @@ P で始まる項目は HTML パーサの振る舞いである。
 - **移植版**：`lexbor/arena_fragment.rs` の `FragmentContext::element` が context の `encoding` を読み、`ContextFacts::html_integration_point` として渡す。`html/tree/actions.rs` の `html_integration_point` が、その context を integration point と答える。属性のうち解析が読むのはこれだけなので、属性そのものは写さない。差分の比較は既定の `ContextFacts` で解析するので、許可は要らない。
 - **テスト**：WPT にない。`spec/html_standard_steps_spec.rb`。
 
+### P20 fragment の form element pointer
+
+- **分類**：参照実装の未対応（監査の foreign F6）。移植版で直した（第 8 段）。
+- **仕様**：fragment の解析は、form element pointer を context 要素に最も近い form 要素（context 自身か、祖先をまっすぐたどったもの）に設定する。
+- **再現**：`<form><div id=a></div></form>` の `#a` に `inner_html = "<form><input></form>x"`。仕様では pointer が祖先の form を指すので、`<form>` 開始タグと `</form>` は無視され、`<input>x` になる。Lexbor は context 自身が form のときだけ pointer を設定するので、`<form><input></form>x` になる。
+- **移植版**：`lexbor/arena_fragment.rs` の `FragmentContext::element` が context と祖先に HTML の `form` があるかを調べ、`ContextFacts::in_form` として渡す。`html/tree/fragment.rs` の `parse_fragment` が、そのとき fragment の文書に form を作って pointer に置く（context 自身が form のときと同じ）。差分の比較は既定の `ContextFacts` で解析するので、許可は要らない。
+- **テスト**：WPT にない。`spec/html_standard_steps_spec.rb`。
+
 ### L1 ソース位置の規則
 
 - **分類**：意図した変更（移植計画の「ソース位置の規則」）。Lexbor の DOM のビルドは旧来の答えのまま。

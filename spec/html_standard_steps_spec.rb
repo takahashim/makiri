@@ -132,4 +132,11 @@ RSpec.describe "HTML Standard steps the port takes and Lexbor does not" do
     ax.inner_html = "<foo></foo>"
     expect(ax.children.first.xpath("namespace-uri()")).to eq("http://www.w3.org/1999/xhtml")
   end
+  # P20: the fragment parsing algorithm sets the form element pointer to the
+  # context's nearest form, itself or an ancestor.
+  it "ignores a <form> in inner_html= of an element inside a form" do
+    doc = Makiri::HTML("<!doctype html><form><div id=a></div></form>")
+    doc.at_css("#a").inner_html = "<form><input></form>x"
+    expect(doc.at_css("#a").inner_html).to eq("<input>x")
+  end
 end
