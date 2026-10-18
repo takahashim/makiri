@@ -339,10 +339,12 @@ HTML Standard は通常の直列化しか定義しておらず、Lexbor の pret
 
 ### セレクタパーサ
 
-自前で書く。
-`css_match::compile` と `css/lower.rs` は `css_parser` の `Simple`、`Selector`、`List` のビューだけを消費しているので、同じ形の所有 AST を返せば消費側はほぼ変わらない。
-`contains_guard`、`css_tokens`、`selector_cache` の別アリーナ、`Parsed` の Drop がアリーナ全体を掃除する問題、パーサ用の `GvlCell` は、ここで消える。
-`spec/conformance/css_diff.rb` と `css_corpus.rb`、および `html_css_diff` fuzz が検証に使える。
+Lexbor の制御フローのまま Rust に移す（`src/selectors/`）。
+セレクタの状態関数は汎用の構文パーサ（規則のスタックと状態のスタック、規則ごとの phase）の上で動き、エラーからの回復や寛容なリスト（`:is()`、`:where()`、`:has()`）の挙動はその組み合わせで決まるので、構文パーサの必要な部分ごと移す。
+`css_match::compile` と `css/lower.rs` は `css_parser` の `Simple`、`Selector`、`List` のビューだけを消費しているので、同じ形のビューをアリーナの AST の上に置けば、消費側は import を変えるだけで済む。
+`selector_cache` の別アリーナ、`Parsed` の Drop がアリーナ全体を掃除する問題、セレクタ解析用の `GvlCell` は、ここで消える。
+`contains_guard` と `css_tokens` は stylesheet パーサの前に残る。
+検証は、Lexbor のパーサとのビューの比較（`lexbor::selector_diff`、`selector_diff` fuzz）、`spec/conformance/css_diff.rb` と `css_corpus.rb`、`html_css_diff` fuzz で行う。
 
 ### stylesheet パーサ
 
@@ -420,4 +422,11 @@ bench（release、同一マシン）でのアリーナ構成と Lexbor 構成の
 
 性能（release、2.6 MB の文書）は、移植版のパースが Lexbor 単体の 1.01 倍、これまでの Lexbor でのパースと複製の 0.57 倍の時間である。
 
-次は第 5 段（CSS）だが、その前に二つを片付ける。fuzz の `html_diff` を CI で回して食い違いを拾うことと、`arena-dom` を既定にするかどうかを bench で判断することである。
+- **セレクタパーサ（第 5 段）**：`src/selectors/` に、Lexbor の CSS 構文 tokenizer（`css/syntax/state.c`、数値の変換に使う `core/strtod.c` と `diyfp`）、構文パーサの規則と状態のスタック（`css/syntax/parser.c`、`css/parser.c`、`css/state.c`）、セレクタの状態関数（`css/selectors/state.c`、`pseudo_state.c`、`syntax/anb.c`）を一対一で移植した。解析結果はアリーナの AST で、`lexbor::css_parser` と同じ形のビューで読む。疑似クラスの表は Lexbor の id のままで、`lexbor-contains` だけは載せない（未知の関数として拒むので、これまでの `contains_guard` の結果と同じになる）。HTML の `css`、`at_css`、`matches?`（`selector_cache` 経由）と、XML の CSS から XPath への変換は、移植版で解析する。`selector_cache` は Lexbor の共有アリーナをやめて解析結果を所有して持ち、キャッシュの方針と定数はそのままにした。Lexbor のセレクタ解析（`css_parser::parse` と `css_engine` のセレクタ用の部分）は比較用の構成（`lexbor-reference`、`css-reference`）にだけ残り、出荷するビルドで Lexbor の CSS パーサを使うのは stylesheet の読み取りだけになった。
+- **セレクタパーサの検証**：tokenizer は Lexbor の tokenizer と token ごとに一致する（種類、offset、長さ、文字列、数値、無作為な 50 万入力）。パーサは `lexbor::selector_diff` が両者のビュー（リストごとの specificity、単純セレクタごとの結合子、名前、名前空間、種類と引数、入れ子のリスト）を比べ、手書きの約 250 件、リポジトリのスペックとテストにある 308 件、文法に沿った無作為な 100 万件で一致した。cargo-fuzz に `selector_diff` を足した。移植版で解析したセレクタを旧エンジン（Lexbor の解析と照合）と比べる既存の差分テストも通る。Ruby の全スペック（1,842 件）、`rake diff`、`rake oom`、`rake symbols` が通る。
+
+移植で、差分表に二つを加えた。S2 は An+B の値が double で 2^63 になる整数の扱い（Lexbor は未定義の変換、移植版は飽和）、S3 はパーサ自身のメモリ不足（Lexbor は途中までのリストを成功として返す、移植版は失敗する）で、S3 は `rake oom` が見つけた。
+
+性能は、解析だけを比べると移植版が Lexbor の 1.5〜2.5 倍の時間である（1 回 0.25〜1.1 µs、release）。Lexbor は作っておいた解析器を使い回すが、移植版は解析ごとに十前後の `Vec` を確保する。HTML の問い合わせは解析結果をキャッシュするので、繰り返すセレクタでは差が出ない（同じ Ruby のマイクロベンチで、`css`、`at_css`、`matches?` は揺れの範囲）。毎回違うセレクタを渡す経路では 5〜10%、キャッシュのない XML の CSS では数 % 遅い。解析器の作業領域の使い回しは第 9 段で扱う。
+
+次は二つある。第 5 段の残りは stylesheet パーサで、`parse_stylesheet` の方針（互換維持か API 変更か）を決めるまで Lexbor のまま残る。第 6 段（既定の切り替え）の前には、byte アリーナの圧縮と、`html_diff` と `selector_diff` の fuzz を CI で回して食い違いを拾うことがある。
