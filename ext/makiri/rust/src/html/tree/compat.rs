@@ -43,6 +43,8 @@ pub enum Fix {
     /// An `<input>` whose `type` is "hidden" in any ASCII case leaves
     /// frameset-ok alone.
     P13,
+    /// A `<sup>` start tag breaks out of foreign content.
+    P15,
     /// An element carries its start tag's offset when it was created for
     /// that tag's token, and no other (`Node#line`); not a tree change, so
     /// [`explains`] never names it: the harnesses compare the trees without
@@ -157,6 +159,12 @@ pub fn explains(input: &[u8], context: Option<&str>) -> Vec<Fix> {
     /* P13: an `<input>` before a `<frameset>`. */
     if has(input, b"frameset") && has(input, b"hidden") {
         fixes.push(Fix::P13);
+    }
+    /* P15: a `<sup>` in foreign content. */
+    if has(input, b"sup")
+        && (has(input, b"svg") || has(input, b"math") || matches!(context, Some("svg" | "math")))
+    {
+        fixes.push(Fix::P15);
     }
     fixes
 }

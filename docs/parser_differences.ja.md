@@ -125,6 +125,14 @@ P で始まる項目は HTML パーサの振る舞いである。
 - **移植版**：`html/tree/modes/in_body.rs` の `input` が値を `eq_ignore_ascii_case` で比べる。差分の許可は、入力に `frameset` と `hidden` があるとき。
 - **テスト**：WPT にない。`spec/html_standard_steps_spec.rb`。
 
+### P15 foreign content を抜ける `<sup>`
+
+- **分類**：参照実装の未対応（監査の foreign F1）。移植版で直した（第 8 段）。
+- **仕様**：foreign content で、`b`、`big`、…、`sub`、`sup`、… の開始タグは parse error で、HTML の要素か MathML text integration point か HTML integration point に達するまで pop し、現在の insertion mode で処理し直す。
+- **再現**：`<svg><sup>x</sup></svg>`。仕様では `sup` が `svg` の後ろの兄弟になる。Lexbor の一覧には `sup` がなく、`svg` の中の SVG 要素になる。
+- **移植版**：`html/tree/modes/foreign_content.rs` の開始タグの一覧に `sup` を加える。差分の許可は、入力に `sup` と、`svg` か `math`（あるいはその context）があるとき。
+- **テスト**：WPT にない。`spec/html_standard_steps_spec.rb`。
+
 ### L1 ソース位置の規則
 
 - **分類**：意図した変更（移植計画の「ソース位置の規則」）。Lexbor の DOM のビルドは旧来の答えのまま。

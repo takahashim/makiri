@@ -84,4 +84,9 @@ RSpec.describe "HTML Standard steps the port takes and Lexbor does not" do
     doc = Makiri::HTML(%(<input type=HIDDEN><frameset>))
     expect(doc.at_css("frameset")).not_to be_nil
   end
+  # P15: foreign content, the start tags that break out include "sup".
+  it "takes a <sup> out of SVG like a <sub>" do
+    doc = Makiri::HTML("<svg><sup>x</sup></svg>")
+    expect(doc.at_css("body").inner_html).to eq("<svg></svg><sup>x</sup>")
+  end
 end

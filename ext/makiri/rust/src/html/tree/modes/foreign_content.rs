@@ -254,6 +254,8 @@ pub fn foreign_content(
         | res::TAG_UL
         | res::TAG_VAR
         | res::TAG_FONT => all(tree, tkz, tok),
+        /* In the Standard's list, missing from Lexbor's. */
+        res::TAG_SUP if compat::fixed(Fix::P15) => all(tree, tkz, tok),
         _ => anything_else(tree, tkz, tok),
     }
 }
