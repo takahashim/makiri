@@ -30,7 +30,6 @@ thread_local! {
 /// Whether the parse takes the Standard's branch where `fix` departs from
 /// Lexbor: always, except inside [`as_lexbor`].
 #[inline]
-#[allow(dead_code)] // the first fix calls it
 pub(crate) fn fixed(fix: Fix) -> bool {
     let _ = fix;
     #[cfg(any(test, feature = "lexbor-reference"))]
@@ -56,7 +55,6 @@ pub fn as_lexbor<R>(f: impl FnOnce() -> R) -> R {
 
 /// Whether the input holds `word`, ignoring ASCII case.
 #[cfg(any(test, feature = "lexbor-reference"))]
-#[allow(dead_code)] // the first entry calls it
 fn has(input: &[u8], word: &[u8]) -> bool {
     input
         .windows(word.len())
@@ -68,6 +66,13 @@ fn has(input: &[u8], word: &[u8]) -> bool {
 /// no fix explains must build the same tree with the fixes on and off.
 #[cfg(any(test, feature = "lexbor-reference"))]
 pub fn explains(input: &[u8], context: Option<&str>) -> Vec<Fix> {
-    let _ = (input, context);
-    Vec::new()
+    let _ = context;
+    let mut fixes = Vec::new();
+    /* P1: frameset-ok decides only whether a `<frameset>` start tag is taken,
+     * and before the implicit `<body>` only a `<template>` in the head sets
+     * it to "not ok". */
+    if has(input, b"frameset") && has(input, b"template") {
+        fixes.push(Fix::P1);
+    }
+    fixes
 }

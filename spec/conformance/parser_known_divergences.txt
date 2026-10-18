@@ -11,10 +11,10 @@
 # A listed test that starts passing fails both runners: remove it here and in
 # the table. A difference nobody has classified is a failure, not an entry.
 #
-# P1: implicit <body> resets frameset-ok (whatwg/html#12908)
-template.dat#44 P1
-template.dat#45 P1
-template.dat#46 P1
+# P1: implicit <body> resets frameset-ok (whatwg/html#12908); fixed in the port
+template.dat#44 P1 lexbor
+template.dat#45 P1 lexbor
+template.dat#46 P1 lexbor
 # P2: the form element pointer and "parsing template contents"
 template.dat#117 P2
 template.dat#120 P2

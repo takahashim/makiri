@@ -2,6 +2,7 @@
 
 use crate::html::res::names as res;
 use crate::html::tokenizer::Tokenizer;
+use crate::html::tree::compat::{self, Fix};
 use crate::html::tree::error::TreeErrorId as E;
 use crate::html::tree::{Mode, Tok, TreeBuilder, TreeStatus};
 
@@ -92,11 +93,17 @@ fn closed(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mut Tok
     }
 }
 
-/// `lxb_html_tree_insertion_mode_after_head_anything_else`.
+/// `lxb_html_tree_insertion_mode_after_head_anything_else`, with the step
+/// whatwg/html#12908 added and Lexbor lacks: the implicit `<body>` sets
+/// frameset-ok back to "ok", which a `<template>` in the head had set to "not
+/// ok" (docs/parser_differences.ja.md P1).
 fn anything_else(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>) -> bool {
     let fake = Tok::fake(res::TAG_BODY);
     if tree.insert_html_element(tkz, &fake).is_err() {
         return tree.abort_with(TreeStatus::Oom);
+    }
+    if compat::fixed(Fix::P1) {
+        tree.frameset_ok = true;
     }
     tree.mode = Mode::InBody;
     false
