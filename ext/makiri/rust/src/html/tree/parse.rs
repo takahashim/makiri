@@ -6,8 +6,9 @@ use super::guard::{DepthLimit, Guard, GuardStop};
 use super::{TreeBuilder, TreeError, TreeStatus};
 use crate::falloc::try_box;
 use crate::html::dom::{Document, DomOom, HtmlParsed, NodeId};
+use crate::html::names::Names;
 use crate::html::res::names as res;
-use crate::html::tokenizer::{Status, Tokenizer};
+use crate::html::tokenizer::{Status, Stop, TokenSink, Tokenizer};
 use crate::source_lines::lines_build;
 use crate::utf8_input::sanitize;
 
@@ -120,4 +121,32 @@ pub fn empty_html_document(compat_mode: u32) -> Result<Box<HtmlParsed>, HtmlPars
     let mut doc = Document::new(mode).map_err(|DomOom| HtmlParseError::Failed)?;
     doc.set_names(NodeId::DOCUMENT, res::TAG__DOCUMENT, res::NS_HTML as u32, 0);
     try_box(HtmlParsed::new(doc, None)).map_err(|()| HtmlParseError::Failed)
+}
+
+/// `Makiri.__panic(6)`'s parse: a real document parse that panics in the
+/// token-done path, right after the tree builder has taken the first token.
+/// It never returns; the panic unwinds through the tokenizer and the tree
+/// builder, which hold nothing a skipped statement would leak, to the
+/// caller's `entry`.
+pub fn parse_with_panicking_hook() -> bool {
+    struct Panicking<'t, 'd>(&'t mut TreeBuilder<'d>);
+    impl TokenSink for Panicking<'_, '_> {
+        fn token(&mut self, tkz: &mut Tokenizer<'_, '_>) -> Result<(), Stop> {
+            self.0.token(tkz)?;
+            #[allow(clippy::panic, reason = "the probe's whole purpose")]
+            {
+                panic!("Makiri.__panic(6): panic inside the tokenizer hook");
+            }
+        }
+        fn names(&mut self) -> &mut Names {
+            self.0.names()
+        }
+    }
+    let Ok(mut doc) = Document::new(0) else {
+        return false;
+    };
+    let mut tree = TreeBuilder::new(&mut doc);
+    let mut sink = Panicking(&mut tree);
+    let mut tkz = Tokenizer::new(b"<p>x</p>", &mut sink);
+    tkz.chunk() == Status::Ok
 }

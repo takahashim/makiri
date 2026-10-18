@@ -217,7 +217,7 @@ pub fn check_compiles(scratch: &mut Scratch, groups: Lists<'_>) -> Result<(), Ma
 }
 
 /// [`compile`]'s verdict alone, for tests that check it without matching.
-#[cfg(test)]
+#[cfg(all(test, feature = "lexbor"))]
 pub(crate) fn validate(groups: Lists<'_>) -> Result<(), MatchFailure> {
     compile(&mut Scratch::new(), groups).map(drop)
 }

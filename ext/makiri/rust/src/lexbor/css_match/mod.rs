@@ -175,7 +175,7 @@ mod state;
 mod tree;
 
 pub use compile::check_compiles;
-#[cfg(test)]
+#[cfg(all(test, feature = "lexbor"))]
 pub(crate) use compile::validate;
 pub use scratch::Scratch;
 
@@ -399,7 +399,7 @@ fn select_all_compiled<'doc>(
 /// of [`DEFAULT_WORK_BUDGET`], so a test can prove the budget actually stops
 /// an expensive `:has()` search without a document big enough to exhaust the
 /// real, shipped limit.
-#[cfg(test)]
+#[cfg(all(test, feature = "lexbor"))]
 pub(crate) fn select_all_with_work_limit<'doc>(
     root: HtmlNode<'doc>,
     groups: Lists<'_>,

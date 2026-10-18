@@ -56,8 +56,10 @@ default = ["ruby"]
 
 # The Ruby boundary: magnus, rb-sys, and everything under `bridge/`, `glue/`
 # and `init.rs`. Off, the crate is the engine alone - which is what Kani and
-# cargo-fuzz build, since neither can link a live Ruby.
-ruby = ["lexbor", "dep:magnus", "dep:rb-sys"]
+# cargo-fuzz build, since neither can link a live Ruby. It no longer needs
+# Lexbor: its HTML DOM is the arena's unless `lexbor` is on without
+# `arena-dom` (build.rs's `arena_dom` cfg), which is the reference build.
+ruby = ["dep:magnus", "dep:rb-sys"]
 
 # The vendored Lexbor: build.rs runs bindgen over its headers, so this also
 # decides whether a build needs `vendor/lexbor/dist` to exist at all. `rake
@@ -83,10 +85,11 @@ lexbor-reference = ["lexbor"]
 # The parser port's index-arena DOM (`crate::html::dom`) in place of Lexbor's
 # DOM, behind the same facade (`crate::html_dom`), parsed by the ported tree
 # builder (`crate::html::tree`) - `docs/rewrite_parser.ja.md`. The extension
-# ships with it: extconf turns it on unless MAKIRI_LEXBOR_DOM=1. It is not in
-# `default` so that a plain `cargo test` still builds Lexbor's DOM, which the
-# reference tests (`lexbor::arena_tests`, `tree_port_tests`) read beside it.
-arena-dom = ["lexbor"]
+# ships with it and links no Lexbor: extconf turns it on unless
+# MAKIRI_LEXBOR_DOM=1, and a `ruby` build without `lexbor` has it anyway.
+# Beside `lexbor` it chooses the arena over Lexbor's DOM, which the reference
+# tests (`lexbor::arena_tests`, `tree_port_tests`) still read beside it.
+arena-dom = []
 
 [dependencies]
 # Only the `ruby` feature needs these; the engine builds without them, which is

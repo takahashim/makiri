@@ -155,7 +155,7 @@ fn alloc_inject_p() -> bool {
 /// than the parser port: the conformance runner reads the known divergences
 /// of the parser it is running.
 fn lexbor_dom_p() -> Result<bool, Error> {
-    crate::bridge::ruby::entry(|| Ok(!cfg!(feature = "arena-dom")))
+    crate::bridge::ruby::entry(|| Ok(!cfg!(arena_dom)))
 }
 
 /// `Makiri.__alloc_inject(n)` - arm "the nth core allocation fails once".
@@ -321,7 +321,8 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     // another Ruby misreads them (`check_running_ruby_api`).
     crate::bridge::ruby::check_running_ruby_api(ruby)?;
     // Before anything can parse: Lexbor's heap blocks carry slack past their
-    // end (`lexbor::memory`).
+    // end (`lexbor::memory`). A build without Lexbor has none to give it.
+    #[cfg(feature = "lexbor")]
     crate::lexbor::memory::install();
     let makiri = ruby.define_module("Makiri")?;
 

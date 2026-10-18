@@ -13,7 +13,7 @@
 
 #![forbid(unsafe_code)]
 
-#[cfg(not(feature = "arena-dom"))]
+#[cfg(not(arena_dom))]
 mod chosen {
     /// Copies between an HTML document and an XML one.
     pub use crate::lexbor::adapter::cross_import;
@@ -32,7 +32,7 @@ mod chosen {
     pub use crate::lexbor::xpath;
 }
 
-#[cfg(feature = "arena-dom")]
+#[cfg(arena_dom)]
 mod chosen {
     /// The typed handles, the edit, and the name ids.
     pub use crate::html::dom as html;
@@ -57,5 +57,7 @@ mod chosen {
 }
 
 /// The parse guard's limits and stop reasons.
-pub use crate::lexbor::adapter::tree_guard;
+pub mod tree_guard {
+    pub use crate::html::tree::guard::{DepthLimit, GuardStop, MAX_SELECT_OPTIONS};
+}
 pub use chosen::*;

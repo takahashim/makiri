@@ -13,17 +13,50 @@
 //! `ContextFacts::foreign_namespace` tells the parser. The elements that
 //! inherited the namespace get it back on import, as the Lexbor DOM does.
 
-pub use crate::lexbor::fragment::FragmentError;
-
 use crate::falloc::{try_to_vec, VecPush};
 use crate::html::dom::{
     DomOom, HtmlDoc, HtmlDocMut, HtmlElement, HtmlNode, NodeId, NodeType, NsId, RawNode, TagId,
 };
 use crate::html::res::names as res;
 use crate::html::tree::guard::ContextOptions;
+use crate::html::tree::guard::{DepthLimit, GuardStop};
 use crate::html::tree::{parse_fragment, ContextFacts, FragmentFailure, ParsedFragment};
-use crate::lexbor::adapter::html as lex;
-use crate::lexbor::adapter::tree_guard::{resolve_option_chain, DepthLimit, OptionContext};
+
+/// Why a fragment parse produced no fragment. The bridge words it for Ruby.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FragmentError {
+    /// Lexbor could not create or initialise a parser (Lexbor's DOM only).
+    Parser,
+    /// Out of memory repairing the input's UTF-8.
+    Decode,
+    /// The parse itself returned no fragment.
+    Parse,
+    /// The context's tag or namespace could not be interned in the document.
+    Context,
+    /// The parse guard refused it ([`GuardStop`]), as it refuses a document.
+    Guard(GuardStop),
+}
+
+impl From<GuardStop> for FragmentError {
+    fn from(stop: GuardStop) -> Self {
+        FragmentError::Guard(stop)
+    }
+}
+
+impl FragmentError {
+    /// The message, for every error but [`Guard`](FragmentError::Guard),
+    /// whose message names its limit and is the bridge's to word
+    /// (`bridge::doc::guard_error`, shared with a document parse).
+    pub fn message(self) -> &'static str {
+        match self {
+            FragmentError::Parser => "failed to create HTML parser",
+            FragmentError::Decode => "out of memory decoding fragment HTML",
+            FragmentError::Parse => "failed to parse HTML fragment",
+            FragmentError::Context => "failed to resolve the fragment context",
+            FragmentError::Guard(_) => "the parse guard refused the fragment",
+        }
+    }
+}
 
 /// A context's namespace.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -105,12 +138,42 @@ impl FragmentTag {
     }
 }
 
+/// What the context `chain` - `(static tag, in the HTML namespace)` pairs,
+/// the context element first - means to the option guard: whether its
+/// ancestor walk reaches a `<select>` arriving with no `<optgroup>` seen
+/// (`fresh`) and with one (`after_optgroup`). The nearest-select rule of
+/// `lxb_html_option_element_nearest_ancestor_select`, as the tree builder's
+/// guard walks it inside the fragment.
+fn resolve_option_chain(
+    chain: impl Iterator<Item = (Option<usize>, bool)> + Clone,
+) -> ContextOptions {
+    let run = |mut optgroup: bool| {
+        for (tag, html) in chain.clone() {
+            if !html {
+                continue;
+            }
+            match tag {
+                Some(res::TAG_DATALIST | res::TAG_HR | res::TAG_OPTION) => return false,
+                Some(res::TAG_OPTGROUP) if optgroup => return false,
+                Some(res::TAG_OPTGROUP) => optgroup = true,
+                Some(res::TAG_SELECT) => return true,
+                _ => {}
+            }
+        }
+        false
+    };
+    ContextOptions {
+        fresh: run(false),
+        after_optgroup: run(true),
+    }
+}
+
 /// Where a fragment is parsed.
 pub enum FragmentContext {
     /// Inside the element whose context was resolved beforehand.
     Element {
         at: Option<FragmentTag>,
-        options: OptionContext,
+        options: ContextOptions,
         facts: ContextFacts,
     },
     /// Inside a named context, for a fragment bound to a document.
@@ -127,12 +190,8 @@ impl FragmentContext {
         };
         /* The option guard's walk into the context's ancestors, made now. */
         let chain = core::iter::successors(Some(node), |n| n.parent()).map(|n: HtmlNode<'_>| {
-            let tag = n
-                .tag_id()
-                .and_then(TagId::static_index)
-                .and_then(lex::TagId::from_raw);
-            let ns = (n.ns_id() == Some(NsId::HTML)).then_some(lex::NsId::HTML);
-            (tag, ns)
+            let html = n.ns_id() == Some(NsId::HTML);
+            (n.tag_id().and_then(TagId::static_index), html)
         });
         let integration = node.ns_id() == Some(NsId::MATH)
             && node.tag_id().and_then(TagId::static_index) == Some(res::TAG_ANNOTATION_XML)
@@ -199,16 +258,7 @@ impl TransientFragment {
         let at = context.at();
         let (tag, ns) = at.map_or((res::TAG__UNDEF, 0), |a| (a.parse_tag(), a.parse_ns()));
         let options = match context {
-            FragmentContext::Element { options, .. } => match *options {
-                OptionContext::Resolved {
-                    fresh,
-                    after_optgroup,
-                } => ContextOptions {
-                    fresh,
-                    after_optgroup,
-                },
-                _ => ContextOptions::default(),
-            },
+            FragmentContext::Element { options, .. } => *options,
             /* A named context reaches a select only by being one. */
             FragmentContext::Tag { .. } => {
                 let select = tag == res::TAG_SELECT && ns == res::NS_HTML;

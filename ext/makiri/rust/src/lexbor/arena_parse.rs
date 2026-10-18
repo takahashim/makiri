@@ -1,7 +1,8 @@
 //! Parsing into the arena DOM (`crate::html::dom`). The parse is the ported
-//! tree builder's (`crate::html::tree`), straight into the arena; only the
-//! `Makiri.__panic(6)` probe still parses with Lexbor, since what it proves is
-//! the latch around Lexbor's tokenizer hook.
+//! tree builder's (`crate::html::tree`), straight into the arena, and so is
+//! the `Makiri.__panic(6)` probe's: there is no C frame left between the
+//! tokenizer and the tree builder for its panic to cross.
 
-pub use crate::html::tree::{empty_html_document, parse_html, HtmlParseError};
-pub use crate::lexbor::adapter::post_parse::parse_with_panicking_hook;
+pub use crate::html::tree::{
+    empty_html_document, parse_html, parse_with_panicking_hook, HtmlParseError,
+};

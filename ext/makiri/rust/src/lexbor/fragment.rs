@@ -32,9 +32,7 @@ use crate::lexbor::abi::{
     lxb_html_parse_fragment_chunk_begin, lxb_html_parse_fragment_chunk_end,
     lxb_html_parse_fragment_chunk_process, TransientDoc,
 };
-use crate::lexbor::adapter::tree_guard::{
-    fragment_document, DepthLimit, GuardStop, OptionContext, TokenHook,
-};
+use crate::lexbor::adapter::tree_guard::{fragment_document, DepthLimit, OptionContext, TokenHook};
 
 /* The HTML parser's lifecycle, from the generated bindings. Declared here first
  * over an opaque parser, which was fine until the source-location port needed
@@ -106,41 +104,7 @@ fn fixup_template_content(
     Ok(())
 }
 
-/// Why a fragment parse produced no fragment. The bridge words it for Ruby.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FragmentError {
-    /// Lexbor could not create or initialise a parser.
-    Parser,
-    /// Out of memory repairing the input's UTF-8.
-    Decode,
-    /// The parse itself returned no fragment.
-    Parse,
-    /// The context's tag or namespace could not be interned in the document.
-    Context,
-    /// The parse guard refused it ([`GuardStop`]), as it refuses a document.
-    Guard(GuardStop),
-}
-
-impl From<GuardStop> for FragmentError {
-    fn from(stop: GuardStop) -> Self {
-        FragmentError::Guard(stop)
-    }
-}
-
-impl FragmentError {
-    /// The message, for every error but [`Guard`](FragmentError::Guard),
-    /// whose message names its limit and is the bridge's to word
-    /// (`bridge::doc::guard_error`, shared with a document parse).
-    pub fn message(self) -> &'static str {
-        match self {
-            FragmentError::Parser => "failed to create HTML parser",
-            FragmentError::Decode => "out of memory decoding fragment HTML",
-            FragmentError::Parse => "failed to parse HTML fragment",
-            FragmentError::Context => "failed to resolve the fragment context",
-            FragmentError::Guard(_) => "the parse guard refused the fragment",
-        }
-    }
-}
+pub use crate::lexbor::arena_fragment::FragmentError;
 
 /// Deep-import each child of `root` into `doc`, appending each to `into`.
 ///

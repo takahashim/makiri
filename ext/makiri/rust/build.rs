@@ -45,6 +45,25 @@ fn main() {
         gem_version();
     }
 
+    // The HTML DOM a build carries. `arena_dom`: the arena's - whenever the
+    // build does not ask for Lexbor's, and also beside Lexbor with
+    // `arena-dom` (the reference tests read both). Without it, a build with
+    // `lexbor` has Lexbor's. `html_dom`: there is one of the two - what the
+    // HTML half of the bridge, the CSS matcher and XPath's HTML instance
+    // need, whichever it is; every build but the bare engine (Kani,
+    // `--no-default-features` alone) has it.
+    println!("cargo:rustc-check-cfg=cfg(html_dom)");
+    println!("cargo:rustc-check-cfg=cfg(arena_dom)");
+    let feature = |f: &str| std::env::var_os(format!("CARGO_FEATURE_{f}")).is_some();
+    let lexbor = feature("LEXBOR");
+    let arena = feature("ARENA_DOM") || (feature("RUBY") && !lexbor);
+    if arena {
+        println!("cargo:rustc-cfg=arena_dom");
+    }
+    if arena || lexbor {
+        println!("cargo:rustc-cfg=html_dom");
+    }
+
     // Only a build that reads Lexbor's layout pays for this. Kani builds with
     // `--no-default-features` and has no Lexbor headers to point at, which is
     // the whole reason `rake kani` needs no `rake compile` first.

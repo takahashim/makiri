@@ -42,7 +42,8 @@ mod stacks;
 pub use error::{TreeError, TreeErrorId};
 pub use fragment::{parse_fragment, ContextFacts, FragmentFailure, ParsedFragment};
 pub use parse::{
-    empty_html_document, parse_document, parse_html, HtmlParseError, ParseFailure, Parsed,
+    empty_html_document, parse_document, parse_html, parse_with_panicking_hook, HtmlParseError,
+    ParseFailure, Parsed,
 };
 
 use crate::falloc::VecPush;

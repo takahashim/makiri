@@ -514,7 +514,7 @@ mod node_key {
 /* Feeds the matcher Lexbor documents, which it takes only when the Lexbor DOM
  * is the one selected; `lexbor::arena_tests` holds it to the old engine over
  * the arena instead. */
-#[cfg(not(feature = "arena-dom"))]
+#[cfg(not(arena_dom))]
 mod css_match {
     use crate::gvl::Gvl;
     use crate::lexbor::adapter::html::{HtmlElement, HtmlNode, NsId, RawNode};
@@ -2832,7 +2832,7 @@ mod css_match {
 /* Feeds the matcher Lexbor documents, which it takes only when the Lexbor DOM
  * is the one selected; `lexbor::arena_tests` holds it to the old engine over
  * the arena instead. */
-#[cfg(not(feature = "arena-dom"))]
+#[cfg(not(arena_dom))]
 mod selector_cache {
     use crate::gvl::Gvl;
     use crate::lexbor::adapter::html::{HtmlNode, RawNode};

@@ -74,6 +74,22 @@ namespace :unsafe do
   end
 end
 
+# The vendored Lexbor, built alone. The extension no longer needs it - the
+# arena DOM and the ported parsers are all Rust - so `rake compile` does not
+# build it; what still does is everything that compares against Lexbor or
+# builds its reference layers (`--all-features`, the `lexbor` feature, the
+# differential fuzz targets), and those depend on this. Rebuilds only when the
+# install is missing or in another mode, as extconf decides.
+desc "Build the vendored Lexbor (the reference the ports are tested against)"
+task :lexbor do
+  Dir.mktmpdir("makiri-lexbor") do |dir|
+    Dir.chdir(dir) do
+      sh({ "MAKIRI_LEXBOR_ONLY" => "1" }, FileUtils::RUBY,
+         File.expand_path("ext/makiri/rust/extconf.rb", __dir__))
+    end
+  end
+end
+
 # The lint gate, with CI's OWN arguments. It exists because a narrower spelling
 # looks like it passes and is not: `cargo clippy --no-default-features --features
 # lexbor` never compiles `bridge/` or `glue/` at all, so five `clippy.toml`
@@ -81,9 +97,12 @@ end
 # every configuration the crate has, which is why CI uses it - and why this task
 # does, rather than leaving the arguments to be remembered.
 desc "Clippy and rustfmt exactly as CI runs them (--all-features, warnings are errors)"
-task :lint do
+task lint: :lexbor do
   Dir.chdir("ext/makiri/rust") do
     sh "cargo", "clippy", "--all-features", "--", "-D", "warnings"
+    # The build that ships has no Lexbor: code only the reference layers use
+    # is dead there, which `--all-features` cannot see.
+    sh "cargo", "clippy", "--no-default-features", "--features", "ruby,arena-dom", "--", "-D", "warnings"
     sh "cargo", "fmt", "--all", "--", "--check"
   end
 end
@@ -721,15 +740,17 @@ task :kani do
 end
 
 namespace :rust do
-  # Two passes: the Ruby- and Lexbor-free core, then the same tests with the
-  # `lexbor` layers in, which adds the CSS lowering cases. The second needs the
-  # vendored Lexbor that `rake compile` builds.
-  desc "Run the Rust tests (the engine core, then with the Lexbor layers)"
-  task :test do
+  # The Ruby- and Lexbor-free core; the arena DOM the extension ships with,
+  # still Lexbor-free; then the same with the `lexbor` layers in, which holds
+  # the ports to Lexbor (the reference tests) and needs the vendored Lexbor
+  # `rake lexbor` builds.
+  desc "Run the Rust tests (the engine core, the shipped DOM, then against Lexbor)"
+  task test: :lexbor do
     Dir.chdir("ext/makiri/rust") do
       sh "cargo test --no-default-features"
-      sh "cargo test --no-default-features --features lexbor"
       # The configuration the extension ships with (extconf adds arena-dom).
+      sh "cargo test --no-default-features --features arena-dom"
+      sh "cargo test --no-default-features --features lexbor"
       sh "cargo test --no-default-features --features lexbor,arena-dom"
       # The fuzz crate is a separate one, so `cargo test` above never sees it;
       # without this check an engine API change can silently break the nightly
@@ -762,7 +783,7 @@ namespace :conformance do
   end
 
   desc "HTML parser conformance in the crate: WPT tree construction through each parser"
-  task :parser do
+  task parser: :lexbor do
     sh "#{FileUtils::RUBY} spec/conformance/parser_data.rb"
     Dir.chdir("ext/makiri/rust") do
       sh "cargo test --no-default-features --features lexbor -- --include-ignored wpt html5lib entities_are_the_whatwg"
@@ -947,7 +968,7 @@ namespace :fuzz do
   end
 
   desc "Build the cargo-fuzz harnesses (requires cargo-fuzz and a nightly toolchain)"
-  task :libfuzzer_build => :compile do
+  task :libfuzzer_build => %i[compile lexbor] do
     cargo_fuzz_available? or
       abort "fuzz:libfuzzer_build: cargo-fuzz is not installed " \
             "(`cargo install cargo-fuzz`; it needs a nightly toolchain)."

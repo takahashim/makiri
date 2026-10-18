@@ -69,12 +69,12 @@ pub mod caught;
 
 /// Holding the GVL as a value: the token the process-global CSS engines ask
 /// for, and the cell that keeps them.
-#[cfg(feature = "lexbor")]
+#[cfg(html_dom)]
 pub mod gvl;
 
 /// The CSS selector front end: lowers a Lexbor-parsed selector list into the
 /// XPath AST. Ruby-free, like the engine it feeds; Lexbor keeps the parser.
-#[cfg(feature = "lexbor")]
+#[cfg(html_dom)]
 pub mod css;
 
 /// The shared UTF-8 primitives. Unconditional, like `falloc`
@@ -138,12 +138,12 @@ pub mod glue;
 
 /// The vendored Lexbor boundary. This owns every direct use of its C ABI;
 /// `adapter` supplies the compatibility facilities Lexbor does not provide.
-#[cfg(feature = "lexbor")]
+#[cfg(html_dom)]
 pub mod lexbor;
 
 /// The HTML DOM as the rest of the crate reaches it: one path, whichever
 /// implementation the build carries (today Lexbor's).
-#[cfg(feature = "lexbor")]
+#[cfg(html_dom)]
 pub mod html_dom;
 
 /// The HTML parser ported from Lexbor to Rust (`docs/rewrite_parser.ja.md`):

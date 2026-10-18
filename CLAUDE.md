@@ -213,9 +213,12 @@ at all, once no reference runs Lexbor's parser.
 ## Build / test
 
 ```bash
-git submodule update --init        # fresh clone only
+git submodule update --init        # fresh clone only; the reference Lexbor
 bundle install
-bundle exec rake compile           # builds vendored Lexbor static lib, then the crate
+bundle exec rake compile           # the crate alone - the extension links no Lexbor
+bundle exec rake lexbor            # the reference Lexbor (cmake); lint, rust:test,
+                                   # conformance:parser and the diff fuzzers need it
+                                   # and depend on it
 bundle exec rake spec
 bundle exec rake rust:test         # Ruby-free core tests, Lexbor-feature tests, fuzz-crate check
 bundle exec rake lint              # cargo clippy --all-features -D warnings + cargo fmt --check
@@ -259,7 +262,9 @@ bundle exec rake kani              # Kani proofs over the Ruby-free core (needs 
 bundle exec rake bench             # perf vs Nokogiri (bench-only gems; runs outside bundle)
 ```
 
-Requires CRuby >= 3.2, `cmake`, and a **Rust toolchain** (`cargo`). A source
+Requires CRuby >= 3.2 and a **Rust toolchain** (`cargo`); `cmake` only for the
+reference Lexbor (`rake lexbor`, `MAKIRI_LEXBOR_DOM=1`). The gem carries none of
+Lexbor's sources, only its LICENSE and NOTICE, which the ports owe it. A source
 install needs cargo too; that is why `rb_sys` is a RUNTIME gemspec dependency -
 `extconf.rb` requires it at install time. Binary gems are published per platform,
 so most users never compile.
@@ -595,9 +600,12 @@ docs/design_doc.ja.md      authoritative design (read this)
 ```
 
 Six features, and the default is the extension: **`ruby`** (the
-magnus boundary + `glue` + `init`; implies `lexbor`), **`lexbor`** (the layers
-that read Lexbor's DOM: the generated ABI, `css`, `lexbor/adapter`, the XPath HTML
-instance), **`alloc-inject`** (the `rake oom` hook, off in any normal build),
+magnus boundary + `glue` + `init`; its HTML DOM is the arena's unless `lexbor`
+is on without `arena-dom` - build.rs's `arena_dom` cfg, with `html_dom` for
+"either DOM"), **`lexbor`** (the vendored Lexbor, now only the reference: the
+generated ABI, Lexbor's DOM through `lexbor/adapter` and its XPath instance,
+its heap slack, and the reference parsers; the extension builds without it, so
+`nm` finds no `lxb_` symbol in a normal build), **`alloc-inject`** (the `rake oom` hook, off in any normal build),
 **`css-reference`** (the OLD CSS engine, `lexbor::selectors`, for the
 `html_css_diff` fuzz target; in no build that ships), **`lexbor-reference`**
 (`lexbor::tree_diff`, `lexbor::selector_diff` and `lexbor::stylesheet_diff`,
@@ -608,11 +616,11 @@ parser port's index-arena DOM, `html::dom`, in place of Lexbor's behind the
 `html_dom` facade, parsed by the ported tree builder `html::tree`. **The
 extension ships with it**: extconf adds the feature unless
 `MAKIRI_LEXBOR_DOM=1`, which builds Lexbor's DOM instead - the reference the
-port was held to, kept buildable until stage 9 retires it; CI's `lexbor-dom`
-job runs it through the spec suite and `rake diff`, and `rake
-"sanitize:lexbor"` builds it, since that run instruments Lexbor. It is NOT a
-Cargo default feature, so a plain `cargo test` still builds Lexbor's DOM;
-`rake rust:test` runs `--features lexbor,arena-dom` too. Its byte store is append-only between
+port was held to, still buildable; CI's `lexbor-dom` job runs it through the
+spec suite and `rake diff`, and `rake "sanitize:lexbor"` builds it, since that
+run instruments Lexbor. A plain `cargo build` is the shipping configuration;
+`rake rust:test` runs the engine alone, `arena-dom`, `lexbor` (Lexbor's DOM)
+and `lexbor,arena-dom`. Its byte store is append-only between
 compactions: an edit's start (`HtmlParsed::edit`, after the indexes - which
 hold spans - are dropped) rewrites it once the dead bytes outweigh the live
 ones (`html/dom/compact.rs`), so repeated `content=` does not grow a document. What the bridge does differently for the two DOMs is

@@ -38,11 +38,22 @@ LEXBOR_SRC = File.join(GEM_ROOT, "vendor", "lexbor")
 LEXBOR_BLD = File.join(LEXBOR_SRC, "build")
 LEXBOR_DST = File.join(LEXBOR_SRC, "dist")
 
-unless File.directory?(LEXBOR_SRC)
+# The HTML DOM: the parser port's index arena (`arena-dom`, parsed by the
+# ported tree builder) is the one that ships, and needs nothing but cargo.
+# MAKIRI_LEXBOR_DOM=1 builds Lexbor's DOM instead - the reference the port was
+# held to - and only then is the vendored Lexbor (and cmake) needed. Like every
+# extconf switch, a change needs `rake clean compile`.
+lexbor_dom = ENV["MAKIRI_LEXBOR_DOM"].to_s.strip == "1"
+# MAKIRI_LEXBOR_ONLY=1 builds the vendored Lexbor and stops: what the tasks
+# that compare against Lexbor need (`rake lexbor`), with no extension built.
+lexbor_only = ENV["MAKIRI_LEXBOR_ONLY"].to_s.strip == "1"
+lexbor_dom ||= lexbor_only
+
+if lexbor_dom && !File.directory?(LEXBOR_SRC)
   abort "Lexbor source not found at #{LEXBOR_SRC}. Did you `git submodule update --init`?"
 end
 
-cmake = find_executable("cmake") or abort "cmake is required to build Lexbor."
+cmake = lexbor_dom && (find_executable("cmake") or abort "cmake is required to build Lexbor.")
 
 # Windows (RubyInstaller / MinGW-UCRT gcc): forces the GNU toolchain for the
 # Lexbor build below.
@@ -62,6 +73,10 @@ linux   = RbConfig::CONFIG["target_os"] =~ /linux/
 # vendor/lexbor stays vanilla - this is a build flag, not a source patch.
 sanitize    = ENV["MAKIRI_SANITIZE"].to_s.strip
 lexbor_asan = !ENV["MAKIRI_SANITIZE_LEXBOR"].to_s.strip.empty? && sanitize.include?("address")
+if lexbor_asan && !lexbor_dom
+  abort "MAKIRI_SANITIZE_LEXBOR instruments Lexbor's DOM: set MAKIRI_LEXBOR_DOM=1 too " \
+        "(`rake sanitize:lexbor` does)."
+end
 
 # Link-time optimization across Lexbor's own translation units, DARWIN ONLY.
 #
@@ -111,7 +126,7 @@ ensure
 end
 
 lexbor_lto =
-  if lexbor_asan || !ENV["MAKIRI_LEXBOR_NO_LTO"].to_s.strip.empty?
+  if !lexbor_dom || lexbor_asan || !ENV["MAKIRI_LEXBOR_NO_LTO"].to_s.strip.empty?
     false
   elsif darwin
     true
@@ -137,7 +152,7 @@ lexbor_stamp = File.join(LEXBOR_DST, ".makiri_build_mode")
 # non-LTO Lexbor can never leak into a build that wanted the other.
 have_archive = File.exist?(File.join(LEXBOR_DST, "lib", "liblexbor_static.a"))
 stamp_ok = have_archive && File.exist?(lexbor_stamp) && File.read(lexbor_stamp).strip == lexbor_mode
-unless stamp_ok
+if lexbor_dom && !stamp_ok
   FileUtils.rm_rf(LEXBOR_BLD)
   FileUtils.rm_rf(LEXBOR_DST) if have_archive # drop a wrong-mode install
   FileUtils.mkdir_p(LEXBOR_BLD)
@@ -184,24 +199,26 @@ end
 
 lexbor_include = File.join(LEXBOR_DST, "include")
 lexbor_archive = File.join(LEXBOR_DST, "lib", "liblexbor_static.a")
+if lexbor_only
+  # No Makefile on purpose; mkmf's exit hook would report that as a failure.
+  $makefile_created = true
+  exit 0
+end
 
 # ---------------------------------------------------------------------------
 # What the crate is built with
 # ---------------------------------------------------------------------------
 
-# The default feature set is the extension: `ruby` (which implies `lexbor`).
+# The default feature set is `ruby`; the DOM is added below.
 features = []
 
 # OOM-injection build (opt-in): MAKIRI_ALLOC_INJECT=1 compiles the allocation
 # failure hook so `rake oom` can sweep "the nth core allocation fails" over
 # representative workloads and assert every OOM branch fails closed.
 # Debug/test builds only - a normal build carries no hook.
-# The HTML DOM: the parser port's index arena (`arena-dom`, parsed by the
-# ported tree builder) is the one that ships. MAKIRI_LEXBOR_DOM=1 builds
-# Lexbor's DOM instead - the reference the port was held to, kept buildable
-# until it is retired (docs/rewrite_parser.ja.md, stage 9). Like every extconf
-# switch, a change needs `rake clean compile`.
-if ENV["MAKIRI_LEXBOR_DOM"].to_s.strip == "1"
+# The HTML DOM (`lexbor_dom`, above).
+if lexbor_dom
+  features << "lexbor"
   warn "makiri: building with Lexbor's DOM (MAKIRI_LEXBOR_DOM=1)"
 else
   features << "arena-dom"
@@ -224,7 +241,7 @@ rustc_args = []
 
 # Hard-link the static archive rather than pass -L/-llexbor_static, to avoid
 # accidentally linking a system-installed Lexbor.
-rustc_args += ["-C", "link-arg=#{lexbor_archive}"]
+rustc_args += ["-C", "link-arg=#{lexbor_archive}"] if lexbor_dom
 
 # Windows: the vendored Lexbor calls CRT functions (strncmp in the HTML initial
 # insertion mode, &c.), but rustc's windows-gnu cdylib link runs gcc with
@@ -238,7 +255,7 @@ rustc_args += ["-C", "link-arg=#{lexbor_archive}"]
 # import after the archive so ld's single pass sees it. (The gnullvm target for
 # aarch64 Ruby already links libucrt through clang's own specs; the -lucrt there
 # is a harmless duplicate.)
-if windows
+if windows && lexbor_dom
   rustc_args += ["-C", "link-arg=#{RUBY_PLATFORM =~ /mingw32/ ? "-lmsvcrt" : "-lucrt"}"]
 end
 
@@ -265,7 +282,7 @@ end
 # Flags that must reach the crate AND its dependencies (magnus, rb-sys), which
 # rustc args cannot do - these are the ones that genuinely belong in RUSTFLAGS.
 rustflags = []
-cargo_env = { "MAKIRI_LEXBOR_INCLUDE" => lexbor_include }
+cargo_env = lexbor_dom ? { "MAKIRI_LEXBOR_INCLUDE" => lexbor_include } : {}
 cargo_target = nil
 
 # Sanitizer build (opt-in): MAKIRI_SANITIZE=address rake clean compile, then run
