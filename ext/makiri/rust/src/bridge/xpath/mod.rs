@@ -225,7 +225,7 @@ fn parse_with_limits(
 /// error as the exception.
 pub fn parse_query(cx: &Cx, expr: Value) -> Result<Box<Ast>, Error> {
     let ev = ruby_verified_text(expr, "XPath expression")?;
-    /* `ev` holds the String rooted and locked; `text`'s borrow keeps it live for the
+    /* `ev` owns a copy of the String's bytes, which `text` borrows for the
      * parse. */
     let parsed = parse_with_limits(cx.limits(), ev.text());
     /* No borrowed bytes across the exception's allocation. */
