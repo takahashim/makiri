@@ -31,6 +31,9 @@ pub enum Fix {
     /// "After after frameset" processes the whitespace of a text token that
     /// also holds other characters, using the "in body" rules.
     P7,
+    /// Input that ends inside `[CDATA[` keeps what was read as the bogus
+    /// comment's data.
+    P8,
     /// An element carries its start tag's offset when it was created for
     /// that tag's token, and no other (`Node#line`); not a tree change, so
     /// [`explains`] never names it: the harnesses compare the trees without
@@ -75,6 +78,15 @@ fn has(input: &[u8], word: &[u8]) -> bool {
     input
         .windows(word.len())
         .any(|w| w.eq_ignore_ascii_case(word))
+}
+
+/// Whether the input's last `<!` has no `>` after it.
+#[cfg(any(test, feature = "lexbor-reference"))]
+fn ends_in_markup_declaration(input: &[u8]) -> bool {
+    input
+        .windows(2)
+        .rposition(|w| w == b"<!")
+        .is_some_and(|i| !input[i..].contains(&b'>'))
 }
 
 /// The fixes that may change the tree of `input` (parsed as a document, or
@@ -122,6 +134,10 @@ pub fn explains(input: &[u8], context: Option<&str>) -> Vec<Fix> {
     /* P7: text after `</html>` in a frameset document. */
     if has(input, b"frameset") {
         fixes.push(Fix::P7);
+    }
+    /* P8: the input ends inside a markup declaration. */
+    if ends_in_markup_declaration(input) {
+        fixes.push(Fix::P8);
     }
     fixes
 }

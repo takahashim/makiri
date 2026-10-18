@@ -93,6 +93,14 @@ P で始まる項目は HTML パーサの振る舞いである。
 - **移植版**：`html/tree/modes/after_after_frameset.rs` が空白だけを "in body" の規則で挿入する。差分の許可は入力に `frameset` があるとき。
 - **テスト**：WPT にない。`spec/html_standard_steps_spec.rb`。
 
+### P8 `[CDATA[` の途中で終わる入力
+
+- **分類**：参照実装の未対応（監査で見つけた）。移植版で直した（第 8 段）。
+- **仕様**：markup declaration open state の「Anything else」で空のコメントを作り、bogus comment state が読んだ文字をそのデータにする。
+- **再現**：`<![CDA`。仕様ではデータが `[CDA` のコメント、Lexbor は空のコメント。`<![`、`<![cd`、`<svg><![CDA` も同じ。Lexbor の DOCTYPE の側（`<!DOC`）は読んだ文字を残しており、CDATA の側だけが捨てる。
+- **移植版**：`html/tokenizer/state.rs` の `markup_declaration_cdata` が、途中まで一致した文字をバッファに残す。差分の許可は、入力の最後の `<!` の後に `>` がないとき。
+- **テスト**：html5lib と WPT にない。`spec/html_standard_steps_spec.rb`。
+
 ### L1 ソース位置の規則
 
 - **分類**：意図した変更（移植計画の「ソース位置の規則」）。Lexbor の DOM のビルドは旧来の答えのまま。

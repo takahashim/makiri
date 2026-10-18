@@ -8,6 +8,7 @@ use super::state_doctype::doctype_before;
 use super::{flags, is_alnum, is_alpha, ncasecmp_first, seek4, ErrorId, Tokenizer};
 use crate::html::res::entities::ENTITIES;
 use crate::html::res::{names as res, sbst_find};
+use crate::html::tree::compat::{self, Fix};
 
 /// A state: consume what it can of `[data, end)` and return where it stopped
 /// (`lxb_html_tokenizer_state_f`).
@@ -722,6 +723,11 @@ fn markup_declaration_cdata(t: &mut Tokenizer<'_, '_>, data: usize, end: usize) 
         t.error(data, ErrorId::Cdinhtco);
         t.state = bogus_comment_before;
         return data;
+    }
+    /* Keep what matched, as the DOCTYPE twin does: when the input ends
+     * inside `[CDATA[`, it is the bogus comment's data. Lexbor drops it (P8). */
+    if compat::fixed(Fix::P8) {
+        try_or!(t.append(avail), end);
     }
     t.markup = rest;
     end

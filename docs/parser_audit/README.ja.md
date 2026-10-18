@@ -40,7 +40,7 @@ in body の監査は、parse5（scripting off）との無作為な比較も使�
 | P5 | table_modes F2 | "in column group" の DOCTYPE を無視する | 直した |
 | P6 | table_modes F3 | "in column group" で、他の文字の後ろの空白を捨てる | 直した |
 | P7 | table_modes F4 | "after after frameset" で、他の文字を含む token の空白を捨てる | 直した |
-| P8 | tokenizer2 D1 | `[CDATA[` の途中で入力が終わると、bogus comment の中身が失われる（`<![CDA`） | 未着手 |
+| P8 | tokenizer2 D1 | `[CDATA[` の途中で入力が終わると、bogus comment の中身が失われる（`<![CDA`） | 直した |
 | P9 | tokenizer2 D2 | 入力末尾の `<!` の直前の文字列が、空のはずのコメントに入る（`x<!`） | 未着手 |
 | P10 | tokenizer1 F1、tree_core 逸脱 1、in_body F4 | 値のない属性（`<b x>`）と空の値（`<b x="">`）を、formatting element の「三つまで」の比較で別の値として扱う | 未着手 |
 | P11 | in_body F1 | adoption agency algorithm の bookmark と formatting element の位置を添字で持ち、要素を除いた後に補正しない | 未着手 |

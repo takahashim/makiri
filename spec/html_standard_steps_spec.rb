@@ -64,4 +64,9 @@ RSpec.describe "HTML Standard steps the port takes and Lexbor does not" do
     doc = Makiri::HTML("<frameset></frameset></html> x ")
     expect(doc.to_html).to eq("<html><head></head><frameset></frameset>  </html>")
   end
+  # P8: markup declaration open, anything else: the bogus comment holds what
+  # was read, also when the input ends inside "[CDATA[".
+  it "keeps a partial [CDATA[ at the end of the input as the comment's data" do
+    expect(Makiri::HTML("<![CDA").children.first.content).to eq("[CDA")
+  end
 end
