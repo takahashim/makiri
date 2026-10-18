@@ -59,4 +59,9 @@ RSpec.describe "CSS Syntax 3 and Selectors 4 steps the CSS parser follows" do
     expect(Makiri::Lexbor::CSS.parse_stylesheet("@-א x {}").first[:name]).to eq("-א")
     expect(Makiri::Lexbor::CSS.parse_stylesheet("@-¶ x {}").first[:type]).to eq(:bad_style)
   end
+  # C6: consume a number, step 6: the value is the whole digit run's.
+  it "keeps the value of a number with more than 128 integer digits" do
+    doc = Makiri::HTML("<ul><li>a<li>b</ul>")
+    expect(doc.css("li:nth-child(#{"0" * 128}1)").map(&:text)).to eq(["a"])
+  end
 end

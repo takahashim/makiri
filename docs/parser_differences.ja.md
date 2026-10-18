@@ -321,6 +321,14 @@ CSS Syntax Level 3 と Selectors Level 4（w3c/csswg-drafts の `7b4c69ecaf9289d
 - **移植版**：`selectors/tokenizer.rs` の `start_ident_sequence` が、`-` の後の 0x80 以上の byte を code point に復号して判定する（`start_ident_utf_8_80`、名前を始める非 ASCII 文字の判定と同じ）。差分の許可は、入力に `-` の直後の 0x80 以上の byte があるとき。
 - **テスト**：`spec/css_standard_steps_spec.rb`。
 
+### C6 128 桁を超える整数部
+
+- **分類**：参照実装の未対応（監査の css_tokenizer F4）。移植版で直した（第 8 段）。
+- **仕様**：consume a number は数字の並び全体を数値に変える。
+- **再現**：`li:nth-child(` に 0 を 128 個と `1` を続けたもの。仕様では値は 1 で、最初の子に一致する。Lexbor は数字を 128 byte の buffer に読み、129 桁目から先を捨てて位も補正しないので、値は 0 になり、何にも一致しない。
+- **移植版**：`selectors/tokenizer.rs` の `consume_numeric` が、先頭の 0 を buffer に入れず、buffer に入りきらない整数部の桁の数だけ指数を上げる。小数部の 129 桁目から先は、値をほとんど変えないので捨てたままにする。差分の許可は、入力に 129 桁以上の数字の並びがあるとき。
+- **テスト**：`spec/css_standard_steps_spec.rb`。
+
 ## パーサの外の項目
 
 次の差は HTML パーサではなく、DOM の上の層（CSS マッチャ、XPath の名前照合）にある。

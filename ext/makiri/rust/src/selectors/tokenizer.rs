@@ -703,30 +703,40 @@ impl<'a> Tokenizer<'a> {
 
     /// `lxb_css_syntax_state_consume_numeric`.
     fn consume_numeric(&mut self, token: &mut Token, mut data: usize, end: usize) -> Option<usize> {
-        /* Lexbor reads the digits into a 128-byte buffer and drops the rest. */
+        /* Lexbor reads the digits into a 128-byte buffer and drops the rest,
+         * an integer part's dropped digits included, which divided the value
+         * by ten for each (C6). The Standard's value keeps their place: a
+         * leading zero takes no room, and a dropped integer digit raises
+         * the exponent. */
         let mut buf = [0u8; 128];
         let mut n = 0;
         let input = self.input;
+        let keep_place = compat::fixed(Fix::C6);
+        let mut dropped: i32 = 0;
 
         while input[data].is_ascii_digit() {
-            if n != buf.len() {
+            if keep_place && n == 0 && input[data] == b'0' {
+                /* A leading zero adds nothing. */
+            } else if n != buf.len() {
                 buf[n] = input[data];
                 n += 1;
+            } else if keep_place {
+                dropped = dropped.saturating_add(1);
             }
             data += 1;
             if data >= end {
-                Self::numeric_set(token, &buf[..n], false, false, 0, 0);
+                Self::numeric_set(token, &buf[..n], false, false, dropped, 0);
                 return Some(data);
             }
         }
 
-        let mut exponent = 0;
+        let mut exponent = dropped;
         let mut is_float = false;
 
         if input[data] == b'.' {
             data += 1;
             if data >= end || !input[data].is_ascii_digit() {
-                Self::numeric_set(token, &buf[..n], false, false, 0, 0);
+                Self::numeric_set(token, &buf[..n], false, false, dropped, 0);
                 return Some(data - 1);
             }
             let begin = n;
@@ -740,7 +750,7 @@ impl<'a> Tokenizer<'a> {
                     break;
                 }
             }
-            exponent = -((n - begin) as i32);
+            exponent = dropped - (n - begin) as i32;
             is_float = true;
             if data >= end {
                 Self::numeric_set(token, &buf[..n], true, false, exponent, 0);

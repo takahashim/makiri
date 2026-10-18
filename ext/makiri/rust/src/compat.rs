@@ -93,6 +93,8 @@ pub enum Fix {
     /// non-ASCII ident code point, not when its UTF-8 lead byte is a Latin-1
     /// letter.
     C5,
+    /// A number keeps the place of the integer digits past its 128th.
+    C6,
     /// `:has()` is unforgiving: an invalid item invalidates the selector.
     C19,
     /// `:has()` is not valid inside `:has()`.
@@ -185,6 +187,10 @@ pub fn css_explains(input: &[u8]) -> Vec<Fix> {
     /* C5: a hyphen before a non-ASCII byte. */
     if input.windows(2).any(|w| w[0] == b'-' && w[1] >= 0x80) {
         fixes.push(Fix::C5);
+    }
+    /* C6: a run of more than 128 digits. */
+    if input.windows(129).any(|w| w.iter().all(u8::is_ascii_digit)) {
+        fixes.push(Fix::C6);
     }
     /* C18: an `:is()` or `:where()` left empty. */
     if has(input, b"is(") || has(input, b"where(") {
