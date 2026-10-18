@@ -764,6 +764,14 @@ namespace :conformance do
     end
   end
 
+  # The ported tree builder against Lexbor over 100,000 real homepages
+  # (web100k, ~3.1 GB downloaded batch by batch). A manual check, not in CI;
+  # BATCHES=1,2 narrows it, KEEP=1 keeps the decompressed pages.
+  desc "HTML parser port vs Lexbor over the web100k corpus (BATCHES=1,2; needs zstd)"
+  task :web100k do
+    sh "#{FileUtils::RUBY} spec/conformance/web100k.rb"
+  end
+
   # Evidence, not a gate: docs/rewrite_parser.ja.md makes the pinned HTML
   # Standard the authority, and browsers can all predate a spec change.
   desc "HTML parser vs Chromium/Firefox/WebKit (Playwright; needs Node.js)"

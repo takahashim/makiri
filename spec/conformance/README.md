@@ -20,6 +20,8 @@ rake conformance:builder   # XML::Builder DSL vs Nokogiri::XML::Builder
 rake conformance           # all tasks above, excluding xml_pbt
 
 rake conformance:xml_pbt   # generated XML trees vs Nokogiri::XML
+rake conformance:web100k   # the ported HTML tree builder vs Lexbor over
+                           # 100,000 real pages (~3.1 GB; needs zstd; manual)
 ```
 
 Pass options through environment variables:
@@ -33,6 +35,7 @@ CSS_XML_ARGS="--generate 5000 --seed 1"      rake conformance:css_xml
 XMLCONF_ARGS="--verbose --show-policy"       rake conformance:xmlconf
 BUILDER_ARGS="--verbose"                     rake conformance:builder
 PBT_ARGS="--count 50000 --verbose"           rake conformance:xml_pbt
+BATCHES=1,2 KEEP=1                           rake conformance:web100k
 ```
 
 Nokogiri is a bench-only dependency, so Nokogiri-based conformance tasks run
