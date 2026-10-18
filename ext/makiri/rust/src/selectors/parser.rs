@@ -361,6 +361,9 @@ pub fn parse(input: &[u8]) -> Result<Parsed, Status> {
         return Err(p.status);
     }
     p.status = p.run();
+    if p.status == Status::Ok && crate::compat::fixed(crate::compat::Fix::C23) {
+        super::specificity::respecify(&mut p.ast);
+    }
     match p.status {
         Status::Ok => match p.sel.list {
             Some(first) => Ok(Parsed {

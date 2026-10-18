@@ -139,9 +139,19 @@ fn without_extremes(s: Option<String>) -> Option<String> {
 }
 
 /// Panic unless both parsers make the same of `selector`, which must be
-/// what Makiri parses: UTF-8 with no NUL.
+/// what Makiri parses: UTF-8 with no NUL. The port is compared as Lexbor
+/// ran (`compat::as_lexbor`); its own answer may differ from that only where
+/// `compat::css_explains` admits it.
 pub fn check(selector: &str) {
     let lexbor = without_extremes(lexbor_dump(selector));
+    let compatible = without_extremes(crate::compat::as_lexbor(|| port_dump(selector)));
+    assert_eq!(lexbor, compatible, "the parsers differ on {selector:?}");
     let port = without_extremes(port_dump(selector));
-    assert_eq!(lexbor, port, "the parsers differ on {selector:?}");
+    if port != compatible {
+        assert!(
+            !crate::compat::css_explains(selector.as_bytes()).is_empty(),
+            "the port's fixes change {selector:?}, which no fix explains: \
+             {compatible:?} / {port:?}"
+        );
+    }
 }

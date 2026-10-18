@@ -261,6 +261,18 @@ P で始まる項目は HTML パーサの振る舞いである。
 - **C2 名前**：宣言名はカスタムプロパティ（`--` で始まる）を除いて ASCII 小文字にし、at-rule の名前も小文字にする。Lexbor は既知のプロパティと型を持つ at-rule だけを正規の名前で書き、ほかは書かれたとおりに返した。型を持つ at-rule を `_undef` に変えたもの（prelude のある `@font-face`、ブロックのある `@namespace`、ブロックのない `@media`）の名前が空になるのは Lexbor のとおりである。
 - **C3 値の状態**：Lexbor は宣言の値をプロパティごとの状態で読み、移植版はすべてカスタムプロパティの状態（終わりまで読む）で読む。値の offset と `!important` の判定は構文パーサの phase が決めるので、答えは変わらない。プロパティの状態が先読みした token の数だけは `lookup_important` などの経路に影響しうるが、比較テストと fuzz で食い違いは見つかっていない。
 
+## CSS パーサの項目
+
+CSS Syntax Level 3 と Selectors Level 4（w3c/csswg-drafts の `7b4c69ecaf9289d1bd5455d6bea10eec0b4a4399`）の監査（`docs/parser_audit/css_*.md`）で見つかった、Lexbor から引き継いだ逸脱を直したもの。HTML の項目と同じく `compat.rs` の `fixed` を問い、比較のテスト（`lexbor::selector_diff`、`lexbor::stylesheet_diff`）は Lexbor 互換の実行で Lexbor と一致させ、仕様どおりの実行との差を `css_explains` の述語が説明できる入力でだけ許す。
+
+### C23〜C26 specificity
+
+- **分類**：参照実装の未対応（監査の css_selectors F7〜F10）。移植版で直した（第 8 段）。
+- **仕様**：Selectors 4 の 17 章。A は ID、B は class、属性、擬似クラス、C は type selector と擬似要素の数。`:is()`、`:not()`、`:has()` は引数のうち最も詳細な complex selector、`:nth-child()` と `:nth-last-child()` は擬似クラス一つに `of S` の最も詳細なものを足し、`:where()` は 0。成分が上限を超えるときは丸めてよい。
+- **再現**：`p:first-child` は仕様で `[0,1,1]`、Lexbor は `[0,0,1]`（引数のない擬似クラスと `:nth-of-type()` を数えない、C23）。`a:is(.b, .c .d)` は `[0,2,1]`、Lexbor は `[0,1,1]`（関数の中では成分ごとに 1 に丸める、C24）。`foo|div` は `[0,0,1]`、Lexbor は `[0,0,2]`（接頭辞のある type selector を二度数える、C25）。`.a` を 512 個並べると Lexbor は `[1,0,0]`（成分が上に繰り上がる、C26）。
+- **移植版**：`selectors/specificity.rs` の `respecify` が、解析の後ですべての complex selector を数え直す。関数の引数の list はそれを持つ list より後に作られるので、後ろから数えれば再帰なしで引数が先に決まる。成分は 9 bit の上限（511）で丸める。差分の許可は、入力に `:` か `|` があるか、1000 byte 以上のとき。
+- **テスト**：`spec/css_standard_steps_spec.rb`。
+
 ## パーサの外の項目
 
 次の差は HTML パーサではなく、DOM の上の層（CSS マッチャ、XPath の名前照合）にある。

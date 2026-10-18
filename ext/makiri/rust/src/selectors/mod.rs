@@ -13,6 +13,7 @@ pub mod ast;
 pub mod parser;
 pub mod pseudo;
 pub mod rules;
+mod specificity;
 mod strtod;
 pub mod token;
 pub mod tokenizer;

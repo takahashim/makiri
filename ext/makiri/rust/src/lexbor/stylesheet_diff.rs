@@ -315,7 +315,15 @@ pub fn port_dump(css: &[u8]) -> Result<String, Status> {
 /// Makiri parses: UTF-8 with no NUL.
 pub fn check(css: &[u8]) {
     let lexbor = lexbor_dump(css);
-    let port = port_dump(css);
+    let port = crate::compat::as_lexbor(|| port_dump(css));
+    let fixed = port_dump(css);
+    if fixed != port {
+        assert!(
+            !crate::compat::css_explains(css).is_empty(),
+            "the port's fixes change {:?}, which no fix explains: {port:?} / {fixed:?}",
+            String::from_utf8_lossy(css)
+        );
+    }
     match (&lexbor, &port) {
         (Ok(a), Ok(b)) => assert_eq!(
             a,

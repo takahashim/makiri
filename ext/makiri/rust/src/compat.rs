@@ -1,6 +1,7 @@
-//! Where the tree builder or the serializer follows the pinned HTML Standard
-//! and Lexbor does not (`docs/parser_differences.ja.md`, the P and R items):
-//! each such step asks [`fixed`] whether to take the Standard's branch.
+//! Where the tree builder or the serializer follows the pinned HTML Standard,
+//! or the CSS parser CSS Syntax 3 and Selectors 4, and Lexbor does not
+//! (`docs/parser_differences.ja.md`, the P, R and C items): each such step
+//! asks [`fixed`] whether to take the specification's branch.
 //!
 //! A build that ships always does. The tests and the reference builds can run
 //! the port as Lexbor ran ([`as_lexbor`]), which is how the differential
@@ -76,6 +77,11 @@ pub enum Fix {
     /// An element in the HTML, SVG or MathML namespace is serialized by its
     /// local name, without the prefix it was created with.
     R2,
+    /// Specificity is Selectors 4's (C23 to C26, one rule): every
+    /// pseudo-class counts in B, a prefixed type selector once, a
+    /// functional pseudo-class as its most specific argument, and each
+    /// component is clamped rather than carried.
+    C23,
     /// An element carries its start tag's offset when it was created for
     /// that tag's token, and no other (`Node#line`); not a tree change, so
     /// [`explains`] never names it: the harnesses compare the trees without
@@ -144,6 +150,20 @@ fn has_formatting_end_tag(input: &[u8]) -> bool {
             .windows(n.len() + 2)
             .any(|w| w[0] == b'<' && w[1] == b'/' && w[2..].eq_ignore_ascii_case(n))
     })
+}
+
+/// The fixes that may change what the CSS parser makes of `input`, a
+/// selector or a stylesheet (`lexbor::selector_diff`,
+/// `lexbor::stylesheet_diff`).
+#[cfg(any(test, feature = "lexbor-reference"))]
+pub fn css_explains(input: &[u8]) -> Vec<Fix> {
+    let mut fixes = Vec::new();
+    /* C23: a pseudo-class or pseudo-element, a namespace prefix, or enough
+     * simple selectors to fill a component (511). */
+    if input.contains(&b':') || input.contains(&b'|') || input.len() >= 1000 {
+        fixes.push(Fix::C23);
+    }
+    fixes
 }
 
 /// The fixes that may change the tree of `input` (parsed as a document, or

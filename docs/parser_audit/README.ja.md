@@ -87,10 +87,10 @@ CSS の項目も、すべて Lexbor の振る舞いを移植版が写したも�
 | C20 | css_selectors F3 | `:has()` の中の `:has()` を受け付ける | 未着手 |
 | C21 | css_selectors F4 | An+B の後ろの token を捨てる（`:nth-child(2n+1of p)`） | 未着手 |
 | C22 | css_selectors F6 | `<ndashdigit-*>` の B が大きすぎると構文エラーにする | 未着手 |
-| C23 | css_selectors F7 | 引数のない擬似クラスと `:nth-of-type()` を specificity の B に数えない | 未着手 |
-| C24 | css_selectors F8 | `:is()` などの specificity を最も詳細な項目でなく、成分ごとに 1 に丸める | 未着手 |
-| C25 | css_selectors F9 | 名前空間の接頭辞のある type selector を C に二度数える | 未着手 |
-| C26 | css_selectors F10 | specificity の成分を丸めず、上の成分に繰り上げる | 未着手 |
+| C23 | css_selectors F7 | 引数のない擬似クラスと `:nth-of-type()` を specificity の B に数えない | 直した |
+| C24 | css_selectors F8 | `:is()` などの specificity を最も詳細な項目でなく、成分ごとに 1 に丸める | 直した |
+| C25 | css_selectors F9 | 名前空間の接頭辞のある type selector を C に二度数える | 直した |
+| C26 | css_selectors F10 | specificity の成分を丸めず、上の成分に繰り上げる | 直した |
 | C27 | css_selectors U1 | `[*\|a]`（任意の名前空間の属性）を受け付けない | 未実装 |
 
 監査で意図した差とした行のうち、二つの差分文書に書いていないものが三つある。入力の NUL と不正な UTF-8 を例外にする（`CLAUDE.md` の text-input contract）、at-rule の入れ子が 64 を超えると例外にする（`lexbor/stylesheet.rs` の `MAX_DEPTH`）、メモリ不足で stylesheet の解析全体を失敗にする（S3 と同じ方針）である。

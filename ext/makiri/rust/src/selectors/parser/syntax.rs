@@ -48,6 +48,9 @@ pub fn parse_stylesheet(input: &[u8]) -> Result<Sheet, Status> {
         return Err(p.status);
     }
     p.status = p.run();
+    if p.status == Status::Ok && crate::compat::fixed(crate::compat::Fix::C23) {
+        crate::selectors::specificity::respecify(&mut p.ast);
+    }
     match p.status {
         Status::Ok => Ok(Sheet {
             ast: p.ast,
