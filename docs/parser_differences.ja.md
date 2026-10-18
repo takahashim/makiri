@@ -346,6 +346,14 @@ CSS Syntax Level 3 と Selectors Level 4（w3c/csswg-drafts の `7b4c69ecaf9289d
 - **互換性**：`#1a` を書いていた呼び出し側は `#\31 a` か `[id="1a"]` に書き換える必要がある。
 - **テスト**：`spec/css_standard_steps_spec.rb`。
 
+### C22 long の範囲を超える `<ndashdigit-*>`
+
+- **分類**：参照実装の未対応（監査の css_selectors F6）。移植版で直した（第 8 段）。
+- **仕様**：`<ndashdigit-ident>` などの `n-` の後の数字の数に上限はない。値の範囲の扱いは書かれていない。
+- **再現**：`:nth-child(n-99999999999999999999)`。Lexbor は ident の中の数字を long に読み、範囲を超えると読み残して誤りにするので構文エラーになる。同じ値を別の token として書いた `:nth-child(n- 99999999999999999999)` は、数値の token として飽和させて受け付けていた。
+- **移植版**：`selectors/parser.rs` の `data_to_long` が、範囲を超える値を long の最大値に飽和させ、残りの数字も読む。S2 で 2^63 を飽和させるのと同じ規則で、書き方によらず同じ答えになる。Lexbor の掛け算は桁あふれで値が回るので、範囲を超える前に確かめる。差分の許可は、入力に `n-` と 19 桁以上の数字の並びがあるとき。
+- **テスト**：`spec/css_standard_steps_spec.rb`。
+
 ## パーサの外の項目
 
 次の差は HTML パーサではなく、DOM の上の層（CSS マッチャ、XPath の名前照合）にある。

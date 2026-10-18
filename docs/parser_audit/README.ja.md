@@ -86,7 +86,7 @@ CSS の項目も、すべて Lexbor の振る舞いを移植版が写したも�
 | C19 | css_selectors F2 | `:has()` の中の無効な項目を捨てる（仕様は unforgiving） | 直した |
 | C20 | css_selectors F3 | `:has()` の中の `:has()` を受け付ける | 直した |
 | C21 | css_selectors F4 | An+B の後ろの token を捨てる（`:nth-child(2n+1of p)`） | 直した |
-| C22 | css_selectors F6 | `<ndashdigit-*>` の B が大きすぎると構文エラーにする | 未着手 |
+| C22 | css_selectors F6 | `<ndashdigit-*>` の B が大きすぎると構文エラーにする | 直した |
 | C23 | css_selectors F7 | 引数のない擬似クラスと `:nth-of-type()` を specificity の B に数えない | 直した |
 | C24 | css_selectors F8 | `:is()` などの specificity を最も詳細な項目でなく、成分ごとに 1 に丸める | 直した |
 | C25 | css_selectors F9 | 名前空間の接頭辞のある type selector を C に二度数える | 直した |

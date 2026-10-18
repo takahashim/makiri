@@ -76,4 +76,11 @@ RSpec.describe "CSS Syntax 3 and Selectors 4 steps the CSS parser follows" do
     expect { doc.css("#1a") }.to raise_error(Makiri::CSS::SyntaxError)
     expect(doc.css('#\\31 a').size).to eq(1)
   end
+  # C22: <ndashdigit-ident> has no bound on its digits; a B too large for a
+  # long saturates, as the same value written as a number does.
+  it "saturates an n- digit run too large for a long" do
+    doc = Makiri::HTML("<ul><li>a<li>b</ul>")
+    expect(doc.css("li:nth-child(n-99999999999999999999)").size).to eq(2)
+    expect(doc.css("li:nth-child(n- 99999999999999999999)").size).to eq(2)
+  end
 end

@@ -84,6 +84,8 @@ pub enum Fix {
     C23,
     /// A token after an `An+B` makes the selector invalid.
     C21,
+    /// An `n-` digit run too large for a long saturates, as a number does.
+    C22,
     /// An empty `:is()` or `:where()` is valid and matches nothing.
     C18,
     /// A string ending in a backslash at the end of the input holds nothing
@@ -215,6 +217,10 @@ pub fn css_explains(input: &[u8]) -> Vec<Fix> {
     if has(input, b"has(") {
         fixes.push(Fix::C19);
         fixes.push(Fix::C20);
+    }
+    /* C22: an An+B's digits run past a long. */
+    if has(input, b"n-") && input.windows(19).any(|w| w.iter().all(u8::is_ascii_digit)) {
+        fixes.push(Fix::C22);
     }
     /* C21: a token after an `An+B`. */
     if has(input, b"nth-") {

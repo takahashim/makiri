@@ -325,7 +325,19 @@ fn data_to_long(data: &[u8]) -> (c_long, usize) {
             break;
         }
         let n = c_ulong::from(d - b'0').wrapping_add(number.wrapping_mul(10));
-        if n > c_long::MAX as c_ulong {
+        let saturate = compat::fixed(Fix::C22);
+        /* Lexbor's product wraps, so it can miss an overflow; checked first
+         * here when the value saturates. */
+        let wrapped = saturate && number > c_long::MAX as c_ulong / 10;
+        if n > c_long::MAX as c_ulong || wrapped {
+            /* Lexbor stops short, and the caller then refuses the An+B; a
+             * value too large saturates instead, as a number token's does
+             * (`double_to_long`, C22), and every digit is read. */
+            if saturate {
+                number = c_long::MAX as c_ulong;
+                p += data[p..].iter().take_while(|d| d.is_ascii_digit()).count();
+                break;
+            }
             p -= 1;
             break;
         }
