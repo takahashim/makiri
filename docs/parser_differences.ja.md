@@ -173,6 +173,14 @@ P で始まる項目は HTML パーサの振る舞いである。
 - **移植版**：`html/tree/fragment.rs` の `ContextFacts::compat_mode` を fragment の文書が受け取り、`lexbor/arena_fragment.rs` の `FragmentContext::element`（`inner_html=`、`outer_html=`）が context の文書の mode を渡す。名前で与える context（`DocumentFragment.parse`、`Document#fragment`）には要素も文書もないので、no-quirks のまま（`DocumentFragment.parse` の裏の文書は doctype がなく quirks なので、写すとこの API の答えが変わる）。差分の比較は既定の `ContextFacts`（Lexbor の前提）で解析するので、許可は要らない。
 - **テスト**：WPT にない。`spec/html_standard_steps_spec.rb`。
 
+### P18 fragment の context の属性（`annotation-xml` の `encoding`）
+
+- **分類**：参照実装の未対応（監査の foreign F4）。移植版で直した（第 8 段）。
+- **仕様**：fragment の解析は、context 要素の local name と属性から start tag token を作り、HTML integration point の判定などに使う。`encoding` が `text/html` か `application/xhtml+xml` の MathML `annotation-xml` は HTML integration point で、その中の開始タグは HTML の規則で処理される。
+- **再現**：`<annotation-xml encoding="text/html">` に `inner_html = "<foo></foo>"`。仕様では `foo` は HTML 名前空間の要素。Lexbor は context を tag と名前空間だけで作るので integration point にならず、`foo` は MathML の要素になる。文書として解析した `<annotation-xml encoding="text/html"><foo>` は前から HTML だった。
+- **移植版**：`lexbor/arena_fragment.rs` の `FragmentContext::element` が context の `encoding` を読み、`ContextFacts::html_integration_point` として渡す。`html/tree/actions.rs` の `html_integration_point` が、その context を integration point と答える。属性のうち解析が読むのはこれだけなので、属性そのものは写さない。差分の比較は既定の `ContextFacts` で解析するので、許可は要らない。
+- **テスト**：WPT にない。`spec/html_standard_steps_spec.rb`。
+
 ### L1 ソース位置の規則
 
 - **分類**：意図した変更（移植計画の「ソース位置の規則」）。Lexbor の DOM のビルドは旧来の答えのまま。

@@ -37,6 +37,10 @@ pub struct ContextFacts {
     /// The context document's quirks mode (0 no-quirks, 1 quirks, 2
     /// limited-quirks), which the fragment's document takes (P17).
     pub compat_mode: u8,
+    /// The context is a MathML `annotation-xml` whose `encoding` makes it
+    /// an HTML integration point (P18): the attributes the Standard's
+    /// context start tag token carries, as far as the parse reads them.
+    pub html_integration_point: bool,
 }
 
 /// Parse `input` as a fragment in the context of an element with tag id
@@ -80,6 +84,7 @@ pub fn parse_fragment(
             .map_err(|_| FragmentFailure::Parse)?;
     }
     tree.fragment = Some(context);
+    tree.context_integration_point = facts.html_integration_point && compat::fixed(Fix::P18);
     tree.reset_insertion_mode_appropriately();
     if tag == res::TAG_FORM && ns == res::NS_HTML {
         let form = tree

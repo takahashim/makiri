@@ -123,4 +123,13 @@ RSpec.describe "HTML Standard steps the port takes and Lexbor does not" do
     doc.at_css("#a").inner_html = "<p><table></table>"
     expect(doc.at_css("#a").inner_html).to eq("<p></p><table></table>")
   end
+  # P18: the fragment parsing algorithm reads the context element's
+  # attributes: an annotation-xml with encoding="text/html" is an HTML
+  # integration point.
+  it "parses inner_html= of an HTML-encoded annotation-xml as HTML" do
+    doc = Makiri::HTML(%(<!doctype html><math><annotation-xml encoding="text/html"></annotation-xml></math>))
+    ax = doc.at_xpath('//*[local-name()="annotation-xml"]')
+    ax.inner_html = "<foo></foo>"
+    expect(ax.children.first.xpath("namespace-uri()")).to eq("http://www.w3.org/1999/xhtml")
+  end
 end

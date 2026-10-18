@@ -266,6 +266,9 @@ pub struct TreeBuilder<'d> {
     pub(crate) doc: &'d mut Document,
     /// The fragment parsing algorithm's context element.
     pub(crate) fragment: Option<NodeId>,
+    /// The context element is an HTML integration point, though it was made
+    /// with no attributes (`ContextFacts::html_integration_point`).
+    pub(crate) context_integration_point: bool,
     /// The form element pointer.
     pub(crate) form: Option<NodeId>,
     /// The head element pointer (Lexbor's `document->head`).
@@ -297,6 +300,7 @@ impl<'d> TreeBuilder<'d> {
         TreeBuilder {
             doc,
             fragment: None,
+            context_integration_point: false,
             form: None,
             head: None,
             open: Vec::new(),

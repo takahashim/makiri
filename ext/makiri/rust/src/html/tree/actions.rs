@@ -747,6 +747,9 @@ impl TreeBuilder<'_> {
 
     /// `lxb_html_tree_html_integration_point`.
     pub(crate) fn html_integration_point(&self, n: NodeId) -> bool {
+        if self.context_integration_point && self.fragment == Some(n) {
+            return true;
+        }
         if self.ns(n) == res::NS_MATH && self.tag(n) == res::TAG_ANNOTATION_XML {
             /* `lxb_dom_element_attr_is_exist(element, "encoding")`: by local
              * name, or by qualified name. */

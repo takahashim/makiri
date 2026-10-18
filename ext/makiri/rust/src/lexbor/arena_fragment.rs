@@ -132,8 +132,18 @@ impl FragmentContext {
             let ns = (n.ns_id() == Some(NsId::HTML)).then_some(lex::NsId::HTML);
             (tag, ns)
         });
+        let integration = node.ns_id() == Some(NsId::MATH)
+            && node.tag_id().and_then(TagId::static_index) == Some(res::TAG_ANNOTATION_XML)
+            && node
+                .element()
+                .and_then(|e| e.get_attribute(b"encoding"))
+                .is_some_and(|v| {
+                    v.eq_ignore_ascii_case(b"text/html")
+                        || v.eq_ignore_ascii_case(b"application/xhtml+xml")
+                });
         let facts = ContextFacts {
             compat_mode: u8::try_from(doc.compat_mode()).unwrap_or(0),
+            html_integration_point: integration,
         };
         Ok(FragmentContext::Element {
             at,
