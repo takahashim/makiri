@@ -343,7 +343,7 @@ Lexbor の制御フローのまま Rust に移す（`src/selectors/`）。
 セレクタの状態関数は汎用の構文パーサ（規則のスタックと状態のスタック、規則ごとの phase）の上で動き、エラーからの回復や寛容なリスト（`:is()`、`:where()`、`:has()`）の挙動はその組み合わせで決まるので、構文パーサの必要な部分ごと移す。
 `css_match::compile` と `css/lower.rs` は `css_parser` の `Simple`、`Selector`、`List` のビューだけを消費しているので、同じ形のビューをアリーナの AST の上に置けば、消費側は import を変えるだけで済む。
 `selector_cache` の別アリーナ、`Parsed` の Drop がアリーナ全体を掃除する問題、セレクタ解析用の `GvlCell` は、ここで消える。
-`contains_guard` と `css_tokens` は stylesheet パーサの前に残る。
+`contains_guard` と `css_tokens` は、stylesheet パーサを移植するまで Lexbor の stylesheet パーサの前に残った。
 検証は、Lexbor のパーサとのビューの比較（`lexbor::selector_diff`、`selector_diff` fuzz）、`spec/conformance/css_diff.rb` と `css_corpus.rb`、`html_css_diff` fuzz で行う。
 
 ### stylesheet パーサ
@@ -352,11 +352,23 @@ stylesheet パーサは、セレクタパーサとは独立した移植対象で
 `parse_stylesheet` は規則、at-rule の name と prelude と入れ子、declaration の name と value と important を返し、値は Lexbor がプロパティを型付きで解釈して正規化した形で返す。
 `spec/lexbor_css_spec.rb` は「`margin: 1px   2px` が `1px 2px` になる」ことを既存の契約として固定しており、dommy がその cascade でこの出力を使っている。
 
-したがって、互換を維持するか API を変えるかを、移植の前に決める。
-互換維持なら、Lexbor のプロパティごとの文法を移植し、既存 spec の全例で検証する。
-API 変更（CSS Syntax Level 3 の generic な declaration、名前と生の値のトークン列）なら、dommy 側の移行まで完了条件に含める。
-本書はどちらとも決めない。
-決めるまで、stylesheet パーサは Lexbor のまま残す。
+選択肢は三つあった。
+互換維持は、Lexbor のプロパティごとの文法（約 9,300 行）を移植する。
+API 変更は、CSS Syntax Level 3 の generic な declaration（名前と生の値のトークン列）を返し、dommy 側の移行まで完了条件に含める。
+中間案は、返す形（name、value、important）を保ち、値の正規化をプロパティによらない構文の規則に置き換える。
+
+Lexbor の正規化は一貫していない。
+型を持つ約 100 のプロパティだけを正規化し（`margin: 1px   2px` は `1px 2px`、`color: RED` は `red`）、未知のプロパティとカスタムプロパティは前後を削るだけで、`calc()` の中も詰めない。
+どこまで正規化されるかが Lexbor の版で変わる契約を、移植の費用をかけて写す理由はない。
+
+中間案を採る（2026-10-18 決定）。
+
+- **構造は Lexbor のまま**：規則のリスト、at-rule（名前、prelude、入れ子）、qualified rule と `:bad_style`、宣言の境界、誤りからの回復、`!important` の判定、値の offset は、Lexbor の構文パーサとコールバック（`css/syntax/parser.c`、`css/state.c`、`css/at_rule/state.c`）を移植して保つ。
+- **値**：宣言の値の範囲（Lexbor と同じ offset）を CSS Syntax のトークンとして読み直し、空白トークンの連続を空白一つにし、前後の空白を削る。それ以外のトークン（文字列、url、エスケープ、コメントを含む）は書かれたとおりに残す。プロパティごとの状態は使わない。
+- **名前**：カスタムプロパティ（`--` で始まる）以外の宣言名は ASCII 小文字に揃える。at-rule の名前も ASCII 小文字に揃える。
+- **変わる答え**：プロパティ固有の正規化（キーワードの小文字化、`url( x )` の空白、単位の大文字小文字）はしなくなる。未知のプロパティとカスタムプロパティの値の空白は詰まり、未知のプロパティと独自の at-rule の名前は小文字になる。いずれも CSS の値としての意味は変えない。
+
+移植後、出荷するビルドは Lexbor の CSS モジュールを使わない（`contains_guard`、`css_tokens`、`css_engine`、`css_parser` は比較用の構成だけに残る）。
 
 ## 仕様全体の監査
 
@@ -392,7 +404,7 @@ Lexbor の DOM に tree builder を向けると、その癖（`attr_append` が 
 
 ブランチ `parser-port/foundation` で次を終えた。
 
-- **固定**：仕様の版（HTML Standard `de953a7`、WPT `5ffee20`、html5lib-tests `c777c40`、`entities.json` の digest）と差分表（`docs/parser_differences.ja.md`）を置いた。既存 API は `spec/api_surface_spec.rb` がすでに固定している。`parse_stylesheet` の方針は未決である。
+- **固定**：仕様の版（HTML Standard `de953a7`、WPT `5ffee20`、html5lib-tests `c777c40`、`entities.json` の digest）と差分表（`docs/parser_differences.ja.md`）を置いた。既存 API は `spec/api_surface_spec.rb` がすでに固定している。`parse_stylesheet` は中間案を採る（「stylesheet パーサ」の節）。
 - **検証基盤**：tree construction のデータを WPT から取るように改め、Ruby の runner と crate の runner が同じ既知差分の一覧を読む。現行の Lexbor は WPT の 1,959 件中 1,951 件を通し、残る 8 件は差分表の P1 から P3（いずれも Lexbor が固定した版の仕様を未実装）に分類した。tokenizer の html5lib テストは Lexbor の tokenizer で 6,819 件すべてを通す。ブラウザ比較（Chromium、Firefox、WebKit）を用意し、オラクル同士の食い違いを B1 から B3 として記録した。
 - **facade**：`lexbor/` の外の利用者は `crate::html_dom` から DOM を取る。
 - **静的な表**：タグ、属性、名前空間の名前を Lexbor の id のまま生成し、文字参照の探索木を `entities.json` から Lexbor と同じ手順で作った。どちらも Lexbor の表と要素ごとに一致する。
@@ -431,4 +443,7 @@ bench（release、同一マシン）でのアリーナ構成と Lexbor 構成の
 
 - **byte アリーナの圧縮**：死んだバイト数を数え（`set_data` の置き換えと、`append_text` が末尾へ移した元のデータ）、生きたバイト数と、ノード数と属性数の和の 8 倍の両方を超えたら、編集の開始点（`HtmlParsed::edit`、索引を捨てた直後）でストアを書き直す。単体テストで、置き換えを繰り返したストアが上限内に収まり、切り離したノード、属性値、PI、doctype の読み取りが変わらないことを確かめた。arena と Lexbor DOM に同じ無作為な編集を加える比較（`edits_leave_the_arena_reading_as_lexbor_does`）には、4 回に 1 回の強制的な圧縮を挟んだ（400 系列で一致）。arena のビルドで、4 KB のテキストを 5 万回置き換えても RSS は 44 MB で止まる（圧縮がなければ 200 MB を超える）。Ruby の全スペック（1,843 件）、`rake diff`、`rake oom` が通る。
 
-次は二つある。第 5 段の残りは stylesheet パーサで、`parse_stylesheet` の方針（互換維持か API 変更か）を決めるまで Lexbor のまま残る。第 6 段（既定の切り替え）の前には、`html_diff` と `selector_diff` の fuzz を CI で回して食い違いを拾うことと、bench で種類としての退行がないことの確認がある。
+- **stylesheet パーサ（第 5 段の残り）**：中間案で移植した。`src/selectors/parser/syntax.rs` に、構文パーサの規則の phase（rule list、at-rule、qualified rule、block、declarations、`css/syntax/parser.c`）、規則を作るコールバック（`css/state.c`、`css/at_rule/state.c`）、tokenizer の先読み（`lookup_colon`、`lookup_important`、`lookup_declaration_ws_end`）を、セレクタパーサと同じ規則のスタックの上に移した。規則は `selectors/rules.rs` のアリーナに作り、qualified rule の prelude はセレクタパーサの状態がそのまま読む。宣言の値は一つの状態で読み、値は `lexbor/stylesheet.rs` が offset の範囲を読み直して作る。到達しない部分（宣言リスト単体の解析で使う名前の検査と drop phase）は移していない。出荷するビルドは Lexbor の CSS パーサを使わなくなり、`contains_guard`、`css_tokens`、`css_engine`、`css_parser` は比較用の構成（`lexbor-reference`、`css-reference`）とテストにだけ残る。
+- **stylesheet パーサの検証**：`lexbor::stylesheet_diff` が両者の規則の木（規則の種類、offset、セレクタ、at-rule の種類と独自の名前、宣言の名前と値の offset と `!important`、ブロックの入れ子、style rule が子として持つ規則）を比べ、手書きの約 110 件、文法に沿った無作為な入力、token を無作為に並べた入力で一致した。cargo-fuzz に `stylesheet_diff` を足した。Ruby の全スペック、`rake diff`、`rake oom`、`rake symbols` が通る。
+
+次は第 6 段（既定の切り替え）の前の確認で、`html_diff`、`selector_diff`、`stylesheet_diff` の fuzz を CI で回して食い違いを拾うことと、bench で種類としての退行がないことの確認である。

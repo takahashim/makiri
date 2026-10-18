@@ -55,10 +55,46 @@ RSpec.describe Makiri::Lexbor::CSS do
       expect(rules[0][:declarations].first[:value]).to eq("1px solid")
     end
 
-    it "normalizes declaration values through Lexbor" do
-      # Lexbor reserializes a known property value in its canonical form.
+    it "collapses the whitespace between a value's tokens" do
       rules = parse("a { margin: 1px   2px }")
       expect(rules[0][:declarations].first[:value]).to eq("1px 2px")
+    end
+
+    describe "names and values (the same rule for every property)" do
+      def decls(css) = parse(css)[0][:declarations].map { |d| [d[:name], d[:value]] }
+
+      it "lower-cases a declaration name unless it is a custom property" do
+        expect(decls("a { COLOR: red; -WebKit-X: y; --Mixed: z }"))
+          .to eq([%w[color red], %w[-webkit-x y], %w[--Mixed z]])
+      end
+
+      it "reads an escaped name as the name it spells" do
+        expect(decls('a { col\6fr: red }')).to eq([%w[color red]])
+      end
+
+      it "keeps every token but whitespace as written" do
+        expect(decls(%(a { color: RED; b: url( x  y ) "a  b" 'c'; --c: {a   b} })))
+          .to eq([%w[color RED], ["b", %(url( x  y ) "a  b" 'c')], ["--c", "{a b}"]])
+      end
+
+      it "treats a custom property's value like any other" do
+        expect(decls("a { --x:   a\n\t b  ; --y: f( 1 ,2 ) }"))
+          .to eq([["--x", "a b"], ["--y", "f( 1 ,2 )"]])
+      end
+
+      it "keeps a comment inside a value" do
+        expect(decls("a { b: c /* d */ e; f: /* g */ h }"))
+          .to eq([["b", "c /* d */ e"], ["f", "h"]])
+      end
+
+      it "leaves !important out of the value" do
+        d = parse("a { b: c d  !IMPORTANT }")[0][:declarations][0]
+        expect(d).to eq(name: "b", value: "c d", important: true)
+      end
+
+      it "lower-cases an at-rule name" do
+        expect(parse("@MEDIA screen { } @Foo bar;").map { |r| r[:name] }).to eq(%w[media foo])
+      end
     end
   end
 

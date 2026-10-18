@@ -78,7 +78,7 @@ UNSAFE_ISLANDS = {
   "lexbor/selector_port_tests.rs" => 1,
   "lexbor/selectors.rs" => 9,
   "lexbor/serialize.rs" => 1,
-  "lexbor/stylesheet.rs" => 9,
+  "lexbor/stylesheet_diff.rs" => 5,
   "lexbor/tests.rs" => 16,
   "lexbor/xpath.rs" => 9,
   "source_lines.rs" => 1,
@@ -109,27 +109,27 @@ FORBID_FILES = %w[
   html/dom/mod.rs html/mod.rs html/tokenizer/mod.rs
   html/tree/mod.rs html_dom.rs lexbor/adapter/dom_index.rs
   lexbor/contains_guard.rs lexbor/css_match/mod.rs lexbor/selector_cache.rs
-  lexbor/selector_text.rs limits.rs node_type.rs
-  ptr_table.rs rust_tests.rs selectors/mod.rs
-  stack.rs text.rs utf8_input.rs
-  xml/arena.rs xml/attr_key.rs xml/chars/expand.rs
-  xml/chars/mod.rs xml/dom_name.rs xml/encoding_sniff.rs
-  xml/index.rs xml/mod.rs xml/model.rs
-  xml/mutate/attr.rs xml/mutate/copy.rs xml/mutate/edit.rs
-  xml/mutate/factory.rs xml/mutate/insert.rs xml/mutate/mod.rs
-  xml/mutate/ns.rs xml/ns_scope.rs xml/qname.rs
-  xml/selftest.rs xml/serialize/bindings.rs xml/serialize/c14n.rs
-  xml/serialize/mod.rs xml/serialize/out.rs xml/serialize/xml.rs
-  xml/tree/cursor.rs xml/tree/decl.rs xml/tree/dtd.rs
-  xml/tree/mod.rs xml/tree/scope.rs xml/verify.rs
-  xml/xpath.rs xpath/abi.rs xpath/ast.rs
-  xpath/ast_ops.rs xpath/attr_pred.rs xpath/axis.rs
-  xpath/ctx.rs xpath/dom.rs xpath/eval.rs
-  xpath/funcs/ext.rs xpath/funcs/mod.rs xpath/lex.rs
-  xpath/limits.rs xpath/mod.rs xpath/nodetest.rs
-  xpath/number.rs xpath/order.rs xpath/parse.rs
-  xpath/step_index.rs xpath/str_cache.rs xpath/tests.rs
-  xpath/value.rs xpath/verify.rs
+  lexbor/selector_text.rs lexbor/stylesheet.rs limits.rs
+  node_type.rs ptr_table.rs rust_tests.rs
+  selectors/mod.rs stack.rs text.rs
+  utf8_input.rs xml/arena.rs xml/attr_key.rs
+  xml/chars/expand.rs xml/chars/mod.rs xml/dom_name.rs
+  xml/encoding_sniff.rs xml/index.rs xml/mod.rs
+  xml/model.rs xml/mutate/attr.rs xml/mutate/copy.rs
+  xml/mutate/edit.rs xml/mutate/factory.rs xml/mutate/insert.rs
+  xml/mutate/mod.rs xml/mutate/ns.rs xml/ns_scope.rs
+  xml/qname.rs xml/selftest.rs xml/serialize/bindings.rs
+  xml/serialize/c14n.rs xml/serialize/mod.rs xml/serialize/out.rs
+  xml/serialize/xml.rs xml/tree/cursor.rs xml/tree/decl.rs
+  xml/tree/dtd.rs xml/tree/mod.rs xml/tree/scope.rs
+  xml/verify.rs xml/xpath.rs xpath/abi.rs
+  xpath/ast.rs xpath/ast_ops.rs xpath/attr_pred.rs
+  xpath/axis.rs xpath/ctx.rs xpath/dom.rs
+  xpath/eval.rs xpath/funcs/ext.rs xpath/funcs/mod.rs
+  xpath/lex.rs xpath/limits.rs xpath/mod.rs
+  xpath/nodetest.rs xpath/number.rs xpath/order.rs
+  xpath/parse.rs xpath/step_index.rs xpath/str_cache.rs
+  xpath/tests.rs xpath/value.rs xpath/verify.rs
 ].freeze
 
 UNSAFE_USE = /\bunsafe\s*(?:\{|fn\b|impl\b|trait\b|extern\b)/
@@ -472,10 +472,11 @@ end
 # their input through `contains_guard` first (CLAUDE.md: the guard is not
 # optional, and a new parse entry must go through it). A type alone cannot
 # say so: the raw ABI is reachable crate-wide, so a second call site would
-# compile and reach the parser unguarded. Pinned here instead.
+# compile and reach the parser unguarded. Pinned here instead. (Both are
+# reference-only now: the shipping build parses with the `selectors` port.)
 GUARDED_PARSES = {
   "lxb_css_selectors_parse" => "lexbor/css_engine.rs",   # SelectorParser::parse
-  "lxb_css_stylesheet_parse" => "lexbor/stylesheet.rs",  # guarded_stylesheet
+  "lxb_css_stylesheet_parse" => "lexbor/stylesheet_diff.rs",  # lexbor_dump
 }.freeze
 guarded_calls = Hash.new { |h, k| h[k] = Hash.new(0) }
 Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
@@ -538,10 +539,10 @@ Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
   relative = path.delete_prefix("#{RUST}/")
   next unless relative.start_with?(*ENGINE_DIRS)
   next if relative.end_with?("selftest.rs", "verify.rs", "tests.rs")
-  # Built only for the tests and the `html_diff` / `selector_diff` fuzz
-  # targets (`lexbor-reference`), never in a build that ships - test files by
-  # another name.
-  next if %w[lexbor/tree_diff.rs lexbor/selector_diff.rs].include?(relative)
+  # Built only for the tests and the `html_diff` / `selector_diff` /
+  # `stylesheet_diff` fuzz targets (`lexbor-reference`), never in a build
+  # that ships - test files by another name.
+  next if %w[lexbor/tree_diff.rs lexbor/selector_diff.rs lexbor/stylesheet_diff.rs].include?(relative)
 
   count = comments_removed(File.binread(path)).scan(INFALLIBLE_ALLOC).length
   infallible[relative] = count unless count.zero?

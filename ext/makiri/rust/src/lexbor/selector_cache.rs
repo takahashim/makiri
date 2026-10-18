@@ -27,9 +27,21 @@ use std::collections::HashMap;
 use crate::falloc::{try_to_boxed_slice, Reserve};
 use crate::gvl::{Gvl, GvlCell};
 use crate::lexbor::css_match::Scratch;
-use crate::lexbor::css_parser::ParseError;
 use crate::selectors::ast::Lists;
 use crate::selectors::{Parsed, Status};
+
+/// Why a parse did not produce a selector list.
+#[derive(Debug)]
+pub enum ParseError {
+    /// The parser could not be created.
+    NotReady,
+    /// The selector is malformed.
+    Syntax,
+    /// A parse on this thread is still borrowing the parser.
+    Busy,
+    /// Out of memory parsing - not a verdict on the selector.
+    Oom,
+}
 
 /// Flush the whole cache once it holds this many distinct selectors.
 const CACHE_CAP: usize = 256;

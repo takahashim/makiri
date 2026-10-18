@@ -20,17 +20,23 @@
 //! - **Lexbor's log is not kept**: nothing reads it.
 //!
 //! There is no native recursion: a nested selector list is a rule and a state
-//! pushed on the heap stacks, as in Lexbor.
+//! pushed on the heap stacks, as in Lexbor. The stylesheet rules (rule
+//! lists, at-rules, qualified rules, blocks, declarations) are phases and
+//! states on the same stacks, in the `syntax` submodule.
 
 use super::ast::{
     comb, matching, modifier, sel_type, AnbOf, Ast, ListId, ListNode, PseudoData, SelId, SelNode,
 };
 use super::pseudo::{self, class, class_function, element, FuncData};
+use super::rules::{AtKind, ItemId, Rules};
 use super::token::{Span, Token, TokenType as T};
 use super::tokenizer::Tokenizer;
 use super::Status;
 use crate::falloc::{Reserve, VecPush};
 use core::ffi::{c_long, c_ulong};
+
+mod syntax;
+pub use syntax::{parse_stylesheet, Sheet};
 
 /// A state's context: the selector list Lexbor passes as `void *ctx`.
 pub type Ctx = Option<ListId>;
@@ -74,6 +80,27 @@ pub enum St {
     PseudoOfBack,
     /// `lxb_css_selectors_state_pseudo_element_function__undef`.
     PseudoElementFunctionUndef,
+    /// `lxb_css_state_blank`.
+    Blank,
+    /// `lxb_css_state_list_rules_next`.
+    ListRulesNext,
+    /// The at-rule preludes of `css/at_rule/state.c`: every kind skips to
+    /// the end, `font-face` fails on anything but an empty prelude.
+    AtPrelude,
+    /// The prelude-failed states (`lxb_css_at_rule_*_prelude_failed`,
+    /// `lxb_css_state_qualified_rule_prelude_failed`), which are one loop.
+    SkipToEnd,
+    /// `lxb_css_state_qualified_rule_prelude`.
+    QualifiedPrelude,
+    /// `lxb_css_state_block_next`.
+    BlockNext,
+    /// A declaration's value. Lexbor runs the property's own state here
+    /// (`entry->state`); the port reads every value as Lexbor reads a custom
+    /// property's (`lxb_css_property_state__custom`), since the reader takes
+    /// the value from its offsets (docs/rewrite_parser.ja.md).
+    DeclarationValue,
+    /// `lxb_css_state_declarations_bad`.
+    DeclarationsBad,
 }
 
 /// `lxb_css_syntax_cb_done_f`: the callbacks a rule runs as it ends.
@@ -89,6 +116,17 @@ pub enum EndCb {
     FunctionForgivingRelative,
     /// `lxb_css_selectors_state_pseudo_of_end`.
     PseudoOfEnd,
+    /// `lxb_css_state_list_rules_end`.
+    ListRulesEnd,
+    /// The at-rule ends of `css/at_rule/state.c`, by the kind the rule was
+    /// created as.
+    AtRuleEnd(AtKind),
+    /// `lxb_css_state_qualified_rule_end`.
+    QualifiedEnd,
+    /// `lxb_css_state_block_end`.
+    BlockEnd,
+    /// `lxb_css_state_declarations_end`.
+    DeclarationsEnd,
 }
 
 /// `rule->phase`.
@@ -99,6 +137,26 @@ enum Phase {
     Function,
     End,
     EndConsumeToken,
+    ListRules,
+    ListRulesAt,
+    ListRulesQualified,
+    AtRule,
+    AtBlock,
+    AtPreludeEnd,
+    AtPreludeEndConsumeToken,
+    Qualified,
+    QualifiedBlock,
+    QualifiedPreludeEnd,
+    Block,
+    BlockAt,
+    BlockDeclarations,
+    BlockQualified,
+    DeclarationsBegin,
+    DeclarationsName,
+    DeclarationsValue,
+    DeclarationsNext,
+    DeclarationEnd,
+    DeclarationsEnd,
 }
 
 /// `rule->back`.
@@ -109,9 +167,26 @@ enum Back {
     Components,
     /// `lxb_css_syntax_parser_function_back`.
     Function,
+    /// `lxb_css_syntax_parser_list_rules_back`.
+    ListRules,
+    /// `lxb_css_syntax_parser_at_back_to_prelude`.
+    AtToPrelude,
+    /// `lxb_css_syntax_parser_qualified_back_to_prelude`.
+    QualifiedToPrelude,
+    /// `lxb_css_syntax_parser_block_back`.
+    Block,
+    /// `lxb_css_syntax_parser_declaration_back_to_value`.
+    DeclarationToValue,
+    /// `lxb_css_syntax_parser_end_back`.
+    ToEnd,
 }
 
-/// `lxb_css_syntax_rule_t`, the members selectors use.
+/// `lxb_css_syntax_rule_t`.
+///
+/// Lexbor's one `context` pointer is two fields here: `context` is the
+/// selector list the selector states pass along, `item` the rule a
+/// stylesheet callback builds (`context_old` is `item_old`). No state reads
+/// the other's, so the split changes nothing Lexbor does.
 #[derive(Clone, Copy, Debug)]
 struct Rule {
     phase: Phase,
@@ -128,6 +203,12 @@ struct Rule {
     block_end: T,
     skip_consume: bool,
     failed: bool,
+    item: Option<ItemId>,
+    item_old: Option<ItemId>,
+    returned: Option<ItemId>,
+    begin: usize,
+    nested: bool,
+    important: bool,
 }
 
 impl Default for Rule {
@@ -145,8 +226,24 @@ impl Default for Rule {
             block_end: T::Undef,
             skip_consume: false,
             failed: false,
+            item: None,
+            item_old: None,
+            returned: None,
+            begin: 0,
+            nested: false,
+            important: false,
         }
     }
+}
+
+/// `lxb_css_syntax_declaration_offset_t`, the parser's `offset`.
+#[derive(Clone, Copy, Debug, Default)]
+struct DeclOffset {
+    value_begin: usize,
+    value_end: usize,
+    important_begin: usize,
+    important_end: usize,
+    end: usize,
 }
 
 /// `lxb_css_parser_state_t`.
@@ -293,6 +390,11 @@ struct Parser<'a> {
     ast: Ast,
     /// State calls left before the run is refused (see `run`).
     budget: usize,
+    /// `parser->fake_null`: a phase asked to be run again.
+    fake_null: bool,
+    offset: DeclOffset,
+    /// The stylesheet's rules (`parser->memory`'s rule objects).
+    sheet: Rules,
 }
 
 impl<'a> Parser<'a> {
@@ -329,6 +431,9 @@ impl<'a> Parser<'a> {
             },
             ast: Ast::default(),
             budget: input.len().saturating_mul(1000).saturating_add(1 << 16),
+            fake_null: false,
+            offset: DeclOffset::default(),
+            sheet: Rules::default(),
         })
     }
 
@@ -344,6 +449,18 @@ impl<'a> Parser<'a> {
         self.loop_ = true;
         loop {
             let Some(token) = self.token() else {
+                if self.fake_null {
+                    self.fake_null = false;
+                    if self.budget == 0 {
+                        self.status = Status::ErrorOverflow;
+                        return self.status;
+                    }
+                    self.budget -= 1;
+                    if !self.loop_ {
+                        break;
+                    }
+                    continue;
+                }
                 return self.status;
             };
             loop {
@@ -356,6 +473,15 @@ impl<'a> Parser<'a> {
                 if self.state(rule.state, token, rule.context) {
                     break;
                 }
+            }
+            /* Out of memory ends the run, wherever it was met. Lexbor's
+             * skipping states (`while (token != NULL && ...)`) end their loop
+             * on a failed read and report success, and a later callback's
+             * status (`parser->status = prelude_end(...)`) overwrites the
+             * failure, so the run returned a truncated sheet as a success
+             * (docs/parser_differences.ja.md S3). */
+            if self.status == Status::ErrorMemoryAllocation {
+                return self.status;
             }
             if !self.loop_ {
                 break;
@@ -382,6 +508,26 @@ impl<'a> Parser<'a> {
             Phase::Function => self.phase_function(token, r),
             Phase::End => self.phase_end(token, r, false),
             Phase::EndConsumeToken => self.phase_end(token, r, true),
+            Phase::ListRules => self.phase_list_rules(token, r),
+            Phase::ListRulesAt => self.at_begin(token, r, St::ListRulesNext, false),
+            Phase::ListRulesQualified => self.phase_list_rules_qualified(r),
+            Phase::AtRule => self.phase_at_rule(token, r),
+            Phase::AtBlock => self.phase_at_block(token, r),
+            Phase::AtPreludeEnd => self.phase_at_prelude_end(token, r, false),
+            Phase::AtPreludeEndConsumeToken => self.phase_at_prelude_end(token, r, true),
+            Phase::Qualified => self.phase_qualified(token, r),
+            Phase::QualifiedBlock => self.phase_qualified_block(token, r),
+            Phase::QualifiedPreludeEnd => self.phase_qualified_prelude_end(token, r),
+            Phase::Block => self.phase_block(token, r),
+            Phase::BlockAt => self.at_begin(token, r, St::BlockNext, true),
+            Phase::BlockDeclarations => self.phase_block_declarations(r),
+            Phase::BlockQualified => self.phase_block_qualified(r),
+            Phase::DeclarationsBegin => self.phase_declarations_begin(token, r),
+            Phase::DeclarationsName => self.phase_declarations_name(token, r),
+            Phase::DeclarationsValue => self.phase_declarations_value(token, r),
+            Phase::DeclarationsNext => self.phase_declarations_next(token, r),
+            Phase::DeclarationEnd => self.phase_declaration_end(token, r),
+            Phase::DeclarationsEnd => self.phase_declarations_end(token, r),
             Phase::Stub => {
                 self.status = Status::ErrorWrongArgs;
                 None
@@ -507,7 +653,7 @@ impl<'a> Parser<'a> {
             return Some(Self::token_end(token.offset));
         }
         let rule = self.rules[r];
-        let status = self.end_cb(rule.end, rule.context, rule.failed);
+        let status = self.end_cb(rule);
         if status != Status::Ok {
             self.status = status;
             return None;
@@ -533,16 +679,27 @@ impl<'a> Parser<'a> {
             return Some(token);
         }
         let rule = &mut self.rules[r];
-        match rule.back {
-            Back::Components => rule.phase = Phase::Components,
-            Back::Function => rule.phase = Phase::Function,
+        let (phase, skip_consume) = match rule.back {
+            Back::Components => (Phase::Components, false),
+            Back::Function => (Phase::Function, false),
+            Back::ListRules => (Phase::ListRules, true),
+            Back::AtToPrelude => (Phase::AtRule, false),
+            Back::QualifiedToPrelude => (Phase::Qualified, false),
+            Back::Block => (Phase::Block, true),
+            Back::DeclarationToValue => (Phase::DeclarationsValue, false),
+            Back::ToEnd => {
+                rule.phase = Phase::End;
+                rule.state = St::Blank;
+                return Some(token);
+            }
             Back::Stub => {
                 self.status = Status::ErrorWrongArgs;
                 return None;
             }
-        }
+        };
+        rule.phase = phase;
         rule.state = rule.back_state;
-        rule.skip_consume = false;
+        rule.skip_consume = skip_consume;
         Some(token)
     }
 
@@ -746,16 +903,32 @@ impl<'a> Parser<'a> {
             St::PseudoOfBegin => self.pseudo_of_begin(token),
             St::PseudoOfBack => self.pseudo_of_back(),
             St::PseudoElementFunctionUndef => true,
+            St::Blank => self.success(),
+            St::ListRulesNext => self.list_rules_next(),
+            St::AtPrelude => self.at_rule_prelude(token),
+            St::SkipToEnd => self.skip_to_end(token),
+            St::QualifiedPrelude => self.qualified_rule_prelude(token),
+            St::BlockNext => self.block_next(),
+            St::DeclarationValue => self.declaration_value(token),
+            St::DeclarationsBad => self.declarations_bad(token),
         }
     }
 
-    /// Dispatch an end callback (`base->end(parser, token, ctx, failed)`).
-    fn end_cb(&mut self, cb: EndCb, ctx: Ctx, failed: bool) -> Status {
-        match cb {
+    /// Dispatch a rule's end callback (`base->end(parser, token, ctx,
+    /// failed)`).
+    fn end_cb(&mut self, rule: Rule) -> Status {
+        let (ctx, failed) = (rule.context, rule.failed);
+        match rule.end {
             EndCb::ComponentsEnd => self.components_end(failed),
             EndCb::FunctionEnd => self.function_end(ctx),
             EndCb::FunctionForgiving | EndCb::FunctionForgivingRelative => self.forgiving_cb(ctx),
             EndCb::PseudoOfEnd => self.pseudo_of_end(ctx),
+            EndCb::ListRulesEnd | EndCb::BlockEnd | EndCb::DeclarationsEnd => {
+                self.set_return(rule.item);
+                Some(Status::Ok)
+            }
+            EndCb::AtRuleEnd(kind) => self.at_rule_end(kind, rule.item, failed),
+            EndCb::QualifiedEnd => self.qualified_rule_end(rule.item, failed),
         }
         .unwrap_or(Status::ErrorWrongArgs)
     }

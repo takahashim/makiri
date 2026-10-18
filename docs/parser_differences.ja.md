@@ -82,7 +82,22 @@ P で始まる項目は HTML パーサの振る舞いである。
 - **分類**：安全性のための変更（失敗を成功として返す）。セレクタパーサ。
 - **箇所**：Lexbor の構文パーサは、括弧の種類を積むスタックを伸ばせなかったとき、token を読もうとした状態が `tkz->status` を返す。これはトークナイザの状態で OK のままなので、実行は成功として終わり、途中までのセレクタリストが返る。
 - **移植版**：パーサ自身の状態を返し、メモリ不足として失敗する（`selectors/parser.rs` の `token`）。
-- **影響**：メモリ不足のときだけ。Lexbor では、途中までのセレクタで照合した結果が返りうる。`rake oom` の `xml_css` シナリオがこれを捕まえた。
+- **影響**：メモリ不足のときだけ。Lexbor では、途中までのセレクタで照合した結果が返りうる。`rake oom` の `xml_css` シナリオがこれを捕まえた。stylesheet パーサの移植でも同じ規則に従う。Lexbor が規則の生成（at-rule、qualified rule、ブロック、宣言リスト）でメモリ不足になると、不正なデータ（`UNEXPECTED_DATA`）として失敗を報告するが、移植版はメモリ不足として報告する。また、prelude や値を読み飛ばす状態は token を読めなかったときにループを抜けて成功を返し、後のコールバックの戻り値（`parser->status = prelude_end(...)`）が失敗を上書きするので、Lexbor では途中までの stylesheet が成功として返る。移植版はメモリ不足をどこで起きても実行の終わりとする（`selectors/parser.rs` の `run`）。`rake oom` の `css_stylesheet` シナリオがこれを捕まえた。
+
+### S4 宣言名の後にコロンがない
+
+- **分類**：安全性のための変更（失敗を成功として返す）。stylesheet パーサ。
+- **箇所**：Lexbor の `lxb_css_syntax_parser_declarations_name` は、宣言名の後（空白を飛ばした後）がコロンでないとき、状態を設定せずに NULL を返す。実行はその時点の状態で終わるので、途中までの stylesheet が成功として返る。Lexbor 自身が注記するとおり、この phase に入る前に `lookup_colon` がコロンを確かめているので、到達しない。
+- **移植版**：不正なデータとして失敗する（`selectors/parser/syntax.rs` の `phase_declarations_name`）。
+- **影響**：ない（到達しない）。
+
+## stylesheet の読み取り
+
+`Makiri::Lexbor::CSS.parse_stylesheet` の名前と値は、Lexbor の型付きのプロパティの正規化をやめ、プロパティによらない規則に置き換えた（`docs/rewrite_parser.ja.md` の「stylesheet パーサ」、2026-10-18 決定）。分類は意図した API の変更である。構造（規則、at-rule の種類と prelude、`:bad_style`、宣言の境界と `!important`）は Lexbor と同じで、`lexbor::stylesheet_diff` が比べる。
+
+- **C1 宣言の値**：Lexbor と同じ offset の範囲を CSS のトークンとして読み直し、空白トークンの連続を空白一つにして前後を削る。ほかのトークン（文字列、url、エスケープ、コメント）は書かれたとおりに残す。Lexbor は型を持つ約 100 のプロパティだけを再直列化した（`color: RED` は `red`）。
+- **C2 名前**：宣言名はカスタムプロパティ（`--` で始まる）を除いて ASCII 小文字にし、at-rule の名前も小文字にする。Lexbor は既知のプロパティと型を持つ at-rule だけを正規の名前で書き、ほかは書かれたとおりに返した。型を持つ at-rule を `_undef` に変えたもの（prelude のある `@font-face`、ブロックのある `@namespace`、ブロックのない `@media`）の名前が空になるのは Lexbor のとおりである。
+- **C3 値の状態**：Lexbor は宣言の値をプロパティごとの状態で読み、移植版はすべてカスタムプロパティの状態（終わりまで読む）で読む。値の offset と `!important` の判定は構文パーサの phase が決めるので、答えは変わらない。プロパティの状態が先読みした token の数だけは `lookup_important` などの経路に影響しうるが、比較テストと fuzz で食い違いは見つかっていない。
 
 ## パーサの外の項目
 

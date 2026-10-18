@@ -54,8 +54,10 @@ pub mod abi;
 pub mod adapter;
 /// Lexbor's serializer callback, shared by every serializer below.
 pub mod chunks;
-/// Keeps `:lexbor-contains()` from the CSS parser: every occurrence is
+/// Keeps `:lexbor-contains()` from Lexbor's CSS parser: every occurrence is
 /// renamed before the parser sees the text, found on Lexbor's own CSS tokens.
+/// Only the reference builds parse with Lexbor's CSS parser any more.
+#[cfg(any(test, feature = "lexbor-reference", feature = "css-reference"))]
 pub mod contains_guard;
 /// The HTML CSS matcher behind `Node#css`/`#at_css`/`#matches?`
 /// (`glue::html_node::css`, via `selector_cache`): Lexbor's `lxb_selectors_*`
@@ -63,6 +65,7 @@ pub mod contains_guard;
 /// heap work stack rather than native recursion. Parsing is `css_parser`'s.
 pub mod css_match;
 /// Lexbor's CSS syntax tokenizer, run on its own for `contains_guard`.
+#[cfg(any(test, feature = "lexbor-reference", feature = "css-reference"))]
 pub(crate) mod css_tokens;
 /// HTML fragment parsing and import/fixup operations.
 pub mod fragment;
@@ -83,15 +86,21 @@ pub mod selector_text;
 pub mod selectors;
 /// Lexbor's HTML serialization callbacks and buffer traversal.
 pub mod serialize;
-/// The Lexbor CSS stylesheet parser and its raw callback traversal.
+/// `parse_stylesheet`'s reader over the stylesheet parser port.
 pub mod stylesheet;
+/// Lexbor's stylesheet parser beside the port's, for the differential tests.
+#[cfg(any(test, all(feature = "lexbor-reference", not(feature = "ruby"))))]
+pub mod stylesheet_diff;
 
 /// The XPath engine's HTML backend (`Dom` for a Lexbor document).
 pub mod xpath;
 
-/// What the CSS users share: the owner of a Lexbor object, the GVL cell, and
-/// the selector parser wired to its arena.
+/// What Lexbor's CSS users share: the owner of a Lexbor object and the
+/// selector parser wired to its arena. Reference builds only.
+#[cfg(any(test, feature = "lexbor-reference", feature = "css-reference"))]
 pub(crate) mod css_engine;
 
-/// The process-global Lexbor CSS selector parser (selector parsing only).
+/// Lexbor's CSS selector parser, and the views over its selector lists:
+/// the reference the selector and stylesheet ports are tested against.
+#[cfg(any(test, feature = "lexbor-reference", feature = "css-reference"))]
 pub mod css_parser;

@@ -420,9 +420,10 @@ SCENARIOS = {
     parts.join("|")
   end,
 
-  # The stylesheet binding (Makiri::Lexbor::CSS.parse_stylesheet). Its own
-  # layer allocates for every selector, declaration and at-rule name, and it
-  # walks Lexbor's parsed tree into owned values BEFORE building any Ruby - so
+  # The stylesheet binding (Makiri::Lexbor::CSS.parse_stylesheet). The parser
+  # port allocates for every rule, selector and name, the reader for every
+  # value it re-tokenizes, and it walks the parsed rules into owned values
+  # BEFORE building any Ruby - so
   # a failure in the middle has a half-built intermediate to abandon, which is
   # exactly the shape this sweep exists to check.
   "css_stylesheet" => lambda do
@@ -433,6 +434,8 @@ SCENARIOS = {
       @media (min-width: 600px) { .x { color: blue } }
       @font-face { font-family: F; src: url(f.woff) }
       @namespace svg url(http://www.w3.org/2000/svg);
+      @supports (display: grid) { a { b: c } d { --e: f   g /* h */ } }
+      a { b { c: d } e: f(g; h) }
     CSS
     Makiri::Lexbor::CSS.parse_stylesheet(css).inspect
   end,

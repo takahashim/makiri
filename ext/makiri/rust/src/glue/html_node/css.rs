@@ -21,8 +21,8 @@ use crate::bridge::string::{ruby_verified_text, RubyText};
 use crate::html_dom::html::RawNode;
 use crate::init::MOD_HTML_NODE_METHODS;
 use crate::lexbor::css_match::{self, MatchFailure, QueryFailure, MAX_COMPOUNDS};
-use crate::lexbor::css_parser::ParseError;
 use crate::lexbor::selector_cache;
+use crate::lexbor::selector_cache::ParseError;
 use crate::limits::NODE_SET_MAX;
 
 /// A parse failure as the Ruby exception it maps to.

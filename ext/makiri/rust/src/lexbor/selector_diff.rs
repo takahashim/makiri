@@ -18,7 +18,7 @@
 /// API, so one body serves both.
 macro_rules! dumper {
     ($name:ident, $($m:ident)::+) => {
-        fn $name(lists: $($m)::+::Lists<'_>, out: &mut String) {
+        pub(crate) fn $name(lists: $($m)::+::Lists<'_>, out: &mut String) {
             use $($m)::+ as v;
             for list in lists {
                 out.push_str(&format!("L{:x}[", list.specificity()));
@@ -82,6 +82,7 @@ macro_rules! dumper {
 }
 
 dumper!(dump_lexbor, crate::lexbor::css_parser);
+
 dumper!(dump_port, crate::selectors::ast);
 
 /// What a parser made of a selector: its dump, or that it refused it.

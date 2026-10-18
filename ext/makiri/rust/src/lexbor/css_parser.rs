@@ -43,17 +43,7 @@ use core::ffi::c_long;
 type SelectorList = lxb::lxb_css_selector_list_t;
 type RawSelector = lxb::lxb_css_selector_t;
 
-/// Why a parse did not produce a selector list.
-pub enum ParseError {
-    /// The parser could not be created.
-    NotReady,
-    /// The selector is malformed.
-    Syntax,
-    /// A parse on this thread is still borrowing the parser.
-    Busy,
-    /// Out of memory parsing - not a verdict on the selector.
-    Oom,
-}
+pub use crate::lexbor::selector_cache::ParseError;
 
 #[cfg(any(test, feature = "lexbor-reference"))]
 /// The process-global parser, built on first use. A build failure leaves it
@@ -254,6 +244,7 @@ impl Parsed<'_> {
 /// # Safety
 /// `p` must be null or point into an arena the caller keeps alive and does
 /// not mutate for `'p`.
+#[cfg(any(test, all(feature = "lexbor-reference", not(feature = "ruby"))))]
 pub(crate) unsafe fn list_from_raw<'p>(p: *mut SelectorList) -> Lists<'p> {
     // SAFETY: forwarded to the caller's contract.
     Lists(unsafe { arena(p) }.map(List))

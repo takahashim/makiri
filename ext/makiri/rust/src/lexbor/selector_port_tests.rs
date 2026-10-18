@@ -786,3 +786,323 @@ fn selector_parse_speed() {
         );
     }
 }
+
+/* ---- the stylesheet parser ---- */
+
+fn same_sheet(css: &str) {
+    crate::lexbor::stylesheet_diff::check(css.as_bytes());
+}
+
+#[test]
+fn the_stylesheet_parser_builds_lexbors_rules() {
+    for css in [
+        "",
+        " ",
+        "a{}",
+        "a { color: red }",
+        "a{color:red;}",
+        "a { color: red; background: blue }",
+        "a, b > c { margin: 1px   2px ; padding: 0 }",
+        "a { color: RED ! important; x: y !important }",
+        "a { x: y !important; z: w!IMPORTANT }",
+        "a { x: y ! important }",
+        "a { x: y !important x; }",
+        "a { x: y !importantx }",
+        "a { x: !important }",
+        "a { x: y !important",
+        "a { x: y",
+        "a { x: y ",
+        "a { x",
+        "a { x: (a; b) ; c: d }",
+        "a { x: [a; b] ; c: d }",
+        "a { x: {a; b} ; c: d }",
+        "a { x: f(a; b) ; c: d }",
+        "a { x: f(a}; c: d }",
+        "a { x: ); c: d }",
+        "a { b {} c:d }",
+        "a { c: d; b {} e: f }",
+        "a { c: d; b; e: f }",
+        "a { @media x { b {} } c: d }",
+        "a { c: d; @foo; e: f }",
+        "a { 1: 2; c: d }",
+        "a { ;;; c: d;;; }",
+        "a { c : d }",
+        "a { c/**/: d }",
+        "a { --X: a   b ; --y:; --z: {a} }",
+        "p{Col\\6fr:x}",
+        "a:dir(ltr){} b{}",
+        "a:foo(x){c:d}",
+        "a::before { c: d }",
+        "a:hover, b::after { c: d }",
+        "{ c: d }",
+        ", { c: d }",
+        "a,, b { }",
+        "a } b { c: d }",
+        "} a { c: d }",
+        "a { } } b { }",
+        "a; b { c: d }",
+        "<!-- a { b: c } -->",
+        "a <!-- { b: c }",
+        "@media screen { a { b: c } }",
+        "@MEDIA screen;",
+        "@media;",
+        "@media { a {} }",
+        "@media screen and (min-width: 600px) { a { b: c } d { e: f } }",
+        "@media x { @media y { a { b: c } } }",
+        "@media x { a { b: c } ",
+        "@media x",
+        "@font-face { src: url(x) }",
+        "@font-face x { src: y }",
+        "@font-face;",
+        "@Font-Face { a: b }",
+        "@namespace svg url(http://www.w3.org/2000/svg);",
+        "@namespace x {a{}}",
+        "@import url(x.css) screen;",
+        "@charset \"utf-8\";",
+        "@foo bar { a { b: c } }",
+        "@Foo; x{y:z}",
+        "@foo bar baz; @qux { }",
+        "@supports (display: grid) { a { display: grid } }",
+        "@keyframes k { from { a: b } 50% { a: c } to { a: d } }",
+        "@layer a, b;",
+        "@page :first { margin: 1in }",
+        "@foo { a: b; c { d: e } }",
+        "@foo [ { ] } a { b: c }",
+        "@foo ( { ) } a { b: c }",
+        "@ { }",
+        "@\\66oo { }",
+        "a { b: c } @foo",
+        "a { b: c } @foo {",
+        "a[x=\"}\"] { b: \"}\" }",
+        "a { b: url(}) }",
+        "a { b: url( x ) }",
+        "a { b: 'unterminated",
+        "a { b: \"x\ny\" }",
+        "a /* c */ { b /* c */ : /* c */ d /* c */ ; }",
+        "a { b: c /* !important */ }",
+        "a { b: c /**/!important }",
+        "a { b: c! important }",
+        "a { b: c !important; }",
+        "a { b: c !important}",
+        "a { b: c\t!important\n}",
+        "a { width: calc(1px + 2px) !important }",
+        "a { color: rgb(1, 2, 3) }",
+        "a { font-family: \"A B\", serif }",
+        "a { b: c; ; d: e }",
+        "a:is(b, c) > d:not(.e) { f: g }",
+        "a:has(> b) { c: d }",
+        "a:nth-child(2n+1 of .x) { c: d }",
+        "a:lexbor-contains(x) { b: c }",
+        "a { b: c:lexbor-contains(1 2) }",
+        "\u{e9} { \u{e9}: \u{e9} }",
+        "a{b:c}a{b:c}a{b:c}",
+        "a{b:c}\n\n@media print{a{b:c}}\n",
+    ] {
+        same_sheet(css);
+    }
+}
+
+fn random_sheet(rng: &mut Rng, depth: u32, out: &mut String) {
+    const AT: &[&str] = &[
+        "@media",
+        "@MEDIA",
+        "@font-face",
+        "@namespace",
+        "@foo",
+        "@supports",
+        "@import",
+        "@keyframes",
+        "@",
+    ];
+    const PRELUDE: &[&str] = &[
+        "",
+        " ",
+        " screen",
+        " (min-width: 1px)",
+        " x y",
+        " url(x)",
+        " [",
+        " (",
+        " {",
+        " }",
+        " ;",
+        " \"s\"",
+    ];
+    const NAMES: &[&str] = &[
+        "color",
+        "COLOR",
+        "margin",
+        "--x",
+        "--X",
+        "-webkit-a",
+        "col\\6fr",
+        "font-family",
+        "display",
+        "width",
+        "x",
+        "1",
+        "\u{e9}",
+        "a b",
+    ];
+    const VALUES: &[&str] = &[
+        "red",
+        "1px",
+        "  2px",
+        "\"s\"",
+        "'s'",
+        "url(x)",
+        "url( \"a\" )",
+        "calc(1px + 2px)",
+        "!important",
+        "! important",
+        "!IMPORTANT",
+        "/*c*/",
+        "\n",
+        "\t",
+        "(",
+        ")",
+        "[",
+        "]",
+        "{",
+        "}",
+        ";",
+        "rgb(1, 2, 3)",
+        "\\",
+        "#fff",
+        "50%",
+        "U+00-ff",
+        "a:b",
+        "!",
+        ",",
+        " ",
+        "<!--",
+        "-->",
+        "@x",
+    ];
+    let n = 1 + rng.below(4);
+    for _ in 0..n {
+        match rng.below(8) {
+            0 | 1 | 2 => {
+                out.push_str(&random_selector(rng, 0));
+                out.push_str(rng.pick(&["{", " { ", "{\n"]));
+                random_block(rng, depth, out, NAMES, VALUES);
+                if rng.below(8) != 0 {
+                    out.push('}');
+                }
+            }
+            3 | 4 => {
+                out.push_str(rng.pick(AT));
+                out.push_str(rng.pick(PRELUDE));
+                if rng.below(3) == 0 {
+                    out.push(';');
+                } else {
+                    out.push('{');
+                    if depth < 3 && rng.below(2) == 0 {
+                        random_sheet(rng, depth + 1, out);
+                    } else {
+                        random_block(rng, depth, out, NAMES, VALUES);
+                    }
+                    if rng.below(8) != 0 {
+                        out.push('}');
+                    }
+                }
+            }
+            5 => out.push_str(rng.pick(&[" ", "\n", ";", "}", "<!--", "-->", "/*x*/"])),
+            _ => {
+                for _ in 0..rng.below(4) {
+                    out.push_str(rng.pick(VALUES));
+                }
+            }
+        }
+    }
+}
+
+fn random_block(rng: &mut Rng, depth: u32, out: &mut String, names: &[&str], values: &[&str]) {
+    for _ in 0..rng.below(5) {
+        match rng.below(10) {
+            0 if depth < 3 => {
+                random_sheet(rng, depth + 1, out);
+            }
+            1 => out.push_str(rng.pick(&[";", " ", "@foo;", "x", "}"])),
+            _ => {
+                out.push_str(rng.pick(names));
+                out.push_str(rng.pick(&[":", " : ", ":", " :", "", "/**/:"]));
+                for _ in 0..rng.below(4) {
+                    out.push_str(rng.pick(values));
+                    if rng.below(2) == 0 {
+                        out.push(' ');
+                    }
+                }
+                out.push_str(rng.pick(&[";", ";", " ; ", "", "\n"]));
+            }
+        }
+    }
+}
+
+#[test]
+fn the_stylesheet_parser_builds_lexbors_rules_on_random_inputs() {
+    let count = std::env::var("SELECTOR_PORT_COUNT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(20_000);
+    let mut rng = Rng(0x5EE_75EE7);
+    for _ in 0..count {
+        let mut css = String::new();
+        random_sheet(&mut rng, 0, &mut css);
+        same_sheet(&css);
+    }
+}
+
+/// Token soup: the tokenizer's pieces in any order, so that recovery is
+/// tried from every place.
+#[test]
+fn the_stylesheet_parser_builds_lexbors_rules_on_token_soup() {
+    let count = std::env::var("SELECTOR_PORT_COUNT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(20_000);
+    let mut rng = Rng(0x50_0B);
+    const SOUP: &[&str] = &[
+        "a",
+        "b",
+        " ",
+        "{",
+        "}",
+        ";",
+        ":",
+        "!",
+        "important",
+        "@media",
+        "@x",
+        "(",
+        ")",
+        "[",
+        "]",
+        ",",
+        ".c",
+        "#i",
+        "url(",
+        "\"",
+        "'",
+        "/*",
+        "*/",
+        "\\",
+        "<!--",
+        "-->",
+        "--v",
+        "1",
+        "f(",
+        "::",
+        ">",
+        "\n",
+        "@font-face",
+        "@namespace",
+    ];
+    for _ in 0..count {
+        let mut css = String::new();
+        for _ in 0..rng.below(24) {
+            css.push_str(rng.pick(SOUP));
+        }
+        same_sheet(&css);
+    }
+}

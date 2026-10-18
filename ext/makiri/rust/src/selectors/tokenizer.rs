@@ -27,6 +27,9 @@ const ERROR_CODEPOINT: u32 = 0x1F_FFFF;
 /// U+FFFD in UTF-8.
 const REPLACEMENT: &[u8] = "\u{FFFD}".as_bytes();
 
+/// `lxb_css_syntax_tokenizer_important`.
+const IMPORTANT: &[u8] = b"important";
+
 /// `LXB_CSS_SYNTAX_RES_NAME_START`.
 const NAME_START: u8 = 0x01;
 
@@ -144,6 +147,116 @@ impl<'a> Tokenizer<'a> {
                 self.queue.clear();
                 self.head = 0;
             }
+        }
+    }
+
+    /// The token read ahead `n` past the current one (`first->next...`).
+    fn ahead(&self, n: usize) -> Option<&Token> {
+        if self.head >= self.queue.len() {
+            return None;
+        }
+        self.queue.get(self.head + n)
+    }
+
+    /// `lxb_css_syntax_tokenizer_lookup_colon`: whether a `:` follows the
+    /// current token, past whitespace. Read from the tokens read ahead when
+    /// there are any, else from the input.
+    pub fn lookup_colon(&self) -> bool {
+        if let Some(token) = self.ahead(1) {
+            if token.ty == TokenType::Whitespace {
+                if let Some(next) = self.ahead(2) {
+                    return next.ty == TokenType::Colon;
+                }
+            } else if token.ty == TokenType::Colon {
+                return true;
+            }
+            return false;
+        }
+        let mut p = self.in_p;
+        while p < self.input.len() {
+            match self.input[p] {
+                b':' => return true,
+                b if is_ws(b) => p += 1,
+                _ => return false,
+            }
+        }
+        false
+    }
+
+    /// `lxb_css_syntax_tokenizer_lookup_important`: whether `important`
+    /// follows the current `!` and ends the declaration.
+    pub fn lookup_important(&self, stop: TokenType, stop_ch: u8) -> bool {
+        let p = self.in_p;
+        if let Some(token) = self.ahead(1) {
+            if token.ty != TokenType::Ident
+                || !self.string(token.string).eq_ignore_ascii_case(IMPORTANT)
+            {
+                return false;
+            }
+            let Some(mut token) = self.ahead(2) else {
+                return self.important_end(p, stop_ch);
+            };
+            if token.ty == TokenType::Whitespace {
+                match self.ahead(3) {
+                    Some(next) => token = next,
+                    None => return self.important_end(p, stop_ch),
+                }
+            }
+            return token.ty == TokenType::Semicolon
+                || token.ty == stop
+                || token.ty == TokenType::Eof;
+        }
+        self.important_ch(p, stop_ch)
+    }
+
+    /// `lxb_css_syntax_tokenizer_lookup_important_ch`.
+    fn important_ch(&self, p: usize, stop_ch: u8) -> bool {
+        match self.input.get(p..p + IMPORTANT.len()) {
+            Some(s) if s.eq_ignore_ascii_case(IMPORTANT) => {
+                self.important_end(p + IMPORTANT.len(), stop_ch)
+            }
+            _ => false,
+        }
+    }
+
+    /// `lxb_css_syntax_tokenizer_lookup_important_end`.
+    fn important_end(&self, mut p: usize, stop_ch: u8) -> bool {
+        while p < self.input.len() {
+            match self.input[p] {
+                b';' => return true,
+                b if is_ws(b) => p += 1,
+                b => return stop_ch != 0 && stop_ch == b,
+            }
+        }
+        true
+    }
+
+    /// `lxb_css_syntax_tokenizer_lookup_declaration_ws_end`: whether the
+    /// whitespace just read ends the value - a `;`, `!important` or the
+    /// block's end follows.
+    ///
+    /// Lexbor's two quirks on the read-ahead path are kept: it looks for
+    /// `important` after a delimiter that is NOT `!`, and it compares the
+    /// token's type with the stop character.
+    pub fn lookup_declaration_ws_end(&self, stop: TokenType, stop_ch: u8) -> bool {
+        if let Some(token) = self.ahead(1) {
+            return match token.ty {
+                TokenType::Delim => {
+                    if token.delim != u32::from(b'!') {
+                        return self.lookup_important(stop, stop_ch);
+                    }
+                    false
+                }
+                TokenType::Semicolon => true,
+                ty => ty as u32 == u32::from(stop_ch) || ty == TokenType::Eof,
+            };
+        }
+        let p = self.in_p;
+        match self.input.get(p) {
+            Some(b';') => true,
+            Some(b'!') => self.important_ch(p + 1, stop_ch),
+            Some(&b) => stop_ch != 0 && stop_ch == b,
+            None => false,
         }
     }
 

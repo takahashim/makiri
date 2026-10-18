@@ -174,15 +174,18 @@ the real parser. It finds the name on the tokens of Lexbor's OWN CSS
 syntax tokenizer (`lexbor::css_tokens`), never on a scanner of ours: the hand
 scanner it replaced ended strings where the tokenizer did not (CR, FF,
 backslash-newline), so a `:lexbor-contains(#x)` after such a string reached the
-parser unseen and `parse_stylesheet` crashed serializing what it left behind. Both call sites go through it - `css_engine::parse`
-(the selector parse, which since the parser port only the reference builds
-run) and `stylesheet.rs`'s `guarded_stylesheet` - and a new one must:
+parser unseen and `parse_stylesheet` crashed serializing what it left behind.
+**Since the parser port no build that ships runs Lexbor's CSS parser at all**:
+selectors and stylesheets are both parsed by `crate::selectors`, which leaves
+`lexbor-contains` out of its function table and so rejects one as an unknown
+function - the answer the guard gave. The guard, `css_tokens`, `css_engine`
+and `css_parser` are compiled only into the tests and the reference features,
+where Lexbor's parser is the oracle. Both reference call sites still go
+through the guard - `css_engine::parse` (selectors) and
+`stylesheet_diff::lexbor_dump` (stylesheets) - and a new one must:
 `rake unsafe:boundaries` allows each Lexbor CSS parse function exactly one
-call site, the guarded one. Selectors no longer reach Lexbor's parser in a
-build that ships: the port (`crate::selectors`) leaves `lexbor-contains` out
-of its function table, so it rejects one as an unknown function, which is the
-answer the guard gave. The guard and its tests come out together or not at
-all, once neither the stylesheet reader nor a reference runs Lexbor's parser.
+call site, the guarded one. The guard and its tests come out together or not
+at all, once no reference runs Lexbor's parser.
 
 ## Working conventions
 
@@ -544,7 +547,8 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            their C definitions change - `adapter`, the one reader of
                            Lexbor's DOM structs, plus the element index,
                            text index, source location and post-parse - and the
-                           selectors/stylesheet/serialize/fragment facades, the
+                           selectors/serialize/fragment facades, the stylesheet
+                           reader (`stylesheet.rs`, safe, over the port), the
                            views over Lexbor's CSS selector lists
                            (`css_parser.rs`; its parse is a reference), the HTML CSS
                            matcher (`css_match/`, `#![forbid(unsafe_code)]`
@@ -553,9 +557,11 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            outside it is 0
     css/                   CSS selector lowering to XPath over the ported selector
                            parser (safe Rust, no Lexbor ABI names)
-    selectors/             the selector parser ported from Lexbor (its CSS syntax
-                           tokenizer, rule/state stacks and selector states) into
-                           an owned AST; Ruby- and Lexbor-free,
+    selectors/             the CSS parser ported from Lexbor (its CSS syntax
+                           tokenizer, rule/state stacks, selector states, and
+                           the stylesheet rule phases and callbacks in
+                           `parser/syntax.rs`) into an owned AST and rule arena
+                           (`rules.rs`); Ruby- and Lexbor-free,
                            `#![forbid(unsafe_code)]` at its root
   fuzz/                    cargo-fuzz harnesses (xml/html, xpath/xml_xpath/
                            html_xpath, css = the XML lowering, html_css = the
@@ -563,8 +569,9 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            css and matches? agree, html_css_diff = the same
                            matcher against Lexbor's own engine, html_diff =
                            the ported tree builder against Lexbor's tree,
-                           documents and fragments, selector_diff = the
-                           ported selector parser against Lexbor's; built on
+                           documents and fragments, selector_diff /
+                           stylesheet_diff = the ported selector / stylesheet
+                           parser against Lexbor's; built on
                            PRs, run nightly. css-match.yml owns the two
                            html_css*)
 vendor/lexbor/             git submodule, pinned 05b5d37 (v3.0.0-66), NEVER patched
@@ -581,8 +588,9 @@ that read Lexbor's DOM: the generated ABI, `css`, `lexbor/adapter`, the XPath HT
 instance), **`alloc-inject`** (the `rake oom` hook, off in any normal build),
 **`css-reference`** (the OLD CSS engine, `lexbor::selectors`, for the
 `html_css_diff` fuzz target; in no build that ships), **`lexbor-reference`**
-(`lexbor::tree_diff` and `lexbor::selector_diff`, Lexbor's tree and selector
-lists beside the ports', for the `html_diff` and `selector_diff` fuzz targets;
+(`lexbor::tree_diff`, `lexbor::selector_diff` and `lexbor::stylesheet_diff`,
+Lexbor's tree, selector lists and stylesheets beside the ports', for the
+`html_diff`, `selector_diff` and `stylesheet_diff` fuzz targets;
 in no build that ships) and **`arena-dom`** (the
 parser port's index-arena DOM, `html::dom`, in place of Lexbor's behind the
 `html_dom` facade, parsed by the ported tree builder `html::tree` -
@@ -824,10 +832,15 @@ The glue reaches it through `lexbor::selector_cache`: an adaptive
 compiled-selector cache (`CachePolicy`, the OLD HTML engine's - same
 constants, same flush-on-cap/bypass-on-low-hit-rate/retest behavior) holding
 each parsed selector it keeps, so a repeated selector string is not re-parsed
-every call. `lexbor::css_parser` remains as the views over Lexbor's OWN lists,
-which the stylesheet reader still parses (`list_from_raw`); its `parse` is the
-reference `selector_diff` compares against, built only for tests and
-`lexbor-reference`. `lexbor/selectors.rs` (the OLD `lxb_selectors`-callback engine this
+every call. `lexbor::css_parser` remains only as the reference: its `parse` and
+its views over Lexbor's OWN lists are what `selector_diff` and
+`stylesheet_diff` compare against, built only for tests and the reference
+features. **`parse_stylesheet` is the port too** (`selectors::parse_stylesheet`
++ `lexbor/stylesheet.rs`): Lexbor's rule structure and recovery exactly, but
+names and values by one rule for every property - a declaration name
+lower-cased unless `--*`, an at-rule name lower-cased, a value the text
+between Lexbor's offsets with whitespace runs collapsed - not Lexbor's
+per-property reserialization (`docs/parser_differences.ja.md` C1-C3). `lexbor/selectors.rs` (the OLD `lxb_selectors`-callback engine this
 replaced for HTML) is the differential-testing reference
 (`lexbor::tests::css_match::agrees_with_the_old_lexbor_engine_on_standard_selectors`
 and its randomized siblings, and the `html_css_diff` fuzz target) and
@@ -1009,7 +1022,7 @@ inheritance, first `legend` element child, `option`/`optgroup`), which
 Lexbor only approximates; `:any-link` / `:link` are Lexbor's exactly
 (`map` counts, any namespace, `xlink:href`).
 **The GVL is an argument, not a comment**: each process-global engine
-(`selector_cache`'s, the stylesheet reader's, and in the reference builds
+(`selector_cache`'s, and in the reference builds
 `css_parser`'s and the OLD `selectors`'s) lives in its own `crate::gvl::GvlCell`, whose `borrow` takes a
 `&Gvl` - minted from a
 `magnus::Ruby` by `bridge::gvl::held`, and `!Send`, so `without_gvl` (which
