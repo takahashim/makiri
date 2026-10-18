@@ -40,6 +40,9 @@ pub enum Fix {
     /// An attribute written with no value equals one with the value "" when
     /// the active formatting elements are counted.
     P10,
+    /// An `<input>` whose `type` is "hidden" in any ASCII case leaves
+    /// frameset-ok alone.
+    P13,
     /// An element carries its start tag's offset when it was created for
     /// that tag's token, and no other (`Node#line`); not a tree change, so
     /// [`explains`] never names it: the harnesses compare the trees without
@@ -150,6 +153,10 @@ pub fn explains(input: &[u8], context: Option<&str>) -> Vec<Fix> {
      * written quoted. */
     if has(input, b"\"\"") || has(input, b"''") {
         fixes.push(Fix::P10);
+    }
+    /* P13: an `<input>` before a `<frameset>`. */
+    if has(input, b"frameset") && has(input, b"hidden") {
+        fixes.push(Fix::P13);
     }
     fixes
 }

@@ -117,6 +117,14 @@ P で始まる項目は HTML パーサの振る舞いである。
 - **移植版**：`html/tree/stacks.rs` の `attr_compare` が、値のない属性を空の値として比べる。値がないことの記録（`valueless`）は、直列化などほかの用途のために残す。差分の許可は、入力に引用符で囲んだ空の値（`""` か `''`）があるとき（空の値は引用符なしでは書けない）。
 - **テスト**：WPT にない。`spec/html_standard_steps_spec.rb`。
 
+### P13 `<input type=hidden>` の大文字小文字
+
+- **分類**：参照実装の未対応（監査の in_body F3）。移植版で直した（第 8 段）。
+- **仕様**："in body" の `input` 開始タグで、`type` 属性がないか、その値が "hidden" と ASCII の大文字小文字を区別せずに一致しないときに frameset-ok を "not ok" にする。
+- **再現**：`<input type=HIDDEN><frameset>`。仕様では frameset-ok が変わらず、`<frameset>` が body を置き換える。Lexbor は値を正確に比べるので frameset-ok を "not ok" にし、`<frameset>` を無視する。
+- **移植版**：`html/tree/modes/in_body.rs` の `input` が値を `eq_ignore_ascii_case` で比べる。差分の許可は、入力に `frameset` と `hidden` があるとき。
+- **テスト**：WPT にない。`spec/html_standard_steps_spec.rb`。
+
 ### L1 ソース位置の規則
 
 - **分類**：意図した変更（移植計画の「ソース位置の規則」）。Lexbor の DOM のビルドは旧来の答えのまま。

@@ -79,4 +79,9 @@ RSpec.describe "HTML Standard steps the port takes and Lexbor does not" do
     doc = Makiri::HTML(%(<p><b x><b x><b x=""><b x=""></p>x))
     expect(doc.css("body > b, body > b b").size).to eq(3)
   end
+  # P13: "in body", an "input" start tag: "hidden" compared ASCII case-insensitively.
+  it "keeps frameset-ok after an input whose type is HIDDEN" do
+    doc = Makiri::HTML(%(<input type=HIDDEN><frameset>))
+    expect(doc.at_css("frameset")).not_to be_nil
+  end
 end

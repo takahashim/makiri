@@ -45,7 +45,7 @@ in body の監査は、parse5（scripting off）との無作為な比較も使�
 | P10 | tokenizer1 F1、tree_core 逸脱 1、in_body F4 | 値のない属性（`<b x>`）と空の値（`<b x="">`）を、formatting element の「三つまで」の比較で別の値として扱う | 直した |
 | P11 | in_body F1 | adoption agency algorithm の bookmark と formatting element の位置を添字で持ち、要素を除いた後に補正しない | 未着手 |
 | P12 | in_body F2 | `<textarea>` の後に "text" insertion mode に入らず、formatting element を再構築する | 未着手 |
-| P13 | in_body F3 | `<input>` の `type=hidden` の判定が ASCII の大文字小文字を区別する | 未着手 |
+| P13 | in_body F3 | `<input>` の `type=hidden` の判定が ASCII の大文字小文字を区別する | 直した |
 | P14 | in_body F5 | table の insertion mode で `<image>` を `<img>` として処理し直さずに失う | 未着手 |
 | P15 | foreign F1 | foreign content を抜ける開始タグの一覧に `sup` がない | 未着手 |
 | P16 | foreign F2 | fragment の解析の終わりに open element を pop しない（`selectedcontent` が更新されない） | 未着手 |

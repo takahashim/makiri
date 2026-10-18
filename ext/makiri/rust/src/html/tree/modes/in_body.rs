@@ -8,6 +8,7 @@ use crate::html::res::names as res;
 use crate::html::res::tree as rt;
 use crate::html::tokenizer::{flags, plaintext_before, rcdata_before, Tokenizer};
 use crate::html::tree::actions::is_category;
+use crate::html::tree::compat::{self, Fix};
 use crate::html::tree::error::TreeErrorId as E;
 use crate::html::tree::{is_ws, AttrAdjust, Mode, Tok, TreeBuilder, TreeStatus};
 
@@ -654,6 +655,11 @@ fn input(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> 
         at = d.next_attr(x);
     }
     let hidden = match found {
+        /* The Standard compares the value ASCII case-insensitively; Lexbor
+         * exactly. */
+        Some(x) if compat::fixed(Fix::P13) => d
+            .attr_value(x)
+            .is_some_and(|v| v.eq_ignore_ascii_case(b"hidden")),
         Some(x) => !tree.valueless.contains(x) && d.attr_value(x) == Some(&b"hidden"[..]),
         None => false,
     };
