@@ -165,6 +165,14 @@ P で始まる項目は HTML パーサの振る舞いである。
 - **移植版**：`html/tree/fragment.rs` の `parse_fragment` が、tokenizer を終えた後で `open_pop_all` を呼ぶ。差分の許可は、fragment の入力に `selectedcontent` があるとき（pop steps を持つのは `option` だけ）。
 - **テスト**：WPT にない。`spec/html_standard_steps_spec.rb`。
 
+### P17 fragment の解析の quirks mode
+
+- **分類**：参照実装の未対応（監査の foreign F3）。移植版で直した（第 8 段）。
+- **仕様**：fragment の解析で作る文書は、context の文書が quirks なら quirks、limited-quirks なら limited-quirks になる。
+- **再現**：doctype のない文書（quirks）の要素に `inner_html = "<p><table></table>"`。仕様では quirks mode なので `<table>` が `p` を閉じず、`<p><table></table></p>` になる。Lexbor は fragment の文書を常に no-quirks で作るので `<p></p><table></table>` になる。
+- **移植版**：`html/tree/fragment.rs` の `ContextFacts::compat_mode` を fragment の文書が受け取り、`lexbor/arena_fragment.rs` の `FragmentContext::element`（`inner_html=`、`outer_html=`）が context の文書の mode を渡す。名前で与える context（`DocumentFragment.parse`、`Document#fragment`）には要素も文書もないので、no-quirks のまま（`DocumentFragment.parse` の裏の文書は doctype がなく quirks なので、写すとこの API の答えが変わる）。差分の比較は既定の `ContextFacts`（Lexbor の前提）で解析するので、許可は要らない。
+- **テスト**：WPT にない。`spec/html_standard_steps_spec.rb`。
+
 ### L1 ソース位置の規則
 
 - **分類**：意図した変更（移植計画の「ソース位置の規則」）。Lexbor の DOM のビルドは旧来の答えのまま。

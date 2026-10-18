@@ -254,8 +254,16 @@ pub fn port_fragment(
         fresh: is_select,
         after_optgroup: is_select,
     };
-    let f = crate::html::tree::parse_fragment(input, false, tag, ns, options, limit)
-        .map_err(|e| format!("{e:?}"))?;
+    let f = crate::html::tree::parse_fragment(
+        input,
+        false,
+        tag,
+        ns,
+        options,
+        crate::html::tree::ContextFacts::default(),
+        limit,
+    )
+    .map_err(|e| format!("{e:?}"))?;
     Ok(dump_children(&f.doc, f.root, false))
 }
 

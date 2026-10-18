@@ -28,24 +28,42 @@ pub struct ParsedFragment {
     pub root: NodeId,
 }
 
+/// What the fragment parsing algorithm reads from the context element and
+/// its document besides the tag and the namespace. Lexbor read none of it;
+/// the default is what it assumed, so a parse given the default is Lexbor's
+/// however [`compat::fixed`] answers.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ContextFacts {
+    /// The context document's quirks mode (0 no-quirks, 1 quirks, 2
+    /// limited-quirks), which the fragment's document takes (P17).
+    pub compat_mode: u8,
+}
+
 /// Parse `input` as a fragment in the context of an element with tag id
 /// `tag` in namespace `ns` (Lexbor's static ids; `ns` 0 for none), refusing a
 /// tree deeper than `limit`; `options` is what the context means to the
-/// option guard.
+/// option guard, `facts` the rest of what the parse reads from it.
 pub fn parse_fragment(
     input: &[u8],
     known_valid: bool,
     tag: usize,
     ns: usize,
     options: ContextOptions,
+    facts: ContextFacts,
     limit: DepthLimit,
 ) -> Result<ParsedFragment, FragmentFailure> {
     let src = sanitize(input, known_valid).ok_or(FragmentFailure::Decode)?;
     let bytes = src.as_slice();
     let oom = |DomOom| FragmentFailure::Parse;
 
-    /* `lxb_html_document_interface_create(NULL)`: no quirks, no scripting. */
-    let mut doc = Document::new(0).map_err(oom)?;
+    /* `lxb_html_document_interface_create(NULL)`: no quirks, no scripting.
+     * The Standard's document is in the context document's quirks mode. */
+    let compat_mode = if compat::fixed(Fix::P17) {
+        facts.compat_mode
+    } else {
+        0
+    };
+    let mut doc = Document::new(compat_mode).map_err(oom)?;
     doc.set_names(NodeId::DOCUMENT, res::TAG__DOCUMENT, res::NS_HTML as u32, 0);
     let ns32 = u32::try_from(ns).unwrap_or(0);
     let root = doc

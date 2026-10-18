@@ -49,7 +49,7 @@ in body の監査は、parse5（scripting off）との無作為な比較も使�
 | P14 | in_body F5 | table の insertion mode で `<image>` を `<img>` として処理し直さずに失う | 直した |
 | P15 | foreign F1 | foreign content を抜ける開始タグの一覧に `sup` がない | 直した |
 | P16 | foreign F2 | fragment の解析の終わりに open element を pop しない（`selectedcontent` が更新されない） | 直した |
-| P17 | foreign F3 | fragment の解析の文書が、context の文書の quirks mode を写さない | 未着手 |
+| P17 | foreign F3 | fragment の解析の文書が、context の文書の quirks mode を写さない | 直した |
 | P18 | foreign F4 | fragment の context 要素を属性なしで作る（`annotation-xml` の `encoding` が効かない） | 未着手 |
 | P19 | foreign F5 | 独自の名前空間の context 要素を名前空間なしとして渡す | 未着手 |
 | P20 | foreign F6 | form element pointer を、祖先の form ではなく context 自身が form のときだけ設定する | 未着手 |

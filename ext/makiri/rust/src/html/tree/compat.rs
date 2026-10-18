@@ -55,6 +55,10 @@ pub enum Fix {
     P15,
     /// A fragment parse pops its open elements at the end.
     P16,
+    /// A fragment's document takes the context document's quirks mode. Read
+    /// from `ContextFacts`, whose default is Lexbor's answer, so [`explains`]
+    /// never names it, nor P18 to P20: the harnesses parse with the default.
+    P17,
     /// An element carries its start tag's offset when it was created for
     /// that tag's token, and no other (`Node#line`); not a tree change, so
     /// [`explains`] never names it: the harnesses compare the trees without

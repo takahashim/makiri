@@ -19,7 +19,7 @@ use crate::html::dom::{
 };
 use crate::html::res::names as res;
 use crate::html::tree::guard::ContextOptions;
-use crate::html::tree::{parse_fragment, FragmentFailure, ParsedFragment};
+use crate::html::tree::{parse_fragment, ContextFacts, FragmentFailure, ParsedFragment};
 use crate::lexbor::adapter::html as lex;
 use crate::lexbor::adapter::tree_guard::{resolve_option_chain, DepthLimit, OptionContext};
 
@@ -109,6 +109,7 @@ pub enum FragmentContext {
     Element {
         at: Option<FragmentTag>,
         options: OptionContext,
+        facts: ContextFacts,
     },
     /// Inside a named context, for a fragment bound to a document.
     Tag { at: FragmentTag },
@@ -131,9 +132,13 @@ impl FragmentContext {
             let ns = (n.ns_id() == Some(NsId::HTML)).then_some(lex::NsId::HTML);
             (tag, ns)
         });
+        let facts = ContextFacts {
+            compat_mode: u8::try_from(doc.compat_mode()).unwrap_or(0),
+        };
         Ok(FragmentContext::Element {
             at,
             options: resolve_option_chain(chain),
+            facts,
         })
     }
 
@@ -194,12 +199,17 @@ impl TransientFragment {
                 }
             }
         };
-        let parsed =
-            parse_fragment(input, known_valid, tag, ns, options, limit).map_err(|f| match f {
+        let facts = match context {
+            FragmentContext::Element { facts, .. } => *facts,
+            FragmentContext::Tag { .. } => ContextFacts::default(),
+        };
+        let parsed = parse_fragment(input, known_valid, tag, ns, options, facts, limit).map_err(
+            |f| match f {
                 FragmentFailure::Decode => FragmentError::Decode,
                 FragmentFailure::Parse => FragmentError::Parse,
                 FragmentFailure::Guard(stop) => FragmentError::Guard(stop),
-            })?;
+            },
+        )?;
         let inherit = match at.map(|a| &a.ns) {
             Some(FragNs::Id(Some(ns))) if !ns.is_static() => FragNs::Id(Some(*ns)),
             Some(FragNs::Uri(u)) => FragNs::Uri(try_to_vec(u).ok_or(FragmentError::Context)?),

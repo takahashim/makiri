@@ -688,6 +688,7 @@ fn port_run(t: &dat::DatTest) -> Option<String> {
                 tag,
                 ns,
                 options,
+                crate::html::tree::ContextFacts::default(),
                 DepthLimit::UNLIMITED,
             )
             .expect("the port parses a fragment");

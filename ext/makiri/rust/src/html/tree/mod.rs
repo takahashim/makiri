@@ -41,7 +41,7 @@ mod select;
 mod stacks;
 
 pub use error::{TreeError, TreeErrorId};
-pub use fragment::{parse_fragment, FragmentFailure, ParsedFragment};
+pub use fragment::{parse_fragment, ContextFacts, FragmentFailure, ParsedFragment};
 pub use parse::{
     empty_html_document, parse_document, parse_html, HtmlParseError, ParseFailure, Parsed,
 };

@@ -113,4 +113,14 @@ RSpec.describe "HTML Standard steps the port takes and Lexbor does not" do
     frag = Makiri::DocumentFragment.parse("<select><button><selectedcontent></selectedcontent></button><option>A")
     expect(frag.at_css("selectedcontent").inner_html).to eq("A")
   end
+  # P17: the fragment parsing algorithm, step 2: the document takes the
+  # context document's quirks mode.
+  it "parses inner_html= in the quirks mode of the element's document" do
+    doc = Makiri::HTML("<p>quirks</p><div id=a></div>")
+    doc.at_css("#a").inner_html = "<p><table></table>"
+    expect(doc.at_css("#a").inner_html).to eq("<p><table></table></p>")
+    doc = Makiri::HTML("<!doctype html><div id=a></div>")
+    doc.at_css("#a").inner_html = "<p><table></table>"
+    expect(doc.at_css("#a").inner_html).to eq("<p></p><table></table>")
+  end
 end
