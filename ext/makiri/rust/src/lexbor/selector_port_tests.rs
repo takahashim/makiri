@@ -900,6 +900,11 @@ fn the_stylesheet_parser_builds_lexbors_rules() {
     ] {
         same_sheet(css);
     }
+    // Nested past the dumps' depth (a fuzz find in the dumpers, not the
+    // parsers): both stop at the same depth.
+    same_sheet(&format!("{}-\\+\n{}+\n", "{".repeat(24), "{".repeat(9)));
+    same_sheet(&"a{".repeat(300));
+    same_sheet(&"@media x{".repeat(300));
 }
 
 fn random_sheet(rng: &mut Rng, depth: u32, out: &mut String) {

@@ -31,8 +31,10 @@ use crate::lexbor::selector_diff::{dump_lexbor, dump_port};
 use crate::selectors::rules::{AtKind, Item, ItemId};
 use crate::selectors::{Sheet, Status};
 
-/// Bound on nesting in the dumps, as the reader's own.
-const MAX_DEPTH: usize = 64;
+/// How deep the dumps descend: both stop at the same depth and write a
+/// marker there, so a deeper sheet is compared down to it rather than
+/// overflowing the dumpers' recursion.
+const MAX_DEPTH: usize = 128;
 
 fn name_as_written(name: &[u8]) -> String {
     let mut n = String::from_utf8_lossy(name).into_owned();
@@ -57,7 +59,10 @@ unsafe fn property_name(decl: *mut lxb::lxb_css_rule_declaration_t) -> Vec<u8> {
 }
 
 unsafe fn lexbor_list(first: *mut lxb::lxb_css_rule_t, depth: usize, out: &mut String) {
-    assert!(depth <= MAX_DEPTH, "too deep");
+    if depth > MAX_DEPTH {
+        out.push_str("...\n");
+        return;
+    }
     let pad = " ".repeat(depth);
     let mut r = first;
     while !r.is_null() {
@@ -207,7 +212,10 @@ pub fn lexbor_dump(css: &[u8]) -> Result<String, u32> {
 /* ---- the port ---- */
 
 fn port_list(sheet: &Sheet, list: Option<ItemId>, depth: usize, out: &mut String) {
-    assert!(depth <= MAX_DEPTH, "too deep");
+    if depth > MAX_DEPTH {
+        out.push_str("...\n");
+        return;
+    }
     let pad = " ".repeat(depth);
     let name = |span: crate::selectors::token::Span| {
         let s = span.start as usize;
