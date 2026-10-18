@@ -58,6 +58,17 @@ pub fn in_column_group(
             if tok.text_start == tok.text_end {
                 return true;
             }
+            /* The Standard takes a text token character by character: with no
+             * colgroup to pop, each non-whitespace character is ignored and
+             * each whitespace one still inserted. Lexbor ignores the rest of
+             * the token (P6). */
+            let colgroup = tree
+                .current_node()
+                .is_some_and(|c| tree.node_is(c, res::TAG_COLGROUP));
+            if !colgroup && compat::fixed(Fix::P6) {
+                tree.parse_error(tok, E::Mielinopelst);
+                return super::in_frameset::whitespace_only(tree, tkz, tok).is_some();
+            }
             anything_else(tree, tok)
         }
         /* "A DOCTYPE token: parse error, ignore the token." Lexbor has no

@@ -52,4 +52,11 @@ RSpec.describe "HTML Standard steps the port takes and Lexbor does not" do
     doc = Makiri::HTML("<table><colgroup><!doctype html><col></table>")
     expect(doc.at_css("table").to_html).to eq("<table><colgroup><col></colgroup></table>")
   end
+  # P6: "in column group", taking a text token character by character.
+  it "keeps the whitespace after other text in a column group with no colgroup to close" do
+    doc = Makiri::HTML("<template><col>a b</template>")
+    expect(doc.at_css("template").inner_html).to eq("<col> ")
+    frag = Makiri::DocumentFragment.parse("a b<col>", context: "colgroup")
+    expect(frag.to_html).to eq(" <col>")
+  end
 end

@@ -77,6 +77,14 @@ P で始まる項目は HTML パーサの振る舞いである。
 - **移植版**：`html/tree/modes/in_column_group.rs` に DOCTYPE の分岐を足した。差分の許可は入力に `doctype` があり、`col` があるか context が colgroup のとき。
 - **テスト**：WPT `domjs-unsafe.dat` #34 はこの分岐を通るが、次が `</colgroup>` なので差が出ない。`spec/html_standard_steps_spec.rb`。
 
+### P6 "in column group" の空白と、それ以外の文字を含む文字 token
+
+- **分類**：参照実装の未対応（監査で見つけた）。移植版で直した。
+- **仕様**：文字 token は一文字ずつで、空白は「Insert the character」、それ以外は「Anything else」（current node が colgroup でなければ parse error として無視）。
+- **再現**：`<template><col>a b</template>`、context を colgroup にした fragment の `a b<col>`。仕様では `b` の前の空白が残り、Lexbor は先頭の空白の後ろを token ごと捨てる。current node が colgroup の場合は、残りを "in table" に渡すので仕様と同じになる。
+- **移植版**：`html/tree/modes/in_column_group.rs` が、colgroup のないとき残りの空白を挿入する。差分の許可は context が colgroup のときか、入力に `col` と `template` があるとき。
+- **テスト**：WPT にない。`spec/html_standard_steps_spec.rb`。
+
 ### L1 ソース位置の規則
 
 - **分類**：意図した変更（移植計画の「ソース位置の規則」）。Lexbor の DOM のビルドは旧来の答えのまま。
