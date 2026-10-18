@@ -113,11 +113,11 @@ RSpec.describe "Mutation argument conversion" do
     end
   end
 
-  # A call converts its arguments one at a time, and the view of an earlier
-  # one borrowed its bytes. A later #to_s that rewrote that String put a NUL
-  # into a name that had passed the check, and one that grew it made the view
-  # read freed memory into the DOM. The checked views now hold the String's
-  # temporary lock, so the rewrite raises instead.
+  # A call converts its arguments one at a time. The view of an earlier one
+  # used to borrow its bytes, so a later #to_s that rewrote that String put a
+  # NUL into a name that had passed the check, and one that grew it made the
+  # view read freed memory into the DOM. A view now owns a copy of the bytes
+  # taken when the argument was converted, so a later rewrite changes nothing.
   describe "an earlier argument rewritten by a later one's #to_s" do
     def rewriting(target, value)
       Object.new.tap do |o|
@@ -125,23 +125,21 @@ RSpec.describe "Mutation argument conversion" do
       end
     end
 
-    it "raises rather than read the rewritten or released bytes" do
+    it "reads the argument as it was when it was converted" do
       html = Makiri.HTML("<p>t</p>")
       name = +"id"
-      expect { html.at_css("p")[name] = rewriting(name, "v") }.to raise_error(RuntimeError, /locked/)
-      expect(html.at_css("p").attribute_nodes).to be_empty
+      html.at_css("p")[name] = rewriting(name, "v")
+      expect(html.at_css("p").attributes.transform_values(&:value)).to eq("id" => "v")
 
       xml = Makiri::XML("<r/>")
       qname = +"p:q"
-      expect { xml.root.set_attribute_ns(rewriting(qname, "urn:a"), qname, "v") }
-        .to raise_error(RuntimeError, /locked/) # the namespace converts after the name
+      xml.root.set_attribute_ns(rewriting(qname, "urn:a"), qname, "v") # the namespace converts after the name
+      expect(xml.root.attribute_nodes.map { |a| [a.name, a.namespace_uri, a.value] }).to eq([["p:q", "urn:a", "v"]])
       target = +"t"
-      expect { xml.create_processing_instruction(target, rewriting(target, "d")) }.to raise_error(RuntimeError, /locked/)
+      pi = xml.create_processing_instruction(target, rewriting(target, "d"))
+      expect([pi.target, pi.content]).to eq(%w[t d])
     end
 
-    # A namespace binding converts both sides before checking either, so the
-    # rewrite happens first and the rewritten prefix is what is checked and
-    # bound - nothing is borrowed across the conversion to lock.
     it "checks a namespace binding after both sides convert" do
       prefix = +"x"
       renaming = Object.new.tap { |o| o.define_singleton_method(:to_s) { prefix << "y" && "urn:x" } }
@@ -154,7 +152,7 @@ RSpec.describe "Mutation argument conversion" do
         .to raise_error(Makiri::Error, /NUL/)
     end
 
-    it "releases the lock afterwards, and takes the same String twice" do
+    it "takes the same String twice, and leaves it changeable afterwards" do
       html = Makiri.HTML("<p>t</p>")
       s = +"dup"
       html.at_css("p")[s] = s

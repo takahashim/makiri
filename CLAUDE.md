@@ -596,13 +596,18 @@ contract, but its NUL refusal is `ArgumentError`, like every other name
 refusal there (the DOM's InvalidCharacterError), so a caller mapping
 `ArgumentError` to a DOMException misses none. Removers and readers keep
 `ruby_verified_text`. Both checked views (`RubyText`, `RubyData`) deref to
-`&str`: each holds its String `rb_str_locktmp`ed for its life, or - when someone
-else already holds that lock (the same String passed twice, an IO) - reads its
-own copy, since a lock it does not own can be released under it; a frozen
-String, which no Ruby can change, is borrowed as it is. The bytes are
-borrowed and CHECKED only after that (`RubyStr::acquire`): a failed lock attempt
-raises, and raising runs Ruby that can change the String. Only the lock's own
-refusal is swallowed - anything else raised there (an interrupt) propagates. `Makiri::XML`'s data
+`&str`, and each OWNS A COPY of the String's bytes, taken with no Ruby between
+the read and the copy (`string::copy_bytes`; up to 64 bytes inline, so a
+selector or an expression allocates nothing) and checked after. Nothing Ruby
+does afterwards - a GC, a later argument's `#to_s` rewriting or growing the
+String - reaches the copy. The HTML source (`HtmlSource`) is a copy too, the
+one a document parse needs to read it with the GVL released. The only borrow
+of a String's bytes left is `string::with_bytes`, a scoped read for the XML
+encoding sniff, whose closure must run no Ruby. (The views used to hold the
+String under `rb_str_locktmp`, with a copy when it was already locked, a
+frozen fast path and a raise to re-propagate - all to spare a copy of a few
+bytes; `spec/mutation_argument_conversion_spec.rb` pins the copy semantics.)
+`Makiri::XML`'s data
 takes NUL too (`bridge::xml::verified_data`), as the DOM does, and so does every
 character XML has no `Char` for: the XML mutators hold what the DOM holds, and
 the serializers refuse a tree XML cannot write, deciding from the data as it is

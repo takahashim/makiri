@@ -191,10 +191,7 @@ fn ruby_to_val(bridge: &Bridge, budget: &mut Budget, rv: Value) -> Result<Val, H
     const NOT_A_STRING: &str = "handler result could not be converted to a string";
     let sv =
         crate::bridge::ruby::to_s(rv).map_err(|e| HandlerFailure::Raised(e, Some(NOT_A_STRING)))?;
-    /* An exception raised while taking the String (an interrupt) ends the
-     * evaluation like any exception from the handler's own call. */
     let vv = ruby_try_verified_text(sv, budget.limits.max_string_bytes)
-        .map_err(|e| HandlerFailure::Raised(e, Some(NOT_A_STRING)))?
         .map_err(HandlerFailure::InvalidString)?;
     Text::try_copy(vv.as_bytes())
         .map(Val::string)

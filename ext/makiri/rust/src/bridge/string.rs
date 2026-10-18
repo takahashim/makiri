@@ -1,21 +1,28 @@
 //! Ruby String <-> Makiri text.
 //!
-//! # The borrow rule this file exists to hold
+//! # Every String crosses as a copy
 //!
-//! Several functions hand back a pointer *into* a Ruby String. That borrow is
-//! only valid until Ruby is allowed to run: a GC can move or free the backing
-//! buffer. So the verdict check in [`text_check`] is **allocation-free by
-//! design**, and every caller relies on that - it runs between a caller taking
-//! the pointer and using it, so it must not be a GC point.
+//! A pointer *into* a Ruby String is valid only until Ruby runs: a GC can move
+//! or free the backing buffer, and Ruby code can rewrite it - an argument's
+//! `#to_s` is arbitrary Ruby, and may change an earlier argument. The C held
+//! such pointers and guarded them with a rule nobody could check; the first
+//! Rust port held them under `rb_str_locktmp`, with a copy for a String that
+//! was already locked, a frozen fast path and an interrupt to re-raise.
 //!
-//! (The C's history is the warning: each caller used to build a throwaway Ruby
-//! String just to read its coderange, which put a Ruby allocation inside every
-//! borrow, and opened a GC window under every *other* borrow already held at a
-//! multi-borrow call site.)
+//! All of that existed to spare a copy of a few bytes. The Strings that reach
+//! the engine through this module are control strings - an XPath expression,
+//! a selector, a name, an attribute value - and the one large input, the
+//! HTML source, was copied out anyway before the GVL was released. So every
+//! String is copied, in one place ([`copy_bytes`]), with no Ruby between the
+//! read and the copy. A checked view ([`RubyText`], [`RubyData`]) then owns
+//! its bytes: nothing can change them, so its `Deref` to `str` is plain. A
+//! short copy stays on the stack ([`Bytes::Inline`]), so the hot paths - a
+//! selector, an expression - allocate nothing.
 //!
-//! Rust does not enforce this for us - `RString::as_slice` is `unsafe` for
-//! exactly this reason, and its lifetime is tied to nothing. What it does give
-//! is a place to state the rule once, which is here.
+//! What a borrow still buys is a scan that needs no copy at all: the XML
+//! reader's encoding sniff reads a prefix of a possibly large String before
+//! deciding how to decode it. That is [`with_bytes`], the one scoped borrow,
+//! whose closure must run no Ruby.
 
 #![allow(unsafe_code)]
 /* Every function takes `VALUE`s its caller holds rooted. */
@@ -40,22 +47,20 @@ use crate::falloc::OomOption;
 
 use crate::bridge::ruby::string_of;
 
-/* ---- the borrowed-text layouts ----
+/* ---- the checked-text types ----
  *
- * Three borrowed-text types with ONE layout. The distinction is the contract,
- * not the shape: `text` has been checked for valid UTF-8 *and* no NUL, `data` for UTF-8 only (the HTML
- * data family may hold U+0000, like browsers), and `bytes` for nothing at all
- * (HTML parsing decodes leniently). Keeping them apart is what makes a name or
- * engine string that took the data path a type error rather than a silent one,
- * so they stay three types here: [`RubyText`] / [`RubyData`] / [`RubyBytes`],
- * one guard type with the contract as its parameter. */
+ * Two owned-text types with ONE layout. The distinction is the contract, not
+ * the shape: `text` has been checked for valid UTF-8 *and* no NUL, `data` for
+ * UTF-8 only (the HTML data family may hold U+0000, like browsers). Keeping
+ * them apart is what makes a name or engine string that took the data path a
+ * type error rather than a silent one, so they stay two types here:
+ * [`RubyText`] / [`RubyData`], one guard type with the contract as its
+ * parameter. The parse source, which no contract checks, is [`HtmlSource`]. */
 
 /// The contract a [`RubyStr`] was checked against. Uninhabited: types only.
 pub enum TextContract {}
 /// See [`TextContract`].
 pub enum DataContract {}
-/// See [`TextContract`].
-pub enum BytesContract {}
 
 mod sealed {
     pub trait Checked {}
@@ -64,71 +69,60 @@ mod sealed {
 }
 use sealed::Checked;
 
-/// Bytes borrowed from a Ruby String, together with the String that owns them.
+/// Up to this many bytes a copy lives inside the view, on the stack.
+const INLINE: usize = 64;
+
+/// A copy of a String's bytes: inline when short, else a `falloc` allocation.
+enum Bytes {
+    Inline { len: u8, buf: [u8; INLINE] },
+    Heap(OwnedBuf),
+}
+
+impl Bytes {
+    /// A copy of `src`; `None` when the heap copy could not be allocated.
+    fn copy(src: &[u8]) -> Option<Bytes> {
+        if src.len() <= INLINE {
+            let mut buf = [0u8; INLINE];
+            buf[..src.len()].copy_from_slice(src);
+            return Some(Bytes::Inline {
+                len: src.len() as u8,
+                buf,
+            });
+        }
+        OwnedBuf::copy_from(src).map(Bytes::Heap)
+    }
+
+    fn as_slice(&self) -> &[u8] {
+        match self {
+            Bytes::Inline { len, buf } => &buf[..usize::from(*len)],
+            Bytes::Heap(b) => b.as_slice(),
+        }
+    }
+}
+
+/// Bytes copied out of a Ruby String and checked against `C`: [`RubyText`]
+/// is valid UTF-8 with no NUL, [`RubyData`] is valid UTF-8 with NUL permitted
+/// (the HTML data family). They are separate types because the contract is
+/// the only thing that stops a data-family value from reaching an engine
+/// input.
 ///
-/// The parameter records what was checked: [`RubyText`] is valid UTF-8 with no
-/// NUL, [`RubyData`] is valid UTF-8 with NUL permitted (the HTML data family),
-/// and [`RubyBytes`] is unchecked (HTML parsing decodes leniently). They are
-/// separate types because the contract is the only thing that stops a
-/// data-family value from reaching an engine input.
-///
-/// `Drop` is the keep-alive. It reads `value`, so the String stays visible to
-/// the conservative stack scan until the guard goes out of scope - the C's
-/// `RB_GC_GUARD` at the end of the borrow, without each call site having to
-/// remember it. For a non-String argument that String is the coerced one, which
-/// nothing else holds. Hence: not `Copy`, kept on the stack (never in a heap
-/// container, which the GC does not scan), and read through `&self`.
-///
-/// Anchoring keeps the String alive and in place; it does not stop Ruby code
-/// from mutating it. A CHECKED view ([`RubyText`], [`RubyData`]) is therefore
-/// held immutable for its whole life ([`RubyStr::acquire`]): a mutator converts
-/// its arguments one after another, and the second one's `#to_s` is arbitrary
-/// Ruby that could rewrite the first - putting a NUL into a name that had
-/// passed the check, or reallocating it so the view read freed memory. That is
-/// what makes a checked view a plain `&str` ([`Deref`]), like a `MutexGuard`.
-/// The unchecked [`RubyBytes`] (the parse source) is not held; its bytes stay
-/// behind an `unsafe` accessor, and it is copied before the GVL is released.
+/// The view owns its bytes, so nothing Ruby does after the copy - a GC, a
+/// mutation of the String, a reallocation - can reach them, and a checked
+/// view is a plain `&str` ([`Deref`]) for as long as it lives.
 pub struct RubyStr<C> {
-    value: VALUE,
-    ptr: *const u8,
-    len: usize,
-    /// Whether this view took the String's temporary lock, and so releases it.
-    owns_lock: bool,
-    /// The view's own copy of the bytes, when the String was already locked by
-    /// someone else (see [`RubyStr::acquire`]); `ptr` then points into it.
-    _copy: Option<OwnedBuf>,
+    bytes: Bytes,
     contract: core::marker::PhantomData<C>,
 }
 
 pub type RubyText = RubyStr<TextContract>;
 pub type RubyData = RubyStr<DataContract>;
-pub type RubyBytes = RubyStr<BytesContract>;
-
-impl<C> RubyStr<C> {
-    /// # Safety
-    /// `ptr`/`len` must be the bytes of the String `value`, checked against `C`.
-    unsafe fn from_raw_parts(value: VALUE, ptr: *const u8, len: usize) -> Self {
-        Self {
-            value,
-            ptr,
-            len,
-            owns_lock: false,
-            _copy: None,
-            contract: core::marker::PhantomData,
-        }
-    }
-}
 
 /// Why [`RubyStr::acquire`] gave no view.
 enum Refusal<P> {
-    /// The held bytes failed the contract; `P` is the check's own answer.
+    /// The bytes failed the contract; `P` is the check's own answer.
     Check(P),
-    /// The String was locked by someone else and its bytes could not be copied.
+    /// The bytes could not be copied.
     Oom,
-    /// Something other than the lock refusal was raised while trying to take
-    /// the lock - an interrupt (`Timeout`, `Thread#raise`, `Interrupt`)
-    /// delivered at the raise's interrupt check. It is the caller's to raise.
-    Raised(Error),
 }
 
 impl<P> crate::falloc::Oom for Refusal<P> {
@@ -138,119 +132,24 @@ impl<P> crate::falloc::Oom for Refusal<P> {
     }
 }
 
-/// Whether `s` is chilled: a String literal from a file without the
-/// `frozen_string_literal` comment (or a `Symbol#to_s`), on Ruby 3.4 and later.
-/// Such a String is read from a copy: locking it warns "literal string will be
-/// frozen" (the lock's frozen check counts as a change), and unlike a frozen
-/// one Ruby can still change it, so it cannot be borrowed as it is.
-///
-/// The bits are the ones Ruby's own public `rb_check_frozen_inline` tests, and
-/// the answer only picks between two safe ways to hold the bytes: a chilled
-/// String misread as plain is locked (and warns), a plain one misread as
-/// chilled is copied.
-fn is_chilled(s: RString) -> bool {
-    use rb_sys::{RUBY_API_VERSION_MAJOR as MAJOR, RUBY_API_VERSION_MINOR as MINOR};
-    if (MAJOR, MINOR) < (3, 4) {
-        return false;
-    }
-    let chilled = (rb_sys::ruby_fl_type::RUBY_FL_USER2 as VALUE)
-        | (rb_sys::ruby_fl_type::RUBY_FL_USER3 as VALUE);
-    // SAFETY: `s` is a live String, a heap object, so it begins with RBasic.
-    let flags = unsafe { (*(s.as_raw() as *const rb_sys::RBasic)).flags };
-    flags & chilled != 0
-}
-
-/// Whether `e` is `rb_str_locktmp`'s own refusal of an already locked String,
-/// rather than an exception delivered while that refusal was being raised.
-///
-/// Both the class and the message are compared: the class must be exactly
-/// `RuntimeError`, because `Timeout::Error` is a SUBCLASS of it, and a
-/// `Thread#raise` of a plain `RuntimeError` is told apart by its message.
-fn is_already_locked(e: &Error) -> bool {
-    let Some(exc) = e.value() else {
-        return false;
-    };
-    exc.class().as_raw()
-        == crate::bridge::ruby::gvl_ruby()
-            .exception_runtime_error()
-            .as_raw()
-        && crate::bridge::ruby::exception_message(exc.as_raw()).contains("locked")
-}
-
 impl<C: Checked> RubyStr<C> {
-    /// A checked view of `s`: its bytes held immutable until the view drops,
-    /// and only THEN checked, by `check` (which gets the String, for its cached
-    /// coderange, and the held bytes).
+    /// A checked view of `s`: its bytes copied, then checked by `check` (which
+    /// gets the String, for its cached coderange, and the copy).
     ///
-    /// Held normally means the String's temporary lock: Ruby raises "can't
-    /// modify string; temporarily locked" on any change, reallocation included
-    /// (`IO#write` holds its buffer the same way).
-    ///
-    /// `rb_str_locktmp` raises when the String is already locked - by another
-    /// view of the same argument passed twice, or by an IO. That lock is not
-    /// this view's to rely on: its holder releases it when IT is done, which
-    /// can be while this view still lives (an IO on another thread finishing
-    /// during a later argument's `#to_s`, or the earlier view dropping first),
-    /// and after that Ruby may rewrite or free the bytes under a `&str` this
-    /// view handed out. So the view copies the bytes instead and reads its own
-    /// copy - which keeps the answer (the same argument twice still works) and
-    /// the safe `Deref` sound, at an allocation only in that rare case.
-    ///
-    /// A frozen String needs neither: no Ruby can change it, so its own bytes
-    /// are held already. And only the lock's own refusal falls back to the
-    /// copy ([`is_already_locked`]): anything else raised meanwhile - an
-    /// interrupt delivered at the raise's interrupt check - is returned for
-    /// the caller to raise, not swallowed.
-    ///
-    /// The order is the point. Building the "already locked" error runs Ruby
-    /// (the exception's `initialize`, an interrupt check, another thread), so
-    /// bytes borrowed or checked BEFORE the lock attempt may be gone or changed
-    /// by the time they are copied. They are borrowed only after it, when
-    /// nothing below runs Ruby until they are locked or copied, and the check
-    /// reads exactly what the view will hand out.
+    /// The coderange `check` consults is the String's current one, and the
+    /// copy was taken from the String as it is now, with no Ruby in between
+    /// ([`copy_bytes`]) - so the cached answer describes the copied bytes.
     fn acquire<P>(
         s: RString,
         check: impl FnOnce(RString, &[u8]) -> Option<P>,
     ) -> Result<Self, Refusal<P>> {
-        let value = s.as_raw();
-        /* A frozen String is already held: nothing in Ruby can change it, so
-         * it is borrowed as it is - no lock (which it would refuse with a
-         * FrozenError) and no copy. */
-        let (frozen, owns_lock) = if s.is_frozen() {
-            (true, false)
-        } else if is_chilled(s) {
-            (false, false)
-        } else {
-            // SAFETY: `value` is the live String `s`; `protect` turns a raise
-            // into `Err`.
-            match protect(|| unsafe { rb_sys::rb_str_locktmp(value) }) {
-                Ok(_) => (false, true),
-                Err(e) if is_already_locked(&e) => (false, false),
-                Err(e) => return Err(Refusal::Raised(e)),
-            }
-        };
-        // SAFETY: borrowed after the lock attempt and whatever Ruby it ran;
-        // nothing from here runs Ruby before the bytes are held (locked, or
-        // copied into the view's own buffer).
-        let (_, ptr, len) = unsafe { borrow(s) };
-        // SAFETY: the bytes of `value`, checked below before the view is
-        // returned.
-        let mut view = unsafe { Self::from_raw_parts(value, ptr, len) };
-        view.owns_lock = owns_lock;
-        if !owns_lock && !frozen {
-            // SAFETY: as above - no Ruby since the borrow.
-            let copy = OwnedBuf::copy_from(unsafe { bytes_at(ptr, len) }).or_oom()?;
-            /* The copy's heap storage does not move with the view. */
-            view.ptr = copy.as_slice().as_ptr();
-            view._copy = Some(copy);
-        }
-        /* The coderange `check` may consult is the String's current one, and
-         * the String has not changed since the bytes were taken. */
-        // SAFETY: the held bytes, live for the view's life.
-        match check(s, unsafe { bytes_at(view.ptr, view.len) }) {
-            /* Dropping the view releases a lock it took. */
+        let bytes = copy_bytes(s).or_oom()?;
+        match check(s, bytes.as_slice()) {
             Some(problem) => Err(Refusal::Check(problem)),
-            None => Ok(view),
+            None => Ok(RubyStr {
+                bytes,
+                contract: core::marker::PhantomData,
+            }),
         }
     }
 }
@@ -259,14 +158,10 @@ impl<C: Checked> Deref for RubyStr<C> {
     type Target = str;
 
     fn deref(&self) -> &str {
-        // SAFETY: `ptr`/`len` are the bytes of the String this view anchors
-        // (so alive and unmoved) and that no Ruby can change - frozen, or held
-        // locked until `Drop` unlocks it, which cannot run while `&self` is
-        // borrowed, and nobody else unlocks a lock this view took - or the
-        // view's own copy, which it owns for as long. Either way they were
-        // checked for valid UTF-8 (`Checked`: both contracts include it) when
-        // the view was built.
-        unsafe { core::str::from_utf8_unchecked(bytes_at(self.ptr, self.len)) }
+        // SAFETY: the view's own bytes, checked for valid UTF-8 (`Checked`:
+        // both contracts include it) when the view was built, and unchanged
+        // since - nothing but `Drop` touches them.
+        unsafe { core::str::from_utf8_unchecked(self.bytes.as_slice()) }
     }
 }
 
@@ -278,75 +173,54 @@ impl RubyText {
     }
 }
 
-impl RubyBytes {
-    /// The bytes.
-    ///
-    /// # Safety
-    /// No Ruby code may run, and so mutate the String, while the slice is used.
-    pub(crate) unsafe fn bytes(&self) -> &[u8] {
-        bytes_at(self.ptr, self.len)
-    }
+/* ---- reading a String's bytes ---- */
 
-    /// The bytes copied into an owned buffer, usable while the GVL is released
-    /// or across a Ruby allocation. An allocation failure is an `Err` - a
-    /// caller that needed the bytes must not carry on without them.
-    pub fn to_owned_buf(&self) -> Result<OwnedBuf, Error> {
-        // SAFETY: the copy runs no Ruby code, and the guard anchors the String.
-        OwnedBuf::copy_from(unsafe { self.bytes() })
-            .ok_or_else(|| makiri_error("out of memory reading a Ruby string"))
-    }
-}
-
-impl<C> Drop for RubyStr<C> {
-    fn drop(&mut self) {
-        if self.owns_lock {
-            let v = self.value;
-            // SAFETY: the String this view locked, still alive (the view
-            // anchors it). Only the locker unlocks, so it is still locked.
-            let _ = protect(|| unsafe { rb_sys::rb_str_unlocktmp(v) });
-        }
-        core::hint::black_box(self.value);
-    }
-}
-
-/// `len` bytes at `ptr`, or the empty slice when there are none (whatever the
-/// pointer).
+/// The `(ptr, len)` of a String's bytes, as the stable API reads them.
+///
+/// A String by type, so the bytes are read as one without a check. What is
+/// left to the caller is the part no type can say:
 ///
 /// # Safety
-/// When `len > 0`, `ptr` must point to `len` bytes that stay live and unchanged
-/// for `'a`.
+/// The returned slice is valid only until Ruby runs - a GC, a mutation or a
+/// reallocation of the String can move or free the bytes - so it must not be
+/// held across anything that can run Ruby.
 #[inline]
-unsafe fn bytes_at<'a>(ptr: *const u8, len: usize) -> &'a [u8] {
+unsafe fn borrow<'a>(s: RString) -> &'a [u8] {
+    let (s, api) = (s.as_raw(), rb_sys::stable_api::get_default());
+    let (ptr, len) = (api.rstring_ptr(s) as *const u8, api.rstring_len(s) as usize);
     if ptr.is_null() || len == 0 {
         return &[];
     }
     core::slice::from_raw_parts(ptr, len)
 }
 
-/// What the strict-text check found.
+/// Run `f` over the bytes of the live String `s`, borrowed for the call.
 ///
-/// The enum itself lives in [`crate::cutf8`] beside the pure [`text_verdict`];
-/// re-exported here so the bridge's callers keep naming it from this module.
-pub use crate::cutf8::TextVerdict;
-
-/// The `value` + `(ptr, len)` of a String, taken together so the borrow and its
-/// anchor cannot be separated by accident.
-///
-/// A String by type, so the bytes are read as one without a check. What is
-/// left to the caller is the part no type can say:
+/// The one scoped borrow this module offers, for a read that needs no copy
+/// (the XML encoding sniff). The closure's result must not borrow from the
+/// slice, which the signature enforces.
 ///
 /// # Safety
-/// The returned pointer is valid only until Ruby runs - a GC, a mutation or a
-/// reallocation of the String can move or free the bytes - so it must not be
-/// held across anything that can run Ruby or allocate.
-#[inline]
-unsafe fn borrow(s: RString) -> (VALUE, *const u8, usize) {
-    let (s, api) = (s.as_raw(), rb_sys::stable_api::get_default());
-    (
-        s,
-        api.rstring_ptr(s) as *const u8,
-        api.rstring_len(s) as usize,
-    )
+/// `f` must run no Ruby: no allocation of a Ruby object, no method call,
+/// nothing that can trigger a GC or let another thread run.
+pub(super) unsafe fn with_bytes<R>(s: RString, f: impl FnOnce(&[u8]) -> R) -> R {
+    // SAFETY: the caller's contract - nothing runs Ruby while the slice lives.
+    f(unsafe { borrow(s) })
+}
+
+/// A copy of the live String `s`'s bytes, taken with no Ruby in between; `None`
+/// when a heap copy could not be allocated.
+fn copy_bytes(s: RString) -> Option<Bytes> {
+    // SAFETY: the bytes are read and copied in this call, which runs no Ruby:
+    // `Bytes::copy` allocates through libc at most, never through Ruby.
+    unsafe { with_bytes(s, Bytes::copy) }
+}
+
+/// A live Ruby String's raw bytes, copied into an owned buffer.
+pub fn ruby_string_bytes(s: RString) -> Result<OwnedBuf, Error> {
+    // SAFETY: as `copy_bytes` - the copy runs no Ruby.
+    unsafe { with_bytes(s, OwnedBuf::copy_from) }
+        .ok_or_else(|| makiri_error("out of memory reading a Ruby string"))
 }
 
 /* ---- assembling Ruby Strings ---- */
@@ -437,6 +311,12 @@ pub fn dom_name_str(bytes: &[u8]) -> Value {
 
 /* ---- the strict text contract ---- */
 
+/// What the strict-text check found.
+///
+/// The enum itself lives in [`crate::cutf8`] beside the pure [`text_verdict`];
+/// re-exported here so the bridge's callers keep naming it from this module.
+pub use crate::cutf8::TextVerdict;
+
 /// Check `bytes` against the strict contract, returning the specific
 /// violation so each caller can map it to its own error surface (`Makiri::Error`,
 /// `XML::SyntaxError`, or a reason string).
@@ -446,16 +326,13 @@ pub fn dom_name_str(bytes: &[u8]) -> Value {
 /// logic is Ruby-free and testable under the always-compiled core.
 ///
 /// `coderange_str` is consulted only for its CACHED coderange, which never
-/// scans and never allocates - so a caller may pass bytes it borrowed from a
-/// String and still hold them afterwards. Allocation-free - see the module
-/// docs.
+/// scans and never allocates.
 pub fn text_check(coderange_str: RString, bytes: &[u8]) -> TextVerdict {
     /* The cached coderange reads flags; it never scans and never allocates. */
     crate::cutf8::text_verdict(bytes, ruby_str_known_valid_utf8(coderange_str))
 }
 
-/// The error for a checked view whose bytes could not be copied - see
-/// [`RubyStr::acquire`].
+/// The error for a checked view whose bytes could not be copied.
 fn oom_reading() -> Error {
     makiri_error("out of memory reading a Ruby string")
 }
@@ -500,7 +377,7 @@ pub fn ruby_verified_name(in_: Value, what: &str) -> Result<RubyText, Error> {
 /// The one acquisition behind [`ruby_verified_text`] and
 /// [`ruby_verified_name`], which differ only in what a NUL raises: `on_nul`
 /// is handed the message. Everything else - invalid UTF-8, a copy that ran out
-/// of memory, a raise while locking - is answered the same way for both.
+/// of memory - is answered the same way for both.
 fn verified_text_raising(
     in_: Value,
     what: &str,
@@ -519,7 +396,6 @@ fn verified_text_raising(
         )),
         Refusal::Check(v) => text_error(what, v.problem().unwrap_or_default()),
         Refusal::Oom => oom_reading(),
-        Refusal::Raised(e) => e,
     })
 }
 
@@ -533,24 +409,7 @@ pub fn ruby_verified_data(in_: Value, what: &str) -> Result<RubyData, Error> {
     RubyData::acquire(s, |s, b| text_check(s, b).data_problem()).map_err(|r| match r {
         Refusal::Check(problem) => text_error(what, problem),
         Refusal::Oom => oom_reading(),
-        Refusal::Raised(e) => e,
     })
-}
-
-/// A borrowed raw byte view. Deliberately enforces nothing: HTML parsing
-/// consumes raw bytes and decodes invalid UTF-8 leniently, like a browser.
-///
-/// `s` is a String by type, so there is nothing to convert, and nothing here
-/// can raise. The view's bytes are [`borrow`]'s: valid only until Ruby runs.
-pub unsafe fn ruby_bytes_view(s: RString) -> RubyBytes {
-    let (value, ptr, len) = borrow(s);
-    RubyBytes::from_raw_parts(value, ptr, len)
-}
-
-/// A live Ruby String's raw bytes, copied into an owned buffer.
-pub fn ruby_string_bytes(s: RString) -> Result<OwnedBuf, Error> {
-    // SAFETY: `s` is a live Ruby String; the view anchors it for the copy.
-    unsafe { ruby_bytes_view(s) }.to_owned_buf()
 }
 
 /* ---- encoding ---- */
@@ -706,18 +565,17 @@ pub fn ruby_to_utf8_value(s: RString) -> Result<RString, Error> {
 }
 
 /// A Ruby String as HTML parser input, under the text-input contract: its
-/// encoding honoured ([`ruby_to_utf8_value`]), and whether the bytes are
-/// already known to be valid UTF-8, so the parser can skip its sanitisation.
+/// encoding honoured ([`ruby_to_utf8_value`]), its bytes copied out, and
+/// whether they are already known to be valid UTF-8, so the parser can skip
+/// its sanitisation.
 ///
-/// The one place that turns a Ruby String into bytes a Lexbor parser reads.
+/// The one place that turns a Ruby String into bytes an HTML parser reads.
 /// Both HTML entry points - a document parse and a fragment parse - take their
-/// input through it, so the engine below never sees a `VALUE`.
-///
-/// The bytes are borrowed from the String, or from the transcoded copy, which
-/// the guard inside keeps alive: like every [`RubyStr`], this lives on the
-/// stack and is read only while no Ruby code runs.
+/// input through it, so the engine below never sees a `VALUE`. The copy is
+/// what a document parse needs anyway, to read the source with the GVL
+/// released.
 pub struct HtmlSource {
-    view: RubyBytes,
+    bytes: OwnedBuf,
     known_valid: bool,
 }
 
@@ -728,11 +586,9 @@ impl HtmlSource {
         /* A transcode replaced every invalid or unmappable byte, so its result
          * is valid UTF-8 whatever its coderange says. */
         let transcoded = src.as_raw() != s.as_raw();
-        // SAFETY: `src` is a live String; the view anchors it.
         let known_valid = transcoded || ruby_str_known_valid_utf8(src);
-        // SAFETY: as above.
-        let view = unsafe { ruby_bytes_view(src) };
-        Ok(HtmlSource { view, known_valid })
+        let bytes = ruby_string_bytes(src)?;
+        Ok(HtmlSource { bytes, known_valid })
     }
 
     /// Whether the bytes are valid UTF-8 already - never a scan, only what
@@ -742,17 +598,13 @@ impl HtmlSource {
     }
 
     /// The bytes.
-    ///
-    /// # Safety
-    /// No Ruby code may run, and so move or mutate the String, while the slice
-    /// is used.
-    pub unsafe fn bytes(&self) -> &[u8] {
-        self.view.bytes()
+    pub fn bytes(&self) -> &[u8] {
+        self.bytes.as_slice()
     }
 
-    /// The bytes copied out, for a parse that runs with the GVL released.
-    pub fn to_owned_bytes(&self) -> Result<OwnedBuf, Error> {
-        self.view.to_owned_buf()
+    /// The bytes, owned - for a parse that runs with the GVL released.
+    pub fn into_bytes(self) -> OwnedBuf {
+        self.bytes
     }
 }
 
@@ -783,38 +635,29 @@ fn ruby_str_known_valid_utf8(str: RString) -> bool {
     }
 }
 
-/// [`ruby_try_verified_text`] for two Strings at once (a `{prefix => uri}` pair),
-/// as a safe call: both are live Strings.
+/// [`ruby_try_verified_text`] for two Strings at once (a `{prefix => uri}`
+/// pair): both are live Strings.
 pub fn ruby_try_verified_text_pair(
     a: RString,
     b: RString,
     max_bytes: usize,
-) -> Result<Result<(RubyText, RubyText), &'static str>, Error> {
-    let a = match ruby_try_verified_text(a, max_bytes)? {
-        Ok(a) => a,
-        Err(reason) => return Ok(Err(reason)),
-    };
-    Ok(ruby_try_verified_text(b, max_bytes)?.map(|b| (a, b)))
+) -> Result<(RubyText, RubyText), &'static str> {
+    let a = ruby_try_verified_text(a, max_bytes)?;
+    let b = ruby_try_verified_text(b, max_bytes)?;
+    Ok((a, b))
 }
 
 /// The non-raising form: the checked view, or a static reason on rejection.
-/// Nothing is coerced: `sv` is a String by type. The outer `Err` is an
-/// exception raised meanwhile - an interrupt - which is not a rejection and
-/// must not be reported as one.
-pub fn ruby_try_verified_text(
-    sv: RString,
-    max_bytes: usize,
-) -> Result<Result<RubyText, &'static str>, Error> {
-    let acquired = RubyText::acquire(sv, |s, b| {
+/// Nothing is coerced: `sv` is a String by type.
+pub fn ruby_try_verified_text(sv: RString, max_bytes: usize) -> Result<RubyText, &'static str> {
+    RubyText::acquire(sv, |s, b| {
         if b.len() > max_bytes {
             return Some("string exceeds the maximum length");
         }
         text_check(s, b).reason()
-    });
-    match acquired {
-        Ok(view) => Ok(Ok(view)),
-        Err(Refusal::Check(reason)) => Ok(Err(reason)),
-        Err(Refusal::Oom) => Ok(Err("could not be copied (out of memory)")),
-        Err(Refusal::Raised(e)) => Err(e),
-    }
+    })
+    .map_err(|r| match r {
+        Refusal::Check(reason) => reason,
+        Refusal::Oom => "could not be copied (out of memory)",
+    })
 }
