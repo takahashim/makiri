@@ -80,8 +80,8 @@ CSS の項目も、すべて Lexbor の振る舞いを移植版が写したも�
 | C13 | css_syntax F5 | 括弧の中の `!important;` で値を切る | 直した |
 | C14 | css_syntax F6 | 名前とコロンの間のコメントで宣言でなくなる | 直した |
 | C15 | css_syntax F7 | 値の正規化が `\` の後の改行を空白に変え、意味を変える | 直した |
-| C16 | css_syntax U1 | at-rule のブロックの中の宣言を出力しない | 未実装 |
-| C17 | css_syntax U2 | style rule の入れ子の規則と、その後の宣言を出力しない | 未実装 |
+| C16 | css_syntax U1 | at-rule のブロックの中の宣言を出力しない | 直した |
+| C17 | css_syntax U2 | style rule の入れ子の規則と、その後の宣言を出力しない | 対応しない（意図した差） |
 | C18 | css_selectors F1 | 空の `:is()`、`:where()` を構文エラーにする | 直した |
 | C19 | css_selectors F2 | `:has()` の中の無効な項目を捨てる（仕様は unforgiving） | 直した |
 | C20 | css_selectors F3 | `:has()` の中の `:has()` を受け付ける | 直した |
@@ -91,7 +91,7 @@ CSS の項目も、すべて Lexbor の振る舞いを移植版が写したも�
 | C24 | css_selectors F8 | `:is()` などの specificity を最も詳細な項目でなく、成分ごとに 1 に丸める | 直した |
 | C25 | css_selectors F9 | 名前空間の接頭辞のある type selector を C に二度数える | 直した |
 | C26 | css_selectors F10 | specificity の成分を丸めず、上の成分に繰り上げる | 直した |
-| C27 | css_selectors U1 | `[*\|a]`（任意の名前空間の属性）を受け付けない | 未実装 |
+| C27 | css_selectors U1 | `[*\|a]`（任意の名前空間の属性）を受け付けない | 対応しない（意図した差） |
 
 監査で意図した差とした行のうち、二つの差分文書に書いていないものが三つある。入力の NUL と不正な UTF-8 を例外にする（`CLAUDE.md` の text-input contract）、at-rule の入れ子が 64 を超えると例外にする（`lexbor/stylesheet.rs` の `MAX_DEPTH`）、メモリ不足で stylesheet の解析全体を失敗にする（S3 と同じ方針）である。
 

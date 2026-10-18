@@ -14,7 +14,8 @@
 //!     selectors:    [ { text: "div.a", specificity: [a, b, c] }, ... ],
 //!     declarations: [ { name: "display", value: "flex", important: false }, ... ] },
 //!   { type: :bad_style, selector_text: "p::before", declarations: [ ... ] },
-//!   { type: :at_rule, name: "media", prelude: "(min-width: 600px)", rules: [ ... ] } ]
+//!   { type: :at_rule, name: "media", prelude: "(min-width: 600px)", rules: [ ... ],
+//!     declarations: [ ... ] } ]
 //! ```
 //!
 //! The structure is Lexbor's: which rules there are, an at-rule's name and
@@ -79,6 +80,9 @@ pub enum Rule {
         name: Vec<u8>,
         prelude: Vec<u8>,
         rules: Vec<Rule>,
+        /// The declarations in its block (`@font-face`, `@page`), every
+        /// run of them in order (C16).
+        declarations: Vec<Decl>,
     },
 }
 
@@ -339,13 +343,28 @@ fn rules(c: &Conv, list: Option<ItemId>, depth: u32) -> Result<Vec<Rule>, Fail> 
                     name,
                     prelude: slice_trim(c.css, prelude_begin, prelude_end)?,
                     rules: rules(c, block, depth + 1)?,
+                    declarations: block_declarations(c, block)?,
                 })
             }
-            // A block's declarations and anything else: not surfaced.
+            // A block's declarations (an at-rule's are read above, a style
+            // rule's from its own field) and anything else: not surfaced.
             _ => None,
         };
         if let Some(e) = entry {
             out.falloc_push(e).or_oom()?;
+        }
+    }
+    Ok(out)
+}
+
+/// Every declaration of a block's declaration lists, in order.
+fn block_declarations(c: &Conv, block: Option<ItemId>) -> Result<Vec<Decl>, Fail> {
+    let mut out = Vec::new();
+    for (id, item) in c.sheet.rules.children(block) {
+        if let Item::DeclarationList { .. } = item {
+            for d in declarations(c, Some(id))? {
+                out.falloc_push(d).or_oom()?;
+            }
         }
     }
     Ok(out)

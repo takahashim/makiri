@@ -457,4 +457,4 @@ bench（release、同一マシン）でのアリーナ構成と Lexbor 構成の
 
 - **仕様全体の監査（第 8 段、CSS の部分）**：CSS Syntax Level 3 と Selectors Level 4（w3c/csswg-drafts の `7b4c69e`）のうち CSS パーサが扱う範囲を三つの表にした（`docs/parser_audit/css_*.md`、319 行）。逸脱と未実装が 24 項目（C4〜C27）見つかり、C15（移植版の値の正規化）を除いてすべて Lexbor から引き継いだものだった。仕組みは HTML と同じで、`compat` を crate の直下に移し、`lexbor::selector_diff` と `lexbor::stylesheet_diff` が Lexbor 互換の実行を Lexbor と比べ、仕様どおりの実行との差を `css_explains`（stylesheet は `stylesheet_explains`）で許す。直したのは、specificity（C23〜C26）、An+B の後ろの token（C21）、空の `:is()`（C18）、`:has()` の unforgiving と入れ子（C19、C20）、トークナイザの四件（C4〜C6、C8）、`#1a`（C7）、`n-` の桁あふれ（C22）、`!important`（C12、C13）、値の `\` の delim（C15）、宣言か規則かの判定（C9、C14）、block のない規則と `--name:` の prelude（C10、C11）。
 
-残りは、`parse_stylesheet` の出力の形に関わる C16（at-rule の block の中の宣言）と C17（style rule の入れ子の規則と、その後の宣言）、未実装の C27（`[*|a]`）で、いずれも API の形を決めてから入れる。その後が第 9 段である。
+出力の形に関わる三項目は 2026-10-18 に決めた。C16（at-rule の block の中の宣言）は at-rule の Hash に `declarations:` を足して返す。C17（CSS Nesting）と C27（`[*|a]`）は Lexbor と同じく対応せず、意図した差として差分表に記録した。これで第 8 段は終わり、次は第 9 段である。

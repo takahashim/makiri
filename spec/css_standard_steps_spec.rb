@@ -131,4 +131,10 @@ RSpec.describe "CSS Syntax 3 and Selectors 4 steps the CSS parser follows" do
     sheet = Makiri::Lexbor::CSS.parse_stylesheet("--foo:hover { color: blue } a{b:c}")
     expect(sheet.map { |r| r[:selectors].map { |s| s[:text] } }).to eq([["a"]])
   end
+  # C16: a block at-rule holds a list of declarations (@font-face, @page).
+  it "returns the declarations in an at-rule's block" do
+    rule = Makiri::Lexbor::CSS.parse_stylesheet("@font-face { font-family: x; src: url(a) }").first
+    expect(rule[:declarations].map { |d| [d[:name], d[:value]] }).to eq([%w[font-family x], ["src", "url(a)"]])
+    expect(Makiri::Lexbor::CSS.parse_stylesheet("@media print { a{b:c} }").first[:declarations]).to eq([])
+  end
 end

@@ -410,6 +410,28 @@ CSS Syntax Level 3 と Selectors Level 4（w3c/csswg-drafts の `7b4c69ecaf9289d
 - **移植版**：`selectors/parser/syntax.rs` の `phase_qualified_block` が、最上位の prelude を `custom_property_prelude`（`selectors/tokenizer.rs`）で確かめ、当たれば `discard` を付ける。差分の許可は、入力に `--` があるとき。
 - **テスト**：`spec/css_standard_steps_spec.rb`。
 
+### C16 at-rule の block の中の宣言
+
+- **分類**：出力の形の不足（監査の css_syntax U1）。直した（第 8 段）。
+- **仕様**：block を持つ at-rule は、宣言の列と child rules を持つ。`@font-face`（`<declaration-list>`）や `@page`（`<declaration-rule-list>`）の中身は宣言である。
+- **再現**：`@font-face { font-family: x }`。パーサは宣言を解析していたが、読み取り層が捨てていたので、出力は `rules: []` だけだった。Lexbor の DOM を使っていた頃の `parse_stylesheet` も同じだった。
+- **移植版**：`lexbor/stylesheet.rs` の `block_declarations` が block の宣言の列をすべて順に読み、at-rule の Hash に `declarations:` として返す（宣言がなければ `[]`）。既存のキーの中身は変わらない。
+- **テスト**：`spec/css_standard_steps_spec.rb`。
+
+### C17 style rule の入れ子の規則（CSS Nesting）
+
+- **分類**：意図した差（監査の css_syntax U2）。対応しない（2026-10-18 決定）。
+- **仕様**：qualified rule は child rules を持つ。block の中の最初の宣言の列より後の規則と宣言は、入れ子の規則と nested declarations rule になる。
+- **再現**：`a { color: red; & b { c: d } e: f }`。出力は `color: red` だけで、`& b { c: d }` と `e: f` は返らない。
+- **理由**：Lexbor も CSS Nesting を扱わず、Lexbor を使っていた頃の `parse_stylesheet` も同じ答えだった。入れ子の規則を返すには、出力の形を足すことに加えて、セレクタパーサに `&` と相対セレクタの扱いを足す必要がある。利用側（dommy）が入れ子の CSS を必要とするまで入れない。
+
+### C27 `[*|a]`（任意の名前空間の属性）
+
+- **分類**：意図した差（監査の css_selectors U1）。対応しない（2026-10-18 決定）。
+- **仕様**：属性セレクタの名前空間の接頭辞 `*` は、どの名前空間の属性（名前空間のないものを含む）にも当たる。
+- **再現**：`[*|a]` は `Makiri::CSS::SyntaxError` になる。
+- **理由**：Lexbor も受け付けず、移植版は同じ答えを保つ。HTML では名前空間を持つ属性は SVG の `xlink:href` などに限られ、ほとんどの用途は `[a]` で足りる。対応には AST の表現、HTML の matcher、XML の XPath への変換の三か所の変更が要る。
+
 ## パーサの外の項目
 
 次の差は HTML パーサではなく、DOM の上の層（CSS マッチャ、XPath の名前照合）にある。

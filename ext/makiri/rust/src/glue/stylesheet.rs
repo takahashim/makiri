@@ -118,11 +118,13 @@ fn rules_to_ruby(ruby: &Ruby, k: &Keys, rs: &[Rule]) -> Result<RArray, Error> {
                 name,
                 prelude,
                 rules,
+                declarations,
             } => {
                 h.aset(k.type_, k.sym_at_rule)?;
                 h.aset(k.name, str_of(ruby, name))?;
                 h.aset(k.prelude, str_of(ruby, prelude))?;
                 h.aset(k.rules, rules_to_ruby(ruby, k, rules)?)?;
+                h.aset(k.declarations, decls_to_ruby(ruby, k, declarations)?)?;
             }
         }
         a.push(h)?;
