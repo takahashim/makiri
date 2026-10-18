@@ -760,7 +760,7 @@ namespace :conformance do
   task :parser do
     sh "#{FileUtils::RUBY} spec/conformance/parser_data.rb"
     Dir.chdir("ext/makiri/rust") do
-      sh "cargo test --no-default-features --features lexbor -- --include-ignored conformance html::"
+      sh "cargo test --no-default-features --features lexbor -- --include-ignored conformance html:: res_tests"
     end
   end
 

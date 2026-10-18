@@ -643,15 +643,22 @@ fn names_are_lexbors() {
     check_or_write("names.rs", &generate_names());
 }
 
+/// The checked-in table is Lexbor's tree; needs no fetched data, so it runs
+/// everywhere.
 #[test]
+fn entities_are_lexbors_tree() {
+    check_or_write("entities.rs", &generate_entities(&lexbor_entities()));
+}
+
+/// Lexbor's tree is the WHATWG list. Needs the fetched entities.json.
+#[test]
+#[ignore = "needs entities.json; run by `rake conformance:parser`"]
 fn entities_are_the_whatwg_list_in_lexbors_tree() {
-    let built = build_entities();
     assert_eq!(
-        built,
+        build_entities(),
         lexbor_entities(),
         "the tree built from entities.json is not Lexbor's"
     );
-    check_or_write("entities.rs", &generate_entities(&built));
 }
 
 #[test]
