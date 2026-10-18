@@ -47,4 +47,9 @@ RSpec.describe "HTML Standard steps the port takes and Lexbor does not" do
     doc = Makiri::HTML("<template><tbody></tbody><p><b></p> </template>")
     expect(doc.at_css("template").inner_html).to eq("<tbody></tbody><p><b></b></p> ")
   end
+  # P5: "in column group", a DOCTYPE token: parse error, ignore the token.
+  it "ignores a DOCTYPE in a column group" do
+    doc = Makiri::HTML("<table><colgroup><!doctype html><col></table>")
+    expect(doc.at_css("table").to_html).to eq("<table><colgroup><col></colgroup></table>")
+  end
 end

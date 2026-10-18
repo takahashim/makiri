@@ -69,6 +69,14 @@ P で始まる項目は HTML パーサの振る舞いである。
 - **移植版**：`html/tree/modes/in_table.rs` の `text_open` が template を一覧に含める。差分の許可は入力に `template` があるとき。
 - **テスト**：WPT にない。`spec/html_standard_steps_spec.rb`。
 
+### P5 "in column group" の DOCTYPE token
+
+- **分類**：参照実装の未対応（監査で見つけた）。移植版で直した。
+- **仕様**："in column group" の「A DOCTYPE token: Parse error. Ignore the token.」。
+- **再現**：`<table><colgroup><!doctype html><col></table>`。仕様では colgroup は一つで col を含み、Lexbor は DOCTYPE で colgroup を閉じて二つ目を作る。
+- **移植版**：`html/tree/modes/in_column_group.rs` に DOCTYPE の分岐を足した。差分の許可は入力に `doctype` があり、`col` があるか context が colgroup のとき。
+- **テスト**：WPT `domjs-unsafe.dat` #34 はこの分岐を通るが、次が `</colgroup>` なので差が出ない。`spec/html_standard_steps_spec.rb`。
+
 ### L1 ソース位置の規則
 
 - **分類**：意図した変更（移植計画の「ソース位置の規則」）。Lexbor の DOM のビルドは旧来の答えのまま。

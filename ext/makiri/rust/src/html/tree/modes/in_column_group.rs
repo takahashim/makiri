@@ -3,6 +3,7 @@
 
 use crate::html::res::names as res;
 use crate::html::tokenizer::Tokenizer;
+use crate::html::tree::compat::{self, Fix};
 use crate::html::tree::error::TreeErrorId as E;
 use crate::html::tree::{Mode, Tok, TreeBuilder, TreeStatus};
 
@@ -58,6 +59,12 @@ pub fn in_column_group(
                 return true;
             }
             anything_else(tree, tok)
+        }
+        /* "A DOCTYPE token: parse error, ignore the token." Lexbor has no
+         * branch for it, and closes the colgroup (P5). */
+        res::TAG__EM_DOCTYPE if compat::fixed(Fix::P5) => {
+            tree.parse_error(tok, E::Unto);
+            true
         }
         res::TAG__EM_COMMENT => {
             if tree.insert_comment(tkz, tok, None).is_err() {

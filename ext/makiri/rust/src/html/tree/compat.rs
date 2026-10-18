@@ -23,6 +23,8 @@ pub enum Fix {
     /// "In table" takes character tokens to "in table text" when the current
     /// node is a `template` too.
     P4,
+    /// "In column group" ignores a DOCTYPE token.
+    P5,
     /// An element carries its start tag's offset when it was created for
     /// that tag's token, and no other (`Node#line`); not a tree change, so
     /// [`explains`] never names it: the harnesses compare the trees without
@@ -100,6 +102,11 @@ pub fn explains(input: &[u8], context: Option<&str>) -> Vec<Fix> {
      * template's table contents. */
     if has(input, b"template") {
         fixes.push(Fix::P4);
+    }
+    /* P5: a DOCTYPE in "in column group". */
+    let colgroup = context == Some("colgroup");
+    if has(input, b"doctype") && (has(input, b"col") || colgroup) {
+        fixes.push(Fix::P5);
     }
     fixes
 }
