@@ -83,4 +83,10 @@ RSpec.describe "CSS Syntax 3 and Selectors 4 steps the CSS parser follows" do
     expect(doc.css("li:nth-child(n-99999999999999999999)").size).to eq(2)
     expect(doc.css("li:nth-child(n- 99999999999999999999)").size).to eq(2)
   end
+  # C15: serialization round-trips; a <delim-token> holding "\" is written
+  # as "\" followed by a newline.
+  it "keeps the newline after a backslash delim in a declaration's value" do
+    values = Makiri::Lexbor::CSS.parse_stylesheet("a{b: c\\\nd; e: x \\\n}").first[:declarations].map { |d| d[:value] }
+    expect(values).to eq(["c\\\nd", "x \\\n"])
+  end
 end

@@ -41,6 +41,7 @@
 
 #![forbid(unsafe_code)]
 
+use crate::compat::{self, Fix};
 use crate::falloc::{self, OomOption, OomResult, Reserve, VecPush};
 use crate::lexbor::selector_text;
 use crate::selectors::ast::ListId;
@@ -141,6 +142,10 @@ pub fn normalize_value(css: &[u8], begin: usize, end: usize) -> Result<Vec<u8>, 
     let mut tkz = Tokenizer::new(src);
     tkz.with_comment = true;
     let mut space = false;
+    /* A `\` delim is a backslash before a newline, and it must stay before
+     * one: before a space it would read back as an escape (C15). The
+     * newline written after it stands for the whitespace that follows. */
+    let mut after_backslash = false;
     loop {
         let Some(token) = tkz.token() else {
             return Err(match tkz.status {
@@ -151,19 +156,38 @@ pub fn normalize_value(css: &[u8], begin: usize, end: usize) -> Result<Vec<u8>, 
         tkz.consume();
         match token.ty {
             TokenType::Eof => break,
+            TokenType::Whitespace if after_backslash => after_backslash = false,
             TokenType::Whitespace => space = !out.is_empty(),
             _ => {
                 let text = src
                     .get(token.offset..token.offset + token.length)
                     .unwrap_or(&[]);
-                out.falloc_reserve(text.len() + 1).or_oom()?;
+                out.falloc_reserve(text.len() + 2).or_oom()?;
                 if space {
                     out.push(b' ');
                     space = false;
                 }
                 out.extend_from_slice(text);
+                after_backslash = token.ty == TokenType::Delim
+                    && token.delim == u32::from(b'\\')
+                    && compat::fixed(Fix::C15);
+                if after_backslash {
+                    out.push(b'\n');
+                }
             }
         }
+    }
+    /* The value's range ends before the whitespace after it, so a backslash
+     * that closes it (one not escaped by another) read as an escape at its
+     * end; in the text it was a delim before a newline. */
+    let trailing = out.iter().rev().take_while(|&&b| b == b'\\').count();
+    if trailing % 2 == 1
+        && !after_backslash
+        && matches!(css.get(end), Some(b'\n' | b'\r' | 0x0C))
+        && compat::fixed(Fix::C15)
+    {
+        out.falloc_reserve(1).or_oom()?;
+        out.push(b'\n');
     }
     Ok(out)
 }

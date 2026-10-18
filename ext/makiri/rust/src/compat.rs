@@ -101,6 +101,8 @@ pub enum Fix {
     C7,
     /// `url(` followed by nothing but whitespace is a URL token.
     C8,
+    /// A value keeps a newline after a backslash delim.
+    C15,
     /// `:has()` is unforgiving: an invalid item invalidates the selector.
     C19,
     /// `:has()` is not valid inside `:has()`.
