@@ -58,6 +58,17 @@ P で始まる項目は HTML パーサの振る舞いである。
 - **テスト**：WPT `tests19.dat` #51、`plain-text-unsafe.dat` #24。
 - **入れる段**：7。移植の初期実装は、この読み飛ばしを Lexbor のとおりに再現する。
 
+## 安全性のための差
+
+移植計画の「変更の二つの種類」の例外として、参照実装の未定義動作を再現しない箇所を記録する。
+
+### S1 selectedness の設定アルゴリズムの step 2
+
+- **分類**：安全性のための変更（参照実装の未定義動作）。
+- **箇所**：Lexbor の `lxb_html_select_selectedness_setting_algorithm` は、display size が 1 のときだけ step 1 で数を数え、step 2 ではその数を display size によらず読む。display size が 1 でない（`size` 属性が 1 以外）とき、読む値は未初期化である。
+- **移植版**：display size が 1 でないときは step 2 を行わない（`html/tree/select.rs`）。
+- **影響**：`size` が 1 以外で、selected な option が二つ以上あり、`<selectedcontent>` を持つ select の、複製される option が変わりうる。Lexbor の答えはスタックの内容次第で決まらない。
+
 ## パーサの外の項目
 
 次の差は HTML パーサではなく、DOM の上の層（CSS マッチャ、XPath の名前照合）にある。

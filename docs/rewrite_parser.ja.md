@@ -407,6 +407,16 @@ Lexbor の DOM に tree builder を向けると、その癖（`attr_append` が 
 
 bench（release、同一マシン）でのアリーナ構成と Lexbor 構成の比は次のとおり。parse は 0.71 倍（複製の分。tree builder の移植で消える）、`to_html` は 1.51 倍、CSS `ul li.item` は 0.80 倍、`//li` と属性軸は約 0.9 倍で、残りは誤差の範囲である。ノードあたりのメモリは Lexbor の約半分（90 B と 178 B）である。
 
-残っている確認は二つある。ASan での全スペックは nightly ツールチェーンがこの環境にないため未実施である。fuzz（`html_diff` と `lexbor-reference` フィーチャ）もまだない。CSS の 0.80 倍は第 9 段より前に原因を調べる。
+残っている確認は二つある。ASan での全スペックは nightly ツールチェーンがこの環境にないため未実施である。CSS の 0.80 倍は第 9 段より前に原因を調べる。
 
-次は第 4 段（tree builder の移植）である。書き込み先はアリーナに決まったので、tree builder はアリーナに直接書き、Lexbor からの複製をなくす。
+- **tree builder（第 4 段）**：`src/html/tree/` に Lexbor の `tree.c` と全 insertion mode を一対一で移植し、アリーナへ直接書く形にした。tokenizer は名前表を sink から借りる形に改め（`TokenSink::names`）、tree builder が文書の名前表を持つ。タグのカテゴリ、SVG のタグ名の綴り、属性の調整表は Lexbor の `tag_res.h` と `tree_res.h` から生成する（`html/res/tree.rs`）。`arena-dom` のビルドは Lexbor からの複製をやめ、文書と fragment の両方を移植した tree builder でパースする。木の深さガード、`<select>` の option 数の上限、ソース位置の記録は、Lexbor の token hook と同じく各 token の前後で判定する（`html/tree/guard.rs`）。挿入の時点で判定すると、上限で push してすぐ pop する void 要素のように、hook が受け入れていた入力を拒むためである。
+- **tree builder の検証**：`lexbor::tree_diff` が、Lexbor の木をアリーナに複製したものと移植版の木を、全ノードの種別、名前、名前空間、接頭辞、属性とその並び、`id`/`class` の参照、文字データ、template contents、ソース位置、quirks mode まで比べる。WPT の文書 1,753 件と fragment の全件、無作為な文書 10 万件と fragment で一致し、ガードの判定（深さ 397〜401、option 10,000 と 10,001）も一致する。cargo-fuzz に `html_diff`（`lexbor-reference` フィーチャ）を足した。アリーナのビルドで Ruby の全スペック（1,842 件）、`rake diff`、`rake oom` が通る。
+
+移植で、Lexbor の挙動として次の二つを記録した。
+
+- Lexbor のパーサは tokenizer に keep-duplicate を設定し、重複属性を tokenizer では落とさず、tree builder が名前と名前空間で照合して落とす。このため `<math xmlns=y xmlns=y>` は、一つ目の名前空間が XMLNS に調整された後で照合をすり抜け、属性が二つ残る。移植版の tokenizer にこの設定を足した。
+- Lexbor の DOM は、パース中に要素の挿入と属性の追加と open elements からの pop に反応し、option の selectedness を更新して、選択中の option の子を `<selectedcontent>` に複製する。移植版はこれを `html/tree/select.rs` で同じ時点に行う。Lexbor の selectedness の設定アルゴリズムは、display size が 1 でないときに未初期化の値を読むので、その場合は step 2 を行わない（差分表の S1）。
+
+性能（release、2.6 MB の文書）は、移植版のパースが Lexbor 単体の 1.01 倍、これまでの Lexbor でのパースと複製の 0.57 倍の時間である。
+
+次は第 5 段（CSS）だが、その前に二つを片付ける。fuzz の `html_diff` を CI で回して食い違いを拾うことと、`arena-dom` を既定にするかどうかを bench で判断することである。
