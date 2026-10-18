@@ -30,6 +30,7 @@
 #![forbid(unsafe_code)]
 
 mod actions;
+pub mod compat;
 mod error;
 mod fragment;
 pub mod guard;

@@ -202,7 +202,7 @@ fn wpt_tree_construction() {
             dir.display()
         )
     });
-    let known = known::load();
+    let known = known::load("lexbor");
     let (mut pass, mut skipped, mut known_hit) = (0, 0, 0);
     let mut failures = Vec::new();
     let mut now_passing = Vec::new();
@@ -583,7 +583,7 @@ fn html5lib_tokenizer() {
             dir.display()
         )
     });
-    let known = known::load();
+    let known = known::load("lexbor");
     let (mut pass, mut known_hit, mut skipped) = (0, 0, 0);
     let mut failures = Vec::new();
     let mut now_passing = Vec::new();

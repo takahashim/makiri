@@ -1,0 +1,73 @@
+//! Where the tree builder follows the pinned HTML Standard and Lexbor does not
+//! (`docs/parser_differences.ja.md`, the P items): each such step asks
+//! [`fixed`] whether to take the Standard's branch.
+//!
+//! A build that ships always does. The tests and the reference builds can run
+//! the port as Lexbor ran ([`as_lexbor`]), which is how the differential
+//! harnesses (`lexbor::tree_diff`, the `html_diff` fuzz target) keep holding
+//! the port to Lexbor's tree exactly: they compare the Lexbor-compatible run
+//! against Lexbor, and then the Standard's run against the compatible one,
+//! where a difference must be one an entry of [`explains`] admits - "this
+//! shape of input, and only this shape, may change" (docs/rewrite_parser.ja.md,
+//! 変更の二つの種類). A fix that also changed something else is caught there.
+
+/// One departure from Lexbor, named by its entry in the differences table.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fix {
+    /// Inserting `<body>` implicitly resets frameset-ok (whatwg/html#12908).
+    P1,
+    /// "Parsing template contents" decides the form element pointer.
+    P2,
+    /// A U+FFFD in the input, in foreign content, sets frameset-ok to "not ok".
+    P3,
+}
+
+#[cfg(any(test, feature = "lexbor-reference"))]
+thread_local! {
+    static AS_LEXBOR: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
+}
+
+/// Whether the parse takes the Standard's branch where `fix` departs from
+/// Lexbor: always, except inside [`as_lexbor`].
+#[inline]
+#[allow(dead_code)] // the first fix calls it
+pub(crate) fn fixed(fix: Fix) -> bool {
+    let _ = fix;
+    #[cfg(any(test, feature = "lexbor-reference"))]
+    if AS_LEXBOR.with(core::cell::Cell::get) {
+        return false;
+    }
+    true
+}
+
+/// Run `f` with every fix off: the port parses as Lexbor did. For the
+/// differential harnesses only.
+#[cfg(any(test, feature = "lexbor-reference"))]
+pub fn as_lexbor<R>(f: impl FnOnce() -> R) -> R {
+    struct Reset(bool);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            AS_LEXBOR.with(|c| c.set(self.0));
+        }
+    }
+    let _reset = Reset(AS_LEXBOR.with(|c| c.replace(true)));
+    f()
+}
+
+/// Whether the input holds `word`, ignoring ASCII case.
+#[cfg(any(test, feature = "lexbor-reference"))]
+#[allow(dead_code)] // the first entry calls it
+fn has(input: &[u8], word: &[u8]) -> bool {
+    input
+        .windows(word.len())
+        .any(|w| w.eq_ignore_ascii_case(word))
+}
+
+/// The fixes that may change the tree of `input` (parsed as a document, or
+/// as a fragment in an HTML `context` element named in lower case). An input
+/// no fix explains must build the same tree with the fixes on and off.
+#[cfg(any(test, feature = "lexbor-reference"))]
+pub fn explains(input: &[u8], context: Option<&str>) -> Vec<Fix> {
+    let _ = (input, context);
+    Vec::new()
+}

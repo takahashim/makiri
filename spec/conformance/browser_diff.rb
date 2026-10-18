@@ -160,7 +160,7 @@ out, err, status = Open3.capture3("node", File.join(node_dir, "dump.mjs"), brows
 abort "browser dump failed:\n#{err}" unless status.success?
 results = JSON.parse(out)
 
-known = ParserData.known_divergences
+known = ParserData.known_divergences(Makiri.send(:__lexbor_dom?) ? "lexbor" : "port")
 stats = Hash.new(0)
 reports = []
 cases.each_with_index do |c, i|

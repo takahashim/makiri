@@ -72,11 +72,15 @@ module ParserData
   end
 
   # The classified known divergences: { "tests1.dat#40" => "P1" }.
-  def known_divergences
+  # The entries that hold for `parser` ("lexbor" or "port"): a line's third
+  # field names the parsers that still diverge, both when absent.
+  def known_divergences(parser)
     File.readlines(File.expand_path("parser_known_divergences.txt", __dir__), chomp: true)
         .map(&:strip)
         .reject { |l| l.empty? || l == "#" || l.start_with?("# ") }
-        .to_h { |l| l.split(/\s+/, 3).first(2) }
+        .map(&:split)
+        .select { |_, _, parsers| parsers.nil? || parsers.split(",").include?(parser) }
+        .to_h { |key, id, _| [key, id] }
   end
 end
 

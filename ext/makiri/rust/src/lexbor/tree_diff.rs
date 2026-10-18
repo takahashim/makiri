@@ -17,6 +17,7 @@
 use std::fmt::Write as _;
 
 use crate::html::dom::{Document, NodeId, NodeType};
+use crate::html::tree::compat::{as_lexbor, explains};
 use crate::lexbor::adapter::arena_copy::{copy_children, copy_document};
 use crate::lexbor::adapter::post_parse::parse_html;
 use crate::lexbor::adapter::tree_guard::DepthLimit;
@@ -158,11 +159,20 @@ pub fn first_difference(a: &str, b: &str) -> String {
     )
 }
 
-/// Whether the port builds Lexbor's tree for `input`; the difference when
-/// not.
+/// Whether the port, run as Lexbor ran (`html::tree::compat::as_lexbor`),
+/// builds Lexbor's tree for `input`, and its fixes change that tree only
+/// where `compat::explains` admits it; the difference when not.
 pub fn check(input: &[u8], offsets: bool) -> Result<(), String> {
     let l = lexbor_dump(input, offsets);
-    let p = port_dump(input, offsets);
+    let p = as_lexbor(|| port_dump(input, offsets));
+    if let (Some(c), Some(f)) = (&p, port_dump(input, offsets)) {
+        if *c != f && explains(input, None).is_empty() {
+            return Err(format!(
+                "a fix changed the tree where no entry explains it\n{}",
+                first_difference(c, &f)
+            ));
+        }
+    }
     match (l, p) {
         (Some(l), Some(p)) if l == p => Ok(()),
         (Some(l), Some(p)) => Err(first_difference(&l, &p)),
@@ -246,7 +256,15 @@ pub fn port_fragment(
 pub fn check_fragment(input: &[u8], context: &str) -> Result<(), String> {
     let (tag, ns) = context_ids(context);
     let l = lexbor_fragment(input, tag, ns, DepthLimit::UNLIMITED);
-    let p = port_fragment(input, tag, ns, DepthLimit::UNLIMITED);
+    let p = as_lexbor(|| port_fragment(input, tag, ns, DepthLimit::UNLIMITED));
+    if let (Ok(c), Ok(f)) = (&p, port_fragment(input, tag, ns, DepthLimit::UNLIMITED)) {
+        if *c != f && explains(input, Some(context)).is_empty() {
+            return Err(format!(
+                "a fix changed the fragment where no entry explains it\n{}",
+                first_difference(c, &f)
+            ));
+        }
+    }
     match (l, p) {
         (Ok(l), Ok(p)) if l == p => Ok(()),
         (Ok(l), Ok(p)) => Err(first_difference(&l, &p)),

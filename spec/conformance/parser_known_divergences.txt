@@ -1,10 +1,12 @@
 # HTML tree-construction tests where Makiri's parser disagrees with the pinned
 # data, each classified against the pinned HTML Standard. One per line:
 #
-#   <file>#<index> <id>
+#   <file>#<index> <id> [<parsers>]
 #
 # The id names the entry in docs/parser_differences.ja.md that gives the spec
-# step deciding it. Read by spec/conformance/html5lib_runner.rb and by the
+# step deciding it. <parsers> - lexbor, port, or both comma-separated; both
+# when absent - names the parsers that still diverge: a divergence fixed in the
+# port stays listed for Lexbor, the reference build (MAKIRI_LEXBOR_DOM=1). Read by spec/conformance/html5lib_runner.rb and by the
 # crate's parser conformance tests (ext/makiri/rust/src/conformance/known.rs).
 # A listed test that starts passing fails both runners: remove it here and in
 # the table. A difference nobody has classified is a failure, not an entry.
