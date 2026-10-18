@@ -313,6 +313,14 @@ CSS Syntax Level 3 と Selectors Level 4（w3c/csswg-drafts の `7b4c69ecaf9289d
 - **移植版**：`selectors/tokenizer.rs` の `string_state` が、入力の終わりの `\` を読み飛ばす。トークンを Lexbor と比べるテスト（`selector_port_tests` の `same_tokens`）は `as_lexbor` で比べ、セレクタと stylesheet の比較が差を許す。差分の許可は、入力が `\` で終わるとき。
 - **テスト**：`spec/css_standard_steps_spec.rb`。
 
+### C5 `-` の後の非 ASCII 文字
+
+- **分類**：参照実装の未対応（監査の css_tokenizer F2、F3）。移植版で直した（第 8 段）。
+- **仕様**：would start an ident sequence の U+002D の分岐。二つ目の code point が ident-start code point（非 ASCII なら non-ASCII ident code point）なら真。
+- **再現**：`.-א`（U+05D0）は仕様では class selector。Lexbor は UTF-8 の先頭 byte（0xD7）を Latin-1 の code point の表で引くので偽になり、構文エラーになる。逆に `@-¶ x {}`（U+00B6 は名前に使えない）は、先頭 byte 0xC2 が表で真になるので、名前 `-` の at-rule になる。仕様では at-keyword にならず、`bad_style` である。
+- **移植版**：`selectors/tokenizer.rs` の `start_ident_sequence` が、`-` の後の 0x80 以上の byte を code point に復号して判定する（`start_ident_utf_8_80`、名前を始める非 ASCII 文字の判定と同じ）。差分の許可は、入力に `-` の直後の 0x80 以上の byte があるとき。
+- **テスト**：`spec/css_standard_steps_spec.rb`。
+
 ## パーサの外の項目
 
 次の差は HTML パーサではなく、DOM の上の層（CSS マッチャ、XPath の名前照合）にある。

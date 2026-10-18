@@ -51,4 +51,12 @@ RSpec.describe "CSS Syntax 3 and Selectors 4 steps the CSS parser follows" do
     doc = Makiri::HTML(%(<p t="x"></p><p t="x&#xFFFD;"></p>))
     expect(doc.css(%([t="x\\)).map(&:to_html)).to eq([%(<p t="x"></p>)])
   end
+  # C5: would start an ident sequence, U+002D: true when the next code point
+  # is an ident-start code point - a non-ASCII ident code point included.
+  it "starts a name with a hyphen before a non-ASCII ident code point only" do
+    doc = Makiri::HTML(%(<p class="-א"></p>))
+    expect(doc.css(".-א").size).to eq(1)
+    expect(Makiri::Lexbor::CSS.parse_stylesheet("@-א x {}").first[:name]).to eq("-א")
+    expect(Makiri::Lexbor::CSS.parse_stylesheet("@-¶ x {}").first[:type]).to eq(:bad_style)
+  end
 end

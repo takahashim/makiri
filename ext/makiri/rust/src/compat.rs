@@ -89,6 +89,10 @@ pub enum Fix {
     /// A string ending in a backslash at the end of the input holds nothing
     /// for it.
     C4,
+    /// After a hyphen, a non-ASCII code point starts a name when it is a
+    /// non-ASCII ident code point, not when its UTF-8 lead byte is a Latin-1
+    /// letter.
+    C5,
     /// `:has()` is unforgiving: an invalid item invalidates the selector.
     C19,
     /// `:has()` is not valid inside `:has()`.
@@ -177,6 +181,10 @@ pub fn css_explains(input: &[u8]) -> Vec<Fix> {
     /* C4: a backslash at the end of the input. */
     if input.last() == Some(&b'\\') {
         fixes.push(Fix::C4);
+    }
+    /* C5: a hyphen before a non-ASCII byte. */
+    if input.windows(2).any(|w| w[0] == b'-' && w[1] >= 0x80) {
+        fixes.push(Fix::C5);
     }
     /* C18: an `:is()` or `:where()` left empty. */
     if has(input, b"is(") || has(input, b"where(") {

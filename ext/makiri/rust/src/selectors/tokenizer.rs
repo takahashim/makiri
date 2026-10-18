@@ -1230,7 +1230,12 @@ fn start_ident_sequence(input: &[u8], mut data: usize, end: usize) -> bool {
                 return true;
             }
             /* Lexbor then reads the byte after the hyphen through the name
-             * table, a byte >= 0x80 included. */
+             * table, a byte >= 0x80 included: a UTF-8 lead byte looked up as
+             * a Latin-1 code point. The Standard asks whether the code point
+             * starts a name (C5). */
+            if ch >= 0x80 && compat::fixed(Fix::C5) {
+                return start_ident_utf_8_80(input, &mut data, end);
+            }
             return NAME_MAP[ch as usize] == NAME_START || ch == 0x00;
         } else if ch == b'\\' {
             return valid_escape(input, data, end);
