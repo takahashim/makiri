@@ -26,13 +26,20 @@ pub fn skip_new_line(
     tok.text_start == tok.text_end
 }
 
-/// `lxb_html_tree_insertion_mode_in_body_skip_new_line_textarea`.
+/// `lxb_html_tree_insertion_mode_in_body_skip_new_line_textarea`: the
+/// Standard goes on in "text", which inserts the contents without
+/// reconstructing formatting elements; Lexbor went back to the mode the
+/// `<textarea>` came in.
 pub fn skip_new_line_textarea(
     tree: &mut TreeBuilder<'_>,
     tkz: &mut Tokenizer<'_, '_>,
     tok: &mut Tok,
 ) -> bool {
-    skip_new_line(tree, tkz, tok)
+    let done = skip_new_line(tree, tkz, tok);
+    if compat::fixed(Fix::P12) {
+        tree.mode = Mode::Text;
+    }
+    done
 }
 
 /// `lxb_html_tree_insertion_mode_in_body_text`.

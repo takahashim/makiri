@@ -40,6 +40,8 @@ pub enum Fix {
     /// An attribute written with no value equals one with the value "" when
     /// the active formatting elements are counted.
     P10,
+    /// A `<textarea>`'s contents are read in "text".
+    P12,
     /// An `<input>` whose `type` is "hidden" in any ASCII case leaves
     /// frameset-ok alone.
     P13,
@@ -158,6 +160,10 @@ pub fn explains(input: &[u8], context: Option<&str>) -> Vec<Fix> {
      * written quoted. */
     if has(input, b"\"\"") || has(input, b"''") {
         fixes.push(Fix::P10);
+    }
+    /* P12: a `<textarea>`'s contents. */
+    if has(input, b"textarea") {
+        fixes.push(Fix::P12);
     }
     /* P13: an `<input>` before a `<frameset>`. */
     if has(input, b"frameset") && has(input, b"hidden") {

@@ -95,4 +95,9 @@ RSpec.describe "HTML Standard steps the port takes and Lexbor does not" do
       .to eq("<img><table><tbody><tr></tr></tbody></table>")
     expect(Makiri::DocumentFragment.parse("<image>", context: "table").to_html).to eq("<img>")
   end
+  # P12: "in body", a "textarea" start tag: switch to "text".
+  it "reads a textarea's contents without reconstructing formatting elements" do
+    doc = Makiri::HTML("<p><b></p><textarea>x</textarea>y")
+    expect(doc.at_css("body").inner_html).to eq("<p><b></b></p><textarea>x</textarea><b>y</b>")
+  end
 end

@@ -141,6 +141,14 @@ P で始まる項目は HTML パーサの振る舞いである。
 - **移植版**：`html/tree/modes/in_table.rs` の `anything_else` が "in body" の答えを返す。差分の許可は、入力に `image` があるとき。
 - **テスト**：WPT にない。`spec/html_standard_steps_spec.rb`。
 
+### P12 `<textarea>` の後の "text" insertion mode
+
+- **分類**：参照実装の未対応（監査の in_body F2）。移植版で直した（第 8 段）。
+- **仕様**："in body" の `textarea` 開始タグは、次の LF を無視し、original insertion mode を current mode にして "text" insertion mode に切り替える。"text" の文字 token は active formatting elements を再構築せずに挿入する。
+- **再現**：`<p><b></p><textarea>x</textarea>y`。仕様では `textarea` の子は文字列 `x` だけ。Lexbor は改行を落とす mode の後で元の mode（"in body" など）に戻るので、`b` を `textarea` の中に再構築する（`<textarea><b>x</b></textarea>`）。
+- **移植版**：`html/tree/modes/in_body.rs` の `skip_new_line_textarea` が "text" に切り替える。差分の許可は、入力に `textarea` があるとき。
+- **テスト**：WPT にない。`spec/html_standard_steps_spec.rb`。
+
 ### L1 ソース位置の規則
 
 - **分類**：意図した変更（移植計画の「ソース位置の規則」）。Lexbor の DOM のビルドは旧来の答えのまま。
