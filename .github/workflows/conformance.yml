@@ -50,7 +50,7 @@ jobs:
           ruby-version: "3.4"
           bundler-cache: true
 
-      - name: Compile the extension (builds vendored Lexbor, then the ext)
+      - name: Compile the extension (conformance:parser builds the reference Lexbor itself)
         run: bundle exec rake compile
 
       - name: Install Nokogiri (system gem; the differentials run outside the bundle)

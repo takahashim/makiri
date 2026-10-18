@@ -52,10 +52,10 @@ jobs:
           ruby-version: "3.4"
           bundler-cache: true
 
-      # The targets need the vendored Lexbor library and headers - the crate's
+      # The targets need the reference Lexbor `rake lexbor` builds - the crate's
       # build.rs links the archive and generates bindings from the headers.
-      - name: Compile the extension (builds Lexbor)
-        run: bundle exec rake compile
+      - name: Compile the extension and the reference Lexbor
+        run: bundle exec rake compile lexbor
 
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz --locked

@@ -64,8 +64,15 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libclang-dev clang lld llvm
 
-      - name: Compile the extension (builds vendored Lexbor, then the crate)
+      - name: Compile the extension (the crate alone; no Lexbor)
         run: bundle exec rake compile
+
+      # The reference Lexbor, which the extension no longer links: Clippy's
+      # `--all-features`, the Rust tests and the fuzz crate build the layers
+      # that compare against it.
+      - name: Build the reference Lexbor
+        if: matrix.os == 'ubuntu-latest' && matrix.ruby == '3.4'
+        run: bundle exec rake lexbor
 
       # Warnings are errors: the lints that matter here are the project's own -
       # `clippy.toml`'s disallowed-methods is what enforces that every heap
@@ -237,6 +244,9 @@ jobs:
       # ran under `rake sanitize` while they were a Ruby hook. `--target` keeps
       # the build scripts uninstrumented. Linux only: on macOS an ASan test
       # binary deadlocks in dyld before main (see the Rakefile's cargo-fuzz note).
+      - name: Build the reference Lexbor
+        run: bundle exec rake lexbor
+
       - name: Rust core tests under AddressSanitizer
         working-directory: ext/makiri/rust
         env:

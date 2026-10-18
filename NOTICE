@@ -8,6 +8,13 @@ This product includes software developed by:
   Licensed under the Apache License, Version 2.0
   https://lexbor.com / https://github.com/lexbor/lexbor
 
+  The HTML tokenizer and tree builder under ext/makiri/rust/src/html/ and the
+  CSS syntax, selector and stylesheet parser under
+  ext/makiri/rust/src/selectors/ are Rust ports of Lexbor's, as are the HTML
+  CSS matcher under ext/makiri/rust/src/lexbor/css_match/ and the tag and
+  attribute tables generated from Lexbor's. The extension links no Lexbor
+  code; Lexbor's LICENSE and NOTICE are kept under vendor/lexbor/ in the gem.
+
 The XPath 1.0 engine under ext/makiri/rust/src/xpath/ is an original
 implementation written for this project. No code is derived from libxml2 or
 libxslt.
