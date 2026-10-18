@@ -554,8 +554,10 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            html_xpath, css = the XML lowering, html_css = the
                            HTML matcher over an arbitrary document, asserting
                            css and matches? agree, html_css_diff = the same
-                           matcher against Lexbor's own engine; built on PRs,
-                           run nightly. css-match.yml owns the two html_css*)
+                           matcher against Lexbor's own engine, html_diff =
+                           the ported tree builder against Lexbor's tree,
+                           documents and fragments; built on PRs, run
+                           nightly. css-match.yml owns the two html_css*)
 vendor/lexbor/             git submodule, pinned 05b5d37 (v3.0.0-66), NEVER patched
 spec/fuzz/                 grammar-aware robustness fuzzer
 spec/invariants/           randomized property checks (see its README)
@@ -564,20 +566,24 @@ bench/                     Nokogiri-comparison benchmark
 docs/design_doc.ja.md      authoritative design (read this)
 ```
 
-Five features, and the default is the extension: **`ruby`** (the
+Six features, and the default is the extension: **`ruby`** (the
 magnus boundary + `glue` + `init`; implies `lexbor`), **`lexbor`** (the layers
 that read Lexbor's DOM: the generated ABI, `css`, `lexbor/adapter`, the XPath HTML
 instance), **`alloc-inject`** (the `rake oom` hook, off in any normal build),
 **`css-reference`** (the OLD CSS engine, `lexbor::selectors`, for the
-`html_css_diff` fuzz target; in no build that ships) and **`arena-dom`** (the
+`html_css_diff` fuzz target; in no build that ships), **`lexbor-reference`**
+(`lexbor::tree_diff`, Lexbor's tree beside the ported tree builder's, for the
+`html_diff` fuzz target; in no build that ships) and **`arena-dom`** (the
 parser port's index-arena DOM, `html::dom`, in place of Lexbor's behind the
-`html_dom` facade: Lexbor still parses and the tree is copied in -
+`html_dom` facade, parsed by the ported tree builder `html::tree` -
 `MAKIRI_ARENA_DOM=1 bundle exec rake clean compile` builds it; off by default
 while it is brought up. What the bridge does differently for the two DOMs is
 `bridge::dom`'s alone. `lexbor::arena_tests` holds it to the Lexbor DOM read
-for read, edit for edit, byte for byte).
-The engine - `xml`, `xpath`, `falloc`, `cbuf`, `cutf8` - is behind no gate at
-all. So the fuzz crate builds `--no-default-features --features lexbor,css-reference` and Kani
+for read, edit for edit, byte for byte, and `lexbor::tree_port_tests` holds
+the tree builder to Lexbor's tree node for node).
+The engine - `xml`, `xpath`, `falloc`, `cbuf`, `cutf8`, `html` (the
+tokenizer, the tree builder and the arena) - is behind no gate at
+all. So the fuzz crate builds `--no-default-features --features lexbor,css-reference,lexbor-reference` and Kani
 builds `--no-default-features`. The ~30 features that used to stand here were
 migration scaffolding, one per ported C file, and went with the C.
 

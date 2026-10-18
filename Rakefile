@@ -890,7 +890,7 @@ namespace :fuzz do
   # library and headers (the crate's build.rs links the archive and generates
   # the layout from the headers), which `rake compile` produces - hence the
   # dependency, which is about Lexbor rather than about the bundle.
-  FUZZ_TARGETS = %w[xml xpath xml_xpath css html html_xpath html_css html_css_diff].freeze
+  FUZZ_TARGETS = %w[xml xpath xml_xpath css html html_xpath html_css html_css_diff html_diff].freeze
   # The targets whose input starts with a CSS selector take its dictionary.
   FUZZ_CSS_DICT = %w[html_css html_css_diff].freeze
 

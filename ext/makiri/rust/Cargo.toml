@@ -44,9 +44,10 @@ expect_used = "warn"
 panic = "warn"
 
 [features]
-# Five features. Three name a real optional dependency rather than a step of
-# the C port - a Ruby runtime, a vendored C library, and a test hook - and the
-# fourth, `css-reference`, a test reference (below).
+# Six features. Three name a real optional dependency rather than a step of
+# the C port - a Ruby runtime, a vendored C library, and a test hook - two,
+# `css-reference` and `lexbor-reference`, test references, and the last,
+# `arena-dom`, the parser port's DOM while it is brought up (below).
 #
 # The port's thirty-seven per-file flags are gone. They existed so one C file at
 # a time could be replaced behind an identical ABI; there is no C left to
@@ -74,10 +75,15 @@ alloc-inject = []
 # part of a build that ships.
 css-reference = ["lexbor"]
 
+# Lexbor as the parser port's reference (`lexbor::tree_diff`): its tree,
+# copied into the arena, beside the ported tree builder's, for the
+# `html_diff` fuzz harness. Never part of a build that ships.
+lexbor-reference = ["lexbor"]
+
 # The parser port's index-arena DOM (`crate::html::dom`) in place of Lexbor's
-# DOM, behind the same facade (`crate::html_dom`) - stage 2 of
-# `docs/rewrite_parser.ja.md`: Lexbor still parses, and its tree is copied
-# into the arena. Off by default until it has replaced Lexbor's DOM.
+# DOM, behind the same facade (`crate::html_dom`), parsed by the ported tree
+# builder (`crate::html::tree`) - `docs/rewrite_parser.ja.md`, stage 4. Off by
+# default until it has replaced Lexbor's DOM.
 arena-dom = ["lexbor"]
 
 [dependencies]

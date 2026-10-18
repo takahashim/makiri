@@ -33,7 +33,11 @@ mod res_tests;
 mod arena_tests;
 
 #[cfg(test)]
-pub mod tree_port_tests;
+mod tree_port_tests;
+
+/// The ported tree builder's output against Lexbor's, as comparable dumps.
+#[cfg(any(test, feature = "lexbor-reference"))]
+pub mod tree_diff;
 
 /// Lexbor's generated layout and constants, plus the wrappers that own a raw
 /// Lexbor object. The one module allowed to hold `lxb_*` bindings.

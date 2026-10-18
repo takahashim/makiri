@@ -537,6 +537,10 @@ Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
   relative = path.delete_prefix("#{RUST}/")
   next unless relative.start_with?(*ENGINE_DIRS)
   next if relative.end_with?("selftest.rs", "verify.rs", "tests.rs")
+  # Built only for the tests and the `html_diff` fuzz target
+  # (`lexbor-reference`), never in a build that ships - a test file by
+  # another name.
+  next if relative == "lexbor/tree_diff.rs"
 
   count = comments_removed(File.binread(path)).scan(INFALLIBLE_ALLOC).length
   infallible[relative] = count unless count.zero?
