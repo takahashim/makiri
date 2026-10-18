@@ -133,6 +133,14 @@ P で始まる項目は HTML パーサの振る舞いである。
 - **移植版**：`html/tree/modes/foreign_content.rs` の開始タグの一覧に `sup` を加える。差分の許可は、入力に `sup` と、`svg` か `math`（あるいはその context）があるとき。
 - **テスト**：WPT にない。`spec/html_standard_steps_spec.rb`。
 
+### P14 table の insertion mode の `<image>`
+
+- **分類**：参照実装の未対応（監査の in_body F5）。移植版で直した（第 8 段）。
+- **仕様**："in table" の anything else は foster parenting を有効にして "in body" の規則で処理する。"in body" の `image` 開始タグは tag 名を `img` に変えて再処理するので、`img` はもう一度 "in table" を通って foster parent される。
+- **再現**：`<table><image>`。仕様では `<img>` が table の前に置かれる。Lexbor は "in body" の再処理の要求を捨てるので、`<image>` が消える。"in table body"、"in row"、"in column group" からも同じ。
+- **移植版**：`html/tree/modes/in_table.rs` の `anything_else` が "in body" の答えを返す。差分の許可は、入力に `image` があるとき。
+- **テスト**：WPT にない。`spec/html_standard_steps_spec.rb`。
+
 ### L1 ソース位置の規則
 
 - **分類**：意図した変更（移植計画の「ソース位置の規則」）。Lexbor の DOM のビルドは旧来の答えのまま。

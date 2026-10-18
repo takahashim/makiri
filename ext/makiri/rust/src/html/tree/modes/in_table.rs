@@ -181,19 +181,21 @@ fn form(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> b
 }
 
 /// `lxb_html_tree_insertion_mode_in_table_anything_else`: "in body" with
-/// foster parenting, whose answer Lexbor does not pass on.
+/// foster parenting, whose answer Lexbor did not pass on.
 pub fn anything_else(
     tree: &mut TreeBuilder<'_>,
     tkz: &mut Tokenizer<'_, '_>,
     tok: &mut Tok,
 ) -> bool {
     tree.foster_parenting = true;
-    super::in_body::in_body(tree, tkz, tok);
+    let done = super::in_body::in_body(tree, tkz, tok);
     if tree.status != TreeStatus::Ok {
         return tree.process_abort();
     }
     tree.foster_parenting = false;
-    true
+    /* "In body" asks for its token back only for `<image>`, renamed `<img>`,
+     * which the current mode reprocesses: this one, fostering it again. */
+    done || !compat::fixed(Fix::P14)
 }
 
 /// `lxb_html_tree_insertion_mode_in_table`.

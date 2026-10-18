@@ -89,4 +89,10 @@ RSpec.describe "HTML Standard steps the port takes and Lexbor does not" do
     doc = Makiri::HTML("<svg><sup>x</sup></svg>")
     expect(doc.at_css("body").inner_html).to eq("<svg></svg><sup>x</sup>")
   end
+  # P14: "in table", anything else: "in body" reprocesses <image> as <img>.
+  it "fosters an <image> in a table as an <img>" do
+    expect(Makiri::HTML("<table><tr><image>").at_css("body").inner_html)
+      .to eq("<img><table><tbody><tr></tr></tbody></table>")
+    expect(Makiri::DocumentFragment.parse("<image>", context: "table").to_html).to eq("<img>")
+  end
 end

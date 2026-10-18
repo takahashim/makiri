@@ -43,6 +43,9 @@ pub enum Fix {
     /// An `<input>` whose `type` is "hidden" in any ASCII case leaves
     /// frameset-ok alone.
     P13,
+    /// An `<image>` start tag in "in table" is reprocessed as `<img>`, not
+    /// lost.
+    P14,
     /// A `<sup>` start tag breaks out of foreign content.
     P15,
     /// An element carries its start tag's offset when it was created for
@@ -159,6 +162,10 @@ pub fn explains(input: &[u8], context: Option<&str>) -> Vec<Fix> {
     /* P13: an `<input>` before a `<frameset>`. */
     if has(input, b"frameset") && has(input, b"hidden") {
         fixes.push(Fix::P13);
+    }
+    /* P14: an `<image>` start tag reaching "in table"'s anything else. */
+    if has(input, b"image") {
+        fixes.push(Fix::P14);
     }
     /* P15: a `<sup>` in foreign content. */
     if has(input, b"sup")
