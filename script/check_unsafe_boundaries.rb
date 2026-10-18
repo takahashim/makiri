@@ -29,12 +29,12 @@ RUST = File.join(ROOT, "ext/makiri/rust/src")
 # (the unsafe did not disappear, it moved); what ratchets is the total, and the
 # summary prints the `glue/` + `xpath/` subtotal that must reach 0.
 UNSAFE_ISLANDS = {
-  "bridge/alloc.rs" => 4,
+  "bridge/alloc.rs" => 9,
   "bridge/doc.rs" => 3,
   "bridge/fragment.rs" => 6,
   "bridge/gvl.rs" => 5,
   "bridge/html.rs" => 18,
-  "bridge/node_set.rs" => 8,
+  "bridge/node_set.rs" => 3,
   "bridge/node_wrap.rs" => 1,
   "bridge/ruby.rs" => 19,
   "bridge/stack.rs" => 1,

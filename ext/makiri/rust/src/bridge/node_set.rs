@@ -13,9 +13,9 @@
 //!
 //! # This wrapper type lives in the bridge
 //!
-//! It owns its `rb_data_type_t`, its GC `mark`/`size`/free, and a raw
-//! Ruby-allocator buffer, so its layout is private and it belongs with the other
-//! raw-Ruby-ABI seams rather than in the glue. The glue builds a set through
+//! It owns its `rb_data_type_t`, its GC `mark`/`size`/free, and a buffer in
+//! Ruby's allocator (`alloc::RubyVec`), so its layout is private and it belongs
+//! with the other raw-Ruby-ABI seams rather than in the glue. The glue builds a set through
 //! `node_set_with_fill`, `node_set_from` or `node_set_of_nodes`, all over
 //! the Document's opaque `VALUE`; the [`Fill`] handle carries the "this is a
 //! NodeSet" invariant so its pushes are safe.
@@ -28,6 +28,7 @@
 
 #![allow(unsafe_code)]
 
+use crate::bridge::alloc::RubyVec;
 use crate::falloc::Reserve;
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -55,17 +56,8 @@ use crate::bridge::ruby::is_kind_of;
 /* storage                                                            */
 /* ------------------------------------------------------------------ */
 
-/// A growable array of node words held in Ruby's allocator.
-///
-/// Ruby's rather than Rust's on purpose: `ruby_xrealloc2` keeps the buffer
-/// GC-accounted, so a large set contributes to the pressure that decides when a
-/// GC runs. It also raises `NoMemoryError` instead of returning NULL, so there
-/// is no allocation-failure branch to get wrong.
-struct NodeVec {
-    ptr: *mut NodeWord,
-    len: usize,
-    cap: usize,
-}
+/// The set's node array: a [`RubyVec`] under the set's size cap.
+struct NodeVec(RubyVec<NodeWord>);
 
 /// Why a push was refused.
 ///
@@ -99,86 +91,36 @@ impl From<PushError> for Error {
     }
 }
 
-/* SAFETY: the buffer is only ever read or written while the GVL is held, which
- * serialises every Ruby thread. The Send bound comes from magnus's TypedData,
- * which has to assume a wrapped value may be freed on whichever thread runs the
- * GC - still under the GVL. Nothing here is shared without it. */
-unsafe impl Send for NodeVec {}
-
 impl NodeVec {
     const fn new() -> Self {
-        NodeVec {
-            ptr: core::ptr::null_mut(),
-            len: 0,
-            cap: 0,
-        }
+        NodeVec(RubyVec::new())
     }
 
     fn len(&self) -> usize {
-        self.len
+        self.0.len()
+    }
+
+    fn capacity(&self) -> usize {
+        self.0.capacity()
     }
 
     fn as_slice(&self) -> &[NodeWord] {
-        if self.ptr.is_null() {
-            return &[];
-        }
-        // SAFETY: ptr is non-null and holds `len` initialised elements.
-        unsafe { core::slice::from_raw_parts(self.ptr, self.len) }
-    }
-
-    /// Geometric growth, delegated to `falloc::grow_capacity`: double from 8 until
-    /// it covers `need`, falling back to exactly `need` when doubling would
-    /// overshoot what the element size allows. So the only failure is `need`
-    /// itself not fitting, which the caller has already bounded by
-    /// `NODE_SET_MAX`.
-    fn grow_capacity(cap: usize, need: usize) -> Option<usize> {
-        crate::falloc::grow_capacity(cap, need, core::mem::size_of::<NodeWord>())
+        self.0.as_slice()
     }
 
     /// Make room for `n` nodes (at most [`NODE_SET_MAX`]) in one allocation,
     /// so the pushes that follow cannot reallocate - and so cannot raise.
     fn reserve(&mut self, n: usize) {
-        let want = n.min(NODE_SET_MAX);
-        if want > self.cap {
-            self.grow_to(want);
-        }
-    }
-
-    /// Reallocate to exactly `cap` nodes; raises `NoMemoryError` on failure.
-    fn grow_to(&mut self, cap: usize) {
-        // SAFETY: ptr is either null or a live Ruby-allocated block of
-        // `self.cap` elements; `realloc_array` reallocates it and checks the
-        // multiply.
-        self.ptr = unsafe { crate::bridge::alloc::realloc_array(self.ptr, cap) };
-        self.cap = cap;
+        self.0.reserve(n.min(NODE_SET_MAX));
     }
 
     /// Append one node. `Err` only for the size cap or a capacity overflow -
     /// allocation failure raises inside Ruby.
     fn push(&mut self, node: NodeWord) -> Result<(), PushError> {
-        if self.len >= NODE_SET_MAX {
+        if self.0.len() >= NODE_SET_MAX {
             return Err(PushError::SizeLimit);
         }
-        if self.len == self.cap {
-            let new_cap =
-                Self::grow_capacity(self.cap, self.len + 1).ok_or(PushError::CapacityOverflow)?;
-            self.grow_to(new_cap);
-        }
-        // SAFETY: len < cap after the growth above.
-        unsafe { *self.ptr.add(self.len) = node };
-        self.len += 1;
-        Ok(())
-    }
-}
-
-impl Drop for NodeVec {
-    fn drop(&mut self) {
-        if !self.ptr.is_null() {
-            // SAFETY: paired with the reallocation above. Called from the GC's
-            // free, where touching Ruby objects would be wrong but freeing our
-            // own buffer is exactly what the C did.
-            unsafe { crate::bridge::alloc::free(self.ptr) };
-        }
+        self.0.push(node).map_err(|_| PushError::CapacityOverflow)
     }
 }
 
@@ -214,9 +156,11 @@ impl DataTypeFunctions for NodeSet {
         let base = core::mem::size_of::<Self>();
         /* Advisory only, so a busy cell just reports the header. */
         match self.nodes.try_borrow() {
-            Ok(nodes) => {
-                base.saturating_add(nodes.cap.saturating_mul(core::mem::size_of::<NodeWord>()))
-            }
+            Ok(nodes) => base.saturating_add(
+                nodes
+                    .capacity()
+                    .saturating_mul(core::mem::size_of::<NodeWord>()),
+            ),
             Err(_) => base,
         }
     }
