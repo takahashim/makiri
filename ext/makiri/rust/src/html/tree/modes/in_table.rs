@@ -26,12 +26,13 @@ fn text_open(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mut 
     let Some(node) = tree.current_node() else {
         return anything_else(tree, tkz, tok);
     };
-    if tree.ns(node) == res::NS_HTML
-        && matches!(
-            tree.tag(node),
-            res::TAG_TABLE | res::TAG_TBODY | res::TAG_TFOOT | res::TAG_THEAD | res::TAG_TR
-        )
-    {
+    /* The Standard's list has `template` too; Lexbor's does not (P4). */
+    let listed = match tree.tag(node) {
+        res::TAG_TABLE | res::TAG_TBODY | res::TAG_TFOOT | res::TAG_THEAD | res::TAG_TR => true,
+        res::TAG_TEMPLATE => compat::fixed(Fix::P4),
+        _ => false,
+    };
+    if tree.ns(node) == res::NS_HTML && listed {
         tree.pending.list.clear();
         tree.pending.bytes.clear();
         tree.pending.have_non_ws = false;

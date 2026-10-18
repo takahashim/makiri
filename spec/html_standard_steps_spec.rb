@@ -42,4 +42,9 @@ RSpec.describe "HTML Standard steps the port takes and Lexbor does not" do
     doc = Makiri::HTML("<!doctype html><svg>\u0000</svg><frameset><frame>")
     expect(doc.at_xpath("/html/frameset")).not_to be_nil
   end
+  # P4: "in table", a character token: the current node may be a template.
+  it "takes text in a template's table contents to \"in table text\"" do
+    doc = Makiri::HTML("<template><tbody></tbody><p><b></p> </template>")
+    expect(doc.at_css("template").inner_html).to eq("<tbody></tbody><p><b></b></p> ")
+  end
 end

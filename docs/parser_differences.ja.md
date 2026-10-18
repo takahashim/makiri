@@ -61,6 +61,14 @@ P で始まる項目は HTML パーサの振る舞いである。
 - **テスト**：WPT `tests19.dat` #51、`plain-text-unsafe.dat` #24。`spec/html_standard_steps_spec.rb`。
 - **移植版**：`html/tree/modes/foreign_content.rs` の `text` が、U+0000 を置き換える前の文字列で frameset-ok を判定する（U+0000 と空白以外の文字があれば "not ok"）。差分の許可は、入力に `frameset` と `svg` か `math` があり、U+FFFD、`&`（文字参照）、UTF-8 でない byte のどれかがあるとき。
 
+### P4 "in table" の文字 token と template
+
+- **分類**：参照実装の未対応（監査で見つけた）。移植版で直した（第 8 段）。Lexbor の DOM のビルドは旧来の答えのまま。
+- **仕様**："in table" の「A character token, if the current node is table, tbody, template, tfoot, thead, or tr element」。
+- **再現**：`<template><tbody></tbody><p><b></p> </template>`。仕様では空白は "in table text" から template の内容に入り、Lexbor は "in body" で処理して `<b>` を再構築し、その中に入れる。
+- **移植版**：`html/tree/modes/in_table.rs` の `text_open` が template を一覧に含める。差分の許可は入力に `template` があるとき。
+- **テスト**：WPT にない。`spec/html_standard_steps_spec.rb`。
+
 ### L1 ソース位置の規則
 
 - **分類**：意図した変更（移植計画の「ソース位置の規則」）。Lexbor の DOM のビルドは旧来の答えのまま。

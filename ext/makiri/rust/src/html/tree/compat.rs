@@ -20,6 +20,9 @@ pub enum Fix {
     P2,
     /// A U+FFFD in the input, in foreign content, sets frameset-ok to "not ok".
     P3,
+    /// "In table" takes character tokens to "in table text" when the current
+    /// node is a `template` too.
+    P4,
     /// An element carries its start tag's offset when it was created for
     /// that tag's token, and no other (`Node#line`); not a tree change, so
     /// [`explains`] never names it: the harnesses compare the trees without
@@ -92,6 +95,11 @@ pub fn explains(input: &[u8], context: Option<&str>) -> Vec<Fix> {
             || core::str::from_utf8(input).is_err())
     {
         fixes.push(Fix::P3);
+    }
+    /* P4: text where the current node is a template in "in table" - a
+     * template's table contents. */
+    if has(input, b"template") {
+        fixes.push(Fix::P4);
     }
     fixes
 }
