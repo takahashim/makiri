@@ -14,9 +14,9 @@
   を検証してから既定に切り替える。移植の計画と現在地は
   `docs/rewrite_parser.ja.md` に置く
 * XPath 1.0 には仕様に準拠した独自エンジンを作成し、libxml2 等を持ち込まない
-* CSS selectors は、Lexbor の CSS 構文 tokenizer とセレクタパーサを Rust に
-  移植した自前のパーサで解析する (stylesheet の読み取りだけは Lexbor の
-  パーサのまま)。HTML の照合は Lexbor の state machine を安全な Rust に
+* CSS selectors と stylesheet は、Lexbor の CSS 構文 tokenizer、構文パーサ、
+  セレクタパーサを Rust に移植した自前のパーサで解析し、出荷するビルドは
+  Lexbor の CSS パーサを使わない。HTML の照合は Lexbor の state machine を安全な Rust に
   移植した独自 matcher で行い、selector のネストを native stack に
   載せない・照合前に selector 全体を検査する・確保はすべて fallible、を
   守る。XML は自前の XPath エンジン上の評価に落とす
@@ -460,8 +460,10 @@ HTML名前テストとHTML属性ではASCII caseを畳み込み、SVG/MathMLの�
   した。bridge が両者で違う箇所は `bridge::dom` の一つのモジュールに置く。
 * セレクタの構文解析も Lexbor のパーサを移植して自前にした。Lexbor の
   共有アリーナの寿命に縛られずに解析結果をキャッシュで所有できる。
-  stylesheet の読み取り (`parse_stylesheet`) は、API を保つか変えるかを
-  決めるまで Lexbor のパーサのまま残す。
+  stylesheet の読み取り (`parse_stylesheet`) も移植版で解析する。規則の
+  構造と誤りからの回復は Lexbor のままで、宣言の名前と値はプロパティごと
+  の正規化をやめ、どのプロパティにも同じ規則 (名前は小文字、値は空白の
+  連続を詰めた原文) で返す (`docs/rewrite_parser.ja.md` の中間案)。
 * Node の wrapper は node ごとに 1 つとし、document が対応表で cache する
   (§4)。当初は wrapper を cache せず node の identity で比較していたが、
   同じ node を辿るたびに別の object が返ると、`equal?`・instance variable・
