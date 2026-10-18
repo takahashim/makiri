@@ -74,6 +74,7 @@ RSpec.describe "CSS Syntax 3 and Selectors 4 steps the CSS parser follows" do
   it "refuses a hash that does not start a name as an ID selector" do
     doc = Makiri::HTML(%(<p id="1a"></p>))
     expect { doc.css("#1a") }.to raise_error(Makiri::CSS::SyntaxError)
+    expect { doc.css("p#-2") }.to raise_error(Makiri::CSS::SyntaxError)
     expect(doc.css('#\\31 a').size).to eq(1)
   end
   # C22: <ndashdigit-ident> has no bound on its digits; a B too large for a

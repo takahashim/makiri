@@ -1474,7 +1474,10 @@ impl<'a> Parser<'a> {
         /* An ID selector is a hash token whose type flag is "id" (C7):
          * `#1a` is not one. */
         if compat::fixed(Fix::C7) && !self.tkz.hash_is_id(&token) {
-            return self.unexpected_status();
+            /* Consumed, as an accepted one is, and refused as a handler
+             * refuses (`colon`'s): the caller fails the rule. */
+            self.consume();
+            return Status::ErrorUnexpectedData;
         }
         if let Some(last) = self.sel.list_last {
             let mut sp = self.sp(last);
