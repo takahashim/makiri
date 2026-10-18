@@ -305,6 +305,14 @@ CSS Syntax Level 3 と Selectors Level 4（w3c/csswg-drafts の `7b4c69ecaf9289d
 - **移植版**：`selectors/parser.rs` の `pseudo_class_function` が、外側の関数を `inside_has` でたどり、`:has()` の中の `:has()` を不明な擬似クラスと同じく拒む。matcher は入れ子の `:has()` をヒープ上で照合する仕組みを持ったままで、Lexbor の engine と比べるテスト（`lexbor::tests::css_match`）は `as_lexbor` で解析して入れ子の `:has()` を使い続ける。差分の許可は C19 と同じ。
 - **テスト**：`spec/css_standard_steps_spec.rb`。`spec/native_stack_guard_spec.rb` の深い `:has()` は、一つの `:has()` の中に `:is()` を深く入れ子にした形に変えた。
 
+### C4 入力の終わりの `\` で終わる文字列
+
+- **分類**：参照実装の未対応（監査の css_tokenizer F1）。移植版で直した（第 8 段）。
+- **仕様**：consume a string token で、U+005C の次が EOF なら何もしない。
+- **再現**：`[t="x\`（入力がここで終わる）。仕様では値は `x` で、`t="x"` に一致する。Lexbor は escape として U+FFFD を足し、`t="x�"` に一致する。
+- **移植版**：`selectors/tokenizer.rs` の `string_state` が、入力の終わりの `\` を読み飛ばす。トークンを Lexbor と比べるテスト（`selector_port_tests` の `same_tokens`）は `as_lexbor` で比べ、セレクタと stylesheet の比較が差を許す。差分の許可は、入力が `\` で終わるとき。
+- **テスト**：`spec/css_standard_steps_spec.rb`。
+
 ## パーサの外の項目
 
 次の差は HTML パーサではなく、DOM の上の層（CSS マッチャ、XPath の名前照合）にある。

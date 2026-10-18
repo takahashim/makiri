@@ -135,9 +135,12 @@ fn port_tokens(input: &[u8]) -> Vec<Dumped> {
     out
 }
 
+/// The port's tokens are compared as Lexbor read them (`compat::as_lexbor`):
+/// the tokenizer's own departures (C4 and on) are the stylesheet and selector
+/// checks' to admit.
 fn same_tokens(input: &[u8]) {
     let lexbor = lexbor_tokens(input);
-    let port = port_tokens(input);
+    let port = crate::compat::as_lexbor(|| port_tokens(input));
     if lexbor != port {
         let at = lexbor
             .iter()

@@ -19,6 +19,7 @@
 use super::strtod::strtod_internal;
 use super::token::{Span, Token, TokenType};
 use super::Status;
+use crate::compat::{self, Fix};
 use crate::falloc::{Reserve, VecPush};
 
 /// `LXB_CSS_SYNTAX_ERROR_CODEPOINT`.
@@ -537,8 +538,12 @@ impl<'a> Tokenizer<'a> {
                     data += 1;
                     begin = data;
                     if data >= end {
-                        data = self.escaped(data, end)?;
-                        begin = data;
+                        /* A backslash at the end of the input does nothing
+                         * in a string (C4); Lexbor escaped it to U+FFFD. */
+                        if !compat::fixed(Fix::C4) {
+                            data = self.escaped(data, end)?;
+                            begin = data;
+                        }
                         continue;
                     }
                     match self.input[data] {

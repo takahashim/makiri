@@ -68,7 +68,7 @@ CSS の項目も、すべて Lexbor の振る舞いを移植版が写したも�
 
 | id | 表 | 内容 | 状態 |
 |---|---|---|---|
-| C4 | css_tokenizer F1 | 入力の終わりの `\` で終わる文字列に U+FFFD を足す | 未着手 |
+| C4 | css_tokenizer F1 | 入力の終わりの `\` で終わる文字列に U+FFFD を足す | 直した |
 | C5 | css_tokenizer F2、F3 | `-` の後の非 ASCII 文字を、UTF-8 の先頭 byte で名前の始まりと判定する | 未着手 |
 | C6 | css_tokenizer F4 | 129 桁目以降の整数部を捨てる | 未着手 |
 | C7 | css_tokenizer F5、css_selectors F5 | hash token に type flag がなく、`#1a` を ID セレクタとして受け付ける | 未着手 |

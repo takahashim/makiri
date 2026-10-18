@@ -86,6 +86,9 @@ pub enum Fix {
     C21,
     /// An empty `:is()` or `:where()` is valid and matches nothing.
     C18,
+    /// A string ending in a backslash at the end of the input holds nothing
+    /// for it.
+    C4,
     /// `:has()` is unforgiving: an invalid item invalidates the selector.
     C19,
     /// `:has()` is not valid inside `:has()`.
@@ -170,6 +173,10 @@ pub fn css_explains(input: &[u8]) -> Vec<Fix> {
      * simple selectors to fill a component (511). */
     if input.contains(&b':') || input.contains(&b'|') || input.len() >= 1000 {
         fixes.push(Fix::C23);
+    }
+    /* C4: a backslash at the end of the input. */
+    if input.last() == Some(&b'\\') {
+        fixes.push(Fix::C4);
     }
     /* C18: an `:is()` or `:where()` left empty. */
     if has(input, b"is(") || has(input, b"where(") {

@@ -46,4 +46,9 @@ RSpec.describe "CSS Syntax 3 and Selectors 4 steps the CSS parser follows" do
     end
     expect(doc.css("div:is(:has(p))").size).to eq(1)
   end
+  # C4: consume a string token, U+005C at EOF: do nothing.
+  it "adds nothing for a backslash that ends the input inside a string" do
+    doc = Makiri::HTML(%(<p t="x"></p><p t="x&#xFFFD;"></p>))
+    expect(doc.css(%([t="x\\)).map(&:to_html)).to eq([%(<p t="x"></p>)])
+  end
 end
