@@ -1,7 +1,7 @@
 # "in body" insertion mode の監査（HTML Standard de953a7 対 移植版 tree builder）
 
 - 仕様：`spec/source`（commit `de953a7cf0523f5873a1904ba2ce010c689dfb66`）の 147629–149077 行（"in body"、close a p element、adoption agency algorithm）。関連して 142947 行（Noah's Ark）、142970 行（reconstruct）、142825 行（scope）、142773 行（special）、149413 行（"in table" の anything else）を読んだ。
-- 実装：`ext/makiri/rust/src/html/tree/modes/in_body.rs`（以下 `in_body.rs`）、`html/tree/actions.rs`、`html/tree/stacks.rs`、`html/tree/mod.rs`、`html/tree/select.rs`、`html/tree/compat.rs`。行番号は現在の作業ツリーのもの。パスは `ext/makiri/rust/src/html/tree/` からの相対で書く。
+- 実装：`ext/makiri/rust/src/html/tree/modes/in_body.rs`（以下 `in_body.rs`）、`html/tree/actions.rs`、`html/tree/stacks.rs`、`html/tree/mod.rs`、`html/tree/select.rs`、`compat.rs`（今は `src/compat.rs`）。行番号は現在の作業ツリーのもの。パスは `ext/makiri/rust/src/html/tree/` からの相対で書く。
 - `in_body.rs` 自身には `compat::fixed(Fix::...)` の分岐はない。"in body" に関わる修正は P2（`mod.rs:361` の `form_in_template`）だけで、form の開始タグと終了タグが使う。
 - テスト番号は `spec/conformance/html5lib_runner.rb` と同じ数え方（ファイルごとに 1 始まり）。scripting-on のテスト（14 件）は数えていない。
 - 確認の方法：(1) コードを Lexbor（`vendor/lexbor/source/lexbor/html/tree/insertion_mode/in_body.c`）と仕様の両方に照らして読んだ。(2) WPT の `.dat` を入力と期待値で検索し、step ごとに代表のテストを選んだ。(3) 組み込み済みの Ruby 拡張に、手で作った入力と乱択の入力（約 10 万件）を与え、parse5 8.0.1（scripting 無効）の出力と比べた。parse5 は古い `<select>` の規則、`search` 要素、P2、foreign content の一部で固定版の仕様と食い違うので、食い違いはすべて手で仕様をたどって判定した。adoption agency の食い違いは、parse5 の bookmark を移植版と同じ「添字の bookmark」に書き換えた複製が移植版と一致することで、原因を確かめた（後述 F1）。

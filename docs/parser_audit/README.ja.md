@@ -35,7 +35,7 @@ in body の監査は、parse5（scripting off）との無作為な比較も使�
 ## 見つかった逸脱と未実装
 
 すべて Lexbor の振る舞いを移植版が写したもので、WPT の tree construction のデータと html5lib の tokenizer テストのどちらも通らない step にある。
-仕様に寄せるものは、第 7 段と同じ手順（`html/tree/compat.rs` の `fixed`、`explains` の述語、最小再現の spec、差分表の項目）で一件ずつ入れる。
+仕様に寄せるものは、第 7 段と同じ手順（`compat.rs` の `fixed`、`explains` の述語、最小再現の spec、差分表の項目）で一件ずつ入れる。
 
 | id | 表 | 内容 | 状態 |
 |---|---|---|---|

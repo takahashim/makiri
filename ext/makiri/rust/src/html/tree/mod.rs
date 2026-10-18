@@ -30,8 +30,7 @@
 #![forbid(unsafe_code)]
 
 mod actions;
-pub mod compat;
-use compat::Fix;
+use crate::compat::{self, Fix};
 mod error;
 mod fragment;
 pub mod guard;

@@ -1,10 +1,10 @@
 //! The "after after frameset" insertion mode
 //! (`insertion_mode/after_after_frameset.c`).
 
+use crate::compat::{self, Fix};
 use crate::html::dom::NodeId;
 use crate::html::res::names as res;
 use crate::html::tokenizer::Tokenizer;
-use crate::html::tree::compat::{self, Fix};
 use crate::html::tree::error::TreeErrorId as E;
 use crate::html::tree::{is_ws, Tok, TreeBuilder};
 

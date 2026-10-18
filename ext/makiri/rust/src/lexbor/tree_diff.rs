@@ -16,8 +16,8 @@
 
 use std::fmt::Write as _;
 
+use crate::compat::{as_lexbor, explains};
 use crate::html::dom::{Document, NodeId, NodeType};
-use crate::html::tree::compat::{as_lexbor, explains};
 use crate::lexbor::adapter::arena_copy::{copy_children, copy_document};
 use crate::lexbor::adapter::post_parse::parse_html;
 use crate::lexbor::adapter::tree_guard::DepthLimit;
@@ -159,7 +159,7 @@ pub fn first_difference(a: &str, b: &str) -> String {
     )
 }
 
-/// Whether the port, run as Lexbor ran (`html::tree::compat::as_lexbor`),
+/// Whether the port, run as Lexbor ran (`compat::as_lexbor`),
 /// builds Lexbor's tree for `input`, and its fixes change that tree only
 /// where `compat::explains` admits it; the difference when not.
 pub fn check(input: &[u8], offsets: bool) -> Result<(), String> {

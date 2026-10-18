@@ -643,9 +643,9 @@ fn html5lib_tokenizer() {
 /// and all - on one input from one state; the first difference, if any.
 fn tokenizer_difference(input: &[u8], state: State, last: Option<&[u8]>) -> Option<String> {
     let lexbor = tokenize_traced(input, state, last);
-    /* The port as Lexbor ran: its departures (html::tree::compat) are the
+    /* The port as Lexbor ran: its departures (crate::compat) are the
      * conformance tests' and tree_diff's to check. */
-    let port = crate::html::tree::compat::as_lexbor(|| {
+    let port = crate::compat::as_lexbor(|| {
         crate::html::tokenizer::tests::tokenize_traced(input, state, last)
     });
     (lexbor != port).then(|| {

@@ -300,9 +300,7 @@ fn compare_docs(ld: lex::HtmlDoc<'_>, ad: arena::HtmlDoc<'_>, ctx: &str) {
     for (i, (&l, &a)) in p.l.iter().zip(&p.a).enumerate() {
         for (deep, pretty) in [(false, false), (true, false), (false, true), (true, true)] {
             let lo = crate::lexbor::serialize::serialize(l, deep, pretty);
-            let ao = crate::html::tree::compat::as_lexbor(|| {
-                arena::serialize::serialize(a, deep, pretty)
-            });
+            let ao = crate::compat::as_lexbor(|| arena::serialize::serialize(a, deep, pretty));
             assert_eq!(
                 lo.as_ref()
                     .map(|b| String::from_utf8_lossy(b.as_slice()).into_owned()),
@@ -624,10 +622,10 @@ fn edits_leave_the_arena_reading_as_lexbor_does() {
 /// context (`Document#fragment`) and appended to the body.
 ///
 /// The arena's parse is the port's, run as Lexbor ran
-/// (`html::tree::compat::as_lexbor`): what is compared here is the DOM, and
+/// (`compat::as_lexbor`): what is compared here is the DOM, and
 /// the port's departures from Lexbor's tree are `tree_diff`'s to check.
 fn fragment_case(input: &[u8], context: &str) {
-    crate::html::tree::compat::as_lexbor(|| fragment_case_as_lexbor(input, context));
+    crate::compat::as_lexbor(|| fragment_case_as_lexbor(input, context));
 }
 
 fn fragment_case_as_lexbor(input: &[u8], context: &str) {

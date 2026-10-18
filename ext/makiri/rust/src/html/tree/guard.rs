@@ -9,8 +9,8 @@
 //! limit and pop back (a void element at the limit), and the hook never saw
 //! that, so a check at the insertion would refuse inputs the hook accepts.
 
-use super::compat::{self, Fix};
 use super::{Tok, TreeBuilder};
+use crate::compat::{self, Fix};
 use crate::html::dom::NodeId;
 use crate::html::res::names as res;
 

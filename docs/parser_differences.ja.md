@@ -35,7 +35,7 @@ tree construction は WPT から、tokenizer は html5lib-tests から取る。
 P で始まる項目は HTML パーサの振る舞いである。
 いずれも `spec/conformance/parser_known_divergences.txt` に同じ id で載っており、Ruby の runner と crate の runner は該当テストを失敗とせずに報告し、通るようになったら失敗する。三つ目の欄は、まだ食い違うパーサ（`lexbor`、`port`）を示す。移植版で直した項目は `lexbor` だけに残る。
 
-移植版の直し方は、`html/tree/compat.rs` の `fixed` を問う分岐として入れる。出荷するビルドは常に仕様どおりに進み、比較のテストと fuzz は Lexbor 互換の実行（`as_lexbor`）で Lexbor との完全一致を保ったうえで、仕様どおりの実行との差を `explains` の述語が説明できる入力でだけ許す。
+移植版の直し方は、`compat.rs` の `fixed` を問う分岐として入れる。出荷するビルドは常に仕様どおりに進み、比較のテストと fuzz は Lexbor 互換の実行（`as_lexbor`）で Lexbor との完全一致を保ったうえで、仕様どおりの実行との差を `explains` の述語が説明できる入力でだけ許す。
 
 ### P1 暗黙に body を挿入したときの frameset-ok の再設定
 
@@ -43,7 +43,7 @@ P で始まる項目は HTML パーサの振る舞いである。
 - **仕様**：tree construction の「after head」insertion mode の anything else。body 要素を暗黙に挿入するとき、frameset-ok flag を "ok" に戻す。whatwg/html#12908（2026-09-07 merge、issue #3178）で入った。
 - **再現**：`<head><template></template></head><p><frameset>`。仕様では frameset 文書になり、Lexbor は `<body><p>` を作る。`<template>` が "in head" で frameset-ok を "not ok" にしたまま、戻す処理がない。
 - **テスト**：WPT `template.dat` #44、#45、#46。`spec/html_standard_steps_spec.rb`。
-- **移植版**：`html/tree/modes/after_head.rs` の `anything_else` が frameset-ok を "ok" に戻す。差分の許可は `html/tree/compat.rs` の `explains`（入力に `frameset` と `template` があるとき）。
+- **移植版**：`html/tree/modes/after_head.rs` の `anything_else` が frameset-ok を "ok" に戻す。差分の許可は `compat.rs` の `explains`（入力に `frameset` と `template` があるとき）。
 
 ### P2 form element pointer と「parsing template contents」
 

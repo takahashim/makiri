@@ -4,8 +4,8 @@
 //! Lexbor's pop callbacks (`open_pop`) run only the option element's
 //! selectedness, which nothing here models, so a pop is a pop.
 
-use super::compat::{self, Fix};
 use super::{Tok, TreeBuilder, TreeStatus};
+use crate::compat::{self, Fix};
 use crate::falloc::{Reserve, VecPush};
 use crate::html::dom::NodeId;
 use crate::html::res::names as res;

@@ -4,9 +4,9 @@
 //! adjustments, implied end tags, resetting the insertion mode, the scope
 //! tests, and the adoption agency algorithm.
 
-use super::compat::{self, Fix};
 use super::error::TreeErrorId as E;
 use super::{AttrAdjust, Ipos, Mode, Tok, TreeBuilder, TreeStatus};
+use crate::compat::{self, Fix};
 use crate::html::dom::{AttrValue, DomOom, NodeId, NodeType};
 use crate::html::res::names as res;
 use crate::html::res::tree as rt;

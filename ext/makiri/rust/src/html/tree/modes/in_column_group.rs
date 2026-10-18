@@ -1,9 +1,9 @@
 //! The "in column group" insertion mode
 //! (`insertion_mode/in_column_group.c`).
 
+use crate::compat::{self, Fix};
 use crate::html::res::names as res;
 use crate::html::tokenizer::Tokenizer;
-use crate::html::tree::compat::{self, Fix};
 use crate::html::tree::error::TreeErrorId as E;
 use crate::html::tree::{Mode, Tok, TreeBuilder, TreeStatus};
 

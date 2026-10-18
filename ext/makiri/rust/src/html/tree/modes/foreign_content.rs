@@ -1,11 +1,11 @@
 //! The rules for parsing tokens in foreign content
 //! (`insertion_mode/foreign_content.c`).
 
+use crate::compat::{self, Fix};
 use crate::falloc::try_vec_with_capacity;
 use crate::html::res::names as res;
 use crate::html::res::tree as rt;
 use crate::html::tokenizer::{flags, Tokenizer};
-use crate::html::tree::compat::{self, Fix};
 use crate::html::tree::error::TreeErrorId as E;
 use crate::html::tree::{is_ws, AttrAdjust, Tok, TreeBuilder, TreeStatus};
 

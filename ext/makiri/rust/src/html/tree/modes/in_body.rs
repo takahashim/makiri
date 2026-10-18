@@ -2,13 +2,13 @@
 //! two helper modes that skip the newline after `<pre>`, `<listing>` and
 //! `<textarea>`.
 
+use crate::compat::{self, Fix};
 use crate::falloc::try_vec_with_capacity;
 use crate::html::dom::NodeId;
 use crate::html::res::names as res;
 use crate::html::res::tree as rt;
 use crate::html::tokenizer::{flags, plaintext_before, rcdata_before, Tokenizer};
 use crate::html::tree::actions::is_category;
-use crate::html::tree::compat::{self, Fix};
 use crate::html::tree::error::TreeErrorId as E;
 use crate::html::tree::{is_ws, AttrAdjust, Mode, Tok, TreeBuilder, TreeStatus};
 

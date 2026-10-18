@@ -2,9 +2,9 @@
 //! / `_process` / `_end` with no owner document, under the parse guard, into
 //! an arena document of the fragment's own.
 
-use super::compat::{self, Fix};
 use super::guard::{ContextOptions, DepthLimit, Guard, GuardStop};
 use super::{Mode, TreeBuilder, TreeStatus};
+use crate::compat::{self, Fix};
 use crate::html::dom::{Document, DomOom, NodeId};
 use crate::html::res::names as res;
 use crate::html::tokenizer::{Status, Tokenizer};

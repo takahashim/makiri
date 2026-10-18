@@ -153,6 +153,10 @@ pub mod html;
 /// The CSS selector parser port (Ruby- and Lexbor-free).
 pub mod selectors;
 
+/// Where the parser ports follow the specifications and Lexbor does not:
+/// the `fixed(Fix::...)` gate the differential harnesses turn off.
+pub mod compat;
+
 /// The XML reader and its arena. Ruby-free and Lexbor-free.
 pub mod xml;
 

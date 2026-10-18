@@ -6,9 +6,9 @@
 use super::state_comment::comment_before_start;
 use super::state_doctype::doctype_before;
 use super::{flags, is_alnum, is_alpha, ncasecmp_first, seek4, ErrorId, Tokenizer};
+use crate::compat::{self, Fix};
 use crate::html::res::entities::ENTITIES;
 use crate::html::res::{names as res, sbst_find};
-use crate::html::tree::compat::{self, Fix};
 
 /// A state: consume what it can of `[data, end)` and return where it stopped
 /// (`lxb_html_tokenizer_state_f`).

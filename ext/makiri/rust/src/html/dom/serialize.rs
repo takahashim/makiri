@@ -17,8 +17,8 @@
 use super::handle::{HtmlAttr, HtmlElement, HtmlNode, NsId};
 use super::{Document, NodeType};
 use crate::cbuf::{Buf, BufError};
+use crate::compat::{self, Fix};
 use crate::html::res::names as res;
-use crate::html::tree::compat::{self, Fix};
 
 /// Where the output goes. `false` refuses the chunk and stops the walk.
 pub trait Sink {
