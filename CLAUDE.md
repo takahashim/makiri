@@ -577,7 +577,8 @@ instance), **`alloc-inject`** (the `rake oom` hook, off in any normal build),
 parser port's index-arena DOM, `html::dom`, in place of Lexbor's behind the
 `html_dom` facade, parsed by the ported tree builder `html::tree` -
 `MAKIRI_ARENA_DOM=1 bundle exec rake clean compile` builds it; off by default
-while it is brought up. What the bridge does differently for the two DOMs is
+while it is brought up, and CI's `arena-dom` job runs it through the spec
+suite, `rake diff` and `rake oom`. What the bridge does differently for the two DOMs is
 `bridge::dom`'s alone. `lexbor::arena_tests` holds it to the Lexbor DOM read
 for read, edit for edit, byte for byte, and `lexbor::tree_port_tests` holds
 the tree builder to Lexbor's tree node for node).

@@ -151,6 +151,53 @@ jobs:
         shell: bash
         run: bundle exec ruby -Ilib -r makiri -e 'p Makiri::VERSION'
 
+  # The parser port's arena DOM (`arena-dom`, MAKIRI_ARENA_DOM=1): off in the
+  # build that ships while it is brought up, so the matrix above never builds
+  # it. One runner holds it to the same suite, the C-build baseline and the
+  # OOM sweep, plus the Rust tests that exist only under the feature.
+  arena-dom:
+    name: Arena DOM (Ruby 3.4)
+    runs-on: ubuntu-latest
+    env:
+      MAKIRI_ARENA_DOM: "1"
+    steps:
+      - name: Checkout (with vendored Lexbor submodule)
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Ensure cmake is available
+        uses: lukka/get-cmake@latest
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install libclang (bindgen) and the LLVM chain (Lexbor LTO)
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev clang lld llvm
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+
+      - name: Compile the extension with the arena DOM
+        run: bundle exec rake compile
+
+      - name: Rust tests with the arena DOM
+        working-directory: ext/makiri/rust
+        run: cargo test --no-default-features --features lexbor,arena-dom
+
+      - name: Differential
+        run: bundle exec rake diff
+
+      - name: Run the test suite
+        run: bundle exec rake spec
+
+      # Rebuilds with MAKIRI_ALLOC_INJECT=1; the job's MAKIRI_ARENA_DOM carries
+      # into that build.
+      - name: OOM-injection sweep
+        run: bundle exec rake oom
+
   sanitize:
     # AddressSanitizer only. UBSan used to run beside it over the C sources;
     # rustc's -Zsanitizer has no `undefined`, so with the C retired there is
