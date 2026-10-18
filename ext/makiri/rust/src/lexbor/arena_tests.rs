@@ -1087,9 +1087,7 @@ fn xpath_reads_as_lexbor_does_on_wpt_inputs() {
 fn css_case(input: &[u8], selectors: &[&str]) {
     use crate::gvl::Gvl;
     use crate::lexbor::css_match::{self as port, Scratch};
-    use crate::lexbor::css_parser;
     use crate::lexbor::selectors as old_engine;
-    use crate::text::VerifiedText;
     let parsed = parse_html(input, true, DepthLimit::DEFAULT).expect("parses");
     // SAFETY: `parsed` owns the document; only this test touches it.
     let ld = unsafe { parsed.raw_doc().as_doc() };
@@ -1104,8 +1102,9 @@ fn css_case(input: &[u8], selectors: &[&str]) {
                 .into_iter()
                 .map(|r| p.lpos[&(r.as_ptr() as usize)])
                 .collect();
-        let text = VerifiedText::from_bytes(sel.as_bytes()).expect("verified");
-        let groups = css_parser::parse(&gvl, text).ok().expect("parses");
+        let groups = crate::selectors::parse(sel.as_bytes())
+            .ok()
+            .expect("parses");
         let new: Vec<usize> = port::select_all(&mut Scratch::new(), ad.as_node(), groups.groups())
             .unwrap_or_else(|e| panic!("{sel:?} failed: {e:?}"))
             .into_iter()
