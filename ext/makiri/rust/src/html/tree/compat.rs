@@ -78,5 +78,15 @@ pub fn explains(input: &[u8], context: Option<&str>) -> Vec<Fix> {
     if has(input, b"form") && (has(input, b"template") || context == Some("template")) {
         fixes.push(Fix::P2);
     }
+    /* P3: a U+FFFD - written, from a character reference, or where the
+     * input was not UTF-8 - in foreign content, before a `<frameset>`. */
+    if has(input, b"frameset")
+        && (has(input, b"svg") || has(input, b"math"))
+        && (has(input, "\u{FFFD}".as_bytes())
+            || input.contains(&b'&')
+            || core::str::from_utf8(input).is_err())
+    {
+        fixes.push(Fix::P3);
+    }
     fixes
 }

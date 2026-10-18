@@ -55,11 +55,11 @@ P で始まる項目は HTML パーサの振る舞いである。
 
 ### P3 foreign content の U+FFFD と frameset-ok
 
-- **分類**：参照実装の未対応。
+- **分類**：参照実装の未対応。移植版で直した（第 7 段）。Lexbor の DOM のビルドは旧来の答えのまま。
 - **仕様**：foreign content の「Any other character token」は frameset-ok flag を "not ok" にする。U+0000 を置き換えた U+FFFD は別の規則（「A character token that is U+0000 NULL」）で扱われ、flag を変えない。入力に現れた U+FFFD（文字参照で書かれたものを含む）は「Any other character token」に当たる。
 - **再現**：`<!doctype html><svg>&#xFFFD;</svg><frameset><frame>`。仕様では frameset が無視され、Lexbor は frameset 文書を作る。Lexbor の foreign content の文字処理は、NUL の置換で生じた U+FFFD を除外するつもりで、文字列中のすべての U+FFFD を空白と同じく読み飛ばす。"in body" の文字処理にはこの除外がなく、仕様どおりである。
-- **テスト**：WPT `tests19.dat` #51、`plain-text-unsafe.dat` #24。
-- **入れる段**：7。移植の初期実装は、この読み飛ばしを Lexbor のとおりに再現する。
+- **テスト**：WPT `tests19.dat` #51、`plain-text-unsafe.dat` #24。`spec/html_standard_steps_spec.rb`。
+- **移植版**：`html/tree/modes/foreign_content.rs` の `text` が、U+0000 を置き換える前の文字列で frameset-ok を判定する（U+0000 と空白以外の文字があれば "not ok"）。差分の許可は、入力に `frameset` と `svg` か `math` があり、U+FFFD、`&`（文字参照）、UTF-8 でない byte のどれかがあるとき。
 
 ## 安全性のための差
 

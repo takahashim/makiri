@@ -19,6 +19,6 @@ template.dat#46 P1 lexbor
 template.dat#117 P2 lexbor
 template.dat#120 P2 lexbor
 template.dat#124 P2 lexbor
-# P3: U+FFFD in foreign content sets frameset-ok to "not ok"
-tests19.dat#51 P3
-plain-text-unsafe.dat#24 P3
+# P3: U+FFFD in foreign content sets frameset-ok to "not ok"; fixed in the port
+tests19.dat#51 P3 lexbor
+plain-text-unsafe.dat#24 P3 lexbor

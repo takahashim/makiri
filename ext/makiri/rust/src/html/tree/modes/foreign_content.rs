@@ -5,6 +5,7 @@ use crate::falloc::try_vec_with_capacity;
 use crate::html::res::names as res;
 use crate::html::res::tree as rt;
 use crate::html::tokenizer::{flags, Tokenizer};
+use crate::html::tree::compat::{self, Fix};
 use crate::html::tree::error::TreeErrorId as E;
 use crate::html::tree::{is_ws, AttrAdjust, Tok, TreeBuilder, TreeStatus};
 
@@ -91,9 +92,9 @@ fn anything_else(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &
     true
 }
 
-/// `..._foreign_content_text`: U+0000 becomes U+FFFD, and Lexbor's
-/// frameset-ok test passes over every U+FFFD (P3 in
-/// `docs/parser_differences.ja.md`).
+/// `..._foreign_content_text`: U+0000 becomes U+FFFD. Lexbor's frameset-ok
+/// test passes over every U+FFFD, and the Standard's only over the ones a
+/// U+0000 became (P3 in `docs/parser_differences.ja.md`).
 fn text(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> bool {
     let data = tok.text(tkz);
     let replaced;
@@ -117,7 +118,14 @@ fn text(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> b
     if s.is_empty() {
         return true;
     }
-    if tree.frameset_ok {
+    if tree.frameset_ok && compat::fixed(Fix::P3) {
+        /* "Any other character token" sets frameset-ok to "not ok"; only a
+         * U+0000 (the token the replacement came from) and whitespace leave
+         * it. A U+FFFD written in the input is any other character. */
+        if data.iter().any(|&c| c != 0 && !is_ws(c)) {
+            tree.frameset_ok = false;
+        }
+    } else if tree.frameset_ok {
         let mut pos = 0;
         while pos < s.len() {
             if s[pos] == REPLACEMENT[0] {

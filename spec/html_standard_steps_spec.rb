@@ -29,4 +29,17 @@ RSpec.describe "HTML Standard steps the port takes and Lexbor does not" do
     doc = Makiri::HTML("<template><table><form></table></template>")
     expect(doc.at_css("template").inner_html).to eq("<table><form></form></table>")
   end
+
+  # P3: in foreign content, a U+FFFD in the input is "any other character"
+  # and sets frameset-ok to "not ok"; only the one a U+0000 became does not.
+  it "ignores a frameset after a U+FFFD written in foreign content" do
+    doc = Makiri::HTML("<!doctype html><svg>&#xFFFD;</svg><frameset><frame>")
+    expect(doc.at_xpath("/html/frameset")).to be_nil
+    expect(doc.at_xpath("/html/body")).not_to be_nil
+  end
+
+  it "still takes a frameset after a U+0000 in foreign content" do
+    doc = Makiri::HTML("<!doctype html><svg>\u0000</svg><frameset><frame>")
+    expect(doc.at_xpath("/html/frameset")).not_to be_nil
+  end
 end
