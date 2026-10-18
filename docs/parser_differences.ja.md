@@ -289,6 +289,22 @@ CSS Syntax Level 3 と Selectors Level 4（w3c/csswg-drafts の `7b4c69ecaf9289d
 - **移植版**：`selectors/parser.rs` の `function_empty` が、`:is()` と `:where()` を引数のないまま残す。HTML の matcher は空の list に何も一致させない。XML の XPath への変換（`css/lower.rs` の `selector_list_selftest`）は、空の list を `false()` にする。差分の許可は、入力に `is(` か `where(` があるとき。
 - **テスト**：`spec/css_standard_steps_spec.rb`。
 
+### C19 `:has()` の引数は forgiving でない
+
+- **分類**：参照実装の未対応（監査の css_selectors F2）。移植版で直した（第 8 段）。
+- **仕様**：`:has()` は `<relative-selector-list>` を取る。固定した版の変更履歴にあるとおり、`:has()` は forgiving でなくなり、forgiving なのは `:is()` と `:where()` だけである。引数に無効な項目が一つでもあれば、セレクタ全体が無効になる。
+- **再現**：`:has(p, :foo)`、`:has(p,)`。仕様では無効。Lexbor は `:has()` が forgiving だった頃の仕様に従い、無効な項目を捨てて `:has(p)` として受け付ける。
+- **移植版**：`selectors/parser.rs` の `function_error` が、`:has()` の中の誤りを forgiving の経路で扱わない。差分の許可は、入力に `has(` があるとき。
+- **テスト**：`spec/css_standard_steps_spec.rb`。
+
+### C20 `:has()` の中の `:has()`
+
+- **分類**：参照実装の未対応（監査の css_selectors F3）。移植版で直した（第 8 段）。
+- **仕様**：`:has()` は入れ子にできず、`:has()` の中の `:has()` は無効である。論理結合の擬似クラスを通しても同じ。
+- **再現**：`:has(:has(span))`、`:has(p:has(span))`、`:has(:not(:has(p)))`。仕様では無効。Lexbor は受け付ける。`:has(:is(:has(p)))` は、`:is()` が forgiving なので内側の `:has()` だけが捨てられ、`:has(:is())`（何にも一致しない）になる。
+- **移植版**：`selectors/parser.rs` の `pseudo_class_function` が、外側の関数を `inside_has` でたどり、`:has()` の中の `:has()` を不明な擬似クラスと同じく拒む。matcher は入れ子の `:has()` をヒープ上で照合する仕組みを持ったままで、Lexbor の engine と比べるテスト（`lexbor::tests::css_match`）は `as_lexbor` で解析して入れ子の `:has()` を使い続ける。差分の許可は C19 と同じ。
+- **テスト**：`spec/css_standard_steps_spec.rb`。`spec/native_stack_guard_spec.rb` の深い `:has()` は、一つの `:has()` の中に `:is()` を深く入れ子にした形に変えた。
+
 ## パーサの外の項目
 
 次の差は HTML パーサではなく、DOM の上の層（CSS マッチャ、XPath の名前照合）にある。

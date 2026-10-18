@@ -90,7 +90,9 @@ RSpec.describe "native stack guard" do
   # natively: `:has()` crashed the whole process with an uncaught
   # SystemStackError, `of S` raised one that wedged the shared CSS engine for
   # the rest of the process. Now they answer, or raise the work budget - and
-  # the engine stays usable either way.
+  # the engine stays usable either way. (Selectors 4 no longer accepts a
+  # `:has()` inside a `:has()`, so the deep `:has()` case nests `:is()` in
+  # one: the matcher's own tests keep the Lexbor grammar's nested `:has()`.)
   describe "HTML CSS matching, inside a small Fiber" do
     it "answers deep :has()/:is()/:not() nesting or raises the budget, never SystemStackError" do
       status, out, err = run_isolated({ "RUBY_FIBER_MACHINE_STACK_SIZE" => "131072" }, <<~RUBY)
@@ -101,15 +103,15 @@ RSpec.describe "native stack guard" do
           print "\#{e.class}:\#{e.message[/budget|could not/]};"
         end
         deep = Makiri::HTML("<body>" + "<div>" * 302 + "x" + "</div>" * 302 + "</body>")
-        run(deep, ":has(" * 300 + "div" + ")" * 300)
-        mixed = "body" + ":is(:not(p):has(" * 100 + "div" + "))" * 100
+        run(deep, ":has(" + ":is(div " * 300 + "div" + ")" * 301)
+        mixed = "body" + ":is(:not(p)" * 100 + ":has(div)" + ")" * 100
         run(deep, mixed)
         run(Makiri::HTML("<a>x</a>"), ":is(" * 2000 + "a" + ")" * 2000)
         run(Makiri::HTML("<a>x</a>"), ":nth-child(1 of " * 2000 + "a" + ")" * 2000)
         print "after=\#{deep.css('div').length}"
       RUBY
       expect(status).to be_success, err
-      expect(out).to eq("Makiri::Error:budget;n=1;n=1;n=1;after=302"), err
+      expect(out).to eq("n=303;n=1;n=1;n=1;after=302"), err
     end
   end
 
@@ -126,8 +128,8 @@ RSpec.describe "native stack guard" do
       env = { "RUBY_FIBER_MACHINE_STACK_SIZE" => "131072",
               "RUBY_FREE_AT_EXIT" => ENV.fetch("RUBY_FREE_AT_EXIT", nil) }
       status, out, err = run_isolated(env, <<~RUBY)
-        [":is(", ":not(", ":has(", ":nth-child(1 of "].each do |open|
-          sel = open * 5000 + ".a\\\\:b" + ")" * 5000
+        [":is(" * 5000, ":not(" * 5000, ":has(" + ":is(" * 4999, ":nth-child(1 of " * 5000].each do |open|
+          sel = open + ".a\\\\:b" + ")" * 5000
           r = Fiber.new { Makiri::Lexbor::CSS.parse_stylesheet(sel + "{x:y}") }.resume
           print r[0][:selectors][0][:text] == sel ? "ok;" : "differs;"
         end

@@ -526,13 +526,16 @@ mod css_match {
     use crate::selectors::ast::Lists;
 
     /// The parse the matcher is fed by in a build that ships: the port's
-    /// (`crate::selectors`), under the name these tests have always called.
+    /// (`crate::selectors`), under the name these tests have always called -
+    /// run as Lexbor ran (`compat::as_lexbor`), since what they hold the
+    /// matcher to is Lexbor's engine on Lexbor's grammar, nested `:has()`
+    /// included, which Selectors 4 no longer accepts (C20).
     mod css_parser {
         pub fn parse(
             _gvl: &crate::gvl::Gvl,
             text: crate::text::VerifiedText<'_>,
         ) -> Result<crate::selectors::Parsed, crate::selectors::Status> {
-            crate::selectors::parse(text.as_bytes())
+            crate::compat::as_lexbor(|| crate::selectors::parse(text.as_bytes()))
         }
     }
     use crate::text::VerifiedText;

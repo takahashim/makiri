@@ -1020,7 +1020,10 @@ Descendant search exploring a genuinely large candidate space for this
 adversarial shape, the SAME pre-existing budget mechanic the old
 native-recursive design also relied on, just no longer reachable via a crash
 first) and leaves the CSS engine fully usable afterward, never
-`SystemStackError`.
+`SystemStackError`. (Since C20 in `docs/parser_differences.ja.md` the parser rejects a
+`:has()` inside a `:has()`, as Selectors 4 does, so the public API no longer
+reaches this shape; the matcher still answers it, and the tests that hold it
+to Lexbor's engine parse as Lexbor did, `compat::as_lexbor`.)
 
 `select_all`/`select_first`/`matches_any` are **descendant-only** (context node
 excluded, like Nokogiri) and in document order; `select_all` is capped at

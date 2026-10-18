@@ -37,4 +37,13 @@ RSpec.describe "CSS Syntax 3 and Selectors 4 steps the CSS parser follows" do
     expect(doc.css("p:not(:is())").size).to eq(1)
     expect(Makiri::XML("<r><p/></r>").css("p:not(:where())").size).to eq(1)
   end
+  # C19: :has() takes an unforgiving <relative-selector-list>.
+  # C20: :has() is not valid within :has().
+  it "reads :has() as unforgiving and refuses a :has() inside one" do
+    doc = Makiri::HTML("<div><p><span></span></p></div>")
+    [":has(p, :foo)", ":has(p,)", ":has(:has(span))", ":has(p:has(span))"].each do |sel|
+      expect { doc.css(sel) }.to raise_error(Makiri::CSS::SyntaxError)
+    end
+    expect(doc.css("div:is(:has(p))").size).to eq(1)
+  end
 end

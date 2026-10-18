@@ -1838,9 +1838,27 @@ impl<'a> Parser<'a> {
             | class_function::NTH_COL
             | class_function::NTH_LAST_COL => return self.unexpected_status(),
             class_function::NTH_CHILD | class_function::NTH_LAST_CHILD => self.specificity_set_b(),
+            class_function::HAS if self.inside_has() && compat::fixed(Fix::C20) => {
+                return self.unexpected_status();
+            }
             _ => {}
         }
         self.start_function(id, func, token, success)
+    }
+
+    /// Whether the selector being parsed is in the argument of a `:has()`,
+    /// directly or through other functional pseudo-classes: `:has()` cannot
+    /// be nested (C20).
+    fn inside_has(&self) -> bool {
+        let mut at = self.sel.parent;
+        while let Some(s) = at {
+            let n = self.ast.sel(s);
+            if n.ty == sel_type::PSEUDO_CLASS_FUNCTION && n.pseudo_type == class_function::HAS {
+                return true;
+            }
+            at = self.ast.list(n.list).parent;
+        }
+        false
     }
 
     /// The common tail of `lxb_css_selectors_state_pseudo_class_function` and
@@ -2087,7 +2105,10 @@ impl<'a> Parser<'a> {
             let p = self.ast.sel(parent);
             let is_class = p.ty == sel_type::PSEUDO_CLASS_FUNCTION;
             let func = pseudo::function_by_id(p.pseudo_type, is_class);
-            forgiving = func.forgiving;
+            /* `:has()` was forgiving when Lexbor was written; Selectors 4
+             * made it unforgiving (C19). */
+            let has = is_class && p.pseudo_type == class_function::HAS;
+            forgiving = func.forgiving && !(has && compat::fixed(Fix::C19));
             comma = func.comma;
         }
         if !self.sel.err_in_function {
