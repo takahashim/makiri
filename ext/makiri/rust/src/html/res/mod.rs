@@ -19,6 +19,8 @@
 pub mod entities;
 #[rustfmt::skip]
 pub mod names;
+#[rustfmt::skip]
+pub mod tree;
 
 /// One node of a static search tree over bytes (Lexbor's
 /// `lexbor_sbst_entry_static_t`): within one layer the nodes form a binary
