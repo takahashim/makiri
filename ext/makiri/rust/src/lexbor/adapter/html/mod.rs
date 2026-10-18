@@ -392,6 +392,12 @@ impl RawNode {
         self.0.as_ptr().cast()
     }
 
+    /// The node as a key of a pointer-keyed table - never null.
+    #[inline]
+    pub fn table_key(self) -> *const () {
+        self.0.as_ptr().cast_const().cast()
+    }
+
     /// `nodes`, lent as typed nodes for `'doc` - a reinterpretation, not a
     /// copy: both types are a transparent non-null node pointer.
     ///

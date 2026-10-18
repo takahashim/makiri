@@ -217,6 +217,13 @@ impl RawNode {
     pub fn from_id(id: NodeId) -> Self {
         RawNode(id)
     }
+
+    /// The node as a key of a pointer-keyed table - its id, never 0. Not a
+    /// pointer to anything: a key is only hashed and compared.
+    #[inline]
+    pub fn table_key(self) -> *const () {
+        core::ptr::without_provenance(self.0.to_word())
+    }
 }
 
 impl crate::ptr_table::TableKey for Option<RawNode> {

@@ -4,7 +4,7 @@
 //! never native recursion (the parent module's doc says why).
 
 use crate::falloc::{OomResult, VecPush};
-use crate::lexbor::adapter::html::{HtmlDoc, HtmlNode, TagId};
+use crate::html_dom::html::{HtmlDoc, HtmlNode, TagId};
 use crate::lexbor::css_parser::Combinator;
 use core::ffi::c_long;
 

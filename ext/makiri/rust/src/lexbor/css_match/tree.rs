@@ -2,7 +2,7 @@
 //! and `of S` step through, and the wider sibling set Lexbor's plain
 //! `:nth-child` family counts.
 
-use crate::lexbor::adapter::html::{HtmlNode, NodeType};
+use crate::html_dom::html::{HtmlNode, NodeType};
 
 /// The next/previous sibling that is an ELEMENT - for combinator dispatch
 /// (`+`, `~`, and the ancestor/parent climb) and `:nth-of-type`-family

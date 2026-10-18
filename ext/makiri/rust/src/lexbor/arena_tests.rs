@@ -1067,3 +1067,138 @@ fn xpath_reads_as_lexbor_does_on_wpt_inputs() {
         xpath_case(&t.data);
     }
 }
+
+/* ---------- CSS, with the arena DOM selected ---------- */
+
+/// The matcher, which takes arena nodes in this build, against Lexbor's own
+/// engine on the Lexbor document the arena copied - by walk position.
+#[cfg(feature = "arena-dom")]
+fn css_case(input: &[u8], selectors: &[&str]) {
+    use crate::gvl::Gvl;
+    use crate::lexbor::css_match::{self as port, Scratch};
+    use crate::lexbor::css_parser;
+    use crate::lexbor::selectors as old_engine;
+    use crate::text::VerifiedText;
+    let parsed = parse_html(input, true, DepthLimit::DEFAULT).expect("parses");
+    // SAFETY: `parsed` owns the document; only this test touches it.
+    let ld = unsafe { parsed.raw_doc().as_doc() };
+    let copy = crate::lexbor::adapter::arena_copy::copy_document(ld).expect("copy");
+    let ad = arena::HtmlDoc::of(&copy);
+    let p = Pair::new(ld, ad);
+    let gvl = Gvl::exclusive();
+    for sel in selectors {
+        let old: Vec<usize> =
+            old_engine::select_all(&gvl, lex::RawNode::from(ld.as_node()), sel.as_bytes())
+                .unwrap_or_else(|_| panic!("old engine rejected {sel:?}"))
+                .into_iter()
+                .map(|r| p.lpos[&(r.as_ptr() as usize)])
+                .collect();
+        let text = VerifiedText::from_bytes(sel.as_bytes()).expect("verified");
+        let groups = css_parser::parse(&gvl, text).ok().expect("parses");
+        let new: Vec<usize> = port::select_all(&mut Scratch::new(), ad.as_node(), groups.groups())
+            .unwrap_or_else(|e| panic!("{sel:?} failed: {e:?}"))
+            .into_iter()
+            .map(|n| p.apos[&n.id()])
+            .collect();
+        assert_eq!(new, old, "{sel:?} over {}", String::from_utf8_lossy(input));
+        let first = port::select_first(&mut Scratch::new(), ad.as_node(), groups.groups())
+            .expect("first")
+            .map(|n| p.apos[&n.id()]);
+        assert_eq!(first, old.first().copied(), "first {sel:?}");
+        /* `matches?` agrees with the descendant set on the plain subtree;
+         * a template's contents are not descendants. */
+        let plain: std::collections::HashSet<arena::NodeId> =
+            ad.as_node().subtree().map(|n| n.id()).collect();
+        for (&n, i) in p.a.iter().zip(0..) {
+            if !plain.contains(&n.id()) || n == ad.as_node() {
+                continue;
+            }
+            if let Some(e) = n.element() {
+                let m =
+                    port::matches_any(&mut Scratch::new(), groups.groups(), e).expect("matches");
+                assert_eq!(m, old.contains(&i), "matches? {sel:?} on node {i}");
+            }
+        }
+    }
+}
+
+#[cfg(feature = "arena-dom")]
+const CSS_SELECTORS: &[&str] = &[
+    "main",
+    "MAIN",
+    "*",
+    ".item",
+    ".Box",
+    "#main",
+    "li.item.first",
+    "a[href]",
+    "a[href='/p/1']",
+    "a[rel~='next']",
+    "li[data-n='1']",
+    "[data-n^='1']",
+    "[data-n$='1']",
+    "[data-n*='1']",
+    "[title='hello world' i]",
+    "ul li",
+    "ul > li",
+    "li + li",
+    "li ~ li",
+    "li:nth-child(2)",
+    "li:nth-child(odd)",
+    "li:nth-last-child(1)",
+    "li:first-child",
+    "li:last-child",
+    "li:only-child",
+    "p:first-of-type",
+    "p:last-of-type",
+    "div.empty:empty",
+    "html:root",
+    ":is(p, li)",
+    ":where(.lead, .item)",
+    "li:not(.first)",
+    ":not(:is(p, li))",
+    ":is(:is(:is(li.first)))",
+    "main:has(img)",
+    "main:has(> p)",
+    "li:has(+ li)",
+    "li:has(~ li)",
+    "p, li.first",
+    "circle",
+    "a:any-link",
+    "a:link",
+];
+
+#[cfg(feature = "arena-dom")]
+#[test]
+fn css_matches_as_lexbor_does() {
+    css_case(
+        br#"<!DOCTYPE html><html><body><main id="main" class="Box">
+            <ul><li class="item first" data-n="1"><a href="/p/1" rel="next prev">one</a></li>
+            <li class="item" data-n="12">two</li><li class="item" data-n="21">three</li></ul>
+            <p class="lead" title="Hello World">intro</p><p>body</p><div class="empty"></div>
+            <img src="x.png"><svg><circle r="1"/></svg></main></body></html>"#,
+        CSS_SELECTORS,
+    );
+}
+
+#[cfg(feature = "arena-dom")]
+#[test]
+#[ignore = "needs the fetched WPT data; run by `rake conformance:parser`"]
+fn css_matches_as_lexbor_does_on_wpt_inputs() {
+    let tests = dat::read_dir(&tree_construction_dir()).expect("WPT data");
+    for t in tests
+        .iter()
+        .filter(|t| t.fragment.is_none() && t.scripting != Scripting::On)
+    {
+        /* Not `MAIN`: a type selector is compared as written to a non-HTML
+         * element (the HTML Standard), where the old engine folds case - a
+         * documented departure of the matcher, which WPT's foreign content
+         * reaches. */
+        let selectors: Vec<&str> = CSS_SELECTORS
+            .iter()
+            .copied()
+            .filter(|s| *s != "MAIN")
+            .collect();
+        css_case(&t.data, &selectors);
+    }
+}

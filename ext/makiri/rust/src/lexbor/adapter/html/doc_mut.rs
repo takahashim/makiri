@@ -16,7 +16,7 @@
 #![allow(unsafe_code)]
 
 use super::*;
-use crate::html_dom::AdapterOom;
+use crate::lexbor::adapter::AdapterOom;
 
 /// A document cleared for editing, lent for `'d`.
 pub struct HtmlDocMut<'d> {

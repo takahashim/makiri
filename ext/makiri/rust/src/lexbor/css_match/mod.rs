@@ -181,7 +181,7 @@ pub(crate) use compile::validate;
 pub use scratch::Scratch;
 
 use crate::falloc::VecPush;
-use crate::lexbor::adapter::html::{HtmlElement, HtmlNode};
+use crate::html_dom::html::{HtmlElement, HtmlNode};
 use crate::lexbor::css_parser::Lists;
 use crate::limits::NODE_SET_MAX;
 

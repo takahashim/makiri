@@ -3,7 +3,7 @@
 //! that nest a selector list deferred to a task (`query`). Names are
 //! resolved once per query ([`Name`]).
 
-use crate::lexbor::adapter::html::{
+use crate::html_dom::html::{
     has_ascii_uppercase, AttrName, HtmlAttr, HtmlDoc, HtmlElement, HtmlNode, NsId, TagId,
 };
 use crate::lexbor::css_parser::{AttrMatch, FunctionArg, PseudoClass, Simple};

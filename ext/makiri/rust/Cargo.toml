@@ -44,7 +44,7 @@ expect_used = "warn"
 panic = "warn"
 
 [features]
-# Four features. Three name a real optional dependency rather than a step of
+# Five features. Three name a real optional dependency rather than a step of
 # the C port - a Ruby runtime, a vendored C library, and a test hook - and the
 # fourth, `css-reference`, a test reference (below).
 #
@@ -73,6 +73,12 @@ alloc-inject = []
 # the reference the `html_css_diff` fuzz harness holds `css_match` to. Never
 # part of a build that ships.
 css-reference = ["lexbor"]
+
+# The parser port's index-arena DOM (`crate::html::dom`) in place of Lexbor's
+# DOM, behind the same facade (`crate::html_dom`) - stage 2 of
+# `docs/rewrite_parser.ja.md`: Lexbor still parses, and its tree is copied
+# into the arena. Off by default until it has replaced Lexbor's DOM.
+arena-dom = ["lexbor"]
 
 [dependencies]
 # Only the `ruby` feature needs these; the engine builds without them, which is

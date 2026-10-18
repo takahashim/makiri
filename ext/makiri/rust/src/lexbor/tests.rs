@@ -511,6 +511,10 @@ mod node_key {
 /// on selector nesting - `css_match`'s module doc). Parses via the existing
 /// `css_parser`, matches via an explicit heap work stack (never native
 /// recursion for selector nesting - verified at 500,000 levels below).
+/* Feeds the matcher Lexbor documents, which it takes only when the Lexbor DOM
+ * is the one selected; `lexbor::arena_tests` holds it to the old engine over
+ * the arena instead. */
+#[cfg(not(feature = "arena-dom"))]
 mod css_match {
     use crate::gvl::Gvl;
     use crate::lexbor::adapter::html::{HtmlElement, HtmlNode, NsId, RawNode};
@@ -2811,6 +2815,10 @@ mod css_match {
 /// same as a miss would, filling the cache past its cap doesn't lose
 /// correctness, and a rejected selector does not disturb what is already
 /// cached.
+/* Feeds the matcher Lexbor documents, which it takes only when the Lexbor DOM
+ * is the one selected; `lexbor::arena_tests` holds it to the old engine over
+ * the arena instead. */
+#[cfg(not(feature = "arena-dom"))]
 mod selector_cache {
     use crate::gvl::Gvl;
     use crate::lexbor::adapter::html::{HtmlNode, RawNode};

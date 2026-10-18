@@ -5,7 +5,7 @@
 //! knows about selectors; the form states that walk the tree charge the
 //! query's work budget as they go.
 
-use crate::lexbor::adapter::html::{HtmlElement, HtmlNode, NodeType, NsId};
+use crate::html_dom::html::{HtmlElement, HtmlNode, NodeType, NsId};
 
 use super::tree::parent_element;
 use super::{Budget, MatchFailure};
