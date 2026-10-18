@@ -406,6 +406,7 @@ impl<'a> Parser<'a> {
         }
         let phase = loop {
             self.rules[r].offset = token.offset + token.length;
+            let declaration = token.ty == T::Ident && self.is_declaration(&token)?;
             match token.ty {
                 T::Semicolon | T::Whitespace => {
                     self.tkz.consume();
@@ -420,7 +421,7 @@ impl<'a> Parser<'a> {
                 }
                 T::Eof => break Phase::End,
                 T::AtKeyword => break Phase::BlockAt,
-                T::Ident if self.tkz.lookup_colon() => break Phase::BlockDeclarations,
+                T::Ident if declaration => break Phase::BlockDeclarations,
                 _ => break Phase::BlockQualified,
             }
         };
@@ -515,9 +516,15 @@ impl<'a> Parser<'a> {
     /// `lxb_css_syntax_parser_declarations_name`: the colon and the
     /// whitespace around it.
     pub(super) fn phase_declarations_name(&mut self, mut token: Token, r: usize) -> Option<Token> {
-        if token.ty == T::Whitespace {
+        /* A dropped comment leaves the whitespace around it as two tokens
+         * (C14); Lexbor's lookup never let a comment through to here. */
+        let comments = compat::fixed(Fix::C14);
+        while token.ty == T::Whitespace {
             self.tkz.consume();
             token = self.raw_token()?;
+            if !comments {
+                break;
+            }
         }
         if token.ty != T::Colon {
             /* Lexbor returns NULL without a status here ("It can't be":
@@ -528,9 +535,12 @@ impl<'a> Parser<'a> {
         }
         self.tkz.consume();
         token = self.raw_token()?;
-        if token.ty == T::Whitespace {
+        while token.ty == T::Whitespace {
             self.tkz.consume();
             token = self.raw_token()?;
+            if !comments {
+                break;
+            }
         }
         self.rules[r].begin = token.offset;
         self.offset.value_end = 0;
@@ -633,6 +643,22 @@ impl<'a> Parser<'a> {
         Some(())
     }
 
+    /// Whether the ident `token` starts a declaration in a block
+    /// (`Tokenizer::lookup_declaration`); `None` when reading ahead failed,
+    /// with the status set.
+    fn is_declaration(&mut self, token: &Token) -> Option<bool> {
+        match self
+            .tkz
+            .lookup_declaration(token, compat::fixed(Fix::C14), compat::fixed(Fix::C9))
+        {
+            Ok(d) => Some(d),
+            Err(st) => {
+                self.status = st;
+                None
+            }
+        }
+    }
+
     /// `lxb_css_syntax_parser_declarations_value`.
     pub(super) fn phase_declarations_value(&mut self, mut token: Token, r: usize) -> Option<Token> {
         if self.rules[r].offset > token.offset {
@@ -733,6 +759,7 @@ impl<'a> Parser<'a> {
         }
         self.declaration_end(r);
         loop {
+            let declaration = token.ty == T::Ident && self.is_declaration(&token)?;
             match token.ty {
                 T::Semicolon | T::Whitespace => {
                     self.tkz.consume();
@@ -742,7 +769,7 @@ impl<'a> Parser<'a> {
                     self.rules[r].phase = Phase::DeclarationsEnd;
                     break;
                 }
-                T::Ident if self.tkz.lookup_colon() => {
+                T::Ident if declaration => {
                     self.rules[r].skip_consume = true;
                     let decl = self.declaration_create(token)?;
                     let rule = &mut self.rules[r];

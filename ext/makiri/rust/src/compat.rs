@@ -108,6 +108,11 @@ pub enum Fix {
     C12,
     /// An `!important` inside a block or function is not the declaration's.
     C13,
+    /// A comment may stand between a declaration's name and its colon.
+    C14,
+    /// A declaration whose value holds a top-level `{}` block beside other
+    /// values is not one: the rule is read as a qualified rule.
+    C9,
     /// `:has()` is unforgiving: an invalid item invalidates the selector.
     C19,
     /// `:has()` is not valid inside `:has()`.
@@ -220,6 +225,13 @@ pub fn css_explains(input: &[u8]) -> Vec<Fix> {
     if input.contains(&b'!') {
         fixes.push(Fix::C12);
         fixes.push(Fix::C13);
+    }
+    /* C9: a block in a declaration's value; C14: a comment. */
+    if input.contains(&b'{') {
+        fixes.push(Fix::C9);
+    }
+    if has(input, b"/*") {
+        fixes.push(Fix::C14);
     }
     /* C18: an `:is()` or `:where()` left empty. */
     if has(input, b"is(") || has(input, b"where(") {

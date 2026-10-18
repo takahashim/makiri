@@ -378,6 +378,22 @@ CSS Syntax Level 3 と Selectors Level 4（w3c/csswg-drafts の `7b4c69ecaf9289d
 - **移植版**：`selectors/parser/syntax.rs` の値の phase が、括弧の中の `!` で `!important` を探さない。差分の許可は C12 と同じ。
 - **テスト**：`spec/css_standard_steps_spec.rb`。
 
+### C9 値に `{}` の block とほかの値が並ぶ宣言（`a:hover{...}` が宣言に吸い込まれる）
+
+- **分類**：参照実装の未対応（監査の css_syntax F1）。移植版で直した（第 8 段）。
+- **仕様**：consume a declaration の step 8。カスタムプロパティでない宣言の値に top-level の `{}` の simple block と、ほかの空白でない値が並ぶなら、宣言は何も返さない。consume a block's contents は、宣言が返らなければ mark に戻って qualified rule として読み直す。
+- **再現**：`@media (max-width:600px){ .x{a:b} a:hover{color:red} .y{c:d} }`。仕様では `@media` の中に style rule `.x`、`a:hover`、`.y` の三つ。Lexbor は block の中で ident の後に `:` があれば宣言と決め、値を `hover{color:red} .y{c:d}` として読むので、規則は `.x` だけになる。型セレクタの直後に擬似クラスを書いた規則（`a:hover`、`li:first-child`、`input:focus`）を `@media` や `@supports` に書くと、その規則と後ろの規則が失われていた。
+- **移植版**：block の中で宣言か規則かを決めるとき（`selectors/parser/syntax.rs` の `is_declaration`）、`selectors/tokenizer.rs` の `lookup_declaration` が宣言になるはずの値を先に token として読み、step 8 に当たれば規則として読む。読み直しの mark を持たない Lexbor の制御フローのまま、決める時点で先読みする。差分の許可は、入力に `{` があるとき。
+- **テスト**：`spec/css_standard_steps_spec.rb`。
+
+### C14 宣言名と `:` の間のコメント
+
+- **分類**：参照実装の未対応（監査の css_syntax F6）。移植版で直した（第 8 段）。
+- **仕様**：コメントは token にならない。consume a declaration は名前の後の空白を捨てて `:` を見るので、`c/**/: d` も `c /**/ : d` も宣言である。
+- **再現**：`a{x:y; c /**/ : d; e:f}`。仕様の宣言は三つ。Lexbor は名前の後の byte 列を見て、空白以外の最初の byte が `:` かどうかだけを調べるので、`c /**/ : d` を規則として読み、それより後の宣言も別の列に回って出力から消える。
+- **移植版**：`lookup_declaration` が `:` も token として探す。コメントで分かれた空白は二つの空白 token になるので、宣言名の phase は空白を続けて読み飛ばす。差分の許可は、入力に `/*` があるとき。
+- **テスト**：`spec/css_standard_steps_spec.rb`。
+
 ## パーサの外の項目
 
 次の差は HTML パーサではなく、DOM の上の層（CSS マッチャ、XPath の名前照合）にある。

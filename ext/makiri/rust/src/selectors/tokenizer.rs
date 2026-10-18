@@ -171,6 +171,113 @@ impl<'a> Tokenizer<'a> {
         self.queue.get(self.head + n)
     }
 
+    /// Whether the ident `name` (the current token) starts a declaration
+    /// inside a block, as consume a block's contents decides by trying one:
+    /// a `:` follows it past whitespace and comments (C14, where Lexbor read
+    /// the bytes and stopped at a comment), and, unless the name is a custom
+    /// property's, the value it would take - to a top-level `;`, the block's
+    /// `}` or the end - does not hold a top-level `{}` block beside other
+    /// values (consume a declaration, step 8; C9), else it is a rule. `fix_colon`
+    /// and `fix_block` choose each; with neither this is [`Self::lookup_colon`].
+    /// `Err` is the status when reading ahead failed.
+    pub fn lookup_declaration(
+        &self,
+        name: &Token,
+        fix_colon: bool,
+        fix_block: bool,
+    ) -> Result<bool, Status> {
+        if !fix_colon && !fix_block {
+            return Ok(self.lookup_colon());
+        }
+        if !fix_colon && !self.lookup_colon() {
+            return Ok(false);
+        }
+        let start = name.begin + name.length;
+        let Some(rest) = self.input.get(start..) else {
+            return Ok(false);
+        };
+        let mut t = Tokenizer::new(rest);
+        t.with_comment = true;
+        fn next(t: &mut Tokenizer<'_>) -> Result<Token, Status> {
+            loop {
+                let tok = t.token().ok_or(t.status)?;
+                t.consume();
+                if !matches!(tok.ty, TokenType::Whitespace | TokenType::Comment) {
+                    return Ok(tok);
+                }
+            }
+        }
+        if next(&mut t)?.ty != TokenType::Colon {
+            return Ok(false);
+        }
+        if !fix_block || self.string(name.string).starts_with(b"--") {
+            return Ok(true);
+        }
+        /* The value's top-level components: whether one is a {}-block, and
+         * how many there are besides, a trailing `! important` aside (step 6
+         * takes it off before step 8 looks). */
+        #[derive(Clone, Copy, PartialEq)]
+        enum Comp {
+            Bang,
+            Important,
+            Other,
+        }
+        let opens = |ty: TokenType| {
+            matches!(
+                ty,
+                TokenType::Function
+                    | TokenType::LParenthesis
+                    | TokenType::LsBracket
+                    | TokenType::LcBracket
+            )
+        };
+        let mut block = false;
+        let mut others = 0usize;
+        let mut last = [Comp::Other, Comp::Other];
+        let mut depth = 0usize;
+        loop {
+            let tok = next(&mut t)?;
+            if depth > 0 {
+                if matches!(
+                    tok.ty,
+                    TokenType::RcBracket | TokenType::RsBracket | TokenType::RParenthesis
+                ) {
+                    depth -= 1;
+                } else if opens(tok.ty) {
+                    depth += 1;
+                } else if tok.ty == TokenType::Eof {
+                    break;
+                }
+                continue;
+            }
+            let comp = match tok.ty {
+                TokenType::Eof | TokenType::Semicolon | TokenType::RcBracket => break,
+                TokenType::LcBracket => {
+                    block = true;
+                    depth += 1;
+                    last = [last[1], Comp::Other];
+                    continue;
+                }
+                TokenType::Delim if tok.delim == u32::from(b'!') => Comp::Bang,
+                TokenType::Ident if t.string(tok.string).eq_ignore_ascii_case(b"important") => {
+                    Comp::Important
+                }
+                ty => {
+                    if opens(ty) {
+                        depth += 1;
+                    }
+                    Comp::Other
+                }
+            };
+            others += 1;
+            last = [last[1], comp];
+        }
+        if last == [Comp::Bang, Comp::Important] {
+            others -= 2;
+        }
+        Ok(!(block && others > 0))
+    }
+
     /// `lxb_css_syntax_tokenizer_lookup_colon`: whether a `:` follows the
     /// current token, past whitespace. Read from the tokens read ahead when
     /// there are any, else from the input.

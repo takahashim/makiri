@@ -105,4 +105,15 @@ RSpec.describe "CSS Syntax 3 and Selectors 4 steps the CSS parser follows" do
   it "leaves an !important inside brackets in the value" do
     expect(declarations("a{b: (x !important; y); c:d}")).to eq([["(x !important; y)", false], ["d", false]])
   end
+  # C9: consume a declaration, step 8: a top-level {}-block beside other
+  # values is no declaration; consume a block's contents reads a rule.
+  it "reads a:hover{...} in a block as a rule, not a declaration" do
+    media = Makiri::Lexbor::CSS.parse_stylesheet("@media (max-width:600px){ .x{a:b} a:hover{color:red} .y{c:d} }").first
+    expect(media[:rules].map { |r| r[:selectors].map { |s| s[:text] } }).to eq([[".x"], ["a:hover"], [".y"]])
+  end
+
+  # C14: comments are not tokens; a comment may stand before the colon.
+  it "reads a declaration with a comment before its colon" do
+    expect(declarations("a{x:y; c /**/ : d; e:f}").size).to eq(3)
+  end
 end
