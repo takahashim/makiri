@@ -618,7 +618,15 @@ fn edits_leave_the_arena_reading_as_lexbor_does() {
 /// placed in a document's body, on both sides, the result put into that
 /// element, and everything compared - then the same input parsed in a named
 /// context (`Document#fragment`) and appended to the body.
+///
+/// The arena's parse is the port's, run as Lexbor ran
+/// (`html::tree::compat::as_lexbor`): what is compared here is the DOM, and
+/// the port's departures from Lexbor's tree are `tree_diff`'s to check.
 fn fragment_case(input: &[u8], context: &str) {
+    crate::html::tree::compat::as_lexbor(|| fragment_case_as_lexbor(input, context));
+}
+
+fn fragment_case_as_lexbor(input: &[u8], context: &str) {
     use crate::lexbor::adapter::html::HtmlDocMut as LexMut;
     use crate::lexbor::arena_fragment as af;
     use crate::lexbor::fragment as lf;
