@@ -64,4 +64,10 @@ RSpec.describe "CSS Syntax 3 and Selectors 4 steps the CSS parser follows" do
     doc = Makiri::HTML("<ul><li>a<li>b</ul>")
     expect(doc.css("li:nth-child(#{"0" * 128}1)").map(&:text)).to eq(["a"])
   end
+  # C8: consume an ident-like token: url( and whitespace, then no quote -
+  # a URL token, which keeps the whitespace in a declaration's value.
+  it "reads url( and whitespace to the end of the input as a URL token" do
+    value = Makiri::Lexbor::CSS.parse_stylesheet("a{b:url(   ").first[:declarations].first[:value]
+    expect(value).to eq("url(   ")
+  end
 end

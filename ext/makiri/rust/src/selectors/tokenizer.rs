@@ -947,6 +947,13 @@ impl<'a> Tokenizer<'a> {
                 }
                 data += 1;
             }
+            /* Only whitespace to the end of the input: no quote follows, so
+             * the Standard reads a URL token (an empty one, at EOF); Lexbor
+             * made a function token (C8). */
+            if data >= end && compat::fixed(Fix::C8) {
+                self.buf.clear();
+                return self.url(token, data, end);
+            }
             token.ty = TokenType::Function;
             return Some(begin);
         }

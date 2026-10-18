@@ -95,6 +95,8 @@ pub enum Fix {
     C5,
     /// A number keeps the place of the integer digits past its 128th.
     C6,
+    /// `url(` followed by nothing but whitespace is a URL token.
+    C8,
     /// `:has()` is unforgiving: an invalid item invalidates the selector.
     C19,
     /// `:has()` is not valid inside `:has()`.
@@ -191,6 +193,10 @@ pub fn css_explains(input: &[u8]) -> Vec<Fix> {
     /* C6: a run of more than 128 digits. */
     if input.windows(129).any(|w| w.iter().all(u8::is_ascii_digit)) {
         fixes.push(Fix::C6);
+    }
+    /* C8: a `url(` the input ends after. */
+    if has(input, b"url(") {
+        fixes.push(Fix::C8);
     }
     /* C18: an `:is()` or `:where()` left empty. */
     if has(input, b"is(") || has(input, b"where(") {

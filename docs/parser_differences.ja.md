@@ -329,6 +329,14 @@ CSS Syntax Level 3 と Selectors Level 4（w3c/csswg-drafts の `7b4c69ecaf9289d
 - **移植版**：`selectors/tokenizer.rs` の `consume_numeric` が、先頭の 0 を buffer に入れず、buffer に入りきらない整数部の桁の数だけ指数を上げる。小数部の 129 桁目から先は、値をほとんど変えないので捨てたままにする。差分の許可は、入力に 129 桁以上の数字の並びがあるとき。
 - **テスト**：`spec/css_standard_steps_spec.rb`。
 
+### C8 空白だけで終わる `url(`
+
+- **分類**：参照実装の未対応（監査の css_tokenizer F6）。移植版で直した（第 8 段）。
+- **仕様**：consume an ident-like token で、`url(` の後の空白を読み、次が引用符でなければ（EOF を含む）consume a url token に進む。EOF なら空の url token になる。
+- **再現**：`parse_stylesheet("a{b:url(   ")`。仕様のトークンでは、値の規則（`C1`）から `url(   ` になる。Lexbor は空白だけが続いて入力が終わると function token を作り、空白は値の末尾として削られて `url(` になる。
+- **移植版**：`selectors/tokenizer.rs` の ident-like の `url(` の分岐が、空白のまま入力が終わったとき url token を作る。差分の許可は、入力に `url(` があるとき。
+- **テスト**：`spec/css_standard_steps_spec.rb`。
+
 ## パーサの外の項目
 
 次の差は HTML パーサではなく、DOM の上の層（CSS マッチャ、XPath の名前照合）にある。
