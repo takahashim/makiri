@@ -377,7 +377,8 @@ CSS は、Selectors Level 4 と CSS Syntax Level 3 のうち、セレクタパ�
 3. **アリーナ DOM をテスト用 backend として完成させる**。アリーナ、mutation と import、シリアライザ（`pretty:` を含む）、bridge のノード identity と NodeSet。この段では Lexbor でパースしてアリーナにコピーし、XPath と CSS と text index と `rake diff` を新 backend で通す。すべて所有権と安全性の側の変更なので、現行との完全一致で検証する。
 4. **tokenizer と tree builder の忠実な移植**。Lexbor の制御フローに対応させて書き、tokenizer テスト、tree-construction と WPT、参照実装との差分 fuzz で検証する。正常な入力だけでなく、異常な入力（深い入れ子、巨大な属性、EOF の位置ごと）の意味論も比べる。完了条件は、参照実装との差が許可リストの安全性修正だけであること。仕様からの逸脱はこの段では直さず、差分表に記録する。
 5. **CSS**。セレクタパーサを同じく忠実に移植し、stylesheet パーサは 1 で決めた方針で扱う。API を変える方針なら、その変更は 7 で入れる。
-6. **新経路の堅牢性と切り替え**。OOM 注入、panic の latch、小さい Fiber の stack、`GC.compact`、並行 parse、失敗後の文書と context の再利用を新経路で確認し、bench で種類としての退行がないことを確かめてから切り替える。ここまでが初期実装である。
+6. **新経路の堅牢性と切り替え**。OOM 注入、panic の latch、小さい Fiber の stack、`GC.compact`、並行 parse、失敗後の文書と context の再利用を新経路で確認し、bench で種類としての退行がないことを確かめてから切り替える。
+   byte アリーナの圧縮（「byte アリーナは追記型から始める」）も切り替えの条件とする。Lexbor は古い文字列を mraw に返して再利用するので、`content=` や属性値の更新を繰り返す文書が育ち続け、span の合計が 4 GiB で例外になるのは、追記型のままでは現行からの退行である。ここまでが初期実装である。
 7. **仕様適合の変更**。差分表の「参照実装の未対応」と、ソース位置の規則の切り替えを、一件ずつ独立したコミットとして入れる。
 8. **仕様全体の監査**。対応表を作り、見つけた逸脱を 7 と同じ手順で入れる。
 9. **性能の最適化と出荷依存の除去**。bench の各行と `bytes/node` を測り、状態関数の形やノードの大きさの仮説をここで検証する。制御フローを変える最適化は、参照実装との一致（許可リストの差を除く）で検証する。通常ビルドから submodule、cmake、bindgen、`memory.rs`、`sanitize:lexbor` を外し、参照ジョブだけが Lexbor を取得する形にする。

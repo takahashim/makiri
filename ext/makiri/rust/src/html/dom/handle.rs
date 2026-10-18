@@ -206,6 +206,15 @@ pub struct HtmlAttr<'d>(HtmlNode<'d>);
 #[repr(transparent)]
 pub struct RawNode(core::num::NonZeroU64);
 
+/* `word` is the whole RawNode only where a usize holds 64 bits: on a 32-bit
+ * target the stamp would be dropped and two documents' nodes would share a
+ * word. The XML arena refuses such targets too (`xml::model::NodeId`). */
+#[cfg(not(target_pointer_width = "64"))]
+compile_error!(
+    "Makiri's HTML index arena packs a document stamp and a NodeId into one \
+     pointer-sized word; only 64-bit targets are supported"
+);
+
 impl RawNode {
     /// The node `id` of the document stamped `stamp`.
     #[inline]
