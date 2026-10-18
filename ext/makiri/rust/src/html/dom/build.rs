@@ -44,6 +44,7 @@ impl Document {
                 .map_err(|()| DomOom)?;
             self.bytes.extend_from_within(span.start as usize..end);
             self.bytes.extend_from_slice(b);
+            self.dead += len;
             Span { start, len: total }
         };
         if let Some(x) = self.node_mut(n) {

@@ -440,6 +440,11 @@ fn edit_sequence(input: &[u8], other: &[u8], seed: u64, steps: usize) {
         let ctx = format!("seed {seed:#x} step {step}");
         let op = rng.below(13);
         let i = rng.below(1 << 20);
+        /* Compaction moves every span; it must change no read. Here far more
+         * often than `compaction_due` would allow. */
+        if rng.below(4) == 0 {
+            ac.compact().expect("compact");
+        }
         let mut am = arena::HtmlDocMut::new(&mut ac);
         let (ln, an) = at(ld, am.read(), i);
         let (lr, ar) = (lex::RawNode::from(ln), arena::RawNode::from(an));

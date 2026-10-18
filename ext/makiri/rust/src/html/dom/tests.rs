@@ -55,3 +55,47 @@ fn namespaces_keep_lexbor_static_ids_and_add_their_own() {
         Some(res::NS_XLINK as u32)
     );
 }
+
+#[test]
+fn compaction_keeps_every_span_and_bounds_the_store() {
+    let mut d = Document::new(0).expect("doc");
+    let div = d.names.tag_append_lower(b"div").expect("tag");
+    let el = d
+        .create_element(div, res::NS_HTML as u32, 0, None)
+        .expect("el");
+    d.append_child(NodeId::DOCUMENT, el);
+    let text = d.create_data(NodeType::Text, b"first").expect("text");
+    d.append_child(el, text);
+    let detached = d.create_data(NodeType::Comment, b"detached").expect("c");
+    let pi = d.create_pi(b"target", b"pi data").expect("pi");
+    d.append_child(el, pi);
+    let id = d.names.attr_local_name_append(b"title").expect("name");
+    let attr = d.create_attr(id, 0, 0, None, b"attr value").expect("attr");
+    d.attr_append(el, attr);
+
+    let big = vec![b'x'; 1024];
+    for i in 0..2000u32 {
+        let mut v = big.clone();
+        v.extend_from_slice(i.to_string().as_bytes());
+        d.set_data(text, &v).expect("set");
+        if i % 3 == 0 {
+            d.set_data(attr, format!("v{i}").as_bytes()).expect("attr");
+        }
+        if d.compaction_due() {
+            d.compact().expect("compact");
+        }
+        assert!(
+            d.bytes.len() < 8 * 1024,
+            "the store grew to {}",
+            d.bytes.len()
+        );
+        assert_eq!(d.data(text), Some(&v[..]));
+    }
+    assert_eq!(d.data(detached), Some(&b"detached"[..]));
+    assert_eq!(d.pi_target(pi), Some(&b"target"[..]));
+    assert_eq!(d.data(pi), Some(&b"pi data"[..]));
+    assert_eq!(d.attr_value(attr), Some(&b"v1998"[..]));
+    d.compact().expect("compact");
+    assert_eq!(d.dead_bytes(), 0);
+    assert_eq!(d.bytes.len(), 1024 + 4 + 8 + 6 + 7 + 5);
+}

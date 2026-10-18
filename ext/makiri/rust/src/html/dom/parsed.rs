@@ -77,6 +77,11 @@ impl HtmlParsed {
     #[inline]
     pub fn edit(&mut self) -> HtmlDocMut<'_> {
         self.invalidate_indexes();
+        /* No span is held outside the arena now (`compact.rs`). A store that
+         * cannot be allocated leaves everything as it was. */
+        if self.doc.compaction_due() {
+            let _ = self.doc.compact();
+        }
         HtmlDocMut::new(&mut self.doc)
     }
 

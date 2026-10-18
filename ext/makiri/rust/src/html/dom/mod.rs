@@ -162,6 +162,9 @@ pub struct Document {
     attrs: Vec<AttrData>,
     doctypes: Vec<DoctypeData>,
     bytes: Vec<u8>,
+    /// Bytes of `bytes` no span names any more: what replacing a node's data
+    /// left behind (`compact.rs`).
+    dead: usize,
     /// Tag and attribute names, shared with the tokenizer.
     pub names: Names,
     /// Namespace URIs past the static ones.
@@ -210,6 +213,7 @@ impl Document {
             attrs: Vec::new(),
             doctypes: Vec::new(),
             bytes: Vec::new(),
+            dead: 0,
             names: Names::default(),
             ns: Vec::new(),
             prefixes: Vec::new(),
@@ -755,30 +759,34 @@ impl Document {
     }
 
     /// Replace the data of a Text, Comment, CDATA or PI node, or an
-    /// attribute's value. The old bytes stay in the store (append-only).
+    /// attribute's value. The old bytes stay in the store, counted as dead
+    /// until the store is compacted (`compact.rs`).
     pub fn set_data(&mut self, n: NodeId, data: &[u8]) -> Result<(), DomOom> {
         let span = self.store(data)?;
         let Some(node) = self.node(n).copied() else {
+            self.dead += span.len as usize;
             return Ok(());
         };
-        match node.payload {
-            Payload::Data(_) => {
+        let old = match node.payload {
+            Payload::Data(old) => {
                 if let Some(x) = self.node_mut(n) {
                     x.payload = Payload::Data(span);
                 }
+                old
             }
-            Payload::Pi { target, .. } => {
+            Payload::Pi { target, data: old } => {
                 if let Some(x) = self.node_mut(n) {
                     x.payload = Payload::Pi { target, data: span };
                 }
+                old
             }
-            Payload::Attr(i) => {
-                if let Some(a) = self.attrs.get_mut(i as usize) {
-                    a.value = span;
-                }
-            }
-            _ => {}
-        }
+            Payload::Attr(i) => match self.attrs.get_mut(i as usize) {
+                Some(a) => core::mem::replace(&mut a.value, span),
+                None => span,
+            },
+            _ => span,
+        };
+        self.dead += old.len as usize;
         Ok(())
     }
 
@@ -968,6 +976,7 @@ impl Document {
 }
 
 mod build;
+mod compact;
 mod copy;
 /// Copies between an arena HTML document and an XML one.
 pub mod cross_import;
