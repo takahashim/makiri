@@ -78,8 +78,14 @@ fuzz_target!(|data: &[u8]| {
     let root = unsafe { p.raw_doc().as_doc() }.as_node();
     let doc = Doc::survey(root);
 
-    let new = selector_cache::with_compiled(&gvl, text.as_bytes(), |groups, scratch| {
-        new_answer(root, groups, scratch, &doc)
+    /* Parsed as Lexbor parses (`compat::as_lexbor`): what is compared here
+     * is the matcher, and the port's own departures from Lexbor's grammar
+     * (C18-C22 in docs/parser_differences.ja.md) are `selector_diff`'s. The
+     * cache only ever holds this mode's parses in this binary. */
+    let new = makiri::compat::as_lexbor(|| {
+        selector_cache::with_compiled(&gvl, text.as_bytes(), |groups, scratch| {
+            new_answer(root, groups, scratch, &doc)
+        })
     });
     let Ok(Some(new)) = new else {
         return;
