@@ -67,10 +67,7 @@ pub fn text_index_string(document: Value, node: RawNode) -> Result<Option<Value>
 
 /// The 1-based source line for `node`, or `None` when unknown.
 pub fn node_line(rb_doc: Value, node: RawNode) -> Option<usize> {
-    with_html_parsed_known(rb_doc, |p| {
-        // SAFETY: `node` is a live node of this document.
-        unsafe { crate::bridge::dom::node_line(p, node) }
-    })
+    with_html_parsed_known(rb_doc, |p| p.node_line(node))
 }
 
 /* ------------------------------------------------------------------ *
@@ -96,11 +93,8 @@ static HTML_NODE_CLASSES: NodeClasses = NodeClasses {
 /// second wrapper; a node type with no specific leaf (entity/notation, which
 /// Lexbor's HTML parser does not produce) falls back to `Makiri::HTML::Node`.
 pub fn wrap_html_node(node: RawNode, document: Value) -> Result<Value, Error> {
-    /* SAFETY: a `RawNode` is live - the safe constructors are `From<HtmlNode>`
-     * and `From<Building*>`, and the only raw one, `from_ptr`, is unsafe - and
-     * the caller hands it with the Document it belongs to. */
-    let handle =
-        unsafe { crate::bridge::dom::node_in(crate::bridge::wrapper::html_doc(&document), node) };
+    // The caller hands `node` with the Document it belongs to.
+    let handle = crate::bridge::wrapper::html_doc(&document).node(node);
     let node_type = handle.node_type();
     if node_type == NodeType::Document {
         return Ok(document);
@@ -111,7 +105,7 @@ pub fn wrap_html_node(node: RawNode, document: Value) -> Result<Value, Error> {
 
 impl crate::bridge::wrapper::NodeHandleSource for RawNode {
     fn identity(&self) -> usize {
-        crate::bridge::dom::node_word(*self)
+        self.word()
     }
 
     fn into_handle(self, document: Value) -> NodeHandle {
@@ -127,11 +121,8 @@ impl crate::bridge::wrapper::NodeHandleSource for RawNode {
     reason = "wrap_html_node's callers vouch the node belongs to the document"
 )]
 fn mint_html_key(node: RawNode, document: Value) -> HtmlNodeKey {
-    with_html_parsed_known(document, |parsed| {
-        // SAFETY: `node` is a live node of `document`, vouched by the caller.
-        unsafe { crate::bridge::dom::mint_key(parsed, node) }
-    })
-    .expect("wrap_html_node: the node must belong to the document it is wrapped under")
+    with_html_parsed_known(document, |parsed| parsed.mint_key(node))
+        .expect("wrap_html_node: the node must belong to the document it is wrapped under")
 }
 
 fn uninitialized() -> Error {
@@ -154,11 +145,8 @@ pub(in crate::bridge) fn html_node_key(rb_node: Value) -> Result<(HtmlNodeKey, V
         let doc = html_doc_unwrap(rb_node)?;
         // SAFETY: the live document of `rb_node`, which the caller holds.
         let raw = unsafe { crate::bridge::dom::document_node(doc) };
-        let key = with_html_parsed_known(rb_node, |parsed| {
-            // SAFETY: `raw` is the document node of `rb_node`'s live document.
-            unsafe { crate::bridge::dom::mint_key(parsed, raw) }
-        })
-        .map_err(|ForeignNode| foreign_node_error())?;
+        let key = with_html_parsed_known(rb_node, |parsed| parsed.mint_key(raw))
+            .map_err(|ForeignNode| foreign_node_error())?;
         return Ok((key, rb_node));
     }
     let nd: &NodeData = HTML_NODE_TYPE.get(&rb_node)?;
@@ -203,9 +191,9 @@ impl HtmlSelf {
     #[inline]
     pub fn node(&self) -> HtmlNode<'_> {
         let doc = self.doc();
-        // SAFETY: the receiver keeps `key`'s owner document alive for this
-        // call, and `key` was minted from a live node of it.
-        unsafe { crate::bridge::dom::node_in(doc, self.key.raw_node()) }
+        // The receiver keeps `key`'s owner document alive for this call, and
+        // `key` was minted from a live node of it.
+        doc.node(self.key.raw_node())
     }
 
     /// The receiver's document, for the length of this method call - made
@@ -263,18 +251,14 @@ pub fn wrap_node(node: Option<HtmlNode<'_>>, document: Value) -> Result<Option<V
 /// agree - a `<template>`'s own (empty) child list included.
 impl<'d> TokenTree for HtmlTree<'d> {
     fn token(&self, n: HtmlNode<'d>) -> usize {
-        crate::bridge::dom::node_word(RawNode::from(n))
+        RawNode::from(n).word()
     }
     fn node_of(&self, token: usize) -> Option<HtmlNode<'d>> {
-        // SAFETY: a word this module recorded from a node of this document.
-        let raw = unsafe { crate::bridge::dom::node_of_word(token) }?;
-        let doc = self.doc()?;
-        // SAFETY: `child_index` asks only for a token it recorded for a list
-        // of this document, so by `ChildPositionMemo`'s invariant it names a
-        // node that is still a child there - in the document the receiver
-        // keeps alive for `'d`. Lexbor detaches rather than frees, so it was
-        // never released.
-        Some(unsafe { crate::bridge::dom::node_in(doc, raw) })
+        // `child_index` asks only for a token it recorded for a list of this
+        // document, so by `ChildPositionMemo`'s invariant it names a node that
+        // is still a child there, in the document the receiver keeps alive.
+        let raw = RawNode::from_word(token)?;
+        Some(self.doc()?.node(raw))
     }
 }
 

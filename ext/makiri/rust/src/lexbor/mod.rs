@@ -51,6 +51,11 @@ pub mod tree_diff;
 ))]
 pub mod selector_diff;
 
+/// A Lexbor document beside its arena copy, node for node: how the CSS
+/// matcher, which takes arena nodes, is held to Lexbor's own engine.
+#[cfg(all(feature = "lexbor", any(test, feature = "css-reference")))]
+pub mod twin;
+
 /// Lexbor's generated layout and constants, plus the wrappers that own a raw
 /// Lexbor object. The one module allowed to hold `lxb_*` bindings.
 #[cfg(feature = "lexbor")]
@@ -82,10 +87,6 @@ pub(crate) mod css_tokens;
 /// HTML fragment parsing and import/fixup operations.
 #[cfg(feature = "lexbor")]
 pub mod fragment;
-/// Lexbor's allocator, padded so a small overrun past a heap block is
-/// contained (hardening; the module doc).
-#[cfg(feature = "lexbor")]
-pub mod memory;
 /// The compiled-selector cache in front of `css_match`: its own
 /// process-global parser/arena, separate from `css_parser`'s (shared with the
 /// XML lowering), and the matcher's kept `Scratch`.

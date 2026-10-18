@@ -29,7 +29,7 @@ end
 # The extension is one Rust crate, and this is still rake-compiler's ordinary
 # task: it runs ext/makiri/rust/extconf.rb, which calls `create_rust_makefile`.
 # The cargo integration lives there, which is where the build's other decisions
-# (the vendored Lexbor build, the link arguments, the export trim) already are.
+# (the link arguments, the export trim) already are.
 #
 # NOT `RbSys::ExtensionTask`, and that is a decision rather than an oversight.
 # It is rake-compiler's task plus cross-compilation plumbing - which this
@@ -79,15 +79,10 @@ end
 # build it; what still does is everything that compares against Lexbor or
 # builds its reference layers (`--all-features`, the `lexbor` feature, the
 # differential fuzz targets), and those depend on this. Rebuilds only when the
-# install is missing or in another mode, as extconf decides.
+# install is missing (script/build_lexbor.rb).
 desc "Build the vendored Lexbor (the reference the ports are tested against)"
 task :lexbor do
-  Dir.mktmpdir("makiri-lexbor") do |dir|
-    Dir.chdir(dir) do
-      sh({ "MAKIRI_LEXBOR_ONLY" => "1" }, FileUtils::RUBY,
-         File.expand_path("ext/makiri/rust/extconf.rb", __dir__))
-    end
-  end
+  sh FileUtils::RUBY, File.expand_path("script/build_lexbor.rb", __dir__)
 end
 
 # The lint gate, with CI's OWN arguments. It exists because a narrower spelling
@@ -102,7 +97,7 @@ task lint: :lexbor do
     sh "cargo", "clippy", "--all-features", "--", "-D", "warnings"
     # The build that ships has no Lexbor: code only the reference layers use
     # is dead there, which `--all-features` cannot see.
-    sh "cargo", "clippy", "--no-default-features", "--features", "ruby,arena-dom", "--", "-D", "warnings"
+    sh "cargo", "clippy", "--no-default-features", "--features", "ruby", "--", "-D", "warnings"
     sh "cargo", "fmt", "--all", "--", "--check"
   end
 end
@@ -266,7 +261,7 @@ end
 # for a from-scratch Lexbor build.
 #
 #   rake clean compile     # regenerate ext Makefile + recompile (fast)
-#   rake clean:lexbor      # force a full Lexbor rebuild next compile
+#   rake clean:lexbor      # force a full Lexbor rebuild next `rake lexbor`
 
 namespace :clean do
   desc "Remove the vendored Lexbor build/install output (forces a full rebuild)"
@@ -354,16 +349,6 @@ def asan_preload_env(sanitize)
           "sanitized cdylib cannot be dlopen'd on Linux without one."
   puts "sanitize: preloading #{runtime} via LD_PRELOAD"
   { "LD_PRELOAD" => runtime }
-end
-
-# Lexbor's LEXBOR_BUILD_WITH_ASAN compiles with `-fsanitize=undefined,address`,
-# so an instrumented Lexbor also references `__ubsan_handle_*`. The C extension
-# got libubsan from gcc's link; rustc links nothing of the kind, so the .so fails
-# to dlopen unless the UBSan runtime is preloaded next to the ASan one.
-def ubsan_runtime_path
-  cc = RbConfig::CONFIG["CC"] || "cc"
-  path = `#{cc} -print-file-name=libubsan.so 2>/dev/null`.strip
-  path if path != "libubsan.so" && !path.empty? && File.exist?(path)
 end
 
 # The coverage-guided harnesses are a cargo-fuzz crate now (they were C files
@@ -538,52 +523,6 @@ task :coverage do
   puts "(coverage build left in place; run `rake clean compile` to restore a normal build)"
 end
 
-desc "Like :sanitize but also builds the vendored Lexbor under ASan, so overflows " \
-     "INSIDE Lexbor's mraw arena are caught (slow: full Lexbor rebuild). Runs the " \
-     "spec suite, or FUZZ_ARGS via the fuzzer when set."
-task "sanitize:lexbor" do
-  sanitize = ENV["MAKIRI_SANITIZE"] || "address"
-  sanitize.include?("address") or
-    abort "sanitize:lexbor needs an address build (MAKIRI_SANITIZE must include 'address')"
-  # Apple clang's instrumentation calls __asan_version_mismatch_check_apple_clang_*,
-  # which the runtime rustc links in does not export; under -undefined
-  # dynamic_lookup that is a NULL, so Lexbor's asan.module_ctor jumps to 0 while
-  # dyld runs initialisers. Linux (CI's nightly job) is where this task runs.
-  if RbConfig::CONFIG["target_os"] =~ /darwin/
-    abort "sanitize:lexbor: not supported on macOS - Apple clang's ASan ABI does not " \
-          "match rustc's runtime, and the extension segfaults at load. Run it on " \
-          "Linux (`gh workflow run security.yml --ref <branch>`)."
-  end
-  ubsan = ubsan_runtime_path or
-    abort "sanitize:lexbor: no UBSan runtime found for #{RbConfig::CONFIG['CC']} - " \
-          "Lexbor's ASan build is also UBSan-instrumented and needs libubsan preloaded."
-
-  # MAKIRI_SANITIZE_LEXBOR makes extconf build Lexbor with -DLEXBOR_BUILD_WITH_ASAN
-  # (enabling its mraw poisoning); the build-mode stamp auto-rebuilds Lexbor on the
-  # plain<->asan switch, so no manual clean:lexbor is needed before or after.
-  # Lexbor's DOM, not the arena DOM that ships: Lexbor's parser and DOM are what
-  # this run instruments, and the suite reaches them only through that build.
-  build_env = { "MAKIRI_SANITIZE" => sanitize, "MAKIRI_SANITIZE_LEXBOR" => "1",
-                "MAKIRI_LEXBOR_DOM" => "1" }
-  sh(build_env, "#{FileUtils::RUBY} -S rake clean compile")
-
-  env = {
-    "ASAN_OPTIONS"  => ASAN_ENV_OPTIONS,
-    # Tells the child it is a sanitizer run. Without it spec_helper cannot know,
-    # and its `:slow` exclusion - written for Valgrind, where those examples were
-    # measured to dominate - never applied here. That is how a suite which takes
-    # 18s plain reached an hour under ASan without anything being wrong.
-    "MAKIRI_SANITIZE" => sanitize,
-    "UBSAN_OPTIONS"   => "print_stacktrace=1:halt_on_error=1",
-  }.merge(asan_preload_env(sanitize))
-  env["LD_PRELOAD"] = [env["LD_PRELOAD"], ubsan].compact.join(":")
-  if ENV["FUZZ_ARGS"]
-    sh(env, "#{FileUtils::RUBY} -Ilib spec/fuzz/run.rb #{ENV['FUZZ_ARGS']}")
-  else
-    sh(env, "#{FileUtils::RUBY} -S rspec")
-  end
-end
-
 desc "Run the robustness fuzzer (override options via FUZZ_ARGS)"
 task fuzz: :compile do
   sh "#{FileUtils::RUBY} -Ilib spec/fuzz/run.rb #{ENV['FUZZ_ARGS']}"
@@ -740,7 +679,7 @@ task :kani do
 end
 
 namespace :rust do
-  # The Ruby- and Lexbor-free core; the arena DOM the extension ships with,
+  # The Ruby- and Lexbor-free core; the HTML DOM the extension ships with,
   # still Lexbor-free; then the same with the `lexbor` layers in, which holds
   # the ports to Lexbor (the reference tests) and needs the vendored Lexbor
   # `rake lexbor` builds.
@@ -748,10 +687,8 @@ namespace :rust do
   task test: :lexbor do
     Dir.chdir("ext/makiri/rust") do
       sh "cargo test --no-default-features"
-      # The configuration the extension ships with (extconf adds arena-dom).
-      sh "cargo test --no-default-features --features arena-dom"
+      sh "cargo test --no-default-features --features html-dom"
       sh "cargo test --no-default-features --features lexbor"
-      sh "cargo test --no-default-features --features lexbor,arena-dom"
       # The fuzz crate is a separate one, so `cargo test` above never sees it;
       # without this check an engine API change can silently break the nightly
       # harnesses (they are not built by `rake compile` or `rake spec`).

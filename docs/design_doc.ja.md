@@ -7,12 +7,10 @@
 * HTML5 scraping で使われる範囲で Nokogiri 互換の API を持つ
 * HTML5 parsing は WHATWG HTML Standard に沿ったパーサで高速に行う。
   Lexbor の tokenizer と tree builder を Rust に移植した自前のパーサと、
-  添字で引く index アリーナの DOM (`arena-dom` フィーチャ) が既定で、
-  出荷するビルドはこれを使う。vendored Lexbor の DOM は、移植版を照合した
-  参照として `MAKIRI_LEXBOR_DOM=1` でビルドでき、両者は一つの facade
-  (`crate::html_dom`) の後ろにあって、facade の上のコード (bridge、XPath、
-  CSS の照合) はどちらでも変わらない。移植の計画と現在地は
-  `docs/rewrite_parser.ja.md` に置く
+  添字で引く index アリーナの DOM を使い、上のコード (bridge、XPath、
+  CSS の照合) は facade (`crate::html_dom`) を通して読む。vendored Lexbor
+  は拡張に入らず、移植版を照合するテストの参照としてだけビルドする
+  (`rake lexbor`)。移植の計画と現在地は `docs/rewrite_parser.ja.md` に置く
 * XPath 1.0 には仕様に準拠した独自エンジンを作成し、libxml2 等を持ち込まない
 * CSS selectors と stylesheet は、Lexbor の CSS 構文 tokenizer、構文パーサ、
   セレクタパーサを Rust に移植した自前のパーサで解析し、出荷するビルドは
@@ -221,10 +219,9 @@ handler 例外の message 取得も fail-closed する
 ## 4. メモリモデル
 
 * DOM node は document ごとの arena に確保し、arena 単位で一括解放する。
-  木に入った node を個別に free することはしない。XML と `arena-dom` の
-  HTML は自前の index アリーナ (node は `Vec` の添字、文字列は byte store
-  の span) で、`unsafe` を含まない。既定の HTML は Lexbor の arena である。
-  以降どちらにも同じ規約を課す。
+  木に入った node を個別に free することはしない。XML と HTML は自前の
+  index アリーナ (node は `Vec` の添字、文字列は byte store の span) で、
+  `unsafe` を含まない。
 * index アリーナの node を Ruby 側へ渡す語は、document ごとの一意な
   stamp と node の添字を 1 語に詰めたもので、document をまたいでも衝突
   しない (Lexbor の node pointer が持っていた性質を保つ)。別の document
@@ -306,12 +303,11 @@ CSS/serialize/読み取りアクセサも GVL を保持する。`spec/threading_
   探索木、tree builder のタグの分類と調整表) は、Lexbor のヘッダとソース
   と WHATWG の `entities.json` から生成し、手で転記しない。生成物は
   Lexbor の表と要素ごとに一致することをテストで確かめる。
-* crate のフィーチャは六つ。`ruby` (Ruby との境界、既定)、`lexbor`
-  (vendored Lexbor を読む層)、`alloc-inject` (OOM 注入)、`arena-dom`
-  (移植版のパーサと index アリーナを facade の後ろに選ぶ。出荷する
-  ビルドは extconf がこれを足し、`MAKIRI_LEXBOR_DOM=1` のときだけ
-  Lexbor の DOM でビルドする)、`css-reference` と
-  `lexbor-reference` (差分 fuzz の参照実装で、出荷するビルドには入らない)。
+* crate のフィーチャは六つ。`ruby` (Ruby との境界、既定)、`html-dom`
+  (index アリーナの HTML DOM とその上の CSS の照合、XPath の HTML 実装。
+  `ruby` と `lexbor` が含む)、`lexbor` (vendored Lexbor を読む参照の層)、
+  `alloc-inject` (OOM 注入)、`css-reference` と `lexbor-reference`
+  (差分 fuzz の参照実装)。`lexbor` を含む三つは出荷するビルドに入らない。
 
 ## 6. Testing
 
@@ -406,9 +402,9 @@ bench で実測の改善があり spec/fuzz/sanitizer が green なときだけ�
 ### 6.7 CI
 
 GitHub Actions で Ruby の各バージョンと OS とで実行する。
-sanitizer は Linux のみで実行する。既定の job はすべて arena DOM の
-ビルドを回し、Lexbor の DOM のビルドは別の job (`lexbor-dom`) で spec と
-`rake diff` を通す。conformance の job が `conformance:parser` を回す。
+sanitizer は Linux のみで実行する。Lexbor と比べる job (`rake rust:test`、
+差分 fuzz、`conformance:parser`) だけが `rake lexbor` で参照の Lexbor を
+ビルドする。
 
 ## 7. 互換性に関する考慮
 

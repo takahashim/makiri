@@ -39,7 +39,7 @@ P で始まる項目は HTML パーサの振る舞いである。
 
 ### P1 暗黙に body を挿入したときの frameset-ok の再設定
 
-- **分類**：参照実装の未対応。移植版で直した（第 7 段）。Lexbor の DOM のビルド（`MAKIRI_LEXBOR_DOM=1`）は旧来の答えのまま。
+- **分類**：参照実装の未対応。移植版で直した（第 7 段）。
 - **仕様**：tree construction の「after head」insertion mode の anything else。body 要素を暗黙に挿入するとき、frameset-ok flag を "ok" に戻す。whatwg/html#12908（2026-09-07 merge、issue #3178）で入った。
 - **再現**：`<head><template></template></head><p><frameset>`。仕様では frameset 文書になり、Lexbor は `<body><p>` を作る。`<template>` が "in head" で frameset-ok を "not ok" にしたまま、戻す処理がない。
 - **テスト**：WPT `template.dat` #44、#45、#46。`spec/html_standard_steps_spec.rb`。

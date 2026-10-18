@@ -1093,7 +1093,6 @@ fn xpath_reads_as_lexbor_does_on_wpt_inputs() {
 
 /// The matcher, which takes arena nodes in this build, against Lexbor's own
 /// engine on the Lexbor document the arena copied - by walk position.
-#[cfg(arena_dom)]
 fn css_case(input: &[u8], selectors: &[&str]) {
     use crate::gvl::Gvl;
     use crate::lexbor::css_match::{self as port, Scratch};
@@ -1142,7 +1141,6 @@ fn css_case(input: &[u8], selectors: &[&str]) {
     }
 }
 
-#[cfg(arena_dom)]
 const CSS_SELECTORS: &[&str] = &[
     "main",
     "MAIN",
@@ -1188,7 +1186,6 @@ const CSS_SELECTORS: &[&str] = &[
     "a:link",
 ];
 
-#[cfg(arena_dom)]
 #[test]
 fn css_matches_as_lexbor_does() {
     css_case(
@@ -1201,7 +1198,6 @@ fn css_matches_as_lexbor_does() {
     );
 }
 
-#[cfg(arena_dom)]
 #[test]
 #[ignore = "needs the fetched WPT data; run by `rake conformance:parser`"]
 fn css_matches_as_lexbor_does_on_wpt_inputs() {

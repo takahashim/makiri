@@ -33,11 +33,11 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
 - **Security-first / fail-closed.** Enforce per-evaluate XPath budgets and
   node-set caps, validate inputs, never return a truncated/wrong result (raise
   instead). **Export only `Init_makiri`** (plus `ruby_abi_version`, which Ruby
-  reads at require time): the vendored Lexbor archive is built with default
-  visibility, so a bundle that re-exports its ~1700 `lxb_*`/`lexbor_*` symbols
-  lets another Lexbor-based gem in the same process (e.g. `nokolexbor`) bind its
-  `lxb_*` calls to our different Lexbor version → segfault. Keep Makiri's Lexbor
-  private; **verify with `bundle exec rake symbols`**, which asserts the whole
+  reads at require time). The extension links no Lexbor any more, but it did,
+  and a bundle that re-exported its ~1700 `lxb_*`/`lexbor_*` symbols let
+  another Lexbor-based gem in the same process (e.g. `nokolexbor`) bind its
+  `lxb_*` calls to our different Lexbor version → segfault; any name of ours in
+  the dynamic table is the same hazard. **Verify with `bundle exec rake symbols`**, which asserts the whole
   claim (nothing of ours or Lexbor's left undefined, and nothing but those two
   names exported). Do not weaken that gate to "no `lxb_` exported" - it passed
   happily while ~220 `mkr_*` names leaked into the dynamic table.
@@ -167,12 +167,6 @@ expectations; what this Lexbor pin still answers the old way is listed in
 Still **vanilla, NEVER patched** - the constraint that relaxed is "release tag
 only", not "no fork".
 
-**Lexbor's heap blocks carry 16 bytes of slack** (`lexbor::memory`, installed
-at `Init_makiri` through Lexbor's own `lexbor_memory_setup`): hardening, so a
-small overrun past the end of a block in the vendored C lands in the slack
-rather than in the next allocation. Off under the sanitizer (`--cfg
-makiri_asan`, from extconf), where such a write must stay visible.
-
 **`:lexbor-contains()` is not supported, and `lexbor::contains_guard` keeps
 every one from the vendored CSS parser - it is not optional.** Its argument
 parser is where the v3.0.0 heap overflow was, and a failed argument parse left
@@ -216,7 +210,8 @@ at all, once no reference runs Lexbor's parser.
 git submodule update --init        # fresh clone only; the reference Lexbor
 bundle install
 bundle exec rake compile           # the crate alone - the extension links no Lexbor
-bundle exec rake lexbor            # the reference Lexbor (cmake); lint, rust:test,
+bundle exec rake lexbor            # the reference Lexbor (script/build_lexbor.rb,
+                                   # cmake); lint, rust:test,
                                    # conformance:parser and the diff fuzzers need it
                                    # and depend on it
 bundle exec rake spec
@@ -253,9 +248,6 @@ bundle exec rake oom               # OOM-injection sweep: rebuilds with
                                    # (clean raise or baseline-identical result), then
                                    # reuses the same document/context after GC.compact.
                                    # Prefix with MAKIRI_SANITIZE=address to combine ASan.
-bundle exec rake "sanitize:lexbor" # also build vendored Lexbor under ASan+UBSan (mraw-arena
-                                   # overflows). LINUX ONLY: Apple clang's ASan ABI
-                                   # does not match rustc's runtime (load segfault)
 bundle exec rake kani              # Kani proofs over the Ruby-free core (needs cargo-kani).
                                    # The successor to the C-era CBMC harnesses: the
                                    # allocator, cbuf, UTF-8 validate/decode.
@@ -263,7 +255,7 @@ bundle exec rake bench             # perf vs Nokogiri (bench-only gems; runs out
 ```
 
 Requires CRuby >= 3.2 and a **Rust toolchain** (`cargo`); `cmake` only for the
-reference Lexbor (`rake lexbor`, `MAKIRI_LEXBOR_DOM=1`). The gem carries none of
+reference Lexbor (`rake lexbor`). The gem carries none of
 Lexbor's sources, only its LICENSE and NOTICE, which the ports owe it. A source
 install needs cargo too; that is why `rb_sys` is a RUNTIME gemspec dependency -
 `extconf.rb` requires it at install time. Binary gems are published per platform,
@@ -386,67 +378,6 @@ by the check that concluded "every undefined symbol is legitimate".
   `-fstack-protector-strong` covered stack smashing in the C, and there is no C.
   Rust's own bounds checking is what covers the class now on every path that is
   not `unsafe`, which is why `unsafe` blocks carry a stated contract.
-- **Vendored Lexbor is built with LTO on macOS and on Linux, but NOT on mingw** -
-  that split is not a preference, it is what each platform's linker can read.
-  Measured against the same build without it, once the GC accounting above made
-  the numbers stable (before that the parse row swung 1.4-2.3x and nothing here
-  was quotable): **parse -16.2%**, **`to_html` -9.2%**, and **`css` +5.3%** -
-  that last one is a real regression, not noise, and it is the price. About two
-  seconds of link. It was the only compile-option win available: Lexbor is ALREADY
-  `-O3`, because `CMAKE_BUILD_TYPE=Release` appends `-O3 -DNDEBUG` after
-  Lexbor's own `-O2` and the last `-O` wins - reading its
-  `LEXBOR_OPTIMIZATION_LEVEL` default as the effective level is a trap.
-
-  Enabling it everywhere was tried and CI gave three different answers, so do
-  not re-derive them: **darwin** ld64 reads the bitcode natively and both the
-  extension and `cargo test` link; **linux** links the extension (gcc drives it,
-  with its LTO plugin) but `cargo test` goes through rust-lld, which cannot read
-  GCC's GIMPLE at all; **mingw** fails outright, because cmake indexes the
-  archive with plain `ar`, which records no LTO symbols.
-
-  Linux therefore gets LTO only with the WHOLE chain in LLVM - clang to emit
-  bitcode, `llvm-ar`/`llvm-ranlib` to index it, and clang+lld to drive the
-  extension's link (`cargo test` already uses rust-lld, which reads bitcode).
-  extconf DETECTS that chain rather than requiring it, probing lld by actually
-  linking with it, so a gcc-only machine builds exactly as before; CI installs
-  `clang lld llvm` so the fast path is the one it exercises. mingw stays out:
-  its Ruby is MinGW-gcc-built, so bringing clang in is an ABI question, not a
-  flag.
-
-  `-march=native` is deliberately NOT used. It measured no gain at all - the hot
-  code is a byte-at-a-time state machine plus libc's already-dispatched
-  memcpy/memset, with nothing for the compiler to vectorise - and it would bake
-  the CI runner's ISA into a gem that has to run on the user's CPU. `-flto=thin`
-  measured the same as `-flto`, so the choice between them is only about which
-  compiler spells it.
-
-  NOT applied under the sanitizer (whole-archive inlining only makes a report
-  harder to read). `MAKIRI_LEXBOR_NO_LTO=1` opts out, and the install stamp
-  tracks it (`plain` / `plain-lto` / `plain-lto-llvm` / `asan`), so a mode switch rebuilds - but
-  only through a path that re-runs extconf, i.e. `rake clean compile`, per the
-  Makefile note above.
-
-- **A plain `sanitize` build does NOT catch overflows inside Lexbor's `mraw`
-  bump arena.** A sub-allocation overrunning into the next one stays within one
-  malloc'd chunk, so the heap allocator's red-zones never see it (this is exactly
-  how the v3.0.0 `:lexbor-contains()` overflow hid from ASan). To catch that
-  class, build Lexbor *itself* under ASan: `MAKIRI_SANITIZE_LEXBOR=1` makes
-  extconf pass `-DLEXBOR_BUILD_WITH_ASAN=ON` (Lexbor's mraw is ASan-aware - it
-  poisons the arena and unpoisons each allocation, so an intra-arena overrun
-  writes into poisoned memory and ASan reports it). Drive it with `rake
-  "sanitize:lexbor"` (slow: full instrumented Lexbor rebuild; FUZZ_ARGS routes to
-  the fuzzer). extconf stamps the Lexbor install mode (`plain`/`asan`) and
-  auto-rebuilds on a switch, so an instrumented Lexbor never leaks into a normal
-  build. Switching the Lexbor *commit* still needs `rake clean:lexbor` (the stamp
-  tracks mode, not revision). No Lexbor patch - it is a vendor build flag.
-
-  That path is LINUX ONLY for the extension, but a **pure-C reproduction is not**:
-  build Lexbor with `cmake -DLEXBOR_BUILD_WITH_ASAN=ON -DCMAKE_BUILD_TYPE=Debug`
-  and link a small `clang -fsanitize=address` program against it. There is no
-  rustc runtime in that process, so the ABI clash does not arise and it works on
-  macOS - the fastest way to decide whether something is ours or Lexbor's. When
-  the answer has to come from a Ruby-side crash instead, build with
-  `MAKIRI_NO_EXPORT_TRIM=1`: without it every frame symbolises as `Init_makiri`.
 - **The XML arena (`src/xml/arena.rs`) needs no ASan poisoning, and has none.**
   The C build's bump arena did (poisoned 64 KiB chunks, the Lexbor-mraw blind
   spot); the Rust one is an index arena - a `Vec<Node>` and a `Vec<u8>` under
@@ -493,9 +424,9 @@ by the check that concluded "every undefined symbol is legitimate".
 ```
 lib/makiri/                Ruby API (Document, Node, Element, NodeSet, XPathContext, ...)
 ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `makiri`
-  extconf.rb               builds vendored Lexbor (cmake), then hands the crate to
-                           cargo via create_rust_makefile; owns the link arguments
-                           and the export trim
+  extconf.rb               hands the crate to cargo via create_rust_makefile; owns
+                           the link arguments and the export trim (it builds no
+                           Lexbor: `rake lexbor` does, for the tests)
   build.rs                 bindgen over Lexbor's own headers -> the layout and
                            constants the crate reads (never transcribed by hand)
   src/
@@ -600,33 +531,31 @@ docs/design_doc.ja.md      authoritative design (read this)
 ```
 
 Six features, and the default is the extension: **`ruby`** (the
-magnus boundary + `glue` + `init`; its HTML DOM is the arena's unless `lexbor`
-is on without `arena-dom` - build.rs's `arena_dom` cfg, with `html_dom` for
-"either DOM"), **`lexbor`** (the vendored Lexbor, now only the reference: the
-generated ABI, Lexbor's DOM through `lexbor/adapter` and its XPath instance,
-its heap slack, and the reference parsers; the extension builds without it, so
-`nm` finds no `lxb_` symbol in a normal build), **`alloc-inject`** (the `rake oom` hook, off in any normal build),
+magnus boundary + `glue` + `init`), **`html-dom`** (the parser port's
+index-arena DOM, `html::dom`, behind the `html_dom` facade and parsed by the
+ported tree builder `html::tree`, with what sits over it - the HTML CSS
+matcher, XPath's HTML instance, the bridge's HTML half; `ruby` and `lexbor`
+both turn it on, and only the bare engine - Kani - is without it),
+**`lexbor`** (the vendored Lexbor, only the reference: the generated ABI,
+Lexbor's DOM through `lexbor/adapter` and its XPath instance, and the
+reference parsers; no build that ships has it, so `nm` finds no `lxb_`
+symbol), **`alloc-inject`** (the `rake oom` hook, off in any normal build),
 **`css-reference`** (the OLD CSS engine, `lexbor::selectors`, for the
-`html_css_diff` fuzz target; in no build that ships), **`lexbor-reference`**
-(`lexbor::tree_diff`, `lexbor::selector_diff` and `lexbor::stylesheet_diff`,
-Lexbor's tree, selector lists and stylesheets beside the ports', for the
-`html_diff`, `selector_diff` and `stylesheet_diff` fuzz targets;
-in no build that ships) and **`arena-dom`** (the
-parser port's index-arena DOM, `html::dom`, in place of Lexbor's behind the
-`html_dom` facade, parsed by the ported tree builder `html::tree`. **The
-extension ships with it**: extconf adds the feature unless
-`MAKIRI_LEXBOR_DOM=1`, which builds Lexbor's DOM instead - the reference the
-port was held to, still buildable; CI's `lexbor-dom` job runs it through the
-spec suite and `rake diff`, and `rake "sanitize:lexbor"` builds it, since that
-run instruments Lexbor. A plain `cargo build` is the shipping configuration;
-`rake rust:test` runs the engine alone, `arena-dom`, `lexbor` (Lexbor's DOM)
-and `lexbor,arena-dom`. Its byte store is append-only between
-compactions: an edit's start (`HtmlParsed::edit`, after the indexes - which
-hold spans - are dropped) rewrites it once the dead bytes outweigh the live
-ones (`html/dom/compact.rs`), so repeated `content=` does not grow a document. What the bridge does differently for the two DOMs is
-`bridge::dom`'s alone. `lexbor::arena_tests` holds it to the Lexbor DOM read
-for read, edit for edit, byte for byte, and `lexbor::tree_port_tests` holds
-the tree builder to Lexbor's tree node for node).
+`html_css_diff` fuzz target) and **`lexbor-reference`** (`lexbor::tree_diff`,
+`lexbor::selector_diff` and `lexbor::stylesheet_diff`, Lexbor's tree, selector
+lists and stylesheets beside the ports', for the `html_diff`, `selector_diff`
+and `stylesheet_diff` fuzz targets). A plain `cargo build` is the shipping
+configuration; `rake rust:test` runs the engine alone, `html-dom` and
+`lexbor`. Lexbor's DOM is not an extension build any more
+(`MAKIRI_LEXBOR_DOM=1` was retired in stage 9): `lexbor::arena_tests` holds
+the arena to it read for read, edit for edit, byte for byte,
+`lexbor::tree_port_tests` holds the tree builder to Lexbor's tree node for
+node, and the matcher is held to Lexbor's own engine over an arena copy of
+Lexbor's parse, node for node by walk position (`lexbor::twin`). The arena's
+byte store is append-only between compactions: an edit's start
+(`HtmlParsed::edit`, after the indexes - which hold spans - are dropped)
+rewrites it once the dead bytes outweigh the live ones
+(`html/dom/compact.rs`), so repeated `content=` does not grow a document.
 The engine - `xml`, `xpath`, `falloc`, `cbuf`, `cutf8`, `html` (the
 tokenizer, the tree builder and the arena), `selectors` (the selector
 parser) - is behind no gate at all. So the fuzz crate builds `--no-default-features --features lexbor,css-reference,lexbor-reference` and Kani
@@ -635,14 +564,14 @@ migration scaffolding, one per ported C file, and went with the C.
 
 ## Subsystems
 
-**Which DOM these notes describe.** The build that ships is the arena DOM
+**Which DOM these notes describe.** The extension's HTML DOM is the arena
 (`html::dom`, parsed by `html::tree`); the notes below that name
 `lexbor/adapter/...` files (source location, the parse guard, the element and
-text indexes, serialization, mutation) describe Lexbor's DOM, the reference
-build (`MAKIRI_LEXBOR_DOM=1`). The arena keeps the same contracts behind the
-same `html_dom` facade - `lexbor::arena_tests` holds the two to the same
-answers - so what a note says a caller sees holds for both; where a note
-describes how Lexbor stores something, the arena's version is in
+text indexes, serialization, mutation) describe Lexbor's DOM, which the arena
+was ported from and is still tested against (`lexbor::arena_tests`), but which
+no build that ships carries. The arena keeps the same contracts behind the
+`html_dom` facade, so what a note says a caller sees holds for it; where a
+note describes how Lexbor stores something, the arena's version is in
 `html/dom/`.
 
 **Text-input contract.** Parsing **honours the input String's encoding**
@@ -706,9 +635,9 @@ a stray `<td>` implies) - so every element the parser invents stays nil and a
 void element fostered out of a table now has its line (L1 in
 `docs/parser_differences.ja.md`). `lexbor::tree_diff::offsets_name_their_tags`
 holds it to the one property `#line` promises: every stamp sits at a start tag
-of the element's own name. What follows is the Lexbor DOM's rule
-(`MAKIRI_LEXBOR_DOM=1`, and the port's Lexbor-compatible run in the
-differential harnesses), which the port reproduced until then.
+of the element's own name. What follows is the Lexbor DOM's rule (the
+reference, and the port's Lexbor-compatible run in the differential
+harnesses), which the port reproduced until then.
 
 (`lexbor/adapter/post_parse.rs`, `source_loc.rs`) `parse_html` drives Lexbor's low-level pipeline (`parser_create`/`init` →
 `parse_chunk_begin` → override the tokenizer's token-done callback, **chaining**

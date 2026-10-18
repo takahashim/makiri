@@ -141,10 +141,9 @@ end
 # failed: the run still fails on any OTHER difference, and it fails when a
 # listed test starts passing, so the table cannot outlive the divergence.
 #
-# The build parses with the port, or with Lexbor (MAKIRI_LEXBOR_DOM=1): each
-# has its own entries in the list.
-PARSER = Makiri.send(:__lexbor_dom?) ? "lexbor" : "port"
-KNOWN_DIVERGENCES = ParserData.known_divergences(PARSER).freeze
+# The extension parses with the port; the list's Lexbor entries are the
+# crate's (its conformance tests run Lexbor's parser too).
+KNOWN_DIVERGENCES = ParserData.known_divergences("port").freeze
 
 files.each do |path|
   parse_dat(path).each do |t|

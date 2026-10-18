@@ -11,7 +11,6 @@ module Makiri
   def self.__alloc_inject(1)
   def self.__alloc_inject?(0)
   def self.__alloc_inject_calls(0)
-  def self.__lexbor_dom?(0)
   def self.__panic(1)
   def self.parse(-2 req:source,keyrest:opts)
 

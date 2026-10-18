@@ -66,7 +66,7 @@ impl From<NodeId> for NodeWord {
 impl From<RawNode> for NodeWord {
     #[inline]
     fn from(n: RawNode) -> Self {
-        NodeWord(crate::bridge::dom::node_word(n))
+        NodeWord(n.word())
     }
 }
 
@@ -87,15 +87,11 @@ impl NodeWord {
         NodeId::from_token(self.0)
     }
 
-    /// The HTML node; `None` for a null word.
-    ///
-    /// # Safety
-    /// The word was made from a [`RawNode`] (it belongs to an HTML document),
-    /// and that document is still alive - a `RawNode` is trusted to be live.
+    /// The HTML node; `None` for a null word. Safe for any word, as
+    /// [`xml`](Self::xml) is: the arena checks the id when it is resolved.
     #[inline]
-    pub unsafe fn html(self) -> Option<RawNode> {
-        // SAFETY: the caller's contract, which is `node_of_word`'s.
-        unsafe { crate::bridge::dom::node_of_word(self.0) }
+    pub fn html(self) -> Option<RawNode> {
+        RawNode::from_word(self.0)
     }
 
     /// The engine token for this node of a document of kind `kind`. Infallible:
@@ -107,8 +103,7 @@ impl NodeWord {
     #[inline]
     pub unsafe fn token(self, kind: DocKind) -> Token {
         match kind {
-            // SAFETY: the caller's contract.
-            DocKind::Html => unsafe { crate::bridge::dom::html_token(self.0) },
+            DocKind::Html => Token::arena(self.0),
             DocKind::Xml => Token::xml(self.0),
         }
     }
@@ -612,7 +607,7 @@ impl From<DocKind> for Kind {
     #[inline]
     fn from(kind: DocKind) -> Kind {
         match kind {
-            DocKind::Html => crate::bridge::dom::HTML_TOKEN_KIND,
+            DocKind::Html => Kind::Arena,
             DocKind::Xml => Kind::Xml,
         }
     }

@@ -1,20 +1,16 @@
-//! What the bridge does differently for the two HTML DOMs `crate::html_dom`
-//! chooses between - the Lexbor adapter and the parser port's arena - kept in
-//! this one module so the rest of the bridge reads the same for both.
-//!
-//! Each step is the same contract on both sides; only how it is met differs.
-//! A Lexbor handle is a pointer, so a node read from a word, or a document lent
-//! for an edit, is the caller's promise. An arena handle borrows its document,
-//! and a node is an id resolved by a checked lookup, so the same steps are
-//! ordinary borrows of the parsed handle the Ruby Document owns.
+//! The parsed HTML document as the bridge holds it: the pointer a Ruby
+//! Document owns, and the borrows of it - shared, for an edit, for XPath -
+//! that the rest of the bridge takes. An arena handle borrows its document
+//! and a node is an id resolved by a checked lookup, so what is the caller's
+//! promise here is only that the Document is live and the borrow is the one
+//! access the contract says.
 
 #![allow(unsafe_code)]
 
 use core::ptr::NonNull;
 
-use crate::html_dom::html::{ForeignNode, HtmlDoc, HtmlDocMut, HtmlNode, HtmlNodeKey, RawNode};
+use crate::html_dom::html::{HtmlDoc, HtmlDocMut, RawNode};
 use crate::html_dom::post_parse::HtmlParsed;
-use crate::token::{Kind, Token};
 
 /// The parsed document a Ruby HTML Document owns, as the bridge passes it:
 /// the pointer `DocumentShell::install_html` leaked, live for as long as the
@@ -64,13 +60,8 @@ impl DocPtr {
     /// one lives - and no Ruby runs meanwhile.
     #[inline]
     pub unsafe fn edit_new_nodes<'d>(self) -> HtmlDocMut<'d> {
-        #[cfg(not(arena_dom))]
-        // SAFETY: the caller's contract, which is `assume_exclusive`'s.
-        let d = unsafe { HtmlDocMut::assume_exclusive(self.as_doc()) };
-        #[cfg(arena_dom)]
         // SAFETY: the caller's contract: the one access for `'d`.
-        let d = unsafe { (*self.0.as_ptr()).edit_keeping_indexes() };
-        d
+        unsafe { (*self.0.as_ptr()).edit_keeping_indexes() }
     }
 
     /// The document, lent for an edit of its tree, attributes or data. The
@@ -80,82 +71,15 @@ impl DocPtr {
     /// As [`edit_new_nodes`](Self::edit_new_nodes).
     #[inline]
     pub unsafe fn edit<'d>(self) -> HtmlDocMut<'d> {
-        #[cfg(not(arena_dom))]
-        // SAFETY: as `edit_new_nodes`.
-        let d = unsafe { HtmlDocMut::assume_exclusive(self.as_doc()) };
-        #[cfg(arena_dom)]
         // SAFETY: as `edit_new_nodes`; `edit` drops the indexes itself too.
-        let d = unsafe { (*self.0.as_ptr()).edit() };
-        d
+        unsafe { (*self.0.as_ptr()).edit() }
     }
 }
-
-/// The node `raw` names in `doc`.
-///
-/// # Safety
-/// `raw` is a live node of `doc` - for Lexbor, a node pointer the caller
-/// vouches for; the arena checks the id itself.
-#[inline]
-pub unsafe fn node_in<'d>(doc: HtmlDoc<'d>, raw: RawNode) -> HtmlNode<'d> {
-    #[cfg(not(arena_dom))]
-    // SAFETY: the caller's contract.
-    let n = unsafe { doc.node(raw) };
-    #[cfg(arena_dom)]
-    let n = doc.node(raw);
-    n
-}
-
-/// A node as the word the bridge stores (`NodeWord`) and the child memo
-/// records: Lexbor's node pointer, or the arena's node id.
-#[inline]
-pub fn node_word(n: RawNode) -> usize {
-    #[cfg(not(arena_dom))]
-    let w = n.as_ptr() as usize;
-    #[cfg(arena_dom)]
-    let w = n.word();
-    w
-}
-
-/// The node a [`node_word`] names; `None` for 0.
-///
-/// # Safety
-/// The word was made by [`node_word`] from a node of a document that is
-/// still alive.
-#[inline]
-pub unsafe fn node_of_word(w: usize) -> Option<RawNode> {
-    #[cfg(not(arena_dom))]
-    let n = RawNode::from_ptr(w as *mut core::ffi::c_void);
-    #[cfg(arena_dom)]
-    let n = RawNode::from_word(w);
-    n
-}
-
-/// The XPath token of the HTML node a [`node_word`] names.
-///
-/// # Safety
-/// As [`node_of_word`].
-#[inline]
-pub unsafe fn html_token(w: usize) -> Token {
-    #[cfg(not(arena_dom))]
-    // SAFETY: the caller's contract, which is `Token::html`'s.
-    let t = unsafe { Token::html(w as *mut core::ffi::c_void) };
-    #[cfg(arena_dom)]
-    let t = Token::arena(w);
-    t
-}
-
-/// The token kind an HTML document's nodes carry.
-#[cfg(not(arena_dom))]
-pub const HTML_TOKEN_KIND: Kind = Kind::Html;
-/// The token kind an HTML document's nodes carry.
-#[cfg(arena_dom)]
-pub const HTML_TOKEN_KIND: Kind = Kind::Arena;
 
 /// XPath's view of the document behind `p`, for `'e`. `Err` when the
 /// element index a mutation dropped could not be rebuilt.
 ///
-/// The arena's instance reads the index its caller built, where Lexbor's
-/// rebuilds it in `Dom::prepare`: built here, with the one `&mut` of the
+/// The instance reads the index its caller built: built here, with the one `&mut` of the
 /// handle an evaluate takes - only when the index is missing, which no
 /// evaluation already running can see (one would have built it, and no
 /// mutation runs while one does), so it never overlaps a shared borrow.
@@ -166,22 +90,15 @@ pub const HTML_TOKEN_KIND: Kind = Kind::Arena;
 pub unsafe fn xpath_dom<'e>(
     p: DocPtr,
 ) -> Result<crate::html_dom::xpath::HtmlDom<'e>, crate::engine_error::ErrorKind> {
-    #[cfg(not(arena_dom))]
-    // SAFETY: the caller's contract, which is `dom`'s.
-    let d = unsafe { crate::html_dom::xpath::dom(p.as_ptr()) };
-    #[cfg(arena_dom)]
-    let d = {
-        // SAFETY: see above - no shared borrow of the handle is live while
-        // the index is missing.
-        if unsafe { p.parsed() }.dom_index().is_none() {
-            unsafe { &mut *p.as_ptr().as_ptr() }
-                .ensure_dom_index()
-                .map_err(|_| crate::engine_error::ErrorKind::Oom)?;
-        }
-        // SAFETY: the caller's contract.
-        crate::html_dom::xpath::dom(unsafe { p.parsed() })
-    };
-    Ok(d)
+    // SAFETY: see above - no shared borrow of the handle is live while the
+    // index is missing.
+    if unsafe { p.parsed() }.dom_index().is_none() {
+        unsafe { &mut *p.as_ptr().as_ptr() }
+            .ensure_dom_index()
+            .map_err(|_| crate::engine_error::ErrorKind::Oom)?;
+    }
+    // SAFETY: the caller's contract.
+    Ok(crate::html_dom::xpath::dom(unsafe { p.parsed() }))
 }
 
 /// The document node of `p`'s document.
@@ -192,34 +109,4 @@ pub unsafe fn xpath_dom<'e>(
 pub unsafe fn document_node(p: DocPtr) -> RawNode {
     // SAFETY: the caller's contract.
     RawNode::from(unsafe { p.as_doc() }.as_node())
-}
-
-/// The key for `node` under `parsed` - see `HtmlParsed::mint_key`.
-///
-/// # Safety
-/// `node` is a live node, and `parsed`'s Document stays alive at its address
-/// for as long as the key is used (Lexbor's key holds the node pointer; the
-/// arena checks the id itself).
-#[inline]
-pub unsafe fn mint_key(parsed: &HtmlParsed, node: RawNode) -> Result<HtmlNodeKey, ForeignNode> {
-    #[cfg(not(arena_dom))]
-    // SAFETY: the caller's contract, which is `mint_key`'s.
-    let k = unsafe { parsed.mint_key(node) };
-    #[cfg(arena_dom)]
-    let k = parsed.mint_key(node);
-    k
-}
-
-/// The 1-based source line of `node`, a node of `parsed`'s document.
-///
-/// # Safety
-/// `node` is a live node of that document.
-#[inline]
-pub unsafe fn node_line(parsed: &HtmlParsed, node: RawNode) -> Option<usize> {
-    #[cfg(not(arena_dom))]
-    // SAFETY: the caller's contract.
-    let l = unsafe { parsed.node_line(node) };
-    #[cfg(arena_dom)]
-    let l = parsed.node_line(node);
-    l
 }

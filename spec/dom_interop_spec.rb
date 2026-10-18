@@ -134,9 +134,9 @@ RSpec.describe "browser-DOM interop" do
     end
 
     # The HTML Standard serializes an HTML, SVG or MathML element by its local
-    # name (docs/parser_differences.ja.md R2); Lexbor's DOM writes the prefix.
+    # name (docs/parser_differences.ja.md R2); Lexbor wrote the prefix.
     def written_tag(name)
-      Makiri.send(:__lexbor_dom?) ? name : name.split(":").last
+      name.split(":").last
     end
   end
 

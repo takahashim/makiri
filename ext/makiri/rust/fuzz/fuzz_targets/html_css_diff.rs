@@ -14,7 +14,9 @@
 //! the tag filter, names resolved to ids, the sibling-position memo.
 //!
 //! The input is laid out as in `html_css`: the selector up to the first NUL,
-//! then the document.
+//! then the document. The document is Lexbor's parse, which the old engine
+//! reads, beside its arena copy (`lexbor::twin`), which `css_match` reads;
+//! the old engine's answer is compared at the same places in the copy.
 //!
 //! Only what the two engines are meant to agree on is compared. `css_match`'s
 //! module doc lists where it departs from Lexbor on purpose, and a selector
@@ -38,12 +40,14 @@ use libfuzzer_sys::fuzz_target;
 mod common;
 use common::*;
 use makiri::gvl::Gvl;
-use makiri::lexbor::adapter::html::{HtmlNode, RawNode};
+use makiri::html_dom::html::{HtmlNode, RawNode};
+use makiri::lexbor::adapter::html::RawNode as LexborNode;
 use makiri::lexbor::adapter::post_parse::parse_html;
 use makiri::lexbor::adapter::tree_guard::DepthLimit;
 use makiri::lexbor::css_match::{select_all, Scratch};
 use makiri::lexbor::selector_cache;
 use makiri::lexbor::selectors as old_engine;
+use makiri::lexbor::twin::Twin;
 use makiri::selectors::ast::{
     Combinator, FunctionArg, ListPseudo, Lists, PseudoClass, Selector, Simple,
 };
@@ -75,7 +79,11 @@ fuzz_target!(|data: &[u8]| {
     };
     let gvl = Gvl::exclusive();
     // SAFETY: `p` owns the document and outlives every handle made here.
-    let root = unsafe { p.raw_doc().as_doc() }.as_node();
+    let lexbor_root = unsafe { p.raw_doc().as_doc() }.as_node();
+    let Ok(twin) = Twin::new(unsafe { p.raw_doc().as_doc() }) else {
+        return;
+    };
+    let root = twin.doc().as_node();
     let doc = Doc::survey(root);
 
     /* Parsed as Lexbor parses (`compat::as_lexbor`): what is compared here
@@ -90,9 +98,14 @@ fuzz_target!(|data: &[u8]| {
     let Ok(Some(new)) = new else {
         return;
     };
-    let Ok(old) = old_engine::select_all(&gvl, RawNode::from(root), text.as_bytes()) else {
+    let Ok(old) = old_engine::select_all(&gvl, LexborNode::from(lexbor_root), text.as_bytes())
+    else {
         return;
     };
+    let old: Vec<RawNode> = old
+        .into_iter()
+        .map(|n| RawNode::from(twin.to_arena(n)))
+        .collect();
     assert!(
         new == old,
         "css_match and Lexbor's engine disagree: {} match(es) here, {} there",

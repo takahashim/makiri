@@ -55,14 +55,9 @@ jobs:
       # Ruby, and bindgen needs libclang. The runner image ships one; installing
       # it explicitly is what keeps a base-image change from turning into
       # "Unable to find libclang" in the cargo step.
-      # clang/lld/llvm are for the vendored Lexbor's LTO, not for bindgen: on
-      # Linux the whole chain has to be LLVM or extconf turns LTO off (gcc emits
-      # GIMPLE, which rust-lld cannot read - see the note in extconf.rb). It
-      # DETECTS them, so a runner without them still builds, just without LTO;
-      # installing them here is what makes CI exercise the fast path.
-      - name: Install libclang (bindgen) and the LLVM chain (Lexbor LTO)
+      - name: Install libclang (bindgen)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libclang-dev clang lld llvm
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
 
       - name: Compile the extension (the crate alone; no Lexbor)
         run: bundle exec rake compile
@@ -157,46 +152,6 @@ jobs:
       - name: Smoke-load the gem
         shell: bash
         run: bundle exec ruby -Ilib -r makiri -e 'p Makiri::VERSION'
-
-  # Lexbor's DOM (MAKIRI_LEXBOR_DOM=1): the reference the parser port's arena
-  # DOM was held to, no longer the build that ships (every other job builds
-  # the arena DOM). One runner keeps it buildable and answering the same
-  # suite and C-build baseline until it is retired (docs/rewrite_parser.ja.md,
-  # stage 9). The Rust tests that read the two DOMs side by side run in
-  # `rake rust:test` above.
-  lexbor-dom:
-    name: Lexbor DOM reference (Ruby 3.4)
-    runs-on: ubuntu-latest
-    env:
-      MAKIRI_LEXBOR_DOM: "1"
-    steps:
-      - name: Checkout (with vendored Lexbor submodule)
-        uses: actions/checkout@v6
-        with:
-          submodules: recursive
-
-      - name: Ensure cmake is available
-        uses: lukka/get-cmake@latest
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - name: Install libclang (bindgen) and the LLVM chain (Lexbor LTO)
-        run: sudo apt-get update && sudo apt-get install -y libclang-dev clang lld llvm
-
-      - name: Set up Ruby
-        uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: "3.4"
-          bundler-cache: true
-
-      - name: Compile the extension with Lexbor's DOM
-        run: bundle exec rake compile
-
-      - name: Differential
-        run: bundle exec rake diff
-
-      - name: Run the test suite
-        run: bundle exec rake spec
 
   sanitize:
     # AddressSanitizer only. UBSan used to run beside it over the C sources;

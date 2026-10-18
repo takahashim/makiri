@@ -32,37 +32,37 @@ pub mod stack;
 /// The Ruby <-> Lexbor DOM seam.
 /// The node and Document wrappers, their TypedData types, and the
 /// representation-agnostic accessors.
-#[cfg(html_dom)]
+#[cfg(feature = "html-dom")]
 pub mod wrapper;
 
 /// The bridge steps that differ between the two HTML DOMs.
 pub mod dom;
 
 /// The HTML front door: Lexbor nodes to Ruby and back, and the HTML edits.
-#[cfg(html_dom)]
+#[cfg(feature = "html-dom")]
 pub mod html;
 
 /// The XML front door and the one gated way to write an arena (the XML
 /// counterpart of `html`).
-#[cfg(html_dom)]
+#[cfg(feature = "html-dom")]
 pub mod xml;
 
 /// The Ruby <-> Document seam: parsing (GVL-released), the Document readers, the
 /// fragment pipeline, and cross-document import/clone.
-#[cfg(html_dom)]
+#[cfg(feature = "html-dom")]
 pub mod doc;
 
 /// The Ruby-facing fragment entry points (`Document#fragment`, `Node#parse`).
-#[cfg(html_dom)]
+#[cfg(feature = "html-dom")]
 pub mod fragment;
 
 /// `Makiri::NodeSet`'s wrapper type (opaque node pointers + a Document
 /// keepalive) and the safe fill handle over it.
-#[cfg(html_dom)]
+#[cfg(feature = "html-dom")]
 pub mod node_set;
 
 /// Reading a stored node word back as a typed wrapper (the two front doors).
-#[cfg(html_dom)]
+#[cfg(feature = "html-dom")]
 pub mod node_wrap;
 
 /// The errors the DOM's insertion rules raise, for HTML and XML alike.
@@ -70,7 +70,7 @@ pub mod dom_error;
 
 /// The Ruby <-> XPath engine seam: which backend a query runs on, and
 /// building the engine context for a Ruby node or document.
-#[cfg(html_dom)]
+#[cfg(feature = "html-dom")]
 pub mod xpath;
 
 pub mod ruby;

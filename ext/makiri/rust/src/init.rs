@@ -151,13 +151,6 @@ fn alloc_inject_p() -> bool {
     cfg!(feature = "alloc-inject")
 }
 
-/// Whether this build parses HTML with Lexbor (`MAKIRI_LEXBOR_DOM=1`) rather
-/// than the parser port: the conformance runner reads the known divergences
-/// of the parser it is running.
-fn lexbor_dom_p() -> Result<bool, Error> {
-    crate::bridge::ruby::entry(|| Ok(!cfg!(arena_dom)))
-}
-
 /// `Makiri.__alloc_inject(n)` - arm "the nth core allocation fails once".
 fn alloc_inject(ruby: &Ruby, nth: i64) -> Result<(), Error> {
     #[cfg(feature = "alloc-inject")]
@@ -320,10 +313,6 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     // Before anything touches the interpreter's structs: a binary built for
     // another Ruby misreads them (`check_running_ruby_api`).
     crate::bridge::ruby::check_running_ruby_api(ruby)?;
-    // Before anything can parse: Lexbor's heap blocks carry slack past their
-    // end (`lexbor::memory`). A build without Lexbor has none to give it.
-    #[cfg(feature = "lexbor")]
-    crate::lexbor::memory::install();
     let makiri = ruby.define_module("Makiri")?;
 
     // What this binary was built as, for `lib/makiri.rb` to check against the
@@ -498,7 +487,6 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     crate::stack::install(crate::bridge::stack::low);
 
     makiri.define_singleton_method("__alloc_inject?", function!(alloc_inject_p, 0))?;
-    makiri.define_singleton_method("__lexbor_dom?", function!(lexbor_dom_p, 0))?;
     makiri.define_singleton_method("__panic", function!(panic_probe, 1))?;
     makiri.define_singleton_method("__alloc_inject", function!(alloc_inject, 1))?;
     makiri.define_singleton_method("__alloc_inject_calls", function!(alloc_inject_calls, 0))?;

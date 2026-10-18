@@ -28,8 +28,7 @@ Gem::Specification.new do |spec|
 
   # The extension builds from the crate alone: the HTML and CSS parsers are
   # Rust ports of Lexbor's, and the vendored Lexbor (a git submodule) is only
-  # the reference the tests compare them with (`MAKIRI_LEXBOR_DOM=1`, `rake
-  # lexbor`). So of `vendor/lexbor` the gem carries only what the ports owe it:
+  # the reference the tests compare them with (`rake lexbor`). So of `vendor/lexbor` the gem carries only what the ports owe it:
   # Lexbor's LICENSE and NOTICE (Apache-2.0, see NOTICE). `--recurse-submodules`
   # is what lists those two files; `git ls-files` alone reports the submodule
   # as one gitlink entry.
