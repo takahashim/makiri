@@ -18,6 +18,7 @@ use super::handle::{HtmlAttr, HtmlElement, HtmlNode, NsId};
 use super::{Document, NodeType};
 use crate::cbuf::{Buf, BufError};
 use crate::html::res::names as res;
+use crate::html::tree::compat::{self, Fix};
 
 /// Where the output goes. `false` refuses the chunk and stops the walk.
 pub trait Sink {
@@ -224,10 +225,25 @@ fn attribute<S: Sink>(out: &mut Out<'_, S>, a: HtmlAttr<'_>) -> R {
     out.send(b"\"")
 }
 
+/// The name an element's tags are written with: the Standard's local name
+/// for an element in the HTML, SVG or MathML namespace, the qualified name
+/// for any other. Lexbor wrote the qualified name for all, which differs
+/// only where a prefix was given (`create_element_ns`): the parser makes
+/// none.
+fn tag_name(el: HtmlElement<'_>) -> &[u8] {
+    if el.has_written_name()
+        && matches!(el.node().ns_id(), Some(NsId::HTML | NsId::SVG | NsId::MATH))
+        && compat::fixed(Fix::R2)
+    {
+        return el.dom_local_name();
+    }
+    el.qualified_name()
+}
+
 /// `lxb_html_serialize_element_cb`: the start tag.
 fn start_tag<S: Sink>(out: &mut Out<'_, S>, el: HtmlElement<'_>) -> R {
     out.send(b"<")?;
-    out.send(el.qualified_name())?;
+    out.send(tag_name(el))?;
     for a in el.attrs() {
         out.send(b" ")?;
         attribute(out, a)?;
@@ -310,7 +326,7 @@ fn end_tag<S: Sink>(out: &mut Out<'_, S>, n: HtmlNode<'_>) -> R {
         return Ok(());
     }
     out.send(b"</")?;
-    out.send(el.qualified_name())?;
+    out.send(tag_name(el))?;
     out.send(b">")
 }
 
@@ -332,6 +348,11 @@ pub fn write<S: Sink>(node: HtmlNode<'_>, deep: bool, pretty: bool, sink: &mut S
     }
     if !deep && node.node_type() != NodeType::Document {
         return subtree(&mut out, node);
+    }
+    /* The Standard's fragment serializing, step 1: a void element's
+     * children, which only the DOM can give it, are not written. */
+    if shape(node) == Shape::Void && compat::fixed(Fix::R1) {
+        return Ok(());
     }
     let mut c = match node.template_content() {
         Some(contents) => contents.first_child(),

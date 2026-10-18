@@ -294,11 +294,15 @@ fn compare_docs(ld: lex::HtmlDoc<'_>, ad: arena::HtmlDoc<'_>, ctx: &str) {
         }
     }
 
-    /* Serialization, every form, of every node Lexbor serializes. */
+    /* Serialization, every form, of every node Lexbor serializes - as
+     * Lexbor serialized: the serializer's departures (R1, R2) are for
+     * shapes only the DOM makes, which the edits here do. */
     for (i, (&l, &a)) in p.l.iter().zip(&p.a).enumerate() {
         for (deep, pretty) in [(false, false), (true, false), (false, true), (true, true)] {
             let lo = crate::lexbor::serialize::serialize(l, deep, pretty);
-            let ao = arena::serialize::serialize(a, deep, pretty);
+            let ao = crate::html::tree::compat::as_lexbor(|| {
+                arena::serialize::serialize(a, deep, pretty)
+            });
             assert_eq!(
                 lo.as_ref()
                     .map(|b| String::from_utf8_lossy(b.as_slice()).into_owned()),

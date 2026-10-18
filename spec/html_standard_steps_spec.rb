@@ -149,4 +149,22 @@ RSpec.describe "HTML Standard steps the port takes and Lexbor does not" do
     expect(el.to_html).to eq(%(<q:foo><bar xlink:href="a"></bar>x&lt;y</q:foo>))
     expect(el.at_xpath("*/@*").xpath("namespace-uri()")).to eq("http://www.w3.org/1999/xlink")
   end
+  # R1: serializing HTML fragments, step 1: a void element serializes as "".
+  it "serializes a void element's children as nothing" do
+    doc = Makiri::HTML("<!doctype html><br>")
+    br = doc.at_css("br")
+    br << doc.create_text_node("x")
+    expect(br.inner_html).to eq("")
+    expect(br.to_html).to eq("<br>")
+  end
+  # R2: serializing HTML fragments: an element in the HTML, SVG or MathML
+  # namespace is written by its local name.
+  it "writes a prefixed HTML, SVG or MathML element by its local name" do
+    doc = Makiri::HTML("<!doctype html><p></p>")
+    p_el = doc.at_css("p")
+    p_el << doc.create_element_ns("http://www.w3.org/2000/svg", "s:rect")
+    p_el << doc.create_element_ns("http://www.w3.org/1999/xhtml", "h:br")
+    p_el << doc.create_element_ns("urn:x", "q:foo")
+    expect(p_el.inner_html).to eq("<rect></rect><br><q:foo></q:foo>")
+  end
 end

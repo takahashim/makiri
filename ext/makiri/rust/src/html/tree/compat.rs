@@ -1,6 +1,6 @@
-//! Where the tree builder follows the pinned HTML Standard and Lexbor does not
-//! (`docs/parser_differences.ja.md`, the P items): each such step asks
-//! [`fixed`] whether to take the Standard's branch.
+//! Where the tree builder or the serializer follows the pinned HTML Standard
+//! and Lexbor does not (`docs/parser_differences.ja.md`, the P and R items):
+//! each such step asks [`fixed`] whether to take the Standard's branch.
 //!
 //! A build that ships always does. The tests and the reference builds can run
 //! the port as Lexbor ran ([`as_lexbor`]), which is how the differential
@@ -69,6 +69,13 @@ pub enum Fix {
     /// A fragment's form element pointer is the context's nearest form,
     /// itself or an ancestor.
     P20,
+    /// A void element's `inner_html` is empty, whatever children the DOM
+    /// gave it. The serializer's, as is R2; no parse makes either shape, so
+    /// [`explains`] never names them.
+    R1,
+    /// An element in the HTML, SVG or MathML namespace is serialized by its
+    /// local name, without the prefix it was created with.
+    R2,
     /// An element carries its start tag's offset when it was created for
     /// that tag's token, and no other (`Node#line`); not a tree change, so
     /// [`explains`] never names it: the harnesses compare the trees without

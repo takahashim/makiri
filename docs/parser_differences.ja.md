@@ -197,6 +197,22 @@ P で始まる項目は HTML パーサの振る舞いである。
 - **移植版**：`lexbor/arena_fragment.rs` の `FragmentContext::element` が、名前空間を「なし」として渡す context について `ContextFacts::foreign_namespace` を立て、`html/tree/fragment.rs` が tokenizer の `undef_is_foreign` に写す。`html/tree/modes/foreign_content.rs` の `anything_else` は、MathML と SVG 以外の名前空間でも adjust foreign attributes を行う（`AttrAdjust::Foreign`。文書の解析ではその名前空間の要素は現れない）。差分の比較は既定の `ContextFacts` と、HTML、SVG、MathML の context で解析するので、許可は要らない。
 - **テスト**：WPT にない。`spec/html_standard_steps_spec.rb`。
 
+### R1 void の要素の `inner_html`
+
+- **分類**：参照実装の未対応（監査の foreign F7）。移植版で直した（第 8 段）。
+- **仕様**：fragment の直列化の step 1。node が serializes as void なら空文字列を返す。
+- **再現**：DOM の操作で `<br>` に text を足し、`inner_html` を読む。仕様では `""`。Lexbor は node の種類を見ずに子を書くので `"x"`。`to_html`（`<br>`）は前から一致していた。
+- **移植版**：`html/dom/serialize.rs` の `write` が、子だけを書く形（`deep`）で void の要素に何も書かない。parser はこの形を作らないので、`lexbor::arena_tests` は直列化を Lexbor の答え（`as_lexbor`）で比べる。
+- **テスト**：WPT にない。`spec/html_standard_steps_spec.rb`。
+
+### R2 接頭辞のある HTML、SVG、MathML の要素の名前
+
+- **分類**：参照実装の未対応（監査の foreign F8）。移植版で直した（第 8 段）。
+- **仕様**：fragment の直列化は、HTML、MathML、SVG の名前空間の要素の tag を local name で書き、ほかの名前空間の要素は qualified name で書く。
+- **再現**：`create_element_ns` で作った `s:rect`（SVG）、`h:br`（HTML）、`q:foo`（`urn:x`）。仕様では `<rect></rect><br><q:foo></q:foo>`。Lexbor は常に qualified name を書くので `<s:rect></s:rect><h:br><q:foo></q:foo>`。
+- **移植版**：`html/dom/serialize.rs` の `tag_name` が、名前を書いたとおりに持つ（接頭辞か大文字を持つ）要素のうち三つの名前空間のものに DOM の `localName` を返す。parser はこの形を作らない。比較の扱いは R1 と同じ。
+- **テスト**：WPT にない。`spec/html_standard_steps_spec.rb`（R1 と同じ例の群）。
+
 ### L1 ソース位置の規則
 
 - **分類**：意図した変更（移植計画の「ソース位置の規則」）。Lexbor の DOM のビルドは旧来の答えのまま。
