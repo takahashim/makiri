@@ -44,7 +44,7 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
 
     #[inline]
     fn token(n: HtmlNode<'d>) -> Token {
-        Token::arena(n.id().to_word())
+        Token::arena(super::RawNode::from(n).word())
     }
     #[inline]
     #[allow(
@@ -57,9 +57,9 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
             Kind::Arena,
             "an HTML context resolved a token of another kind"
         );
-        let id = NodeId::from_word(t.word()).expect("a resolved token names a node");
+        let raw = super::RawNode::from_word(t.word()).expect("a resolved token names a node");
         self.doc
-            .get(id)
+            .checked(raw)
             .expect("a token names a node of its document")
     }
 

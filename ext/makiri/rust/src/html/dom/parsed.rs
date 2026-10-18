@@ -80,6 +80,14 @@ impl HtmlParsed {
         HtmlDocMut::new(&mut self.doc)
     }
 
+    /// The document, lent to make DETACHED nodes - factories and copies -
+    /// with the indexes kept: no index names a node no tree holds, and
+    /// nothing an index stores moves when the arena grows (ids and offsets).
+    #[inline]
+    pub fn edit_keeping_indexes(&mut self) -> HtmlDocMut<'_> {
+        HtmlDocMut::new(&mut self.doc)
+    }
+
     /// The arena itself.
     #[inline]
     pub fn arena(&self) -> &Document {
@@ -151,7 +159,7 @@ impl HtmlParsed {
     /// The 1-based source line for `node`, or `None` when unknown.
     pub fn node_line(&self, node: RawNode) -> Option<usize> {
         let lines = self.lines.as_ref()?;
-        let offset = self.doc().get(node.id())?.source_offset()?;
+        let offset = self.doc().checked(node)?.source_offset()?;
         Some(lines.lookup(offset))
     }
 
@@ -163,7 +171,7 @@ impl HtmlParsed {
 
     /// The key for `node`, which must be a node of this document.
     pub fn mint_key(&self, node: RawNode) -> Result<HtmlNodeKey, ForeignNode> {
-        if self.doc().get(node.id()).is_none() {
+        if self.doc().checked(node).is_none() {
             return Err(ForeignNode);
         }
         Ok(HtmlNodeKey {
@@ -177,7 +185,7 @@ impl HtmlParsed {
         if key.owner != self.identity() {
             return Err(ForeignNode);
         }
-        self.doc().get(key.node.id()).ok_or(ForeignNode)
+        self.doc().checked(key.node).ok_or(ForeignNode)
     }
 }
 

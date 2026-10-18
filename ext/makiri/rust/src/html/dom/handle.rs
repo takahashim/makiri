@@ -198,31 +198,53 @@ pub struct HtmlElement<'d>(HtmlNode<'d>);
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct HtmlAttr<'d>(HtmlNode<'d>);
 
-/// A node named by its id, without the document - what crosses the Ruby
-/// boundary. It means something only together with its document
-/// ([`HtmlDoc::node`]).
+/// A node named without a borrow of its document - what crosses the Ruby
+/// boundary: its document's stamp and its id, in one word, so two documents'
+/// nodes never share one (as two Lexbor nodes never share a pointer). It
+/// means something only together with its document ([`HtmlDoc::node`]).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 #[repr(transparent)]
-pub struct RawNode(NodeId);
+pub struct RawNode(core::num::NonZeroU64);
 
 impl RawNode {
-    /// The node id.
+    /// The node `id` of the document stamped `stamp`.
+    #[inline]
+    pub fn new(stamp: u32, id: NodeId) -> Self {
+        RawNode(core::num::NonZeroU64::from(id.0) | (u64::from(stamp) << 32))
+    }
+
+    /// The node id, in its document.
     #[inline]
     pub fn id(self) -> NodeId {
-        self.0
+        /* The low half is a NodeId's non-zero word, by construction. */
+        NodeId(NonZeroU32::new(self.0.get() as u32).unwrap_or(NonZeroU32::MIN))
     }
 
-    /// `id` as a raw node.
+    /// The stamp of the document the node belongs to.
     #[inline]
-    pub fn from_id(id: NodeId) -> Self {
-        RawNode(id)
+    pub fn stamp(self) -> u32 {
+        (self.0.get() >> 32) as u32
     }
 
-    /// The node as a key of a pointer-keyed table - its id, never 0. Not a
+    /// The node as one word, for the bridge's node word and a token.
+    #[inline]
+    pub fn word(self) -> usize {
+        self.0.get() as usize
+    }
+
+    /// A [`word`](Self::word) back; `None` for one no node has.
+    #[inline]
+    pub fn from_word(w: usize) -> Option<Self> {
+        let w = u64::try_from(w).ok()?;
+        NonZeroU32::new(w as u32)?;
+        core::num::NonZeroU64::new(w).map(RawNode)
+    }
+
+    /// The node as a key of a pointer-keyed table - its word, never 0. Not a
     /// pointer to anything: a key is only hashed and compared.
     #[inline]
     pub fn table_key(self) -> *const () {
-        core::ptr::without_provenance(self.0.to_word())
+        core::ptr::without_provenance(self.word())
     }
 }
 
@@ -230,14 +252,14 @@ impl crate::ptr_table::TableKey for Option<RawNode> {
     const EMPTY: Self = None;
     #[inline]
     fn table_hash(self) -> u64 {
-        crate::ptr_table::ptr_hash(self.map_or(0, |n| n.0.to_word()) as *const ())
+        crate::ptr_table::ptr_hash(self.map_or(0, RawNode::word) as *const ())
     }
 }
 
 impl<'d> From<HtmlNode<'d>> for RawNode {
     #[inline]
     fn from(n: HtmlNode<'d>) -> Self {
-        RawNode(n.id)
+        RawNode::new(n.d.stamp(), n.id)
     }
 }
 
@@ -301,21 +323,37 @@ impl<'d> HtmlDoc<'d> {
         }
     }
 
-    /// The node `raw` names in this document. A raw node of another
-    /// document names some node here or none; the bridge resolves a raw node
-    /// only against the document it came from.
+    /// The node `raw` names in this document. The bridge resolves a raw
+    /// node only against the document it came from; one of another document
+    /// is a broken invariant, asserted in a debug build.
     #[inline]
     pub fn node(self, raw: RawNode) -> HtmlNode<'d> {
+        debug_assert_eq!(raw.stamp(), self.d.stamp(), "a node of another document");
         HtmlNode {
             d: self.d,
-            id: raw.0,
+            id: raw.id(),
         }
+    }
+
+    /// The node `raw` names, when it is a node of this document.
+    #[inline]
+    pub fn checked(self, raw: RawNode) -> Option<HtmlNode<'d>> {
+        if raw.stamp() != self.d.stamp() {
+            return None;
+        }
+        self.get(raw.id())
     }
 
     /// The node `id` names, when the document has one by that id.
     #[inline]
     pub fn get(self, id: NodeId) -> Option<HtmlNode<'d>> {
         (id.index() < self.d.node_count()).then_some(HtmlNode { d: self.d, id })
+    }
+
+    /// Whether `name` satisfies the DOM's doctype-name production - the
+    /// rule the XML factory applies too.
+    pub fn valid_doctype_name(name: &[u8]) -> bool {
+        crate::xml::dom_name::valid_doctype_name(name)
     }
 
     /// The document as a node.

@@ -530,7 +530,7 @@ impl<'doc> From<HtmlDoc<'doc>> for RawDoc {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct HtmlDocIdentity(NonNull<HtmlParsed>);
 
-#[cfg_attr(not(feature = "ruby"), allow(dead_code))]
+#[cfg_attr(any(not(feature = "ruby"), feature = "arena-dom"), allow(dead_code))]
 impl HtmlDocIdentity {
     /// The identity of `parsed`, a live parsed document.
     #[inline]
@@ -562,7 +562,7 @@ pub struct HtmlNodeKey {
     node: RawNode,
 }
 
-#[cfg_attr(not(feature = "ruby"), allow(dead_code))]
+#[cfg_attr(any(not(feature = "ruby"), feature = "arena-dom"), allow(dead_code))]
 impl HtmlNodeKey {
     /// The key for `node` under `owner`, with no owner check of its own.
     ///
@@ -838,8 +838,9 @@ impl<'doc> HtmlDoc<'doc> {
         }
     }
 
-    /// The document's `<title>` text, or None when there is none.
-    pub fn title(self) -> Option<&'doc [u8]> {
+    /// The document's `<title>` text, or None when there is none. Borrowed
+    /// from the document; a `Cow` because the arena DOM computes its own.
+    pub fn title(self) -> Option<std::borrow::Cow<'doc, [u8]>> {
         /* SAFETY: a live HTML document - an `lxb_html_document_t` leads with
          * its `lxb_dom_document_t`, so this is the same address - and the bytes
          * are borrowed from it. */
@@ -849,7 +850,7 @@ impl<'doc> HtmlDoc<'doc> {
                 lxb::lxb_html_document_title,
             )
         };
-        (!t.is_empty()).then_some(t)
+        (!t.is_empty()).then_some(std::borrow::Cow::Borrowed(t))
     }
 }
 

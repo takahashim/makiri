@@ -97,7 +97,11 @@ fn compare_docs(ld: lex::HtmlDoc<'_>, ad: arena::HtmlDoc<'_>, ctx: &str) {
     let p = Pair::new(ld, ad);
 
     assert_eq!(ld.compat_mode(), ad.compat_mode(), "{ctx}");
-    assert_eq!(s(ld.title()), s(ad.title().as_deref()), "title of {ctx}");
+    assert_eq!(
+        s(ld.title().as_deref()),
+        s(ad.title().as_deref()),
+        "title of {ctx}"
+    );
     for name in [
         &b"div"[..],
         b"DIV",
@@ -294,7 +298,7 @@ fn compare_docs(ld: lex::HtmlDoc<'_>, ad: arena::HtmlDoc<'_>, ctx: &str) {
     for (i, (&l, &a)) in p.l.iter().zip(&p.a).enumerate() {
         for (deep, pretty) in [(false, false), (true, false), (false, true), (true, true)] {
             let lo = crate::lexbor::serialize::serialize(l, deep, pretty);
-            let ao = arena::serialize::serialize_buf(a, deep, pretty);
+            let ao = arena::serialize::serialize(a, deep, pretty);
             assert_eq!(
                 lo.as_ref()
                     .map(|b| String::from_utf8_lossy(b.as_slice()).into_owned()),
@@ -1000,7 +1004,8 @@ fn xpath_case(input: &[u8]) {
         }
         .ok()
         .expect("context");
-        let mut ac = arena::xpath::context(&mut ap, crate::token::Token::arena(1));
+        let doc_word = arena::RawNode::from(ap.doc().as_node()).word();
+        let mut ac = arena::xpath::context(&mut ap, crate::token::Token::arena(doc_word));
         lc.set_lax(lax);
         ac.set_lax(lax);
         for (pre, uri) in [
@@ -1025,7 +1030,8 @@ fn xpath_case(input: &[u8]) {
                         .map(|t| if by_lex {
                             lpos.get(&(t.as_ptr() as usize)).copied()
                         } else {
-                            arena::NodeId::from_word(t.word()).and_then(|id| apos.get(&id).copied())
+                            arena::RawNode::from_word(t.word())
+                                .and_then(|r| apos.get(&r.id()).copied())
                         })
                         .collect::<Vec<_>>()
                 ),

@@ -391,6 +391,20 @@ impl FragmentTag {
 }
 
 impl FragmentContext {
+    /// The context the element `el` of `doc` provides (`inner_html=`). The
+    /// element is read when the parse runs.
+    pub fn element(_doc: HtmlDoc<'_>, el: RawNode) -> Result<FragmentContext, FragmentError> {
+        Ok(FragmentContext::Element(el))
+    }
+
+    /// A named context, the fragment made in `doc`'s memory.
+    pub fn tag_in(doc: HtmlDoc<'_>, at: FragmentTag) -> FragmentContext {
+        FragmentContext::Tag {
+            doc: RawDoc::from(doc),
+            at,
+        }
+    }
+
     /// What `lxb_html_parse_fragment_chunk_begin` takes: the owner document
     /// for the fragment's own, and the context's tag and namespace ids - the
     /// namespace as [`FragmentTag::parse_ns`] gives it, with the one it held

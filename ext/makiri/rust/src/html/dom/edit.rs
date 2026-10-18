@@ -154,13 +154,16 @@ impl Shortcut {
 /// A document lent for an edit.
 pub struct HtmlDocMut<'d> {
     d: &'d mut Document,
+    /// The document's stamp, for the raw nodes the factories hand out.
+    stamp: u32,
 }
 
 impl<'d> HtmlDocMut<'d> {
     /// The edit of `d`.
     #[inline]
     pub fn new(d: &'d mut Document) -> Self {
-        HtmlDocMut { d }
+        let stamp = d.stamp();
+        HtmlDocMut { d, stamp }
     }
 
     /// The document, for reading between changes.
@@ -277,7 +280,7 @@ impl<'d> HtmlDocMut<'d> {
         let at = self.create_attr(el.id(), None, name, value, lower)?;
         let local = self
             .read()
-            .node(RawNode::from_id(at))
+            .node(RawNode::new(self.stamp, at))
             .attr()
             .map(|a| a.dom_local_name());
         let shortcut = local.and_then(Shortcut::named);
@@ -328,7 +331,7 @@ impl<'d> HtmlDocMut<'d> {
         /* An attribute set IN a namespace is never the ID or class one. */
         let shortcut = if ns.is_none() {
             self.read()
-                .node(RawNode::from_id(at))
+                .node(RawNode::new(self.stamp, at))
                 .attr()
                 .and_then(|a| Shortcut::named(a.dom_local_name()))
         } else {
@@ -429,7 +432,7 @@ impl<'d> HtmlDocMut<'d> {
         self.d
             .create_element(tag, res::NS_HTML as u32, 0, None)
             .ok()
-            .map(RawNode::from_id)
+            .map(|id| RawNode::new(self.stamp, id))
     }
 
     /// A new element in namespace `ns` with `prefix` (DOM `createElementNS`,
@@ -471,7 +474,7 @@ impl<'d> HtmlDocMut<'d> {
         };
         d.create_element(tag, ns_id, prefix_id, written.as_deref())
             .ok()
-            .map(RawNode::from_id)
+            .map(|id| RawNode::new(self.stamp, id))
     }
 
     fn new_text(&mut self, text: &[u8]) -> Result<NodeId, DomOom> {
@@ -482,7 +485,9 @@ impl<'d> HtmlDocMut<'d> {
 
     /// A new Text node (Lexbor names it `#text`, in the HTML namespace).
     pub fn create_text(&mut self, text: &[u8]) -> Option<RawNode> {
-        self.new_text(text).ok().map(RawNode::from_id)
+        self.new_text(text)
+            .ok()
+            .map(|id| RawNode::new(self.stamp, id))
     }
 
     /// A new Comment (`!--`, in the HTML namespace).
@@ -490,7 +495,7 @@ impl<'d> HtmlDocMut<'d> {
         let c = self.d.create_data(NodeType::Comment, text).ok()?;
         self.d
             .set_names(c, res::TAG__EM_COMMENT, res::NS_HTML as u32, 0);
-        Some(RawNode::from_id(c))
+        Some(RawNode::new(self.stamp, c))
     }
 
     /// A new ProcessingInstruction; `None` for data holding `?>`, which
@@ -499,7 +504,10 @@ impl<'d> HtmlDocMut<'d> {
         if data.windows(2).any(|w| w == b"?>") {
             return None;
         }
-        self.d.create_pi(target, data).ok().map(RawNode::from_id)
+        self.d
+            .create_pi(target, data)
+            .ok()
+            .map(|id| RawNode::new(self.stamp, id))
     }
 
     /// A new DocumentType; an absent id is an empty one.
@@ -516,12 +524,15 @@ impl<'d> HtmlDocMut<'d> {
                 system_id.unwrap_or_default(),
             )
             .ok()
-            .map(RawNode::from_id)
+            .map(|id| RawNode::new(self.stamp, id))
     }
 
     /// A new, empty DocumentFragment.
     pub fn create_fragment(&mut self) -> Option<RawNode> {
-        self.d.create_fragment(None).ok().map(RawNode::from_id)
+        self.d
+            .create_fragment(None)
+            .ok()
+            .map(|id| RawNode::new(self.stamp, id))
     }
 
     /// A detached copy of `src`, a node of ANOTHER document, `<template>`
@@ -529,12 +540,14 @@ impl<'d> HtmlDocMut<'d> {
     pub fn import(&mut self, src: HtmlNode<'_>, deep: bool) -> Result<RawNode, DomOom> {
         self.d
             .copy_from(src.owner_document().arena(), src.id(), deep)
-            .map(RawNode::from_id)
+            .map(|id| RawNode::new(self.stamp, id))
     }
 
     /// A detached copy of `src`, a node of this document (`cloneNode`).
     pub fn copy(&mut self, src: RawNode, deep: bool) -> Result<RawNode, DomOom> {
-        self.d.copy_within(src.id(), deep).map(RawNode::from_id)
+        self.d
+            .copy_within(src.id(), deep)
+            .map(|id| RawNode::new(self.stamp, id))
     }
 
     /// A detached copy of the XML node `src` of `xdoc`.

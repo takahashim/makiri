@@ -126,7 +126,9 @@ fn parse(
 ) -> Result<TransientFragment, Error> {
     let src = HtmlSource::from_ruby(html)?;
     // SAFETY: the context's element or document is live (the callers below hold
-    // it), and the bytes are read by the parse alone, which runs no Ruby.
+    // it), and the bytes are read by the parse alone, which runs no Ruby. The
+    // arena's parse needs no such promise, and is safe.
+    #[allow(unused_unsafe)]
     unsafe { TransientFragment::parse(src.bytes(), src.known_valid(), context, limit) }
         .map_err(|e| fragment_error(e, limit))
 }
@@ -166,11 +168,9 @@ fn import_into(
 ) -> Result<(), Error> {
     /* The setters take no keyword, so they parse under the default limit, as
      * Nokogiri's do. */
-    let parsed = parse(
-        html,
-        &FragmentContext::Element(context),
-        DepthLimit::DEFAULT,
-    )?;
+    let context = FragmentContext::element(d.read(), context)
+        .map_err(|e| fragment_error(e, DepthLimit::DEFAULT))?;
+    let parsed = parse(html, &context, DepthLimit::DEFAULT)?;
     parsed
         .import_into_doc(d, into)
         .map_err(|_| makiri_error("failed to import a fragment child"))
@@ -216,7 +216,9 @@ pub fn build_fragment(
      * document when the import below writes it. */
     ensure_document_mutable(document)?;
     let doc = html_doc_unwrap(document)?;
-    let parsed = parse(html, &FragmentContext::Tag { doc, at }, limit)?;
+    // SAFETY: a live HTML Document, kept alive by `document` for this call.
+    let context = FragmentContext::tag_in(unsafe { doc.as_doc() }, at);
+    let parsed = parse(html, &context, limit)?;
 
     let frag = crate::bridge::html::new_node(&document, |d| {
         let Some(frag) = d.create_fragment() else {

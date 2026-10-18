@@ -135,7 +135,8 @@ pub fn document_root(rb_doc: Value) -> Result<Option<Value>, Error> {
 
 /// `Document#title`: the document `<title>`, or `""`.
 pub fn document_title(ruby: &Ruby, rb_doc: Value) -> RString {
-    let bytes = html_doc(&rb_doc).title().unwrap_or(&[]);
+    let title = html_doc(&rb_doc).title();
+    let bytes = title.as_deref().unwrap_or(&[]);
     ruby.enc_str_new(bytes, ruby.utf8_encoding())
 }
 

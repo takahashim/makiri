@@ -16,12 +16,13 @@ use magnus::rb_sys::AsRawValue;
 use crate::bridge::ruby::makiri_error;
 use magnus::{Error, Value};
 
+use crate::bridge::dom::DocPtr;
 use crate::bridge::ruby::{value, VALUE};
 use crate::bridge::typed::{Hooks, Marker, Relocator, TypedType};
 use crate::child_index::{ChildList, ChildPositionMemo, Children, TokenTree};
 use crate::dom_rules::Tree;
 use crate::falloc::{MapInsert, Reserve};
-use crate::html_dom::html::{HtmlDoc, HtmlNodeKey, RawDoc, RawNode};
+use crate::html_dom::html::{HtmlDoc, HtmlNodeKey, RawNode};
 use crate::html_dom::post_parse::HtmlParsed;
 use crate::init::{RbConst, CLASS_DOCUMENT};
 use crate::node_type::NodeType;
@@ -65,7 +66,7 @@ impl From<NodeId> for NodeWord {
 impl From<RawNode> for NodeWord {
     #[inline]
     fn from(n: RawNode) -> Self {
-        NodeWord(n.as_ptr() as usize)
+        NodeWord(crate::bridge::dom::node_word(n))
     }
 }
 
@@ -93,7 +94,8 @@ impl NodeWord {
     /// and that document is still alive - a `RawNode` is trusted to be live.
     #[inline]
     pub unsafe fn html(self) -> Option<RawNode> {
-        RawNode::from_ptr(self.0 as *mut core::ffi::c_void)
+        // SAFETY: the caller's contract, which is `node_of_word`'s.
+        unsafe { crate::bridge::dom::node_of_word(self.0) }
     }
 
     /// The engine token for this node of a document of kind `kind`. Infallible:
@@ -105,7 +107,8 @@ impl NodeWord {
     #[inline]
     pub unsafe fn token(self, kind: DocKind) -> Token {
         match kind {
-            DocKind::Html => Token::html(self.0 as *mut core::ffi::c_void),
+            // SAFETY: the caller's contract.
+            DocKind::Html => unsafe { crate::bridge::dom::html_token(self.0) },
             DocKind::Xml => Token::xml(self.0),
         }
     }
@@ -609,7 +612,7 @@ impl From<DocKind> for Kind {
     #[inline]
     fn from(kind: DocKind) -> Kind {
         match kind {
-            DocKind::Html => Kind::Html,
+            DocKind::Html => crate::bridge::dom::HTML_TOKEN_KIND,
             DocKind::Xml => Kind::Xml,
         }
     }
@@ -703,7 +706,7 @@ pub(in crate::bridge) fn xml_arena_known(rb_doc: Value) -> *mut XmlDoc {
 }
 
 /// The Lexbor document behind an HTML Document. `Err(TypeError)` otherwise.
-pub fn html_doc_unwrap(rb_doc: Value) -> Result<RawDoc, Error> {
+pub fn html_doc_unwrap(rb_doc: Value) -> Result<DocPtr, Error> {
     let d: &DocData = HTML_DOC_TYPE.get(&rb_doc)?;
     Ok(html_doc_of(d))
 }
@@ -718,7 +721,7 @@ pub fn html_doc(rb_doc: &Value) -> HtmlDoc<'_> {
 }
 
 /// [`html_doc_unwrap`] for a VALUE already known to be an HTML Document.
-pub fn html_doc_known(rb_doc: Value) -> RawDoc {
+pub fn html_doc_known(rb_doc: Value) -> DocPtr {
     html_doc_of(HTML_DOC_TYPE.get_known(&rb_doc))
 }
 
@@ -726,17 +729,14 @@ pub fn html_doc_known(rb_doc: Value) -> RawDoc {
     clippy::expect_used,
     reason = "an HTML Document holds HTML content from `install` on, and none is reachable before"
 )]
-fn html_doc_of(d: &DocData) -> RawDoc {
+fn html_doc_of(d: &DocData) -> DocPtr {
     /* The HTML type guarantees HTML content once installed, and nothing
      * reaches a Document before `install`: a broken invariant. */
     let p = d
         .content
         .html()
         .expect("an HTML Document without its document");
-    /* An lxb_html_document_t leads with its lxb_dom_document_t, so this is a
-     * downcast to the embedded base, not a reinterpretation. */
-    // SAFETY: the live document this Document owns.
-    unsafe { p.as_ref().raw_doc() }
+    DocPtr::new(p)
 }
 
 /// Run `f` over the parsed document of a VALUE known to be an HTML Document.
@@ -930,7 +930,9 @@ pub fn node_raw(rb_node: Value) -> Result<NodeWord, Error> {
             // document node is read, not written.
             return Ok(unsafe { xdoc.as_ref() }.doc_node().into());
         }
-        return Ok(RawNode::from(html_doc_unwrap(rb_node)?).into());
+        let doc = html_doc_unwrap(rb_node)?;
+        // SAFETY: the live document of `rb_node`, which the caller holds.
+        return Ok(unsafe { crate::bridge::dom::document_node(doc) }.into());
     }
     /* TypeError for a non-node, as TypedData_Get_Struct raised. */
     let nd: &NodeData = NODE_DATA_TYPE.get(&rb_node)?;
@@ -1059,25 +1061,36 @@ pub trait ChildListHost: magnus::TryConvert {
 
     /// The Document whose memo the lists use.
     fn document(&self) -> Value;
-    /// The receiver's `list`.
-    fn children(&self, list: ChildList) -> Children<'_, Self::Tree<'_>>;
+    /// Run `f` over the receiver's `list`. The tree is made for the call and
+    /// not kept: an HTML arena tree borrows its document, which an edit later
+    /// in the same method takes by `&mut`.
+    fn with_children<R>(
+        &self,
+        list: ChildList,
+        f: impl for<'a> FnOnce(Children<'a, Self::Tree<'a>>) -> R,
+    ) -> R;
     /// A child of the receiver as its Ruby wrapper; None is nil.
-    fn wrap_child(&self, n: Option<<Self::Tree<'_> as Tree>::Node>)
-        -> Result<Option<Value>, Error>;
+    fn wrap_child<'a>(
+        &self,
+        n: Option<<Self::Tree<'a> as Tree>::Node>,
+    ) -> Result<Option<Value>, Error>
+    where
+        Self: 'a;
 
     /// How many children are in `list`.
     fn child_count(&self, list: ChildList) -> usize {
         with_child_memo(self.document(), |memo, version| {
-            self.children(list).count(memo, version)
+            self.with_children(list, |c| c.count(memo, version))
         })
     }
 
     /// The wrapped child at `index` in `list`, or nil past the end.
     fn child_at(&self, list: ChildList, index: usize) -> Result<Option<Value>, Error> {
-        let found = with_child_memo(self.document(), |memo, version| {
-            self.children(list).at(memo, version, index)
-        });
-        self.wrap_child(found)
+        self.with_children(list, |c| {
+            let found =
+                with_child_memo(self.document(), |memo, version| c.at(memo, version, index));
+            self.wrap_child(found)
+        })
     }
 }
 

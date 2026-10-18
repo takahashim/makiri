@@ -32,6 +32,9 @@ pub mod stack;
 #[cfg(feature = "lexbor")]
 pub mod wrapper;
 
+/// The bridge steps that differ between the two HTML DOMs.
+pub mod dom;
+
 /// The HTML front door: Lexbor nodes to Ruby and back, and the HTML edits.
 #[cfg(feature = "lexbor")]
 pub mod html;

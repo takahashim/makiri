@@ -552,12 +552,18 @@ bench/                     Nokogiri-comparison benchmark
 docs/design_doc.ja.md      authoritative design (read this)
 ```
 
-Four features, and the default is the extension: **`ruby`** (the
+Five features, and the default is the extension: **`ruby`** (the
 magnus boundary + `glue` + `init`; implies `lexbor`), **`lexbor`** (the layers
 that read Lexbor's DOM: the generated ABI, `css`, `lexbor/adapter`, the XPath HTML
-instance), **`alloc-inject`** (the `rake oom` hook, off in any normal build) and
+instance), **`alloc-inject`** (the `rake oom` hook, off in any normal build),
 **`css-reference`** (the OLD CSS engine, `lexbor::selectors`, for the
-`html_css_diff` fuzz target; in no build that ships).
+`html_css_diff` fuzz target; in no build that ships) and **`arena-dom`** (the
+parser port's index-arena DOM, `html::dom`, in place of Lexbor's behind the
+`html_dom` facade: Lexbor still parses and the tree is copied in -
+`MAKIRI_ARENA_DOM=1 bundle exec rake clean compile` builds it; off by default
+while it is brought up. What the bridge does differently for the two DOMs is
+`bridge::dom`'s alone. `lexbor::arena_tests` holds it to the Lexbor DOM read
+for read, edit for edit, byte for byte).
 The engine - `xml`, `xpath`, `falloc`, `cbuf`, `cutf8` - is behind no gate at
 all. So the fuzz crate builds `--no-default-features --features lexbor,css-reference` and Kani
 builds `--no-default-features`. The ~30 features that used to stand here were

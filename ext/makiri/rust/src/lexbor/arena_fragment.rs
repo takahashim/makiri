@@ -150,6 +150,12 @@ impl FragmentContext {
         FragmentContext::Tag { at }
     }
 
+    /// A named context for a fragment of `doc` - the document plays no part
+    /// in the parse here; the copy lands in it on import.
+    pub fn tag_in(_doc: HtmlDoc<'_>, at: FragmentTag) -> FragmentContext {
+        FragmentContext::Tag { at }
+    }
+
     fn at(&self) -> Option<&FragmentTag> {
         match self {
             FragmentContext::Element { at, .. } => at.as_ref(),

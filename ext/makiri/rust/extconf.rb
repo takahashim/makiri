@@ -196,6 +196,14 @@ features = []
 # failure hook so `rake oom` can sweep "the nth core allocation fails" over
 # representative workloads and assert every OOM branch fails closed.
 # Debug/test builds only - a normal build carries no hook.
+# The parser port's arena DOM in place of Lexbor's (opt-in, while it is being
+# brought up): MAKIRI_ARENA_DOM=1 builds with the `arena-dom` feature. Like
+# every extconf switch, a change needs `rake clean compile`.
+if ENV["MAKIRI_ARENA_DOM"].to_s.strip == "1"
+  features << "arena-dom"
+  warn "makiri: building with the arena DOM (arena-dom)"
+end
+
 if ENV["MAKIRI_ALLOC_INJECT"].to_s.strip == "1"
   features << "alloc-inject"
   warn "makiri: building with allocation-failure injection (MKR_ALLOC_INJECT)"

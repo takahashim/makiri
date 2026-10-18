@@ -21,7 +21,7 @@ pub fn parse_html(
 ) -> Result<Box<HtmlParsed>, HtmlParseError> {
     let mut parsed = lex::parse_html(src, assume_valid, limit)?;
     let lines = parsed.take_lines().map(|b| *b);
-    let doc = copy_document(parsed.doc_handle()).map_err(|_| HtmlParseError::Failed)?;
+    let doc = copy_document(parsed.doc()).map_err(|_| HtmlParseError::Failed)?;
     drop(parsed);
     try_box(HtmlParsed::new(doc, lines)).map_err(|()| HtmlParseError::Failed)
 }
@@ -30,6 +30,6 @@ pub fn parse_html(
 /// document, copied.
 pub fn empty_html_document(compat_mode: u32) -> Result<Box<HtmlParsed>, HtmlParseError> {
     let parsed = lex_empty(compat_mode)?;
-    let doc = copy_document(parsed.doc_handle()).map_err(|_| HtmlParseError::Failed)?;
+    let doc = copy_document(parsed.doc()).map_err(|_| HtmlParseError::Failed)?;
     try_box(HtmlParsed::new(doc, None)).map_err(|()| HtmlParseError::Failed)
 }

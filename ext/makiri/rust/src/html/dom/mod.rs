@@ -170,7 +170,16 @@ pub struct Document {
     prefixes: Vec<Vec<u8>>,
     /// Lexbor's `compat_mode`: 0 no-quirks, 1 quirks, 2 limited-quirks.
     pub compat_mode: u8,
+    /// This document's process-unique stamp (never 0), carried in every
+    /// [`RawNode`] it hands out, so a node word names one node of one
+    /// document - as a Lexbor node pointer does.
+    stamp: u32,
 }
+
+/// Hands each document a stamp; see [`Document::stamp`]. It wraps after 2^32
+/// documents, which a node word could only outlive inside a Ruby wrapper -
+/// and a wrapper keeps its document alive.
+static DOC_STAMP: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(1);
 
 macro_rules! oom {
     ($e:expr) => {
@@ -205,7 +214,22 @@ impl Document {
             ns: Vec::new(),
             prefixes: Vec::new(),
             compat_mode: compat_mode.min(2),
+            stamp: {
+                use core::sync::atomic::Ordering::Relaxed;
+                let s = DOC_STAMP.fetch_add(1, Relaxed);
+                if s == 0 {
+                    DOC_STAMP.fetch_add(1, Relaxed)
+                } else {
+                    s
+                }
+            },
         })
+    }
+
+    /// This document's stamp, never 0.
+    #[inline]
+    pub fn stamp(&self) -> u32 {
+        self.stamp
     }
 
     /// How many nodes the arena holds (live or detached).

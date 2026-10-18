@@ -123,7 +123,14 @@ impl Cx {
             }
             DocPtr::Html(p) => {
                 // SAFETY: as above, for the parse handle.
-                let dom = unsafe { crate::html_dom::xpath::dom(p) };
+                let dom =
+                    unsafe { crate::bridge::dom::xpath_dom(crate::bridge::dom::DocPtr::new(p)) }
+                        .map_err(|kind| {
+                            XPathError::with(
+                                kind,
+                                format_args!("failed to build the element index for XPath"),
+                            )
+                        })?;
                 run_on(&self.session, dom, ast, handler, answer)
             }
         }

@@ -31,16 +31,17 @@ RUST = File.join(ROOT, "ext/makiri/rust/src")
 UNSAFE_ISLANDS = {
   "bridge/alloc.rs" => 4,
   "bridge/doc.rs" => 1,
-  "bridge/fragment.rs" => 3,
+  "bridge/dom.rs" => 26,
+  "bridge/fragment.rs" => 4,
   "bridge/gvl.rs" => 5,
-  "bridge/html.rs" => 13,
+  "bridge/html.rs" => 14,
   "bridge/node_set.rs" => 8,
   "bridge/node_wrap.rs" => 1,
   "bridge/ruby.rs" => 19,
   "bridge/stack.rs" => 1,
   "bridge/string.rs" => 31,
   "bridge/typed.rs" => 21,
-  "bridge/wrapper.rs" => 20,
+  "bridge/wrapper.rs" => 22,
   "bridge/xml.rs" => 11,
   "bridge/xml_decode.rs" => 5,
   "bridge/xpath/context_object.rs" => 3,
@@ -181,8 +182,14 @@ RAW_NODE_CROSSING_COUNTS = {
   # the child-position memo's token and back. `child_index::ChildPositionMemo`
   # answers only for the `tree_version` it was filled under, so a token read
   # back is still that child; the node is never handed out raw, only wrapped.
-  "bridge/html.rs" => 9,
-  "bridge/wrapper.rs" => 3,
+  # `bridge/dom.rs`: the two steps whose spelling differs between the HTML
+  # DOMs (`crate::html_dom`) - a stored node word back into a node
+  # (`node_of_word`, Lexbor's `from_ptr`), and a Document's own node
+  # (`document_node`). Both were spelled twice, in `html.rs` and
+  # `wrapper.rs`, which each lost two.
+  "bridge/dom.rs" => 2,
+  "bridge/html.rs" => 7,
+  "bridge/wrapper.rs" => 1,
 }.freeze
 
 # Lexbor ABI names outside `lexbor/` are forbidden. `lexbor` is the sole owner

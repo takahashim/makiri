@@ -100,14 +100,8 @@ impl HtmlParsed {
         RawDoc::from(self.doc())
     }
 
-    /// The document as a handle, borrowed for as long as this is - for the
-    /// arena copy, which reads it whole.
-    pub(crate) fn doc_handle(&self) -> DomDoc<'_> {
-        self.doc()
-    }
-
     /// The document as a handle, borrowed for as long as this is.
-    fn doc(&self) -> DomDoc<'_> {
+    pub fn doc(&self) -> DomDoc<'_> {
         // SAFETY: the handle owns a live document, and it is not restructured
         // while `&self` is borrowed - every mutation takes `&mut` of the
         // wrapper's content first (see `bridge::wrapper`).
@@ -239,7 +233,7 @@ impl HtmlParsed {
 
     /// The identity of this document, for a long-lived node key. See
     /// `HtmlDocIdentity`: the stable address of this handle.
-    #[cfg_attr(not(feature = "ruby"), allow(dead_code))]
+    #[cfg_attr(any(not(feature = "ruby"), feature = "arena-dom"), allow(dead_code))]
     #[inline]
     pub(crate) fn identity(&self) -> HtmlDocIdentity {
         HtmlDocIdentity::of(self)
@@ -260,7 +254,7 @@ impl HtmlParsed {
     /// a reused address would pass the comparison and dereference a stale
     /// pointer. The Ruby path keeps the document alive by marking it from the
     /// wrapper that holds the key.
-    #[cfg_attr(not(feature = "ruby"), allow(dead_code))]
+    #[cfg_attr(any(not(feature = "ruby"), feature = "arena-dom"), allow(dead_code))]
     pub(crate) unsafe fn mint_key(&self, node: RawNode) -> Result<HtmlNodeKey, ForeignNode> {
         // SAFETY: the caller's contract - `node` is live.
         let owner = unsafe { node.as_node() }.owner_document();
@@ -280,7 +274,7 @@ impl HtmlParsed {
     /// `HtmlNodeKey::new` under its own (unsafe) contract, and both require a
     /// live node of the owner document - which the caller must have kept alive
     /// at its address until this call (see `mint_key`'s contract).
-    #[cfg_attr(not(feature = "ruby"), allow(dead_code))]
+    #[cfg_attr(any(not(feature = "ruby"), feature = "arena-dom"), allow(dead_code))]
     pub(crate) fn resolve(&self, key: HtmlNodeKey) -> Result<HtmlNode<'_>, ForeignNode> {
         if key.owner() != self.identity() {
             return Err(ForeignNode);

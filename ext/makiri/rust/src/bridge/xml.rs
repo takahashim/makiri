@@ -104,14 +104,21 @@ impl ChildListHost for XmlSelf {
     fn document(&self) -> Value {
         self.document
     }
-    fn children(&self, list: ChildList) -> Children<'_, XmlDoc> {
-        Children {
+    fn with_children<R>(
+        &self,
+        list: ChildList,
+        f: impl for<'a> FnOnce(Children<'a, XmlDoc>) -> R,
+    ) -> R {
+        f(Children {
             tree: self.doc_ref(),
             parent: self.id,
             list,
-        }
+        })
     }
-    fn wrap_child(&self, n: Option<NodeId>) -> Result<Option<Value>, Error> {
+    fn wrap_child<'a>(&self, n: Option<NodeId>) -> Result<Option<Value>, Error>
+    where
+        Self: 'a,
+    {
         n.map(|id| wrap_xml_node(id, self.document)).transpose()
     }
 }
