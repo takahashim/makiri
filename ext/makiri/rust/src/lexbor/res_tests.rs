@@ -592,9 +592,11 @@ fn generate_tree_tables() -> String {
     let nss = enum_consts(&lexbor_src("ns/const.h"), "LXB_NS_");
     let _ = writeln!(
         out,
-        "\n/// Foreign attributes to adjust: (name, prefix, local name, namespace)\n\
+        "\n/// A foreign attribute to adjust: (name, prefix, local name, namespace).\n\
+         pub type ForeignAdjust = (&'static [u8], &'static [u8], &'static [u8], usize);\n\n\
+         /// Foreign attributes to adjust\n\
          /// (`lxb_html_tree_res_attr_adjust_foreign_map`).\n\
-         pub static FOREIGN_ATTR_ADJUST: [(&[u8], &[u8], &[u8], usize); {}] = [",
+         pub static FOREIGN_ATTR_ADJUST: [ForeignAdjust; {}] = [",
         rows.len()
     );
     for row in &rows {

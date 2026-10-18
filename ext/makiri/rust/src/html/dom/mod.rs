@@ -967,6 +967,7 @@ impl Document {
     }
 }
 
+mod build;
 mod copy;
 /// Copies between an arena HTML document and an XML one.
 pub mod cross_import;
@@ -977,6 +978,7 @@ mod parsed;
 pub mod serialize;
 /// XPath's HTML instance of its `Dom` trait, over the arena.
 pub mod xpath;
+pub use build::AttrValue;
 pub use edit::{HtmlDocMut, HtmlTree, Insertion, Place};
 pub use handle::{
     has_ascii_uppercase, Ancestors, AttrName, Attrs, HtmlAttr, HtmlDoc, HtmlElement, HtmlNode,

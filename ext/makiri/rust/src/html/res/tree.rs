@@ -483,9 +483,12 @@ pub static SVG_ATTR_ADJUST: [(&[u8], &[u8]); 58] = [
     (b"zoomandpan", b"zoomAndPan"),
 ];
 
-/// Foreign attributes to adjust: (name, prefix, local name, namespace)
+/// A foreign attribute to adjust: (name, prefix, local name, namespace).
+pub type ForeignAdjust = (&'static [u8], &'static [u8], &'static [u8], usize);
+
+/// Foreign attributes to adjust
 /// (`lxb_html_tree_res_attr_adjust_foreign_map`).
-pub static FOREIGN_ATTR_ADJUST: [(&[u8], &[u8], &[u8], usize); 11] = [
+pub static FOREIGN_ATTR_ADJUST: [ForeignAdjust; 11] = [
     (b"xlink:actuate", b"xlink", b"actuate", 5),
     (b"xlink:arcrole", b"xlink", b"arcrole", 5),
     (b"xlink:href", b"xlink", b"href", 5),

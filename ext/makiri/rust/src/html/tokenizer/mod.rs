@@ -174,6 +174,10 @@ pub struct Tokenizer<'i, 's> {
     /// decides whether `<![CDATA[` opens a CDATA section
     /// (`lxb_html_tokenizer_current_namespace`); `NS__UNDEF` with no tree.
     pub current_ns: usize,
+    /// `LXB_HTML_TOKENIZER_OPT_ATTR_KEEP_DUPLICATE`: hand a start tag's
+    /// repeated attributes on rather than dropping them. Lexbor's parser
+    /// sets it, and its tree builder drops a repeat by name and namespace.
+    pub keep_duplicate: bool,
 }
 
 impl<'i, 's> Tokenizer<'i, 's> {
@@ -204,6 +208,7 @@ impl<'i, 's> Tokenizer<'i, 's> {
             status: Status::Ok,
             is_eof: false,
             current_ns: res::NS__UNDEF,
+            keep_duplicate: false,
         }
     }
 
@@ -381,7 +386,9 @@ impl<'i, 's> Tokenizer<'i, 's> {
 
     /// `lxb_html_tokenizer_state_token_attr_add_m`.
     pub(crate) fn attr_add(&mut self) -> Result<(), ()> {
-        self.attr_last_duplicate();
+        if !self.keep_duplicate {
+            self.attr_last_duplicate();
+        }
         if self.token.attrs.falloc_push(TokenAttr::default()).is_err() {
             self.status = Status::Oom;
             return Err(());
@@ -478,7 +485,9 @@ impl<'i, 's> Tokenizer<'i, 's> {
     /// `_lxb_html_tokenizer_state_token_done_m`: the duplicate check, the
     /// end-tag check, the callback. `Err` when the callback stopped.
     fn token_done_inner(&mut self) -> Result<(), ()> {
-        self.attr_last_duplicate();
+        if !self.keep_duplicate {
+            self.attr_last_duplicate();
+        }
         if self.token.flags & flags::CLOSE != 0 {
             self.validate_close_tag();
         }
