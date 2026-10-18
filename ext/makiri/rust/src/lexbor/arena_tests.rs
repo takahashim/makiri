@@ -601,3 +601,244 @@ fn edits_leave_the_arena_reading_as_lexbor_does() {
     /* The sequences must actually move nodes around, not only fail checks. */
     assert!(PLACED.load(core::sync::atomic::Ordering::Relaxed) > seeds as usize * 5);
 }
+
+/* ---------- fragments ---------- */
+
+/// `input` parsed as a fragment in a `context` element (`svg g`, `td`, ...)
+/// placed in a document's body, on both sides, the result put into that
+/// element, and everything compared - then the same input parsed in a named
+/// context (`Document#fragment`) and appended to the body.
+fn fragment_case(input: &[u8], context: &str) {
+    use crate::lexbor::adapter::html::HtmlDocMut as LexMut;
+    use crate::lexbor::arena_fragment as af;
+    use crate::lexbor::fragment as lf;
+    let parsed = parse_html(b"<body>", false, DepthLimit::UNLIMITED).expect("parses");
+    // SAFETY: `parsed` owns the document; only this test reads or writes it.
+    let ld = unsafe { parsed.raw_doc().as_doc() };
+    let mut ac = crate::lexbor::adapter::arena_copy::copy_document(ld).expect("copy");
+    // SAFETY: as above.
+    let mut lm = unsafe { LexMut::assume_exclusive(ld) };
+    let mut am = arena::HtmlDocMut::new(&mut ac);
+    let (ns, name): (&[u8], &str) = match context.split_once(' ') {
+        Some(("svg", local)) => (b"http://www.w3.org/2000/svg", local),
+        Some(("math", local)) => (b"http://www.w3.org/1998/Math/MathML", local),
+        _ => (b"http://www.w3.org/1999/xhtml", context),
+    };
+    let ctx = format!("fragment {:?} in {context}", String::from_utf8_lossy(input));
+    let body = |w: &[lex::HtmlNode<'_>]| {
+        w.iter()
+            .position(|n| n.element().is_some_and(|e| e.local_name() == b"body"))
+            .expect("a body")
+    };
+    let bi = body(&lex_walk(ld));
+    let (lbody, abody) = at(ld, am.read(), bi);
+    let (lbody, abody) = (lex::RawNode::from(lbody), arena::RawNode::from(abody));
+
+    /* An element context. */
+    let lc = lm
+        .create_element_ns(name.as_bytes(), ns, b"")
+        .expect("context");
+    let ac2 = am
+        .create_element_ns(name.as_bytes(), ns, b"")
+        .expect("context");
+    lm.place(lbody, lc, lex::Place::Child);
+    am.place(abody, ac2, arena::Place::Child);
+    let lf_ = unsafe {
+        // SAFETY: the context element is live for the call.
+        lf::TransientFragment::parse(
+            input,
+            false,
+            &lf::FragmentContext::Element(lc),
+            DepthLimit::UNLIMITED,
+        )
+    };
+    let actx = af::FragmentContext::element(am.read(), ac2).expect("context");
+    let af_ = af::TransientFragment::parse(input, false, &actx, DepthLimit::UNLIMITED);
+    assert_eq!(lf_.is_ok(), af_.is_ok(), "parse: {ctx}");
+    if let (Ok(l), Ok(a)) = (lf_, af_) {
+        let (lfr, afr) = (
+            lm.create_fragment().expect("f"),
+            am.create_fragment().expect("f"),
+        );
+        l.import_into_doc(&mut lm, lfr).expect("import");
+        a.import_into_doc(&mut am, afr).expect("import");
+        lm.place(lc, lfr, lex::Place::Child);
+        am.place(ac2, afr, arena::Place::Child);
+    }
+    compare_docs(ld, am.read(), &ctx);
+
+    /* A named context. */
+    let lex_at = match context.split_once(' ') {
+        Some(("svg", _)) => lf::FragmentTag::SVG,
+        Some(("math", _)) => lf::FragmentTag::MATH,
+        _ => match ld.tag_id(name.as_bytes()) {
+            Some(t) => lf::FragmentTag::html(t),
+            None => return,
+        },
+    };
+    let arena_at = match context.split_once(' ') {
+        Some(("svg", _)) => af::FragmentTag::SVG,
+        Some(("math", _)) => af::FragmentTag::MATH,
+        _ => af::FragmentTag::html(am.read().tag_id(name.as_bytes()).expect("same tags")),
+    };
+    let lf_ = unsafe {
+        // SAFETY: the document is live for the call.
+        lf::TransientFragment::parse(
+            input,
+            false,
+            &lf::FragmentContext::Tag {
+                doc: parsed.raw_doc(),
+                at: lex_at,
+            },
+            DepthLimit::UNLIMITED,
+        )
+    };
+    let af_ = af::TransientFragment::parse(
+        input,
+        false,
+        &af::FragmentContext::tag(arena_at),
+        DepthLimit::UNLIMITED,
+    );
+    assert_eq!(lf_.is_ok(), af_.is_ok(), "named parse: {ctx}");
+    if let (Ok(l), Ok(a)) = (lf_, af_) {
+        let (lfr, afr) = (
+            lm.create_fragment().expect("f"),
+            am.create_fragment().expect("f"),
+        );
+        l.import_into_doc(&mut lm, lfr).expect("import");
+        a.import_into_doc(&mut am, afr).expect("import");
+        lm.place(lbody, lfr, lex::Place::Child);
+        am.place(abody, afr, arena::Place::Child);
+    }
+    compare_docs(ld, am.read(), &format!("named {ctx}"));
+}
+
+#[test]
+fn fragments_read_as_lexbor_does() {
+    fragment_case(b"<td>x</td><option>o", "tr");
+    fragment_case(b"<g><desc><b>x</b></desc></g>", "svg g");
+    fragment_case(b"<mi>x</mi><b>y", "math mi");
+    fragment_case(b"<template><p>t</p></template>&amp;", "div");
+    fragment_case(b"</textarea>x", "textarea");
+    fragment_case(b"<option>a<option>b", "select");
+}
+
+#[test]
+#[ignore = "needs the fetched WPT data; run by `rake conformance:parser`"]
+fn fragments_read_as_lexbor_does_on_wpt_inputs() {
+    let tests = dat::read_dir(&tree_construction_dir()).expect("WPT data");
+    for t in tests.iter().filter(|t| t.scripting != Scripting::On) {
+        if let Some(context) = &t.fragment {
+            fragment_case(&t.data, context);
+        }
+    }
+}
+
+/// The option guard reaches through the context's ancestors on both sides,
+/// and a context in a custom namespace gives it to what inherits it.
+#[test]
+fn fragment_contexts_resolve_alike() {
+    use crate::lexbor::adapter::html::HtmlDocMut as LexMut;
+    use crate::lexbor::arena_fragment as af;
+    use crate::lexbor::fragment as lf;
+    let many = b"<option>".repeat(crate::lexbor::adapter::tree_guard::MAX_SELECT_OPTIONS + 1);
+    let chains: [&[&[u8]]; 3] = [&[b"select", b"optgroup"], &[b"select", b"div"], &[b"div"]];
+    for chain in chains {
+        let input = &many[..];
+        let parsed = parse_html(b"<body>", false, DepthLimit::UNLIMITED).expect("parses");
+        // SAFETY: `parsed` owns the document; only this test touches it.
+        let ld = unsafe { parsed.raw_doc().as_doc() };
+        let mut ac = crate::lexbor::adapter::arena_copy::copy_document(ld).expect("copy");
+        // SAFETY: as above.
+        let mut lm = unsafe { LexMut::assume_exclusive(ld) };
+        let mut am = arena::HtmlDocMut::new(&mut ac);
+        let bi = lex_walk(ld)
+            .iter()
+            .position(|n| n.element().is_some_and(|e| e.local_name() == b"body"))
+            .expect("body");
+        let (lb, ab) = at(ld, am.read(), bi);
+        let (mut lp, mut ap) = (lex::RawNode::from(lb), arena::RawNode::from(ab));
+        for name in chain {
+            let l = lm.create_element(name).expect("el");
+            let a = am.create_element(name).expect("el");
+            lm.place(lp, l, lex::Place::Child);
+            am.place(ap, a, arena::Place::Child);
+            (lp, ap) = (l, a);
+        }
+        // SAFETY: the context element is live for the call.
+        let l = unsafe {
+            lf::TransientFragment::parse(
+                input,
+                true,
+                &lf::FragmentContext::Element(lp),
+                DepthLimit::DEFAULT,
+            )
+        };
+        let actx = af::FragmentContext::element(am.read(), ap).expect("context");
+        let a = af::TransientFragment::parse(input, true, &actx, DepthLimit::DEFAULT);
+        assert_eq!(l.err(), a.err(), "{chain:?}");
+    }
+
+    /* A context element in a custom namespace, from another document,
+     * against the Lexbor DOM taking the same route. */
+    for input in [&b"<a>x</a><b/>"[..], b"<svg><g/></svg><c>"] {
+        let lother = crate::lexbor::adapter::post_parse::empty_html_document(0).expect("doc");
+        // SAFETY: `lother` owns the document; only this test touches it.
+        let lo = unsafe { lother.raw_doc().as_doc() };
+        let mut lom = unsafe { LexMut::assume_exclusive(lo) };
+        let lel = lom.create_element_ns(b"x", b"urn:Custom", b"").expect("el");
+        let ltarget = crate::lexbor::adapter::post_parse::empty_html_document(0).expect("doc");
+        // SAFETY: as above.
+        let lt = unsafe { ltarget.raw_doc().as_doc() };
+        let lat = lf::FragmentTag::resolve(lom.node(lel).element().expect("el"), lt)
+            .expect("resolve")
+            .expect("tag");
+        // SAFETY: the target document is live for the call.
+        let lfrag = unsafe {
+            lf::TransientFragment::parse(
+                input,
+                true,
+                &lf::FragmentContext::Tag {
+                    doc: ltarget.raw_doc(),
+                    at: lat,
+                },
+                DepthLimit::DEFAULT,
+            )
+        }
+        .expect("parses");
+        let mut ltm = unsafe { LexMut::assume_exclusive(lt) };
+        let linto = ltm.create_fragment().expect("frag");
+        lfrag.import_into_doc(&mut ltm, linto).expect("import");
+
+        let mut other = crate::html::dom::Document::new(0).expect("doc");
+        let mut om = arena::HtmlDocMut::new(&mut other);
+        let el = om.create_element_ns(b"x", b"urn:Custom", b"").expect("el");
+        let mut target = crate::lexbor::arena_parse::empty_html_document(0).expect("doc");
+        let at =
+            af::FragmentTag::resolve(om.read().node(el).element().expect("element"), target.doc())
+                .expect("resolve")
+                .expect("a tag");
+        let frag = af::TransientFragment::parse(
+            input,
+            true,
+            &af::FragmentContext::tag(at),
+            DepthLimit::DEFAULT,
+        )
+        .expect("parses");
+        let mut tm = target.edit();
+        let into = tm.create_fragment().expect("frag");
+        frag.import_into_doc(&mut tm, into).expect("import");
+        let r = tm.read();
+        let lnodes: Vec<_> = ltm
+            .node(linto)
+            .subtree_with_contents()
+            .map(|n| (s(Some(n.node_name())), s(n.ns_uri())))
+            .collect();
+        let anodes: Vec<_> = r
+            .node(into)
+            .subtree_with_contents()
+            .map(|n| (s(Some(n.node_name())), s(n.ns_uri())))
+            .collect();
+        assert_eq!(lnodes, anodes, "{}", String::from_utf8_lossy(input));
+    }
+}

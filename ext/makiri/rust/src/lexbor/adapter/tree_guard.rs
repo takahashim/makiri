@@ -347,6 +347,35 @@ pub enum OptionContext {
     /// A context named by tag and namespace (`fragment(context:)`), which has
     /// no ancestors yet.
     Tag(Option<TagId>, Option<NsId>),
+    /// A context element of another DOM (the arena's), whose ancestor walk
+    /// was made beforehand: whether it reaches a `<select>` when the walk
+    /// arrives with no `<optgroup>` seen (`fresh`) and with one
+    /// (`after_optgroup`) - the only state [`nearest_select`] carries.
+    Resolved { fresh: bool, after_optgroup: bool },
+}
+
+/// [`OptionContext::Resolved`]'s answers for a context chain given as
+/// `(tag, ns)` pairs, the context element first: the walk [`nearest_select`]
+/// makes into an element context, run from both states. `None` for a tag
+/// Lexbor does not know (`Option<TagId>` none) is fine: only static tags
+/// decide.
+pub fn resolve_option_chain(
+    chain: impl Iterator<Item = (Option<TagId>, Option<NsId>)> + Clone,
+) -> OptionContext {
+    let run = |mut optgroup: bool| {
+        for (tag, ns) in chain.clone() {
+            match select_step(tag, ns, &mut optgroup) {
+                Step::Stop => return false,
+                Step::Select => return true,
+                Step::Up => {}
+            }
+        }
+        false
+    };
+    OptionContext::Resolved {
+        fresh: run(false),
+        after_optgroup: run(true),
+    }
 }
 
 /// One step of the nearest-select walk, over an element's tag and namespace.
@@ -411,6 +440,13 @@ fn nearest_select(option: HtmlNode<'_>, context: OptionContext) -> Option<*const
             Step::Select => Some(core::ptr::dangling::<c_void>()),
             Step::Stop | Step::Up => None,
         },
+        OptionContext::Resolved {
+            fresh,
+            after_optgroup,
+        } => {
+            let reaches = if optgroup { after_optgroup } else { fresh };
+            reaches.then(core::ptr::dangling::<c_void>)
+        }
     }
 }
 

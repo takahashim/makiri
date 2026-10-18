@@ -66,6 +66,12 @@ impl NsId {
         NonZeroU32::new(v).map(NsId)
     }
 
+    /// The arena's number for the id (a built-in one is Lexbor's).
+    #[inline]
+    pub fn number(self) -> u32 {
+        self.0.get()
+    }
+
     /// One of Lexbor's built-in namespaces, the same number in every
     /// document.
     #[inline]

@@ -241,6 +241,32 @@ impl TransientFragment {
     }
 }
 
+impl TransientFragment {
+    /// Parse `input` in a [`FragmentContext::Standalone`] context - which
+    /// names no live node or document, so nothing the caller holds has to
+    /// be vouched for.
+    pub fn parse_standalone(
+        input: &[u8],
+        known_valid: bool,
+        at: Option<FragmentTag>,
+        options: OptionContext,
+        limit: DepthLimit,
+    ) -> Result<TransientFragment, FragmentError> {
+        let context = FragmentContext::Standalone { at, options };
+        // SAFETY: a standalone context reads no node or document of the
+        // caller's; the input is only read.
+        unsafe { run_fragment_parser(input, known_valid, &context, limit) }
+    }
+
+    /// The node whose children the parse produced, lent for as long as
+    /// `self` is borrowed: the fragment owns the document it lives in, which
+    /// nothing else holds or changes.
+    pub fn with_root<R>(&self, f: impl FnOnce(HtmlNode<'_>) -> R) -> R {
+        // SAFETY: as above - live while `self` is, and unchanged.
+        f(unsafe { self.root.as_node() })
+    }
+}
+
 /// Which Lexbor fragment parser to run, and the context it needs.
 ///
 /// Both implement the same WHATWG algorithm - tokenizer state for
@@ -254,6 +280,14 @@ pub enum FragmentContext {
     /// A named context: a tag id and namespace, for `Document#fragment` and
     /// `DocumentFragment.parse`, where no such element exists yet.
     Tag { doc: RawDoc, at: FragmentTag },
+    /// A context given as a tag and namespace Lexbor knows (static ids),
+    /// parsed in a document of its own, with the option guard's walk over
+    /// the context's ancestors made beforehand - for a context element of
+    /// another DOM (the arena's). `at` none parses with no context element.
+    Standalone {
+        at: Option<FragmentTag>,
+        options: OptionContext,
+    },
 }
 
 /// The tag a context gets when its own cannot be handed to the parser - see
@@ -388,6 +422,7 @@ impl FragmentContext {
             /* A document handle is untyped; this entry takes the HTML document
              * it is. */
             FragmentContext::Tag { doc, at } => (doc.as_ptr().cast(), Some(at)),
+            FragmentContext::Standalone { at, .. } => (core::ptr::null_mut(), at),
         };
         Ok(BeginArgs {
             owner,
@@ -442,7 +477,10 @@ unsafe fn run_fragment_parser(
     /* Only the element context gets a document of its own to free; the tag
      * context's lives in the target's memory, and Lexbor's own chunk cleanup
      * destroys it. */
-    if matches!(context, FragmentContext::Element(_)) {
+    if matches!(
+        context,
+        FragmentContext::Element(_) | FragmentContext::Standalone { .. }
+    ) {
         owned = TransientDoc::own(fragment_document(parser.as_ptr()).cast());
     }
 
@@ -451,6 +489,7 @@ unsafe fn run_fragment_parser(
         match *context {
             FragmentContext::Element(el) => OptionContext::Element(el),
             FragmentContext::Tag { at, .. } => OptionContext::Tag(Some(at.tag), at.ns),
+            FragmentContext::Standalone { options, .. } => options,
         },
     );
     if !hook.install(parser.as_ptr()) {

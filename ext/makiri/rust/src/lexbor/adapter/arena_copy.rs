@@ -23,12 +23,19 @@ pub fn copy_document(src: HtmlDoc<'_>) -> Result<Document, DomOom> {
     let mode = u8::try_from(src.compat_mode()).unwrap_or(2);
     let mut doc = Document::new(mode)?;
     copy_names(&mut doc, src.as_node(), NodeId::DOCUMENT)?;
-    copy_children(&mut doc, src.as_node(), NodeId::DOCUMENT)?;
+    copy_children(&mut doc, src.as_node(), NodeId::DOCUMENT, true)?;
     Ok(doc)
 }
 
-/// Copy the children of `src` (and everything below them) under `dst`.
-pub fn copy_children(doc: &mut Document, src: HtmlNode<'_>, dst: NodeId) -> Result<(), DomOom> {
+/// Copy the children of `src` (and everything below them) under `dst`, with
+/// their source offsets when `offsets` - a copy of a parse keeps them, an
+/// import from another document drops them.
+pub fn copy_children(
+    doc: &mut Document,
+    src: HtmlNode<'_>,
+    dst: NodeId,
+    offsets: bool,
+) -> Result<(), DomOom> {
     /* (source parent, its next child to copy, destination parent) */
     let mut stack: Vec<(Option<HtmlNode<'_>>, NodeId)> = Vec::new();
     stack
@@ -42,6 +49,9 @@ pub fn copy_children(doc: &mut Document, src: HtmlNode<'_>, dst: NodeId) -> Resu
         top.0 = s.next();
         let parent = top.1;
         let made = copy_one(doc, s)?;
+        if !offsets {
+            doc.forget_source_offset(made);
+        }
         doc.append_child(parent, made);
         if let Some(contents) = s.template_content() {
             /* The arena made the contents with the template, as Lexbor
