@@ -689,8 +689,20 @@ leave stale. XML names stay NUL-strict, like HTML's. Don't drop the
 UTF-8 checks or route a name/engine string through the data path; see
 `docs/string_types.md`.
 
-**Parsing & source location** (`lexbor/adapter/post_parse.rs`, `source_loc.rs`).
-`parse_html` drives Lexbor's low-level pipeline (`parser_create`/`init` →
+**Parsing & source location.** In the build that ships, the ported tree
+builder stamps an element when it is CREATED FOR ITS OWN START TAG
+(`TreeBuilder::created_offset`, `html/tree/guard.rs`): a real start-tag token
+with no base element - never a `Tok::fake`, an adoption-agency or
+reconstruction copy, or an element implied by another tag's token (the `<tr>`
+a stray `<td>` implies) - so every element the parser invents stays nil and a
+void element fostered out of a table now has its line (L1 in
+`docs/parser_differences.ja.md`). `lexbor::tree_diff::offsets_name_their_tags`
+holds it to the one property `#line` promises: every stamp sits at a start tag
+of the element's own name. What follows is the Lexbor DOM's rule
+(`MAKIRI_LEXBOR_DOM=1`, and the port's Lexbor-compatible run in the
+differential harnesses), which the port reproduced until then.
+
+(`lexbor/adapter/post_parse.rs`, `source_loc.rs`) `parse_html` drives Lexbor's low-level pipeline (`parser_create`/`init` →
 `parse_chunk_begin` → override the tokenizer's token-done callback, **chaining**
 the parser's tree builder → `chunk_process`/`chunk_end`) so each element can
 be stamped with its start tag's byte offset (`token->begin`) **at creation**:

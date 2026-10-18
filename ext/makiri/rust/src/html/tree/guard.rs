@@ -9,6 +9,7 @@
 //! limit and pop back (a void element at the limit), and the hook never saw
 //! that, so a check at the insertion would refuse inputs the hook accepts.
 
+use super::compat::{self, Fix};
 use super::{Tok, TreeBuilder};
 use crate::html::dom::NodeId;
 use crate::html::res::names as res;
@@ -134,10 +135,28 @@ impl TreeBuilder<'_> {
         self.doc.template_content(n).unwrap_or(n)
     }
 
+    /// The offset an element created from `tok` carries: its start tag's,
+    /// when `tok` is a real start tag of a stamping parse - not a token the
+    /// tree builder made up (`Tok::fake`) or one that copies an existing
+    /// element (`base`: the adoption agency, the reconstruction of the
+    /// active formatting elements). The HTML Standard's sense of an element
+    /// "created for the token"; L1 in docs/parser_differences.ja.md.
+    pub(crate) fn created_offset(&self, tok: &Tok) -> Option<usize> {
+        if !self.guard.stamp || !compat::fixed(Fix::L1) || tok.base.is_some() {
+            return None;
+        }
+        tok.begin.filter(|&o| o < self.guard.input_len)
+    }
+
     /// Before a token: the stamp's snapshot, for an element start tag
-    /// (`Stamper::start_tag`, `Before::at`).
+    /// (`Stamper::start_tag`, `Before::at`) - Lexbor's rule, which only the
+    /// Lexbor-compatible run (`compat::as_lexbor`) still uses.
     pub(crate) fn guard_before(&self, tok: &Tok) -> Option<Before> {
-        if !self.guard.stamp || tok.tag_id <= res::TAG__EM_DOCTYPE || tok.is_close() {
+        if !self.guard.stamp
+            || compat::fixed(Fix::L1)
+            || tok.tag_id <= res::TAG__EM_DOCTYPE
+            || tok.is_close()
+        {
             return None;
         }
         let offset = tok.begin?;

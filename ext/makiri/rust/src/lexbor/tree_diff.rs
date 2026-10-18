@@ -165,13 +165,19 @@ pub fn first_difference(a: &str, b: &str) -> String {
 pub fn check(input: &[u8], offsets: bool) -> Result<(), String> {
     let l = lexbor_dump(input, offsets);
     let p = as_lexbor(|| port_dump(input, offsets));
-    if let (Some(c), Some(f)) = (&p, port_dump(input, offsets)) {
+    /* The fixes' trees, offsets aside (L1 changes only those, and is
+     * checked on its own below). */
+    let c = as_lexbor(|| port_dump(input, false));
+    if let (Some(c), Some(f)) = (&c, port_dump(input, false)) {
         if *c != f && explains(input, None).is_empty() {
             return Err(format!(
                 "a fix changed the tree where no entry explains it\n{}",
                 first_difference(c, &f)
             ));
         }
+    }
+    if offsets {
+        offsets_name_their_tags(input)?;
     }
     match (l, p) {
         (Some(l), Some(p)) if l == p => Ok(()),
@@ -270,4 +276,67 @@ pub fn check_fragment(input: &[u8], context: &str) -> Result<(), String> {
         (Ok(l), Ok(p)) => Err(first_difference(&l, &p)),
         (l, p) => Err(format!("lexbor: {:?}, port: {:?}", l.err(), p.err())),
     }
+}
+
+/// The source-offset rule (L1 in docs/parser_differences.ja.md), checked on
+/// its own terms: every element the port stamps sits at a start tag of its
+/// own name in the parsed text - never a wrong line. (`<image>` makes an
+/// `img`.) Which elements are stamped is the rule's; this holds it to the
+/// one property `Node#line` promises.
+pub fn offsets_name_their_tags(input: &[u8]) -> Result<(), String> {
+    let Some(parsed) = crate::html::tree::parse_html(input, false, DepthLimit::UNLIMITED).ok()
+    else {
+        return Ok(());
+    };
+    let text = crate::utf8_input::sanitize(input, false).expect("sanitize");
+    let text = text.as_slice();
+    let d = parsed.arena();
+    let mut stack = vec![NodeId::DOCUMENT];
+    while let Some(n) = stack.pop() {
+        if let Some(c) = d.template_content(n) {
+            stack.push(c);
+        }
+        let mut c = d.first_child(n);
+        while let Some(x) = c {
+            stack.push(x);
+            c = d.next(x);
+        }
+        if d.kind(n) != NodeType::Element {
+            continue;
+        }
+        let Some(o) = d.source_offset(n) else {
+            continue;
+        };
+        let name = d.names.tag_name(d.local(n) as usize).unwrap_or_default();
+        /* A start tag's offset is Lexbor's `token->begin`: the byte after
+         * its `<`. */
+        let after = text.get(o..).unwrap_or_default();
+        /* As the tokenizer reads a tag name: up to whitespace, `/` or `>`,
+         * with U+0000 as U+FFFD. */
+        let mut written = Vec::new();
+        for &b in after
+            .iter()
+            .take_while(|b| !matches!(b, b' ' | b'\t' | b'\n' | b'\r' | 0x0C | b'/' | b'>'))
+        {
+            if b == 0 {
+                written.extend_from_slice("\u{FFFD}".as_bytes());
+            } else {
+                written.push(b);
+            }
+        }
+        let named = written.eq_ignore_ascii_case(name)
+            || (name == b"img" && written.eq_ignore_ascii_case(b"image"));
+        /* `</br>` is handled as a `<br>` start tag, which makes the element:
+         * its offset is after `</`. */
+        let opens = o >= 1 && text.get(o - 1) == Some(&b'<');
+        let br_end = name == b"br" && o >= 2 && text.get(o - 2..o) == Some(&b"</"[..]);
+        if !(opens || br_end) || !named {
+            return Err(format!(
+                "<{}> stamped at {o}, where the text reads {:?}",
+                String::from_utf8_lossy(name),
+                String::from_utf8_lossy(&text[o.min(text.len())..(o + 24).min(text.len())])
+            ));
+        }
+    }
+    Ok(())
 }

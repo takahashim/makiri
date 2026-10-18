@@ -61,6 +61,14 @@ P で始まる項目は HTML パーサの振る舞いである。
 - **テスト**：WPT `tests19.dat` #51、`plain-text-unsafe.dat` #24。`spec/html_standard_steps_spec.rb`。
 - **移植版**：`html/tree/modes/foreign_content.rs` の `text` が、U+0000 を置き換える前の文字列で frameset-ok を判定する（U+0000 と空白以外の文字があれば "not ok"）。差分の許可は、入力に `frameset` と `svg` か `math` があり、U+FFFD、`&`（文字参照）、UTF-8 でない byte のどれかがあるとき。
 
+### L1 ソース位置の規則
+
+- **分類**：意図した変更（移植計画の「ソース位置の規則」）。Lexbor の DOM のビルドは旧来の答えのまま。
+- **規則**：要素は、それ自身の開始タグの token のために作られたときだけ、その token の開始位置を持つ。`Tok::fake`、adoption agency と再構築の複製（`base` を持つ token）、別のタグの token が暗に作らせた要素（はぐれた `<td>` が作る `<tr>`）は持たない（`html/tree/guard.rs` の `created_offset`）。`</br>` は `<br>` の開始タグとして扱われて要素を作るので、その要素は `</br>` の位置を持つ。
+- **旧来の規則**：Lexbor の token hook の前後で、新しい current node か挿入先の最後の子を探して印を付ける（`source_loc::stamp_created`）。table から foster された void 要素は、どちらの場所にもないので nil だった。
+- **変わる答え**：foster された void 要素が自分の行を持つ（`<table>\n<input>` の `input` は 2）。間違った行を返さないことは変わらない。
+- **検証**：比較のテストと fuzz は、Lexbor 互換の実行で Lexbor の位置と完全に一致させ、仕様どおりの実行では、印を付けたすべての要素が、その位置で自分の名前の開始タグを指すことを確かめる（`lexbor::tree_diff::offsets_name_their_tags`）。
+
 ## 安全性のための差
 
 移植計画の「変更の二つの種類」の例外として、参照実装の未定義動作や、失敗を成功として返す箇所を再現しない箇所を記録する。

@@ -83,6 +83,9 @@ pub fn in_table_body(
             let mut fake = *tok;
             fake.tag_id = res::TAG_TR;
             fake.has_attrs = false;
+            /* The implied `<tr>` is the parser's, not the `<td>`'s: no
+             * source position (`created_offset`). */
+            fake.begin = None;
             if tree.insert_html_element(tkz, &fake).is_err() {
                 return tree.abort_with(TreeStatus::Oom);
             }

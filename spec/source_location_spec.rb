@@ -132,10 +132,14 @@ RSpec.describe "Makiri source location" do
     it "never answers a wrong line under foster parenting" do
       expect(lines("<table>\n<p>x</p>\n<tr><td>1</td></tr></table>"))
         .to eq([["p", 2], ["table", 1], ["tbody", nil], ["tr", 3], ["td", 3]])
-      # A fostered VOID element lands before the table, at neither place the
-      # stamping looks, so it is nil rather than guessed.
+      # A fostered VOID element lands before the table. The port stamps an
+      # element when it is created for its own start tag, so it has its line;
+      # Lexbor's DOM (MAKIRI_LEXBOR_DOM=1) stamps after the token, where it
+      # finds neither place it looks, and leaves it nil rather than guess
+      # (docs/parser_differences.ja.md L1).
+      input_line = Makiri.send(:__lexbor_dom?) ? nil : 2
       expect(lines("<table>\n<input>\n<tr><td>1</td></tr></table>"))
-        .to eq([["input", nil], ["table", 1], ["tbody", nil], ["tr", 3], ["td", 3]])
+        .to eq([["input", input_line], ["table", 1], ["tbody", nil], ["tr", 3], ["td", 3]])
     end
 
     it "locates void elements and self-closing foreign elements" do

@@ -165,6 +165,9 @@ impl TreeBuilder<'_> {
             None => self.append_attributes(tkz, el, tok, ns)?,
             Some(from) => self.append_attributes_from_element(el, from)?,
         }
+        if let Some(offset) = self.created_offset(tok) {
+            self.doc.set_source_offset(el, offset);
+        }
         Ok(el)
     }
 

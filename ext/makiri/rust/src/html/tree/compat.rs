@@ -20,6 +20,11 @@ pub enum Fix {
     P2,
     /// A U+FFFD in the input, in foreign content, sets frameset-ok to "not ok".
     P3,
+    /// An element carries its start tag's offset when it was created for
+    /// that tag's token, and no other (`Node#line`); not a tree change, so
+    /// [`explains`] never names it: the harnesses compare the trees without
+    /// offsets and check the offsets on their own.
+    L1,
 }
 
 #[cfg(any(test, feature = "lexbor-reference"))]
