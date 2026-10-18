@@ -28,4 +28,13 @@ RSpec.describe "CSS Syntax 3 and Selectors 4 steps the CSS parser follows" do
     end
     expect(doc.css(":nth-child(2n+1 of p)").map(&:text)).to eq(["t"])
   end
+  # C18: a forgiving selector list may be empty; :is() and :where() then
+  # match nothing.
+  it "accepts an empty :is() or :where(), which matches nothing" do
+    doc = Makiri::HTML("<div><p>t</p></div>")
+    expect(doc.css("p:is()")).to be_empty
+    expect(doc.css("p:where(:foo)")).to be_empty
+    expect(doc.css("p:not(:is())").size).to eq(1)
+    expect(Makiri::XML("<r><p/></r>").css("p:not(:where())").size).to eq(1)
+  end
 end

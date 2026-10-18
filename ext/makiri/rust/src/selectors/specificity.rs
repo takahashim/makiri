@@ -66,8 +66,12 @@ pub(crate) fn respecify(ast: &mut Ast) {
                 }
                 st::PSEUDO_CLASS_FUNCTION => match (n.pseudo_type, n.data) {
                     (cf::WHERE, _) => {}
-                    (cf::IS | cf::NOT | cf::HAS, PseudoData::List(l)) => {
-                        add(&mut sum, most_specific(ast, Some(l)));
+                    (cf::IS | cf::NOT | cf::HAS, data) => {
+                        let first = match data {
+                            PseudoData::List(l) => Some(l),
+                            _ => None,
+                        };
+                        add(&mut sum, most_specific(ast, first));
                     }
                     (cf::NTH_CHILD | cf::NTH_LAST_CHILD, PseudoData::AnbOf(anb)) => {
                         sum[1] = sum[1].saturating_add(1);

@@ -82,7 +82,7 @@ CSS の項目も、すべて Lexbor の振る舞いを移植版が写したも�
 | C15 | css_syntax F7 | 値の正規化が `\` の後の改行を空白に変え、意味を変える | 未着手 |
 | C16 | css_syntax U1 | at-rule のブロックの中の宣言を出力しない | 未実装 |
 | C17 | css_syntax U2 | style rule の入れ子の規則と、その後の宣言を出力しない | 未実装 |
-| C18 | css_selectors F1 | 空の `:is()`、`:where()` を構文エラーにする | 未着手 |
+| C18 | css_selectors F1 | 空の `:is()`、`:where()` を構文エラーにする | 直した |
 | C19 | css_selectors F2 | `:has()` の中の無効な項目を捨てる（仕様は unforgiving） | 未着手 |
 | C20 | css_selectors F3 | `:has()` の中の `:has()` を受け付ける | 未着手 |
 | C21 | css_selectors F4 | An+B の後ろの token を捨てる（`:nth-child(2n+1of p)`） | 直した |

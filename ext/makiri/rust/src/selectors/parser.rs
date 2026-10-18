@@ -1965,7 +1965,12 @@ impl<'a> Parser<'a> {
         let selector = self.ast.list(last).last?;
         let s = self.ast.sel(selector);
         let is_class = s.ty == sel_type::PSEUDO_CLASS_FUNCTION;
-        if pseudo::function_can_empty(s.pseudo_type, is_class) {
+        /* A forgiving list may be empty, written so or left so by the items
+         * it dropped: `:is()` and `:where()` then match nothing (C18). */
+        let forgiving_empty = is_class
+            && matches!(s.pseudo_type, class_function::IS | class_function::WHERE)
+            && compat::fixed(Fix::C18);
+        if pseudo::function_can_empty(s.pseudo_type, is_class) || forgiving_empty {
             if set_ok {
                 self.set_ok();
             }

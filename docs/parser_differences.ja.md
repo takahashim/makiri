@@ -281,6 +281,14 @@ CSS Syntax Level 3 と Selectors Level 4（w3c/csswg-drafts の `7b4c69ecaf9289d
 - **移植版**：`selectors/parser.rs` の `function_end` が、An+B を持つ関数の規則が failed で終わったとき、An+B が不正なときと同じくセレクタを無効にする。差分の許可は、入力に `nth-` があるとき。
 - **テスト**：`spec/css_standard_steps_spec.rb`。
 
+### C18 空の `:is()` と `:where()`
+
+- **分類**：参照実装の未対応（監査の css_selectors F1）。移植版で直した（第 8 段）。
+- **仕様**：`:is()` と `:where()` の引数は forgiving selector list で、空でもよい。書いたとおり空のときも、無効な項目を除いて空になったときも、何にも一致しない。
+- **再現**：`p:is()`、`p:where(:foo)`。仕様では有効で、何にも一致しない（`p:not(:is())` はすべての `p` に一致する）。Lexbor は空の関数を受け付けず、セレクタ全体が構文エラーになる。
+- **移植版**：`selectors/parser.rs` の `function_empty` が、`:is()` と `:where()` を引数のないまま残す。HTML の matcher は空の list に何も一致させない。XML の XPath への変換（`css/lower.rs` の `selector_list_selftest`）は、空の list を `false()` にする。差分の許可は、入力に `is(` か `where(` があるとき。
+- **テスト**：`spec/css_standard_steps_spec.rb`。
+
 ## パーサの外の項目
 
 次の差は HTML パーサではなく、DOM の上の層（CSS マッチャ、XPath の名前照合）にある。
