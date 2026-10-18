@@ -455,4 +455,6 @@ bench（release、同一マシン）でのアリーナ構成と Lexbor 構成の
 
 - **仕様全体の監査（第 8 段、HTML の部分）**：固定した版の HTML Standard の構文解析の章を六つに分け、step ごとの対応表を `docs/parser_audit/` に置いた（879 行）。どのオラクルも覆っていなかった逸脱が 19 件見つかり、すべて Lexbor の振る舞いを移植版が写したものだった。tokenizer と tree builder の 13 件（P4〜P16、P11 は parse5 との乱択の比較で確かめた）、fragment の解析が context から読むもの 4 件（P17〜P20。`ContextFacts` を足し、既定値を Lexbor の前提にしたので、比較のテストは既定値のまま Lexbor と一致させる）、直列化 2 件（R1、R2）を、第 7 段と同じ手順で一件ずつ入れた。`<template for>` の content patching（U1）は Lexbor にもなく、未実装として残す。
 
-次は第 8 段の残り（CSS：Selectors Level 4 と CSS Syntax Level 3 のうち、セレクタパーサが受け付ける文法と stylesheet パーサの範囲の対応表）で、その後が第 9 段である。
+- **仕様全体の監査（第 8 段、CSS の部分）**：CSS Syntax Level 3 と Selectors Level 4（w3c/csswg-drafts の `7b4c69e`）のうち CSS パーサが扱う範囲を三つの表にした（`docs/parser_audit/css_*.md`、319 行）。逸脱と未実装が 24 項目（C4〜C27）見つかり、C15（移植版の値の正規化）を除いてすべて Lexbor から引き継いだものだった。仕組みは HTML と同じで、`compat` を crate の直下に移し、`lexbor::selector_diff` と `lexbor::stylesheet_diff` が Lexbor 互換の実行を Lexbor と比べ、仕様どおりの実行との差を `css_explains`（stylesheet は `stylesheet_explains`）で許す。直したのは、specificity（C23〜C26）、An+B の後ろの token（C21）、空の `:is()`（C18）、`:has()` の unforgiving と入れ子（C19、C20）、トークナイザの四件（C4〜C6、C8）、`#1a`（C7）、`n-` の桁あふれ（C22）、`!important`（C12、C13）、値の `\` の delim（C15）、宣言か規則かの判定（C9、C14）、block のない規則と `--name:` の prelude（C10、C11）。
+
+残りは、`parse_stylesheet` の出力の形に関わる C16（at-rule の block の中の宣言）と C17（style rule の入れ子の規則と、その後の宣言）、未実装の C27（`[*|a]`）で、いずれも API の形を決めてから入れる。その後が第 9 段である。
