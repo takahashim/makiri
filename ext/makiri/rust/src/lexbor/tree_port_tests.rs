@@ -603,3 +603,63 @@ fn tree_port_speed() {
         port / lexbor_copy
     );
 }
+
+/// The two parsers over a directory of real pages - the web100k corpus
+/// (github.com/EmilStenstrom/web100k), decompressed to `*.html` files in
+/// `WEB100K_DIR`. Every page must give the same tree, offsets included, with
+/// no limit, and the same verdict under the default guard. Pages that differ
+/// are copied to `WEB100K_OUT` (when set) for a repro, and the run fails
+/// naming the first few.
+#[test]
+#[ignore = "needs the web100k corpus in WEB100K_DIR"]
+fn the_port_builds_lexbors_tree_on_web100k() {
+    let Some(dir) = std::env::var_os("WEB100K_DIR") else {
+        panic!("set WEB100K_DIR to a directory of decompressed web100k pages");
+    };
+    let out = std::env::var_os("WEB100K_OUT").map(std::path::PathBuf::from);
+    let mut paths: Vec<_> = std::fs::read_dir(&dir)
+        .expect("WEB100K_DIR is a directory")
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "html"))
+        .collect();
+    paths.sort();
+    let (mut n, mut bytes, mut differ, mut verdicts) = (0usize, 0usize, Vec::new(), Vec::new());
+    for p in &paths {
+        let input = std::fs::read(p).expect("a page");
+        n += 1;
+        bytes += input.len();
+        let name = p.file_name().unwrap().to_string_lossy().into_owned();
+        let mut keep = false;
+        if let Err(e) = check(&input, true) {
+            differ.push(format!("{name}\n{e}"));
+            keep = true;
+        }
+        let l = parse_html(&input, false, DepthLimit::DEFAULT).map(|_| ());
+        let r = crate::html::tree::parse_html(&input, false, DepthLimit::DEFAULT).map(|_| ());
+        if l != r {
+            verdicts.push(format!("{name}: lexbor {l:?}, port {r:?}"));
+            keep = true;
+        }
+        if let (true, Some(o)) = (keep, &out) {
+            let _ = std::fs::create_dir_all(o);
+            let _ = std::fs::write(o.join(&name), &input);
+        }
+    }
+    eprintln!(
+        "web100k: {n} pages, {:.1} MB; {} trees differ, {} verdicts differ",
+        bytes as f64 / 1e6,
+        differ.len(),
+        verdicts.len()
+    );
+    assert!(
+        differ.is_empty() && verdicts.is_empty(),
+        "{}\n\n{}",
+        verdicts.join("\n"),
+        differ
+            .iter()
+            .take(5)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    );
+}
