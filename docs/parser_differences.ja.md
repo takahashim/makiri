@@ -30,6 +30,8 @@ tree construction は WPT から、tokenizer は html5lib-tests から取る。
 
 各項目は、分類、仕様の該当箇所、再現する入力、現在の扱い、移植計画の中で入れる段を持つ。
 
+「監査の」で始まる参照（`in_body F1`、`css_selectors F7` など）は、第 8 段の監査の表の行を指す。表は step ごとの対応を記録した作業記録で、結果をこの表と `compat.rs` に移したあと削除した。git の履歴の `docs/parser_audit/` にある。
+
 ## パーサの項目
 
 P で始まる項目は HTML パーサの振る舞いである。
@@ -215,11 +217,28 @@ P で始まる項目は HTML パーサの振る舞いである。
 
 ### L1 ソース位置の規則
 
-- **分類**：意図した変更（移植計画の「ソース位置の規則」）。Lexbor の DOM のビルドは旧来の答えのまま。
+- **分類**：意図した変更（移植計画の「ソース位置の規則」）。
 - **規則**：要素は、それ自身の開始タグの token のために作られたときだけ、その token の開始位置を持つ。`Tok::fake`、adoption agency と再構築の複製（`base` を持つ token）、別のタグの token が暗に作らせた要素（はぐれた `<td>` が作る `<tr>`）は持たない（`html/tree/guard.rs` の `created_offset`）。`</br>` は `<br>` の開始タグとして扱われて要素を作るので、その要素は `</br>` の位置を持つ。
 - **旧来の規則**：Lexbor の token hook の前後で、新しい current node か挿入先の最後の子を探して印を付ける（`source_loc::stamp_created`）。table から foster された void 要素は、どちらの場所にもないので nil だった。
 - **変わる答え**：foster された void 要素が自分の行を持つ（`<table>\n<input>` の `input` は 2）。間違った行を返さないことは変わらない。
 - **検証**：比較のテストと fuzz は、Lexbor 互換の実行で Lexbor の位置と完全に一致させ、仕様どおりの実行では、印を付けたすべての要素が、その位置で自分の名前の開始タグを指すことを確かめる（`lexbor::tree_diff::offsets_name_their_tags`）。
+
+## 実装しないもの
+
+監査で未実装または意図した差とした step のうち、ほかの項目に入らないもの。
+
+### U1 `<template for>` による content patching
+
+- **分類**：未実装。Lexbor にもない。processing-instruction token とともに入った機能で、WPT の pin に入力がない。
+- **仕様**：in head の「A start tag whose tag name is "template"」で、shadowrootmode がなく `for` 属性があれば、scope の中から `<?marker name=...?>` か `<?start name=...?>`（と対応する `<?end?>`）を探し（find markers）、prepare content patching で template の insertion target を marker の親にし、start と end の間のノードを除く。成功すれば template 要素そのものは挿入しない。appropriate place for inserting a node はその insertion target を使い、template の終了タグが marker を外す。
+- **再現**：`<div><?marker name="x"?></div><template for="x"><p>new</p></template>` は、仕様では `<div>` の子が `<p>new</p>` だけになる。移植版は marker を残し、body に `<template for="x">`（content に `<p>new</p>`）を作る。
+- **扱い**：`for` は普通の属性で、template は普通の template として木に入る（`html/tree/modes/in_head.rs`）。
+
+### 入力と資源の制限
+
+- NUL を含む名前や不正な UTF-8 を、API の境界で例外にする（`CLAUDE.md` の text-input contract）。HTML の入力そのものは置き換えて読む。
+- stylesheet の at-rule の入れ子が 64 を超えると例外にする（`lexbor/stylesheet.rs` の `MAX_DEPTH`）。
+- メモリ不足では stylesheet の解析全体を失敗にする（S3 と同じ方針）。
 
 ## 安全性のための差
 
@@ -263,7 +282,7 @@ P で始まる項目は HTML パーサの振る舞いである。
 
 ## CSS パーサの項目
 
-CSS Syntax Level 3 と Selectors Level 4（w3c/csswg-drafts の `7b4c69ecaf9289d1bd5455d6bea10eec0b4a4399`）の監査（`docs/parser_audit/css_*.md`）で見つかった、Lexbor から引き継いだ逸脱を直したもの。HTML の項目と同じく `compat.rs` の `fixed` を問い、比較のテスト（`lexbor::selector_diff`、`lexbor::stylesheet_diff`）は Lexbor 互換の実行で Lexbor と一致させ、仕様どおりの実行との差を `css_explains` の述語が説明できる入力でだけ許す。
+CSS Syntax Level 3 と Selectors Level 4（w3c/csswg-drafts の `7b4c69ecaf9289d1bd5455d6bea10eec0b4a4399`）の監査（第 8 段）で見つかった、Lexbor から引き継いだ逸脱を直したもの。HTML の項目と同じく `compat.rs` の `fixed` を問い、比較のテスト（`lexbor::selector_diff`、`lexbor::stylesheet_diff`）は Lexbor 互換の実行で Lexbor と一致させ、仕様どおりの実行との差を `css_explains` の述語が説明できる入力でだけ許す。
 
 ### C23〜C26 specificity
 
