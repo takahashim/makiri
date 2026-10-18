@@ -4,6 +4,7 @@
 //! Lexbor's pop callbacks (`open_pop`) run only the option element's
 //! selectedness, which nothing here models, so a pop is a pop.
 
+use super::compat::{self, Fix};
 use super::{Tok, TreeBuilder, TreeStatus};
 use crate::falloc::{Reserve, VecPush};
 use crate::html::dom::NodeId;
@@ -295,7 +296,9 @@ impl TreeBuilder<'_> {
         true
     }
 
-    /// `lxb_dom_attr_compare`.
+    /// `lxb_dom_attr_compare`. The Standard compares values, and an attribute
+    /// written with no value has the value "" - the same as `x=""`; Lexbor
+    /// tells the two apart (P10).
     fn attr_compare(&self, first: NodeId, second: NodeId) -> bool {
         let d = &*self.doc;
         if d.local(first) != d.local(second)
@@ -303,6 +306,16 @@ impl TreeBuilder<'_> {
             || d.written_id(first) != d.written_id(second)
         {
             return false;
+        }
+        if compat::fixed(Fix::P10) {
+            let value = |a| {
+                if self.valueless.contains(a) {
+                    &[][..]
+                } else {
+                    d.attr_value(a).unwrap_or_default()
+                }
+            };
+            return value(first) == value(second);
         }
         match (
             self.valueless.contains(first),

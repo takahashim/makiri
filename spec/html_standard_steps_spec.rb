@@ -74,4 +74,9 @@ RSpec.describe "HTML Standard steps the port takes and Lexbor does not" do
     doc = Makiri::HTML("x<!")
     expect(doc.at_css("body").inner_html).to eq("x<!---->")
   end
+  # P10: the Noah's Ark clause compares values; `x` and `x=""` both have "".
+  it "counts an attribute with no value as the empty value among formatting elements" do
+    doc = Makiri::HTML(%(<p><b x><b x><b x=""><b x=""></p>x))
+    expect(doc.css("body > b, body > b b").size).to eq(3)
+  end
 end

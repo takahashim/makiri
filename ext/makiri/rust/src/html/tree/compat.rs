@@ -37,6 +37,9 @@ pub enum Fix {
     /// A `<!` at the end of the input makes an empty comment, not one holding
     /// the text before it.
     P9,
+    /// An attribute written with no value equals one with the value "" when
+    /// the active formatting elements are counted.
+    P10,
     /// An element carries its start tag's offset when it was created for
     /// that tag's token, and no other (`Node#line`); not a tree change, so
     /// [`explains`] never names it: the harnesses compare the trees without
@@ -142,6 +145,11 @@ pub fn explains(input: &[u8], context: Option<&str>) -> Vec<Fix> {
     if ends_in_markup_declaration(input) {
         fixes.push(Fix::P8);
         fixes.push(Fix::P9);
+    }
+    /* P10: an attribute whose value is the empty string, which can only be
+     * written quoted. */
+    if has(input, b"\"\"") || has(input, b"''") {
+        fixes.push(Fix::P10);
     }
     fixes
 }
