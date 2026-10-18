@@ -59,6 +59,11 @@ jobs:
       - name: HTML5 parsing conformance (html5lib-tests)
         run: bundle exec rake conformance:html5
 
+      # The same WPT data through the crate: the tokenizer and the ported tree
+      # builder against Lexbor, and the entity table against the WHATWG list.
+      - name: HTML parser port vs Lexbor (WPT, html5lib, entities)
+        run: bundle exec rake conformance:parser
+
       # XPATH_ARGS must be a real env var, not a rake CLI arg: the task reads
       # ENV['XPATH_ARGS'] inside Bundler.with_unbundled_env, which reverts to the
       # pre-rake environment, so a rake-set var would be dropped.
