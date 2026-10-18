@@ -410,7 +410,7 @@ bench（release、同一マシン）でのアリーナ構成と Lexbor 構成の
 残っている確認は二つある。ASan での全スペックは nightly ツールチェーンがこの環境にないため未実施である。CSS の 0.80 倍は第 9 段より前に原因を調べる。
 
 - **tree builder（第 4 段）**：`src/html/tree/` に Lexbor の `tree.c` と全 insertion mode を一対一で移植し、アリーナへ直接書く形にした。tokenizer は名前表を sink から借りる形に改め（`TokenSink::names`）、tree builder が文書の名前表を持つ。タグのカテゴリ、SVG のタグ名の綴り、属性の調整表は Lexbor の `tag_res.h` と `tree_res.h` から生成する（`html/res/tree.rs`）。`arena-dom` のビルドは Lexbor からの複製をやめ、文書と fragment の両方を移植した tree builder でパースする。木の深さガード、`<select>` の option 数の上限、ソース位置の記録は、Lexbor の token hook と同じく各 token の前後で判定する（`html/tree/guard.rs`）。挿入の時点で判定すると、上限で push してすぐ pop する void 要素のように、hook が受け入れていた入力を拒むためである。
-- **tree builder の検証**：`lexbor::tree_diff` が、Lexbor の木をアリーナに複製したものと移植版の木を、全ノードの種別、名前、名前空間、接頭辞、属性とその並び、`id`/`class` の参照、文字データ、template contents、ソース位置、quirks mode まで比べる。WPT の文書 1,753 件と fragment の全件、無作為な文書 10 万件と fragment で一致し、ガードの判定（深さ 397〜401、option 10,000 と 10,001）も一致する。cargo-fuzz に `html_diff`（`lexbor-reference` フィーチャ）を足した。アリーナのビルドで Ruby の全スペック（1,842 件）、`rake diff`、`rake oom` が通る。
+- **tree builder の検証**：`lexbor::tree_diff` が、Lexbor の木をアリーナに複製したものと移植版の木を、全ノードの種別、名前、名前空間、接頭辞、属性とその並び、`id`/`class` の参照、文字データ、template contents、ソース位置、quirks mode まで比べる。WPT の文書 1,753 件と fragment の全件、無作為な文書 10 万件と fragment で一致し、ガードの判定（深さ 397〜401、option 10,000 と 10,001）も一致する。cargo-fuzz に `html_diff`（`lexbor-reference` フィーチャ）を足した。実際の Web ページ 10 万件（web100k、展開後 22 GB）でも、全ページで木とガードの判定が一致した（`rake conformance:web100k`、CI では回さない）。アリーナのビルドで Ruby の全スペック（1,842 件）、`rake diff`、`rake oom` が通る。
 
 移植で、Lexbor の挙動として次の二つを記録した。
 
