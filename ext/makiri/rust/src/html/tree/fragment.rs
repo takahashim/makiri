@@ -44,6 +44,11 @@ pub struct ContextFacts {
     /// The context or one of its ancestors is an HTML `form`, which the form
     /// element pointer is set to (P20).
     pub in_form: bool,
+    /// The context is an element whose namespace the parser is given as
+    /// none (it has none, or one the parser does not know), which is as
+    /// foreign as any namespace but HTML: a `<![CDATA[` opens a CDATA
+    /// section in it (P19).
+    pub foreign_namespace: bool,
 }
 
 /// Parse `input` as a fragment in the context of an element with tag id
@@ -99,12 +104,14 @@ pub fn parse_fragment(
 
     let status = {
         let current_ns = tree.current_namespace();
+        let foreign = facts.foreign_namespace && compat::fixed(Fix::P19);
         let mut tkz = Tokenizer::new(bytes, &mut tree);
         /* `lxb_html_parser_init` */
         tkz.keep_duplicate = true;
         tkz.set_state_by_tag(false, tag, ns);
         tkz.tmp_tag_id = res::TAG__UNDEF;
         tkz.current_ns = current_ns;
+        tkz.undef_is_foreign = foreign;
         match tkz.chunk() {
             Status::Ok => tkz.end(),
             st => st,

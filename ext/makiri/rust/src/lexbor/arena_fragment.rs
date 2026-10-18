@@ -4,11 +4,13 @@
 //! the same guard, and its children are then copied into the target - the
 //! arena's counterpart of `lexbor::fragment`, with its API.
 //!
-//! A context is only ever a tag and a namespace to the fragment parser. One
-//! outside the static tables - a tag past the static range, a namespace past
-//! the built-in ones - decides nothing in the parse (an unknown name is no
-//! special context, an unknown namespace a foreign one), so the parser is given
-//! a plain `div` and no namespace in their place, and the elements that
+//! A context is a tag and a namespace to the fragment parser, and the few
+//! other things it reads from the element and its document
+//! (`ContextFacts`). A tag or namespace outside the static tables - a tag
+//! past the static range, a namespace past the built-in ones - is given as a
+//! plain `div` and no namespace in its place: an unknown name is no special
+//! context, and an unknown namespace is as foreign as none, which
+//! `ContextFacts::foreign_namespace` tells the parser. The elements that
 //! inherited the namespace get it back on import, as the Lexbor DOM does.
 
 pub use crate::lexbor::fragment::FragmentError;
@@ -145,7 +147,9 @@ impl FragmentContext {
             n.ns_id() == Some(NsId::HTML)
                 && n.tag_id().and_then(TagId::static_index) == Some(res::TAG_FORM)
         });
+        let foreign_namespace = at.as_ref().is_some_and(|a| a.parse_ns() == 0);
         let facts = ContextFacts {
+            foreign_namespace,
             in_form,
             compat_mode: u8::try_from(doc.compat_mode()).unwrap_or(0),
             html_integration_point: integration,

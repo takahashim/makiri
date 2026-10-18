@@ -111,6 +111,9 @@ pub(crate) enum AttrAdjust {
     Mathml,
     /// `lxb_html_tree_adjust_attributes_svg`.
     Svg,
+    /// Only "adjust foreign attributes": an element in a namespace that is
+    /// neither MathML nor SVG, which only a fragment's context has (P19).
+    Foreign,
 }
 
 /// The token the tree builder is processing: Lexbor's `lxb_html_token_t` as

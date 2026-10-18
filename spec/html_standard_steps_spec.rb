@@ -139,4 +139,14 @@ RSpec.describe "HTML Standard steps the port takes and Lexbor does not" do
     doc.at_css("#a").inner_html = "<form><input></form>x"
     expect(doc.at_css("#a").inner_html).to eq("<input>x")
   end
+  # P19: an element in a namespace the parser does not know is foreign:
+  # CDATA sections are read in it, and foreign attributes adjusted.
+  it "parses inner_html= of an element in another namespace as foreign content" do
+    doc = Makiri::HTML("<!doctype html><body>")
+    el = doc.create_element_ns("urn:x", "q:foo")
+    doc.at_css("body") << el
+    el.inner_html = %(<bar xlink:href="a"/><![CDATA[x<y]]>)
+    expect(el.to_html).to eq(%(<q:foo><bar xlink:href="a"></bar>x&lt;y</q:foo>))
+    expect(el.at_xpath("*/@*").xpath("namespace-uri()")).to eq("http://www.w3.org/1999/xlink")
+  end
 end

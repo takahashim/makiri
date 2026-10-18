@@ -62,6 +62,10 @@ pub enum Fix {
     /// A fragment's MathML `annotation-xml` context is an HTML integration
     /// point when its `encoding` says so.
     P18,
+    /// Foreign content adjusts foreign attributes in every namespace, and a
+    /// fragment whose context has a namespace the parser does not know (or
+    /// none) reads CDATA sections in it.
+    P19,
     /// A fragment's form element pointer is the context's nearest form,
     /// itself or an ancestor.
     P20,

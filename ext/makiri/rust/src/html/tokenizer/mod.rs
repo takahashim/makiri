@@ -174,6 +174,9 @@ pub struct Tokenizer<'i, 's> {
     /// decides whether `<![CDATA[` opens a CDATA section
     /// (`lxb_html_tokenizer_current_namespace`); `NS__UNDEF` with no tree.
     pub current_ns: usize,
+    /// `NS__UNDEF` in `current_ns` is a foreign namespace, not "no tree":
+    /// a fragment whose context's namespace the parser was given as none.
+    pub undef_is_foreign: bool,
     /// `LXB_HTML_TOKENIZER_OPT_ATTR_KEEP_DUPLICATE`: hand a start tag's
     /// repeated attributes on rather than dropping them. Lexbor's parser
     /// sets it, and its tree builder drops a repeat by name and namespace.
@@ -208,6 +211,7 @@ impl<'i, 's> Tokenizer<'i, 's> {
             status: Status::Ok,
             is_eof: false,
             current_ns: res::NS__UNDEF,
+            undef_is_foreign: false,
             keep_duplicate: false,
         }
     }

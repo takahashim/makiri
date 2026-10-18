@@ -279,6 +279,7 @@ impl TreeBuilder<'_> {
         match adjust {
             AttrAdjust::Mathml => self.adjust_mathml_attributes(spec)?,
             AttrAdjust::Svg => self.adjust_svg_attributes(spec)?,
+            AttrAdjust::Foreign => {}
         }
         self.adjust_foreign_attributes(spec)
     }

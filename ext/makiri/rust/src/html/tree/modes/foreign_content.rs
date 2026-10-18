@@ -61,6 +61,9 @@ fn anything_else(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &
         tree.before_append_attr = Some(AttrAdjust::Mathml);
     } else if ns == res::NS_SVG {
         tree.before_append_attr = Some(AttrAdjust::Svg);
+    } else if compat::fixed(Fix::P19) {
+        /* The Standard adjusts foreign attributes in every namespace. */
+        tree.before_append_attr = Some(AttrAdjust::Foreign);
     }
     let made = tree.insert_foreign_element(tkz, tok, ns, false);
     let Ok(el) = made else {

@@ -189,6 +189,14 @@ P で始まる項目は HTML パーサの振る舞いである。
 - **移植版**：`lexbor/arena_fragment.rs` の `FragmentContext::element` が context と祖先に HTML の `form` があるかを調べ、`ContextFacts::in_form` として渡す。`html/tree/fragment.rs` の `parse_fragment` が、そのとき fragment の文書に form を作って pointer に置く（context 自身が form のときと同じ）。差分の比較は既定の `ContextFacts` で解析するので、許可は要らない。
 - **テスト**：WPT にない。`spec/html_standard_steps_spec.rb`。
 
+### P19 独自の名前空間の context（CDATA と adjust foreign attributes）
+
+- **分類**：参照実装の未対応（監査の foreign F5）。移植版で直した（第 8 段）。
+- **仕様**：context が HTML 以外の名前空間（名前空間なしを含む）の要素なら、adjusted current node はその要素なので、`<![CDATA[` は CDATA section になる。また foreign content の "any other start tag" は、名前空間によらず adjust foreign attributes を行う。
+- **再現**：`urn:x` 名前空間の要素に `inner_html = '<bar xlink:href="a"/><![CDATA[x<y]]>'`。仕様では `xlink:href` は XLink 名前空間の属性で、CDATA は text `x<y` になる。Lexbor は静的でない名前空間を「なし」として渡し、tokenizer は「なし」で CDATA を認めないので comment `<!--[CDATA[x<y]]-->` になる。adjust foreign attributes は MathML と SVG の中でしか行わない。
+- **移植版**：`lexbor/arena_fragment.rs` の `FragmentContext::element` が、名前空間を「なし」として渡す context について `ContextFacts::foreign_namespace` を立て、`html/tree/fragment.rs` が tokenizer の `undef_is_foreign` に写す。`html/tree/modes/foreign_content.rs` の `anything_else` は、MathML と SVG 以外の名前空間でも adjust foreign attributes を行う（`AttrAdjust::Foreign`。文書の解析ではその名前空間の要素は現れない）。差分の比較は既定の `ContextFacts` と、HTML、SVG、MathML の context で解析するので、許可は要らない。
+- **テスト**：WPT にない。`spec/html_standard_steps_spec.rb`。
+
 ### L1 ソース位置の規則
 
 - **分類**：意図した変更（移植計画の「ソース位置の規則」）。Lexbor の DOM のビルドは旧来の答えのまま。
