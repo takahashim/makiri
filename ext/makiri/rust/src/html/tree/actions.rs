@@ -4,6 +4,7 @@
 //! adjustments, implied end tags, resetting the insertion mode, the scope
 //! tests, and the adoption agency algorithm.
 
+use super::compat::{self, Fix};
 use super::error::TreeErrorId as E;
 use super::{AttrAdjust, Ipos, Mode, Tok, TreeBuilder, TreeStatus};
 use crate::html::dom::{AttrValue, DomOom, NodeId, NodeType};
@@ -853,8 +854,13 @@ impl TreeBuilder<'_> {
                 return false;
             };
 
-            /* State 13 */
+            /* State 13. The bookmark and the formatting element's index are
+             * positions in a list the inner loop removes from: the Standard's
+             * bookmark stays between its neighbours, so both move down with
+             * an entry removed before them. Lexbor kept the indices as they
+             * were. */
             let mut bookmark = formatting_index;
+            let mut formatting_index = formatting_index;
 
             /* State 14 */
             let mut last = furthest_block;
@@ -876,8 +882,18 @@ impl TreeBuilder<'_> {
 
                 /* State 14.5 */
                 let mut afe_node_idx = self.afe_find_by_node_reverse(node);
-                if inner_loop_counter > 3 && afe_node_idx.is_some() {
-                    self.afe_remove_by_node(node);
+                if inner_loop_counter > 3 {
+                    if let Some(i) = afe_node_idx {
+                        self.afe_remove(i);
+                        if compat::fixed(Fix::P11) {
+                            if i < formatting_index {
+                                formatting_index -= 1;
+                            }
+                            if i < bookmark {
+                                bookmark -= 1;
+                            }
+                        }
+                    }
                     afe_node_idx = None;
                 }
 
@@ -951,6 +967,9 @@ impl TreeBuilder<'_> {
 
             /* State 19 */
             self.afe_remove(formatting_index);
+            if formatting_index < bookmark && compat::fixed(Fix::P11) {
+                bookmark -= 1;
+            }
             if bookmark > self.afe.len() {
                 bookmark = self.afe.len();
             }

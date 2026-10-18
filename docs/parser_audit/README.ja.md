@@ -43,7 +43,7 @@ in body の監査は、parse5（scripting off）との無作為な比較も使�
 | P8 | tokenizer2 D1 | `[CDATA[` の途中で入力が終わると、bogus comment の中身が失われる（`<![CDA`） | 直した |
 | P9 | tokenizer2 D2 | 入力末尾の `<!` の直前の文字列が、空のはずのコメントに入る（`x<!`） | 直した |
 | P10 | tokenizer1 F1、tree_core 逸脱 1、in_body F4 | 値のない属性（`<b x>`）と空の値（`<b x="">`）を、formatting element の「三つまで」の比較で別の値として扱う | 直した |
-| P11 | in_body F1 | adoption agency algorithm の bookmark と formatting element の位置を添字で持ち、要素を除いた後に補正しない | 未着手 |
+| P11 | in_body F1 | adoption agency algorithm の bookmark と formatting element の位置を添字で持ち、要素を除いた後に補正しない | 直した |
 | P12 | in_body F2 | `<textarea>` の後に "text" insertion mode に入らず、formatting element を再構築する | 直した |
 | P13 | in_body F3 | `<input>` の `type=hidden` の判定が ASCII の大文字小文字を区別する | 直した |
 | P14 | in_body F5 | table の insertion mode で `<image>` を `<img>` として処理し直さずに失う | 直した |

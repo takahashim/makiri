@@ -100,4 +100,11 @@ RSpec.describe "HTML Standard steps the port takes and Lexbor does not" do
     doc = Makiri::HTML("<p><b></p><textarea>x</textarea>y")
     expect(doc.at_css("body").inner_html).to eq("<p><b></b></p><textarea>x</textarea><b>y</b>")
   end
+  # P11: the adoption agency algorithm, steps 13, 14.5 and 19: the bookmark
+  # stays between its neighbours when entries are removed before it.
+  it "reconstructs the active formatting elements the adoption agency left" do
+    doc = Makiri::HTML("<em><s><b><div><strike><tt><nobr><a><div></s></div></div>x")
+    expect(doc.at_css("body > em > b").children.last.to_html)
+      .to eq("<tt><nobr><a>x</a></nobr></tt>")
+  end
 end

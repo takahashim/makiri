@@ -40,6 +40,9 @@ pub enum Fix {
     /// An attribute written with no value equals one with the value "" when
     /// the active formatting elements are counted.
     P10,
+    /// The adoption agency algorithm's bookmark and formatting element
+    /// position follow the entries the inner loop removes.
+    P11,
     /// A `<textarea>`'s contents are read in "text".
     P12,
     /// An `<input>` whose `type` is "hidden" in any ASCII case leaves
@@ -105,6 +108,21 @@ fn ends_in_markup_declaration(input: &[u8]) -> bool {
         .is_some_and(|i| !input[i..].contains(&b'>'))
 }
 
+/// Whether the input has an end tag of an element the adoption agency
+/// algorithm runs for.
+#[cfg(any(test, feature = "lexbor-reference"))]
+fn has_formatting_end_tag(input: &[u8]) -> bool {
+    const NAMES: [&[u8]; 14] = [
+        b"a", b"b", b"big", b"code", b"em", b"font", b"i", b"nobr", b"s", b"small", b"strike",
+        b"strong", b"tt", b"u",
+    ];
+    NAMES.iter().any(|n| {
+        input
+            .windows(n.len() + 2)
+            .any(|w| w[0] == b'<' && w[1] == b'/' && w[2..].eq_ignore_ascii_case(n))
+    })
+}
+
 /// The fixes that may change the tree of `input` (parsed as a document, or
 /// as a fragment in an HTML `context` element named in lower case). An input
 /// no fix explains must build the same tree with the fixes on and off.
@@ -160,6 +178,15 @@ pub fn explains(input: &[u8], context: Option<&str>) -> Vec<Fix> {
      * written quoted. */
     if has(input, b"\"\"") || has(input, b"''") {
         fixes.push(Fix::P10);
+    }
+    /* P11: the inner loop removes an entry only from its fourth step, so
+     * the furthest block lies at least four elements below the formatting
+     * element: an end tag closing a formatting element across that many
+     * open elements, one of them special. Any input with an end tag of a
+     * formatting element, or an `<a>` or `<nobr>` start tag (which run the
+     * algorithm too), is admitted. */
+    if has_formatting_end_tag(input) || has(input, b"<a") || has(input, b"<nobr") {
+        fixes.push(Fix::P11);
     }
     /* P12: a `<textarea>`'s contents. */
     if has(input, b"textarea") {

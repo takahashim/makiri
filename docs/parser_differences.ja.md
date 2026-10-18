@@ -149,6 +149,14 @@ P で始まる項目は HTML パーサの振る舞いである。
 - **移植版**：`html/tree/modes/in_body.rs` の `skip_new_line_textarea` が "text" に切り替える。差分の許可は、入力に `textarea` があるとき。
 - **テスト**：WPT にない。`spec/html_standard_steps_spec.rb`。
 
+### P11 adoption agency algorithm の bookmark
+
+- **分類**：参照実装の未対応（監査の in_body F1）。移植版で直した（第 8 段）。
+- **仕様**：bookmark は active formatting elements の中の「両隣の要素に対する位置」で、inner loop が要素を除いても動かない。step 19 で formatting element を除き、新しい要素を bookmark の位置に入れる。
+- **再現**：`<em><s><b><div><strike><tt><nobr><a><div></s></div></div>x`。仕様では `</s>` の後の active formatting elements は em、b、tt、nobr、a で、`x` の周りに `<tt><nobr><a>` が再構築される。Lexbor は bookmark と formatting element の位置を添字で持ち、前の要素を除いても補正しないので、別の要素を除き、stack にない `s` を残す（`<s><nobr><a>x`）。
+- **移植版**：`html/tree/actions.rs` の `adoption_agency_algorithm` が、inner loop で除いた要素より後ろにある bookmark と formatting element の添字を一つ戻し、step 19 で formatting element を除いた後の bookmark も補正する。parse5 との乱択の比較（formatting 要素と block を混ぜた 12,000 件）で一致した。差分の許可は、入力に formatting element の終了タグか、`<a>` か `<nobr>` の開始タグ（これも adoption agency algorithm を走らせる）があるとき。
+- **テスト**：WPT にない。`spec/html_standard_steps_spec.rb`。
+
 ### L1 ソース位置の規則
 
 - **分類**：意図した変更（移植計画の「ソース位置の規則」）。Lexbor の DOM のビルドは旧来の答えのまま。
