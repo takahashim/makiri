@@ -55,8 +55,6 @@ pub fn parse_fragment(
 
     let mut tree = TreeBuilder::new(&mut doc);
     tree.guard = Guard::for_fragment(limit, options);
-    /* Nothing reads a fragment's parse errors. */
-    tree.record_errors = false;
     tree.open_push(root).map_err(|_| FragmentFailure::Parse)?;
     if tag == res::TAG_TEMPLATE && ns == res::NS_HTML {
         tree.template_modes_push(Mode::InTemplate)
@@ -76,7 +74,6 @@ pub fn parse_fragment(
         let mut tkz = Tokenizer::new(bytes, &mut tree);
         /* `lxb_html_parser_init` */
         tkz.keep_duplicate = true;
-        tkz.record_errors = false;
         tkz.set_state_by_tag(false, tag, ns);
         tkz.tmp_tag_id = res::TAG__UNDEF;
         tkz.current_ns = current_ns;

@@ -1069,16 +1069,13 @@ pub trait ChildListHost: magnus::TryConvert {
         list: ChildList,
         f: impl for<'a> FnOnce(Children<'a, Self::Tree<'a>>) -> R,
     ) -> R;
-    /// A child as it leaves [`with_children`](Self::with_children)'s tree:
-    /// a plain reference that borrows nothing, so it is wrapped after the
-    /// tree is gone - wrapping mints a key, which borrows the document again.
-    type Child: Copy;
-    /// A node of the tree as a [`Child`](Self::Child).
-    fn child_of<'a>(n: <Self::Tree<'a> as Tree>::Node) -> Self::Child
+    /// A child of the receiver as its Ruby wrapper; None is nil.
+    fn wrap_child<'a>(
+        &self,
+        n: Option<<Self::Tree<'a> as Tree>::Node>,
+    ) -> Result<Option<Value>, Error>
     where
         Self: 'a;
-    /// A child of the receiver as its Ruby wrapper; None is nil.
-    fn wrap_child(&self, n: Option<Self::Child>) -> Result<Option<Value>, Error>;
 
     /// How many children are in `list`.
     fn child_count(&self, list: ChildList) -> usize {
@@ -1089,11 +1086,11 @@ pub trait ChildListHost: magnus::TryConvert {
 
     /// The wrapped child at `index` in `list`, or nil past the end.
     fn child_at(&self, list: ChildList, index: usize) -> Result<Option<Value>, Error> {
-        let found = self.with_children(list, |c| {
-            with_child_memo(self.document(), |memo, version| c.at(memo, version, index))
-                .map(Self::child_of)
-        });
-        self.wrap_child(found)
+        self.with_children(list, |c| {
+            let found =
+                with_child_memo(self.document(), |memo, version| c.at(memo, version, index));
+            self.wrap_child(found)
+        })
     }
 }
 

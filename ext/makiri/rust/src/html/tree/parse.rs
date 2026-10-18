@@ -55,24 +55,21 @@ pub struct Parsed {
 /// `lxb_html_document_parse`, unguarded and unstamped: tokenize `input` -
 /// valid UTF-8, the whole document - and build its tree.
 pub fn parse_document(input: &[u8]) -> Result<Parsed, ParseFailure> {
-    parse_with(input, Guard::default(), true)
+    parse_with(input, Guard::default())
 }
 
-/// [`parse_document`] under `guard`, recording the parse errors only when
-/// `record_errors` (a Ruby Document reads none).
-fn parse_with(input: &[u8], guard: Guard, record_errors: bool) -> Result<Parsed, ParseFailure> {
+/// [`parse_document`] under `guard`.
+fn parse_with(input: &[u8], guard: Guard) -> Result<Parsed, ParseFailure> {
     let mut doc = Document::new(0).map_err(|DomOom| ParseFailure::Oom)?;
     /* An HTML document node is in the HTML namespace
      * (`lxb_dom_document_init`). */
     doc.set_names(NodeId::DOCUMENT, res::TAG__DOCUMENT, res::NS_HTML as u32, 0);
     let mut tree = TreeBuilder::new(&mut doc);
     tree.guard = guard;
-    tree.record_errors = record_errors;
     let status = {
         let mut tkz = Tokenizer::new(input, &mut tree);
         /* `lxb_html_parser_init` */
         tkz.keep_duplicate = true;
-        tkz.record_errors = record_errors;
         match tkz.chunk() {
             Status::Ok => tkz.end(),
             st => st,
@@ -110,7 +107,7 @@ pub fn parse_html(
 ) -> Result<Box<HtmlParsed>, HtmlParseError> {
     let input = sanitize(src, assume_valid).ok_or(HtmlParseError::Failed)?;
     let bytes = input.as_slice();
-    let parsed = parse_with(bytes, Guard::for_document(limit, bytes.len()), false)?;
+    let parsed = parse_with(bytes, Guard::for_document(limit, bytes.len()))?;
     let lines = lines_build(bytes);
     drop(input);
     try_box(HtmlParsed::new(parsed.doc, lines)).map_err(|()| HtmlParseError::Failed)
