@@ -271,9 +271,9 @@ fn typed_data(v: Value, ty: &'static DataType) -> Result<*mut c_void, Error> {
     // raise there; a mismatch runs it under `protect`.
     unsafe {
         if rb_sys::rb_typeddata_is_kind_of(v, ty) != 0 {
-            return Ok(rb_sys::rb_check_typeddata(v, ty));
+            return Ok(super::raw::check_typeddata(v, ty));
         }
-        match protect(|| rb_sys::rb_check_typeddata(v, ty) as VALUE) {
+        match protect(|| super::raw::check_typeddata(v, ty) as VALUE) {
             Err(e) => Err(e),
             /* rb_typeddata_is_kind_of said no, so the check should have raised. */
             Ok(_) => Err(crate::bridge::ruby::type_error("wrong argument type")),
@@ -297,7 +297,7 @@ fn typed_data_known(v: Value, ty: &'static DataType) -> *mut c_void {
             rb_sys::rb_typeddata_is_kind_of(v, ty) != 0,
             "a VALUE of an established type had a different one"
         );
-        rb_sys::rb_check_typeddata(v, ty)
+        super::raw::check_typeddata(v, ty)
     }
 }
 
@@ -332,9 +332,9 @@ unsafe fn wrap_built<T>(
 ) -> VALUE {
     /* `ruby_xmalloc` is malloc-aligned; nothing wrapped asks for more. */
     const { assert!(core::mem::align_of::<T>() <= 16) };
-    let p = rb_sys::ruby_xmalloc(core::mem::size_of::<T>() as rb_sys::size_t) as *mut T;
+    let p = super::raw::xmalloc(core::mem::size_of::<T>()) as *mut T;
     p.write(build());
-    let obj = rb_sys::rb_data_typed_object_wrap(klass, p as *mut c_void, ty);
+    let obj = super::raw::typed_object_wrap(klass, p as *mut c_void, ty);
     store(&mut *p);
     obj
 }
@@ -364,5 +364,5 @@ pub(in crate::bridge) unsafe fn typed_data_unprotected<'a, T: magnus::TypedData>
     /* magnus::DataType is #[repr(transparent)] over rb_data_type_t, so this
      * cast is what the repr promises; the accessor for it is crate-private. */
     let dt = T::data_type() as *const magnus::typed_data::DataType as *const rb_data_type_t;
-    &*(rb_sys::rb_check_typeddata(v, dt) as *const T)
+    &*(super::raw::check_typeddata(v, dt) as *const T)
 }

@@ -10,8 +10,8 @@
 //!
 //! `rb_enc_find` can AUTOLOAD an encoding, which is a Ruby allocation and so a
 //! GC point, and a borrow of the String's bytes must not be held across one.
-//! So both scans finish while the bytes are borrowed, and the lookups run only
-//! after that borrow has ended.
+//! So each scan runs inside one scoped borrow (`string::with_bytes`), whose
+//! closure runs no Ruby, and the lookups run only after it has ended.
 
 #![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
@@ -23,7 +23,7 @@ use magnus::{Error, RString};
 use rb_sys::VALUE;
 
 use super::ruby::exception_message;
-use super::string::{ruby_bytes_view, text_check, Encoding};
+use super::string::{text_check, with_bytes, Encoding};
 use crate::init::{EXC_XML_LIMIT_EXCEEDED, EXC_XML_SYNTAX_ERROR};
 use crate::xml::encoding_sniff::sniff;
 
@@ -32,12 +32,9 @@ use crate::xml::encoding_sniff::sniff;
 /// `rb_protect` so the Ruby `Encoding::*Error` can be remapped to
 /// `Makiri::XML::SyntaxError`.
 unsafe extern "C" fn strict_transcode_thunk(str: VALUE) -> VALUE {
-    rb_sys::rb_str_encode(
-        str,
-        rb_sys::rb_enc_from_encoding(rb_sys::rb_utf8_encoding()),
-        0,
-        rb_sys::Qnil as VALUE,
-    )
+    /* Only C calls (through `raw`'s thin wrapper): nothing here can panic
+     * into the `rb_protect` frame that runs it. */
+    super::raw::str_encode(str, rb_sys::rb_utf8_encoding(), 0)
 }
 
 /// Two encodings agree, for conflict purposes, when identical or when either is
@@ -71,14 +68,9 @@ fn effective_encoding(str: RString) -> Result<Encoding, Error> {
     let tag = Encoding::of(str);
     /* Read everything first, while the bytes are borrowed and nothing can run
      * a GC; the name lookups - which can - come after the borrow ends. */
-    let (bom, decl) = {
-        // SAFETY: a live String, by type; the view, and the bytes borrowed
-        // from it, are dropped before the lookups below can allocate.
-        unsafe {
-            let anchor = ruby_bytes_view(str);
-            sniff(anchor.bytes())
-        }
-    };
+    // SAFETY: `sniff` reads the bytes and runs no Ruby; the lookups below,
+    // which can allocate, run after the borrow has ended.
+    let (bom, decl) = unsafe { with_bytes(str, sniff) };
     let bom = bom.and_then(|b| Encoding::find(b.name().as_bytes()));
     let decl = decl.and_then(|d| Encoding::find(d.as_bytes()));
     let claimed = !claims_no_encoding(tag);
@@ -143,8 +135,8 @@ unsafe fn xml_decode_input(str: RString, max_bytes: Option<usize>) -> Result<RSt
     } else {
         let mut input = str.as_raw();
         if Encoding::of(str) != eff {
-            input = rb_sys::rb_str_dup(input);
-            rb_sys::rb_enc_associate(input, eff.as_raw());
+            input = super::raw::str_dup(input);
+            super::raw::enc_associate(input, eff.as_raw());
         }
         let mut state: c_int = 0;
         let out = rb_sys::rb_protect(Some(strict_transcode_thunk), input, &mut state);
@@ -163,15 +155,16 @@ unsafe fn xml_decode_input(str: RString, max_bytes: Option<usize>) -> Result<RSt
      * The transcode above turns any UTF-16/32 BOM into a U+FEFF, so one rule
      * covers every input. Each read of the bytes is a scoped borrow that ends
      * before anything can allocate - the module's one ordering rule. */
-    let (off, len) = {
-        let anchor = ruby_bytes_view(s);
-        let bytes = anchor.bytes();
-        let off = if bytes.starts_with(b"\xEF\xBB\xBF") {
-            3
-        } else {
-            0
-        };
-        (off, bytes.len() - off)
+    // SAFETY: a read of the bytes that runs no Ruby.
+    let (off, len) = unsafe {
+        with_bytes(s, |bytes| {
+            let off = if bytes.starts_with(b"\xEF\xBB\xBF") {
+                3
+            } else {
+                0
+            };
+            (off, bytes.len() - off)
+        })
     };
 
     /* Fail closed on an over-budget input BEFORE the validation scan and the
@@ -189,18 +182,17 @@ unsafe fn xml_decode_input(str: RString, max_bytes: Option<usize>) -> Result<RSt
      * the HTML sanitize path. The whole String is consulted for its cached
      * coderange (which covers the stripped suffix too - the BOM is one complete
      * UTF-8 character) while the bytes validated are the suffix. */
-    let problem = {
-        let anchor = ruby_bytes_view(s);
-        text_check(s, &anchor.bytes()[off..]).problem()
-    };
+    // SAFETY: `text_check` reads the bytes and the cached coderange, and runs
+    // no Ruby.
+    let problem = unsafe { with_bytes(s, |bytes| text_check(s, &bytes[off..]).problem()) };
     if let Some(problem) = problem {
         return Err(syntax_error(format!("XML input {problem}")));
     }
 
     /* Built from the VALUE: the borrow above is over, and rb_str_subseq
      * allocates. */
-    let u = rb_sys::rb_str_subseq(s.as_raw(), off as c_long, len as c_long);
-    rb_sys::rb_enc_associate(u, rb_sys::rb_utf8_encoding());
+    let u = super::raw::str_subseq(s.as_raw(), off as c_long, len as c_long);
+    super::raw::enc_associate(u, rb_sys::rb_utf8_encoding());
     decoded_string(u)
 }
 
