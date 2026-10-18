@@ -201,6 +201,11 @@ jobs:
       - name: Invariant checks
         run: bundle exec rake invariants
 
+      # The tree-construction data (WPT) through the Ruby runner, on the
+      # ported tree builder: the same KNOWN_DIVERGENCES list as Lexbor's.
+      - name: HTML5 parsing conformance (html5lib-tests, WPT)
+        run: bundle exec rake conformance:html5
+
       # The examples the GC.auto_compact + GC.stress job (valgrind.yml) runs
       # over the shipping build, at fewer iterations: one runner, all shards.
       - name: GC-sensitive examples under GC.auto_compact + GC.stress
