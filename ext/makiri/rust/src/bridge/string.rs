@@ -244,7 +244,7 @@ pub unsafe fn ruby_str_from_slices<'a>(
     if total > c_long::MAX as usize {
         return Err(makiri_error("text too large to assemble"));
     }
-    let str = rb_sys::rb_utf8_str_new(core::ptr::null(), total as c_long);
+    let str = super::raw::utf8_str_new(core::ptr::null(), total as c_long);
     /* We just created it and hold the only reference, so writing through the
      * buffer is sound - this is what RSTRING_PTR gives the C. It has room for
      * exactly `total` bytes, and nothing else runs while `out` is held. */
@@ -282,7 +282,7 @@ pub unsafe fn ruby_str_from_slices<'a>(
 /// than a memory error - wrong is still wrong.
 pub unsafe fn ruby_str_from_utf8(bytes: &[u8]) -> VALUE {
     /* A slice's pointer is never null, even when it is empty. */
-    rb_sys::rb_utf8_str_new(bytes.as_ptr() as *const c_char, bytes.len() as c_long)
+    super::raw::utf8_str_new(bytes.as_ptr() as *const c_char, bytes.len() as c_long)
 }
 
 /// A DOM name as a Ruby String: frozen and deduplicated, tagged UTF-8 -
@@ -301,7 +301,7 @@ pub fn dom_name_str(bytes: &[u8]) -> Value {
     // SAFETY: a slice's pointer and length, read for the call; the encoding
     // is Ruby's static UTF-8 one. The result is a live String.
     unsafe {
-        crate::bridge::ruby::value(rb_sys::rb_enc_interned_str(
+        crate::bridge::ruby::value(super::raw::enc_interned_str(
             bytes.as_ptr() as *const c_char,
             bytes.len() as c_long,
             rb_sys::rb_utf8_encoding(),
@@ -449,7 +449,7 @@ impl Encoding {
         buf[..name.len()].copy_from_slice(name);
         let c = core::ffi::CStr::from_bytes_with_nul(&buf[..name.len() + 1]).ok()?;
         // SAFETY: a NUL-terminated name; the lookup raises nothing.
-        let enc = unsafe { rb_sys::rb_enc_find(c.as_ptr()) };
+        let enc = unsafe { super::raw::enc_find(c.as_ptr()) };
         (!enc.is_null()).then_some(Encoding(enc))
     }
 
@@ -497,14 +497,8 @@ impl Encoding {
             rb_sys::ruby_econv_flag_type::RUBY_ECONV_UNDEF_HEX_CHARREF as c_int;
         // SAFETY: `str` is a live String and `self` a live encoding; `protect`
         // turns a raise into `Err`.
-        let raw = protect(|| unsafe {
-            rb_sys::rb_str_encode(
-                str.as_raw(),
-                rb_sys::rb_enc_from_encoding(self.0),
-                UNDEF_HEX_CHARREF,
-                rb_sys::Qnil as VALUE,
-            )
-        })?;
+        let raw =
+            protect(|| unsafe { super::raw::str_encode(str.as_raw(), self.0, UNDEF_HEX_CHARREF) })?;
         // SAFETY: `rb_str_encode` returns a live String value.
         Ok(unsafe { crate::bridge::ruby::value(raw) })
     }
@@ -517,7 +511,7 @@ pub fn to_encoding(v: Value) -> Result<Encoding, Error> {
     let mut enc: *mut rb_sys::rb_encoding = core::ptr::null_mut();
     // SAFETY: `v` is a live value; `protect` turns the raise into `Err`.
     protect(|| unsafe {
-        enc = rb_sys::rb_to_encoding(v.as_raw());
+        enc = super::raw::to_encoding(v.as_raw());
         rb_sys::Qnil as VALUE
     })?;
     Ok(Encoding(enc))
@@ -545,12 +539,7 @@ unsafe fn ruby_to_utf8(str: RString) -> VALUE {
     }
     const REPLACE: c_int = rb_sys::ruby_econv_flag_type::RUBY_ECONV_INVALID_REPLACE as c_int
         | rb_sys::ruby_econv_flag_type::RUBY_ECONV_UNDEF_REPLACE as c_int;
-    rb_sys::rb_str_encode(
-        str.as_raw(),
-        rb_sys::rb_enc_from_encoding(Encoding::utf8().0),
-        REPLACE,
-        rb_sys::Qnil as VALUE,
-    )
+    super::raw::str_encode(str.as_raw(), Encoding::utf8().0, REPLACE)
 }
 
 /// [`ruby_to_utf8`] as a safe call: `s` is a String by type, and so is the

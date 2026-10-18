@@ -32,12 +32,9 @@ use crate::xml::encoding_sniff::sniff;
 /// `rb_protect` so the Ruby `Encoding::*Error` can be remapped to
 /// `Makiri::XML::SyntaxError`.
 unsafe extern "C" fn strict_transcode_thunk(str: VALUE) -> VALUE {
-    rb_sys::rb_str_encode(
-        str,
-        rb_sys::rb_enc_from_encoding(rb_sys::rb_utf8_encoding()),
-        0,
-        rb_sys::Qnil as VALUE,
-    )
+    /* Only C calls (through `raw`'s thin wrapper): nothing here can panic
+     * into the `rb_protect` frame that runs it. */
+    super::raw::str_encode(str, rb_sys::rb_utf8_encoding(), 0)
 }
 
 /// Two encodings agree, for conflict purposes, when identical or when either is
@@ -138,8 +135,8 @@ unsafe fn xml_decode_input(str: RString, max_bytes: Option<usize>) -> Result<RSt
     } else {
         let mut input = str.as_raw();
         if Encoding::of(str) != eff {
-            input = rb_sys::rb_str_dup(input);
-            rb_sys::rb_enc_associate(input, eff.as_raw());
+            input = super::raw::str_dup(input);
+            super::raw::enc_associate(input, eff.as_raw());
         }
         let mut state: c_int = 0;
         let out = rb_sys::rb_protect(Some(strict_transcode_thunk), input, &mut state);
@@ -194,8 +191,8 @@ unsafe fn xml_decode_input(str: RString, max_bytes: Option<usize>) -> Result<RSt
 
     /* Built from the VALUE: the borrow above is over, and rb_str_subseq
      * allocates. */
-    let u = rb_sys::rb_str_subseq(s.as_raw(), off as c_long, len as c_long);
-    rb_sys::rb_enc_associate(u, rb_sys::rb_utf8_encoding());
+    let u = super::raw::str_subseq(s.as_raw(), off as c_long, len as c_long);
+    super::raw::enc_associate(u, rb_sys::rb_utf8_encoding());
     decoded_string(u)
 }
 

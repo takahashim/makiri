@@ -82,7 +82,16 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   `bridge/typed.rs` run where nothing can be raised and a half-freed object is
   worse than a stop, so they keep aborting - keep their bodies trivial. The two
   raw `rb_protect` thunks (`exception_message_thunk`, `strict_transcode_thunk`)
-  contain only C calls, so there is no Rust there to panic; keep it that way.
+  contain only C calls (through `bridge::raw`'s thin wrappers), so there is
+  no Rust there to panic; keep it that way.
+
+  **Every C call that can raise is a wrapper in `bridge/raw.rs`**, which says
+  what raises it. A raise is a `longjmp` over every Rust frame up to the
+  nearest `rb_protect`, so each such call is made under `bridge::ruby::protect`
+  or from a frame that owns nothing a skipped `Drop` would leak - and which
+  calls those are is answered by that one file. `rake unsafe:boundaries` pins
+  the raising names to it, so a new one is a new wrapper there with its raise
+  stated.
 
   **A Ruby method raises `Makiri::InternalError`, not `fatal`.**
   `bridge::ruby::entry` wraps the body of EVERY method the glue registers, and
@@ -476,7 +485,7 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            WHATWG; `cbuf`+`cutf8` only, so Ruby/Lexbor-free
     bridge/                the Ruby boundary - the ONLY layer allowed raw Ruby String
                            access (RSTRING) and verified-string minting, and where
-                           raising C calls (rb_String, typed-data checks) and the
+                           the C calls that can raise (`bridge/raw.rs`) and the
                            wrap-then-store constructor live; a raise becomes `Err`
                            there. `rake unsafe:boundaries` pins that boundary:
                            the crate denies `unsafe_code` (`lib.rs`), so every
@@ -487,8 +496,9 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            `css/**` and `lexbor/css_match/**` are fully safe
                            (their module roots carry
                            `#![forbid(unsafe_code)]`, which the gate pins), and
-                           `rb_sys::`, `Value::from_raw` and raising C calls are
-                           0 outside `bridge/`
+                           `rb_sys::` and `Value::from_raw` are 0 outside
+                           `bridge/`, and the C calls that can raise live only
+                           in `bridge/raw.rs`
     glue/                  THE Ruby surface: every method Makiri defines, with
                            its argument reading, its errors and its
                            registration, one module per feature

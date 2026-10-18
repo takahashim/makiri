@@ -36,6 +36,7 @@ UNSAFE_ISLANDS = {
   "bridge/html.rs" => 18,
   "bridge/node_set.rs" => 3,
   "bridge/node_wrap.rs" => 1,
+  "bridge/raw.rs" => 44,
   "bridge/ruby.rs" => 19,
   "bridge/stack.rs" => 1,
   "bridge/string.rs" => 20,
@@ -139,8 +140,19 @@ STATIC_MUT_COUNTS = {}.freeze
 # comment lines.
 RB_SYS_COUNTS = {}.freeze
 
-RAISING_API = /\b(?:rb_raise|rb_exc_raise|rb_jump_tag|rb_check_typeddata)\b/
-RAISING_COUNTS = {}.freeze
+# The Ruby C calls that can RAISE - start a `longjmp` that skips every Rust
+# destructor between the raise and the nearest `rb_protect` - are named in ONE
+# file, `bridge/raw.rs`, each wrapper stating what raises it. The names below
+# may appear nowhere else: outside `bridge/` (as before), nor in any other
+# bridge file, which reaches them through `raw`'s wrappers and so under a
+# `protect` or from a frame that owns nothing. A new raising call is a new
+# wrapper there, and this count moves with it on purpose.
+RAISING_API = /\b(?:rb_raise|rb_exc_raise|rb_jump_tag|rb_check_typeddata|
+  rb_String|rb_funcallv|rb_funcall|rb_obj_as_string|rb_respond_to|rb_check_frozen|
+  rb_range_beg_len|rb_thread_check_ints|rb_intern3|rb_intern|rb_utf8_str_new|
+  rb_enc_interned_str|rb_str_dup|rb_str_subseq|rb_enc_associate|rb_str_encode|
+  rb_to_encoding|rb_enc_find|rb_data_typed_object_wrap|ruby_xmalloc|ruby_xrealloc2)\b/x
+RAISING_COUNTS = { "bridge/raw.rs" => 22 }.freeze
 
 # `Value::from_raw` outside `bridge/` is the other half of the raw Ruby
 # boundary: a `VALUE` the glue already holds, turned back into a `Value`. The
@@ -379,20 +391,21 @@ rb_sys = Hash.new(0)
 raising = Hash.new(0)
 Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
   relative = path.delete_prefix("#{RUST}/")
+  code = rust_code(path)
+  # A name in a block comment is documentation, as for the Lexbor names.
+  count = comments_removed(File.binread(path)).scan(RAISING_API).length
+  raising[relative] = count unless count.zero?
   next if relative.start_with?("bridge/")
 
-  code = rust_code(path)
   count = code.scan(/(?<!magnus::)\brb_sys::/).length
   rb_sys[relative] = count unless count.zero?
-  count = code.scan(RAISING_API).length
-  raising[relative] = count unless count.zero?
 end
 
 if rb_sys != RB_SYS_COUNTS
   errors << "rb_sys:: outside bridge/ changed: #{table_diff(RB_SYS_COUNTS, rb_sys)}"
 end
 if raising != RAISING_COUNTS
-  errors << "raising C API outside bridge/ changed: #{table_diff(RAISING_COUNTS, raising)}"
+  errors << "raising C API outside bridge/raw.rs changed: #{table_diff(RAISING_COUNTS, raising)}"
 end
 
 value_from_raw = Hash.new(0)
@@ -772,7 +785,7 @@ puts "unsafe-boundaries: #{forbidding.length} forbid files; " \
      "#{unsafe_actual.values.sum} unsafe uses in #{unsafe_actual.length} islands " \
      "(glue+xpath #{glue_xpath_unsafe}); " \
      "#{actual.values.sum} reviewed static mut declarations; " \
-     "#{rb_sys.values.sum} rb_sys:: and #{raising.values.sum} raising C calls outside bridge/; " \
+     "#{rb_sys.values.sum} rb_sys:: outside bridge/ and #{raising.values.sum} raising C calls in bridge/raw.rs; " \
      "#{value_from_raw.values.sum} Value::from_raw and " \
      "#{lexbor_abi.values.sum} Lexbor ABI names outside their layer and " \
      "#{lexbor_decls.values.sum} Lexbor declarations outside lexbor/abi.rs; " \

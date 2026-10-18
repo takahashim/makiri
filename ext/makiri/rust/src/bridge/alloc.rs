@@ -28,13 +28,7 @@ pub unsafe fn free<T>(p: *mut T) {
 #[inline]
 pub unsafe fn realloc_array<T>(p: *mut T, n: usize) -> *mut T {
     // SAFETY: the caller's contract; `ruby_xrealloc2` checks the multiply.
-    unsafe {
-        rb_sys::ruby_xrealloc2(
-            p as *mut c_void,
-            n as rb_sys::size_t,
-            core::mem::size_of::<T>() as rb_sys::size_t,
-        ) as *mut T
-    }
+    unsafe { super::raw::xrealloc2(p as *mut c_void, n, core::mem::size_of::<T>()) as *mut T }
 }
 
 /// Why a [`RubyVec`] push was refused: the next capacity does not fit the

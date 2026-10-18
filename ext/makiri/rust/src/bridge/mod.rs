@@ -20,6 +20,9 @@
 
 pub mod alloc;
 
+/// The Ruby C calls that can raise, each with its raise stated.
+pub mod raw;
+
 pub mod gvl;
 
 /// `ruby_stack_check`, installed into `crate::stack` at `Init_makiri` so the
