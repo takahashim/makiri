@@ -182,6 +182,18 @@ each Lexbor CSS parse function exactly one call site, the guarded one.
 decision. The guard, that flush and their tests come out together or not at all,
 and only once the pin has moved past what they stand in for.
 
+## Working conventions
+
+- **Commit messages are short**: a subject line and one or two short
+  paragraphs, not a long rationale. The why belongs in code comments and
+  `docs/`.
+- **Pushing is the maintainer's.** Commit locally and hand over the
+  `git push` command; do not push, and do not chain `commit && push`.
+- **The HTML parser port** (Lexbor to Rust, index-arena DOM) is planned in
+  `docs/rewrite_parser.ja.md`; its "進捗" section says where it stands and
+  what comes next. Known parser divergences are in
+  `docs/parser_differences.ja.md`.
+
 ## Build / test
 
 ```bash
