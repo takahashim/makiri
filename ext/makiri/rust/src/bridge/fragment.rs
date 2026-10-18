@@ -10,7 +10,7 @@
 
 #![allow(unsafe_code)]
 
-use magnus::{prelude::*, Error, Value};
+use magnus::{prelude::*, Error, RString, Value};
 
 use crate::bridge::ruby::makiri_error;
 
@@ -113,28 +113,18 @@ pub fn resolve_node_context(
     }
 }
 
-/// The parser's copy of a fragment's markup: `rb_html` coerced (`#to_str` /
-/// `#to_s`), its encoding honoured and its bytes copied ([`HtmlSource`]).
-///
-/// Both steps can run Ruby - the coercion is the argument's own code, and
-/// transcoding may load a converter - so an edit takes the source BEFORE
-/// it lends the document ([`crate::bridge::html::HtmlEdit::with_tree`]),
-/// whose closure must run none.
-pub fn fragment_source(rb_html: Value) -> Result<HtmlSource, Error> {
-    HtmlSource::from_ruby(string_of(rb_html)?)
-}
-
-/// Parse `src` as a fragment in `context`. Nothing is changed yet: a String
+/// Parse `html` as a fragment in `context`. Nothing is changed yet: a String
 /// that fails to parse leaves every document as it was.
 ///
-/// `src` is already the parser's copy of the String ([`fragment_source`]),
-/// because taking it runs Ruby, and for `inner_html=` that has to finish
-/// before the edit drops the document's indexes.
+/// `html` is a String already - the caller ran `string_of` - because that
+/// conversion is the argument's `#to_s`, arbitrary Ruby, and for `inner_html=`
+/// it has to finish before the edit drops the document's indexes.
 fn parse(
-    src: &HtmlSource,
+    html: RString,
     context: &FragmentContext,
     limit: DepthLimit,
 ) -> Result<TransientFragment, Error> {
+    let src = HtmlSource::from_ruby(html)?;
     // SAFETY: the context's element or document is live (the callers below
     // hold it); the bytes are the source's own copy. The arena's parse needs no
     // such promise, and is safe.
@@ -157,12 +147,12 @@ fn parse(
 pub fn stage_fragment_in(
     d: &mut HtmlDocMut<'_>,
     context: RawNode,
-    src: &HtmlSource,
+    html: RString,
 ) -> Result<RawNode, Error> {
     let Some(staged) = d.create_fragment() else {
         return Err(makiri_error("failed to create document fragment"));
     };
-    import_into(d, context, staged, src)?;
+    import_into(d, context, staged, html)?;
     Ok(staged)
 }
 
@@ -174,13 +164,13 @@ fn import_into(
     d: &mut HtmlDocMut<'_>,
     context: RawNode,
     into: RawNode,
-    src: &HtmlSource,
+    html: RString,
 ) -> Result<(), Error> {
     /* The setters take no keyword, so they parse under the default limit, as
      * Nokogiri's do. */
     let context = FragmentContext::element(d.read(), context)
         .map_err(|e| fragment_error(e, DepthLimit::DEFAULT))?;
-    let parsed = parse(src, &context, DepthLimit::DEFAULT)?;
+    let parsed = parse(html, &context, DepthLimit::DEFAULT)?;
     parsed
         .import_into_doc(d, into)
         .map_err(|_| makiri_error("failed to import a fragment child"))
@@ -198,9 +188,9 @@ pub fn set_template_inner_html(
     d: &mut HtmlDocMut<'_>,
     template: RawNode,
     content: RawNode,
-    src: &HtmlSource,
+    html: RString,
 ) -> Result<(), Error> {
-    let staged = stage_fragment_in(d, template, src)?;
+    let staged = stage_fragment_in(d, template, html)?;
     d.detach_children(content);
     d.place(content, staged, Place::Child);
     Ok(())
@@ -219,9 +209,8 @@ pub fn build_fragment(
      * an XPath evaluation with a handler reads it. Checked first, so that
      * refusal wins over a bad argument... */
     ensure_document_mutable(document)?;
-    /* `to_str`/`to_s` and the transcode are Ruby that may raise: under
-     * protect. */
-    let src = fragment_source(rb_html)?;
+    /* `to_str`/`to_s` is Ruby code that may raise: converted under protect. */
+    let html = string_of(rb_html)?;
     /* ...and again, because that conversion is arbitrary Ruby: it can start an
      * evaluation that suspends mid-walk (an Enumerator), still reading this
      * document when the import below writes it. */
@@ -229,7 +218,7 @@ pub fn build_fragment(
     let doc = html_doc_unwrap(document)?;
     // SAFETY: a live HTML Document, kept alive by `document` for this call.
     let context = FragmentContext::tag_in(unsafe { doc.as_doc() }, at);
-    let parsed = parse(&src, &context, limit)?;
+    let parsed = parse(html, &context, limit)?;
 
     let frag = crate::bridge::html::new_node(&document, |d| {
         let Some(frag) = d.create_fragment() else {

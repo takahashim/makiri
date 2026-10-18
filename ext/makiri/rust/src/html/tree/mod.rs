@@ -47,7 +47,7 @@ pub use parse::{
 };
 
 use crate::falloc::VecPush;
-use crate::html::dom::{Document, NodeId, TextRoom};
+use crate::html::dom::{Document, NodeId};
 use crate::html::names::Names;
 use crate::html::res::names as res;
 use crate::html::tokenizer::{flags, Status, Stop, TokenSink, Tokenizer};
@@ -289,12 +289,6 @@ pub struct TreeBuilder<'d> {
     pub(crate) selected: NodeSet,
     /// The parse guard and the source-position stamps (`guard.rs`).
     pub(crate) guard: guard::Guard,
-    /// The room left after text moved to the store's tail
-    /// (`Document::append_text`).
-    pub(crate) text_room: TextRoom,
-    /// Whether parse errors are recorded ([`errors`](Self::errors)); see the
-    /// tokenizer's `record_errors`.
-    pub(crate) record_errors: bool,
 }
 
 impl<'d> TreeBuilder<'d> {
@@ -320,8 +314,6 @@ impl<'d> TreeBuilder<'d> {
             valueless: NodeSet::default(),
             selected: NodeSet::default(),
             guard: guard::Guard::default(),
-            text_room: TextRoom::default(),
-            record_errors: true,
         }
     }
 
@@ -411,9 +403,6 @@ impl<'d> TreeBuilder<'d> {
 
     /// `lxb_html_tree_parse_error`.
     pub(crate) fn parse_error(&mut self, tok: &Tok, id: TreeErrorId) {
-        if !self.record_errors {
-            return;
-        }
         let _ = self.errors.falloc_push(TreeError {
             id,
             begin: tok.begin,

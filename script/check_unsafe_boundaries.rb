@@ -195,16 +195,13 @@ RAW_NODE_CROSSING_COUNTS = {
   # the child-position memo's token and back. `child_index::ChildPositionMemo`
   # answers only for the `tree_version` it was filled under, so a token read
   # back is still that child; the node is never handed out raw, only wrapped.
-  # 11th: `ChildListHost::child_of`, the child `child_at` found as a reference
-  # out of the tree it was found in, so it is wrapped once that borrow of the
-  # document is gone (wrapping mints a key, which borrows it again).
   # `bridge/dom.rs`: the two steps whose spelling differs between the HTML
   # DOMs (`crate::html_dom`) - a stored node word back into a node
   # (`node_of_word`, Lexbor's `from_ptr`), and a Document's own node
   # (`document_node`). Both were spelled twice, in `html.rs` and
   # `wrapper.rs`, which each lost two.
   "bridge/dom.rs" => 2,
-  "bridge/html.rs" => 8,
+  "bridge/html.rs" => 7,
   "bridge/wrapper.rs" => 1,
 }.freeze
 

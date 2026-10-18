@@ -358,10 +358,7 @@ impl TreeBuilder<'_> {
             Ipos::Child => self.doc.last_child(pos),
         };
         if let Some(p) = prev.filter(|&p| self.tag(p) == res::TAG__TEXT) {
-            return self
-                .doc
-                .append_text(p, data, &mut self.text_room)
-                .map_err(oom);
+            return self.doc.append_text(p, data).map_err(oom);
         }
         let text = self.doc.create_data(NodeType::Text, data).map_err(oom)?;
         self.doc

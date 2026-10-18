@@ -99,29 +99,3 @@ fn compaction_keeps_every_span_and_bounds_the_store() {
     assert_eq!(d.dead_bytes(), 0);
     assert_eq!(d.bytes.len(), 1024 + 4 + 8 + 6 + 7 + 5);
 }
-
-#[test]
-fn text_appended_alternately_to_two_nodes_grows_the_store_linearly() {
-    /* Foster-parented text between a table's cells is appended to one node
-     * while a second keeps storing after it (`append_text`'s doc). */
-    let mut d = Document::new(0).expect("doc");
-    let mut room = TextRoom::default();
-    let a = d.create_data(NodeType::Text, b"a").expect("a");
-    let b = d.create_data(NodeType::Text, b"b").expect("b");
-    let n = 20_000usize;
-    for _ in 1..n {
-        d.append_text(a, b"a", &mut room).expect("a");
-        d.append_text(b, b"b", &mut room).expect("b");
-    }
-    assert_eq!(d.data(a), Some(&vec![b'a'; n][..]));
-    assert_eq!(d.data(b), Some(&vec![b'b'; n][..]));
-    assert!(
-        d.bytes.len() < 16 * n,
-        "the store grew to {}",
-        d.bytes.len()
-    );
-    d.compact().expect("compact");
-    assert_eq!(d.dead_bytes(), 0);
-    assert_eq!(d.bytes.len(), 2 * n);
-    assert_eq!(d.data(a), Some(&vec![b'a'; n][..]));
-}

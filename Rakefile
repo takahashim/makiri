@@ -904,8 +904,8 @@ namespace :fuzz do
   # the layout from the headers), which `rake compile` produces - hence the
   # dependency, which is about Lexbor rather than about the bundle.
   FUZZ_TARGETS = %w[xml xpath xml_xpath css html html_xpath html_css html_css_diff html_diff selector_diff stylesheet_diff].freeze
-  # The targets whose input is, or starts with, CSS take its dictionary.
-  FUZZ_CSS_DICT = %w[html_css html_css_diff selector_diff stylesheet_diff].freeze
+  # The targets whose input starts with a CSS selector take its dictionary.
+  FUZZ_CSS_DICT = %w[html_css html_css_diff].freeze
 
   # The local mode: TARGETS=css,html_xpath narrows the run to what you touched,
   # and the time is FUZZ_TIME seconds per target (default 60) or FUZZ_BUDGET

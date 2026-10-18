@@ -295,15 +295,11 @@ impl ChildListHost for HtmlSelf {
             list,
         })
     }
-    type Child = RawNode;
-    fn child_of<'a>(n: HtmlNode<'a>) -> RawNode
+    fn wrap_child<'a>(&self, n: Option<HtmlNode<'a>>) -> Result<Option<Value>, Error>
     where
         Self: 'a,
     {
-        RawNode::from(n)
-    }
-    fn wrap_child(&self, n: Option<RawNode>) -> Result<Option<Value>, Error> {
-        n.map(|n| wrap_html_node(n, self.document)).transpose()
+        wrap_node(n, self.document)
     }
 }
 
@@ -576,7 +572,7 @@ pub fn insert(this: &HtmlSelf, rb_incoming: Value, place: Place) -> Result<Value
  * verified strings into Lexbor                                        *
  * ------------------------------------------------------------------ *
  * The node methods live in `glue::html_node::mutate`. A checked view reads as
- * a plain `&str` (`RubyStr`'s `Deref` over its own copy of the bytes), and each
+ * a plain `&str` (`RubyStr`'s `Deref`: it holds its String locked), and each
  * primitive passes it straight to a Lexbor call that copies what it keeps. A
  * primitive answers what Lexbor answered; the method words the error. */
 

@@ -115,14 +115,10 @@ impl ChildListHost for XmlSelf {
             list,
         })
     }
-    type Child = NodeId;
-    fn child_of<'a>(n: NodeId) -> NodeId
+    fn wrap_child<'a>(&self, n: Option<NodeId>) -> Result<Option<Value>, Error>
     where
         Self: 'a,
     {
-        n
-    }
-    fn wrap_child(&self, n: Option<NodeId>) -> Result<Option<Value>, Error> {
         n.map(|id| wrap_xml_node(id, self.document)).transpose()
     }
 }

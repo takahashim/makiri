@@ -16,49 +16,12 @@ pub enum AttrValue<'a> {
     CopyOf(NodeId),
 }
 
-/// The room a parse left after text it moved to the tail of the byte store
-/// ([`Document::append_text`]): node -> (the data's start when the room was
-/// made, the room's end). Owned by one tree builder, so it lives for one
-/// parse, where nothing but `append_text` rewrites a text node's data and
-/// nothing compacts the store - an entry whose start no longer matches the
-/// node's is simply not used.
-#[derive(Default)]
-pub struct TextRoom(crate::ptr_table::PtrMap<*const (), (u32, u32)>);
-
-impl TextRoom {
-    fn key(n: NodeId) -> *const () {
-        core::ptr::without_provenance(n.to_word())
-    }
-
-    /// Where the room after `n`'s data ends, when its data still starts at
-    /// `start`, where the room was made.
-    fn end_for(&self, n: NodeId, start: u32) -> Option<usize> {
-        let (at, end) = self.0.get(Self::key(n))?;
-        (at == start).then_some(end as usize)
-    }
-
-    /// Remember room up to `end` after `n`'s data, which starts at `start`.
-    /// Out of memory, nothing is remembered: the room only saves moves.
-    fn record(&mut self, n: NodeId, start: u32, end: u32) {
-        let _ = self.0.set(Self::key(n), (start, end));
-    }
-}
-
 impl Document {
     /// Append `b` to the data of the Text node `n` (`lexbor_str_append` onto
     /// its character data): in place when its data ends the byte store, as it
-    /// does whenever nothing was stored since it was made, or when it fits the
-    /// room a previous move left after it; otherwise the data moves to the
-    /// tail with `b` after it, and as much room again after that.
-    ///
-    /// The room is what keeps a parse linear. Text appended alternately to
-    /// two nodes - foster-parented text before a `<table>` between its cells,
-    /// `<table>x<td>y</td>x<td>...` - moved the first one's whole data on every
-    /// append, so the store grew with the square of the input: 700 KB of it
-    /// made 2 GB, and a little more ran into the 4 GiB a span can address and
-    /// failed the parse. Doubling makes the moves logarithmic, and the room
-    /// is dead bytes, which a later compaction drops.
-    pub fn append_text(&mut self, n: NodeId, b: &[u8], room: &mut TextRoom) -> Result<(), DomOom> {
+    /// does whenever nothing was stored since it was made; otherwise the data
+    /// moves to the tail with `b` after it.
+    pub fn append_text(&mut self, n: NodeId, b: &[u8]) -> Result<(), DomOom> {
         let Some(Payload::Data(span)) = self.node(n).map(|x| x.payload) else {
             return Ok(());
         };
@@ -73,39 +36,15 @@ impl Document {
                 start: span.start,
                 len: total,
             }
-        } else if let Some(to) = room
-            .end_for(n, span.start)
-            .filter(|&room_end| end + b.len() <= room_end)
-            .and_then(|_| self.bytes.get_mut(end..end + b.len()))
-        {
-            /* Into the room: those bytes were counted dead when it was made. */
-            to.copy_from_slice(b);
-            self.dead = self.dead.saturating_sub(b.len());
-            Span {
-                start: span.start,
-                len: total,
-            }
         } else {
             let start = u32::try_from(self.bytes.len()).map_err(|_| DomOom)?;
-            let data_end = start.checked_add(total).ok_or(DomOom)?;
-            let want = total.min(u32::MAX - data_end) as usize;
-            /* The room is an optimisation: without memory for it, move the
-             * data alone, as before. */
-            let extra = if self.bytes.falloc_reserve(total as usize + want).is_ok() {
-                want
-            } else {
-                self.bytes
-                    .falloc_reserve(total as usize)
-                    .map_err(|()| DomOom)?;
-                0
-            };
+            start.checked_add(total).ok_or(DomOom)?;
+            self.bytes
+                .falloc_reserve(len + b.len())
+                .map_err(|()| DomOom)?;
             self.bytes.extend_from_within(span.start as usize..end);
             self.bytes.extend_from_slice(b);
-            self.bytes.resize(self.bytes.len() + extra, 0); /* reserved above */
-            self.dead += len + extra;
-            if extra > 0 {
-                room.record(n, start, data_end + extra as u32);
-            }
+            self.dead += len;
             Span { start, len: total }
         };
         if let Some(x) = self.node_mut(n) {
