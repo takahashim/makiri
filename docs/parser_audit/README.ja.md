@@ -71,7 +71,7 @@ CSS の項目も、すべて Lexbor の振る舞いを移植版が写したも�
 | C4 | css_tokenizer F1 | 入力の終わりの `\` で終わる文字列に U+FFFD を足す | 直した |
 | C5 | css_tokenizer F2、F3 | `-` の後の非 ASCII 文字を、UTF-8 の先頭 byte で名前の始まりと判定する | 直した |
 | C6 | css_tokenizer F4 | 129 桁目以降の整数部を捨てる | 直した |
-| C7 | css_tokenizer F5、css_selectors F5 | hash token に type flag がなく、`#1a` を ID セレクタとして受け付ける | 未着手 |
+| C7 | css_tokenizer F5、css_selectors F5 | hash token に type flag がなく、`#1a` を ID セレクタとして受け付ける | 直した |
 | C8 | css_tokenizer F6 | 空白だけが続いて終わる `url(` を function token にする | 直した |
 | C9 | css_syntax F1 | ブロックの中で `ident:` で始まる規則を宣言として読む | 未着手 |
 | C10 | css_syntax F2 | ブロックのないまま終わる qualified rule を規則にする | 未着手 |

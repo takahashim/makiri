@@ -337,6 +337,15 @@ CSS Syntax Level 3 と Selectors Level 4（w3c/csswg-drafts の `7b4c69ecaf9289d
 - **移植版**：`selectors/tokenizer.rs` の ident-like の `url(` の分岐が、空白のまま入力が終わったとき url token を作る。差分の許可は、入力に `url(` があるとき。
 - **テスト**：`spec/css_standard_steps_spec.rb`。
 
+### C7 hash token の type flag（`#1a`）
+
+- **分類**：参照実装の未対応（監査の css_tokenizer F5、css_selectors F5）。移植版で直した（第 8 段）。
+- **仕様**：hash token は、`#` の後が ident sequence を始めるとき type flag が "id" になる。ID selector はその flag を持つ hash token だけで、`#1a` や `#-1` は無効なセレクタである（ブラウザの `querySelector` も SyntaxError にする）。
+- **再現**：`#1a`、`#-1`。仕様では無効。Lexbor は type flag を記録せず、どの hash token も ID selector にするので、`id="1a"` の要素に一致する。エスケープで書いた `#\31 a` は仕様でも有効で、同じ要素に一致する。
+- **移植版**：`selectors/tokenizer.rs` の `hash_is_id` が token の入力上の位置から flag を求め、`selectors/parser.rs` の `selector_hash` が flag のない hash を不明な構文と同じく拒む。stylesheet の規則は `bad_style` になる。差分の許可は、入力に `#` の後に名前の始まりでない byte が続く箇所があるとき。
+- **互換性**：`#1a` を書いていた呼び出し側は `#\31 a` か `[id="1a"]` に書き換える必要がある。
+- **テスト**：`spec/css_standard_steps_spec.rb`。
+
 ## パーサの外の項目
 
 次の差は HTML パーサではなく、DOM の上の層（CSS マッチャ、XPath の名前照合）にある。

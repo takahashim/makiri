@@ -1456,6 +1456,11 @@ impl<'a> Parser<'a> {
 
     /// `lxb_css_selectors_state_hash`.
     fn selector_hash(&mut self, token: Token) -> Status {
+        /* An ID selector is a hash token whose type flag is "id" (C7):
+         * `#1a` is not one. */
+        if compat::fixed(Fix::C7) && !self.tkz.hash_is_id(&token) {
+            return self.unexpected_status();
+        }
         if let Some(last) = self.sel.list_last {
             let mut sp = self.sp(last);
             if self.sel.parent.is_none() {

@@ -126,6 +126,13 @@ impl<'a> Tokenizer<'a> {
             .unwrap_or(&[])
     }
 
+    /// Whether a hash token's type flag is "id": the code points after its
+    /// `#` would start an ident sequence. Lexbor records no flag; read from
+    /// the input where the token begins.
+    pub fn hash_is_id(&self, token: &Token) -> bool {
+        start_ident_sequence(self.input, token.begin + 1, self.input.len())
+    }
+
     /// `lxb_css_syntax_token`: the first token not consumed, read if there is
     /// none.
     pub fn token(&mut self) -> Option<Token> {

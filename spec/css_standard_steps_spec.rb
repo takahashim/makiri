@@ -70,4 +70,10 @@ RSpec.describe "CSS Syntax 3 and Selectors 4 steps the CSS parser follows" do
     value = Makiri::Lexbor::CSS.parse_stylesheet("a{b:url(   ").first[:declarations].first[:value]
     expect(value).to eq("url(   ")
   end
+  # C7: an ID selector is a <hash-token> whose type flag is "id".
+  it "refuses a hash that does not start a name as an ID selector" do
+    doc = Makiri::HTML(%(<p id="1a"></p>))
+    expect { doc.css("#1a") }.to raise_error(Makiri::CSS::SyntaxError)
+    expect(doc.css('#\\31 a').size).to eq(1)
+  end
 end
