@@ -53,6 +53,8 @@ pub enum Fix {
     P14,
     /// A `<sup>` start tag breaks out of foreign content.
     P15,
+    /// A fragment parse pops its open elements at the end.
+    P16,
     /// An element carries its start tag's offset when it was created for
     /// that tag's token, and no other (`Node#line`); not a tree change, so
     /// [`explains`] never names it: the harnesses compare the trees without
@@ -205,6 +207,11 @@ pub fn explains(input: &[u8], context: Option<&str>) -> Vec<Fix> {
         && (has(input, b"svg") || has(input, b"math") || matches!(context, Some("svg" | "math")))
     {
         fixes.push(Fix::P15);
+    }
+    /* P16: the only pop steps are an `<option>`'s, which copy it into a
+     * `<selectedcontent>`. */
+    if context.is_some() && has(input, b"selectedcontent") {
+        fixes.push(Fix::P16);
     }
     fixes
 }

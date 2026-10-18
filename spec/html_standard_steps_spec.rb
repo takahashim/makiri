@@ -107,4 +107,10 @@ RSpec.describe "HTML Standard steps the port takes and Lexbor does not" do
     expect(doc.at_css("body > em > b").children.last.to_html)
       .to eq("<tt><nobr><a>x</a></nobr></tt>")
   end
+  # P16: "the end" pops the stack of open elements for a fragment too, and
+  # an option's pop steps update the select's selectedcontent.
+  it "updates a fragment's selectedcontent from an option left open" do
+    frag = Makiri::DocumentFragment.parse("<select><button><selectedcontent></selectedcontent></button><option>A")
+    expect(frag.at_css("selectedcontent").inner_html).to eq("A")
+  end
 end

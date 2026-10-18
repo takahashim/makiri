@@ -2,6 +2,7 @@
 //! / `_process` / `_end` with no owner document, under the parse guard, into
 //! an arena document of the fragment's own.
 
+use super::compat::{self, Fix};
 use super::guard::{ContextOptions, DepthLimit, Guard, GuardStop};
 use super::{Mode, TreeBuilder, TreeStatus};
 use crate::html::dom::{Document, DomOom, NodeId};
@@ -87,6 +88,14 @@ pub fn parse_fragment(
     }
     if status != Status::Ok || tree.status != TreeStatus::Ok {
         return Err(FragmentFailure::Parse);
+    }
+    /* "The end" pops whatever is still open, with its pop steps, for a
+     * fragment as for a document; Lexbor's fragment end did not. */
+    if compat::fixed(Fix::P16) {
+        tree.open_pop_all();
+        if tree.status != TreeStatus::Ok {
+            return Err(FragmentFailure::Parse);
+        }
     }
     drop(tree);
     Ok(ParsedFragment { doc, root })

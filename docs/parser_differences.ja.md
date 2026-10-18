@@ -157,6 +157,14 @@ P で始まる項目は HTML パーサの振る舞いである。
 - **移植版**：`html/tree/actions.rs` の `adoption_agency_algorithm` が、inner loop で除いた要素より後ろにある bookmark と formatting element の添字を一つ戻し、step 19 で formatting element を除いた後の bookmark も補正する。parse5 との乱択の比較（formatting 要素と block を混ぜた 12,000 件）で一致した。差分の許可は、入力に formatting element の終了タグか、`<a>` か `<nobr>` の開始タグ（これも adoption agency algorithm を走らせる）があるとき。
 - **テスト**：WPT にない。`spec/html_standard_steps_spec.rb`。
 
+### P16 fragment の解析の終わりの pop
+
+- **分類**：参照実装の未対応（監査の foreign F2）。移植版で直した（第 8 段）。
+- **仕様**："the end" は stack of open elements のノードをすべて pop する。fragment の解析でも EOF の "stop parsing" から走り、`option` の pop steps が `select` の `selectedcontent` を更新する。
+- **再現**：`Makiri::DocumentFragment.parse("<select><button><selectedcontent></selectedcontent></button><option>A")`。仕様では文書として解析したときと同じく `selectedcontent` が `A` を持つ。Lexbor の `lxb_html_parse_fragment_chunk_end` は pop しないので、空のまま残る。
+- **移植版**：`html/tree/fragment.rs` の `parse_fragment` が、tokenizer を終えた後で `open_pop_all` を呼ぶ。差分の許可は、fragment の入力に `selectedcontent` があるとき（pop steps を持つのは `option` だけ）。
+- **テスト**：WPT にない。`spec/html_standard_steps_spec.rb`。
+
 ### L1 ソース位置の規則
 
 - **分類**：意図した変更（移植計画の「ソース位置の規則」）。Lexbor の DOM のビルドは旧来の答えのまま。
