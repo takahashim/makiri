@@ -842,3 +842,89 @@ fn fragment_contexts_resolve_alike() {
         assert_eq!(lnodes, anodes, "{}", String::from_utf8_lossy(input));
     }
 }
+
+/* ---------- HTML <-> XML ---------- */
+
+/// Every node of `input` copied into an XML document by each side, written
+/// out as XML; then every node of `xml` copied into each side's document and
+/// everything compared.
+fn cross_case(input: &[u8], xml: &[u8]) {
+    use crate::lexbor::adapter::html::HtmlDocMut as LexMut;
+    let parsed = parse_html(input, false, DepthLimit::UNLIMITED).expect("parses");
+    // SAFETY: `parsed` owns the document; only this test touches it.
+    let ld = unsafe { parsed.raw_doc().as_doc() };
+    let mut ac = crate::lexbor::adapter::arena_copy::copy_document(ld).expect("copy");
+    let ctx = String::from_utf8_lossy(input).into_owned();
+    {
+        let ad = arena::HtmlDoc::of(&ac);
+        let p = Pair::new(ld, ad);
+        for (i, (&l, &a)) in p.l.iter().zip(&p.a).enumerate() {
+            for deep in [false, true] {
+                let mut lx = crate::xml::tree::parse(b"<r/>").expect("xml");
+                let mut ax = crate::xml::tree::parse(b"<r/>").expect("xml");
+                let lr = crate::lexbor::adapter::cross_import::cross_html_to_xml(&mut lx, l, deep);
+                let ar = arena::cross_import::cross_html_to_xml(&mut ax, a, deep);
+                let out = |x: &crate::xml::model::Document,
+                           r: Result<crate::xml::model::NodeId, _>| {
+                    r.map(|n| {
+                        crate::xml::serialize::to_xml(x, n, 0, None)
+                            .map(|b| String::from_utf8_lossy(b.as_slice()).into_owned())
+                            .map_err(|e| format!("{e:?}"))
+                    })
+                };
+                assert_eq!(
+                    out(&lx, lr),
+                    out(&ax, ar),
+                    "h2x node {i} deep {deep} of {ctx}"
+                );
+            }
+        }
+    }
+    let xdoc = crate::xml::tree::parse(xml).expect("xml");
+    // SAFETY: as above.
+    let mut lm = unsafe { LexMut::assume_exclusive(ld) };
+    let mut am = arena::HtmlDocMut::new(&mut ac);
+    let bi = lex_walk(ld)
+        .iter()
+        .position(|n| n.element().is_some_and(|e| e.local_name() == b"body"))
+        .expect("body");
+    let (lb, ab) = at(ld, am.read(), bi);
+    let (lb, ab) = (lex::RawNode::from(lb), arena::RawNode::from(ab));
+    let mut stack = vec![xdoc.doc_node()];
+    let mut xs = Vec::new();
+    while let Some(n) = stack.pop() {
+        xs.push(n);
+        let mut c = xdoc.first_child(n);
+        while let Some(x) = c {
+            stack.push(x);
+            c = xdoc.next(x);
+        }
+    }
+    for x in xs {
+        for deep in [false, true] {
+            let l = lm.import_xml(&xdoc, x, deep);
+            let a = am.import_xml(&xdoc, x, deep);
+            assert_eq!(
+                l.is_ok(),
+                a.is_ok(),
+                "x2h {x:?} deep {deep}: {:?}",
+                a.as_ref().err()
+            );
+            if let (Ok(l), Ok(a)) = (l, a) {
+                lm.place(lb, l, lex::Place::Child);
+                am.place(ab, a, arena::Place::Child);
+            }
+            compare_docs(ld, am.read(), &format!("x2h {x:?} deep {deep} into {ctx}"));
+        }
+    }
+}
+
+#[test]
+fn cross_imports_agree() {
+    cross_case(
+        SAMPLE,
+        b"<?xml version='1.0'?><r xmlns='http://www.w3.org/1999/xhtml' xmlns:s='http://www.w3.org/2000/svg' xmlns:q='urn:Q'>\
+          <div id='a' class='b' q:x='1'>t<![CDATA[c]]></div><s:svg><s:linearGradient s:href='h'/></s:svg>\
+          <template><p>in</p></template><BR/><q:e xml:lang='en'/><!--c--><?pi d?></r>",
+    );
+}

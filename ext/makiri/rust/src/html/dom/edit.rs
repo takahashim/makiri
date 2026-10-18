@@ -537,6 +537,16 @@ impl<'d> HtmlDocMut<'d> {
         self.d.copy_within(src.id(), deep).map(RawNode::from_id)
     }
 
+    /// A detached copy of the XML node `src` of `xdoc`.
+    pub fn import_xml(
+        &mut self,
+        xdoc: &crate::xml::model::Document,
+        src: crate::xml::model::NodeId,
+        deep: bool,
+    ) -> Result<RawNode, crate::xml::model::MutError> {
+        super::cross_import::cross_xml_to_html(self, xdoc, src, deep)
+    }
+
     /// The namespace `uri` interned in this document, as written.
     pub fn intern_ns(&mut self, uri: &[u8]) -> Option<NsId> {
         self.d

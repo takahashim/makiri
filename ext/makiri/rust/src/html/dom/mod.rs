@@ -944,6 +944,8 @@ impl Document {
 }
 
 mod copy;
+/// Copies between an arena HTML document and an XML one.
+pub mod cross_import;
 mod edit;
 mod handle;
 mod parsed;
