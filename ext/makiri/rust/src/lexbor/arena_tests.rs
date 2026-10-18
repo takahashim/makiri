@@ -44,6 +44,7 @@ fn arena_walk(doc: arena::HtmlDoc<'_>) -> Vec<arena::HtmlNode<'_>> {
 }
 
 /// The two walks, with each node's position.
+#[derive(Clone)]
 struct Pair<'l, 'a> {
     l: Vec<lex::HtmlNode<'l>>,
     a: Vec<arena::HtmlNode<'a>>,
@@ -927,4 +928,142 @@ fn cross_imports_agree() {
           <div id='a' class='b' q:x='1'>t<![CDATA[c]]></div><s:svg><s:linearGradient s:href='h'/></s:svg>\
           <template><p>in</p></template><BR/><q:e xml:lang='en'/><!--c--><?pi d?></r>",
     );
+}
+
+/* ---------- XPath ---------- */
+
+const EXPRS: &[&str] = &[
+    "//*",
+    "//p",
+    "//DIV",
+    "//svg",
+    "//svg:svg",
+    "//svg:*",
+    "//*[@id]",
+    "//*[@id='x']",
+    "//@*",
+    "//text()",
+    "//comment()",
+    "//processing-instruction()",
+    "//node()",
+    "id('x')",
+    "//*[lang('en')]",
+    "count(//*)",
+    "string(/)",
+    "name(//*[1])",
+    "local-name(//svg:*[1])",
+    "namespace-uri(//*[last()])",
+    "//a/@xlink:href",
+    "//*[@xml:lang]",
+    "//b/ancestor::*",
+    "//td/preceding::*",
+    "//*[position() mod 2 = 0]",
+    "(//*)[3]",
+    "//h:p",
+    "//math:mi",
+    "//*[contains(., 't')]",
+    "sum(//li/@data-n)",
+    "//template",
+    "//template/node()",
+    "//*[starts-with(name(), 'x')]",
+    "//x:y",
+    "//*[@ID]",
+    "//*[@viewbox]",
+    "//*[@viewBox]",
+    "normalize-space(//title)",
+    "//node()[not(self::*)]",
+    "//*/following-sibling::*[1]",
+];
+
+fn xpath_case(input: &[u8]) {
+    use crate::xpath::{limits::Budget, parse::parse_owned, value::Val};
+    let parsed = parse_html(input, false, DepthLimit::UNLIMITED).expect("parses");
+    // SAFETY: `parsed` owns the document; only this test touches it.
+    let ld = unsafe { parsed.raw_doc().as_doc() };
+    let copy = crate::lexbor::adapter::arena_copy::copy_document(ld).expect("copy");
+    let mut lp = parse_html(input, false, DepthLimit::UNLIMITED).expect("parses");
+    lp.ensure_dom_index().expect("index");
+    let mut ap = crate::html::dom::HtmlParsed::new(copy, None);
+    // SAFETY: as above.
+    let ld2 = unsafe { lp.raw_doc().as_doc() };
+    let p = Pair::new(ld2, ap.doc());
+    let lpos: HashMap<usize, usize> = p.lpos.clone();
+    let apos: HashMap<arena::NodeId, usize> = p.apos.clone();
+    drop(p);
+    for lax in [false, true] {
+        // SAFETY: `lp` outlives the context and nothing edits it.
+        let mut lc = unsafe {
+            crate::lexbor::xpath::context(
+                &mut *lp,
+                crate::token::Token::html(lex::RawNode::from(ld2.as_node()).as_ptr()),
+            )
+        }
+        .ok()
+        .expect("context");
+        let mut ac = arena::xpath::context(&mut ap, crate::token::Token::arena(1));
+        lc.set_lax(lax);
+        ac.set_lax(lax);
+        for (pre, uri) in [
+            (&b"svg"[..], &b"http://www.w3.org/2000/svg"[..]),
+            (b"math", b"http://www.w3.org/1998/Math/MathML"),
+            (b"h", b"http://www.w3.org/1999/xhtml"),
+            (b"xlink", b"http://www.w3.org/1999/xlink"),
+            (b"x", b"urn:x"),
+        ] {
+            lc.register_ns(pre, uri).expect("ns");
+            ac.register_ns(pre, uri).expect("ns");
+        }
+        for e in EXPRS {
+            let text = crate::text::VerifiedText::new(e).expect("text");
+            let mut b = Budget::with_limits(lc.limits());
+            let ast = parse_owned(text, &mut b).expect("parses");
+            let show = |v: Result<Val, crate::engine_error::Error>, by_lex: bool| match v {
+                Ok(Val::NodeSet(ns)) => format!(
+                    "{:?}",
+                    ns.as_slice()
+                        .iter()
+                        .map(|t| if by_lex {
+                            lpos.get(&(t.as_ptr() as usize)).copied()
+                        } else {
+                            arena::NodeId::from_word(t.word()).and_then(|id| apos.get(&id).copied())
+                        })
+                        .collect::<Vec<_>>()
+                ),
+                Ok(Val::String(s)) => format!("{:?}", String::from_utf8_lossy(s.as_slice())),
+                Ok(Val::Number(n)) => format!("{n}"),
+                Ok(Val::Boolean(x)) => format!("{x}"),
+                Err(err) => format!("error {:?}", err.status),
+            };
+            assert_eq!(
+                show(lc.evaluate(&ast, None), true),
+                show(ac.evaluate(&ast, None), false),
+                "{e} (lax {lax}) over {}",
+                String::from_utf8_lossy(input)
+            );
+            assert_eq!(
+                show(lc.evaluate_first(&ast, None), true),
+                show(ac.evaluate_first(&ast, None), false),
+                "first {e} (lax {lax})"
+            );
+        }
+    }
+}
+
+#[test]
+fn xpath_reads_as_lexbor_does() {
+    xpath_case(SAMPLE);
+    xpath_case(EDIT_INPUT);
+    xpath_case(b"<ul><li data-n=1>a</li><li data-n=2 lang=en>b</li></ul><p xml:lang=en>c</p>");
+}
+
+#[test]
+#[ignore = "needs the fetched WPT data; run by `rake conformance:parser`"]
+fn xpath_reads_as_lexbor_does_on_wpt_inputs() {
+    let tests = dat::read_dir(&tree_construction_dir()).expect("WPT data");
+    for t in tests
+        .iter()
+        .filter(|t| t.fragment.is_none() && t.scripting != Scripting::On)
+    {
+        xpath_case(&t.data);
+    }
 }

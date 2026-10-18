@@ -42,7 +42,8 @@ pub fn try_descendant_index<'e, 'd, D: Dom<'d>>(
         return Ok(None);
     };
     let mut result = NodeSet::new();
-    for &n in bucket.nodes {
+    for &item in bucket.nodes {
+        let n = doc.bucket_node(item);
         budget.charge_op()?;
         if bucket.recheck && !ct.matches(doc, n) {
             continue;
@@ -136,7 +137,8 @@ pub fn try_descendant_index_nth<'e, 'd, D: Dom<'d>>(
     };
     let budget = &mut ev.budget;
 
-    for &e in bucket.nodes {
+    for &item in bucket.nodes {
+        let e = doc.bucket_node(item);
         budget.charge_op()?;
         if bucket.recheck && !ct.matches(doc, e) {
             continue;

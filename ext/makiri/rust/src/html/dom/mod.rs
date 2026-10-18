@@ -951,6 +951,8 @@ mod handle;
 mod parsed;
 /// HTML serialization.
 pub mod serialize;
+/// XPath's HTML instance of its `Dom` trait, over the arena.
+pub mod xpath;
 pub use edit::{HtmlDocMut, HtmlTree, Insertion, Place};
 pub use handle::{
     has_ascii_uppercase, Ancestors, AttrName, Attrs, HtmlAttr, HtmlDoc, HtmlElement, HtmlNode,
