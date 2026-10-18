@@ -883,7 +883,7 @@ fn tokenizer_speed_on(label: &str, input: &[u8]) {
         unsafe { *(ctx as *mut usize) += 1 };
         token
     }
-    struct Count(usize);
+    struct Count(usize, crate::html::names::Names);
     impl crate::html::tokenizer::TokenSink for Count {
         fn token(
             &mut self,
@@ -891,6 +891,9 @@ fn tokenizer_speed_on(label: &str, input: &[u8]) {
         ) -> Result<(), crate::html::tokenizer::Stop> {
             self.0 += 1;
             Ok(())
+        }
+        fn names(&mut self) -> &mut crate::html::names::Names {
+            &mut self.1
         }
     }
     let rounds = 15;
@@ -914,10 +917,9 @@ fn tokenizer_speed_on(label: &str, input: &[u8]) {
         n
     };
     let port = || {
-        let mut names = crate::html::names::Names::default();
-        let mut sink = Count(0);
+        let mut sink = Count(0, crate::html::names::Names::default());
         {
-            let mut t = crate::html::tokenizer::Tokenizer::new(input, &mut names, &mut sink);
+            let mut t = crate::html::tokenizer::Tokenizer::new(input, &mut sink);
             t.chunk();
             t.end();
         }
@@ -950,7 +952,7 @@ fn tokenizer_speed_on(label: &str, input: &[u8]) {
 #[test]
 #[ignore = "a profiling target"]
 fn tokenizer_profile_target() {
-    struct Count(usize);
+    struct Count(usize, crate::html::names::Names);
     impl crate::html::tokenizer::TokenSink for Count {
         fn token(
             &mut self,
@@ -959,15 +961,17 @@ fn tokenizer_profile_target() {
             self.0 += 1;
             Ok(())
         }
+        fn names(&mut self) -> &mut crate::html::names::Names {
+            &mut self.1
+        }
     }
     let input = std::env::var("PROFILE_INPUT")
         .unwrap_or_else(|_| "&CounterClockwiseContourIntegral;".to_string())
         .repeat(100_000);
     let until = std::time::Instant::now() + std::time::Duration::from_secs(8);
     while std::time::Instant::now() < until {
-        let mut names = crate::html::names::Names::default();
-        let mut sink = Count(0);
-        let mut t = crate::html::tokenizer::Tokenizer::new(input.as_bytes(), &mut names, &mut sink);
+        let mut sink = Count(0, crate::html::names::Names::default());
+        let mut t = crate::html::tokenizer::Tokenizer::new(input.as_bytes(), &mut sink);
         t.chunk();
         t.end();
     }

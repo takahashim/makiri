@@ -14,15 +14,19 @@ use crate::html::res::names as res;
 
 /// Collects every token, read the way Lexbor's are read, with where it
 /// began and ended.
-struct Collect(Vec<Token>, Vec<(Option<usize>, Option<usize>)>);
+struct Collect(Vec<Token>, Vec<(Option<usize>, Option<usize>)>, Names);
 
 impl TokenSink for Collect {
     fn token(&mut self, t: &mut Tokenizer<'_, '_>) -> Result<(), Stop> {
-        if let Some(tk) = read(t) {
+        if let Some(tk) = read(&self.2, t) {
             self.0.push(tk);
             self.1.push((t.token.begin, t.token.end));
         }
         Ok(())
+    }
+
+    fn names(&mut self) -> &mut Names {
+        &mut self.2
     }
 }
 
@@ -35,7 +39,7 @@ pub struct Trace {
     pub errors: Vec<(u32, Option<usize>)>,
 }
 
-fn read(t: &mut Tokenizer<'_, '_>) -> Option<Token> {
+fn read(names: &Names, t: &mut Tokenizer<'_, '_>) -> Option<Token> {
     let tag = t.token.tag_id;
     let text = t.text().to_vec();
     match tag {
@@ -51,8 +55,8 @@ fn read(t: &mut Tokenizer<'_, '_>) -> Option<Token> {
         }
         res::TAG__EM_DOCTYPE => {
             let attrs = t.token.attrs.clone();
-            let attr_name = |t: &mut Tokenizer<'_, '_>, id: Option<usize>| {
-                id.and_then(|id| t.names().attr_name(id).map(<[u8]>::to_vec))
+            let attr_name = |id: Option<usize>| {
+                id.and_then(|id| names.attr_name(id).map(<[u8]>::to_vec))
                     .unwrap_or_default()
             };
             let value =
@@ -60,7 +64,7 @@ fn read(t: &mut Tokenizer<'_, '_>) -> Option<Token> {
             let name = attrs
                 .first()
                 .filter(|a| a.name_begin.is_some())
-                .map(|a| attr_name(t, a.name));
+                .map(|a| attr_name(a.name));
             let (mut public_id, mut system_id) = (None, None);
             if let Some(second) = attrs.get(1) {
                 if second.name == Some(res::ATTR_PUBLIC) {
@@ -80,11 +84,7 @@ fn read(t: &mut Tokenizer<'_, '_>) -> Option<Token> {
             })
         }
         _ => {
-            let name = t
-                .names()
-                .tag_name(tag)
-                .map(<[u8]>::to_vec)
-                .unwrap_or_default();
+            let name = names.tag_name(tag).map(<[u8]>::to_vec).unwrap_or_default();
             if t.token.flags & flags::CLOSE != 0 {
                 return Some(Token::EndTag { name });
             }
@@ -94,7 +94,7 @@ fn read(t: &mut Tokenizer<'_, '_>) -> Option<Token> {
                 .map(|a| {
                     let n = a
                         .name
-                        .and_then(|id| t.names().attr_name(id).map(<[u8]>::to_vec));
+                        .and_then(|id| names.attr_name(id).map(<[u8]>::to_vec));
                     (
                         n.unwrap_or_default(),
                         t.attr_value(a).map(<[u8]>::to_vec).unwrap_or_default(),
@@ -119,10 +119,10 @@ pub fn tokenize(input: &[u8], state: State, last_start_tag: Option<&[u8]>) -> Ve
 pub fn tokenize_traced(input: &[u8], state: State, last_start_tag: Option<&[u8]>) -> Trace {
     let mut names = Names::default();
     let last = last_start_tag.map(|n| names.tag_append_lower(n).expect("interns"));
-    let mut sink = Collect(Vec::new(), Vec::new());
+    let mut sink = Collect(Vec::new(), Vec::new(), names);
     let errors;
     {
-        let mut t = Tokenizer::new(input, &mut names, &mut sink);
+        let mut t = Tokenizer::new(input, &mut sink);
         let (f, wants_last): (super::State, bool) = match state {
             State::Data => (data_before, false),
             State::Plaintext => (plaintext_before, false),

@@ -17,6 +17,9 @@
 //!   stops, as Lexbor's does.
 //! - **The token-done callback is a [`TokenSink`]**, handed the tokenizer
 //!   itself, as Lexbor's tree builder is handed `tkz`.
+//! - **The names table is the sink's** ([`TokenSink::names`]), not a second
+//!   reference the tokenizer holds: the tree builder writes the document that
+//!   owns the table, and Lexbor's tokenizer and document share it the same way.
 //!
 //! Lexbor's chunked input is kept as an API (`chunk` may be called more than
 //! once) because its states are written for it, but Makiri passes one chunk.
@@ -126,6 +129,10 @@ pub struct Stop;
 /// so it can read the token's text and switch the tokenizer's state.
 pub trait TokenSink {
     fn token(&mut self, tkz: &mut Tokenizer<'_, '_>) -> Result<(), Stop>;
+
+    /// The table tag and attribute names are interned into (Lexbor's
+    /// `tkz->tags` and `tkz->attrs`, which are the document's).
+    fn names(&mut self) -> &mut Names;
 }
 
 /// `lxb_html_tokenizer_t`.
@@ -134,7 +141,6 @@ pub struct Tokenizer<'i, 's> {
     pub(crate) state: State,
     pub(crate) state_return: Option<State>,
     pub(crate) sink: Option<&'s mut dyn TokenSink>,
-    pub(crate) names: &'s mut Names,
     pub token: Token,
     /// Lexbor's temporary buffer: `start` is index 0, `pos` is the length.
     pub(crate) buf: Vec<u8>,
@@ -172,14 +178,13 @@ pub struct Tokenizer<'i, 's> {
 
 impl<'i, 's> Tokenizer<'i, 's> {
     /// `lxb_html_tokenizer_create` + `_init` + `_begin`, over `input`, in the
-    /// data state, interning names into `names`.
-    pub fn new(input: &'i [u8], names: &'s mut Names, sink: &'s mut dyn TokenSink) -> Self {
+    /// data state, interning names into the sink's table.
+    pub fn new(input: &'i [u8], sink: &'s mut dyn TokenSink) -> Self {
         Tokenizer {
             input,
             state: data_before,
             state_return: None,
             sink: Some(sink),
-            names,
             token: Token::default(),
             buf: Vec::new(),
             values: Vec::new(),
@@ -210,11 +215,6 @@ impl<'i, 's> Tokenizer<'i, 's> {
     /// The parse errors recorded so far.
     pub fn errors(&self) -> &[ParseError] {
         &self.errors
-    }
-
-    /// The names table.
-    pub fn names(&mut self) -> &mut Names {
-        self.names
     }
 
     /// The current token's text (inside the sink).
@@ -332,7 +332,7 @@ impl<'i, 's> Tokenizer<'i, 's> {
     /// `lxb_html_tokenizer_state_set_tag_m` over the buffer's `[from, len)`.
     pub(crate) fn set_tag_from_buf(&mut self, from: usize) -> Result<(), ()> {
         let name = self.buf.get(from..).unwrap_or_default();
-        match self.names.tag_append_lower(name) {
+        match intern(&mut self.sink, |names| names.tag_append_lower(name)) {
             Ok(id) => {
                 self.token.tag_id = id;
                 Ok(())
@@ -347,7 +347,9 @@ impl<'i, 's> Tokenizer<'i, 's> {
     /// `lxb_html_tokenizer_state_set_name_m`: the last attribute's name is
     /// the buffer.
     pub(crate) fn set_name(&mut self) -> Result<(), ()> {
-        match self.names.attr_local_name_append(&self.buf) {
+        match intern(&mut self.sink, |names| {
+            names.attr_local_name_append(&self.buf)
+        }) {
             Ok(id) => {
                 if let Some(a) = self.token.attrs.last_mut() {
                     a.name = Some(id);
@@ -550,6 +552,19 @@ impl<'i, 's> Tokenizer<'i, 's> {
             res::TAG_PLAINTEXT => self.state = plaintext_before,
             _ => {}
         }
+    }
+}
+
+/// Intern through the sink's names table. The sink is only away while it is
+/// being handed a token, and no state interns from inside the sink.
+#[inline]
+fn intern(
+    sink: &mut Option<&mut dyn TokenSink>,
+    f: impl FnOnce(&mut Names) -> Result<usize, crate::html::names::NamesOom>,
+) -> Result<usize, crate::html::names::NamesOom> {
+    match sink {
+        Some(s) => f(s.names()),
+        None => Err(crate::html::names::NamesOom),
     }
 }
 
