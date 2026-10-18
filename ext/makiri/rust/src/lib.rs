@@ -150,6 +150,9 @@ pub mod html_dom;
 /// Lexbor-free and Ruby-free.
 pub mod html;
 
+/// The CSS selector parser port (Ruby- and Lexbor-free).
+pub mod selectors;
+
 /// The XML reader and its arena. Ruby-free and Lexbor-free.
 pub mod xml;
 

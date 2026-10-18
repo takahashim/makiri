@@ -35,6 +35,9 @@ mod arena_tests;
 #[cfg(test)]
 mod tree_port_tests;
 
+#[cfg(test)]
+mod selector_port_tests;
+
 /// The ported tree builder's output against Lexbor's, as comparable dumps.
 #[cfg(any(test, feature = "lexbor-reference"))]
 pub mod tree_diff;
