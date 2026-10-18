@@ -101,6 +101,14 @@ P で始まる項目は HTML パーサの振る舞いである。
 - **移植版**：`html/tokenizer/state.rs` の `markup_declaration_cdata` が、途中まで一致した文字をバッファに残す。差分の許可は、入力の最後の `<!` の後に `>` がないとき。
 - **テスト**：html5lib と WPT にない。`spec/html_standard_steps_spec.rb`。
 
+### P9 入力の末尾の `<!`
+
+- **分類**：参照実装の未対応（監査で見つけた）。移植版で直した。
+- **仕様**：markup declaration open state で入力が終わると、空のコメントを作る。
+- **再現**：`x<!`。仕様では `x` の text と空のコメント、Lexbor はコメントのデータにも `x` を入れる（直前の text のバッファを空にしないため）。
+- **移植版**：`html/tokenizer/state.rs` の `markup_declaration_open` が、入力の終わりでバッファを空にする。差分の許可は P8 と同じ。
+- **テスト**：html5lib と WPT にない。`spec/html_standard_steps_spec.rb`。
+
 ### L1 ソース位置の規則
 
 - **分類**：意図した変更（移植計画の「ソース位置の規則」）。Lexbor の DOM のビルドは旧来の答えのまま。

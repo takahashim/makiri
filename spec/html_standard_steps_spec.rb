@@ -69,4 +69,9 @@ RSpec.describe "HTML Standard steps the port takes and Lexbor does not" do
   it "keeps a partial [CDATA[ at the end of the input as the comment's data" do
     expect(Makiri::HTML("<![CDA").children.first.content).to eq("[CDA")
   end
+  # P9: markup declaration open at the end of the input: an empty comment.
+  it "makes an empty comment of a <! at the end of the input" do
+    doc = Makiri::HTML("x<!")
+    expect(doc.at_css("body").inner_html).to eq("x<!---->")
+  end
 end

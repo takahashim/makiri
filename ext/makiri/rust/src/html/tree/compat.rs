@@ -34,6 +34,9 @@ pub enum Fix {
     /// Input that ends inside `[CDATA[` keeps what was read as the bogus
     /// comment's data.
     P8,
+    /// A `<!` at the end of the input makes an empty comment, not one holding
+    /// the text before it.
+    P9,
     /// An element carries its start tag's offset when it was created for
     /// that tag's token, and no other (`Node#line`); not a tree change, so
     /// [`explains`] never names it: the harnesses compare the trees without
@@ -135,9 +138,10 @@ pub fn explains(input: &[u8], context: Option<&str>) -> Vec<Fix> {
     if has(input, b"frameset") {
         fixes.push(Fix::P7);
     }
-    /* P8: the input ends inside a markup declaration. */
+    /* P8, P9: the input ends inside a markup declaration. */
     if ends_in_markup_declaration(input) {
         fixes.push(Fix::P8);
+        fixes.push(Fix::P9);
     }
     fixes
 }

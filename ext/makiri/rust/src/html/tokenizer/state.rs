@@ -665,6 +665,12 @@ fn markup_declaration_open(t: &mut Tokenizer<'_, '_>, mut data: usize, end: usiz
     if t.is_eof {
         t.token.end = Some(t.last);
         t.token.begin = t.token.end;
+        /* At the end of the input nothing set the token's begin above, so the
+         * text emitted before `<!` is still in the buffer; the Standard's
+         * comment is empty. Lexbor writes the text into it (P9). */
+        if compat::fixed(Fix::P9) {
+            t.buf.clear();
+        }
     }
     t.error(data, ErrorId::Inopco);
     t.state = bogus_comment_before;
