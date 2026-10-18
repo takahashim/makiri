@@ -1367,10 +1367,15 @@ Key decisions that got there, worth not regressing:
   since measuring walks every chunk. A document's last edit may go unreported
   (under-reporting, the safe direction). Without it, 60 documents grown by
   `inner_html=` ran with zero GCs to ~700 MB RSS; with it, ~200 MB.
-- Tree-walk speed is structurally capped by Lexbor's 96-byte node (we can't
-  shrink it); investigated nodeset-pool / prefetch follow-ups were **not** shipped
-  because, with no remaining slower-than-Nokogiri row, they'd add lifetime /
-  speculative complexity for no measurable win.
+- Tree-walk speed was structurally capped by Lexbor's 96-byte node; the arena
+  DOM that ships is ~109 B a node all in (byte store and names included,
+  against Lexbor's ~180 B) and walks children ~13% faster. Investigated
+  nodeset-pool / prefetch follow-ups were **not** shipped because, with no
+  remaining slower-than-Nokogiri row, they'd add lifetime / speculative
+  complexity for no measurable win. Stage 9's measurements (arena against
+  Lexbor's DOM, row by row, and why the selector parser's work space is not
+  reused) are in `docs/rewrite_parser.ja.md`; measure with min CPU time over
+  repeated runs, since benchmark-ips swings 15-25% on this kind of machine.
 
 Working on perf: capture a `rake bench` baseline, change one thing, re-bench,
 and **ship only a measurable win** that keeps `rake spec` + `rake fuzz:sanitize`
