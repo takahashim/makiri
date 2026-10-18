@@ -3,10 +3,11 @@
 require "spec_helper"
 
 # Replacing a node's data over and over must keep every answer right. In the
-# arena DOM (MAKIRI_ARENA_DOM=1) the old bytes are left in the byte store and
+# arena DOM (the default build) the old bytes are left in the byte store and
 # the store is compacted at the start of a later edit
 # (html/dom/compact.rs), which moves every span - this is the workload that
-# triggers it; on Lexbor's DOM the old data goes back to Lexbor's pool.
+# triggers it; on Lexbor's DOM (MAKIRI_LEXBOR_DOM=1) the old data goes back
+# to Lexbor's pool.
 RSpec.describe "Repeated data edits" do
   it "keeps the data of every node through thousands of replacements" do
     doc = Makiri::HTML(<<~HTML)

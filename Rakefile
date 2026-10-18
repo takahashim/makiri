@@ -542,7 +542,10 @@ task "sanitize:lexbor" do
   # MAKIRI_SANITIZE_LEXBOR makes extconf build Lexbor with -DLEXBOR_BUILD_WITH_ASAN
   # (enabling its mraw poisoning); the build-mode stamp auto-rebuilds Lexbor on the
   # plain<->asan switch, so no manual clean:lexbor is needed before or after.
-  build_env = { "MAKIRI_SANITIZE" => sanitize, "MAKIRI_SANITIZE_LEXBOR" => "1" }
+  # Lexbor's DOM, not the arena DOM that ships: Lexbor's parser and DOM are what
+  # this run instruments, and the suite reaches them only through that build.
+  build_env = { "MAKIRI_SANITIZE" => sanitize, "MAKIRI_SANITIZE_LEXBOR" => "1",
+                "MAKIRI_LEXBOR_DOM" => "1" }
   sh(build_env, "#{FileUtils::RUBY} -S rake clean compile")
 
   env = {
@@ -726,6 +729,8 @@ namespace :rust do
     Dir.chdir("ext/makiri/rust") do
       sh "cargo test --no-default-features"
       sh "cargo test --no-default-features --features lexbor"
+      # The configuration the extension ships with (extconf adds arena-dom).
+      sh "cargo test --no-default-features --features lexbor,arena-dom"
       # The fuzz crate is a separate one, so `cargo test` above never sees it;
       # without this check an engine API change can silently break the nightly
       # harnesses (they are not built by `rake compile` or `rake spec`).

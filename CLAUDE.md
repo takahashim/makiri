@@ -1,8 +1,10 @@
 # Makiri - project guide for Claude Code
 
 Makiri is a Ruby gem: an HTML5 parser + native XPath 1.0 query engine + CSS
-selectors, with **no libxml2 / libxslt dependency at any layer**. It parses via
-vendored Lexbor and queries via an original XPath engine. Security is a
+selectors, with **no libxml2 / libxslt dependency at any layer**. It parses with
+a Rust port of Lexbor's HTML parser into an index-arena DOM (vendored Lexbor
+remains as the reference it is tested against) and queries via an original
+XPath engine. Security is a
 first-class goal.
 
 The authoritative design is **`docs/design_doc.ja.md`** (Japanese) - read it
@@ -603,10 +605,14 @@ Lexbor's tree, selector lists and stylesheets beside the ports', for the
 `html_diff`, `selector_diff` and `stylesheet_diff` fuzz targets;
 in no build that ships) and **`arena-dom`** (the
 parser port's index-arena DOM, `html::dom`, in place of Lexbor's behind the
-`html_dom` facade, parsed by the ported tree builder `html::tree` -
-`MAKIRI_ARENA_DOM=1 bundle exec rake clean compile` builds it; off by default
-while it is brought up, and CI's `arena-dom` job runs it through the spec
-suite, `rake diff` and `rake oom`. Its byte store is append-only between
+`html_dom` facade, parsed by the ported tree builder `html::tree`. **The
+extension ships with it**: extconf adds the feature unless
+`MAKIRI_LEXBOR_DOM=1`, which builds Lexbor's DOM instead - the reference the
+port was held to, kept buildable until stage 9 retires it; CI's `lexbor-dom`
+job runs it through the spec suite and `rake diff`, and `rake
+"sanitize:lexbor"` builds it, since that run instruments Lexbor. It is NOT a
+Cargo default feature, so a plain `cargo test` still builds Lexbor's DOM;
+`rake rust:test` runs `--features lexbor,arena-dom` too. Its byte store is append-only between
 compactions: an edit's start (`HtmlParsed::edit`, after the indexes - which
 hold spans - are dropped) rewrites it once the dead bytes outweigh the live
 ones (`html/dom/compact.rs`), so repeated `content=` does not grow a document. What the bridge does differently for the two DOMs is
@@ -620,6 +626,16 @@ builds `--no-default-features`. The ~30 features that used to stand here were
 migration scaffolding, one per ported C file, and went with the C.
 
 ## Subsystems
+
+**Which DOM these notes describe.** The build that ships is the arena DOM
+(`html::dom`, parsed by `html::tree`); the notes below that name
+`lexbor/adapter/...` files (source location, the parse guard, the element and
+text indexes, serialization, mutation) describe Lexbor's DOM, the reference
+build (`MAKIRI_LEXBOR_DOM=1`). The arena keeps the same contracts behind the
+same `html_dom` facade - `lexbor::arena_tests` holds the two to the same
+answers - so what a note says a caller sees holds for both; where a note
+describes how Lexbor stores something, the arena's version is in
+`html/dom/`.
 
 **Text-input contract.** Parsing **honours the input String's encoding**
 (`ruby_to_utf8`, `bridge/string.rs`): UTF-8 / US-ASCII / ASCII-8BIT pass

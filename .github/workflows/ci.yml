@@ -151,18 +151,17 @@ jobs:
         shell: bash
         run: bundle exec ruby -Ilib -r makiri -e 'p Makiri::VERSION'
 
-  # The parser port's arena DOM (`arena-dom`, MAKIRI_ARENA_DOM=1): off in the
-  # build that ships while it is brought up, so the matrix above never builds
-  # it. One runner holds it to the same suite (threading examples included),
-  # the C-build baseline, the invariant checks, the GC.auto_compact +
-  # GC.stress examples and the OOM sweep, plus the Rust tests that exist only
-  # under the feature: the new path's half of stage 6's robustness checks
-  # (docs/rewrite_parser.ja.md).
-  arena-dom:
-    name: Arena DOM (Ruby 3.4)
+  # Lexbor's DOM (MAKIRI_LEXBOR_DOM=1): the reference the parser port's arena
+  # DOM was held to, no longer the build that ships (every other job builds
+  # the arena DOM). One runner keeps it buildable and answering the same
+  # suite and C-build baseline until it is retired (docs/rewrite_parser.ja.md,
+  # stage 9). The Rust tests that read the two DOMs side by side run in
+  # `rake rust:test` above.
+  lexbor-dom:
+    name: Lexbor DOM reference (Ruby 3.4)
     runs-on: ubuntu-latest
     env:
-      MAKIRI_ARENA_DOM: "1"
+      MAKIRI_LEXBOR_DOM: "1"
     steps:
       - name: Checkout (with vendored Lexbor submodule)
         uses: actions/checkout@v6
@@ -183,41 +182,14 @@ jobs:
           ruby-version: "3.4"
           bundler-cache: true
 
-      - name: Compile the extension with the arena DOM
+      - name: Compile the extension with Lexbor's DOM
         run: bundle exec rake compile
-
-      - name: Rust tests with the arena DOM
-        working-directory: ext/makiri/rust
-        run: cargo test --no-default-features --features lexbor,arena-dom
 
       - name: Differential
         run: bundle exec rake diff
 
-      - name: Run the test suite (threading examples included)
-        env:
-          THREADING: "1"
+      - name: Run the test suite
         run: bundle exec rake spec
-
-      - name: Invariant checks
-        run: bundle exec rake invariants
-
-      # The tree-construction data (WPT) through the Ruby runner, on the
-      # ported tree builder: the same KNOWN_DIVERGENCES list as Lexbor's.
-      - name: HTML5 parsing conformance (html5lib-tests, WPT)
-        run: bundle exec rake conformance:html5
-
-      # The examples the GC.auto_compact + GC.stress job (valgrind.yml) runs
-      # over the shipping build, at fewer iterations: one runner, all shards.
-      - name: GC-sensitive examples under GC.auto_compact + GC.stress
-        env:
-          GC_COMPACT_STRESS: "1"
-          GC_COMPACT_ITERS: "50"
-        run: bundle exec rspec --tag gc_compact spec
-
-      # Rebuilds with MAKIRI_ALLOC_INJECT=1; the job's MAKIRI_ARENA_DOM carries
-      # into that build.
-      - name: OOM-injection sweep
-        run: bundle exec rake oom
 
   sanitize:
     # AddressSanitizer only. UBSan used to run beside it over the C sources;

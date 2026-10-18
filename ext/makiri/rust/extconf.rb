@@ -196,12 +196,19 @@ features = []
 # failure hook so `rake oom` can sweep "the nth core allocation fails" over
 # representative workloads and assert every OOM branch fails closed.
 # Debug/test builds only - a normal build carries no hook.
-# The parser port's arena DOM in place of Lexbor's (opt-in, while it is being
-# brought up): MAKIRI_ARENA_DOM=1 builds with the `arena-dom` feature. Like
-# every extconf switch, a change needs `rake clean compile`.
-if ENV["MAKIRI_ARENA_DOM"].to_s.strip == "1"
+# The HTML DOM: the parser port's index arena (`arena-dom`, parsed by the
+# ported tree builder) is the one that ships. MAKIRI_LEXBOR_DOM=1 builds
+# Lexbor's DOM instead - the reference the port was held to, kept buildable
+# until it is retired (docs/rewrite_parser.ja.md, stage 9). Like every extconf
+# switch, a change needs `rake clean compile`.
+if ENV["MAKIRI_LEXBOR_DOM"].to_s.strip == "1"
+  warn "makiri: building with Lexbor's DOM (MAKIRI_LEXBOR_DOM=1)"
+else
   features << "arena-dom"
-  warn "makiri: building with the arena DOM (arena-dom)"
+end
+if ENV.key?("MAKIRI_ARENA_DOM")
+  warn "makiri: MAKIRI_ARENA_DOM is ignored - the arena DOM is the default " \
+       "(MAKIRI_LEXBOR_DOM=1 builds Lexbor's)"
 end
 
 if ENV["MAKIRI_ALLOC_INJECT"].to_s.strip == "1"

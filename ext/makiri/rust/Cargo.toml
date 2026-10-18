@@ -47,7 +47,7 @@ panic = "warn"
 # Six features. Three name a real optional dependency rather than a step of
 # the C port - a Ruby runtime, a vendored C library, and a test hook - two,
 # `css-reference` and `lexbor-reference`, test references, and the last,
-# `arena-dom`, the parser port's DOM while it is brought up (below).
+# `arena-dom`, the parser port's DOM, which the extension ships with (below).
 #
 # The port's thirty-seven per-file flags are gone. They existed so one C file at
 # a time could be replaced behind an identical ABI; there is no C left to
@@ -82,8 +82,10 @@ lexbor-reference = ["lexbor"]
 
 # The parser port's index-arena DOM (`crate::html::dom`) in place of Lexbor's
 # DOM, behind the same facade (`crate::html_dom`), parsed by the ported tree
-# builder (`crate::html::tree`) - `docs/rewrite_parser.ja.md`, stage 4. Off by
-# default until it has replaced Lexbor's DOM.
+# builder (`crate::html::tree`) - `docs/rewrite_parser.ja.md`. The extension
+# ships with it: extconf turns it on unless MAKIRI_LEXBOR_DOM=1. It is not in
+# `default` so that a plain `cargo test` still builds Lexbor's DOM, which the
+# reference tests (`lexbor::arena_tests`, `tree_port_tests`) read beside it.
 arena-dom = ["lexbor"]
 
 [dependencies]

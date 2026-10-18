@@ -271,6 +271,10 @@ jobs:
     name: Nightly instrumented-Lexbor ASan suite
     runs-on: ubuntu-latest
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # Lexbor's DOM, not the arena DOM that ships: the suite reaches Lexbor's
+    # parser and DOM only through it, and Lexbor is what this job instruments.
+    env:
+      MAKIRI_LEXBOR_DOM: "1"
     steps:
       - name: Checkout (with vendored Lexbor submodule)
         uses: actions/checkout@v6

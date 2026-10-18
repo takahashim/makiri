@@ -449,4 +449,6 @@ bench（release、同一マシン）でのアリーナ構成と Lexbor 構成の
 - **第 6 段の確認（新経路）**：arena-dom のビルドで、並行 parse を含むスペック（`THREADING=1`、1,855 件）、`GC.auto_compact` と `GC.stress` の下の GC に敏感な例（44 件）、不変条件のチェック、ASan の下のスペック（1,849 件）と ASan の下のロバスト性 fuzz（5,058 件、crash 0）が通る。OOM 注入、panic の latch、小さい Fiber の stack は CI の arena-dom ジョブ（`rake oom` とスペック）が確かめている。CI の arena-dom ジョブには、並行 parse のスペック、不変条件、`GC.stress` の例、html5lib の適合テストを足した。差分 fuzz は手元で ASan つきで回し、`html_diff`（5 分、47 万件）、`selector_diff`（5 分、697 万件）、`stylesheet_diff`（10 分、372 万件）で食い違いはなかった。`stylesheet_diff` が落ちたのは比較用のダンプの深さの上限で、パーサ同士の差ではない（両方のダンプが同じ深さで打ち切るように直した）。
 - **bench（arena-dom / Lexbor DOM、同じ機械）**：parse 1.04、`css` 1.52、`//li[@data-rank='1']` 1.82、`//*[@id='main']` 1.79、属性の等値 1.72、children の走査 1.54、`to_html` 1.92、全文の text 1.09、一回限りの parse と text 1.54。`at_css('#main')`、`//li`、`//a/@href` は一度目に 0.76〜0.91 と出たが、各 3 回の再測定では揺れの範囲で並んだ。種類としての退行はない。
 
-次は既定の切り替えである。CI の arena-dom ジョブで html5lib の適合テストが通ることを確かめてから、出荷するビルドを arena-dom にし、Lexbor DOM のビルドを比較用の構成として残す。
+- **既定の切り替え（第 6 段の完了）**：出荷するビルドを arena-dom にした。extconf は `arena-dom` を足し、`MAKIRI_LEXBOR_DOM=1` のときだけ Lexbor の DOM でビルドする。CI の既定の job（OS と Ruby の行列、ASan、OOM 注入、不変条件、`GC.stress`、Valgrind、conformance）はすべて arena DOM を回し、Lexbor の DOM は `lexbor-dom` の job が spec と `rake diff` で保つ。Lexbor を ASan で計装する夜間の job（`sanitize:lexbor`）は Lexbor の DOM でビルドする。`rake rust:test` は `lexbor,arena-dom` の構成も回す。Lexbor は参照として、また CSS の参照実装と比較用の構成のために残り、出荷する依存から外すのは第 9 段である。
+
+次は第 7 段（仕様適合の変更）で、差分表の「参照実装の未対応」（P1〜P3）とソース位置の規則の切り替えを、一件ずつ入れる。

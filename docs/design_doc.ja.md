@@ -6,12 +6,12 @@
 
 * HTML5 scraping で使われる範囲で Nokogiri 互換の API を持つ
 * HTML5 parsing は WHATWG HTML Standard に沿ったパーサで高速に行う。
-  現在は vendored Lexbor が既定で、Lexbor の tokenizer と tree builder を
-  Rust に移植した自前のパーサと、添字で引く index アリーナの DOM を
-  `arena-dom` フィーチャの裏で育てている。両者は一つの facade
-  (`crate::html_dom`) の後ろにあり、facade の上のコード (bridge、XPath、
-  CSS の照合) はどちらでも変わらない。移植版は Lexbor と木が一致すること
-  を検証してから既定に切り替える。移植の計画と現在地は
+  Lexbor の tokenizer と tree builder を Rust に移植した自前のパーサと、
+  添字で引く index アリーナの DOM (`arena-dom` フィーチャ) が既定で、
+  出荷するビルドはこれを使う。vendored Lexbor の DOM は、移植版を照合した
+  参照として `MAKIRI_LEXBOR_DOM=1` でビルドでき、両者は一つの facade
+  (`crate::html_dom`) の後ろにあって、facade の上のコード (bridge、XPath、
+  CSS の照合) はどちらでも変わらない。移植の計画と現在地は
   `docs/rewrite_parser.ja.md` に置く
 * XPath 1.0 には仕様に準拠した独自エンジンを作成し、libxml2 等を持ち込まない
 * CSS selectors と stylesheet は、Lexbor の CSS 構文 tokenizer、構文パーサ、
@@ -308,8 +308,9 @@ CSS/serialize/読み取りアクセサも GVL を保持する。`spec/threading_
   Lexbor の表と要素ごとに一致することをテストで確かめる。
 * crate のフィーチャは六つ。`ruby` (Ruby との境界、既定)、`lexbor`
   (vendored Lexbor を読む層)、`alloc-inject` (OOM 注入)、`arena-dom`
-  (移植版のパーサと index アリーナを facade の後ろに選ぶ。
-  `MAKIRI_ARENA_DOM=1` で configure する)、`css-reference` と
+  (移植版のパーサと index アリーナを facade の後ろに選ぶ。出荷する
+  ビルドは extconf がこれを足し、`MAKIRI_LEXBOR_DOM=1` のときだけ
+  Lexbor の DOM でビルドする)、`css-reference` と
   `lexbor-reference` (差分 fuzz の参照実装で、出荷するビルドには入らない)。
 
 ## 6. Testing
@@ -400,14 +401,14 @@ baseline として固定し、現在のビルドと突き合わせる。baseline
 bench で実測の改善があり spec/fuzz/sanitizer が green なときだけ採用、
 そうでなければその変更を revert する。移植版のパーサは、既定の切り替えの
 前に bench の各行で種類としての退行 (Nokogiri と同等以下に落ちる行) が
-ないことを確かめる。
+ないことを確かめた (`docs/rewrite_parser.ja.md` の進捗)。
 
 ### 6.7 CI
 
 GitHub Actions で Ruby の各バージョンと OS とで実行する。
-sanitizer は Linux のみで実行する。`arena-dom` のビルドは別の job で
-crate のテスト、`rake diff`、spec、OOM 注入を通し、conformance の job が
-`conformance:parser` を回す。
+sanitizer は Linux のみで実行する。既定の job はすべて arena DOM の
+ビルドを回し、Lexbor の DOM のビルドは別の job (`lexbor-dom`) で spec と
+`rake diff` を通す。conformance の job が `conformance:parser` を回す。
 
 ## 7. 互換性に関する考慮
 
