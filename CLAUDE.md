@@ -82,7 +82,16 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   `bridge/typed.rs` run where nothing can be raised and a half-freed object is
   worse than a stop, so they keep aborting - keep their bodies trivial. The two
   raw `rb_protect` thunks (`exception_message_thunk`, `strict_transcode_thunk`)
-  contain only C calls, so there is no Rust there to panic; keep it that way.
+  contain only C calls (through `bridge::raw`'s thin wrappers), so there is
+  no Rust there to panic; keep it that way.
+
+  **Every C call that can raise is a wrapper in `bridge/raw.rs`**, which says
+  what raises it. A raise is a `longjmp` over every Rust frame up to the
+  nearest `rb_protect`, so each such call is made under `bridge::ruby::protect`
+  or from a frame that owns nothing a skipped `Drop` would leak - and which
+  calls those are is answered by that one file. `rake unsafe:boundaries` pins
+  the raising names to it, so a new one is a new wrapper there with its raise
+  stated.
 
   **A Ruby method raises `Makiri::InternalError`, not `fatal`.**
   `bridge::ruby::entry` wraps the body of EVERY method the glue registers, and
@@ -476,7 +485,7 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            WHATWG; `cbuf`+`cutf8` only, so Ruby/Lexbor-free
     bridge/                the Ruby boundary - the ONLY layer allowed raw Ruby String
                            access (RSTRING) and verified-string minting, and where
-                           raising C calls (rb_String, typed-data checks) and the
+                           the C calls that can raise (`bridge/raw.rs`) and the
                            wrap-then-store constructor live; a raise becomes `Err`
                            there. `rake unsafe:boundaries` pins that boundary:
                            the crate denies `unsafe_code` (`lib.rs`), so every
@@ -487,8 +496,9 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            `css/**` and `lexbor/css_match/**` are fully safe
                            (their module roots carry
                            `#![forbid(unsafe_code)]`, which the gate pins), and
-                           `rb_sys::`, `Value::from_raw` and raising C calls are
-                           0 outside `bridge/`
+                           `rb_sys::` and `Value::from_raw` are 0 outside
+                           `bridge/`, and the C calls that can raise live only
+                           in `bridge/raw.rs`
     glue/                  THE Ruby surface: every method Makiri defines, with
                            its argument reading, its errors and its
                            registration, one module per feature
@@ -596,13 +606,18 @@ contract, but its NUL refusal is `ArgumentError`, like every other name
 refusal there (the DOM's InvalidCharacterError), so a caller mapping
 `ArgumentError` to a DOMException misses none. Removers and readers keep
 `ruby_verified_text`. Both checked views (`RubyText`, `RubyData`) deref to
-`&str`: each holds its String `rb_str_locktmp`ed for its life, or - when someone
-else already holds that lock (the same String passed twice, an IO) - reads its
-own copy, since a lock it does not own can be released under it; a frozen
-String, which no Ruby can change, is borrowed as it is. The bytes are
-borrowed and CHECKED only after that (`RubyStr::acquire`): a failed lock attempt
-raises, and raising runs Ruby that can change the String. Only the lock's own
-refusal is swallowed - anything else raised there (an interrupt) propagates. `Makiri::XML`'s data
+`&str`, and each OWNS A COPY of the String's bytes, taken with no Ruby between
+the read and the copy (`string::copy_bytes`; up to 64 bytes inline, so a
+selector or an expression allocates nothing) and checked after. Nothing Ruby
+does afterwards - a GC, a later argument's `#to_s` rewriting or growing the
+String - reaches the copy. The HTML source (`HtmlSource`) is a copy too, the
+one a document parse needs to read it with the GVL released. The only borrow
+of a String's bytes left is `string::with_bytes`, a scoped read for the XML
+encoding sniff, whose closure must run no Ruby. (The views used to hold the
+String under `rb_str_locktmp`, with a copy when it was already locked, a
+frozen fast path and a raise to re-propagate - all to spare a copy of a few
+bytes; `spec/mutation_argument_conversion_spec.rb` pins the copy semantics.)
+`Makiri::XML`'s data
 takes NUL too (`bridge::xml::verified_data`), as the DOM does, and so does every
 character XML has no `Char` for: the XML mutators hold what the DOM holds, and
 the serializers refuse a tree XML cannot write, deciding from the data as it is

@@ -82,13 +82,11 @@ pub fn parse_document(source: Value, limit: DepthLimit) -> Result<Value, Error> 
      * anything else is transcoded so its content survives. */
     let src = HtmlSource::from_ruby(s)?;
 
-    /* Copy the source out BEFORE allocating the wrapper. Allocating is a GC
-     * point, and a borrowed pointer into a Ruby String's backing store must
-     * not straddle one - nor be held while the GVL is released. A source
-     * already known to be valid UTF-8 lets the parse skip its sanitisation. */
+    /* The source is already a copy, so nothing here borrows from the Ruby
+     * String - which the parse reads with the GVL released. A source already
+     * known to be valid UTF-8 lets the parse skip its sanitisation. */
     let assume_valid = src.known_valid();
-    let owned = src.to_owned_bytes()?;
-    drop(src);
+    let owned = src.into_bytes();
 
     /* Allocate the wrapper with a null handle, so a failed parse still
      * frees cleanly through GC. This entry is defined on

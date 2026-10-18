@@ -125,8 +125,8 @@ fn parse(
     limit: DepthLimit,
 ) -> Result<TransientFragment, Error> {
     let src = HtmlSource::from_ruby(html)?;
-    // SAFETY: the context's element or document is live (the callers below hold
-    // it), and the bytes are read by the parse alone, which runs no Ruby.
+    // SAFETY: the context's element or document is live (the callers below
+    // hold it); the bytes are the source's own copy.
     unsafe { TransientFragment::parse(src.bytes(), src.known_valid(), context, limit) }
         .map_err(|e| fragment_error(e, limit))
 }

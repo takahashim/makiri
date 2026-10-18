@@ -98,7 +98,7 @@ pub fn string_of(v: Value) -> Result<RString, Error> {
         return Ok(s);
     }
     // SAFETY: `v` is a live value; `protect` turns a raising `to_s` into `Err`.
-    let s = protect(|| unsafe { rb_sys::rb_String(v.as_raw()) })?;
+    let s = protect(|| unsafe { super::raw::string(v.as_raw()) })?;
     // SAFETY: `rb_String` returned a live value.
     RString::from_value(unsafe { Value::from_raw(s) })
         .ok_or_else(|| type_error("String() returned a non-String"))
@@ -135,7 +135,7 @@ pub fn check_frozen(v: Value) -> Result<(), Error> {
     }
     // SAFETY: `v` is a live value; `protect` turns the raise into `Err`.
     protect(|| unsafe {
-        rb_sys::rb_check_frozen(v.as_raw());
+        super::raw::check_frozen(v.as_raw());
         rb_sys::Qnil as VALUE
     })
     .map(|_| ())
@@ -147,7 +147,7 @@ pub fn check_frozen(v: Value) -> Result<(), Error> {
 pub fn respond_to(v: Value, method: rb_sys::ID) -> Result<bool, Error> {
     // SAFETY: `v` is a live value; `protect` turns the raise into `Err`.
     let answer = protect(|| unsafe {
-        if rb_sys::rb_respond_to(v.as_raw(), method) != 0 {
+        if super::raw::respond_to(v.as_raw(), method) {
             rb_sys::Qtrue as VALUE
         } else {
             rb_sys::Qfalse as VALUE
@@ -167,7 +167,7 @@ pub fn range_beg_len(range: Value, count: c_long) -> Result<Option<(c_long, c_lo
     let mut len: c_long = 0;
     // SAFETY: `range` is a live Range; `protect` turns the raise into `Err`.
     let answer = protect(|| unsafe {
-        rb_sys::rb_range_beg_len(range.as_raw(), &mut beg, &mut len, count, 0)
+        super::raw::range_beg_len(range.as_raw(), &mut beg, &mut len, count, 0)
     })?;
     Ok((answer == rb_sys::Qtrue as VALUE).then_some((beg, len)))
 }
@@ -277,9 +277,10 @@ pub fn same_value(a: Value, b: Value) -> bool {
 #[inline]
 pub fn intern(name: &str) -> ID {
     // SAFETY: `name` is `name.len()` valid UTF-8 bytes, read for the call;
-    // interning valid UTF-8 does not raise.
+    // interning valid UTF-8 raises only on a symbol table that cannot grow,
+    // and every caller interns at init or from a frame owning nothing.
     unsafe {
-        rb_sys::rb_intern3(
+        super::raw::intern3(
             name.as_ptr() as *const core::ffi::c_char,
             name.len() as core::ffi::c_long,
             rb_sys::rb_utf8_encoding(),
@@ -295,7 +296,7 @@ pub fn intern(name: &str) -> ID {
 #[inline]
 pub unsafe fn funcallv(recv: VALUE, method: ID, args: &[VALUE]) -> VALUE {
     // SAFETY: the caller's contract; `args` is a live slice.
-    unsafe { rb_sys::rb_funcallv(recv, method, args.len() as c_int, args.as_ptr()) }
+    unsafe { super::raw::funcallv(recv, method, args) }
 }
 
 /// `true`/`false` for Ruby's two boolean singletons, and `None` for anything
@@ -384,10 +385,11 @@ pub fn report_external_bytes(delta: isize) {
 /* ---- exception messages ---- */
 
 unsafe extern "C" fn exception_message_thunk(exc: VALUE) -> VALUE {
-    rb_sys::rb_obj_as_string(rb_sys::rb_funcall(
+    /* Only C calls (through `raw`'s thin wrappers): nothing here can panic
+     * into the `rb_protect` frame below. */
+    super::raw::obj_as_string(super::raw::funcall0(
         exc,
-        rb_sys::rb_intern(c"message".as_ptr()),
-        0,
+        super::raw::intern_cstr(c"message".as_ptr()),
     ))
 }
 

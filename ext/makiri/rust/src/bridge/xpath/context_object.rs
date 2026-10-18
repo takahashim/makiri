@@ -258,13 +258,11 @@ impl XPathCtx {
         if self.ctx.is_evaluating() {
             return Err(refused(ContextError::Evaluating, BUSY, FAILED));
         }
-        /* Coerce the value FIRST - to_s allocates, which is a GC point - so no
-         * borrowed name bytes are held across it. The value then gets the
-         * stricter engine-string check, which adds the byte cap on top of the
-         * no-NUL / valid-UTF-8 contract. */
+        /* The value gets the stricter engine-string check, which adds the
+         * byte cap on top of the no-NUL / valid-UTF-8 contract. */
         let sv = crate::bridge::ruby::to_s(value)?;
         let nv = ruby_verified_text(name, "variable name")?;
-        let vv = ruby_try_verified_text(sv, self.ctx.limits().max_string_bytes)?
+        let vv = ruby_try_verified_text(sv, self.ctx.limits().max_string_bytes)
             .map_err(|reason| makiri_error(format!("invalid variable value: {reason}")))?;
         self.ctx
             .register_variable(nv.as_bytes(), vv.as_bytes()) /* copies both */
