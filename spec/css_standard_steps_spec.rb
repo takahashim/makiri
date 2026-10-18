@@ -20,4 +20,12 @@ RSpec.describe "CSS Syntax 3 and Selectors 4 steps the CSS parser follows" do
     expect(specificity("foo|div")).to eq([0, 0, 1])
     expect(specificity(".a" * 512)).to eq([0, 511, 0])
   end
+  # C21: An+B is the whole argument (or followed by "of S" in :nth-child()).
+  it "rejects a token after An+B" do
+    doc = Makiri::HTML("<div><p>t</p><span>s</span><p>u</p></div>")
+    [":nth-child(2n+1of p)", ":nth-child(3 n)", ":nth-of-type(2 of p)"].each do |sel|
+      expect { doc.css(sel) }.to raise_error(Makiri::CSS::SyntaxError)
+    end
+    expect(doc.css(":nth-child(2n+1 of p)").map(&:text)).to eq(["t"])
+  end
 end

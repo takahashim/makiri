@@ -32,6 +32,7 @@ use super::rules::{AtKind, ItemId, Rules};
 use super::token::{Span, Token, TokenType as T};
 use super::tokenizer::Tokenizer;
 use super::Status;
+use crate::compat::{self, Fix};
 use crate::falloc::{Reserve, VecPush};
 use core::ffi::{c_long, c_ulong};
 
@@ -361,7 +362,7 @@ pub fn parse(input: &[u8]) -> Result<Parsed, Status> {
         return Err(p.status);
     }
     p.status = p.run();
-    if p.status == Status::Ok && crate::compat::fixed(crate::compat::Fix::C23) {
+    if p.status == Status::Ok && compat::fixed(Fix::C23) {
         super::specificity::respecify(&mut p.ast);
     }
     match p.status {
@@ -923,7 +924,7 @@ impl<'a> Parser<'a> {
         let (ctx, failed) = (rule.context, rule.failed);
         match rule.end {
             EndCb::ComponentsEnd => self.components_end(failed),
-            EndCb::FunctionEnd => self.function_end(ctx),
+            EndCb::FunctionEnd => self.function_end(ctx, failed),
             EndCb::FunctionForgiving | EndCb::FunctionForgivingRelative => self.forgiving_cb(ctx),
             EndCb::PseudoOfEnd => self.pseudo_of_end(ctx),
             EndCb::ListRulesEnd | EndCb::BlockEnd | EndCb::DeclarationsEnd => {
@@ -1976,14 +1977,28 @@ impl<'a> Parser<'a> {
         Some(Status::Ok)
     }
 
-    /// `lxb_css_selectors_state_function_end`.
-    fn function_end(&mut self, ctx: Ctx) -> Option<Status> {
+    /// `lxb_css_selectors_state_function_end`. A token left after an `An+B`
+    /// fails the rule (`success`), which Lexbor's callback does not read: the
+    /// argument does not match the grammar, so the selector is invalid, as
+    /// when the `An+B` itself is not one (C21).
+    fn function_end(&mut self, ctx: Ctx, failed: bool) -> Option<Status> {
         let last = ctx?;
         if self.sel.list_last.is_none() {
             self.restore_parent(last);
             return self.function_empty(true);
         }
         self.restore_parent(last);
+        if failed && compat::fixed(Fix::C21) {
+            if let Some(selector) = self.ast.list(last).last {
+                let s = self.ast.sel(selector);
+                if s.ty == sel_type::PSEUDO_CLASS_FUNCTION && matches!(s.data, PseudoData::AnbOf(_))
+                {
+                    self.selector_remove(selector);
+                    self.failed_set_parent();
+                    self.sel.err_in_function = true;
+                }
+            }
+        }
         Some(Status::Ok)
     }
 

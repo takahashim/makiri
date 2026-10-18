@@ -273,6 +273,14 @@ CSS Syntax Level 3 と Selectors Level 4（w3c/csswg-drafts の `7b4c69ecaf9289d
 - **移植版**：`selectors/specificity.rs` の `respecify` が、解析の後ですべての complex selector を数え直す。関数の引数の list はそれを持つ list より後に作られるので、後ろから数えれば再帰なしで引数が先に決まる。成分は 9 bit の上限（511）で丸める。差分の許可は、入力に `:` か `|` があるか、1000 byte 以上のとき。
 - **テスト**：`spec/css_standard_steps_spec.rb`。
 
+### C21 An+B の後ろの token
+
+- **分類**：参照実装の未対応（監査の css_selectors F4）。移植版で直した（第 8 段）。
+- **仕様**：`:nth-child()` と `:nth-last-child()` の引数は `An+B [of S]?`、`:nth-of-type()` などは `An+B` だけ。後ろに別の token が続く引数は文法に合わず、セレクタは無効である。
+- **再現**：`:nth-child(2n+1of p)`（`+1of` は dimension token）、`:nth-child(3 n)`、`:nth-of-type(2 of p)`。仕様ではどれも無効。Lexbor は余分な token を読み飛ばして規則を failed にするが、関数の終わりのコールバックがそれを見ないので、`:nth-child(even)`、`:nth-child(3)`、`:nth-of-type(2)` として受け付ける。
+- **移植版**：`selectors/parser.rs` の `function_end` が、An+B を持つ関数の規則が failed で終わったとき、An+B が不正なときと同じくセレクタを無効にする。差分の許可は、入力に `nth-` があるとき。
+- **テスト**：`spec/css_standard_steps_spec.rb`。
+
 ## パーサの外の項目
 
 次の差は HTML パーサではなく、DOM の上の層（CSS マッチャ、XPath の名前照合）にある。

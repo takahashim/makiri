@@ -82,6 +82,8 @@ pub enum Fix {
     /// functional pseudo-class as its most specific argument, and each
     /// component is clamped rather than carried.
     C23,
+    /// A token after an `An+B` makes the selector invalid.
+    C21,
     /// An element carries its start tag's offset when it was created for
     /// that tag's token, and no other (`Node#line`); not a tree change, so
     /// [`explains`] never names it: the harnesses compare the trees without
@@ -162,6 +164,10 @@ pub fn css_explains(input: &[u8]) -> Vec<Fix> {
      * simple selectors to fill a component (511). */
     if input.contains(&b':') || input.contains(&b'|') || input.len() >= 1000 {
         fixes.push(Fix::C23);
+    }
+    /* C21: a token after an `An+B`. */
+    if has(input, b"nth-") {
+        fixes.push(Fix::C21);
     }
     fixes
 }
