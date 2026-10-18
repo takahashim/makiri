@@ -453,4 +453,6 @@ bench（release、同一マシン）でのアリーナ構成と Lexbor 構成の
 
 - **仕様適合の変更（第 7 段）**：差分表の P1〜P3 と、ソース位置の規則（L1）を、一件ずつ独立したコミットで入れた。仕組みは `html/tree/compat.rs` で、仕様に寄せた分岐はそれぞれ `fixed(Fix::…)` を問う。出荷するビルドは常に仕様どおりに進む。比較のテストと `html_diff` fuzz は `as_lexbor` で Lexbor 互換の実行を作って Lexbor と完全に一致させ、仕様どおりの実行との木の差は `explains` の述語（P1 は `frameset` と `template`、P2 は `form` と template、P3 は `frameset` と foreign content と U+FFFD の源）が説明できる入力でだけ許す。L1 は木を変えないので、印の位置が自分の名前の開始タグを指すことを別に確かめる（`offsets_name_their_tags`。これが `</br>` と、はぐれた `<td>` が作る `<tr>` の扱いを見つけた）。既知差分の一覧には、まだ食い違うパーサの欄を足し、移植版の WPT の実行（`wpt_tree_construction_through_the_port`）と、Ruby の runner がビルドに応じて読む一覧（`Makiri.__lexbor_dom?`）を置いた。移植版は、WPT の tree construction で実行する 1,959 件をすべて通す。Lexbor の DOM のビルドは 8 件を既知差分として残す。
 
-次は第 8 段（仕様全体の監査）で、固定した版の HTML Standard の tree construction と tokenizer の各 step と実装の対応表を作り、どのオラクルも覆っていない逸脱を探す。
+- **仕様全体の監査（第 8 段、HTML の部分）**：固定した版の HTML Standard の構文解析の章を六つに分け、step ごとの対応表を `docs/parser_audit/` に置いた（879 行）。どのオラクルも覆っていなかった逸脱が 19 件見つかり、すべて Lexbor の振る舞いを移植版が写したものだった。tokenizer と tree builder の 13 件（P4〜P16、P11 は parse5 との乱択の比較で確かめた）、fragment の解析が context から読むもの 4 件（P17〜P20。`ContextFacts` を足し、既定値を Lexbor の前提にしたので、比較のテストは既定値のまま Lexbor と一致させる）、直列化 2 件（R1、R2）を、第 7 段と同じ手順で一件ずつ入れた。`<template for>` の content patching（U1）は Lexbor にもなく、未実装として残す。
+
+次は第 8 段の残り（CSS：Selectors Level 4 と CSS Syntax Level 3 のうち、セレクタパーサが受け付ける文法と stylesheet パーサの範囲の対応表）で、その後が第 9 段である。
