@@ -3,6 +3,7 @@
 use crate::html::res::names as res;
 use crate::html::res::tree as rt;
 use crate::html::tokenizer::Tokenizer;
+use crate::html::tree::compat::{self, Fix};
 use crate::html::tree::error::TreeErrorId as E;
 use crate::html::tree::{Mode, Tok, TreeBuilder, TreeStatus};
 
@@ -158,19 +159,22 @@ fn input(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mut Tok)
 /// `lxb_html_tree_insertion_mode_in_table_form`.
 fn form(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> bool {
     tree.parse_error(tok, E::Unto);
-    if tree.form.is_some() {
+    let in_template = tree.form_in_template();
+    if !in_template && tree.form.is_some() {
         return true;
     }
-    if tree
-        .open_find_reverse(res::TAG_TEMPLATE, res::NS_HTML)
-        .is_some()
-    {
+    /* Lexbor (and the Standard before whatwg/html#12257) ignores the token
+     * whenever a template is open; the Standard now inserts it there,
+     * without the form element pointer (docs/parser_differences.ja.md P2). */
+    if in_template && !compat::fixed(Fix::P2) {
         return true;
     }
     let Some(el) = insert(tree, tkz, tok) else {
         return true;
     };
-    tree.form = Some(el);
+    if !in_template {
+        tree.form = Some(el);
+    }
     tree.open_pop_until_node(el, true);
     true
 }

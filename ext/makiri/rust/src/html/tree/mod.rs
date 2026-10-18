@@ -31,6 +31,7 @@
 
 mod actions;
 pub mod compat;
+use compat::Fix;
 mod error;
 mod fragment;
 pub mod guard;
@@ -351,6 +352,23 @@ impl<'d> TreeBuilder<'d> {
     #[inline]
     pub(crate) fn node_is(&self, n: NodeId, tag: usize) -> bool {
         self.tag(n) == tag && self.ns(n) == res::NS_HTML
+    }
+
+    /// Whether a form start or end tag sees a template: the HTML Standard's
+    /// "parsing template contents" - a `template` on the stack of open
+    /// elements, or a fragment parsed in a `template` context - where Lexbor
+    /// asks only the first (docs/parser_differences.ja.md P2).
+    pub(crate) fn form_in_template(&self) -> bool {
+        if self
+            .open_find_reverse(res::TAG_TEMPLATE, res::NS_HTML)
+            .is_some()
+        {
+            return true;
+        }
+        compat::fixed(Fix::P2)
+            && self
+                .fragment
+                .is_some_and(|f| self.node_is(f, res::TAG_TEMPLATE))
     }
 
     /// `lxb_html_tree_current_node`.

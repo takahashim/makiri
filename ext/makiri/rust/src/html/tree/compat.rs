@@ -66,13 +66,17 @@ fn has(input: &[u8], word: &[u8]) -> bool {
 /// no fix explains must build the same tree with the fixes on and off.
 #[cfg(any(test, feature = "lexbor-reference"))]
 pub fn explains(input: &[u8], context: Option<&str>) -> Vec<Fix> {
-    let _ = context;
     let mut fixes = Vec::new();
     /* P1: frameset-ok decides only whether a `<frameset>` start tag is taken,
      * and before the implicit `<body>` only a `<template>` in the head sets
      * it to "not ok". */
     if has(input, b"frameset") && has(input, b"template") {
         fixes.push(Fix::P1);
+    }
+    /* P2: a form start tag inside template contents - a template open, or a
+     * fragment parsed in one. */
+    if has(input, b"form") && (has(input, b"template") || context == Some("template")) {
+        fixes.push(Fix::P2);
     }
     fixes
 }

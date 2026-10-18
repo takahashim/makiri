@@ -47,11 +47,11 @@ P で始まる項目は HTML パーサの振る舞いである。
 
 ### P2 form element pointer と「parsing template contents」
 
-- **分類**：参照実装の未対応。
+- **分類**：参照実装の未対応。移植版で直した（第 7 段）。Lexbor の DOM のビルドは旧来の答えのまま。
 - **仕様**：「parsing template contents」は、open elements のスタックに template 要素があるか、fragment の context 要素が template 要素であるときに真になる。"in body" と "in table" の form 開始タグは、この条件で form element pointer を無視し、設定もしない。whatwg/html issue #12257（2026-09-07 close）で入った。
 - **再現**：context が template の fragment で `<form><form>`。仕様では入れ子の form が二つでき、Lexbor は二つ目を捨てる。Lexbor は旧来の「スタックに template 要素があるか」だけを見ており、context の template を数えない。"in table" の form 開始タグも旧来の規則のままで、`<template><table><form></table></template>` の form を捨てる。
-- **テスト**：WPT `template.dat` #117、#120、#124。
-- **入れる段**：7。
+- **テスト**：WPT `template.dat` #117、#120、#124。`spec/html_standard_steps_spec.rb`。
+- **移植版**：`TreeBuilder::form_in_template`（`html/tree/mod.rs`）が「parsing template contents」を判定し、"in body" の form の開始タグと終了タグ、"in table" の form の開始タグがそれを使う。"in table" では、template の中の form を捨てずに、form element pointer なしで挿入する。終了タグも同じ判定に従う（#124 は、template を context にした fragment の `</form>` が form を閉じることを確かめる）。差分の許可は、入力に `form` があり、`template` があるか context が template のとき。
 
 ### P3 foreign content の U+FFFD と frameset-ok
 

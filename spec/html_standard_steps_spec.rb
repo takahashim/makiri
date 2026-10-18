@@ -16,4 +16,17 @@ RSpec.describe "HTML Standard steps the port takes and Lexbor does not" do
     expect(doc.at_xpath("/html/frameset")).not_to be_nil
     expect(doc.at_xpath("/html/body")).to be_nil
   end
+
+  # P2: whatwg/html#12257 - "parsing template contents" decides the form
+  # element pointer: a fragment parsed in a template context counts, and a
+  # form start tag in a table inside a template is kept.
+  it "nests forms in a fragment parsed in a template context" do
+    frag = Makiri::DocumentFragment.parse("<form><form></form></form>", context: "template")
+    expect(frag.to_html).to eq("<form><form></form></form>")
+  end
+
+  it "keeps a form start tag in a table inside a template" do
+    doc = Makiri::HTML("<template><table><form></table></template>")
+    expect(doc.at_css("template").inner_html).to eq("<table><form></form></table>")
+  end
 end

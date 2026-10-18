@@ -253,8 +253,8 @@ fn pre_listing(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &To
 
 /// `lxb_html_tree_insertion_mode_in_body_form`.
 fn form(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> bool {
-    let temp = tree.open_find_reverse(res::TAG_TEMPLATE, res::NS_HTML);
-    if tree.form.is_some() && temp.is_none() {
+    let in_template = tree.form_in_template();
+    if tree.form.is_some() && !in_template {
         tree.parse_error(tok, E::Unto);
         return true;
     }
@@ -262,7 +262,7 @@ fn form(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> b
     let Some(el) = insert(tree, tkz, tok) else {
         return true;
     };
-    if temp.is_none() {
+    if !in_template {
         tree.form = Some(el);
     }
     true
@@ -362,12 +362,10 @@ fn abcdfhlmnopsu_closed(tree: &mut TreeBuilder<'_>, tok: &Tok) -> bool {
     true
 }
 
-/// `lxb_html_tree_insertion_mode_in_body_form_closed`.
+/// `lxb_html_tree_insertion_mode_in_body_form_closed`, with the template
+/// test the start tag uses (`form_in_template`).
 fn form_closed(tree: &mut TreeBuilder<'_>, tok: &Tok) -> bool {
-    if tree
-        .open_find_reverse(res::TAG_TEMPLATE, res::NS_HTML)
-        .is_none()
-    {
+    if !tree.form_in_template() {
         let node = tree.form.take();
         let Some(node) = node else {
             tree.parse_error(tok, E::Unclto);
