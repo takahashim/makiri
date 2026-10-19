@@ -8,7 +8,7 @@
 //! Ruby wrapper may still name it.
 
 use super::handle::{has_ascii_uppercase, HtmlDoc, HtmlNode, NsId, RawNode};
-use super::{Document, DomOom, NodeId, NodeType};
+use super::{Document, DomOom, NodeId, NodeType, Shortcut, ShortcutRule};
 use crate::dom_rules::{self, At, Hierarchy, PreInsertError, Tree, Violation};
 use crate::html::res::names as res;
 
@@ -131,23 +131,6 @@ impl<'d> Insertion<'d> {
         }
         dom_rules::check(&HtmlTree::new(), self.parent, self.node, self.at)
             .map_err(PreInsertError::Rule)
-    }
-}
-
-/// Which attribute shortcut a no-namespace attribute with this local name is.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Shortcut {
-    Id,
-    Class,
-}
-
-impl Shortcut {
-    fn named(local: &[u8]) -> Option<Shortcut> {
-        match local {
-            b"id" => Some(Shortcut::Id),
-            b"class" => Some(Shortcut::Class),
-            _ => None,
-        }
     }
 }
 
@@ -284,7 +267,8 @@ impl<'d> HtmlDocMut<'d> {
             .attr()
             .map(|a| a.dom_local_name());
         let shortcut = local.and_then(Shortcut::named);
-        self.link_attr(el.id(), at, shortcut);
+        self.d
+            .link_attribute(el.id(), at, ShortcutRule::take(shortcut));
         Ok(())
     }
 
@@ -337,7 +321,7 @@ impl<'d> HtmlDocMut<'d> {
         } else {
             None
         };
-        self.link_attr(el, at, shortcut);
+        self.d.link_attribute(el, at, ShortcutRule::take(shortcut));
         Ok(())
     }
 
@@ -365,19 +349,6 @@ impl<'d> HtmlDocMut<'d> {
 
     fn is_html(&self, el: NodeId) -> bool {
         self.d.ns(el) == res::NS_HTML as u32
-    }
-
-    /// Lexbor's `link_attr`: link `at` last, leaving both shortcuts as they
-    /// were, then point `shortcut` (if any) at it.
-    fn link_attr(&mut self, el: NodeId, at: NodeId, shortcut: Option<Shortcut>) {
-        let (id, class) = (self.d.id_attr(el), self.d.class_attr(el));
-        self.d.attr_link(el, at);
-        let (id, class) = match shortcut {
-            Some(Shortcut::Id) => (Some(at), class),
-            Some(Shortcut::Class) => (id, Some(at)),
-            None => (id, class),
-        };
-        self.d.set_shortcuts(el, id, class);
     }
 
     /// A new attribute of `el`'s document named `qname` in `ns`, not linked,

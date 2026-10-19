@@ -137,6 +137,19 @@ pub struct ElementData {
     template: Option<NodeId>,
 }
 
+impl ElementData {
+    /// Which shortcut, if any, points at `attr`.
+    fn shortcut_of(&self, attr: NodeId) -> Option<Shortcut> {
+        if self.id_attr == Some(attr) {
+            Some(Shortcut::Id)
+        } else if self.class_attr == Some(attr) {
+            Some(Shortcut::Class)
+        } else {
+            None
+        }
+    }
+}
+
 /// An attribute's own fields.
 #[derive(Clone, Copy, Debug)]
 pub struct AttrData {
@@ -153,6 +166,49 @@ struct DoctypeData {
     name: Span,
     public_id: Span,
     system_id: Span,
+}
+
+/// Which of an element's attribute shortcuts (Lexbor's `attr_id` /
+/// `attr_class`, which CSS `#id` / `.class` read) an attribute is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Shortcut {
+    Id,
+    Class,
+}
+
+impl Shortcut {
+    /// The shortcut a no-namespace attribute with the DOM local name `local`
+    /// would be.
+    pub fn named(local: &[u8]) -> Option<Shortcut> {
+        match local {
+            b"id" => Some(Shortcut::Id),
+            b"class" => Some(Shortcut::Class),
+            _ => None,
+        }
+    }
+}
+
+/// How [`Document::link_attribute`] moves the shortcuts. Three callers want
+/// three rules, and each names its own here rather than writing the links.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShortcutRule {
+    /// The parser's: `lxb_dom_element_attr_append`, where an attribute whose
+    /// local name is `id` or `class`, in whatever namespace, takes the
+    /// shortcut and the attribute that held it is taken off.
+    Lexbor,
+    /// Leave both shortcuts as they are.
+    Keep,
+    /// Point this shortcut at the attribute, leaving the other: the DOM
+    /// algorithms, which decide it themselves, and a copy, which points
+    /// them where its source's point.
+    Take(Shortcut),
+}
+
+impl ShortcutRule {
+    /// `Take(s)` for `Some(s)`, else `Keep`.
+    pub fn take(s: Option<Shortcut>) -> ShortcutRule {
+        s.map_or(ShortcutRule::Keep, ShortcutRule::Take)
+    }
 }
 
 /// One HTML document.
@@ -683,27 +739,50 @@ impl Document {
         }
     }
 
-    /// Append the attribute `attr` to the element `el`'s list, keeping the
-    /// `id`/`class` shortcuts as Lexbor's `lxb_dom_element_attr_append`
-    /// does for an attribute in no namespace.
-    pub fn attr_append(&mut self, el: NodeId, attr: NodeId) {
+    /// Link the attribute `attr` last in `el`'s list, moving the element's
+    /// `id`/`class` shortcuts by `rule` - the one place they change, apart
+    /// from [`attr_remove`](Self::attr_remove) clearing one it takes off.
+    pub fn link_attribute(&mut self, el: NodeId, attr: NodeId, rule: ShortcutRule) {
+        if let ShortcutRule::Lexbor = rule {
+            return self.attr_append_lexbor(el, attr);
+        }
         if !self.attr_link(el, attr) {
             return;
         }
-        let (local, ns) = (self.local(attr), self.own_ns_if_on(attr, el));
-        if let Some(e) = self.element_mut(el) {
-            if ns == 0 && local == res::ATTR_ID as u32 && e.id_attr.is_none() {
-                e.id_attr = Some(attr);
-            }
-            if ns == 0 && local == res::ATTR_CLASS as u32 && e.class_attr.is_none() {
-                e.class_attr = Some(attr);
+        if let (ShortcutRule::Take(which), Some(e)) = (rule, self.element_mut(el)) {
+            match which {
+                Shortcut::Id => e.id_attr = Some(attr),
+                Shortcut::Class => e.class_attr = Some(attr),
             }
         }
     }
 
+    /// `lxb_dom_element_attr_append`: link `attr` last on `el`, and when its
+    /// local name is `id` or `class` (whatever its namespace) make it the
+    /// element's shortcut, taking off the attribute that held it.
+    fn attr_append_lexbor(&mut self, el: NodeId, attr: NodeId) {
+        let local = self.local(attr) as usize;
+        if local == res::ATTR_ID {
+            if let Some(old) = self.id_attr(el) {
+                self.attr_remove(old);
+            }
+            if let Some(e) = self.element_mut(el) {
+                e.id_attr = Some(attr);
+            }
+        } else if local == res::ATTR_CLASS {
+            if let Some(old) = self.class_attr(el) {
+                self.attr_remove(old);
+            }
+            if let Some(e) = self.element_mut(el) {
+                e.class_attr = Some(attr);
+            }
+        }
+        self.attr_link(el, attr);
+    }
+
     /// Link the attribute `attr` last in `el`'s list, leaving the shortcuts
     /// alone; whether both were what they must be.
-    pub fn attr_link(&mut self, el: NodeId, attr: NodeId) -> bool {
+    fn attr_link(&mut self, el: NodeId, attr: NodeId) -> bool {
         let Some(last) = self.element(el).map(|e| e.last_attr) else {
             return false;
         };
@@ -763,20 +842,6 @@ impl Document {
         }
         if let Some(me) = self.node_mut(attr) {
             me.parent = None;
-        }
-    }
-
-    /// Point the element's `id`/`class` shortcuts at `attr` (or clear them),
-    /// for the DOM attribute algorithms that decide them.
-    pub fn set_shortcuts(
-        &mut self,
-        el: NodeId,
-        id_attr: Option<NodeId>,
-        class_attr: Option<NodeId>,
-    ) {
-        if let Some(e) = self.element_mut(el) {
-            e.id_attr = id_attr;
-            e.class_attr = class_attr;
         }
     }
 

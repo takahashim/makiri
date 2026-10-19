@@ -29,7 +29,7 @@ fn links_and_attributes_keep_their_lists() {
 
     let id = d.names.attr_local_name_append(b"id").expect("id");
     let x = d.create_attr(id, 0, 0, None, b"x").expect("attr");
-    d.attr_append(a, x);
+    d.link_attribute(a, x, ShortcutRule::Take(Shortcut::Id));
     assert_eq!(d.id_attr(a), Some(x));
     assert_eq!(d.parent(x), Some(a));
     assert_eq!(d.attr_value(x), Some(&b"x"[..]));
@@ -71,7 +71,7 @@ fn compaction_keeps_every_span_and_bounds_the_store() {
     d.append_child(el, pi);
     let id = d.names.attr_local_name_append(b"title").expect("name");
     let attr = d.create_attr(id, 0, 0, None, b"attr value").expect("attr");
-    d.attr_append(el, attr);
+    d.link_attribute(el, attr, ShortcutRule::Keep);
 
     let big = vec![b'x'; 1024];
     for i in 0..2000u32 {

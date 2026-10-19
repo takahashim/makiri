@@ -25,7 +25,7 @@
 
 use super::{TreeBuilder, TreeStatus};
 use crate::falloc::VecPush;
-use crate::html::dom::{AttrValue, NodeId, NodeType};
+use crate::html::dom::{AttrValue, NodeId, NodeType, ShortcutRule};
 use crate::html::res::names as res;
 
 impl TreeBuilder<'_> {
@@ -35,7 +35,7 @@ impl TreeBuilder<'_> {
         el: NodeId,
         attr: NodeId,
     ) -> Result<(), TreeStatus> {
-        self.doc.attr_append_lexbor(el, attr);
+        self.doc.link_attribute(el, attr, ShortcutRule::Lexbor);
         /* `lxb_html_option_attr_steps_change`, by tag id alone. */
         if self.tag(el) == res::TAG_OPTION && self.tag(attr) == res::ATTR_SELECTED {
             self.selected.insert(el).map_err(|()| TreeStatus::Oom)?;

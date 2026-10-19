@@ -5,7 +5,6 @@
 
 use super::{AttrData, Document, DomOom, NodeId, NodeType, NsIndex, Payload, PrefixIndex, Span};
 use crate::falloc::Reserve;
-use crate::html::res::names as res;
 
 /// Where a new attribute's value comes from.
 #[derive(Clone, Copy)]
@@ -172,28 +171,5 @@ impl Document {
             }
             _ => {}
         }
-    }
-
-    /// `lxb_dom_element_attr_append`: link `attr` last on `el`, and when its
-    /// local name is `id` or `class` (whatever its namespace) make it the
-    /// element's shortcut, taking off the attribute that held it.
-    pub fn attr_append_lexbor(&mut self, el: NodeId, attr: NodeId) {
-        let local = self.local(attr) as usize;
-        if local == res::ATTR_ID {
-            if let Some(old) = self.id_attr(el) {
-                self.attr_remove(old);
-            }
-            if let Some(e) = self.element_mut(el) {
-                e.id_attr = Some(attr);
-            }
-        } else if local == res::ATTR_CLASS {
-            if let Some(old) = self.class_attr(el) {
-                self.attr_remove(old);
-            }
-            if let Some(e) = self.element_mut(el) {
-                e.class_attr = Some(attr);
-            }
-        }
-        self.attr_link(el, attr);
     }
 }

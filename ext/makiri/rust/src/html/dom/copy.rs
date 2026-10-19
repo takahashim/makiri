@@ -14,7 +14,7 @@
 //! allocation leaves a partial copy that nothing links to, as the arena keeps
 //! every node it ever made.
 
-use super::{Document, DomOom, ElementData, Node, NodeId, NodeType, Payload, Span};
+use super::{Document, DomOom, ElementData, Node, NodeId, NodeType, Payload, ShortcutRule, Span};
 use crate::falloc::VecPush;
 use crate::html::res::names as res;
 
@@ -114,20 +114,14 @@ impl Document {
                 if let Some(x) = self.element_mut(id) {
                     x.written = written;
                 }
-                let (mut new_id, mut new_class) = (None, None);
+                /* The copy's shortcuts point where the source's do. */
                 let mut a = e.first_attr;
                 while let Some(src_attr) = a {
                     let copy = self.copy_one(from, src_attr)?;
-                    self.attr_link(id, copy);
-                    if e.id_attr == Some(src_attr) {
-                        new_id = Some(copy);
-                    }
-                    if e.class_attr == Some(src_attr) {
-                        new_class = Some(copy);
-                    }
+                    let rule = ShortcutRule::take(e.shortcut_of(src_attr));
+                    self.link_attribute(id, copy, rule);
                     a = self.src(from).next_attr(src_attr);
                 }
-                self.set_shortcuts(id, new_id, new_class);
                 id
             }
             Payload::Attr(i) => {

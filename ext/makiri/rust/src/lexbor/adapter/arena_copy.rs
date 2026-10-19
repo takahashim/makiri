@@ -10,7 +10,7 @@
 //! an appended one gets the arena's.
 
 use crate::falloc::VecPush;
-use crate::html::dom::{Document, DomOom, NodeId, NodeType};
+use crate::html::dom::{Document, DomOom, NodeId, NodeType, Shortcut, ShortcutRule};
 use crate::lexbor::adapter::html::{HtmlAttr, HtmlDoc, HtmlNode};
 
 /// The prefix before the first colon of `qname`, when it has one.
@@ -92,18 +92,18 @@ fn copy_one(doc: &mut Document, s: HtmlNode<'_>) -> Result<NodeId, DomOom> {
             let written = el.has_written_name().then_some(qname);
             let id = doc.create_element(tag, ns, prefix, written)?;
             let (id_attr, class_attr) = (el.id_attr(), el.class_attr());
-            let (mut new_id, mut new_class) = (None, None);
             for a in el.attrs() {
                 let made_attr = copy_attr(doc, a)?;
-                doc.attr_append(id, made_attr);
-                if Some(a) == id_attr {
-                    new_id = Some(made_attr);
-                }
-                if Some(a) == class_attr {
-                    new_class = Some(made_attr);
-                }
+                /* The copy's shortcuts point where Lexbor's do. */
+                let rule = if Some(a) == id_attr {
+                    ShortcutRule::Take(Shortcut::Id)
+                } else if Some(a) == class_attr {
+                    ShortcutRule::Take(Shortcut::Class)
+                } else {
+                    ShortcutRule::Keep
+                };
+                doc.link_attribute(id, made_attr, rule);
             }
-            doc.set_shortcuts(id, new_id, new_class);
             id
         }
         kind => {
