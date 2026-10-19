@@ -91,9 +91,9 @@ fn compaction_keeps_every_span_and_bounds_the_store() {
             d.compact().expect("compact");
         }
         assert!(
-            d.bytes.len() < 8 * 1024,
+            d.stored_bytes() < 8 * 1024,
             "the store grew to {}",
-            d.bytes.len()
+            d.stored_bytes()
         );
         assert_eq!(d.data(text), Some(&v[..]));
     }
@@ -103,7 +103,7 @@ fn compaction_keeps_every_span_and_bounds_the_store() {
     assert_eq!(d.attr_value(attr), Some(&b"v1998"[..]));
     d.compact().expect("compact");
     assert_eq!(d.dead_bytes(), 0);
-    assert_eq!(d.bytes.len(), 1024 + 4 + 8 + 6 + 7 + 5);
+    assert_eq!(d.stored_bytes(), 1024 + 4 + 8 + 6 + 7 + 5);
 }
 
 #[test]
@@ -131,16 +131,16 @@ fn text_appended_between_other_stores_grows_the_store_linearly() {
         /* Live bytes are 2n; the rooms and moved copies add a constant
          * factor, where a copy per append made it ~n^2/2 per text. */
         assert!(
-            d.bytes.len() < 12 * n,
+            d.stored_bytes() < 12 * n,
             "{texts} texts: {} bytes",
-            d.bytes.len()
+            d.stored_bytes()
         );
         d.compact().expect("compact");
         for &t in &ts {
             assert_eq!(d.data(t).map(<[u8]>::len), Some(n / texts));
             assert!(d.data(t).expect("data").iter().all(|&c| c == b'a'));
         }
-        assert_eq!(d.bytes.len(), 2 * n);
+        assert_eq!(d.stored_bytes(), 2 * n);
     }
 }
 

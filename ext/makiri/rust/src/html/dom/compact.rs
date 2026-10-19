@@ -24,8 +24,7 @@
 //!   and [`COMPACT_PER_HOLDER`] per span holder, so the walk over every node
 //!   is paid for by bytes stored since the last one.
 
-use super::{Document, DomOom, Payload, Span};
-use crate::falloc::try_vec_with_capacity;
+use super::{Document, DomOom, Payload};
 
 /// Dead bytes, per node and attribute, that make a compaction worth its
 /// walk.
@@ -35,74 +34,46 @@ impl Document {
     /// Bytes of the store no span names.
     #[inline]
     pub fn dead_bytes(&self) -> usize {
-        self.dead
+        self.bytes.dead()
     }
 
     /// Whether [`compact`](Self::compact) pays for itself now.
     pub fn compaction_due(&self) -> bool {
-        let live = self.bytes.len().saturating_sub(self.dead);
+        let dead = self.bytes.dead();
+        let live = self.bytes.len().saturating_sub(dead);
         let holders = self.nodes.len() + self.attrs.len();
-        self.dead > live && self.dead > holders.saturating_mul(COMPACT_PER_HOLDER)
+        dead > live && dead > holders.saturating_mul(COMPACT_PER_HOLDER)
     }
 
     /// Rewrite the byte store with the live bytes only. Nothing changes when
     /// the new store cannot be allocated.
     pub fn compact(&mut self) -> Result<(), DomOom> {
-        let mut live = 0usize;
-        self.each_span(|s| live += s.len as usize);
-        let mut out: Vec<u8> = try_vec_with_capacity(live).ok_or(DomOom)?;
-        /* `out` holds every live byte without growing, so nothing below
-         * allocates, and every span fits a u32 as it did before. */
-        let bytes = &self.bytes;
-        let mut copy = |s: &mut Span| {
-            let start = s.start as usize;
-            let from = bytes.get(start..start + s.len as usize).unwrap_or_default();
-            s.start = out.len() as u32;
-            out.extend_from_slice(from);
-        };
-        for n in &mut self.nodes {
-            match &mut n.payload {
-                Payload::Data(s) => copy(s),
-                Payload::Pi { target, data } => {
-                    copy(target);
-                    copy(data);
+        let Document {
+            nodes,
+            attrs,
+            doctypes,
+            bytes,
+            ..
+        } = self;
+        bytes.compact(|f| {
+            for n in nodes.iter_mut() {
+                match &mut n.payload {
+                    Payload::Data(s) => f(s),
+                    Payload::Pi { target, data } => {
+                        f(target);
+                        f(data);
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
-        }
-        for a in &mut self.attrs {
-            copy(&mut a.value);
-        }
-        for d in &mut self.doctypes {
-            copy(&mut d.name);
-            copy(&mut d.public_id);
-            copy(&mut d.system_id);
-        }
-        self.bytes = out;
-        self.dead = 0;
-        self.growing.clear();
-        Ok(())
-    }
-
-    /// Every span the arena holds.
-    fn each_span(&self, mut f: impl FnMut(Span)) {
-        for n in &self.nodes {
-            match n.payload {
-                Payload::Data(s) => f(s),
-                Payload::Pi { target, data } => {
-                    f(target);
-                    f(data);
-                }
-                _ => {}
+            for a in attrs.iter_mut() {
+                f(&mut a.value);
             }
-        }
-        for a in &self.attrs {
-            f(a.value);
-        }
-        for d in &self.doctypes {
-            f(d.name);
-            f(d.public_id);
-            f(d.system_id);
-        }
+            for d in doctypes.iter_mut() {
+                f(&mut d.name);
+                f(&mut d.public_id);
+                f(&mut d.system_id);
+            }
+        })
     }
 }

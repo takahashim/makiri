@@ -25,6 +25,8 @@ use crate::html::names::Names;
 use crate::html::res::names as res;
 pub use crate::node_type::NodeType;
 use ext_table::ExtTable;
+use store::ByteStore;
+pub use store::Span;
 
 /// An allocation the arena needed failed; the document is as it was.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,13 +66,6 @@ impl NodeId {
     pub fn from_word(w: usize) -> Option<NodeId> {
         u32::try_from(w).ok().and_then(NonZeroU32::new).map(NodeId)
     }
-}
-
-/// `[start, start + len)` of the byte store.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Span {
-    start: u32,
-    len: u32,
 }
 
 /// A node's Lexbor name fields: its local name (an id of the document's
@@ -267,13 +262,8 @@ pub struct Document {
     elements: Vec<ElementData>,
     attrs: Vec<AttrData>,
     doctypes: Vec<DoctypeData>,
-    bytes: Vec<u8>,
-    /// Bytes of `bytes` no span names any more: what replacing a node's data
-    /// left behind (`compact.rs`).
-    dead: usize,
-    /// Texts the tree builder appends to with room reserved after them
-    /// (`build.rs`'s `append_text`).
-    growing: build::Growing,
+    /// Every node's data, attribute value and doctype string (`store.rs`).
+    bytes: ByteStore,
     /// Tag and attribute names, shared with the tokenizer.
     pub names: Names,
     /// Namespace URIs, Lexbor's static ones first.
@@ -334,9 +324,7 @@ impl Document {
             elements: Vec::new(),
             attrs: Vec::new(),
             doctypes: Vec::new(),
-            bytes: Vec::new(),
-            dead: 0,
-            growing: build::Growing::default(),
+            bytes: ByteStore::default(),
             names: Names::default(),
             ns: ExtTable::new(&res::NS_LINKS),
             prefixes: ExtTable::new(&res::NS_PREFIXES),
@@ -400,34 +388,17 @@ impl Document {
     /* ---- storing ---- */
 
     fn store(&mut self, b: &[u8]) -> Result<Span, DomOom> {
-        let start = u32::try_from(self.bytes.len()).map_err(|_| DomOom)?;
-        let len = u32::try_from(b.len()).map_err(|_| DomOom)?;
-        start.checked_add(len).ok_or(DomOom)?;
-        oom!(self.bytes.falloc_reserve(b.len()));
-        self.bytes.extend_from_slice(b);
-        Ok(Span { start, len })
+        self.bytes.store(b)
     }
 
     /// A second copy of the stored bytes `s`.
     fn dup(&mut self, s: Span) -> Result<Span, DomOom> {
-        let start = u32::try_from(self.bytes.len()).map_err(|_| DomOom)?;
-        start.checked_add(s.len).ok_or(DomOom)?;
-        let from = s.start as usize;
-        let to = from + s.len as usize;
-        if to > self.bytes.len() {
-            return Err(DomOom);
-        }
-        oom!(self.bytes.falloc_reserve(s.len as usize));
-        self.bytes.extend_from_within(from..to);
-        Ok(Span { start, len: s.len })
+        self.bytes.dup(s)
     }
 
     #[inline]
     fn bytes_of(&self, s: Span) -> &[u8] {
-        let start = s.start as usize;
-        self.bytes
-            .get(start..start + s.len as usize)
-            .unwrap_or_default()
+        self.bytes.get(s)
     }
 
     fn push(&mut self, kind: NodeType, payload: Payload) -> Result<NodeId, DomOom> {
@@ -911,7 +882,7 @@ impl Document {
     pub fn set_data(&mut self, n: NodeId, data: &[u8]) -> Result<(), DomOom> {
         let span = self.store(data)?;
         let Some(node) = self.node(n).copied() else {
-            self.dead += span.len as usize;
+            self.bytes.release(span);
             return Ok(());
         };
         let old = match node.payload {
@@ -933,11 +904,22 @@ impl Document {
             },
             _ => span,
         };
-        self.dead += old.len as usize;
+        self.bytes.release(old);
         Ok(())
     }
 
     /* ---- reading ---- */
+
+    /// The span of a non-empty Text or CDATA node's data, for an index that
+    /// keeps it (the text index; spans move only when an edit compacts the
+    /// store, after the indexes are dropped).
+    pub fn text_span(&self, n: NodeId) -> Option<Span> {
+        let node = self.node(n)?;
+        match (node.kind, node.payload) {
+            (NodeType::Text | NodeType::CDataSection, Payload::Data(s)) if !s.is_empty() => Some(s),
+            _ => None,
+        }
+    }
 
     #[inline]
     pub fn kind(&self, n: NodeId) -> NodeType {
@@ -1153,6 +1135,7 @@ mod handle;
 mod parsed;
 /// HTML serialization.
 pub mod serialize;
+mod store;
 /// XPath's HTML instance of its `Dom` trait, over the arena.
 pub mod xpath;
 pub use build::AttrValue;
