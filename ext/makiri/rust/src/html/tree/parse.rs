@@ -6,9 +6,8 @@ use super::guard::{DepthLimit, Guard, GuardStop};
 use super::stamp::Stamping;
 use super::{TreeBuilder, TreeError, TreeStatus};
 use crate::falloc::try_box;
-use crate::html::dom::{Document, DomOom, HtmlParsed, NodeId};
+use crate::html::dom::{Document, DomOom, HtmlParsed};
 use crate::html::names::Names;
-use crate::html::res::names as res;
 use crate::html::tokenizer::{Options, Status, Stop, TokenSink, Tokenizer};
 use crate::source_lines::lines_build;
 use crate::utf8_input::sanitize;
@@ -60,27 +59,34 @@ pub fn parse_document(input: &[u8]) -> Result<Parsed, ParseFailure> {
     parse_with(input, Guard::default(), Stamping::default())
 }
 
+/// Tokenize `input` into `tree`, one chunk and then the end, as Lexbor's
+/// parser sets its tokenizer up (`lxb_html_parser_init` keeps duplicate
+/// attributes); `setup` adjusts the tokenizer before the first chunk.
+pub(super) fn drive(
+    tree: &mut TreeBuilder<'_>,
+    input: &[u8],
+    undef_is_foreign: bool,
+    setup: impl FnOnce(&mut Tokenizer<'_, '_>),
+) -> Status {
+    let options = Options {
+        keep_duplicate: true,
+        undef_is_foreign,
+    };
+    let mut tkz = Tokenizer::with_options(input, tree, options);
+    setup(&mut tkz);
+    match tkz.chunk() {
+        Status::Ok => tkz.end(),
+        st => st,
+    }
+}
+
 /// [`parse_document`] under `guard`, stamping as `stamping` says.
 fn parse_with(input: &[u8], guard: Guard, stamping: Stamping) -> Result<Parsed, ParseFailure> {
     let mut doc = Document::new(0).map_err(|DomOom| ParseFailure::Oom)?;
-    /* An HTML document node is in the HTML namespace
-     * (`lxb_dom_document_init`). */
-    doc.set_names(NodeId::DOCUMENT, res::TAG__DOCUMENT, res::NS_HTML as u32, 0);
     let mut tree = TreeBuilder::new(&mut doc);
     tree.guard = guard;
     tree.stamping = stamping;
-    let status = {
-        /* `lxb_html_parser_init` keeps duplicates. */
-        let options = Options {
-            keep_duplicate: true,
-            ..Options::default()
-        };
-        let mut tkz = Tokenizer::with_options(input, &mut tree, options);
-        match tkz.chunk() {
-            Status::Ok => tkz.end(),
-            st => st,
-        }
-    };
+    let status = drive(&mut tree, input, false, |_| {});
     if let Some(stop) = tree.guard.stopped {
         return Err(ParseFailure::Guard(stop));
     }
@@ -134,8 +140,7 @@ pub fn parse_html(
 /// quirks, 2 limited-quirks) - what Lexbor's document constructor makes.
 pub fn empty_html_document(compat_mode: u32) -> Result<Box<HtmlParsed>, HtmlParseError> {
     let mode = u8::try_from(compat_mode).unwrap_or(2);
-    let mut doc = Document::new(mode).map_err(|DomOom| HtmlParseError::Failed)?;
-    doc.set_names(NodeId::DOCUMENT, res::TAG__DOCUMENT, res::NS_HTML as u32, 0);
+    let doc = Document::new(mode).map_err(|DomOom| HtmlParseError::Failed)?;
     try_box(HtmlParsed::new(doc, None)).map_err(|()| HtmlParseError::Failed)
 }
 

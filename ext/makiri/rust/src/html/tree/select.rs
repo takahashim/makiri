@@ -25,7 +25,7 @@
 
 use super::{TreeBuilder, TreeStatus};
 use crate::falloc::VecPush;
-use crate::html::dom::{AttrValue, NodeId, NodeType, ShortcutRule};
+use crate::html::dom::{NodeId, NodeType, ShortcutRule};
 use crate::html::res::names as res;
 
 /// Where [`TreeBuilder::walk_to_select`] ended.
@@ -71,24 +71,7 @@ impl TreeBuilder<'_> {
                     self.selectedness_setting_algorithm(select);
                 }
             }
-            node = match self.doc.first_child(n) {
-                Some(c) => Some(c),
-                None => {
-                    let mut at = n;
-                    loop {
-                        if at == root {
-                            break None;
-                        }
-                        if let Some(next) = self.doc.next(at) {
-                            break Some(next);
-                        }
-                        match self.doc.parent(at) {
-                            Some(p) => at = p,
-                            None => break None,
-                        }
-                    }
-                }
-            };
+            node = self.doc.preorder_next(n, root);
         }
     }
 
@@ -200,11 +183,11 @@ impl TreeBuilder<'_> {
             if self.node_is(n, res::TAG_OPTION) {
                 out.falloc_push(n).map_err(|()| TreeStatus::Oom)?;
             }
-            let mut skip = false;
+            let mut descend = false;
             if self.ns(n) == res::NS_HTML {
                 match self.tag(n) {
                     res::TAG_SELECT | res::TAG_DATALIST | res::TAG_HR | res::TAG_OPTION => {
-                        skip = true
+                        descend = true
                     }
                     res::TAG_OPTGROUP => {
                         let mut up = self.doc.parent(n);
@@ -213,7 +196,7 @@ impl TreeBuilder<'_> {
                                 break;
                             }
                             if self.tag(o) != res::TAG_OPTGROUP && self.ns(o) == res::NS_HTML {
-                                skip = true;
+                                descend = true;
                                 break;
                             }
                             up = self.doc.parent(o);
@@ -222,23 +205,10 @@ impl TreeBuilder<'_> {
                     _ => {}
                 }
             }
-            node = match self.doc.first_child(n) {
-                Some(c) if skip => Some(c),
-                _ => {
-                    let mut at = n;
-                    loop {
-                        if at == root {
-                            break None;
-                        }
-                        if let Some(next) = self.doc.next(at) {
-                            break Some(next);
-                        }
-                        match self.doc.parent(at) {
-                            Some(p) => at = p,
-                            None => break None,
-                        }
-                    }
-                }
+            node = if descend {
+                self.doc.preorder_next(n, root)
+            } else {
+                self.doc.preorder_next_past(n, root)
             };
         }
         Ok(out)
@@ -303,24 +273,7 @@ impl TreeBuilder<'_> {
             if self.node_is(n, res::TAG_SELECTEDCONTENT) {
                 return Some(n);
             }
-            node = match self.doc.first_child(n) {
-                Some(c) => Some(c),
-                None => {
-                    let mut at = n;
-                    loop {
-                        if at == root {
-                            break None;
-                        }
-                        if let Some(next) = self.doc.next(at) {
-                            break Some(next);
-                        }
-                        match self.doc.parent(at) {
-                            Some(p) => at = p,
-                            None => break None,
-                        }
-                    }
-                }
-            };
+            node = self.doc.preorder_next(n, root);
         }
         None
     }
@@ -378,67 +331,30 @@ impl TreeBuilder<'_> {
         Ok(root)
     }
 
-    /// One node of [`clone_deep`](Self::clone_deep), detached.
+    /// One node of [`clone_deep`](Self::clone_deep), detached: anything
+    /// but an element as the arena copies it, an element with its attributes
+    /// made and appended by Lexbor's steps.
     fn clone_one(&mut self, src: NodeId) -> Result<NodeId, TreeStatus> {
-        let d = &mut *self.doc;
-        let (local, ns, prefix) = (d.local(src), d.ns(src), d.prefix(src));
         let oom = |_| TreeStatus::Oom;
-        let made = match d.kind(src) {
-            NodeType::Element => {
-                let el = d
-                    .create_element(local as usize, ns, prefix, None)
-                    .map_err(oom)?;
-                let written = d.written_id(src);
-                d.set_written_id(el, written);
-                let mut a = d.first_attr(src);
-                while let Some(x) = a {
-                    let value = (!self.valueless.contains(x)).then_some(AttrValue::CopyOf(x));
-                    let d = &mut *self.doc;
-                    let attr = d
-                        .create_attr_by_ids(
-                            d.local(x) as usize,
-                            d.ns(x),
-                            d.prefix(x),
-                            d.written_id(x),
-                            value.unwrap_or(AttrValue::Bytes(b"")),
-                        )
-                        .map_err(oom)?;
-                    if value.is_none() {
-                        self.valueless.insert(attr).map_err(|()| TreeStatus::Oom)?;
-                    }
-                    self.append_attr_with_steps(el, attr)?;
-                    a = self.doc.next_attr(x);
-                }
-                el
-            }
-            NodeType::Pi => {
-                let target = crate::falloc::try_to_vec(d.pi_target(src).unwrap_or_default())
-                    .ok_or(TreeStatus::Oom)?;
-                let data = crate::falloc::try_to_vec(d.data(src).unwrap_or_default())
-                    .ok_or(TreeStatus::Oom)?;
-                d.create_pi(&target, &data).map_err(oom)?
-            }
-            NodeType::DocumentType => {
-                let (n, p, s) = d.doctype(src).unwrap_or_default();
-                let (n, p, s) = (
-                    crate::falloc::try_to_vec(n).ok_or(TreeStatus::Oom)?,
-                    crate::falloc::try_to_vec(p).ok_or(TreeStatus::Oom)?,
-                    crate::falloc::try_to_vec(s).ok_or(TreeStatus::Oom)?,
-                );
-                d.create_doctype(&n, &p, &s).map_err(oom)?
-            }
-            kind => {
-                let data = crate::falloc::try_to_vec(d.data(src).unwrap_or_default())
-                    .ok_or(TreeStatus::Oom)?;
-                d.create_data(kind, &data).map_err(oom)?
-            }
-        };
-        let d = &mut *self.doc;
-        d.set_names(made, local as usize, ns, prefix);
-        if let Some(o) = d.source_offset(src) {
-            d.set_source_offset(made, o);
+        if self.doc.kind(src) != NodeType::Element {
+            return self.doc.copy_within(src, false).map_err(oom);
         }
-        Ok(made)
+        let d = &mut *self.doc;
+        let el = d
+            .create_element(d.local(src) as usize, d.ns(src), d.prefix(src), None)
+            .map_err(oom)?;
+        let written = d.written_id(src);
+        d.set_written_id(el, written);
+        if let Some(o) = d.source_offset(src) {
+            d.set_source_offset(el, o);
+        }
+        let mut a = self.doc.first_attr(src);
+        while let Some(x) = a {
+            let attr = self.copy_attr(x, self.doc.prefix(x), None)?;
+            self.append_attr_with_steps(el, attr)?;
+            a = self.doc.next_attr(x);
+        }
+        Ok(el)
     }
 }
 

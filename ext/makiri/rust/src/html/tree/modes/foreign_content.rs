@@ -4,7 +4,6 @@
 use crate::compat::{self, Fix};
 use crate::falloc::try_vec_with_capacity;
 use crate::html::res::names as res;
-use crate::html::res::tree as rt;
 use crate::html::tokenizer::{flags, Tokenizer};
 use crate::html::tree::error::TreeErrorId as E;
 use crate::html::tree::{is_ws, AttrAdjust, OrAbort, Tok, TreeBuilder, TreeStatus};
@@ -18,21 +17,21 @@ fn anything_else_closed(
     tkz: &mut Tokenizer<'_, '_>,
     tok: &mut Tok,
 ) -> bool {
-    if tree.open.is_empty() {
+    if tree.open_len() == 0 {
         return tree.run(tree.mode, tkz, tok);
     }
-    let mut idx = tree.open.len() - 1;
-    if idx > 0 && tree.tag(tree.open[idx]) != tok.tag_id {
+    let mut idx = tree.open_len() - 1;
+    if idx > 0 && tree.tag(tree.open_at(idx)) != tok.tag_id {
         tree.parse_error(tok, E::Unelinopelst);
     }
     while idx != 0 {
-        let node = tree.open[idx];
+        let node = tree.open_at(idx);
         if tree.tag(node) == tok.tag_id {
             tree.open_pop_until_node(node, true);
             return true;
         }
         idx -= 1;
-        if tree.ns(tree.open[idx]) == res::NS_HTML {
+        if tree.ns(tree.open_at(idx)) == res::NS_HTML {
             break;
         }
     }
@@ -72,15 +71,7 @@ fn anything_else(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &
         return true;
     };
     if ns == res::NS_SVG {
-        let fixed = rt::SVG_FIXNAME
-            .get(tree.tag(el))
-            .copied()
-            .unwrap_or_default();
-        if !fixed.is_empty() {
-            /* `lxb_dom_element_qualified_name_set`; Lexbor ignores a
-             * failure. */
-            let _ = tree.doc.set_written(el, Some(fixed));
-        }
+        tree.adjust_svg_tag_name(el);
     }
     if tok.flags & flags::CLOSE_SELF == 0 {
         return true;

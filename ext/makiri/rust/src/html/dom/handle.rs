@@ -300,7 +300,7 @@ impl<'d> HtmlDoc<'d> {
     /// 0 no-quirks, 1 quirks, 2 limited-quirks.
     #[inline]
     pub fn compat_mode(self) -> i64 {
-        i64::from(self.d.compat_mode)
+        i64::from(self.d.compat_mode().lexbor())
     }
 
     /// The tag id `name` is known by (ASCII case-insensitively), or `None`.
@@ -493,25 +493,13 @@ impl<'d> HtmlNode<'d> {
 
     /// The node after this one in a pre-order walk of `root`'s subtree.
     pub fn preorder_next(self, root: Self) -> Option<Self> {
-        if let Some(c) = self.first_child() {
-            return Some(c);
-        }
-        self.preorder_next_past(root)
+        self.at(self.d.preorder_next(self.id, root.id))
     }
 
     /// The node after this one's whole subtree in a pre-order walk of
     /// `root`'s subtree.
     pub fn preorder_next_past(self, root: Self) -> Option<Self> {
-        let mut n = self;
-        loop {
-            if n == root {
-                return None;
-            }
-            if let Some(s) = n.next() {
-                return Some(s);
-            }
-            n = n.parent()?;
-        }
+        self.at(self.d.preorder_next_past(self.id, root.id))
     }
 
     /// This node and every node below it, `<template>` contents included.

@@ -159,7 +159,7 @@ fn template_closed(tree: &mut TreeBuilder<'_>, _tkz: &mut Tokenizer<'_, '_>, tok
     }
     tree.open_pop_until_tag_id(res::TAG_TEMPLATE, res::NS_HTML, true);
     tree.afe_up_to_last_marker();
-    tree.template_modes.pop();
+    tree.template_modes_pop();
     tree.reset_insertion_mode_appropriately();
     true
 }

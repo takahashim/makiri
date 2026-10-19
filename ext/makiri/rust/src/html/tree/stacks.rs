@@ -1,8 +1,12 @@
 //! The stack of open elements (`html/tree/open_elements.c`) and the list of
 //! active formatting elements (`html/tree/active_formatting.c`).
 //!
-//! Lexbor's pop callbacks (`open_pop`) run only the option element's
-//! selectedness, which nothing here models, so a pop is a pop.
+//! The modes read and change the stacks only through these methods; the
+//! adoption agency (`actions.rs`) and the guard read them directly, as
+//! Lexbor's do. A pop runs Lexbor's pop callback ([`pop_steps`]: an option
+//! leaving the stack may be cloned into its select's `<selectedcontent>`).
+//!
+//! [`pop_steps`]: TreeBuilder::pop_steps
 
 use super::{Tok, TreeBuilder, TreeStatus};
 use crate::compat::{self, Fix};
@@ -31,6 +35,19 @@ impl TreeBuilder<'_> {
     #[inline]
     pub(crate) fn open_first(&self) -> Option<NodeId> {
         self.open.first().copied()
+    }
+
+    /// The number of open elements.
+    #[inline]
+    pub(crate) fn open_len(&self) -> usize {
+        self.open.len()
+    }
+
+    /// The open element at `idx`, counted from the bottom; `idx` is below
+    /// [`open_len`](Self::open_len).
+    #[inline]
+    pub(crate) fn open_at(&self, idx: usize) -> NodeId {
+        self.open[idx]
     }
 
     /// `lxb_html_tree_open_elements_get`.
@@ -151,6 +168,18 @@ impl TreeBuilder<'_> {
         self.template_modes
             .falloc_push(mode)
             .map_err(|()| TreeStatus::Oom)
+    }
+
+    /// Pop the current template insertion mode.
+    #[inline]
+    pub(crate) fn template_modes_pop(&mut self) -> Option<super::Mode> {
+        self.template_modes.pop()
+    }
+
+    /// Whether the stack of template insertion modes is not empty.
+    #[inline]
+    pub(crate) fn in_template_mode(&self) -> bool {
+        !self.template_modes.is_empty()
     }
 
     /* ---- active formatting elements ---- */

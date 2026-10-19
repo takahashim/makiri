@@ -228,6 +228,21 @@ impl TreeBuilder<'_> {
         Ok(attr)
     }
 
+    /// `lxb_dom_element_attr_is_exist`: the first attribute of `el` whose
+    /// local name is `name` or whose qualified name as written is.
+    pub(crate) fn attr_is_exist(&self, el: NodeId, name: &[u8]) -> Option<NodeId> {
+        let d = &*self.doc;
+        let id = d.names.attr_id(name);
+        let mut a = d.first_attr(el);
+        while let Some(x) = a {
+            if Some(d.local(x) as usize) == id || d.attr_written(x) == Some(name) {
+                return Some(x);
+            }
+            a = d.next_attr(x);
+        }
+        None
+    }
+
     /// `lxb_dom_element_attr_by_local_name_ns_data`: whether `el` has an
     /// attribute with local name `name` in `ns`, or whose qualified name is
     /// `name`.
@@ -256,21 +271,45 @@ impl TreeBuilder<'_> {
     ) -> Result<(), TreeStatus> {
         let mut a = self.doc.first_attr(from);
         while let Some(x) = a {
-            let mut spec = AttrSpec {
-                local: self.doc.local(x) as usize,
-                ns: self.doc.ns(x) as usize,
-                prefix: 0,
-                written: self.doc.written_id(x),
-            };
-            if let Some(adjust) = adjust {
-                self.adjust(&mut spec, adjust)?;
-            }
-            let value = (!self.valueless.contains(x)).then_some(AttrValue::CopyOf(x));
-            let attr = self.make_attr(spec, value)?;
+            let attr = self.copy_attr(x, 0, adjust)?;
             self.append_attr_with_steps(el, attr)?;
             a = self.doc.next_attr(x);
         }
         Ok(())
+    }
+
+    /// A copy of the attribute `x`, not linked, with the prefix `prefix` and
+    /// adjusted by `adjust`: valueless (Lexbor's NULL) when `x` is.
+    pub(super) fn copy_attr(
+        &mut self,
+        x: NodeId,
+        prefix: u32,
+        adjust: Option<AttrAdjust>,
+    ) -> Result<NodeId, TreeStatus> {
+        let mut spec = AttrSpec {
+            local: self.doc.local(x) as usize,
+            ns: self.doc.ns(x) as usize,
+            prefix,
+            written: self.doc.written_id(x),
+        };
+        if let Some(adjust) = adjust {
+            self.adjust(&mut spec, adjust)?;
+        }
+        let value = (!self.valueless.contains(x)).then_some(AttrValue::CopyOf(x));
+        self.make_attr(spec, value)
+    }
+
+    /// The SVG element `el`'s name as the Standard's table writes it
+    /// (`foreignObject`), set as its qualified name
+    /// (`lxb_dom_element_qualified_name_set`; Lexbor ignores a failure).
+    pub(crate) fn adjust_svg_tag_name(&mut self, el: NodeId) {
+        let fixed = rt::SVG_FIXNAME
+            .get(self.tag(el))
+            .copied()
+            .unwrap_or_default();
+        if !fixed.is_empty() {
+            let _ = self.doc.set_written(el, Some(fixed));
+        }
     }
 
     /// `tree->before_append_attr`: how a foreign element's attributes are
@@ -748,23 +787,15 @@ impl TreeBuilder<'_> {
         if self.ns(n) == res::NS_MATH && self.tag(n) == res::TAG_ANNOTATION_XML {
             /* `lxb_dom_element_attr_is_exist(element, "encoding")`: by local
              * name, or by qualified name. */
-            let d = &*self.doc;
-            let Some(id) = d.names.attr_id(b"encoding") else {
+            let Some(x) = self.attr_is_exist(n, b"encoding") else {
                 return false;
             };
-            let mut a = d.first_attr(n);
-            while let Some(x) = a {
-                if d.local(x) as usize == id || d.attr_written(x) == Some(&b"encoding"[..]) {
-                    if self.valueless.contains(x) {
-                        return false;
-                    }
-                    let v = d.attr_value(x).unwrap_or_default();
-                    return v.eq_ignore_ascii_case(b"text/html")
-                        || v.eq_ignore_ascii_case(b"application/xhtml+xml");
-                }
-                a = d.next_attr(x);
+            if self.valueless.contains(x) {
+                return false;
             }
-            return false;
+            let v = self.doc.attr_value(x).unwrap_or_default();
+            return v.eq_ignore_ascii_case(b"text/html")
+                || v.eq_ignore_ascii_case(b"application/xhtml+xml");
         }
         self.ns(n) == res::NS_SVG
             && matches!(

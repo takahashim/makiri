@@ -1,14 +1,10 @@
 //! The "initial" insertion mode (`insertion_mode/initial.c`).
 
-use crate::html::dom::NodeId;
+use crate::html::dom::{CompatMode, NodeId};
 use crate::html::res::names as res;
 use crate::html::tokenizer::{flags, Tokenizer};
 use crate::html::tree::error::TreeErrorId as E;
 use crate::html::tree::{Mode, OrAbort, Tok, TreeBuilder};
-
-/// `LXB_DOM_DOCUMENT_CMODE_*`.
-const QUIRKS: u8 = 1;
-const LIMITED_QUIRKS: u8 = 2;
 
 /// "The public identifier is set to".
 const PUBLIC_IS: [&[u8]; 3] = [
@@ -129,7 +125,7 @@ pub fn initial(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mu
             }
             /* No iframe srcdoc document is ever parsed here. */
             tree.parse_error(tok, E::Untoininmo);
-            tree.doc.compat_mode = QUIRKS;
+            tree.doc.set_compat_mode(CompatMode::Quirks);
             tree.mode = Mode::BeforeHtml;
             return false;
         }
@@ -167,11 +163,11 @@ fn doctype_check(tree: &mut TreeBuilder<'_>, node: NodeId, tok: &Tok, is_html: b
         || (!system.is_empty() && check_system(system))
         || (!public.is_empty() && system.is_empty() && check_pubsys(public));
     if quirks {
-        tree.doc.compat_mode = QUIRKS;
+        tree.doc.set_compat_mode(CompatMode::Quirks);
         return;
     }
     if !public.is_empty() && check_limq(public, system) {
-        tree.doc.compat_mode = LIMITED_QUIRKS;
+        tree.doc.set_compat_mode(CompatMode::LimitedQuirks);
     }
 }
 

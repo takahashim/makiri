@@ -7,7 +7,7 @@
 
 #![allow(clippy::disallowed_methods)]
 
-use super::{Document, NodeId, NodeType};
+use super::{CompatMode, Document, NodeId, NodeType};
 use crate::conformance::tree::{Attr, Element, Node, Quirks, Tree};
 
 fn tail<'a>(qualified: &'a [u8], local: &'a [u8]) -> &'a [u8] {
@@ -24,10 +24,10 @@ fn prefix_of(q: &[u8]) -> Option<Vec<u8>> {
 
 /// The whole document.
 pub fn read_document(d: &Document) -> Tree {
-    let quirks = match d.compat_mode {
-        0 => Quirks::NoQuirks,
-        1 => Quirks::Quirks,
-        _ => Quirks::LimitedQuirks,
+    let quirks = match d.compat_mode() {
+        CompatMode::NoQuirks => Quirks::NoQuirks,
+        CompatMode::Quirks => Quirks::Quirks,
+        CompatMode::LimitedQuirks => Quirks::LimitedQuirks,
     };
     Tree {
         quirks: Some(quirks),

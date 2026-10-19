@@ -4,6 +4,7 @@
 
 use crate::compat::{self, Fix};
 use crate::falloc::try_vec_with_capacity;
+use crate::html::dom::CompatMode;
 use crate::html::res::names as res;
 use crate::html::res::tree as rt;
 use crate::html::tokenizer::{flags, TextContent, Tokenizer};
@@ -150,7 +151,7 @@ fn frameset(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) 
 
 /// `lxb_html_tree_insertion_mode_in_body_eof`.
 fn eof(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mut Tok) -> bool {
-    if !tree.template_modes.is_empty() {
+    if tree.in_template_mode() {
         return super::in_template::in_template(tree, tkz, tok);
     }
     if !tree.check_scope_element() {
@@ -262,10 +263,10 @@ fn form(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> b
 /// met first.
 fn close_list_item(tree: &mut TreeBuilder<'_>, tok: &Tok, tags: &[usize]) {
     tree.frameset_ok = false;
-    let mut idx = tree.open.len();
+    let mut idx = tree.open_len();
     while idx != 0 {
         idx -= 1;
-        let node = tree.open[idx];
+        let node = tree.open_at(idx);
         if let Some(&tag) = tags.iter().find(|&&t| tree.node_is(node, t)) {
             tree.close_element(tok, tag, Some(tag), E::Unelinopelst);
             break;
@@ -534,7 +535,7 @@ fn amo_closed(tree: &mut TreeBuilder<'_>, tok: &Tok) -> bool {
 /// `lxb_html_tree_insertion_mode_in_body_table`.
 fn table(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> bool {
     /* LXB_DOM_DOCUMENT_CMODE_QUIRKS */
-    if tree.doc.compat_mode != 1 {
+    if tree.doc.compat_mode() != CompatMode::Quirks {
         close_p_in_button_scope(tree, tok);
     }
     if tree.insert_html_element(tkz, tok).or_abort(tree).is_none() {
@@ -587,17 +588,8 @@ fn input(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> 
     tree.acknowledge_token_self_closing(tok);
     /* `lxb_dom_element_attr_is_exist(element, "type")`: by local name or by
      * qualified name; the value compared exactly. */
+    let found = tree.attr_is_exist(el, b"type");
     let d = &*tree.doc;
-    let id = d.names.attr_id(b"type");
-    let mut found = None;
-    let mut at = d.first_attr(el);
-    while let Some(x) = at {
-        if Some(d.local(x) as usize) == id || d.attr_written(x) == Some(&b"type"[..]) {
-            found = Some(x);
-            break;
-        }
-        at = d.next_attr(x);
-    }
     let hidden = match found {
         /* The Standard compares the value ASCII case-insensitively; Lexbor
          * exactly. */
@@ -857,10 +849,10 @@ fn noscript(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) 
 
 /// `lxb_html_tree_insertion_mode_in_body_anything_else_closed`.
 pub fn anything_else_closed(tree: &mut TreeBuilder<'_>, tok: &Tok) -> bool {
-    let mut len = tree.open.len();
+    let mut len = tree.open_len();
     while len != 0 {
         len -= 1;
-        let node = tree.open[len];
+        let node = tree.open_at(len);
         if tree.node_is(node, tok.tag_id) {
             tree.generate_implied_end_tags(tok.tag_id, res::NS_HTML);
             if Some(node) != tree.current_node() {

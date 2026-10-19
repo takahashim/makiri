@@ -211,6 +211,34 @@ impl ShortcutRule {
     }
 }
 
+/// A document's mode (the DOM's "no-quirks", "quirks", "limited-quirks").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CompatMode {
+    NoQuirks,
+    Quirks,
+    LimitedQuirks,
+}
+
+impl CompatMode {
+    /// From Lexbor's `compat_mode` number: 0, 1, 2 (and anything past 2).
+    pub const fn from_lexbor(n: u8) -> CompatMode {
+        match n {
+            0 => CompatMode::NoQuirks,
+            1 => CompatMode::Quirks,
+            _ => CompatMode::LimitedQuirks,
+        }
+    }
+
+    /// As Lexbor's `compat_mode` number, which the Ruby API reports.
+    pub const fn lexbor(self) -> u8 {
+        match self {
+            CompatMode::NoQuirks => 0,
+            CompatMode::Quirks => 1,
+            CompatMode::LimitedQuirks => 2,
+        }
+    }
+}
+
 /// One HTML document.
 pub struct Document {
     nodes: Vec<Node>,
@@ -232,8 +260,7 @@ pub struct Document {
     prefixes: Vec<Vec<u8>>,
     /// The bytes of `ns` and `prefixes`' entries: their growth in O(1).
     ns_bytes: usize,
-    /// Lexbor's `compat_mode`: 0 no-quirks, 1 quirks, 2 limited-quirks.
-    pub compat_mode: u8,
+    compat_mode: CompatMode,
     /// This document's process-unique stamp (never 0), carried in every
     /// [`RawNode`] it hands out, so a node word names one node of one
     /// document - as a Lexbor node pointer does.
@@ -252,13 +279,27 @@ macro_rules! oom {
 }
 
 impl Document {
-    /// An empty document in `compat_mode`.
+    /// The document's mode.
+    #[inline]
+    pub fn compat_mode(&self) -> CompatMode {
+        self.compat_mode
+    }
+
+    /// Set the document's mode (the tree builder's, from a DOCTYPE).
+    #[inline]
+    pub fn set_compat_mode(&mut self, mode: CompatMode) {
+        self.compat_mode = mode;
+    }
+
+    /// An empty document in Lexbor's `compat_mode` number.
     pub fn new(compat_mode: u8) -> Result<Document, DomOom> {
         let mut nodes: Vec<Node> = try_vec_with_capacity(16).ok_or(DomOom)?;
         nodes.push(Node {
             kind: NodeType::Document,
             local: res::TAG__DOCUMENT as u32,
-            ns: 0,
+            /* An HTML document node is in the HTML namespace
+             * (`lxb_dom_document_init`). */
+            ns: res::NS_HTML as u32,
             prefix: 0,
             parent: None,
             first_child: None,
@@ -280,7 +321,7 @@ impl Document {
             ns: Vec::new(),
             prefixes: Vec::new(),
             ns_bytes: 0,
-            compat_mode: compat_mode.min(2),
+            compat_mode: CompatMode::from_lexbor(compat_mode),
             stamp: {
                 use core::sync::atomic::Ordering::Relaxed;
                 let s = DOC_STAMP.fetch_add(1, Relaxed);
@@ -888,6 +929,26 @@ impl Document {
     pub fn parent(&self, n: NodeId) -> Option<NodeId> {
         self.node(n)?.parent
     }
+    /// The node after `n` in a pre-order walk of `root`'s subtree.
+    pub fn preorder_next(&self, n: NodeId, root: NodeId) -> Option<NodeId> {
+        self.first_child(n)
+            .or_else(|| self.preorder_next_past(n, root))
+    }
+
+    /// The node after `n`'s whole subtree in a pre-order walk of `root`'s
+    /// subtree.
+    pub fn preorder_next_past(&self, mut n: NodeId, root: NodeId) -> Option<NodeId> {
+        loop {
+            if n == root {
+                return None;
+            }
+            if let Some(s) = self.next(n) {
+                return Some(s);
+            }
+            n = self.parent(n)?;
+        }
+    }
+
     #[inline]
     pub fn first_child(&self, n: NodeId) -> Option<NodeId> {
         self.node(n)?.first_child
