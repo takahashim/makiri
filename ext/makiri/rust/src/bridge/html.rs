@@ -151,8 +151,9 @@ pub(in crate::bridge) fn html_node_key(rb_node: Value) -> Result<(HtmlNodeKey, V
     }
     let nd: &NodeData = HTML_NODE_TYPE.get(&rb_node)?;
     let key = nd.node.html().ok_or_else(uninitialized)?;
-    // SAFETY: `nd.document` is the live Document the wrapper marks.
-    let document = unsafe { value(nd.document) };
+    // SAFETY: the field of the wrapper `rb_node`, whose mark marks it; the
+    // argument keeps the wrapper reachable.
+    let document = unsafe { nd.document.get() };
     Ok((key, document))
 }
 

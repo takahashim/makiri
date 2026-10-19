@@ -23,6 +23,62 @@ use rb_sys::{rb_data_type_t, VALUE};
 
 use super::ruby::protect;
 
+/* ---- a VALUE inside a wrapped object ---- */
+
+/// A Ruby value stored inside a wrapped object's data, which that object's
+/// [`Hooks::mark`] marks.
+///
+/// The rule it carries: a VALUE may go into a native struct only once the
+/// struct is wrapped. Before the wrap no mark sees the struct, so a GC in the
+/// wrap's own allocation could free the value or compaction move it from
+/// under the stored copy (the `DocData.errors` bug). A `Held` holding a value
+/// can only be made with a [`Store`], and a `Store` exists only where the
+/// owner is already a Ruby object: in [`TypedType::wrap`]'s store step and
+/// in [`TypedType::with_known`]. A struct is built holding [`Held::EMPTY`].
+///
+/// What the type enforces is the ORDER: the value goes in after the wrap. It
+/// cannot enforce what comes after - that the `Held` stays where its owner's
+/// mark finds it. Safe code holding a `Store` could put one into a `Vec` no
+/// mark sees, or move it out of its field, and the owner's `Hooks::mark` could
+/// forget it; any of those leaves a VALUE nothing keeps alive. So reading one
+/// back ([`get`](Self::get)) is `unsafe`, with that as its contract, and the
+/// type is visible to the bridge alone. Neither `Copy` nor `Clone`, so it is
+/// read through its owner rather than carried off.
+#[repr(transparent)]
+pub(in crate::bridge) struct Held(VALUE);
+
+impl Held {
+    /// What a struct is built with: `Qfalse`, which a mark ignores.
+    pub(in crate::bridge) const EMPTY: Held = Held(rb_sys::Qfalse as VALUE);
+
+    /// The value.
+    ///
+    /// # Safety
+    /// `self` is a field of a live wrapped object whose [`Hooks::mark`] marks
+    /// it, and the caller keeps that object reachable for the call (a method
+    /// argument, a VALUE on the stack). Then the value is marked, so live -
+    /// pinned when marked with [`Marker::mark`], and current after any move
+    /// when marked movable, since [`Hooks::compact`] relocates it.
+    #[inline]
+    pub(in crate::bridge) unsafe fn get(&self) -> Value {
+        // SAFETY: the caller's contract - a marked value of a reachable object.
+        unsafe { super::ruby::value(self.0) }
+    }
+}
+
+/// Proof that the object a value is stored into is already wrapped - so its
+/// mark sees the value from the moment it is stored. See [`Held`].
+pub(in crate::bridge) struct Store(());
+
+impl Store {
+    /// `v`, as a value the wrapped object holds. Store the result in that
+    /// object's data, where its mark finds it - see [`Held`].
+    #[inline]
+    pub(in crate::bridge) fn hold(&self, v: Value) -> Held {
+        Held(v.as_raw())
+    }
+}
+
 /// The mark phase's handle, for [`Hooks::mark`].
 pub struct Marker(());
 
@@ -33,9 +89,9 @@ impl Marker {
     /// [`Marker::mark_movable`] instead, so 50,000 pinned objects do not stop
     /// compaction from doing its job.
     #[inline]
-    pub fn mark(&self, v: VALUE) {
+    pub(in crate::bridge) fn mark(&self, v: &Held) {
         // SAFETY: called from Ruby's mark phase, with the GVL held.
-        unsafe { rb_sys::rb_gc_mark(v) };
+        unsafe { rb_sys::rb_gc_mark(v.0) };
     }
 
     /// Mark a stored `VALUE` that compaction MAY move.
@@ -44,9 +100,9 @@ impl Marker {
     /// marked movable must be re-read there, or the stored copy is left pointing
     /// at where the object used to be.
     #[inline]
-    pub fn mark_movable(&self, v: VALUE) {
+    pub(in crate::bridge) fn mark_movable(&self, v: &Held) {
         // SAFETY: as `mark`; `Hooks::compact` updates every VALUE marked here.
-        unsafe { rb_sys::rb_gc_mark_movable(v) };
+        unsafe { rb_sys::rb_gc_mark_movable(v.0) };
     }
 }
 
@@ -54,12 +110,13 @@ impl Marker {
 pub struct Relocator(());
 
 impl Relocator {
-    /// Where `v` is now, after compaction may have moved it.
+    /// Point `v` at where its object is now, after compaction may have
+    /// moved it.
     #[inline]
-    pub fn location(&self, v: VALUE) -> VALUE {
+    pub(in crate::bridge) fn relocate(&self, v: &mut Held) {
         // SAFETY: called from Ruby's compaction phase, with the GVL held, on a
         // VALUE this object marked movable.
-        unsafe { rb_sys::rb_gc_location(v) }
+        v.0 = unsafe { rb_sys::rb_gc_location(v.0) };
     }
 }
 
@@ -195,17 +252,33 @@ impl<T: Hooks> TypedType<T> {
         typed_data_known(v, &self.raw) as *mut T
     }
 
+    /// Run `f` over the data of `v`, an object whose type the caller
+    /// established, with a [`Store`]: `v` is wrapped, so a value stored into
+    /// its data is marked from the moment it is stored.
+    ///
+    /// # Safety
+    /// Under the GVL, with no other borrow of `v`'s data live for the call,
+    /// and `f` runs no Ruby that could reach `v`'s data.
+    pub(in crate::bridge) unsafe fn with_known<R>(
+        &'static self,
+        v: Value,
+        f: impl FnOnce(&mut T, &Store) -> R,
+    ) -> R {
+        // SAFETY: the caller's contract; `known_ptr` asserts the type.
+        unsafe { f(&mut *self.known_ptr(v), &Store(())) }
+    }
+
     /// Allocate Ruby memory for a `T`, `build` it there, wrap it as a `klass`
     /// object of this type, and only then let `store` write the VALUEs it
     /// holds - see [`wrap_built`] for why that order.
     ///
     /// # Safety
     /// Under the GVL; see [`wrap_built`] for what `build` may return.
-    pub unsafe fn wrap(
+    pub(in crate::bridge) unsafe fn wrap(
         &'static self,
         klass: VALUE,
         build: impl FnOnce() -> T,
-        store: impl FnOnce(&mut T),
+        store: impl FnOnce(&mut T, &Store),
     ) -> VALUE {
         wrap_built::<T>(klass, self.raw.as_ptr(), build, store)
     }
@@ -322,20 +395,21 @@ fn typed_data_known(v: Value, ty: &'static DataType) -> *mut c_void {
 ///
 /// # Safety
 /// Under the GVL. `build` returns a `T` that owns nothing needing a drop and
-/// holds no VALUE but `Qfalse`; `ty` must be `T`'s type (its free callback
+/// holds no VALUE but `Qfalse` (all a `Held` can hold before a `Store`); `ty` must be `T`'s type (its free callback
 /// drops a `T` and returns the memory to `ruby_xfree`).
 unsafe fn wrap_built<T>(
     klass: VALUE,
     ty: *const rb_data_type_t,
     build: impl FnOnce() -> T,
-    store: impl FnOnce(&mut T),
+    store: impl FnOnce(&mut T, &Store),
 ) -> VALUE {
     /* `ruby_xmalloc` is malloc-aligned; nothing wrapped asks for more. */
     const { assert!(core::mem::align_of::<T>() <= 16) };
     let p = super::raw::xmalloc(core::mem::size_of::<T>()) as *mut T;
     p.write(build());
     let obj = super::raw::typed_object_wrap(klass, p as *mut c_void, ty);
-    store(&mut *p);
+    /* Wrapped: from here the mark sees what `store` puts in. */
+    store(&mut *p, &Store(()));
     obj
 }
 

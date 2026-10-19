@@ -22,7 +22,7 @@ use crate::bridge::ruby::makiri_error;
 use magnus::{prelude::*, Error, Value};
 
 use crate::bridge::html::with_arg_node;
-use crate::bridge::ruby::{check_frozen, is_kind_of, value};
+use crate::bridge::ruby::{check_frozen, is_kind_of};
 use crate::bridge::string::{ruby_verified_text, RubyText};
 use crate::bridge::wrapper::*;
 use crate::bridge::wrapper::{
@@ -182,8 +182,9 @@ pub fn xml_node_document(rb_self: Value) -> Result<Value, Error> {
         return Ok(rb_self);
     }
     let nd: &NodeData = XML_NODE_TYPE.get(&rb_self)?;
-    // SAFETY: `nd.document` is the live Document the wrapper marks.
-    Ok(unsafe { value(nd.document) })
+    // SAFETY: the field of the wrapper `rb_self`, whose mark marks it; the
+    // argument keeps the wrapper reachable.
+    Ok(unsafe { nd.document.get() })
 }
 
 /* ------------------------------------------------------------------ *
