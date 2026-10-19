@@ -182,7 +182,9 @@ pub fn xml_node_document(rb_self: Value) -> Result<Value, Error> {
         return Ok(rb_self);
     }
     let nd: &NodeData = XML_NODE_TYPE.get(&rb_self)?;
-    Ok(nd.document.get())
+    // SAFETY: the field of the wrapper `rb_self`, whose mark marks it; the
+    // argument keeps the wrapper reachable.
+    Ok(unsafe { nd.document.get() })
 }
 
 /* ------------------------------------------------------------------ *

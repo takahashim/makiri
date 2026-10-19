@@ -162,7 +162,7 @@ impl NodeHandle {
 pub struct NodeData {
     /// Representation-opaque; read it only through a kind-checked accessor.
     pub node: NodeHandle,
-    pub document: Held,
+    pub(in crate::bridge) document: Held,
 }
 
 /* Measured: `NodeHandle` fits two words (the `NonNull`/`NonZero` niches carry
@@ -266,7 +266,9 @@ struct NodeCache {
 
 impl NodeCache {
     fn get(&self, token: usize) -> Option<Value> {
-        self.map.get(&token).map(Held::get)
+        // SAFETY: an entry of this cache, which the Document's mark marks
+        // (movable, relocated by `compact`); the caller holds the Document.
+        self.map.get(&token).map(|v| unsafe { v.get() })
     }
 
     /// Room for one more wrapper, so the [`NodeCache::insert`] after it
@@ -419,7 +421,9 @@ impl DocData {
 
     /// The Document's parse-warning Array.
     pub fn errors(&self) -> Value {
-        self.errors.get()
+        // SAFETY: a field of this Document's data, which its mark marks; the
+        // caller reached it through the Document, which it holds.
+        unsafe { self.errors.get() }
     }
 
     /// Whether the content has grown enough since the last report to measure
@@ -966,7 +970,9 @@ pub fn keepalive_document(rb_node: Value) -> Result<Value, Error> {
         return Ok(rb_node);
     }
     let nd: &NodeData = NODE_DATA_TYPE.get(&rb_node)?;
-    Ok(nd.document.get())
+    // SAFETY: the field of the wrapper `rb_node`, whose mark marks it; the
+    // argument keeps the wrapper reachable.
+    Ok(unsafe { nd.document.get() })
 }
 
 /* ---- the edit versions ---- */

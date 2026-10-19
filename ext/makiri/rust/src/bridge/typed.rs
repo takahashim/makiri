@@ -36,38 +36,45 @@ use super::ruby::protect;
 /// owner is already a Ruby object: in [`TypedType::wrap`]'s store step and
 /// in [`TypedType::with_known`]. A struct is built holding [`Held::EMPTY`].
 ///
-/// Neither `Copy` nor `Clone`, so the value is read through the owner
-/// ([`get`](Self::get)) and cannot be carried off past it.
+/// What the type enforces is the ORDER: the value goes in after the wrap. It
+/// cannot enforce what comes after - that the `Held` stays where its owner's
+/// mark finds it. Safe code holding a `Store` could put one into a `Vec` no
+/// mark sees, or move it out of its field, and the owner's `Hooks::mark` could
+/// forget it; any of those leaves a VALUE nothing keeps alive. So reading one
+/// back ([`get`](Self::get)) is `unsafe`, with that as its contract, and the
+/// type is visible to the bridge alone. Neither `Copy` nor `Clone`, so it is
+/// read through its owner rather than carried off.
 #[repr(transparent)]
-pub struct Held(VALUE);
+pub(in crate::bridge) struct Held(VALUE);
 
 impl Held {
     /// What a struct is built with: `Qfalse`, which a mark ignores.
-    pub const EMPTY: Held = Held(rb_sys::Qfalse as VALUE);
+    pub(in crate::bridge) const EMPTY: Held = Held(rb_sys::Qfalse as VALUE);
 
-    /// The value. Live for as long as `&self` is borrowed: the `Held` sits in
-    /// a wrapped object that marks it, and the caller holds that object.
+    /// The value.
+    ///
+    /// # Safety
+    /// `self` is a field of a live wrapped object whose [`Hooks::mark`] marks
+    /// it, and the caller keeps that object reachable for the call (a method
+    /// argument, a VALUE on the stack). Then the value is marked, so live -
+    /// pinned when marked with [`Marker::mark`], and current after any move
+    /// when marked movable, since [`Hooks::compact`] relocates it.
     #[inline]
-    pub fn get(&self) -> Value {
-        // SAFETY: see above - a marked value of a reachable object.
+    pub(in crate::bridge) unsafe fn get(&self) -> Value {
+        // SAFETY: the caller's contract - a marked value of a reachable object.
         unsafe { super::ruby::value(self.0) }
-    }
-
-    /// The raw value, for an identity comparison.
-    #[inline]
-    pub fn raw(&self) -> VALUE {
-        self.0
     }
 }
 
 /// Proof that the object a value is stored into is already wrapped - so its
 /// mark sees the value from the moment it is stored. See [`Held`].
-pub struct Store(());
+pub(in crate::bridge) struct Store(());
 
 impl Store {
-    /// `v`, as a value the wrapped object holds.
+    /// `v`, as a value the wrapped object holds. Store the result in that
+    /// object's data, where its mark finds it - see [`Held`].
     #[inline]
-    pub fn hold(&self, v: Value) -> Held {
+    pub(in crate::bridge) fn hold(&self, v: Value) -> Held {
         Held(v.as_raw())
     }
 }
@@ -82,7 +89,7 @@ impl Marker {
     /// [`Marker::mark_movable`] instead, so 50,000 pinned objects do not stop
     /// compaction from doing its job.
     #[inline]
-    pub fn mark(&self, v: &Held) {
+    pub(in crate::bridge) fn mark(&self, v: &Held) {
         // SAFETY: called from Ruby's mark phase, with the GVL held.
         unsafe { rb_sys::rb_gc_mark(v.0) };
     }
@@ -93,7 +100,7 @@ impl Marker {
     /// marked movable must be re-read there, or the stored copy is left pointing
     /// at where the object used to be.
     #[inline]
-    pub fn mark_movable(&self, v: &Held) {
+    pub(in crate::bridge) fn mark_movable(&self, v: &Held) {
         // SAFETY: as `mark`; `Hooks::compact` updates every VALUE marked here.
         unsafe { rb_sys::rb_gc_mark_movable(v.0) };
     }
@@ -106,7 +113,7 @@ impl Relocator {
     /// Point `v` at where its object is now, after compaction may have
     /// moved it.
     #[inline]
-    pub fn relocate(&self, v: &mut Held) {
+    pub(in crate::bridge) fn relocate(&self, v: &mut Held) {
         // SAFETY: called from Ruby's compaction phase, with the GVL held, on a
         // VALUE this object marked movable.
         v.0 = unsafe { rb_sys::rb_gc_location(v.0) };
@@ -252,7 +259,11 @@ impl<T: Hooks> TypedType<T> {
     /// # Safety
     /// Under the GVL, with no other borrow of `v`'s data live for the call,
     /// and `f` runs no Ruby that could reach `v`'s data.
-    pub unsafe fn with_known<R>(&'static self, v: Value, f: impl FnOnce(&mut T, &Store) -> R) -> R {
+    pub(in crate::bridge) unsafe fn with_known<R>(
+        &'static self,
+        v: Value,
+        f: impl FnOnce(&mut T, &Store) -> R,
+    ) -> R {
         // SAFETY: the caller's contract; `known_ptr` asserts the type.
         unsafe { f(&mut *self.known_ptr(v), &Store(())) }
     }
@@ -263,7 +274,7 @@ impl<T: Hooks> TypedType<T> {
     ///
     /// # Safety
     /// Under the GVL; see [`wrap_built`] for what `build` may return.
-    pub unsafe fn wrap(
+    pub(in crate::bridge) unsafe fn wrap(
         &'static self,
         klass: VALUE,
         build: impl FnOnce() -> T,
