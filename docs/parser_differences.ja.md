@@ -462,6 +462,8 @@ CSS Syntax Level 3 と Selectors Level 4（w3c/csswg-drafts の `7b4c69ecaf9289d
 - **M3 属性名の大文字小文字**：SVG と MathML の要素では、CSS の属性セレクタの属性名を大文字小文字を区別して照合する。Lexbor はすべての要素で畳む。HTML Standard の規則に従う。
 - **M4 type セレクタの大文字小文字**：HTML 以外の要素では、type セレクタを書かれたとおりに localName と照合する（`fegaussianblur` は SVG の `feGaussianBlur` に当たらない）。Lexbor はすべての要素で畳む。HTML Standard の規則に従う。
 - **M5 `:nth-child(... of S)`**：S にコンマ区切りのリスト、結合子、擬似クラスがある場合を CSS の定義で数える。Lexbor はこれらを正しく数えない。
+- **M6 type セレクタの名前空間の接頭辞**：HTML の CSS は接頭辞を解決せず、`svg|path`、`|path`、`path` はどれも SVG の `path` に当たる。`css(selector, ns)` の Hash は受け取るが使わない。Lexbor の matcher の規則を保った意図した互換差。仕様では接頭辞は宣言した名前空間に解決し、`|E` は名前空間のない要素だけに当たる。名前空間を区別するときは XPath を使う。
+- **M7 属性セレクタの名前空間の接頭辞**：HTML の CSS は属性セレクタの接頭辞も解決しない。名前は DOM の `getAttribute` と同じく修飾名で引くので、`[xlink|href]`、`[foo|href]`、`[|href]`、`[href]` はどれも修飾名が `href` の属性に当たり、SVG の `xlink:href` には当たらない。`xlink:href` には修飾名をエスケープして書いた `[xlink\:href]` が当たる。接頭辞を無視するのは Lexbor の規則を保った意図した互換差（修飾名で引くのは Lexbor と異なり、`css_match` のモジュール doc にある）。仕様では `[xlink|href]` は XLink 名前空間の `href` に当たり、宣言していない接頭辞はセレクタを不正にする。XPath では `//@xlink:href` で届く。`[*|a]` は C27。
 
 ## オラクル同士の食い違い
 

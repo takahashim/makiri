@@ -47,11 +47,12 @@
   a prefixed HTML, SVG or MathML element is written by its local name (R2).
 * `Node#line` of a void element fostered out of a table is its line, not nil
   (L1).
+* A `:has()` inside a `:has()` (`div:has(p:has(a))`) raises
+  `Makiri::CSS::SyntaxError`, as Selectors 4 says; it used to match (C20).
 * CSS selectors follow Selectors 4 where Lexbor's parser did not:
   * an empty `:is()` or `:where()` is valid and matches nothing (C18);
-  * `:has()` is unforgiving - one invalid argument makes the selector
-    invalid (C19) - and a `:has()` inside a `:has()` raises
-    `Makiri::CSS::SyntaxError` (C20);
+  * `:has()` is unforgiving: one invalid argument makes the selector
+    invalid (C19);
   * a token after An+B (`:nth-child(2n+1of p)`) makes the selector invalid
     (C21); an `n-` digit run or an An+B value too large for 64 bits
     saturates instead of failing (C22, S2);
@@ -70,10 +71,14 @@
   `:not()` / `:has()` take their most specific argument, a namespaced type
   selector counts once, and no component carries into the next (C23-C26).
 * `parse_stylesheet` finds `!important` on the value's top-level tokens
-  (`! important`, but not inside brackets) (C12, C13), decides a declaration
-  from a nested rule by the tokens ahead (C9, C14), drops a qualified rule with
-  no block and a top-level `--name:` prelude (C10, C11), and keeps a newline
-  after a backslash in a value (C15).
+  (`! important`, but not inside brackets) (C12, C13), drops a qualified rule
+  with no block and a top-level `--name:` prelude (C10, C11), and keeps a
+  newline after a backslash in a value (C15).
+* `parse_stylesheet` keeps a rule such as `a:hover { ... }` inside `@media`
+  or `@supports`: a type selector followed by a pseudo-class was read as a
+  declaration, which swallowed that rule and every rule after it in the block
+  (C9). A comment between a declaration's name and its `:` no longer drops
+  that declaration and the ones after it (C14).
 
 ### Removed
 
