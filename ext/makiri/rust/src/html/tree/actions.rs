@@ -1,0 +1,1005 @@
+//! The tree builder's actions: `html/tree.c` past the dispatcher - the
+//! appropriate place for inserting a node, creating and inserting elements,
+//! character data, comments and processing instructions, the attribute
+//! adjustments, implied end tags, resetting the insertion mode, the scope
+//! tests, and the adoption agency algorithm.
+
+use super::error::TreeErrorId as E;
+use super::{AttrAdjust, Ipos, Mode, Tok, TreeBuilder, TreeStatus};
+use crate::compat::{self, Fix};
+use crate::html::dom::{AttrValue, DomOom, NodeId, NodeType};
+use crate::html::res::names as res;
+use crate::html::res::tree as rt;
+use crate::html::tokenizer::{flags, Tokenizer};
+use crate::html::tokenizer::{rawtext_before, rcdata_before};
+
+/// An attribute about to be made: Lexbor's name fields, which the
+/// adjustments rewrite before the attribute is appended.
+#[derive(Clone, Copy)]
+struct AttrSpec {
+    local: usize,
+    ns: usize,
+    prefix: u32,
+    written: u32,
+}
+
+#[inline]
+fn oom(_: DomOom) -> TreeStatus {
+    TreeStatus::Oom
+}
+
+/// `lxb_html_tag_is_category`.
+#[inline]
+pub(crate) fn is_category(tag: usize, ns: usize, cat: u8) -> bool {
+    match rt::TAG_CATS.get(tag).and_then(|r| r.get(ns)) {
+        Some(c) => c & cat != 0,
+        None => rt::CAT_ORDINARY & cat != 0,
+    }
+}
+
+/// `lxb_html_tag_is_void`.
+#[inline]
+pub(crate) fn is_void(tag: usize) -> bool {
+    matches!(
+        tag,
+        res::TAG_AREA
+            | res::TAG_BASE
+            | res::TAG_BR
+            | res::TAG_COL
+            | res::TAG_EMBED
+            | res::TAG_HR
+            | res::TAG_IMG
+            | res::TAG_INPUT
+            | res::TAG_LINK
+            | res::TAG_META
+            | res::TAG_SOURCE
+            | res::TAG_TRACK
+            | res::TAG_WBR
+    )
+}
+
+impl TreeBuilder<'_> {
+    /// `lxb_html_tree_appropriate_place_inserting_node`.
+    pub(crate) fn appropriate_place(
+        &self,
+        override_target: Option<NodeId>,
+    ) -> Option<(NodeId, Ipos)> {
+        let mut ipos = Ipos::Child;
+        let target = match override_target {
+            Some(t) => t,
+            None => self.current_node()?,
+        };
+        let adjusted;
+        if self.foster_parenting
+            && self.ns(target) == res::NS_HTML
+            && matches!(
+                self.tag(target),
+                res::TAG_TABLE | res::TAG_TBODY | res::TAG_TFOOT | res::TAG_THEAD | res::TAG_TR
+            )
+        {
+            let last_temp = self.open_find_reverse(res::TAG_TEMPLATE, res::NS_HTML);
+            let last_table = self.open_find_reverse(res::TAG_TABLE, res::NS_HTML);
+            match (last_temp, last_table) {
+                (Some((temp, ti)), table)
+                    if table.is_none() || table.is_some_and(|(_, tbi)| ti > tbi) =>
+                {
+                    return Some((self.doc.template_content(temp)?, Ipos::Child));
+                }
+                (_, None) => {
+                    adjusted = self.open_first()?;
+                }
+                (_, Some((table, _))) if self.doc.parent(table).is_some() => {
+                    adjusted = table;
+                    ipos = Ipos::Before;
+                }
+                (_, Some((_, tbi))) => {
+                    adjusted = self.open_get(tbi.checked_sub(1)?)?;
+                }
+            }
+        } else {
+            adjusted = target;
+        }
+        /* "If the adjusted insertion location is inside a template element,
+         * let it instead be inside the template element's template
+         * contents" - Lexbor tests the location itself. */
+        if self.node_is(adjusted, res::TAG_TEMPLATE) {
+            return Some((self.doc.template_content(adjusted)?, ipos));
+        }
+        Some((adjusted, ipos))
+    }
+
+    /// `lxb_html_tree_insert_node`.
+    #[inline]
+    pub(crate) fn insert_node(&mut self, to: NodeId, node: NodeId, ipos: Ipos) {
+        match ipos {
+            Ipos::Before => self.doc.insert_before(to, node),
+            Ipos::Child => self.append_child_with_steps(to, node),
+        }
+    }
+
+    /// `lxb_html_tree_insert_foreign_element`.
+    pub(crate) fn insert_foreign_element(
+        &mut self,
+        tkz: &Tokenizer<'_, '_>,
+        tok: &Tok,
+        ns: usize,
+        only_add_stack: bool,
+    ) -> Result<NodeId, TreeStatus> {
+        let (pos, ipos) = self.appropriate_place(None).ok_or(TreeStatus::Oom)?;
+        let el = self.create_element_for_token(tkz, tok, ns)?;
+        if !only_add_stack {
+            self.insert_node(pos, el, ipos);
+        }
+        self.open_push(el)?;
+        Ok(el)
+    }
+
+    /// `lxb_html_tree_insert_html_element`.
+    #[inline]
+    pub(crate) fn insert_html_element(
+        &mut self,
+        tkz: &Tokenizer<'_, '_>,
+        tok: &Tok,
+    ) -> Result<NodeId, TreeStatus> {
+        self.insert_foreign_element(tkz, tok, res::NS_HTML, false)
+    }
+
+    /// `lxb_html_tree_create_node` for an element (`lxb_html_interface_create`).
+    pub(crate) fn create_element_node(
+        &mut self,
+        tag: usize,
+        ns: usize,
+    ) -> Result<NodeId, TreeStatus> {
+        let ns = u32::try_from(ns).unwrap_or(0);
+        self.doc.create_element(tag, ns, 0, None).map_err(oom)
+    }
+
+    /// `lxb_html_tree_create_element_for_token`.
+    pub(crate) fn create_element_for_token(
+        &mut self,
+        tkz: &Tokenizer<'_, '_>,
+        tok: &Tok,
+        ns: usize,
+    ) -> Result<NodeId, TreeStatus> {
+        let el = self.create_element_node(tok.tag_id, ns)?;
+        match tok.base {
+            None => self.append_attributes(tkz, el, tok, ns)?,
+            Some(from) => self.append_attributes_from_element(el, from)?,
+        }
+        if let Some(offset) = self.created_offset(tok) {
+            self.doc.set_source_offset(el, offset);
+        }
+        Ok(el)
+    }
+
+    /// `lxb_html_tree_append_attributes`.
+    pub(crate) fn append_attributes(
+        &mut self,
+        tkz: &Tokenizer<'_, '_>,
+        el: NodeId,
+        tok: &Tok,
+        ns: usize,
+    ) -> Result<(), TreeStatus> {
+        if !tok.has_attrs {
+            return Ok(());
+        }
+        for ta in &tkz.token.attrs {
+            let Some(name) = ta.name else { continue };
+            if self.attr_by_local_name_ns(el, name, ns) {
+                continue;
+            }
+            let mut spec = AttrSpec {
+                local: name,
+                ns,
+                prefix: 0,
+                written: 0,
+            };
+            if let Some(adjust) = self.before_append_attr {
+                self.adjust(&mut spec, adjust)?;
+            }
+            let value = ta
+                .value_begin
+                .map(|_| tkz.attr_value(ta).unwrap_or_default());
+            let attr = self.make_attr(spec, value.map(AttrValue::Bytes))?;
+            self.append_attr_with_steps(el, attr)?;
+        }
+        Ok(())
+    }
+
+    /// Make an attribute: with no value - Lexbor's NULL - when `value` is
+    /// none.
+    fn make_attr(
+        &mut self,
+        spec: AttrSpec,
+        value: Option<AttrValue<'_>>,
+    ) -> Result<NodeId, TreeStatus> {
+        let ns = u32::try_from(spec.ns).unwrap_or(0);
+        let attr = self
+            .doc
+            .create_attr_by_ids(
+                spec.local,
+                ns,
+                spec.prefix,
+                spec.written,
+                value.unwrap_or(AttrValue::Bytes(b"")),
+            )
+            .map_err(oom)?;
+        if value.is_none() {
+            self.valueless.insert(attr).map_err(|()| TreeStatus::Oom)?;
+        }
+        Ok(attr)
+    }
+
+    /// `lxb_dom_element_attr_by_local_name_ns_data`: whether `el` has an
+    /// attribute with local name `name` in `ns`, or whose qualified name is
+    /// `name`.
+    fn attr_by_local_name_ns(&self, el: NodeId, name: usize, ns: usize) -> bool {
+        let d = &*self.doc;
+        let text = d.names.attr_name(name);
+        let mut a = d.first_attr(el);
+        while let Some(x) = a {
+            if d.local(x) as usize == name && d.ns(x) as usize == ns {
+                return true;
+            }
+            if text.is_some() && d.attr_written(x) == text {
+                return true;
+            }
+            a = d.next_attr(x);
+        }
+        false
+    }
+
+    /// `lxb_html_tree_append_attributes_from_element`.
+    fn append_attributes_from_element(
+        &mut self,
+        el: NodeId,
+        from: NodeId,
+    ) -> Result<(), TreeStatus> {
+        let mut a = self.doc.first_attr(from);
+        while let Some(x) = a {
+            let mut spec = AttrSpec {
+                local: self.doc.local(x) as usize,
+                ns: self.doc.ns(x) as usize,
+                prefix: 0,
+                written: self.doc.written_id(x),
+            };
+            if let Some(adjust) = self.before_append_attr {
+                self.adjust(&mut spec, adjust)?;
+            }
+            let value = (!self.valueless.contains(x)).then_some(AttrValue::CopyOf(x));
+            let attr = self.make_attr(spec, value)?;
+            self.append_attr_with_steps(el, attr)?;
+            a = self.doc.next_attr(x);
+        }
+        Ok(())
+    }
+
+    /// `tree->before_append_attr`.
+    fn adjust(&mut self, spec: &mut AttrSpec, adjust: AttrAdjust) -> Result<(), TreeStatus> {
+        match adjust {
+            AttrAdjust::Mathml => self.adjust_mathml_attributes(spec)?,
+            AttrAdjust::Svg => self.adjust_svg_attributes(spec)?,
+            AttrAdjust::Foreign => {}
+        }
+        self.adjust_foreign_attributes(spec)
+    }
+
+    /// `lxb_html_tree_adjust_mathml_attributes`.
+    fn adjust_mathml_attributes(&mut self, spec: &mut AttrSpec) -> Result<(), TreeStatus> {
+        if self.doc.names.attr_name(spec.local) == Some(&b"definitionurl"[..]) {
+            spec.written = self
+                .doc
+                .names
+                .qualified_append(b"definitionURL")
+                .map_err(|_| TreeStatus::Error)?;
+        }
+        Ok(())
+    }
+
+    /// `lxb_html_tree_adjust_svg_attributes`.
+    fn adjust_svg_attributes(&mut self, spec: &mut AttrSpec) -> Result<(), TreeStatus> {
+        let Some(name) = self.doc.names.attr_name(spec.local) else {
+            return Ok(());
+        };
+        if let Some((_, to)) = rt::SVG_ATTR_ADJUST.iter().find(|(from, _)| *from == name) {
+            spec.written = self
+                .doc
+                .names
+                .qualified_append(to)
+                .map_err(|_| TreeStatus::Error)?;
+        }
+        Ok(())
+    }
+
+    /// `lxb_html_tree_adjust_foreign_attributes`.
+    fn adjust_foreign_attributes(&mut self, spec: &mut AttrSpec) -> Result<(), TreeStatus> {
+        let Some(name) = self.doc.names.attr_name(spec.local) else {
+            return Ok(());
+        };
+        let Some(&(full, prefix, local, ns)) =
+            rt::FOREIGN_ATTR_ADJUST.iter().find(|(n, ..)| *n == name)
+        else {
+            return Ok(());
+        };
+        if !prefix.is_empty() {
+            let names = &mut self.doc.names;
+            spec.written = names
+                .qualified_append(full)
+                .map_err(|_| TreeStatus::Error)?;
+            spec.local = names
+                .attr_local_name_append(local)
+                .map_err(|_| TreeStatus::Error)?;
+            spec.prefix = self
+                .doc
+                .intern_prefix(prefix)
+                .map_err(|_| TreeStatus::Error)?
+                .unwrap_or(0);
+        }
+        spec.ns = ns;
+        Ok(())
+    }
+
+    /// `lxb_html_tree_insert_character`: the token's text, as it is.
+    pub(crate) fn insert_character(
+        &mut self,
+        tkz: &Tokenizer<'_, '_>,
+        tok: &Tok,
+    ) -> Result<(), TreeStatus> {
+        self.insert_character_for_data(tok.text(tkz))
+    }
+
+    /// `lxb_html_tree_insert_character_for_data`: appended to the text node
+    /// at the place, or a new one.
+    pub(crate) fn insert_character_for_data(&mut self, data: &[u8]) -> Result<(), TreeStatus> {
+        let (pos, ipos) = self.appropriate_place(None).ok_or(TreeStatus::Error)?;
+        if self.node_is(pos, res::TAG__DOCUMENT) {
+            return Ok(());
+        }
+        let prev = match ipos {
+            Ipos::Before => self.doc.prev(pos),
+            Ipos::Child => self.doc.last_child(pos),
+        };
+        if let Some(p) = prev.filter(|&p| self.tag(p) == res::TAG__TEXT) {
+            return self.doc.append_text(p, data).map_err(oom);
+        }
+        let text = self.doc.create_data(NodeType::Text, data).map_err(oom)?;
+        self.doc
+            .set_names(text, res::TAG__TEXT, res::NS_HTML as u32, 0);
+        self.insert_node(pos, text, ipos);
+        Ok(())
+    }
+
+    /// `lxb_html_tree_insert_comment`: at `pos` when given, else at the
+    /// appropriate place. The comment takes the namespace of where it goes.
+    pub(crate) fn insert_comment(
+        &mut self,
+        tkz: &Tokenizer<'_, '_>,
+        tok: &Tok,
+        pos: Option<NodeId>,
+    ) -> Result<NodeId, TreeStatus> {
+        let (pos, ipos) = match pos {
+            Some(p) => (p, Ipos::Child),
+            None => self.appropriate_place(None).ok_or(TreeStatus::Error)?,
+        };
+        let ns = self.doc.ns(pos);
+        let c = self
+            .doc
+            .create_data(NodeType::Comment, tok.text(tkz))
+            .map_err(oom)?;
+        self.doc.set_names(c, tok.tag_id, ns, 0);
+        self.insert_node(pos, c, ipos);
+        Ok(c)
+    }
+
+    /// `lxb_html_tree_insert_processing_instruction`: the target is the
+    /// token's first `null_count` bytes, the data the rest.
+    pub(crate) fn insert_processing_instruction(
+        &mut self,
+        tkz: &Tokenizer<'_, '_>,
+        tok: &Tok,
+        pos: Option<NodeId>,
+    ) -> Result<NodeId, TreeStatus> {
+        let (pos, ipos) = self.appropriate_place(pos).ok_or(TreeStatus::Error)?;
+        let text = tok.text(tkz);
+        let at = tok.null_count.min(text.len());
+        let pi = self.doc.create_pi(&text[..at], &text[at..]).map_err(oom)?;
+        self.insert_node(pos, pi, ipos);
+        Ok(pi)
+    }
+
+    /// `lxb_html_tree_create_document_type_from_token` with
+    /// `lxb_html_token_doctype_parse`: the name is the first attribute's,
+    /// then a `public` or `system` attribute's value, and a system one after
+    /// a public one. Returns the node and its name id (0 for none).
+    pub(crate) fn create_document_type_from_token(
+        &mut self,
+        tkz: &Tokenizer<'_, '_>,
+    ) -> Result<(NodeId, usize, usize, usize), TreeStatus> {
+        let attrs = &tkz.token.attrs;
+        let mut name_id = 0;
+        let (mut public, mut system): (&[u8], &[u8]) = (b"", b"");
+        if let Some(first) = attrs.first() {
+            name_id = first.name.unwrap_or(0);
+            if let Some(second) = attrs.get(1) {
+                let value = |a| tkz.attr_value(a).unwrap_or_default();
+                if second.name == Some(res::ATTR_PUBLIC) {
+                    public = value(second);
+                    if second.value_begin.is_some() {
+                        if let Some(third) = attrs.get(2) {
+                            system = value(third);
+                        }
+                    }
+                } else if second.name == Some(res::ATTR_SYSTEM) {
+                    system = value(second);
+                }
+            }
+        }
+        /* `lxb_dom_document_type_name`: `LXB_DOM_ATTR__UNDEF` reads as "". */
+        let name = match name_id {
+            res::ATTR__UNDEF => &b""[..],
+            id => self.doc.names.attr_name(id).unwrap_or_default(),
+        };
+        /* `lexbor_str_t` copies: the name is the interned attribute name. */
+        let name = crate::falloc::try_to_vec(name).ok_or(TreeStatus::Oom)?;
+        let node = self
+            .doc
+            .create_doctype(&name, public, system)
+            .map_err(oom)?;
+        self.doc
+            .set_names(node, res::TAG__EM_DOCTYPE, res::NS_HTML as u32, 0);
+        Ok((node, name_id, public.len(), system.len()))
+    }
+
+    /// `lxb_html_tree_generic_rawtext_parsing`.
+    pub(crate) fn generic_rawtext_parsing(
+        &mut self,
+        tkz: &mut Tokenizer<'_, '_>,
+        tok: &Tok,
+    ) -> Result<NodeId, TreeStatus> {
+        let el = self.insert_html_element(tkz, tok)?;
+        tkz.tmp_tag_id = tok.tag_id;
+        tkz.set_state(rawtext_before);
+        self.original_mode = self.mode;
+        self.mode = Mode::Text;
+        Ok(el)
+    }
+
+    /// `lxb_html_tree_generic_rcdata_parsing`.
+    pub(crate) fn generic_rcdata_parsing(
+        &mut self,
+        tkz: &mut Tokenizer<'_, '_>,
+        tok: &Tok,
+    ) -> Result<NodeId, TreeStatus> {
+        let el = self.insert_html_element(tkz, tok)?;
+        tkz.tmp_tag_id = tok.tag_id;
+        tkz.set_state(rcdata_before);
+        self.original_mode = self.mode;
+        self.mode = Mode::Text;
+        Ok(el)
+    }
+
+    /// `lxb_html_tree_generate_implied_end_tags`.
+    pub(crate) fn generate_implied_end_tags(&mut self, ex_tag: usize, ex_ns: usize) {
+        while let Some(node) = self.current_node() {
+            match self.tag(node) {
+                res::TAG_DD
+                | res::TAG_DT
+                | res::TAG_LI
+                | res::TAG_OPTGROUP
+                | res::TAG_OPTION
+                | res::TAG_P
+                | res::TAG_RB
+                | res::TAG_RP
+                | res::TAG_RT
+                | res::TAG_RTC => {
+                    if self.tag(node) == ex_tag && self.ns(node) == ex_ns {
+                        return;
+                    }
+                    self.open_pop();
+                }
+                _ => return,
+            }
+        }
+    }
+
+    /// `lxb_html_tree_generate_all_implied_end_tags_thoroughly`.
+    pub(crate) fn generate_all_implied_end_tags_thoroughly(&mut self, ex_tag: usize, ex_ns: usize) {
+        while let Some(node) = self.current_node() {
+            match self.tag(node) {
+                res::TAG_CAPTION
+                | res::TAG_COLGROUP
+                | res::TAG_DD
+                | res::TAG_DT
+                | res::TAG_LI
+                | res::TAG_OPTGROUP
+                | res::TAG_OPTION
+                | res::TAG_P
+                | res::TAG_RB
+                | res::TAG_RP
+                | res::TAG_RT
+                | res::TAG_RTC
+                | res::TAG_TBODY
+                | res::TAG_TD
+                | res::TAG_TFOOT
+                | res::TAG_TH
+                | res::TAG_THEAD
+                | res::TAG_TR => {
+                    if self.tag(node) == ex_tag && self.ns(node) == ex_ns {
+                        return;
+                    }
+                    self.open_pop();
+                }
+                _ => return,
+            }
+        }
+    }
+
+    /// `lxb_html_tree_reset_insertion_mode_appropriately`.
+    pub(crate) fn reset_insertion_mode_appropriately(&mut self) {
+        let mut idx = self.open.len();
+        let mut last = false;
+        while idx != 0 {
+            idx -= 1;
+            let mut node = self.open[idx];
+            if idx == 0 {
+                last = true;
+                if let Some(f) = self.fragment {
+                    node = f;
+                }
+            }
+            /* Step 16 */
+            if self.ns(node) != res::NS_HTML {
+                if last {
+                    self.mode = Mode::InBody;
+                    return;
+                }
+                continue;
+            }
+            match self.tag(node) {
+                res::TAG_TD | res::TAG_TH => {
+                    if !last {
+                        self.mode = Mode::InCell;
+                        return;
+                    }
+                }
+                res::TAG_TR => {
+                    self.mode = Mode::InRow;
+                    return;
+                }
+                res::TAG_TBODY | res::TAG_TFOOT | res::TAG_THEAD => {
+                    self.mode = Mode::InTableBody;
+                    return;
+                }
+                res::TAG_CAPTION => {
+                    self.mode = Mode::InCaption;
+                    return;
+                }
+                res::TAG_COLGROUP => {
+                    self.mode = Mode::InColumnGroup;
+                    return;
+                }
+                res::TAG_TABLE => {
+                    self.mode = Mode::InTable;
+                    return;
+                }
+                res::TAG_TEMPLATE => {
+                    /* Lexbor asserts a template mode is there. */
+                    if let Some(&m) = self.template_modes.last() {
+                        self.mode = m;
+                    }
+                    return;
+                }
+                res::TAG_HEAD => {
+                    if !last {
+                        self.mode = Mode::InHead;
+                        return;
+                    }
+                }
+                res::TAG_BODY => {
+                    self.mode = Mode::InBody;
+                    return;
+                }
+                res::TAG_FRAMESET => {
+                    self.mode = Mode::InFrameset;
+                    return;
+                }
+                res::TAG_HTML => {
+                    self.mode = if self.head.is_none() {
+                        Mode::BeforeHead
+                    } else {
+                        Mode::AfterHead
+                    };
+                    return;
+                }
+                _ => {}
+            }
+            if last {
+                self.mode = Mode::InBody;
+                return;
+            }
+        }
+    }
+
+    /// `lxb_html_tree_element_in_scope`.
+    pub(crate) fn element_in_scope(&self, tag: usize, ns: usize, cat: u8) -> Option<NodeId> {
+        for &node in self.open.iter().rev() {
+            if self.tag(node) == tag && self.ns(node) == ns {
+                return Some(node);
+            }
+            if is_category(self.tag(node), self.ns(node), cat) {
+                return None;
+            }
+        }
+        None
+    }
+
+    /// `lxb_html_tree_element_in_scope_by_node`.
+    pub(crate) fn element_in_scope_by_node(&self, by: NodeId, cat: u8) -> Option<NodeId> {
+        for &node in self.open.iter().rev() {
+            if node == by {
+                return Some(node);
+            }
+            if is_category(self.tag(node), self.ns(node), cat) {
+                return None;
+            }
+        }
+        None
+    }
+
+    /// The `lxb_html_tree_element_in_scope_*` family over a set of tags.
+    fn element_in_scope_any(&self, tags: impl Fn(usize) -> bool, cat: u8) -> Option<NodeId> {
+        for &node in self.open.iter().rev() {
+            if tags(self.tag(node)) && self.ns(node) == res::NS_HTML {
+                return Some(node);
+            }
+            if is_category(self.tag(node), self.ns(node), cat) {
+                return None;
+            }
+        }
+        None
+    }
+
+    /// `lxb_html_tree_element_in_scope_h123456`.
+    pub(crate) fn element_in_scope_h123456(&self) -> Option<NodeId> {
+        self.element_in_scope_any(super::stacks::is_h123456, rt::CAT_SCOPE)
+    }
+
+    /// `lxb_html_tree_element_in_scope_tbody_thead_tfoot`.
+    pub(crate) fn element_in_scope_tbody_thead_tfoot(&self) -> Option<NodeId> {
+        self.element_in_scope_any(
+            |t| matches!(t, res::TAG_TBODY | res::TAG_THEAD | res::TAG_TFOOT),
+            rt::CAT_SCOPE_TABLE,
+        )
+    }
+
+    /// `lxb_html_tree_element_in_scope_td_th`.
+    pub(crate) fn element_in_scope_td_th(&self) -> Option<NodeId> {
+        self.element_in_scope_any(
+            |t| matches!(t, res::TAG_TD | res::TAG_TH),
+            rt::CAT_SCOPE_TABLE,
+        )
+    }
+
+    /// `lxb_html_tree_element_in_scope_option_optgroup`.
+    pub(crate) fn element_in_scope_option_optgroup(&self) -> Option<NodeId> {
+        self.element_in_scope_any(
+            |t| matches!(t, res::TAG_OPTION | res::TAG_OPTGROUP),
+            rt::CAT_SCOPE,
+        )
+    }
+
+    /// `lxb_html_tree_check_scope_element`.
+    pub(crate) fn check_scope_element(&self) -> bool {
+        self.open.iter().any(|&n| {
+            matches!(
+                self.tag(n),
+                res::TAG_DD
+                    | res::TAG_DT
+                    | res::TAG_LI
+                    | res::TAG_OPTGROUP
+                    | res::TAG_OPTION
+                    | res::TAG_P
+                    | res::TAG_RB
+                    | res::TAG_RP
+                    | res::TAG_RT
+                    | res::TAG_RTC
+                    | res::TAG_TBODY
+                    | res::TAG_TD
+                    | res::TAG_TFOOT
+                    | res::TAG_TH
+                    | res::TAG_THEAD
+                    | res::TAG_TR
+                    | res::TAG_BODY
+                    | res::TAG_HTML
+            )
+        })
+    }
+
+    /// `lxb_html_tree_close_p_element`.
+    pub(crate) fn close_p_element(&mut self, tok: &Tok) {
+        self.generate_implied_end_tags(res::TAG_P, res::NS_HTML);
+        let is_p = self
+            .current_node()
+            .is_some_and(|n| self.node_is(n, res::TAG_P));
+        if !is_p {
+            self.parse_error(tok, E::Unelinopelst);
+        }
+        self.open_pop_until_tag_id(res::TAG_P, res::NS_HTML, true);
+    }
+
+    /// `lxb_html_tree_acknowledge_token_self_closing`.
+    pub(crate) fn acknowledge_token_self_closing(&mut self, tok: &Tok) {
+        if tok.flags & flags::CLOSE_SELF == 0 {
+            return;
+        }
+        if !is_void(tok.tag_id) {
+            self.parse_error(tok, E::Novohtelsttawitrso);
+        }
+    }
+
+    /// `lxb_html_tree_mathml_text_integration_point`.
+    pub(crate) fn mathml_text_integration_point(&self, n: NodeId) -> bool {
+        self.ns(n) == res::NS_MATH
+            && matches!(
+                self.tag(n),
+                res::TAG_MI | res::TAG_MO | res::TAG_MN | res::TAG_MS | res::TAG_MTEXT
+            )
+    }
+
+    /// `lxb_html_tree_html_integration_point`.
+    pub(crate) fn html_integration_point(&self, n: NodeId) -> bool {
+        if self.context_integration_point && self.fragment == Some(n) {
+            return true;
+        }
+        if self.ns(n) == res::NS_MATH && self.tag(n) == res::TAG_ANNOTATION_XML {
+            /* `lxb_dom_element_attr_is_exist(element, "encoding")`: by local
+             * name, or by qualified name. */
+            let d = &*self.doc;
+            let Some(id) = d.names.attr_id(b"encoding") else {
+                return false;
+            };
+            let mut a = d.first_attr(n);
+            while let Some(x) = a {
+                if d.local(x) as usize == id || d.attr_written(x) == Some(&b"encoding"[..]) {
+                    if self.valueless.contains(x) {
+                        return false;
+                    }
+                    let v = d.attr_value(x).unwrap_or_default();
+                    return v.eq_ignore_ascii_case(b"text/html")
+                        || v.eq_ignore_ascii_case(b"application/xhtml+xml");
+                }
+                a = d.next_attr(x);
+            }
+            return false;
+        }
+        self.ns(n) == res::NS_SVG
+            && matches!(
+                self.tag(n),
+                res::TAG_FOREIGNOBJECT | res::TAG_DESC | res::TAG_TITLE
+            )
+    }
+
+    /// `lxb_html_tree_adoption_agency_algorithm`: `true` when the caller is
+    /// to act as "any other end tag" (Lexbor's return), with the status set
+    /// on failure.
+    pub(crate) fn adoption_agency_algorithm(&mut self, tok: &Tok) -> bool {
+        let subject = tok.tag_id;
+        /* State 2 */
+        let Some(node) = self.current_node() else {
+            return false;
+        };
+        if self.node_is(node, subject) && self.afe_find_by_node_reverse(node).is_none() {
+            self.open_pop();
+            return false;
+        }
+        /* State 3-4 */
+        let mut outer_loop = 0;
+        while outer_loop < 8 {
+            /* State 5 */
+            outer_loop += 1;
+
+            /* State 6 */
+            let mut formatting = None;
+            for idx in (0..self.afe.len()).rev() {
+                match self.afe[idx] {
+                    None => return true,
+                    Some(n) if self.tag(n) == subject => {
+                        formatting = Some((idx, n));
+                        break;
+                    }
+                    Some(_) => {}
+                }
+            }
+            let Some((formatting_index, formatting_element)) = formatting else {
+                return true;
+            };
+
+            /* State 7 */
+            let Some(oel_formatting_idx) = self.open_find_by_node_reverse(formatting_element)
+            else {
+                self.parse_error(tok, E::Mielinopelst);
+                self.afe_remove_by_node(formatting_element);
+                return false;
+            };
+
+            /* State 8 */
+            if self
+                .element_in_scope_by_node(formatting_element, rt::CAT_SCOPE)
+                .is_none()
+            {
+                self.parse_error(tok, E::Mielinsc);
+                return false;
+            }
+
+            /* State 9 */
+            if self.current_node() != Some(formatting_element) {
+                self.parse_error(tok, E::Unelinopelst);
+            }
+
+            /* State 10 */
+            let furthest = (oel_formatting_idx..self.open.len()).find(|&i| {
+                let n = self.open[i];
+                is_category(self.tag(n), self.ns(n), rt::CAT_SPECIAL)
+            });
+
+            /* State 11 */
+            let Some(mut furthest_block_idx) = furthest else {
+                self.open_pop_until_node(formatting_element, true);
+                self.afe_remove_by_node(formatting_element);
+                return false;
+            };
+            let furthest_block = self.open[furthest_block_idx];
+
+            /* State 12 */
+            let Some(common_ancestor) = oel_formatting_idx
+                .checked_sub(1)
+                .and_then(|i| self.open_get(i))
+            else {
+                return false;
+            };
+
+            /* State 13. The bookmark and the formatting element's index are
+             * positions in a list the inner loop removes from: the Standard's
+             * bookmark stays between its neighbours, so both move down with
+             * an entry removed before them. Lexbor kept the indices as they
+             * were. */
+            let mut bookmark = formatting_index;
+            let mut formatting_index = formatting_index;
+
+            /* State 14 */
+            let mut last = furthest_block;
+            let mut node_idx = furthest_block_idx;
+            let mut inner_loop_counter = 0;
+            loop {
+                inner_loop_counter += 1;
+                /* State 14.3 */
+                if node_idx == 0 {
+                    return false;
+                }
+                node_idx -= 1;
+                let mut node = self.open[node_idx];
+
+                /* State 14.4 */
+                if node == formatting_element {
+                    break;
+                }
+
+                /* State 14.5 */
+                let mut afe_node_idx = self.afe_find_by_node_reverse(node);
+                if inner_loop_counter > 3 {
+                    if let Some(i) = afe_node_idx {
+                        self.afe_remove(i);
+                        if compat::fixed(Fix::P11) {
+                            if i < formatting_index {
+                                formatting_index -= 1;
+                            }
+                            if i < bookmark {
+                                bookmark -= 1;
+                            }
+                        }
+                    }
+                    afe_node_idx = None;
+                }
+
+                /* State 14.6 */
+                let Some(afe_node_idx) = afe_node_idx else {
+                    self.open_remove_by_node(node);
+                    continue;
+                };
+
+                /* State 14.7 */
+                let mut fake = Tok::fake(self.tag(node));
+                fake.base = Some(node);
+                let el = match self.create_element_for_fake(&fake) {
+                    Ok(el) => el,
+                    Err(st) => {
+                        self.status = st;
+                        return false;
+                    }
+                };
+                node = el;
+                self.afe[afe_node_idx] = Some(node);
+                self.open[node_idx] = node;
+
+                /* State 14.8 */
+                if last == furthest_block {
+                    bookmark = afe_node_idx + 1;
+                }
+
+                /* State 14.9 */
+                if self.doc.parent(last).is_some() {
+                    self.doc.detach(last);
+                }
+                self.doc.append_child(node, last);
+
+                /* State 14.10 */
+                last = node;
+            }
+
+            if self.doc.parent(last).is_some() {
+                self.doc.detach(last);
+            }
+
+            /* State 15 */
+            let Some((pos, ipos)) = self.appropriate_place(Some(common_ancestor)) else {
+                return false;
+            };
+            self.insert_node(pos, last, ipos);
+
+            /* State 16 */
+            let mut fake = Tok::fake(self.tag(formatting_element));
+            fake.base = Some(formatting_element);
+            let element = match self.create_element_for_fake(&fake) {
+                Ok(el) => el,
+                Err(st) => {
+                    self.status = st;
+                    return false;
+                }
+            };
+
+            /* State 17 */
+            let mut child = self.doc.first_child(furthest_block);
+            while let Some(c) = child {
+                let next = self.doc.next(c);
+                self.doc.detach(c);
+                self.doc.append_child(element, c);
+                child = next;
+            }
+
+            /* State 18 */
+            self.doc.append_child(furthest_block, element);
+
+            /* State 19 */
+            self.afe_remove(formatting_index);
+            if formatting_index < bookmark && compat::fixed(Fix::P11) {
+                bookmark -= 1;
+            }
+            if bookmark > self.afe.len() {
+                bookmark = self.afe.len();
+            }
+            if let Err(st) = self.afe_insert(element, bookmark) {
+                self.status = st;
+                return false;
+            }
+
+            /* State 20 */
+            self.open_remove_by_node(formatting_element);
+            furthest_block_idx = self.open_find_by_node(furthest_block).unwrap_or(0);
+            if let Err(st) = self.open_insert_after(element, furthest_block_idx) {
+                self.status = st;
+                return false;
+            }
+        }
+        false
+    }
+
+    /// `lxb_html_tree_create_element_for_token` for a token with a base
+    /// element (no tokenizer attributes), in the HTML namespace.
+    fn create_element_for_fake(&mut self, fake: &Tok) -> Result<NodeId, TreeStatus> {
+        let el = self.create_element_node(fake.tag_id, res::NS_HTML)?;
+        if let Some(from) = fake.base {
+            self.append_attributes_from_element(el, from)?;
+        }
+        Ok(el)
+    }
+}

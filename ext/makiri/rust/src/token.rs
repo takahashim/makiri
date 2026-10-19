@@ -32,6 +32,8 @@ pub enum Kind {
     Html,
     /// A Makiri XML arena handle.
     Xml,
+    /// A node id of the HTML arena DOM (`crate::html::dom`).
+    Arena,
 }
 
 /// An opaque node handle, tagged with its backend.
@@ -68,6 +70,19 @@ impl Token {
     pub(crate) const fn xml(word: usize) -> Token {
         Token {
             kind: Kind::Xml,
+            word,
+        }
+    }
+
+    /// A token for a node id of the HTML arena DOM.
+    ///
+    /// Safe for the reason [`Token::xml`] is: the arena's resolver reads an
+    /// id through a bounds-checked lookup, so no value can cause undefined
+    /// behaviour - and the kind keeps it from the Lexbor resolver.
+    #[inline]
+    pub const fn arena(word: usize) -> Token {
+        Token {
+            kind: Kind::Arena,
             word,
         }
     }

@@ -31,7 +31,7 @@
 use core::ffi::c_long;
 
 use crate::falloc::{OomResult, Reserve, VecPush};
-use crate::lexbor::css_parser::{
+use crate::selectors::ast::{
     AttrMatch, CaseModifier, Combinator, FunctionArg, List, Lists, Selector, Simple,
 };
 

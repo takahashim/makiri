@@ -2,10 +2,9 @@
 //!
 //! The selector engine lives in [`crate::lexbor::css_match`] (matching,
 //! over the typed adapter, non-recursive) plus [`crate::lexbor::selector_cache`]
-//! (parsing AND caching - Lexbor's own C parser, kept warm across repeat
-//! calls with the same selector string, its own process-global engine
-//! separate from [`crate::lexbor::css_parser`]'s), neither of which knows
-//! about Ruby. This module verifies the selector, maps an engine failure to
+//! (parsing, with the parser port [`crate::selectors`], AND caching the
+//! parse across repeat calls with the same selector string), neither of
+//! which knows about Ruby. This module verifies the selector, maps an engine failure to
 //! its exception, and fills the NodeSet (`css`) or wraps the one node
 //! `at_css` found.
 
@@ -19,11 +18,11 @@ use crate::bridge::html::wrap_html_node;
 use crate::bridge::node_set::node_set_from;
 use crate::bridge::ruby::makiri_error;
 use crate::bridge::string::{ruby_verified_text, RubyText};
+use crate::html_dom::html::RawNode;
 use crate::init::MOD_HTML_NODE_METHODS;
-use crate::lexbor::adapter::html::RawNode;
 use crate::lexbor::css_match::{self, MatchFailure, QueryFailure, MAX_COMPOUNDS};
-use crate::lexbor::css_parser::ParseError;
 use crate::lexbor::selector_cache;
+use crate::lexbor::selector_cache::ParseError;
 use crate::limits::NODE_SET_MAX;
 
 /// A parse failure as the Ruby exception it maps to.

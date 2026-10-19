@@ -32,9 +32,7 @@ use crate::lexbor::abi::{
     lxb_html_parse_fragment_chunk_begin, lxb_html_parse_fragment_chunk_end,
     lxb_html_parse_fragment_chunk_process, TransientDoc,
 };
-use crate::lexbor::adapter::tree_guard::{
-    fragment_document, DepthLimit, GuardStop, OptionContext, TokenHook,
-};
+use crate::lexbor::adapter::tree_guard::{fragment_document, DepthLimit, OptionContext, TokenHook};
 
 /* The HTML parser's lifecycle, from the generated bindings. Declared here first
  * over an opaque parser, which was fine until the source-location port needed
@@ -106,41 +104,7 @@ fn fixup_template_content(
     Ok(())
 }
 
-/// Why a fragment parse produced no fragment. The bridge words it for Ruby.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FragmentError {
-    /// Lexbor could not create or initialise a parser.
-    Parser,
-    /// Out of memory repairing the input's UTF-8.
-    Decode,
-    /// The parse itself returned no fragment.
-    Parse,
-    /// The context's tag or namespace could not be interned in the document.
-    Context,
-    /// The parse guard refused it ([`GuardStop`]), as it refuses a document.
-    Guard(GuardStop),
-}
-
-impl From<GuardStop> for FragmentError {
-    fn from(stop: GuardStop) -> Self {
-        FragmentError::Guard(stop)
-    }
-}
-
-impl FragmentError {
-    /// The message, for every error but [`Guard`](FragmentError::Guard),
-    /// whose message names its limit and is the bridge's to word
-    /// (`bridge::doc::guard_error`, shared with a document parse).
-    pub fn message(self) -> &'static str {
-        match self {
-            FragmentError::Parser => "failed to create HTML parser",
-            FragmentError::Decode => "out of memory decoding fragment HTML",
-            FragmentError::Parse => "failed to parse HTML fragment",
-            FragmentError::Context => "failed to resolve the fragment context",
-            FragmentError::Guard(_) => "the parse guard refused the fragment",
-        }
-    }
-}
+pub use crate::lexbor::arena_fragment::FragmentError;
 
 /// Deep-import each child of `root` into `doc`, appending each to `into`.
 ///
@@ -217,6 +181,56 @@ impl TransientFragment {
     }
 }
 
+impl TransientFragment {
+    /// [`import_into`](Self::import_into) for an edit holding the target
+    /// document: every child goes into `into`, a detached fragment of that
+    /// document.
+    pub fn import_into_doc(
+        self,
+        d: &mut crate::lexbor::adapter::html::HtmlDocMut<'_>,
+        into: RawNode,
+    ) -> Result<(), AdapterOom> {
+        // SAFETY: `d` is the document cleared for this edit, and `into` a
+        // detached fragment of it that the caller made for this import.
+        unsafe { self.import_into(d.raw_doc(), into) }
+    }
+}
+
+#[cfg(test)]
+impl TransientFragment {
+    /// The node whose children the parse produced, for the parser
+    /// conformance reader (`lexbor::conformance_tests`).
+    pub(crate) fn root(&self) -> RawNode {
+        self.root
+    }
+}
+
+impl TransientFragment {
+    /// Parse `input` in a [`FragmentContext::Standalone`] context - which
+    /// names no live node or document, so nothing the caller holds has to
+    /// be vouched for.
+    pub fn parse_standalone(
+        input: &[u8],
+        known_valid: bool,
+        at: Option<FragmentTag>,
+        options: OptionContext,
+        limit: DepthLimit,
+    ) -> Result<TransientFragment, FragmentError> {
+        let context = FragmentContext::Standalone { at, options };
+        // SAFETY: a standalone context reads no node or document of the
+        // caller's; the input is only read.
+        unsafe { run_fragment_parser(input, known_valid, &context, limit) }
+    }
+
+    /// The node whose children the parse produced, lent for as long as
+    /// `self` is borrowed: the fragment owns the document it lives in, which
+    /// nothing else holds or changes.
+    pub fn with_root<R>(&self, f: impl FnOnce(HtmlNode<'_>) -> R) -> R {
+        // SAFETY: as above - live while `self` is, and unchanged.
+        f(unsafe { self.root.as_node() })
+    }
+}
+
 /// Which Lexbor fragment parser to run, and the context it needs.
 ///
 /// Both implement the same WHATWG algorithm - tokenizer state for
@@ -230,6 +244,14 @@ pub enum FragmentContext {
     /// A named context: a tag id and namespace, for `Document#fragment` and
     /// `DocumentFragment.parse`, where no such element exists yet.
     Tag { doc: RawDoc, at: FragmentTag },
+    /// A context given as a tag and namespace Lexbor knows (static ids),
+    /// parsed in a document of its own, with the option guard's walk over
+    /// the context's ancestors made beforehand - for a context element of
+    /// another DOM (the arena's). `at` none parses with no context element.
+    Standalone {
+        at: Option<FragmentTag>,
+        options: OptionContext,
+    },
 }
 
 /// The tag a context gets when its own cannot be handed to the parser - see
@@ -333,6 +355,20 @@ impl FragmentTag {
 }
 
 impl FragmentContext {
+    /// The context the element `el` of `doc` provides (`inner_html=`). The
+    /// element is read when the parse runs.
+    pub fn element(_doc: HtmlDoc<'_>, el: RawNode) -> Result<FragmentContext, FragmentError> {
+        Ok(FragmentContext::Element(el))
+    }
+
+    /// A named context, the fragment made in `doc`'s memory.
+    pub fn tag_in(doc: HtmlDoc<'_>, at: FragmentTag) -> FragmentContext {
+        FragmentContext::Tag {
+            doc: RawDoc::from(doc),
+            at,
+        }
+    }
+
     /// What `lxb_html_parse_fragment_chunk_begin` takes: the owner document
     /// for the fragment's own, and the context's tag and namespace ids - the
     /// namespace as [`FragmentTag::parse_ns`] gives it, with the one it held
@@ -364,6 +400,7 @@ impl FragmentContext {
             /* A document handle is untyped; this entry takes the HTML document
              * it is. */
             FragmentContext::Tag { doc, at } => (doc.as_ptr().cast(), Some(at)),
+            FragmentContext::Standalone { at, .. } => (core::ptr::null_mut(), at),
         };
         Ok(BeginArgs {
             owner,
@@ -418,7 +455,10 @@ unsafe fn run_fragment_parser(
     /* Only the element context gets a document of its own to free; the tag
      * context's lives in the target's memory, and Lexbor's own chunk cleanup
      * destroys it. */
-    if matches!(context, FragmentContext::Element(_)) {
+    if matches!(
+        context,
+        FragmentContext::Element(_) | FragmentContext::Standalone { .. }
+    ) {
         owned = TransientDoc::own(fragment_document(parser.as_ptr()).cast());
     }
 
@@ -427,6 +467,7 @@ unsafe fn run_fragment_parser(
         match *context {
             FragmentContext::Element(el) => OptionContext::Element(el),
             FragmentContext::Tag { at, .. } => OptionContext::Tag(Some(at.tag), at.ns),
+            FragmentContext::Standalone { options, .. } => options,
         },
     );
     if !hook.install(parser.as_ptr()) {

@@ -78,7 +78,7 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
         let raw = RawNode::from_ptr(t.as_ptr()).expect("a resolved token names a node");
         // SAFETY: an HTML token names a live node of the document it was made
         // over, and `self` is that document.
-        unsafe { raw.as_node() }
+        unsafe { self.doc.node(raw) }
     }
 
     #[inline]
@@ -238,6 +238,12 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
     /// Served only for a document with no foreign element, where lax and
     /// strict admit the same elements, and no HTML element named with upper
     /// case as written, which no bucket holds but a folded name test finds.
+    type BucketItem = HtmlNode<'d>;
+    #[inline]
+    fn bucket_node(self, item: HtmlNode<'d>) -> HtmlNode<'d> {
+        item
+    }
+
     fn name_bucket(self, local: &[u8], ns_uri: Option<&[u8]>) -> Option<Bucket<'d, HtmlNode<'d>>> {
         let parsed = self.parsed();
         let index = parsed.dom_index()?;

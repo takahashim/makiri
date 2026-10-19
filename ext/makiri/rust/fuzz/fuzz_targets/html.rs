@@ -1,16 +1,16 @@
 //! The HTML parser + compat index build, on raw bytes.
 //!
 //! This is the cargo-fuzz counterpart to the XML reader target: it drives
-//! `parse_html` and the lazy `dom_index` build, reaching the Lexbor
-//! pipeline, the UTF-8 sanitizer, the tag -> elements index, and
-//! the source-location recorder. Arbitrary bytes are valid input: invalid
+//! `parse_html` and the lazy `dom_index` build, reaching the ported tokenizer
+//! and tree builder, the UTF-8 sanitizer, the tag -> elements index, and
+//! the source-location stamps. Arbitrary bytes are valid input: invalid
 //! UTF-8 is replaced and NUL is left for the tokenizer, so there is no
 //! in-contract filter.
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use makiri::lexbor::adapter::post_parse::parse_html;
-use makiri::lexbor::adapter::tree_guard::DepthLimit;
+use makiri::html_dom::post_parse::parse_html;
+use makiri::html_dom::tree_guard::DepthLimit;
 
 fuzz_target!(|data: &[u8]| {
     let Ok(mut p) = parse_html(data, false, DepthLimit::DEFAULT) else {

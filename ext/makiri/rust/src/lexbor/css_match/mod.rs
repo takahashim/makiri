@@ -3,10 +3,9 @@
 //! architectural property Lexbor's own `lxb_selectors_*` state machine has
 //! (`lxb_selectors_run`'s loop,
 //! `do { entry = selectors->state(...) } while (entry != NULL);`, never
-//! recurses on selector nesting). Selector PARSING is not reimplemented: it
-//! goes through
-//! the existing `lexbor::css_parser` typed view, the same one the XML
-//! CSS->XPath lowering already uses.
+//! recurses on selector nesting). Selector PARSING is the parser port's
+//! (`crate::selectors`), read through its typed views, the same ones the XML
+//! CSS->XPath lowering uses.
 //!
 //! Wired into `Node#css`/`#at_css`/`#matches?` (`glue::html_node::css`). A
 //! port was chosen over adopting the `selectors`/`cssparser` crates, which
@@ -176,14 +175,14 @@ mod state;
 mod tree;
 
 pub use compile::check_compiles;
-#[cfg(test)]
+#[cfg(all(test, feature = "lexbor"))]
 pub(crate) use compile::validate;
 pub use scratch::Scratch;
 
 use crate::falloc::VecPush;
-use crate::lexbor::adapter::html::{HtmlElement, HtmlNode};
-use crate::lexbor::css_parser::Lists;
+use crate::html_dom::html::{HtmlElement, HtmlNode};
 use crate::limits::NODE_SET_MAX;
+use crate::selectors::ast::Lists;
 
 use compile::{compile, Compiled};
 use query::Query;
@@ -400,7 +399,7 @@ fn select_all_compiled<'doc>(
 /// of [`DEFAULT_WORK_BUDGET`], so a test can prove the budget actually stops
 /// an expensive `:has()` search without a document big enough to exhaust the
 /// real, shipped limit.
-#[cfg(test)]
+#[cfg(all(test, feature = "lexbor"))]
 pub(crate) fn select_all_with_work_limit<'doc>(
     root: HtmlNode<'doc>,
     groups: Lists<'_>,

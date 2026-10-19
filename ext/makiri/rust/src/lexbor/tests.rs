@@ -460,66 +460,39 @@ mod tree_depth {
     }
 }
 
-mod node_key {
-    use crate::lexbor::adapter::html::RawNode;
-    use crate::lexbor::adapter::post_parse::{parse_html, HtmlParsed};
-    use crate::lexbor::adapter::tree_guard::{DepthLimit, GuardStop};
-
-    fn doc(html: &[u8]) -> Box<HtmlParsed> {
-        parse_html(html, true, DepthLimit::DEFAULT).expect("a document parses")
-    }
-
-    fn root(parsed: &HtmlParsed) -> RawNode {
-        // SAFETY: `parsed` is live for the call.
-        let doc = unsafe { parsed.raw_doc().as_doc() };
-        RawNode::from(
-            doc.as_node()
-                .document_root()
-                .expect("the parser always inserts a root"),
-        )
-    }
-
-    #[test]
-    fn a_key_resolves_to_its_own_node() {
-        let parsed = doc(b"<div id=x>y</div>");
-        let node = root(&parsed);
-        // SAFETY: `node` is a live node of `parsed`.
-        let key = unsafe { parsed.mint_key(node) }.expect("its own node mints");
-        assert!(RawNode::from(parsed.resolve(key).expect("mints, so it resolves")) == node);
-    }
-
-    #[test]
-    fn a_node_of_another_document_is_refused() {
-        let a = doc(b"<p>a</p>");
-        let b = doc(b"<p>b</p>");
-        let node = root(&a);
-        // SAFETY: `node` is a live node (of `a`).
-        assert!(
-            unsafe { b.mint_key(node) }.is_err(),
-            "another document's node must not mint"
-        );
-        let key = unsafe { a.mint_key(node) }.expect("its own node mints");
-        assert!(
-            b.resolve(key).is_err(),
-            "a key must not resolve under another document"
-        );
-    }
-}
-
 /// `lexbor::css_match` - a semantic port of Lexbor's `selectors.c`, not a
 /// `selectors`-crate-based approach (rejected: that matcher recurses natively
 /// on selector nesting - `css_match`'s module doc). Parses via the existing
 /// `css_parser`, matches via an explicit heap work stack (never native
 /// recursion for selector nesting - verified at 500,000 levels below).
+/* The matcher takes arena nodes, and the old engine Lexbor's: each document
+ * here is Lexbor's parse beside its arena copy (`lexbor::twin`), so a test
+ * written against Lexbor's tree keeps its answers, and the old engine's are
+ * read back at the same places in the copy. */
 mod css_match {
     use crate::gvl::Gvl;
-    use crate::lexbor::adapter::html::{HtmlElement, HtmlNode, NsId, RawNode};
-    use crate::lexbor::adapter::post_parse::{parse_html, HtmlParsed};
-    use crate::lexbor::adapter::tree_guard::{DepthLimit, GuardStop};
+    use crate::html_dom::html::{HtmlElement, HtmlNode, NsId, RawNode};
+    use crate::lexbor::adapter::post_parse::parse_html;
+    use crate::lexbor::adapter::tree_guard::DepthLimit;
     use crate::lexbor::css_match::{
         self as port, validate, MatchFailure, QueryFailure, Scratch, MAX_COMPOUNDS,
     };
-    use crate::lexbor::css_parser::{self, Lists};
+    use crate::lexbor::twin::Twin;
+    use crate::selectors::ast::Lists;
+
+    /// The parse the matcher is fed by in a build that ships: the port's
+    /// (`crate::selectors`), under the name these tests have always called -
+    /// run as Lexbor ran (`compat::as_lexbor`), since what they hold the
+    /// matcher to is Lexbor's engine on Lexbor's grammar, nested `:has()`
+    /// included, which Selectors 4 no longer accepts (C20).
+    mod css_parser {
+        pub fn parse(
+            _gvl: &crate::gvl::Gvl,
+            text: crate::text::VerifiedText<'_>,
+        ) -> Result<crate::selectors::Parsed, crate::selectors::Status> {
+            crate::compat::as_lexbor(|| crate::selectors::parse(text.as_bytes()))
+        }
+    }
     use crate::text::VerifiedText;
 
     /* The engine's entry points take the `Scratch` a caller keeps; each test
@@ -543,8 +516,65 @@ mod css_match {
         port::matches_any(&mut Scratch::new(), groups, element)
     }
 
+    /// A document the tests query: Lexbor's parse, and its arena copy, which
+    /// is what the matcher reads.
+    struct HtmlParsed {
+        /// Owns the Lexbor document `twin` was copied from.
+        lexbor: Box<crate::lexbor::adapter::post_parse::HtmlParsed>,
+        twin: Twin,
+    }
+
     fn parsed(html: &[u8]) -> Box<HtmlParsed> {
-        parse_html(html, true, DepthLimit::DEFAULT).expect("a document parses")
+        let lexbor = parse_html(html, true, DepthLimit::DEFAULT).expect("a document parses");
+        // SAFETY: `lexbor` owns the document for the copy's walk.
+        let twin = Twin::new(unsafe { lexbor.raw_doc().as_doc() }).expect("the copy");
+        Box::new(HtmlParsed { lexbor, twin })
+    }
+
+    /// Lexbor's own engine, asked over the Lexbor document behind `doc` from
+    /// the node at `root`'s place, with its answer read back in the copy.
+    mod old_engine {
+        use super::HtmlParsed;
+        use crate::gvl::Gvl;
+        use crate::html_dom::html::RawNode;
+        use crate::lexbor::selectors::{self as old, SelectError};
+
+        fn from(doc: &HtmlParsed, root: RawNode) -> crate::lexbor::adapter::html::RawNode {
+            let _ = &doc.lexbor;
+            doc.twin.to_lexbor(doc.twin.doc().node(root))
+        }
+
+        pub fn select_all(
+            gvl: &Gvl,
+            doc: &HtmlParsed,
+            root: RawNode,
+            selector: &[u8],
+        ) -> Result<Vec<RawNode>, SelectError> {
+            let found = old::select_all(gvl, from(doc, root), selector)?;
+            Ok(found
+                .into_iter()
+                .map(|n| RawNode::from(doc.twin.to_arena(n)))
+                .collect())
+        }
+
+        pub fn select_first(
+            gvl: &Gvl,
+            doc: &HtmlParsed,
+            root: RawNode,
+            selector: &[u8],
+        ) -> Result<Option<RawNode>, SelectError> {
+            let found = old::select_first(gvl, from(doc, root), selector)?;
+            Ok(found.map(|n| RawNode::from(doc.twin.to_arena(n))))
+        }
+
+        pub fn matches_node(
+            gvl: &Gvl,
+            doc: &HtmlParsed,
+            root: RawNode,
+            selector: &[u8],
+        ) -> Result<bool, SelectError> {
+            old::matches_node(gvl, from(doc, root), selector)
+        }
     }
 
     /// The node `Node#css` etc. would actually be called on for "the whole
@@ -554,9 +584,7 @@ mod css_match {
     /// here instead of there previously undercounted it by one against the
     /// old engine.
     fn root(doc: &HtmlParsed) -> HtmlNode<'_> {
-        // SAFETY: `doc` outlives the borrow this returns.
-        let d = unsafe { doc.raw_doc().as_doc() };
-        d.as_node()
+        doc.twin.doc().as_node()
     }
 
     fn matches_selector(element: HtmlElement<'_>, selector: &str) -> bool {
@@ -819,8 +847,6 @@ mod css_match {
     /// that exclusion unnecessary.
     #[test]
     fn a_compound_led_by_a_list_pseudo_tries_every_candidate() {
-        use crate::lexbor::selectors as old_engine;
-
         let doc = parsed(
             b"<div><section><p><a></a></p></section></div>\
               <p></p><b></b><i></i>",
@@ -843,7 +869,7 @@ mod css_match {
             assert_eq!(names(select_all(&doc, sel)), want, "{sel}");
 
             let gvl = Gvl::exclusive();
-            let old = old_engine::select_all(&gvl, RawNode::from(root(&doc)), sel.as_bytes())
+            let old = old_engine::select_all(&gvl, &doc, RawNode::from(root(&doc)), sel.as_bytes())
                 .unwrap_or_else(|_| panic!("old engine rejected {sel:?}"));
             assert_ne!(
                 old.len(),
@@ -867,8 +893,6 @@ mod css_match {
     /// with `:has()`.
     #[test]
     fn a_sibling_compound_with_a_list_pseudo_in_has_tries_every_pair() {
-        use crate::lexbor::selectors as old_engine;
-
         let doc = parsed(b"<span><i></i><li></li><a></a><b><u></u></b></span>");
         for sel in [
             "span:has(* + :not(li))",
@@ -881,7 +905,7 @@ mod css_match {
             assert_eq!(select_all(&doc, sel).len(), 1, "{sel}");
 
             let gvl = Gvl::exclusive();
-            let old = old_engine::select_all(&gvl, RawNode::from(root(&doc)), sel.as_bytes())
+            let old = old_engine::select_all(&gvl, &doc, RawNode::from(root(&doc)), sel.as_bytes())
                 .unwrap_or_else(|_| panic!("old engine rejected {sel:?}"));
             assert_eq!(
                 old.len(),
@@ -910,8 +934,6 @@ mod css_match {
     /// searched, which the old engine (exhaustive) checks.
     #[test]
     fn has_descendant_search_skips_a_subtree_already_searched() {
-        use crate::lexbor::selectors as old_engine;
-
         let n = 390;
         let deep =
             parsed(format!("<body>{}{}</body>", "<z>".repeat(n), "</z>".repeat(n)).as_bytes());
@@ -953,8 +975,13 @@ mod css_match {
         ] {
             let old = {
                 let gvl = Gvl::exclusive();
-                old_engine::select_all(&gvl, RawNode::from(root(&branchy)), sel.as_bytes())
-                    .unwrap_or_else(|_| panic!("old engine rejected {sel:?}"))
+                old_engine::select_all(
+                    &gvl,
+                    &branchy,
+                    RawNode::from(root(&branchy)),
+                    sel.as_bytes(),
+                )
+                .unwrap_or_else(|_| panic!("old engine rejected {sel:?}"))
             };
             let new: Vec<RawNode> = select_all(&branchy, sel)
                 .into_iter()
@@ -1558,7 +1585,6 @@ mod css_match {
     /// and `href` in any namespace (`xlink:href`).
     #[test]
     fn any_link_and_link_agree_with_lexbor() {
-        use crate::lexbor::selectors as old_engine;
         let doc = parsed(
             br##"<!doctype html><html><head><link href=s.css rel=stylesheet><link rel=icon></head><body>
                 <a href=/x>a</a><a>no-href</a><area href=/y><map href=/m></map><map></map>
@@ -1575,9 +1601,8 @@ mod css_match {
         ] {
             let old = {
                 let gvl = Gvl::exclusive();
-                // SAFETY: `doc` outlives the call, and its root is a live node.
-                let d = unsafe { doc.raw_doc().as_doc() };
-                old_engine::select_all(&gvl, RawNode::from(d.as_node()), sel.as_bytes())
+                let d = doc.twin.doc();
+                old_engine::select_all(&gvl, &doc, RawNode::from(d.as_node()), sel.as_bytes())
                     .unwrap_or_else(|_| panic!("{sel}: old engine"))
             };
             let new: Vec<RawNode> = select_all(&doc, sel)
@@ -1748,8 +1773,6 @@ mod css_match {
     /// - in document order - on every standard selector this port supports.
     #[test]
     fn agrees_with_the_old_lexbor_engine_on_standard_selectors() {
-        use crate::lexbor::selectors as old_engine;
-
         let doc = parsed(
             br#"<!doctype html><html><body>
                 <main id="main" class="container Box">
@@ -1821,10 +1844,9 @@ mod css_match {
 
         fn old_select_all(doc: &HtmlParsed, selector: &str) -> Vec<RawNode> {
             let gvl = Gvl::exclusive();
-            // SAFETY: `doc` outlives the call, `root` is a live node of it.
-            let d = unsafe { doc.raw_doc().as_doc() };
+            let d = doc.twin.doc();
             let root = RawNode::from(d.as_node());
-            old_engine::select_all(&gvl, root, selector.as_bytes())
+            old_engine::select_all(&gvl, &doc, root, selector.as_bytes())
                 .unwrap_or_else(|_| panic!("old engine rejected {selector:?}"))
         }
 
@@ -1994,7 +2016,7 @@ mod css_match {
     /// `a_sibling_compound_with_a_list_pseudo_in_has_tries_every_pair`).
     /// A selector that does not parse is not one - the caller skips it anyway.
     fn departs_from_lexbor(sel: &str) -> bool {
-        use crate::lexbor::css_parser::{Combinator, FunctionArg, ListPseudo, Simple};
+        use crate::selectors::ast::{Combinator, FunctionArg, ListPseudo, Simple};
 
         let gvl = Gvl::exclusive();
         let Some(text) = VerifiedText::from_bytes(sel.as_bytes()) else {
@@ -2035,8 +2057,6 @@ mod css_match {
     /// reproducible: rerun with the printed seed to get the same query.
     #[test]
     fn agrees_with_the_old_engine_on_randomly_generated_selectors() {
-        use crate::lexbor::selectors as old_engine;
-
         let doc = parsed(
             br#"<!doctype html><html><body>
                 <main id="main" class="container Box">
@@ -2075,10 +2095,9 @@ mod css_match {
 
             let old = {
                 let gvl = Gvl::exclusive();
-                // SAFETY: `doc` outlives the call, `root` is a live node of it.
-                let d = unsafe { doc.raw_doc().as_doc() };
+                let d = doc.twin.doc();
                 let root = RawNode::from(d.as_node());
-                match old_engine::select_all(&gvl, root, sel.as_bytes()) {
+                match old_engine::select_all(&gvl, &doc, root, sel.as_bytes()) {
                     Ok(v) => v,
                     // A generated shape the old engine's parser refuses (e.g.
                     // an operator combination it is stricter about) is not
@@ -2171,8 +2190,6 @@ mod css_match {
     /// document and the selector.
     #[test]
     fn agrees_with_the_old_engine_on_random_documents() {
-        use crate::lexbor::selectors as old_engine;
-
         let env = |name: &str, default: u64| {
             std::env::var(name)
                 .ok()
@@ -2200,7 +2217,12 @@ mod css_match {
                 }
                 let old = {
                     let gvl = Gvl::exclusive();
-                    match old_engine::select_all(&gvl, RawNode::from(root(&doc)), sel.as_bytes()) {
+                    match old_engine::select_all(
+                        &gvl,
+                        &doc,
+                        RawNode::from(root(&doc)),
+                        sel.as_bytes(),
+                    ) {
                         Ok(v) => v,
                         // As above: a shape the old parser refuses is skipped.
                         Err(_) => continue,
@@ -2233,8 +2255,6 @@ mod css_match {
     /// wrong prune would skip.
     #[test]
     fn pruned_long_chains_agree_with_the_old_engine() {
-        use crate::lexbor::selectors as old_engine;
-
         let mut html = String::from("<!doctype html><html><body>");
         for i in 0..12 {
             let class = ["a", "b", "item"][i % 3];
@@ -2328,10 +2348,9 @@ mod css_match {
             let sel = parts.concat();
             let old = {
                 let gvl = Gvl::exclusive();
-                // SAFETY: `doc` outlives the call, `root` is a live node of it.
-                let d = unsafe { doc.raw_doc().as_doc() };
+                let d = doc.twin.doc();
                 let root = RawNode::from(d.as_node());
-                match old_engine::select_all(&gvl, root, sel.as_bytes()) {
+                match old_engine::select_all(&gvl, &doc, root, sel.as_bytes()) {
                     Ok(v) => v,
                     Err(_) => continue,
                 }
@@ -2533,8 +2552,6 @@ mod css_match {
     /// (dynamic tag ids), and names the document does not contain at all.
     #[test]
     fn resolved_names_agree_with_the_old_engine() {
-        use crate::lexbor::selectors as old_engine;
-
         let body = r##"<body><my-el data-x="1" class="Foo">c</my-el><x-y id="Main"></x-y>
             <svg viewBox="0 0 1 1"><foreignObject data-x="2"><p class="foo">f</p></foreignObject>
             <circle r="1" CLASS="k"/><a xlink:href="#h" href="#g"></a></svg>
@@ -2580,13 +2597,13 @@ mod css_match {
         for prefix in ["<!doctype html><html>", "<html>"] {
             let html = format!("{prefix}{body}</html>");
             let doc = parsed(html.as_bytes());
-            let d = unsafe { doc.raw_doc().as_doc() };
+            let d = doc.twin.doc();
             let raw_root = RawNode::from(d.as_node());
             for sel in selectors {
                 let gvl = Gvl::exclusive();
-                let old = old_engine::select_all(&gvl, raw_root, sel.as_bytes())
+                let old = old_engine::select_all(&gvl, &doc, raw_root, sel.as_bytes())
                     .unwrap_or_else(|_| panic!("old engine rejected {sel:?}"));
-                let old_first = old_engine::select_first(&gvl, raw_root, sel.as_bytes())
+                let old_first = old_engine::select_first(&gvl, &doc, raw_root, sel.as_bytes())
                     .unwrap_or_else(|_| panic!("old engine rejected {sel:?}"));
                 drop(gvl);
                 let new: Vec<RawNode> = select_all(&doc, sel)
@@ -2646,8 +2663,6 @@ mod css_match {
     /// against the old engine from that same non-document root.
     #[test]
     fn select_first_and_matches_any_agree_with_the_old_engine_from_a_non_document_root() {
-        use crate::lexbor::selectors as old_engine;
-
         let doc = parsed(
             br#"<!doctype html><html><body>
                 <ul id="list">
@@ -2680,9 +2695,9 @@ mod css_match {
         for sel in selectors {
             let gvl = Gvl::exclusive();
             let raw_root = RawNode::from(list.node());
-            let old_first = old_engine::select_first(&gvl, raw_root, sel.as_bytes())
+            let old_first = old_engine::select_first(&gvl, &doc, raw_root, sel.as_bytes())
                 .unwrap_or_else(|_| panic!("old engine rejected {sel:?}"));
-            let old_matches = old_engine::matches_node(&gvl, raw_root, sel.as_bytes())
+            let old_matches = old_engine::matches_node(&gvl, &doc, raw_root, sel.as_bytes())
                 .unwrap_or_else(|_| panic!("old engine rejected {sel:?}"));
             drop(gvl);
 
@@ -2813,9 +2828,9 @@ mod css_match {
 /// cached.
 mod selector_cache {
     use crate::gvl::Gvl;
-    use crate::lexbor::adapter::html::{HtmlNode, RawNode};
-    use crate::lexbor::adapter::post_parse::{parse_html, HtmlParsed};
-    use crate::lexbor::adapter::tree_guard::{DepthLimit, GuardStop};
+    use crate::html_dom::html::{HtmlNode, RawNode};
+    use crate::html_dom::post_parse::{parse_html, HtmlParsed};
+    use crate::html_dom::tree_guard::DepthLimit;
     use crate::lexbor::css_match::select_all;
     use crate::lexbor::selector_cache::with_compiled;
 
@@ -2824,9 +2839,7 @@ mod selector_cache {
     }
 
     fn root(doc: &HtmlParsed) -> HtmlNode<'_> {
-        // SAFETY: `doc` outlives the borrow this returns.
-        let d = unsafe { doc.raw_doc().as_doc() };
-        d.as_node()
+        doc.doc().as_node()
     }
 
     /// Every matching descendant's node identity, through the cache.
@@ -2900,7 +2913,7 @@ mod serialize_walk {
     use crate::lexbor::abi as lxb;
     use crate::lexbor::adapter::html::{HtmlNode, RawNode};
     use crate::lexbor::adapter::post_parse::{parse_html, HtmlParsed};
-    use crate::lexbor::adapter::tree_guard::{DepthLimit, GuardStop};
+    use crate::lexbor::adapter::tree_guard::DepthLimit;
     use crate::lexbor::chunks::{chunk_cb, ChunkSink, Chunks};
     use crate::node_type::NodeType;
 

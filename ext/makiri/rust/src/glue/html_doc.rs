@@ -14,7 +14,7 @@
 
 use crate::bridge::fragment;
 use crate::glue::html_node::HtmlSelf;
-use crate::lexbor::adapter::html::NodeType;
+use crate::html_dom::html::NodeType;
 use magnus::{method, prelude::*, Error, Ruby, Value};
 
 /* ---- Document.parse ---- */

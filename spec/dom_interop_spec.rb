@@ -91,7 +91,8 @@ RSpec.describe "browser-DOM interop" do
       end
       made.each do |name, el|
         expect([el.name, el.namespace_uri]).to eq([name, XHTML_NS])
-        expect(el.to_html).to eq("<#{name}>t&lt;&amp;</#{name}>") # not void, not raw text
+        tag = written_tag(name)
+        expect(el.to_html).to eq("<#{tag}>t&lt;&amp;</#{tag}>") # not void, not raw text
       end
       expect(made["TEMPLATE"].content_fragment).to be_nil
       expect(doc.css(":enabled")).to be_empty # INPUT is no input
@@ -123,12 +124,19 @@ RSpec.describe "browser-DOM interop" do
       end
       xml = Makiri::XML(%(<r xmlns:h="#{XHTML_NS}"><h:BR>t</h:BR></r>))
       el = doc.import_node(xml.root.element_children.first, true)
-      expect([el.name, el.to_html]).to eq(["h:BR", "<h:BR>t</h:BR>"])
+      expect([el.name, el.to_html]).to eq(["h:BR", "<#{written_tag("h:BR")}>t</#{written_tag("h:BR")}>"])
     end
 
     it "keeps a prefix" do
       el = doc.create_element_ns(SVG_NS, "s:rect")
-      expect([el.name, el.namespace_uri, el.to_html]).to eq(["s:rect", SVG_NS, "<s:rect></s:rect>"])
+      tag = written_tag("s:rect")
+      expect([el.name, el.namespace_uri, el.to_html]).to eq(["s:rect", SVG_NS, "<#{tag}></#{tag}>"])
+    end
+
+    # The HTML Standard serializes an HTML, SVG or MathML element by its local
+    # name (docs/parser_differences.ja.md R2); Lexbor wrote the prefix.
+    def written_tag(name)
+      name.split(":").last
     end
   end
 

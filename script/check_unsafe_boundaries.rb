@@ -30,10 +30,11 @@ RUST = File.join(ROOT, "ext/makiri/rust/src")
 # summary prints the `glue/` + `xpath/` subtotal that must reach 0.
 UNSAFE_ISLANDS = {
   "bridge/alloc.rs" => 9,
-  "bridge/doc.rs" => 3,
-  "bridge/fragment.rs" => 6,
+  "bridge/doc.rs" => 1,
+  "bridge/dom.rs" => 14,
+  "bridge/fragment.rs" => 4,
   "bridge/gvl.rs" => 5,
-  "bridge/html.rs" => 18,
+  "bridge/html.rs" => 7,
   "bridge/node_set.rs" => 3,
   "bridge/node_wrap.rs" => 1,
   "bridge/raw.rs" => 44,
@@ -41,7 +42,7 @@ UNSAFE_ISLANDS = {
   "bridge/stack.rs" => 1,
   "bridge/string.rs" => 20,
   "bridge/typed.rs" => 21,
-  "bridge/wrapper.rs" => 20,
+  "bridge/wrapper.rs" => 19,
   "bridge/xml.rs" => 11,
   "bridge/xml_decode.rs" => 7,
   "bridge/xpath/context_object.rs" => 3,
@@ -58,25 +59,29 @@ UNSAFE_ISLANDS = {
   "lexbor/adapter/cross_import.rs" => 2,
   "lexbor/adapter/html/attrs.rs" => 25,
   "lexbor/adapter/html/build.rs" => 26,
+  "lexbor/adapter/html/doc_mut.rs" => 6,
   "lexbor/adapter/html/mod.rs" => 67,
   "lexbor/adapter/html/mutate.rs" => 9,
   "lexbor/adapter/html/serialize.rs" => 18,
-  "lexbor/adapter/post_parse.rs" => 13,
-  "lexbor/adapter/source_loc.rs" => 2,
+  "lexbor/adapter/post_parse.rs" => 9,
+  "lexbor/adapter/source_loc.rs" => 1,
   "lexbor/adapter/text_index.rs" => 1,
   "lexbor/adapter/tree_guard.rs" => 9,
+  "lexbor/arena_tests.rs" => 21,
   "lexbor/chunks.rs" => 2,
-  "lexbor/css_engine.rs" => 14,
+  "lexbor/conformance_tests.rs" => 24,
+  "lexbor/css_engine.rs" => 10,
   "lexbor/css_parser.rs" => 19,
   "lexbor/css_tokens.rs" => 10,
-  "lexbor/fragment.rs" => 7,
-  "lexbor/memory.rs" => 9,
-  "lexbor/selector_cache.rs" => 15,
+  "lexbor/fragment.rs" => 10,
+  "lexbor/res_tests.rs" => 3,
+  "lexbor/selector_port_tests.rs" => 1,
   "lexbor/selectors.rs" => 9,
-  "lexbor/serialize.rs" => 2,
-  "lexbor/stylesheet.rs" => 9,
-  "lexbor/tests.rs" => 16,
+  "lexbor/serialize.rs" => 1,
+  "lexbor/stylesheet_diff.rs" => 5,
+  "lexbor/tests.rs" => 6,
   "lexbor/xpath.rs" => 9,
+  "source_lines.rs" => 1,
   "token.rs" => 1,
 }.freeze
 
@@ -88,22 +93,25 @@ UNSAFE_ISLANDS = {
 # The subtree roots in FORBID_ROOTS make whole directories compiler-forbidden:
 # `forbid` is inherited, so a new file under `glue/` or `xpath/` cannot slip in
 # with an `allow`, however few its `unsafe`s.
-FORBID_ROOTS = %w[css/mod.rs glue/mod.rs lexbor/css_match/mod.rs xml/mod.rs xpath/mod.rs].freeze
+FORBID_ROOTS = %w[css/mod.rs glue/mod.rs lexbor/css_match/mod.rs selectors/mod.rs xml/mod.rs xpath/mod.rs].freeze
 
 FORBID_FILES = %w[
-  bridge/dom_error.rs child_index.rs css/build.rs
-  css/lower.rs css/mod.rs cutf8.rs
-  cutf8/verify.rs dom_rules.rs engine_error.rs
-  falloc/verify.rs glue/css.rs glue/html_doc.rs
-  glue/html_node/css.rs glue/html_node/mutate.rs glue/html_node/read.rs
-  glue/html_node/serialize.rs glue/mod.rs glue/node.rs
-  glue/node_set.rs glue/query.rs glue/xml_doc.rs
-  glue/xml_node/css.rs glue/xml_node/mod.rs glue/xml_node/mutate.rs
-  glue/xml_node/ns.rs glue/xml_node/read.rs glue/xml_node/serialize.rs
-  glue/xml_node/strings.rs glue/xpath_context.rs lexbor/adapter/dom_index.rs
-  lexbor/contains_guard.rs lexbor/css_match/mod.rs lexbor/selector_text.rs
-  limits.rs node_type.rs ptr_table.rs
-  rust_tests.rs stack.rs text.rs
+  bridge/dom_error.rs child_index.rs conformance/mod.rs
+  css/build.rs css/lower.rs css/mod.rs
+  cutf8.rs cutf8/verify.rs dom_rules.rs
+  engine_error.rs falloc/verify.rs glue/css.rs
+  glue/html_doc.rs glue/html_node/css.rs glue/html_node/mutate.rs
+  glue/html_node/read.rs glue/html_node/serialize.rs glue/mod.rs
+  glue/node.rs glue/node_set.rs glue/query.rs
+  glue/xml_doc.rs glue/xml_node/css.rs glue/xml_node/mod.rs
+  glue/xml_node/mutate.rs glue/xml_node/ns.rs glue/xml_node/read.rs
+  glue/xml_node/serialize.rs glue/xml_node/strings.rs glue/xpath_context.rs
+  html/dom/mod.rs html/mod.rs html/tokenizer/mod.rs
+  html/tree/mod.rs html_dom.rs lexbor/adapter/dom_index.rs
+  lexbor/contains_guard.rs lexbor/css_match/mod.rs lexbor/selector_cache.rs
+  lexbor/selector_text.rs lexbor/stylesheet.rs limits.rs
+  node_type.rs ptr_table.rs rust_tests.rs
+  selectors/mod.rs stack.rs text.rs
   utf8_input.rs xml/arena.rs xml/attr_key.rs
   xml/chars/expand.rs xml/chars/mod.rs xml/dom_name.rs
   xml/encoding_sniff.rs xml/index.rs xml/mod.rs
@@ -175,15 +183,25 @@ RAW_NODE_CROSSING =
   /\bRawNode::from\s*\(|\bRawNode::from_ptr\b|\.raw_node\(\)|\bHtmlNodeKey::raw_node\b/
 RAW_NODE_CROSSING_COUNTS = {
   "bridge/doc.rs" => 1,
-  "bridge/fragment.rs" => 3,
+  # `node_ref`: a checked key as a reference INTO its document, for an edit
+  # that holds that document by `&mut` (`HtmlDocMut`) and reads the node
+  # through it - the one exit, so an edit never holds a second handle. The
+  # fragment staging that used to cross three times now passes references
+  # inside the edit and crosses none.
   # 8th: an Attr's owner, read as the wrapper cache's identity key for the
   # owner-frozen check (`check_attr_owner_frozen`); it does not escape.
   # 9th/10th: `TokenTree for HtmlTree` (`child_count` / `child_at`), a node's pointer as
   # the child-position memo's token and back. `child_index::ChildPositionMemo`
   # answers only for the `tree_version` it was filled under, so a token read
   # back is still that child; the node is never handed out raw, only wrapped.
-  "bridge/html.rs" => 10,
-  "bridge/wrapper.rs" => 3,
+  # `bridge/dom.rs`: the two steps whose spelling differs between the HTML
+  # DOMs (`crate::html_dom`) - a stored node word back into a node
+  # (`node_of_word`, Lexbor's `from_ptr`), and a Document's own node
+  # (`document_node`). Both were spelled twice, in `html.rs` and
+  # `wrapper.rs`, which each lost two.
+  "bridge/dom.rs" => 1,
+  "bridge/html.rs" => 7,
+  "bridge/wrapper.rs" => 1,
 }.freeze
 
 # Lexbor ABI names outside `lexbor/` are forbidden. `lexbor` is the sole owner
@@ -203,7 +221,7 @@ LEXBOR_ABI_COUNTS = {}.freeze
 # along - so the table is empty and any such use fails.
 # The crate-root modules the engine is built on sit outside those directories
 # and are held to the same two rules.
-ENGINE_DIRS = %w[lexbor/ xml/ xpath/ css/ falloc/ cbuf.rs cutf8.rs dom_rules.rs dom_rules/ limits.rs node_type.rs ptr_table.rs text.rs token.rs utf8_input.rs].freeze
+ENGINE_DIRS = %w[lexbor/ xml/ xpath/ css/ selectors/ falloc/ cbuf.rs cutf8.rs dom_rules.rs dom_rules/ limits.rs node_type.rs ptr_table.rs text.rs token.rs utf8_input.rs].freeze
 RUBY_LAYER = /crate::(?:bridge|glue|init)|magnus::/
 RUBY_LAYER_COUNTS = {}.freeze
 
@@ -466,10 +484,11 @@ end
 # their input through `contains_guard` first (CLAUDE.md: the guard is not
 # optional, and a new parse entry must go through it). A type alone cannot
 # say so: the raw ABI is reachable crate-wide, so a second call site would
-# compile and reach the parser unguarded. Pinned here instead.
+# compile and reach the parser unguarded. Pinned here instead. (Both are
+# reference-only now: the shipping build parses with the `selectors` port.)
 GUARDED_PARSES = {
   "lxb_css_selectors_parse" => "lexbor/css_engine.rs",   # SelectorParser::parse
-  "lxb_css_stylesheet_parse" => "lexbor/stylesheet.rs",  # guarded_stylesheet
+  "lxb_css_stylesheet_parse" => "lexbor/stylesheet_diff.rs",  # lexbor_dump
 }.freeze
 guarded_calls = Hash.new { |h, k| h[k] = Hash.new(0) }
 Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
@@ -532,6 +551,10 @@ Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
   relative = path.delete_prefix("#{RUST}/")
   next unless relative.start_with?(*ENGINE_DIRS)
   next if relative.end_with?("selftest.rs", "verify.rs", "tests.rs")
+  # Built only for the tests and the `html_diff` / `selector_diff` /
+  # `stylesheet_diff` fuzz targets (`lexbor-reference`), never in a build
+  # that ships - test files by another name.
+  next if %w[lexbor/tree_diff.rs lexbor/selector_diff.rs lexbor/stylesheet_diff.rs].include?(relative)
 
   count = comments_removed(File.binread(path)).scan(INFALLIBLE_ALLOC).length
   infallible[relative] = count unless count.zero?

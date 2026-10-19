@@ -8,7 +8,9 @@ Some tasks fetch external test data. Others compare Makiri with Nokogiri/libxml2
 The pure Ruby specs listed below are part of the normal spec suite.
 
 ```bash
-rake conformance:html5     # HTML tree construction vs html5lib-tests
+rake conformance:html5     # HTML tree construction vs the WPT .dat data
+rake conformance:parser    # the same data + html5lib tokenizer tests, in the crate
+rake conformance:browsers  # HTML parsing vs Chromium/Firefox/WebKit (evidence)
 rake conformance:xpath     # HTML XPath 1.0 vs Nokogiri::HTML5
 rake conformance:css       # HTML CSS selectors vs Nokogiri::HTML5
 rake conformance:xmlconf   # XML 1.0 well-formedness vs W3C XML Test Suite
@@ -18,6 +20,8 @@ rake conformance:builder   # XML::Builder DSL vs Nokogiri::XML::Builder
 rake conformance           # all tasks above, excluding xml_pbt
 
 rake conformance:xml_pbt   # generated XML trees vs Nokogiri::XML
+rake conformance:web100k   # the ported HTML tree builder vs Lexbor over
+                           # 100,000 real pages (~3.1 GB; needs zstd; manual)
 ```
 
 Pass options through environment variables:
@@ -31,6 +35,7 @@ CSS_XML_ARGS="--generate 5000 --seed 1"      rake conformance:css_xml
 XMLCONF_ARGS="--verbose --show-policy"       rake conformance:xmlconf
 BUILDER_ARGS="--verbose"                     rake conformance:builder
 PBT_ARGS="--count 50000 --verbose"           rake conformance:xml_pbt
+BATCHES=1,2 KEEP=1                           rake conformance:web100k
 ```
 
 Nokogiri is a bench-only dependency, so Nokogiri-based conformance tasks run
@@ -58,15 +63,16 @@ as investigation signals, and follow the exit policy of that runner.
 
 ## 1. HTML5 parsing - `html5lib_runner.rb`
 
-This runner uses the WHATWG
-[html5lib-tests](https://github.com/html5lib/html5lib-tests)
-`tree-construction` corpus. It parses each case with `Makiri::HTML(...)` or
+This runner uses the html5lib-format tree-construction corpus, which
+[html5lib-tests](https://github.com/html5lib/html5lib-tests) moved into WPT
+(`html/syntax/parsing/resources`) in 2026-06. It parses each case with `Makiri::HTML(...)` or
 `Makiri::DocumentFragment.parse(...)`. Then it dumps Makiri's DOM and compares
 that dump with the expected html5lib tree.
 
 The test data is not vendored. On the first run, the runner fetches a pinned
-commit of `html5lib/html5lib-tests` into `spec/conformance/data/`. That directory
-is gitignored. To update the corpus, update `DATA_COMMIT` in the runner.
+commit of `web-platform-tests/wpt` (sparse) into `spec/conformance/data/wpt`.
+That directory is gitignored. To update the corpus, update `DATA_COMMIT` in the
+runner together with the pins in `docs/parser_differences.ja.md`.
 
 Scope:
 
@@ -78,10 +84,30 @@ Scope:
   and scripting changes tree construction.
 - If an expected node cannot be represented by Makiri's Ruby API, the case is
   counted as `unsupported`. The current corpus should keep this count at zero.
+- A difference already classified against the pinned HTML Standard is listed in
+  `KNOWN_DIVERGENCES` with its id in `docs/parser_differences.ja.md`. It is
+  reported, not failed; the run fails when a listed test starts passing.
 
 This runner mainly checks Makiri's Lexbor integration. It also checks that the
 post-parse indexes, source-location stamping, and Ruby wrappers do not change
 the HTML5 tree.
+
+### Parser harness in the crate - `rake conformance:parser`
+
+The same WPT tree-construction data, and the html5lib tokenizer tests, run
+through each parser the crate can build (today Lexbor) as Rust tests. A parser
+is read into a parser-neutral tree (`ext/makiri/rust/src/conformance/`) that
+also records namespaces, attribute order, text node boundaries and quirks mode,
+so a second parser can be compared with Lexbor as a tree, not as serialized
+text. `parser_data.rb` fetches both pinned data sets.
+
+### Browsers as evidence - `rake conformance:browsers`
+
+`browser_diff.rb` parses the same inputs in Makiri and in Chromium, Firefox and
+WebKit through Playwright (`spec/conformance/browser`, Node.js), with scripting
+disabled, and reports where the trees differ and who agrees with whom. It is
+evidence for classifying a difference, not an arbiter: the pinned HTML Standard
+is. Pass options with `BROWSER_ARGS` (`--browsers`, `--file`, `--verbose`).
 
 ---
 

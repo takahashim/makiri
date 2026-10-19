@@ -102,6 +102,38 @@ RSpec.describe "GC accounting of document arenas" do
   # DocData::compact load-bearing: without it the cache hands back a VALUE for
   # where an object USED to be. Breaking the callback on purpose crashes the
   # process here, which is why this runs GC.compact rather than trusting a read.
+  # Table foster parenting appends to one text between comments, so the text
+  # never ends the byte store; copying it whole on each append made the store
+  # (and the parse) quadratic: 8,000 repetitions held ~34 MB.
+  it "keeps a document whose text is appended to between other nodes linear" do
+    sizes = [4_000, 16_000].map do |n|
+      doc = Makiri::HTML("<table>" + "a<!--x-->" * n)
+      expect(doc.at_css("body").children.first.content).to eq("a" * n)
+      ObjectSpace.memsize_of(doc)
+    end
+    expect(sizes[1]).to be < sizes[0] * 6 # linear is ~4x, quadratic ~16x
+    expect(sizes[1]).to be < 16_000 * 100
+  end
+
+  # The namespace and prefix tables are the document's too: a megabyte of
+  # namespace URI used to leave both the memsize and the GC report unchanged.
+  it "counts and reports a document's own namespaces" do
+    doc = Makiri::HTML("")
+    before = ObjectSpace.memsize_of(doc)
+    uri = "urn:" + ("x" * 1_000_000)
+    GC.start
+    GC.disable
+    begin
+      reported = GC.stat(:malloc_increase_bytes)
+      doc.create_element_ns(uri, "p:x")
+      reported = GC.stat(:malloc_increase_bytes) - reported
+    ensure
+      GC.enable
+    end
+    expect(ObjectSpace.memsize_of(doc) - before).to be >= 1_000_000
+    expect(reported).to be >= 1_000_000
+  end
+
   describe "the node cache survives compaction" do
     %w[HTML XML].each do |kind|
       it "keeps identity, attached state and reads across GC.compact (#{kind})" do

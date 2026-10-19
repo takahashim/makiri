@@ -30,13 +30,13 @@ use crate::bridge::wrapper::{
 };
 use crate::bridge::xml_decode::xml_decode_input_value;
 use crate::child_index::{ChildList, Children, TokenTree};
+use crate::html_dom::cross_import::cross_html_to_xml;
 use crate::init::{CLASS_NODE, CLASS_XML_DOCUMENT, EXC_XML_LIMIT_EXCEEDED, EXC_XML_SYNTAX_ERROR};
 use crate::init::{
     CLASS_XML_ATTR, CLASS_XML_CDATA_SECTION, CLASS_XML_COMMENT, CLASS_XML_DOCUMENT_FRAGMENT,
     CLASS_XML_DOCUMENT_TYPE, CLASS_XML_ELEMENT, CLASS_XML_NODE, CLASS_XML_PROCESSING_INSTRUCTION,
     CLASS_XML_TEXT,
 };
-use crate::lexbor::adapter::cross_import::cross_html_to_xml;
 use crate::node_type::NodeType as CrateKind;
 use crate::xml::attr_key::AttrKey;
 use crate::xml::model::{ArenaKind, Document as XmlDoc, MutError, NodeId, ParseError, ParseLimits};
@@ -104,14 +104,21 @@ impl ChildListHost for XmlSelf {
     fn document(&self) -> Value {
         self.document
     }
-    fn children(&self, list: ChildList) -> Children<'_, XmlDoc> {
-        Children {
+    fn with_children<R>(
+        &self,
+        list: ChildList,
+        f: impl for<'a> FnOnce(Children<'a, XmlDoc>) -> R,
+    ) -> R {
+        f(Children {
             tree: self.doc_ref(),
             parent: self.id,
             list,
-        }
+        })
     }
-    fn wrap_child(&self, n: Option<NodeId>) -> Result<Option<Value>, Error> {
+    fn wrap_child<'a>(&self, n: Option<NodeId>) -> Result<Option<Value>, Error>
+    where
+        Self: 'a,
+    {
         n.map(|id| wrap_xml_node(id, self.document)).transpose()
     }
 }

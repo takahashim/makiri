@@ -3,10 +3,10 @@
 //! that nest a selector list deferred to a task (`query`). Names are
 //! resolved once per query ([`Name`]).
 
-use crate::lexbor::adapter::html::{
+use crate::html_dom::html::{
     has_ascii_uppercase, AttrName, HtmlAttr, HtmlDoc, HtmlElement, HtmlNode, NsId, TagId,
 };
-use crate::lexbor::css_parser::{AttrMatch, FunctionArg, PseudoClass, Simple};
+use crate::selectors::ast::{AttrMatch, FunctionArg, PseudoClass, Simple};
 use core::ffi::c_long;
 
 use super::compile::{Nest, Step};
@@ -216,7 +216,7 @@ fn nth_matches(
     node: HtmlNode<'_>,
     from_end: bool,
     of_type: bool,
-    anb: Option<crate::lexbor::css_parser::Nth<'_>>,
+    anb: Option<crate::selectors::ast::Nth<'_>>,
     budget: &Budget,
     positions: &mut Positions,
 ) -> Result<bool, MatchFailure> {
@@ -316,8 +316,8 @@ pub(super) fn check_simple(
         // would be indistinguishable from a selector that legitimately
         // matches nothing. Raised instead; `compile` refuses it before any
         // node is tested, so this arm is the backstop. `:lexbor-contains()`
-        // never parses (`contains_guard`); were it decoded, it is refused
-        // the same way.
+        // never parses (the parser does not know the name); were it decoded,
+        // it is refused the same way.
         Simple::PseudoClassFunction(FunctionArg::Contains | FunctionArg::Current(_)) => {
             return Err(MatchFailure::Unsupported)
         }

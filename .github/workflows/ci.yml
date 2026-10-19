@@ -55,17 +55,19 @@ jobs:
       # Ruby, and bindgen needs libclang. The runner image ships one; installing
       # it explicitly is what keeps a base-image change from turning into
       # "Unable to find libclang" in the cargo step.
-      # clang/lld/llvm are for the vendored Lexbor's LTO, not for bindgen: on
-      # Linux the whole chain has to be LLVM or extconf turns LTO off (gcc emits
-      # GIMPLE, which rust-lld cannot read - see the note in extconf.rb). It
-      # DETECTS them, so a runner without them still builds, just without LTO;
-      # installing them here is what makes CI exercise the fast path.
-      - name: Install libclang (bindgen) and the LLVM chain (Lexbor LTO)
+      - name: Install libclang (bindgen)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libclang-dev clang lld llvm
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
 
-      - name: Compile the extension (builds vendored Lexbor, then the crate)
+      - name: Compile the extension (the crate alone; no Lexbor)
         run: bundle exec rake compile
+
+      # The reference Lexbor, which the extension no longer links: Clippy's
+      # `--all-features`, the Rust tests and the fuzz crate build the layers
+      # that compare against it.
+      - name: Build the reference Lexbor
+        if: matrix.os == 'ubuntu-latest' && matrix.ruby == '3.4'
+        run: bundle exec rake lexbor
 
       # Warnings are errors: the lints that matter here are the project's own -
       # `clippy.toml`'s disallowed-methods is what enforces that every heap
@@ -197,6 +199,9 @@ jobs:
       # ran under `rake sanitize` while they were a Ruby hook. `--target` keeps
       # the build scripts uninstrumented. Linux only: on macOS an ASan test
       # binary deadlocks in dyld before main (see the Rakefile's cargo-fuzz note).
+      - name: Build the reference Lexbor
+        run: bundle exec rake lexbor
+
       - name: Rust core tests under AddressSanitizer
         working-directory: ext/makiri/rust
         env:

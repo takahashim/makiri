@@ -12,7 +12,10 @@ impl<'doc> HtmlDoc<'doc> {
     /// `None` when Lexbor could not make one. The DOM's createElement: the
     /// result belongs to this document but is in no tree, which is what
     /// [`BuildingElement`] says.
-    pub fn create_element(self, local_name: &[u8]) -> Option<BuildingElement<'doc>> {
+    pub(in crate::lexbor) fn create_element(
+        self,
+        local_name: &[u8],
+    ) -> Option<BuildingElement<'doc>> {
         // SAFETY: a live document; Lexbor copies the name into its own storage.
         unsafe {
             BuildingElement::from_raw(lxb::lxb_dom_document_create_element(
@@ -38,7 +41,7 @@ impl<'doc> HtmlDoc<'doc> {
     ///
     /// [`create_element`]: Self::create_element
     /// [`create_html_element_as_written`]: Self::create_html_element_as_written
-    pub fn create_element_ns(
+    pub(in crate::lexbor) fn create_element_ns(
         self,
         local: &[u8],
         ns: &[u8],
@@ -203,7 +206,7 @@ impl<'doc> HtmlDoc<'doc> {
     }
 
     /// A detached text node holding `text`. `None` on allocation failure.
-    pub fn create_text(self, text: &[u8]) -> Option<BuildingNode<'doc>> {
+    pub(in crate::lexbor) fn create_text(self, text: &[u8]) -> Option<BuildingNode<'doc>> {
         // SAFETY: a live document; Lexbor copies the bytes.
         unsafe {
             BuildingNode::from_raw(lxb::lxb_dom_document_create_text_node(
@@ -215,7 +218,7 @@ impl<'doc> HtmlDoc<'doc> {
     }
 
     /// A detached comment holding `text`. `None` on allocation failure.
-    pub fn create_comment(self, text: &[u8]) -> Option<BuildingNode<'doc>> {
+    pub(in crate::lexbor) fn create_comment(self, text: &[u8]) -> Option<BuildingNode<'doc>> {
         // SAFETY: as above.
         unsafe {
             BuildingNode::from_raw(lxb::lxb_dom_document_create_comment(
@@ -229,7 +232,11 @@ impl<'doc> HtmlDoc<'doc> {
     /// A detached processing instruction, or `None` when Lexbor could not make
     /// one - including data holding `?>`, which Lexbor refuses. The TARGET it
     /// does not check (a TODO in Lexbor), so the caller validates it first.
-    pub fn create_pi(self, target: &[u8], data: &[u8]) -> Option<BuildingNode<'doc>> {
+    pub(in crate::lexbor) fn create_pi(
+        self,
+        target: &[u8],
+        data: &[u8],
+    ) -> Option<BuildingNode<'doc>> {
         // SAFETY: as above, for both slices.
         unsafe {
             BuildingNode::from_raw(lxb::lxb_dom_document_create_processing_instruction(
@@ -262,7 +269,7 @@ impl<'doc> HtmlDoc<'doc> {
     ///   source. Such a doctype would be unimportable, so an absent id is
     ///   initialised to an allocated empty string instead. Length stays 0, so
     ///   the accessor and the serializer still read it as absent.
-    pub fn create_doctype(
+    pub(in crate::lexbor) fn create_doctype(
         self,
         name: &[u8],
         public_id: Option<&[u8]>,
@@ -332,7 +339,7 @@ impl<'doc> HtmlDoc<'doc> {
     }
 
     /// An empty detached DocumentFragment. `None` on allocation failure.
-    pub fn create_fragment(self) -> Option<BuildingNode<'doc>> {
+    pub(in crate::lexbor) fn create_fragment(self) -> Option<BuildingNode<'doc>> {
         // SAFETY: a live document.
         unsafe {
             BuildingNode::from_raw(
@@ -357,7 +364,11 @@ impl<'doc> HtmlDoc<'doc> {
     /// own (hardening): an attribute by Lexbor's attribute clone, a fragment
     /// made afresh and given copies of the children. Lexbor's importNode is
     /// given every other kind.
-    pub fn import_node(self, src: HtmlNode<'_>, deep: bool) -> Option<BuildingNode<'doc>> {
+    pub(in crate::lexbor) fn import_node(
+        self,
+        src: HtmlNode<'_>,
+        deep: bool,
+    ) -> Option<BuildingNode<'doc>> {
         match src.node_type() {
             NodeType::Attribute => {
                 // SAFETY: a live attribute, only read; the clone is made in

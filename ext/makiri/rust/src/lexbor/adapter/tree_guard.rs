@@ -40,45 +40,9 @@ type Tokenizer = lxb::lxb_html_tokenizer_t;
 type TokenFn = lxb::lxb_html_tokenizer_token_f;
 type Tree = lxb::lxb_html_tree_t;
 
-/// The most `<option>`s one `<select>` may receive during a parse; real lists
-/// are a few hundred at most.
-pub const MAX_SELECT_OPTIONS: usize = 10_000;
-
-/// What stopped a parse the hook refused.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum GuardStop {
-    /// The tree grew deeper than the [`DepthLimit`] allowed.
-    TooDeep,
-    /// One `<select>` received more than [`MAX_SELECT_OPTIONS`] options.
-    TooManyOptions,
-}
-
-/// The deepest element an HTML parse accepts, or no limit.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct DepthLimit(Option<usize>);
-
-impl DepthLimit {
-    /// Nokogiri::HTML5's default (`Nokogiri::Gumbo::DEFAULT_MAX_TREE_DEPTH`).
-    pub const DEFAULT: DepthLimit = DepthLimit(Some(400));
-    /// No limit: the quadratic worst case is back.
-    pub const UNLIMITED: DepthLimit = DepthLimit(None);
-
-    /// Accept elements up to depth `depth` (see the module doc for the count).
-    pub const fn at_most(depth: usize) -> DepthLimit {
-        DepthLimit(Some(depth))
-    }
-
-    /// The limit, or `None` when there is none.
-    pub fn max_depth(self) -> Option<usize> {
-        self.0
-    }
-
-    /// The longest open-element stack allowed, given `synthetic` entries the
-    /// parser keeps below the first real element.
-    fn max_open(self, synthetic: usize) -> usize {
-        self.0.map_or(usize::MAX, |d| d.saturating_add(synthetic))
-    }
-}
+/* The limits and stop reasons are the ported tree builder's, so both
+ * parsers answer with the same types. */
+pub use crate::html::tree::guard::{DepthLimit, GuardStop, MAX_SELECT_OPTIONS};
 
 /// The tokenizer's token-done hook: runs the depth guard after the tree
 /// builder, and stamps source positions for a document parse.
@@ -347,6 +311,35 @@ pub enum OptionContext {
     /// A context named by tag and namespace (`fragment(context:)`), which has
     /// no ancestors yet.
     Tag(Option<TagId>, Option<NsId>),
+    /// A context element of another DOM (the arena's), whose ancestor walk
+    /// was made beforehand: whether it reaches a `<select>` when the walk
+    /// arrives with no `<optgroup>` seen (`fresh`) and with one
+    /// (`after_optgroup`) - the only state [`nearest_select`] carries.
+    Resolved { fresh: bool, after_optgroup: bool },
+}
+
+/// [`OptionContext::Resolved`]'s answers for a context chain given as
+/// `(tag, ns)` pairs, the context element first: the walk [`nearest_select`]
+/// makes into an element context, run from both states. `None` for a tag
+/// Lexbor does not know (`Option<TagId>` none) is fine: only static tags
+/// decide.
+pub fn resolve_option_chain(
+    chain: impl Iterator<Item = (Option<TagId>, Option<NsId>)> + Clone,
+) -> OptionContext {
+    let run = |mut optgroup: bool| {
+        for (tag, ns) in chain.clone() {
+            match select_step(tag, ns, &mut optgroup) {
+                Step::Stop => return false,
+                Step::Select => return true,
+                Step::Up => {}
+            }
+        }
+        false
+    };
+    OptionContext::Resolved {
+        fresh: run(false),
+        after_optgroup: run(true),
+    }
 }
 
 /// One step of the nearest-select walk, over an element's tag and namespace.
@@ -411,6 +404,13 @@ fn nearest_select(option: HtmlNode<'_>, context: OptionContext) -> Option<*const
             Step::Select => Some(core::ptr::dangling::<c_void>()),
             Step::Stop | Step::Up => None,
         },
+        OptionContext::Resolved {
+            fresh,
+            after_optgroup,
+        } => {
+            let reaches = if optgroup { after_optgroup } else { fresh };
+            reaches.then(core::ptr::dangling::<c_void>)
+        }
     }
 }
 

@@ -180,12 +180,23 @@ pub trait Dom<'d>: Copy {
     /// An unprefixed test is the strict one; where lax admits more (HTML's
     /// foreign elements), the host must not answer a bucket that leaves them
     /// out.
-    fn name_bucket(self, local: &[u8], ns_uri: Option<&[u8]>) -> Option<Bucket<'d, Self::Node>>;
+    fn name_bucket(
+        self,
+        local: &[u8],
+        ns_uri: Option<&[u8]>,
+    ) -> Option<Bucket<'d, Self::BucketItem>>;
+
+    /// What a bucket lends: the node itself, or a name for it the host
+    /// stores more compactly (the HTML arena's ids).
+    type BucketItem: Copy + 'd;
+
+    /// The node a bucket item names.
+    fn bucket_node(self, item: Self::BucketItem) -> Self::Node;
 }
 
 /// What `Dom::name_bucket` found: the elements, in document order, and whether
 /// each still has to be re-checked against the name test before it counts.
-pub struct Bucket<'a, N> {
-    pub nodes: &'a [N],
+pub struct Bucket<'a, I> {
+    pub nodes: &'a [I],
     pub recheck: bool,
 }

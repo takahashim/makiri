@@ -26,27 +26,19 @@ Gem::Specification.new do |spec|
   spec.metadata["changelog_uri"]     = "#{spec.homepage}/blob/main/CHANGELOG.md"
   spec.metadata["rubygems_mfa_required"] = "true"
 
-  # `--recurse-submodules` pulls in the vendored Lexbor sources (a git submodule),
-  # which `git ls-files` alone reports as a single gitlink entry. They are
-  # required to compile the extension from a source gem, and to build the
-  # precompiled (native) gems on CI.
-  #
-  # Drop the parts of Lexbor the build never touches: our CMake config sets
-  # LEXBOR_BUILD_{TESTS,EXAMPLES,UTILS,BENCHMARKS,WASM}=OFF and each of those
-  # add_subdirectory() calls is IF()-guarded, so these trees are never entered.
-  # Keeps the source gem to roughly half the file count (only `source/` + the
-  # CMake config + LICENSE/NOTICE are needed to build).
-  lexbor_unused = %w[
-    vendor/lexbor/test/ vendor/lexbor/utils/ vendor/lexbor/examples/
-    vendor/lexbor/benchmarks/ vendor/lexbor/wasm/ vendor/lexbor/packaging/
-    vendor/lexbor/images/ vendor/lexbor/.github/
-  ]
+  # The extension builds from the crate alone: the HTML and CSS parsers are
+  # Rust ports of Lexbor's, and the vendored Lexbor (a git submodule) is only
+  # the reference the tests compare them with (`rake lexbor`). So of `vendor/lexbor` the gem carries only what the ports owe it:
+  # Lexbor's LICENSE and NOTICE (Apache-2.0, see NOTICE). `--recurse-submodules`
+  # is what lists those two files; `git ls-files` alone reports the submodule
+  # as one gitlink entry.
+  lexbor_kept = %w[vendor/lexbor/LICENSE vendor/lexbor/NOTICE]
   gemspec = File.basename(__FILE__)
   spec.files = IO.popen(%w[git ls-files -z --recurse-submodules], chdir: __dir__, err: IO::NULL) do |ls|
     ls.readlines("\x0", chomp: true).reject do |f|
       (f == gemspec) ||
         f.start_with?(*%w[bin/ Gemfile .gitignore .rspec spec/ test/ bench/ docs/ CLAUDE.md AGENTS.md]) ||
-        f.start_with?(*lexbor_unused)
+        (f.start_with?("vendor/lexbor/") && !lexbor_kept.include?(f))
     end
   end
   spec.bindir            = "exe"
@@ -66,7 +58,7 @@ Gem::Specification.new do |spec|
   # extensions, which is what makes this work.
   spec.add_dependency "rb_sys", "~> 0.9"
 
-  # Vendored Lexbor builds via cmake; declared as a dev requirement.
+  # The reference Lexbor (`rake lexbor`) builds via cmake, outside the gem.
   spec.add_development_dependency "rake",            "~> 13.0"
   spec.add_development_dependency "rake-compiler",   "~> 1.2"
   spec.add_development_dependency "rspec",           "~> 3.13"

@@ -19,8 +19,12 @@ libfuzzer-sys = "0.4"
 path = ".."
 default-features = false
 # `css-reference` adds the OLD CSS engine, the reference `html_css_diff`
-# compares against; it ships in no build of the extension.
-features = ["lexbor", "css-reference"]
+# compares against, and `lexbor-reference` Lexbor's tree, the reference
+# `html_diff` compares the ported tree builder against (and Lexbor's selector
+# and stylesheet parsers beside the ports, for `selector_diff` and
+# `stylesheet_diff`); neither ships in any build of
+# the extension.
+features = ["lexbor", "css-reference", "lexbor-reference"]
 
 [[bin]]
 name = "xml"
@@ -74,6 +78,27 @@ bench = false
 [[bin]]
 name = "html_css_diff"
 path = "fuzz_targets/html_css_diff.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "html_diff"
+path = "fuzz_targets/html_diff.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "selector_diff"
+path = "fuzz_targets/selector_diff.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "stylesheet_diff"
+path = "fuzz_targets/stylesheet_diff.rs"
 test = false
 doc = false
 bench = false

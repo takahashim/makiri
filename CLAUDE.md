@@ -1,8 +1,10 @@
 # Makiri - project guide for Claude Code
 
 Makiri is a Ruby gem: an HTML5 parser + native XPath 1.0 query engine + CSS
-selectors, with **no libxml2 / libxslt dependency at any layer**. It parses via
-vendored Lexbor and queries via an original XPath engine. Security is a
+selectors, with **no libxml2 / libxslt dependency at any layer**. It parses with
+a Rust port of Lexbor's HTML parser into an index-arena DOM (vendored Lexbor
+remains as the reference it is tested against) and queries via an original
+XPath engine. Security is a
 first-class goal.
 
 The authoritative design is **`docs/design_doc.ja.md`** (Japanese) - read it
@@ -31,11 +33,11 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
 - **Security-first / fail-closed.** Enforce per-evaluate XPath budgets and
   node-set caps, validate inputs, never return a truncated/wrong result (raise
   instead). **Export only `Init_makiri`** (plus `ruby_abi_version`, which Ruby
-  reads at require time): the vendored Lexbor archive is built with default
-  visibility, so a bundle that re-exports its ~1700 `lxb_*`/`lexbor_*` symbols
-  lets another Lexbor-based gem in the same process (e.g. `nokolexbor`) bind its
-  `lxb_*` calls to our different Lexbor version → segfault. Keep Makiri's Lexbor
-  private; **verify with `bundle exec rake symbols`**, which asserts the whole
+  reads at require time). The extension links no Lexbor any more, but it did,
+  and a bundle that re-exported its ~1700 `lxb_*`/`lexbor_*` symbols let
+  another Lexbor-based gem in the same process (e.g. `nokolexbor`) bind its
+  `lxb_*` calls to our different Lexbor version → segfault; any name of ours in
+  the dynamic table is the same hazard. **Verify with `bundle exec rake symbols`**, which asserts the whole
   claim (nothing of ours or Lexbor's left undefined, and nothing but those two
   names exported). Do not weaken that gate to "no `lxb_` exported" - it passed
   happily while ~220 `mkr_*` names leaked into the dynamic table.
@@ -156,19 +158,14 @@ input is a `ProcessingInstruction` node where it used to be a Comment, `#to_html
 writes `<?target data?>`, and `<?` at EOF is ignored (the spec's
 "eof-in-processing-instruction"). `Nokogiri::HTML5` still answers the old way -
 see NOKOGIRI_DIFFERENCES.md. The differential baseline's 81 affected lines were
-edited with the bump, and `spec/conformance/html5lib_runner.rb`'s
-`STALE_EXPECTATIONS` records the one pinned html5lib test whose expectation
-predates the spec change (that suite's tree-construction tests have moved to
-WPT, so the data pin cannot gain the new expectation).
+edited with the bump. `spec/conformance/html5lib_runner.rb` reads its
+tree-construction data from WPT (`html/syntax/parsing/resources`, where the
+html5lib .dat files have lived since 2026-06), which carries the new
+expectations; what this Lexbor pin still answers the old way is listed in
+`KNOWN_DIVERGENCES` there and in `docs/parser_differences.ja.md`.
 
 Still **vanilla, NEVER patched** - the constraint that relaxed is "release tag
 only", not "no fork".
-
-**Lexbor's heap blocks carry 16 bytes of slack** (`lexbor::memory`, installed
-at `Init_makiri` through Lexbor's own `lexbor_memory_setup`): hardening, so a
-small overrun past the end of a block in the vendored C lands in the slack
-rather than in the next allocation. Off under the sanitizer (`--cfg
-makiri_asan`, from extconf), where such a write must stay visible.
 
 **`:lexbor-contains()` is not supported, and `lexbor::contains_guard` keeps
 every one from the vendored CSS parser - it is not optional.** Its argument
@@ -182,20 +179,41 @@ the real parser. It finds the name on the tokens of Lexbor's OWN CSS
 syntax tokenizer (`lexbor::css_tokens`), never on a scanner of ours: the hand
 scanner it replaced ended strings where the tokenizer did not (CR, FF,
 backslash-newline), so a `:lexbor-contains(#x)` after such a string reached the
-parser unseen and `parse_stylesheet` crashed serializing what it left behind. Both call sites go through it - `css_engine::parse`
-(so HTML `#css` and the XML lowering) and `stylesheet.rs`'s
-`guarded_stylesheet` - and a new one must: `rake unsafe:boundaries` allows
-each Lexbor CSS parse function exactly one call site, the guarded one.
-`SelectorCache::compile`'s flush after a rejected parse belongs to the same
-decision. The guard, that flush and their tests come out together or not at all,
-and only once the pin has moved past what they stand in for.
+parser unseen and `parse_stylesheet` crashed serializing what it left behind.
+**Since the parser port no build that ships runs Lexbor's CSS parser at all**:
+selectors and stylesheets are both parsed by `crate::selectors`, which leaves
+`lexbor-contains` out of its function table and so rejects one as an unknown
+function - the answer the guard gave. The guard, `css_tokens`, `css_engine`
+and `css_parser` are compiled only into the tests and the reference features,
+where Lexbor's parser is the oracle. Both reference call sites still go
+through the guard - `css_engine::parse` (selectors) and
+`stylesheet_diff::lexbor_dump` (stylesheets) - and a new one must:
+`rake unsafe:boundaries` allows each Lexbor CSS parse function exactly one
+call site, the guarded one. The guard and its tests come out together or not
+at all, once no reference runs Lexbor's parser.
+
+## Working conventions
+
+- **Commit messages are short**: a subject line and one or two short
+  paragraphs, not a long rationale. The why belongs in code comments and
+  `docs/`.
+- **Pushing is the maintainer's.** Commit locally and hand over the
+  `git push` command; do not push, and do not chain `commit && push`.
+- **The HTML parser port** (Lexbor to Rust, index-arena DOM) is planned in
+  `docs/rewrite_parser.ja.md`; its "進捗" section says where it stands and
+  what comes next. Known parser divergences are in
+  `docs/parser_differences.ja.md`.
 
 ## Build / test
 
 ```bash
-git submodule update --init        # fresh clone only
+git submodule update --init        # fresh clone only; the reference Lexbor
 bundle install
-bundle exec rake compile           # builds vendored Lexbor static lib, then the crate
+bundle exec rake compile           # the crate alone - the extension links no Lexbor
+bundle exec rake lexbor            # the reference Lexbor (script/build_lexbor.rb,
+                                   # cmake); lint, rust:test,
+                                   # conformance:parser and the diff fuzzers need it
+                                   # and depend on it
 bundle exec rake spec
 bundle exec rake rust:test         # Ruby-free core tests, Lexbor-feature tests, fuzz-crate check
 bundle exec rake lint              # cargo clippy --all-features -D warnings + cargo fmt --check
@@ -230,16 +248,15 @@ bundle exec rake oom               # OOM-injection sweep: rebuilds with
                                    # (clean raise or baseline-identical result), then
                                    # reuses the same document/context after GC.compact.
                                    # Prefix with MAKIRI_SANITIZE=address to combine ASan.
-bundle exec rake "sanitize:lexbor" # also build vendored Lexbor under ASan+UBSan (mraw-arena
-                                   # overflows). LINUX ONLY: Apple clang's ASan ABI
-                                   # does not match rustc's runtime (load segfault)
 bundle exec rake kani              # Kani proofs over the Ruby-free core (needs cargo-kani).
                                    # The successor to the C-era CBMC harnesses: the
                                    # allocator, cbuf, UTF-8 validate/decode.
 bundle exec rake bench             # perf vs Nokogiri (bench-only gems; runs outside bundle)
 ```
 
-Requires CRuby >= 3.2, `cmake`, and a **Rust toolchain** (`cargo`). A source
+Requires CRuby >= 3.2 and a **Rust toolchain** (`cargo`); `cmake` only for the
+reference Lexbor (`rake lexbor`). The gem carries none of
+Lexbor's sources, only its LICENSE and NOTICE, which the ports owe it. A source
 install needs cargo too; that is why `rb_sys` is a RUNTIME gemspec dependency -
 `extconf.rb` requires it at install time. Binary gems are published per platform,
 so most users never compile.
@@ -361,67 +378,6 @@ by the check that concluded "every undefined symbol is legitimate".
   `-fstack-protector-strong` covered stack smashing in the C, and there is no C.
   Rust's own bounds checking is what covers the class now on every path that is
   not `unsafe`, which is why `unsafe` blocks carry a stated contract.
-- **Vendored Lexbor is built with LTO on macOS and on Linux, but NOT on mingw** -
-  that split is not a preference, it is what each platform's linker can read.
-  Measured against the same build without it, once the GC accounting above made
-  the numbers stable (before that the parse row swung 1.4-2.3x and nothing here
-  was quotable): **parse -16.2%**, **`to_html` -9.2%**, and **`css` +5.3%** -
-  that last one is a real regression, not noise, and it is the price. About two
-  seconds of link. It was the only compile-option win available: Lexbor is ALREADY
-  `-O3`, because `CMAKE_BUILD_TYPE=Release` appends `-O3 -DNDEBUG` after
-  Lexbor's own `-O2` and the last `-O` wins - reading its
-  `LEXBOR_OPTIMIZATION_LEVEL` default as the effective level is a trap.
-
-  Enabling it everywhere was tried and CI gave three different answers, so do
-  not re-derive them: **darwin** ld64 reads the bitcode natively and both the
-  extension and `cargo test` link; **linux** links the extension (gcc drives it,
-  with its LTO plugin) but `cargo test` goes through rust-lld, which cannot read
-  GCC's GIMPLE at all; **mingw** fails outright, because cmake indexes the
-  archive with plain `ar`, which records no LTO symbols.
-
-  Linux therefore gets LTO only with the WHOLE chain in LLVM - clang to emit
-  bitcode, `llvm-ar`/`llvm-ranlib` to index it, and clang+lld to drive the
-  extension's link (`cargo test` already uses rust-lld, which reads bitcode).
-  extconf DETECTS that chain rather than requiring it, probing lld by actually
-  linking with it, so a gcc-only machine builds exactly as before; CI installs
-  `clang lld llvm` so the fast path is the one it exercises. mingw stays out:
-  its Ruby is MinGW-gcc-built, so bringing clang in is an ABI question, not a
-  flag.
-
-  `-march=native` is deliberately NOT used. It measured no gain at all - the hot
-  code is a byte-at-a-time state machine plus libc's already-dispatched
-  memcpy/memset, with nothing for the compiler to vectorise - and it would bake
-  the CI runner's ISA into a gem that has to run on the user's CPU. `-flto=thin`
-  measured the same as `-flto`, so the choice between them is only about which
-  compiler spells it.
-
-  NOT applied under the sanitizer (whole-archive inlining only makes a report
-  harder to read). `MAKIRI_LEXBOR_NO_LTO=1` opts out, and the install stamp
-  tracks it (`plain` / `plain-lto` / `plain-lto-llvm` / `asan`), so a mode switch rebuilds - but
-  only through a path that re-runs extconf, i.e. `rake clean compile`, per the
-  Makefile note above.
-
-- **A plain `sanitize` build does NOT catch overflows inside Lexbor's `mraw`
-  bump arena.** A sub-allocation overrunning into the next one stays within one
-  malloc'd chunk, so the heap allocator's red-zones never see it (this is exactly
-  how the v3.0.0 `:lexbor-contains()` overflow hid from ASan). To catch that
-  class, build Lexbor *itself* under ASan: `MAKIRI_SANITIZE_LEXBOR=1` makes
-  extconf pass `-DLEXBOR_BUILD_WITH_ASAN=ON` (Lexbor's mraw is ASan-aware - it
-  poisons the arena and unpoisons each allocation, so an intra-arena overrun
-  writes into poisoned memory and ASan reports it). Drive it with `rake
-  "sanitize:lexbor"` (slow: full instrumented Lexbor rebuild; FUZZ_ARGS routes to
-  the fuzzer). extconf stamps the Lexbor install mode (`plain`/`asan`) and
-  auto-rebuilds on a switch, so an instrumented Lexbor never leaks into a normal
-  build. Switching the Lexbor *commit* still needs `rake clean:lexbor` (the stamp
-  tracks mode, not revision). No Lexbor patch - it is a vendor build flag.
-
-  That path is LINUX ONLY for the extension, but a **pure-C reproduction is not**:
-  build Lexbor with `cmake -DLEXBOR_BUILD_WITH_ASAN=ON -DCMAKE_BUILD_TYPE=Debug`
-  and link a small `clang -fsanitize=address` program against it. There is no
-  rustc runtime in that process, so the ABI clash does not arise and it works on
-  macOS - the fastest way to decide whether something is ours or Lexbor's. When
-  the answer has to come from a Ruby-side crash instead, build with
-  `MAKIRI_NO_EXPORT_TRIM=1`: without it every frame symbolises as `Init_makiri`.
 - **The XML arena (`src/xml/arena.rs`) needs no ASan poisoning, and has none.**
   The C build's bump arena did (poisoned 64 KiB chunks, the Lexbor-mraw blind
   spot); the Rust one is an index arena - a `Vec<Node>` and a `Vec<u8>` under
@@ -431,7 +387,7 @@ by the check that concluded "every undefined symbol is legitimate".
   allocator, or - for the glue's Ruby-side storage - through Ruby's xmalloc;
   ASan red-zones both per allocation.
 - **The fallible-allocation line.** The engine (`xml`, `xpath`, `css`,
-  `lexbor/adapter`, `lexbor/css_match`, `cbuf`) allocates only through `falloc`: `clippy.toml` bans the
+  `selectors`, `lexbor/adapter`, `lexbor/css_match`, `cbuf`) allocates only through `falloc`: `clippy.toml` bans the
   infallible `Box::new` / `Vec::with_capacity` / `reserve`, and `rake oom` fails
   each site in turn, so an OOM there raises instead of aborting. The glue's
   Ruby-side storage - TypedData wrappers (`bridge::typed::wrap_built`, freed by
@@ -468,9 +424,9 @@ by the check that concluded "every undefined symbol is legitimate".
 ```
 lib/makiri/                Ruby API (Document, Node, Element, NodeSet, XPathContext, ...)
 ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `makiri`
-  extconf.rb               builds vendored Lexbor (cmake), then hands the crate to
-                           cargo via create_rust_makefile; owns the link arguments
-                           and the export trim
+  extconf.rb               hands the crate to cargo via create_rust_makefile; owns
+                           the link arguments and the export trim (it builds no
+                           Lexbor: `rake lexbor` does, for the tests)
   build.rs                 bindgen over Lexbor's own headers -> the layout and
                            constants the crate reads (never transcribed by hand)
   src/
@@ -539,20 +495,33 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            their C definitions change - `adapter`, the one reader of
                            Lexbor's DOM structs, plus the element index,
                            text index, source location and post-parse - and the
-                           selectors/stylesheet/serialize/fragment facades, the
-                           CSS selector parser (`css_parser.rs`), the HTML CSS
+                           selectors/serialize/fragment facades, the stylesheet
+                           reader (`stylesheet.rs`, safe, over the port), the
+                           views over Lexbor's CSS selector lists
+                           (`css_parser.rs`; its parse is a reference), the HTML CSS
                            matcher (`css_match/`, `#![forbid(unsafe_code)]`
                            at its root) and the XPath
                            HTML backend (`xpath.rs`); every `lxb_*`/`Lxb*` name
                            outside it is 0
-    css/                   CSS selector lowering over the lexbor-owned selector
+    css/                   CSS selector lowering to XPath over the ported selector
                            parser (safe Rust, no Lexbor ABI names)
+    selectors/             the CSS parser ported from Lexbor (its CSS syntax
+                           tokenizer, rule/state stacks, selector states, and
+                           the stylesheet rule phases and callbacks in
+                           `parser/syntax.rs`) into an owned AST and rule arena
+                           (`rules.rs`); Ruby- and Lexbor-free,
+                           `#![forbid(unsafe_code)]` at its root
   fuzz/                    cargo-fuzz harnesses (xml/html, xpath/xml_xpath/
                            html_xpath, css = the XML lowering, html_css = the
                            HTML matcher over an arbitrary document, asserting
                            css and matches? agree, html_css_diff = the same
-                           matcher against Lexbor's own engine; built on PRs,
-                           run nightly. css-match.yml owns the two html_css*)
+                           matcher against Lexbor's own engine, html_diff =
+                           the ported tree builder against Lexbor's tree,
+                           documents and fragments, selector_diff /
+                           stylesheet_diff = the ported selector / stylesheet
+                           parser against Lexbor's; built on
+                           PRs, run nightly. css-match.yml owns the two
+                           html_css*)
 vendor/lexbor/             git submodule, pinned 05b5d37 (v3.0.0-66), NEVER patched
 spec/fuzz/                 grammar-aware robustness fuzzer
 spec/invariants/           randomized property checks (see its README)
@@ -561,18 +530,49 @@ bench/                     Nokogiri-comparison benchmark
 docs/design_doc.ja.md      authoritative design (read this)
 ```
 
-Four features, and the default is the extension: **`ruby`** (the
-magnus boundary + `glue` + `init`; implies `lexbor`), **`lexbor`** (the layers
-that read Lexbor's DOM: the generated ABI, `css`, `lexbor/adapter`, the XPath HTML
-instance), **`alloc-inject`** (the `rake oom` hook, off in any normal build) and
+Six features, and the default is the extension: **`ruby`** (the
+magnus boundary + `glue` + `init`), **`html-dom`** (the parser port's
+index-arena DOM, `html::dom`, behind the `html_dom` facade and parsed by the
+ported tree builder `html::tree`, with what sits over it - the HTML CSS
+matcher, XPath's HTML instance, the bridge's HTML half; `ruby` and `lexbor`
+both turn it on, and only the bare engine - Kani - is without it),
+**`lexbor`** (the vendored Lexbor, only the reference: the generated ABI,
+Lexbor's DOM through `lexbor/adapter` and its XPath instance, and the
+reference parsers; no build that ships has it, so `nm` finds no `lxb_`
+symbol), **`alloc-inject`** (the `rake oom` hook, off in any normal build),
 **`css-reference`** (the OLD CSS engine, `lexbor::selectors`, for the
-`html_css_diff` fuzz target; in no build that ships).
-The engine - `xml`, `xpath`, `falloc`, `cbuf`, `cutf8` - is behind no gate at
-all. So the fuzz crate builds `--no-default-features --features lexbor,css-reference` and Kani
+`html_css_diff` fuzz target) and **`lexbor-reference`** (`lexbor::tree_diff`,
+`lexbor::selector_diff` and `lexbor::stylesheet_diff`, Lexbor's tree, selector
+lists and stylesheets beside the ports', for the `html_diff`, `selector_diff`
+and `stylesheet_diff` fuzz targets). A plain `cargo build` is the shipping
+configuration; `rake rust:test` runs the engine alone, `html-dom` and
+`lexbor`. Lexbor's DOM is not an extension build any more
+(`MAKIRI_LEXBOR_DOM=1` was retired in stage 9): `lexbor::arena_tests` holds
+the arena to it read for read, edit for edit, byte for byte,
+`lexbor::tree_port_tests` holds the tree builder to Lexbor's tree node for
+node, and the matcher is held to Lexbor's own engine over an arena copy of
+Lexbor's parse, node for node by walk position (`lexbor::twin`). The arena's
+byte store is append-only between compactions: an edit's start
+(`HtmlParsed::edit`, after the indexes - which hold spans - are dropped)
+rewrites it once the dead bytes outweigh the live ones
+(`html/dom/compact.rs`), so repeated `content=` does not grow a document.
+The engine - `xml`, `xpath`, `falloc`, `cbuf`, `cutf8`, `html` (the
+tokenizer, the tree builder and the arena), `selectors` (the selector
+parser) - is behind no gate at all. So the fuzz crate builds `--no-default-features --features lexbor,css-reference,lexbor-reference` and Kani
 builds `--no-default-features`. The ~30 features that used to stand here were
 migration scaffolding, one per ported C file, and went with the C.
 
 ## Subsystems
+
+**Which DOM these notes describe.** The extension's HTML DOM is the arena
+(`html::dom`, parsed by `html::tree`); the notes below that name
+`lexbor/adapter/...` files (source location, the parse guard, the element and
+text indexes, serialization, mutation) describe Lexbor's DOM, which the arena
+was ported from and is still tested against (`lexbor::arena_tests`), but which
+no build that ships carries. The arena keeps the same contracts behind the
+`html_dom` facade, so what a note says a caller sees holds for it; where a
+note describes how Lexbor stores something, the arena's version is in
+`html/dom/`.
 
 **Text-input contract.** Parsing **honours the input String's encoding**
 (`ruby_to_utf8`, `bridge/string.rs`): UTF-8 / US-ASCII / ASCII-8BIT pass
@@ -626,8 +626,20 @@ leave stale. XML names stay NUL-strict, like HTML's. Don't drop the
 UTF-8 checks or route a name/engine string through the data path; see
 `docs/string_types.md`.
 
-**Parsing & source location** (`lexbor/adapter/post_parse.rs`, `source_loc.rs`).
-`parse_html` drives Lexbor's low-level pipeline (`parser_create`/`init` →
+**Parsing & source location.** In the build that ships, the ported tree
+builder stamps an element when it is CREATED FOR ITS OWN START TAG
+(`TreeBuilder::created_offset`, `html/tree/guard.rs`): a real start-tag token
+with no base element - never a `Tok::fake`, an adoption-agency or
+reconstruction copy, or an element implied by another tag's token (the `<tr>`
+a stray `<td>` implies) - so every element the parser invents stays nil and a
+void element fostered out of a table now has its line (L1 in
+`docs/parser_differences.ja.md`). `lexbor::tree_diff::offsets_name_their_tags`
+holds it to the one property `#line` promises: every stamp sits at a start tag
+of the element's own name. What follows is the Lexbor DOM's rule (the
+reference, and the port's Lexbor-compatible run in the differential
+harnesses), which the port reproduced until then.
+
+(`lexbor/adapter/post_parse.rs`, `source_loc.rs`) `parse_html` drives Lexbor's low-level pipeline (`parser_create`/`init` →
 `parse_chunk_begin` → override the tokenizer's token-done callback, **chaining**
 the parser's tree builder → `chunk_process`/`chunk_end`) so each element can
 be stamped with its start tag's byte offset (`token->begin`) **at creation**:
@@ -782,29 +794,33 @@ policy is a new item stated in each `impl`. The HTML backend reports the DOM's
 case-preserved `localName` (`refX`, `foreignObject`), not Lexbor's lower-cased
 stored name.
 
-**CSS** (`lexbor/css_match/` + `lexbor/selector_cache.rs` +
-`lexbor/css_parser.rs`). `Node#{css,at_css,matches?}` (`glue::html_node::css`)
+**CSS** (`lexbor/css_match/` + `lexbor/selector_cache.rs` + `selectors/`). `Node#{css,at_css,matches?}` (`glue::html_node::css`)
 match over the typed HTML adapter through `css_match` - an original,
 `#![forbid(unsafe_code)]` Rust port of Lexbor's `lxb_selectors_*` state
 machine (its `find`/`found_check`/`not_found` loop over a chain's compounds,
 with nested list-pseudos as contexts on a heap task stack; never native
 recursion for selector nesting, as `lxb_selectors_run`'s loop never recurses
-either), NOT Lexbor's own matcher. Selector PARSING is still Lexbor's own CSS
-parser (`css_engine::SelectorParser::parse`, unchanged), but the glue reaches
-it through `lexbor::selector_cache`, not `css_parser::parse` directly:
-`selector_cache` owns its OWN process-global parser/arena
-(`css_engine::ParserParts::build()`, the same factory `css_parser` and the
-stylesheet reader each call independently) plus an adaptive compiled-selector
-cache (`CachePolicy`, a near-verbatim port of the OLD HTML engine's - same
-constants, same flush-on-cap/bypass-on-low-hit-rate/retest behavior), so a
-repeated selector string is not re-parsed every call. `css_parser::parse`
-itself is unaffected - still what the XML CSS->XPath lowering and the
-stylesheet reader use - and lends `selector_cache` exactly one thing,
-`list_from_raw`: a `Lists` view over a raw pointer `selector_cache`'s OWN
-cache keeps alive, the same shape `Parsed::groups()` builds over one a
-`Parsed` keeps alive (a `Parsed`'s `Drop` cleans the WHOLE shared arena, which
-is exactly why HTML needed its own separate one to cache anything past one
-call). `lexbor/selectors.rs` (the OLD `lxb_selectors`-callback engine this
+either), NOT Lexbor's own matcher. Selector PARSING is the parser port
+(`crate::selectors`, `docs/rewrite_parser.ja.md` stage 5): Lexbor's CSS
+syntax tokenizer, its rule and state stacks and its selector states, line for
+line, into an owned index-arena AST read through views of the same shape as
+`lexbor::css_parser`'s (`List`, `Lists`, `Selector`, `Simple`, ...), so the
+matcher and the XML lowering read either. `lexbor::selector_diff` holds it to
+Lexbor's parser view for view (the `selector_diff` fuzz target too); the two
+answers that differ on purpose are `docs/parser_differences.ja.md` S2/S3.
+The glue reaches it through `lexbor::selector_cache`: an adaptive
+compiled-selector cache (`CachePolicy`, the OLD HTML engine's - same
+constants, same flush-on-cap/bypass-on-low-hit-rate/retest behavior) holding
+each parsed selector it keeps, so a repeated selector string is not re-parsed
+every call. `lexbor::css_parser` remains only as the reference: its `parse` and
+its views over Lexbor's OWN lists are what `selector_diff` and
+`stylesheet_diff` compare against, built only for tests and the reference
+features. **`parse_stylesheet` is the port too** (`selectors::parse_stylesheet`
++ `lexbor/stylesheet.rs`): Lexbor's rule structure and recovery exactly, but
+names and values by one rule for every property - a declaration name
+lower-cased unless `--*`, an at-rule name lower-cased, a value the text
+between Lexbor's offsets with whitespace runs collapsed - not Lexbor's
+per-property reserialization (`docs/parser_differences.ja.md` C1-C3). `lexbor/selectors.rs` (the OLD `lxb_selectors`-callback engine this
 replaced for HTML) is the differential-testing reference
 (`lexbor::tests::css_match::agrees_with_the_old_lexbor_engine_on_standard_selectors`
 and its randomized siblings, and the `html_css_diff` fuzz target) and
@@ -917,8 +933,8 @@ documented minimum (128 KiB), crashed the WHOLE PROCESS with an uncaught
 `SystemStackError` that escaped every `rescue` (exit code 1) - worse than an
 ordinary raise, since Ruby's stack-overflow handling `longjmp`s past every
 Rust frame between the overflow and the nearest `rb_protect`, skipping `Drop`
-(`crate::stack`'s module doc): for `selector_cache::Session`, whose `Drop`
-releases the process-global CSS engine's `GvlCell` busy flag, a `longjmp`
+(`crate::stack`'s module doc): for `selector_cache`'s borrow of its
+`GvlCell`, whose `Drop` releases the busy flag, a `longjmp`
 mid-match would have left it stuck `true` forever, wedging `Node#css`/
 `#at_css`/`#matches?` for the rest of the process - not just crashing the one
 call. Lexbor's own C engine never had this problem: `:has()`/`:is()` nesting
@@ -941,7 +957,10 @@ Descendant search exploring a genuinely large candidate space for this
 adversarial shape, the SAME pre-existing budget mechanic the old
 native-recursive design also relied on, just no longer reachable via a crash
 first) and leaves the CSS engine fully usable afterward, never
-`SystemStackError`.
+`SystemStackError`. (Since C20 in `docs/parser_differences.ja.md` the parser rejects a
+`:has()` inside a `:has()`, as Selectors 4 does, so the public API no longer
+reaches this shape; the matcher still answers it, and the tests that hold it
+to Lexbor's engine parse as Lexbor did, `compat::as_lexbor`.)
 
 `select_all`/`select_first`/`matches_any` are **descendant-only** (context node
 excluded, like Nokogiri) and in document order; `select_all` is capped at
@@ -959,8 +978,8 @@ the plain `:nth-*` family remembers positions. A malformed selector raises
 `:current()` and the column combinator (`||`) are constructs this
 matcher cannot evaluate (deliberately, and because Lexbor's own traversal
 can't run the latter either) - raised as "could not be run", never answered as
-a silent empty result (`:lexbor-contains()` never gets this far - see
-`contains_guard`). **Both that and the 64-compound chain cap are decided
+a silent empty result (`:lexbor-contains()` never gets this far: the parser
+rejects it as an unknown function). **Both that and the 64-compound chain cap are decided
 by `css_match::compile`, over the WHOLE selector tree, before any node is
 matched** - every entry point (`select_all`/`select_first`/`matches_any`)
 compiles first, and `matches?` on a non-element compiles too. Found lazily
@@ -986,8 +1005,8 @@ inheritance, first `legend` element child, `option`/`optgroup`), which
 Lexbor only approximates; `:any-link` / `:link` are Lexbor's exactly
 (`map` counts, any namespace, `xlink:href`).
 **The GVL is an argument, not a comment**: each process-global engine
-(`css_parser`'s, `selector_cache`'s, the OLD `selectors`'s, the stylesheet
-reader's) lives in its own `crate::gvl::GvlCell`, whose `borrow` takes a
+(`selector_cache`'s, and in the reference builds
+`css_parser`'s and the OLD `selectors`'s) lives in its own `crate::gvl::GvlCell`, whose `borrow` takes a
 `&Gvl` - minted from a
 `magnus::Ruby` by `bridge::gvl::held`, and `!Send`, so `without_gvl` (which
 requires a `Send` body) cannot carry one across a release. The cell's busy
@@ -1074,9 +1093,16 @@ generic over a small `Tree` trait (the XPath `Dom` pattern) that the adapter
 (`HtmlTree`: a template's contents reach it through `host`, an attribute has no
 tree parent) and the XML arena both implement; each side keeps only its linking
 (and XML its namespace resolution), and checks a fragment as one node before
-any link changes. The placing is `HtmlNodeMut::place`. **Every edit goes through `bridge::html::edit` and then
-`HtmlEdit::node`, which drops the indexes** (`HtmlParsed::invalidate_indexes`) -
-so no mutator calls it, and none can forget to on an error path. The two are
+any link changes. The placing is `HtmlDocMut::place`. **Every edit goes through `bridge::html::edit` and then
+`HtmlEdit::with_tree` (or `with_attributes` / `with_data`), which drops the indexes**
+(`HtmlParsed::invalidate_indexes`) and lends the document as `&mut HtmlDocMut`
+for a closure that runs no Ruby - so no mutator calls it, and none can forget to
+on an error path. The factories, copies and fragment imports reach the document
+through `bridge::html::new_node` the same way; nothing outside the Lexbor layer
+can name `HtmlNodeMut`'s constructor or `HtmlDoc::create_*`. A `RawNode` is a
+reference INTO a document and becomes a handle only through `HtmlDoc::node` (or
+`HtmlDocMut::node` inside an edit): the shape the parser port's index arena
+needs (`docs/rewrite_parser.ja.md`). The two are
 separate on purpose: `edit` checks (frozen, evaluating) so those errors come
 first, and every argument is converted BETWEEN the two, because a conversion is
 the argument's `#to_s` - arbitrary Ruby - and a query there rebuilt the indexes
@@ -1186,21 +1212,17 @@ Key decisions that got there, worth not regressing:
   `at_css` to 2.70M i/s (~3.8x nokolexbor), `css` 8.38k. Verify with
   `bench`'s `at_css`/`css` rows, the differential fuzzer, `rake oom` and
   `FUZZ_ARGS="--target css" bundle exec rake fuzz:sanitize`.
-- **The compiled-selector cache is back, over its own separate engine**
-  (`lexbor::selector_cache`): `Node#css`/`#at_css`/`#matches?` no longer
-  re-parse a repeated selector string from scratch - a near-verbatim port of
-  the OLD engine's adaptive `CachePolicy`/`SelectorCache` (same constants,
-  same flush-on-cap/bypass-on-low-hit-rate/retest behavior), but over its OWN
-  `css_engine::ParserParts`-built parser/arena, NOT `css_parser::ENGINE`:
-  that one is shared with the XML CSS->XPath lowering, whose `Parsed` cleans
-  the WHOLE arena on every drop, which would dangle a cached entry the
-  moment an XML query ran between two HTML ones. `css_parser::list_from_raw`
-  is the one piece of API this borrows from there - a `Lists` view over a
-  raw pointer THIS cache keeps alive instead of a `Parsed` guard. Measured
-  effect: none for short selectors (above) - it exists for correctness and
-  architectural parity with the OLD engine, not because it was shown to be a
-  `bench` win; a longer/more complex selector under heavy reuse is the
-  remaining case where it might matter, unmeasured. Verify with
+- **The compiled-selector cache** (`lexbor::selector_cache`):
+  `Node#css`/`#at_css`/`#matches?` do not re-parse a repeated selector string
+  - the OLD engine's adaptive `CachePolicy` (same constants, same
+  flush-on-cap/bypass-on-low-hit-rate/retest behavior), now holding the parser
+  port's owned ASTs, where it used to hold lists in a Lexbor arena of its own.
+  It matters more than it did: the port parses at 1.5-2.5x Lexbor's time
+  (0.25-1.1 us a selector; it allocates its stacks per parse, where Lexbor
+  reuses one parser), so a cache hit hides that and only the per-call paths
+  pay it - one-off selectors (~5-10% on a uniquely-named `at_css`) and the
+  uncached XML CSS lowering (a few %). Reusing the parser's work space is
+  stage 9's (`docs/rewrite_parser.ja.md`). Verify with
   `spec/css_selector_cache_spec.rb` (flush, bypass/retest, and
   reject-without-disturbing-the-cache) and the Rust-level
   `lexbor::tests::selector_cache`.
@@ -1274,10 +1296,15 @@ Key decisions that got there, worth not regressing:
   since measuring walks every chunk. A document's last edit may go unreported
   (under-reporting, the safe direction). Without it, 60 documents grown by
   `inner_html=` ran with zero GCs to ~700 MB RSS; with it, ~200 MB.
-- Tree-walk speed is structurally capped by Lexbor's 96-byte node (we can't
-  shrink it); investigated nodeset-pool / prefetch follow-ups were **not** shipped
-  because, with no remaining slower-than-Nokogiri row, they'd add lifetime /
-  speculative complexity for no measurable win.
+- Tree-walk speed was structurally capped by Lexbor's 96-byte node; the arena
+  DOM that ships is ~109 B a node all in (byte store and names included,
+  against Lexbor's ~180 B) and walks children ~13% faster. Investigated
+  nodeset-pool / prefetch follow-ups were **not** shipped because, with no
+  remaining slower-than-Nokogiri row, they'd add lifetime / speculative
+  complexity for no measurable win. Stage 9's measurements (arena against
+  Lexbor's DOM, row by row, and why the selector parser's work space is not
+  reused) are in `docs/rewrite_parser.ja.md`; measure with min CPU time over
+  repeated runs, since benchmark-ips swings 15-25% on this kind of machine.
 
 Working on perf: capture a `rake bench` baseline, change one thing, re-bench,
 and **ship only a measurable win** that keeps `rake spec` + `rake fuzz:sanitize`

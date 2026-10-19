@@ -54,7 +54,7 @@ fn text(s: &str) -> Answer {
 
 enum Query {
     XPath,
-    #[cfg(feature = "lexbor")]
+    #[cfg(feature = "html-dom")]
     Css,
 }
 
@@ -89,19 +89,12 @@ fn run_on(
     /* `source` borrows `expr`, which outlives the parse. */
     let compiled: Result<Box<Ast>, _> = match query {
         Query::XPath => parse_owned(source, &mut parse_budget),
-        #[cfg(feature = "lexbor")]
+        #[cfg(feature = "html-dom")]
         Query::Css => {
             let ns = crate::css::CssNs {
                 default_namespace: false,
             };
-            let gvl = crate::gvl::Gvl::exclusive();
-            crate::css::compile_owned(
-                &gvl,
-                source,
-                &ns,
-                crate::css::Form::Select,
-                &mut parse_budget,
-            )
+            crate::css::compile_owned(source, &ns, crate::css::Form::Select, &mut parse_budget)
         }
     };
     let ast = match compiled {
@@ -309,12 +302,12 @@ fn a_nested_evaluate_does_not_refill_the_outer_budget() {
     assert_eq!(walk_with_handler(true, 30), Answer::Err(ErrorKind::Limit));
 }
 
-#[cfg(feature = "lexbor")]
+#[cfg(feature = "html-dom")]
 fn css(selector: &str) -> Answer {
     run(Query::Css, selector, |_| {})
 }
 
-#[cfg(feature = "lexbor")]
+#[cfg(feature = "html-dom")]
 #[test]
 fn css_selectors_lower_to_the_same_answers_as_xml_css() {
     assert_eq!(css("a"), nodes(&["a", "a"]));
@@ -339,7 +332,7 @@ fn css_selectors_lower_to_the_same_answers_as_xml_css() {
 /// goes through `token_match`'s never-test, so it matches no element - the
 /// answer the HTML matcher gives, not every element whose class has a space.
 /// `[a~=v]` already refused such a value, and `.class` must agree.
-#[cfg(feature = "lexbor")]
+#[cfg(feature = "html-dom")]
 #[test]
 fn a_class_name_with_whitespace_matches_nothing() {
     let doc = br#"<r><e class="x y"/><e class="xy"/></r>"#;
@@ -356,7 +349,7 @@ fn a_class_name_with_whitespace_matches_nothing() {
 /// `:root` is the document element, as Lexbor's matcher answers it - not merely
 /// a parentless element. A child element has an element parent, so `e:root` is
 /// empty; only the document element matches.
-#[cfg(feature = "lexbor")]
+#[cfg(feature = "html-dom")]
 #[test]
 fn root_is_the_document_element_not_any_parentless_element() {
     assert_eq!(css(":root"), nodes(&["r"]));
@@ -367,7 +360,7 @@ fn root_is_the_document_element_not_any_parentless_element() {
 /// A CDATA section is a child, so it makes an element NON-empty, exactly as
 /// Lexbor's `:empty` (which ignores only comments) has it. An empty CDATA still
 /// counts: it is a node.
-#[cfg(feature = "lexbor")]
+#[cfg(feature = "html-dom")]
 #[test]
 fn empty_counts_a_cdata_child_but_not_a_comment() {
     let doc = br#"<r><a><![CDATA[]]></a><b/><c><!--x--></c><d><![CDATA[z]]></d></r>"#;
@@ -380,7 +373,7 @@ fn empty_counts_a_cdata_child_but_not_a_comment() {
 
 /// `:nth-child(an+b)` with a NEGATIVE `a`: only the first few positions match,
 /// and the answer is the same as the HTML matcher's.
-#[cfg(feature = "lexbor")]
+#[cfg(feature = "html-dom")]
 #[test]
 fn nth_child_with_a_negative_step_matches_the_leading_positions() {
     /* `<r>` has element children a(1) a(2) b(3); `<b>` has c(1) c(2) d:e(3).
@@ -397,7 +390,7 @@ fn nth_child_with_a_negative_step_matches_the_leading_positions() {
 /// every later XML `css`/`at_css`/`matches?` would fail `Busy` for the life of
 /// the process. The second assertion is what tells an ordinary refusal from a
 /// lost borrow.
-#[cfg(feature = "lexbor")]
+#[cfg(feature = "html-dom")]
 #[test]
 fn a_deeply_nested_selector_is_refused_and_leaves_the_parser_usable() {
     let depth = crate::css::MAX_SELECTOR_NESTING as usize + 8;

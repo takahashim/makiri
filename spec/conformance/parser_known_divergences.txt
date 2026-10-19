@@ -1,0 +1,26 @@
+# HTML tree-construction tests where Makiri's parser disagrees with the pinned
+# data, each classified against the pinned HTML Standard. One per line:
+#
+#   <file>#<index> <id> [<parsers>]
+#
+# The id names the entry in docs/parser_differences.ja.md that gives the spec
+# step deciding it. <parsers> - lexbor, port, or both comma-separated; both
+# when absent - names the parsers that still diverge: a divergence fixed in the
+# port stays listed for Lexbor, whose parser the crate's conformance tests
+# (ext/makiri/rust/src/conformance/known.rs) still run beside the port's. Read
+# by those tests and by spec/conformance/html5lib_runner.rb (the port's
+# entries only).
+# A listed test that starts passing fails both runners: remove it here and in
+# the table. A difference nobody has classified is a failure, not an entry.
+#
+# P1: implicit <body> resets frameset-ok (whatwg/html#12908); fixed in the port
+template.dat#44 P1 lexbor
+template.dat#45 P1 lexbor
+template.dat#46 P1 lexbor
+# P2: the form element pointer and "parsing template contents"; fixed in the port
+template.dat#117 P2 lexbor
+template.dat#120 P2 lexbor
+template.dat#124 P2 lexbor
+# P3: U+FFFD in foreign content sets frameset-ok to "not ok"; fixed in the port
+tests19.dat#51 P3 lexbor
+plain-text-unsafe.dat#24 P3 lexbor

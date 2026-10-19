@@ -194,6 +194,12 @@ impl<'d> Dom<'d> for &'d xml::Document {
     /// The XML name index is keyed by (local name, namespace URI), so a bucket
     /// holds exactly the matching elements and needs no re-check. An
     /// unprefixed test means no namespace, in either mode.
+    type BucketItem = xml::NodeId;
+    #[inline]
+    fn bucket_node(self, item: xml::NodeId) -> xml::NodeId {
+        item
+    }
+
     fn name_bucket(self, local: &[u8], ns_uri: Option<&[u8]>) -> Option<Bucket<'d, xml::NodeId>> {
         let uri = ns_uri.unwrap_or(b"");
         /* Built lazily and cached on the document; None on OOM, and the caller

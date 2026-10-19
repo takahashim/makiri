@@ -10,9 +10,10 @@ require "rb_sys/mkmf"
 
 # extconf for the Makiri extension.
 #
-# Makiri is one Rust crate plus one vendored C dependency. This file builds
-# Lexbor (unpatched, through its own cmake) and then hands the crate to cargo.
-# There is no C of ours left to compile, so there is no mkmf object list, no
+# Makiri is one Rust crate, and this file hands it to cargo. The vendored
+# Lexbor is not part of the extension: it is the reference the ports are
+# tested against, built by `rake lexbor` (script/build_lexbor.rb) for the
+# tests alone. There is no C left to compile, so there is no mkmf object list, no
 # $srcs, and no $CFLAGS: cargo performs the final link, and everything that used
 # to be a compiler or linker flag is now either a rustc argument or gone.
 #
@@ -32,164 +33,17 @@ require "rb_sys/mkmf"
 # binary gems are built for the platforms that matter, and a source install
 # needs a Rust toolchain.
 
-CRATE_DIR = __dir__
-GEM_ROOT  = File.expand_path("../../..", CRATE_DIR)
-LEXBOR_SRC = File.join(GEM_ROOT, "vendor", "lexbor")
-LEXBOR_BLD = File.join(LEXBOR_SRC, "build")
-LEXBOR_DST = File.join(LEXBOR_SRC, "dist")
-
-unless File.directory?(LEXBOR_SRC)
-  abort "Lexbor source not found at #{LEXBOR_SRC}. Did you `git submodule update --init`?"
-end
-
-cmake = find_executable("cmake") or abort "cmake is required to build Lexbor."
-
-# Windows (RubyInstaller / MinGW-UCRT gcc): forces the GNU toolchain for the
-# Lexbor build below.
 windows = RbConfig::CONFIG["target_os"] =~ /mingw|mswin/
 darwin  = RbConfig::CONFIG["target_os"] =~ /darwin/
 linux   = RbConfig::CONFIG["target_os"] =~ /linux/
 
-# Optionally build the vendored Lexbor itself under AddressSanitizer. This is
-# the ONLY way to catch overflows *inside* Lexbor's bump (mraw) arena: a
-# sub-allocation overrunning into the next one stays within one big malloc'd
-# chunk, so the heap allocator's red-zones (and thus a plain ASan build of just
-# our crate) never see it. Lexbor's own mraw is ASan-aware - with
-# -DLEXBOR_BUILD_WITH_ASAN=ON it poisons the arena and unpoisons each
-# allocation, so an intra-arena overrun writes into poisoned memory and ASan
-# reports it. Opt-in (slow full rebuild), only meaningful with
-# MAKIRI_SANITIZE=...address...; drive it via `rake sanitize:lexbor`.
-# vendor/lexbor stays vanilla - this is a build flag, not a source patch.
-sanitize    = ENV["MAKIRI_SANITIZE"].to_s.strip
-lexbor_asan = !ENV["MAKIRI_SANITIZE_LEXBOR"].to_s.strip.empty? && sanitize.include?("address")
-
-# Link-time optimization across Lexbor's own translation units, DARWIN ONLY.
-#
-# It is the one compile-option win there was: measured -17% on parse and -10%
-# on to_html (CPU time, 6000-element document), for about two seconds of link.
-# Lexbor is already -O3 - `CMAKE_BUILD_TYPE=Release` appends `-O3 -DNDEBUG`
-# AFTER its own `-O2`, and the last one wins - so there was nothing left in the
-# -O level.
-#
-# Darwin only because the archive stops being ordinary objects, and what can
-# read it afterwards is a property of each platform's linker. CI found all
-# three answers, so do not "simplify" this to every platform:
-#
-#   darwin  ld64 reads the bitcode natively. Extension AND `cargo test` link.
-#   linux   the extension links (gcc drives it, with its LTO plugin), but
-#           `cargo test` uses rust-lld, which cannot read GCC's GIMPLE at all.
-#   mingw   BFD ld fails outright: cmake indexes the archive with plain `ar`,
-#           which records no LTO symbols, so every `lxb_*` is undefined.
-#
-# Both could in principle be chased - `gcc-ar` for the index, clang for the
-# Linux Lexbor build so lld sees bitcode - but each turns on a version match
-# between toolchains we do not control. The measured win stays where it is
-# measured. `MAKIRI_LEXBOR_NO_LTO=1` opts out of it.
-#
-# NOT under the sanitizer: that build exists to find bugs, where inlining across
-# the whole archive only makes a report harder to read.
-#
-# Linux needs the WHOLE chain to be LLVM, not just the compile: `cargo test`
-# links with rust-lld, which reads LLVM bitcode and not GCC's GIMPLE, so clang
-# has to produce the archive, llvm-ar has to index it (plain `ar` records no
-# LTO symbols - that is what broke mingw), and clang has to drive the final
-# link. Missing any of those, LTO is simply off: this DETECTS the toolchain
-# rather than requiring it, so a machine with only gcc builds exactly as before
-# instead of failing.
-def llvm_chain_ok?
-  return false unless find_executable("clang")
-  return false unless find_executable("llvm-ar") && find_executable("llvm-ranlib")
-
-  # clang knowing the NAME lld is not the same as lld being installed.
-  probe = File.join(Dir.tmpdir, "makiri_lld_probe_#{Process.pid}")
-  File.write("#{probe}.c", "int main(void){return 0;}\n")
-  ok = system("clang", "-fuse-ld=lld", "#{probe}.c", "-o", probe,
-              out: File::NULL, err: File::NULL)
-  ok
-ensure
-  FileUtils.rm_f(["#{probe}.c", probe]) if probe
-end
-
-lexbor_lto =
-  if lexbor_asan || !ENV["MAKIRI_LEXBOR_NO_LTO"].to_s.strip.empty?
-    false
-  elsif darwin
-    true
-  elsif linux
-    llvm_chain_ok?
-  else
-    false # mingw: BFD ld cannot read the archive at all - see above
-  end
-lexbor_lto_llvm = lexbor_lto && !darwin # darwin's own toolchain needs no help
-lexbor_mode = if lexbor_asan
-                "asan"
-              elsif lexbor_lto_llvm
-                "plain-lto-llvm"
-              elsif lexbor_lto
-                "plain-lto"
-              else
-                "plain"
-              end
-lexbor_stamp = File.join(LEXBOR_DST, ".makiri_build_mode")
-
-# Reuse the cached archive only when it was built in the mode we now want; a
-# mode switch (plain <-> asan <-> plain-lto) forces a rebuild, so a sanitized or
-# non-LTO Lexbor can never leak into a build that wanted the other.
-have_archive = File.exist?(File.join(LEXBOR_DST, "lib", "liblexbor_static.a"))
-stamp_ok = have_archive && File.exist?(lexbor_stamp) && File.read(lexbor_stamp).strip == lexbor_mode
-unless stamp_ok
-  FileUtils.rm_rf(LEXBOR_BLD)
-  FileUtils.rm_rf(LEXBOR_DST) if have_archive # drop a wrong-mode install
-  FileUtils.mkdir_p(LEXBOR_BLD)
-  Dir.chdir(LEXBOR_BLD) do
-    cmd = [
-      cmake,
-      # On Windows the runner ships Visual Studio, so a bare cmake defaults to
-      # the MSVC generator -> lexbor_static.lib under a Release/ subdir,
-      # breaking the hardcoded liblexbor_static.a path below. Force the GNU
-      # toolchain via Ninja (bundled by lukka/get-cmake; single-config, so no
-      # Release/ subdir) and pin the MinGW-UCRT gcc so cmake can't auto-probe
-      # MSVC. "MinGW Makefiles" is avoided: cmake refuses it when sh.exe is on
-      # PATH (MSYS2/Git-Bash put it there).
-      *(windows ? ["-G", "Ninja", "-DCMAKE_C_COMPILER=gcc"] : []),
-      "-DLEXBOR_BUILD_SHARED=OFF",
-      "-DLEXBOR_BUILD_STATIC=ON",
-      "-DLEXBOR_BUILD_TESTS=OFF",
-      "-DLEXBOR_BUILD_EXAMPLES=OFF",
-      "-DLEXBOR_BUILD_UTILS=OFF",
-      "-DCMAKE_BUILD_TYPE=Release",
-      "-DCMAKE_POSITION_INDEPENDENT_CODE=ON",
-      "-DCMAKE_INSTALL_PREFIX=#{LEXBOR_DST}",
-      *(lexbor_asan ? ["-DLEXBOR_BUILD_WITH_ASAN=ON"] : []),
-      *(lexbor_lto ? ["-DLEXBOR_C_FLAGS=#{lexbor_lto_llvm ? "-flto=thin" : "-flto"}"] : []),
-      *(lexbor_lto_llvm ? ["-DCMAKE_C_COMPILER=clang", "-DCMAKE_AR=#{`which llvm-ar`.strip}",
-                           "-DCMAKE_RANLIB=#{`which llvm-ranlib`.strip}"] : []),
-      LEXBOR_SRC,
-    ]
-    warn "makiri: building vendored Lexbor (mode=#{lexbor_mode})"
-    # Multi-arg system() bypasses the shell, so args pass verbatim on every
-    # platform. Do NOT shelljoin: Shellwords escapes `=` as `\=`, which a POSIX
-    # shell unwraps but Windows cmd.exe does not, mangling every -DNAME=VALUE
-    # (cmake then ignores CMAKE_INSTALL_PREFIX etc. and installs to the default).
-    system(*cmd) or abort "cmake configure failed for Lexbor."
-    nproc = Etc.respond_to?(:nprocessors) ? Etc.nprocessors : 4
-    # `-- -jN` forwards to make and is wrong for Ninja; use cmake's portable
-    # --parallel (cmake >= 3.12, satisfied by get-cmake) on Windows.
-    build_parallel = windows ? ["--parallel", nproc.to_s] : ["--", "-j#{nproc}"]
-    system(cmake, "--build", ".", "--target", "install", *build_parallel) or
-      abort "cmake build/install failed for Lexbor."
-  end
-  File.write(lexbor_stamp, lexbor_mode)
-end
-
-lexbor_include = File.join(LEXBOR_DST, "include")
-lexbor_archive = File.join(LEXBOR_DST, "lib", "liblexbor_static.a")
+sanitize = ENV["MAKIRI_SANITIZE"].to_s.strip
 
 # ---------------------------------------------------------------------------
 # What the crate is built with
 # ---------------------------------------------------------------------------
 
-# The default feature set is the extension: `ruby` (which implies `lexbor`).
+# The default feature set is `ruby`, which carries the arena HTML DOM.
 features = []
 
 # OOM-injection build (opt-in): MAKIRI_ALLOC_INJECT=1 compiles the allocation
@@ -203,29 +57,8 @@ end
 
 # Arguments for the FINAL crate only, passed after `cargo rustc --`. They must
 # not go through RUSTFLAGS: that would also apply them to build scripts and proc
-# macros (rb-sys runs bindgen), which build for the host and have no business
-# linking Lexbor.
+# macros (rb-sys runs bindgen), which build for the host.
 rustc_args = []
-
-# Hard-link the static archive rather than pass -L/-llexbor_static, to avoid
-# accidentally linking a system-installed Lexbor.
-rustc_args += ["-C", "link-arg=#{lexbor_archive}"]
-
-# Windows: the vendored Lexbor calls CRT functions (strncmp in the HTML initial
-# insertion mode, &c.), but rustc's windows-gnu cdylib link runs gcc with
-# `-nodefaultlibs` and a hardcoded CRT list (-lmsvcrt -lmingwex -lgcc ...).
-# RubyInstaller's Ruby is a UCRT build and its toolchain's CRT is libucrt.a,
-# which is NOT in that list, and our archive sits at the END of the link line -
-# so anything Lexbor references has to be resolved by a library that appears
-# AFTER it. References the Rust std already pulled from an earlier archive are
-# incidentally satisfied; the rest fail with "undefined reference" (observed:
-# strncmp, the only CRT symbol nothing before Lexbor needed). Re-pass the CRT
-# import after the archive so ld's single pass sees it. (The gnullvm target for
-# aarch64 Ruby already links libucrt through clang's own specs; the -lucrt there
-# is a harmless duplicate.)
-if windows
-  rustc_args += ["-C", "link-arg=#{RUBY_PLATFORM =~ /mingw32/ ? "-lmsvcrt" : "-lucrt"}"]
-end
 
 # Nothing is added here for macOS's `-undefined dynamic_lookup`: rb_sys already
 # passes it, so Ruby C API symbols are resolved from the loading process and one
@@ -237,20 +70,12 @@ if linux
   # $DLDFLAGS that still have a subject: they are properties of the link, not of
   # the language that produced the objects.
   rustc_args += ["-C", "link-arg=-Wl,-z,relro", "-C", "link-arg=-Wl,-z,now"]
-
-  # With an LLVM-bitcode Lexbor the link has to be LLVM too: gcc's plugin reads
-  # GIMPLE, not bitcode. `cargo test` already uses rust-lld and needs nothing
-  # here; this is for the extension, which rb_sys otherwise links with Ruby's
-  # own CC.
-  if lexbor_lto_llvm
-    rustc_args += ["-C", "linker=clang", "-C", "link-arg=-fuse-ld=lld"]
-  end
 end
 
 # Flags that must reach the crate AND its dependencies (magnus, rb-sys), which
 # rustc args cannot do - these are the ones that genuinely belong in RUSTFLAGS.
 rustflags = []
-cargo_env = { "MAKIRI_LEXBOR_INCLUDE" => lexbor_include }
+cargo_env = {}
 cargo_target = nil
 
 # Sanitizer build (opt-in): MAKIRI_SANITIZE=address rake clean compile, then run
@@ -283,9 +108,7 @@ unless sanitize.empty?
             "(-Zsanitizer is unstable): rustup toolchain install nightly."
     end
     cargo_env["RUSTUP_TOOLCHAIN"] = "nightly"
-    # `makiri_asan`: `lexbor::memory` leaves Lexbor's allocator unpadded, so
-    # ASan sees a write past the end of a Lexbor block instead of the slack.
-    rustflags += ["-Zsanitizer=address", "-Cllvm-args=-asan-stack=0", "--cfg", "makiri_asan"]
+    rustflags += ["-Zsanitizer=address", "-Cllvm-args=-asan-stack=0"]
     # Only one ASan runtime may be linked; reference clang's rather than
     # linking Rust's own copy.
     # NOT -Zexternal-clangrt. That flag says "do not link a runtime, one is
@@ -311,8 +134,7 @@ unless sanitize.empty?
 end
 
 # Coverage build (opt-in): MAKIRI_COVERAGE=1 instruments the crate with LLVM
-# source-based coverage (the vendored Lexbor is built separately and is NOT
-# instrumented - we measure only the code we write). Run via `rake coverage`.
+# source-based coverage. Run via `rake coverage`.
 unless ENV["MAKIRI_COVERAGE"].to_s.strip.empty?
   rustflags << "-Cinstrument-coverage"
   warn "makiri: building with LLVM source-based coverage"
@@ -367,11 +189,13 @@ end
 # Export ONLY Init_makiri
 # ---------------------------------------------------------------------------
 #
-# The hazard is unchanged and is not hypothetical: the vendored Lexbor archive
-# is built with default visibility, so a bundle that re-exports its ~1700
-# `lxb_*` symbols lets another Lexbor-based extension in the same process (e.g.
-# nokolexbor) resolve its own `lxb_*` calls to OUR copy - a different Lexbor
-# version with an incompatible ABI - and segfault.
+# The hazard was not hypothetical while the extension linked the vendored
+# Lexbor: its archive is built with default visibility, so a bundle that
+# re-exported its ~1700 `lxb_*` symbols let another Lexbor-based extension in
+# the same process (e.g. nokolexbor) resolve its own `lxb_*` calls to OUR copy -
+# a different Lexbor version with an incompatible ABI - and segfault. No
+# Lexbor is linked any more, and an exported name of our own is the same
+# hazard for whatever binds it, so the restriction stays.
 #
 # What changed is where it is enforced. Under mkmf this was a link flag
 # (-Wl,-exported_symbol / --exclude-libs,ALL). rustc performs the cdylib link

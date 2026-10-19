@@ -69,12 +69,12 @@ pub mod caught;
 
 /// Holding the GVL as a value: the token the process-global CSS engines ask
 /// for, and the cell that keeps them.
-#[cfg(feature = "lexbor")]
+#[cfg(feature = "html-dom")]
 pub mod gvl;
 
 /// The CSS selector front end: lowers a Lexbor-parsed selector list into the
 /// XPath AST. Ruby-free, like the engine it feeds; Lexbor keeps the parser.
-#[cfg(feature = "lexbor")]
+#[cfg(feature = "html-dom")]
 pub mod css;
 
 /// The shared UTF-8 primitives. Unconditional, like `falloc`
@@ -87,6 +87,9 @@ pub mod cutf8;
 /// only - so it sits with the engine even though only the HTML parse path calls
 /// it.
 pub mod utf8_input;
+
+/// The source line table (byte offset -> line).
+pub mod source_lines;
 
 /// `VerifiedText`: a borrowed engine input, valid UTF-8 with no NUL.
 /// Unconditional: the engine, the DOM adapter and the glue all pass it.
@@ -135,8 +138,24 @@ pub mod glue;
 
 /// The vendored Lexbor boundary. This owns every direct use of its C ABI;
 /// `adapter` supplies the compatibility facilities Lexbor does not provide.
-#[cfg(feature = "lexbor")]
+#[cfg(feature = "html-dom")]
 pub mod lexbor;
+
+/// The HTML DOM as the rest of the crate reaches it: one path, whichever
+/// implementation the build carries (today Lexbor's).
+#[cfg(feature = "html-dom")]
+pub mod html_dom;
+
+/// The HTML parser ported from Lexbor to Rust (`docs/rewrite_parser.ja.md`):
+/// Lexbor-free and Ruby-free.
+pub mod html;
+
+/// The CSS selector parser port (Ruby- and Lexbor-free).
+pub mod selectors;
+
+/// Where the parser ports follow the specifications and Lexbor does not:
+/// the `fixed(Fix::...)` gate the differential harnesses turn off.
+pub mod compat;
 
 /// The XML reader and its arena. Ruby-free and Lexbor-free.
 pub mod xml;
@@ -156,3 +175,8 @@ pub mod init;
 // on every representative CI build.
 #[cfg(test)]
 mod rust_tests;
+
+/// The HTML parser conformance harness: a parser-neutral DOM tree, the
+/// html5lib formats, and the classified known divergences.
+#[cfg(test)]
+pub mod conformance;

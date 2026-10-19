@@ -3,8 +3,10 @@
 //! The Ruby surface of each edit: reading and verifying the arguments, the
 //! error each refusal raises, and the value handed back. The DOM's rules about
 //! what may go where are the adapter's `Insertion`, and every edit starts at
-//! `bridge::html::edit` and reaches the tree through its `HtmlEdit::node`,
-//! which drops the document's indexes - so no method here can forget to. Each
+//! `bridge::html::edit` and reaches the document through its
+//! `HtmlEdit::with_tree` (or its attribute and data twins), which drops the
+//! document's indexes and lends the document by `&mut` - so no method here can
+//! forget to, or read the document while it is changed. Each
 //! method converts its arguments BETWEEN the two: a conversion is the
 //! argument's `#to_s`, and a query there must not rebuild the indexes from the
 //! tree the edit is about to change. What touches a
@@ -19,13 +21,15 @@ use magnus::{prelude::*, Error, Ruby, Value};
 use crate::bridge::ruby::{makiri_error, string_of};
 
 use crate::bridge::fragment::{set_template_inner_html, stage_fragment_in};
-use crate::bridge::html::{edit, insert, owning_doc, wrap_html_node, HtmlEdit, HtmlSelf};
+use crate::bridge::html::{
+    check_owning_doc, edit, insert, new_node, wrap_html_node, HtmlEdit, HtmlSelf,
+};
 use crate::bridge::string::{
     namespace_arg, ruby_verified_data, ruby_verified_name, ruby_verified_text,
     ruby_verified_text_opt,
 };
 use crate::glue::node::dom_extract as extract;
-use crate::lexbor::adapter::html::{HtmlElementMut, NodeType, Place, RawNode};
+use crate::html_dom::html::{HtmlDocMut, NodeType, Place, RawNode};
 use crate::xml::dom_name;
 
 /// `name` held to the WHATWG DOM rule `ok`, else `ArgumentError` - the DOM's
@@ -50,14 +54,22 @@ fn check_dom_name(
     ))
 }
 
-/// The receiver as an element, once every argument is converted. Its node type
-/// was checked before the conversion (an argument cannot change it), so the
-/// `None` arm is a broken invariant - raised as one rather than assumed away.
-/// For the attribute mutators only: it leaves the tree version alone.
-fn element_of(edit: HtmlEdit<'_>) -> Result<HtmlElementMut<'_>, Error> {
-    edit.node_for_attributes()?.element_mut().ok_or_else(|| {
-        crate::bridge::ruby::internal_error("an attribute edit's checked element is not one")
-    })
+/// An attribute edit of the receiver as an element, once every argument is
+/// converted. Its node type was checked before the conversion (an argument
+/// cannot change it), so a non-element here is a broken invariant - raised as
+/// one rather than assumed away. It leaves the tree version alone.
+fn with_element<R>(
+    edit: HtmlEdit<'_>,
+    f: impl FnOnce(&mut HtmlDocMut<'_>, RawNode) -> R,
+) -> Result<R, Error> {
+    edit.with_attributes(|d, el| {
+        if d.node(el).element().is_none() {
+            return Err(crate::bridge::ruby::internal_error(
+                "an attribute edit's checked element is not one",
+            ));
+        }
+        Ok(f(d, el))
+    })?
 }
 
 /* ------------------------------------------------------------------ *
@@ -99,13 +111,14 @@ pub fn remove(_ruby: &Ruby, this: HtmlSelf) -> Result<Value, Error> {
         /* An Attr leaves its element's attribute list: an attribute edit,
          * which changes no child list - as the XML side's `remove` is. */
         if edit.node_type() == NodeType::Attribute {
-            edit.node_for_attributes()?.remove_from_owner();
+            edit.with_attributes(|d, attr| d.remove_from_owner(attr))?;
             return Ok(this.value);
         }
-        let node = edit.node()?;
-        if node.parent().is_some() {
-            node.detach();
-        }
+        edit.with_tree(|d, node| {
+            if d.node(node).parent().is_some() {
+                d.detach(node);
+            }
+        })?;
         Ok(this.value)
     })
 }
@@ -125,9 +138,10 @@ pub fn aset(ruby: &Ruby, this: HtmlSelf, rb_name: Value, rb_value: Value) -> Res
         let nv = ruby_verified_name(rb_name, "attribute name")?;
         let vv = ruby_verified_data(rb_value, "attribute value")?;
         check_dom_name(ruby, &nv, dom_name::valid_attribute_local_name, "attribute")?;
-        let el = element_of(edit)?;
-        crate::bridge::html::set_attribute(el, &nv, &vv)
-            .map_err(|_| makiri_error("failed to set attribute"))?;
+        with_element(edit, |d, el| {
+            crate::bridge::html::set_attribute(d, el, &nv, &vv)
+        })?
+        .map_err(|_| makiri_error("failed to set attribute"))?;
         Ok(rb_value)
     })
 }
@@ -159,9 +173,11 @@ pub fn set_attribute_ns(
             dom_name::valid_attribute_local_name,
             "HTML attribute",
         )?;
-        let el = element_of(edit)?;
-        crate::bridge::html::set_attribute_ns(el, nv.as_ref().map(|n| n.as_bytes()), &qv, &vv)
-            .map_err(|_| makiri_error("failed to set namespaced attribute"))?;
+        let ns = nv.as_ref().map(|n| n.as_bytes());
+        with_element(edit, |d, el| {
+            crate::bridge::html::set_attribute_ns(d, el, ns, &qv, &vv)
+        })?
+        .map_err(|_| makiri_error("failed to set namespaced attribute"))?;
         Ok(rb_value)
     })
 }
@@ -180,8 +196,10 @@ pub fn remove_attribute_ns(
         }
         let lv = ruby_verified_text(rb_local, "attribute local name")?;
         let nv = namespace_arg(rb_ns, "namespace")?;
-        let el = element_of(edit)?;
-        crate::bridge::html::remove_attribute_ns(el, nv.as_ref().map(|n| n.as_bytes()), &lv);
+        let ns = nv.as_ref().map(|n| n.as_bytes());
+        with_element(edit, |d, el| {
+            crate::bridge::html::remove_attribute_ns(d, el, ns, &lv)
+        })?;
         Ok(ruby.qnil().as_value())
     })
 }
@@ -193,15 +211,16 @@ pub fn set_content(_ruby: &Ruby, this: HtmlSelf, rb_text: Value) -> Result<Value
         let tv = ruby_verified_data(rb_text, "node content")?;
         /* An Attr's content is its value, an attribute edit; a Text, Comment,
          * CDATA or PI node's is its data. Neither changes a child list. */
-        let node = match edit.node_type() {
-            NodeType::Attribute => edit.node_for_attributes()?,
+        let set =
+            |d: &mut HtmlDocMut<'_>, n: RawNode| crate::bridge::html::set_text_content(d, n, &tv);
+        match edit.node_type() {
+            NodeType::Attribute => edit.with_attributes(set)?,
             NodeType::Text | NodeType::Comment | NodeType::CDataSection | NodeType::Pi => {
-                edit.node_for_data()?
+                edit.with_data(set)?
             }
-            _ => edit.node()?,
-        };
-        crate::bridge::html::set_text_content(node, &tv)
-            .map_err(|_| makiri_error("failed to set node content"))?;
+            _ => edit.with_tree(set)?,
+        }
+        .map_err(|_| makiri_error("failed to set node content"))?;
         Ok(rb_text)
     })
 }
@@ -215,8 +234,9 @@ pub fn delete(_ruby: &Ruby, this: HtmlSelf, rb_name: Value) -> Result<Value, Err
             return Ok(rb_self);
         }
         let nv = ruby_verified_text(rb_name, "attribute name")?;
-        let el = element_of(edit)?;
-        crate::bridge::html::remove_attribute(el, &nv);
+        with_element(edit, |d, el| {
+            crate::bridge::html::remove_attribute(d, el, &nv)
+        })?;
         Ok(rb_self)
     })
 }
@@ -233,21 +253,23 @@ pub fn set_inner_html(_ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Va
         }
         /* `to_str`/`to_s` is Ruby code that may raise: converted under protect. */
         let html = string_of(rb_html)?;
-        let node = edit.node()?;
-        /* WHATWG: a `<template>`'s inner HTML is its contents fragment, not the
-         * element's (empty) children - the same node `Element#content_fragment`
-         * exposes and `#to_html` serializes, so `inner_html`/`inner_html=`/
-         * `to_html` all agree. */
-        if let Some(content) = node.template_content_mut() {
-            set_template_inner_html(node, content, html)?;
-        } else {
-            let staged = stage_fragment_in(node, html)?;
-            /* Detached, not destroyed: the arena reclaims them with the document. */
-            while let Some(c) = node.first_child() {
-                c.detach();
+        edit.with_tree(|d, node| {
+            /* WHATWG: a `<template>`'s inner HTML is its contents fragment, not
+             * the element's (empty) children - the same node
+             * `Element#content_fragment` exposes and `#to_html` serializes, so
+             * `inner_html`/`inner_html=`/`to_html` all agree. */
+            match d.node(node).template_content().map(RawNode::from) {
+                Some(content) => set_template_inner_html(d, node, content, html),
+                None => {
+                    let staged = stage_fragment_in(d, node, html)?;
+                    /* Detached, not destroyed: the arena reclaims them with the
+                     * document. */
+                    d.detach_children(node);
+                    d.place(node, staged, Place::Child);
+                    Ok(())
+                }
             }
-            node.place(staged, Place::Child);
-        }
+        })??;
         Ok(rb_html)
     })
 }
@@ -263,20 +285,25 @@ pub fn set_outer_html(_ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Va
         let edit = edit(&this)?;
         /* `to_str`/`to_s` is Ruby code that may raise: converted under protect. */
         let html = string_of(rb_html)?;
-        let node = edit.node()?;
-        /* An attribute's `parent()` is its owner element, but it is no child of
-         * it: the replace below would drop the new content and report success. */
-        let Some(parent) = node
-            .parent()
-            .filter(|_| node.node().node_type() != NodeType::Attribute)
-            .filter(|p| p.node().node_type() == NodeType::Element)
-        else {
-            return Err(makiri_error(
-                "outer_html= requires a node with a parent element",
-            ));
-        };
-        let staged = stage_fragment_in(parent, html)?;
-        node.place(staged, Place::Replace);
+        edit.with_tree(|d, node| {
+            /* An attribute's `parent()` is its owner element, but it is no child
+             * of it: the replace below would drop the new content and report
+             * success. */
+            let n = d.node(node);
+            let Some(parent) = n
+                .parent()
+                .filter(|_| n.node_type() != NodeType::Attribute)
+                .filter(|p| p.node_type() == NodeType::Element)
+                .map(RawNode::from)
+            else {
+                return Err(makiri_error(
+                    "outer_html= requires a node with a parent element",
+                ));
+            };
+            let staged = stage_fragment_in(d, parent, html)?;
+            d.place(node, staged, Place::Replace);
+            Ok(())
+        })??;
         Ok(rb_html)
     })
 }
@@ -296,11 +323,11 @@ fn created(node: Option<RawNode>, rb_self: Value, what: &str) -> Result<Value, E
 /// `Document#create_element(name)` -> Element.
 pub fn create_element(ruby: &Ruby, rb_self: Value, rb_name: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let doc = owning_doc(&rb_self)?;
+        check_owning_doc(&rb_self)?;
         let nv = ruby_verified_name(rb_name, "element name")?;
         check_dom_name(ruby, &nv, dom_name::valid_element_local_name, "element")?;
         created(
-            crate::bridge::html::create_element(doc, &nv),
+            new_node(&rb_self, |d| d.create_element(nv.as_bytes()))?,
             rb_self,
             "element",
         )
@@ -321,7 +348,7 @@ pub fn create_element_ns(
     rb_qname: Value,
 ) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let doc = owning_doc(&rb_self)?;
+        check_owning_doc(&rb_self)?;
         let nv = namespace_arg(rb_ns, "namespace")?;
         let qv = ruby_verified_name(rb_qname, "element qualified name")?;
         let ns = nv.as_ref().map_or(&b""[..], |n| n.as_bytes());
@@ -333,7 +360,7 @@ pub fn create_element_ns(
             "HTML element",
         )?;
         created(
-            crate::bridge::html::create_element_ns(doc, local, ns, prefix),
+            new_node(&rb_self, |d| d.create_element_ns(local, ns, prefix))?,
             rb_self,
             "element",
         )
@@ -358,7 +385,7 @@ pub fn create_loose_dom_element(
     rb_ns: Value,
 ) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let doc = owning_doc(&rb_self)?;
+        check_owning_doc(&rb_self)?;
         let qv = ruby_verified_name(rb_qname, "qualified name")?;
         let lv = ruby_verified_name(rb_local, "local name")?;
         let pv = if rb_prefix.is_nil() {
@@ -372,12 +399,9 @@ pub fn create_loose_dom_element(
             .map_err(|e| Error::new(ruby.exception_arg_error(), e.message()))?;
         let ns = nv.as_ref().map_or(&b""[..], |n| n.as_bytes());
         created(
-            crate::bridge::html::create_element_ns(
-                doc,
-                lv.as_bytes(),
-                ns,
-                prefix.unwrap_or_default(),
-            ),
+            new_node(&rb_self, |d| {
+                d.create_element_ns(lv.as_bytes(), ns, prefix.unwrap_or_default())
+            })?,
             rb_self,
             "element",
         )
@@ -387,10 +411,10 @@ pub fn create_loose_dom_element(
 /// `Document#create_text_node(content)` -> Text.
 pub fn create_text_node(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let doc = owning_doc(&rb_self)?;
+        check_owning_doc(&rb_self)?;
         let tv = ruby_verified_data(rb_text, "text content")?;
         created(
-            crate::bridge::html::create_text(doc, &tv),
+            new_node(&rb_self, |d| d.create_text(tv.as_bytes()))?,
             rb_self,
             "text node",
         )
@@ -400,10 +424,10 @@ pub fn create_text_node(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<
 /// `Document#create_comment(content)` -> Comment.
 pub fn create_comment(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let doc = owning_doc(&rb_self)?;
+        check_owning_doc(&rb_self)?;
         let tv = ruby_verified_data(rb_text, "comment content")?;
         created(
-            crate::bridge::html::create_comment(doc, &tv),
+            new_node(&rb_self, |d| d.create_comment(tv.as_bytes()))?,
             rb_self,
             "comment",
         )
@@ -418,7 +442,7 @@ pub fn create_pi(
     rb_data: Value,
 ) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let doc = owning_doc(&rb_self)?;
+        check_owning_doc(&rb_self)?;
         let tv = ruby_verified_name(rb_target, "processing instruction target")?;
         let dv = ruby_verified_text(rb_data, "processing instruction data")?;
         /* DOM createProcessingInstruction: the target must match the XML Name
@@ -439,7 +463,7 @@ pub fn create_pi(
             ));
         }
         created(
-            crate::bridge::html::create_pi(doc, &tv, &dv),
+            new_node(&rb_self, |d| d.create_pi(tv.as_bytes(), dv.as_bytes()))?,
             rb_self,
             "processing instruction",
         )
@@ -460,7 +484,7 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
         let (rb_name,) = args.required;
         let (rb_pub, rb_sys_) = args.optional;
 
-        let doc = owning_doc(&rb_self)?;
+        check_owning_doc(&rb_self)?;
         let nv = ruby_verified_name(rb_name, "doctype name")?;
         if !crate::bridge::html::valid_doctype_name(&nv) {
             /* The caller's error, not Lexbor's, so the exception class is picked
@@ -478,7 +502,13 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
         let pv = verified(rb_pub, "doctype public id")?;
         let sv = verified(rb_sys_, "doctype system id")?;
         created(
-            crate::bridge::html::create_doctype(doc, &nv, pv.as_ref(), sv.as_ref()),
+            new_node(&rb_self, |d| {
+                d.create_doctype(
+                    nv.as_bytes(),
+                    pv.as_ref().map(|v| v.as_bytes()),
+                    sv.as_ref().map(|v| v.as_bytes()),
+                )
+            })?,
             rb_self,
             "doctype",
         )
@@ -488,9 +518,9 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
 /// `Document#create_document_fragment` -> an EMPTY DocumentFragment.
 pub fn create_document_fragment(_ruby: &Ruby, rb_self: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let doc = owning_doc(&rb_self)?;
+        check_owning_doc(&rb_self)?;
         created(
-            doc.create_fragment().map(RawNode::from),
+            new_node(&rb_self, |d| d.create_fragment())?,
             rb_self,
             "document fragment",
         )

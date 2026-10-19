@@ -83,8 +83,8 @@ impl Kwargs {
 pub(crate) fn max_tree_depth(
     ruby: &Ruby,
     v: Option<Value>,
-) -> Result<crate::lexbor::adapter::tree_guard::DepthLimit, Error> {
-    use crate::lexbor::adapter::tree_guard::DepthLimit;
+) -> Result<crate::html_dom::tree_guard::DepthLimit, Error> {
+    use crate::html_dom::tree_guard::DepthLimit;
     let Some(v) = v.filter(|v| !v.is_nil()) else {
         return Ok(DepthLimit::DEFAULT);
     };

@@ -1,24 +1,24 @@
 # frozen_string_literal: true
 #
-# WHATWG HTML parsing conformance: run the html5lib-tests tree-construction
-# suite through Makiri's public parse API and diff Makiri's resulting DOM
-# against each test's expected tree dump.
+# WHATWG HTML parsing conformance: run the tree-construction suite in the
+# html5lib .dat format (maintained in WPT since 2026-06) through Makiri's public
+# parse API and diff the resulting DOM against each test's expected tree dump.
 #
-# Lexbor passes html5lib-tests upstream; this runner verifies that Makiri's
-# post-parse layer (the attr->owner index, source-location stamping, and the
-# Ruby wrappers) does not perturb the tree the spec expects. A failure here is
-# either a genuine parse divergence or a Makiri-side regression.
+# A failure is either a parse divergence from the pinned data or a Makiri-side
+# regression in what sits over the parser (the Ruby wrappers, the fragment
+# context, the template contents). Divergences already checked against the
+# pinned HTML Standard are listed in KNOWN_DIVERGENCES below.
 #
-# The test data is NOT vendored. On first run this fetches a pinned tag of
-# html5lib/html5lib-tests via a sparse, blobless clone into
-# spec/conformance/data/ (gitignored). Use --no-fetch to require a local copy.
+# The test data is NOT vendored: parser_data.rb fetches the pinned WPT commit
+# (html/syntax/parsing/resources) on first run. Use --no-fetch to require a
+# local copy.
 #
-# Scope of v1: full-document tests only. Fragment tests (#document-fragment)
-# and scripting-on tests (#script-on) are counted and skipped, not run, so the
-# pass rate is never inflated by silently dropping hard cases. A test whose
-# expected dump exercises a DOM detail Makiri cannot represent on the Ruby
-# surface at all (e.g. a processing-instruction node) is reported as
-# "unsupported" rather than failed; in practice this count is now 0.
+# Document and fragment tests both run (a fragment through
+# DocumentFragment.parse with its context element). Scripting-on tests
+# (#script-on) are counted and skipped, not run: Makiri parses with scripting
+# disabled, so the pass rate is never inflated by silently dropping hard cases.
+# A test whose dump exercises a DOM detail Makiri cannot represent on the Ruby
+# surface is reported as "unsupported" rather than failed; that count is 0.
 #
 # Usage:
 #   ruby -Ilib spec/conformance/html5lib_runner.rb
@@ -35,12 +35,10 @@ require "makiri"
 
 require_relative "html5lib_dump"
 
-DATA_REPO = "https://github.com/html5lib/html5lib-tests.git"
-# html5lib-tests has no maintained version tags (only ancient python-0.x), so
-# we pin an exact master commit for reproducibility. Bump deliberately.
-DATA_COMMIT = "e4463205ac3c4500e1379103daadfdcfe5e33af5"
-DATA_DIR    = File.expand_path("data/html5lib-tests", __dir__)
-TC_DIR      = File.join(DATA_DIR, "tree-construction")
+require_relative "parser_data"
+
+DATA_COMMIT = ParserData::WPT.commit
+TC_DIR      = ParserData::WPT.data_dir
 
 # --- options ---------------------------------------------------------------
 
@@ -56,25 +54,10 @@ end.parse!(ARGV)
 
 # --- data acquisition ------------------------------------------------------
 
-def fetch_data!
-  puts "fetching html5lib-tests@#{DATA_COMMIT[0, 12]} (sparse) -> #{DATA_DIR}"
-  FileUtils.mkdir_p(DATA_DIR)
-  run = lambda do |*args|
-    system("git", "-C", DATA_DIR, *args) or abort "git #{args.first} failed"
-  end
-  run.call("init", "-q")
-  system("git", "-C", DATA_DIR, "remote", "add", "origin", DATA_REPO) # ok if it already exists
-  run.call("sparse-checkout", "init", "--cone")
-  run.call("sparse-checkout", "set", "tree-construction")
-  # GitHub permits fetching an exact commit by SHA; --depth 1 keeps it shallow.
-  run.call("fetch", "-q", "--depth", "1", "--filter=blob:none", "origin", DATA_COMMIT)
-  run.call("checkout", "-q", "FETCH_HEAD")
-end
-
-unless Dir.exist?(TC_DIR) && !Dir.glob(File.join(TC_DIR, "*.dat")).empty?
+unless ParserData::WPT.present?
   abort "no test data at #{TC_DIR} (run without --no-fetch to fetch it)" unless opts[:fetch]
-  fetch_data!
 end
+ParserData.ensure!(ParserData::WPT) if opts[:fetch]
 
 # --- .dat parsing ----------------------------------------------------------
 #
@@ -97,7 +80,7 @@ def parse_dat(path)
     script_on = false
     chunk.each_line do |line|
       line = line.chomp("\n")
-      if line.start_with?("#") && (m = line.match(/\A#(data|errors|new-errors|document-fragment|script-on|script-off|document)\z/))
+      if line.start_with?("#") && (m = line.match(/\A#(data|errors|new-errors|document-fragment|script-on|script-off|document|description)\z/))
         section = m[1]
         case section
         when "script-on" then script_on = true
@@ -131,7 +114,8 @@ files =
 
 stats = Hash.new(0)
 diffs = []
-stale = []
+known_hits = []
+fixed = []
 
 # A fragment test's context is either a bare HTML tag ("td") or a namespaced
 # foreign element ("svg desc", "math mi"). The HTML case goes straight through
@@ -150,20 +134,16 @@ def fragment_context(ctx)
   end
 end
 
-# Tests whose recorded expectation predates a change to the HTML Standard that
-# Lexbor has since implemented. The data is pinned (and html5lib-tests has moved
-# tree-construction to WPT, so it will not gain the new expectation), so the
-# divergence is recorded here with its reason rather than failing the run.
+# Tests where Makiri's current parser (vendored Lexbor) disagrees with the
+# pinned data, each one checked against the pinned HTML Standard and recorded in
+# docs/parser_differences.ja.md under the id given in
+# spec/conformance/parser_known_divergences.txt (shared with the crate's runner). They are reported, not
+# failed: the run still fails on any OTHER difference, and it fails when a
+# listed test starts passing, so the table cannot outlive the divergence.
 #
-# Keep this EMPTY unless the spec itself says the new answer is right: the whole
-# point of the suite is that a parse difference is a finding.
-STALE_EXPECTATIONS = {
-  # The HTML Standard added processing-instruction tokens; `<?` at EOF is now
-  # "eof-in-processing-instruction", whose handling is "such processing
-  # instructions are ignored". The pinned data still expects the old bogus
-  # comment `<!-- ? -->`.
-  "tests1.dat#40" => "PI tokens: `<?` at EOF is ignored (HTML Standard), not a comment",
-}.freeze
+# The extension parses with the port; the list's Lexbor entries are the
+# crate's (its conformance tests run Lexbor's parser too).
+KNOWN_DIVERGENCES = ParserData.known_divergences("port").freeze
 
 files.each do |path|
   parse_dat(path).each do |t|
@@ -191,11 +171,16 @@ files.each do |path|
         next
       end
 
+    known = KNOWN_DIVERGENCES["#{t.file}##{t.index}"]
     if actual == t.document
       stats[:pass] += 1
-    elsif (reason = STALE_EXPECTATIONS["#{t.file}##{t.index}"])
-      stats[:stale] += 1
-      stale << [t, reason]
+      if known
+        stats[:fixed] += 1
+        fixed << [t, known]
+      end
+    elsif known
+      stats[:known] += 1
+      known_hits << [t, known]
     else
       stats[:fail] += 1
       diffs << [t, t.document, actual]
@@ -228,20 +213,24 @@ if !opts[:verbose] && diffs.length > shown
   puts "\n... #{diffs.length - shown} more failure(s) not shown (use --verbose or --max-diffs)"
 end
 
-run = stats[:pass] + stats[:fail] + stats[:error] + stats[:stale]
+run = stats[:pass] + stats[:fail] + stats[:error] + stats[:known]
 puts "\n#{'=' * 72}"
-puts "html5lib-tests tree-construction (data @#{DATA_COMMIT[0, 12]})"
+puts "HTML tree construction (WPT html/syntax/parsing @#{DATA_COMMIT[0, 12]})"
 puts "  total tests     : #{stats[:total]}"
 puts "  skipped script  : #{stats[:skip_script]}"
 puts "  unsupported     : #{stats[:unsupported]}"
-puts "  stale data      : #{stats[:stale]}#{stale.empty? ? '' : '  (the pinned expectation predates the spec)'}"
-stale.each { |t, reason| puts "      #{t.file} ##{t.index}: #{reason}" }
 puts "  ran             : #{run}"
 puts "  pass            : #{stats[:pass]}"
+puts "  known divergence: #{stats[:known]}  (docs/parser_differences.ja.md)"
+known_hits.each { |t, id| puts "      #{id}  #{t.file} ##{t.index}" }
 puts "  fail            : #{stats[:fail]}"
 puts "  error           : #{stats[:error]}"
+unless fixed.empty?
+  puts "  NOW PASSING     : #{fixed.size}  (remove from KNOWN_DIVERGENCES and the table)"
+  fixed.each { |t, id| puts "      #{id}  #{t.file} ##{t.index}" }
+end
 if run.positive?
   puts format("  pass rate       : %.2f%% of ran", 100.0 * stats[:pass] / run)
 end
 
-exit(stats[:fail].zero? && stats[:error].zero? ? 0 : 1)
+exit(stats[:fail].zero? && stats[:error].zero? && fixed.empty? ? 0 : 1)

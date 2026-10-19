@@ -2,7 +2,7 @@
 //! navigation, attributes, source line and document order.
 //!
 //! Every read of the Lexbor tree goes through the typed handles of
-//! `lexbor::adapter::html`, the node and text index through `bridge::wrapper` and `bridge::html`, and
+//! `html_dom::html`, the node and text index through `bridge::wrapper` and `bridge::html`, and
 //! the NodeSet through its fill handle, so the readers are all safe.
 //!
 //! # Where a GC may run
@@ -23,8 +23,8 @@ use crate::bridge::node_set::node_set_with_fill;
 use crate::bridge::ruby::is_kind_of;
 use crate::bridge::string::{dom_name_str, ruby_verified_text};
 use crate::child_index;
+use crate::html_dom::html::{HtmlAttr, HtmlElement, HtmlNode, HtmlTree, NodeType, RawNode};
 use crate::init::{CLASS_NODE, CLASS_XML_DOCUMENT};
-use crate::lexbor::adapter::html::{HtmlAttr, HtmlElement, HtmlNode, HtmlTree, NodeType, RawNode};
 
 /* ------------------------------------------------------------------ *
  * small helpers                                                      *

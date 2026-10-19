@@ -11,22 +11,20 @@ use crate::bridge::ruby::makiri_error;
 use magnus::{Error, Value};
 
 use crate::bridge::ruby::value;
+use crate::html_dom::html::{
+    ForeignNode, HtmlNode, HtmlNodeKey, HtmlTree, Insertion, NodeType, Place, RawNode,
+};
 use crate::init::{
     CLASS_DOCUMENT, CLASS_HTML_ATTR, CLASS_HTML_CDATA_SECTION, CLASS_HTML_COMMENT,
     CLASS_HTML_DOCUMENT_FRAGMENT, CLASS_HTML_DOCUMENT_TYPE, CLASS_HTML_ELEMENT, CLASS_HTML_NODE,
     CLASS_HTML_PROCESSING_INSTRUCTION, CLASS_HTML_TEXT, CLASS_XML_DOCUMENT,
 };
-use crate::lexbor::adapter::html::{
-    ForeignNode, HtmlNode, HtmlNodeKey, HtmlNodeMut, HtmlTree, Insertion, NodeType, Place, RawDoc,
-    RawNode,
-};
-use crate::lexbor::fragment::import_with_fixup;
 
 use crate::bridge::string::{RubyData, RubyText};
 use crate::bridge::wrapper::*;
 use crate::child_index::{ChildList, Children, TokenTree};
-use crate::lexbor::adapter::html::{HtmlDoc, HtmlElementMut};
-use crate::lexbor::adapter::AdapterOom;
+use crate::html_dom::html::{HtmlDoc, HtmlDocMut};
+use crate::html_dom::AdapterOom;
 
 /* ---- the document's own bytes and text ---- */
 
@@ -69,10 +67,7 @@ pub fn text_index_string(document: Value, node: RawNode) -> Result<Option<Value>
 
 /// The 1-based source line for `node`, or `None` when unknown.
 pub fn node_line(rb_doc: Value, node: RawNode) -> Option<usize> {
-    with_html_parsed_known(rb_doc, |p| {
-        // SAFETY: `node` is a live node of this document.
-        unsafe { p.node_line(node) }
-    })
+    with_html_parsed_known(rb_doc, |p| p.node_line(node))
 }
 
 /* ------------------------------------------------------------------ *
@@ -98,9 +93,8 @@ static HTML_NODE_CLASSES: NodeClasses = NodeClasses {
 /// second wrapper; a node type with no specific leaf (entity/notation, which
 /// Lexbor's HTML parser does not produce) falls back to `Makiri::HTML::Node`.
 pub fn wrap_html_node(node: RawNode, document: Value) -> Result<Value, Error> {
-    /* SAFETY: a `RawNode` is live - the safe constructors are `From<HtmlNode>`
-     * and `From<Building*>`, and the only raw one, `from_ptr`, is unsafe. */
-    let handle = unsafe { node.as_node() };
+    // The caller hands `node` with the Document it belongs to.
+    let handle = crate::bridge::wrapper::html_doc(&document).node(node);
     let node_type = handle.node_type();
     if node_type == NodeType::Document {
         return Ok(document);
@@ -111,7 +105,7 @@ pub fn wrap_html_node(node: RawNode, document: Value) -> Result<Value, Error> {
 
 impl crate::bridge::wrapper::NodeHandleSource for RawNode {
     fn identity(&self) -> usize {
-        self.as_ptr() as usize
+        self.word()
     }
 
     fn into_handle(self, document: Value) -> NodeHandle {
@@ -127,11 +121,8 @@ impl crate::bridge::wrapper::NodeHandleSource for RawNode {
     reason = "wrap_html_node's callers vouch the node belongs to the document"
 )]
 fn mint_html_key(node: RawNode, document: Value) -> HtmlNodeKey {
-    with_html_parsed_known(document, |parsed| {
-        // SAFETY: `node` is a live node of `document`, vouched by the caller.
-        unsafe { parsed.mint_key(node) }
-    })
-    .expect("wrap_html_node: the node must belong to the document it is wrapped under")
+    with_html_parsed_known(document, |parsed| parsed.mint_key(node))
+        .expect("wrap_html_node: the node must belong to the document it is wrapped under")
 }
 
 fn uninitialized() -> Error {
@@ -151,12 +142,11 @@ pub(in crate::bridge) fn html_node_key(rb_node: Value) -> Result<(HtmlNodeKey, V
                 "expected an HTML node, got a Makiri::XML::Document",
             ));
         }
-        let raw = RawNode::from(html_doc_unwrap(rb_node)?);
-        let key = with_html_parsed_known(rb_node, |parsed| {
-            // SAFETY: `raw` is the document node of `rb_node`'s live document.
-            unsafe { parsed.mint_key(raw) }
-        })
-        .map_err(|ForeignNode| foreign_node_error())?;
+        let doc = html_doc_unwrap(rb_node)?;
+        // SAFETY: the live document of `rb_node`, which the caller holds.
+        let raw = unsafe { crate::bridge::dom::document_node(doc) };
+        let key = with_html_parsed_known(rb_node, |parsed| parsed.mint_key(raw))
+            .map_err(|ForeignNode| foreign_node_error())?;
         return Ok((key, rb_node));
     }
     let nd: &NodeData = HTML_NODE_TYPE.get(&rb_node)?;
@@ -170,9 +160,9 @@ pub(in crate::bridge) fn html_node_key(rb_node: Value) -> Result<(HtmlNodeKey, V
 ///
 /// The field is the receiver's opaque key, not a raw pointer: a long-lived
 /// wrapper stores one, and a Document receiver's key is minted for the call.
-/// `node()` resolves it without a check - the receiver's own Document, kept
-/// alive by the argument, is what makes that sound - while `with_node` is the
-/// checked boundary.
+/// `node()` resolves it against the receiver's document without a check - the
+/// receiver's own Document, kept alive by the argument, is what makes that
+/// sound - while `with_node` is the checked boundary.
 #[derive(Clone, Copy)]
 pub struct HtmlSelf {
     pub value: Value,
@@ -200,9 +190,18 @@ impl HtmlSelf {
     /// alive; the borrow of `self` ends the handle with the call.
     #[inline]
     pub fn node(&self) -> HtmlNode<'_> {
-        // SAFETY: the receiver keeps `key`'s owner document alive for this
-        // call, and `key` was minted from a live node of it.
-        unsafe { self.key.raw_node().as_node() }
+        let doc = self.doc();
+        // The receiver keeps `key`'s owner document alive for this call, and
+        // `key` was minted from a live node of it.
+        doc.node(self.key.raw_node())
+    }
+
+    /// The receiver's document, for the length of this method call - made
+    /// afresh on each call and never stored, so no handle of it is held
+    /// across an edit of the same document.
+    #[inline]
+    pub fn doc(&self) -> HtmlDoc<'_> {
+        crate::bridge::wrapper::html_doc(&self.document)
     }
 
     /// The receiver's node as the boundary handle, for the mutators.
@@ -252,37 +251,38 @@ pub fn wrap_node(node: Option<HtmlNode<'_>>, document: Value) -> Result<Option<V
 /// agree - a `<template>`'s own (empty) child list included.
 impl<'d> TokenTree for HtmlTree<'d> {
     fn token(&self, n: HtmlNode<'d>) -> usize {
-        RawNode::from(n).as_ptr() as usize
+        RawNode::from(n).word()
     }
     fn node_of(&self, token: usize) -> Option<HtmlNode<'d>> {
-        let raw = RawNode::from_ptr(token as *mut core::ffi::c_void)?;
-        // SAFETY: `child_index` asks only for a token it recorded for a list
-        // of this document, so by `ChildPositionMemo`'s invariant it names a
-        // node that is still a child there - in the document the receiver
-        // keeps alive for `'d`. Lexbor detaches rather than frees, so it was
-        // never released.
-        Some(unsafe { raw.as_node() })
+        // `child_index` asks only for a token it recorded for a list of this
+        // document, so by `ChildPositionMemo`'s invariant it names a node that
+        // is still a child there, in the document the receiver keeps alive.
+        let raw = RawNode::from_word(token)?;
+        Some(self.doc()?.node(raw))
     }
 }
-
-/// The tree every HTML receiver lends its child lists, as `&'static`: a
-/// `const` item is what may be borrowed for that long (the type holds
-/// nothing).
-const HTML_TREE: HtmlTree<'static> = HtmlTree::new();
 
 impl ChildListHost for HtmlSelf {
     type Tree<'a> = HtmlTree<'a>;
     fn document(&self) -> Value {
         self.document
     }
-    fn children(&self, list: ChildList) -> Children<'_, HtmlTree<'_>> {
-        Children {
-            tree: &HTML_TREE,
+    fn with_children<R>(
+        &self,
+        list: ChildList,
+        f: impl for<'a> FnOnce(Children<'a, HtmlTree<'a>>) -> R,
+    ) -> R {
+        let tree = HtmlTree::of(self.doc());
+        f(Children {
+            tree: &tree,
             parent: self.node(),
             list,
-        }
+        })
     }
-    fn wrap_child(&self, n: Option<HtmlNode<'_>>) -> Result<Option<Value>, Error> {
+    fn wrap_child<'a>(&self, n: Option<HtmlNode<'a>>) -> Result<Option<Value>, Error>
+    where
+        Self: 'a,
+    {
         wrap_node(n, self.document)
     }
 }
@@ -321,13 +321,25 @@ pub(in crate::bridge) fn with_html_node<R>(
     })
 }
 
+/// The node `key` names, as a reference into `rb_doc`'s document, after the
+/// same check [`with_html_node`] makes.
+///
+/// What an edit takes for a node of the document it is changing: the edit
+/// holds that document by `&mut` (`HtmlDocMut`), so the node is read through
+/// that borrow - never through a second handle - and a reference is all that
+/// crosses. The one place a checked key leaves the bridge's handles as a
+/// reference.
+pub(in crate::bridge) fn node_ref(rb_doc: Value, key: HtmlNodeKey) -> Result<RawNode, Error> {
+    with_html_node(rb_doc, key, |n| RawNode::from(n))
+}
+
 /* ------------------------------------------------------------------ *
  * structural mutation                                                *
  * ------------------------------------------------------------------ */
 
 /// The receiver cleared for an edit - not frozen, its document not under
 /// evaluation - and the PROOF of it: [`edit`] is the only way to build one and
-/// [`HtmlEdit::node`] (or its attribute and data twins) the only way to spend
+/// [`HtmlEdit::with_tree`] (or its attribute and data twins) the only way to spend
 /// it, ONCE - they take `self`. The XML side's `Editing`, spent the same way.
 ///
 /// The checks and the index drop are two steps on purpose. The checks come
@@ -341,7 +353,7 @@ pub struct HtmlEdit<'a> {
 }
 
 /// Clear the receiver for an edit. Convert every argument after this and
-/// before [`HtmlEdit::node`].
+/// before [`HtmlEdit::with_tree`].
 pub fn edit(this: &HtmlSelf) -> Result<HtmlEdit<'_>, Error> {
     crate::bridge::ruby::check_frozen(this.value)?;
     check_attr_owner_frozen(this)?;
@@ -371,104 +383,120 @@ impl<'a> HtmlEdit<'a> {
         self.this.node().node_type()
     }
 
-    /// The mutable handle, with the document's indexes dropped. From here to
-    /// the change nothing may run Ruby - every argument is already converted -
-    /// so nothing can rebuild them.
+    /// Lend the document for the change, with the receiver's node, and drop
+    /// its indexes first. From here to the end of `f` nothing may run Ruby -
+    /// every argument is already converted - so nothing can rebuild them, and
+    /// nothing can read the document while `f` holds it.
     ///
     /// Both guards are checked again, since an argument's `#to_s` ran between
     /// `edit` and here: one that froze the receiver had its edit go through.
     /// `edit` checked first only so a frozen receiver is still reported ahead
     /// of a bad argument. It takes the token, so a caller cannot reach for the
-    /// handle a second time after running Ruby. What it cannot stop is Ruby
-    /// run while the handle is held - the handle's lifetime is the receiver's,
-    /// not the token's - so a caller keeps the span from here to the change
-    /// to engine calls and checks that call no Ruby (`insert` reads its
-    /// argument's node and frozen flag there, and nothing more).
+    /// document a second time after running Ruby.
     ///
     /// It counts as a change to a child list ([`record_edit`]); an
-    /// attribute edit takes [`HtmlEdit::node_for_attributes`] instead, and a
-    /// character-data edit [`HtmlEdit::node_for_data`].
-    pub fn node(self) -> Result<HtmlNodeMut<'a>, Error> {
-        self.mutable(EditKind::ChildList)
+    /// attribute edit takes [`HtmlEdit::with_attributes`] instead, and a
+    /// character-data edit [`HtmlEdit::with_data`].
+    pub fn with_tree<R>(
+        self,
+        f: impl FnOnce(&mut HtmlDocMut<'_>, RawNode) -> R,
+    ) -> Result<R, Error> {
+        self.lend(EditKind::ChildList, f)
     }
 
-    /// [`HtmlEdit::node`] for an edit of ATTRIBUTES only - an element's, or an
-    /// Attr node's value - which changes no child list: it counts towards the
-    /// attribute version ([`record_edit`]) instead of the tree
+    /// [`HtmlEdit::with_tree`] for an edit of ATTRIBUTES only - an element's,
+    /// or an Attr node's value - which changes no child list: it counts
+    /// towards the attribute version ([`record_edit`]) instead of the tree
     /// version.
-    pub fn node_for_attributes(self) -> Result<HtmlNodeMut<'a>, Error> {
-        self.mutable(EditKind::Attributes)
+    pub fn with_attributes<R>(
+        self,
+        f: impl FnOnce(&mut HtmlDocMut<'_>, RawNode) -> R,
+    ) -> Result<R, Error> {
+        self.lend(EditKind::Attributes, f)
     }
 
-    /// [`HtmlEdit::node`] for an edit of a Text, Comment, CDATA or PI node's
-    /// DATA, which changes no child list and no attribute: no version counts
-    /// it (see [`EditKind::CharacterData`]).
-    pub fn node_for_data(self) -> Result<HtmlNodeMut<'a>, Error> {
-        self.mutable(EditKind::CharacterData)
+    /// [`HtmlEdit::with_tree`] for an edit of a Text, Comment, CDATA or PI
+    /// node's DATA, which changes no child list and no attribute: no version
+    /// counts it (see [`EditKind::CharacterData`]).
+    pub fn with_data<R>(
+        self,
+        f: impl FnOnce(&mut HtmlDocMut<'_>, RawNode) -> R,
+    ) -> Result<R, Error> {
+        self.lend(EditKind::CharacterData, f)
     }
 
-    fn mutable(self, kind: EditKind) -> Result<HtmlNodeMut<'a>, Error> {
+    fn lend<R>(
+        self,
+        kind: EditKind,
+        f: impl FnOnce(&mut HtmlDocMut<'_>, RawNode) -> R,
+    ) -> Result<R, Error> {
         crate::bridge::ruby::check_frozen(self.this.value)?;
         check_attr_owner_frozen(self.this)?;
         ensure_document_mutable(self.this.document)?;
         invalidate_indexes(self.this.document);
         record_edit(self.this.document, kind);
         // SAFETY: the receiver is not frozen and no XPath evaluation is
-        // reading its document - both checked just now.
-        Ok(unsafe { HtmlNodeMut::assume_mutable(self.this.raw().as_node()) })
+        // reading its document - both checked just now - and `f` runs no Ruby
+        // (this method's contract with its callers), so the document is this
+        // edit's alone while `f` holds it.
+        let mut doc = unsafe { crate::bridge::wrapper::html_doc_known(self.this.document).edit() };
+        Ok(f(&mut doc, self.this.raw()))
     }
 }
 
-/// A detached copy of `src` in `doc` - `<template>` contents included - or a
-/// `Makiri::Error` naming `what` failed ("import node", "clone node"). The one
-/// copy every import, adopt and clone makes, so none can grow its own variant.
-///
-/// # Safety
-/// `doc` must be a live document, held by the caller for the call.
-pub unsafe fn import_copy(
-    doc: RawDoc,
-    src: HtmlNode<'_>,
-    deep: bool,
-    what: &str,
-) -> Result<RawNode, Error> {
-    import_with_fixup(doc, RawNode::from(src), deep)
-        .map_err(|_| makiri_error(format!("failed to {what}")))
+/// Refuse a factory on `rb_doc` - not an HTML Document, or one an XPath
+/// evaluation with a handler is reading - before any argument is converted, so
+/// that refusal wins over a bad argument. [`new_node`] checks again.
+pub fn check_owning_doc(rb_doc: &Value) -> Result<(), Error> {
+    html_doc_unwrap(*rb_doc)?;
+    ensure_document_mutable(*rb_doc)
 }
 
-/// Copy `node` into `doc`, for a node that came from another document.
-fn adopt_copy<'d>(doc: RawDoc, node: HtmlNode<'_>) -> Result<HtmlNode<'d>, Error> {
-    // SAFETY: `doc` is a live document, the caller's target.
-    let imp = unsafe { import_copy(doc, node, true, "import node") }?;
-    // SAFETY: a node just imported into `doc`, which outlives this call.
-    Ok(unsafe { imp.as_node() })
+/// Lend `rb_doc`'s document to `f` to make a DETACHED node - the factories'
+/// and the copies' gate. A new node is in no tree, so no index changes and no
+/// receiver can be frozen; what is refused is a document an XPath evaluation
+/// with a handler is reading, whose arena the walk borrows. `f` must run no
+/// Ruby, as [`HtmlEdit::with_tree`]'s must not.
+pub fn new_node<R>(rb_doc: &Value, f: impl FnOnce(&mut HtmlDocMut<'_>) -> R) -> Result<R, Error> {
+    let doc = html_doc_unwrap(*rb_doc)?;
+    ensure_document_mutable(*rb_doc)?;
+    let r = {
+        // SAFETY: a live HTML Document, kept alive by `rb_doc` for this call,
+        // not under evaluation (checked just now), and `f` runs no Ruby. The
+        // loan ends with this block, before the document is read below.
+        let mut d = unsafe { doc.edit_new_nodes() };
+        f(&mut d)
+    };
+    /* A factory grows the document without an edit after it - a namespace
+     * of a megabyte, a fragment imported - so it reports here, after `f`: the
+     * arguments were converted to copies before, and what `f` made is still a
+     * bare node, so a collection here can free nothing it needs. */
+    crate::bridge::wrapper::account_growth(*rb_doc);
+    Ok(r)
 }
 
-/// Take the node `src` wraps out of the document it came from, so the whole
-/// thing reads as the move the DOM says appendChild performs - and drop that
-/// document's indexes, which still list it. A structural change to a document
-/// invalidates ITS indexes; this is one, made from another document's method.
-fn adopt_release(src: Value) -> Result<(), Error> {
-    /* Invalidated and recorded before the release (`record_edit`); the node
-     * borrow below is taken after, as dropping the indexes borrows too. */
-    let src_doc = keepalive_document(src)?;
-    invalidate_indexes(src_doc);
-    record_edit(src_doc, EditKind::ChildList);
-    with_arg_node(src, |node| {
-        /* SAFETY: the source document was cleared for editing by
-         * `take_incoming` before anything was copied out of it. */
-        release_from_tree(unsafe { HtmlNodeMut::assume_mutable(node) });
-    })
+/// Lend the document of `rb_doc` - not the receiver's - for the part of an
+/// edit that changes it: an adoption's release of the original. Its indexes
+/// are dropped and the change recorded first.
+fn edit_other_document<R>(
+    rb_doc: Value,
+    f: impl FnOnce(&mut HtmlDocMut<'_>) -> R,
+) -> Result<R, Error> {
+    ensure_document_mutable(rb_doc)?;
+    invalidate_indexes(rb_doc);
+    record_edit(rb_doc, EditKind::ChildList);
+    new_node(&rb_doc, f)
 }
 
-fn release_from_tree(node: HtmlNodeMut<'_>) {
-    if node.node().node_type() == NodeType::DocumentFragment {
-        /* A fragment contributes its children; the DOM leaves a spliced one
-         * empty, so empty the source rather than detaching it. */
-        while let Some(c) = node.first_child() {
-            c.detach();
-        }
-    } else if node.parent().is_some() {
-        node.detach();
+/// Take `node` out of its tree, the release half of an adoption: a fragment
+/// contributes its children (the DOM leaves a spliced one empty), anything
+/// else leaves its parent.
+fn release_from_tree(d: &mut HtmlDocMut<'_>, node: RawNode) {
+    let n = d.node(node);
+    if n.node_type() == NodeType::DocumentFragment {
+        d.detach_children(node);
+    } else if n.parent().is_some() {
+        d.detach(node);
     }
 }
 
@@ -478,8 +506,8 @@ fn release_from_tree(node: HtmlNodeMut<'_>) {
 /// node its copy.
 ///
 /// Every rule is checked before anything changes (see
-/// [`Insertion::check`], the shared `crate::dom_rules`); after that only the adoption copy can fail, and it
-/// too runs before a link is touched.
+/// [`Insertion::check`], the shared `crate::dom_rules`); after that only the
+/// adoption copy can fail, and it too runs before a link is touched.
 pub fn insert(this: &HtmlSelf, rb_incoming: Value, place: Place) -> Result<Value, Error> {
     let edit = edit(this)?;
     let (key, incoming_doc) = html_node_key(rb_incoming)?;
@@ -491,54 +519,46 @@ pub fn insert(this: &HtmlSelf, rb_incoming: Value, place: Place) -> Result<Value
      * checked, because frozenness lives on the Ruby object and there is no map
      * from a node back to its wrapper. */
     crate::bridge::ruby::check_frozen(rb_incoming)?;
-    /* An adoption changes the argument's own document too (see
-     * `take_incoming`, which checks again). Refused here as well, so every
-     * refusal about the argument comes before `node` records the edit, as the
-     * XML side's does. */
+    /* An adoption changes the argument's own document too. Refused here, so
+     * every refusal about the argument comes before the edit is recorded, as
+     * the XML side's does. */
     ensure_document_mutable(incoming_doc)?;
-    let target = edit.node()?;
-    /* The argument, resolved against its own Document, for the checks, the
-     * copy or move, and the placing - none of which runs Ruby or wraps a
-     * node. Releasing an adopted original and wrapping its copy borrow a
-     * document again, so they come after. */
-    let (placed, adopted) = with_html_node(incoming_doc, key, |incoming| {
-        Insertion::new(target.node(), place, incoming)
-            .and_then(|i| i.check())
-            .map_err(crate::bridge::dom_error::pre_insert_error)?;
-        let (node, adopted) = take_incoming(target, incoming_doc, incoming)?;
-        target.place(node, place);
-        Ok::<_, Error>((RawNode::from(node.node()), adopted))
+    /* The argument resolved against its own Document - the checked boundary -
+     * and kept as a reference: in the receiver's document it is read through
+     * the edit's own borrow, never through a second one. */
+    let incoming = node_ref(incoming_doc, key)?;
+    let same = crate::bridge::ruby::same_value(incoming_doc, this.document);
+    let (placed, adopted) = edit.with_tree(|d, target| -> Result<(RawNode, bool), Error> {
+        let node = if same {
+            Insertion::new(d.node(target), place, d.node(incoming))
+                .and_then(|i| i.check())
+                .map_err(crate::bridge::dom_error::pre_insert_error)?;
+            if d.node(incoming).parent().is_some() {
+                d.detach(incoming);
+            }
+            incoming
+        } else {
+            /* From another document: checked, then copied into this one - the
+             * original is released below, once the copy is in. */
+            with_html_node(incoming_doc, key, |src| {
+                Insertion::new(d.node(target), place, src)
+                    .and_then(|i| i.check())
+                    .map_err(crate::bridge::dom_error::pre_insert_error)?;
+                d.import(src, true)
+                    .map_err(|_| makiri_error("failed to import node"))
+            })??
+        };
+        d.place(target, node, place);
+        Ok((node, !same))
     })??;
     if !adopted {
         return Ok(rb_incoming);
     }
-    adopt_release(rb_incoming)?;
+    /* Take the original out of the document it came from, so the whole thing
+     * reads as the move the DOM says appendChild performs - and drop that
+     * document's indexes, which still list it. */
+    edit_other_document(incoming_doc, |d| release_from_tree(d, incoming))?;
     wrap_html_node(placed, this.document)
-}
-
-/// The node to put in the tree for `incoming`: itself, taken out of where it
-/// was, or - from another document - a copy made in `target`'s, with `true`
-/// for "release the original once the copy is in" (see [`adopt_release`]).
-/// `incoming_doc` is the argument's own Document.
-fn take_incoming<'d>(
-    target: HtmlNodeMut<'d>,
-    incoming_doc: Value,
-    incoming: HtmlNode<'_>,
-) -> Result<(HtmlNodeMut<'d>, bool), Error> {
-    if !target.node().same_document(incoming) {
-        /* Adopting takes the node out of the document it came from, so that
-         * document changes too - refuse before anything is copied. */
-        ensure_document_mutable(incoming_doc)?;
-        let copy = adopt_copy(RawDoc::from(target.node().owner_document()), incoming)?;
-        // SAFETY: a copy this call just made in `target`'s document.
-        return Ok((unsafe { HtmlNodeMut::assume_mutable(copy) }, true));
-    }
-    // SAFETY: a node of `target`'s document, which `edit` cleared.
-    let incoming = unsafe { HtmlNodeMut::assume_mutable(RawNode::from(incoming).as_node()) };
-    if incoming.parent().is_some() {
-        incoming.detach();
-    }
-    Ok((incoming, false))
 }
 
 /* ------------------------------------------------------------------ *
@@ -549,125 +569,80 @@ fn take_incoming<'d>(
  * primitive passes it straight to a Lexbor call that copies what it keeps. A
  * primitive answers what Lexbor answered; the method words the error. */
 
-/// The Lexbor document behind an HTML Document receiver, for a factory - so,
-/// like every other change to a document, refused while an XPath evaluation
-/// with a handler is reading it.
-pub fn owning_doc(rb_self: &Value) -> Result<HtmlDoc<'_>, Error> {
-    let doc = html_doc_unwrap(*rb_self)?;
-    ensure_document_mutable(*rb_self)?;
-    // SAFETY: a live HTML Document, kept alive by `rb_self` for this call.
-    Ok(unsafe { doc.as_doc() })
-}
-
-/// `el[name] = value`; `Err` when Lexbor could not store it.
+/// `el[name] = value` on the element `el`; `Err` when it could not be stored.
 pub fn set_attribute(
-    el: HtmlElementMut<'_>,
+    d: &mut HtmlDocMut<'_>,
+    el: RawNode,
     name: &RubyText,
     value: &RubyData,
 ) -> Result<(), AdapterOom> {
-    el.set_attribute(name.as_bytes(), value.as_bytes())
-        .map(drop)
+    d.set_attribute(el, name.as_bytes(), value.as_bytes())
 }
 
 /// Set the attribute `qname` in namespace `ns` (`None` = none), matching an
 /// existing one on (namespace, local name) - the DOM key - rather than on the
-/// qualified name. `Err` when Lexbor could not store it.
+/// qualified name. `Err` when it could not be stored.
 ///
 /// `ns` comes from `string::namespace_arg`, so an empty URI already reads as
 /// `None`.
 pub fn set_attribute_ns(
-    el: HtmlElementMut<'_>,
+    d: &mut HtmlDocMut<'_>,
+    el: RawNode,
     ns: Option<&[u8]>,
     qname: &RubyText,
     value: &RubyData,
 ) -> Result<(), AdapterOom> {
-    el.set_attribute_ns(ns, qname.as_bytes(), value.as_bytes())
+    d.set_attribute_ns(el, ns, qname.as_bytes(), value.as_bytes())
 }
 
-/// Remove the attribute `local` in namespace `ns` (`None` = none); whether
-/// there was one. `ns` comes from `string::namespace_arg`.
-pub fn remove_attribute_ns(el: HtmlElementMut<'_>, ns: Option<&[u8]>, local: &RubyText) -> bool {
+/// Remove the attribute `local` in namespace `ns` (`None` = none) from the
+/// element `el`; whether there was one. `ns` comes from
+/// `string::namespace_arg`.
+pub fn remove_attribute_ns(
+    d: &mut HtmlDocMut<'_>,
+    el: RawNode,
+    ns: Option<&[u8]>,
+    local: &RubyText,
+) -> bool {
     /* Looked up, not interned: a namespace the document never interned is
      * one no attribute here carries, so there is nothing to remove - and a
      * lookup can neither fail nor grow the table. */
     let want_ns = match ns {
-        Some(uri) => {
-            let doc = el.element().node().owner_document();
-            let Some(id) = doc.lookup_ns(uri) else {
-                return false;
-            };
-            Some(id)
-        }
+        Some(uri) => match d.read().lookup_ns(uri) {
+            Some(id) => Some(id),
+            None => return false,
+        },
         None => None,
     };
-    match el.element().attr_by_ns(want_ns, local.as_bytes()) {
+    let found = d
+        .node(el)
+        .element()
+        .and_then(|e| e.attr_by_ns(want_ns, local.as_bytes()))
+        .map(|a| RawNode::from(a.node()));
+    match found {
         Some(attr) => {
-            el.attr_remove(attr);
+            d.attr_remove(el, attr);
             true
         }
         None => false,
     }
 }
 
-/// `el.delete(name)`.
-pub fn remove_attribute(el: HtmlElementMut<'_>, name: &RubyText) {
-    el.remove_attribute(name.as_bytes());
+/// `el.delete(name)` on the element `el`.
+pub fn remove_attribute(d: &mut HtmlDocMut<'_>, el: RawNode, name: &RubyText) {
+    d.remove_attribute(el, name.as_bytes());
 }
 
-/// `node.content = text`; `Err` when Lexbor could not store it.
-pub fn set_text_content(node: HtmlNodeMut<'_>, text: &RubyData) -> Result<(), AdapterOom> {
-    node.set_text_content(text.as_bytes())
-}
-
-/// A new element in `doc`.
-pub fn create_element<'d>(doc: HtmlDoc<'d>, name: &RubyText) -> Option<RawNode> {
-    doc.create_element(name.as_bytes()).map(RawNode::from)
-}
-
-/// A new element named `local` in namespace `ns` ("" = none), with `prefix`
-/// ("" = none) - the DOM's createElementNS, once the caller has validated and
-/// split the name.
-pub fn create_element_ns<'d>(
-    doc: HtmlDoc<'d>,
-    local: &[u8],
-    ns: &[u8],
-    prefix: &[u8],
-) -> Option<RawNode> {
-    doc.create_element_ns(local, ns, prefix).map(RawNode::from)
-}
-
-/// A new Text node in `doc`.
-pub fn create_text(doc: HtmlDoc<'_>, text: &RubyData) -> Option<RawNode> {
-    doc.create_text(text.as_bytes()).map(RawNode::from)
-}
-
-/// A new Comment in `doc`.
-pub fn create_comment(doc: HtmlDoc<'_>, text: &RubyData) -> Option<RawNode> {
-    doc.create_comment(text.as_bytes()).map(RawNode::from)
-}
-
-/// A new ProcessingInstruction in `doc`.
-pub fn create_pi(doc: HtmlDoc<'_>, target: &RubyText, data: &RubyText) -> Option<RawNode> {
-    doc.create_pi(target.as_bytes(), data.as_bytes())
-        .map(RawNode::from)
+/// `node.content = text`; `Err` when it could not be stored.
+pub fn set_text_content(
+    d: &mut HtmlDocMut<'_>,
+    node: RawNode,
+    text: &RubyData,
+) -> Result<(), AdapterOom> {
+    d.set_text_content(node, text.as_bytes())
 }
 
 /// Whether `name` is one the DOM accepts for a doctype.
 pub fn valid_doctype_name(name: &RubyText) -> bool {
     HtmlDoc::valid_doctype_name(name.as_bytes())
-}
-
-/// A new DocumentType in `doc`.
-pub fn create_doctype(
-    doc: HtmlDoc<'_>,
-    name: &RubyText,
-    public_id: Option<&RubyText>,
-    system_id: Option<&RubyText>,
-) -> Option<RawNode> {
-    let (name, pub_id, sys_id) = (
-        name.as_bytes(),
-        public_id.map(|v| v.as_bytes()),
-        system_id.map(|v| v.as_bytes()),
-    );
-    doc.create_doctype(name, pub_id, sys_id).map(RawNode::from)
 }

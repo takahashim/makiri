@@ -2,7 +2,7 @@
 //! memo that makes a walking query count each sibling list once.
 
 use crate::falloc::{OomResult, VecPush};
-use crate::lexbor::adapter::html::{HtmlNode, RawNode};
+use crate::html_dom::html::{HtmlNode, RawNode};
 use crate::ptr_table::PtrMap;
 
 use super::scratch::{recycle, SCRATCH_KEEP};
@@ -200,7 +200,7 @@ impl Positions {
 }
 
 fn node_key(node: HtmlNode<'_>) -> *const () {
-    RawNode::from(node).as_ptr().cast_const().cast()
+    RawNode::from(node).table_key()
 }
 
 /// `node`'s 1-based position among its (`from_end`-directed) siblings,

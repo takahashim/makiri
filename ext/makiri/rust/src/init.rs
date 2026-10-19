@@ -244,7 +244,7 @@ fn panic_probe(ruby: &Ruby, kind: i64) -> Result<(), Error> {
              * parse runs: the hook latches it and stops the parse, the parse
              * re-raises it, and `entry` makes it `Makiri::InternalError`. */
             return crate::bridge::ruby::entry(|| -> Result<(), Error> {
-                crate::lexbor::adapter::post_parse::parse_with_panicking_hook();
+                crate::html_dom::post_parse::parse_with_panicking_hook();
                 Ok(())
             });
         }
@@ -313,9 +313,6 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     // Before anything touches the interpreter's structs: a binary built for
     // another Ruby misreads them (`check_running_ruby_api`).
     crate::bridge::ruby::check_running_ruby_api(ruby)?;
-    // Before anything can parse: Lexbor's heap blocks carry slack past their
-    // end (`lexbor::memory`).
-    crate::lexbor::memory::install();
     let makiri = ruby.define_module("Makiri")?;
 
     // What this binary was built as, for `lib/makiri.rb` to check against the

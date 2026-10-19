@@ -420,9 +420,10 @@ SCENARIOS = {
     parts.join("|")
   end,
 
-  # The stylesheet binding (Makiri::Lexbor::CSS.parse_stylesheet). Its own
-  # layer allocates for every selector, declaration and at-rule name, and it
-  # walks Lexbor's parsed tree into owned values BEFORE building any Ruby - so
+  # The stylesheet binding (Makiri::Lexbor::CSS.parse_stylesheet). The parser
+  # port allocates for every rule, selector and name, the reader for every
+  # value it re-tokenizes, and it walks the parsed rules into owned values
+  # BEFORE building any Ruby - so
   # a failure in the middle has a half-built intermediate to abandon, which is
   # exactly the shape this sweep exists to check.
   "css_stylesheet" => lambda do
@@ -433,6 +434,8 @@ SCENARIOS = {
       @media (min-width: 600px) { .x { color: blue } }
       @font-face { font-family: F; src: url(f.woff) }
       @namespace svg url(http://www.w3.org/2000/svg);
+      @supports (display: grid) { a { b: c } d { --e: f   g /* h */ } }
+      a { b { c: d } e: f(g; h) }
     CSS
     Makiri::Lexbor::CSS.parse_stylesheet(css).inspect
   end,
@@ -759,12 +762,14 @@ STATEFUL_SCENARIOS.each do |name, spec|
 end
 
 # An allocation failure while deciding a selector is not a verdict on it. For
-# a selector `lexbor::contains_guard` rewrites (so the parse ends in a syntax
-# error when nothing fails), every injected failure - the cache key, the
-# guard's copy - must surface as an out-of-memory Makiri::Error, never as
-# CSS::SyntaxError: the guard's OOM used to become a rejected parse, which
-# ALLOWED above cannot tell apart (SyntaxError is a Makiri::Error), so this is
-# checked on its own. Warmed twice first, as the scenarios are: a cold call
+# a selector the parser rejects (`:lexbor-contains()` is not in the port's
+# function table, as `lexbor::contains_guard` kept it from Lexbor's), every
+# injected failure - the cache key, the tokens, the parser's stacks - must
+# surface as an out-of-memory Makiri::Error, never as CSS::SyntaxError (the
+# guard's OOM once became a rejected parse) nor as an answer (the parser's
+# own OOM once ended the parse as a success; parser_differences.ja.md S3).
+# ALLOWED above cannot tell a SyntaxError apart (it is a Makiri::Error), so
+# this is checked on its own. Warmed twice first, as the scenarios are: a cold call
 # also allocates the engines and the error report's one-time state, which
 # fail after the verdict and so may keep the SyntaxError.
 guard_docs = {

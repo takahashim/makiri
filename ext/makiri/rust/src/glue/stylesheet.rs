@@ -2,7 +2,7 @@
 //! stylesheet binding, the owned Rust rules [`crate::lexbor::stylesheet::parse`]
 //! returns turned into plain Ruby hashes and arrays.
 //!
-//! Phase one has dropped every Lexbor resource before this runs, so building
+//! Phase one has dropped everything it built before this runs, so building
 //! Ruby objects - each one a possible raise - leaves nothing to free. That is
 //! the whole reason for the two phases; see `lexbor::stylesheet`.
 
@@ -118,11 +118,13 @@ fn rules_to_ruby(ruby: &Ruby, k: &Keys, rs: &[Rule]) -> Result<RArray, Error> {
                 name,
                 prelude,
                 rules,
+                declarations,
             } => {
                 h.aset(k.type_, k.sym_at_rule)?;
                 h.aset(k.name, str_of(ruby, name))?;
                 h.aset(k.prelude, str_of(ruby, prelude))?;
                 h.aset(k.rules, rules_to_ruby(ruby, k, rules)?)?;
+                h.aset(k.declarations, decls_to_ruby(ruby, k, declarations)?)?;
             }
         }
         a.push(h)?;
@@ -138,8 +140,8 @@ fn parse_stylesheet(ruby: &Ruby, text: Value) -> Result<RArray, Error> {
 
 fn parse_stylesheet_inner(ruby: &Ruby, text: Value) -> Result<RArray, Error> {
     let tv = ruby_verified_text(text, "CSS stylesheet")?;
-    /* `tv` anchors the String for this frame, and `parse` is Lexbor and the
-     * allocator only - no Ruby runs that could move or mutate the bytes. */
+    /* `tv` anchors the String for this frame, and `parse` is the parser and
+     * the allocator only - no Ruby runs that could move or mutate the bytes. */
     let css: &[u8] = tv.as_bytes();
 
     let eclass = error_class();
@@ -154,9 +156,7 @@ fn parse_stylesheet_inner(ruby: &Ruby, text: Value) -> Result<RArray, Error> {
                 format!("CSS at-rule nesting too deep (max {MAX_DEPTH})"),
             ))
         }
-        Err(Fail::Init) => return Err(err("failed to initialise CSS parser")),
         Err(Fail::Parse) => return Err(err("failed to parse CSS stylesheet")),
-        Err(Fail::Serialize) => return Err(err("failed to serialize CSS")),
     };
 
     // ---- phase two ----
