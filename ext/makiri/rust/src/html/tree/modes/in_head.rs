@@ -108,7 +108,7 @@ fn script(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) ->
         return tree.abort_with(TreeStatus::Error);
     };
     let Some(el) = tree
-        .create_element_for_token(tkz, tok, res::NS_HTML)
+        .create_element_for_token(tkz, tok, res::NS_HTML, None)
         .or_abort(tree)
     else {
         return true;
@@ -153,9 +153,7 @@ fn template_closed(tree: &mut TreeBuilder<'_>, _tkz: &mut Tokenizer<'_, '_>, tok
         return true;
     }
     tree.generate_all_implied_end_tags_thoroughly(res::TAG__UNDEF, res::NS__UNDEF);
-    let is_template = tree
-        .current_node()
-        .is_some_and(|n| tree.node_is(n, res::TAG_TEMPLATE));
+    let is_template = tree.current_is(res::TAG_TEMPLATE);
     if !is_template {
         tree.parse_error(tok, E::Teelisnocuinhemo);
     }

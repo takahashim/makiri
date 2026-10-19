@@ -35,9 +35,7 @@ pub fn in_frameset(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok:
                 return true;
             }
             tree.open_pop();
-            let is = tree
-                .current_node()
-                .is_some_and(|c| tree.node_is(c, res::TAG_FRAMESET));
+            let is = tree.current_is(res::TAG_FRAMESET);
             if tree.fragment.is_none() && !is {
                 tree.mode = crate::html::tree::Mode::AfterFrameset;
             }

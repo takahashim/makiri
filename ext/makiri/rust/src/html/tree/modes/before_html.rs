@@ -37,7 +37,7 @@ fn open(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mut Tok) 
         }
         res::TAG_HTML => {
             let Some(html) = tree
-                .create_element_for_token(tkz, tok, res::NS_HTML)
+                .create_element_for_token(tkz, tok, res::NS_HTML, None)
                 .or_abort(tree)
             else {
                 return true;

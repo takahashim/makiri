@@ -103,8 +103,8 @@ pub(crate) enum Ipos {
     Before,
 }
 
-/// The hook Lexbor sets on `tree->before_append_attr` while it inserts a
-/// foreign element.
+/// How a foreign element's attributes are adjusted as it is inserted: the
+/// hook Lexbor sets on `tree->before_append_attr`, passed here as an argument.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AttrAdjust {
     /// `lxb_html_tree_adjust_attributes_mathml`.
@@ -298,7 +298,6 @@ pub struct TreeBuilder<'d> {
     pub(crate) scripting: bool,
     pub(crate) mode: Mode,
     pub(crate) original_mode: Mode,
-    pub(crate) before_append_attr: Option<AttrAdjust>,
     pub(crate) status: TreeStatus,
     /// The attributes made with no value (see the module doc).
     pub(crate) valueless: NodeSet,
@@ -327,7 +326,6 @@ impl<'d> TreeBuilder<'d> {
             scripting: false,
             mode: Mode::Initial,
             original_mode: Mode::Initial,
-            before_append_attr: None,
             status: TreeStatus::Ok,
             valueless: NodeSet::default(),
             selected: NodeSet::default(),

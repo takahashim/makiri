@@ -123,13 +123,11 @@ impl TreeBuilder<'_> {
         tkz: &Tokenizer<'_, '_>,
         tok: &Tok,
         ns: usize,
-        only_add_stack: bool,
+        adjust: Option<AttrAdjust>,
     ) -> Result<NodeId, TreeStatus> {
         let (pos, ipos) = self.appropriate_place(None).ok_or(TreeStatus::Oom)?;
-        let el = self.create_element_for_token(tkz, tok, ns)?;
-        if !only_add_stack {
-            self.insert_node(pos, el, ipos);
-        }
+        let el = self.create_element_for_token(tkz, tok, ns, adjust)?;
+        self.insert_node(pos, el, ipos);
         self.open_push(el)?;
         Ok(el)
     }
@@ -141,7 +139,7 @@ impl TreeBuilder<'_> {
         tkz: &Tokenizer<'_, '_>,
         tok: &Tok,
     ) -> Result<NodeId, TreeStatus> {
-        self.insert_foreign_element(tkz, tok, res::NS_HTML, false)
+        self.insert_foreign_element(tkz, tok, res::NS_HTML, None)
     }
 
     /// `lxb_html_tree_create_node` for an element (`lxb_html_interface_create`).
@@ -154,17 +152,19 @@ impl TreeBuilder<'_> {
         self.doc.create_element(tag, ns, 0, None).map_err(oom)
     }
 
-    /// `lxb_html_tree_create_element_for_token`.
+    /// `lxb_html_tree_create_element_for_token`, its attributes adjusted
+    /// by `adjust` (Lexbor's `tree->before_append_attr`).
     pub(crate) fn create_element_for_token(
         &mut self,
         tkz: &Tokenizer<'_, '_>,
         tok: &Tok,
         ns: usize,
+        adjust: Option<AttrAdjust>,
     ) -> Result<NodeId, TreeStatus> {
         let el = self.create_element_node(tok.tag_id, ns)?;
         match tok.base {
-            None => self.append_attributes(tkz, el, tok, ns)?,
-            Some(from) => self.append_attributes_from_element(el, from)?,
+            None => self.append_attributes(tkz, el, tok, ns, adjust)?,
+            Some(from) => self.append_attributes_from_element(el, from, adjust)?,
         }
         if let Some(offset) = self.created_offset(tok) {
             self.doc.set_source_offset(el, offset);
@@ -179,6 +179,7 @@ impl TreeBuilder<'_> {
         el: NodeId,
         tok: &Tok,
         ns: usize,
+        adjust: Option<AttrAdjust>,
     ) -> Result<(), TreeStatus> {
         for ta in tok.attrs(tkz) {
             let Some(name) = ta.name else { continue };
@@ -191,7 +192,7 @@ impl TreeBuilder<'_> {
                 prefix: 0,
                 written: 0,
             };
-            if let Some(adjust) = self.before_append_attr {
+            if let Some(adjust) = adjust {
                 self.adjust(&mut spec, adjust)?;
             }
             let value = ta
@@ -251,6 +252,7 @@ impl TreeBuilder<'_> {
         &mut self,
         el: NodeId,
         from: NodeId,
+        adjust: Option<AttrAdjust>,
     ) -> Result<(), TreeStatus> {
         let mut a = self.doc.first_attr(from);
         while let Some(x) = a {
@@ -260,7 +262,7 @@ impl TreeBuilder<'_> {
                 prefix: 0,
                 written: self.doc.written_id(x),
             };
-            if let Some(adjust) = self.before_append_attr {
+            if let Some(adjust) = adjust {
                 self.adjust(&mut spec, adjust)?;
             }
             let value = (!self.valueless.contains(x)).then_some(AttrValue::CopyOf(x));
@@ -271,7 +273,8 @@ impl TreeBuilder<'_> {
         Ok(())
     }
 
-    /// `tree->before_append_attr`.
+    /// `tree->before_append_attr`: how a foreign element's attributes are
+    /// adjusted.
     fn adjust(&mut self, spec: &mut AttrSpec, adjust: AttrAdjust) -> Result<(), TreeStatus> {
         match adjust {
             AttrAdjust::Mathml => self.adjust_mathml_attributes(spec)?,
@@ -695,14 +698,27 @@ impl TreeBuilder<'_> {
 
     /// `lxb_html_tree_close_p_element`.
     pub(crate) fn close_p_element(&mut self, tok: &Tok) {
-        self.generate_implied_end_tags(res::TAG_P, res::NS_HTML);
-        let is_p = self
-            .current_node()
-            .is_some_and(|n| self.node_is(n, res::TAG_P));
-        if !is_p {
-            self.parse_error(tok, E::Unelinopelst);
+        self.close_element(tok, res::TAG_P, Some(res::TAG_P), E::Unelinopelst);
+    }
+
+    /// Whether the current node is the HTML element `tag`.
+    #[inline]
+    pub(crate) fn current_is(&self, tag: usize) -> bool {
+        self.current_node().is_some_and(|n| self.node_is(n, tag))
+    }
+
+    /// The Standard's recurring close of an element: generate implied end
+    /// tags, except for the HTML element `except`; report `err` unless the
+    /// current node is then `tag`; pop up to and including `tag`.
+    pub(crate) fn close_element(&mut self, tok: &Tok, tag: usize, except: Option<usize>, err: E) {
+        match except {
+            Some(t) => self.generate_implied_end_tags(t, res::NS_HTML),
+            None => self.generate_implied_end_tags(res::TAG__UNDEF, res::NS__UNDEF),
         }
-        self.open_pop_until_tag_id(res::TAG_P, res::NS_HTML, true);
+        if !self.current_is(tag) {
+            self.parse_error(tok, err);
+        }
+        self.open_pop_until_tag_id(tag, res::NS_HTML, true);
     }
 
     /// `lxb_html_tree_acknowledge_token_self_closing`.
@@ -957,7 +973,7 @@ impl TreeBuilder<'_> {
     fn create_element_for_fake(&mut self, fake: &Tok) -> Result<NodeId, TreeStatus> {
         let el = self.create_element_node(fake.tag_id, res::NS_HTML)?;
         if let Some(from) = fake.base {
-            self.append_attributes_from_element(el, from)?;
+            self.append_attributes_from_element(el, from, None)?;
         }
         Ok(el)
     }

@@ -9,16 +9,7 @@ use crate::html::tree::{Mode, OrAbort, Tok, TreeBuilder, TreeStatus};
 
 /// `lxb_html_tree_clear_stack_back_to_table_context`.
 fn clear_stack_back_to_table_context(tree: &mut TreeBuilder<'_>) {
-    while let Some(c) = tree.current_node() {
-        if matches!(
-            tree.tag(c),
-            res::TAG_TABLE | res::TAG_TEMPLATE | res::TAG_HTML
-        ) && tree.ns(c) == res::NS_HTML
-        {
-            return;
-        }
-        tree.open_pop();
-    }
+    tree.clear_stack_back_to(&[res::TAG_TABLE, res::TAG_TEMPLATE, res::TAG_HTML]);
 }
 
 /// `lxb_html_tree_insertion_mode_in_table_text_open`.

@@ -8,14 +8,7 @@ use crate::html::tree::{Mode, OrAbort, Tok, TreeBuilder};
 
 /// `lxb_html_tree_clear_stack_back_to_table_row`.
 fn clear_stack_back_to_table_row(tree: &mut TreeBuilder<'_>) {
-    while let Some(c) = tree.current_node() {
-        if matches!(tree.tag(c), res::TAG_TR | res::TAG_TEMPLATE | res::TAG_HTML)
-            && tree.ns(c) == res::NS_HTML
-        {
-            return;
-        }
-        tree.open_pop();
-    }
+    tree.clear_stack_back_to(&[res::TAG_TR, res::TAG_TEMPLATE, res::TAG_HTML]);
 }
 
 /// Close the row (`..._tr_closed` with `consumed`, `..._ct_open_closed`

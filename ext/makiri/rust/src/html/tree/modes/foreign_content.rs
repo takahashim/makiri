@@ -57,18 +57,19 @@ fn anything_else(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &
         return tree.abort_with(TreeStatus::Error);
     };
     let ns = tree.ns(node);
-    if ns == res::NS_MATH {
-        tree.before_append_attr = Some(AttrAdjust::Mathml);
+    let adjust = if ns == res::NS_MATH {
+        Some(AttrAdjust::Mathml)
     } else if ns == res::NS_SVG {
-        tree.before_append_attr = Some(AttrAdjust::Svg);
+        Some(AttrAdjust::Svg)
     } else if compat::fixed(Fix::P19) {
         /* The Standard adjusts foreign attributes in every namespace. */
-        tree.before_append_attr = Some(AttrAdjust::Foreign);
-    }
-    let made = tree.insert_foreign_element(tkz, tok, ns, false);
-    let Ok(el) = made else {
-        tree.before_append_attr = None;
-        return tree.abort_with(TreeStatus::Oom);
+        Some(AttrAdjust::Foreign)
+    } else {
+        None
+    };
+    let made = tree.insert_foreign_element(tkz, tok, ns, adjust);
+    let Some(el) = made.or_abort(tree) else {
+        return true;
     };
     if ns == res::NS_SVG {
         let fixed = rt::SVG_FIXNAME
@@ -81,7 +82,6 @@ fn anything_else(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &
             let _ = tree.doc.set_written(el, Some(fixed));
         }
     }
-    tree.before_append_attr = None;
     if tok.flags & flags::CLOSE_SELF == 0 {
         return true;
     }

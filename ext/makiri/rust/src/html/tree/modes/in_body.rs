@@ -89,7 +89,7 @@ fn html(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> b
     };
     let ns = tree.ns(html);
     if tree
-        .append_attributes(tkz, html, tok, ns)
+        .append_attributes(tkz, html, tok, ns, None)
         .or_abort(tree)
         .is_none()
     {
@@ -118,7 +118,7 @@ fn body(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> b
     tree.frameset_ok = false;
     let ns = tree.ns(node);
     if tree
-        .append_attributes(tkz, node, tok, ns)
+        .append_attributes(tkz, node, tok, ns, None)
         .or_abort(tree)
         .is_none()
     {
@@ -267,12 +267,7 @@ fn close_list_item(tree: &mut TreeBuilder<'_>, tok: &Tok, tags: &[usize]) {
         idx -= 1;
         let node = tree.open[idx];
         if let Some(&tag) = tags.iter().find(|&&t| tree.node_is(node, t)) {
-            tree.generate_implied_end_tags(tag, res::NS_HTML);
-            let is = tree.current_node().is_some_and(|c| tree.node_is(c, tag));
-            if !is {
-                tree.parse_error(tok, E::Unelinopelst);
-            }
-            tree.open_pop_until_tag_id(tag, res::NS_HTML, true);
+            tree.close_element(tok, tag, Some(tag), E::Unelinopelst);
             break;
         }
         if is_category(tree.tag(node), tree.ns(node), rt::CAT_SPECIAL)
@@ -340,14 +335,7 @@ fn abcdfhlmnopsu_closed(tree: &mut TreeBuilder<'_>, tok: &Tok) -> bool {
         tree.parse_error(tok, E::Unclto);
         return true;
     }
-    tree.generate_implied_end_tags(res::TAG__UNDEF, res::NS__UNDEF);
-    let is = tree
-        .current_node()
-        .is_some_and(|c| tree.node_is(c, tok.tag_id));
-    if !is {
-        tree.parse_error(tok, E::Unelinopelst);
-    }
-    tree.open_pop_until_tag_id(tok.tag_id, res::NS_HTML, true);
+    tree.close_element(tok, tok.tag_id, None, E::Unelinopelst);
     true
 }
 
@@ -378,14 +366,7 @@ fn form_closed(tree: &mut TreeBuilder<'_>, tok: &Tok) -> bool {
         tree.parse_error(tok, E::Unclto);
         return true;
     }
-    tree.generate_implied_end_tags(res::TAG__UNDEF, res::NS__UNDEF);
-    let is = tree
-        .current_node()
-        .is_some_and(|c| tree.node_is(c, res::TAG_FORM));
-    if !is {
-        tree.parse_error(tok, E::Unelinopelst);
-    }
-    tree.open_pop_until_tag_id(res::TAG_FORM, res::NS_HTML, true);
+    tree.close_element(tok, res::TAG_FORM, None, E::Unelinopelst);
     true
 }
 
@@ -418,14 +399,7 @@ fn li_closed(tree: &mut TreeBuilder<'_>, tok: &Tok) -> bool {
         tree.parse_error(tok, E::Unclto);
         return true;
     }
-    tree.generate_implied_end_tags(res::TAG_LI, res::NS_HTML);
-    let is = tree
-        .current_node()
-        .is_some_and(|c| tree.node_is(c, res::TAG_LI));
-    if !is {
-        tree.parse_error(tok, E::Unelinopelst);
-    }
-    tree.open_pop_until_tag_id(res::TAG_LI, res::NS_HTML, true);
+    tree.close_element(tok, res::TAG_LI, Some(res::TAG_LI), E::Unelinopelst);
     true
 }
 
@@ -438,14 +412,7 @@ fn dd_dt_closed(tree: &mut TreeBuilder<'_>, tok: &Tok) -> bool {
         tree.parse_error(tok, E::Unclto);
         return true;
     }
-    tree.generate_implied_end_tags(tok.tag_id, res::NS_HTML);
-    let is = tree
-        .current_node()
-        .is_some_and(|c| tree.node_is(c, tok.tag_id));
-    if !is {
-        tree.parse_error(tok, E::Unelinopelst);
-    }
-    tree.open_pop_until_tag_id(tok.tag_id, res::NS_HTML, true);
+    tree.close_element(tok, tok.tag_id, Some(tok.tag_id), E::Unelinopelst);
     true
 }
 
@@ -456,9 +423,7 @@ fn h123456_closed(tree: &mut TreeBuilder<'_>, tok: &Tok) -> bool {
         return true;
     }
     tree.generate_implied_end_tags(res::TAG__UNDEF, res::NS__UNDEF);
-    let is = tree
-        .current_node()
-        .is_some_and(|c| tree.node_is(c, tok.tag_id));
+    let is = tree.current_is(tok.tag_id);
     if !is {
         tree.parse_error(tok, E::Unelinopelst);
     }
@@ -561,14 +526,7 @@ fn amo_closed(tree: &mut TreeBuilder<'_>, tok: &Tok) -> bool {
         tree.parse_error(tok, E::Unclto);
         return true;
     }
-    tree.generate_implied_end_tags(res::TAG__UNDEF, res::NS__UNDEF);
-    let is = tree
-        .current_node()
-        .is_some_and(|c| tree.node_is(c, tok.tag_id));
-    if !is {
-        tree.parse_error(tok, E::Unelinopelst);
-    }
-    tree.open_pop_until_tag_id(tok.tag_id, res::NS_HTML, true);
+    tree.close_element(tok, tok.tag_id, None, E::Unelinopelst);
     tree.afe_up_to_last_marker();
     true
 }
@@ -787,10 +745,7 @@ fn option(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) ->
         {
             tree.parse_error(tok, E::Oppaopinsc);
         }
-    } else if tree
-        .current_node()
-        .is_some_and(|c| tree.node_is(c, res::TAG_OPTION))
-    {
+    } else if tree.current_is(res::TAG_OPTION) {
         tree.open_pop();
     }
     if !reconstruct(tree, tkz) {
@@ -810,10 +765,7 @@ fn optgroup(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) 
         if tree.element_in_scope_option_optgroup().is_some() {
             tree.parse_error(tok, E::Oppaopopinsc);
         }
-    } else if tree
-        .current_node()
-        .is_some_and(|c| tree.node_is(c, res::TAG_OPTION))
-    {
+    } else if tree.current_is(res::TAG_OPTION) {
         tree.open_pop();
     }
     if !reconstruct(tree, tkz) {
@@ -831,9 +783,7 @@ fn rbrtc(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> 
     {
         tree.generate_implied_end_tags(res::TAG__UNDEF, res::NS__UNDEF);
     }
-    let is = tree
-        .current_node()
-        .is_some_and(|c| tree.node_is(c, res::TAG_RUBY));
+    let is = tree.current_is(res::TAG_RUBY);
     if !is {
         tree.parse_error(tok, E::Mielinopelst);
     }
@@ -870,9 +820,7 @@ fn foreign(
     if !reconstruct(tree, tkz) {
         return true;
     }
-    tree.before_append_attr = Some(adjust);
-    let made = tree.insert_foreign_element(tkz, tok, ns, false);
-    tree.before_append_attr = None;
+    let made = tree.insert_foreign_element(tkz, tok, ns, Some(adjust));
     if made.or_abort(tree).is_none() {
         return true;
     }

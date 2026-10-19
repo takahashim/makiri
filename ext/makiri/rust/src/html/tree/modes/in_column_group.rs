@@ -9,9 +9,7 @@ use crate::html::tree::{Mode, OrAbort, Tok, TreeBuilder};
 
 /// `lxb_html_tree_insertion_mode_in_column_group_anything_else`.
 fn anything_else(tree: &mut TreeBuilder<'_>, tok: &Tok) -> bool {
-    let is = tree
-        .current_node()
-        .is_some_and(|c| tree.node_is(c, res::TAG_COLGROUP));
+    let is = tree.current_is(res::TAG_COLGROUP);
     if !is {
         tree.parse_error(tok, E::Mielinopelst);
         return true;
@@ -30,9 +28,7 @@ pub fn in_column_group(
     if tok.is_close() {
         return match tok.tag_id {
             res::TAG_COLGROUP => {
-                let is = tree
-                    .current_node()
-                    .is_some_and(|c| tree.node_is(c, res::TAG_COLGROUP));
+                let is = tree.current_is(res::TAG_COLGROUP);
                 if !is {
                     tree.parse_error(tok, E::Mielinopelst);
                     return true;
@@ -64,9 +60,7 @@ pub fn in_column_group(
              * colgroup to pop, each non-whitespace character is ignored and
              * each whitespace one still inserted. Lexbor ignores the rest of
              * the token (P6). */
-            let colgroup = tree
-                .current_node()
-                .is_some_and(|c| tree.node_is(c, res::TAG_COLGROUP));
+            let colgroup = tree.current_is(res::TAG_COLGROUP);
             if !colgroup && compat::fixed(Fix::P6) {
                 tree.parse_error(tok, E::Mielinopelst);
                 return super::in_frameset::whitespace_only(tree, tkz, tok).is_some();

@@ -51,6 +51,17 @@ impl TreeBuilder<'_> {
         }
     }
 
+    /// The Standard's "clear the stack back to a ... context": pop until the
+    /// current node is an HTML element with one of the tags `stop`.
+    pub(crate) fn clear_stack_back_to(&mut self, stop: &[usize]) {
+        while let Some(c) = self.current_node() {
+            if self.ns(c) == res::NS_HTML && stop.contains(&self.tag(c)) {
+                return;
+            }
+            self.open_pop();
+        }
+    }
+
     /// `lxb_html_tree_open_elements_pop_until_tag_id`.
     pub(crate) fn open_pop_until_tag_id(&mut self, tag: usize, ns: usize, exclude: bool) {
         while let Some(n) = self.open.pop() {
