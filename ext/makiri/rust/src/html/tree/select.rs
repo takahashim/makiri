@@ -28,6 +28,16 @@ use crate::falloc::VecPush;
 use crate::html::dom::{AttrValue, NodeId, NodeType, ShortcutRule};
 use crate::html::res::names as res;
 
+/// Where [`TreeBuilder::walk_to_select`] ended.
+pub(crate) enum SelectWalk {
+    /// At this `<select>`.
+    Select(NodeId),
+    /// At an element that keeps the option from any select.
+    Blocked,
+    /// Past the top of the tree, through an `<optgroup>` or not.
+    OffTop { optgroup: bool },
+}
+
 impl TreeBuilder<'_> {
     /// `lxb_dom_element_attr_append` with Lexbor's attribute steps.
     pub(crate) fn append_attr_with_steps(
@@ -96,24 +106,33 @@ impl TreeBuilder<'_> {
 
     /// `lxb_html_option_element_nearest_ancestor_select`.
     fn nearest_ancestor_select(&self, option: NodeId) -> Option<NodeId> {
+        match self.walk_to_select(option) {
+            SelectWalk::Select(n) => Some(n),
+            SelectWalk::Blocked | SelectWalk::OffTop { .. } => None,
+        }
+    }
+
+    /// The walk up from `option` to the select it belongs to, which Lexbor's
+    /// option steps and the guard's option count both take: through at
+    /// most one `<optgroup>`, stopped by a `<datalist>`, `<hr>` or `<option>`.
+    pub(crate) fn walk_to_select(&self, option: NodeId) -> SelectWalk {
         let mut optgroup = false;
         let mut node = self.doc.parent(option);
         while let Some(n) = node {
-            let html = self.ns(n) == res::NS_HTML;
-            match self.tag(n) {
-                res::TAG_DATALIST | res::TAG_HR | res::TAG_OPTION if html => return None,
-                res::TAG_OPTGROUP if html => {
-                    if optgroup {
-                        return None;
+            if self.ns(n) == res::NS_HTML {
+                match self.tag(n) {
+                    res::TAG_DATALIST | res::TAG_HR | res::TAG_OPTION => {
+                        return SelectWalk::Blocked
                     }
-                    optgroup = true;
+                    res::TAG_OPTGROUP if optgroup => return SelectWalk::Blocked,
+                    res::TAG_OPTGROUP => optgroup = true,
+                    res::TAG_SELECT => return SelectWalk::Select(n),
+                    _ => {}
                 }
-                res::TAG_SELECT if html => return Some(n),
-                _ => {}
             }
             node = self.doc.parent(n);
         }
-        None
+        SelectWalk::OffTop { optgroup }
     }
 
     /// `lxb_dom_element_attr_by_id`: the first attribute with local name

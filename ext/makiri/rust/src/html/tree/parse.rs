@@ -3,6 +3,7 @@
 //! and the source stamps of `lexbor::adapter::post_parse`, as one Rust call.
 
 use super::guard::{DepthLimit, Guard, GuardStop};
+use super::stamp::Stamping;
 use super::{TreeBuilder, TreeError, TreeStatus};
 use crate::falloc::try_box;
 use crate::html::dom::{Document, DomOom, HtmlParsed, NodeId};
@@ -56,17 +57,18 @@ pub struct Parsed {
 /// `lxb_html_document_parse`, unguarded and unstamped: tokenize `input` -
 /// valid UTF-8, the whole document - and build its tree.
 pub fn parse_document(input: &[u8]) -> Result<Parsed, ParseFailure> {
-    parse_with(input, Guard::default())
+    parse_with(input, Guard::default(), Stamping::default())
 }
 
-/// [`parse_document`] under `guard`.
-fn parse_with(input: &[u8], guard: Guard) -> Result<Parsed, ParseFailure> {
+/// [`parse_document`] under `guard`, stamping as `stamping` says.
+fn parse_with(input: &[u8], guard: Guard, stamping: Stamping) -> Result<Parsed, ParseFailure> {
     let mut doc = Document::new(0).map_err(|DomOom| ParseFailure::Oom)?;
     /* An HTML document node is in the HTML namespace
      * (`lxb_dom_document_init`). */
     doc.set_names(NodeId::DOCUMENT, res::TAG__DOCUMENT, res::NS_HTML as u32, 0);
     let mut tree = TreeBuilder::new(&mut doc);
     tree.guard = guard;
+    tree.stamping = stamping;
     let status = {
         /* `lxb_html_parser_init` keeps duplicates. */
         let options = Options {
@@ -118,7 +120,11 @@ pub fn parse_html(
 ) -> Result<Box<HtmlParsed>, HtmlParseError> {
     let input = sanitize(src, assume_valid).ok_or(HtmlParseError::Failed)?;
     let bytes = input.as_slice();
-    let parsed = parse_with(bytes, Guard::for_document(limit, bytes.len()))?;
+    let parsed = parse_with(
+        bytes,
+        Guard::for_document(limit),
+        Stamping::document(bytes.len()),
+    )?;
     let lines = lines_build(bytes);
     drop(input);
     try_box(HtmlParsed::new(parsed.doc, lines)).map_err(|()| HtmlParseError::Failed)

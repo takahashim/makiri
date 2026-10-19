@@ -38,6 +38,7 @@ mod modes;
 mod parse;
 mod select;
 mod stacks;
+mod stamp;
 
 pub use error::{TreeError, TreeErrorId};
 pub use fragment::{parse_fragment, ContextFacts, FragmentFailure, ParsedFragment};
@@ -305,6 +306,7 @@ pub struct TreeBuilder<'d> {
     pub(crate) selected: NodeSet,
     /// The parse guard and the source-position stamps (`guard.rs`).
     pub(crate) guard: guard::Guard,
+    pub(crate) stamping: stamp::Stamping,
 }
 
 impl<'d> TreeBuilder<'d> {
@@ -330,6 +332,7 @@ impl<'d> TreeBuilder<'d> {
             valueless: NodeSet::default(),
             selected: NodeSet::default(),
             guard: guard::Guard::default(),
+            stamping: stamp::Stamping::default(),
         }
     }
 
@@ -498,10 +501,11 @@ impl<'d> TreeBuilder<'d> {
         let mut tok = Tok::of(tkz);
         /* The guard reads the token as the tokenizer handed it over. */
         let handed = tok;
-        let before = self.guard_before(&handed);
+        let before = self.stamp_before(&handed);
         while !self.dispatch(tkz, &mut tok) {}
         tkz.set_current_namespace(self.current_namespace());
-        if self.status == TreeStatus::Ok && !self.guard_after(before, &handed) {
+        self.stamp_after(before);
+        if self.status == TreeStatus::Ok && !self.guard_after(&handed) {
             self.status = TreeStatus::Error;
         }
         self.status
