@@ -18,7 +18,7 @@ use magnus::{Error, Value};
 
 use crate::bridge::dom::DocPtr;
 use crate::bridge::ruby::{value, VALUE};
-use crate::bridge::typed::{Hooks, Marker, Relocator, TypedType};
+use crate::bridge::typed::{Held, Hooks, Marker, Relocator, TypedType};
 use crate::child_index::{ChildList, ChildPositionMemo, Children, TokenTree};
 use crate::dom_rules::Tree;
 use crate::falloc::{MapInsert, Reserve};
@@ -31,9 +31,6 @@ use crate::xml::model::{Document as XmlDoc, NodeId};
 use core::hash::BuildHasherDefault;
 use std::collections::HashMap;
 
-/// The placeholder a wrapper's VALUE field holds until `TypedType::wrap`'s
-/// store step writes the real one: `Qfalse`, which the mark ignores.
-const QFALSE: VALUE = rb_sys::Qfalse as VALUE;
 
 /* ------------------------------------------------------------------ *
  * the node wrapper                                                   *
@@ -166,7 +163,7 @@ impl NodeHandle {
 pub struct NodeData {
     /// Representation-opaque; read it only through a kind-checked accessor.
     pub node: NodeHandle,
-    pub document: VALUE,
+    pub document: Held,
 }
 
 /* Measured: `NodeHandle` fits two words (the `NonNull`/`NonZero` niches carry
@@ -180,7 +177,7 @@ const _: () = assert!(
 
 impl Hooks for NodeData {
     fn mark(&self, marker: &Marker) {
-        marker.mark(self.document);
+        marker.mark(&self.document);
     }
 }
 
@@ -265,12 +262,12 @@ struct NodeCache {
     /// Tokens are a slot index or an aligned pointer - already well
     /// distributed - so they are mixed ([`crate::ptr_table::MixHasher`]) rather
     /// than hashed.
-    map: HashMap<usize, VALUE, BuildHasherDefault<crate::ptr_table::MixHasher>>,
+    map: HashMap<usize, Held, BuildHasherDefault<crate::ptr_table::MixHasher>>,
 }
 
 impl NodeCache {
-    fn get(&self, token: usize) -> Option<VALUE> {
-        self.map.get(&token).copied()
+    fn get(&self, token: usize) -> Option<Value> {
+        self.map.get(&token).map(Held::get)
     }
 
     /// Room for one more wrapper, so the [`NodeCache::insert`] after it
@@ -281,7 +278,7 @@ impl NodeCache {
 
     /// Remember `wrapper` as the one wrapper for `token`. After
     /// [`NodeCache::reserve`] this allocates nothing, so it does not fail.
-    fn insert(&mut self, token: usize, wrapper: VALUE) -> Result<(), ()> {
+    fn insert(&mut self, token: usize, wrapper: Held) -> Result<(), ()> {
         self.map.falloc_insert(token, wrapper)
     }
 
@@ -290,18 +287,18 @@ impl NodeCache {
     /// with [`NodeCache::compact`].
     fn mark(&self, marker: &Marker) {
         for v in self.map.values() {
-            marker.mark_movable(*v);
+            marker.mark_movable(v);
         }
     }
 
     fn compact(&mut self, relocator: &Relocator) {
         for v in self.map.values_mut() {
-            *v = relocator.location(*v);
+            relocator.relocate(v);
         }
     }
 
     fn memsize(&self) -> usize {
-        self.map.capacity() * (core::mem::size_of::<usize>() + core::mem::size_of::<VALUE>())
+        self.map.capacity() * (core::mem::size_of::<usize>() + core::mem::size_of::<Held>())
     }
 }
 
@@ -379,7 +376,7 @@ pub struct DocData {
     content: Content,
     /// The mutation gate and the edit versions ([`EditState`]).
     edits: EditState,
-    errors: VALUE,
+    errors: Held,
     /// What the GC has been told about the content ([`ExternalReport`]).
     report: ExternalReport,
     /// One wrapper per node; see [`NodeCache`].
@@ -394,7 +391,7 @@ pub struct DocData {
 
 impl DocData {
     /// The one wrapper for `token`, or None until something navigates to it.
-    fn cached(&self, token: usize) -> Option<VALUE> {
+    fn cached(&self, token: usize) -> Option<Value> {
         self.nodes.as_ref()?.get(token)
     }
 
@@ -417,14 +414,13 @@ impl DocData {
 
     /// Remember `wrapper` for `token`, in the room [`DocData::reserve_node`]
     /// made.
-    fn cache(&mut self, token: usize, wrapper: VALUE) -> Result<(), ()> {
+    fn cache(&mut self, token: usize, wrapper: Held) -> Result<(), ()> {
         self.nodes.as_mut().ok_or(())?.insert(token, wrapper)
     }
 
     /// The Document's parse-warning Array.
     pub fn errors(&self) -> Value {
-        // SAFETY: the live Array this wrapper marks.
-        unsafe { value(self.errors) }
+        self.errors.get()
     }
 
     /// Whether the content has grown enough since the last report to measure
@@ -469,7 +465,7 @@ impl DocData {
 
 impl Hooks for DocData {
     fn mark(&self, marker: &Marker) {
-        marker.mark(self.errors);
+        marker.mark(&self.errors);
         if let Some(cache) = self.nodes.as_ref() {
             cache.mark(marker);
         }
@@ -643,12 +639,12 @@ impl DocumentShell {
                 || DocData {
                     content: Content::Empty,
                     edits: EditState::default(),
-                    errors: QFALSE,
+                    errors: Held::EMPTY,
                     report: ExternalReport::default(),
                     nodes: None,
                     child_memo: ChildPositionMemo::default(),
                 },
-                |d| d.errors = errors.as_raw(),
+                |d, store| d.errors = store.hold(errors),
             )
         })
     }
@@ -830,9 +826,9 @@ pub(in crate::bridge) fn wrap_cached(
             klass,
             || NodeData {
                 node,
-                document: QFALSE,
+                document: Held::EMPTY,
             },
-            |nd| nd.document = document.as_raw(),
+            |nd, store| nd.document = store.hold(document),
         ))
     };
     /* After the wrap, so the VALUE exists, into the room reserved above - no
@@ -851,10 +847,7 @@ fn wrap_oom() -> Error {
 /// `rb_doc` must be a live Document; [`wrap_cached`] is the only caller and
 /// already holds one.
 fn cached_node(rb_doc: Value, token: usize) -> Option<Value> {
-    // SAFETY: as `with_doc_data_known`.
-    let v = with_doc_data_known(rb_doc, |d| d.cached(token));
-    // SAFETY: a VALUE this document marks, so it is live.
-    v.map(|v| unsafe { value(v) })
+    with_doc_data_known(rb_doc, |d| d.cached(token))
 }
 
 /// `FrozenError` when the node `source` names has a wrapper and that wrapper is
@@ -873,7 +866,9 @@ pub(in crate::bridge) fn check_node_frozen(
 
 /// Remember `wrapper` as the one wrapper for `token` under `rb_doc`.
 fn cache_node(rb_doc: Value, token: usize, wrapper: Value) -> Result<(), ()> {
-    with_doc_data_known(rb_doc, |d| d.cache(token, wrapper.as_raw()))
+    // SAFETY: a live Document under the GVL, its data borrowed for the call
+    // alone, which runs no Ruby.
+    unsafe { DOC_TYPE.with_known(rb_doc, |d, store| d.cache(token, store.hold(wrapper))) }
 }
 
 /// Run `f` over a Document's wrapper data, for the fields that are the
@@ -972,8 +967,7 @@ pub fn keepalive_document(rb_node: Value) -> Result<Value, Error> {
         return Ok(rb_node);
     }
     let nd: &NodeData = NODE_DATA_TYPE.get(&rb_node)?;
-    // SAFETY: `nd.document` is the live Document the wrapper marks.
-    Ok(unsafe { value(nd.document) })
+    Ok(nd.document.get())
 }
 
 /* ---- the edit versions ---- */

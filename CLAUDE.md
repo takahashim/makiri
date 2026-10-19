@@ -87,6 +87,14 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   contain only C calls (through `bridge::raw`'s thin wrappers), so there is
   no Rust there to panic; keep it that way.
 
+  **A VALUE inside a wrapped object is a `bridge::typed::Held`**, and a
+  `Held` that holds anything can only be made with a `Store`, which exists
+  only where the owner is already a Ruby object (`TypedType::wrap`'s store
+  step, `TypedType::with_known`). So "store a VALUE into a struct only after
+  its wrapper exists" - the `DocData.errors` crash - is a type rule, not a
+  convention: a struct is built holding `Held::EMPTY`, and its `Hooks::mark`
+  marks the `Held`s it keeps.
+
   **Every C call that can raise is a wrapper in `bridge/raw.rs`**, which says
   what raises it. A raise is a `longjmp` over every Rust frame up to the
   nearest `rb_protect`, so each such call is made under `bridge::ruby::protect`
