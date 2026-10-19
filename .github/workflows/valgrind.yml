@@ -1,13 +1,13 @@
 name: Valgrind + GC.compact
 
 on:
-  # Valgrind memcheck ALSO runs on push to main: it is the only check without a
+  # Valgrind memcheck runs nightly (and by hand): it is the only check without a
   # frequency threshold (any "definitely lost" / uninitialised-value use fails,
-  # unlike the PR-level macOS leak gate, which only flags stacks repeated >=30x),
-  # so a leak on a rarely-hit error path slips past the PR gates and would
-  # otherwise surface only on the next nightly. Running it post-merge catches such
-  # regressions within ~30 min without adding ~20 min to every PR. (It is gated to
-  # main only, not pull_request, to keep PR latency low.)
+  # unlike the PR-level macOS leak gate, which only flags stacks repeated >=30x).
+  # It also ran on every push to main while the extension carried C; with the
+  # crate's unsafe confined to reviewed islands (`rake unsafe:boundaries`) and
+  # ASan on every PR, a nightly run is enough to catch a leak on a rarely-hit
+  # error path within a day.
   #
   # The GC.stress job also runs on pull requests (see its `if:` below). It was
   # nightly-only on the reasoning that it checks structural properties that do
@@ -16,16 +16,13 @@ on:
   # (a VALUE stored in a wrapper struct before the wrap, freed by the GC there).
   # It runs only the :gc_compact examples, so it is cheap enough for a PR.
   # Valgrind memcheck stays off pull requests, as above.
-  push:
-    branches: [main, master]
   pull_request:
   schedule:
     - cron: "0 2 * * *"
   workflow_dispatch:
 
 # A new push to a pull request supersedes the run on its previous head. The
-# event is in the group so a push to main never queues behind (or replaces) a
-# nightly run of the same workflow.
+# event is in the group so a pull request never replaces a nightly run.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -37,8 +34,8 @@ jobs:
   # (intra-arena overflows).  Runs on Linux because Valgrind is x86_64/amd64
   # Linux only.
   valgrind-memcheck:
-    # Post-merge and nightly; not on pull requests (see the note under `on:`).
-    if: github.event_name != 'pull_request'
+    # Nightly and by hand; not on pull requests (see the note under `on:`).
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     name: Valgrind memcheck (Ruby ${{ matrix.ruby }}, shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
     timeout-minutes: 360
@@ -58,10 +55,8 @@ jobs:
       PBT_COUNT: "15"
       CSS_PBT_COUNT: "15"
       # --track-origins roughly doubles memcheck's runtime and only adds an origin
-      # backtrace to a finding (the finding itself is still reported without it).
-      # Drop it on the frequent post-merge push gate to halve its runtime; keep it
-      # for the thorough nightly / manual runs, where the backtrace aids triage.
-      VALGRIND_TRACK_ORIGINS: ${{ github.event_name == 'push' && 'no' || 'yes' }}
+      # backtrace to a finding; the nightly run keeps it, for triage.
+      VALGRIND_TRACK_ORIGINS: "yes"
     strategy:
       fail-fast: false
       matrix:
@@ -73,9 +68,6 @@ jobs:
         uses: actions/checkout@v6
         with:
           submodules: recursive
-
-      - name: Ensure cmake is available
-        uses: lukka/get-cmake@latest
 
       # The extension is a Rust crate; cargo is part of the build now.
       - uses: dtolnay/rust-toolchain@stable
@@ -127,9 +119,8 @@ jobs:
   # of iterations; it runs in ci.yml and its GC-sensitive examples opt into
   # GC.stress themselves, so cross-thread interactions are covered there.
   gc-compact-stress:
-    # Pull requests, nightly and on demand - not on push (the valgrind job is the
-    # post-merge gate). See the note under `on:` for why pull requests.
-    if: github.event_name != 'push'
+    # Pull requests, nightly and on demand. See the note under `on:` for why
+    # pull requests.
     name: GC.auto_compact + GC.stress (Ruby ${{ matrix.ruby }}, ${{ matrix.shard.name }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -161,9 +152,6 @@ jobs:
         uses: actions/checkout@v6
         with:
           submodules: recursive
-
-      - name: Ensure cmake is available
-        uses: lukka/get-cmake@latest
 
       # The extension is a Rust crate; cargo is part of the build now.
       - uses: dtolnay/rust-toolchain@stable

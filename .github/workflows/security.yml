@@ -38,9 +38,6 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Ensure cmake is available
-        uses: lukka/get-cmake@latest
-
       # The extension is a Rust crate; cargo is part of the build now. stable is
       # the default because that is what ships - but nightly has to be PRESENT
       # too: -Zsanitizer is unstable, so extconf sets RUSTUP_TOOLCHAIN=nightly
@@ -78,9 +75,6 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Ensure cmake is available
-        uses: lukka/get-cmake@latest
-
       # The extension is a Rust crate; cargo is part of the build now. stable is
       # the default because that is what ships - but nightly has to be PRESENT
       # too: -Zsanitizer is unstable, so extconf sets RUSTUP_TOOLCHAIN=nightly
@@ -117,9 +111,6 @@ jobs:
         uses: actions/checkout@v6
         with:
           submodules: recursive
-
-      - name: Ensure cmake is available
-        uses: lukka/get-cmake@latest
 
       # The extension is a Rust crate; cargo is part of the build now. stable is
       # the default because that is what ships - but nightly has to be PRESENT
@@ -159,9 +150,6 @@ jobs:
         uses: actions/checkout@v6
         with:
           submodules: recursive
-
-      - name: Ensure cmake is available
-        uses: lukka/get-cmake@latest
 
       # The extension is a Rust crate; cargo is part of the build now. stable is
       # the default because that is what ships - but nightly has to be PRESENT
@@ -203,9 +191,6 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Ensure cmake is available
-        uses: lukka/get-cmake@latest
-
       # The extension is a Rust crate; cargo is part of the build now. stable is
       # the default because that is what ships - but nightly has to be PRESENT
       # too: -Zsanitizer is unstable, so extconf sets RUSTUP_TOOLCHAIN=nightly
@@ -238,9 +223,6 @@ jobs:
         uses: actions/checkout@v6
         with:
           submodules: recursive
-
-      - name: Ensure cmake is available
-        uses: lukka/get-cmake@latest
 
       # The extension is a Rust crate; cargo is part of the build now. stable is
       # the default because that is what ships - but nightly has to be PRESENT

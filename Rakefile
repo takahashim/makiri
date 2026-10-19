@@ -546,8 +546,7 @@ task leaks: :compile do
 end
 require_relative "tools/pe_exports"
 
-desc "Symbol gate: the built extension must export only Init_makiri and leave no " \
-     "Lexbor/Makiri symbol undefined"
+desc "Symbol gate: the built extension must export only Init_makiri (and ruby_abi_version)"
 task symbols: :compile do
   lib = Dir["lib/makiri/makiri.{bundle,so}"].first or abort "no built extension"
   macos = RbConfig::CONFIG["target_os"] =~ /darwin/
@@ -555,35 +554,15 @@ task symbols: :compile do
   # macOS decorates C symbols with a leading underscore; Linux/Windows do not.
   u = macos ? "_" : ""
 
-  # 1. Nothing of ours or Lexbor's may be UNDEFINED. Everything both define is
-  #    statically linked in, so an undefined one means the declaration matched
-  #    no definition - which macOS does not treat as a link error, because the
-  #    extension is linked with -undefined dynamic_lookup. It becomes a NULL
-  #    call the first time that function runs. Three inline-only Lexbor
-  #    functions reached a shipped build this way once; eight more were
-  #    identified while porting glue/ruby_html_node.c, and this is what stops
-  #    the next one from getting that far.
+  # ONLY Init_makiri (and ruby_abi_version, which Ruby reads at require time)
+  # may be EXPORTED. The hazard was Lexbor's: another Lexbor-based gem in the
+  # same process binding to our differently-versioned copy and segfaulting -
+  # see CLAUDE.md. No Lexbor is linked any more, and any name of ours in the
+  # dynamic table is the same hazard for whatever binds it.
   #
-  #    On Windows the PE linker already refuses unresolved symbols in the final
-  #    DLL, and `nm -u` on a stripped PE image reports no symbols. Use the link
-  #    step as the guard there instead of trying to parse the import table.
-  bad = if windows
-          []
-        else
-          undef_list = `nm -u #{lib.shellescape}`.lines.map(&:strip)
-          # `nm -u` prints bare names on macOS and "U <name>" entries on Linux.
-          undef_list.map { |l| l.split.last.to_s }
-                    .grep(/\A#{u}(lxb_|lexbor_|mkr_)/)
-        end
-  unless bad.empty?
-    abort "undefined Lexbor/Makiri symbols in #{lib} (they will NULL-call at " \
-          "run time):\n  #{bad.uniq.sort.join("\n  ")}"
-  end
-
-  # 2. ONLY Init_makiri (and ruby_abi_version, which Ruby reads at require time)
-  #    may be EXPORTED. The hazard this addresses is Lexbor's: another
-  #    Lexbor-based gem in the same process binding to our differently-versioned
-  #    copy and segfaulting - see CLAUDE.md.
+  # (This gate also refused an UNDEFINED lxb_/lexbor_/mkr_ symbol, which macOS's
+  # -undefined dynamic_lookup turns into a NULL call. Nothing so named is linked
+  # or declared in the extension now, so that half checked nothing and went.)
   #
   #    This used to assert only "no lxb_ exported", which the flag-based link
   #    made true as a side effect. rustc performs the cdylib link now and passes
@@ -613,8 +592,7 @@ task symbols: :compile do
     abort "#{lib} does not export Init_makiri - Ruby could not load it."
   end
 
-  puts "symbols: 0 undefined Lexbor/Makiri, exports limited to " \
-       "#{allowed.join(' + ')} (#{lib})"
+  puts "symbols: exports limited to #{allowed.join(' + ')} (#{lib})"
 end
 
 desc "OOM-injection gate: rebuild with MAKIRI_ALLOC_INJECT=1 and sweep every core " \

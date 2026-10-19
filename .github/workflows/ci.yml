@@ -163,7 +163,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ruby: ["3.4", "4.0"]
+        # One Ruby: the instrumented code is the crate's unsafe islands,
+        # which do not vary with the Ruby version.
+        ruby: ["3.4"]
     steps:
       - name: Checkout (with vendored Lexbor submodule)
         uses: actions/checkout@v6

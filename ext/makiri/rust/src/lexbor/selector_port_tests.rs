@@ -676,12 +676,15 @@ fn random_selector(rng: &mut Rng, depth: u32) -> String {
     out
 }
 
+/* 2,000 inputs by default (debug, about half a minute): the selector_diff
+ * and stylesheet_diff fuzz targets search the same comparison far deeper,
+ * nightly under ASan. SELECTOR_PORT_COUNT runs more here. */
 #[test]
 fn the_parser_builds_lexbors_selectors_on_random_inputs() {
     let count = std::env::var("SELECTOR_PORT_COUNT")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(20_000);
+        .unwrap_or(2_000);
     let mut rng = Rng(0xC55_5E1);
     for _ in 0..count {
         let s = random_selector(&mut rng, 0);
@@ -1047,12 +1050,15 @@ fn random_block(rng: &mut Rng, depth: u32, out: &mut String, names: &[&str], val
     }
 }
 
+/* 2,000 inputs by default (debug, about half a minute): the selector_diff
+ * and stylesheet_diff fuzz targets search the same comparison far deeper,
+ * nightly under ASan. SELECTOR_PORT_COUNT runs more here. */
 #[test]
 fn the_stylesheet_parser_builds_lexbors_rules_on_random_inputs() {
     let count = std::env::var("SELECTOR_PORT_COUNT")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(20_000);
+        .unwrap_or(2_000);
     let mut rng = Rng(0x5EE_75EE7);
     for _ in 0..count {
         let mut css = String::new();
