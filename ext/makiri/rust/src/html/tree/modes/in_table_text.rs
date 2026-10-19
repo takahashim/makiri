@@ -47,31 +47,30 @@ pub fn in_table_text(
 
     /* The pending text leaves the tree builder while it is inserted. */
     let pending = core::mem::take(&mut tree.pending);
-    let mut failed = false;
+    let mut failed = None;
     if pending.have_non_ws {
         tree.parse_error(tok, E::Chintate);
         tree.foster_parenting = true;
         for &(s, e) in &pending.list {
-            if super::in_body::text_append(tree, tkz, &pending.bytes[s..e]).is_err() {
-                failed = true;
+            if let Err(st) = super::in_body::text_append(tree, tkz, &pending.bytes[s..e]) {
+                failed = Some(st);
                 break;
             }
         }
-        if !failed {
+        if failed.is_none() {
             tree.foster_parenting = false;
         }
     } else {
         for &(s, e) in &pending.list {
             if let Err(st) = tree.insert_character_for_data(&pending.bytes[s..e]) {
-                tree.status = st;
-                failed = true;
+                failed = Some(st);
                 break;
             }
         }
     }
     tree.pending = pending;
-    if failed {
-        return tree.process_abort();
+    if let Some(st) = failed {
+        return tree.abort_with(st);
     }
     tree.mode = tree.original_mode;
     false

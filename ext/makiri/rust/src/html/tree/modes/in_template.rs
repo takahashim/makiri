@@ -3,14 +3,14 @@
 use crate::html::res::names as res;
 use crate::html::tokenizer::Tokenizer;
 use crate::html::tree::error::TreeErrorId as E;
-use crate::html::tree::{Mode, Tok, TreeBuilder};
+use crate::html::tree::{Mode, OrAbort, Tok, TreeBuilder};
 
 /// Replace the current template insertion mode with `mode`, switch to it,
 /// and reprocess.
 fn switch_to(tree: &mut TreeBuilder<'_>, mode: Mode) -> bool {
     tree.template_modes.pop();
-    if let Err(st) = tree.template_modes_push(mode) {
-        return tree.abort_with(st);
+    if tree.template_modes_push(mode).or_abort(tree).is_none() {
+        return true;
     }
     tree.mode = mode;
     false

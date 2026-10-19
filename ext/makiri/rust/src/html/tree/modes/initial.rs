@@ -4,7 +4,7 @@ use crate::html::dom::NodeId;
 use crate::html::res::names as res;
 use crate::html::tokenizer::{flags, Tokenizer};
 use crate::html::tree::error::TreeErrorId as E;
-use crate::html::tree::{Mode, Tok, TreeBuilder};
+use crate::html::tree::{Mode, OrAbort, Tok, TreeBuilder};
 
 /// `LXB_DOM_DOCUMENT_CMODE_*`.
 const QUIRKS: u8 = 1;
@@ -101,17 +101,19 @@ pub fn initial(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mu
         res::TAG__EM_COMMENT => {
             if tree
                 .insert_comment(tkz, tok, Some(NodeId::DOCUMENT))
-                .is_err()
+                .or_abort(tree)
+                .is_none()
             {
-                return tree.process_abort();
+                return true;
             }
         }
         res::TAG__PROCESSINGINSTRUCTION => {
             if tree
                 .insert_processing_instruction(tkz, Some(NodeId::DOCUMENT))
-                .is_err()
+                .or_abort(tree)
+                .is_none()
             {
-                return tree.process_abort();
+                return true;
             }
         }
         res::TAG__EM_DOCTYPE => {
@@ -137,8 +139,9 @@ pub fn initial(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mu
 
 /// `lxb_html_tree_insertion_mode_initial_doctype`.
 fn initial_doctype(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> bool {
-    let Ok((node, name_id, _, _)) = tree.create_document_type_from_token(tkz) else {
-        return tree.abort_with(crate::html::tree::TreeStatus::Oom);
+    let Some((node, name_id, _, _)) = tree.create_document_type_from_token(tkz).or_abort(tree)
+    else {
+        return true;
     };
     let (public, system) = match tree.doc.doctype(node) {
         Some((_, p, s)) => (p.len(), s),

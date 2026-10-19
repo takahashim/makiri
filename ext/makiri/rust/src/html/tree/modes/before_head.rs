@@ -3,7 +3,7 @@
 use crate::html::res::names as res;
 use crate::html::tokenizer::Tokenizer;
 use crate::html::tree::error::TreeErrorId as E;
-use crate::html::tree::{Mode, Tok, TreeBuilder, TreeStatus};
+use crate::html::tree::{Mode, OrAbort, Tok, TreeBuilder, TreeStatus};
 
 /// `lxb_html_tree_insertion_mode_before_head`.
 pub fn before_head(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mut Tok) -> bool {
@@ -16,20 +16,24 @@ pub fn before_head(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok:
 fn open(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mut Tok) -> bool {
     match tok.tag_id {
         res::TAG__EM_COMMENT => {
-            if tree.insert_comment(tkz, tok, None).is_err() {
-                return tree.abort_with(TreeStatus::Oom);
+            if tree.insert_comment(tkz, tok, None).or_abort(tree).is_none() {
+                return true;
             }
         }
         res::TAG__PROCESSINGINSTRUCTION => {
-            if tree.insert_processing_instruction(tkz, None).is_err() {
-                return tree.process_abort();
+            if tree
+                .insert_processing_instruction(tkz, None)
+                .or_abort(tree)
+                .is_none()
+            {
+                return true;
             }
         }
         res::TAG__EM_DOCTYPE => tree.parse_error(tok, E::Dotoinbehemo),
         res::TAG_HTML => return super::in_body::in_body(tree, tkz, tok),
         res::TAG_HEAD => {
-            if let Err(st) = head(tree, tkz, tok) {
-                return tree.abort_with(st);
+            if head(tree, tkz, tok).or_abort(tree).is_none() {
+                return true;
             }
             tree.mode = Mode::InHead;
         }
@@ -59,8 +63,8 @@ fn closed(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) ->
 /// `lxb_html_tree_insertion_mode_before_head_anything_else`.
 fn anything_else(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>) -> bool {
     let fake = Tok::fake(res::TAG_HEAD);
-    if let Err(st) = head(tree, tkz, &fake) {
-        return tree.abort_with(st);
+    if head(tree, tkz, &fake).or_abort(tree).is_none() {
+        return true;
     }
     tree.mode = Mode::InHead;
     false

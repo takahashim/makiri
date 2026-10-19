@@ -413,7 +413,8 @@ impl<'d> TreeBuilder<'d> {
         true
     }
 
-    /// Set the status to `status` and abort.
+    /// Set the status to `status` and abort. [`OrAbort`] is the form for a
+    /// step's `Result`.
     pub(crate) fn abort_with(&mut self, status: TreeStatus) -> bool {
         self.status = status;
         self.process_abort()
@@ -506,6 +507,27 @@ impl<'d> TreeBuilder<'d> {
             self.status = TreeStatus::Error;
         }
         self.status
+    }
+}
+
+/// A failed step aborts the parse with its own status: Lexbor's
+/// `tree->status = status; return lxb_html_tree_process_abort(tree)`, the
+/// one way a mode handles a failure. `None` means the parse is aborted, and
+/// the mode returns `true` (the token consumed).
+pub(crate) trait OrAbort<T> {
+    fn or_abort(self, tree: &mut TreeBuilder<'_>) -> Option<T>;
+}
+
+impl<T> OrAbort<T> for Result<T, TreeStatus> {
+    #[inline]
+    fn or_abort(self, tree: &mut TreeBuilder<'_>) -> Option<T> {
+        match self {
+            Ok(v) => Some(v),
+            Err(st) => {
+                tree.abort_with(st);
+                None
+            }
+        }
     }
 }
 

@@ -4,7 +4,7 @@ use crate::html::res::names as res;
 use crate::html::res::tree as rt;
 use crate::html::tokenizer::Tokenizer;
 use crate::html::tree::error::TreeErrorId as E;
-use crate::html::tree::{Mode, Tok, TreeBuilder, TreeStatus};
+use crate::html::tree::{Mode, OrAbort, Tok, TreeBuilder};
 
 /// `lxb_html_tree_clear_stack_back_to_table_row`.
 fn clear_stack_back_to_table_row(tree: &mut TreeBuilder<'_>) {
@@ -75,12 +75,12 @@ pub fn in_row(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mut
     match tok.tag_id {
         res::TAG_TH | res::TAG_TD => {
             clear_stack_back_to_table_row(tree);
-            if tree.insert_html_element(tkz, tok).is_err() {
-                return tree.abort_with(TreeStatus::Oom);
+            if tree.insert_html_element(tkz, tok).or_abort(tree).is_none() {
+                return true;
             }
             tree.mode = Mode::InCell;
-            if let Err(st) = tree.afe_push_marker() {
-                return tree.abort_with(st);
+            if tree.afe_push_marker().or_abort(tree).is_none() {
+                return true;
             }
             true
         }

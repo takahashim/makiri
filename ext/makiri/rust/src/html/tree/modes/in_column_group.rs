@@ -5,7 +5,7 @@ use crate::compat::{self, Fix};
 use crate::html::res::names as res;
 use crate::html::tokenizer::Tokenizer;
 use crate::html::tree::error::TreeErrorId as E;
-use crate::html::tree::{Mode, Tok, TreeBuilder, TreeStatus};
+use crate::html::tree::{Mode, OrAbort, Tok, TreeBuilder};
 
 /// `lxb_html_tree_insertion_mode_in_column_group_anything_else`.
 fn anything_else(tree: &mut TreeBuilder<'_>, tok: &Tok) -> bool {
@@ -52,8 +52,10 @@ pub fn in_column_group(
     match tok.tag_id {
         res::TAG__TEXT => {
             let ws = tok.split_ws_begin(tkz);
-            if ws.text_start != ws.text_end && tree.insert_character(tkz, &ws).is_err() {
-                return tree.abort_with(TreeStatus::Oom);
+            if ws.text_start != ws.text_end
+                && tree.insert_character(tkz, &ws).or_abort(tree).is_none()
+            {
+                return true;
             }
             if tok.text_start == tok.text_end {
                 return true;
@@ -78,21 +80,25 @@ pub fn in_column_group(
             true
         }
         res::TAG__EM_COMMENT => {
-            if tree.insert_comment(tkz, tok, None).is_err() {
-                return tree.abort_with(TreeStatus::Oom);
+            if tree.insert_comment(tkz, tok, None).or_abort(tree).is_none() {
+                return true;
             }
             true
         }
         res::TAG__PROCESSINGINSTRUCTION => {
-            if tree.insert_processing_instruction(tkz, None).is_err() {
-                return tree.process_abort();
+            if tree
+                .insert_processing_instruction(tkz, None)
+                .or_abort(tree)
+                .is_none()
+            {
+                return true;
             }
             true
         }
         res::TAG_HTML => super::in_body::in_body(tree, tkz, tok),
         res::TAG_COL => {
-            if tree.insert_html_element(tkz, tok).is_err() {
-                return tree.abort_with(TreeStatus::Oom);
+            if tree.insert_html_element(tkz, tok).or_abort(tree).is_none() {
+                return true;
             }
             tree.open_pop();
             tree.acknowledge_token_self_closing(tok);

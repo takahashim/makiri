@@ -7,7 +7,7 @@ use crate::html::res::names as res;
 use crate::html::res::tree as rt;
 use crate::html::tokenizer::{flags, Tokenizer};
 use crate::html::tree::error::TreeErrorId as E;
-use crate::html::tree::{is_ws, AttrAdjust, Tok, TreeBuilder, TreeStatus};
+use crate::html::tree::{is_ws, AttrAdjust, OrAbort, Tok, TreeBuilder, TreeStatus};
 
 /// U+FFFD in UTF-8.
 const REPLACEMENT: &[u8] = "\u{FFFD}".as_bytes();
@@ -148,8 +148,8 @@ fn text(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> b
             pos += 1;
         }
     }
-    if let Err(st) = tree.insert_character_for_data(s) {
-        return tree.abort_with(st);
+    if tree.insert_character_for_data(s).or_abort(tree).is_none() {
+        return true;
     }
     true
 }
@@ -197,14 +197,18 @@ pub fn foreign_content(
     match tok.tag_id {
         res::TAG__TEXT => text(tree, tkz, tok),
         res::TAG__EM_COMMENT => {
-            if tree.insert_comment(tkz, tok, None).is_err() {
-                return tree.abort_with(TreeStatus::Oom);
+            if tree.insert_comment(tkz, tok, None).or_abort(tree).is_none() {
+                return true;
             }
             true
         }
         res::TAG__PROCESSINGINSTRUCTION => {
-            if tree.insert_processing_instruction(tkz, None).is_err() {
-                return tree.process_abort();
+            if tree
+                .insert_processing_instruction(tkz, None)
+                .or_abort(tree)
+                .is_none()
+            {
+                return true;
             }
             true
         }

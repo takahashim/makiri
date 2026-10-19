@@ -6,7 +6,7 @@ use crate::html::dom::NodeId;
 use crate::html::res::names as res;
 use crate::html::tokenizer::Tokenizer;
 use crate::html::tree::error::TreeErrorId as E;
-use crate::html::tree::{is_ws, Tok, TreeBuilder};
+use crate::html::tree::{is_ws, OrAbort, Tok, TreeBuilder};
 
 /// `lxb_html_tree_insertion_mode_after_after_frameset`.
 pub fn after_after_frameset(
@@ -18,17 +18,19 @@ pub fn after_after_frameset(
         res::TAG__EM_COMMENT => {
             if tree
                 .insert_comment(tkz, tok, Some(NodeId::DOCUMENT))
-                .is_err()
+                .or_abort(tree)
+                .is_none()
             {
-                return tree.process_abort();
+                return true;
             }
         }
         res::TAG__PROCESSINGINSTRUCTION => {
             if tree
                 .insert_processing_instruction(tkz, Some(NodeId::DOCUMENT))
-                .is_err()
+                .or_abort(tree)
+                .is_none()
             {
-                return tree.process_abort();
+                return true;
             }
         }
         res::TAG__EM_DOCTYPE | res::TAG_HTML => return super::in_body::in_body(tree, tkz, tok),
@@ -46,8 +48,8 @@ pub fn after_after_frameset(
                  * formatting elements, insert) and the rest is ignored.
                  * Lexbor ignores the whole token (P7). */
                 if compat::fixed(Fix::P7) && tok.text(tkz).iter().any(|&c| is_ws(c)) {
-                    if let Err(st) = tree.afe_reconstruct(tkz) {
-                        return tree.abort_with(st);
+                    if tree.afe_reconstruct(tkz).or_abort(tree).is_none() {
+                        return true;
                     }
                     tree.parse_error(tok, E::Unto);
                     return super::in_frameset::whitespace_only(tree, tkz, tok).is_some();

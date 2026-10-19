@@ -5,7 +5,7 @@ use crate::html::res::names as res;
 use crate::html::res::tree as rt;
 use crate::html::tokenizer::Tokenizer;
 use crate::html::tree::error::TreeErrorId as E;
-use crate::html::tree::{Mode, Tok, TreeBuilder, TreeStatus};
+use crate::html::tree::{Mode, OrAbort, Tok, TreeBuilder, TreeStatus};
 
 /// `lxb_html_tree_clear_stack_back_to_table_context`.
 fn clear_stack_back_to_table_context(tree: &mut TreeBuilder<'_>) {
@@ -43,29 +43,13 @@ fn text_open(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mut 
     anything_else(tree, tkz, tok)
 }
 
-/// Insert an HTML element for the token; `false` when that failed and the
-/// parse is aborted.
-fn insert(
-    tree: &mut TreeBuilder<'_>,
-    tkz: &Tokenizer<'_, '_>,
-    tok: &Tok,
-) -> Option<crate::html::dom::NodeId> {
-    match tree.insert_html_element(tkz, tok) {
-        Ok(el) => Some(el),
-        Err(_) => {
-            tree.abort_with(TreeStatus::Oom);
-            None
-        }
-    }
-}
-
 /// `lxb_html_tree_insertion_mode_in_table_caption`.
 fn caption(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> bool {
     clear_stack_back_to_table_context(tree);
-    if let Err(st) = tree.afe_push_marker() {
-        return tree.abort_with(st);
+    if tree.afe_push_marker().or_abort(tree).is_none() {
+        return true;
     }
-    if insert(tree, tkz, tok).is_none() {
+    if tree.insert_html_element(tkz, tok).or_abort(tree).is_none() {
         return true;
     }
     tree.mode = Mode::InCaption;
@@ -75,7 +59,7 @@ fn caption(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -
 /// `lxb_html_tree_insertion_mode_in_table_colgroup`.
 fn colgroup(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> bool {
     clear_stack_back_to_table_context(tree);
-    if insert(tree, tkz, tok).is_none() {
+    if tree.insert_html_element(tkz, tok).or_abort(tree).is_none() {
         return true;
     }
     tree.mode = Mode::InColumnGroup;
@@ -85,7 +69,11 @@ fn colgroup(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) 
 /// `lxb_html_tree_insertion_mode_in_table_col`.
 fn col(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>) -> bool {
     clear_stack_back_to_table_context(tree);
-    if insert(tree, tkz, &Tok::fake(res::TAG_COLGROUP)).is_none() {
+    if tree
+        .insert_html_element(tkz, &Tok::fake(res::TAG_COLGROUP))
+        .or_abort(tree)
+        .is_none()
+    {
         return true;
     }
     tree.mode = Mode::InColumnGroup;
@@ -95,7 +83,7 @@ fn col(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>) -> bool {
 /// `lxb_html_tree_insertion_mode_in_table_tbtfth`.
 fn tbtfth(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> bool {
     clear_stack_back_to_table_context(tree);
-    if insert(tree, tkz, tok).is_none() {
+    if tree.insert_html_element(tkz, tok).or_abort(tree).is_none() {
         return true;
     }
     tree.mode = Mode::InTableBody;
@@ -105,7 +93,11 @@ fn tbtfth(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) ->
 /// `lxb_html_tree_insertion_mode_in_table_tdthtr`.
 fn tdthtr(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>) -> bool {
     clear_stack_back_to_table_context(tree);
-    if insert(tree, tkz, &Tok::fake(res::TAG_TBODY)).is_none() {
+    if tree
+        .insert_html_element(tkz, &Tok::fake(res::TAG_TBODY))
+        .or_abort(tree)
+        .is_none()
+    {
         return true;
     }
     tree.mode = Mode::InTableBody;
@@ -148,7 +140,7 @@ fn input(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mut Tok)
         return anything_else(tree, tkz, tok);
     }
     tree.parse_error(tok, E::Unto);
-    let Some(el) = insert(tree, tkz, tok) else {
+    let Some(el) = tree.insert_html_element(tkz, tok).or_abort(tree) else {
         return true;
     };
     tree.open_pop_until_node(el, true);
@@ -169,7 +161,7 @@ fn form(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> b
     if in_template && !compat::fixed(Fix::P2) {
         return true;
     }
-    let Some(el) = insert(tree, tkz, tok) else {
+    let Some(el) = tree.insert_html_element(tkz, tok).or_abort(tree) else {
         return true;
     };
     if !in_template {
@@ -223,14 +215,18 @@ pub fn in_table(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &m
     match tok.tag_id {
         res::TAG__TEXT => text_open(tree, tkz, tok),
         res::TAG__EM_COMMENT => {
-            if tree.insert_comment(tkz, tok, None).is_err() {
-                return tree.abort_with(TreeStatus::Oom);
+            if tree.insert_comment(tkz, tok, None).or_abort(tree).is_none() {
+                return true;
             }
             true
         }
         res::TAG__PROCESSINGINSTRUCTION => {
-            if tree.insert_processing_instruction(tkz, None).is_err() {
-                return tree.process_abort();
+            if tree
+                .insert_processing_instruction(tkz, None)
+                .or_abort(tree)
+                .is_none()
+            {
+                return true;
             }
             true
         }

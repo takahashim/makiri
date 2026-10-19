@@ -5,7 +5,7 @@ use crate::html::dom::NodeId;
 use crate::html::res::names as res;
 use crate::html::tokenizer::Tokenizer;
 use crate::html::tree::error::TreeErrorId as E;
-use crate::html::tree::{Mode, Tok, TreeBuilder};
+use crate::html::tree::{Mode, OrAbort, Tok, TreeBuilder};
 
 /// `lxb_html_tree_insertion_mode_after_after_body`.
 pub fn after_after_body(
@@ -17,17 +17,19 @@ pub fn after_after_body(
         res::TAG__EM_COMMENT => {
             if tree
                 .insert_comment(tkz, tok, Some(NodeId::DOCUMENT))
-                .is_err()
+                .or_abort(tree)
+                .is_none()
             {
-                return tree.process_abort();
+                return true;
             }
         }
         res::TAG__PROCESSINGINSTRUCTION => {
             if tree
                 .insert_processing_instruction(tkz, Some(NodeId::DOCUMENT))
-                .is_err()
+                .or_abort(tree)
+                .is_none()
             {
-                return tree.process_abort();
+                return true;
             }
         }
         res::TAG__EM_DOCTYPE | res::TAG_HTML => return super::in_body::in_body(tree, tkz, tok),

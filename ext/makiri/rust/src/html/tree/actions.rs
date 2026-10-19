@@ -288,7 +288,7 @@ impl TreeBuilder<'_> {
                 .doc
                 .names
                 .qualified_append(b"definitionURL")
-                .map_err(|_| TreeStatus::Error)?;
+                .map_err(|_| TreeStatus::Oom)?;
         }
         Ok(())
     }
@@ -758,17 +758,16 @@ impl TreeBuilder<'_> {
     }
 
     /// `lxb_html_tree_adoption_agency_algorithm`: `true` when the caller is
-    /// to act as "any other end tag" (Lexbor's return), with the status set
-    /// on failure.
-    pub(crate) fn adoption_agency_algorithm(&mut self, tok: &Tok) -> bool {
+    /// to act as "any other end tag" (Lexbor's return), `Err` on failure.
+    pub(crate) fn adoption_agency_algorithm(&mut self, tok: &Tok) -> Result<bool, TreeStatus> {
         let subject = tok.tag_id;
         /* State 2 */
         let Some(node) = self.current_node() else {
-            return false;
+            return Ok(false);
         };
         if self.node_is(node, subject) && self.afe_find_by_node_reverse(node).is_none() {
             self.open_pop();
-            return false;
+            return Ok(false);
         }
         /* State 3-4 */
         let mut outer_loop = 0;
@@ -780,7 +779,7 @@ impl TreeBuilder<'_> {
             let mut formatting = None;
             for idx in (0..self.afe.len()).rev() {
                 match self.afe[idx] {
-                    None => return true,
+                    None => return Ok(true),
                     Some(n) if self.tag(n) == subject => {
                         formatting = Some((idx, n));
                         break;
@@ -789,7 +788,7 @@ impl TreeBuilder<'_> {
                 }
             }
             let Some((formatting_index, formatting_element)) = formatting else {
-                return true;
+                return Ok(true);
             };
 
             /* State 7 */
@@ -797,7 +796,7 @@ impl TreeBuilder<'_> {
             else {
                 self.parse_error(tok, E::Mielinopelst);
                 self.afe_remove_by_node(formatting_element);
-                return false;
+                return Ok(false);
             };
 
             /* State 8 */
@@ -806,7 +805,7 @@ impl TreeBuilder<'_> {
                 .is_none()
             {
                 self.parse_error(tok, E::Mielinsc);
-                return false;
+                return Ok(false);
             }
 
             /* State 9 */
@@ -824,7 +823,7 @@ impl TreeBuilder<'_> {
             let Some(mut furthest_block_idx) = furthest else {
                 self.open_pop_until_node(formatting_element, true);
                 self.afe_remove_by_node(formatting_element);
-                return false;
+                return Ok(false);
             };
             let furthest_block = self.open[furthest_block_idx];
 
@@ -833,7 +832,7 @@ impl TreeBuilder<'_> {
                 .checked_sub(1)
                 .and_then(|i| self.open_get(i))
             else {
-                return false;
+                return Ok(false);
             };
 
             /* State 13. The bookmark and the formatting element's index are
@@ -852,7 +851,7 @@ impl TreeBuilder<'_> {
                 inner_loop_counter += 1;
                 /* State 14.3 */
                 if node_idx == 0 {
-                    return false;
+                    return Ok(false);
                 }
                 node_idx -= 1;
                 let mut node = self.open[node_idx];
@@ -888,13 +887,7 @@ impl TreeBuilder<'_> {
                 /* State 14.7 */
                 let mut fake = Tok::fake(self.tag(node));
                 fake.base = Some(node);
-                let el = match self.create_element_for_fake(&fake) {
-                    Ok(el) => el,
-                    Err(st) => {
-                        self.status = st;
-                        return false;
-                    }
-                };
+                let el = self.create_element_for_fake(&fake)?;
                 node = el;
                 self.afe[afe_node_idx] = Some(node);
                 self.open[node_idx] = node;
@@ -920,20 +913,14 @@ impl TreeBuilder<'_> {
 
             /* State 15 */
             let Some((pos, ipos)) = self.appropriate_place(Some(common_ancestor)) else {
-                return false;
+                return Ok(false);
             };
             self.insert_node(pos, last, ipos);
 
             /* State 16 */
             let mut fake = Tok::fake(self.tag(formatting_element));
             fake.base = Some(formatting_element);
-            let element = match self.create_element_for_fake(&fake) {
-                Ok(el) => el,
-                Err(st) => {
-                    self.status = st;
-                    return false;
-                }
-            };
+            let element = self.create_element_for_fake(&fake)?;
 
             /* State 17 */
             let mut child = self.doc.first_child(furthest_block);
@@ -955,20 +942,14 @@ impl TreeBuilder<'_> {
             if bookmark > self.afe.len() {
                 bookmark = self.afe.len();
             }
-            if let Err(st) = self.afe_insert(element, bookmark) {
-                self.status = st;
-                return false;
-            }
+            self.afe_insert(element, bookmark)?;
 
             /* State 20 */
             self.open_remove_by_node(formatting_element);
             furthest_block_idx = self.open_find_by_node(furthest_block).unwrap_or(0);
-            if let Err(st) = self.open_insert_after(element, furthest_block_idx) {
-                self.status = st;
-                return false;
-            }
+            self.open_insert_after(element, furthest_block_idx)?;
         }
-        false
+        Ok(false)
     }
 
     /// `lxb_html_tree_create_element_for_token` for a token with a base

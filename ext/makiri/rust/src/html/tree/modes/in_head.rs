@@ -3,7 +3,7 @@
 use crate::html::res::names as res;
 use crate::html::tokenizer::{TextContent, Tokenizer};
 use crate::html::tree::error::TreeErrorId as E;
-use crate::html::tree::{Mode, Tok, TreeBuilder, TreeStatus};
+use crate::html::tree::{Mode, OrAbort, Tok, TreeBuilder, TreeStatus};
 
 /// `lxb_html_tree_insertion_mode_in_head`.
 pub fn in_head(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mut Tok) -> bool {
@@ -16,27 +16,35 @@ pub fn in_head(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mu
 fn open(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mut Tok) -> bool {
     match tok.tag_id {
         res::TAG__EM_COMMENT => {
-            if tree.insert_comment(tkz, tok, None).is_err() {
-                return tree.abort_with(TreeStatus::Oom);
+            if tree.insert_comment(tkz, tok, None).or_abort(tree).is_none() {
+                return true;
             }
         }
         res::TAG__PROCESSINGINSTRUCTION => {
-            if tree.insert_processing_instruction(tkz, None).is_err() {
-                return tree.process_abort();
+            if tree
+                .insert_processing_instruction(tkz, None)
+                .or_abort(tree)
+                .is_none()
+            {
+                return true;
             }
         }
         res::TAG__EM_DOCTYPE => tree.parse_error(tok, E::Dotoinhemo),
         res::TAG_HTML => return super::in_body::in_body(tree, tkz, tok),
         res::TAG_BASE | res::TAG_BASEFONT | res::TAG_BGSOUND | res::TAG_LINK | res::TAG_META => {
-            if tree.insert_html_element(tkz, tok).is_err() {
-                return tree.abort_with(TreeStatus::Oom);
+            if tree.insert_html_element(tkz, tok).or_abort(tree).is_none() {
+                return true;
             }
             tree.open_pop();
             tree.acknowledge_token_self_closing(tok);
         }
         res::TAG_TITLE => {
-            if tree.generic_rcdata_parsing(tkz, tok).is_err() {
-                return tree.abort_with(TreeStatus::Oom);
+            if tree
+                .generic_rcdata_parsing(tkz, tok)
+                .or_abort(tree)
+                .is_none()
+            {
+                return true;
             }
         }
         res::TAG_NOSCRIPT => {
@@ -47,13 +55,17 @@ fn open(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mut Tok) 
                 tree.mode = Mode::InHeadNoscript;
                 el
             };
-            if made.is_err() {
-                return tree.abort_with(TreeStatus::Oom);
+            if made.or_abort(tree).is_none() {
+                return true;
             }
         }
         res::TAG_NOFRAMES | res::TAG_STYLE => {
-            if tree.generic_rawtext_parsing(tkz, tok).is_err() {
-                return tree.abort_with(TreeStatus::Oom);
+            if tree
+                .generic_rawtext_parsing(tkz, tok)
+                .or_abort(tree)
+                .is_none()
+            {
+                return true;
             }
         }
         res::TAG_SCRIPT => return script(tree, tkz, tok),
@@ -62,8 +74,10 @@ fn open(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mut Tok) 
         _ => {
             if tok.tag_id == res::TAG__TEXT {
                 let ws = tok.split_ws_begin(tkz);
-                if ws.text_start != ws.text_end && tree.insert_character(tkz, &ws).is_err() {
-                    return tree.abort_with(TreeStatus::Oom);
+                if ws.text_start != ws.text_end
+                    && tree.insert_character(tkz, &ws).or_abort(tree).is_none()
+                {
+                    return true;
                 }
                 if tok.text_start == tok.text_end {
                     return true;
@@ -93,11 +107,14 @@ fn script(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) ->
     let Some((pos, ipos)) = tree.appropriate_place(None) else {
         return tree.abort_with(TreeStatus::Error);
     };
-    let Ok(el) = tree.create_element_for_token(tkz, tok, res::NS_HTML) else {
-        return tree.abort_with(TreeStatus::Oom);
+    let Some(el) = tree
+        .create_element_for_token(tkz, tok, res::NS_HTML)
+        .or_abort(tree)
+    else {
+        return true;
     };
-    if let Err(st) = tree.open_push(el) {
-        return tree.abort_with(st);
+    if tree.open_push(el).or_abort(tree).is_none() {
+        return true;
     }
     tree.insert_node(pos, el, ipos);
     tkz.enter_text_content(TextContent::ScriptData, tok.tag_id);
@@ -108,16 +125,20 @@ fn script(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) ->
 
 /// `lxb_html_tree_insertion_mode_in_head_template`.
 fn template(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> bool {
-    if tree.insert_html_element(tkz, tok).is_err() {
-        return tree.abort_with(TreeStatus::Oom);
+    if tree.insert_html_element(tkz, tok).or_abort(tree).is_none() {
+        return true;
     }
-    if let Err(st) = tree.afe_push_marker() {
-        return tree.abort_with(st);
+    if tree.afe_push_marker().or_abort(tree).is_none() {
+        return true;
     }
     tree.frameset_ok = false;
     tree.mode = Mode::InTemplate;
-    if tree.template_modes_push(Mode::InTemplate).is_err() {
-        return tree.abort_with(TreeStatus::Oom);
+    if tree
+        .template_modes_push(Mode::InTemplate)
+        .or_abort(tree)
+        .is_none()
+    {
+        return true;
     }
     true
 }
