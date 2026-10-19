@@ -31,7 +31,6 @@ use crate::xml::model::{Document as XmlDoc, NodeId};
 use core::hash::BuildHasherDefault;
 use std::collections::HashMap;
 
-
 /* ------------------------------------------------------------------ *
  * the node wrapper                                                   *
  * ------------------------------------------------------------------ */
