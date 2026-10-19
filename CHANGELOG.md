@@ -1,5 +1,86 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+* `Makiri::Lexbor::CSS.parse_stylesheet` returns the declarations in an
+  at-rule's block as its `:declarations` (`@font-face`, `@page`, ...); they
+  were dropped.
+
+### Changed
+
+* HTML is parsed by a Rust port of Lexbor's tokenizer and tree builder, into
+  a DOM of Makiri's own. The extension links no Lexbor any more, so a source
+  install needs a Rust toolchain and nothing else - no cmake. A parsed
+  document takes about 40% less memory (~110 bytes a node, its text and names
+  included). The CSS selector and stylesheet parsers are ported too.
+* HTML parsing follows the HTML Standard where Lexbor did not, so these
+  documents parse differently (`docs/parser_differences.ja.md`, P1-P20):
+  * an implicit `<body>` resets frameset-ok, so a `<frameset>` can still
+    replace it after a `<template>` in the head (P1);
+  * a `<form>` inside a `<template>` neither uses nor sets the form element
+    pointer (P2);
+  * a U+FFFD in SVG or MathML text sets frameset-ok to "not ok" (P3);
+  * text directly in a `<table>` inside a `<template>` goes through
+    "in table text" (P4); "in column group" ignores a DOCTYPE (P5) and keeps
+    the whitespace that follows other text (P6), as does "after after
+    frameset" (P7);
+  * `<![CDA` at the end of the input is a comment holding `[CDA` (P8), and
+    the text before a final `<!` stays text, with an empty comment after it
+    (P9);
+  * `<b x>` and `<b x="">` are the same formatting element for the "three
+    of a kind" rule (P10), and the adoption agency keeps its bookmark in
+    place as elements are removed (P11);
+  * a `<textarea>`'s contents are read as text, without reconstructing open
+    formatting elements (P12);
+  * `type=HIDDEN` on an `<input>` in a table compares case-insensitively
+    (P13), an `<image>` in a table becomes an `<img>` (P14), and a `<sup>`
+    breaks out of SVG and MathML (P15);
+  * fragment parsing (`#inner_html=`, `DocumentFragment.parse`,
+    `Document#fragment`) pops its open elements at the end, so a
+    `<selectedcontent>` is updated (P16), uses the context document's quirks
+    mode (P17), honours an `annotation-xml` context's `encoding` (P18), parses
+    in a context element of another namespace as foreign content (P19), and
+    takes the form element pointer from an ancestor `<form>` (P20).
+* A void element's `#inner_html` is empty even when it has children (R1), and
+  a prefixed HTML, SVG or MathML element is written by its local name (R2).
+* `Node#line` of a void element fostered out of a table is its line, not nil
+  (L1).
+* CSS selectors follow Selectors 4 where Lexbor's parser did not:
+  * an empty `:is()` or `:where()` is valid and matches nothing (C18);
+  * `:has()` is unforgiving - one invalid argument makes the selector
+    invalid (C19) - and a `:has()` inside a `:has()` raises
+    `Makiri::CSS::SyntaxError` (C20);
+  * a token after An+B (`:nth-child(2n+1of p)`) makes the selector invalid
+    (C21); an `n-` digit run or an An+B value too large for 64 bits
+    saturates instead of failing (C22, S2);
+  * `#1a` is not an ID selector (C7);
+  * the tokenizer's edge cases follow CSS Syntax 3: a backslash ending the
+    input inside a string, a hyphen followed by a non-ASCII letter, an
+    integer of more than 128 digits, and `url(` followed only by whitespace
+    (C4-C6, C8).
+* `parse_stylesheet` reads names and values by one rule for every property
+  instead of Lexbor's per-property reserialization (C1-C3): a declaration name
+  is lower-cased unless it is a custom property, an at-rule name is
+  lower-cased, and a value is the text as written with each run of whitespace
+  collapsed (`color: RED` stays `RED`; it came back as `red`).
+* `parse_stylesheet`'s `:specificity` is counted as Selectors 4 does: a
+  pseudo-class with no argument and `:nth-of-type()` count as B, `:is()` /
+  `:not()` / `:has()` take their most specific argument, a namespaced type
+  selector counts once, and no component carries into the next (C23-C26).
+* `parse_stylesheet` finds `!important` on the value's top-level tokens
+  (`! important`, but not inside brackets) (C12, C13), decides a declaration
+  from a nested rule by the tokens ahead (C9, C14), drops a qualified rule with
+  no block and a top-level `--name:` prelude (C10, C11), and keeps a newline
+  after a backslash in a value (C15).
+
+### Removed
+
+* Lexbor's sources from the gem, which keeps only its LICENSE and NOTICE.
+  The vendored Lexbor is now only the reference the ports are tested against
+  (`rake lexbor`).
+
 ## [0.16.0] - 2026-10-10
 
 ### Added
