@@ -13,9 +13,9 @@
 //! `ContextFacts::foreign_namespace` tells the parser. The elements that
 //! inherited the namespace get it back on import, as the Lexbor DOM does.
 
-use crate::falloc::{try_to_vec, VecPush};
+use crate::falloc::try_to_vec;
 use crate::html::dom::{
-    DomOom, HtmlDoc, HtmlDocMut, HtmlElement, HtmlNode, NodeId, NodeType, NsId, RawNode, TagId,
+    DomOom, HtmlDoc, HtmlDocMut, HtmlElement, HtmlNode, NsId, Place, RawNode, TagId,
 };
 use crate::html::res::names as res;
 use crate::html::tree::guard::ContextOptions;
@@ -294,41 +294,16 @@ impl TransientFragment {
             FragNs::Id(ns) => *ns,
             FragNs::Uri(u) => Some(d.intern_ns(u).ok_or(DomOom)?),
         };
-        let arena = d.arena();
-        let src = &self.parsed.doc;
-        let mut child = src.first_child(self.parsed.root);
+        let src = HtmlDoc::of(&self.parsed.doc);
+        let mut child = src.get(self.parsed.root).and_then(HtmlNode::first_child);
         while let Some(c) = child {
-            let made = arena.copy_from(src, c, true)?;
-            arena.append_child(into.id(), made);
-            child = src.next(c);
+            let made = d.import(c, true)?;
+            d.place(into, made, Place::Child);
+            child = c.next();
         }
         if let Some(ns) = inherit {
-            give_namespace(d, into.id(), ns)?;
+            d.give_namespace(into, ns)?;
         }
         Ok(())
     }
-}
-
-/// Put every element under `root` (template contents included) that is in
-/// no namespace into `ns`: the elements that inherited a context namespace
-/// the parser was not given.
-fn give_namespace(d: &mut HtmlDocMut<'_>, root: NodeId, ns: NsId) -> Result<(), DomOom> {
-    let mut todo: Vec<NodeId> = Vec::new();
-    {
-        let doc = d.read();
-        let Some(r) = doc.get(root) else {
-            return Ok(());
-        };
-        for n in r.subtree_with_contents() {
-            if n.node_type() == NodeType::Element && n.ns_id().is_none() {
-                todo.falloc_push(n.id()).map_err(|()| DomOom)?;
-            }
-        }
-    }
-    let a = d.arena();
-    for id in todo {
-        let (local, prefix) = (a.local(id), a.prefix(id));
-        a.set_names(id, local as usize, ns.number(), prefix);
-    }
-    Ok(())
 }

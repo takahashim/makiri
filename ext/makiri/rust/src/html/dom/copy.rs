@@ -14,7 +14,9 @@
 //! allocation leaves a partial copy that nothing links to, as the arena keeps
 //! every node it ever made.
 
-use super::{Document, DomOom, ElementData, Node, NodeId, NodeType, Payload, ShortcutRule, Span};
+use super::{
+    Document, DomOom, ElementData, Node, NodeId, NodeName, NodeType, Payload, ShortcutRule, Span,
+};
 use crate::falloc::VecPush;
 use crate::html::res::names as res;
 
@@ -110,10 +112,7 @@ impl Document {
             Payload::Element(i) => {
                 let e: ElementData = *self.src(from).elements.get(i as usize).ok_or(DomOom)?;
                 let written = self.written_from(from, e.written)?;
-                let id = self.create_element(local as usize, ns, prefix, None)?;
-                if let Some(x) = self.element_mut(id) {
-                    x.written = written;
-                }
+                let id = self.push_element(local as usize, ns, prefix, written)?;
                 /* The copy's shortcuts point where the source's do. */
                 let mut a = e.first_attr;
                 while let Some(src_attr) = a {
@@ -128,12 +127,7 @@ impl Document {
                 let a = *self.src(from).attrs.get(i as usize).ok_or(DomOom)?;
                 let written = self.written_from(from, a.written)?;
                 let value = self.bytes_from(from, a.value)?;
-                let id = self.create_attr(local as usize, ns, prefix, None, b"")?;
-                if let Some(x) = self.attr_mut(id) {
-                    x.written = written;
-                    x.value = value;
-                }
-                id
+                self.push_attr(local as usize, ns, prefix, written, value)?
             }
             Payload::Data(span) => {
                 let span = self.bytes_from(from, span)?;
@@ -155,11 +149,12 @@ impl Document {
                     public_id: self.bytes_from(from, d.public_id)?,
                     system_id: self.bytes_from(from, d.system_id)?,
                 };
-                let idx = u32::try_from(self.doctypes.len()).map_err(|_| DomOom)?;
-                self.doctypes.falloc_push(dt).map_err(|()| DomOom)?;
-                let id = self.push(NodeType::DocumentType, Payload::Doctype(idx))?;
-                self.set_names(id, local as usize, ns, prefix);
-                id
+                let names = NodeName {
+                    local: local as usize,
+                    ns,
+                    prefix,
+                };
+                self.push_doctype(names, dt)?
             }
             /* A fragment's copy is a plain new one, as the adapter makes it;
              * a document is never copied. */

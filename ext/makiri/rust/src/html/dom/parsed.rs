@@ -85,9 +85,11 @@ impl HtmlParsed {
         HtmlDocMut::new(&mut self.doc)
     }
 
-    /// The document, lent to make DETACHED nodes - factories and copies -
-    /// with the indexes kept: no index names a node no tree holds, and
-    /// nothing an index stores moves when the arena grows (ids and offsets).
+    /// The document, lent to make DETACHED nodes - factories and copies, and
+    /// a detached fragment's subtree - with the indexes kept: no index names
+    /// a node no tree holds, and nothing an index stores moves when the
+    /// arena grows (ids and offsets). Anything that changes a node in the
+    /// document's tree takes [`edit`](Self::edit), which drops them.
     #[inline]
     pub fn edit_keeping_indexes(&mut self) -> HtmlDocMut<'_> {
         HtmlDocMut::new(&mut self.doc)

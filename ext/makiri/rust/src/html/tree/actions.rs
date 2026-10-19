@@ -7,7 +7,7 @@
 use super::error::TreeErrorId as E;
 use super::{AttrAdjust, Ipos, Mode, Tok, TreeBuilder, TreeStatus};
 use crate::compat::{self, Fix};
-use crate::html::dom::{AttrValue, DomOom, NodeId, NodeType};
+use crate::html::dom::{AttrValue, DomOom, NodeId, NodeName, NodeType};
 use crate::html::res::names as res;
 use crate::html::res::tree as rt;
 use crate::html::tokenizer::TextContent;
@@ -401,9 +401,11 @@ impl TreeBuilder<'_> {
         if let Some(p) = prev.filter(|&p| self.tag(p) == res::TAG__TEXT) {
             return self.doc.append_text(p, data).map_err(oom);
         }
-        let text = self.doc.create_data(NodeType::Text, data).map_err(oom)?;
-        self.doc
-            .set_names(text, res::TAG__TEXT, res::NS_HTML as u32, 0);
+        let name = NodeName::html(res::TAG__TEXT);
+        let text = self
+            .doc
+            .create_data(NodeType::Text, name, data)
+            .map_err(oom)?;
         self.insert_node(pos, text, ipos);
         Ok(())
     }
@@ -420,12 +422,15 @@ impl TreeBuilder<'_> {
             Some(p) => (p, Ipos::Child),
             None => self.appropriate_place(None).ok_or(TreeStatus::Error)?,
         };
-        let ns = self.doc.ns(pos);
+        let name = NodeName {
+            local: tok.tag_id,
+            ns: self.doc.ns(pos),
+            prefix: 0,
+        };
         let c = self
             .doc
-            .create_data(NodeType::Comment, tok.text(tkz))
+            .create_data(NodeType::Comment, name, tok.text(tkz))
             .map_err(oom)?;
-        self.doc.set_names(c, tok.tag_id, ns, 0);
         self.insert_node(pos, c, ipos);
         Ok(c)
     }
@@ -463,12 +468,11 @@ impl TreeBuilder<'_> {
         };
         /* `lexbor_str_t` copies: the name is the interned attribute name. */
         let name = crate::falloc::try_to_vec(name).ok_or(TreeStatus::Oom)?;
+        let names = NodeName::html(res::TAG__EM_DOCTYPE);
         let node = self
             .doc
-            .create_doctype(&name, public, system)
+            .create_doctype(names, &name, public, system)
             .map_err(oom)?;
-        self.doc
-            .set_names(node, res::TAG__EM_DOCTYPE, res::NS_HTML as u32, 0);
         Ok((node, name_id, public.len(), system.len()))
     }
 

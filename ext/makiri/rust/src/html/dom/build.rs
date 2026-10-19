@@ -3,7 +3,7 @@
 //! of the qualified-name table rather than from text, and Lexbor's own
 //! `id`/`class` bookkeeping on append.
 
-use super::{AttrData, Document, DomOom, NodeId, NodeType, NsIndex, Payload, PrefixIndex, Span};
+use super::{Document, DomOom, NodeId, NsIndex, Payload, PrefixIndex, Span};
 use crate::falloc::Reserve;
 
 /// Where a new attribute's value comes from.
@@ -134,17 +134,7 @@ impl Document {
                 None => Span::default(),
             },
         };
-        let idx = u32::try_from(self.attrs.len()).map_err(|_| DomOom)?;
-        self.attrs.falloc_reserve(1).map_err(|()| DomOom)?;
-        let id = self.push(NodeType::Attribute, Payload::Attr(idx))?;
-        self.set_names(id, local, ns, prefix);
-        self.attrs.push(AttrData {
-            written,
-            value,
-            next: None,
-            prev: None,
-        });
-        Ok(id)
+        self.push_attr(local, ns, prefix, written, value)
     }
 
     /// An element's or attribute's written-name id (0 for none).
@@ -153,23 +143,6 @@ impl Document {
             Some(Payload::Element(i)) => self.elements.get(i as usize).map_or(0, |e| e.written),
             Some(Payload::Attr(i)) => self.attrs.get(i as usize).map_or(0, |a| a.written),
             _ => 0,
-        }
-    }
-
-    /// Set an element's or attribute's written-name id.
-    pub fn set_written_id(&mut self, n: NodeId, written: u32) {
-        match self.node(n).map(|x| x.payload) {
-            Some(Payload::Element(i)) => {
-                if let Some(e) = self.elements.get_mut(i as usize) {
-                    e.written = written;
-                }
-            }
-            Some(Payload::Attr(i)) => {
-                if let Some(a) = self.attrs.get_mut(i as usize) {
-                    a.written = written;
-                }
-            }
-            _ => {}
         }
     }
 }

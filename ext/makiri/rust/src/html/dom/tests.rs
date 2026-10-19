@@ -14,7 +14,9 @@ fn links_and_attributes_keep_their_lists() {
     let b = d
         .create_element(div, res::NS_HTML as u32, 0, None)
         .expect("b");
-    let c = d.create_data(NodeType::Text, b"t").expect("c");
+    let c = d
+        .create_data(NodeType::Text, NodeName::default(), b"t")
+        .expect("c");
     d.append_child(NodeId::DOCUMENT, a);
     d.append_child(a, c);
     d.insert_before(c, b);
@@ -64,9 +66,13 @@ fn compaction_keeps_every_span_and_bounds_the_store() {
         .create_element(div, res::NS_HTML as u32, 0, None)
         .expect("el");
     d.append_child(NodeId::DOCUMENT, el);
-    let text = d.create_data(NodeType::Text, b"first").expect("text");
+    let text = d
+        .create_data(NodeType::Text, NodeName::default(), b"first")
+        .expect("text");
     d.append_child(el, text);
-    let detached = d.create_data(NodeType::Comment, b"detached").expect("c");
+    let detached = d
+        .create_data(NodeType::Comment, NodeName::default(), b"detached")
+        .expect("c");
     let pi = d.create_pi(b"target", b"pi data").expect("pi");
     d.append_child(el, pi);
     let id = d.names.attr_local_name_append(b"title").expect("name");
@@ -107,13 +113,17 @@ fn text_appended_between_other_stores_grows_the_store_linearly() {
     for texts in [1usize, 2, 4] {
         let mut d = Document::new(0).expect("doc");
         let ts: Vec<NodeId> = (0..texts)
-            .map(|_| d.create_data(NodeType::Text, b"").expect("text"))
+            .map(|_| {
+                d.create_data(NodeType::Text, NodeName::default(), b"")
+                    .expect("text")
+            })
             .collect();
         let n = 20_000;
         for i in 0..n {
             let t = ts[i % texts];
             d.append_text(t, b"a").expect("append");
-            d.create_data(NodeType::Comment, b"x").expect("comment");
+            d.create_data(NodeType::Comment, NodeName::default(), b"x")
+                .expect("comment");
         }
         for &t in &ts {
             assert_eq!(d.data(t).map(<[u8]>::len), Some(n / texts));

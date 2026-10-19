@@ -461,11 +461,7 @@ const CEILING_FLOOR: usize = 65536;
 /// over [`CEILING_FLOOR`] - so a legitimate document round-trips and a
 /// pathological pretty-print fails closed.
 fn ceiling(doc: &Document) -> usize {
-    let longest = doc
-        .names
-        .longest()
-        .max(doc.ns.iter().map(Vec::len).max().unwrap_or(0))
-        .max(doc.prefixes.iter().map(Vec::len).max().unwrap_or(0));
+    let longest = doc.longest_name();
     CEILING_FLOOR
         .saturating_add(doc.owned_bytes().saturating_mul(32))
         .saturating_add(doc.node_count().saturating_mul(longest.saturating_mul(4)))
@@ -491,7 +487,7 @@ pub fn serialize(node: HtmlNode<'_>, deep: bool, pretty: bool) -> Option<Buf> {
     if whole {
         /* Best-effort pre-size: markup is about the size of the text the
          * document stores, plus a few bytes per node. */
-        let _ = buf.reserve(doc.bytes.len() + doc.node_count() * 8);
+        let _ = buf.reserve(doc.stored_bytes() + doc.node_count() * 8);
     }
     let mut sink = BufSink(buf);
     write(node, deep, pretty, &mut sink).ok()?;

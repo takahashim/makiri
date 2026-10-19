@@ -24,6 +24,7 @@ use crate::falloc::{try_vec_with_capacity, Reserve, VecPush};
 use crate::html::names::Names;
 use crate::html::res::names as res;
 pub use crate::node_type::NodeType;
+use ext_table::ExtTable;
 
 /// An allocation the arena needed failed; the document is as it was.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -70,6 +71,27 @@ impl NodeId {
 pub struct Span {
     start: u32,
     len: u32,
+}
+
+/// A node's Lexbor name fields: its local name (an id of the document's
+/// [`Names`]), namespace and prefix (0 for none).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct NodeName {
+    pub local: usize,
+    pub ns: NsIndex,
+    pub prefix: PrefixIndex,
+}
+
+impl NodeName {
+    /// `local` in the HTML namespace, with no prefix - how Lexbor names a
+    /// text, comment or doctype node its parser or document makes.
+    pub const fn html(local: usize) -> NodeName {
+        NodeName {
+            local,
+            ns: res::NS_HTML as u32,
+            prefix: 0,
+        }
+    }
 }
 
 /// A namespace id: Lexbor's static numbers (`res::NS_*`) first, then the
@@ -254,12 +276,10 @@ pub struct Document {
     growing: build::Growing,
     /// Tag and attribute names, shared with the tokenizer.
     pub names: Names,
-    /// Namespace URIs past the static ones.
-    ns: Vec<Vec<u8>>,
-    /// Prefixes past the static ones.
-    prefixes: Vec<Vec<u8>>,
-    /// The bytes of `ns` and `prefixes`' entries: their growth in O(1).
-    ns_bytes: usize,
+    /// Namespace URIs, Lexbor's static ones first.
+    ns: ExtTable,
+    /// Prefixes, numbered as namespaces are (Lexbor shares the static range).
+    prefixes: ExtTable,
     compat_mode: CompatMode,
     /// This document's process-unique stamp (never 0), carried in every
     /// [`RawNode`] it hands out, so a node word names one node of one
@@ -318,9 +338,8 @@ impl Document {
             dead: 0,
             growing: build::Growing::default(),
             names: Names::default(),
-            ns: Vec::new(),
-            prefixes: Vec::new(),
-            ns_bytes: 0,
+            ns: ExtTable::new(&res::NS_LINKS),
+            prefixes: ExtTable::new(&res::NS_PREFIXES),
             compat_mode: CompatMode::from_lexbor(compat_mode),
             stamp: {
                 use core::sync::atomic::Ordering::Relaxed;
@@ -354,19 +373,28 @@ impl Document {
             + self.doctypes.capacity() * core::mem::size_of::<DoctypeData>()
             + self.bytes.capacity()
             + self.names.owned_bytes()
-            + Self::table_bytes(&self.ns)
-            + Self::table_bytes(&self.prefixes)
+            + self.ns.owned_bytes()
+            + self.prefixes.owned_bytes()
     }
 
-    /// What a table of byte strings owns: its own block and each entry's.
-    fn table_bytes(t: &[Vec<u8>]) -> usize {
-        t.iter().map(Vec::capacity).sum::<usize>() + core::mem::size_of_val(t)
+    /// The bytes the store holds, live and dead.
+    pub fn stored_bytes(&self) -> usize {
+        self.bytes.len()
+    }
+
+    /// The longest name a node can write: a tag or attribute name, a
+    /// namespace URI or a prefix of the document's own.
+    pub fn longest_name(&self) -> usize {
+        self.names
+            .longest()
+            .max(self.ns.longest_own())
+            .max(self.prefixes.longest_own())
     }
 
     /// An O(1) measure of what the name and namespace tables hold, which
     /// [`owned_bytes`](Self::owned_bytes) counts by walking them.
     pub fn table_growth(&self) -> usize {
-        self.names.stored_bytes() + self.ns_bytes
+        self.names.stored_bytes() + self.ns.stored_bytes() + self.prefixes.stored_bytes()
     }
 
     /* ---- storing ---- */
@@ -435,82 +463,27 @@ impl Document {
     /// The id of the namespace `uri`, matched byte for byte; `None` when the
     /// document has none by that URI (or for an empty one).
     pub fn lookup_ns(&self, uri: &[u8]) -> Option<NsIndex> {
-        if uri.is_empty() {
-            return None;
-        }
-        if let Some(i) = res::NS_LINKS
-            .iter()
-            .skip(res::NS_HTML)
-            .position(|l| *l == uri)
-        {
-            return u32::try_from(i + res::NS_HTML).ok();
-        }
-        self.ns
-            .iter()
-            .position(|l| l == uri)
-            .and_then(|i| u32::try_from(res::NS__LAST_ENTRY + i).ok())
+        self.ns.lookup(uri)
     }
 
     /// [`lookup_ns`](Self::lookup_ns), appending `uri` when new.
     pub fn intern_ns(&mut self, uri: &[u8]) -> Result<Option<NsIndex>, DomOom> {
-        if uri.is_empty() {
-            return Ok(None);
-        }
-        if let Some(i) = self.lookup_ns(uri) {
-            return Ok(Some(i));
-        }
-        let owned = crate::falloc::try_to_vec(uri).ok_or(DomOom)?;
-        oom!(self.ns.falloc_push(owned));
-        self.ns_bytes += uri.len();
-        Ok(u32::try_from(res::NS__LAST_ENTRY + self.ns.len() - 1).ok())
+        self.ns.intern(uri)
     }
 
     /// A namespace id's URI.
     pub fn ns_uri(&self, ns: NsIndex) -> Option<&[u8]> {
-        let i = ns as usize;
-        if i == 0 {
-            return None;
-        }
-        match res::NS_LINKS.get(i) {
-            Some(l) => (!l.is_empty()).then_some(*l),
-            None => self.ns.get(i - res::NS__LAST_ENTRY).map(Vec::as_slice),
-        }
+        self.ns.get(ns)
     }
 
     /// The id of `prefix`, appending it when new; `None` for an empty one.
     pub fn intern_prefix(&mut self, prefix: &[u8]) -> Result<Option<PrefixIndex>, DomOom> {
-        if prefix.is_empty() {
-            return Ok(None);
-        }
-        if let Some(i) = res::NS_PREFIXES
-            .iter()
-            .skip(res::NS_HTML)
-            .position(|p| *p == prefix)
-        {
-            return Ok(u32::try_from(i + res::NS_HTML).ok());
-        }
-        if let Some(i) = self.prefixes.iter().position(|p| p == prefix) {
-            return Ok(u32::try_from(res::NS__LAST_ENTRY + i).ok());
-        }
-        let owned = crate::falloc::try_to_vec(prefix).ok_or(DomOom)?;
-        oom!(self.prefixes.falloc_push(owned));
-        self.ns_bytes += prefix.len();
-        Ok(u32::try_from(res::NS__LAST_ENTRY + self.prefixes.len() - 1).ok())
+        self.prefixes.intern(prefix)
     }
 
     /// A prefix id's text.
     pub fn prefix_text(&self, p: PrefixIndex) -> Option<&[u8]> {
-        let i = p as usize;
-        if i == 0 {
-            return None;
-        }
-        match res::NS_PREFIXES.get(i) {
-            Some(t) => (!t.is_empty()).then_some(*t),
-            None => self
-                .prefixes
-                .get(i - res::NS__LAST_ENTRY)
-                .map(Vec::as_slice),
-        }
+        self.prefixes.get(p)
     }
 
     /* ---- making nodes (detached) ---- */
@@ -526,20 +499,24 @@ impl Document {
     /// it has none of its own).
     pub fn set_written(&mut self, n: NodeId, written: Option<&[u8]>) -> Result<(), DomOom> {
         let id = self.intern_written(written)?;
-        match self.node(n).map(|x| x.payload) {
-            Some(Payload::Element(i)) => {
-                if let Some(e) = self.elements.get_mut(i as usize) {
-                    e.written = id;
-                }
-            }
-            Some(Payload::Attr(i)) => {
-                if let Some(a) = self.attrs.get_mut(i as usize) {
-                    a.written = id;
-                }
-            }
-            _ => {}
-        }
+        self.set_written_id(n, id);
         Ok(())
+    }
+
+    /// An element's or attribute's written-name id, to change.
+    fn written_mut(&mut self, n: NodeId) -> Option<&mut u32> {
+        match self.node(n)?.payload {
+            Payload::Element(i) => self.elements.get_mut(i as usize).map(|e| &mut e.written),
+            Payload::Attr(i) => self.attrs.get_mut(i as usize).map(|a| &mut a.written),
+            _ => None,
+        }
+    }
+
+    /// Set an element's or attribute's written-name id.
+    pub fn set_written_id(&mut self, n: NodeId, written: u32) {
+        if let Some(w) = self.written_mut(n) {
+            *w = written;
+        }
     }
 
     /// A new element: local name `tag` (an id of [`Document::names`]), in
@@ -553,6 +530,18 @@ impl Document {
         written: Option<&[u8]>,
     ) -> Result<NodeId, DomOom> {
         let written = self.intern_written(written)?;
+        self.push_element(tag, ns, prefix, written)
+    }
+
+    /// [`create_element`](Self::create_element) with the written name an id
+    /// of [`Names::qualified`] already.
+    fn push_element(
+        &mut self,
+        tag: usize,
+        ns: NsIndex,
+        prefix: PrefixIndex,
+        written: u32,
+    ) -> Result<NodeId, DomOom> {
         let idx = u32::try_from(self.elements.len()).map_err(|_| DomOom)?;
         oom!(self.elements.falloc_reserve(1));
         let id = self.push(NodeType::Element, Payload::Element(idx))?;
@@ -587,6 +576,19 @@ impl Document {
     ) -> Result<NodeId, DomOom> {
         let written = self.intern_written(written)?;
         let value = self.store(value)?;
+        self.push_attr(local, ns, prefix, written, value)
+    }
+
+    /// The one maker of an attribute node: names, a written-name id and a
+    /// value already in the store.
+    fn push_attr(
+        &mut self,
+        local: usize,
+        ns: NsIndex,
+        prefix: PrefixIndex,
+        written: u32,
+        value: Span,
+    ) -> Result<NodeId, DomOom> {
         let idx = u32::try_from(self.attrs.len()).map_err(|_| DomOom)?;
         oom!(self.attrs.falloc_reserve(1));
         let id = self.push(NodeType::Attribute, Payload::Attr(idx))?;
@@ -600,14 +602,21 @@ impl Document {
         Ok(id)
     }
 
-    /// A new Text, Comment or CDATA node holding `data`.
-    pub fn create_data(&mut self, kind: NodeType, data: &[u8]) -> Result<NodeId, DomOom> {
+    /// A new Text, Comment or CDATA node named `name`, holding `data`.
+    pub fn create_data(
+        &mut self,
+        kind: NodeType,
+        name: NodeName,
+        data: &[u8],
+    ) -> Result<NodeId, DomOom> {
         debug_assert!(matches!(
             kind,
             NodeType::Text | NodeType::Comment | NodeType::CDataSection
         ));
         let span = self.store(data)?;
-        self.push(kind, Payload::Data(span))
+        let id = self.push(kind, Payload::Data(span))?;
+        self.set_names(id, name.local, name.ns, name.prefix);
+        Ok(id)
     }
 
     /// A new ProcessingInstruction.
@@ -617,9 +626,10 @@ impl Document {
         self.push(NodeType::Pi, Payload::Pi { target, data })
     }
 
-    /// A new DocumentType.
+    /// A new DocumentType, its node named `names`.
     pub fn create_doctype(
         &mut self,
+        names: NodeName,
         name: &[u8],
         public_id: &[u8],
         system_id: &[u8],
@@ -629,9 +639,15 @@ impl Document {
             public_id: self.store(public_id)?,
             system_id: self.store(system_id)?,
         };
+        self.push_doctype(names, d)
+    }
+
+    /// The one maker of a DocumentType node, its strings in the store.
+    fn push_doctype(&mut self, names: NodeName, d: DoctypeData) -> Result<NodeId, DomOom> {
         let idx = u32::try_from(self.doctypes.len()).map_err(|_| DomOom)?;
         oom!(self.doctypes.falloc_reserve(1));
         let id = self.push(NodeType::DocumentType, Payload::Doctype(idx))?;
+        self.set_names(id, names.local, names.ns, names.prefix);
         self.doctypes.push(d);
         Ok(id)
     }
@@ -641,7 +657,10 @@ impl Document {
         self.push(NodeType::DocumentFragment, Payload::Fragment { host })
     }
 
-    /// Set a node's Lexbor name fields: `local_name`, `ns`, `prefix`.
+    /// Set a node's Lexbor name fields: `local_name`, `ns`, `prefix`. The
+    /// factories name what they make; this is for the reference copies of
+    /// Lexbor's trees (`lexbor::adapter::arena_copy`), which name a node
+    /// after making it, and for the factories themselves.
     pub fn set_names(&mut self, n: NodeId, local: usize, ns: NsIndex, prefix: PrefixIndex) {
         if let Some(node) = self.node_mut(n) {
             node.local = u32::try_from(local).unwrap_or(0);
@@ -1129,6 +1148,7 @@ mod copy;
 /// Copies between an arena HTML document and an XML one.
 pub mod cross_import;
 mod edit;
+mod ext_table;
 mod handle;
 mod parsed;
 /// HTML serialization.

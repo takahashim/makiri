@@ -10,7 +10,7 @@
 //! an appended one gets the arena's.
 
 use crate::falloc::VecPush;
-use crate::html::dom::{Document, DomOom, NodeId, NodeType, Shortcut, ShortcutRule};
+use crate::html::dom::{Document, DomOom, NodeId, NodeName, NodeType, Shortcut, ShortcutRule};
 use crate::lexbor::adapter::html::{HtmlAttr, HtmlDoc, HtmlNode};
 
 /// The prefix before the first colon of `qname`, when it has one.
@@ -109,13 +109,14 @@ fn copy_one(doc: &mut Document, s: HtmlNode<'_>) -> Result<NodeId, DomOom> {
         kind => {
             let id = match kind {
                 NodeType::Text | NodeType::Comment | NodeType::CDataSection => {
-                    doc.create_data(kind, s.data().unwrap_or_default())?
+                    doc.create_data(kind, NodeName::default(), s.data().unwrap_or_default())?
                 }
                 NodeType::Pi => doc.create_pi(
                     s.pi_target().unwrap_or_default(),
                     s.data().unwrap_or_default(),
                 )?,
                 NodeType::DocumentType => doc.create_doctype(
+                    NodeName::default(),
                     s.node_name(),
                     s.doctype_public_id().unwrap_or_default(),
                     s.doctype_system_id().unwrap_or_default(),
