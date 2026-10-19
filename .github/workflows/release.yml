@@ -72,8 +72,6 @@ jobs:
       - uses: actions/checkout@v6
         with:
           submodules: recursive
-      - name: Ensure cmake is available
-        uses: lukka/get-cmake@latest
       # The extension is a Rust crate, so every release runner needs cargo. This
       # is the job that produces the precompiled gems, which is what most users
       # install - if it cannot build, the gem falls back to a source install and

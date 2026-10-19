@@ -38,8 +38,7 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   another Lexbor-based gem in the same process (e.g. `nokolexbor`) bind its
   `lxb_*` calls to our different Lexbor version → segfault; any name of ours in
   the dynamic table is the same hazard. **Verify with `bundle exec rake symbols`**, which asserts the whole
-  claim (nothing of ours or Lexbor's left undefined, and nothing but those two
-  names exported). Do not weaken that gate to "no `lxb_` exported" - it passed
+  claim (nothing but those two names exported). Do not weaken that gate to "no `lxb_` exported" - it passed
   happily while ~220 `mkr_*` names leaked into the dynamic table.
   Every change must stay clean under ASan and keep the fuzzers green. The ASan
   runtime preload is PLATFORM-SPLIT (required on Linux, harmful on macOS) - see
@@ -222,7 +221,7 @@ bundle exec rake clean             # wipe the build dir (regenerates the Makefil
 bundle exec rake clean:lexbor      # wipe vendor/lexbor/{build,dist} (full Lexbor rebuild)
 bundle exec ruby -Ilib -r makiri -e 'p Makiri::VERSION'   # smoke load
 
-bundle exec rake symbols           # THE export/undefined gate - see Hard constraints
+bundle exec rake symbols           # THE export gate - see Hard constraints
 bundle exec rake diff              # answers vs the recorded C-build baseline (see below)
 bundle exec rake sanitize          # rebuild w/ -Zsanitizer=address (nightly), run suite
 bundle exec rake fuzz              # robustness fuzzer (spec/fuzz/); FUZZ_ARGS to tune
@@ -239,7 +238,8 @@ bundle exec rake fuzz:libfuzzer    # cargo-fuzz harnesses (needs cargo-fuzz + ni
                                    # macOS runs `-s none` (see the Rakefile)
 bundle exec rake leaks             # macOS malloc-leak gate (ASan runs detect_leaks=0,
                                    # so this and Linux Valgrind (`spec:valgrind`, any
-                                   # "definitely lost" through the ext) are the leak
+                                   # "definitely lost" through the ext; CI runs it
+                                   # nightly) are the leak
                                    # checks; flags per-call leak stacks through the
                                    # ext incl. rescued raises)
 bundle exec rake oom               # OOM-injection sweep: rebuilds with

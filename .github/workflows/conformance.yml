@@ -97,9 +97,6 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Ensure cmake is available
-        uses: lukka/get-cmake@latest
-
       # The extension is a Rust crate; cargo is part of the build now.
       - uses: dtolnay/rust-toolchain@stable
 
