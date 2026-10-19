@@ -330,13 +330,31 @@ fn end_tag<S: Sink>(out: &mut Out<'_, S>, n: HtmlNode<'_>) -> R {
     out.send(b">")
 }
 
-/// Serialize `node` into `sink`: with its subtree, or with `deep` its
-/// children only (a template's contents); a Document as its children.
-/// `pretty` is Lexbor's pretty format at indent 0.
-pub fn write<S: Sink>(node: HtmlNode<'_>, deep: bool, pretty: bool, sink: &mut S) -> R {
+/// What of a node is written.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Scope {
+    /// The node and its subtree (`outerHTML`); a Document as its children.
+    Outer,
+    /// Its children only (`innerHTML`): in [`Layout::Plain`], a template's
+    /// contents.
+    Inner,
+}
+
+/// How it is written.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Layout {
+    /// As the HTML Standard serializes.
+    Plain,
+    /// Lexbor's pretty format, at indent 0.
+    Pretty,
+}
+
+/// Serialize `node` into `sink`, `scope` of it laid out as `layout`.
+pub fn write<S: Sink>(node: HtmlNode<'_>, scope: Scope, layout: Layout, sink: &mut S) -> R {
     let mut out = Out { sink };
-    if pretty {
-        if !deep && node.node_type() != NodeType::Document {
+    let outer = scope == Scope::Outer && node.node_type() != NodeType::Document;
+    if layout == Layout::Pretty {
+        if outer {
             return pretty_subtree(&mut out, node);
         }
         let mut c = node.first_child();
@@ -346,7 +364,7 @@ pub fn write<S: Sink>(node: HtmlNode<'_>, deep: bool, pretty: bool, sink: &mut S
         }
         return Ok(());
     }
-    if !deep && node.node_type() != NodeType::Document {
+    if outer {
         return subtree(&mut out, node);
     }
     /* The Standard's fragment serializing, step 1: a void element's
@@ -479,7 +497,7 @@ impl Sink for BufSink {
 /// Serialize `node` into owned UTF-8 bytes - see [`write`]. `None` when
 /// the output could not be held (out of memory, or past the ceiling) or a
 /// node Lexbor does not serialize was reached.
-pub fn serialize(node: HtmlNode<'_>, deep: bool, pretty: bool) -> Option<Buf> {
+pub fn serialize(node: HtmlNode<'_>, scope: Scope, layout: Layout) -> Option<Buf> {
     let doc = node.owner_document().arena();
     let mut buf = Buf::new(ceiling(doc));
     let whole = node.node_type() == NodeType::Document
@@ -490,6 +508,6 @@ pub fn serialize(node: HtmlNode<'_>, deep: bool, pretty: bool) -> Option<Buf> {
         let _ = buf.reserve(doc.stored_bytes() + doc.node_count() * 8);
     }
     let mut sink = BufSink(buf);
-    write(node, deep, pretty, &mut sink).ok()?;
+    write(node, scope, layout, &mut sink).ok()?;
     Some(sink.0)
 }

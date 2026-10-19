@@ -112,10 +112,6 @@ fn h2x_copy_attrs(doc: &mut XmlDoc, s: HtmlElement<'_>, el: NodeId) -> Result<()
     Ok(())
 }
 
-/// Translate ONE Lexbor node into a fresh mkr node - its own fields and
-/// attributes, NOT its children.
-///
-/// `None` to SKIP an unsupported type; an `Err` status fails the whole import.
 /// The element namespace URIs one import has stored, so every element in
 /// a namespace shares one copy of its URI - as the source shares one
 /// Lexbor namespace id. A handful at most (HTML, SVG, MathML), so a list.
@@ -137,6 +133,10 @@ impl<'a> NsSpans<'a> {
     }
 }
 
+/// Translate ONE arena node into a fresh XML node - its own fields and
+/// attributes, NOT its children.
+///
+/// `None` to SKIP an unsupported type; an `Err` status fails the whole import.
 fn h2x_make<'a>(
     doc: &mut XmlDoc,
     s: HtmlNode<'a>,
