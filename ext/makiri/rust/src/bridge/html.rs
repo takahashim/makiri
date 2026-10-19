@@ -460,10 +460,19 @@ pub fn check_owning_doc(rb_doc: &Value) -> Result<(), Error> {
 pub fn new_node<R>(rb_doc: &Value, f: impl FnOnce(&mut HtmlDocMut<'_>) -> R) -> Result<R, Error> {
     let doc = html_doc_unwrap(*rb_doc)?;
     ensure_document_mutable(*rb_doc)?;
-    // SAFETY: a live HTML Document, kept alive by `rb_doc` for this call, not
-    // under evaluation (checked just now), and `f` runs no Ruby.
-    let mut d = unsafe { doc.edit_new_nodes() };
-    Ok(f(&mut d))
+    let r = {
+        // SAFETY: a live HTML Document, kept alive by `rb_doc` for this call,
+        // not under evaluation (checked just now), and `f` runs no Ruby. The
+        // loan ends with this block, before the document is read below.
+        let mut d = unsafe { doc.edit_new_nodes() };
+        f(&mut d)
+    };
+    /* A factory grows the document without an edit after it - a namespace
+     * of a megabyte, a fragment imported - so it reports here, after `f`: the
+     * arguments were converted to copies before, and what `f` made is still a
+     * bare node, so a collection here can free nothing it needs. */
+    crate::bridge::wrapper::account_growth(*rb_doc);
+    Ok(r)
 }
 
 /// Lend the document of `rb_doc` - not the receiver's - for the part of an

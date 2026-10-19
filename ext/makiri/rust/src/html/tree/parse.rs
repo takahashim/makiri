@@ -93,6 +93,13 @@ fn parse_with(input: &[u8], guard: Guard) -> Result<Parsed, ParseFailure> {
     }
     let errors = core::mem::take(&mut tree.errors);
     drop(tree);
+    /* What the parse left dead - the rooms `append_text` reserved - goes now
+     * when it outweighs the live bytes, rather than at the first edit, which a
+     * document only read never makes. A failed compaction leaves the store as
+     * it is. */
+    if doc.compaction_due() {
+        let _ = doc.compact();
+    }
     Ok(Parsed { doc, errors })
 }
 

@@ -165,12 +165,17 @@ pub struct Document {
     /// Bytes of `bytes` no span names any more: what replacing a node's data
     /// left behind (`compact.rs`).
     dead: usize,
+    /// Texts the tree builder appends to with room reserved after them
+    /// (`build.rs`'s `append_text`).
+    growing: build::Growing,
     /// Tag and attribute names, shared with the tokenizer.
     pub names: Names,
     /// Namespace URIs past the static ones.
     ns: Vec<Vec<u8>>,
     /// Prefixes past the static ones.
     prefixes: Vec<Vec<u8>>,
+    /// The bytes of `ns` and `prefixes`' entries: their growth in O(1).
+    ns_bytes: usize,
     /// Lexbor's `compat_mode`: 0 no-quirks, 1 quirks, 2 limited-quirks.
     pub compat_mode: u8,
     /// This document's process-unique stamp (never 0), carried in every
@@ -214,9 +219,11 @@ impl Document {
             doctypes: Vec::new(),
             bytes: Vec::new(),
             dead: 0,
+            growing: build::Growing::default(),
             names: Names::default(),
             ns: Vec::new(),
             prefixes: Vec::new(),
+            ns_bytes: 0,
             compat_mode: compat_mode.min(2),
             stamp: {
                 use core::sync::atomic::Ordering::Relaxed;
@@ -250,6 +257,19 @@ impl Document {
             + self.doctypes.capacity() * core::mem::size_of::<DoctypeData>()
             + self.bytes.capacity()
             + self.names.owned_bytes()
+            + Self::table_bytes(&self.ns)
+            + Self::table_bytes(&self.prefixes)
+    }
+
+    /// What a table of byte strings owns: its own block and each entry's.
+    fn table_bytes(t: &[Vec<u8>]) -> usize {
+        t.iter().map(Vec::capacity).sum::<usize>() + core::mem::size_of_val(t)
+    }
+
+    /// An O(1) measure of what the name and namespace tables hold, which
+    /// [`owned_bytes`](Self::owned_bytes) counts by walking them.
+    pub fn table_growth(&self) -> usize {
+        self.names.stored_bytes() + self.ns_bytes
     }
 
     /* ---- storing ---- */
@@ -344,6 +364,7 @@ impl Document {
         }
         let owned = crate::falloc::try_to_vec(uri).ok_or(DomOom)?;
         oom!(self.ns.falloc_push(owned));
+        self.ns_bytes += uri.len();
         Ok(u32::try_from(res::NS__LAST_ENTRY + self.ns.len() - 1).ok())
     }
 
@@ -376,6 +397,7 @@ impl Document {
         }
         let owned = crate::falloc::try_to_vec(prefix).ok_or(DomOom)?;
         oom!(self.prefixes.falloc_push(owned));
+        self.ns_bytes += prefix.len();
         Ok(u32::try_from(res::NS__LAST_ENTRY + self.prefixes.len() - 1).ok())
     }
 

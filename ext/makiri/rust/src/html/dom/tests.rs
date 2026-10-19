@@ -99,3 +99,48 @@ fn compaction_keeps_every_span_and_bounds_the_store() {
     assert_eq!(d.dead_bytes(), 0);
     assert_eq!(d.bytes.len(), 1024 + 4 + 8 + 6 + 7 + 5);
 }
+
+#[test]
+fn text_appended_between_other_stores_grows_the_store_linearly() {
+    /* Table foster parenting appends to one text between comments; several
+     * texts taking turns must not push each other's room out either. */
+    for texts in [1usize, 2, 4] {
+        let mut d = Document::new(0).expect("doc");
+        let ts: Vec<NodeId> = (0..texts)
+            .map(|_| d.create_data(NodeType::Text, b"").expect("text"))
+            .collect();
+        let n = 20_000;
+        for i in 0..n {
+            let t = ts[i % texts];
+            d.append_text(t, b"a").expect("append");
+            d.create_data(NodeType::Comment, b"x").expect("comment");
+        }
+        for &t in &ts {
+            assert_eq!(d.data(t).map(<[u8]>::len), Some(n / texts));
+        }
+        /* Live bytes are 2n; the rooms and moved copies add a constant
+         * factor, where a copy per append made it ~n^2/2 per text. */
+        assert!(
+            d.bytes.len() < 12 * n,
+            "{texts} texts: {} bytes",
+            d.bytes.len()
+        );
+        d.compact().expect("compact");
+        for &t in &ts {
+            assert_eq!(d.data(t).map(<[u8]>::len), Some(n / texts));
+            assert!(d.data(t).expect("data").iter().all(|&c| c == b'a'));
+        }
+        assert_eq!(d.bytes.len(), 2 * n);
+    }
+}
+
+#[test]
+fn owned_bytes_counts_the_namespace_and_prefix_tables() {
+    let mut d = Document::new(0).expect("doc");
+    let (bytes, growth) = (d.owned_bytes(), d.table_growth());
+    let uri = [b'x'; 100_000];
+    d.intern_ns(&uri).expect("ns");
+    d.intern_prefix(&uri[..50_000]).expect("prefix");
+    assert!(d.owned_bytes() >= bytes + 150_000);
+    assert!(d.table_growth() >= growth + 150_000);
+}

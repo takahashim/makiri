@@ -80,6 +80,7 @@ impl Document {
         }
         self.bytes = out;
         self.dead = 0;
+        self.growing.clear();
         Ok(())
     }
 

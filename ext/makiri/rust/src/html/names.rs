@@ -108,6 +108,9 @@ struct Appended {
     uppers: Vec<Vec<u8>>,
     /// The longest entry's length.
     longest: usize,
+    /// The bytes of every entry, both forms: an O(1) measure of the table's
+    /// growth.
+    stored: usize,
 }
 
 /// How a table compares an input with a stored key.
@@ -210,6 +213,7 @@ impl Appended {
         self.hashes.falloc_reserve(1).map_err(|()| NamesOom)?;
         let index = self.names.len();
         self.longest = self.longest.max(stored.len());
+        self.stored += stored.len() * if up.is_some() { 2 } else { 1 };
         self.names.push(stored);
         self.hashes.push(h);
         if let Some(u) = up {
@@ -345,6 +349,13 @@ impl Names {
     /// Bytes the tables own.
     pub fn owned_bytes(&self) -> usize {
         self.tags.bytes() + self.attrs.bytes() + self.quals.bytes()
+    }
+
+    /// The bytes of the names appended so far, in O(1): what the tables grow
+    /// by, for deciding when to measure [`owned_bytes`](Self::owned_bytes)
+    /// again.
+    pub fn stored_bytes(&self) -> usize {
+        self.tags.stored + self.attrs.stored + self.quals.stored
     }
 
     /// The tag id for `name` if it is already known (`lxb_tag_id_by_name`),

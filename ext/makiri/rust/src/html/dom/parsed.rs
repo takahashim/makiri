@@ -156,9 +156,9 @@ impl HtmlParsed {
 
     /// An O(1) measure that grows with the document, for deciding when to
     /// measure [`external_bytes`](Self::external_bytes) again: the node count
-    /// plus the byte store in 4 KiB pages.
+    /// plus the byte store and the name and namespace tables in 4 KiB pages.
     pub fn arena_chunks(&self) -> usize {
-        self.doc.node_count() / 64 + self.doc.bytes.len() / 4096
+        self.doc.node_count() / 64 + (self.doc.bytes.len() + self.doc.table_growth()) / 4096
     }
 
     /// The 1-based source line for `node`, or `None` when unknown.
