@@ -5,7 +5,7 @@
 
 use super::state_comment::comment_before_start;
 use super::state_doctype::doctype_before;
-use super::{flags, is_alnum, is_alpha, ncasecmp_first, seek4, ErrorId, Tokenizer};
+use super::{flags, is_alnum, is_alpha, ncasecmp_first, seek4, ErrorId, Halted, Tokenizer};
 use crate::compat::{self, Fix};
 use crate::html::res::entities::ENTITIES;
 use crate::html::res::{names as res, sbst_find};
@@ -89,13 +89,7 @@ fn data_state(t: &mut Tokenizer<'_, '_>, mut data: usize, end: usize) -> usize {
                     }
                     return end;
                 }
-                match t.token.null_count.checked_add(1) {
-                    Some(n) => t.token.null_count = n,
-                    None => {
-                        t.status = super::Status::Overflow;
-                        return end;
-                    }
-                }
+                try_or!(t.count_null(), end);
                 t.error(data, ErrorId::Unnuch);
             }
             _ => {}
@@ -132,9 +126,7 @@ fn plaintext(t: &mut Tokenizer<'_, '_>, mut data: usize, end: usize) -> usize {
                     try_or!(t.token_text_done(), end);
                     return end;
                 }
-                t.begin = data + 1;
-                try_or!(t.append_replace(), end);
-                t.error(data, ErrorId::Unnuch);
+                try_or!(t.replace_null(data), end);
             }
             _ => {}
         }
@@ -241,9 +233,7 @@ fn tag_name(t: &mut Tokenizer<'_, '_>, mut data: usize, end: usize) -> usize {
                     return end;
                 }
                 try_or!(t.append_data(data), end);
-                t.begin = data + 1;
-                try_or!(t.append_replace(), end);
-                t.error(data, ErrorId::Unnuch);
+                try_or!(t.replace_null(data), end);
             }
             _ => {}
         }
@@ -306,9 +296,7 @@ fn attribute_name(t: &mut Tokenizer<'_, '_>, mut data: usize, end: usize) -> usi
                     return data;
                 }
                 try_or!(t.append_data(data), end);
-                t.begin = data + 1;
-                try_or!(t.append_replace(), end);
-                t.error(data, ErrorId::Unnuch);
+                try_or!(t.replace_null(data), end);
             }
             0x3D => {
                 try_or!(t.append_data(data), end);
@@ -434,9 +422,7 @@ fn attribute_value_quoted<const Q: u8>(
                     return end;
                 }
                 try_or!(t.append_data(data), end);
-                t.begin = data + 1;
-                try_or!(t.append_replace(), end);
-                t.error(data, ErrorId::Unnuch);
+                try_or!(t.replace_null(data), end);
             }
             _ => {}
         }
@@ -496,9 +482,7 @@ fn attribute_value_unquoted(t: &mut Tokenizer<'_, '_>, mut data: usize, end: usi
                     return end;
                 }
                 try_or!(t.append_data(data), end);
-                t.begin = data + 1;
-                try_or!(t.append_replace(), end);
-                t.error(data, ErrorId::Unnuch);
+                try_or!(t.replace_null(data), end);
             }
             0x22 | 0x27 | 0x3C | 0x3D | 0x60 => {
                 let at = t.token.end;
@@ -774,13 +758,7 @@ fn cdata_section(t: &mut Tokenizer<'_, '_>, mut data: usize, end: usize) -> usiz
                     try_or!(t.token_text_done(), end);
                     return end;
                 }
-                match t.token.null_count.checked_add(1) {
-                    Some(n) => t.token.null_count = n,
-                    None => {
-                        t.status = super::Status::Overflow;
-                        return end;
-                    }
-                }
+                try_or!(t.count_null(), end);
             }
             _ => {}
         }
@@ -972,11 +950,10 @@ fn processing_instruction_questionable(
 
 /// `lxb_html_tokenizer_state_processing_instruction_to_comment`: prefix the
 /// buffer with `?`.
-fn processing_instruction_to_comment(t: &mut Tokenizer<'_, '_>) -> Result<(), ()> {
+fn processing_instruction_to_comment(t: &mut Tokenizer<'_, '_>) -> Result<(), Halted> {
     use crate::falloc::Reserve;
     if t.buf.falloc_reserve(1).is_err() {
-        t.status = super::Status::Oom;
-        return Err(());
+        return Err(t.halt(super::Status::Oom));
     }
     t.buf.insert(0, b'?');
     Ok(())
@@ -1098,7 +1075,7 @@ fn char_ref_named(t: &mut Tokenizer<'_, '_>, mut data: usize, end: usize) -> usi
     if new_len > t.buf.len() {
         use crate::falloc::Reserve;
         if t.buf.falloc_reserve(new_len - t.buf.len()).is_err() {
-            t.status = super::Status::Oom;
+            t.halt(super::Status::Oom);
             return end;
         }
         t.buf.resize(new_len, 0);

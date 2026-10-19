@@ -158,13 +158,12 @@ fn text(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> b
 /// out of foreign content.
 fn all(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mut Tok) -> bool {
     if tok.tag_id == res::TAG_FONT {
-        let breaks = tok.has_attrs
-            && tkz.token.attrs.iter().any(|a| {
-                matches!(
-                    a.name,
-                    Some(res::ATTR_COLOR) | Some(res::ATTR_FACE) | Some(res::ATTR_SIZE)
-                )
-            });
+        let breaks = tok.attrs(tkz).iter().any(|a| {
+            matches!(
+                a.name,
+                Some(res::ATTR_COLOR) | Some(res::ATTR_FACE) | Some(res::ATTR_SIZE)
+            )
+        });
         if !breaks {
             return anything_else(tree, tkz, tok);
         }
@@ -204,7 +203,7 @@ pub fn foreign_content(
             true
         }
         res::TAG__PROCESSINGINSTRUCTION => {
-            if tree.insert_processing_instruction(tkz, tok, None).is_err() {
+            if tree.insert_processing_instruction(tkz, None).is_err() {
                 return tree.process_abort();
             }
             true

@@ -17,7 +17,7 @@ pub fn after_body(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: 
         }
         res::TAG__PROCESSINGINSTRUCTION => {
             let html = tree.open_first();
-            if tree.insert_processing_instruction(tkz, tok, html).is_err() {
+            if tree.insert_processing_instruction(tkz, html).is_err() {
                 return tree.process_abort();
             }
         }

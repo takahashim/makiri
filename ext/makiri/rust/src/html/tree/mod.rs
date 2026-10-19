@@ -50,7 +50,7 @@ use crate::falloc::VecPush;
 use crate::html::dom::{Document, NodeId};
 use crate::html::names::Names;
 use crate::html::res::names as res;
-use crate::html::tokenizer::{flags, Stop, TokenSink, Tokenizer};
+use crate::html::tokenizer::{flags, Stop, TokenAttr, TokenSink, Tokenizer};
 
 /// Why the tree builder stopped (`tree->status`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -173,6 +173,17 @@ impl Tok {
     #[inline]
     pub fn is_close(&self) -> bool {
         self.flags & flags::CLOSE != 0
+    }
+
+    /// The token's attributes: none for a fake token, whatever the
+    /// tokenizer holds.
+    #[inline]
+    pub fn attrs<'a>(&self, tkz: &'a Tokenizer<'_, '_>) -> &'a [TokenAttr] {
+        if self.has_attrs {
+            &tkz.token.attrs
+        } else {
+            &[]
+        }
     }
 
     /// The token's text.

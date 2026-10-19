@@ -138,13 +138,12 @@ fn table_closed(tree: &mut TreeBuilder<'_>, tok: &Tok) -> bool {
 
 /// `lxb_html_tree_insertion_mode_in_table_input`.
 fn input(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mut Tok) -> bool {
-    let hidden = tok.has_attrs
-        && tkz.token.attrs.iter().any(|a| {
-            a.name == Some(res::ATTR_TYPE)
-                && tkz
-                    .attr_value(a)
-                    .is_some_and(|v| v.eq_ignore_ascii_case(b"hidden"))
-        });
+    let hidden = tok.attrs(tkz).iter().any(|a| {
+        a.name == Some(res::ATTR_TYPE)
+            && tkz
+                .attr_value(a)
+                .is_some_and(|v| v.eq_ignore_ascii_case(b"hidden"))
+    });
     if !hidden {
         return anything_else(tree, tkz, tok);
     }
@@ -230,7 +229,7 @@ pub fn in_table(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &m
             true
         }
         res::TAG__PROCESSINGINSTRUCTION => {
-            if tree.insert_processing_instruction(tkz, tok, None).is_err() {
+            if tree.insert_processing_instruction(tkz, None).is_err() {
                 return tree.process_abort();
             }
             true

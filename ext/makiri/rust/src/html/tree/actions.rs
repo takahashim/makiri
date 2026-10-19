@@ -180,10 +180,7 @@ impl TreeBuilder<'_> {
         tok: &Tok,
         ns: usize,
     ) -> Result<(), TreeStatus> {
-        if !tok.has_attrs {
-            return Ok(());
-        }
-        for ta in &tkz.token.attrs {
+        for ta in tok.attrs(tkz) {
             let Some(name) = ta.name else { continue };
             if self.attr_by_local_name_ns(el, name, ns) {
                 continue;
@@ -391,18 +388,16 @@ impl TreeBuilder<'_> {
         Ok(c)
     }
 
-    /// `lxb_html_tree_insert_processing_instruction`: the target is the
-    /// token's first `null_count` bytes, the data the rest.
+    /// `lxb_html_tree_insert_processing_instruction`, the target and data as
+    /// the tokenizer splits them ([`Tokenizer::pi_parts`]).
     pub(crate) fn insert_processing_instruction(
         &mut self,
         tkz: &Tokenizer<'_, '_>,
-        tok: &Tok,
         pos: Option<NodeId>,
     ) -> Result<NodeId, TreeStatus> {
         let (pos, ipos) = self.appropriate_place(pos).ok_or(TreeStatus::Error)?;
-        let text = tok.text(tkz);
-        let at = tok.null_count.min(text.len());
-        let pi = self.doc.create_pi(&text[..at], &text[at..]).map_err(oom)?;
+        let (target, data) = tkz.pi_parts();
+        let pi = self.doc.create_pi(target, data).map_err(oom)?;
         self.insert_node(pos, pi, ipos);
         Ok(pi)
     }
@@ -415,25 +410,10 @@ impl TreeBuilder<'_> {
         &mut self,
         tkz: &Tokenizer<'_, '_>,
     ) -> Result<(NodeId, usize, usize, usize), TreeStatus> {
-        let attrs = &tkz.token.attrs;
-        let mut name_id = 0;
-        let (mut public, mut system): (&[u8], &[u8]) = (b"", b"");
-        if let Some(first) = attrs.first() {
-            name_id = first.name.unwrap_or(0);
-            if let Some(second) = attrs.get(1) {
-                let value = |a| tkz.attr_value(a).unwrap_or_default();
-                if second.name == Some(res::ATTR_PUBLIC) {
-                    public = value(second);
-                    if second.value_begin.is_some() {
-                        if let Some(third) = attrs.get(2) {
-                            system = value(third);
-                        }
-                    }
-                } else if second.name == Some(res::ATTR_SYSTEM) {
-                    system = value(second);
-                }
-            }
-        }
+        let parts = tkz.doctype();
+        let name_id = parts.name.and_then(|a| a.name).unwrap_or(0);
+        let public = parts.public_id.unwrap_or_default();
+        let system = parts.system_id.unwrap_or_default();
         /* `lxb_dom_document_type_name`: `LXB_DOM_ATTR__UNDEF` reads as "". */
         let name = match name_id {
             res::ATTR__UNDEF => &b""[..],

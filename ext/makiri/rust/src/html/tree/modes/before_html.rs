@@ -27,7 +27,7 @@ fn open(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mut Tok) 
         }
         res::TAG__PROCESSINGINSTRUCTION => {
             if tree
-                .insert_processing_instruction(tkz, tok, Some(NodeId::DOCUMENT))
+                .insert_processing_instruction(tkz, Some(NodeId::DOCUMENT))
                 .is_err()
             {
                 return tree.process_abort();

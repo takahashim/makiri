@@ -22,7 +22,7 @@ fn open(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mut Tok) 
             }
         }
         res::TAG__PROCESSINGINSTRUCTION => {
-            if tree.insert_processing_instruction(tkz, tok, None).is_err() {
+            if tree.insert_processing_instruction(tkz, None).is_err() {
                 return tree.process_abort();
             }
         }
