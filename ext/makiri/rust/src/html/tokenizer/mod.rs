@@ -119,9 +119,37 @@ pub struct ParseError {
 }
 
 /// A sink's request to stop tokenizing (Lexbor's NULL return from the
-/// callback).
+/// callback), with why: the tokenizer's status reports it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stop;
+pub enum Stop {
+    /// The sink could not allocate.
+    Oom,
+    /// Anything else.
+    Error,
+}
+
+/// What a tokenizer is set up with, before its first chunk.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Options {
+    /// `LXB_HTML_TOKENIZER_OPT_ATTR_KEEP_DUPLICATE`: hand a start tag's
+    /// repeated attributes on rather than dropping them. Lexbor's parser
+    /// sets it, and its tree builder drops a repeat by name and namespace.
+    pub keep_duplicate: bool,
+    /// `NS__UNDEF` as the current namespace is a foreign namespace, not "no
+    /// tree": a fragment whose context's namespace the parser was given as
+    /// none.
+    pub undef_is_foreign: bool,
+}
+
+/// The text-content states a tree builder switches the tokenizer into after
+/// a start tag (the Standard's "switch the tokenizer to the ... state"),
+/// which only an appropriate end tag leaves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextContent {
+    Rcdata,
+    Rawtext,
+    ScriptData,
+}
 
 /// The receiver of each finished token: Lexbor's `callback_token_done`.
 ///
@@ -154,7 +182,9 @@ pub struct Tokenizer<'i, 's> {
     pub(crate) markup_pos: Option<usize>,
     /// `temp`: where an RCDATA/RAWTEXT/script end tag began.
     pub(crate) temp: Option<usize>,
-    pub tmp_tag_id: usize,
+    /// The tag of the last start tag, which decides whether an end tag in
+    /// RCDATA/RAWTEXT/script data is "appropriate".
+    tmp_tag_id: usize,
 
     /// `begin`: where the input not yet appended to the buffer starts.
     pub(crate) begin: usize,
@@ -168,25 +198,24 @@ pub struct Tokenizer<'i, 's> {
     pub(crate) entity_number: u32,
     pub(crate) is_attribute: bool,
 
-    pub status: Status,
+    status: Status,
     pub(crate) is_eof: bool,
     /// The namespace of the tree builder's adjusted current node, which
     /// decides whether `<![CDATA[` opens a CDATA section
     /// (`lxb_html_tokenizer_current_namespace`); `NS__UNDEF` with no tree.
-    pub current_ns: usize,
-    /// `NS__UNDEF` in `current_ns` is a foreign namespace, not "no tree":
-    /// a fragment whose context's namespace the parser was given as none.
-    pub undef_is_foreign: bool,
-    /// `LXB_HTML_TOKENIZER_OPT_ATTR_KEEP_DUPLICATE`: hand a start tag's
-    /// repeated attributes on rather than dropping them. Lexbor's parser
-    /// sets it, and its tree builder drops a repeat by name and namespace.
-    pub keep_duplicate: bool,
+    current_ns: usize,
+    options: Options,
 }
 
 impl<'i, 's> Tokenizer<'i, 's> {
     /// `lxb_html_tokenizer_create` + `_init` + `_begin`, over `input`, in the
     /// data state, interning names into the sink's table.
     pub fn new(input: &'i [u8], sink: &'s mut dyn TokenSink) -> Self {
+        Self::with_options(input, sink, Options::default())
+    }
+
+    /// [`new`](Self::new), set up with `options`.
+    pub fn with_options(input: &'i [u8], sink: &'s mut dyn TokenSink, options: Options) -> Self {
         Tokenizer {
             input,
             state: data_before,
@@ -211,14 +240,54 @@ impl<'i, 's> Tokenizer<'i, 's> {
             status: Status::Ok,
             is_eof: false,
             current_ns: res::NS__UNDEF,
-            undef_is_foreign: false,
-            keep_duplicate: false,
+            options,
         }
     }
 
     /// `lxb_html_tokenizer_state_set`.
-    pub fn set_state(&mut self, state: State) {
+    fn set_state(&mut self, state: State) {
         self.state = state;
+    }
+
+    /// Switch to the `content` state after the start tag `tag_id`, which an
+    /// end tag must name to close it (`lxb_html_tokenizer_tmp_tag_id_set`
+    /// and `lxb_html_tokenizer_state_set` together, which every caller
+    /// paired).
+    pub fn enter_text_content(&mut self, content: TextContent, tag_id: usize) {
+        self.tmp_tag_id = tag_id;
+        self.set_state(match content {
+            TextContent::Rcdata => rcdata_before,
+            TextContent::Rawtext => rawtext_before,
+            TextContent::ScriptData => script_data_before,
+        });
+    }
+
+    /// Switch to the PLAINTEXT state, which nothing leaves.
+    pub fn enter_plaintext(&mut self) {
+        self.set_state(plaintext_before);
+    }
+
+    /// The fragment parsing algorithm's step: the state its context element
+    /// `tag_id` in `ns` puts the tokenizer in, with no end tag appropriate -
+    /// no start tag has been seen (`lxb_html_parse_fragment_chunk_begin`).
+    pub fn enter_fragment_context(&mut self, scripting: bool, tag_id: usize, ns: usize) {
+        self.set_state_by_tag(scripting, tag_id, ns);
+        self.tmp_tag_id = res::TAG__UNDEF;
+    }
+
+    /// The namespace of the tree builder's adjusted current node, which the
+    /// tree builder reports after each token.
+    #[inline]
+    pub fn set_current_namespace(&mut self, ns: usize) {
+        self.current_ns = ns;
+    }
+
+    /// Whether the adjusted current node is foreign content, for
+    /// `<![CDATA[`.
+    #[inline]
+    pub(crate) fn in_foreign_content(&self) -> bool {
+        let ns = self.current_ns;
+        ns != res::NS_HTML && (ns != res::NS__UNDEF || self.options.undef_is_foreign)
     }
 
     /// The parse errors recorded so far.
@@ -390,7 +459,7 @@ impl<'i, 's> Tokenizer<'i, 's> {
 
     /// `lxb_html_tokenizer_state_token_attr_add_m`.
     pub(crate) fn attr_add(&mut self) -> Result<(), ()> {
-        if !self.keep_duplicate {
+        if !self.options.keep_duplicate {
             self.attr_last_duplicate();
         }
         if self.token.attrs.falloc_push(TokenAttr::default()).is_err() {
@@ -477,9 +546,12 @@ impl<'i, 's> Tokenizer<'i, 's> {
         };
         let r = sink.token(self);
         self.sink = Some(sink);
-        if r.is_err() {
+        if let Err(stop) = r {
             if self.status == Status::Ok {
-                self.status = Status::Error;
+                self.status = match stop {
+                    Stop::Oom => Status::Oom,
+                    Stop::Error => Status::Error,
+                };
             }
             return Err(());
         }
@@ -489,7 +561,7 @@ impl<'i, 's> Tokenizer<'i, 's> {
     /// `_lxb_html_tokenizer_state_token_done_m`: the duplicate check, the
     /// end-tag check, the callback. `Err` when the callback stopped.
     fn token_done_inner(&mut self) -> Result<(), ()> {
-        if !self.keep_duplicate {
+        if !self.options.keep_duplicate {
             self.attr_last_duplicate();
         }
         if self.token.flags & flags::CLOSE != 0 {
@@ -532,37 +604,33 @@ impl<'i, 's> Tokenizer<'i, 's> {
 
     /// `lxb_html_tokenizer_set_state_by_tag`: the state a start tag in the HTML
     /// namespace switches the tokenizer to.
-    pub fn set_state_by_tag(&mut self, scripting: bool, tag_id: usize, ns: usize) {
+    fn set_state_by_tag(&mut self, scripting: bool, tag_id: usize, ns: usize) {
         if ns != res::NS_HTML {
             self.state = data_before;
             return;
         }
         match tag_id {
             res::TAG_TITLE | res::TAG_TEXTAREA => {
-                self.tmp_tag_id = tag_id;
-                self.state = rcdata_before;
+                self.enter_text_content(TextContent::Rcdata, tag_id);
             }
             res::TAG_STYLE
             | res::TAG_XMP
             | res::TAG_IFRAME
             | res::TAG_NOEMBED
             | res::TAG_NOFRAMES => {
-                self.tmp_tag_id = tag_id;
-                self.state = rawtext_before;
+                self.enter_text_content(TextContent::Rawtext, tag_id);
             }
             res::TAG_SCRIPT => {
-                self.tmp_tag_id = tag_id;
-                self.state = script_data_before;
+                self.enter_text_content(TextContent::ScriptData, tag_id);
             }
             res::TAG_NOSCRIPT => {
                 if scripting {
-                    self.tmp_tag_id = tag_id;
-                    self.state = rawtext_before;
+                    self.enter_text_content(TextContent::Rawtext, tag_id);
                     return;
                 }
                 self.state = data_before;
             }
-            res::TAG_PLAINTEXT => self.state = plaintext_before,
+            res::TAG_PLAINTEXT => self.enter_plaintext(),
             _ => {}
         }
     }

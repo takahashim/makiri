@@ -10,8 +10,8 @@ use crate::compat::{self, Fix};
 use crate::html::dom::{AttrValue, DomOom, NodeId, NodeType};
 use crate::html::res::names as res;
 use crate::html::res::tree as rt;
+use crate::html::tokenizer::TextContent;
 use crate::html::tokenizer::{flags, Tokenizer};
-use crate::html::tokenizer::{rawtext_before, rcdata_before};
 
 /// An attribute about to be made: Lexbor's name fields, which the
 /// adjustments rewrite before the attribute is appended.
@@ -457,8 +457,7 @@ impl TreeBuilder<'_> {
         tok: &Tok,
     ) -> Result<NodeId, TreeStatus> {
         let el = self.insert_html_element(tkz, tok)?;
-        tkz.tmp_tag_id = tok.tag_id;
-        tkz.set_state(rawtext_before);
+        tkz.enter_text_content(TextContent::Rawtext, tok.tag_id);
         self.original_mode = self.mode;
         self.mode = Mode::Text;
         Ok(el)
@@ -471,8 +470,7 @@ impl TreeBuilder<'_> {
         tok: &Tok,
     ) -> Result<NodeId, TreeStatus> {
         let el = self.insert_html_element(tkz, tok)?;
-        tkz.tmp_tag_id = tok.tag_id;
-        tkz.set_state(rcdata_before);
+        tkz.enter_text_content(TextContent::Rcdata, tok.tag_id);
         self.original_mode = self.mode;
         self.mode = Mode::Text;
         Ok(el)

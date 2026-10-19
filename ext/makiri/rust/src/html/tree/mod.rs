@@ -50,7 +50,7 @@ use crate::falloc::VecPush;
 use crate::html::dom::{Document, NodeId};
 use crate::html::names::Names;
 use crate::html::res::names as res;
-use crate::html::tokenizer::{flags, Status, Stop, TokenSink, Tokenizer};
+use crate::html::tokenizer::{flags, Stop, TokenSink, Tokenizer};
 
 /// Why the tree builder stopped (`tree->status`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -490,7 +490,7 @@ impl<'d> TreeBuilder<'d> {
         let handed = tok;
         let before = self.guard_before(&handed);
         while !self.dispatch(tkz, &mut tok) {}
-        tkz.current_ns = self.current_namespace();
+        tkz.set_current_namespace(self.current_namespace());
         if self.status == TreeStatus::Ok && !self.guard_after(before, &handed) {
             self.status = TreeStatus::Error;
         }
@@ -503,13 +503,8 @@ impl TokenSink for TreeBuilder<'_> {
     fn token(&mut self, tkz: &mut Tokenizer<'_, '_>) -> Result<(), Stop> {
         match self.process(tkz) {
             TreeStatus::Ok => Ok(()),
-            st => {
-                tkz.status = match st {
-                    TreeStatus::Oom => Status::Oom,
-                    _ => Status::Error,
-                };
-                Err(Stop)
-            }
+            TreeStatus::Oom => Err(Stop::Oom),
+            _ => Err(Stop::Error),
         }
     }
 

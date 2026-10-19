@@ -650,8 +650,7 @@ fn markup_declaration_open(t: &mut Tokenizer<'_, '_>, mut data: usize, end: usiz
             return data;
         }
         if t.input_slice(data, 7) == b"[CDATA[" {
-            let ns = t.current_ns;
-            if ns != res::NS_HTML && (ns != res::NS__UNDEF || t.undef_is_foreign) {
+            if t.in_foreign_content() {
                 data += 7;
                 t.token_set_begin(data);
                 t.state = cdata_section_before;
@@ -719,8 +718,7 @@ fn markup_declaration_cdata(t: &mut Tokenizer<'_, '_>, data: usize, end: usize) 
         return data;
     };
     if rest.is_empty() {
-        let ns = t.current_ns;
-        if ns != res::NS_HTML && (ns != res::NS__UNDEF || t.undef_is_foreign) {
+        if t.in_foreign_content() {
             let data = data + (t.markup.len() - rest.len());
             t.state = cdata_section_before;
             return data;

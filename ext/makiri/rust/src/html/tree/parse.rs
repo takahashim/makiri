@@ -8,7 +8,7 @@ use crate::falloc::try_box;
 use crate::html::dom::{Document, DomOom, HtmlParsed, NodeId};
 use crate::html::names::Names;
 use crate::html::res::names as res;
-use crate::html::tokenizer::{Status, Stop, TokenSink, Tokenizer};
+use crate::html::tokenizer::{Options, Status, Stop, TokenSink, Tokenizer};
 use crate::source_lines::lines_build;
 use crate::utf8_input::sanitize;
 
@@ -68,9 +68,12 @@ fn parse_with(input: &[u8], guard: Guard) -> Result<Parsed, ParseFailure> {
     let mut tree = TreeBuilder::new(&mut doc);
     tree.guard = guard;
     let status = {
-        let mut tkz = Tokenizer::new(input, &mut tree);
-        /* `lxb_html_parser_init` */
-        tkz.keep_duplicate = true;
+        /* `lxb_html_parser_init` keeps duplicates. */
+        let options = Options {
+            keep_duplicate: true,
+            ..Options::default()
+        };
+        let mut tkz = Tokenizer::with_options(input, &mut tree, options);
         match tkz.chunk() {
             Status::Ok => tkz.end(),
             st => st,

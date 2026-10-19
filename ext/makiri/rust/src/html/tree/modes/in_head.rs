@@ -1,7 +1,7 @@
 //! The "in head" insertion mode (`insertion_mode/in_head.c`).
 
 use crate::html::res::names as res;
-use crate::html::tokenizer::{script_data_before, Tokenizer};
+use crate::html::tokenizer::{TextContent, Tokenizer};
 use crate::html::tree::error::TreeErrorId as E;
 use crate::html::tree::{Mode, Tok, TreeBuilder, TreeStatus};
 
@@ -100,8 +100,7 @@ fn script(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) ->
         return tree.abort_with(st);
     }
     tree.insert_node(pos, el, ipos);
-    tkz.tmp_tag_id = tok.tag_id;
-    tkz.set_state(script_data_before);
+    tkz.enter_text_content(TextContent::ScriptData, tok.tag_id);
     tree.original_mode = tree.mode;
     tree.mode = Mode::Text;
     true

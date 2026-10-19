@@ -7,7 +7,7 @@ use super::{Mode, TreeBuilder, TreeStatus};
 use crate::compat::{self, Fix};
 use crate::html::dom::{Document, DomOom, NodeId};
 use crate::html::res::names as res;
-use crate::html::tokenizer::{Status, Tokenizer};
+use crate::html::tokenizer::{Options, Status, Tokenizer};
 use crate::utf8_input::sanitize;
 
 /// Why a fragment parse produced no fragment.
@@ -105,13 +105,14 @@ pub fn parse_fragment(
     let status = {
         let current_ns = tree.current_namespace();
         let foreign = facts.foreign_namespace && compat::fixed(Fix::P19);
-        let mut tkz = Tokenizer::new(bytes, &mut tree);
-        /* `lxb_html_parser_init` */
-        tkz.keep_duplicate = true;
-        tkz.set_state_by_tag(false, tag, ns);
-        tkz.tmp_tag_id = res::TAG__UNDEF;
-        tkz.current_ns = current_ns;
-        tkz.undef_is_foreign = foreign;
+        /* `lxb_html_parser_init` keeps duplicates. */
+        let options = Options {
+            keep_duplicate: true,
+            undef_is_foreign: foreign,
+        };
+        let mut tkz = Tokenizer::with_options(bytes, &mut tree, options);
+        tkz.enter_fragment_context(false, tag, ns);
+        tkz.set_current_namespace(current_ns);
         match tkz.chunk() {
             Status::Ok => tkz.end(),
             st => st,

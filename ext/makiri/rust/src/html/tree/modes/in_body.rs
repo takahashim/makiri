@@ -7,7 +7,7 @@ use crate::falloc::try_vec_with_capacity;
 use crate::html::dom::NodeId;
 use crate::html::res::names as res;
 use crate::html::res::tree as rt;
-use crate::html::tokenizer::{flags, plaintext_before, rcdata_before, Tokenizer};
+use crate::html::tokenizer::{flags, TextContent, Tokenizer};
 use crate::html::tree::actions::is_category;
 use crate::html::tree::error::TreeErrorId as E;
 use crate::html::tree::{is_ws, AttrAdjust, Mode, Tok, TreeBuilder, TreeStatus};
@@ -326,7 +326,7 @@ fn plaintext(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok)
     if insert(tree, tkz, tok).is_none() {
         return true;
     }
-    tkz.set_state(plaintext_before);
+    tkz.enter_plaintext();
     true
 }
 
@@ -719,8 +719,7 @@ fn textarea(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) 
     if insert(tree, tkz, tok).is_none() {
         return true;
     }
-    tkz.tmp_tag_id = res::TAG_TEXTAREA;
-    tkz.set_state(rcdata_before);
+    tkz.enter_text_content(TextContent::Rcdata, res::TAG_TEXTAREA);
     tree.frameset_ok = false;
     tree.original_mode = tree.mode;
     tree.mode = Mode::InBodySkipNewLineTextarea;
