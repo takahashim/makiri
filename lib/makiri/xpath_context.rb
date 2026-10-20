@@ -27,39 +27,6 @@ module Makiri
     #   in progress, since it would free/swap state the suspended evaluator still
     #   borrows; a nested +evaluate+ is allowed.
 
-    # The Fiber an evaluation's handler calls run in, made once per
-    # evaluation that calls one (bridge/xpath/handler.rs). The evaluator's
-    # frames stay in the caller's Fiber: a handler that switches Fibers -
-    # Fiber.yield, an Enumerator's yielder - suspends only its own frames
-    # here, and the evaluation fails instead of being left suspended with the
-    # document locked. Each op is [call?, handler, method, args]; each answer
-    # is [this Fiber, result], so a value the handler yields itself is told
-    # from an answer.
-    #
-    # respond_to? is asked as C's rb_respond_to asks it: the receiver's own
-    # respond_to? when it has one, else Kernel's - so a BasicObject handler,
-    # which has none, is still asked rather than refused with NoMethodError.
-    def self.__handler_fiber # :nodoc:
-      Fiber.new(blocking: true) do |op|
-        me = Fiber.current
-        loop do
-          recv = op[1]
-          out = if op[0]
-                  recv.__send__(op[2], *op[3])
-                elsif RESPOND_TO.bind_call(recv, :respond_to?, true)
-                  recv.__send__(:respond_to?, op[2])
-                else
-                  RESPOND_TO.bind_call(recv, op[2])
-                end
-          op = Fiber.yield([me, out])
-        end
-      end
-    end
-    private_class_method :__handler_fiber
-
-    RESPOND_TO = ::Kernel.instance_method(:respond_to?)
-    private_constant :RESPOND_TO
-
     # Nokogiri-compatible name for {#register_namespace}.
     alias register_ns register_namespace
 

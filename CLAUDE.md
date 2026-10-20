@@ -760,17 +760,15 @@ Custom functions: unknown calls route through the engine resolver to
 `handler.<local_name with - → _>`, run under `rb_protect`, so a raise is never
 a long-jump through the evaluator: a `StandardError` becomes `Makiri::Error`
 (the original as its `#cause`), and anything else - `Interrupt`, `exit`,
-Timeout's exception - is kept in the per-evaluate `Bridge` (on
+Timeout's exception, a `throw` - is kept in the per-evaluate `Bridge` (on
 `evaluate_query`'s stack, so the GC sees it) and re-raised UNCHANGED once the
-evaluation and its guard are gone (`handler::propagates`). The handler's
-calls (its `respond_to?` too) run in a Fiber made for the evaluation
-(`XPathContext.__handler_fiber`, `Bridge::in_fiber`), so the evaluator's
-frames never sit in a Fiber the handler can suspend: a handler that switches
-Fibers (`Fiber.yield`, an Enumerator's yielder) fails the evaluation, where it
-used to leave it suspended for good with the document's guard held. A `throw`
-cannot leave that Fiber, so it fails the evaluation too (`UncaughtThrowError`
-as the cause), and `Thread.current[]` (Fiber-local) reads the handler Fiber's
-own values; Fiber storage (`Fiber[]`) is inherited. Node-set
+evaluation and its guard are gone (`handler::propagates`). A handler that
+switches Fibers (an Enumerator's yielder) leaves the evaluation suspended with
+the document's guard held, as an abandoned `Hash#each` Enumerator leaves its
+Hash locked; this is accepted. Running the handler in a Fiber of its own was
+tried and reverted: every call of user code (`respond_to?`, the result's
+`to_s`, an exception's `#message`) had to be routed into it, and each one
+missed was the same hang again. Node-set
 returns from a foreign document are rejected. A handler may not modify the document
 being evaluated: while an evaluation with a handler runs, every mutator on that
 document raises `Makiri::Error` - the factories (`create_*`, `clone_node`,

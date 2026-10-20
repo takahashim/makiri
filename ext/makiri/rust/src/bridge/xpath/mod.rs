@@ -364,8 +364,6 @@ pub fn evaluate_query(
             document: document.as_raw(),
             _reading: crate::bridge::wrapper::DocumentEvaluation::enter(document)?,
             raised: core::cell::OnceCell::new(),
-            fiber: core::cell::Cell::new(crate::bridge::ruby::nil().as_raw()),
-            answered: core::cell::RefCell::new(Vec::new()),
         }),
     };
     let result = ctx.run(ast, bridge.as_ref().map(|b| b as &dyn Resolver), answer);

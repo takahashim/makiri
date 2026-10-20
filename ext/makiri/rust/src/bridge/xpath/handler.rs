@@ -6,7 +6,7 @@
 
 use magnus::rb_sys::AsRawValue;
 use magnus::value::ReprValue;
-use magnus::{Error, RString, Ruby, Value};
+use magnus::{Error, Ruby, Value};
 
 use crate::bridge::node_set::NodeSet as RubyNodeSet;
 use crate::bridge::ruby::VALUE;
@@ -50,21 +50,6 @@ pub(super) struct Bridge {
     /// so the exception VALUE inside is seen by the GC's conservative stack
     /// scan for as long as it is held here.
     pub(super) raised: core::cell::OnceCell<Error>,
-    /// The Fiber the handler's calls run in (`XPathContext.__handler_fiber`),
-    /// `nil` until the first call makes it, and again once one left it
-    /// unusable. On this frame's stack, as `raised` is, so the GC sees it.
-    ///
-    /// The point of it: the evaluator's frames never run in a Fiber the
-    /// handler can suspend. A handler that switched Fibers from the caller's
-    /// own - an `Enumerator` the evaluation runs inside, abandoned after one
-    /// `next` - used to leave this frame suspended for good, with the
-    /// document's evaluation guard held: every later edit refused, and
-    /// nothing the frames owned ever freed.
-    pub(super) fiber: core::cell::Cell<VALUE>,
-    /// The methods the handler said it responds to, this evaluation: asked
-    /// once each, so a call costs one Fiber switch rather than two. A handful
-    /// of names at most, so a list; one that cannot grow only stops caching.
-    pub(super) answered: core::cell::RefCell<Vec<crate::bridge::ruby::ID>>,
 }
 
 impl Bridge {
@@ -73,140 +58,7 @@ impl Bridge {
     fn stash(&self, e: Error) {
         let _ = self.raised.set(e);
     }
-
-    /// Run one op in the handler's Fiber: `recv.respond_to?(method)` when
-    /// `args` is `None`, else the call `recv.method(*args)`. `recv` is the
-    /// handler, or for the `to_s` of its result ([`Bridge::result_to_s`])
-    /// that result: any of the handler's Ruby runs here. `None` when that
-    /// Ruby switched Fibers instead of answering - its Fiber is then
-    /// suspended in the handler, so it is dropped (it holds Ruby frames
-    /// only, which Ruby frees with it).
-    ///
-    /// # Safety
-    /// Under `protect`: making the Fiber, the op Array and the resume all
-    /// raise, and the handler's own raise comes out of the resume. `recv`
-    /// is live on the caller's frame, and `args` holds at most
-    /// [`HANDLER_MAX_ARGS`] values.
-    unsafe fn in_fiber(
-        &self,
-        recv: VALUE,
-        method: crate::bridge::ruby::ID,
-        args: Option<&[VALUE]>,
-    ) -> Option<VALUE> {
-        let ruby = crate::bridge::ruby::gvl_ruby();
-        let nil = ruby.qnil().as_raw();
-        let mut fiber = self.fiber.get();
-        if fiber == nil {
-            // SAFETY: under protect (the caller's contract); the class is live.
-            fiber = unsafe {
-                crate::bridge::ruby::funcallv(
-                    crate::init::CLASS_XPATH_CONTEXT.raw(),
-                    crate::bridge::ruby::intern("__handler_fiber"),
-                    &[],
-                )
-            };
-            self.fiber.set(fiber);
-        }
-        // SAFETY: `rb_id2sym` makes no object for an interned id.
-        let name = unsafe { rb_sys::rb_id2sym(method) };
-        let op = match args {
-            None => ruby.ary_new_from_values(&[
-                ruby.qfalse().as_value(),
-                value_of(recv),
-                value_of(name),
-            ]),
-            Some(a) => {
-                /* Built in one raising call, not pushed: `RArray::push`
-                 * returns its allocator's raise as `Err`, and a dropped one
-                 * called the handler with arguments missing. Under protect,
-                 * the raise fails the call instead. */
-                let mut vals = [ruby.qnil().as_value(); HANDLER_MAX_ARGS];
-                let mut n = 0;
-                for (slot, &v) in vals.iter_mut().zip(a) {
-                    *slot = value_of(v);
-                    n += 1;
-                }
-                let argv = ruby.ary_new_from_values(&vals[..n]);
-                ruby.ary_new_from_values(&[
-                    ruby.qtrue().as_value(),
-                    value_of(recv),
-                    value_of(name),
-                    argv.as_value(),
-                ])
-            }
-        };
-        // SAFETY: under protect; a live Fiber and a live op.
-        let answer = unsafe {
-            crate::bridge::ruby::funcallv(
-                fiber,
-                crate::bridge::ruby::intern("resume"),
-                &[op.as_raw()],
-            )
-        };
-        /* An answer is `[the Fiber, result]`; anything else is a value the
-         * handler passed to a Fiber switch of its own. */
-        let answer = magnus::RArray::from_value(value_of(answer))
-            .filter(|a| a.len() == 2)
-            .and_then(|a| Some((a.entry::<Value>(0).ok()?, a.entry::<Value>(1).ok()?)));
-        match answer {
-            Some((who, out)) if who.as_raw() == fiber => Some(out.as_raw()),
-            _ => {
-                self.fiber.set(nil);
-                None
-            }
-        }
-    }
-
-    /// The handler's result as a String: [`crate::bridge::ruby::to_s`], with
-    /// the `to_s` run in the handler's Fiber. It is the handler's Ruby too,
-    /// and run on the caller's Fiber a `Fiber.yield` in it suspended the
-    /// evaluation with the document's guard held, as a handler's own did.
-    fn result_to_s(&self, rv: Value) -> Result<RString, HandlerFailure> {
-        const NOT_A_STRING: &str = "handler result could not be converted to a string";
-        let ruby = crate::bridge::ruby::gvl_ruby();
-        if let Some(s) = RString::from_value(rv) {
-            if rv.class().as_raw() == ruby.class_string().as_raw() {
-                return Ok(s);
-            }
-        }
-        let mut switched = false;
-        let r = crate::bridge::ruby::protect(|| {
-            // SAFETY: under protect, as `in_fiber` asks; `rv` is live on
-            // this frame, and no argument is passed.
-            match unsafe {
-                self.in_fiber(rv.as_raw(), crate::bridge::ruby::intern("to_s"), Some(&[]))
-            } {
-                Some(v) => v,
-                None => {
-                    switched = true;
-                    rb_sys::Qnil as VALUE
-                }
-            }
-        });
-        match r {
-            Err(e) => Err(HandlerFailure::Raised(e, Some(NOT_A_STRING))),
-            Ok(_) if switched => Err(HandlerFailure::Msg(SWITCHED)),
-            Ok(v) => RString::from_value(value_of(v)).ok_or_else(|| {
-                HandlerFailure::Raised(
-                    crate::bridge::ruby::type_error("to_s returned a non-String"),
-                    Some(NOT_A_STRING),
-                )
-            }),
-        }
-    }
 }
-
-/// A VALUE this module holds live (the handler, an argument, a Fiber's
-/// answer), as a magnus `Value` for the Array calls.
-fn value_of(v: VALUE) -> Value {
-    // SAFETY: every caller passes a VALUE rooted by the evaluation's frame
-    // (`Bridge`'s fields, the argv on this stack) or just returned by Ruby.
-    unsafe { crate::bridge::ruby::value(v) }
-}
-
-/// What a handler that switched Fibers fails its call with.
-const SWITCHED: &str =
-    "handler switched Fibers (Fiber.yield, or an Enumerator's yielder, inside an XPath handler)";
 
 /// Whether `e` must reach the caller of the query unchanged rather than become
 /// `Makiri::Error`: anything that is not a `StandardError` - an interrupt,
@@ -336,7 +188,9 @@ fn ruby_to_val(bridge: &Bridge, budget: &mut Budget, rv: Value) -> Result<Val, H
     }
     /* A `to_s` that raises, or returns something other than a String, is
      * refused here rather than read as a String. */
-    let sv = bridge.result_to_s(rv)?;
+    const NOT_A_STRING: &str = "handler result could not be converted to a string";
+    let sv =
+        crate::bridge::ruby::to_s(rv).map_err(|e| HandlerFailure::Raised(e, Some(NOT_A_STRING)))?;
     let vv = ruby_try_verified_text(sv, budget.limits.max_string_bytes)
         .map_err(HandlerFailure::InvalidString)?;
     Text::try_copy(vv.as_bytes())
@@ -389,12 +243,8 @@ fn handler_call_body(c: &mut HandlerCall<'_>) {
     }
     // SAFETY: under `protect` (the handler's raise comes back as `Err`), with
     // the live handler and the arguments just built.
-    let Some(r) = (unsafe {
-        c.bridge
-            .in_fiber(c.bridge.handler, c.method, Some(&c.argv[..c.args.len()]))
-    }) else {
-        c.result = Some(Err(HandlerFailure::Msg(SWITCHED)));
-        return;
+    let r = unsafe {
+        crate::bridge::ruby::funcallv(c.bridge.handler, c.method, &c.argv[..c.args.len()])
     };
     // SAFETY: the live VALUE the handler returned.
     let rv = unsafe { crate::bridge::ruby::value(r) };
@@ -445,41 +295,12 @@ unsafe fn handler_resolver(
         Err(e) => return Err(HandlerFailure::Raised(e, None).report(bridge, err)),
     };
     /* `respond_to?` - and `respond_to_missing?` behind it - is the handler's own
-     * Ruby code, so it is asked under protect, and in the handler's Fiber: a
-     * raise there fails this call like any handler raise, and a Fiber switch
-     * suspends no frame of the evaluator's. */
-    let known = bridge
-        .answered
-        .try_borrow()
-        .is_ok_and(|a| a.contains(&method));
-    let mut switched = false;
-    let answer = if known {
-        Ok(rb_sys::Qtrue as VALUE)
-    } else {
-        crate::bridge::ruby::protect(|| {
-            // SAFETY: under protect, as `in_fiber` asks.
-            match unsafe { bridge.in_fiber(bridge.handler, method, None) } {
-                Some(v) => v,
-                None => {
-                    switched = true;
-                    rb_sys::Qfalse as VALUE
-                }
-            }
-        })
-    };
-    match answer {
+     * Ruby code, so it is asked under protect: a raise there fails this call like
+     * any handler raise, instead of unwinding past the evaluation's guards. */
+    match crate::bridge::ruby::respond_to(crate::bridge::ruby::value(bridge.handler), method) {
+        Ok(true) => {}
+        Ok(false) => return Ok(None), /* let the engine raise "unknown function" */
         Err(e) => return Err(HandlerFailure::Raised(e, None).report(bridge, err)),
-        Ok(_) if switched => return Err(HandlerFailure::Msg(SWITCHED).report(bridge, err)),
-        Ok(v) if v == rb_sys::Qfalse as VALUE || v == rb_sys::Qnil as VALUE => {
-            return Ok(None); /* let the engine raise "unknown function" */
-        }
-        Ok(_) if !known => {
-            if let Ok(mut a) = bridge.answered.try_borrow_mut() {
-                use crate::falloc::VecPush;
-                let _ = a.falloc_push(method);
-            }
-        }
-        Ok(_) => {}
     }
 
     if call.args.len() > HANDLER_MAX_ARGS {
