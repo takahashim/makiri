@@ -436,6 +436,10 @@ fn the_port_parses_fragments_as_lexbor_does() {
         ("<frame>", "frameset"),
         ("x<script>y</script>", "noscript"),
         ("<g><path/></g>", "svg g"),
+        /* P15 in a foreign context, which `explains` must admit (a nightly
+         * html_diff find: `<sup>` in a `math math` context). */
+        ("\u{FFFD}\u{6}.<sup>f<f>f@f", "math math"),
+        ("<sup>x", "svg svg"),
     ] {
         if let Err(e) = check_fragment(input.as_bytes(), ctx) {
             panic!("{input:?} in {ctx}\n{e}");
