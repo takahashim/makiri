@@ -7,7 +7,7 @@
 use super::error::TreeErrorId as E;
 use super::{AttrAdjust, Ipos, Mode, Tok, TreeBuilder, TreeStatus};
 use crate::compat::{self, Fix};
-use crate::html::dom::{AttrValue, DomOom, NodeId, NodeName, NodeType};
+use crate::html::dom::{AttrValue, NodeId, NodeName, NodeType};
 use crate::html::res::names as res;
 use crate::html::res::tree as rt;
 use crate::html::tokenizer::TextContent;
@@ -23,8 +23,10 @@ struct AttrSpec {
     written: u32,
 }
 
+/// A failed allocation of the arena or its names table, as the tree
+/// builder's status.
 #[inline]
-fn oom(_: DomOom) -> TreeStatus {
+fn oom<E>(_: E) -> TreeStatus {
     TreeStatus::Oom
 }
 
@@ -330,7 +332,7 @@ impl TreeBuilder<'_> {
                 .doc
                 .names
                 .qualified_append(b"definitionURL")
-                .map_err(|_| TreeStatus::Oom)?;
+                .map_err(oom)?;
         }
         Ok(())
     }
@@ -341,11 +343,7 @@ impl TreeBuilder<'_> {
             return Ok(());
         };
         if let Some((_, to)) = rt::SVG_ATTR_ADJUST.iter().find(|(from, _)| *from == name) {
-            spec.written = self
-                .doc
-                .names
-                .qualified_append(to)
-                .map_err(|_| TreeStatus::Oom)?;
+            spec.written = self.doc.names.qualified_append(to).map_err(oom)?;
         }
         Ok(())
     }
@@ -362,15 +360,9 @@ impl TreeBuilder<'_> {
         };
         if !prefix.is_empty() {
             let names = &mut self.doc.names;
-            spec.written = names.qualified_append(full).map_err(|_| TreeStatus::Oom)?;
-            spec.local = names
-                .attr_local_name_append(local)
-                .map_err(|_| TreeStatus::Oom)?;
-            spec.prefix = self
-                .doc
-                .intern_prefix(prefix)
-                .map_err(|_| TreeStatus::Oom)?
-                .unwrap_or(0);
+            spec.written = names.qualified_append(full).map_err(oom)?;
+            spec.local = names.attr_local_name_append(local).map_err(oom)?;
+            spec.prefix = self.doc.intern_prefix(prefix).map_err(oom)?.unwrap_or(0);
         }
         spec.ns = ns;
         Ok(())

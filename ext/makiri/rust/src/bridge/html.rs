@@ -434,12 +434,11 @@ impl<'a> HtmlEdit<'a> {
         crate::bridge::ruby::check_frozen(self.this.value)?;
         check_attr_owner_frozen(self.this)?;
         ensure_document_mutable(self.this.document)?;
-        invalidate_indexes(self.this.document);
         record_edit(self.this.document, kind);
         // SAFETY: the receiver is not frozen and no XPath evaluation is
         // reading its document - both checked just now - and `f` runs no Ruby
         // (this method's contract with its callers), so the document is this
-        // edit's alone while `f` holds it.
+        // edit's alone while `f` holds it. `edit` drops the indexes.
         let mut doc = unsafe { crate::bridge::wrapper::html_doc_known(self.this.document).edit() };
         Ok(f(&mut doc, self.this.raw()))
     }
@@ -499,8 +498,8 @@ fn lend_document<R>(
 }
 
 /// Lend the document of `rb_doc` - not the receiver's - for the part of an
-/// edit that changes it: an adoption's release of the original. Its indexes
-/// are dropped and the change recorded first.
+/// edit that changes it: an adoption's release of the original. The change
+/// is recorded first; the lend's `edit` drops its indexes.
 fn edit_other_document<R>(
     rb_doc: Value,
     f: impl FnOnce(&mut HtmlDocMut<'_>) -> R,

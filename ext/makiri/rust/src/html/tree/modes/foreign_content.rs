@@ -23,7 +23,7 @@ fn anything_else_closed(
     let mut idx = tree.open_len() - 1;
     if idx > 0
         && tree
-            .open_get(idx)
+            .current_node()
             .is_some_and(|n| tree.tag(n) != tok.tag_id)
     {
         tree.parse_error(tok, E::Unelinopelst);

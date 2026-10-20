@@ -55,8 +55,9 @@ fn read(names: &Names, t: &mut Tokenizer<'_, '_>) -> Option<Token> {
         }
         res::TAG__EM_DOCTYPE => {
             /* Read the attributes as the states store them (`state_doctype.rs`),
-             * not through `Tokenizer::doctype`: the tree builder's reading is
-             * what this suite checks. */
+             * not through `Tokenizer::doctype`: that is the tree builder's
+             * reading, which the tree-construction tests check; this suite
+             * checks what the states store. */
             let attrs = t.token.attrs.clone();
             let attr_name = |id: Option<usize>| {
                 id.and_then(|id| names.attr_name(id).map(<[u8]>::to_vec))

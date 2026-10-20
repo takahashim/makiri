@@ -1,6 +1,7 @@
 //! The namespace and prefix tables: Lexbor's static entries first, then the
-//! document's own, numbered on from the last static id (`NS__LAST_ENTRY` for
-//! both) - the same scheme for both, which `Document` used to write out twice.
+//! document's own, numbered from the static table's length (`NS__LAST_ENTRY`
+//! for both) - the same scheme for both, which `Document` used to write out
+//! twice.
 
 use super::DomOom;
 use crate::falloc::VecPush;
@@ -10,7 +11,7 @@ use crate::html::res::names as res;
 pub(super) struct ExtTable {
     /// Lexbor's static entries by id; an empty one is no entry.
     statics: &'static [&'static [u8]],
-    /// The document's own, numbered on from the last static id.
+    /// The document's own, numbered from `statics.len()`.
     own: Vec<Vec<u8>>,
     /// The bytes of `own`'s entries: its growth in O(1).
     bytes: usize,

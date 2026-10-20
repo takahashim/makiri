@@ -15,22 +15,14 @@ pub fn after_after_body(
 ) -> bool {
     match tok.tag_id {
         res::TAG__EM_COMMENT => {
-            if tree
+            let _ = tree
                 .insert_comment(tkz, tok, Some(NodeId::DOCUMENT))
-                .or_abort(tree)
-                .is_none()
-            {
-                return true;
-            }
+                .or_abort(tree);
         }
         res::TAG__PROCESSINGINSTRUCTION => {
-            if tree
+            let _ = tree
                 .insert_processing_instruction(tkz, Some(NodeId::DOCUMENT))
-                .or_abort(tree)
-                .is_none()
-            {
-                return true;
-            }
+                .or_abort(tree);
         }
         res::TAG__EM_DOCTYPE | res::TAG_HTML => return super::in_body::in_body(tree, tkz, tok),
         res::TAG__END_OF_FILE => {}
