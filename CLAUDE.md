@@ -639,7 +639,7 @@ UTF-8 checks or route a name/engine string through the data path; see
 
 **Parsing & source location.** In the build that ships, the ported tree
 builder stamps an element when it is CREATED FOR ITS OWN START TAG
-(`TreeBuilder::created_offset`, `html/tree/guard.rs`): a real start-tag token
+(`TreeBuilder::created_offset`, `html/tree/stamp.rs`): a real start-tag token
 with no base element - never a `Tok::fake`, an adoption-agency or
 reconstruction copy, or an element implied by another tag's token (the `<tr>`
 a stray `<td>` implies) - so every element the parser invents stays nil and a

@@ -47,10 +47,13 @@ fn read(names: &Names, t: &mut Tokenizer<'_, '_>) -> Option<Token> {
         res::TAG__TEXT => Some(Token::Character(text)),
         res::TAG__EM_COMMENT => Some(Token::Comment(text)),
         res::TAG__PROCESSINGINSTRUCTION => {
-            let (target, data) = t.pi_parts();
+            /* As the states store it - the target's length in `null_count` -
+             * not through `Tokenizer::pi_parts`, the tree builder's reading,
+             * for the reason the DOCTYPE case below gives. */
+            let at = t.token.null_count.min(text.len());
             Some(Token::Pi {
-                target: target.to_vec(),
-                data: data.to_vec(),
+                target: text[..at].to_vec(),
+                data: text[at..].to_vec(),
             })
         }
         res::TAG__EM_DOCTYPE => {

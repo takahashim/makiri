@@ -24,10 +24,11 @@ struct AttrSpec {
 }
 
 /// A failed allocation of the arena or its names table, as the tree
-/// builder's status.
+/// builder's status. Bounded by the two allocation errors' `From`, so an
+/// error that is not an allocation failure cannot be reported as one.
 #[inline]
-fn oom<E>(_: E) -> TreeStatus {
-    TreeStatus::Oom
+fn oom<E: Into<TreeStatus>>(e: E) -> TreeStatus {
+    e.into()
 }
 
 /// `lxb_html_tag_is_category`.
