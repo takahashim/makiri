@@ -3,14 +3,14 @@
 use crate::html::res::names as res;
 use crate::html::tokenizer::Tokenizer;
 use crate::html::tree::error::TreeErrorId as E;
-use crate::html::tree::{Mode, Tok, TreeBuilder};
+use crate::html::tree::{Mode, OrAbort, Tok, TreeBuilder};
 
 /// Replace the current template insertion mode with `mode`, switch to it,
 /// and reprocess.
 fn switch_to(tree: &mut TreeBuilder<'_>, mode: Mode) -> bool {
-    tree.template_modes.pop();
-    if let Err(st) = tree.template_modes_push(mode) {
-        return tree.abort_with(st);
+    tree.template_modes_pop();
+    if tree.template_modes_push(mode).or_abort(tree).is_none() {
+        return true;
     }
     tree.mode = mode;
     false
@@ -25,7 +25,7 @@ fn end_of_file(tree: &mut TreeBuilder<'_>, tok: &Tok) -> bool {
     tree.parse_error(tok, E::Unenoffi);
     tree.open_pop_until_tag_id(res::TAG_TEMPLATE, res::NS_HTML, true);
     tree.afe_up_to_last_marker();
-    tree.template_modes.pop();
+    tree.template_modes_pop();
     tree.reset_insertion_mode_appropriately();
     false
 }

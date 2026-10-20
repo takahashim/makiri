@@ -8,8 +8,9 @@
 //! Ruby wrapper may still name it.
 
 use super::handle::{has_ascii_uppercase, HtmlDoc, HtmlNode, NsId, RawNode};
-use super::{Document, DomOom, NodeId, NodeType};
+use super::{Document, DomOom, NodeId, NodeName, NodeType, Shortcut, ShortcutRule};
 use crate::dom_rules::{self, At, Hierarchy, PreInsertError, Tree, Violation};
+use crate::falloc::VecPush;
 use crate::html::res::names as res;
 
 /// Where an insertion puts its node, relative to the node it is made on.
@@ -134,23 +135,6 @@ impl<'d> Insertion<'d> {
     }
 }
 
-/// Which attribute shortcut a no-namespace attribute with this local name is.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Shortcut {
-    Id,
-    Class,
-}
-
-impl Shortcut {
-    fn named(local: &[u8]) -> Option<Shortcut> {
-        match local {
-            b"id" => Some(Shortcut::Id),
-            b"class" => Some(Shortcut::Class),
-            _ => None,
-        }
-    }
-}
-
 /// A document lent for an edit.
 pub struct HtmlDocMut<'d> {
     d: &'d mut Document,
@@ -178,22 +162,40 @@ impl<'d> HtmlDocMut<'d> {
         self.read().node(raw)
     }
 
-    /// The arena, for the parts of the crate that build into it.
+    /// The id of `raw`, a node of this document.
     #[inline]
-    pub fn arena(&mut self) -> &mut Document {
-        self.d
+    fn id_of(&self, raw: RawNode) -> NodeId {
+        debug_assert_eq!(raw.stamp(), self.stamp, "a node of another document");
+        raw.id()
+    }
+
+    /// Put every element under `root` (template contents included) that is
+    /// in no namespace into `ns`: what a fragment parse whose context
+    /// namespace the parser was not given leaves to its import.
+    pub fn give_namespace(&mut self, root: RawNode, ns: NsId) -> Result<(), DomOom> {
+        let mut todo: Vec<NodeId> = Vec::new();
+        for n in self.node(root).subtree_with_contents() {
+            if n.node_type() == NodeType::Element && n.ns_id().is_none() {
+                todo.falloc_push(n.id()).map_err(|()| DomOom)?;
+            }
+        }
+        for id in todo {
+            let (local, prefix) = (self.d.local(id), self.d.prefix(id));
+            self.d.set_names(id, local as usize, ns.number(), prefix);
+        }
+        Ok(())
     }
 
     /* ---- the tree ---- */
 
     /// Take `n` out of its tree. The arena keeps it.
     pub fn detach(&mut self, n: RawNode) {
-        self.d.detach(n.id());
+        self.d.detach(self.id_of(n));
     }
 
     /// Take every child of `n` out of the tree, in order.
     pub fn detach_children(&mut self, n: RawNode) {
-        while let Some(c) = self.d.first_child(n.id()) {
+        while let Some(c) = self.d.first_child(self.id_of(n)) {
             self.d.detach(c);
         }
     }
@@ -202,7 +204,7 @@ impl<'d> HtmlDocMut<'d> {
     /// of the two has checked. A DocumentFragment contributes its children,
     /// in order, and is left empty; a replace then takes `target` out.
     pub fn place(&mut self, target: RawNode, node: RawNode, place: Place) {
-        let (target, node) = (target.id(), node.id());
+        let (target, node) = (self.id_of(target), self.id_of(node));
         let mut after = target;
         let mut put = |d: &mut Document, c: NodeId| match place {
             Place::Child => d.append_child(target, c),
@@ -228,15 +230,15 @@ impl<'d> HtmlDocMut<'d> {
     /// Take the attribute `attr` off its owner element; a no-op for anything
     /// else.
     pub fn remove_from_owner(&mut self, attr: RawNode) {
-        if self.d.kind(attr.id()) == NodeType::Attribute {
-            self.d.attr_remove(attr.id());
+        if self.d.kind(self.id_of(attr)) == NodeType::Attribute {
+            self.d.attr_remove(self.id_of(attr));
         }
     }
 
     /// DOM `textContent = text` on `n`. `Err` when it could not be stored,
     /// in which case `n` keeps what it had.
     pub fn set_text_content(&mut self, n: RawNode, text: &[u8]) -> Result<(), DomOom> {
-        let n = n.id();
+        let n = self.id_of(n);
         match self.d.kind(n) {
             NodeType::Element | NodeType::DocumentFragment => {
                 /* Detached, never destroyed: a wrapper may hold a child. The
@@ -276,15 +278,16 @@ impl<'d> HtmlDocMut<'d> {
             let at = at.node().id();
             return self.d.set_data(at, value);
         }
-        let lower = self.is_html(el.id());
-        let at = self.create_attr(el.id(), None, name, value, lower)?;
+        let lower = self.is_html(self.id_of(el));
+        let at = self.create_attr(self.id_of(el), None, name, value, lower)?;
         let local = self
             .read()
             .node(RawNode::new(self.stamp, at))
             .attr()
             .map(|a| a.dom_local_name());
         let shortcut = local.and_then(Shortcut::named);
-        self.link_attr(el.id(), at, shortcut);
+        self.d
+            .link_attribute(self.id_of(el), at, ShortcutRule::take(shortcut));
         Ok(())
     }
 
@@ -315,12 +318,12 @@ impl<'d> HtmlDocMut<'d> {
             let at = at.node().id();
             return self.d.set_data(at, value);
         }
-        self.append_attribute(el.id(), ns, qname, value)
+        self.append_attribute(self.id_of(el), ns, qname, value)
     }
 
     /// Append a new attribute named `qname` in `ns`, case preserved, without
     /// looking for an existing one - a copy's step.
-    pub fn append_attribute(
+    pub(super) fn append_attribute(
         &mut self,
         el: NodeId,
         ns: Option<&[u8]>,
@@ -337,16 +340,16 @@ impl<'d> HtmlDocMut<'d> {
         } else {
             None
         };
-        self.link_attr(el, at, shortcut);
+        self.d.link_attribute(el, at, ShortcutRule::take(shortcut));
         Ok(())
     }
 
     /// Take the attribute `attr` off the element `el`.
     pub fn attr_remove(&mut self, el: RawNode, attr: RawNode) {
-        if self.d.kind(attr.id()) == NodeType::Attribute
-            && self.d.parent(attr.id()) == Some(el.id())
+        if self.d.kind(self.id_of(attr)) == NodeType::Attribute
+            && self.d.parent(self.id_of(attr)) == Some(self.id_of(el))
         {
-            self.d.attr_remove(attr.id());
+            self.d.attr_remove(self.id_of(attr));
         }
     }
 
@@ -365,19 +368,6 @@ impl<'d> HtmlDocMut<'d> {
 
     fn is_html(&self, el: NodeId) -> bool {
         self.d.ns(el) == res::NS_HTML as u32
-    }
-
-    /// Lexbor's `link_attr`: link `at` last, leaving both shortcuts as they
-    /// were, then point `shortcut` (if any) at it.
-    fn link_attr(&mut self, el: NodeId, at: NodeId, shortcut: Option<Shortcut>) {
-        let (id, class) = (self.d.id_attr(el), self.d.class_attr(el));
-        self.d.attr_link(el, at);
-        let (id, class) = match shortcut {
-            Some(Shortcut::Id) => (Some(at), class),
-            Some(Shortcut::Class) => (id, Some(at)),
-            None => (id, class),
-        };
-        self.d.set_shortcuts(el, id, class);
     }
 
     /// A new attribute of `el`'s document named `qname` in `ns`, not linked,
@@ -478,9 +468,8 @@ impl<'d> HtmlDocMut<'d> {
     }
 
     fn new_text(&mut self, text: &[u8]) -> Result<NodeId, DomOom> {
-        let t = self.d.create_data(NodeType::Text, text)?;
-        self.d.set_names(t, res::TAG__TEXT, res::NS_HTML as u32, 0);
-        Ok(t)
+        self.d
+            .create_data(NodeType::Text, NodeName::html(res::TAG__TEXT), text)
     }
 
     /// A new Text node (Lexbor names it `#text`, in the HTML namespace).
@@ -492,9 +481,8 @@ impl<'d> HtmlDocMut<'d> {
 
     /// A new Comment (`!--`, in the HTML namespace).
     pub fn create_comment(&mut self, text: &[u8]) -> Option<RawNode> {
-        let c = self.d.create_data(NodeType::Comment, text).ok()?;
-        self.d
-            .set_names(c, res::TAG__EM_COMMENT, res::NS_HTML as u32, 0);
+        let name = NodeName::html(res::TAG__EM_COMMENT);
+        let c = self.d.create_data(NodeType::Comment, name, text).ok()?;
         Some(RawNode::new(self.stamp, c))
     }
 
@@ -519,6 +507,7 @@ impl<'d> HtmlDocMut<'d> {
     ) -> Option<RawNode> {
         self.d
             .create_doctype(
+                NodeName::default(),
                 name,
                 public_id.unwrap_or_default(),
                 system_id.unwrap_or_default(),

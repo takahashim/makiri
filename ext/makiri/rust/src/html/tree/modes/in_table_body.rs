@@ -4,20 +4,17 @@ use crate::html::res::names as res;
 use crate::html::res::tree as rt;
 use crate::html::tokenizer::Tokenizer;
 use crate::html::tree::error::TreeErrorId as E;
-use crate::html::tree::{Mode, Tok, TreeBuilder, TreeStatus};
+use crate::html::tree::{Mode, OrAbort, Tok, TreeBuilder};
 
 /// `lxb_html_tree_clear_stack_back_to_table_body`.
 fn clear_stack_back_to_table_body(tree: &mut TreeBuilder<'_>) {
-    while let Some(c) = tree.current_node() {
-        if matches!(
-            tree.tag(c),
-            res::TAG_TBODY | res::TAG_TFOOT | res::TAG_THEAD | res::TAG_TEMPLATE | res::TAG_HTML
-        ) && tree.ns(c) == res::NS_HTML
-        {
-            return;
-        }
-        tree.open_pop();
-    }
+    tree.clear_stack_back_to(&[
+        res::TAG_TBODY,
+        res::TAG_TFOOT,
+        res::TAG_THEAD,
+        res::TAG_TEMPLATE,
+        res::TAG_HTML,
+    ]);
 }
 
 /// `..._in_table_body_ct_open_closed`.
@@ -71,8 +68,8 @@ pub fn in_table_body(
     match tok.tag_id {
         res::TAG_TR => {
             clear_stack_back_to_table_body(tree);
-            if tree.insert_html_element(tkz, tok).is_err() {
-                return tree.abort_with(TreeStatus::Oom);
+            if tree.insert_html_element(tkz, tok).or_abort(tree).is_none() {
+                return true;
             }
             tree.mode = Mode::InRow;
             true
@@ -86,8 +83,12 @@ pub fn in_table_body(
             /* The implied `<tr>` is the parser's, not the `<td>`'s: no
              * source position (`created_offset`). */
             fake.begin = None;
-            if tree.insert_html_element(tkz, &fake).is_err() {
-                return tree.abort_with(TreeStatus::Oom);
+            if tree
+                .insert_html_element(tkz, &fake)
+                .or_abort(tree)
+                .is_none()
+            {
+                return true;
             }
             tree.mode = Mode::InRow;
             false

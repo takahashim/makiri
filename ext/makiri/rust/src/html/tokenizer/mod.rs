@@ -99,6 +99,15 @@ impl Token {
     }
 }
 
+/// A DOCTYPE token, as [`Tokenizer::doctype`] reads it.
+#[derive(Clone, Copy, Debug)]
+pub struct DoctypeParts<'a> {
+    /// The attribute that carries the name (its `name` is the name's id).
+    pub name: Option<&'a TokenAttr>,
+    pub public_id: Option<&'a [u8]>,
+    pub system_id: Option<&'a [u8]>,
+}
+
 /// Why tokenizing stopped (`lxb_status_t`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Status {
@@ -118,10 +127,43 @@ pub struct ParseError {
     pub id: ErrorId,
 }
 
-/// A sink's request to stop tokenizing (Lexbor's NULL return from the
-/// callback).
+/// Tokenizing stopped; the tokenizer's status says why ([`Tokenizer::halt`]
+/// is the one way to make one).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stop;
+pub(crate) struct Halted;
+
+/// A sink's request to stop tokenizing (Lexbor's NULL return from the
+/// callback), with why: the tokenizer's status reports it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stop {
+    /// The sink could not allocate.
+    Oom,
+    /// Anything else.
+    Error,
+}
+
+/// What a tokenizer is set up with, before its first chunk.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Options {
+    /// `LXB_HTML_TOKENIZER_OPT_ATTR_KEEP_DUPLICATE`: hand a start tag's
+    /// repeated attributes on rather than dropping them. Lexbor's parser
+    /// sets it, and its tree builder drops a repeat by name and namespace.
+    pub keep_duplicate: bool,
+    /// `NS__UNDEF` as the current namespace is a foreign namespace, not "no
+    /// tree": a fragment whose context's namespace the parser was given as
+    /// none.
+    pub undef_is_foreign: bool,
+}
+
+/// The text-content states a tree builder switches the tokenizer into after
+/// a start tag (the Standard's "switch the tokenizer to the ... state"),
+/// which only an appropriate end tag leaves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextContent {
+    Rcdata,
+    Rawtext,
+    ScriptData,
+}
 
 /// The receiver of each finished token: Lexbor's `callback_token_done`.
 ///
@@ -154,7 +196,9 @@ pub struct Tokenizer<'i, 's> {
     pub(crate) markup_pos: Option<usize>,
     /// `temp`: where an RCDATA/RAWTEXT/script end tag began.
     pub(crate) temp: Option<usize>,
-    pub tmp_tag_id: usize,
+    /// The tag of the last start tag, which decides whether an end tag in
+    /// RCDATA/RAWTEXT/script data is "appropriate".
+    tmp_tag_id: usize,
 
     /// `begin`: where the input not yet appended to the buffer starts.
     pub(crate) begin: usize,
@@ -164,29 +208,35 @@ pub struct Tokenizer<'i, 's> {
     pub(crate) entity: usize,
     pub(crate) entity_match: Option<usize>,
     pub(crate) entity_start: usize,
+    /// Where a possible RCDATA/RAWTEXT/script end tag's `</` starts in the
+    /// buffer: the text before it is the text token, the name after it is
+    /// compared with the last start tag (Lexbor reuses `entity_start`).
+    pub(crate) end_tag_at: usize,
+    /// Where the name read by script data's double-escape states starts in
+    /// the buffer (Lexbor reuses `entity_start` for this too).
+    pub(crate) escape_name_at: usize,
     pub(crate) entity_end: usize,
     pub(crate) entity_number: u32,
     pub(crate) is_attribute: bool,
 
-    pub status: Status,
+    status: Status,
     pub(crate) is_eof: bool,
     /// The namespace of the tree builder's adjusted current node, which
     /// decides whether `<![CDATA[` opens a CDATA section
     /// (`lxb_html_tokenizer_current_namespace`); `NS__UNDEF` with no tree.
-    pub current_ns: usize,
-    /// `NS__UNDEF` in `current_ns` is a foreign namespace, not "no tree":
-    /// a fragment whose context's namespace the parser was given as none.
-    pub undef_is_foreign: bool,
-    /// `LXB_HTML_TOKENIZER_OPT_ATTR_KEEP_DUPLICATE`: hand a start tag's
-    /// repeated attributes on rather than dropping them. Lexbor's parser
-    /// sets it, and its tree builder drops a repeat by name and namespace.
-    pub keep_duplicate: bool,
+    current_ns: usize,
+    options: Options,
 }
 
 impl<'i, 's> Tokenizer<'i, 's> {
     /// `lxb_html_tokenizer_create` + `_init` + `_begin`, over `input`, in the
     /// data state, interning names into the sink's table.
     pub fn new(input: &'i [u8], sink: &'s mut dyn TokenSink) -> Self {
+        Self::with_options(input, sink, Options::default())
+    }
+
+    /// [`new`](Self::new), set up with `options`.
+    pub fn with_options(input: &'i [u8], sink: &'s mut dyn TokenSink, options: Options) -> Self {
         Tokenizer {
             input,
             state: data_before,
@@ -205,20 +255,62 @@ impl<'i, 's> Tokenizer<'i, 's> {
             entity: 0,
             entity_match: None,
             entity_start: 0,
+            end_tag_at: 0,
+            escape_name_at: 0,
             entity_end: 0,
             entity_number: 0,
             is_attribute: false,
             status: Status::Ok,
             is_eof: false,
             current_ns: res::NS__UNDEF,
-            undef_is_foreign: false,
-            keep_duplicate: false,
+            options,
         }
     }
 
     /// `lxb_html_tokenizer_state_set`.
-    pub fn set_state(&mut self, state: State) {
+    fn set_state(&mut self, state: State) {
         self.state = state;
+    }
+
+    /// Switch to the `content` state after the start tag `tag_id`, which an
+    /// end tag must name to close it (`lxb_html_tokenizer_tmp_tag_id_set`
+    /// and `lxb_html_tokenizer_state_set` together, which every caller
+    /// paired).
+    pub fn enter_text_content(&mut self, content: TextContent, tag_id: usize) {
+        self.tmp_tag_id = tag_id;
+        self.set_state(match content {
+            TextContent::Rcdata => rcdata_before,
+            TextContent::Rawtext => rawtext_before,
+            TextContent::ScriptData => script_data_before,
+        });
+    }
+
+    /// Switch to the PLAINTEXT state, which nothing leaves.
+    pub fn enter_plaintext(&mut self) {
+        self.set_state(plaintext_before);
+    }
+
+    /// The fragment parsing algorithm's step: the state its context element
+    /// `tag_id` in `ns` puts the tokenizer in, with no end tag appropriate -
+    /// no start tag has been seen (`lxb_html_parse_fragment_chunk_begin`).
+    pub fn enter_fragment_context(&mut self, scripting: bool, tag_id: usize, ns: usize) {
+        self.set_state_by_tag(scripting, tag_id, ns);
+        self.tmp_tag_id = res::TAG__UNDEF;
+    }
+
+    /// The namespace of the tree builder's adjusted current node, which the
+    /// tree builder reports after each token.
+    #[inline]
+    pub fn set_current_namespace(&mut self, ns: usize) {
+        self.current_ns = ns;
+    }
+
+    /// Whether the adjusted current node is foreign content, for
+    /// `<![CDATA[`.
+    #[inline]
+    pub(crate) fn in_foreign_content(&self) -> bool {
+        let ns = self.current_ns;
+        ns != res::NS_HTML && (ns != res::NS__UNDEF || self.options.undef_is_foreign)
     }
 
     /// The parse errors recorded so far.
@@ -232,6 +324,38 @@ impl<'i, 's> Tokenizer<'i, 's> {
             Some(len) => self.buf.get(..len).unwrap_or_default(),
             None => &[],
         }
+    }
+
+    /// A processing instruction's target and data (inside the sink): Lexbor
+    /// keeps the target's length in the token's `null_count`.
+    pub fn pi_parts(&self) -> (&[u8], &[u8]) {
+        let text = self.text();
+        text.split_at(self.token.null_count.min(text.len()))
+    }
+
+    /// A DOCTYPE token's parts (inside the sink), read as
+    /// `lxb_html_token_doctype_parse` reads them: the states store the name
+    /// as the first attribute, then a `public` or `system` one, and a system
+    /// identifier after a public one that has a value (`state_doctype.rs`).
+    pub fn doctype(&self) -> DoctypeParts<'_> {
+        let attrs = &self.token.attrs;
+        let value = |a: &TokenAttr| self.attr_value(a);
+        let mut parts = DoctypeParts {
+            name: attrs.first(),
+            public_id: None,
+            system_id: None,
+        };
+        if let Some(second) = attrs.get(1) {
+            if second.name == Some(res::ATTR_PUBLIC) {
+                parts.public_id = value(second);
+                if second.value_begin.is_some() {
+                    parts.system_id = attrs.get(2).and_then(value);
+                }
+            } else if second.name == Some(res::ATTR_SYSTEM) {
+                parts.system_id = value(second);
+            }
+        }
+        parts
     }
 
     /// An attribute's value (inside the sink); `None` when it has none.
@@ -293,17 +417,16 @@ impl<'i, 's> Tokenizer<'i, 's> {
     /// `lxb_html_tokenizer_temp_append_data`: append `[begin, data)`.
     /// `Err` with the status set on allocation failure.
     #[inline]
-    pub(crate) fn append_data(&mut self, data: usize) -> Result<(), ()> {
+    pub(crate) fn append_data(&mut self, data: usize) -> Result<(), Halted> {
         let bytes = self.input_range(self.begin, data);
         self.append(bytes)
     }
 
     /// `lxb_html_tokenizer_temp_append`.
     #[inline]
-    pub(crate) fn append(&mut self, bytes: &[u8]) -> Result<(), ()> {
+    pub(crate) fn append(&mut self, bytes: &[u8]) -> Result<(), Halted> {
         if self.buf.falloc_reserve(bytes.len()).is_err() {
-            self.status = Status::Oom;
-            return Err(());
+            return Err(self.halt(Status::Oom));
         }
         self.buf.extend_from_slice(bytes);
         Ok(())
@@ -311,8 +434,41 @@ impl<'i, 's> Tokenizer<'i, 's> {
 
     /// `lxb_html_tokenizer_state_append_replace_m`: U+FFFD.
     #[inline]
-    pub(crate) fn append_replace(&mut self) -> Result<(), ()> {
+    pub(crate) fn append_replace(&mut self) -> Result<(), Halted> {
         self.append("\u{FFFD}".as_bytes())
+    }
+
+    /// Stop with `status`, keeping a failure already recorded.
+    #[inline]
+    pub(crate) fn halt(&mut self, status: Status) -> Halted {
+        if self.status == Status::Ok {
+            self.status = status;
+        }
+        Halted
+    }
+
+    /// Count a U+0000 in the text token (Lexbor's `null_count`), which the
+    /// tree builder reads to decide whether to strip them.
+    #[inline]
+    pub(crate) fn count_null(&mut self) -> Result<(), Halted> {
+        match self.token.null_count.checked_add(1) {
+            Some(n) => {
+                self.token.null_count = n;
+                Ok(())
+            }
+            None => Err(self.halt(Status::Overflow)),
+        }
+    }
+
+    /// The step every state shares on a U+0000 it replaces, after the input
+    /// up to it was appended: skip it, append U+FFFD, and report
+    /// `unexpected-null-character` at it.
+    #[inline]
+    pub(crate) fn replace_null(&mut self, at: usize) -> Result<(), Halted> {
+        self.begin = at + 1;
+        self.append_replace()?;
+        self.error(at, ErrorId::Unnuch);
+        Ok(())
     }
 
     /// `tkz->pos[-1] = 0x0A`, after a CR was appended.
@@ -339,23 +495,20 @@ impl<'i, 's> Tokenizer<'i, 's> {
     }
 
     /// `lxb_html_tokenizer_state_set_tag_m` over the buffer's `[from, len)`.
-    pub(crate) fn set_tag_from_buf(&mut self, from: usize) -> Result<(), ()> {
+    pub(crate) fn set_tag_from_buf(&mut self, from: usize) -> Result<(), Halted> {
         let name = self.buf.get(from..).unwrap_or_default();
         match intern(&mut self.sink, |names| names.tag_append_lower(name)) {
             Ok(id) => {
                 self.token.tag_id = id;
                 Ok(())
             }
-            Err(_) => {
-                self.status = Status::Oom;
-                Err(())
-            }
+            Err(_) => Err(self.halt(Status::Oom)),
         }
     }
 
     /// `lxb_html_tokenizer_state_set_name_m`: the last attribute's name is
     /// the buffer.
-    pub(crate) fn set_name(&mut self) -> Result<(), ()> {
+    pub(crate) fn set_name(&mut self) -> Result<(), Halted> {
         match intern(&mut self.sink, |names| {
             names.attr_local_name_append(&self.buf)
         }) {
@@ -365,20 +518,16 @@ impl<'i, 's> Tokenizer<'i, 's> {
                 }
                 Ok(())
             }
-            Err(_) => {
-                self.status = Status::Oom;
-                Err(())
-            }
+            Err(_) => Err(self.halt(Status::Oom)),
         }
     }
 
     /// `lxb_html_tokenizer_state_set_value_m`: the last attribute's value is a
     /// copy of the buffer.
-    pub(crate) fn set_value(&mut self) -> Result<(), ()> {
+    pub(crate) fn set_value(&mut self) -> Result<(), Halted> {
         let start = self.values.len();
         if self.values.falloc_reserve(self.buf.len()).is_err() {
-            self.status = Status::Oom;
-            return Err(());
+            return Err(self.halt(Status::Oom));
         }
         self.values.extend_from_slice(&self.buf);
         let end = self.values.len();
@@ -389,13 +538,12 @@ impl<'i, 's> Tokenizer<'i, 's> {
     }
 
     /// `lxb_html_tokenizer_state_token_attr_add_m`.
-    pub(crate) fn attr_add(&mut self) -> Result<(), ()> {
-        if !self.keep_duplicate {
+    pub(crate) fn attr_add(&mut self) -> Result<(), Halted> {
+        if !self.options.keep_duplicate {
             self.attr_last_duplicate();
         }
         if self.token.attrs.falloc_push(TokenAttr::default()).is_err() {
-            self.status = Status::Oom;
-            return Err(());
+            return Err(self.halt(Status::Oom));
         }
         Ok(())
     }
@@ -470,26 +618,25 @@ impl<'i, 's> Tokenizer<'i, 's> {
     }
 
     /// Hand the token to the sink. `Err` when the sink stopped (status set).
-    fn emit(&mut self) -> Result<(), ()> {
+    fn emit(&mut self) -> Result<(), Halted> {
         let Some(sink) = self.sink.take() else {
-            self.status = Status::Error;
-            return Err(());
+            return Err(self.halt(Status::Error));
         };
         let r = sink.token(self);
         self.sink = Some(sink);
-        if r.is_err() {
-            if self.status == Status::Ok {
-                self.status = Status::Error;
-            }
-            return Err(());
+        if let Err(stop) = r {
+            return Err(self.halt(match stop {
+                Stop::Oom => Status::Oom,
+                Stop::Error => Status::Error,
+            }));
         }
         Ok(())
     }
 
     /// `_lxb_html_tokenizer_state_token_done_m`: the duplicate check, the
     /// end-tag check, the callback. `Err` when the callback stopped.
-    fn token_done_inner(&mut self) -> Result<(), ()> {
-        if !self.keep_duplicate {
+    fn token_done_inner(&mut self) -> Result<(), Halted> {
+        if !self.options.keep_duplicate {
             self.attr_last_duplicate();
         }
         if self.token.flags & flags::CLOSE != 0 {
@@ -499,7 +646,7 @@ impl<'i, 's> Tokenizer<'i, 's> {
     }
 
     /// `lxb_html_tokenizer_state_token_done_m`.
-    pub(crate) fn token_done(&mut self) -> Result<(), ()> {
+    pub(crate) fn token_done(&mut self) -> Result<(), Halted> {
         self.token_done_inner()?;
         self.token.clean();
         self.values.clear();
@@ -508,7 +655,7 @@ impl<'i, 's> Tokenizer<'i, 's> {
     }
 
     /// `lxb_html_tokenizer_state_token_text_done_m`.
-    pub(crate) fn token_text_done(&mut self) -> Result<(), ()> {
+    pub(crate) fn token_text_done(&mut self) -> Result<(), Halted> {
         if self.token.text.is_some_and(|n| n != 0) {
             self.token_done_inner()?;
         }
@@ -519,7 +666,7 @@ impl<'i, 's> Tokenizer<'i, 's> {
     }
 
     /// `lxb_html_tokenizer_state_token_emit_text_not_empty_m`.
-    pub(crate) fn emit_text_not_empty(&mut self) -> Result<(), ()> {
+    pub(crate) fn emit_text_not_empty(&mut self) -> Result<(), Halted> {
         if !self.buf.is_empty() {
             self.token.tag_id = res::TAG__TEXT;
             self.set_text();
@@ -532,37 +679,33 @@ impl<'i, 's> Tokenizer<'i, 's> {
 
     /// `lxb_html_tokenizer_set_state_by_tag`: the state a start tag in the HTML
     /// namespace switches the tokenizer to.
-    pub fn set_state_by_tag(&mut self, scripting: bool, tag_id: usize, ns: usize) {
+    fn set_state_by_tag(&mut self, scripting: bool, tag_id: usize, ns: usize) {
         if ns != res::NS_HTML {
             self.state = data_before;
             return;
         }
         match tag_id {
             res::TAG_TITLE | res::TAG_TEXTAREA => {
-                self.tmp_tag_id = tag_id;
-                self.state = rcdata_before;
+                self.enter_text_content(TextContent::Rcdata, tag_id);
             }
             res::TAG_STYLE
             | res::TAG_XMP
             | res::TAG_IFRAME
             | res::TAG_NOEMBED
             | res::TAG_NOFRAMES => {
-                self.tmp_tag_id = tag_id;
-                self.state = rawtext_before;
+                self.enter_text_content(TextContent::Rawtext, tag_id);
             }
             res::TAG_SCRIPT => {
-                self.tmp_tag_id = tag_id;
-                self.state = script_data_before;
+                self.enter_text_content(TextContent::ScriptData, tag_id);
             }
             res::TAG_NOSCRIPT => {
                 if scripting {
-                    self.tmp_tag_id = tag_id;
-                    self.state = rawtext_before;
+                    self.enter_text_content(TextContent::Rawtext, tag_id);
                     return;
                 }
                 self.state = data_before;
             }
-            res::TAG_PLAINTEXT => self.state = plaintext_before,
+            res::TAG_PLAINTEXT => self.enter_plaintext(),
             _ => {}
         }
     }

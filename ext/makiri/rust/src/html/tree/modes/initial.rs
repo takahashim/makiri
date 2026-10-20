@@ -1,14 +1,10 @@
 //! The "initial" insertion mode (`insertion_mode/initial.c`).
 
-use crate::html::dom::NodeId;
+use crate::html::dom::{CompatMode, NodeId};
 use crate::html::res::names as res;
 use crate::html::tokenizer::{flags, Tokenizer};
 use crate::html::tree::error::TreeErrorId as E;
-use crate::html::tree::{Mode, Tok, TreeBuilder};
-
-/// `LXB_DOM_DOCUMENT_CMODE_*`.
-const QUIRKS: u8 = 1;
-const LIMITED_QUIRKS: u8 = 2;
+use crate::html::tree::{Mode, OrAbort, Tok, TreeBuilder};
 
 /// "The public identifier is set to".
 const PUBLIC_IS: [&[u8]; 3] = [
@@ -101,17 +97,19 @@ pub fn initial(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mu
         res::TAG__EM_COMMENT => {
             if tree
                 .insert_comment(tkz, tok, Some(NodeId::DOCUMENT))
-                .is_err()
+                .or_abort(tree)
+                .is_none()
             {
-                return tree.process_abort();
+                return true;
             }
         }
         res::TAG__PROCESSINGINSTRUCTION => {
             if tree
-                .insert_processing_instruction(tkz, tok, Some(NodeId::DOCUMENT))
-                .is_err()
+                .insert_processing_instruction(tkz, Some(NodeId::DOCUMENT))
+                .or_abort(tree)
+                .is_none()
             {
-                return tree.process_abort();
+                return true;
             }
         }
         res::TAG__EM_DOCTYPE => {
@@ -127,7 +125,7 @@ pub fn initial(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mu
             }
             /* No iframe srcdoc document is ever parsed here. */
             tree.parse_error(tok, E::Untoininmo);
-            tree.doc.compat_mode = QUIRKS;
+            tree.doc.set_compat_mode(CompatMode::Quirks);
             tree.mode = Mode::BeforeHtml;
             return false;
         }
@@ -137,8 +135,9 @@ pub fn initial(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mu
 
 /// `lxb_html_tree_insertion_mode_initial_doctype`.
 fn initial_doctype(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> bool {
-    let Ok((node, name_id, _, _)) = tree.create_document_type_from_token(tkz) else {
-        return tree.abort_with(crate::html::tree::TreeStatus::Oom);
+    let Some((node, name_id, _, _)) = tree.create_document_type_from_token(tkz).or_abort(tree)
+    else {
+        return true;
     };
     let (public, system) = match tree.doc.doctype(node) {
         Some((_, p, s)) => (p.len(), s),
@@ -164,11 +163,11 @@ fn doctype_check(tree: &mut TreeBuilder<'_>, node: NodeId, tok: &Tok, is_html: b
         || (!system.is_empty() && check_system(system))
         || (!public.is_empty() && system.is_empty() && check_pubsys(public));
     if quirks {
-        tree.doc.compat_mode = QUIRKS;
+        tree.doc.set_compat_mode(CompatMode::Quirks);
         return;
     }
     if !public.is_empty() && check_limq(public, system) {
-        tree.doc.compat_mode = LIMITED_QUIRKS;
+        tree.doc.set_compat_mode(CompatMode::LimitedQuirks);
     }
 }
 

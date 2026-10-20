@@ -31,7 +31,7 @@ fn text(b: Option<&[u8]>) -> String {
 
 /// Everything the port must reproduce, one line per node, in tree order.
 pub fn dump(d: &Document, offsets: bool) -> String {
-    let mut out = format!("compat {}\n", d.compat_mode);
+    let mut out = format!("compat {}\n", d.compat_mode().lexbor());
     walk(d, &mut out, vec![(NodeId::DOCUMENT, 0)], offsets);
     out
 }

@@ -7,11 +7,11 @@
 use super::error::TreeErrorId as E;
 use super::{AttrAdjust, Ipos, Mode, Tok, TreeBuilder, TreeStatus};
 use crate::compat::{self, Fix};
-use crate::html::dom::{AttrValue, DomOom, NodeId, NodeType};
+use crate::html::dom::{AttrValue, DomOom, NodeId, NodeName, NodeType};
 use crate::html::res::names as res;
 use crate::html::res::tree as rt;
+use crate::html::tokenizer::TextContent;
 use crate::html::tokenizer::{flags, Tokenizer};
-use crate::html::tokenizer::{rawtext_before, rcdata_before};
 
 /// An attribute about to be made: Lexbor's name fields, which the
 /// adjustments rewrite before the attribute is appended.
@@ -123,13 +123,11 @@ impl TreeBuilder<'_> {
         tkz: &Tokenizer<'_, '_>,
         tok: &Tok,
         ns: usize,
-        only_add_stack: bool,
+        adjust: Option<AttrAdjust>,
     ) -> Result<NodeId, TreeStatus> {
         let (pos, ipos) = self.appropriate_place(None).ok_or(TreeStatus::Oom)?;
-        let el = self.create_element_for_token(tkz, tok, ns)?;
-        if !only_add_stack {
-            self.insert_node(pos, el, ipos);
-        }
+        let el = self.create_element_for_token(tkz, tok, ns, adjust)?;
+        self.insert_node(pos, el, ipos);
         self.open_push(el)?;
         Ok(el)
     }
@@ -141,7 +139,7 @@ impl TreeBuilder<'_> {
         tkz: &Tokenizer<'_, '_>,
         tok: &Tok,
     ) -> Result<NodeId, TreeStatus> {
-        self.insert_foreign_element(tkz, tok, res::NS_HTML, false)
+        self.insert_foreign_element(tkz, tok, res::NS_HTML, None)
     }
 
     /// `lxb_html_tree_create_node` for an element (`lxb_html_interface_create`).
@@ -154,17 +152,19 @@ impl TreeBuilder<'_> {
         self.doc.create_element(tag, ns, 0, None).map_err(oom)
     }
 
-    /// `lxb_html_tree_create_element_for_token`.
+    /// `lxb_html_tree_create_element_for_token`, its attributes adjusted
+    /// by `adjust` (Lexbor's `tree->before_append_attr`).
     pub(crate) fn create_element_for_token(
         &mut self,
         tkz: &Tokenizer<'_, '_>,
         tok: &Tok,
         ns: usize,
+        adjust: Option<AttrAdjust>,
     ) -> Result<NodeId, TreeStatus> {
         let el = self.create_element_node(tok.tag_id, ns)?;
         match tok.base {
-            None => self.append_attributes(tkz, el, tok, ns)?,
-            Some(from) => self.append_attributes_from_element(el, from)?,
+            None => self.append_attributes(tkz, el, tok, ns, adjust)?,
+            Some(from) => self.append_attributes_from_element(el, from, adjust)?,
         }
         if let Some(offset) = self.created_offset(tok) {
             self.doc.set_source_offset(el, offset);
@@ -179,11 +179,9 @@ impl TreeBuilder<'_> {
         el: NodeId,
         tok: &Tok,
         ns: usize,
+        adjust: Option<AttrAdjust>,
     ) -> Result<(), TreeStatus> {
-        if !tok.has_attrs {
-            return Ok(());
-        }
-        for ta in &tkz.token.attrs {
+        for ta in tok.attrs(tkz) {
             let Some(name) = ta.name else { continue };
             if self.attr_by_local_name_ns(el, name, ns) {
                 continue;
@@ -194,7 +192,7 @@ impl TreeBuilder<'_> {
                 prefix: 0,
                 written: 0,
             };
-            if let Some(adjust) = self.before_append_attr {
+            if let Some(adjust) = adjust {
                 self.adjust(&mut spec, adjust)?;
             }
             let value = ta
@@ -230,6 +228,21 @@ impl TreeBuilder<'_> {
         Ok(attr)
     }
 
+    /// `lxb_dom_element_attr_is_exist`: the first attribute of `el` whose
+    /// local name is `name` or whose qualified name as written is.
+    pub(crate) fn attr_is_exist(&self, el: NodeId, name: &[u8]) -> Option<NodeId> {
+        let d = &*self.doc;
+        let id = d.names.attr_id(name);
+        let mut a = d.first_attr(el);
+        while let Some(x) = a {
+            if Some(d.local(x) as usize) == id || d.attr_written(x) == Some(name) {
+                return Some(x);
+            }
+            a = d.next_attr(x);
+        }
+        None
+    }
+
     /// `lxb_dom_element_attr_by_local_name_ns_data`: whether `el` has an
     /// attribute with local name `name` in `ns`, or whose qualified name is
     /// `name`.
@@ -254,27 +267,53 @@ impl TreeBuilder<'_> {
         &mut self,
         el: NodeId,
         from: NodeId,
+        adjust: Option<AttrAdjust>,
     ) -> Result<(), TreeStatus> {
         let mut a = self.doc.first_attr(from);
         while let Some(x) = a {
-            let mut spec = AttrSpec {
-                local: self.doc.local(x) as usize,
-                ns: self.doc.ns(x) as usize,
-                prefix: 0,
-                written: self.doc.written_id(x),
-            };
-            if let Some(adjust) = self.before_append_attr {
-                self.adjust(&mut spec, adjust)?;
-            }
-            let value = (!self.valueless.contains(x)).then_some(AttrValue::CopyOf(x));
-            let attr = self.make_attr(spec, value)?;
+            let attr = self.copy_attr(x, 0, adjust)?;
             self.append_attr_with_steps(el, attr)?;
             a = self.doc.next_attr(x);
         }
         Ok(())
     }
 
-    /// `tree->before_append_attr`.
+    /// A copy of the attribute `x`, not linked, with the prefix `prefix` and
+    /// adjusted by `adjust`: valueless (Lexbor's NULL) when `x` is.
+    pub(super) fn copy_attr(
+        &mut self,
+        x: NodeId,
+        prefix: u32,
+        adjust: Option<AttrAdjust>,
+    ) -> Result<NodeId, TreeStatus> {
+        let mut spec = AttrSpec {
+            local: self.doc.local(x) as usize,
+            ns: self.doc.ns(x) as usize,
+            prefix,
+            written: self.doc.written_id(x),
+        };
+        if let Some(adjust) = adjust {
+            self.adjust(&mut spec, adjust)?;
+        }
+        let value = (!self.valueless.contains(x)).then_some(AttrValue::CopyOf(x));
+        self.make_attr(spec, value)
+    }
+
+    /// The SVG element `el`'s name as the Standard's table writes it
+    /// (`foreignObject`), set as its qualified name
+    /// (`lxb_dom_element_qualified_name_set`; Lexbor ignores a failure).
+    pub(crate) fn adjust_svg_tag_name(&mut self, el: NodeId) {
+        let fixed = rt::SVG_FIXNAME
+            .get(self.tag(el))
+            .copied()
+            .unwrap_or_default();
+        if !fixed.is_empty() {
+            let _ = self.doc.set_written(el, Some(fixed));
+        }
+    }
+
+    /// `tree->before_append_attr`: how a foreign element's attributes are
+    /// adjusted.
     fn adjust(&mut self, spec: &mut AttrSpec, adjust: AttrAdjust) -> Result<(), TreeStatus> {
         match adjust {
             AttrAdjust::Mathml => self.adjust_mathml_attributes(spec)?,
@@ -291,7 +330,7 @@ impl TreeBuilder<'_> {
                 .doc
                 .names
                 .qualified_append(b"definitionURL")
-                .map_err(|_| TreeStatus::Error)?;
+                .map_err(|_| TreeStatus::Oom)?;
         }
         Ok(())
     }
@@ -362,9 +401,11 @@ impl TreeBuilder<'_> {
         if let Some(p) = prev.filter(|&p| self.tag(p) == res::TAG__TEXT) {
             return self.doc.append_text(p, data).map_err(oom);
         }
-        let text = self.doc.create_data(NodeType::Text, data).map_err(oom)?;
-        self.doc
-            .set_names(text, res::TAG__TEXT, res::NS_HTML as u32, 0);
+        let name = NodeName::html(res::TAG__TEXT);
+        let text = self
+            .doc
+            .create_data(NodeType::Text, name, data)
+            .map_err(oom)?;
         self.insert_node(pos, text, ipos);
         Ok(())
     }
@@ -381,28 +422,29 @@ impl TreeBuilder<'_> {
             Some(p) => (p, Ipos::Child),
             None => self.appropriate_place(None).ok_or(TreeStatus::Error)?,
         };
-        let ns = self.doc.ns(pos);
+        let name = NodeName {
+            local: tok.tag_id,
+            ns: self.doc.ns(pos),
+            prefix: 0,
+        };
         let c = self
             .doc
-            .create_data(NodeType::Comment, tok.text(tkz))
+            .create_data(NodeType::Comment, name, tok.text(tkz))
             .map_err(oom)?;
-        self.doc.set_names(c, tok.tag_id, ns, 0);
         self.insert_node(pos, c, ipos);
         Ok(c)
     }
 
-    /// `lxb_html_tree_insert_processing_instruction`: the target is the
-    /// token's first `null_count` bytes, the data the rest.
+    /// `lxb_html_tree_insert_processing_instruction`, the target and data as
+    /// the tokenizer splits them ([`Tokenizer::pi_parts`]).
     pub(crate) fn insert_processing_instruction(
         &mut self,
         tkz: &Tokenizer<'_, '_>,
-        tok: &Tok,
         pos: Option<NodeId>,
     ) -> Result<NodeId, TreeStatus> {
         let (pos, ipos) = self.appropriate_place(pos).ok_or(TreeStatus::Error)?;
-        let text = tok.text(tkz);
-        let at = tok.null_count.min(text.len());
-        let pi = self.doc.create_pi(&text[..at], &text[at..]).map_err(oom)?;
+        let (target, data) = tkz.pi_parts();
+        let pi = self.doc.create_pi(target, data).map_err(oom)?;
         self.insert_node(pos, pi, ipos);
         Ok(pi)
     }
@@ -415,25 +457,10 @@ impl TreeBuilder<'_> {
         &mut self,
         tkz: &Tokenizer<'_, '_>,
     ) -> Result<(NodeId, usize, usize, usize), TreeStatus> {
-        let attrs = &tkz.token.attrs;
-        let mut name_id = 0;
-        let (mut public, mut system): (&[u8], &[u8]) = (b"", b"");
-        if let Some(first) = attrs.first() {
-            name_id = first.name.unwrap_or(0);
-            if let Some(second) = attrs.get(1) {
-                let value = |a| tkz.attr_value(a).unwrap_or_default();
-                if second.name == Some(res::ATTR_PUBLIC) {
-                    public = value(second);
-                    if second.value_begin.is_some() {
-                        if let Some(third) = attrs.get(2) {
-                            system = value(third);
-                        }
-                    }
-                } else if second.name == Some(res::ATTR_SYSTEM) {
-                    system = value(second);
-                }
-            }
-        }
+        let parts = tkz.doctype();
+        let name_id = parts.name.and_then(|a| a.name).unwrap_or(0);
+        let public = parts.public_id.unwrap_or_default();
+        let system = parts.system_id.unwrap_or_default();
         /* `lxb_dom_document_type_name`: `LXB_DOM_ATTR__UNDEF` reads as "". */
         let name = match name_id {
             res::ATTR__UNDEF => &b""[..],
@@ -441,12 +468,11 @@ impl TreeBuilder<'_> {
         };
         /* `lexbor_str_t` copies: the name is the interned attribute name. */
         let name = crate::falloc::try_to_vec(name).ok_or(TreeStatus::Oom)?;
+        let names = NodeName::html(res::TAG__EM_DOCTYPE);
         let node = self
             .doc
-            .create_doctype(&name, public, system)
+            .create_doctype(names, &name, public, system)
             .map_err(oom)?;
-        self.doc
-            .set_names(node, res::TAG__EM_DOCTYPE, res::NS_HTML as u32, 0);
         Ok((node, name_id, public.len(), system.len()))
     }
 
@@ -457,8 +483,7 @@ impl TreeBuilder<'_> {
         tok: &Tok,
     ) -> Result<NodeId, TreeStatus> {
         let el = self.insert_html_element(tkz, tok)?;
-        tkz.tmp_tag_id = tok.tag_id;
-        tkz.set_state(rawtext_before);
+        tkz.enter_text_content(TextContent::Rawtext, tok.tag_id);
         self.original_mode = self.mode;
         self.mode = Mode::Text;
         Ok(el)
@@ -471,8 +496,7 @@ impl TreeBuilder<'_> {
         tok: &Tok,
     ) -> Result<NodeId, TreeStatus> {
         let el = self.insert_html_element(tkz, tok)?;
-        tkz.tmp_tag_id = tok.tag_id;
-        tkz.set_state(rcdata_before);
+        tkz.enter_text_content(TextContent::Rcdata, tok.tag_id);
         self.original_mode = self.mode;
         self.mode = Mode::Text;
         Ok(el)
@@ -717,14 +741,27 @@ impl TreeBuilder<'_> {
 
     /// `lxb_html_tree_close_p_element`.
     pub(crate) fn close_p_element(&mut self, tok: &Tok) {
-        self.generate_implied_end_tags(res::TAG_P, res::NS_HTML);
-        let is_p = self
-            .current_node()
-            .is_some_and(|n| self.node_is(n, res::TAG_P));
-        if !is_p {
-            self.parse_error(tok, E::Unelinopelst);
+        self.close_element(tok, res::TAG_P, Some(res::TAG_P), E::Unelinopelst);
+    }
+
+    /// Whether the current node is the HTML element `tag`.
+    #[inline]
+    pub(crate) fn current_is(&self, tag: usize) -> bool {
+        self.current_node().is_some_and(|n| self.node_is(n, tag))
+    }
+
+    /// The Standard's recurring close of an element: generate implied end
+    /// tags, except for the HTML element `except`; report `err` unless the
+    /// current node is then `tag`; pop up to and including `tag`.
+    pub(crate) fn close_element(&mut self, tok: &Tok, tag: usize, except: Option<usize>, err: E) {
+        match except {
+            Some(t) => self.generate_implied_end_tags(t, res::NS_HTML),
+            None => self.generate_implied_end_tags(res::TAG__UNDEF, res::NS__UNDEF),
         }
-        self.open_pop_until_tag_id(res::TAG_P, res::NS_HTML, true);
+        if !self.current_is(tag) {
+            self.parse_error(tok, err);
+        }
+        self.open_pop_until_tag_id(tag, res::NS_HTML, true);
     }
 
     /// `lxb_html_tree_acknowledge_token_self_closing`.
@@ -754,23 +791,15 @@ impl TreeBuilder<'_> {
         if self.ns(n) == res::NS_MATH && self.tag(n) == res::TAG_ANNOTATION_XML {
             /* `lxb_dom_element_attr_is_exist(element, "encoding")`: by local
              * name, or by qualified name. */
-            let d = &*self.doc;
-            let Some(id) = d.names.attr_id(b"encoding") else {
+            let Some(x) = self.attr_is_exist(n, b"encoding") else {
                 return false;
             };
-            let mut a = d.first_attr(n);
-            while let Some(x) = a {
-                if d.local(x) as usize == id || d.attr_written(x) == Some(&b"encoding"[..]) {
-                    if self.valueless.contains(x) {
-                        return false;
-                    }
-                    let v = d.attr_value(x).unwrap_or_default();
-                    return v.eq_ignore_ascii_case(b"text/html")
-                        || v.eq_ignore_ascii_case(b"application/xhtml+xml");
-                }
-                a = d.next_attr(x);
+            if self.valueless.contains(x) {
+                return false;
             }
-            return false;
+            let v = self.doc.attr_value(x).unwrap_or_default();
+            return v.eq_ignore_ascii_case(b"text/html")
+                || v.eq_ignore_ascii_case(b"application/xhtml+xml");
         }
         self.ns(n) == res::NS_SVG
             && matches!(
@@ -780,17 +809,16 @@ impl TreeBuilder<'_> {
     }
 
     /// `lxb_html_tree_adoption_agency_algorithm`: `true` when the caller is
-    /// to act as "any other end tag" (Lexbor's return), with the status set
-    /// on failure.
-    pub(crate) fn adoption_agency_algorithm(&mut self, tok: &Tok) -> bool {
+    /// to act as "any other end tag" (Lexbor's return), `Err` on failure.
+    pub(crate) fn adoption_agency_algorithm(&mut self, tok: &Tok) -> Result<bool, TreeStatus> {
         let subject = tok.tag_id;
         /* State 2 */
         let Some(node) = self.current_node() else {
-            return false;
+            return Ok(false);
         };
         if self.node_is(node, subject) && self.afe_find_by_node_reverse(node).is_none() {
             self.open_pop();
-            return false;
+            return Ok(false);
         }
         /* State 3-4 */
         let mut outer_loop = 0;
@@ -802,7 +830,7 @@ impl TreeBuilder<'_> {
             let mut formatting = None;
             for idx in (0..self.afe.len()).rev() {
                 match self.afe[idx] {
-                    None => return true,
+                    None => return Ok(true),
                     Some(n) if self.tag(n) == subject => {
                         formatting = Some((idx, n));
                         break;
@@ -811,7 +839,7 @@ impl TreeBuilder<'_> {
                 }
             }
             let Some((formatting_index, formatting_element)) = formatting else {
-                return true;
+                return Ok(true);
             };
 
             /* State 7 */
@@ -819,7 +847,7 @@ impl TreeBuilder<'_> {
             else {
                 self.parse_error(tok, E::Mielinopelst);
                 self.afe_remove_by_node(formatting_element);
-                return false;
+                return Ok(false);
             };
 
             /* State 8 */
@@ -828,7 +856,7 @@ impl TreeBuilder<'_> {
                 .is_none()
             {
                 self.parse_error(tok, E::Mielinsc);
-                return false;
+                return Ok(false);
             }
 
             /* State 9 */
@@ -846,7 +874,7 @@ impl TreeBuilder<'_> {
             let Some(mut furthest_block_idx) = furthest else {
                 self.open_pop_until_node(formatting_element, true);
                 self.afe_remove_by_node(formatting_element);
-                return false;
+                return Ok(false);
             };
             let furthest_block = self.open[furthest_block_idx];
 
@@ -855,7 +883,7 @@ impl TreeBuilder<'_> {
                 .checked_sub(1)
                 .and_then(|i| self.open_get(i))
             else {
-                return false;
+                return Ok(false);
             };
 
             /* State 13. The bookmark and the formatting element's index are
@@ -874,7 +902,7 @@ impl TreeBuilder<'_> {
                 inner_loop_counter += 1;
                 /* State 14.3 */
                 if node_idx == 0 {
-                    return false;
+                    return Ok(false);
                 }
                 node_idx -= 1;
                 let mut node = self.open[node_idx];
@@ -910,13 +938,7 @@ impl TreeBuilder<'_> {
                 /* State 14.7 */
                 let mut fake = Tok::fake(self.tag(node));
                 fake.base = Some(node);
-                let el = match self.create_element_for_fake(&fake) {
-                    Ok(el) => el,
-                    Err(st) => {
-                        self.status = st;
-                        return false;
-                    }
-                };
+                let el = self.create_element_for_fake(&fake)?;
                 node = el;
                 self.afe[afe_node_idx] = Some(node);
                 self.open[node_idx] = node;
@@ -942,20 +964,14 @@ impl TreeBuilder<'_> {
 
             /* State 15 */
             let Some((pos, ipos)) = self.appropriate_place(Some(common_ancestor)) else {
-                return false;
+                return Ok(false);
             };
             self.insert_node(pos, last, ipos);
 
             /* State 16 */
             let mut fake = Tok::fake(self.tag(formatting_element));
             fake.base = Some(formatting_element);
-            let element = match self.create_element_for_fake(&fake) {
-                Ok(el) => el,
-                Err(st) => {
-                    self.status = st;
-                    return false;
-                }
-            };
+            let element = self.create_element_for_fake(&fake)?;
 
             /* State 17 */
             let mut child = self.doc.first_child(furthest_block);
@@ -977,20 +993,14 @@ impl TreeBuilder<'_> {
             if bookmark > self.afe.len() {
                 bookmark = self.afe.len();
             }
-            if let Err(st) = self.afe_insert(element, bookmark) {
-                self.status = st;
-                return false;
-            }
+            self.afe_insert(element, bookmark)?;
 
             /* State 20 */
             self.open_remove_by_node(formatting_element);
             furthest_block_idx = self.open_find_by_node(furthest_block).unwrap_or(0);
-            if let Err(st) = self.open_insert_after(element, furthest_block_idx) {
-                self.status = st;
-                return false;
-            }
+            self.open_insert_after(element, furthest_block_idx)?;
         }
-        false
+        Ok(false)
     }
 
     /// `lxb_html_tree_create_element_for_token` for a token with a base
@@ -998,7 +1008,7 @@ impl TreeBuilder<'_> {
     fn create_element_for_fake(&mut self, fake: &Tok) -> Result<NodeId, TreeStatus> {
         let el = self.create_element_node(fake.tag_id, res::NS_HTML)?;
         if let Some(from) = fake.base {
-            self.append_attributes_from_element(el, from)?;
+            self.append_attributes_from_element(el, from, None)?;
         }
         Ok(el)
     }

@@ -16,14 +16,7 @@ fn close_caption(tree: &mut TreeBuilder<'_>, tok: &Tok, consumed: bool) -> bool 
         tree.parse_error(tok, E::Mielinsc);
         return true;
     }
-    tree.generate_implied_end_tags(res::TAG__UNDEF, res::NS__UNDEF);
-    let is = tree
-        .current_node()
-        .is_some_and(|c| tree.node_is(c, res::TAG_CAPTION));
-    if !is {
-        tree.parse_error(tok, E::Unelinopelst);
-    }
-    tree.open_pop_until_tag_id(res::TAG_CAPTION, res::NS_HTML, true);
+    tree.close_element(tok, res::TAG_CAPTION, None, E::Unelinopelst);
     tree.afe_up_to_last_marker();
     tree.mode = Mode::InTable;
     consumed

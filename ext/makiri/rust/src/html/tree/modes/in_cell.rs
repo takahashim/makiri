@@ -32,14 +32,7 @@ pub fn in_cell(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mu
                     tree.parse_error(tok, E::Unclto);
                     return true;
                 }
-                tree.generate_implied_end_tags(res::TAG__UNDEF, res::NS__UNDEF);
-                let is = tree
-                    .current_node()
-                    .is_some_and(|c| tree.node_is(c, tok.tag_id));
-                if !is {
-                    tree.parse_error(tok, E::Mielinopelst);
-                }
-                tree.open_pop_until_tag_id(tok.tag_id, res::NS_HTML, true);
+                tree.close_element(tok, tok.tag_id, None, E::Mielinopelst);
                 tree.afe_up_to_last_marker();
                 tree.mode = Mode::InRow;
                 true

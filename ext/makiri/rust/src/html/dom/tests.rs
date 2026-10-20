@@ -14,7 +14,9 @@ fn links_and_attributes_keep_their_lists() {
     let b = d
         .create_element(div, res::NS_HTML as u32, 0, None)
         .expect("b");
-    let c = d.create_data(NodeType::Text, b"t").expect("c");
+    let c = d
+        .create_data(NodeType::Text, NodeName::default(), b"t")
+        .expect("c");
     d.append_child(NodeId::DOCUMENT, a);
     d.append_child(a, c);
     d.insert_before(c, b);
@@ -29,7 +31,7 @@ fn links_and_attributes_keep_their_lists() {
 
     let id = d.names.attr_local_name_append(b"id").expect("id");
     let x = d.create_attr(id, 0, 0, None, b"x").expect("attr");
-    d.attr_append(a, x);
+    d.link_attribute(a, x, ShortcutRule::Take(Shortcut::Id));
     assert_eq!(d.id_attr(a), Some(x));
     assert_eq!(d.parent(x), Some(a));
     assert_eq!(d.attr_value(x), Some(&b"x"[..]));
@@ -64,14 +66,18 @@ fn compaction_keeps_every_span_and_bounds_the_store() {
         .create_element(div, res::NS_HTML as u32, 0, None)
         .expect("el");
     d.append_child(NodeId::DOCUMENT, el);
-    let text = d.create_data(NodeType::Text, b"first").expect("text");
+    let text = d
+        .create_data(NodeType::Text, NodeName::default(), b"first")
+        .expect("text");
     d.append_child(el, text);
-    let detached = d.create_data(NodeType::Comment, b"detached").expect("c");
+    let detached = d
+        .create_data(NodeType::Comment, NodeName::default(), b"detached")
+        .expect("c");
     let pi = d.create_pi(b"target", b"pi data").expect("pi");
     d.append_child(el, pi);
     let id = d.names.attr_local_name_append(b"title").expect("name");
     let attr = d.create_attr(id, 0, 0, None, b"attr value").expect("attr");
-    d.attr_append(el, attr);
+    d.link_attribute(el, attr, ShortcutRule::Keep);
 
     let big = vec![b'x'; 1024];
     for i in 0..2000u32 {
@@ -85,9 +91,9 @@ fn compaction_keeps_every_span_and_bounds_the_store() {
             d.compact().expect("compact");
         }
         assert!(
-            d.bytes.len() < 8 * 1024,
+            d.stored_bytes() < 8 * 1024,
             "the store grew to {}",
-            d.bytes.len()
+            d.stored_bytes()
         );
         assert_eq!(d.data(text), Some(&v[..]));
     }
@@ -97,7 +103,7 @@ fn compaction_keeps_every_span_and_bounds_the_store() {
     assert_eq!(d.attr_value(attr), Some(&b"v1998"[..]));
     d.compact().expect("compact");
     assert_eq!(d.dead_bytes(), 0);
-    assert_eq!(d.bytes.len(), 1024 + 4 + 8 + 6 + 7 + 5);
+    assert_eq!(d.stored_bytes(), 1024 + 4 + 8 + 6 + 7 + 5);
 }
 
 #[test]
@@ -107,13 +113,17 @@ fn text_appended_between_other_stores_grows_the_store_linearly() {
     for texts in [1usize, 2, 4] {
         let mut d = Document::new(0).expect("doc");
         let ts: Vec<NodeId> = (0..texts)
-            .map(|_| d.create_data(NodeType::Text, b"").expect("text"))
+            .map(|_| {
+                d.create_data(NodeType::Text, NodeName::default(), b"")
+                    .expect("text")
+            })
             .collect();
         let n = 20_000;
         for i in 0..n {
             let t = ts[i % texts];
             d.append_text(t, b"a").expect("append");
-            d.create_data(NodeType::Comment, b"x").expect("comment");
+            d.create_data(NodeType::Comment, NodeName::default(), b"x")
+                .expect("comment");
         }
         for &t in &ts {
             assert_eq!(d.data(t).map(<[u8]>::len), Some(n / texts));
@@ -121,16 +131,16 @@ fn text_appended_between_other_stores_grows_the_store_linearly() {
         /* Live bytes are 2n; the rooms and moved copies add a constant
          * factor, where a copy per append made it ~n^2/2 per text. */
         assert!(
-            d.bytes.len() < 12 * n,
+            d.stored_bytes() < 12 * n,
             "{texts} texts: {} bytes",
-            d.bytes.len()
+            d.stored_bytes()
         );
         d.compact().expect("compact");
         for &t in &ts {
             assert_eq!(d.data(t).map(<[u8]>::len), Some(n / texts));
             assert!(d.data(t).expect("data").iter().all(|&c| c == b'a'));
         }
-        assert_eq!(d.bytes.len(), 2 * n);
+        assert_eq!(d.stored_bytes(), 2 * n);
     }
 }
 

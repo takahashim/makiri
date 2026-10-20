@@ -1,8 +1,12 @@
 //! The stack of open elements (`html/tree/open_elements.c`) and the list of
 //! active formatting elements (`html/tree/active_formatting.c`).
 //!
-//! Lexbor's pop callbacks (`open_pop`) run only the option element's
-//! selectedness, which nothing here models, so a pop is a pop.
+//! The modes read and change the stacks only through these methods; the
+//! adoption agency (`actions.rs`) and the guard read them directly, as
+//! Lexbor's do. A pop runs Lexbor's pop callback ([`pop_steps`]: an option
+//! leaving the stack may be cloned into its select's `<selectedcontent>`).
+//!
+//! [`pop_steps`]: TreeBuilder::pop_steps
 
 use super::{Tok, TreeBuilder, TreeStatus};
 use crate::compat::{self, Fix};
@@ -33,6 +37,19 @@ impl TreeBuilder<'_> {
         self.open.first().copied()
     }
 
+    /// The number of open elements.
+    #[inline]
+    pub(crate) fn open_len(&self) -> usize {
+        self.open.len()
+    }
+
+    /// The open element at `idx`, counted from the bottom; `idx` is below
+    /// [`open_len`](Self::open_len).
+    #[inline]
+    pub(crate) fn open_at(&self, idx: usize) -> NodeId {
+        self.open[idx]
+    }
+
     /// `lxb_html_tree_open_elements_get`.
     #[inline]
     pub(crate) fn open_get(&self, idx: usize) -> Option<NodeId> {
@@ -48,6 +65,17 @@ impl TreeBuilder<'_> {
     pub(crate) fn open_remove_by_node(&mut self, n: NodeId) {
         if let Some(i) = self.open.iter().rposition(|&x| x == n) {
             self.open.remove(i);
+        }
+    }
+
+    /// The Standard's "clear the stack back to a ... context": pop until the
+    /// current node is an HTML element with one of the tags `stop`.
+    pub(crate) fn clear_stack_back_to(&mut self, stop: &[usize]) {
+        while let Some(c) = self.current_node() {
+            if self.ns(c) == res::NS_HTML && stop.contains(&self.tag(c)) {
+                return;
+            }
+            self.open_pop();
         }
     }
 
@@ -140,6 +168,18 @@ impl TreeBuilder<'_> {
         self.template_modes
             .falloc_push(mode)
             .map_err(|()| TreeStatus::Oom)
+    }
+
+    /// Pop the current template insertion mode.
+    #[inline]
+    pub(crate) fn template_modes_pop(&mut self) -> Option<super::Mode> {
+        self.template_modes.pop()
+    }
+
+    /// Whether the stack of template insertion modes is not empty.
+    #[inline]
+    pub(crate) fn in_template_mode(&self) -> bool {
+        !self.template_modes.is_empty()
     }
 
     /* ---- active formatting elements ---- */

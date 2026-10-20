@@ -3,11 +3,12 @@
 //! an arena document of the fragment's own.
 
 use super::guard::{ContextOptions, DepthLimit, Guard, GuardStop};
+use super::parse::drive;
 use super::{Mode, TreeBuilder, TreeStatus};
 use crate::compat::{self, Fix};
 use crate::html::dom::{Document, DomOom, NodeId};
 use crate::html::res::names as res;
-use crate::html::tokenizer::{Status, Tokenizer};
+use crate::html::tokenizer::Status;
 use crate::utf8_input::sanitize;
 
 /// Why a fragment parse produced no fragment.
@@ -76,7 +77,6 @@ pub fn parse_fragment(
         0
     };
     let mut doc = Document::new(compat_mode).map_err(oom)?;
-    doc.set_names(NodeId::DOCUMENT, res::TAG__DOCUMENT, res::NS_HTML as u32, 0);
     let ns32 = u32::try_from(ns).unwrap_or(0);
     let root = doc
         .create_element(res::TAG_HTML, res::NS_HTML as u32, 0, None)
@@ -86,37 +86,15 @@ pub fn parse_fragment(
 
     let mut tree = TreeBuilder::new(&mut doc);
     tree.guard = Guard::for_fragment(limit, options);
-    tree.open_push(root).map_err(|_| FragmentFailure::Parse)?;
-    if tag == res::TAG_TEMPLATE && ns == res::NS_HTML {
-        tree.template_modes_push(Mode::InTemplate)
-            .map_err(|_| FragmentFailure::Parse)?;
-    }
-    tree.fragment = Some(context);
-    tree.context_integration_point = facts.html_integration_point && compat::fixed(Fix::P18);
-    tree.reset_insertion_mode_appropriately();
-    let own_form = tag == res::TAG_FORM && ns == res::NS_HTML;
-    if own_form || (facts.in_form && compat::fixed(Fix::P20)) {
-        let form = tree
-            .create_element_node(res::TAG_FORM, res::NS_HTML)
-            .map_err(|_| FragmentFailure::Parse)?;
-        tree.form = Some(form);
-    }
+    tree.begin_fragment(root, context, &facts)
+        .map_err(|_| FragmentFailure::Parse)?;
 
-    let status = {
-        let current_ns = tree.current_namespace();
-        let foreign = facts.foreign_namespace && compat::fixed(Fix::P19);
-        let mut tkz = Tokenizer::new(bytes, &mut tree);
-        /* `lxb_html_parser_init` */
-        tkz.keep_duplicate = true;
-        tkz.set_state_by_tag(false, tag, ns);
-        tkz.tmp_tag_id = res::TAG__UNDEF;
-        tkz.current_ns = current_ns;
-        tkz.undef_is_foreign = foreign;
-        match tkz.chunk() {
-            Status::Ok => tkz.end(),
-            st => st,
-        }
-    };
+    let current_ns = tree.current_namespace();
+    let foreign = facts.foreign_namespace && compat::fixed(Fix::P19);
+    let status = drive(&mut tree, bytes, foreign, |tkz| {
+        tkz.enter_fragment_context(false, tag, ns);
+        tkz.set_current_namespace(current_ns);
+    });
     if let Some(stop) = tree.guard.stopped {
         return Err(FragmentFailure::Guard(stop));
     }
@@ -133,4 +111,31 @@ pub fn parse_fragment(
     }
     drop(tree);
     Ok(ParsedFragment { doc, root })
+}
+
+impl TreeBuilder<'_> {
+    /// The fragment case's setup of the tree builder (Lexbor's
+    /// `lxb_html_parse_fragment_chunk_begin`): `root` the only open element,
+    /// `context` the context element, a template's mode, the insertion
+    /// mode reset, and the form element pointer.
+    fn begin_fragment(
+        &mut self,
+        root: NodeId,
+        context: NodeId,
+        facts: &ContextFacts,
+    ) -> Result<(), TreeStatus> {
+        let (tag, ns) = (self.tag(context), self.ns(context));
+        self.open_push(root)?;
+        if tag == res::TAG_TEMPLATE && ns == res::NS_HTML {
+            self.template_modes_push(Mode::InTemplate)?;
+        }
+        self.fragment = Some(context);
+        self.context_integration_point = facts.html_integration_point && compat::fixed(Fix::P18);
+        self.reset_insertion_mode_appropriately();
+        let own_form = tag == res::TAG_FORM && ns == res::NS_HTML;
+        if own_form || (facts.in_form && compat::fixed(Fix::P20)) {
+            self.form = Some(self.create_element_node(res::TAG_FORM, res::NS_HTML)?);
+        }
+        Ok(())
+    }
 }

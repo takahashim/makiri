@@ -24,6 +24,9 @@ use crate::falloc::{try_vec_with_capacity, Reserve, VecPush};
 use crate::html::names::Names;
 use crate::html::res::names as res;
 pub use crate::node_type::NodeType;
+use ext_table::ExtTable;
+use store::ByteStore;
+pub use store::Span;
 
 /// An allocation the arena needed failed; the document is as it was.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -65,11 +68,25 @@ impl NodeId {
     }
 }
 
-/// `[start, start + len)` of the byte store.
+/// A node's Lexbor name fields: its local name (an id of the document's
+/// [`Names`]), namespace and prefix (0 for none).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Span {
-    start: u32,
-    len: u32,
+pub struct NodeName {
+    pub local: usize,
+    pub ns: NsIndex,
+    pub prefix: PrefixIndex,
+}
+
+impl NodeName {
+    /// `local` in the HTML namespace, with no prefix - how Lexbor names a
+    /// text, comment or doctype node its parser or document makes.
+    pub const fn html(local: usize) -> NodeName {
+        NodeName {
+            local,
+            ns: res::NS_HTML as u32,
+            prefix: 0,
+        }
+    }
 }
 
 /// A namespace id: Lexbor's static numbers (`res::NS_*`) first, then the
@@ -137,6 +154,19 @@ pub struct ElementData {
     template: Option<NodeId>,
 }
 
+impl ElementData {
+    /// Which shortcut, if any, points at `attr`.
+    fn shortcut_of(&self, attr: NodeId) -> Option<Shortcut> {
+        if self.id_attr == Some(attr) {
+            Some(Shortcut::Id)
+        } else if self.class_attr == Some(attr) {
+            Some(Shortcut::Class)
+        } else {
+            None
+        }
+    }
+}
+
 /// An attribute's own fields.
 #[derive(Clone, Copy, Debug)]
 pub struct AttrData {
@@ -155,29 +185,92 @@ struct DoctypeData {
     system_id: Span,
 }
 
+/// Which of an element's attribute shortcuts (Lexbor's `attr_id` /
+/// `attr_class`, which CSS `#id` / `.class` read) an attribute is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Shortcut {
+    Id,
+    Class,
+}
+
+impl Shortcut {
+    /// The shortcut a no-namespace attribute with the DOM local name `local`
+    /// would be.
+    pub fn named(local: &[u8]) -> Option<Shortcut> {
+        match local {
+            b"id" => Some(Shortcut::Id),
+            b"class" => Some(Shortcut::Class),
+            _ => None,
+        }
+    }
+}
+
+/// How [`Document::link_attribute`] moves the shortcuts. Three callers want
+/// three rules, and each names its own here rather than writing the links.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShortcutRule {
+    /// The parser's: `lxb_dom_element_attr_append`, where an attribute whose
+    /// local name is `id` or `class`, in whatever namespace, takes the
+    /// shortcut and the attribute that held it is taken off.
+    Lexbor,
+    /// Leave both shortcuts as they are.
+    Keep,
+    /// Point this shortcut at the attribute, leaving the other: the DOM
+    /// algorithms, which decide it themselves, and a copy, which points
+    /// them where its source's point.
+    Take(Shortcut),
+}
+
+impl ShortcutRule {
+    /// `Take(s)` for `Some(s)`, else `Keep`.
+    pub fn take(s: Option<Shortcut>) -> ShortcutRule {
+        s.map_or(ShortcutRule::Keep, ShortcutRule::Take)
+    }
+}
+
+/// A document's mode (the DOM's "no-quirks", "quirks", "limited-quirks").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CompatMode {
+    NoQuirks,
+    Quirks,
+    LimitedQuirks,
+}
+
+impl CompatMode {
+    /// From Lexbor's `compat_mode` number: 0, 1, 2 (and anything past 2).
+    pub const fn from_lexbor(n: u8) -> CompatMode {
+        match n {
+            0 => CompatMode::NoQuirks,
+            1 => CompatMode::Quirks,
+            _ => CompatMode::LimitedQuirks,
+        }
+    }
+
+    /// As Lexbor's `compat_mode` number, which the Ruby API reports.
+    pub const fn lexbor(self) -> u8 {
+        match self {
+            CompatMode::NoQuirks => 0,
+            CompatMode::Quirks => 1,
+            CompatMode::LimitedQuirks => 2,
+        }
+    }
+}
+
 /// One HTML document.
 pub struct Document {
     nodes: Vec<Node>,
     elements: Vec<ElementData>,
     attrs: Vec<AttrData>,
     doctypes: Vec<DoctypeData>,
-    bytes: Vec<u8>,
-    /// Bytes of `bytes` no span names any more: what replacing a node's data
-    /// left behind (`compact.rs`).
-    dead: usize,
-    /// Texts the tree builder appends to with room reserved after them
-    /// (`build.rs`'s `append_text`).
-    growing: build::Growing,
+    /// Every node's data, attribute value and doctype string (`store.rs`).
+    bytes: ByteStore,
     /// Tag and attribute names, shared with the tokenizer.
     pub names: Names,
-    /// Namespace URIs past the static ones.
-    ns: Vec<Vec<u8>>,
-    /// Prefixes past the static ones.
-    prefixes: Vec<Vec<u8>>,
-    /// The bytes of `ns` and `prefixes`' entries: their growth in O(1).
-    ns_bytes: usize,
-    /// Lexbor's `compat_mode`: 0 no-quirks, 1 quirks, 2 limited-quirks.
-    pub compat_mode: u8,
+    /// Namespace URIs, Lexbor's static ones first.
+    ns: ExtTable,
+    /// Prefixes, numbered as namespaces are (Lexbor shares the static range).
+    prefixes: ExtTable,
+    compat_mode: CompatMode,
     /// This document's process-unique stamp (never 0), carried in every
     /// [`RawNode`] it hands out, so a node word names one node of one
     /// document - as a Lexbor node pointer does.
@@ -196,13 +289,27 @@ macro_rules! oom {
 }
 
 impl Document {
-    /// An empty document in `compat_mode`.
+    /// The document's mode.
+    #[inline]
+    pub fn compat_mode(&self) -> CompatMode {
+        self.compat_mode
+    }
+
+    /// Set the document's mode (the tree builder's, from a DOCTYPE).
+    #[inline]
+    pub fn set_compat_mode(&mut self, mode: CompatMode) {
+        self.compat_mode = mode;
+    }
+
+    /// An empty document in Lexbor's `compat_mode` number.
     pub fn new(compat_mode: u8) -> Result<Document, DomOom> {
         let mut nodes: Vec<Node> = try_vec_with_capacity(16).ok_or(DomOom)?;
         nodes.push(Node {
             kind: NodeType::Document,
             local: res::TAG__DOCUMENT as u32,
-            ns: 0,
+            /* An HTML document node is in the HTML namespace
+             * (`lxb_dom_document_init`). */
+            ns: res::NS_HTML as u32,
             prefix: 0,
             parent: None,
             first_child: None,
@@ -217,14 +324,11 @@ impl Document {
             elements: Vec::new(),
             attrs: Vec::new(),
             doctypes: Vec::new(),
-            bytes: Vec::new(),
-            dead: 0,
-            growing: build::Growing::default(),
+            bytes: ByteStore::default(),
             names: Names::default(),
-            ns: Vec::new(),
-            prefixes: Vec::new(),
-            ns_bytes: 0,
-            compat_mode: compat_mode.min(2),
+            ns: ExtTable::new(&res::NS_LINKS),
+            prefixes: ExtTable::new(&res::NS_PREFIXES),
+            compat_mode: CompatMode::from_lexbor(compat_mode),
             stamp: {
                 use core::sync::atomic::Ordering::Relaxed;
                 let s = DOC_STAMP.fetch_add(1, Relaxed);
@@ -257,52 +361,44 @@ impl Document {
             + self.doctypes.capacity() * core::mem::size_of::<DoctypeData>()
             + self.bytes.capacity()
             + self.names.owned_bytes()
-            + Self::table_bytes(&self.ns)
-            + Self::table_bytes(&self.prefixes)
+            + self.ns.owned_bytes()
+            + self.prefixes.owned_bytes()
     }
 
-    /// What a table of byte strings owns: its own block and each entry's.
-    fn table_bytes(t: &[Vec<u8>]) -> usize {
-        t.iter().map(Vec::capacity).sum::<usize>() + core::mem::size_of_val(t)
+    /// The bytes the store holds, live and dead.
+    pub fn stored_bytes(&self) -> usize {
+        self.bytes.len()
+    }
+
+    /// The longest name a node can write: a tag or attribute name, a
+    /// namespace URI or a prefix of the document's own.
+    pub fn longest_name(&self) -> usize {
+        self.names
+            .longest()
+            .max(self.ns.longest_own())
+            .max(self.prefixes.longest_own())
     }
 
     /// An O(1) measure of what the name and namespace tables hold, which
     /// [`owned_bytes`](Self::owned_bytes) counts by walking them.
     pub fn table_growth(&self) -> usize {
-        self.names.stored_bytes() + self.ns_bytes
+        self.names.stored_bytes() + self.ns.stored_bytes() + self.prefixes.stored_bytes()
     }
 
     /* ---- storing ---- */
 
     fn store(&mut self, b: &[u8]) -> Result<Span, DomOom> {
-        let start = u32::try_from(self.bytes.len()).map_err(|_| DomOom)?;
-        let len = u32::try_from(b.len()).map_err(|_| DomOom)?;
-        start.checked_add(len).ok_or(DomOom)?;
-        oom!(self.bytes.falloc_reserve(b.len()));
-        self.bytes.extend_from_slice(b);
-        Ok(Span { start, len })
+        self.bytes.store(b)
     }
 
     /// A second copy of the stored bytes `s`.
     fn dup(&mut self, s: Span) -> Result<Span, DomOom> {
-        let start = u32::try_from(self.bytes.len()).map_err(|_| DomOom)?;
-        start.checked_add(s.len).ok_or(DomOom)?;
-        let from = s.start as usize;
-        let to = from + s.len as usize;
-        if to > self.bytes.len() {
-            return Err(DomOom);
-        }
-        oom!(self.bytes.falloc_reserve(s.len as usize));
-        self.bytes.extend_from_within(from..to);
-        Ok(Span { start, len: s.len })
+        self.bytes.dup(s)
     }
 
     #[inline]
     fn bytes_of(&self, s: Span) -> &[u8] {
-        let start = s.start as usize;
-        self.bytes
-            .get(start..start + s.len as usize)
-            .unwrap_or_default()
+        self.bytes.get(s)
     }
 
     fn push(&mut self, kind: NodeType, payload: Payload) -> Result<NodeId, DomOom> {
@@ -338,82 +434,27 @@ impl Document {
     /// The id of the namespace `uri`, matched byte for byte; `None` when the
     /// document has none by that URI (or for an empty one).
     pub fn lookup_ns(&self, uri: &[u8]) -> Option<NsIndex> {
-        if uri.is_empty() {
-            return None;
-        }
-        if let Some(i) = res::NS_LINKS
-            .iter()
-            .skip(res::NS_HTML)
-            .position(|l| *l == uri)
-        {
-            return u32::try_from(i + res::NS_HTML).ok();
-        }
-        self.ns
-            .iter()
-            .position(|l| l == uri)
-            .and_then(|i| u32::try_from(res::NS__LAST_ENTRY + i).ok())
+        self.ns.lookup(uri)
     }
 
     /// [`lookup_ns`](Self::lookup_ns), appending `uri` when new.
     pub fn intern_ns(&mut self, uri: &[u8]) -> Result<Option<NsIndex>, DomOom> {
-        if uri.is_empty() {
-            return Ok(None);
-        }
-        if let Some(i) = self.lookup_ns(uri) {
-            return Ok(Some(i));
-        }
-        let owned = crate::falloc::try_to_vec(uri).ok_or(DomOom)?;
-        oom!(self.ns.falloc_push(owned));
-        self.ns_bytes += uri.len();
-        Ok(u32::try_from(res::NS__LAST_ENTRY + self.ns.len() - 1).ok())
+        self.ns.intern(uri)
     }
 
     /// A namespace id's URI.
     pub fn ns_uri(&self, ns: NsIndex) -> Option<&[u8]> {
-        let i = ns as usize;
-        if i == 0 {
-            return None;
-        }
-        match res::NS_LINKS.get(i) {
-            Some(l) => (!l.is_empty()).then_some(*l),
-            None => self.ns.get(i - res::NS__LAST_ENTRY).map(Vec::as_slice),
-        }
+        self.ns.get(ns)
     }
 
     /// The id of `prefix`, appending it when new; `None` for an empty one.
     pub fn intern_prefix(&mut self, prefix: &[u8]) -> Result<Option<PrefixIndex>, DomOom> {
-        if prefix.is_empty() {
-            return Ok(None);
-        }
-        if let Some(i) = res::NS_PREFIXES
-            .iter()
-            .skip(res::NS_HTML)
-            .position(|p| *p == prefix)
-        {
-            return Ok(u32::try_from(i + res::NS_HTML).ok());
-        }
-        if let Some(i) = self.prefixes.iter().position(|p| p == prefix) {
-            return Ok(u32::try_from(res::NS__LAST_ENTRY + i).ok());
-        }
-        let owned = crate::falloc::try_to_vec(prefix).ok_or(DomOom)?;
-        oom!(self.prefixes.falloc_push(owned));
-        self.ns_bytes += prefix.len();
-        Ok(u32::try_from(res::NS__LAST_ENTRY + self.prefixes.len() - 1).ok())
+        self.prefixes.intern(prefix)
     }
 
     /// A prefix id's text.
     pub fn prefix_text(&self, p: PrefixIndex) -> Option<&[u8]> {
-        let i = p as usize;
-        if i == 0 {
-            return None;
-        }
-        match res::NS_PREFIXES.get(i) {
-            Some(t) => (!t.is_empty()).then_some(*t),
-            None => self
-                .prefixes
-                .get(i - res::NS__LAST_ENTRY)
-                .map(Vec::as_slice),
-        }
+        self.prefixes.get(p)
     }
 
     /* ---- making nodes (detached) ---- */
@@ -429,20 +470,24 @@ impl Document {
     /// it has none of its own).
     pub fn set_written(&mut self, n: NodeId, written: Option<&[u8]>) -> Result<(), DomOom> {
         let id = self.intern_written(written)?;
-        match self.node(n).map(|x| x.payload) {
-            Some(Payload::Element(i)) => {
-                if let Some(e) = self.elements.get_mut(i as usize) {
-                    e.written = id;
-                }
-            }
-            Some(Payload::Attr(i)) => {
-                if let Some(a) = self.attrs.get_mut(i as usize) {
-                    a.written = id;
-                }
-            }
-            _ => {}
-        }
+        self.set_written_id(n, id);
         Ok(())
+    }
+
+    /// An element's or attribute's written-name id, to change.
+    fn written_mut(&mut self, n: NodeId) -> Option<&mut u32> {
+        match self.node(n)?.payload {
+            Payload::Element(i) => self.elements.get_mut(i as usize).map(|e| &mut e.written),
+            Payload::Attr(i) => self.attrs.get_mut(i as usize).map(|a| &mut a.written),
+            _ => None,
+        }
+    }
+
+    /// Set an element's or attribute's written-name id.
+    pub fn set_written_id(&mut self, n: NodeId, written: u32) {
+        if let Some(w) = self.written_mut(n) {
+            *w = written;
+        }
     }
 
     /// A new element: local name `tag` (an id of [`Document::names`]), in
@@ -456,6 +501,18 @@ impl Document {
         written: Option<&[u8]>,
     ) -> Result<NodeId, DomOom> {
         let written = self.intern_written(written)?;
+        self.push_element(tag, ns, prefix, written)
+    }
+
+    /// [`create_element`](Self::create_element) with the written name an id
+    /// of [`Names::qualified`] already.
+    fn push_element(
+        &mut self,
+        tag: usize,
+        ns: NsIndex,
+        prefix: PrefixIndex,
+        written: u32,
+    ) -> Result<NodeId, DomOom> {
         let idx = u32::try_from(self.elements.len()).map_err(|_| DomOom)?;
         oom!(self.elements.falloc_reserve(1));
         let id = self.push(NodeType::Element, Payload::Element(idx))?;
@@ -490,6 +547,19 @@ impl Document {
     ) -> Result<NodeId, DomOom> {
         let written = self.intern_written(written)?;
         let value = self.store(value)?;
+        self.push_attr(local, ns, prefix, written, value)
+    }
+
+    /// The one maker of an attribute node: names, a written-name id and a
+    /// value already in the store.
+    fn push_attr(
+        &mut self,
+        local: usize,
+        ns: NsIndex,
+        prefix: PrefixIndex,
+        written: u32,
+        value: Span,
+    ) -> Result<NodeId, DomOom> {
         let idx = u32::try_from(self.attrs.len()).map_err(|_| DomOom)?;
         oom!(self.attrs.falloc_reserve(1));
         let id = self.push(NodeType::Attribute, Payload::Attr(idx))?;
@@ -503,14 +573,21 @@ impl Document {
         Ok(id)
     }
 
-    /// A new Text, Comment or CDATA node holding `data`.
-    pub fn create_data(&mut self, kind: NodeType, data: &[u8]) -> Result<NodeId, DomOom> {
+    /// A new Text, Comment or CDATA node named `name`, holding `data`.
+    pub fn create_data(
+        &mut self,
+        kind: NodeType,
+        name: NodeName,
+        data: &[u8],
+    ) -> Result<NodeId, DomOom> {
         debug_assert!(matches!(
             kind,
             NodeType::Text | NodeType::Comment | NodeType::CDataSection
         ));
         let span = self.store(data)?;
-        self.push(kind, Payload::Data(span))
+        let id = self.push(kind, Payload::Data(span))?;
+        self.set_names(id, name.local, name.ns, name.prefix);
+        Ok(id)
     }
 
     /// A new ProcessingInstruction.
@@ -520,9 +597,10 @@ impl Document {
         self.push(NodeType::Pi, Payload::Pi { target, data })
     }
 
-    /// A new DocumentType.
+    /// A new DocumentType, its node named `names`.
     pub fn create_doctype(
         &mut self,
+        names: NodeName,
         name: &[u8],
         public_id: &[u8],
         system_id: &[u8],
@@ -532,9 +610,15 @@ impl Document {
             public_id: self.store(public_id)?,
             system_id: self.store(system_id)?,
         };
+        self.push_doctype(names, d)
+    }
+
+    /// The one maker of a DocumentType node, its strings in the store.
+    fn push_doctype(&mut self, names: NodeName, d: DoctypeData) -> Result<NodeId, DomOom> {
         let idx = u32::try_from(self.doctypes.len()).map_err(|_| DomOom)?;
         oom!(self.doctypes.falloc_reserve(1));
         let id = self.push(NodeType::DocumentType, Payload::Doctype(idx))?;
+        self.set_names(id, names.local, names.ns, names.prefix);
         self.doctypes.push(d);
         Ok(id)
     }
@@ -544,7 +628,10 @@ impl Document {
         self.push(NodeType::DocumentFragment, Payload::Fragment { host })
     }
 
-    /// Set a node's Lexbor name fields: `local_name`, `ns`, `prefix`.
+    /// Set a node's Lexbor name fields: `local_name`, `ns`, `prefix`. The
+    /// factories name what they make; this is for the reference copies of
+    /// Lexbor's trees (`lexbor::adapter::arena_copy`), which name a node
+    /// after making it, and for the factories themselves.
     pub fn set_names(&mut self, n: NodeId, local: usize, ns: NsIndex, prefix: PrefixIndex) {
         if let Some(node) = self.node_mut(n) {
             node.local = u32::try_from(local).unwrap_or(0);
@@ -683,27 +770,50 @@ impl Document {
         }
     }
 
-    /// Append the attribute `attr` to the element `el`'s list, keeping the
-    /// `id`/`class` shortcuts as Lexbor's `lxb_dom_element_attr_append`
-    /// does for an attribute in no namespace.
-    pub fn attr_append(&mut self, el: NodeId, attr: NodeId) {
+    /// Link the attribute `attr` last in `el`'s list, moving the element's
+    /// `id`/`class` shortcuts by `rule` - the one place they change, apart
+    /// from [`attr_remove`](Self::attr_remove) clearing one it takes off.
+    pub fn link_attribute(&mut self, el: NodeId, attr: NodeId, rule: ShortcutRule) {
+        if let ShortcutRule::Lexbor = rule {
+            return self.attr_append_lexbor(el, attr);
+        }
         if !self.attr_link(el, attr) {
             return;
         }
-        let (local, ns) = (self.local(attr), self.own_ns_if_on(attr, el));
-        if let Some(e) = self.element_mut(el) {
-            if ns == 0 && local == res::ATTR_ID as u32 && e.id_attr.is_none() {
-                e.id_attr = Some(attr);
-            }
-            if ns == 0 && local == res::ATTR_CLASS as u32 && e.class_attr.is_none() {
-                e.class_attr = Some(attr);
+        if let (ShortcutRule::Take(which), Some(e)) = (rule, self.element_mut(el)) {
+            match which {
+                Shortcut::Id => e.id_attr = Some(attr),
+                Shortcut::Class => e.class_attr = Some(attr),
             }
         }
     }
 
+    /// `lxb_dom_element_attr_append`: link `attr` last on `el`, and when its
+    /// local name is `id` or `class` (whatever its namespace) make it the
+    /// element's shortcut, taking off the attribute that held it.
+    fn attr_append_lexbor(&mut self, el: NodeId, attr: NodeId) {
+        let local = self.local(attr) as usize;
+        if local == res::ATTR_ID {
+            if let Some(old) = self.id_attr(el) {
+                self.attr_remove(old);
+            }
+            if let Some(e) = self.element_mut(el) {
+                e.id_attr = Some(attr);
+            }
+        } else if local == res::ATTR_CLASS {
+            if let Some(old) = self.class_attr(el) {
+                self.attr_remove(old);
+            }
+            if let Some(e) = self.element_mut(el) {
+                e.class_attr = Some(attr);
+            }
+        }
+        self.attr_link(el, attr);
+    }
+
     /// Link the attribute `attr` last in `el`'s list, leaving the shortcuts
     /// alone; whether both were what they must be.
-    pub fn attr_link(&mut self, el: NodeId, attr: NodeId) -> bool {
+    fn attr_link(&mut self, el: NodeId, attr: NodeId) -> bool {
         let Some(last) = self.element(el).map(|e| e.last_attr) else {
             return false;
         };
@@ -766,27 +876,13 @@ impl Document {
         }
     }
 
-    /// Point the element's `id`/`class` shortcuts at `attr` (or clear them),
-    /// for the DOM attribute algorithms that decide them.
-    pub fn set_shortcuts(
-        &mut self,
-        el: NodeId,
-        id_attr: Option<NodeId>,
-        class_attr: Option<NodeId>,
-    ) {
-        if let Some(e) = self.element_mut(el) {
-            e.id_attr = id_attr;
-            e.class_attr = class_attr;
-        }
-    }
-
     /// Replace the data of a Text, Comment, CDATA or PI node, or an
     /// attribute's value. The old bytes stay in the store, counted as dead
     /// until the store is compacted (`compact.rs`).
     pub fn set_data(&mut self, n: NodeId, data: &[u8]) -> Result<(), DomOom> {
         let span = self.store(data)?;
         let Some(node) = self.node(n).copied() else {
-            self.dead += span.len as usize;
+            self.bytes.release(span);
             return Ok(());
         };
         let old = match node.payload {
@@ -808,11 +904,22 @@ impl Document {
             },
             _ => span,
         };
-        self.dead += old.len as usize;
+        self.bytes.release(old);
         Ok(())
     }
 
     /* ---- reading ---- */
+
+    /// The span of a non-empty Text or CDATA node's data, for an index that
+    /// keeps it (the text index; spans move only when an edit compacts the
+    /// store, after the indexes are dropped).
+    pub fn text_span(&self, n: NodeId) -> Option<Span> {
+        let node = self.node(n)?;
+        match (node.kind, node.payload) {
+            (NodeType::Text | NodeType::CDataSection, Payload::Data(s)) if !s.is_empty() => Some(s),
+            _ => None,
+        }
+    }
 
     #[inline]
     pub fn kind(&self, n: NodeId) -> NodeType {
@@ -823,6 +930,26 @@ impl Document {
     pub fn parent(&self, n: NodeId) -> Option<NodeId> {
         self.node(n)?.parent
     }
+    /// The node after `n` in a pre-order walk of `root`'s subtree.
+    pub fn preorder_next(&self, n: NodeId, root: NodeId) -> Option<NodeId> {
+        self.first_child(n)
+            .or_else(|| self.preorder_next_past(n, root))
+    }
+
+    /// The node after `n`'s whole subtree in a pre-order walk of `root`'s
+    /// subtree.
+    pub fn preorder_next_past(&self, mut n: NodeId, root: NodeId) -> Option<NodeId> {
+        loop {
+            if n == root {
+                return None;
+            }
+            if let Some(s) = self.next(n) {
+                return Some(s);
+            }
+            n = self.parent(n)?;
+        }
+    }
+
     #[inline]
     pub fn first_child(&self, n: NodeId) -> Option<NodeId> {
         self.node(n)?.first_child
@@ -1003,10 +1130,12 @@ mod copy;
 /// Copies between an arena HTML document and an XML one.
 pub mod cross_import;
 mod edit;
+mod ext_table;
 mod handle;
 mod parsed;
 /// HTML serialization.
 pub mod serialize;
+mod store;
 /// XPath's HTML instance of its `Dom` trait, over the arena.
 pub mod xpath;
 pub use build::AttrValue;

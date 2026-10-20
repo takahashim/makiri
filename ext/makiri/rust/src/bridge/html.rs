@@ -459,13 +459,35 @@ pub fn check_owning_doc(rb_doc: &Value) -> Result<(), Error> {
 /// with a handler is reading, whose arena the walk borrows. `f` must run no
 /// Ruby, as [`HtmlEdit::with_tree`]'s must not.
 pub fn new_node<R>(rb_doc: &Value, f: impl FnOnce(&mut HtmlDocMut<'_>) -> R) -> Result<R, Error> {
+    lend_document(rb_doc, Lend::NewNodes, f)
+}
+
+/// What a document is lent for: making detached nodes, which keeps its
+/// indexes, or changing its tree, which goes through the parse handle's
+/// `edit` (the indexes dropped, a due compaction run).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Lend {
+    NewNodes,
+    Tree,
+}
+
+fn lend_document<R>(
+    rb_doc: &Value,
+    lend: Lend,
+    f: impl FnOnce(&mut HtmlDocMut<'_>) -> R,
+) -> Result<R, Error> {
     let doc = html_doc_unwrap(*rb_doc)?;
     ensure_document_mutable(*rb_doc)?;
     let r = {
         // SAFETY: a live HTML Document, kept alive by `rb_doc` for this call,
         // not under evaluation (checked just now), and `f` runs no Ruby. The
         // loan ends with this block, before the document is read below.
-        let mut d = unsafe { doc.edit_new_nodes() };
+        let mut d = unsafe {
+            match lend {
+                Lend::NewNodes => doc.edit_new_nodes(),
+                Lend::Tree => doc.edit(),
+            }
+        };
         f(&mut d)
     };
     /* A factory grows the document without an edit after it - a namespace
@@ -486,7 +508,7 @@ fn edit_other_document<R>(
     ensure_document_mutable(rb_doc)?;
     invalidate_indexes(rb_doc);
     record_edit(rb_doc, EditKind::ChildList);
-    new_node(&rb_doc, f)
+    lend_document(&rb_doc, Lend::Tree, f)
 }
 
 /// Take `node` out of its tree, the release half of an adoption: a fragment

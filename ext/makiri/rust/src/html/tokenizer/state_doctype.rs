@@ -108,9 +108,7 @@ fn doctype_name(t: &mut Tokenizer<'_, '_>, mut data: usize, end: usize) -> usize
                     try_or!(t.token_done(), end);
                     return end;
                 }
-                t.begin = data + 1;
-                try_or!(t.append_replace(), end);
-                t.error(data, ErrorId::Unnuch);
+                try_or!(t.replace_null(data), end);
                 t.attr_last().flags |= attr_flags::NAME_NULL;
             }
             _ => {}
@@ -219,7 +217,7 @@ fn doctype_after_name_system(t: &mut Tokenizer<'_, '_>, data: usize, end: usize)
     after_name_keyword(t, data, end, res::ATTR_SYSTEM, doctype_after_system_keyword)
 }
 
-/// What differs between the two keyword states.
+/// What differs between the public and the system identifier's states.
 struct Keyword {
     before: super::State,
     double: super::State,
@@ -228,6 +226,24 @@ struct Keyword {
     missing_id: ErrorId,
     missing_quote: ErrorId,
 }
+
+const PUBLIC: Keyword = Keyword {
+    before: doctype_before_public_identifier,
+    double: doctype_public_identifier_double_quoted,
+    single: doctype_public_identifier_single_quoted,
+    missing_ws: ErrorId::Miwhafdopuke,
+    missing_id: ErrorId::Midopuid,
+    missing_quote: ErrorId::Miqubedopuid,
+};
+
+const SYSTEM: Keyword = Keyword {
+    before: doctype_before_system_identifier,
+    double: doctype_system_identifier_double_quoted,
+    single: doctype_system_identifier_single_quoted,
+    missing_ws: ErrorId::Miwhafdosyke,
+    missing_id: ErrorId::Midosyid,
+    missing_quote: ErrorId::Miqubedosyid,
+};
 
 /// The keyword states (12.2.5.57, 12.2.5.63):
 /// `lxb_html_tokenizer_state_doctype_after_public_keyword` and
@@ -273,36 +289,12 @@ fn after_keyword(t: &mut Tokenizer<'_, '_>, data: usize, end: usize, k: &Keyword
 
 /// `lxb_html_tokenizer_state_doctype_after_public_keyword` (12.2.5.57).
 fn doctype_after_public_keyword(t: &mut Tokenizer<'_, '_>, data: usize, end: usize) -> usize {
-    after_keyword(
-        t,
-        data,
-        end,
-        &Keyword {
-            before: doctype_before_public_identifier,
-            double: doctype_public_identifier_double_quoted,
-            single: doctype_public_identifier_single_quoted,
-            missing_ws: ErrorId::Miwhafdopuke,
-            missing_id: ErrorId::Midopuid,
-            missing_quote: ErrorId::Miqubedopuid,
-        },
-    )
+    after_keyword(t, data, end, &PUBLIC)
 }
 
 /// `lxb_html_tokenizer_state_doctype_after_system_keyword` (12.2.5.63).
 fn doctype_after_system_keyword(t: &mut Tokenizer<'_, '_>, data: usize, end: usize) -> usize {
-    after_keyword(
-        t,
-        data,
-        end,
-        &Keyword {
-            before: doctype_before_system_identifier,
-            double: doctype_system_identifier_double_quoted,
-            single: doctype_system_identifier_single_quoted,
-            missing_ws: ErrorId::Miwhafdosyke,
-            missing_id: ErrorId::Midosyid,
-            missing_quote: ErrorId::Miqubedosyid,
-        },
-    )
+    after_keyword(t, data, end, &SYSTEM)
 }
 
 /// The before-identifier states (12.2.5.58, 12.2.5.64):
@@ -310,29 +302,21 @@ fn doctype_after_system_keyword(t: &mut Tokenizer<'_, '_>, data: usize, end: usi
 /// `_before_system_identifier`. The public one consumes the character it
 /// switches on (its cases `break` to `return data + 1`); the system one
 /// returns per case, also one past it - the same, so one body serves both.
-fn before_identifier(
-    t: &mut Tokenizer<'_, '_>,
-    data: usize,
-    end: usize,
-    double: super::State,
-    single: super::State,
-    missing_id: ErrorId,
-    missing_quote: ErrorId,
-) -> usize {
+fn before_identifier(t: &mut Tokenizer<'_, '_>, data: usize, end: usize, k: &Keyword) -> usize {
     match t.at(data) {
         0x09 | 0x0A | 0x0C | 0x0D | 0x20 => data + 1,
         0x22 => {
-            t.state = double;
+            t.state = k.double;
             data + 1
         }
         0x27 => {
-            t.state = single;
+            t.state = k.single;
             data + 1
         }
         0x3E => {
             t.token.flags |= flags::FORCE_QUIRKS;
             t.state = data_before;
-            t.error(data, missing_id);
+            t.error(data, k.missing_id);
             try_or!(t.token_done(), end);
             data + 1
         }
@@ -344,7 +328,7 @@ fn before_identifier(
                 try_or!(t.token_done(), end);
                 return end;
             }
-            t.error(data, missing_quote);
+            t.error(data, k.missing_quote);
             t.token.flags |= flags::FORCE_QUIRKS;
             t.state = doctype_bogus;
             data
@@ -354,28 +338,12 @@ fn before_identifier(
 
 /// `lxb_html_tokenizer_state_doctype_before_public_identifier` (12.2.5.58).
 fn doctype_before_public_identifier(t: &mut Tokenizer<'_, '_>, data: usize, end: usize) -> usize {
-    before_identifier(
-        t,
-        data,
-        end,
-        doctype_public_identifier_double_quoted,
-        doctype_public_identifier_single_quoted,
-        ErrorId::Midopuid,
-        ErrorId::Miqubedopuid,
-    )
+    before_identifier(t, data, end, &PUBLIC)
 }
 
 /// `lxb_html_tokenizer_state_doctype_before_system_identifier` (12.2.5.64).
 fn doctype_before_system_identifier(t: &mut Tokenizer<'_, '_>, data: usize, end: usize) -> usize {
-    before_identifier(
-        t,
-        data,
-        end,
-        doctype_system_identifier_double_quoted,
-        doctype_system_identifier_single_quoted,
-        ErrorId::Midosyid,
-        ErrorId::Miqubedosyid,
-    )
+    before_identifier(t, data, end, &SYSTEM)
 }
 
 /// The quoted identifier states (12.2.5.59-60, 12.2.5.65-66), one body for
@@ -427,9 +395,7 @@ fn identifier_quoted<const Q: u8>(
                     try_or!(t.token_done(), end);
                     return end;
                 }
-                t.begin = data + 1;
-                try_or!(t.append_replace(), end);
-                t.error(data, ErrorId::Unnuch);
+                try_or!(t.replace_null(data), end);
                 t.attr_last().flags |= attr_flags::VALUE_NULL;
             }
             _ => {}

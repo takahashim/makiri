@@ -4,13 +4,13 @@
 
 use crate::compat::{self, Fix};
 use crate::falloc::try_vec_with_capacity;
-use crate::html::dom::NodeId;
+use crate::html::dom::CompatMode;
 use crate::html::res::names as res;
 use crate::html::res::tree as rt;
-use crate::html::tokenizer::{flags, plaintext_before, rcdata_before, Tokenizer};
+use crate::html::tokenizer::{flags, TextContent, Tokenizer};
 use crate::html::tree::actions::is_category;
 use crate::html::tree::error::TreeErrorId as E;
-use crate::html::tree::{is_ws, AttrAdjust, Mode, Tok, TreeBuilder, TreeStatus};
+use crate::html::tree::{is_ws, AttrAdjust, Mode, OrAbort, Tok, TreeBuilder, TreeStatus};
 
 /// `lxb_html_tree_insertion_mode_in_body_skip_new_line`.
 pub fn skip_new_line(
@@ -62,9 +62,7 @@ fn text(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> b
         }
         text_append(tree, tkz, data)
     };
-    if r.is_err() {
-        return tree.process_abort();
-    }
+    let _ = r.or_abort(tree);
     true
 }
 
@@ -74,18 +72,11 @@ pub fn text_append(
     tkz: &Tokenizer<'_, '_>,
     data: &[u8],
 ) -> Result<(), TreeStatus> {
-    if let Err(st) = tree.afe_reconstruct(tkz) {
-        tree.status = st;
-        return Err(st);
-    }
+    tree.afe_reconstruct(tkz)?;
     if tree.frameset_ok && data.iter().any(|&c| !is_ws(c)) {
         tree.frameset_ok = false;
     }
-    if let Err(st) = tree.insert_character_for_data(data) {
-        tree.status = st;
-        return Err(st);
-    }
-    Ok(())
+    tree.insert_character_for_data(data)
 }
 
 /// `lxb_html_tree_insertion_mode_in_body_html`.
@@ -98,8 +89,12 @@ fn html(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> b
         return true;
     };
     let ns = tree.ns(html);
-    if let Err(st) = tree.append_attributes(tkz, html, tok, ns) {
-        return tree.abort_with(st);
+    if tree
+        .append_attributes(tkz, html, tok, ns, None)
+        .or_abort(tree)
+        .is_none()
+    {
+        return true;
     }
     true
 }
@@ -123,8 +118,12 @@ fn body(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> b
     }
     tree.frameset_ok = false;
     let ns = tree.ns(node);
-    if let Err(st) = tree.append_attributes(tkz, node, tok, ns) {
-        return tree.abort_with(st);
+    if tree
+        .append_attributes(tkz, node, tok, ns, None)
+        .or_abort(tree)
+        .is_none()
+    {
+        return true;
     }
     true
 }
@@ -143,8 +142,8 @@ fn frameset(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) 
     if let Some(html) = tree.open_get(0) {
         tree.open_pop_until_node(html, false);
     }
-    if tree.insert_html_element(tkz, tok).is_err() {
-        return tree.abort_with(TreeStatus::Oom);
+    if tree.insert_html_element(tkz, tok).or_abort(tree).is_none() {
+        return true;
     }
     tree.mode = Mode::InFrameset;
     true
@@ -152,7 +151,7 @@ fn frameset(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) 
 
 /// `lxb_html_tree_insertion_mode_in_body_eof`.
 fn eof(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mut Tok) -> bool {
-    if !tree.template_modes.is_empty() {
+    if tree.in_template_mode() {
         return super::in_template::in_template(tree, tkz, tok);
     }
     if !tree.check_scope_element() {
@@ -204,33 +203,16 @@ fn close_p_in_button_scope(tree: &mut TreeBuilder<'_>, tok: &Tok) {
     }
 }
 
-/// Insert an HTML element for the token, aborting on failure.
-fn insert(tree: &mut TreeBuilder<'_>, tkz: &Tokenizer<'_, '_>, tok: &Tok) -> Option<NodeId> {
-    match tree.insert_html_element(tkz, tok) {
-        Ok(el) => Some(el),
-        Err(_) => {
-            tree.abort_with(TreeStatus::Oom);
-            None
-        }
-    }
-}
-
 /// Reconstruct the active formatting elements; `false` when that failed
 /// and the parse is aborted.
 fn reconstruct(tree: &mut TreeBuilder<'_>, tkz: &Tokenizer<'_, '_>) -> bool {
-    match tree.afe_reconstruct(tkz) {
-        Ok(()) => true,
-        Err(st) => {
-            tree.abort_with(st);
-            false
-        }
-    }
+    tree.afe_reconstruct(tkz).or_abort(tree).is_some()
 }
 
 /// `lxb_html_tree_insertion_mode_in_body_abcdfhmnopsu`.
 fn abcdfhmnopsu(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> bool {
     close_p_in_button_scope(tree, tok);
-    insert(tree, tkz, tok);
+    tree.insert_html_element(tkz, tok).or_abort(tree);
     true
 }
 
@@ -243,14 +225,14 @@ fn h123456(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -
             tree.open_pop();
         }
     }
-    insert(tree, tkz, tok);
+    tree.insert_html_element(tkz, tok).or_abort(tree);
     true
 }
 
 /// `lxb_html_tree_insertion_mode_in_body_pre_listing`.
 fn pre_listing(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> bool {
     close_p_in_button_scope(tree, tok);
-    if insert(tree, tkz, tok).is_none() {
+    if tree.insert_html_element(tkz, tok).or_abort(tree).is_none() {
         return true;
     }
     tree.original_mode = tree.mode;
@@ -267,7 +249,7 @@ fn form(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> b
         return true;
     }
     close_p_in_button_scope(tree, tok);
-    let Some(el) = insert(tree, tkz, tok) else {
+    let Some(el) = tree.insert_html_element(tkz, tok).or_abort(tree) else {
         return true;
     };
     if !in_template {
@@ -281,17 +263,12 @@ fn form(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> b
 /// met first.
 fn close_list_item(tree: &mut TreeBuilder<'_>, tok: &Tok, tags: &[usize]) {
     tree.frameset_ok = false;
-    let mut idx = tree.open.len();
+    let mut idx = tree.open_len();
     while idx != 0 {
         idx -= 1;
-        let node = tree.open[idx];
+        let node = tree.open_at(idx);
         if let Some(&tag) = tags.iter().find(|&&t| tree.node_is(node, t)) {
-            tree.generate_implied_end_tags(tag, res::NS_HTML);
-            let is = tree.current_node().is_some_and(|c| tree.node_is(c, tag));
-            if !is {
-                tree.parse_error(tok, E::Unelinopelst);
-            }
-            tree.open_pop_until_tag_id(tag, res::NS_HTML, true);
+            tree.close_element(tok, tag, Some(tag), E::Unelinopelst);
             break;
         }
         if is_category(tree.tag(node), tree.ns(node), rt::CAT_SPECIAL)
@@ -308,7 +285,7 @@ fn close_list_item(tree: &mut TreeBuilder<'_>, tok: &Tok, tags: &[usize]) {
 fn li(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> bool {
     close_list_item(tree, tok, &[res::TAG_LI]);
     close_p_in_button_scope(tree, tok);
-    insert(tree, tkz, tok);
+    tree.insert_html_element(tkz, tok).or_abort(tree);
     true
 }
 
@@ -316,17 +293,17 @@ fn li(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> boo
 fn dd_dt(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> bool {
     close_list_item(tree, tok, &[res::TAG_DD, res::TAG_DT]);
     close_p_in_button_scope(tree, tok);
-    insert(tree, tkz, tok);
+    tree.insert_html_element(tkz, tok).or_abort(tree);
     true
 }
 
 /// `lxb_html_tree_insertion_mode_in_body_plaintext`.
 fn plaintext(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> bool {
     close_p_in_button_scope(tree, tok);
-    if insert(tree, tkz, tok).is_none() {
+    if tree.insert_html_element(tkz, tok).or_abort(tree).is_none() {
         return true;
     }
-    tkz.set_state(plaintext_before);
+    tkz.enter_plaintext();
     true
 }
 
@@ -343,7 +320,7 @@ fn button(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) ->
     if !reconstruct(tree, tkz) {
         return true;
     }
-    if insert(tree, tkz, tok).is_none() {
+    if tree.insert_html_element(tkz, tok).or_abort(tree).is_none() {
         return true;
     }
     tree.frameset_ok = false;
@@ -359,14 +336,7 @@ fn abcdfhlmnopsu_closed(tree: &mut TreeBuilder<'_>, tok: &Tok) -> bool {
         tree.parse_error(tok, E::Unclto);
         return true;
     }
-    tree.generate_implied_end_tags(res::TAG__UNDEF, res::NS__UNDEF);
-    let is = tree
-        .current_node()
-        .is_some_and(|c| tree.node_is(c, tok.tag_id));
-    if !is {
-        tree.parse_error(tok, E::Unelinopelst);
-    }
-    tree.open_pop_until_tag_id(tok.tag_id, res::NS_HTML, true);
+    tree.close_element(tok, tok.tag_id, None, E::Unelinopelst);
     true
 }
 
@@ -397,14 +367,7 @@ fn form_closed(tree: &mut TreeBuilder<'_>, tok: &Tok) -> bool {
         tree.parse_error(tok, E::Unclto);
         return true;
     }
-    tree.generate_implied_end_tags(res::TAG__UNDEF, res::NS__UNDEF);
-    let is = tree
-        .current_node()
-        .is_some_and(|c| tree.node_is(c, res::TAG_FORM));
-    if !is {
-        tree.parse_error(tok, E::Unelinopelst);
-    }
-    tree.open_pop_until_tag_id(res::TAG_FORM, res::NS_HTML, true);
+    tree.close_element(tok, res::TAG_FORM, None, E::Unelinopelst);
     true
 }
 
@@ -416,7 +379,11 @@ fn p_closed(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) 
     {
         tree.parse_error(tok, E::Unclto);
         let fake = Tok::fake(res::TAG_P);
-        if insert(tree, tkz, &fake).is_none() {
+        if tree
+            .insert_html_element(tkz, &fake)
+            .or_abort(tree)
+            .is_none()
+        {
             return true;
         }
     }
@@ -433,14 +400,7 @@ fn li_closed(tree: &mut TreeBuilder<'_>, tok: &Tok) -> bool {
         tree.parse_error(tok, E::Unclto);
         return true;
     }
-    tree.generate_implied_end_tags(res::TAG_LI, res::NS_HTML);
-    let is = tree
-        .current_node()
-        .is_some_and(|c| tree.node_is(c, res::TAG_LI));
-    if !is {
-        tree.parse_error(tok, E::Unelinopelst);
-    }
-    tree.open_pop_until_tag_id(res::TAG_LI, res::NS_HTML, true);
+    tree.close_element(tok, res::TAG_LI, Some(res::TAG_LI), E::Unelinopelst);
     true
 }
 
@@ -453,14 +413,7 @@ fn dd_dt_closed(tree: &mut TreeBuilder<'_>, tok: &Tok) -> bool {
         tree.parse_error(tok, E::Unclto);
         return true;
     }
-    tree.generate_implied_end_tags(tok.tag_id, res::NS_HTML);
-    let is = tree
-        .current_node()
-        .is_some_and(|c| tree.node_is(c, tok.tag_id));
-    if !is {
-        tree.parse_error(tok, E::Unelinopelst);
-    }
-    tree.open_pop_until_tag_id(tok.tag_id, res::NS_HTML, true);
+    tree.close_element(tok, tok.tag_id, Some(tok.tag_id), E::Unelinopelst);
     true
 }
 
@@ -471,9 +424,7 @@ fn h123456_closed(tree: &mut TreeBuilder<'_>, tok: &Tok) -> bool {
         return true;
     }
     tree.generate_implied_end_tags(res::TAG__UNDEF, res::NS__UNDEF);
-    let is = tree
-        .current_node()
-        .is_some_and(|c| tree.node_is(c, tok.tag_id));
+    let is = tree.current_is(tok.tag_id);
     if !is {
         tree.parse_error(tok, E::Unelinopelst);
     }
@@ -485,9 +436,8 @@ fn h123456_closed(tree: &mut TreeBuilder<'_>, tok: &Tok) -> bool {
 fn a(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> bool {
     if let Some((node, _)) = tree.afe_between_last_marker(tok.tag_id) {
         tree.parse_error(tok, E::Unelinacfost);
-        tree.adoption_agency_algorithm(tok);
-        if tree.status != TreeStatus::Ok {
-            return tree.process_abort();
+        if tree.adoption_agency_algorithm(tok).or_abort(tree).is_none() {
+            return true;
         }
         tree.afe_remove_by_node(node);
         tree.open_remove_by_node(node);
@@ -495,7 +445,7 @@ fn a(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> bool
     if !reconstruct(tree, tkz) {
         return true;
     }
-    let Some(el) = insert(tree, tkz, tok) else {
+    let Some(el) = tree.insert_html_element(tkz, tok).or_abort(tree) else {
         return true;
     };
     /* Lexbor ignores a failed push here. */
@@ -508,7 +458,7 @@ fn bcefistu(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) 
     if !reconstruct(tree, tkz) {
         return true;
     }
-    let Some(el) = insert(tree, tkz, tok) else {
+    let Some(el) = tree.insert_html_element(tkz, tok).or_abort(tree) else {
         return true;
     };
     let _ = tree.afe_push_with_check_dupl(el);
@@ -525,21 +475,17 @@ fn nobr(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> b
         .is_some()
     {
         tree.parse_error(tok, E::Unelinsc);
-        let run_any_other_end_tag = tree.adoption_agency_algorithm(tok);
-        if tree.status != TreeStatus::Ok {
-            return tree.process_abort();
-        }
+        let Some(run_any_other_end_tag) = tree.adoption_agency_algorithm(tok).or_abort(tree) else {
+            return true;
+        };
         if run_any_other_end_tag {
             anything_else_closed(tree, tok);
-            if tree.status != TreeStatus::Ok {
-                return tree.process_abort();
-            }
         }
         if !reconstruct(tree, tkz) {
             return true;
         }
     }
-    let Some(el) = insert(tree, tkz, tok) else {
+    let Some(el) = tree.insert_html_element(tkz, tok).or_abort(tree) else {
         return true;
     };
     let _ = tree.afe_push_with_check_dupl(el);
@@ -548,10 +494,9 @@ fn nobr(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> b
 
 /// `lxb_html_tree_insertion_mode_in_body_abcefinstu_closed`.
 fn abcefinstu_closed(tree: &mut TreeBuilder<'_>, tok: &Tok) -> bool {
-    let run_any_other_end_tag = tree.adoption_agency_algorithm(tok);
-    if tree.status != TreeStatus::Ok {
-        return tree.process_abort();
-    }
+    let Some(run_any_other_end_tag) = tree.adoption_agency_algorithm(tok).or_abort(tree) else {
+        return true;
+    };
     if run_any_other_end_tag {
         return anything_else_closed(tree, tok);
     }
@@ -563,11 +508,11 @@ fn amo(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> bo
     if !reconstruct(tree, tkz) {
         return true;
     }
-    if insert(tree, tkz, tok).is_none() {
+    if tree.insert_html_element(tkz, tok).or_abort(tree).is_none() {
         return true;
     }
-    if let Err(st) = tree.afe_push_marker() {
-        return tree.abort_with(st);
+    if tree.afe_push_marker().or_abort(tree).is_none() {
+        return true;
     }
     tree.frameset_ok = false;
     true
@@ -582,14 +527,7 @@ fn amo_closed(tree: &mut TreeBuilder<'_>, tok: &Tok) -> bool {
         tree.parse_error(tok, E::Unclto);
         return true;
     }
-    tree.generate_implied_end_tags(res::TAG__UNDEF, res::NS__UNDEF);
-    let is = tree
-        .current_node()
-        .is_some_and(|c| tree.node_is(c, tok.tag_id));
-    if !is {
-        tree.parse_error(tok, E::Unelinopelst);
-    }
-    tree.open_pop_until_tag_id(tok.tag_id, res::NS_HTML, true);
+    tree.close_element(tok, tok.tag_id, None, E::Unelinopelst);
     tree.afe_up_to_last_marker();
     true
 }
@@ -597,10 +535,10 @@ fn amo_closed(tree: &mut TreeBuilder<'_>, tok: &Tok) -> bool {
 /// `lxb_html_tree_insertion_mode_in_body_table`.
 fn table(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> bool {
     /* LXB_DOM_DOCUMENT_CMODE_QUIRKS */
-    if tree.doc.compat_mode != 1 {
+    if tree.doc.compat_mode() != CompatMode::Quirks {
         close_p_in_button_scope(tree, tok);
     }
-    if insert(tree, tkz, tok).is_none() {
+    if tree.insert_html_element(tkz, tok).or_abort(tree).is_none() {
         return true;
     }
     tree.frameset_ok = false;
@@ -613,7 +551,7 @@ fn abeikw(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) ->
     if !reconstruct(tree, tkz) {
         return true;
     }
-    if insert(tree, tkz, tok).is_none() {
+    if tree.insert_html_element(tkz, tok).or_abort(tree).is_none() {
         return true;
     }
     tree.open_pop();
@@ -643,24 +581,15 @@ fn input(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> 
     if !reconstruct(tree, tkz) {
         return true;
     }
-    let Some(el) = insert(tree, tkz, tok) else {
+    let Some(el) = tree.insert_html_element(tkz, tok).or_abort(tree) else {
         return true;
     };
     tree.open_pop();
     tree.acknowledge_token_self_closing(tok);
     /* `lxb_dom_element_attr_is_exist(element, "type")`: by local name or by
      * qualified name; the value compared exactly. */
+    let found = tree.attr_is_exist(el, b"type");
     let d = &*tree.doc;
-    let id = d.names.attr_id(b"type");
-    let mut found = None;
-    let mut at = d.first_attr(el);
-    while let Some(x) = at {
-        if Some(d.local(x) as usize) == id || d.attr_written(x) == Some(&b"type"[..]) {
-            found = Some(x);
-            break;
-        }
-        at = d.next_attr(x);
-    }
     let hidden = match found {
         /* The Standard compares the value ASCII case-insensitively; Lexbor
          * exactly. */
@@ -678,7 +607,7 @@ fn input(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> 
 
 /// `lxb_html_tree_insertion_mode_in_body_pst`.
 fn pst(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> bool {
-    if insert(tree, tkz, tok).is_none() {
+    if tree.insert_html_element(tkz, tok).or_abort(tree).is_none() {
         return true;
     }
     tree.open_pop();
@@ -698,7 +627,7 @@ fn hr(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> boo
             tree.parse_error(tok, E::Hrpaseopopinsc);
         }
     }
-    if insert(tree, tkz, tok).is_none() {
+    if tree.insert_html_element(tkz, tok).or_abort(tree).is_none() {
         return true;
     }
     tree.open_pop();
@@ -716,11 +645,10 @@ fn image(tree: &mut TreeBuilder<'_>, tok: &mut Tok) -> bool {
 
 /// `lxb_html_tree_insertion_mode_in_body_textarea`.
 fn textarea(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> bool {
-    if insert(tree, tkz, tok).is_none() {
+    if tree.insert_html_element(tkz, tok).or_abort(tree).is_none() {
         return true;
     }
-    tkz.tmp_tag_id = res::TAG_TEXTAREA;
-    tkz.set_state(rcdata_before);
+    tkz.enter_text_content(TextContent::Rcdata, res::TAG_TEXTAREA);
     tree.frameset_ok = false;
     tree.original_mode = tree.mode;
     tree.mode = Mode::InBodySkipNewLineTextarea;
@@ -734,8 +662,12 @@ fn xmp(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> bo
         return true;
     }
     tree.frameset_ok = false;
-    if tree.generic_rawtext_parsing(tkz, tok).is_err() {
-        return tree.abort_with(TreeStatus::Oom);
+    if tree
+        .generic_rawtext_parsing(tkz, tok)
+        .or_abort(tree)
+        .is_none()
+    {
+        return true;
     }
     true
 }
@@ -743,16 +675,24 @@ fn xmp(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> bo
 /// `lxb_html_tree_insertion_mode_in_body_iframe`.
 fn iframe(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> bool {
     tree.frameset_ok = false;
-    if tree.generic_rawtext_parsing(tkz, tok).is_err() {
-        return tree.abort_with(TreeStatus::Oom);
+    if tree
+        .generic_rawtext_parsing(tkz, tok)
+        .or_abort(tree)
+        .is_none()
+    {
+        return true;
     }
     true
 }
 
 /// `lxb_html_tree_insertion_mode_in_body_noembed`.
 fn noembed(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> bool {
-    if tree.generic_rawtext_parsing(tkz, tok).is_err() {
-        return tree.abort_with(TreeStatus::Oom);
+    if tree
+        .generic_rawtext_parsing(tkz, tok)
+        .or_abort(tree)
+        .is_none()
+    {
+        return true;
     }
     true
 }
@@ -777,7 +717,7 @@ fn select(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) ->
     if !reconstruct(tree, tkz) {
         return true;
     }
-    if insert(tree, tkz, tok).is_none() {
+    if tree.insert_html_element(tkz, tok).or_abort(tree).is_none() {
         return true;
     }
     tree.frameset_ok = false;
@@ -797,16 +737,13 @@ fn option(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) ->
         {
             tree.parse_error(tok, E::Oppaopinsc);
         }
-    } else if tree
-        .current_node()
-        .is_some_and(|c| tree.node_is(c, res::TAG_OPTION))
-    {
+    } else if tree.current_is(res::TAG_OPTION) {
         tree.open_pop();
     }
     if !reconstruct(tree, tkz) {
         return true;
     }
-    insert(tree, tkz, tok);
+    tree.insert_html_element(tkz, tok).or_abort(tree);
     true
 }
 
@@ -820,16 +757,13 @@ fn optgroup(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) 
         if tree.element_in_scope_option_optgroup().is_some() {
             tree.parse_error(tok, E::Oppaopopinsc);
         }
-    } else if tree
-        .current_node()
-        .is_some_and(|c| tree.node_is(c, res::TAG_OPTION))
-    {
+    } else if tree.current_is(res::TAG_OPTION) {
         tree.open_pop();
     }
     if !reconstruct(tree, tkz) {
         return true;
     }
-    insert(tree, tkz, tok);
+    tree.insert_html_element(tkz, tok).or_abort(tree);
     true
 }
 
@@ -841,13 +775,11 @@ fn rbrtc(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> 
     {
         tree.generate_implied_end_tags(res::TAG__UNDEF, res::NS__UNDEF);
     }
-    let is = tree
-        .current_node()
-        .is_some_and(|c| tree.node_is(c, res::TAG_RUBY));
+    let is = tree.current_is(res::TAG_RUBY);
     if !is {
         tree.parse_error(tok, E::Mielinopelst);
     }
-    insert(tree, tkz, tok);
+    tree.insert_html_element(tkz, tok).or_abort(tree);
     true
 }
 
@@ -865,7 +797,7 @@ fn rprt(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> b
     if !is {
         tree.parse_error(tok, E::Mielinopelst);
     }
-    insert(tree, tkz, tok);
+    tree.insert_html_element(tkz, tok).or_abort(tree);
     true
 }
 
@@ -880,11 +812,9 @@ fn foreign(
     if !reconstruct(tree, tkz) {
         return true;
     }
-    tree.before_append_attr = Some(adjust);
-    let made = tree.insert_foreign_element(tkz, tok, ns, false);
-    tree.before_append_attr = None;
-    if made.is_err() {
-        return tree.abort_with(TreeStatus::Oom);
+    let made = tree.insert_foreign_element(tkz, tok, ns, Some(adjust));
+    if made.or_abort(tree).is_none() {
+        return true;
     }
     if tok.flags & flags::CLOSE_SELF != 0 {
         tree.open_pop();
@@ -898,7 +828,7 @@ fn anything_else(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &
     if !reconstruct(tree, tkz) {
         return true;
     }
-    insert(tree, tkz, tok);
+    tree.insert_html_element(tkz, tok).or_abort(tree);
     true
 }
 
@@ -907,18 +837,22 @@ fn noscript(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) 
     if !tree.scripting {
         return anything_else(tree, tkz, tok);
     }
-    if tree.generic_rawtext_parsing(tkz, tok).is_err() {
-        return tree.abort_with(TreeStatus::Oom);
+    if tree
+        .generic_rawtext_parsing(tkz, tok)
+        .or_abort(tree)
+        .is_none()
+    {
+        return true;
     }
     true
 }
 
 /// `lxb_html_tree_insertion_mode_in_body_anything_else_closed`.
 pub fn anything_else_closed(tree: &mut TreeBuilder<'_>, tok: &Tok) -> bool {
-    let mut len = tree.open.len();
+    let mut len = tree.open_len();
     while len != 0 {
         len -= 1;
-        let node = tree.open[len];
+        let node = tree.open_at(len);
         if tree.node_is(node, tok.tag_id) {
             tree.generate_implied_end_tags(tok.tag_id, res::NS_HTML);
             if Some(node) != tree.current_node() {
@@ -999,14 +933,18 @@ pub fn in_body(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mu
     match tok.tag_id {
         res::TAG__TEXT => text(tree, tkz, tok),
         res::TAG__EM_COMMENT => {
-            if tree.insert_comment(tkz, tok, None).is_err() {
-                return tree.abort_with(TreeStatus::Oom);
+            if tree.insert_comment(tkz, tok, None).or_abort(tree).is_none() {
+                return true;
             }
             true
         }
         res::TAG__PROCESSINGINSTRUCTION => {
-            if tree.insert_processing_instruction(tkz, tok, None).is_err() {
-                return tree.process_abort();
+            if tree
+                .insert_processing_instruction(tkz, None)
+                .or_abort(tree)
+                .is_none()
+            {
+                return true;
             }
             true
         }

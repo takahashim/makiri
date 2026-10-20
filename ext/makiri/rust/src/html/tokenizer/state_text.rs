@@ -10,7 +10,7 @@ use super::state::{
     before_attribute_name, char_ref, cr, cr_case, data_before, self_closing_start_tag, try_or,
     State,
 };
-use super::{flags, is_alpha, ErrorId, Tokenizer};
+use super::{flags, is_alpha, ErrorId, Halted, Tokenizer};
 use crate::html::res::names as res;
 
 /* ---- RCDATA and RAWTEXT ---- */
@@ -62,9 +62,7 @@ fn text<const RC: bool>(t: &mut Tokenizer<'_, '_>, mut data: usize, end: usize) 
                     try_or!(t.token_text_done(), end);
                     return end;
                 }
-                t.begin = data + 1;
-                try_or!(t.append_replace(), end);
-                t.error(data, ErrorId::Unnuch);
+                try_or!(t.replace_null(data), end);
             }
             _ => {}
         }
@@ -88,7 +86,7 @@ fn less_than_sign<const RC: bool>(t: &mut Tokenizer<'_, '_>, data: usize, _end: 
 fn end_tag_open<const RC: bool>(t: &mut Tokenizer<'_, '_>, data: usize, end: usize) -> usize {
     if is_alpha(t.at(data)) {
         t.temp = Some(data);
-        t.entity_start = t.buf.len() - 1;
+        t.end_tag_at = t.buf.len() - 1;
         t.state = end_tag_name::<RC>;
     } else {
         t.state = text::<RC>;
@@ -98,10 +96,10 @@ fn end_tag_open<const RC: bool>(t: &mut Tokenizer<'_, '_>, data: usize, end: usi
 }
 
 /// The appropriate-end-tag test of every `*_end_tag_name` state: the name
-/// collected after `</` (`entity_start` is the `<`) interned and compared with
+/// collected after `</` (`end_tag_at` is the `<`) interned and compared with
 /// the last start tag. `Err` (status set) on allocation failure.
-fn appropriate(t: &mut Tokenizer<'_, '_>) -> Result<bool, ()> {
-    t.set_tag_from_buf(t.entity_start + 2)?;
+fn appropriate(t: &mut Tokenizer<'_, '_>) -> Result<bool, Halted> {
+    t.set_tag_from_buf(t.end_tag_at + 2)?;
     Ok(t.tmp_tag_id == t.token.tag_id)
 }
 
@@ -111,9 +109,9 @@ fn emit_text_then_end_tag(
     t: &mut Tokenizer<'_, '_>,
     begin: Option<usize>,
     end_at: usize,
-) -> Result<(), ()> {
+) -> Result<(), Halted> {
     t.token.tag_id = res::TAG__TEXT;
-    t.buf.truncate(t.entity_start);
+    t.buf.truncate(t.end_tag_at);
     t.set_text();
     t.token_text_done()?;
     t.token.tag_id = t.tmp_tag_id;
@@ -143,7 +141,7 @@ fn end_tag_name_common(
             0x09 | 0x0A | 0x0C | 0x0D | 0x20 | 0x2F | 0x3E => {
                 try_or!(t.append_data(data), end);
                 match appropriate(t) {
-                    Err(()) => return end,
+                    Err(Halted) => return end,
                     Ok(false) => {
                         t.state = back;
                         return data;
@@ -218,9 +216,7 @@ fn script_data(t: &mut Tokenizer<'_, '_>, mut data: usize, end: usize) -> usize 
                     try_or!(t.token_text_done(), end);
                     return end;
                 }
-                t.begin = data + 1;
-                try_or!(t.append_replace(), end);
-                t.error(data, ErrorId::Unnuch);
+                try_or!(t.replace_null(data), end);
             }
             _ => {}
         }
@@ -251,7 +247,7 @@ fn script_data_less_than_sign(t: &mut Tokenizer<'_, '_>, data: usize, _end: usiz
 /// `lxb_html_tokenizer_state_script_data_end_tag_open` (12.2.5.16).
 fn script_data_end_tag_open(t: &mut Tokenizer<'_, '_>, data: usize, end: usize) -> usize {
     if is_alpha(t.at(data)) {
-        t.entity_start = t.buf.len() - 1;
+        t.end_tag_at = t.buf.len() - 1;
         t.temp = Some(data);
         t.state = script_data_end_tag_name;
     } else {
@@ -343,9 +339,7 @@ fn escaped_common<const DOUBLE: bool>(
                 if t.is_eof {
                     return eof_in_script_comment(t, end);
                 }
-                t.begin = data + 1;
-                try_or!(t.append_replace(), end);
-                t.error(data, ErrorId::Unnuch);
+                try_or!(t.replace_null(data), end);
             }
             _ => {}
         }
@@ -426,7 +420,7 @@ fn script_data_escaped_less_than_sign(
         return data + 1;
     }
     if is_alpha(c) {
-        t.entity_start = t.buf.len();
+        t.escape_name_at = t.buf.len();
         t.state = script_data_double_escape_start;
         return data;
     }
@@ -438,7 +432,7 @@ fn script_data_escaped_less_than_sign(
 fn script_data_escaped_end_tag_open(t: &mut Tokenizer<'_, '_>, data: usize, end: usize) -> usize {
     if is_alpha(t.at(data)) {
         t.temp = Some(data);
-        t.entity_start = t.buf.len() - 1;
+        t.end_tag_at = t.buf.len() - 1;
         t.state = script_data_escaped_end_tag_name;
     } else {
         t.state = script_data_escaped;
@@ -468,7 +462,7 @@ fn double_escape_switch(
         match c {
             0x09 | 0x0A | 0x0C | 0x0D | 0x20 | 0x2F | 0x3E => {
                 try_or!(t.append_data(data), end);
-                let name = t.buf.get(t.entity_start..).unwrap_or_default();
+                let name = t.buf.get(t.escape_name_at..).unwrap_or_default();
                 t.state = if name.len() == 6 && name.eq_ignore_ascii_case(b"script") {
                     on_script
                 } else {
@@ -593,7 +587,7 @@ fn script_data_double_escaped_end_tag_open(
     end: usize,
 ) -> usize {
     if is_alpha(t.at(data)) {
-        t.entity_start = t.buf.len() + 1;
+        t.escape_name_at = t.buf.len() + 1;
         t.state = script_data_double_escape_end;
     } else {
         t.state = script_data_double_escaped;

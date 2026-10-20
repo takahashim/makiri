@@ -4,10 +4,9 @@
 use crate::compat::{self, Fix};
 use crate::falloc::try_vec_with_capacity;
 use crate::html::res::names as res;
-use crate::html::res::tree as rt;
 use crate::html::tokenizer::{flags, Tokenizer};
 use crate::html::tree::error::TreeErrorId as E;
-use crate::html::tree::{is_ws, AttrAdjust, Tok, TreeBuilder, TreeStatus};
+use crate::html::tree::{is_ws, AttrAdjust, OrAbort, Tok, TreeBuilder, TreeStatus};
 
 /// U+FFFD in UTF-8.
 const REPLACEMENT: &[u8] = "\u{FFFD}".as_bytes();
@@ -18,21 +17,21 @@ fn anything_else_closed(
     tkz: &mut Tokenizer<'_, '_>,
     tok: &mut Tok,
 ) -> bool {
-    if tree.open.is_empty() {
+    if tree.open_len() == 0 {
         return tree.run(tree.mode, tkz, tok);
     }
-    let mut idx = tree.open.len() - 1;
-    if idx > 0 && tree.tag(tree.open[idx]) != tok.tag_id {
+    let mut idx = tree.open_len() - 1;
+    if idx > 0 && tree.tag(tree.open_at(idx)) != tok.tag_id {
         tree.parse_error(tok, E::Unelinopelst);
     }
     while idx != 0 {
-        let node = tree.open[idx];
+        let node = tree.open_at(idx);
         if tree.tag(node) == tok.tag_id {
             tree.open_pop_until_node(node, true);
             return true;
         }
         idx -= 1;
-        if tree.ns(tree.open[idx]) == res::NS_HTML {
+        if tree.ns(tree.open_at(idx)) == res::NS_HTML {
             break;
         }
     }
@@ -57,31 +56,23 @@ fn anything_else(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &
         return tree.abort_with(TreeStatus::Error);
     };
     let ns = tree.ns(node);
-    if ns == res::NS_MATH {
-        tree.before_append_attr = Some(AttrAdjust::Mathml);
+    let adjust = if ns == res::NS_MATH {
+        Some(AttrAdjust::Mathml)
     } else if ns == res::NS_SVG {
-        tree.before_append_attr = Some(AttrAdjust::Svg);
+        Some(AttrAdjust::Svg)
     } else if compat::fixed(Fix::P19) {
         /* The Standard adjusts foreign attributes in every namespace. */
-        tree.before_append_attr = Some(AttrAdjust::Foreign);
-    }
-    let made = tree.insert_foreign_element(tkz, tok, ns, false);
-    let Ok(el) = made else {
-        tree.before_append_attr = None;
-        return tree.abort_with(TreeStatus::Oom);
+        Some(AttrAdjust::Foreign)
+    } else {
+        None
+    };
+    let made = tree.insert_foreign_element(tkz, tok, ns, adjust);
+    let Some(el) = made.or_abort(tree) else {
+        return true;
     };
     if ns == res::NS_SVG {
-        let fixed = rt::SVG_FIXNAME
-            .get(tree.tag(el))
-            .copied()
-            .unwrap_or_default();
-        if !fixed.is_empty() {
-            /* `lxb_dom_element_qualified_name_set`; Lexbor ignores a
-             * failure. */
-            let _ = tree.doc.set_written(el, Some(fixed));
-        }
+        tree.adjust_svg_tag_name(el);
     }
-    tree.before_append_attr = None;
     if tok.flags & flags::CLOSE_SELF == 0 {
         return true;
     }
@@ -148,8 +139,8 @@ fn text(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> b
             pos += 1;
         }
     }
-    if let Err(st) = tree.insert_character_for_data(s) {
-        return tree.abort_with(st);
+    if tree.insert_character_for_data(s).or_abort(tree).is_none() {
+        return true;
     }
     true
 }
@@ -158,13 +149,12 @@ fn text(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> b
 /// out of foreign content.
 fn all(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mut Tok) -> bool {
     if tok.tag_id == res::TAG_FONT {
-        let breaks = tok.has_attrs
-            && tkz.token.attrs.iter().any(|a| {
-                matches!(
-                    a.name,
-                    Some(res::ATTR_COLOR) | Some(res::ATTR_FACE) | Some(res::ATTR_SIZE)
-                )
-            });
+        let breaks = tok.attrs(tkz).iter().any(|a| {
+            matches!(
+                a.name,
+                Some(res::ATTR_COLOR) | Some(res::ATTR_FACE) | Some(res::ATTR_SIZE)
+            )
+        });
         if !breaks {
             return anything_else(tree, tkz, tok);
         }
@@ -198,14 +188,18 @@ pub fn foreign_content(
     match tok.tag_id {
         res::TAG__TEXT => text(tree, tkz, tok),
         res::TAG__EM_COMMENT => {
-            if tree.insert_comment(tkz, tok, None).is_err() {
-                return tree.abort_with(TreeStatus::Oom);
+            if tree.insert_comment(tkz, tok, None).or_abort(tree).is_none() {
+                return true;
             }
             true
         }
         res::TAG__PROCESSINGINSTRUCTION => {
-            if tree.insert_processing_instruction(tkz, tok, None).is_err() {
-                return tree.process_abort();
+            if tree
+                .insert_processing_instruction(tkz, None)
+                .or_abort(tree)
+                .is_none()
+            {
+                return true;
             }
             true
         }

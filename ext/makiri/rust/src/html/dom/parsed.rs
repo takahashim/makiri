@@ -85,9 +85,11 @@ impl HtmlParsed {
         HtmlDocMut::new(&mut self.doc)
     }
 
-    /// The document, lent to make DETACHED nodes - factories and copies -
-    /// with the indexes kept: no index names a node no tree holds, and
-    /// nothing an index stores moves when the arena grows (ids and offsets).
+    /// The document, lent to make DETACHED nodes - factories and copies, and
+    /// a detached fragment's subtree - with the indexes kept: no index names
+    /// a node no tree holds, and nothing an index stores moves when the
+    /// arena grows (ids and offsets). Anything that changes a node in the
+    /// document's tree takes [`edit`](Self::edit), which drops them.
     #[inline]
     pub fn edit_keeping_indexes(&mut self) -> HtmlDocMut<'_> {
         HtmlDocMut::new(&mut self.doc)
@@ -158,7 +160,7 @@ impl HtmlParsed {
     /// measure [`external_bytes`](Self::external_bytes) again: the node count
     /// plus the byte store and the name and namespace tables in 4 KiB pages.
     pub fn arena_chunks(&self) -> usize {
-        self.doc.node_count() / 64 + (self.doc.bytes.len() + self.doc.table_growth()) / 4096
+        self.doc.node_count() / 64 + (self.doc.stored_bytes() + self.doc.table_growth()) / 4096
     }
 
     /// The 1-based source line for `node`, or `None` when unknown.
@@ -325,13 +327,7 @@ fn is_container(n: HtmlNode<'_>) -> bool {
 
 /// The span of a non-empty Text or CDATA node's data.
 fn text_span(n: HtmlNode<'_>) -> Option<Span> {
-    if !matches!(n.node_type(), NodeType::Text | NodeType::CDataSection) {
-        return None;
-    }
-    match n.owner_document().arena().node(n.id())?.payload {
-        super::Payload::Data(s) if s.len > 0 => Some(s),
-        _ => None,
-    }
+    n.owner_document().arena().text_span(n.id())
 }
 
 struct Frame<'d> {
@@ -383,7 +379,7 @@ impl TextIndex {
                 if t.slices.len() == nslices {
                     return Ok(None);
                 }
-                let Some(total) = t.prefix[t.slices.len()].checked_add(span.len as usize) else {
+                let Some(total) = t.prefix[t.slices.len()].checked_add(span.len()) else {
                     return Ok(None);
                 };
                 t.slices.push(span);

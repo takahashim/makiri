@@ -4,7 +4,7 @@ use crate::html::dom::NodeId;
 use crate::html::res::names as res;
 use crate::html::tokenizer::Tokenizer;
 use crate::html::tree::error::TreeErrorId as E;
-use crate::html::tree::{Mode, Tok, TreeBuilder, TreeStatus};
+use crate::html::tree::{Mode, OrAbort, Tok, TreeBuilder, TreeStatus};
 
 /// `lxb_html_tree_insertion_mode_before_html`.
 pub fn before_html(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mut Tok) -> bool {
@@ -20,25 +20,30 @@ fn open(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mut Tok) 
         res::TAG__EM_COMMENT => {
             if tree
                 .insert_comment(tkz, tok, Some(NodeId::DOCUMENT))
-                .is_err()
+                .or_abort(tree)
+                .is_none()
             {
-                return tree.process_abort();
+                return true;
             }
         }
         res::TAG__PROCESSINGINSTRUCTION => {
             if tree
-                .insert_processing_instruction(tkz, tok, Some(NodeId::DOCUMENT))
-                .is_err()
+                .insert_processing_instruction(tkz, Some(NodeId::DOCUMENT))
+                .or_abort(tree)
+                .is_none()
             {
-                return tree.process_abort();
+                return true;
             }
         }
         res::TAG_HTML => {
-            let Ok(html) = tree.create_element_for_token(tkz, tok, res::NS_HTML) else {
-                return tree.abort_with(TreeStatus::Oom);
+            let Some(html) = tree
+                .create_element_for_token(tkz, tok, res::NS_HTML, None)
+                .or_abort(tree)
+            else {
+                return true;
             };
-            if let Err(st) = html_html(tree, html) {
-                return tree.abort_with(st);
+            if html_html(tree, html).or_abort(tree).is_none() {
+                return true;
             }
             tree.mode = Mode::BeforeHead;
         }
@@ -67,11 +72,14 @@ fn closed(tree: &mut TreeBuilder<'_>, tok: &Tok) -> bool {
 
 /// `lxb_html_tree_insertion_mode_before_html_anything_else`.
 fn anything_else(tree: &mut TreeBuilder<'_>) -> bool {
-    let Ok(html) = tree.create_element_node(res::TAG_HTML, res::NS_HTML) else {
-        return tree.abort_with(TreeStatus::Oom);
+    let Some(html) = tree
+        .create_element_node(res::TAG_HTML, res::NS_HTML)
+        .or_abort(tree)
+    else {
+        return true;
     };
-    if let Err(st) = html_html(tree, html) {
-        return tree.abort_with(st);
+    if html_html(tree, html).or_abort(tree).is_none() {
+        return true;
     }
     tree.mode = Mode::BeforeHead;
     false

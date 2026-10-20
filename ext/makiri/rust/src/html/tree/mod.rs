@@ -38,6 +38,7 @@ mod modes;
 mod parse;
 mod select;
 mod stacks;
+mod stamp;
 
 pub use error::{TreeError, TreeErrorId};
 pub use fragment::{parse_fragment, ContextFacts, FragmentFailure, ParsedFragment};
@@ -50,7 +51,7 @@ use crate::falloc::VecPush;
 use crate::html::dom::{Document, NodeId};
 use crate::html::names::Names;
 use crate::html::res::names as res;
-use crate::html::tokenizer::{flags, Status, Stop, TokenSink, Tokenizer};
+use crate::html::tokenizer::{flags, Stop, TokenAttr, TokenSink, Tokenizer};
 
 /// Why the tree builder stopped (`tree->status`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -103,8 +104,8 @@ pub(crate) enum Ipos {
     Before,
 }
 
-/// The hook Lexbor sets on `tree->before_append_attr` while it inserts a
-/// foreign element.
+/// How a foreign element's attributes are adjusted as it is inserted: the
+/// hook Lexbor sets on `tree->before_append_attr`, passed here as an argument.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AttrAdjust {
     /// `lxb_html_tree_adjust_attributes_mathml`.
@@ -173,6 +174,17 @@ impl Tok {
     #[inline]
     pub fn is_close(&self) -> bool {
         self.flags & flags::CLOSE != 0
+    }
+
+    /// The token's attributes: none for a fake token, whatever the
+    /// tokenizer holds.
+    #[inline]
+    pub fn attrs<'a>(&self, tkz: &'a Tokenizer<'_, '_>) -> &'a [TokenAttr] {
+        if self.has_attrs {
+            &tkz.token.attrs
+        } else {
+            &[]
+        }
     }
 
     /// The token's text.
@@ -287,7 +299,6 @@ pub struct TreeBuilder<'d> {
     pub(crate) scripting: bool,
     pub(crate) mode: Mode,
     pub(crate) original_mode: Mode,
-    pub(crate) before_append_attr: Option<AttrAdjust>,
     pub(crate) status: TreeStatus,
     /// The attributes made with no value (see the module doc).
     pub(crate) valueless: NodeSet,
@@ -295,6 +306,7 @@ pub struct TreeBuilder<'d> {
     pub(crate) selected: NodeSet,
     /// The parse guard and the source-position stamps (`guard.rs`).
     pub(crate) guard: guard::Guard,
+    pub(crate) stamping: stamp::Stamping,
 }
 
 impl<'d> TreeBuilder<'d> {
@@ -316,11 +328,11 @@ impl<'d> TreeBuilder<'d> {
             scripting: false,
             mode: Mode::Initial,
             original_mode: Mode::Initial,
-            before_append_attr: None,
             status: TreeStatus::Ok,
             valueless: NodeSet::default(),
             selected: NodeSet::default(),
             guard: guard::Guard::default(),
+            stamping: stamp::Stamping::default(),
         }
     }
 
@@ -402,7 +414,8 @@ impl<'d> TreeBuilder<'d> {
         true
     }
 
-    /// Set the status to `status` and abort.
+    /// Set the status to `status` and abort. [`OrAbort`] is the form for a
+    /// step's `Result`.
     pub(crate) fn abort_with(&mut self, status: TreeStatus) -> bool {
         self.status = status;
         self.process_abort()
@@ -488,13 +501,35 @@ impl<'d> TreeBuilder<'d> {
         let mut tok = Tok::of(tkz);
         /* The guard reads the token as the tokenizer handed it over. */
         let handed = tok;
-        let before = self.guard_before(&handed);
+        let before = self.stamp_before(&handed);
         while !self.dispatch(tkz, &mut tok) {}
-        tkz.current_ns = self.current_namespace();
-        if self.status == TreeStatus::Ok && !self.guard_after(before, &handed) {
+        tkz.set_current_namespace(self.current_namespace());
+        self.stamp_after(before);
+        if self.status == TreeStatus::Ok && !self.guard_after(&handed) {
             self.status = TreeStatus::Error;
         }
         self.status
+    }
+}
+
+/// A failed step aborts the parse with its own status: Lexbor's
+/// `tree->status = status; return lxb_html_tree_process_abort(tree)`, the
+/// one way a mode handles a failure. `None` means the parse is aborted, and
+/// the mode returns `true` (the token consumed).
+pub(crate) trait OrAbort<T> {
+    fn or_abort(self, tree: &mut TreeBuilder<'_>) -> Option<T>;
+}
+
+impl<T> OrAbort<T> for Result<T, TreeStatus> {
+    #[inline]
+    fn or_abort(self, tree: &mut TreeBuilder<'_>) -> Option<T> {
+        match self {
+            Ok(v) => Some(v),
+            Err(st) => {
+                tree.abort_with(st);
+                None
+            }
+        }
     }
 }
 
@@ -503,13 +538,8 @@ impl TokenSink for TreeBuilder<'_> {
     fn token(&mut self, tkz: &mut Tokenizer<'_, '_>) -> Result<(), Stop> {
         match self.process(tkz) {
             TreeStatus::Ok => Ok(()),
-            st => {
-                tkz.status = match st {
-                    TreeStatus::Oom => Status::Oom,
-                    _ => Status::Error,
-                };
-                Err(Stop)
-            }
+            TreeStatus::Oom => Err(Stop::Oom),
+            _ => Err(Stop::Error),
         }
     }
 

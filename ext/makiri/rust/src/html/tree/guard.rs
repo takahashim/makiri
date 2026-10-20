@@ -1,16 +1,16 @@
-//! The guard every HTML parse runs under, and the source-position stamps,
-//! as the tree builder's own: what `lexbor::adapter::tree_guard` and
-//! `lexbor::adapter::source_loc` do from a hook around Lexbor's tree builder,
-//! done around [`TreeBuilder::process`](super::TreeBuilder) at the same
-//! points - before and after each token - so the answers are the same. The
-//! why of both limits is in `tree_guard`'s module doc.
+//! The guard every HTML parse runs under, as the tree builder's own: what
+//! `lexbor::adapter::tree_guard` does from a hook around Lexbor's tree
+//! builder, done after each token of
+//! [`TreeBuilder::process`](super::TreeBuilder), so the answers are the
+//! same. The why of both limits is in `tree_guard`'s module doc. The
+//! source-position stamps run at the same points and are `stamp.rs`'s.
 //!
 //! The checks stay per token, not per insertion: a token can push past the
 //! limit and pop back (a void element at the limit), and the hook never saw
 //! that, so a check at the insertion would refuse inputs the hook accepts.
 
+use super::select::SelectWalk;
 use super::{Tok, TreeBuilder};
-use crate::compat::{self, Fix};
 use crate::html::dom::NodeId;
 use crate::html::res::names as res;
 
@@ -76,10 +76,6 @@ pub(crate) struct Guard {
     options: usize,
     context: Option<ContextOptions>,
     pub(crate) stopped: Option<GuardStop>,
-    /// Whether elements get their start tag's offset (a document parse).
-    stamp: bool,
-    /// The input's length, which an offset must be below.
-    input_len: usize,
 }
 
 impl Default for Guard {
@@ -90,25 +86,21 @@ impl Default for Guard {
             options: 0,
             context: None,
             stopped: None,
-            stamp: false,
-            input_len: 0,
         }
     }
 }
 
 impl Guard {
-    /// A document parse's guard: `limit` from the root, stamping offsets.
-    pub fn for_document(limit: DepthLimit, input_len: usize) -> Guard {
+    /// A document parse's guard: `limit` from the root.
+    pub fn for_document(limit: DepthLimit) -> Guard {
         Guard {
             max_open: limit.max_open(0),
-            stamp: true,
-            input_len,
             ..Guard::default()
         }
     }
 
     /// A fragment parse's guard: `limit` over the fragment's own elements,
-    /// below the parser's synthetic `<html>`; no stamps.
+    /// below the parser's synthetic `<html>`.
     pub fn for_fragment(limit: DepthLimit, context: ContextOptions) -> Guard {
         Guard {
             max_open: limit.max_open(1),
@@ -118,67 +110,10 @@ impl Guard {
     }
 }
 
-/// An element start tag the tree builder is about to process, and the tree
-/// just before: the current node and the last child of where it inserts
-/// (`source_loc::StartTag` and `Before`).
-pub(crate) struct Before {
-    tag: usize,
-    offset: usize,
-    current: Option<NodeId>,
-    last_child: Option<NodeId>,
-}
-
 impl TreeBuilder<'_> {
-    /// Where the tree builder appends a child of `n`: an HTML `<template>`'s
-    /// contents, otherwise `n`.
-    fn inserts_into(&self, n: NodeId) -> NodeId {
-        self.doc.template_content(n).unwrap_or(n)
-    }
-
-    /// The offset an element created from `tok` carries: its start tag's,
-    /// when `tok` is a real start tag of a stamping parse - not a token the
-    /// tree builder made up (`Tok::fake`) or one that copies an existing
-    /// element (`base`: the adoption agency, the reconstruction of the
-    /// active formatting elements). The HTML Standard's sense of an element
-    /// "created for the token"; L1 in docs/parser_differences.ja.md.
-    pub(crate) fn created_offset(&self, tok: &Tok) -> Option<usize> {
-        if !self.guard.stamp || !compat::fixed(Fix::L1) || tok.base.is_some() {
-            return None;
-        }
-        tok.begin.filter(|&o| o < self.guard.input_len)
-    }
-
-    /// Before a token: the stamp's snapshot, for an element start tag
-    /// (`Stamper::start_tag`, `Before::at`) - Lexbor's rule, which only the
-    /// Lexbor-compatible run (`compat::as_lexbor`) still uses.
-    pub(crate) fn guard_before(&self, tok: &Tok) -> Option<Before> {
-        if !self.guard.stamp
-            || compat::fixed(Fix::L1)
-            || tok.tag_id <= res::TAG__EM_DOCTYPE
-            || tok.is_close()
-        {
-            return None;
-        }
-        let offset = tok.begin?;
-        if offset >= self.guard.input_len {
-            return None;
-        }
-        let current = self.current_node();
-        Some(Before {
-            tag: tok.tag_id,
-            offset,
-            current,
-            last_child: current.and_then(|c| self.doc.last_child(self.inserts_into(c))),
-        })
-    }
-
-    /// After a token: stamp what it created, then refuse the parse when the
-    /// tree is too deep or a select has too many options. `false` when the
-    /// parse is to stop.
-    pub(crate) fn guard_after(&mut self, before: Option<Before>, tok: &Tok) -> bool {
-        if let Some(b) = before {
-            self.stamp_created(&b);
-        }
+    /// After a token: refuse the parse when the tree is too deep or a
+    /// select has too many options. `false` when the parse is to stop.
+    pub(crate) fn guard_after(&mut self, tok: &Tok) -> bool {
         if self.guard.max_open != usize::MAX && self.open.len() > self.guard.max_open {
             self.guard.stopped = Some(GuardStop::TooDeep);
             return false;
@@ -189,35 +124,6 @@ impl TreeBuilder<'_> {
             return false;
         }
         true
-    }
-
-    /// `source_loc::stamp_created`.
-    fn stamp_created(&mut self, b: &Before) {
-        let Some(now) = self.current_node() else {
-            return;
-        };
-        let candidate = if Some(now) != b.current && self.is_element_tag(now, b.tag) {
-            Some(now)
-        } else {
-            self.doc.last_child(self.inserts_into(now))
-        };
-        let Some(x) = candidate else {
-            return;
-        };
-        if Some(x) == b.current
-            || Some(x) == b.last_child
-            || !self.is_element_tag(x, b.tag)
-            || self.doc.source_offset(x).is_some()
-            || self.doc.first_child(x).is_some()
-        {
-            return;
-        }
-        self.doc.set_source_offset(x, b.offset);
-    }
-
-    /// Whether `n` is an element with tag id `tag`.
-    fn is_element_tag(&self, n: NodeId, tag: usize) -> bool {
-        self.doc.element(n).is_some() && self.tag(n) == tag
     }
 
     /// `HookState::count_option`: count the `<option>` just inserted against
@@ -244,24 +150,16 @@ impl TreeBuilder<'_> {
     /// `tree_guard::nearest_select`: the select an inserted option updates,
     /// `Some(None)` for the fragment context's.
     fn guard_nearest_select(&self, option: NodeId) -> Option<Option<NodeId>> {
-        let mut optgroup = false;
-        let mut node = self.doc.parent(option);
-        while let Some(n) = node {
-            if self.ns(n) == res::NS_HTML {
-                match self.tag(n) {
-                    res::TAG_DATALIST | res::TAG_HR | res::TAG_OPTION => return None,
-                    res::TAG_OPTGROUP if optgroup => return None,
-                    res::TAG_OPTGROUP => optgroup = true,
-                    res::TAG_SELECT => return Some(Some(n)),
-                    _ => {}
-                }
+        match self.walk_to_select(option) {
+            SelectWalk::Select(n) => Some(Some(n)),
+            SelectWalk::Blocked => None,
+            /* Off the top: in a fragment, the synthetic root, whose children
+             * land in the context. */
+            SelectWalk::OffTop { optgroup } => {
+                let c = self.guard.context?;
+                let reaches = if optgroup { c.after_optgroup } else { c.fresh };
+                reaches.then_some(None)
             }
-            node = self.doc.parent(n);
         }
-        /* Off the top: in a fragment, the synthetic root, whose children land
-         * in the context. */
-        let c = self.guard.context?;
-        let reaches = if optgroup { c.after_optgroup } else { c.fresh };
-        reaches.then_some(None)
     }
 }

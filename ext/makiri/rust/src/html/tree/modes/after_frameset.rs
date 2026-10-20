@@ -3,7 +3,7 @@
 use crate::html::res::names as res;
 use crate::html::tokenizer::Tokenizer;
 use crate::html::tree::error::TreeErrorId as E;
-use crate::html::tree::{Mode, Tok, TreeBuilder};
+use crate::html::tree::{Mode, OrAbort, Tok, TreeBuilder};
 
 /// `lxb_html_tree_insertion_mode_after_frameset`.
 pub fn after_frameset(
@@ -13,13 +13,17 @@ pub fn after_frameset(
 ) -> bool {
     match tok.tag_id {
         res::TAG__EM_COMMENT => {
-            if tree.insert_comment(tkz, tok, None).is_err() {
-                return tree.process_abort();
+            if tree.insert_comment(tkz, tok, None).or_abort(tree).is_none() {
+                return true;
             }
         }
         res::TAG__PROCESSINGINSTRUCTION => {
-            if tree.insert_processing_instruction(tkz, tok, None).is_err() {
-                return tree.process_abort();
+            if tree
+                .insert_processing_instruction(tkz, None)
+                .or_abort(tree)
+                .is_none()
+            {
+                return true;
             }
         }
         res::TAG__EM_DOCTYPE => tree.parse_error(tok, E::Dotoaffrmo),

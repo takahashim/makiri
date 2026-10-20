@@ -93,9 +93,7 @@ fn comment(t: &mut Tokenizer<'_, '_>, mut data: usize, end: usize) -> usize {
                     try_or!(t.token_done(), end);
                     return end;
                 }
-                t.begin = data + 1;
-                try_or!(t.append_replace(), end);
-                t.error(data, ErrorId::Unnuch);
+                try_or!(t.replace_null(data), end);
             }
             _ => {}
         }
