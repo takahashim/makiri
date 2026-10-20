@@ -273,12 +273,7 @@ pub fn same_value(a: Value, b: Value) -> bool {
 /// symbol table that cannot grow raises comes back as `Err` instead of
 /// unwinding past the caller.
 pub fn intern_protected(name: &str) -> Result<ID, Error> {
-    let mut id: ID = 0;
-    protect(|| {
-        id = intern(name);
-        nil().as_raw()
-    })?;
-    Ok(id)
+    protected(|| Ok(intern(name)))
 }
 
 /// A method `ID`, interned from a UTF-8 name.

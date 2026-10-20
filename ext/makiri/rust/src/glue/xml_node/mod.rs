@@ -12,7 +12,6 @@ pub mod mutate;
 pub mod ns;
 pub mod read;
 pub mod serialize;
-pub mod strings;
 
 use magnus::{method, prelude::*, Error, RModule};
 

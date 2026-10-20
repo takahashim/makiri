@@ -379,12 +379,10 @@ RSpec.describe "Makiri XPath custom function handler" do
       end
 
       # `fragment` converts its argument with `to_s` - arbitrary Ruby - after
-      # the check that no evaluation is reading the document. That Ruby could
-      # once START one and leave it suspended mid-walk (a handler that yields
-      # from an Enumerator), still reading the document when the fragment was
-      # made in it; the check is made again after the conversion for that. A
-      # handler now runs in a Fiber of its own, so the walk fails instead of
-      # being suspended - and the fragment is still not made.
+      # the check that no evaluation is reading the document. That Ruby can
+      # START one and leave it suspended mid-walk (a handler that yields from
+      # an Enumerator), still reading the document when the fragment is made
+      # in it. So the check is made again after the conversion.
       {
         html: [-> { Makiri.HTML("<p>x</p>") }, "//p[f()]", "<b>y</b>"],
         xml: [-> { Makiri::XML("<r><a/></r>") }, "//a[f()]", "<b/>"],
@@ -399,7 +397,7 @@ RSpec.describe "Makiri XPath custom function handler" do
           arg = Object.new
           arg.define_singleton_method(:to_s) { walk.next && source }
 
-          expect { doc.fragment(arg) }.to raise_error(Makiri::Error, /switched Fibers|while evaluating/)
+          expect { doc.fragment(arg) }.to raise_error(Makiri::Error, /while evaluating/)
         end
       end
 
@@ -474,13 +472,9 @@ RSpec.describe "a handler's non-StandardError exit" do
     expect { doc.xpath("//p[f()]", h) }.to raise_error(SystemExit) { |e| expect(e.status).to eq(3) }
   end
 
-  # A handler runs in a Fiber of its own (bridge/xpath/handler.rs), and a
-  # throw does not cross a Fiber: it fails the evaluation as the
-  # UncaughtThrowError Ruby raises for it.
-  it "fails the evaluation on a throw, which cannot leave the handler's Fiber" do
+  it "lets a throw reach the enclosing catch" do
     h = handler { throw :out, :thrown }
-    expect { catch(:out) { doc.xpath("//p[f()]", h) } }
-      .to raise_error(Makiri::Error) { |e| expect(e.cause).to be_a(UncaughtThrowError) }
+    expect(catch(:out) { doc.xpath("//p[f()]", h) }).to eq(:thrown)
   end
 
   it "propagates an Interrupt raised by the result's to_s" do
@@ -512,60 +506,5 @@ RSpec.describe "a handler's non-StandardError exit" do
     expect { doc.xpath("//p[f()]", h) }.to raise_error(Makiri::Error, "handler raised: boom") { |e|
       expect(e.cause).to be_a(RuntimeError).and(have_attributes(message: "boom"))
     }
-  end
-end
-
-# A handler runs in a Fiber made for the evaluation, so a handler that
-# switches Fibers suspends only its own frames: the evaluation fails, and
-# nothing of it is left suspended holding the document.
-RSpec.describe "an XPath handler that switches Fibers" do
-  let(:doc) { Makiri.HTML("<p>x</p><p>y</p>") }
-
-  def yielding_handler(yielder)
-    Object.new.tap { |h| h.define_singleton_method(:f) { |*| yielder << 1; true } }
-  end
-
-  it "fails the evaluation instead of suspending it" do
-    e = Enumerator.new { |y| doc.xpath("//p[f()]", yielding_handler(y)) }
-    expect { e.next }.to raise_error(Makiri::Error, /switched Fibers/)
-  end
-
-  it "leaves the document editable once the Enumerator is dropped" do
-    e = Enumerator.new { |y| doc.xpath("//p[f()]", yielding_handler(y)) }
-    begin
-      e.next
-    rescue Makiri::Error
-      nil
-    end
-    e = nil
-    GC.start
-    doc.at_css("p")["a"] = "b"
-    expect(doc.at_css("p")["a"]).to eq("b")
-  end
-
-  it "leaves an XPathContext usable too" do
-    ctx = Makiri::XPathContext.new(doc)
-    e = Enumerator.new { |y| ctx.evaluate("//p[f()]", yielding_handler(y)) }
-    expect { e.next }.to raise_error(Makiri::Error)
-    expect { ctx.register_namespace("x", "urn:x") }.not_to raise_error
-  end
-
-  it "fails a respond_to? that switches Fibers the same way" do
-    e = Enumerator.new do |y|
-      h = Object.new
-      h.define_singleton_method(:respond_to_missing?) { |*| y << 1; true }
-      doc.xpath("//p[g()]", h)
-    end
-    expect { e.next }.to raise_error(Makiri::Error, /switched Fibers/)
-  end
-
-  it "reads Fiber storage, which a new Fiber inherits, but not Thread.current[]" do
-    Fiber[:makiri_k] = "inherited"
-    Thread.current[:makiri_k] = "fiber-local"
-    h = Object.new
-    def h.k(*) = [Fiber[:makiri_k], Thread.current[:makiri_k].inspect].join(",")
-    expect(doc.xpath("string(k())", h)).to eq("inherited,nil")
-  ensure
-    Thread.current[:makiri_k] = nil
   end
 end

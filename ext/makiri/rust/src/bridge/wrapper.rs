@@ -268,8 +268,9 @@ struct NodeCache {
 
 impl NodeCache {
     fn get(&self, token: usize) -> Option<Value> {
-        // SAFETY: an entry of this cache, which the Document's mark marks
-        // (movable, relocated by `compact`); the caller holds the Document.
+        // SAFETY: an entry of this cache, which the Document's trace hands
+        // over movable (marked, then relocated by the same walk); the caller
+        // holds the Document.
         self.map.get(&token).map(|v| unsafe { v.get() })
     }
 
@@ -422,6 +423,14 @@ impl DocData {
     fn cache(&self, token: usize, wrapper: Held) -> Result<(), ()> {
         let mut nodes = self.nodes.try_borrow_mut().map_err(|_| ())?;
         nodes.as_mut().ok_or(())?.insert(token, wrapper)
+    }
+
+    /// Change the edit state in place - the one read-modify-write of the
+    /// cell, which holds a `Copy` value.
+    fn update_edits(&self, f: impl FnOnce(&mut EditState)) {
+        let mut edits = self.edits.get();
+        f(&mut edits);
+        self.edits.set(edits);
     }
 
     /// The Document's parse-warning Array.
@@ -1050,10 +1059,7 @@ pub enum EditKind {
 /// Recording after the change instead would miss an edit that panics, or
 /// fails having changed something, and leave a reader trusting a stale cache.
 pub fn record_edit(rb_doc: Value, kind: EditKind) {
-    let d = doc_data_known(&rb_doc);
-    let mut edits = d.edits.get();
-    edits.record(kind);
-    d.edits.set(edits);
+    doc_data_known(&rb_doc).update_edits(|e| e.record(kind));
 }
 
 /// `Document#tree_version`: how many child-list edits the document has seen.
@@ -1174,20 +1180,14 @@ pub struct DocumentEvaluation(
 impl DocumentEvaluation {
     pub fn enter(rb_doc: Value) -> Result<Self, Error> {
         DOC_TYPE.get(&rb_doc)?; /* TypeError for a non-Document */
-        let d = doc_data_known(&rb_doc);
-        let mut edits = d.edits.get();
-        edits.evaluating += 1;
-        d.edits.set(edits);
+        doc_data_known(&rb_doc).update_edits(|e| e.evaluating += 1);
         Ok(DocumentEvaluation(rb_doc))
     }
 }
 
 impl Drop for DocumentEvaluation {
     fn drop(&mut self) {
-        let d = doc_data_known(&self.0);
-        let mut edits = d.edits.get();
-        edits.evaluating -= 1;
-        d.edits.set(edits);
+        doc_data_known(&self.0).update_edits(|e| e.evaluating -= 1);
         /* Read the Document here, so the guard demonstrably holds it: the field
          * is there to keep it reachable, and a field nothing reads is one the
          * compiler is free to treat as absent. */

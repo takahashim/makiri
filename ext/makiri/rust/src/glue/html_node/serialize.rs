@@ -33,7 +33,7 @@ fn render(node: HtmlNode<'_>, scope: Scope, layout: Layout) -> Result<RString, E
     /* The serializer emits UTF-8, so the String is tagged UTF-8 rather than
      * built as binary and re-tagged; protected, so a failed allocation drops
      * `buf` rather than leaking it. */
-    crate::bridge::string::utf8_string(buf.as_slice())
+    crate::bridge::string::utf8_str_protected(buf.as_slice())
 }
 
 /// Outer HTML: the node itself plus its descendants. `pretty: true` indents.

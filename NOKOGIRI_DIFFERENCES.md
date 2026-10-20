@@ -44,16 +44,8 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
 * A `StandardError` raised by a custom-function handler becomes `Makiri::Error`
   ("handler raised: <message>"), with the handler's exception as its `#cause`
   * Nokogiri re-raises the handler's exception itself. Anything that is not a
-    `StandardError` (`Interrupt`, `SystemExit`, Timeout's exception) reaches
-    the caller unchanged in both.
-
-* A handler's calls run in a Fiber of their own (Nokogiri calls the handler on
-  the caller's), so a `throw` out of a handler, which cannot leave that Fiber,
-  is `Makiri::Error` with an `UncaughtThrowError` cause; a handler that
-  switches Fibers (`Fiber.yield`, an Enumerator's yielder) fails the
-  evaluation with `Makiri::Error`; and `Thread.current[]`, which is
-  Fiber-local, reads the handler Fiber's own values (`Fiber[]` storage is
-  inherited).
+    `StandardError` (`Interrupt`, `SystemExit`, Timeout's exception) and a
+    `throw` reach the caller unchanged in both.
 
 * A number literal is read as the nearest double; libxml2's own reader is not
   correctly rounded for a literal with more digits than a double holds, so

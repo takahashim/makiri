@@ -225,21 +225,31 @@ pub fn ruby_string_bytes(s: RString) -> Result<OwnedBuf, Error> {
 
 /* ---- assembling Ruby Strings ---- */
 
-/// A UTF-8 String holding a copy of `bytes`, for a frame that owns the
-/// buffer it copies out of (a serializer's output): Ruby's allocator raises
-/// `NoMemoryError`, and a raise past that frame would leak the buffer, so it
-/// comes back as `Err` and the buffer drops.
+/// A UTF-8 String holding a copy of `bytes`. Ruby's allocator raises
+/// `NoMemoryError`, a longjmp past every Rust frame up to the nearest
+/// `rb_protect`, so this is for a frame that owns nothing a skipped `Drop`
+/// would leak; a frame that does uses [`utf8_str_protected`].
+/// `rake unsafe:boundaries` holds the glue to that.
 ///
-/// `bytes` must be valid UTF-8; the String is tagged so.
-pub fn utf8_string(bytes: &[u8]) -> Result<RString, Error> {
-    let Ok(len) = c_long::try_from(bytes.len()) else {
+/// `bytes` must be valid UTF-8 (the String is tagged so without a check):
+/// everything a document lends is, by the text-input contract, and so is
+/// every checked view. Bytes that were not would make a wrong String, never
+/// a memory error.
+pub fn utf8_str(bytes: &[u8]) -> Value {
+    // SAFETY: valid UTF-8 by this function's contract; the String copies it.
+    unsafe { super::ruby::value(ruby_str_from_utf8(bytes)) }
+}
+
+/// [`utf8_str`] for a frame that owns what a raise would leak (a serializer's
+/// output buffer, an argument's copy): the allocator's raise comes back as
+/// `Err`, and the caller's owned values drop.
+pub fn utf8_str_protected(bytes: &[u8]) -> Result<RString, Error> {
+    if c_long::try_from(bytes.len()).is_err() {
         return Err(makiri_error("string too large"));
-    };
-    // SAFETY: `bytes` is `len` readable bytes for the call; `protect_value`
-    // turns the allocator's raise into `Err`.
-    let v = super::ruby::protect_value(|| unsafe {
-        super::raw::utf8_str_new(bytes.as_ptr() as *const c_char, len)
-    })?;
+    }
+    // SAFETY: valid UTF-8 by `utf8_str`'s contract; `protect_value` turns the
+    // allocator's raise into `Err`.
+    let v = super::ruby::protect_value(|| unsafe { ruby_str_from_utf8(bytes) })?;
     RString::from_value(v)
         .ok_or_else(|| crate::bridge::ruby::internal_error("the allocator made no String"))
 }
@@ -300,8 +310,12 @@ pub unsafe fn ruby_str_from_slices<'a>(
 /// text-input contract. Bytes that were not would make a wrong String rather
 /// than a memory error - wrong is still wrong.
 pub unsafe fn ruby_str_from_utf8(bytes: &[u8]) -> VALUE {
+    /* A length `c_long` cannot hold (32 bits on Windows) is passed as -1,
+     * which Ruby refuses with ArgumentError - a raise, as an allocation
+     * failure already is - rather than truncated into a shorter String. */
+    let len = c_long::try_from(bytes.len()).unwrap_or(-1);
     /* A slice's pointer is never null, even when it is empty. */
-    super::raw::utf8_str_new(bytes.as_ptr() as *const c_char, bytes.len() as c_long)
+    super::raw::utf8_str_new(bytes.as_ptr() as *const c_char, len)
 }
 
 /// A DOM name as a Ruby String: frozen and deduplicated, tagged UTF-8 -
@@ -317,12 +331,18 @@ pub unsafe fn ruby_str_from_utf8(bytes: &[u8]) -> VALUE {
 /// that were not UTF-8 would make a wrong String, never a memory error. Every
 /// caller passes a document's name, which is UTF-8 by the text-input contract.
 pub fn dom_name_str(bytes: &[u8]) -> Value {
+    /* A length `c_long` cannot hold (32 bits on Windows) would be truncated,
+     * or turn negative, which `rb_enc_interned_str` does not check: refused
+     * as `utf8_str` refuses it, with ArgumentError. */
+    let Ok(len) = c_long::try_from(bytes.len()) else {
+        return utf8_str(bytes);
+    };
     // SAFETY: a slice's pointer and length, read for the call; the encoding
     // is Ruby's static UTF-8 one. The result is a live String.
     unsafe {
         crate::bridge::ruby::value(super::raw::enc_interned_str(
             bytes.as_ptr() as *const c_char,
-            bytes.len() as c_long,
+            len,
             rb_sys::rb_utf8_encoding(),
         ))
     }

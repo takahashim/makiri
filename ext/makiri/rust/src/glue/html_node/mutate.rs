@@ -24,10 +24,9 @@ use crate::bridge::fragment::{set_template_inner_html, stage_fragment_in};
 use crate::bridge::html::{
     check_owning_doc, edit, insert, new_node, wrap_html_node, HtmlEdit, HtmlSelf,
 };
-use crate::bridge::string::HtmlSource;
 use crate::bridge::string::{
     namespace_arg, ruby_verified_data, ruby_verified_name, ruby_verified_text,
-    ruby_verified_text_opt,
+    ruby_verified_text_opt, HtmlSource,
 };
 use crate::glue::node::dom_extract as extract;
 use crate::html_dom::html::{HtmlDocMut, NodeType, Place, RawNode};
@@ -316,9 +315,12 @@ pub fn set_outer_html(_ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Va
  * ------------------------------------------------------------------ */
 
 /// A node the factory made, or the error naming what failed.
+///
+/// The wrap is protected: every factory still owns its arguments' copies
+/// here, and the wrapper's allocation raises `NoMemoryError` past this frame.
 fn created(node: Option<RawNode>, rb_self: Value, what: &str) -> Result<Value, Error> {
     match node {
-        Some(n) => wrap_html_node(n, rb_self),
+        Some(n) => crate::bridge::ruby::protected(|| wrap_html_node(n, rb_self)),
         None => Err(makiri_error(format!("failed to create {what}"))),
     }
 }

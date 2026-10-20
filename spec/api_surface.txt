@@ -498,7 +498,6 @@ class Makiri::XPath::SyntaxError < Makiri::Error
 
 class Makiri::XPathContext < Object
   def self.new(-1)
-  private def self.__handler_fiber(0)
   def evaluate(-1)
   def node=(1)
   def register_namespace(2)

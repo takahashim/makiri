@@ -18,10 +18,9 @@
 
 use magnus::{prelude::*, Error, Ruby, Value};
 
-use super::strings::{str_field, utf8};
 use super::{wrap, XmlSelf};
 use crate::bridge::node_set::node_set_with_fill;
-use crate::bridge::string::dom_name_str;
+use crate::bridge::string::{dom_name_str, utf8_str};
 use crate::child_index;
 use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId};
 
@@ -31,8 +30,8 @@ fn wrap_rel(this: XmlSelf, rel: Option<NodeId>) -> Result<Option<Value>, Error> 
 }
 
 /// A byte field as a String, or None (nil) when there is none.
-fn str_or_nil(ruby: &Ruby, bytes: Option<&[u8]>) -> Option<Value> {
-    bytes.map(|b| str_field(ruby, b))
+fn str_or_nil(bytes: Option<&[u8]>) -> Option<Value> {
+    bytes.map(utf8_str)
 }
 
 fn is_element(d: &XmlDoc, id: NodeId) -> bool {
@@ -46,11 +45,11 @@ pub fn name(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
         let d = this.doc_ref();
         let id = this.id;
         if let Some(n) = d.name_parts(id) {
-            return Ok(str_field(ruby, n.qname));
+            return Ok(utf8_str(n.qname));
         }
         Ok(match d.type_(id) {
             /* A PI's target and a DOCTYPE's name are its `local`. */
-            Some(ArenaKind::Pi | ArenaKind::DocumentType) => str_field(ruby, d.local(id)),
+            Some(ArenaKind::Pi | ArenaKind::DocumentType) => utf8_str(d.local(id)),
             Some(ArenaKind::Text) => ruby.str_new("text").as_value(),
             Some(ArenaKind::CDataSection) => ruby.str_new("#cdata-section").as_value(),
             Some(ArenaKind::Comment) => ruby.str_new("comment").as_value(),
@@ -97,11 +96,11 @@ pub fn tag_name(_ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
 }
 
 /// `ProcessingInstruction#target`, or nil for a non-PI.
-pub fn pi_target(ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
+pub fn pi_target(_ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
         let d = this.doc_ref();
         let target = (d.type_(this.id) == Some(ArenaKind::Pi)).then(|| d.local(this.id));
-        Ok(str_or_nil(ruby, target))
+        Ok(str_or_nil(target))
     })
 }
 
@@ -113,10 +112,9 @@ pub fn node_type(_ruby: &Ruby, this: XmlSelf) -> Result<u32, Error> {
  *
  * An omitted id answers nil; an empty literal (`PUBLIC ""`) answers `""`. */
 
-pub fn dtd_external_id(ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
+pub fn dtd_external_id(_ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
         Ok(str_or_nil(
-            ruby,
             this.doc_ref()
                 .doctype_ids(this.id)
                 .and_then(|ids| ids.public),
@@ -124,10 +122,9 @@ pub fn dtd_external_id(ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Erro
     })
 }
 
-pub fn dtd_system_id(ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
+pub fn dtd_system_id(_ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
         Ok(str_or_nil(
-            ruby,
             this.doc_ref()
                 .doctype_ids(this.id)
                 .and_then(|ids| ids.system),
@@ -157,7 +154,7 @@ pub fn content(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
                     | ArenaKind::Pi
             )
         ) {
-            return Ok(str_field(ruby, d.value(id)));
+            return Ok(utf8_str(d.value(id)));
         }
 
         let texts = || {
@@ -273,10 +270,10 @@ fn attrs_of(d: &XmlDoc, id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
 }
 
 /// `#[]` - the attribute's value, or nil.
-pub fn aref(ruby: &Ruby, this: XmlSelf, rb_name: Value) -> Result<Option<Value>, Error> {
+pub fn aref(_ruby: &Ruby, this: XmlSelf, rb_name: Value) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
         let found = crate::bridge::xml::find_attribute(this, rb_name)?;
-        Ok(str_or_nil(ruby, found.map(|at| this.doc_ref().value(at))))
+        Ok(str_or_nil(found.map(|at| this.doc_ref().value(at))))
     })
 }
 
@@ -284,14 +281,14 @@ pub fn aref(ruby: &Ruby, this: XmlSelf, rb_name: Value) -> Result<Option<Value>,
 /// attribute in namespace `ns` (nil or "" for none) with local name `local`,
 /// or nil - for a non-element too.
 pub fn attribute_value_ns(
-    ruby: &Ruby,
+    _ruby: &Ruby,
     this: XmlSelf,
     rb_ns: Value,
     rb_local: Value,
 ) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
         let found = crate::bridge::xml::find_attribute_ns(this, rb_ns, rb_local)?;
-        Ok(str_or_nil(ruby, found.map(|at| this.doc_ref().value(at))))
+        Ok(str_or_nil(found.map(|at| this.doc_ref().value(at))))
     })
 }
 
@@ -326,7 +323,7 @@ pub fn keys(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
         let d = this.doc_ref();
         let ary = ruby.ary_new();
         for at in attrs_of(d, this.id) {
-            ary.push(str_field(ruby, d.qname(at)))?;
+            ary.push(utf8_str(d.qname(at)))?;
         }
         Ok(ary.as_value())
     })
@@ -338,7 +335,7 @@ pub fn values(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
         let d = this.doc_ref();
         let ary = ruby.ary_new();
         for at in attrs_of(d, this.id) {
-            ary.push(utf8(ruby, d.value(at)))?;
+            ary.push(utf8_str(d.value(at)))?;
         }
         Ok(ary.as_value())
     })

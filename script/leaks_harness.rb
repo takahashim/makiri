@@ -20,9 +20,8 @@ CSS  = "div.a, #b > span { color: red !important; --v: 1px }\n" \
 
 handler = Class.new { def my_fn(nodes) = nodes.length.to_s }.new
 RAISING_TO_S = Object.new.tap { |o| def o.to_s = raise("to_s failed") }
-# A handler's exits: a StandardError (wrapped), a non-StandardError (carried
-# across the evaluation and re-raised unchanged), and a throw (which cannot
-# leave the handler's Fiber, so it fails the evaluation as Makiri::Error).
+# A handler's exits: a StandardError (wrapped), a non-StandardError and a throw
+# (both carried across the evaluation and re-raised unchanged).
 EXITS = Class.new do
   def std(*) = raise("boom")
   def int(*) = raise(Interrupt)
@@ -41,7 +40,7 @@ ITERATIONS.times do |i|
   begin d.xpath("//li[std()]", EXITS) rescue Makiri::Error; end
   begin; d.xpath("//li[int()]", EXITS); rescue Interrupt; end
   begin; d.xpath("//li[str()]", EXITS); rescue Interrupt; end
-  begin; catch(:out) { d.xpath("//li[out()]", EXITS) }; rescue Makiri::Error; end
+  catch(:out) { d.xpath("//li[out()]", EXITS) }
   begin; Makiri::XPathContext.new(d).evaluate("//li[int()]", EXITS); rescue Interrupt; end
   d.xpath("//*[local-name()='path']")
   d.to_html; d.at_css("ul").inner_html; d.to_html(pretty: true); d.text

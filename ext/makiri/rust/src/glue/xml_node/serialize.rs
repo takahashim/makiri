@@ -115,7 +115,7 @@ fn to_xml(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Er
         let buf = out.map_err(|f| failure_error(f, "serialize"))?;
         /* Protected: a failed allocation drops `buf` (and `enc_name`) rather
          * than leaking them. */
-        let mut str = crate::bridge::string::utf8_string(buf.as_slice())?.as_value();
+        let mut str = crate::bridge::string::utf8_str_protected(buf.as_slice())?.as_value();
         drop(buf);
 
         if let Some(enc) = to_enc {
@@ -132,7 +132,7 @@ fn canonicalize(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Val
         let comments = Kwargs::scan(args)?.flag(ruby, "comments");
         let buf = xml_serialize::canonicalize(this.doc_ref(), this.id, comments)
             .map_err(|f| failure_error(f, "canonicalize"))?;
-        Ok(crate::bridge::string::utf8_string(buf.as_slice())?.as_value())
+        Ok(crate::bridge::string::utf8_str_protected(buf.as_slice())?.as_value())
     })
 }
 
