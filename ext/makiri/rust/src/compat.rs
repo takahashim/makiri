@@ -347,10 +347,12 @@ pub fn explains(input: &[u8], context: Option<&str>) -> Vec<Fix> {
     if has(input, b"image") {
         fixes.push(Fix::P14);
     }
-    /* P15: a `<sup>` in foreign content. */
-    if has(input, b"sup")
-        && (has(input, b"svg") || has(input, b"math") || matches!(context, Some("svg" | "math")))
-    {
+    /* P15: a `<sup>` in foreign content - an `<svg>` or `<math>` in the
+     * input, or a context in either namespace, which the harnesses name
+     * `svg <local>` / `math <local>` (`tree_diff::context_ids`). */
+    let foreign_context =
+        context.is_some_and(|c| matches!(c.split_once(' '), Some(("svg" | "math", _))));
+    if has(input, b"sup") && (has(input, b"svg") || has(input, b"math") || foreign_context) {
         fixes.push(Fix::P15);
     }
     /* P16: the only pop steps are an `<option>`'s, which copy it into a
