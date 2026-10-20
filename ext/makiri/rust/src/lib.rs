@@ -72,8 +72,8 @@ pub mod caught;
 #[cfg(feature = "html-dom")]
 pub mod gvl;
 
-/// The CSS selector front end: lowers a Lexbor-parsed selector list into the
-/// XPath AST. Ruby-free, like the engine it feeds; Lexbor keeps the parser.
+/// The CSS selector front end: lowers a selector list parsed by the port
+/// (`selectors`) into the XPath AST. Ruby-free, like the engine it feeds.
 #[cfg(feature = "html-dom")]
 pub mod css;
 
@@ -141,8 +141,8 @@ pub mod glue;
 #[cfg(feature = "html-dom")]
 pub mod lexbor;
 
-/// The HTML DOM as the rest of the crate reaches it: one path, whichever
-/// implementation the build carries (today Lexbor's).
+/// The HTML DOM as the rest of the crate reaches it: one path, to the parser
+/// port's index arena (`html::dom`).
 #[cfg(feature = "html-dom")]
 pub mod html_dom;
 

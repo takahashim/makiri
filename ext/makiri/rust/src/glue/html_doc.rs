@@ -34,8 +34,8 @@ fn doc_root(_ruby: &Ruby, self_: Value) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| crate::bridge::doc::document_root(self_))
 }
 
-fn doc_title(ruby: &Ruby, self_: Value) -> Result<magnus::RString, Error> {
-    crate::bridge::ruby::entry(|| Ok(crate::bridge::doc::document_title(ruby, self_)))
+fn doc_title(_ruby: &Ruby, self_: Value) -> Result<magnus::RString, Error> {
+    crate::bridge::ruby::entry(|| crate::bridge::doc::document_title(self_))
 }
 
 /// The `<!DOCTYPE ...>` node, or nil - Nokogiri's `#internal_subset`. It is a

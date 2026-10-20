@@ -231,8 +231,10 @@ pub fn build_fragment(
         Ok(frag)
     })??;
     /* Released before the wrap, which can raise (NoMemoryError) past this
-     * frame: the source copy would leak with it. */
+     * frame: the source copy would leak with it, and so would the context's
+     * namespace URI (`FragNs::Uri`, a context node of another document). */
     drop(src);
+    drop(context);
     wrap_html_node(frag, document)
 }
 

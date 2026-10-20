@@ -310,12 +310,17 @@ pub fn strtod_internal(digits: &[u8], mut exp: i32) -> f64 {
     let right = p + 1;
     let start = &start[..right];
 
-    exp += (left - right) as i32;
+    /* Saturating: an exponent near `i32::MAX` (`123456789e2147483639`) wraps
+     * in Lexbor's `int` arithmetic and would panic here, where overflow is
+     * checked in every build; the saturated sum is past either bound, which
+     * is the value's own answer. Both counts are at most 128 digits. */
+    exp = exp.saturating_add((left - right) as i32);
+    let magnitude = exp.saturating_add(right as i32);
 
-    if exp + right as i32 > DECIMAL_POWER_MAX {
+    if magnitude > DECIMAL_POWER_MAX {
         return f64::INFINITY;
     }
-    if exp + right as i32 <= DECIMAL_POWER_MIN {
+    if magnitude <= DECIMAL_POWER_MIN {
         return 0.0;
     }
     diyfp_strtod(start, exp)
@@ -335,5 +340,12 @@ mod tests {
         assert_eq!(strtod_internal(b"9007199254740993", 0), 9007199254740992.0);
         assert_eq!(strtod_internal(b"15", -1), 1.5);
         assert_eq!(strtod_internal(b"1", 400), f64::INFINITY);
+    }
+
+    #[test]
+    fn an_exponent_near_the_int_range_saturates() {
+        assert_eq!(strtod_internal(b"123456789", 2147483639), f64::INFINITY);
+        assert_eq!(strtod_internal(b"1000000000", i32::MAX), f64::INFINITY);
+        assert_eq!(strtod_internal(b"123456789", i32::MIN), 0.0);
     }
 }
