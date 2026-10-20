@@ -34,13 +34,13 @@ UNSAFE_ISLANDS = {
   "bridge/dom.rs" => 13,
   "bridge/fragment.rs" => 4,
   "bridge/gvl.rs" => 5,
-  "bridge/html.rs" => 7,
+  "bridge/html.rs" => 6,
   "bridge/node_set.rs" => 2,
   "bridge/node_wrap.rs" => 1,
   "bridge/raw.rs" => 44,
   "bridge/ruby.rs" => 19,
   "bridge/stack.rs" => 1,
-  "bridge/string.rs" => 21,
+  "bridge/string.rs" => 22,
   "bridge/typed.rs" => 23,
   "bridge/wrapper.rs" => 18,
   "bridge/xml.rs" => 11,
@@ -105,31 +105,31 @@ FORBID_FILES = %w[
   glue/node.rs glue/node_set.rs glue/query.rs
   glue/xml_doc.rs glue/xml_node/css.rs glue/xml_node/mod.rs
   glue/xml_node/mutate.rs glue/xml_node/ns.rs glue/xml_node/read.rs
-  glue/xml_node/serialize.rs glue/xml_node/strings.rs glue/xpath_context.rs
-  html/dom/mod.rs html/mod.rs html/tokenizer/mod.rs
-  html/tree/mod.rs html_dom.rs lexbor/adapter/dom_index.rs
-  lexbor/contains_guard.rs lexbor/css_match/mod.rs lexbor/selector_cache.rs
-  lexbor/selector_text.rs lexbor/stylesheet.rs limits.rs
-  node_type.rs ptr_table.rs rust_tests.rs
-  selectors/mod.rs stack.rs text.rs
-  utf8_input.rs xml/arena.rs xml/attr_key.rs
-  xml/chars/expand.rs xml/chars/mod.rs xml/dom_name.rs
-  xml/encoding_sniff.rs xml/index.rs xml/mod.rs
-  xml/model.rs xml/mutate/attr.rs xml/mutate/copy.rs
-  xml/mutate/edit.rs xml/mutate/factory.rs xml/mutate/insert.rs
-  xml/mutate/mod.rs xml/mutate/ns.rs xml/ns_scope.rs
-  xml/qname.rs xml/selftest.rs xml/serialize/bindings.rs
-  xml/serialize/c14n.rs xml/serialize/mod.rs xml/serialize/out.rs
-  xml/serialize/xml.rs xml/tree/cursor.rs xml/tree/decl.rs
-  xml/tree/dtd.rs xml/tree/mod.rs xml/tree/scope.rs
-  xml/verify.rs xml/xpath.rs xpath/abi.rs
-  xpath/ast.rs xpath/ast_ops.rs xpath/attr_pred.rs
-  xpath/axis.rs xpath/ctx.rs xpath/dom.rs
-  xpath/eval.rs xpath/funcs/ext.rs xpath/funcs/mod.rs
-  xpath/lex.rs xpath/limits.rs xpath/mod.rs
-  xpath/nodetest.rs xpath/number.rs xpath/order.rs
-  xpath/parse.rs xpath/step_index.rs xpath/str_cache.rs
-  xpath/tests.rs xpath/value.rs xpath/verify.rs
+  glue/xml_node/serialize.rs glue/xpath_context.rs html/dom/mod.rs
+  html/mod.rs html/tokenizer/mod.rs html/tree/mod.rs
+  html_dom.rs lexbor/adapter/dom_index.rs lexbor/contains_guard.rs
+  lexbor/css_match/mod.rs lexbor/selector_cache.rs lexbor/selector_text.rs
+  lexbor/stylesheet.rs limits.rs node_type.rs
+  ptr_table.rs rust_tests.rs selectors/mod.rs
+  stack.rs text.rs utf8_input.rs
+  xml/arena.rs xml/attr_key.rs xml/chars/expand.rs
+  xml/chars/mod.rs xml/dom_name.rs xml/encoding_sniff.rs
+  xml/index.rs xml/mod.rs xml/model.rs
+  xml/mutate/attr.rs xml/mutate/copy.rs xml/mutate/edit.rs
+  xml/mutate/factory.rs xml/mutate/insert.rs xml/mutate/mod.rs
+  xml/mutate/ns.rs xml/ns_scope.rs xml/qname.rs
+  xml/selftest.rs xml/serialize/bindings.rs xml/serialize/c14n.rs
+  xml/serialize/mod.rs xml/serialize/out.rs xml/serialize/xml.rs
+  xml/tree/cursor.rs xml/tree/decl.rs xml/tree/dtd.rs
+  xml/tree/mod.rs xml/tree/scope.rs xml/verify.rs
+  xml/xpath.rs xpath/abi.rs xpath/ast.rs
+  xpath/ast_ops.rs xpath/attr_pred.rs xpath/axis.rs
+  xpath/ctx.rs xpath/dom.rs xpath/eval.rs
+  xpath/funcs/ext.rs xpath/funcs/mod.rs xpath/lex.rs
+  xpath/limits.rs xpath/mod.rs xpath/nodetest.rs
+  xpath/number.rs xpath/order.rs xpath/parse.rs
+  xpath/step_index.rs xpath/str_cache.rs xpath/tests.rs
+  xpath/value.rs xpath/verify.rs
 ].freeze
 
 UNSAFE_USE = /\bunsafe\s*(?:\{|fn\b|impl\b|trait\b|extern\b)/
@@ -792,6 +792,145 @@ def unwrapped_entries(rust)
   missing.uniq
 end
 
+# A glue frame that owns a copy of an argument (a checked view, the HTML
+# source, an owned buffer) must not reach a call that can raise while the copy
+# is live: a raise is a longjmp past the frame, its `Drop` never runs, and the
+# copy leaks - the shape fixed one site at a time in build_fragment, css, the
+# factories and `[]` before this check existed. Drop the copy first, or make
+# the call under `bridge::ruby::protected`, where a raise comes back as `Err`.
+#
+# What raises is worked out, not listed: `bridge/raw.rs`'s wrappers of the
+# RAISING_API calls and magnus's allocating constructors are the seeds, and a
+# function in `bridge/` or `glue/` that calls one outside a protect raises
+# too, to a fixed point. A call is matched by name, a method call (`.f(`) to
+# methods and a plain or path call to free functions, and a name defined more
+# than once is not followed (it would make every `new` and `get` raise); the
+# wrappers below are followed by hand for that reason. A copy is a `let`
+# whose right side calls a function returning one of COPY_TYPES (or a closure
+# that does); it is live to the end of its block or to its `drop(name)`, so a
+# copy moved into a callee still counts - drop it or protect the call.
+COPY_TYPES = /\b(?:RubyText|RubyData|RubyStr|HtmlSource|OwnedBuf)\b/
+MAGNUS_ALLOCATING = /\.(?:str_new|enc_str_new|str_from_slice|str_buf_new|str_with_capacity|
+  ary_new|ary_new_capa|ary_new_from_values|ary_from_iter|ary_from_vec|hash_new|hash_new_capa|
+  enumeratorize|obj_alloc|float_from_f64|integer_from_i64|integer_from_u64|sym_new)\s*\(/x
+PROTECTING = /\b(?:protected|protect_value|protect)\s*\(/
+# Raise only when their contract is broken: `check_typeddata` on a VALUE the
+# caller built as that type.
+CANNOT_RAISE = %w[typed_data_known typed_data_unprotected].freeze
+# Raising, but defined under a name used more than once (`TypedType::wrap`).
+RAISING_BY_HAND = [["wrap_cached", false]].freeze
+# Methods of ours named like a std method (`NodeSet::filter`): a `.filter(`
+# is far more often an Option's or an iterator's, so these are not followed.
+STD_METHOD_NAMES = %w[at concat copy filter get push reserve slice split_off take union value].freeze
+
+# Every `fn` in `files`: [rel, name, method?, body code, body offset, file code].
+def fn_bodies(rust, files)
+  files.flat_map do |path|
+    rel = path.delete_prefix("#{rust}/")
+    code = code_only(File.binread(path))
+    code.to_enum(:scan, /\bfn\s+(\w+)/).filter_map do
+      m = Regexp.last_match
+      open = code.index(/[{;]/, m.end(0))
+      next if open.nil? || code[open] == ";"
+
+      close = matching_close(code, open) or next
+      sig = code[m.end(0)...open]
+      params = sig[/\((.*)/m, 1].to_s
+      [rel, m[1], params.match?(/\A\s*&?\s*(?:'\w+\s+)?(?:mut\s+)?self\b/), code[(open + 1)...close],
+       open + 1, code, sig]
+    end
+  end
+end
+
+def protected_spans(body)
+  body.to_enum(:scan, PROTECTING).filter_map do
+    open = Regexp.last_match.end(0) - 1
+    close = matching_close(body, open)
+    close && (open..close)
+  end
+end
+
+# The calls in `body` to a [name, method?] in `raising`, outside a protect.
+def raising_calls(body, raising)
+  calls = body.to_enum(:scan, MAGNUS_ALLOCATING).map { [Regexp.last_match.begin(0), Regexp.last_match[0].strip] }
+  body.to_enum(:scan, /(\.\s*)?\b(\w+)\s*(?:::<[^>]*>)?\s*\(/).each do
+    m = Regexp.last_match
+    calls << [m.begin(2), m[2]] if raising.include?([m[2], !m[1].nil?])
+  end
+  # A free function handed over as a value, `.map(utf8_str)`, is called too.
+  body.to_enum(:scan, /(?<![.\w])(?:\w+::)*(\w+)(?=\s*[),])/).each do
+    m = Regexp.last_match
+    calls << [m.begin(1), m[1]] if raising.include?([m[1], false])
+  end
+  spans = protected_spans(body)
+  calls.reject { |at, _| spans.any? { |s| s.cover?(at) } }
+end
+
+def copies_across_raises(rust)
+  fns = fn_bodies(rust, Dir.glob(File.join(rust, "{bridge,glue}", "**", "*.rs")))
+  defined = fns.map { |f| [f[1], f[2]] }.tally
+  raising = fns.select { |rel, _, _, body| rel == "bridge/raw.rs" && body.match?(RAISING_API) }
+               .to_set { |f| [f[1], false] }
+  raising.merge(RAISING_BY_HAND)
+  # `use path::f as g`: a call to `g` is a call to `f`.
+  aliases = Dir.glob(File.join(rust, "{bridge,glue}", "**", "*.rs")).flat_map do |path|
+    code_only(File.binread(path)).scan(/\b(\w+)\s+as\s+(\w+)\b/)
+  end
+  loop do
+    aliases.each { |from, to| raising << [to, false] if raising.include?([from, false]) }
+    followed = raising.select { |k| defined[k].to_i <= 1 && !(k[1] && STD_METHOD_NAMES.include?(k[0])) }
+    grown = fns.filter_map do |rel, name, method, body|
+      k = [name, method]
+      next if rel == "bridge/raw.rs" || raising.include?(k) || CANNOT_RAISE.include?(name)
+
+      k if raising_calls(body, followed).any?
+    end
+    break if grown.empty?
+
+    raising.merge(grown)
+  end
+  aliases.each { |from, to| raising << [to, false] if raising.include?([from, false]) }
+  followed = raising.select { |k| defined[k].to_i <= 1 && !(k[1] && STD_METHOD_NAMES.include?(k[0])) }
+  copy_fns = fns.select { |f| f[6][/->(.*)\z/m, 1]&.match?(COPY_TYPES) }.to_set { |f| f[1] }
+
+  found = []
+  fns.select { |f| f[0].start_with?("glue/") }.each do |rel, name, _, body, base, code|
+    local_copy_fns = copy_fns.dup
+    body.to_enum(:scan, /\blet\s+(?:mut\s+)?(?:Some\(\s*)?(?:mut\s+)?(\(?[\w\s,]+\)?)\s*(?::[^=;]*)?=(?!=)/).each do
+      m = Regexp.last_match
+      stmt_end = (m.end(0)...body.length).find do |i|
+        body[i] == ";" && body[m.end(0)...i].count("([{") == body[m.end(0)...i].count(")]}")
+      end or next
+      rhs = body[m.end(0)...stmt_end]
+      next unless local_copy_fns.any? { |f| rhs.match?(/\b#{f}\s*\(/) }
+
+      names = m[1].scan(/\w+/) - %w[mut]
+      if rhs.lstrip.match?(/\A(?:move\s*)?\|/)
+        local_copy_fns.merge(names)
+        next
+      end
+      # The innermost block holding the `let`.
+      opens = (0...m.begin(0)).select { |i| body[i] == "{" }.reverse
+      block_end = opens.lazy.map { |o| matching_close(body, o) }.find { |c| c && c > m.begin(0) } || body.length
+      names.each do |var|
+        dropped = body.index(/\bdrop\(\s*(?:\([\w\s,]*)?\b#{var}\b[\w\s,]*\)?\s*\)/, stmt_end)
+        live_end = [block_end, dropped || block_end].min
+        raising_calls(body[stmt_end...live_end], followed).each do |at, callee|
+          line = code[0...(base + stmt_end + at)].count("\n") + 1
+          found << "#{rel}:#{line} #{name}: `#{var}` (a copy) is live across #{callee}"
+        end
+      end
+    end
+  end
+  found.uniq
+end
+
+copy_leaks = copies_across_raises(RUST)
+unless copy_leaks.empty?
+  errors << "a glue frame holds a copy across a call that can raise (drop it first, or " \
+            "make the call under bridge::ruby::protected): #{copy_leaks.inspect}"
+end
+
 unentered = unwrapped_entries(RUST)
 unless unentered.empty?
   errors << "Ruby methods whose body is not wrapped in bridge::ruby::entry " \
@@ -823,4 +962,5 @@ puts "unsafe-boundaries: #{forbidding.length} forbid files; " \
      "#{raw_node_crossing.values.sum} raw-node crossings in bridge/; " \
      "#{ruby_layer.values.sum} Ruby-layer uses inside the engine; " \
      "#{ruby_surface.values.sum} Ruby methods in bridge/; " \
-     "every registered method but #{ENTRY_EXEMPT.length} exempt runs under entry"
+     "every registered method but #{ENTRY_EXEMPT.length} exempt runs under entry; " \
+     "no glue copy is live across a raise"

@@ -109,6 +109,13 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   calls those are is answered by that one file. `rake unsafe:boundaries` pins
   the raising names to it, so a new one is a new wrapper there with its raise
   stated.
+  The same gate follows those wrappers, and magnus's allocating
+  constructors, up through every function that calls one unprotected, and
+  fails when a glue frame still holds an argument's copy (`RubyText`,
+  `RubyData`, `HtmlSource`, `OwnedBuf`) across such a call: drop the copy
+  first, or make the call under `bridge::ruby::protected`. A String is made
+  by `bridge::string::utf8_str` in a frame that owns nothing, and by
+  `utf8_str_protected` in one that does.
 
   **A Ruby method raises `Makiri::InternalError`, not `fatal`.**
   `bridge::ruby::entry` wraps the body of EVERY method the glue registers, and

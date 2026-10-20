@@ -12,8 +12,8 @@
 
 use magnus::{prelude::*, Error, RArray, RClass, RHash, Ruby, Value};
 
-use super::strings::{str_field, utf8};
 use super::XmlSelf;
+use crate::bridge::string::utf8_str;
 use crate::init::MOD_XML;
 use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId};
 
@@ -32,7 +32,7 @@ fn new_ns(class: RClass, prefix: Value, href: Value) -> Result<Value, Error> {
 /// String.
 fn prefix_value(ruby: &Ruby, p: Option<&[u8]>) -> Value {
     p.filter(|p| !p.is_empty())
-        .map_or_else(|| ruby.qnil().as_value(), |p| str_field(ruby, p))
+        .map_or_else(|| ruby.qnil().as_value(), utf8_str)
 }
 
 /// The xmlns declarations among `id`'s attributes, as (declaring attribute,
@@ -55,7 +55,7 @@ pub fn namespace(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
         /* Both copied out before the call, so the arena is not lent across it. */
         let Some((prefix, uri)) = parts
             .and_then(|n| Some((n.prefix, n.ns_uri?)))
-            .map(|(p, u)| (prefix_value(ruby, p), str_field(ruby, u)))
+            .map(|(p, u)| (prefix_value(ruby, p), utf8_str(u)))
         else {
             return Ok(ruby.qnil().as_value());
         };
@@ -73,7 +73,7 @@ pub fn namespace_definitions(ruby: &Ruby, this: XmlSelf) -> Result<RArray, Error
         let pairs = ruby.ary_new();
         for (_, p, u) in declarations(this.doc_ref(), this.id) {
             pairs.push(prefix_value(ruby, Some(p)))?;
-            pairs.push(utf8(ruby, u).as_value())?;
+            pairs.push(utf8_str(u))?;
         }
         let class = ns_class()?;
         let arr = ruby.ary_new_capa(pairs.len() / 2);
@@ -94,9 +94,9 @@ pub fn namespaces(ruby: &Ruby, this: XmlSelf) -> Result<RHash, Error> {
         let d = this.doc_ref();
         for id in core::iter::successors(Some(this.id), |&n| d.parent(n)) {
             for (at, _, u) in declarations(d, id) {
-                let key = str_field(ruby, d.qname(at));
+                let key = utf8_str(d.qname(at));
                 if h.get(key).is_none() {
-                    h.aset(key, utf8(ruby, u))?;
+                    h.aset(key, utf8_str(u))?;
                 }
             }
         }
@@ -115,7 +115,7 @@ pub fn collect_namespaces(ruby: &Ruby, this: XmlSelf) -> Result<RHash, Error> {
             .unwrap_or(this.id);
         for id in core::iter::successors(Some(top), |&n| d.preorder_next(top, n)) {
             for (at, _, u) in declarations(d, id) {
-                h.aset(str_field(ruby, d.qname(at)), utf8(ruby, u))?;
+                h.aset(utf8_str(d.qname(at)), utf8_str(u))?;
             }
         }
         Ok(h)

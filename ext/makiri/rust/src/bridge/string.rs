@@ -225,13 +225,25 @@ pub fn ruby_string_bytes(s: RString) -> Result<OwnedBuf, Error> {
 
 /* ---- assembling Ruby Strings ---- */
 
-/// A UTF-8 String holding a copy of `bytes`, for a frame that owns the
-/// buffer it copies out of (a serializer's output): Ruby's allocator raises
-/// `NoMemoryError`, and a raise past that frame would leak the buffer, so it
-/// comes back as `Err` and the buffer drops.
+/// A UTF-8 String holding a copy of `bytes`. Ruby's allocator raises
+/// `NoMemoryError`, a longjmp past every Rust frame up to the nearest
+/// `rb_protect`, so this is for a frame that owns nothing a skipped `Drop`
+/// would leak; a frame that does uses [`utf8_str_protected`].
+/// `rake unsafe:boundaries` holds the glue to that.
 ///
-/// `bytes` must be valid UTF-8; the String is tagged so.
-pub fn utf8_string(bytes: &[u8]) -> Result<RString, Error> {
+/// `bytes` must be valid UTF-8 (the String is tagged so without a check):
+/// everything a document lends is, by the text-input contract, and so is
+/// every checked view. Bytes that were not would make a wrong String, never
+/// a memory error.
+pub fn utf8_str(bytes: &[u8]) -> Value {
+    // SAFETY: valid UTF-8 by this function's contract; the String copies it.
+    unsafe { super::ruby::value(ruby_str_from_utf8(bytes)) }
+}
+
+/// [`utf8_str`] for a frame that owns what a raise would leak (a serializer's
+/// output buffer, an argument's copy): the allocator's raise comes back as
+/// `Err`, and the caller's owned values drop.
+pub fn utf8_str_protected(bytes: &[u8]) -> Result<RString, Error> {
     let Ok(len) = c_long::try_from(bytes.len()) else {
         return Err(makiri_error("string too large"));
     };

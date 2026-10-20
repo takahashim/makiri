@@ -10,7 +10,7 @@
 use magnus::{function, prelude::*, Error, RArray, RHash, Ruby, StaticSymbol, Value};
 
 use crate::bridge::ruby::error_class;
-use crate::bridge::string::ruby_verified_text;
+use crate::bridge::string::{ruby_verified_text, utf8_str};
 use crate::init::MOD_LEXBOR;
 use crate::lexbor::stylesheet::{parse, Decl, Fail, Rule, MAX_DEPTH};
 
@@ -62,21 +62,12 @@ impl Keys {
     }
 }
 
-/// Lexbor emits UTF-8 and the input was verified as UTF-8, so the String is
-/// tagged UTF-8 rather than built as binary and re-tagged - which is what
-/// `str_from_slice` would give, and what a spec caught.
-fn str_of(ruby: &Ruby, b: &[u8]) -> Value {
-    // `utf8_encoding` hands back CRuby's cached global, so this is not worth
-    // threading through the conversion.
-    ruby.enc_str_new(b, ruby.utf8_encoding()).as_value()
-}
-
 fn decls_to_ruby(ruby: &Ruby, k: &Keys, ds: &[Decl]) -> Result<RArray, Error> {
     let a = ruby.ary_new_capa(ds.len());
     for d in ds {
         let h = ruby.hash_new();
-        h.aset(k.name, str_of(ruby, &d.name))?;
-        h.aset(k.value, str_of(ruby, &d.value))?;
+        h.aset(k.name, utf8_str(&d.name))?;
+        h.aset(k.value, utf8_str(&d.value))?;
         h.aset(k.important, d.important)?;
         a.push(h)?;
     }
@@ -96,7 +87,7 @@ fn rules_to_ruby(ruby: &Ruby, k: &Keys, rs: &[Rule]) -> Result<RArray, Error> {
                 let sa = ruby.ary_new_capa(selectors.len());
                 for s in selectors {
                     let sh = ruby.hash_new();
-                    sh.aset(k.text, str_of(ruby, &s.text))?;
+                    sh.aset(k.text, utf8_str(&s.text))?;
                     let sp = ruby.ary_new_capa(3);
                     for v in s.specificity {
                         sp.push(v as i64)?;
@@ -112,7 +103,7 @@ fn rules_to_ruby(ruby: &Ruby, k: &Keys, rs: &[Rule]) -> Result<RArray, Error> {
                 declarations,
             } => {
                 h.aset(k.type_, k.sym_bad_style)?;
-                h.aset(k.selector_text, str_of(ruby, selector_text))?;
+                h.aset(k.selector_text, utf8_str(selector_text))?;
                 h.aset(k.declarations, decls_to_ruby(ruby, k, declarations)?)?;
             }
             Rule::At {
@@ -122,8 +113,8 @@ fn rules_to_ruby(ruby: &Ruby, k: &Keys, rs: &[Rule]) -> Result<RArray, Error> {
                 declarations,
             } => {
                 h.aset(k.type_, k.sym_at_rule)?;
-                h.aset(k.name, str_of(ruby, name))?;
-                h.aset(k.prelude, str_of(ruby, prelude))?;
+                h.aset(k.name, utf8_str(name))?;
+                h.aset(k.prelude, utf8_str(prelude))?;
                 h.aset(k.rules, rules_to_ruby(ruby, k, rules)?)?;
                 h.aset(k.declarations, decls_to_ruby(ruby, k, declarations)?)?;
             }

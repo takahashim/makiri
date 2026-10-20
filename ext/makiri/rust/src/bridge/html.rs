@@ -28,17 +28,6 @@ use crate::html_dom::AdapterOom;
 
 /* ---- the document's own bytes and text ---- */
 
-/// A UTF-8 Ruby String copied from bytes the parsed document lends.
-///
-/// Safe by the text-input contract: parsing sanitizes invalid UTF-8 to U+FFFD,
-/// so everything a document's readers hand over is valid UTF-8. That contract
-/// belongs to this module - the one that ran the parser - which is why the
-/// unsafe of `ruby_str_from_utf8` is discharged here.
-pub fn dom_str(bytes: &[u8]) -> Value {
-    // SAFETY: valid UTF-8 by the text-input contract; the String copies it.
-    unsafe { value(crate::bridge::string::ruby_str_from_utf8(bytes)) }
-}
-
 /// The indexed descendant text of `node` as one Ruby String.
 ///
 /// `Ok(None)` when the text index cannot serve this node (it is outside the
