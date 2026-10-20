@@ -585,11 +585,11 @@ impl Unit {
 pub fn parse_xml_document(source: Value, limits: ParseLimits) -> Result<Value, Error> {
     let source = crate::bridge::ruby::string_of(source)?;
     let decoded = xml_decode_input_value(source, Some(limits.budget()))?;
-    let src = crate::bridge::string::ruby_string_bytes(decoded)?;
-
-    /* The wrapper first, while nothing needs freeing (see DocumentShell). The
-     * source is already copied, so this Ruby allocation cannot disturb it. */
+    /* The wrapper first, while nothing needs freeing (see DocumentShell): its
+     * allocation can raise, and the copy below is this frame's to free. The
+     * decoded String is a local, so the stack scan keeps it across it. */
     let shell = DocumentShell::new(DocKind::Xml);
+    let src = crate::bridge::string::ruby_string_bytes(decoded)?;
 
     /* Ruby-free from here: only the copied bytes and the limits cross. */
     let result = crate::bridge::gvl::without_gvl(|| tree::parse_ex(src.as_slice(), Some(&limits)))?;

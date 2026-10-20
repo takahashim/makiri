@@ -27,12 +27,13 @@ fn layout_opt(ruby: &Ruby, args: &[Value]) -> Result<Layout, Error> {
 
 /// The receiver's serialization as a UTF-8 String, or `Makiri::Error` on a
 /// Lexbor status failure.
-fn render(ruby: &Ruby, node: HtmlNode<'_>, scope: Scope, layout: Layout) -> Result<RString, Error> {
+fn render(node: HtmlNode<'_>, scope: Scope, layout: Layout) -> Result<RString, Error> {
     let buf =
         serialize(node, scope, layout).ok_or_else(|| makiri_error("HTML serialization failed"))?;
-    /* Lexbor emits UTF-8, so the String is tagged UTF-8 rather than built as
-     * binary and re-tagged. */
-    Ok(ruby.enc_str_new(buf.as_slice(), ruby.utf8_encoding()))
+    /* The serializer emits UTF-8, so the String is tagged UTF-8 rather than
+     * built as binary and re-tagged; protected, so a failed allocation drops
+     * `buf` rather than leaking it. */
+    crate::bridge::string::utf8_string(buf.as_slice())
 }
 
 /// Outer HTML: the node itself plus its descendants. `pretty: true` indents.
@@ -47,7 +48,7 @@ fn to_html(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<RString, Error
         } else {
             Scope::Outer
         };
-        render(ruby, this.node(), scope, layout)
+        render(this.node(), scope, layout)
     })
 }
 
@@ -62,7 +63,7 @@ fn inner_html(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<RString, Er
         let layout = layout_opt(ruby, args)?;
         let node = this.node();
         let target = node.template_content().unwrap_or(node);
-        render(ruby, target, Scope::Inner, layout)
+        render(target, Scope::Inner, layout)
     })
 }
 

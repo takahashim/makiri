@@ -74,6 +74,20 @@ RSpec.describe "UTF-8 text-input contract" do
       expect(doc.fragment("<p>#{jp}</p>".encode("EUC-JP")).at_css("p").text).to eq(jp)
     end
 
+    # The setters transcode before the edit starts: the transcode allocates
+    # Ruby objects, and nothing inside an edit may run Ruby.
+    it "honours the encoding in inner_html= and outer_html=" do
+      doc = Makiri::HTML("<html><body><div><span>old</span></div><template></template></body></html>")
+      div = doc.at_css("div")
+      div.inner_html = "<p>#{jp}</p>".encode("Shift_JIS")
+      expect(div.at_css("p").text).to eq(jp)
+      div.at_css("p").outer_html = "<b>#{jp}</b>".encode("EUC-JP")
+      expect(div.to_html).to eq("<div><b>#{jp}</b></div>")
+      template = doc.at_css("template")
+      template.inner_html = "<i>#{jp}</i>".encode("Shift_JIS")
+      expect(template.inner_html).to eq("<i>#{jp}</i>")
+    end
+
     it "replaces bytes that don't round-trip with U+FFFD, never raising" do
       html = "<p>\x80</p>".dup.force_encoding("ISO-8859-1")
       expect(Makiri::HTML(html).at_css("p").text).to be_valid_encoding

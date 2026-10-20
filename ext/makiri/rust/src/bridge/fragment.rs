@@ -10,7 +10,7 @@
 
 #![allow(unsafe_code)]
 
-use magnus::{prelude::*, Error, RString, Value};
+use magnus::{prelude::*, Error, Value};
 
 use crate::bridge::ruby::makiri_error;
 
@@ -116,15 +116,16 @@ pub fn resolve_node_context(
 /// Parse `html` as a fragment in `context`. Nothing is changed yet: a String
 /// that fails to parse leaves every document as it was.
 ///
-/// `html` is a String already - the caller ran `string_of` - because that
-/// conversion is the argument's `#to_s`, arbitrary Ruby, and for `inner_html=`
-/// it has to finish before the edit drops the document's indexes.
+/// `src` is converted already - the caller ran `string_of` and
+/// `HtmlSource::from_ruby` - because those are the argument's `#to_s`
+/// (arbitrary Ruby) and its transcode (a Ruby allocation), and for
+/// `inner_html=` both have to finish before the edit drops the document's
+/// indexes: nothing inside an edit may run Ruby.
 fn parse(
-    html: RString,
+    src: &HtmlSource,
     context: &FragmentContext,
     limit: DepthLimit,
 ) -> Result<TransientFragment, Error> {
-    let src = HtmlSource::from_ruby(html)?;
     // SAFETY: the context's element or document is live (the callers below
     // hold it); the bytes are the source's own copy. The arena's parse needs no
     // such promise, and is safe.
@@ -147,12 +148,12 @@ fn parse(
 pub fn stage_fragment_in(
     d: &mut HtmlDocMut<'_>,
     context: RawNode,
-    html: RString,
+    src: &HtmlSource,
 ) -> Result<RawNode, Error> {
     let Some(staged) = d.create_fragment() else {
         return Err(makiri_error("failed to create document fragment"));
     };
-    import_into(d, context, staged, html)?;
+    import_into(d, context, staged, src)?;
     Ok(staged)
 }
 
@@ -164,13 +165,13 @@ fn import_into(
     d: &mut HtmlDocMut<'_>,
     context: RawNode,
     into: RawNode,
-    html: RString,
+    src: &HtmlSource,
 ) -> Result<(), Error> {
     /* The setters take no keyword, so they parse under the default limit, as
      * Nokogiri's do. */
     let context = FragmentContext::element(d.read(), context)
         .map_err(|e| fragment_error(e, DepthLimit::DEFAULT))?;
-    let parsed = parse(html, &context, DepthLimit::DEFAULT)?;
+    let parsed = parse(src, &context, DepthLimit::DEFAULT)?;
     parsed
         .import_into_doc(d, into)
         .map_err(|_| makiri_error("failed to import a fragment child"))
@@ -188,9 +189,9 @@ pub fn set_template_inner_html(
     d: &mut HtmlDocMut<'_>,
     template: RawNode,
     content: RawNode,
-    html: RString,
+    src: &HtmlSource,
 ) -> Result<(), Error> {
-    let staged = stage_fragment_in(d, template, html)?;
+    let staged = stage_fragment_in(d, template, src)?;
     d.detach_children(content);
     d.place(content, staged, Place::Child);
     Ok(())
@@ -210,7 +211,7 @@ pub fn build_fragment(
      * refusal wins over a bad argument... */
     ensure_document_mutable(document)?;
     /* `to_str`/`to_s` is Ruby code that may raise: converted under protect. */
-    let html = string_of(rb_html)?;
+    let src = HtmlSource::from_ruby(string_of(rb_html)?)?;
     /* ...and again, because that conversion is arbitrary Ruby: it can start an
      * evaluation that suspends mid-walk (an Enumerator), still reading this
      * document when the import below writes it. */
@@ -218,7 +219,7 @@ pub fn build_fragment(
     let doc = html_doc_unwrap(document)?;
     // SAFETY: a live HTML Document, kept alive by `document` for this call.
     let context = FragmentContext::tag_in(unsafe { doc.as_doc() }, at);
-    let parsed = parse(html, &context, limit)?;
+    let parsed = parse(&src, &context, limit)?;
 
     let frag = crate::bridge::html::new_node(&document, |d| {
         let Some(frag) = d.create_fragment() else {

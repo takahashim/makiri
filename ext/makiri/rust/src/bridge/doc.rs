@@ -76,6 +76,11 @@ pub fn tree_depth_error(limit: DepthLimit) -> Error {
 /// A tree deeper than `limit` fails the parse (see `html_dom::tree_guard`).
 pub fn parse_document(source: Value, limit: DepthLimit) -> Result<Value, Error> {
     let s = source.to_r_string()?;
+    /* Allocate the wrapper with a null handle, so a failed parse still
+     * frees cleanly through GC - and first, before this frame owns the
+     * source's copy: the wrapper's allocation can raise. This entry is
+     * defined on Makiri::HTML::Document, so the result is always HTML. */
+    let shell = DocumentShell::new(DocKind::Html);
     /* Honour the input's encoding: UTF-8/US-ASCII/binary pass through,
      * anything else is transcoded so its content survives. */
     let src = HtmlSource::from_ruby(s)?;
@@ -85,11 +90,6 @@ pub fn parse_document(source: Value, limit: DepthLimit) -> Result<Value, Error> 
      * known to be valid UTF-8 lets the parse skip its sanitisation. */
     let assume_valid = src.known_valid();
     let owned = src.into_bytes();
-
-    /* Allocate the wrapper with a null handle, so a failed parse still
-     * frees cleanly through GC. This entry is defined on
-     * Makiri::HTML::Document, so the result is always HTML. */
-    let shell = DocumentShell::new(DocKind::Html);
 
     /* The body runs on this thread with the GVL released, so the parsed
      * handle comes back as it is. */
