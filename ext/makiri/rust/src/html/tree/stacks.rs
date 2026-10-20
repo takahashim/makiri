@@ -43,13 +43,6 @@ impl TreeBuilder<'_> {
         self.open.len()
     }
 
-    /// The open element at `idx`, counted from the bottom; `idx` is below
-    /// [`open_len`](Self::open_len).
-    #[inline]
-    pub(crate) fn open_at(&self, idx: usize) -> NodeId {
-        self.open[idx]
-    }
-
     /// `lxb_html_tree_open_elements_get`.
     #[inline]
     pub(crate) fn open_get(&self, idx: usize) -> Option<NodeId> {

@@ -64,14 +64,14 @@ impl DocPtr {
         unsafe { (*self.0.as_ptr()).edit_keeping_indexes() }
     }
 
-    /// The document, lent for an edit of its tree, attributes or data. The
-    /// caller drops the indexes first (`wrapper::invalidate_indexes`).
+    /// The document, lent for an edit of its tree, attributes or data, with
+    /// its indexes dropped (`HtmlParsed::edit`).
     ///
     /// # Safety
     /// As [`edit_new_nodes`](Self::edit_new_nodes).
     #[inline]
     pub unsafe fn edit<'d>(self) -> HtmlDocMut<'d> {
-        // SAFETY: as `edit_new_nodes`; `edit` drops the indexes itself too.
+        // SAFETY: as `edit_new_nodes`.
         unsafe { (*self.0.as_ptr()).edit() }
     }
 }

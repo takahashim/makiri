@@ -66,6 +66,22 @@ pub enum TreeStatus {
     Error,
 }
 
+/// The arena could not allocate.
+impl From<crate::html::dom::DomOom> for TreeStatus {
+    #[inline]
+    fn from(_: crate::html::dom::DomOom) -> TreeStatus {
+        TreeStatus::Oom
+    }
+}
+
+/// The names table could not allocate.
+impl From<crate::html::names::NamesOom> for TreeStatus {
+    #[inline]
+    fn from(_: crate::html::names::NamesOom) -> TreeStatus {
+        TreeStatus::Oom
+    }
+}
+
 /// The insertion modes (`lxb_html_tree_insertion_mode_*`), including
 /// Lexbor's three helper modes for the newline after `<pre>`, `<listing>`
 /// and `<textarea>`.
@@ -304,8 +320,9 @@ pub struct TreeBuilder<'d> {
     pub(crate) valueless: NodeSet,
     /// The options whose selectedness is true (`select.rs`).
     pub(crate) selected: NodeSet,
-    /// The parse guard and the source-position stamps (`guard.rs`).
+    /// The parse guard (`guard.rs`).
     pub(crate) guard: guard::Guard,
+    /// Whether elements get their start tag's offset (`stamp.rs`).
     pub(crate) stamping: stamp::Stamping,
 }
 

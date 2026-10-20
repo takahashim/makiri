@@ -997,8 +997,8 @@ pub enum EditKind {
 /// moves. Called where an edit is handed its mutable node (`HtmlEdit`,
 /// `Editing`) and for the source document of an adoption, so no mutator can
 /// miss it. Dropping what the edit invalidates is the representation's own
-/// step, taken beside this one: an HTML document's indexes
-/// ([`invalidate_indexes`]), the XML arena's name index (the arena's).
+/// step, taken beside this one: an HTML document's indexes (dropped by the
+/// parse handle's `edit`), the XML arena's name index (the arena's).
 ///
 /// The versions are INVALIDATION keys, not edit counts. The contract, for HTML
 /// and XML alike:
@@ -1099,14 +1099,6 @@ pub fn ensure_document_mutable(rb_doc: Value) -> Result<(), Error> {
         ));
     }
     Ok(())
-}
-
-/// Drop the DOM and text indexes so the next query rebuilds them. An XML
-/// Document keeps none.
-pub fn invalidate_indexes(rb_doc: Value) {
-    if let Content::Html(_) = doc_content_known(rb_doc) {
-        with_html_parsed_known(rb_doc, HtmlParsed::invalidate_indexes);
-    }
 }
 
 /* ------------------------------------------------------------------ *

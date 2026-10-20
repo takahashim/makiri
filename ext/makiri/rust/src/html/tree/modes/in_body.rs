@@ -89,13 +89,9 @@ fn html(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> b
         return true;
     };
     let ns = tree.ns(html);
-    if tree
+    let _ = tree
         .append_attributes(tkz, html, tok, ns, None)
-        .or_abort(tree)
-        .is_none()
-    {
-        return true;
-    }
+        .or_abort(tree);
     true
 }
 
@@ -118,13 +114,9 @@ fn body(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> b
     }
     tree.frameset_ok = false;
     let ns = tree.ns(node);
-    if tree
+    let _ = tree
         .append_attributes(tkz, node, tok, ns, None)
-        .or_abort(tree)
-        .is_none()
-    {
-        return true;
-    }
+        .or_abort(tree);
     true
 }
 
@@ -266,7 +258,9 @@ fn close_list_item(tree: &mut TreeBuilder<'_>, tok: &Tok, tags: &[usize]) {
     let mut idx = tree.open_len();
     while idx != 0 {
         idx -= 1;
-        let node = tree.open_at(idx);
+        let Some(node) = tree.open_get(idx) else {
+            break;
+        };
         if let Some(&tag) = tags.iter().find(|&&t| tree.node_is(node, t)) {
             tree.close_element(tok, tag, Some(tag), E::Unelinopelst);
             break;
@@ -662,38 +656,20 @@ fn xmp(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> bo
         return true;
     }
     tree.frameset_ok = false;
-    if tree
-        .generic_rawtext_parsing(tkz, tok)
-        .or_abort(tree)
-        .is_none()
-    {
-        return true;
-    }
+    let _ = tree.generic_rawtext_parsing(tkz, tok).or_abort(tree);
     true
 }
 
 /// `lxb_html_tree_insertion_mode_in_body_iframe`.
 fn iframe(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> bool {
     tree.frameset_ok = false;
-    if tree
-        .generic_rawtext_parsing(tkz, tok)
-        .or_abort(tree)
-        .is_none()
-    {
-        return true;
-    }
+    let _ = tree.generic_rawtext_parsing(tkz, tok).or_abort(tree);
     true
 }
 
 /// `lxb_html_tree_insertion_mode_in_body_noembed`.
 fn noembed(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> bool {
-    if tree
-        .generic_rawtext_parsing(tkz, tok)
-        .or_abort(tree)
-        .is_none()
-    {
-        return true;
-    }
+    let _ = tree.generic_rawtext_parsing(tkz, tok).or_abort(tree);
     true
 }
 
@@ -837,13 +813,7 @@ fn noscript(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) 
     if !tree.scripting {
         return anything_else(tree, tkz, tok);
     }
-    if tree
-        .generic_rawtext_parsing(tkz, tok)
-        .or_abort(tree)
-        .is_none()
-    {
-        return true;
-    }
+    let _ = tree.generic_rawtext_parsing(tkz, tok).or_abort(tree);
     true
 }
 
@@ -852,7 +822,9 @@ pub fn anything_else_closed(tree: &mut TreeBuilder<'_>, tok: &Tok) -> bool {
     let mut len = tree.open_len();
     while len != 0 {
         len -= 1;
-        let node = tree.open_at(len);
+        let Some(node) = tree.open_get(len) else {
+            break;
+        };
         if tree.node_is(node, tok.tag_id) {
             tree.generate_implied_end_tags(tok.tag_id, res::NS_HTML);
             if Some(node) != tree.current_node() {
@@ -933,19 +905,11 @@ pub fn in_body(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mu
     match tok.tag_id {
         res::TAG__TEXT => text(tree, tkz, tok),
         res::TAG__EM_COMMENT => {
-            if tree.insert_comment(tkz, tok, None).or_abort(tree).is_none() {
-                return true;
-            }
+            let _ = tree.insert_comment(tkz, tok, None).or_abort(tree);
             true
         }
         res::TAG__PROCESSINGINSTRUCTION => {
-            if tree
-                .insert_processing_instruction(tkz, None)
-                .or_abort(tree)
-                .is_none()
-            {
-                return true;
-            }
+            let _ = tree.insert_processing_instruction(tkz, None).or_abort(tree);
             true
         }
         res::TAG__EM_DOCTYPE => {

@@ -71,7 +71,7 @@ impl TreeBuilder<'_> {
                     self.selectedness_setting_algorithm(select);
                 }
             }
-            node = self.doc.preorder_next(n, root);
+            node = self.doc.preorder_next(root, n);
         }
     }
 
@@ -174,7 +174,11 @@ impl TreeBuilder<'_> {
     /// `lxb_html_select_list_of_options`, as Lexbor walks it: into an
     /// element's children only when the element is a `select`, `datalist`,
     /// `hr` or `option`, or an `optgroup` with a non-`optgroup` HTML element
-    /// between it and the select.
+    /// between it and the select. That is NOT the Standard's "get the list
+    /// of options", which enters every other element (an `optgroup`'s and a
+    /// `div`'s options count); taking it here as it stands made the walk,
+    /// run once per inserted option, cost options x nodes under the select,
+    /// so it waits for a walk that is not repeated per option.
     fn list_of_options(&self, select: NodeId) -> Result<Vec<NodeId>, TreeStatus> {
         let mut out = Vec::new();
         let root = select;
@@ -206,9 +210,9 @@ impl TreeBuilder<'_> {
                 }
             }
             node = if descend {
-                self.doc.preorder_next(n, root)
+                self.doc.preorder_next(root, n)
             } else {
-                self.doc.preorder_next_past(n, root)
+                self.doc.preorder_next_past(root, n)
             };
         }
         Ok(out)
@@ -273,7 +277,7 @@ impl TreeBuilder<'_> {
             if self.node_is(n, res::TAG_SELECTEDCONTENT) {
                 return Some(n);
             }
-            node = self.doc.preorder_next(n, root);
+            node = self.doc.preorder_next(root, n);
         }
         None
     }
@@ -335,14 +339,11 @@ impl TreeBuilder<'_> {
     /// but an element as the arena copies it, an element with its attributes
     /// made and appended by Lexbor's steps.
     fn clone_one(&mut self, src: NodeId) -> Result<NodeId, TreeStatus> {
-        let oom = |_| TreeStatus::Oom;
         if self.doc.kind(src) != NodeType::Element {
-            return self.doc.copy_within(src, false).map_err(oom);
+            return self.doc.copy_within(src, false).map_err(TreeStatus::from);
         }
         let d = &mut *self.doc;
-        let el = d
-            .create_element(d.local(src) as usize, d.ns(src), d.prefix(src), None)
-            .map_err(oom)?;
+        let el = d.create_element(d.local(src) as usize, d.ns(src), d.prefix(src), None)?;
         let written = d.written_id(src);
         d.set_written_id(el, written);
         if let Some(o) = d.source_offset(src) {

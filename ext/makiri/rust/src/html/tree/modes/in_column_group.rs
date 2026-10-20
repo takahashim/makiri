@@ -74,19 +74,11 @@ pub fn in_column_group(
             true
         }
         res::TAG__EM_COMMENT => {
-            if tree.insert_comment(tkz, tok, None).or_abort(tree).is_none() {
-                return true;
-            }
+            let _ = tree.insert_comment(tkz, tok, None).or_abort(tree);
             true
         }
         res::TAG__PROCESSINGINSTRUCTION => {
-            if tree
-                .insert_processing_instruction(tkz, None)
-                .or_abort(tree)
-                .is_none()
-            {
-                return true;
-            }
+            let _ = tree.insert_processing_instruction(tkz, None).or_abort(tree);
             true
         }
         res::TAG_HTML => super::in_body::in_body(tree, tkz, tok),

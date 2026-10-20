@@ -72,9 +72,7 @@ pub fn in_row(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mut
                 return true;
             }
             tree.mode = Mode::InCell;
-            if tree.afe_push_marker().or_abort(tree).is_none() {
-                return true;
-            }
+            let _ = tree.afe_push_marker().or_abort(tree);
             true
         }
         res::TAG_CAPTION
