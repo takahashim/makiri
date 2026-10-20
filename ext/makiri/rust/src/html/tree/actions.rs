@@ -23,14 +23,6 @@ struct AttrSpec {
     written: u32,
 }
 
-/// A failed allocation of the arena or its names table, as the tree
-/// builder's status. Bounded by the two allocation errors' `From`, so an
-/// error that is not an allocation failure cannot be reported as one.
-#[inline]
-fn oom<E: Into<TreeStatus>>(e: E) -> TreeStatus {
-    e.into()
-}
-
 /// `lxb_html_tag_is_category`.
 #[inline]
 pub(crate) fn is_category(tag: usize, ns: usize, cat: u8) -> bool {
@@ -152,7 +144,9 @@ impl TreeBuilder<'_> {
         ns: usize,
     ) -> Result<NodeId, TreeStatus> {
         let ns = u32::try_from(ns).unwrap_or(0);
-        self.doc.create_element(tag, ns, 0, None).map_err(oom)
+        self.doc
+            .create_element(tag, ns, 0, None)
+            .map_err(TreeStatus::from)
     }
 
     /// `lxb_html_tree_create_element_for_token`, its attributes adjusted
@@ -215,16 +209,13 @@ impl TreeBuilder<'_> {
         value: Option<AttrValue<'_>>,
     ) -> Result<NodeId, TreeStatus> {
         let ns = u32::try_from(spec.ns).unwrap_or(0);
-        let attr = self
-            .doc
-            .create_attr_by_ids(
-                spec.local,
-                ns,
-                spec.prefix,
-                spec.written,
-                value.unwrap_or(AttrValue::Bytes(b"")),
-            )
-            .map_err(oom)?;
+        let attr = self.doc.create_attr_by_ids(
+            spec.local,
+            ns,
+            spec.prefix,
+            spec.written,
+            value.unwrap_or(AttrValue::Bytes(b"")),
+        )?;
         if value.is_none() {
             self.valueless.insert(attr).map_err(|()| TreeStatus::Oom)?;
         }
@@ -329,11 +320,7 @@ impl TreeBuilder<'_> {
     /// `lxb_html_tree_adjust_mathml_attributes`.
     fn adjust_mathml_attributes(&mut self, spec: &mut AttrSpec) -> Result<(), TreeStatus> {
         if self.doc.names.attr_name(spec.local) == Some(&b"definitionurl"[..]) {
-            spec.written = self
-                .doc
-                .names
-                .qualified_append(b"definitionURL")
-                .map_err(oom)?;
+            spec.written = self.doc.names.qualified_append(b"definitionURL")?;
         }
         Ok(())
     }
@@ -344,7 +331,7 @@ impl TreeBuilder<'_> {
             return Ok(());
         };
         if let Some((_, to)) = rt::SVG_ATTR_ADJUST.iter().find(|(from, _)| *from == name) {
-            spec.written = self.doc.names.qualified_append(to).map_err(oom)?;
+            spec.written = self.doc.names.qualified_append(to)?;
         }
         Ok(())
     }
@@ -361,9 +348,9 @@ impl TreeBuilder<'_> {
         };
         if !prefix.is_empty() {
             let names = &mut self.doc.names;
-            spec.written = names.qualified_append(full).map_err(oom)?;
-            spec.local = names.attr_local_name_append(local).map_err(oom)?;
-            spec.prefix = self.doc.intern_prefix(prefix).map_err(oom)?.unwrap_or(0);
+            spec.written = names.qualified_append(full)?;
+            spec.local = names.attr_local_name_append(local)?;
+            spec.prefix = self.doc.intern_prefix(prefix)?.unwrap_or(0);
         }
         spec.ns = ns;
         Ok(())
@@ -390,13 +377,10 @@ impl TreeBuilder<'_> {
             Ipos::Child => self.doc.last_child(pos),
         };
         if let Some(p) = prev.filter(|&p| self.tag(p) == res::TAG__TEXT) {
-            return self.doc.append_text(p, data).map_err(oom);
+            return self.doc.append_text(p, data).map_err(TreeStatus::from);
         }
         let name = NodeName::html(res::TAG__TEXT);
-        let text = self
-            .doc
-            .create_data(NodeType::Text, name, data)
-            .map_err(oom)?;
+        let text = self.doc.create_data(NodeType::Text, name, data)?;
         self.insert_node(pos, text, ipos);
         Ok(())
     }
@@ -420,8 +404,7 @@ impl TreeBuilder<'_> {
         };
         let c = self
             .doc
-            .create_data(NodeType::Comment, name, tok.text(tkz))
-            .map_err(oom)?;
+            .create_data(NodeType::Comment, name, tok.text(tkz))?;
         self.insert_node(pos, c, ipos);
         Ok(c)
     }
@@ -435,7 +418,7 @@ impl TreeBuilder<'_> {
     ) -> Result<NodeId, TreeStatus> {
         let (pos, ipos) = self.appropriate_place(pos).ok_or(TreeStatus::Error)?;
         let (target, data) = tkz.pi_parts();
-        let pi = self.doc.create_pi(target, data).map_err(oom)?;
+        let pi = self.doc.create_pi(target, data)?;
         self.insert_node(pos, pi, ipos);
         Ok(pi)
     }
@@ -460,10 +443,7 @@ impl TreeBuilder<'_> {
         /* `lexbor_str_t` copies: the name is the interned attribute name. */
         let name = crate::falloc::try_to_vec(name).ok_or(TreeStatus::Oom)?;
         let names = NodeName::html(res::TAG__EM_DOCTYPE);
-        let node = self
-            .doc
-            .create_doctype(names, &name, public, system)
-            .map_err(oom)?;
+        let node = self.doc.create_doctype(names, &name, public, system)?;
         Ok((node, name_id, public.len(), system.len()))
     }
 

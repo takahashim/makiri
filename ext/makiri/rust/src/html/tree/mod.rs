@@ -320,8 +320,9 @@ pub struct TreeBuilder<'d> {
     pub(crate) valueless: NodeSet,
     /// The options whose selectedness is true (`select.rs`).
     pub(crate) selected: NodeSet,
-    /// The parse guard and the source-position stamps (`guard.rs`).
+    /// The parse guard (`guard.rs`).
     pub(crate) guard: guard::Guard,
+    /// Whether elements get their start tag's offset (`stamp.rs`).
     pub(crate) stamping: stamp::Stamping,
 }
 

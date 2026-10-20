@@ -175,9 +175,10 @@ impl TreeBuilder<'_> {
     /// `lxb_html_select_list_of_options`: every option in the select's
     /// subtree, not entering a select, datalist, hr or option, nor an
     /// optgroup with another optgroup between it and the select. Lexbor
-    /// inverts that test - it enters only those elements, so an optgroup's
-    /// options are left out - which [`Fix::P21`] keeps for the
-    /// Lexbor-compatible run.
+    /// enters only a select, datalist, hr or option, or an optgroup with a
+    /// non-optgroup HTML element between it and the select, so the options
+    /// of an optgroup or a div that is a child of the select are left out;
+    /// [`Fix::P21`] keeps that for the Lexbor-compatible run.
     fn list_of_options(&self, select: NodeId) -> Result<Vec<NodeId>, TreeStatus> {
         let mut out = Vec::new();
         let root = select;
@@ -368,14 +369,11 @@ impl TreeBuilder<'_> {
     /// but an element as the arena copies it, an element with its attributes
     /// made and appended by Lexbor's steps.
     fn clone_one(&mut self, src: NodeId) -> Result<NodeId, TreeStatus> {
-        let oom = |_| TreeStatus::Oom;
         if self.doc.kind(src) != NodeType::Element {
-            return self.doc.copy_within(src, false).map_err(oom);
+            return self.doc.copy_within(src, false).map_err(TreeStatus::from);
         }
         let d = &mut *self.doc;
-        let el = d
-            .create_element(d.local(src) as usize, d.ns(src), d.prefix(src), None)
-            .map_err(oom)?;
+        let el = d.create_element(d.local(src) as usize, d.ns(src), d.prefix(src), None)?;
         let written = d.written_id(src);
         d.set_written_id(el, written);
         if let Some(o) = d.source_offset(src) {
