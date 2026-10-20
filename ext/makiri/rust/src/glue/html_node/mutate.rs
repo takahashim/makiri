@@ -316,9 +316,12 @@ pub fn set_outer_html(_ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Va
  * ------------------------------------------------------------------ */
 
 /// A node the factory made, or the error naming what failed.
+///
+/// The wrap is protected: every factory still owns its arguments' copies
+/// here, and the wrapper's allocation raises `NoMemoryError` past this frame.
 fn created(node: Option<RawNode>, rb_self: Value, what: &str) -> Result<Value, Error> {
     match node {
-        Some(n) => wrap_html_node(n, rb_self),
+        Some(n) => crate::bridge::ruby::protected(|| wrap_html_node(n, rb_self)),
         None => Err(makiri_error(format!("failed to create {what}"))),
     }
 }

@@ -365,7 +365,10 @@ pub fn aref(_ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Optio
         let nv = ruby_verified_text(rb_name, "attribute name")?;
         /* A present attribute with no value (`<input disabled>`) answers
          * `Some(b"")`, which is `""`; only an absent one is nil. */
-        Ok(el.get_attribute(nv.as_bytes()).map(dom_str))
+        let value = el.get_attribute(nv.as_bytes());
+        /* The name is not read past here; the String allocates, so after. */
+        drop(nv);
+        Ok(value.map(dom_str))
     })
 }
 

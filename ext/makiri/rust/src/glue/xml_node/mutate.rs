@@ -416,6 +416,8 @@ fn create_chardata(
     let n = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
         mutate::new_chardata(d, type_, bytes)
     })?)?;
+    /* Before the wrap, whose allocation can raise past this frame. */
+    drop(tv);
     wrap(n, rb_self)
 }
 
@@ -441,6 +443,8 @@ pub fn create_pi(_ruby: &Ruby, rb_self: Value, target: Value, data: Value) -> Re
         let pi = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
             mutate::new_pi(d, target, data)
         })?)?;
+        /* Before the wrap, whose allocation can raise past this frame. */
+        drop((tg, dt));
         wrap(pi, rb_self)
     })
 }

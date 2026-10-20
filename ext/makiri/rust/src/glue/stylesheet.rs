@@ -2,9 +2,10 @@
 //! stylesheet binding, the owned Rust rules [`crate::lexbor::stylesheet::parse`]
 //! returns turned into plain Ruby hashes and arrays.
 //!
-//! Phase one has dropped everything it built before this runs, so building
-//! Ruby objects - each one a possible raise - leaves nothing to free. That is
-//! the whole reason for the two phases; see `lexbor::stylesheet`.
+//! Phase one has dropped everything it built before this runs; what is left
+//! owned - the parsed rules and the input's copy - is the caller's frame's,
+//! and phase two runs under `protect`, so a raise from building Ruby objects
+//! comes back as `Err` and those drop. See `lexbor::stylesheet`.
 
 use magnus::{function, prelude::*, Error, RArray, RHash, Ruby, StaticSymbol, Value};
 
@@ -140,8 +141,8 @@ fn parse_stylesheet(ruby: &Ruby, text: Value) -> Result<RArray, Error> {
 
 fn parse_stylesheet_inner(ruby: &Ruby, text: Value) -> Result<RArray, Error> {
     let tv = ruby_verified_text(text, "CSS stylesheet")?;
-    /* `tv` anchors the String for this frame, and `parse` is the parser and
-     * the allocator only - no Ruby runs that could move or mutate the bytes. */
+    /* `tv` is this frame's own copy of the String's bytes, so nothing Ruby
+     * does can move or mutate them. */
     let css: &[u8] = tv.as_bytes();
 
     let eclass = error_class();

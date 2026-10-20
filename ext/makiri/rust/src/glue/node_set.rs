@@ -66,9 +66,8 @@ fn aref(ruby: &Ruby, s: &NodeSet, args: &[Value]) -> Result<Option<Value>, Error
 
 /// `each`: yields every node; an Enumerator without a block.
 ///
-/// Iterates a snapshot: the block can call back into this set (even grow it
-/// through a query), and holding the borrow across the yield would turn that
-/// into an error for no reason.
+/// Iterates by index, each node read under a short borrow released before the
+/// yield, so the block can call back into this set.
 fn each(ruby: &Ruby, s: &NodeSet) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         /* magnus hands methods a `&NodeSet`, not the object, and `each` needs the
@@ -82,9 +81,12 @@ fn each(ruby: &Ruby, s: &NodeSet) -> Result<Value, Error> {
          * `each` (`set.each.next`, then dropped) suspends in its Fiber and
          * never resumes, so nothing would free it. */
         for i in 0..s.count()? {
-            if let Some(node) = s.at(ruby, i)? {
-                let _: Value = ruby.yield_value(node)?;
-            }
+            /* Never None while the set is unchanged; a shrunk set would be a
+             * broken invariant, not a shorter answer. */
+            let node = s.at(ruby, i)?.ok_or_else(|| {
+                crate::bridge::ruby::internal_error("a node set changed while it was iterated")
+            })?;
+            let _: Value = ruby.yield_value(node)?;
         }
         Ok(this)
     })
