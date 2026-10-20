@@ -111,7 +111,7 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   stated.
   The same gate follows those wrappers, and magnus's allocating
   constructors, up through every function that calls one unprotected, and
-  fails when a glue frame still holds an argument's copy (`RubyText`,
+  fails when a frame in `glue/` or `bridge/` still holds an argument's copy (`RubyText`,
   `RubyData`, `HtmlSource`, `OwnedBuf`) across such a call: drop the copy
   first, or make the call under `bridge::ruby::protected`. A String is made
   by `bridge::string::utf8_str` in a frame that owns nothing, and by

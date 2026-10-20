@@ -792,9 +792,9 @@ def unwrapped_entries(rust)
   missing.uniq
 end
 
-# A glue frame that owns a copy of an argument (a checked view, the HTML
-# source, an owned buffer) must not reach a call that can raise while the copy
-# is live: a raise is a longjmp past the frame, its `Drop` never runs, and the
+# A frame in `glue/` or `bridge/` that owns a copy of an argument (a checked
+# view, the HTML source, an owned buffer) must not reach a call that can raise
+# while the copy is live: a raise is a longjmp past the frame, its `Drop` never runs, and the
 # copy leaks - the shape fixed one site at a time in build_fragment, css, the
 # factories and `[]` before this check existed. Drop the copy first, or make
 # the call under `bridge::ruby::protected`, where a raise comes back as `Err`.
@@ -853,14 +853,19 @@ end
 # The calls in `body` to a [name, method?] in `raising`, outside a protect.
 def raising_calls(body, raising)
   calls = body.to_enum(:scan, MAGNUS_ALLOCATING).map { [Regexp.last_match.begin(0), Regexp.last_match[0].strip] }
-  body.to_enum(:scan, /(\.\s*)?\b(\w+)\s*(?:::<[^>]*>)?\s*\(/).each do
+  body.to_enum(:scan, /(\.\s*)?(\b[A-Z]\w*\s*(?:<[^>]*>)?\s*::\s*)?\b(\w+)\s*(?:::<[^>]*>)?\s*\(/).each do
     m = Regexp.last_match
-    calls << [m.begin(2), m[2]] if raising.include?([m[2], !m[1].nil?])
+    # `Type::f(` names an associated function, not a free one of that name.
+    next if m[2]
+
+    calls << [m.begin(3), m[3]] if raising.include?([m[3], !m[1].nil?])
   end
   # A free function handed over as a value, `.map(utf8_str)`, is called too.
-  body.to_enum(:scan, /(?<![.\w])(?:\w+::)*(\w+)(?=\s*[),])/).each do
+  body.to_enum(:scan, /(?<![.\w])((?:\w+::)*)(\w+)(?=\s*[),])/).each do
     m = Regexp.last_match
-    calls << [m.begin(1), m[1]] if raising.include?([m[1], false])
+    next if m[1].match?(/(?:\A|::)[A-Z]\w*::\z/) # `Val::string`, not `string`
+
+    calls << [m.begin(2), m[2]] if raising.include?([m[2], false])
   end
   spans = protected_spans(body)
   calls.reject { |at, _| spans.any? { |s| s.cover?(at) } }
@@ -894,7 +899,7 @@ def copies_across_raises(rust)
   copy_fns = fns.select { |f| f[6][/->(.*)\z/m, 1]&.match?(COPY_TYPES) }.to_set { |f| f[1] }
 
   found = []
-  fns.select { |f| f[0].start_with?("glue/") }.each do |rel, name, _, body, base, code|
+  fns.select { |f| f[0].start_with?("glue/", "bridge/") && f[0] != "bridge/raw.rs" }.each do |rel, name, _, body, base, code|
     local_copy_fns = copy_fns.dup
     body.to_enum(:scan, /\blet\s+(?:mut\s+)?(?:Some\(\s*)?(?:mut\s+)?(\(?[\w\s,]+\)?)\s*(?::[^=;]*)?=(?!=)/).each do
       m = Regexp.last_match
@@ -902,6 +907,8 @@ def copies_across_raises(rust)
         body[i] == ";" && body[m.end(0)...i].count("([{") == body[m.end(0)...i].count(")]}")
       end or next
       rhs = body[m.end(0)...stmt_end]
+      # A block's value is not the copy made inside it; its own lets are seen.
+      next if rhs.lstrip.start_with?("{")
       next unless local_copy_fns.any? { |f| rhs.match?(/\b#{f}\s*\(/) }
 
       names = m[1].scan(/\w+/) - %w[mut]
@@ -914,8 +921,14 @@ def copies_across_raises(rust)
       block_end = opens.lazy.map { |o| matching_close(body, o) }.find { |c| c && c > m.begin(0) } || body.length
       names.each do |var|
         dropped = body.index(/\bdrop\(\s*(?:\([\w\s,]*)?\b#{var}\b[\w\s,]*\)?\s*\)/, stmt_end)
-        live_end = [block_end, dropped || block_end].min
-        raising_calls(body[stmt_end...live_end], followed).each do |at, callee|
+        # Handed to a call by value (`f(x)`, `f(a, x)`): the callee owns it.
+        moved = body.index(/[(,]\s*#{var}\s*[,)]/, stmt_end)
+        live_end = [block_end, dropped || block_end, moved || block_end].min
+        seg = body[stmt_end...live_end]
+        # The call it is handed to by value owns it: not live across that one.
+        into = moved && (open = body.rindex("(", moved)) && (open - stmt_end)
+        raising_calls(seg, followed).each do |at, callee|
+          next if into && at < into && seg.index("(", at) == into
           line = code[0...(base + stmt_end + at)].count("\n") + 1
           found << "#{rel}:#{line} #{name}: `#{var}` (a copy) is live across #{callee}"
         end
@@ -927,7 +940,7 @@ end
 
 copy_leaks = copies_across_raises(RUST)
 unless copy_leaks.empty?
-  errors << "a glue frame holds a copy across a call that can raise (drop it first, or " \
+  errors << "a frame holds a copy across a call that can raise (drop it first, or " \
             "make the call under bridge::ruby::protected): #{copy_leaks.inspect}"
 end
 
@@ -963,4 +976,4 @@ puts "unsafe-boundaries: #{forbidding.length} forbid files; " \
      "#{ruby_layer.values.sum} Ruby-layer uses inside the engine; " \
      "#{ruby_surface.values.sum} Ruby methods in bridge/; " \
      "every registered method but #{ENTRY_EXEMPT.length} exempt runs under entry; " \
-     "no glue copy is live across a raise"
+     "no copy is live across a raise in glue/ or bridge/"
