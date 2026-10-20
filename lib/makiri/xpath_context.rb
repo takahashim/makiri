@@ -35,16 +35,30 @@ module Makiri
     # document locked. Each op is [call?, handler, method, args]; each answer
     # is [this Fiber, result], so a value the handler yields itself is told
     # from an answer.
+    #
+    # respond_to? is asked as C's rb_respond_to asks it: the receiver's own
+    # respond_to? when it has one, else Kernel's - so a BasicObject handler,
+    # which has none, is still asked rather than refused with NoMethodError.
     def self.__handler_fiber # :nodoc:
       Fiber.new(blocking: true) do |op|
         me = Fiber.current
         loop do
-          out = op[0] ? op[1].__send__(op[2], *op[3]) : op[1].respond_to?(op[2])
+          recv = op[1]
+          out = if op[0]
+                  recv.__send__(op[2], *op[3])
+                elsif RESPOND_TO.bind_call(recv, :respond_to?, true)
+                  recv.__send__(:respond_to?, op[2])
+                else
+                  RESPOND_TO.bind_call(recv, op[2])
+                end
           op = Fiber.yield([me, out])
         end
       end
     end
     private_class_method :__handler_fiber
+
+    RESPOND_TO = ::Kernel.instance_method(:respond_to?)
+    private_constant :RESPOND_TO
 
     # Nokogiri-compatible name for {#register_namespace}.
     alias register_ns register_namespace

@@ -230,6 +230,9 @@ pub fn build_fragment(
             .map_err(|_| makiri_error("failed to import a fragment child"))?;
         Ok(frag)
     })??;
+    /* Released before the wrap, which can raise (NoMemoryError) past this
+     * frame: the source copy would leak with it. */
+    drop(src);
     wrap_html_node(frag, document)
 }
 

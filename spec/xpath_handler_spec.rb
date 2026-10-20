@@ -559,6 +559,24 @@ RSpec.describe "an XPath handler that switches Fibers" do
     expect { e.next }.to raise_error(Makiri::Error, /switched Fibers/)
   end
 
+  it "fails a result whose to_s switches Fibers the same way, leaving the document editable" do
+    e = Enumerator.new do |y|
+      result = Object.new
+      result.define_singleton_method(:to_s) { y << 1; "s" }
+      h = Object.new
+      h.define_singleton_method(:g) { |*| result }
+      doc.xpath("string(g())", h)
+    end
+    expect { e.next }.to raise_error(Makiri::Error, /switched Fibers/)
+    doc.at_css("p")["a"] = "b"
+    expect(doc.at_css("p")["a"]).to eq("b")
+  end
+
+  it "asks a BasicObject handler, which has no respond_to? of its own" do
+    h = Class.new(BasicObject) { def f(*) = true }.new
+    expect(doc.xpath("//p[f()]", h).size).to eq(2)
+  end
+
   it "reads Fiber storage, which a new Fiber inherits, but not Thread.current[]" do
     Fiber[:makiri_k] = "inherited"
     Thread.current[:makiri_k] = "fiber-local"

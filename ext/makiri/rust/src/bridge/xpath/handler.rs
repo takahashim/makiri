@@ -6,7 +6,7 @@
 
 use magnus::rb_sys::AsRawValue;
 use magnus::value::ReprValue;
-use magnus::{Error, Ruby, Value};
+use magnus::{Error, RString, Ruby, Value};
 
 use crate::bridge::node_set::NodeSet as RubyNodeSet;
 use crate::bridge::ruby::VALUE;
@@ -74,16 +74,22 @@ impl Bridge {
         let _ = self.raised.set(e);
     }
 
-    /// Run one op in the handler's Fiber: `respond_to?(method)` when `args`
-    /// is `None`, else the call. `Ok(None)` when the handler switched Fibers
-    /// instead of answering - its Fiber is then suspended in the handler, so
-    /// it is dropped (it holds Ruby frames only, which Ruby frees with it).
+    /// Run one op in the handler's Fiber: `recv.respond_to?(method)` when
+    /// `args` is `None`, else the call `recv.method(*args)`. `recv` is the
+    /// handler, or for the `to_s` of its result ([`Bridge::result_to_s`])
+    /// that result: any of the handler's Ruby runs here. `None` when that
+    /// Ruby switched Fibers instead of answering - its Fiber is then
+    /// suspended in the handler, so it is dropped (it holds Ruby frames
+    /// only, which Ruby frees with it).
     ///
     /// # Safety
     /// Under `protect`: making the Fiber, the op Array and the resume all
-    /// raise, and the handler's own raise comes out of the resume.
+    /// raise, and the handler's own raise comes out of the resume. `recv`
+    /// is live on the caller's frame, and `args` holds at most
+    /// [`HANDLER_MAX_ARGS`] values.
     unsafe fn in_fiber(
         &self,
+        recv: VALUE,
         method: crate::bridge::ruby::ID,
         args: Option<&[VALUE]>,
     ) -> Option<VALUE> {
@@ -106,18 +112,24 @@ impl Bridge {
         let op = match args {
             None => ruby.ary_new_from_values(&[
                 ruby.qfalse().as_value(),
-                value_of(self.handler),
+                value_of(recv),
                 value_of(name),
             ]),
             Some(a) => {
-                let argv = ruby.ary_new_capa(a.len());
-                for &v in a {
-                    /* Under protect: a raise here is the allocator's. */
-                    let _ = argv.push(value_of(v));
+                /* Built in one raising call, not pushed: `RArray::push`
+                 * returns its allocator's raise as `Err`, and a dropped one
+                 * called the handler with arguments missing. Under protect,
+                 * the raise fails the call instead. */
+                let mut vals = [ruby.qnil().as_value(); HANDLER_MAX_ARGS];
+                let mut n = 0;
+                for (slot, &v) in vals.iter_mut().zip(a) {
+                    *slot = value_of(v);
+                    n += 1;
                 }
+                let argv = ruby.ary_new_from_values(&vals[..n]);
                 ruby.ary_new_from_values(&[
                     ruby.qtrue().as_value(),
-                    value_of(self.handler),
+                    value_of(recv),
                     value_of(name),
                     argv.as_value(),
                 ])
@@ -142,6 +154,44 @@ impl Bridge {
                 self.fiber.set(nil);
                 None
             }
+        }
+    }
+
+    /// The handler's result as a String: [`crate::bridge::ruby::to_s`], with
+    /// the `to_s` run in the handler's Fiber. It is the handler's Ruby too,
+    /// and run on the caller's Fiber a `Fiber.yield` in it suspended the
+    /// evaluation with the document's guard held, as a handler's own did.
+    fn result_to_s(&self, rv: Value) -> Result<RString, HandlerFailure> {
+        const NOT_A_STRING: &str = "handler result could not be converted to a string";
+        let ruby = crate::bridge::ruby::gvl_ruby();
+        if let Some(s) = RString::from_value(rv) {
+            if rv.class().as_raw() == ruby.class_string().as_raw() {
+                return Ok(s);
+            }
+        }
+        let mut switched = false;
+        let r = crate::bridge::ruby::protect(|| {
+            // SAFETY: under protect, as `in_fiber` asks; `rv` is live on
+            // this frame, and no argument is passed.
+            match unsafe {
+                self.in_fiber(rv.as_raw(), crate::bridge::ruby::intern("to_s"), Some(&[]))
+            } {
+                Some(v) => v,
+                None => {
+                    switched = true;
+                    rb_sys::Qnil as VALUE
+                }
+            }
+        });
+        match r {
+            Err(e) => Err(HandlerFailure::Raised(e, Some(NOT_A_STRING))),
+            Ok(_) if switched => Err(HandlerFailure::Msg(SWITCHED)),
+            Ok(v) => RString::from_value(value_of(v)).ok_or_else(|| {
+                HandlerFailure::Raised(
+                    crate::bridge::ruby::type_error("to_s returned a non-String"),
+                    Some(NOT_A_STRING),
+                )
+            }),
         }
     }
 }
@@ -286,9 +336,7 @@ fn ruby_to_val(bridge: &Bridge, budget: &mut Budget, rv: Value) -> Result<Val, H
     }
     /* A `to_s` that raises, or returns something other than a String, is
      * refused here rather than read as a String. */
-    const NOT_A_STRING: &str = "handler result could not be converted to a string";
-    let sv =
-        crate::bridge::ruby::to_s(rv).map_err(|e| HandlerFailure::Raised(e, Some(NOT_A_STRING)))?;
+    let sv = bridge.result_to_s(rv)?;
     let vv = ruby_try_verified_text(sv, budget.limits.max_string_bytes)
         .map_err(HandlerFailure::InvalidString)?;
     Text::try_copy(vv.as_bytes())
@@ -341,7 +389,10 @@ fn handler_call_body(c: &mut HandlerCall<'_>) {
     }
     // SAFETY: under `protect` (the handler's raise comes back as `Err`), with
     // the live handler and the arguments just built.
-    let Some(r) = (unsafe { c.bridge.in_fiber(c.method, Some(&c.argv[..c.args.len()])) }) else {
+    let Some(r) = (unsafe {
+        c.bridge
+            .in_fiber(c.bridge.handler, c.method, Some(&c.argv[..c.args.len()]))
+    }) else {
         c.result = Some(Err(HandlerFailure::Msg(SWITCHED)));
         return;
     };
@@ -407,7 +458,7 @@ unsafe fn handler_resolver(
     } else {
         crate::bridge::ruby::protect(|| {
             // SAFETY: under protect, as `in_fiber` asks.
-            match unsafe { bridge.in_fiber(method, None) } {
+            match unsafe { bridge.in_fiber(bridge.handler, method, None) } {
                 Some(v) => v,
                 None => {
                     switched = true;

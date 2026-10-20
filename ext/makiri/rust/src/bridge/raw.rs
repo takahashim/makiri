@@ -56,13 +56,6 @@ pub unsafe fn obj_as_string(v: VALUE) -> VALUE {
     unsafe { rb_sys::rb_obj_as_string(v) }
 }
 
-/// `rb_respond_to`: raises whatever the object's `respond_to?` (or
-/// `respond_to_missing?`) raises.
-#[inline]
-pub unsafe fn respond_to(v: VALUE, method: ID) -> bool {
-    unsafe { rb_sys::rb_respond_to(v, method) != 0 }
-}
-
 /// `rb_check_frozen`: raises `FrozenError` for a frozen value.
 #[inline]
 pub unsafe fn check_frozen(v: VALUE) {

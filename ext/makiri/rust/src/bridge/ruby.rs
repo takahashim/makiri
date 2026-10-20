@@ -141,21 +141,6 @@ pub fn check_frozen(v: Value) -> Result<(), Error> {
     .map(|_| ())
 }
 
-/// `rb_respond_to` returning a raise from the object's own `respond_to?` (or the
-/// `respond_to_missing?` behind it) as `Err`, rather than unwinding through the
-/// caller.
-pub fn respond_to(v: Value, method: rb_sys::ID) -> Result<bool, Error> {
-    // SAFETY: `v` is a live value; `protect` turns the raise into `Err`.
-    let answer = protect(|| unsafe {
-        if super::raw::respond_to(v.as_raw(), method) {
-            rb_sys::Qtrue as VALUE
-        } else {
-            rb_sys::Qfalse as VALUE
-        }
-    })?;
-    Ok(answer == rb_sys::Qtrue as VALUE)
-}
-
 /// `rb_range_beg_len` over a collection of `count` elements, with the C's
 /// `err = 0`: a start outside the collection is `None` rather than a raise.
 ///
