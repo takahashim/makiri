@@ -220,8 +220,11 @@ LEXBOR_ABI_COUNTS = {}.freeze
 # engine module holding the bridge's invariants, and the path a raise escaped
 # along - so the table is empty and any such use fails.
 # The crate-root modules the engine is built on sit outside those directories
-# and are held to the same two rules.
-ENGINE_DIRS = %w[lexbor/ xml/ xpath/ css/ selectors/ falloc/ cbuf.rs cutf8.rs dom_rules.rs dom_rules/ limits.rs node_type.rs ptr_table.rs text.rs token.rs utf8_input.rs].freeze
+# and are held to the same two rules. `html/` (the parser and the arena DOM
+# an edit's closure works on), its facade and the child-index walk are
+# engine too: an edit lends `&mut HtmlDocMut` to a closure that must run no
+# Ruby, and this is what keeps what that closure calls Ruby-free.
+ENGINE_DIRS = %w[lexbor/ xml/ xpath/ css/ selectors/ html/ html_dom.rs child_index.rs child_index/ falloc/ cbuf.rs cutf8.rs dom_rules.rs dom_rules/ limits.rs node_type.rs ptr_table.rs text.rs token.rs utf8_input.rs].freeze
 RUBY_LAYER = /crate::(?:bridge|glue|init)|magnus::/
 RUBY_LAYER_COUNTS = {}.freeze
 
@@ -555,8 +558,13 @@ Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
   # `stylesheet_diff` fuzz targets (`lexbor-reference`), never in a build
   # that ships - test files by another name.
   next if %w[lexbor/tree_diff.rs lexbor/selector_diff.rs lexbor/stylesheet_diff.rs].include?(relative)
+  # A `#[cfg(test)]` module of its own (`pub mod conformance` is declared
+  # under `#[cfg(test)]` in html/dom/mod.rs), a test file by another name.
+  next if relative == "html/dom/conformance.rs"
 
-  count = comments_removed(File.binread(path)).scan(INFALLIBLE_ALLOC).length
+  # An inline `#[cfg(test)] mod tests` at the end of a file is tests too.
+  code = comments_removed(File.binread(path)).split(/^#\[cfg\(test\)\]\s*\n\s*mod tests\b/).first.to_s
+  count = code.scan(INFALLIBLE_ALLOC).length
   infallible[relative] = count unless count.zero?
 end
 if infallible != INFALLIBLE_ALLOC_COUNTS
