@@ -16,18 +16,10 @@ pub fn in_head(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mu
 fn open(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mut Tok) -> bool {
     match tok.tag_id {
         res::TAG__EM_COMMENT => {
-            if tree.insert_comment(tkz, tok, None).or_abort(tree).is_none() {
-                return true;
-            }
+            let _ = tree.insert_comment(tkz, tok, None).or_abort(tree);
         }
         res::TAG__PROCESSINGINSTRUCTION => {
-            if tree
-                .insert_processing_instruction(tkz, None)
-                .or_abort(tree)
-                .is_none()
-            {
-                return true;
-            }
+            let _ = tree.insert_processing_instruction(tkz, None).or_abort(tree);
         }
         res::TAG__EM_DOCTYPE => tree.parse_error(tok, E::Dotoinhemo),
         res::TAG_HTML => return super::in_body::in_body(tree, tkz, tok),
@@ -39,13 +31,7 @@ fn open(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mut Tok) 
             tree.acknowledge_token_self_closing(tok);
         }
         res::TAG_TITLE => {
-            if tree
-                .generic_rcdata_parsing(tkz, tok)
-                .or_abort(tree)
-                .is_none()
-            {
-                return true;
-            }
+            let _ = tree.generic_rcdata_parsing(tkz, tok).or_abort(tree);
         }
         res::TAG_NOSCRIPT => {
             let made = if tree.scripting {
@@ -55,18 +41,10 @@ fn open(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mut Tok) 
                 tree.mode = Mode::InHeadNoscript;
                 el
             };
-            if made.or_abort(tree).is_none() {
-                return true;
-            }
+            let _ = made.or_abort(tree);
         }
         res::TAG_NOFRAMES | res::TAG_STYLE => {
-            if tree
-                .generic_rawtext_parsing(tkz, tok)
-                .or_abort(tree)
-                .is_none()
-            {
-                return true;
-            }
+            let _ = tree.generic_rawtext_parsing(tkz, tok).or_abort(tree);
         }
         res::TAG_SCRIPT => return script(tree, tkz, tok),
         res::TAG_TEMPLATE => return template(tree, tkz, tok),
@@ -133,13 +111,7 @@ fn template(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) 
     }
     tree.frameset_ok = false;
     tree.mode = Mode::InTemplate;
-    if tree
-        .template_modes_push(Mode::InTemplate)
-        .or_abort(tree)
-        .is_none()
-    {
-        return true;
-    }
+    let _ = tree.template_modes_push(Mode::InTemplate).or_abort(tree);
     true
 }
 

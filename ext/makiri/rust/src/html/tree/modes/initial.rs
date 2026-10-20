@@ -95,22 +95,14 @@ fn starts_with_ci(s: &[u8], prefix: &[u8]) -> bool {
 pub fn initial(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mut Tok) -> bool {
     match tok.tag_id {
         res::TAG__EM_COMMENT => {
-            if tree
+            let _ = tree
                 .insert_comment(tkz, tok, Some(NodeId::DOCUMENT))
-                .or_abort(tree)
-                .is_none()
-            {
-                return true;
-            }
+                .or_abort(tree);
         }
         res::TAG__PROCESSINGINSTRUCTION => {
-            if tree
+            let _ = tree
                 .insert_processing_instruction(tkz, Some(NodeId::DOCUMENT))
-                .or_abort(tree)
-                .is_none()
-            {
-                return true;
-            }
+                .or_abort(tree);
         }
         res::TAG__EM_DOCTYPE => {
             tree.mode = Mode::BeforeHtml;

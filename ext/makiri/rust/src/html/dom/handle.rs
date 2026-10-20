@@ -493,13 +493,13 @@ impl<'d> HtmlNode<'d> {
 
     /// The node after this one in a pre-order walk of `root`'s subtree.
     pub fn preorder_next(self, root: Self) -> Option<Self> {
-        self.at(self.d.preorder_next(self.id, root.id))
+        self.at(self.d.preorder_next(root.id, self.id))
     }
 
     /// The node after this one's whole subtree in a pre-order walk of
     /// `root`'s subtree.
     pub fn preorder_next_past(self, root: Self) -> Option<Self> {
-        self.at(self.d.preorder_next_past(self.id, root.id))
+        self.at(self.d.preorder_next_past(root.id, self.id))
     }
 
     /// This node and every node below it, `<template>` contents included.

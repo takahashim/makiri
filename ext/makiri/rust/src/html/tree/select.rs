@@ -71,7 +71,7 @@ impl TreeBuilder<'_> {
                     self.selectedness_setting_algorithm(select);
                 }
             }
-            node = self.doc.preorder_next(n, root);
+            node = self.doc.preorder_next(root, n);
         }
     }
 
@@ -206,9 +206,9 @@ impl TreeBuilder<'_> {
                 }
             }
             node = if descend {
-                self.doc.preorder_next(n, root)
+                self.doc.preorder_next(root, n)
             } else {
-                self.doc.preorder_next_past(n, root)
+                self.doc.preorder_next_past(root, n)
             };
         }
         Ok(out)
@@ -273,7 +273,7 @@ impl TreeBuilder<'_> {
             if self.node_is(n, res::TAG_SELECTEDCONTENT) {
                 return Some(n);
             }
-            node = self.doc.preorder_next(n, root);
+            node = self.doc.preorder_next(root, n);
         }
         None
     }

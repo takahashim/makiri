@@ -54,14 +54,31 @@ fn read(names: &Names, t: &mut Tokenizer<'_, '_>) -> Option<Token> {
             })
         }
         res::TAG__EM_DOCTYPE => {
-            let parts = t.doctype();
-            let name = parts.name.filter(|a| a.name_begin.is_some()).map(|a| {
-                a.name
-                    .and_then(|id| names.attr_name(id).map(<[u8]>::to_vec))
+            /* Read the attributes as the states store them (`state_doctype.rs`),
+             * not through `Tokenizer::doctype`: the tree builder's reading is
+             * what this suite checks. */
+            let attrs = t.token.attrs.clone();
+            let attr_name = |id: Option<usize>| {
+                id.and_then(|id| names.attr_name(id).map(<[u8]>::to_vec))
                     .unwrap_or_default()
-            });
-            let public_id = parts.public_id.map(<[u8]>::to_vec);
-            let system_id = parts.system_id.map(<[u8]>::to_vec);
+            };
+            let value =
+                |t: &Tokenizer<'_, '_>, a: &super::TokenAttr| t.attr_value(a).map(<[u8]>::to_vec);
+            let name = attrs
+                .first()
+                .filter(|a| a.name_begin.is_some())
+                .map(|a| attr_name(a.name));
+            let (mut public_id, mut system_id) = (None, None);
+            if let Some(second) = attrs.get(1) {
+                if second.name == Some(res::ATTR_PUBLIC) {
+                    public_id = value(t, second);
+                    if let Some(third) = attrs.get(2) {
+                        system_id = value(t, third);
+                    }
+                } else if second.name == Some(res::ATTR_SYSTEM) {
+                    system_id = value(t, second);
+                }
+            }
             Some(Token::Doctype {
                 name,
                 public_id,

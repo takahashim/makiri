@@ -11,19 +11,11 @@ pub fn after_body(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: 
     match tok.tag_id {
         res::TAG__EM_COMMENT => {
             let html = tree.open_first();
-            if tree.insert_comment(tkz, tok, html).or_abort(tree).is_none() {
-                return true;
-            }
+            let _ = tree.insert_comment(tkz, tok, html).or_abort(tree);
         }
         res::TAG__PROCESSINGINSTRUCTION => {
             let html = tree.open_first();
-            if tree
-                .insert_processing_instruction(tkz, html)
-                .or_abort(tree)
-                .is_none()
-            {
-                return true;
-            }
+            let _ = tree.insert_processing_instruction(tkz, html).or_abort(tree);
         }
         res::TAG__EM_DOCTYPE => tree.parse_error(tok, E::Dotoafbomo),
         res::TAG_HTML => {

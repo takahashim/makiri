@@ -46,25 +46,15 @@ pub fn in_frameset(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok:
     }
     match tok.tag_id {
         res::TAG__EM_COMMENT => {
-            if tree.insert_comment(tkz, tok, None).or_abort(tree).is_none() {
-                return true;
-            }
+            let _ = tree.insert_comment(tkz, tok, None).or_abort(tree);
         }
         res::TAG__PROCESSINGINSTRUCTION => {
-            if tree
-                .insert_processing_instruction(tkz, None)
-                .or_abort(tree)
-                .is_none()
-            {
-                return true;
-            }
+            let _ = tree.insert_processing_instruction(tkz, None).or_abort(tree);
         }
         res::TAG__EM_DOCTYPE => tree.parse_error(tok, E::Dotoinfrmo),
         res::TAG_HTML => return super::in_body::in_body(tree, tkz, tok),
         res::TAG_FRAMESET => {
-            if tree.insert_html_element(tkz, tok).or_abort(tree).is_none() {
-                return true;
-            }
+            let _ = tree.insert_html_element(tkz, tok).or_abort(tree);
         }
         res::TAG_FRAME => {
             if tree.insert_html_element(tkz, tok).or_abort(tree).is_none() {

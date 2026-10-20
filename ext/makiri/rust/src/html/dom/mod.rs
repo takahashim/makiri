@@ -930,15 +930,16 @@ impl Document {
     pub fn parent(&self, n: NodeId) -> Option<NodeId> {
         self.node(n)?.parent
     }
-    /// The node after `n` in a pre-order walk of `root`'s subtree.
-    pub fn preorder_next(&self, n: NodeId, root: NodeId) -> Option<NodeId> {
+    /// The node after `n` in a pre-order walk of `root`'s subtree. `root`
+    /// first, as the XML arena's `preorder_next` takes it.
+    pub fn preorder_next(&self, root: NodeId, n: NodeId) -> Option<NodeId> {
         self.first_child(n)
-            .or_else(|| self.preorder_next_past(n, root))
+            .or_else(|| self.preorder_next_past(root, n))
     }
 
     /// The node after `n`'s whole subtree in a pre-order walk of `root`'s
     /// subtree.
-    pub fn preorder_next_past(&self, mut n: NodeId, root: NodeId) -> Option<NodeId> {
+    pub fn preorder_next_past(&self, root: NodeId, mut n: NodeId) -> Option<NodeId> {
         loop {
             if n == root {
                 return None;

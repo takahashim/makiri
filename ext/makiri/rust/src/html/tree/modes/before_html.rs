@@ -18,22 +18,14 @@ fn open(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mut Tok) 
     match tok.tag_id {
         res::TAG__EM_DOCTYPE => tree.parse_error(tok, E::Dotoinbehtmo),
         res::TAG__EM_COMMENT => {
-            if tree
+            let _ = tree
                 .insert_comment(tkz, tok, Some(NodeId::DOCUMENT))
-                .or_abort(tree)
-                .is_none()
-            {
-                return true;
-            }
+                .or_abort(tree);
         }
         res::TAG__PROCESSINGINSTRUCTION => {
-            if tree
+            let _ = tree
                 .insert_processing_instruction(tkz, Some(NodeId::DOCUMENT))
-                .or_abort(tree)
-                .is_none()
-            {
-                return true;
-            }
+                .or_abort(tree);
         }
         res::TAG_HTML => {
             let Some(html) = tree

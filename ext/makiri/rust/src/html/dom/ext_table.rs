@@ -1,6 +1,6 @@
 //! The namespace and prefix tables: Lexbor's static entries first, then the
-//! document's own, numbered on from `NS__LAST_ENTRY` - the same scheme for
-//! both, which `Document` used to write out twice.
+//! document's own, numbered on from the last static id (`NS__LAST_ENTRY` for
+//! both) - the same scheme for both, which `Document` used to write out twice.
 
 use super::DomOom;
 use crate::falloc::VecPush;
@@ -10,7 +10,7 @@ use crate::html::res::names as res;
 pub(super) struct ExtTable {
     /// Lexbor's static entries by id; an empty one is no entry.
     statics: &'static [&'static [u8]],
-    /// The document's own, the first numbered `NS__LAST_ENTRY`.
+    /// The document's own, numbered on from the last static id.
     own: Vec<Vec<u8>>,
     /// The bytes of `own`'s entries: its growth in O(1).
     bytes: usize,
@@ -43,7 +43,7 @@ impl ExtTable {
         self.own
             .iter()
             .position(|l| l == text)
-            .and_then(|i| u32::try_from(res::NS__LAST_ENTRY + i).ok())
+            .and_then(|i| u32::try_from(self.statics.len() + i).ok())
     }
 
     /// [`lookup`](Self::lookup), appending `text` when new.
@@ -57,7 +57,7 @@ impl ExtTable {
         let owned = crate::falloc::try_to_vec(text).ok_or(DomOom)?;
         self.own.falloc_push(owned).map_err(|()| DomOom)?;
         self.bytes += text.len();
-        Ok(u32::try_from(res::NS__LAST_ENTRY + self.own.len() - 1).ok())
+        Ok(u32::try_from(self.statics.len() + self.own.len() - 1).ok())
     }
 
     /// An id's text; `None` for 0, an empty static entry or an unknown id.
@@ -70,7 +70,7 @@ impl ExtTable {
             Some(l) => (!l.is_empty()).then_some(*l),
             None => self
                 .own
-                .get(i.checked_sub(res::NS__LAST_ENTRY)?)
+                .get(i.checked_sub(self.statics.len())?)
                 .map(Vec::as_slice),
         }
     }

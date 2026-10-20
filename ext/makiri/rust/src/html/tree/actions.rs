@@ -125,7 +125,7 @@ impl TreeBuilder<'_> {
         ns: usize,
         adjust: Option<AttrAdjust>,
     ) -> Result<NodeId, TreeStatus> {
-        let (pos, ipos) = self.appropriate_place(None).ok_or(TreeStatus::Oom)?;
+        let (pos, ipos) = self.appropriate_place(None).ok_or(TreeStatus::Error)?;
         let el = self.create_element_for_token(tkz, tok, ns, adjust)?;
         self.insert_node(pos, el, ipos);
         self.open_push(el)?;
@@ -345,7 +345,7 @@ impl TreeBuilder<'_> {
                 .doc
                 .names
                 .qualified_append(to)
-                .map_err(|_| TreeStatus::Error)?;
+                .map_err(|_| TreeStatus::Oom)?;
         }
         Ok(())
     }
@@ -362,16 +362,14 @@ impl TreeBuilder<'_> {
         };
         if !prefix.is_empty() {
             let names = &mut self.doc.names;
-            spec.written = names
-                .qualified_append(full)
-                .map_err(|_| TreeStatus::Error)?;
+            spec.written = names.qualified_append(full).map_err(|_| TreeStatus::Oom)?;
             spec.local = names
                 .attr_local_name_append(local)
-                .map_err(|_| TreeStatus::Error)?;
+                .map_err(|_| TreeStatus::Oom)?;
             spec.prefix = self
                 .doc
                 .intern_prefix(prefix)
-                .map_err(|_| TreeStatus::Error)?
+                .map_err(|_| TreeStatus::Oom)?
                 .unwrap_or(0);
         }
         spec.ns = ns;

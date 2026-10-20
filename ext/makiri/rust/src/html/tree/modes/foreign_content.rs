@@ -21,17 +21,26 @@ fn anything_else_closed(
         return tree.run(tree.mode, tkz, tok);
     }
     let mut idx = tree.open_len() - 1;
-    if idx > 0 && tree.tag(tree.open_at(idx)) != tok.tag_id {
+    if idx > 0
+        && tree
+            .open_get(idx)
+            .is_some_and(|n| tree.tag(n) != tok.tag_id)
+    {
         tree.parse_error(tok, E::Unelinopelst);
     }
     while idx != 0 {
-        let node = tree.open_at(idx);
+        let Some(node) = tree.open_get(idx) else {
+            break;
+        };
         if tree.tag(node) == tok.tag_id {
             tree.open_pop_until_node(node, true);
             return true;
         }
         idx -= 1;
-        if tree.ns(tree.open_at(idx)) == res::NS_HTML {
+        if tree
+            .open_get(idx)
+            .is_some_and(|n| tree.ns(n) == res::NS_HTML)
+        {
             break;
         }
     }
@@ -139,9 +148,7 @@ fn text(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> b
             pos += 1;
         }
     }
-    if tree.insert_character_for_data(s).or_abort(tree).is_none() {
-        return true;
-    }
+    let _ = tree.insert_character_for_data(s).or_abort(tree);
     true
 }
 
@@ -188,19 +195,11 @@ pub fn foreign_content(
     match tok.tag_id {
         res::TAG__TEXT => text(tree, tkz, tok),
         res::TAG__EM_COMMENT => {
-            if tree.insert_comment(tkz, tok, None).or_abort(tree).is_none() {
-                return true;
-            }
+            let _ = tree.insert_comment(tkz, tok, None).or_abort(tree);
             true
         }
         res::TAG__PROCESSINGINSTRUCTION => {
-            if tree
-                .insert_processing_instruction(tkz, None)
-                .or_abort(tree)
-                .is_none()
-            {
-                return true;
-            }
+            let _ = tree.insert_processing_instruction(tkz, None).or_abort(tree);
             true
         }
         res::TAG__EM_DOCTYPE => {

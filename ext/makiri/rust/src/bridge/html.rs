@@ -506,7 +506,6 @@ fn edit_other_document<R>(
     f: impl FnOnce(&mut HtmlDocMut<'_>) -> R,
 ) -> Result<R, Error> {
     ensure_document_mutable(rb_doc)?;
-    invalidate_indexes(rb_doc);
     record_edit(rb_doc, EditKind::ChildList);
     lend_document(&rb_doc, Lend::Tree, f)
 }

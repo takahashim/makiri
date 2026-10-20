@@ -9,9 +9,7 @@ use crate::html::tree::{OrAbort, Tok, TreeBuilder};
 pub fn text(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mut Tok) -> bool {
     match tok.tag_id {
         res::TAG__TEXT => {
-            if tree.insert_character(tkz, tok).or_abort(tree).is_none() {
-                return true;
-            }
+            let _ = tree.insert_character(tkz, tok).or_abort(tree);
         }
         res::TAG__END_OF_FILE => {
             tree.parse_error(tok, E::Unenoffi);
