@@ -304,26 +304,6 @@ pub fn node_set_from(
  * `node_set_of_nodes`), so none of them can put a foreign word where
  * [`wrap_doc_node`] would read it; new nodes from a walk arrive through [`Fill`]. */
 
-/// A copy of a set's nodes, detached from its borrow, which wraps them on the
-/// way out: see [`NodeSet::snapshot`].
-pub struct Snapshot {
-    nodes: Vec<NodeWord>,
-    document: Value,
-    kind: DocKind,
-}
-
-impl Snapshot {
-    /// The nodes as Ruby objects, in the set's order - each `Err` if its
-    /// wrapper could not be made.
-    pub fn wrapped(&self) -> impl Iterator<Item = Result<Value, Error>> + '_ {
-        // SAFETY: nodes a set of this document stored, so `kind` is the
-        // representation they were stored as, and `document` roots them.
-        self.nodes
-            .iter()
-            .map(|&n| unsafe { wrap_doc_node(self.kind, n, self.document) })
-    }
-}
-
 impl NodeSet {
     /// The number of nodes.
     pub fn count(&self) -> Result<usize, Error> {
@@ -368,19 +348,6 @@ impl NodeSet {
         }
         drop(w);
         Ok(result)
-    }
-
-    /// See [`Snapshot`]: for iterating while the set may change underneath -
-    /// `each` yields, and the block can push. The copy goes through falloc: it is
-    /// as large as the set, so an OOM must raise rather than abort.
-    pub fn snapshot(&self, ruby: &Ruby) -> Result<Snapshot, Error> {
-        let nodes = crate::falloc::try_to_vec(self.read()?.as_slice())
-            .ok_or_else(|| makiri_error("out of memory copying a node set"))?;
-        Ok(Snapshot {
-            nodes,
-            document: self.document(ruby),
-            kind: self.kind,
-        })
     }
 
     /// `other` as a set that can be combined with this one: a NodeSet, and of

@@ -77,8 +77,14 @@ fn each(ruby: &Ruby, s: &NodeSet) -> Result<Value, Error> {
         if !ruby.block_given() {
             return Ok(this.enumeratorize("each", ()).as_value());
         }
-        for node in s.snapshot(ruby)?.wrapped() {
-            let _: Value = ruby.yield_value(node?)?;
+        /* By index, not over a copy: a set is never changed once filled, and
+         * a copy would be owned by this frame - which an Enumerator over
+         * `each` (`set.each.next`, then dropped) suspends in its Fiber and
+         * never resumes, so nothing would free it. */
+        for i in 0..s.count()? {
+            if let Some(node) = s.at(ruby, i)? {
+                let _: Value = ruby.yield_value(node)?;
+            }
         }
         Ok(this)
     })
