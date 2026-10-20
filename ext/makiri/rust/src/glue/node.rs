@@ -81,12 +81,12 @@ fn child_index_arg(i: Integer) -> Option<usize> {
 /// `#child_count` (DOM `childNodes.length`): every child node, counted
 /// without building `#children`.
 pub fn child_count<S: ChildListHost>(this: S) -> Result<usize, magnus::Error> {
-    crate::bridge::ruby::entry(|| Ok(this.child_count(ChildList::Nodes)))
+    crate::bridge::ruby::entry(|| this.child_count(ChildList::Nodes))
 }
 
 /// `#element_child_count` (DOM `childElementCount`).
 pub fn element_child_count<S: ChildListHost>(this: S) -> Result<usize, magnus::Error> {
-    crate::bridge::ruby::entry(|| Ok(this.child_count(ChildList::Elements)))
+    crate::bridge::ruby::entry(|| this.child_count(ChildList::Elements))
 }
 
 /// `#child_at(i)` (DOM `childNodes[i]`): the child node at `i`, or nil when

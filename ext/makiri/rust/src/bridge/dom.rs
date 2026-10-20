@@ -79,10 +79,8 @@ impl DocPtr {
 /// XPath's view of the document behind `p`, for `'e`. `Err` when the
 /// element index a mutation dropped could not be rebuilt.
 ///
-/// The instance reads the index its caller built: built here, with the one `&mut` of the
-/// handle an evaluate takes - only when the index is missing, which no
-/// evaluation already running can see (one would have built it, and no
-/// mutation runs while one does), so it never overlaps a shared borrow.
+/// The instance reads the index its caller built: built here, into the
+/// handle's cell, when it is missing.
 ///
 /// # Safety
 /// The Document is live, and nothing edits it, for `'e`.
@@ -90,13 +88,10 @@ impl DocPtr {
 pub unsafe fn xpath_dom<'e>(
     p: DocPtr,
 ) -> Result<crate::html_dom::xpath::HtmlDom<'e>, crate::engine_error::ErrorKind> {
-    // SAFETY: see above - no shared borrow of the handle is live while the
-    // index is missing.
-    if unsafe { p.parsed() }.dom_index().is_none() {
-        unsafe { &mut *p.as_ptr().as_ptr() }
-            .ensure_dom_index()
-            .map_err(|_| crate::engine_error::ErrorKind::Oom)?;
-    }
+    // SAFETY: the caller's contract.
+    unsafe { p.parsed() }
+        .ensure_dom_index()
+        .map_err(|_| crate::engine_error::ErrorKind::Oom)?;
     // SAFETY: the caller's contract.
     Ok(crate::html_dom::xpath::dom(unsafe { p.parsed() }))
 }

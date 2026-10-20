@@ -27,7 +27,7 @@ pub fn dom(parsed: &HtmlParsed) -> HtmlDom<'_> {
 
 /// A context over `parsed` with `node` as the focus, its element index built
 /// first.
-pub fn context(parsed: &mut HtmlParsed, node: Token) -> Context<'_, HtmlDom<'_>> {
+pub fn context(parsed: &HtmlParsed, node: Token) -> Context<'_, HtmlDom<'_>> {
     /* The walk serves a document the index cannot be built for. */
     let _ = parsed.ensure_dom_index();
     Context::new(dom(parsed), Some(node))
