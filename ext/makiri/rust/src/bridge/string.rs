@@ -331,12 +331,18 @@ pub unsafe fn ruby_str_from_utf8(bytes: &[u8]) -> VALUE {
 /// that were not UTF-8 would make a wrong String, never a memory error. Every
 /// caller passes a document's name, which is UTF-8 by the text-input contract.
 pub fn dom_name_str(bytes: &[u8]) -> Value {
+    /* A length `c_long` cannot hold (32 bits on Windows) would be truncated,
+     * or turn negative, which `rb_enc_interned_str` does not check: refused
+     * as `utf8_str` refuses it, with ArgumentError. */
+    let Ok(len) = c_long::try_from(bytes.len()) else {
+        return utf8_str(bytes);
+    };
     // SAFETY: a slice's pointer and length, read for the call; the encoding
     // is Ruby's static UTF-8 one. The result is a live String.
     unsafe {
         crate::bridge::ruby::value(super::raw::enc_interned_str(
             bytes.as_ptr() as *const c_char,
-            bytes.len() as c_long,
+            len,
             rb_sys::rb_utf8_encoding(),
         ))
     }

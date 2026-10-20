@@ -575,7 +575,7 @@ pub fn insert(this: &HtmlSelf, rb_incoming: Value, place: Place) -> Result<Value
  * verified strings into Lexbor                                        *
  * ------------------------------------------------------------------ *
  * The node methods live in `glue::html_node::mutate`. A checked view reads as
- * a plain `&str` (`RubyStr`'s `Deref`: it holds its String locked), and each
+ * a plain `&str` (`RubyStr`'s `Deref`, over its own copy of the bytes), and each
  * primitive passes it straight to a Lexbor call that copies what it keeps. A
  * primitive answers what Lexbor answered; the method words the error. */
 

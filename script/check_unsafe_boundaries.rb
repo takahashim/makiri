@@ -807,8 +807,9 @@ end
 # than once is not followed (it would make every `new` and `get` raise); the
 # wrappers below are followed by hand for that reason. A copy is a `let`
 # whose right side calls a function returning one of COPY_TYPES (or a closure
-# that does); it is live to the end of its block or to its `drop(name)`, so a
-# copy moved into a callee still counts - drop it or protect the call.
+# that does), or a parameter that takes one by value; it is live to the end
+# of its block, to its `drop(name)`, or to the call it is handed to by value -
+# that callee owns it then, and is checked through its own parameter.
 COPY_TYPES = /\b(?:RubyText|RubyData|RubyStr|HtmlSource|OwnedBuf)\b/
 MAGNUS_ALLOCATING = /\.(?:str_new|enc_str_new|str_from_slice|str_buf_new|str_with_capacity|
   ary_new|ary_new_capa|ary_new_from_values|ary_from_iter|ary_from_vec|hash_new|hash_new_capa|
@@ -850,25 +851,41 @@ def protected_spans(body)
   end
 end
 
-# The calls in `body` to a [name, method?] in `raising`, outside a protect.
-def raising_calls(body, raising)
-  calls = body.to_enum(:scan, MAGNUS_ALLOCATING).map { [Regexp.last_match.begin(0), Regexp.last_match[0].strip] }
+# Every call site in `body` outside a protect, as [offset, key, label]: key is
+# the [name, method?] it calls, or nil for a magnus allocating constructor,
+# which raises whatever `raising` holds. Worked out once per body, so the
+# fixed point below only filters.
+def call_sites(body)
+  calls = body.to_enum(:scan, MAGNUS_ALLOCATING).map do
+    [Regexp.last_match.begin(0), nil, Regexp.last_match[0].strip]
+  end
   body.to_enum(:scan, /(\.\s*)?(\b[A-Z]\w*\s*(?:<[^>]*>)?\s*::\s*)?\b(\w+)\s*(?:::<[^>]*>)?\s*\(/).each do
     m = Regexp.last_match
     # `Type::f(` names an associated function, not a free one of that name.
     next if m[2]
 
-    calls << [m.begin(3), m[3]] if raising.include?([m[3], !m[1].nil?])
+    calls << [m.begin(3), [m[3], !m[1].nil?], m[3]]
   end
   # A free function handed over as a value, `.map(utf8_str)`, is called too.
   body.to_enum(:scan, /(?<![.\w])((?:\w+::)*)(\w+)(?=\s*[),])/).each do
     m = Regexp.last_match
     next if m[1].match?(/(?:\A|::)[A-Z]\w*::\z/) # `Val::string`, not `string`
 
-    calls << [m.begin(2), m[2]] if raising.include?([m[2], false])
+    calls << [m.begin(2), [m[2], false], m[2]]
   end
   spans = protected_spans(body)
-  calls.reject { |at, _| spans.any? { |s| s.cover?(at) } }
+  calls.reject { |at, _, _| spans.any? { |s| s.cover?(at) } }
+end
+
+# The calls in `sites` (from `call_sites`) to a [name, method?] in `raising`,
+# as [offset, label].
+def raising_in(sites, raising)
+  sites.filter_map { |at, key, label| [at, label] if key.nil? || raising.include?(key) }
+end
+
+# The calls in `body` to a [name, method?] in `raising`, outside a protect.
+def raising_calls(body, raising)
+  raising_in(call_sites(body), raising)
 end
 
 def copies_across_raises(rust)
@@ -881,30 +898,54 @@ def copies_across_raises(rust)
   aliases = Dir.glob(File.join(rust, "{bridge,glue}", "**", "*.rs")).flat_map do |path|
     code_only(File.binread(path)).scan(/\b(\w+)\s+as\s+(\w+)\b/)
   end
+  sites = fns.map { |f| call_sites(f[3]) }
   loop do
     aliases.each { |from, to| raising << [to, false] if raising.include?([from, false]) }
-    followed = raising.select { |k| defined[k].to_i <= 1 && !(k[1] && STD_METHOD_NAMES.include?(k[0])) }
-    grown = fns.filter_map do |rel, name, method, body|
+    followed = raising.select { |k| defined[k].to_i <= 1 && !(k[1] && STD_METHOD_NAMES.include?(k[0])) }.to_set
+    grown = fns.zip(sites).filter_map do |(rel, name, method), body_sites|
       k = [name, method]
       next if rel == "bridge/raw.rs" || raising.include?(k) || CANNOT_RAISE.include?(name)
 
-      k if raising_calls(body, followed).any?
+      k if raising_in(body_sites, followed).any?
     end
     break if grown.empty?
 
     raising.merge(grown)
   end
   aliases.each { |from, to| raising << [to, false] if raising.include?([from, false]) }
-  followed = raising.select { |k| defined[k].to_i <= 1 && !(k[1] && STD_METHOD_NAMES.include?(k[0])) }
+  followed = raising.select { |k| defined[k].to_i <= 1 && !(k[1] && STD_METHOD_NAMES.include?(k[0])) }.to_set
   copy_fns = fns.select { |f| f[6][/->(.*)\z/m, 1]&.match?(COPY_TYPES) }.to_set { |f| f[1] }
 
   found = []
-  fns.select { |f| f[0].start_with?("glue/", "bridge/") && f[0] != "bridge/raw.rs" }.each do |rel, name, _, body, base, code|
+  fns.select { |f| f[0].start_with?("glue/", "bridge/") && f[0] != "bridge/raw.rs" }.each do |rel, name, _, body, base, code, sig|
+    # `var`, a copy from `from`, live to `block_end` unless dropped or moved.
+    check = lambda do |var, from, block_end|
+      dropped = body.index(/\bdrop\(\s*(?:\([\w\s,]*)?\b#{var}\b[\w\s,]*\)?\s*\)/, from)
+      # Handed to a call by value (`f(x)`, `f(a, x)`): the callee owns it.
+      moved = body.index(/[(,]\s*#{var}\s*[,)]/, from)
+      live_end = [block_end, dropped || block_end, moved || block_end].min
+      seg = body[from...live_end]
+      # The call it is handed to by value owns it: not live across that one.
+      into = moved && (open = body.rindex("(", moved)) && (open - from)
+      raising_calls(seg, followed).each do |at, callee|
+        next if into && at < into && seg.index("(", at) == into
+        line = code[0...(base + from + at)].count("\n") + 1
+        found << "#{rel}:#{line} #{name}: `#{var}` (a copy) is live across #{callee}"
+      end
+    end
+    # A copy taken by value is this frame's from the start: the caller that
+    # handed it over is not checked past that call.
+    sig[/\((.*)\)/m, 1].to_s.scan(/(?:\A|,)\s*(?:mut\s+)?(\w+)\s*:\s*(?:Option<\s*)?(?:\w+::)*(?:#{COPY_TYPES.source})/)
+                       .each { |(var)| check.(var, 0, body.length) }
     local_copy_fns = copy_fns.dup
     body.to_enum(:scan, /\blet\s+(?:mut\s+)?(?:Some\(\s*)?(?:mut\s+)?(\(?[\w\s,]+\)?)\s*(?::[^=;]*)?=(?!=)/).each do
       m = Regexp.last_match
+      depth = 0
       stmt_end = (m.end(0)...body.length).find do |i|
-        body[i] == ";" && body[m.end(0)...i].count("([{") == body[m.end(0)...i].count(")]}")
+        c = body[i]
+        depth += 1 if "([{".include?(c)
+        depth -= 1 if ")]}".include?(c)
+        c == ";" && depth.zero?
       end or next
       rhs = body[m.end(0)...stmt_end]
       # A block's value is not the copy made inside it; its own lets are seen.
@@ -919,20 +960,7 @@ def copies_across_raises(rust)
       # The innermost block holding the `let`.
       opens = (0...m.begin(0)).select { |i| body[i] == "{" }.reverse
       block_end = opens.lazy.map { |o| matching_close(body, o) }.find { |c| c && c > m.begin(0) } || body.length
-      names.each do |var|
-        dropped = body.index(/\bdrop\(\s*(?:\([\w\s,]*)?\b#{var}\b[\w\s,]*\)?\s*\)/, stmt_end)
-        # Handed to a call by value (`f(x)`, `f(a, x)`): the callee owns it.
-        moved = body.index(/[(,]\s*#{var}\s*[,)]/, stmt_end)
-        live_end = [block_end, dropped || block_end, moved || block_end].min
-        seg = body[stmt_end...live_end]
-        # The call it is handed to by value owns it: not live across that one.
-        into = moved && (open = body.rindex("(", moved)) && (open - stmt_end)
-        raising_calls(seg, followed).each do |at, callee|
-          next if into && at < into && seg.index("(", at) == into
-          line = code[0...(base + stmt_end + at)].count("\n") + 1
-          found << "#{rel}:#{line} #{name}: `#{var}` (a copy) is live across #{callee}"
-        end
-      end
+      names.each { |var| check.(var, stmt_end, block_end) }
     end
   end
   found.uniq
