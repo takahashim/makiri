@@ -221,10 +221,15 @@ RSpec.describe "Makiri::XML#to_xml" do
       %(<r xmlns:p="urn:p">#{open.join}#{close.join}</r>)
     end
 
-    def seconds
-      t = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-      yield
-      Process.clock_gettime(Process::CLOCK_MONOTONIC) - t
+    # The fastest of several runs: the small document serializes in about
+    # 0.1 ms, so one sample is at the mercy of a preempted CI runner (one
+    # read 10.4 on macOS CI).
+    def seconds(runs = 7)
+      Array.new(runs) do
+        t = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        yield
+        Process.clock_gettime(Process::CLOCK_MONOTONIC) - t
+      end.min
     end
 
     it "stays linear as depth and attribute count both double" do
