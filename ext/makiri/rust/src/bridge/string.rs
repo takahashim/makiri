@@ -225,6 +225,25 @@ pub fn ruby_string_bytes(s: RString) -> Result<OwnedBuf, Error> {
 
 /* ---- assembling Ruby Strings ---- */
 
+/// A UTF-8 String holding a copy of `bytes`, for a frame that owns the
+/// buffer it copies out of (a serializer's output): Ruby's allocator raises
+/// `NoMemoryError`, and a raise past that frame would leak the buffer, so it
+/// comes back as `Err` and the buffer drops.
+///
+/// `bytes` must be valid UTF-8; the String is tagged so.
+pub fn utf8_string(bytes: &[u8]) -> Result<RString, Error> {
+    let Ok(len) = c_long::try_from(bytes.len()) else {
+        return Err(makiri_error("string too large"));
+    };
+    // SAFETY: `bytes` is `len` readable bytes for the call; `protect_value`
+    // turns the allocator's raise into `Err`.
+    let v = super::ruby::protect_value(|| unsafe {
+        super::raw::utf8_str_new(bytes.as_ptr() as *const c_char, len)
+    })?;
+    RString::from_value(v)
+        .ok_or_else(|| crate::bridge::ruby::internal_error("the allocator made no String"))
+}
+
 /// Join document-order slices totalling `total` bytes into one UTF-8 String.
 ///
 /// This is the text index's output path, so it writes straight into the fresh

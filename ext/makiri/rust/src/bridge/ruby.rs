@@ -269,6 +269,18 @@ pub fn same_value(a: Value, b: Value) -> bool {
     a.as_raw() == b.as_raw()
 }
 
+/// [`intern`] from a frame that owns something: the `NoMemoryError` a
+/// symbol table that cannot grow raises comes back as `Err` instead of
+/// unwinding past the caller.
+pub fn intern_protected(name: &str) -> Result<ID, Error> {
+    let mut id: ID = 0;
+    protect(|| {
+        id = intern(name);
+        nil().as_raw()
+    })?;
+    Ok(id)
+}
+
 /// A method `ID`, interned from a UTF-8 name.
 ///
 /// UTF-8 explicitly, not `rb_intern`: that one tags the name US-ASCII, so a
@@ -278,7 +290,8 @@ pub fn same_value(a: Value, b: Value) -> bool {
 pub fn intern(name: &str) -> ID {
     // SAFETY: `name` is `name.len()` valid UTF-8 bytes, read for the call;
     // interning valid UTF-8 raises only on a symbol table that cannot grow,
-    // and every caller interns at init or from a frame owning nothing.
+    // and every caller interns at init, from a frame owning nothing, or under
+    // `intern_protected`.
     unsafe {
         super::raw::intern3(
             name.as_ptr() as *const core::ffi::c_char,
@@ -354,6 +367,19 @@ where
     let out = magnus_protect(|| latch.guard(rb_sys::Qnil as VALUE, f));
     latch.resume();
     out
+}
+
+/// Run `f` - Rust that makes Ruby objects through magnus, whose allocating
+/// calls raise rather than return - under `protect`, for a caller that owns
+/// what a raise would leak: the raise comes back as `Err`, `f`'s own frames
+/// are the only ones it skips, and the caller's owned values drop.
+pub fn protected<T>(f: impl FnOnce() -> Result<T, Error>) -> Result<T, Error> {
+    let mut out = None;
+    protect(|| {
+        out = Some(f());
+        rb_sys::Qnil as VALUE
+    })?;
+    out.unwrap_or_else(|| Err(internal_error("protected body did not finish")))
 }
 
 #[inline]

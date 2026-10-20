@@ -287,7 +287,13 @@ unsafe fn handler_resolver(
         return Ok(None);
     };
 
-    let method = crate::bridge::ruby::intern(name);
+    /* Under protect: this frame is inside an evaluation - its guards and the
+     * engine's state are on the stack above - so a raise from the symbol
+     * table must not unwind past it. */
+    let method = match crate::bridge::ruby::intern_protected(name) {
+        Ok(m) => m,
+        Err(e) => return Err(HandlerFailure::Raised(e, None).report(bridge, err)),
+    };
     /* `respond_to?` - and `respond_to_missing?` behind it - is the handler's own
      * Ruby code, so it is asked under protect: a raise there fails this call like
      * any handler raise, instead of unwinding past the evaluation's guards. */

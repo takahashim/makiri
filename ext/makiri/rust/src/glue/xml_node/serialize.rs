@@ -12,7 +12,6 @@ use magnus::{method, prelude::*, Error, Ruby, Value};
 use crate::bridge::ruby::makiri_error;
 use crate::glue::kwargs::Kwargs;
 
-use super::strings::utf8;
 use crate::init::MOD_XML_NODE_METHODS;
 use crate::xml::serialize::{self as xml_serialize, Failure};
 
@@ -114,7 +113,9 @@ fn to_xml(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Er
             enc_name.as_ref().map(|b| b.as_slice()),
         );
         let buf = out.map_err(|f| failure_error(f, "serialize"))?;
-        let mut str = utf8(ruby, buf.as_slice()).as_value();
+        /* Protected: a failed allocation drops `buf` (and `enc_name`) rather
+         * than leaking them. */
+        let mut str = crate::bridge::string::utf8_string(buf.as_slice())?.as_value();
         drop(buf);
 
         if let Some(enc) = to_enc {
@@ -131,7 +132,7 @@ fn canonicalize(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Val
         let comments = Kwargs::scan(args)?.flag(ruby, "comments");
         let buf = xml_serialize::canonicalize(this.doc_ref(), this.id, comments)
             .map_err(|f| failure_error(f, "canonicalize"))?;
-        Ok(utf8(ruby, buf.as_slice()).as_value())
+        Ok(crate::bridge::string::utf8_string(buf.as_slice())?.as_value())
     })
 }
 

@@ -160,7 +160,10 @@ fn parse_stylesheet_inner(ruby: &Ruby, text: Value) -> Result<RArray, Error> {
     };
 
     // ---- phase two ----
-    rules_to_ruby(ruby, &Keys::new(ruby), &parsed)
+    /* Under protect: building the result allocates Ruby objects, and a raise
+     * from the allocator would unwind past this frame, which owns the parsed
+     * rules and the input's copy. */
+    crate::bridge::ruby::protected(|| rules_to_ruby(ruby, &Keys::new(ruby), &parsed))
 }
 
 /// `Makiri::Lexbor::CSS.parse_stylesheet`. From `Init_makiri`.

@@ -277,8 +277,12 @@ pub fn node_set_from(
 ) -> Result<Value, Error> {
     let (set, fill) = node_set_with_fill(document);
     let mut refused = None;
+    /* Borrowed into the protected closure, not moved: a raise unwinds the
+     * closure's frames only, and the collection the iterator owns (a
+     * matcher's result) is still this frame's to drop. */
+    let mut nodes = nodes;
     crate::bridge::ruby::protect_value(|| {
-        for n in nodes {
+        for n in nodes.by_ref() {
             if let Err(e) = fill.push(n) {
                 refused = Some(e);
                 break;
