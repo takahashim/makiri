@@ -149,7 +149,7 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
 * `<?php ... ?>` in HTML input is a **ProcessingInstruction** node; `#to_html`
   writes it back as `<?php ... ?>`, and `<?` at end of input is ignored.
   * The HTML Standard added processing-instruction tokens and tree-construction
-    rules for them; Makiri follows them through Lexbor. `Nokogiri::HTML5` (gumbo)
+    rules for them, and Makiri's parser follows them. `Nokogiri::HTML5` (gumbo)
     still produces the older bogus comment (`<!--?php ... ?-->`), and
     `Nokogiri::HTML` (libxml2) its own comment.
 
@@ -165,10 +165,9 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
 
 * There is no `Node#name=` / `#node_name=` (on HTML or XML nodes). Nokogiri
   renames a node in place and keeps its identity; the DOM has no rename, and
-  Lexbor keeps elements such as `<template>`, `<option>` and `<style>` in
-  structs of their own, so a node cannot change its tag safely. Create an
-  element of the new name, move the attributes and children, and `replace`
-  the old one (see CHANGELOG.md).
+  an element's tag decides what it is (a `<template>` owns its contents), so a
+  node cannot change its tag. Create an element of the new name, move the
+  attributes and children, and `replace` the old one (see CHANGELOG.md).
 * Element and attribute names follow the WHATWG DOM's rules
   * `create_element`, `[]=` and `set_attribute_ns` raise `ArgumentError` for a
     name the DOM refuses - one holding whitespace, `/`, `>` (or `=` for an
@@ -224,26 +223,19 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
   * One exception to the DOM: an HTML attribute named `xml:lang` (in no
     namespace) becomes the XML namespace's `xml:lang`, as the XML reader reads
     that name, so XHTML-style HTML still writes as XML.
-* A known gap, in Lexbor's tag table: an HTML document that already holds a
-  parsed element named with a colon (`<x:y>`, one local name) and then
-  receives, by `import_node` from another document, a prefixed element
-  written the same way (`x:y` from XML: prefix `x`, local name `y`) re-points
-  the table's entry for that spelling - the parsed element then no longer
-  matches CSS `x\:y`. Copies within one document do not touch the table.
 * An XML element with a prefix, imported into HTML, keeps it (`h:div` in
   XHTML has the local name `div`). Two readers then disagree, as they do in
-  browsers: CSS's `div` matches it (Lexbor matches the local name), XPath's
-  `//div` does not (an HTML element's name test reads its qualified name). And
-  Lexbor's HTML serializer writes the prefix (`<h:div>`), where the HTML
-  standard writes the local name, so the HTML does not re-parse to the same
-  element.
+  browsers: CSS's `div` matches it (the matcher compares the local name),
+  XPath's `//div` does not (an HTML element's name test reads its qualified
+  name). `#to_html` writes the local name (`<div>`), as the HTML standard
+  does.
 
 ## CSS
 
 * Most jQuery/Nokogiri CSS extensions are not supported (`:gt`, `:lt`, `:eq`, `:first`, ...)
-  * Makiri uses Lexbor's selector engine, which is standards-based apart from one
-    text-containment extension. Use XPath (`xpath("//p[contains(., 'x')]")`) or
-    Enumerable (`css('li')[1]`) for the rest.
+  * Makiri's selector engine is standards-based. Use XPath
+    (`xpath("//p[contains(., 'x')]")`) or Enumerable (`css('li')[1]`) for the
+    rest.
     Standard Level-4 selectors (`:is` / `:where` / `:has`) are supported; some of which Nokogiri rejects.
   * There is no text-containment pseudo-class. Nokogiri's `:contains()` is
     not supported, and neither is Lexbor's `:lexbor-contains()`: it raises
@@ -255,20 +247,23 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
   selector) is supported and correct on both HTML and XML - the "type" is the
   element's own expanded name.
   * Nokogiri (XML and HTML5) mistranslates these to first-/only-child
-    (`//*[position()=1]` / `//*[last()=1]`), so it under-matches; Makiri matches
-    Lexbor's HTML matcher.
+    (`//*[position()=1]` / `//*[last()=1]`), so it under-matches; Makiri does
+    not.
 * HTML CSS takes a `{prefix => uri}` Hash (`css(selector, ns)`) but does not
-  resolve prefixes against it: Lexbor's matcher matches a prefixed type selector
-  loosely, so `svg|path`, `|path` and `path` all find the SVG element whatever
-  is bound. `Nokogiri::HTML5` honours the binding (a wrong URI finds nothing).
+  resolve prefixes against it: the HTML matcher keeps Lexbor's rule and
+  matches a prefixed type selector loosely, so `svg|path`, `|path` and `path`
+  all find the SVG element whatever is bound. `Nokogiri::HTML5` honours the
+  binding (a wrong URI finds nothing).
   * The Hash is accepted and unused rather than refused, so the `css(selector,
     ns)` a caller writes for both representations works. Use `#xpath`, where a
     prefix IS resolved against the bindings, when the namespace matters.
   * `Makiri::XML` resolves CSS prefixes properly - it lowers the selector to the
     XPath engine, which registers the bindings.
-  * The same holds for attribute selectors: HTML `[|href]` (no namespace) and
-    plain `[href]` also find an SVG `xlink:href`, which `Nokogiri::HTML5`
-    does not.
+  * Attribute selectors do not resolve the prefix either: the name is looked
+    up by qualified name, as `getAttribute` does, so `[xlink|href]`,
+    `[foo|href]`, `[|href]` and `[href]` all find an attribute named `href`
+    and not an SVG `xlink:href`. Write `[xlink\:href]` for that one, or use
+    XPath (`//@xlink:href` with the XLink namespace registered).
     `Makiri::XML` reads `[|a]` as the no-namespace attribute.
 * A selector under a node matches the way `Element#querySelectorAll` does in a
   browser, not scoped to that node, on HTML: `at_css("#c").css("div p")` finds a
@@ -276,12 +271,12 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
   against the whole document and only the results are kept to descendants.
   `Nokogiri::HTML5` and `Nokogiri::XML` scope the selector to the node (`#c`
   cannot be the `div`), and so does `Makiri::XML`, which lowers the selector to
-  an XPath from the node. Lexbor has no `:scope`; for a scoped match on HTML,
+  an XPath from the node. HTML CSS has no `:scope`; for a scoped match on HTML,
   use XPath from the node (`xpath(".//div//p")`).
-* The attribute case modifiers (`[a="x" i]`, `[a="x" s]`): HTML supports both,
-  through Lexbor's matcher. `Makiri::XML` accepts `s` (case-sensitive, which XML
-  values are anyway) and refuses `i` with `Makiri::CSS::SyntaxError`. Nokogiri
-  refuses both on either representation.
+* The attribute case modifiers (`[a="x" i]`, `[a="x" s]`): HTML supports both.
+  `Makiri::XML` accepts `s` (case-sensitive, which XML values are anyway) and
+  refuses `i` with `Makiri::CSS::SyntaxError`. Nokogiri refuses both on either
+  representation.
 * `#matches?` answers for a DETACHED node (`document.create_element("p")
   .matches?("p")` is true, on both representations). Nokogiri raises
   `NoMethodError` there - it implements `#matches?` as a search from
