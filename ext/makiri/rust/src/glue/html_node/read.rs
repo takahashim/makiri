@@ -7,11 +7,11 @@
 //!
 //! # Where a GC may run
 //!
-//! Building any String or NodeSet is a GC point, so a view borrowed from a Ruby
-//! String must not be live across one. The attribute lookups take their name
-//! through `ruby_verified_text`, whose guard keeps the String reachable until
-//! it drops, and read the bytes before building anything. Bytes borrowed from
-//! the document are arena memory, which a GC does not move.
+//! Building any String or NodeSet allocates, and Ruby's allocator raises
+//! `NoMemoryError` past every Rust frame. The attribute lookups take their
+//! name through `ruby_verified_text`, an owned copy, and drop it before
+//! building anything, so a raise there leaks nothing. Bytes borrowed from the
+//! document are arena memory, which a GC does not move.
 
 #![forbid(unsafe_code)]
 

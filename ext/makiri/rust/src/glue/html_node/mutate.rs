@@ -24,10 +24,9 @@ use crate::bridge::fragment::{set_template_inner_html, stage_fragment_in};
 use crate::bridge::html::{
     check_owning_doc, edit, insert, new_node, wrap_html_node, HtmlEdit, HtmlSelf,
 };
-use crate::bridge::string::HtmlSource;
 use crate::bridge::string::{
     namespace_arg, ruby_verified_data, ruby_verified_name, ruby_verified_text,
-    ruby_verified_text_opt,
+    ruby_verified_text_opt, HtmlSource,
 };
 use crate::glue::node::dom_extract as extract;
 use crate::html_dom::html::{HtmlDocMut, NodeType, Place, RawNode};

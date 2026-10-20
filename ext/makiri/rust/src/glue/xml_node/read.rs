@@ -20,8 +20,7 @@ use magnus::{prelude::*, Error, Ruby, Value};
 
 use super::{wrap, XmlSelf};
 use crate::bridge::node_set::node_set_with_fill;
-use crate::bridge::string::dom_name_str;
-use crate::bridge::string::utf8_str;
+use crate::bridge::string::{dom_name_str, utf8_str};
 use crate::child_index;
 use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId};
 

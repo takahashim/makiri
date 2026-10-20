@@ -244,14 +244,12 @@ pub fn utf8_str(bytes: &[u8]) -> Value {
 /// output buffer, an argument's copy): the allocator's raise comes back as
 /// `Err`, and the caller's owned values drop.
 pub fn utf8_str_protected(bytes: &[u8]) -> Result<RString, Error> {
-    let Ok(len) = c_long::try_from(bytes.len()) else {
+    if c_long::try_from(bytes.len()).is_err() {
         return Err(makiri_error("string too large"));
-    };
-    // SAFETY: `bytes` is `len` readable bytes for the call; `protect_value`
-    // turns the allocator's raise into `Err`.
-    let v = super::ruby::protect_value(|| unsafe {
-        super::raw::utf8_str_new(bytes.as_ptr() as *const c_char, len)
-    })?;
+    }
+    // SAFETY: valid UTF-8 by `utf8_str`'s contract; `protect_value` turns the
+    // allocator's raise into `Err`.
+    let v = super::ruby::protect_value(|| unsafe { ruby_str_from_utf8(bytes) })?;
     RString::from_value(v)
         .ok_or_else(|| crate::bridge::ruby::internal_error("the allocator made no String"))
 }
@@ -312,8 +310,12 @@ pub unsafe fn ruby_str_from_slices<'a>(
 /// text-input contract. Bytes that were not would make a wrong String rather
 /// than a memory error - wrong is still wrong.
 pub unsafe fn ruby_str_from_utf8(bytes: &[u8]) -> VALUE {
+    /* A length `c_long` cannot hold (32 bits on Windows) is passed as -1,
+     * which Ruby refuses with ArgumentError - a raise, as an allocation
+     * failure already is - rather than truncated into a shorter String. */
+    let len = c_long::try_from(bytes.len()).unwrap_or(-1);
     /* A slice's pointer is never null, even when it is empty. */
-    super::raw::utf8_str_new(bytes.as_ptr() as *const c_char, bytes.len() as c_long)
+    super::raw::utf8_str_new(bytes.as_ptr() as *const c_char, len)
 }
 
 /// A DOM name as a Ruby String: frozen and deduplicated, tagged UTF-8 -
