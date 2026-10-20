@@ -147,6 +147,26 @@
   fun:gc_writebarrier_incremental
 }
 
+# The same flag read through the other barrier entry: a C-API call that copies
+# a hash - `rb_scan_args` duplicating a keyword-argument Hash for one of our
+# methods (`ar_copy`) - calls `rb_gc_writebarrier_remember`, which reads the
+# copy's RVALUE flags through `RVALUE_BLACK_P` during incremental marking. It
+# fails intermittently, in whichever spec a GC step happens to land on (shard
+# 2/4, `Makiri::XML` with keywords, on runs 39202324640 and 39384625418), and
+# our frames only make the call.
+{
+  ruby-gc-cond-writebarrier_remember
+  Memcheck:Cond
+  ...
+  fun:rb_gc_impl_writebarrier_remember
+}
+{
+  ruby-gc-value8-writebarrier_remember
+  Memcheck:Value8
+  ...
+  fun:rb_gc_impl_writebarrier_remember
+}
+
 # ---- Ruby VM internal caches that are never freed before exit ----
 # The global constant-cache / inline method-cache id_table is allocated lazily
 # on method lookup and lives for the life of the VM, so RUBY_FREE_AT_EXIT still
