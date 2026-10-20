@@ -9,6 +9,7 @@
 
 #![allow(unsafe_code)]
 
+use core::cell::{Cell, RefCell};
 use core::ptr::NonNull;
 
 use magnus::rb_sys::AsRawValue;
@@ -214,7 +215,8 @@ pub enum NodeRepr {
 /// deliberately: readers copy the pointer out of a `&DocData` and hold what
 /// they derive from it well past that borrow - an XPath context keeps this
 /// pointer for the Document's whole life and reborrows the content per
-/// evaluate, while other calls take `&mut DocData` for the node cache. A `Box` field
+/// evaluate, while other calls read the node cache through the same
+/// `&DocData`. A `Box` field
 /// would assert unique ownership underneath those live aliases (a Stacked
 /// Borrows hazard); a `NonNull` asserts nothing. `Copy`, so a reader gets the
 /// pointer without borrowing the wrapper.
@@ -292,8 +294,8 @@ impl NodeCache {
         }
     }
 
-    fn compact(&mut self, relocator: &Relocator) {
-        for v in self.map.values_mut() {
+    fn compact(&self, relocator: &Relocator) {
+        for v in self.map.values() {
             relocator.relocate(v);
         }
     }
@@ -307,7 +309,7 @@ impl NodeCache {
 /// a handler holds closed, and the versions readers key their caches by. Kept
 /// together because they answer one question - may this document change, and
 /// has it - and only [`record_edit`] and [`DocumentEvaluation`] write them.
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 struct EditState {
     /// How many XPath evaluations that can run Ruby (ones with a handler) are
     /// reading this document right now. Every mutator refuses while it is
@@ -336,7 +338,7 @@ impl EditState {
 /// What the GC was last told about a Document's content, which lives outside
 /// Ruby's allocator ([`account_document`]): `Drop` takes back exactly `bytes`,
 /// and [`account_growth`] compares against it.
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 struct ExternalReport {
     /// The external bytes reported.
     bytes: usize,
@@ -372,28 +374,36 @@ impl ExternalReport {
 
 /// A Document wrapper's data: the parsed content (owned - GC frees it), the
 /// mutation gate's count, and the reserved errors Array.
+///
+/// Read and written through `&DocData` only - every field that changes is a
+/// cell - so a method may hold one while another reads it (a wrapper made
+/// while a child walk holds the memo, a GC run in the middle of either), and
+/// the GC callbacks read it shared too. The two `RefCell`s are borrowed only
+/// for spans that run no Ruby and so no collection; the mark and compaction
+/// hooks rely on that (see [`Hooks for DocData`](#impl-Hooks-for-DocData)).
 pub struct DocData {
     /// Set once, by `DocumentShell::install`; read through the accessors below.
-    content: Content,
+    content: Cell<Content>,
     /// The mutation gate and the edit versions ([`EditState`]).
-    edits: EditState,
+    edits: Cell<EditState>,
     errors: Held,
     /// What the GC has been told about the content ([`ExternalReport`]).
-    report: ExternalReport,
+    report: Cell<ExternalReport>,
     /// One wrapper per node; see [`NodeCache`].
     ///
     /// Boxed and optional so a document nobody navigates never allocates a
     /// cache, and its wrapper stays one pointer wide.
-    nodes: Option<Box<NodeCache>>,
+    nodes: RefCell<Option<Box<NodeCache>>>,
     /// Where `child_count` / `child_at` last were ([`ChildPositionMemo`]).
     /// Allocates nothing until the first of them records.
-    child_memo: ChildPositionMemo,
+    child_memo: RefCell<ChildPositionMemo>,
 }
 
 impl DocData {
     /// The one wrapper for `token`, or None until something navigates to it.
-    fn cached(&self, token: usize) -> Option<Value> {
-        self.nodes.as_ref()?.get(token)
+    fn cached(&self, token: usize) -> Result<Option<Value>, Error> {
+        let nodes = self.nodes.try_borrow().map_err(|_| busy_cache())?;
+        Ok(nodes.as_ref().and_then(|c| c.get(token)))
     }
 
     /// Make room in the cache (allocating it on first use) for the wrapper
@@ -401,22 +411,24 @@ impl DocData {
     /// BEFORE the wrapper exists: a wrapper made and then not cached would be
     /// a second object for its node on the next navigation, without the
     /// first one's `freeze`, instance variables or singleton methods.
-    fn reserve_node(&mut self) -> Result<(), ()> {
-        if self.nodes.is_none() {
-            self.nodes = Some(
+    fn reserve_node(&self) -> Result<(), ()> {
+        let mut nodes = self.nodes.try_borrow_mut().map_err(|_| ())?;
+        if nodes.is_none() {
+            *nodes = Some(
                 crate::falloc::try_box(NodeCache {
                     map: HashMap::with_hasher(BuildHasherDefault::default()),
                 })
                 .map_err(|_| ())?,
             );
         }
-        self.nodes.as_mut().ok_or(())?.reserve()
+        nodes.as_mut().ok_or(())?.reserve()
     }
 
     /// Remember `wrapper` for `token`, in the room [`DocData::reserve_node`]
     /// made.
-    fn cache(&mut self, token: usize, wrapper: Held) -> Result<(), ()> {
-        self.nodes.as_mut().ok_or(())?.insert(token, wrapper)
+    fn cache(&self, token: usize, wrapper: Held) -> Result<(), ()> {
+        let mut nodes = self.nodes.try_borrow_mut().map_err(|_| ())?;
+        nodes.as_mut().ok_or(())?.insert(token, wrapper)
     }
 
     /// The Document's parse-warning Array.
@@ -432,15 +444,15 @@ impl DocData {
     fn grown_enough(&self) -> bool {
         // SAFETY: the content is owned by this object and live for the call.
         unsafe {
-            match self.content {
+            match self.content.get() {
                 Content::Empty => false,
                 Content::Html(p) => {
-                    let then = self.report.chunks;
+                    let then = self.report.get().chunks;
                     p.as_ref().arena_chunks()
                         >= then.saturating_add((then / 8).max(GROWTH_MIN_CHUNKS))
                 }
                 Content::Xml(d) => {
-                    let then = self.report.bytes;
+                    let then = self.report.get().bytes;
                     d.as_ref().memsize() >= then.saturating_add((then / 8).max(GROWTH_MIN_BYTES))
                 }
             }
@@ -450,14 +462,19 @@ impl DocData {
     /// The HTML content's chunk count, 0 for XML.
     fn arena_chunks(&self) -> usize {
         // SAFETY: as `grown_enough`.
-        unsafe { self.content.html().map_or(0, |p| p.as_ref().arena_chunks()) }
+        unsafe {
+            self.content
+                .get()
+                .html()
+                .map_or(0, |p| p.as_ref().arena_chunks())
+        }
     }
 
     /// The bytes the content holds outside Ruby's allocator, or 0 with none.
     fn external_bytes(&self) -> usize {
         // SAFETY: the content is owned by this object and live for the call.
         unsafe {
-            match self.content {
+            match self.content.get() {
                 Content::Empty => 0,
                 Content::Html(p) => p.as_ref().external_bytes(),
                 Content::Xml(d) => d.as_ref().memsize(),
@@ -466,25 +483,47 @@ impl DocData {
     }
 }
 
+/// The node cache's `RefCell` is borrowed mutably only by `reserve_node` and
+/// `cache`, whose spans allocate from the system allocator alone - no Ruby,
+/// so no collection - and a collection therefore never finds it borrowed. Were
+/// it to, marking the cache partly would let the GC free a wrapper it still
+/// hands out, so the hooks abort instead, as a broken invariant in a GC
+/// callback must (see the note on the callbacks in `typed.rs`).
 impl Hooks for DocData {
     fn mark(&self, marker: &Marker) {
         marker.mark(&self.errors);
-        if let Some(cache) = self.nodes.as_ref() {
-            cache.mark(marker);
+        match self.nodes.try_borrow() {
+            Ok(nodes) => {
+                if let Some(cache) = nodes.as_ref() {
+                    cache.mark(marker);
+                }
+            }
+            Err(_) => std::process::abort(),
         }
     }
 
-    fn compact(&mut self, relocator: &Relocator) {
-        if let Some(cache) = self.nodes.as_mut() {
-            cache.compact(relocator);
+    fn compact(&self, relocator: &Relocator) {
+        match self.nodes.try_borrow() {
+            Ok(nodes) => {
+                if let Some(cache) = nodes.as_ref() {
+                    cache.compact(relocator);
+                }
+            }
+            Err(_) => std::process::abort(),
         }
     }
 
     fn memsize(&self) -> usize {
+        /* A size only, so a cell found borrowed counts as empty. */
+        let cache = self
+            .nodes
+            .try_borrow()
+            .map_or(0, |n| n.as_ref().map_or(0, |c| c.memsize()));
+        let memo = self.child_memo.try_borrow().map_or(0, |m| m.memsize());
         core::mem::size_of::<DocData>()
             .saturating_add(self.external_bytes())
-            .saturating_add(self.nodes.as_ref().map_or(0, |c| c.memsize()))
-            .saturating_add(self.child_memo.memsize())
+            .saturating_add(cache)
+            .saturating_add(memo)
     }
 }
 
@@ -499,18 +538,18 @@ impl Drop for DocData {
         // this wrapper owns it; readers' borrows are confined to calls on a
         // live Document, and this one is being collected.
         unsafe {
-            match self.content {
+            match self.content.get() {
                 Content::Empty => {}
                 Content::Html(p) => drop(Box::from_raw(p.as_ptr())),
                 Content::Xml(d) => drop(Box::from_raw(d.as_ptr())),
             }
         }
-        self.content = Content::Empty;
+        self.content.set(Content::Empty);
         /* Balance the report, or the GC keeps counting freed arenas as live
          * and collects ever more eagerly. A plain C call, as this hook has to
          * be: it only subtracts, and Ruby's own `xfree` does the same from
          * here. */
-        if let Some(diff) = self.report.release() {
+        if let Some(diff) = self.report.get().release() {
             crate::bridge::ruby::report_external_bytes(diff);
         }
     }
@@ -530,10 +569,17 @@ impl Drop for DocData {
 /// caller's frame (a local VALUE is), and nothing borrowed from a Ruby String
 /// may be held across the call.
 fn account_document(rb_doc: VALUE) {
-    // SAFETY: `rb_doc` is a Document (the base type matches either leaf).
-    let d = unsafe { &mut *(DOC_TYPE.known_ptr(value(rb_doc))) };
+    // SAFETY: `rb_doc` is a Document (the base type matches either leaf),
+    // live on the caller's frame.
+    let rb_doc = unsafe { value(rb_doc) };
+    let d = DOC_TYPE.get_known(&rb_doc);
     let (now, chunks) = (d.external_bytes(), d.arena_chunks());
-    if let Some(diff) = d.report.update(now, chunks) {
+    let mut report = d.report.get();
+    let diff = report.update(now, chunks);
+    d.report.set(report);
+    /* After the cell is written: the report may run a collection, which
+     * reads `d` shared - as it may, now that nothing holds it `&mut`. */
+    if let Some(diff) = diff {
         crate::bridge::ruby::report_external_bytes(diff);
     }
 }
@@ -562,7 +608,7 @@ const GROWTH_MIN_BYTES: usize = 512 * 1024;
 /// caller's stack and no borrowed Ruby String held - which is so at the start
 /// of an edit, before any argument is converted.
 pub fn account_growth(rb_doc: Value) {
-    if with_doc_data_known(rb_doc, |d| d.grown_enough()) {
+    if doc_data_known(&rb_doc).grown_enough() {
         account_document(rb_doc.as_raw());
     }
 }
@@ -640,12 +686,12 @@ impl DocumentShell {
             ty.wrap(
                 klass,
                 || DocData {
-                    content: Content::Empty,
-                    edits: EditState::default(),
-                    errors: Held::EMPTY,
-                    report: ExternalReport::default(),
-                    nodes: None,
-                    child_memo: ChildPositionMemo::default(),
+                    content: Cell::new(Content::Empty),
+                    edits: Cell::new(EditState::default()),
+                    errors: Held::empty(),
+                    report: Cell::new(ExternalReport::default()),
+                    nodes: RefCell::new(None),
+                    child_memo: RefCell::new(ChildPositionMemo::default()),
                 },
                 |d, store| d.errors = store.hold(errors),
             )
@@ -664,12 +710,10 @@ impl DocumentShell {
     }
 
     fn install(self, content: Content) -> Value {
-        // SAFETY: `self.0` is a Document wrapper (the base type matches either
-        // leaf) that has no content yet, so nothing is overwritten.
-        unsafe {
-            let d = DOC_TYPE.known_ptr(value(self.0));
-            (*d).content = content;
-        }
+        // SAFETY: `self.0` is a live Document wrapper (the base type matches
+        // either leaf) that has no content yet, so nothing is overwritten.
+        let rb_doc = unsafe { value(self.0) };
+        DOC_TYPE.get_known(&rb_doc).content.set(content);
         account_document(self.0);
         // SAFETY: a live Document.
         unsafe { value(self.0) }
@@ -682,13 +726,13 @@ impl DocumentShell {
 
 /// The content of any Document. `Err(TypeError)` for a non-Document.
 pub(in crate::bridge) fn doc_content(rb_doc: Value) -> Result<Content, Error> {
-    Ok(DOC_TYPE.get(&rb_doc)?.content)
+    Ok(DOC_TYPE.get(&rb_doc)?.content.get())
 }
 
 /// [`doc_content`] for a VALUE already known to be a Document - a node's
 /// keepalive Document, or the receiver of a Document method.
 pub(in crate::bridge) fn doc_content_known(rb_doc: Value) -> Content {
-    DOC_TYPE.get_known(&rb_doc).content
+    DOC_TYPE.get_known(&rb_doc).content.get()
 }
 
 /// The XML arena of a Document, or null when it is not an XML one.
@@ -728,29 +772,33 @@ fn html_doc_of(d: &DocData) -> DocPtr {
      * reaches a Document before `install`: a broken invariant. */
     let p = d
         .content
+        .get()
         .html()
         .expect("an HTML Document without its document");
     DocPtr::new(p)
 }
 
-/// Run `f` over the parsed document of a VALUE known to be an HTML Document.
+/// Run `f` over the parsed document of a VALUE known to be an HTML Document,
+/// for reading - an index a reader builds is a cell (`HtmlParsed`), so no
+/// reader takes the document `&mut`, and readers may overlap (an XPath walk
+/// that called a handler, and the handler's own reads).
 ///
-/// The `&mut HtmlParsed` does not escape `f`, so the raw pointer stays in this
-/// layer and no alias can outlive the call. `f` must not run Ruby that could
-/// re-enter this document (the readers' closures copy, they do not call back).
+/// The reference does not escape `f`, so the raw pointer stays in this layer.
 #[allow(
     clippy::expect_used,
     reason = "an HTML Document holds HTML content from `install` on, and none is reachable before"
 )]
 pub(in crate::bridge) fn with_html_parsed_known<R>(
     rb_doc: Value,
-    f: impl FnOnce(&mut HtmlParsed) -> R,
+    f: impl FnOnce(&HtmlParsed) -> R,
 ) -> R {
-    let mut p = doc_content_known(rb_doc)
+    let p = doc_content_known(rb_doc)
         .html()
         .expect("an HTML Document without its document");
-    // SAFETY: under the GVL, and the borrow is confined to `f`.
-    unsafe { f(p.as_mut()) }
+    // SAFETY: under the GVL, the document owned by its live wrapper, and the
+    // borrow confined to `f`; the only `&mut` of it is an edit's, which the
+    // mutation gate keeps from overlapping a reader that runs Ruby.
+    unsafe { f(p.as_ref()) }
 }
 
 /// One representation's leaf classes, by node type: the mapping both
@@ -815,12 +863,14 @@ pub(in crate::bridge) fn wrap_cached(
     document: Value,
 ) -> Result<Value, Error> {
     let token = source.identity();
-    if let Some(cached) = cached_node(document, token) {
+    if let Some(cached) = cached_node(document, token)? {
         return Ok(cached);
     }
     /* Room for the entry first: a failure after the wrap would hand out a
      * wrapper the cache does not know (DocData::reserve_node). */
-    with_doc_data_known(document, DocData::reserve_node).map_err(|_| wrap_oom())?;
+    doc_data_known(&document)
+        .reserve_node()
+        .map_err(|_| wrap_oom())?;
     let node = source.into_handle(document);
     /* The Document is stored after the wrap: see `TypedType::wrap`. */
     // SAFETY: a fresh wrapper; the store closure only moves a live VALUE in.
@@ -829,7 +879,7 @@ pub(in crate::bridge) fn wrap_cached(
             klass,
             || NodeData {
                 node,
-                document: Held::EMPTY,
+                document: Held::empty(),
             },
             |nd, store| nd.document = store.hold(document),
         ))
@@ -849,8 +899,8 @@ fn wrap_oom() -> Error {
 ///
 /// `rb_doc` must be a live Document; [`wrap_cached`] is the only caller and
 /// already holds one.
-fn cached_node(rb_doc: Value, token: usize) -> Option<Value> {
-    with_doc_data_known(rb_doc, |d| d.cached(token))
+fn cached_node(rb_doc: Value, token: usize) -> Result<Option<Value>, Error> {
+    doc_data_known(&rb_doc).cached(token)
 }
 
 /// `FrozenError` when the node `source` names has a wrapper and that wrapper is
@@ -861,7 +911,7 @@ pub(in crate::bridge) fn check_node_frozen(
     rb_doc: Value,
     source: impl NodeHandleSource,
 ) -> Result<(), Error> {
-    match cached_node(rb_doc, source.identity()) {
+    match cached_node(rb_doc, source.identity())? {
         Some(wrapper) => crate::bridge::ruby::check_frozen(wrapper),
         None => Ok(()),
     }
@@ -869,17 +919,19 @@ pub(in crate::bridge) fn check_node_frozen(
 
 /// Remember `wrapper` as the one wrapper for `token` under `rb_doc`.
 fn cache_node(rb_doc: Value, token: usize, wrapper: Value) -> Result<(), ()> {
-    // SAFETY: a live Document under the GVL, its data borrowed for the call
-    // alone, which runs no Ruby.
-    unsafe { DOC_TYPE.with_known(rb_doc, |d, store| d.cache(token, store.hold(wrapper))) }
+    DOC_TYPE.with_store(rb_doc, |d, store| d.cache(token, store.hold(wrapper)))
 }
 
-/// Run `f` over a Document's wrapper data, for the fields that are the
-/// wrapper's own rather than the content's (the evaluation count).
-fn with_doc_data_known<R>(rb_doc: Value, f: impl FnOnce(&mut DocData) -> R) -> R {
-    // SAFETY: a live Document (the base type matches either leaf), under the
-    // GVL, with the borrow confined to `f`.
-    unsafe { f(&mut *DOC_TYPE.known_ptr(rb_doc)) }
+/// A Document's wrapper data, for the fields that are the wrapper's own
+/// rather than the content's - every one of them a cell, so this is shared.
+fn doc_data_known(rb_doc: &Value) -> &DocData {
+    DOC_TYPE.get_known(rb_doc)
+}
+
+/// The node cache was found borrowed: a broken invariant (no borrow of it
+/// spans Ruby), not a bad input.
+fn busy_cache() -> Error {
+    crate::bridge::ruby::internal_error("a Document's node cache was found in use")
 }
 
 /// Why [`node_token_in`] refused a node.
@@ -1016,19 +1068,22 @@ pub enum EditKind {
 /// Recording after the change instead would miss an edit that panics, or
 /// fails having changed something, and leave a reader trusting a stale cache.
 pub fn record_edit(rb_doc: Value, kind: EditKind) {
-    with_doc_data_known(rb_doc, |d| d.edits.record(kind));
+    let d = doc_data_known(&rb_doc);
+    let mut edits = d.edits.get();
+    edits.record(kind);
+    d.edits.set(edits);
 }
 
 /// `Document#tree_version`: how many child-list edits the document has seen.
 /// `TypeError` for a non-Document.
 pub fn tree_version(rb_doc: Value) -> Result<u64, Error> {
-    Ok(DOC_TYPE.get(&rb_doc)?.edits.tree_version)
+    Ok(DOC_TYPE.get(&rb_doc)?.edits.get().tree_version)
 }
 
 /// `Document#attribute_version`: how many attribute edits the document has
 /// seen. `TypeError` for a non-Document.
 pub fn attribute_version(rb_doc: Value) -> Result<u64, Error> {
-    Ok(DOC_TYPE.get(&rb_doc)?.edits.attribute_version)
+    Ok(DOC_TYPE.get(&rb_doc)?.edits.get().attribute_version)
 }
 
 /* ---- the child-position memo ---- */
@@ -1039,8 +1094,20 @@ pub fn attribute_version(rb_doc: Value) -> Result<u64, Error> {
 ///
 /// `f` runs inside the document's borrow, so it must not run Ruby; a walk of
 /// the child links does not.
-fn with_child_memo<R>(rb_doc: Value, f: impl FnOnce(&mut ChildPositionMemo, u64) -> R) -> R {
-    with_doc_data_known(rb_doc, |d| f(&mut d.child_memo, d.edits.tree_version))
+///
+/// The memo's borrow spans `f` only, which walks links and runs no Ruby, so
+/// no second use of it can start inside; one found borrowed is a broken
+/// invariant, reported as `Makiri::InternalError`.
+fn with_child_memo<R>(
+    rb_doc: Value,
+    f: impl FnOnce(&mut ChildPositionMemo, u64) -> R,
+) -> Result<R, Error> {
+    let d = doc_data_known(&rb_doc);
+    let version = d.edits.get().tree_version;
+    let mut memo = d.child_memo.try_borrow_mut().map_err(|_| {
+        crate::bridge::ruby::internal_error("a Document's child memo was found in use")
+    })?;
+    Ok(f(&mut memo, version))
 }
 
 /// A receiver whose child lists `#child_count` / `#child_at` and their
@@ -1072,7 +1139,7 @@ pub trait ChildListHost: magnus::TryConvert {
         Self: 'a;
 
     /// How many children are in `list`.
-    fn child_count(&self, list: ChildList) -> usize {
+    fn child_count(&self, list: ChildList) -> Result<usize, Error> {
         with_child_memo(self.document(), |memo, version| {
             self.with_children(list, |c| c.count(memo, version))
         })
@@ -1082,7 +1149,7 @@ pub trait ChildListHost: magnus::TryConvert {
     fn child_at(&self, list: ChildList, index: usize) -> Result<Option<Value>, Error> {
         self.with_children(list, |c| {
             let found =
-                with_child_memo(self.document(), |memo, version| c.at(memo, version, index));
+                with_child_memo(self.document(), |memo, version| c.at(memo, version, index))?;
             self.wrap_child(found)
         })
     }
@@ -1093,7 +1160,7 @@ pub trait ChildListHost: magnus::TryConvert {
 /// `Err(Makiri::Error)` while an evaluation with a handler is reading `rb_doc`.
 /// Every mutator checks this before it changes anything.
 pub fn ensure_document_mutable(rb_doc: Value) -> Result<(), Error> {
-    if with_doc_data_known(rb_doc, |d| d.edits.evaluating) != 0 {
+    if doc_data_known(&rb_doc).edits.get().evaluating != 0 {
         return Err(makiri_error(
             "cannot modify a document while evaluating XPath over it (re-entrant mutation from a handler)",
         ));
@@ -1125,14 +1192,20 @@ pub struct DocumentEvaluation(
 impl DocumentEvaluation {
     pub fn enter(rb_doc: Value) -> Result<Self, Error> {
         DOC_TYPE.get(&rb_doc)?; /* TypeError for a non-Document */
-        with_doc_data_known(rb_doc, |d| d.edits.evaluating += 1);
+        let d = doc_data_known(&rb_doc);
+        let mut edits = d.edits.get();
+        edits.evaluating += 1;
+        d.edits.set(edits);
         Ok(DocumentEvaluation(rb_doc))
     }
 }
 
 impl Drop for DocumentEvaluation {
     fn drop(&mut self) {
-        with_doc_data_known(self.0, |d| d.edits.evaluating -= 1);
+        let d = doc_data_known(&self.0);
+        let mut edits = d.edits.get();
+        edits.evaluating -= 1;
+        d.edits.set(edits);
         /* Read the Document here, so the guard demonstrably holds it: the field
          * is there to keep it reachable, and a field nothing reads is one the
          * compiler is free to treat as absent. */

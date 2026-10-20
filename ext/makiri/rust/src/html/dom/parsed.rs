@@ -6,6 +6,7 @@
 //! nothing here borrows across a change: an edit takes `&mut` of the whole
 //! handle ([`HtmlParsed::edit`]), which drops the indexes first.
 
+use core::cell::OnceCell;
 use core::ptr::NonNull;
 
 use super::edit::HtmlDocMut;
@@ -42,17 +43,18 @@ impl HtmlNodeKey {
 }
 
 /// A parsed HTML document, and the indexes built over it on demand.
+///
+/// The indexes are cells a READER fills (`&self`): a query builds the one it
+/// needs while other readers - an XPath walk that called a handler, a node
+/// wrapper being made - hold the document shared, so building one must not
+/// take it `&mut`. Only an edit drops them, and an edit holds the document
+/// alone (`edit`, behind the mutation gate).
 pub struct HtmlParsed {
     doc: Document,
-    dom_index: Option<DomIndex>,
+    dom_index: OnceCell<DomIndex>,
     lines: Option<Lines>,
-    text_index: TextIndexState,
-}
-
-enum TextIndexState {
-    Unbuilt,
-    Built(TextIndex),
-    Inapplicable,
+    /// `None` inside: the document has no root element to index under.
+    text_index: OnceCell<Option<TextIndex>>,
 }
 
 impl HtmlParsed {
@@ -60,9 +62,9 @@ impl HtmlParsed {
     pub fn new(doc: Document, lines: Option<Lines>) -> Self {
         HtmlParsed {
             doc,
-            dom_index: None,
+            dom_index: OnceCell::new(),
             lines,
-            text_index: TextIndexState::Unbuilt,
+            text_index: OnceCell::new(),
         }
     }
 
@@ -103,35 +105,37 @@ impl HtmlParsed {
 
     /// Build the tag -> elements index if it is not built. `Err` when the
     /// build cannot allocate, which caches nothing.
-    pub fn ensure_dom_index(&mut self) -> Result<(), DomOom> {
-        if self.dom_index.is_none() {
-            self.dom_index = Some(DomIndex::build(self.doc()).ok_or(DomOom)?);
+    pub fn ensure_dom_index(&self) -> Result<(), DomOom> {
+        if self.dom_index.get().is_none() {
+            let index = DomIndex::build(self.doc()).ok_or(DomOom)?;
+            /* Unset just now, and nothing between could set it: the build
+             * runs no Ruby. */
+            let _ = self.dom_index.set(index);
         }
         Ok(())
     }
 
     /// The tag -> elements index, once built.
     pub fn dom_index(&self) -> Option<&DomIndex> {
-        self.dom_index.as_ref()
+        self.dom_index.get()
     }
 
     /// The elements with tag `tag`, in document order, by id; `None` until
     /// the index is built, and for a tag it does not bucket.
     pub fn tag_bucket(&self, tag: TagId) -> Option<&[NodeId]> {
-        self.dom_index.as_ref()?.tag_bucket(tag)
+        self.dom_index.get()?.tag_bucket(tag)
     }
 
     /// Build the node -> text index if it is not built and can be.
-    pub fn ensure_text_index(&mut self) -> Result<(), DomOom> {
-        if matches!(self.text_index, TextIndexState::Unbuilt) {
-            let Some(root) = self.doc().as_node().document_root() else {
-                self.text_index = TextIndexState::Inapplicable;
-                return Ok(());
+    pub fn ensure_text_index(&self) -> Result<(), DomOom> {
+        if self.text_index.get().is_none() {
+            let built = match self.doc().as_node().document_root() {
+                Some(root) => TextIndex::build(root)?,
+                None => None,
             };
-            self.text_index = match TextIndex::build(root)? {
-                Some(t) => TextIndexState::Built(t),
-                None => TextIndexState::Inapplicable,
-            };
+            /* As `ensure_dom_index`: unset just now, and the build runs no
+             * Ruby. A failed build sets nothing, so a later call retries. */
+            let _ = self.text_index.set(built);
         }
         Ok(())
     }
@@ -139,16 +143,13 @@ impl HtmlParsed {
     /// The run of text slices `node`'s subtree owns, or `None`: walk
     /// instead.
     pub fn text_slices(&self, node: RawNode) -> Option<TextRun<'_>> {
-        match &self.text_index {
-            TextIndexState::Built(index) => index.slices_of(&self.doc, node),
-            _ => None,
-        }
+        self.text_index.get()?.as_ref()?.slices_of(&self.doc, node)
     }
 
     /// Drop the indexes so the next query rebuilds them.
     pub fn invalidate_indexes(&mut self) {
-        self.dom_index = None;
-        self.text_index = TextIndexState::Unbuilt;
+        self.dom_index.take();
+        self.text_index.take();
     }
 
     /// The bytes this document holds outside Ruby's allocator.

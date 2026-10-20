@@ -54,6 +54,22 @@ RSpec.describe "node wrapper identity" do
       expect(node.call.instance_variable_get(:@wrapper).instance_variable_get(:@x)).to eq("kept")
     end
 
+    # verify_compaction_references moves every movable object and checks every
+    # reference was updated: the node cache marks its wrappers movable, so a
+    # wrapper it failed to relocate would be found here, where GC.compact
+    # alone only moves what happens to fit.
+    it "keeps every cached wrapper through a compaction that moves everything" do
+      skip "no GC.verify_compaction_references" unless GC.respond_to?(:verify_compaction_references)
+      doc = Makiri::HTML("<ul>#{'<li>x</li>' * 200}</ul>")
+      doc.css("li").each_with_index { |li, i| li.instance_variable_set(:@i, i) }
+      ids = doc.css("li").map(&:object_id)
+      GC.verify_compaction_references(expand_heap: true, toward: :empty)
+      lis = doc.css("li")
+      expect(lis.map(&:object_id)).to eq(ids)
+      expect(lis.map { |li| li.instance_variable_get(:@i) }).to eq((0...200).to_a)
+      expect(lis.map(&:text).uniq).to eq(["x"])
+    end
+
     it "does not carry instance variables to a copy" do
       node.call.instance_variable_set(:@wrapper, :mine)
       expect(node.call.clone_node(true).instance_variable_get(:@wrapper)).to be_nil

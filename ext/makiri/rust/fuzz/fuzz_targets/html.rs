@@ -13,7 +13,7 @@ use makiri::html_dom::post_parse::parse_html;
 use makiri::html_dom::tree_guard::DepthLimit;
 
 fuzz_target!(|data: &[u8]| {
-    let Ok(mut p) = parse_html(data, false, DepthLimit::DEFAULT) else {
+    let Ok(p) = parse_html(data, false, DepthLimit::DEFAULT) else {
         return;
     };
 
