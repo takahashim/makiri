@@ -10,6 +10,15 @@
 
 ### Changed
 
+* An XPath custom-function handler is called in a Fiber made for the
+  evaluation. A handler that switches Fibers - `Fiber.yield`, or an
+  Enumerator's yielder, as in `Enumerator.new { |y| doc.xpath(expr, handler)
+  }.next` - now fails the evaluation with `Makiri::Error`; it used to leave
+  the evaluation suspended, and once the Enumerator was dropped the document
+  refused every edit for good. A `throw` out of a handler is `Makiri::Error`
+  (its cause an `UncaughtThrowError`) instead of reaching an enclosing
+  `catch`, and `Thread.current[]` inside a handler is the handler Fiber's own;
+  `Fiber[]` storage is inherited.
 * HTML is parsed by a Rust port of Lexbor's tokenizer and tree builder, into
   a DOM of Makiri's own. The extension links no Lexbor any more, so a source
   install needs a Rust toolchain and nothing else - no cmake. A parsed
