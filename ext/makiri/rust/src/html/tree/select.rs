@@ -24,6 +24,7 @@
 //!   namespace reads.
 
 use super::{TreeBuilder, TreeStatus};
+use crate::compat::{self, Fix};
 use crate::falloc::VecPush;
 use crate::html::dom::{NodeId, NodeType, ShortcutRule};
 use crate::html::res::names as res;
@@ -171,10 +172,12 @@ impl TreeBuilder<'_> {
         }
     }
 
-    /// `lxb_html_select_list_of_options`, as Lexbor walks it: into an
-    /// element's children only when the element is a `select`, `datalist`,
-    /// `hr` or `option`, or an `optgroup` with a non-`optgroup` HTML element
-    /// between it and the select.
+    /// `lxb_html_select_list_of_options`: every option in the select's
+    /// subtree, not entering a select, datalist, hr or option, nor an
+    /// optgroup with another optgroup between it and the select. Lexbor
+    /// inverts that test - it enters only those elements, so an optgroup's
+    /// options are left out - which [`Fix::P21`] keeps for the
+    /// Lexbor-compatible run.
     fn list_of_options(&self, select: NodeId) -> Result<Vec<NodeId>, TreeStatus> {
         let mut out = Vec::new();
         let root = select;
@@ -183,28 +186,11 @@ impl TreeBuilder<'_> {
             if self.node_is(n, res::TAG_OPTION) {
                 out.falloc_push(n).map_err(|()| TreeStatus::Oom)?;
             }
-            let mut descend = false;
-            if self.ns(n) == res::NS_HTML {
-                match self.tag(n) {
-                    res::TAG_SELECT | res::TAG_DATALIST | res::TAG_HR | res::TAG_OPTION => {
-                        descend = true
-                    }
-                    res::TAG_OPTGROUP => {
-                        let mut up = self.doc.parent(n);
-                        while let Some(o) = up {
-                            if o == root {
-                                break;
-                            }
-                            if self.tag(o) != res::TAG_OPTGROUP && self.ns(o) == res::NS_HTML {
-                                descend = true;
-                                break;
-                            }
-                            up = self.doc.parent(o);
-                        }
-                    }
-                    _ => {}
-                }
-            }
+            let descend = if compat::fixed(Fix::P21) {
+                !self.ends_option_walk(n, root)
+            } else {
+                self.lexbor_descends(n, root)
+            };
             node = if descend {
                 self.doc.preorder_next(root, n)
             } else {
@@ -212,6 +198,53 @@ impl TreeBuilder<'_> {
             };
         }
         Ok(out)
+    }
+
+    /// Whether the list of options does not enter `n`, below `root`.
+    fn ends_option_walk(&self, n: NodeId, root: NodeId) -> bool {
+        if self.ns(n) != res::NS_HTML {
+            return false;
+        }
+        match self.tag(n) {
+            res::TAG_SELECT | res::TAG_DATALIST | res::TAG_HR | res::TAG_OPTION => true,
+            res::TAG_OPTGROUP => {
+                let mut up = self.doc.parent(n);
+                while let Some(o) = up.filter(|&o| o != root) {
+                    if self.node_is(o, res::TAG_OPTGROUP) {
+                        return true;
+                    }
+                    up = self.doc.parent(o);
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
+    /// Lexbor's test, which enters `n` only when it is a select, datalist,
+    /// hr or option, or an optgroup with a non-optgroup HTML element
+    /// between it and `root`.
+    fn lexbor_descends(&self, n: NodeId, root: NodeId) -> bool {
+        if self.ns(n) != res::NS_HTML {
+            return false;
+        }
+        match self.tag(n) {
+            res::TAG_SELECT | res::TAG_DATALIST | res::TAG_HR | res::TAG_OPTION => true,
+            res::TAG_OPTGROUP => {
+                let mut up = self.doc.parent(n);
+                while let Some(o) = up {
+                    if o == root {
+                        return false;
+                    }
+                    if self.tag(o) != res::TAG_OPTGROUP && self.ns(o) == res::NS_HTML {
+                        return true;
+                    }
+                    up = self.doc.parent(o);
+                }
+                false
+            }
+            _ => false,
+        }
     }
 
     /// `lxb_html_select_selectedness_setting_algorithm`.

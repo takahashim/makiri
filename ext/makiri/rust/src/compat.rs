@@ -70,6 +70,10 @@ pub enum Fix {
     /// A fragment's form element pointer is the context's nearest form,
     /// itself or an ancestor.
     P20,
+    /// A select's list of options takes the options of every descendant
+    /// but a select, datalist, hr, option or nested optgroup - an
+    /// optgroup's and a div's included.
+    P21,
     /// A void element's `inner_html` is empty, whatever children the DOM
     /// gave it. The serializer's, as is R2; no parse makes either shape, so
     /// [`explains`] never names them.
@@ -357,6 +361,11 @@ pub fn explains(input: &[u8], context: Option<&str>) -> Vec<Fix> {
      * `<selectedcontent>`. */
     if context.is_some() && has(input, b"selectedcontent") {
         fixes.push(Fix::P16);
+    }
+    /* P21: the list of options decides which option is selected, which
+     * only a `<selectedcontent>` shows (a copy of it). */
+    if has(input, b"selectedcontent") {
+        fixes.push(Fix::P21);
     }
     fixes
 }

@@ -111,6 +111,13 @@ RSpec.describe "HTML Standard steps the port takes and Lexbor does not" do
     frag = Makiri::DocumentFragment.parse("<select><button><selectedcontent></selectedcontent></button><option>A")
     expect(frag.at_css("selectedcontent").inner_html).to eq("A")
   end
+  # P21: a select's list of options takes an optgroup's options, so the
+  # selectedcontent copies the option the selectedness setting picks.
+  it "counts an optgroup's options in a select's list of options" do
+    doc = Makiri::HTML("<select><button><selectedcontent></selectedcontent></button>" \
+                       "<optgroup><option>A</option></optgroup></select>")
+    expect(doc.at_css("selectedcontent").inner_html).to eq("A")
+  end
   # P17: the fragment parsing algorithm, step 2: the document takes the
   # context document's quirks mode.
   it "parses inner_html= in the quirks mode of the element's document" do

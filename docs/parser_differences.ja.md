@@ -199,6 +199,14 @@ P で始まる項目は HTML パーサの振る舞いである。
 - **移植版**：`lexbor/arena_fragment.rs` の `FragmentContext::element` が、名前空間を「なし」として渡す context について `ContextFacts::foreign_namespace` を立て、`html/tree/fragment.rs` が tokenizer の `undef_is_foreign` に写す。`html/tree/modes/foreign_content.rs` の `anything_else` は、MathML と SVG 以外の名前空間でも adjust foreign attributes を行う（`AttrAdjust::Foreign`。文書の解析ではその名前空間の要素は現れない）。差分の比較は既定の `ContextFacts` と、HTML、SVG、MathML の context で解析するので、許可は要らない。
 - **テスト**：WPT にない。`spec/html_standard_steps_spec.rb`。
 
+### P21 select の list of options
+
+- **分類**：参照実装の未対応。移植版で直した。
+- **仕様**："get the list of options" は select の子孫を tree order でたどり、option を集める。select、hr、option、datalist の要素と、select との間に別の optgroup を持つ optgroup の子孫には入らず、それ以外（optgroup、div など）の子孫には入る。
+- **再現**：`<select><button><selectedcontent></selectedcontent></button><optgroup><option>A</option></optgroup></select>`。仕様では `A` が list of options に入って selected になり、`selectedcontent` が `A` を持つ。Lexbor の `lxb_html_select_list_of_options` は入る条件が逆で、select、datalist、hr、option と、間に optgroup 以外の HTML 要素を持つ optgroup の子孫にだけ入るので、select 直下でない option を数えず、`selectedcontent` は空のまま残る。
+- **移植版**：`html/tree/select.rs` の `list_of_options` が仕様どおりにたどる（`ends_option_walk`）。Lexbor 互換の実行は Lexbor の判定（`lexbor_descends`）を使う。差分の許可は、入力に `selectedcontent` があるとき（list of options の結果が見えるのは、selected な option の複製だけ）。
+- **テスト**：WPT にない。`spec/html_standard_steps_spec.rb`。
+
 ### R1 void の要素の `inner_html`
 
 - **分類**：参照実装の未対応（監査の foreign F7）。移植版で直した（第 8 段）。
