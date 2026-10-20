@@ -19,7 +19,7 @@ use magnus::{Error, Value};
 
 use crate::bridge::dom::DocPtr;
 use crate::bridge::ruby::{value, VALUE};
-use crate::bridge::typed::{Held, Hooks, Marker, Relocator, TypedType};
+use crate::bridge::typed::{Held, Hooks, Tracer, TypedType};
 use crate::child_index::{ChildList, ChildPositionMemo, Children, TokenTree};
 use crate::dom_rules::Tree;
 use crate::falloc::{MapInsert, Reserve};
@@ -176,8 +176,8 @@ const _: () = assert!(
 );
 
 impl Hooks for NodeData {
-    fn mark(&self, marker: &Marker) {
-        marker.mark(&self.document);
+    fn trace(&self, tracer: &Tracer) {
+        tracer.pinned(&self.document);
     }
 }
 
@@ -286,17 +286,10 @@ impl NodeCache {
     }
 
     /// MOVABLE, not pinned: a document walked end to end holds one entry per
-    /// node, and pinning them all would stop compaction doing its job. Paired
-    /// with [`NodeCache::compact`].
-    fn mark(&self, marker: &Marker) {
+    /// node, and pinning them all would stop compaction doing its job.
+    fn trace(&self, tracer: &Tracer) {
         for v in self.map.values() {
-            marker.mark_movable(v);
-        }
-    }
-
-    fn compact(&self, relocator: &Relocator) {
-        for v in self.map.values() {
-            relocator.relocate(v);
+            tracer.movable(v);
         }
     }
 
@@ -490,23 +483,12 @@ impl DocData {
 /// hands out, so the hooks abort instead, as a broken invariant in a GC
 /// callback must (see the note on the callbacks in `typed.rs`).
 impl Hooks for DocData {
-    fn mark(&self, marker: &Marker) {
-        marker.mark(&self.errors);
+    fn trace(&self, tracer: &Tracer) {
+        tracer.pinned(&self.errors);
         match self.nodes.try_borrow() {
             Ok(nodes) => {
                 if let Some(cache) = nodes.as_ref() {
-                    cache.mark(marker);
-                }
-            }
-            Err(_) => std::process::abort(),
-        }
-    }
-
-    fn compact(&self, relocator: &Relocator) {
-        match self.nodes.try_borrow() {
-            Ok(nodes) => {
-                if let Some(cache) = nodes.as_ref() {
-                    cache.compact(relocator);
+                    cache.trace(tracer);
                 }
             }
             Err(_) => std::process::abort(),
