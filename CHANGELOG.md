@@ -15,6 +15,8 @@
   `Makiri::XPath::LimitExceeded`.
 * `==` / `eql?` compare the nodes' Documents as well, so nodes of two
   documents can no longer compare equal after the per-document counter wraps.
+* Importing an XML processing instruction whose data holds `?>` into an
+  HTML document raises `ArgumentError`; it reported "out of memory".
 
 ## [0.17.0.rc1] - 2026-10-22
 

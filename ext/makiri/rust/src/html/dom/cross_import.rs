@@ -349,6 +349,12 @@ fn x2h_make(d: &mut HtmlDocMut<'_>, doc: &XmlDoc, s: NodeId) -> Result<Option<Ra
         }
         Some(ArenaKind::Text) => made(d.create_text(doc.value(s))),
         Some(ArenaKind::Comment) => made(d.create_comment(doc.value(s))),
+        /* The HTML factory refuses `?>` in the data, which an XML PI may hold
+         * (its `content=` checks nothing): refused here by name, not reported
+         * as the out-of-memory a `None` from the factory otherwise reads as. */
+        Some(ArenaKind::Pi) if doc.value(s).windows(2).any(|w| w == b"?>") => Err(
+            MutError::InvalidCharacter("processing instruction data must not contain ?>"),
+        ),
         Some(ArenaKind::Pi) => made(d.create_pi(doc.local(s), doc.value(s))),
         Some(ArenaKind::CDataSection) => Err(MutError::Type),
         Some(ArenaKind::DocumentFragment) => made(d.create_fragment()),
