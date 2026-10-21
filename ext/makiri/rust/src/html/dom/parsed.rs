@@ -9,7 +9,7 @@
 use core::cell::OnceCell;
 use core::ptr::NonNull;
 
-use super::edit::HtmlDocMut;
+use super::edit::{HtmlDocMut, HtmlNewNodes};
 use super::handle::{has_ascii_uppercase, HtmlDoc, HtmlNode, NsId, RawNode, TagId, TAG_LAST_ENTRY};
 use super::{Document, DomOom, NodeId, NodeType, Span};
 use crate::falloc::{try_vec_with_capacity, VecPush};
@@ -93,8 +93,8 @@ impl HtmlParsed {
     /// arena grows (ids and offsets). Anything that changes a node in the
     /// document's tree takes [`edit`](Self::edit), which drops them.
     #[inline]
-    pub fn edit_keeping_indexes(&mut self) -> HtmlDocMut<'_> {
-        HtmlDocMut::new(&mut self.doc)
+    pub fn edit_keeping_indexes(&mut self) -> HtmlNewNodes<'_> {
+        HtmlNewNodes::new(&mut self.doc)
     }
 
     /// The arena itself.

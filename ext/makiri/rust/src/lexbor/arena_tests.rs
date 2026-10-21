@@ -691,7 +691,7 @@ fn fragment_case_as_lexbor(input: &[u8], context: &str) {
             am.create_fragment().expect("f"),
         );
         l.import_into_doc(&mut lm, lfr).expect("import");
-        a.import_into_doc(&mut am, afr).expect("import");
+        a.import_into_doc(&mut am.new_nodes(), afr).expect("import");
         lm.place(lc, lfr, lex::Place::Child);
         am.place(ac2, afr, arena::Place::Child);
     }
@@ -736,7 +736,7 @@ fn fragment_case_as_lexbor(input: &[u8], context: &str) {
             am.create_fragment().expect("f"),
         );
         l.import_into_doc(&mut lm, lfr).expect("import");
-        a.import_into_doc(&mut am, afr).expect("import");
+        a.import_into_doc(&mut am.new_nodes(), afr).expect("import");
         lm.place(lbody, lfr, lex::Place::Child);
         am.place(abody, afr, arena::Place::Child);
     }
@@ -857,7 +857,8 @@ fn fragment_contexts_resolve_alike() {
         .expect("parses");
         let mut tm = target.edit();
         let into = tm.create_fragment().expect("frag");
-        frag.import_into_doc(&mut tm, into).expect("import");
+        frag.import_into_doc(&mut tm.new_nodes(), into)
+            .expect("import");
         let r = tm.read();
         let lnodes: Vec<_> = ltm
             .node(linto)

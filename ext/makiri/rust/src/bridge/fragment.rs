@@ -194,7 +194,7 @@ fn import_into(
         .map_err(|e| fragment_error(e, DepthLimit::DEFAULT))?;
     let parsed = parse(src, &context, DepthLimit::DEFAULT)?;
     parsed
-        .import_into_doc(d, into)
+        .import_into_doc(&mut d.new_nodes(), into)
         .map_err(|_| makiri_error("failed to import a fragment child"))
 }
 

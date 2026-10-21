@@ -1,5 +1,6 @@
 //! Editing an arena document: [`HtmlDocMut`], with the Lexbor adapter's
-//! method set, and the tree [`crate::dom_rules`] checks an insertion against.
+//! method set; [`HtmlNewNodes`], the part of it that only makes detached
+//! nodes; and the tree [`crate::dom_rules`] checks an insertion against.
 //!
 //! Every change reproduces what the adapter does over Lexbor - its factories
 //! name a node as Lexbor's constructors do, its attribute writes are the DOM's
@@ -160,6 +161,13 @@ impl<'d> HtmlDocMut<'d> {
     #[inline]
     pub fn node(&self, raw: RawNode) -> HtmlNode<'_> {
         self.read().node(raw)
+    }
+
+    /// The part of this edit that makes detached nodes, for a step that
+    /// needs no more (an import into a fragment it made).
+    #[inline]
+    pub fn new_nodes(&mut self) -> HtmlNewNodes<'_> {
+        HtmlNewNodes { d: self.d }
     }
 
     /// The id of `raw`, a node of this document.
@@ -556,5 +564,122 @@ impl<'d> HtmlDocMut<'d> {
             .ok()
             .flatten()
             .and_then(NsId::from_index)
+    }
+}
+
+/// A document lent to make DETACHED nodes - the factories, the copies, and
+/// a fragment's import into a fragment just made - while the document's
+/// indexes stay ([`HtmlParsed::edit_keeping_indexes`]). That is sound only
+/// while nothing in the document's tree changes, so this offers nothing that
+/// could change it: no insertion but into a node no tree holds, no attribute
+/// or data write.
+///
+/// [`HtmlParsed::edit_keeping_indexes`]: super::HtmlParsed::edit_keeping_indexes
+pub struct HtmlNewNodes<'d> {
+    d: &'d mut Document,
+}
+
+impl<'d> HtmlNewNodes<'d> {
+    #[inline]
+    pub(super) fn new(d: &'d mut Document) -> Self {
+        HtmlNewNodes { d }
+    }
+
+    /// The full edit, for this module's delegation only.
+    #[inline]
+    fn edit(&mut self) -> HtmlDocMut<'_> {
+        HtmlDocMut::new(self.d)
+    }
+
+    /// The document, for reading between changes.
+    #[inline]
+    pub fn read(&self) -> HtmlDoc<'_> {
+        HtmlDoc::of(self.d)
+    }
+
+    /// Append `node` as the last child of `into` - a node no tree of the
+    /// document holds (a fragment this lend made) - or, `node` being a
+    /// fragment, its children.
+    pub fn append_to_detached(&mut self, into: RawNode, node: RawNode) {
+        debug_assert!(
+            !self.d.is_connected(into.id()),
+            "a node in the document's tree, whose indexes this lend keeps"
+        );
+        self.edit().place(into, node, Place::Child);
+    }
+
+    /// [`HtmlDocMut::give_namespace`], under `root`, a node no tree of the
+    /// document holds.
+    pub fn give_namespace(&mut self, root: RawNode, ns: NsId) -> Result<(), DomOom> {
+        debug_assert!(
+            !self.d.is_connected(root.id()),
+            "a node in the document's tree, whose indexes this lend keeps"
+        );
+        self.edit().give_namespace(root, ns)
+    }
+
+    /// [`HtmlDocMut::create_element`].
+    pub fn create_element(&mut self, local_name: &[u8]) -> Option<RawNode> {
+        self.edit().create_element(local_name)
+    }
+
+    /// [`HtmlDocMut::create_element_ns`].
+    pub fn create_element_ns(&mut self, local: &[u8], ns: &[u8], prefix: &[u8]) -> Option<RawNode> {
+        self.edit().create_element_ns(local, ns, prefix)
+    }
+
+    /// [`HtmlDocMut::create_text`].
+    pub fn create_text(&mut self, text: &[u8]) -> Option<RawNode> {
+        self.edit().create_text(text)
+    }
+
+    /// [`HtmlDocMut::create_comment`].
+    pub fn create_comment(&mut self, text: &[u8]) -> Option<RawNode> {
+        self.edit().create_comment(text)
+    }
+
+    /// [`HtmlDocMut::create_pi`].
+    pub fn create_pi(&mut self, target: &[u8], data: &[u8]) -> Option<RawNode> {
+        self.edit().create_pi(target, data)
+    }
+
+    /// [`HtmlDocMut::create_doctype`].
+    pub fn create_doctype(
+        &mut self,
+        name: &[u8],
+        public_id: Option<&[u8]>,
+        system_id: Option<&[u8]>,
+    ) -> Option<RawNode> {
+        self.edit().create_doctype(name, public_id, system_id)
+    }
+
+    /// [`HtmlDocMut::create_fragment`].
+    pub fn create_fragment(&mut self) -> Option<RawNode> {
+        self.edit().create_fragment()
+    }
+
+    /// [`HtmlDocMut::import`].
+    pub fn import(&mut self, src: HtmlNode<'_>, deep: bool) -> Result<RawNode, DomOom> {
+        self.edit().import(src, deep)
+    }
+
+    /// [`HtmlDocMut::copy`].
+    pub fn copy(&mut self, src: RawNode, deep: bool) -> Result<RawNode, DomOom> {
+        self.edit().copy(src, deep)
+    }
+
+    /// [`HtmlDocMut::import_xml`].
+    pub fn import_xml(
+        &mut self,
+        xdoc: &crate::xml::model::Document,
+        src: crate::xml::model::NodeId,
+        deep: bool,
+    ) -> Result<RawNode, crate::xml::model::MutError> {
+        self.edit().import_xml(xdoc, src, deep)
+    }
+
+    /// [`HtmlDocMut::intern_ns`].
+    pub fn intern_ns(&mut self, uri: &[u8]) -> Option<NsId> {
+        self.edit().intern_ns(uri)
     }
 }

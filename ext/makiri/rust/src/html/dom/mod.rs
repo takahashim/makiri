@@ -969,6 +969,20 @@ impl Document {
     pub fn prev(&self, n: NodeId) -> Option<NodeId> {
         self.node(n)?.prev
     }
+    /// Whether `n` is in the document's tree: the document node is its
+    /// root, a template's contents counting as inside their template.
+    pub fn is_connected(&self, mut n: NodeId) -> bool {
+        loop {
+            if n == NodeId::DOCUMENT {
+                return true;
+            }
+            match self.parent(n).or_else(|| self.fragment_host(n)) {
+                Some(p) => n = p,
+                None => return false,
+            }
+        }
+    }
+
     /// The start tag's byte offset, when recorded.
     #[inline]
     pub fn source_offset(&self, n: NodeId) -> Option<usize> {
@@ -1144,7 +1158,7 @@ mod store;
 /// XPath's HTML instance of its `Dom` trait, over the arena.
 pub mod xpath;
 pub use build::AttrValue;
-pub use edit::{HtmlDocMut, HtmlTree, Insertion, Place};
+pub use edit::{HtmlDocMut, HtmlNewNodes, HtmlTree, Insertion, Place};
 pub use handle::{
     has_ascii_uppercase, Ancestors, AttrName, Attrs, HtmlAttr, HtmlDoc, HtmlElement, HtmlNode,
     NsId, RawNode, Siblings, TagId, NS_LAST_ENTRY, TAG_EM_DOCTYPE, TAG_LAST_ENTRY,

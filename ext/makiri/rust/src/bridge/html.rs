@@ -20,10 +20,11 @@ use crate::init::{
     CLASS_HTML_PROCESSING_INSTRUCTION, CLASS_HTML_TEXT, CLASS_XML_DOCUMENT,
 };
 
+use crate::bridge::dom::DocPtr;
 use crate::bridge::string::{RubyData, RubyText};
 use crate::bridge::wrapper::*;
 use crate::child_index::{ChildList, Children, TokenTree};
-use crate::html_dom::html::{HtmlDoc, HtmlDocMut};
+use crate::html_dom::html::{HtmlDoc, HtmlDocMut, HtmlNewNodes};
 use crate::html_dom::AdapterOom;
 
 /* ---- the document's own bytes and text ---- */
@@ -446,42 +447,37 @@ pub fn check_owning_doc(rb_doc: &Value) -> Result<(), Error> {
 /// receiver can be frozen; what is refused is a document an XPath evaluation
 /// with a handler is reading, whose arena the walk borrows. `f` must run no
 /// Ruby, as [`HtmlEdit::with_tree`]'s must not.
-pub fn new_node<R>(rb_doc: &Value, f: impl FnOnce(&mut HtmlDocMut<'_>) -> R) -> Result<R, Error> {
-    lend_document(rb_doc, Lend::NewNodes, f)
+pub fn new_node<R>(rb_doc: &Value, f: impl FnOnce(&mut HtmlNewNodes<'_>) -> R) -> Result<R, Error> {
+    lend_document(rb_doc, |doc| {
+        // SAFETY: `lend_document`'s: a live HTML Document, kept alive by
+        // `rb_doc` for this call, not under evaluation, and `f` runs no Ruby.
+        // The loan ends with this closure, before the document is read again.
+        let mut d = unsafe { doc.edit_new_nodes() };
+        f(&mut d)
+    })
 }
 
-/// What a document is lent for: making detached nodes, which keeps its
-/// indexes, or changing its tree, which goes through the parse handle's
-/// `edit` (the indexes dropped, a due compaction run).
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Lend {
-    NewNodes,
-    Tree,
+/// Lend `rb_doc`'s document to `f` for a change to its tree, attributes or
+/// data: the parse handle's `edit`, which drops the indexes and runs a due
+/// compaction.
+fn edit_document<R>(rb_doc: &Value, f: impl FnOnce(&mut HtmlDocMut<'_>) -> R) -> Result<R, Error> {
+    lend_document(rb_doc, |doc| {
+        // SAFETY: as `new_node`'s.
+        let mut d = unsafe { doc.edit() };
+        f(&mut d)
+    })
 }
 
-fn lend_document<R>(
-    rb_doc: &Value,
-    lend: Lend,
-    f: impl FnOnce(&mut HtmlDocMut<'_>) -> R,
-) -> Result<R, Error> {
+/// Check `rb_doc` can be lent - an HTML Document no evaluation is reading -
+/// hand its document to `lend`, and report what the loan grew it by.
+fn lend_document<R>(rb_doc: &Value, lend: impl FnOnce(DocPtr) -> R) -> Result<R, Error> {
     let doc = html_doc_unwrap(*rb_doc)?;
     ensure_document_mutable(*rb_doc)?;
-    let r = {
-        // SAFETY: a live HTML Document, kept alive by `rb_doc` for this call,
-        // not under evaluation (checked just now), and `f` runs no Ruby. The
-        // loan ends with this block, before the document is read below.
-        let mut d = unsafe {
-            match lend {
-                Lend::NewNodes => doc.edit_new_nodes(),
-                Lend::Tree => doc.edit(),
-            }
-        };
-        f(&mut d)
-    };
+    let r = lend(doc);
     /* A factory grows the document without an edit after it - a namespace
-     * of a megabyte, a fragment imported - so it reports here, after `f`: the
-     * arguments were converted to copies before, and what `f` made is still a
-     * bare node, so a collection here can free nothing it needs. */
+     * of a megabyte, a fragment imported - so it reports here, after the
+     * loan: the arguments were converted to copies before, and what it made
+     * is still a bare node, so a collection here can free nothing it needs. */
     crate::bridge::wrapper::account_growth(*rb_doc);
     Ok(r)
 }
@@ -495,7 +491,7 @@ fn edit_other_document<R>(
 ) -> Result<R, Error> {
     ensure_document_mutable(rb_doc)?;
     record_edit(rb_doc, EditKind::ChildList);
-    lend_document(&rb_doc, Lend::Tree, f)
+    edit_document(&rb_doc, f)
 }
 
 /// Take `node` out of its tree, the release half of an adoption: a fragment
