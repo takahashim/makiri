@@ -19,9 +19,10 @@ RSpec.describe "Makiri CSS" do
   end
 
   # The pseudo-classes Lexbor answers from an attribute's presence keep
-  # Lexbor's rule - the attribute by local name, in any namespace - as
-  # `:any-link` does (`xlink:href`). Only a DOM write can make a namespaced
-  # one; the parser never does on an `<input>`.
+  # Lexbor's rule - the attribute by local name, in any namespace - except
+  # `:read-write` (M9), whose `readonly` is the HTML Standard's: the
+  # attribute in no namespace. Only a DOM write can make a namespaced one;
+  # the parser never does on an `<input>`.
   describe "attribute-presence pseudo-classes" do
     it "find the attribute by its local name in any namespace, as Lexbor does" do
       d = Makiri::HTML("<input id=a><input id=b><textarea id=c></textarea>")
@@ -30,7 +31,7 @@ RSpec.describe "Makiri CSS" do
       d.at_css("#c").set_attribute_ns("urn:x", "x:placeholder", "p")
       expect(d.css(":required").map { |e| e["id"] }).to eq(%w[a])
       expect(d.css(":optional").map { |e| e["id"] }).to eq(%w[b c])
-      expect(d.css(":read-write").map { |e| e["id"] }).to eq(%w[a c])
+      expect(d.css(":read-write").map { |e| e["id"] }).to eq(%w[a b c])
       expect(d.css(":placeholder-shown").map { |e| e["id"] }).to eq(%w[c])
     end
   end

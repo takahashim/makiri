@@ -5,6 +5,7 @@
 //! knows about selectors; the form states that walk the tree charge the
 //! query's work budget as they go.
 
+use crate::compat::{self, Fix};
 use crate::node_type::NodeType;
 
 use super::dom::{CssAttr, CssElement, CssNode};
@@ -42,21 +43,27 @@ fn lexbor_attr<'d, E: CssElement<'d>>(el: E, local: &[u8]) -> bool {
     el.attrs().any(|a| a.local_name() == local)
 }
 
-/// `:empty` (`lxb_selectors_pseudo_class`'s `EMPTY` case): a child of ANY type
-/// OTHER than Comment disqualifies it, not just Element/non-empty-text - a
-/// processing-instruction child does too (found by `spec/xml_css_spec.rb`'s
-/// HTML/XML agreement check: `<i><?pi x?></i>` was wrongly treated as `:empty`,
-/// since neither `element()` nor `char_data()` sees a PI, and it fell through
-/// unnoticed).
+/// `:empty`: no element child, and no text child with data (a CDATA
+/// section is text) - a comment or a processing instruction does not count,
+/// as in Chromium, Firefox and WebKit (M10 in docs/parser_differences.ja.md).
+/// Run as Lexbor ran, any child but a comment disqualifies
+/// (`lxb_selectors_pseudo_class`'s `EMPTY` case), a processing instruction
+/// and an empty text included.
 pub(super) fn is_empty<'d, N: CssNode<'d>>(node: N) -> bool {
-    !children(node).any(|c| c.node_type() != NodeType::Comment)
+    if !compat::fixed(Fix::M10) {
+        return !children(node).any(|c| c.node_type() != NodeType::Comment);
+    }
+    !children(node).any(|c| match c.node_type() {
+        NodeType::Element => true,
+        NodeType::Text | NodeType::CDataSection => c.char_data().is_some_and(|d| !d.is_empty()),
+        _ => false,
+    })
 }
 
 /// `:blank` (`lxb_dom_node_is_empty`, in Lexbor's `dom/interfaces/node.c`): as
-/// `:empty`, but a Text child only disqualifies it when it holds a
-/// non-whitespace byte - still stricter than "ignore text entirely", and a PI
-/// (or anything else that is neither Text nor Comment) disqualifies it
-/// unconditionally, same bug/fix as `is_empty` above.
+/// Lexbor's `:empty`, but a Text child only disqualifies it when it holds a
+/// non-whitespace byte - and a PI (or anything else that is neither Text nor
+/// Comment) disqualifies it unconditionally.
 pub(super) fn is_blank<'d, N: CssNode<'d>>(node: N) -> bool {
     !children(node).any(|c| match c.char_data() {
         Some(t) => t.iter().any(|&b| !is_lexbor_whitespace(b)),
@@ -68,21 +75,43 @@ pub(super) fn is_root<'d, N: CssNode<'d>>(node: N) -> bool {
     node.is_root()
 }
 
-/// `:any-link` / `:link`, exactly as `lxb_selectors_pseudo_class` has them: an
-/// element whose tag is `a`, `area` or `map` (`:any-link`) / `a`, `area` or
-/// `link` (`:link`), in any namespace (Lexbor compares the tag id alone, so an
-/// SVG `<a>` counts), with an attribute whose local name is `href`, in any
-/// namespace (`lxb_dom_element_attr_by_id`, so `xlink:href` counts).
+const SVG_NS: &[u8] = b"http://www.w3.org/2000/svg";
+const XLINK_NS: &[u8] = b"http://www.w3.org/1999/xlink";
+
+/// `:any-link` / `:link` (no history, so the same): an HTML `a` or `area`
+/// with an `href` attribute (the HTML Standard's "Pseudo-classes"), or an
+/// SVG `a` with an `href` or an XLink `href` (SVG 2), as Chromium, Firefox
+/// and WebKit answer (M2 in docs/parser_differences.ja.md).
+///
+/// Run as Lexbor ran, `lxb_selectors_pseudo_class` has them: an element
+/// whose tag is `a`, `area` or `map` (`:any-link`) / `a`, `area` or `link`
+/// (`:link`), in any namespace, with an attribute whose local name is
+/// `href`, in any namespace.
 pub(super) fn is_any_link<'d, N: CssNode<'d>>(node: N, link_tag: bool) -> bool {
     let Some(el) = node.element() else {
         return false;
     };
-    let tags: [&[u8]; 3] = if link_tag {
-        [b"a", b"area", b"link"]
-    } else {
-        [b"a", b"area", b"map"]
+    if !compat::fixed(Fix::M2) {
+        let tags: [&[u8]; 3] = if link_tag {
+            [b"a", b"area", b"link"]
+        } else {
+            [b"a", b"area", b"map"]
+        };
+        return lexbor_tag(el, &tags) && lexbor_attr(el, b"href");
+    }
+    let href = |xlink: bool| {
+        el.attrs().any(|a| {
+            a.local_name() == b"href"
+                && match a.ns_uri() {
+                    None => true,
+                    Some(uri) => xlink && uri == XLINK_NS,
+                }
+        })
     };
-    lexbor_tag(el, &tags) && lexbor_attr(el, b"href")
+    if html_named(node, &[b"a", b"area"]) {
+        return href(false);
+    }
+    node.ns_uri() == Some(SVG_NS) && el.local_name() == b"a" && href(true)
 }
 
 /// `:required` (`required == true`) / `:optional`, exactly as
@@ -238,10 +267,32 @@ pub(super) fn is_checked<'d, N: CssNode<'d>>(node: N) -> bool {
     false
 }
 
-/// `:read-write` (`lxb_selectors_pseudo_class_read_write`): an `input` or
-/// `textarea` ([`lexbor_tag`]) without a `readonly` attribute
+/// The `input` types the `readonly` attribute applies to (HTML Standard,
+/// "the readonly attribute"); a missing or unknown type is Text, which it
+/// applies to.
+const READONLY_TYPES_NOT: [&[u8]; 10] = [
+    b"hidden",
+    b"range",
+    b"color",
+    b"checkbox",
+    b"radio",
+    b"file",
+    b"submit",
+    b"image",
+    b"reset",
+    b"button",
+];
+
+/// `:read-write`, as the HTML Standard defines it (M9 in
+/// docs/parser_differences.ja.md): an `input` the `readonly` attribute
+/// applies to, and a `textarea`, without that attribute and not disabled
+/// ([`is_disabled`]); and any other element that is editable - inside an
+/// editing host ([`is_editable`]). `:read-only` is every other element.
+///
+/// Run as Lexbor ran (`lxb_selectors_pseudo_class_read_write`): an `input`
+/// or `textarea` ([`lexbor_tag`]) without a `readonly` attribute
 /// ([`lexbor_attr`]) that is not disabled - disabled by the HTML Standard,
-/// as `:disabled` is ([`is_disabled`]).
+/// as `:disabled` is.
 pub(super) fn is_read_write<'d, N: CssNode<'d>>(
     node: N,
     budget: &Budget,
@@ -249,7 +300,51 @@ pub(super) fn is_read_write<'d, N: CssNode<'d>>(
     let Some(el) = node.element() else {
         return Ok(false);
     };
-    Ok(lexbor_tag(el, &[b"input", b"textarea"])
-        && !lexbor_attr(el, b"readonly")
-        && !is_disabled(node, budget)?)
+    if !compat::fixed(Fix::M9) {
+        return Ok(lexbor_tag(el, &[b"input", b"textarea"])
+            && !lexbor_attr(el, b"readonly")
+            && !is_disabled(node, budget)?);
+    }
+    if html_named(node, &[b"input"]) {
+        let applies = el.get_attribute(b"type").is_none_or(|t| {
+            !READONLY_TYPES_NOT
+                .iter()
+                .any(|no| t.eq_ignore_ascii_case(no))
+        });
+        return Ok(applies && !has_attr(node, b"readonly") && !is_disabled(node, budget)?);
+    }
+    if html_named(node, &[b"textarea"]) {
+        return Ok(!has_attr(node, b"readonly") && !is_disabled(node, budget)?);
+    }
+    is_editable(node, budget)
+}
+
+/// Whether `node` is editable: the nearest HTML element at or above it
+/// whose `contenteditable` attribute has a valid value decides - `""`,
+/// `true` or `plaintext-only` (an editing host) yes, `false` no; an invalid
+/// value inherits, as does no attribute, and the top of the tree is not
+/// editable. Every element climbed charges `budget`.
+fn is_editable<'d, N: CssNode<'d>>(node: N, budget: &Budget) -> Result<bool, MatchFailure> {
+    let mut at = Some(node);
+    while let Some(n) = at {
+        budget.charge()?;
+        if is_html_namespace(n) {
+            if let Some(v) = n
+                .element()
+                .and_then(|el| el.get_attribute(b"contenteditable"))
+            {
+                if v.is_empty()
+                    || v.eq_ignore_ascii_case(b"true")
+                    || v.eq_ignore_ascii_case(b"plaintext-only")
+                {
+                    return Ok(true);
+                }
+                if v.eq_ignore_ascii_case(b"false") {
+                    return Ok(false);
+                }
+            }
+        }
+        at = parent_element(n);
+    }
+    Ok(false)
 }

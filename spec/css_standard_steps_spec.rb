@@ -149,4 +149,34 @@ RSpec.describe "CSS Syntax 3 and Selectors 4 steps the CSS parser follows" do
     expect(doc.css("i:nth-child(2)").map(&:text)).to eq(["2"])
     expect(doc.at_css("b").matches?(":first-child")).to be(true)
   end
+
+  # M2: HTML Standard, :link - "all a elements that have an href attribute,
+  # and all area elements that have an href attribute"; SVG 2 adds its a.
+  it "takes a and area with href, and SVG a, as links" do
+    doc = Makiri::HTML(%(<!doctype html><link href=x><map href=y></map><a href=z>a</a><area href=w>
+      <svg><a href=s></a><a xlink:href=t></a></svg>))
+    expect(doc.css(":link").map { |e| e["href"] || e.attribute_nodes.first.value }).to eq(%w[z w s t])
+    expect(doc.css(":any-link").size).to eq(4)
+  end
+
+  # M9: HTML Standard, :read-write - input elements to which the readonly
+  # attribute applies and that are mutable, textarea elements without
+  # readonly that are not disabled, and editing hosts or editable elements.
+  it "decides :read-write by readonly's input types and by contenteditable" do
+    doc = Makiri::HTML(%(<!doctype html><input id=t><input id=c type=checkbox><input id=n type=NUMBER>
+      <input id=r type=email readonly><textarea id=x></textarea>
+      <div id=h contenteditable><p id=p>a</p><span contenteditable=false><b id=f>b</b></span></div>))
+    expect(doc.css(":read-write").map { |e| e["id"] }).to eq(%w[t n x h p])
+    expect(doc.at_css("#c").matches?(":read-only")).to be(true)
+    expect(doc.at_css("#f").matches?(":read-only")).to be(true)
+  end
+
+  # M10: :empty, as browsers count children - elements and text with data;
+  # comments and processing instructions do not count.
+  it "ignores comments and processing instructions for :empty" do
+    doc = Makiri::HTML("<!doctype html><p id=a><?pi x?></p><p id=b><!--c--></p><p id=c> </p><p id=d></p>")
+    expect(doc.css("p:empty").map { |e| e["id"] }).to eq(%w[a b d])
+    xml = Makiri::XML("<r><e><![CDATA[]]></e><e><?pi x?></e><e>t</e></r>")
+    expect(xml.css("e:empty").size).to eq(2)
+  end
 end

@@ -596,6 +596,36 @@ mod css_match {
         assert_eq!(count("i:last-child"), (1, 0));
         assert_eq!(count("i:nth-child(2)"), (1, 0));
         assert_eq!(count("b:only-child"), (0, 0));
+
+        /* M2, M9, M10: links, read-write and :empty as the browsers have
+         * them, where Lexbor took <link> and <map>, every <input>, and a
+         * processing instruction as content. */
+        let doc = parsed(
+            b"<!doctype html><link href=x><map href=y></map><a href=z></a>\
+              <input type=checkbox><input><div contenteditable><p></p></div>\
+              <i><?pi x?></i><s></s>",
+        );
+        let count = |selector: &str| {
+            let text = VerifiedText::from_bytes(selector.as_bytes()).expect("verified");
+            let parsed = css_parser::parse(&gvl, text).expect("parses");
+            let spec = port::select_all(
+                &mut Scratch::new(),
+                root(&doc),
+                parsed.groups(),
+                &port::Namespaces::NONE,
+            )
+            .expect("runs")
+            .len();
+            let lexbor = port_select_all(root(&doc), parsed.groups())
+                .expect("runs")
+                .len();
+            (spec, lexbor)
+        };
+        assert_eq!(count(":link"), (1, 2));
+        assert_eq!(count(":any-link"), (1, 2));
+        assert_eq!(count("input:read-write"), (1, 2));
+        assert_eq!(count("div:read-write, p:read-write"), (2, 0));
+        assert_eq!(count("i:empty"), (1, 0));
     }
 
     fn texts(doc: &HtmlParsed, selector: &str) -> Vec<String> {

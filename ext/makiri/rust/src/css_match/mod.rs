@@ -53,11 +53,18 @@
 //!   count, `:enabled` is only for the elements `:disabled` is defined for
 //!   (Lexbor: any element), and an
 //!   element with a custom tag is neither `:disabled` nor `:checked` by its
-//!   attribute alone. `:read-write` / `:read-only` ask the same
-//!   `is_disabled`, so an `<input>` in a `<fieldset disabled>` is read-only
-//!   here and read-write to Lexbor. Checked against the Standard
+//!   attribute alone. `:read-write` / `:read-only` are the Standard's too
+//!   (M9): an `input` the `readonly` attribute applies to, a `textarea`, an
+//!   editable element - Lexbor takes every `input`, and no editable one.
+//!   Checked against the Standard
 //!   (`form_state_pseudo_classes_follow_the_html_standard`); the Lexbor
 //!   differential fuzzer leaves all five out.
+//! - `:any-link` / `:link` are an HTML `a` / `area` or an SVG `a` with an
+//!   `href` (M2), where Lexbor takes `link` and `map` in any namespace, and
+//!   `:empty` counts element and non-empty text children only (M10), where
+//!   Lexbor counts every child but a comment. Both as the browsers answer.
+//!   The harnesses that hold this matcher to Lexbor's engine run Lexbor's
+//!   rules (`compat::as_lexbor`).
 //! - `lxb_selectors_anb_calc` tests `:nth-*`'s `An+B` with a `double`
 //!   division, which past 2^53 answers "divisible" for everything; this port
 //!   computes exactly, in `i128` (`anb_matches`'s doc).

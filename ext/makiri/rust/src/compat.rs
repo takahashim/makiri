@@ -137,6 +137,18 @@ pub enum Fix {
     /// undeclared prefix invalid. Lexbor ignores every prefix. A matcher
     /// item, as M8.
     M6,
+    /// `:any-link` / `:link` are the HTML Standard's (M2): an HTML `a` or
+    /// `area`, or an SVG `a`, with an `href` - not Lexbor's `link` and `map`
+    /// in any namespace. A matcher item, as M8.
+    M2,
+    /// `:read-write` is the HTML Standard's (M9): an `input` the `readonly`
+    /// attribute applies to, a `textarea`, and an editable element - not
+    /// Lexbor's every `input`. A matcher item, as M8.
+    M9,
+    /// `:empty` counts element children and text with data (M10), as the
+    /// browsers do - not Lexbor's every child but a comment. A matcher item,
+    /// as M8.
+    M10,
     /// The plain `:nth-child` family counts element siblings only, as
     /// Selectors 4 does; Lexbor counts every sibling but Text and Comment,
     /// so a doctype or a processing instruction took a position. A

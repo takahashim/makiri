@@ -94,9 +94,14 @@ fn agree(
     selector: &str,
     scratch: &mut Scratch<XmlHost>,
 ) -> Option<usize> {
-    let (Some(old), Some(new)) = (lowered(doc, selector), matched(doc, selector, scratch)) else {
-        return None;
-    };
+    let new = matched(doc, selector, scratch)?;
+    /* The lowering's `:empty` is Lexbor's, which counts a processing
+     * instruction and an empty CDATA section; the matcher's is the
+     * browsers' (M10), checked against them below. */
+    if selector.contains(":empty") {
+        return Some(new.len());
+    }
+    let old = lowered(doc, selector)?;
     assert_eq!(
         new, old,
         "the matcher and the lowering disagree on {selector:?} over\n{src}"
@@ -391,12 +396,12 @@ fn the_matcher_agrees_with_the_lowering_on_random_selectors() {
 /// Chromium, Firefox and WebKit answer over the same XML document
 /// (`spec/conformance/css_browser_cases.rb`'s `xml-xhtml` and `xml-plain`).
 /// An XHTML element in an XML document has the form states, and compares
-/// its names and values as written. `:read-write` is Lexbor's (M9), so the
-/// checkbox counts here and not there.
+/// its names and values as written; `:read-write` (M9) and `:empty` (M10)
+/// are the browsers'.
 #[test]
 fn the_matcher_answers_what_the_lowering_refuses_as_the_browsers_do() {
     let xhtml = r#"<html xmlns="http://www.w3.org/1999/xhtml" xmlns:svg="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><body><form><input id="i1" type="checkbox" checked=""/><input id="i2" type="TEXT" required="" placeholder="p"/><input id="i3" disabled=""/><fieldset disabled=""><input id="i4"/></fieldset><select><option selected="">a</option></select></form><a id="a1" href="x">a</a><a id="a2">b</a><DIV id="D"/><P title="Hello World"/><svg:svg><svg:a xlink:href="x"><svg:path/></svg:a><svg:a href="y"/></svg:svg></body></html>"#;
-    let plain = r#"<r><p class="x" title="Hello World"/><p/><q class="x"/><p class="x"/></r>"#;
+    let plain = r#"<r><p class="x" title="Hello World"/><p/><q class="x"/><p class="x"/><e><?pi x?></e><e><![CDATA[]]></e><e><!--c--></e><e>t</e></r>"#;
     let doc = xml_parse(xhtml.as_bytes()).expect("parses");
     let mut scratch = Scratch::new();
     let count = |doc: &Document, sel: &str, scratch: &mut Scratch<XmlHost>| {
@@ -411,6 +416,7 @@ fn the_matcher_answers_what_the_lowering_refuses_as_the_browsers_do() {
         (":placeholder-shown", 1),
         (":link", 3),
         (":any-link", 3),
+        (":read-write", 1),
         ("DIV", 1),
         ("div", 0),
         ("INPUT", 0),
@@ -424,6 +430,7 @@ fn the_matcher_answers_what_the_lowering_refuses_as_the_browsers_do() {
     let doc = xml_parse(plain.as_bytes()).expect("parses");
     for (sel, want) in [
         (":nth-child(2n+1 of .x)", 2),
+        ("e:empty", 3),
         (":nth-last-child(1 of p)", 1),
         (":checked", 0),
         (":disabled", 0),

@@ -54,12 +54,7 @@ RULES = [
   ["unimplemented", %w[html-basic], [":scope > p"], "#d"],
   ["unimplemented", %w[xml-plain], [":scope > p"], "div"],
   ["pseudo-element", ALL_DOCS, ["::before", "p::before"]],
-  ["C27", ALL_DOCS, ["[*|href]"]],
-  # :link takes <link> (M2), and :read-write is Lexbor's (M9).
-  ["M2", %w[html-form], [":link"]],
-  ["M9", %w[html-form xml-xhtml], [":read-write"]],
-  # :empty counts an empty CDATA section and a processing instruction (M10).
-  ["M10", %w[xml-plain], [":empty", ":not(:empty)"]]
+  ["C27", ALL_DOCS, ["[*|href]"]]
 ].freeze
 KNOWN = RULES.each_with_object({}) do |(tag, docs, sels, where), h|
   places = where ? [where] : %i[all matches]

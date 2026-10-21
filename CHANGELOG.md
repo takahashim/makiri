@@ -120,6 +120,12 @@
   in the element's own namespace replaces the attribute it set before,
   where it appended a second, and an attribute taken off its element keeps
   its `namespace_uri`, where it became nil.
+* `:any-link` / `:link` match an HTML `a` or `area`, or an SVG `a`, with an
+  `href`, as browsers do (M2): `<link href>` matched `:link` and `<map>`
+  `:any-link`. `:read-write` / `:read-only` follow the HTML Standard (M9):
+  a checkbox or radio is read-only, an element inside `contenteditable` is
+  read-write, and a `readonly` attribute in a namespace is not one.
+  `:empty` ignores processing instructions and empty text (M10).
 * HTML CSS's `:nth-child` family counts element siblings only (M8): a
   doctype or a processing instruction took a position, so
   `html:first-child` matched nothing after `<!doctype html>`.

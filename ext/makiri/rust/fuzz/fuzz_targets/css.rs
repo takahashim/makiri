@@ -24,7 +24,7 @@ use common::*;
 use makiri::css::{compile_owned, CssNs, Form};
 use makiri::css_match::dom::CssNode;
 use makiri::css_match::{matches_any, select_all, select_first, Namespaces, Scratch};
-use makiri::selectors::ast::{Combinator, FunctionArg, Lists, Simple};
+use makiri::selectors::ast::{Combinator, FunctionArg, Lists, PseudoClass, Simple};
 use makiri::xml::css::{XmlHost, XmlNode};
 use makiri::xml::NodeId;
 
@@ -45,7 +45,8 @@ const DEFAULT: &[u8] = b"http://example.com/default";
 /// (`bare_type`) or universal selector written without a namespace prefix,
 /// which the two read differently, or a compound with two of them (`|E|*`,
 /// which the parser takes as Lexbor's does), where the lowering lets the
-/// second replace the first's name. Walked on a work list, as the matcher
+/// second replace the first's name; or `:empty`, which the lowering counts
+/// as Lexbor does and the matcher as the browsers do (M10). Walked on a work list, as the matcher
 /// compiles it, so no input nests the harness's stack.
 fn not_comparable(groups: Lists<'_>, bare_type: bool) -> bool {
     let mut pending = vec![groups];
@@ -66,6 +67,7 @@ fn not_comparable(groups: Lists<'_>, bare_type: bool) -> bool {
                             return true;
                         }
                     }
+                    Simple::PseudoClass(PseudoClass::Empty) => return true,
                     Simple::PseudoClassFunction(FunctionArg::Selectors { lists, .. }) => {
                         pending.push(lists)
                     }

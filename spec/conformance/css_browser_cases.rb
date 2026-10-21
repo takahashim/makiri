@@ -39,7 +39,8 @@ module CssBrowserCases
     ":link", ":any-link", ":visited", ":hover", ":focus", ":active", ":target",
     # forms
     ":checked", ":disabled", ":enabled", ":required", ":optional", ":read-only", ":read-write",
-    ":placeholder-shown", ":default", ":indeterminate",
+    ":placeholder-shown", ":default", ":indeterminate", "input:read-write", "b:read-write",
+    "p:empty", "svg a:link",
     # language, scope and the rest
     ":lang(en)", ":lang(fr)", ":dir(ltr)", ":scope", ":scope > *", ":defined",
     "::before", "p::before", ":current", ":foo", "foo(", "p:nth-child(", ""
@@ -62,7 +63,10 @@ module CssBrowserCases
         <fieldset disabled><legend><input id="i5"></legend><input id="i6"></fieldset><button id="b1" disabled>x</button>
         </form><a id="a1" href="x">a</a><a id="a2">b</a><area id="ar" href="x"><map id="m1"></map><link id="l1" href="x">
         <svg><a id="sa" href="x"><path/></a><a id="sx" xlink:href="x"><path/></a></svg>
-        <div contenteditable id="ce"></div></body></html>
+        <div contenteditable id="ce"><p id="cp">x</p><span contenteditable="false"><b id="cf">y</b></span><i contenteditable="bogus">z</i></div>
+        <div contenteditable="plaintext-only" id="pt"><b>w</b></div><div contenteditable="FALSE"><b>v</b></div>
+        <input id="h" type="hidden"><input id="rg" type="range"><input id="nu" type="NUMBER"><input id="em" type="email" readonly><input id="un" type="bogus">
+        <p id="e1"></p><p id="e2"><!--c--></p><p id="e3"> </p></body></html>
       HTML
     },
     {
