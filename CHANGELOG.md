@@ -88,6 +88,12 @@
   The vendored Lexbor is now only the reference the ports are tested against
   (`rake lexbor`).
 
+### Fixed
+
+* `HTML::Document#import_node` refuses a document with "cannot import a
+  document; use #dup", as `#clone_node` does; it failed with "failed to
+  import node".
+
 ## [0.16.0] - 2026-10-10
 
 ### Added

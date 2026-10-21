@@ -156,10 +156,15 @@ impl Document {
                 };
                 self.push_doctype(names, dt)?
             }
-            /* A fragment's copy is a plain new one, as the adapter makes it;
-             * a document is never copied. */
+            /* A fragment's copy is a plain new one, as the adapter makes it. */
             Payload::Fragment { .. } => self.create_fragment(None)?,
-            Payload::Document => return Err(DomOom),
+            /* A document is never copied: `clone_node` and `import_node`
+             * refuse one first, and `#dup` parses afresh. Refused here too,
+             * so a caller that forgot fails rather than copies. */
+            Payload::Document => {
+                debug_assert!(false, "a copy of a document node");
+                return Err(DomOom);
+            }
         };
         if matches!(from, From::Same) && node.source != 0 {
             if let Some(x) = self.node_mut(made) {

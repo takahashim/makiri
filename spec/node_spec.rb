@@ -515,6 +515,13 @@ RSpec.describe Makiri::Node do
       other.at_css("body").add_child(imp)
       expect(other.at_css("#x")).not_to be_nil
     end
+
+    # DOM importNode throws NotSupportedError for a document; the copy used to
+    # fail inside as a bare "failed to import node".
+    it "refuses a document, as clone_node does" do
+      expect { other.import_node(doc, true) }.to raise_error(Makiri::Error, /cannot import a document/)
+      expect { other.import_node(other) }.to raise_error(Makiri::Error, /cannot import a document/)
+    end
   end
 
   describe "#content_fragment (template contents)" do
