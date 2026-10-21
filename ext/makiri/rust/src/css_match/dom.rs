@@ -17,6 +17,10 @@ use crate::node_type::NodeType;
 /// a live node - only the type a kept, emptied vector is held at between
 /// queries (`scratch::recycle`).
 pub trait Host: 'static + Sized {
+    /// Whether names are resolved to ids once per walking query
+    /// ([`CssDoc::tag_id`], [`CssDoc::resolve_attr_name`]); without, they
+    /// are compared as bytes, as `matches?` compares them everywhere.
+    const RESOLVES_NAMES: bool;
     type Node<'d>: CssNode<'d, Host = Self>;
     /// A type selector's name resolved in a document: equal ids are equal
     /// names with ASCII case folded.
@@ -45,8 +49,14 @@ pub trait CssNode<'d>: Copy + PartialEq + 'd {
     fn node_type(self) -> NodeType;
     /// A text, CDATA or comment node's data.
     fn char_data(self) -> Option<&'d [u8]>;
-    /// Whether the node is in the HTML namespace.
+    /// Whether the node is in the HTML namespace: what the form-state
+    /// pseudo-classes ask, in any document.
     fn is_html(self) -> bool;
+    /// Whether the node is an HTML element in an HTML document, where a
+    /// selector's names - and the HTML Standard's list of attribute values -
+    /// compare ASCII case-insensitively ("case-sensitivity of selectors"). An
+    /// XHTML element in an XML document is not.
+    fn folds_case(self) -> bool;
     /// The node's namespace URI; `None` for no namespace.
     fn ns_uri(self) -> Option<&'d [u8]>;
     /// Whether the two nodes are in the same namespace (none counting as

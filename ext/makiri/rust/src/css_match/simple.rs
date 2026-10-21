@@ -14,8 +14,7 @@ use super::positions::{sibling_position, Positions};
 use super::scratch::Table;
 use super::state::{
     has_state_attr, is_any_link, is_blank, is_checked, is_disabled, is_empty, is_enabled,
-    is_html_namespace, is_lexbor_whitespace, is_placeholder_shown, is_read_write, is_required,
-    is_root,
+    is_lexbor_whitespace, is_placeholder_shown, is_read_write, is_required, is_root,
 };
 use super::tree::{next_position_sibling, prev_position_sibling};
 use super::{Budget, MatchFailure};
@@ -91,7 +90,7 @@ fn name_eq<'d, N: CssNode<'d>>(node: N, want: &[u8]) -> bool {
 /// never gets past the first branch.
 #[inline]
 fn written_case_holds<'d, N: CssNode<'d>>(node: N, el: N::Element, want: &[u8]) -> bool {
-    (!el.has_written_name() && node.is_html()) || written_case_holds_slow(node, el, want)
+    (!el.has_written_name() && node.folds_case()) || written_case_holds_slow(node, el, want)
 }
 
 #[inline(never)]
@@ -105,7 +104,7 @@ fn written_case_holds_slow<'d, N: CssNode<'d>>(node: N, el: N::Element, want: &[
         return !has_ascii_uppercase(want);
     }
     let local = el.dom_local_name();
-    if node.is_html() {
+    if node.folds_case() {
         /* `want` lower-cased against the localName. Given the fold, that
          * holds exactly when the localName has no upper case - and needs no
          * lower-cased copy of `want`. */
@@ -118,13 +117,11 @@ fn written_case_holds_slow<'d, N: CssNode<'d>>(node: N, el: N::Element, want: &[
 /// `lxb_selectors_match_attribute`: `[name op value]` (or `[name]`, existence,
 /// when `at.value` is `None`). `value_ci` is [`Step::value_ci`]: `None` - a
 /// name in Lexbor's case-insensitive table with no `i`/`s` - compares
-/// case-insensitively on an HTML-namespace element.
+/// case-insensitively on an HTML element in an HTML document.
 ///
-/// Lexbor also asks that the owner document be an HTML document, a raw
-/// document-type read `css_match` (which forbids `unsafe`) cannot make; it
-/// always holds here, since this matcher only ever runs on `Makiri::HTML`
-/// documents (XML's CSS goes through `css::lower`), and the namespace alone
-/// tells HTML elements from foreign (SVG/MathML) content within one.
+/// Lexbor also asks that the owner document be an HTML document; so does
+/// the HTML Standard, and [`CssNode::folds_case`] is that question - an
+/// XHTML element in an XML document compares its values as written.
 fn attribute_matches<'d, N: CssNode<'d>>(
     node: N,
     value: Option<&[u8]>,
@@ -138,7 +135,7 @@ fn attribute_matches<'d, N: CssNode<'d>>(
     let Some(want) = at_value else {
         return true; // `[name]`: existence only
     };
-    let ci = value_ci.unwrap_or_else(|| is_html_namespace(node));
+    let ci = value_ci.unwrap_or_else(|| node.folds_case());
     match op {
         AttrMatch::Equal => eq_bytes(value, want, ci),
         // Lexbor's `~=` literally reuses the class-token matcher.
@@ -446,7 +443,7 @@ fn attr_value_in<'d, N: CssNode<'d>>(
     local: &[u8],
 ) -> Option<&'d [u8]> {
     let el = node.element()?;
-    let fold = node.is_html();
+    let fold = node.folds_case();
     el.attrs()
         .find(|a| {
             uri.is_some()

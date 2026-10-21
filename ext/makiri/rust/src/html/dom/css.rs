@@ -10,6 +10,7 @@ use super::NodeType;
 pub struct HtmlHost;
 
 impl Host for HtmlHost {
+    const RESOLVES_NAMES: bool = true;
     type Node<'d> = HtmlNode<'d>;
     type TagId = TagId;
     type AttrName = AttrName;
@@ -59,6 +60,11 @@ impl<'d> CssNode<'d> for HtmlNode<'d> {
     #[inline]
     fn is_html(self) -> bool {
         self.ns_id() == Some(NsId::HTML)
+    }
+    /// Every document here is an HTML document.
+    #[inline]
+    fn folds_case(self) -> bool {
+        CssNode::is_html(self)
     }
     #[inline]
     fn ns_uri(self) -> Option<&'d [u8]> {

@@ -266,14 +266,16 @@ impl<'c, 'p, 'd, N: CssNode<'d>> Query<'c, 'p, 'd, N> {
         limit: u64,
         scratch: &mut Scratch<N::Host>,
     ) -> Result<Self, MatchFailure> {
+        /* Names are resolved only where the host keeps ids for them. */
+        let resolve_in = walk_in.filter(|_| <N::Host as Host>::RESOLVES_NAMES);
         let mut names = Names::reuse(&mut scratch.names);
-        if walk_in.is_some() {
+        if resolve_in.is_some() {
             for _ in compiled.simples.as_slice() {
                 names.push(Name::Unresolved)?;
             }
         }
         let mut tag_filter = None;
-        if let (Some(doc), [chain]) = (walk_in, compiled.top.as_slice()) {
+        if let (Some(doc), [chain]) = (resolve_in, compiled.top.as_slice()) {
             if chain.len != 0 {
                 let last = compiled.compound(*chain, chain.len() - 1)?;
                 for i in last.start..last.end {
@@ -292,7 +294,7 @@ impl<'c, 'p, 'd, N: CssNode<'d>> Query<'c, 'p, 'd, N> {
             compiled,
             names,
             tag_filter,
-            walked: walk_in,
+            walked: resolve_in,
             _doc: core::marker::PhantomData,
             budget: Budget {
                 spent: std::cell::Cell::new(0),
