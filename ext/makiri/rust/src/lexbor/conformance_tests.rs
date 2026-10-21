@@ -924,8 +924,7 @@ fn tokenizer_speed_on(label: &str, input: &[u8]) {
         let mut sink = Count(0, crate::html::names::Names::default());
         {
             let mut t = crate::html::tokenizer::Tokenizer::new(input, &mut sink);
-            t.chunk();
-            t.end();
+            t.run();
         }
         sink.0
     };
@@ -976,8 +975,7 @@ fn tokenizer_profile_target() {
     while std::time::Instant::now() < until {
         let mut sink = Count(0, crate::html::names::Names::default());
         let mut t = crate::html::tokenizer::Tokenizer::new(input.as_bytes(), &mut sink);
-        t.chunk();
-        t.end();
+        t.run();
     }
 }
 

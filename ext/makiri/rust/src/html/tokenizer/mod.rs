@@ -21,8 +21,10 @@
 //!   reference the tokenizer holds: the tree builder writes the document that
 //!   owns the table, and Lexbor's tokenizer and document share it the same way.
 //!
-//! Lexbor's chunked input is kept as an API (`chunk` may be called more than
-//! once) because its states are written for it, but Makiri passes one chunk.
+//! Lexbor's states are written for chunked input - a keyword, a CR or a
+//! reference can straddle a chunk end - and keep that handling, but the input
+//! is always one chunk: [`Tokenizer::run`] tokenizes all of it, then runs the
+//! end-of-file pass.
 
 #![forbid(unsafe_code)]
 
@@ -364,9 +366,20 @@ impl<'i, 's> Tokenizer<'i, 's> {
             .map(|(s, e)| self.values.get(s..e).unwrap_or_default())
     }
 
+    /// Tokenize the whole input, then the end of file: Lexbor's
+    /// `lxb_html_tokenizer_chunk` over the input as one chunk, and
+    /// `lxb_html_tokenizer_end` when that succeeded. Call it once; the input
+    /// is tokenized from its start.
+    pub fn run(&mut self) -> Status {
+        match self.chunk() {
+            Status::Ok => self.end(),
+            st => st,
+        }
+    }
+
     /// `lxb_html_tokenizer_chunk`: tokenize the whole of the input, which is
     /// one chunk.
-    pub fn chunk(&mut self) -> Status {
+    fn chunk(&mut self) -> Status {
         let end = self.input.len();
         self.is_eof = false;
         self.status = Status::Ok;
@@ -380,7 +393,7 @@ impl<'i, 's> Tokenizer<'i, 's> {
 
     /// `lxb_html_tokenizer_end`: the end-of-file pass, then the end-of-file
     /// token.
-    pub fn end(&mut self) -> Status {
+    fn end(&mut self) -> Status {
         self.status = Status::Ok;
         /* Lexbor's fake EOF buffer: one NUL at the virtual index `len`. */
         let data = self.input.len();

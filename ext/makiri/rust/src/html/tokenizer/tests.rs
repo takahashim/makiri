@@ -142,8 +142,7 @@ pub fn tokenize_traced(input: &[u8], state: State, last_start_tag: Option<&[u8]>
         if let (true, Some(id)) = (wants_last, last) {
             t.tmp_tag_id = id;
         }
-        assert_eq!(t.chunk(), Status::Ok);
-        assert_eq!(t.end(), Status::Ok);
+        assert_eq!(t.run(), Status::Ok);
         errors = t.errors().iter().map(|e| (e.id as u32, e.pos)).collect();
     }
     Trace {
