@@ -1,4 +1,4 @@
-//! The lowering itself: a Lexbor selector chain becomes XPath steps and
+//! The lowering itself: a parsed selector chain becomes XPath steps and
 //! predicates.
 //!
 //! - a COMPOUND (a run of simple selectors on one element) becomes ONE step: the
@@ -269,8 +269,9 @@ fn only(b: &Build, set: Siblings) -> Built {
 /// The `:nth-*(an+b)` match condition over the position among `set` along
 /// `axis`.
 fn nth(b: &Build, axis: Axis, set: Siblings, anb: Nth<'_>) -> Built {
-    /* `c_long` from Lexbor's `lxb_css_syntax_anb_t` - 64-bit on LP64, 32-bit on
-     * LLP64 - so the `as f64` below is a real conversion on either. */
+    /* `c_long`, as Lexbor's `lxb_css_syntax_anb_t` has it and the parser port
+     * keeps it - 64-bit on LP64, 32-bit on LLP64 - so the `as f64` below is a
+     * real conversion on either. */
     let (a, bb) = (anb.a as f64, anb.b as f64);
     if anb.a == 0 {
         /* position = b */
@@ -465,8 +466,9 @@ fn fold_simple(
 ///
 /// `+` is not here: it takes two steps, which the callers emit. `Close` only
 /// heads a chain's first compound - inside a chain it continues a compound
-/// instead of starting one - and reads as whitespace there. Anything else Lexbor
-/// parses (the column combinator `||`) is refused, never read as a descendant.
+/// instead of starting one - and reads as whitespace there. Anything else the
+/// parser accepts (the column combinator `||`) is refused, never read as a
+/// descendant.
 fn combinator_axis(b: &Build, c: Combinator, reverse: bool) -> Result<Axis, Reported> {
     Ok(match (c, reverse) {
         (Combinator::Descendant | Combinator::Close, false) => Axis::Descendant,

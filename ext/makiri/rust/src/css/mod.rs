@@ -51,15 +51,17 @@ pub(crate) const MAX_COMPOUNDS: usize = 64;
 /// The deepest selector-list nesting the lowering descends through.
 ///
 /// Every level - a `:is`, `:where`, `:not` or `:has` argument that itself nests
-/// another - recurses through several frames, and Lexbor's parser accepts a
-/// much deeper chain than the AST depth limit would ever see, because
-/// `check_ast_depth` runs on the way UP: by the time it can refuse, the descent
-/// has already spent the stack. This bound is checked on the way DOWN, far
-/// below `MAX_AST_DEPTH` - but a count alone assumes the caller's stack was
-/// full-sized to begin with, which `crate::stack::exhausted()` (also checked
-/// on the way down, see [`Build::enter_selector_nesting`]) does not have to
-/// assume: see its module doc for why an unchecked overflow is not an ordinary
-/// error (it skips `Drop`, wedging the process-global CSS parser `Busy`).
+/// another - recurses through several frames of the lowering, while the parser
+/// port nests on heap stacks, not natively, and so accepts any depth
+/// (`crate::selectors::parser`'s module doc). The AST depth limit does not
+/// stop the descent: `check_ast_depth` runs on the way UP, and by the time it
+/// can refuse, the descent has already spent the stack. This bound is checked
+/// on the way DOWN, far below `MAX_AST_DEPTH` - but a count alone assumes the
+/// caller's stack was full-sized to begin with, which `crate::stack::exhausted()`
+/// (also checked on the way down, see [`Build::enter_selector_nesting`]) does
+/// not have to assume. An unchecked overflow is not an ordinary error: Ruby
+/// handles it by a `longjmp` that skips `Drop` in every frame up to the
+/// nearest `rb_protect` (`crate::stack`'s module doc).
 pub(crate) const MAX_SELECTOR_NESTING: u32 = 128;
 
 /// What every builder in this module carries: where to charge AST nodes, where
