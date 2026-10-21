@@ -415,7 +415,7 @@ by the check that concluded "every undefined symbol is legitimate".
   allocator, or - for the glue's Ruby-side storage - through Ruby's xmalloc;
   ASan red-zones both per allocation.
 - **The fallible-allocation line.** The engine (`xml`, `xpath`, `css`,
-  `selectors`, `lexbor/adapter`, `lexbor/css_match`, `cbuf`) allocates only through `falloc`: `clippy.toml` bans the
+  `selectors`, `lexbor/adapter`, `css_match`, `cbuf`) allocates only through `falloc`: `clippy.toml` bans the
   infallible `Box::new` / `Vec::with_capacity` / `reserve`, and `rake oom` fails
   each site in turn, so an OOM there raises instead of aborting. The glue's
   Ruby-side storage - TypedData wrappers (`bridge::typed::wrap_built`, freed by
@@ -477,7 +477,7 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            holds each one's count exactly - a new file fails even
                            where a parent module's `allow` kept rustc quiet - plus
                            the 56 `forbid` files. `glue/**`, `xpath/**`,
-                           `css/**` and `lexbor/css_match/**` are fully safe
+                           `css/**` and `css_match/**` are fully safe
                            (their module roots carry
                            `#![forbid(unsafe_code)]`, which the gate pins), and
                            `rb_sys::` and `Value::from_raw` are 0 outside
@@ -834,7 +834,7 @@ policy is a new item stated in each `impl`. The HTML backend reports the DOM's
 case-preserved `localName` (`refX`, `foreignObject`), not Lexbor's lower-cased
 stored name.
 
-**CSS** (`lexbor/css_match/` + `lexbor/selector_cache.rs` + `selectors/`). `Node#{css,at_css,matches?}` (`glue::html_node::css`)
+**CSS** (`css_match/` + `lexbor/selector_cache.rs` + `selectors/`). `Node#{css,at_css,matches?}` (`glue::html_node::css`)
 match over the typed HTML adapter through `css_match` - an original,
 `#![forbid(unsafe_code)]` Rust port of Lexbor's `lxb_selectors_*` state
 machine (its `find`/`found_check`/`not_found` loop over a chain's compounds,
@@ -1176,7 +1176,7 @@ against Nokogiri: parse ~4.6×, css ~10×, at_css ~7000×, `//tag` ~4×,
 full-text extraction ~3.5×. **traverse** (children walk) used to be the one row
 that only met Nokogiri (within measurement error); as of the v0.10.0 bench it
 beats it too. (`css`/`at_css` were remeasured after HTML CSS matching moved
-from Lexbor's engine to `lexbor::css_match`, then after the
+from Lexbor's engine to `css_match`, then after the
 per-candidate allocation fix and the move to Lexbor's own loop below - see
 that note; the `~12×`/`~9400×` figures an earlier revision of this file
 quoted were the OLD engine's.)
@@ -1223,7 +1223,7 @@ Key decisions that got there, worth not regressing:
   tag names fall through. See the element index note above.
 
 - **HTML CSS matches over the typed adapter, not Lexbor's own matcher**
-  (`lexbor::css_match`, see the subsystem note), and **allocates per
+  (`css_match`, see the subsystem note), and **allocates per
   query, not per candidate**. Right after the switch it was ~6x slower than
   Lexbor's C matcher PER CANDIDATE NODE (a Ruby-free in-process probe, same
   parsed document, same ratio for `css`'s whole-tree scan and `at_css`'s

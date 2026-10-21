@@ -94,22 +94,22 @@ UNSAFE_ISLANDS = {
 # The subtree roots in FORBID_ROOTS make whole directories compiler-forbidden:
 # `forbid` is inherited, so a new file under `glue/` or `xpath/` cannot slip in
 # with an `allow`, however few its `unsafe`s.
-FORBID_ROOTS = %w[css/mod.rs glue/mod.rs lexbor/css_match/mod.rs selectors/mod.rs xml/mod.rs xpath/mod.rs].freeze
+FORBID_ROOTS = %w[css/mod.rs glue/mod.rs css_match/mod.rs selectors/mod.rs xml/mod.rs xpath/mod.rs].freeze
 
 FORBID_FILES = %w[
   bridge/dom_error.rs child_index.rs conformance/mod.rs
   css/build.rs css/lower.rs css/mod.rs
-  cutf8.rs cutf8/verify.rs dom_rules.rs
-  engine_error.rs falloc/verify.rs glue/css.rs
-  glue/html_doc.rs glue/html_node/css.rs glue/html_node/mutate.rs
-  glue/html_node/read.rs glue/html_node/serialize.rs glue/mod.rs
-  glue/node.rs glue/node_set.rs glue/query.rs
-  glue/xml_doc.rs glue/xml_node/css.rs glue/xml_node/mod.rs
-  glue/xml_node/mutate.rs glue/xml_node/ns.rs glue/xml_node/read.rs
-  glue/xml_node/serialize.rs glue/xpath_context.rs html/dom/mod.rs
-  html/mod.rs html/tokenizer/mod.rs html/tree/mod.rs
-  html_dom.rs lexbor/adapter/dom_index.rs lexbor/contains_guard.rs
-  lexbor/css_match/mod.rs lexbor/selector_cache.rs lexbor/selector_text.rs
+  css_match/mod.rs cutf8.rs cutf8/verify.rs
+  dom_rules.rs engine_error.rs falloc/verify.rs
+  glue/css.rs glue/html_doc.rs glue/html_node/css.rs
+  glue/html_node/mutate.rs glue/html_node/read.rs glue/html_node/serialize.rs
+  glue/mod.rs glue/node.rs glue/node_set.rs
+  glue/query.rs glue/xml_doc.rs glue/xml_node/css.rs
+  glue/xml_node/mod.rs glue/xml_node/mutate.rs glue/xml_node/ns.rs
+  glue/xml_node/read.rs glue/xml_node/serialize.rs glue/xpath_context.rs
+  html/dom/mod.rs html/mod.rs html/tokenizer/mod.rs
+  html/tree/mod.rs html_dom.rs lexbor/adapter/dom_index.rs
+  lexbor/contains_guard.rs lexbor/selector_cache.rs lexbor/selector_text.rs
   lexbor/stylesheet.rs limits.rs node_type.rs
   ptr_table.rs rust_tests.rs selectors/mod.rs
   stack.rs text.rs utf8_input.rs
@@ -243,7 +243,7 @@ INFALLIBLE_ALLOC = /\.to_owned\(\)|\.to_vec\(\)|String::from\(|\bformat!\(/
 #
 # Empty: the `selectors`-crate exploration that once held an
 # accepted exception here was rejected in favour of porting Lexbor's own
-# `lxb_selectors_*` state machine instead - `lexbor/css_match/`, which
+# `lxb_selectors_*` state machine instead - `css_match/`, which
 # allocates only through `falloc` like the rest of the engine (and `rake oom`
 # sweeps it).
 INFALLIBLE_ALLOC_COUNTS = {}.freeze

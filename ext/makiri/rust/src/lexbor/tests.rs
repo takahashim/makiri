@@ -403,7 +403,7 @@ mod guard_agreement {
     }
 }
 
-/// `lexbor::css_match` - a semantic port of Lexbor's `selectors.c`, not a
+/// `css_match` - a semantic port of Lexbor's `selectors.c`, not a
 /// `selectors`-crate-based approach (rejected: that matcher recurses natively
 /// on selector nesting - `css_match`'s module doc). Parses via the existing
 /// `css_parser`, matches via an explicit heap work stack (never native
@@ -413,13 +413,13 @@ mod guard_agreement {
  * written against Lexbor's tree keeps its answers, and the old engine's are
  * read back at the same places in the copy. */
 mod css_match {
+    use crate::css_match::{
+        self as port, validate, MatchFailure, QueryFailure, Scratch, MAX_COMPOUNDS,
+    };
     use crate::gvl::Gvl;
     use crate::html_dom::html::{HtmlElement, HtmlNode, NsId, RawNode};
     use crate::lexbor::adapter::post_parse::parse_html;
     use crate::lexbor::adapter::tree_guard::DepthLimit;
-    use crate::lexbor::css_match::{
-        self as port, validate, MatchFailure, QueryFailure, Scratch, MAX_COMPOUNDS,
-    };
     use crate::lexbor::twin::Twin;
     use crate::selectors::ast::Lists;
 
@@ -974,7 +974,7 @@ mod css_match {
     /// look exactly like a legitimate empty result.
     #[test]
     fn unsupported_constructs_are_raised_not_answered_as_empty() {
-        use crate::lexbor::css_match::QueryFailure;
+        use crate::css_match::QueryFailure;
 
         let doc = parsed(
             b"<html><body><table><col><tr><td>x</td></tr></table><p>hello</p></body></html>",
@@ -1026,7 +1026,7 @@ mod css_match {
     /// nested, so the query never reaches that silent path at all.
     #[test]
     fn too_complex_chains_are_caught_wherever_they_are_nested() {
-        use crate::lexbor::css_match::MatchFailure;
+        use crate::css_match::MatchFailure;
 
         let chain_of = |n: usize| -> String {
             let mut s = String::from("div");
@@ -1085,7 +1085,7 @@ mod css_match {
     /// does), this raises instead of silently matching everything.
     #[test]
     fn not_with_a_too_complex_chain_raises_instead_of_matching_everything() {
-        use crate::lexbor::css_match::MatchFailure;
+        use crate::css_match::MatchFailure;
 
         let mut chain = String::from("div");
         for _ in 1..=MAX_COMPOUNDS + 1 {
@@ -1116,7 +1116,7 @@ mod css_match {
     /// because `p` happened to come first.
     #[test]
     fn unsupported_constructs_are_found_regardless_of_position_or_short_circuit() {
-        use crate::lexbor::css_match::MatchFailure;
+        use crate::css_match::MatchFailure;
 
         let shapes = [
             "nosuch:current(p)",
@@ -1302,7 +1302,7 @@ mod css_match {
     /// items spent the shipped budget.
     #[test]
     fn nth_child_of_s_over_a_wide_list_costs_linear_work() {
-        use crate::lexbor::css_match::select_all_with_work_limit;
+        use crate::css_match::select_all_with_work_limit;
         const N: usize = 20_000;
 
         let html = format!(
@@ -1334,7 +1334,7 @@ mod css_match {
     /// fails closed.
     #[test]
     fn a_wide_disabled_fieldset_costs_linear_work() {
-        use crate::lexbor::css_match::select_all_with_work_limit;
+        use crate::css_match::select_all_with_work_limit;
         const N: usize = 20_000;
 
         let gvl = Gvl::exclusive();
@@ -1358,8 +1358,8 @@ mod css_match {
         );
         assert!(matches!(
             query(late_legend, 20 * N as u64),
-            Err(crate::lexbor::css_match::QueryFailure::Match(
-                crate::lexbor::css_match::MatchFailure::WorkExceeded
+            Err(crate::css_match::QueryFailure::Match(
+                crate::css_match::MatchFailure::WorkExceeded
             ))
         ));
     }
@@ -1372,7 +1372,7 @@ mod css_match {
     /// placements that CAN match still do.
     #[test]
     fn a_failing_descendant_chain_does_not_try_every_combination_of_ancestors() {
-        use crate::lexbor::css_match::select_all_with_work_limit;
+        use crate::css_match::select_all_with_work_limit;
 
         let html = format!("{}<p></p>{}", "<div>".repeat(40), "</div>".repeat(40));
         let doc = parsed(html.as_bytes());
@@ -1395,7 +1395,7 @@ mod css_match {
 
     #[test]
     fn a_has_search_that_cannot_find_anything_fails_closed_once_the_work_budget_is_spent() {
-        use crate::lexbor::css_match::select_all_with_work_limit;
+        use crate::css_match::select_all_with_work_limit;
 
         const CANDIDATES: usize = 5;
         const DESCENDANTS_EACH: usize = 20;
@@ -1425,8 +1425,8 @@ mod css_match {
         let starved = select_all_with_work_limit(root(&doc), parsed_sel.groups(), 10);
         assert!(matches!(
             starved,
-            Err(crate::lexbor::css_match::QueryFailure::Match(
-                crate::lexbor::css_match::MatchFailure::WorkExceeded
+            Err(crate::css_match::QueryFailure::Match(
+                crate::css_match::MatchFailure::WorkExceeded
             ))
         ));
 
@@ -1518,7 +1518,7 @@ mod css_match {
     /// here.
     #[test]
     fn wide_sibling_lists_under_of_type_checks_charge_the_work_budget_too() {
-        use crate::lexbor::css_match::select_all_with_work_limit;
+        use crate::css_match::select_all_with_work_limit;
 
         const SIBLINGS: usize = 30;
 
@@ -1539,8 +1539,8 @@ mod css_match {
         let starved = select_all_with_work_limit(root(&doc), parsed_sel.groups(), 10);
         assert!(matches!(
             starved,
-            Err(crate::lexbor::css_match::QueryFailure::Match(
-                crate::lexbor::css_match::MatchFailure::WorkExceeded
+            Err(crate::css_match::QueryFailure::Match(
+                crate::css_match::MatchFailure::WorkExceeded
             ))
         ));
 
@@ -1714,7 +1714,7 @@ mod css_match {
     /// (`tr:nth-child(odd)` over ~4,500 rows failed the 10 million default).
     #[test]
     fn nth_over_a_wide_list_costs_work_linear_in_the_list() {
-        use crate::lexbor::css_match::select_all_with_work_limit;
+        use crate::css_match::select_all_with_work_limit;
         const ROWS: usize = 5000;
         let mut html = String::from("<!doctype html><table><tbody>");
         for _ in 0..ROWS {
@@ -2741,7 +2741,7 @@ mod css_match {
     /// shipped 10-million limit.
     #[test]
     fn has_nesting_against_an_ambiguous_document_fails_closed_on_the_work_budget() {
-        use crate::lexbor::css_match::{select_all_with_work_limit, QueryFailure};
+        use crate::css_match::{select_all_with_work_limit, QueryFailure};
 
         const DEPTH: usize = 10;
         let selector = format!("{}div{}", ":has(".repeat(DEPTH), ")".repeat(DEPTH));
@@ -2797,11 +2797,11 @@ mod css_match {
 /// correctness, and a rejected selector does not disturb what is already
 /// cached.
 mod selector_cache {
+    use crate::css_match::select_all;
     use crate::gvl::Gvl;
     use crate::html_dom::html::{HtmlNode, RawNode};
     use crate::html_dom::post_parse::{parse_html, HtmlParsed};
     use crate::html_dom::tree_guard::DepthLimit;
-    use crate::lexbor::css_match::select_all;
     use crate::lexbor::selector_cache::with_compiled;
 
     fn parsed(html: &[u8]) -> Box<HtmlParsed> {

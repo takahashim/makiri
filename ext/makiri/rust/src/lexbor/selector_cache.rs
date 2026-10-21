@@ -1,4 +1,4 @@
-//! The compiled-selector cache for `lexbor::css_match`'s HTML query: a
+//! The compiled-selector cache for `css_match`'s HTML query: a
 //! selector string is parsed once by the ported parser (`crate::selectors`)
 //! and its AST kept for the next query that uses the same string.
 //!
@@ -24,9 +24,9 @@
 
 use std::collections::HashMap;
 
+use crate::css_match::Scratch;
 use crate::falloc::{try_to_boxed_slice, Reserve};
 use crate::gvl::{Gvl, GvlCell};
-use crate::lexbor::css_match::Scratch;
 use crate::selectors::ast::Lists;
 use crate::selectors::{Parsed, Status};
 

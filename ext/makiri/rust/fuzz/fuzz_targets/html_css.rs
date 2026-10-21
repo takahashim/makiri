@@ -5,7 +5,7 @@
 //! compiled-selector cache (`selector_cache::with_compiled` - the parser
 //! port, the cached lists, the flush at the cap,
 //! the bypass and its re-test, and the engine's kept `Scratch`), then
-//! `lexbor::css_match` - `compile`, the chain loop and its backtracking,
+//! `css_match` - `compile`, the chain loop and its backtracking,
 //! the task stack for `:is()` / `:not()` / `:has()` / `of S`, the sibling-
 //! position memo, the lazily resolved names and the adapter reads they make -
 //! over an arbitrary document.
@@ -32,11 +32,11 @@ use libfuzzer_sys::fuzz_target;
 
 mod common;
 use common::*;
+use makiri::css_match::{matches_any, select_all, select_first, Scratch};
 use makiri::gvl::Gvl;
 use makiri::html_dom::html::HtmlNode;
 use makiri::html_dom::post_parse::parse_html;
 use makiri::html_dom::tree_guard::DepthLimit;
-use makiri::lexbor::css_match::{matches_any, select_all, select_first, Scratch};
 use makiri::lexbor::selector_cache;
 use makiri::selectors::ast::Lists;
 

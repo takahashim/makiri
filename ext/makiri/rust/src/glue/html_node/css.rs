@@ -1,6 +1,6 @@
 //! `Node#css` / `#at_css` / `#matches?`.
 //!
-//! The selector engine lives in [`crate::lexbor::css_match`] (matching,
+//! The selector engine lives in [`crate::css_match`] (matching,
 //! over the typed adapter, non-recursive) plus [`crate::lexbor::selector_cache`]
 //! (parsing, with the parser port [`crate::selectors`], AND caching the
 //! parse across repeat calls with the same selector string), neither of
@@ -18,9 +18,9 @@ use crate::bridge::html::wrap_html_node;
 use crate::bridge::node_set::node_set_from;
 use crate::bridge::ruby::makiri_error;
 use crate::bridge::string::{ruby_verified_text, RubyText};
+use crate::css_match::{self, MatchFailure, QueryFailure, MAX_COMPOUNDS};
 use crate::html_dom::html::RawNode;
 use crate::init::MOD_HTML_NODE_METHODS;
-use crate::lexbor::css_match::{self, MatchFailure, QueryFailure, MAX_COMPOUNDS};
 use crate::lexbor::selector_cache;
 use crate::lexbor::selector_cache::ParseError;
 use crate::limits::NODE_SET_MAX;
@@ -36,7 +36,7 @@ fn parse_error(err: ParseError, selector: Value) -> Error {
     }
 }
 
-/// A whole-query failure ([`crate::lexbor::css_match::select_all`]'s
+/// A whole-query failure ([`crate::css_match::select_all`]'s
 /// error) as the Ruby exception it maps to.
 fn query_error(err: QueryFailure) -> Error {
     match err {

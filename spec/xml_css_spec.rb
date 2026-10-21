@@ -394,7 +394,7 @@ RSpec.describe "Makiri::XML CSS selectors" do
       "[lang|=en]", "[data-k^=pre]", "[data-k$=suf]", "[data-k*=mid]", "[class~=b]", ":not(p)",
       "p:not(:first-child)", ":is(p, span)", ":where(div > span)", ":has(> span)", ":has(+ p)", ":has(~ em)",
       "*:not(:has(*))",
-      # NOT :lexbor-contains() - the HTML matcher (`lexbor::css_match`)
+      # NOT :lexbor-contains() - the HTML matcher (`css_match`)
       # deliberately does not implement it, so it raises there instead of
       # ever answering; see the dedicated divergence test below, and
       # css_spec.rb's ":lexbor-contains()" describe block.

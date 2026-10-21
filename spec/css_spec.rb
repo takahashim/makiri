@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# M7: CSS selector queries, matched by `lexbor::css_match` (a safe-Rust
+# M7: CSS selector queries, matched by `css_match` (a safe-Rust
 # port of Lexbor's `lxb_selectors` state machine - selector PARSING still goes
 # through Lexbor's own CSS parser, matching does not).
 RSpec.describe "Makiri CSS" do
@@ -94,7 +94,7 @@ RSpec.describe "Makiri CSS" do
   # context node itself CAN satisfy an earlier compound in the selector, unlike
   # Nokogiri (and `Makiri::XML`, which lowers to an XPath scoped from the node).
   # Pinned here so a change of matcher (as the move from Lexbor's engine to
-  # `lexbor::css_match` was) reproduces this, not "fix" it into XPath-style
+  # `css_match` was) reproduces this, not "fix" it into XPath-style
   # scoping.
   describe "query scope (whole-document matching, not scoped to the context node)" do
     it "lets the context node itself satisfy an earlier compound" do
@@ -181,7 +181,7 @@ RSpec.describe "Makiri CSS" do
     end
   end
 
-  # HTML matching (`lexbor::css_match`) caps one compound chain at 64
+  # HTML matching (`css_match`) caps one compound chain at 64
   # compounds, the same bound `Makiri::XML` has (see `xml_css_spec.rb`'s
   # "fails closed on an over-long :is()/:not() argument"). Over the cap is a
   # raise, found before any node is matched, wherever the chain is nested -

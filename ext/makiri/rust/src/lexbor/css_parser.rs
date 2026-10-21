@@ -164,7 +164,7 @@ mod raw {
         l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_LAST_OF_TYPE;
     pub const ONLY_OF_TYPE: Pc =
         l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_ONLY_OF_TYPE;
-    // The rest are for `lexbor::css_match` (HTML matching), not the XML
+    // The rest are for `css_match` (HTML matching), not the XML
     // lowering, which treats all of them as unsupported (`PseudoClass::Other`).
     pub const ANY_LINK: Pc =
         l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_ANY_LINK;
@@ -344,7 +344,7 @@ pub struct Attribute<'p> {
 
 /// The case modifier written after an attribute selector's value.
 ///
-/// Three states, not a flag: `lexbor::css_match` needs `Unset` and `Sensitive`
+/// Three states, not a flag: `css_match` needs `Unset` and `Sensitive`
 /// apart, because an explicit `s` forces a case-sensitive compare even for an
 /// attribute in HTML's case-insensitive table
 /// (`lxb_selectors_match_attribute_html_case_insensitive`, `type` for one),
@@ -372,7 +372,7 @@ pub enum PseudoClass {
     FirstOfType,
     LastOfType,
     OnlyOfType,
-    // The rest are for `lexbor::css_match` (HTML matching) only; the XML
+    // The rest are for `css_match` (HTML matching) only; the XML
     // lowering's exhaustive match (`css::lower::lower_pseudo_simple`) groups
     // them with `Other` - unsupported, same as before this was added.
     AnyLink,

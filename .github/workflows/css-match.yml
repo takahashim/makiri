@@ -1,6 +1,6 @@
 name: CSS matcher
 
-# The HTML CSS matcher (`lexbor::css_match`) on its own: it answers every
+# The HTML CSS matcher (`css_match`) on its own: it answers every
 # `Node#css` / `#at_css` / `#matches?`, and its failure mode is not a crash
 # but a wrong answer, which the general suites only catch by example. Two
 # checks, both against the OLD engine - Lexbor's own `lxb_selectors`, kept as
@@ -22,6 +22,7 @@ on:
     branches: [main, master]
     paths:
       - "ext/makiri/rust/src/lexbor/**"
+      - "ext/makiri/rust/src/css_match/**"
       - "ext/makiri/rust/fuzz/**"
       - "ext/makiri/rust/Cargo.toml"
       - "vendor/lexbor"
@@ -29,6 +30,7 @@ on:
   pull_request:
     paths:
       - "ext/makiri/rust/src/lexbor/**"
+      - "ext/makiri/rust/src/css_match/**"
       - "ext/makiri/rust/fuzz/**"
       - "ext/makiri/rust/Cargo.toml"
       - "vendor/lexbor"

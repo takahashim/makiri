@@ -39,12 +39,12 @@ use libfuzzer_sys::fuzz_target;
 
 mod common;
 use common::*;
+use makiri::css_match::{select_all, Scratch};
 use makiri::gvl::Gvl;
 use makiri::html_dom::html::{HtmlNode, RawNode};
 use makiri::lexbor::adapter::html::RawNode as LexborNode;
 use makiri::lexbor::adapter::post_parse::parse_html;
 use makiri::lexbor::adapter::tree_guard::DepthLimit;
-use makiri::lexbor::css_match::{select_all, Scratch};
 use makiri::lexbor::selector_cache;
 use makiri::lexbor::selectors as old_engine;
 use makiri::lexbor::twin::Twin;
