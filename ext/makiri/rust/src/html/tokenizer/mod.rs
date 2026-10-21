@@ -179,6 +179,27 @@ pub trait TokenSink {
     fn names(&mut self) -> &mut Names;
 }
 
+/// The state of the character reference being read: what only the
+/// `char_ref*` states (`state.rs`) read and write, under Lexbor's names in
+/// the docs.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct CharRef {
+    /// `entity`: the node of the named-reference search tree reached so far.
+    pub(crate) entity: usize,
+    /// `entity_match`: the longest named reference matched so far.
+    pub(crate) matched: Option<usize>,
+    /// `entity_start`: where the reference starts in the buffer.
+    pub(crate) start: usize,
+    /// `entity_end`: the buffer index of the matched name's last byte.
+    pub(crate) end: usize,
+    /// `entity_number`: a numeric reference's value.
+    pub(crate) number: u32,
+    /// `is_attribute`: the reference is in an attribute value.
+    pub(crate) in_attribute: bool,
+    /// `markup` as a position, for a numeric reference's errors.
+    pub(crate) markup_pos: Option<usize>,
+}
+
 /// `lxb_html_tokenizer_t`.
 pub struct Tokenizer<'i, 's> {
     pub(crate) input: &'i [u8],
@@ -194,8 +215,6 @@ pub struct Tokenizer<'i, 's> {
 
     /// `markup`: the rest of a keyword being matched across a chunk end.
     pub(crate) markup: &'static [u8],
-    /// `markup` as a position, for a numeric reference's errors.
-    pub(crate) markup_pos: Option<usize>,
     /// `temp`: where an RCDATA/RAWTEXT/script end tag began.
     pub(crate) temp: Option<usize>,
     /// The tag of the last start tag, which decides whether an end tag in
@@ -207,9 +226,8 @@ pub struct Tokenizer<'i, 's> {
     /// `last`: the end of the last chunk.
     pub(crate) last: usize,
 
-    pub(crate) entity: usize,
-    pub(crate) entity_match: Option<usize>,
-    pub(crate) entity_start: usize,
+    /// The character reference being read (`char_ref*` in `state.rs`).
+    pub(crate) char_ref: CharRef,
     /// Where a possible RCDATA/RAWTEXT/script end tag's `</` starts in the
     /// buffer: the text before it is the text token, the name after it is
     /// compared with the last start tag (Lexbor reuses `entity_start`).
@@ -217,9 +235,6 @@ pub struct Tokenizer<'i, 's> {
     /// Where the name read by script data's double-escape states starts in
     /// the buffer (Lexbor reuses `entity_start` for this too).
     pub(crate) escape_name_at: usize,
-    pub(crate) entity_end: usize,
-    pub(crate) entity_number: u32,
-    pub(crate) is_attribute: bool,
 
     status: Status,
     pub(crate) is_eof: bool,
@@ -249,19 +264,13 @@ impl<'i, 's> Tokenizer<'i, 's> {
             values: Vec::new(),
             errors: Vec::new(),
             markup: b"",
-            markup_pos: None,
             temp: None,
             tmp_tag_id: res::TAG__UNDEF,
             begin: 0,
             last: 0,
-            entity: 0,
-            entity_match: None,
-            entity_start: 0,
+            char_ref: CharRef::default(),
             end_tag_at: 0,
             escape_name_at: 0,
-            entity_end: 0,
-            entity_number: 0,
-            is_attribute: false,
             status: Status::Ok,
             is_eof: false,
             current_ns: res::NS__UNDEF,
