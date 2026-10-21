@@ -13,7 +13,7 @@
 
 use super::{Tok, TreeBuilder, TreeStatus};
 use crate::compat::{self, Fix};
-use crate::falloc::{Reserve, VecPush};
+use crate::falloc::{try_vec_with_capacity, Reserve, VecPush};
 use crate::html::dom::NodeId;
 use crate::html::res::names as res;
 
@@ -338,20 +338,36 @@ impl TreeBuilder<'_> {
     /// `lxb_html_tree_active_formatting_push_with_check_dupl`: the Noah's Ark
     /// clause.
     pub(crate) fn afe_push_with_check_dupl(&mut self, node: NodeId) -> Result<(), TreeStatus> {
-        let mut idx = self.afe.0.len();
-        let mut earliest = idx.saturating_sub(1);
-        let mut count = 0;
-        while idx != 0 {
-            idx -= 1;
-            let Some(e) = self.afe.0[idx] else { break };
-            if self.tag(e) == self.tag(node)
-                && self.ns(e) == self.ns(node)
-                && self.element_compare(e, node)
-            {
-                count += 1;
-                earliest = idx;
+        let (count, earliest) = {
+            /* `node`'s attribute keys, sorted, when it has more than a scan
+             * should compare pairwise: every entry is compared with `node`,
+             * and pairwise that cost entries x attributes^2. */
+            let keys = if self.doc.attrs_of(node).count() > LINEAR_COMPARE {
+                let mut keys: Vec<AttrCompareKey<'_>> =
+                    try_vec_with_capacity(self.doc.attrs_of(node).count())
+                        .ok_or(TreeStatus::Oom)?;
+                keys.extend(self.doc.attrs_of(node).map(|a| self.attr_compare_key(a)));
+                keys.sort_unstable();
+                Some(keys)
+            } else {
+                None
+            };
+            let mut idx = self.afe.0.len();
+            let mut earliest = idx.saturating_sub(1);
+            let mut count = 0;
+            while idx != 0 {
+                idx -= 1;
+                let Some(e) = self.afe.0[idx] else { break };
+                if self.tag(e) == self.tag(node)
+                    && self.ns(e) == self.ns(node)
+                    && self.element_compare(e, node, keys.as_deref())
+                {
+                    count += 1;
+                    earliest = idx;
+                }
             }
-        }
+            (count, earliest)
+        };
         if count >= 3 {
             self.afe_remove(earliest);
         }
@@ -359,8 +375,16 @@ impl TreeBuilder<'_> {
     }
 
     /// `lxb_dom_element_compare`: the same name and the same attributes, in
-    /// any order.
-    fn element_compare(&self, first: NodeId, second: NodeId) -> bool {
+    /// any order. `second_keys` is `second`'s attributes as
+    /// [`attr_compare_key`](Self::attr_compare_key)s, sorted, to look each of
+    /// `first`'s up in rather than scanning - the same answer, since an
+    /// attribute equals another exactly when their keys are equal.
+    fn element_compare(
+        &self,
+        first: NodeId,
+        second: NodeId,
+        second_keys: Option<&[AttrCompareKey<'_>]>,
+    ) -> bool {
         let d = &*self.doc;
         if d.local(first) != d.local(second)
             || d.ns(first) != d.ns(second)
@@ -371,41 +395,51 @@ impl TreeBuilder<'_> {
         if d.attrs_of(first).count() != d.attrs_of(second).count() {
             return false;
         }
-        d.attrs_of(first)
-            .all(|fa| d.attrs_of(second).any(|sa| self.attr_compare(fa, sa)))
+        match second_keys {
+            Some(keys) => d
+                .attrs_of(first)
+                .all(|fa| keys.binary_search(&self.attr_compare_key(fa)).is_ok()),
+            None => d
+                .attrs_of(first)
+                .all(|fa| d.attrs_of(second).any(|sa| self.attr_compare(fa, sa))),
+        }
     }
 
     /// `lxb_dom_attr_compare`. The Standard compares values, and an attribute
     /// written with no value has the value "" - the same as `x=""`; Lexbor
     /// tells the two apart (P10).
     fn attr_compare(&self, first: NodeId, second: NodeId) -> bool {
+        self.attr_compare_key(first) == self.attr_compare_key(second)
+    }
+
+    /// What [`attr_compare`](Self::attr_compare) compares, as one value: the
+    /// local name, namespace and written name, then the value - with the
+    /// valueless mark Lexbor tells apart only when P10 is off.
+    fn attr_compare_key(&self, a: NodeId) -> AttrCompareKey<'_> {
         let d = &*self.doc;
-        if d.local(first) != d.local(second)
-            || d.ns(first) != d.ns(second)
-            || d.written_id(first) != d.written_id(second)
-        {
-            return false;
-        }
-        if compat::fixed(Fix::P10) {
-            let value = |a| {
-                if self.node_state.valueless.contains(a) {
-                    &[][..]
-                } else {
-                    d.attr_value(a).unwrap_or_default()
-                }
-            };
-            return value(first) == value(second);
-        }
-        match (
-            self.node_state.valueless.contains(first),
-            self.node_state.valueless.contains(second),
-        ) {
-            (true, true) => true,
-            (false, false) => d.attr_value(first) == d.attr_value(second),
-            _ => false,
-        }
+        let valueless = self.node_state.valueless.contains(a);
+        let value = if valueless {
+            &[][..]
+        } else {
+            d.attr_value(a).unwrap_or_default()
+        };
+        (
+            d.local(a),
+            d.ns(a),
+            d.written_id(a),
+            valueless && !compat::fixed(Fix::P10),
+            value,
+        )
     }
 }
+
+/// An attribute as [`TreeBuilder::attr_compare`] compares it: (local name,
+/// namespace, written name, valueless under Lexbor's rule, value).
+type AttrCompareKey<'d> = (u32, u32, u32, bool, &'d [u8]);
+
+/// At most this many attributes on the element pushed, the Noah's Ark clause
+/// compares attribute lists pairwise; past it, by sorted keys.
+const LINEAR_COMPARE: usize = 16;
 
 /// `lexbor_array_insert`: insert at `idx`. Past the end Lexbor grows the
 /// array to `idx` with NULL entries; no caller inserts past the end (the

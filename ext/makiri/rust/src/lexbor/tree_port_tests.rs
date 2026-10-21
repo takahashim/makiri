@@ -349,6 +349,41 @@ fn the_port_builds_lexbors_tree_on_random_inputs() {
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
 
+/// Elements with more attributes than the tree builder scans for
+/// (`LINEAR_ATTRS`, `LINEAR_COMPARE`: 16), where it looks names up in a
+/// table and compares formatting elements by sorted keys - with every kind
+/// of name the scan matched on: repeats, a namespace the adjustment moves
+/// (`xmlns`), the `id` / `class` shortcuts, attributes merged onto `<html>`
+/// and `<body>`, and valueless against empty values.
+#[test]
+fn many_attributes_build_lexbors_tree() {
+    let many = |prefix: &str, n: usize| -> String {
+        (0..n).map(|i| format!(" {prefix}{i}=v{i}")).collect()
+    };
+    let a20 = many("a", 20);
+    let b20 = many("b", 20);
+    let cases = [
+        format!("<div{a20}>"),
+        format!("<div{a20}{a20} id=x id=y class=c class=d ID=z>"),
+        format!("<svg{a20} xmlns=a xmlns=b xmlns=c xlink:href=h xlink:href=i viewbox=1 viewBox=2>"),
+        format!("<math{a20} definitionurl=a definitionURL=b xmlns=m xmlns=n>"),
+        format!("<html{a20}><body{b20}><html{a20} x=1{b20}><body{b20} y=2{a20}>"),
+        format!("<b{a20}>1<b{a20}>2<b{a20}>3<b{a20}>4<b{a20}>5</b></b></b></b></b>"),
+        format!("<b{a20} x>1<b{a20} x=\"\">2<b{a20} x>3<b{a20} x>4<b{a20} x=\"\">5"),
+        format!("<a{a20} href=1>1<a{b20} href=1>2<b{a20}>3<b{b20}>4<b{a20}>5<b{a20}>6<b{a20}>7"),
+        format!("<p>{}</p>", format!("<b{a20}>x").repeat(10)),
+        /* Closed by `</p>`, the formatting elements are made again for the
+         * text after it: how many is the Noah's Ark clause's answer. */
+        format!("<p><b{a20}><b{a20}><b{a20}><b{a20}><b{a20}></p>x"),
+        format!("<p><b{a20}><b{b20}><b{a20}><b{a20} z><b{a20}></p>x"),
+        format!("<p><b{a20} x><b{a20} x=\"\"><b{a20} x><b{a20} x><b{a20} x=\"\"></p>x"),
+        format!("<table><input type=text{a20} type=hidden>"),
+    ];
+    for input in &cases {
+        same(input);
+    }
+}
+
 /// Whether both parsers accept `input` under `limit`, or refuse it the same
 /// way.
 fn same_verdict(input: &[u8], limit: DepthLimit) {
