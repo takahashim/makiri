@@ -256,10 +256,13 @@ See also [`spec/conformance/README.md`](spec/conformance/README.md).
 ## Requirements
 
 * CRuby 3.2 or newer.
-* A Rust toolchain (stable) with `cargo` - the extension is a Rust crate.
+* Rust 1.84 or newer with `cargo` - the extension is a Rust crate. (Binary
+  gems are published for the common platforms, which need no toolchain.)
 * libclang (clang's development library): rb-sys runs bindgen at build time and
   reads Ruby's headers through it.
-* CMake and a C toolchain, to build the vendored Lexbor static library.
+
+Development also needs CMake and a C toolchain, to build the vendored Lexbor
+that the Rust port is tested against (`rake lexbor`).
 
 ## Build (development)
 
