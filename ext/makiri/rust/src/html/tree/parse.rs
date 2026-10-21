@@ -5,6 +5,7 @@
 use super::guard::{DepthLimit, Guard, GuardStop};
 use super::stamp::Stamping;
 use super::{TreeBuilder, TreeError, TreeStatus};
+use crate::compat::{self, Fix};
 use crate::falloc::try_box;
 use crate::html::dom::{Document, DomOom, HtmlParsed};
 use crate::html::names::Names;
@@ -59,9 +60,10 @@ pub fn parse_document(input: &[u8]) -> Result<Parsed, ParseFailure> {
     parse_with(input, Guard::default(), Stamping::default(), true)
 }
 
-/// Tokenize `input` into `tree`, as Lexbor's
-/// parser sets its tokenizer up (`lxb_html_parser_init` keeps duplicate
-/// attributes); `setup` adjusts the tokenizer before the first chunk.
+/// Tokenize `input` into `tree`; `setup` adjusts the tokenizer before the
+/// input. The tokenizer drops a repeated attribute name, as the Standard's
+/// does - in the Lexbor-compatible run it keeps them, as
+/// `lxb_html_parser_init` sets Lexbor's up (P21).
 pub(super) fn drive(
     tree: &mut TreeBuilder<'_>,
     input: &[u8],
@@ -69,7 +71,11 @@ pub(super) fn drive(
     setup: impl FnOnce(&mut Tokenizer<'_, '_>),
 ) -> Status {
     let options = Options {
-        keep_duplicate: true,
+        /* The Standard's tokenizer drops a repeated attribute name; Lexbor's
+         * parser hands every one on and its tree builder drops them by name
+         * and namespace, which kept a repeated `xmlns` and let "in table"
+         * read a dropped `type` (P21). */
+        keep_duplicate: !compat::fixed(Fix::P21),
         undef_is_foreign,
     };
     let mut tkz = Tokenizer::with_options(input, tree, options);

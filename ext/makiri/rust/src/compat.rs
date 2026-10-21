@@ -70,6 +70,9 @@ pub enum Fix {
     /// A fragment's form element pointer is the context's nearest form,
     /// itself or an ancestor.
     P20,
+    /// The tokenizer drops a start tag's attribute whose name an earlier one
+    /// has, rather than handing it to the tree builder.
+    P21,
     /// A void element's `inner_html` is empty, whatever children the DOM
     /// gave it. The serializer's, as is R2; no parse makes either shape, so
     /// [`explains`] never names them.
@@ -360,5 +363,41 @@ pub fn explains(input: &[u8], context: Option<&str>) -> Vec<Fix> {
     if context.is_some() && has(input, b"selectedcontent") {
         fixes.push(Fix::P16);
     }
+    /* P21: a tag that repeats an attribute name. */
+    if repeats_an_attribute(input) {
+        fixes.push(Fix::P21);
+    }
     fixes
+}
+
+/// Whether some tag in `input` repeats an attribute name, as the tokenizer
+/// reads `input` on its own - with no tree builder to switch it into
+/// RAWTEXT, script data or a CDATA section, so it reads more of the input
+/// as tags than a parse does, never less: a CDATA section's `]]>` comes no
+/// sooner than the `>` that ends the bogus comment read in its place.
+#[cfg(any(test, feature = "lexbor-reference"))]
+fn repeats_an_attribute(input: &[u8]) -> bool {
+    use crate::html::names::Names;
+    use crate::html::tokenizer::{ErrorId, Options, Stop, TokenSink, Tokenizer};
+    struct Discard(Names);
+    impl TokenSink for Discard {
+        fn token(&mut self, _: &mut Tokenizer<'_, '_>) -> Result<(), Stop> {
+            Ok(())
+        }
+        fn names(&mut self) -> &mut Names {
+            &mut self.0
+        }
+    }
+    /* As a parse reads it: invalid UTF-8 is U+FFFD first. */
+    let Some(text) = crate::utf8_input::sanitize(input, false) else {
+        return true;
+    };
+    let mut sink = Discard(Names::default());
+    let options = Options {
+        keep_duplicate: false,
+        undef_is_foreign: false,
+    };
+    let mut tkz = Tokenizer::with_options(text.as_slice(), &mut sink, options);
+    let _ = tkz.run();
+    tkz.errors().iter().any(|e| e.id == ErrorId::Duat)
 }

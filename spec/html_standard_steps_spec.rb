@@ -176,6 +176,19 @@ RSpec.describe "HTML Standard steps the port takes and Lexbor does not" do
     expect(el.to_html).to eq(%(<q:foo><bar xlink:href="a"></bar>x&lt;y</q:foo>))
     expect(el.at_xpath("*/@*").xpath("namespace-uri()")).to eq("http://www.w3.org/1999/xlink")
   end
+  # P21: the tokenizer drops an attribute whose name an earlier one has
+  # (the duplicate-attribute parse error), as Chromium, Firefox and WebKit
+  # do. Lexbor dropped repeats in the tree builder, by name and namespace,
+  # which kept a repeated xmlns and let "in table" read a dropped type.
+  it "drops a repeated attribute name in the tokenizer" do
+    doc = Makiri::HTML("<!doctype html><svg xmlns=a xmlns=b xmlns=c></svg>")
+    expect(doc.at_xpath("//*[local-name()='svg']").attribute_nodes.map(&:value)).to eq(["a"])
+
+    doc = Makiri::HTML("<!doctype html><table><input type=text type=hidden></table>")
+    expect(doc.at_xpath("//table/input")).to be_nil
+    expect(doc.at_xpath("//body/input/following-sibling::table")).not_to be_nil
+  end
+
   # R1: serializing HTML fragments, step 1: a void element serializes as "".
   it "serializes a void element's children as nothing" do
     doc = Makiri::HTML("<!doctype html><br>")

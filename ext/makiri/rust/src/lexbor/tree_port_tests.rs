@@ -384,6 +384,38 @@ fn many_attributes_build_lexbors_tree() {
     }
 }
 
+/// P21: the port drops a repeated attribute name in the tokenizer, where
+/// Lexbor's tree builder kept a repeated `xmlns` and "in table" read a
+/// dropped `type` - and `explains` admits exactly the inputs that repeat one.
+#[test]
+fn p21_drops_repeated_attributes_in_the_tokenizer() {
+    use crate::compat::{as_lexbor, explains, Fix};
+    let attrs_of = |input: &str, lexbor: bool| -> String {
+        let run = || port_dump(input.as_bytes(), false).expect("parses");
+        if lexbor {
+            as_lexbor(run)
+        } else {
+            run()
+        }
+    };
+    let svg = "<svg xmlns=a xmlns=b xmlns=c></svg>";
+    assert_eq!(attrs_of(svg, true).matches("@\"xmlns\"").count(), 3);
+    assert_eq!(attrs_of(svg, false).matches("@\"xmlns\"").count(), 1);
+    let table = "<table><input type=text type=hidden></table>";
+    assert_ne!(attrs_of(table, true), attrs_of(table, false));
+    for input in [svg, table, "<p a a>", "<b X=1 x=2>"] {
+        assert!(
+            explains(input.as_bytes(), None).contains(&Fix::P21),
+            "{input}"
+        );
+    }
+    for input in ["<p a b>", "<p a>x<p a>", "<script><p a a></script>"] {
+        let admitted = explains(input.as_bytes(), None).contains(&Fix::P21);
+        /* Read alone, script data is tags: admitted, the safe way. */
+        assert_eq!(admitted, input.starts_with("<script>"), "{input}");
+    }
+}
+
 /// Whether both parsers accept `input` under `limit`, or refuse it the same
 /// way.
 fn same_verdict(input: &[u8], limit: DepthLimit) {

@@ -16,7 +16,7 @@
   document takes about 40% less memory (~110 bytes a node, its text and names
   included). The CSS selector and stylesheet parsers are ported too.
 * HTML parsing follows the HTML Standard where Lexbor did not, so these
-  documents parse differently (`docs/parser_differences.ja.md`, P1-P20):
+  documents parse differently (`docs/parser_differences.ja.md`, P1-P21):
   * an implicit `<body>` resets frameset-ok, so a `<frameset>` can still
     replace it after a `<template>` in the head (P1);
   * a `<form>` inside a `<template>` neither uses nor sets the form element
@@ -44,7 +44,10 @@
     element) it also uses that element's document's quirks mode (P17),
     honours an `annotation-xml` context's `encoding` (P18), parses in a
     context element of another namespace as foreign content (P19), and takes
-    the form element pointer from an ancestor `<form>` (P20).
+    the form element pointer from an ancestor `<form>` (P20);
+  * a repeated attribute name is dropped by the tokenizer, as browsers do:
+    `<svg xmlns=a xmlns=b>` keeps one `xmlns`, and a repeated `type` on an
+    `<input>` in a table is no longer read (P21).
 * A void element's `#inner_html` is empty even when it has children (R1), and
   a prefixed HTML, SVG or MathML element is written by its local name (R2).
 * `Node#line` of a void element fostered out of a table is its line, not nil
