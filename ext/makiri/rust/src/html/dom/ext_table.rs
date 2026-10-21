@@ -78,7 +78,8 @@ impl ExtTable {
 
     /// What the table owns, for the GC report.
     pub(super) fn owned_bytes(&self) -> usize {
-        self.own.iter().map(Vec::capacity).sum::<usize>() + core::mem::size_of_val(&*self.own)
+        self.own.iter().map(Vec::capacity).sum::<usize>()
+            + self.own.capacity() * core::mem::size_of::<Vec<u8>>()
     }
 
     /// The bytes of the document's own entries, in O(1).

@@ -221,7 +221,7 @@ impl Document {
                     node.local
                 } else {
                     let name = d.names.tag_name(node.local as usize).ok_or(DomOom)?;
-                    let id = if name.iter().any(u8::is_ascii_uppercase) {
+                    let id = if super::has_ascii_uppercase(name) {
                         self.names.tag_append_raw(name)
                     } else {
                         self.names.tag_append_lower(name)

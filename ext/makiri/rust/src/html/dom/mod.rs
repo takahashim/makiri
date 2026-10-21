@@ -800,6 +800,11 @@ impl Document {
     /// local name is `id` or `class` (whatever its namespace) make it the
     /// element's shortcut, taking off the attribute that held it.
     fn attr_append_lexbor(&mut self, el: NodeId, attr: NodeId) {
+        /* Checked before any shortcut moves: a shortcut must never name a
+         * node `attr_link` would then refuse to link. */
+        if self.element(el).is_none() || self.attr(attr).is_none() {
+            return;
+        }
         let local = self.local(attr) as usize;
         if local == res::ATTR_ID {
             if let Some(old) = self.id_attr(el) {
