@@ -139,7 +139,7 @@ pub fn tokenize_traced(input: &[u8], state: State, last_start_tag: Option<&[u8]>
             State::ScriptData => (script_data_before, true),
             State::CdataSection => (cdata_section_before, false),
         };
-        t.set_state(f);
+        t.state = f;
         if let (true, Some(id)) = (wants_last, last) {
             t.tmp_tag_id = id;
         }

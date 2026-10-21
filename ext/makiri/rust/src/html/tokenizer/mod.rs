@@ -240,6 +240,9 @@ pub struct Tokenizer<'i, 's> {
 
     status: Status,
     pub(crate) is_eof: bool,
+    /// Where [`attr_last`](Self::attr_last) writes when there is no
+    /// attribute; never read.
+    scratch_attr: TokenAttr,
     /// The namespace of the tree builder's adjusted current node, which
     /// decides whether `<![CDATA[` opens a CDATA section
     /// (`lxb_html_tokenizer_current_namespace`); `NS__UNDEF` with no tree.
@@ -275,14 +278,10 @@ impl<'i, 's> Tokenizer<'i, 's> {
             escape_name_at: 0,
             status: Status::Ok,
             is_eof: false,
+            scratch_attr: TokenAttr::default(),
             current_ns: res::NS__UNDEF,
             options,
         }
-    }
-
-    /// `lxb_html_tokenizer_state_set`.
-    fn set_state(&mut self, state: State) {
-        self.state = state;
     }
 
     /// Switch to the `content` state after the start tag `tag_id`, which an
@@ -291,16 +290,16 @@ impl<'i, 's> Tokenizer<'i, 's> {
     /// paired).
     pub fn enter_text_content(&mut self, content: TextContent, tag_id: usize) {
         self.tmp_tag_id = tag_id;
-        self.set_state(match content {
+        self.state = match content {
             TextContent::Rcdata => rcdata_before,
             TextContent::Rawtext => rawtext_before,
             TextContent::ScriptData => script_data_before,
-        });
+        };
     }
 
     /// Switch to the PLAINTEXT state, which nothing leaves.
     pub fn enter_plaintext(&mut self) {
-        self.set_state(plaintext_before);
+        self.state = plaintext_before;
     }
 
     /// The fragment parsing algorithm's step: the state its context element
@@ -525,7 +524,7 @@ impl<'i, 's> Tokenizer<'i, 's> {
                 self.token.tag_id = id;
                 Ok(())
             }
-            Err(_) => Err(self.halt(Status::Oom)),
+            Err(st) => Err(self.halt(st)),
         }
     }
 
@@ -541,7 +540,7 @@ impl<'i, 's> Tokenizer<'i, 's> {
                 }
                 Ok(())
             }
-            Err(_) => Err(self.halt(Status::Oom)),
+            Err(st) => Err(self.halt(st)),
         }
     }
 
@@ -571,13 +570,16 @@ impl<'i, 's> Tokenizer<'i, 's> {
         Ok(())
     }
 
-    /// The last attribute, which the states only reach once one was added.
+    /// The last attribute, which the states only reach once one was added
+    /// (`attr_add`). With none - a broken invariant, caught in debug builds -
+    /// the write goes to a scratch attribute the token does not hold, so no
+    /// attribute is made up and nothing panics.
     #[inline]
     pub(crate) fn attr_last(&mut self) -> &mut TokenAttr {
+        debug_assert!(!self.token.attrs.is_empty(), "no attribute to write");
         if self.token.attrs.is_empty() {
-            /* Unreachable by the state machine; an empty attribute keeps the
-             * port total rather than panicking. */
-            let _ = self.token.attrs.falloc_push(TokenAttr::default());
+            self.scratch_attr = TokenAttr::default();
+            return &mut self.scratch_attr;
         }
         let n = self.token.attrs.len();
         &mut self.token.attrs[n - 1]
@@ -671,8 +673,7 @@ impl<'i, 's> Tokenizer<'i, 's> {
     /// `lxb_html_tokenizer_state_token_done_m`.
     pub(crate) fn token_done(&mut self) -> Result<(), Halted> {
         self.token_done_inner()?;
-        self.token.clean();
-        self.values.clear();
+        self.clean_token();
         self.buf.clear();
         Ok(())
     }
@@ -682,22 +683,28 @@ impl<'i, 's> Tokenizer<'i, 's> {
         if self.token.text.is_some_and(|n| n != 0) {
             self.token_done_inner()?;
         }
-        self.token.clean();
-        self.values.clear();
+        self.clean_token();
         self.buf.clear();
         Ok(())
     }
 
-    /// `lxb_html_tokenizer_state_token_emit_text_not_empty_m`.
+    /// `lxb_html_tokenizer_state_token_emit_text_not_empty_m`. Unlike the
+    /// two above it leaves the buffer as it is, as Lexbor's macro does.
     pub(crate) fn emit_text_not_empty(&mut self) -> Result<(), Halted> {
         if !self.buf.is_empty() {
             self.token.tag_id = res::TAG__TEXT;
             self.set_text();
             self.token_done_inner()?;
-            self.token.clean();
-            self.values.clear();
+            self.clean_token();
         }
         Ok(())
+    }
+
+    /// Ready the token for the next one, once the sink has it: cleaned, and
+    /// the attribute values it owned gone.
+    fn clean_token(&mut self) {
+        self.token.clean();
+        self.values.clear();
     }
 
     /// `lxb_html_tokenizer_set_state_by_tag`: the state a start tag in the HTML
@@ -734,17 +741,20 @@ impl<'i, 's> Tokenizer<'i, 's> {
     }
 }
 
-/// Intern through the sink's names table. The sink is only away while it is
-/// being handed a token, and no state interns from inside the sink.
+/// Intern through the sink's names table: the id, or the status to stop
+/// with. The sink is only away while it is being handed a token, and no
+/// state interns from inside the sink - so its absence is a broken
+/// invariant, caught in debug builds and stopped with `Error`, not `Oom`.
 #[inline]
 fn intern(
     sink: &mut Option<&mut dyn TokenSink>,
     f: impl FnOnce(&mut Names) -> Result<usize, crate::html::names::NamesOom>,
-) -> Result<usize, crate::html::names::NamesOom> {
-    match sink {
-        Some(s) => f(s.names()),
-        None => Err(crate::html::names::NamesOom),
-    }
+) -> Result<usize, Status> {
+    let Some(s) = sink else {
+        debug_assert!(false, "interning while the sink has the token");
+        return Err(Status::Error);
+    };
+    f(s.names()).map_err(|_| Status::Oom)
 }
 
 /* ---- byte classes (lexbor/core/str_res.h) ---- */
