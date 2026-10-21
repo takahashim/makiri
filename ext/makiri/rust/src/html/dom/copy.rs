@@ -16,6 +16,7 @@
 
 use super::{
     Document, DomOom, ElementData, Node, NodeId, NodeName, NodeType, Payload, ShortcutRule, Span,
+    HTML_NS,
 };
 use crate::falloc::VecPush;
 use crate::html::res::names as res;
@@ -94,7 +95,7 @@ impl Document {
         let node = self.node(n)?;
         if node.kind == NodeType::Element
             && node.local as usize == res::TAG_TEMPLATE
-            && node.ns == res::NS_HTML as u32
+            && node.ns == HTML_NS
         {
             self.template_content(n)
         } else {

@@ -9,7 +9,7 @@
 //! Ruby wrapper may still name it.
 
 use super::handle::{has_ascii_uppercase, HtmlDoc, HtmlNode, NsId, RawNode};
-use super::{Document, DomOom, NodeId, NodeName, NodeType, Shortcut, ShortcutRule};
+use super::{Document, DomOom, NodeId, NodeName, NodeType, Shortcut, ShortcutRule, HTML_NS};
 use crate::dom_rules::{self, At, Hierarchy, PreInsertError, Tree, Violation};
 use crate::falloc::VecPush;
 use crate::html::res::names as res;
@@ -378,7 +378,7 @@ impl<'d> HtmlDocMut<'d> {
     }
 
     fn is_html(&self, el: NodeId) -> bool {
-        self.d.ns(el) == res::NS_HTML as u32
+        self.d.ns(el) == HTML_NS
     }
 
     /// A new attribute of `el`'s document named `qname` in `ns`, not linked,
@@ -444,7 +444,7 @@ impl<'d> HtmlDocMut<'d> {
         }
         let tag = self.d.names.tag_append_lower(local_name).ok()?;
         self.d
-            .create_element(tag, res::NS_HTML as u32, 0, None)
+            .create_element(tag, HTML_NS, 0, None)
             .ok()
             .map(|id| self.raw(id))
     }
@@ -459,7 +459,7 @@ impl<'d> HtmlDocMut<'d> {
         }
         let d = &mut *self.d;
         let upper = has_ascii_uppercase(local);
-        let html = d.lookup_ns(ns) == Some(res::NS_HTML as u32);
+        let html = d.lookup_ns(ns) == Some(HTML_NS);
         let tag = if upper && html {
             d.names.tag_append_raw(local).ok()?
         } else {

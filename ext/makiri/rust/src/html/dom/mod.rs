@@ -83,7 +83,7 @@ impl NodeName {
     pub const fn html(local: usize) -> NodeName {
         NodeName {
             local,
-            ns: res::NS_HTML as u32,
+            ns: HTML_NS,
             prefix: 0,
         }
     }
@@ -91,9 +91,17 @@ impl NodeName {
 
 /// A namespace id: Lexbor's static numbers (`res::NS_*`) first, then the
 /// document's own. 0 (`NS__UNDEF`) is "none" and never stored.
+///
+/// The arena and the tree builder speak Lexbor's numbers, 0 for none, as the
+/// port they are tested against does; the typed ids ([`NsId`], [`TagId`],
+/// "none" an `Option`) are the handles' (`handle.rs`), for the layers above.
+/// The two meet only there.
 pub type NsIndex = u32;
 /// A prefix id, numbered as namespaces are (Lexbor shares the static range).
 pub type PrefixIndex = u32;
+
+/// The HTML namespace's [`NsIndex`].
+pub const HTML_NS: NsIndex = res::NS_HTML as NsIndex;
 
 #[derive(Clone, Copy, Debug)]
 enum Payload {
@@ -309,7 +317,7 @@ impl Document {
             local: res::TAG__DOCUMENT as u32,
             /* An HTML document node is in the HTML namespace
              * (`lxb_dom_document_init`). */
-            ns: res::NS_HTML as u32,
+            ns: HTML_NS,
             prefix: 0,
             parent: None,
             first_child: None,
@@ -528,7 +536,7 @@ impl Document {
         /* An HTML `<template>` is made with its contents fragment, as
          * Lexbor's template interface is: in the HTML namespace, hosted by
          * the template. */
-        if tag == res::TAG_TEMPLATE && ns == res::NS_HTML as u32 {
+        if tag == res::TAG_TEMPLATE && ns == HTML_NS {
             let contents = self.create_fragment(Some(id))?;
             self.set_names(contents, 0, ns, 0);
             self.set_template_content(id, contents);

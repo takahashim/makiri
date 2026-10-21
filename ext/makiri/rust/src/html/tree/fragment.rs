@@ -6,7 +6,7 @@ use super::guard::{ContextOptions, DepthLimit, Guard, GuardStop};
 use super::parse::drive;
 use super::{Mode, TreeBuilder, TreeStatus};
 use crate::compat::{self, Fix};
-use crate::html::dom::{Document, DomOom, NodeId};
+use crate::html::dom::{Document, DomOom, NodeId, HTML_NS};
 use crate::html::res::names as res;
 use crate::html::tokenizer::Status;
 use crate::utf8_input::sanitize;
@@ -122,7 +122,7 @@ pub fn parse_fragment(
     let mut doc = Document::new(compat_mode).map_err(oom)?;
     let ns32 = u32::try_from(ns).unwrap_or(0);
     let root = doc
-        .create_element(res::TAG_HTML, res::NS_HTML as u32, 0, None)
+        .create_element(res::TAG_HTML, HTML_NS, 0, None)
         .map_err(oom)?;
     doc.append_child(NodeId::DOCUMENT, root);
     let context = doc.create_element(tag, ns32, 0, None).map_err(oom)?;
