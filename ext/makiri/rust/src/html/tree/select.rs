@@ -48,7 +48,10 @@ impl TreeBuilder<'_> {
         self.doc.link_attribute(el, attr, ShortcutRule::Lexbor);
         /* `lxb_html_option_attr_steps_change`, by tag id alone. */
         if self.tag(el) == res::TAG_OPTION && self.tag(attr) == res::ATTR_SELECTED {
-            self.selected.insert(el).map_err(|()| TreeStatus::Oom)?;
+            self.node_state
+                .selected
+                .insert(el)
+                .map_err(|()| TreeStatus::Oom)?;
         }
         Ok(())
     }
@@ -150,7 +153,7 @@ impl TreeBuilder<'_> {
     /// `lxb_html_select_selectedness_display_size`.
     fn display_size(&self, select: NodeId) -> u64 {
         if let Some(size) = self.attr_by_id(select, res::ATTR_SIZE) {
-            if !self.valueless.contains(size) {
+            if !self.node_state.valueless.contains(size) {
                 if let Some(v) = parse_nonneg_integer(self.doc.attr_value(size).unwrap_or_default())
                 {
                     return v;
@@ -231,7 +234,7 @@ impl TreeBuilder<'_> {
         let mut last = None;
         let mut selected = 0;
         for &o in &options {
-            if self.selected.contains(o) {
+            if self.node_state.selected.contains(o) {
                 selected += 1;
                 last = Some(o);
             }
@@ -241,15 +244,15 @@ impl TreeBuilder<'_> {
         }
         if selected == 0 {
             if let Some(f) = first {
-                let _ = self.selected.insert(f);
+                let _ = self.node_state.selected.insert(f);
             }
             return;
         }
         /* Step 2 */
         if selected >= 2 {
             for &o in &options {
-                if self.selected.contains(o) && Some(o) != last {
-                    self.selected.remove(o);
+                if self.node_state.selected.contains(o) && Some(o) != last {
+                    self.node_state.selected.remove(o);
                 }
             }
         }
@@ -277,7 +280,7 @@ impl TreeBuilder<'_> {
 
     /// `lxb_html_option_maybe_clone_to_selectedcontent`.
     fn maybe_clone_to_selectedcontent(&mut self, option: NodeId) -> Result<(), TreeStatus> {
-        if !self.selected.contains(option) {
+        if !self.node_state.selected.contains(option) {
             return Ok(());
         }
         let Some(select) = self.nearest_ancestor_select(option) else {

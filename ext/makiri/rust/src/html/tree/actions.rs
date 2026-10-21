@@ -235,7 +235,10 @@ impl TreeBuilder<'_> {
             value.unwrap_or(AttrValue::Bytes(b"")),
         )?;
         if value.is_none() {
-            self.valueless.insert(attr).map_err(|()| TreeStatus::Oom)?;
+            self.node_state
+                .valueless
+                .insert(attr)
+                .map_err(|()| TreeStatus::Oom)?;
         }
         Ok(attr)
     }
@@ -294,7 +297,7 @@ impl TreeBuilder<'_> {
         if let Some(adjust) = adjust {
             self.adjust(&mut spec, adjust)?;
         }
-        let value = (!self.valueless.contains(x)).then_some(AttrValue::CopyOf(x));
+        let value = (!self.node_state.valueless.contains(x)).then_some(AttrValue::CopyOf(x));
         self.make_attr(spec, value)
     }
 
@@ -745,7 +748,7 @@ impl TreeBuilder<'_> {
             let Some(x) = self.attr_is_exist(n, b"encoding") else {
                 return false;
             };
-            if self.valueless.contains(x) {
+            if self.node_state.valueless.contains(x) {
                 return false;
             }
             let v = self.doc.attr_value(x).unwrap_or_default();

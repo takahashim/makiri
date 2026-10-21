@@ -590,7 +590,9 @@ fn input(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> 
         Some(x) if compat::fixed(Fix::P13) => d
             .attr_value(x)
             .is_some_and(|v| v.eq_ignore_ascii_case(b"hidden")),
-        Some(x) => !tree.valueless.contains(x) && d.attr_value(x) == Some(&b"hidden"[..]),
+        Some(x) => {
+            !tree.node_state.valueless.contains(x) && d.attr_value(x) == Some(&b"hidden"[..])
+        }
         None => false,
     };
     if !hidden {

@@ -22,7 +22,7 @@
 //!   and stops, as Lexbor's do.
 //! - **The marker of the active formatting list is `None`**, not a static
 //!   element.
-//! - **An attribute with no value is remembered in [`TreeBuilder::valueless`]**:
+//! - **An attribute with no value is remembered in [`NodeState::valueless`]**:
 //!   Lexbor keeps a NULL value for one (`<b x>`), which the Noah's Ark clause
 //!   tells apart from an empty one (`<b x="">`), and the arena stores both
 //!   as an empty span.
@@ -293,6 +293,17 @@ impl NodeSet {
     }
 }
 
+/// What Lexbor's DOM keeps on its nodes, and the arena does not, that the
+/// tree builder reads back: which attributes were made with no value (see
+/// the module doc), and which options are selected (`select.rs`).
+#[derive(Default)]
+pub(crate) struct NodeState {
+    /// The attributes made with no value.
+    pub(crate) valueless: NodeSet,
+    /// The options whose selectedness is true.
+    pub(crate) selected: NodeSet,
+}
+
 /// `lxb_html_tree_t`, building into one arena document.
 pub struct TreeBuilder<'d> {
     doc: &'d mut Document,
@@ -316,10 +327,8 @@ pub struct TreeBuilder<'d> {
     mode: Mode,
     original_mode: Mode,
     status: TreeStatus,
-    /// The attributes made with no value (see the module doc).
-    valueless: NodeSet,
-    /// The options whose selectedness is true (`select.rs`).
-    selected: NodeSet,
+    /// What Lexbor's DOM keeps on its nodes and the arena does not.
+    node_state: NodeState,
     /// The parse guard (`guard.rs`).
     guard: guard::Guard,
     /// Whether elements get their start tag's offset (`stamp.rs`).
@@ -351,8 +360,7 @@ impl<'d> TreeBuilder<'d> {
             mode: Mode::Initial,
             original_mode: Mode::Initial,
             status: TreeStatus::Ok,
-            valueless: NodeSet::default(),
-            selected: NodeSet::default(),
+            node_state: NodeState::default(),
             guard,
             stamping: stamp::Stamping::default(),
         }

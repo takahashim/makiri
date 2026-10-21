@@ -388,7 +388,7 @@ impl TreeBuilder<'_> {
         }
         if compat::fixed(Fix::P10) {
             let value = |a| {
-                if self.valueless.contains(a) {
+                if self.node_state.valueless.contains(a) {
                     &[][..]
                 } else {
                     d.attr_value(a).unwrap_or_default()
@@ -397,8 +397,8 @@ impl TreeBuilder<'_> {
             return value(first) == value(second);
         }
         match (
-            self.valueless.contains(first),
-            self.valueless.contains(second),
+            self.node_state.valueless.contains(first),
+            self.node_state.valueless.contains(second),
         ) {
             (true, true) => true,
             (false, false) => d.attr_value(first) == d.attr_value(second),
