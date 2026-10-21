@@ -4,7 +4,7 @@
 use crate::html::res::names as res;
 use crate::html::tokenizer::Tokenizer;
 use crate::html::tree::error::TreeErrorId as E;
-use crate::html::tree::{Mode, OrAbort, Tok, TreeBuilder};
+use crate::html::tree::{Mode, Tok, TreeBuilder};
 
 /// `lxb_html_tree_insertion_mode_in_head_noscript`.
 pub fn in_head_noscript(
@@ -34,14 +34,9 @@ fn open(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mut Tok) 
         _ => {
             /* Copied from "in head". */
             if tok.tag_id == res::TAG__TEXT {
-                let ws = tok.split_ws_begin(tkz);
-                if ws.text_start != ws.text_end
-                    && tree.insert_character(tkz, &ws).or_abort(tree).is_none()
-                {
-                    return true;
-                }
-                if tok.text_start == tok.text_end {
-                    return true;
+                match tree.insert_leading_ws(tkz, tok) {
+                    None | Some(true) => return true,
+                    Some(false) => {}
                 }
             }
             return anything_else(tree, tok);

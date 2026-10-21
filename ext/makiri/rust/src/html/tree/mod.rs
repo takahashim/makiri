@@ -550,7 +550,9 @@ impl<'d> TreeBuilder<'d> {
         /* The guard reads the token as the tokenizer handed it over. */
         let handed = tok;
         let before = self.stamp_before(&handed);
-        while !self.dispatch(tkz, &mut tok) {}
+        /* An aborted parse has emptied the stack: reprocessing would only
+         * fail again, so a token is never retried once the status is set. */
+        while !self.dispatch(tkz, &mut tok) && self.status == TreeStatus::Ok {}
         tkz.set_current_namespace(self.current_namespace());
         self.stamp_after(before);
         if self.status == TreeStatus::Ok && !self.guard_after(&handed) {

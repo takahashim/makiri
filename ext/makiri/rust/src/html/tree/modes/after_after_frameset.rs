@@ -44,7 +44,9 @@ pub fn after_after_frameset(
                         return true;
                     }
                     tree.parse_error(tok, E::Unto);
-                    return super::in_frameset::whitespace_only(tree, tkz, tok).is_some();
+                    /* Consumed either way: an aborted parse is done with it. */
+                    let _ = super::in_frameset::whitespace_only(tree, tkz, tok);
+                    return true;
                 }
             }
             tree.parse_error(tok, E::Unto);

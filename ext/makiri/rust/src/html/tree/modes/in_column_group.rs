@@ -47,14 +47,9 @@ pub fn in_column_group(
     }
     match tok.tag_id {
         res::TAG__TEXT => {
-            let ws = tok.split_ws_begin(tkz);
-            if ws.text_start != ws.text_end
-                && tree.insert_character(tkz, &ws).or_abort(tree).is_none()
-            {
-                return true;
-            }
-            if tok.text_start == tok.text_end {
-                return true;
+            match tree.insert_leading_ws(tkz, tok) {
+                None | Some(true) => return true,
+                Some(false) => {}
             }
             /* The Standard takes a text token character by character: with no
              * colgroup to pop, each non-whitespace character is ignored and
@@ -63,7 +58,9 @@ pub fn in_column_group(
             let colgroup = tree.current_is(res::TAG_COLGROUP);
             if !colgroup && compat::fixed(Fix::P6) {
                 tree.parse_error(tok, E::Mielinopelst);
-                return super::in_frameset::whitespace_only(tree, tkz, tok).is_some();
+                /* Consumed either way: an aborted parse is done with it. */
+                let _ = super::in_frameset::whitespace_only(tree, tkz, tok);
+                return true;
             }
             anything_else(tree, tok)
         }

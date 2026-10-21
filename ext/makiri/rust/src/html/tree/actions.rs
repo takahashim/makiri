@@ -5,7 +5,7 @@
 //! tests, and the adoption agency algorithm.
 
 use super::error::TreeErrorId as E;
-use super::{AttrAdjust, Found, Ipos, Mode, Tok, TreeBuilder, TreeStatus};
+use super::{AttrAdjust, Found, Ipos, Mode, OrAbort, Tok, TreeBuilder, TreeStatus};
 use crate::compat::{self, Fix};
 use crate::html::dom::{AttrValue, NodeId, NodeName, NodeType};
 use crate::html::res::names as res;
@@ -371,6 +371,22 @@ impl TreeBuilder<'_> {
         tok: &Tok,
     ) -> Result<(), TreeStatus> {
         self.insert_character_for_data(tok.text(tkz))
+    }
+
+    /// A text token's leading whitespace inserted as it is
+    /// (`lxb_html_token_data_split_ws_begin` + `lxb_html_tree_insert_character`),
+    /// the rest left in `tok`: whether that was the whole token, or `None`
+    /// when the parse was aborted.
+    pub(crate) fn insert_leading_ws(
+        &mut self,
+        tkz: &Tokenizer<'_, '_>,
+        tok: &mut Tok,
+    ) -> Option<bool> {
+        let ws = tok.split_ws_begin(tkz);
+        if ws.text_start != ws.text_end {
+            self.insert_character(tkz, &ws).or_abort(self)?;
+        }
+        Some(tok.text_start == tok.text_end)
     }
 
     /// `lxb_html_tree_insert_character_for_data`: appended to the text node
