@@ -121,14 +121,7 @@ impl TreeBuilder<'_> {
     /// `lxb_dom_element_attr_by_id`: the first attribute with local name
     /// `id`, in any namespace.
     fn attr_by_id(&self, el: NodeId, id: usize) -> Option<NodeId> {
-        let mut a = self.doc.first_attr(el);
-        while let Some(x) = a {
-            if self.tag(x) == id {
-                return Some(x);
-            }
-            a = self.doc.next_attr(x);
-        }
-        None
+        self.doc.attrs_of(el).find(|&x| self.tag(x) == id)
     }
 
     /// `lxb_html_option_is_disabled`.

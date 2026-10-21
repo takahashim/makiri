@@ -364,21 +364,11 @@ impl TreeBuilder<'_> {
         {
             return false;
         }
-        let count =
-            |n: NodeId| core::iter::successors(d.first_attr(n), |&a| d.next_attr(a)).count();
-        if count(first) != count(second) {
+        if d.attrs_of(first).count() != d.attrs_of(second).count() {
             return false;
         }
-        let mut f = d.first_attr(first);
-        while let Some(fa) = f {
-            let found = core::iter::successors(d.first_attr(second), |&a| d.next_attr(a))
-                .any(|sa| self.attr_compare(fa, sa));
-            if !found {
-                return false;
-            }
-            f = d.next_attr(fa);
-        }
-        true
+        d.attrs_of(first)
+            .all(|fa| d.attrs_of(second).any(|sa| self.attr_compare(fa, sa)))
     }
 
     /// `lxb_dom_attr_compare`. The Standard compares values, and an attribute

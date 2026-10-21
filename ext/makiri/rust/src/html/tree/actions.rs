@@ -227,14 +227,8 @@ impl TreeBuilder<'_> {
     pub(crate) fn attr_is_exist(&self, el: NodeId, name: &[u8]) -> Option<NodeId> {
         let d = &*self.doc;
         let id = d.names.attr_id(name);
-        let mut a = d.first_attr(el);
-        while let Some(x) = a {
-            if Some(d.local(x) as usize) == id || d.attr_written(x) == Some(name) {
-                return Some(x);
-            }
-            a = d.next_attr(x);
-        }
-        None
+        d.attrs_of(el)
+            .find(|&x| Some(d.local(x) as usize) == id || d.attr_written(x) == Some(name))
     }
 
     /// `lxb_dom_element_attr_by_local_name_ns_data`: whether `el` has an
@@ -243,17 +237,10 @@ impl TreeBuilder<'_> {
     fn attr_by_local_name_ns(&self, el: NodeId, name: usize, ns: usize) -> bool {
         let d = &*self.doc;
         let text = d.names.attr_name(name);
-        let mut a = d.first_attr(el);
-        while let Some(x) = a {
-            if d.local(x) as usize == name && d.ns(x) as usize == ns {
-                return true;
-            }
-            if text.is_some() && d.attr_written(x) == text {
-                return true;
-            }
-            a = d.next_attr(x);
-        }
-        false
+        d.attrs_of(el).any(|x| {
+            (d.local(x) as usize == name && d.ns(x) as usize == ns)
+                || (text.is_some() && d.attr_written(x) == text)
+        })
     }
 
     /// `lxb_html_tree_append_attributes_from_element`.
