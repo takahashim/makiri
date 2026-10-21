@@ -2,27 +2,32 @@
 
 Makiri is a Ruby library for parsing and querying HTML and XML documents.
 
-It uses [Lexbor](https://lexbor.com/) for HTML parsing and CSS selector matching, and includes a built-in native XPath 1.0 engine and XML 1.0 parser.
-Makiri does not depend on libxml2.
+It parses HTML with a Rust port of [Lexbor](https://lexbor.com/)'s HTML5 parser, and has its own CSS selector matcher, XPath 1.0 engine and XML 1.0 parser.
+Makiri does not depend on libxml2, and links no C library at all.
 
 > [!WARNING]
 > Status: early release. APIs and behavior may change before v1.0.
 
 ## What / Why
 
-Makiri uses Lexbor for HTML5 parsing and CSS selector support, and implements
-XPath 1.0 evaluation in its own native engine, with no libxml2 dependency.
+Makiri is one Rust extension: an HTML5 parser ported from Lexbor, CSS
+selectors, an XPath 1.0 engine and an XML 1.0 parser, with no libxml2
+dependency.
 
-* HTML5 parsing via [Lexbor](https://lexbor.com)
-  * Makiri uses Lexbor as the parsing backend and provides a Ruby-facing DOM/query layer.
-* CSS selector support via Lexbor
-  * Supports Lexbor-backed standard CSS selector querying, including `:is`/`:where`/`:has`
+* HTML5 parsing
+  * A Rust port of Lexbor's tokenizer and tree builder, into a compact DOM of
+    Makiri's own. It is held to the vendored Lexbor (which the gem does not
+    ship) and to the html5lib tests.
+* CSS selectors
+  * Selectors 4, including `:is`/`:where`/`:not`/`:has` and `:nth-child(... of S)`,
+    matched by one engine for HTML and XML and checked against Chromium,
+    Firefox and WebKit's `querySelectorAll`.
 * Native XPath 1.0 engine
   * XPath is parsed and evaluated by Makiri's own engine, written from scratch.
   * Makiri does not depend on libxml2 for parsing, DOM representation, or XPath evaluation.
 * Native XML 1.0 parser
   * A strict, non-validating, fail-closed parser with its own node arena (not
-    Lexbor's HTML DOM), queried through the same native XPath engine, with
+    the HTML DOM), queried through the same native XPath engine, with
     in-place tree edits (attributes, content, remove).
   * Conformance is held by the W3C XML Conformance Test Suite, an XPath
     differential, and property-based testing vs Nokogiri (see below).
@@ -49,7 +54,7 @@ doc = Makiri::HTML(<<~HTML)
   </body></html>
 HTML
 
-# CSS selectors (Lexbor's selector parser, Makiri's own matcher)
+# CSS selectors
 doc.css("a").map { |a| a["href"] }      # => ["/a", "/b"]
 doc.at_css("p.lead").text               # => "Hello"
 
@@ -63,7 +68,7 @@ link = doc.at_css("a")
 link["href"]                            # => "/a"
 link.parent.name                        # => "div"
 
-# Source location (reconstructed from the tokenizer, no Lexbor patches)
+# Source location (the line of the element's start tag)
 doc.at_css("p").line                    # => 3
 
 # Nesting deeper than 400 elements raises Makiri::Error (Nokogiri's default);
@@ -239,11 +244,14 @@ The HTML XPath and CSS suites are differentials against `Nokogiri::HTML5`
 HTML5, so the DOM is isomorphic and results are compared node-for-node. HTML
 parsing itself is checked against the WHATWG html5lib-tests corpus, and
 XPath-over-HTML semantics additionally against browsers via a WPT port.
+HTML parsing and CSS selectors are also run in Chromium, Firefox and WebKit,
+which are the reference where they and Nokogiri disagree.
 See also [`spec/conformance/README.md`](spec/conformance/README.md).
 
 | Suite | Input | Oracle | `rake` task |
 |---|---|---|---|
 | HTML parsing | HTML | WHATWG html5lib-tests (expected-tree corpus) | `conformance:html5` |
+| HTML parsing | HTML | Chromium, Firefox, WebKit (Playwright) | `conformance:browsers` |
 | XPath 1.0 | HTML | `Nokogiri::HTML5` (libxml2 XPath) — differential | `conformance:xpath` |
 | XPath over HTML | HTML | browsers (WPT `domxpath`, hand-ported; runs under `rake spec`) | — |
 | CSS selectors | HTML | `Nokogiri::HTML5#css` — differential | `conformance:css` |
@@ -251,6 +259,7 @@ See also [`spec/conformance/README.md`](spec/conformance/README.md).
 | XPath 1.0 | XML | `Nokogiri::XML` — differential | `conformance:xpath_xml` |
 | Parsed tree (property-based) | XML | `Nokogiri::XML` — differential | `conformance:xml_pbt` |
 | CSS selectors | XML | `Nokogiri::XML` — differential | `conformance:css_xml` |
+| CSS selectors | HTML, XML | Chromium, Firefox, WebKit `querySelectorAll` (Playwright) | `conformance:css_browsers` |
 | XML Builder | Ruby DSL | `Nokogiri::XML::Builder` — differential | `conformance:builder` |
 
 ## Requirements
