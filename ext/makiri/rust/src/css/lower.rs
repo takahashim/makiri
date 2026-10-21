@@ -106,73 +106,62 @@ fn lower_universal(
 
 /// `[name op value]` as an expression.
 fn lower_attribute(b: &Build, s: Selector<'_>, at: Attribute<'_>) -> Built {
-    let name = s.name();
-
     if at.case == CaseModifier::Insensitive {
         return Err(b.fail(
             ErrorKind::Syntax,
             "CSS attribute case modifier i ([a=v i]) is not supported for XML",
         ));
     }
-
-    /* The attribute namespace: NULL is a bare name, anything else a prefix. An
-     * unprefixed CSS attribute selector matches the no-namespace attribute, per
-     * CSS and XPath alike. Lexbor stores `[|a]` - explicitly no namespace -
-     * with the namespace `*`, and refuses `[*|a]` (any namespace) before it gets
-     * here, so a `*` is `[|a]` and reads as no prefix. It was refused as
-     * `[*|a]`. */
-    let prefix = match s.ns() {
-        Some(p) if p == b"*" => None,
-        other => other,
-    };
-
+    let (prefix, name) = (attr_prefix(s), s.name());
     let Some(value) = at.value else {
         /* `[name]` - existence */
         return build::attr_ns(b, prefix, name);
     };
-
     /* An empty value for ^= $= *= "represents nothing" (Selectors 4 §6.3),
      * as the HTML matcher has it. Lowered as written they matched everything -
      * starts-with(@a, '') is true with no @a at all, so [z^=""] found every
      * element. ~= has the same rule and more (a value holding whitespace),
      * and takes it from `build::token_match`, which `.class` shares. */
-    let never = match at.op {
-        AttrMatch::Prefix | AttrMatch::Suffix | AttrMatch::Substring => value.is_empty(),
-        _ => false,
-    };
+    let never = matches!(
+        at.op,
+        AttrMatch::Prefix | AttrMatch::Suffix | AttrMatch::Substring
+    ) && value.is_empty();
     if never {
         return build::call0(b, b"false");
     }
+    attr_op(b, at.op, prefix, name, value)
+}
 
-    match at.op {
+/// The attribute selector's namespace prefix: none for a bare name, which
+/// matches the no-namespace attribute, per CSS and XPath alike. Lexbor's
+/// parser - and so the port's - stores `[|a]`, explicitly no namespace, with
+/// the namespace `*`, and refuses `[*|a]` (any namespace) before it gets
+/// here, so a `*` is `[|a]` and reads as no prefix. It was refused as
+/// `[*|a]`.
+fn attr_prefix<'p>(s: Selector<'p>) -> Option<&'p [u8]> {
+    match s.ns() {
+        Some(p) if p == b"*" => None,
+        other => other,
+    }
+}
+
+/// `@[prefix:]name op 'value'`, for a value that represents something.
+fn attr_op(b: &Build, op: AttrMatch, prefix: Option<&[u8]>, name: &[u8], value: &[u8]) -> Built {
+    let attr = || build::attr_ns(b, prefix, name);
+    match op {
         /* [a=v] -> @a = 'v' */
-        AttrMatch::Equal => build::binop(
-            b,
-            Op::Eq,
-            || build::attr_ns(b, prefix, name),
-            || build::literal(b, value),
-        ),
+        AttrMatch::Equal => build::binop(b, Op::Eq, attr, || build::literal(b, value)),
         /* [a~=v] -> whitespace-separated token match */
         AttrMatch::Include => build::token_match(b, prefix, name, value),
         /* [a^=v] -> starts-with(@a, 'v') */
-        AttrMatch::Prefix => build::call2(
-            b,
-            b"starts-with",
-            || build::attr_ns(b, prefix, name),
-            || build::literal(b, value),
-        ),
+        AttrMatch::Prefix => build::call2(b, b"starts-with", attr, || build::literal(b, value)),
         /* [a*=v] -> contains(@a, 'v') */
-        AttrMatch::Substring => build::call2(
-            b,
-            b"contains",
-            || build::attr_ns(b, prefix, name),
-            || build::literal(b, value),
-        ),
+        AttrMatch::Substring => build::call2(b, b"contains", attr, || build::literal(b, value)),
         /* [a$=v] -> substring(@a, string-length(@a) - len + 1) = 'v', where len
          * counts CHARACTERS: string-length and substring do, so a byte count
          * missed any non-ASCII suffix ([d$="é"]). */
         AttrMatch::Suffix => {
-            let slen = build::call1(b, b"string-length", || build::attr_ns(b, prefix, name));
+            let slen = build::call1(b, b"string-length", attr);
             let chars = crate::xpath::funcs::count_chars(value);
             let start = build::binop(
                 b,
@@ -180,34 +169,19 @@ fn lower_attribute(b: &Build, s: Selector<'_>, at: Attribute<'_>) -> Built {
                 || build::binop(b, Op::Sub, || slen, || build::num(b, chars as f64)),
                 || build::num(b, 1.0),
             );
-            let sub = build::call2(
-                b,
-                b"substring",
-                || build::attr_ns(b, prefix, name),
-                || start,
-            );
+            let sub = build::call2(b, b"substring", attr, || start);
             build::binop(b, Op::Eq, || sub, || build::literal(b, value))
         }
         /* [a|=v] -> @a = 'v' or starts-with(@a, 'v-') */
         AttrMatch::Dash => {
-            let eq = build::binop(
-                b,
-                Op::Eq,
-                || build::attr_ns(b, prefix, name),
-                || build::literal(b, value),
-            );
+            let eq = build::binop(b, Op::Eq, attr, || build::literal(b, value));
             let Some(mut dashed) = crate::falloc::try_vec_with_capacity::<u8>(value.len() + 1)
             else {
                 return Err(b.oom());
             };
             dashed.extend_from_slice(value);
             dashed.push(b'-');
-            let pre = build::call2(
-                b,
-                b"starts-with",
-                || build::attr_ns(b, prefix, name),
-                || build::literal(b, &dashed),
-            );
+            let pre = build::call2(b, b"starts-with", attr, || build::literal(b, &dashed));
             build::binop(b, Op::Or, || eq, || pre)
         }
         AttrMatch::Other => Err(b.fail(ErrorKind::Syntax, "unsupported CSS attribute operator")),
