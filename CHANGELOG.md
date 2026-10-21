@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.17.0.rc1] - 2026-10-22
+
 ### Added
 
 * `Makiri::Lexbor::CSS.parse_stylesheet` returns the declarations in an
