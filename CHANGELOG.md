@@ -10,6 +10,9 @@
 * XPath over HTML keeps a plain attribute of an element created in the
   XMLNS namespace on `@*` and `[@name]`; it was taken for a namespace
   declaration and skipped.
+* XPath's `id()` with many tokens indexes the document's IDs once instead
+  of searching it per token: 8,000 IDs over 8,000 elements raised
+  `Makiri::XPath::LimitExceeded`.
 
 ## [0.17.0.rc1] - 2026-10-22
 
