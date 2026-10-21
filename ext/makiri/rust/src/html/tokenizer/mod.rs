@@ -82,9 +82,11 @@ pub struct Token {
     /// (`text_start` is always the buffer start); `None` before it is set.
     pub text: Option<usize>,
     pub attrs: Vec<TokenAttr>,
-    /// For text, the number of U+0000 bytes in it; for a processing
-    /// instruction, the target's length (see Lexbor's `lxb_html_token_t`).
+    /// For text, the number of U+0000 bytes in it.
     pub null_count: usize,
+    /// For a processing instruction, the target's length: where its text
+    /// splits into target and data. (Lexbor keeps it in `null_count`.)
+    pub pi_target_len: usize,
     pub tag_id: usize,
     pub flags: u8,
 }
@@ -337,11 +339,10 @@ impl<'i, 's> Tokenizer<'i, 's> {
         }
     }
 
-    /// A processing instruction's target and data (inside the sink): Lexbor
-    /// keeps the target's length in the token's `null_count`.
+    /// A processing instruction's target and data (inside the sink).
     pub fn pi_parts(&self) -> (&[u8], &[u8]) {
         let text = self.text();
-        text.split_at(self.token.null_count.min(text.len()))
+        text.split_at(self.token.pi_target_len.min(text.len()))
     }
 
     /// A DOCTYPE token's parts (inside the sink), read as

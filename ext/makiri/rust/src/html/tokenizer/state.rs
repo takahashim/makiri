@@ -833,7 +833,7 @@ fn processing_instruction_target(t: &mut Tokenizer<'_, '_>, mut data: usize, end
                     return data;
                 }
                 /* The target's length, the realloc-safe target/data boundary. */
-                t.token.null_count = t.buf.len();
+                t.token.pi_target_len = t.buf.len();
                 t.state = after_processing_instruction_target;
                 return data;
             }
