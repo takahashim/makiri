@@ -59,7 +59,7 @@ pub fn parse_document(input: &[u8]) -> Result<Parsed, ParseFailure> {
     parse_with(input, Guard::default(), Stamping::default())
 }
 
-/// Tokenize `input` into `tree`, one chunk and then the end, as Lexbor's
+/// Tokenize `input` into `tree`, as Lexbor's
 /// parser sets its tokenizer up (`lxb_html_parser_init` keeps duplicate
 /// attributes); `setup` adjusts the tokenizer before the first chunk.
 pub(super) fn drive(
@@ -74,10 +74,7 @@ pub(super) fn drive(
     };
     let mut tkz = Tokenizer::with_options(input, tree, options);
     setup(&mut tkz);
-    match tkz.chunk() {
-        Status::Ok => tkz.end(),
-        st => st,
-    }
+    tkz.run()
 }
 
 /// [`parse_document`] under `guard`, stamping as `stamping` says.
@@ -167,5 +164,5 @@ pub fn parse_with_panicking_hook() -> bool {
     let mut tree = TreeBuilder::for_document(&mut doc, Guard::default(), Stamping::default());
     let mut sink = Panicking(&mut tree);
     let mut tkz = Tokenizer::new(b"<p>x</p>", &mut sink);
-    tkz.chunk() == Status::Ok
+    tkz.run() == Status::Ok
 }

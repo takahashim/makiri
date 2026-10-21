@@ -833,7 +833,7 @@ fn processing_instruction_target(t: &mut Tokenizer<'_, '_>, mut data: usize, end
                     return data;
                 }
                 /* The target's length, the realloc-safe target/data boundary. */
-                t.token.null_count = t.buf.len();
+                t.token.pi_target_len = t.buf.len();
                 t.state = after_processing_instruction_target;
                 return data;
             }
@@ -974,13 +974,13 @@ fn crlf(t: &mut Tokenizer<'_, '_>, data: usize, _end: usize) -> usize {
 
 /// `lxb_html_tokenizer_state_char_ref` (12.2.5.72).
 pub fn char_ref(t: &mut Tokenizer<'_, '_>, data: usize, end: usize) -> usize {
-    t.is_attribute = false;
+    t.char_ref.in_attribute = false;
     char_ref_common(t, data, end)
 }
 
 /// `lxb_html_tokenizer_state_char_ref_attr`.
 fn char_ref_attr(t: &mut Tokenizer<'_, '_>, data: usize, end: usize) -> usize {
-    t.is_attribute = true;
+    t.char_ref.in_attribute = true;
     char_ref_common(t, data, end)
 }
 
@@ -988,14 +988,14 @@ fn char_ref_attr(t: &mut Tokenizer<'_, '_>, data: usize, end: usize) -> usize {
 fn char_ref_common(t: &mut Tokenizer<'_, '_>, data: usize, end: usize) -> usize {
     let c = t.at(data);
     if is_alnum(c) {
-        t.entity = 1;
-        t.entity_match = None;
-        t.entity_start = t.buf.len() - 1;
+        t.char_ref.entity = 1;
+        t.char_ref.matched = None;
+        t.char_ref.start = t.buf.len() - 1;
         t.state = char_ref_named;
         return data;
     } else if c == 0x23 {
-        t.markup_pos = Some(data);
-        t.entity_start = t.buf.len() - 1;
+        t.char_ref.markup_pos = Some(data);
+        t.char_ref.start = t.buf.len() - 1;
         try_or!(t.append(b"#"), end);
         t.state = char_ref_numeric;
         return data + 1;
@@ -1009,7 +1009,7 @@ fn char_ref_common(t: &mut Tokenizer<'_, '_>, data: usize, end: usize) -> usize 
 /// `lxb_html_tokenizer_state_char_ref_named` (12.2.5.73).
 fn char_ref_named(t: &mut Tokenizer<'_, '_>, mut data: usize, end: usize) -> usize {
     let begin = data;
-    let mut entry = t.entity;
+    let mut entry = t.char_ref.entity;
     let mut stopped = false;
     let input: &[u8] = t.input;
     let (mut matched_end, mut matched) = (None, None);
@@ -1031,8 +1031,8 @@ fn char_ref_named(t: &mut Tokenizer<'_, '_>, mut data: usize, end: usize) -> usi
         data += 1;
     }
     if let (Some(off), Some(i)) = (matched_end, matched) {
-        t.entity_end = t.buf.len() + off;
-        t.entity_match = Some(i);
+        t.char_ref.end = t.buf.len() + off;
+        t.char_ref.matched = Some(i);
     }
     if stopped {
         let consumed = t.input_slice(begin, data - begin);
@@ -1040,13 +1040,13 @@ fn char_ref_named(t: &mut Tokenizer<'_, '_>, mut data: usize, end: usize) -> usi
     }
     if !stopped {
         /* Wait for the next chunk. */
-        t.entity = entry;
+        t.char_ref.entity = entry;
         let consumed = t.input_slice(begin, end - begin);
         try_or!(t.append(consumed), end);
         return data;
     }
 
-    let Some(m) = t.entity_match else {
+    let Some(m) = t.char_ref.matched else {
         t.state = char_ref_ambiguous_ampersand;
         return data;
     };
@@ -1054,9 +1054,9 @@ fn char_ref_named(t: &mut Tokenizer<'_, '_>, mut data: usize, end: usize) -> usi
         t.state = s;
     }
     let matched = &ENTITIES[m];
-    if t.is_attribute && matched.key != 0x3B {
+    if t.char_ref.in_attribute && matched.key != 0x3B {
         /* The next input character is the one right after the match. */
-        let ch = match t.buf.get(t.entity_end + 1) {
+        let ch = match t.buf.get(t.char_ref.end + 1) {
             Some(&b) => b,
             None => t.at(data),
         };
@@ -1068,9 +1068,9 @@ fn char_ref_named(t: &mut Tokenizer<'_, '_>, mut data: usize, end: usize) -> usi
         t.error(data, ErrorId::Miseafchre);
     }
     let value = matched.value().unwrap_or_default();
-    let tail_start = t.entity_end + 1;
+    let tail_start = t.char_ref.end + 1;
     let tail_len = t.buf.len().saturating_sub(tail_start);
-    let new_tail = t.entity_start + value.len();
+    let new_tail = t.char_ref.start + value.len();
     let new_len = new_tail + tail_len;
     if new_len > t.buf.len() {
         use crate::falloc::Reserve;
@@ -1082,7 +1082,7 @@ fn char_ref_named(t: &mut Tokenizer<'_, '_>, mut data: usize, end: usize) -> usi
     }
     t.buf
         .copy_within(tail_start..tail_start + tail_len, new_tail);
-    t.buf[t.entity_start..new_tail].copy_from_slice(value);
+    t.buf[t.char_ref.start..new_tail].copy_from_slice(value);
     t.buf.truncate(new_len);
     data
 }
@@ -1114,7 +1114,7 @@ fn char_ref_ambiguous_ampersand(t: &mut Tokenizer<'_, '_>, mut data: usize, end:
 
 /// `lxb_html_tokenizer_state_char_ref_numeric` (12.2.5.75).
 fn char_ref_numeric(t: &mut Tokenizer<'_, '_>, data: usize, end: usize) -> usize {
-    t.entity_number = 0;
+    t.char_ref.number = 0;
     let c = t.at(data);
     if c == 0x78 || c == 0x58 {
         try_or!(t.append(&[c]), end);
@@ -1166,8 +1166,8 @@ fn char_ref_hexademical(t: &mut Tokenizer<'_, '_>, mut data: usize, end: usize) 
             }
             return char_ref_numeric_end(t, data, end);
         };
-        if t.entity_number <= 0x10FFFF {
-            t.entity_number = (t.entity_number << 4) | v;
+        if t.char_ref.number <= 0x10FFFF {
+            t.char_ref.number = (t.char_ref.number << 4) | v;
         }
         data += 1;
     }
@@ -1189,8 +1189,8 @@ fn char_ref_decimal(t: &mut Tokenizer<'_, '_>, mut data: usize, end: usize) -> u
             }
             return char_ref_numeric_end(t, data, end);
         };
-        if t.entity_number <= 0x10FFFF {
-            t.entity_number = v + t.entity_number * 10;
+        if t.char_ref.number <= 0x10FFFF {
+            t.char_ref.number = v + t.char_ref.number * 10;
         }
         data += 1;
     }
@@ -1221,8 +1221,8 @@ const REPLACEMENT: [u32; 160] = {
 
 /// `lxb_html_tokenizer_state_char_ref_numeric_end` (12.2.5.80).
 fn char_ref_numeric_end(t: &mut Tokenizer<'_, '_>, data: usize, end: usize) -> usize {
-    let n = t.entity_number;
-    let at = t.markup_pos;
+    let n = t.char_ref.number;
+    let at = t.char_ref.markup_pos;
     let replace = if n == 0x00 {
         t.error_at(at, ErrorId::Nuchre);
         true
@@ -1255,7 +1255,7 @@ fn char_ref_numeric_end(t: &mut Tokenizer<'_, '_>, data: usize, end: usize) -> u
             n
         }
     };
-    t.buf.truncate(t.entity_start);
+    t.buf.truncate(t.char_ref.start);
     let ch = char::from_u32(cp).unwrap_or('\u{FFFD}');
     let mut b = [0u8; 4];
     try_or!(t.append(ch.encode_utf8(&mut b).as_bytes()), end);

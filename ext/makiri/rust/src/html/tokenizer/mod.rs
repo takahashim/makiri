@@ -21,8 +21,10 @@
 //!   reference the tokenizer holds: the tree builder writes the document that
 //!   owns the table, and Lexbor's tokenizer and document share it the same way.
 //!
-//! Lexbor's chunked input is kept as an API (`chunk` may be called more than
-//! once) because its states are written for it, but Makiri passes one chunk.
+//! Lexbor's states are written for chunked input - a keyword, a CR or a
+//! reference can straddle a chunk end - and keep that handling, but the input
+//! is always one chunk: [`Tokenizer::run`] tokenizes all of it, then runs the
+//! end-of-file pass.
 
 #![forbid(unsafe_code)]
 
@@ -80,9 +82,11 @@ pub struct Token {
     /// (`text_start` is always the buffer start); `None` before it is set.
     pub text: Option<usize>,
     pub attrs: Vec<TokenAttr>,
-    /// For text, the number of U+0000 bytes in it; for a processing
-    /// instruction, the target's length (see Lexbor's `lxb_html_token_t`).
+    /// For text, the number of U+0000 bytes in it.
     pub null_count: usize,
+    /// For a processing instruction, the target's length: where its text
+    /// splits into target and data. (Lexbor keeps it in `null_count`.)
+    pub pi_target_len: usize,
     pub tag_id: usize,
     pub flags: u8,
 }
@@ -177,6 +181,27 @@ pub trait TokenSink {
     fn names(&mut self) -> &mut Names;
 }
 
+/// The state of the character reference being read: what only the
+/// `char_ref*` states (`state.rs`) read and write, under Lexbor's names in
+/// the docs.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct CharRef {
+    /// `entity`: the node of the named-reference search tree reached so far.
+    pub(crate) entity: usize,
+    /// `entity_match`: the longest named reference matched so far.
+    pub(crate) matched: Option<usize>,
+    /// `entity_start`: where the reference starts in the buffer.
+    pub(crate) start: usize,
+    /// `entity_end`: the buffer index of the matched name's last byte.
+    pub(crate) end: usize,
+    /// `entity_number`: a numeric reference's value.
+    pub(crate) number: u32,
+    /// `is_attribute`: the reference is in an attribute value.
+    pub(crate) in_attribute: bool,
+    /// `markup` as a position, for a numeric reference's errors.
+    pub(crate) markup_pos: Option<usize>,
+}
+
 /// `lxb_html_tokenizer_t`.
 pub struct Tokenizer<'i, 's> {
     pub(crate) input: &'i [u8],
@@ -192,8 +217,6 @@ pub struct Tokenizer<'i, 's> {
 
     /// `markup`: the rest of a keyword being matched across a chunk end.
     pub(crate) markup: &'static [u8],
-    /// `markup` as a position, for a numeric reference's errors.
-    pub(crate) markup_pos: Option<usize>,
     /// `temp`: where an RCDATA/RAWTEXT/script end tag began.
     pub(crate) temp: Option<usize>,
     /// The tag of the last start tag, which decides whether an end tag in
@@ -205,9 +228,8 @@ pub struct Tokenizer<'i, 's> {
     /// `last`: the end of the last chunk.
     pub(crate) last: usize,
 
-    pub(crate) entity: usize,
-    pub(crate) entity_match: Option<usize>,
-    pub(crate) entity_start: usize,
+    /// The character reference being read (`char_ref*` in `state.rs`).
+    pub(crate) char_ref: CharRef,
     /// Where a possible RCDATA/RAWTEXT/script end tag's `</` starts in the
     /// buffer: the text before it is the text token, the name after it is
     /// compared with the last start tag (Lexbor reuses `entity_start`).
@@ -215,12 +237,12 @@ pub struct Tokenizer<'i, 's> {
     /// Where the name read by script data's double-escape states starts in
     /// the buffer (Lexbor reuses `entity_start` for this too).
     pub(crate) escape_name_at: usize,
-    pub(crate) entity_end: usize,
-    pub(crate) entity_number: u32,
-    pub(crate) is_attribute: bool,
 
     status: Status,
     pub(crate) is_eof: bool,
+    /// Where [`attr_last`](Self::attr_last) writes when there is no
+    /// attribute; never read.
+    scratch_attr: TokenAttr,
     /// The namespace of the tree builder's adjusted current node, which
     /// decides whether `<![CDATA[` opens a CDATA section
     /// (`lxb_html_tokenizer_current_namespace`); `NS__UNDEF` with no tree.
@@ -247,29 +269,19 @@ impl<'i, 's> Tokenizer<'i, 's> {
             values: Vec::new(),
             errors: Vec::new(),
             markup: b"",
-            markup_pos: None,
             temp: None,
             tmp_tag_id: res::TAG__UNDEF,
             begin: 0,
             last: 0,
-            entity: 0,
-            entity_match: None,
-            entity_start: 0,
+            char_ref: CharRef::default(),
             end_tag_at: 0,
             escape_name_at: 0,
-            entity_end: 0,
-            entity_number: 0,
-            is_attribute: false,
             status: Status::Ok,
             is_eof: false,
+            scratch_attr: TokenAttr::default(),
             current_ns: res::NS__UNDEF,
             options,
         }
-    }
-
-    /// `lxb_html_tokenizer_state_set`.
-    fn set_state(&mut self, state: State) {
-        self.state = state;
     }
 
     /// Switch to the `content` state after the start tag `tag_id`, which an
@@ -278,16 +290,16 @@ impl<'i, 's> Tokenizer<'i, 's> {
     /// paired).
     pub fn enter_text_content(&mut self, content: TextContent, tag_id: usize) {
         self.tmp_tag_id = tag_id;
-        self.set_state(match content {
+        self.state = match content {
             TextContent::Rcdata => rcdata_before,
             TextContent::Rawtext => rawtext_before,
             TextContent::ScriptData => script_data_before,
-        });
+        };
     }
 
     /// Switch to the PLAINTEXT state, which nothing leaves.
     pub fn enter_plaintext(&mut self) {
-        self.set_state(plaintext_before);
+        self.state = plaintext_before;
     }
 
     /// The fragment parsing algorithm's step: the state its context element
@@ -326,11 +338,10 @@ impl<'i, 's> Tokenizer<'i, 's> {
         }
     }
 
-    /// A processing instruction's target and data (inside the sink): Lexbor
-    /// keeps the target's length in the token's `null_count`.
+    /// A processing instruction's target and data (inside the sink).
     pub fn pi_parts(&self) -> (&[u8], &[u8]) {
         let text = self.text();
-        text.split_at(self.token.null_count.min(text.len()))
+        text.split_at(self.token.pi_target_len.min(text.len()))
     }
 
     /// A DOCTYPE token's parts (inside the sink), read as
@@ -364,9 +375,20 @@ impl<'i, 's> Tokenizer<'i, 's> {
             .map(|(s, e)| self.values.get(s..e).unwrap_or_default())
     }
 
+    /// Tokenize the whole input, then the end of file: Lexbor's
+    /// `lxb_html_tokenizer_chunk` over the input as one chunk, and
+    /// `lxb_html_tokenizer_end` when that succeeded. Call it once; the input
+    /// is tokenized from its start.
+    pub fn run(&mut self) -> Status {
+        match self.chunk() {
+            Status::Ok => self.end(),
+            st => st,
+        }
+    }
+
     /// `lxb_html_tokenizer_chunk`: tokenize the whole of the input, which is
     /// one chunk.
-    pub fn chunk(&mut self) -> Status {
+    fn chunk(&mut self) -> Status {
         let end = self.input.len();
         self.is_eof = false;
         self.status = Status::Ok;
@@ -380,7 +402,7 @@ impl<'i, 's> Tokenizer<'i, 's> {
 
     /// `lxb_html_tokenizer_end`: the end-of-file pass, then the end-of-file
     /// token.
-    pub fn end(&mut self) -> Status {
+    fn end(&mut self) -> Status {
         self.status = Status::Ok;
         /* Lexbor's fake EOF buffer: one NUL at the virtual index `len`. */
         let data = self.input.len();
@@ -502,7 +524,7 @@ impl<'i, 's> Tokenizer<'i, 's> {
                 self.token.tag_id = id;
                 Ok(())
             }
-            Err(_) => Err(self.halt(Status::Oom)),
+            Err(st) => Err(self.halt(st)),
         }
     }
 
@@ -518,7 +540,7 @@ impl<'i, 's> Tokenizer<'i, 's> {
                 }
                 Ok(())
             }
-            Err(_) => Err(self.halt(Status::Oom)),
+            Err(st) => Err(self.halt(st)),
         }
     }
 
@@ -548,13 +570,16 @@ impl<'i, 's> Tokenizer<'i, 's> {
         Ok(())
     }
 
-    /// The last attribute, which the states only reach once one was added.
+    /// The last attribute, which the states only reach once one was added
+    /// (`attr_add`). With none - a broken invariant, caught in debug builds -
+    /// the write goes to a scratch attribute the token does not hold, so no
+    /// attribute is made up and nothing panics.
     #[inline]
     pub(crate) fn attr_last(&mut self) -> &mut TokenAttr {
+        debug_assert!(!self.token.attrs.is_empty(), "no attribute to write");
         if self.token.attrs.is_empty() {
-            /* Unreachable by the state machine; an empty attribute keeps the
-             * port total rather than panicking. */
-            let _ = self.token.attrs.falloc_push(TokenAttr::default());
+            self.scratch_attr = TokenAttr::default();
+            return &mut self.scratch_attr;
         }
         let n = self.token.attrs.len();
         &mut self.token.attrs[n - 1]
@@ -648,8 +673,7 @@ impl<'i, 's> Tokenizer<'i, 's> {
     /// `lxb_html_tokenizer_state_token_done_m`.
     pub(crate) fn token_done(&mut self) -> Result<(), Halted> {
         self.token_done_inner()?;
-        self.token.clean();
-        self.values.clear();
+        self.clean_token();
         self.buf.clear();
         Ok(())
     }
@@ -659,22 +683,28 @@ impl<'i, 's> Tokenizer<'i, 's> {
         if self.token.text.is_some_and(|n| n != 0) {
             self.token_done_inner()?;
         }
-        self.token.clean();
-        self.values.clear();
+        self.clean_token();
         self.buf.clear();
         Ok(())
     }
 
-    /// `lxb_html_tokenizer_state_token_emit_text_not_empty_m`.
+    /// `lxb_html_tokenizer_state_token_emit_text_not_empty_m`. Unlike the
+    /// two above it leaves the buffer as it is, as Lexbor's macro does.
     pub(crate) fn emit_text_not_empty(&mut self) -> Result<(), Halted> {
         if !self.buf.is_empty() {
             self.token.tag_id = res::TAG__TEXT;
             self.set_text();
             self.token_done_inner()?;
-            self.token.clean();
-            self.values.clear();
+            self.clean_token();
         }
         Ok(())
+    }
+
+    /// Ready the token for the next one, once the sink has it: cleaned, and
+    /// the attribute values it owned gone.
+    fn clean_token(&mut self) {
+        self.token.clean();
+        self.values.clear();
     }
 
     /// `lxb_html_tokenizer_set_state_by_tag`: the state a start tag in the HTML
@@ -711,17 +741,20 @@ impl<'i, 's> Tokenizer<'i, 's> {
     }
 }
 
-/// Intern through the sink's names table. The sink is only away while it is
-/// being handed a token, and no state interns from inside the sink.
+/// Intern through the sink's names table: the id, or the status to stop
+/// with. The sink is only away while it is being handed a token, and no
+/// state interns from inside the sink - so its absence is a broken
+/// invariant, caught in debug builds and stopped with `Error`, not `Oom`.
 #[inline]
 fn intern(
     sink: &mut Option<&mut dyn TokenSink>,
     f: impl FnOnce(&mut Names) -> Result<usize, crate::html::names::NamesOom>,
-) -> Result<usize, crate::html::names::NamesOom> {
-    match sink {
-        Some(s) => f(s.names()),
-        None => Err(crate::html::names::NamesOom),
-    }
+) -> Result<usize, Status> {
+    let Some(s) = sink else {
+        debug_assert!(false, "interning while the sink has the token");
+        return Err(Status::Error);
+    };
+    f(s.names()).map_err(|_| Status::Oom)
 }
 
 /* ---- byte classes (lexbor/core/str_res.h) ---- */
