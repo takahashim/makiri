@@ -9,7 +9,7 @@
 //! Ruby wrapper may still name it.
 
 use super::handle::{has_ascii_uppercase, HtmlDoc, HtmlNode, NsId, RawNode};
-use super::{Document, DomOom, NodeId, NodeName, NodeType, Shortcut, ShortcutRule, HTML_NS};
+use super::{Document, DomOom, NodeId, NodeName, NodeType, OwnNs, Shortcut, ShortcutRule, HTML_NS};
 use crate::dom_rules::{self, At, Hierarchy, PreInsertError, Tree, Violation};
 use crate::falloc::VecPush;
 use crate::html::res::names as res;
@@ -422,7 +422,15 @@ impl<'d> HtmlDocMut<'d> {
             .attr_local_name_append(local_name)
             .map_err(|_| DomOom)?;
         let written = (!lower || colon.is_some()).then_some(qname);
-        d.create_attr(local, ns_id, prefix, written, value)
+        let at = d.create_attr(local, ns_id, prefix, written, value)?;
+        /* Made in `ns`, or in none - whatever element it goes on (D1). */
+        let own = if ns.is_some() {
+            OwnNs::Stored
+        } else {
+            OwnNs::None
+        };
+        d.set_attr_own_ns(at, own);
+        Ok(at)
     }
 
     /* ---- new nodes ----

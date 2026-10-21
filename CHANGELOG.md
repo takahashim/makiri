@@ -98,6 +98,10 @@
 
 ### Fixed
 
+* An attribute keeps the namespace it was made in (D1): `set_attribute_ns`
+  in the element's own namespace replaces the attribute it set before,
+  where it appended a second, and an attribute taken off its element keeps
+  its `namespace_uri`, where it became nil.
 * `HTML::Document#import_node` refuses a document with "cannot import a
   document; use #dup", as `#clone_node` does; it failed with "failed to
   import node".

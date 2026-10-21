@@ -80,6 +80,11 @@ pub enum Fix {
     /// An element in the HTML, SVG or MathML namespace is serialized by its
     /// local name, without the prefix it was created with.
     R2,
+    /// An attribute keeps the namespace it was made in: one set in its
+    /// element's own namespace is in it, and one taken off its element keeps
+    /// its. A DOM item; no parse makes either shape, so [`explains`] never
+    /// names it.
+    D1,
     /// Specificity is Selectors 4's (C23 to C26, one rule): every
     /// pseudo-class counts in B, a prefixed type selector once, a
     /// functional pseudo-class as its most specific argument, and each

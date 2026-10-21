@@ -20,6 +20,7 @@
 
 use core::num::NonZeroU32;
 
+use crate::compat::{self, Fix};
 use crate::falloc::{try_vec_with_capacity, Reserve, VecPush};
 use crate::html::names::Names;
 use crate::html::res::names as res;
@@ -175,11 +176,27 @@ impl ElementData {
     }
 }
 
+/// An attribute's own namespace, as kept: always either none or the
+/// attribute's stored `ns`, which is all the DOM can make it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum OwnNs {
+    /// Not settled yet: Lexbor's rule decides it from the element the
+    /// attribute is on (a parsed attribute, until it is linked).
+    #[default]
+    Derived,
+    /// No namespace.
+    None,
+    /// The attribute's stored `ns`.
+    Stored,
+}
+
 /// An attribute's own fields.
 #[derive(Clone, Copy, Debug)]
 pub struct AttrData {
     /// As [`ElementData`]'s.
     written: u32,
+    /// Its own namespace (D1); `Derived` until it is settled.
+    own_ns: OwnNs,
     value: Span,
     /// The next and previous attribute of its element's list.
     next: Option<NodeId>,
@@ -574,6 +591,7 @@ impl Document {
         self.set_names(id, local, ns, prefix);
         self.attrs.push(AttrData {
             written,
+            own_ns: OwnNs::Derived,
             value,
             next: None,
             prev: None,
@@ -833,6 +851,15 @@ impl Document {
         if self.attr(attr).is_none() {
             return false;
         }
+        /* An attribute keeps the namespace it has on the element it is first
+         * linked to, wherever it goes from here (D1). */
+        if self.attr(attr).is_some_and(|a| a.own_ns == OwnNs::Derived) {
+            let own = match self.own_ns_if_on(attr, el) {
+                0 => OwnNs::None,
+                _ => OwnNs::Stored,
+            };
+            self.set_attr_own_ns(attr, own);
+        }
         if let Some(a) = self.node_mut(attr) {
             a.parent = Some(el);
         }
@@ -1078,15 +1105,39 @@ impl Document {
     pub fn attr_written(&self, n: NodeId) -> Option<&[u8]> {
         self.names.qualified(self.attr(n)?.written)
     }
-    /// An attribute's OWN namespace (0 for none), as the adapter's
-    /// `HtmlAttr::own_ns` decides it: the stored one when the attribute has a
-    /// prefix or differs from its element's, none otherwise.
+    /// An attribute's OWN namespace (0 for none): the one it was made in
+    /// (D1). Lexbor stores none and decides it from where the attribute is:
+    /// the stored one when the attribute has a prefix or differs from its
+    /// element's, none otherwise. So an attribute set in its element's own
+    /// namespace read as in none, and one taken off its element changed
+    /// namespace. That rule still settles a parsed attribute's, and is the
+    /// answer in the Lexbor-compatible run.
     pub fn attr_own_ns(&self, n: NodeId) -> NsIndex {
+        let own = self.attr(n).map_or(OwnNs::Derived, |a| a.own_ns);
+        if compat::fixed(Fix::D1) {
+            match own {
+                OwnNs::None => return 0,
+                OwnNs::Stored => return self.ns(n),
+                OwnNs::Derived => {}
+            }
+        }
         match self.parent(n) {
             Some(el) => self.own_ns_if_on(n, el),
             None if self.prefix(n) != 0 => self.ns(n),
             None => 0,
         }
+    }
+
+    /// Settle an attribute's own namespace (see [`OwnNs`]).
+    pub fn set_attr_own_ns(&mut self, n: NodeId, own: OwnNs) {
+        if let Some(a) = self.attr_mut(n) {
+            a.own_ns = own;
+        }
+    }
+
+    /// An attribute's own namespace as kept, to copy.
+    fn attr_own_ns_kept(&self, n: NodeId) -> OwnNs {
+        self.attr(n).map_or(OwnNs::Derived, |a| a.own_ns)
     }
 
     /// [`attr_own_ns`](Self::attr_own_ns) of `attr` as if on `el`.
