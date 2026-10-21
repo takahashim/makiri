@@ -4,13 +4,16 @@ name: Release
 # platforms, attach them to a GitHub Release, and (optionally, on manual
 # dispatch) publish to RubyGems.
 #
-# Native gems are built on each target platform's own runner — NOT
-# cross-compiled — because the extension builds vendored Lexbor with CMake using
-# the host toolchain (see ext/makiri/rust/extconf.rb). Each runner compiles for
-# Ruby 3.2/3.3/3.4; script/build_native_gem.rb then assembles one gem per
-# platform containing all three ABIs (lib/makiri.rb selects the right one at
-# require time). `gem install` of a native gem does not recompile or need
-# cmake / the Lexbor submodule.
+# Native gems are built on each target platform's own runner - NOT
+# cross-compiled - because the extension is a Rust crate that rb-sys builds
+# against the headers of the Ruby running extconf (see
+# ext/makiri/rust/extconf.rb). Each runner compiles for every Ruby in
+# RUBY_ABIS; script/build_native_gem.rb then assembles one gem per platform
+# containing all of those ABIs (lib/makiri.rb selects the right one at require
+# time). `gem install` of a native gem does not recompile or need a Rust
+# toolchain. The source gem does: `source-gem-install` installs it the way a
+# user without a native gem would, and nothing is released or published
+# unless that works.
 
 on:
   push:
@@ -36,7 +39,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          submodules: recursive   # vendored Lexbor must be in the gem's file list
+          # Lexbor's LICENSE and NOTICE are in the gem's file list, and
+          # `git ls-files --recurse-submodules` lists them only from a
+          # checked-out submodule. Nothing else of Lexbor is in the gem.
+          submodules: recursive
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: "3.4"
@@ -49,6 +55,85 @@ jobs:
           name: gem-source
           path: pkg/*.gem
           if-no-files-found: error
+
+  # --- install the source gem as a user would, and use it ----------------------
+  # What `gem install makiri` does on a platform with no native gem: extconf
+  # runs cargo through rb-sys at install time. Once with the oldest Rust the
+  # crate declares (Cargo.toml's rust-version) and the oldest Ruby, once with
+  # the current ones; the require and the queries run outside the checkout, so
+  # they load the installed gem and nothing else.
+  source-gem-install:
+    name: Install source gem (${{ matrix.os }}, Ruby ${{ matrix.ruby }}, Rust ${{ matrix.rust }})
+    needs: source-gem
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, ruby: "3.2", rust: msrv }
+          - { os: ubuntu-latest, ruby: "4.0", rust: stable }
+          - { os: macos-14,      ruby: "3.4", rust: stable }
+    steps:
+      - uses: actions/checkout@v6   # for Cargo.toml's rust-version only
+      - name: Read the Rust version to install
+        id: rust
+        shell: bash
+        run: |
+          if [ "${{ matrix.rust }}" = msrv ]; then
+            v="$(sed -n 's/^rust-version *= *"\(.*\)"/\1/p' ext/makiri/rust/Cargo.toml)"
+            [ -n "$v" ] || { echo "::error::Cargo.toml declares no rust-version"; exit 1; }
+          else
+            v=stable
+          fi
+          echo "toolchain=$v" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.rust.outputs.toolchain }}
+      - name: Install libclang (rb-sys generates Ruby's bindings with it)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: gem-source
+          path: pkg
+      - name: The gem carries nothing for development
+        shell: bash
+        run: |
+          gem spec pkg/makiri-source.gem files | tee files.txt
+          if grep -E '^- (\.github/|ext/makiri/rust/fuzz/|ext/makiri/rust/tests/|script/|tools/|spec/|bench/|docs/|vendor/lexbor/(source|test|build))' files.txt; then
+            echo "::error::the source gem carries development files"; exit 1
+          fi
+          grep -q '^- vendor/lexbor/LICENSE$' files.txt && grep -q '^- vendor/lexbor/NOTICE$' files.txt \
+            || { echo "::error::the source gem lacks Lexbor's LICENSE or NOTICE"; exit 1; }
+          grep -q '^- ext/makiri/rust/Cargo.lock$' files.txt \
+            || { echo "::error::the source gem lacks Cargo.lock"; exit 1; }
+      - name: gem install (compiles the crate)
+        shell: bash
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.rust.outputs.toolchain }}
+        run: |
+          rustc --version
+          gem install pkg/makiri-source.gem --verbose
+      - name: Use the installed gem
+        shell: bash
+        working-directory: ${{ runner.temp }}
+        run: |
+          ruby -e '
+            require "makiri"
+            puts Makiri::VERSION
+            html = Makiri::HTML("<ul><li class=a>1</li><li>2</li></ul><svg><a href=x/></svg>")
+            raise "css" unless html.css("li.a").map(&:text) == ["1"]
+            raise "xpath" unless html.xpath("count(//li)") == 2.0
+            raise "link" unless html.css(":link").size == 1
+            raise "serialize" unless html.at_css("ul").to_html.start_with?("<ul>")
+            xml = Makiri::XML(%(<feed xmlns="urn:a"><entry id="e"/></feed>))
+            raise "xml css" unless xml.css("entry").map { |e| e["id"] } == ["e"]
+            raise "xml xpath" unless xml.at_xpath("//a:entry", "a" => "urn:a")
+            puts "ok"
+          '
 
   # --- compile the extension natively, per platform x Ruby --------------------
   compile:
@@ -69,9 +154,7 @@ jobs:
           - { platform: arm64-darwin,   os: macos-14 }
           - { platform: x64-mingw-ucrt, os: windows-latest }
     steps:
-      - uses: actions/checkout@v6
-        with:
-          submodules: recursive
+      - uses: actions/checkout@v6   # the crate alone: no submodule
       # The extension is a Rust crate, so every release runner needs cargo. This
       # is the job that produces the precompiled gems, which is what most users
       # install - if it cannot build, the gem falls back to a source install and
@@ -84,14 +167,14 @@ jobs:
           # names the GNU triple; this installs the std that goes with it.
           # Empty elsewhere, so the other runners are unaffected.
           targets: ${{ runner.os == 'Windows' && 'x86_64-pc-windows-gnu' || '' }}
-      - name: Install libclang (bindgen)
+      - name: Install libclang (rb-sys generates Ruby's bindings with it)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libclang-dev
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: ${{ matrix.ruby }}
           bundler-cache: true
-      - name: Compile (builds vendored Lexbor, then the crate)
+      - name: Compile the extension
         run: bundle exec rake compile
       - name: Smoke-load
         shell: bash
@@ -158,7 +241,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          submodules: recursive   # for the gemspec's file scan (ext/vendor are then dropped)
+          # For the gemspec's file scan: Lexbor's LICENSE and NOTICE, which the
+          # native gem carries too (ext/ is dropped).
+          submodules: recursive
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: "3.4"
@@ -186,6 +271,8 @@ jobs:
       - name: Verify it installs without recompiling
         shell: bash
         run: |
+          gem spec "makiri-"*"-${{ matrix.platform }}.gem" files | grep -q '^- vendor/lexbor/NOTICE$' \
+            || { echo "::error::the native gem lacks Lexbor's NOTICE"; exit 1; }
           gem install "makiri-"*"-${{ matrix.platform }}.gem" --local
           ruby -e 'require "makiri"; puts Makiri::VERSION'
       - uses: actions/upload-artifact@v7
@@ -197,7 +284,7 @@ jobs:
   # --- attach every gem to a GitHub Release (on a version tag) ----------------
   release:
     name: GitHub Release
-    needs: [source-gem, native-gem]
+    needs: [source-gem, source-gem-install, native-gem]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
@@ -234,7 +321,7 @@ jobs:
   # through this gated environment.
   publish:
     name: Publish to RubyGems
-    needs: [source-gem, native-gem]
+    needs: [source-gem, source-gem-install, native-gem]
     if: >-
       startsWith(github.ref, 'refs/tags/') ||
       (github.event_name == 'workflow_dispatch' && inputs.publish_to_rubygems)

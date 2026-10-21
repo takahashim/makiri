@@ -11,10 +11,11 @@ Gem::Specification.new do |spec|
 
   spec.summary     = "HTML5 parser + native XPath 1.0 for Ruby, with no libxml2 dependency."
   spec.description = <<~DESC
-    Makiri parses HTML5 documents via the Lexbor library
-    and queries them with a native XPath 1.0 engine written for this project.
-    It does not depend on libxml2 at any layer. The API is
-    Nokogiri-compatible for the subset of methods used in HTML scraping.
+    Makiri parses HTML5 documents with a Rust port of Lexbor's HTML parser,
+    and queries them with a native XPath 1.0 engine and CSS selector matcher
+    written for this project; it reads XML too. It does not depend on libxml2
+    at any layer. The API is Nokogiri-compatible for the subset of methods
+    used in HTML scraping.
   DESC
 
   spec.homepage             = "https://github.com/takahashim/makiri"
@@ -26,19 +27,29 @@ Gem::Specification.new do |spec|
   spec.metadata["changelog_uri"]     = "#{spec.homepage}/blob/main/CHANGELOG.md"
   spec.metadata["rubygems_mfa_required"] = "true"
 
+  # What a user's install needs, and nothing else: the Ruby library, the
+  # crate's sources and manifests (with Cargo.lock, so a source install builds
+  # the dependency versions CI tested), the signatures and the documents. The
+  # list is of what to INCLUDE, so a new development file - a workflow, a fuzz
+  # target, a script - stays out without anyone remembering to exclude it.
+  #
   # The extension builds from the crate alone: the HTML and CSS parsers are
   # Rust ports of Lexbor's, and the vendored Lexbor (a git submodule) is only
-  # the reference the tests compare them with (`rake lexbor`). So of `vendor/lexbor` the gem carries only what the ports owe it:
-  # Lexbor's LICENSE and NOTICE (Apache-2.0, see NOTICE). `--recurse-submodules`
-  # is what lists those two files; `git ls-files` alone reports the submodule
-  # as one gitlink entry.
-  lexbor_kept = %w[vendor/lexbor/LICENSE vendor/lexbor/NOTICE]
-  gemspec = File.basename(__FILE__)
+  # the reference the tests compare them with (`rake lexbor`). So of
+  # `vendor/lexbor` the gem carries only what the ports owe it: Lexbor's
+  # LICENSE and NOTICE (Apache-2.0, see NOTICE). `--recurse-submodules` is
+  # what lists those two files; `git ls-files` alone reports the submodule as
+  # one gitlink entry.
+  shipped = %w[
+    LICENSE NOTICE README.md CHANGELOG.md NOKOGIRI_DIFFERENCES.md
+    vendor/lexbor/LICENSE vendor/lexbor/NOTICE
+    ext/makiri/rust/Cargo.toml ext/makiri/rust/Cargo.lock
+    ext/makiri/rust/build.rs ext/makiri/rust/extconf.rb
+  ]
+  shipped_dirs = %w[lib/ sig/ ext/makiri/rust/src/]
   spec.files = IO.popen(%w[git ls-files -z --recurse-submodules], chdir: __dir__, err: IO::NULL) do |ls|
-    ls.readlines("\x0", chomp: true).reject do |f|
-      (f == gemspec) ||
-        f.start_with?(*%w[bin/ Gemfile .gitignore .rspec spec/ test/ bench/ docs/ CLAUDE.md AGENTS.md]) ||
-        (f.start_with?("vendor/lexbor/") && !lexbor_kept.include?(f))
+    ls.readlines("\x0", chomp: true).select do |f|
+      shipped.include?(f) || f.start_with?(*shipped_dirs)
     end
   end
   spec.bindir            = "exe"
