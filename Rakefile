@@ -650,10 +650,88 @@ task :kani do
   # ceilings are `extern static`s that Kani, which does not link C, treats as
   # unconstrained values - so the proof would be about a configuration nobody
   # builds. With it they are the consts the extension actually uses.
+  #
+  #   KANI_GROUPS=alloc,utf8 rake kani            # some groups (KANI_GROUPS below)
+  #   KANI_JOBS=4 rake kani                       # harnesses in parallel
   argv = ["cargo", "kani", "--no-default-features"]
   harness = ENV["HARNESS"].to_s.strip
-  argv += ["--harness", harness] unless harness.empty?
+  groups = ENV["KANI_GROUPS"].to_s.split(",").map(&:strip).reject(&:empty?)
+  unknown = groups - KANI_GROUPS.keys
+  abort "rake kani: unknown KANI_GROUPS #{unknown.join(', ')} (known: #{KANI_GROUPS.keys.join(', ')})" if unknown.any?
+  if !harness.empty?
+    argv += ["--harness", harness]
+  elsif groups.any?
+    groups.flat_map { |g| KANI_GROUPS[g][:harnesses] }.each { |h| argv += ["--harness", h] }
+  end
+  # Kani runs harnesses in parallel only with its terse output, which still
+  # names each harness and its verdict.
+  jobs = ENV["KANI_JOBS"].to_s.strip
+  argv += ["--jobs", jobs, "--output-format=terse"] unless jobs.empty?
   Dir.chdir("ext/makiri/rust") { sh(*argv) }
+end
+
+# The Kani harnesses in groups, each with the code its proofs depend on, so CI
+# runs a group only when that code changed (verify.yml; a weekly run takes all
+# of them, to catch a dependency missed here). The paths are the code
+# each group's proofs run - read off the harnesses' `use`s, what the proven
+# functions call, and the modules' `cfg(kani)`: `cbuf` uses only `falloc`,
+# which uses nothing, while `xml::verify` reaches `cutf8` through
+# `xml::chars`. `KANI_SHARED` is what every group depends on - the
+# bounds in lib.rs, the build, this file and the workflow. `kani:groups`
+# fails when a file holding a proof is in no group, so a new harness cannot
+# go unrun.
+RUST_SRC = "ext/makiri/rust/src"
+KANI_GROUPS = {
+  # The allocator and the byte buffer: the slow group (~6 of CI's ~10 min).
+  "alloc" => {
+    harnesses: %w[cbuf::verify:: falloc::verify:: falloc::cstr::verify::],
+    paths: %W[#{RUST_SRC}/cbuf.rs #{RUST_SRC}/cbuf/ #{RUST_SRC}/falloc/]
+  },
+  "utf8" => {
+    harnesses: %w[cutf8::verify::],
+    paths: %W[#{RUST_SRC}/cutf8.rs #{RUST_SRC}/cutf8/]
+  },
+  # `cutf8` too: `xml::chars::decode1` IS `cutf8::decode1`, and
+  # `validate_chars` decodes with it, so a change there can change these
+  # proofs' answer - which the utf8 group's own proofs of `decode1` do not
+  # stand in for. Not `falloc`, which `xml::chars` uses only outside what
+  # these prove (`normalize_newlines`).
+  "xml" => {
+    harnesses: %w[xml::verify::],
+    paths: %W[#{RUST_SRC}/xml/chars/ #{RUST_SRC}/xml/verify.rs #{RUST_SRC}/xml/mod.rs
+              #{RUST_SRC}/cutf8.rs #{RUST_SRC}/cutf8/]
+  },
+  "xpath" => {
+    harnesses: %w[xpath::verify::],
+    paths: %W[#{RUST_SRC}/xpath/number.rs #{RUST_SRC}/xpath/verify.rs #{RUST_SRC}/xpath/mod.rs]
+  }
+}.freeze
+KANI_SHARED = %W[
+  #{RUST_SRC}/lib.rs ext/makiri/rust/build.rs ext/makiri/rust/Cargo.toml
+  ext/makiri/rust/Cargo.lock Rakefile .github/workflows/verify.yml
+].freeze
+
+namespace :kani do
+  # Print the groups the changed files (one per line on stdin) touch, comma
+  # separated - all of them when a shared file changed, none when no proof's
+  # code did. First checks that every file holding a `#[kani::proof]` is in a
+  # group.
+  desc "Kani groups touched by the files on stdin (and check every proof is grouped)"
+  task :groups do
+    covered = ->(file, paths) { paths.any? { |p| p.end_with?("/") ? file.start_with?(p) : file == p } }
+    all_paths = KANI_GROUPS.values.flat_map { |g| g[:paths] }
+    ungrouped = Dir.glob("#{RUST_SRC}/**/*.rs").select { |f| File.read(f).include?("#[kani::proof]") }
+                   .reject { |f| covered.call(f, all_paths) }
+    abort "kani:groups: proofs in no group: #{ungrouped.join(', ')}" if ungrouped.any?
+
+    changed = $stdin.read.split("\n").map(&:strip).reject(&:empty?)
+    hit = if changed.any? { |f| KANI_SHARED.include?(f) }
+            KANI_GROUPS.keys
+          else
+            KANI_GROUPS.select { |_, g| changed.any? { |f| covered.call(f, g[:paths]) } }.keys
+          end
+    puts hit.join(",")
+  end
 end
 
 namespace :rust do

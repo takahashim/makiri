@@ -274,6 +274,11 @@ bundle exec rake oom               # OOM-injection sweep: rebuilds with
 bundle exec rake kani              # Kani proofs over the Ruby-free core (needs cargo-kani).
                                    # The successor to the C-era CBMC harnesses: the
                                    # allocator, cbuf, UTF-8 validate/decode.
+                                   # KANI_GROUPS=alloc,utf8,xml,xpath picks groups
+                                   # (Rakefile's KANI_GROUPS, with the code each
+                                   # depends on); CI runs only the groups whose
+                                   # code changed (`rake kani:groups`), and all of
+                                   # them weekly. KANI_JOBS=N runs N in parallel.
 bundle exec rake bench             # perf vs Nokogiri (bench-only gems; runs outside bundle)
 ```
 

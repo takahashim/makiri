@@ -1,8 +1,9 @@
 name: Verify
 
 on:
-  # Ten minutes of proofs, over the Ruby-free engine only - so they run when
-  # that engine (or how it is built) changes, not on every push.
+  # Up to ten minutes of proofs, over the Ruby-free engine only - so they run
+  # when that engine (or how it is built) changes, not on every push, and then
+  # only the groups whose code changed (see "Pick the proof groups").
   push:
     branches: [main, master]
     paths: &kani-paths
@@ -23,6 +24,10 @@ on:
       - ".github/workflows/verify.yml"
   pull_request:
     paths: *kani-paths
+  # Every group, whatever changed: the safety net for a dependency the groups
+  # in the Rakefile (KANI_GROUPS) missed.
+  schedule:
+    - cron: "0 4 * * 0"
   workflow_dispatch:
 
 # A new push to a pull request supersedes the run on its previous head. The
@@ -51,6 +56,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          # The base of the change, for the diff below.
+          fetch-depth: 0
 
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
@@ -58,8 +66,33 @@ jobs:
           ruby-version: "3.4"
           bundler-cache: true
 
+      # Only the groups whose code changed (`rake kani:groups`, which also
+      # fails on a proof in no group): the allocator's group alone is ~6
+      # minutes and its code rarely changes. A schedule or manual run, or a
+      # push with no previous commit to diff against, takes every group.
+      - name: Pick the proof groups
+        id: groups
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          case "$EVENT" in
+            pull_request) base="$PR_BASE" ;;
+            push) base="$PUSH_BEFORE" ;;
+            *) base="" ;;
+          esac
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
+            groups=$(printf 'Rakefile\n' | bundle exec rake -s kani:groups)
+          else
+            groups=$(git diff --name-only "$base" HEAD | bundle exec rake -s kani:groups)
+          fi
+          echo "groups=$groups" >> "$GITHUB_OUTPUT"
+          echo "Kani groups: ${groups:-(none)}"
+
       # Kani pins its own Rust toolchain, so no rust-toolchain step here.
       - name: Install Kani
+        if: steps.groups.outputs.groups != ''
         run: |
           cargo install --locked kani-verifier
           cargo kani setup
@@ -67,5 +100,11 @@ jobs:
 
       # No `rake compile` first: these proofs are over the Ruby- and
       # Lexbor-free features, which is the whole reason Kani can build them.
+      # Four jobs: the runner's cores, so the run takes about its slowest
+      # harness rather than the sum.
       - name: Run the Kani proofs
+        if: steps.groups.outputs.groups != ''
+        env:
+          KANI_GROUPS: ${{ steps.groups.outputs.groups }}
+          KANI_JOBS: "4"
         run: bundle exec rake kani
