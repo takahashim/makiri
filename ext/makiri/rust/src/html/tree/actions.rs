@@ -5,13 +5,90 @@
 //! tests, and the adoption agency algorithm.
 
 use super::error::TreeErrorId as E;
-use super::{AttrAdjust, Found, Ipos, Mode, Tok, TreeBuilder, TreeStatus};
+use super::{AttrAdjust, Found, Ipos, Mode, OrAbort, Tok, TreeBuilder, TreeStatus};
 use crate::compat::{self, Fix};
 use crate::html::dom::{AttrValue, NodeId, NodeName, NodeType};
 use crate::html::res::names as res;
 use crate::html::res::tree as rt;
 use crate::html::tokenizer::TextContent;
 use crate::html::tokenizer::{flags, Tokenizer};
+use crate::ptr_table::{mix64, PtrMap, TableKey};
+
+/// At most this many attributes in all, an element's and a token's,
+/// [`TreeBuilder::append_attributes`] scans the element's list for each
+/// token attribute; past it, it makes an [`AttrNames`] table first.
+const LINEAR_ATTRS: usize = 16;
+
+/// A key of [`AttrNames`]: an attribute's (local name, namespace), or the id
+/// of its qualified name as written - the two things
+/// `lxb_dom_element_attr_by_local_name_ns_data` matches a name on. One bit
+/// tells the two apart; a local id is below 2^31 (an appended one starts at
+/// `FIRST_APPENDED_ATTR`, 2^30) and a namespace fits 32 bits.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct AttrKey(u64);
+
+impl AttrKey {
+    fn named(local: usize, ns: usize) -> AttrKey {
+        AttrKey(((local as u64) << 33) | ((ns as u64 & 0xffff_ffff) << 1))
+    }
+
+    fn written(id: u32) -> AttrKey {
+        AttrKey((u64::from(id) << 1) | 1)
+    }
+}
+
+impl TableKey for AttrKey {
+    /* Not a key either constructor makes: a written id is a u32. */
+    const EMPTY: AttrKey = AttrKey(u64::MAX);
+    #[inline]
+    fn table_hash(self) -> u64 {
+        mix64(self.0)
+    }
+}
+
+/// An element's attribute names as [`AttrKey`]s, kept equal to its list, so
+/// that "has it an attribute matching this name" is one lookup rather than a
+/// scan: exactly the attributes `attr_by_local_name_ns` would find, since
+/// that matches a name on the same two keys.
+struct AttrNames(PtrMap<AttrKey, ()>);
+
+impl AttrNames {
+    /// The names of every attribute `el` has now.
+    fn of(tree: &TreeBuilder<'_>, el: NodeId) -> Result<AttrNames, TreeStatus> {
+        let mut names = AttrNames(PtrMap::new());
+        for x in tree.doc.attrs_of(el) {
+            names.add(tree, x)?;
+        }
+        Ok(names)
+    }
+
+    /// Add the attribute `x`'s names.
+    fn add(&mut self, tree: &TreeBuilder<'_>, x: NodeId) -> Result<(), TreeStatus> {
+        let d = &*tree.doc;
+        let key = AttrKey::named(d.local(x) as usize, d.ns(x) as usize);
+        self.0.insert(key, ()).map_err(|_| TreeStatus::Oom)?;
+        match d.written_id(x) {
+            0 => Ok(()),
+            w => self
+                .0
+                .insert(AttrKey::written(w), ())
+                .map_err(|_| TreeStatus::Oom),
+        }
+    }
+
+    /// `attr_by_local_name_ns`, by lookup: an attribute with local name
+    /// `name` in `ns`, or whose qualified name as written is `name`'s text.
+    fn has(&self, tree: &TreeBuilder<'_>, name: usize, ns: usize) -> bool {
+        if self.0.get(AttrKey::named(name, ns)).is_some() {
+            return true;
+        }
+        let names = &tree.doc.names;
+        names
+            .attr_name(name)
+            .and_then(|text| names.qualified_id(text))
+            .is_some_and(|w| self.0.get(AttrKey::written(w)).is_some())
+    }
+}
 
 /// An attribute about to be made: Lexbor's name fields, which the
 /// adjustments rewrite before the attribute is appended.
@@ -125,7 +202,11 @@ impl TreeBuilder<'_> {
     #[inline]
     pub(crate) fn insert_node(&mut self, to: NodeId, node: NodeId, ipos: Ipos) {
         match ipos {
-            Ipos::Before => self.doc.insert_before(to, node),
+            /* No insertion steps run here, so the selects are told. */
+            Ipos::Before => {
+                self.tree_moved(Some(to));
+                self.doc.insert_before(to, node)
+            }
             Ipos::Child => self.append_child_with_steps(to, node),
         }
     }
@@ -187,7 +268,10 @@ impl TreeBuilder<'_> {
         Ok(el)
     }
 
-    /// `lxb_html_tree_append_attributes`.
+    /// `lxb_html_tree_append_attributes`. Each token attribute is looked for
+    /// on `el` first (`attr_by_local_name_ns`); past [`LINEAR_ATTRS`] in all,
+    /// through an [`AttrNames`] table instead of a scan of the element's
+    /// list, which made an element of `n` attributes cost `n^2`.
     pub(crate) fn append_attributes(
         &mut self,
         tkz: &Tokenizer<'_, '_>,
@@ -196,9 +280,19 @@ impl TreeBuilder<'_> {
         ns: usize,
         adjust: Option<AttrAdjust>,
     ) -> Result<(), TreeStatus> {
-        for ta in tok.attrs(tkz) {
+        let attrs = tok.attrs(tkz);
+        let mut names = if attrs.len() + self.doc.attrs_of(el).count() > LINEAR_ATTRS {
+            Some(AttrNames::of(self, el)?)
+        } else {
+            None
+        };
+        for ta in attrs {
             let Some(name) = ta.name else { continue };
-            if self.attr_by_local_name_ns(el, name, ns) {
+            let present = match &names {
+                Some(n) => n.has(self, name, ns),
+                None => self.attr_by_local_name_ns(el, name, ns),
+            };
+            if present {
                 continue;
             }
             let mut spec = AttrSpec {
@@ -214,7 +308,19 @@ impl TreeBuilder<'_> {
                 .value_begin
                 .map(|_| tkz.attr_value(ta).unwrap_or_default());
             let attr = self.make_attr(spec, value.map(AttrValue::Bytes))?;
+            /* Lexbor's append takes the `id` / `class` shortcut and the
+             * attribute that held it off the element: then the table is made
+             * again, so it is always the element's list. */
+            let takes_off = (spec.local == res::ATTR_ID && self.doc.id_attr(el).is_some())
+                || (spec.local == res::ATTR_CLASS && self.doc.class_attr(el).is_some());
             self.append_attr_with_steps(el, attr)?;
+            if let Some(n) = &mut names {
+                if takes_off {
+                    *n = AttrNames::of(self, el)?;
+                } else {
+                    n.add(self, attr)?;
+                }
+            }
         }
         Ok(())
     }
@@ -371,6 +477,22 @@ impl TreeBuilder<'_> {
         tok: &Tok,
     ) -> Result<(), TreeStatus> {
         self.insert_character_for_data(tok.text(tkz))
+    }
+
+    /// A text token's leading whitespace inserted as it is
+    /// (`lxb_html_token_data_split_ws_begin` + `lxb_html_tree_insert_character`),
+    /// the rest left in `tok`: whether that was the whole token, or `None`
+    /// when the parse was aborted.
+    pub(crate) fn insert_leading_ws(
+        &mut self,
+        tkz: &Tokenizer<'_, '_>,
+        tok: &mut Tok,
+    ) -> Option<bool> {
+        let ws = tok.split_ws_begin(tkz);
+        if ws.text_start != ws.text_end {
+            self.insert_character(tkz, &ws).or_abort(self)?;
+        }
+        Some(tok.text_start == tok.text_end)
     }
 
     /// `lxb_html_tree_insert_character_for_data`: appended to the text node
@@ -765,6 +887,8 @@ impl TreeBuilder<'_> {
     /// `lxb_html_tree_adoption_agency_algorithm`: `true` when the caller is
     /// to act as "any other end tag" (Lexbor's return), `Err` on failure.
     pub(crate) fn adoption_agency_algorithm(&mut self, tok: &Tok) -> Result<bool, TreeStatus> {
+        /* It moves nodes with no insertion steps: the selects are told. */
+        self.tree_moved(None);
         let subject = tok.tag_id;
         /* State 2 */
         let Some(node) = self.current_node() else {

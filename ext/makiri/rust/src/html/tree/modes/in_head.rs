@@ -51,14 +51,9 @@ fn open(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mut Tok) 
         res::TAG_HEAD => tree.parse_error(tok, E::Hetoinhemo),
         _ => {
             if tok.tag_id == res::TAG__TEXT {
-                let ws = tok.split_ws_begin(tkz);
-                if ws.text_start != ws.text_end
-                    && tree.insert_character(tkz, &ws).or_abort(tree).is_none()
-                {
-                    return true;
-                }
-                if tok.text_start == tok.text_end {
-                    return true;
+                match tree.insert_leading_ws(tkz, tok) {
+                    None | Some(true) => return true,
+                    Some(false) => {}
                 }
             }
             return anything_else(tree);

@@ -35,5 +35,5 @@ pub mod post_parse {
 
 /// The parse guard's limits and stop reasons.
 pub mod tree_guard {
-    pub use crate::html::tree::guard::{DepthLimit, GuardStop, MAX_SELECT_OPTIONS};
+    pub use crate::html::tree::guard::{DepthLimit, GuardStop};
 }

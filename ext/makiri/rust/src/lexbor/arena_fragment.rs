@@ -18,7 +18,6 @@ use crate::html::dom::{
     DomOom, HtmlDoc, HtmlElement, HtmlNewNodes, HtmlNode, NsId, RawNode, TagId,
 };
 use crate::html::res::names as res;
-use crate::html::tree::guard::ContextOptions;
 use crate::html::tree::guard::{DepthLimit, GuardStop};
 use crate::html::tree::{
     parse_fragment, ContextElement, ContextFacts, FragmentFailure, ParsedFragment,
@@ -140,42 +139,11 @@ impl FragmentTag {
     }
 }
 
-/// What the context `chain` - `(static tag, in the HTML namespace)` pairs,
-/// the context element first - means to the option guard: whether its
-/// ancestor walk reaches a `<select>` arriving with no `<optgroup>` seen
-/// (`fresh`) and with one (`after_optgroup`). The nearest-select rule of
-/// `lxb_html_option_element_nearest_ancestor_select`, as the tree builder's
-/// guard walks it inside the fragment.
-fn resolve_option_chain(
-    chain: impl Iterator<Item = (Option<usize>, bool)> + Clone,
-) -> ContextOptions {
-    let run = |mut optgroup: bool| {
-        for (tag, html) in chain.clone() {
-            if !html {
-                continue;
-            }
-            match tag {
-                Some(res::TAG_DATALIST | res::TAG_HR | res::TAG_OPTION) => return false,
-                Some(res::TAG_OPTGROUP) if optgroup => return false,
-                Some(res::TAG_OPTGROUP) => optgroup = true,
-                Some(res::TAG_SELECT) => return true,
-                _ => {}
-            }
-        }
-        false
-    };
-    ContextOptions {
-        fresh: run(false),
-        after_optgroup: run(true),
-    }
-}
-
 /// Where a fragment is parsed.
 pub enum FragmentContext {
     /// Inside the element whose context was resolved beforehand.
     Element {
         at: Option<FragmentTag>,
-        options: ContextOptions,
         facts: ContextFacts,
     },
     /// Inside a named context, for a fragment bound to a document.
@@ -201,11 +169,6 @@ impl FragmentContext {
             Some(e) => FragmentTag::resolve(e, target).map_err(|_| FragmentError::Context)?,
             None => None,
         };
-        /* The option guard's walk into the context's ancestors, made now. */
-        let chain = core::iter::successors(Some(node), |n| n.parent()).map(|n: HtmlNode<'_>| {
-            let html = n.ns_id() == Some(NsId::HTML);
-            (n.tag_id().and_then(TagId::static_index), html)
-        });
         let integration = node.ns_id() == Some(NsId::MATH)
             && node.tag_id().and_then(TagId::static_index) == Some(res::TAG_ANNOTATION_XML)
             && node
@@ -226,11 +189,7 @@ impl FragmentContext {
             compat_mode: u8::try_from(node.owner_document().compat_mode()).unwrap_or(0),
             html_integration_point: integration,
         };
-        Ok(FragmentContext::Element {
-            at,
-            options: resolve_option_chain(chain),
-            facts,
-        })
+        Ok(FragmentContext::Element { at, facts })
     }
 
     /// A named context.
@@ -265,10 +224,9 @@ impl TransientFragment {
         let at = context.at();
         let (tag, ns) = at.map_or((res::TAG__UNDEF, 0), |a| (a.parse_tag(), a.parse_ns()));
         let element = match context {
-            FragmentContext::Element { options, facts, .. } => ContextElement {
+            FragmentContext::Element { facts, .. } => ContextElement {
                 tag,
                 ns,
-                options: *options,
                 facts: *facts,
             },
             FragmentContext::Tag { .. } => ContextElement::named(tag, ns),

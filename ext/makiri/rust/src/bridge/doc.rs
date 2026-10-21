@@ -33,26 +33,17 @@ use crate::bridge::xml::xml_node_document;
 use crate::bridge::xml::{xml_mut_result, xml_node_unwrap};
 use crate::html_dom::html::RawNode;
 use crate::html_dom::post_parse::{empty_html_document, parse_html, HtmlParseError};
-use crate::html_dom::tree_guard::{DepthLimit, GuardStop, MAX_SELECT_OPTIONS};
+use crate::html_dom::tree_guard::{DepthLimit, GuardStop};
 
 /* ------------------------------------------------------------------ *
  * parsing                                                            *
  * ------------------------------------------------------------------ */
-
-/// The error for a parse refused for one `<select>` receiving too many
-/// `<option>`s: `Makiri::Error`, naming the limit.
-pub fn select_options_error() -> Error {
-    makiri_error(format!(
-        "too many option elements in one select element (limit {MAX_SELECT_OPTIONS})"
-    ))
-}
 
 /// The error for a parse the guard refused (`GuardStop`), for a document and
 /// a fragment alike: the one place that maps a stop to its exception.
 pub fn guard_error(stop: GuardStop, limit: DepthLimit) -> Error {
     match stop {
         GuardStop::TooDeep => tree_depth_error(limit),
-        GuardStop::TooManyOptions => select_options_error(),
     }
 }
 

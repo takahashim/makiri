@@ -32,7 +32,7 @@ use crate::lexbor::abi::{
     lxb_html_parse_fragment_chunk_begin, lxb_html_parse_fragment_chunk_end,
     lxb_html_parse_fragment_chunk_process, TransientDoc,
 };
-use crate::lexbor::adapter::tree_guard::{fragment_document, DepthLimit, OptionContext, TokenHook};
+use crate::lexbor::adapter::tree_guard::{fragment_document, DepthLimit, TokenHook};
 
 /* The HTML parser's lifecycle, from the generated bindings. Declared here first
  * over an opaque parser, which was fine until the source-location port needed
@@ -213,10 +213,9 @@ impl TransientFragment {
         input: &[u8],
         known_valid: bool,
         at: Option<FragmentTag>,
-        options: OptionContext,
         limit: DepthLimit,
     ) -> Result<TransientFragment, FragmentError> {
-        let context = FragmentContext::Standalone { at, options };
+        let context = FragmentContext::Standalone { at };
         // SAFETY: a standalone context reads no node or document of the
         // caller's; the input is only read.
         unsafe { run_fragment_parser(input, known_valid, &context, limit) }
@@ -245,13 +244,9 @@ pub enum FragmentContext {
     /// `DocumentFragment.parse`, where no such element exists yet.
     Tag { doc: RawDoc, at: FragmentTag },
     /// A context given as a tag and namespace Lexbor knows (static ids),
-    /// parsed in a document of its own, with the option guard's walk over
-    /// the context's ancestors made beforehand - for a context element of
-    /// another DOM (the arena's). `at` none parses with no context element.
-    Standalone {
-        at: Option<FragmentTag>,
-        options: OptionContext,
-    },
+    /// parsed in a document of its own - for a context element of another
+    /// DOM (the arena's). `at` none parses with no context element.
+    Standalone { at: Option<FragmentTag> },
 }
 
 /// The tag a context gets when its own cannot be handed to the parser - see
@@ -462,14 +457,7 @@ unsafe fn run_fragment_parser(
         owned = TransientDoc::own(fragment_document(parser.as_ptr()).cast());
     }
 
-    let mut hook = TokenHook::for_fragment(
-        limit,
-        match *context {
-            FragmentContext::Element(el) => OptionContext::Element(el),
-            FragmentContext::Tag { at, .. } => OptionContext::Tag(Some(at.tag), at.ns),
-            FragmentContext::Standalone { options, .. } => options,
-        },
-    );
+    let mut hook = TokenHook::for_fragment(limit);
     if !hook.install(parser.as_ptr()) {
         return Err(FragmentError::Parse); /* never unguarded */
     }

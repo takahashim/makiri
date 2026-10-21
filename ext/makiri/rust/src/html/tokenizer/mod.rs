@@ -43,6 +43,7 @@ pub use state_text::{rawtext_before, rcdata_before, script_data_before};
 use crate::falloc::{Reserve, VecPush};
 use crate::html::names::Names;
 use crate::html::res::names as res;
+use crate::ptr_table::{mix64, PtrMap, TableKey};
 
 /// `lxb_html_token_type`: flags on a token.
 pub mod flags {
@@ -243,6 +244,8 @@ pub struct Tokenizer<'i, 's> {
     /// Where [`attr_last`](Self::attr_last) writes when there is no
     /// attribute; never read.
     scratch_attr: TokenAttr,
+    /// The current token's attribute names, for the duplicate check.
+    attr_seen: AttrSeen,
     /// The namespace of the tree builder's adjusted current node, which
     /// decides whether `<![CDATA[` opens a CDATA section
     /// (`lxb_html_tokenizer_current_namespace`); `NS__UNDEF` with no tree.
@@ -279,6 +282,7 @@ impl<'i, 's> Tokenizer<'i, 's> {
             status: Status::Ok,
             is_eof: false,
             scratch_attr: TokenAttr::default(),
+            attr_seen: AttrSeen::default(),
             current_ns: res::NS__UNDEF,
             options,
         }
@@ -606,14 +610,21 @@ impl<'i, 's> Tokenizer<'i, 's> {
     }
 
     /// `lxb_html_tokenizer_attr_last_duplicate`: drop the last attribute when
-    /// an earlier one has the same name.
+    /// an earlier one has the same name. Past [`LINEAR_ATTRS`] earlier ones,
+    /// they are looked up in [`AttrSeen`] rather than scanned, which made a
+    /// tag of `n` attributes cost `n^2`.
     fn attr_last_duplicate(&mut self) {
         let Some(last) = self.token.attrs.last() else {
             return;
         };
         let (name, at) = (last.name, last.name_begin);
         let n = self.token.attrs.len();
-        if self.token.attrs[..n - 1].iter().any(|a| a.name == name) {
+        let earlier = &self.token.attrs[..n - 1];
+        let dup = match self.attr_seen.covering(earlier) {
+            Some(seen) => seen.contains(name),
+            None => earlier.iter().any(|a| a.name == name),
+        };
+        if dup {
             self.error_at(at, ErrorId::Duat);
             self.token.attrs.pop();
         }
@@ -705,6 +716,7 @@ impl<'i, 's> Tokenizer<'i, 's> {
     fn clean_token(&mut self) {
         self.token.clean();
         self.values.clear();
+        self.attr_seen.clear();
     }
 
     /// `lxb_html_tokenizer_set_state_by_tag`: the state a start tag in the HTML
@@ -738,6 +750,80 @@ impl<'i, 's> Tokenizer<'i, 's> {
             res::TAG_PLAINTEXT => self.enter_plaintext(),
             _ => {}
         }
+    }
+}
+
+/// At most this many earlier attributes, the duplicate check scans them.
+const LINEAR_ATTRS: usize = 16;
+
+/// An attribute name id as a table key: the id + 1, so 0 is free for the
+/// empty slot; a name not set yet (`None`) is `u64::MAX`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct NameKey(u64);
+
+impl NameKey {
+    fn of(name: Option<usize>) -> NameKey {
+        NameKey(name.map_or(u64::MAX, |id| id as u64 + 1))
+    }
+}
+
+impl TableKey for NameKey {
+    const EMPTY: NameKey = NameKey(0);
+    #[inline]
+    fn table_hash(self) -> u64 {
+        mix64(self.0)
+    }
+}
+
+/// The names of the current token's first `len` attributes, filled as the
+/// duplicate check needs them. Only a token with many attributes fills it;
+/// if growing it ever fails, it is given up for the token and the check
+/// scans, so the answer never depends on it.
+#[derive(Default)]
+struct AttrSeen {
+    names: PtrMap<NameKey, ()>,
+    len: usize,
+    given_up: bool,
+}
+
+impl AttrSeen {
+    /// The table holding exactly the names of `earlier` - caught up with it
+    /// first - or `None` when the check should scan: few attributes, or the
+    /// table given up.
+    fn covering(&mut self, earlier: &[TokenAttr]) -> Option<&Self> {
+        if earlier.len() <= LINEAR_ATTRS || self.given_up {
+            return None;
+        }
+        /* The check drops a duplicate as soon as it is added, so the list
+         * only grows past what the table holds. Shorter than it - an
+         * attribute deleted some other way - it is made again. */
+        if self.len > earlier.len() {
+            self.names.clear();
+            self.len = 0;
+        }
+        while self.len < earlier.len() {
+            if self
+                .names
+                .insert(NameKey::of(earlier[self.len].name), ())
+                .is_err()
+            {
+                self.given_up = true;
+                return None;
+            }
+            self.len += 1;
+        }
+        Some(self)
+    }
+
+    fn contains(&self, name: Option<usize>) -> bool {
+        self.names.get(NameKey::of(name)).is_some()
+    }
+
+    /// Empty again, for the next token.
+    fn clear(&mut self) {
+        self.names.clear();
+        self.len = 0;
+        self.given_up = false;
     }
 }
 

@@ -302,6 +302,8 @@ pub(crate) struct NodeState {
     pub(crate) valueless: NodeSet,
     /// The options whose selectedness is true.
     pub(crate) selected: NodeSet,
+    /// What the selectedness setting algorithm last left each select with.
+    pub(crate) selects: select::SelectStates,
 }
 
 /// `lxb_html_tree_t`, building into one arena document.
@@ -321,6 +323,10 @@ pub struct TreeBuilder<'d> {
     template_modes: Vec<Mode>,
     pending: PendingTable,
     errors: Vec<TreeError>,
+    /// Whether [`parse_error`](Self::parse_error) keeps what it is told:
+    /// only a caller that reads `errors` asks, since a document of nothing
+    /// but stray end tags makes one record per few bytes of input.
+    record_errors: bool,
     foster_parenting: bool,
     frameset_ok: bool,
     scripting: bool,
@@ -354,6 +360,7 @@ impl<'d> TreeBuilder<'d> {
             template_modes: Vec::new(),
             pending: PendingTable::default(),
             errors: Vec::new(),
+            record_errors: false,
             foster_parenting: false,
             frameset_ok: true,
             scripting: false,
@@ -376,6 +383,15 @@ impl<'d> TreeBuilder<'d> {
         TreeBuilder {
             stamping,
             ..TreeBuilder::new(doc, guard)
+        }
+    }
+
+    /// Keep the parse errors, when `record`: only for a caller that reads
+    /// them ([`errors`](Self::errors)).
+    pub(crate) fn recording_errors(self, record: bool) -> TreeBuilder<'d> {
+        TreeBuilder {
+            record_errors: record,
+            ..self
         }
     }
 
@@ -471,6 +487,9 @@ impl<'d> TreeBuilder<'d> {
 
     /// `lxb_html_tree_parse_error`.
     pub(crate) fn parse_error(&mut self, tok: &Tok, id: TreeErrorId) {
+        if !self.record_errors {
+            return;
+        }
         let _ = self.errors.falloc_push(TreeError {
             id,
             begin: tok.begin,
@@ -547,13 +566,15 @@ impl<'d> TreeBuilder<'d> {
     /// a mode consumes it.
     pub(crate) fn process(&mut self, tkz: &mut Tokenizer<'_, '_>) -> TreeStatus {
         let mut tok = Tok::of(tkz);
-        /* The guard reads the token as the tokenizer handed it over. */
+        /* The stamps read the token as the tokenizer handed it over. */
         let handed = tok;
         let before = self.stamp_before(&handed);
-        while !self.dispatch(tkz, &mut tok) {}
+        /* An aborted parse has emptied the stack: reprocessing would only
+         * fail again, so a token is never retried once the status is set. */
+        while !self.dispatch(tkz, &mut tok) && self.status == TreeStatus::Ok {}
         tkz.set_current_namespace(self.current_namespace());
         self.stamp_after(before);
-        if self.status == TreeStatus::Ok && !self.guard_after(&handed) {
+        if self.status == TreeStatus::Ok && !self.guard_after() {
             self.status = TreeStatus::Error;
         }
         self.status

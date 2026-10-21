@@ -27,15 +27,110 @@ use super::{TreeBuilder, TreeStatus};
 use crate::falloc::VecPush;
 use crate::html::dom::{NodeId, NodeType, ShortcutRule};
 use crate::html::res::names as res;
+use crate::ptr_table::{mix64, PtrMap, TableKey};
 
-/// Where [`TreeBuilder::walk_to_select`] ended.
-pub(crate) enum SelectWalk {
-    /// At this `<select>`.
+/// A `<select>` as a table key: its node word, which is never 0.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct SelectKey(u64);
+
+impl TableKey for SelectKey {
+    const EMPTY: SelectKey = SelectKey(0);
+    #[inline]
+    fn table_hash(self) -> u64 {
+        mix64(self.0)
+    }
+}
+
+/// What the selectedness setting algorithm last left a select with, so the
+/// next run can be decided from it and the option inserted, rather than by
+/// walking every option again - which made a select of `n` options cost
+/// `n^2` to build.
+#[derive(Clone, Copy, Default)]
+struct SelectState {
+    /// Whether the fields below are the select's now. A full run makes them
+    /// so; anything that could change its list of options otherwise clears it.
+    valid: bool,
+    /// The select's last child when the state was made: what the next option
+    /// appended after it is checked against.
+    tail: Option<NodeId>,
+    /// The one option of its list that is selected, if one is: after a run
+    /// of the algorithm there is never more than one.
+    selected: Option<NodeId>,
+    /// The first option of its list that is not disabled.
+    first_enabled: Option<NodeId>,
+    /// The first `<selectedcontent>` below it, found while `content_at` was
+    /// still [`SelectStates::content_version`].
+    content: Option<NodeId>,
+    content_at: Option<u64>,
+}
+
+/// The selects' [`SelectState`]s of one parse.
+#[derive(Default)]
+pub(crate) struct SelectStates {
+    index: PtrMap<SelectKey, u32>,
+    states: Vec<SelectState>,
+    /// A select was found inside another: the outer one's algorithm then
+    /// sets the inner one's options, so no state is trusted for the parse.
+    nested: bool,
+    /// Moves on with every change that could put a different
+    /// `<selectedcontent>` first below a select: one inserted, and the tree
+    /// changes no insertion steps see (the adoption agency, foster
+    /// parenting).
+    content_version: u64,
+}
+
+impl SelectStates {
+    fn get(&self, select: NodeId) -> Option<&SelectState> {
+        let i = self.index.get(SelectKey(select.to_word() as u64))?;
+        self.states.get(i as usize)
+    }
+
+    /// The select's state, made empty if it has none; `None` when there is
+    /// no room for one, which leaves every answer to the full walk.
+    fn entry(&mut self, select: NodeId) -> Option<&mut SelectState> {
+        let key = SelectKey(select.to_word() as u64);
+        let i = match self.index.get(key) {
+            Some(i) => i as usize,
+            None => {
+                let i = self.states.len();
+                self.states.falloc_push(SelectState::default()).ok()?;
+                self.index.insert(key, u32::try_from(i).ok()?).ok()?;
+                i
+            }
+        };
+        self.states.get_mut(i)
+    }
+
+    /// Forget the select's list of options.
+    fn invalidate(&mut self, select: NodeId) {
+        if self.index.get(SelectKey(select.to_word() as u64)).is_some() {
+            if let Some(st) = self.entry(select) {
+                st.valid = false;
+            }
+        }
+    }
+}
+
+/// What the selectedness setting algorithm does to a list of options.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Selectedness {
+    /// Nothing: one option is selected, or none is and none is enabled.
+    Keep,
+    /// None is selected: select this one, the first enabled.
     Select(NodeId),
-    /// At an element that keeps the option from any select.
-    Blocked,
-    /// Past the top of the tree, through an `<optgroup>` or not.
-    OffTop { optgroup: bool },
+    /// Several are: unselect all but this one, the last.
+    KeepOnly(NodeId),
+}
+
+/// Whether an HTML element `tag`, a child of the select, is an option or one
+/// `list_of_options` walks into - a child the state cannot account for
+/// without the walk. Not an `<optgroup>`: one directly in the select has no
+/// non-`optgroup` element between it and the select, so the walk passes it.
+fn holds_options(tag: usize) -> bool {
+    matches!(
+        tag,
+        res::TAG_OPTION | res::TAG_SELECT | res::TAG_DATALIST | res::TAG_HR
+    )
 }
 
 impl TreeBuilder<'_> {
@@ -70,11 +165,54 @@ impl TreeBuilder<'_> {
         while let Some(n) = node {
             if self.node_is(n, res::TAG_OPTION) {
                 /* `lxb_html_option_element_insert_steps` */
-                if let Some(select) = self.nearest_ancestor_select(n) {
-                    self.selectedness_setting_algorithm(select);
+                let select = self.nearest_ancestor_select(n);
+                /* Every other select above it may list it too. */
+                self.invalidate_selects_above(n, select);
+                if let Some(select) = select {
+                    self.selectedness_setting_algorithm(select, n);
                 }
+            } else if self.node_is(n, res::TAG_SELECTEDCONTENT) {
+                self.node_state.selects.content_version += 1;
+            } else if self.node_is(n, res::TAG_SELECT) && self.has_select_above(n) {
+                self.node_state.selects.nested = true;
             }
             node = self.doc.preorder_next(root, n);
+        }
+    }
+
+    /// Forget the list of options of every select above `n` but `except`.
+    fn invalidate_selects_above(&mut self, n: NodeId, except: Option<NodeId>) {
+        let mut up = self.doc.parent(n);
+        while let Some(a) = up {
+            if self.node_is(a, res::TAG_SELECT) && Some(a) != except {
+                self.node_state.selects.invalidate(a);
+            }
+            up = self.doc.parent(a);
+        }
+    }
+
+    fn has_select_above(&self, n: NodeId) -> bool {
+        let mut up = self.doc.parent(n);
+        while let Some(a) = up {
+            if self.node_is(a, res::TAG_SELECT) {
+                return true;
+            }
+            up = self.doc.parent(a);
+        }
+        false
+    }
+
+    /// The tree is about to change where no insertion steps see it: under
+    /// `at` (foster parenting's insert, before `at`), or anywhere (the
+    /// adoption agency, `at` `None`). Any select above `at` forgets its
+    /// options, and every select its first `<selectedcontent>`.
+    pub(crate) fn tree_moved(&mut self, at: Option<NodeId>) {
+        self.node_state.selects.content_version += 1;
+        if let Some(at) = at {
+            self.invalidate_selects_above(at, None);
+            if self.node_is(at, res::TAG_SELECT) {
+                self.node_state.selects.invalidate(at);
+            }
         }
     }
 
@@ -90,35 +228,25 @@ impl TreeBuilder<'_> {
         }
     }
 
-    /// `lxb_html_option_element_nearest_ancestor_select`.
+    /// `lxb_html_option_element_nearest_ancestor_select`: up from `option`
+    /// through at most one `<optgroup>`, stopped by a `<datalist>`, `<hr>`
+    /// or `<option>`.
     fn nearest_ancestor_select(&self, option: NodeId) -> Option<NodeId> {
-        match self.walk_to_select(option) {
-            SelectWalk::Select(n) => Some(n),
-            SelectWalk::Blocked | SelectWalk::OffTop { .. } => None,
-        }
-    }
-
-    /// The walk up from `option` to the select it belongs to, which Lexbor's
-    /// option steps and the guard's option count both take: through at
-    /// most one `<optgroup>`, stopped by a `<datalist>`, `<hr>` or `<option>`.
-    pub(crate) fn walk_to_select(&self, option: NodeId) -> SelectWalk {
         let mut optgroup = false;
         let mut node = self.doc.parent(option);
         while let Some(n) = node {
             if self.ns(n) == res::NS_HTML {
                 match self.tag(n) {
-                    res::TAG_DATALIST | res::TAG_HR | res::TAG_OPTION => {
-                        return SelectWalk::Blocked
-                    }
-                    res::TAG_OPTGROUP if optgroup => return SelectWalk::Blocked,
+                    res::TAG_DATALIST | res::TAG_HR | res::TAG_OPTION => return None,
+                    res::TAG_OPTGROUP if optgroup => return None,
                     res::TAG_OPTGROUP => optgroup = true,
-                    res::TAG_SELECT => return SelectWalk::Select(n),
+                    res::TAG_SELECT => return Some(n),
                     _ => {}
                 }
             }
             node = self.doc.parent(n);
         }
-        SelectWalk::OffTop { optgroup }
+        None
     }
 
     /// `lxb_dom_element_attr_by_id`: the first attribute with local name
@@ -167,6 +295,46 @@ impl TreeBuilder<'_> {
         }
     }
 
+    /// Whether `option`, below `select`, is in its list of options: every
+    /// element between them one `list_of_options` walks into.
+    fn is_listed(&self, select: NodeId, option: NodeId) -> bool {
+        let mut up = self.doc.parent(option);
+        while let Some(a) = up {
+            if a == select {
+                return true;
+            }
+            if !self.walks_into(a, select) {
+                return false;
+            }
+            up = self.doc.parent(a);
+        }
+        false
+    }
+
+    /// Whether `list_of_options` for `root` walks into `n`'s children.
+    fn walks_into(&self, n: NodeId, root: NodeId) -> bool {
+        if self.ns(n) != res::NS_HTML {
+            return false;
+        }
+        match self.tag(n) {
+            res::TAG_SELECT | res::TAG_DATALIST | res::TAG_HR | res::TAG_OPTION => true,
+            res::TAG_OPTGROUP => {
+                let mut up = self.doc.parent(n);
+                while let Some(o) = up {
+                    if o == root {
+                        return false;
+                    }
+                    if self.tag(o) != res::TAG_OPTGROUP && self.ns(o) == res::NS_HTML {
+                        return true;
+                    }
+                    up = self.doc.parent(o);
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
     /// `lxb_html_select_list_of_options`, as Lexbor walks it: into an
     /// element's children only when the element is a `select`, `datalist`,
     /// `hr` or `option`, or an `optgroup` with a non-`optgroup` HTML element
@@ -175,7 +343,8 @@ impl TreeBuilder<'_> {
     /// `div`'s options count); taking it here as it stands made the walk,
     /// run once per inserted option, cost options x nodes under the select,
     /// so it waits for a walk that is not repeated per option.
-    fn list_of_options(&self, select: NodeId) -> Result<Vec<NodeId>, TreeStatus> {
+    fn list_of_options(&self, select: NodeId) -> Result<(Vec<NodeId>, bool), TreeStatus> {
+        let mut nested = false;
         let mut out = Vec::new();
         let root = select;
         let mut node = self.doc.first_child(root);
@@ -183,39 +352,26 @@ impl TreeBuilder<'_> {
             if self.node_is(n, res::TAG_OPTION) {
                 out.falloc_push(n).map_err(|()| TreeStatus::Oom)?;
             }
-            let mut descend = false;
-            if self.ns(n) == res::NS_HTML {
-                match self.tag(n) {
-                    res::TAG_SELECT | res::TAG_DATALIST | res::TAG_HR | res::TAG_OPTION => {
-                        descend = true
-                    }
-                    res::TAG_OPTGROUP => {
-                        let mut up = self.doc.parent(n);
-                        while let Some(o) = up {
-                            if o == root {
-                                break;
-                            }
-                            if self.tag(o) != res::TAG_OPTGROUP && self.ns(o) == res::NS_HTML {
-                                descend = true;
-                                break;
-                            }
-                            up = self.doc.parent(o);
-                        }
-                    }
-                    _ => {}
-                }
+            if self.node_is(n, res::TAG_SELECT) {
+                /* Its options are this select's too: see `nested`. */
+                nested = true;
             }
+            let descend = self.walks_into(n, root);
             node = if descend {
                 self.doc.preorder_next(root, n)
             } else {
                 self.doc.preorder_next_past(root, n)
             };
         }
-        Ok(out)
+        Ok((out, nested))
     }
 
-    /// `lxb_html_select_selectedness_setting_algorithm`.
-    fn selectedness_setting_algorithm(&mut self, select: NodeId) {
+    /// `lxb_html_select_selectedness_setting_algorithm`, run for the option
+    /// `inserted`. When `inserted` was appended as the select's last option
+    /// since its state was made, it is decided from that state
+    /// ([`fast_selectedness`](Self::fast_selectedness)); otherwise by walking
+    /// every option, which makes the state again.
+    fn selectedness_setting_algorithm(&mut self, select: NodeId, inserted: NodeId) {
         if self.attr_by_id(select, res::ATTR_MULTIPLE).is_some() {
             return;
         }
@@ -225,15 +381,54 @@ impl TreeBuilder<'_> {
              * module doc. */
             return;
         }
+        if self.fast_selectedness(select, inserted) {
+            return;
+        }
         /* Lexbor answers a failed walk with an exception its callers
          * drop. */
-        let Ok(options) = self.list_of_options(select) else {
+        let Ok((options, nested)) = self.list_of_options(select) else {
             return;
         };
+        if nested {
+            self.node_state.selects.nested = true;
+        }
+        let (decision, first) = self.decide(&options);
+        match decision {
+            Selectedness::Keep => {}
+            Selectedness::Select(f) => {
+                let _ = self.node_state.selected.insert(f);
+            }
+            /* Step 2 */
+            Selectedness::KeepOnly(last) => {
+                for &o in &options {
+                    if o != last && self.node_state.selected.contains(o) {
+                        self.node_state.selected.remove(o);
+                    }
+                }
+            }
+        }
+        let selected = options
+            .iter()
+            .copied()
+            .find(|&o| self.node_state.selected.contains(o));
+        let tail = self.doc.last_child(select);
+        if let Some(st) = self.node_state.selects.entry(select) {
+            *st = SelectState {
+                valid: true,
+                tail,
+                selected,
+                first_enabled: first,
+                ..*st
+            };
+        }
+    }
+
+    /// What the algorithm does to `options`, and their first enabled one.
+    fn decide(&self, options: &[NodeId]) -> (Selectedness, Option<NodeId>) {
         let mut first = None;
         let mut last = None;
         let mut selected = 0;
-        for &o in &options {
+        for &o in options {
             if self.node_state.selected.contains(o) {
                 selected += 1;
                 last = Some(o);
@@ -242,31 +437,147 @@ impl TreeBuilder<'_> {
                 first = Some(o);
             }
         }
-        if selected == 0 {
-            if let Some(f) = first {
-                let _ = self.node_state.selected.insert(f);
-            }
-            return;
+        let decision = match (selected, first, last) {
+            (0, Some(f), _) => Selectedness::Select(f),
+            (2.., _, Some(l)) => Selectedness::KeepOnly(l),
+            _ => Selectedness::Keep,
+        };
+        (decision, first)
+    }
+
+    /// The algorithm decided from the select's state, when the state is
+    /// known to hold for every option but `inserted`: the select's children
+    /// added since the state's tail are ones that could list no option
+    /// (`holds_options`; an `<optgroup>` directly in the select is walked
+    /// past), so the list is the state's - with `inserted` at its end when
+    /// `inserted` is listed, which is checked as the select's last child with
+    /// no children of its own. `false` when that does not hold, for the full
+    /// walk.
+    fn fast_selectedness(&mut self, select: NodeId, inserted: NodeId) -> bool {
+        let states = &self.node_state.selects;
+        if states.nested {
+            return false;
         }
-        /* Step 2 */
-        if selected >= 2 {
-            for &o in &options {
-                if self.node_state.selected.contains(o) && Some(o) != last {
-                    self.node_state.selected.remove(o);
+        let Some(st) = states.get(select).copied().filter(|st| st.valid) else {
+            return false;
+        };
+        let d = &*self.doc;
+        let listed = self.is_listed(select, inserted);
+        if listed
+            && (d.parent(inserted) != Some(select)
+                || d.last_child(select) != Some(inserted)
+                || d.first_child(inserted).is_some())
+        {
+            return false;
+        }
+        let mut between = d.last_child(select);
+        if listed {
+            between = d.prev(inserted);
+        }
+        while between != st.tail {
+            match between {
+                Some(n) if !(self.ns(n) == res::NS_HTML && holds_options(self.tag(n))) => {
+                    between = d.prev(n);
+                }
+                /* The tail is gone, or an element between could list one. */
+                _ => return false,
+            }
+        }
+        if !listed {
+            /* The list is the one the last run left: run again, the
+             * algorithm finds nothing to change. */
+            #[cfg(debug_assertions)]
+            if let Ok((options, _)) = self.list_of_options(select) {
+                assert_eq!(
+                    (Selectedness::Keep, st.first_enabled),
+                    self.decide(&options),
+                    "the selectedness from the state is not the walk's"
+                );
+            }
+            let tail = d.last_child(select);
+            if let Some(entry) = self.node_state.selects.entry(select) {
+                entry.tail = tail;
+            }
+            return true;
+        }
+        let is_selected = self.node_state.selected.contains(inserted);
+        let first = st
+            .first_enabled
+            .or((!self.option_is_disabled(inserted)).then_some(inserted));
+        let decision = match (st.selected.is_some(), is_selected, first) {
+            (false, false, Some(f)) => Selectedness::Select(f),
+            (true, true, _) => Selectedness::KeepOnly(inserted),
+            _ => Selectedness::Keep,
+        };
+        #[cfg(debug_assertions)]
+        if let Ok((options, _)) = self.list_of_options(select) {
+            assert_eq!(
+                (decision, first),
+                self.decide(&options),
+                "the selectedness from the state is not the walk's"
+            );
+        }
+        let selected = match decision {
+            Selectedness::Select(f) => {
+                let _ = self.node_state.selected.insert(f);
+                Some(f)
+            }
+            Selectedness::KeepOnly(last) => {
+                if let Some(old) = st.selected {
+                    self.node_state.selected.remove(old);
+                }
+                Some(last)
+            }
+            Selectedness::Keep => {
+                if is_selected {
+                    Some(inserted)
+                } else {
+                    st.selected
                 }
             }
+        };
+        if let Some(entry) = self.node_state.selects.entry(select) {
+            *entry = SelectState {
+                tail: Some(inserted),
+                selected,
+                first_enabled: first,
+                ..st
+            };
         }
+        true
     }
 
     /// `lxb_html_select_get_enabled_selectedcontent`: the first
     /// `<selectedcontent>` below the select, unless the select is
     /// `multiple`. (A `<selectedcontent>` is never disabled: Lexbor's
     /// insertion steps that would disable one are not wired to it.)
-    fn enabled_selectedcontent(&self, select: NodeId) -> Option<NodeId> {
+    /// The walk is remembered per select until the
+    /// first `<selectedcontent>` below one could have changed
+    /// (`SelectStates::content_version`): a selected option popped looks it
+    /// up again, and walking each time made a select's options cost `n^2`.
+    fn enabled_selectedcontent(&mut self, select: NodeId) -> Option<NodeId> {
         if self.attr_by_id(select, res::ATTR_MULTIPLE).is_some() {
             return None;
         }
-        /* `lxb_dom_node_simple_walk`, below the select. */
+        let version = self.node_state.selects.content_version;
+        if let Some(st) = self.node_state.selects.get(select) {
+            if st.content_at == Some(version) {
+                #[cfg(debug_assertions)]
+                assert_eq!(st.content, self.first_selectedcontent(select));
+                return st.content;
+            }
+        }
+        let found = self.first_selectedcontent(select);
+        if let Some(st) = self.node_state.selects.entry(select) {
+            st.content = found;
+            st.content_at = Some(version);
+        }
+        found
+    }
+
+    /// `lxb_dom_node_simple_walk` below `select`: its first
+    /// `<selectedcontent>`.
+    fn first_selectedcontent(&self, select: NodeId) -> Option<NodeId> {
         let root = select;
         let mut node = self.doc.first_child(root);
         while let Some(n) = node {

@@ -696,8 +696,11 @@ unrefs tkz/tree). An earlier `line: :text`/`:none` option was removed - `:text`
 
 **HTML parse guard** (`lexbor/adapter/tree_guard.rs`; the why is there).
 Every HTML parse entry installs a `TokenHook` that bounds the tree depth
-(`max_tree_depth:`, default 400) and the options one `<select>` receives
-(10,000). Keep it a stack value on every parse, independent of the source
+(`max_tree_depth:`, default 400). There is no limit on a `<select>`'s
+options: the selectedness setting algorithm is decided from each select's
+state (`html/tree/select.rs`, `SelectStates`), so a select builds in linear
+time - keep it so, or the 10,000 limit it replaced has to come back. Keep
+the guard a stack value on every parse, independent of the source
 `Stamper`, so no stamper failure switches it off; fragments use the chunked
 `lxb_html_parse_fragment_chunk_*` API so it can be installed.
 

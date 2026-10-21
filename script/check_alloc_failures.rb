@@ -36,6 +36,15 @@ end
 XML_CONTENT_TEXT = ("rewritten" * 8192).freeze
 
 SCENARIOS = {
+  # Two insertion modes whose text handling, on a failed allocation, once
+  # returned "reprocess" from an aborted parse: the token went round the
+  # dispatcher for ever, a parse that never returned (without the GVL). A
+  # regression hangs this sweep rather than failing it.
+  "html_text_modes" => lambda do
+    ["<template><col>a b", "<frameset></frameset></html>a b"]
+      .map { |src| Makiri::HTML(src).to_html }.join("|")
+  end,
+
   # XML parse covering the syntax surface: declaration, DOCTYPE (SYSTEM id +
   # internal subset), default + prefixed namespaces, prefixed attributes,
   # references, comment, CDATA, PI, nesting, CRLF normalization in an attr.

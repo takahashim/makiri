@@ -158,8 +158,6 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
   Nokogiri's. `inner_html=`, `outer_html=` and `Node#parse` take no keyword.
   `Nokogiri::HTML` (libxml2) instead stops at depth 256 and returns the
   truncated document.
-* More than 10,000 `<option>`s in one `<select>` raise `Makiri::Error`;
-  Nokogiri has no such limit.
 
 ## HTML mutation
 

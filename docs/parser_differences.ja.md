@@ -199,6 +199,14 @@ P で始まる項目は HTML パーサの振る舞いである。
 - **移植版**：`lexbor/arena_fragment.rs` の `FragmentContext::element_into`（P17 と同じく、要素を context にとる解析のすべて）が、名前空間を「なし」として渡す context について `ContextFacts::foreign_namespace` を立て、`html/tree/fragment.rs` が tokenizer の `undef_is_foreign` に写す。`html/tree/modes/foreign_content.rs` の `anything_else` は、MathML と SVG 以外の名前空間でも adjust foreign attributes を行う（`AttrAdjust::Foreign`。文書の解析ではその名前空間の要素は現れない）。差分の比較は既定の `ContextFacts` と、HTML、SVG、MathML の context で解析するので、許可は要らない。
 - **テスト**：WPT にない。`spec/html_standard_steps_spec.rb`。
 
+### P21 重複した属性名
+
+- **分類**：参照実装の未対応。移植版で直した。
+- **仕様**：attribute name state を出るとき、同じ token にすでに同じ名前の属性があれば duplicate-attribute の parse error で、新しい属性は token から除く。つまり重複は tokenizer で落ち、tree builder には届かない。
+- **再現**：`<svg xmlns=a xmlns=b xmlns=c>` は、仕様では `xmlns="a"` が一つ。`<table><input type=text type=hidden>` は、仕様では `type=text` だけを見るので、`input` は table の外（前）に出る。Lexbor の parser は tokenizer に keep-duplicate を設定して重複を tree builder へ渡し、tree builder が名前と名前空間で落とす。そのため名前空間が XMLNS に調整される `xmlns` は落ちずに三つ残り、"in table" の `<input>` は落ちるはずの `type=hidden` を読んで table の中に置く。Chromium 153、Firefox 155、WebKit 26.6 は仕様どおり。
+- **移植版**：`html/tree/parse.rs` の `drive` が、tokenizer の `keep_duplicate` を P21 を直すときだけ外す。tokenizer の重複の判定は、属性が多い token では名前の表で引く（`html/tokenizer/mod.rs` の `AttrSeen`）。差分の比較は、tokenizer を単独で走らせて重複の parse error が出る入力を許す（`compat::explains`）。
+- **テスト**：WPT にない。`spec/html_standard_steps_spec.rb`、`lexbor::tree_port_tests::p21_drops_repeated_attributes_in_the_tokenizer`。
+
 ### R1 void の要素の `inner_html`
 
 - **分類**：参照実装の未対応（監査の foreign F7）。移植版で直した（第 8 段）。

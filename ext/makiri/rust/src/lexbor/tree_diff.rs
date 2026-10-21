@@ -216,25 +216,13 @@ pub fn lexbor_fragment(
     limit: DepthLimit,
 ) -> Result<String, String> {
     use crate::lexbor::adapter::html as lex;
-    use crate::lexbor::adapter::tree_guard::OptionContext;
     let at = crate::lexbor::fragment::FragmentTag {
         tag: lex::TagId::from_raw(tag).unwrap(),
         ns: lex::NsId::from_raw(ns),
     };
-    let is_select =
-        tag == crate::html::res::names::TAG_SELECT && ns == crate::html::res::names::NS_HTML;
-    let options = OptionContext::Resolved {
-        fresh: is_select,
-        after_optgroup: is_select,
-    };
-    let frag = crate::lexbor::fragment::TransientFragment::parse_standalone(
-        input,
-        false,
-        Some(at),
-        options,
-        limit,
-    )
-    .map_err(|e| format!("{e:?}"))?;
+    let frag =
+        crate::lexbor::fragment::TransientFragment::parse_standalone(input, false, Some(at), limit)
+            .map_err(|e| format!("{e:?}"))?;
     let mut doc = Document::new(0).unwrap();
     let into = doc.create_fragment(None).unwrap();
     frag.with_root(|root| copy_children(&mut doc, root, into, false))
@@ -427,10 +415,7 @@ pub fn check_fragment_serialization(input: &[u8], context: &str) -> Result<(), S
     use crate::html::dom::serialize::{serialize, Layout, Scope};
     use crate::html::dom::{HtmlDoc as ArenaDoc, RawNode};
     use crate::lexbor::adapter::html as lex;
-    use crate::lexbor::adapter::tree_guard::OptionContext;
     let (tag, ns) = context_ids(context);
-    let is_select =
-        tag == crate::html::res::names::TAG_SELECT && ns == crate::html::res::names::NS_HTML;
     let at = crate::lexbor::fragment::FragmentTag {
         tag: lex::TagId::from_raw(tag).unwrap(),
         ns: lex::NsId::from_raw(ns),
@@ -439,10 +424,6 @@ pub fn check_fragment_serialization(input: &[u8], context: &str) -> Result<(), S
         input,
         false,
         Some(at),
-        OptionContext::Resolved {
-            fresh: is_select,
-            after_optgroup: is_select,
-        },
         DepthLimit::UNLIMITED,
     ) else {
         return Ok(());

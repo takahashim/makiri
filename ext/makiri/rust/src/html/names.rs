@@ -360,6 +360,15 @@ impl Names {
         u32::try_from(id).map_err(|_| NamesOom)
     }
 
+    /// The id of the qualified name `name` as written, when it is interned:
+    /// the one [`qualified_append`](Self::qualified_append) gave it. Written
+    /// names are interned exactly, so two ids are equal when, and only when,
+    /// their texts are.
+    pub fn qualified_id(&self, name: &[u8]) -> Option<u32> {
+        let i = self.quals.find_by(name, hash_lower(name), Match::Exact)?;
+        u32::try_from(1 + i).ok()
+    }
+
     /// A qualified name's text.
     pub fn qualified(&self, id: u32) -> Option<&[u8]> {
         self.quals.name(id as usize, 1)
