@@ -57,6 +57,19 @@ fn matched(doc: &Document, selector: &str, scratch: &mut Scratch<XmlHost>) -> Op
     let ns = Namespaces::new(BINDINGS, None);
     let root = XmlNode::new(doc, doc.doc_node());
     let all = select_all(scratch, root, parsed.groups(), &ns).ok()?;
+    /* From the document node a type selector is answered from an index;
+     * from the root element, by a walk. They must agree. */
+    if let Some(top) = doc.root().map(|id| XmlNode::new(doc, id)) {
+        let mut walked = Vec::new();
+        if matches_any(scratch, parsed.groups(), &ns, top).ok()? {
+            walked.push(top);
+        }
+        walked.extend(select_all(scratch, top, parsed.groups(), &ns).ok()?);
+        assert!(
+            walked == all,
+            "the index and the walk disagree on {selector:?}"
+        );
+    }
     let first = select_first(scratch, root, parsed.groups(), &ns).ok()?;
     assert!(
         first.map(XmlNode::id) == all.first().map(|n| n.id()),

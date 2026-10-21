@@ -12,6 +12,10 @@
 
 use crate::node_type::NodeType;
 
+/// The namespace an index lookup asks for: `None` any, `Some(None)` none,
+/// `Some(Some(uri))` that one.
+pub type NsFilter<'a> = Option<Option<&'a [u8]>>;
+
 /// A DOM the matcher runs over: the types its [`Scratch`](super::Scratch)
 /// keeps between queries, which name no document. `Node<'static>` is never
 /// a live node - only the type a kept, emptied vector is held at between
@@ -71,6 +75,15 @@ pub trait CssNode<'d>: Copy + PartialEq + 'd {
     /// The node as a key of a `ptr_table` map: equal exactly when the nodes
     /// are, for as long as the query runs.
     fn table_key(self) -> *const ();
+
+    /// What [`candidates`](Self::candidates) yields.
+    type Candidates: Iterator<Item = Self>;
+    /// From an index: every element in `self`'s subtree (not `self`) whose
+    /// local name is `local` - as written, no case folded - and whose
+    /// namespace is `ns` (`None` any, `Some(None)` none), in document order.
+    /// `None` where the host has no index to answer from, and the matcher
+    /// walks the subtree.
+    fn candidates(self, local: &[u8], ns: NsFilter<'_>) -> Option<Self::Candidates>;
 }
 
 /// An element.

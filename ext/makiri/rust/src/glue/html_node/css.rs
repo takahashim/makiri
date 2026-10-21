@@ -10,68 +10,18 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{method, prelude::*, Error, RHash, Ruby, Value};
+use magnus::{method, prelude::*, Error, Ruby, Value};
 
 use super::HtmlSelf;
 use crate::bridge::gvl::held;
 use crate::bridge::html::wrap_html_node;
 use crate::bridge::node_set::node_set_from;
-use crate::bridge::ruby::makiri_error;
 use crate::bridge::string::{ruby_verified_text, RubyText};
-use crate::css_match::{self, MatchFailure, Namespaces, QueryFailure, MAX_COMPOUNDS};
+use crate::css_match;
+use crate::glue::css::{match_error, parse_error, query_error, CssArgs};
 use crate::html_dom::html::RawNode;
 use crate::init::MOD_HTML_NODE_METHODS;
 use crate::lexbor::selector_cache;
-use crate::lexbor::selector_cache::ParseError;
-use crate::limits::NODE_SET_MAX;
-
-/// A parse failure as the Ruby exception it maps to.
-fn parse_error(err: ParseError, selector: Value) -> Error {
-    match err {
-        /* Lexbor's parser reports no reason of its own. */
-        ParseError::Syntax => crate::glue::css::syntax_error(selector, None),
-        ParseError::Oom => makiri_error("out of memory parsing CSS selector"),
-        ParseError::Busy => makiri_error("CSS selector engine is already in use"),
-        ParseError::NotReady => makiri_error("failed to initialise CSS selector engine"),
-    }
-}
-
-/// A whole-query failure ([`crate::css_match::select_all`]'s
-/// error) as the Ruby exception it maps to.
-fn query_error(err: QueryFailure, selector: Value) -> Error {
-    match err {
-        QueryFailure::Overflow => makiri_error(format!(
-            "CSS result set exceeded the node limit ({NODE_SET_MAX})"
-        )),
-        QueryFailure::Match(e) => match_error(e, selector),
-    }
-}
-
-/// As [`query_error`], for the entry points that cannot overflow the result
-/// set ([`css_match::select_first`], [`css_match::matches_any`] -
-/// one node each, never a `Vec`) and so only ever fail the other way.
-///
-/// The message for `Unsupported` (the column combinator `||`, or
-/// `:current()`) matches the OLD engine's own wording for the same
-/// case (`SelectError::Traversal`'s "CSS selector could not be run") on
-/// purpose: it is the same fact - this engine could not run the selector
-/// either - not a new one.
-fn match_error(err: MatchFailure, selector: Value) -> Error {
-    match err {
-        MatchFailure::UndeclaredPrefix => {
-            crate::glue::css::syntax_error(selector, Some("undeclared namespace prefix"))
-        }
-        MatchFailure::WorkExceeded => makiri_error("CSS query exceeded its work budget"),
-        MatchFailure::Unsupported => makiri_error("CSS selector could not be run"),
-        MatchFailure::TooComplex => makiri_error(format!(
-            "CSS selector chain too complex (more than {MAX_COMPOUNDS} compounds)"
-        )),
-        MatchFailure::Oom => makiri_error("out of memory matching CSS selector"),
-        MatchFailure::Internal => {
-            crate::bridge::ruby::internal_error("CSS matcher reached a broken invariant")
-        }
-    }
-}
 
 /// The selector after the strict text check. The engine reads its bytes and
 /// runs no Ruby, so the view stays valid for the query.
@@ -79,57 +29,10 @@ fn selector_text(selector: Value) -> Result<RubyText, Error> {
     ruby_verified_text(selector, "CSS selector")
 }
 
-/// `(selector, namespaces = nil)`, the argument list `Makiri::XML`'s CSS
-/// methods and Nokogiri's take - so one call works on either representation.
-///
-/// The Hash declares the prefixes the selector may use (`svg|path`,
-/// `[xlink|href]`), read and checked as `#xpath`'s bindings are; a prefix it
-/// does not bind makes the selector invalid. It sets no default namespace:
-/// a bare type selector matches its name in any namespace, as in a browser.
-struct CssArgs {
-    selector: Value,
-    bindings: crate::glue::query::NamespaceBindings,
-}
-
-fn css_args(ruby: &Ruby, args: &[Value]) -> Result<CssArgs, Error> {
-    let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), (), ()>(args)?;
-    let mut bindings = Vec::new();
-    if let Some(ns) = a.optional.0.filter(|v| !v.is_nil()) {
-        let Some(h) = RHash::from_value(ns) else {
-            return Err(Error::new(
-                ruby.exception_type_error(),
-                "namespaces must be a Hash of prefix => uri",
-            ));
-        };
-        bindings = crate::glue::query::namespace_bindings(h)?;
-    }
-    Ok(CssArgs {
-        selector: a.required.0,
-        bindings,
-    })
-}
-
-impl CssArgs {
-    /// The bindings as the matcher reads them, for `f`.
-    fn with_namespaces<R>(&self, f: impl FnOnce(&Namespaces<'_>) -> R) -> Result<R, Error> {
-        use crate::falloc::{try_vec_with_capacity, VecPush};
-        if self.bindings.is_empty() {
-            return Ok(f(&Namespaces::NONE));
-        }
-        let oom = || makiri_error("out of memory reading namespace bindings");
-        let mut refs = try_vec_with_capacity(self.bindings.len()).ok_or_else(oom)?;
-        for (p, u) in &self.bindings {
-            refs.falloc_push((p.as_slice(), u.as_slice()))
-                .map_err(|()| oom())?;
-        }
-        Ok(f(&Namespaces::new(&refs, None)))
-    }
-}
-
 /// `Node#css`: every matching descendant, in document order.
 fn css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let args = css_args(ruby, args)?;
+        let args = CssArgs::scan(ruby, args)?;
         let selector = args.selector;
         let sv = selector_text(selector)?;
         let gvl = held(ruby);
@@ -155,7 +58,7 @@ fn css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Value, Error> {
 /// `#first` dispatch, for the single node the caller asked for.
 fn at_css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        let args = css_args(ruby, args)?;
+        let args = CssArgs::scan(ruby, args)?;
         let selector = args.selector;
         let sv = selector_text(selector)?;
         let gvl = held(ruby);
@@ -182,7 +85,7 @@ fn at_css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Option<Value>, 
 /// asked about (`css_match::matches_any`).
 fn matches(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<bool, Error> {
     crate::bridge::ruby::entry(|| {
-        let args = css_args(ruby, args)?;
+        let args = CssArgs::scan(ruby, args)?;
         let selector = args.selector;
         let sv = selector_text(selector)?;
         let gvl = held(ruby);

@@ -47,39 +47,19 @@ XML_DOCS = %w[xml-plain xml-ns xml-xhtml].freeze
 ALL_DOCS = HTML_DOCS + XML_DOCS
 UNIMPLEMENTED = [":visited", ":target", ":default", ":indeterminate", ":lang(en)", ":lang(fr)",
                  ":dir(ltr)", ":scope", ":scope > *", ":defined"].freeze
-XML_REFUSED = [":link", ":any-link", ":hover", ":focus", ":active", ":checked", ":disabled", ":enabled",
-               ":required", ":optional", ":read-write", ":placeholder-shown",
-               ":nth-child(2n+1 of .x)", ":nth-last-child(1 of p)", "[title='hello world' i]"].freeze
 RULES = [
-  # Pseudo-classes neither engine implements, and pseudo-elements, which a
-  # browser accepts and never matches.
+  # Pseudo-classes the matcher does not implement, and pseudo-elements, which
+  # a browser accepts and never matches.
   ["unimplemented", ALL_DOCS, UNIMPLEMENTED],
   ["unimplemented", %w[html-basic], [":scope > p"], "#d"],
   ["unimplemented", %w[xml-plain], [":scope > p"], "div"],
   ["pseudo-element", ALL_DOCS, ["::before", "p::before"]],
-  # What the XML lowering refuses and the shared matcher would answer.
-  ["xml-refused", XML_DOCS, XML_REFUSED],
-  # The two engines' error classes for the same construct.
-  ["error-kind", HTML_DOCS, ["b || d"]],
-  ["error-kind", %w[xml-plain], ["s|p", "svg|path", "[xlink|href]"]],
-  ["error-kind", %w[xml-ns xml-xhtml], ["s|p"]],
-  ["error-kind", %w[xml-ns], ["svg|path"]],
   ["C27", ALL_DOCS, ["[*|href]"]],
-  # HTML :link takes <link> (M2), and :read-write is Lexbor's.
+  # :link takes <link> (M2), and :read-write is Lexbor's (M9).
   ["M2", %w[html-form], [":link"]],
-  ["read-write", %w[html-form], [":read-write"]],
-  # XML :empty counts an empty CDATA section and a processing instruction.
-  ["xml-empty", %w[xml-plain], [":empty", ":not(:empty)"]],
-  # XML css/at_css match within the context (an open decision).
-  ["xml-scope", %w[xml-plain], ["r div p", "r p", "div p"], "div"],
-  ["xml-scope", %w[xml-plain], ["div li"], "ul"],
-  # XML binds a bare name to the root's default namespace (an open decision).
-  ["xml-default-ns", %w[xml-ns], ["p", "p + p", "p:first-of-type", ":is(p, li)", ":not(p)"]],
-  ["xml-default-ns", %w[xml-ns], ["r p", "p"], "q"],
-  ["xml-default-ns", %w[xml-xhtml], ["svg", "path"]],
-  # XML declares the document's prefixes; a browser has no way to.
-  ["xml-prefix-hash", %w[xml-ns xml-xhtml], ["[xlink|href]"]],
-  ["xml-prefix-hash", %w[xml-xhtml], ["svg|path"]]
+  ["M9", %w[html-form xml-xhtml], [":read-write"]],
+  # :empty counts an empty CDATA section and a processing instruction (M10).
+  ["M10", %w[xml-plain], [":empty", ":not(:empty)"]]
 ].freeze
 KNOWN = RULES.each_with_object({}) do |(tag, docs, sels, where), h|
   places = where ? [where] : %i[all matches]

@@ -210,7 +210,8 @@ RSpec.describe "Makiri CSS" do
         expect(svg_doc.css("s|circle", "s" => svg).size).to eq(1)
         expect(svg_doc.css("s|circle", "s" => "urn:other")).to be_empty
         expect { svg_doc.css("s|circle") }.to raise_error(Makiri::CSS::SyntaxError)
-        expect(xml.css("s|circle").size).to eq(1)
+        expect(xml.css("s|circle", "s" => svg).size).to eq(1)
+        expect { xml.css("s|circle") }.to raise_error(Makiri::CSS::SyntaxError)
       end
     end
   end

@@ -41,26 +41,25 @@ RSpec.describe "native stack guard" do
   let(:css_nesting) { ":not(" * 127 + "b" + ")" * 127 }
   let(:xpath_nesting) { "not(" * 255 + "1" + ")" * 255 }
 
-  describe "XML CSS lowering, inside a small Fiber" do
-    it "raises LimitExceeded instead of SystemStackError, and leaves the shared CSS parser usable" do
+  # XML CSS used to be lowered to XPath, recursing natively per nesting level
+  # under a count and the guard; it is matched by `css_match` now, as HTML's
+  # is, on a heap stack: deep nesting is answered in a small Fiber, and the
+  # shared engine stays usable.
+  describe "XML CSS matching, inside a small Fiber" do
+    it "answers deep nesting, never SystemStackError, and leaves the shared CSS engine usable" do
       status, out, err = run_isolated({ "RUBY_FIBER_MACHINE_STACK_SIZE" => "131072" }, <<~RUBY)
         x = Makiri::XML("<r><a/></r>")
-        begin
-          Fiber.new { x.css(#{css_nesting.inspect}) }.resume
-          print "no_error"
-        rescue => e
-          print e.class
+        [#{css_nesting.inspect}, ":is(" * 2000 + "a" + ")" * 2000].each do |sel|
+          begin
+            print "n=\#{Fiber.new { x.css(sel) }.resume.length};"
+          rescue Exception => e
+            print "\#{e.class};"
+          end
         end
-        print ":"
-        begin
-          x.css("a")
-          print "after_ok"
-        rescue => e
-          print "after_\#{e.message}"
-        end
+        print "after=\#{x.css("a").length}"
       RUBY
       expect(status).to be_success
-      expect(out).to eq("Makiri::XPath::LimitExceeded:after_ok"), err
+      expect(out).to eq("n=2;n=1;after=1"), err
     end
   end
 

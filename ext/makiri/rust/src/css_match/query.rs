@@ -8,7 +8,8 @@ use crate::selectors::ast::Combinator;
 use core::ffi::c_long;
 
 use super::compile::{Chain, Compiled, Compound, Nest, Step};
-use super::dom::{CssNode, Host};
+use super::dom::{CssNode, Host, NsFilter};
+use super::ns::NsTest;
 use super::positions::Positions;
 use super::scratch::{recycle, Scratch, SCRATCH_KEEP};
 use super::simple::{anb_matches, check_simple, Name, Names, SimpleCheck};
@@ -314,6 +315,35 @@ impl<'c, 'p, 'd, N: CssNode<'d>> Query<'c, 'p, 'd, N> {
         scratch.at = recycle(self.at, SCRATCH_KEEP);
         scratch.cursors = recycle(self.cursors, SCRATCH_KEEP);
         self.positions.give_back(&mut scratch.positions);
+    }
+
+    /// The rightmost type selector of a lone top-level chain - its name and
+    /// namespace (`None` any, `Some(None)` none) - which every match must
+    /// carry, so a host's index for it holds every candidate
+    /// ([`CssNode::candidates`]); and whether it is the whole selector, so
+    /// that every candidate matches.
+    pub(super) fn index_key(&self) -> Option<(&'p [u8], NsFilter<'p>, bool)> {
+        let [chain] = self.compiled.top.as_slice() else {
+            return None;
+        };
+        if chain.len == 0 {
+            return None;
+        }
+        let last = self.compiled.compound(*chain, chain.len() - 1).ok()?;
+        let steps = self
+            .compiled
+            .simples
+            .as_slice()
+            .get(last.start as usize..last.end as usize)?;
+        let sel = steps
+            .iter()
+            .find(|s| matches!(s.simple, crate::selectors::ast::Simple::Type))?;
+        let ns = match sel.ns {
+            NsTest::ANY => None,
+            NsTest::NONE => Some(None),
+            t => Some(Some(self.compiled.ns.uri(t)?)),
+        };
+        Some((sel.name, ns, chain.len == 1 && steps.len() == 1))
     }
 
     /// Does `node` match any top-level alternative?

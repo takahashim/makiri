@@ -1,4 +1,4 @@
-//! The compiled-selector cache for `css_match`'s HTML query: a
+//! The compiled-selector cache for `css_match`'s queries, HTML and XML: a
 //! selector string is parsed once by the ported parser (`crate::selectors`)
 //! and its AST kept for the next query that uses the same string.
 //!
@@ -20,16 +20,19 @@
 
 #![forbid(unsafe_code)]
 // Its one entry point (`with_compiled`) is the Ruby glue's
-// (`glue::html_node::css`) and the `html_css` fuzz harness's.
+// (`glue::html_node::css`, `glue::xml_node::css`) and the `html_css` fuzz
+// harness's.
 
 use std::collections::HashMap;
 
+use crate::css_match::dom::Host;
 use crate::css_match::Scratch;
 use crate::falloc::{try_to_boxed_slice, Reserve};
 use crate::gvl::{Gvl, GvlCell};
 use crate::html::dom::css::HtmlHost;
 use crate::selectors::ast::Lists;
 use crate::selectors::{Parsed, Status};
+use crate::xml::css::XmlHost;
 
 /// Why a parse did not produce a selector list.
 #[derive(Debug)]
@@ -152,16 +155,44 @@ impl Cache {
 
 struct Globals {
     policy: CachePolicy,
+    /// Parsed selectors, which name no DOM: one cache serves both.
     cache: Cache,
-    /// The matcher's stacks, kept from one query to the next (its doc).
-    scratch: Scratch<HtmlHost>,
+    /// The matcher's stacks, kept from one query to the next (its doc) - one
+    /// per DOM, since they hold its nodes.
+    scratches: Scratches,
+}
+
+/// [`Globals`]' kept [`Scratch`]es.
+pub struct Scratches {
+    html: Scratch<HtmlHost>,
+    xml: Scratch<XmlHost>,
+}
+
+/// A DOM whose [`Scratch`] the cache keeps.
+pub trait Kept: Host {
+    fn kept(s: &mut Scratches) -> &mut Scratch<Self>;
+}
+
+impl Kept for HtmlHost {
+    fn kept(s: &mut Scratches) -> &mut Scratch<Self> {
+        &mut s.html
+    }
+}
+
+impl Kept for XmlHost {
+    fn kept(s: &mut Scratches) -> &mut Scratch<Self> {
+        &mut s.xml
+    }
 }
 
 /// The one process-global, borrowed once per query.
 static G: GvlCell<Globals> = GvlCell::new(Globals {
     policy: CachePolicy::new(),
     cache: Cache::new(),
-    scratch: Scratch::new(),
+    scratches: Scratches {
+        html: Scratch::new(),
+        xml: Scratch::new(),
+    },
 });
 
 /// Parse `selector` with the ported parser.
@@ -178,10 +209,10 @@ fn parse(selector: &[u8]) -> Result<Parsed, ParseError> {
 /// Three ways: a window that ended with caching off flushes the cache;
 /// bypassing parses per call; otherwise the selector comes from the cache,
 /// parsed into it on a miss.
-pub fn with_compiled<R>(
+pub fn with_compiled<H: Kept, R>(
     gvl: &Gvl,
     selector: &[u8],
-    f: impl FnOnce(Lists<'_>, &mut Scratch<HtmlHost>) -> R,
+    f: impl FnOnce(Lists<'_>, &mut Scratch<H>) -> R,
 ) -> Result<R, ParseError> {
     let mut guard = G.borrow(gvl).map_err(|_| ParseError::Busy)?;
     let g = &mut *guard;
@@ -192,9 +223,9 @@ pub fn with_compiled<R>(
 
     if g.policy.bypassing() {
         let parsed = parse(selector)?;
-        return Ok(f(parsed.groups(), &mut g.scratch));
+        return Ok(f(parsed.groups(), H::kept(&mut g.scratches)));
     }
 
     let parsed = g.cache.get(&mut g.policy, selector)?;
-    Ok(f(parsed.groups(), &mut g.scratch))
+    Ok(f(parsed.groups(), H::kept(&mut g.scratches)))
 }

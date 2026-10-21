@@ -11,7 +11,7 @@
 
 #![forbid(unsafe_code)]
 
-use crate::css_match::dom::{CssAttr, CssDoc, CssElement, CssNode, Host};
+use crate::css_match::dom::{CssAttr, CssDoc, CssElement, CssNode, Host, NsFilter};
 use crate::node_type::NodeType;
 use crate::xml::model::{ArenaKind, Document, NodeId};
 
@@ -182,6 +182,40 @@ impl<'d> CssNode<'d> for XmlNode<'d> {
     #[inline]
     fn table_key(self) -> *const () {
         core::ptr::without_provenance(self.id.to_token())
+    }
+
+    type Candidates = XmlCandidates<'d>;
+    /// From the document node only: the indexes hold the elements connected
+    /// to the document, all of which are its descendants. Below it, a
+    /// subtree's share of a bucket would take a walk to find, and the
+    /// matcher walks the subtree instead.
+    fn candidates(self, local: &[u8], ns: NsFilter<'_>) -> Option<XmlCandidates<'d>> {
+        if self.id != self.d.doc_node() {
+            return None;
+        }
+        let bucket = match ns {
+            None => self.d.local_index()?.lookup(local),
+            Some(uri) => self.d.name_index()?.lookup(local, uri.unwrap_or_default()),
+        };
+        Some(XmlCandidates {
+            d: self.d,
+            ids: bucket.iter(),
+        })
+    }
+}
+
+/// An index bucket's elements, as nodes.
+pub struct XmlCandidates<'d> {
+    d: &'d Document,
+    ids: core::slice::Iter<'d, NodeId>,
+}
+
+impl<'d> Iterator for XmlCandidates<'d> {
+    type Item = XmlNode<'d>;
+
+    #[inline]
+    fn next(&mut self) -> Option<XmlNode<'d>> {
+        self.ids.next().map(|&id| XmlNode { d: self.d, id })
     }
 }
 

@@ -1,15 +1,85 @@
-//! What a rejected CSS selector raises, for both representations.
+//! What both representations' `#css` / `#at_css` / `#matches?` share: the
+//! argument list and its namespace bindings ([`CssArgs`]), and what a
+//! rejected selector raises.
 //!
 //! One wording, so `Makiri::HTML` and `Makiri::XML` answer a bad selector the
 //! same way: `"<reason>: <selector>"`, where the reason is the engine's when it
-//! has one ("unsupported CSS pseudo-class") and a plain "invalid CSS selector"
-//! otherwise. Lexbor's matcher reports no reason, the lowering usually does.
+//! has one ("undeclared namespace prefix") and a plain "invalid CSS selector"
+//! otherwise.
 
 #![forbid(unsafe_code)]
 
-use magnus::{Error, Value};
+use magnus::{prelude::*, Error, RHash, Ruby, Value};
 
+use crate::bridge::ruby::makiri_error;
+use crate::css_match::{MatchFailure, Namespaces, QueryFailure, MAX_COMPOUNDS};
 use crate::init::EXC_CSS_SYNTAX_ERROR;
+use crate::lexbor::selector_cache::ParseError;
+use crate::limits::NODE_SET_MAX;
+
+/// The key whose URI is the default namespace, as Nokogiri's Hash has it.
+const DEFAULT_KEY: &[u8] = b"xmlns";
+
+/// `(selector, namespaces = nil)`, the argument list Nokogiri's CSS methods
+/// take too - so one call works on either representation.
+///
+/// The Hash declares the prefixes the selector may use (`svg|path`,
+/// `[xlink|href]`), read and checked as `#xpath`'s bindings are; a prefix it
+/// does not bind makes the selector invalid. Its `"xmlns"` entry, if any, is
+/// the default namespace, as CSS `@namespace` without a prefix sets one: a
+/// type or universal selector without a prefix is then in it. Without one, a
+/// bare type selector matches its name in any namespace, as in a browser.
+pub struct CssArgs {
+    pub selector: Value,
+    bindings: crate::glue::query::NamespaceBindings,
+}
+
+impl CssArgs {
+    /// Read `(selector, namespaces = nil)` from `args`.
+    pub fn scan(ruby: &Ruby, args: &[Value]) -> Result<CssArgs, Error> {
+        let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), (), ()>(args)?;
+        CssArgs::new(
+            ruby,
+            a.required.0,
+            a.optional.0.unwrap_or_else(|| ruby.qnil().as_value()),
+        )
+    }
+
+    /// The selector and its namespaces (`nil` or a Hash).
+    pub fn new(ruby: &Ruby, selector: Value, ns: Value) -> Result<CssArgs, Error> {
+        let mut bindings = Vec::new();
+        if !ns.is_nil() {
+            let Some(h) = RHash::from_value(ns) else {
+                return Err(Error::new(
+                    ruby.exception_type_error(),
+                    "namespaces must be a Hash of prefix => uri",
+                ));
+            };
+            bindings = crate::glue::query::namespace_bindings(h)?;
+        }
+        Ok(CssArgs { selector, bindings })
+    }
+
+    /// The bindings as the matcher reads them, for `f`.
+    pub fn with_namespaces<R>(&self, f: impl FnOnce(&Namespaces<'_>) -> R) -> Result<R, Error> {
+        use crate::falloc::{try_vec_with_capacity, VecPush};
+        if self.bindings.is_empty() {
+            return Ok(f(&Namespaces::NONE));
+        }
+        let oom = || makiri_error("out of memory reading namespace bindings");
+        let mut refs = try_vec_with_capacity(self.bindings.len()).ok_or_else(oom)?;
+        let mut default = None;
+        for (p, u) in &self.bindings {
+            if p.as_slice() == DEFAULT_KEY {
+                default = Some(u.as_slice());
+            } else {
+                refs.falloc_push((p.as_slice(), u.as_slice()))
+                    .map_err(|()| oom())?;
+            }
+        }
+        Ok(f(&Namespaces::new(&refs, default)))
+    }
+}
 
 /// `Makiri::CSS::SyntaxError` naming `selector`.
 pub fn syntax_error(selector: Value, reason: Option<&str>) -> Error {
@@ -18,4 +88,53 @@ pub fn syntax_error(selector: Value, reason: Option<&str>) -> Error {
         EXC_CSS_SYNTAX_ERROR.exception(),
         format!("{reason}: {selector}"),
     )
+}
+
+/// A parse failure as the Ruby exception it maps to.
+pub fn parse_error(err: ParseError, selector: Value) -> Error {
+    match err {
+        /* Lexbor's parser reports no reason of its own. */
+        ParseError::Syntax => syntax_error(selector, None),
+        ParseError::Oom => makiri_error("out of memory parsing CSS selector"),
+        ParseError::Busy => makiri_error("CSS selector engine is already in use"),
+        ParseError::NotReady => makiri_error("failed to initialise CSS selector engine"),
+    }
+}
+
+/// A whole-query failure ([`crate::css_match::select_all`]'s
+/// error) as the Ruby exception it maps to.
+pub fn query_error(err: QueryFailure, selector: Value) -> Error {
+    match err {
+        QueryFailure::Overflow => makiri_error(format!(
+            "CSS result set exceeded the node limit ({NODE_SET_MAX})"
+        )),
+        QueryFailure::Match(e) => match_error(e, selector),
+    }
+}
+
+/// As [`query_error`], for the entry points that cannot overflow the result
+/// set ([`css_match::select_first`], [`css_match::matches_any`] -
+/// one node each, never a `Vec`) and so only ever fail the other way.
+///
+/// `Unsupported` (the column combinator `||`, or `:current()`) is a
+/// `Makiri::CSS::SyntaxError`, as a browser's `querySelectorAll` throws a
+/// SyntaxError for both; its wording is the OLD engine's for the same case
+/// ("CSS selector could not be run").
+pub fn match_error(err: MatchFailure, selector: Value) -> Error {
+    match err {
+        MatchFailure::UndeclaredPrefix => {
+            syntax_error(selector, Some("undeclared namespace prefix"))
+        }
+        MatchFailure::WorkExceeded => makiri_error("CSS query exceeded its work budget"),
+        /* A construct the matcher does not run (`||`, `:current()`) is a
+         * selector error, as a browser's SyntaxError is. */
+        MatchFailure::Unsupported => syntax_error(selector, Some("CSS selector could not be run")),
+        MatchFailure::TooComplex => makiri_error(format!(
+            "CSS selector chain too complex (more than {MAX_COMPOUNDS} compounds)"
+        )),
+        MatchFailure::Oom => makiri_error("out of memory matching CSS selector"),
+        MatchFailure::Internal => {
+            crate::bridge::ruby::internal_error("CSS matcher reached a broken invariant")
+        }
+    }
 }

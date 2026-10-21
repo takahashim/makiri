@@ -392,10 +392,10 @@ fn select_all_compiled<'d, N: CssNode<'d>>(
     let mut query = Query::new(compiled, Some(root.owner_document()), limit, scratch)?;
     let mut walk = || {
         let mut out = Vec::new();
-        let mut n = root;
-        while let Some(next) = n.preorder_next(root) {
-            n = next;
-            if n.element().is_some() && query.matches_top(n)? {
+        let candidates = Candidates::of(&query, root);
+        let every = candidates.all_match();
+        for n in candidates {
+            if every || query.matches_top(n)? {
                 if out.len() >= NODE_SET_MAX {
                     return Err(QueryFailure::Overflow);
                 }
@@ -452,10 +452,10 @@ fn select_first_compiled<'d, N: CssNode<'d>>(
         scratch,
     )?;
     let mut walk = || {
-        let mut n = root;
-        while let Some(next) = n.preorder_next(root) {
-            n = next;
-            if n.element().is_some() && query.matches_top(n)? {
+        let candidates = Candidates::of(&query, root);
+        let every = candidates.all_match();
+        for n in candidates {
+            if every || query.matches_top(n)? {
                 return Ok(Some(n));
             }
         }
@@ -464,4 +464,55 @@ fn select_first_compiled<'d, N: CssNode<'d>>(
     let found = walk();
     query.finish(scratch);
     found
+}
+
+/// The elements a walking query tests, in document order: `root`'s element
+/// descendants, or - where the host has an index for the selector's
+/// rightmost type selector ([`Query::index_key`]) - that index's bucket,
+/// which holds every element that can match and no other order.
+enum Candidates<'d, N: CssNode<'d>> {
+    Walk {
+        root: N,
+        at: N,
+    },
+    /// A bucket, and whether the selector is its type selector alone, so
+    /// that every element in it matches.
+    Index(N::Candidates, bool),
+}
+
+impl<'d, N: CssNode<'d>> Candidates<'d, N> {
+    fn of(query: &Query<'_, '_, 'd, N>, root: N) -> Self {
+        let Some((local, ns, whole)) = query.index_key() else {
+            return Candidates::Walk { root, at: root };
+        };
+        match root.candidates(local, ns) {
+            Some(bucket) => Candidates::Index(bucket, whole),
+            None => Candidates::Walk { root, at: root },
+        }
+    }
+
+    /// Whether every candidate matches, with nothing left to test.
+    fn all_match(&self) -> bool {
+        matches!(self, Candidates::Index(_, true))
+    }
+}
+
+impl<'d, N: CssNode<'d>> Iterator for Candidates<'d, N> {
+    type Item = N;
+
+    #[inline]
+    fn next(&mut self) -> Option<N> {
+        match self {
+            Candidates::Walk { root, at } => {
+                while let Some(next) = at.preorder_next(*root) {
+                    *at = next;
+                    if next.element().is_some() {
+                        return Some(next);
+                    }
+                }
+                None
+            }
+            Candidates::Index(bucket, _) => bucket.next(),
+        }
+    }
 }

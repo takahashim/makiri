@@ -1,95 +1,86 @@
 //! CSS over XML: the private `_css` / `_at_css` / `_css_matches` primitives the
-//! Ruby `#css` / `#at_css` / `#matches?` call once they have collected the
-//! document's namespaces (`lib/makiri/xml/node_methods.rb`).
+//! Ruby `#css` / `#at_css` / `#matches?` call (`lib/makiri/xml/node_methods.rb`).
 //!
-//! A selector is compiled to the XPath engine's AST and run through the SAME
-//! evaluator as `#xpath`, so case-sensitivity, namespaces, budgets and document
-//! order are identical. The namespaces arrive as a normalised `{prefix => uri}`
-//! Hash; a default namespace comes under the synthetic `"xmlns"` prefix, which a
-//! bare type selector binds to.
+//! The selector runs through the same matcher as HTML's (`css_match`), over
+//! the XML arena (`xml::css`), with the same compiled-selector cache, the
+//! same namespace bindings ([`CssArgs`]) and the same exceptions. What
+//! differs is the document's: no XML document is an HTML document, so names
+//! and values compare as written, an XHTML element included.
 
 #![forbid(unsafe_code)]
 
-use magnus::{method, prelude::*, Error, RHash, Ruby, Value};
+use magnus::{method, prelude::*, Error, Ruby, Value};
 
+use super::{wrap, XmlSelf};
+use crate::bridge::gvl::held;
+use crate::bridge::node_set::node_set_from;
 use crate::bridge::string::ruby_verified_text;
-use crate::bridge::wrapper::keepalive_document;
-use crate::bridge::xpath::{evaluate_query, evaluate_to_ruby, xpath_error, Answer, Cx, QueryAst};
-use crate::css::{CssNs, Form, DEFAULT_NS_PREFIX};
-use crate::engine_error::ErrorKind;
-use crate::glue::query::{query_context, QueryArgs};
+use crate::css_match;
+use crate::glue::css::{match_error, parse_error, query_error, CssArgs};
 use crate::init::MOD_XML_NODE_METHODS;
-use crate::xpath::ast::Ast;
-use crate::xpath::ctx::XPathValue;
+use crate::lexbor::selector_cache;
+use crate::xml::css::XmlNode;
 
-/// The query arguments for a selector and its namespace Hash.
-fn css_args(selector: Value, ns: Value) -> QueryArgs {
-    QueryArgs {
-        text: selector,
-        namespaces: RHash::from_value(ns),
-        handler: None,
-        lax: false,
-    }
-}
-
-/// Whether the namespace Hash binds the default namespace.
-fn default_namespace(ruby: &Ruby, q: &QueryArgs) -> bool {
-    q.namespaces
-        .is_some_and(|h| matches!(h.get(ruby.str_new(DEFAULT_NS_PREFIX)), Some(v) if !v.is_nil()))
-}
-
-/// Compile the selector under `ctx`, whose namespaces are already registered.
-fn compile(ruby: &Ruby, ctx: &Cx, q: &QueryArgs, form: Form) -> Result<Box<Ast>, Error> {
-    let cns = CssNs {
-        default_namespace: default_namespace(ruby, q),
-    };
-    let sv = ruby_verified_text(q.text, "CSS selector")?;
-    let mut budget = crate::xpath::limits::Budget::with_limits(ctx.limits());
-    /* `sv` holds the selector String rooted; the compile allocates through
-     * falloc only - no Ruby runs in it. */
-    let ast = crate::css::compile_owned(sv.text(), &cns, form, &mut budget);
-    drop(sv);
-    ast.map_err(|_| compile_error(q.text, &budget.take_error()))
-}
-
-/// A failed compile as its exception: `Makiri::CSS::SyntaxError` for a selector
-/// that does not parse or lower - with the lowering's reason, when it gave one -
-/// and the XPath mapping otherwise.
-fn compile_error(selector: Value, error: &crate::engine_error::Error) -> Error {
-    if error.status != ErrorKind::Syntax {
-        return xpath_error(error);
-    }
-    crate::glue::css::syntax_error(selector, error.message())
-}
-
-fn css_run(ruby: &Ruby, rb_self: Value, q: QueryArgs, answer: Answer) -> Result<Value, Error> {
-    let document = keepalive_document(rb_self)?;
-    let ctx = query_context(rb_self, document, &q)?;
-    let ast = compile(ruby, &ctx, &q, Form::Select)?;
-    evaluate_to_ruby(ctx, QueryAst::owned(ast), q.handler, document, answer)
-}
-
-fn css(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| css_run(ruby, rb_self, css_args(selector, ns), Answer::All))
-}
-
-fn at_css(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| css_run(ruby, rb_self, css_args(selector, ns), Answer::First))
-}
-
-/// `#matches?(selector)`: does THIS node match?
-///
-/// Compiled as a self-test (`Form::SelfTest`) and evaluated from the node, so it
-/// walks the node's ancestors and siblings rather than selecting across the
-/// whole document - the same question Lexbor's `match_node` answers for HTML.
-fn css_matches(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Result<bool, Error> {
+/// `#css`: every matching descendant, in document order.
+fn css(ruby: &Ruby, this: XmlSelf, selector: Value, ns: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let q = css_args(selector, ns);
-        let document = keepalive_document(rb_self)?;
-        let ctx = query_context(rb_self, document, &q)?;
-        let ast = compile(ruby, &ctx, &q, Form::SelfTest)?;
-        let value = evaluate_query(&ctx, &ast, q.handler, document, Answer::All)?;
-        Ok(matches!(value, XPathValue::Boolean(true)))
+        let args = CssArgs::new(ruby, selector, ns)?;
+        let selector = args.selector;
+        let sv = ruby_verified_text(selector, "CSS selector")?;
+        let gvl = held(ruby);
+        let root = XmlNode::new(this.doc_ref(), this.id);
+        let matched = args
+            .with_namespaces(|ns| {
+                selector_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
+                    css_match::select_all(scratch, root, groups, ns)
+                })
+            })?
+            .map_err(|e| parse_error(e, selector))?;
+        drop(sv);
+        let nodes = matched.map_err(|e| query_error(e, selector))?;
+        node_set_from(this.document, nodes.into_iter().map(|n| n.id().into()))
+    })
+}
+
+/// `#at_css`: the first matching descendant, or nil.
+fn at_css(ruby: &Ruby, this: XmlSelf, selector: Value, ns: Value) -> Result<Option<Value>, Error> {
+    crate::bridge::ruby::entry(|| {
+        let args = CssArgs::new(ruby, selector, ns)?;
+        let selector = args.selector;
+        let sv = ruby_verified_text(selector, "CSS selector")?;
+        let gvl = held(ruby);
+        let root = XmlNode::new(this.doc_ref(), this.id);
+        let matched = args
+            .with_namespaces(|ns| {
+                selector_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
+                    css_match::select_first(scratch, root, groups, ns)
+                })
+            })?
+            .map_err(|e| parse_error(e, selector))?;
+        drop(sv);
+        let found = matched.map_err(|e| match_error(e, selector))?;
+        found.map(|n| wrap(n.id(), this.document)).transpose()
+    })
+}
+
+/// `#matches?`: does THIS node match? Its ancestors and siblings take part,
+/// wherever the node is.
+fn css_matches(ruby: &Ruby, this: XmlSelf, selector: Value, ns: Value) -> Result<bool, Error> {
+    crate::bridge::ruby::entry(|| {
+        let args = CssArgs::new(ruby, selector, ns)?;
+        let selector = args.selector;
+        let sv = ruby_verified_text(selector, "CSS selector")?;
+        let gvl = held(ruby);
+        let node = XmlNode::new(this.doc_ref(), this.id);
+        let matched = args
+            .with_namespaces(|ns| {
+                selector_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
+                    css_match::matches_any(scratch, groups, ns, node)
+                })
+            })?
+            .map_err(|e| parse_error(e, selector))?;
+        drop(sv);
+        matched.map_err(|e| match_error(e, selector))
     })
 }
 

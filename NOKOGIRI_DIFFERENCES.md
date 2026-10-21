@@ -247,27 +247,43 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
   * Nokogiri (XML and HTML5) mistranslates these to first-/only-child
     (`//*[position()=1]` / `//*[last()=1]`), so it under-matches; Makiri does
     not.
-* HTML CSS resolves a namespace prefix against the `{prefix => uri}` Hash
-  (`css(selector, ns)`), as `Nokogiri::HTML5` does: `svg|path` is the SVG
-  `path` once `svg` is bound, `|path` an element in no namespace, and a prefix
-  the Hash does not bind raises `Makiri::CSS::SyntaxError`. `[x|href]` finds
-  the XLink `href` once `x` is bound to XLink.
-  * A bare type selector matches its name in any namespace (`path` finds the
-    SVG element), as a browser's `querySelectorAll` does; the Hash sets no
-    default namespace for HTML.
-  * Up to 0.16 the Hash was accepted and unused, and every prefix ignored.
+* CSS resolves a namespace prefix against the `{prefix => uri}` Hash
+  (`css(selector, ns)`), on HTML and XML alike: `svg|path` is the SVG `path`
+  once `svg` is bound, `|path` an element in no namespace, and a prefix the
+  Hash does not bind raises `Makiri::CSS::SyntaxError`. `[x|href]` finds the
+  XLink `href` once `x` is bound to XLink. The Hash's `"xmlns"` entry is the
+  default namespace, as CSS `@namespace` without a prefix sets one: a type or
+  universal selector without a prefix is then in it.
+  * Without a default, a bare type selector matches its name in any namespace
+    (`path` finds the SVG element, `entry` an Atom entry), as a browser's
+    `querySelectorAll` does. `Nokogiri::XML` binds a bare name to the root's
+    default namespace when no Hash is given, and to no namespace once one is;
+    pass `"xmlns" => uri` (or `"xmlns" => ""`) for that reading.
+  * `Makiri::XML` does not collect the document's own declarations: a prefix
+    is declared by the Hash or not at all. `Nokogiri::XML` collects the
+    root's.
+  * A bare `*` under a default namespace is in it, as CSS has it;
+    `Nokogiri::XML` matches any element.
+  * Up to 0.16 HTML accepted the Hash and ignored every prefix, and
+    `Makiri::XML` collected the root's declarations as Nokogiri does.
 * A selector under a node matches the way `Element#querySelectorAll` does in a
-  browser, not scoped to that node, on HTML: `at_css("#c").css("div p")` finds a
-  `p` inside `#c` when `#c` is itself a `div`, since the selector is matched
-  against the whole document and only the results are kept to descendants.
-  `Nokogiri::HTML5` and `Nokogiri::XML` scope the selector to the node (`#c`
-  cannot be the `div`), and so does `Makiri::XML`, which lowers the selector to
-  an XPath from the node. HTML CSS has no `:scope`; for a scoped match on HTML,
-  use XPath from the node (`xpath(".//div//p")`).
-* The attribute case modifiers (`[a="x" i]`, `[a="x" s]`): HTML supports both.
-  `Makiri::XML` accepts `s` (case-sensitive, which XML values are anyway) and
-  refuses `i` with `Makiri::CSS::SyntaxError`. Nokogiri refuses both on either
-  representation.
+  browser, not scoped to that node, on HTML and XML alike:
+  `at_css("#c").css("div p")` finds a `p` inside `#c` when `#c` is itself a
+  `div`, since the selector is matched against the whole tree and only the
+  results are kept to descendants. `Nokogiri::HTML5` and `Nokogiri::XML` scope
+  the selector to the node (`#c` cannot be the `div`), and so did
+  `Makiri::XML` up to 0.16. There is no `:scope`; for a scoped match, use XPath
+  from the node (`xpath(".//div//p")`).
+* The attribute case modifiers (`[a="x" i]`, `[a="x" s]`) are supported on
+  both representations. Nokogiri refuses both on either.
+* The form-state and link pseudo-classes (`:checked`, `:disabled`,
+  `:enabled`, `:required`, `:optional`, `:placeholder-shown`, `:link`, ...)
+  answer on `Makiri::XML` too, for XHTML elements, as browsers do in an XML
+  document; on any other element they match nothing. `Nokogiri::XML` refuses
+  them.
+* A selector `Makiri` cannot run (the column combinator `||`, `:current()`)
+  raises `Makiri::CSS::SyntaxError`, as a browser's `querySelectorAll` throws a
+  SyntaxError, on both representations.
 * `#matches?` answers for a DETACHED node (`document.create_element("p")
   .matches?("p")` is true, on both representations). Nokogiri raises
   `NoMethodError` there - it implements `#matches?` as a search from
@@ -280,7 +296,9 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
   therefore matches no type selector.
   * `Nokogiri::HTML5` is case-sensitive on HTML elements too, so `LI` does not
     match `<li>` there. `Makiri::XML`'s `#css` is case-sensitive, as XML names
-    are.
+    are - an XHTML element's included, as in a browser's XML document - and so
+    are its attribute values, the HTML Standard's case-insensitive list of
+    attributes applying only to an HTML document.
 
 ## Serialization
 

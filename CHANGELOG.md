@@ -10,6 +10,19 @@
 
 ### Changed
 
+* `Makiri::XML`'s `#css`, `#at_css` and `#matches?` run on the same matcher as
+  HTML's, and match as a browser's `querySelectorAll` does in an XML
+  document. A bare type selector matches its name in any namespace; the
+  root's declarations are no longer collected, so a prefix needs the ns
+  Hash, whose `"xmlns"` entry is the default namespace (on HTML too). A
+  selector under a node is matched against the whole tree, its results kept
+  to the node's descendants. `[a=v i]`, `:nth-child(... of S)` and the
+  form-state and link pseudo-classes (for XHTML elements) are supported.
+  A selector that cannot run (`||`, `:current()`) raises
+  `Makiri::CSS::SyntaxError` on both representations, and an over-long
+  chain `Makiri::Error` where XML raised `Makiri::XPath::LimitExceeded`.
+  Deeply nested selectors are answered rather than refused. Matching is
+  10-20x faster on compound selectors (`.item`, `ul li.item`).
 * HTML CSS resolves namespace prefixes (M6, M7). `css(selector, ns)` binds
   them: `svg|path` is the SVG `path`, `|p` an element in no namespace, and
   `[x|href]` the attribute in `x`'s namespace. A prefix the Hash does not

@@ -81,6 +81,7 @@ impl Document {
             doc_node: NodeId::new(DOC_NODE_SLOT, stamp),
             doctype: None,
             name_index: core::cell::OnceCell::new(),
+            local_index: core::cell::OnceCell::new(),
             has_encoding_decl: false,
         };
         let mut doc = crate::falloc::try_box(doc).or_oom()?;

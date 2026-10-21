@@ -1,7 +1,7 @@
 //! The arena's handles as the CSS matcher reads them (`css_match::dom`):
 //! every item forwards to the handle's own method of the same name.
 
-use crate::css_match::dom::{CssAttr, CssDoc, CssElement, CssNode, Host};
+use crate::css_match::dom::{CssAttr, CssDoc, CssElement, CssNode, Host, NsFilter};
 
 use super::handle::{AttrName, Attrs, HtmlAttr, HtmlDoc, HtmlElement, HtmlNode, NsId, TagId};
 use super::NodeType;
@@ -88,6 +88,14 @@ impl<'d> CssNode<'d> for HtmlNode<'d> {
     #[inline]
     fn table_key(self) -> *const () {
         super::RawNode::from(self).table_key()
+    }
+
+    /// The walk, with its tag-id filter (`css_match::query`), is the HTML
+    /// matcher's: no index is offered.
+    type Candidates = core::iter::Empty<Self>;
+    #[inline]
+    fn candidates(self, _local: &[u8], _ns: NsFilter<'_>) -> Option<Self::Candidates> {
+        None
     }
 }
 
