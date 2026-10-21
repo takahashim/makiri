@@ -14,11 +14,11 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
+use makiri::lexbor::adapter::tree_guard::DepthLimit;
 use makiri::lexbor::tree_diff::{
     check, check_fragment, check_fragment_serialization, check_fragment_verdict,
     check_serialization, check_verdict,
 };
-use makiri::lexbor::adapter::tree_guard::DepthLimit;
 
 const CONTEXTS: &[&str] = &[
     "body",
