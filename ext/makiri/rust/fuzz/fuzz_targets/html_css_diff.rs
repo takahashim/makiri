@@ -39,7 +39,7 @@ use libfuzzer_sys::fuzz_target;
 
 mod common;
 use common::*;
-use makiri::css_match::{select_all, Scratch};
+use makiri::css_match::{select_all, Namespaces, Scratch};
 use makiri::gvl::Gvl;
 use makiri::html::dom::css::HtmlHost;
 use makiri::html_dom::html::{HtmlNode, RawNode};
@@ -126,7 +126,7 @@ fn new_answer(
     if !comparable(&shape, doc) || !affordable(&shape, doc) {
         return None;
     }
-    let all = select_all(scratch, root, groups).ok()?;
+    let all = select_all(scratch, root, groups, &Namespaces::NONE).ok()?;
     Some(all.into_iter().map(RawNode::from).collect())
 }
 

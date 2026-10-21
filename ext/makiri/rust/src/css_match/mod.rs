@@ -169,6 +169,7 @@
 
 mod compile;
 pub mod dom;
+mod ns;
 mod positions;
 mod query;
 mod scratch;
@@ -178,6 +179,7 @@ mod tree;
 
 #[cfg(all(test, feature = "lexbor"))]
 pub(crate) use compile::validate;
+pub use ns::Namespaces;
 pub use scratch::Scratch;
 
 use crate::falloc::VecPush;
@@ -258,6 +260,10 @@ pub enum MatchFailure {
     /// compounds - see [`compile()`](compile::compile)'s doc for why this is caught up front
     /// rather than left to a silent never-matching chain.
     TooComplex,
+    /// A namespace prefix in the selector that the query's [`Namespaces`]
+    /// do not bind: the selector is invalid (Selectors 4 §6.1), found when
+    /// it is compiled.
+    UndeclaredPrefix,
     /// An allocation the match needed failed (`falloc`). Raised, like every
     /// other failure here, never answered as a partial result.
     Oom,
@@ -305,9 +311,10 @@ impl crate::falloc::Oom for MatchFailure {
 pub fn matches_any<'d, N: CssNode<'d>>(
     scratch: &mut Scratch<N::Host>,
     groups: Lists<'_>,
+    ns: &Namespaces<'_>,
     node: N,
 ) -> Result<bool, MatchFailure> {
-    let compiled = compile(&mut scratch.tables, groups)?;
+    let compiled = compile(&mut scratch.tables, groups, ns)?;
     let answer = if node.element().is_none() {
         Ok(false)
     } else {
@@ -358,17 +365,19 @@ pub fn select_all<'d, N: CssNode<'d>>(
     scratch: &mut Scratch<N::Host>,
     root: N,
     groups: Lists<'_>,
+    ns: &Namespaces<'_>,
 ) -> Result<Vec<N>, QueryFailure> {
-    select_all_with_limit(scratch, root, groups, DEFAULT_WORK_BUDGET)
+    select_all_with_limit(scratch, root, groups, ns, DEFAULT_WORK_BUDGET)
 }
 
 fn select_all_with_limit<'d, N: CssNode<'d>>(
     scratch: &mut Scratch<N::Host>,
     root: N,
     groups: Lists<'_>,
+    ns: &Namespaces<'_>,
     limit: u64,
 ) -> Result<Vec<N>, QueryFailure> {
-    let compiled = compile(&mut scratch.tables, groups)?;
+    let compiled = compile(&mut scratch.tables, groups, ns)?;
     let found = select_all_compiled(scratch, &compiled, root, limit);
     compiled.give_back(&mut scratch.tables);
     found
@@ -411,7 +420,7 @@ pub(crate) fn select_all_with_work_limit<'d, N: CssNode<'d>>(
     groups: Lists<'_>,
     limit: u64,
 ) -> Result<Vec<N>, QueryFailure> {
-    select_all_with_limit(&mut Scratch::new(), root, groups, limit)
+    select_all_with_limit(&mut Scratch::new(), root, groups, &Namespaces::NONE, limit)
 }
 
 /// The first descendant of `root`, in document order, that matches any
@@ -423,8 +432,9 @@ pub fn select_first<'d, N: CssNode<'d>>(
     scratch: &mut Scratch<N::Host>,
     root: N,
     groups: Lists<'_>,
+    ns: &Namespaces<'_>,
 ) -> Result<Option<N>, MatchFailure> {
-    let compiled = compile(&mut scratch.tables, groups)?;
+    let compiled = compile(&mut scratch.tables, groups, ns)?;
     let found = select_first_compiled(scratch, &compiled, root);
     compiled.give_back(&mut scratch.tables);
     found

@@ -171,13 +171,47 @@ RSpec.describe "Makiri CSS" do
       expect(svg_doc.css("svg circle").map(&:name)).to eq(%w[circle])
     end
 
-    # query_args_spec.rb pins the loose namespace ignore for a bare `svg|path`;
-    # this is the same loose ignore inside compound/functional selectors.
-    it "keeps the namespace binding ignored inside :is() / :has() / attribute selectors" do
-      ns = { "svg" => "http://www.w3.org/2000/svg" }
+    # M6/M7: a prefix is resolved against the bindings - inside :is() /
+    # :has() too - and one the bindings lack makes the selector invalid,
+    # however little of it a query reaches.
+    it "resolves a namespace prefix against the bindings, inside :is() / :has() / attribute selectors" do
+      svg = "http://www.w3.org/2000/svg"
+      ns = { "svg" => svg }
       expect(svg_doc.css(":is(svg|circle)", ns).map(&:name)).to eq(%w[circle])
       expect(svg_doc.css("body:has(svg|circle)", ns).map(&:name)).to eq(%w[body])
-      expect(svg_doc.css("[svg|r]", ns).map(&:name)).to eq(%w[circle])
+      expect(svg_doc.css("h|circle", "h" => "http://www.w3.org/1999/xhtml")).to be_empty
+      expect(svg_doc.css("[svg|r]", ns)).to be_empty # `r` is in no namespace
+      expect(svg_doc.css("[|r]").map(&:name)).to eq(%w[circle])
+      expect(svg_doc.css("|circle")).to be_empty
+      expect(svg_doc.css("*|circle").map(&:name)).to eq(%w[circle])
+      expect { svg_doc.css("svg|circle") }.to raise_error(Makiri::CSS::SyntaxError, /undeclared namespace prefix/)
+      expect { svg_doc.css("nosuch, q|x") }.to raise_error(Makiri::CSS::SyntaxError)
+      expect { svg_doc.at_css("circle, q|x") }.to raise_error(Makiri::CSS::SyntaxError)
+      expect { svg_doc.at_css("circle").matches?("q|circle") }.to raise_error(Makiri::CSS::SyntaxError)
+      expect(svg_doc.at_css("circle").matches?("svg|circle", ns)).to be(true)
+      expect { Makiri::HTML("").css("q|x") }.to raise_error(Makiri::CSS::SyntaxError)
+    end
+
+    it "finds an attribute in a namespace by its prefix" do
+      doc = Makiri::HTML(%(<svg><a xlink:href="u"/><a href="v"/></svg>))
+      xlink = { "x" => "http://www.w3.org/1999/xlink" }
+      expect(doc.css("[x|href]", xlink).map { |a| a.attribute_nodes.first.value }).to eq(%w[u])
+      expect(doc.css("[x|href='u']", xlink).size).to eq(1)
+      expect(doc.css("[href]").map { |a| a["href"] }).to eq(%w[v])
+    end
+
+    # The parsed selector is cached by its text alone; what a prefix means is
+    # settled per call, so the same text under other bindings, or in another
+    # document, answers by those.
+    it "resolves the same cached selector afresh under each call's bindings" do
+      svg = "http://www.w3.org/2000/svg"
+      xml = Makiri::XML(%(<r xmlns:s="#{svg}"><s:circle/></r>))
+      3.times do
+        expect(svg_doc.css("s|circle", "s" => svg).size).to eq(1)
+        expect(svg_doc.css("s|circle", "s" => "urn:other")).to be_empty
+        expect { svg_doc.css("s|circle") }.to raise_error(Makiri::CSS::SyntaxError)
+        expect(xml.css("s|circle").size).to eq(1)
+      end
     end
   end
 

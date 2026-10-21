@@ -64,9 +64,6 @@ RULES = [
   ["error-kind", %w[xml-plain], ["s|p", "svg|path", "[xlink|href]"]],
   ["error-kind", %w[xml-ns xml-xhtml], ["s|p"]],
   ["error-kind", %w[xml-ns], ["svg|path"]],
-  # HTML ignores a selector's namespace prefix (M6, M7).
-  ["M6-M7", HTML_DOCS, ["|*", "s|p", "svg|path", "[xlink|href]"]],
-  ["M6-M7", %w[html-basic html-foreign], ["|p"]],
   ["C27", ALL_DOCS, ["[*|href]"]],
   # HTML :link takes <link> (M2), and :read-write is Lexbor's.
   ["M2", %w[html-form], [":link"]],

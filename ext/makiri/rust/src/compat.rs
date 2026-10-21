@@ -132,6 +132,11 @@ pub enum Fix {
     C19,
     /// `:has()` is not valid inside `:has()`.
     C20,
+    /// A selector's namespace prefix is resolved against the caller's
+    /// bindings (M6, M7): `p|E` is E in that namespace, `|E` E in none, an
+    /// undeclared prefix invalid. Lexbor ignores every prefix. A matcher
+    /// item, as M8.
+    M6,
     /// The plain `:nth-child` family counts element siblings only, as
     /// Selectors 4 does; Lexbor counts every sibling but Text and Comment,
     /// so a doctype or a processing instruction took a position. A

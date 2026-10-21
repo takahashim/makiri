@@ -61,6 +61,10 @@ impl<'d> CssNode<'d> for HtmlNode<'d> {
         self.ns_id() == Some(NsId::HTML)
     }
     #[inline]
+    fn ns_uri(self) -> Option<&'d [u8]> {
+        HtmlNode::ns_uri(self)
+    }
+    #[inline]
     fn same_namespace(self, other: Self) -> bool {
         self.ns_id() == other.ns_id()
     }
@@ -137,6 +141,14 @@ impl<'d> CssAttr<'d> for HtmlAttr<'d> {
     #[inline]
     fn local_name(self) -> &'d [u8] {
         HtmlAttr::local_name(self)
+    }
+    #[inline]
+    fn dom_local_name(self) -> &'d [u8] {
+        HtmlAttr::dom_local_name(self)
+    }
+    #[inline]
+    fn ns_uri(self) -> Option<&'d [u8]> {
+        HtmlAttr::own_ns_uri(self)
     }
 }
 

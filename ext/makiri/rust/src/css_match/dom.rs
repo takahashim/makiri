@@ -47,6 +47,8 @@ pub trait CssNode<'d>: Copy + PartialEq + 'd {
     fn char_data(self) -> Option<&'d [u8]>;
     /// Whether the node is in the HTML namespace.
     fn is_html(self) -> bool;
+    /// The node's namespace URI; `None` for no namespace.
+    fn ns_uri(self) -> Option<&'d [u8]>;
     /// Whether the two nodes are in the same namespace (none counting as
     /// one).
     fn same_namespace(self, other: Self) -> bool;
@@ -100,6 +102,10 @@ pub trait CssAttr<'d>: Copy {
     fn value(self) -> &'d [u8];
     /// The local name as the host stores it (lower-cased in HTML).
     fn local_name(self) -> &'d [u8];
+    /// The DOM's `localName`.
+    fn dom_local_name(self) -> &'d [u8];
+    /// The attribute's own namespace URI; `None` for no namespace.
+    fn ns_uri(self) -> Option<&'d [u8]>;
 }
 
 /// A document.

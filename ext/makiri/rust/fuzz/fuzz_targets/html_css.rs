@@ -32,7 +32,7 @@ use libfuzzer_sys::fuzz_target;
 
 mod common;
 use common::*;
-use makiri::css_match::{matches_any, select_all, select_first, Scratch};
+use makiri::css_match::{matches_any, select_all, select_first, Namespaces, Scratch};
 use makiri::gvl::Gvl;
 use makiri::html::dom::css::HtmlHost;
 use makiri::html_dom::html::HtmlNode;
@@ -77,10 +77,10 @@ fuzz_target!(|data: &[u8]| {
 /// The walking query and the one-candidate query agree (module doc). False
 /// when a query refused, so the caller stops.
 fn check(root: HtmlNode<'_>, groups: Lists<'_>, scratch: &mut Scratch<HtmlHost>) -> bool {
-    let Ok(all) = select_all(scratch, root, groups) else {
+    let Ok(all) = select_all(scratch, root, groups, &Namespaces::NONE) else {
         return false;
     };
-    if let Ok(first) = select_first(scratch, root, groups) {
+    if let Ok(first) = select_first(scratch, root, groups, &Namespaces::NONE) {
         assert!(
             first == all.first().copied(),
             "select_first is not the first of select_all"
@@ -91,7 +91,7 @@ fn check(root: HtmlNode<'_>, groups: Lists<'_>, scratch: &mut Scratch<HtmlHost>)
         .filter_map(HtmlNode::element)
         .take(ONE_BY_ONE)
     {
-        let Ok(matched) = matches_any(scratch, groups, el.node()) else {
+        let Ok(matched) = matches_any(scratch, groups, &Namespaces::NONE, el.node()) else {
             return false;
         };
         assert_eq!(

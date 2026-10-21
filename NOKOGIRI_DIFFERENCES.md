@@ -247,22 +247,15 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
   * Nokogiri (XML and HTML5) mistranslates these to first-/only-child
     (`//*[position()=1]` / `//*[last()=1]`), so it under-matches; Makiri does
     not.
-* HTML CSS takes a `{prefix => uri}` Hash (`css(selector, ns)`) but does not
-  resolve prefixes against it: the HTML matcher keeps Lexbor's rule and
-  matches a prefixed type selector loosely, so `svg|path`, `|path` and `path`
-  all find the SVG element whatever is bound. `Nokogiri::HTML5` honours the
-  binding (a wrong URI finds nothing).
-  * The Hash is accepted and unused rather than refused, so the `css(selector,
-    ns)` a caller writes for both representations works. Use `#xpath`, where a
-    prefix IS resolved against the bindings, when the namespace matters.
-  * `Makiri::XML` resolves CSS prefixes properly - it lowers the selector to the
-    XPath engine, which registers the bindings.
-  * Attribute selectors do not resolve the prefix either: the name is looked
-    up by qualified name, as `getAttribute` does, so `[xlink|href]`,
-    `[foo|href]`, `[|href]` and `[href]` all find an attribute named `href`
-    and not an SVG `xlink:href`. Write `[xlink\:href]` for that one, or use
-    XPath (`//@xlink:href` with the XLink namespace registered).
-    `Makiri::XML` reads `[|a]` as the no-namespace attribute.
+* HTML CSS resolves a namespace prefix against the `{prefix => uri}` Hash
+  (`css(selector, ns)`), as `Nokogiri::HTML5` does: `svg|path` is the SVG
+  `path` once `svg` is bound, `|path` an element in no namespace, and a prefix
+  the Hash does not bind raises `Makiri::CSS::SyntaxError`. `[x|href]` finds
+  the XLink `href` once `x` is bound to XLink.
+  * A bare type selector matches its name in any namespace (`path` finds the
+    SVG element), as a browser's `querySelectorAll` does; the Hash sets no
+    default namespace for HTML.
+  * Up to 0.16 the Hash was accepted and unused, and every prefix ignored.
 * A selector under a node matches the way `Element#querySelectorAll` does in a
   browser, not scoped to that node, on HTML: `at_css("#c").css("div p")` finds a
   `p` inside `#c` when `#c` is itself a `div`, since the selector is matched

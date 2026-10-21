@@ -18,7 +18,7 @@ use crate::bridge::html::wrap_html_node;
 use crate::bridge::node_set::node_set_from;
 use crate::bridge::ruby::makiri_error;
 use crate::bridge::string::{ruby_verified_text, RubyText};
-use crate::css_match::{self, MatchFailure, QueryFailure, MAX_COMPOUNDS};
+use crate::css_match::{self, MatchFailure, Namespaces, QueryFailure, MAX_COMPOUNDS};
 use crate::html_dom::html::RawNode;
 use crate::init::MOD_HTML_NODE_METHODS;
 use crate::lexbor::selector_cache;
@@ -38,12 +38,12 @@ fn parse_error(err: ParseError, selector: Value) -> Error {
 
 /// A whole-query failure ([`crate::css_match::select_all`]'s
 /// error) as the Ruby exception it maps to.
-fn query_error(err: QueryFailure) -> Error {
+fn query_error(err: QueryFailure, selector: Value) -> Error {
     match err {
         QueryFailure::Overflow => makiri_error(format!(
             "CSS result set exceeded the node limit ({NODE_SET_MAX})"
         )),
-        QueryFailure::Match(e) => match_error(e),
+        QueryFailure::Match(e) => match_error(e, selector),
     }
 }
 
@@ -56,8 +56,11 @@ fn query_error(err: QueryFailure) -> Error {
 /// case (`SelectError::Traversal`'s "CSS selector could not be run") on
 /// purpose: it is the same fact - this engine could not run the selector
 /// either - not a new one.
-fn match_error(err: MatchFailure) -> Error {
+fn match_error(err: MatchFailure, selector: Value) -> Error {
     match err {
+        MatchFailure::UndeclaredPrefix => {
+            crate::glue::css::syntax_error(selector, Some("undeclared namespace prefix"))
+        }
         MatchFailure::WorkExceeded => makiri_error("CSS query exceeded its work budget"),
         MatchFailure::Unsupported => makiri_error("CSS selector could not be run"),
         MatchFailure::TooComplex => makiri_error(format!(
@@ -79,38 +82,66 @@ fn selector_text(selector: Value) -> Result<RubyText, Error> {
 /// `(selector, namespaces = nil)`, the argument list `Makiri::XML`'s CSS
 /// methods and Nokogiri's take - so one call works on either representation.
 ///
-/// The bindings are ACCEPTED AND UNUSED here: the matcher resolves a
-/// selector's names itself, and its prefix handling is loose (`svg|path` and
-/// `path` match the same elements whatever a caller binds). Refusing them
-/// instead would break the common `node.css(selector, ns)` written for both
-/// representations, and would protect nothing - the answer is the same with or
-/// without them. See NOKOGIRI_DIFFERENCES.md; `#xpath` is where a prefix is
-/// resolved against real bindings.
-fn css_args(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
+/// The Hash declares the prefixes the selector may use (`svg|path`,
+/// `[xlink|href]`), read and checked as `#xpath`'s bindings are; a prefix it
+/// does not bind makes the selector invalid. It sets no default namespace:
+/// a bare type selector matches its name in any namespace, as in a browser.
+struct CssArgs {
+    selector: Value,
+    bindings: crate::glue::query::NamespaceBindings,
+}
+
+fn css_args(ruby: &Ruby, args: &[Value]) -> Result<CssArgs, Error> {
     let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), (), ()>(args)?;
+    let mut bindings = Vec::new();
     if let Some(ns) = a.optional.0.filter(|v| !v.is_nil()) {
-        if RHash::from_value(ns).is_none() {
+        let Some(h) = RHash::from_value(ns) else {
             return Err(Error::new(
                 ruby.exception_type_error(),
                 "namespaces must be a Hash of prefix => uri",
             ));
-        }
+        };
+        bindings = crate::glue::query::namespace_bindings(h)?;
     }
-    Ok(a.required.0)
+    Ok(CssArgs {
+        selector: a.required.0,
+        bindings,
+    })
+}
+
+impl CssArgs {
+    /// The bindings as the matcher reads them, for `f`.
+    fn with_namespaces<R>(&self, f: impl FnOnce(&Namespaces<'_>) -> R) -> Result<R, Error> {
+        use crate::falloc::{try_vec_with_capacity, VecPush};
+        if self.bindings.is_empty() {
+            return Ok(f(&Namespaces::NONE));
+        }
+        let oom = || makiri_error("out of memory reading namespace bindings");
+        let mut refs = try_vec_with_capacity(self.bindings.len()).ok_or_else(oom)?;
+        for (p, u) in &self.bindings {
+            refs.falloc_push((p.as_slice(), u.as_slice()))
+                .map_err(|()| oom())?;
+        }
+        Ok(f(&Namespaces::new(&refs, None)))
+    }
 }
 
 /// `Node#css`: every matching descendant, in document order.
 fn css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let selector = css_args(ruby, args)?;
+        let args = css_args(ruby, args)?;
+        let selector = args.selector;
         let sv = selector_text(selector)?;
         let gvl = held(ruby);
-        let matched = selector_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
-            css_match::select_all(scratch, this.node(), groups)
-        })
-        .map_err(|e| parse_error(e, selector))?;
+        let matched = args
+            .with_namespaces(|ns| {
+                selector_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
+                    css_match::select_all(scratch, this.node(), groups, ns)
+                })
+            })?
+            .map_err(|e| parse_error(e, selector))?;
         drop(sv);
-        let nodes = matched.map_err(query_error)?;
+        let nodes = matched.map_err(|e| query_error(e, selector))?;
         node_set_from(
             this.document,
             nodes.into_iter().map(|n| RawNode::from(n).into()),
@@ -124,15 +155,19 @@ fn css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Value, Error> {
 /// `#first` dispatch, for the single node the caller asked for.
 fn at_css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        let selector = css_args(ruby, args)?;
+        let args = css_args(ruby, args)?;
+        let selector = args.selector;
         let sv = selector_text(selector)?;
         let gvl = held(ruby);
-        let matched = selector_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
-            css_match::select_first(scratch, this.node(), groups)
-        })
-        .map_err(|e| parse_error(e, selector))?;
+        let matched = args
+            .with_namespaces(|ns| {
+                selector_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
+                    css_match::select_first(scratch, this.node(), groups, ns)
+                })
+            })?
+            .map_err(|e| parse_error(e, selector))?;
         drop(sv);
-        let found = matched.map_err(match_error)?;
+        let found = matched.map_err(|e| match_error(e, selector))?;
         found
             .map(|n| wrap_html_node(RawNode::from(n), this.document))
             .transpose()
@@ -147,16 +182,20 @@ fn at_css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Option<Value>, 
 /// asked about (`css_match::matches_any`).
 fn matches(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<bool, Error> {
     crate::bridge::ruby::entry(|| {
-        let selector = css_args(ruby, args)?;
+        let args = css_args(ruby, args)?;
+        let selector = args.selector;
         let sv = selector_text(selector)?;
         let gvl = held(ruby);
         let node = this.node();
-        let matched = selector_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
-            css_match::matches_any(scratch, groups, node)
-        })
-        .map_err(|e| parse_error(e, selector))?;
+        let matched = args
+            .with_namespaces(|ns| {
+                selector_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
+                    css_match::matches_any(scratch, groups, ns, node)
+                })
+            })?
+            .map_err(|e| parse_error(e, selector))?;
         drop(sv);
-        matched.map_err(match_error)
+        matched.map_err(|e| match_error(e, selector))
     })
 }
 

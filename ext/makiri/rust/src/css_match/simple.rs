@@ -9,6 +9,7 @@ use core::ffi::c_long;
 
 use super::compile::{Nest, Step};
 use super::dom::{CssAttr, CssDoc, CssElement, CssNode, Host};
+use super::ns::{Namespaces, NsTest};
 use super::positions::{sibling_position, Positions};
 use super::scratch::Table;
 use super::state::{
@@ -256,6 +257,7 @@ pub(super) enum SimpleCheck {
 pub(super) fn check_simple<'d, N: CssNode<'d>>(
     sel: &Step<'_>,
     name: Name<N::Host>,
+    ns: &Namespaces<'_>,
     node: N,
     budget: &Budget,
     positions: &mut Positions,
@@ -267,8 +269,13 @@ pub(super) fn check_simple<'d, N: CssNode<'d>>(
         // node a `:has()` Descendant search visits, and an unconditional
         // `true` here made a `<p>` with only text content wrongly "have"
         // that text node as a `*`-matching descendant.
-        Simple::Universal => SimpleCheck::Result(node.element().is_some()),
-        Simple::Type => SimpleCheck::Result(type_matches(node, sel.name, name)),
+        Simple::Universal => SimpleCheck::Result(
+            node.element().is_some() && (sel.ns == NsTest::ANY || ns_matches(node, sel.ns, ns)),
+        ),
+        Simple::Type => SimpleCheck::Result(
+            type_matches(node, sel.name, name)
+                && (sel.ns == NsTest::ANY || ns_matches(node, sel.ns, ns)),
+        ),
         // `lxb_selectors_match_id` / `_class` through the element's own `id` /
         // `class` shortcut, as Lexbor reads them (`HtmlElement::id_attr`) - no
         // attribute-list scan.
@@ -289,7 +296,11 @@ pub(super) fn check_simple<'d, N: CssNode<'d>>(
         // decides. `compile` settled which in `Step::value_ci`.
         Simple::Attribute(at) => SimpleCheck::Result(attribute_matches(
             node,
-            attr_value(node, sel.name, name),
+            if sel.ns.is_uri() {
+                attr_value_in(node, ns.uri(sel.ns), sel.name)
+            } else {
+                attr_value(node, sel.name, name)
+            },
             at.op,
             at.value,
             sel.value_ci,
@@ -369,7 +380,9 @@ impl<H: Host> Name<H> {
     pub(super) fn resolve<'d, D: CssDoc<'d, Host = H>>(sel: &Step<'_>, doc: D) -> Name<H> {
         match sel.simple {
             Simple::Type => Name::Tag(doc.tag_id(sel.name)),
-            Simple::Attribute(_) => Name::Attr(doc.resolve_attr_name(sel.name)),
+            /* An attribute in a namespace is found by scanning
+             * (`attr_value_in`), not by a resolved name. */
+            Simple::Attribute(_) if !sel.ns.is_uri() => Name::Attr(doc.resolve_attr_name(sel.name)),
             _ => Name::None,
         }
     }
@@ -407,6 +420,44 @@ fn attr_value<'d, N: CssNode<'d>>(node: N, qname: &[u8], name: Name<N::Host>) ->
             .map(CssAttr::value),
         _ => el.get_attribute(qname),
     }
+}
+
+/// Whether `node` is in the namespace `test` asks for, of `ns`. Out of
+/// line, and not asked for [`NsTest::ANY`] - a selector with no prefix and
+/// no default namespace, nearly every one: [`check_simple`] is inlined into
+/// the matcher's hot loop, and this inline there cost every plain scan
+/// 4-10%.
+#[inline(never)]
+fn ns_matches<'d, N: CssNode<'d>>(node: N, test: NsTest, ns: &Namespaces<'_>) -> bool {
+    match test {
+        NsTest::ANY => true,
+        NsTest::NONE => node.ns_uri().is_none(),
+        _ => node.ns_uri().is_some_and(|uri| ns.uri(test) == Some(uri)),
+    }
+}
+
+/// The value of `node`'s attribute in the namespace `uri` whose local name
+/// is `local` - ASCII case-insensitively on an HTML element, as an attribute
+/// selector's name is compared there. Out of line, as [`ns_matches`].
+#[inline(never)]
+fn attr_value_in<'d, N: CssNode<'d>>(
+    node: N,
+    uri: Option<&[u8]>,
+    local: &[u8],
+) -> Option<&'d [u8]> {
+    let el = node.element()?;
+    let fold = node.is_html();
+    el.attrs()
+        .find(|a| {
+            uri.is_some()
+                && a.ns_uri() == uri
+                && if fold {
+                    a.dom_local_name().eq_ignore_ascii_case(local)
+                } else {
+                    a.dom_local_name() == local
+                }
+        })
+        .map(CssAttr::value)
 }
 
 #[cfg(test)]

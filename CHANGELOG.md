@@ -10,6 +10,11 @@
 
 ### Changed
 
+* HTML CSS resolves namespace prefixes (M6, M7). `css(selector, ns)` binds
+  them: `svg|path` is the SVG `path`, `|p` an element in no namespace, and
+  `[x|href]` the attribute in `x`'s namespace. A prefix the Hash does not
+  bind raises `Makiri::CSS::SyntaxError` ("undeclared namespace prefix"),
+  where every prefix used to be ignored.
 * A `<select>` may have any number of `<option>`s: the 10,000 limit is gone,
   with the reason for it. The selectedness setting algorithm walked every
   option for each one inserted; it is decided from the select's state now,

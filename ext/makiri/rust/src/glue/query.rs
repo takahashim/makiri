@@ -224,6 +224,29 @@ pub fn register_namespaces(ctx: &Cx, namespaces: Option<RHash>) -> Result<(), Er
     )
 }
 
+/// `(prefix, uri)` pairs, owned.
+pub type NamespaceBindings = Vec<(Vec<u8>, Vec<u8>)>;
+
+/// A `{prefix => uri}` Hash's bindings, copied out and checked as `#xpath`'s
+/// are (`bind_pair`) - for HTML CSS, whose matcher takes them as bytes.
+pub fn namespace_bindings(h: RHash) -> Result<NamespaceBindings, Error> {
+    use crate::falloc::{try_to_vec, VecPush};
+    let oom = || makiri_error("out of memory reading namespace bindings");
+    let mut out = Vec::new();
+    bind_each(
+        h,
+        |prefix, uri| {
+            let pair = (
+                try_to_vec(prefix).ok_or_else(oom)?,
+                try_to_vec(uri).ok_or_else(oom)?,
+            );
+            out.falloc_push(pair).map_err(|()| oom())
+        },
+        crate::xpath::limits::Limits::DEFAULT.max_string_bytes,
+    )?;
+    Ok(out)
+}
+
 /// Register a `{prefix => uri}` Hash onto an `XPathContext`, for every later
 /// evaluate.
 pub fn register_bindings(ctx: &XPathCtx, bindings: RHash) -> Result<(), Error> {

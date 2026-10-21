@@ -447,18 +447,29 @@ mod css_match {
         root: HtmlNode<'doc>,
         groups: Lists<'_>,
     ) -> Result<Vec<HtmlNode<'doc>>, QueryFailure> {
-        crate::compat::as_lexbor(|| port::select_all(&mut Scratch::new(), root, groups))
+        crate::compat::as_lexbor(|| {
+            port::select_all(&mut Scratch::new(), root, groups, &port::Namespaces::NONE)
+        })
     }
 
     fn port_select_first<'doc>(
         root: HtmlNode<'doc>,
         groups: Lists<'_>,
     ) -> Result<Option<HtmlNode<'doc>>, MatchFailure> {
-        crate::compat::as_lexbor(|| port::select_first(&mut Scratch::new(), root, groups))
+        crate::compat::as_lexbor(|| {
+            port::select_first(&mut Scratch::new(), root, groups, &port::Namespaces::NONE)
+        })
     }
 
     fn matches_any(groups: Lists<'_>, element: HtmlElement<'_>) -> Result<bool, MatchFailure> {
-        crate::compat::as_lexbor(|| port::matches_any(&mut Scratch::new(), groups, element.node()))
+        crate::compat::as_lexbor(|| {
+            port::matches_any(
+                &mut Scratch::new(),
+                groups,
+                &port::Namespaces::NONE,
+                element.node(),
+            )
+        })
     }
 
     /// A document the tests query: Lexbor's parse, and its arena copy, which
@@ -567,9 +578,14 @@ mod css_match {
         let count = |selector: &str| {
             let text = VerifiedText::from_bytes(selector.as_bytes()).expect("verified");
             let parsed = css_parser::parse(&gvl, text).expect("parses");
-            let spec = port::select_all(&mut Scratch::new(), root(&doc), parsed.groups())
-                .expect("runs")
-                .len();
+            let spec = port::select_all(
+                &mut Scratch::new(),
+                root(&doc),
+                parsed.groups(),
+                &port::Namespaces::NONE,
+            )
+            .expect("runs")
+            .len();
             let lexbor = port_select_all(root(&doc), parsed.groups())
                 .expect("runs")
                 .len();
@@ -2815,7 +2831,12 @@ mod selector_cache {
     /// Every matching descendant's node identity, through the cache.
     fn select_all_cached(doc: &HtmlParsed, selector: &str) -> Vec<RawNode> {
         with_compiled(&Gvl::exclusive(), selector.as_bytes(), |groups, scratch| {
-            select_all(scratch, root(doc), groups)
+            select_all(
+                scratch,
+                root(doc),
+                groups,
+                &crate::css_match::Namespaces::NONE,
+            )
         })
         .unwrap_or_else(|_| panic!("{selector:?} fails to parse"))
         .unwrap_or_else(|e| panic!("{selector:?} failed: {e:?}"))
@@ -2867,7 +2888,12 @@ mod selector_cache {
         assert_eq!(select_all_cached(&doc, "p.x").len(), 2);
 
         let rejected = with_compiled(&Gvl::exclusive(), b"p[", |groups, scratch| {
-            select_all(scratch, root(&doc), groups)
+            select_all(
+                scratch,
+                root(&doc),
+                groups,
+                &crate::css_match::Namespaces::NONE,
+            )
         });
         assert!(rejected.is_err(), "a malformed selector must not parse");
 

@@ -558,7 +558,14 @@ impl<'c, 'p, 'd, N: CssNode<'d>> Query<'c, 'p, 'd, N> {
             .ok_or(MatchFailure::Internal)?;
         for (i, sel) in (from..).zip(steps) {
             let name = self.name(i, sel);
-            match check_simple(sel, name, node, &self.budget, &mut self.positions)? {
+            match check_simple(
+                sel,
+                name,
+                &compiled.ns,
+                node,
+                &self.budget,
+                &mut self.positions,
+            )? {
                 SimpleCheck::Result(true) => {}
                 SimpleCheck::Result(false) => return Ok(Check::Done(false)),
                 SimpleCheck::Deferred => return Ok(Check::Defer(i)),
