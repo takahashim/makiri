@@ -764,50 +764,13 @@ fn fragments_read_as_lexbor_does_on_wpt_inputs() {
     }
 }
 
-/// The option guard reaches through the context's ancestors on both sides,
-/// and a context in a custom namespace gives it to what inherits it.
+/// A context in a custom namespace gives it to what inherits it, on both
+/// sides.
 #[test]
 fn fragment_contexts_resolve_alike() {
     use crate::lexbor::adapter::html::HtmlDocMut as LexMut;
     use crate::lexbor::arena_fragment as af;
     use crate::lexbor::fragment as lf;
-    let many = b"<option>".repeat(crate::lexbor::adapter::tree_guard::MAX_SELECT_OPTIONS + 1);
-    let chains: [&[&[u8]]; 3] = [&[b"select", b"optgroup"], &[b"select", b"div"], &[b"div"]];
-    for chain in chains {
-        let input = &many[..];
-        let parsed = parse_html(b"<body>", false, DepthLimit::UNLIMITED).expect("parses");
-        // SAFETY: `parsed` owns the document; only this test touches it.
-        let ld = unsafe { parsed.raw_doc().as_doc() };
-        let mut ac = crate::lexbor::adapter::arena_copy::copy_document(ld).expect("copy");
-        // SAFETY: as above.
-        let mut lm = unsafe { LexMut::assume_exclusive(ld) };
-        let mut am = arena::HtmlDocMut::new(&mut ac);
-        let bi = lex_walk(ld)
-            .iter()
-            .position(|n| n.element().is_some_and(|e| e.local_name() == b"body"))
-            .expect("body");
-        let (lb, ab) = at(ld, am.read(), bi);
-        let (mut lp, mut ap) = (lex::RawNode::from(lb), arena::RawNode::from(ab));
-        for name in chain {
-            let l = lm.create_element(name).expect("el");
-            let a = am.create_element(name).expect("el");
-            lm.place(lp, l, lex::Place::Child);
-            am.place(ap, a, arena::Place::Child);
-            (lp, ap) = (l, a);
-        }
-        // SAFETY: the context element is live for the call.
-        let l = unsafe {
-            lf::TransientFragment::parse(
-                input,
-                true,
-                &lf::FragmentContext::Element(lp),
-                DepthLimit::DEFAULT,
-            )
-        };
-        let actx = af::FragmentContext::element(am.read(), ap).expect("context");
-        let a = af::TransientFragment::parse(input, true, &actx, DepthLimit::DEFAULT);
-        assert_eq!(l.err(), a.err(), "{chain:?}");
-    }
 
     /* A context element in a custom namespace, from another document,
      * against the Lexbor DOM taking the same route. */

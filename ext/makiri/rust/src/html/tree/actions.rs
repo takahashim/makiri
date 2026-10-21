@@ -202,7 +202,11 @@ impl TreeBuilder<'_> {
     #[inline]
     pub(crate) fn insert_node(&mut self, to: NodeId, node: NodeId, ipos: Ipos) {
         match ipos {
-            Ipos::Before => self.doc.insert_before(to, node),
+            /* No insertion steps run here, so the selects are told. */
+            Ipos::Before => {
+                self.tree_moved(Some(to));
+                self.doc.insert_before(to, node)
+            }
             Ipos::Child => self.append_child_with_steps(to, node),
         }
     }
@@ -883,6 +887,8 @@ impl TreeBuilder<'_> {
     /// `lxb_html_tree_adoption_agency_algorithm`: `true` when the caller is
     /// to act as "any other end tag" (Lexbor's return), `Err` on failure.
     pub(crate) fn adoption_agency_algorithm(&mut self, tok: &Tok) -> Result<bool, TreeStatus> {
+        /* It moves nodes with no insertion steps: the selects are told. */
+        self.tree_moved(None);
         let subject = tok.tag_id;
         /* State 2 */
         let Some(node) = self.current_node() else {

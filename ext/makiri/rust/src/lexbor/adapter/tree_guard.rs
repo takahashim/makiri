@@ -1,7 +1,7 @@
 //! The guard every HTML parse runs under: a tokenizer hook that stops the
-//! parse on the two input shapes Lexbor's tree construction handles in
-//! quadratic time. The parse runs with the GVL released and cannot be
-//! interrupted, so either is a denial of service on untrusted input.
+//! parse on the input shape Lexbor's tree construction handles in quadratic
+//! time. The parse runs with the GVL released and cannot be
+//! interrupted, so it is a denial of service on untrusted input.
 //!
 //! - **Depth.** Most start tags walk the stack of open elements for a scope
 //!   check, so `"<div>" * 80_000` (400 KB) took 5 s. The limit is Nokogiri's
@@ -11,10 +11,10 @@
 //!   it - the `synthetic` of [`TokenHook::for_document`] / [`TokenHook::for_fragment`]). Checked on the open-element stack
 //!   after each token; a token that pushes several elements is bounded by what
 //!   the previous check accepted.
-//! - **Options per select.** Each inserted `<option>` re-runs the select's
-//!   selectedness algorithm over all its options (Lexbor `9c841a3`, v3.0.0),
-//!   so 40,000 options took 4 s. Counted per select, up to
-//!   [`MAX_SELECT_OPTIONS`].
+//! - **Options per select** were limited here too (10,000), for Lexbor's
+//!   selectedness algorithm, which walks every option per option inserted.
+//!   The parser port no longer walks so, and has no limit; the reference
+//!   keeps the same verdicts by having none either.
 //!
 //! The hook stops a parse by returning NULL for the token - how Lexbor's own
 //! tree builder fails - and records why ([`TokenHook::stopped`]).
@@ -32,7 +32,7 @@ use core::ffi::c_void;
 use crate::caught::PanicLatch;
 use crate::lexbor::abi as lxb;
 
-use super::html::{HtmlNode, NsId, RawNode, TagId};
+use super::html::RawNode;
 use super::source_loc::{stamp_created, Before, Stamper};
 
 type Token = lxb::lxb_html_token_t;
@@ -42,7 +42,7 @@ type Tree = lxb::lxb_html_tree_t;
 
 /* The limits and stop reasons are the ported tree builder's, so both
  * parsers answer with the same types. */
-pub use crate::html::tree::guard::{DepthLimit, GuardStop, MAX_SELECT_OPTIONS};
+pub use crate::html::tree::guard::{DepthLimit, GuardStop};
 
 /// The tokenizer's token-done hook: runs the depth guard after the tree
 /// builder, and stamps source positions for a document parse.
@@ -74,14 +74,6 @@ struct HookState {
     tree: *const Tree,
     /// The stack length above which the parse stops; `usize::MAX` for none.
     max_open: usize,
-    /// The `<select>` the last counted option went into, and how many have.
-    /// One is enough: the parser only ever inserts into the select that is
-    /// open, and once closed a select receives no more.
-    select: *const c_void,
-    options: usize,
-    /// What a fragment's top level is parsed inside, for [`nearest_select`]:
-    /// an option there lands in the context once the fragment is placed.
-    context: OptionContext,
     stopped: Option<GuardStop>,
     /// The document parse's position stamper; `None` for a fragment.
     stamper: Option<Stamper>,
@@ -89,13 +81,10 @@ struct HookState {
 
 impl TokenHook {
     /// The hook a fragment parse installs: `limit` over the fragment's own
-    /// elements (the parser keeps one synthetic `<html>` root below the first),
-    /// with its top-level options counted against the select `context` is or
-    /// is in. No position stamper: a fragment's elements have no line.
-    pub fn for_fragment(limit: DepthLimit, context: OptionContext) -> TokenHook {
-        let mut hook = TokenHook::build(limit, 1, None);
-        hook.state.context = context;
-        hook
+    /// elements (the parser keeps one synthetic `<html>` root below the
+    /// first). No position stamper: a fragment's elements have no line.
+    pub fn for_fragment(limit: DepthLimit) -> TokenHook {
+        TokenHook::build(limit, 1, None)
     }
 }
 
@@ -116,9 +105,6 @@ impl<const PANIC_PROBE: bool> TokenHook<PANIC_PROBE> {
                 delegate_ctx: core::ptr::null_mut(),
                 tree: core::ptr::null(),
                 max_open: limit.max_open(synthetic).unwrap_or(usize::MAX),
-                select: core::ptr::null(),
-                options: 0,
-                context: OptionContext::None,
                 stopped: None,
                 stamper,
             },
@@ -200,38 +186,10 @@ impl HookState {
         RawNode::from_ptr(*(*stack).list.add((*stack).length - 1))
     }
 
-    /// Count an `<option>` the tree builder just inserted, against the select
-    /// it updates; whether that select is now past [`MAX_SELECT_OPTIONS`].
-    ///
-    /// # Safety
-    /// As [`current_node`](Self::current_node).
-    unsafe fn count_option(&mut self) -> bool {
-        let Some(raw) = self.current_node() else {
-            return false;
-        };
-        // SAFETY: an open element of the tree being built, live for the parse,
-        // and only read here (its tag, namespace and ancestors).
-        let option = raw.as_node();
-        if option.tag_id() != Some(TagId::OPTION) || option.ns_id() != Some(NsId::HTML) {
-            return false; /* not inserted as an element that updates a select */
-        }
-        let Some(key) = nearest_select(option, self.context) else {
-            return false;
-        };
-        if key == self.select {
-            self.options += 1;
-        } else {
-            self.select = key;
-            self.options = 1;
-        }
-        self.options > MAX_SELECT_OPTIONS
-    }
-
     /// One token: everything the hook does with it, the delegate included.
     ///
     /// Always delegates, so the parser still builds the tree; then refuses the
-    /// token - which stops the parse - if the tree has grown past the limit or
-    /// a select past its options. For a document parse, an element start tag's
+    /// token - which stops the parse - if the tree has grown past the limit. For a document parse, an element start tag's
     /// offset is stamped onto the element the tree builder created for it
     /// (`source_loc::stamp_created`), from the current node seen on either
     /// side of the delegate.
@@ -257,9 +215,6 @@ impl HookState {
         // built, which the parse does not free; each handle is used only
         // within this call, before the parse can go on.
         let before = start.map(|_| Before::at(self.current_node().map(|r| r.as_node())));
-        /* Only an `<option>` start tag can insert an option. */
-        let option_start = (*token).tag_id == lxb::lxb_tag_id_enum_t_LXB_TAG_OPTION as usize
-            && ((*token).type_ & lxb::lxb_html_token_type_LXB_HTML_TOKEN_TYPE_CLOSE as i32) == 0;
         let out = match self.delegate {
             /* Lexbor's tree builder: C that calls nothing of ours, so nothing
              * can unwind through it from here. */
@@ -285,132 +240,7 @@ impl HookState {
             self.stopped = Some(GuardStop::TooDeep);
             return core::ptr::null_mut(); /* the tokenizer stops with an error */
         }
-        if option_start && self.count_option() {
-            self.stopped = Some(GuardStop::TooManyOptions);
-            return core::ptr::null_mut();
-        }
         out
-    }
-}
-
-/// What a fragment is parsed inside, as far as the options it receives go.
-///
-/// A fragment's top level sits under a synthetic root, so an option parsed
-/// there has no select above it - yet placing the fragment puts it in the
-/// context, where each inserted option re-runs that select's selectedness as
-/// any other does. The walk in [`nearest_select`] carries on into the context
-/// for that reason: `select.inner_html = "<option>" * n` must meet the same
-/// limit as the same markup in a document.
-#[derive(Clone, Copy)]
-pub enum OptionContext {
-    /// A document parse: the tree is the whole story.
-    None,
-    /// The context element itself (`inner_html=`, `outer_html=`), whose
-    /// ancestors count too. Live for the parse.
-    Element(RawNode),
-    /// A context named by tag and namespace (`fragment(context:)`), which has
-    /// no ancestors yet.
-    Tag(Option<TagId>, Option<NsId>),
-    /// A context element of another DOM (the arena's), whose ancestor walk
-    /// was made beforehand: whether it reaches a `<select>` when the walk
-    /// arrives with no `<optgroup>` seen (`fresh`) and with one
-    /// (`after_optgroup`) - the only state [`nearest_select`] carries.
-    Resolved { fresh: bool, after_optgroup: bool },
-}
-
-/// [`OptionContext::Resolved`]'s answers for a context chain given as
-/// `(tag, ns)` pairs, the context element first: the walk [`nearest_select`]
-/// makes into an element context, run from both states. `None` for a tag
-/// Lexbor does not know (`Option<TagId>` none) is fine: only static tags
-/// decide.
-pub fn resolve_option_chain(
-    chain: impl Iterator<Item = (Option<TagId>, Option<NsId>)> + Clone,
-) -> OptionContext {
-    let run = |mut optgroup: bool| {
-        for (tag, ns) in chain.clone() {
-            match select_step(tag, ns, &mut optgroup) {
-                Step::Stop => return false,
-                Step::Select => return true,
-                Step::Up => {}
-            }
-        }
-        false
-    };
-    OptionContext::Resolved {
-        fresh: run(false),
-        after_optgroup: run(true),
-    }
-}
-
-/// One step of the nearest-select walk, over an element's tag and namespace.
-enum Step {
-    Stop,
-    Select,
-    Up,
-}
-
-fn select_step(tag: Option<TagId>, ns: Option<NsId>, optgroup: &mut bool) -> Step {
-    if ns != Some(NsId::HTML) {
-        return Step::Up;
-    }
-    match tag {
-        Some(TagId::DATALIST | TagId::HR | TagId::OPTION) => Step::Stop,
-        Some(TagId::OPTGROUP) if *optgroup => Step::Stop,
-        Some(TagId::OPTGROUP) => {
-            *optgroup = true;
-            Step::Up
-        }
-        Some(TagId::SELECT) => Step::Select,
-        _ => Step::Up,
-    }
-}
-
-/// The `<select>` an inserted `<option>` updates, if any, as a key for the
-/// count. Lexbor's static `lxb_html_option_element_nearest_ancestor_select`,
-/// restated - keep it that rule - and continued past a fragment's synthetic
-/// root into `context` (see [`OptionContext`]).
-fn nearest_select(option: HtmlNode<'_>, context: OptionContext) -> Option<*const c_void> {
-    let key = |n: HtmlNode<'_>| RawNode::from(n).as_ptr() as *const c_void;
-    let mut optgroup = false;
-    let mut node = option.parent();
-    while let Some(n) = node {
-        match select_step(n.tag_id(), n.ns_id(), &mut optgroup) {
-            Step::Stop => return None,
-            Step::Select => return Some(key(n)),
-            Step::Up => {}
-        }
-        node = n.parent();
-    }
-    /* Off the top of the tree. In a fragment that was the synthetic root,
-     * whose children land in the context. */
-    match context {
-        OptionContext::None => None,
-        OptionContext::Element(el) => {
-            // SAFETY: the context element is live for the parse, and only read.
-            let mut node = Some(unsafe { el.as_node() });
-            while let Some(n) = node {
-                match select_step(n.tag_id(), n.ns_id(), &mut optgroup) {
-                    Step::Stop => return None,
-                    Step::Select => return Some(key(n)),
-                    Step::Up => {}
-                }
-                node = n.parent();
-            }
-            None
-        }
-        OptionContext::Tag(tag, ns) => match select_step(tag, ns, &mut optgroup) {
-            /* No node stands for it; any constant key will do, since a parse
-             * has one context. */
-            Step::Select => Some(core::ptr::dangling::<c_void>()),
-            Step::Stop | Step::Up => None,
-        },
-        OptionContext::Resolved {
-            fresh,
-            after_optgroup,
-        } => {
-            let reaches = if optgroup { after_optgroup } else { fresh };
-            reaches.then(core::ptr::dangling::<c_void>)
-        }
     }
 }
 

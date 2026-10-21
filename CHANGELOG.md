@@ -10,6 +10,11 @@
 
 ### Changed
 
+* A `<select>` may have any number of `<option>`s: the 10,000 limit is gone,
+  with the reason for it. The selectedness setting algorithm walked every
+  option for each one inserted; it is decided from the select's state now,
+  so 9,999 options build in about 5 ms (they took 270 ms), and 40,000 - which
+  raised `Makiri::Error` - parse as browsers parse them.
 * HTML is parsed by a Rust port of Lexbor's tokenizer and tree builder, into
   a DOM of Makiri's own. The extension links no Lexbor any more, so a source
   install needs a Rust toolchain and nothing else - no cmake. A parsed

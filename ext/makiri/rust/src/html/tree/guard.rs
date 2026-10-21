@@ -2,29 +2,24 @@
 //! `lexbor::adapter::tree_guard` does from a hook around Lexbor's tree
 //! builder, done after each token of
 //! [`TreeBuilder::process`](super::TreeBuilder), so the answers are the
-//! same. The why of both limits is in `tree_guard`'s module doc. The
+//! same. The why of the depth limit is in `tree_guard`'s module doc. The
 //! source-position stamps run at the same points and are `stamp.rs`'s.
+//!
+//! There is no limit on a `<select>`'s options any more: the 10,000 that
+//! stood here held off the selectedness setting algorithm's walk of every
+//! option per option inserted, which `select.rs` now does without.
 //!
 //! The checks stay per token, not per insertion: a token can push past the
 //! limit and pop back (a void element at the limit), and the hook never saw
 //! that, so a check at the insertion would refuse inputs the hook accepts.
 
-use super::select::SelectWalk;
-use super::{Tok, TreeBuilder};
-use crate::html::dom::NodeId;
-use crate::html::res::names as res;
-
-/// The most `<option>`s one `<select>` may receive during a parse; real lists
-/// are a few hundred at most.
-pub const MAX_SELECT_OPTIONS: usize = 10_000;
+use super::TreeBuilder;
 
 /// What stopped a parse the guard refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GuardStop {
     /// The tree grew deeper than the [`DepthLimit`] allowed.
     TooDeep,
-    /// One `<select>` received more than [`MAX_SELECT_OPTIONS`] options.
-    TooManyOptions,
 }
 
 /// The deepest element an HTML parse accepts, or no limit.
@@ -56,35 +51,11 @@ impl DepthLimit {
     }
 }
 
-/// Whether a fragment's context leads an option at the fragment's top level
-/// to a `<select>` - from where the walk arrives with no `<optgroup>` seen
-/// (`fresh`) and with one (`after_optgroup`). `tree_guard::OptionContext`'s
-/// `Resolved`; a document parse has no context.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct ContextOptions {
-    pub fresh: bool,
-    pub after_optgroup: bool,
-}
-
-/// The `<select>` an option is counted against.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum CountedSelect {
-    /// The fragment's context, which the fragment's top level lands in.
-    Context,
-    /// One in the tree being built.
-    Element(NodeId),
-}
-
 /// The guard's state across a parse.
 #[derive(Default)]
 pub(crate) struct Guard {
     /// The stack length above which the parse stops; `None` for no limit.
     max_open: Option<usize>,
-    /// The `<select>` the last counted option went into, and how many
-    /// options it has had.
-    select: Option<CountedSelect>,
-    options: usize,
-    context: Option<ContextOptions>,
     pub(crate) stopped: Option<GuardStop>,
 }
 
@@ -99,65 +70,22 @@ impl Guard {
 
     /// A fragment parse's guard: `limit` over the fragment's own elements,
     /// below the parser's synthetic `<html>`.
-    pub fn for_fragment(limit: DepthLimit, context: ContextOptions) -> Guard {
+    pub fn for_fragment(limit: DepthLimit) -> Guard {
         Guard {
             max_open: limit.max_open(1),
-            context: Some(context),
             ..Guard::default()
         }
     }
 }
 
 impl TreeBuilder<'_> {
-    /// After a token: refuse the parse when the tree is too deep or a
-    /// select has too many options. `false` when the parse is to stop.
-    pub(crate) fn guard_after(&mut self, tok: &Tok) -> bool {
+    /// After a token: refuse the parse when the tree is too deep. `false`
+    /// when the parse is to stop.
+    pub(crate) fn guard_after(&mut self) -> bool {
         if self.guard.max_open.is_some_and(|max| self.open.len() > max) {
             self.guard.stopped = Some(GuardStop::TooDeep);
             return false;
         }
-        let option_start = tok.tag_id == res::TAG_OPTION && !tok.is_close();
-        if option_start && self.count_option() {
-            self.guard.stopped = Some(GuardStop::TooManyOptions);
-            return false;
-        }
         true
-    }
-
-    /// `HookState::count_option`: count the `<option>` just inserted against
-    /// the select it updates; whether that select is now past the limit.
-    fn count_option(&mut self) -> bool {
-        let Some(option) = self.current_node() else {
-            return false;
-        };
-        if !self.node_is(option, res::TAG_OPTION) {
-            return false;
-        }
-        let Some(key) = self.guard_nearest_select(option) else {
-            return false;
-        };
-        if self.guard.select == Some(key) {
-            self.guard.options += 1;
-        } else {
-            self.guard.select = Some(key);
-            self.guard.options = 1;
-        }
-        self.guard.options > MAX_SELECT_OPTIONS
-    }
-
-    /// `tree_guard::nearest_select`: the select an inserted option updates,
-    /// if any.
-    fn guard_nearest_select(&self, option: NodeId) -> Option<CountedSelect> {
-        match self.walk_to_select(option) {
-            SelectWalk::Select(n) => Some(CountedSelect::Element(n)),
-            SelectWalk::Blocked => None,
-            /* Off the top: in a fragment, the synthetic root, whose children
-             * land in the context. */
-            SelectWalk::OffTop { optgroup } => {
-                let c = self.guard.context?;
-                let reaches = if optgroup { c.after_optgroup } else { c.fresh };
-                reaches.then_some(CountedSelect::Context)
-            }
-        }
     }
 }

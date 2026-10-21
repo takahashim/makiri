@@ -2,7 +2,7 @@
 //! / `_process` / `_end` with no owner document, under the parse guard, into
 //! an arena document of the fragment's own.
 
-use super::guard::{ContextOptions, DepthLimit, Guard, GuardStop};
+use super::guard::{DepthLimit, Guard, GuardStop};
 use super::parse::drive;
 use super::{Mode, TreeBuilder, TreeStatus};
 use crate::compat::{self, Fix};
@@ -66,29 +66,22 @@ pub struct ContextFacts {
 }
 
 /// The context element of a fragment parse, as far as the parse reads it:
-/// its tag and namespace (Lexbor's static ids; `ns` 0 for none), what it
-/// means to the option guard, and the rest ([`ContextFacts`]).
+/// its tag and namespace (Lexbor's static ids; `ns` 0 for none), and the
+/// rest ([`ContextFacts`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ContextElement {
     pub tag: usize,
     pub ns: usize,
-    pub options: ContextOptions,
     pub facts: ContextFacts,
 }
 
 impl ContextElement {
     /// A context known by its name alone - a fragment bound to a document,
-    /// the WPT fragment tests: it leads an option to a select only by being
-    /// one, and its facts are Lexbor's defaults.
+    /// the WPT fragment tests: its facts are Lexbor's defaults.
     pub fn named(tag: usize, ns: usize) -> ContextElement {
-        let select = tag == res::TAG_SELECT && ns == res::NS_HTML;
         ContextElement {
             tag,
             ns,
-            options: ContextOptions {
-                fresh: select,
-                after_optgroup: select,
-            },
             facts: ContextFacts::default(),
         }
     }
@@ -102,12 +95,7 @@ pub fn parse_fragment(
     context: &ContextElement,
     limit: DepthLimit,
 ) -> Result<ParsedFragment, FragmentFailure> {
-    let ContextElement {
-        tag,
-        ns,
-        options,
-        facts,
-    } = *context;
+    let ContextElement { tag, ns, facts } = *context;
     let src = sanitize(input, known_valid).ok_or(FragmentFailure::Decode)?;
     let bytes = src.as_slice();
     let oom = |DomOom| FragmentFailure::Oom;
@@ -127,13 +115,8 @@ pub fn parse_fragment(
     doc.append_child(NodeId::DOCUMENT, root);
     let context = doc.create_element(tag, ns32, 0, None).map_err(oom)?;
 
-    let mut tree = TreeBuilder::for_fragment(
-        &mut doc,
-        root,
-        context,
-        &facts,
-        Guard::for_fragment(limit, options),
-    )?;
+    let mut tree =
+        TreeBuilder::for_fragment(&mut doc, root, context, &facts, Guard::for_fragment(limit))?;
 
     let current_ns = tree.current_namespace();
     let foreign = facts.foreign_namespace && compat::fixed(Fix::P19);

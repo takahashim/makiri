@@ -188,58 +188,33 @@ RSpec.describe "HTML tree depth limit" do
     end
   end
 
+  # There is no limit on a select's options. The 10,000 that stood here held
+  # off the selectedness setting algorithm's walk of every option per option
+  # inserted, which made a select quadratic to build; the algorithm is now
+  # decided from each select's state, and browsers have no such limit either.
   describe "the <option> count per <select>" do
-    let(:message) { /too many option elements in one select element \(limit 10000\)/ }
-
     def options(n, open = "<select>", close = "</select>") = "#{open}#{"<option>x" * n}#{close}"
 
-    it "accepts 10,000 options in one select and refuses one more" do
-      expect(Makiri::HTML(options(10_000)).css("option").size).to eq(10_000)
-      expect { Makiri::HTML(options(10_001)) }.to raise_error(Makiri::Error, message)
+    it "accepts any number of options in one select" do
+      expect(Makiri::HTML(options(40_000)).css("option").size).to eq(40_000)
+      grouped = "<select>#{"<optgroup>#{"<option>x" * 100}</optgroup>" * 200}</select>"
+      expect(Makiri::HTML(grouped).css("option").size).to eq(20_000)
     end
 
-    it "bounds the quadratic case: 40,000 options are refused, not parsed", :timing do
+    it "builds a select in time linear in its options", :timing do
       started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-      expect { Makiri::HTML(options(40_000)) }.to raise_error(Makiri::Error, message)
+      expect(Makiri::HTML(options(10_000) * 20).css("select").size).to eq(20)
+      expect(Makiri::HTML(options(100_000)).css("option").size).to eq(100_000)
       expect(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started).to be < 2.5
     end
 
-    it "counts per select, and counts options inside an optgroup" do
-      expect(Makiri::HTML(options(6_000) * 2).css("select").size).to eq(2)
-      grouped = "<select>#{"<optgroup>#{"<option>x" * 100}</optgroup>" * 101}</select>"
-      expect { Makiri::HTML(grouped) }.to raise_error(Makiri::Error, message)
-    end
-
-    it "does not count options that update no select" do
-      expect(Makiri::HTML(options(12_000, "<datalist>", "</datalist>")).css("option").size).to eq(12_000)
-      expect(Makiri::HTML("<option>x" * 12_000).css("option").size).to eq(12_000)
-    end
-
-    it "guards fragments and inner_html=, leaving the element unchanged on refusal" do
-      expect { Makiri::HTML::DocumentFragment.parse(options(10_001)) }.to raise_error(Makiri::Error, message)
-      doc = Makiri::HTML("<div><b>old</b></div>")
-      expect { doc.at_css("div").inner_html = options(10_001) }.to raise_error(Makiri::Error, message)
-      expect(doc.at_css("div").inner_html).to eq("<b>old</b>")
-    end
-
-    # A fragment's top level is parsed under a synthetic root, with no select
-    # above it; placed, its options land in the context, and each one inserted
-    # re-runs that select's selectedness all the same.
-    it "counts a fragment's top-level options against the select its context is or is in" do
-      doc = Makiri::HTML("<select id=s><option id=o></select><select id=t><optgroup id=g></optgroup></select>")
-      flood = "<option>x" * 10_001
-      expect { doc.at_css("#t").inner_html = flood }.to raise_error(Makiri::Error, message)
-      expect { doc.at_css("#g").inner_html = flood }.to raise_error(Makiri::Error, message)
-      expect { doc.at_css("#o").outer_html = flood }.to raise_error(Makiri::Error, message)
-      expect { doc.fragment(flood, context: "select") }.to raise_error(Makiri::Error, message)
-      expect { doc.fragment(flood, context: doc.at_css("#s")) }.to raise_error(Makiri::Error, message)
-      expect { Makiri::HTML::DocumentFragment.parse("<div>#{flood}", context: doc.at_css("#s")) }
-        .to raise_error(Makiri::Error, message)
-      expect(doc.at_css("#s").css("option").size).to eq(1)
-
-      doc.at_css("#t").inner_html = "<option>x" * 10_000
-      expect(doc.at_css("#t").css("option").size).to eq(10_000)
-      expect(doc.fragment(flood, context: "div").children.size).to eq(10_001)
+    it "parses fragments and inner_html= of many options" do
+      expect(Makiri::HTML::DocumentFragment.parse(options(20_000)).css("option").size).to eq(20_000)
+      doc = Makiri::HTML("<select id=s><option>x</select><div id=d></div>")
+      doc.at_css("#s").inner_html = "<option>x" * 20_000
+      expect(doc.at_css("#s").css("option").size).to eq(20_000)
+      doc.at_css("#d").inner_html = options(20_000)
+      expect(doc.at_css("#d").css("option").size).to eq(20_000)
     end
   end
 

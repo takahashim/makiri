@@ -416,6 +416,117 @@ fn p21_drops_repeated_attributes_in_the_tokenizer() {
     }
 }
 
+/// Selects whose options the selectedness setting algorithm decides from
+/// the select's state rather than a walk (`html/tree/select.rs`) - and the
+/// shapes that must go back to the walk - made visible by a
+/// `<selectedcontent>`, which takes the selected option's children.
+#[test]
+fn selects_decided_from_their_state_build_lexbors_tree() {
+    let sc = "<button><selectedcontent></selectedcontent></button>";
+    let opts = |n: usize, attr: &dyn Fn(usize) -> &'static str| -> String {
+        (0..n)
+            .map(|i| format!("<option{}>o{i}</option>\n", attr(i)))
+            .collect()
+    };
+    let cases = [
+        format!("<select>{sc}{}</select>", opts(30, &|_| "")),
+        format!(
+            "<select>{sc}{}</select>",
+            opts(30, &|i| if i % 7 == 3 { " selected" } else { "" })
+        ),
+        format!("<select>{sc}{}</select>", opts(30, &|_| " selected")),
+        format!(
+            "<select>{sc}{}</select>",
+            opts(30, &|i| if i < 5 { " disabled" } else { "" })
+        ),
+        format!("<select>{sc}{}</select>", opts(30, &|_| " disabled")),
+        format!(
+            "<select>{sc}{}<optgroup>{}</optgroup>{}</select>",
+            opts(10, &|_| ""),
+            opts(5, &|_| " selected"),
+            opts(10, &|_| "")
+        ),
+        format!(
+            "<select>{sc}{}<datalist>{}</datalist>{}</select>",
+            opts(10, &|_| ""),
+            opts(5, &|_| " selected"),
+            opts(10, &|i| if i == 4 { " selected" } else { "" })
+        ),
+        format!(
+            "<select>{sc}{}<hr>{}<div>{}</div>{}</select>",
+            opts(10, &|_| ""),
+            opts(5, &|_| ""),
+            opts(5, &|_| " selected"),
+            opts(5, &|_| "")
+        ),
+        format!(
+            "<select>{sc}{}<b>{}</b>{}</select>",
+            opts(10, &|_| ""),
+            opts(5, &|_| " selected"),
+            opts(5, &|_| "")
+        ),
+        format!(
+            "<select>{sc}{}<select>{}</select>{}</select>",
+            opts(5, &|_| ""),
+            opts(5, &|_| " selected"),
+            opts(5, &|_| "")
+        ),
+        format!(
+            "<select multiple>{sc}{}</select>",
+            opts(20, &|_| " selected")
+        ),
+        format!("<select size=3>{sc}{}</select>", opts(20, &|_| " selected")),
+        format!(
+            "<table><select>{sc}{}</select></table>",
+            opts(20, &|i| if i % 3 == 0 { " selected" } else { "" })
+        ),
+        format!(
+            "<select>{sc}{}</select><select>{sc}{}</select>",
+            opts(10, &|_| " selected"),
+            opts(10, &|_| "")
+        ),
+        format!(
+            "<b><select>{sc}{}<p>x</b>{}</select>",
+            opts(10, &|_| ""),
+            opts(10, &|_| " selected")
+        ),
+        format!(
+            "<select>{sc}<option>a<b>b<i>c</b>d</i>{}</select>",
+            opts(10, &|_| " selected")
+        ),
+        /* Options an `<optgroup>` or a `<div>` directly in the select holds
+         * are not in its list: the state answers for them too. */
+        format!(
+            "<select>{sc}{}</select>",
+            (0..6)
+                .map(|g| format!(
+                    "<optgroup label=g{g}>{}</optgroup>",
+                    opts(5, &|i| if i == g { " selected" } else { "" })
+                ))
+                .collect::<String>()
+        ),
+        format!(
+            "<select>{sc}<optgroup>{}</optgroup>{}</select>",
+            opts(10, &|_| ""),
+            opts(10, &|_| "")
+        ),
+        format!(
+            "<select>{sc}{}<div>{}</div>{}</select>",
+            opts(5, &|_| ""),
+            opts(10, &|_| " selected"),
+            opts(5, &|_| "")
+        ),
+        format!(
+            "<select>{sc}<div><optgroup>{}</optgroup></div>{}</select>",
+            opts(10, &|_| " selected"),
+            opts(5, &|_| "")
+        ),
+    ];
+    for input in &cases {
+        same(input);
+    }
+}
+
 /// Whether both parsers accept `input` under `limit`, or refuse it the same
 /// way.
 fn same_verdict(input: &[u8], limit: DepthLimit) {
@@ -426,7 +537,6 @@ fn same_verdict(input: &[u8], limit: DepthLimit) {
 
 #[test]
 fn the_port_guards_as_lexbor_does() {
-    use crate::html::tree::guard::MAX_SELECT_OPTIONS;
     for n in [397, 398, 399, 400, 401] {
         let deep = "<div>".repeat(n);
         same_verdict(deep.as_bytes(), DepthLimit::DEFAULT);
@@ -446,19 +556,6 @@ fn the_port_guards_as_lexbor_does() {
         ] {
             same_verdict(input.as_bytes(), DepthLimit::at_most(d));
         }
-    }
-    for n in [MAX_SELECT_OPTIONS, MAX_SELECT_OPTIONS + 1] {
-        let opts = "<option>".repeat(n);
-        same_verdict(format!("<select>{opts}").as_bytes(), DepthLimit::DEFAULT);
-        same_verdict(
-            format!("<select><optgroup>{opts}").as_bytes(),
-            DepthLimit::DEFAULT,
-        );
-        same_verdict(format!("<datalist>{opts}").as_bytes(), DepthLimit::DEFAULT);
-        same_verdict(
-            format!("<select>{}", "<option>x</option>".repeat(n)).as_bytes(),
-            DepthLimit::DEFAULT,
-        );
     }
 }
 
@@ -614,7 +711,6 @@ fn the_port_parses_random_fragments_as_lexbor_does() {
 
 #[test]
 fn the_port_guards_fragments_as_lexbor_does() {
-    use crate::html::tree::guard::MAX_SELECT_OPTIONS;
     for ctx in ["body", "select", "td", "svg svg"] {
         let (tag, ns) = context_ids(ctx);
         for n in [398, 399, 400, 401] {
@@ -622,16 +718,6 @@ fn the_port_guards_fragments_as_lexbor_does() {
             let l = lexbor_fragment(input.as_bytes(), tag, ns, DepthLimit::DEFAULT).err();
             let p = port_fragment(input.as_bytes(), tag, ns, DepthLimit::DEFAULT).err();
             assert_eq!(l.is_some(), p.is_some(), "{n} in {ctx}");
-        }
-        for n in [MAX_SELECT_OPTIONS, MAX_SELECT_OPTIONS + 1] {
-            for input in [
-                "<option>".repeat(n),
-                format!("<optgroup>{}", "<option>".repeat(n)),
-            ] {
-                let l = lexbor_fragment(input.as_bytes(), tag, ns, DepthLimit::DEFAULT).err();
-                let p = port_fragment(input.as_bytes(), tag, ns, DepthLimit::DEFAULT).err();
-                assert_eq!(l.is_some(), p.is_some(), "{n} options in {ctx}");
-            }
         }
     }
 }

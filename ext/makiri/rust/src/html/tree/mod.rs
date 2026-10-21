@@ -302,6 +302,8 @@ pub(crate) struct NodeState {
     pub(crate) valueless: NodeSet,
     /// The options whose selectedness is true.
     pub(crate) selected: NodeSet,
+    /// What the selectedness setting algorithm last left each select with.
+    pub(crate) selects: select::SelectStates,
 }
 
 /// `lxb_html_tree_t`, building into one arena document.
@@ -564,7 +566,7 @@ impl<'d> TreeBuilder<'d> {
     /// a mode consumes it.
     pub(crate) fn process(&mut self, tkz: &mut Tokenizer<'_, '_>) -> TreeStatus {
         let mut tok = Tok::of(tkz);
-        /* The guard reads the token as the tokenizer handed it over. */
+        /* The stamps read the token as the tokenizer handed it over. */
         let handed = tok;
         let before = self.stamp_before(&handed);
         /* An aborted parse has emptied the stack: reprocessing would only
@@ -572,7 +574,7 @@ impl<'d> TreeBuilder<'d> {
         while !self.dispatch(tkz, &mut tok) && self.status == TreeStatus::Ok {}
         tkz.set_current_namespace(self.current_namespace());
         self.stamp_after(before);
-        if self.status == TreeStatus::Ok && !self.guard_after(&handed) {
+        if self.status == TreeStatus::Ok && !self.guard_after() {
             self.status = TreeStatus::Error;
         }
         self.status
