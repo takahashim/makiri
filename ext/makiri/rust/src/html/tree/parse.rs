@@ -56,7 +56,7 @@ pub struct Parsed {
 /// `lxb_html_document_parse`, unguarded and unstamped: tokenize `input` -
 /// valid UTF-8, the whole document - and build its tree.
 pub fn parse_document(input: &[u8]) -> Result<Parsed, ParseFailure> {
-    parse_with(input, Guard::default(), Stamping::default())
+    parse_with(input, Guard::default(), Stamping::default(), true)
 }
 
 /// Tokenize `input` into `tree`, as Lexbor's
@@ -77,10 +77,18 @@ pub(super) fn drive(
     tkz.run()
 }
 
-/// [`parse_document`] under `guard`, stamping as `stamping` says.
-fn parse_with(input: &[u8], guard: Guard, stamping: Stamping) -> Result<Parsed, ParseFailure> {
+/// [`parse_document`] under `guard`, stamping as `stamping` says, and
+/// keeping the parse errors only when `record_errors` (`Parsed::errors` is
+/// empty otherwise).
+fn parse_with(
+    input: &[u8],
+    guard: Guard,
+    stamping: Stamping,
+    record_errors: bool,
+) -> Result<Parsed, ParseFailure> {
     let mut doc = Document::new(0).map_err(|DomOom| ParseFailure::Oom)?;
-    let mut tree = TreeBuilder::for_document(&mut doc, guard, stamping);
+    let mut tree =
+        TreeBuilder::for_document(&mut doc, guard, stamping).recording_errors(record_errors);
     let status = drive(&mut tree, input, false, |_| {});
     if let Some(stop) = tree.guard_stopped() {
         return Err(ParseFailure::Guard(stop));
@@ -125,6 +133,7 @@ pub fn parse_html(
         bytes,
         Guard::for_document(limit),
         Stamping::document(bytes.len()),
+        false,
     )?;
     let lines = lines_build(bytes);
     drop(input);

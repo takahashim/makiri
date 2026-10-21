@@ -321,6 +321,10 @@ pub struct TreeBuilder<'d> {
     template_modes: Vec<Mode>,
     pending: PendingTable,
     errors: Vec<TreeError>,
+    /// Whether [`parse_error`](Self::parse_error) keeps what it is told:
+    /// only a caller that reads `errors` asks, since a document of nothing
+    /// but stray end tags makes one record per few bytes of input.
+    record_errors: bool,
     foster_parenting: bool,
     frameset_ok: bool,
     scripting: bool,
@@ -354,6 +358,7 @@ impl<'d> TreeBuilder<'d> {
             template_modes: Vec::new(),
             pending: PendingTable::default(),
             errors: Vec::new(),
+            record_errors: false,
             foster_parenting: false,
             frameset_ok: true,
             scripting: false,
@@ -376,6 +381,15 @@ impl<'d> TreeBuilder<'d> {
         TreeBuilder {
             stamping,
             ..TreeBuilder::new(doc, guard)
+        }
+    }
+
+    /// Keep the parse errors, when `record`: only for a caller that reads
+    /// them ([`errors`](Self::errors)).
+    pub(crate) fn recording_errors(self, record: bool) -> TreeBuilder<'d> {
+        TreeBuilder {
+            record_errors: record,
+            ..self
         }
     }
 
@@ -471,6 +485,9 @@ impl<'d> TreeBuilder<'d> {
 
     /// `lxb_html_tree_parse_error`.
     pub(crate) fn parse_error(&mut self, tok: &Tok, id: TreeErrorId) {
+        if !self.record_errors {
+            return;
+        }
         let _ = self.errors.falloc_push(TreeError {
             id,
             begin: tok.begin,
