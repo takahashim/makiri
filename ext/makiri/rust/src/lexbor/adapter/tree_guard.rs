@@ -115,7 +115,7 @@ impl<const PANIC_PROBE: bool> TokenHook<PANIC_PROBE> {
                 delegate: None,
                 delegate_ctx: core::ptr::null_mut(),
                 tree: core::ptr::null(),
-                max_open: limit.max_open(synthetic),
+                max_open: limit.max_open(synthetic).unwrap_or(usize::MAX),
                 select: core::ptr::null(),
                 options: 0,
                 context: OptionContext::None,
