@@ -132,6 +132,9 @@ pub enum Fix {
     C19,
     /// `:has()` is not valid inside `:has()`.
     C20,
+    /// A type or universal selector written with a namespace prefix (`|E`,
+    /// `ns|*`) may only begin a compound: `|E|*` and `.x|a` are invalid.
+    C28,
     /// A selector's namespace prefix is resolved against the caller's
     /// bindings (M6, M7): `p|E` is E in that namespace, `|E` E in none, an
     /// undeclared prefix invalid. Lexbor ignores every prefix. A matcher
@@ -234,6 +237,10 @@ pub fn css_explains(input: &[u8]) -> Vec<Fix> {
      * simple selectors to fill a component (511). */
     if input.contains(&b':') || input.contains(&b'|') || input.len() >= 1000 {
         fixes.push(Fix::C23);
+    }
+    /* C28: a namespace bar. */
+    if input.contains(&b'|') {
+        fixes.push(Fix::C28);
     }
     /* C4: a backslash at the end of the input. */
     if input.last() == Some(&b'\\') {

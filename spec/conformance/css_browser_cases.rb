@@ -43,7 +43,9 @@ module CssBrowserCases
     "p:empty", "svg a:link",
     # language, scope and the rest
     ":lang(en)", ":lang(fr)", ":dir(ltr)", ":scope", ":scope > *", ":defined",
-    "::before", "p::before", ":current", ":foo", "foo(", "p:nth-child(", ""
+    "::before", "p::before", ":current", ":foo", "foo(", "p:nth-child(", "",
+    # a namespaced type selector only begins a compound (C28)
+    "|p|*", ".x|p", "[title]|p", "*|p|*", "p |li", "ul>*|li", "*|p.x"
   ].freeze
 
   DOCUMENTS = [

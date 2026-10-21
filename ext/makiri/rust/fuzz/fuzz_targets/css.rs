@@ -24,7 +24,7 @@ use common::*;
 use makiri::css::{compile_owned, CssNs, Form};
 use makiri::css_match::dom::CssNode;
 use makiri::css_match::{matches_any, select_all, select_first, Namespaces, Scratch};
-use makiri::selectors::ast::{Combinator, FunctionArg, Lists, PseudoClass, Simple};
+use makiri::selectors::ast::{FunctionArg, Lists, PseudoClass, Simple};
 use makiri::xml::css::{XmlHost, XmlNode};
 use makiri::xml::NodeId;
 
@@ -43,9 +43,7 @@ const DEFAULT: &[u8] = b"http://example.com/default";
 
 /// Whether the lowering is not compared on the selector: it holds a type
 /// (`bare_type`) or universal selector written without a namespace prefix,
-/// which the two read differently, or a compound with two of them (`|E|*`,
-/// which the parser takes as Lexbor's does), where the lowering lets the
-/// second replace the first's name; or `:empty`, which the lowering counts
+/// which the two read differently, or `:empty`, which the lowering counts
 /// as Lexbor does and the matcher as the browsers do (M10). Walked on a work list, as the matcher
 /// compiles it, so no input nests the harness's stack.
 fn not_comparable(groups: Lists<'_>, bare_type: bool) -> bool {
@@ -53,17 +51,10 @@ fn not_comparable(groups: Lists<'_>, bare_type: bool) -> bool {
     while let Some(lists) = pending.pop() {
         for list in lists {
             let mut sel = list.first();
-            let mut typed = 0;
             while let Some(s) = sel {
-                if s.combinator() != Combinator::Close {
-                    typed = 0;
-                }
                 match s.simple() {
                     Simple::Type | Simple::Universal => {
-                        typed += 1;
-                        let bare =
-                            s.ns().is_none() && (bare_type == matches!(s.simple(), Simple::Type));
-                        if bare || typed > 1 {
+                        if s.ns().is_none() && (bare_type == matches!(s.simple(), Simple::Type)) {
                             return true;
                         }
                     }

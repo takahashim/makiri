@@ -479,6 +479,14 @@ CSS Syntax Level 3 と Selectors Level 4（w3c/csswg-drafts の `7b4c69ecaf9289d
 - **再現**：`a { color: red; & b { c: d } e: f }`。出力は `color: red` だけで、`& b { c: d }` と `e: f` は返らない。
 - **理由**：Lexbor も CSS Nesting を扱わず、Lexbor を使っていた頃の `parse_stylesheet` も同じ答えだった。入れ子の規則を返すには、出力の形を足すことに加えて、セレクタパーサに `&` と相対セレクタの扱いを足す必要がある。利用側（dommy）が入れ子の CSS を必要とするまで入れない。
 
+### C28 compound の途中の名前空間つき型セレクタ
+
+- **分類**：参照実装の誤り。移植版で直した。
+- **仕様**：compound は `<type-selector>? <subclass-selector>* ...` で、型セレクタ（全称セレクタを含む）は先頭に高々一つ。
+- **再現**：`|E|*`、`.x|a`、`[x]|a`、`a|*|b`。仕様ではどれも無効で、Chromium、Firefox、WebKit は SyntaxError。Lexbor は compound の終わりで `|` を見ると、`||` でなければ結合子のないまま compound の続きに戻るので、二つ目の型セレクタを同じ compound に足して受け付ける（`|E|*` は「名前空間のない E」として照合され、旧来の XML の XPath への変換は二つ目で名前を上書きして名前空間のない要素すべてを返していた）。接頭辞のない `a*` や `[x]a` は Lexbor も無効にする。
+- **移植版**：`selectors/parser.rs` の `complex_end` が、結合子のない `|` を無効にする。`a |b` や `a>|b` のように結合子のあとの `|` は新しい compound の始まりで、有効のまま。差分の許可は、入力に `|` があるとき。
+- **テスト**：`spec/css_standard_steps_spec.rb`、`spec/conformance/css_browser_diff.rb`。
+
 ### C27 `[*|a]`（任意の名前空間の属性）
 
 - **分類**：意図した差（監査の css_selectors U1）。対応しない（2026-10-18 決定）。

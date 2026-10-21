@@ -120,6 +120,9 @@
   in the element's own namespace replaces the attribute it set before,
   where it appended a second, and an attribute taken off its element keeps
   its `namespace_uri`, where it became nil.
+* A namespaced type selector in the middle of a compound (`|E|*`, `.x|a`)
+  raises `Makiri::CSS::SyntaxError`, as browsers do (C28); it was read as a
+  second type selector of the compound.
 * `:any-link` / `:link` match an HTML `a` or `area`, or an SVG `a`, with an
   `href`, as browsers do (M2): `<link href>` matched `:link` and `<map>`
   `:any-link`. `:read-write` / `:read-only` follow the HTML Standard (M9):

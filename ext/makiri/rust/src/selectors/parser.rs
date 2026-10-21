@@ -1270,6 +1270,14 @@ impl<'a> Parser<'a> {
                                 self.consume();
                                 self.sel.combinator = comb::CELL;
                             } else {
+                                /* A `|` with no combinator before it starts a
+                                 * type selector in the middle of a compound
+                                 * (`|E|*`, `.x|a`), which the grammar allows
+                                 * only first (C28). Lexbor appends it. */
+                                if self.sel.combinator == comb::CLOSE && compat::fixed(Fix::C28) {
+                                    self.done();
+                                    return self.unexpected();
+                                }
                                 break;
                             }
                         }

@@ -179,4 +179,17 @@ RSpec.describe "CSS Syntax 3 and Selectors 4 steps the CSS parser follows" do
     xml = Makiri::XML("<r><e><![CDATA[]]></e><e><?pi x?></e><e>t</e></r>")
     expect(xml.css("e:empty").size).to eq(2)
   end
+
+  # C28: <compound-selector> = [ <type-selector>? <subclass-selector>* ... ]:
+  # a type selector, namespaced or not, only begins a compound.
+  it "refuses a namespaced type selector in the middle of a compound" do
+    doc = Makiri::HTML("<a class=x>t</a>")
+    %w[|a|* .x|a [x]|a *|a|b].each do |sel|
+      expect { doc.css(sel) }.to raise_error(Makiri::CSS::SyntaxError), sel
+    end
+    expect(doc.css("|a.x")).to be_empty
+    expect(doc.css("*|a.x").size).to eq(1)
+    expect(doc.css("body *|a").size).to eq(1)
+    expect(Makiri::XML("<r><a/></r>").css("r >|a").size).to eq(1)
+  end
 end
