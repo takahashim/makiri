@@ -59,7 +59,9 @@ fn not_comparable(groups: Lists<'_>, bare_type: bool) -> bool {
                 if starts && !bare_type && !matches!(s.simple(), Simple::Type | Simple::Universal) {
                     return true;
                 }
-                starts = s.next().is_some_and(|n| n.combinator() != Combinator::Close);
+                starts = s
+                    .next()
+                    .is_some_and(|n| n.combinator() != Combinator::Close);
                 match s.simple() {
                     Simple::Type | Simple::Universal => {
                         if s.ns().is_none() && (bare_type == matches!(s.simple(), Simple::Type)) {

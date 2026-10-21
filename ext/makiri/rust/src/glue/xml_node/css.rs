@@ -16,9 +16,9 @@ use crate::bridge::gvl::held;
 use crate::bridge::node_set::node_set_from;
 use crate::bridge::string::ruby_verified_text;
 use crate::css_match;
+use crate::css_match::cache;
 use crate::glue::css::{match_error, parse_error, query_error, CssArgs};
 use crate::init::MOD_XML_NODE_METHODS;
-use crate::lexbor::selector_cache;
 use crate::xml::css::XmlNode;
 
 /// `#css`: every matching descendant, in document order.
@@ -31,7 +31,7 @@ fn css(ruby: &Ruby, this: XmlSelf, selector: Value, ns: Value) -> Result<Value, 
         let root = XmlNode::new(this.doc_ref(), this.id);
         let matched = args
             .with_namespaces(|ns| {
-                selector_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
+                cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
                     css_match::select_all(scratch, root, groups, ns)
                 })
             })?
@@ -52,7 +52,7 @@ fn at_css(ruby: &Ruby, this: XmlSelf, selector: Value, ns: Value) -> Result<Opti
         let root = XmlNode::new(this.doc_ref(), this.id);
         let matched = args
             .with_namespaces(|ns| {
-                selector_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
+                cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
                     css_match::select_first(scratch, root, groups, ns)
                 })
             })?
@@ -74,7 +74,7 @@ fn css_matches(ruby: &Ruby, this: XmlSelf, selector: Value, ns: Value) -> Result
         let node = XmlNode::new(this.doc_ref(), this.id);
         let matched = args
             .with_namespaces(|ns| {
-                selector_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
+                cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
                     css_match::matches_any(scratch, groups, ns, node)
                 })
             })?

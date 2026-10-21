@@ -172,7 +172,7 @@ P で始まる項目は HTML パーサの振る舞いである。
 - **分類**：参照実装の未対応（監査の foreign F3）。移植版で直した（第 8 段）。
 - **仕様**：fragment の解析で作る文書は、context の文書が quirks なら quirks、limited-quirks なら limited-quirks になる。
 - **再現**：doctype のない文書（quirks）の要素に `inner_html = "<p><table></table>"`。仕様では quirks mode なので `<table>` が `p` を閉じず、`<p><table></table></p>` になる。Lexbor は fragment の文書を常に no-quirks で作るので `<p></p><table></table>` になる。
-- **移植版**：`html/tree/fragment.rs` の `ContextFacts::compat_mode` を fragment の文書が受け取り、`lexbor/arena_fragment.rs` の `FragmentContext::element_into` が context の文書の mode を渡す。要素を context にとる解析はどれもこれを通る（`inner_html=`、`outer_html=`、`Node#parse`、`DocumentFragment.parse` と `Document#fragment` の `context:` に要素を与えたとき。別の文書の要素なら、その要素の文書の mode）。名前で与える context（`DocumentFragment.parse`、`Document#fragment` の `context:` に文字列か nil）には要素も文書もないので、no-quirks のまま（`DocumentFragment.parse` の裏の文書は doctype がなく quirks なので、写すとこの API の答えが変わる）。差分の比較は既定の `ContextFacts`（Lexbor の前提）で解析するので、許可は要らない。
+- **移植版**：`html/tree/fragment.rs` の `ContextFacts::compat_mode` を fragment の文書が受け取り、`html/fragment.rs` の `FragmentContext::element_into` が context の文書の mode を渡す。要素を context にとる解析はどれもこれを通る（`inner_html=`、`outer_html=`、`Node#parse`、`DocumentFragment.parse` と `Document#fragment` の `context:` に要素を与えたとき。別の文書の要素なら、その要素の文書の mode）。名前で与える context（`DocumentFragment.parse`、`Document#fragment` の `context:` に文字列か nil）には要素も文書もないので、no-quirks のまま（`DocumentFragment.parse` の裏の文書は doctype がなく quirks なので、写すとこの API の答えが変わる）。差分の比較は既定の `ContextFacts`（Lexbor の前提）で解析するので、許可は要らない。
 - **テスト**：WPT にない。`spec/html_standard_steps_spec.rb`。
 
 ### P18 fragment の context の属性（`annotation-xml` の `encoding`）
@@ -180,7 +180,7 @@ P で始まる項目は HTML パーサの振る舞いである。
 - **分類**：参照実装の未対応（監査の foreign F4）。移植版で直した（第 8 段）。
 - **仕様**：fragment の解析は、context 要素の local name と属性から start tag token を作り、HTML integration point の判定などに使う。`encoding` が `text/html` か `application/xhtml+xml` の MathML `annotation-xml` は HTML integration point で、その中の開始タグは HTML の規則で処理される。
 - **再現**：`<annotation-xml encoding="text/html">` に `inner_html = "<foo></foo>"`。仕様では `foo` は HTML 名前空間の要素。Lexbor は context を tag と名前空間だけで作るので integration point にならず、`foo` は MathML の要素になる。文書として解析した `<annotation-xml encoding="text/html"><foo>` は前から HTML だった。
-- **移植版**：`lexbor/arena_fragment.rs` の `FragmentContext::element_into`（P17 と同じく、要素を context にとる解析のすべて）が context の `encoding` を読み、`ContextFacts::html_integration_point` として渡す。`html/tree/actions.rs` の `html_integration_point` が、その context を integration point と答える。属性のうち解析が読むのはこれだけなので、属性そのものは写さない。差分の比較は既定の `ContextFacts` で解析するので、許可は要らない。
+- **移植版**：`html/fragment.rs` の `FragmentContext::element_into`（P17 と同じく、要素を context にとる解析のすべて）が context の `encoding` を読み、`ContextFacts::html_integration_point` として渡す。`html/tree/actions.rs` の `html_integration_point` が、その context を integration point と答える。属性のうち解析が読むのはこれだけなので、属性そのものは写さない。差分の比較は既定の `ContextFacts` で解析するので、許可は要らない。
 - **テスト**：WPT にない。`spec/html_standard_steps_spec.rb`。
 
 ### P20 fragment の form element pointer
@@ -188,7 +188,7 @@ P で始まる項目は HTML パーサの振る舞いである。
 - **分類**：参照実装の未対応（監査の foreign F6）。移植版で直した（第 8 段）。
 - **仕様**：fragment の解析は、form element pointer を context 要素に最も近い form 要素（context 自身か、祖先をまっすぐたどったもの）に設定する。
 - **再現**：`<form><div id=a></div></form>` の `#a` に `inner_html = "<form><input></form>x"`。仕様では pointer が祖先の form を指すので、`<form>` 開始タグと `</form>` は無視され、`<input>x` になる。Lexbor は context 自身が form のときだけ pointer を設定するので、`<form><input></form>x` になる。
-- **移植版**：`lexbor/arena_fragment.rs` の `FragmentContext::element_into`（P17 と同じく、要素を context にとる解析のすべて）が context と祖先に HTML の `form` があるかを調べ、`ContextFacts::in_form` として渡す。`html/tree/fragment.rs` の `parse_fragment` が、そのとき fragment の文書に form を作って pointer に置く（context 自身が form のときと同じ）。差分の比較は既定の `ContextFacts` で解析するので、許可は要らない。
+- **移植版**：`html/fragment.rs` の `FragmentContext::element_into`（P17 と同じく、要素を context にとる解析のすべて）が context と祖先に HTML の `form` があるかを調べ、`ContextFacts::in_form` として渡す。`html/tree/fragment.rs` の `parse_fragment` が、そのとき fragment の文書に form を作って pointer に置く（context 自身が form のときと同じ）。差分の比較は既定の `ContextFacts` で解析するので、許可は要らない。
 - **テスト**：WPT にない。`spec/html_standard_steps_spec.rb`。
 
 ### P19 独自の名前空間の context（CDATA と adjust foreign attributes）
@@ -196,7 +196,7 @@ P で始まる項目は HTML パーサの振る舞いである。
 - **分類**：参照実装の未対応（監査の foreign F5）。移植版で直した（第 8 段）。
 - **仕様**：context が HTML 以外の名前空間（名前空間なしを含む）の要素なら、adjusted current node はその要素なので、`<![CDATA[` は CDATA section になる。また foreign content の "any other start tag" は、名前空間によらず adjust foreign attributes を行う。
 - **再現**：`urn:x` 名前空間の要素に `inner_html = '<bar xlink:href="a"/><![CDATA[x<y]]>'`。仕様では `xlink:href` は XLink 名前空間の属性で、CDATA は text `x<y` になる。Lexbor は静的でない名前空間を「なし」として渡し、tokenizer は「なし」で CDATA を認めないので comment `<!--[CDATA[x<y]]-->` になる。adjust foreign attributes は MathML と SVG の中でしか行わない。
-- **移植版**：`lexbor/arena_fragment.rs` の `FragmentContext::element_into`（P17 と同じく、要素を context にとる解析のすべて）が、名前空間を「なし」として渡す context について `ContextFacts::foreign_namespace` を立て、`html/tree/fragment.rs` が tokenizer の `undef_is_foreign` に写す。`html/tree/modes/foreign_content.rs` の `anything_else` は、MathML と SVG 以外の名前空間でも adjust foreign attributes を行う（`AttrAdjust::Foreign`。文書の解析ではその名前空間の要素は現れない）。差分の比較は既定の `ContextFacts` と、HTML、SVG、MathML の context で解析するので、許可は要らない。
+- **移植版**：`html/fragment.rs` の `FragmentContext::element_into`（P17 と同じく、要素を context にとる解析のすべて）が、名前空間を「なし」として渡す context について `ContextFacts::foreign_namespace` を立て、`html/tree/fragment.rs` が tokenizer の `undef_is_foreign` に写す。`html/tree/modes/foreign_content.rs` の `anything_else` は、MathML と SVG 以外の名前空間でも adjust foreign attributes を行う（`AttrAdjust::Foreign`。文書の解析ではその名前空間の要素は現れない）。差分の比較は既定の `ContextFacts` と、HTML、SVG、MathML の context で解析するので、許可は要らない。
 - **テスト**：WPT にない。`spec/html_standard_steps_spec.rb`。
 
 ### P21 重複した属性名
@@ -272,7 +272,7 @@ P で始まる項目は HTML パーサの振る舞いである。
 ### 入力と資源の制限
 
 - NUL を含む名前や不正な UTF-8 を、API の境界で例外にする（`CLAUDE.md` の text-input contract）。HTML の入力そのものは置き換えて読む。
-- stylesheet の at-rule の入れ子が 64 を超えると例外にする（`lexbor/stylesheet.rs` の `MAX_DEPTH`）。
+- stylesheet の at-rule の入れ子が 64 を超えると例外にする（`selectors/stylesheet.rs` の `MAX_DEPTH`）。
 - メモリ不足では stylesheet の解析全体を失敗にする（S3 と同じ方針）。
 
 ## 安全性のための差
@@ -413,7 +413,7 @@ CSS Syntax Level 3 と Selectors Level 4（w3c/csswg-drafts の `7b4c69ecaf9289d
 - **分類**：移植版の値の正規化（C1）から生じた差（監査の css_syntax F7）。直した（第 8 段）。
 - **仕様**：直列化は解析と round-trip する（空白の連続を一つにすることだけは許す）。`\` の delim token は、`\` と改行として書く。トークナイザが `\` を delim にするのは、その後が改行のときだけである。
 - **再現**：`a{b: c\` 改行 `d}`。C1 の規則は空白 token を空白一つにするので、値は `c\ d` になり、読み直すと `\ ` がエスケープになって ident 一つ（`c d`）になる。値の末尾の `\`（`a{e: x \` 改行 `}`）は、範囲が改行の前で終わるので、読み直すと U+FFFD のエスケープになる。
-- **移植版**：`lexbor/stylesheet.rs` の `normalize_value` が、`\` の delim の後に改行を書き、続く空白はその改行で表す。値の範囲の末尾にエスケープされていない `\` があり、元の入力でその後が改行なら、改行を足す。比較のテストは規則の構造だけを比べるので、許可は要らない。
+- **移植版**：`selectors/stylesheet.rs` の `normalize_value` が、`\` の delim の後に改行を書き、続く空白はその改行で表す。値の範囲の末尾にエスケープされていない `\` があり、元の入力でその後が改行なら、改行を足す。比較のテストは規則の構造だけを比べるので、許可は要らない。
 - **テスト**：`spec/css_standard_steps_spec.rb`。
 
 ### C12 `!important` の判定
@@ -469,7 +469,7 @@ CSS Syntax Level 3 と Selectors Level 4（w3c/csswg-drafts の `7b4c69ecaf9289d
 - **分類**：出力の形の不足（監査の css_syntax U1）。直した（第 8 段）。
 - **仕様**：block を持つ at-rule は、宣言の列と child rules を持つ。`@font-face`（`<declaration-list>`）や `@page`（`<declaration-rule-list>`）の中身は宣言である。
 - **再現**：`@font-face { font-family: x }`。パーサは宣言を解析していたが、読み取り層が捨てていたので、出力は `rules: []` だけだった。Lexbor の DOM を使っていた頃の `parse_stylesheet` も同じだった。
-- **移植版**：`lexbor/stylesheet.rs` の `block_declarations` が block の宣言の列をすべて順に読み、at-rule の Hash に `declarations:` として返す（宣言がなければ `[]`）。既存のキーの中身は変わらない。
+- **移植版**：`selectors/stylesheet.rs` の `block_declarations` が block の宣言の列をすべて順に読み、at-rule の Hash に `declarations:` として返す（宣言がなければ `[]`）。既存のキーの中身は変わらない。
 - **テスト**：`spec/css_standard_steps_spec.rb`。
 
 ### C17 style rule の入れ子の規則（CSS Nesting）

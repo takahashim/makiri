@@ -15,6 +15,10 @@ pub mod pseudo;
 pub mod rules;
 mod specificity;
 mod strtod;
+/// `parse_stylesheet`'s reader: the stylesheet parse walked into owned values.
+pub mod stylesheet;
+/// A parsed selector written back as CSSOM text, for the stylesheet reader.
+pub mod text;
 pub mod token;
 pub mod tokenizer;
 

@@ -2,7 +2,7 @@
 //!
 //! `css` covers `Makiri::XML`'s CSS (the lowering to XPath) and `html` the HTML
 //! parse. This is the path `Node#css` / `#at_css` / `#matches?` run: the
-//! compiled-selector cache (`selector_cache::with_compiled` - the parser
+//! compiled-selector cache (`cache::with_compiled` - the parser
 //! port, the cached lists, the flush at the cap,
 //! the bypass and its re-test, and the engine's kept `Scratch`), then
 //! `css_match` - `compile`, the chain loop and its backtracking,
@@ -32,13 +32,13 @@ use libfuzzer_sys::fuzz_target;
 
 mod common;
 use common::*;
+use makiri::css_match::cache;
 use makiri::css_match::{matches_any, select_all, select_first, Namespaces, Scratch};
 use makiri::gvl::Gvl;
 use makiri::html::dom::css::HtmlHost;
 use makiri::html_dom::html::HtmlNode;
 use makiri::html_dom::post_parse::parse_html;
 use makiri::html_dom::tree_guard::DepthLimit;
-use makiri::lexbor::selector_cache;
 use makiri::selectors::ast::Lists;
 
 /// How many elements are asked `matches?` each: each is a full query, with
@@ -62,7 +62,7 @@ fuzz_target!(|data: &[u8]| {
     let gvl = Gvl::exclusive();
     let root = p.doc().as_node();
     for _ in 0..2 {
-        let answered = selector_cache::with_compiled(&gvl, text.as_bytes(), |groups, scratch| {
+        let answered = cache::with_compiled(&gvl, text.as_bytes(), |groups, scratch| {
             check(root, groups, scratch)
         });
         // A refusal is the budget doing its job, and each refused query spends

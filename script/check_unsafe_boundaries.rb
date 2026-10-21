@@ -99,19 +99,19 @@ FORBID_ROOTS = %w[css/mod.rs glue/mod.rs css_match/mod.rs selectors/mod.rs xml/m
 FORBID_FILES = %w[
   bridge/dom_error.rs child_index.rs conformance/mod.rs
   css/build.rs css/lower.rs css/mod.rs
-  css_match/mod.rs cutf8.rs cutf8/verify.rs
-  dom_rules.rs engine_error.rs falloc/verify.rs
-  glue/css.rs glue/html_doc.rs glue/html_node/css.rs
-  glue/html_node/mutate.rs glue/html_node/read.rs glue/html_node/serialize.rs
-  glue/mod.rs glue/node.rs glue/node_set.rs
-  glue/query.rs glue/xml_doc.rs glue/xml_node/css.rs
-  glue/xml_node/mod.rs glue/xml_node/mutate.rs glue/xml_node/ns.rs
-  glue/xml_node/read.rs glue/xml_node/serialize.rs glue/xpath_context.rs
-  html/dom/mod.rs html/mod.rs html/tokenizer/mod.rs
-  html/tree/mod.rs html_dom.rs lexbor/adapter/dom_index.rs
-  lexbor/contains_guard.rs lexbor/selector_cache.rs lexbor/selector_text.rs
-  lexbor/stylesheet.rs limits.rs node_type.rs
-  ptr_table.rs rust_tests.rs selectors/mod.rs
+  css_match/cache.rs css_match/mod.rs cutf8.rs
+  cutf8/verify.rs dom_rules.rs engine_error.rs
+  falloc/verify.rs glue/css.rs glue/html_doc.rs
+  glue/html_node/css.rs glue/html_node/mutate.rs glue/html_node/read.rs
+  glue/html_node/serialize.rs glue/mod.rs glue/node.rs
+  glue/node_set.rs glue/query.rs glue/xml_doc.rs
+  glue/xml_node/css.rs glue/xml_node/mod.rs glue/xml_node/mutate.rs
+  glue/xml_node/ns.rs glue/xml_node/read.rs glue/xml_node/serialize.rs
+  glue/xpath_context.rs html/dom/mod.rs html/mod.rs
+  html/tokenizer/mod.rs html/tree/mod.rs html_dom.rs
+  lexbor/adapter/dom_index.rs lexbor/contains_guard.rs limits.rs
+  node_type.rs ptr_table.rs rust_tests.rs
+  selectors/mod.rs selectors/stylesheet.rs selectors/text.rs
   stack.rs text.rs utf8_input.rs
   xml/arena.rs xml/attr_key.rs xml/chars/expand.rs
   xml/chars/mod.rs xml/css.rs xml/css_tests.rs
@@ -217,7 +217,7 @@ LEXBOR_ABI_COUNTS = {}.freeze
 
 # The engine layers are Ruby-free: `lexbor/`, `xml/`, `xpath/` and `css/` take
 # bytes and return their own error types, and the Ruby half of a feature lives in
-# `bridge/` or `glue/`. `lexbor/fragment.rs` and `lexbor/stylesheet.rs` once
+# `bridge/` or `glue/`. `lexbor/fragment.rs` and `selectors/stylesheet.rs` once
 # reached back up for a `VALUE`, the String borrow rules and `Makiri::Error` - an
 # engine module holding the bridge's invariants, and the path a raise escaped
 # along - so the table is empty and any such use fails.

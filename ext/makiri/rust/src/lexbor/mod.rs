@@ -15,11 +15,6 @@
 //! in `bridge::string::HtmlSource` and `glue::stylesheet`. Nothing here names a
 //! Ruby type, and `rake unsafe:boundaries` holds it to that.
 
-/// Fragment parsing into the arena DOM through Lexbor's tree builder.
-pub mod arena_fragment;
-/// Parsing into the arena DOM through Lexbor's tree builder.
-pub mod arena_parse;
-
 #[cfg(all(test, feature = "lexbor"))]
 mod tests;
 
@@ -87,12 +82,6 @@ pub(crate) mod css_tokens;
 /// HTML fragment parsing and import/fixup operations.
 #[cfg(feature = "lexbor")]
 pub mod fragment;
-/// The compiled-selector cache in front of `css_match`: its own
-/// process-global parser/arena, separate from `css_parser`'s (shared with the
-/// XML lowering), and the matcher's kept `Scratch`.
-pub mod selector_cache;
-/// A parsed selector written back as CSSOM text, for the stylesheet reader.
-pub mod selector_text;
 /// The OLD `lxb_selectors`-callback engine `css_match` replaced: compiled
 /// into tests only - and into the `html_css_diff` fuzz harness, through the
 /// `css-reference` feature - as the reference the differential checks
@@ -102,8 +91,6 @@ pub mod selectors;
 /// Lexbor's HTML serialization callbacks and buffer traversal.
 #[cfg(feature = "lexbor")]
 pub mod serialize;
-/// `parse_stylesheet`'s reader over the stylesheet parser port.
-pub mod stylesheet;
 /// Lexbor's stylesheet parser beside the port's, for the differential tests.
 #[cfg(all(
     feature = "lexbor",

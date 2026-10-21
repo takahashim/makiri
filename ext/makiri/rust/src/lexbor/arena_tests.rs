@@ -643,8 +643,8 @@ fn fragment_case(input: &[u8], context: &str) {
 }
 
 fn fragment_case_as_lexbor(input: &[u8], context: &str) {
+    use crate::html::fragment as af;
     use crate::lexbor::adapter::html::HtmlDocMut as LexMut;
-    use crate::lexbor::arena_fragment as af;
     use crate::lexbor::fragment as lf;
     let parsed = parse_html(b"<body>", false, DepthLimit::UNLIMITED).expect("parses");
     // SAFETY: `parsed` owns the document; only this test reads or writes it.
@@ -772,8 +772,8 @@ fn fragments_read_as_lexbor_does_on_wpt_inputs() {
 /// sides.
 #[test]
 fn fragment_contexts_resolve_alike() {
+    use crate::html::fragment as af;
     use crate::lexbor::adapter::html::HtmlDocMut as LexMut;
-    use crate::lexbor::arena_fragment as af;
     use crate::lexbor::fragment as lf;
 
     /* A context element in a custom namespace, from another document,
@@ -810,7 +810,7 @@ fn fragment_contexts_resolve_alike() {
         let mut other = crate::html::dom::Document::new(0).expect("doc");
         let mut om = arena::HtmlDocMut::new(&mut other);
         let el = om.create_element_ns(b"x", b"urn:Custom", b"").expect("el");
-        let mut target = crate::lexbor::arena_parse::empty_html_document(0).expect("doc");
+        let mut target = crate::html::tree::empty_html_document(0).expect("doc");
         let at =
             af::FragmentTag::resolve(om.read().node(el).element().expect("element"), target.doc())
                 .expect("resolve")

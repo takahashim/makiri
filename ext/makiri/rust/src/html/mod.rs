@@ -9,6 +9,7 @@
 #![forbid(unsafe_code)]
 
 pub mod dom;
+pub mod fragment;
 pub mod names;
 pub mod res;
 pub mod tokenizer;

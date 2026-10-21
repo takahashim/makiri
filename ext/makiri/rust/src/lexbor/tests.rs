@@ -196,7 +196,7 @@ mod guard {
     /// failed parse left behind).
     #[test]
     fn the_review_crash_inputs_parse_as_a_bad_rule() {
-        use crate::lexbor::stylesheet::{parse, Rule};
+        use crate::selectors::stylesheet::{parse, Rule};
         for input in [
             "a{content:\"x\r}b:lexbor-contains(#x){color:red}",
             "a{content:\"x\n}b:lexbor-contains(#x){color:red}",
@@ -289,7 +289,7 @@ mod guard_tokens {
             String::from_utf8_lossy(input)
         );
         /* A crash here, not an assertion, is how this fails. */
-        let _ = crate::lexbor::stylesheet::parse(input);
+        let _ = crate::selectors::stylesheet::parse(input);
     }
 }
 
@@ -2827,7 +2827,7 @@ mod css_match {
     }
 }
 
-/// `lexbor::selector_cache` - the compiled-selector cache reintroduced for
+/// `css_match::cache` - the compiled-selector cache reintroduced for
 /// `Node#css`/`#at_css`/`#matches?` once they moved to `css_match`,
 /// mirroring `lexbor::selectors`'s adaptive `CachePolicy`/`SelectorCache` over
 /// its OWN separate parser/arena (module doc). `Gvl::exclusive()` stands in
@@ -2843,12 +2843,12 @@ mod css_match {
 /// correctness, and a rejected selector does not disturb what is already
 /// cached.
 mod selector_cache {
+    use crate::css_match::cache::with_compiled;
     use crate::css_match::select_all;
     use crate::gvl::Gvl;
     use crate::html_dom::html::{HtmlNode, RawNode};
     use crate::html_dom::post_parse::{parse_html, HtmlParsed};
     use crate::html_dom::tree_guard::DepthLimit;
-    use crate::lexbor::selector_cache::with_compiled;
 
     fn parsed(html: &[u8]) -> Box<HtmlParsed> {
         parse_html(html, true, DepthLimit::DEFAULT).expect("a document parses")
@@ -3038,11 +3038,11 @@ mod serialize_walk {
 }
 
 mod selector_text {
-    //! [`crate::lexbor::selector_text`] against Lexbor's own parser: the text
+    //! [`crate::selectors::text`] against Lexbor's own parser: the text
     //! written for a selector parses back to the same selector, whatever
     //! characters its names and values hold.
-    use crate::lexbor::selector_text::{ident, string};
-    use crate::lexbor::stylesheet::{parse, Rule};
+    use crate::selectors::stylesheet::{parse, Rule};
+    use crate::selectors::text::{ident, string};
 
     /// The `:text` of each selector of `css`'s first rule, which must be a
     /// style rule.

@@ -73,7 +73,7 @@ pub mod caught;
 pub mod gvl;
 
 /// The CSS matcher behind `Node#css`/`#at_css`/`#matches?`
-/// (`glue::html_node::css`, via `lexbor::selector_cache`): Lexbor's
+/// (`glue::html_node::css`, via `css_match::cache`): Lexbor's
 /// `lxb_selectors_*` control flow in safe Rust, on an explicit heap work
 /// stack rather than native recursion, over the selector parser's views and
 /// any DOM that implements its traits (`css_match::dom`). Ruby- and

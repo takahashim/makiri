@@ -115,7 +115,7 @@ RSpec.describe "native stack guard" do
   end
 
   # The selector text `parse_stylesheet` returns is written on a heap work
-  # list (`lexbor::selector_text`); Lexbor's own serializer it replaced
+  # list (`selectors::text`); Lexbor's own serializer it replaced
   # recursed once per nested list.
   describe "stylesheet selector text, inside a small Fiber" do
     it "writes deeply nested selector lists back in full" do
