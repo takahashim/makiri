@@ -54,8 +54,18 @@ fn has_upper(name: &[u8]) -> bool {
 }
 
 /// Open-addressing slots for a static table: `id + 1`, 0 empty. `N` is a power
-/// of two at least twice the number of names.
+/// of two at least twice the number of names - checked here, so a table
+/// that outgrew its slots is a compile error naming the reason rather than
+/// a probe loop that never ends.
 const fn static_slots<const N: usize>(names: &[&[u8]]) -> [u16; N] {
+    assert!(
+        N.is_power_of_two(),
+        "static slots: N must be a power of two"
+    );
+    assert!(
+        names.len() * 2 <= N,
+        "static slots: N must be at least twice the names - grow it"
+    );
     let mut slots = [0u16; N];
     let mut id = 0;
     while id < names.len() {
@@ -71,6 +81,29 @@ const fn static_slots<const N: usize>(names: &[&[u8]]) -> [u16; N] {
 
 static TAG_SLOTS: [u16; 512] = static_slots::<512>(&res::TAG_NAMES);
 static ATTR_SLOTS: [u16; 256] = static_slots::<256>(&res::ATTR_NAMES);
+
+/// The longest of `names`.
+const fn longest_of(names: &[&[u8]]) -> usize {
+    let mut longest = 0;
+    let mut i = 0;
+    while i < names.len() {
+        if names[i].len() > longest {
+            longest = names[i].len();
+        }
+        i += 1;
+    }
+    longest
+}
+
+/// The longest static tag or attribute name, from the tables themselves.
+const STATIC_LONGEST: usize = {
+    let (t, a) = (longest_of(&res::TAG_NAMES), longest_of(&res::ATTR_NAMES));
+    if t > a {
+        t
+    } else {
+        a
+    }
+};
 
 /// The static id for `name`, matched as Lexbor's static lookup matches it.
 #[inline]
@@ -356,8 +389,6 @@ impl Names {
 
     /// The longest name any table holds, static ones included.
     pub fn longest(&self) -> usize {
-        /* No static tag or attribute name is longer than this. */
-        const STATIC_LONGEST: usize = 32;
         STATIC_LONGEST
             .max(self.tags.longest)
             .max(self.attrs.longest)
@@ -441,6 +472,17 @@ mod tests {
         for (id, name) in res::ATTR_NAMES.iter().enumerate() {
             assert_eq!(n.attr_local_name_append(name), Ok(id));
         }
+    }
+
+    #[test]
+    fn the_static_longest_is_the_tables_longest() {
+        let longest = res::TAG_NAMES
+            .iter()
+            .chain(res::ATTR_NAMES.iter())
+            .map(|n| n.len())
+            .max();
+        assert_eq!(Some(STATIC_LONGEST), longest);
+        assert_eq!(Names::default().longest(), STATIC_LONGEST);
     }
 
     #[test]
