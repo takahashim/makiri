@@ -83,11 +83,9 @@ pub(super) fn drive(
 /// [`parse_document`] under `guard`, stamping as `stamping` says.
 fn parse_with(input: &[u8], guard: Guard, stamping: Stamping) -> Result<Parsed, ParseFailure> {
     let mut doc = Document::new(0).map_err(|DomOom| ParseFailure::Oom)?;
-    let mut tree = TreeBuilder::new(&mut doc);
-    tree.guard = guard;
-    tree.stamping = stamping;
+    let mut tree = TreeBuilder::for_document(&mut doc, guard, stamping);
     let status = drive(&mut tree, input, false, |_| {});
-    if let Some(stop) = tree.guard.stopped {
+    if let Some(stop) = tree.guard_stopped() {
         return Err(ParseFailure::Guard(stop));
     }
     if status != Status::Ok {
@@ -166,7 +164,7 @@ pub fn parse_with_panicking_hook() -> bool {
     let Ok(mut doc) = Document::new(0) else {
         return false;
     };
-    let mut tree = TreeBuilder::new(&mut doc);
+    let mut tree = TreeBuilder::for_document(&mut doc, Guard::default(), Stamping::default());
     let mut sink = Panicking(&mut tree);
     let mut tkz = Tokenizer::new(b"<p>x</p>", &mut sink);
     tkz.chunk() == Status::Ok

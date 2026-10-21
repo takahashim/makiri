@@ -911,8 +911,8 @@ impl TreeBuilder<'_> {
                 fake.base = Some(node);
                 let el = self.create_element_for_fake(&fake)?;
                 node = el;
-                self.afe[afe_node_idx] = Some(node);
-                self.open[node_idx] = node;
+                self.afe.replace(afe_node_idx, node);
+                self.open.replace(node_idx, node);
 
                 /* State 14.8 */
                 if last == furthest_block {

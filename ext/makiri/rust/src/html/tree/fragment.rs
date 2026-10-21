@@ -84,10 +84,14 @@ pub fn parse_fragment(
     doc.append_child(NodeId::DOCUMENT, root);
     let context = doc.create_element(tag, ns32, 0, None).map_err(oom)?;
 
-    let mut tree = TreeBuilder::new(&mut doc);
-    tree.guard = Guard::for_fragment(limit, options);
-    tree.begin_fragment(root, context, &facts)
-        .map_err(|_| FragmentFailure::Parse)?;
+    let mut tree = TreeBuilder::for_fragment(
+        &mut doc,
+        root,
+        context,
+        &facts,
+        Guard::for_fragment(limit, options),
+    )
+    .map_err(|_| FragmentFailure::Parse)?;
 
     let current_ns = tree.current_namespace();
     let foreign = facts.foreign_namespace && compat::fixed(Fix::P19);
@@ -95,7 +99,7 @@ pub fn parse_fragment(
         tkz.enter_fragment_context(false, tag, ns);
         tkz.set_current_namespace(current_ns);
     });
-    if let Some(stop) = tree.guard.stopped {
+    if let Some(stop) = tree.guard_stopped() {
         return Err(FragmentFailure::Guard(stop));
     }
     if status != Status::Ok || tree.status != TreeStatus::Ok {
@@ -113,29 +117,31 @@ pub fn parse_fragment(
     Ok(ParsedFragment { doc, root })
 }
 
-impl TreeBuilder<'_> {
-    /// The fragment case's setup of the tree builder (Lexbor's
-    /// `lxb_html_parse_fragment_chunk_begin`): `root` the only open element,
-    /// `context` the context element, a template's mode, the insertion
-    /// mode reset, and the form element pointer.
-    fn begin_fragment(
-        &mut self,
+impl<'d> TreeBuilder<'d> {
+    /// A fragment parse into `doc`, held to `guard`, set up as Lexbor's
+    /// `lxb_html_parse_fragment_chunk_begin` does: `root` the only open
+    /// element, `context` the context element, a template's mode, the
+    /// insertion mode reset, and the form element pointer.
+    fn for_fragment(
+        doc: &'d mut Document,
         root: NodeId,
         context: NodeId,
         facts: &ContextFacts,
-    ) -> Result<(), TreeStatus> {
-        let (tag, ns) = (self.tag(context), self.ns(context));
-        self.open_push(root)?;
+        guard: Guard,
+    ) -> Result<TreeBuilder<'d>, TreeStatus> {
+        let mut tree = TreeBuilder::new(doc, guard);
+        let (tag, ns) = (tree.tag(context), tree.ns(context));
+        tree.open_push(root)?;
         if tag == res::TAG_TEMPLATE && ns == res::NS_HTML {
-            self.template_modes_push(Mode::InTemplate)?;
+            tree.template_modes_push(Mode::InTemplate)?;
         }
-        self.fragment = Some(context);
-        self.context_integration_point = facts.html_integration_point && compat::fixed(Fix::P18);
-        self.reset_insertion_mode_appropriately();
+        tree.fragment = Some(context);
+        tree.context_integration_point = facts.html_integration_point && compat::fixed(Fix::P18);
+        tree.reset_insertion_mode_appropriately();
         let own_form = tag == res::TAG_FORM && ns == res::NS_HTML;
         if own_form || (facts.in_form && compat::fixed(Fix::P20)) {
-            self.form = Some(self.create_element_node(res::TAG_FORM, res::NS_HTML)?);
+            tree.form = Some(tree.create_element_node(res::TAG_FORM, res::NS_HTML)?);
         }
-        Ok(())
+        Ok(tree)
     }
 }
