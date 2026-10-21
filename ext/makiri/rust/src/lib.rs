@@ -147,7 +147,8 @@ pub mod glue;
 
 /// The vendored Lexbor boundary. This owns every direct use of its C ABI;
 /// `adapter` supplies the compatibility facilities Lexbor does not provide.
-#[cfg(feature = "html-dom")]
+/// Only the reference the ports are tested against: no build that ships has it.
+#[cfg(feature = "lexbor")]
 pub mod lexbor;
 
 /// The HTML DOM as the rest of the crate reaches it: one path, to the parser
