@@ -2,145 +2,92 @@
 
 ## [Unreleased]
 
+## [0.17.0.rc1] - 2026-10-22
+
 ### Added
 
 * `Makiri::Lexbor::CSS.parse_stylesheet` returns the declarations in an
-  at-rule's block as its `:declarations` (`@font-face`, `@page`, ...); they
+  at-rule's block (`@font-face`, `@page`, ...) as its `:declarations`; they
   were dropped.
 
 ### Changed
 
-* `Makiri::XML`'s `#css`, `#at_css` and `#matches?` run on the same matcher as
-  HTML's, and match as a browser's `querySelectorAll` does in an XML
-  document. A bare type selector matches its name in any namespace; the
-  root's declarations are no longer collected, so a prefix needs the ns
-  Hash, whose `"xmlns"` entry is the default namespace (on HTML too). A
-  selector under a node is matched against the whole tree, its results kept
-  to the node's descendants. `[a=v i]`, `:nth-child(... of S)` and the
-  form-state and link pseudo-classes (for XHTML elements) are supported.
-  A selector that cannot run (`||`, `:current()`) raises
-  `Makiri::CSS::SyntaxError` on both representations, and an over-long
-  chain `Makiri::Error` where XML raised `Makiri::XPath::LimitExceeded`.
-  Deeply nested selectors are answered rather than refused. Matching is
-  10-20x faster on compound selectors (`.item`, `ul li.item`).
-* HTML CSS resolves namespace prefixes (M6, M7). `css(selector, ns)` binds
-  them: `svg|path` is the SVG `path`, `|p` an element in no namespace, and
-  `[x|href]` the attribute in `x`'s namespace. A prefix the Hash does not
-  bind raises `Makiri::CSS::SyntaxError` ("undeclared namespace prefix"),
-  where every prefix used to be ignored.
-* A `<select>` may have any number of `<option>`s: the 10,000 limit is gone,
-  with the reason for it. The selectedness setting algorithm walked every
-  option for each one inserted; it is decided from the select's state now,
-  so 9,999 options build in about 5 ms (they took 270 ms), and 40,000 - which
-  raised `Makiri::Error` - parse as browsers parse them.
-* HTML is parsed by a Rust port of Lexbor's tokenizer and tree builder, into
-  a DOM of Makiri's own. The extension links no Lexbor any more, so a source
-  install needs a Rust toolchain and nothing else - no cmake. A parsed
-  document takes about 40% less memory (~110 bytes a node, its text and names
-  included). The CSS selector and stylesheet parsers are ported too.
-* HTML parsing follows the HTML Standard where Lexbor did not, so these
-  documents parse differently (`docs/parser_differences.ja.md`, P1-P21):
-  * an implicit `<body>` resets frameset-ok, so a `<frameset>` can still
-    replace it after a `<template>` in the head (P1);
-  * a `<form>` inside a `<template>` neither uses nor sets the form element
-    pointer (P2);
-  * a U+FFFD in SVG or MathML text sets frameset-ok to "not ok" (P3);
-  * text directly in a `<table>` inside a `<template>` goes through
-    "in table text" (P4); "in column group" ignores a DOCTYPE (P5) and keeps
-    the whitespace that follows other text (P6), as does "after after
-    frameset" (P7);
-  * `<![CDA` at the end of the input is a comment holding `[CDA` (P8), and
-    the text before a final `<!` stays text, with an empty comment after it
-    (P9);
-  * `<b x>` and `<b x="">` are the same formatting element for the "three
-    of a kind" rule (P10), and the adoption agency keeps its bookmark in
-    place as elements are removed (P11);
-  * a `<textarea>`'s contents are read as text, without reconstructing open
-    formatting elements (P12);
-  * `type=HIDDEN` on an `<input>` in a table compares case-insensitively
-    (P13), an `<image>` in a table becomes an `<img>` (P14), and a `<sup>`
-    breaks out of SVG and MathML (P15);
-  * fragment parsing (`#inner_html=`, `DocumentFragment.parse`,
-    `Document#fragment`, `Node#parse`) pops its open elements at the end, so
-    a `<selectedcontent>` is updated (P16); with an element as the context
-    (`#inner_html=`, `#outer_html=`, `Node#parse`, or `context:` given an
-    element) it also uses that element's document's quirks mode (P17),
-    honours an `annotation-xml` context's `encoding` (P18), parses in a
-    context element of another namespace as foreign content (P19), and takes
-    the form element pointer from an ancestor `<form>` (P20);
-  * a repeated attribute name is dropped by the tokenizer, as browsers do:
-    `<svg xmlns=a xmlns=b>` keeps one `xmlns`, and a repeated `type` on an
-    `<input>` in a table is no longer read (P21).
-* A void element's `#inner_html` is empty even when it has children (R1), and
-  a prefixed HTML, SVG or MathML element is written by its local name (R2).
-* `Node#line` of a void element fostered out of a table is its line, not nil
-  (L1).
-* A `:has()` inside a `:has()` (`div:has(p:has(a))`) raises
-  `Makiri::CSS::SyntaxError`, as Selectors 4 says; it used to match (C20).
-* CSS selectors follow Selectors 4 where Lexbor's parser did not:
-  * an empty `:is()` or `:where()` is valid and matches nothing (C18);
-  * `:has()` is unforgiving: one invalid argument makes the selector
-    invalid (C19);
-  * a token after An+B (`:nth-child(2n+1of p)`) makes the selector invalid
-    (C21); an `n-` digit run or an An+B value too large for 64 bits
-    saturates instead of failing (C22, S2);
-  * `#1a` is not an ID selector (C7);
-  * the tokenizer's edge cases follow CSS Syntax 3: a backslash ending the
-    input inside a string, a hyphen followed by a non-ASCII letter, an
-    integer of more than 128 digits, and `url(` followed only by whitespace
-    (C4-C6, C8).
-* `parse_stylesheet` reads names and values by one rule for every property
-  instead of Lexbor's per-property reserialization (C1-C3): a declaration name
-  is lower-cased unless it is a custom property, an at-rule name is
-  lower-cased, and a value is the text as written with each run of whitespace
-  collapsed (`color: RED` stays `RED`; it came back as `red`).
-* `parse_stylesheet`'s `:specificity` is counted as Selectors 4 does: a
-  pseudo-class with no argument and `:nth-of-type()` count as B, `:is()` /
-  `:not()` / `:has()` take their most specific argument, a namespaced type
-  selector counts once, and no component carries into the next (C23-C26).
-* `parse_stylesheet` finds `!important` on the value's top-level tokens
-  (`! important`, but not inside brackets) (C12, C13), drops a qualified rule
-  with no block and a top-level `--name:` prelude (C10, C11), and keeps a
-  newline after a backslash in a value (C15).
-* `parse_stylesheet` keeps a rule such as `a:hover { ... }` inside `@media`
-  or `@supports`: a type selector followed by a pseudo-class was read as a
-  declaration, which swallowed that rule and every rule after it in the block
-  (C9). A comment between a declaration's name and its `:` no longer drops
-  that declaration and the ones after it (C14).
+* HTML is parsed by Makiri's own Rust port of Lexbor's tokenizer and tree
+  builder, into a DOM of Makiri's own, and the CSS selector and stylesheet
+  parsers are ported too. A parsed document takes about 40% less memory.
+* Installing from source needs Rust 1.84 or newer (and libclang), and no
+  longer CMake: the gem carries none of Lexbor's sources, only its LICENSE
+  and NOTICE.
+* `Makiri::XML`'s `#css`, `#at_css` and `#matches?` run on the same matcher
+  as HTML's and answer as a browser's `querySelectorAll` does in an XML
+  document, 10-20x faster on compound selectors (`.item`, `ul li.item`).
+  This changes some answers:
+  * a bare type selector (`p`) matches that name in any namespace;
+  * the root element's namespace declarations are no longer picked up: a
+    prefix must be given in the ns Hash, whose `"xmlns"` entry is the
+    default namespace (on HTML too);
+  * a selector run on a node may match through ancestors outside it
+    (`node.css("body p")`); only the node's descendants are returned;
+  * `[a=v i]`, `:nth-child(... of S)`, and the form-state and link
+    pseudo-classes on XHTML elements are supported;
+  * `||` and `:current()` raise `Makiri::CSS::SyntaxError`, and an over-long
+    chain `Makiri::Error` (it was `Makiri::XPath::LimitExceeded`).
+* HTML `css(selector, ns)` resolves namespace prefixes: `svg|path` is the SVG
+  `path`, `|p` an element in no namespace, `[x|href]` the attribute in `x`'s
+  namespace. A prefix the Hash does not bind raises
+  `Makiri::CSS::SyntaxError`; prefixes used to be ignored.
+* HTML parsing follows the HTML Standard where Lexbor did not. This affects
+  malformed or unusual markup only: `<frameset>`, `<form>` and tables inside
+  `<template>`, `<![CDA` or `<!` at the end of the input, the adoption
+  agency, `<textarea>`, `<input type=HIDDEN>` and `<image>` in a table,
+  `<sup>` in SVG or MathML, and a repeated attribute name (the first is
+  kept). Fragment parsing (`#inner_html=`, `#outer_html=`, `Node#parse`,
+  `context:` given an element) takes the context element's quirks mode,
+  namespace and ancestor `<form>` into account, as browsers do.
+* CSS selectors are parsed as Selectors 4 says: `:has()` inside `:has()` and
+  an invalid argument to `:has()` make the selector invalid, an empty
+  `:is()` / `:where()` is valid and matches nothing, and `#1a` is not an ID
+  selector.
+* `parse_stylesheet` reads names and values by one rule for every property: a
+  declaration name is lower-cased unless it is a custom property, an at-rule
+  name is lower-cased, and a value is the text as written with whitespace
+  runs collapsed (`color: RED` stays `RED`; it came back as `red`).
+  `:specificity` is counted as Selectors 4 does (`:is()` / `:not()` /
+  `:has()` take their most specific argument).
 
 ### Removed
 
-* Lexbor's sources from the gem, which keeps only its LICENSE and NOTICE.
-  The vendored Lexbor is now only the reference the ports are tested against
-  (`rake lexbor`).
+* The 10,000-`<option>` limit on a `<select>`: a select with any number of
+  options parses in linear time, as browsers parse it.
 
 ### Fixed
 
-* An attribute keeps the namespace it was made in (D1): `set_attribute_ns`
-  in the element's own namespace replaces the attribute it set before,
-  where it appended a second, and an attribute taken off its element keeps
-  its `namespace_uri`, where it became nil.
-* A namespaced type selector in the middle of a compound (`|E|*`, `.x|a`)
-  raises `Makiri::CSS::SyntaxError`, as browsers do (C28); it was read as a
-  second type selector of the compound.
-* `:any-link` / `:link` match an HTML `a` or `area`, or an SVG `a`, with an
-  `href`, as browsers do (M2): `<link href>` matched `:link` and `<map>`
-  `:any-link`. `:read-write` / `:read-only` follow the HTML Standard (M9):
-  a checkbox or radio is read-only, an element inside `contenteditable` is
-  read-write, and a `readonly` attribute in a namespace is not one.
-  `:empty` ignores processing instructions and empty text (M10).
-* HTML CSS's `:nth-child` family counts element siblings only (M8): a
-  doctype or a processing instruction took a position, so
+* `parse_stylesheet` keeps a rule such as `a:hover { ... }` inside `@media`
+  or `@supports`; it was read as a declaration, which dropped that rule and
+  every one after it in the block. A comment between a declaration's name
+  and its `:` no longer drops the declarations that follow.
+* A namespaced type selector in the middle of a compound (`.x|a`) raises
+  `Makiri::CSS::SyntaxError`, as browsers do.
+* `:any-link` / `:link` match only an HTML `a` or `area`, or an SVG `a`, with
+  an `href` (`<link href>` and `<map>` matched). `:read-write` /
+  `:read-only` follow the HTML Standard (a checkbox is read-only, an element
+  inside `contenteditable` is read-write), and `:empty` ignores processing
+  instructions.
+* HTML's `:nth-child` family counts element siblings only:
   `html:first-child` matched nothing after `<!doctype html>`.
-* An attribute name is serialized in the case it was set (R3): `e["viewBox"]`
-  on an element in no namespace, or `set_attribute_ns` with `xlink:Href`,
-  wrote the name lower-cased.
-* An HTML document looks a namespace or prefix up by hash, and an import
-  into XML shares URIs by namespace id: a document given many namespaces by
-  `create_element_ns` made both quadratic.
-* `HTML::Document#import_node` refuses a document with "cannot import a
-  document; use #dup", as `#clone_node` does; it failed with "failed to
-  import node".
+* An attribute keeps the namespace it was made in: `set_attribute_ns` in the
+  element's own namespace replaces the attribute it set before instead of
+  adding a second, and an attribute removed from its element keeps its
+  `namespace_uri`.
+* An attribute name is serialized in the case it was set (`e["viewBox"]` on
+  an element in no namespace was written lower-cased).
+* A void element's `#inner_html` is empty even when it has children, and a
+  prefixed HTML, SVG or MathML element is written by its local name.
+* `Node#line` of a void element fostered out of a table is its line, not nil.
+* Many namespaces created with `create_element_ns` no longer make lookups
+  quadratic.
+* `HTML::Document#import_node` given a document raises "cannot import a
+  document; use #dup", as `#clone_node` does.
 
 ## [0.16.0] - 2026-10-10
 
