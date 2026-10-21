@@ -68,6 +68,21 @@ RSpec.describe "Makiri::XML CSS selectors" do
       plain = Makiri::XML("<feed><entry/><entry/></feed>")
       expect(plain.css("entry").length).to eq(2)
     end
+
+    # Selectors 4 §5.3: a compound with no type selector still matches only
+    # the default namespace's elements, as if `*` were written - except the
+    # subject of an :is() / :where() / :not() argument (§4.2-4.4).
+    it "keeps a compound with no type selector to the default namespace" do
+      doc = Makiri::XML(%(<r xmlns:s="urn:s" xmlns:o="urn:o"><s:p class="x" a="1"/><o:p class="x" a="1"/><q class="x"/></r>))
+      ns = { "xmlns" => "urn:s" }
+      %w[.x *.x [a] :is(.x) :where(.x)].each do |sel|
+        expect(doc.css(sel, ns).map(&:name)).to eq(%w[s:p]), sel
+      end
+      expect(doc.css("*|*:not(.x)", ns).map(&:name)).to eq(%w[r])
+      expect(doc.css("*|*:is(.x)", ns).map(&:name)).to eq(%w[s:p o:p q])
+      expect(doc.css(".x").map(&:name)).to eq(%w[s:p o:p q])
+      expect(doc.at_css("q").matches?(".x", ns)).to be(false)
+    end
   end
 
   describe "class / id / attribute operators" do

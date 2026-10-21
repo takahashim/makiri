@@ -45,7 +45,10 @@ module CssBrowserCases
     ":lang(en)", ":lang(fr)", ":dir(ltr)", ":scope", ":scope > *", ":defined",
     "::before", "p::before", ":current", ":foo", "foo(", "p:nth-child(", "",
     # a namespaced type selector only begins a compound (C28)
-    "|p|*", ".x|p", "[title]|p", "*|p|*", "p |li", "ul>*|li", "*|p.x"
+    "|p|*", ".x|p", "[title]|p", "*|p|*", "p |li", "ul>*|li", "*|p.x",
+    # an undeclared prefix: a forgiving list drops that alternative alone
+    ":is(p, z|p)", ":where(z|li, li)", ":is(:not(z|p), li)", ":is(:is(z|p), span)",
+    ":not(:is(z|p))", ":not(z|p)", ":has(z|p)", ":nth-child(1 of z|p)"
   ].freeze
 
   DOCUMENTS = [

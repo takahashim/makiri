@@ -932,7 +932,10 @@ document - decides case folding and the 46-name value table, `is_html` (the
 namespace) the form states, so an XHTML element in XML has `:checked` but
 compares `DIV` as written; a bare type selector matches in any namespace; a
 prefix comes from the ns Hash (`css_match::Namespaces`, its `"xmlns"` entry
-the default namespace), resolved at compile, undeclared = `CSS::SyntaxError`;
+the default namespace, which a compound with no type selector is kept to as
+well, bar an `:is()`/`:where()`/`:not()` argument's subject), resolved at
+compile, undeclared = `CSS::SyntaxError` - except inside the forgiving
+`:is()`/`:where()`, which drop that alternative alone (`compile`'s `Nesting`);
 ancestors outside the context node take part. One `Scratch` per host,
 kept by `selector_cache` beside the one host-free AST cache.
 

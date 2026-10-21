@@ -20,6 +20,12 @@
 * An HTML Attr serializes to the empty string, as an XML Attr does and as
   DOM Parsing and Firefox have it: `attr.to_s`, `puts attr` and `NodeSet#to_s`
   over attributes raised `Makiri::Error` ("HTML serialization failed").
+* Under a default namespace (the ns Hash's `"xmlns"`), a compound with no
+  type selector (`.x`, `[a]`) matches only that namespace's elements, as if
+  `*` were written (Selectors 4); it matched elements in any namespace.
+* An undeclared namespace prefix inside `:is()` or `:where()` drops that
+  alternative alone, as browsers do: `:is(a, z|a)` matches `a` instead of
+  raising `Makiri::CSS::SyntaxError`.
 
 ## [0.17.0.rc1] - 2026-10-22
 

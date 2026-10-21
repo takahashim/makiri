@@ -12,9 +12,10 @@
 # "xmlns" entry naming that namespace ("" for none), which Makiri takes as the
 # default namespace - and the comparison is of what both then mean. A bare `*`
 # still differs: under that default Makiri puts it in the default namespace
-# (or in none), as CSS does, where Nokogiri matches any element; a selector
-# with one that answers differently is tallied as universal-default, not
-# scored. Vocabulary differences
+# (or in none), as CSS does, where Nokogiri matches any element - and so does
+# a compound with no type selector at all (`.x`, `[a]`, `:root`), which CSS
+# reads as if `*` were written (Selectors 4 §5.3); a selector with either
+# that answers differently is tallied as universal-default, not scored. Vocabulary differences
 # are tallied, NOT scored as bugs:
 #   * makiri-unsupported : Makiri raises (the [a=v i] case flag, `*|attr`,
 #                          untyped of-type, jQuery extensions); standards-only /
@@ -175,7 +176,7 @@ classify = lambda do |doc, sel|
   elsif m[1].sort == n[1].sort
     stats[:order_only] += 1
     diffs << [doc[:name], sel, "ORDER ONLY (same set, different order)"]
-  elsif sel.match?(/(?<![|\w-])\*(?!\|)/)
+  elsif sel.match?(/(?<![|\w-])\*(?!\|)/) || sel.match?(/(?:\A|[\s>+~,(])[.#\[:]/)
     stats[:universal_default] += 1
   else
     stats[:diverge] += 1
@@ -213,7 +214,7 @@ puts "  agree (node set)     : #{stats[:agree]}"
 puts "  agree (both reject)  : #{stats[:agree_reject]}"
 puts "  makiri-unsupported   : #{stats[:makiri_unsupported]}  (*|attr / jQuery)"
 puts "  nokogiri-unsupported : #{stats[:nokogiri_unsupported]}"
-puts "  universal-default    : #{stats[:universal_default]}  (a bare * in the default namespace, as CSS has it)"
+puts "  universal-default    : #{stats[:universal_default]}  (a bare * or typeless compound in the default namespace, as CSS has it)"
 puts "  order-only diff      : #{stats[:order_only]}"
 puts "  DIVERGE node set     : #{stats[:diverge]}"
 
