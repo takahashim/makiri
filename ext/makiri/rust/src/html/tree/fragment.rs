@@ -52,19 +52,49 @@ pub struct ContextFacts {
     pub foreign_namespace: bool,
 }
 
-/// Parse `input` as a fragment in the context of an element with tag id
-/// `tag` in namespace `ns` (Lexbor's static ids; `ns` 0 for none), refusing a
-/// tree deeper than `limit`; `options` is what the context means to the
-/// option guard, `facts` the rest of what the parse reads from it.
+/// The context element of a fragment parse, as far as the parse reads it:
+/// its tag and namespace (Lexbor's static ids; `ns` 0 for none), what it
+/// means to the option guard, and the rest ([`ContextFacts`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ContextElement {
+    pub tag: usize,
+    pub ns: usize,
+    pub options: ContextOptions,
+    pub facts: ContextFacts,
+}
+
+impl ContextElement {
+    /// A context known by its name alone - a fragment bound to a document,
+    /// the WPT fragment tests: it leads an option to a select only by being
+    /// one, and its facts are Lexbor's defaults.
+    pub fn named(tag: usize, ns: usize) -> ContextElement {
+        let select = tag == res::TAG_SELECT && ns == res::NS_HTML;
+        ContextElement {
+            tag,
+            ns,
+            options: ContextOptions {
+                fresh: select,
+                after_optgroup: select,
+            },
+            facts: ContextFacts::default(),
+        }
+    }
+}
+
+/// Parse `input` as a fragment in `context`, refusing a tree deeper than
+/// `limit`.
 pub fn parse_fragment(
     input: &[u8],
     known_valid: bool,
-    tag: usize,
-    ns: usize,
-    options: ContextOptions,
-    facts: ContextFacts,
+    context: &ContextElement,
     limit: DepthLimit,
 ) -> Result<ParsedFragment, FragmentFailure> {
+    let ContextElement {
+        tag,
+        ns,
+        options,
+        facts,
+    } = *context;
     let src = sanitize(input, known_valid).ok_or(FragmentFailure::Decode)?;
     let bytes = src.as_slice();
     let oom = |DomOom| FragmentFailure::Parse;

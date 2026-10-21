@@ -20,7 +20,9 @@ use crate::html::dom::{
 use crate::html::res::names as res;
 use crate::html::tree::guard::ContextOptions;
 use crate::html::tree::guard::{DepthLimit, GuardStop};
-use crate::html::tree::{parse_fragment, ContextFacts, FragmentFailure, ParsedFragment};
+use crate::html::tree::{
+    parse_fragment, ContextElement, ContextFacts, FragmentFailure, ParsedFragment,
+};
 
 /// Why a fragment parse produced no fragment. The bridge words it for Ruby.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -262,28 +264,20 @@ impl TransientFragment {
     ) -> Result<TransientFragment, FragmentError> {
         let at = context.at();
         let (tag, ns) = at.map_or((res::TAG__UNDEF, 0), |a| (a.parse_tag(), a.parse_ns()));
-        let options = match context {
-            FragmentContext::Element { options, .. } => *options,
-            /* A named context reaches a select only by being one. */
-            FragmentContext::Tag { .. } => {
-                let select = tag == res::TAG_SELECT && ns == res::NS_HTML;
-                ContextOptions {
-                    fresh: select,
-                    after_optgroup: select,
-                }
-            }
-        };
-        let facts = match context {
-            FragmentContext::Element { facts, .. } => *facts,
-            FragmentContext::Tag { .. } => ContextFacts::default(),
-        };
-        let parsed = parse_fragment(input, known_valid, tag, ns, options, facts, limit).map_err(
-            |f| match f {
-                FragmentFailure::Decode => FragmentError::Decode,
-                FragmentFailure::Parse => FragmentError::Parse,
-                FragmentFailure::Guard(stop) => FragmentError::Guard(stop),
+        let element = match context {
+            FragmentContext::Element { options, facts, .. } => ContextElement {
+                tag,
+                ns,
+                options: *options,
+                facts: *facts,
             },
-        )?;
+            FragmentContext::Tag { .. } => ContextElement::named(tag, ns),
+        };
+        let parsed = parse_fragment(input, known_valid, &element, limit).map_err(|f| match f {
+            FragmentFailure::Decode => FragmentError::Decode,
+            FragmentFailure::Parse => FragmentError::Parse,
+            FragmentFailure::Guard(stop) => FragmentError::Guard(stop),
+        })?;
         let inherit = match at.map(|a| &a.ns) {
             Some(FragNs::Id(Some(ns))) if !ns.is_static() => FragNs::Id(Some(*ns)),
             Some(FragNs::Uri(u)) => FragNs::Uri(try_to_vec(u).ok_or(FragmentError::Context)?),
