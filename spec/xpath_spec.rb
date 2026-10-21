@@ -874,6 +874,16 @@ RSpec.describe "Makiri XPath" do
       expect(Makiri::XML(%(<r><e id="a"/></r>)).xpath('count(id("a"))')).to eq(0)
     end
 
+    it "keeps a plain attribute of an element made in the XMLNS namespace on @*" do
+      doc = Makiri::HTML("<p></p>")
+      e = doc.create_element_ns("http://www.w3.org/2000/xmlns/", "xmlns:foo")
+      e["bar"] = "1"
+      doc.at_css("p") << e
+      expect(doc.xpath("count(//*[@bar])")).to eq(1)
+      expect(e.xpath("count(@*)")).to eq(1)
+      expect(doc.css("[bar]").size).to eq(1)
+    end
+
     # Lax is "what Nokogiri does", and Nokogiri::XML (libxml2) is as
     # namespace-strict as the specification - so in XML the flag changes
     # nothing, for elements or attributes, on the axis or the [@a] fast path.

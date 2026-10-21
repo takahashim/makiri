@@ -7,6 +7,9 @@
 * A refused `Makiri::XML` insert of a node from another document (onto a
   Text node, say) no longer leaves the copy it made in the target document,
   where each refused call grew it and used up its node budget.
+* XPath over HTML keeps a plain attribute of an element created in the
+  XMLNS namespace on `@*` and `[@name]`; it was taken for a namespace
+  declaration and skipped.
 
 ## [0.17.0.rc1] - 2026-10-22
 
