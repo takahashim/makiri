@@ -14,13 +14,13 @@ use magnus::{prelude::*, Error, Value};
 
 use crate::bridge::ruby::makiri_error;
 
-use crate::bridge::html::{with_arg_node, wrap_html_node};
+use crate::bridge::html::{html_node_key, with_html_node, wrap_html_node};
 use crate::bridge::ruby::{is_kind_of, string_of};
 use crate::bridge::string::{ruby_verified_text, HtmlSource};
 use crate::bridge::wrapper::{ensure_document_mutable, html_doc_unwrap, DocKind, DocumentShell};
 pub use crate::html_dom::fragment::FragmentTag;
 use crate::html_dom::fragment::{FragmentContext, FragmentError, TransientFragment};
-use crate::html_dom::html::{HtmlDoc, HtmlDocMut, HtmlNode, Place, RawNode};
+use crate::html_dom::html::{HtmlDoc, HtmlDocMut, HtmlNode, HtmlNodeKey, Place, RawNode};
 use crate::html_dom::post_parse::parse_html;
 pub use crate::html_dom::tree_guard::DepthLimit;
 use crate::init::CLASS_NODE;
@@ -33,29 +33,58 @@ fn fragment_error(e: FragmentError, limit: DepthLimit) -> Error {
     }
 }
 
+/// What a fragment is parsed inside of, as the caller gave it. An element is
+/// read when the parse starts ([`build_fragment`]), after the HTML argument's
+/// conversion - arbitrary Ruby, which may change the element or its tree.
+pub enum ContextArg {
+    /// A named context (nil is `<body>`).
+    Tag(FragmentTag),
+    /// An HTML element, read whole: the HTML Standard's fragment parsing takes
+    /// its document's quirks mode, its ancestors' form and its attributes, as
+    /// `inner_html=` does. Made by [`ContextArg::element`].
+    Element(ContextElement),
+}
+
+/// The element of a [`ContextArg::Element`], already checked: its key and the
+/// Document that keeps it alive. Taken out of its wrapper before the HTML
+/// argument is converted, since that check can raise and the conversion's copy
+/// must not be held across a raise; the element itself is read after.
+pub struct ContextElement {
+    key: HtmlNodeKey,
+    document: Value,
+}
+
+impl ContextArg {
+    /// The element wrapped by `v` as a context; `Err` for an XML node or a
+    /// node that is not an element.
+    pub fn element(v: Value) -> Result<ContextArg, Error> {
+        let (key, document) = html_node_key(v)?;
+        if !with_html_node(document, key, is_context_element)? {
+            return Err(not_an_element());
+        }
+        Ok(ContextArg::Element(ContextElement { key, document }))
+    }
+}
+
 /// Resolve the Ruby `context:` argument against `document`.
 ///
-/// Matches Nokogiri's `context:`: nil is `<body>` in the HTML namespace; a node
-/// contributes its own tag and namespace (the only way to reach a foreign
-/// non-root context such as SVG `<desc>`); a String names an HTML-namespace tag,
-/// except "svg" / "math" which name the foreign roots. `Err` for an unusable one.
+/// Nokogiri's `context:`: nil is `<body>` in the HTML namespace; a String names
+/// an HTML-namespace tag, except "svg" / "math" which name the foreign roots;
+/// an element is the context itself (the only way to reach a foreign non-root
+/// context such as SVG `<desc>`), and may belong to another document -
+/// `DocumentFragment.parse`'s always does. `Err` for an unusable one.
 pub fn resolve_fragment_context(
     document: Value,
     context: Option<Value>,
-) -> Result<FragmentTag, Error> {
+) -> Result<ContextArg, Error> {
     let Some(context) = context.filter(|c| !c.is_nil()) else {
-        return Ok(FragmentTag::BODY);
+        return Ok(ContextArg::Tag(FragmentTag::BODY));
     };
 
     if is_kind_of(context, &CLASS_NODE) {
-        /* Rejects an XML node before any Lexbor use; only the context's tag
-         * and namespace come out, as ids of `document`. The node may belong to
-         * another document - `DocumentFragment.parse`'s always does. */
-        let target = html_doc_unwrap(document)?;
-        return with_arg_node(context, |cn| {
-            // SAFETY: a live HTML Document, kept alive by `document` for this call.
-            resolve_node_context(document, cn, unsafe { target.as_doc() })
-        })?;
+        /* Refused now, before the HTML argument is converted: an XML node or
+         * a non-element. */
+        return ContextArg::element(context);
     }
 
     /* A context tag name is a programmatic control string, not parsed HTML, so
@@ -69,17 +98,25 @@ pub fn resolve_fragment_context(
         return Err(unknown_context(name));
     }
     if name == b"svg" {
-        return Ok(FragmentTag::SVG);
+        return Ok(ContextArg::Tag(FragmentTag::SVG));
     }
     if name == b"math" {
-        return Ok(FragmentTag::MATH);
+        return Ok(ContextArg::Tag(FragmentTag::MATH));
     }
     let doc = html_doc_unwrap(document)?;
     // SAFETY: a live HTML Document, kept alive by `document` for this call.
     let Some(tag) = (unsafe { doc.as_doc() }).tag_id(name) else {
         return Err(unknown_context(name));
     };
-    Ok(FragmentTag::html(tag))
+    Ok(ContextArg::Tag(FragmentTag::html(tag)))
+}
+
+fn is_context_element(node: HtmlNode<'_>) -> bool {
+    node.element().is_some() && node.tag_id().is_some()
+}
+
+fn not_an_element() -> Error {
+    crate::bridge::ruby::arg_error("fragment context node must be an element")
 }
 
 fn unknown_context(name: &[u8]) -> Error {
@@ -89,28 +126,12 @@ fn unknown_context(name: &[u8]) -> Error {
     ))
 }
 
-/// The context the node `node` provides to a fragment parsed into `target`
-/// (the HTML document `document` wraps), as `target`'s ids - see
-/// [`FragmentTag::resolve`]. Resolving may intern a name in `target`, a write,
-/// so it is refused while an XPath evaluation with a handler reads `document`.
-pub fn resolve_node_context(
-    document: Value,
-    node: HtmlNode<'_>,
-    target: HtmlDoc<'_>,
-) -> Result<FragmentTag, Error> {
-    ensure_document_mutable(document)?;
-    let Some(el) = node.element() else {
-        return Err(crate::bridge::ruby::arg_error(
-            "fragment context node must be an element",
-        ));
-    };
-    match FragmentTag::resolve(el, target) {
-        Ok(Some(at)) => Ok(at),
-        Ok(None) => Err(crate::bridge::ruby::arg_error(
-            "fragment context node must be an element",
-        )),
-        Err(_) => Err(makiri_error(FragmentError::Context.message())),
+/// The context the element `node` provides to a fragment made in `target`.
+fn element_context(node: HtmlNode<'_>, target: HtmlDoc<'_>) -> Result<FragmentContext, Error> {
+    if !is_context_element(node) {
+        return Err(not_an_element());
     }
+    FragmentContext::element_into(node, target).map_err(|e| makiri_error(e.message()))
 }
 
 /// Parse `html` as a fragment in `context`. Nothing is changed yet: a String
@@ -203,7 +224,7 @@ pub fn set_template_inner_html(
 pub fn build_fragment(
     document: Value,
     rb_html: Value,
-    at: FragmentTag,
+    at: ContextArg,
     limit: DepthLimit,
 ) -> Result<Value, Error> {
     /* A fragment's nodes are made in `document`: a change to it, refused while
@@ -216,9 +237,19 @@ pub fn build_fragment(
      * evaluation that suspends mid-walk (an Enumerator), still reading this
      * document when the import below writes it. */
     ensure_document_mutable(document)?;
-    let doc = html_doc_unwrap(document)?;
-    // SAFETY: a live HTML Document, kept alive by `document` for this call.
-    let context = FragmentContext::tag_in(unsafe { doc.as_doc() }, at);
+    /* The element is read now, after the conversion, as `inner_html=` reads
+     * it inside its edit. */
+    let context = match at {
+        ContextArg::Tag(at) => FragmentContext::tag(at),
+        ContextArg::Element(el) => {
+            let doc = html_doc_unwrap(document)?;
+            with_html_node(el.document, el.key, |cn| {
+                // SAFETY: a live HTML Document, kept alive by `document` for
+                // this call.
+                element_context(cn, unsafe { doc.as_doc() })
+            })??
+        }
+    };
     let parsed = parse(&src, &context, limit)?;
 
     let frag = crate::bridge::html::new_node(&document, |d| {

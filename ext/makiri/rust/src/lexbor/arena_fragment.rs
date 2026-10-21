@@ -183,9 +183,20 @@ pub enum FragmentContext {
 impl FragmentContext {
     /// The context the element `el` of `doc` provides (`inner_html=`).
     pub fn element(doc: HtmlDoc<'_>, el: RawNode) -> Result<FragmentContext, FragmentError> {
-        let node = doc.node(el);
+        FragmentContext::element_into(doc.node(el), doc)
+    }
+
+    /// The context `node` provides to a fragment made in `target`, which need
+    /// not be `node`'s document (`DocumentFragment.parse(html, context: el)`).
+    /// The HTML Standard's fragment parsing reads the element whole: its
+    /// document's quirks mode, its ancestors' form, its attributes - so
+    /// `Node#parse` and `context:` answer as `inner_html=` does.
+    pub fn element_into(
+        node: HtmlNode<'_>,
+        target: HtmlDoc<'_>,
+    ) -> Result<FragmentContext, FragmentError> {
         let at = match node.element() {
-            Some(e) => FragmentTag::resolve(e, doc).map_err(|_| FragmentError::Context)?,
+            Some(e) => FragmentTag::resolve(e, target).map_err(|_| FragmentError::Context)?,
             None => None,
         };
         /* The option guard's walk into the context's ancestors, made now. */
@@ -210,7 +221,7 @@ impl FragmentContext {
         let facts = ContextFacts {
             foreign_namespace,
             in_form,
-            compat_mode: u8::try_from(doc.compat_mode()).unwrap_or(0),
+            compat_mode: u8::try_from(node.owner_document().compat_mode()).unwrap_or(0),
             html_integration_point: integration,
         };
         Ok(FragmentContext::Element {
@@ -222,12 +233,6 @@ impl FragmentContext {
 
     /// A named context.
     pub fn tag(at: FragmentTag) -> FragmentContext {
-        FragmentContext::Tag { at }
-    }
-
-    /// A named context for a fragment of `doc` - the document plays no part
-    /// in the parse here; the copy lands in it on import.
-    pub fn tag_in(_doc: HtmlDoc<'_>, at: FragmentTag) -> FragmentContext {
         FragmentContext::Tag { at }
     }
 

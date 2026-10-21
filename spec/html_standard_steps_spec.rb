@@ -137,6 +137,35 @@ RSpec.describe "HTML Standard steps the port takes and Lexbor does not" do
     doc.at_css("#a").inner_html = "<form><input></form>x"
     expect(doc.at_css("#a").inner_html).to eq("<input>x")
   end
+  # P17, P18 and P20 hold for every parse with an element context: Node#parse
+  # and context: run the same fragment parsing algorithm as inner_html=.
+  describe "with an element as the context" do
+    def parsed(nodes) = nodes.map(&:to_html).join
+
+    it "parses in the quirks mode of the element's document" do
+      quirks = Makiri::HTML("<p>quirks</p><div id=a></div>").at_css("#a")
+      expect(parsed(quirks.parse("<p><table></table>"))).to eq("<p><table></table></p>")
+      expect(quirks.document.fragment("<p><table></table>", context: quirks).to_html)
+        .to eq("<p><table></table></p>")
+      expect(Makiri::DocumentFragment.parse("<p><table></table>", context: quirks).to_html)
+        .to eq("<p><table></table></p>")
+      standard = Makiri::HTML("<!doctype html><div id=a></div>").at_css("#a")
+      expect(parsed(standard.parse("<p><table></table>"))).to eq("<p></p><table></table>")
+    end
+
+    it "takes the form element pointer from the element's ancestors" do
+      doc = Makiri::HTML("<!doctype html><form><div id=a></div></form>")
+      a = doc.at_css("#a")
+      expect(parsed(a.parse("<form><input></form>x"))).to eq("<input>x")
+      expect(doc.fragment("<form><input></form>x", context: a).to_html).to eq("<input>x")
+    end
+
+    it "reads an HTML-encoded annotation-xml as an HTML integration point" do
+      doc = Makiri::HTML(%(<!doctype html><math><annotation-xml encoding="text/html"></annotation-xml></math>))
+      ax = doc.at_xpath('//*[local-name()="annotation-xml"]')
+      expect(ax.parse("<foo></foo>").first.xpath("namespace-uri()")).to eq("http://www.w3.org/1999/xhtml")
+    end
+  end
   # P19: an element in a namespace the parser does not know is foreign:
   # CDATA sections are read in it, and foreign attributes adjusted.
   it "parses inner_html= of an element in another namespace as foreign content" do
