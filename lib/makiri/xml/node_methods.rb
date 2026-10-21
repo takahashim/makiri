@@ -28,30 +28,33 @@ module Makiri
       # After #key?, which #has_attribute? aliases.
       ReaderAliases.define_on(self)
 
-      # CSS selector queries over XML, lowered to the native XPath engine (so
-      # matching is case-sensitive and namespace-aware, unlike a Lexbor HTML
-      # matcher). Nokogiri-compatible namespaces: the root element's
-      # declarations are collected automatically (a bare type selector binds to
-      # the default namespace), unless an +ns+ hash of {prefix => uri} is
-      # given, which then replaces them.
+      # CSS selector queries over XML, matched by the same engine as HTML's,
+      # as a browser's querySelectorAll matches them in an XML document: names
+      # and values compare as written, a type selector without a prefix
+      # matches its name in any namespace, and the context node's ancestors
+      # take part in the match while only its descendants are returned. An
+      # +ns+ hash of {prefix => uri} declares the prefixes the selector may
+      # use; its "xmlns" entry, if any, is the default namespace a bare type
+      # selector is then in.
       #
-      #   doc.css("entry")               # default-namespace bound (Atom/RSS just work)
-      #   doc.css("a|entry", "a" => uri) # explicit prefix
+      #   doc.css("entry")                    # <entry> in any namespace
+      #   doc.css("a|entry", "a" => uri)      # <entry> in uri
+      #   doc.css("entry", "xmlns" => uri)    # the same, as a default
       #
       # @return [Makiri::NodeSet]
       def css(selector, ns = nil)
-        _css(selector.to_s, _css_namespaces(ns))
+        _css(selector.to_s, ns)
       end
 
       # First descendant matching +selector+, or nil. @return [Makiri::Node, nil]
       def at_css(selector, ns = nil)
-        _at_css(selector.to_s, _css_namespaces(ns))
+        _at_css(selector.to_s, ns)
       end
 
       # Whether this node matches +selector+ (full selector, combinators included).
       # @return [Boolean]
       def matches?(selector, ns = nil)
-        _css_matches(selector.to_s, _css_namespaces(ns))
+        _css_matches(selector.to_s, ns)
       end
 
       private
@@ -60,25 +63,6 @@ module Makiri
       # per XPath 1.0 (see {NodePath#path}).
       def unprefixed_element_namespace
         nil
-      end
-
-      # Build the {prefix => uri} hash the native primitives register. Matching
-      # Nokogiri: with NO explicit namespaces the document's own declarations are
-      # collected (the default namespace under the synthetic prefix "xmlns", so a
-      # bare type selector binds to it - the RSS/Atom common case); but once the
-      # caller passes a namespaces hash, ONLY those prefixes are used and a bare
-      # selector resolves to no namespace (Nokogiri disables the default binding
-      # the moment an explicit map is given). Reading only the root's
-      # declarations is O(root attributes), not the whole-document walk.
-      def _css_namespaces(user)
-        return user.transform_keys(&:to_s).transform_values(&:to_s) if user && !user.empty?
-
-        reg = {}
-        root = document&.root
-        root&.namespace_definitions&.each do |ns|
-          reg[ns.prefix.nil? ? "xmlns" : ns.prefix] = ns.href
-        end
-        reg
       end
     end
   end

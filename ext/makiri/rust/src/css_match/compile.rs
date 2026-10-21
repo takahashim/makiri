@@ -9,7 +9,8 @@ use crate::selectors::ast::{
 
 use core::ffi::c_long;
 
-use super::scratch::{Scratch, Table};
+use super::ns::{Namespaces, NsTest};
+use super::scratch::{Table, Tables};
 use super::{MatchFailure, MAX_COMPOUNDS};
 
 /// A compound (a `Close`-linked run of simple selectors, `simples[start ..
@@ -62,6 +63,10 @@ pub(super) struct Step<'p> {
     /// compound with nothing nested in it: answered in place by
     /// [`Query::check_compound`](super::query::Query::check_compound), with no task.
     pub(super) inline: bool,
+    /// The namespace a type, universal or attribute selector asks for,
+    /// resolved against the query's [`Namespaces`]; [`NsTest::Any`] for
+    /// every other kind.
+    pub(super) ns: NsTest,
     /// Whether - and how - this simple selector is answered by a nested
     /// selector list: decided once, here, and read by everything that
     /// treats a nested selector differently (`check_simple`'s deferral,
@@ -142,6 +147,8 @@ pub(super) struct Compiled<'p> {
     pub(super) top: Table<Chain>,
     /// Every nested list's alternatives, each list's in order ([`Step::alts`]).
     pub(super) alts: Table<Chain>,
+    /// The bindings the steps' [`NsTest`]s point into.
+    pub(super) ns: Namespaces<'p>,
 }
 
 /// Compile `groups` - see [`Compiled`] - or refuse it: no chain anywhere
@@ -176,24 +183,26 @@ pub(super) struct Compiled<'p> {
 /// The tables are `scratch`'s, lent for the query ([`Compiled::give_back`]
 /// returns them).
 pub(super) fn compile<'p>(
-    scratch: &mut Scratch,
+    scratch: &mut Tables,
     groups: Lists<'p>,
+    ns: &Namespaces<'p>,
 ) -> Result<Compiled<'p>, MatchFailure> {
     let mut c = Compiled {
         simples: Table::reuse(&mut scratch.simples),
         compounds: Table::reuse(&mut scratch.compounds),
         top: Table::reuse(&mut scratch.top),
         alts: Table::reuse(&mut scratch.alts),
+        ns: *ns,
     };
     let mut pending: Table<(Lists<'p>, u32)> = Table::reuse(&mut scratch.pending);
     let built = (|| {
         for list in groups {
-            let chain = c.add_chain(list, &mut pending)?;
+            let chain = c.add_chain(list, ns, &mut pending)?;
             c.top.push(chain)?;
         }
         while let Some((lists, at)) = pending.pop() {
             for (k, list) in (at..).zip(lists) {
-                let chain = c.add_chain(list, &mut pending)?;
+                let chain = c.add_chain(list, ns, &mut pending)?;
                 c.alts.set(k as usize, chain)?;
             }
         }
@@ -209,17 +218,10 @@ pub(super) fn compile<'p>(
     }
 }
 
-/// [`compile`]'s verdict alone, over `scratch`'s tables - for `matches?` on
-/// a node no selector can match, which still refuses a selector the matcher
-/// would refuse.
-pub fn check_compiles(scratch: &mut Scratch, groups: Lists<'_>) -> Result<(), MatchFailure> {
-    compile(scratch, groups).map(|c| c.give_back(scratch))
-}
-
 /// [`compile`]'s verdict alone, for tests that check it without matching.
 #[cfg(all(test, feature = "lexbor"))]
 pub(crate) fn validate(groups: Lists<'_>) -> Result<(), MatchFailure> {
-    compile(&mut Scratch::new(), groups).map(drop)
+    compile(&mut Tables::new(), groups, &Namespaces::NONE).map(drop)
 }
 
 impl<'p> Compiled<'p> {
@@ -230,6 +232,7 @@ impl<'p> Compiled<'p> {
     fn add_chain(
         &mut self,
         list: List<'p>,
+        ns: &Namespaces<'p>,
         pending: &mut Table<(Lists<'p>, u32)>,
     ) -> Result<Chain, MatchFailure> {
         let start = u32::try_from(self.compounds.len()).map_err(|_| MatchFailure::TooComplex)?;
@@ -272,6 +275,7 @@ impl<'p> Compiled<'p> {
                 self.simples.push(Step {
                     simple,
                     name: sel.name(),
+                    ns: NsTest::resolve(sel, simple, ns)?,
                     alts,
                     n_alts,
                     value_ci,
@@ -295,7 +299,7 @@ impl<'p> Compiled<'p> {
     }
 
     /// Hand the tables back to `scratch` for the next query.
-    pub(super) fn give_back(self, scratch: &mut Scratch) {
+    pub(super) fn give_back(self, scratch: &mut Tables) {
         self.simples.give_back(&mut scratch.simples);
         self.compounds.give_back(&mut scratch.compounds);
         self.top.give_back(&mut scratch.top);

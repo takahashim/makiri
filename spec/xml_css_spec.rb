@@ -2,10 +2,10 @@
 
 require "spec_helper"
 
-# CSS selector queries over Makiri::XML, lowered to the native XPath engine
-# (ext/makiri/rust/src/css/). Unlike an HTML matcher, matching is
-# case-sensitive and namespace-aware; bare type selectors bind to the document's
-# default namespace (Nokogiri-compatible).
+# CSS selector queries over Makiri::XML, matched by the same engine as HTML's
+# (`css_match`, over the XML arena), as a browser's querySelectorAll matches
+# them in an XML document: case-sensitive, a bare type selector in any
+# namespace, prefixes declared by the ns Hash.
 RSpec.describe "Makiri::XML CSS selectors" do
   describe "type selectors (case-sensitive)" do
     let(:doc) { Makiri::XML("<Root><Item/><Item/><item/></Root>") }
@@ -22,7 +22,7 @@ RSpec.describe "Makiri::XML CSS selectors" do
     end
   end
 
-  describe "namespaces (Nokogiri-compatible)" do
+  describe "namespaces (as a browser's querySelectorAll)" do
     let(:atom) do
       Makiri::XML(<<~XML)
         <feed xmlns="urn:atom" xmlns:dc="urn:dc">
@@ -33,10 +33,20 @@ RSpec.describe "Makiri::XML CSS selectors" do
       XML
     end
 
-    it "binds a bare type selector to the default namespace" do
-      expect(atom.css("entry").length).to eq(2) # the urn:atom entries, not dc:entry
-      expect(atom.css("feed > entry").length).to eq(2)
+    it "matches a bare type selector in any namespace" do
+      expect(atom.css("entry").length).to eq(3) # the urn:atom entries and dc:entry
+      expect(atom.css("feed > entry").length).to eq(3)
       expect(atom.css("title").map(&:text)).to eq(%w[A B])
+    end
+
+    it "takes the Hash's xmlns entry as the default namespace" do
+      expect(atom.css("entry", "xmlns" => "urn:atom").length).to eq(2)
+      expect(atom.css("entry", "xmlns" => "urn:dc").map(&:text)).to eq(["meta"])
+      expect(atom.css("*|entry", "xmlns" => "urn:atom").length).to eq(3)
+    end
+
+    it "does not collect the document's own declarations" do
+      expect { atom.css("dc|entry") }.to raise_error(Makiri::CSS::SyntaxError, /undeclared namespace prefix/)
     end
 
     it "selects a prefixed element with a supplied namespace" do
@@ -49,12 +59,8 @@ RSpec.describe "Makiri::XML CSS selectors" do
       expect(atom.css("[dc|role=\"lead\"]", "dc" => "urn:dc").length).to eq(1)
     end
 
-    it "disables the default-namespace binding once an explicit ns hash is given" do
-      # Nokogiri-compatible: with an explicit namespaces hash, a bare type
-      # selector resolves to NO namespace (it no longer auto-binds the default),
-      # so the default-ns entries are not matched...
-      expect(atom.css("entry[dc|role]", "dc" => "urn:dc").length).to eq(0)
-      # ...and the default namespace must be registered under a prefix to match.
+    it "binds no default namespace for a Hash without an xmlns entry" do
+      expect(atom.css("entry[dc|role]", "dc" => "urn:dc").length).to eq(1)
       expect(atom.css("a|entry[dc|role]", "a" => "urn:atom", "dc" => "urn:dc").length).to eq(1)
     end
 
@@ -214,8 +220,8 @@ RSpec.describe "Makiri::XML CSS selectors" do
       # `a || b` parses, but XPath has no table-column relation; it used to fall
       # through to the descendant axis and answer <b> inside <a>.
       nested = Makiri::XML("<r><a><b/></a></r>")
-      expect { nested.css("a || b") }.to raise_error(Makiri::CSS::SyntaxError, /combinator/)
-      expect { nested.css(":is(a || b)") }.to raise_error(Makiri::CSS::SyntaxError, /combinator/)
+      expect { nested.css("a || b") }.to raise_error(Makiri::CSS::SyntaxError, /could not be run/)
+      expect { nested.css(":is(a || b)") }.to raise_error(Makiri::CSS::SyntaxError, /could not be run/)
     end
 
     it "rejects a selector with invalid UTF-8 / an embedded NUL (verify_text)" do
@@ -330,7 +336,7 @@ RSpec.describe "Makiri::XML CSS selectors" do
 
     it "still supports *|el (any namespace), bare el, and the [a|=v] operator" do
       expect(doc.css("*|wrap").length).to eq(2)                   # any namespace
-      expect(doc.css("wrap").length).to eq(1)                     # bare: no-namespace here
+      expect(doc.css("wrap").length).to eq(2)                     # bare: any namespace
       expect(doc.xpath("//wrap").length).to eq(1)
       expect(doc.css(%([id|="x"])).length).to eq(0)               # |= operator unaffected
     end
@@ -344,11 +350,13 @@ RSpec.describe "Makiri::XML CSS selectors" do
       expect(attrs.css("[p|a]", "p" => "u").map(&:name)).to eq(%w[q w])
     end
 
-    it "accepts the s attribute modifier (case-sensitive, as XML is) and refuses i" do
+    it "compares values as written, and folds case for the i modifier" do
       attrs = Makiri::XML(%(<r><q a="X"/></r>))
+      expect(attrs.css(%([a="X"])).map(&:name)).to eq(%w[q])
+      expect(attrs.css(%([a="x"]))).to be_empty
       expect(attrs.css(%([a="X" s])).map(&:name)).to eq(%w[q])
       expect(attrs.css(%([a="x" s]))).to be_empty
-      expect { attrs.css(%([a="x" i])) }.to raise_error(Makiri::CSS::SyntaxError, /modifier i/)
+      expect(attrs.css(%([a="x" i])).map(&:name)).to eq(%w[q])
     end
   end
 
@@ -394,7 +402,7 @@ RSpec.describe "Makiri::XML CSS selectors" do
       "[lang|=en]", "[data-k^=pre]", "[data-k$=suf]", "[data-k*=mid]", "[class~=b]", ":not(p)",
       "p:not(:first-child)", ":is(p, span)", ":where(div > span)", ":has(> span)", ":has(+ p)", ":has(~ em)",
       "*:not(:has(*))",
-      # NOT :lexbor-contains() - the HTML matcher (`lexbor::css_match`)
+      # NOT :lexbor-contains() - the HTML matcher (`css_match`)
       # deliberately does not implement it, so it raises there instead of
       # ever answering; see the dedicated divergence test below, and
       # css_spec.rb's ":lexbor-contains()" describe block.

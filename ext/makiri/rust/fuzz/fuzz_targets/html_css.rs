@@ -5,7 +5,7 @@
 //! compiled-selector cache (`selector_cache::with_compiled` - the parser
 //! port, the cached lists, the flush at the cap,
 //! the bypass and its re-test, and the engine's kept `Scratch`), then
-//! `lexbor::css_match` - `compile`, the chain loop and its backtracking,
+//! `css_match` - `compile`, the chain loop and its backtracking,
 //! the task stack for `:is()` / `:not()` / `:has()` / `of S`, the sibling-
 //! position memo, the lazily resolved names and the adapter reads they make -
 //! over an arbitrary document.
@@ -32,11 +32,12 @@ use libfuzzer_sys::fuzz_target;
 
 mod common;
 use common::*;
+use makiri::css_match::{matches_any, select_all, select_first, Namespaces, Scratch};
 use makiri::gvl::Gvl;
+use makiri::html::dom::css::HtmlHost;
 use makiri::html_dom::html::HtmlNode;
 use makiri::html_dom::post_parse::parse_html;
 use makiri::html_dom::tree_guard::DepthLimit;
-use makiri::lexbor::css_match::{matches_any, select_all, select_first, Scratch};
 use makiri::lexbor::selector_cache;
 use makiri::selectors::ast::Lists;
 
@@ -75,11 +76,11 @@ fuzz_target!(|data: &[u8]| {
 
 /// The walking query and the one-candidate query agree (module doc). False
 /// when a query refused, so the caller stops.
-fn check(root: HtmlNode<'_>, groups: Lists<'_>, scratch: &mut Scratch) -> bool {
-    let Ok(all) = select_all(scratch, root, groups) else {
+fn check(root: HtmlNode<'_>, groups: Lists<'_>, scratch: &mut Scratch<HtmlHost>) -> bool {
+    let Ok(all) = select_all(scratch, root, groups, &Namespaces::NONE) else {
         return false;
     };
-    if let Ok(first) = select_first(scratch, root, groups) {
+    if let Ok(first) = select_first(scratch, root, groups, &Namespaces::NONE) {
         assert!(
             first == all.first().copied(),
             "select_first is not the first of select_all"
@@ -90,7 +91,7 @@ fn check(root: HtmlNode<'_>, groups: Lists<'_>, scratch: &mut Scratch) -> bool {
         .filter_map(HtmlNode::element)
         .take(ONE_BY_ONE)
     {
-        let Ok(matched) = matches_any(scratch, groups, el) else {
+        let Ok(matched) = matches_any(scratch, groups, &Namespaces::NONE, el.node()) else {
             return false;
         };
         assert_eq!(

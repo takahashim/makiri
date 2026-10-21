@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# M7: CSS selector queries, matched by `lexbor::css_match` (a safe-Rust
+# M7: CSS selector queries, matched by `css_match` (a safe-Rust
 # port of Lexbor's `lxb_selectors` state machine - selector PARSING still goes
 # through Lexbor's own CSS parser, matching does not).
 RSpec.describe "Makiri CSS" do
@@ -19,9 +19,10 @@ RSpec.describe "Makiri CSS" do
   end
 
   # The pseudo-classes Lexbor answers from an attribute's presence keep
-  # Lexbor's rule - the attribute by local name, in any namespace - as
-  # `:any-link` does (`xlink:href`). Only a DOM write can make a namespaced
-  # one; the parser never does on an `<input>`.
+  # Lexbor's rule - the attribute by local name, in any namespace - except
+  # `:read-write` (M9), whose `readonly` is the HTML Standard's: the
+  # attribute in no namespace. Only a DOM write can make a namespaced one;
+  # the parser never does on an `<input>`.
   describe "attribute-presence pseudo-classes" do
     it "find the attribute by its local name in any namespace, as Lexbor does" do
       d = Makiri::HTML("<input id=a><input id=b><textarea id=c></textarea>")
@@ -30,7 +31,7 @@ RSpec.describe "Makiri CSS" do
       d.at_css("#c").set_attribute_ns("urn:x", "x:placeholder", "p")
       expect(d.css(":required").map { |e| e["id"] }).to eq(%w[a])
       expect(d.css(":optional").map { |e| e["id"] }).to eq(%w[b c])
-      expect(d.css(":read-write").map { |e| e["id"] }).to eq(%w[a c])
+      expect(d.css(":read-write").map { |e| e["id"] }).to eq(%w[a b c])
       expect(d.css(":placeholder-shown").map { |e| e["id"] }).to eq(%w[c])
     end
   end
@@ -94,7 +95,7 @@ RSpec.describe "Makiri CSS" do
   # context node itself CAN satisfy an earlier compound in the selector, unlike
   # Nokogiri (and `Makiri::XML`, which lowers to an XPath scoped from the node).
   # Pinned here so a change of matcher (as the move from Lexbor's engine to
-  # `lexbor::css_match` was) reproduces this, not "fix" it into XPath-style
+  # `css_match` was) reproduces this, not "fix" it into XPath-style
   # scoping.
   describe "query scope (whole-document matching, not scoped to the context node)" do
     it "lets the context node itself satisfy an earlier compound" do
@@ -171,17 +172,52 @@ RSpec.describe "Makiri CSS" do
       expect(svg_doc.css("svg circle").map(&:name)).to eq(%w[circle])
     end
 
-    # query_args_spec.rb pins the loose namespace ignore for a bare `svg|path`;
-    # this is the same loose ignore inside compound/functional selectors.
-    it "keeps the namespace binding ignored inside :is() / :has() / attribute selectors" do
-      ns = { "svg" => "http://www.w3.org/2000/svg" }
+    # M6/M7: a prefix is resolved against the bindings - inside :is() /
+    # :has() too - and one the bindings lack makes the selector invalid,
+    # however little of it a query reaches.
+    it "resolves a namespace prefix against the bindings, inside :is() / :has() / attribute selectors" do
+      svg = "http://www.w3.org/2000/svg"
+      ns = { "svg" => svg }
       expect(svg_doc.css(":is(svg|circle)", ns).map(&:name)).to eq(%w[circle])
       expect(svg_doc.css("body:has(svg|circle)", ns).map(&:name)).to eq(%w[body])
-      expect(svg_doc.css("[svg|r]", ns).map(&:name)).to eq(%w[circle])
+      expect(svg_doc.css("h|circle", "h" => "http://www.w3.org/1999/xhtml")).to be_empty
+      expect(svg_doc.css("[svg|r]", ns)).to be_empty # `r` is in no namespace
+      expect(svg_doc.css("[|r]").map(&:name)).to eq(%w[circle])
+      expect(svg_doc.css("|circle")).to be_empty
+      expect(svg_doc.css("*|circle").map(&:name)).to eq(%w[circle])
+      expect { svg_doc.css("svg|circle") }.to raise_error(Makiri::CSS::SyntaxError, /undeclared namespace prefix/)
+      expect { svg_doc.css("nosuch, q|x") }.to raise_error(Makiri::CSS::SyntaxError)
+      expect { svg_doc.at_css("circle, q|x") }.to raise_error(Makiri::CSS::SyntaxError)
+      expect { svg_doc.at_css("circle").matches?("q|circle") }.to raise_error(Makiri::CSS::SyntaxError)
+      expect(svg_doc.at_css("circle").matches?("svg|circle", ns)).to be(true)
+      expect { Makiri::HTML("").css("q|x") }.to raise_error(Makiri::CSS::SyntaxError)
+    end
+
+    it "finds an attribute in a namespace by its prefix" do
+      doc = Makiri::HTML(%(<svg><a xlink:href="u"/><a href="v"/></svg>))
+      xlink = { "x" => "http://www.w3.org/1999/xlink" }
+      expect(doc.css("[x|href]", xlink).map { |a| a.attribute_nodes.first.value }).to eq(%w[u])
+      expect(doc.css("[x|href='u']", xlink).size).to eq(1)
+      expect(doc.css("[href]").map { |a| a["href"] }).to eq(%w[v])
+    end
+
+    # The parsed selector is cached by its text alone; what a prefix means is
+    # settled per call, so the same text under other bindings, or in another
+    # document, answers by those.
+    it "resolves the same cached selector afresh under each call's bindings" do
+      svg = "http://www.w3.org/2000/svg"
+      xml = Makiri::XML(%(<r xmlns:s="#{svg}"><s:circle/></r>))
+      3.times do
+        expect(svg_doc.css("s|circle", "s" => svg).size).to eq(1)
+        expect(svg_doc.css("s|circle", "s" => "urn:other")).to be_empty
+        expect { svg_doc.css("s|circle") }.to raise_error(Makiri::CSS::SyntaxError)
+        expect(xml.css("s|circle", "s" => svg).size).to eq(1)
+        expect { xml.css("s|circle") }.to raise_error(Makiri::CSS::SyntaxError)
+      end
     end
   end
 
-  # HTML matching (`lexbor::css_match`) caps one compound chain at 64
+  # HTML matching (`css_match`) caps one compound chain at 64
   # compounds, the same bound `Makiri::XML` has (see `xml_css_spec.rb`'s
   # "fails closed on an over-long :is()/:not() argument"). Over the cap is a
   # raise, found before any node is matched, wherever the chain is nested -

@@ -1,13 +1,14 @@
-//! CSS selector matcher over the typed HTML adapter, structured as an
+//! CSS selector matcher over any DOM that implements [`dom`]'s traits - the
+//! HTML arena's are `html::dom::css` - structured as an
 //! explicit (heap) work stack rather than native recursion - the same
 //! architectural property Lexbor's own `lxb_selectors_*` state machine has
 //! (`lxb_selectors_run`'s loop,
 //! `do { entry = selectors->state(...) } while (entry != NULL);`, never
 //! recurses on selector nesting). Selector PARSING is the parser port's
-//! (`crate::selectors`), read through its typed views, the same ones the XML
-//! CSS->XPath lowering uses.
+//! (`crate::selectors`), read through its typed views.
 //!
-//! Wired into `Node#css`/`#at_css`/`#matches?` (`glue::html_node::css`). A
+//! Wired into `Node#css`/`#at_css`/`#matches?` on both representations
+//! (`glue::html_node::css`, `glue::xml_node::css`). A
 //! port was chosen over adopting the `selectors`/`cssparser` crates, which
 //! were explored and discarded: their matcher recurses natively on selector
 //! nesting ("Why an explicit stack" below). The spike code is gone, findable
@@ -52,11 +53,18 @@
 //!   count, `:enabled` is only for the elements `:disabled` is defined for
 //!   (Lexbor: any element), and an
 //!   element with a custom tag is neither `:disabled` nor `:checked` by its
-//!   attribute alone. `:read-write` / `:read-only` ask the same
-//!   `is_disabled`, so an `<input>` in a `<fieldset disabled>` is read-only
-//!   here and read-write to Lexbor. Checked against the Standard
+//!   attribute alone. `:read-write` / `:read-only` are the Standard's too
+//!   (M9): an `input` the `readonly` attribute applies to, a `textarea`, an
+//!   editable element - Lexbor takes every `input`, and no editable one.
+//!   Checked against the Standard
 //!   (`form_state_pseudo_classes_follow_the_html_standard`); the Lexbor
 //!   differential fuzzer leaves all five out.
+//! - `:any-link` / `:link` are an HTML `a` / `area` or an SVG `a` with an
+//!   `href` (M2), where Lexbor takes `link` and `map` in any namespace, and
+//!   `:empty` counts element and non-empty text children only (M10), where
+//!   Lexbor counts every child but a comment. Both as the browsers answer.
+//!   The harnesses that hold this matcher to Lexbor's engine run Lexbor's
+//!   rules (`compat::as_lexbor`).
 //! - `lxb_selectors_anb_calc` tests `:nth-*`'s `An+B` with a `double`
 //!   division, which past 2^53 answers "divisible" for everything; this port
 //!   computes exactly, in `i128` (`anb_matches`'s doc).
@@ -167,6 +175,8 @@
 #![forbid(unsafe_code)]
 
 mod compile;
+pub mod dom;
+mod ns;
 mod positions;
 mod query;
 mod scratch;
@@ -174,17 +184,17 @@ mod simple;
 mod state;
 mod tree;
 
-pub use compile::check_compiles;
 #[cfg(all(test, feature = "lexbor"))]
 pub(crate) use compile::validate;
+pub use ns::Namespaces;
 pub use scratch::Scratch;
 
 use crate::falloc::VecPush;
-use crate::html_dom::html::{HtmlElement, HtmlNode};
 use crate::limits::NODE_SET_MAX;
 use crate::selectors::ast::Lists;
 
 use compile::{compile, Compiled};
+use dom::CssNode;
 use query::Query;
 
 /// A complexity bound on compounds per chain, mirroring `css::MAX_COMPOUNDS`.
@@ -257,6 +267,10 @@ pub enum MatchFailure {
     /// compounds - see [`compile()`](compile::compile)'s doc for why this is caught up front
     /// rather than left to a silent never-matching chain.
     TooComplex,
+    /// A namespace prefix in the selector that the query's [`Namespaces`]
+    /// do not bind: the selector is invalid (Selectors 4 §6.1), found when
+    /// it is compiled.
+    UndeclaredPrefix,
     /// An allocation the match needed failed (`falloc`). Raised, like every
     /// other failure here, never answered as a partial result.
     Oom,
@@ -297,21 +311,27 @@ impl crate::falloc::Oom for MatchFailure {
  * is matched, whatever the document holds.                            *
  * ------------------------------------------------------------------ */
 
-/// Does `element` match any comma-separated alternative of `groups`? The
+/// Does `node` match any comma-separated alternative of `groups`? The
 /// entry point for `Node#matches?`: no traversal, under a fresh budget, over
-/// `scratch`'s tables and stacks.
-pub fn matches_any(
-    scratch: &mut Scratch,
+/// `scratch`'s tables and stacks. A node that is not an element matches
+/// nothing, once the selector compiles.
+pub fn matches_any<'d, N: CssNode<'d>>(
+    scratch: &mut Scratch<N::Host>,
     groups: Lists<'_>,
-    element: HtmlElement<'_>,
+    ns: &Namespaces<'_>,
+    node: N,
 ) -> Result<bool, MatchFailure> {
-    let compiled = compile(scratch, groups)?;
-    let answer = Query::new(&compiled, None, DEFAULT_WORK_BUDGET, scratch).and_then(|mut query| {
-        let answer = query.matches_top(element.node());
-        query.finish(scratch);
-        answer
-    });
-    compiled.give_back(scratch);
+    let compiled = compile(&mut scratch.tables, groups, ns)?;
+    let answer = if node.element().is_none() {
+        Ok(false)
+    } else {
+        Query::new(&compiled, None, DEFAULT_WORK_BUDGET, scratch).and_then(|mut query| {
+            let answer = query.matches_top(node);
+            query.finish(scratch);
+            answer
+        })
+    };
+    compiled.give_back(&mut scratch.tables);
     answer
 }
 
@@ -348,39 +368,41 @@ impl From<MatchFailure> for QueryFailure {
 /// Capped at [`NODE_SET_MAX`], matching every other Makiri result set, and
 /// at one shared work budget for the whole call (`Budget`'s doc). The
 /// tables and stacks are `scratch`'s.
-pub fn select_all<'doc>(
-    scratch: &mut Scratch,
-    root: HtmlNode<'doc>,
+pub fn select_all<'d, N: CssNode<'d>>(
+    scratch: &mut Scratch<N::Host>,
+    root: N,
     groups: Lists<'_>,
-) -> Result<Vec<HtmlNode<'doc>>, QueryFailure> {
-    select_all_with_limit(scratch, root, groups, DEFAULT_WORK_BUDGET)
+    ns: &Namespaces<'_>,
+) -> Result<Vec<N>, QueryFailure> {
+    select_all_with_limit(scratch, root, groups, ns, DEFAULT_WORK_BUDGET)
 }
 
-fn select_all_with_limit<'doc>(
-    scratch: &mut Scratch,
-    root: HtmlNode<'doc>,
+fn select_all_with_limit<'d, N: CssNode<'d>>(
+    scratch: &mut Scratch<N::Host>,
+    root: N,
     groups: Lists<'_>,
+    ns: &Namespaces<'_>,
     limit: u64,
-) -> Result<Vec<HtmlNode<'doc>>, QueryFailure> {
-    let compiled = compile(scratch, groups)?;
+) -> Result<Vec<N>, QueryFailure> {
+    let compiled = compile(&mut scratch.tables, groups, ns)?;
     let found = select_all_compiled(scratch, &compiled, root, limit);
-    compiled.give_back(scratch);
+    compiled.give_back(&mut scratch.tables);
     found
 }
 
-fn select_all_compiled<'doc>(
-    scratch: &mut Scratch,
+fn select_all_compiled<'d, N: CssNode<'d>>(
+    scratch: &mut Scratch<N::Host>,
     compiled: &Compiled<'_>,
-    root: HtmlNode<'doc>,
+    root: N,
     limit: u64,
-) -> Result<Vec<HtmlNode<'doc>>, QueryFailure> {
+) -> Result<Vec<N>, QueryFailure> {
     let mut query = Query::new(compiled, Some(root.owner_document()), limit, scratch)?;
     let mut walk = || {
         let mut out = Vec::new();
-        let mut n = root;
-        while let Some(next) = n.preorder_next(root) {
-            n = next;
-            if n.element().is_some() && query.matches_top(n)? {
+        let candidates = Candidates::of(&query, root);
+        let every = candidates.all_match();
+        for n in candidates {
+            if every || query.matches_top(n)? {
                 if out.len() >= NODE_SET_MAX {
                     return Err(QueryFailure::Overflow);
                 }
@@ -400,12 +422,12 @@ fn select_all_compiled<'doc>(
 /// an expensive `:has()` search without a document big enough to exhaust the
 /// real, shipped limit.
 #[cfg(all(test, feature = "lexbor"))]
-pub(crate) fn select_all_with_work_limit<'doc>(
-    root: HtmlNode<'doc>,
+pub(crate) fn select_all_with_work_limit<'d, N: CssNode<'d>>(
+    root: N,
     groups: Lists<'_>,
     limit: u64,
-) -> Result<Vec<HtmlNode<'doc>>, QueryFailure> {
-    select_all_with_limit(&mut Scratch::new(), root, groups, limit)
+) -> Result<Vec<N>, QueryFailure> {
+    select_all_with_limit(&mut Scratch::new(), root, groups, &Namespaces::NONE, limit)
 }
 
 /// The first descendant of `root`, in document order, that matches any
@@ -413,22 +435,23 @@ pub(crate) fn select_all_with_work_limit<'doc>(
 /// instead of building the whole set, as `Node#at_css` wants (see
 /// `lexbor::selectors::first_cb`). One work budget for the whole search,
 /// over `scratch`'s tables and stacks.
-pub fn select_first<'doc>(
-    scratch: &mut Scratch,
-    root: HtmlNode<'doc>,
+pub fn select_first<'d, N: CssNode<'d>>(
+    scratch: &mut Scratch<N::Host>,
+    root: N,
     groups: Lists<'_>,
-) -> Result<Option<HtmlNode<'doc>>, MatchFailure> {
-    let compiled = compile(scratch, groups)?;
+    ns: &Namespaces<'_>,
+) -> Result<Option<N>, MatchFailure> {
+    let compiled = compile(&mut scratch.tables, groups, ns)?;
     let found = select_first_compiled(scratch, &compiled, root);
-    compiled.give_back(scratch);
+    compiled.give_back(&mut scratch.tables);
     found
 }
 
-fn select_first_compiled<'doc>(
-    scratch: &mut Scratch,
+fn select_first_compiled<'d, N: CssNode<'d>>(
+    scratch: &mut Scratch<N::Host>,
     compiled: &Compiled<'_>,
-    root: HtmlNode<'doc>,
-) -> Result<Option<HtmlNode<'doc>>, MatchFailure> {
+    root: N,
+) -> Result<Option<N>, MatchFailure> {
     let mut query = Query::new(
         compiled,
         Some(root.owner_document()),
@@ -436,10 +459,10 @@ fn select_first_compiled<'doc>(
         scratch,
     )?;
     let mut walk = || {
-        let mut n = root;
-        while let Some(next) = n.preorder_next(root) {
-            n = next;
-            if n.element().is_some() && query.matches_top(n)? {
+        let candidates = Candidates::of(&query, root);
+        let every = candidates.all_match();
+        for n in candidates {
+            if every || query.matches_top(n)? {
                 return Ok(Some(n));
             }
         }
@@ -448,4 +471,55 @@ fn select_first_compiled<'doc>(
     let found = walk();
     query.finish(scratch);
     found
+}
+
+/// The elements a walking query tests, in document order: `root`'s element
+/// descendants, or - where the host has an index for the selector's
+/// rightmost type selector ([`Query::index_key`]) - that index's bucket,
+/// which holds every element that can match and no other order.
+enum Candidates<'d, N: CssNode<'d>> {
+    Walk {
+        root: N,
+        at: N,
+    },
+    /// A bucket, and whether the selector is its type selector alone, so
+    /// that every element in it matches.
+    Index(N::Candidates, bool),
+}
+
+impl<'d, N: CssNode<'d>> Candidates<'d, N> {
+    fn of(query: &Query<'_, '_, 'd, N>, root: N) -> Self {
+        let Some((local, ns, whole)) = query.index_key() else {
+            return Candidates::Walk { root, at: root };
+        };
+        match root.candidates(local, ns) {
+            Some(bucket) => Candidates::Index(bucket, whole),
+            None => Candidates::Walk { root, at: root },
+        }
+    }
+
+    /// Whether every candidate matches, with nothing left to test.
+    fn all_match(&self) -> bool {
+        matches!(self, Candidates::Index(_, true))
+    }
+}
+
+impl<'d, N: CssNode<'d>> Iterator for Candidates<'d, N> {
+    type Item = N;
+
+    #[inline]
+    fn next(&mut self) -> Option<N> {
+        match self {
+            Candidates::Walk { root, at } => {
+                while let Some(next) = at.preorder_next(*root) {
+                    *at = next;
+                    if next.element().is_some() {
+                        return Some(next);
+                    }
+                }
+                None
+            }
+            Candidates::Index(bucket, _) => bucket.next(),
+        }
+    }
 }

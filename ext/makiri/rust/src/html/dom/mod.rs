@@ -1212,6 +1212,7 @@ mod compact;
 mod copy;
 /// Copies between an arena HTML document and an XML one.
 pub mod cross_import;
+pub mod css;
 mod edit;
 mod ext_table;
 mod handle;

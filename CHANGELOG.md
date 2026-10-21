@@ -10,6 +10,24 @@
 
 ### Changed
 
+* `Makiri::XML`'s `#css`, `#at_css` and `#matches?` run on the same matcher as
+  HTML's, and match as a browser's `querySelectorAll` does in an XML
+  document. A bare type selector matches its name in any namespace; the
+  root's declarations are no longer collected, so a prefix needs the ns
+  Hash, whose `"xmlns"` entry is the default namespace (on HTML too). A
+  selector under a node is matched against the whole tree, its results kept
+  to the node's descendants. `[a=v i]`, `:nth-child(... of S)` and the
+  form-state and link pseudo-classes (for XHTML elements) are supported.
+  A selector that cannot run (`||`, `:current()`) raises
+  `Makiri::CSS::SyntaxError` on both representations, and an over-long
+  chain `Makiri::Error` where XML raised `Makiri::XPath::LimitExceeded`.
+  Deeply nested selectors are answered rather than refused. Matching is
+  10-20x faster on compound selectors (`.item`, `ul li.item`).
+* HTML CSS resolves namespace prefixes (M6, M7). `css(selector, ns)` binds
+  them: `svg|path` is the SVG `path`, `|p` an element in no namespace, and
+  `[x|href]` the attribute in `x`'s namespace. A prefix the Hash does not
+  bind raises `Makiri::CSS::SyntaxError` ("undeclared namespace prefix"),
+  where every prefix used to be ignored.
 * A `<select>` may have any number of `<option>`s: the 10,000 limit is gone,
   with the reason for it. The selectedness setting algorithm walked every
   option for each one inserted; it is decided from the select's state now,
@@ -102,6 +120,18 @@
   in the element's own namespace replaces the attribute it set before,
   where it appended a second, and an attribute taken off its element keeps
   its `namespace_uri`, where it became nil.
+* A namespaced type selector in the middle of a compound (`|E|*`, `.x|a`)
+  raises `Makiri::CSS::SyntaxError`, as browsers do (C28); it was read as a
+  second type selector of the compound.
+* `:any-link` / `:link` match an HTML `a` or `area`, or an SVG `a`, with an
+  `href`, as browsers do (M2): `<link href>` matched `:link` and `<map>`
+  `:any-link`. `:read-write` / `:read-only` follow the HTML Standard (M9):
+  a checkbox or radio is read-only, an element inside `contenteditable` is
+  read-write, and a `readonly` attribute in a namespace is not one.
+  `:empty` ignores processing instructions and empty text (M10).
+* HTML CSS's `:nth-child` family counts element siblings only (M8): a
+  doctype or a processing instruction took a position, so
+  `html:first-child` matched nothing after `<!doctype html>`.
 * An attribute name is serialized in the case it was set (R3): `e["viewBox"]`
   on an element in no namespace, or `set_attribute_ns` with `xlink:Href`,
   wrote the name lower-cased.

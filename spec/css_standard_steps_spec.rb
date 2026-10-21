@@ -137,4 +137,59 @@ RSpec.describe "CSS Syntax 3 and Selectors 4 steps the CSS parser follows" do
     expect(rule[:declarations].map { |d| [d[:name], d[:value]] }).to eq([%w[font-family x], ["src", "url(a)"]])
     expect(Makiri::Lexbor::CSS.parse_stylesheet("@media print { a{b:c} }").first[:declarations]).to eq([])
   end
+
+  # M8: Selectors 4, :nth-child(): "the element has An+B-1 siblings before
+  # it" - element siblings, so a doctype or a processing instruction takes
+  # no position.
+  it "counts only element siblings for the :nth-child family" do
+    doc = Makiri::HTML("<!doctype html><div><?pi x?><b>1</b><!--c--><i>2</i><?pi y?></div>")
+    expect(doc.css("html:first-child").size).to eq(1)
+    expect(doc.css("b:first-child").map(&:text)).to eq(["1"])
+    expect(doc.css("i:last-child").map(&:text)).to eq(["2"])
+    expect(doc.css("i:nth-child(2)").map(&:text)).to eq(["2"])
+    expect(doc.at_css("b").matches?(":first-child")).to be(true)
+  end
+
+  # M2: HTML Standard, :link - "all a elements that have an href attribute,
+  # and all area elements that have an href attribute"; SVG 2 adds its a.
+  it "takes a and area with href, and SVG a, as links" do
+    doc = Makiri::HTML(%(<!doctype html><link href=x><map href=y></map><a href=z>a</a><area href=w>
+      <svg><a href=s></a><a xlink:href=t></a></svg>))
+    expect(doc.css(":link").map { |e| e["href"] || e.attribute_nodes.first.value }).to eq(%w[z w s t])
+    expect(doc.css(":any-link").size).to eq(4)
+  end
+
+  # M9: HTML Standard, :read-write - input elements to which the readonly
+  # attribute applies and that are mutable, textarea elements without
+  # readonly that are not disabled, and editing hosts or editable elements.
+  it "decides :read-write by readonly's input types and by contenteditable" do
+    doc = Makiri::HTML(%(<!doctype html><input id=t><input id=c type=checkbox><input id=n type=NUMBER>
+      <input id=r type=email readonly><textarea id=x></textarea>
+      <div id=h contenteditable><p id=p>a</p><span contenteditable=false><b id=f>b</b></span></div>))
+    expect(doc.css(":read-write").map { |e| e["id"] }).to eq(%w[t n x h p])
+    expect(doc.at_css("#c").matches?(":read-only")).to be(true)
+    expect(doc.at_css("#f").matches?(":read-only")).to be(true)
+  end
+
+  # M10: :empty, as browsers count children - elements and text with data;
+  # comments and processing instructions do not count.
+  it "ignores comments and processing instructions for :empty" do
+    doc = Makiri::HTML("<!doctype html><p id=a><?pi x?></p><p id=b><!--c--></p><p id=c> </p><p id=d></p>")
+    expect(doc.css("p:empty").map { |e| e["id"] }).to eq(%w[a b d])
+    xml = Makiri::XML("<r><e><![CDATA[]]></e><e><?pi x?></e><e>t</e></r>")
+    expect(xml.css("e:empty").size).to eq(2)
+  end
+
+  # C28: <compound-selector> = [ <type-selector>? <subclass-selector>* ... ]:
+  # a type selector, namespaced or not, only begins a compound.
+  it "refuses a namespaced type selector in the middle of a compound" do
+    doc = Makiri::HTML("<a class=x>t</a>")
+    %w[|a|* .x|a [x]|a *|a|b].each do |sel|
+      expect { doc.css(sel) }.to raise_error(Makiri::CSS::SyntaxError), sel
+    end
+    expect(doc.css("|a.x")).to be_empty
+    expect(doc.css("*|a.x").size).to eq(1)
+    expect(doc.css("body *|a").size).to eq(1)
+    expect(Makiri::XML("<r><a/></r>").css("r >|a").size).to eq(1)
+  end
 end

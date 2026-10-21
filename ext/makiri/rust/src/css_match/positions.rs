@@ -2,9 +2,9 @@
 //! memo that makes a walking query count each sibling list once.
 
 use crate::falloc::{OomResult, VecPush};
-use crate::html_dom::html::{HtmlNode, RawNode};
 use crate::ptr_table::PtrMap;
 
+use super::dom::CssNode;
 use super::scratch::{recycle, SCRATCH_KEEP};
 use super::tree::{name_matches_type, next_position_sibling, prev_position_sibling};
 use super::{Budget, MatchFailure};
@@ -112,22 +112,22 @@ impl Positions {
     }
 
     /// Note that a count tested `node` and found it in `S` or not.
-    pub(super) fn of_seen_push(
+    pub(super) fn of_seen_push<'d, N: CssNode<'d>>(
         &mut self,
-        node: HtmlNode<'_>,
+        node: N,
         in_s: bool,
     ) -> Result<(), MatchFailure> {
         self.of_seen.falloc_push((node_key(node), in_s)).or_oom()
     }
 
     /// `node`'s recorded `(rank, in_s)` for the `of S` selector `sel`.
-    pub(super) fn of_rank(&self, sel: u32, node: HtmlNode<'_>) -> Option<(u64, bool)> {
+    pub(super) fn of_rank<'d, N: CssNode<'d>>(&self, sel: u32, node: N) -> Option<(u64, bool)> {
         let (_, map) = self.of_memo.iter().find(|(k, _)| *k == sel)?;
         map.get(node_key(node)).map(|v| (v >> 1, v & 1 == 1))
     }
 
     /// Is `node` known not to be in the `of S` selector `sel`'s `S`?
-    pub(super) fn of_known_out(&self, sel: u32, node: HtmlNode<'_>) -> bool {
+    pub(super) fn of_known_out<'d, N: CssNode<'d>>(&self, sel: u32, node: N) -> bool {
         self.of_out
             .iter()
             .find(|(k, _)| *k == sel)
@@ -135,7 +135,11 @@ impl Positions {
     }
 
     /// Record that `node` is not in `sel`'s `S` (a walking query only).
-    pub(super) fn of_note_out(&mut self, sel: u32, node: HtmlNode<'_>) -> Result<(), MatchFailure> {
+    pub(super) fn of_note_out<'d, N: CssNode<'d>>(
+        &mut self,
+        sel: u32,
+        node: N,
+    ) -> Result<(), MatchFailure> {
         if !self.walking {
             return Ok(());
         }
@@ -161,11 +165,11 @@ impl Positions {
     /// sibling's, or 0 at the end of the list). Returns the candidate's
     /// rank - its position among the siblings in `S` - and, in a walking
     /// query, records every sibling passed and the candidate itself.
-    pub(super) fn of_finish(
+    pub(super) fn of_finish<'d, N: CssNode<'d>>(
         &mut self,
         sel: u32,
         seen_base: u32,
-        candidate: HtmlNode<'_>,
+        candidate: N,
         end_rank: u64,
     ) -> Result<u64, MatchFailure> {
         let run = self.of_seen.get(seen_base as usize..).unwrap_or_default();
@@ -199,8 +203,8 @@ impl Positions {
     }
 }
 
-fn node_key(node: HtmlNode<'_>) -> *const () {
-    RawNode::from(node).table_key()
+fn node_key<'d, N: CssNode<'d>>(node: N) -> *const () {
+    node.table_key()
 }
 
 /// `node`'s 1-based position among its (`from_end`-directed) siblings,
@@ -211,8 +215,8 @@ fn node_key(node: HtmlNode<'_>) -> *const () {
 /// the first counted sibling whose position is known (or at the end of the
 /// list), and every counted sibling it passed gets its position recorded
 /// too - so each is stepped over once per kind, not once per candidate.
-pub(super) fn sibling_position<'doc>(
-    node: HtmlNode<'doc>,
+pub(super) fn sibling_position<'d, N: CssNode<'d>>(
+    node: N,
     from_end: bool,
     of_type: bool,
     budget: &Budget,
@@ -222,8 +226,8 @@ pub(super) fn sibling_position<'doc>(
     // `name_matches_type`) but is WRONG for the plain (`of_type == false`)
     // case - see `counts_toward_child_position`'s doc. One walk serves both,
     // since `same_type` already answers `false` for a non-element itself.
-    let same_type = |n: HtmlNode<'_>| !of_type || name_matches_type(n, node);
-    let step = |n: HtmlNode<'doc>| {
+    let same_type = |n: N| !of_type || name_matches_type(n, node);
+    let step = |n: N| {
         if from_end {
             next_position_sibling(n)
         } else {

@@ -518,5 +518,7 @@ pub struct Document {
     pub(super) doctype: Option<NodeId>,
     /// Rust-owned cache; mutation drops it before changing links.
     pub(in crate::xml) name_index: core::cell::OnceCell<Box<crate::xml::index::NameIndex>>,
+    /// The same, by local name alone, for CSS's any-namespace type selector.
+    pub(in crate::xml) local_index: core::cell::OnceCell<Box<crate::xml::index::LocalIndex>>,
     pub(super) has_encoding_decl: bool,
 }

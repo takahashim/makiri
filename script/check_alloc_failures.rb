@@ -322,7 +322,7 @@ SCENARIOS = {
 
   # CSS: a comma list with combinators through the reused engine, the at_css
   # first-match path, and matches?. The selectors reach every allocation the
-  # HTML matcher (`lexbor::css_match`) makes: the compiled tables and the
+  # HTML matcher (`css_match`) makes: the compiled tables and the
   # compile work list, the chain positions, the task stack (:is/:not/:has/
   # of S, :has() cursors), the resolved names, the remembered `:nth-*`
   # sibling positions, and the result vector. Most are borrowed from a
@@ -351,11 +351,11 @@ SCENARIOS = {
       doc.at_css("li").matches?("ul > li:is(.a):not(:has(p))").to_s
   end,
 
-  # CSS on XML: a different engine from the HTML one above - the selector is
-  # lowered (css/) into an XPath AST, every node of which is a falloc site. One
-  # selector per lowering shape: combinators, attribute operators, the nth and
-  # of-type arithmetic, the selector-list pseudo-classes and namespaced
-  # type/universal selectors.
+  # CSS on XML: the matcher above over the XML arena - its own Scratch, the
+  # namespace bindings, and the name indexes a type selector is answered from
+  # (built lazily, so a failed build falls back to the walk). One selector per
+  # shape: combinators, attribute operators, the nth and of-type arithmetic,
+  # the selector-list pseudo-classes and namespaced type/universal selectors.
   "xml_css" => lambda do
     doc = Makiri::XML::Document.parse(<<~XML)
       <root xmlns:p="urn:p">

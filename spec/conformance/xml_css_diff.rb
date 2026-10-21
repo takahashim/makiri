@@ -1,14 +1,21 @@
 # frozen_string_literal: true
 #
 # XML CSS-selector differential conformance: run the same selector against the
-# same XML document in Makiri (CSS lowered to its native XPath engine - original
+# same XML document in Makiri (its CSS matcher over the XML arena - original
 # code, no libxml2) and in Nokogiri::XML (which compiles CSS to XPath and runs
 # libxml2), then compare the matched node sets. A divergence is either a Makiri
 # bug or an intentional, documented difference.
 #
-# Both engines bind a bare type selector to the document's default namespace and
-# take a {prefix => uri} map for `ns|el`; the same map is passed to both, so the
-# inputs are identical. Vocabulary differences are tallied, NOT scored as bugs:
+# The two read a bare type selector differently: Makiri as a browser does, in
+# any namespace, Nokogiri in the root's default namespace (or, once a map is
+# given, in none). So Makiri is GIVEN Nokogiri's reading - the map plus an
+# "xmlns" entry naming that namespace ("" for none), which Makiri takes as the
+# default namespace - and the comparison is of what both then mean. A bare `*`
+# still differs: under that default Makiri puts it in the default namespace
+# (or in none), as CSS does, where Nokogiri matches any element; a selector
+# with one that answers differently is tallied as universal-default, not
+# scored. Vocabulary differences
+# are tallied, NOT scored as bugs:
 #   * makiri-unsupported : Makiri raises (the [a=v i] case flag, `*|attr`,
 #                          untyped of-type, jQuery extensions); standards-only /
 #                          XPath-1.0 limits, documented in the README.
@@ -121,6 +128,14 @@ def positional_key(node)
   "/#{segs.join('/')}"
 end
 
+# The namespace Nokogiri binds a bare type selector to in `doc`: the root's
+# default declaration with no map, none with one.
+def nokogiri_default(doc, ns)
+  return "" unless ns.empty?
+
+  doc.root.namespace_definitions.find { |d| d.prefix.nil? }&.href.to_s
+end
+
 def run(doc, sel, ns)
   set = (ns.empty? ? doc.css(sel) : doc.css(sel, ns))
   [:ok, set.map { |n| positional_key(n) }.sort]
@@ -139,7 +154,8 @@ makiri_only = {}    # distinct selectors Makiri supports but Nokogiri rejects
 noko_only   = {}    # distinct selectors Nokogiri supports but Makiri rejects
 
 classify = lambda do |doc, sel|
-  m = run(doc[:makiri], sel, doc[:ns])
+  default = nokogiri_default(doc[:nokogiri], doc[:ns])
+  m = run(doc[:makiri], sel, doc[:ns].merge("xmlns" => default))
   n = run(doc[:nokogiri], sel, doc[:ns])
   stats[:pairs] += 1
 
@@ -159,6 +175,8 @@ classify = lambda do |doc, sel|
   elsif m[1].sort == n[1].sort
     stats[:order_only] += 1
     diffs << [doc[:name], sel, "ORDER ONLY (same set, different order)"]
+  elsif sel.match?(/(?<![|\w-])\*(?!\|)/)
+    stats[:universal_default] += 1
   else
     stats[:diverge] += 1
     diffs << [doc[:name], sel,
@@ -193,8 +211,9 @@ puts "  documents            : #{DOCS.size}"
 puts "  pairs evaluated      : #{stats[:pairs]}"
 puts "  agree (node set)     : #{stats[:agree]}"
 puts "  agree (both reject)  : #{stats[:agree_reject]}"
-puts "  makiri-unsupported   : #{stats[:makiri_unsupported]}  ([a=v i] / *|attr / of-type / jQuery)"
+puts "  makiri-unsupported   : #{stats[:makiri_unsupported]}  (*|attr / jQuery)"
 puts "  nokogiri-unsupported : #{stats[:nokogiri_unsupported]}"
+puts "  universal-default    : #{stats[:universal_default]}  (a bare * in the default namespace, as CSS has it)"
 puts "  order-only diff      : #{stats[:order_only]}"
 puts "  DIVERGE node set     : #{stats[:diverge]}"
 

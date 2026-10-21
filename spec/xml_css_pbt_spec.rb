@@ -35,24 +35,14 @@ RSpec.describe "Makiri::XML CSS property-based testing" do
     Makiri::XML(XmlPbt.serialize(XmlPbt.gen_document(Random.new(seed), max_depth: 5, max_children: 4)))
   end
 
-  # The URI a BARE type selector binds to: the root element's default-namespace
-  # declaration, mirroring the engine's _css_namespaces. An xmlns="" declaration
-  # (empty URI) IS the no-namespace, which elements report as a nil namespace_uri,
-  # so normalise the empty string to nil to match.
-  def root_default_ns(doc)
-    href = doc.root&.namespace_definitions&.find { |n| n.prefix.nil? }&.href
-    (href.nil? || href.empty?) ? nil : href
-  end
-
   it "bare + prefixed name tests equal a ground-truth walk" do
     bad = nil
     CSS_PBT_COUNT.times do |i|
       doc = gen_doc(i)
       els = all_elements(doc)
-      droot = root_default_ns(doc)
-
+      # A bare type selector matches its name in any namespace.
       bare_ok = els.map(&:local_name).uniq.all? do |local|
-        truth = els.select { |e| e.local_name == local && e.namespace_uri == droot }
+        truth = els.select { |e| e.local_name == local }
         doc.css(local).to_a == truth
       end
       pipe_ok = els.map(&:local_name).uniq.all? do |local|

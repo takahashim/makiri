@@ -78,11 +78,6 @@ pub mod chunks;
     any(test, feature = "lexbor-reference", feature = "css-reference")
 ))]
 pub mod contains_guard;
-/// The HTML CSS matcher behind `Node#css`/`#at_css`/`#matches?`
-/// (`glue::html_node::css`, via `selector_cache`): Lexbor's `lxb_selectors_*`
-/// control flow in safe Rust, over the typed HTML adapter, on an explicit
-/// heap work stack rather than native recursion. Parsing is `css_parser`'s.
-pub mod css_match;
 /// Lexbor's CSS syntax tokenizer, run on its own for `contains_guard`.
 #[cfg(all(
     feature = "lexbor",

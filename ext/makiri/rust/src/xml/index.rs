@@ -1,5 +1,7 @@
-//! Safe element-name index: `(local name, namespace URI)` -> document-ordered
-//! elements.
+//! Safe element-name indexes: `(local name, namespace URI)` -> document-
+//! ordered elements ([`NameIndex`], XPath's name tests), and local name ->
+//! the same ([`LocalIndex`], CSS's type selector, which with no prefix and no
+//! default namespace matches its name in any namespace).
 //!
 //! The cache is built and read through the index-arena [`Document`], so this
 //! module contains no `unsafe` of its own. It owns no arena memory; its bucket
@@ -141,6 +143,43 @@ fn build(doc: &Document) -> Option<Box<NameIndex>> {
     .ok()
 }
 
+/// Local name -> the document's elements with it, in document order, in
+/// every namespace. Built apart from [`NameIndex`], and only when CSS asks:
+/// XPath never wants it.
+pub struct LocalIndex {
+    map: HashMap<Box<[u8]>, Vec<NodeId>, BuildHasherDefault<Fnv>>,
+}
+
+impl LocalIndex {
+    /// The elements named `local`, in document order; valid until the next
+    /// mutation invalidates the index.
+    pub fn lookup(&self, local: &[u8]) -> &[NodeId] {
+        self.map.get(local).map_or(&[], Vec::as_slice)
+    }
+}
+
+fn build_local(doc: &Document) -> Option<Box<LocalIndex>> {
+    let root = doc.doc_node();
+    let mut map: HashMap<Box<[u8]>, Vec<NodeId>, BuildHasherDefault<Fnv>> = HashMap::default();
+    let mut cur = Some(root);
+    while let Some(node) = cur {
+        if doc.type_(node) == Some(ArenaKind::Element) {
+            let local = doc.local(node);
+            match map.get_mut(local) {
+                Some(nodes) => nodes.falloc_push(node).ok()?,
+                None => {
+                    let key = falloc::try_to_boxed_slice(local)?;
+                    let mut nodes = falloc::try_vec_with_capacity(1)?;
+                    nodes.falloc_push(node).ok()?;
+                    map.falloc_insert(key, nodes).ok()?;
+                }
+            }
+        }
+        cur = doc.preorder_next(root, node);
+    }
+    falloc::try_box(LocalIndex { map }).ok()
+}
+
 /* `impl Document` here rather than in `arena`: the cache is document-owned
  * state, and this module owns its TYPE. The two blocks are the only ones -
  * `arena` for storage, this for its one lazy cache - so a reader looking for a
@@ -158,8 +197,18 @@ impl Document {
         self.name_index.get().map(|idx| &**idx)
     }
 
-    /// Drop the index, which any mutation must do before changing links.
+    /// This document's [`LocalIndex`], built lazily; `None` as for
+    /// [`name_index`](Self::name_index).
+    pub fn local_index(&self) -> Option<&LocalIndex> {
+        if self.local_index.get().is_none() {
+            let _ = self.local_index.set(build_local(self)?);
+        }
+        self.local_index.get().map(|idx| &**idx)
+    }
+
+    /// Drop the indexes, which any mutation must do before changing links.
     pub fn invalidate_name_index(&mut self) {
         self.name_index.take();
+        self.local_index.take();
     }
 }

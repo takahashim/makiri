@@ -108,9 +108,10 @@ el = doc.at_xpath("//a:entry", ns)
 el.local_name                                  # => "entry"
 el.namespace_uri                               # => "http://www.w3.org/2005/Atom"
 
-# CSS selectors work too (lowered to the native XPath engine): a bare type
-# selector binds to the document's default namespace, so this just works.
+# CSS selectors work too, as in a browser: a bare type selector matches its
+# name in any namespace, so this just works.
 doc.css("entry").length                        # => 2
+doc.css("a|entry", ns).length                  # => 2 (a prefix the Hash binds)
 doc.css("feed > entry").map { |e| e.at_css("title").text }  # => ["Hello", "World"]
 
 # Serialize back to XML

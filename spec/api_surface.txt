@@ -479,7 +479,6 @@ module Makiri::XML::NodeMethods
   private def _at_css(2)
   private def _css(2)
   private def _css_matches(2)
-  private def _css_namespaces(1 req:user)
   private def unprefixed_element_namespace(0)
 
 class Makiri::XML::ProcessingInstruction < Makiri::ProcessingInstruction

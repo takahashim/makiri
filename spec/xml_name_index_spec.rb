@@ -34,7 +34,9 @@ RSpec.describe "Makiri::XML element-name index" do
         <wrap><entry id="a2"/></wrap>
       </feed>
     XML
-    expect(doc.css("entry").map { |e| e["id"] }).to eq(%w[a1 a2])          # default ns only
+    expect(doc.css("entry").map { |e| e["id"] }).to eq(%w[a1 d1 a2])       # any namespace
+    expect(doc.css("entry", "xmlns" => "urn:a").map { |e| e["id"] }).to eq(%w[a1 a2])
+    expect(doc.css("|entry").map { |e| e["id"] }).to be_empty
     expect(walk_by_name(doc, "entry", "urn:a").map { |e| e["id"] }).to eq(%w[a1 a2])
     expect(doc.css("dc|entry", "dc" => "urn:dc").map { |e| e["id"] }).to eq(%w[d1])
     expect(doc.xpath("//a:entry", "a" => "urn:a").map { |e| e["id"] }).to eq(%w[a1 a2])

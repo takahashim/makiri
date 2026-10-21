@@ -132,6 +132,31 @@ pub enum Fix {
     C19,
     /// `:has()` is not valid inside `:has()`.
     C20,
+    /// A type or universal selector written with a namespace prefix (`|E`,
+    /// `ns|*`) may only begin a compound: `|E|*` and `.x|a` are invalid.
+    C28,
+    /// A selector's namespace prefix is resolved against the caller's
+    /// bindings (M6, M7): `p|E` is E in that namespace, `|E` E in none, an
+    /// undeclared prefix invalid. Lexbor ignores every prefix. A matcher
+    /// item, as M8.
+    M6,
+    /// `:any-link` / `:link` are the HTML Standard's (M2): an HTML `a` or
+    /// `area`, or an SVG `a`, with an `href` - not Lexbor's `link` and `map`
+    /// in any namespace. A matcher item, as M8.
+    M2,
+    /// `:read-write` is the HTML Standard's (M9): an `input` the `readonly`
+    /// attribute applies to, a `textarea`, and an editable element - not
+    /// Lexbor's every `input`. A matcher item, as M8.
+    M9,
+    /// `:empty` counts element children and text with data (M10), as the
+    /// browsers do - not Lexbor's every child but a comment. A matcher item,
+    /// as M8.
+    M10,
+    /// The plain `:nth-child` family counts element siblings only, as
+    /// Selectors 4 does; Lexbor counts every sibling but Text and Comment,
+    /// so a doctype or a processing instruction took a position. A
+    /// matcher item; no parse changes, so [`explains`] never names it.
+    M8,
     /// An element carries its start tag's offset when it was created for
     /// that tag's token, and no other (`Node#line`); not a tree change, so
     /// [`explains`] never names it: the harnesses compare the trees without
@@ -212,6 +237,10 @@ pub fn css_explains(input: &[u8]) -> Vec<Fix> {
      * simple selectors to fill a component (511). */
     if input.contains(&b':') || input.contains(&b'|') || input.len() >= 1000 {
         fixes.push(Fix::C23);
+    }
+    /* C28: a namespace bar. */
+    if input.contains(&b'|') {
+        fixes.push(Fix::C28);
     }
     /* C4: a backslash at the end of the input. */
     if input.last() == Some(&b'\\') {

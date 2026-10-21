@@ -1072,8 +1072,8 @@ fn xpath_reads_as_lexbor_does_on_wpt_inputs() {
 /// The matcher, which takes arena nodes in this build, against Lexbor's own
 /// engine on the Lexbor document the arena copied - by walk position.
 fn css_case(input: &[u8], selectors: &[&str]) {
+    use crate::css_match::{self as port, Scratch};
     use crate::gvl::Gvl;
-    use crate::lexbor::css_match::{self as port, Scratch};
     use crate::lexbor::selectors as old_engine;
     let parsed = parse_html(input, true, DepthLimit::DEFAULT).expect("parses");
     // SAFETY: `parsed` owns the document; only this test touches it.
@@ -1092,15 +1092,25 @@ fn css_case(input: &[u8], selectors: &[&str]) {
         let groups = crate::selectors::parse(sel.as_bytes())
             .ok()
             .expect("parses");
-        let new: Vec<usize> = port::select_all(&mut Scratch::new(), ad.as_node(), groups.groups())
-            .unwrap_or_else(|e| panic!("{sel:?} failed: {e:?}"))
-            .into_iter()
-            .map(|n| p.apos[&n.id()])
-            .collect();
+        let new: Vec<usize> = port::select_all(
+            &mut Scratch::new(),
+            ad.as_node(),
+            groups.groups(),
+            &port::Namespaces::NONE,
+        )
+        .unwrap_or_else(|e| panic!("{sel:?} failed: {e:?}"))
+        .into_iter()
+        .map(|n| p.apos[&n.id()])
+        .collect();
         assert_eq!(new, old, "{sel:?} over {}", String::from_utf8_lossy(input));
-        let first = port::select_first(&mut Scratch::new(), ad.as_node(), groups.groups())
-            .expect("first")
-            .map(|n| p.apos[&n.id()]);
+        let first = port::select_first(
+            &mut Scratch::new(),
+            ad.as_node(),
+            groups.groups(),
+            &port::Namespaces::NONE,
+        )
+        .expect("first")
+        .map(|n| p.apos[&n.id()]);
         assert_eq!(first, old.first().copied(), "first {sel:?}");
         /* `matches?` agrees with the descendant set on the plain subtree;
          * a template's contents are not descendants. */
@@ -1111,8 +1121,13 @@ fn css_case(input: &[u8], selectors: &[&str]) {
                 continue;
             }
             if let Some(e) = n.element() {
-                let m =
-                    port::matches_any(&mut Scratch::new(), groups.groups(), e).expect("matches");
+                let m = port::matches_any(
+                    &mut Scratch::new(),
+                    groups.groups(),
+                    &port::Namespaces::NONE,
+                    e.node(),
+                )
+                .expect("matches");
                 assert_eq!(m, old.contains(&i), "matches? {sel:?} on node {i}");
             }
         }

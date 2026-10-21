@@ -16,7 +16,7 @@ html5ever を採らない理由は三つある。
 第三に、木の深さガードや、現在の Lexbor pin が実装している processing-instruction token など、Makiri が依存している振る舞いを TreeSink の外から足すことになる。
 
 Lexbor を参考にするのは、CSS マッチャで一度やった方法の繰り返しである。
-`lexbor::css_match` は Lexbor の `lxb_selectors_*` の状態機械を安全な Rust に写し、旧実装をテスト専用のフィーチャに残して差分オラクルにした。
+`css_match` は Lexbor の `lxb_selectors_*` の状態機械を安全な Rust に写し、旧実装をテスト専用のフィーチャに残して差分オラクルにした。
 Lexbor は Apache-2.0 なので、制御フローの移植は `NOTICE` の記載の範囲で済む。
 初期実装では、Lexbor の意味論と制御フローとの対応を可能な限り保つ。
 対応が保たれていれば、新実装と Lexbor の食い違いはすべて移植の誤りとして扱えるので、差分オラクルが鋭く効く。

@@ -14,10 +14,13 @@
 * XPath 1.0 には仕様に準拠した独自エンジンを作成し、libxml2 等を持ち込まない
 * CSS selectors と stylesheet は、Lexbor の CSS 構文 tokenizer、構文パーサ、
   セレクタパーサを Rust に移植した自前のパーサで解析し、出荷するビルドは
-  Lexbor の CSS パーサを使わない。HTML の照合は Lexbor の state machine を安全な Rust に
-  移植した独自 matcher で行い、selector のネストを native stack に
+  Lexbor の CSS パーサを使わない。照合は Lexbor の state machine を安全な Rust に
+  移植した独自 matcher (`css_match`) で、HTML と XML の両方を同じトレイト
+  (`css_match::dom`) 越しに照合し、selector のネストを native stack に
   載せない・照合前に selector 全体を検査する・確保はすべて fallible、を
-  守る。XML は自前の XPath エンジン上の評価に落とす
+  守る。意味はブラウザの `querySelectorAll` に合わせる (HTML 文書かどうかと
+  要素の名前空間で規則を切り替える)。XML の CSS を XPath に落とす旧来の
+  変換 (`crate::css`) は、XML の照合を確かめる参照としてだけ残す
 * HTML の要素について source location (開始タグの行番号、1 始まり) を
   サポートする。行を特定できない node (parser が補った要素、fragment
   など) は推測せず nil を返す。column / byte offset は公開しない
@@ -303,11 +306,12 @@ CSS/serialize/読み取りアクセサも GVL を保持する。`spec/threading_
   探索木、tree builder のタグの分類と調整表) は、Lexbor のヘッダとソース
   と WHATWG の `entities.json` から生成し、手で転記しない。生成物は
   Lexbor の表と要素ごとに一致することをテストで確かめる。
-* crate のフィーチャは六つ。`ruby` (Ruby との境界、既定)、`html-dom`
+* crate のフィーチャは七つ。`ruby` (Ruby との境界、既定)、`html-dom`
   (index アリーナの HTML DOM とその上の CSS の照合、XPath の HTML 実装。
   `ruby` と `lexbor` が含む)、`lexbor` (vendored Lexbor を読む参照の層)、
-  `alloc-inject` (OOM 注入)、`css-reference` と `lexbor-reference`
-  (差分 fuzz の参照実装)。`lexbor` を含む三つは出荷するビルドに入らない。
+  `alloc-inject` (OOM 注入)、`css-reference`、`lexbor-reference`、
+  `xml-css-reference` (差分 fuzz の参照実装)。`lexbor` と三つの参照は
+  出荷するビルドに入らない。
 
 ## 6. Testing
 
@@ -330,8 +334,9 @@ cargo-fuzz の harness (`ext/makiri/rust/fuzz/`) は Ruby なしで engine を
 harness を持つ: `html_diff` (移植版の tree builder と Lexbor の木、その
 直列化、深さの上限の判定)、`html_xpath_diff` (XPath のアリーナの `Dom` と
 Lexbor の `Dom`)、`selector_diff` (移植版と Lexbor のセレクタ解析)、`html_css_diff` (自前の
-matcher と Lexbor の matcher)。参照実装は `lexbor-reference` /
-`css-reference` フィーチャでだけ link する。
+matcher と Lexbor の matcher)、`css` (XML の matcher と旧来の XPath への
+変換)。参照実装は `lexbor-reference` / `css-reference` /
+`xml-css-reference` フィーチャでだけ link する。
 
 > 当初構想にあった「Nokogiri を oracle にした diff モードを fuzz に持たせる」
 > 案は採っていない。Lexbor と libxml2 は HTML5 semantics が異なり、ランダム
@@ -422,7 +427,8 @@ Makiri では spec 準拠を取り、差分を curated spec で固定する:
 | 名前テストの ASCII case 畳み込み | HTML の要素・属性は畳み込む (SVG/MathML は保持) | Nokogiri は畳み込まない (HTML4 / HTML5 とも)。browser は畳み込む |
 | HTML 要素の namespace | XHTML namespace (属性は namespace なし) | HTML5 は namespace なし (`namespace-uri()` は空文字列) |
 | HTML 中の `<?target data?>` | processing instruction node (HTML Standard の現行の定義) | HTML5 は comment にする。HTML4 は processing instruction |
-| node からの CSS 検索の範囲 | 文書全体で照合し、結果を子孫に絞る (`querySelectorAll` と同じ) | selector を node 起点に限定して照合する |
+| node からの CSS 検索の範囲 | 文書全体で照合し、結果を子孫に絞る (`querySelectorAll` と同じ、HTML と XML) | selector を node 起点に限定して照合する |
+| XML の CSS の接頭辞のない型セレクタ | どの名前空間の要素にも当たる (ブラウザと同じ)。既定の名前空間は ns Hash の `"xmlns"` で与える | ルート要素の既定の名前空間 (ns Hash を渡すと名前空間なし) |
 | 要素名の変更 (`name=`) | できない (DOM に rename はない) | できる |
 
 Nokogiri 列の HTML4 / HTML5 は `Nokogiri::HTML4` / `Nokogiri::HTML5` を指す

@@ -44,10 +44,11 @@ expect_used = "warn"
 panic = "warn"
 
 [features]
-# Six features. Three name a real optional dependency rather than a step of
-# the C port - a Ruby runtime, a vendored C library, and a test hook - two,
-# `css-reference` and `lexbor-reference`, test references, and the last,
-# `html-dom`, the HTML DOM and everything over it (below).
+# Seven features. Three name a real optional dependency rather than a step of
+# the C port - a Ruby runtime, a vendored C library, and a test hook - three,
+# `css-reference`, `lexbor-reference` and `xml-css-reference`, test
+# references, and the last, `html-dom`, the HTML DOM and everything over it
+# (below).
 #
 # The port's thirty-seven per-file flags are gone. They existed so one C file at
 # a time could be replaced behind an identical ABI; there is no C left to
@@ -76,6 +77,12 @@ alloc-inject = []
 # the reference the `html_css_diff` fuzz harness holds `css_match` to. Never
 # part of a build that ships.
 css-reference = ["lexbor"]
+
+# The CSS-to-XPath lowering (`crate::css`) outside `cfg(test)`, as the
+# reference the `css` fuzz harness holds the matcher's XML instance to - the
+# engine `Makiri::XML`'s CSS ran on before it moved to `css_match`. No
+# dependency, no Lexbor. Never part of a build that ships.
+xml-css-reference = []
 
 # Lexbor as the parser port's reference (`lexbor::tree_diff`): its tree,
 # copied into the arena, beside the ported tree builder's, for the
