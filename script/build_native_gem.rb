@@ -10,9 +10,9 @@
 #
 # Run by .github/workflows/release.yml after downloading the compile artifacts.
 # The resulting gem ships the compiled binaries (one per Ruby minor version) and
-# declares no C extension, so `gem install` does NOT recompile or need cmake /
-# the Lexbor submodule. lib/makiri.rb already selects lib/makiri/<minor>/makiri
-# at require time.
+# declares no extension, so `gem install` does NOT recompile or need a Rust
+# toolchain. lib/makiri.rb already selects lib/makiri/<minor>/makiri at require
+# time.
 
 require "rubygems"
 require "rubygems/package"
@@ -26,11 +26,13 @@ spec = Gem::Specification.load(File.join(root, "makiri.gemspec"))
 libs = Dir[File.join(root, "lib", "makiri", "*", "makiri.{so,bundle}")].sort
 abort "no precompiled libraries found under lib/makiri/*/ - stage them first" if libs.empty?
 
-# Native gem: ship binaries, not the C sources or the vendored Lexbor tree, and
-# declare no extension so install never tries to compile.
+# Native gem: ship binaries, not the crate's sources, and declare no extension
+# so install never tries to compile. Lexbor's LICENSE and NOTICE stay: the
+# binaries are built from ports of its code, which Apache-2.0 asks a
+# distribution of to carry them.
 spec.platform   = platform
 spec.extensions = []
-spec.files = spec.files.reject { |f| f.start_with?("ext/", "vendor/") }
+spec.files = spec.files.reject { |f| f.start_with?("ext/") }
 spec.files += libs.map { |p| p.sub("#{root}/", "") }
 spec.files.uniq!
 # rb_sys is a runtime dependency only because extconf requires it at install

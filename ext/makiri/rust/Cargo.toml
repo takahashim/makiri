@@ -2,6 +2,11 @@
 name = "makiri_rs"
 version = "0.0.1"
 edition = "2021"
+# The oldest Rust a source install builds with - what the release's
+# `source-gem-install` job installs and builds on, so the declaration is
+# tested. It is today's floor (1.84 brought `core::ptr::without_provenance`),
+# not a promise: raise it whenever a newer feature is worth having.
+rust-version = "1.84"
 publish = false
 description = "The Makiri gem's extension: HTML5 parsing, XPath 1.0 and an XML reader"
 

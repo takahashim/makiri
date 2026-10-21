@@ -393,9 +393,9 @@ fn main() {
     // of them left to keep in agreement.
 }
 
-/// Where the vendored Lexbor headers are. extconf builds them into
-/// `vendor/lexbor/dist` before it invokes cargo, so the default is that path
-/// relative to this crate; `MAKIRI_LEXBOR_INCLUDE` overrides it for anything
+/// Where the vendored Lexbor headers are, for the reference builds that
+/// read them (the `lexbor` feature). `rake lexbor` builds them into
+/// `vendor/lexbor/dist`, so the default is that path relative to this crate; `MAKIRI_LEXBOR_INCLUDE` overrides it for anything
 /// that builds the crate from somewhere else.
 fn lexbor_include() -> std::path::PathBuf {
     if let Some(p) = std::env::var_os("MAKIRI_LEXBOR_INCLUDE") {
@@ -405,7 +405,7 @@ fn lexbor_include() -> std::path::PathBuf {
     let p = manifest.join("../../../vendor/lexbor/dist/include");
     if !p.join("lexbor/dom/dom.h").exists() {
         panic!(
-            "vendored Lexbor headers not found at {} - run `bundle exec rake compile` \
+            "vendored Lexbor headers not found at {} - run `bundle exec rake lexbor` \
              once, or set MAKIRI_LEXBOR_INCLUDE",
             p.display()
         );
