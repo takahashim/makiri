@@ -281,6 +281,44 @@ impl Appended {
     }
 }
 
+/// An [`Appended`] table that matches and stores byte for byte: the
+/// namespace and prefix tables' own entries (`html::dom`'s `ExtTable`),
+/// numbered from 0.
+#[derive(Default)]
+pub struct ExactNames(Appended);
+
+impl ExactNames {
+    /// The index of `name`, if the table holds it.
+    pub fn find(&self, name: &[u8]) -> Option<usize> {
+        self.0.find_by(name, hash_lower(name), Match::Exact)
+    }
+
+    /// The index of `name`, appended when new.
+    pub fn intern(&mut self, name: &[u8]) -> Result<usize, NamesOom> {
+        self.0.append_by(name, hash_lower(name), 0, Match::Exact)
+    }
+
+    /// The entry at `index`.
+    pub fn get(&self, index: usize) -> Option<&[u8]> {
+        self.0.name(index, 0)
+    }
+
+    /// The bytes the table owns.
+    pub fn owned_bytes(&self) -> usize {
+        self.0.bytes()
+    }
+
+    /// The bytes of its entries, in O(1).
+    pub fn stored_bytes(&self) -> usize {
+        self.0.stored
+    }
+
+    /// The longest entry's length.
+    pub fn longest(&self) -> usize {
+        self.0.longest
+    }
+}
+
 /// A document's interned tag and attribute names.
 pub struct Names {
     tags: Appended,

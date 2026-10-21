@@ -105,6 +105,9 @@
 * An attribute name is serialized in the case it was set (R3): `e["viewBox"]`
   on an element in no namespace, or `set_attribute_ns` with `xlink:Href`,
   wrote the name lower-cased.
+* An HTML document looks a namespace or prefix up by hash, and an import
+  into XML shares URIs by namespace id: a document given many namespaces by
+  `create_element_ns` made both quadratic.
 * `HTML::Document#import_node` refuses a document with "cannot import a
   document; use #dup", as `#clone_node` does; it failed with "failed to
   import node".
