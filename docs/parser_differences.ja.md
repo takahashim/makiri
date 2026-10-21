@@ -223,6 +223,17 @@ P で始まる項目は HTML パーサの振る舞いである。
 - **変わる答え**：foster された void 要素が自分の行を持つ（`<table>\n<input>` の `input` は 2）。間違った行を返さないことは変わらない。
 - **検証**：比較のテストと fuzz は、Lexbor 互換の実行で Lexbor の位置と完全に一致させ、仕様どおりの実行では、印を付けたすべての要素が、その位置で自分の名前の開始タグを指すことを確かめる（`lexbor::tree_diff::offsets_name_their_tags`）。
 
+## 資源の表の項目
+
+`html/res/tree.rs`（tree builder の分類と調整の表）は、固定した版の HTML Standard から生成する（`conformance::res_gen`）。Lexbor をリンクしている間は、`lexbor::res_tests` が Lexbor の表（`tag_res.h`、`tree_res.h`）と照合し、次の差だけを許す。
+
+### T1 HTML の `image` の special
+
+- **分類**：参照実装との差（観測できない）。
+- **箇所**：13.2.4.3 の special の一覧は `image` を含まない。仕様のソースは、要素としてスタックに載らないので関係ないとして、コメントで外している。Lexbor の `lxb_html_tag_res_cats` は HTML の `image` を special にしている。
+- **移植版**：表を仕様から生成するので、special にしない。
+- **影響**：ない。`<image>` の開始タグは `img` 要素になるので HTML の `image` 要素はスタックに載らず、special を問うのはスタック上の要素だけである。
+
 ## 実装しないもの
 
 監査で未実装または意図した差とした step のうち、ほかの項目に入らないもの。

@@ -36,20 +36,40 @@ module ParserData
   ENTITIES_SHA256 = "d741d877ac77c4194c4ad526b5b4a19aef8dfe411ab840a466891cdbb9f362e6"
   ENTITIES_PATH = File.expand_path("data/whatwg/entities.json", __dir__)
 
+  # The HTML Standard's source at the pinned commit (docs/parser_differences.ja.md
+  # fixes it): what the tree builder's tables in html/res/tree.rs are generated
+  # from (`conformance::res_gen` in the crate). One file, so fetched raw and
+  # pinned by its digest as well as its commit.
+  HTML_SPEC_COMMIT = "de953a7cf0523f5873a1904ba2ce010c689dfb66"
+  HTML_SPEC_URL = "https://raw.githubusercontent.com/whatwg/html/#{HTML_SPEC_COMMIT}/source"
+  HTML_SPEC_SHA256 = "8c5ba635768cfc0bb9bef6c4f4107efbc52b263bc8c796f7b55cd12f80b5dda4"
+  HTML_SPEC_PATH = File.expand_path("data/whatwg/html-source", __dir__)
+
   module_function
 
   # Fetch entities.json unless the pinned copy is there.
   def ensure_entities!
+    ensure_file!(ENTITIES_URL, ENTITIES_SHA256, ENTITIES_PATH)
+  end
+
+  # Fetch the HTML Standard's source unless the pinned copy is there.
+  def ensure_html_spec!
+    ensure_file!(HTML_SPEC_URL, HTML_SPEC_SHA256, HTML_SPEC_PATH)
+  end
+
+  # Fetch `url` to `path` unless a copy with the digest `sha256` is there; abort
+  # on any other digest.
+  def ensure_file!(url, sha256, path)
     require "digest"
-    return if File.exist?(ENTITIES_PATH) && Digest::SHA256.file(ENTITIES_PATH).hexdigest == ENTITIES_SHA256
+    return if File.exist?(path) && Digest::SHA256.file(path).hexdigest == sha256
 
     require "open-uri"
-    puts "fetching #{ENTITIES_URL} -> #{ENTITIES_PATH}"
-    body = URI.parse(ENTITIES_URL).open("rb", &:read)
+    puts "fetching #{url} -> #{path}"
+    body = URI.parse(url).open("rb", &:read)
     got = Digest::SHA256.hexdigest(body)
-    abort "entities.json digest #{got} is not the pinned #{ENTITIES_SHA256}" unless got == ENTITIES_SHA256
-    FileUtils.mkdir_p(File.dirname(ENTITIES_PATH))
-    File.binwrite(ENTITIES_PATH, body)
+    abort "#{File.basename(path)} digest #{got} is not the pinned #{sha256}" unless got == sha256
+    FileUtils.mkdir_p(File.dirname(path))
+    File.binwrite(path, body)
   end
 
   # Fetch `src` unless its files are there and checked out at the pinned commit.
@@ -88,4 +108,5 @@ if $PROGRAM_NAME == __FILE__
   ParserData.ensure!(ParserData::WPT)
   ParserData.ensure!(ParserData::HTML5LIB)
   ParserData.ensure_entities!
+  ParserData.ensure_html_spec!
 end

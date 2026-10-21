@@ -16,6 +16,8 @@
 //!   with the small [`json`] reader.
 //! - [`known`]: the divergences already classified against the pinned HTML
 //!   Standard, shared with the Ruby runner.
+//! - [`res_gen`]: the generator of `html::res`'s tree tables and entity tree,
+//!   from the pinned Standard and `entities.json`.
 //!
 //! Nothing here knows which parser built a tree; each parser's reader lives
 //! with that parser (`lexbor::conformance_tests` for Lexbor).
@@ -29,6 +31,7 @@
 pub mod dat;
 pub mod json;
 pub mod known;
+pub mod res_gen;
 pub mod tokens;
 pub mod tree;
 

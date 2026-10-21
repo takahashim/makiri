@@ -1,22 +1,22 @@
-//! The generator of `html::res`, and its oracle.
+//! `html::res` against the linked Lexbor, while it is linked.
 //!
-//! `html::res::names` is built from Lexbor's static tables: the constant names
-//! from the enum headers (`tag/const.h`, `dom/interfaces/attr_const.h`,
-//! `ns/const.h`) and each id's strings from the linked Lexbor itself.
-//! `html::res::entities` is built from the WHATWG `entities.json` (pinned by
-//! digest in `spec/conformance/parser_data.rb`) with a port of Lexbor's
-//! `utils/lexbor/html/tokenizer_entities_bst.py`, and then compared with the
-//! tree Lexbor generated from its own copy (`html/tokenizer/res.h`).
+//! `html::res::names` is still generated here, from Lexbor's static tables:
+//! the constant names from the enum headers (`tag/const.h`,
+//! `dom/interfaces/attr_const.h`, `ns/const.h`) and each id's strings from
+//! the linked Lexbor itself. The other two are generated without Lexbor, by
+//! `conformance::res_gen` - `tree` from the HTML Standard, `entities` from
+//! the WHATWG `entities.json` - and only compared with Lexbor's tables here
+//! (`tag_res.h`, `tree_res.h`, `tokenizer/res.h`).
 //!
-//! The tests fail when a checked-in file is not what the generator makes now;
-//! `MAKIRI_REGENERATE=1` rewrites them instead.
+//! `names_are_lexbors` fails when `names.rs` is not what the generator makes
+//! now; `MAKIRI_REGENERATE=1` rewrites it instead.
 
 #![allow(unsafe_code)]
 #![allow(clippy::disallowed_methods)]
 
+use crate::conformance::res_gen::lit;
 use crate::html::res::{entities, names, SbstEntry};
 use crate::lexbor::abi as lxb;
-use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
@@ -58,24 +58,6 @@ unsafe fn entry_str(e: &lxb::lexbor_hash_entry_t) -> Vec<u8> {
             core::slice::from_raw_parts(e.u.long_str, e.length).to_vec()
         }
     }
-}
-
-fn lit(b: &[u8]) -> String {
-    let mut s = String::from("b\"");
-    for &c in b {
-        match c {
-            b'"' | b'\\' => {
-                s.push('\\');
-                s.push(c as char);
-            }
-            0x20..=0x7e => s.push(c as char),
-            _ => {
-                let _ = write!(s, "\\x{c:02x}");
-            }
-        }
-    }
-    s.push('"');
-    s
 }
 
 /// One constant block: `pub const PREFIX_NAME: usize = N;` per enum entry.
@@ -208,208 +190,8 @@ fn generate_names() -> String {
     out
 }
 
-/* ---- the entity tree, ported from tokenizer_entities_bst.py ---- */
-
-#[derive(Default)]
-struct Layer(BTreeMap<u8, LayerEntry>);
-
-#[derive(Default)]
-struct LayerEntry {
-    next: Layer,
-    values: Vec<Vec<u8>>,
-}
-
-struct Node {
-    key: u8,
-    left: usize,
-    right: usize,
-    next: usize,
-    value: Option<Vec<u8>>,
-    pending: Option<Layer>,
-}
-
-/// `entities_bst_create_tree`: lay out one layer from `idx`, returning the
-/// next free index. The arithmetic is the script's, step for step.
-fn create_tree(index: Layer, bst: &mut BTreeMap<usize, Node>, mut idx: usize) -> usize {
-    let mut index = index.0;
-    let mut keys: Vec<u8> = index.keys().copied().collect();
-    let mut optv: Vec<(Vec<u8>, usize)> = Vec::new();
-    let mut inr: Option<usize> = None;
-    while !keys.is_empty() {
-        let mid = keys.len() / 2;
-        let (key, left_keys, right_keys) =
-            (keys[mid], keys[..mid].to_vec(), keys[mid + 1..].to_vec());
-        let mut idx_left = if left_keys.is_empty() { 0 } else { idx + 2 };
-        let idx_right = if right_keys.is_empty() { 0 } else { idx + 1 };
-        if idx_right == 0 && idx_left != 0 {
-            idx_left -= 1;
-        }
-        let at = match inr {
-            Some(parent) => bst[&parent].right,
-            None => idx,
-        };
-        let entry = index.remove(&key).expect("a key of this layer");
-        assert!(entry.values.len() < 2, "double values");
-        bst.insert(
-            at,
-            Node {
-                key,
-                left: idx_left,
-                right: idx_right,
-                next: 0,
-                value: entry.values.into_iter().next(),
-                pending: Some(entry.next),
-            },
-        );
-        if !right_keys.is_empty() {
-            optv.push((right_keys, at));
-        }
-        if idx_left != 0 {
-            idx = idx_left;
-        }
-        inr = None;
-        keys = left_keys;
-        if keys.is_empty() {
-            let Some((k, parent)) = optv.pop() else { break };
-            keys = k;
-            inr = Some(parent);
-        }
-    }
-    idx + 1
-}
-
-/// `entities_bst_create`: every layer, depth first.
-fn create_bst(index: Layer) -> BTreeMap<usize, Node> {
-    let mut bst = BTreeMap::new();
-    bst.insert(
-        0,
-        Node {
-            key: 0,
-            left: 0,
-            right: 0,
-            next: 0,
-            value: None,
-            pending: None,
-        },
-    );
-    let mut begin = 1;
-    let mut end = create_tree(index, &mut bst, begin);
-    let mut idx = end;
-    let mut stack = Vec::new();
-    loop {
-        while begin < end {
-            let node = bst.get_mut(&begin).expect("a laid-out node");
-            match node.pending.take() {
-                Some(layer) if !layer.0.is_empty() => {
-                    node.next = idx;
-                    stack.push((begin + 1, end));
-                    begin = idx;
-                    idx = create_tree(layer, &mut bst, idx);
-                    end = idx;
-                }
-                _ => begin += 1,
-            }
-        }
-        let Some((b, e)) = stack.pop() else { break };
-        begin = b;
-        end = e;
-    }
-    bst
-}
-
-fn entities_json() -> PathBuf {
-    root().join("../../../spec/conformance/data/whatwg/entities.json")
-}
-
-fn build_entities() -> Vec<SbstOwned> {
-    let text = std::fs::read_to_string(entities_json())
-        .expect("entities.json - run `ruby spec/conformance/parser_data.rb`");
-    let json = crate::conformance::json::parse(&text).expect("entities.json parses");
-    let crate::conformance::json::Json::Obj(map) = json else {
-        panic!("entities.json is an object")
-    };
-    let mut index = Layer::default();
-    for (name, v) in &map {
-        let chars = v
-            .get("characters")
-            .and_then(|c| c.as_str())
-            .expect("characters")
-            .bytes
-            .clone();
-        let name = name.as_bytes();
-        let mut layer = &mut index;
-        for (pos, &c) in name.iter().enumerate().skip(1) {
-            let e = layer.0.entry(c).or_default();
-            if pos == name.len() - 1 {
-                e.values.push(chars.clone());
-            }
-            layer = &mut e.next;
-        }
-    }
-    let bst = create_bst(index);
-    let n = bst.keys().last().copied().unwrap_or(0) + 1;
-    assert_eq!(bst.len(), n, "the tree's indices are contiguous");
-    bst.into_values()
-        .map(|n| SbstOwned {
-            key: n.key,
-            value: n.value,
-            left: n.left,
-            right: n.right,
-            next: n.next,
-        })
-        .collect()
-}
-
-#[derive(Debug, PartialEq, Eq)]
-struct SbstOwned {
-    key: u8,
-    value: Option<Vec<u8>>,
-    left: usize,
-    right: usize,
-    next: usize,
-}
-
-fn generate_entities(table: &[SbstOwned]) -> String {
-    let mut out = String::from(
-        "//! GENERATED by `lexbor::res_tests` from the WHATWG entities.json - do not edit.\n\
-         //! The named character references as Lexbor's static search tree\n\
-         //! (`html/tokenizer/res.h`), one byte per layer after the `&`, with the\n\
-         //! replacements in a table of their own.\n\n\
-         use super::SbstEntry;\n\n\
-         const fn e(key: u8, value: u16, left: u16, right: u16, next: u16) -> SbstEntry {\n    \
-         SbstEntry { key, value, left, right, next }\n}\n\n",
-    );
-    let values: Vec<&Vec<u8>> = table.iter().filter_map(|t| t.value.as_ref()).collect();
-    let _ = writeln!(
-        out,
-        "pub static ENTITY_VALUES: [&[u8]; {}] = [",
-        values.len()
-    );
-    for v in &values {
-        let _ = writeln!(out, "    {},", lit(v));
-    }
-    out.push_str("];\n\n");
-    let _ = writeln!(out, "pub static ENTITIES: [SbstEntry; {}] = [", table.len());
-    let mut next_value = 0usize;
-    for t in table {
-        let v = if t.value.is_some() {
-            next_value += 1;
-            next_value
-        } else {
-            0
-        };
-        let _ = writeln!(
-            out,
-            "    e(0x{:02x}, {v}, {}, {}, {}),",
-            t.key, t.left, t.right, t.next
-        );
-    }
-    out.push_str("];\n");
-    out
-}
-
 /// Lexbor's own tree, read from `res.h`: `{0x61, "\x..", 2, 3, 2, 53}`.
-fn lexbor_entities() -> Vec<SbstOwned> {
+fn lexbor_entities() -> Vec<crate::conformance::res_gen::SbstOwned> {
     let text = std::fs::read_to_string(lexbor_src("html/tokenizer/res.h")).expect("res.h");
     let body = &text[text
         .find("lxb_html_tokenizer_res_entities_sbst[]")
@@ -439,7 +221,7 @@ fn lexbor_entities() -> Vec<SbstOwned> {
                 )
             }
         };
-        out.push(SbstOwned {
+        out.push(crate::conformance::res_gen::SbstOwned {
             key: num(fields[0]) as u8,
             value,
             left: num(fields[3]),
@@ -507,99 +289,61 @@ fn c_str(field: &str) -> Vec<u8> {
     }
 }
 
-fn generate_tree_tables() -> String {
+/// Lexbor's tree builder tables, read from `tag_res.h` and `tree_res.h`:
+/// the categories per static tag and namespace, the SVG tag names, and the
+/// two attribute adjustment maps.
+struct LexborTreeTables {
+    cats: Vec<Vec<u8>>,
+    svg_fixname: Vec<Vec<u8>>,
+    svg_attrs: Vec<(Vec<u8>, Vec<u8>)>,
+    foreign: Vec<(Vec<u8>, Vec<u8>, Vec<u8>, usize)>,
+}
+
+fn lexbor_tree_tables() -> LexborTreeTables {
     let tag_res = std::fs::read_to_string(lexbor_src("html/tag_res.h")).expect("tag_res.h");
     let tree_res = std::fs::read_to_string(lexbor_src("html/tree_res.h")).expect("tree_res.h");
-    let cats = enum_consts(&lexbor_src("html/tag.h"), "LXB_HTML_TAG_CATEGORY_");
-    let cat_value = |name: &str| -> usize {
+    let cat_names = enum_consts(&lexbor_src("html/tag.h"), "LXB_HTML_TAG_CATEGORY_");
+    let cat_value = |name: &str| -> u8 {
         let name = name
             .trim()
             .strip_prefix("LXB_HTML_TAG_CATEGORY_")
             .expect("a category");
-        cats.iter()
+        cat_names
+            .iter()
             .find(|(n, _)| n == name)
-            .map(|(_, v)| *v)
+            .map(|(_, v)| *v as u8)
             .expect("a known category")
     };
-    let mut out = String::from(
-        "//! GENERATED by `lexbor::res_tests` from Lexbor's `html/tag_res.h` and\n\
-         //! `html/tree_res.h` - do not edit. The tree builder's static tables.\n\n\
-         use super::names::{NS__LAST_ENTRY, TAG__LAST_ENTRY};\n\n",
-    );
-    for (n, v) in &cats {
-        let _ = writeln!(out, "pub const CAT_{n}: u8 = {v};");
-    }
-
-    /* lxb_html_tag_res_cats[tag][ns] */
-    let rows = c_groups(&c_array_body(&tag_res, "lxb_html_tag_res_cats["));
-    let _ = writeln!(
-        out,
-        "\n/// Each static tag's categories per static namespace\n\
-         /// (`lxb_html_tag_res_cats`).\n\
-         pub static TAG_CATS: [[u8; NS__LAST_ENTRY]; TAG__LAST_ENTRY] = ["
-    );
-    for row in &rows {
-        let vals: Vec<String> = row
-            .split(',')
-            .filter(|e| !e.trim().is_empty())
-            .map(|e| {
-                e.split('|')
-                    .map(cat_value)
-                    .fold(0, |a, b| a | b)
-                    .to_string()
-            })
-            .collect();
-        let _ = writeln!(out, "    [{}],", vals.join(", "));
-    }
-    out.push_str("];\n");
-
-    /* lxb_html_tag_res_fixname_svg[tag] */
-    let rows = c_groups(&c_array_body(&tag_res, "lxb_html_tag_res_fixname_svg["));
-    let _ = writeln!(
-        out,
-        "\n/// Each static tag's SVG name in its proper case, empty when it needs\n\
-         /// none (`lxb_html_tag_res_fixname_svg`).\n\
-         pub static SVG_FIXNAME: [&[u8]; TAG__LAST_ENTRY] = ["
-    );
-    for row in &rows {
-        let _ = writeln!(out, "    {},", lit(&c_str(row)));
-    }
-    out.push_str("];\n");
-
-    /* lxb_html_tree_res_attr_adjust_svg_map */
-    let rows = c_groups(&c_array_body(
+    let cats = c_groups(&c_array_body(&tag_res, "lxb_html_tag_res_cats["))
+        .iter()
+        .map(|row| {
+            row.split(',')
+                .filter(|e| !e.trim().is_empty())
+                .map(|e| e.split('|').map(cat_value).fold(0, |a, b| a | b))
+                .collect()
+        })
+        .collect();
+    let svg_fixname = c_groups(&c_array_body(&tag_res, "lxb_html_tag_res_fixname_svg["))
+        .iter()
+        .map(|row| c_str(row))
+        .collect();
+    let svg_attrs = c_groups(&c_array_body(
         &tree_res,
         "lxb_html_tree_res_attr_adjust_svg_map[]",
-    ));
-    let _ = writeln!(
-        out,
-        "\n/// SVG attribute names to adjust: (lower case, proper case)\n\
-         /// (`lxb_html_tree_res_attr_adjust_svg_map`).\n\
-         pub static SVG_ATTR_ADJUST: [(&[u8], &[u8]); {}] = [",
-        rows.len()
-    );
-    for row in &rows {
+    ))
+    .iter()
+    .map(|row| {
         let f: Vec<&str> = row.split(',').collect();
-        let _ = writeln!(out, "    ({}, {}),", lit(&c_str(f[0])), lit(&c_str(f[1])));
-    }
-    out.push_str("];\n");
-
-    /* lxb_html_tree_res_attr_adjust_foreign_map */
-    let rows = c_groups(&c_array_body(
+        (c_str(f[0]), c_str(f[1]))
+    })
+    .collect();
+    let nss = enum_consts(&lexbor_src("ns/const.h"), "LXB_NS_");
+    let foreign = c_groups(&c_array_body(
         &tree_res,
         "lxb_html_tree_res_attr_adjust_foreign_map[]",
-    ));
-    let nss = enum_consts(&lexbor_src("ns/const.h"), "LXB_NS_");
-    let _ = writeln!(
-        out,
-        "\n/// A foreign attribute to adjust: (name, prefix, local name, namespace).\n\
-         pub type ForeignAdjust = (&'static [u8], &'static [u8], &'static [u8], usize);\n\n\
-         /// Foreign attributes to adjust\n\
-         /// (`lxb_html_tree_res_attr_adjust_foreign_map`).\n\
-         pub static FOREIGN_ATTR_ADJUST: [ForeignAdjust; {}] = [",
-        rows.len()
-    );
-    for row in &rows {
+    ))
+    .iter()
+    .map(|row| {
         let f: Vec<&str> = row.split(',').map(str::trim).collect();
         let ns = f[5].strip_prefix("LXB_NS_").expect("a namespace");
         let ns = nss
@@ -607,21 +351,58 @@ fn generate_tree_tables() -> String {
             .find(|(n, _)| n == ns)
             .map(|(_, v)| *v)
             .expect("known");
-        let _ = writeln!(
-            out,
-            "    ({}, {}, {}, {ns}),",
-            lit(&c_str(f[0])),
-            lit(&c_str(f[1])),
-            lit(&c_str(f[2]))
-        );
+        (c_str(f[0]), c_str(f[1]), c_str(f[2]), ns)
+    })
+    .collect();
+    LexborTreeTables {
+        cats,
+        svg_fixname,
+        svg_attrs,
+        foreign,
     }
-    out.push_str("];\n");
-    out
 }
 
+/// `html::res::tree` - generated from the HTML Standard
+/// (`conformance::res_gen`) - says what Lexbor's tables say, but for the one
+/// entry the Standard leaves out on purpose: Lexbor counts HTML `image` as
+/// special, an element the parser never puts on the stack ("so it doesn't
+/// matter"), so no answer depends on it. The ordinary bit is not compared:
+/// the Standard defines it as neither special nor formatting, Lexbor sets it
+/// its own way, and nothing asks for it.
 #[test]
-fn tree_tables_are_lexbors() {
-    check_or_write("tree.rs", &generate_tree_tables());
+fn tree_tables_agree_with_lexbors() {
+    use crate::html::res::tree as rt;
+    let l = lexbor_tree_tables();
+    for (tag, (lrow, row)) in l.cats.iter().zip(rt::TAG_CATS.iter()).enumerate() {
+        for (ns, (&lc, &c)) in lrow.iter().zip(row.iter()).enumerate() {
+            let mut lc = lc & !rt::CAT_ORDINARY;
+            if tag == names::TAG_IMAGE && ns == names::NS_HTML {
+                lc &= !rt::CAT_SPECIAL;
+            }
+            assert_eq!(
+                lc,
+                c & !rt::CAT_ORDINARY,
+                "categories of {} in namespace {ns}",
+                String::from_utf8_lossy(names::TAG_NAMES[tag])
+            );
+        }
+    }
+    assert_eq!(l.cats.len(), rt::TAG_CATS.len());
+    let fix: Vec<Vec<u8>> = rt::SVG_FIXNAME.iter().map(|f| f.to_vec()).collect();
+    assert_eq!(l.svg_fixname, fix, "the SVG tag names");
+    let mut ours: Vec<(Vec<u8>, Vec<u8>)> = rt::SVG_ATTR_ADJUST
+        .iter()
+        .map(|(a, b)| (a.to_vec(), b.to_vec()))
+        .collect();
+    let mut theirs = l.svg_attrs;
+    ours.sort();
+    theirs.sort();
+    assert_eq!(theirs, ours, "the SVG attribute names");
+    let ours: Vec<_> = rt::FOREIGN_ATTR_ADJUST
+        .iter()
+        .map(|(a, b, c, ns)| (a.to_vec(), b.to_vec(), c.to_vec(), *ns))
+        .collect();
+    assert_eq!(l.foreign, ours, "the foreign attributes");
 }
 
 fn check_or_write(rel: &str, generated: &str) {
@@ -643,11 +424,15 @@ fn names_are_lexbors() {
     check_or_write("names.rs", &generate_names());
 }
 
-/// The checked-in table is Lexbor's tree; needs no fetched data, so it runs
-/// everywhere.
+/// The checked-in table - generated from entities.json by
+/// `conformance::res_gen` - is Lexbor's tree; needs no fetched data, so it
+/// runs everywhere.
 #[test]
 fn entities_are_lexbors_tree() {
-    check_or_write("entities.rs", &generate_entities(&lexbor_entities()));
+    assert!(
+        crate::conformance::res_gen::entities_file_is(&lexbor_entities()),
+        "html/res/entities.rs is not Lexbor's tree"
+    );
 }
 
 /// Lexbor's tree is the WHATWG list. Needs the fetched entities.json.
@@ -655,7 +440,7 @@ fn entities_are_lexbors_tree() {
 #[ignore = "needs entities.json; run by `rake conformance:parser`"]
 fn entities_are_the_whatwg_list_in_lexbors_tree() {
     assert_eq!(
-        build_entities(),
+        crate::conformance::res_gen::build_entities(),
         lexbor_entities(),
         "the tree built from entities.json is not Lexbor's"
     );

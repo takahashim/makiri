@@ -1,15 +1,24 @@
-//! Lexbor's static resource tables, as Rust data.
+//! The parser's static resource tables, as Rust data. All three are
+//! GENERATED, not written, and each from the source that defines it:
 //!
-//! [`names`] and [`entities`] are GENERATED, not written: names (tags,
-//! attributes, namespaces and their prefixes, with Lexbor's own id numbers)
-//! from Lexbor's tables, and the named character references from the WHATWG
-//! `entities.json`, built into the same search tree Lexbor builds. The
-//! generator is `lexbor::res_tests`, which also holds both files equal to what
-//! the vendored Lexbor has, entry by entry, for as long as it is linked:
+//! - [`tree`] - the tree builder's categories and adjustment tables - from
+//!   the HTML Standard's `source` at the pinned commit, and [`entities`] -
+//!   the named character references, in Lexbor's search-tree layout - from
+//!   the WHATWG `entities.json`. Their generator is
+//!   `conformance::res_gen`, which needs no Lexbor:
 //!
-//! ```text
-//! MAKIRI_REGENERATE=1 cargo test --no-default-features --features lexbor res_tests
-//! ```
+//!   ```text
+//!   ruby spec/conformance/parser_data.rb     # fetch the pinned sources
+//!   MAKIRI_REGENERATE=1 cargo test --no-default-features res_gen -- --include-ignored
+//!   ```
+//!
+//! - [`names`] - tags, attributes, namespaces and prefixes, with Lexbor's own
+//!   id numbers - from Lexbor's static tables, by `lexbor::res_tests`. The
+//!   Standard numbers nothing, so the ids stay Lexbor's.
+//!
+//! While the reference Lexbor is linked, `lexbor::res_tests` holds all three
+//! to Lexbor's tables, entry by entry (`docs/parser_differences.ja.md`, T1,
+//! is the one entry `tree` departs from on purpose).
 //!
 //! The ids keep Lexbor's numbering because the rest of the crate reads them:
 //! the CSS matcher and the element index index arrays by tag id, and the tree
