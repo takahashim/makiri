@@ -540,31 +540,52 @@ struct Compound<'p> {
     comb: Combinator,
 }
 
-/// Walk a chain compound by compound, left to right.
+/// Walk a chain compound by compound, left to right, refusing a chain of
+/// more than [`MAX_COMPOUNDS`] with `Limit`.
 ///
 /// The single splitter, shared by [`complex`] (forward) and [`complex_selftest`]
-/// (right to left), so the boundary rule and the complexity cap the callers
-/// apply live in one place rather than being written twice and drifting.
-struct Compounds<'p> {
+/// (right to left), so the boundary rule and the complexity cap live in one
+/// place rather than being written twice and drifting.
+struct Compounds<'b, 'a, 'p> {
+    b: &'b Build<'a>,
     cursor: Option<Selector<'p>>,
+    /// How many compounds were handed out.
+    count: usize,
 }
 
-impl<'p> Iterator for Compounds<'p> {
-    type Item = Compound<'p>;
+impl<'b, 'a, 'p> Compounds<'b, 'a, 'p> {
+    fn new(b: &'b Build<'a>, first: Option<Selector<'p>>) -> Self {
+        Compounds {
+            b,
+            cursor: first,
+            count: 0,
+        }
+    }
+}
 
-    fn next(&mut self) -> Option<Compound<'p>> {
+impl<'p> Iterator for Compounds<'_, '_, 'p> {
+    type Item = Result<Compound<'p>, Reported>;
+
+    fn next(&mut self) -> Option<Self::Item> {
         let start = self.cursor?;
+        if self.count >= MAX_COMPOUNDS {
+            self.cursor = None;
+            return Some(Err(self
+                .b
+                .fail(ErrorKind::Limit, "CSS selector too complex")));
+        }
+        self.count += 1;
         /* A CLOSE combinator continues the compound. */
         let mut last = start;
         while let Some(nxt) = last.next().filter(|n| n.combinator() == Combinator::Close) {
             last = nxt;
         }
         self.cursor = last.next();
-        Some(Compound {
+        Some(Ok(Compound {
             first: start,
             last,
             comb: start.combinator(),
-        })
+        }))
     }
 }
 
@@ -585,10 +606,8 @@ pub(crate) fn complex(b: &Build, first: Option<Selector<'_>>, relative_first: bo
     let _nesting = b.enter_selector_nesting()?;
     let mut steps = Vec::new();
 
-    for (nc, comp) in (Compounds { cursor: first }).enumerate() {
-        if nc >= MAX_COMPOUNDS {
-            return Err(b.fail(ErrorKind::Limit, "CSS selector too complex"));
-        }
+    for (nc, comp) in Compounds::new(b, first).enumerate() {
+        let comp = comp?;
         /* The first compound of a top-level query is a DESCENDANT of the
          * context node whatever it carries, which is what makes `css("p")` find
          * every `p` below the receiver rather than only its children. */
@@ -631,11 +650,8 @@ pub(crate) fn complex_selftest(b: &Build, first: Option<Selector<'_>>) -> Built 
         Some(v) => v,
         None => return Err(b.oom()),
     };
-    for comp in (Compounds { cursor: first }) {
-        if comps.len() >= MAX_COMPOUNDS {
-            return Err(b.fail(ErrorKind::Limit, "CSS selector too complex"));
-        }
-        build::push(b, &mut comps, comp)?;
+    for comp in Compounds::new(b, first) {
+        build::push(b, &mut comps, comp?)?;
     }
 
     /* Right to left: the subject first, then each compound to its left, joined

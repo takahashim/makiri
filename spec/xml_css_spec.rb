@@ -225,13 +225,19 @@ RSpec.describe "Makiri::XML CSS selectors" do
     end
 
     it "fails closed on an over-long :is()/:not() argument (fixed compounds bound)" do
-      # The :is()/:not() argument lowering splits the chain into a fixed
-      # comps[64] stack array; >64 combinator-chained compounds must be refused,
-      # never overflow it. Boundary: exactly 64 is accepted, 65 is rejected.
+      # The :is()/:not() argument lowering takes a chain of at most 64
+      # compounds (it once split it into a fixed comps[64] stack array, which a
+      # longer one would have overflowed). Boundary: 64 is accepted, 65 refused.
       ok65  = ":is(#{(['a'] * 64).join(' ')})"
       over  = ":is(#{(['a'] * 65).join(' ')})"
       expect { doc.css(ok65) }.not_to raise_error
       expect { doc.css(over) }.to raise_error(Makiri::Error, /too complex/)
+    end
+
+    it "holds a top-level chain to the same 64-compound bound" do
+      # The forward lowering takes the cap from the same splitter as :is().
+      expect { doc.css((["a"] * 64).join(" ")) }.not_to raise_error
+      expect { doc.css((["a"] * 65).join(" ")) }.to raise_error(Makiri::Error, /too complex/)
     end
   end
 
