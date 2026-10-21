@@ -1151,6 +1151,7 @@ pub mod cross_import;
 mod edit;
 mod ext_table;
 mod handle;
+mod index;
 mod parsed;
 /// HTML serialization.
 pub mod serialize;
@@ -1163,7 +1164,8 @@ pub use handle::{
     has_ascii_uppercase, Ancestors, AttrName, Attrs, HtmlAttr, HtmlDoc, HtmlElement, HtmlNode,
     NsId, RawNode, Siblings, TagId, NS_LAST_ENTRY, TAG_EM_DOCTYPE, TAG_LAST_ENTRY,
 };
-pub use parsed::{DomIndex, ForeignNode, HtmlDocIdentity, HtmlNodeKey, HtmlParsed, TextRun};
+pub use index::{DomIndex, TextRun};
+pub use parsed::{ForeignNode, HtmlDocIdentity, HtmlNodeKey, HtmlParsed};
 
 #[cfg(test)]
 pub mod conformance;
