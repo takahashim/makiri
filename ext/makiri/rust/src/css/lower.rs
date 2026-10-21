@@ -131,18 +131,13 @@ fn lower_attribute(b: &Build, s: Selector<'_>, at: Attribute<'_>) -> Built {
         return build::attr_ns(b, prefix, name);
     };
 
-    /* An empty value for ^= $= *= ~=, or a value holding whitespace for ~=,
-     * "represents nothing" (Selectors 4 §6.2-6.3), as the HTML matcher has it.
-     * Lowered as written they matched everything - starts-with(@a, '') is true
-     * with no @a at all, so [z^=""] found every element. */
+    /* An empty value for ^= $= *= "represents nothing" (Selectors 4 §6.3),
+     * as the HTML matcher has it. Lowered as written they matched everything -
+     * starts-with(@a, '') is true with no @a at all, so [z^=""] found every
+     * element. ~= has the same rule and more (a value holding whitespace),
+     * and takes it from `build::token_match`, which `.class` shares. */
     let never = match at.op {
         AttrMatch::Prefix | AttrMatch::Suffix | AttrMatch::Substring => value.is_empty(),
-        AttrMatch::Include => {
-            value.is_empty()
-                || value
-                    .iter()
-                    .any(|&c| matches!(c, b' ' | b'\t' | b'\n' | b'\r' | 0x0c))
-        }
         _ => false,
     };
     if never {

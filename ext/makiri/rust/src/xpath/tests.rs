@@ -331,7 +331,7 @@ fn css_selectors_lower_to_the_same_answers_as_xml_css() {
 /// A class name holding whitespace (`.x\ y`) "represents nothing": `.class`
 /// goes through `token_match`'s never-test, so it matches no element - the
 /// answer the HTML matcher gives, not every element whose class has a space.
-/// `[a~=v]` already refused such a value, and `.class` must agree.
+/// `[a~=v]` takes the same check, so the two agree.
 #[cfg(feature = "html-dom")]
 #[test]
 fn a_class_name_with_whitespace_matches_nothing() {
@@ -342,6 +342,23 @@ fn a_class_name_with_whitespace_matches_nothing() {
     );
     assert_eq!(
         run_on(doc, Query::Css, ".xy", |_| {}),
+        Answer::Nodes(vec!["e".to_string()])
+    );
+}
+
+/// An empty `[a~=v]` value represents nothing too - including on an element
+/// whose attribute is empty, where the padded needle `'  '` would be found
+/// in `concat(' ', '', ' ')`. `token_match` refuses it, for `~=` and `.class`.
+#[cfg(feature = "html-dom")]
+#[test]
+fn an_empty_token_matches_nothing_even_on_an_empty_attribute() {
+    let doc = br#"<r><e class=""/><e class="x"/></r>"#;
+    assert_eq!(
+        run_on(doc, Query::Css, r#"[class~=""]"#, |_| {}),
+        Answer::Nodes(vec![])
+    );
+    assert_eq!(
+        run_on(doc, Query::Css, r#"[class~="x"]"#, |_| {}),
         Answer::Nodes(vec!["e".to_string()])
     );
 }

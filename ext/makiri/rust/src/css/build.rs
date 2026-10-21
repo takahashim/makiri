@@ -16,6 +16,12 @@ use crate::text::VerifiedText;
 use crate::xpath::ast::{Axis, Expr, ExprKind, NodeTest, Op, Path, Step};
 use crate::xpath::limits::check_ast_depth;
 
+/// CSS whitespace: space, tab, LF, CR, FF.
+#[inline]
+pub(crate) fn is_css_ws(c: u8) -> bool {
+    matches!(c, b' ' | b'\t' | b'\n' | b'\r' | 0x0c)
+}
+
 /// A node under construction, or the proof its build failed with `*err` set.
 pub(crate) type Built = Result<Expr, Reported>;
 
@@ -226,20 +232,17 @@ pub(crate) fn padded_tokens(b: &Build, prefix: Option<&[u8]>, name: &[u8]) -> Bu
 /// makes this equivalent to CSS's whitespace-separated list semantics.
 ///
 /// An empty value, or one holding whitespace, "represents nothing" (Selectors 4
-/// §6.2-6.3): no token can contain a space, so the padded needle `' x y '` is
-/// never a substring of `' ... '`. This is the ONE check for both users - the
-/// `.class` lowering calls straight in, while `[a~=v]` reaches it after its own
-/// `never` test, and neither may skip it.
+/// §6.2-6.3), and is `false()` here: no token is empty or holds a space - and
+/// padded as written, an empty value's `'  '` would match an element whose
+/// attribute is empty. This is the ONE check for both users, `.class` and
+/// `[a~=v]`, which both call straight in.
 pub(crate) fn token_match(
     b: &Build,
     prefix: Option<&[u8]>,
     attr_name: &[u8],
     value: &[u8],
 ) -> Built {
-    if value
-        .iter()
-        .any(|&c| matches!(c, b' ' | b'\t' | b'\n' | b'\r' | 0x0c))
-    {
+    if value.is_empty() || value.iter().copied().any(is_css_ws) {
         return call0(b, b"false");
     }
 
