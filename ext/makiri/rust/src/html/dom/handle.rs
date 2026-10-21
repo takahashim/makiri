@@ -257,6 +257,14 @@ impl RawNode {
     }
 }
 
+impl crate::ptr_table::TableKey for Option<NsId> {
+    const EMPTY: Self = None;
+    #[inline]
+    fn table_hash(self) -> u64 {
+        crate::ptr_table::mix64(u64::from(self.map_or(0, NsId::number)))
+    }
+}
+
 impl crate::ptr_table::TableKey for Option<RawNode> {
     const EMPTY: Self = None;
     #[inline]

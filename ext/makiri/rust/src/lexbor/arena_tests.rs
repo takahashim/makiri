@@ -612,13 +612,17 @@ fn edits_leave_the_arena_reading_as_lexbor_does() {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(40);
+    /* Lexbor decides an attribute's namespace from where it is, which the
+     * arena departs from on purpose (D1): compared as Lexbor runs. */
     for seed in 1..=seeds {
-        edit_sequence(
-            EDIT_INPUT,
-            EDIT_OTHER,
-            seed.wrapping_mul(0x9E37_79B9_7F4A_7C15),
-            60,
-        );
+        crate::compat::as_lexbor(|| {
+            edit_sequence(
+                EDIT_INPUT,
+                EDIT_OTHER,
+                seed.wrapping_mul(0x9E37_79B9_7F4A_7C15),
+                60,
+            )
+        });
     }
     /* The sequences must actually move nodes around, not only fail checks. */
     assert!(PLACED.load(core::sync::atomic::Ordering::Relaxed) > seeds as usize * 5);

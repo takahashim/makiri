@@ -173,4 +173,38 @@ RSpec.describe "HTML attribute DOM algorithms" do
       expect(doc.css("#c").to_a).to eq([div])
     end
   end
+
+  # D1: an attribute keeps the namespace it was made in. Lexbor decides it
+  # from where the attribute is, so one set in its element's own namespace
+  # read as in none - setAttributeNS could not find it again and appended a
+  # second - and one taken off its element changed namespace.
+  describe "an attribute keeps the namespace it was made in" do
+    let(:xhtml) { "http://www.w3.org/1999/xhtml" }
+    let(:svg) { "http://www.w3.org/2000/svg" }
+
+    it "is found again in its element's own namespace, not appended twice" do
+      div = Makiri::HTML("<div></div>").at_css("div")
+      div.set_attribute_ns(xhtml, "x", "1")
+      div.set_attribute_ns(xhtml, "x", "2")
+      expect(div.to_html).to eq('<div x="2"></div>')
+      expect(div.attribute_nodes.map(&:namespace_uri)).to eq([xhtml])
+
+      el = Makiri::HTML("<svg></svg>").at_xpath("//*[local-name()='svg']")
+      el.set_attribute_ns(svg, "id", "a")
+      el.set_attribute_ns(svg, "id", "b")
+      expect(el.attribute_nodes.map(&:value)).to eq(["b"])
+    end
+
+    it "keeps it when the attribute is taken off its element" do
+      div = Makiri::HTML("<div></div>").at_css("div")
+      div.set_attribute_ns(svg, "y", "1")
+      attr = div.attribute_nodes.first
+      attr.remove
+      expect(attr.namespace_uri).to eq(svg)
+
+      parsed = Makiri::HTML("<svg xlink:href=h></svg>").at_xpath("//*[local-name()='svg']").attribute_nodes.first
+      parsed.remove
+      expect(parsed.namespace_uri).to eq("http://www.w3.org/1999/xlink")
+    end
+  end
 end

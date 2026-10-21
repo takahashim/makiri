@@ -17,6 +17,7 @@ use crate::xml::mutate;
  * as its own `ArenaKind`. The two now have distinct names, so a comparison
  * across representations reads for itself. */
 use crate::node_type::NodeType;
+use crate::ptr_table::PtrMap;
 
 /// A DOM name or value slice must fit `u32` - the mkr store's per-slice cap.
 #[inline]
@@ -114,21 +115,24 @@ fn h2x_copy_attrs(doc: &mut XmlDoc, s: HtmlElement<'_>, el: NodeId) -> Result<()
 
 /// The element namespace URIs one import has stored, so every element in
 /// a namespace shares one copy of its URI - as the source shares one
-/// Lexbor namespace id. A handful at most (HTML, SVG, MathML), so a list.
+/// namespace id. Keyed by that id: `create_element_ns` can give a subtree
+/// any number of namespaces, and a list made the import quadratic in them.
 #[derive(Default)]
-struct NsSpans<'a> {
-    seen: Vec<(&'a [u8], Span)>,
+struct NsSpans {
+    seen: PtrMap<Option<NsId>, Option<Span>>,
 }
 
-impl<'a> NsSpans<'a> {
-    /// The span of `uri` in `doc`, stored the first time it is asked for.
-    fn span(&mut self, doc: &mut XmlDoc, uri: &'a [u8]) -> Result<Span, MutError> {
-        if let Some(&(_, span)) = self.seen.iter().find(|(u, _)| *u == uri) {
+impl NsSpans {
+    /// The span of `n`'s namespace URI in `doc`, stored the first time it is
+    /// asked for.
+    fn span(&mut self, doc: &mut XmlDoc, n: HtmlNode<'_>) -> Result<Span, MutError> {
+        let id = n.ns_id();
+        if let Some(span) = self.seen.get(id).flatten() {
             return Ok(span);
         }
-        let span = mutate::stored_ns(doc, uri)?;
-        /* A list that cannot grow only stops the sharing. */
-        let _ = self.seen.falloc_push((uri, span));
+        let span = mutate::stored_ns(doc, html_ns_uri(n).unwrap_or(&[]))?;
+        /* A table that cannot grow only stops the sharing. */
+        let _ = self.seen.insert(id, Some(span));
         Ok(span)
     }
 }
@@ -140,7 +144,7 @@ impl<'a> NsSpans<'a> {
 fn h2x_make<'a>(
     doc: &mut XmlDoc,
     s: HtmlNode<'a>,
-    ns: &mut NsSpans<'a>,
+    ns: &mut NsSpans,
 ) -> Result<Option<NodeId>, MutError> {
     let unchanged = |node| Ok(Some(node));
     let data = |n: HtmlNode<'a>| {
@@ -181,13 +185,13 @@ fn h2x_make<'a>(
 fn h2x_element<'a>(
     doc: &mut XmlDoc,
     e: HtmlElement<'a>,
-    ns: &mut NsSpans<'a>,
+    ns: &mut NsSpans,
 ) -> Result<NodeId, MutError> {
     let name = e.qualified_name();
     let Some(nl) = fits_u32(name.len()) else {
         return Err(MutError::Oom);
     };
-    let euri = ns.span(doc, html_ns_uri(e.node()).unwrap_or(&[]))?;
+    let euri = ns.span(doc, e.node())?;
 
     /* Three kinds of name. A PREFIXED one (an element that came from
      * XML) is made as written, prefix and namespace. An

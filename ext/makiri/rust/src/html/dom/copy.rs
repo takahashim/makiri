@@ -128,7 +128,11 @@ impl Document {
                 let a = *self.src(from).attrs.get(i as usize).ok_or(DomOom)?;
                 let written = self.written_from(from, a.written)?;
                 let value = self.bytes_from(from, a.value)?;
-                self.push_attr(local as usize, ns, prefix, written, value)?
+                let at = self.push_attr(local as usize, ns, prefix, written, value)?;
+                /* The copy is in the namespace its source is in (D1). */
+                let own = self.src(from).attr_own_ns_kept(n);
+                self.set_attr_own_ns(at, own);
+                at
             }
             Payload::Data(span) => {
                 let span = self.bytes_from(from, span)?;
@@ -221,7 +225,7 @@ impl Document {
                     node.local
                 } else {
                     let name = d.names.tag_name(node.local as usize).ok_or(DomOom)?;
-                    let id = if name.iter().any(u8::is_ascii_uppercase) {
+                    let id = if super::has_ascii_uppercase(name) {
                         self.names.tag_append_raw(name)
                     } else {
                         self.names.tag_append_lower(name)
