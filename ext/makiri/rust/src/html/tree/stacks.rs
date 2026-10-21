@@ -17,6 +17,16 @@ use crate::falloc::{Reserve, VecPush};
 use crate::html::dom::NodeId;
 use crate::html::res::names as res;
 
+/// Whether a pop-until takes the element it stops at off the stack too
+/// (Lexbor's `exclude` flag).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Found {
+    /// Popped with the rest.
+    Popped,
+    /// Left on the stack, the current node.
+    Kept,
+}
+
 /// The stack of open elements, bottom first. Read as a slice; pushed and
 /// popped only through `TreeBuilder`'s methods below.
 #[derive(Default)]
@@ -124,54 +134,48 @@ impl TreeBuilder<'_> {
         }
     }
 
-    /// `lxb_html_tree_open_elements_pop_until_tag_id`.
-    pub(crate) fn open_pop_until_tag_id(&mut self, tag: usize, ns: usize, exclude: bool) {
+    /// Pop until `found` answers for an element, which is popped too or
+    /// kept as `which` says; every element popped runs its pop steps. The
+    /// `lxb_html_tree_open_elements_pop_until_*` family below is this with
+    /// each one's test.
+    fn open_pop_until(&mut self, found: impl Fn(&Self, NodeId) -> bool, which: Found) {
         while let Some(n) = self.open.0.pop() {
-            if self.tag(n) == tag && self.ns(n) == ns {
-                if exclude {
-                    self.pop_steps(n);
-                } else {
-                    self.open.0.push(n);
+            if found(self, n) {
+                match which {
+                    Found::Popped => self.pop_steps(n),
+                    /* Back where it was: a pop just freed the room. */
+                    Found::Kept => self.open.0.push(n),
                 }
-                break;
+                return;
             }
             self.pop_steps(n);
         }
+    }
+
+    /// `lxb_html_tree_open_elements_pop_until_tag_id`.
+    pub(crate) fn open_pop_until_tag_id(&mut self, tag: usize, ns: usize, which: Found) {
+        self.open_pop_until(|t, n| t.tag(n) == tag && t.ns(n) == ns, which);
     }
 
     /// `lxb_html_tree_open_elements_pop_until_h123456`.
     pub(crate) fn open_pop_until_h123456(&mut self) {
-        while let Some(n) = self.open.0.pop() {
-            self.pop_steps(n);
-            if is_h123456(self.tag(n)) && self.ns(n) == res::NS_HTML {
-                return;
-            }
-        }
+        self.open_pop_until(
+            |t, n| is_h123456(t.tag(n)) && t.ns(n) == res::NS_HTML,
+            Found::Popped,
+        );
     }
 
     /// `lxb_html_tree_open_elements_pop_until_td_th`.
     pub(crate) fn open_pop_until_td_th(&mut self) {
-        while let Some(n) = self.open.0.pop() {
-            self.pop_steps(n);
-            if matches!(self.tag(n), res::TAG_TD | res::TAG_TH) && self.ns(n) == res::NS_HTML {
-                return;
-            }
-        }
+        self.open_pop_until(
+            |t, n| matches!(t.tag(n), res::TAG_TD | res::TAG_TH) && t.ns(n) == res::NS_HTML,
+            Found::Popped,
+        );
     }
 
     /// `lxb_html_tree_open_elements_pop_until_node`.
-    pub(crate) fn open_pop_until_node(&mut self, node: NodeId, exclude: bool) {
-        while let Some(n) = self.open.0.pop() {
-            if n == node {
-                if exclude {
-                    self.pop_steps(n);
-                } else {
-                    self.open.0.push(n);
-                }
-                break;
-            }
-            self.pop_steps(n);
-        }
+    pub(crate) fn open_pop_until_node(&mut self, node: NodeId, which: Found) {
+        self.open_pop_until(|_, n| n == node, which);
     }
 
     /// `lxb_html_tree_open_elements_pop_all`: every element off the stack,

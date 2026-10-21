@@ -5,7 +5,7 @@ use crate::html::res::names as res;
 use crate::html::res::tree as rt;
 use crate::html::tokenizer::Tokenizer;
 use crate::html::tree::error::TreeErrorId as E;
-use crate::html::tree::{Mode, OrAbort, Tok, TreeBuilder, TreeStatus};
+use crate::html::tree::{Found, Mode, OrAbort, Tok, TreeBuilder, TreeStatus};
 
 /// `lxb_html_tree_clear_stack_back_to_table_context`.
 fn clear_stack_back_to_table_context(tree: &mut TreeBuilder<'_>) {
@@ -102,7 +102,7 @@ fn table(tree: &mut TreeBuilder<'_>, tok: &Tok) -> bool {
     else {
         return true;
     };
-    tree.open_pop_until_node(node, true);
+    tree.open_pop_until_node(node, Found::Popped);
     tree.reset_insertion_mode_appropriately();
     false
 }
@@ -114,7 +114,7 @@ fn table_closed(tree: &mut TreeBuilder<'_>, tok: &Tok) -> bool {
         tree.parse_error(tok, E::Unclto);
         return true;
     };
-    tree.open_pop_until_node(node, true);
+    tree.open_pop_until_node(node, Found::Popped);
     tree.reset_insertion_mode_appropriately();
     true
 }
@@ -134,7 +134,7 @@ fn input(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mut Tok)
     let Some(el) = tree.insert_html_element(tkz, tok).or_abort(tree) else {
         return true;
     };
-    tree.open_pop_until_node(el, true);
+    tree.open_pop_until_node(el, Found::Popped);
     tree.acknowledge_token_self_closing(tok);
     true
 }
@@ -158,7 +158,7 @@ fn form(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> b
     if !in_template {
         tree.form = Some(el);
     }
-    tree.open_pop_until_node(el, true);
+    tree.open_pop_until_node(el, Found::Popped);
     true
 }
 

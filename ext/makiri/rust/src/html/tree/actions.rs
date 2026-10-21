@@ -5,7 +5,7 @@
 //! tests, and the adoption agency algorithm.
 
 use super::error::TreeErrorId as E;
-use super::{AttrAdjust, Ipos, Mode, Tok, TreeBuilder, TreeStatus};
+use super::{AttrAdjust, Found, Ipos, Mode, Tok, TreeBuilder, TreeStatus};
 use crate::compat::{self, Fix};
 use crate::html::dom::{AttrValue, NodeId, NodeName, NodeType};
 use crate::html::res::names as res;
@@ -50,6 +50,24 @@ pub(crate) fn is_void(tag: usize) -> bool {
             | res::TAG_SOURCE
             | res::TAG_TRACK
             | res::TAG_WBR
+    )
+}
+
+/// The tags "generate implied end tags" pops.
+#[inline]
+fn implies_end_tag(tag: usize) -> bool {
+    matches!(
+        tag,
+        res::TAG_DD
+            | res::TAG_DT
+            | res::TAG_LI
+            | res::TAG_OPTGROUP
+            | res::TAG_OPTION
+            | res::TAG_P
+            | res::TAG_RB
+            | res::TAG_RP
+            | res::TAG_RT
+            | res::TAG_RTC
     )
 }
 
@@ -462,57 +480,40 @@ impl TreeBuilder<'_> {
 
     /// `lxb_html_tree_generate_implied_end_tags`.
     pub(crate) fn generate_implied_end_tags(&mut self, ex_tag: usize, ex_ns: usize) {
-        while let Some(node) = self.current_node() {
-            match self.tag(node) {
-                res::TAG_DD
-                | res::TAG_DT
-                | res::TAG_LI
-                | res::TAG_OPTGROUP
-                | res::TAG_OPTION
-                | res::TAG_P
-                | res::TAG_RB
-                | res::TAG_RP
-                | res::TAG_RT
-                | res::TAG_RTC => {
-                    if self.tag(node) == ex_tag && self.ns(node) == ex_ns {
-                        return;
-                    }
-                    self.open_pop();
-                }
-                _ => return,
-            }
-        }
+        self.pop_implied(implies_end_tag, ex_tag, ex_ns);
     }
 
     /// `lxb_html_tree_generate_all_implied_end_tags_thoroughly`.
     pub(crate) fn generate_all_implied_end_tags_thoroughly(&mut self, ex_tag: usize, ex_ns: usize) {
+        self.pop_implied(
+            |t| {
+                implies_end_tag(t)
+                    || matches!(
+                        t,
+                        res::TAG_CAPTION
+                            | res::TAG_COLGROUP
+                            | res::TAG_TBODY
+                            | res::TAG_TD
+                            | res::TAG_TFOOT
+                            | res::TAG_TH
+                            | res::TAG_THEAD
+                            | res::TAG_TR
+                    )
+            },
+            ex_tag,
+            ex_ns,
+        );
+    }
+
+    /// Pop while the current node's tag is one `implied` names - by tag
+    /// alone, as Lexbor tests it - and it is not `ex_tag` in `ex_ns`.
+    fn pop_implied(&mut self, implied: impl Fn(usize) -> bool, ex_tag: usize, ex_ns: usize) {
         while let Some(node) = self.current_node() {
-            match self.tag(node) {
-                res::TAG_CAPTION
-                | res::TAG_COLGROUP
-                | res::TAG_DD
-                | res::TAG_DT
-                | res::TAG_LI
-                | res::TAG_OPTGROUP
-                | res::TAG_OPTION
-                | res::TAG_P
-                | res::TAG_RB
-                | res::TAG_RP
-                | res::TAG_RT
-                | res::TAG_RTC
-                | res::TAG_TBODY
-                | res::TAG_TD
-                | res::TAG_TFOOT
-                | res::TAG_TH
-                | res::TAG_THEAD
-                | res::TAG_TR => {
-                    if self.tag(node) == ex_tag && self.ns(node) == ex_ns {
-                        return;
-                    }
-                    self.open_pop();
-                }
-                _ => return,
+            let tag = self.tag(node);
+            if !implied(tag) || (tag == ex_tag && self.ns(node) == ex_ns) {
+                return;
             }
+            self.open_pop();
         }
     }
 
@@ -673,27 +674,19 @@ impl TreeBuilder<'_> {
     /// `lxb_html_tree_check_scope_element`.
     pub(crate) fn check_scope_element(&self) -> bool {
         self.open.iter().any(|&n| {
-            matches!(
-                self.tag(n),
-                res::TAG_DD
-                    | res::TAG_DT
-                    | res::TAG_LI
-                    | res::TAG_OPTGROUP
-                    | res::TAG_OPTION
-                    | res::TAG_P
-                    | res::TAG_RB
-                    | res::TAG_RP
-                    | res::TAG_RT
-                    | res::TAG_RTC
-                    | res::TAG_TBODY
-                    | res::TAG_TD
-                    | res::TAG_TFOOT
-                    | res::TAG_TH
-                    | res::TAG_THEAD
-                    | res::TAG_TR
-                    | res::TAG_BODY
-                    | res::TAG_HTML
-            )
+            let t = self.tag(n);
+            implies_end_tag(t)
+                || matches!(
+                    t,
+                    res::TAG_TBODY
+                        | res::TAG_TD
+                        | res::TAG_TFOOT
+                        | res::TAG_TH
+                        | res::TAG_THEAD
+                        | res::TAG_TR
+                        | res::TAG_BODY
+                        | res::TAG_HTML
+                )
         })
     }
 
@@ -719,7 +712,7 @@ impl TreeBuilder<'_> {
         if !self.current_is(tag) {
             self.parse_error(tok, err);
         }
-        self.open_pop_until_tag_id(tag, res::NS_HTML, true);
+        self.open_pop_until_tag_id(tag, res::NS_HTML, Found::Popped);
     }
 
     /// `lxb_html_tree_acknowledge_token_self_closing`.
@@ -830,7 +823,7 @@ impl TreeBuilder<'_> {
 
             /* State 11 */
             let Some(mut furthest_block_idx) = furthest else {
-                self.open_pop_until_node(formatting_element, true);
+                self.open_pop_until_node(formatting_element, Found::Popped);
                 self.afe_remove_by_node(formatting_element);
                 return Ok(false);
             };

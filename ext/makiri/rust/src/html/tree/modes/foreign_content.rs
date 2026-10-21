@@ -6,7 +6,7 @@ use crate::falloc::try_vec_with_capacity;
 use crate::html::res::names as res;
 use crate::html::tokenizer::{flags, Tokenizer};
 use crate::html::tree::error::TreeErrorId as E;
-use crate::html::tree::{is_ws, AttrAdjust, OrAbort, Tok, TreeBuilder, TreeStatus};
+use crate::html::tree::{is_ws, AttrAdjust, Found, OrAbort, Tok, TreeBuilder, TreeStatus};
 
 /// U+FFFD in UTF-8.
 const REPLACEMENT: &[u8] = "\u{FFFD}".as_bytes();
@@ -33,7 +33,7 @@ fn anything_else_closed(
             break;
         };
         if tree.tag(node) == tok.tag_id {
-            tree.open_pop_until_node(node, true);
+            tree.open_pop_until_node(node, Found::Popped);
             return true;
         }
         idx -= 1;

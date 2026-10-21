@@ -38,6 +38,7 @@ mod modes;
 mod parse;
 mod select;
 mod stacks;
+pub(crate) use stacks::Found;
 mod stamp;
 
 pub use error::{TreeError, TreeErrorId};

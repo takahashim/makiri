@@ -3,7 +3,7 @@
 use crate::html::res::names as res;
 use crate::html::tokenizer::{TextContent, Tokenizer};
 use crate::html::tree::error::TreeErrorId as E;
-use crate::html::tree::{Mode, OrAbort, Tok, TreeBuilder, TreeStatus};
+use crate::html::tree::{Found, Mode, OrAbort, Tok, TreeBuilder, TreeStatus};
 
 /// `lxb_html_tree_insertion_mode_in_head`.
 pub fn in_head(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mut Tok) -> bool {
@@ -129,7 +129,7 @@ fn template_closed(tree: &mut TreeBuilder<'_>, _tkz: &mut Tokenizer<'_, '_>, tok
     if !is_template {
         tree.parse_error(tok, E::Teelisnocuinhemo);
     }
-    tree.open_pop_until_tag_id(res::TAG_TEMPLATE, res::NS_HTML, true);
+    tree.open_pop_until_tag_id(res::TAG_TEMPLATE, res::NS_HTML, Found::Popped);
     tree.afe_up_to_last_marker();
     tree.template_modes_pop();
     tree.reset_insertion_mode_appropriately();
