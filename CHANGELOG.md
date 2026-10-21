@@ -17,6 +17,9 @@
   documents can no longer compare equal after the per-document counter wraps.
 * Importing an XML processing instruction whose data holds `?>` into an
   HTML document raises `ArgumentError`; it reported "out of memory".
+* An HTML Attr serializes to the empty string, as an XML Attr does and as
+  DOM Parsing and Firefox have it: `attr.to_s`, `puts attr` and `NodeSet#to_s`
+  over attributes raised `Makiri::Error` ("HTML serialization failed").
 
 ## [0.17.0.rc1] - 2026-10-22
 

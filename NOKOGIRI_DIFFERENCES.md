@@ -314,6 +314,10 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
   disabled (its children are elements, not raw text) and escaping is what makes
   that round-trip; `Nokogiri::HTML5` writes it literally and contradicts its own
   parser there.
+* An Attr serializes to the empty string (`attr.to_s`, `#to_html`,
+  `NodeSet#to_s` over attributes), as DOM Parsing's algorithm and Firefox
+  have it, in HTML and XML. Nokogiri's `Attr#to_s` is the value (`"a"`) and
+  its `#to_html` the markup (`id="a"`); use `#value` for the value.
 
 ## Text input (mutation APIs)
 

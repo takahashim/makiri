@@ -27,7 +27,14 @@ fn layout_opt(ruby: &Ruby, args: &[Value]) -> Result<Layout, Error> {
 
 /// The receiver's serialization as a UTF-8 String, or `Makiri::Error` on a
 /// Lexbor status failure.
+///
+/// An Attr serializes to the empty string, as DOM Parsing's algorithm and
+/// Firefox have it (Chromium and WebKit write the escaped value) and as an
+/// XML Attr does; the serializer itself has no markup for one, and refused.
 fn render(node: HtmlNode<'_>, scope: Scope, layout: Layout) -> Result<RString, Error> {
+    if node.node_type() == NodeType::Attribute {
+        return crate::bridge::string::utf8_str_protected(b"");
+    }
     let buf =
         serialize(node, scope, layout).ok_or_else(|| makiri_error("HTML serialization failed"))?;
     /* The serializer emits UTF-8, so the String is tagged UTF-8 rather than
