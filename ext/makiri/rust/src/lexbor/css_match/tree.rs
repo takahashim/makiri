@@ -2,6 +2,7 @@
 //! and `of S` step through, and the wider sibling set Lexbor's plain
 //! `:nth-child` family counts.
 
+use crate::compat::{self, Fix};
 use crate::html_dom::html::{HtmlNode, NodeType};
 
 /// The next/previous sibling that is an ELEMENT - for combinator dispatch
@@ -39,20 +40,19 @@ pub(super) fn parent_element(node: HtmlNode<'_>) -> Option<HtmlNode<'_>> {
 
 /// Does `n` count as "a sibling" for the plain (no `of_type`, no `of S`)
 /// `:nth-child`/`:nth-last-child`/`:first-child`/`:last-child`/`:only-child`
-/// family? Lexbor's own rule (the sibling loop in
+/// family? Selectors 4 counts element siblings only (M8 in
+/// docs/parser_differences.ja.md). Lexbor's rule (the sibling loop in
 /// `lxb_selectors_pseudo_class_function`'s `NTH_CHILD` case, and
-/// `lxb_selectors_pseudo_class_first_child`/`last_child` the same way):
-/// everything except Text and Comment - NOT "is an element". A
-/// `<!doctype html>` (a `DocumentType` node, `<html>`'s own preceding
-/// "sibling" under the Document) or an HTML processing-instruction sibling
-/// counts here even though neither is an element - found by
-/// `agrees_with_the_old_engine_on_randomly_generated_selectors` generating
-/// `*:nth-child(2n+1)` and disagreeing with the old engine on `<html>` itself:
-/// this port's `prev_sibling_element`/`next_sibling_element` (element-only,
-/// correct for combinators and `of_type`/`of S`, WRONG here) skipped the
-/// doctype and undercounted its position by one.
+/// `lxb_selectors_pseudo_class_first_child`/`last_child` the same way) is
+/// everything except Text and Comment, so a `<!doctype html>` before
+/// `<html>` or a processing-instruction sibling took a position; the
+/// harnesses that hold the matcher to Lexbor's engine run that rule.
 fn counts_toward_child_position(n: HtmlNode<'_>) -> bool {
-    !matches!(n.node_type(), NodeType::Text | NodeType::Comment)
+    if compat::fixed(Fix::M8) {
+        n.element().is_some()
+    } else {
+        !matches!(n.node_type(), NodeType::Text | NodeType::Comment)
+    }
 }
 
 pub(super) fn next_position_sibling(node: HtmlNode<'_>) -> Option<HtmlNode<'_>> {

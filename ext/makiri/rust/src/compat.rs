@@ -132,6 +132,11 @@ pub enum Fix {
     C19,
     /// `:has()` is not valid inside `:has()`.
     C20,
+    /// The plain `:nth-child` family counts element siblings only, as
+    /// Selectors 4 does; Lexbor counts every sibling but Text and Comment,
+    /// so a doctype or a processing instruction took a position. A
+    /// matcher item; no parse changes, so [`explains`] never names it.
+    M8,
     /// An element carries its start tag's offset when it was created for
     /// that tag's token, and no other (`Node#line`); not a tree change, so
     /// [`explains`] never names it: the harnesses compare the trees without

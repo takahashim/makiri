@@ -137,4 +137,16 @@ RSpec.describe "CSS Syntax 3 and Selectors 4 steps the CSS parser follows" do
     expect(rule[:declarations].map { |d| [d[:name], d[:value]] }).to eq([%w[font-family x], ["src", "url(a)"]])
     expect(Makiri::Lexbor::CSS.parse_stylesheet("@media print { a{b:c} }").first[:declarations]).to eq([])
   end
+
+  # M8: Selectors 4, :nth-child(): "the element has An+B-1 siblings before
+  # it" - element siblings, so a doctype or a processing instruction takes
+  # no position.
+  it "counts only element siblings for the :nth-child family" do
+    doc = Makiri::HTML("<!doctype html><div><?pi x?><b>1</b><!--c--><i>2</i><?pi y?></div>")
+    expect(doc.css("html:first-child").size).to eq(1)
+    expect(doc.css("b:first-child").map(&:text)).to eq(["1"])
+    expect(doc.css("i:last-child").map(&:text)).to eq(["2"])
+    expect(doc.css("i:nth-child(2)").map(&:text)).to eq(["2"])
+    expect(doc.at_css("b").matches?(":first-child")).to be(true)
+  end
 end

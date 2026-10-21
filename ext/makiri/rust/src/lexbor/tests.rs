@@ -439,24 +439,26 @@ mod css_match {
     use crate::text::VerifiedText;
 
     /* The engine's entry points take the `Scratch` a caller keeps; each test
-     * query here starts from a fresh one, as a cold call would. */
+     * query here starts from a fresh one, as a cold call would. They match
+     * as Lexbor matched too (`compat::as_lexbor`): the matcher's own
+     * departures (M8) are checked by `matcher_departures`. */
 
     fn port_select_all<'doc>(
         root: HtmlNode<'doc>,
         groups: Lists<'_>,
     ) -> Result<Vec<HtmlNode<'doc>>, QueryFailure> {
-        port::select_all(&mut Scratch::new(), root, groups)
+        crate::compat::as_lexbor(|| port::select_all(&mut Scratch::new(), root, groups))
     }
 
     fn port_select_first<'doc>(
         root: HtmlNode<'doc>,
         groups: Lists<'_>,
     ) -> Result<Option<HtmlNode<'doc>>, MatchFailure> {
-        port::select_first(&mut Scratch::new(), root, groups)
+        crate::compat::as_lexbor(|| port::select_first(&mut Scratch::new(), root, groups))
     }
 
     fn matches_any(groups: Lists<'_>, element: HtmlElement<'_>) -> Result<bool, MatchFailure> {
-        port::matches_any(&mut Scratch::new(), groups, element)
+        crate::compat::as_lexbor(|| port::matches_any(&mut Scratch::new(), groups, element))
     }
 
     /// A document the tests query: Lexbor's parse, and its arena copy, which
@@ -553,6 +555,31 @@ mod css_match {
             .into_iter()
             .filter_map(HtmlNode::element)
             .collect()
+    }
+
+    /// What the matcher answers on its own, not as Lexbor matched: the
+    /// plain `:nth-child` family counts element siblings only (M8), so
+    /// neither a doctype nor a processing instruction takes a position.
+    #[test]
+    fn matcher_departures() {
+        let doc = parsed(b"<!doctype html><div><?pi x?><b>1</b><!--c--><i>2</i><?pi y?></div>");
+        let gvl = Gvl::exclusive();
+        let count = |selector: &str| {
+            let text = VerifiedText::from_bytes(selector.as_bytes()).expect("verified");
+            let parsed = css_parser::parse(&gvl, text).expect("parses");
+            let spec = port::select_all(&mut Scratch::new(), root(&doc), parsed.groups())
+                .expect("runs")
+                .len();
+            let lexbor = port_select_all(root(&doc), parsed.groups())
+                .expect("runs")
+                .len();
+            (spec, lexbor)
+        };
+        assert_eq!(count("html:first-child"), (1, 0));
+        assert_eq!(count("b:first-child"), (1, 0));
+        assert_eq!(count("i:last-child"), (1, 0));
+        assert_eq!(count("i:nth-child(2)"), (1, 0));
+        assert_eq!(count("b:only-child"), (0, 0));
     }
 
     fn texts(doc: &HtmlParsed, selector: &str) -> Vec<String> {
