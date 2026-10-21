@@ -207,4 +207,15 @@ RSpec.describe "HTML Standard steps the port takes and Lexbor does not" do
     p_el << doc.create_element_ns("urn:x", "q:foo")
     expect(p_el.inner_html).to eq("<rect></rect><br><q:foo></q:foo>")
   end
+  # R3: serializing HTML fragments: an attribute is written by its namespace
+  # and its DOM localName, as it was set.
+  it "writes an attribute name in the case it was set" do
+    doc = Makiri::HTML("<!doctype html><p></p>")
+    foo = doc.create_element_ns(nil, "foo")
+    foo["viewBox"] = "1"
+    expect(foo.to_html).to eq('<foo viewBox="1"></foo>')
+    svg = doc.create_element_ns("http://www.w3.org/2000/svg", "svg")
+    svg.set_attribute_ns("http://www.w3.org/1999/xlink", "xlink:Href", "h")
+    expect(svg.to_html).to eq('<svg xlink:Href="h"></svg>')
+  end
 end

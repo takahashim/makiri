@@ -102,6 +102,9 @@
   in the element's own namespace replaces the attribute it set before,
   where it appended a second, and an attribute taken off its element keeps
   its `namespace_uri`, where it became nil.
+* An attribute name is serialized in the case it was set (R3): `e["viewBox"]`
+  on an element in no namespace, or `set_attribute_ns` with `xlink:Href`,
+  wrote the name lower-cased.
 * `HTML::Document#import_node` refuses a document with "cannot import a
   document; use #dup", as `#clone_node` does; it failed with "failed to
   import node".

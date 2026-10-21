@@ -223,6 +223,14 @@ P で始まる項目は HTML パーサの振る舞いである。
 - **移植版**：`html/dom/serialize.rs` の `tag_name` が、名前を書いたとおりに持つ（接頭辞か大文字を持つ）要素のうち三つの名前空間のものに DOM の `localName` を返す。parser はこの形を作らない。比較の扱いは R1 と同じ。
 - **テスト**：WPT にない。`spec/html_standard_steps_spec.rb`（R1 と同じ例の群）。
 
+### R3 属性の名前の大文字
+
+- **分類**：参照実装の未対応（DOM の操作）。移植版で直した。
+- **仕様**：fragment の直列化は、属性の名前を、名前空間が null なら local name で、XML、XMLNS、XLink の名前空間ならそれぞれの接頭辞と local name で書く。local name は DOM の `localName`、つまり設定したときの大文字を保つ。
+- **再現**：`create_element_ns(nil, "foo")` に `e["viewBox"] = "1"`。仕様では `<foo viewBox="1"></foo>`。Lexbor は属性を小文字にした名前で持ち、それを書くので `viewbox`。`set_attribute_ns(XLINK, "xlink:Href")` も `xlink:href` になる。
+- **移植版**：`html/dom/serialize.rs` の `attribute` が、DOM の `localName` と属性自身の名前空間（D1）で書く。パーサの作る属性は名前を小文字にするか SVG、MathML の表で直すので、パースの結果は変わらない。比較の扱いは R1 と同じ。
+- **テスト**：WPT にない。`spec/html_standard_steps_spec.rb`（R1 と同じ例の群）。
+
 ### D1 属性の名前空間
 
 - **分類**：参照実装の未対応（DOM の操作）。移植版で直した。

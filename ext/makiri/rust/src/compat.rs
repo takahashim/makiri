@@ -80,6 +80,9 @@ pub enum Fix {
     /// An element in the HTML, SVG or MathML namespace is serialized by its
     /// local name, without the prefix it was created with.
     R2,
+    /// An attribute's name is serialized by its own namespace and its
+    /// case-preserved local name. The serializer's, as R1 and R2.
+    R3,
     /// An attribute keeps the namespace it was made in: one set in its
     /// element's own namespace is in it, and one taken off its element keeps
     /// its. A DOM item; no parse makes either shape, so [`explains`] never

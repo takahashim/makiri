@@ -197,10 +197,18 @@ fn raw_text(n: HtmlNode<'_>) -> bool {
 
 /// `lxb_html_serialize_attribute_cb` / `..._pretty_attribute_cb` (no
 /// option): the name by the namespace Lexbor stores on the attribute node,
-/// then the escaped value.
+/// then the escaped value. The Standard's name goes by the attribute's own
+/// namespace and its case-preserved local name (R3): Lexbor's node
+/// namespace is the element's for an attribute in none, and its stored
+/// local name lower case, which differ only for an attribute the DOM made -
+/// `viewBox` set on an element in no namespace was written `viewbox`.
 fn attribute<S: Sink>(out: &mut Out<'_, S>, a: HtmlAttr<'_>) -> R {
-    let local = a.local_name();
-    match a.node().ns_id() {
+    let (local, ns) = if compat::fixed(Fix::R3) {
+        (a.dom_local_name(), a.own_ns())
+    } else {
+        (a.local_name(), a.node().ns_id())
+    };
+    match ns {
         None => out.send(local)?,
         Some(NsId::XML) => {
             out.send(b"xml:")?;
