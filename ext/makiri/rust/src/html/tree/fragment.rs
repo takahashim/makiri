@@ -11,15 +11,28 @@ use crate::html::res::names as res;
 use crate::html::tokenizer::Status;
 use crate::utf8_input::sanitize;
 
-/// Why a fragment parse produced no fragment.
+/// Why a fragment parse produced no fragment: a document parse's reasons
+/// ([`ParseFailure`](super::ParseFailure)), and the input's repair.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FragmentFailure {
     /// Out of memory repairing the input's UTF-8.
     Decode,
-    /// The parse failed (out of memory, or the tree builder stopped).
-    Parse,
+    /// An allocation failed.
+    Oom,
+    /// The tree builder stopped the parse.
+    Stopped(TreeStatus),
     /// The guard refused it.
     Guard(GuardStop),
+}
+
+impl From<TreeStatus> for FragmentFailure {
+    /// A tree builder's failure: its own out-of-memory, or a stop.
+    fn from(st: TreeStatus) -> FragmentFailure {
+        match st {
+            TreeStatus::Oom => FragmentFailure::Oom,
+            st => FragmentFailure::Stopped(st),
+        }
+    }
 }
 
 /// A parsed fragment: its own document, and the node whose children are the
@@ -97,7 +110,7 @@ pub fn parse_fragment(
     } = *context;
     let src = sanitize(input, known_valid).ok_or(FragmentFailure::Decode)?;
     let bytes = src.as_slice();
-    let oom = |DomOom| FragmentFailure::Parse;
+    let oom = |DomOom| FragmentFailure::Oom;
 
     /* `lxb_html_document_interface_create(NULL)`: no quirks, no scripting.
      * The Standard's document is in the context document's quirks mode. */
@@ -120,8 +133,7 @@ pub fn parse_fragment(
         context,
         &facts,
         Guard::for_fragment(limit, options),
-    )
-    .map_err(|_| FragmentFailure::Parse)?;
+    )?;
 
     let current_ns = tree.current_namespace();
     let foreign = facts.foreign_namespace && compat::fixed(Fix::P19);
@@ -132,15 +144,18 @@ pub fn parse_fragment(
     if let Some(stop) = tree.guard_stopped() {
         return Err(FragmentFailure::Guard(stop));
     }
+    if status == Status::Oom {
+        return Err(FragmentFailure::Oom);
+    }
     if status != Status::Ok || tree.status != TreeStatus::Ok {
-        return Err(FragmentFailure::Parse);
+        return Err(FragmentFailure::Stopped(tree.status));
     }
     /* "The end" pops whatever is still open, with its pop steps, for a
      * fragment as for a document; Lexbor's fragment end did not. */
     if compat::fixed(Fix::P16) {
         tree.open_pop_all();
         if tree.status != TreeStatus::Ok {
-            return Err(FragmentFailure::Parse);
+            return Err(tree.status.into());
         }
     }
     drop(tree);

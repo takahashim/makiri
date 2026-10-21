@@ -275,7 +275,7 @@ impl TransientFragment {
         };
         let parsed = parse_fragment(input, known_valid, &element, limit).map_err(|f| match f {
             FragmentFailure::Decode => FragmentError::Decode,
-            FragmentFailure::Parse => FragmentError::Parse,
+            FragmentFailure::Oom | FragmentFailure::Stopped(_) => FragmentError::Parse,
             FragmentFailure::Guard(stop) => FragmentError::Guard(stop),
         })?;
         let inherit = match at.map(|a| &a.ns) {
