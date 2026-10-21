@@ -83,7 +83,7 @@ impl NodeName {
     pub const fn html(local: usize) -> NodeName {
         NodeName {
             local,
-            ns: res::NS_HTML as u32,
+            ns: HTML_NS,
             prefix: 0,
         }
     }
@@ -91,9 +91,17 @@ impl NodeName {
 
 /// A namespace id: Lexbor's static numbers (`res::NS_*`) first, then the
 /// document's own. 0 (`NS__UNDEF`) is "none" and never stored.
+///
+/// The arena and the tree builder speak Lexbor's numbers, 0 for none, as the
+/// port they are tested against does; the typed ids ([`NsId`], [`TagId`],
+/// "none" an `Option`) are the handles' (`handle.rs`), for the layers above.
+/// The two meet only there.
 pub type NsIndex = u32;
 /// A prefix id, numbered as namespaces are (Lexbor shares the static range).
 pub type PrefixIndex = u32;
+
+/// The HTML namespace's [`NsIndex`].
+pub const HTML_NS: NsIndex = res::NS_HTML as NsIndex;
 
 #[derive(Clone, Copy, Debug)]
 enum Payload {
@@ -309,7 +317,7 @@ impl Document {
             local: res::TAG__DOCUMENT as u32,
             /* An HTML document node is in the HTML namespace
              * (`lxb_dom_document_init`). */
-            ns: res::NS_HTML as u32,
+            ns: HTML_NS,
             prefix: 0,
             parent: None,
             first_child: None,
@@ -528,7 +536,7 @@ impl Document {
         /* An HTML `<template>` is made with its contents fragment, as
          * Lexbor's template interface is: in the HTML namespace, hosted by
          * the template. */
-        if tag == res::TAG_TEMPLATE && ns == res::NS_HTML as u32 {
+        if tag == res::TAG_TEMPLATE && ns == HTML_NS {
             let contents = self.create_fragment(Some(id))?;
             self.set_names(contents, 0, ns, 0);
             self.set_template_content(id, contents);
@@ -969,6 +977,20 @@ impl Document {
     pub fn prev(&self, n: NodeId) -> Option<NodeId> {
         self.node(n)?.prev
     }
+    /// Whether `n` is in the document's tree: the document node is its
+    /// root, a template's contents counting as inside their template.
+    pub fn is_connected(&self, mut n: NodeId) -> bool {
+        loop {
+            if n == NodeId::DOCUMENT {
+                return true;
+            }
+            match self.parent(n).or_else(|| self.fragment_host(n)) {
+                Some(p) => n = p,
+                None => return false,
+            }
+        }
+    }
+
     /// The start tag's byte offset, when recorded.
     #[inline]
     pub fn source_offset(&self, n: NodeId) -> Option<usize> {
@@ -1137,6 +1159,7 @@ pub mod cross_import;
 mod edit;
 mod ext_table;
 mod handle;
+mod index;
 mod parsed;
 /// HTML serialization.
 pub mod serialize;
@@ -1144,12 +1167,13 @@ mod store;
 /// XPath's HTML instance of its `Dom` trait, over the arena.
 pub mod xpath;
 pub use build::AttrValue;
-pub use edit::{HtmlDocMut, HtmlTree, Insertion, Place};
+pub use edit::{HtmlDocMut, HtmlNewNodes, HtmlTree, Insertion, Place};
 pub use handle::{
     has_ascii_uppercase, Ancestors, AttrName, Attrs, HtmlAttr, HtmlDoc, HtmlElement, HtmlNode,
     NsId, RawNode, Siblings, TagId, NS_LAST_ENTRY, TAG_EM_DOCTYPE, TAG_LAST_ENTRY,
 };
-pub use parsed::{DomIndex, ForeignNode, HtmlDocIdentity, HtmlNodeKey, HtmlParsed, TextRun};
+pub use index::{DomIndex, TextRun};
+pub use parsed::{ForeignNode, HtmlDocIdentity, HtmlNodeKey, HtmlParsed};
 
 #[cfg(test)]
 pub mod conformance;

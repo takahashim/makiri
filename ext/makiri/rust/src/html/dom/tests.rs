@@ -8,12 +8,8 @@ use super::*;
 fn links_and_attributes_keep_their_lists() {
     let mut d = Document::new(0).expect("doc");
     let div = d.names.tag_append_lower(b"div").expect("tag");
-    let a = d
-        .create_element(div, res::NS_HTML as u32, 0, None)
-        .expect("a");
-    let b = d
-        .create_element(div, res::NS_HTML as u32, 0, None)
-        .expect("b");
+    let a = d.create_element(div, HTML_NS, 0, None).expect("a");
+    let b = d.create_element(div, HTML_NS, 0, None).expect("b");
     let c = d
         .create_data(NodeType::Text, NodeName::default(), b"t")
         .expect("c");
@@ -62,9 +58,7 @@ fn namespaces_keep_lexbor_static_ids_and_add_their_own() {
 fn compaction_keeps_every_span_and_bounds_the_store() {
     let mut d = Document::new(0).expect("doc");
     let div = d.names.tag_append_lower(b"div").expect("tag");
-    let el = d
-        .create_element(div, res::NS_HTML as u32, 0, None)
-        .expect("el");
+    let el = d.create_element(div, HTML_NS, 0, None).expect("el");
     d.append_child(NodeId::DOCUMENT, el);
     let text = d
         .create_data(NodeType::Text, NodeName::default(), b"first")

@@ -16,13 +16,14 @@
 
 use super::{
     Document, DomOom, ElementData, Node, NodeId, NodeName, NodeType, Payload, ShortcutRule, Span,
+    HTML_NS,
 };
 use crate::falloc::VecPush;
 use crate::html::res::names as res;
 
 /// Where a copy reads from.
 #[derive(Clone, Copy)]
-enum From<'s> {
+enum Source<'s> {
     /// The document being written.
     Same,
     /// Another document.
@@ -33,7 +34,7 @@ impl Document {
     /// A copy of the node `n` of this document, detached; with its subtree
     /// when `deep`.
     pub fn copy_within(&mut self, n: NodeId, deep: bool) -> Result<NodeId, DomOom> {
-        self.copy_tree(From::Same, n, deep)
+        self.copy_tree(Source::Same, n, deep)
     }
 
     /// A copy of the node `n` of `src`, another document, detached; with its
@@ -42,17 +43,17 @@ impl Document {
         if core::ptr::eq(self, src) {
             return self.copy_within(n, deep);
         }
-        self.copy_tree(From::Other(src), n, deep)
+        self.copy_tree(Source::Other(src), n, deep)
     }
 
-    fn src<'a>(&'a self, from: From<'a>) -> &'a Document {
+    fn src<'a>(&'a self, from: Source<'a>) -> &'a Document {
         match from {
-            From::Same => self,
-            From::Other(d) => d,
+            Source::Same => self,
+            Source::Other(d) => d,
         }
     }
 
-    fn copy_tree(&mut self, from: From<'_>, root: NodeId, deep: bool) -> Result<NodeId, DomOom> {
+    fn copy_tree(&mut self, from: Source<'_>, root: NodeId, deep: bool) -> Result<NodeId, DomOom> {
         let top = self.copy_one(from, root)?;
         if !deep {
             return Ok(top);
@@ -94,7 +95,7 @@ impl Document {
         let node = self.node(n)?;
         if node.kind == NodeType::Element
             && node.local as usize == res::TAG_TEMPLATE
-            && node.ns == res::NS_HTML as u32
+            && node.ns == HTML_NS
         {
             self.template_content(n)
         } else {
@@ -105,7 +106,7 @@ impl Document {
     /// One node, detached and without children: an element with copies of
     /// its attributes (and, for a template, empty contents), anything else
     /// with its data.
-    fn copy_one(&mut self, from: From<'_>, n: NodeId) -> Result<NodeId, DomOom> {
+    fn copy_one(&mut self, from: Source<'_>, n: NodeId) -> Result<NodeId, DomOom> {
         let node: Node = *self.src(from).node(n).ok_or(DomOom)?;
         let (local, ns, prefix) = self.names_from(from, &node)?;
         let made = match node.payload {
@@ -156,12 +157,17 @@ impl Document {
                 };
                 self.push_doctype(names, dt)?
             }
-            /* A fragment's copy is a plain new one, as the adapter makes it;
-             * a document is never copied. */
+            /* A fragment's copy is a plain new one, as the adapter makes it. */
             Payload::Fragment { .. } => self.create_fragment(None)?,
-            Payload::Document => return Err(DomOom),
+            /* A document is never copied: `clone_node` and `import_node`
+             * refuse one first, and `#dup` parses afresh. Refused here too,
+             * so a caller that forgot fails rather than copies. */
+            Payload::Document => {
+                debug_assert!(false, "a copy of a document node");
+                return Err(DomOom);
+            }
         };
-        if matches!(from, From::Same) && node.source != 0 {
+        if matches!(from, Source::Same) && node.source != 0 {
             if let Some(x) = self.node_mut(made) {
                 x.source = node.source;
             }
@@ -170,18 +176,18 @@ impl Document {
     }
 
     /// The bytes `s` of the source, stored here.
-    fn bytes_from(&mut self, from: From<'_>, s: Span) -> Result<Span, DomOom> {
+    fn bytes_from(&mut self, from: Source<'_>, s: Span) -> Result<Span, DomOom> {
         match from {
-            From::Same => self.dup(s),
-            From::Other(d) => self.store(d.bytes_of(s)),
+            Source::Same => self.dup(s),
+            Source::Other(d) => self.store(d.bytes_of(s)),
         }
     }
 
     /// A written-name id of the source, as an id here.
-    fn written_from(&mut self, from: From<'_>, id: u32) -> Result<u32, DomOom> {
+    fn written_from(&mut self, from: Source<'_>, id: u32) -> Result<u32, DomOom> {
         match from {
-            From::Same => Ok(id),
-            From::Other(d) => match d.names.qualified(id) {
+            Source::Same => Ok(id),
+            Source::Other(d) => match d.names.qualified(id) {
                 Some(w) => self.names.qualified_append(w).map_err(|_| DomOom),
                 None => Ok(0),
             },
@@ -192,10 +198,10 @@ impl Document {
     /// the static ones is interned again by its text (a tag with upper case
     /// as written, as Lexbor's copy appends it), a namespace by its URI as
     /// written.
-    fn names_from(&mut self, from: From<'_>, node: &Node) -> Result<(u32, u32, u32), DomOom> {
+    fn names_from(&mut self, from: Source<'_>, node: &Node) -> Result<(u32, u32, u32), DomOom> {
         let d = match from {
-            From::Same => return Ok((node.local, node.ns, node.prefix)),
-            From::Other(d) => d,
+            Source::Same => return Ok((node.local, node.ns, node.prefix)),
+            Source::Other(d) => d,
         };
         let local = match node.kind {
             NodeType::Attribute => {

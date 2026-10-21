@@ -183,6 +183,13 @@ pub fn import_node(rb_self: Value, node_v: Value, deep: bool) -> Result<Value, E
      * the edit holds the document, and reads it through its own borrow; one
      * of another document is read through that document's. */
     let (key, src_doc) = html_node_key(node_v)?;
+    /* The DOM's importNode refuses a document (NotSupportedError), as
+     * `clone_node` does here. */
+    if crate::bridge::ruby::same_value(node_v, src_doc) {
+        return Err(makiri_error(
+            "import_node cannot import a document; use #dup",
+        ));
+    }
     let raw = crate::bridge::html::node_ref(src_doc, key)?;
     let imp = if crate::bridge::ruby::same_value(src_doc, rb_self) {
         new_node(&rb_self, |d| d.copy(raw, deep))?

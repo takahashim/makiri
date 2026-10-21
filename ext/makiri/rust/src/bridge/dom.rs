@@ -9,7 +9,7 @@
 
 use core::ptr::NonNull;
 
-use crate::html_dom::html::{HtmlDoc, HtmlDocMut, RawNode};
+use crate::html_dom::html::{HtmlDoc, HtmlDocMut, HtmlNewNodes, RawNode};
 use crate::html_dom::post_parse::HtmlParsed;
 
 /// The parsed document a Ruby HTML Document owns, as the bridge passes it:
@@ -59,7 +59,7 @@ impl DocPtr {
     /// the only access to it for `'d` - no handle of it is used while this
     /// one lives - and no Ruby runs meanwhile.
     #[inline]
-    pub unsafe fn edit_new_nodes<'d>(self) -> HtmlDocMut<'d> {
+    pub unsafe fn edit_new_nodes<'d>(self) -> HtmlNewNodes<'d> {
         // SAFETY: the caller's contract: the one access for `'d`.
         unsafe { (*self.0.as_ptr()).edit_keeping_indexes() }
     }

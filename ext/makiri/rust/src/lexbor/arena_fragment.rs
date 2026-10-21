@@ -15,7 +15,7 @@
 
 use crate::falloc::try_to_vec;
 use crate::html::dom::{
-    DomOom, HtmlDoc, HtmlDocMut, HtmlElement, HtmlNode, NsId, Place, RawNode, TagId,
+    DomOom, HtmlDoc, HtmlElement, HtmlNewNodes, HtmlNode, NsId, RawNode, TagId,
 };
 use crate::html::res::names as res;
 use crate::html::tree::guard::ContextOptions;
@@ -288,7 +288,7 @@ impl TransientFragment {
 
     /// Copy every child into `d`'s detached fragment `into`; `Err` if one
     /// could not be copied, with the ones before it already there.
-    pub fn import_into_doc(self, d: &mut HtmlDocMut<'_>, into: RawNode) -> Result<(), DomOom> {
+    pub fn import_into_doc(self, d: &mut HtmlNewNodes<'_>, into: RawNode) -> Result<(), DomOom> {
         let inherit = match &self.inherit {
             FragNs::Id(ns) => *ns,
             FragNs::Uri(u) => Some(d.intern_ns(u).ok_or(DomOom)?),
@@ -297,7 +297,7 @@ impl TransientFragment {
         let mut child = src.get(self.parsed.root).and_then(HtmlNode::first_child);
         while let Some(c) = child {
             let made = d.import(c, true)?;
-            d.place(into, made, Place::Child);
+            d.append_to_detached(into, made);
             child = c.next();
         }
         if let Some(ns) = inherit {

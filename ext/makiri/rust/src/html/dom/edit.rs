@@ -1,5 +1,6 @@
 //! Editing an arena document: [`HtmlDocMut`], with the Lexbor adapter's
-//! method set, and the tree [`crate::dom_rules`] checks an insertion against.
+//! method set; [`HtmlNewNodes`], the part of it that only makes detached
+//! nodes; and the tree [`crate::dom_rules`] checks an insertion against.
 //!
 //! Every change reproduces what the adapter does over Lexbor - its factories
 //! name a node as Lexbor's constructors do, its attribute writes are the DOM's
@@ -8,7 +9,7 @@
 //! Ruby wrapper may still name it.
 
 use super::handle::{has_ascii_uppercase, HtmlDoc, HtmlNode, NsId, RawNode};
-use super::{Document, DomOom, NodeId, NodeName, NodeType, Shortcut, ShortcutRule};
+use super::{Document, DomOom, NodeId, NodeName, NodeType, Shortcut, ShortcutRule, HTML_NS};
 use crate::dom_rules::{self, At, Hierarchy, PreInsertError, Tree, Violation};
 use crate::falloc::VecPush;
 use crate::html::res::names as res;
@@ -162,6 +163,19 @@ impl<'d> HtmlDocMut<'d> {
         self.read().node(raw)
     }
 
+    /// The part of this edit that makes detached nodes, for a step that
+    /// needs no more (an import into a fragment it made).
+    #[inline]
+    pub fn new_nodes(&mut self) -> HtmlNewNodes<'_> {
+        HtmlNewNodes { d: self.d }
+    }
+
+    /// The node `id` of this document, as the handle a caller holds.
+    #[inline]
+    fn raw(&self, id: NodeId) -> RawNode {
+        RawNode::new(self.stamp, id)
+    }
+
     /// The id of `raw`, a node of this document.
     #[inline]
     fn id_of(&self, raw: RawNode) -> NodeId {
@@ -280,14 +294,8 @@ impl<'d> HtmlDocMut<'d> {
         }
         let lower = self.is_html(self.id_of(el));
         let at = self.create_attr(self.id_of(el), None, name, value, lower)?;
-        let local = self
-            .read()
-            .node(RawNode::new(self.stamp, at))
-            .attr()
-            .map(|a| a.dom_local_name());
-        let shortcut = local.and_then(Shortcut::named);
-        self.d
-            .link_attribute(self.id_of(el), at, ShortcutRule::take(shortcut));
+        let rule = ShortcutRule::take(self.shortcut_of_new(at, None));
+        self.d.link_attribute(self.id_of(el), at, rule);
         Ok(())
     }
 
@@ -331,17 +339,20 @@ impl<'d> HtmlDocMut<'d> {
         value: &[u8],
     ) -> Result<(), DomOom> {
         let at = self.create_attr(el, ns, qname, value, false)?;
-        /* An attribute set IN a namespace is never the ID or class one. */
-        let shortcut = if ns.is_none() {
-            self.read()
-                .node(RawNode::new(self.stamp, at))
-                .attr()
-                .and_then(|a| Shortcut::named(a.dom_local_name()))
-        } else {
-            None
-        };
-        self.d.link_attribute(el, at, ShortcutRule::take(shortcut));
+        let rule = ShortcutRule::take(self.shortcut_of_new(at, ns));
+        self.d.link_attribute(el, at, rule);
         Ok(())
+    }
+
+    /// The shortcut the new attribute `at`, set in `ns`, takes: by its DOM
+    /// local name, and none in a namespace - an attribute set IN a namespace
+    /// is never the ID or class one.
+    fn shortcut_of_new(&self, at: NodeId, ns: Option<&[u8]>) -> Option<Shortcut> {
+        if ns.is_some() {
+            return None;
+        }
+        let local = self.read().node(self.raw(at)).attr()?.dom_local_name();
+        Shortcut::named(local)
     }
 
     /// Take the attribute `attr` off the element `el`.
@@ -367,7 +378,7 @@ impl<'d> HtmlDocMut<'d> {
     }
 
     fn is_html(&self, el: NodeId) -> bool {
-        self.d.ns(el) == res::NS_HTML as u32
+        self.d.ns(el) == HTML_NS
     }
 
     /// A new attribute of `el`'s document named `qname` in `ns`, not linked,
@@ -384,6 +395,9 @@ impl<'d> HtmlDocMut<'d> {
         value: &[u8],
         lower: bool,
     ) -> Result<NodeId, DomOom> {
+        /* The glue refuses an empty name, or an empty namespace URI, first
+         * (`ArgumentError`); refused here too, as no attribute is made. */
+        debug_assert!(!qname.is_empty(), "an empty attribute name");
         if qname.is_empty() {
             return Err(DomOom);
         }
@@ -399,6 +413,7 @@ impl<'d> HtmlDocMut<'d> {
             Some(i) => (&qname[i + 1..], d.intern_prefix(&qname[..i])?.unwrap_or(0)),
             None => (qname, 0),
         };
+        debug_assert!(!local_name.is_empty(), "an empty attribute local name");
         if local_name.is_empty() {
             return Err(DomOom);
         }
@@ -410,31 +425,41 @@ impl<'d> HtmlDocMut<'d> {
         d.create_attr(local, ns_id, prefix, written, value)
     }
 
-    /* ---- new nodes ---- */
+    /* ---- new nodes ----
+     *
+     * The factories answer `None` for out of memory, and for a PI whose data
+     * holds `?>`, which Lexbor refused as a failed creation (the glue refuses
+     * it first, with an `ArgumentError`). An empty name the glue
+     * refuses first with an `ArgumentError`, so here it is a broken
+     * invariant - caught in debug builds, refused in release. They keep the
+     * Lexbor adapter's `Option`, which `lexbor::arena_tests` compares them
+     * with. */
 
     /// A new element named `local_name` (DOM `createElement`): its tag
     /// lower-cased, in the HTML namespace.
     pub fn create_element(&mut self, local_name: &[u8]) -> Option<RawNode> {
+        debug_assert!(!local_name.is_empty(), "an empty element name");
         if local_name.is_empty() {
             return None;
         }
         let tag = self.d.names.tag_append_lower(local_name).ok()?;
         self.d
-            .create_element(tag, res::NS_HTML as u32, 0, None)
+            .create_element(tag, HTML_NS, 0, None)
             .ok()
-            .map(|id| RawNode::new(self.stamp, id))
+            .map(|id| self.raw(id))
     }
 
     /// A new element in namespace `ns` with `prefix` (DOM `createElementNS`,
     /// the name already validated and split) - see the adapter's: an HTML
     /// name with upper case gets a tag of its own, as written.
     pub fn create_element_ns(&mut self, local: &[u8], ns: &[u8], prefix: &[u8]) -> Option<RawNode> {
+        debug_assert!(!local.is_empty(), "an empty element local name");
         if local.is_empty() {
             return None;
         }
         let d = &mut *self.d;
         let upper = has_ascii_uppercase(local);
-        let html = d.lookup_ns(ns) == Some(res::NS_HTML as u32);
+        let html = d.lookup_ns(ns) == Some(HTML_NS);
         let tag = if upper && html {
             d.names.tag_append_raw(local).ok()?
         } else {
@@ -464,7 +489,7 @@ impl<'d> HtmlDocMut<'d> {
         };
         d.create_element(tag, ns_id, prefix_id, written.as_deref())
             .ok()
-            .map(|id| RawNode::new(self.stamp, id))
+            .map(|id| self.raw(id))
     }
 
     fn new_text(&mut self, text: &[u8]) -> Result<NodeId, DomOom> {
@@ -474,16 +499,14 @@ impl<'d> HtmlDocMut<'d> {
 
     /// A new Text node (Lexbor names it `#text`, in the HTML namespace).
     pub fn create_text(&mut self, text: &[u8]) -> Option<RawNode> {
-        self.new_text(text)
-            .ok()
-            .map(|id| RawNode::new(self.stamp, id))
+        self.new_text(text).ok().map(|id| self.raw(id))
     }
 
     /// A new Comment (`!--`, in the HTML namespace).
     pub fn create_comment(&mut self, text: &[u8]) -> Option<RawNode> {
         let name = NodeName::html(res::TAG__EM_COMMENT);
         let c = self.d.create_data(NodeType::Comment, name, text).ok()?;
-        Some(RawNode::new(self.stamp, c))
+        Some(self.raw(c))
     }
 
     /// A new ProcessingInstruction; `None` for data holding `?>`, which
@@ -492,10 +515,7 @@ impl<'d> HtmlDocMut<'d> {
         if data.windows(2).any(|w| w == b"?>") {
             return None;
         }
-        self.d
-            .create_pi(target, data)
-            .ok()
-            .map(|id| RawNode::new(self.stamp, id))
+        self.d.create_pi(target, data).ok().map(|id| self.raw(id))
     }
 
     /// A new DocumentType; an absent id is an empty one.
@@ -513,15 +533,12 @@ impl<'d> HtmlDocMut<'d> {
                 system_id.unwrap_or_default(),
             )
             .ok()
-            .map(|id| RawNode::new(self.stamp, id))
+            .map(|id| self.raw(id))
     }
 
     /// A new, empty DocumentFragment.
     pub fn create_fragment(&mut self) -> Option<RawNode> {
-        self.d
-            .create_fragment(None)
-            .ok()
-            .map(|id| RawNode::new(self.stamp, id))
+        self.d.create_fragment(None).ok().map(|id| self.raw(id))
     }
 
     /// A detached copy of `src`, a node of ANOTHER document, `<template>`
@@ -529,14 +546,12 @@ impl<'d> HtmlDocMut<'d> {
     pub fn import(&mut self, src: HtmlNode<'_>, deep: bool) -> Result<RawNode, DomOom> {
         self.d
             .copy_from(src.owner_document().arena(), src.id(), deep)
-            .map(|id| RawNode::new(self.stamp, id))
+            .map(|id| self.raw(id))
     }
 
     /// A detached copy of `src`, a node of this document (`cloneNode`).
     pub fn copy(&mut self, src: RawNode, deep: bool) -> Result<RawNode, DomOom> {
-        self.d
-            .copy_within(src.id(), deep)
-            .map(|id| RawNode::new(self.stamp, id))
+        self.d.copy_within(src.id(), deep).map(|id| self.raw(id))
     }
 
     /// A detached copy of the XML node `src` of `xdoc`.
@@ -556,5 +571,122 @@ impl<'d> HtmlDocMut<'d> {
             .ok()
             .flatten()
             .and_then(NsId::from_index)
+    }
+}
+
+/// A document lent to make DETACHED nodes - the factories, the copies, and
+/// a fragment's import into a fragment just made - while the document's
+/// indexes stay ([`HtmlParsed::edit_keeping_indexes`]). That is sound only
+/// while nothing in the document's tree changes, so this offers nothing that
+/// could change it: no insertion but into a node no tree holds, no attribute
+/// or data write.
+///
+/// [`HtmlParsed::edit_keeping_indexes`]: super::HtmlParsed::edit_keeping_indexes
+pub struct HtmlNewNodes<'d> {
+    d: &'d mut Document,
+}
+
+impl<'d> HtmlNewNodes<'d> {
+    #[inline]
+    pub(super) fn new(d: &'d mut Document) -> Self {
+        HtmlNewNodes { d }
+    }
+
+    /// The full edit, for this module's delegation only.
+    #[inline]
+    fn edit(&mut self) -> HtmlDocMut<'_> {
+        HtmlDocMut::new(self.d)
+    }
+
+    /// The document, for reading between changes.
+    #[inline]
+    pub fn read(&self) -> HtmlDoc<'_> {
+        HtmlDoc::of(self.d)
+    }
+
+    /// Append `node` as the last child of `into` - a node no tree of the
+    /// document holds (a fragment this lend made) - or, `node` being a
+    /// fragment, its children.
+    pub fn append_to_detached(&mut self, into: RawNode, node: RawNode) {
+        debug_assert!(
+            !self.d.is_connected(into.id()),
+            "a node in the document's tree, whose indexes this lend keeps"
+        );
+        self.edit().place(into, node, Place::Child);
+    }
+
+    /// [`HtmlDocMut::give_namespace`], under `root`, a node no tree of the
+    /// document holds.
+    pub fn give_namespace(&mut self, root: RawNode, ns: NsId) -> Result<(), DomOom> {
+        debug_assert!(
+            !self.d.is_connected(root.id()),
+            "a node in the document's tree, whose indexes this lend keeps"
+        );
+        self.edit().give_namespace(root, ns)
+    }
+
+    /// [`HtmlDocMut::create_element`].
+    pub fn create_element(&mut self, local_name: &[u8]) -> Option<RawNode> {
+        self.edit().create_element(local_name)
+    }
+
+    /// [`HtmlDocMut::create_element_ns`].
+    pub fn create_element_ns(&mut self, local: &[u8], ns: &[u8], prefix: &[u8]) -> Option<RawNode> {
+        self.edit().create_element_ns(local, ns, prefix)
+    }
+
+    /// [`HtmlDocMut::create_text`].
+    pub fn create_text(&mut self, text: &[u8]) -> Option<RawNode> {
+        self.edit().create_text(text)
+    }
+
+    /// [`HtmlDocMut::create_comment`].
+    pub fn create_comment(&mut self, text: &[u8]) -> Option<RawNode> {
+        self.edit().create_comment(text)
+    }
+
+    /// [`HtmlDocMut::create_pi`].
+    pub fn create_pi(&mut self, target: &[u8], data: &[u8]) -> Option<RawNode> {
+        self.edit().create_pi(target, data)
+    }
+
+    /// [`HtmlDocMut::create_doctype`].
+    pub fn create_doctype(
+        &mut self,
+        name: &[u8],
+        public_id: Option<&[u8]>,
+        system_id: Option<&[u8]>,
+    ) -> Option<RawNode> {
+        self.edit().create_doctype(name, public_id, system_id)
+    }
+
+    /// [`HtmlDocMut::create_fragment`].
+    pub fn create_fragment(&mut self) -> Option<RawNode> {
+        self.edit().create_fragment()
+    }
+
+    /// [`HtmlDocMut::import`].
+    pub fn import(&mut self, src: HtmlNode<'_>, deep: bool) -> Result<RawNode, DomOom> {
+        self.edit().import(src, deep)
+    }
+
+    /// [`HtmlDocMut::copy`].
+    pub fn copy(&mut self, src: RawNode, deep: bool) -> Result<RawNode, DomOom> {
+        self.edit().copy(src, deep)
+    }
+
+    /// [`HtmlDocMut::import_xml`].
+    pub fn import_xml(
+        &mut self,
+        xdoc: &crate::xml::model::Document,
+        src: crate::xml::model::NodeId,
+        deep: bool,
+    ) -> Result<RawNode, crate::xml::model::MutError> {
+        self.edit().import_xml(xdoc, src, deep)
+    }
+
+    /// [`HtmlDocMut::intern_ns`].
+    pub fn intern_ns(&mut self, uri: &[u8]) -> Option<NsId> {
+        self.edit().intern_ns(uri)
     }
 }
