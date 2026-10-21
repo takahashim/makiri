@@ -126,12 +126,12 @@ FORBID_FILES = %w[
   xml/tree/scope.rs xml/verify.rs xml/xpath.rs
   xpath/abi.rs xpath/ast.rs xpath/ast_ops.rs
   xpath/attr_pred.rs xpath/axis.rs xpath/ctx.rs
-  xpath/dom.rs xpath/eval.rs xpath/funcs/ext.rs
-  xpath/funcs/mod.rs xpath/lex.rs xpath/limits.rs
-  xpath/mod.rs xpath/nodetest.rs xpath/number.rs
-  xpath/order.rs xpath/parse.rs xpath/step_index.rs
-  xpath/str_cache.rs xpath/tests.rs xpath/value.rs
-  xpath/verify.rs
+  xpath/dom.rs xpath/eval.rs xpath/funcs/css_hooks.rs
+  xpath/funcs/ext.rs xpath/funcs/mod.rs xpath/lex.rs
+  xpath/limits.rs xpath/mod.rs xpath/nodetest.rs
+  xpath/number.rs xpath/order.rs xpath/parse.rs
+  xpath/step_index.rs xpath/str_cache.rs xpath/tests.rs
+  xpath/value.rs xpath/verify.rs
 ].freeze
 
 UNSAFE_USE = /\bunsafe\s*(?:\{|fn\b|impl\b|trait\b|extern\b)/

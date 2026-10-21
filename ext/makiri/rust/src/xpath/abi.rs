@@ -6,6 +6,7 @@
 
 pub use super::ast::*;
 pub use super::ctx::{Names, Resolver, ResolverCall};
+#[cfg(any(test, feature = "xml-css-reference"))]
 pub use super::funcs::{FN_CHILD_POS, FN_CHILD_POS_LAST, FN_OF_TYPE_POS, FN_OF_TYPE_POS_LAST};
 pub use super::limits::Limits;
 pub use super::order::OrderIndex;

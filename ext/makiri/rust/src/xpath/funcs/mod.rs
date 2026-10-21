@@ -12,10 +12,13 @@
 
 #![forbid(unsafe_code)]
 
-/// The functions beyond XPath 1.0's library: the Nokogiri builtins and the
-/// CSS lowering's internal hooks.
+/// The CSS lowering's internal hooks, built with the lowering only.
+#[cfg(any(test, feature = "xml-css-reference"))]
+mod css_hooks;
+/// The functions beyond XPath 1.0's library: the Nokogiri builtins.
 mod ext;
-pub(crate) use ext::SiblingPositions;
+#[cfg(any(test, feature = "xml-css-reference"))]
+pub(crate) use css_hooks::SiblingPositions;
 
 use super::abi::*;
 use super::axis::walk_descendants;
@@ -37,12 +40,16 @@ use core::ops::ControlFlow;
 /// They live here, not beside the evaluator: one end emits them and the other
 /// resolves them, and a name that only one end knows is a call that resolves to
 /// nothing.
+#[cfg(any(test, feature = "xml-css-reference"))]
 pub const FN_OF_TYPE_POS: &[u8] = b"\x01of-type-pos";
+#[cfg(any(test, feature = "xml-css-reference"))]
 pub const FN_OF_TYPE_POS_LAST: &[u8] = b"\x01of-type-pos-last";
 /// The same pair for the `-child` family: the position among ALL element
 /// siblings. XPath can say that (`count(preceding-sibling::*) + 1`), but per
 /// candidate it is n^2 over a flat list; the hook reads a per-parent memo.
+#[cfg(any(test, feature = "xml-css-reference"))]
 pub const FN_CHILD_POS: &[u8] = b"\x01child-pos";
+#[cfg(any(test, feature = "xml-css-reference"))]
 pub const FN_CHILD_POS_LAST: &[u8] = b"\x01child-pos-last";
 
 /// Namespace URI registered from Nokogiri's XPath context, so prefixed names
@@ -136,9 +143,13 @@ enum Builtin {
     Round,
     CssClass,
     LocalNameIs,
+    #[cfg(any(test, feature = "xml-css-reference"))]
     OfTypePos,
+    #[cfg(any(test, feature = "xml-css-reference"))]
     OfTypePosLast,
+    #[cfg(any(test, feature = "xml-css-reference"))]
     ChildPos,
+    #[cfg(any(test, feature = "xml-css-reference"))]
     ChildPosLast,
 }
 
@@ -215,13 +226,6 @@ const BUILTINS: &[Entry] = {
         e(Core, b"floor", Floor, PureWithArgs, 1, 1),
         e(Core, b"ceiling", Ceiling, PureWithArgs, 1, 1),
         e(Core, b"round", Round, PureWithArgs, 1, 1),
-        /* The CSS lowering's internal hooks. Registered for every host: their
-         * names begin with \x01, which no expression can spell, so only the
-         * lowering reaches them - and it runs only for XML today. */
-        e(Core, FN_OF_TYPE_POS, OfTypePos, Impure, 0, usize::MAX),
-        e(Core, FN_OF_TYPE_POS_LAST, OfTypePosLast, Impure, 0, usize::MAX),
-        e(Core, FN_CHILD_POS, ChildPos, Impure, 0, usize::MAX),
-        e(Core, FN_CHILD_POS_LAST, ChildPosLast, Impure, 0, usize::MAX),
         /* Nokogiri's builtins, in its builtin namespace */
         e(Nokogiri, b"css-class", CssClass, Impure, 2, 2),
         e(Nokogiri, b"local-name-is", LocalNameIs, Impure, 1, 1),
@@ -260,18 +264,42 @@ impl Builtin {
             Builtin::Round => fn_round::<D> as FnImpl<'e, 'd, D>,
             Builtin::CssClass => ext::fn_css_class::<D> as FnImpl<'e, 'd, D>,
             Builtin::LocalNameIs => ext::fn_local_name_is::<D> as FnImpl<'e, 'd, D>,
-            Builtin::OfTypePos => ext::fn_of_type_pos::<D> as FnImpl<'e, 'd, D>,
-            Builtin::OfTypePosLast => ext::fn_of_type_pos_last::<D> as FnImpl<'e, 'd, D>,
-            Builtin::ChildPos => ext::fn_child_pos::<D> as FnImpl<'e, 'd, D>,
-            Builtin::ChildPosLast => ext::fn_child_pos_last::<D> as FnImpl<'e, 'd, D>,
+            #[cfg(any(test, feature = "xml-css-reference"))]
+            Builtin::OfTypePos => css_hooks::fn_of_type_pos::<D> as FnImpl<'e, 'd, D>,
+            #[cfg(any(test, feature = "xml-css-reference"))]
+            Builtin::OfTypePosLast => css_hooks::fn_of_type_pos_last::<D> as FnImpl<'e, 'd, D>,
+            #[cfg(any(test, feature = "xml-css-reference"))]
+            Builtin::ChildPos => css_hooks::fn_child_pos::<D> as FnImpl<'e, 'd, D>,
+            #[cfg(any(test, feature = "xml-css-reference"))]
+            Builtin::ChildPosLast => css_hooks::fn_child_pos_last::<D> as FnImpl<'e, 'd, D>,
         }
     }
 }
+
+/// The CSS lowering's internal hooks, in their own table so they are built
+/// with the lowering only: their names begin with \x01, which no expression
+/// can spell, so only the lowering reaches them.
+#[cfg(any(test, feature = "xml-css-reference"))]
+#[rustfmt::skip]
+const CSS_HOOKS: &[Entry] = {
+    use Builtin::*;
+    use Library::*;
+    use Purity::*;
+    &[
+        e(Core, FN_OF_TYPE_POS, OfTypePos, Impure, 0, usize::MAX),
+        e(Core, FN_OF_TYPE_POS_LAST, OfTypePosLast, Impure, 0, usize::MAX),
+        e(Core, FN_CHILD_POS, ChildPos, Impure, 0, usize::MAX),
+        e(Core, FN_CHILD_POS_LAST, ChildPosLast, Impure, 0, usize::MAX),
+    ]
+};
+#[cfg(not(any(test, feature = "xml-css-reference")))]
+const CSS_HOOKS: &[Entry] = &[];
 
 /// The table entry for `local` in `library`.
 fn find(library: Library, local: &[u8]) -> Option<&'static Entry> {
     BUILTINS
         .iter()
+        .chain(CSS_HOOKS)
         .find(|e| e.library == library && e.name == local)
 }
 
