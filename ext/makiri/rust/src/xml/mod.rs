@@ -13,7 +13,7 @@ pub mod arena;
 pub mod attr_key;
 pub mod chars;
 pub mod css;
-#[cfg(all(test, feature = "html-dom"))]
+#[cfg(test)]
 mod css_tests;
 pub mod dom_name;
 pub mod encoding_sniff;

@@ -80,9 +80,10 @@ pub mod gvl;
 /// Lexbor-free, like the engine.
 pub mod css_match;
 
-/// The CSS selector front end: lowers a selector list parsed by the port
-/// (`selectors`) into the XPath AST. Ruby-free, like the engine it feeds.
-#[cfg(feature = "html-dom")]
+/// The CSS-to-XPath lowering `Makiri::XML`'s CSS ran on before `css_match`
+/// took it over: kept only as the reference the XML matcher is tested and
+/// fuzzed against (`xml::css_tests`, the `css` fuzz target).
+#[cfg(any(test, feature = "xml-css-reference"))]
 pub mod css;
 
 /// The shared UTF-8 primitives. Unconditional, like `falloc`

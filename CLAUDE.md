@@ -531,8 +531,14 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            at its root) and the XPath
                            HTML backend (`xpath.rs`); every `lxb_*`/`Lxb*` name
                            outside it is 0
-    css/                   CSS selector lowering to XPath over the ported selector
-                           parser (safe Rust, no Lexbor ABI names)
+    css_match/             the CSS matcher, over any DOM that implements its
+                           traits (`css_match::dom`: the HTML arena's in
+                           `html/dom/css.rs`, the XML arena's in `xml/css.rs`);
+                           `#![forbid(unsafe_code)]`, Ruby- and Lexbor-free
+    css/                   the CSS-to-XPath lowering XML's CSS used to run on,
+                           kept only as the reference the XML matcher is held
+                           to (`xml::css_tests`, the `css` fuzz target; built
+                           under `cfg(test)` or `xml-css-reference`)
     selectors/             the CSS parser ported from Lexbor (its CSS syntax
                            tokenizer, rule/state stacks, selector states, and
                            the stylesheet rule phases and callbacks in
@@ -540,7 +546,7 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            (`rules.rs`); Ruby- and Lexbor-free,
                            `#![forbid(unsafe_code)]` at its root
   fuzz/                    cargo-fuzz harnesses (xml/html, xpath/xml_xpath/
-                           html_xpath, css = the XML lowering, html_css = the
+                           html_xpath, css = the XML matcher held to the lowering, html_css = the
                            HTML matcher over an arbitrary document, asserting
                            css and matches? agree, html_css_diff = the same
                            matcher against Lexbor's own engine, html_diff =
@@ -561,7 +567,7 @@ bench/                     Nokogiri-comparison benchmark
 docs/design_doc.ja.md      authoritative design (read this)
 ```
 
-Six features, and the default is the extension: **`ruby`** (the
+Seven features, and the default is the extension: **`ruby`** (the
 magnus boundary + `glue` + `init`), **`html-dom`** (the parser port's
 index-arena DOM, `html::dom`, behind the `html_dom` facade and parsed by the
 ported tree builder `html::tree`, with what sits over it - the HTML CSS
@@ -575,7 +581,9 @@ symbol), **`alloc-inject`** (the `rake oom` hook, off in any normal build),
 `html_css_diff` fuzz target) and **`lexbor-reference`** (`lexbor::tree_diff`,
 `lexbor::selector_diff` and `lexbor::stylesheet_diff`, Lexbor's tree, selector
 lists and stylesheets beside the ports', for the `html_diff`, `selector_diff`
-and `stylesheet_diff` fuzz targets). A plain `cargo build` is the shipping
+and `stylesheet_diff` fuzz targets) and **`xml-css-reference`** (the
+CSS-to-XPath lowering `crate::css`, for the `css` fuzz target; no Lexbor). A
+plain `cargo build` is the shipping
 configuration; `rake rust:test` runs the engine alone, `html-dom` and
 `lexbor`. Lexbor's DOM is not an extension build any more
 (`MAKIRI_LEXBOR_DOM=1` was retired in stage 9): `lexbor::arena_tests` holds
@@ -589,7 +597,7 @@ rewrites it once the dead bytes outweigh the live ones
 (`html/dom/compact.rs`), so repeated `content=` does not grow a document.
 The engine - `xml`, `xpath`, `falloc`, `cbuf`, `cutf8`, `html` (the
 tokenizer, the tree builder and the arena), `selectors` (the selector
-parser) - is behind no gate at all. So the fuzz crate builds `--no-default-features --features lexbor,css-reference,lexbor-reference` and Kani
+parser) - is behind no gate at all. So the fuzz crate builds `--no-default-features --features lexbor,css-reference,lexbor-reference,xml-css-reference` and Kani
 builds `--no-default-features`. The ~30 features that used to stand here were
 migration scaffolding, one per ported C file, and went with the C.
 
@@ -767,9 +775,10 @@ caps) live in `xpath/limits.rs` and fail closed with `Status::Limit`.
 assumes the caller's frame started with a full-sized native stack, which a
 small `Fiber` (`RUBY_FIBER_MACHINE_STACK_SIZE`) or a caller already deep in its
 own recursion does not have - there the count refuses too late, and Ruby's
-`SystemStackError` handling longjmps past `Drop`. The CSS lowering's
-`Build::enter_selector_nesting` (`css/mod.rs`) checks the same way, for the
-same reason. Ruby:
+`SystemStackError` handling longjmps past `Drop`. (The CSS lowering's
+`Build::enter_selector_nesting` checked the same way while XML's CSS ran on
+it; CSS matching, HTML and XML, keeps nesting on a heap stack and needs no
+check.) Ruby:
 `Node#{xpath,at_xpath}(expr, handler=nil)`, `Makiri::XPathContext`
 (`.new`, `#evaluate`, `#register_namespace`/`#register_ns`, `#register_variable`).
 `#xpath` returns a NodeSet for node-sets, else String/Float/boolean. Errors map
@@ -834,8 +843,8 @@ policy is a new item stated in each `impl`. The HTML backend reports the DOM's
 case-preserved `localName` (`refX`, `foreignObject`), not Lexbor's lower-cased
 stored name.
 
-**CSS** (`css_match/` + `lexbor/selector_cache.rs` + `selectors/`). `Node#{css,at_css,matches?}` (`glue::html_node::css`)
-match over the typed HTML adapter through `css_match` - an original,
+**CSS** (`css_match/` + `lexbor/selector_cache.rs` + `selectors/`). `Node#{css,at_css,matches?}` (`glue::html_node::css`, `glue::xml_node::css`)
+match through `css_match` on both representations - an original,
 `#![forbid(unsafe_code)]` Rust port of Lexbor's `lxb_selectors_*` state
 machine (its `find`/`found_check`/`not_found` loop over a chain's compounds,
 with nested list-pseudos as contexts on a heap task stack; never native
@@ -907,6 +916,25 @@ i/s). `#id` / `.class` read the element's `attr_id` / `attr_class` shortcut
 attributes, the no-namespace ones - an unprefixed `id` set IN a namespace is
 not the ID (`spec/attribute_dom_algorithms_spec.rb`), where the by-qualified-
 name lookup used before took it when it was the only `id`.
+
+**One matcher, two DOMs, a browser's answers.** `css_match` reads a DOM only
+through `css_match::dom`'s traits (`Host`, `CssNode`, `CssElement`,
+`CssAttr`, `CssDoc`), named after the HTML arena's handles, whose impls
+(`html/dom/css.rs`) only forward - so the HTML matcher monomorphizes to what
+it was; keep `bench:css` flat when touching them. The XML arena's
+(`xml/css.rs`) resolves no names (`Host::RESOLVES_NAMES`, bytes compared),
+has no `id`/`class` shortcut, and answers a type selector from the document
+node out of the XML name indexes (`CssNode::candidates`; `LocalIndex` for a
+bare name in any namespace), every candidate re-tested. The rules follow a
+browser's `querySelectorAll` (`rake conformance:css_browsers` holds them to
+Chromium/Firefox/WebKit): `CssNode::folds_case` - an HTML element in an HTML
+document - decides case folding and the 46-name value table, `is_html` (the
+namespace) the form states, so an XHTML element in XML has `:checked` but
+compares `DIV` as written; a bare type selector matches in any namespace; a
+prefix comes from the ns Hash (`css_match::Namespaces`, its `"xmlns"` entry
+the default namespace), resolved at compile, undeclared = `CSS::SyntaxError`;
+ancestors outside the context node take part. One `Scratch` per host,
+kept by `selector_cache` beside the one host-free AST cache.
 
 **Tag and attribute names are resolved to Lexbor's ids once per query**, each
 the first time a candidate reaches it - Lexbor's own lazily set `entry->id`
@@ -1260,8 +1288,8 @@ Key decisions that got there, worth not regressing:
   It matters more than it did: the port parses at 1.5-2.5x Lexbor's time
   (0.25-1.1 us a selector; it allocates its stacks per parse, where Lexbor
   reuses one parser), so a cache hit hides that and only the per-call paths
-  pay it - one-off selectors (~5-10% on a uniquely-named `at_css`) and the
-  uncached XML CSS lowering (a few %). Reusing the parser's work space is
+  pay it - one-off selectors (~5-10% on a uniquely-named `at_css`). XML's CSS
+  shares the cache (and has its own `Scratch`, `Kept`). Reusing the parser's work space is
   stage 9's (`docs/rewrite_parser.ja.md`). Verify with
   `spec/css_selector_cache_spec.rb` (flush, bypass/retest, and
   reject-without-disturbing-the-cache) and the Rust-level

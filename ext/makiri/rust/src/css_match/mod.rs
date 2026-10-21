@@ -5,10 +5,10 @@
 //! (`lxb_selectors_run`'s loop,
 //! `do { entry = selectors->state(...) } while (entry != NULL);`, never
 //! recurses on selector nesting). Selector PARSING is the parser port's
-//! (`crate::selectors`), read through its typed views, the same ones the XML
-//! CSS->XPath lowering uses.
+//! (`crate::selectors`), read through its typed views.
 //!
-//! Wired into `Node#css`/`#at_css`/`#matches?` (`glue::html_node::css`). A
+//! Wired into `Node#css`/`#at_css`/`#matches?` on both representations
+//! (`glue::html_node::css`, `glue::xml_node::css`). A
 //! port was chosen over adopting the `selectors`/`cssparser` crates, which
 //! were explored and discarded: their matcher recurses natively on selector
 //! nesting ("Why an explicit stack" below). The spike code is gone, findable

@@ -13,8 +13,8 @@ libfuzzer-sys = "0.4"
 # No Ruby: the glue needs magnus -> rb-sys -> a live Ruby, which a fuzz binary
 # has no business linking. The targets drive the engine's front door the glue
 # drives - the XML reader, the HTML parse and its indexes, XPath over both
-# engine instances, the CSS lowering, and the HTML CSS matcher - and so need
-# `lexbor`, which is what carries the HTML instance, `css` and the matcher.
+# engine instances, and the CSS matcher over both DOMs - and so need `lexbor`,
+# which is what carries the HTML instance.
 [dependencies.makiri_rs]
 path = ".."
 default-features = false
@@ -23,9 +23,10 @@ default-features = false
 # `html_diff` compares the ported tree builder against, and its DOM, which
 # `html_xpath_diff` holds the arena's XPath instance to (and Lexbor's selector
 # and stylesheet parsers beside the ports, for `selector_diff` and
-# `stylesheet_diff`); neither ships in any build of
-# the extension.
-features = ["lexbor", "css-reference", "lexbor-reference"]
+# `stylesheet_diff`), and `xml-css-reference` the CSS-to-XPath lowering the
+# `css` target holds the XML matcher to; none ships in any build of the
+# extension.
+features = ["lexbor", "css-reference", "lexbor-reference", "xml-css-reference"]
 
 [[bin]]
 name = "xml"
