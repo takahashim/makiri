@@ -201,9 +201,10 @@ pub fn context_ids(context: &str) -> (usize, usize) {
         Some((ns, _)) => panic!("unknown fragment context namespace {ns:?}"),
         None => (res::NS_HTML, context),
     };
-    /* A name Lexbor's static table lacks stands in as `div`, as
+    /* A name with no static id stands in as `div`, as
      * `lexbor::arena_fragment` gives it. */
-    let tag = crate::html::res::tag_id_by_lower_name(name.to_ascii_lowercase().as_bytes())
+    let tag = crate::html::names::Names::default()
+        .tag_id(name.as_bytes())
         .unwrap_or(res::TAG_DIV);
     (tag, ns)
 }

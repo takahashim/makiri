@@ -1,5 +1,5 @@
-//! The parser's static resource tables, as Rust data. All three are
-//! GENERATED, not written, and each from the source that defines it:
+//! The parser's static resource tables, as Rust data. Two are GENERATED, not
+//! written, each from the source that defines it, and one is kept:
 //!
 //! - [`tree`] - the tree builder's categories and adjustment tables - from
 //!   the HTML Standard's `source` at the pinned commit, and [`entities`] -
@@ -12,9 +12,10 @@
 //!   MAKIRI_REGENERATE=1 cargo test --no-default-features res_gen -- --include-ignored
 //!   ```
 //!
-//! - [`names`] - tags, attributes, namespaces and prefixes, with Lexbor's own
-//!   id numbers - from Lexbor's static tables, by `lexbor::res_tests`. The
-//!   Standard numbers nothing, so the ids stay Lexbor's.
+//! - [`names`] - tags, attributes, namespaces and prefixes, with their ids -
+//!   is the crate's own table, not regenerated: the Standard numbers
+//!   nothing, so the ids are the ones Lexbor's tables gave, kept as they are.
+//!   Adding a name is a decision of its own.
 //!
 //! While the reference Lexbor is linked, `lexbor::res_tests` holds all three
 //! to Lexbor's tables, entry by entry (`docs/parser_differences.ja.md`, T1,
@@ -74,33 +75,4 @@ pub fn sbst_find(
         root = if key > e.key { e.right } else { e.left } as usize;
     }
     None
-}
-
-/// The static tag id for an ASCII-lower-case `name`, if Lexbor has one -
-/// the special ids (`#text`, `!--`, ...) included, as Lexbor's static lookup
-/// holds them.
-pub fn tag_id_by_lower_name(name: &[u8]) -> Option<usize> {
-    names::TAG_BY_NAME
-        .binary_search_by(|(n, _)| (*n).cmp(name))
-        .ok()
-        .map(|i| names::TAG_BY_NAME[i].1)
-}
-
-/// The static attribute id for an ASCII-lower-case local `name`, if Lexbor has
-/// one.
-pub fn attr_id_by_lower_name(name: &[u8]) -> Option<usize> {
-    names::ATTR_BY_NAME
-        .binary_search_by(|(n, _)| (*n).cmp(name))
-        .ok()
-        .map(|i| names::ATTR_BY_NAME[i].1)
-}
-
-/// The static namespace id for a namespace URI, matched byte for byte.
-pub fn ns_id_by_link(link: &[u8]) -> Option<usize> {
-    names::NS_LINKS
-        .iter()
-        .enumerate()
-        .skip(names::NS_HTML)
-        .find(|(_, l)| **l == link)
-        .map(|(i, _)| i)
 }
