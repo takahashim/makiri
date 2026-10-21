@@ -13,6 +13,8 @@
 * XPath's `id()` with many tokens indexes the document's IDs once instead
   of searching it per token: 8,000 IDs over 8,000 elements raised
   `Makiri::XPath::LimitExceeded`.
+* `==` / `eql?` compare the nodes' Documents as well, so nodes of two
+  documents can no longer compare equal after the per-document counter wraps.
 
 ## [0.17.0.rc1] - 2026-10-22
 

@@ -44,8 +44,8 @@ pub fn dom_extract<'q>(
 }
 
 /// Node identity: equal iff both wrappers name the same node of the same
-/// representation, so an HTML node is never equal to an XML one (see
-/// [`node_key`]).
+/// Document, so an HTML node is never equal to an XML one, nor a node to one
+/// of another document that happens to share its word (see [`node_key`]).
 pub fn node_equals(rb_self: Value, other: Value) -> Result<bool, magnus::Error> {
     crate::bridge::ruby::entry(|| {
         if !crate::bridge::ruby::is_kind_of(other, &CLASS_NODE) {
