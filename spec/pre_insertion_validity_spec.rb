@@ -109,6 +109,23 @@ RSpec.describe "pre-insertion validity" do
       expect(doc.root.to_xml).to eq("<r>t<!--c--></r>")
     end
 
+    # The copy of a node from another document is made before the placement
+    # is decided; a refused one used to stay in the target's arena, holding
+    # its bytes and node budget, once per call.
+    it "takes back the copy a refused insert from another document made" do
+      require "objspace"
+      doc = Makiri::XML("<r>t</r>")
+      src = Makiri::XML("<a>#{"<b>x</b>" * 1000}</a>")
+      text = doc.root.children.first
+      expect { text.add_child(src.root) }.to raise_error(Makiri::Error, /can have children/)
+      size = ObjectSpace.memsize_of(doc)
+      20.times { expect { text.add_child(src.root) }.to raise_error(Makiri::Error) }
+      expect(ObjectSpace.memsize_of(doc)).to be <= size
+      expect(doc.root.to_xml).to eq("<r>t</r>")
+      expect(src.root.children.size).to eq(1000)
+      expect(doc.root.add_child(src.root).children.size).to eq(1000)
+    end
+
     it "gives an attribute no parent to place a sibling beside" do
       doc = Makiri::XML(%(<r a="1"><c/></r>))
       attr = doc.root.attribute_nodes.first

@@ -715,6 +715,10 @@ struct Adoption {
     /// The source's Document, whose tree version the removal bumps.
     src_document: Value,
     src: NodeId,
+    /// The target arena's high-water mark from before the copy, so a copy
+    /// the placement refuses is taken back out rather than left in the
+    /// arena, holding its bytes and node budget, for every refused call.
+    mark: crate::xml::arena::Mark,
     /// The source node's wrapper, which keeps its document - and so
     /// `src_doc` - alive until the adoption is finished.
     _keep: Value,
@@ -753,8 +757,16 @@ impl Adoption {
 pub fn insert(this: XmlSelf, arg: Value, at: crate::xml::mutate::Place) -> Result<Value, Error> {
     let edit = begin_edit(this)?;
     let (node, adoption) = incoming_node(edit.document(), arg)?;
+    let undo = adoption.as_ref().map(|a| a.mark);
     xml_mut_result(edit.with_insertion(node, |d, target| {
-        crate::xml::mutate::place(d, target, node, at)
+        let placed = crate::xml::mutate::place(d, target, node, at);
+        /* A refused placement wrote nothing (`place` validates and resolves
+         * before it links), so the copy made for it is still unlinked and
+         * unwrapped: give it back, as a failed copy is (`Document::rewind`). */
+        if let (Err(_), Some(mark)) = (&placed, undo) {
+            d.rewind(mark);
+        }
+        placed
     })?)?;
     if let Some(a) = adoption {
         a.finish();
@@ -792,13 +804,18 @@ fn incoming_node(target_doc: Value, arg: Value) -> Result<(NodeId, Option<Adopti
     let src_doc = arena_mut(src_document)?;
     // SAFETY: two distinct live arenas (the documents differ), both cleared
     // for writing; the source is only read here.
-    let copy = xml_mut_result(unsafe { import_subtree(&mut *xd, &*src_doc, src) })?;
+    let (mark, copied) = unsafe {
+        let dst = &mut *xd;
+        (dst.mark(), import_subtree(dst, &*src_doc, src))
+    };
+    let copy = xml_mut_result(copied)?;
     Ok((
         copy,
         Some(Adoption {
             src_doc,
             src_document,
             src,
+            mark,
             _keep: arg,
         }),
     ))

@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Fixed
+
+* A refused `Makiri::XML` insert of a node from another document (onto a
+  Text node, say) no longer leaves the copy it made in the target document,
+  where each refused call grew it and used up its node budget.
+
 ## [0.17.0.rc1] - 2026-10-22
 
 ### Added
