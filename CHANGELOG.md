@@ -38,11 +38,13 @@
     (P13), an `<image>` in a table becomes an `<img>` (P14), and a `<sup>`
     breaks out of SVG and MathML (P15);
   * fragment parsing (`#inner_html=`, `DocumentFragment.parse`,
-    `Document#fragment`) pops its open elements at the end, so a
-    `<selectedcontent>` is updated (P16), uses the context document's quirks
-    mode (P17), honours an `annotation-xml` context's `encoding` (P18), parses
-    in a context element of another namespace as foreign content (P19), and
-    takes the form element pointer from an ancestor `<form>` (P20).
+    `Document#fragment`, `Node#parse`) pops its open elements at the end, so
+    a `<selectedcontent>` is updated (P16); with an element as the context
+    (`#inner_html=`, `#outer_html=`, `Node#parse`, or `context:` given an
+    element) it also uses that element's document's quirks mode (P17),
+    honours an `annotation-xml` context's `encoding` (P18), parses in a
+    context element of another namespace as foreign content (P19), and takes
+    the form element pointer from an ancestor `<form>` (P20).
 * A void element's `#inner_html` is empty even when it has children (R1), and
   a prefixed HTML, SVG or MathML element is written by its local name (R2).
 * `Node#line` of a void element fostered out of a table is its line, not nil

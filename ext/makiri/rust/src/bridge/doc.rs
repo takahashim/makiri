@@ -132,10 +132,13 @@ pub fn document_root(rb_doc: Value) -> Result<Option<Value>, Error> {
 }
 
 /// `Document#title`: the document `<title>`, or `""`.
-pub fn document_title(ruby: &Ruby, rb_doc: Value) -> RString {
+///
+/// Protected: a collapsed title is this frame's own copy, which the String's
+/// allocation raising past the frame would leak.
+pub fn document_title(rb_doc: Value) -> Result<RString, Error> {
     let title = html_doc(&rb_doc).title();
     let bytes = title.as_deref().unwrap_or(&[]);
-    ruby.enc_str_new(bytes, ruby.utf8_encoding())
+    crate::bridge::string::utf8_str_protected(bytes)
 }
 
 /// `Document#quirks_mode`, as an Integer matching Lexbor (and Gumbo/Nokogiri):

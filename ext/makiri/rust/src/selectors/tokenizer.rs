@@ -834,10 +834,14 @@ impl<'a> Tokenizer<'a> {
         exponent: i32,
         e_digit: i32,
     ) {
+        /* Saturating: `e_digit` reaches 2147483639, and the digits' own
+         * exponent (dropped integer digits, or minus the fraction digits)
+         * would carry it past `i32` - a panic here, where Lexbor's `int`
+         * wraps. */
         let exponent = if e_is_negative {
-            -(e_digit - exponent)
+            exponent.saturating_sub(e_digit)
         } else {
-            e_digit + exponent
+            e_digit.saturating_add(exponent)
         };
         token.ty = TokenType::Number;
         token.is_float = is_float;

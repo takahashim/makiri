@@ -32,7 +32,7 @@ UNSAFE_ISLANDS = {
   "bridge/alloc.rs" => 9,
   "bridge/doc.rs" => 1,
   "bridge/dom.rs" => 13,
-  "bridge/fragment.rs" => 4,
+  "bridge/fragment.rs" => 3,
   "bridge/gvl.rs" => 5,
   "bridge/html.rs" => 6,
   "bridge/node_set.rs" => 2,
@@ -804,7 +804,7 @@ end
 # function in `bridge/` or `glue/` that calls one outside a protect raises
 # too, to a fixed point. A call is matched by name, a method call (`.f(`) to
 # methods and a plain or path call to free functions, and a name defined more
-# than once is not followed (it would make every `new` and `get` raise); the
+# than once in the crate is not followed (it would make every `new` and `get` raise); the
 # wrappers below are followed by hand for that reason. A copy is a `let`
 # whose right side calls a function returning one of COPY_TYPES (or a closure
 # that does), or a parameter that takes one by value; it is live to the end
@@ -890,7 +890,12 @@ end
 
 def copies_across_raises(rust)
   fns = fn_bodies(rust, Dir.glob(File.join(rust, "{bridge,glue}", "**", "*.rs")))
-  defined = fns.map { |f| [f[1], f[2]] }.tally
+  # Counted over the whole crate: a bridge method named like an engine one
+  # (`Bridge::resolve`, `HtmlParsed::resolve`) is not the one a call reaches.
+  defined = Dir.glob(File.join(rust, "**", "*.rs")).flat_map do |path|
+    File.binread(path).scan(/\bfn\s+(\w+)\s*(?:<[^>{]*>)?\s*\((\s*&?\s*(?:'\w+\s+)?(?:mut\s+)?self\b)?/)
+        .map { |n, recv| [n, !recv.nil?] }
+  end.tally
   raising = fns.select { |rel, _, _, body| rel == "bridge/raw.rs" && body.match?(RAISING_API) }
                .to_set { |f| [f[1], false] }
   raising.merge(RAISING_BY_HAND)
