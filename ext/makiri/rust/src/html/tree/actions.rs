@@ -438,7 +438,7 @@ impl TreeBuilder<'_> {
     pub(crate) fn create_document_type_from_token(
         &mut self,
         tkz: &Tokenizer<'_, '_>,
-    ) -> Result<(NodeId, usize, usize, usize), TreeStatus> {
+    ) -> Result<(NodeId, usize), TreeStatus> {
         let parts = tkz.doctype();
         let name_id = parts.name.and_then(|a| a.name).unwrap_or(0);
         let public = parts.public_id.unwrap_or_default();
@@ -452,7 +452,7 @@ impl TreeBuilder<'_> {
         let name = crate::falloc::try_to_vec(name).ok_or(TreeStatus::Oom)?;
         let names = NodeName::html(res::TAG__EM_DOCTYPE);
         let node = self.doc.create_doctype(names, &name, public, system)?;
-        Ok((node, name_id, public.len(), system.len()))
+        Ok((node, name_id))
     }
 
     /// `lxb_html_tree_generic_rawtext_parsing`.
