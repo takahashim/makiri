@@ -1031,6 +1031,10 @@ impl Document {
     pub fn first_attr(&self, n: NodeId) -> Option<NodeId> {
         self.element(n)?.first_attr
     }
+    /// An element's attributes, in order; none for any other node.
+    pub fn attrs_of(&self, n: NodeId) -> impl Iterator<Item = NodeId> + '_ {
+        core::iter::successors(self.first_attr(n), |&a| self.next_attr(a))
+    }
     /// An element's no-namespace `id` attribute.
     pub fn id_attr(&self, n: NodeId) -> Option<NodeId> {
         self.element(n)?.id_attr

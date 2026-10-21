@@ -127,8 +127,7 @@ pub fn initial(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mu
 
 /// `lxb_html_tree_insertion_mode_initial_doctype`.
 fn initial_doctype(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> bool {
-    let Some((node, name_id, _, _)) = tree.create_document_type_from_token(tkz).or_abort(tree)
-    else {
+    let Some((node, name_id)) = tree.create_document_type_from_token(tkz).or_abort(tree) else {
         return true;
     };
     let (public, system) = match tree.doc.doctype(node) {

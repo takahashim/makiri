@@ -50,9 +50,9 @@ impl DepthLimit {
     }
 
     /// The longest open-element stack allowed, given `synthetic` entries the
-    /// parser keeps below the first real element.
-    pub(crate) fn max_open(self, synthetic: usize) -> usize {
-        self.0.map_or(usize::MAX, |d| d.saturating_add(synthetic))
+    /// parser keeps below the first real element; `None` for no limit.
+    pub(crate) fn max_open(self, synthetic: usize) -> Option<usize> {
+        self.0.map(|d| d.saturating_add(synthetic))
     }
 }
 
@@ -66,28 +66,26 @@ pub struct ContextOptions {
     pub after_optgroup: bool,
 }
 
+/// The `<select>` an option is counted against.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CountedSelect {
+    /// The fragment's context, which the fragment's top level lands in.
+    Context,
+    /// One in the tree being built.
+    Element(NodeId),
+}
+
 /// The guard's state across a parse.
+#[derive(Default)]
 pub(crate) struct Guard {
-    /// The stack length above which the parse stops; `usize::MAX` for none.
-    max_open: usize,
-    /// The `<select>` the last counted option went into (`None` for the
-    /// context's), whether there was one, and how many options it has had.
-    select: Option<Option<NodeId>>,
+    /// The stack length above which the parse stops; `None` for no limit.
+    max_open: Option<usize>,
+    /// The `<select>` the last counted option went into, and how many
+    /// options it has had.
+    select: Option<CountedSelect>,
     options: usize,
     context: Option<ContextOptions>,
     pub(crate) stopped: Option<GuardStop>,
-}
-
-impl Default for Guard {
-    fn default() -> Guard {
-        Guard {
-            max_open: usize::MAX,
-            select: None,
-            options: 0,
-            context: None,
-            stopped: None,
-        }
-    }
 }
 
 impl Guard {
@@ -114,7 +112,7 @@ impl TreeBuilder<'_> {
     /// After a token: refuse the parse when the tree is too deep or a
     /// select has too many options. `false` when the parse is to stop.
     pub(crate) fn guard_after(&mut self, tok: &Tok) -> bool {
-        if self.guard.max_open != usize::MAX && self.open.len() > self.guard.max_open {
+        if self.guard.max_open.is_some_and(|max| self.open.len() > max) {
             self.guard.stopped = Some(GuardStop::TooDeep);
             return false;
         }
@@ -148,17 +146,17 @@ impl TreeBuilder<'_> {
     }
 
     /// `tree_guard::nearest_select`: the select an inserted option updates,
-    /// `Some(None)` for the fragment context's.
-    fn guard_nearest_select(&self, option: NodeId) -> Option<Option<NodeId>> {
+    /// if any.
+    fn guard_nearest_select(&self, option: NodeId) -> Option<CountedSelect> {
         match self.walk_to_select(option) {
-            SelectWalk::Select(n) => Some(Some(n)),
+            SelectWalk::Select(n) => Some(CountedSelect::Element(n)),
             SelectWalk::Blocked => None,
             /* Off the top: in a fragment, the synthetic root, whose children
              * land in the context. */
             SelectWalk::OffTop { optgroup } => {
                 let c = self.guard.context?;
                 let reaches = if optgroup { c.after_optgroup } else { c.fresh };
-                reaches.then_some(None)
+                reaches.then_some(CountedSelect::Context)
             }
         }
     }

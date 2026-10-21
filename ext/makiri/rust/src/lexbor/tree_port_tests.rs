@@ -685,26 +685,16 @@ fn the_port_builds_lexbors_tree_on_web100k() {
 fn port_run(t: &dat::DatTest) -> Option<String> {
     use crate::conformance::tree::{self, Quirks, Tree};
     use crate::html::dom::conformance::{read_children, read_document};
-    use crate::html::tree::guard::ContextOptions;
     if t.scripting == Scripting::On {
         return None;
     }
     let tree = match &t.fragment {
         Some(ctx) => {
             let (tag, ns) = context_ids(ctx);
-            let is_select = tag == crate::html::res::names::TAG_SELECT
-                && ns == crate::html::res::names::NS_HTML;
-            let options = ContextOptions {
-                fresh: is_select,
-                after_optgroup: is_select,
-            };
             let f = crate::html::tree::parse_fragment(
                 &t.data,
                 false,
-                tag,
-                ns,
-                options,
-                crate::html::tree::ContextFacts::default(),
+                &crate::html::tree::ContextElement::named(tag, ns),
                 DepthLimit::UNLIMITED,
             )
             .expect("the port parses a fragment");

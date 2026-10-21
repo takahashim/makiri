@@ -247,20 +247,10 @@ pub fn port_fragment(
     ns: usize,
     limit: DepthLimit,
 ) -> Result<String, String> {
-    use crate::html::tree::guard::ContextOptions;
-    let is_select =
-        tag == crate::html::res::names::TAG_SELECT && ns == crate::html::res::names::NS_HTML;
-    let options = ContextOptions {
-        fresh: is_select,
-        after_optgroup: is_select,
-    };
     let f = crate::html::tree::parse_fragment(
         input,
         false,
-        tag,
-        ns,
-        options,
-        crate::html::tree::ContextFacts::default(),
+        &crate::html::tree::ContextElement::named(tag, ns),
         limit,
     )
     .map_err(|e| format!("{e:?}"))?;
@@ -435,7 +425,6 @@ pub fn check_serialization(input: &[u8]) -> Result<(), String> {
 pub fn check_fragment_serialization(input: &[u8], context: &str) -> Result<(), String> {
     use crate::html::dom::serialize::{serialize, Layout, Scope};
     use crate::html::dom::{HtmlDoc as ArenaDoc, RawNode};
-    use crate::html::tree::guard::ContextOptions;
     use crate::lexbor::adapter::html as lex;
     use crate::lexbor::adapter::tree_guard::OptionContext;
     let (tag, ns) = context_ids(context);
@@ -461,13 +450,7 @@ pub fn check_fragment_serialization(input: &[u8], context: &str) -> Result<(), S
         crate::html::tree::parse_fragment(
             input,
             false,
-            tag,
-            ns,
-            ContextOptions {
-                fresh: is_select,
-                after_optgroup: is_select,
-            },
-            crate::html::tree::ContextFacts::default(),
+            &crate::html::tree::ContextElement::named(tag, ns),
             DepthLimit::UNLIMITED,
         )
     }) else {

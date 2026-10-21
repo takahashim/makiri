@@ -22,7 +22,7 @@
 //!   and stops, as Lexbor's do.
 //! - **The marker of the active formatting list is `None`**, not a static
 //!   element.
-//! - **An attribute with no value is remembered in [`TreeBuilder::valueless`]**:
+//! - **An attribute with no value is remembered in [`NodeState::valueless`]**:
 //!   Lexbor keeps a NULL value for one (`<b x>`), which the Noah's Ark clause
 //!   tells apart from an empty one (`<b x="">`), and the arena stores both
 //!   as an empty span.
@@ -38,10 +38,11 @@ mod modes;
 mod parse;
 mod select;
 mod stacks;
+pub(crate) use stacks::Found;
 mod stamp;
 
 pub use error::{TreeError, TreeErrorId};
-pub use fragment::{parse_fragment, ContextFacts, FragmentFailure, ParsedFragment};
+pub use fragment::{parse_fragment, ContextElement, ContextFacts, FragmentFailure, ParsedFragment};
 pub use parse::{
     empty_html_document, parse_document, parse_html, parse_with_panicking_hook, HtmlParseError,
     ParseFailure, Parsed,
@@ -292,51 +293,64 @@ impl NodeSet {
     }
 }
 
+/// What Lexbor's DOM keeps on its nodes, and the arena does not, that the
+/// tree builder reads back: which attributes were made with no value (see
+/// the module doc), and which options are selected (`select.rs`).
+#[derive(Default)]
+pub(crate) struct NodeState {
+    /// The attributes made with no value.
+    pub(crate) valueless: NodeSet,
+    /// The options whose selectedness is true.
+    pub(crate) selected: NodeSet,
+}
+
 /// `lxb_html_tree_t`, building into one arena document.
 pub struct TreeBuilder<'d> {
-    pub(crate) doc: &'d mut Document,
+    doc: &'d mut Document,
     /// The fragment parsing algorithm's context element.
-    pub(crate) fragment: Option<NodeId>,
+    fragment: Option<NodeId>,
     /// The context element is an HTML integration point, though it was made
     /// with no attributes (`ContextFacts::html_integration_point`).
-    pub(crate) context_integration_point: bool,
+    context_integration_point: bool,
     /// The form element pointer.
-    pub(crate) form: Option<NodeId>,
+    form: Option<NodeId>,
     /// The head element pointer (Lexbor's `document->head`).
-    pub(crate) head: Option<NodeId>,
-    pub(crate) open: Vec<NodeId>,
-    /// The list of active formatting elements; `None` is a marker.
-    pub(crate) afe: Vec<Option<NodeId>>,
-    pub(crate) template_modes: Vec<Mode>,
-    pub(crate) pending: PendingTable,
-    pub(crate) errors: Vec<TreeError>,
-    pub(crate) foster_parenting: bool,
-    pub(crate) frameset_ok: bool,
-    pub(crate) scripting: bool,
-    pub(crate) mode: Mode,
-    pub(crate) original_mode: Mode,
-    pub(crate) status: TreeStatus,
-    /// The attributes made with no value (see the module doc).
-    pub(crate) valueless: NodeSet,
-    /// The options whose selectedness is true (`select.rs`).
-    pub(crate) selected: NodeSet,
+    head: Option<NodeId>,
+    open: stacks::OpenElements,
+    afe: stacks::ActiveFormatting,
+    template_modes: Vec<Mode>,
+    pending: PendingTable,
+    errors: Vec<TreeError>,
+    foster_parenting: bool,
+    frameset_ok: bool,
+    scripting: bool,
+    mode: Mode,
+    original_mode: Mode,
+    status: TreeStatus,
+    /// What Lexbor's DOM keeps on its nodes and the arena does not.
+    node_state: NodeState,
     /// The parse guard (`guard.rs`).
-    pub(crate) guard: guard::Guard,
+    guard: guard::Guard,
     /// Whether elements get their start tag's offset (`stamp.rs`).
-    pub(crate) stamping: stamp::Stamping,
+    stamping: stamp::Stamping,
 }
 
 impl<'d> TreeBuilder<'d> {
-    /// `lxb_html_tree_create` + `_init` + `_begin`, over `doc`.
-    pub fn new(doc: &'d mut Document) -> TreeBuilder<'d> {
+    /// `lxb_html_tree_create` + `_init` + `_begin`, over `doc`, held to
+    /// `guard`. Every parse starts here, through [`for_document`] or
+    /// `for_fragment` (`fragment.rs`), which set what the parse needs before
+    /// the first token.
+    ///
+    /// [`for_document`]: Self::for_document
+    fn new(doc: &'d mut Document, guard: guard::Guard) -> TreeBuilder<'d> {
         TreeBuilder {
             doc,
             fragment: None,
             context_integration_point: false,
             form: None,
             head: None,
-            open: Vec::new(),
-            afe: Vec::new(),
+            open: stacks::OpenElements::default(),
+            afe: stacks::ActiveFormatting::default(),
             template_modes: Vec::new(),
             pending: PendingTable::default(),
             errors: Vec::new(),
@@ -346,11 +360,28 @@ impl<'d> TreeBuilder<'d> {
             mode: Mode::Initial,
             original_mode: Mode::Initial,
             status: TreeStatus::Ok,
-            valueless: NodeSet::default(),
-            selected: NodeSet::default(),
-            guard: guard::Guard::default(),
+            node_state: NodeState::default(),
+            guard,
             stamping: stamp::Stamping::default(),
         }
+    }
+
+    /// A document parse into `doc`, held to `guard` and stamped as
+    /// `stamping` says.
+    pub(crate) fn for_document(
+        doc: &'d mut Document,
+        guard: guard::Guard,
+        stamping: stamp::Stamping,
+    ) -> TreeBuilder<'d> {
+        TreeBuilder {
+            stamping,
+            ..TreeBuilder::new(doc, guard)
+        }
+    }
+
+    /// What the guard refused the parse for, if it did.
+    pub(crate) fn guard_stopped(&self) -> Option<guard::GuardStop> {
+        self.guard.stopped
     }
 
     /// The tree's parse errors.
@@ -427,7 +458,7 @@ impl<'d> TreeBuilder<'d> {
         if self.status == TreeStatus::Ok {
             self.status = TreeStatus::Aborted;
         }
-        self.open.clear();
+        self.open_abandon();
         true
     }
 

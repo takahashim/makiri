@@ -5,7 +5,7 @@
 //! tests, and the adoption agency algorithm.
 
 use super::error::TreeErrorId as E;
-use super::{AttrAdjust, Ipos, Mode, Tok, TreeBuilder, TreeStatus};
+use super::{AttrAdjust, Found, Ipos, Mode, Tok, TreeBuilder, TreeStatus};
 use crate::compat::{self, Fix};
 use crate::html::dom::{AttrValue, NodeId, NodeName, NodeType};
 use crate::html::res::names as res;
@@ -50,6 +50,24 @@ pub(crate) fn is_void(tag: usize) -> bool {
             | res::TAG_SOURCE
             | res::TAG_TRACK
             | res::TAG_WBR
+    )
+}
+
+/// The tags "generate implied end tags" pops.
+#[inline]
+fn implies_end_tag(tag: usize) -> bool {
+    matches!(
+        tag,
+        res::TAG_DD
+            | res::TAG_DT
+            | res::TAG_LI
+            | res::TAG_OPTGROUP
+            | res::TAG_OPTION
+            | res::TAG_P
+            | res::TAG_RB
+            | res::TAG_RP
+            | res::TAG_RT
+            | res::TAG_RTC
     )
 }
 
@@ -217,7 +235,10 @@ impl TreeBuilder<'_> {
             value.unwrap_or(AttrValue::Bytes(b"")),
         )?;
         if value.is_none() {
-            self.valueless.insert(attr).map_err(|()| TreeStatus::Oom)?;
+            self.node_state
+                .valueless
+                .insert(attr)
+                .map_err(|()| TreeStatus::Oom)?;
         }
         Ok(attr)
     }
@@ -227,14 +248,8 @@ impl TreeBuilder<'_> {
     pub(crate) fn attr_is_exist(&self, el: NodeId, name: &[u8]) -> Option<NodeId> {
         let d = &*self.doc;
         let id = d.names.attr_id(name);
-        let mut a = d.first_attr(el);
-        while let Some(x) = a {
-            if Some(d.local(x) as usize) == id || d.attr_written(x) == Some(name) {
-                return Some(x);
-            }
-            a = d.next_attr(x);
-        }
-        None
+        d.attrs_of(el)
+            .find(|&x| Some(d.local(x) as usize) == id || d.attr_written(x) == Some(name))
     }
 
     /// `lxb_dom_element_attr_by_local_name_ns_data`: whether `el` has an
@@ -243,17 +258,10 @@ impl TreeBuilder<'_> {
     fn attr_by_local_name_ns(&self, el: NodeId, name: usize, ns: usize) -> bool {
         let d = &*self.doc;
         let text = d.names.attr_name(name);
-        let mut a = d.first_attr(el);
-        while let Some(x) = a {
-            if d.local(x) as usize == name && d.ns(x) as usize == ns {
-                return true;
-            }
-            if text.is_some() && d.attr_written(x) == text {
-                return true;
-            }
-            a = d.next_attr(x);
-        }
-        false
+        d.attrs_of(el).any(|x| {
+            (d.local(x) as usize == name && d.ns(x) as usize == ns)
+                || (text.is_some() && d.attr_written(x) == text)
+        })
     }
 
     /// `lxb_html_tree_append_attributes_from_element`.
@@ -289,7 +297,7 @@ impl TreeBuilder<'_> {
         if let Some(adjust) = adjust {
             self.adjust(&mut spec, adjust)?;
         }
-        let value = (!self.valueless.contains(x)).then_some(AttrValue::CopyOf(x));
+        let value = (!self.node_state.valueless.contains(x)).then_some(AttrValue::CopyOf(x));
         self.make_attr(spec, value)
     }
 
@@ -430,7 +438,7 @@ impl TreeBuilder<'_> {
     pub(crate) fn create_document_type_from_token(
         &mut self,
         tkz: &Tokenizer<'_, '_>,
-    ) -> Result<(NodeId, usize, usize, usize), TreeStatus> {
+    ) -> Result<(NodeId, usize), TreeStatus> {
         let parts = tkz.doctype();
         let name_id = parts.name.and_then(|a| a.name).unwrap_or(0);
         let public = parts.public_id.unwrap_or_default();
@@ -444,7 +452,7 @@ impl TreeBuilder<'_> {
         let name = crate::falloc::try_to_vec(name).ok_or(TreeStatus::Oom)?;
         let names = NodeName::html(res::TAG__EM_DOCTYPE);
         let node = self.doc.create_doctype(names, &name, public, system)?;
-        Ok((node, name_id, public.len(), system.len()))
+        Ok((node, name_id))
     }
 
     /// `lxb_html_tree_generic_rawtext_parsing`.
@@ -475,57 +483,40 @@ impl TreeBuilder<'_> {
 
     /// `lxb_html_tree_generate_implied_end_tags`.
     pub(crate) fn generate_implied_end_tags(&mut self, ex_tag: usize, ex_ns: usize) {
-        while let Some(node) = self.current_node() {
-            match self.tag(node) {
-                res::TAG_DD
-                | res::TAG_DT
-                | res::TAG_LI
-                | res::TAG_OPTGROUP
-                | res::TAG_OPTION
-                | res::TAG_P
-                | res::TAG_RB
-                | res::TAG_RP
-                | res::TAG_RT
-                | res::TAG_RTC => {
-                    if self.tag(node) == ex_tag && self.ns(node) == ex_ns {
-                        return;
-                    }
-                    self.open_pop();
-                }
-                _ => return,
-            }
-        }
+        self.pop_implied(implies_end_tag, ex_tag, ex_ns);
     }
 
     /// `lxb_html_tree_generate_all_implied_end_tags_thoroughly`.
     pub(crate) fn generate_all_implied_end_tags_thoroughly(&mut self, ex_tag: usize, ex_ns: usize) {
+        self.pop_implied(
+            |t| {
+                implies_end_tag(t)
+                    || matches!(
+                        t,
+                        res::TAG_CAPTION
+                            | res::TAG_COLGROUP
+                            | res::TAG_TBODY
+                            | res::TAG_TD
+                            | res::TAG_TFOOT
+                            | res::TAG_TH
+                            | res::TAG_THEAD
+                            | res::TAG_TR
+                    )
+            },
+            ex_tag,
+            ex_ns,
+        );
+    }
+
+    /// Pop while the current node's tag is one `implied` names - by tag
+    /// alone, as Lexbor tests it - and it is not `ex_tag` in `ex_ns`.
+    fn pop_implied(&mut self, implied: impl Fn(usize) -> bool, ex_tag: usize, ex_ns: usize) {
         while let Some(node) = self.current_node() {
-            match self.tag(node) {
-                res::TAG_CAPTION
-                | res::TAG_COLGROUP
-                | res::TAG_DD
-                | res::TAG_DT
-                | res::TAG_LI
-                | res::TAG_OPTGROUP
-                | res::TAG_OPTION
-                | res::TAG_P
-                | res::TAG_RB
-                | res::TAG_RP
-                | res::TAG_RT
-                | res::TAG_RTC
-                | res::TAG_TBODY
-                | res::TAG_TD
-                | res::TAG_TFOOT
-                | res::TAG_TH
-                | res::TAG_THEAD
-                | res::TAG_TR => {
-                    if self.tag(node) == ex_tag && self.ns(node) == ex_ns {
-                        return;
-                    }
-                    self.open_pop();
-                }
-                _ => return,
+            let tag = self.tag(node);
+            if !implied(tag) || (tag == ex_tag && self.ns(node) == ex_ns) {
+                return;
             }
+            self.open_pop();
         }
     }
 
@@ -686,27 +677,19 @@ impl TreeBuilder<'_> {
     /// `lxb_html_tree_check_scope_element`.
     pub(crate) fn check_scope_element(&self) -> bool {
         self.open.iter().any(|&n| {
-            matches!(
-                self.tag(n),
-                res::TAG_DD
-                    | res::TAG_DT
-                    | res::TAG_LI
-                    | res::TAG_OPTGROUP
-                    | res::TAG_OPTION
-                    | res::TAG_P
-                    | res::TAG_RB
-                    | res::TAG_RP
-                    | res::TAG_RT
-                    | res::TAG_RTC
-                    | res::TAG_TBODY
-                    | res::TAG_TD
-                    | res::TAG_TFOOT
-                    | res::TAG_TH
-                    | res::TAG_THEAD
-                    | res::TAG_TR
-                    | res::TAG_BODY
-                    | res::TAG_HTML
-            )
+            let t = self.tag(n);
+            implies_end_tag(t)
+                || matches!(
+                    t,
+                    res::TAG_TBODY
+                        | res::TAG_TD
+                        | res::TAG_TFOOT
+                        | res::TAG_TH
+                        | res::TAG_THEAD
+                        | res::TAG_TR
+                        | res::TAG_BODY
+                        | res::TAG_HTML
+                )
         })
     }
 
@@ -732,7 +715,7 @@ impl TreeBuilder<'_> {
         if !self.current_is(tag) {
             self.parse_error(tok, err);
         }
-        self.open_pop_until_tag_id(tag, res::NS_HTML, true);
+        self.open_pop_until_tag_id(tag, res::NS_HTML, Found::Popped);
     }
 
     /// `lxb_html_tree_acknowledge_token_self_closing`.
@@ -765,7 +748,7 @@ impl TreeBuilder<'_> {
             let Some(x) = self.attr_is_exist(n, b"encoding") else {
                 return false;
             };
-            if self.valueless.contains(x) {
+            if self.node_state.valueless.contains(x) {
                 return false;
             }
             let v = self.doc.attr_value(x).unwrap_or_default();
@@ -843,7 +826,7 @@ impl TreeBuilder<'_> {
 
             /* State 11 */
             let Some(mut furthest_block_idx) = furthest else {
-                self.open_pop_until_node(formatting_element, true);
+                self.open_pop_until_node(formatting_element, Found::Popped);
                 self.afe_remove_by_node(formatting_element);
                 return Ok(false);
             };
@@ -911,8 +894,8 @@ impl TreeBuilder<'_> {
                 fake.base = Some(node);
                 let el = self.create_element_for_fake(&fake)?;
                 node = el;
-                self.afe[afe_node_idx] = Some(node);
-                self.open[node_idx] = node;
+                self.afe.replace(afe_node_idx, node);
+                self.open.replace(node_idx, node);
 
                 /* State 14.8 */
                 if last == furthest_block {

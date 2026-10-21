@@ -11,15 +11,28 @@ use crate::html::res::names as res;
 use crate::html::tokenizer::Status;
 use crate::utf8_input::sanitize;
 
-/// Why a fragment parse produced no fragment.
+/// Why a fragment parse produced no fragment: a document parse's reasons
+/// ([`ParseFailure`](super::ParseFailure)), and the input's repair.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FragmentFailure {
     /// Out of memory repairing the input's UTF-8.
     Decode,
-    /// The parse failed (out of memory, or the tree builder stopped).
-    Parse,
+    /// An allocation failed.
+    Oom,
+    /// The tree builder stopped the parse.
+    Stopped(TreeStatus),
     /// The guard refused it.
     Guard(GuardStop),
+}
+
+impl From<TreeStatus> for FragmentFailure {
+    /// A tree builder's failure: its own out-of-memory, or a stop.
+    fn from(st: TreeStatus) -> FragmentFailure {
+        match st {
+            TreeStatus::Oom => FragmentFailure::Oom,
+            st => FragmentFailure::Stopped(st),
+        }
+    }
 }
 
 /// A parsed fragment: its own document, and the node whose children are the
@@ -52,22 +65,52 @@ pub struct ContextFacts {
     pub foreign_namespace: bool,
 }
 
-/// Parse `input` as a fragment in the context of an element with tag id
-/// `tag` in namespace `ns` (Lexbor's static ids; `ns` 0 for none), refusing a
-/// tree deeper than `limit`; `options` is what the context means to the
-/// option guard, `facts` the rest of what the parse reads from it.
+/// The context element of a fragment parse, as far as the parse reads it:
+/// its tag and namespace (Lexbor's static ids; `ns` 0 for none), what it
+/// means to the option guard, and the rest ([`ContextFacts`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ContextElement {
+    pub tag: usize,
+    pub ns: usize,
+    pub options: ContextOptions,
+    pub facts: ContextFacts,
+}
+
+impl ContextElement {
+    /// A context known by its name alone - a fragment bound to a document,
+    /// the WPT fragment tests: it leads an option to a select only by being
+    /// one, and its facts are Lexbor's defaults.
+    pub fn named(tag: usize, ns: usize) -> ContextElement {
+        let select = tag == res::TAG_SELECT && ns == res::NS_HTML;
+        ContextElement {
+            tag,
+            ns,
+            options: ContextOptions {
+                fresh: select,
+                after_optgroup: select,
+            },
+            facts: ContextFacts::default(),
+        }
+    }
+}
+
+/// Parse `input` as a fragment in `context`, refusing a tree deeper than
+/// `limit`.
 pub fn parse_fragment(
     input: &[u8],
     known_valid: bool,
-    tag: usize,
-    ns: usize,
-    options: ContextOptions,
-    facts: ContextFacts,
+    context: &ContextElement,
     limit: DepthLimit,
 ) -> Result<ParsedFragment, FragmentFailure> {
+    let ContextElement {
+        tag,
+        ns,
+        options,
+        facts,
+    } = *context;
     let src = sanitize(input, known_valid).ok_or(FragmentFailure::Decode)?;
     let bytes = src.as_slice();
-    let oom = |DomOom| FragmentFailure::Parse;
+    let oom = |DomOom| FragmentFailure::Oom;
 
     /* `lxb_html_document_interface_create(NULL)`: no quirks, no scripting.
      * The Standard's document is in the context document's quirks mode. */
@@ -84,10 +127,13 @@ pub fn parse_fragment(
     doc.append_child(NodeId::DOCUMENT, root);
     let context = doc.create_element(tag, ns32, 0, None).map_err(oom)?;
 
-    let mut tree = TreeBuilder::new(&mut doc);
-    tree.guard = Guard::for_fragment(limit, options);
-    tree.begin_fragment(root, context, &facts)
-        .map_err(|_| FragmentFailure::Parse)?;
+    let mut tree = TreeBuilder::for_fragment(
+        &mut doc,
+        root,
+        context,
+        &facts,
+        Guard::for_fragment(limit, options),
+    )?;
 
     let current_ns = tree.current_namespace();
     let foreign = facts.foreign_namespace && compat::fixed(Fix::P19);
@@ -95,47 +141,52 @@ pub fn parse_fragment(
         tkz.enter_fragment_context(false, tag, ns);
         tkz.set_current_namespace(current_ns);
     });
-    if let Some(stop) = tree.guard.stopped {
+    if let Some(stop) = tree.guard_stopped() {
         return Err(FragmentFailure::Guard(stop));
     }
+    if status == Status::Oom {
+        return Err(FragmentFailure::Oom);
+    }
     if status != Status::Ok || tree.status != TreeStatus::Ok {
-        return Err(FragmentFailure::Parse);
+        return Err(FragmentFailure::Stopped(tree.status));
     }
     /* "The end" pops whatever is still open, with its pop steps, for a
      * fragment as for a document; Lexbor's fragment end did not. */
     if compat::fixed(Fix::P16) {
         tree.open_pop_all();
         if tree.status != TreeStatus::Ok {
-            return Err(FragmentFailure::Parse);
+            return Err(tree.status.into());
         }
     }
     drop(tree);
     Ok(ParsedFragment { doc, root })
 }
 
-impl TreeBuilder<'_> {
-    /// The fragment case's setup of the tree builder (Lexbor's
-    /// `lxb_html_parse_fragment_chunk_begin`): `root` the only open element,
-    /// `context` the context element, a template's mode, the insertion
-    /// mode reset, and the form element pointer.
-    fn begin_fragment(
-        &mut self,
+impl<'d> TreeBuilder<'d> {
+    /// A fragment parse into `doc`, held to `guard`, set up as Lexbor's
+    /// `lxb_html_parse_fragment_chunk_begin` does: `root` the only open
+    /// element, `context` the context element, a template's mode, the
+    /// insertion mode reset, and the form element pointer.
+    fn for_fragment(
+        doc: &'d mut Document,
         root: NodeId,
         context: NodeId,
         facts: &ContextFacts,
-    ) -> Result<(), TreeStatus> {
-        let (tag, ns) = (self.tag(context), self.ns(context));
-        self.open_push(root)?;
+        guard: Guard,
+    ) -> Result<TreeBuilder<'d>, TreeStatus> {
+        let mut tree = TreeBuilder::new(doc, guard);
+        let (tag, ns) = (tree.tag(context), tree.ns(context));
+        tree.open_push(root)?;
         if tag == res::TAG_TEMPLATE && ns == res::NS_HTML {
-            self.template_modes_push(Mode::InTemplate)?;
+            tree.template_modes_push(Mode::InTemplate)?;
         }
-        self.fragment = Some(context);
-        self.context_integration_point = facts.html_integration_point && compat::fixed(Fix::P18);
-        self.reset_insertion_mode_appropriately();
+        tree.fragment = Some(context);
+        tree.context_integration_point = facts.html_integration_point && compat::fixed(Fix::P18);
+        tree.reset_insertion_mode_appropriately();
         let own_form = tag == res::TAG_FORM && ns == res::NS_HTML;
         if own_form || (facts.in_form && compat::fixed(Fix::P20)) {
-            self.form = Some(self.create_element_node(res::TAG_FORM, res::NS_HTML)?);
+            tree.form = Some(tree.create_element_node(res::TAG_FORM, res::NS_HTML)?);
         }
-        Ok(())
+        Ok(tree)
     }
 }

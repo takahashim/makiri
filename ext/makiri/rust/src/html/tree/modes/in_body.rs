@@ -10,7 +10,7 @@ use crate::html::res::tree as rt;
 use crate::html::tokenizer::{flags, TextContent, Tokenizer};
 use crate::html::tree::actions::is_category;
 use crate::html::tree::error::TreeErrorId as E;
-use crate::html::tree::{is_ws, AttrAdjust, Mode, OrAbort, Tok, TreeBuilder, TreeStatus};
+use crate::html::tree::{is_ws, AttrAdjust, Found, Mode, OrAbort, Tok, TreeBuilder, TreeStatus};
 
 /// `lxb_html_tree_insertion_mode_in_body_skip_new_line`.
 pub fn skip_new_line(
@@ -132,7 +132,7 @@ fn frameset(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) 
     /* `lxb_html_tree_node_delete_deep` */
     tree.doc.detach(node);
     if let Some(html) = tree.open_get(0) {
-        tree.open_pop_until_node(html, false);
+        tree.open_pop_until_node(html, Found::Kept);
     }
     if tree.insert_html_element(tkz, tok).or_abort(tree).is_none() {
         return true;
@@ -309,7 +309,7 @@ fn button(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) ->
     {
         tree.parse_error(tok, E::Unto);
         tree.generate_implied_end_tags(res::TAG__UNDEF, res::NS__UNDEF);
-        tree.open_pop_until_tag_id(res::TAG_BUTTON, res::NS_HTML, true);
+        tree.open_pop_until_tag_id(res::TAG_BUTTON, res::NS_HTML, Found::Popped);
     }
     if !reconstruct(tree, tkz) {
         return true;
@@ -570,7 +570,7 @@ fn input(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> 
     }
     if let Some(node) = tree.element_in_scope(res::TAG_SELECT, res::NS_HTML, rt::CAT_SCOPE) {
         tree.parse_error(tok, E::Seinsc);
-        tree.open_pop_until_node(node, true);
+        tree.open_pop_until_node(node, Found::Popped);
     }
     if !reconstruct(tree, tkz) {
         return true;
@@ -590,7 +590,9 @@ fn input(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> 
         Some(x) if compat::fixed(Fix::P13) => d
             .attr_value(x)
             .is_some_and(|v| v.eq_ignore_ascii_case(b"hidden")),
-        Some(x) => !tree.valueless.contains(x) && d.attr_value(x) == Some(&b"hidden"[..]),
+        Some(x) => {
+            !tree.node_state.valueless.contains(x) && d.attr_value(x) == Some(&b"hidden"[..])
+        }
         None => false,
     };
     if !hidden {
@@ -687,7 +689,7 @@ fn select(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) ->
     }
     if let Some(node) = tree.element_in_scope(res::TAG_SELECT, res::NS_HTML, rt::CAT_SCOPE) {
         tree.parse_error(tok, E::Seinsc);
-        tree.open_pop_until_node(node, true);
+        tree.open_pop_until_node(node, Found::Popped);
         return true;
     }
     if !reconstruct(tree, tkz) {
@@ -830,7 +832,7 @@ pub fn anything_else_closed(tree: &mut TreeBuilder<'_>, tok: &Tok) -> bool {
             if Some(node) != tree.current_node() {
                 tree.parse_error(tok, E::Unelinopelst);
             }
-            tree.open_pop_until_node(node, true);
+            tree.open_pop_until_node(node, Found::Popped);
             return true;
         }
         if is_category(tree.tag(node), tree.ns(node), rt::CAT_SPECIAL) {
