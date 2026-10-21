@@ -41,6 +41,7 @@ mod common;
 use common::*;
 use makiri::css_match::{select_all, Scratch};
 use makiri::gvl::Gvl;
+use makiri::html::dom::css::HtmlHost;
 use makiri::html_dom::html::{HtmlNode, RawNode};
 use makiri::lexbor::adapter::html::RawNode as LexborNode;
 use makiri::lexbor::adapter::post_parse::parse_html;
@@ -118,7 +119,7 @@ fuzz_target!(|data: &[u8]| {
 fn new_answer(
     root: HtmlNode<'_>,
     groups: Lists<'_>,
-    scratch: &mut Scratch,
+    scratch: &mut Scratch<HtmlHost>,
     doc: &Doc,
 ) -> Option<Vec<RawNode>> {
     let shape = Shape::of(groups)?;

@@ -1,4 +1,5 @@
-//! CSS selector matcher over the typed HTML adapter, structured as an
+//! CSS selector matcher over any DOM that implements [`dom`]'s traits - the
+//! HTML arena's are `html::dom::css` - structured as an
 //! explicit (heap) work stack rather than native recursion - the same
 //! architectural property Lexbor's own `lxb_selectors_*` state machine has
 //! (`lxb_selectors_run`'s loop,
@@ -167,6 +168,7 @@
 #![forbid(unsafe_code)]
 
 mod compile;
+pub mod dom;
 mod positions;
 mod query;
 mod scratch;
@@ -174,17 +176,16 @@ mod simple;
 mod state;
 mod tree;
 
-pub use compile::check_compiles;
 #[cfg(all(test, feature = "lexbor"))]
 pub(crate) use compile::validate;
 pub use scratch::Scratch;
 
 use crate::falloc::VecPush;
-use crate::html_dom::html::{HtmlElement, HtmlNode};
 use crate::limits::NODE_SET_MAX;
 use crate::selectors::ast::Lists;
 
 use compile::{compile, Compiled};
+use dom::CssNode;
 use query::Query;
 
 /// A complexity bound on compounds per chain, mirroring `css::MAX_COMPOUNDS`.
@@ -297,21 +298,26 @@ impl crate::falloc::Oom for MatchFailure {
  * is matched, whatever the document holds.                            *
  * ------------------------------------------------------------------ */
 
-/// Does `element` match any comma-separated alternative of `groups`? The
+/// Does `node` match any comma-separated alternative of `groups`? The
 /// entry point for `Node#matches?`: no traversal, under a fresh budget, over
-/// `scratch`'s tables and stacks.
-pub fn matches_any(
-    scratch: &mut Scratch,
+/// `scratch`'s tables and stacks. A node that is not an element matches
+/// nothing, once the selector compiles.
+pub fn matches_any<'d, N: CssNode<'d>>(
+    scratch: &mut Scratch<N::Host>,
     groups: Lists<'_>,
-    element: HtmlElement<'_>,
+    node: N,
 ) -> Result<bool, MatchFailure> {
-    let compiled = compile(scratch, groups)?;
-    let answer = Query::new(&compiled, None, DEFAULT_WORK_BUDGET, scratch).and_then(|mut query| {
-        let answer = query.matches_top(element.node());
-        query.finish(scratch);
-        answer
-    });
-    compiled.give_back(scratch);
+    let compiled = compile(&mut scratch.tables, groups)?;
+    let answer = if node.element().is_none() {
+        Ok(false)
+    } else {
+        Query::new(&compiled, None, DEFAULT_WORK_BUDGET, scratch).and_then(|mut query| {
+            let answer = query.matches_top(node);
+            query.finish(scratch);
+            answer
+        })
+    };
+    compiled.give_back(&mut scratch.tables);
     answer
 }
 
@@ -348,32 +354,32 @@ impl From<MatchFailure> for QueryFailure {
 /// Capped at [`NODE_SET_MAX`], matching every other Makiri result set, and
 /// at one shared work budget for the whole call (`Budget`'s doc). The
 /// tables and stacks are `scratch`'s.
-pub fn select_all<'doc>(
-    scratch: &mut Scratch,
-    root: HtmlNode<'doc>,
+pub fn select_all<'d, N: CssNode<'d>>(
+    scratch: &mut Scratch<N::Host>,
+    root: N,
     groups: Lists<'_>,
-) -> Result<Vec<HtmlNode<'doc>>, QueryFailure> {
+) -> Result<Vec<N>, QueryFailure> {
     select_all_with_limit(scratch, root, groups, DEFAULT_WORK_BUDGET)
 }
 
-fn select_all_with_limit<'doc>(
-    scratch: &mut Scratch,
-    root: HtmlNode<'doc>,
+fn select_all_with_limit<'d, N: CssNode<'d>>(
+    scratch: &mut Scratch<N::Host>,
+    root: N,
     groups: Lists<'_>,
     limit: u64,
-) -> Result<Vec<HtmlNode<'doc>>, QueryFailure> {
-    let compiled = compile(scratch, groups)?;
+) -> Result<Vec<N>, QueryFailure> {
+    let compiled = compile(&mut scratch.tables, groups)?;
     let found = select_all_compiled(scratch, &compiled, root, limit);
-    compiled.give_back(scratch);
+    compiled.give_back(&mut scratch.tables);
     found
 }
 
-fn select_all_compiled<'doc>(
-    scratch: &mut Scratch,
+fn select_all_compiled<'d, N: CssNode<'d>>(
+    scratch: &mut Scratch<N::Host>,
     compiled: &Compiled<'_>,
-    root: HtmlNode<'doc>,
+    root: N,
     limit: u64,
-) -> Result<Vec<HtmlNode<'doc>>, QueryFailure> {
+) -> Result<Vec<N>, QueryFailure> {
     let mut query = Query::new(compiled, Some(root.owner_document()), limit, scratch)?;
     let mut walk = || {
         let mut out = Vec::new();
@@ -400,11 +406,11 @@ fn select_all_compiled<'doc>(
 /// an expensive `:has()` search without a document big enough to exhaust the
 /// real, shipped limit.
 #[cfg(all(test, feature = "lexbor"))]
-pub(crate) fn select_all_with_work_limit<'doc>(
-    root: HtmlNode<'doc>,
+pub(crate) fn select_all_with_work_limit<'d, N: CssNode<'d>>(
+    root: N,
     groups: Lists<'_>,
     limit: u64,
-) -> Result<Vec<HtmlNode<'doc>>, QueryFailure> {
+) -> Result<Vec<N>, QueryFailure> {
     select_all_with_limit(&mut Scratch::new(), root, groups, limit)
 }
 
@@ -413,22 +419,22 @@ pub(crate) fn select_all_with_work_limit<'doc>(
 /// instead of building the whole set, as `Node#at_css` wants (see
 /// `lexbor::selectors::first_cb`). One work budget for the whole search,
 /// over `scratch`'s tables and stacks.
-pub fn select_first<'doc>(
-    scratch: &mut Scratch,
-    root: HtmlNode<'doc>,
+pub fn select_first<'d, N: CssNode<'d>>(
+    scratch: &mut Scratch<N::Host>,
+    root: N,
     groups: Lists<'_>,
-) -> Result<Option<HtmlNode<'doc>>, MatchFailure> {
-    let compiled = compile(scratch, groups)?;
+) -> Result<Option<N>, MatchFailure> {
+    let compiled = compile(&mut scratch.tables, groups)?;
     let found = select_first_compiled(scratch, &compiled, root);
-    compiled.give_back(scratch);
+    compiled.give_back(&mut scratch.tables);
     found
 }
 
-fn select_first_compiled<'doc>(
-    scratch: &mut Scratch,
+fn select_first_compiled<'d, N: CssNode<'d>>(
+    scratch: &mut Scratch<N::Host>,
     compiled: &Compiled<'_>,
-    root: HtmlNode<'doc>,
-) -> Result<Option<HtmlNode<'doc>>, MatchFailure> {
+    root: N,
+) -> Result<Option<N>, MatchFailure> {
     let mut query = Query::new(
         compiled,
         Some(root.owner_document()),

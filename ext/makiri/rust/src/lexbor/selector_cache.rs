@@ -27,6 +27,7 @@ use std::collections::HashMap;
 use crate::css_match::Scratch;
 use crate::falloc::{try_to_boxed_slice, Reserve};
 use crate::gvl::{Gvl, GvlCell};
+use crate::html::dom::css::HtmlHost;
 use crate::selectors::ast::Lists;
 use crate::selectors::{Parsed, Status};
 
@@ -153,7 +154,7 @@ struct Globals {
     policy: CachePolicy,
     cache: Cache,
     /// The matcher's stacks, kept from one query to the next (its doc).
-    scratch: Scratch,
+    scratch: Scratch<HtmlHost>,
 }
 
 /// The one process-global, borrowed once per query.
@@ -180,7 +181,7 @@ fn parse(selector: &[u8]) -> Result<Parsed, ParseError> {
 pub fn with_compiled<R>(
     gvl: &Gvl,
     selector: &[u8],
-    f: impl FnOnce(Lists<'_>, &mut Scratch) -> R,
+    f: impl FnOnce(Lists<'_>, &mut Scratch<HtmlHost>) -> R,
 ) -> Result<R, ParseError> {
     let mut guard = G.borrow(gvl).map_err(|_| ParseError::Busy)?;
     let g = &mut *guard;

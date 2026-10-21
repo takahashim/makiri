@@ -3,13 +3,12 @@
 //! that nest a selector list deferred to a task (`query`). Names are
 //! resolved once per query ([`Name`]).
 
-use crate::html_dom::html::{
-    has_ascii_uppercase, AttrName, HtmlAttr, HtmlDoc, HtmlElement, HtmlNode, NsId, TagId,
-};
+use crate::html::dom::has_ascii_uppercase;
 use crate::selectors::ast::{AttrMatch, FunctionArg, PseudoClass, Simple};
 use core::ffi::c_long;
 
 use super::compile::{Nest, Step};
+use super::dom::{CssAttr, CssDoc, CssElement, CssNode, Host};
 use super::positions::{sibling_position, Positions};
 use super::scratch::Table;
 use super::state::{
@@ -20,10 +19,10 @@ use super::state::{
 use super::tree::{next_position_sibling, prev_position_sibling};
 use super::{Budget, MatchFailure};
 
-/// Lexbor's `compat_mode` values (`adapter::html::HtmlDoc::compat_mode`'s own
-/// doc: "0 no-quirks, 1 quirks, 2 limited-quirks").
-fn document_is_quirks(node: HtmlNode<'_>) -> bool {
-    node.owner_document().compat_mode() == 1
+/// Whether `node`'s document is in quirks mode, where `#id` and `.class`
+/// fold ASCII case.
+fn document_is_quirks<'d, N: CssNode<'d>>(node: N) -> bool {
+    node.owner_document().is_quirks()
 }
 
 fn eq_bytes(a: &[u8], b: &[u8], case_insensitive: bool) -> bool {
@@ -65,7 +64,7 @@ fn has_whitespace_token(target: &[u8], want: &[u8], case_insensitive: bool) -> b
 
 /// A type selector `want`, compared as bytes (`matches?`, which resolves no
 /// ids): the case-folded comparison Lexbor makes, then [`written_case_holds`].
-fn name_eq(node: HtmlNode<'_>, want: &[u8]) -> bool {
+fn name_eq<'d, N: CssNode<'d>>(node: N, want: &[u8]) -> bool {
     node.element().is_some_and(|el| {
         el.local_name().eq_ignore_ascii_case(want) && written_case_holds(node, el, want)
     })
@@ -90,13 +89,12 @@ fn name_eq(node: HtmlNode<'_>, want: &[u8]) -> bool {
 /// type scan (`li`, `ul li a`) measured 5-10% slower, on an HTML element that
 /// never gets past the first branch.
 #[inline]
-fn written_case_holds(node: HtmlNode<'_>, el: HtmlElement<'_>, want: &[u8]) -> bool {
-    (!el.has_written_name() && node.ns_id() == Some(NsId::HTML))
-        || written_case_holds_slow(node, el, want)
+fn written_case_holds<'d, N: CssNode<'d>>(node: N, el: N::Element, want: &[u8]) -> bool {
+    (!el.has_written_name() && node.is_html()) || written_case_holds_slow(node, el, want)
 }
 
 #[inline(never)]
-fn written_case_holds_slow(node: HtmlNode<'_>, el: HtmlElement<'_>, want: &[u8]) -> bool {
+fn written_case_holds_slow<'d, N: CssNode<'d>>(node: N, el: N::Element, want: &[u8]) -> bool {
     if !el.has_written_name() {
         /* A foreign element (an HTML one answered inline), whose localName is
          * its stored, lower-cased name: equal to `want` as written, given the
@@ -106,7 +104,7 @@ fn written_case_holds_slow(node: HtmlNode<'_>, el: HtmlElement<'_>, want: &[u8])
         return !has_ascii_uppercase(want);
     }
     let local = el.dom_local_name();
-    if node.ns_id() == Some(NsId::HTML) {
+    if node.is_html() {
         /* `want` lower-cased against the localName. Given the fold, that
          * holds exactly when the localName has no upper case - and needs no
          * lower-cased copy of `want`. */
@@ -126,8 +124,8 @@ fn written_case_holds_slow(node: HtmlNode<'_>, el: HtmlElement<'_>, want: &[u8])
 /// always holds here, since this matcher only ever runs on `Makiri::HTML`
 /// documents (XML's CSS goes through `css::lower`), and the namespace alone
 /// tells HTML elements from foreign (SVG/MathML) content within one.
-fn attribute_matches(
-    node: HtmlNode<'_>,
+fn attribute_matches<'d, N: CssNode<'d>>(
+    node: N,
     value: Option<&[u8]>,
     op: AttrMatch,
     at_value: Option<&[u8]>,
@@ -170,9 +168,9 @@ fn attribute_matches(
     }
 }
 
-fn plain_pseudo_matches(
+fn plain_pseudo_matches<'d, N: CssNode<'d>>(
     pc: PseudoClass,
-    node: HtmlNode<'_>,
+    node: N,
     budget: &Budget,
     positions: &mut Positions,
 ) -> Result<bool, MatchFailure> {
@@ -212,8 +210,8 @@ fn plain_pseudo_matches(
     })
 }
 
-fn nth_matches(
-    node: HtmlNode<'_>,
+fn nth_matches<'d, N: CssNode<'d>>(
+    node: N,
     from_end: bool,
     of_type: bool,
     anb: Option<crate::selectors::ast::Nth<'_>>,
@@ -255,10 +253,10 @@ pub(super) enum SimpleCheck {
 }
 
 #[inline]
-pub(super) fn check_simple(
+pub(super) fn check_simple<'d, N: CssNode<'d>>(
     sel: &Step<'_>,
-    name: Name,
-    node: HtmlNode<'_>,
+    name: Name<N::Host>,
+    node: N,
     budget: &Budget,
     positions: &mut Positions,
 ) -> Result<SimpleCheck, MatchFailure> {
@@ -276,12 +274,12 @@ pub(super) fn check_simple(
         // attribute-list scan.
         Simple::Id => SimpleCheck::Result(
             node.element()
-                .and_then(HtmlElement::id_attr)
+                .and_then(CssElement::id_attr)
                 .is_some_and(|a| eq_bytes(a.value(), sel.name, document_is_quirks(node))),
         ),
         Simple::Class => SimpleCheck::Result(
             node.element()
-                .and_then(HtmlElement::class_attr)
+                .and_then(CssElement::class_attr)
                 .is_some_and(|a| {
                     has_whitespace_token(a.value(), sel.name, document_is_quirks(node))
                 }),
@@ -348,22 +346,27 @@ pub(super) fn check_simple(
 /// side is `attr_by_resolved_name`'s precondition, asserted in debug builds.
 /// The per-node check this replaced read `owner_document` on every
 /// candidate, which cost `css("li")` ~10% on a document not in cache.
-#[derive(Clone, Copy, Default)]
-pub(super) enum Name {
+pub(super) enum Name<H: Host> {
     /// Not looked up yet.
-    #[default]
     Unresolved,
     /// Nothing to look up: not a type or attribute selector.
     None,
     /// A type selector's tag id in the walked document; `None`: no element
     /// of the document has the name.
-    Tag(Option<TagId>),
+    Tag(Option<H::TagId>),
     /// An attribute selector's name.
-    Attr(AttrName),
+    Attr(H::AttrName),
 }
 
-impl Name {
-    pub(super) fn resolve(sel: &Step<'_>, doc: HtmlDoc<'_>) -> Name {
+impl<H: Host> Clone for Name<H> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<H: Host> Copy for Name<H> {}
+
+impl<H: Host> Name<H> {
+    pub(super) fn resolve<'d, D: CssDoc<'d, Host = H>>(sel: &Step<'_>, doc: D) -> Name<H> {
         match sel.simple {
             Simple::Type => Name::Tag(doc.tag_id(sel.name)),
             Simple::Attribute(_) => Name::Attr(doc.resolve_attr_name(sel.name)),
@@ -374,13 +377,13 @@ impl Name {
 
 /// A query's [`Name`]s, by simple-selector index: one per simple
 /// selector, each resolved when it is first reached.
-pub(super) type Names = Table<Name>;
+pub(super) type Names<H> = Table<Name<H>>;
 
 /// `lxb_selectors_match_element` through [`Name`]: one id comparison in a
 /// walking query (the node is of the walked document - [`Name`]'s doc),
 /// [`name_eq`] otherwise; either way confirmed by [`written_case_holds`].
 #[inline]
-fn type_matches(node: HtmlNode<'_>, want: &[u8], name: Name) -> bool {
+fn type_matches<'d, N: CssNode<'d>>(node: N, want: &[u8], name: Name<N::Host>) -> bool {
     match name {
         Name::Tag(id) => {
             id.is_some()
@@ -396,12 +399,12 @@ fn type_matches(node: HtmlNode<'_>, want: &[u8], name: Name) -> bool {
 /// The value of `node`'s attribute `qname` (DOM `getAttribute`), through
 /// the resolved [`Name`] when there is one.
 #[inline]
-fn attr_value<'doc>(node: HtmlNode<'doc>, qname: &[u8], name: Name) -> Option<&'doc [u8]> {
+fn attr_value<'d, N: CssNode<'d>>(node: N, qname: &[u8], name: Name<N::Host>) -> Option<&'d [u8]> {
     let el = node.element()?;
     match name {
         Name::Attr(resolved) => el
             .attr_by_resolved_name(qname, resolved)
-            .map(HtmlAttr::value),
+            .map(CssAttr::value),
         _ => el.get_attribute(qname),
     }
 }

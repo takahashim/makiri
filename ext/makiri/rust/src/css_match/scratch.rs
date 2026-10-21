@@ -4,10 +4,10 @@
 //! vectors.
 
 use crate::falloc::{OomResult, VecPush};
-use crate::html_dom::html::HtmlNode;
 use crate::selectors::ast::Lists;
 
 use super::compile::{Chain, Compound, Step};
+use super::dom::Host;
 use super::positions::Positions;
 use super::query::{HasCursor, Task};
 use super::simple::Name;
@@ -76,33 +76,49 @@ impl<T: Copy> Table<T> {
 /// the process-global selector engine (`selector_cache`), under the GVL, and
 /// every entry point ([`select_all`](super::select_all) etc.) takes one.
 ///
-/// Empty between queries: only the capacity carries over, moved between
-/// lifetimes by [`recycle`].
-pub struct Scratch {
+/// One per DOM ([`Host`]): the stacks hold its nodes and the names its
+/// documents resolve. The compiled selector's tables ([`Tables`]) name no
+/// DOM. Empty between queries: only the capacity carries over, moved
+/// between lifetimes by [`recycle`].
+pub struct Scratch<H: Host> {
+    pub(super) tables: Tables,
+    pub(super) names: Vec<Name<H>>,
+    pub(super) tasks: Vec<Task<H::Node<'static>>>,
+    pub(super) at: Vec<Option<H::Node<'static>>>,
+    pub(super) cursors: Vec<HasCursor<H::Node<'static>>>,
+    pub(super) positions: Positions,
+}
+
+/// The compiled selector's tables ([`Compiled`](super::compile::Compiled)),
+/// which name no DOM.
+pub(super) struct Tables {
     pub(super) simples: Vec<Step<'static>>,
     pub(super) compounds: Vec<Compound>,
     pub(super) top: Vec<Chain>,
     pub(super) alts: Vec<Chain>,
     pub(super) pending: Vec<(Lists<'static>, u32)>,
-    pub(super) names: Vec<Name>,
-    pub(super) tasks: Vec<Task<'static>>,
-    pub(super) at: Vec<Option<HtmlNode<'static>>>,
-    pub(super) cursors: Vec<HasCursor<'static>>,
-    pub(super) positions: Positions,
 }
 
 /// A [`Scratch`] vector over this many items is dropped rather than kept, so
 /// one pathological query does not pin its memory for the process's life.
 pub(super) const SCRATCH_KEEP: usize = 1024;
 
-impl Scratch {
-    pub const fn new() -> Self {
-        Scratch {
+impl Tables {
+    pub(super) const fn new() -> Self {
+        Tables {
             simples: Vec::new(),
             compounds: Vec::new(),
             top: Vec::new(),
             alts: Vec::new(),
             pending: Vec::new(),
+        }
+    }
+}
+
+impl<H: Host> Scratch<H> {
+    pub const fn new() -> Self {
+        Scratch {
+            tables: Tables::new(),
             names: Vec::new(),
             tasks: Vec::new(),
             at: Vec::new(),
@@ -112,7 +128,7 @@ impl Scratch {
     }
 }
 
-impl Default for Scratch {
+impl<H: Host> Default for Scratch<H> {
     fn default() -> Self {
         Scratch::new()
     }

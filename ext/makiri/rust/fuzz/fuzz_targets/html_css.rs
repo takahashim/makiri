@@ -34,6 +34,7 @@ mod common;
 use common::*;
 use makiri::css_match::{matches_any, select_all, select_first, Scratch};
 use makiri::gvl::Gvl;
+use makiri::html::dom::css::HtmlHost;
 use makiri::html_dom::html::HtmlNode;
 use makiri::html_dom::post_parse::parse_html;
 use makiri::html_dom::tree_guard::DepthLimit;
@@ -75,7 +76,7 @@ fuzz_target!(|data: &[u8]| {
 
 /// The walking query and the one-candidate query agree (module doc). False
 /// when a query refused, so the caller stops.
-fn check(root: HtmlNode<'_>, groups: Lists<'_>, scratch: &mut Scratch) -> bool {
+fn check(root: HtmlNode<'_>, groups: Lists<'_>, scratch: &mut Scratch<HtmlHost>) -> bool {
     let Ok(all) = select_all(scratch, root, groups) else {
         return false;
     };
@@ -90,7 +91,7 @@ fn check(root: HtmlNode<'_>, groups: Lists<'_>, scratch: &mut Scratch) -> bool {
         .filter_map(HtmlNode::element)
         .take(ONE_BY_ONE)
     {
-        let Ok(matched) = matches_any(scratch, groups, el) else {
+        let Ok(matched) = matches_any(scratch, groups, el.node()) else {
             return false;
         };
         assert_eq!(

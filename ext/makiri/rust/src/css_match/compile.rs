@@ -9,7 +9,7 @@ use crate::selectors::ast::{
 
 use core::ffi::c_long;
 
-use super::scratch::{Scratch, Table};
+use super::scratch::{Table, Tables};
 use super::{MatchFailure, MAX_COMPOUNDS};
 
 /// A compound (a `Close`-linked run of simple selectors, `simples[start ..
@@ -176,7 +176,7 @@ pub(super) struct Compiled<'p> {
 /// The tables are `scratch`'s, lent for the query ([`Compiled::give_back`]
 /// returns them).
 pub(super) fn compile<'p>(
-    scratch: &mut Scratch,
+    scratch: &mut Tables,
     groups: Lists<'p>,
 ) -> Result<Compiled<'p>, MatchFailure> {
     let mut c = Compiled {
@@ -209,17 +209,10 @@ pub(super) fn compile<'p>(
     }
 }
 
-/// [`compile`]'s verdict alone, over `scratch`'s tables - for `matches?` on
-/// a node no selector can match, which still refuses a selector the matcher
-/// would refuse.
-pub fn check_compiles(scratch: &mut Scratch, groups: Lists<'_>) -> Result<(), MatchFailure> {
-    compile(scratch, groups).map(|c| c.give_back(scratch))
-}
-
 /// [`compile`]'s verdict alone, for tests that check it without matching.
 #[cfg(all(test, feature = "lexbor"))]
 pub(crate) fn validate(groups: Lists<'_>) -> Result<(), MatchFailure> {
-    compile(&mut Scratch::new(), groups).map(drop)
+    compile(&mut Tables::new(), groups).map(drop)
 }
 
 impl<'p> Compiled<'p> {
@@ -295,7 +288,7 @@ impl<'p> Compiled<'p> {
     }
 
     /// Hand the tables back to `scratch` for the next query.
-    pub(super) fn give_back(self, scratch: &mut Scratch) {
+    pub(super) fn give_back(self, scratch: &mut Tables) {
         self.simples.give_back(&mut scratch.simples);
         self.compounds.give_back(&mut scratch.compounds);
         self.top.give_back(&mut scratch.top);

@@ -142,21 +142,17 @@ fn at_css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Option<Value>, 
 /// `Node#matches?`: does THIS node match? Tested against the node itself, not
 /// its descendants, like Nokogiri. A non-element node (there is no CSS
 /// selector, not even `*`, that an element-only engine can match it with -
-/// see `css_match`'s `Simple::Universal` fix) never matches, without
-/// asking the engine.
+/// see `css_match`'s `Simple::Universal` fix) never matches; the selector is
+/// still compiled, so one the matcher refuses is refused whatever node it is
+/// asked about (`css_match::matches_any`).
 fn matches(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<bool, Error> {
     crate::bridge::ruby::entry(|| {
         let selector = css_args(ruby, args)?;
         let sv = selector_text(selector)?;
         let gvl = held(ruby);
-        let element = this.node().element();
+        let node = this.node();
         let matched = selector_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
-            match element {
-                Some(el) => css_match::matches_any(scratch, groups, el),
-                // Still compiled: a selector the matcher refuses is refused
-                // whatever node it is asked about.
-                None => css_match::check_compiles(scratch, groups).map(|()| false),
-            }
+            css_match::matches_any(scratch, groups, node)
         })
         .map_err(|e| parse_error(e, selector))?;
         drop(sv);

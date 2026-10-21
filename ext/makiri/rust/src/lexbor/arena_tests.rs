@@ -1111,8 +1111,8 @@ fn css_case(input: &[u8], selectors: &[&str]) {
                 continue;
             }
             if let Some(e) = n.element() {
-                let m =
-                    port::matches_any(&mut Scratch::new(), groups.groups(), e).expect("matches");
+                let m = port::matches_any(&mut Scratch::new(), groups.groups(), e.node())
+                    .expect("matches");
                 assert_eq!(m, old.contains(&i), "matches? {sel:?} on node {i}");
             }
         }

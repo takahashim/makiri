@@ -4,11 +4,11 @@
 //! never native recursion (the parent module's doc says why).
 
 use crate::falloc::{OomResult, VecPush};
-use crate::html_dom::html::{HtmlDoc, HtmlNode, TagId};
 use crate::selectors::ast::Combinator;
 use core::ffi::c_long;
 
 use super::compile::{Chain, Compiled, Compound, Nest, Step};
+use super::dom::{CssNode, Host};
 use super::positions::Positions;
 use super::scratch::{recycle, Scratch, SCRATCH_KEEP};
 use super::simple::{anb_matches, check_simple, Name, Names, SimpleCheck};
@@ -25,7 +25,7 @@ use super::{Budget, MatchFailure};
 /// filtering as Lexbor's own forward search
 /// (`lxb_selectors_state_found_check_forward`)/this port's earlier
 /// native-recursive `has_forward`.
-pub(super) enum HasCursor<'doc> {
+pub(super) enum HasCursor<N> {
     /// The combinator can never find anything (`Close` - defensive, per
     /// `Compiled::add_chain`: a compound boundary is always a real
     /// structural combinator, so this is not a real case in practice).
@@ -35,24 +35,24 @@ pub(super) enum HasCursor<'doc> {
     /// bundles the `.skip(1)` this cursor needs to resume mid-walk instead
     /// of re-deriving on every step).
     Subtree {
-        current: HtmlNode<'doc>,
-        root: HtmlNode<'doc>,
+        current: N,
+        root: N,
         /// The next step leaves `current`'s subtree out ([`HasCursor::prune`]).
         past: bool,
     },
     /// `Combinator::Child`: the next child to try.
-    Child(Option<HtmlNode<'doc>>),
+    Child(Option<N>),
     /// `Combinator::NextSibling`: exactly one candidate, taken then spent.
-    NextSibling(Option<HtmlNode<'doc>>),
+    NextSibling(Option<N>),
     /// `Combinator::SubsequentSibling`: the next following sibling to try.
-    SubsequentSibling(Option<HtmlNode<'doc>>),
+    SubsequentSibling(Option<N>),
 }
 
-impl<'doc> HasCursor<'doc> {
+impl<'d, N: CssNode<'d>> HasCursor<N> {
     /// Start searching for `comb`'s candidates from `from`. `Err(Unsupported)`
     /// for the column combinator `||`, exactly as the original `has_forward`
     /// raised it - Lexbor's own traversal cannot run it either.
-    fn start(comb: Combinator, from: HtmlNode<'doc>) -> Result<Self, MatchFailure> {
+    fn start(comb: Combinator, from: N) -> Result<Self, MatchFailure> {
         Ok(match comb {
             Combinator::Descendant => HasCursor::Subtree {
                 current: from,
@@ -71,7 +71,7 @@ impl<'doc> HasCursor<'doc> {
 
     /// The next ELEMENT candidate, or `None` once the search is exhausted -
     /// [`Query::step_forward`] charges the budget for each one.
-    fn next(&mut self) -> Option<HtmlNode<'doc>> {
+    fn next(&mut self) -> Option<N> {
         match self {
             HasCursor::Empty => None,
             HasCursor::Subtree {
@@ -110,7 +110,7 @@ impl<'doc> HasCursor<'doc> {
     }
 }
 
-impl HasCursor<'_> {
+impl<N> HasCursor<N> {
     /// Leave the subtree of the candidate last returned out of the rest of
     /// the walk. Only a [`HasCursor::Subtree`] has candidates inside an
     /// earlier one's subtree; the others are left as they are.
@@ -133,10 +133,10 @@ pub(super) struct Alts {
 /// its simple selectors from `rest` on. `at[at_base + i]` is where compound
 /// `i` currently stands, which is what a backtrack moves on.
 #[derive(Clone, Copy)]
-pub(super) struct ChainTask<'doc> {
+pub(super) struct ChainTask<N> {
     chain: Chain,
     idx: u32,
-    cur: HtmlNode<'doc>,
+    cur: N,
     rest: u32,
     at_base: u32,
 }
@@ -159,10 +159,10 @@ enum Fail {
 /// `*_forward` states): compound `level` tested at `cand`, from simple selector
 /// `rest`; each level's candidates come from `cursors[cur_base + level]`.
 #[derive(Clone, Copy)]
-pub(super) struct ForwardTask<'doc> {
+pub(super) struct ForwardTask<N> {
     chain: Chain,
     level: u32,
-    cand: HtmlNode<'doc>,
+    cand: N,
     rest: u32,
     cur_base: u32,
 }
@@ -173,15 +173,15 @@ pub(super) struct ForwardTask<'doc> {
 /// [`Positions`]' `of_seen` from `seen_base` on, until the list ends or a
 /// sibling whose rank a walking query already knows.
 #[derive(Clone, Copy)]
-pub(super) struct NthOfTask<'doc> {
+pub(super) struct NthOfTask<N> {
     a: c_long,
     b: c_long,
     from_end: bool,
     alts: Alts,
     /// The `of S` simple selector's index: its ranks' memo key.
     sel: u32,
-    candidate: HtmlNode<'doc>,
-    node: HtmlNode<'doc>,
+    candidate: N,
+    node: N,
     seen_base: u32,
     counting: bool,
 }
@@ -193,29 +193,29 @@ pub(super) struct NthOfTask<'doc> {
 /// one pops and hands its `bool` to the one below. Nesting depth is stack
 /// length, never native recursion (module doc).
 #[derive(Clone, Copy)]
-pub(super) enum Task<'doc> {
-    Chain(ChainTask<'doc>),
+pub(super) enum Task<N> {
+    Chain(ChainTask<N>),
     /// Does `node` match one of `alts` (`:is()`/`:where()`, and `S` of `of
     /// S`), or - `negate`, `:not()` - none of them?
     Alternatives {
         alts: Alts,
-        node: HtmlNode<'doc>,
+        node: N,
         negate: bool,
     },
     /// `:has()`: does one of `alts`' forward searches from `anchor` succeed?
     Has {
         alts: Alts,
-        anchor: HtmlNode<'doc>,
+        anchor: N,
     },
-    Forward(ForwardTask<'doc>),
-    NthOf(NthOfTask<'doc>),
+    Forward(ForwardTask<N>),
+    NthOf(NthOfTask<N>),
 }
 
 /// What a task step did: finished with a verdict, or wants `Task` answered
 /// first (and is then resumed with that answer).
-enum Outcome<'doc> {
+enum Outcome<N> {
     Done(bool),
-    Spawn(Task<'doc>),
+    Spawn(Task<N>),
 }
 
 /// A compound's simple selectors checked from some index: settled, or
@@ -231,27 +231,28 @@ enum Check {
 /// from one candidate to the next, so a walk over many candidates allocates
 /// for the deepest match it needed, not once per candidate. Lexbor does the
 /// same with its entry / nested-state pools, reset between candidates.
-pub(super) struct Query<'c, 'p, 'doc> {
+pub(super) struct Query<'c, 'p, 'd, N: CssNode<'d>> {
     compiled: &'c Compiled<'p>,
     /// The simple selectors' names, resolved in the query's document.
-    names: Names,
+    names: Names<N::Host>,
     budget: Budget,
-    tasks: Vec<Task<'doc>>,
+    tasks: Vec<Task<N>>,
     /// [`ChainTask`]s' compound positions.
-    at: Vec<Option<HtmlNode<'doc>>>,
+    at: Vec<Option<N>>,
     /// [`ForwardTask`]s' per-level candidate cursors.
-    cursors: Vec<HasCursor<'doc>>,
+    cursors: Vec<HasCursor<N>>,
     /// Sibling positions counted so far (walking queries only).
     positions: Positions,
     /// The resolved type selector of a lone top-level chain's rightmost
     /// compound: a candidate with another tag is refused before the machine
     /// starts. (Of the walked document, as every candidate is - [`Name`].)
-    tag_filter: Option<Option<TagId>>,
+    tag_filter: Option<Option<<N::Host as Host>::TagId>>,
     /// The document a walking query walks, which its names are resolved in.
-    walked: Option<HtmlDoc<'doc>>,
+    walked: Option<N::Doc>,
+    _doc: core::marker::PhantomData<&'d ()>,
 }
 
-impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
+impl<'c, 'p, 'd, N: CssNode<'d>> Query<'c, 'p, 'd, N> {
     /// A query over `compiled`. With `walk_in`, the query walks that
     /// document: names are resolved lazily ([`Name`]), each the first time a
     /// candidate reaches it, as Lexbor's entries are, and the rightmost type
@@ -261,9 +262,9 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
     /// even resolved lazily, `ul > li.item` 85 -> 117 ns.
     pub(super) fn new(
         compiled: &'c Compiled<'p>,
-        walk_in: Option<HtmlDoc<'doc>>,
+        walk_in: Option<N::Doc>,
         limit: u64,
-        scratch: &mut Scratch,
+        scratch: &mut Scratch<N::Host>,
     ) -> Result<Self, MatchFailure> {
         let mut names = Names::reuse(&mut scratch.names);
         if walk_in.is_some() {
@@ -292,6 +293,7 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
             names,
             tag_filter,
             walked: walk_in,
+            _doc: core::marker::PhantomData,
             budget: Budget {
                 spent: std::cell::Cell::new(0),
                 limit,
@@ -304,7 +306,7 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
     }
 
     /// Hand the names and stacks back to `scratch` for the next query.
-    pub(super) fn finish(self, scratch: &mut Scratch) {
+    pub(super) fn finish(self, scratch: &mut Scratch<N::Host>) {
         self.names.give_back(&mut scratch.names);
         scratch.tasks = recycle(self.tasks, SCRATCH_KEEP);
         scratch.at = recycle(self.at, SCRATCH_KEEP);
@@ -313,7 +315,7 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
     }
 
     /// Does `node` match any top-level alternative?
-    pub(super) fn matches_top(&mut self, node: HtmlNode<'doc>) -> Result<bool, MatchFailure> {
+    pub(super) fn matches_top(&mut self, node: N) -> Result<bool, MatchFailure> {
         // `type_matches`' own verdict, taken before anything else is set up.
         if let Some(id) = self.tag_filter {
             if id.is_none() || node.tag_id() != id {
@@ -332,7 +334,7 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
     /// Run the machine from matching `chain` at `node` to its verdict. The
     /// loop is the WHOLE control flow - no Rust-level recursion anywhere here, however deeply
     /// the selector nests.
-    fn run(&mut self, chain: Chain, node: HtmlNode<'doc>) -> Result<bool, MatchFailure> {
+    fn run(&mut self, chain: Chain, node: N) -> Result<bool, MatchFailure> {
         // The rightmost compound first, with nothing set up: most candidates
         // fail it, and a one-compound chain needs nothing more.
         let idx = chain.len - 1;
@@ -387,7 +389,7 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
     }
 
     /// Give back the side-stack entries a finished `task` held.
-    fn release(&mut self, task: Task<'doc>) {
+    fn release(&mut self, task: Task<N>) {
         match task {
             Task::Chain(t) => self.at.truncate(t.at_base as usize),
             Task::Forward(t) => self.cursors.truncate(t.cur_base as usize),
@@ -401,9 +403,9 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
     /// of the task it spawned.
     fn step(
         &mut self,
-        task: &mut Task<'doc>,
+        task: &mut Task<N>,
         event: Option<bool>,
-    ) -> Result<Outcome<'doc>, MatchFailure> {
+    ) -> Result<Outcome<N>, MatchFailure> {
         match task {
             Task::Chain(t) => self.step_chain(t, event),
             Task::Alternatives { alts, node, negate } => {
@@ -451,11 +453,7 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
     }
 
     /// A [`ChainTask`] matching `chain` (non-empty) at `node`.
-    fn chain_task(
-        &mut self,
-        chain: Chain,
-        node: HtmlNode<'doc>,
-    ) -> Result<ChainTask<'doc>, MatchFailure> {
+    fn chain_task(&mut self, chain: Chain, node: N) -> Result<ChainTask<N>, MatchFailure> {
         let at_base = u32::try_from(self.at.len()).map_err(|_| MatchFailure::Oom)?;
         // Compounds `1 .. len - 1`: a backtrack only ever comes back to
         // those (never to the first, never to the last).
@@ -473,11 +471,7 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
     }
 
     /// A [`ForwardTask`] searching for `chain` (non-empty) from `anchor`.
-    fn forward_task(
-        &mut self,
-        chain: Chain,
-        anchor: HtmlNode<'doc>,
-    ) -> Result<Task<'doc>, MatchFailure> {
+    fn forward_task(&mut self, chain: Chain, anchor: N) -> Result<Task<N>, MatchFailure> {
         let cur_base = u32::try_from(self.cursors.len()).map_err(|_| MatchFailure::Oom)?;
         let cursor = HasCursor::start(self.compiled.compound(chain, 0)?.comb, anchor)?;
         self.cursors.falloc_push(cursor).or_oom()?;
@@ -491,7 +485,7 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
     }
 
     /// The task answering the deferred simple selector `i` at `node`.
-    fn deferred_task(&self, i: u32, node: HtmlNode<'doc>) -> Result<Task<'doc>, MatchFailure> {
+    fn deferred_task(&self, i: u32, node: N) -> Result<Task<N>, MatchFailure> {
         let sel = self
             .compiled
             .simples
@@ -525,12 +519,7 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
     /// loop on purpose: the branch there, never taken by a flat compound,
     /// still cost plain scans ~10% (`.item`, `main a`).
     #[inline]
-    fn check(
-        &mut self,
-        compound: Compound,
-        mut from: u32,
-        node: HtmlNode<'doc>,
-    ) -> Result<Check, MatchFailure> {
+    fn check(&mut self, compound: Compound, mut from: u32, node: N) -> Result<Check, MatchFailure> {
         loop {
             let i = match self.check_compound(compound, from, node)? {
                 Check::Defer(i) => i,
@@ -559,7 +548,7 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
         &mut self,
         compound: Compound,
         from: u32,
-        node: HtmlNode<'doc>,
+        node: N,
     ) -> Result<Check, MatchFailure> {
         let compiled = self.compiled;
         let steps = compiled
@@ -582,7 +571,7 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
     /// first time; `Name::None` in a query that compares names as bytes
     /// (it keeps no slots - `Query::new`).
     #[inline]
-    fn name(&mut self, i: u32, sel: &Step<'_>) -> Name {
+    fn name(&mut self, i: u32, sel: &Step<'_>) -> Name<N::Host> {
         match (self.names.get_mut(i as usize), self.walked) {
             (Some(slot @ Name::Unresolved), Some(doc)) => {
                 *slot = Name::resolve(sel, doc);
@@ -598,11 +587,7 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
     /// `Alternatives` task would do, without the task. Every alternative
     /// tried charges the budget, as [`Query::next_alternative`] does.
     #[inline(never)]
-    fn inline_alternatives(
-        &mut self,
-        sel: &Step<'_>,
-        node: HtmlNode<'doc>,
-    ) -> Result<bool, MatchFailure> {
+    fn inline_alternatives(&mut self, sel: &Step<'_>, node: N) -> Result<bool, MatchFailure> {
         let Nest::List { negate } = sel.nest else {
             return Err(MatchFailure::Internal); /* only a list is inline */
         };
@@ -631,7 +616,7 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
         Ok(negate)
     }
 
-    fn set_at(&mut self, i: u32, node: HtmlNode<'doc>) {
+    fn set_at(&mut self, i: u32, node: N) {
         if let Some(slot) = self.at.get_mut(i as usize) {
             *slot = Some(node);
         }
@@ -657,9 +642,9 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
     /// match of `i` can have led to.
     fn step_chain(
         &mut self,
-        t: &mut ChainTask<'doc>,
+        t: &mut ChainTask<N>,
         event: Option<bool>,
-    ) -> Result<Outcome<'doc>, MatchFailure> {
+    ) -> Result<Outcome<N>, MatchFailure> {
         let compiled = self.compiled;
         let compounds = compiled
             .compounds
@@ -775,9 +760,9 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
     /// (`lxb_selectors_state_found_check_forward`).
     fn step_forward(
         &mut self,
-        t: &mut ForwardTask<'doc>,
+        t: &mut ForwardTask<N>,
         event: Option<bool>,
-    ) -> Result<Outcome<'doc>, MatchFailure> {
+    ) -> Result<Outcome<N>, MatchFailure> {
         let mut resumed = event;
         loop {
             let from = match resumed.take() {
@@ -849,9 +834,9 @@ impl<'c, 'p, 'doc> Query<'c, 'p, 'doc> {
     /// S` in a walking query, not once per candidate.
     fn step_nth_of(
         &mut self,
-        t: &mut NthOfTask<'doc>,
+        t: &mut NthOfTask<N>,
         event: Option<bool>,
-    ) -> Result<Outcome<'doc>, MatchFailure> {
+    ) -> Result<Outcome<N>, MatchFailure> {
         match event {
             None => {
                 if let Some((rank, in_s)) = self.positions.of_rank(t.sel, t.candidate) {

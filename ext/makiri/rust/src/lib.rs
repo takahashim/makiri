@@ -75,8 +75,9 @@ pub mod gvl;
 /// The CSS matcher behind `Node#css`/`#at_css`/`#matches?`
 /// (`glue::html_node::css`, via `lexbor::selector_cache`): Lexbor's
 /// `lxb_selectors_*` control flow in safe Rust, on an explicit heap work
-/// stack rather than native recursion, over the selector parser's views.
-#[cfg(feature = "html-dom")]
+/// stack rather than native recursion, over the selector parser's views and
+/// any DOM that implements its traits (`css_match::dom`). Ruby- and
+/// Lexbor-free, like the engine.
 pub mod css_match;
 
 /// The CSS selector front end: lowers a selector list parsed by the port

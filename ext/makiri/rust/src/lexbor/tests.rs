@@ -458,7 +458,7 @@ mod css_match {
     }
 
     fn matches_any(groups: Lists<'_>, element: HtmlElement<'_>) -> Result<bool, MatchFailure> {
-        crate::compat::as_lexbor(|| port::matches_any(&mut Scratch::new(), groups, element))
+        crate::compat::as_lexbor(|| port::matches_any(&mut Scratch::new(), groups, element.node()))
     }
 
     /// A document the tests query: Lexbor's parse, and its arena copy, which
