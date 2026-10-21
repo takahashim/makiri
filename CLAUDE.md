@@ -540,7 +540,10 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            css and matches? agree, html_css_diff = the same
                            matcher against Lexbor's own engine, html_diff =
                            the ported tree builder against Lexbor's tree,
-                           documents and fragments, selector_diff /
+                           documents and fragments - with their
+                           serializations and the depth guard's verdicts -
+                           html_xpath_diff = XPath's arena `Dom` against
+                           its Lexbor one, selector_diff /
                            stylesheet_diff = the ported selector / stylesheet
                            parser against Lexbor's; built on
                            PRs, run nightly. css-match.yml owns the two

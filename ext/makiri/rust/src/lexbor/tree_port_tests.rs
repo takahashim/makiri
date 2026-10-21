@@ -1,6 +1,7 @@
 //! The ported tree builder against Lexbor's: `lexbor::tree_diff`'s dumps of
 //! both parses must be equal, on hand-picked, WPT and random inputs, for
-//! documents and fragments, with the parse guard's verdicts alike.
+//! documents and fragments, with the parse guard's verdicts alike - and on
+//! the random inputs, under a random small limit too, and serialized alike.
 
 #![allow(
     clippy::disallowed_methods,
@@ -104,7 +105,7 @@ fn the_dump_sees_the_tree() {
 }
 
 /// xorshift64*, seeded, so a failure names its seed.
-struct Rng(u64);
+pub(crate) struct Rng(pub(crate) u64);
 
 impl Rng {
     fn next(&mut self) -> u64 {
@@ -113,7 +114,7 @@ impl Rng {
         self.0 ^= self.0 >> 27;
         self.0.wrapping_mul(0x2545_F491_4F6C_DD1D)
     }
-    fn below(&mut self, n: usize) -> usize {
+    pub(crate) fn below(&mut self, n: usize) -> usize {
         (self.next() % n.max(1) as u64) as usize
     }
     fn pick<'a, T>(&mut self, v: &'a [T]) -> &'a T {
@@ -288,7 +289,7 @@ const OTHERS: &[&str] = &[
 ];
 
 /// A random input from tag, attribute, text and markup fragments.
-fn random_input(rng: &mut Rng) -> String {
+pub(crate) fn random_input(rng: &mut Rng) -> String {
     let mut s = String::new();
     let n = 1 + rng.below(30);
     for _ in 0..n {
@@ -332,7 +333,13 @@ fn the_port_builds_lexbors_tree_on_random_inputs() {
     for seed in seed0..seed0 + count {
         let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
         let input = random_input(&mut rng);
-        if let Err(e) = check(input.as_bytes(), true) {
+        /* Drawn after the input, so a seed still names the same input. */
+        let limit = DepthLimit::at_most(rng.below(32) + 1);
+        let bytes = input.as_bytes();
+        if let Err(e) = check(bytes, true)
+            .and_then(|()| check_serialization(bytes))
+            .and_then(|()| check_verdict(bytes, limit))
+        {
             failures.push(format!("seed {seed}: {input:?}\n{e}"));
             if failures.len() >= 5 {
                 break;
@@ -523,7 +530,12 @@ fn the_port_parses_random_fragments_as_lexbor_does() {
         let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
         let ctx = *rng.pick(CONTEXTS);
         let input = random_input(&mut rng);
-        if let Err(e) = check_fragment(input.as_bytes(), ctx) {
+        let limit = DepthLimit::at_most(rng.below(32) + 1);
+        let bytes = input.as_bytes();
+        if let Err(e) = check_fragment(bytes, ctx)
+            .and_then(|()| check_fragment_serialization(bytes, ctx))
+            .and_then(|()| check_fragment_verdict(bytes, ctx, limit))
+        {
             failures.push(format!("seed {seed} in {ctx}: {input:?}\n{e}"));
             if failures.len() >= 5 {
                 break;

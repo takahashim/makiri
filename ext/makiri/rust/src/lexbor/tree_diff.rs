@@ -348,3 +348,182 @@ pub fn offsets_name_their_tags(input: &[u8]) -> Result<(), String> {
     }
     Ok(())
 }
+
+/* ---------- serialization ---------- */
+
+/// Up to this many nodes of a tree are serialized in every form; a larger
+/// tree is sampled evenly, so a deep one does not make the check quadratic.
+const SERIALIZED_NODES: usize = 64;
+
+fn serial_text(b: Option<crate::cbuf::Buf>) -> String {
+    match b {
+        Some(b) => String::from_utf8_lossy(b.as_slice()).into_owned(),
+        None => "<none>".into(),
+    }
+}
+
+/// Every form (`deep`, `pretty`) Lexbor's serializer writes for `n`.
+fn forms_by_lexbor(n: crate::lexbor::adapter::html::HtmlNode<'_>) -> [String; 4] {
+    [(false, false), (true, false), (false, true), (true, true)]
+        .map(|(deep, pretty)| serial_text(crate::lexbor::serialize::serialize(n, deep, pretty)))
+}
+
+/// The same four forms from the arena's serializer, run as Lexbor serialized.
+fn forms_by_port(n: crate::html::dom::HtmlNode<'_>) -> [String; 4] {
+    use crate::html::dom::serialize::{serialize, Layout, Scope};
+    [
+        (Scope::Outer, Layout::Plain),
+        (Scope::Inner, Layout::Plain),
+        (Scope::Outer, Layout::Pretty),
+        (Scope::Inner, Layout::Pretty),
+    ]
+    .map(|(scope, layout)| serial_text(as_lexbor(|| serialize(n, scope, layout))))
+}
+
+fn compare_forms(what: &str, l: [String; 4], p: [String; 4]) -> Result<(), String> {
+    const FORMS: [&str; 4] = ["outer", "inner", "outer pretty", "inner pretty"];
+    for ((l, p), form) in l.iter().zip(&p).zip(FORMS) {
+        if l != p {
+            return Err(format!(
+                "{form} serialization of {what} differs\n--- lexbor\n{l:?}\n--- port\n{p:?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Whether the port's tree for `input`, parsed and serialized as Lexbor ran,
+/// serializes as Lexbor's does - the document and a spread of its nodes, in
+/// every form. [`check`] holds the trees equal; this holds the serializer to
+/// Lexbor's over the same arbitrary trees, where `lexbor::arena_tests` has
+/// only hand-written and WPT inputs.
+pub fn check_serialization(input: &[u8]) -> Result<(), String> {
+    use crate::html::dom::HtmlDoc as ArenaDoc;
+    let Ok(lp) = parse_html(input, false, DepthLimit::UNLIMITED) else {
+        return Ok(());
+    };
+    let Some(pp) =
+        as_lexbor(|| crate::html::tree::parse_html(input, false, DepthLimit::UNLIMITED).ok())
+    else {
+        return Ok(());
+    };
+    let l: Vec<_> = lp.doc().as_node().subtree_with_contents().collect();
+    let a: Vec<_> = ArenaDoc::of(pp.arena())
+        .as_node()
+        .subtree_with_contents()
+        .collect();
+    if l.len() != a.len() {
+        return Err(format!(
+            "the walks differ: {} and {} nodes",
+            l.len(),
+            a.len()
+        ));
+    }
+    let stride = l.len().div_ceil(SERIALIZED_NODES).max(1);
+    for i in (0..l.len()).step_by(stride) {
+        compare_forms(
+            &format!("node {i} ({:?})", l[i].node_type()),
+            forms_by_lexbor(l[i]),
+            forms_by_port(a[i]),
+        )?;
+    }
+    Ok(())
+}
+
+/// [`check_serialization`] of a fragment: its contents, as `innerHTML` reads
+/// them, both plain and pretty.
+pub fn check_fragment_serialization(input: &[u8], context: &str) -> Result<(), String> {
+    use crate::html::dom::serialize::{serialize, Layout, Scope};
+    use crate::html::dom::{HtmlDoc as ArenaDoc, RawNode};
+    use crate::html::tree::guard::ContextOptions;
+    use crate::lexbor::adapter::html as lex;
+    use crate::lexbor::adapter::tree_guard::OptionContext;
+    let (tag, ns) = context_ids(context);
+    let is_select =
+        tag == crate::html::res::names::TAG_SELECT && ns == crate::html::res::names::NS_HTML;
+    let at = crate::lexbor::fragment::FragmentTag {
+        tag: lex::TagId::from_raw(tag).unwrap(),
+        ns: lex::NsId::from_raw(ns),
+    };
+    let Ok(lf) = crate::lexbor::fragment::TransientFragment::parse_standalone(
+        input,
+        false,
+        Some(at),
+        OptionContext::Resolved {
+            fresh: is_select,
+            after_optgroup: is_select,
+        },
+        DepthLimit::UNLIMITED,
+    ) else {
+        return Ok(());
+    };
+    let Ok(pf) = as_lexbor(|| {
+        crate::html::tree::parse_fragment(
+            input,
+            false,
+            tag,
+            ns,
+            ContextOptions {
+                fresh: is_select,
+                after_optgroup: is_select,
+            },
+            crate::html::tree::ContextFacts::default(),
+            DepthLimit::UNLIMITED,
+        )
+    }) else {
+        return Ok(());
+    };
+    let root = ArenaDoc::of(&pf.doc).node(RawNode::new(pf.doc.stamp(), pf.root));
+    for pretty in [false, true] {
+        let l = serial_text(lf.with_root(|r| crate::lexbor::serialize::serialize(r, true, pretty)));
+        let layout = if pretty {
+            Layout::Pretty
+        } else {
+            Layout::Plain
+        };
+        let p = serial_text(as_lexbor(|| serialize(root, Scope::Inner, layout)));
+        if l != p {
+            return Err(format!(
+                "fragment serialization (pretty {pretty}) in {context} differs\n--- lexbor\n{l:?}\n--- port\n{p:?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/* ---------- the guard ---------- */
+
+/// Whether both parsers accept `input` as a document under `limit`, or
+/// refuse it the same way. [`check`] runs unlimited, so a refusal on one
+/// side only is never a difference there; this is where it is one.
+pub fn check_verdict(input: &[u8], limit: DepthLimit) -> Result<(), String> {
+    let l = parse_html(input, false, limit).map(|_| ());
+    let p = as_lexbor(|| crate::html::tree::parse_html(input, false, limit).map(|_| ()));
+    if l == p {
+        Ok(())
+    } else {
+        Err(format!("under {limit:?}: lexbor {l:?}, port {p:?}"))
+    }
+}
+
+/// [`check_verdict`] for a fragment in `context`; where both accept, the
+/// trees must agree too.
+pub fn check_fragment_verdict(
+    input: &[u8],
+    context: &str,
+    limit: DepthLimit,
+) -> Result<(), String> {
+    let (tag, ns) = context_ids(context);
+    let l = lexbor_fragment(input, tag, ns, limit);
+    let p = as_lexbor(|| port_fragment(input, tag, ns, limit));
+    match (l, p) {
+        (Ok(l), Ok(p)) if l == p => Ok(()),
+        (Ok(l), Ok(p)) => Err(format!("under {limit:?}\n{}", first_difference(&l, &p))),
+        (Err(_), Err(_)) => Ok(()),
+        (l, p) => Err(format!(
+            "under {limit:?}: lexbor {:?}, port {:?}",
+            l.err(),
+            p.err()
+        )),
+    }
+}

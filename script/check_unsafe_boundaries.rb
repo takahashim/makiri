@@ -81,6 +81,7 @@ UNSAFE_ISLANDS = {
   "lexbor/stylesheet_diff.rs" => 5,
   "lexbor/tests.rs" => 5,
   "lexbor/xpath.rs" => 9,
+  "lexbor/xpath_diff.rs" => 2,
   "source_lines.rs" => 1,
   "token.rs" => 1,
 }.freeze
@@ -554,10 +555,11 @@ Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
   relative = path.delete_prefix("#{RUST}/")
   next unless relative.start_with?(*ENGINE_DIRS)
   next if relative.end_with?("selftest.rs", "verify.rs", "tests.rs")
-  # Built only for the tests and the `html_diff` / `selector_diff` /
-  # `stylesheet_diff` fuzz targets (`lexbor-reference`), never in a build
-  # that ships - test files by another name.
-  next if %w[lexbor/tree_diff.rs lexbor/selector_diff.rs lexbor/stylesheet_diff.rs].include?(relative)
+  # Built only for the tests and the `html_diff` / `html_xpath_diff` /
+  # `selector_diff` / `stylesheet_diff` fuzz targets (`lexbor-reference`),
+  # never in a build that ships - test files by another name.
+  next if %w[lexbor/tree_diff.rs lexbor/xpath_diff.rs lexbor/selector_diff.rs
+             lexbor/stylesheet_diff.rs].include?(relative)
   # A `#[cfg(test)]` module of its own (`pub mod conformance` is declared
   # under `#[cfg(test)]` in html/dom/mod.rs), a test file by another name.
   next if relative == "html/dom/conformance.rs"

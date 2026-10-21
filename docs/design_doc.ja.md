@@ -327,8 +327,9 @@ hang なし) ことを assertする。
 cargo-fuzz の harness (`ext/makiri/rust/fuzz/`) は Ruby なしで engine を
 叩く。壊れないことを見るもの (`html`、`xml`、`xpath`、`xml_xpath`、
 `html_xpath`、`css`、`html_css`) に加えて、参照実装との一致を見る差分
-harness を持つ: `html_diff` (移植版の tree builder と Lexbor の木)、
-`selector_diff` (移植版と Lexbor のセレクタ解析)、`html_css_diff` (自前の
+harness を持つ: `html_diff` (移植版の tree builder と Lexbor の木、その
+直列化、深さの上限の判定)、`html_xpath_diff` (XPath のアリーナの `Dom` と
+Lexbor の `Dom`)、`selector_diff` (移植版と Lexbor のセレクタ解析)、`html_css_diff` (自前の
 matcher と Lexbor の matcher)。参照実装は `lexbor-reference` /
 `css-reference` フィーチャでだけ link する。
 
