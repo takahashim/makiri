@@ -173,7 +173,7 @@ pub fn import_node(rb_self: Value, node_v: Value, deep: bool) -> Result<Value, E
         let xdoc = doc_of(xml_node_document(node_v)?);
         let src = xml_node_unwrap(node_v)?;
         // SAFETY: a live arena of another document, read for the call.
-        let xdoc = unsafe { &*xdoc };
+        let xdoc = unsafe { xdoc.as_ref() };
         let imp = new_node(&rb_self, |d| d.import_xml(xdoc, src, deep))?;
         return wrap_html_node(xml_mut_result(imp)?, rb_self);
     }

@@ -17,7 +17,7 @@ use magnus::rb_sys::AsRawValue;
 use crate::bridge::ruby::makiri_error;
 use magnus::{Error, Value};
 
-use crate::bridge::dom::DocPtr;
+use crate::bridge::dom::{DocPtr, XmlDocPtr};
 use crate::bridge::ruby::{value, VALUE};
 use crate::bridge::typed::{Held, Hooks, Tracer, TypedType};
 use crate::child_index::{ChildList, ChildPositionMemo, Children, TokenTree};
@@ -728,11 +728,11 @@ pub(in crate::bridge) fn doc_content_known(rb_doc: Value) -> Content {
     DOC_TYPE.get_known(&rb_doc).content.get()
 }
 
-/// The XML arena of a Document, or null when it is not an XML one.
-pub(in crate::bridge) fn xml_arena_known(rb_doc: Value) -> *mut XmlDoc {
+/// The XML arena of a Document, or `None` when it is not an XML one.
+pub(in crate::bridge) fn xml_arena_known(rb_doc: Value) -> Option<XmlDocPtr> {
     match doc_content_known(rb_doc) {
-        Content::Xml(d) => d.as_ptr(),
-        _ => core::ptr::null_mut(),
+        Content::Xml(d) => Some(XmlDocPtr::new(d)),
+        _ => None,
     }
 }
 

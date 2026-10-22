@@ -21,6 +21,7 @@ use magnus::rb_sys::AsRawValue;
 use crate::bridge::ruby::makiri_error;
 use magnus::{prelude::*, Error, Value};
 
+use crate::bridge::dom::XmlDocPtr;
 use crate::bridge::html::with_arg_node;
 use crate::bridge::ruby::{check_frozen, is_kind_of};
 use crate::bridge::string::{ruby_verified_text, RubyText};
@@ -130,8 +131,8 @@ impl ChildListHost for XmlSelf {
 pub fn xml_node_unwrap(rb_self: Value) -> Result<NodeId, Error> {
     if crate::bridge::ruby::is_kind_of(rb_self, &CLASS_XML_DOCUMENT) {
         XML_DOC_TYPE.get(&rb_self)?; /* TypeError for any other Document */
-        // SAFETY: the arena a live XML Document owns.
-        return Ok(unsafe { (*doc_of(rb_self)).doc_node() });
+        // SAFETY: the arena a live XML Document owns, read for the call.
+        return Ok(unsafe { doc_of(rb_self).as_ref() }.doc_node());
     }
     let nd: &NodeData = XML_NODE_TYPE.get(&rb_self)?;
     /* A wrapper's word is a real node; a null one is a broken invariant. It
@@ -149,7 +150,7 @@ pub fn xml_node_unwrap(rb_self: Value) -> Result<NodeId, Error> {
 /// The XML arena behind a value checked to be an XML Document:
 /// `Err(TypeError)` for anything else. For a receiver not yet established as
 /// one; [`doc_of`] is for a document already known to be.
-pub fn xml_doc_unwrap(rb_doc: Value) -> Result<*mut XmlDoc, Error> {
+pub fn xml_doc_unwrap(rb_doc: Value) -> Result<XmlDocPtr, Error> {
     XML_DOC_TYPE.get(&rb_doc)?;
     Ok(doc_of(rb_doc))
 }
@@ -161,10 +162,12 @@ pub fn xml_doc_unwrap(rb_doc: Value) -> Result<*mut XmlDoc, Error> {
 /// "no arena" case to handle, and a null here is a broken invariant - it
 /// panics (unwinding to `fatal` / `Makiri::InternalError`) rather than being
 /// read through.
-pub fn doc_of(document: Value) -> *mut XmlDoc {
-    let arena = xml_arena_known(document);
-    assert!(!arena.is_null(), "an XML Document without its arena");
-    arena
+#[allow(
+    clippy::expect_used,
+    reason = "an XML Document holds its arena from `install` on, and none is reachable before"
+)]
+pub fn doc_of(document: Value) -> XmlDocPtr {
+    xml_arena_known(document).expect("an XML Document without its arena")
 }
 
 /// The arena behind `document`, borrowed for as long as the caller borrows the
@@ -172,7 +175,7 @@ pub fn doc_of(document: Value) -> *mut XmlDoc {
 fn arena_ref(document: &Value) -> &XmlDoc {
     // SAFETY: the Document's `DocData` owns the arena, alive while `document`
     // is held; only read here.
-    unsafe { &*doc_of(*document) }
+    unsafe { doc_of(*document).as_ref() }
 }
 
 /// The keepalive Document of an XML node. XML-strict: it rejects an HTML node
@@ -229,7 +232,7 @@ impl XmlSelf {
 /// slices it borrowed. Every path that hands out a `&mut` goes through here, so
 /// the one mutation gate covers the factories and the imports as well as the
 /// tree edits.
-fn arena_mut(document: Value) -> Result<*mut XmlDoc, Error> {
+fn arena_mut(document: Value) -> Result<XmlDocPtr, Error> {
     ensure_document_mutable(document)?;
     Ok(doc_of(document))
 }
@@ -321,7 +324,7 @@ pub fn with_arena_for_new_node<R>(
     let xd = arena_mut(document)?;
     // SAFETY: a live arena of `document`, which the caller holds; cleared for
     // writing above, and borrowed only for `f`, which runs no Ruby.
-    Ok(f(unsafe { &mut *xd }))
+    Ok(f(unsafe { xd.edit() }))
 }
 
 /// The receiver cleared for an edit, and the PROOF of it.
@@ -663,14 +666,14 @@ pub fn fragment_into(
     let xdoc = arena_mut(document)?;
     let source = crate::bridge::ruby::string_of(source)?;
     // SAFETY: a live arena; the decode only reads its `max_bytes`.
-    let decoded = xml_decode_input_value(source, Some(unsafe { (*xdoc).max_bytes() }))?;
+    let decoded = xml_decode_input_value(source, Some(unsafe { xdoc.as_ref() }.max_bytes()))?;
     let src = crate::bridge::string::ruby_string_bytes(decoded)?;
     /* ...and checked again: the conversion is arbitrary Ruby, which can start
      * an evaluation that suspends mid-walk (an Enumerator) still holding
      * slices of the arena this parse grows. */
     let xdoc = arena_mut(document)?;
     // SAFETY: the arena is live and mutable for this call, under the GVL.
-    tree::parse_fragment(unsafe { &mut *xdoc }, src.as_slice(), inherit_doc_ns)
+    tree::parse_fragment(unsafe { xdoc.edit() }, src.as_slice(), inherit_doc_ns)
         .map_err(|status| parse_status_error(status, Unit::Fragment))
 }
 
@@ -724,7 +727,7 @@ pub fn find_attribute_ns(this: XmlSelf, ns: Value, local: Value) -> Result<Optio
 /// the source arena and node [`incoming_node`] already resolved, so finishing
 /// cannot fail - there is nothing left to look up.
 struct Adoption {
-    src_doc: *mut XmlDoc,
+    src_doc: XmlDocPtr,
     /// The source's Document, whose tree version the removal bumps.
     src_document: Value,
     src: NodeId,
@@ -753,7 +756,7 @@ impl Adoption {
         // SAFETY: `src_doc` is the live arena `incoming_node` found and cleared
         // for writing; `_keep` holds it, and the caller ran only engine code
         // on the OTHER arena since.
-        let sdoc = unsafe { &mut *self.src_doc };
+        let sdoc = unsafe { self.src_doc.edit() };
         /* Invalidated and recorded before the removal (`record_edit`). */
         sdoc.invalidate_name_index();
         record_edit(self.src_document, EditKind::ChildList);
@@ -828,8 +831,8 @@ fn incoming_node(target_doc: Value, arg: Value) -> Result<(NodeId, Option<Adopti
     // SAFETY: two distinct live arenas (the documents differ), both cleared
     // for writing; the source is only read here.
     let (mark, copied) = unsafe {
-        let dst = &mut *xd;
-        (dst.mark(), import_subtree(dst, &*src_doc, src))
+        let dst = xd.edit();
+        (dst.mark(), import_subtree(dst, src_doc.as_ref(), src))
     };
     let copy = xml_mut_result(copied)?;
     Ok((
@@ -857,10 +860,10 @@ pub fn import_copy(rb_self: Value, node_v: Value, deep: bool) -> Result<NodeId, 
             if src_doc == xd {
                 /* Same arena: the single-`&mut` clone path. */
                 // SAFETY: the target arena, which is the source here.
-                xml_mut_result(unsafe { clone_node(&mut *xd, src, deep) })?
+                xml_mut_result(clone_node(unsafe { xd.edit() }, src, deep))?
             } else {
                 // SAFETY: two distinct live arenas.
-                xml_mut_result(unsafe { copy_node_from(&mut *xd, &*src_doc, src, deep) })?
+                xml_mut_result(unsafe { copy_node_from(xd.edit(), src_doc.as_ref(), src, deep) })?
             }
         }
         NodeRepr::Html => {
@@ -869,7 +872,7 @@ pub fn import_copy(rb_self: Value, node_v: Value, deep: bool) -> Result<NodeId, 
             let copied = with_arg_node(node_v, |src| {
                 // SAFETY: the receiver's live arena - another document than
                 // the source's, so the source's borrow does not overlap it.
-                cross_html_to_xml(unsafe { &mut *xd }, src, deep)
+                cross_html_to_xml(unsafe { xd.edit() }, src, deep)
             })?;
             xml_mut_result(copied)?
         }
