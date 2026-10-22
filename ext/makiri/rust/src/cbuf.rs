@@ -81,6 +81,9 @@ impl OwnedBuf {
     /// used; NUL-terminated there. None on OOM.
     pub fn fill(cap: usize, fill: impl FnOnce(&mut [u8]) -> usize) -> Option<OwnedBuf> {
         let p = NonNull::new(crate::falloc::cstr::str_alloc(cap) as *mut u8)?;
+        // Own the allocation before running user code or checking its result:
+        // either can panic, and unwinding must release the buffer too.
+        let mut owned = OwnedBuf { ptr: p, len: 0 };
         // SAFETY: `p` is `cap + 1` writable bytes nothing else holds yet. This
         // zeroes the first `cap` - so every byte `fill` sees is initialised -
         // and lends exactly those, leaving the terminator byte untouched.
@@ -92,7 +95,8 @@ impl OwnedBuf {
         assert!(len <= cap, "OwnedBuf::fill: wrote past its reservation");
         // SAFETY: `len <= cap`, and byte `cap` exists.
         unsafe { *p.as_ptr().add(len) = 0 };
-        Some(OwnedBuf { ptr: p, len })
+        owned.len = len;
+        Some(owned)
     }
 }
 
@@ -396,7 +400,24 @@ pub(crate) use limits::{BUF_DEFAULT_LIMIT, BUF_HARD_MAX};
 
 #[cfg(test)]
 mod tests {
-    use super::{Buf, BufError};
+    use super::{Buf, BufError, OwnedBuf};
+
+    #[test]
+    fn fill_unwinds_on_callback_panic_or_invalid_length() {
+        assert!(std::panic::catch_unwind(|| {
+            OwnedBuf::fill(32, |_| panic!("fill failed"));
+        })
+        .is_err());
+        assert!(std::panic::catch_unwind(|| OwnedBuf::fill(32, |_| 33)).is_err());
+
+        let owned = OwnedBuf::fill(32, |bytes| {
+            assert!(bytes.iter().all(|&b| b == 0));
+            bytes[..3].copy_from_slice(b"abc");
+            3
+        })
+        .unwrap();
+        assert_eq!(owned.as_slice(), b"abc");
+    }
 
     #[test]
     fn safe_api_appends_and_reserves_without_exposing_storage() {
