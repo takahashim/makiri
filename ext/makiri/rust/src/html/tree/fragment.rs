@@ -173,3 +173,22 @@ impl<'d> TreeBuilder<'d> {
         Ok(tree)
     }
 }
+
+/// An html5lib-format fragment context - `td`, or `svg desc` / `math mi` for a
+/// foreign one - as the tag and namespace ids the fragment parser takes: what
+/// the test data names a context by, read the same way for every parser the
+/// harnesses run. `None` for a namespace the format does not have. A name
+/// with no static id stands in as `div`, as `html::fragment` gives it.
+pub fn context_ids(context: &str) -> Option<(usize, usize)> {
+    use crate::html::res::names as res;
+    let (ns, name) = match context.split_once(' ') {
+        Some(("svg", local)) => (res::NS_SVG, local),
+        Some(("math", local)) => (res::NS_MATH, local),
+        Some(_) => return None,
+        None => (res::NS_HTML, context),
+    };
+    let tag = crate::html::names::Names::default()
+        .tag_id(name.as_bytes())
+        .unwrap_or(res::TAG_DIV);
+    Some((tag, ns))
+}

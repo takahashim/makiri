@@ -1318,7 +1318,7 @@ Key decisions that got there, worth not regressing:
   stage 9's (`docs/rewrite_parser.ja.md`). Verify with
   `spec/css_selector_cache_spec.rb` (flush, bypass/retest, and
   reject-without-disturbing-the-cache) and the Rust-level
-  `lexbor::tests::selector_cache` (the test module keeps the old name).
+  `css_cache::tests`.
 - **`Node#text` is served from the text index** (`lexbor/adapter/text_index.rs`,
   see the subsystem note): a per-document, lazily-built, mutation-invalidated
   map from node → its document-order text-slice run, turning text extraction

@@ -389,7 +389,7 @@ pub fn explains(input: &[u8], context: Option<&str>) -> Vec<Fix> {
     }
     /* P15: a `<sup>` in foreign content - an `<svg>` or `<math>` in the
      * input, or a context in either namespace, which the harnesses name
-     * `svg <local>` / `math <local>` (`tree_diff::context_ids`). */
+     * `svg <local>` / `math <local>` (`html::tree::context_ids`). */
     let foreign_context =
         context.is_some_and(|c| matches!(c.split_once(' '), Some(("svg" | "math", _))));
     if has(input, b"sup") && (has(input, b"svg") || has(input, b"math") || foreign_context) {

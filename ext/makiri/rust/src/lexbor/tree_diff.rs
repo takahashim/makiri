@@ -14,6 +14,7 @@
     clippy::panic
 )]
 
+use crate::html::tree::context_ids;
 use std::fmt::Write as _;
 
 use crate::compat::{as_lexbor, explains};
@@ -192,23 +193,6 @@ pub fn check(input: &[u8], offsets: bool) -> Result<(), String> {
 
 /* ---------- fragments ---------- */
 
-/// A context for both parsers: `td`, or `svg desc` for a foreign one.
-pub fn context_ids(context: &str) -> (usize, usize) {
-    use crate::html::res::names as res;
-    let (ns, name) = match context.split_once(' ') {
-        Some(("svg", local)) => (res::NS_SVG, local),
-        Some(("math", local)) => (res::NS_MATH, local),
-        Some((ns, _)) => panic!("unknown fragment context namespace {ns:?}"),
-        None => (res::NS_HTML, context),
-    };
-    /* A name with no static id stands in as `div`, as
-     * `html::fragment` gives it. */
-    let tag = crate::html::names::Names::default()
-        .tag_id(name.as_bytes())
-        .unwrap_or(res::TAG_DIV);
-    (tag, ns)
-}
-
 pub fn lexbor_fragment(
     input: &[u8],
     tag: usize,
@@ -247,7 +231,7 @@ pub fn port_fragment(
 }
 
 pub fn check_fragment(input: &[u8], context: &str) -> Result<(), String> {
-    let (tag, ns) = context_ids(context);
+    let (tag, ns) = context_ids(context).expect("an html5lib fragment context");
     let l = lexbor_fragment(input, tag, ns, DepthLimit::UNLIMITED);
     let p = as_lexbor(|| port_fragment(input, tag, ns, DepthLimit::UNLIMITED));
     if let (Ok(c), Ok(f)) = (&p, port_fragment(input, tag, ns, DepthLimit::UNLIMITED)) {
@@ -415,7 +399,7 @@ pub fn check_fragment_serialization(input: &[u8], context: &str) -> Result<(), S
     use crate::html::dom::serialize::{serialize, Layout, Scope};
     use crate::html::dom::{HtmlDoc as ArenaDoc, RawNode};
     use crate::lexbor::adapter::html as lex;
-    let (tag, ns) = context_ids(context);
+    let (tag, ns) = context_ids(context).expect("an html5lib fragment context");
     let at = crate::lexbor::fragment::FragmentTag {
         tag: lex::TagId::from_raw(tag).unwrap(),
         ns: lex::NsId::from_raw(ns),
@@ -478,7 +462,7 @@ pub fn check_fragment_verdict(
     context: &str,
     limit: DepthLimit,
 ) -> Result<(), String> {
-    let (tag, ns) = context_ids(context);
+    let (tag, ns) = context_ids(context).expect("an html5lib fragment context");
     let l = lexbor_fragment(input, tag, ns, limit);
     let p = as_lexbor(|| port_fragment(input, tag, ns, limit));
     match (l, p) {

@@ -42,11 +42,15 @@ mod select;
 mod stacks;
 pub(crate) use stacks::Found;
 mod stamp;
+#[cfg(test)]
+mod wpt_tests;
 
 #[cfg(feature = "html-dom")]
 pub use document_bytes::parse_document_bytes;
 pub use error::{TreeError, TreeErrorId};
-pub use fragment::{parse_fragment, ContextElement, ContextFacts, FragmentFailure, ParsedFragment};
+pub use fragment::{
+    context_ids, parse_fragment, ContextElement, ContextFacts, FragmentFailure, ParsedFragment,
+};
 pub use parse::{
     empty_html_document, parse_document, parse_html, parse_with_panicking_hook, HtmlParseError,
     ParseFailure, Parsed,
