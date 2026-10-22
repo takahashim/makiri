@@ -352,9 +352,9 @@ pub fn nodeset_unique_sorted<'e, 'd, D: Dom<'d>>(
     ns.dedup();
 }
 
-#[allow(clippy::disallowed_methods)] /* test inputs */
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::disallowed_methods)] /* test inputs */
     use super::{merge_runs, merge_sort};
     use core::cmp::Ordering;
 

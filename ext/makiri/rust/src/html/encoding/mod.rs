@@ -255,8 +255,8 @@ pub fn decode(bytes: &[u8], encoding: &'static Encoding) -> Option<Vec<u8>> {
 }
 
 #[cfg(test)]
-#[allow(clippy::disallowed_methods)] /* test inputs */
 mod tests {
+    #![allow(clippy::disallowed_methods)] /* test inputs */
     use super::*;
     use crate::html::tree::guard::DepthLimit;
     use encoding_rs::{EUC_JP, ISO_2022_JP, SHIFT_JIS, WINDOWS_1251};
