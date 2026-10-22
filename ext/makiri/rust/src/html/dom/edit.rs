@@ -451,8 +451,7 @@ impl<'d> HtmlDocMut<'d> {
      * it first, with an `ArgumentError`). An empty name the glue
      * refuses first with an `ArgumentError`, so here it is a broken
      * invariant - caught in debug builds, refused in release. They keep the
-     * Lexbor adapter's `Option`, which `lexbor::arena_tests` compares them
-     * with. */
+     * Lexbor adapter's `Option`, the shape they were ported in. */
 
     /// A new element named `local_name` (DOM `createElement`): its tag
     /// lower-cased, in the HTML namespace.

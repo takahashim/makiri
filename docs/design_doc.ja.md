@@ -333,8 +333,7 @@ cargo-fuzz の harness (`ext/makiri/rust/fuzz/`) は Ruby なしで engine を
 叩く。壊れないことを見るもの (`html`、`xml`、`xpath`、`xml_xpath`、
 `html_xpath`、`css`、`html_css`) に加えて、参照実装との一致を見る差分
 harness を持つ: `html_diff` (移植版の tree builder と Lexbor の木、その
-直列化、深さの上限の判定)、`html_xpath_diff` (XPath のアリーナの `Dom` と
-Lexbor の `Dom`)、`selector_diff` (移植版と Lexbor のセレクタ解析)、`html_css_diff` (自前の
+直列化、深さの上限の判定)、`selector_diff` (移植版と Lexbor のセレクタ解析)、`html_css_diff` (自前の
 matcher と Lexbor の matcher)、`css` (XML の matcher と旧来の XPath への
 変換)。参照実装は `lexbor-reference` / `css-reference` /
 `xml-css-reference` フィーチャでだけ link する。
@@ -366,9 +365,10 @@ baseline として固定し、現在のビルドと突き合わせる。baseline
   tokenizer テストを通す。
 * パーサの移植版は Lexbor を参照実装として、WPT の全入力、無作為な文書と
   fragment、実際の Web ページ (web100k、`conformance:web100k`、CI では
-  回さない) で木が一致することを見る (`lexbor::tree_diff`)。index アリーナ
-  は Lexbor アダプタと、読み取り・編集後の状態・シリアライズのバイト列・
-  fragment・XPath・CSS で一致することを見る (`lexbor::arena_tests`)。
+  回さない) で木が一致することを見る (`lexbor::tree_diff`)。移行期に
+  index アリーナを Lexbor アダプタと読み取り・編集・XPath で照合していた
+  検査（`lexbor::arena_tests`、`html_xpath_diff`）は、arena が唯一の実装に
+  なったので退役した。
   セレクタパーサの移植版は Lexbor の解析結果と一致することを見る
   (`lexbor::selector_diff`)。
 * ブラウザ (Chromium、Firefox、WebKit) は証拠として使い、合格基準には

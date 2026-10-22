@@ -212,7 +212,7 @@ P で始まる項目は HTML パーサの振る舞いである。
 - **分類**：参照実装の未対応（監査の foreign F7）。移植版で直した（第 8 段）。
 - **仕様**：fragment の直列化の step 1。node が serializes as void なら空文字列を返す。
 - **再現**：DOM の操作で `<br>` に text を足し、`inner_html` を読む。仕様では `""`。Lexbor は node の種類を見ずに子を書くので `"x"`。`to_html`（`<br>`）は前から一致していた。
-- **移植版**：`html/dom/serialize.rs` の `write` が、子だけを書く形（`deep`）で void の要素に何も書かない。parser はこの形を作らないので、`lexbor::arena_tests` は直列化を Lexbor の答え（`as_lexbor`）で比べる。
+- **移植版**：`html/dom/serialize.rs` の `write` が、子だけを書く形（`deep`）で void の要素に何も書かない。parser はこの形を作らないので、`html_diff` の直列化の比較は Lexbor の答え（`as_lexbor`）で比べる。
 - **テスト**：WPT にない。`spec/html_standard_steps_spec.rb`。
 
 ### R2 接頭辞のある HTML、SVG、MathML の要素の名前
@@ -236,7 +236,7 @@ P で始まる項目は HTML パーサの振る舞いである。
 - **分類**：参照実装の未対応（DOM の操作）。移植版で直した。
 - **仕様**：属性の名前空間は、属性を作ったときに決まり、要素に付けても外しても変わらない。`setAttributeNS(ns, "x")` は、名前空間 `ns` と local name `x` の属性があればその値を書き換える。
 - **再現**：`<div>` に `set_attribute_ns(XHTML, "x", "1")` を二度。仕様では属性は一つ。Lexbor は属性の名前空間を持たず、接頭辞があるか要素の名前空間と違うときだけ名前空間ありと読むので、要素と同じ名前空間の属性は「名前空間なし」になり、二度目は見つからずに属性が二つになる。また `set_attribute_ns(SVG, "y")` で作った属性を外すと、要素がなくなるので名前空間が nil に変わる。
-- **移植版**：`html/dom/mod.rs` の `AttrData::own_ns` が名前空間を持つ。DOM の操作で作った属性は作るときに、パーサが作った属性は最初に要素に付けたときに Lexbor の規則で決め、以後は変えない。パースの結果は変わらない。比較のテスト（`lexbor::arena_tests` の編集の列）は Lexbor 互換の実行で Lexbor の規則を保つ。
+- **移植版**：`html/dom/mod.rs` の `AttrData::own_ns` が名前空間を持つ。DOM の操作で作った属性は作るときに、パーサが作った属性は最初に要素に付けたときに Lexbor の規則で決め、以後は変えない。パースの結果は変わらない。Lexbor 互換の実行（`as_lexbor`）では Lexbor の規則を保つ。
 - **テスト**：WPT にない。`spec/attribute_dom_algorithms_spec.rb`。
 
 ### L1 ソース位置の規則

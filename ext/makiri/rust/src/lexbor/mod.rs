@@ -25,9 +25,6 @@ pub mod conformance_tests;
 mod res_tests;
 
 #[cfg(all(test, feature = "lexbor"))]
-mod arena_tests;
-
-#[cfg(all(test, feature = "lexbor"))]
 pub(crate) mod tree_port_tests;
 
 #[cfg(all(test, feature = "lexbor"))]
@@ -45,11 +42,6 @@ pub mod tree_diff;
     any(test, all(feature = "lexbor-reference", not(feature = "ruby")))
 ))]
 pub mod selector_diff;
-
-/// XPath's HTML instance over the arena against the one over Lexbor's DOM,
-/// for its randomized test and the `html_xpath_diff` fuzz target.
-#[cfg(all(feature = "lexbor", any(test, feature = "lexbor-reference")))]
-pub mod xpath_diff;
 
 /// A Lexbor document beside its arena copy, node for node: how the CSS
 /// matcher, which takes arena nodes, is held to Lexbor's own engine.
@@ -97,10 +89,6 @@ pub mod serialize;
     any(test, all(feature = "lexbor-reference", not(feature = "ruby")))
 ))]
 pub mod stylesheet_diff;
-
-/// The XPath engine's HTML backend (`Dom` for a Lexbor document).
-#[cfg(feature = "lexbor")]
-pub mod xpath;
 
 /// What Lexbor's CSS users share: the owner of a Lexbor object and the
 /// selector parser wired to its arena. Reference builds only.

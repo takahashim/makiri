@@ -20,8 +20,7 @@ path = ".."
 default-features = false
 # `css-reference` adds the OLD CSS engine, the reference `html_css_diff`
 # compares against, and `lexbor-reference` Lexbor's tree, the reference
-# `html_diff` compares the ported tree builder against, and its DOM, which
-# `html_xpath_diff` holds the arena's XPath instance to (and Lexbor's selector
+# `html_diff` compares the ported tree builder against (and Lexbor's selector
 # and stylesheet parsers beside the ports, for `selector_diff` and
 # `stylesheet_diff`), and `xml-css-reference` the CSS-to-XPath lowering the
 # `css` target holds the XML matcher to; none ships in any build of the
@@ -87,13 +86,6 @@ bench = false
 [[bin]]
 name = "html_diff"
 path = "fuzz_targets/html_diff.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "html_xpath_diff"
-path = "fuzz_targets/html_xpath_diff.rs"
 test = false
 doc = false
 bench = false

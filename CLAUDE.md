@@ -558,8 +558,7 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            the ported tree builder against Lexbor's tree,
                            documents and fragments - with their
                            serializations and the depth guard's verdicts -
-                           html_xpath_diff = XPath's arena `Dom` against
-                           its Lexbor one, selector_diff /
+                           selector_diff /
                            stylesheet_diff = the ported selector / stylesheet
                            parser against Lexbor's; built on
                            PRs, run nightly. css-match.yml owns the two
@@ -591,10 +590,11 @@ CSS-to-XPath lowering `crate::css`, for the `css` fuzz target; no Lexbor). A
 plain `cargo build` is the shipping
 configuration; `rake rust:test` runs the engine alone, `html-dom` and
 `lexbor`. Lexbor's DOM is not an extension build any more
-(`MAKIRI_LEXBOR_DOM=1` was retired in stage 9): `lexbor::arena_tests` holds
-the arena to it read for read, edit for edit, byte for byte,
-`lexbor::tree_port_tests` holds the tree builder to Lexbor's tree node for
-node, and the matcher is held to Lexbor's own engine over an arena copy of
+(`MAKIRI_LEXBOR_DOM=1` was retired in stage 9; the tests that held the
+arena's edits and XPath to Lexbor's DOM retired with the migration):
+`lexbor::tree_port_tests` and the `html_diff` fuzz target hold the tree
+builder - and its serializations - to Lexbor's tree node for node, and the
+matcher is held to Lexbor's own engine over an arena copy of
 Lexbor's parse, node for node by walk position (`lexbor::twin`). The arena's
 byte store is append-only between compactions: an edit's start
 (`HtmlParsed::edit`, after the indexes - which hold spans - are dropped)
@@ -609,8 +609,8 @@ migration scaffolding, one per ported C file, and went with the C.
 ## Subsystems
 
 The HTML DOM below is the arena (`html::dom`, behind the `html_dom` facade,
-parsed by `html::tree`); Lexbor's DOM is only the reference it is held to
-(`lexbor::arena_tests`, `lexbor::tree_port_tests`).
+parsed by `html::tree`); Lexbor's tree is only the reference the parser is
+held to (`lexbor::tree_port_tests`, `html_diff`).
 
 **Text-input contract.** A DOCUMENT parse decodes its bytes as a browser
 does (`html::encoding` decides, `html::tree::parse_document_bytes` drives):
@@ -1078,8 +1078,8 @@ process-wide mutex; it does not exist in the extension build.
 **Serialization** (`html/dom/serialize.rs`). `Node#{to_html,to_s,outer_html}`
 and `#inner_html` are one iterative walk over the arena (`write`), byte for
 byte what Lexbor's serializers write but for the documented departures (R1,
-R2) - `lexbor::arena_tests` and the `html_diff` fuzz target
-(`tree_diff::check_serialization`) hold it there: a `<template>` writes its CONTENTS,
+R2) - the `html_diff` fuzz target (`tree_diff::check_serialization`) holds
+it there: a `<template>` writes its CONTENTS,
 not its own children, as the HTML Standard's fragment serializing does;
 text is written raw only inside the elements the Standard names
 (`raw_text`); the void test reads the tag id (`shape`). `pretty: true` is

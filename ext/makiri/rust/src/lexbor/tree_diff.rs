@@ -358,8 +358,7 @@ fn compare_forms(what: &str, l: [String; 4], p: [String; 4]) -> Result<(), Strin
 /// Whether the port's tree for `input`, parsed and serialized as Lexbor ran,
 /// serializes as Lexbor's does - the document and a spread of its nodes, in
 /// every form. [`check`] holds the trees equal; this holds the serializer to
-/// Lexbor's over the same arbitrary trees, where `lexbor::arena_tests` has
-/// only hand-written and WPT inputs.
+/// Lexbor's over the same arbitrary trees.
 pub fn check_serialization(input: &[u8]) -> Result<(), String> {
     use crate::html::dom::HtmlDoc as ArenaDoc;
     let Ok(lp) = parse_html(input, false, DepthLimit::UNLIMITED) else {
