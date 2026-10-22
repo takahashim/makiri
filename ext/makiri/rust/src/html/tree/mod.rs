@@ -43,6 +43,8 @@ mod stamp;
 
 pub use error::{TreeError, TreeErrorId};
 pub use fragment::{parse_fragment, ContextElement, ContextFacts, FragmentFailure, ParsedFragment};
+#[cfg(feature = "html-dom")]
+pub use parse::parse_document_bytes;
 pub use parse::{
     empty_html_document, parse_document, parse_html, parse_html_probing, parse_with_panicking_hook,
     HtmlParseError, ParseFailure, Parsed,

@@ -23,8 +23,12 @@ fuzz_target!(|data: &[u8]| {
     let parsed = if mode & 1 == 0 {
         parse_html(data, false, DepthLimit::DEFAULT)
     } else {
-        makiri::html::encoding::parse_document(data, None, false, DepthLimit::DEFAULT)
-            .map(|(p, _)| p)
+        let input = makiri::html::encoding::DocumentInput {
+            bytes: data,
+            transport: None,
+            known_valid_utf8: false,
+        };
+        makiri::html::tree::parse_document_bytes(input, DepthLimit::DEFAULT)
     };
     let Ok(p) = parsed else {
         return;

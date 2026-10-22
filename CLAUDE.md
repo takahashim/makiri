@@ -616,7 +616,8 @@ note describes how Lexbor stores something, the arena's version is in
 `html/dom/`.
 
 **Text-input contract.** A DOCUMENT parse decodes its bytes as a browser
-does (`html/encoding.rs`): the HTML Standard's encoding sniffing algorithm
+does (`html/encoding.rs` decides, `html::tree::parse_document_bytes` drives):
+the HTML Standard's encoding sniffing algorithm
 (BOM; the transport layer's encoding - `encoding:`, else the String's own
 when it has one; for an ASCII-8BIT String the 1024-byte `<meta>` prescan,
 then UTF-8 if the bytes are valid UTF-8, then `chardetng`), "change the
@@ -624,7 +625,7 @@ encoding" (a `<meta>` met while the confidence is tentative re-reads the
 document), and the Encoding Standard's decoders (`encoding_rs`, into a
 `falloc` buffer). `Document#encoding` is what it was read in. A Ruby
 encoding the Standard has no label for (UTF-32, CP51932) is transcoded by
-Ruby as before (`HtmlSource::for_document`). Fragment parsing takes text, so
+Ruby as before (`DocumentSource`, over `html::encoding::transport_for`). Fragment parsing takes text, so
 it has no sniffing: there the input String's encoding is honoured
 (`ruby_to_utf8`, `bridge/string.rs`): UTF-8 / US-ASCII / ASCII-8BIT pass
 through untouched (the UTF-8 common case is a single encoding compare - no
