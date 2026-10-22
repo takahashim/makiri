@@ -1124,9 +1124,13 @@ growth is GC-tracked. The ceiling (`ceiling`) is 64 KiB + 32x the bytes the
 document owns + nodes x 4 x the longest name: a name is stored once however
 many nodes write it, so 50 elements named by 20,000 bytes need the name
 term. **The per-chunk append is the hot path** (a chunk is a few bytes,
-~20 per element): `Buf::append`'s inline fast path (fits the allocation =>
-no ceiling check) and its `memcpy`-free copy of <= 16 bytes are what put
-`to_html` ahead of `nokolexbor`; profile them before touching either. A
+~20 per element): `Buf::append`'s inline fast path (fits the room => no
+ceiling check, since the room never passes the ceiling) and its
+`memcpy`-free copy of <= 16 bytes (`copy_small`: two fixed-size copies, safe
+Rust over a `Vec` kept initialised to its room) are what put `to_html` ahead
+of `nokolexbor`, and the 64-byte first room (`FIRST_ROOM`) is what keeps a
+subtree's, which grows from empty, ahead of the libc buffer it replaced;
+profile them before touching any of the three. A
 `DocumentFragment` serializes as its children. `#inner_html` and
 `#inner_html=` special-case an HTML `<template>` to its contents fragment,
 as the WHATWG DOM special-cases `innerHTML` alone - so `inner_html`,

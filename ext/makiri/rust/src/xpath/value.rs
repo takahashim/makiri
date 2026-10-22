@@ -454,10 +454,7 @@ fn descendant_text<'d, D: Dom<'d>>(
     match found {
         Found::Nothing => Ok(Str::Borrowed(&[])),
         Found::One(s) => Ok(Str::Borrowed(s)),
-        Found::Many(mut buf) => buf
-            .steal()
-            .map(|owned| Str::Owned(Text::from_buf(owned)))
-            .map_err(|_| Unbuilt::Buf(BufError::Oom)),
+        Found::Many(mut buf) => Ok(Str::Owned(Text::from_buf(buf.steal()))),
     }
 }
 

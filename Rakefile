@@ -686,7 +686,7 @@ RUST_SRC = "ext/makiri/rust/src"
 KANI_GROUPS = {
   # The allocator and the byte buffer: the slow group (~6 of CI's ~10 min).
   "alloc" => {
-    harnesses: %w[cbuf::verify:: falloc::verify:: falloc::cstr::verify::],
+    harnesses: %w[cbuf::verify:: falloc::verify::],
     paths: %W[#{RUST_SRC}/cbuf.rs #{RUST_SRC}/cbuf/ #{RUST_SRC}/falloc/]
   },
   "utf8" => {

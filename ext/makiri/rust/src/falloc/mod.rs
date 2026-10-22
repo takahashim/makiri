@@ -12,7 +12,7 @@
 //!
 //!  1. **Not injectable.** Allocations made with `std` containers never consult
 //!     the hook, so no sweep can reach them. Code that allocates through this
-//!     module (or the libc facades in `cstr`) inherits it.
+//!     module inherits it.
 //!  2. **Not fallible.** `Box::new`, `Vec::push` and `HashMap::insert` abort the
 //!     process on allocation failure (`handle_alloc_error`). For a library
 //!     loaded into someone's application server, aborting is not "failing
@@ -20,9 +20,9 @@
 //!
 //! So this module does both: it consults the counter the sweep arms, and it
 //! returns failure instead of aborting. Container growth goes through the
-//! traits below, construction through the `try_*` free functions, and raw
-//! NUL-terminated C strings through `cstr`. `clippy.toml` bans the `std`
-//! methods these wrap, so a new call site cannot quietly go around the sweep.
+//! traits below, construction through the `try_*` free functions.
+//! `clippy.toml` bans the `std` methods these wrap, so a new call site cannot
+//! quietly go around the sweep.
 //!
 //! The `bridge`'s Ruby-side storage is the deliberate exception: it is Ruby's
 //! `xmalloc` memory, freed by Ruby, and never reaches this counter.
@@ -68,7 +68,6 @@
 
 use std::collections::{HashMap, HashSet};
 
-pub(crate) mod cstr;
 #[cfg(feature = "alloc-inject")]
 pub(crate) mod inject;
 

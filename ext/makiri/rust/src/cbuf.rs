@@ -5,14 +5,17 @@
 //! now writes into it - the XPath engine's string values and the glue's
 //! serializers.
 //!
-//! The memory is libc's rather than Rust's allocator, so a stolen buffer is an
-//! [`OwnedBuf`] that `free()`s it; see the section on the growth functions.
+//! A `Vec<u8>` grown through `falloc`, so `rake oom` reaches every growth and
+//! a failure leaves the buffer as it was. It used to be libc memory under a
+//! raw pointer, NUL-terminated for the C callers it once had; nothing reads a
+//! terminator any more - every reader takes [`Buf::as_slice`] - so there is
+//! none, and no `unsafe` either. (The Kani proof that made the libc version
+//! worth keeping holds over this one too, and in a seventh of the time: see
+//! `verify`.)
 
-#![allow(unsafe_code)]
+#![forbid(unsafe_code)]
 
-use crate::falloc::OomOption;
-use core::ffi::c_void;
-use core::ptr::NonNull;
+use crate::falloc::{OomOption, Reserve};
 
 pub mod verify;
 
@@ -32,79 +35,48 @@ impl crate::falloc::Oom for BufError {
     }
 }
 
-/// A growable buffer, NUL-terminated whenever it holds an allocation.
+/// A growable buffer with a content ceiling.
 pub struct Buf {
-    data: *mut u8,
+    /// The room: initialised over its whole length, which is what was asked
+    /// for (never past the ceiling), so a short write is two fixed-size
+    /// copies into it rather than a `memcpy` call - see [`copy_small`].
+    data: Vec<u8>,
+    /// How much of `data` is content.
     len: usize,
-    cap: usize,
     /// 0 selects the conservative default ceiling; it is not "unbounded".
     max: usize,
 }
 
-/// A NUL-terminated libc allocation detached from a [`Buf`].
-pub struct OwnedBuf {
-    ptr: NonNull<u8>,
-    len: usize,
-}
-
-// SAFETY: an `OwnedBuf` owns its allocation outright and never writes to it
-// after construction - it is `Box<[u8]>` with a NUL - so moving it to another
-// thread, or reading it from two, is as sound as for that. The parse reads its
-// copy of the source from the GVL-released thread (`bridge::gvl::without_gvl`).
-unsafe impl Send for OwnedBuf {}
-// SAFETY: as `Send`; `&OwnedBuf` offers only reads.
-unsafe impl Sync for OwnedBuf {}
+/// Bytes detached from a [`Buf`], or copied or filled on their own.
+pub struct OwnedBuf(Vec<u8>);
 
 impl OwnedBuf {
-    /// The bytes written to the allocation, without the trailing NUL.
+    /// The bytes.
+    #[inline]
     pub fn as_slice(&self) -> &[u8] {
-        // SAFETY: the fields are private and every constructor stores a live
-        // libc allocation of at least `len + 1` initialised bytes, owned until
-        // `Drop`, which cannot run for `&self`.
-        unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+        &self.0
     }
 
-    /// A fresh allocation holding a copy of `bytes`, NUL-terminated, or None on
-    /// OOM.
+    /// A fresh allocation holding a copy of `bytes`, or None on OOM. The empty
+    /// copy allocates nothing.
     pub fn copy_from(bytes: &[u8]) -> Option<OwnedBuf> {
-        let len = bytes.len();
-        // SAFETY: `str_alloc` returns null or `len + 1` writable bytes from libc,
-        // which `Drop` frees; the copy and the terminator stay inside them.
-        unsafe {
-            let p = NonNull::new(crate::falloc::cstr::str_alloc(len) as *mut u8)?;
-            core::ptr::copy_nonoverlapping(bytes.as_ptr(), p.as_ptr(), len);
-            Some(OwnedBuf { ptr: p, len }) /* `str_alloc` wrote the NUL */
-        }
+        let mut v = Vec::new();
+        v.falloc_reserve_exact(bytes.len()).ok()?;
+        v.extend_from_slice(bytes);
+        Some(OwnedBuf(v))
     }
 
     /// Room for `cap` bytes, zeroed, that `fill` writes and reports how many it
-    /// used; NUL-terminated there. None on OOM.
+    /// used. None on OOM. The allocation is owned before `fill` runs, so a
+    /// panic in it - or the length check after - releases it.
     pub fn fill(cap: usize, fill: impl FnOnce(&mut [u8]) -> usize) -> Option<OwnedBuf> {
-        let p = NonNull::new(crate::falloc::cstr::str_alloc(cap) as *mut u8)?;
-        // Own the allocation before running user code or checking its result:
-        // either can panic, and unwinding must release the buffer too.
-        let mut owned = OwnedBuf { ptr: p, len: 0 };
-        // SAFETY: `p` is `cap + 1` writable bytes nothing else holds yet. This
-        // zeroes the first `cap` - so every byte `fill` sees is initialised -
-        // and lends exactly those, leaving the terminator byte untouched.
-        let dst = unsafe {
-            core::ptr::write_bytes(p.as_ptr(), 0, cap);
-            core::slice::from_raw_parts_mut(p.as_ptr(), cap)
-        };
-        let len = fill(dst);
+        let mut v = Vec::new();
+        v.falloc_reserve_exact(cap).ok()?;
+        v.resize(cap, 0);
+        let len = fill(&mut v);
         assert!(len <= cap, "OwnedBuf::fill: wrote past its reservation");
-        // SAFETY: `len <= cap`, and byte `cap` exists.
-        unsafe { *p.as_ptr().add(len) = 0 };
-        owned.len = len;
-        Some(owned)
-    }
-}
-
-impl Drop for OwnedBuf {
-    fn drop(&mut self) {
-        // SAFETY: this type owns the libc allocation, and the destructor is the
-        // only thing that frees it, so nothing else can still hold it here.
-        unsafe { libc_free(self.ptr.as_ptr() as *mut c_void) };
+        v.truncate(len);
+        Some(OwnedBuf(v))
     }
 }
 
@@ -114,29 +86,18 @@ impl Buf {
     /// The value is not clamped here: every growth path goes through
     /// `content_limit`, which takes `min(max, BUF_HARD_MAX)`, so passing a
     /// larger soft ceiling is already equivalent to passing the hard one.
-    pub fn new(max: usize) -> Buf {
+    pub const fn new(max: usize) -> Buf {
         Buf {
-            data: core::ptr::null_mut(),
+            data: Vec::new(),
             len: 0,
-            cap: 0,
             max,
         }
     }
 
-    /// The bytes written so far, without the trailing NUL.
-    pub fn as_slice(&self) -> &[u8] {
-        // SAFETY: the fields are private, and every constructor and mutator in
-        // this module leaves `data` either null or an allocation holding `len`
-        // initialised bytes - which is exactly what `as_slice_unchecked` needs.
-        unsafe { self.as_slice_unchecked() }
-    }
-
+    /// The bytes written so far.
     #[inline]
-    unsafe fn as_slice_unchecked(&self) -> &[u8] {
-        if self.data.is_null() || self.len == 0 {
-            return &[];
-        }
-        core::slice::from_raw_parts(self.data, self.len)
+    pub fn as_slice(&self) -> &[u8] {
+        &self.data[..self.len]
     }
 
     /// Append `bytes`. Fails closed, leaving the buffer untouched (see
@@ -144,68 +105,48 @@ impl Buf {
     #[inline]
     pub fn append(&mut self, bytes: &[u8]) -> Result<(), BufError> {
         let n = bytes.len();
+        let len = self.len;
         /* The common case - serializer output arrives as many small chunks -
-         * is a copy into room already there. It needs no ceiling check: `cap`
-         * never exceeds the ceiling plus the NUL (`realloc_within_ceiling`,
-         * the one place it changes, clamps it; the Kani proof asserts it), so
-         * content that fits below `cap` is within the ceiling. `len < cap`
-         * whenever there is an allocation, and both are 0 when there is none,
-         * so the subtraction cannot wrap and an empty buffer falls through to
-         * the growth. */
-        if n < self.cap - self.len {
-            // SAFETY: `len + n + 1 <= cap`, so the copy and the terminator fit
-            // the allocation; `bytes` is a slice, so it names `n` readable
-            // bytes, and it cannot overlap a buffer this one owns.
-            unsafe {
-                copy_small_or_memcpy(bytes.as_ptr(), self.data.add(self.len), n);
-                *self.data.add(self.len + n) = 0; /* keep NUL-terminated */
-            }
-            self.len += n;
+         * is a copy into room already there. `n` fits the room, so `len + n`
+         * cannot overflow; and the room is never past the ceiling (`grow_to`,
+         * the one place it changes, is handed a clamped size, and the Kani
+         * proof asserts it), so content that fits it is within the ceiling. */
+        if let Some(dst) = self.data.get_mut(len..len + n) {
+            copy_small(dst, bytes);
+            self.len = len + n;
             return Ok(());
         }
         self.append_growing(bytes)
     }
 
-    /// [`append`](Self::append) when the bytes do not fit the allocation: the
-    /// ceiling, the growth and its clamp. Kept out of line so the common path
-    /// stays small enough to inline into a per-chunk callback.
+    /// [`append`](Self::append) when the bytes do not fit the allocation, or
+    /// pass the ceiling: the ceiling, the growth and its clamp. Kept out of
+    /// line so the common path stays small enough to inline into a per-chunk
+    /// callback.
     #[cold]
     #[inline(never)]
     fn append_growing(&mut self, bytes: &[u8]) -> Result<(), BufError> {
-        let n = bytes.len();
-        if n == 0 {
-            return Ok(());
-        }
-        let need = self.len.checked_add(n).or_oom()?;
+        let need = self.len.checked_add(bytes.len()).or_oom()?;
         let limit = self.content_limit();
         if need > limit {
             return Err(BufError::Limit);
         }
-        /* Room for the NUL terminator too. */
-        let need_term = need.checked_add(1).or_oom()?;
-
-        if need_term > self.cap {
-            /* Geometric growth can overshoot to ~2x need_term; the realloc
-             * clamps it to the ceiling. This append passed `need <= limit`, so
-             * `need_term <= limit + 1` and the clamp never cuts below it. */
-            let new_cap = crate::falloc::grow_capacity(self.cap, need_term, 1).or_oom()?;
-            self.realloc_within_ceiling(need_term, new_cap)?;
+        if need > self.data.len() {
+            /* Geometric growth can overshoot to ~2x `need`; it is clamped to
+             * the ceiling, which `need` is within, so the clamp never cuts
+             * below it. */
+            let room = crate::falloc::grow_capacity(self.data.len().max(FIRST_ROOM), need, 1)
+                .or_oom()?
+                .min(limit);
+            self.grow_to(room)?;
         }
-
-        // SAFETY: `data` holds `cap >= need + 1` bytes after the growth above,
-        // so the `n` copied bytes and the terminator after them fit; `bytes` is
-        // a slice, so it names `n` readable bytes, and it cannot overlap a
-        // buffer this one owns.
-        unsafe {
-            core::ptr::copy_nonoverlapping(bytes.as_ptr(), self.data.add(self.len), n);
-            *self.data.add(need) = 0; /* keep NUL-terminated */
-        }
+        self.data[self.len..need].copy_from_slice(bytes);
         self.len = need;
         Ok(())
     }
 
     /// Raise the soft ceiling to `max`; a `max` at or below the current one is
-    /// ignored. Only ever raising keeps `cap <= content_limit() + 1`, which
+    /// ignored. Only ever raising keeps the room within the ceiling, which
     /// [`append`](Self::append)'s fast path relies on.
     pub fn raise_limit(&mut self, max: usize) {
         if max > self.content_limit() {
@@ -214,54 +155,24 @@ impl Buf {
     }
 
     /// Pre-allocate capacity for `n` content bytes without changing the current
-    /// length, so a known-size fill does not realloc on every geometric step.
+    /// length, so a known-size fill does not reallocate on every geometric step.
     ///
     /// Best-effort: it never grows past the buffer's own ceiling, and a later
     /// append still fails closed if the real output exceeds it.
     pub fn reserve(&mut self, n: usize) -> Result<(), BufError> {
         let n = n.min(self.content_limit());
-        let need_term = n.checked_add(1).or_oom()?;
-        if need_term <= self.cap {
+        if n <= self.data.len() {
             return Ok(()); /* already have room */
         }
-        self.realloc_within_ceiling(need_term, need_term)?;
-        // SAFETY: `cap > len` (the allocation holds the old content and its
-        // terminator), so byte `len` is inside it.
-        unsafe { *self.data.add(self.len) = 0 }; /* keep NUL-terminated */
-        Ok(())
+        self.grow_to(n)
     }
 
-    /// Detach the NUL-terminated bytes and reset this buffer to empty.
-    ///
-    /// An empty buffer yields a freshly owned `""`, so the caller never has to
-    /// distinguish "no output" from "failed": `Err` is OOM.
-    pub fn steal(&mut self) -> Result<OwnedBuf, BufError> {
-        let Some(ptr) = NonNull::new(self.data) else {
-            /* `str_alloc(0)` returns null or one NUL byte from libc, which the
-             * `OwnedBuf` frees. */
-            let p = crate::falloc::cstr::str_alloc(0) as *mut u8;
-            let ptr = NonNull::new(p).or_oom()?;
-            return Ok(OwnedBuf { ptr, len: 0 });
-        };
-        let len = self.len;
-        /* The allocation now belongs to the `OwnedBuf` alone. */
-        self.data = core::ptr::null_mut();
+    /// Detach the bytes and reset this buffer to empty. Moves the allocation;
+    /// copies nothing.
+    pub fn steal(&mut self) -> OwnedBuf {
+        self.data.truncate(self.len);
         self.len = 0;
-        self.cap = 0;
-        Ok(OwnedBuf { ptr, len })
-    }
-
-    /// Release the allocation and reset the buffer to an empty state.
-    pub fn free(&mut self) {
-        if !self.data.is_null() {
-            // SAFETY: non-null here, and owned by this buffer - `steal` is the
-            // only way out and it nulls the field. Nulled again below, so a
-            // second `free` (or the `Drop` that calls this) cannot double-free.
-            unsafe { libc_free(self.data as *mut c_void) };
-            self.data = core::ptr::null_mut();
-        }
-        self.len = 0;
-        self.cap = 0;
+        OwnedBuf(core::mem::take(&mut self.data))
     }
 
     /// The effective content ceiling: this buffer's own `max` (0 meaning the
@@ -284,94 +195,51 @@ impl Buf {
         soft.min(BUF_HARD_MAX)
     }
 
-    /// Reallocate so the capacity is `want` bytes, or the ceiling (content
-    /// limit plus the NUL) when `want` is past it - but never below `min`.
-    /// [`BufError::Limit`] when even `min` is past the ceiling, `Oom` when the
-    /// allocation fails; either `Err` leaves the buffer as it was.
-    ///
-    /// `min <= want`, and `min` is what the caller is about to write, so a
-    /// clamp can never hand back less room than the write needs. The one place
-    /// capacity changes, so the one place that holds
-    /// `cap <= content_limit() + 1`: [`append`](Self::append)'s fast path skips
-    /// the ceiling check on the strength of it, and the Kani proof asserts it.
-    /// A new growth path that goes through here cannot break it. (A limit + 1
-    /// that overflows - only a pathological `MKR_BUF_HARD_MAX=SIZE_MAX` - has no
-    /// ceiling to clamp to.)
-    ///
-    /// The memory is libc's, not Rust's: `steal` hands the pointer to an
-    /// `OwnedBuf` that `free()`s it. So this uses `realloc` directly rather
-    /// than `falloc`, and consults `falloc::allocation_should_fail`, so
-    /// `rake oom` reaches it while production builds compile that hook to
-    /// `false`.
-    fn realloc_within_ceiling(&mut self, min: usize, want: usize) -> Result<(), BufError> {
-        debug_assert!(min <= want, "a clamped capacity must still fit the write");
-        let cap = match self.content_limit().checked_add(1) {
-            Some(ceiling) => {
-                if min > ceiling {
-                    return Err(BufError::Limit);
-                }
-                want.min(ceiling)
-            }
-            None => want,
-        };
-        if crate::falloc::allocation_should_fail() {
-            return Err(BufError::Oom);
-        }
-        // SAFETY: `data` is null or this buffer's own libc allocation; on
-        // failure `realloc` leaves it untouched, and it is replaced only on
-        // success.
-        let p = unsafe { libc_realloc(self.data as *mut c_void, cap) } as *mut u8;
-        if p.is_null() {
-            return Err(BufError::Oom);
-        }
-        self.data = p;
-        self.cap = cap;
+    /// Grow the room to `room` bytes, zeroed: more than it is, and within the
+    /// ceiling, which the callers clamp it to. The one place the room changes.
+    /// `Oom` leaves the buffer as it was: `falloc`'s reserve is std's
+    /// `try_reserve_exact`, which does, and the zeroing after it cannot
+    /// allocate.
+    fn grow_to(&mut self, room: usize) -> Result<(), BufError> {
+        self.data
+            .falloc_reserve_exact(room - self.data.len())
+            .map_err(|()| BufError::Oom)?;
+        self.data.resize(room, 0);
         Ok(())
     }
 }
 
-/// Copy `n` bytes, without a `memcpy` call when `n <= 16`.
+/// The least room a buffer grows to. Most buffers start empty - a subtree's
+/// `to_html`, an XPath string - and grow a few chunks at a time, and each
+/// growth is a reallocation plus the zeroing of the new room: starting at 8
+/// bytes, a ~150-byte `<li>` took six of them and was ~16% slower than the
+/// libc buffer this replaced; starting here it is ~25% faster.
+const FIRST_ROOM: usize = 64;
+
+/// Copy `src` into `dst` (the same length), without a `memcpy` call when it
+/// is at most 16 bytes.
 ///
 /// Serializer output is mostly chunks of a few bytes - `<`, a tag name, `="` -
 /// and a call per chunk into libc's `memcpy` measured about a fifth of
-/// `to_html`. Up to 16 bytes are moved as two fixed-size reads and writes that
-/// may overlap in the middle (`[0, k)` and `[n - k, n)` for the largest power
-/// of two `k <= n`), which covers every byte and reads none outside `src`.
-///
-/// # Safety
-/// As [`core::ptr::copy_nonoverlapping`]: `src` names `n` readable bytes, `dst`
-/// `n` writable ones, and the two do not overlap.
+/// `to_html`. Up to 16 bytes are moved as two fixed-size copies that may
+/// overlap in the middle (`[0, k)` and `[n - k, n)` for the largest power of
+/// two `k <= n`), which covers every byte; each is a load and a store.
 #[inline(always)]
-unsafe fn copy_small_or_memcpy(src: *const u8, dst: *mut u8, n: usize) {
+fn copy_small(dst: &mut [u8], src: &[u8]) {
     #[inline(always)]
-    unsafe fn two<T: Copy>(src: *const u8, dst: *mut u8, n: usize) {
-        let k = core::mem::size_of::<T>();
-        let head = src.cast::<T>().read_unaligned();
-        let tail = src.add(n - k).cast::<T>().read_unaligned();
-        dst.cast::<T>().write_unaligned(head);
-        dst.add(n - k).cast::<T>().write_unaligned(tail);
+    fn two<const K: usize>(dst: &mut [u8], src: &[u8]) {
+        let n = src.len();
+        dst[..K].copy_from_slice(&src[..K]);
+        dst[n - K..n].copy_from_slice(&src[n - K..]);
     }
-    match n {
+    match src.len() {
         0 => {}
-        1 => *dst = *src,
-        2..=3 => two::<u16>(src, dst, n),
-        4..=7 => two::<u32>(src, dst, n),
-        8..=16 => two::<u64>(src, dst, n),
-        _ => core::ptr::copy_nonoverlapping(src, dst, n),
+        1 => dst[0] = src[0],
+        2..=3 => two::<2>(dst, src),
+        4..=7 => two::<4>(dst, src),
+        8..=16 => two::<8>(dst, src),
+        _ => dst.copy_from_slice(src),
     }
-}
-
-impl Drop for Buf {
-    fn drop(&mut self) {
-        self.free();
-    }
-}
-
-extern "C" {
-    #[link_name = "free"]
-    fn libc_free(p: *mut c_void);
-    #[link_name = "realloc"]
-    fn libc_realloc(p: *mut c_void, n: usize) -> *mut c_void;
 }
 
 /* The build-time content limits, each overridable from the environment at
@@ -437,6 +305,17 @@ mod tests {
         assert_eq!(buf.as_slice(), b"hello");
     }
 
+    /// Room past the ceiling - which a `Vec` may have, however it was asked -
+    /// is not a way past it: the fast path checks the ceiling too.
+    #[test]
+    fn spare_room_does_not_lift_the_ceiling() {
+        let mut buf = Buf::new(5);
+        assert_eq!(buf.reserve(64), Ok(()));
+        assert_eq!(buf.append(b"hello"), Ok(()));
+        assert_eq!(buf.append(b"!"), Err(BufError::Limit));
+        assert_eq!(buf.as_slice(), b"hello");
+    }
+
     #[test]
     fn raise_limit_only_ever_raises() {
         let mut buf = Buf::new(5);
@@ -453,16 +332,32 @@ mod tests {
         let mut buf = Buf::new(16);
         buf.append(b"owned").unwrap();
 
-        let owned = buf.steal().unwrap();
+        let owned = buf.steal();
         assert_eq!(owned.as_slice(), b"owned");
         assert!(buf.as_slice().is_empty());
-        drop(owned); /* exercises OwnedBuf's libc-free Drop */
+        /* The buffer is usable again. */
+        buf.append(b"again").unwrap();
+        assert_eq!(buf.as_slice(), b"again");
+        assert_eq!(owned.as_slice(), b"owned");
+    }
+
+    /// Every length the fixed-size path takes, and past it, at every offset
+    /// in a buffer that already holds bytes on both sides.
+    #[test]
+    fn short_copies_move_exactly_their_bytes() {
+        for n in 0..=20usize {
+            let src: Vec<u8> = (0..n as u8).map(|b| b + 1).collect();
+            let mut dst = [0xA5u8; 24];
+            super::copy_small(&mut dst[2..2 + n], &src);
+            assert_eq!(&dst[2..2 + n], &src[..]);
+            assert!(dst[..2].iter().chain(&dst[2 + n..]).all(|&b| b == 0xA5));
+        }
     }
 
     #[test]
-    fn dropping_a_live_buffer_releases_it_without_manual_free() {
+    fn interior_nul_is_content() {
         let mut buf = Buf::new(16);
-        buf.append(b"dropped").unwrap();
-        drop(buf); /* exercises Buf's libc-free Drop */
+        buf.append(b"a\0b").unwrap();
+        assert_eq!(buf.steal().as_slice(), b"a\0b");
     }
 }

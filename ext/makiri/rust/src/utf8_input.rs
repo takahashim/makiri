@@ -85,7 +85,7 @@ fn replace_invalid(src: &[u8]) -> Result<OwnedBuf, BufError> {
         }
     }
 
-    buf.steal()
+    Ok(buf.steal())
 }
 
 /// Sanitise `input` for the HTML parser: invalid UTF-8 becomes U+FFFD, valid

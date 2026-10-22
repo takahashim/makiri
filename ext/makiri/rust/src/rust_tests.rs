@@ -368,7 +368,7 @@ fn text_adopts_a_detached_buffer() {
 
     let mut buf = Buf::new(0);
     buf.append(b"a\0b").expect("append");
-    let t = Text::from_buf(buf.steal().expect("steal"));
+    let t = Text::from_buf(buf.steal());
     assert_eq!(t.as_slice(), b"a\0b");
 }
 

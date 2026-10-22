@@ -1100,9 +1100,7 @@ fn fn_translate<'e, 'd, D: Dom<'d>>(
             })?;
         }
     }
-    let owned = buf
-        .steal()
-        .map_err(|_| err_setf!(err, ErrorKind::Oom, "out of memory in translate()"))?;
+    let owned = buf.steal();
     Ok(Val::string(Text::from_buf(owned)))
 }
 
