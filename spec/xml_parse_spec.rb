@@ -420,5 +420,12 @@ RSpec.describe "Makiri::XML minimal parse" do
       expect(ok?("<?xml version='1.0' encoding='utf-8'?><r>x</r>")).to be true
       expect(ok?("<?xml version='1.0' encoding='Shift_JIS'?><r>x</r>".encode("US-ASCII"))).to be true
     end
+
+    it "rejects a declaration naming an encoding Ruby does not know, whatever the String's encoding" do
+      src = "<?xml version='1.0' encoding='no-such-encoding'?><r>x</r>"
+      [src, src.b, src.encode("US-ASCII")].each do |s|
+        expect { Makiri::XML(s) }.to raise_error(Makiri::XML::SyntaxError, /unknown encoding: no-such-encoding/)
+      end
+    end
   end
 end

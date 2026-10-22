@@ -160,11 +160,19 @@ pub unsafe fn to_encoding(v: VALUE) -> *mut rb_encoding {
     unsafe { rb_sys::rb_to_encoding(v) }
 }
 
-/// `rb_enc_find`: may autoload the encoding, which can raise (`LoadError`)
-/// and is a GC point; `null` for a name Ruby does not know.
+/// `rb_enc_find_index` + `rb_enc_from_index`: may autoload the encoding,
+/// which can raise (`LoadError`) and is a GC point; `null` for a name Ruby
+/// does not know. Not `rb_enc_find`, which answers ASCII-8BIT for one.
 #[inline]
 pub unsafe fn enc_find(name: *const c_char) -> *mut rb_encoding {
-    unsafe { rb_sys::rb_enc_find(name) }
+    unsafe {
+        let index = rb_sys::rb_enc_find_index(name);
+        if index < 0 {
+            core::ptr::null_mut()
+        } else {
+            rb_sys::rb_enc_from_index(index)
+        }
+    }
 }
 
 /* ---- typed data and Ruby's allocator ---- */

@@ -159,7 +159,7 @@ RAISING_API = /\b(?:rb_raise|rb_exc_raise|rb_jump_tag|rb_check_typeddata|
   rb_String|rb_funcallv|rb_funcall|rb_obj_as_string|rb_respond_to|rb_check_frozen|
   rb_range_beg_len|rb_thread_check_ints|rb_intern3|rb_intern|rb_utf8_str_new|
   rb_enc_interned_str|rb_str_dup|rb_str_subseq|rb_enc_associate|rb_str_encode|
-  rb_to_encoding|rb_enc_find|rb_data_typed_object_wrap|ruby_xmalloc|ruby_xrealloc2)\b/x
+  rb_to_encoding|rb_enc_find_index|rb_data_typed_object_wrap|ruby_xmalloc|ruby_xrealloc2)\b/x
 RAISING_COUNTS = { "bridge/raw.rs" => 22 }.freeze
 
 # `Value::from_raw` outside `bridge/` is the other half of the raw Ruby
