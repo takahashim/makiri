@@ -80,6 +80,11 @@ pub mod gvl;
 /// Lexbor-free, like the engine.
 pub mod css_match;
 
+/// A vector's allocation kept with nothing in it, so the matcher's stacks
+/// can be kept in a process-global whatever nodes they held (`css_match`'s
+/// `Scratch`). The one `unsafe impl Send` it needs is the whole module.
+pub mod spare;
+
 /// The compiled-selector cache in front of `css_match`, with the `Scratch`
 /// each host's queries borrow: process-global, behind the GVL. It names the
 /// two hosts (`html::dom::css`, `xml::css`), so it sits beside the matcher,

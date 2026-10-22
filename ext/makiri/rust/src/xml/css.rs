@@ -180,8 +180,8 @@ impl<'d> CssNode<'d> for XmlNode<'d> {
     /// The id's token: never 0 (no id names slot 0), and unique in the one
     /// document a query walks.
     #[inline]
-    fn table_key(self) -> *const () {
-        core::ptr::without_provenance(self.id.to_token())
+    fn table_key(self) -> crate::ptr_table::NodeKey {
+        crate::ptr_table::NodeKey::new(self.id.to_token())
     }
 
     type Candidates = XmlCandidates<'d>;

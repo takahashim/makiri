@@ -89,6 +89,30 @@ impl<T> TableKey for *const T {
     }
 }
 
+/// A node's identity as a table key: a word equal exactly when the nodes are,
+/// and never 0 for a node, since 0 is the empty slot - which the tables refuse
+/// as a key. An integer, not an address: nothing reads through it, and unlike
+/// a raw pointer it is `Send`, so a table of keys can live in a process-global
+/// (`css_cache`'s kept `Scratch`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct NodeKey(usize);
+
+impl NodeKey {
+    /// The key for a node's word (its host's own non-zero identity).
+    #[inline]
+    pub const fn new(word: usize) -> NodeKey {
+        NodeKey(word)
+    }
+}
+
+impl TableKey for NodeKey {
+    const EMPTY: Self = NodeKey(0);
+    #[inline]
+    fn table_hash(self) -> u64 {
+        mix64(self.0 as u64)
+    }
+}
+
 /// The slot count for `keys` keys at load factor <= 1/2, or None on overflow.
 fn capacity_for(keys: usize) -> Option<usize> {
     Some(keys.checked_mul(2)?.checked_next_power_of_two()?.max(8))

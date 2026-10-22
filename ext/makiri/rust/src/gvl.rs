@@ -78,6 +78,13 @@ impl Deref for Exclusive {
 }
 
 /// A process-global reached only with a [`Gvl`].
+///
+/// Only a `Send` value can be one, as with a `Mutex`:
+///
+/// ```compile_fail,E0277
+/// use makiri::gvl::GvlCell;
+/// static CELL: GvlCell<Option<std::rc::Rc<u8>>> = GvlCell::new(None);
+/// ```
 pub struct GvlCell<T> {
     busy: Cell<bool>,
     value: UnsafeCell<T>,
@@ -86,9 +93,12 @@ pub struct GvlCell<T> {
 // SAFETY: every access goes through `borrow`, which takes a `&Gvl`. A token
 // exists only on a thread holding the GVL (or the stand-in lock), so accesses
 // from different threads are serialised - and ordered - by that lock, and the
-// busy flag rules out a second borrow on one thread. `T` holds Lexbor pointers
-// that are only ever used under the same lock, hence no `T: Send` bound.
-unsafe impl<T> Sync for GvlCell<T> {}
+// busy flag rules out a second borrow on one thread. One thread after another
+// gets a `&mut T`, so the value in effect moves between them: hence `T: Send`,
+// as for `Mutex<T>`. The lock orders the cell's own accesses and nothing
+// else, so a `T` that shared its state outside the cell (an `Rc` with a clone
+// elsewhere) would not be protected by it.
+unsafe impl<T: Send> Sync for GvlCell<T> {}
 
 /// A second borrow of a [`GvlCell`] on the thread that already holds one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -158,5 +168,39 @@ mod tests {
         assert_eq!(CELL.borrow(&gvl).err(), Some(Busy));
         drop(first);
         assert_eq!(*CELL.borrow(&gvl).expect("free again"), 1);
+    }
+
+    #[test]
+    fn a_panic_in_a_borrow_frees_the_cell() {
+        static CELL: GvlCell<u32> = GvlCell::new(0);
+        let caught = std::panic::catch_unwind(|| {
+            let gvl = Gvl::exclusive();
+            let mut v = CELL.borrow(&gvl).expect("the first borrow");
+            *v = 7;
+            panic!("inside the borrow");
+        });
+        assert!(caught.is_err());
+        let gvl = Gvl::exclusive();
+        assert_eq!(*CELL.borrow(&gvl).expect("free after the unwind"), 7);
+    }
+
+    #[test]
+    fn threads_borrow_one_after_another() {
+        static CELL: GvlCell<Vec<u32>> = GvlCell::new(Vec::new());
+        let threads: Vec<_> = (0..4)
+            .map(|i| {
+                std::thread::spawn(move || {
+                    let gvl = Gvl::exclusive();
+                    CELL.borrow(&gvl).expect("serialised").push(i);
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().expect("the thread");
+        }
+        let gvl = Gvl::exclusive();
+        let mut seen = CELL.borrow(&gvl).expect("free").clone();
+        seen.sort_unstable();
+        assert_eq!(seen, [0, 1, 2, 3]);
     }
 }

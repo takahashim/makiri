@@ -86,7 +86,7 @@ impl<'d> CssNode<'d> for HtmlNode<'d> {
         self.owner_document().as_node().document_root() == Some(self)
     }
     #[inline]
-    fn table_key(self) -> *const () {
+    fn table_key(self) -> crate::ptr_table::NodeKey {
         super::RawNode::from(self).table_key()
     }
 

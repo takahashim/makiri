@@ -2,7 +2,7 @@
 //! memo that makes a walking query count each sibling list once.
 
 use crate::falloc::{OomResult, VecPush};
-use crate::ptr_table::PtrMap;
+use crate::ptr_table::{NodeKey, PtrMap};
 
 use super::dom::CssNode;
 use super::nth_of::{NthOf, NthOfMemo};
@@ -26,9 +26,9 @@ pub(super) struct Positions {
     /// positions - most - pays nothing for them, and `Query` stays small
     /// enough to move cheaply (a fixed array of four here measured ~5% on
     /// `matches?`).
-    memo: Vec<PtrMap<*const (), u64>>,
+    memo: Vec<PtrMap<NodeKey, u64>>,
     /// A walk's counted siblings, nearest first.
-    visited: Vec<*const ()>,
+    visited: Vec<NodeKey>,
     /// The `:nth-child(... of S)` ranks, which count by `S` rather than by
     /// position and are kept apart.
     nth_of: NthOfMemo,
@@ -95,7 +95,7 @@ impl Positions {
     }
 }
 
-pub(super) fn node_key<'d, N: CssNode<'d>>(node: N) -> *const () {
+pub(super) fn node_key<'d, N: CssNode<'d>>(node: N) -> NodeKey {
     node.table_key()
 }
 

@@ -4,7 +4,7 @@
 //! [`Positions`](super::positions::Positions) does for plain positions.
 
 use crate::falloc::{OomResult, VecPush};
-use crate::ptr_table::PtrMap;
+use crate::ptr_table::{NodeKey, PtrMap};
 
 use super::dom::CssNode;
 use super::positions::{node_key, POSITIONS_MAX};
@@ -15,16 +15,16 @@ pub(super) struct NthOfMemo {
     /// Ranks, one map per `of S` simple selector (its index), made on first
     /// use: a node's value is `rank << 1 | in_s`, `rank` being how many of it
     /// and the siblings before it (in the counting direction) are in `S`.
-    ranks: Vec<(u32, PtrMap<*const (), u64>)>,
+    ranks: Vec<(u32, PtrMap<NodeKey, u64>)>,
     /// The siblings `of S` counts have tested and not yet recorded, with
     /// whether each is in `S`, nearest first; a count's own run starts at
     /// its task's `seen_base`, as `Query::at` is shared by chains.
-    seen: Vec<(*const (), bool)>,
+    seen: Vec<(NodeKey, bool)>,
     /// Candidates found NOT in `S`, one set per `of S` simple selector. Such
     /// a candidate's test ends its count, so it gets no rank in `ranks`,
     /// and without this every `:has()` that reaches it again tests `S`
     /// again - nested `of S` over nested `:has()` was 2.7x Lexbor's time.
-    out: Vec<(u32, PtrMap<*const (), ()>)>,
+    out: Vec<(u32, PtrMap<NodeKey, ()>)>,
 }
 
 impl NthOfMemo {

@@ -12,6 +12,7 @@ use super::positions::Positions;
 use super::query::{HasCursor, Task};
 use super::simple::Name;
 use super::MatchFailure;
+use crate::spare::Spare;
 
 /// One of a query's tables: a `falloc` vector, borrowed from a [`Scratch`]
 /// for the query and handed back after it, so a warm call reuses the last
@@ -79,13 +80,16 @@ impl<T: Copy> Table<T> {
 /// One per DOM ([`Host`]): the stacks hold its nodes and the names its
 /// documents resolve. The compiled selector's tables ([`Tables`]) name no
 /// DOM. Empty between queries: only the capacity carries over, moved
-/// between lifetimes by [`recycle`].
+/// between lifetimes by [`recycle`]. The stacks typed by the host's nodes
+/// are [`Spare`]s, which say so in their type: they hold no node, so a
+/// `Scratch` is `Send` whatever its nodes borrow, as the process-global
+/// that keeps one must be (`gvl::GvlCell`).
 pub struct Scratch<H: Host> {
     pub(super) tables: Tables,
     pub(super) names: Vec<Name<H>>,
-    pub(super) tasks: Vec<Task<H::Node<'static>>>,
-    pub(super) at: Vec<Option<H::Node<'static>>>,
-    pub(super) cursors: Vec<HasCursor<H::Node<'static>>>,
+    pub(super) tasks: Spare<Task<H::Node<'static>>>,
+    pub(super) at: Spare<Option<H::Node<'static>>>,
+    pub(super) cursors: Spare<HasCursor<H::Node<'static>>>,
     pub(super) positions: Positions,
 }
 
@@ -120,9 +124,9 @@ impl<H: Host> Scratch<H> {
         Scratch {
             tables: Tables::new(),
             names: Vec::new(),
-            tasks: Vec::new(),
-            at: Vec::new(),
-            cursors: Vec::new(),
+            tasks: Spare::new(),
+            at: Spare::new(),
+            cursors: Spare::new(),
             positions: Positions::new(),
         }
     }

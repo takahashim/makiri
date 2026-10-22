@@ -48,7 +48,19 @@ pub use crate::css_cache::ParseError;
 #[cfg(any(test, feature = "lexbor-reference"))]
 /// The process-global parser, built on first use. A build failure leaves it
 /// unset, so a later call tries again.
-static ENGINE: GvlCell<Option<SelectorParser>> = GvlCell::new(None);
+static ENGINE: GvlCell<Slot> = GvlCell::new(Slot(None));
+
+#[cfg(any(test, feature = "lexbor-reference"))]
+/// The process-global's content: the parser once built.
+struct Slot(Option<SelectorParser>);
+
+// SAFETY: the parser is Lexbor heap objects with no thread affinity (Lexbor's
+// core and CSS keep no thread-local state), so the cell's content may be
+// borrowed on whichever thread holds the GVL (`gvl::GvlCell`'s `T: Send`).
+// Only the slot moves: `SelectorParser` itself stays `!Send`, so a copy taken
+// out of a borrow cannot leave its thread.
+#[cfg(any(test, feature = "lexbor-reference"))]
+unsafe impl Send for Slot {}
 
 #[cfg(any(test, feature = "lexbor-reference"))]
 /// A parsed selector list, borrowed from the engine's arena.
@@ -61,7 +73,7 @@ pub struct Parsed<'g> {
     first: *mut SelectorList,
     engine: SelectorParser,
     /// Released after `drop` below has cleaned the arena.
-    _slot: GvlRef<'g, Option<SelectorParser>>,
+    _slot: GvlRef<'g, Slot>,
 }
 
 #[cfg(any(test, feature = "lexbor-reference"))]
@@ -77,9 +89,9 @@ impl Drop for Parsed<'_> {
 /// Parse `selector` into the engine's arena.
 pub fn parse<'g>(gvl: &'g Gvl, selector: VerifiedText) -> Result<Parsed<'g>, ParseError> {
     let mut slot = ENGINE.borrow(gvl).map_err(|_| ParseError::Busy)?;
-    let e = match *slot {
+    let e = match slot.0 {
         Some(e) => e,
-        None => *slot.insert(
+        None => *slot.0.insert(
             ParserParts::build()
                 .ok_or(ParseError::NotReady)?
                 .into_parser(),

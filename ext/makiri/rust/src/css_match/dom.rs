@@ -74,7 +74,7 @@ pub trait CssNode<'d>: Copy + PartialEq + 'd {
     fn is_root(self) -> bool;
     /// The node as a key of a `ptr_table` map: equal exactly when the nodes
     /// are, for as long as the query runs.
-    fn table_key(self) -> *const ();
+    fn table_key(self) -> crate::ptr_table::NodeKey;
 
     /// What [`candidates`](Self::candidates) yields.
     type Candidates: Iterator<Item = Self>;

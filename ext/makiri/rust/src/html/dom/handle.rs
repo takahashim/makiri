@@ -150,8 +150,9 @@ fn eq_lowered(qualified: &[u8], name: &[u8]) -> bool {
 /// [`HtmlDoc::resolve_attr_name`].
 #[derive(Clone, Copy)]
 pub struct AttrName {
-    /// `None`: not resolvable (a prefixed or empty name) - look up by name.
-    doc: Option<*const Document>,
+    /// The stamp of the document it was resolved in; `None`: not resolvable
+    /// (a prefixed or empty name) - look up by name.
+    doc: Option<u32>,
     /// The lower-cased local name's id there; `None`: no attribute of that
     /// document has the name.
     id: Option<u32>,
@@ -249,11 +250,10 @@ impl RawNode {
         core::num::NonZeroU64::new(w).map(RawNode)
     }
 
-    /// The node as a key of a pointer-keyed table - its word, never 0. Not a
-    /// pointer to anything: a key is only hashed and compared.
+    /// The node as a table key - its word, never 0.
     #[inline]
-    pub fn table_key(self) -> *const () {
-        core::ptr::without_provenance(self.word())
+    pub fn table_key(self) -> crate::ptr_table::NodeKey {
+        crate::ptr_table::NodeKey::new(self.word())
     }
 }
 
@@ -330,7 +330,7 @@ impl<'d> HtmlDoc<'d> {
             };
         }
         AttrName {
-            doc: Some(self.d as *const Document),
+            doc: Some(self.d.stamp()),
             id: self
                 .d
                 .names
@@ -830,7 +830,7 @@ impl<'d> HtmlElement<'d> {
         let Some(doc) = name.doc else {
             return self.attr_by_name(qname);
         };
-        debug_assert!(core::ptr::eq(self.d(), doc));
+        debug_assert_eq!(self.d().stamp(), doc);
         let id = name.id?;
         let html = self.is_html_in_html_doc();
         self.attrs().find(|a| {

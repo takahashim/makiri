@@ -107,6 +107,13 @@ struct Globals {
     engine: Option<Engine>,
 }
 
+// SAFETY: the globals own the engine, which is Lexbor heap objects with no
+// thread affinity (Lexbor's core, CSS and selectors keep no thread-local
+// state), so the cell's content may be borrowed on whichever thread holds the
+// GVL (`gvl::GvlCell`'s `T: Send`). Only the globals move: `Engine` itself
+// stays `!Send`, so a copy taken out of a borrow cannot leave its thread.
+unsafe impl Send for Globals {}
+
 /// The one process-global, borrowed once per query by [`Session`].
 static G: GvlCell<Globals> = GvlCell::new(Globals { engine: None });
 

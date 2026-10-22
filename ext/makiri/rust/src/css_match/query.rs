@@ -262,9 +262,9 @@ impl<'c, 'p, 'd, N: CssNode<'d>> Query<'c, 'p, 'd, N> {
                 spent: std::cell::Cell::new(0),
                 limit,
             },
-            tasks: recycle(core::mem::take(&mut scratch.tasks), usize::MAX),
-            at: recycle(core::mem::take(&mut scratch.at), usize::MAX),
-            cursors: recycle(core::mem::take(&mut scratch.cursors), usize::MAX),
+            tasks: recycle(scratch.tasks.take(), usize::MAX),
+            at: recycle(scratch.at.take(), usize::MAX),
+            cursors: recycle(scratch.cursors.take(), usize::MAX),
             positions: Positions::reuse(&mut scratch.positions, walk_in.is_some()),
         })
     }
@@ -272,9 +272,9 @@ impl<'c, 'p, 'd, N: CssNode<'d>> Query<'c, 'p, 'd, N> {
     /// Hand the names and stacks back to `scratch` for the next query.
     pub(super) fn finish(self, scratch: &mut Scratch<N::Host>) {
         self.plan.give_back(scratch);
-        scratch.tasks = recycle(self.tasks, SCRATCH_KEEP);
-        scratch.at = recycle(self.at, SCRATCH_KEEP);
-        scratch.cursors = recycle(self.cursors, SCRATCH_KEEP);
+        scratch.tasks.put(recycle(self.tasks, SCRATCH_KEEP));
+        scratch.at.put(recycle(self.at, SCRATCH_KEEP));
+        scratch.cursors.put(recycle(self.cursors, SCRATCH_KEEP));
         self.positions.give_back(&mut scratch.positions);
     }
 

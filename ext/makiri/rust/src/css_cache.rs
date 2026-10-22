@@ -330,4 +330,55 @@ mod tests {
         // The previously cached entry must still answer correctly.
         assert_eq!(select_all_cached(&doc, "p.x").len(), 2);
     }
+
+    /// The kept `Scratch` carries capacity and nothing else: a query on a
+    /// new document - which may reuse a dropped one's addresses and stamp
+    /// space - answers what a fresh `Scratch` does, for the selectors that
+    /// keep per-node memos (`:nth-*`, `of S`) and resolve names per document.
+    #[test]
+    fn the_kept_scratch_carries_nothing_from_one_document_to_the_next() {
+        use crate::css_match::Scratch;
+        use crate::html::dom::css::HtmlHost;
+        const SELECTORS: &[&str] = &[
+            "li:nth-child(2n+1)",
+            "li:nth-last-of-type(2)",
+            ":nth-child(2 of .x)",
+            "[data-k=v]",
+            "li[data-k]:nth-child(odd)",
+        ];
+        let docs: [&[u8]; 3] = [
+            b"<ul><li class=x data-k=v>a<li>b<li class=x>c<li data-k=w>d</ul>",
+            b"<ol><li>a<li class=x>b<li class=x data-k=v>c</ol><p data-k=v>",
+            b"<ul><li data-k>a<li class=x>b<li class=x>c<li class=x>d<li>e</ul>",
+        ];
+        for round in 0..2 {
+            for html in docs {
+                let doc = parsed(html);
+                for sel in SELECTORS {
+                    let kept = select_all_cached(&doc, sel);
+                    let fresh: Vec<RawNode> = with_compiled(
+                        &Gvl::exclusive(),
+                        sel.as_bytes(),
+                        |groups, _: &mut Scratch<HtmlHost>| {
+                            select_all(
+                                &mut Scratch::new(),
+                                root(&doc),
+                                groups,
+                                &crate::css_match::Namespaces::NONE,
+                            )
+                        },
+                    )
+                    .expect("parses")
+                    .expect("matches")
+                    .into_iter()
+                    .map(RawNode::from)
+                    .collect();
+                    assert!(
+                        kept == fresh,
+                        "{sel:?} in round {round} differs from a fresh scratch"
+                    );
+                }
+            }
+        }
+    }
 }
