@@ -466,3 +466,141 @@ mod tests {
         assert!(compares < 3 * v.len(), "{compares} compares");
     }
 }
+
+/// The document-order sort taken apart on a bench-shaped HTML document: the
+/// whole evaluate, and its pieces - the already-sorted scan, the index build
+/// and the sort with and without the index. A measurement, not a check:
+/// `cargo test --release --lib order_speed -- --ignored --nocapture`
+/// (`ORDER_ITEMS` sets the size, default 20,000).
+#[cfg(all(test, feature = "html-dom"))]
+mod speed {
+    #![allow(clippy::disallowed_methods, clippy::unwrap_used)]
+    use super::*;
+    use crate::html::dom::xpath::{context, dom, HtmlDom};
+    use crate::html::tree::guard::DepthLimit;
+    use crate::text::VerifiedText;
+    use crate::xpath::ctx::XPathValue;
+    use crate::xpath::limits::Budget;
+    use crate::xpath::parse::parse_owned;
+    use std::time::Instant;
+
+    fn bench_html(items: usize) -> String {
+        let mut rows = String::new();
+        for i in 1..=items {
+            rows.push_str(&format!(
+                "<li class=\"item r{}\" data-id=\"{i}\" data-rank=\"{}\"><a href=\"/p/{i}\" class=\"link\">item {i}</a><span class=\"meta\">tag{} &amp; more</span></li>\n",
+                i % 7,
+                i % 100,
+                i % 13
+            ));
+        }
+        format!(
+            "<!doctype html><html><head><title>bench</title><meta charset=\"utf-8\"></head><body><header id=\"top\"><nav><a href=\"/\">home</a><a href=\"/about\">about</a></nav></header><main id=\"main\" class=\"container\"><section class=\"list\"><ul>{rows}</ul></section></main><footer id=\"bot\"><p>&copy; bench</p></footer></body></html>"
+        )
+    }
+
+    /// The best of `n` runs, in microseconds.
+    fn best(n: usize, mut f: impl FnMut()) -> f64 {
+        let mut b = f64::MAX;
+        for _ in 0..n {
+            let t = Instant::now();
+            f();
+            b = b.min(t.elapsed().as_secs_f64());
+        }
+        b * 1e6
+    }
+
+    fn elements<'d>(d: HtmlDom<'d>, name: &[u8]) -> Vec<<HtmlDom<'d> as Dom<'d>>::Node> {
+        let root = d.document_node();
+        core::iter::once(root)
+            .chain(root.subtree())
+            .filter(|n| n.element().is_some() && d.local_name(*n) == name)
+            .collect()
+    }
+
+    #[test]
+    #[ignore = "a measurement, not a check"]
+    fn order_speed() {
+        let items = std::env::var("ORDER_ITEMS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(20_000);
+        let html = bench_html(items);
+        let parsed =
+            crate::html::tree::parse_html(html.as_bytes(), false, DepthLimit::DEFAULT).unwrap();
+        let d = dom(&parsed);
+        let nodes = 1 + d.document_node().subtree().count();
+        let attrs: usize = d
+            .document_node()
+            .subtree()
+            .map(|n| d.attributes(n).count())
+            .sum();
+        eprintln!(
+            "{items} items, {} bytes, {nodes} tree nodes, {attrs} attributes",
+            html.len()
+        );
+
+        let ctx = context(&parsed, HtmlDom::token(d.document_node()));
+        for expr in [
+            "//a",
+            "//span",
+            "//a | //span",
+            "//li/a/..",
+            "//span | //a",
+            "(//li)[last()] | //a",
+        ] {
+            let mut budget = Budget::with_limits(ctx.limits());
+            let ast = parse_owned(
+                VerifiedText::from_bytes(expr.as_bytes()).unwrap(),
+                &mut budget,
+            )
+            .unwrap();
+            let mut len = 0;
+            let t = best(10, || match ctx.evaluate(&ast, None).ok().unwrap() {
+                XPathValue::NodeSet(s) => len = s.as_slice().len(),
+                _ => unreachable!(),
+            });
+            eprintln!("evaluate {expr:<22} {t:>9.0} us  ({len} nodes)");
+        }
+
+        /* The pieces, on the union's input: every <a>, then every <span>. */
+        let mut union = elements(d, b"a");
+        union.extend(elements(d, b"span"));
+        let first_break = union
+            .windows(2)
+            .position(|w| doc_order_cmp(d, w[0], w[1]) == Ordering::Greater)
+            .unwrap();
+        let scan = best(10, || {
+            let ok = union
+                .windows(2)
+                .all(|w| doc_order_cmp(d, w[0], w[1]) != Ordering::Greater);
+            std::hint::black_box(ok);
+        });
+        let (x, y) = (union[first_break], union[first_break + 1]);
+        let one_cmp = best(10, || {
+            std::hint::black_box(doc_order_cmp(d, x, y));
+        });
+        let build = best(10, || {
+            let mut idx = OrderIndex::new();
+            assert!(order_index_build(d, &mut idx, d.document_node()));
+            std::hint::black_box(&idx);
+        });
+        let mut idx = OrderIndex::new();
+        order_index_build(d, &mut idx, d.document_node());
+        let sort_indexed = best(10, || {
+            let mut v = union.clone();
+            merge_sort(&mut v, |a, b| doc_order_cmp_indexed(d, &idx, *a, *b));
+            std::hint::black_box(v);
+        });
+        let sort_walk = best(3, || {
+            let mut v = union.clone();
+            merge_sort(&mut v, |a, b| doc_order_cmp(d, *a, *b));
+            std::hint::black_box(v);
+        });
+        eprintln!(
+            "union of {} nodes: sorted scan {scan:.0} us (stops at pair {first_break}; that one compare {one_cmp:.0} us), \
+             index build {build:.0} us, sort with index {sort_indexed:.0} us, sort walking parents {sort_walk:.0} us",
+            union.len()
+        );
+    }
+}
