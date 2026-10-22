@@ -263,9 +263,22 @@ SCENARIOS = {
   # property forbids.
   "html_invalid_utf8" => lambda do
     bad = (1..200).map { |i| "<p id='p#{i}'>a\xC3(b \xE0\x80\x80 \xF4\x90\x80\x80 \xED\xA0\x80</p>" }.join
-    doc = Makiri::HTML::Document.parse("<html><body>#{bad}</body></html>".dup.force_encoding("BINARY"))
-    frag = doc.fragment("<i>\xC3\x28</i><b>\xF1\x80</b>".dup.force_encoding("BINARY"))
+    # UTF-8 Strings, the declared encoding: binary ones would be sniffed
+    # and decoded as another (html_legacy_encoding).
+    doc = Makiri::HTML::Document.parse("<html><body>#{bad}</body></html>".dup.force_encoding("UTF-8"))
+    frag = doc.fragment("<i>\xC3\x28</i><b>\xF1\x80</b>".dup.force_encoding("UTF-8"))
     doc.text + "|" + frag.to_html
+  end,
+
+  # A document in a legacy encoding: the decoder's output buffer
+  # (html::encoding::decode), once for a detected Shift_JIS and twice for a
+  # document a late <meta> re-reads - the first parse dropped, the second
+  # decoded afresh.
+  "html_legacy_encoding" => lambda do
+    ja = "<p>日本語のテキスト、ひらがなとカタカナ。</p>" * 20
+    detected = Makiri::HTML(ja.encode("Shift_JIS").b)
+    reread = Makiri::HTML("<!--#{"x" * 1100}--><meta charset=euc-jp>#{ja}".encode("EUC-JP").b)
+    [detected.encoding, detected.text, reread.encoding, reread.text].join("|")
   end,
 
   # The HTML mutation surface: the factories, insertion on every side, the

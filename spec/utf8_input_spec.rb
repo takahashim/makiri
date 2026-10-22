@@ -9,7 +9,10 @@ RSpec.describe "UTF-8 text-input contract" do
 
   describe "HTML parsing (browser-compatible, never raises)" do
     it "replaces invalid UTF-8 with U+FFFD and yields valid text" do
-      doc = Makiri::HTML("<p>a#{INVALID}b</p>".dup.force_encoding("BINARY"))
+      # A UTF-8 String: the declared encoding, so its invalid bytes are
+      # replaced rather than sniffed as another encoding (a binary one would
+      # be - html_encoding_spec.rb).
+      doc = Makiri::HTML("<p>a#{INVALID}b</p>".dup.force_encoding("UTF-8"))
       text = doc.at_xpath("//p").text
       expect(text).to be_valid_encoding
       expect(text).to eq("a�(b") # 0xC3 -> U+FFFD, 0x28 '(' kept
@@ -24,7 +27,7 @@ RSpec.describe "UTF-8 text-input contract" do
       # ~80k lone lead bytes: each is invalid and becomes U+FFFD, so the output
       # is ~3x the input -> forces the sanitiser's buffer to grow and crosses its
       # internal decode/encode chunk boundaries. Must stay memory-clean (ASan).
-      src = ("<p>" + ("\xC3" * 80_000) + "</p>").dup.force_encoding("BINARY")
+      src = ("<p>" + ("\xC3" * 80_000) + "</p>").dup.force_encoding("UTF-8")
       text = Makiri::HTML(src).at_xpath("//p").text
       expect(text).to be_valid_encoding
       expect(text.chars.uniq).to eq(["�"])

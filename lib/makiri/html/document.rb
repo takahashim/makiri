@@ -9,8 +9,18 @@ module Makiri
       # Parse +source+ as HTML5 and return a Makiri::HTML::Document.
       #
       # +source+ may be a String or any object responding to +#read+ (e.g. an
-      # IO). The native parser (#_parse) expects UTF-8 bytes. Source locations
-      # for {Node#line} are always tracked (the cost is negligible).
+      # IO). Source locations for {Node#line} are always tracked (the cost is
+      # negligible).
+      #
+      # The bytes are decoded as the HTML Standard's encoding sniffing
+      # algorithm decides, with the Encoding Standard's decoders: a byte
+      # order mark first; then +encoding+ (an Encoding Standard label such as
+      # "shift_jis", or a Ruby Encoding), or else the String's own encoding
+      # when it has a real one; for binary (ASCII-8BIT) input, a
+      # <meta charset> in the first 1024 bytes, else UTF-8 if the bytes are
+      # valid UTF-8, else a detected encoding - and a <meta> found while
+      # parsing that names another one re-reads the document in it. The
+      # encoding used is #encoding.
       #
       # +max_tree_depth+ bounds how deeply elements may nest, as in
       # Nokogiri::HTML5: the depth counts elements from the root, +<html>+
@@ -20,10 +30,12 @@ module Makiri
       #
       # @param source [String, #read]
       # @param max_tree_depth [Integer, nil] nil for the default
+      # @param encoding [String, Encoding, nil] the transport layer's
+      #   encoding; an unknown label raises ArgumentError
       # @return [Makiri::HTML::Document]
-      def self.parse(source, max_tree_depth: nil)
+      def self.parse(source, max_tree_depth: nil, encoding: nil)
         source = source.read if source.respond_to?(:read)
-        _parse(String(source), max_tree_depth)
+        _parse(String(source), max_tree_depth, encoding&.to_s)
       end
 
       # An independent copy of the whole document (like Nokogiri's Document#dup):
@@ -79,13 +91,6 @@ module Makiri
       def title=(text)
         ensure_in_head("title", "title")&.content = text
         text
-      end
-
-      # Makiri parses and stores everything as UTF-8 (callers decode bytes before
-      # parsing), so the in-memory encoding is always UTF-8.
-      # @return [String]
-      def encoding
-        "UTF-8"
       end
 
       # The charset declared in the document's markup, or nil. Reads

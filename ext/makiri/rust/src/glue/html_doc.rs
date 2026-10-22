@@ -19,13 +19,46 @@ use magnus::{method, prelude::*, Error, Ruby, Value};
 
 /* ---- Document.parse ---- */
 
-/// `Document._parse(source, max_tree_depth)`. The Ruby `Document.parse` turns
-/// the keyword into the second argument; `nil` is the default limit.
-fn doc_s_parse(ruby: &Ruby, _klass: Value, source: Value, depth: Value) -> Result<Value, Error> {
+/// `Document._parse(source, max_tree_depth, encoding)`. The Ruby
+/// `Document.parse` turns the keywords into the second and third arguments;
+/// `nil` is the default limit, and no encoding given.
+fn doc_s_parse(
+    ruby: &Ruby,
+    _klass: Value,
+    source: Value,
+    depth: Value,
+    encoding: Value,
+) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let limit = crate::glue::kwargs::max_tree_depth(ruby, Some(depth))?;
-        crate::bridge::doc::parse_document(source, limit)
+        let given = encoding_arg(ruby, encoding)?;
+        crate::bridge::doc::parse_document(source, limit, given)
     })
+}
+
+/// The `encoding:` keyword, which `Document.parse` hands over as nil or a
+/// String (an `Encoding` or Symbol by its `to_s`): an Encoding Standard label
+/// (`"shift_jis"`, `"latin1"`, `"Windows-31J"`). Anything the Standard does
+/// not label is `ArgumentError`: a document is never read in an encoding the
+/// caller did not ask for.
+fn encoding_arg(ruby: &Ruby, v: Value) -> Result<Option<&'static encoding_rs::Encoding>, Error> {
+    if v.is_nil() {
+        return Ok(None);
+    }
+    let label = crate::bridge::string::ruby_verified_text(v, "encoding")?;
+    match crate::html::encoding::for_label(label.as_bytes()) {
+        Some(e) => Ok(Some(e)),
+        None => Err(Error::new(
+            ruby.exception_arg_error(),
+            format!("unknown encoding for HTML: {}", &*label),
+        )),
+    }
+}
+
+/// `Document#encoding`: the character encoding the document was read in, by
+/// its Encoding Standard name (`"UTF-8"`, `"Shift_JIS"`, `"windows-1252"`).
+fn doc_encoding(_ruby: &Ruby, this: Value) -> Result<&'static str, Error> {
+    crate::bridge::ruby::entry(|| Ok(crate::bridge::doc::document_encoding(this)))
 }
 
 /* ---- read-only accessors ---- */
@@ -52,7 +85,7 @@ fn doc_internal_subset(_ruby: &Ruby, this: HtmlSelf) -> Result<Option<Value>, Er
 
 /// `Makiri::HTML::Document.new`: an empty document - no children, no-quirks.
 fn doc_s_new(_ruby: &Ruby, _klass: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| crate::bridge::doc::new_empty_document(0))
+    crate::bridge::ruby::entry(|| crate::bridge::doc::new_empty_document(0, "UTF-8"))
 }
 
 /// `Document#_empty_copy` (private): an empty document in this one's quirks
@@ -60,7 +93,8 @@ fn doc_s_new(_ruby: &Ruby, _klass: Value) -> Result<Value, Error> {
 fn doc_empty_copy(_ruby: &Ruby, this: HtmlSelf) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let mode = u32::try_from(this.node().owner_document().compat_mode()).unwrap_or(0);
-        crate::bridge::doc::new_empty_document(mode)
+        let encoding = crate::bridge::doc::document_encoding(this.document);
+        crate::bridge::doc::new_empty_document(mode, encoding)
     })
 }
 
@@ -171,7 +205,8 @@ pub fn node_clone_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Va
 pub fn init_html_doc() -> Result<(), Error> {
     let html_doc = crate::init::CLASS_HTML_DOCUMENT.defined()?;
 
-    html_doc.define_singleton_method("_parse", method!(doc_s_parse, 2))?;
+    html_doc.define_singleton_method("_parse", method!(doc_s_parse, 3))?;
+    html_doc.define_method("encoding", method!(doc_encoding, 0))?;
     html_doc.define_singleton_method("new", method!(doc_s_new, 0))?;
     html_doc.define_private_method("_empty_copy", method!(doc_empty_copy, 0))?;
     html_doc.define_method("root", method!(doc_root, 0))?;

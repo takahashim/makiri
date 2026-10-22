@@ -2,8 +2,31 @@
 
 ## [Unreleased]
 
+### Added
+
+* HTML documents are decoded as browsers decode them: the HTML Standard's
+  encoding sniffing algorithm with the Encoding Standard's decoders. A
+  binary (ASCII-8BIT) String is read in the encoding its byte order mark or
+  `<meta>` declares, or as UTF-8 when it is valid UTF-8, or else in a
+  detected encoding (Shift_JIS, EUC-JP, ISO-2022-JP, ...); a `<meta>` past
+  the first 1024 bytes re-reads the document in the encoding it names.
+  `Makiri::HTML(src, encoding: "shift_jis")` gives the encoding outright, and
+  `Document#encoding` returns the one used (it was always `"UTF-8"`).
+
+### Changed
+
+* A binary String holding invalid UTF-8 is no longer read as UTF-8 with
+  U+FFFD replacements: it is sniffed, and usually detected as a legacy
+  encoding. Pass `encoding: "utf-8"` (or a UTF-8 String) for the old reading.
+* A String in a legacy encoding is decoded with the Encoding Standard's
+  decoder for it rather than Ruby's transcoder, as browsers decode it:
+  `ISO-8859-1` reads as windows-1252 (`\x80` is `€`), and Shift_JIS's
+  `0x8160` is U+301C where Ruby's `Windows-31J` made U+FF5E.
+
 ### Fixed
 
+* A UTF-8 byte order mark at the start of a document is no longer kept as a
+  U+FEFF character in the text.
 * A refused `Makiri::XML` insert of a node from another document (onto a
   Text node, say) no longer leaves the copy it made in the target document,
   where each refused call grew it and used up its node budget.

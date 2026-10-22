@@ -12,6 +12,10 @@
 # and two U+FFFD under a byte-at-a-time one). The enumeration below is the
 # standing check that the shipped build follows the maximal-subpart rule.
 #
+# The bytes go in as a UTF-8 String, the transport layer's declaration, so
+# the encoding sniffing does not detect another encoding for the invalid ones
+# (a binary String would be sniffed: `html_encoding_spec.rb`).
+#
 # The bytes are read back through a comment node: the HTML tokenizer copies
 # comment data through verbatim, so what comes out is the sanitiser's output.
 # Six bytes cannot travel that channel and are excluded rather than asserted on
@@ -23,7 +27,7 @@ RSpec.describe "UTF-8 sanitiser: the maximal-subpart rule" do
 
   # What the sanitiser made of these bytes.
   def sanitized(bytes)
-    doc = Makiri::HTML("<!--#{bytes.pack("C*")}-->")
+    doc = Makiri::HTML("<!--#{bytes.pack("C*")}-->".force_encoding("UTF-8"))
     doc.children.find { |n| n.is_a?(Makiri::HTML::Comment) }&.content
   end
 

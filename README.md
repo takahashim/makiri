@@ -71,6 +71,11 @@ link.parent.name                        # => "div"
 # Source location (the line of the element's start tag)
 doc.at_css("p").line                    # => 3
 
+# Bytes are decoded as a browser decodes them: BOM, <meta charset>, else
+# UTF-8 or a detected legacy encoding (or say which with encoding:)
+Makiri::HTML(File.binread("legacy.html")).encoding  # => "Shift_JIS"
+Makiri::HTML(bytes, encoding: "euc-jp")
+
 # Nesting deeper than 400 elements raises Makiri::Error (Nokogiri's default);
 # max_tree_depth: raises the limit, and a negative value disables it
 Makiri::HTML(deep_html, max_tree_depth: 2000)

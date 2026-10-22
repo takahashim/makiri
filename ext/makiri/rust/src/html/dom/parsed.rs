@@ -55,6 +55,10 @@ pub struct HtmlParsed {
     lines: Option<Lines>,
     /// `None` inside: the document has no root element to index under.
     text_index: OnceCell<Option<TextIndex>>,
+    /// The document's character encoding: the one its bytes were decoded
+    /// from (`html::encoding`), by its Encoding Standard name; UTF-8 for a
+    /// document made rather than parsed.
+    encoding: &'static str,
 }
 
 impl HtmlParsed {
@@ -65,7 +69,18 @@ impl HtmlParsed {
             dom_index: OnceCell::new(),
             lines,
             text_index: OnceCell::new(),
+            encoding: "UTF-8",
         }
+    }
+
+    /// The document's character encoding, by its Encoding Standard name.
+    pub fn encoding(&self) -> &'static str {
+        self.encoding
+    }
+
+    /// Record the encoding the document was read in.
+    pub fn set_encoding(&mut self, name: &'static str) {
+        self.encoding = name;
     }
 
     /// The document, for reading.

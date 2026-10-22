@@ -615,12 +615,24 @@ no build that ships carries. The arena keeps the same contracts behind the
 note describes how Lexbor stores something, the arena's version is in
 `html/dom/`.
 
-**Text-input contract.** Parsing **honours the input String's encoding**
+**Text-input contract.** A DOCUMENT parse decodes its bytes as a browser
+does (`html/encoding.rs`): the HTML Standard's encoding sniffing algorithm
+(BOM; the transport layer's encoding - `encoding:`, else the String's own
+when it has one; for an ASCII-8BIT String the 1024-byte `<meta>` prescan,
+then UTF-8 if the bytes are valid UTF-8, then `chardetng`), "change the
+encoding" (a `<meta>` met while the confidence is tentative re-reads the
+document), and the Encoding Standard's decoders (`encoding_rs`, into a
+`falloc` buffer). `Document#encoding` is what it was read in. A Ruby
+encoding the Standard has no label for (UTF-32, CP51932) is transcoded by
+Ruby as before (`HtmlSource::for_document`). Fragment parsing takes text, so
+it has no sniffing: there the input String's encoding is honoured
 (`ruby_to_utf8`, `bridge/string.rs`): UTF-8 / US-ASCII / ASCII-8BIT pass
 through untouched (the UTF-8 common case is a single encoding compare - no
 transcode, no copy), any other encoding (Shift_JIS, EUC-JP, ISO-8859-1, ...) is
 `rb_str_encode`'d to UTF-8 (invalid/undef → U+FFFD) so its content survives
-instead of being read as raw UTF-8. After that the bytes are UTF-8. **HTML
+instead of being read as raw UTF-8. After that the bytes are UTF-8 - and a
+document's UTF-8 skips the decoder, since the sanitiser below replaces as the
+UTF-8 decoder does (`the_sanitiser_is_the_utf8_decoder`). **HTML
 parsing then decodes leniently like a browser**: `sanitize`
 (`utf8_input.rs`) replaces any remaining invalid UTF-8 with U+FFFD (a NUL is left
 for the HTML5 tokenizer to drop/replace), so parse/fragment **never fail** on
@@ -1198,7 +1210,7 @@ all three scopes; there is no `Attribute`. Convenience: `Node#{root,ancestors,pa
 (path round-trips through `#at_xpath`), `Node#{attributes,to_h}`,
 `Node#{search,at}` (CSS/XPath auto-detect: starts `/ ./ .. .// ( @` or contains
 `::` ⇒ XPath, else CSS), `Document#{body,head,encoding,meta_encoding}`
-(`encoding` is always "UTF-8"). `NodeSet#{|,+,&,-}` are identity-dedup,
+(`encoding` is the one the document was read in, "UTF-8" for one made). `NodeSet#{|,+,&,-}` are identity-dedup,
 encounter-order (**not** doc-order), `#{css,xpath,search}` run per node and union
 (return `self` when empty so an empty set stays a NodeSet), `#{last,at,remove}`.
 `Element.new(name, doc)` / `Text.new(content, doc)` delegate to

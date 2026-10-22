@@ -619,6 +619,41 @@ impl HtmlSource {
         Ok(HtmlSource { bytes, known_valid })
     }
 
+    /// `s` as a DOCUMENT parse's input (`html::encoding`): its bytes as they
+    /// are, with the transport layer's encoding they come under, which the
+    /// encoding sniffing algorithm takes as certain. That is `given`
+    /// (`encoding:`) when there is one; otherwise the String's own encoding
+    /// is the declaration - none for ASCII-8BIT, whose bytes are sniffed,
+    /// UTF-8 for UTF-8 and US-ASCII, and for any other the Encoding Standard
+    /// encoding its name labels. An encoding the Standard has no label for
+    /// (UTF-32, CP51932, ...) is transcoded by Ruby, as before, and read as
+    /// UTF-8.
+    pub fn for_document(
+        s: RString,
+        given: Option<&'static encoding_rs::Encoding>,
+    ) -> Result<(HtmlSource, Option<&'static encoding_rs::Encoding>), Error> {
+        let enc = Encoding::of(s);
+        let transport = match given {
+            Some(e) => Some(e),
+            None if enc.is_ascii8bit() => None,
+            None if enc.is_utf8_compatible() => Some(encoding_rs::UTF_8),
+            None => {
+                let name = magnus::encoding::RbEncoding::from(
+                    magnus::encoding::EncodingCapable::enc_get(s),
+                );
+                match encoding_rs::Encoding::for_label(name.name().as_bytes()) {
+                    Some(e) => Some(e),
+                    None => return Ok((HtmlSource::from_ruby(s)?, Some(encoding_rs::UTF_8))),
+                }
+            }
+        };
+        let known_valid = transport == Some(encoding_rs::UTF_8)
+            && enc.is_utf8_compatible()
+            && ruby_str_known_valid_utf8(s);
+        let bytes = ruby_string_bytes(s)?;
+        Ok((HtmlSource { bytes, known_valid }, transport))
+    }
+
     /// Whether the bytes are valid UTF-8 already - never a scan, only what
     /// Ruby (or the transcode) has established.
     pub fn known_valid(&self) -> bool {
