@@ -20,7 +20,7 @@ use crate::bridge::node_set::{node_set_with_fill, PushError};
 use crate::bridge::node_wrap::wrap_doc_node;
 use crate::bridge::ruby::VALUE;
 use crate::bridge::string::{ruby_str_from_utf8, ruby_verified_text};
-use crate::bridge::wrapper::{doc_content, html_doc_unwrap, Content};
+use crate::bridge::wrapper::{doc_content, Content};
 use crate::bridge::wrapper::{DocKind, NodeWord};
 use crate::bridge::xml::xml_node_unwrap;
 use crate::engine_error::{Error as XPathError, ErrorKind};
@@ -40,7 +40,7 @@ mod context_object;
 mod handler;
 
 use crate::bridge::ruby::is_kind_of;
-pub use context_object::XPathCtx;
+pub use context_object::{XPathCtx, XPathCtxSelf};
 use handler::Bridge;
 
 /// An engine error as the Ruby exception it maps to.
@@ -48,6 +48,12 @@ use handler::Bridge;
 /// Returned rather than raised: `rb_raise` longjmps past every Rust destructor
 /// on the way (see `glue/mod.rs`), so each caller hands this back as `Err` and
 /// magnus raises once its frames - and the context they own - are gone.
+///
+/// Built lazily - a class and a Rust message, no Ruby object - so making one
+/// allocates nothing Ruby could raise `NoMemoryError` from: the callers build
+/// it while they still own the parse error, the context and the AST, which a
+/// raise here would leak. magnus makes the exception (a UTF-8 message) when
+/// it raises.
 pub fn xpath_error(err: &XPathError) -> Error {
     let class = match err.status {
         ErrorKind::Syntax => EXC_XPATH_SYNTAX_ERROR.exception(),
@@ -58,15 +64,12 @@ pub fn xpath_error(err: &XPathError) -> Error {
         | ErrorKind::Internal
         | ErrorKind::Oom => EXC_ERROR.exception(),
     };
-    let ruby = magnus::Ruby::get_with(class);
-    let msg = ruby.enc_str_new(
-        err.message().unwrap_or("XPath evaluation failed"),
-        ruby.utf8_encoding(),
-    );
-    match class.new_instance((msg,)) {
-        Ok(e) => Error::from(e),
-        Err(e) => e,
-    }
+    Error::new(
+        class,
+        err.message()
+            .unwrap_or("XPath evaluation failed")
+            .to_owned(),
+    )
 }
 
 /// The document a [`Cx`] evaluates, as the pointer the Document wrapper owns.
@@ -179,16 +182,16 @@ pub fn context_for(rb_node: Value, document: Value) -> Result<Cx, Error> {
         });
     }
 
+    /* XML was answered above, so anything else is a Document with no
+     * content yet - refused before the HTML accessors would assume one. */
+    let Content::Html(parsed) = content else {
+        return Err(makiri_error("XPath context with no document"));
+    };
     let (key, _) = html_node_key(rb_node)?;
-    /* TypeError for a Document that is not HTML. */
-    html_doc_unwrap(document)?;
     /* Resolved against `document` - checked, not assumed, to own the node -
      * and kept as the context's token, which `document` keeps alive for as
      * long as the context lives. */
     let node = with_html_node(document, key, |n| <HtmlDom<'_> as Dom<'_>>::token(n))?;
-    let Content::Html(parsed) = content else {
-        return Err(makiri_error("XPath context with no document"));
-    };
     Ok(Cx {
         session: Session::new(Some(node)),
         doc: DocPtr::Html(crate::bridge::dom::DocPtr::new(parsed)),
@@ -211,10 +214,10 @@ fn parse_with_limits(
 /// error as the exception.
 pub fn parse_query(cx: &Cx, expr: Value) -> Result<Box<Ast>, Error> {
     let ev = ruby_verified_text(expr, "XPath expression")?;
-    /* `ev` holds the String rooted and locked; `text`'s borrow keeps it live for the
-     * parse. */
+    /* `ev` owns a copy of the String's bytes; the parse reads that copy. */
     let parsed = parse_with_limits(cx.limits(), ev.text());
-    /* No borrowed bytes across the exception's allocation. */
+    /* The copy is freed before the error is built, as `rake unsafe:boundaries`
+     * asks of every argument copy. */
     drop(ev);
     parsed.map_err(|error| xpath_error(&error))
 }
@@ -357,10 +360,8 @@ pub fn evaluate_query(
     /* The exception a handler-side call ended in, moved to this frame's stack
      * (where the GC's conservative scan keeps seeing it) before the bridge goes. */
     let raised = bridge.as_mut().and_then(|b| b.raised.take());
-    /* Released BEFORE the error is built: `xpath_error` allocates Ruby objects
-     * outside `protect`, and a `NoMemoryError` there longjmps past this frame,
-     * skipping the guard's `Drop` - which would leave the document refusing
-     * every edit for the rest of its life. */
+    /* Released BEFORE the error is built: `with_cause` runs Ruby, and nothing
+     * must find the document still refusing edits once the walk is over. */
     drop(bridge);
     /* A document-order index the evaluate built is the document's now. */
     crate::bridge::wrapper::account_kept_order(document, had_order);
@@ -400,16 +401,26 @@ pub fn evaluate_to_ruby<C: core::borrow::Borrow<Cx>>(
 ///
 /// Ruby sets a cause only by raising, and has no C API for it, so this goes
 /// through `Makiri::Error.__with_cause` (`lib/makiri/error.rb`), which raises
-/// with `cause:` and hands the exception back. Left without one when either
-/// is not an exception object, or the call fails.
+/// with `cause:` and hands the exception back. `error` is [`xpath_error`]'s
+/// lazy one, made into its exception here, every allocation under `protect`.
+/// Left without a cause when `cause` is not an exception object, or a call
+/// fails.
 fn with_cause(error: Error, cause: &Error) -> Error {
-    use magnus::error::ErrorType::Exception;
-    let (Exception(exc), Exception(cause)) = (error.error_type(), cause.error_type()) else {
+    use magnus::error::ErrorType;
+    let (ErrorType::Error(class, msg), ErrorType::Exception(cause)) =
+        (error.error_type(), cause.error_type())
+    else {
+        return error;
+    };
+    let Ok(msg) = crate::bridge::string::utf8_str_protected(msg.as_bytes()) else {
+        return error;
+    };
+    let Ok(exc) = class.new_instance((msg,)) else {
         return error;
     };
     let with: Result<Value, Error> = crate::init::EXC_ERROR
         .exception()
-        .funcall("__with_cause", (*exc, *cause));
+        .funcall("__with_cause", (exc, *cause));
     match with.ok().and_then(magnus::Exception::from_value) {
         Some(e) => Error::from(e),
         None => error,

@@ -422,7 +422,17 @@ impl From<DocKind> for Kind {
 /// [`install`](Self::install), which also reports the arena to the GC. That
 /// report is not optional (see `account_document`), and the parse entries used
 /// to make it by hand, each one a place to forget it.
-pub struct DocumentShell(VALUE);
+///
+/// Until `install` the wrapper is HIDDEN (`rb_obj_hide`: no class, so
+/// `ObjectSpace` does not list it): a Document with no content answers
+/// nothing, and every accessor assumes the content is there. A parse runs
+/// with the GVL released between the two, so another thread could otherwise
+/// find the wrapper and call a method on it; a parse that fails leaves it
+/// hidden for the GC to free.
+pub struct DocumentShell {
+    obj: VALUE,
+    klass: VALUE,
+}
 
 impl DocumentShell {
     pub fn new(kind: DocKind) -> DocumentShell {
@@ -436,7 +446,7 @@ impl DocumentShell {
          * NoMemoryError while the caller holds a live resource). */
         let errors = crate::bridge::ruby::array_new();
         // SAFETY: a fresh wrapper; the store closure only moves a live VALUE in.
-        DocumentShell(unsafe {
+        let obj = unsafe {
             ty.wrap(
                 klass,
                 || DocData {
@@ -449,7 +459,11 @@ impl DocumentShell {
                 },
                 |d, store| d.errors = store.hold(errors),
             )
-        })
+        };
+        // SAFETY: a live object of ours, not yet handed out; hiding clears its
+        // class field and raises nothing.
+        unsafe { rb_sys::rb_obj_hide(obj) };
+        DocumentShell { obj, klass }
     }
 
     /// Give the HTML Document its parsed document - the GC owns it from here -
@@ -464,13 +478,17 @@ impl DocumentShell {
     }
 
     fn install(self, content: Content) -> Value {
-        // SAFETY: `self.0` is a live Document wrapper (the base type matches
+        // SAFETY: `self.obj` is a live Document wrapper (the base type matches
         // either leaf) that has no content yet, so nothing is overwritten.
-        let rb_doc = unsafe { value(self.0) };
+        let rb_doc = unsafe { value(self.obj) };
         DOC_TYPE.get_known(&rb_doc).content.set(content);
-        account_document(self.0);
+        account_document(self.obj);
+        /* Content in place: the Document can be seen now. */
+        // SAFETY: the object `new` hid, given back the class it was made
+        // with; revealing raises nothing.
+        unsafe { rb_sys::rb_obj_reveal(self.obj, self.klass) };
         // SAFETY: a live Document.
-        unsafe { value(self.0) }
+        unsafe { value(self.obj) }
     }
 }
 

@@ -162,9 +162,13 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
 * A document's bytes are decoded by the HTML Standard's **encoding sniffing
   algorithm**, with the Encoding Standard's decoders, and `Document#encoding`
   is the encoding they were read in (`"Shift_JIS"`, `"windows-1252"`).
-  * A binary (ASCII-8BIT) String with no `<meta>` charset is read as UTF-8
-    when it is valid UTF-8 and is otherwise detected (Shift_JIS, EUC-JP,
-    ISO-2022-JP, ...). `Nokogiri::HTML5` reads it as windows-1252, so valid
+  * A binary (ASCII-8BIT) or US-ASCII String with no `<meta>` charset is read
+    as UTF-8 when it is valid UTF-8 and is otherwise detected (Shift_JIS,
+    EUC-JP, ISO-2022-JP, ...), as browsers read a local file. One invalid
+    byte - a stray one, or a character cut off at the end - rules UTF-8 out,
+    and the whole document is read in the detected encoding; pass
+    `encoding: "utf-8"` for input known to be UTF-8, and only the bad bytes
+    become U+FFFD. `Nokogiri::HTML5` reads it as windows-1252, so valid
     UTF-8 and Shift_JIS alike come out garbled.
   * A `<meta>` charset past the first 1024 bytes re-reads the document in that
     encoding, as browsers do; `Nokogiri::HTML5` ignores it.

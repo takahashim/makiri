@@ -57,6 +57,14 @@ impl Held {
         Held(core::cell::Cell::new(rb_sys::Qfalse as VALUE))
     }
 
+    /// Hold `new`'s value in place of this one: a field that changes after
+    /// the wrap (an `XPathContext`'s node). `new` comes from a [`Store`], so
+    /// the rule [`Held`] carries holds for it too.
+    #[inline]
+    pub(in crate::bridge) fn replace(&self, new: Held) {
+        self.0.set(new.0.get());
+    }
+
     /// The value.
     ///
     /// # Safety
@@ -418,8 +426,8 @@ unsafe fn wrap_built<T>(
 /* ---- magnus's TypedData, for NodeSet ----
  * NodeSet is a magnus `#[derive(TypedData)]` (its GC hooks are magnus's), not
  * a `TypedType`; this is its one unchecked accessor, kept beside the others.
- * magnus boxes the value and its free drops the `Box`, so NodeSet and
- * XPathContext get their `Drop` the same way a `TypedType` object does. */
+ * magnus boxes the value and its free drops the `Box`, so NodeSet gets its
+ * `Drop` the same way a `TypedType` object does. */
 
 /// The wrapped Rust value behind a TypedData object, without magnus's
 /// `rb_protect`.

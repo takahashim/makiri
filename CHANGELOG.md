@@ -20,12 +20,20 @@
 * A binary or US-ASCII String holding invalid UTF-8 is no longer read as
   UTF-8 with U+FFFD replacements: it is sniffed, and read in the encoding a
   detector guesses - which, for short text or text with little variety,
-  can be the wrong one. Pass `encoding:` when it is known, `"utf-8"` (or a
-  UTF-8 String) for the old reading.
+  can be the wrong one. A single invalid byte is enough: UTF-8 with one
+  stray byte, or cut off inside a character, is read whole as a legacy
+  encoding (windows-1252, say), as a browser reads such a local file. Pass
+  `encoding:` when it is known, `"utf-8"` (or a UTF-8 String) for the old
+  reading.
 * A String in a legacy encoding is decoded with the Encoding Standard's
   decoder for it rather than Ruby's transcoder, as browsers decode it:
   `ISO-8859-1` reads as windows-1252 (`\x80` is `€`), and Shift_JIS's
   `0x8160` is U+301C where Ruby's `Windows-31J` made U+FF5E.
+* Selectors, XPath expressions, names, attribute values and text read a
+  String in its own encoding, as parsing does: one that is not UTF-8,
+  US-ASCII or binary is converted to UTF-8 first, and refused with
+  `Makiri::Error` when it cannot be. Its bytes were read as UTF-8, so a
+  Windows-1252 `"\xC3\xA9"` was stored as `é` and a UTF-16 `"a"` as `"a\0"`.
 * `Makiri::XML` `#ancestors` returns a NodeSet, as HTML's does; it returned
   an Array.
 * `Makiri::XML` reads an encoding declaration by its IANA charset name or
