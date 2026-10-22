@@ -98,6 +98,9 @@ enum Refusal<P> {
     Check(P),
     /// The bytes could not be copied.
     Oom,
+    /// The String is in an encoding whose text has no UTF-8 form, or holds
+    /// bytes that are not that encoding's ([`utf8_strict`]).
+    Encoding,
 }
 
 impl<P> crate::falloc::Oom for Refusal<P> {
@@ -118,6 +121,10 @@ impl<C: Checked> RubyStr<C> {
         s: RString,
         check: impl FnOnce(RString, &[u8]) -> Option<P>,
     ) -> Result<Self, Refusal<P>> {
+        /* Read in its own encoding: a String in another one is transcoded
+         * first, and the copy and the check are of the UTF-8 it became. The
+         * transcode is a fresh String on this frame, so the GC keeps it. */
+        let s = utf8_strict(s).map_err(|_| Refusal::Encoding)?;
         let bytes = copy_bytes(s).or_oom()?;
         match check(s, bytes.as_slice()) {
             Some(problem) => Err(Refusal::Check(problem)),
@@ -222,6 +229,9 @@ pub fn text_check(coderange_str: RString, bytes: &[u8]) -> TextVerdict {
 }
 
 /// The error for a checked view whose bytes could not be copied.
+/// Why a String in another encoding was refused ([`Refusal::Encoding`]).
+const NOT_UTF8_CONVERTIBLE: &str = "could not be converted to UTF-8 from its encoding";
+
 fn oom_reading() -> Error {
     makiri_error("out of memory reading a Ruby string")
 }
@@ -285,6 +295,7 @@ fn verified_text_raising(
         )),
         Refusal::Check(v) => text_error(what, v.problem().unwrap_or_default()),
         Refusal::Oom => oom_reading(),
+        Refusal::Encoding => text_error(what, NOT_UTF8_CONVERTIBLE),
     })
 }
 
@@ -298,6 +309,7 @@ pub fn ruby_verified_data(in_: Value, what: &str) -> Result<RubyData, Error> {
     RubyData::acquire(s, |s, b| text_check(s, b).data_problem()).map_err(|r| match r {
         Refusal::Check(problem) => text_error(what, problem),
         Refusal::Oom => oom_reading(),
+        Refusal::Encoding => text_error(what, NOT_UTF8_CONVERTIBLE),
     })
 }
 
@@ -358,5 +370,6 @@ pub fn ruby_try_verified_text(sv: RString, max_bytes: usize) -> Result<RubyText,
     .map_err(|r| match r {
         Refusal::Check(reason) => reason,
         Refusal::Oom => "could not be copied (out of memory)",
+        Refusal::Encoding => NOT_UTF8_CONVERTIBLE,
     })
 }

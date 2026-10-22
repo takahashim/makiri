@@ -175,6 +175,25 @@ unsafe fn ruby_to_utf8(str: RString) -> VALUE {
     crate::bridge::raw::str_encode(str.as_raw(), Encoding::utf8().0, REPLACE)
 }
 
+/// `s` as UTF-8 for a STRICT reader (`RubyText`, `RubyData`): itself when
+/// its bytes are read as UTF-8 already ([`Encoding::reads_as_utf8_bytes`] -
+/// UTF-8, US-ASCII, ASCII-8BIT), else transcoded by Ruby with no
+/// replacement, so a character that has no UTF-8 form, or a byte that is not
+/// one of the encoding's, is an error rather than a U+FFFD. The parse path
+/// replaces instead ([`ruby_to_utf8_value`]); a selector or an attribute value
+/// is not repaired. Ruby's own raise (an `Encoding::*Error`) is returned.
+pub fn utf8_strict(s: RString) -> Result<RString, Error> {
+    if Encoding::of(s).reads_as_utf8_bytes() {
+        return Ok(s);
+    }
+    // SAFETY: `s` is a live String, and `protect` turns the raise into `Err`.
+    let raw =
+        protect(|| unsafe { crate::bridge::raw::str_encode(s.as_raw(), Encoding::utf8().0, 0) })?;
+    // SAFETY: `rb_str_encode` returns a live value; checked to be a String.
+    RString::from_value(unsafe { crate::bridge::ruby::value(raw) })
+        .ok_or_else(|| crate::bridge::ruby::internal_error("transcoding returned a non-String"))
+}
+
 /// [`ruby_to_utf8`] as a safe call: `s` is a String by type, and so is the
 /// result. An encoding Ruby cannot convert to UTF-8 comes back as its
 /// `Encoding::ConverterNotFoundError`, returned rather than raised.
