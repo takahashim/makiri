@@ -283,7 +283,7 @@ fn cached_ast(
     limits: crate::xpath::limits::Limits,
     expr: RubyText,
 ) -> Result<(QueryAst, usize), crate::engine_error::Error> {
-    // SAFETY: `expr` holds its String rooted for this lookup.
+    /* `expr` owns a copy of the String's bytes, so the key cannot change. */
     let key = expr.as_bytes();
     if let Some(ast) = cache.0.get(key) {
         // SAFETY: cached, so alive and unchanged while the context is.
@@ -297,9 +297,6 @@ fn cached_ast(
     let Some(owned_key) = try_to_boxed_slice(key) else {
         return Ok((QueryAst::owned(ast), 0));
     };
-    /* The Box's heap address is what the cache keeps; moving the Box into the
-     * map does not move the AST, so the pointer is taken before the insert. */
-    let ptr = NonNull::from(&*ast);
     let added = owned_key.len().saturating_add(ast.heap_estimate());
     if cache.0.falloc_insert(owned_key, ast).is_err() {
         return Err(XPathError::with(
@@ -307,6 +304,16 @@ fn cached_ast(
             format_args!("out of memory caching XPath expression"),
         ));
     }
+    /* The AST is borrowed from the map AFTER the insert, not through a pointer
+     * taken before it: moving the `Box` into the map asserts unique ownership
+     * of the AST, which a pointer derived earlier does not survive (the same
+     * Stacked Borrows hazard `wrapper::Content` avoids). */
+    let Some(ast) = cache.0.get(key) else {
+        return Err(XPathError::with(
+            ErrorKind::Internal,
+            format_args!("a cached XPath expression went missing"),
+        ));
+    };
     // SAFETY: just cached, so alive and unchanged while the context is.
-    Ok((unsafe { QueryAst::cached(ptr.as_ref()) }, added))
+    Ok((unsafe { QueryAst::cached(ast) }, added))
 }
