@@ -17,9 +17,6 @@ use crate::css_match::{MatchFailure, Namespaces, QueryFailure, MAX_COMPOUNDS};
 use crate::init::EXC_CSS_SYNTAX_ERROR;
 use crate::limits::NODE_SET_MAX;
 
-/// The key whose URI is the default namespace, as Nokogiri's Hash has it.
-const DEFAULT_KEY: &[u8] = b"xmlns";
-
 /// `(selector, namespaces = nil)`, the argument list Nokogiri's CSS methods
 /// take too - so one call works on either representation.
 ///
@@ -70,7 +67,7 @@ impl CssArgs {
         let mut refs = try_vec_with_capacity(self.bindings.len()).ok_or_else(oom)?;
         let mut default = None;
         for (p, u) in &self.bindings {
-            if p.as_slice() == DEFAULT_KEY {
+            if p.as_slice() == Namespaces::DEFAULT_KEY {
                 default = Some(u.as_slice());
             } else {
                 refs.falloc_push((p.as_slice(), u.as_slice()))

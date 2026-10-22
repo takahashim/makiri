@@ -8,11 +8,11 @@ use crate::selectors::ast::Combinator;
 use core::ffi::c_long;
 
 use super::compile::{Chain, Compiled, Compound, Nest, Step};
-use super::dom::{CssNode, Host, NsFilter};
-use super::ns::NsTest;
+use super::dom::CssNode;
+use super::plan::QueryPlan;
 use super::positions::Positions;
 use super::scratch::{recycle, Scratch, SCRATCH_KEEP};
-use super::simple::{anb_matches, check_simple, Name, Names, SimpleCheck};
+use super::simple::{anb_matches, check_simple, SimpleCheck};
 use super::tree::{next_sibling_element, nth_of_sibling, parent_element, prev_sibling_element};
 use super::{Budget, MatchFailure};
 
@@ -171,7 +171,7 @@ pub(super) struct ForwardTask<N> {
 /// `of S` (`lxb_selectors_pseudo_class_function`'s `NTH_CHILD`): is
 /// `candidate` in `S` (`counting == false`), then how many of its siblings
 /// in the counting direction are - each tested at `node` in turn, noted in
-/// [`Positions`]' `of_seen` from `seen_base` on, until the list ends or a
+/// `NthOfMemo`'s `seen` from `seen_base` on, until the list ends or a
 /// sibling whose rank a walking query already knows.
 #[derive(Clone, Copy)]
 pub(super) struct NthOfTask<N> {
@@ -234,8 +234,8 @@ enum Check {
 /// same with its entry / nested-state pools, reset between candidates.
 pub(super) struct Query<'c, 'p, 'd, N: CssNode<'d>> {
     compiled: &'c Compiled<'p>,
-    /// The simple selectors' names, resolved in the query's document.
-    names: Names<N::Host>,
+    /// What the query decided once for its document: names, tag filter.
+    plan: QueryPlan<'d, N>,
     budget: Budget,
     tasks: Vec<Task<N>>,
     /// [`ChainTask`]s' compound positions.
@@ -244,59 +244,20 @@ pub(super) struct Query<'c, 'p, 'd, N: CssNode<'d>> {
     cursors: Vec<HasCursor<N>>,
     /// Sibling positions counted so far (walking queries only).
     positions: Positions,
-    /// The resolved type selector of a lone top-level chain's rightmost
-    /// compound: a candidate with another tag is refused before the machine
-    /// starts. (Of the walked document, as every candidate is - [`Name`].)
-    tag_filter: Option<Option<<N::Host as Host>::TagId>>,
-    /// The document a walking query walks, which its names are resolved in.
-    walked: Option<N::Doc>,
-    _doc: core::marker::PhantomData<&'d ()>,
 }
 
 impl<'c, 'p, 'd, N: CssNode<'d>> Query<'c, 'p, 'd, N> {
-    /// A query over `compiled`. With `walk_in`, the query walks that
-    /// document: names are resolved lazily ([`Name`]), each the first time a
-    /// candidate reaches it, as Lexbor's entries are, and the rightmost type
-    /// selector of a lone chain is resolved now, for [`Query::tag_filter`].
-    /// Without it (`matches?`, one candidate) names are compared as bytes:
-    /// a lookup costs more than the one comparison it would save - measured
-    /// even resolved lazily, `ul > li.item` 85 -> 117 ns.
+    /// A query over `compiled`, walking `walk_in` when given (its plan,
+    /// [`QueryPlan::new`]), under a work budget of `limit` steps.
     pub(super) fn new(
         compiled: &'c Compiled<'p>,
         walk_in: Option<N::Doc>,
         limit: u64,
         scratch: &mut Scratch<N::Host>,
     ) -> Result<Self, MatchFailure> {
-        /* Names are resolved only where the host keeps ids for them. */
-        let resolve_in = walk_in.filter(|_| <N::Host as Host>::RESOLVES_NAMES);
-        let mut names = Names::reuse(&mut scratch.names);
-        if resolve_in.is_some() {
-            for _ in compiled.simples.as_slice() {
-                names.push(Name::Unresolved)?;
-            }
-        }
-        let mut tag_filter = None;
-        if let (Some(doc), [chain]) = (resolve_in, compiled.top.as_slice()) {
-            if chain.len != 0 {
-                let last = compiled.compound(*chain, chain.len() - 1)?;
-                for i in last.start..last.end {
-                    let Some(sel) = compiled.simples.as_slice().get(i as usize) else {
-                        continue;
-                    };
-                    if let Name::Tag(id) = Name::resolve(sel, doc) {
-                        names.set(i as usize, Name::Tag(id))?;
-                        tag_filter = Some(id);
-                        break;
-                    }
-                }
-            }
-        }
         Ok(Query {
             compiled,
-            names,
-            tag_filter,
-            walked: resolve_in,
-            _doc: core::marker::PhantomData,
+            plan: QueryPlan::new(compiled, walk_in, scratch)?,
             budget: Budget {
                 spent: std::cell::Cell::new(0),
                 limit,
@@ -310,49 +271,22 @@ impl<'c, 'p, 'd, N: CssNode<'d>> Query<'c, 'p, 'd, N> {
 
     /// Hand the names and stacks back to `scratch` for the next query.
     pub(super) fn finish(self, scratch: &mut Scratch<N::Host>) {
-        self.names.give_back(&mut scratch.names);
+        self.plan.give_back(scratch);
         scratch.tasks = recycle(self.tasks, SCRATCH_KEEP);
         scratch.at = recycle(self.at, SCRATCH_KEEP);
         scratch.cursors = recycle(self.cursors, SCRATCH_KEEP);
         self.positions.give_back(&mut scratch.positions);
     }
 
-    /// The rightmost type selector of a lone top-level chain - its name and
-    /// namespace (`None` any, `Some(None)` none) - which every match must
-    /// carry, so a host's index for it holds every candidate
-    /// ([`CssNode::candidates`]); and whether it is the whole selector, so
-    /// that every candidate matches.
-    pub(super) fn index_key(&self) -> Option<(&'p [u8], NsFilter<'p>, bool)> {
-        let [chain] = self.compiled.top.as_slice() else {
-            return None;
-        };
-        if chain.len == 0 {
-            return None;
-        }
-        let last = self.compiled.compound(*chain, chain.len() - 1).ok()?;
-        let steps = self
-            .compiled
-            .simples
-            .as_slice()
-            .get(last.start as usize..last.end as usize)?;
-        let sel = steps
-            .iter()
-            .find(|s| matches!(s.simple, crate::selectors::ast::Simple::Type))?;
-        let ns = match sel.ns {
-            NsTest::ANY => None,
-            NsTest::NONE => Some(None),
-            t => Some(Some(self.compiled.ns.uri(t)?)),
-        };
-        Some((sel.name, ns, chain.len == 1 && steps.len() == 1))
+    /// The compiled selector the query runs.
+    pub(super) fn compiled(&self) -> &'c Compiled<'p> {
+        self.compiled
     }
 
     /// Does `node` match any top-level alternative?
     pub(super) fn matches_top(&mut self, node: N) -> Result<bool, MatchFailure> {
-        // `type_matches`' own verdict, taken before anything else is set up.
-        if let Some(id) = self.tag_filter {
-            if id.is_none() || node.tag_id() != id {
-                return Ok(false);
-            }
+        if self.plan.refuses(node) {
+            return Ok(false);
         }
         for i in 0..self.compiled.top.len() {
             let chain = self.compiled.top.get(i).ok_or(MatchFailure::Internal)?;
@@ -425,7 +359,7 @@ impl<'c, 'p, 'd, N: CssNode<'d>> Query<'c, 'p, 'd, N> {
         match task {
             Task::Chain(t) => self.at.truncate(t.at_base as usize),
             Task::Forward(t) => self.cursors.truncate(t.cur_base as usize),
-            Task::NthOf(t) => self.positions.of_seen_truncate(t.seen_base),
+            Task::NthOf(t) => self.positions.nth_of.truncate_seen(t.seen_base),
             /* No side stack: a new kind that holds one must say so here. */
             Task::Alternatives { .. } | Task::Has { .. } => {}
         }
@@ -538,7 +472,7 @@ impl<'c, 'p, 'd, N: CssNode<'d>> Query<'c, 'p, 'd, N> {
                 sel: i,
                 candidate: node,
                 node,
-                seen_base: self.positions.of_seen_base(),
+                seen_base: self.positions.nth_of.seen_base(),
                 counting: false,
             }),
             // Only a nested selector defers: a broken invariant.
@@ -589,7 +523,7 @@ impl<'c, 'p, 'd, N: CssNode<'d>> Query<'c, 'p, 'd, N> {
             .get(from as usize..compound.end as usize)
             .ok_or(MatchFailure::Internal)?;
         for (i, sel) in (from..).zip(steps) {
-            let name = self.name(i, sel);
+            let name = self.plan.name(i, sel);
             match check_simple(
                 sel,
                 name,
@@ -604,21 +538,6 @@ impl<'c, 'p, 'd, N: CssNode<'d>> Query<'c, 'p, 'd, N> {
             }
         }
         Ok(Check::Done(true))
-    }
-
-    /// Simple selector `i`'s [`Name`], resolved in the walked document the
-    /// first time; `Name::None` in a query that compares names as bytes
-    /// (it keeps no slots - `Query::new`).
-    #[inline]
-    fn name(&mut self, i: u32, sel: &Step<'_>) -> Name<N::Host> {
-        match (self.names.get_mut(i as usize), self.walked) {
-            (Some(slot @ Name::Unresolved), Some(doc)) => {
-                *slot = Name::resolve(sel, doc);
-                *slot
-            }
-            (Some(n), _) => *n,
-            (None, _) => Name::None,
-        }
     }
 
     /// A [`Step::inline`] `:is()` / `:where()` / `:not()` at `node`: each
@@ -878,22 +797,22 @@ impl<'c, 'p, 'd, N: CssNode<'d>> Query<'c, 'p, 'd, N> {
     ) -> Result<Outcome<N>, MatchFailure> {
         match event {
             None => {
-                if let Some((rank, in_s)) = self.positions.of_rank(t.sel, t.candidate) {
+                if let Some((rank, in_s)) = self.positions.nth_of.rank(t.sel, t.candidate) {
                     return Ok(Outcome::Done(in_s && anb_matches(t.a, t.b, rank)));
                 }
-                if self.positions.of_known_out(t.sel, t.candidate) {
+                if self.positions.nth_of.known_out(t.sel, t.candidate) {
                     return Ok(Outcome::Done(false));
                 }
             }
             Some(in_s) => {
                 if !t.counting {
                     if !in_s {
-                        self.positions.of_note_out(t.sel, t.candidate)?;
+                        self.positions.nth_of.note_out(t.sel, t.candidate)?;
                         return Ok(Outcome::Done(false));
                     }
                     t.counting = true;
                 } else {
-                    self.positions.of_seen_push(t.node, in_s)?;
+                    self.positions.nth_of.push_seen(t.node, in_s)?;
                 }
                 // A sibling already known not to be in `S` is noted without
                 // testing `S` again.
@@ -901,7 +820,7 @@ impl<'c, 'p, 'd, N: CssNode<'d>> Query<'c, 'p, 'd, N> {
                     let end_rank = match nth_of_sibling(t.node, t.from_end) {
                         Some(s) => {
                             self.budget.charge()?;
-                            let known = self.positions.of_rank(t.sel, s);
+                            let known = self.positions.nth_of.rank(t.sel, s);
                             if known.is_none() {
                                 t.node = s;
                             }
@@ -910,15 +829,18 @@ impl<'c, 'p, 'd, N: CssNode<'d>> Query<'c, 'p, 'd, N> {
                         None => Some(0),
                     };
                     if let Some(end_rank) = end_rank {
-                        let pos =
-                            self.positions
-                                .of_finish(t.sel, t.seen_base, t.candidate, end_rank)?;
+                        let pos = self.positions.nth_of.finish(
+                            t.sel,
+                            t.seen_base,
+                            t.candidate,
+                            end_rank,
+                        )?;
                         return Ok(Outcome::Done(anb_matches(t.a, t.b, pos)));
                     }
-                    if !self.positions.of_known_out(t.sel, t.node) {
+                    if !self.positions.nth_of.known_out(t.sel, t.node) {
                         break;
                     }
-                    self.positions.of_seen_push(t.node, false)?;
+                    self.positions.nth_of.push_seen(t.node, false)?;
                 }
             }
         }

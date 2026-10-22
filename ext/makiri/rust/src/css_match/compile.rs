@@ -9,6 +9,7 @@ use crate::selectors::ast::{
 
 use core::ffi::c_long;
 
+use super::dom::NsFilter;
 use super::ns::{Namespaces, NsTest};
 use super::scratch::{Table, Tables};
 use super::{MatchFailure, MAX_COMPOUNDS};
@@ -441,6 +442,34 @@ impl<'p> Compiled<'p> {
 
     fn simple_index(&self) -> Result<u32, MatchFailure> {
         u32::try_from(self.simples.len()).map_err(|_| MatchFailure::TooComplex)
+    }
+
+    /// The rightmost type selector of a lone top-level chain - its name and
+    /// namespace (`None` any, `Some(None)` none) - which every match must
+    /// carry, so a host's index for it holds every candidate
+    /// ([`CssNode::candidates`]); and whether it is the whole selector, so
+    /// that every candidate matches.
+    pub(super) fn index_key(&self) -> Option<(&'p [u8], NsFilter<'p>, bool)> {
+        let [chain] = self.top.as_slice() else {
+            return None;
+        };
+        if chain.len == 0 {
+            return None;
+        }
+        let last = self.compound(*chain, chain.len() - 1).ok()?;
+        let steps = self
+            .simples
+            .as_slice()
+            .get(last.start as usize..last.end as usize)?;
+        let sel = steps
+            .iter()
+            .find(|s| matches!(s.simple, crate::selectors::ast::Simple::Type))?;
+        let ns = match sel.ns {
+            NsTest::ANY => None,
+            NsTest::NONE => Some(None),
+            t => Some(Some(self.ns.uri(t)?)),
+        };
+        Some((sel.name, ns, chain.len == 1 && steps.len() == 1))
     }
 
     /// `chain[idx]`. Out of range is a broken invariant, raised rather than
