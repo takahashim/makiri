@@ -47,7 +47,8 @@ fn encoding_arg(ruby: &Ruby, v: Value) -> Result<Option<GivenEncoding>, Error> {
     if v.is_nil() {
         return Ok(None);
     }
-    let label = crate::bridge::string::ruby_verified_text(v, "encoding")?;
+    /* A name: a NUL in it is the ArgumentError any other unknown name is. */
+    let label = crate::bridge::string::ruby_verified_name(v, "encoding")?;
     let unknown = |label: &str| {
         Error::new(
             ruby.exception_arg_error(),
