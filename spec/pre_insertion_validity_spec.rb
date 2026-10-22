@@ -219,6 +219,9 @@ RSpec.describe "pre-insertion validity" do
       "text under the document" => ->(d, _p) { d.add_child(d.create_text_node("t")) },
       "a sibling of a detached node" => ->(d, _p) { d.create_element("a").add_next_sibling(d.create_element("b")) },
       "a replace of a detached node" => ->(d, _p) { d.create_element("a").replace(d.create_element("b")) },
+      "a replace of a detached node by itself" => ->(d, _p) { d.create_element("a").then { |a| a.replace(a) } },
+      "removing the document" => ->(d, _p) { d.remove },
+      "unlinking the document" => ->(d, _p) { d.unlink },
     }
     cases.each do |what, edit|
       it "for #{what}" do
@@ -231,6 +234,42 @@ RSpec.describe "pre-insertion validity" do
         end
         expect(messages["HTML"]).not_to be_nil
         expect(messages["XML"]).to eq(messages["HTML"])
+      end
+    end
+  end
+
+  # The DOM's own rules, which dom_rules states once for both
+  # representations: they answered differently while each side had its own.
+  describe "the same answer in HTML and XML" do
+    builders = {
+      "HTML" => -> { Makiri::HTML("<div><p>a</p><i>b</i></div>").then { |d| [d, d.at_css("p")] } },
+      "XML" => -> { Makiri::XML("<div><p>a</p><i>b</i></div>").then { |d| [d, d.at_css("p")] } },
+    }
+
+    # Pre-insert step 3 and replace step 8: a node beside, or in place of,
+    # itself stays where it is. It was a "cannot insert a node into its own
+    # subtree" error in HTML.
+    %i[add_previous_sibling add_next_sibling replace].each do |verb|
+      it "leaves a node #{verb}(itself) where it is" do
+        builders.each do |kind, make|
+          _doc, para = make.call
+          para.public_send(verb, para)
+          expect(para.parent.children.map(&:name)).to eq(%w[p i]), kind
+        end
+      end
+    end
+
+    # The textContent setter: a DocumentFragment's children are replaced, a
+    # Document is left as it is. Both raised in XML.
+    it "takes content= on a document fragment and ignores it on a document" do
+      builders.each do |kind, make|
+        doc, _para = make.call
+        frag = doc.fragment("<a/><b/>")
+        frag.content = "z"
+        expect([frag.children.length, frag.text]).to eq([1, "z"]), kind
+        before = doc.root.to_s
+        doc.content = "z"
+        expect(doc.root.to_s).to eq(before), kind
       end
     end
   end

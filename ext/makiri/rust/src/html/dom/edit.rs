@@ -10,7 +10,7 @@
 
 use super::handle::{has_ascii_uppercase, HtmlDoc, HtmlNode, NsId, RawNode};
 use super::{Document, DomOom, NodeId, NodeName, NodeType, OwnNs, Shortcut, ShortcutRule, HTML_NS};
-use crate::dom_rules::{self, At, Hierarchy, PreInsertError, Tree, Violation};
+use crate::dom_rules::{self, At, PreInsertError, TextContent, Tree};
 use crate::falloc::VecPush;
 use crate::html::res::names as res;
 
@@ -89,10 +89,11 @@ impl<'d> Tree for HtmlTree<'d> {
 /// An insertion about to be made - see the adapter's.
 #[derive(Clone, Copy)]
 pub struct Insertion<'d> {
-    target: HtmlNode<'d>,
     parent: HtmlNode<'d>,
     at: At<HtmlNode<'d>>,
     node: HtmlNode<'d>,
+    /// The node goes beside, or in place of, itself: no change.
+    unchanged: bool,
 }
 
 impl<'d> Insertion<'d> {
@@ -109,6 +110,17 @@ impl<'d> Insertion<'d> {
                     replacing: place == Place::Replace,
                 })
         };
+        /* A node beside itself is no change, whether or not it has a
+         * parent; in its own place, only once it has one. */
+        let beside = matches!(place, Place::Before | Place::After);
+        if beside && dom_rules::places_itself(target, node) {
+            return Ok(Insertion {
+                parent: target,
+                at: At::Before(None),
+                node,
+                unchanged: true,
+            });
+        }
         let (parent, at) = match place {
             Place::Child => (target, At::Before(None)),
             Place::Before => (parent()?, At::Before(Some(target))),
@@ -116,24 +128,43 @@ impl<'d> Insertion<'d> {
             Place::Replace => (parent()?, At::Replacing(target)),
         };
         Ok(Insertion {
-            target,
             parent,
             at,
             node,
+            unchanged: place == Place::Replace && dom_rules::places_itself(target, node),
         })
     }
 
-    /// Every rule the insertion must keep, plus: a node is not put beside,
-    /// or in place of, itself.
+    /// Every rule the insertion must keep; none for one that changes nothing.
     pub fn check(&self) -> Result<(), PreInsertError> {
-        if self.target == self.node {
-            return Err(PreInsertError::Rule(Violation::HierarchyRequest(
-                Hierarchy::Ancestor,
-            )));
+        if self.unchanged {
+            return Ok(());
         }
         dom_rules::check(&HtmlTree::new(), self.parent, self.node, self.at)
             .map_err(PreInsertError::Rule)
     }
+
+    /// Whether the insertion puts the node beside, or in place of, itself,
+    /// which leaves the tree as it is (`dom_rules::places_itself`): the
+    /// caller links nothing.
+    pub fn unchanged(&self) -> bool {
+        self.unchanged
+    }
+}
+
+/// Why [`HtmlDocMut::create_pi`] made no ProcessingInstruction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CreatePiError {
+    /// The data holds `?>` ([`CreatePiError::MESSAGE`]).
+    ClosingInData,
+    /// No memory.
+    Oom,
+}
+
+impl CreatePiError {
+    /// What a caller tells a user for [`ClosingInData`](Self::ClosingInData):
+    /// the XML side's words for the same rule.
+    pub const MESSAGE: &'static str = "processing instruction data must not contain ?>";
 }
 
 /// A document lent for an edit.
@@ -253,8 +284,8 @@ impl<'d> HtmlDocMut<'d> {
     /// in which case `n` keeps what it had.
     pub fn set_text_content(&mut self, n: RawNode, text: &[u8]) -> Result<(), DomOom> {
         let n = self.id_of(n);
-        match self.d.kind(n) {
-            NodeType::Element | NodeType::DocumentFragment => {
+        match dom_rules::text_content(self.d.kind(n)) {
+            TextContent::ReplaceChildren => {
                 /* Detached, never destroyed: a wrapper may hold a child. The
                  * text node is made first, so a failure changes nothing. */
                 let t = if text.is_empty() {
@@ -270,13 +301,8 @@ impl<'d> HtmlDocMut<'d> {
                 }
                 Ok(())
             }
-            /* Lexbor's `text_content_set`: an attribute's value, or the data
-             * of a text, comment or PI; a CDATA section, a doctype and a
-             * document are left as they are. */
-            NodeType::Attribute | NodeType::Text | NodeType::Pi | NodeType::Comment => {
-                self.d.set_data(n, text)
-            }
-            _ => Ok(()),
+            TextContent::Data | TextContent::AttrValue => self.d.set_data(n, text),
+            TextContent::Nothing => Ok(()),
         }
     }
 
@@ -440,8 +466,7 @@ impl<'d> HtmlDocMut<'d> {
      * it first, with an `ArgumentError`). An empty name the glue
      * refuses first with an `ArgumentError`, so here it is a broken
      * invariant - caught in debug builds, refused in release. They keep the
-     * Lexbor adapter's `Option`, which `lexbor::arena_tests` compares them
-     * with. */
+     * Lexbor adapter's `Option`, the shape they were ported in. */
 
     /// A new element named `local_name` (DOM `createElement`): its tag
     /// lower-cased, in the HTML namespace.
@@ -517,13 +542,17 @@ impl<'d> HtmlDocMut<'d> {
         Some(self.raw(c))
     }
 
-    /// A new ProcessingInstruction; `None` for data holding `?>`, which
-    /// Lexbor refuses.
-    pub fn create_pi(&mut self, target: &[u8], data: &[u8]) -> Option<RawNode> {
+    /// A new ProcessingInstruction, or why there is none: data holding `?>`,
+    /// which would end the instruction where it is written (Lexbor refuses
+    /// it too), or no memory. The one place that rule is kept.
+    pub fn create_pi(&mut self, target: &[u8], data: &[u8]) -> Result<RawNode, CreatePiError> {
         if data.windows(2).any(|w| w == b"?>") {
-            return None;
+            return Err(CreatePiError::ClosingInData);
         }
-        self.d.create_pi(target, data).ok().map(|id| self.raw(id))
+        self.d
+            .create_pi(target, data)
+            .map(|id| self.raw(id))
+            .map_err(|DomOom| CreatePiError::Oom)
     }
 
     /// A new DocumentType; an absent id is an empty one.
@@ -654,7 +683,7 @@ impl<'d> HtmlNewNodes<'d> {
     }
 
     /// [`HtmlDocMut::create_pi`].
-    pub fn create_pi(&mut self, target: &[u8], data: &[u8]) -> Option<RawNode> {
+    pub fn create_pi(&mut self, target: &[u8], data: &[u8]) -> Result<RawNode, CreatePiError> {
         self.edit().create_pi(target, data)
     }
 

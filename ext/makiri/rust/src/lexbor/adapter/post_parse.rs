@@ -29,16 +29,13 @@
 
 use core::ptr::NonNull;
 
-use crate::falloc::{try_box, OomOption, OomResult};
+use crate::falloc::try_box;
 use crate::lexbor::abi::{
     self as lxb, lxb_html_document_destroy, lxb_html_parse_chunk_begin, lxb_html_parse_chunk_end,
     lxb_html_parse_chunk_process,
 };
-use crate::lexbor::adapter::arena_bytes::{document_capacity, document_chunks};
-use crate::lexbor::adapter::dom_index::DomIndex;
-use crate::lexbor::adapter::html::{HtmlDoc as DomDoc, HtmlNode, RawDoc, RawNode, TagId};
+use crate::lexbor::adapter::html::{HtmlDoc as DomDoc, RawDoc, RawNode};
 use crate::lexbor::adapter::source_loc::{lines_build, Lines, Stamper};
-use crate::lexbor::adapter::text_index::{TextBuildError, TextIndex, TextRun};
 use crate::lexbor::adapter::tree_guard::{DepthLimit, TokenHook};
 use crate::utf8_input::sanitize;
 
@@ -48,44 +45,17 @@ use crate::lexbor::abi::consts::STATUS_OK as LXB_STATUS_OK;
 
 /* ---- the parsed document ---- */
 
-use super::AdapterOom;
-
-/// A parsed HTML document, and the indices built over it on demand.
-///
-/// The indices point into the document's nodes and text, so every change to the
-/// document goes through [`invalidate_indexes`](HtmlParsed::invalidate_indexes),
-/// which drops them; the next query rebuilds.
-///
-/// HTML only. What a Ruby Document owns - this or an XML arena, plus the count
-/// of evaluations reading it - is `bridge::wrapper`'s: the XML engine's
-/// document does not belong to the Lexbor adapter, and the evaluation count is
-/// the Ruby layer's mutation gate.
+/// A document Lexbor parsed, as the reference the port is held to: its tree
+/// and line table, read by the comparisons (`tree_diff`, the conformance
+/// tests).
 pub struct HtmlParsed {
     doc: NonNull<HtmlDoc>,
-    /// The tag -> elements index (`//tag`).
-    dom_index: Option<Box<DomIndex>>,
     /// byte offset -> source line.
     lines: Option<Box<Lines>>,
-    /// node -> descendant-text slice run.
-    text_index: TextIndexState,
-}
-
-/// The text index's state, so a document the index cannot serve does not rebuild
-/// on every `Node#text`.
-enum TextIndexState {
-    /// Not built since the last invalidation.
-    Unbuilt,
-    /// Built over the document root.
-    Built(Box<TextIndex>),
-    /// The index does not fit this document (its root is not a container, or it
-    /// holds more slices than a run can index). Retrying cannot change that.
-    Inapplicable,
 }
 
 impl Drop for HtmlParsed {
     fn drop(&mut self) {
-        /* The indices point into the document, so they go first. */
-        self.invalidate_indexes();
         // SAFETY: the handle owns the document, and nothing reads it once the
         // handle is gone.
         unsafe { lxb_html_document_destroy(self.doc.as_ptr()) };
@@ -106,109 +76,10 @@ impl HtmlParsed {
         unsafe { DomDoc::from_non_null(self.doc.cast()) }
     }
 
-    /// Build the tag -> elements index if a mutation (or nothing yet) left it
-    /// unbuilt. `Err` when the build cannot allocate - which caches nothing,
-    /// so a later call retries.
-    ///
-    /// The one writer; the readers below take `&self`, so a reader holding
-    /// what they lend cannot be overlapped by a rebuild.
-    pub fn ensure_dom_index(&mut self) -> Result<(), AdapterOom> {
-        if self.dom_index.is_none() {
-            let built = crate::lexbor::adapter::dom_index::build(self.doc()).or_oom()?;
-            self.dom_index = Some(try_box(built).or_oom()?);
-        }
-        Ok(())
-    }
-
-    /// The tag -> elements index, or `None` until
-    /// [`ensure_dom_index`](Self::ensure_dom_index) has built it.
-    pub fn dom_index(&self) -> Option<&DomIndex> {
-        self.dom_index.as_deref()
-    }
-
-    /// The elements with tag id `tag`, in document order, as typed nodes
-    /// borrowed from this handle. `None` until
-    /// [`ensure_dom_index`](Self::ensure_dom_index) has built the index, and
-    /// for a tag the index does not bucket (see [`DomIndex::tag_bucket`]).
-    ///
-    /// Safe, and bounded by `&self`, because this handle is what makes the
-    /// nodes live: the index is built only from `self`'s own document, is
-    /// dropped with it, and is dropped by [`invalidate_indexes`] - which takes
-    /// `&mut self` - before any edit. An edit that skipped it would first have
-    /// had to break the contract of the `unsafe` mutable handle
-    /// (`HtmlNodeMut::assume_mutable`).
-    ///
-    /// [`invalidate_indexes`]: Self::invalidate_indexes
-    pub fn tag_bucket(&self, tag: TagId) -> Option<&[HtmlNode<'_>]> {
-        let bucket = self.dom_index.as_deref()?.tag_bucket(tag)?;
-        // SAFETY: every node of the bucket is a live element of `self.doc`, and
-        // stays one for as long as `self` is borrowed - see above. The
-        // lifetime is `&self`'s, not one of the caller's choosing.
-        Some(unsafe { RawNode::as_html_nodes_unchecked(bucket) })
-    }
-
-    /// Build the node -> text index if it is not built and the document can
-    /// have one. `Err` when the build could not allocate - which caches
-    /// nothing, so a later call retries; an index that does not fit this
-    /// document is remembered so it is never attempted again.
-    pub fn ensure_text_index(&mut self) -> Result<(), AdapterOom> {
-        if matches!(self.text_index, TextIndexState::Unbuilt) {
-            let Some(root) = self.doc().as_node().document_root() else {
-                self.text_index = TextIndexState::Inapplicable;
-                return Ok(());
-            };
-            match TextIndex::build(root) {
-                Ok(built) => {
-                    self.text_index = TextIndexState::Built(try_box(built).or_oom()?);
-                }
-                Err(TextBuildError::NotApplicable) => {
-                    self.text_index = TextIndexState::Inapplicable;
-                }
-                Err(TextBuildError::Oom) => return Err(AdapterOom),
-            }
-        }
-        Ok(())
-    }
-
-    /// The run of text slices `node`'s subtree owns, and its byte total.
-    ///
-    /// None means "walk instead": the index is not built (call
-    /// [`ensure_text_index`](Self::ensure_text_index) first), does not fit this
-    /// document, or does not place this node (a fragment outside the tree).
-    pub fn text_slices(&self, node: RawNode) -> Option<TextRun<'_>> {
-        match &self.text_index {
-            TextIndexState::Built(index) => index.slices_of(node),
-            TextIndexState::Unbuilt | TextIndexState::Inapplicable => None,
-        }
-    }
-
     /// The line table, taken out - for the arena DOM, which copies this
     /// document and keeps the table.
     pub fn take_lines(&mut self) -> Option<Box<Lines>> {
         self.lines.take()
-    }
-
-    /// Drop the indices so the next query rebuilds them.
-    ///
-    /// This is the whole safety protocol for what they borrow: EVERY mutation
-    /// reaches here, so no cached node or text slice outlives the storage it
-    /// points into.
-    pub fn invalidate_indexes(&mut self) {
-        self.dom_index = None;
-        self.text_index = TextIndexState::Unbuilt;
-    }
-
-    /// The bytes this document holds OUTSIDE Ruby's allocator, for the GC:
-    /// arena CAPACITY, not the bytes in use, because the pages are what cost.
-    pub fn external_bytes(&self) -> usize {
-        document_capacity(self.doc())
-    }
-
-    /// How many chunks the document's pools hold: an O(1) stand-in for
-    /// [`external_bytes`](Self::external_bytes), for deciding when to measure
-    /// it again.
-    pub fn arena_chunks(&self) -> usize {
-        document_chunks(self.doc())
     }
 
     /// The 1-based source line for `node`, or `None` when unknown.
@@ -334,12 +205,7 @@ pub fn parse_html(
     let (doc, lines) = unsafe { parse_tracked::<false>(input.as_slice(), limit) }?;
     drop(input); /* the parse is done with the buffer, on every path */
 
-    let parsed = HtmlParsed {
-        doc,
-        dom_index: None,
-        lines,
-        text_index: TextIndexState::Unbuilt,
-    };
+    let parsed = HtmlParsed { doc, lines };
     /* On OOM the handle drops, and with it the document. */
     try_box(parsed).map_err(|()| HtmlParseError::Failed)
 }
@@ -354,9 +220,7 @@ pub fn empty_html_document(compat_mode: u32) -> Result<Box<HtmlParsed>, HtmlPars
     let doc = DocOwner(DomDoc::create_empty(compat_mode).ok_or(HtmlParseError::Failed)?);
     let parsed = HtmlParsed {
         doc: doc.release(),
-        dom_index: None,
         lines: None,
-        text_index: TextIndexState::Unbuilt,
     };
     /* On OOM the handle drops, and with it the document. */
     try_box(parsed).map_err(|()| HtmlParseError::Failed)

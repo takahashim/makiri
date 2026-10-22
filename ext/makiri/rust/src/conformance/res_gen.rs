@@ -562,7 +562,9 @@ pub(crate) fn generate_entities(table: &[SbstOwned]) -> String {
 }
 
 /// The checked-in `entities.rs` is what `generate_entities` makes of
-/// `table`, without writing it - for an oracle other than entities.json.
+/// `table`, without writing it - for an oracle other than entities.json
+/// (Lexbor's table, `lexbor::res_tests`).
+#[cfg(feature = "lexbor")]
 pub(crate) fn entities_file_is(table: &[SbstOwned]) -> bool {
     let path = root().join("src/html/res/entities.rs");
     std::fs::read_to_string(path).unwrap_or_default() == generate_entities(table)

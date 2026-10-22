@@ -72,7 +72,17 @@ fn effective_encoding(str: RString) -> Result<Encoding, Error> {
     // which can allocate, run after the borrow has ended.
     let (bom, decl) = unsafe { with_bytes(str, sniff) };
     let bom = bom.and_then(|b| Encoding::find(b.name().as_bytes()));
-    let decl = decl.and_then(|d| Encoding::find(d.as_bytes()));
+    /* XML 1.0 §4.3.3: an entity in an encoding the processor cannot
+     * process is a fatal error - never read as some other encoding. */
+    let decl = match decl {
+        None => None,
+        Some(d) => Some(Encoding::find(d.as_bytes()).ok_or_else(|| {
+            syntax_error(format!(
+                "XML encoding declaration names an unknown encoding: {}",
+                String::from_utf8_lossy(d.as_bytes())
+            ))
+        })?),
+    };
     let claimed = !claims_no_encoding(tag);
 
     if let (Some(b), Some(d)) = (bom, decl) {

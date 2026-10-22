@@ -31,7 +31,7 @@ RUST = File.join(ROOT, "ext/makiri/rust/src")
 UNSAFE_ISLANDS = {
   "bridge/alloc.rs" => 9,
   "bridge/doc.rs" => 1,
-  "bridge/dom.rs" => 13,
+  "bridge/dom.rs" => 17,
   "bridge/fragment.rs" => 2,
   "bridge/gvl.rs" => 5,
   "bridge/html.rs" => 7,
@@ -40,9 +40,13 @@ UNSAFE_ISLANDS = {
   "bridge/raw.rs" => 44,
   "bridge/ruby.rs" => 19,
   "bridge/stack.rs" => 1,
-  "bridge/string.rs" => 22,
+  "bridge/string/build.rs" => 5,
+  "bridge/string/encoding.rs" => 14,
+  "bridge/string/view.rs" => 6,
   "bridge/typed.rs" => 23,
-  "bridge/wrapper.rs" => 18,
+  "bridge/wrapper/accounting.rs" => 1,
+  "bridge/wrapper/document.rs" => 12,
+  "bridge/wrapper/node.rs" => 3,
   "bridge/xml.rs" => 11,
   "bridge/xml_decode.rs" => 7,
   "bridge/xpath/context_object.rs" => 3,
@@ -56,32 +60,25 @@ UNSAFE_ISLANDS = {
   "gvl.rs" => 4,
   "lexbor/abi.rs" => 4,
   "lexbor/adapter/arena_bytes.rs" => 14,
-  "lexbor/adapter/cross_import.rs" => 2,
-  "lexbor/adapter/html/attrs.rs" => 25,
-  "lexbor/adapter/html/build.rs" => 26,
-  "lexbor/adapter/html/doc_mut.rs" => 6,
-  "lexbor/adapter/html/mod.rs" => 67,
-  "lexbor/adapter/html/mutate.rs" => 9,
+  "lexbor/adapter/html/attrs.rs" => 19,
+  "lexbor/adapter/html/build.rs" => 14,
+  "lexbor/adapter/html/mod.rs" => 66,
   "lexbor/adapter/html/serialize.rs" => 18,
-  "lexbor/adapter/post_parse.rs" => 9,
+  "lexbor/adapter/post_parse.rs" => 8,
   "lexbor/adapter/source_loc.rs" => 1,
-  "lexbor/adapter/text_index.rs" => 1,
   "lexbor/adapter/tree_guard.rs" => 7,
-  "lexbor/arena_tests.rs" => 18,
   "lexbor/chunks.rs" => 2,
   "lexbor/conformance_tests.rs" => 24,
   "lexbor/css_engine.rs" => 10,
   "lexbor/css_parser.rs" => 19,
   "lexbor/css_tokens.rs" => 10,
-  "lexbor/fragment.rs" => 10,
+  "lexbor/fragment.rs" => 7,
   "lexbor/res_tests.rs" => 3,
   "lexbor/selector_port_tests.rs" => 1,
   "lexbor/selectors.rs" => 9,
   "lexbor/serialize.rs" => 1,
   "lexbor/stylesheet_diff.rs" => 5,
-  "lexbor/tests.rs" => 5,
-  "lexbor/xpath.rs" => 9,
-  "lexbor/xpath_diff.rs" => 2,
+  "lexbor/tests.rs" => 3,
   "source_lines.rs" => 1,
   "token.rs" => 1,
 }.freeze
@@ -97,41 +94,42 @@ UNSAFE_ISLANDS = {
 FORBID_ROOTS = %w[css/mod.rs glue/mod.rs css_match/mod.rs selectors/mod.rs xml/mod.rs xpath/mod.rs].freeze
 
 FORBID_FILES = %w[
-  bridge/dom_error.rs child_index.rs conformance/mod.rs
-  css/build.rs css/lower.rs css/mod.rs
-  css_cache.rs css_match/mod.rs cutf8.rs
-  cutf8/verify.rs dom_rules.rs engine_error.rs
-  falloc/verify.rs glue/css.rs glue/html_doc.rs
-  glue/html_node/css.rs glue/html_node/mutate.rs glue/html_node/read.rs
-  glue/html_node/serialize.rs glue/mod.rs glue/node.rs
-  glue/node_set.rs glue/query.rs glue/xml_doc.rs
-  glue/xml_node/css.rs glue/xml_node/mod.rs glue/xml_node/mutate.rs
-  glue/xml_node/ns.rs glue/xml_node/read.rs glue/xml_node/serialize.rs
-  glue/xpath_context.rs html/dom/mod.rs html/encoding/mod.rs
-  html/mod.rs html/tokenizer/mod.rs html/tree/mod.rs
-  html_dom.rs lexbor/adapter/dom_index.rs lexbor/contains_guard.rs
-  limits.rs node_type.rs ptr_table.rs
-  rust_tests.rs selectors/mod.rs selectors/stylesheet.rs
-  selectors/text.rs stack.rs text.rs
-  utf8_input.rs xml/arena.rs xml/attr_key.rs
-  xml/chars/expand.rs xml/chars/mod.rs xml/css.rs
-  xml/css_tests.rs xml/dom_name.rs xml/encoding_sniff.rs
-  xml/index.rs xml/mod.rs xml/model.rs
-  xml/mutate/attr.rs xml/mutate/copy.rs xml/mutate/edit.rs
-  xml/mutate/factory.rs xml/mutate/insert.rs xml/mutate/mod.rs
-  xml/mutate/ns.rs xml/ns_scope.rs xml/qname.rs
-  xml/selftest.rs xml/serialize/bindings.rs xml/serialize/c14n.rs
-  xml/serialize/mod.rs xml/serialize/out.rs xml/serialize/xml.rs
-  xml/tree/cursor.rs xml/tree/decl.rs xml/tree/dtd.rs
-  xml/tree/mod.rs xml/tree/scope.rs xml/verify.rs
-  xml/xpath.rs xpath/abi.rs xpath/ast.rs
-  xpath/ast_ops.rs xpath/attr_pred.rs xpath/axis.rs
-  xpath/ctx.rs xpath/dom.rs xpath/eval.rs
-  xpath/funcs/css_hooks.rs xpath/funcs/ext.rs xpath/funcs/mod.rs
-  xpath/lex.rs xpath/limits.rs xpath/mod.rs
-  xpath/nodetest.rs xpath/number.rs xpath/order.rs
-  xpath/parse.rs xpath/step_index.rs xpath/str_cache.rs
-  xpath/tests.rs xpath/value.rs xpath/verify.rs
+  bridge/dom_error.rs bridge/string/source.rs bridge/wrapper/edit.rs
+  child_index.rs conformance/mod.rs css/build.rs
+  css/lower.rs css/mod.rs css_cache.rs
+  css_match/mod.rs cutf8.rs cutf8/verify.rs
+  dom_rules.rs engine_error.rs falloc/verify.rs
+  glue/css.rs glue/html_doc.rs glue/html_node/css.rs
+  glue/html_node/mutate.rs glue/html_node/read.rs glue/html_node/serialize.rs
+  glue/mod.rs glue/node.rs glue/node_set.rs
+  glue/query.rs glue/xml_doc.rs glue/xml_node/css.rs
+  glue/xml_node/mod.rs glue/xml_node/mutate.rs glue/xml_node/ns.rs
+  glue/xml_node/read.rs glue/xml_node/serialize.rs glue/xpath_context.rs
+  html/dom/mod.rs html/encoding/mod.rs html/mod.rs
+  html/tokenizer/mod.rs html/tree/mod.rs html_dom.rs
+  lexbor/contains_guard.rs limits.rs node_type.rs
+  ptr_table.rs rust_tests.rs selectors/mod.rs
+  selectors/stylesheet.rs selectors/text.rs stack.rs
+  text.rs utf8_input.rs xml/arena.rs
+  xml/attr_key.rs xml/chars/expand.rs xml/chars/mod.rs
+  xml/css.rs xml/css_tests.rs xml/dom_name.rs
+  xml/encoding_sniff.rs xml/index.rs xml/mod.rs
+  xml/model.rs xml/mutate/attr.rs xml/mutate/copy.rs
+  xml/mutate/edit.rs xml/mutate/factory.rs xml/mutate/insert.rs
+  xml/mutate/mod.rs xml/mutate/ns.rs xml/ns_scope.rs
+  xml/qname.rs xml/selftest.rs xml/serialize/bindings.rs
+  xml/serialize/c14n.rs xml/serialize/mod.rs xml/serialize/out.rs
+  xml/serialize/xml.rs xml/tree/cursor.rs xml/tree/decl.rs
+  xml/tree/dtd.rs xml/tree/mod.rs xml/tree/scope.rs
+  xml/verify.rs xml/xpath.rs xpath/abi.rs
+  xpath/ast.rs xpath/ast_ops.rs xpath/attr_pred.rs
+  xpath/axis.rs xpath/ctx.rs xpath/dom.rs
+  xpath/eval.rs xpath/funcs/css_hooks.rs xpath/funcs/ext.rs
+  xpath/funcs/mod.rs xpath/lex.rs xpath/limits.rs
+  xpath/mod.rs xpath/nodetest.rs xpath/number.rs
+  xpath/order.rs xpath/parse.rs xpath/step_index.rs
+  xpath/str_cache.rs xpath/tests.rs xpath/value.rs
+  xpath/verify.rs
 ].freeze
 
 UNSAFE_USE = /\bunsafe\s*(?:\{|fn\b|impl\b|trait\b|extern\b)/
@@ -161,7 +159,7 @@ RAISING_API = /\b(?:rb_raise|rb_exc_raise|rb_jump_tag|rb_check_typeddata|
   rb_String|rb_funcallv|rb_funcall|rb_obj_as_string|rb_respond_to|rb_check_frozen|
   rb_range_beg_len|rb_thread_check_ints|rb_intern3|rb_intern|rb_utf8_str_new|
   rb_enc_interned_str|rb_str_dup|rb_str_subseq|rb_enc_associate|rb_str_encode|
-  rb_to_encoding|rb_enc_find|rb_data_typed_object_wrap|ruby_xmalloc|ruby_xrealloc2)\b/x
+  rb_to_encoding|rb_enc_find_index|rb_data_typed_object_wrap|ruby_xmalloc|ruby_xrealloc2)\b/x
 RAISING_COUNTS = { "bridge/raw.rs" => 22 }.freeze
 
 # `Value::from_raw` outside `bridge/` is the other half of the raw Ruby
@@ -200,10 +198,10 @@ RAW_NODE_CROSSING_COUNTS = {
   # DOMs (`crate::html_dom`) - a stored node word back into a node
   # (`node_of_word`, Lexbor's `from_ptr`), and a Document's own node
   # (`document_node`). Both were spelled twice, in `html.rs` and
-  # `wrapper.rs`, which each lost two.
+  # `wrapper/`, which each lost two.
   "bridge/dom.rs" => 1,
   "bridge/html.rs" => 7,
-  "bridge/wrapper.rs" => 1,
+  "bridge/wrapper/node.rs" => 1,
 }.freeze
 
 # Lexbor ABI names outside `lexbor/` are forbidden. `lexbor` is the sole owner

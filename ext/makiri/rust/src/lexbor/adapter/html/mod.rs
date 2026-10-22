@@ -28,12 +28,8 @@ pub use crate::node_type::NodeType;
 
 mod attrs;
 mod build;
-mod doc_mut;
-mod mutate;
 mod serialize;
 pub use build::{BuildingElement, BuildingNode};
-pub use doc_mut::HtmlDocMut;
-pub use mutate::{HtmlElementMut, HtmlNodeMut, HtmlTree, Insertion, Place};
 
 /* A node handle is cast to an element or attribute handle, which is sound only
  * while the node sits FIRST in both. That is a claim about the absolute offset,
@@ -391,30 +387,6 @@ impl RawNode {
     #[inline]
     pub fn table_key(self) -> *const () {
         self.0.as_ptr().cast_const().cast()
-    }
-
-    /// `nodes`, lent as typed nodes for `'doc` - a reinterpretation, not a
-    /// copy: both types are a transparent non-null node pointer.
-    ///
-    /// Unchecked in two ways, as the name warns. Nothing checks that the nodes
-    /// are live, and `'doc` is UNBOUNDED: it is whatever the caller asks for,
-    /// not tied to the borrow of `nodes` - the same hazard as
-    /// [`core::slice::from_raw_parts`]. Prefer [`RawNode::as_node`] one node at
-    /// a time; this exists for the `//tag` bucket, which lends a whole slice,
-    /// and its one caller is `HtmlParsed::tag_bucket`, which wraps it in a
-    /// safe method bounded by the handle that owns both index and document.
-    ///
-    /// # Safety
-    /// As [`RawNode::as_node`], for every node of `nodes`, and `nodes` itself
-    /// outlives `'doc`.
-    #[inline]
-    pub(in crate::lexbor::adapter) unsafe fn as_html_nodes_unchecked<'doc>(
-        nodes: &[RawNode],
-    ) -> &'doc [HtmlNode<'doc>] {
-        /* `RawNode` and `HtmlNode` are both `repr(transparent)` over
-         * `NonNull<LxbNode>` (the `PhantomData` is zero-sized); liveness and
-         * the lifetime are the caller's contract. */
-        core::slice::from_raw_parts(nodes.as_ptr().cast::<HtmlNode<'doc>>(), nodes.len())
     }
 
     /// The typed node pointer, for the facades that hand it to a Lexbor call.

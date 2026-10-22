@@ -13,6 +13,7 @@
 #![forbid(unsafe_code)]
 
 use crate::bridge::fragment;
+use crate::bridge::string::GivenEncoding;
 use crate::glue::html_node::HtmlSelf;
 use crate::html_dom::html::NodeType;
 use magnus::{method, prelude::*, Error, Ruby, Value};
@@ -37,28 +38,36 @@ fn doc_s_parse(
 }
 
 /// The `encoding:` keyword, which `Document.parse` hands over as nil or a
-/// String (an `Encoding` or Symbol by its `to_s`): an Encoding Standard label
-/// (`"shift_jis"`, `"latin1"`, `"Windows-31J"`). Anything the Standard does
-/// not label is `ArgumentError`: a document is never read in an encoding the
-/// caller did not ask for.
-fn encoding_arg(
-    ruby: &Ruby,
-    v: Value,
-) -> Result<Option<&'static crate::html::encoding::Encoding>, Error> {
+/// String (an `Encoding` or Symbol by its `to_s`): a name Ruby knows, read
+/// as a String tagged with that encoding is (`"US-ASCII"` is UTF-8,
+/// `"BINARY"` is sniffed, `"UTF-32LE"` is transcoded), or an Encoding
+/// Standard label (`"latin1"`). Anything else is `ArgumentError`: a document
+/// is never read in an encoding the caller did not ask for.
+fn encoding_arg(ruby: &Ruby, v: Value) -> Result<Option<GivenEncoding>, Error> {
     if v.is_nil() {
         return Ok(None);
     }
     let label = crate::bridge::string::ruby_verified_text(v, "encoding")?;
-    match crate::html::encoding::for_label(label.as_bytes()) {
-        Some(e) => Ok(Some(e)),
-        None => Err(Error::new(
+    let unknown = |label: &str| {
+        Error::new(
             ruby.exception_arg_error(),
-            format!(
-                "unknown encoding for HTML: {} (omit encoding: to have it sniffed)",
-                &*label
-            ),
-        )),
-    }
+            format!("unknown encoding for HTML: {label} (omit encoding: to have it sniffed)"),
+        )
+    };
+    /* No encoding's name is this long, Ruby's or the Standard's; a shorter
+     * one is copied out, so no argument's copy is held across the lookup
+     * (which can autoload an encoding). */
+    let mut name = [0u8; 64];
+    let Some(dst) = name.get_mut(..label.len()) else {
+        return Err(unknown(&label));
+    };
+    dst.copy_from_slice(label.as_bytes());
+    let len = label.len();
+    drop(label);
+    let name = &name[..len];
+    GivenEncoding::resolve(name)
+        .map(Some)
+        .ok_or_else(|| unknown(&String::from_utf8_lossy(name)))
 }
 
 /// `Document#encoding`: the character encoding the document was read in, by

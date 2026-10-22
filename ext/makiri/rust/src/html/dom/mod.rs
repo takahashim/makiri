@@ -1224,7 +1224,7 @@ mod store;
 /// XPath's HTML instance of its `Dom` trait, over the arena.
 pub mod xpath;
 pub use build::AttrValue;
-pub use edit::{HtmlDocMut, HtmlNewNodes, HtmlTree, Insertion, Place};
+pub use edit::{CreatePiError, HtmlDocMut, HtmlNewNodes, HtmlTree, Insertion, Place};
 pub use handle::{
     has_ascii_uppercase, Ancestors, AttrName, Attrs, HtmlAttr, HtmlDoc, HtmlElement, HtmlNode,
     NsId, RawNode, Siblings, TagId, NS_LAST_ENTRY, TAG_EM_DOCTYPE, TAG_LAST_ENTRY,

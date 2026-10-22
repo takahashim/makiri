@@ -2,8 +2,8 @@
 //! Fragments are `bridge::fragment`'s; the wrapper and its mutation gate are
 //! `bridge::wrapper`'s.
 //!
-//! The arena work is `lexbor`'s; what lives here is the part that must touch
-//! raw Ruby values and Lexbor handles together - copying the source out of a
+//! The arena work is `html`'s; what lives here is the part that must touch
+//! raw Ruby values and arena handles together - copying the source out of a
 //! Ruby String before the wrapper allocation, releasing the GVL for the parse,
 //! and minting the wrapper. Keeping it here is what lets `glue/html_doc.rs` be
 //! ordinary safe orchestration.
@@ -68,7 +68,7 @@ pub fn tree_depth_error(limit: DepthLimit) -> Error {
 pub fn parse_document(
     source: Value,
     limit: DepthLimit,
-    given: Option<&'static crate::html::encoding::Encoding>,
+    given: Option<crate::bridge::string::GivenEncoding>,
 ) -> Result<Value, Error> {
     let s = source.to_r_string()?;
     /* Allocate the wrapper with a null handle, so a failed parse still
@@ -173,7 +173,7 @@ pub fn import_node(rb_self: Value, node_v: Value, deep: bool) -> Result<Value, E
         let xdoc = doc_of(xml_node_document(node_v)?);
         let src = xml_node_unwrap(node_v)?;
         // SAFETY: a live arena of another document, read for the call.
-        let xdoc = unsafe { &*xdoc };
+        let xdoc = unsafe { xdoc.as_ref() };
         let imp = new_node(&rb_self, |d| d.import_xml(xdoc, src, deep))?;
         return wrap_html_node(xml_mut_result(imp)?, rb_self);
     }

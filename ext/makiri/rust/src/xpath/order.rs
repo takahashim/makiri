@@ -354,6 +354,7 @@ pub fn nodeset_unique_sorted<'e, 'd, D: Dom<'d>>(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::disallowed_methods)] /* test inputs */
     use super::{merge_runs, merge_sort};
     use core::cmp::Ordering;
 
@@ -411,12 +412,12 @@ mod tests {
         let mut inputs = 0usize;
         for (n, keys) in ranges {
             each_sequence(n, keys, |input| {
-                let mut items: Vec<_> = input.iter().copied().collect();
+                let mut items: Vec<_> = input.to_vec();
                 let mut scratch = items.clone();
                 merge_runs(&mut items, &mut scratch, |a, b| a.0.cmp(&b.0));
                 assert_stably_sorted(&items, input);
 
-                let mut items: Vec<_> = input.iter().copied().collect();
+                let mut items: Vec<_> = input.to_vec();
                 merge_sort(&mut items, |a, b| a.0.cmp(&b.0));
                 assert_stably_sorted(&items, input);
                 inputs += 1;

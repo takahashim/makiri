@@ -3,7 +3,7 @@
 //! calls.
 //!
 //! The engine (`xpath/`) is generic over `Dom` and names no representation, and
-//! `glue/query.rs` must not name a Lexbor or XML type either. This module sits
+//! `glue/query.rs` must not name an HTML or XML type either. This module sits
 //! between them: it is the one place that knows both backends exist, and it
 //! turns a Ruby node into the right context with the raw-pointer work the
 //! backend's lifetime contract needs.
@@ -24,7 +24,6 @@ use crate::bridge::wrapper::{doc_content, html_doc_unwrap, with_html_parsed_know
 use crate::bridge::wrapper::{DocKind, NodeWord};
 use crate::bridge::xml::xml_node_unwrap;
 use crate::engine_error::{Error as XPathError, ErrorKind};
-use crate::html_dom::post_parse::HtmlParsed;
 use crate::html_dom::xpath::HtmlDom;
 use crate::init::EXC_ERROR;
 pub use crate::init::{CLASS_XPATH_CONTEXT, EXC_XPATH_LIMIT_EXCEEDED, EXC_XPATH_SYNTAX_ERROR};
@@ -80,10 +79,10 @@ pub fn xpath_error(err: &XPathError) -> Error {
 /// (see [`Cx::run`]); what persists holds no borrow.
 #[derive(Clone, Copy)]
 enum DocPtr {
-    /// A Lexbor document's parse handle.
-    Html(NonNull<HtmlParsed>),
+    /// An HTML document's parse handle.
+    Html(crate::bridge::dom::DocPtr),
     /// A Makiri XML arena.
-    Xml(NonNull<XmlDoc>),
+    Xml(crate::bridge::dom::XmlDocPtr),
 }
 
 /// A context bound to whichever backend the receiver's document is.
@@ -123,14 +122,12 @@ impl Cx {
             }
             DocPtr::Html(p) => {
                 // SAFETY: as above, for the parse handle.
-                let dom =
-                    unsafe { crate::bridge::dom::xpath_dom(crate::bridge::dom::DocPtr::new(p)) }
-                        .map_err(|kind| {
-                            XPathError::with(
-                                kind,
-                                format_args!("failed to build the element index for XPath"),
-                            )
-                        })?;
+                let dom = unsafe { crate::bridge::dom::xpath_dom(p) }.map_err(|kind| {
+                    XPathError::with(
+                        kind,
+                        format_args!("failed to build the element index for XPath"),
+                    )
+                })?;
                 run_on(&self.session, dom, ast, handler, answer)
             }
         }
@@ -183,7 +180,7 @@ pub fn context_for(rb_node: Value, document: Value) -> Result<Cx, Error> {
         let node = xml_node_unwrap(rb_node)?;
         return Ok(Cx {
             session: Session::new(Some(Token::xml(node.to_token()))),
-            doc: DocPtr::Xml(xdoc),
+            doc: DocPtr::Xml(crate::bridge::dom::XmlDocPtr::new(xdoc)),
         });
     }
 
@@ -205,7 +202,7 @@ pub fn context_for(rb_node: Value, document: Value) -> Result<Cx, Error> {
     }
     Ok(Cx {
         session: Session::new(Some(node)),
-        doc: DocPtr::Html(parsed),
+        doc: DocPtr::Html(crate::bridge::dom::DocPtr::new(parsed)),
     })
 }
 

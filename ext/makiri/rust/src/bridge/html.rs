@@ -1,9 +1,9 @@
-//! The Ruby <-> Lexbor seam for HTML nodes: wrapping a Lexbor node for Ruby
+//! The Ruby <-> arena seam for HTML nodes: wrapping an arena node for Ruby
 //! and back, the checked receiver (`HtmlSelf`), and the tree and attribute
 //! edits the node methods make.
 //!
-//! A value read out of a Ruby wrapper becomes a live Lexbor handle here, and
-//! the conversion is unsafe; the lexbor side stays Ruby-free.
+//! A value read out of a Ruby wrapper becomes a live arena handle here, and
+//! the conversion is unsafe; the arena side (`html::dom`) stays Ruby-free.
 
 #![allow(unsafe_code)]
 
@@ -81,7 +81,7 @@ static HTML_NODE_CLASSES: NodeClasses = NodeClasses {
 ///
 /// A DOCUMENT node maps back onto the Ruby Document rather than getting a
 /// second wrapper; a node type with no specific leaf (entity/notation, which
-/// Lexbor's HTML parser does not produce) falls back to `Makiri::HTML::Node`.
+/// the HTML parser does not produce) falls back to `Makiri::HTML::Node`.
 pub fn wrap_html_node(node: RawNode, document: Value) -> Result<Value, Error> {
     // The caller hands `node` with the Document it belongs to.
     let handle = crate::bridge::wrapper::html_doc(&document).node(node);
@@ -123,7 +123,7 @@ fn uninitialized() -> Error {
 ///
 /// `Err(TypeError)` for an XML node or Document: the typed-data check is
 /// against [`HTML_NODE_TYPE`], which an XML node (wrapped under
-/// `XML_NODE_TYPE`) does not satisfy. The Document node is keyed too: Lexbor sets its `owner_document` to itself, so
+/// `XML_NODE_TYPE`) does not satisfy. The Document node is keyed too: it is its own `owner_document`, so
 /// `mint_key` accepts it.
 pub(in crate::bridge) fn html_node_key(rb_node: Value) -> Result<(HtmlNodeKey, Value), Error> {
     if crate::bridge::ruby::is_kind_of(rb_node, &CLASS_DOCUMENT) {
@@ -237,7 +237,7 @@ pub fn wrap_node(node: Option<HtmlNode<'_>>, document: Value) -> Result<Option<V
  * indexing a child list                                               *
  * ------------------------------------------------------------------ */
 
-/// The Lexbor tree for [`crate::child_index`]: a node's pointer is its token.
+/// The arena's tree for [`crate::child_index`]: a node's word is its token.
 /// The links are [`HtmlTree`]'s, the raw ones `#children` follows, so the two
 /// agree - a `<template>`'s own (empty) child list included.
 impl<'d> TokenTree for HtmlTree<'d> {
@@ -246,10 +246,11 @@ impl<'d> TokenTree for HtmlTree<'d> {
     }
     fn node_of(&self, token: usize) -> Option<HtmlNode<'d>> {
         // `child_index` asks only for a token it recorded for a list of this
-        // document, so by `ChildPositionMemo`'s invariant it names a node that
-        // is still a child there, in the document the receiver keeps alive.
+        // document (`ChildPositionMemo`'s invariant), and the lookup is the
+        // checked one all the same: a stale or foreign word answers None,
+        // which the memo reads as a miss, rather than another node.
         let raw = RawNode::from_word(token)?;
-        Some(self.doc()?.node(raw))
+        self.doc()?.checked(raw)
     }
 }
 
@@ -340,12 +341,17 @@ pub(in crate::bridge) fn node_ref(rb_doc: Value, key: HtmlNodeKey) -> Result<Raw
 /// the tree the edit was about to change - after which `#text` read the text
 /// the edit had released, and `//p` found the nodes it had removed.
 pub struct HtmlEdit<'a> {
-    this: &'a HtmlSelf,
+    /// Borrowed mutably for the edit's life: a read of the receiver's
+    /// document (`HtmlSelf::doc`) cannot still be held when the edit begins,
+    /// nor be taken while it runs - the edit compacts the byte store those
+    /// reads borrow. A COPY of the receiver is not covered; reads go through
+    /// the receiver itself.
+    this: &'a mut HtmlSelf,
 }
 
 /// Clear the receiver for an edit. Convert every argument after this and
 /// before [`HtmlEdit::with_tree`].
-pub fn edit(this: &HtmlSelf) -> Result<HtmlEdit<'_>, Error> {
+pub fn edit(this: &mut HtmlSelf) -> Result<HtmlEdit<'_>, Error> {
     crate::bridge::ruby::check_frozen(this.value)?;
     check_attr_owner_frozen(this)?;
     ensure_document_mutable(this.document)?;
@@ -514,7 +520,8 @@ fn release_from_tree(d: &mut HtmlDocMut<'_>, node: RawNode) {
 /// Every rule is checked before anything changes (see
 /// [`Insertion::check`], the shared `crate::dom_rules`); after that only the
 /// adoption copy can fail, and it too runs before a link is touched.
-pub fn insert(this: &HtmlSelf, rb_incoming: Value, place: Place) -> Result<Value, Error> {
+pub fn insert(this: &mut HtmlSelf, rb_incoming: Value, place: Place) -> Result<Value, Error> {
+    let document = this.document;
     let edit = edit(this)?;
     let (key, incoming_doc) = html_node_key(rb_incoming)?;
     /* The argument is relinked too - `place` changes its parent and siblings, and
@@ -533,12 +540,17 @@ pub fn insert(this: &HtmlSelf, rb_incoming: Value, place: Place) -> Result<Value
      * and kept as a reference: in the receiver's document it is read through
      * the edit's own borrow, never through a second one. */
     let incoming = node_ref(incoming_doc, key)?;
-    let same = crate::bridge::ruby::same_value(incoming_doc, this.document);
+    let same = crate::bridge::ruby::same_value(incoming_doc, document);
     let (placed, adopted) = edit.with_tree(|d, target| -> Result<(RawNode, bool), Error> {
         let node = if same {
-            Insertion::new(d.node(target), place, d.node(incoming))
-                .and_then(|i| i.check())
+            let insertion = Insertion::new(d.node(target), place, d.node(incoming))
                 .map_err(crate::bridge::dom_error::pre_insert_error)?;
+            insertion
+                .check()
+                .map_err(crate::bridge::dom_error::pre_insert_error)?;
+            if insertion.unchanged() {
+                return Ok((incoming, false));
+            }
             if d.node(incoming).parent().is_some() {
                 d.detach(incoming);
             }
@@ -564,16 +576,16 @@ pub fn insert(this: &HtmlSelf, rb_incoming: Value, place: Place) -> Result<Value
      * reads as the move the DOM says appendChild performs - and drop that
      * document's indexes, which still list it. */
     edit_other_document(incoming_doc, |d| release_from_tree(d, incoming))?;
-    wrap_html_node(placed, this.document)
+    wrap_html_node(placed, document)
 }
 
 /* ------------------------------------------------------------------ *
- * verified strings into Lexbor                                        *
+ * verified strings into the arena                                    *
  * ------------------------------------------------------------------ *
  * The node methods live in `glue::html_node::mutate`. A checked view reads as
  * a plain `&str` (`RubyStr`'s `Deref`, over its own copy of the bytes), and each
- * primitive passes it straight to a Lexbor call that copies what it keeps. A
- * primitive answers what Lexbor answered; the method words the error. */
+ * primitive passes it straight to an arena edit that copies what it keeps. A
+ * primitive answers what the edit answered; the method words the error. */
 
 /// `el[name] = value` on the element `el`; `Err` when it could not be stored.
 pub fn set_attribute(

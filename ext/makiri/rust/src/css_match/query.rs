@@ -359,7 +359,7 @@ impl<'c, 'p, 'd, N: CssNode<'d>> Query<'c, 'p, 'd, N> {
         match task {
             Task::Chain(t) => self.at.truncate(t.at_base as usize),
             Task::Forward(t) => self.cursors.truncate(t.cur_base as usize),
-            Task::NthOf(t) => self.positions.nth_of.truncate_seen(t.seen_base),
+            Task::NthOf(t) => self.positions.nth_of().truncate_seen(t.seen_base),
             /* No side stack: a new kind that holds one must say so here. */
             Task::Alternatives { .. } | Task::Has { .. } => {}
         }
@@ -472,7 +472,7 @@ impl<'c, 'p, 'd, N: CssNode<'d>> Query<'c, 'p, 'd, N> {
                 sel: i,
                 candidate: node,
                 node,
-                seen_base: self.positions.nth_of.seen_base(),
+                seen_base: self.positions.nth_of_memo().seen_base(),
                 counting: false,
             }),
             // Only a nested selector defers: a broken invariant.
@@ -797,22 +797,22 @@ impl<'c, 'p, 'd, N: CssNode<'d>> Query<'c, 'p, 'd, N> {
     ) -> Result<Outcome<N>, MatchFailure> {
         match event {
             None => {
-                if let Some((rank, in_s)) = self.positions.nth_of.rank(t.sel, t.candidate) {
+                if let Some((rank, in_s)) = self.positions.nth_of().rank(t.sel, t.candidate) {
                     return Ok(Outcome::Done(in_s && anb_matches(t.a, t.b, rank)));
                 }
-                if self.positions.nth_of.known_out(t.sel, t.candidate) {
+                if self.positions.nth_of().known_out(t.sel, t.candidate) {
                     return Ok(Outcome::Done(false));
                 }
             }
             Some(in_s) => {
                 if !t.counting {
                     if !in_s {
-                        self.positions.nth_of.note_out(t.sel, t.candidate)?;
+                        self.positions.nth_of().note_out(t.sel, t.candidate)?;
                         return Ok(Outcome::Done(false));
                     }
                     t.counting = true;
                 } else {
-                    self.positions.nth_of.push_seen(t.node, in_s)?;
+                    self.positions.nth_of().push_seen(t.node, in_s)?;
                 }
                 // A sibling already known not to be in `S` is noted without
                 // testing `S` again.
@@ -820,7 +820,7 @@ impl<'c, 'p, 'd, N: CssNode<'d>> Query<'c, 'p, 'd, N> {
                     let end_rank = match nth_of_sibling(t.node, t.from_end) {
                         Some(s) => {
                             self.budget.charge()?;
-                            let known = self.positions.nth_of.rank(t.sel, s);
+                            let known = self.positions.nth_of().rank(t.sel, s);
                             if known.is_none() {
                                 t.node = s;
                             }
@@ -829,7 +829,7 @@ impl<'c, 'p, 'd, N: CssNode<'d>> Query<'c, 'p, 'd, N> {
                         None => Some(0),
                     };
                     if let Some(end_rank) = end_rank {
-                        let pos = self.positions.nth_of.finish(
+                        let pos = self.positions.nth_of().finish(
                             t.sel,
                             t.seen_base,
                             t.candidate,
@@ -837,10 +837,10 @@ impl<'c, 'p, 'd, N: CssNode<'d>> Query<'c, 'p, 'd, N> {
                         )?;
                         return Ok(Outcome::Done(anb_matches(t.a, t.b, pos)));
                     }
-                    if !self.positions.nth_of.known_out(t.sel, t.node) {
+                    if !self.positions.nth_of().known_out(t.sel, t.node) {
                         break;
                     }
-                    self.positions.nth_of.push_seen(t.node, false)?;
+                    self.positions.nth_of().push_seen(t.node, false)?;
                 }
             }
         }

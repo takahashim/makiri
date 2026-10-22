@@ -94,7 +94,7 @@ jobs:
           fi
           echo "MAKIRI_CSS_DIFF_SEED=$MAKIRI_CSS_DIFF_SEED MAKIRI_CSS_DIFF_ITERATIONS=$MAKIRI_CSS_DIFF_ITERATIONS"
           cargo test --release --no-default-features --features lexbor -- \
-            lexbor::tests::css_match lexbor::tests::selector_cache
+            lexbor::tests::css_match css_cache::tests
 
   fuzz:
     name: cargo-fuzz ${{ matrix.target }}

@@ -1,6 +1,8 @@
-//! The parsed HTML document as the bridge holds it: the pointer a Ruby
+//! A Document's content as the bridge holds it - the parsed HTML document
+//! ([`DocPtr`]) or the XML arena ([`XmlDocPtr`]): the pointer a Ruby
 //! Document owns, and the borrows of it - shared, for an edit, for XPath -
-//! that the rest of the bridge takes. An arena handle borrows its document
+//! that the rest of the bridge takes. Each borrow is one named `unsafe`
+//! method, so its contract is stated once. An arena handle borrows its document
 //! and a node is an id resolved by a checked lookup, so what is the caller's
 //! promise here is only that the Document is live and the borrow is the one
 //! access the contract says.
@@ -11,6 +13,7 @@ use core::ptr::NonNull;
 
 use crate::html_dom::html::{HtmlDoc, HtmlDocMut, HtmlNewNodes, RawNode};
 use crate::html_dom::post_parse::HtmlParsed;
+use crate::xml::model::Document as XmlDoc;
 
 /// The parsed document a Ruby HTML Document owns, as the bridge passes it:
 /// the pointer `DocumentShell::install_html` leaked, live for as long as the
@@ -73,6 +76,42 @@ impl DocPtr {
     pub unsafe fn edit<'d>(self) -> HtmlDocMut<'d> {
         // SAFETY: as `edit_new_nodes`.
         unsafe { (*self.0.as_ptr()).edit() }
+    }
+}
+
+/// The XML arena a Ruby XML Document owns, as the bridge passes it: the
+/// pointer `DocumentShell::install_xml` leaked, live for as long as the
+/// Document. Equality is identity: two are equal when they are one arena.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct XmlDocPtr(NonNull<XmlDoc>);
+
+impl XmlDocPtr {
+    /// The handle behind `p`.
+    #[inline]
+    pub fn new(p: NonNull<XmlDoc>) -> Self {
+        XmlDocPtr(p)
+    }
+
+    /// The arena, shared, for `'d`.
+    ///
+    /// # Safety
+    /// The Document is live for `'d`, and nothing edits it while `'d` lasts.
+    #[inline]
+    pub unsafe fn as_ref<'d>(self) -> &'d XmlDoc {
+        // SAFETY: the caller's contract.
+        unsafe { &*self.0.as_ptr() }
+    }
+
+    /// The arena, lent for an edit.
+    ///
+    /// # Safety
+    /// The document is cleared for editing (no evaluation reads it), this is
+    /// the only access to it for `'d` - no other borrow of it is used while
+    /// this one lives - and no Ruby runs meanwhile.
+    #[inline]
+    pub unsafe fn edit<'d>(self) -> &'d mut XmlDoc {
+        // SAFETY: the caller's contract: the one access for `'d`.
+        unsafe { &mut *self.0.as_ptr() }
     }
 }
 

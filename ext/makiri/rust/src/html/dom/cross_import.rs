@@ -6,7 +6,8 @@
 
 use crate::falloc::{try_vec_with_capacity, OomOption, OomResult, VecPush};
 use crate::html::dom::{
-    has_ascii_uppercase, HtmlDocMut, HtmlElement, HtmlNode, NodeId as HtmlId, NsId, Place, RawNode,
+    has_ascii_uppercase, CreatePiError, HtmlDocMut, HtmlElement, HtmlNode, NodeId as HtmlId, NsId,
+    Place, RawNode,
 };
 use crate::xml::model::{ArenaKind, Document as XmlDoc, MutError, NodeId, Span};
 use crate::xml::mutate;
@@ -349,13 +350,15 @@ fn x2h_make(d: &mut HtmlDocMut<'_>, doc: &XmlDoc, s: NodeId) -> Result<Option<Ra
         }
         Some(ArenaKind::Text) => made(d.create_text(doc.value(s))),
         Some(ArenaKind::Comment) => made(d.create_comment(doc.value(s))),
-        /* The HTML factory refuses `?>` in the data, which an XML PI may hold
-         * (its `content=` checks nothing): refused here by name, not reported
-         * as the out-of-memory a `None` from the factory otherwise reads as. */
-        Some(ArenaKind::Pi) if doc.value(s).windows(2).any(|w| w == b"?>") => Err(
-            MutError::InvalidCharacter("processing instruction data must not contain ?>"),
-        ),
-        Some(ArenaKind::Pi) => made(d.create_pi(doc.local(s), doc.value(s))),
+        /* An XML PI may hold `?>` (its `content=` checks nothing), which the
+         * HTML factory refuses by name. */
+        Some(ArenaKind::Pi) => match d.create_pi(doc.local(s), doc.value(s)) {
+            Ok(n) => Ok(Some(n)),
+            Err(CreatePiError::ClosingInData) => {
+                Err(MutError::InvalidCharacter(CreatePiError::MESSAGE))
+            }
+            Err(CreatePiError::Oom) => Err(MutError::Oom),
+        },
         Some(ArenaKind::CDataSection) => Err(MutError::Type),
         Some(ArenaKind::DocumentFragment) => made(d.create_fragment()),
         _ => Ok(None),

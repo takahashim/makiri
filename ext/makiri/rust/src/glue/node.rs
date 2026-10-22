@@ -16,6 +16,10 @@ use crate::xml::dom_name;
 
 use crate::init::CLASS_NODE;
 
+/// `remove` / `unlink` on a Document, on either representation: the DOM gives
+/// one no `remove()`, and it is in no tree to leave (`dom_rules::removable`).
+pub const DOCUMENT_NOT_REMOVABLE: &str = "cannot remove the document node";
+
 use crate::bridge::wrapper::{node_identity, node_key, ChildListHost};
 use crate::child_index::ChildList;
 

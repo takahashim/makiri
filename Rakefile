@@ -94,10 +94,12 @@ end
 desc "Clippy and rustfmt exactly as CI runs them (--all-features, warnings are errors)"
 task lint: :lexbor do
   Dir.chdir("ext/makiri/rust") do
-    sh "cargo", "clippy", "--all-features", "--", "-D", "warnings"
+    sh "cargo", "clippy", "--all-features", "--tests", "--", "-D", "warnings"
     # The build that ships has no Lexbor: code only the reference layers use
-    # is dead there, which `--all-features` cannot see.
+    # is dead there, which `--all-features` cannot see - and so are test
+    # helpers only a Lexbor test calls, which the html-dom test build sees.
     sh "cargo", "clippy", "--no-default-features", "--features", "ruby", "--", "-D", "warnings"
+    sh "cargo", "clippy", "--no-default-features", "--features", "html-dom", "--tests", "--", "-D", "warnings"
     sh "cargo", "fmt", "--all", "--", "--check"
   end
 end
@@ -931,7 +933,7 @@ namespace :fuzz do
   # library and headers (the crate's build.rs links the archive and generates
   # the layout from the headers), which `rake compile` produces - hence the
   # dependency, which is about Lexbor rather than about the bundle.
-  FUZZ_TARGETS = %w[xml xpath xml_xpath css html html_xpath html_css html_css_diff html_diff html_xpath_diff selector_diff stylesheet_diff].freeze
+  FUZZ_TARGETS = %w[xml xpath xml_xpath css html html_xpath html_css html_css_diff html_diff selector_diff stylesheet_diff].freeze
   # The targets whose input starts with a CSS selector take its dictionary.
   FUZZ_CSS_DICT = %w[html_css html_css_diff].freeze
 

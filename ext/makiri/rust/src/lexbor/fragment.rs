@@ -106,30 +106,6 @@ fn fixup_template_content(
 
 pub use crate::html::fragment::FragmentError;
 
-/// Deep-import each child of `root` into `doc`, appending each to `into`.
-///
-/// `Err` when a child could not be copied whole. It REPORTS rather than
-/// raising, and that still matters now the C has gone: every caller owns the
-/// transient document the fragment was parsed into
-/// (`lexbor::abi::TransientDoc`), and a raise from here would longjmp past its
-/// `Drop` - one leaked Lexbor document per failure. The caller raises once its
-/// own cleanup has run, with the message that suits it.
-unsafe fn import_fragment_children(
-    doc: RawDoc,
-    root: RawNode,
-    into: RawNode,
-) -> Result<(), AdapterOom> {
-    let into = BuildingNode::from_raw_node(into);
-    let hdoc = doc.as_doc();
-    /* `children` reads each next sibling before yielding the node; import does
-     * not unlink the source anyway. */
-    for child in root.as_node().children() {
-        let imp = import_fixed(hdoc, child, true)?;
-        into.insert_child(imp);
-    }
-    Ok(())
-}
-
 /// A fragment parsed in a context - an element, or a tag and namespace. With an
 /// element context it lives in a TRANSIENT document Lexbor builds for it, which
 /// destroying the parser does not free, so this owns it and frees it on drop,
@@ -142,10 +118,6 @@ unsafe fn import_fragment_children(
 pub struct TransientFragment {
     root: RawNode,
     _doc: Option<crate::lexbor::abi::TransientDoc>,
-    /// The context's namespace when the parser was given none in its place
-    /// (see [`FragmentTag::parse_ns`]): the elements that inherited it are
-    /// given it back as they are imported.
-    inherit: Option<NsId>,
 }
 
 impl TransientFragment {
@@ -160,39 +132,6 @@ impl TransientFragment {
         limit: DepthLimit,
     ) -> Result<TransientFragment, FragmentError> {
         run_fragment_parser(input, known_valid, context, limit)
-    }
-
-    /// Import every child into `doc`, as the children of `into`; `Err` if
-    /// one failed, with the ones before it already there.
-    ///
-    /// Always into a detached DOCUMENT_FRAGMENT, never into a live tree: a
-    /// failure part-way is then invisible, and the caller places the whole
-    /// fragment afterwards (see `bridge::fragment::stage_fragment_in`).
-    ///
-    /// # Safety
-    /// `doc` must be live, and `into` a detached fragment of `doc` that nothing
-    /// else refers to.
-    pub unsafe fn import_into(self, doc: RawDoc, into: RawNode) -> Result<(), AdapterOom> {
-        import_fragment_children(doc, self.root, into)?;
-        if let Some(ns) = self.inherit {
-            BuildingNode::from_raw_node(into).give_namespace(ns);
-        }
-        Ok(())
-    }
-}
-
-impl TransientFragment {
-    /// [`import_into`](Self::import_into) for an edit holding the target
-    /// document: every child goes into `into`, a detached fragment of that
-    /// document.
-    pub fn import_into_doc(
-        self,
-        d: &mut crate::lexbor::adapter::html::HtmlDocMut<'_>,
-        into: RawNode,
-    ) -> Result<(), AdapterOom> {
-        // SAFETY: `d` is the document cleared for this edit, and `into` a
-        // detached fragment of it that the caller made for this import.
-        unsafe { self.import_into(d.raw_doc(), into) }
     }
 }
 
@@ -292,8 +231,9 @@ impl FragmentTag {
     /// interned is a pointer into THAT document's table, meaningless in `doc`
     /// and dangling once `el`'s document is gone:
     ///
-    /// - such a namespace is interned in `doc` (a no-op when `el` is `doc`'s),
-    ///   to be given to what inherits it (see [`parse_ns`](Self::parse_ns));
+    /// - such a namespace is interned in `doc` (a no-op when `el` is `doc`'s);
+    ///   the parse itself is handed only a static one
+    ///   ([`parse_ns`](Self::parse_ns));
     /// - such a tag - one not in Lexbor's static table - becomes
     ///   [`STANDIN_TAG`], a tag of `doc`'s own that the parser does not know
     ///   either. It decides nothing: a context of an unknown name is no
@@ -325,19 +265,12 @@ impl FragmentTag {
     /// The parse is the same either way - the tree builder tells HTML, SVG
     /// and MathML apart and nothing else, so an element in no namespace and
     /// one in `urn:x` are the same foreign context to it. Lexbor is handed
-    /// only the namespaces it builds in (hardening), and
-    /// [`inherit`](Self::inherit) is given to the elements that inherited the
-    /// context's on import.
+    /// only the namespaces it builds in (hardening).
     fn parse_ns(self) -> usize {
         match self.ns {
             Some(ns) if ns.is_static() => ns.raw(),
             _ => 0,
         }
-    }
-
-    /// The namespace [`parse_ns`](Self::parse_ns) held back, if any.
-    fn inherit(self) -> Option<NsId> {
-        self.ns.filter(|ns| !ns.is_static())
     }
 
     /// An HTML-namespace tag.
@@ -401,7 +334,6 @@ impl FragmentContext {
             owner,
             tag: at.map_or(0, |at| at.tag.raw()),
             ns: at.map_or(0, FragmentTag::parse_ns),
-            inherit: at.and_then(FragmentTag::inherit),
         })
     }
 }
@@ -411,7 +343,6 @@ struct BeginArgs {
     owner: *mut crate::lexbor::abi::lxb_html_document_t,
     tag: usize,
     ns: usize,
-    inherit: Option<NsId>,
 }
 
 /// Run a fragment parse with a fresh parser, under the tree-depth guard.
@@ -438,12 +369,7 @@ unsafe fn run_fragment_parser(
     let src = sanitize(input, known_valid).ok_or(FragmentError::Decode)?;
     let bytes = src.as_slice();
 
-    let BeginArgs {
-        owner,
-        tag,
-        ns,
-        inherit,
-    } = context.begin_args()?;
+    let BeginArgs { owner, tag, ns } = context.begin_args()?;
     if lxb_html_parse_fragment_chunk_begin(parser.as_ptr(), owner, tag, ns) != LXB_STATUS_OK {
         return Err(FragmentError::Parse);
     }
@@ -473,11 +399,7 @@ unsafe fn run_fragment_parser(
     drop(src); /* the parse consumed it; the buffer goes on every path */
     drop(parser); /* the fragment belongs to its document, not to the parser */
     let root = RawNode::from_ptr(root.cast()).ok_or(FragmentError::Parse)?;
-    Ok(TransientFragment {
-        root,
-        _doc: owned,
-        inherit,
-    })
+    Ok(TransientFragment { root, _doc: owned })
 }
 
 /// Copy `src` into `doc`, `<template>` contents included, or `Err` on failure.

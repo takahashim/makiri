@@ -1,208 +1,29 @@
-//! The Ruby wrappers of Makiri's nodes and Documents: the structs behind
-//! them, their TypedData types and GC hooks, the one way a Document gets its
-//! parsed handle ([`DocumentShell`]), and the representation-agnostic
-//! accessors every node method starts from.
-//!
-//! Which representation a wrapper holds is decided here, by its TypedData
-//! type; the HTML and XML front doors built on it are `bridge::html` and
-//! `bridge::xml`.
+//! The Document wrapper: its data, its TypedData types and GC hooks, the
+//! node cache, [`DocumentShell`], and the accessors that reach a Document's
+//! content.
 
 #![allow(unsafe_code)]
 
 use core::cell::{Cell, RefCell};
 use core::ptr::NonNull;
 
-use magnus::rb_sys::AsRawValue;
-
 use crate::bridge::ruby::makiri_error;
 use magnus::{Error, Value};
 
-use crate::bridge::dom::DocPtr;
+use super::*;
+use crate::bridge::dom::{DocPtr, XmlDocPtr};
 use crate::bridge::ruby::{value, VALUE};
 use crate::bridge::typed::{Held, Hooks, Tracer, TypedType};
-use crate::child_index::{ChildList, ChildPositionMemo, Children, TokenTree};
-use crate::dom_rules::Tree;
+use crate::child_index::ChildPositionMemo;
 use crate::falloc::{MapInsert, Reserve};
-use crate::html_dom::html::{HtmlDoc, HtmlNodeKey, RawNode};
+use crate::html_dom::html::HtmlDoc;
 use crate::html_dom::post_parse::HtmlParsed;
-use crate::init::{RbConst, CLASS_DOCUMENT};
+use crate::init::RbConst;
 use crate::node_type::NodeType;
-use crate::token::{Kind, Token};
-use crate::xml::model::{Document as XmlDoc, NodeId};
+use crate::token::Kind;
+use crate::xml::model::Document as XmlDoc;
 use core::hash::BuildHasherDefault;
 use std::collections::HashMap;
-
-/* ------------------------------------------------------------------ *
- * the node wrapper                                                   *
- * ------------------------------------------------------------------ */
-
-/// A node as the Ruby layer stores it: one pointer-sized word that is a Lexbor
-/// node pointer in an HTML document and an arena [`NodeId`] in an XML one.
-///
-/// Which of the two it is is not stored beside it. It is the document's
-/// representation - the wrapper's TypedData type, a NodeSet's [`DocKind`] -
-/// decided once, so a word is read back only through the reader named for
-/// that kind ([`xml`](Self::xml), [`html`](Self::html), [`token`](Self::token)).
-/// This type is where the word crosses between the typed forms and the
-/// untyped one, and so the one place in the glue a stored node is cast.
-///
-/// `repr(transparent)` over `usize`: a NodeSet's buffer keeps the layout it had
-/// as `*mut c_void`. (A [`NodeData`] does not use it any more - it stores an
-/// opaque [`NodeHandle`], which is larger by design.)
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-#[repr(transparent)]
-pub struct NodeWord(usize);
-
-impl From<NodeId> for NodeWord {
-    #[inline]
-    fn from(id: NodeId) -> Self {
-        NodeWord(id.to_token())
-    }
-}
-
-impl From<RawNode> for NodeWord {
-    #[inline]
-    fn from(n: RawNode) -> Self {
-        NodeWord(n.word())
-    }
-}
-
-impl NodeWord {
-    /// The word of an engine token. The token's kind is dropped: the word goes
-    /// into a set or wrapper whose document already names it.
-    #[inline]
-    pub fn of_token(t: Token) -> Self {
-        NodeWord(t.word())
-    }
-
-    /// The XML node, or `None` for a word naming no slot (a null one) - the
-    /// same shape as [`html`](Self::html). Safe for any word: an arena reads a
-    /// `NodeId` through `Document::try_node`, which rejects a stale or foreign
-    /// one.
-    #[inline]
-    pub fn xml(self) -> Option<NodeId> {
-        NodeId::from_token(self.0)
-    }
-
-    /// The HTML node; `None` for a null word. Safe for any word, as
-    /// [`xml`](Self::xml) is: the arena checks the id when it is resolved.
-    #[inline]
-    pub fn html(self) -> Option<RawNode> {
-        RawNode::from_word(self.0)
-    }
-
-    /// The engine token for this node of a document of kind `kind`. Infallible:
-    /// a [`DocKind`] is HTML or XML, never the token table's null slot, so the
-    /// one place a Ruby-held node becomes a token cannot mint a null kind.
-    ///
-    /// # Safety
-    /// The word is a live node of a document of kind `kind`.
-    #[inline]
-    pub unsafe fn token(self, kind: DocKind) -> Token {
-        match kind {
-            DocKind::Html => Token::arena(self.0),
-            DocKind::Xml => Token::xml(self.0),
-        }
-    }
-
-    /// Node identity as an integer: for `#==`/`#hash` and the wrapper cache's
-    /// key. Never read back as a node.
-    #[inline]
-    pub fn identity(self) -> usize {
-        self.0
-    }
-}
-
-/// A node as a long-lived Ruby wrapper stores it: the opaque [`HtmlNodeKey`]
-/// for HTML, the arena [`NodeId`] for XML.
-///
-/// The HTML variant is what makes the stored handle opaque: it is a private
-/// mint (see `lexbor::adapter`), so a wrapper's node can only have come from
-/// the document the wrapper marks. The XML variant carries its document stamp
-/// for the same reason. Which variant a wrapper holds is decided by its
-/// TypedData type, as before.
-#[derive(Clone, Copy)]
-pub enum NodeHandle {
-    Html(HtmlNodeKey),
-    Xml(NodeId),
-}
-
-/// A live representation-specific node that can become a long-lived wrapper
-/// handle. Its cache identity and stored handle are derived from the same
-/// value, so callers cannot accidentally pair an unrelated token and handle.
-pub(in crate::bridge) trait NodeHandleSource {
-    fn identity(&self) -> usize;
-    fn into_handle(self, document: Value) -> NodeHandle;
-}
-
-impl NodeHandle {
-    /// The HTML key, when this is an HTML node.
-    #[inline]
-    pub fn html(self) -> Option<HtmlNodeKey> {
-        match self {
-            NodeHandle::Html(key) => Some(key),
-            NodeHandle::Xml(_) => None,
-        }
-    }
-
-    /// The XML id, when this is an XML node.
-    #[inline]
-    pub fn xml(self) -> Option<NodeId> {
-        match self {
-            NodeHandle::Xml(id) => Some(id),
-            NodeHandle::Html(_) => None,
-        }
-    }
-}
-
-/// A node wrapper's data: the node plus the keepalive Document.
-///
-/// The node is owned by the document's arena (HTML or XML), so the wrapper
-/// never frees it; the Document reference is what keeps it alive, and marking
-/// it is the wrapper's whole GC job.
-pub struct NodeData {
-    /// Representation-opaque; read it only through a kind-checked accessor.
-    pub node: NodeHandle,
-    pub(in crate::bridge) document: Held,
-}
-
-/* Measured: `NodeHandle` fits two words (the `NonNull`/`NonZero` niches carry
- * the discriminant), so `NodeData` is three words - one more than the two-word
- * `NodeWord` + `VALUE` it replaced. Pinned as a growth ratchet: a field that
- * pushes wrapper data past three words fails the build. */
-const _: () = assert!(
-    core::mem::size_of::<NodeData>() <= 24,
-    "NodeData grew past three words; re-measure the wrapper cost before raising this"
-);
-
-impl Hooks for NodeData {
-    fn trace(&self, tracer: &Tracer) {
-        tracer.pinned(&self.document);
-    }
-}
-
-pub static NODE_DATA_TYPE: TypedType<NodeData> = TypedType::base(c"Makiri::Node".as_ptr());
-
-pub static HTML_NODE_TYPE: TypedType<NodeData> =
-    TypedType::derived(c"Makiri::HTML::Node".as_ptr(), &NODE_DATA_TYPE);
-
-pub static XML_NODE_TYPE: TypedType<NodeData> =
-    TypedType::derived(c"Makiri::XML::Node".as_ptr(), &NODE_DATA_TYPE);
-
-/// Which representation a wrapped Ruby node is, decided by its TypedData type
-/// rather than its Ruby class. A Document, a NodeSet or any non-node is
-/// `Other`.
-///
-/// An enum, not the C's `c_int` codes: a transcribed code (`NODE_KIND_XML = 1`
-/// where it was 2) once made `Document#import_node` read every HTML node as an
-/// XML one, and copies of those numbers had spread to three files. A `match`
-/// over this is checked for exhaustiveness and cannot be off by one.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum NodeRepr {
-    Html,
-    Xml,
-    Other,
-}
 
 /* ------------------------------------------------------------------ *
  * the document wrapper                                               *
@@ -257,7 +78,7 @@ impl Content {
 /// Keyed by the node TOKEN - a `NodeId` for XML, a node pointer for HTML - which
 /// is stable for the document's life in both: XML never recycles an arena slot,
 /// and HTML detaches without destroying, so a node is never freed.
-struct NodeCache {
+pub(super) struct NodeCache {
     /// Empty until the first navigation, so a document nobody walks pays
     /// nothing.
     /// Tokens are a slot index or an aligned pointer - already well
@@ -304,23 +125,23 @@ impl NodeCache {
 /// together because they answer one question - may this document change, and
 /// has it - and only [`record_edit`] and [`DocumentEvaluation`] write them.
 #[derive(Clone, Copy, Default)]
-struct EditState {
+pub(super) struct EditState {
     /// How many XPath evaluations that can run Ruby (ones with a handler) are
     /// reading this document right now. Every mutator refuses while it is
     /// non-zero - see [`DocumentEvaluation`].
-    evaluating: usize,
+    pub(super) evaluating: usize,
     /// `Document#tree_version`: the child-list edits ([`EditKind::ChildList`]).
-    tree_version: u64,
+    pub(super) tree_version: u64,
     /// `Document#attribute_version`: the attribute edits
     /// ([`EditKind::Attributes`]).
-    attribute_version: u64,
+    pub(super) attribute_version: u64,
 }
 
 impl EditState {
     /// Count `kind`'s edit by the version that counts it - by at most one, so
     /// a reader keying a cache by one version is not refilled for another's
     /// edits.
-    fn record(&mut self, kind: EditKind) {
+    pub(super) fn record(&mut self, kind: EditKind) {
         match kind {
             EditKind::ChildList => self.tree_version = self.tree_version.wrapping_add(1),
             EditKind::Attributes => self.attribute_version = self.attribute_version.wrapping_add(1),
@@ -333,7 +154,7 @@ impl EditState {
 /// Ruby's allocator ([`account_document`]): `Drop` takes back exactly `bytes`,
 /// and [`account_growth`] compares against it.
 #[derive(Clone, Copy, Default)]
-struct ExternalReport {
+pub(super) struct ExternalReport {
     /// The external bytes reported.
     bytes: usize,
     /// An HTML document's pool chunk count when `bytes` was measured: what
@@ -347,7 +168,7 @@ impl ExternalReport {
     /// difference from the last one for the GC - `None` when there is none to
     /// report, or a size Ruby could not address (a truncated difference would
     /// unbalance the release).
-    fn update(&mut self, now: usize, chunks: usize) -> Option<isize> {
+    pub(super) fn update(&mut self, now: usize, chunks: usize) -> Option<isize> {
         let (Ok(now_i), Ok(then_i)) = (isize::try_from(now), isize::try_from(self.bytes)) else {
             return None;
         };
@@ -379,10 +200,10 @@ pub struct DocData {
     /// Set once, by `DocumentShell::install`; read through the accessors below.
     content: Cell<Content>,
     /// The mutation gate and the edit versions ([`EditState`]).
-    edits: Cell<EditState>,
+    pub(super) edits: Cell<EditState>,
     errors: Held,
     /// What the GC has been told about the content ([`ExternalReport`]).
-    report: Cell<ExternalReport>,
+    pub(super) report: Cell<ExternalReport>,
     /// One wrapper per node; see [`NodeCache`].
     ///
     /// Boxed and optional so a document nobody navigates never allocates a
@@ -390,7 +211,7 @@ pub struct DocData {
     nodes: RefCell<Option<Box<NodeCache>>>,
     /// Where `child_count` / `child_at` last were ([`ChildPositionMemo`]).
     /// Allocates nothing until the first of them records.
-    child_memo: RefCell<ChildPositionMemo>,
+    pub(super) child_memo: RefCell<ChildPositionMemo>,
 }
 
 impl DocData {
@@ -427,7 +248,7 @@ impl DocData {
 
     /// Change the edit state in place - the one read-modify-write of the
     /// cell, which holds a `Copy` value.
-    fn update_edits(&self, f: impl FnOnce(&mut EditState)) {
+    pub(super) fn update_edits(&self, f: impl FnOnce(&mut EditState)) {
         let mut edits = self.edits.get();
         f(&mut edits);
         self.edits.set(edits);
@@ -443,7 +264,7 @@ impl DocData {
     /// Whether the content has grown enough since the last report to measure
     /// and report it again ([`account_growth`]): by an eighth, and at least
     /// [`GROWTH_MIN_CHUNKS`] chunks (HTML) or [`GROWTH_MIN_BYTES`] (XML).
-    fn grown_enough(&self) -> bool {
+    pub(super) fn grown_enough(&self) -> bool {
         // SAFETY: the content is owned by this object and live for the call.
         unsafe {
             match self.content.get() {
@@ -462,7 +283,7 @@ impl DocData {
     }
 
     /// The HTML content's chunk count, 0 for XML.
-    fn arena_chunks(&self) -> usize {
+    pub(super) fn arena_chunks(&self) -> usize {
         // SAFETY: as `grown_enough`.
         unsafe {
             self.content
@@ -473,7 +294,7 @@ impl DocData {
     }
 
     /// The bytes the content holds outside Ruby's allocator, or 0 with none.
-    fn external_bytes(&self) -> usize {
+    pub(super) fn external_bytes(&self) -> usize {
         // SAFETY: the content is owned by this object and live for the call.
         unsafe {
             match self.content.get() {
@@ -546,71 +367,13 @@ impl Drop for DocData {
     }
 }
 
-/// Tell the GC how much memory `rb_doc` holds outside Ruby's allocator.
-///
-/// Neither the Lexbor arena nor the XML arena is an `xmalloc`, so the GC sees
-/// a parsed document as a few dozen bytes: a loop that parses and drops never
-/// triggers a collection from memory pressure, RSS climbs by a document per
-/// parse, and every parse pays for freshly faulted pages (measured: 2× the
-/// parse time, and gigabytes of RSS, on a 280 KB document). This reports the
-/// difference since the last call, so it is safe to call again after the
-/// document grows.
-///
-/// May run a collection right here, so `rb_doc` must be reachable from the
-/// caller's frame (a local VALUE is), and nothing borrowed from a Ruby String
-/// may be held across the call.
-fn account_document(rb_doc: VALUE) {
-    // SAFETY: `rb_doc` is a Document (the base type matches either leaf),
-    // live on the caller's frame.
-    let rb_doc = unsafe { value(rb_doc) };
-    let d = DOC_TYPE.get_known(&rb_doc);
-    let (now, chunks) = (d.external_bytes(), d.arena_chunks());
-    let mut report = d.report.get();
-    let diff = report.update(now, chunks);
-    d.report.set(report);
-    /* After the cell is written: the report may run a collection, which
-     * reads `d` shared - as it may, now that nothing holds it `&mut`. */
-    if let Some(diff) = diff {
-        crate::bridge::ruby::report_external_bytes(diff);
-    }
-}
-
-/// Chunks an HTML document's pools must gain before [`account_growth`]
-/// measures it again (Lexbor's node pool grows in chunks of tens of KiB).
-const GROWTH_MIN_CHUNKS: usize = 16;
-/// Bytes an XML document must gain before [`account_growth`] reports again.
-const GROWTH_MIN_BYTES: usize = 512 * 1024;
-
-/// Tell the GC about what `rb_doc` has grown by since its last report, once
-/// that is enough to matter ([`DocData::grown_enough`]: an eighth, and a floor).
-///
-/// A parse reports its document's size once; mutation grows the arena after
-/// that - nodes appended in a loop, `inner_html=` of a large string - and
-/// without a new report the GC keeps judging a large document by its size at
-/// parse time. Measuring an HTML document walks every chunk of its pools, too
-/// costly for every edit, so an O(1) chunk count decides when; growth by a
-/// fraction also keeps the measurements logarithmic in the final size.
-///
-/// Called where an edit begins (`bridge::html::edit`, `bridge::xml::
-/// begin_edit`): the growth it sees is the previous edits', and a document's
-/// last edit is reported at its next one or not at all - an under-report, the
-/// safe direction, as it was before this existed. It may run a collection,
-/// so, like [`account_document`], it must be called with `rb_doc` on the
-/// caller's stack and no borrowed Ruby String held - which is so at the start
-/// of an edit, before any argument is converted.
-pub fn account_growth(rb_doc: Value) {
-    if doc_data_known(&rb_doc).grown_enough() {
-        account_document(rb_doc.as_raw());
-    }
-}
-
 /// The base type: the kind-agnostic accessors (`doc_content`, `#errors`) accept
 /// either representation.
 pub static DOC_TYPE: TypedType<DocData> = TypedType::base(c"Makiri::Document".as_ptr());
 
 /// HTML and XML Documents share the layout and the GC functions but are wrapped
 /// under DISTINCT types deriving from the base, so `html_doc_unwrap` - which
-/// reinterprets the handle as a Lexbor document - raises TypeError on an XML
+/// reinterprets the handle as an HTML document - raises TypeError on an XML
 /// Document through Ruby's own type machinery rather than relying on an assert
 /// that NDEBUG erases.
 pub static HTML_DOC_TYPE: TypedType<DocData> =
@@ -712,7 +475,7 @@ impl DocumentShell {
 }
 
 /* ------------------------------------------------------------------ *
- * lexbor <-> wrapper accessors                                       *
+ * document content <-> wrapper accessors                             *
  * ------------------------------------------------------------------ */
 
 /// The content of any Document. `Err(TypeError)` for a non-Document.
@@ -726,21 +489,21 @@ pub(in crate::bridge) fn doc_content_known(rb_doc: Value) -> Content {
     DOC_TYPE.get_known(&rb_doc).content.get()
 }
 
-/// The XML arena of a Document, or null when it is not an XML one.
-pub(in crate::bridge) fn xml_arena_known(rb_doc: Value) -> *mut XmlDoc {
+/// The XML arena of a Document, or `None` when it is not an XML one.
+pub(in crate::bridge) fn xml_arena_known(rb_doc: Value) -> Option<XmlDocPtr> {
     match doc_content_known(rb_doc) {
-        Content::Xml(d) => d.as_ptr(),
-        _ => core::ptr::null_mut(),
+        Content::Xml(d) => Some(XmlDocPtr::new(d)),
+        _ => None,
     }
 }
 
-/// The Lexbor document behind an HTML Document. `Err(TypeError)` otherwise.
+/// The arena document behind an HTML Document. `Err(TypeError)` otherwise.
 pub fn html_doc_unwrap(rb_doc: Value) -> Result<DocPtr, Error> {
     let d: &DocData = HTML_DOC_TYPE.get(&rb_doc)?;
     Ok(html_doc_of(d))
 }
 
-/// The Lexbor document of `rb_doc`, a VALUE already known to be an HTML
+/// The arena document of `rb_doc`, a VALUE already known to be an HTML
 /// Document (a Document method's receiver), borrowed for as long as the caller
 /// borrows it.
 pub fn html_doc(rb_doc: &Value) -> HtmlDoc<'_> {
@@ -915,7 +678,7 @@ fn cache_node(rb_doc: Value, token: usize, wrapper: Value) -> Result<(), ()> {
 
 /// A Document's wrapper data, for the fields that are the wrapper's own
 /// rather than the content's - every one of them a cell, so this is shared.
-fn doc_data_known(rb_doc: &Value) -> &DocData {
+pub(super) fn doc_data_known(rb_doc: &Value) -> &DocData {
     DOC_TYPE.get_known(rb_doc)
 }
 
@@ -923,277 +686,4 @@ fn doc_data_known(rb_doc: &Value) -> &DocData {
 /// spans Ruby), not a bad input.
 fn busy_cache() -> Error {
     crate::bridge::ruby::internal_error("a Document's node cache was found in use")
-}
-
-/// Why [`node_token_in`] refused a node.
-pub enum NotInDocument {
-    /// Not a usable Makiri node - the `TypeError` or `Makiri::Error` its
-    /// wrapper raised.
-    Unusable(Error),
-    /// A node of another document.
-    Foreign,
-}
-
-/// The engine token of `rb_node`, which must be a node of `document` (the
-/// document node included).
-///
-/// The check behind every token minted for one document's engine - a handler's
-/// result node, an `XPathContext`'s context node - made here once, so the
-/// `unsafe` mint never rests on a caller having made it. The token's kind is
-/// `document`'s own, not one a caller passes alongside.
-pub fn node_token_in(rb_node: Value, document: Value) -> Result<Token, NotInDocument> {
-    let node_document = keepalive_document(rb_node).map_err(NotInDocument::Unusable)?;
-    if node_document.as_raw() != document.as_raw() {
-        return Err(NotInDocument::Foreign);
-    }
-    let raw = node_raw(rb_node).map_err(NotInDocument::Unusable)?;
-    // SAFETY: a live node of `document` - its wrapper holds that document -
-    // minted for `document`'s own kind.
-    Ok(unsafe { raw.token(DocKind::of(document)) })
-}
-
-/// The kind-AGNOSTIC node word (the base type, so HTML or XML). Only for the
-/// few sites where the representation is irrelevant (identity comparison) or
-/// already guaranteed by an external same-document check (the XPath context
-/// node, a NodeSet of the node's own document).
-///
-/// The Document branch is kind-aware: an XML Document resolves to its arena's
-/// document node, an HTML one to Lexbor's.
-pub fn node_raw(rb_node: Value) -> Result<NodeWord, Error> {
-    if crate::bridge::ruby::is_kind_of(rb_node, &CLASS_DOCUMENT) {
-        if let Content::Xml(xdoc) = doc_content(rb_node)? {
-            // SAFETY: a Document's arena lives as long as the Document, and its
-            // document node is read, not written.
-            return Ok(unsafe { xdoc.as_ref() }.doc_node().into());
-        }
-        let doc = html_doc_unwrap(rb_node)?;
-        // SAFETY: the live document of `rb_node`, which the caller holds.
-        return Ok(unsafe { crate::bridge::dom::document_node(doc) }.into());
-    }
-    /* TypeError for a non-node, as TypedData_Get_Struct raised. */
-    let nd: &NodeData = NODE_DATA_TYPE.get(&rb_node)?;
-    Ok(match nd.node {
-        NodeHandle::Html(key) => NodeWord::from(key.raw_node()),
-        NodeHandle::Xml(id) => NodeWord::from(id),
-    })
-}
-
-/// Which representation `v` wraps ([`NodeRepr`]).
-pub fn node_repr(v: Value) -> NodeRepr {
-    if HTML_NODE_TYPE.is(v) {
-        NodeRepr::Html
-    } else if XML_NODE_TYPE.is(v) {
-        NodeRepr::Xml
-    } else {
-        NodeRepr::Other
-    }
-}
-
-/// Node identity as an integer, for `#==`/`#eql?`/`#hash`/`#pointer_id` -
-/// kind-agnostic, and never dereferenced.
-pub fn node_identity(rb_node: Value) -> Result<usize, Error> {
-    Ok(node_raw(rb_node)?.identity())
-}
-
-/// Node identity for `==`/`eql?`: the Document AND the word. The word alone
-/// does not tell two documents apart - it is a node id packed with its
-/// document's 32-bit stamp, and the stamps wrap (every parse, fragment parses
-/// included, takes one), so a long-lived document and one made 2^32 documents
-/// later can share a stamp; and an XML word can equal an HTML one. The
-/// Document is the same object for every node of one document, so comparing
-/// it settles both.
-pub fn node_key(rb_node: Value) -> Result<(VALUE, usize), Error> {
-    Ok((
-        keepalive_document(rb_node)?.as_raw(),
-        node_identity(rb_node)?,
-    ))
-}
-
-/// The keepalive Document of any node, or the Document itself.
-/// `Err(TypeError)` for a non-node.
-pub fn keepalive_document(rb_node: Value) -> Result<Value, Error> {
-    if crate::bridge::ruby::is_kind_of(rb_node, &CLASS_DOCUMENT) {
-        return Ok(rb_node);
-    }
-    let nd: &NodeData = NODE_DATA_TYPE.get(&rb_node)?;
-    // SAFETY: the field of the wrapper `rb_node`, whose mark marks it; the
-    // argument keeps the wrapper reachable.
-    Ok(unsafe { nd.document.get() })
-}
-
-/* ---- the edit versions ---- */
-
-/// What an edit changes, and so which version counts it ([`record_edit`]).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum EditKind {
-    /// A child list of a node the document owns - attached, detached or inside
-    /// a fragment alike: `Document#tree_version`.
-    ChildList,
-    /// An attribute of an element the document owns - added, removed, its
-    /// value set (to the same value too) - or an Attr's value:
-    /// `Document#attribute_version`.
-    Attributes,
-    /// A Text, Comment, CDATA or PI node's data. No version counts it: no
-    /// reader has asked for one, and `tree_version` counting it made every
-    /// keystroke in a text field refill every child-list cache.
-    CharacterData,
-}
-
-/// Record an edit of `kind` to a node `rb_doc` owns: the one way a version
-/// moves. Called where an edit is handed its mutable node (`HtmlEdit`,
-/// `Editing`) and for the source document of an adoption, so no mutator can
-/// miss it. Dropping what the edit invalidates is the representation's own
-/// step, taken beside this one: an HTML document's indexes (dropped by the
-/// parse handle's `edit`), the XML arena's name index (the arena's).
-///
-/// The versions are INVALIDATION keys, not edit counts. The contract, for HTML
-/// and XML alike:
-///
-/// - an unchanged version means the data it keys did not change -
-///   `tree_version` the child lists, `attribute_version` the attributes;
-/// - a changed one may be conservative: an edit that then fails, or stops
-///   part-way, still moved it;
-/// - it is recorded once the edit's refusals are past - the frozen check, the
-///   evaluation guard - and its arguments converted, immediately BEFORE the
-///   change, with the representation's indexes dropped at the same point;
-/// - no Ruby runs between the record and the change, so nothing can read the
-///   tree in between and cache it under the new number.
-///
-/// Recording after the change instead would miss an edit that panics, or
-/// fails having changed something, and leave a reader trusting a stale cache.
-pub fn record_edit(rb_doc: Value, kind: EditKind) {
-    doc_data_known(&rb_doc).update_edits(|e| e.record(kind));
-}
-
-/// `Document#tree_version`: how many child-list edits the document has seen.
-/// `TypeError` for a non-Document.
-pub fn tree_version(rb_doc: Value) -> Result<u64, Error> {
-    Ok(DOC_TYPE.get(&rb_doc)?.edits.get().tree_version)
-}
-
-/// `Document#attribute_version`: how many attribute edits the document has
-/// seen. `TypeError` for a non-Document.
-pub fn attribute_version(rb_doc: Value) -> Result<u64, Error> {
-    Ok(DOC_TYPE.get(&rb_doc)?.edits.get().attribute_version)
-}
-
-/* ---- the child-position memo ---- */
-
-/// Run `f` over the document's [`ChildPositionMemo`] and its current
-/// `tree_version`, which every use of the memo must pass it - the memo keeps
-/// its own invariant from that (`crate::child_index`).
-///
-/// `f` runs inside the document's borrow, so it must not run Ruby; a walk of
-/// the child links does not.
-///
-/// The memo's borrow spans `f` only, which walks links and runs no Ruby, so
-/// no second use of it can start inside; one found borrowed is a broken
-/// invariant, reported as `Makiri::InternalError`.
-fn with_child_memo<R>(
-    rb_doc: Value,
-    f: impl FnOnce(&mut ChildPositionMemo, u64) -> R,
-) -> Result<R, Error> {
-    let d = doc_data_known(&rb_doc);
-    let version = d.edits.get().tree_version;
-    let mut memo = d.child_memo.try_borrow_mut().map_err(|_| {
-        crate::bridge::ruby::internal_error("a Document's child memo was found in use")
-    })?;
-    Ok(f(&mut memo, version))
-}
-
-/// A receiver whose child lists `#child_count` / `#child_at` and their
-/// element twins read - an HTML or XML node or Document. A representation
-/// says which tree and node it is and how a child is wrapped; counting and
-/// indexing are written once, here, and the four Ruby methods once, over
-/// this, in `glue::node`.
-pub trait ChildListHost: magnus::TryConvert {
-    type Tree<'a>: TokenTree
-    where
-        Self: 'a;
-
-    /// The Document whose memo the lists use.
-    fn document(&self) -> Value;
-    /// Run `f` over the receiver's `list`. The tree is made for the call and
-    /// not kept: an HTML arena tree borrows its document, which an edit later
-    /// in the same method takes by `&mut`.
-    fn with_children<R>(
-        &self,
-        list: ChildList,
-        f: impl for<'a> FnOnce(Children<'a, Self::Tree<'a>>) -> R,
-    ) -> R;
-    /// A child of the receiver as its Ruby wrapper; None is nil.
-    fn wrap_child<'a>(
-        &self,
-        n: Option<<Self::Tree<'a> as Tree>::Node>,
-    ) -> Result<Option<Value>, Error>
-    where
-        Self: 'a;
-
-    /// How many children are in `list`.
-    fn child_count(&self, list: ChildList) -> Result<usize, Error> {
-        with_child_memo(self.document(), |memo, version| {
-            self.with_children(list, |c| c.count(memo, version))
-        })
-    }
-
-    /// The wrapped child at `index` in `list`, or nil past the end.
-    fn child_at(&self, list: ChildList, index: usize) -> Result<Option<Value>, Error> {
-        self.with_children(list, |c| {
-            let found =
-                with_child_memo(self.document(), |memo, version| c.at(memo, version, index))?;
-            self.wrap_child(found)
-        })
-    }
-}
-
-/* ---- the document's mutation gate ---- */
-
-/// `Err(Makiri::Error)` while an evaluation with a handler is reading `rb_doc`.
-/// Every mutator checks this before it changes anything.
-pub fn ensure_document_mutable(rb_doc: Value) -> Result<(), Error> {
-    if doc_data_known(&rb_doc).edits.get().evaluating != 0 {
-        return Err(makiri_error(
-            "cannot modify a document while evaluating XPath over it (re-entrant mutation from a handler)",
-        ));
-    }
-    Ok(())
-}
-
-/* ------------------------------------------------------------------ *
- * the evaluation guard                                                *
- * ------------------------------------------------------------------ */
-
-/// Marks a document as read by an XPath evaluation that can run Ruby - one with
-/// a handler - for as long as it lives. Nested evaluations stack.
-///
-/// The engine borrows names, attribute values and index slices out of the
-/// document for the whole walk, and a handler runs arbitrary Ruby in the middle
-/// of it. Lexbor frees an attribute's old value when a new one is set
-/// (`lxb_dom_attr_set_value`), and a mutation drops the indexes, so a handler
-/// that edited the same document could leave the evaluator reading freed
-/// memory. Every mutator checks [`ensure_document_mutable`]
-/// first, so that borrow is never invalidated under a suspended walk.
-pub struct DocumentEvaluation(
-    /// The Document the count belongs to. Holding it is what keeps the parsed
-    /// handle valid: a guard lives on the machine stack, which Ruby's collector
-    /// scans, so the Document cannot be collected while one is alive.
-    Value,
-);
-
-impl DocumentEvaluation {
-    pub fn enter(rb_doc: Value) -> Result<Self, Error> {
-        DOC_TYPE.get(&rb_doc)?; /* TypeError for a non-Document */
-        doc_data_known(&rb_doc).update_edits(|e| e.evaluating += 1);
-        Ok(DocumentEvaluation(rb_doc))
-    }
-}
-
-impl Drop for DocumentEvaluation {
-    fn drop(&mut self) {
-        doc_data_known(&self.0).update_edits(|e| e.evaluating -= 1);
-        /* Read the Document here, so the guard demonstrably holds it: the field
-         * is there to keep it reachable, and a field nothing reads is one the
-         * compiler is free to treat as absent. */
-        core::hint::black_box(self.0);
-    }
 }

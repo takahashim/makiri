@@ -5,7 +5,7 @@ use crate::falloc::{OomResult, VecPush};
 use crate::ptr_table::PtrMap;
 
 use super::dom::CssNode;
-use super::nth_of::NthOfMemo;
+use super::nth_of::{NthOf, NthOfMemo};
 use super::scratch::{recycle, SCRATCH_KEEP};
 use super::tree::{name_matches_type, next_position_sibling, prev_position_sibling};
 use super::{Budget, MatchFailure};
@@ -31,7 +31,7 @@ pub(super) struct Positions {
     visited: Vec<*const ()>,
     /// The `:nth-child(... of S)` ranks, which count by `S` rather than by
     /// position and are kept apart.
-    pub(super) nth_of: NthOfMemo,
+    nth_of: NthOfMemo,
 }
 
 /// A memo past this many entries is dropped and refilled, bounding it: the
@@ -56,13 +56,22 @@ impl Positions {
         }
     }
 
+    /// The `:nth-child(... of S)` memo, for a read.
+    pub(super) fn nth_of_memo(&self) -> &NthOfMemo {
+        &self.nth_of
+    }
+
+    /// The `:nth-child(... of S)` memo, recording only if this query walks.
+    pub(super) fn nth_of(&mut self) -> NthOf<'_> {
+        self.nth_of.with_walking(self.walking)
+    }
+
     /// A query's positions, over the allocations `kept` holds (a
     /// [`Scratch`](super::Scratch)'s), so a warm `:nth-*` query makes no
     /// tables of its own.
     pub(super) fn reuse(kept: &mut Positions, walking: bool) -> Self {
         let mut p = core::mem::replace(kept, Positions::new());
         p.walking = walking;
-        p.nth_of.walking = walking;
         p
     }
 

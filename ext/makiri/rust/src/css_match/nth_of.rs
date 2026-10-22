@@ -12,8 +12,6 @@ use super::scratch::{recycle, SCRATCH_KEEP};
 use super::MatchFailure;
 
 pub(super) struct NthOfMemo {
-    /// A walking query's: only it records ranks.
-    pub(super) walking: bool,
     /// Ranks, one map per `of S` simple selector (its index), made on first
     /// use: a node's value is `rank << 1 | in_s`, `rank` being how many of it
     /// and the siblings before it (in the counting direction) are in `S`.
@@ -32,7 +30,6 @@ pub(super) struct NthOfMemo {
 impl NthOfMemo {
     pub(super) const fn new() -> Self {
         NthOfMemo {
-            walking: false,
             ranks: Vec::new(),
             seen: Vec::new(),
             out: Vec::new(),
@@ -43,7 +40,6 @@ impl NthOfMemo {
     /// The maps are keyed by the query's own selector indexes, so they go.
     pub(super) fn emptied(self) -> Self {
         NthOfMemo {
-            walking: false,
             ranks: Vec::new(),
             seen: recycle(self.seen, SCRATCH_KEEP),
             out: Vec::new(),
@@ -55,9 +51,27 @@ impl NthOfMemo {
         self.seen.len() as u32
     }
 
+    /// The memo as a query reads and writes it: recording only when the
+    /// query walks (`walking`, its [`Positions`](super::positions::Positions)'
+    /// own flag - the one place it is kept).
+    pub(super) fn with_walking(&mut self, walking: bool) -> NthOf<'_> {
+        NthOf {
+            memo: self,
+            walking,
+        }
+    }
+}
+
+/// [`NthOfMemo`] lent to a query, with whether the query walks.
+pub(super) struct NthOf<'a> {
+    memo: &'a mut NthOfMemo,
+    walking: bool,
+}
+
+impl NthOf<'_> {
     /// Drop what a finished (or abandoned) count left in `seen`.
     pub(super) fn truncate_seen(&mut self, base: u32) {
-        self.seen.truncate(base as usize);
+        self.memo.seen.truncate(base as usize);
     }
 
     /// Note that a count tested `node` and found it in `S` or not.
@@ -66,18 +80,19 @@ impl NthOfMemo {
         node: N,
         in_s: bool,
     ) -> Result<(), MatchFailure> {
-        self.seen.falloc_push((node_key(node), in_s)).or_oom()
+        self.memo.seen.falloc_push((node_key(node), in_s)).or_oom()
     }
 
     /// `node`'s recorded `(rank, in_s)` for the `of S` selector `sel`.
     pub(super) fn rank<'d, N: CssNode<'d>>(&self, sel: u32, node: N) -> Option<(u64, bool)> {
-        let (_, map) = self.ranks.iter().find(|(k, _)| *k == sel)?;
+        let (_, map) = self.memo.ranks.iter().find(|(k, _)| *k == sel)?;
         map.get(node_key(node)).map(|v| (v >> 1, v & 1 == 1))
     }
 
     /// Is `node` known not to be in the `of S` selector `sel`'s `S`?
     pub(super) fn known_out<'d, N: CssNode<'d>>(&self, sel: u32, node: N) -> bool {
-        self.out
+        self.memo
+            .out
             .iter()
             .find(|(k, _)| *k == sel)
             .is_some_and(|(_, set)| set.get(node_key(node)).is_some())
@@ -92,14 +107,14 @@ impl NthOfMemo {
         if !self.walking {
             return Ok(());
         }
-        let at = match self.out.iter().position(|(k, _)| *k == sel) {
+        let at = match self.memo.out.iter().position(|(k, _)| *k == sel) {
             Some(at) => at,
             None => {
-                self.out.falloc_push((sel, PtrMap::new())).or_oom()?;
-                self.out.len() - 1
+                self.memo.out.falloc_push((sel, PtrMap::new())).or_oom()?;
+                self.memo.out.len() - 1
             }
         };
-        if let Some((_, set)) = self.out.get_mut(at) {
+        if let Some((_, set)) = self.memo.out.get_mut(at) {
             if set.len() + 1 > POSITIONS_MAX {
                 *set = PtrMap::new();
             }
@@ -121,18 +136,18 @@ impl NthOfMemo {
         candidate: N,
         end_rank: u64,
     ) -> Result<u64, MatchFailure> {
-        let run = self.seen.get(seen_base as usize..).unwrap_or_default();
+        let run = self.memo.seen.get(seen_base as usize..).unwrap_or_default();
         let members = run.iter().filter(|(_, in_s)| *in_s).count() as u64;
         let pos = end_rank + members + 1;
         if self.walking {
-            let at = match self.ranks.iter().position(|(k, _)| *k == sel) {
+            let at = match self.memo.ranks.iter().position(|(k, _)| *k == sel) {
                 Some(at) => at,
                 None => {
-                    self.ranks.falloc_push((sel, PtrMap::new())).or_oom()?;
-                    self.ranks.len() - 1
+                    self.memo.ranks.falloc_push((sel, PtrMap::new())).or_oom()?;
+                    self.memo.ranks.len() - 1
                 }
             };
-            if let Some((_, map)) = self.ranks.get_mut(at) {
+            if let Some((_, map)) = self.memo.ranks.get_mut(at) {
                 if map.len() + run.len() + 1 > POSITIONS_MAX {
                     *map = PtrMap::new();
                 }
@@ -147,7 +162,7 @@ impl NthOfMemo {
                     .map_err(|_| MatchFailure::Oom)?;
             }
         }
-        self.seen.truncate(seen_base as usize);
+        self.memo.seen.truncate(seen_base as usize);
         Ok(pos)
     }
 }

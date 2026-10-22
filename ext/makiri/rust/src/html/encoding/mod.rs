@@ -29,7 +29,7 @@ use encoding_rs::{UTF_16BE, UTF_16LE, WINDOWS_1252, X_USER_DEFINED};
 pub use encoding_rs::{Encoding, UTF_8};
 
 use crate::falloc::try_vec_with_capacity;
-use crate::html::tree::MetaProbe;
+use crate::html::tree::{MetaProbe, MetaVerdict};
 
 mod prescan;
 pub use prescan::{from_meta_content, prescan};
@@ -74,13 +74,13 @@ impl Decision {
 
     /// What the parse reads of `input` under this decision: the bytes after
     /// any byte order mark, and whether they are known to be valid UTF-8 -
-    /// found so by the sniffing, or by the caller for bytes with no BOM. Only
-    /// bytes read AS UTF-8 can be known so: any other encoding is decoded,
-    /// and its decoder's output is valid by construction.
+    /// found so by the sniffing, or by the caller. Only bytes read AS UTF-8
+    /// can be known so: any other encoding is decoded, and its decoder's
+    /// output is valid by construction. A UTF-8 BOM is a whole character, so
+    /// what follows one in valid input is valid too.
     pub fn body<'a>(&self, input: &DocumentInput<'a>) -> (&'a [u8], bool) {
         let body = input.bytes.get(self.bom_len..).unwrap_or_default();
-        let known_valid = self.encoding == UTF_8
-            && (self.valid_utf8 || (input.known_valid_utf8 && self.bom_len == 0));
+        let known_valid = self.encoding == UTF_8 && (self.valid_utf8 || input.known_valid_utf8);
         (body, known_valid)
     }
 }
@@ -96,8 +96,10 @@ pub struct DocumentInput<'a> {
     pub known_valid_utf8: bool,
 }
 
-/// What the String handed to a document parse says of its own encoding, as
-/// the caller reads it.
+/// A Ruby encoding, as a document parse reads it: the String's own, or the
+/// one `encoding:` names when Ruby knows that name. Both are read by the one
+/// rule, [`transport_for`], so a String tagged US-ASCII and `encoding:
+/// "US-ASCII"` are the same input.
 #[derive(Clone, Copy)]
 pub enum StringEncoding<'a> {
     /// ASCII-8BIT: bytes with no declared encoding.
@@ -120,16 +122,15 @@ pub enum Transport {
     Unlabelled,
 }
 
-/// The transport layer's encoding: `given` (`encoding:`) when there is one,
-/// else what the String says of itself - nothing for binary, UTF-8 for UTF-8
-/// and US-ASCII, and for any other the Encoding Standard encoding its name
-/// labels.
-pub fn transport_for(given: Option<&'static Encoding>, string: StringEncoding<'_>) -> Transport {
-    match (given, string) {
-        (Some(e), _) => Transport::Declared(e),
-        (None, StringEncoding::Binary) => Transport::Sniff,
-        (None, StringEncoding::Utf8) => Transport::Declared(UTF_8),
-        (None, StringEncoding::Named(name)) => {
+/// The transport layer's encoding a Ruby encoding stands for: nothing for
+/// binary, UTF-8 for UTF-8 and US-ASCII (Ruby's ASCII is a subset of UTF-8,
+/// not the Standard's windows-1252), and for any other the Encoding Standard
+/// encoding its name labels.
+pub fn transport_for(string: StringEncoding<'_>) -> Transport {
+    match string {
+        StringEncoding::Binary => Transport::Sniff,
+        StringEncoding::Utf8 => Transport::Declared(UTF_8),
+        StringEncoding::Named(name) => {
             for_label(name).map_or(Transport::Unlabelled, Transport::Declared)
         }
     }
@@ -215,7 +216,7 @@ impl MetaProbe for EncodingWatch {
         charset: Option<&[u8]>,
         http_equiv: Option<&[u8]>,
         content: Option<&[u8]>,
-    ) -> bool {
+    ) -> MetaVerdict {
         let found = charset.and_then(for_label).or_else(|| {
             http_equiv
                 .filter(|v| v.eq_ignore_ascii_case(b"content-type"))
@@ -223,17 +224,18 @@ impl MetaProbe for EncodingWatch {
                 .and_then(from_meta_content)
         });
         let Some(new) = found else {
-            return false;
+            return MetaVerdict::Tentative;
         };
         /* "Change the encoding": certain from here on, whatever it decides. */
         if self.current == UTF_16BE || self.current == UTF_16LE {
-            return true;
+            return MetaVerdict::Certain;
         }
         let new = declared(new);
-        if new != self.current {
-            self.change = Some(new);
+        if new == self.current {
+            return MetaVerdict::Certain;
         }
-        true
+        self.change = Some(new);
+        MetaVerdict::Reread
     }
 }
 
@@ -255,6 +257,7 @@ pub fn decode(bytes: &[u8], encoding: &'static Encoding) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::disallowed_methods)] /* test inputs */
     use super::*;
     use crate::html::tree::guard::DepthLimit;
     use encoding_rs::{EUC_JP, ISO_2022_JP, SHIFT_JIS, WINDOWS_1251};
@@ -266,26 +269,19 @@ mod tests {
     }
 
     #[test]
-    fn the_transport_layer_is_the_given_encoding_then_the_strings_own() {
+    fn the_transport_layer_is_what_the_ruby_encoding_stands_for() {
         use StringEncoding::*;
+        assert_eq!(transport_for(Binary), Transport::Sniff);
+        assert_eq!(transport_for(Utf8), Transport::Declared(UTF_8));
         assert_eq!(
-            transport_for(Some(EUC_JP), Utf8),
-            Transport::Declared(EUC_JP)
-        );
-        assert_eq!(transport_for(None, Binary), Transport::Sniff);
-        assert_eq!(transport_for(None, Utf8), Transport::Declared(UTF_8));
-        assert_eq!(
-            transport_for(None, Named(b"Windows-31J")),
+            transport_for(Named(b"Windows-31J")),
             Transport::Declared(SHIFT_JIS)
         );
         assert_eq!(
-            transport_for(None, Named(b"ISO-8859-1")),
+            transport_for(Named(b"ISO-8859-1")),
             Transport::Declared(WINDOWS_1252)
         );
-        assert_eq!(
-            transport_for(None, Named(b"UTF-32LE")),
-            Transport::Unlabelled
-        );
+        assert_eq!(transport_for(Named(b"UTF-32LE")), Transport::Unlabelled);
     }
 
     #[test]

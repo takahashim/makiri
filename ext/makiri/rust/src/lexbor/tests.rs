@@ -5,6 +5,7 @@
 //! where both are allowed.
 
 #![allow(unsafe_code)]
+#![allow(clippy::disallowed_methods)] /* test fixtures */
 
 mod guard {
     use crate::lexbor::contains_guard::{neutralized, Oom};
@@ -1862,7 +1863,7 @@ mod css_match {
             let gvl = Gvl::exclusive();
             let d = doc.twin.doc();
             let root = RawNode::from(d.as_node());
-            old_engine::select_all(&gvl, &doc, root, selector.as_bytes())
+            old_engine::select_all(&gvl, doc, root, selector.as_bytes())
                 .unwrap_or_else(|_| panic!("old engine rejected {selector:?}"))
         }
 
@@ -1984,14 +1985,14 @@ mod css_match {
         // under test, so it does not need to prove anything about stack
         // safety; that is `deeply_nested_is_does_not_grow_the_native_stack`'s
         // job with a purpose-built input).
-        if depth < 3 && rng.next_u64().is_multiple_of(3) {
+        if depth < 3 && rng.next_u64() % 3 == 0 {
             // `of S` is left out: Lexbor's own `of S` counts differently from
             // the spec in many shapes (module doc), so it is checked against a
             // spec oracle instead (`nth_child_of_s_agrees_with_a_spec_oracle`).
             const LIST_PSEUDOS: &[&str] = &[":is(", ":where(", ":not(", ":has("];
             s.push_str(rng.pick(LIST_PSEUDOS));
             s.push_str(&random_chain(rng, depth + 1));
-            if rng.next_u64().is_multiple_of(4) {
+            if rng.next_u64() % 4 == 0 {
                 s.push_str(", ");
                 s.push_str(&random_chain(rng, depth + 1));
             }
@@ -2018,7 +2019,7 @@ mod css_match {
     /// `select_all`/`matches_any` actually take (`Lists`, not one chain).
     fn random_selector(rng: &mut Rng) -> String {
         let mut s = random_chain(rng, 0);
-        if rng.next_u64().is_multiple_of(3) {
+        if rng.next_u64() % 3 == 0 {
             s.push_str(", ");
             s.push_str(&random_chain(rng, 0));
         }
@@ -2316,11 +2317,11 @@ mod css_match {
             let len = 2 + rng.next_u64() % 7;
             loop {
                 let mut compound = String::from_utf8_lossy(at.node().qualified_name()).into_owned();
-                if rng.next_u64().is_multiple_of(4) {
+                if rng.next_u64() % 4 == 0 {
                     compound = "*".into();
                 }
                 if let Some(class) = at.get_attribute(b"class") {
-                    if rng.next_u64().is_multiple_of(2) {
+                    if rng.next_u64() % 2 == 0 {
                         let first = class.split(|b| *b == b' ').next().unwrap_or_default();
                         compound.push('.');
                         compound.push_str(&String::from_utf8_lossy(first));
@@ -2353,7 +2354,7 @@ mod css_match {
                 at = next;
             }
             parts.reverse();
-            if parts.len() > 1 && rng.next_u64().is_multiple_of(2) {
+            if parts.len() > 1 && rng.next_u64() % 2 == 0 {
                 let k = (rng.next_u64() as usize) % parts.len();
                 parts[k] = if k % 2 == 0 {
                     format!("{}{}", rng.pick(TYPES), rng.pick(CLASSES))
@@ -2470,7 +2471,7 @@ mod css_match {
                 continue;
             };
             let (anb, a, b) = *rng.pick(ANBS);
-            let from_end = rng.next_u64().is_multiple_of(2);
+            let from_end = rng.next_u64() % 2 == 0;
             let pseudo = if from_end {
                 "nth-last-child"
             } else {
@@ -2824,313 +2825,5 @@ mod css_match {
         let unstarved = select_all_with_work_limit(root(&doc), parsed_sel.groups(), 10_000)
             .expect("comfortably within budget");
         assert!(!unstarved.is_empty());
-    }
-}
-
-/// `css_cache` - the compiled-selector cache reintroduced for
-/// `Node#css`/`#at_css`/`#matches?` once they moved to `css_match`,
-/// mirroring `lexbor::selectors`'s adaptive `CachePolicy`/`SelectorCache` over
-/// its OWN separate parser/arena (module doc). `Gvl::exclusive()` stands in
-/// for the real GVL proof here, same as `css_match`'s differential
-/// tests do against the old engine.
-///
-/// The adaptive bypass/retest window (40,000-iteration territory in
-/// `spec/css_selector_cache_spec.rb`) is NOT re-tested here - that spec
-/// already covers it end to end through the real glue, and duplicating a
-/// slow, iteration-heavy test at this level buys little; this module checks
-/// the parts a fast, ASan-friendly Rust test is good for: a hit answers the
-/// same as a miss would, filling the cache past its cap doesn't lose
-/// correctness, and a rejected selector does not disturb what is already
-/// cached.
-mod selector_cache {
-    use crate::css_cache::with_compiled;
-    use crate::css_match::select_all;
-    use crate::gvl::Gvl;
-    use crate::html_dom::html::{HtmlNode, RawNode};
-    use crate::html_dom::post_parse::{parse_html, HtmlParsed};
-    use crate::html_dom::tree_guard::DepthLimit;
-
-    fn parsed(html: &[u8]) -> Box<HtmlParsed> {
-        parse_html(html, true, DepthLimit::DEFAULT).expect("a document parses")
-    }
-
-    fn root(doc: &HtmlParsed) -> HtmlNode<'_> {
-        doc.doc().as_node()
-    }
-
-    /// Every matching descendant's node identity, through the cache.
-    fn select_all_cached(doc: &HtmlParsed, selector: &str) -> Vec<RawNode> {
-        with_compiled(&Gvl::exclusive(), selector.as_bytes(), |groups, scratch| {
-            select_all(
-                scratch,
-                root(doc),
-                groups,
-                &crate::css_match::Namespaces::NONE,
-            )
-        })
-        .unwrap_or_else(|_| panic!("{selector:?} fails to parse"))
-        .unwrap_or_else(|e| panic!("{selector:?} failed: {e:?}"))
-        .into_iter()
-        .map(RawNode::from)
-        .collect()
-    }
-
-    #[test]
-    fn a_cache_hit_answers_the_same_as_the_first_miss_did() {
-        let doc = parsed(b"<html><body><p class=x>a</p><p>b</p><p class=x>c</p></body></html>");
-        let first = select_all_cached(&doc, "p.x");
-        let second = select_all_cached(&doc, "p.x"); // same bytes: a cache hit
-        assert_eq!(first.len(), 2);
-        assert!(
-            first == second,
-            "a hit must answer exactly what the miss did"
-        );
-    }
-
-    #[test]
-    fn filling_the_cache_past_its_cap_does_not_lose_correctness() {
-        // 300 distinct selectors against the 256-entry cap (mirrors
-        // spec/css_selector_cache_spec.rb): the 257th flushes it, and every
-        // one - before and after the flush - must still answer right.
-        let mut html = String::from("<html><body>");
-        for i in 1..=300 {
-            html.push_str(&format!("<p id=n{i}>{i}</p>"));
-        }
-        html.push_str("</body></html>");
-        let doc = parsed(html.as_bytes());
-
-        for i in 1..=300 {
-            let sel = format!("#n{i}");
-            let found = select_all_cached(&doc, &sel);
-            assert_eq!(found.len(), 1, "selector {sel:?} should match exactly one");
-        }
-        // A second pass re-hits everything, including the ones the cap
-        // already flushed out and back in once.
-        for i in 1..=300 {
-            let sel = format!("#n{i}");
-            assert_eq!(select_all_cached(&doc, &sel).len(), 1);
-        }
-    }
-
-    #[test]
-    fn a_rejected_selector_does_not_disturb_what_is_already_cached() {
-        let doc = parsed(b"<html><body><p class=x>a</p><p class=x>b</p></body></html>");
-        assert_eq!(select_all_cached(&doc, "p.x").len(), 2);
-
-        let rejected = with_compiled(&Gvl::exclusive(), b"p[", |groups, scratch| {
-            select_all(
-                scratch,
-                root(&doc),
-                groups,
-                &crate::css_match::Namespaces::NONE,
-            )
-        });
-        assert!(rejected.is_err(), "a malformed selector must not parse");
-
-        // The previously cached entry must still answer correctly.
-        assert_eq!(select_all_cached(&doc, "p.x").len(), 2);
-    }
-}
-
-/// The serializer's walks (`adapter::html::serialize`) against the Lexbor
-/// walks they replaced: byte for byte the same on every node of documents the
-/// parser builds.
-mod serialize_walk {
-    use crate::lexbor::abi as lxb;
-    use crate::lexbor::adapter::html::{HtmlNode, RawNode};
-    use crate::lexbor::adapter::post_parse::{parse_html, HtmlParsed};
-    use crate::lexbor::adapter::tree_guard::DepthLimit;
-    use crate::lexbor::chunks::{chunk_cb, ChunkSink, Chunks};
-    use crate::node_type::NodeType;
-
-    const OK: lxb::lxb_status_t = lxb::consts::STATUS_OK as lxb::lxb_status_t;
-    const OPT: lxb::lxb_html_serialize_opt_t =
-        lxb::lxb_html_serialize_opt_LXB_HTML_SERIALIZE_OPT_UNDEF as _;
-
-    struct Bytes(Vec<u8>);
-
-    impl ChunkSink for Bytes {
-        fn take(&mut self, bytes: &[u8]) -> bool {
-            self.0.extend_from_slice(bytes);
-            true
-        }
-    }
-
-    /// What `write` sends through a collecting sink.
-    fn collect(
-        write: impl FnOnce(lxb::lxb_html_serialize_cb_f, *mut core::ffi::c_void) -> lxb::lxb_status_t,
-    ) -> Vec<u8> {
-        let mut c = Chunks::new(Bytes(Vec::new()));
-        let st = write(Some(chunk_cb::<Bytes>), c.ctx());
-        assert_eq!(st, OK);
-        c.sink.0
-    }
-
-    /// Ours and Lexbor's, as (plain, pretty), for `n` and - with `deep` - its
-    /// children only.
-    fn both(n: HtmlNode<'_>, deep: bool) -> [(Vec<u8>, Vec<u8>); 2] {
-        let raw = RawNode::from(n).as_lxb_mut();
-        // SAFETY: a live node of a live document, which nothing changes; the
-        // sink takes every chunk with its own context.
-        unsafe {
-            let ours = (
-                collect(|cb, ctx| n.serialize_to(deep, cb, ctx)),
-                collect(|cb, ctx| n.serialize_pretty_to(deep, cb, ctx)),
-            );
-            let lexbor = if deep {
-                (
-                    collect(|cb, ctx| lxb::lxb_html_serialize_deep_cb(raw, cb, ctx)),
-                    collect(|cb, ctx| lxb::lxb_html_serialize_pretty_deep_cb(raw, OPT, 0, cb, ctx)),
-                )
-            } else {
-                (
-                    collect(|cb, ctx| lxb::lxb_html_serialize_tree_cb(raw, cb, ctx)),
-                    collect(|cb, ctx| lxb::lxb_html_serialize_pretty_tree_cb(raw, OPT, 0, cb, ctx)),
-                )
-            };
-            [ours, lexbor]
-        }
-    }
-
-    fn doc(html: &[u8]) -> Box<HtmlParsed> {
-        parse_html(html, true, DepthLimit::UNLIMITED).expect("a document parses")
-    }
-
-    #[test]
-    fn ours_write_what_lexbor_writes() {
-        let corpus: &[&[u8]] = &[
-            b"<!doctype html><html><head><title>t &amp; u</title><style>a<b{}</style>\
-              <script>if (a < b && c) {}</script></head><body><p class=x id=\"q\">a &lt; b\xc2\xa0c</p>\
-              <!-- c --><br><img src=x alt='a\"b'><ul><li>1<li>2</ul><table><tr><td>x</table>\
-              <textarea>\n t</textarea><pre>\n\nx</pre><xmp><b></xmp><noscript><i>n</i></noscript>\
-              <iframe><b></iframe><noembed>&</noembed><plaintext>x<y",
-            b"<template><p>a</p><template><i>b</i></template></template><div><template></template></div>",
-            b"<svg viewBox='0 0 1 1'><foreignObject><p>x</p></foreignObject><style>plain</style>\
-              <script>also plain</script><desc>d</desc><path d='M0'/></svg><math><mi>x</mi>\
-              <annotation-xml encoding='text/html'><p>y</p></annotation-xml></math>",
-            b"<p>line\nbreak\r\nand\ttab</p><?php echo 1 ?><div><span><b>deep</b></span></div>",
-            b"",
-        ];
-        for html in corpus {
-            let parsed = doc(html);
-            // SAFETY: `parsed` is live for the loop.
-            let root = unsafe { parsed.raw_doc().as_doc() }.as_node();
-            let mut node = Some(root);
-            while let Some(n) = node {
-                let fragment = n.node_type() == NodeType::DocumentFragment;
-                if !fragment {
-                    let [ours, lexbor] = both(n, false);
-                    assert_eq!(ours, lexbor, "tree of a {:?} in {html:?}", n.node_type());
-                }
-                if n.first_child().is_some() || fragment {
-                    let [ours, lexbor] = both(n, true);
-                    assert_eq!(
-                        ours,
-                        lexbor,
-                        "children of a {:?} in {html:?}",
-                        n.node_type()
-                    );
-                }
-                node = n.preorder_next_with_contents(root);
-            }
-        }
-    }
-}
-
-mod selector_text {
-    //! [`crate::selectors::text`] against Lexbor's own parser: the text
-    //! written for a selector parses back to the same selector, whatever
-    //! characters its names and values hold.
-    use crate::selectors::stylesheet::{parse, Rule};
-    use crate::selectors::text::{ident, string};
-
-    /// The `:text` of each selector of `css`'s first rule, which must be a
-    /// style rule.
-    fn texts(css: &[u8]) -> Vec<Vec<u8>> {
-        let Ok(rules) = parse(css) else {
-            panic!("{:?} failed to parse", String::from_utf8_lossy(css));
-        };
-        match rules.into_iter().next() {
-            Some(Rule::Style { selectors, .. }) => selectors.into_iter().map(|s| s.text).collect(),
-            _ => panic!("{:?}: not a style rule", String::from_utf8_lossy(css)),
-        }
-    }
-
-    fn rule(sel: &[u8]) -> Vec<u8> {
-        [sel, b"{x:y}"].concat()
-    }
-
-    #[test]
-    fn written_text_reads_back_as_itself() {
-        for sel in [
-            r".md\:block",
-            r".a\,b",
-            r"#x\.y",
-            r".\31 0",
-            r#"[data-x="a\"b"]"#,
-            r#"[a="x\\y"]"#,
-            r#"[a="a\a b"]"#,
-            r":is(.md\:block, #x\.y)",
-            r":nth-child(2n+1 of .a\:b)",
-            r":current(.a\:b)",
-            r":has(> a\+b)",
-            "div.a, #b > span",
-        ] {
-            let first = texts(&rule(sel.as_bytes()));
-            let joined = first.join(&b", "[..]);
-            assert_eq!(texts(&rule(&joined)), first, "{sel}");
-        }
-    }
-
-    /// A tiny xorshift64*, as in `css_match`'s randomized tests: a fixed seed
-    /// keeps a failure reproducible.
-    struct Rng(u64);
-
-    impl Rng {
-        fn next(&mut self) -> usize {
-            self.0 ^= self.0 << 13;
-            self.0 ^= self.0 >> 7;
-            self.0 ^= self.0 << 17;
-            self.0 as usize
-        }
-    }
-
-    /// Text from characters that mean something in a selector, or need an
-    /// escape, or are not ASCII.
-    fn random_text(rng: &mut Rng) -> String {
-        const CHARS: &[char] = &[
-            'a', 'Z', '0', '9', '-', '_', ':', '/', '[', ']', ',', ' ', '.', '#', '+', '>', '~',
-            '\\', '"', '\'', '(', ')', '@', '!', '*', '|', '=', '{', '}', ';', 'é', '日', '\t',
-            '\n', '\r', '\u{7f}', '\u{1}', '\u{fffd}',
-        ];
-        let len = 1 + rng.next() % 6;
-        (0..len).map(|_| CHARS[rng.next() % CHARS.len()]).collect()
-    }
-
-    #[test]
-    fn any_name_or_value_survives_the_round_trip() {
-        let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
-        for i in 0..5000 {
-            let raw = random_text(&mut rng);
-            let raw = raw.as_bytes();
-
-            // As a class, an id and an attribute name: written by us from
-            // the raw name, so Lexbor decoding it and us writing it again
-            // must give the same text back.
-            for lead in [&b"."[..], b"#", b"["] {
-                let mut sel = lead.to_vec();
-                ident(&mut sel, raw).unwrap_or_else(|_| panic!("oom"));
-                if lead == b"[" {
-                    sel.push(b']');
-                }
-                assert_eq!(texts(&rule(&sel)), vec![sel.clone()], "#{i} {raw:?}");
-            }
-
-            // As an attribute value.
-            let mut sel = b"[a=".to_vec();
-            string(&mut sel, raw).unwrap_or_else(|_| panic!("oom"));
-            sel.push(b']');
-            assert_eq!(texts(&rule(&sel)), vec![sel.clone()], "#{i} {raw:?}");
-        }
     }
 }
