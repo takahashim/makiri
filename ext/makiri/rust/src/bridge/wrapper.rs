@@ -36,8 +36,9 @@ use std::collections::HashMap;
  * the node wrapper                                                   *
  * ------------------------------------------------------------------ */
 
-/// A node as the Ruby layer stores it: one pointer-sized word that is a Lexbor
-/// node pointer in an HTML document and an arena [`NodeId`] in an XML one.
+/// A node as the Ruby layer stores it: one pointer-sized word that is an arena
+/// node id - the HTML arena's in an HTML document, an XML [`NodeId`] in an
+/// XML one.
 ///
 /// Which of the two it is is not stored beside it. It is the document's
 /// representation - the wrapper's TypedData type, a NodeSet's [`DocKind`] -
@@ -95,10 +96,11 @@ impl NodeWord {
     /// a [`DocKind`] is HTML or XML, never the token table's null slot, so the
     /// one place a Ruby-held node becomes a token cannot mint a null kind.
     ///
-    /// # Safety
-    /// The word is a live node of a document of kind `kind`.
+    /// Safe: both resolvers read the word through a checked lookup
+    /// (`Token::arena`, `Token::xml`), so a stale or foreign word is refused,
+    /// never undefined behaviour.
     #[inline]
-    pub unsafe fn token(self, kind: DocKind) -> Token {
+    pub fn token(self, kind: DocKind) -> Token {
         match kind {
             DocKind::Html => Token::arena(self.0),
             DocKind::Xml => Token::xml(self.0),
@@ -938,18 +940,16 @@ pub enum NotInDocument {
 /// document node included).
 ///
 /// The check behind every token minted for one document's engine - a handler's
-/// result node, an `XPathContext`'s context node - made here once, so the
-/// `unsafe` mint never rests on a caller having made it. The token's kind is
-/// `document`'s own, not one a caller passes alongside.
+/// result node, an `XPathContext`'s context node - made here once, so a token
+/// never names a node of another document. The token's kind is `document`'s
+/// own, not one a caller passes alongside.
 pub fn node_token_in(rb_node: Value, document: Value) -> Result<Token, NotInDocument> {
     let node_document = keepalive_document(rb_node).map_err(NotInDocument::Unusable)?;
     if node_document.as_raw() != document.as_raw() {
         return Err(NotInDocument::Foreign);
     }
     let raw = node_raw(rb_node).map_err(NotInDocument::Unusable)?;
-    // SAFETY: a live node of `document` - its wrapper holds that document -
-    // minted for `document`'s own kind.
-    Ok(unsafe { raw.token(DocKind::of(document)) })
+    Ok(raw.token(DocKind::of(document)))
 }
 
 /// The kind-AGNOSTIC node word (the base type, so HTML or XML). Only for the
@@ -1168,11 +1168,13 @@ pub fn ensure_document_mutable(rb_doc: Value) -> Result<(), Error> {
 ///
 /// The engine borrows names, attribute values and index slices out of the
 /// document for the whole walk, and a handler runs arbitrary Ruby in the middle
-/// of it. Lexbor frees an attribute's old value when a new one is set
-/// (`lxb_dom_attr_set_value`), and a mutation drops the indexes, so a handler
-/// that edited the same document could leave the evaluator reading freed
-/// memory. Every mutator checks [`ensure_document_mutable`]
-/// first, so that borrow is never invalidated under a suspended walk.
+/// of it. An edit invalidates those borrows: an HTML edit drops the indexes
+/// and may compact the byte store the spans point into
+/// (`HtmlParsed::edit`), and an XML edit or factory can grow the arena's
+/// vectors. So a handler that edited the same document could leave the
+/// evaluator reading released memory. Every mutator checks
+/// [`ensure_document_mutable`] first, so that borrow is never invalidated
+/// under a suspended walk.
 pub struct DocumentEvaluation(
     /// The Document the count belongs to. Holding it is what keeps the parsed
     /// handle valid: a guard lives on the machine stack, which Ruby's collector

@@ -260,12 +260,15 @@ pub fn utf8_str_protected(bytes: &[u8]) -> Result<RString, Error> {
 /// String's buffer: one pre-sized allocation and one memcpy run, with no
 /// intermediate. The bounds checks are not redundant with the caller's
 /// bookkeeping - a wrong `total` would otherwise run past the allocation, so
-/// both a long slice and a short sum fail closed.
+/// both a long slice and a short sum fail closed. The joined bytes are to be
+/// valid UTF-8, as text-index slices are by the text-input contract; bytes
+/// that were not would make a wrong String, not a memory error.
 ///
 /// # Safety
-/// The joined bytes must be valid UTF-8. Text-index slices are, by the
-/// text-input contract; bytes that were not would make a wrong String rather
-/// than a memory error.
+/// Allocating the String RAISES on failure (`raw::utf8_str_new`), a longjmp
+/// over every frame up to the nearest `rb_protect`: call it under
+/// `bridge::ruby::protect`, or from a frame that owns nothing a skipped
+/// `Drop` would leak. The returned VALUE is unrooted until stored or returned.
 pub unsafe fn ruby_str_from_slices<'a>(
     slices: impl Iterator<Item = &'a [u8]>,
     total: usize,
@@ -303,12 +306,15 @@ pub unsafe fn ruby_str_from_slices<'a>(
 ///
 /// The DOM readers hand over a slice the document lends them and want a String
 /// of it. Deciding that the bytes are valid UTF-8 is not this layer's job,
-/// because only the caller knows where they came from.
+/// because only the caller knows where they came from: everything in a
+/// parsed document is valid UTF-8 by the text-input contract, and bytes that
+/// were not would make a wrong String - wrong is still wrong - not a memory
+/// error.
 ///
 /// # Safety
-/// `bytes` must be valid UTF-8. Everything in a parsed document is, by the
-/// text-input contract. Bytes that were not would make a wrong String rather
-/// than a memory error - wrong is still wrong.
+/// Allocating the String RAISES on failure (`raw::utf8_str_new`), as an
+/// over-long `bytes` does: call it under `bridge::ruby::protect`, or from a
+/// frame that owns nothing a skipped `Drop` would leak.
 pub unsafe fn ruby_str_from_utf8(bytes: &[u8]) -> VALUE {
     /* A length `c_long` cannot hold (32 bits on Windows) is passed as -1,
      * which Ruby refuses with ArgumentError - a raise, as an allocation

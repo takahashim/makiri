@@ -46,8 +46,9 @@ pub trait TokenTree: Tree {
     /// memo is stored under.
     fn token(&self, n: Self::Node) -> usize;
     /// The node behind a token this module recorded. By the memo's invariant
-    /// it is still a child of the parent it was recorded under. None only for
-    /// a token no node has, which is never recorded.
+    /// it is still a child of the parent it was recorded under. None for a
+    /// token no node of this document has: never recorded, and answered by a
+    /// fresh walk should it be.
     fn node_of(&self, token: usize) -> Option<Self::Node>;
 }
 
@@ -326,7 +327,16 @@ impl<T: TokenTree> Children<'_, T> {
             },
             /* `steps` is `count - 1 - index`, so this starts at `count - 1`. */
             Start::Back { steps } => (index + steps, self.last()?),
-            Start::Memo { from, token } => (from, self.tree.node_of(token)?),
+            Start::Memo { from, token } => match self.tree.node_of(token) {
+                Some(n) => (from, n),
+                /* A token that no longer resolves breaks the memo's invariant;
+                 * the list is counted afresh rather than answered from it. */
+                None => {
+                    known.count = None;
+                    known.at = None;
+                    (0, self.first()?)
+                }
+            },
         };
         let walked = if index >= from {
             self.walk(start, index - from, T::next_sibling)

@@ -773,8 +773,9 @@ insertion rules' description of each tree, so the three cannot disagree -
 and remember where they were in a per-document `ChildPositionMemo` (a
 `PtrMap` per list, emptied past `CHILD_MEMO_MAX`), so an index loop is O(1)
 a step. The memo answers only for the `tree_version` it was filled under;
-that invariant is what makes HTML's `TokenTree::node_of` (a recorded node
-pointer read back - a recorded raw-node crossing) sound, so keep every
+that invariant is what makes a recorded token read back
+(`TokenTree::node_of`, a checked lookup, so a stale one is walked afresh
+rather than answered) name the right node, so keep every
 child-list edit moving the version BEFORE it changes anything
 (`record_edit`). Any edit empties the whole memo (the module doc's known
 limit). The four Ruby methods are generic over `bridge::wrapper::ChildListHost`

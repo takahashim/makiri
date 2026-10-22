@@ -237,7 +237,7 @@ pub fn wrap_node(node: Option<HtmlNode<'_>>, document: Value) -> Result<Option<V
  * indexing a child list                                               *
  * ------------------------------------------------------------------ */
 
-/// The Lexbor tree for [`crate::child_index`]: a node's pointer is its token.
+/// The arena's tree for [`crate::child_index`]: a node's word is its token.
 /// The links are [`HtmlTree`]'s, the raw ones `#children` follows, so the two
 /// agree - a `<template>`'s own (empty) child list included.
 impl<'d> TokenTree for HtmlTree<'d> {
@@ -246,10 +246,11 @@ impl<'d> TokenTree for HtmlTree<'d> {
     }
     fn node_of(&self, token: usize) -> Option<HtmlNode<'d>> {
         // `child_index` asks only for a token it recorded for a list of this
-        // document, so by `ChildPositionMemo`'s invariant it names a node that
-        // is still a child there, in the document the receiver keeps alive.
+        // document (`ChildPositionMemo`'s invariant), and the lookup is the
+        // checked one all the same: a stale or foreign word answers None,
+        // which the memo reads as a miss, rather than another node.
         let raw = RawNode::from_word(token)?;
-        Some(self.doc()?.node(raw))
+        self.doc()?.checked(raw)
     }
 }
 
