@@ -159,6 +159,22 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
   `Nokogiri::HTML` (libxml2) instead stops at depth 256 and returns the
   truncated document.
 
+* A document's bytes are decoded by the HTML Standard's **encoding sniffing
+  algorithm**, with the Encoding Standard's decoders, and `Document#encoding`
+  is the encoding they were read in (`"Shift_JIS"`, `"windows-1252"`).
+  * A binary (ASCII-8BIT) String with no `<meta>` charset is read as UTF-8
+    when it is valid UTF-8 and is otherwise detected (Shift_JIS, EUC-JP,
+    ISO-2022-JP, ...). `Nokogiri::HTML5` reads it as windows-1252, so valid
+    UTF-8 and Shift_JIS alike come out garbled.
+  * A `<meta>` charset past the first 1024 bytes re-reads the document in that
+    encoding, as browsers do; `Nokogiri::HTML5` ignores it.
+  * A String with an encoding is read in that encoding, and `encoding:` gives
+    one explicitly; a `<meta>` cannot override either. Both use the Encoding
+    Standard's decoders rather than Ruby's transcoders, so `ISO-8859-1` reads
+    as windows-1252 (`\x80` is `€`) and Shift_JIS's `0x8160` is U+301C, as in
+    browsers.
+  * `Nokogiri::HTML5`'s `#encoding` is always `"UTF-8"`.
+
 ## HTML mutation
 
 * There is no `Node#name=` / `#node_name=` (on HTML or XML nodes). Nokogiri
@@ -314,6 +330,10 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
   disabled (its children are elements, not raw text) and escaping is what makes
   that round-trip; `Nokogiri::HTML5` writes it literally and contradicts its own
   parser there.
+* An Attr serializes to the empty string (`attr.to_s`, `#to_html`,
+  `NodeSet#to_s` over attributes), as DOM Parsing's algorithm and Firefox
+  have it, in HTML and XML. Nokogiri's `Attr#to_s` is the value (`"a"`) and
+  its `#to_html` the markup (`id="a"`); use `#value` for the value.
 
 ## Text input (mutation APIs)
 

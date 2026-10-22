@@ -189,7 +189,7 @@ RSpec.describe Makiri::Lexbor::CSS do
     end
   end
 
-  # `:text` is CSSOM's serialization (`lexbor::selector_text`): identifiers and
+  # `:text` is CSSOM's serialization (`selectors::text`): identifiers and
   # strings are escaped, so the text means what the selector did. Lexbor's own
   # serializer wrote names decoded - `.md\:block` as `.md:block` - and a caller
   # re-parsing the text (dommy's cascade) lost or misapplied the rule.

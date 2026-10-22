@@ -193,6 +193,22 @@ RSpec.describe "Makiri CSS" do
       expect { Makiri::HTML("").css("q|x") }.to raise_error(Makiri::CSS::SyntaxError)
     end
 
+    # :is() and :where() take a forgiving list, which drops an invalid
+    # alternative alone; an undeclared prefix is one. The browsers agree
+    # (css_browser_cases.rb).
+    it "drops an alternative with an undeclared prefix from :is() and :where() alone" do
+      doc = Makiri::HTML("<a></a><b></b>")
+      expect(doc.css(":is(a, z|a)").map(&:name)).to eq(%w[a])
+      expect(doc.css(":where(z|a, a)").map(&:name)).to eq(%w[a])
+      expect(doc.css(":is(z|a)")).to be_empty
+      expect(doc.css(":is(:not(z|a), b)").map(&:name)).to eq(%w[b])
+      expect(doc.at_css("a").matches?(":is(z|a, a)")).to be(true)
+      expect(doc.css("body > :not(:is(z|a))").map(&:name)).to eq(%w[a b])
+      %w[:not(z|a) :has(z|a) :nth-child(1\ of\ z|a) a,\ z|a].each do |sel|
+        expect { doc.css(sel) }.to raise_error(Makiri::CSS::SyntaxError, /undeclared namespace prefix/), sel
+      end
+    end
+
     it "finds an attribute in a namespace by its prefix" do
       doc = Makiri::HTML(%(<svg><a xlink:href="u"/><a href="v"/></svg>))
       xlink = { "x" => "http://www.w3.org/1999/xlink" }

@@ -39,6 +39,7 @@ use libfuzzer_sys::fuzz_target;
 
 mod common;
 use common::*;
+use makiri::css_match::cache;
 use makiri::css_match::{select_all, Namespaces, Scratch};
 use makiri::gvl::Gvl;
 use makiri::html::dom::css::HtmlHost;
@@ -46,7 +47,6 @@ use makiri::html_dom::html::{HtmlNode, RawNode};
 use makiri::lexbor::adapter::html::RawNode as LexborNode;
 use makiri::lexbor::adapter::post_parse::parse_html;
 use makiri::lexbor::adapter::tree_guard::DepthLimit;
-use makiri::lexbor::selector_cache;
 use makiri::lexbor::selectors as old_engine;
 use makiri::lexbor::twin::Twin;
 use makiri::selectors::ast::{
@@ -92,7 +92,7 @@ fuzz_target!(|data: &[u8]| {
      * (C18-C22 in docs/parser_differences.ja.md) are `selector_diff`'s. The
      * cache only ever holds this mode's parses in this binary. */
     let new = makiri::compat::as_lexbor(|| {
-        selector_cache::with_compiled(&gvl, text.as_bytes(), |groups, scratch| {
+        cache::with_compiled(&gvl, text.as_bytes(), |groups, scratch| {
             new_answer(root, groups, scratch, &doc)
         })
     });

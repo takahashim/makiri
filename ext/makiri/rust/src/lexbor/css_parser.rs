@@ -43,7 +43,7 @@ use core::ffi::c_long;
 type SelectorList = lxb::lxb_css_selector_list_t;
 type RawSelector = lxb::lxb_css_selector_t;
 
-pub use crate::lexbor::selector_cache::ParseError;
+pub use crate::css_match::cache::ParseError;
 
 #[cfg(any(test, feature = "lexbor-reference"))]
 /// The process-global parser, built on first use. A build failure leaves it
@@ -235,7 +235,7 @@ impl Parsed<'_> {
 }
 
 /// As [`Parsed::groups`], for a selector list some OTHER caller parsed and
-/// keeps alive - `lexbor::selector_cache`'s own long-lived compiled-selector
+/// keeps alive - `css_match::cache`'s own long-lived compiled-selector
 /// cache, which manages its own separate parser/arena (module doc: this
 /// module's `Parsed` is not the only way to own one) and only invalidates a
 /// list when it flushes or evicts it, never per-call the way `Parsed`'s

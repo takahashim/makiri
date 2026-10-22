@@ -104,7 +104,7 @@ fn fixup_template_content(
     Ok(())
 }
 
-pub use crate::lexbor::arena_fragment::FragmentError;
+pub use crate::html::fragment::FragmentError;
 
 /// Deep-import each child of `root` into `doc`, appending each to `into`.
 ///

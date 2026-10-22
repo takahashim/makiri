@@ -32,7 +32,7 @@ use crate::bridge::xml::doc_of;
 use crate::bridge::xml::xml_node_document;
 use crate::bridge::xml::{xml_mut_result, xml_node_unwrap};
 use crate::html_dom::html::RawNode;
-use crate::html_dom::post_parse::{empty_html_document, parse_html, HtmlParseError};
+use crate::html_dom::post_parse::{empty_html_document, HtmlParseError};
 use crate::html_dom::tree_guard::{DepthLimit, GuardStop};
 
 /* ------------------------------------------------------------------ *
@@ -65,16 +65,20 @@ pub fn tree_depth_error(limit: DepthLimit) -> Error {
 /// The Ruby-level `Document.parse` coerces `source` to a String (and reads IO)
 /// before calling this. Source locations for `Node#line` are always tracked.
 /// A tree deeper than `limit` fails the parse (see `html_dom::tree_guard`).
-pub fn parse_document(source: Value, limit: DepthLimit) -> Result<Value, Error> {
+pub fn parse_document(
+    source: Value,
+    limit: DepthLimit,
+    given: Option<&'static encoding_rs::Encoding>,
+) -> Result<Value, Error> {
     let s = source.to_r_string()?;
     /* Allocate the wrapper with a null handle, so a failed parse still
      * frees cleanly through GC - and first, before this frame owns the
      * source's copy: the wrapper's allocation can raise. This entry is
      * defined on Makiri::HTML::Document, so the result is always HTML. */
     let shell = DocumentShell::new(DocKind::Html);
-    /* Honour the input's encoding: UTF-8/US-ASCII/binary pass through,
-     * anything else is transcoded so its content survives. */
-    let src = HtmlSource::from_ruby(s)?;
+    /* The bytes as they are, with the transport layer's encoding: `given`,
+     * else the String's own (none for binary, which is sniffed). */
+    let (src, transport) = HtmlSource::for_document(s, given)?;
 
     /* The source is already a copy, so nothing here borrows from the Ruby
      * String - which the parse reads with the GVL released. A source already
@@ -82,10 +86,12 @@ pub fn parse_document(source: Value, limit: DepthLimit) -> Result<Value, Error> 
     let assume_valid = src.known_valid();
     let owned = src.into_bytes();
 
-    /* The body runs on this thread with the GVL released, so the parsed
-     * handle comes back as it is. */
-    let result =
-        crate::bridge::gvl::without_gvl(|| parse_html(owned.as_slice(), assume_valid, limit))?;
+    /* The body - sniffing, decoding and parsing - runs on this thread with
+     * the GVL released, so the parsed handle comes back as it is. */
+    let result = crate::bridge::gvl::without_gvl(|| {
+        crate::html::encoding::parse_document(owned.as_slice(), transport, assume_valid, limit)
+            .map(|(parsed, _)| parsed)
+    })?;
     drop(owned);
 
     let parsed = result.map_err(|e| match e {
@@ -98,13 +104,14 @@ pub fn parse_document(source: Value, limit: DepthLimit) -> Result<Value, Error> 
 }
 
 /// An empty HTML document - no children - in `compat_mode` (Lexbor's
-/// numbering): `Makiri::HTML::Document.new` (no-quirks) and the copy
-/// `Document#dup` fills.
-pub fn new_empty_document(compat_mode: u32) -> Result<Value, Error> {
+/// numbering) and `encoding`: `Makiri::HTML::Document.new` (no-quirks,
+/// UTF-8) and the copy `Document#dup` fills.
+pub fn new_empty_document(compat_mode: u32, encoding: &'static str) -> Result<Value, Error> {
     /* The wrapper first, while nothing needs freeing - see DocumentShell. */
     let shell = DocumentShell::new(DocKind::Html);
-    let parsed = empty_html_document(compat_mode)
+    let mut parsed = empty_html_document(compat_mode)
         .map_err(|_| makiri_error("failed to create HTML document"))?;
+    parsed.set_encoding(encoding);
     Ok(shell.install_html(parsed))
 }
 
@@ -130,6 +137,12 @@ pub fn document_title(rb_doc: Value) -> Result<RString, Error> {
     let title = html_doc(&rb_doc).title();
     let bytes = title.as_deref().unwrap_or(&[]);
     crate::bridge::string::utf8_str_protected(bytes)
+}
+
+/// `Document#encoding`: the character encoding the document was read in, by
+/// its Encoding Standard name - `"UTF-8"` for one made rather than parsed.
+pub fn document_encoding(rb_doc: Value) -> &'static str {
+    crate::bridge::wrapper::with_html_parsed_known(rb_doc, |p| p.encoding())
 }
 
 /// `Document#quirks_mode`, as an Integer matching Lexbor (and Gumbo/Nokogiri):

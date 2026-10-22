@@ -71,6 +71,17 @@ impl NsTest {
         }
     }
 
+    /// The test a compound with no type or universal selector takes under a
+    /// default namespace (Selectors 4 §5.3: it still matches only elements
+    /// in that namespace, as if `*` were written), or `None` without one.
+    /// Not as Lexbor ran (M6), which had no namespaces.
+    pub(super) fn implied(ns: &Namespaces<'_>) -> Option<Self> {
+        if !compat::fixed(Fix::M6) {
+            return None;
+        }
+        ns.default.map(|uri| NsTest::uri_at(uri, NsTest::DEFAULT))
+    }
+
     /// Whether this asks for one namespace (not any, not none).
     #[inline]
     pub(super) fn is_uri(self) -> bool {

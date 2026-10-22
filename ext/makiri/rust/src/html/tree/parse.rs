@@ -4,7 +4,7 @@
 
 use super::guard::{DepthLimit, Guard, GuardStop};
 use super::stamp::Stamping;
-use super::{TreeBuilder, TreeError, TreeStatus};
+use super::{MetaProbe, TreeBuilder, TreeError, TreeStatus};
 use crate::compat::{self, Fix};
 use crate::falloc::try_box;
 use crate::html::dom::{Document, DomOom, HtmlParsed};
@@ -57,7 +57,7 @@ pub struct Parsed {
 /// `lxb_html_document_parse`, unguarded and unstamped: tokenize `input` -
 /// valid UTF-8, the whole document - and build its tree.
 pub fn parse_document(input: &[u8]) -> Result<Parsed, ParseFailure> {
-    parse_with(input, Guard::default(), Stamping::default(), true)
+    parse_with(input, Guard::default(), Stamping::default(), true, None)
 }
 
 /// Tokenize `input` into `tree`; `setup` adjusts the tokenizer before the
@@ -91,10 +91,12 @@ fn parse_with(
     guard: Guard,
     stamping: Stamping,
     record_errors: bool,
+    probe: Option<&mut (dyn MetaProbe + 'static)>,
 ) -> Result<Parsed, ParseFailure> {
     let mut doc = Document::new(0).map_err(|DomOom| ParseFailure::Oom)?;
-    let mut tree =
-        TreeBuilder::for_document(&mut doc, guard, stamping).recording_errors(record_errors);
+    let mut tree = TreeBuilder::for_document(&mut doc, guard, stamping)
+        .recording_errors(record_errors)
+        .probing_meta(probe);
     let status = drive(&mut tree, input, false, |_| {});
     if let Some(stop) = tree.guard_stopped() {
         return Err(ParseFailure::Guard(stop));
@@ -133,6 +135,17 @@ pub fn parse_html(
     assume_valid: bool,
     limit: DepthLimit,
 ) -> Result<Box<HtmlParsed>, HtmlParseError> {
+    parse_html_probing(src, assume_valid, limit, None)
+}
+
+/// [`parse_html`], telling `probe` of each `<meta>` the "in head" rules
+/// insert while the document's encoding is tentative (`html::encoding`).
+pub fn parse_html_probing(
+    src: &[u8],
+    assume_valid: bool,
+    limit: DepthLimit,
+    probe: Option<&mut (dyn MetaProbe + 'static)>,
+) -> Result<Box<HtmlParsed>, HtmlParseError> {
     let input = sanitize(src, assume_valid).ok_or(HtmlParseError::Failed)?;
     let bytes = input.as_slice();
     let parsed = parse_with(
@@ -140,6 +153,7 @@ pub fn parse_html(
         Guard::for_document(limit),
         Stamping::document(bytes.len()),
         false,
+        probe,
     )?;
     let lines = lines_build(bytes);
     drop(input);

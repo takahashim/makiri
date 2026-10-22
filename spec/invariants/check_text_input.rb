@@ -8,9 +8,9 @@
 #
 # CLAUDE.md's "Text-input contract" states a precise set of rules that nothing
 # checked mechanically. Getting an encoding wrong is also a classic way to
-# inject: Makiri honours the input String's encoding, transcoding anything that
-# is not UTF-8 / US-ASCII / ASCII-8BIT before the parser ever sees it, and that
-# "convert first" decision is what determines how multibyte encodings behave.
+# inject: Makiri honours the input String's encoding, decoding a document with
+# the Encoding Standard's decoder for it (html/encoding.rs), and that decoder is
+# what determines how multibyte encodings behave.
 #
 # Two directions are dangerous, and only one of them is Makiri's to control:
 #
@@ -21,17 +21,23 @@
 #       character, not `<`. That is the encoding's definition, and NOT
 #       swallowing it would be the dangerous behaviour.
 #
-# E3 checks (1) by parsing with Makiri and looking at the tree. (2) is pinned by
-# E4, which compares against transcoding in Ruby first. A real-world injection
-# happens when Makiri and some other component disagree about the encoding, and
-# no library can close that alone; what Makiri can promise is that it reads the
-# encoding it was handed, which is E4.
+# E3 checks (1) by parsing with Makiri and looking at the tree. (2) is E4. In
+# the Encoding Standard's Shift_JIS and EUC-JP no syntax character can be a
+# trail byte (they are all below 0x40), and a lead byte followed by a byte that
+# makes no character gives that byte back - so a syntax character after ANY
+# byte survives. (E4 used to compare against transcoding in Ruby first. Ruby's
+# transcoder is not the Standard's: it maps fewer characters, and it does
+# swallow the ASCII byte after an unmapped lead, `82 42` reading as one U+FFFD
+# where the Standard reads U+FFFD and `B`.) A real-world injection happens when
+# Makiri and some other component disagree about the encoding, and no library
+# can close that alone; what Makiri can promise is that it reads the encoding
+# it was handed, as the Standard defines it.
 #
 #   E1 encoding honoured  Shift_JIS / EUC-JP / Windows-31J / UTF-16 are read
 #   E2 lenient decoding   invalid UTF-8 never fails the parse; the DOM is valid
 #   E3 no manufactured    conversion invents no syntax character (all 2-byte
 #                         sequences, through Makiri)
-#   E4 equivalence        raw bytes == transcoding in Ruby first
+#   E4 no swallowing      a syntax character after any byte is kept
 #   E5 strict APIs        invalid UTF-8 raises at XPath / CSS / attributes / content=
 #   E6 the NUL two-tier   accepted in data content (HTML and XML alike, as the
 #                         DOM holds it), refused in names and engine input;
@@ -173,24 +179,20 @@ end
 
 # --- E4 ---------------------------------------------------------------
 
-section "E4 raw bytes == transcoding in Ruby first"
+section "E4 a syntax character after any byte is kept"
+# Read back through a comment, whose data the tokenizer copies through: the
+# character must still follow whatever the byte decoded to.
 MB_ENCODINGS.each do |enc|
   mismatch = []
-  checked = 0
   256.times do |b|
-    raw = "<html><body><p>A#{b.chr}B</p></body></html>".b.force_encoding(enc)
-    want = begin
-      raw.encode("UTF-8", invalid: :replace, undef: :replace)
-    rescue StandardError
-      next
+    SYNTAX.each do |c|
+      raw = "<html><body><!--A#{b.chr}#{c}Z--></body></html>".b.force_encoding(enc)
+      data = Makiri::HTML(raw).at_css("body").children.find { |n| n.is_a?(Makiri::HTML::Comment) }&.content
+      mismatch << [b, c] unless data&.end_with?("#{c}Z")
     end
-    checked += 1
-    got = Makiri::HTML(raw).at_css("p")&.text
-    expect = Makiri::HTML(want).at_css("p")&.text
-    mismatch << b if got != expect
   end
-  row("#{enc} (#{checked} bytes)", mismatch.empty?,
-      mismatch.empty? ? "" : "#{mismatch.length} differ: #{mismatch.first(6).inspect}")
+  row("#{enc} (256 bytes x #{SYNTAX.length})", mismatch.empty?,
+      mismatch.empty? ? "" : "#{mismatch.length} swallowed: #{mismatch.first(4).inspect}")
 end
 
 # --- E5 ---------------------------------------------------------------

@@ -874,6 +874,27 @@ RSpec.describe "Makiri XPath" do
       expect(Makiri::XML(%(<r><e id="a"/></r>)).xpath('count(id("a"))')).to eq(0)
     end
 
+    # A walk per token made id() quadratic: 8,000 IDREFS over 8,000 elements
+    # spent the op budget and raised LimitExceeded.
+    it "answers id() of many tokens within the budget, first match per ID" do
+      n = 8000
+      doc = Makiri::HTML("<body>" + (0...n).map { |i| %(<i id="i#{i}"></i>) }.join + %(<b id="i7"></b></body>))
+      refs = (0...n).map { |i| "i#{i}" }.reverse.join(" ")
+      expect(doc.xpath("count(id('#{refs} none'))")).to eq(n)
+      expect(doc.xpath("id('i9 i1 i2 i3 i4 i7 i7')").map { |e| e["id"] }).to eq(%w[i1 i2 i3 i4 i7 i9])
+      expect(doc.xpath("name(id('i0 i1 i2 i3 i4 i7'))")).to eq("i")
+    end
+
+    it "keeps a plain attribute of an element made in the XMLNS namespace on @*" do
+      doc = Makiri::HTML("<p></p>")
+      e = doc.create_element_ns("http://www.w3.org/2000/xmlns/", "xmlns:foo")
+      e["bar"] = "1"
+      doc.at_css("p") << e
+      expect(doc.xpath("count(//*[@bar])")).to eq(1)
+      expect(e.xpath("count(@*)")).to eq(1)
+      expect(doc.css("[bar]").size).to eq(1)
+    end
+
     # Lax is "what Nokogiri does", and Nokogiri::XML (libxml2) is as
     # namespace-strict as the specification - so in XML the flag changes
     # nothing, for elements or attributes, on the axis or the [@a] fast path.

@@ -109,6 +109,19 @@ RSpec.describe "Makiri serialization" do
     end
   end
 
+  # DOM Parsing writes an Attr as the empty string (Firefox does; Chromium
+  # and WebKit write the escaped value), as an XML Attr already was. It used
+  # to raise "HTML serialization failed", so `puts attr` did.
+  it "serializes an Attr as the empty string, in HTML and XML" do
+    html = Makiri::HTML(%(<p id="a" class='x"y'>t</p>))
+    attr = html.at_css("p").attribute_nodes.last
+    expect([attr.to_s, attr.to_html, attr.outer_html, attr.inner_html]).to eq(["", "", "", ""])
+    expect(attr.to_html(pretty: true)).to eq("")
+    expect(html.xpath("//p/@*").to_s).to eq("")
+    expect("[#{attr}]").to eq("[]")
+    expect(Makiri::XML(%(<r a="1"/>)).root.attribute_nodes.first.to_s).to eq("")
+  end
+
   describe "NodeSet#to_html / #text" do
     it "concatenates outer HTML of each node" do
       expect(doc.css("p, b").to_html).to eq("<p>a</p><b>x</b>")

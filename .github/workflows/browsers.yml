@@ -1,0 +1,83 @@
+name: Browsers
+
+# Makiri against Chromium, Firefox and WebKit (Playwright), on a schedule: the
+# browsers move, and the CSS comparison's KNOWN list has to follow them -
+# an entry a browser update fixed is reported as stale and fails the run, as
+# a new difference does. The HTML parser comparison is evidence, not a gate
+# (spec/conformance/browser_diff.rb's header): its report goes to the job
+# summary for classifying by hand.
+#
+# Weekly, and on demand. Not on pull requests: a browser release can change
+# the answer with no change on our side, which is not a PR's to fail on.
+
+on:
+  schedule:
+    - cron: "23 6 * * 1" # Mondays, offset from the nightly workflows
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  browsers:
+    name: CSS selectors and HTML parsing vs browsers
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      # No submodule: the extension links no Lexbor, and the parser comparison
+      # fetches its WPT inputs itself (spec/conformance/parser_data.rb).
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install libclang (bindgen, via rb-sys)
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      # playwright-core is pinned by the lockfile; its own CLI installs the
+      # browser builds that version drives, with their system libraries.
+      - name: Install Playwright and its browsers
+        working-directory: spec/conformance/browser
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright-core install --with-deps chromium firefox webkit
+
+      - name: Compile the extension
+        run: bundle exec rake compile
+
+      - name: CSS selectors vs browsers (HTML and XML)
+        run: bundle exec rake conformance:css_browsers
+
+      # The WPT inputs plus generated fragments, a fresh seed each run (the
+      # run number, so a finding reproduces with --seed).
+      - name: HTML parsing vs browsers (evidence only)
+        if: always()
+        env:
+          BROWSER_ARGS: "--generate 20000 --seed ${{ github.run_number }}"
+        run: |
+          bundle exec rake conformance:browsers | tee browser_diff.txt
+          {
+            echo '## HTML parsing vs browsers'
+            echo '```'
+            tail -n 12 browser_diff.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the parser report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-diff
+          path: browser_diff.txt
+          if-no-files-found: ignore

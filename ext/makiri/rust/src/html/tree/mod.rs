@@ -44,8 +44,8 @@ mod stamp;
 pub use error::{TreeError, TreeErrorId};
 pub use fragment::{parse_fragment, ContextElement, ContextFacts, FragmentFailure, ParsedFragment};
 pub use parse::{
-    empty_html_document, parse_document, parse_html, parse_with_panicking_hook, HtmlParseError,
-    ParseFailure, Parsed,
+    empty_html_document, parse_document, parse_html, parse_html_probing, parse_with_panicking_hook,
+    HtmlParseError, ParseFailure, Parsed,
 };
 
 use crate::falloc::VecPush;
@@ -339,6 +339,26 @@ pub struct TreeBuilder<'d> {
     guard: guard::Guard,
     /// Whether elements get their start tag's offset (`stamp.rs`).
     stamping: stamp::Stamping,
+    /// While a document's encoding is tentative, what is told of each
+    /// `<meta>` the "in head" rules insert ([`MetaProbe`]); dropped once it
+    /// answers that the confidence is certain.
+    meta_probe: Option<&'d mut (dyn MetaProbe + 'static)>,
+}
+
+/// What the "in head" rules tell the encoding sniffing of a `<meta>` while
+/// the confidence is tentative (HTML Standard, "in head", a start tag whose
+/// tag name is "meta"): the values of its `charset`, `http-equiv` and
+/// `content` attributes. The tree builder decides nothing about encodings;
+/// `html::encoding` does, so this module needs no decoder.
+pub trait MetaProbe {
+    /// One inserted `<meta>`. True once the confidence is certain, after
+    /// which no further `<meta>` is reported.
+    fn meta(
+        &mut self,
+        charset: Option<&[u8]>,
+        http_equiv: Option<&[u8]>,
+        content: Option<&[u8]>,
+    ) -> bool;
 }
 
 impl<'d> TreeBuilder<'d> {
@@ -370,6 +390,7 @@ impl<'d> TreeBuilder<'d> {
             node_state: NodeState::default(),
             guard,
             stamping: stamp::Stamping::default(),
+            meta_probe: None,
         }
     }
 
@@ -392,6 +413,40 @@ impl<'d> TreeBuilder<'d> {
         TreeBuilder {
             record_errors: record,
             ..self
+        }
+    }
+
+    /// Report each `<meta>` to `probe` while the encoding is tentative.
+    pub(crate) fn probing_meta(
+        self,
+        probe: Option<&'d mut (dyn MetaProbe + 'static)>,
+    ) -> TreeBuilder<'d> {
+        TreeBuilder {
+            meta_probe: probe,
+            ..self
+        }
+    }
+
+    /// The "in head" rules' encoding step for an inserted `<meta>`: its
+    /// `charset`, `http-equiv` and `content` values, to the probe.
+    pub(super) fn probe_meta(&mut self, tkz: &Tokenizer<'_, '_>, tok: &Tok) {
+        let Some(probe) = self.meta_probe.as_deref_mut() else {
+            return;
+        };
+        let (mut charset, mut http_equiv, mut content) = (None, None, None);
+        for a in tok.attrs(tkz) {
+            let slot = match a.name {
+                Some(res::ATTR_CHARSET) => &mut charset,
+                Some(res::ATTR_HTTP_EQUIV) => &mut http_equiv,
+                Some(res::ATTR_CONTENT) => &mut content,
+                _ => continue,
+            };
+            if slot.is_none() {
+                *slot = Some(tkz.attr_value(a).unwrap_or_default());
+            }
+        }
+        if probe.meta(charset, http_equiv, content) {
+            self.meta_probe = None;
         }
     }
 

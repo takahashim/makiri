@@ -2,6 +2,54 @@
 
 ## [Unreleased]
 
+### Added
+
+* HTML documents are decoded as browsers decode them: the HTML Standard's
+  encoding sniffing algorithm with the Encoding Standard's decoders. A
+  binary (ASCII-8BIT) String is read in the encoding its byte order mark or
+  `<meta>` declares, or as UTF-8 when it is valid UTF-8, or else in a
+  detected encoding (Shift_JIS, EUC-JP, ISO-2022-JP, ...); a `<meta>` past
+  the first 1024 bytes re-reads the document in the encoding it names.
+  `Makiri::HTML(src, encoding: "shift_jis")` gives the encoding outright, and
+  `Document#encoding` returns the one used (it was always `"UTF-8"`).
+
+### Changed
+
+* A binary String holding invalid UTF-8 is no longer read as UTF-8 with
+  U+FFFD replacements: it is sniffed, and usually detected as a legacy
+  encoding. Pass `encoding: "utf-8"` (or a UTF-8 String) for the old reading.
+* A String in a legacy encoding is decoded with the Encoding Standard's
+  decoder for it rather than Ruby's transcoder, as browsers decode it:
+  `ISO-8859-1` reads as windows-1252 (`\x80` is `€`), and Shift_JIS's
+  `0x8160` is U+301C where Ruby's `Windows-31J` made U+FF5E.
+
+### Fixed
+
+* A UTF-8 byte order mark at the start of a document is no longer kept as a
+  U+FEFF character in the text.
+* A refused `Makiri::XML` insert of a node from another document (onto a
+  Text node, say) no longer leaves the copy it made in the target document,
+  where each refused call grew it and used up its node budget.
+* XPath over HTML keeps a plain attribute of an element created in the
+  XMLNS namespace on `@*` and `[@name]`; it was taken for a namespace
+  declaration and skipped.
+* XPath's `id()` with many tokens indexes the document's IDs once instead
+  of searching it per token: 8,000 IDs over 8,000 elements raised
+  `Makiri::XPath::LimitExceeded`.
+* `==` / `eql?` compare the nodes' Documents as well, so nodes of two
+  documents can no longer compare equal after the per-document counter wraps.
+* Importing an XML processing instruction whose data holds `?>` into an
+  HTML document raises `ArgumentError`; it reported "out of memory".
+* An HTML Attr serializes to the empty string, as an XML Attr does and as
+  DOM Parsing and Firefox have it: `attr.to_s`, `puts attr` and `NodeSet#to_s`
+  over attributes raised `Makiri::Error` ("HTML serialization failed").
+* Under a default namespace (the ns Hash's `"xmlns"`), a compound with no
+  type selector (`.x`, `[a]`) matches only that namespace's elements, as if
+  `*` were written (Selectors 4); it matched elements in any namespace.
+* An undeclared namespace prefix inside `:is()` or `:where()` drops that
+  alternative alone, as browsers do: `:is(a, z|a)` matches `a` instead of
+  raising `Makiri::CSS::SyntaxError`.
+
 ## [0.17.0.rc1] - 2026-10-22
 
 ### Added

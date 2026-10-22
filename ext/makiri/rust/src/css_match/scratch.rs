@@ -6,7 +6,7 @@
 use crate::falloc::{OomResult, VecPush};
 use crate::selectors::ast::Lists;
 
-use super::compile::{Chain, Compound, Step};
+use super::compile::{Chain, Compound, Nesting, Step};
 use super::dom::Host;
 use super::positions::Positions;
 use super::query::{HasCursor, Task};
@@ -96,7 +96,7 @@ pub(super) struct Tables {
     pub(super) compounds: Vec<Compound>,
     pub(super) top: Vec<Chain>,
     pub(super) alts: Vec<Chain>,
-    pub(super) pending: Vec<(Lists<'static>, u32)>,
+    pub(super) pending: Vec<(Lists<'static>, u32, Nesting)>,
 }
 
 /// A [`Scratch`] vector over this many items is dropped rather than kept, so

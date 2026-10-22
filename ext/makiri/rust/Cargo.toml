@@ -98,10 +98,18 @@ lexbor-reference = ["lexbor"]
 # (`crate::html_dom`), parsed by the ported tree builder (`crate::html::tree`),
 # and what sits over it: the HTML CSS matcher, XPath's HTML instance, the
 # bridge's HTML half. Off only in the bare engine (Kani). `ruby` and `lexbor`
-# both turn it on.
-html-dom = []
+# both turn it on. The document parse's encoding sniffing and decoders
+# (`html::encoding`) come with it.
+html-dom = ["dep:encoding_rs", "dep:chardetng"]
 
 [dependencies]
+# The WHATWG Encoding Standard's decoders (`encoding_rs`) and Firefox's
+# detector for a document that declares no encoding (`chardetng`), for the
+# HTML document parse (`html::encoding`). Neither allocates through the
+# global allocator on the paths used: a decoder writes into a buffer we hand
+# it (`falloc`'s), and the detector keeps fixed-size state.
+chardetng = { version = "=1.0.0", optional = true }
+encoding_rs = { version = "=0.8.35", optional = true }
 # Only the `ruby` feature needs these; the engine builds without them, which is
 # what lets Kani and cargo-fuzz compile it. `rb-sys` is magnus's own binding
 # layer, taken directly for the raw VALUEs the boundary passes around and

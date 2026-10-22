@@ -202,7 +202,7 @@ pub fn context_ids(context: &str) -> (usize, usize) {
         None => (res::NS_HTML, context),
     };
     /* A name with no static id stands in as `div`, as
-     * `lexbor::arena_fragment` gives it. */
+     * `html::fragment` gives it. */
     let tag = crate::html::names::Names::default()
         .tag_id(name.as_bytes())
         .unwrap_or(res::TAG_DIV);

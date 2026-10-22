@@ -11,6 +11,7 @@ The pure Ruby specs listed below are part of the normal spec suite.
 rake conformance:html5     # HTML tree construction vs the WPT .dat data
 rake conformance:parser    # the same data + html5lib tokenizer tests, in the crate
 rake conformance:browsers  # HTML parsing vs Chromium/Firefox/WebKit (evidence)
+rake conformance:css_browsers # CSS selectors vs Chromium/Firefox/WebKit (HTML and XML)
 rake conformance:xpath     # HTML XPath 1.0 vs Nokogiri::HTML5
 rake conformance:css       # HTML CSS selectors vs Nokogiri::HTML5
 rake conformance:xmlconf   # XML 1.0 well-formedness vs W3C XML Test Suite
@@ -107,7 +108,20 @@ text. `parser_data.rb` fetches both pinned data sets.
 WebKit through Playwright (`spec/conformance/browser`, Node.js), with scripting
 disabled, and reports where the trees differ and who agrees with whom. It is
 evidence for classifying a difference, not an arbiter: the pinned HTML Standard
-is. Pass options with `BROWSER_ARGS` (`--browsers`, `--file`, `--verbose`).
+is. Pass options with `BROWSER_ARGS` (`--browsers`, `--file`, `--verbose`,
+`--generate N --seed S`). `--generate` adds N random fragments from
+`html_gen.rb`, parsed in-page in a context element (no frame load each, as a
+document needs), so thousands run in seconds; a case reproduces from its key,
+`gen:<seed>:<index>`.
+
+`rake conformance:css_browsers` (`css_browser_diff.rb`) runs the selectors of
+`css_browser_cases.rb` through `querySelectorAll` and `matches` in the three
+browsers and in Makiri, over HTML and XML documents. Unlike the parser
+comparison it is a gate: a difference not in its `RULES`/`KNOWN`, or a `KNOWN`
+entry that no longer differs, fails it.
+
+Both run weekly in CI (`.github/workflows/browsers.yml`), so the `KNOWN` list
+follows the browsers' releases; the parser report is kept in the job summary.
 
 ---
 

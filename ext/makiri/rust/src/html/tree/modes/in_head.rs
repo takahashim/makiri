@@ -29,6 +29,9 @@ fn open(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &mut Tok) 
             }
             tree.open_pop();
             tree.acknowledge_token_self_closing(tok);
+            if tok.tag_id == res::TAG_META {
+                tree.probe_meta(tkz, tok);
+            }
         }
         res::TAG_TITLE => {
             let _ = tree.generic_rcdata_parsing(tkz, tok).or_abort(tree);

@@ -147,11 +147,7 @@ fn parse(
     context: &FragmentContext,
     limit: DepthLimit,
 ) -> Result<TransientFragment, Error> {
-    // SAFETY: the context's element or document is live (the callers below
-    // hold it); the bytes are the source's own copy. The arena's parse needs no
-    // such promise, and is safe.
-    #[allow(unused_unsafe)]
-    unsafe { TransientFragment::parse(src.bytes(), src.known_valid(), context, limit) }
+    TransientFragment::parse(src.bytes(), src.known_valid(), context, limit)
         .map_err(|e| fragment_error(e, limit))
 }
 

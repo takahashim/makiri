@@ -64,9 +64,9 @@ class Makiri::HTML::Comment < Makiri::Comment
 
 class Makiri::HTML::Document < Makiri::Document
   include Makiri::HTML::NodeMethods
-  def self._parse(2)
+  def self._parse(3)
   def self.new(0)
-  def self.parse(-2 req:source,key:max_tree_depth)
+  def self.parse(-2 req:source,key:max_tree_depth,key:encoding)
   def attribute_version(0)
   def body(0)
   def compat_mode(0)

@@ -523,18 +523,18 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            their C definitions change - `adapter`, the one reader of
                            Lexbor's DOM structs, plus the element index,
                            text index, source location and post-parse - and the
-                           selectors/serialize/fragment facades, the stylesheet
-                           reader (`stylesheet.rs`, safe, over the port), the
-                           views over Lexbor's CSS selector lists
-                           (`css_parser.rs`; its parse is a reference), the HTML CSS
-                           matcher (`css_match/`, `#![forbid(unsafe_code)]`
-                           at its root) and the XPath
-                           HTML backend (`xpath.rs`); every `lxb_*`/`Lxb*` name
-                           outside it is 0
+                           selectors/serialize/fragment facades, the views over
+                           Lexbor's CSS selector lists (`css_parser.rs`; its
+                           parse is a reference) and the XPath HTML backend
+                           (`xpath.rs`). All of it is the reference the ports
+                           are tested against: nothing here ships, and every
+                           `lxb_*`/`Lxb*` name outside it is 0
     css_match/             the CSS matcher, over any DOM that implements its
                            traits (`css_match::dom`: the HTML arena's in
-                           `html/dom/css.rs`, the XML arena's in `xml/css.rs`);
-                           `#![forbid(unsafe_code)]`, Ruby- and Lexbor-free
+                           `html/dom/css.rs`, the XML arena's in `xml/css.rs`),
+                           and the compiled-selector cache in front of it
+                           (`cache.rs`); `#![forbid(unsafe_code)]`, Ruby- and
+                           Lexbor-free
     css/                   the CSS-to-XPath lowering XML's CSS used to run on,
                            kept only as the reference the XML matcher is held
                            to (`xml::css_tests`, the `css` fuzz target; built
@@ -543,7 +543,9 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            tokenizer, rule/state stacks, selector states, and
                            the stylesheet rule phases and callbacks in
                            `parser/syntax.rs`) into an owned AST and rule arena
-                           (`rules.rs`); Ruby- and Lexbor-free,
+                           (`rules.rs`), plus `parse_stylesheet`'s reader
+                           (`stylesheet.rs`) and the CSSOM selector writer
+                           (`text.rs`); Ruby- and Lexbor-free,
                            `#![forbid(unsafe_code)]` at its root
   fuzz/                    cargo-fuzz harnesses (xml/html, xpath/xml_xpath/
                            html_xpath, css = the XML matcher held to the lowering, html_css = the
@@ -613,12 +615,24 @@ no build that ships carries. The arena keeps the same contracts behind the
 note describes how Lexbor stores something, the arena's version is in
 `html/dom/`.
 
-**Text-input contract.** Parsing **honours the input String's encoding**
+**Text-input contract.** A DOCUMENT parse decodes its bytes as a browser
+does (`html/encoding.rs`): the HTML Standard's encoding sniffing algorithm
+(BOM; the transport layer's encoding - `encoding:`, else the String's own
+when it has one; for an ASCII-8BIT String the 1024-byte `<meta>` prescan,
+then UTF-8 if the bytes are valid UTF-8, then `chardetng`), "change the
+encoding" (a `<meta>` met while the confidence is tentative re-reads the
+document), and the Encoding Standard's decoders (`encoding_rs`, into a
+`falloc` buffer). `Document#encoding` is what it was read in. A Ruby
+encoding the Standard has no label for (UTF-32, CP51932) is transcoded by
+Ruby as before (`HtmlSource::for_document`). Fragment parsing takes text, so
+it has no sniffing: there the input String's encoding is honoured
 (`ruby_to_utf8`, `bridge/string.rs`): UTF-8 / US-ASCII / ASCII-8BIT pass
 through untouched (the UTF-8 common case is a single encoding compare - no
 transcode, no copy), any other encoding (Shift_JIS, EUC-JP, ISO-8859-1, ...) is
 `rb_str_encode`'d to UTF-8 (invalid/undef → U+FFFD) so its content survives
-instead of being read as raw UTF-8. After that the bytes are UTF-8. **HTML
+instead of being read as raw UTF-8. After that the bytes are UTF-8 - and a
+document's UTF-8 skips the decoder, since the sanitiser below replaces as the
+UTF-8 decoder does (`the_sanitiser_is_the_utf8_decoder`). **HTML
 parsing then decodes leniently like a browser**: `sanitize`
 (`utf8_input.rs`) replaces any remaining invalid UTF-8 with U+FFFD (a NUL is left
 for the HTML5 tokenizer to drop/replace), so parse/fragment **never fail** on
@@ -843,7 +857,7 @@ policy is a new item stated in each `impl`. The HTML backend reports the DOM's
 case-preserved `localName` (`refX`, `foreignObject`), not Lexbor's lower-cased
 stored name.
 
-**CSS** (`css_match/` + `lexbor/selector_cache.rs` + `selectors/`). `Node#{css,at_css,matches?}` (`glue::html_node::css`, `glue::xml_node::css`)
+**CSS** (`css_match/` + `css_match/cache.rs` + `selectors/`). `Node#{css,at_css,matches?}` (`glue::html_node::css`, `glue::xml_node::css`)
 match through `css_match` on both representations - an original,
 `#![forbid(unsafe_code)]` Rust port of Lexbor's `lxb_selectors_*` state
 machine (its `find`/`found_check`/`not_found` loop over a chain's compounds,
@@ -857,7 +871,7 @@ line, into an owned index-arena AST read through views of the same shape as
 matcher and the XML lowering read either. `lexbor::selector_diff` holds it to
 Lexbor's parser view for view (the `selector_diff` fuzz target too); the two
 answers that differ on purpose are `docs/parser_differences.ja.md` S2/S3.
-The glue reaches it through `lexbor::selector_cache`: an adaptive
+The glue reaches it through `css_match::cache`: an adaptive
 compiled-selector cache (`CachePolicy`, the OLD HTML engine's - same
 constants, same flush-on-cap/bypass-on-low-hit-rate/retest behavior) holding
 each parsed selector it keeps, so a repeated selector string is not re-parsed
@@ -865,7 +879,7 @@ every call. `lexbor::css_parser` remains only as the reference: its `parse` and
 its views over Lexbor's OWN lists are what `selector_diff` and
 `stylesheet_diff` compare against, built only for tests and the reference
 features. **`parse_stylesheet` is the port too** (`selectors::parse_stylesheet`
-+ `lexbor/stylesheet.rs`): Lexbor's rule structure and recovery exactly, but
++ `selectors/stylesheet.rs`): Lexbor's rule structure and recovery exactly, but
 names and values by one rule for every property - a declaration name
 lower-cased unless `--*`, an at-rule name lower-cased, a value the text
 between Lexbor's offsets with whitespace runs collapsed - not Lexbor's
@@ -875,7 +889,7 @@ replaced for HTML) is the differential-testing reference
 and its randomized siblings, and the `html_css_diff` fuzz target) and
 nothing else: `#[cfg(test)]` or the `css-reference` feature, so no build
 that ships carries it, and without a cache of its own - parse, run, clean
-per query. The adaptive cache policy lives only in `selector_cache`.
+per query. The adaptive cache policy lives only in `css_match::cache`.
 **The matcher is Lexbor's control flow, in safe Rust** (`css_match`'s
 `Compiled` and `Query`). `compile` decodes every simple selector once into a
 `Step` (Lexbor's entry) and splits every chain - top level and every nested
@@ -932,7 +946,10 @@ document - decides case folding and the 46-name value table, `is_html` (the
 namespace) the form states, so an XHTML element in XML has `:checked` but
 compares `DIV` as written; a bare type selector matches in any namespace; a
 prefix comes from the ns Hash (`css_match::Namespaces`, its `"xmlns"` entry
-the default namespace), resolved at compile, undeclared = `CSS::SyntaxError`;
+the default namespace, which a compound with no type selector is kept to as
+well, bar an `:is()`/`:where()`/`:not()` argument's subject), resolved at
+compile, undeclared = `CSS::SyntaxError` - except inside the forgiving
+`:is()`/`:where()`, which drop that alternative alone (`compile`'s `Nesting`);
 ancestors outside the context node take part. One `Scratch` per host,
 kept by `selector_cache` beside the one host-free AST cache.
 
@@ -1193,7 +1210,7 @@ all three scopes; there is no `Attribute`. Convenience: `Node#{root,ancestors,pa
 (path round-trips through `#at_xpath`), `Node#{attributes,to_h}`,
 `Node#{search,at}` (CSS/XPath auto-detect: starts `/ ./ .. .// ( @` or contains
 `::` ⇒ XPath, else CSS), `Document#{body,head,encoding,meta_encoding}`
-(`encoding` is always "UTF-8"). `NodeSet#{|,+,&,-}` are identity-dedup,
+(`encoding` is the one the document was read in, "UTF-8" for one made). `NodeSet#{|,+,&,-}` are identity-dedup,
 encounter-order (**not** doc-order), `#{css,xpath,search}` run per node and union
 (return `self` when empty so an empty set stays a NodeSet), `#{last,at,remove}`.
 `Element.new(name, doc)` / `Text.new(content, doc)` delegate to
@@ -1283,7 +1300,7 @@ Key decisions that got there, worth not regressing:
   `at_css` to 2.70M i/s (~3.8x nokolexbor), `css` 8.38k. Verify with
   `bench`'s `at_css`/`css` rows, the differential fuzzer, `rake oom` and
   `FUZZ_ARGS="--target css" bundle exec rake fuzz:sanitize`.
-- **The compiled-selector cache** (`lexbor::selector_cache`):
+- **The compiled-selector cache** (`css_match::cache`):
   `Node#css`/`#at_css`/`#matches?` do not re-parse a repeated selector string
   - the OLD engine's adaptive `CachePolicy` (same constants, same
   flush-on-cap/bypass-on-low-hit-rate/retest behavior), now holding the parser
@@ -1296,7 +1313,7 @@ Key decisions that got there, worth not regressing:
   stage 9's (`docs/rewrite_parser.ja.md`). Verify with
   `spec/css_selector_cache_spec.rb` (flush, bypass/retest, and
   reject-without-disturbing-the-cache) and the Rust-level
-  `lexbor::tests::selector_cache`.
+  `lexbor::tests::selector_cache` (the test module keeps the old name).
 - **`Node#text` is served from the text index** (`lexbor/adapter/text_index.rs`,
   see the subsystem note): a per-document, lazily-built, mutation-invalidated
   map from node → its document-order text-slice run, turning text extraction

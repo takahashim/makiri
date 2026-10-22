@@ -73,7 +73,7 @@ pub mod caught;
 pub mod gvl;
 
 /// The CSS matcher behind `Node#css`/`#at_css`/`#matches?`
-/// (`glue::html_node::css`, via `lexbor::selector_cache`): Lexbor's
+/// (`glue::html_node::css`, via `css_match::cache`): Lexbor's
 /// `lxb_selectors_*` control flow in safe Rust, on an explicit heap work
 /// stack rather than native recursion, over the selector parser's views and
 /// any DOM that implements its traits (`css_match::dom`). Ruby- and
@@ -147,7 +147,8 @@ pub mod glue;
 
 /// The vendored Lexbor boundary. This owns every direct use of its C ABI;
 /// `adapter` supplies the compatibility facilities Lexbor does not provide.
-#[cfg(feature = "html-dom")]
+/// Only the reference the ports are tested against: no build that ships has it.
+#[cfg(feature = "lexbor")]
 pub mod lexbor;
 
 /// The HTML DOM as the rest of the crate reaches it: one path, to the parser

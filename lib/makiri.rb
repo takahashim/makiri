@@ -67,8 +67,9 @@ require_relative "makiri/compat_aliases"
 module Makiri
   # Convenience constructor mirroring Nokogiri.
   #
-  # @param source [String] HTML source (UTF-8).
-  # @param opts [Hash] +max_tree_depth:+ - see {Makiri::HTML::Document.parse}
+  # @param source [String, #read] HTML source
+  # @param opts [Hash] +max_tree_depth:+, +encoding:+ - see
+  #   {Makiri::HTML::Document.parse}
   # @return [Makiri::HTML::Document]
   def self.HTML(source, **opts) # rubocop:disable Naming/MethodName
     HTML::Document.parse(source, **opts)

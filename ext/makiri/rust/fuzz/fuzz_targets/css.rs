@@ -24,7 +24,7 @@ use common::*;
 use makiri::css::{compile_owned, CssNs, Form};
 use makiri::css_match::dom::CssNode;
 use makiri::css_match::{matches_any, select_all, select_first, Namespaces, Scratch};
-use makiri::selectors::ast::{FunctionArg, Lists, PseudoClass, Simple};
+use makiri::selectors::ast::{Combinator, FunctionArg, Lists, PseudoClass, Simple};
 use makiri::xml::css::{XmlHost, XmlNode};
 use makiri::xml::NodeId;
 
@@ -43,15 +43,25 @@ const DEFAULT: &[u8] = b"http://example.com/default";
 
 /// Whether the lowering is not compared on the selector: it holds a type
 /// (`bare_type`) or universal selector written without a namespace prefix,
-/// which the two read differently, or `:empty`, which the lowering counts
-/// as Lexbor does and the matcher as the browsers do (M10). Walked on a work list, as the matcher
-/// compiles it, so no input nests the harness's stack.
+/// which the two read differently; under a default namespace (`!bare_type`)
+/// a compound with neither, which the matcher keeps to that namespace
+/// (Selectors 4 §5.3) and the lowering does not; or `:empty`, which the
+/// lowering counts as Lexbor does and the matcher as the browsers do (M10).
+/// Walked on a work list, as the matcher compiles it, so no input nests the
+/// harness's stack.
 fn not_comparable(groups: Lists<'_>, bare_type: bool) -> bool {
     let mut pending = vec![groups];
     while let Some(lists) = pending.pop() {
         for list in lists {
             let mut sel = list.first();
+            let mut starts = true;
             while let Some(s) = sel {
+                if starts && !bare_type && !matches!(s.simple(), Simple::Type | Simple::Universal) {
+                    return true;
+                }
+                starts = s
+                    .next()
+                    .is_some_and(|n| n.combinator() != Combinator::Close);
                 match s.simple() {
                     Simple::Type | Simple::Universal => {
                         if s.ns().is_none() && (bare_type == matches!(s.simple(), Simple::Type)) {

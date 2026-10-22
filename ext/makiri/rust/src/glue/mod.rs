@@ -34,7 +34,7 @@ pub mod kwargs;
 /// Hash argument pairs, copied out before any caller code converts them.
 pub mod hash;
 
-/// `Makiri::Lexbor::CSS.parse_stylesheet` - the Ruby half of `lexbor::stylesheet`.
+/// `Makiri::Lexbor::CSS.parse_stylesheet` - the Ruby half of `selectors::stylesheet`.
 pub mod stylesheet;
 
 /// What a rejected CSS selector raises, for both representations.

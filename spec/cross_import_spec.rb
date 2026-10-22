@@ -7,6 +7,13 @@ require "spec_helper"
 # import is a DETACHED deep/shallow copy owned by the target document; the source
 # is untouched.
 RSpec.describe "cross-kind import_node" do
+  it "refuses an XML processing instruction whose data HTML cannot hold" do
+    pi = Makiri::XML("<r><?pi a?></r>").root.children.first
+    pi.content = "a?>b"
+    expect { Makiri.HTML("<p></p>").import_node(pi) }
+      .to raise_error(ArgumentError, /must not contain \?>/)
+  end
+
   describe "HTML -> XML" do
     let(:xml)  { Makiri::XML("<root/>") }
     let(:html) { Makiri::HTML("<div id='a' class='c'>hi<!--cm--><span>x</span></div>") }

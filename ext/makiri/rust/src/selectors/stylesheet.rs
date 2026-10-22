@@ -44,9 +44,9 @@
 
 use crate::compat::{self, Fix};
 use crate::falloc::{self, OomOption, OomResult, Reserve, VecPush};
-use crate::lexbor::selector_text;
 use crate::selectors::ast::ListId;
 use crate::selectors::rules::{AtKind, Item, ItemId};
+use crate::selectors::text;
 use crate::selectors::token::TokenType;
 use crate::selectors::tokenizer::Tokenizer;
 use crate::selectors::{Sheet, Status};
@@ -218,7 +218,7 @@ fn declarations(c: &Conv, list: Option<ItemId>) -> Result<Vec<Decl>, Fail> {
 }
 
 /// Each comma alternative of a style rule's selector list, as text
-/// (`lexbor::selector_text`) with its specificity - or None when one of them
+/// (`selectors::text`) with its specificity - or None when one of them
 /// cannot be written back as it was written, for the caller to report the
 /// rule as `:bad_style` rather than hand out a selector that means something
 /// else.
@@ -226,10 +226,10 @@ fn selectors(c: &Conv, first: Option<ListId>) -> Result<Option<Vec<Selector>>, F
     let mut out = Vec::new();
     for list in c.sheet.ast.lists_from(first) {
         let mut text = Vec::new();
-        match selector_text::write(list, &mut text) {
+        match text::write(list, &mut text) {
             Ok(()) => {}
-            Err(selector_text::Fail::Lossy) => return Ok(None),
-            Err(selector_text::Fail::Oom) => return Err(Fail::Oom),
+            Err(text::Fail::Lossy) => return Ok(None),
+            Err(text::Fail::Oom) => return Err(Fail::Oom),
         }
         out.falloc_push(Selector {
             text,

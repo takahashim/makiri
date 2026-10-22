@@ -1,18 +1,18 @@
 //! `Makiri::Lexbor::CSS.parse_stylesheet(text) -> Array`: phase two of the
-//! stylesheet binding, the owned Rust rules [`crate::lexbor::stylesheet::parse`]
+//! stylesheet binding, the owned Rust rules [`crate::selectors::stylesheet::parse`]
 //! returns turned into plain Ruby hashes and arrays.
 //!
 //! Phase one has dropped everything it built before this runs; what is left
 //! owned - the parsed rules and the input's copy - is the caller's frame's,
 //! and phase two runs under `protect`, so a raise from building Ruby objects
-//! comes back as `Err` and those drop. See `lexbor::stylesheet`.
+//! comes back as `Err` and those drop. See `selectors::stylesheet`.
 
 use magnus::{function, prelude::*, Error, RArray, RHash, Ruby, StaticSymbol, Value};
 
 use crate::bridge::ruby::error_class;
 use crate::bridge::string::{ruby_verified_text, utf8_str};
 use crate::init::MOD_LEXBOR;
-use crate::lexbor::stylesheet::{parse, Decl, Fail, Rule, MAX_DEPTH};
+use crate::selectors::stylesheet::{parse, Decl, Fail, Rule, MAX_DEPTH};
 
 /// The fixed hash keys and `:type` values, interned once per call.
 ///

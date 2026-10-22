@@ -127,6 +127,22 @@ fn nest_of<'p>(simple: Simple<'p>) -> Result<(Nest, Option<Lists<'p>>), MatchFai
     })
 }
 
+/// Where a nested list sits, for the two rules that depend on it; carried
+/// with the list on [`compile`]'s work list.
+#[derive(Clone, Copy)]
+pub(super) struct Nesting {
+    /// The list is the argument of `:is()` / `:where()` / `:not()`, whose
+    /// alternatives' subject compounds take no default namespace (Selectors
+    /// 4 §4.2-4.4) unless they write a type or universal selector.
+    list_arg: bool,
+    /// The list is forgiving (`:is()` / `:where()`): each alternative is
+    /// dropped on its own when it is invalid.
+    forgiving: bool,
+    /// The alternative slot (`alts`) of the nearest forgiving alternative
+    /// around the list, which an invalid selector inside it empties.
+    within: Option<u32>,
+}
+
 /// A selector, compiled for matching: every chain in it - the top-level
 /// comma alternatives and every list nested in `:is()`/`:where()`/`:not()`/
 /// `:has()`/`of S` - split into compounds ONCE, before any node is tested.
@@ -194,16 +210,33 @@ pub(super) fn compile<'p>(
         alts: Table::reuse(&mut scratch.alts),
         ns: *ns,
     };
-    let mut pending: Table<(Lists<'p>, u32)> = Table::reuse(&mut scratch.pending);
+    let mut pending: Table<(Lists<'p>, u32, Nesting)> = Table::reuse(&mut scratch.pending);
     let built = (|| {
         for list in groups {
-            let chain = c.add_chain(list, ns, &mut pending)?;
+            let chain = c.add_chain(list, ns, false, None, &mut pending)?;
             c.top.push(chain)?;
         }
-        while let Some((lists, at)) = pending.pop() {
+        while let Some((lists, at, nesting)) = pending.pop() {
             for (k, list) in (at..).zip(lists) {
-                let chain = c.add_chain(list, ns, &mut pending)?;
-                c.alts.set(k as usize, chain)?;
+                let within = if nesting.forgiving {
+                    Some(k)
+                } else {
+                    nesting.within
+                };
+                match c.add_chain(list, ns, nesting.list_arg, within, &mut pending) {
+                    Ok(chain) => c.alts.set(k as usize, chain)?,
+                    /* An undeclared prefix makes a selector invalid, and a
+                     * forgiving list drops an invalid alternative alone
+                     * (Selectors 4 §4.2): the empty chain matches nothing.
+                     * Its own nested lists are still compiled, and can only
+                     * empty it again. Anything else - out of memory, too
+                     * complex - fails the query. */
+                    Err(MatchFailure::UndeclaredPrefix) if within.is_some() => {
+                        let slot = within.ok_or(MatchFailure::Internal)?;
+                        c.alts.set(slot as usize, Chain::default())?;
+                    }
+                    Err(e) => return Err(e),
+                }
             }
         }
         c.mark_inline()
@@ -228,12 +261,14 @@ impl<'p> Compiled<'p> {
     /// Split `list`'s chain into compounds, left to right (the order
     /// the parser links them in), appending them to `compounds`; any list
     /// nested in its simple selectors is queued on `pending`, not walked
-    /// here.
+    /// here. `list_arg` and `within` are where the chain sits ([`Nesting`]).
     fn add_chain(
         &mut self,
         list: List<'p>,
         ns: &Namespaces<'p>,
-        pending: &mut Table<(Lists<'p>, u32)>,
+        list_arg: bool,
+        within: Option<u32>,
+        pending: &mut Table<(Lists<'p>, u32, Nesting)>,
     ) -> Result<Chain, MatchFailure> {
         let start = u32::try_from(self.compounds.len()).map_err(|_| MatchFailure::TooComplex)?;
         let mut len = 0u32;
@@ -248,6 +283,21 @@ impl<'p> Compiled<'p> {
                 return Err(MatchFailure::Unsupported);
             }
             let simple_start = self.simple_index()?;
+            if let Some(implied) = NsTest::implied(ns) {
+                let typed = matches!(first.simple(), Simple::Type | Simple::Universal);
+                if !typed && !(list_arg && is_subject(first)) {
+                    self.simples.push(Step {
+                        simple: Simple::Universal,
+                        name: b"",
+                        ns: implied,
+                        alts: 0,
+                        n_alts: 0,
+                        value_ci: Some(false),
+                        inline: false,
+                        nest: Nest::None,
+                    })?;
+                }
+            }
             let mut sel = first;
             loop {
                 let simple = sel.simple();
@@ -260,7 +310,19 @@ impl<'p> Compiled<'p> {
                         self.alts.push(Chain::default())?;
                         n_alts += 1;
                     }
-                    pending.push((lists, alts))?;
+                    let forgiving = matches!(
+                        simple,
+                        Simple::PseudoClassFunction(FunctionArg::Selectors {
+                            pseudo: ListPseudo::Is | ListPseudo::Where,
+                            ..
+                        })
+                    );
+                    let nesting = Nesting {
+                        list_arg: matches!(nest, Nest::List { .. }),
+                        forgiving,
+                        within,
+                    };
+                    pending.push((lists, alts, nesting))?;
                 }
                 let value_ci = match simple {
                     Simple::Attribute(at) if at.case == CaseModifier::Insensitive => Some(true),
@@ -355,6 +417,19 @@ impl<'p> Compiled<'p> {
         self.compounds
             .get(chain.start as usize + idx)
             .ok_or(MatchFailure::Internal)
+    }
+}
+
+/// Whether the compound `first` begins is its chain's last - the subject -
+/// by a walk over the compound's own links. (Whether it writes a type or
+/// universal selector needs no walk: one only begins a compound, C28.)
+fn is_subject(first: crate::selectors::ast::Selector<'_>) -> bool {
+    let mut sel = first;
+    loop {
+        match sel.next() {
+            Some(n) if n.combinator() == Combinator::Close => sel = n,
+            next => return next.is_none(),
+        }
     }
 }
 

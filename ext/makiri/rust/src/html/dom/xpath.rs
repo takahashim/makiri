@@ -239,9 +239,15 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
 }
 
 /// `a`, or the first attribute after it that is not a namespace declaration.
+///
+/// A declaration is an attribute whose OWN namespace is XMLNS. The stored one
+/// is not enough: an attribute in no namespace stores its element's, so on an
+/// element made in the XMLNS namespace (`create_element_ns`) every plain
+/// attribute read as a declaration and vanished from `@*`. The stored id is
+/// tested first, so only an attribute stored in XMLNS pays for the own one.
 fn skip_ns_decls(mut a: Option<HtmlAttr<'_>>) -> Option<HtmlAttr<'_>> {
     while let Some(x) = a {
-        if x.node().ns_id() != Some(NsId::XMLNS) {
+        if x.node().ns_id() != Some(NsId::XMLNS) || x.own_ns() != Some(NsId::XMLNS) {
             return Some(x);
         }
         a = x.next_attr();

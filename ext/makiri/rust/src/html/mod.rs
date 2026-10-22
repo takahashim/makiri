@@ -9,6 +9,9 @@
 #![forbid(unsafe_code)]
 
 pub mod dom;
+#[cfg(feature = "html-dom")]
+pub mod encoding;
+pub mod fragment;
 pub mod names;
 pub mod res;
 pub mod tokenizer;

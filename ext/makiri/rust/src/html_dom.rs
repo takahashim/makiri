@@ -23,12 +23,12 @@ pub use crate::html::dom::xpath;
 /// A DOM step that could not get the memory it needed.
 pub use crate::html::dom::DomOom as AdapterOom;
 /// Fragment parsing and importing.
-pub use crate::lexbor::arena_fragment as fragment;
+pub use crate::html::fragment;
 
 /// The parsed document handle, its indexes, and the document parse.
 pub mod post_parse {
     pub use crate::html::dom::HtmlParsed;
-    pub use crate::lexbor::arena_parse::{
+    pub use crate::html::tree::{
         empty_html_document, parse_html, parse_with_panicking_hook, HtmlParseError,
     };
 }

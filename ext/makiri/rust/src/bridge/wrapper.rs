@@ -995,13 +995,16 @@ pub fn node_identity(rb_node: Value) -> Result<usize, Error> {
     Ok(node_raw(rb_node)?.identity())
 }
 
-/// Node identity for `==`/`eql?`: the representation AND the word. The word
-/// alone does not tell the two apart - an XML node's is its arena index packed
-/// with its document's stamp, not an address, so it can equal a live HTML
-/// node's pointer.
-pub fn node_key(rb_node: Value) -> Result<(DocKind, usize), Error> {
+/// Node identity for `==`/`eql?`: the Document AND the word. The word alone
+/// does not tell two documents apart - it is a node id packed with its
+/// document's 32-bit stamp, and the stamps wrap (every parse, fragment parses
+/// included, takes one), so a long-lived document and one made 2^32 documents
+/// later can share a stamp; and an XML word can equal an HTML one. The
+/// Document is the same object for every node of one document, so comparing
+/// it settles both.
+pub fn node_key(rb_node: Value) -> Result<(VALUE, usize), Error> {
     Ok((
-        DocKind::of(keepalive_document(rb_node)?),
+        keepalive_document(rb_node)?.as_raw(),
         node_identity(rb_node)?,
     ))
 }
