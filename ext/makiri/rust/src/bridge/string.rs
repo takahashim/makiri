@@ -644,14 +644,14 @@ impl HtmlSource {
 /// UTF-8.
 pub struct DocumentSource {
     source: HtmlSource,
-    transport: Option<&'static encoding_rs::Encoding>,
+    transport: Option<&'static crate::html::encoding::Encoding>,
 }
 
 impl DocumentSource {
     /// `s` is a String by type: the caller has coerced it.
     pub fn from_ruby(
         s: RString,
-        given: Option<&'static encoding_rs::Encoding>,
+        given: Option<&'static crate::html::encoding::Encoding>,
     ) -> Result<DocumentSource, Error> {
         use crate::html::encoding::{transport_for, StringEncoding, Transport};
         let enc = Encoding::of(s);
@@ -669,14 +669,14 @@ impl DocumentSource {
             Transport::Unlabelled => {
                 return Ok(DocumentSource {
                     source: HtmlSource::from_ruby(s)?,
-                    transport: Some(encoding_rs::UTF_8),
+                    transport: Some(crate::html::encoding::UTF_8),
                 })
             }
             Transport::Sniff => None,
             Transport::Declared(e) => Some(e),
         };
         /* Ruby's own verdict counts only for bytes it holds as UTF-8. */
-        let known_valid = transport == Some(encoding_rs::UTF_8)
+        let known_valid = transport == Some(crate::html::encoding::UTF_8)
             && enc.is_utf8_compatible()
             && ruby_str_known_valid_utf8(s);
         let bytes = ruby_string_bytes(s)?;

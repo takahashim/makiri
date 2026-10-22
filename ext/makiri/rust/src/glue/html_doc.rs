@@ -41,7 +41,10 @@ fn doc_s_parse(
 /// (`"shift_jis"`, `"latin1"`, `"Windows-31J"`). Anything the Standard does
 /// not label is `ArgumentError`: a document is never read in an encoding the
 /// caller did not ask for.
-fn encoding_arg(ruby: &Ruby, v: Value) -> Result<Option<&'static encoding_rs::Encoding>, Error> {
+fn encoding_arg(
+    ruby: &Ruby,
+    v: Value,
+) -> Result<Option<&'static crate::html::encoding::Encoding>, Error> {
     if v.is_nil() {
         return Ok(None);
     }
