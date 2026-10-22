@@ -51,6 +51,24 @@ RSpec.describe "a document read held across Ruby", :gc_compact do
         expect(doc.xpath(expr.sub("pause", "peek"), h).size).to eq(2)
       end
 
+      it "refuses to adopt a node out of it, leaving both documents as they were" do
+        target = kind == :html ? Makiri.HTML("<div></div>") : Makiri::XML("<r><div/></r>")
+        host = kind == :html ? target.at_css("div") : target.at_xpath("//div")
+        expect(walk.next).to eq(:suspended)
+        expect { host.add_child(first_p.call(doc)) }.to raise_error(Makiri::Error, /while evaluating/)
+        expect(host.children.size).to eq(0)
+        expect(doc.xpath("count(//p)")).to eq(2.0)
+      end
+
+      it "adopts a node out of it once the walk has run to its end" do
+        target = kind == :html ? Makiri.HTML("<div></div>") : Makiri::XML("<r><div/></r>")
+        host = kind == :html ? target.at_css("div") : target.at_xpath("//div")
+        3.times { walk.next }
+        host.add_child(first_p.call(doc))
+        expect(host.children.size).to eq(1)
+        expect(doc.xpath("count(//p)")).to eq(1.0)
+      end
+
       it "evaluates a kept context afresh after an edit between two evaluates" do
         ctx = Makiri::XPathContext.new(doc)
         expect(ctx.evaluate("count(//p)")).to eq(2.0)

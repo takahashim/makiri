@@ -424,12 +424,12 @@ impl DocumentShell {
     /// Give the HTML Document its parsed document - the GC owns it from here -
     /// and report the arena's size.
     pub fn install_html(self, parsed: Box<HtmlParsed>) -> Value {
-        self.install(Body::Html(RefCell::new(parsed)))
+        self.install(Body::Html(crate::doc_cell::DocCell::new(parsed)))
     }
 
     /// Give the XML Document its arena, as [`install_html`](Self::install_html).
     pub fn install_xml(self, arena: Box<XmlDoc>) -> Value {
-        self.install(Body::Xml(RefCell::new(arena)))
+        self.install(Body::Xml(crate::doc_cell::DocCell::new(arena)))
     }
 
     #[allow(

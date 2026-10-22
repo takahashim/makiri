@@ -603,13 +603,6 @@ pub fn new_node<R>(rb_doc: &Value, f: impl FnOnce(&mut HtmlNewNodes<'_>) -> R) -
     lend_document(rb_doc, |write| f(&mut write.new_nodes()))
 }
 
-/// Lend `rb_doc`'s document to `f` for a change to its tree, attributes or
-/// data: the parse handle's `edit`, which drops the indexes and runs a due
-/// compaction.
-fn edit_document<R>(rb_doc: &Value, f: impl FnOnce(&mut HtmlDocMut<'_>) -> R) -> Result<R, Error> {
-    lend_document(rb_doc, |write| f(&mut write.edit()))
-}
-
 /// Check `rb_doc` can be lent - an HTML Document no evaluation is reading -
 /// hand its document to `lend`, and report what the loan grew it by.
 fn lend_document<R>(
@@ -630,18 +623,6 @@ fn lend_document<R>(
      * is still a bare node, so a collection here can free nothing it needs. */
     crate::bridge::wrapper::account_growth(*rb_doc);
     Ok(r)
-}
-
-/// Lend the document of `rb_doc` - not the receiver's - for the part of an
-/// edit that changes it: an adoption's release of the original. The change
-/// is recorded first; the lend's `edit` drops its indexes.
-fn edit_other_document<R>(
-    rb_doc: Value,
-    f: impl FnOnce(&mut HtmlDocMut<'_>) -> R,
-) -> Result<R, Error> {
-    ensure_document_mutable(rb_doc)?;
-    record_edit(rb_doc, EditKind::ChildList);
-    edit_document(&rb_doc, f)
 }
 
 /// Take `node` out of its tree, the release half of an adoption: a fragment
@@ -685,6 +666,16 @@ pub fn insert(this: &mut HtmlSelf, rb_incoming: Value, place: Place) -> Result<V
      * the edit's own borrow, never through a second one. */
     let incoming = node_ref(incoming_doc, key)?;
     let same = crate::bridge::ruby::same_value(incoming_doc, document);
+    /* From another document, the argument's own document is written too -
+     * its original released once the copy is in - so it is taken for the
+     * edit before anything changes: a refusal then comes before the copy is
+     * placed rather than after, which would leave the copy in and the
+     * original where it was. The source is read through the same borrow.
+     * Nothing between here and the release runs Ruby. */
+    let mut source = match same {
+        true => None,
+        false => Some(html_write(&incoming_doc)?),
+    };
     let (placed, adopted) = edit.with_tree(|d, target| -> Result<(RawNode, bool), Error> {
         let node = if same {
             let insertion = Insertion::new(d.node(target), place, d.node(incoming))
@@ -702,24 +693,36 @@ pub fn insert(this: &mut HtmlSelf, rb_incoming: Value, place: Place) -> Result<V
         } else {
             /* From another document: checked, then copied into this one - the
              * original is released below, once the copy is in. */
-            with_html_node(incoming_doc, key, |src| {
-                Insertion::new(d.node(target), place, src)
-                    .and_then(|i| i.check())
-                    .map_err(crate::bridge::dom_error::pre_insert_error)?;
-                d.import(src, true)
-                    .map_err(|_| makiri_error("failed to import node"))
-            })??
+            let parsed = source
+                .as_ref()
+                .ok_or_else(|| {
+                    crate::bridge::ruby::internal_error("an adoption without its source")
+                })?
+                .parsed();
+            let src = parsed
+                .resolve(key)
+                .map_err(|ForeignNode| foreign_node_error())?;
+            Insertion::new(d.node(target), place, src)
+                .and_then(|i| i.check())
+                .map_err(crate::bridge::dom_error::pre_insert_error)?;
+            d.import(src, true)
+                .map_err(|_| makiri_error("failed to import node"))?
         };
         d.place(target, node, place);
         Ok((node, !same))
     })??;
-    if !adopted {
+    let Some(mut source) = source.take().filter(|_| adopted) else {
         return Ok(rb_incoming);
-    }
+    };
     /* Take the original out of the document it came from, so the whole thing
      * reads as the move the DOM says appendChild performs - and drop that
-     * document's indexes, which still list it. */
-    edit_other_document(incoming_doc, |d| release_from_tree(d, incoming))?;
+     * document's indexes, which still list it. Recorded before the change
+     * (`record_edit`), through the borrow taken above, which cannot be
+     * refused now. */
+    record_edit(incoming_doc, EditKind::ChildList);
+    release_from_tree(&mut source.edit(), incoming);
+    drop(source);
+    crate::bridge::wrapper::account_growth(incoming_doc);
     wrap_html_node(placed, document)
 }
 

@@ -80,6 +80,11 @@ pub mod gvl;
 /// Lexbor-free, like the engine.
 pub mod css_match;
 
+/// A Document's content, reachable only through a counted borrow guard -
+/// what `bridge::dom` holds each Document's parse in. Ruby-free, so the
+/// guards' promises are tested here.
+pub mod doc_cell;
+
 /// A vector's allocation kept with nothing in it, so the matcher's stacks
 /// can be kept in a process-global whatever nodes they held (`css_match`'s
 /// `Scratch`). The one `unsafe impl Send` it needs is the whole module.

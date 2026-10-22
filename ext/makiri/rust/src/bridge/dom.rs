@@ -1,8 +1,10 @@
 //! A Document's content as the bridge holds it - the parsed HTML document or
 //! the XML arena - and the only ways to reach it: a shared borrow
 //! ([`HtmlRead`], [`XmlRead`]) or an exclusive one ([`HtmlWrite`],
-//! [`XmlWrite`]), each a guard on the `RefCell` the Document owns its content
-//! through.
+//! [`XmlWrite`]), each a guard on the [`DocCell`] the Document owns its
+//! content through. The cell and its guards are `crate::doc_cell`'s, which is
+//! Ruby-free so what they promise is tested there; this module names the two
+//! representations' guards and what each lends.
 //!
 //! The content used to be a raw pointer that every reader and editor
 //! dereferenced under an `unsafe` contract - "the Document is live, and nothing
@@ -20,9 +22,10 @@
 
 #![forbid(unsafe_code)]
 
-use core::cell::{Ref, RefCell, RefMut};
 use core::ops::{Deref, DerefMut};
 
+pub(in crate::bridge) use crate::doc_cell::Conflict;
+use crate::doc_cell::{DocCell, Read, Write};
 use crate::html_dom::html::{HtmlDoc, HtmlDocMut, HtmlNewNodes, HtmlNode, RawNode};
 use crate::html_dom::post_parse::HtmlParsed;
 use crate::xml::model::Document as XmlDoc;
@@ -30,8 +33,8 @@ use crate::xml::model::Document as XmlDoc;
 /// What a Document owns: its parsed content, in one of the two
 /// representations, borrowed only through the guards below.
 pub(in crate::bridge) enum Body {
-    Html(RefCell<Box<HtmlParsed>>),
-    Xml(RefCell<Box<XmlDoc>>),
+    Html(DocCell<HtmlParsed>),
+    Xml(DocCell<XmlDoc>),
 }
 
 impl Body {
@@ -39,8 +42,8 @@ impl Body {
     /// an edit holds it (a GC callback's question, answered without waiting).
     pub(in crate::bridge) fn external_bytes(&self) -> Option<usize> {
         match self {
-            Body::Html(c) => c.try_borrow().ok().map(|p| p.external_bytes()),
-            Body::Xml(c) => c.try_borrow().ok().map(|d| d.memsize()),
+            Body::Html(c) => c.peek(HtmlParsed::external_bytes),
+            Body::Xml(c) => c.peek(XmlDoc::memsize),
         }
     }
 
@@ -48,29 +51,18 @@ impl Body {
     /// it.
     pub(in crate::bridge) fn arena_chunks(&self) -> Option<usize> {
         match self {
-            Body::Html(c) => c.try_borrow().ok().map(|p| p.arena_chunks()),
+            Body::Html(c) => c.peek(HtmlParsed::arena_chunks),
             Body::Xml(_) => Some(0),
         }
     }
 }
 
-/// Why a guard could not be taken: the content is held the other way.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::bridge) enum Conflict {
-    /// A read was asked for while an edit holds the content - an edit runs
-    /// no Ruby, so this is a broken invariant.
-    ByEdit,
-    /// An edit was asked for while a read holds it - a reader suspended in
-    /// Ruby (an XPath handler, a Fiber).
-    ByRead,
-}
-
 /// An HTML document, borrowed for reading.
-pub struct HtmlRead<'a>(Ref<'a, Box<HtmlParsed>>);
+pub struct HtmlRead<'a>(Read<'a, HtmlParsed>);
 
 impl<'a> HtmlRead<'a> {
-    pub(in crate::bridge) fn of(c: &'a RefCell<Box<HtmlParsed>>) -> Result<Self, Conflict> {
-        c.try_borrow().map(HtmlRead).map_err(|_| Conflict::ByEdit)
+    pub(in crate::bridge) fn of(c: &'a DocCell<HtmlParsed>) -> Result<Self, Conflict> {
+        c.read().map(HtmlRead)
     }
 
     /// The parse handle, with its indexes.
@@ -94,13 +86,18 @@ impl<'a> HtmlRead<'a> {
 }
 
 /// An HTML document, borrowed for an edit.
-pub struct HtmlWrite<'a>(RefMut<'a, Box<HtmlParsed>>);
+pub struct HtmlWrite<'a>(Write<'a, HtmlParsed>);
 
 impl<'a> HtmlWrite<'a> {
-    pub(in crate::bridge) fn of(c: &'a RefCell<Box<HtmlParsed>>) -> Result<Self, Conflict> {
-        c.try_borrow_mut()
-            .map(HtmlWrite)
-            .map_err(|_| Conflict::ByRead)
+    pub(in crate::bridge) fn of(c: &'a DocCell<HtmlParsed>) -> Result<Self, Conflict> {
+        c.write().map(HtmlWrite)
+    }
+
+    /// The parse handle, read through the edit's own borrow - for what an
+    /// edit reads before it changes anything (an adopted node's source).
+    #[inline]
+    pub fn parsed(&self) -> &HtmlParsed {
+        &self.0
     }
 
     /// The document, for an edit of its tree, attributes or data, with its
@@ -119,11 +116,11 @@ impl<'a> HtmlWrite<'a> {
 }
 
 /// An XML arena, borrowed for reading.
-pub struct XmlRead<'a>(Ref<'a, Box<XmlDoc>>);
+pub struct XmlRead<'a>(Read<'a, XmlDoc>);
 
 impl<'a> XmlRead<'a> {
-    pub(in crate::bridge) fn of(c: &'a RefCell<Box<XmlDoc>>) -> Result<Self, Conflict> {
-        c.try_borrow().map(XmlRead).map_err(|_| Conflict::ByEdit)
+    pub(in crate::bridge) fn of(c: &'a DocCell<XmlDoc>) -> Result<Self, Conflict> {
+        c.read().map(XmlRead)
     }
 }
 
@@ -136,13 +133,11 @@ impl Deref for XmlRead<'_> {
 }
 
 /// An XML arena, borrowed for an edit.
-pub struct XmlWrite<'a>(RefMut<'a, Box<XmlDoc>>);
+pub struct XmlWrite<'a>(Write<'a, XmlDoc>);
 
 impl<'a> XmlWrite<'a> {
-    pub(in crate::bridge) fn of(c: &'a RefCell<Box<XmlDoc>>) -> Result<Self, Conflict> {
-        c.try_borrow_mut()
-            .map(XmlWrite)
-            .map_err(|_| Conflict::ByRead)
+    pub(in crate::bridge) fn of(c: &'a DocCell<XmlDoc>) -> Result<Self, Conflict> {
+        c.write().map(XmlWrite)
     }
 }
 

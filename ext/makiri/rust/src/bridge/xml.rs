@@ -760,10 +760,9 @@ pub fn find_attribute_ns(this: XmlSelf, ns: Value, local: Value) -> Result<Optio
 
 /// A node copied in from another document, still to be taken out of it: the
 /// second half of the move `appendChild` performs across arenas. It carries
-/// the source Document and node [`incoming_node`] already resolved, so there
-/// is nothing left to look up; finishing fails only if the source's write is
-/// refused, which `incoming_node`'s `ensure_document_mutable` rules out - no
-/// Ruby runs between the two.
+/// the source Document and node [`incoming_node`] already resolved, and
+/// [`insert`] takes the source for writing before the copy is placed, so
+/// finishing cannot fail: there is nothing left to look up or to be refused.
 struct Adoption {
     /// The source's Document: the arena the original is taken out of, and
     /// whose tree version the removal bumps.
@@ -789,22 +788,19 @@ impl Adoption {
     }
 
     /// The placement took the copy: empty the original out of its old
-    /// document, whose name index goes with it.
-    fn finish(self) -> Result<(), Error> {
-        /* `incoming_node` cleared the source for writing, and the caller ran
-         * only engine code on the OTHER arena since. */
-        let mut sdoc = xml_write(&self.src_document)?;
+    /// document - `sdoc`, the source's write taken before the placement -
+    /// whose name index goes with it.
+    fn finish(self, sdoc: &mut XmlDoc) {
         /* Invalidated and recorded before the removal (`record_edit`). */
         sdoc.invalidate_name_index();
         record_edit(self.src_document, EditKind::ChildList);
         if sdoc.type_(self.src) == Some(ArenaKind::DocumentFragment) {
             while let Some(c) = sdoc.first_child(self.src) {
-                remove_node(&mut sdoc, c);
+                remove_node(sdoc, c);
             }
         } else {
-            remove_node(&mut sdoc, self.src);
+            remove_node(sdoc, self.src);
         }
-        Ok(())
     }
 }
 
@@ -825,6 +821,15 @@ pub fn insert(
 ) -> Result<Value, Error> {
     let edit = begin_edit(&mut this)?;
     let (node, adoption) = incoming_node(edit.document(), arg)?;
+    /* An adoption writes the source too, so it is taken for the edit before
+     * the copy is placed: a refusal then comes first, rather than after the
+     * placement, which would leave the copy in and the original where it
+     * was. Nothing between here and the release runs Ruby. */
+    let src_document = adoption.as_ref().map(|a| a.src_document);
+    let mut source = match &src_document {
+        Some(d) => Some(xml_write(d)?),
+        None => None,
+    };
     xml_mut_result(edit.with_insertion(node, |d, target| {
         let placed = crate::xml::mutate::place(d, target, node, at);
         if let (Err(_), Some(a)) = (&placed, &adoption) {
@@ -832,9 +837,10 @@ pub fn insert(
         }
         placed
     })?)?;
-    if let Some(a) = adoption {
-        a.finish()?;
+    if let (Some(a), Some(sdoc)) = (adoption, source.as_mut()) {
+        a.finish(sdoc);
     }
+    drop(source);
     wrap_xml_node(node, this.document)
 }
 

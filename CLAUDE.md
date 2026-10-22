@@ -114,8 +114,10 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   by `bridge::string::utf8_str` in a frame that owns nothing, and by
   `utf8_str_protected` in one that does.
 
-  **A Document's content is reached only through a guard** (`bridge::dom`):
-  the `DocData` owns it in a `RefCell`, and a read (`HtmlRead` / `XmlRead`,
+  **A Document's content is reached only through a guard** (`bridge::dom`,
+  over `crate::doc_cell`, which is Ruby-free so its `compile_fail` doctests
+  pin that a guard's loan cannot outlive it and that a guard stays on its
+  thread): the `DocData` owns it in a `DocCell`, and a read (`HtmlRead` / `XmlRead`,
   or the receiver views `HtmlSelf::read` / `XmlSelf::read`) or an edit
   (`HtmlWrite` / `XmlWrite`, taken only inside `HtmlEdit::with_tree`,
   `new_node`, `Editing::with_arena` and their kin) is a counted borrow. No
@@ -124,7 +126,9 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   call site: an edit that begins while any read is held - a Fiber suspended
   in an XPath handler, a copy of the receiver - is refused as `Makiri::Error`
   (after `ensure_document_mutable`, whose refusal comes first), and a read
-  during an edit is an `InternalError`. A guard is a `Drop`, and a raise past
+  during an edit is an `InternalError`. An edit that changes two documents
+  (an adoption: the copy placed, the original released) takes both writes
+  before it changes either, so it is refused whole or done whole. A guard is a `Drop`, and a raise past
   one leaves the document borrowed for good, so the gate above holds guards
   to the copies' rule (`COPY_TYPES`/`GUARD_TYPES`): read what is needed and
   drop the guard before building the Ruby result. `str_after_read` lifts
@@ -477,6 +481,8 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            through here, so `rake oom` can fail it and OOM raises
                            rather than aborting the host process (the glue's
                            Ruby-side storage is Ruby's xmalloc; see the gotchas)
+    doc_cell.rs            `DocCell`: a Document's content behind counted
+                           read/write guards (Ruby-free; `bridge::dom` wraps it)
     cbuf.rs                `Buf`: the owned, capped, growable byte buffer
     cutf8.rs               the one UTF-8 validator + strict 1-codepoint decoder
     utf8_input.rs          HTML input sanitiser: invalid UTF-8 -> U+FFFD, per
