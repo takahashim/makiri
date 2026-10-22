@@ -20,7 +20,7 @@ use crate::bridge::node_set::{node_set_with_fill, PushError};
 use crate::bridge::node_wrap::wrap_doc_node;
 use crate::bridge::ruby::VALUE;
 use crate::bridge::string::{ruby_str_from_utf8, ruby_verified_text};
-use crate::bridge::wrapper::{doc_content, html_doc_unwrap, Content};
+use crate::bridge::wrapper::{doc_content, Content};
 use crate::bridge::wrapper::{DocKind, NodeWord};
 use crate::bridge::xml::xml_node_unwrap;
 use crate::engine_error::{Error as XPathError, ErrorKind};
@@ -179,16 +179,16 @@ pub fn context_for(rb_node: Value, document: Value) -> Result<Cx, Error> {
         });
     }
 
+    /* XML was answered above, so anything else is a Document with no
+     * content yet - refused before the HTML accessors would assume one. */
+    let Content::Html(parsed) = content else {
+        return Err(makiri_error("XPath context with no document"));
+    };
     let (key, _) = html_node_key(rb_node)?;
-    /* TypeError for a Document that is not HTML. */
-    html_doc_unwrap(document)?;
     /* Resolved against `document` - checked, not assumed, to own the node -
      * and kept as the context's token, which `document` keeps alive for as
      * long as the context lives. */
     let node = with_html_node(document, key, |n| <HtmlDom<'_> as Dom<'_>>::token(n))?;
-    let Content::Html(parsed) = content else {
-        return Err(makiri_error("XPath context with no document"));
-    };
     Ok(Cx {
         session: Session::new(Some(node)),
         doc: DocPtr::Html(crate::bridge::dom::DocPtr::new(parsed)),
