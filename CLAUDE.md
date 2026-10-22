@@ -617,7 +617,8 @@ does (`html::encoding` decides, `html::tree::parse_document_bytes` drives):
 the HTML Standard's encoding sniffing algorithm
 (BOM; the transport layer's encoding - `encoding:`, else the String's own
 when it has one; for an ASCII-8BIT String the 1024-byte `<meta>` prescan,
-then UTF-8 if the bytes are valid UTF-8, then `chardetng`), "change the
+then UTF-8 if the bytes are valid UTF-8, then `chardetng` over 64 KiB
+from the first non-ASCII byte, `DETECT_MAX`), "change the
 encoding" (a `<meta>` met while the confidence is tentative re-reads the
 document), and the Encoding Standard's decoders (`encoding_rs`, into a
 `falloc` buffer). `Document#encoding` is what it was read in. A Ruby
@@ -723,18 +724,41 @@ byte store is compacted - moving every span - only right after
   over the static tag range, for the XPath `//tag` fast path
   (`xpath/step_index.rs`; `DomIndex::tag_bucket`). A custom tag, a foreign
   element (`has_foreign`) or an HTML element written in upper case
-  (`has_case_kept`) sends `//tag` back to the tree walk. Built by
-  `HtmlParsed::ensure_dom_index`; OOM fails closed. **Every evaluate reads
+  (`has_case_kept`) sends `//tag` back to the tree walk. Built in one walk
+  (each element's tag and id, then a counting sort) by the first `//tag`
+  that asks for a bucket (`HtmlDom::name_bucket` ->
+  `HtmlParsed::ensure_dom_index`) - never up front, so an XPath that names
+  no tag (`/html/body`) pays nothing for it; OOM answers no bucket and the
+  step walks. **Every evaluate reads
   the index afresh from the handle**: a reused `XPathContext` that kept the
   one it first saw answered from a dropped index - a use-after-free in the
   Lexbor era (`spec/xpath_context_mutation_spec.rb`).
+- **document-order index** (`DocOrder`): each node's position in XPath's
+  document order - a node, its attributes, its children; `<template>`
+  contents left out, as the XPath walk leaves them - as a dense
+  `NodeId -> u32` array sized to the arena. XPath's sorts read it through
+  `Dom::KEEPS_ORDER` / `kept_position` / `build_kept_order`
+  (`xpath/order.rs`, `sort_by_kept_order`); a node it does not hold
+  (detached, a fragment's, appended since) falls back to the parent-chain
+  compare. Built by the first sort large enough to want it
+  (`INDEX_BUILD_MIN`) and kept across evaluates until an edit drops it;
+  OOM falls back for the rest of that evaluate. Counted in
+  `HtmlParsed::external_bytes` and reported to the GC once the evaluate
+  that built it is over (`account_kept_order`). XML keeps the evaluate's own
+  `OrderIndex`. Verify with `spec/xpath_kept_order_spec.rb` and
+  `xpath::order::speed::order_speed` (ignored; a measurement).
 - **text index** (`TextIndex`): every text node's span in document order and
-  each container's `[start, end)` run of them (`PtrTable`), so a `Node#text`
-  is a lookup plus `ruby_str_from_slices` - one pre-sized memcpy run, no
-  element node touched (**~4x libxml2**). Reached via
-  `HtmlParsed::text_slices`; `None` (a fragment, a build OOM) means the
-  caller walks. Verify with `spec/text_index_spec.rb`, which holds it
-  byte-identical to a plain walk across subtrees and mutations.
+  each container's `[start, end)` run of them (a dense array by `NodeId`,
+  built in one walk), so a `Node#text` is a lookup plus
+  `ruby_str_from_slices` - one pre-sized memcpy run, no element node touched
+  (**~4x libxml2**). Built only once the walks `Node#text` has served since
+  the last edit cover half the document (`HtmlParsed::ensure_text_index` /
+  `note_text_walk`): the build costs about one walk of the document, so a
+  one-off `li.text` walks its own few nodes instead. Reached via
+  `HtmlParsed::text_slices`; `None` (not due, a fragment, a build OOM)
+  means the caller walks (`bridge::html::subtree_text`: one walk collecting
+  the slices, one copy). Verify with `spec/text_index_spec.rb`, which holds
+  it byte-identical to a plain walk across subtrees and mutations.
 
 **Child counting and indexing** (`src/child_index.rs`). `#child_count` /
 `#child_at` and their element twins walk `dom_rules::Tree`'s links - the
@@ -1270,17 +1294,22 @@ Key decisions that got there, worth not regressing:
   `css_cache::tests`.
 - **`Node#text` is served from the text index** (`html/dom/index.rs`,
   see the subsystem note): a per-document, lazily-built, edit-dropped map
-  from node → its document-order run of text spans, turning text extraction
-  into a lookup + one pre-sized memcpy instead of a walk (~4× libxml2). The walk fallback stays
-  for non-indexed nodes. Do not regress to walking on the indexed path; verify
+  from node → its document-order run of text spans, turning repeated text
+  extraction into a lookup + one pre-sized memcpy instead of a walk (~4×
+  libxml2). It is built once the walks it would replace add up to half the
+  document, so first and one-off calls walk (a first `doc.text` 2x faster,
+  a first small `li.text` from a whole-document build to nothing). Do not
+  regress to walking on the indexed path; verify
   with `bench`'s "full document text" row and `spec/text_index_spec.rb` (which
   asserts byte-identity with a plain walk across subtrees + mutations).
 - **String-value cache is hashed** (`xpath/str_cache.rs`): a token-keyed
   `PtrMap` index over an ordered store, so per-node predicate compares
   are O(1), not the old O(n²) linear scan. The cache belongs to one evaluate
-  (`xpath::eval::Evaluation`), as do the op budget and the document-order
-  index, so a nested (handler-triggered) evaluate gets its own and cannot
-  disturb the walk that called it.
+  (`xpath::eval::Evaluation`), as do the op budget and - for XML - the
+  document-order index, so a nested (handler-triggered) evaluate gets its
+  own and cannot disturb the walk that called it. HTML's document-order
+  index is the document's (`DocOrder`, above), which a nested evaluate
+  shares: no evaluate can edit the document it reads.
 - **Node string-values are borrowed when they are one slice** (`xpath/value.rs`
   `node_string_value` -> `Str`, `NodeText::Borrowed`): an attribute, a
   text/CDATA/comment/PI node, and a container whose descendants hold one

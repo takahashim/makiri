@@ -67,3 +67,23 @@ pub fn account_growth(rb_doc: Value) {
         account_document(rb_doc.as_raw());
     }
 }
+
+/// Whether `rb_doc` is an HTML Document whose kept document-order index is
+/// built - read before an evaluate, for [`account_kept_order`] after it.
+pub fn has_kept_order(rb_doc: Value) -> bool {
+    with_html_parsed_if(rb_doc, |p| p.has_doc_order()).unwrap_or(false)
+}
+
+/// Tell the GC about the document-order index an evaluate on `rb_doc` built,
+/// `had` being [`has_kept_order`] before it. The index is kept across
+/// evaluates, as the arena is, so it is reported as the arena is; an edit
+/// drops it, and the next report gives it back.
+///
+/// Called once the evaluate is over - its walk, its handler guard - since
+/// the report may run a collection: like [`account_document`], with `rb_doc`
+/// on the caller's stack and no borrowed Ruby String held.
+pub fn account_kept_order(rb_doc: Value, had: bool) {
+    if !had && has_kept_order(rb_doc) {
+        account_document(rb_doc.as_raw());
+    }
+}

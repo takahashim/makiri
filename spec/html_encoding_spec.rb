@@ -61,6 +61,17 @@ RSpec.describe "HTML document encoding" do
     end
   end
 
+  describe "detection" do
+    it "reads the document's text past a long ASCII head, and costs a window of it" do
+      head = "<script>#{"var x = 1;\n" * 20_000}</script>"
+      body = "<p>#{"吾輩は猫である。名前はまだ無い。" * 20_000}</p>"
+      src = (head + body).encode("Shift_JIS").b
+      doc = Makiri::HTML(src)
+      expect(doc.encoding).to eq("Shift_JIS")
+      expect(text_of(doc)).to start_with("吾輩は猫である。")
+    end
+  end
+
   describe "a US-ASCII String, which is what File.read gives any bytes under LANG=C" do
     it "declares nothing, so a <meta> is honoured and legacy bytes are sniffed" do
       src = %(<meta charset="shift_jis"><p>#{"日本語".encode("Shift_JIS").b}</p>).b.force_encoding("US-ASCII")

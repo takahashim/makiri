@@ -20,7 +20,7 @@ use crate::bridge::node_set::{node_set_with_fill, PushError};
 use crate::bridge::node_wrap::wrap_doc_node;
 use crate::bridge::ruby::VALUE;
 use crate::bridge::string::{ruby_str_from_utf8, ruby_verified_text};
-use crate::bridge::wrapper::{doc_content, html_doc_unwrap, with_html_parsed_known, Content};
+use crate::bridge::wrapper::{doc_content, html_doc_unwrap, Content};
 use crate::bridge::wrapper::{DocKind, NodeWord};
 use crate::bridge::xml::xml_node_unwrap;
 use crate::engine_error::{Error as XPathError, ErrorKind};
@@ -122,12 +122,7 @@ impl Cx {
             }
             DocPtr::Html(p) => {
                 // SAFETY: as above, for the parse handle.
-                let dom = unsafe { crate::bridge::dom::xpath_dom(p) }.map_err(|kind| {
-                    XPathError::with(
-                        kind,
-                        format_args!("failed to build the element index for XPath"),
-                    )
-                })?;
+                let dom = unsafe { crate::bridge::dom::xpath_dom(p) };
                 run_on(&self.session, dom, ast, handler, answer)
             }
         }
@@ -164,9 +159,9 @@ impl core::ops::DerefMut for Cx {
 
 /// Build the context a query on `rb_node` runs under, bound to `document`.
 ///
-/// The HTML branch builds the element index up front, so `//tag` is answered
-/// without a tree walk and an allocation failure raises here rather than on the
-/// first evaluate. The XML branch's name index hangs off the document.
+/// Neither branch builds an index here: HTML's element index is built by the
+/// first `//tag` that asks it for a bucket (`HtmlDom::name_bucket`), and the
+/// XML branch's name index hangs off the document.
 ///
 /// The context keeps a pointer to the document, not a borrow: the caller holds
 /// `document` for as long as the context lives, and each evaluate reborrows it
@@ -194,12 +189,6 @@ pub fn context_for(rb_node: Value, document: Value) -> Result<Cx, Error> {
     let Content::Html(parsed) = content else {
         return Err(makiri_error("XPath context with no document"));
     };
-    /* Built up front, so an allocation failure raises here rather than on the
-     * first evaluate. Each evaluate still reads the index afresh from the
-     * handle, which rebuilds it after a mutation. */
-    if with_html_parsed_known(document, |p| p.ensure_dom_index().is_err()) {
-        return Err(makiri_error("failed to build the element index for XPath"));
-    }
     Ok(Cx {
         session: Session::new(Some(node)),
         doc: DocPtr::Html(crate::bridge::dom::DocPtr::new(parsed)),
@@ -363,6 +352,7 @@ pub fn evaluate_query(
             raised: core::cell::OnceCell::new(),
         }),
     };
+    let had_order = crate::bridge::wrapper::has_kept_order(document);
     let result = ctx.run(ast, bridge.as_ref().map(|b| b as &dyn Resolver), answer);
     /* The exception a handler-side call ended in, moved to this frame's stack
      * (where the GC's conservative scan keeps seeing it) before the bridge goes. */
@@ -372,6 +362,8 @@ pub fn evaluate_query(
      * skipping the guard's `Drop` - which would leave the document refusing
      * every edit for the rest of its life. */
     drop(bridge);
+    /* A document-order index the evaluate built is the document's now. */
+    crate::bridge::wrapper::account_kept_order(document, had_order);
     result.map_err(|error| match raised {
         /* Not the handler's error but the caller's control flow - an interrupt,
          * `exit`, Timeout, a `throw` - so it is re-raised as it was. Nothing

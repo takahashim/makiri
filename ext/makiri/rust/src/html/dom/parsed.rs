@@ -7,12 +7,12 @@
 //! an edit takes `&mut` of the whole handle ([`HtmlParsed::edit`]), which
 //! drops the indexes first.
 
-use core::cell::OnceCell;
+use core::cell::{Cell, OnceCell};
 use core::ptr::NonNull;
 
 use super::edit::{HtmlDocMut, HtmlNewNodes};
 use super::handle::{HtmlDoc, HtmlNode, RawNode, TagId};
-use super::index::{DomIndex, TextIndex, TextRun};
+use super::index::{DocOrder, DomIndex, TextIndex, TextRun};
 use super::{Document, DomOom, NodeId};
 use crate::source_lines::Lines;
 
@@ -55,6 +55,11 @@ pub struct HtmlParsed {
     lines: Option<Lines>,
     /// `None` inside: the document has no root element to index under.
     text_index: OnceCell<Option<TextIndex>>,
+    /// Nodes `Node#text` has walked in the document's tree since the text
+    /// index was last dropped or failed - what decides when to build it.
+    text_walked: Cell<usize>,
+    /// Each node's position in document order, for XPath's sorts.
+    doc_order: OnceCell<DocOrder>,
     /// The document's character encoding: the one its bytes were decoded
     /// from (`html::encoding`), by its Encoding Standard name; UTF-8 for a
     /// document made rather than parsed.
@@ -69,6 +74,8 @@ impl HtmlParsed {
             dom_index: OnceCell::new(),
             lines,
             text_index: OnceCell::new(),
+            text_walked: Cell::new(0),
+            doc_order: OnceCell::new(),
             encoding: "UTF-8",
         }
     }
@@ -142,34 +149,92 @@ impl HtmlParsed {
     }
 
     /// Build the node -> text index if it is not built and can be.
+    ///
+    /// Not built on a document's first `Node#text`: until the walks it has
+    /// served since the last edit add up to half the document's nodes
+    /// ([`note_text_walk`](Self::note_text_walk)), a walk of the asked
+    /// node's subtree is cheaper than the build, which walks the whole tree,
+    /// and a one-off `li.text` pays for its own few nodes only. Past that the
+    /// build costs about one walk of the document, and every later call is a
+    /// lookup. Half rather than all of it: a large subtree asked again (a
+    /// `<ul>` holding most of the page) builds on its second call instead of
+    /// its third. `Ok(())` without building when it is not yet due.
     pub fn ensure_text_index(&self) -> Result<(), DomOom> {
-        if self.text_index.get().is_none() {
+        if self.text_index.get().is_none() && self.text_walked.get() >= self.doc.node_count() / 2 {
             let built = match self.doc().as_node().document_root() {
-                Some(root) => TextIndex::build(root)?,
-                None => None,
+                Some(root) => TextIndex::build(root, self.doc.node_count()),
+                None => Ok(None),
+            };
+            let Ok(built) = built else {
+                /* Retried once the walks cover the document again, not on
+                 * the next call. */
+                self.text_walked.set(0);
+                return Err(DomOom);
             };
             /* As `ensure_dom_index`: unset just now, and the build runs no
-             * Ruby. A failed build sets nothing, so a later call retries. */
+             * Ruby. */
             let _ = self.text_index.set(built);
         }
         Ok(())
     }
 
+    /// Count a walk of `nodes` nodes that served `Node#text` for a node of
+    /// the document's tree (one the index would hold), toward building the
+    /// index ([`ensure_text_index`](Self::ensure_text_index)).
+    pub fn note_text_walk(&self, nodes: usize) {
+        self.text_walked
+            .set(self.text_walked.get().saturating_add(nodes));
+    }
+
     /// The run of text slices `node`'s subtree owns, or `None`: walk
     /// instead.
     pub fn text_slices(&self, node: RawNode) -> Option<TextRun<'_>> {
-        self.text_index.get()?.as_ref()?.slices_of(&self.doc, node)
+        let id = self.doc().checked(node)?.id();
+        self.text_index.get()?.as_ref()?.slices_of(&self.doc, id)
+    }
+
+    /// Build the document-order index if it is not built: `true` when it is
+    /// there to read. A failed build (OOM) sets nothing, so a later call
+    /// retries.
+    pub fn ensure_doc_order(&self) -> bool {
+        if self.doc_order.get().is_none() {
+            let Some(order) = DocOrder::build(self.doc(), self.doc.node_count()) else {
+                return false;
+            };
+            /* As `ensure_dom_index`: unset just now, and the build runs no
+             * Ruby. */
+            let _ = self.doc_order.set(order);
+        }
+        true
+    }
+
+    /// `node`'s position in document order, once the index is built; `None`
+    /// before that, and for a node it does not hold. Never builds.
+    #[inline]
+    pub fn doc_order_position(&self, node: NodeId) -> Option<u32> {
+        self.doc_order.get()?.position(node)
+    }
+
+    /// Whether the document-order index is built.
+    pub fn has_doc_order(&self) -> bool {
+        self.doc_order.get().is_some()
     }
 
     /// Drop the indexes so the next query rebuilds them.
     pub fn invalidate_indexes(&mut self) {
         self.dom_index.take();
         self.text_index.take();
+        self.text_walked.set(0);
+        self.doc_order.take();
     }
 
     /// The bytes this document holds outside Ruby's allocator.
+    ///
+    /// The document-order index is counted: it is kept across evaluates and
+    /// grows with the arena. The element and text indexes are not, as they
+    /// never were.
     pub fn external_bytes(&self) -> usize {
-        self.doc.owned_bytes()
+        self.doc.owned_bytes() + self.doc_order.get().map_or(0, DocOrder::bytes)
     }
 
     /// An O(1) measure that grows with the document, for deciding when to

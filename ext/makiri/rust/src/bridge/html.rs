@@ -40,6 +40,7 @@ pub fn text_index_string(document: Value, node: RawNode) -> Result<Option<Value>
         if p.ensure_text_index().is_err() {
             return; /* build failed closed: walk instead */
         }
+        /* Not built yet (not due, see `ensure_text_index`): walk. */
         if let Some(run) = p.text_slices(node) {
             // SAFETY: valid UTF-8 by the text-input contract (the slices are
             // this document's text, borrowed from its index for the copy).
@@ -53,6 +54,46 @@ pub fn text_index_string(document: Value, node: RawNode) -> Result<Option<Value>
         }
     });
     found.transpose()
+}
+
+/// The descendant text of `node` as one Ruby String, by walking: one walk
+/// collects the text slices, and one pre-sized copy joins them. Out of
+/// memory for the list, the walk runs twice instead - once to size, once
+/// to copy. A walk of the document's tree is counted toward building the
+/// text index (`HtmlParsed::note_text_walk`); one outside it (a fragment, a
+/// detached subtree), which the index would not serve, is not.
+pub fn subtree_text(document: Value, node: HtmlNode<'_>) -> Result<Value, Error> {
+    use crate::falloc::VecPush;
+    let texts = || {
+        core::iter::successors(node.first_child(), move |c| c.preorder_next(node))
+            .filter_map(|c| c.char_data())
+            .filter(|d| !d.is_empty())
+    };
+    let mut slices: Vec<&[u8]> = Vec::new();
+    let mut walked = 0usize;
+    let collected = core::iter::successors(node.first_child(), |c| c.preorder_next(node))
+        .inspect(|_| walked += 1)
+        .filter_map(|c| c.char_data())
+        .filter(|d| !d.is_empty())
+        .try_for_each(|d| slices.falloc_push(d))
+        .is_ok();
+    let in_tree = node.ancestors().last().unwrap_or(node).node_type() == NodeType::Document;
+    if collected && in_tree {
+        with_html_parsed_known(document, |p| p.note_text_walk(walked));
+    }
+    // SAFETY: valid UTF-8 by the text-input contract (the document's own
+    // text, borrowed for the copy).
+    let built = unsafe {
+        if collected {
+            let total = slices.iter().map(|s| s.len()).sum();
+            crate::bridge::string::ruby_str_from_slices(slices.iter().copied(), total)
+        } else {
+            let total = texts().map(<[u8]>::len).sum();
+            crate::bridge::string::ruby_str_from_slices(texts(), total)
+        }
+    }?;
+    // SAFETY: the String just built, live and on this frame.
+    Ok(unsafe { value(built) })
 }
 
 /// The 1-based source line for `node`, or `None` when unknown.

@@ -10,8 +10,9 @@
 //! first 1024 bytes, as the Standard encourages. Autodetection takes UTF-8 when
 //! the whole input is valid UTF-8 - which the Standard's own note recommends
 //! when the whole file can be examined - and asks `chardetng`, Firefox's
-//! detector, otherwise; it always answers, so the implementation-defined default
-//! is never reached. "Change the encoding" is [`EncodingWatch`]'s verdict;
+//! detector, otherwise, over the first 64 KiB from the first byte that is not
+//! ASCII ([`DETECT_MAX`]); it always answers, so the implementation-defined
+//! default is never reached. "Change the encoding" is [`EncodingWatch`]'s verdict;
 //! the re-read it asks for - from the bytes, as the Standard asks a browser
 //! to do when it cannot switch decoders on the fly - is the document parse's
 //! (`html::tree::parse_document_bytes`), which this module does not drive.
@@ -160,17 +161,40 @@ pub fn sniff(input: &[u8], transport: Option<&'static Encoding>) -> Decision {
     Decision::tentative(encoding, valid_utf8)
 }
 
+/// How much of the input [`detect`] hands `chardetng`, from the first byte
+/// that is not ASCII (or is an escape).
+///
+/// The detector reads ~20 MB/s, a tenth of the parser's speed, so a whole
+/// undeclared 8 MB page spent half a second guessing - and any input could
+/// be made to. Its guess settles long before: over sample pages in fifteen
+/// legacy encodings (`notes/doc_order_bench/detect_caps.rb`) every cap from
+/// 1 KiB guessed as the whole input did; this one leaves a wide margin.
+const DETECT_MAX: usize = 64 * 1024;
+
 /// The autodetection step: UTF-8 when the input is valid UTF-8, else
 /// `chardetng`'s guess, with whether the input was found valid UTF-8. An
 /// escape byte sends even valid UTF-8 to the detector: ISO-2022-JP is
 /// seven-bit, so it is valid UTF-8 too, and only its escape sequences tell
 /// it apart.
+///
+/// The UTF-8 test reads the whole input (it is fast); the detector reads
+/// [`DETECT_MAX`] bytes from the first byte that is not ASCII or is an
+/// escape. The ASCII before it - a page's inline scripts and styles - tells
+/// nothing apart, and starting there is starting on a character boundary in
+/// every encoding the detector guesses. A cut short of the end is not
+/// reported as the end (`last`), so an ISO-2022-JP sequence left open by the
+/// cut does not count against it.
 fn detect(input: &[u8]) -> (&'static Encoding, bool) {
     if !input.contains(&0x1B) && crate::cutf8::valid(input) {
         return (UTF_8, true);
     }
     let mut detector = chardetng::EncodingDetector::new(chardetng::Iso2022JpDetection::Allow);
-    detector.feed(input, true);
+    let from = input
+        .iter()
+        .position(|&b| b >= 0x80 || b == 0x1B)
+        .unwrap_or(input.len());
+    let to = input.len().min(from.saturating_add(DETECT_MAX));
+    detector.feed(input.get(from..to).unwrap_or_default(), to == input.len());
     (detector.guess(None, chardetng::Utf8Detection::Allow), false)
 }
 
@@ -292,6 +316,51 @@ mod tests {
             Transport::Declared(WINDOWS_1252)
         );
         assert_eq!(transport_for(Named(b"UTF-32LE")), Transport::Unlabelled);
+    }
+
+    /// `text` repeated past `n` bytes once encoded in `e`.
+    fn encoded_past(text: &str, e: &'static Encoding, n: usize) -> Vec<u8> {
+        let one = e.encode(text).0.into_owned();
+        let mut out = Vec::new();
+        while out.len() <= n {
+            out.extend_from_slice(&one);
+        }
+        out
+    }
+
+    const JA: &str = "吾輩は猫である。名前はまだ無い。どこで生れたかとんと見当がつかぬ。\n";
+
+    #[test]
+    fn the_detector_starts_past_an_ascii_head() {
+        let mut input = b"<script>".to_vec();
+        input.resize(DETECT_MAX * 2, b' ');
+        input.extend(encoded_past(JA, SHIFT_JIS, 4096));
+        assert_eq!(detect(&input), (SHIFT_JIS, false));
+    }
+
+    #[test]
+    fn the_detector_reads_only_its_window() {
+        let mut input = encoded_past(JA, EUC_JP, DETECT_MAX);
+        input.extend(encoded_past(JA, SHIFT_JIS, DETECT_MAX * 4));
+        /* Fed all of it, the detector guesses otherwise (GBK, as it
+         * happens): what it answers here is the window's alone. */
+        let mut whole = chardetng::EncodingDetector::new(chardetng::Iso2022JpDetection::Allow);
+        whole.feed(&input, true);
+        assert_ne!(whole.guess(None, chardetng::Utf8Detection::Allow), EUC_JP);
+        assert_eq!(detect(&input).0, EUC_JP);
+    }
+
+    #[test]
+    fn a_window_cut_inside_iso_2022_jp_is_not_its_end() {
+        /* The window ends at every offset into a line - mid-escape, mid-
+         * character, in JIS mode - by shifting the lines after the first. */
+        let line = ISO_2022_JP.encode(JA).0.into_owned();
+        for shift in 0..line.len() {
+            let mut input = line.clone();
+            input.resize(line.len() + shift, b'x');
+            input.extend(encoded_past(JA, ISO_2022_JP, DETECT_MAX * 2));
+            assert_eq!(detect(&input).0, ISO_2022_JP, "shifted by {shift}");
+        }
     }
 
     #[test]
