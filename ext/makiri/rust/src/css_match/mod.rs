@@ -194,7 +194,8 @@ use crate::falloc::VecPush;
 use crate::limits::NODE_SET_MAX;
 use crate::selectors::ast::Lists;
 
-use compile::{compile, Compiled};
+use compile::compile;
+use core::ops::ControlFlow;
 use dom::CssNode;
 use query::Query;
 
@@ -323,15 +324,35 @@ pub fn matches_any<'d, N: CssNode<'d>>(
     ns: &Namespaces<'_>,
     node: N,
 ) -> Result<bool, MatchFailure> {
+    with_query(scratch, groups, ns, None, DEFAULT_WORK_BUDGET, |query| {
+        if node.element().is_none() {
+            return Ok(false);
+        }
+        query.matches_top(node)
+    })
+}
+
+/// Compile `groups` ([`compile`]: a selector it refuses is refused before
+/// any node is matched), make a query over it - walking `walk_in` when
+/// given - and run `f`; every table and stack goes back to `scratch`
+/// whatever `f` answers. The one place the entry points borrow and return
+/// a [`Scratch`].
+fn with_query<'d, N: CssNode<'d>, R, E: From<MatchFailure>>(
+    scratch: &mut Scratch<N::Host>,
+    groups: Lists<'_>,
+    ns: &Namespaces<'_>,
+    walk_in: Option<N::Doc>,
+    limit: u64,
+    f: impl FnOnce(&mut Query<'_, '_, 'd, N>) -> Result<R, E>,
+) -> Result<R, E> {
     let compiled = compile(&mut scratch.tables, groups, ns)?;
-    let answer = if node.element().is_none() {
-        Ok(false)
-    } else {
-        Query::new(&compiled, None, DEFAULT_WORK_BUDGET, scratch).and_then(|mut query| {
-            let answer = query.matches_top(node);
+    let answer = match Query::new(&compiled, walk_in, limit, scratch) {
+        Ok(mut query) => {
+            let answer = f(&mut query);
             query.finish(scratch);
             answer
-        })
+        }
+        Err(e) => Err(e.into()),
     };
     compiled.give_back(&mut scratch.tables);
     answer
@@ -386,37 +407,23 @@ fn select_all_with_limit<'d, N: CssNode<'d>>(
     ns: &Namespaces<'_>,
     limit: u64,
 ) -> Result<Vec<N>, QueryFailure> {
-    let compiled = compile(&mut scratch.tables, groups, ns)?;
-    let found = select_all_compiled(scratch, &compiled, root, limit);
-    compiled.give_back(&mut scratch.tables);
-    found
-}
-
-fn select_all_compiled<'d, N: CssNode<'d>>(
-    scratch: &mut Scratch<N::Host>,
-    compiled: &Compiled<'_>,
-    root: N,
-    limit: u64,
-) -> Result<Vec<N>, QueryFailure> {
-    let mut query = Query::new(compiled, Some(root.owner_document()), limit, scratch)?;
-    let mut walk = || {
+    let walk_in = Some(root.owner_document());
+    with_query(scratch, groups, ns, walk_in, limit, |query| {
         let mut out = Vec::new();
-        let candidates = Candidates::of(&query, root);
-        let every = candidates.all_match();
-        for n in candidates {
-            if every || query.matches_top(n)? {
-                if out.len() >= NODE_SET_MAX {
-                    return Err(QueryFailure::Overflow);
-                }
-                out.falloc_push(n)
-                    .map_err(|()| QueryFailure::Match(MatchFailure::Oom))?;
+        let stopped = each_match(query, root, |n| {
+            if out.len() >= NODE_SET_MAX {
+                return ControlFlow::Break(QueryFailure::Overflow);
             }
+            match out.falloc_push(n) {
+                Ok(()) => ControlFlow::Continue(()),
+                Err(()) => ControlFlow::Break(QueryFailure::Match(MatchFailure::Oom)),
+            }
+        })?;
+        match stopped {
+            Some(failure) => Err(failure),
+            None => Ok(out),
         }
-        Ok(out)
-    };
-    let found = walk();
-    query.finish(scratch);
-    found
+    })
 }
 
 /// Test-only: [`select_all`] with a caller-chosen work-budget limit instead
@@ -443,36 +450,33 @@ pub fn select_first<'d, N: CssNode<'d>>(
     groups: Lists<'_>,
     ns: &Namespaces<'_>,
 ) -> Result<Option<N>, MatchFailure> {
-    let compiled = compile(&mut scratch.tables, groups, ns)?;
-    let found = select_first_compiled(scratch, &compiled, root);
-    compiled.give_back(&mut scratch.tables);
-    found
+    let walk_in = Some(root.owner_document());
+    with_query(scratch, groups, ns, walk_in, DEFAULT_WORK_BUDGET, |query| {
+        each_match(query, root, ControlFlow::Break)
+    })
 }
 
-fn select_first_compiled<'d, N: CssNode<'d>>(
-    scratch: &mut Scratch<N::Host>,
-    compiled: &Compiled<'_>,
+/// Run `f` on each descendant of `root` the walking `query` matches, in
+/// document order - its [`Candidates`], each tested unless the index
+/// already answers for all - until `f` breaks, with what it broke with.
+/// Internal iteration rather than an `Iterator`: the loop stays the one
+/// the compiler inlines `f` into, where an iterator's per-item `Result`
+/// cost an index-answered `css("li")` 20%.
+fn each_match<'d, N: CssNode<'d>, B>(
+    query: &mut Query<'_, '_, 'd, N>,
     root: N,
-) -> Result<Option<N>, MatchFailure> {
-    let mut query = Query::new(
-        compiled,
-        Some(root.owner_document()),
-        DEFAULT_WORK_BUDGET,
-        scratch,
-    )?;
-    let mut walk = || {
-        let candidates = Candidates::of(&query, root);
-        let every = candidates.all_match();
-        for n in candidates {
-            if every || query.matches_top(n)? {
-                return Ok(Some(n));
+    mut f: impl FnMut(N) -> ControlFlow<B>,
+) -> Result<Option<B>, MatchFailure> {
+    let candidates = Candidates::of(query, root);
+    let every = candidates.all_match();
+    for n in candidates {
+        if every || query.matches_top(n)? {
+            if let ControlFlow::Break(b) = f(n) {
+                return Ok(Some(b));
             }
         }
-        Ok(None)
-    };
-    let found = walk();
-    query.finish(scratch);
-    found
+    }
+    Ok(None)
 }
 
 /// The elements a walking query tests, in document order: `root`'s element
