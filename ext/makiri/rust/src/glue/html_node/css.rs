@@ -1,7 +1,7 @@
 //! `Node#css` / `#at_css` / `#matches?`.
 //!
 //! The selector engine lives in [`crate::css_match`] (matching,
-//! over the typed adapter, non-recursive) plus [`crate::css_match::cache`]
+//! over the typed adapter, non-recursive) plus [`crate::css_cache`]
 //! (parsing, with the parser port [`crate::selectors`], AND caching the
 //! parse across repeat calls with the same selector string), neither of
 //! which knows about Ruby. This module verifies the selector, maps an engine failure to
@@ -17,8 +17,8 @@ use crate::bridge::gvl::held;
 use crate::bridge::html::wrap_html_node;
 use crate::bridge::node_set::node_set_from;
 use crate::bridge::string::{ruby_verified_text, RubyText};
+use crate::css_cache;
 use crate::css_match;
-use crate::css_match::cache;
 use crate::glue::css::{match_error, parse_error, query_error, CssArgs};
 use crate::html_dom::html::RawNode;
 use crate::init::MOD_HTML_NODE_METHODS;
@@ -38,7 +38,7 @@ fn css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Value, Error> {
         let gvl = held(ruby);
         let matched = args
             .with_namespaces(|ns| {
-                cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
+                css_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
                     css_match::select_all(scratch, this.node(), groups, ns)
                 })
             })?
@@ -64,7 +64,7 @@ fn at_css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Option<Value>, 
         let gvl = held(ruby);
         let matched = args
             .with_namespaces(|ns| {
-                cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
+                css_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
                     css_match::select_first(scratch, this.node(), groups, ns)
                 })
             })?
@@ -92,7 +92,7 @@ fn matches(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<bool, Error> {
         let node = this.node();
         let matched = args
             .with_namespaces(|ns| {
-                cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
+                css_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
                     css_match::matches_any(scratch, groups, ns, node)
                 })
             })?

@@ -73,12 +73,19 @@ pub mod caught;
 pub mod gvl;
 
 /// The CSS matcher behind `Node#css`/`#at_css`/`#matches?`
-/// (`glue::html_node::css`, via `css_match::cache`): Lexbor's
+/// (`glue::html_node::css`, via `css_cache`): Lexbor's
 /// `lxb_selectors_*` control flow in safe Rust, on an explicit heap work
 /// stack rather than native recursion, over the selector parser's views and
 /// any DOM that implements its traits (`css_match::dom`). Ruby- and
 /// Lexbor-free, like the engine.
 pub mod css_match;
+
+/// The compiled-selector cache in front of `css_match`, with the `Scratch`
+/// each host's queries borrow: process-global, behind the GVL. It names the
+/// two hosts (`html::dom::css`, `xml::css`), so it sits beside the matcher,
+/// which knows none, rather than in it.
+#[cfg(feature = "html-dom")]
+pub mod css_cache;
 
 /// The CSS-to-XPath lowering `Makiri::XML`'s CSS ran on before `css_match`
 /// took it over: kept only as the reference the XML matcher is tested and

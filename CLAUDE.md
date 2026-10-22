@@ -531,10 +531,10 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            `lxb_*`/`Lxb*` name outside it is 0
     css_match/             the CSS matcher, over any DOM that implements its
                            traits (`css_match::dom`: the HTML arena's in
-                           `html/dom/css.rs`, the XML arena's in `xml/css.rs`),
-                           and the compiled-selector cache in front of it
-                           (`cache.rs`); `#![forbid(unsafe_code)]`, Ruby- and
-                           Lexbor-free
+                           `html/dom/css.rs`, the XML arena's in `xml/css.rs`);
+                           `#![forbid(unsafe_code)]`, Ruby- and Lexbor-free,
+                           and naming no host. The compiled-selector cache in
+                           front of it, which names both, is `css_cache.rs`
     css/                   the CSS-to-XPath lowering XML's CSS used to run on,
                            kept only as the reference the XML matcher is held
                            to (`xml::css_tests`, the `css` fuzz target; built
@@ -857,7 +857,7 @@ policy is a new item stated in each `impl`. The HTML backend reports the DOM's
 case-preserved `localName` (`refX`, `foreignObject`), not Lexbor's lower-cased
 stored name.
 
-**CSS** (`css_match/` + `css_match/cache.rs` + `selectors/`). `Node#{css,at_css,matches?}` (`glue::html_node::css`, `glue::xml_node::css`)
+**CSS** (`css_match/` + `css_cache.rs` + `selectors/`). `Node#{css,at_css,matches?}` (`glue::html_node::css`, `glue::xml_node::css`)
 match through `css_match` on both representations - an original,
 `#![forbid(unsafe_code)]` Rust port of Lexbor's `lxb_selectors_*` state
 machine (its `find`/`found_check`/`not_found` loop over a chain's compounds,
@@ -871,7 +871,7 @@ line, into an owned index-arena AST read through views of the same shape as
 matcher and the XML lowering read either. `lexbor::selector_diff` holds it to
 Lexbor's parser view for view (the `selector_diff` fuzz target too); the two
 answers that differ on purpose are `docs/parser_differences.ja.md` S2/S3.
-The glue reaches it through `css_match::cache`: an adaptive
+The glue reaches it through `css_cache`: an adaptive
 compiled-selector cache (`CachePolicy`, the OLD HTML engine's - same
 constants, same flush-on-cap/bypass-on-low-hit-rate/retest behavior) holding
 each parsed selector it keeps, so a repeated selector string is not re-parsed
@@ -889,7 +889,7 @@ replaced for HTML) is the differential-testing reference
 and its randomized siblings, and the `html_css_diff` fuzz target) and
 nothing else: `#[cfg(test)]` or the `css-reference` feature, so no build
 that ships carries it, and without a cache of its own - parse, run, clean
-per query. The adaptive cache policy lives only in `css_match::cache`.
+per query. The adaptive cache policy lives only in `css_cache`.
 **The matcher is Lexbor's control flow, in safe Rust** (`css_match`'s
 `Compiled` and `Query`). `compile` decodes every simple selector once into a
 `Step` (Lexbor's entry) and splits every chain - top level and every nested
@@ -1300,7 +1300,7 @@ Key decisions that got there, worth not regressing:
   `at_css` to 2.70M i/s (~3.8x nokolexbor), `css` 8.38k. Verify with
   `bench`'s `at_css`/`css` rows, the differential fuzzer, `rake oom` and
   `FUZZ_ARGS="--target css" bundle exec rake fuzz:sanitize`.
-- **The compiled-selector cache** (`css_match::cache`):
+- **The compiled-selector cache** (`css_cache`):
   `Node#css`/`#at_css`/`#matches?` do not re-parse a repeated selector string
   - the OLD engine's adaptive `CachePolicy` (same constants, same
   flush-on-cap/bypass-on-low-hit-rate/retest behavior), now holding the parser

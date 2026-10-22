@@ -174,10 +174,6 @@
 
 #![forbid(unsafe_code)]
 
-/// The compiled-selector cache in front of the matcher, with the `Scratch`
-/// each host's queries borrow; process-global, behind the GVL.
-#[cfg(feature = "html-dom")]
-pub mod cache;
 mod compile;
 pub mod dom;
 mod ns;

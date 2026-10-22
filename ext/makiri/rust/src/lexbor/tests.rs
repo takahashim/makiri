@@ -2827,7 +2827,7 @@ mod css_match {
     }
 }
 
-/// `css_match::cache` - the compiled-selector cache reintroduced for
+/// `css_cache` - the compiled-selector cache reintroduced for
 /// `Node#css`/`#at_css`/`#matches?` once they moved to `css_match`,
 /// mirroring `lexbor::selectors`'s adaptive `CachePolicy`/`SelectorCache` over
 /// its OWN separate parser/arena (module doc). `Gvl::exclusive()` stands in
@@ -2843,7 +2843,7 @@ mod css_match {
 /// correctness, and a rejected selector does not disturb what is already
 /// cached.
 mod selector_cache {
-    use crate::css_match::cache::with_compiled;
+    use crate::css_cache::with_compiled;
     use crate::css_match::select_all;
     use crate::gvl::Gvl;
     use crate::html_dom::html::{HtmlNode, RawNode};

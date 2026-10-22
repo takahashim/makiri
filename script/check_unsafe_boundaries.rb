@@ -99,7 +99,7 @@ FORBID_ROOTS = %w[css/mod.rs glue/mod.rs css_match/mod.rs selectors/mod.rs xml/m
 FORBID_FILES = %w[
   bridge/dom_error.rs child_index.rs conformance/mod.rs
   css/build.rs css/lower.rs css/mod.rs
-  css_match/cache.rs css_match/mod.rs cutf8.rs
+  css_cache.rs css_match/mod.rs cutf8.rs
   cutf8/verify.rs dom_rules.rs engine_error.rs
   falloc/verify.rs glue/css.rs glue/html_doc.rs
   glue/html_node/css.rs glue/html_node/mutate.rs glue/html_node/read.rs
