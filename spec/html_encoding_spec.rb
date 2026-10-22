@@ -61,6 +61,15 @@ RSpec.describe "HTML document encoding" do
     end
   end
 
+  describe "a US-ASCII String, which is what File.read gives any bytes under LANG=C" do
+    it "declares nothing, so a <meta> is honoured and legacy bytes are sniffed" do
+      src = %(<meta charset="shift_jis"><p>#{"日本語".encode("Shift_JIS").b}</p>).b.force_encoding("US-ASCII")
+      doc = Makiri::HTML(src)
+      expect([doc.encoding, text_of(doc)]).to eq(%w[Shift_JIS 日本語])
+      expect(Makiri::HTML("<p>caf\xC3\xA9</p>".b.force_encoding("US-ASCII")).encoding).to eq("UTF-8")
+    end
+  end
+
   describe "encoding:" do
     it "is the transport layer's encoding, over the String's own" do
       doc = Makiri::HTML(JA.encode("EUC-JP").b, encoding: "euc-jp")
@@ -77,10 +86,12 @@ RSpec.describe "HTML document encoding" do
         tagged = Makiri::HTML(src.dup.force_encoding(enc))
         expect([given.encoding, text_of(given)]).to eq([tagged.encoding, text_of(tagged)]), enc.name
       end
-      # US-ASCII is Ruby's, a subset of UTF-8 - not the Standard's "ascii" (windows-1252).
+      # BINARY and US-ASCII (Ruby's "ascii", not the Standard's windows-1252)
+      # declare nothing, so the document is sniffed.
+      %w[BINARY ascii US-ASCII].each do |enc|
+        expect(Makiri::HTML(%(<meta charset="euc-jp"><p>x</p>), encoding: enc).encoding).to eq("EUC-JP"), enc
+      end
       expect(Makiri::HTML(bytes, encoding: "ascii").encoding).to eq("UTF-8")
-      # BINARY declares nothing, so the document is sniffed.
-      expect(Makiri::HTML(%(<meta charset="euc-jp"><p>x</p>), encoding: "BINARY").encoding).to eq("EUC-JP")
     end
 
     it "refuses a name neither Ruby nor the Encoding Standard knows" do

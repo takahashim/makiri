@@ -348,8 +348,10 @@ pub fn explains(input: &[u8], context: Option<&str>) -> Vec<Fix> {
         fixes.push(Fix::P5);
     }
     /* P6: text after a non-whitespace character in "in column group" with
-     * no colgroup as the current node: a template's, or a colgroup context. */
-    if colgroup || (has(input, b"col") && has(input, b"template")) {
+     * no colgroup as the current node: a template's - a template open, or a
+     * fragment parsed in one - or a colgroup context. */
+    if colgroup || (has(input, b"col") && (has(input, b"template") || context == Some("template")))
+    {
         fixes.push(Fix::P6);
     }
     /* P7: text after `</html>` in a frameset document. */

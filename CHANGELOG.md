@@ -6,29 +6,33 @@
 
 * HTML documents are decoded as browsers decode them: the HTML Standard's
   encoding sniffing algorithm with the Encoding Standard's decoders. A
-  binary (ASCII-8BIT) String is read in the encoding its byte order mark or
-  `<meta>` declares, or as UTF-8 when it is valid UTF-8, or else in a
-  detected encoding (Shift_JIS, EUC-JP, ISO-2022-JP, ...); a `<meta>` past
-  the first 1024 bytes re-reads the document in the encoding it names.
-  `Makiri::HTML(src, encoding: "shift_jis")` gives the encoding outright -
-  read as a String tagged with it is read, so `encoding: "US-ASCII"` is
-  UTF-8 and `encoding: Encoding::UTF_32LE` works - and `Document#encoding`
-  returns the one used (it was always `"UTF-8"`).
+  binary (ASCII-8BIT) or US-ASCII String is read in the encoding its byte
+  order mark or `<meta>` declares, or as UTF-8 when it is valid UTF-8, or
+  else in a detected encoding (Shift_JIS, EUC-JP, ISO-2022-JP, ...); a
+  `<meta>` past the first 1024 bytes re-reads the document in the encoding
+  it names. `Makiri::HTML(src, encoding: "shift_jis")` gives the encoding
+  outright - read as a String tagged with it is read, so
+  `encoding: Encoding::UTF_32LE` works - and `Document#encoding` returns
+  the one used (it was always `"UTF-8"`).
 
 ### Changed
 
-* A binary String holding invalid UTF-8 is no longer read as UTF-8 with
-  U+FFFD replacements: it is sniffed, and usually detected as a legacy
-  encoding. Pass `encoding: "utf-8"` (or a UTF-8 String) for the old reading.
+* A binary or US-ASCII String holding invalid UTF-8 is no longer read as
+  UTF-8 with U+FFFD replacements: it is sniffed, and read in the encoding a
+  detector guesses - which, for short text or text with little variety,
+  can be the wrong one. Pass `encoding:` when it is known, `"utf-8"` (or a
+  UTF-8 String) for the old reading.
 * A String in a legacy encoding is decoded with the Encoding Standard's
   decoder for it rather than Ruby's transcoder, as browsers decode it:
   `ISO-8859-1` reads as windows-1252 (`\x80` is `€`), and Shift_JIS's
   `0x8160` is U+301C where Ruby's `Windows-31J` made U+FF5E.
 * `Makiri::XML` `#ancestors` returns a NodeSet, as HTML's does; it returned
   an Array.
-* `Makiri::XML` raises `Makiri::XML::SyntaxError` for an encoding
-  declaration naming an encoding Ruby does not know, as XML 1.0 has it; it
-  was ignored, or reported as conflicting with the String's encoding.
+* `Makiri::XML` reads an encoding declaration by its IANA charset name or
+  alias in any case (`latin1`, `csISOLatin1`), as XML 1.0 has it, and
+  raises `Makiri::XML::SyntaxError` for a name that is neither (`utf8`);
+  such a declaration was ignored, or reported as conflicting with the
+  String's encoding.
 
 ### Fixed
 

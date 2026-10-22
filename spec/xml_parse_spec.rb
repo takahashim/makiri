@@ -421,6 +421,20 @@ RSpec.describe "Makiri::XML minimal parse" do
       expect(ok?("<?xml version='1.0' encoding='Shift_JIS'?><r>x</r>".encode("US-ASCII"))).to be true
     end
 
+    it "reads a declaration by its IANA charset name or alias, in any case (XML 1.0 4.3.3)" do
+      %w[ISO-8859-1 latin1 L1 csISOLatin1 IBM819].each do |name|
+        src = %(<?xml version="1.0" encoding="#{name}"?><r>caf\xE9</r>).b
+        expect(Makiri::XML(src).root.text).to eq("café"), name
+      end
+    end
+
+    it "rejects a declaration whose name is not a registered one, or names the process's encoding" do
+      %w[utf8 locale external].each do |name|
+        expect { Makiri::XML(%(<?xml version="1.0" encoding="#{name}"?><r/>).b) }
+          .to raise_error(Makiri::XML::SyntaxError, /unknown encoding: #{name}/)
+      end
+    end
+
     it "rejects a declaration naming an encoding Ruby does not know, whatever the String's encoding" do
       src = "<?xml version='1.0' encoding='no-such-encoding'?><r>x</r>"
       [src, src.b, src.encode("US-ASCII")].each do |s|

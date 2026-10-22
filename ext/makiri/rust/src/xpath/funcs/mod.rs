@@ -28,7 +28,7 @@ use super::order::nodeset_unique_sorted;
 use super::value::Focus;
 use super::value::*;
 use crate::err_setf;
-use crate::falloc::{try_vec_with_capacity, MapInsert};
+use crate::falloc::{try_vec_with_capacity, Reserve};
 use core::ops::ControlFlow;
 use std::collections::HashMap;
 
@@ -646,17 +646,18 @@ impl<'d, D: Dom<'d>> IdLookup<'d, D> {
                 return ControlFlow::Break(e);
             }
             if doc.node_type(n) == NodeType::Element {
-                if let Some(id) = doc.get_attribute(n, id_attr) {
-                    if !id.is_empty()
-                        && !index.contains_key(id)
-                        && index.falloc_insert(id, n).is_err()
-                    {
+                if let Some(id) = doc.get_attribute(n, id_attr).filter(|id| !id.is_empty()) {
+                    /* One lookup: the reserve first, so `entry` - which grows
+                     * a full table for a vacant key - allocates nothing; the
+                     * first element in document order keeps the ID. */
+                    if index.falloc_reserve(1).is_err() {
                         return ControlFlow::Break(err_setf!(
                             budget.sink(),
                             ErrorKind::Oom,
                             "out of memory in id()"
                         ));
                     }
+                    index.entry(id).or_insert(n);
                 }
             }
             ControlFlow::Continue(())

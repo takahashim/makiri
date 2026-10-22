@@ -44,7 +44,8 @@ fn compatible(a: Encoding, b: Encoding) -> bool {
 }
 
 /// Whether a String's own tag claims no encoding for the document it holds:
-/// ASCII-8BIT, and US-ASCII - an XML rule, not the HTML reader's. A String
+/// ASCII-8BIT, and US-ASCII - as the HTML document reader has it
+/// (`Encoding::kind`). A String
 /// tagged either is decoded by what its bytes declare (the BOM, then
 /// `encoding=`), and validated as UTF-8 when they declare nothing.
 ///
@@ -72,11 +73,12 @@ fn effective_encoding(str: RString) -> Result<Encoding, Error> {
     // which can allocate, run after the borrow has ended.
     let (bom, decl) = unsafe { with_bytes(str, sniff) };
     let bom = bom.and_then(|b| Encoding::find(b.name().as_bytes()));
-    /* XML 1.0 §4.3.3: an entity in an encoding the processor cannot
-     * process is a fatal error - never read as some other encoding. */
+    /* XML 1.0 §4.3.3: the name is an IANA charset name or alias, Ruby's or
+     * one `encoding_names` maps to Ruby's; an entity in an encoding the
+     * processor cannot process is a fatal error - never read as another. */
     let decl = match decl {
         None => None,
-        Some(d) => Some(Encoding::find(d.as_bytes()).ok_or_else(|| {
+        Some(d) => Some(declared_encoding(d.as_bytes()).ok_or_else(|| {
             syntax_error(format!(
                 "XML encoding declaration names an unknown encoding: {}",
                 String::from_utf8_lossy(d.as_bytes())
@@ -112,6 +114,18 @@ fn effective_encoding(str: RString) -> Result<Encoding, Error> {
         return Ok(tag);
     }
     Ok(bom.or(decl).unwrap_or_else(Encoding::utf8))
+}
+
+/// The encoding an encoding declaration names: Ruby's for an IANA name or
+/// alias (`encoding_names` supplying the aliases Ruby lacks). Ruby's own
+/// names for the process's encodings (`locale`, `external`, ...) name no
+/// charset, so a document cannot reach them.
+fn declared_encoding(name: &[u8]) -> Option<Encoding> {
+    if crate::xml::encoding_names::is_ruby_special(name) {
+        return None;
+    }
+    Encoding::find(name)
+        .or_else(|| crate::xml::encoding_names::ruby_name(name).and_then(Encoding::find))
 }
 
 /// A `Makiri::XML::SyntaxError` carrying `msg`.

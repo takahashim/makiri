@@ -16,6 +16,7 @@ pub mod css;
 #[cfg(test)]
 mod css_tests;
 pub mod dom_name;
+pub mod encoding_names;
 pub mod encoding_sniff;
 pub mod index;
 pub mod mutate;
