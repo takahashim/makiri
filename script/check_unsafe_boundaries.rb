@@ -107,7 +107,7 @@ FORBID_FILES = %w[
   glue/node_set.rs glue/query.rs glue/xml_doc.rs
   glue/xml_node/css.rs glue/xml_node/mod.rs glue/xml_node/mutate.rs
   glue/xml_node/ns.rs glue/xml_node/read.rs glue/xml_node/serialize.rs
-  glue/xpath_context.rs html/dom/mod.rs html/encoding.rs
+  glue/xpath_context.rs html/dom/mod.rs html/encoding/mod.rs
   html/mod.rs html/tokenizer/mod.rs html/tree/mod.rs
   html_dom.rs lexbor/adapter/dom_index.rs lexbor/contains_guard.rs
   limits.rs node_type.rs ptr_table.rs
