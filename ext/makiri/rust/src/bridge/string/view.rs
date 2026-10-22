@@ -98,9 +98,11 @@ enum Refusal<P> {
     Check(P),
     /// The bytes could not be copied.
     Oom,
-    /// The String is in an encoding whose text has no UTF-8 form, or holds
-    /// bytes that are not that encoding's ([`utf8_strict`]).
-    Encoding,
+    /// The transcode to UTF-8 raised ([`utf8_strict`]): an `EncodingError`
+    /// when the text has no UTF-8 form or holds bytes that are not its
+    /// encoding's - or anything else that cut it short, which
+    /// [`encoding_refusal`] hands back as it is.
+    Encoding(Error),
 }
 
 impl<P> crate::falloc::Oom for Refusal<P> {
@@ -111,8 +113,9 @@ impl<P> crate::falloc::Oom for Refusal<P> {
 }
 
 impl<C: Checked> RubyStr<C> {
-    /// A checked view of `s`: its bytes copied, then checked by `check` (which
-    /// gets the String, for its cached coderange, and the copy).
+    /// A checked view of `s`: read in its own encoding ([`utf8_strict`]), its
+    /// UTF-8 bytes copied, then checked by `check` (which gets the String, for
+    /// its cached coderange, and the copy).
     ///
     /// The coderange `check` consults is the String's current one, and the
     /// copy was taken from the String as it is now, with no Ruby in between
@@ -124,7 +127,7 @@ impl<C: Checked> RubyStr<C> {
         /* Read in its own encoding: a String in another one is transcoded
          * first, and the copy and the check are of the UTF-8 it became. The
          * transcode is a fresh String on this frame, so the GC keeps it. */
-        let s = utf8_strict(s).map_err(|_| Refusal::Encoding)?;
+        let s = utf8_strict(s).map_err(Refusal::Encoding)?;
         let bytes = copy_bytes(s).or_oom()?;
         match check(s, bytes.as_slice()) {
             Some(problem) => Err(Refusal::Check(problem)),
@@ -228,10 +231,23 @@ pub fn text_check(coderange_str: RString, bytes: &[u8]) -> TextVerdict {
     crate::cutf8::text_verdict(bytes, ruby_str_known_valid_utf8(coderange_str))
 }
 
-/// The error for a checked view whose bytes could not be copied.
 /// Why a String in another encoding was refused ([`Refusal::Encoding`]).
 const NOT_UTF8_CONVERTIBLE: &str = "could not be converted to UTF-8 from its encoding";
 
+/// The error for a String whose transcode to UTF-8 raised `e`: an
+/// `EncodingError` is the String's own fault, worded as the contract's
+/// refusal; anything else - a `NoMemoryError`, an interrupt delivered while
+/// Ruby loaded a converter - is not about the String, and is returned as it
+/// was rather than reworded as one.
+fn encoding_refusal(what: &str, e: Error) -> Error {
+    if e.is_kind_of(crate::bridge::ruby::gvl_ruby().exception_encoding_error()) {
+        text_error(what, NOT_UTF8_CONVERTIBLE)
+    } else {
+        e
+    }
+}
+
+/// The error for a checked view whose bytes could not be copied.
 fn oom_reading() -> Error {
     makiri_error("out of memory reading a Ruby string")
 }
@@ -295,7 +311,7 @@ fn verified_text_raising(
         )),
         Refusal::Check(v) => text_error(what, v.problem().unwrap_or_default()),
         Refusal::Oom => oom_reading(),
-        Refusal::Encoding => text_error(what, NOT_UTF8_CONVERTIBLE),
+        Refusal::Encoding(e) => encoding_refusal(what, e),
     })
 }
 
@@ -309,7 +325,7 @@ pub fn ruby_verified_data(in_: Value, what: &str) -> Result<RubyData, Error> {
     RubyData::acquire(s, |s, b| text_check(s, b).data_problem()).map_err(|r| match r {
         Refusal::Check(problem) => text_error(what, problem),
         Refusal::Oom => oom_reading(),
-        Refusal::Encoding => text_error(what, NOT_UTF8_CONVERTIBLE),
+        Refusal::Encoding(e) => encoding_refusal(what, e),
     })
 }
 
@@ -356,8 +372,12 @@ pub fn ruby_try_verified_text_pair(
 /// Nothing is coerced: `sv` is a String by type.
 pub fn ruby_try_verified_text(sv: RString, max_bytes: usize) -> Result<RubyText, &'static str> {
     const TOO_LONG: &str = "string exceeds the maximum length";
-    /* Refused before the copy, so an over-long String is not copied whole
-     * only to be refused; the check on the copy below stays authoritative. */
+    /* The cap is on the UTF-8 the String becomes, so it is measured after the
+     * transcode: a UTF-16 String is twice its UTF-8 length. Refused before
+     * the copy, so an over-long String is not copied whole only to be
+     * refused; the check on the copy below stays authoritative. (`acquire`'s
+     * own transcode is then a no-op on a String that is UTF-8 already.) */
+    let sv = utf8_strict(sv).map_err(|_| NOT_UTF8_CONVERTIBLE)?;
     if sv.len() > max_bytes {
         return Err(TOO_LONG);
     }
@@ -370,6 +390,6 @@ pub fn ruby_try_verified_text(sv: RString, max_bytes: usize) -> Result<RubyText,
     .map_err(|r| match r {
         Refusal::Check(reason) => reason,
         Refusal::Oom => "could not be copied (out of memory)",
-        Refusal::Encoding => NOT_UTF8_CONVERTIBLE,
+        Refusal::Encoding(_) => NOT_UTF8_CONVERTIBLE,
     })
 }
