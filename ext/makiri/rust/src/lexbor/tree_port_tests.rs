@@ -612,6 +612,9 @@ fn the_port_parses_fragments_as_lexbor_does() {
          * html_diff find: `<sup>` in a `math math` context). */
         ("\u{FFFD}\u{6}.<sup>f<f>f@f", "math math"),
         ("<sup>x", "svg svg"),
+        /* P6 in a template context with no `template` in the input, which
+         * `explains` must admit too (an html_diff find). */
+        ("<col>x\n", "template"),
     ] {
         if let Err(e) = check_fragment(input.as_bytes(), ctx) {
             panic!("{input:?} in {ctx}\n{e}");
