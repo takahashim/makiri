@@ -14,8 +14,7 @@ use magnus::{Error, Value};
 use crate::bridge::string::ruby_try_verified_text;
 use crate::bridge::string::{ruby_verified_text, RubyText};
 use crate::bridge::wrapper::{keepalive_document, node_token_in, NotInDocument};
-use crate::engine_error::ErrorKind;
-use crate::falloc::{try_to_boxed_slice, MapInsert, Reserve};
+use crate::falloc::{try_to_boxed_slice, Reserve};
 use crate::xpath::ast::Ast;
 use crate::xpath::ctx::ContextError;
 
@@ -189,8 +188,11 @@ impl XPathCtx {
         let document = keepalive_document(rb_node)?;
         let mut ctx = context_for(rb_node, document)?;
         ctx.set_lax(lax);
-        // SAFETY: under the GVL; the struct is built holding no value, and the
-        // two are stored once it is wrapped.
+        // SAFETY: under the GVL. The struct is built holding no value - the
+        // two are stored once it is wrapped - and owning no allocation, as
+        // `wrap` asks: a fresh `Cx`'s registrations and the cache are empty
+        // collections, which allocate nothing until the first insert, so a
+        // `NoMemoryError` from the wrap leaks the struct's own memory alone.
         let obj = unsafe {
             XPATH_CTX_TYPE.wrap(
                 CLASS_XPATH_CONTEXT.raw(),
@@ -320,22 +322,12 @@ fn cached_ast(
         return Ok((QueryAst::owned(ast), 0));
     };
     let added = owned_key.len().saturating_add(ast.heap_estimate());
-    if cache.0.falloc_insert(owned_key, ast).is_err() {
-        return Err(XPathError::with(
-            ErrorKind::Oom,
-            format_args!("out of memory caching XPath expression"),
-        ));
-    }
-    /* The AST is borrowed from the map AFTER the insert, not through a pointer
-     * taken before it: moving the `Box` into the map asserts unique ownership
-     * of the AST, which a pointer derived earlier does not survive (the same
-     * Stacked Borrows hazard `wrapper::Content` avoids). */
-    let Some(ast) = cache.0.get(key) else {
-        return Err(XPathError::with(
-            ErrorKind::Internal,
-            format_args!("a cached XPath expression went missing"),
-        ));
-    };
+    /* The slot was reserved above, so the vacant entry's insert allocates
+     * nothing. The AST is borrowed from the map AFTER the insert, not through
+     * a pointer taken before it: moving the `Box` into the map asserts unique
+     * ownership of the AST, which a pointer derived earlier does not survive
+     * (the same Stacked Borrows hazard `wrapper::Content` avoids). */
+    let ast = cache.0.entry(owned_key).or_insert(ast);
     // SAFETY: just cached, so alive and unchanged while the context is.
     Ok((unsafe { QueryAst::cached(ast) }, added))
 }
