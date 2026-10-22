@@ -3,28 +3,9 @@
 module Makiri
   module XML
     # Ruby additions over the native XML node readers, so the XML node surface
-    # matches the HTML one (Makiri::HTML::NodeMethods).
+    # matches the HTML one (Makiri::HTML::NodeMethods). #ancestors and #key?
+    # are native on both, so they cannot drift apart.
     module NodeMethods
-      # Element ancestors, nearest first, excluding self - matching
-      # Makiri::HTML's native #ancestors.
-      # @return [Array<Makiri::XML::Element>]
-      def ancestors
-        out = []
-        node = parent
-        while node
-          out << node if node.element?
-          node = node.parent
-        end
-        out
-      end
-
-      # Whether an attribute with the given qualified name is present
-      # (case-sensitive, per XML).
-      def key?(name)
-        wanted = name.to_s
-        attribute_nodes.any? { |attr| attr.name == wanted }
-      end
-
       # After #key?, which #has_attribute? aliases.
       ReaderAliases.define_on(self)
 

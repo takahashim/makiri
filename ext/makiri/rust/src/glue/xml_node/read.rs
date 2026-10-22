@@ -251,6 +251,16 @@ pub fn children(this: XmlSelf) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| set_of(this, children_of(this.doc_ref(), this.id)))
 }
 
+/// `#ancestors`: the element ancestors, nearest first, the node itself
+/// excluded - as HTML's.
+pub fn ancestors(this: XmlSelf) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| {
+        let d = this.doc_ref();
+        let up = core::iter::successors(d.parent(this.id), |&p| d.parent(p));
+        set_of(this, up.filter(|&n| is_element(d, n)))
+    })
+}
+
 /// `#element_children` / `#elements`: the child elements only.
 pub fn element_children(this: XmlSelf) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
@@ -275,6 +285,12 @@ pub fn aref(_ruby: &Ruby, this: XmlSelf, rb_name: Value) -> Result<Option<Value>
         let found = crate::bridge::xml::find_attribute(this, rb_name)?;
         Ok(str_or_nil(found.map(|at| this.doc_ref().value(at))))
     })
+}
+
+/// `#key?` / `#has_attribute?`: whether `#[]` finds an attribute by that
+/// qualified name (DOM `hasAttribute`) - case-sensitive, as XML names are.
+pub fn has_key(_ruby: &Ruby, this: XmlSelf, rb_name: Value) -> Result<bool, Error> {
+    crate::bridge::ruby::entry(|| Ok(crate::bridge::xml::find_attribute(this, rb_name)?.is_some()))
 }
 
 /// `#attribute_value_ns(ns, local)` (DOM `getAttributeNS`): the value of the

@@ -58,6 +58,7 @@ fn init_read() -> Result<(), Error> {
 
     m.define_method("document", method!(read::get_document, 0))?;
     m.define_method("parent", method!(read::parent, 0))?;
+    m.define_method("ancestors", method!(read::ancestors, 0))?;
     m.define_method("<=>", method!(read::spaceship, 1))?;
     for name in ["next", "next_sibling"] {
         m.define_method(name, method!(read::next, 0))?;
@@ -90,6 +91,7 @@ fn init_read() -> Result<(), Error> {
     for name in ["[]", "attribute_value_by_qualified_name"] {
         m.define_method(name, method!(read::aref, 1))?;
     }
+    m.define_method("key?", method!(read::has_key, 1))?;
     m.define_method("keys", method!(read::keys, 0))?;
     m.define_method("values", method!(read::values, 0))?;
     m.define_method("attribute_nodes", method!(read::attribute_nodes, 0))?;
