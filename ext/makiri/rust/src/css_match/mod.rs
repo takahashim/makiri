@@ -197,7 +197,8 @@ use compile::{compile, Compiled};
 use dom::CssNode;
 use query::Query;
 
-/// A complexity bound on compounds per chain, mirroring `css::MAX_COMPOUNDS`.
+/// A complexity bound on compounds per chain. The reference lowering
+/// (`crate::css`) is held to the same one.
 ///
 /// Not a stack-safety mechanism (this design needs none, for `:has()` nesting
 /// or any other - see the module doc) - just a sanity cap so a single

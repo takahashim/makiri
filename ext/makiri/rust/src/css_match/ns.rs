@@ -20,6 +20,11 @@ pub struct Namespaces<'a> {
 }
 
 impl<'a> Namespaces<'a> {
+    /// The binding key whose URI is the default namespace, as Nokogiri's
+    /// Hash has it: what `css(selector, ns)` reads as CSS `@namespace`
+    /// without a prefix.
+    pub const DEFAULT_KEY: &'static [u8] = b"xmlns";
+
     /// No bindings: every prefix is undeclared, and a bare type selector
     /// matches its name in any namespace - what a browser's
     /// `querySelectorAll` has.

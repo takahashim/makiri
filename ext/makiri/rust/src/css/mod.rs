@@ -43,10 +43,11 @@ pub struct CssNs {
 /// The synthetic prefix bound to the document's default namespace. The glue
 /// looks for it in the namespace hash the Ruby side normalises, and a bare type
 /// selector is lowered under it, so both read this one constant.
-pub const DEFAULT_NS_PREFIX: &str = "xmlns";
+pub const DEFAULT_NS_PREFIX: &[u8] = crate::css_match::Namespaces::DEFAULT_KEY;
 
-/// The cap on compounds in one selector chain - a selector-complexity bound.
-pub(crate) const MAX_COMPOUNDS: usize = 64;
+/// The cap on compounds in one selector chain - the matcher's own, so the
+/// two engines refuse the same selectors.
+pub(crate) use crate::css_match::MAX_COMPOUNDS;
 
 /// The deepest selector-list nesting the lowering descends through.
 ///
@@ -118,7 +119,7 @@ impl Build<'_> {
     /// The default-namespace prefix in scope, if any.
     pub(crate) fn default_prefix(&self) -> Option<&'static [u8]> {
         self.default_namespace
-            .then_some(DEFAULT_NS_PREFIX.as_bytes())
+            .then_some(DEFAULT_NS_PREFIX)
     }
 }
 
