@@ -343,9 +343,15 @@ pub fn ruby_try_verified_text_pair(
 /// The non-raising form: the checked view, or a static reason on rejection.
 /// Nothing is coerced: `sv` is a String by type.
 pub fn ruby_try_verified_text(sv: RString, max_bytes: usize) -> Result<RubyText, &'static str> {
+    const TOO_LONG: &str = "string exceeds the maximum length";
+    /* Refused before the copy, so an over-long String is not copied whole
+     * only to be refused; the check on the copy below stays authoritative. */
+    if sv.len() > max_bytes {
+        return Err(TOO_LONG);
+    }
     RubyText::acquire(sv, |s, b| {
         if b.len() > max_bytes {
-            return Some("string exceeds the maximum length");
+            return Some(TOO_LONG);
         }
         text_check(s, b).reason()
     })
