@@ -98,9 +98,17 @@ for (const name of names) {
       return route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body });
     });
     await page.goto(`${ORIGIN}/`);
+    // A round trip per batch: up to 50 documents, whose frames load one by
+    // one, or up to 1000 cases when they are fragments, which parse in-page.
     const trees = [];
-    for (let i = 0; i < cases.length; i += 50) {
-      trees.push(...(await page.evaluate(parseAll, cases.slice(i, i + 50))));
+    for (let i = 0; i < cases.length; ) {
+      let j = i;
+      let docs = 0;
+      while (j < cases.length && j - i < 1000 && docs < 50) {
+        if (cases[j++].kind === "document") docs++;
+      }
+      trees.push(...(await page.evaluate(parseAll, cases.slice(i, j))));
+      i = j;
     }
     out[name] = trees;
     out[`${name}_version`] = browser.version();

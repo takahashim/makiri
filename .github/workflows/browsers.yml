@@ -59,8 +59,12 @@ jobs:
       - name: CSS selectors vs browsers (HTML and XML)
         run: bundle exec rake conformance:css_browsers
 
+      # The WPT inputs plus generated fragments, a fresh seed each run (the
+      # run number, so a finding reproduces with --seed).
       - name: HTML parsing vs browsers (evidence only)
         if: always()
+        env:
+          BROWSER_ARGS: "--generate 20000 --seed ${{ github.run_number }}"
         run: |
           bundle exec rake conformance:browsers | tee browser_diff.txt
           {

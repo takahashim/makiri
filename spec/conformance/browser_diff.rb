@@ -25,6 +25,12 @@
 #   ruby -Ilib spec/conformance/browser_diff.rb                 # the WPT .dat inputs
 #   ruby -Ilib spec/conformance/browser_diff.rb --file a.html   # extra documents
 #   ruby -Ilib spec/conformance/browser_diff.rb --browsers chromium,firefox --verbose
+#   ruby -Ilib spec/conformance/browser_diff.rb --no-dat --generate 20000 --seed 1
+#
+# --generate adds random fragments (html_gen.rb), parsed in a context element
+# in-page: about as fast as the browsers parse, where a document costs a frame
+# load each. The test data and the known divergences do not cover them, so a
+# generated case reports test-data=- and is classified by hand like any other.
 
 require "json"
 require "open3"
@@ -34,12 +40,15 @@ $LOAD_PATH.unshift File.expand_path("../../lib", __dir__)
 require "makiri"
 require_relative "parser_data"
 require_relative "html5lib_dump"
+require_relative "html_gen"
 
-opts = { browsers: "chromium,firefox,webkit", files: [], verbose: false, dat: true }
+opts = { browsers: "chromium,firefox,webkit", files: [], verbose: false, dat: true, generate: 0, seed: 1 }
 OptionParser.new do |o|
   o.on("--browsers LIST", "comma-separated (default chromium,firefox,webkit)") { |v| opts[:browsers] = v }
   o.on("--file PATH", "also compare this HTML file as a document") { |v| opts[:files] << v }
   o.on("--no-dat", "skip the WPT tree-construction inputs") { opts[:dat] = false }
+  o.on("--generate N", Integer, "also compare N random fragments (html_gen.rb)") { |v| opts[:generate] = v }
+  o.on("--seed S", Integer, "the generator's seed (default 1)") { |v| opts[:seed] = v }
   o.on("--verbose", "print the differing trees") { opts[:verbose] = true }
 end.parse!(ARGV)
 
@@ -95,7 +104,9 @@ def fragment_context(ctx)
   return ctx unless ctx.include?(" ")
 
   ns, local = ctx.split(" ", 2)
-  host = local == ns ? Makiri::HTML("<#{ns}></#{ns}>") : Makiri::HTML("<#{ns}><#{local}></#{local}></#{ns}>")
+  # In a no-quirks document, as dump.mjs makes its context element (P17: the
+  # context's document's mode is the fragment's).
+  host = local == ns ? Makiri::HTML("<!DOCTYPE html><#{ns}></#{ns}>") : Makiri::HTML("<!DOCTYPE html><#{ns}><#{local}></#{local}></#{ns}>")
   host.at_xpath("//*[local-name()='#{local}' and namespace-uri()='#{NS.fetch(ns)}']")
 end
 
@@ -147,6 +158,9 @@ cases = []
 cases.concat(dat_cases) if opts[:dat]
 opts[:files].each do |f|
   cases << Case.new(key: f, kind: "document", data: File.read(f, encoding: "UTF-8"), context: nil, expected: nil)
+end
+HtmlGen.cases(opts[:generate], opts[:seed]).each do |key, data, context|
+  cases << Case.new(key: key, kind: "fragment", data: data, context: context, expected: nil)
 end
 abort "no cases" if cases.empty?
 
