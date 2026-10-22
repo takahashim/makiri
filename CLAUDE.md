@@ -57,30 +57,25 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   Two rules follow, and anything new has to keep both.
 
   **Whatever must be released across a panic is a `Drop`**, not a statement
-  after the work - a plain `lxb_*_clean` following a parse is exactly what
-  unwinding skips. `lexbor::selectors::Session` and `post_parse::DocOwner`
-  are the two that had to be converted, both around process-global or
-  not-yet-owned Lexbor state.
+  after the work - a cleanup call following the work is exactly what
+  unwinding skips. (The two Lexbor-era cases, `lexbor::selectors::Session` and
+  `post_parse::DocOwner`, are reference-only now.)
 
   **A callback must not panic INTO C.** Rust turns an unwind at an `extern "C"`
   boundary into an abort, because unwinding through frames built without unwind
   tables is undefined behaviour - so the callback catches the panic, latches it
   and returns the stop status, and the caller re-raises once C has unwound.
   `caught::PanicLatch` is that, and it is deliberately the same shape the
-  callbacks already used for the node cap and OOM. It is installed in all eight:
-  the OLD CSS engine's traversal (`find_cb`/`first_cb`/`match_cb`, in
-  `lexbor::selectors`, now compiled into tests only), the serializer sink
-  (`lexbor::chunks::chunk_cb`, one generic function for the HTML and stylesheet
-  serializers),
-  the tokenizer's `tree_guard::hook_token_cb` (its whole Rust body is one
-  guarded closure, `HookState::on_token`; a latched panic stops the parse),
-  `bridge::gvl`'s trampoline (which carries the
-  whole parser), and - covering every `rb_protect` at once, since magnus runs
-  the closure inside its own `extern "C"` trampoline - `bridge::ruby::protect`.
-  Do not call magnus's `protect` directly; ours is the one with the latch. For
-  the same reason a Hash is walked only through `glue::hash::hash_foreach`
-  (magnus's `RHash::foreach` protects without one; `rake unsafe:boundaries`
-  fails on a direct `.foreach(`).
+  callbacks already used for the node cap and OOM. The build that ships
+  installs it in three: `bridge::gvl`'s trampoline (which carries the whole
+  parser), `bridge::ruby::protect` - covering every `rb_protect` at once, since
+  magnus runs the closure inside its own `extern "C"` trampoline - and
+  `glue::hash::hash_foreach`. Do not call magnus's `protect` directly; ours is
+  the one with the latch. For the same reason a Hash is walked only through
+  `hash_foreach` (magnus's `RHash::foreach` protects without one;
+  `rake unsafe:boundaries` fails on a direct `.foreach(`). The reference-only
+  Lexbor callbacks carry it too (`lexbor::selectors`' traversal,
+  `lexbor::chunks::chunk_cb`, `tree_guard::hook_token_cb`).
   Two `extern "C"` functions have no latch ON PURPOSE. The GC callbacks in
   `bridge/typed.rs` run where nothing can be raised and a half-freed object is
   worse than a stop, so they keep aborting - keep their bodies trivial. The two
@@ -140,8 +135,9 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   from arriving by accident; a site that wants one carries an `#[allow]` with a
   reason. `spec/panic_spec.rb` drives `Makiri.__panic(kind)`: kind 4 panics
   below the GVL-release frame, the case that proves the latch since without it
-  that one aborts, kind 5 goes through `entry`, and kind 6 panics inside the
-  tokenizer hook (a const-generic probe, compiled out of every real parse).
+  that one aborts, kind 5 goes through `entry`, and kind 6 panics in the
+  token-done path of a real document parse (`html::tree`'s
+  `parse_with_panicking_hook`, its own sink, so no real parse carries it).
 
   The C-era hardening flags (`-D_FORTIFY_SOURCE=2`, `-fstack-protector-strong`,
   `-fvisibility=hidden`, `-Wformat-security`) are **gone rather than relaxed**:
@@ -416,8 +412,8 @@ by the check that concluded "every undefined symbol is legitimate".
   next cut. Everything else we write allocates through `falloc` onto the system
   allocator, or - for the glue's Ruby-side storage - through Ruby's xmalloc;
   ASan red-zones both per allocation.
-- **The fallible-allocation line.** The engine (`xml`, `xpath`, `css`,
-  `selectors`, `lexbor/adapter`, `css_match`, `cbuf`) allocates only through `falloc`: `clippy.toml` bans the
+- **The fallible-allocation line.** The engine (`html`, `xml`, `xpath`, `css`,
+  `selectors`, `css_match`, `css_cache`, `cbuf`) allocates only through `falloc`: `clippy.toml` bans the
   infallible `Box::new` / `Vec::with_capacity` / `reserve`, and `rake oom` fails
   each site in turn, so an OOM there raises instead of aborting. The glue's
   Ruby-side storage - TypedData wrappers (`bridge::typed::wrap_built`, freed by
@@ -430,16 +426,13 @@ by the check that concluded "every undefined symbol is legitimate".
   and abort on OOM, invisibly to `rake oom`. Sort in place (`sort_unstable_by`)
   or, for document order, `xpath::order`'s natural merge sort, which takes its
   scratch from falloc and falls back to the in-place sort without it.
-- **`node->user` is reserved** for source-location byte offsets (see below) - do
-  not repurpose it. Its encoding (offset + 1) lives in `HtmlNode::source_offset`
-  / `stamp_source_offset` / `forget_source_offset`, the only reader and writers
-  (a copy from another document forgets the offsets it copied, `<template>`
-  contents included: `HtmlNode::subtree_with_contents` is THE walk over what a
-  deep copy produced, and the import fixup walks in lockstep with it).
-- **Lexbor's DOM structs are read only through `lexbor::adapter::html`'s typed
-  handles** - the index builders included; its only tree writes are the
-  source-offset stamp and forget (`HtmlNode::stamp_source_offset`,
-  `forget_source_offset`). Pointer-keyed
+- **A node's `source` field holds its start tag's byte offset** (offset + 1;
+  0 for none), for `Node#line`: `Document::set_source_offset` /
+  `forget_source_offset` / `source_offset` (`html/dom/mod.rs`) are its only
+  writers and reader. A copy within the document keeps it; one from another
+  document drops it, since it indexes that document's source
+  (`html/dom/copy.rs`).
+- Pointer-keyed
   tables hash with `crate::ptr_table::ptr_hash`, and are a `PtrTable` (sized
   once) or a `PtrMap` (grows) rather than another hand-written probe loop; a
   key that can be 0 (an XML token) supplies its own empty marker through
@@ -515,6 +508,14 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            `xml` = plans a prefix per name, `c14n` = renders the
                            document's own declarations, adding a name's own
                            prefix where its namespace was set, never inventing one)
+    html/                  the HTML parser ported from Lexbor and the DOM it builds
+                           (Ruby/Lexbor-free): `tokenizer/`, `tree/` (the tree
+                           builder, its guard, stamps and the document-bytes
+                           parse), `dom/` (the index arena: handles, edits,
+                           copies, indexes, serialization, CSS and XPath
+                           instances), `encoding/` (sniffing, decoders),
+                           `fragment.rs`, and `res/` (tables generated from
+                           Lexbor's)
     lexbor/                the Lexbor boundary: `abi` - the generated layout and
                            functions (the `_noi` twins included), the ONE place
                            a Lexbor function is declared (a second `extern "C"`
@@ -607,18 +608,12 @@ migration scaffolding, one per ported C file, and went with the C.
 
 ## Subsystems
 
-**Which DOM these notes describe.** The extension's HTML DOM is the arena
-(`html::dom`, parsed by `html::tree`); the notes below that name
-`lexbor/adapter/...` files (source location, the parse guard, the element and
-text indexes, serialization, mutation) describe Lexbor's DOM, which the arena
-was ported from and is still tested against (`lexbor::arena_tests`), but which
-no build that ships carries. The arena keeps the same contracts behind the
-`html_dom` facade, so what a note says a caller sees holds for it; where a
-note describes how Lexbor stores something, the arena's version is in
-`html/dom/`.
+The HTML DOM below is the arena (`html::dom`, behind the `html_dom` facade,
+parsed by `html::tree`); Lexbor's DOM is only the reference it is held to
+(`lexbor::arena_tests`, `lexbor::tree_port_tests`).
 
 **Text-input contract.** A DOCUMENT parse decodes its bytes as a browser
-does (`html/encoding.rs` decides, `html::tree::parse_document_bytes` drives):
+does (`html::encoding` decides, `html::tree::parse_document_bytes` drives):
 the HTML Standard's encoding sniffing algorithm
 (BOM; the transport layer's encoding - `encoding:`, else the String's own
 when it has one; for an ASCII-8BIT String the 1024-byte `<meta>` prescan,
@@ -682,90 +677,64 @@ leave stale. XML names stay NUL-strict, like HTML's. Don't drop the
 UTF-8 checks or route a name/engine string through the data path; see
 `docs/string_types.md`.
 
-**Parsing & source location.** In the build that ships, the ported tree
-builder stamps an element when it is CREATED FOR ITS OWN START TAG
-(`TreeBuilder::created_offset`, `html/tree/stamp.rs`): a real start-tag token
-with no base element - never a `Tok::fake`, an adoption-agency or
-reconstruction copy, or an element implied by another tag's token (the `<tr>`
-a stray `<td>` implies) - so every element the parser invents stays nil and a
-void element fostered out of a table now has its line (L1 in
-`docs/parser_differences.ja.md`). `lexbor::tree_diff::offsets_name_their_tags`
-holds it to the one property `#line` promises: every stamp sits at a start tag
-of the element's own name. What follows is the Lexbor DOM's rule (the
-reference, and the port's Lexbor-compatible run in the differential
-harnesses), which the port reproduced until then.
+**Parsing & source location.** The tree builder stamps an element when it
+is CREATED FOR ITS OWN START TAG (`TreeBuilder::created_offset`,
+`html/tree/stamp.rs`): a real start-tag token with no base element - never a
+`Tok::fake`, an adoption-agency or reconstruction copy, or an element implied
+by another tag's token (the `<tr>` a stray `<td>` implies) - so every element
+the parser invents stays nil and a void element fostered out of a table has
+its line (L1 in `docs/parser_differences.ja.md`).
+`lexbor::tree_diff::offsets_name_their_tags` holds it to the one property
+`#line` promises: every stamp sits at a start tag of the element's own name.
+The offset goes in the node's `source` field (see the gotchas), and a line
+table (`source_lines::Lines`, built once per parse) resolves it to a 1-based
+line. `Node#line` returns an Integer, or **nil** when unplaceable - never a
+wrong line: every element the parser invents, text/comment/attribute nodes,
+nodes copied from another document, and fragments (their parse stamps
+nothing). The first `#line` is O(1), and a mutation needs no ordering. (The
+Lexbor-era design stamped from a token-done hook around Lexbor's tree
+builder; an even earlier one paired recorded tokens with elements after the
+parse, and parser-made elements stole later tags' lines.)
 
-(`lexbor/adapter/post_parse.rs`, `source_loc.rs`) `parse_html` drives Lexbor's low-level pipeline (`parser_create`/`init` →
-`parse_chunk_begin` → override the tokenizer's token-done callback, **chaining**
-the parser's tree builder → `chunk_process`/`chunk_end`) so each element can
-be stamped with its start tag's byte offset (`token->begin`) **at creation**:
-`tree_guard::hook_token_cb` notes the current node before the tree builder runs
-and `source_loc::stamp_created` looks after it. The element made for a start
-tag is inserted last, so it is the new current node or (void/self-closing) the
-last child of where the current node inserts (a `<template>`'s contents); it
-is stamped (`offset+1` into `node->user`) only if it has the token's tag, no
-stamp, no children, and is neither the previous current node nor that place's
-previous last child. A line table (`source_loc::Lines`, built once, eagerly -
-~2%, and deferring it would mean keeping the source buffer) resolves the offset
-to a 1-based line. `Node#line` returns an Integer, or **nil** when unplaceable -
-never a wrong line. Nil: every element the parser invents (implicit
-html/head/body/tbody/colgroup, formatting elements the adoption agency or
-reconstruction recreates), a void element fostered out of a table,
-text/comment/attribute nodes, and fragments (their parse stamps nothing).
-There is no token array, cap or post-parse walk, so a mutation needs no
-ordering and the first `#line` is O(1). (The previous design recorded tokens
-and paired them with elements after the parse; parser-created elements stole
-later tags' lines.) The document outlives `lxb_html_parser_destroy` (it only
-unrefs tkz/tree). An earlier `line: :text`/`:none` option was removed - `:text`
-(a separate source scan) measured *slower* (~36%) and was only approximate.
+**HTML parse guard** (`html/tree/guard.rs`). Every parse runs under a
+`Guard` the tree builder checks after each token - `Guard::for_document`
+from `parse_html`, `Guard::for_fragment` (below the synthetic `<html>`) from
+`parse_fragment` - bounding the tree depth (`max_tree_depth:`, `DepthLimit`,
+default 400, Nokogiri's). The check is per token, not per insertion, so a
+void element at the limit is not refused. There is no limit on a
+`<select>`'s options: the selectedness setting algorithm is decided from
+each select's state (`html/tree/select.rs`, `SelectStates`), so a select
+builds in linear time - keep it so, or the 10,000 limit it replaced has to
+come back.
 
-**HTML parse guard** (`lexbor/adapter/tree_guard.rs`; the why is there).
-Every HTML parse entry installs a `TokenHook` that bounds the tree depth
-(`max_tree_depth:`, default 400). There is no limit on a `<select>`'s
-options: the selectedness setting algorithm is decided from each select's
-state (`html/tree/select.rs`, `SelectStates`), so a select builds in linear
-time - keep it so, or the 10,000 limit it replaced has to come back. Keep
-the guard a stack value on every parse, independent of the source
-`Stamper`, so no stamper failure switches it off; fragments use the chunked
-`lxb_html_parse_fragment_chunk_*` API so it can be installed.
+**An attribute's parent is its element**, held in the attribute node's own
+`parent` link, which appending the attribute sets and removing it clears
+(`html/dom/mod.rs`); `Document::parent` reads it live, so the XPath
+parent/ancestor axes, document order and `Attr#parent` all agree and need
+no index.
 
-**An attribute's parent is Lexbor's own `attr->owner`**, which Lexbor sets when
-it appends an attribute and clears when it removes one; `HtmlNode::parent`
-reads it live, so the XPath parent/ancestor axes, document order and
-`Attr#parent` all agree and need no index. (An earlier premise that Lexbor links
-neither `owner` nor `node.parent` led to an attr->owner table that backfilled
-`node.parent` at index time - which answered whatever held when the index was
-last built, so a detached element's attribute had a parent or not depending on
-history. It is gone.)
-
-**element index** (`lexbor/adapter/dom_index.rs`; lazy two-phase build - count,
-size once, fill; iterative walk, no recursion → no stack DoS; OOM fails closed
-and retries). It is a `tag id → elements` document-order CSR used by the XPath
-`//tag` fast path; only Lexbor's static tag-id range `[1, LXB_TAG__LAST_ENTRY)`
-is bucketed - custom-element tag ids are *pointer values* (`lxb_tag_append`),
-so those elements are left out and `//customtag` falls back to the tree walk.
-Reached via `DomIndex::tag_bucket` / `DomIndex::has_foreign`; owned by the parse
-handle (`HtmlParsed::dom_index`) and dropped by `HtmlParsed::invalidate_indexes`
-after any mutation. **Every evaluate reads the index afresh from the handle**: a
-reused `XPathContext` must never keep the one it first saw, because a mutation
-frees it - that stale pointer was a use-after-free that answered from another
-document's index (`spec/xpath_context_mutation_spec.rb`).
-
-**text index** (`lexbor/adapter/text_index.rs`). Removes the per-call descendant
-walk from text extraction (the cache-bound cost on Lexbor's 96-byte nodes). One
-lazy build (count, size once, fill; explicit **heap**-stack DFS via
-`try_vec_with_capacity` and a `PtrTable`, no recursion → no stack DoS) records a flat document-order
-array of every TEXT/CDATA node's **borrowed** slice (a private raw
-`RawSlice`, handed out only as `&[u8]` borrowed from the index through a
-`TextRun`), a prefix-sum of their lengths, and a `PtrTable` mapping
-each element/fragment to the `[start,end)` run of slices its subtree owns. A
-`Node#text` is then a hash lookup + `ruby_str_from_slices` (one pre-sized
-memcpy run; **~4× faster than libxml2 at all sizes**), no element node touched.
-Cached on the parse handle; `HtmlParsed::invalidate_indexes` drops it
-from the **same single mutation hook** as the element index, so a borrowed slice
-can never point at reallocated/detached text storage. Reached via
-`HtmlParsed::text_slices` (None → caller walks: fragments, build OOM).
-Fail-closed: a build OOM leaves it unbuilt and the walk fallback serves.
+**The indexes** (`html/dom/index.rs`, owned by the parse handle,
+`HtmlParsed`) are built lazily and name nodes by id and text by its span in
+the byte store, so neither borrows the arena. **Every edit drops them before
+anything changes** (`HtmlParsed::edit` -> `invalidate_indexes`), and the
+byte store is compacted - moving every span - only right after
+(`html/dom/compact.rs`), so no index survives a span it names.
+- **element index** (`DomIndex`): a `tag id -> elements` document-order CSR
+  over the static tag range, for the XPath `//tag` fast path
+  (`xpath/step_index.rs`; `DomIndex::tag_bucket`). A custom tag, a foreign
+  element (`has_foreign`) or an HTML element written in upper case
+  (`has_case_kept`) sends `//tag` back to the tree walk. Built by
+  `HtmlParsed::ensure_dom_index`; OOM fails closed. **Every evaluate reads
+  the index afresh from the handle**: a reused `XPathContext` that kept the
+  one it first saw answered from a dropped index - a use-after-free in the
+  Lexbor era (`spec/xpath_context_mutation_spec.rb`).
+- **text index** (`TextIndex`): every text node's span in document order and
+  each container's `[start, end)` run of them (`PtrTable`), so a `Node#text`
+  is a lookup plus `ruby_str_from_slices` - one pre-sized memcpy run, no
+  element node touched (**~4x libxml2**). Reached via
+  `HtmlParsed::text_slices`; `None` (a fragment, a build OOM) means the
+  caller walks. Verify with `spec/text_index_spec.rb`, which holds it
+  byte-identical to a plain walk across subtrees and mutations.
 
 **Child counting and indexing** (`src/child_index.rs`). `#child_count` /
 `#child_at` and their element twins walk `dom_rules::Tree`'s links - the
@@ -1106,110 +1075,84 @@ flag turns a re-entrant second borrow into `Busy` rather than a second
 `&mut`. Outside Ruby (cargo tests, fuzz) `Gvl::exclusive()` stands in with a
 process-wide mutex; it does not exist in the extension build.
 
-**Serialization** (`lexbor/serialize.rs`). `Node#{to_html,to_s,outer_html}` and
-`#inner_html` are Lexbor's tree / deep serializers with the WALK driven from
-Rust (`HtmlNode::serialize_to`, `adapter/html/serialize.rs`): each node's own
-markup is Lexbor's `lxb_html_serialize_cb`, an end tag is what Lexbor's
-(unexported) closer writes, and a `<template>` writes its CONTENTS and not its
-own children, as the HTML Standard's fragment serializing does - Lexbor walked
-into both. The void test is a Rust read of the tag id (`shape`), not the
-`_noi` FFI twin, which cost ~10%. `pretty: true` is the same kind of walk
-(`serialize_pretty_to`) over Lexbor's per-node `lxb_html_serialize_pretty_cb`,
-in Lexbor's own layout (not the Standard's). BOTH forms always walk here, never
-Lexbor's own loops (hardening; ~3% on `to_html` against Lexbor's plain loop,
-which the template flag that once chose between them saved): iterative, with a
-template's contents walked as children, so no tree depth grows the native
-stack; and which text is written unescaped follows the Standard's rule, checked
-in the walk (`escaped_here`). `lexbor::tests::serialize_walk` holds both walks
-byte-identical to Lexbor's on parsed documents - Lexbor's walks stay generated
-for that test alone.
-The callback
-collects Lexbor's many small chunks into one growing C buffer (`cbuf::Buf`,
-**pre-reserved** via `Buf::reserve` so the per-chunk appends don't realloc on
-every geometric step - but only for the document or its root element: the
-estimate walks the WHOLE arena, which made one `<p>`'s `to_html` cost time in
-the document's size, so a subtree grows from empty and measures the document
-only if its output passes the 64 KiB ceiling floor) and the
-whole thing is copied into a UTF-8 Ruby String once - markedly faster than
-`rb_str_cat` per chunk (its per-append capacity + coderange bookkeeping was the
-serializer's dominant cost). The ceiling (`serialize::ceiling`) is 64 KiB +
-32x the live arena + nodes x 4 x the longest interned name, from
-`arena_bytes::document_size`: the arena includes the four name tables (tags,
-attrs, ns, prefix), and the name term exists because a name is stored once
-however many nodes write it - 50 elements named by 20,000 bytes failed their
-own `to_html` without it. **The per-chunk append is the hot path**, since
-a chunk is a few bytes (`<`, a tag name, `="`) and there are ~20 per element:
-`Buf::append`'s inline fast path (fits the allocation => no ceiling check, as
-`cap <= ceiling + 1` always holds) and its `memcpy`-free copy of <= 16 bytes
-took `to_html` from ~1.1x slower than `nokolexbor` to ~1.5x faster; profile
-`chunk_cb` before touching either. nokolexbor also pays a callback per chunk
-(Lexbor's `*_str` serializers are `*_cb` plus a C append), so the gap was
-never "C vs FFI" but what each call costs. (Serializing
-straight into a growing Ruby String avoids the final copy but measured *slower* -
-the intermediate growth is GC-tracked; the untracked C buffer + one copy wins.)
-In `pretty: true` Lexbor quotes text nodes. A `DocumentFragment` serializes
-as its children (the deep form). `#inner_html` and
-`#inner_html=` special-case an HTML `<template>` to its contents fragment, as
-the WHATWG DOM special-cases `innerHTML` alone - so `inner_html`, `inner_html=`,
-`#to_html` and `content_fragment` agree, while `children`/`content=` keep the
-element's own (empty) children as the specification says. `Node#text`/`#content`
-(`html_node::read::content`) serves descendant text from the **text index** (see
-below) - a hash lookup + one pre-sized `ruby_str_from_slices` memcpy run,
-no per-call tree walk - and falls back to a direct iterative walk for
-non-indexed nodes (fragments). For a Document it returns the **root element's**
-text (DOM makes a Document's textContent null, which is not what callers want).
+**Serialization** (`html/dom/serialize.rs`). `Node#{to_html,to_s,outer_html}`
+and `#inner_html` are one iterative walk over the arena (`write`), byte for
+byte what Lexbor's serializers write but for the documented departures (R1,
+R2) - `lexbor::arena_tests` and the `html_diff` fuzz target
+(`tree_diff::check_serialization`) hold it there: a `<template>` writes its CONTENTS,
+not its own children, as the HTML Standard's fragment serializing does;
+text is written raw only inside the elements the Standard names
+(`raw_text`); the void test reads the tag id (`shape`). `pretty: true` is
+the same walk in Lexbor's pretty layout (not the Standard's; it quotes text
+nodes). Output goes to a `Sink` chunk by chunk; the shipping one is a
+`cbuf::Buf`, pre-reserved only for the document or its root element (sizing
+reads the whole arena, so a subtree grows from empty), copied into one UTF-8
+Ruby String at the end - faster than appending to a Ruby String, whose
+growth is GC-tracked. The ceiling (`ceiling`) is 64 KiB + 32x the bytes the
+document owns + nodes x 4 x the longest name: a name is stored once however
+many nodes write it, so 50 elements named by 20,000 bytes need the name
+term. **The per-chunk append is the hot path** (a chunk is a few bytes,
+~20 per element): `Buf::append`'s inline fast path (fits the allocation =>
+no ceiling check) and its `memcpy`-free copy of <= 16 bytes are what put
+`to_html` ahead of `nokolexbor`; profile them before touching either. A
+`DocumentFragment` serializes as its children. `#inner_html` and
+`#inner_html=` special-case an HTML `<template>` to its contents fragment,
+as the WHATWG DOM special-cases `innerHTML` alone - so `inner_html`,
+`inner_html=`, `#to_html` and `content_fragment` agree, while
+`children`/`content=` keep the element's own (empty) children.
+`Node#text`/`#content` (`html_node::read::content`) is served from the text
+index, with a direct iterative walk for nodes it does not cover
+(fragments); for a Document it returns the **root element's** text (the
+DOM's null is not what callers want).
 
-**Mutation** (`glue/html_node/mutate.rs`). Tree edits (`add_child`/`<<`,
-`add_previous_sibling`/`before`, `add_next_sibling`/`after`, `remove`/`unlink`,
-`replace`) over Lexbor insert/remove. We **detach, never destroy** - the arena
-owns node memory and live Ruby wrappers may alias a removed node; move semantics
-= detach-then-insert. Attribute `[]=` / `delete`; `Node#content=`. **Every HTML
-attribute lookup and write is the DOM's algorithm in `lexbor/adapter/html/attrs.rs`**
-(by qualified name, lower-cased on an HTML element; by namespace + local name),
-never Lexbor's element helpers: those match the LOCAL name (`svg_a["href"]`
-hit `xlink:href`), and `lxb_dom_element_attr_append` DESTROYS the attribute
-behind `element->attr_id`/`attr_class` when another `id`/`class` arrives.
-`link_attr` empties both shortcuts around that append (nothing to free) and
-points them at the no-namespace `id`/`class` itself (they back CSS `#id` /
-`.class`); `repair_import` fixes what Lexbor's `importNode` copy drops. There is
-NO rename (`name=` was removed on both representations): the DOM has none, and
-Lexbor keeps many elements in structs of their own, so rewriting a node's tag in
-place left it read as a struct it is not (`div` -> `template` segfaulted). `Document#{create_element,create_text_node}`.
-Fragments: `DocumentFragment.parse(html)` (own backing doc) and
-`Document#fragment(html)` (bound to a doc) parse in a throwaway `<body>` context
-and `lxb_dom_document_import_node` (deep) each child into the target arena;
-inserting a fragment splices its **children**. The four structural verbs are one
+**Mutation** (`glue/html_node/mutate.rs` over `html/dom/edit.rs`). Tree edits
+(`add_child`/`<<`, `add_previous_sibling`/`before`, `add_next_sibling`/
+`after`, `remove`/`unlink`, `replace`) **detach, never destroy** - the arena
+owns node memory and live Ruby wrappers may alias a removed node; a move is
+detach-then-insert. **Every HTML attribute lookup and write is the DOM's
+algorithm** (`HtmlElement::attr_by_name` / `get_attribute`, by qualified
+name, lower-cased on an HTML element; `HtmlDocMut::set_attribute` /
+`set_attribute_ns`, by namespace + local name), so `svg_a["href"]` does not
+find `xlink:href`. The `id`/`class` shortcuts that back CSS `#id` / `.class`
+move only through `Document::link_attribute` and a `ShortcutRule` each caller
+names (the parser's Lexbor rule, the DOM algorithms' `Take`, a copy's).
+There is NO rename (`name=` was removed on both representations): the DOM has
+none. Copies - `clone_node`, `import_node`, an insert from another document,
+a fragment's import - are `html/dom/copy.rs` (`HtmlDocMut::import`,
+`import_xml`). Fragments: `DocumentFragment.parse(html)` (own backing doc)
+and `Document#fragment(html)` (bound to a doc) parse in a throwaway document
+(`html::fragment`) and import each child; inserting a fragment splices its
+**children**. The four structural verbs are one
 `bridge::html::insert(this, node, Place)`. The rules - the WHATWG DOM's
 "ensure pre-insertion validity" - are written ONCE, in `crate::dom_rules::check`
 (with the DOM's other rules both sides must answer alike: `places_itself`,
-`text_content`, `removable`),
-generic over a small `Tree` trait (the XPath `Dom` pattern) that the adapter
-(`HtmlTree`: a template's contents reach it through `host`, an attribute has no
-tree parent) and the XML arena both implement; each side keeps only its linking
-(and XML its namespace resolution), and checks a fragment as one node before
-any link changes. The placing is `HtmlDocMut::place`. **Every edit goes through `bridge::html::edit` and then
-`HtmlEdit::with_tree` (or `with_attributes` / `with_data`), which drops the indexes**
-(`HtmlParsed::invalidate_indexes`) and lends the document as `&mut HtmlDocMut`
-for a closure that runs no Ruby - so no mutator calls it, and none can forget to
-on an error path. The factories, copies and fragment imports reach the document
-through `bridge::html::new_node` the same way; nothing outside the Lexbor layer
-can name `HtmlNodeMut`'s constructor or `HtmlDoc::create_*`. A `RawNode` is a
-reference INTO a document and becomes a handle only through `HtmlDoc::node` (or
-`HtmlDocMut::node` inside an edit): the shape the parser port's index arena
-needs (`docs/rewrite_parser.ja.md`). The two are
-separate on purpose: `edit` checks (frozen, evaluating) so those errors come
-first, and every argument is converted BETWEEN the two, because a conversion is
-the argument's `#to_s` - arbitrary Ruby - and a query there rebuilt the indexes
-from the tree about to change (a read of released text storage). The XML side
-is the same pair, `begin_edit` and `Editing::with_arena`. Both take the
-receiver `&mut` for the edit's life, so a read of its document
-(`HtmlSelf::doc`, `XmlSelf::doc_ref`) still held when the edit begins - one
-the edit's compaction or arena growth would invalidate - is a borrow error, not
-a use-after-free; a read the edit itself needs goes through it
-(`Editing::doc`). A copy of the receiver is not covered. `inner_html=`/`outer_html=` are all or
-nothing: `stage_fragment_in` imports into a DETACHED fragment first, and only
-then are the old nodes swapped out (`rake oom`'s `html_inner_html` scenario
-checks the document is unchanged after every injected failure).
+`text_content`, `removable`), generic over a small `Tree` trait that the
+arena (`HtmlTree`: a template's contents reach it through `host`, an
+attribute has no tree parent) and the XML arena both implement; each side
+keeps only its linking (and XML its namespace resolution), and checks a
+fragment as one node before any link changes. The placing is
+`HtmlDocMut::place`. **Every edit goes through `bridge::html::edit` and then
+`HtmlEdit::with_tree` (or `with_attributes` / `with_data`), which drops the
+indexes** (`HtmlParsed::edit`) and lends the document as `&mut HtmlDocMut`
+for a closure that runs no Ruby - so no mutator calls it, and none can
+forget to on an error path. The factories, copies and fragment imports reach
+the document through `bridge::html::new_node` (`HtmlNewNodes`, which keeps
+the indexes: a detached node is in none). A `RawNode` is a reference INTO a
+document and becomes a handle only through `HtmlDoc::node` / `checked` (or
+`HtmlDocMut::node` inside an edit). `edit` and `with_tree` are separate on
+purpose: `edit` checks (frozen, evaluating) so those errors come first, and
+every argument is converted BETWEEN the two, because a conversion is the
+argument's `#to_s` - arbitrary Ruby - and a query there rebuilt the indexes
+from the tree about to change. The XML side is the same pair, `begin_edit`
+and `Editing::with_arena`. Both take the receiver `&mut` for the edit's
+life, so a read of its document (`HtmlSelf::doc`, `XmlSelf::doc_ref`) still
+held when the edit begins - one the edit's compaction or arena growth would
+invalidate - is a borrow error, not a use-after-free; a read the edit itself
+needs goes through it (`Editing::doc`). A copy of the receiver is not
+covered. `inner_html=`/`outer_html=` are all or nothing: `stage_fragment_in`
+imports into a DETACHED fragment first, and only then are the old nodes
+swapped out (`rake oom`'s `html_inner_html` scenario checks the document is
+unchanged after every injected failure).
 
 **Ruby surface niceties.** Node classes, under the WHATWG DOM interface names:
 Document, Element, Attr, Text, Comment, CDATASection, ProcessingInstruction,
@@ -1325,11 +1268,10 @@ Key decisions that got there, worth not regressing:
   `spec/css_selector_cache_spec.rb` (flush, bypass/retest, and
   reject-without-disturbing-the-cache) and the Rust-level
   `css_cache::tests`.
-- **`Node#text` is served from the text index** (`lexbor/adapter/text_index.rs`,
-  see the subsystem note): a per-document, lazily-built, mutation-invalidated
-  map from node → its document-order text-slice run, turning text extraction
-  into a hash lookup + one pre-sized memcpy instead of a cache-bound walk over
-  96-byte nodes (~4× libxml2, vs the former ~parity). The walk fallback stays
+- **`Node#text` is served from the text index** (`html/dom/index.rs`,
+  see the subsystem note): a per-document, lazily-built, edit-dropped map
+  from node → its document-order run of text spans, turning text extraction
+  into a lookup + one pre-sized memcpy instead of a walk (~4× libxml2). The walk fallback stays
   for non-indexed nodes. Do not regress to walking on the indexed path; verify
   with `bench`'s "full document text" row and `spec/text_index_spec.rb` (which
   asserts byte-identity with a plain walk across subtrees + mutations).
@@ -1374,7 +1316,7 @@ Key decisions that got there, worth not regressing:
   `Node#xpath` uses a throwaway context and does not cache.
 - **Every Document reports its arena to the GC** (`account_document`, which
   `DocumentShell::install` calls; `impl Drop for DocData` takes the report back). Neither
-  Lexbor's pools nor the XML arena is an `xmalloc`, so without the report Ruby
+  arena, HTML or XML, is an `xmalloc`, so without the report Ruby
   sees a parsed Document as ~56 bytes and NO collection is triggered by memory
   pressure: `500.times { Makiri::HTML(html) }` ran with zero GCs, 2.2 GB RSS,
   and every parse faulting fresh pages - the parse bench read 1.8× slower than
@@ -1386,13 +1328,12 @@ Key decisions that got there, worth not regressing:
   and `install_html(Box<HtmlParsed>)` / `install_xml(Box<XmlDoc>)` store the
   content and report it in one step, so a
   new parse entry cannot skip the report; `spec/gc_accounting_spec.rb` pins
-  both halves. The report is the capacity of everything the document OWNS -
-  pools and the four name tables (~23 KB of tables for an empty document); a
-  document made with an owner shares its owner's and reports 0. Growth through
+  both halves. The report is what the document OWNS (`HtmlParsed::external_bytes`,
+  the XML arena's `memsize`). Growth through
   mutation is re-reported where an edit begins (`account_growth`, from
   `bridge::html::edit` / `bridge::xml::begin_edit`) once it reaches an eighth
-  of the last report (and a floor): an O(1) chunk count decides for HTML,
-  since measuring walks every chunk. A document's last edit may go unreported
+  of the last report (and a floor): for HTML an O(1) measure decides
+  (`HtmlParsed::arena_chunks`) before the bytes are measured again. A document's last edit may go unreported
   (under-reporting, the safe direction). Without it, 60 documents grown by
   `inner_html=` ran with zero GCs to ~700 MB RSS; with it, ~200 MB.
 - Tree-walk speed was structurally capped by Lexbor's 96-byte node; the arena
