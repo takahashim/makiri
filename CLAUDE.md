@@ -617,7 +617,8 @@ does (`html::encoding` decides, `html::tree::parse_document_bytes` drives):
 the HTML Standard's encoding sniffing algorithm
 (BOM; the transport layer's encoding - `encoding:`, else the String's own
 when it has one; for an ASCII-8BIT String the 1024-byte `<meta>` prescan,
-then UTF-8 if the bytes are valid UTF-8, then `chardetng`), "change the
+then UTF-8 if the bytes are valid UTF-8, then `chardetng` over 64 KiB
+from the first non-ASCII byte, `DETECT_MAX`), "change the
 encoding" (a `<meta>` met while the confidence is tentative re-reads the
 document), and the Encoding Standard's decoders (`encoding_rs`, into a
 `falloc` buffer). `Document#encoding` is what it was read in. A Ruby
