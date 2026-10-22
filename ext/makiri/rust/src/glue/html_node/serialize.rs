@@ -50,12 +50,15 @@ fn to_html(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<RString, Error
         /* A document fragment has no tag of its own, so its "outer" is its
          * children: the inner scope is the right one (the outer one rejects
          * a fragment node). */
-        let scope = if this.node().node_type() == NodeType::DocumentFragment {
+        let view = this.read()?;
+        let node = view.node();
+        let scope = if node.node_type() == NodeType::DocumentFragment {
             Scope::Inner
         } else {
             Scope::Outer
         };
-        render(this.node(), scope, layout)
+        /* The String is made under `protect`, so the read may stay. */
+        render(node, scope, layout)
     })
 }
 
@@ -68,7 +71,8 @@ fn to_html(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<RString, Error
 fn inner_html(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<RString, Error> {
     crate::bridge::ruby::entry(|| {
         let layout = layout_opt(ruby, args)?;
-        let node = this.node();
+        let view = this.read()?;
+        let node = view.node();
         let target = node.template_content().unwrap_or(node);
         render(target, Scope::Inner, layout)
     })

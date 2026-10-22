@@ -264,36 +264,93 @@ pub fn node_set_with_fill<'a>(document: Value) -> (Value, Fill<'a>) {
     (value, Fill { value, set })
 }
 
-/// A NodeSet over `document` holding `nodes`, for a caller that owns them.
+/// A NodeSet over `document` holding `nodes`, for a caller that owns them -
+/// or holds a document read they borrow.
 ///
-/// Built under `protect`: growing the set can raise `NoMemoryError` from Ruby's
-/// allocator, and a longjmp would skip the drop of whatever collection the
-/// caller is iterating. Under `protect` it comes back as `Err` instead, the
-/// collection drops normally, and magnus raises afterwards - one setjmp per set,
-/// not per node.
+/// Built under `protect`, the set's allocation included: making and growing
+/// the set can raise `NoMemoryError` from Ruby's allocator, and a longjmp
+/// would skip the drop of whatever collection the caller is iterating, and of
+/// a read guard the nodes borrow. Under `protect` it comes back as `Err`
+/// instead, those drop normally, and magnus raises afterwards - one setjmp
+/// per set, not per node.
 pub fn node_set_from(
     document: Value,
     nodes: impl Iterator<Item = NodeWord>,
 ) -> Result<Value, Error> {
-    let (set, fill) = node_set_with_fill(document);
     let mut refused = None;
     /* Borrowed into the protected closure, not moved: a raise unwinds the
      * closure's frames only, and the collection the iterator owns (a
      * matcher's result) is still this frame's to drop. */
     let mut nodes = nodes;
-    crate::bridge::ruby::protect_value(|| {
+    let set = crate::bridge::ruby::protect_value(|| {
+        let (set, fill) = node_set_with_fill(document);
         for n in nodes.by_ref() {
             if let Err(e) = fill.push(n) {
                 refused = Some(e);
                 break;
             }
         }
-        crate::bridge::ruby::nil().as_raw()
+        set.as_raw()
     })?;
     match refused {
         Some(e) => Err(e.into()),
         None => Ok(set),
     }
+}
+
+/// The most nodes [`node_set_after_read`] lifts out of a read onto the stack,
+/// as a node's children or ancestors usually are, rather than building the
+/// set while the read is held, under `protect`, which costs a `setjmp`.
+const LIFT_NODES: usize = 32;
+
+/// A NodeSet over `document` of the nodes `each` lists from `read`, a document
+/// read guard - built with the read ended before anything can raise past it.
+///
+/// A read guard is a counted borrow: a raise that `longjmp`s past it leaves
+/// the document counted as read for good, and every later edit refused. So up
+/// to [`LIFT_NODES`] node words are copied to the stack (no `Drop`), the guard
+/// is dropped, and the set is built after; more, and `each` runs again under
+/// `protect` with the guard held, filling the set directly.
+pub fn node_set_after_read<G>(
+    read: G,
+    document: Value,
+    each: impl Fn(&G, &mut dyn FnMut(NodeWord)),
+) -> Result<Value, Error> {
+    let mut lifted = [NodeWord::NULL; LIFT_NODES];
+    let mut len = 0usize;
+    let mut overflow = false;
+    each(&read, &mut |w| match lifted.get_mut(len) {
+        Some(slot) => {
+            *slot = w;
+            len += 1;
+        }
+        None => overflow = true,
+    });
+    if overflow {
+        let mut refused = None;
+        let set = crate::bridge::ruby::protect_value(|| {
+            let (set, fill) = node_set_with_fill(document);
+            each(&read, &mut |w| {
+                if refused.is_none() {
+                    if let Err(e) = fill.push(w) {
+                        refused = Some(e);
+                    }
+                }
+            });
+            set.as_raw()
+        })?;
+        drop(read);
+        return match refused {
+            Some(e) => Err(e.into()),
+            None => Ok(set),
+        };
+    }
+    drop(read);
+    let (set, fill) = node_set_with_fill(document);
+    for &w in &lifted[..len] {
+        fill.push(w)?;
+    }
+    Ok(set)
 }
 
 /* ------------------------------------------------------------------ */

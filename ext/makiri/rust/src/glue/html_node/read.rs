@@ -8,20 +8,23 @@
 //! # Where a GC may run
 //!
 //! Building any String or NodeSet allocates, and Ruby's allocator raises
-//! `NoMemoryError` past every Rust frame. The attribute lookups take their
-//! name through `ruby_verified_text`, an owned copy, and drop it before
-//! building anything, so a raise there leaks nothing. Bytes borrowed from the
-//! document are arena memory, which a GC does not move.
+//! `NoMemoryError` past every Rust frame. Every read of the document is a
+//! guard (`HtmlSelf::read`), a counted borrow a raise would leave counted, so
+//! none is held across an allocation: a node is wrapped after the read
+//! (`HtmlView::wrap`), a String is made of bytes lifted out of it
+//! (`str_after_read`), and what must be built while the read is held - a
+//! NodeSet, an Array of names - is built under `protect`. The attribute
+//! lookups take their name through `ruby_verified_text`, an owned copy, which
+//! goes with the read.
 
 #![forbid(unsafe_code)]
 
 use magnus::{prelude::*, Error, Ruby, Value};
 
-use super::{with_arg_node, wrap_node};
-use crate::bridge::html::{text_index_string, wrap_html_node};
-use crate::bridge::node_set::node_set_with_fill;
-use crate::bridge::ruby::is_kind_of;
-use crate::bridge::string::{dom_name_str, ruby_verified_text, utf8_str};
+use super::with_arg_node;
+use crate::bridge::html::{wrap_html_node, HtmlView};
+use crate::bridge::ruby::{is_kind_of, protected};
+use crate::bridge::string::{ruby_verified_text, str_after_read, utf8_str, RubyText, StrKind};
 use crate::child_index;
 use crate::html_dom::html::{HtmlAttr, HtmlNode, HtmlTree, NodeType, RawNode};
 use crate::init::{CLASS_NODE, CLASS_XML_DOCUMENT};
@@ -50,6 +53,12 @@ fn qname_prefix(q: &[u8], local_len: usize) -> Option<&[u8]> {
     (q.len() > local_len + 1).then(|| &q[..q.len() - local_len - 1])
 }
 
+/// Whether the receiver is an element - asked before an argument is
+/// converted, so a non-element answers without reading it.
+fn is_element(this: &super::HtmlSelf) -> Result<bool, Error> {
+    Ok(this.read()?.node().element().is_some())
+}
+
 /* ------------------------------------------------------------------ *
  * name / type / content                                              *
  * ------------------------------------------------------------------ */
@@ -59,17 +68,20 @@ fn qname_prefix(q: &[u8], local_len: usize) -> Option<&[u8]> {
 /// `text` / `comment` / `#cdata-section` / `document` for the other kinds.
 pub fn name(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let node = this.node();
-        if let Some((q, _)) = qname(node) {
-            return Ok(utf8_str(q));
-        }
-        Ok(match node.node_type() {
-            NodeType::Text => ruby.str_new("text").as_value(),
-            NodeType::Comment => ruby.str_new("comment").as_value(),
-            NodeType::CDataSection => ruby.str_new("#cdata-section").as_value(),
-            NodeType::Document => ruby.str_new("document").as_value(),
-            _ => utf8_str(node.node_name()),
-        })
+        let name = str_after_read(this.read()?, StrKind::Utf8, |v| {
+            let node = v.node();
+            if let Some((q, _)) = qname(node) {
+                return Some(q);
+            }
+            Some(match node.node_type() {
+                NodeType::Text => b"text",
+                NodeType::Comment => b"comment",
+                NodeType::CDataSection => b"#cdata-section",
+                NodeType::Document => b"document",
+                _ => node.node_name(),
+            })
+        })?;
+        Ok(name.unwrap_or_else(|| ruby.str_new("").as_value()))
     })
 }
 
@@ -80,13 +92,14 @@ pub fn local_name(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, 
     crate::bridge::ruby::entry(|| {
         /* The DOM's case-preserved name - `foreignObject`, `refX` - where Lexbor
          * stores a lower-cased one; the same answer XPath's `local-name()` gives. */
-        let node = this.node();
-        let local = match (node.element(), node.attr()) {
-            (Some(el), _) => el.dom_local_name(),
-            (None, Some(at)) => at.dom_local_name(),
-            (None, None) => return Ok(None),
-        };
-        Ok(Some(dom_name_str(local)))
+        str_after_read(this.read()?, StrKind::DomName, |v| {
+            let node = v.node();
+            match (node.element(), node.attr()) {
+                (Some(el), _) => Some(el.dom_local_name()),
+                (None, Some(at)) => Some(at.dom_local_name()),
+                (None, None) => None,
+            }
+        })
     })
 }
 
@@ -94,9 +107,9 @@ pub fn local_name(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, 
 /// typically nil for HTML5-parsed content. Element and Attribute only.
 pub fn prefix(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        Ok(qname(this.node())
-            .and_then(|(q, local)| qname_prefix(q, local.len()))
-            .map(dom_name_str))
+        str_after_read(this.read()?, StrKind::DomName, |v| {
+            qname(v.node()).and_then(|(q, local)| qname_prefix(q, local.len()))
+        })
     })
 }
 
@@ -114,13 +127,14 @@ pub fn prefix(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Erro
 /// Other kinds: nil.
 pub fn namespace_uri(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        let node = this.node();
-        let uri = match (node.element(), node.attr()) {
-            (Some(_), _) => node.ns_uri(),
-            (None, Some(at)) => at.own_ns_uri(),
-            (None, None) => None,
-        };
-        Ok(uri.map(dom_name_str))
+        str_after_read(this.read()?, StrKind::DomName, |v| {
+            let node = v.node();
+            match (node.element(), node.attr()) {
+                (Some(_), _) => node.ns_uri(),
+                (None, Some(at)) => at.own_ns_uri(),
+                (None, None) => None,
+            }
+        })
     })
 }
 
@@ -130,11 +144,9 @@ pub fn namespace_uri(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value
 /// their case. nil for a non-element.
 pub fn tag_name(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        Ok(this
-            .node()
-            .element()
-            .and_then(|el| el.tag_name())
-            .map(dom_name_str))
+        str_after_read(this.read()?, StrKind::DomName, |v| {
+            v.node().element().and_then(|el| el.tag_name())
+        })
     })
 }
 
@@ -142,12 +154,14 @@ pub fn tag_name(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Er
 /// nil for a non-PI. The PI's data is read with `#content` like any
 /// character-data node.
 pub fn pi_target(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| this.with_node(|node| Ok(node.pi_target().map(utf8_str))))
+    crate::bridge::ruby::entry(|| {
+        str_after_read(this.read()?, StrKind::Utf8, |v| v.node().pi_target())
+    })
 }
 
 /// `#node_type`: the numeric DOM node type (`LXB_DOM_NODE_TYPE_*`).
 pub fn node_type(_ruby: &Ruby, this: super::HtmlSelf) -> Result<i64, Error> {
-    crate::bridge::ruby::entry(|| Ok(this.node().node_type() as u32 as i64))
+    crate::bridge::ruby::entry(|| Ok(this.read()?.node().node_type() as u32 as i64))
 }
 
 /// `DocumentType#public_id` / `#system_id` (WHATWG DOM).
@@ -157,11 +171,19 @@ pub fn node_type(_ruby: &Ruby, this: super::HtmlSelf) -> Result<i64, Error> {
 /// both answer nil, matching Nokogiri. Defined only on DocumentType; for any
 /// other receiver the handle answers None as well.
 pub fn doctype_public_id(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| Ok(this.node().doctype_public_id().map(utf8_str)))
+    crate::bridge::ruby::entry(|| {
+        str_after_read(this.read()?, StrKind::Utf8, |v| {
+            v.node().doctype_public_id()
+        })
+    })
 }
 
 pub fn doctype_system_id(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| Ok(this.node().doctype_system_id().map(utf8_str)))
+    crate::bridge::ruby::entry(|| {
+        str_after_read(this.read()?, StrKind::Utf8, |v| {
+            v.node().doctype_system_id()
+        })
+    })
 }
 
 /// `Element#content_fragment`: a `<template>` element's "template contents" -
@@ -175,7 +197,7 @@ pub fn doctype_system_id(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<V
 /// DOM, and unavoidable for CSS, which runs Lexbor's selector engine over the
 /// real tree - so query the fragment instead.
 pub fn content_fragment(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| wrap_node(this.node().template_content(), this.document))
+    crate::bridge::ruby::entry(|| this.read()?.wrap(|n| n.template_content()))
 }
 
 /// `#content` / `#text` / `#inner_text`: the concatenated text of this node and
@@ -183,51 +205,8 @@ pub fn content_fragment(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Va
 ///
 /// The DOM makes a Document's textContent null; this returns the ROOT element's
 /// text instead, which is the intuitive, Nokogiri-like `Document#text`.
-pub fn content(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        let mut node = this.node();
-        if node.node_type() == NodeType::Document {
-            match node.document_root() {
-                Some(root) => node = root,
-                None => return Ok(ruby.str_new("").as_value()),
-            }
-        }
-
-        if matches!(
-            node.node_type(),
-            NodeType::Element | NodeType::DocumentFragment
-        ) {
-            return element_text(this.document, node);
-        }
-
-        /* Character data and attributes lend their own bytes; the other kinds
-         * (a doctype) have none. A UTF-8
-         * String, not magnus's str_from_slice: that one tags the String
-         * ASCII-8BIT, and a binary Text#content poisons every UTF-8 String it is
-         * appended to. */
-        Ok(match node.own_text() {
-            Some(bytes) => utf8_str(bytes),
-            None => ruby.str_new("").as_value(),
-        })
-    })
-}
-
-/// The element/fragment half of [`content`], which is the common case and
-/// includes whole-document text.
-///
-/// Preferred: the per-document text index maps the node to the contiguous,
-/// document-order run of its descendants' text slices, so this is one pre-sized
-/// memcpy run with no per-extraction tree walk - the walk is otherwise the
-/// dominant, cache-bound cost.
-///
-/// Otherwise - before the index is due (`HtmlParsed::ensure_text_index`), for
-/// a node outside the indexed tree (a fragment), or after a build OOM - a walk
-/// of the node's subtree (`bridge::html::subtree_text`).
-fn element_text(document: Value, node: HtmlNode<'_>) -> Result<Value, Error> {
-    if let Some(text) = text_index_string(document, node.into())? {
-        return Ok(text);
-    }
-    crate::bridge::html::subtree_text(document, node)
+pub fn content(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| this.read()?.text())
 }
 
 /* ------------------------------------------------------------------ *
@@ -243,53 +222,53 @@ pub fn get_document(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error>
 /// answers nil and nothing needs building. (It used to go through an index
 /// whose build could fail, which is why this returned `Result`.)
 pub fn parent(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| wrap_node(this.node().parent(), this.document))
+    crate::bridge::ruby::entry(|| this.read()?.wrap(|n| n.parent()))
 }
 
 pub fn next(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| wrap_node(this.node().next(), this.document))
+    crate::bridge::ruby::entry(|| this.read()?.wrap(|n| n.next()))
 }
 
 pub fn previous(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| wrap_node(this.node().prev(), this.document))
+    crate::bridge::ruby::entry(|| this.read()?.wrap(|n| n.prev()))
 }
 
 pub fn next_element(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        let found = child_index::next_element_sibling(&HtmlTree::new(), this.node());
-        wrap_node(found, this.document)
+        this.read()?
+            .wrap(|n| child_index::next_element_sibling(&HtmlTree::new(), n))
     })
 }
 
 pub fn previous_element(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        let found = child_index::previous_element_sibling(&HtmlTree::new(), this.node());
-        wrap_node(found, this.document)
+        this.read()?
+            .wrap(|n| child_index::previous_element_sibling(&HtmlTree::new(), n))
     })
 }
 
 /// `#child`: the first child node of any type, or nil.
 pub fn child(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| wrap_node(this.node().first_child(), this.document))
+    crate::bridge::ruby::entry(|| this.read()?.wrap(|n| n.first_child()))
 }
 
 pub fn first_element_child(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        let found = child_index::first_element_child(&HtmlTree::new(), this.node());
-        wrap_node(found, this.document)
+        this.read()?
+            .wrap(|n| child_index::first_element_child(&HtmlTree::new(), n))
     })
 }
 
 pub fn last_element_child(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        let found = child_index::last_element_child(&HtmlTree::new(), this.node());
-        wrap_node(found, this.document)
+        this.read()?
+            .wrap(|n| child_index::last_element_child(&HtmlTree::new(), n))
     })
 }
 
 /// `#last_child`: the last child node of any type, or nil.
 pub fn last_child(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| wrap_node(this.node().last_child(), this.document))
+    crate::bridge::ruby::entry(|| this.read()?.wrap(|n| n.last_child()))
 }
 
 /// `#root_node` (DOM `getRootNode()`, not shadow-including) - see
@@ -297,40 +276,27 @@ pub fn last_child(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, 
 /// answers its element.
 pub fn root_node(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let root = crate::dom_rules::root(&HtmlTree::new(), this.node());
-        wrap_html_node(RawNode::from(root), this.document)
+        let root = {
+            let view = this.read()?;
+            RawNode::from(crate::dom_rules::root(&HtmlTree::new(), view.node()))
+        };
+        wrap_html_node(root, this.document)
     })
-}
-
-/// Collect nodes into a NodeSet. The set is a live Ruby object across every
-/// push, so nothing borrowed from Ruby is held here.
-fn set_of<'d>(
-    document: Value,
-    nodes: impl Iterator<Item = HtmlNode<'d>>,
-    elements_only: bool,
-) -> Result<Value, Error> {
-    let (set, fill) = node_set_with_fill(document);
-    for n in nodes {
-        if !elements_only || n.element().is_some() {
-            fill.push(RawNode::from(n).into())?;
-        }
-    }
-    Ok(set)
 }
 
 /// `#children`: every child node, as a NodeSet.
 pub fn children(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| set_of(this.document, this.node().children(), false))
+    crate::bridge::ruby::entry(|| this.read()?.set(false, |n, out| n.children().for_each(out)))
 }
 
 /// `#element_children` / `#elements`: the child elements only.
 pub fn element_children(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| set_of(this.document, this.node().children(), true))
+    crate::bridge::ruby::entry(|| this.read()?.set(true, |n, out| n.children().for_each(out)))
 }
 
 /// `#ancestors`: the ancestor elements, nearest first.
 pub fn ancestors(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| set_of(this.document, this.node().ancestors(), true))
+    crate::bridge::ruby::entry(|| this.read()?.set(true, |n, out| n.ancestors().for_each(out)))
 }
 
 /* ------------------------------------------------------------------ *
@@ -345,63 +311,70 @@ pub fn ancestors(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
 /// sibling.
 pub fn aref(_ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        if this.node().element().is_none() {
+        if !is_element(&this)? {
             return Ok(None);
         }
         /* Converted before the document is borrowed: the conversion is the
          * argument's `to_s`, arbitrary Ruby that can edit this document. */
         let nv = ruby_verified_text(rb_name, "attribute name")?;
-        let Some(el) = this.node().element() else {
-            return Ok(None);
-        };
         /* A present attribute with no value (`<input disabled>`) answers
-         * `Some(b"")`, which is `""`; only an absent one is nil. */
-        let value = el.get_attribute(nv.as_bytes());
-        /* The name is not read past here; the String allocates, so after. */
-        drop(nv);
-        Ok(value.map(utf8_str))
+         * `Some(b"")`, which is `""`; only an absent one is nil. The name goes
+         * with the read, before the String is made. */
+        str_after_read((this.read()?, nv), StrKind::Utf8, |(v, nv)| {
+            v.node().element()?.get_attribute(nv.as_bytes())
+        })
     })
 }
 
 /// `node.key?(name)`.
 pub fn has_key(_ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<bool, Error> {
     crate::bridge::ruby::entry(|| {
-        if this.node().element().is_none() {
+        if !is_element(&this)? {
             return Ok(false);
         }
         /* Converted before the document is borrowed: the conversion is the
          * argument's `to_s`, arbitrary Ruby that can edit this document. */
         let nv = ruby_verified_text(rb_name, "attribute name")?;
-        let Some(el) = this.node().element() else {
-            return Ok(false);
-        };
-        Ok(el.has_attribute(nv.as_bytes()))
+        let view = this.read()?;
+        let found = view
+            .node()
+            .element()
+            .is_some_and(|el| el.has_attribute(nv.as_bytes()));
+        Ok(found)
     })
 }
 
 /// `node.keys` -> the attribute names, in document order.
 pub fn keys(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let ary = ruby.ary_new();
-        if let Some(el) = this.node().element() {
-            for at in el.attrs() {
-                ary.push(utf8_str(at.qualified_name()))?;
+        let view = this.read()?;
+        /* The names borrow the read, so the Array is built under `protect`. */
+        protected(|| {
+            let ary = ruby.ary_new();
+            if let Some(el) = view.node().element() {
+                for at in el.attrs() {
+                    ary.push(utf8_str(at.qualified_name()))?;
+                }
             }
-        }
-        Ok(ary.as_value())
+            Ok(ary.as_value())
+        })
     })
 }
 
 /// `node.values` -> the attribute values, in document order.
 pub fn values(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let ary = ruby.ary_new();
-        if let Some(el) = this.node().element() {
-            for at in el.attrs() {
-                ary.push(utf8_str(at.value()))?;
+        let view = this.read()?;
+        /* The values borrow the read, so the Array is built under `protect`. */
+        protected(|| {
+            let ary = ruby.ary_new();
+            if let Some(el) = view.node().element() {
+                for at in el.attrs() {
+                    ary.push(utf8_str(at.value()))?;
+                }
             }
-        }
-        Ok(ary.as_value())
+            Ok(ary.as_value())
+        })
     })
 }
 
@@ -410,9 +383,12 @@ pub fn values(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
 /// back with `Attribute#parent` reads its `attr->owner`.
 pub fn attribute_nodes(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let node = this.node();
-        let attrs = node.element().into_iter().flat_map(|el| el.attrs());
-        set_of(this.document, attrs.map(|at| at.node()), false)
+        this.read()?.set(false, |node, out| {
+            node.element()
+                .into_iter()
+                .flat_map(|el| el.attrs())
+                .for_each(|at| out(at.node()))
+        })
     })
 }
 
@@ -428,20 +404,25 @@ pub fn attribute_by_qualified_name(
     rb_name: Value,
 ) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        if this.node().element().is_none() {
+        if !is_element(&this)? {
             return Ok(None);
         }
         /* Converted before the document is borrowed: the conversion is the
          * argument's `to_s`, arbitrary Ruby that can edit this document. */
         let nv = ruby_verified_text(rb_name, "attribute name")?;
-        let Some(el) = this.node().element() else {
-            return Ok(None);
+        let found = {
+            let view = this.read()?;
+            let name = nv.as_bytes();
+            view.node()
+                .element()
+                .and_then(|el| el.attrs().find(|at| at.qualified_name() == name))
+                .map(|at| RawNode::from(at.node()))
         };
-        let name = nv.as_bytes();
-        let found = el.attrs().find(|at| at.qualified_name() == name);
         /* The name is not read past here; wrapping allocates, so it happens after. */
         drop(nv);
-        wrap_node(found.map(|at| at.node()), this.document)
+        found
+            .map(|at| wrap_html_node(at, this.document))
+            .transpose()
     })
 }
 
@@ -458,22 +439,20 @@ pub fn attribute_value_by_qualified_name(
     rb_name: Value,
 ) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        if this.node().element().is_none() {
+        if !is_element(&this)? {
             return Ok(None);
         }
         /* Converted before the document is borrowed: the conversion is the
          * argument's `to_s`, arbitrary Ruby that can edit this document. */
         let nv = ruby_verified_text(rb_name, "attribute name")?;
-        let Some(el) = this.node().element() else {
-            return Ok(None);
-        };
-        let name = nv.as_bytes();
-        let value = el
-            .attrs()
-            .find(|at| at.qualified_name() == name)
-            .map(|at| at.value());
-        drop(nv);
-        Ok(value.map(utf8_str))
+        str_after_read((this.read()?, nv), StrKind::Utf8, |(v, nv)| {
+            let name = nv.as_bytes();
+            v.node()
+                .element()?
+                .attrs()
+                .find(|at| at.qualified_name() == name)
+                .map(|at| at.value())
+        })
     })
 }
 
@@ -481,32 +460,31 @@ pub fn attribute_value_by_qualified_name(
 /// local name `rb_local` - DOM "get an attribute by namespace and local name",
 /// the key `remove_attribute_ns` removes by. The namespace compares exactly.
 ///
-/// `None` for a non-element receiver, before either argument is read. The
-/// element is borrowed only after both are converted: a conversion is the
-/// argument's `to_s`, arbitrary Ruby that can edit this document.
-fn attr_by_ns_arg<'d>(
-    this: &'d super::HtmlSelf,
-    rb_ns: Value,
-    rb_local: Value,
-) -> Result<Option<HtmlAttr<'d>>, Error> {
-    if this.node().element().is_none() {
+/// The two arguments, converted - `None` for a non-element receiver, before
+/// either is read. Converted before the document is borrowed: a conversion
+/// is the argument's `to_s`, arbitrary Ruby that can edit this document.
+type NsArgs = (RubyText, Option<RubyText>);
+
+fn ns_args(this: &super::HtmlSelf, rb_ns: Value, rb_local: Value) -> Result<Option<NsArgs>, Error> {
+    if !is_element(this)? {
         return Ok(None);
     }
     let lv = ruby_verified_text(rb_local, "attribute local name")?;
     let nv = crate::bridge::string::namespace_arg(rb_ns, "namespace")?;
-    let Some(el) = this.node().element() else {
-        return Ok(None);
-    };
+    Ok(Some((lv, nv)))
+}
+
+/// The receiver's attribute the converted [`ns_args`] name, read through
+/// `view`.
+fn attr_by_ns<'v>(view: &'v HtmlView<'_>, (lv, nv): &NsArgs) -> Option<HtmlAttr<'v>> {
+    let el = view.node().element()?;
     /* Looked up, not interned: a namespace the document never interned is
      * one no attribute here carries. */
     let want_ns = match nv.as_ref() {
-        Some(uri) => match el.node().owner_document().lookup_ns(uri.as_bytes()) {
-            Some(id) => Some(id),
-            None => return Ok(None),
-        },
+        Some(uri) => Some(el.node().owner_document().lookup_ns(uri.as_bytes())?),
         None => None,
     };
-    Ok(el.attr_by_ns(want_ns, lv.as_bytes()))
+    el.attr_by_ns(want_ns, lv.as_bytes())
 }
 
 /// `#attribute_value_ns(ns, local)` (DOM `getAttributeNS`): the value of the
@@ -519,8 +497,12 @@ pub fn attribute_value_ns(
     rb_local: Value,
 ) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        let found = attr_by_ns_arg(&this, rb_ns, rb_local)?;
-        Ok(found.map(|at| utf8_str(at.value())))
+        let Some(args) = ns_args(&this, rb_ns, rb_local)? else {
+            return Ok(None);
+        };
+        str_after_read((this.read()?, args), StrKind::Utf8, |(v, args)| {
+            attr_by_ns(v, args).map(|at| at.value())
+        })
     })
 }
 
@@ -533,17 +515,31 @@ pub fn attribute_node_ns(
     rb_local: Value,
 ) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        let found = attr_by_ns_arg(&this, rb_ns, rb_local)?;
-        wrap_node(found.map(|at| at.node()), this.document)
+        let Some(args) = ns_args(&this, rb_ns, rb_local)? else {
+            return Ok(None);
+        };
+        let found = {
+            let view = this.read()?;
+            attr_by_ns(&view, &args).map(|at| RawNode::from(at.node()))
+        };
+        drop(args);
+        found
+            .map(|at| wrap_html_node(at, this.document))
+            .transpose()
     })
 }
 
 /// `attr.value`. For a non-attribute node this falls back to text content,
 /// matching the loose Nokogiri-ish meaning of `#value`.
 pub fn value(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| match this.node().attr() {
-        Some(at) => Ok(utf8_str(at.value())),
-        None => content(ruby, this),
+    crate::bridge::ruby::entry(|| {
+        let value = str_after_read(this.read()?, StrKind::Utf8, |v| {
+            v.node().attr().map(|at| at.value())
+        })?;
+        match value {
+            Some(value) => Ok(value),
+            None => content(ruby, this),
+        }
     })
 }
 
@@ -554,7 +550,7 @@ pub fn value(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
 /// not place - a parser-inserted implicit `<html>`/`<head>`/`<body>`, a text or
 /// comment node - never a wrong line.
 pub fn line(this: super::HtmlSelf) -> Result<Option<usize>, Error> {
-    crate::bridge::ruby::entry(|| Ok(crate::bridge::html::node_line(this.document, this.raw())))
+    crate::bridge::ruby::entry(|| crate::bridge::html::node_line(this.document, this.raw()))
 }
 
 /* ------------------------------------------------------------------ *
@@ -579,7 +575,9 @@ pub fn spaceship(_ruby: &Ruby, this: super::HtmlSelf, other: Value) -> Result<Op
         if !comparable {
             return Ok(None);
         }
-        let order = with_arg_node(other, |o| this.node().document_order(o))?;
+        let order = with_arg_node(other, |o| {
+            this.read().map(|view| view.node().document_order(o))
+        })??;
         Ok(order.map(|o| o as i64))
     })
 }

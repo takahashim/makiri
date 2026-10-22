@@ -466,7 +466,9 @@ HTML名前テストとHTML属性ではASCII caseを畳み込み、SVG/MathMLの�
   アクセスは境界検査で捕まる。bridge は node を「document への参照」
   (`RawNode`) として扱い、document を `&mut` で借りた閉包の中でだけ編集
   する形に先に直し、二つの backend を一つの facade で差し替えられるように
-  した。bridge が両者で違う箇所は `bridge::dom` の一つのモジュールに置く。
+  した。`bridge::dom` は、Document が `RefCell` で所有する本体と、その読み取りと
+  編集のガードを置く。本体へ届く道はガードだけで、編集は読み取りが残っている間は
+  実行時に拒否される。
 * セレクタの構文解析も Lexbor のパーサを移植して自前にした。Lexbor の
   共有アリーナの寿命に縛られずに解析結果をキャッシュで所有できる。
   stylesheet の読み取り (`parse_stylesheet`) も移植版で解析する。規則の

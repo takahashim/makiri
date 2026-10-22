@@ -30,11 +30,8 @@ RUST = File.join(ROOT, "ext/makiri/rust/src")
 # summary prints the `glue/` + `xpath/` subtotal that must reach 0.
 UNSAFE_ISLANDS = {
   "bridge/alloc.rs" => 9,
-  "bridge/doc.rs" => 1,
-  "bridge/dom.rs" => 16,
-  "bridge/fragment.rs" => 2,
   "bridge/gvl.rs" => 5,
-  "bridge/html.rs" => 9,
+  "bridge/html.rs" => 5,
   "bridge/node_set.rs" => 2,
   "bridge/node_wrap.rs" => 1,
   "bridge/raw.rs" => 44,
@@ -45,13 +42,13 @@ UNSAFE_ISLANDS = {
   "bridge/string/view.rs" => 6,
   "bridge/typed.rs" => 23,
   "bridge/wrapper/accounting.rs" => 1,
-  "bridge/wrapper/document.rs" => 15,
-  "bridge/wrapper/node.rs" => 3,
-  "bridge/xml.rs" => 11,
+  "bridge/wrapper/document.rs" => 8,
+  "bridge/wrapper/node.rs" => 1,
+  "bridge/xml.rs" => 1,
   "bridge/xml_decode.rs" => 7,
   "bridge/xpath/context_object.rs" => 5,
   "bridge/xpath/handler.rs" => 7,
-  "bridge/xpath/mod.rs" => 7,
+  "bridge/xpath/mod.rs" => 5,
   "falloc/mod.rs" => 3,
   "gvl.rs" => 4,
   "lexbor/abi.rs" => 4,
@@ -91,7 +88,8 @@ UNSAFE_ISLANDS = {
 FORBID_ROOTS = %w[css/mod.rs glue/mod.rs css_match/mod.rs selectors/mod.rs xml/mod.rs xpath/mod.rs].freeze
 
 FORBID_FILES = %w[
-  bridge/dom_error.rs bridge/string/source.rs bridge/wrapper/edit.rs
+  bridge/doc.rs bridge/dom.rs bridge/dom_error.rs
+  bridge/fragment.rs bridge/string/source.rs bridge/wrapper/edit.rs
   cbuf.rs child_index.rs conformance/mod.rs
   css/build.rs css/lower.rs css/mod.rs
   css_cache.rs css_match/mod.rs cutf8.rs
@@ -179,7 +177,6 @@ VALUE_FROM_RAW_COUNTS = {}.freeze
 RAW_NODE_CROSSING =
   /\bRawNode::from\s*\(|\bRawNode::from_ptr\b|\.raw_node\(\)|\bHtmlNodeKey::raw_node\b/
 RAW_NODE_CROSSING_COUNTS = {
-  "bridge/doc.rs" => 1,
   # `node_ref`: a checked key as a reference INTO its document, for an edit
   # that holds that document by `&mut` (`HtmlDocMut`) and reads the node
   # through it - the one exit, so an edit never holds a second handle. The
@@ -191,14 +188,17 @@ RAW_NODE_CROSSING_COUNTS = {
   # the child-position memo's token and back. `child_index::ChildPositionMemo`
   # answers only for the `tree_version` it was filled under, so a token read
   # back is still that child; the node is never handed out raw, only wrapped.
-  # `bridge/dom.rs`: the two steps whose spelling differs between the HTML
-  # DOMs (`crate::html_dom`) - a stored node word back into a node
-  # (`node_of_word`, Lexbor's `from_ptr`), and a Document's own node
-  # (`document_node`). Both were spelled twice, in `html.rs` and
-  # `wrapper/`, which each lost two.
-  "bridge/dom.rs" => 1,
-  "bridge/html.rs" => 7,
-  "bridge/wrapper/node.rs" => 1,
+  # 11th: a Document's own node, minted as its key (`html_node_key`); and in
+  # `wrapper/node.rs` the same node as its word (`node_raw`). `bridge/dom.rs`
+  # spelled it once (`document_node`) until the document became a guard's,
+  # read where it is used.
+  # 12th: `HtmlView::set`, the nodes a read lists as the words a NodeSet holds,
+  # pushed under `protect` while the read is held; the glue's `set_of` did it
+  # before the read was a guard.
+  # 13th: `HtmlView::wrap`, the node a read finds - with its type, so the
+  # wrap after the read need not read again.
+  "bridge/html.rs" => 10,
+  "bridge/wrapper/node.rs" => 2,
 }.freeze
 
 # Lexbor ABI names outside `lexbor/` are forbidden. `lexbor` is the sole owner
@@ -694,6 +694,27 @@ end
 
 # The index of the bracket closing the one at `open` in CODE (see
 # `code_only`); nil when unbalanced.
+# The open paren of the innermost call enclosing `pos` in `code`: the nearest
+# unmatched `(` before it, passed over while it opens a tuple or a group (no
+# name or generic before it) for the one around that.
+def call_paren_around(code, pos)
+  depth = 0
+  (pos - 1).downto(0) do |i|
+    c = code[i]
+    if ")]}".include?(c)
+      depth += 1
+    elsif "([{".include?(c)
+      if depth.zero?
+        return nil unless c == "("
+        return i if code[0...i].match?(/[\w>]\s*\z/)
+      else
+        depth -= 1
+      end
+    end
+  end
+  nil
+end
+
 def matching_close(code, open)
   depth = 0
   (open...code.length).each do |i|
@@ -797,6 +818,11 @@ end
 # factories and `[]` before this check existed. Drop the copy first, or make
 # the call under `bridge::ruby::protected`, where a raise comes back as `Err`.
 #
+# A document guard (`bridge::dom`'s reads and writes, and the receiver views
+# over them) is held to the same rule, for a worse reason: its `Drop` is what
+# ends a counted borrow, so a raise past one leaves the document read - every
+# later edit refused - or written - every later read refused - for good.
+#
 # What raises is worked out, not listed: `bridge/raw.rs`'s wrappers of the
 # RAISING_API calls and magnus's allocating constructors are the seeds, and a
 # function in `bridge/` or `glue/` that calls one outside a protect raises
@@ -808,7 +834,11 @@ end
 # that does), or a parameter that takes one by value; it is live to the end
 # of its block, to its `drop(name)`, or to the call it is handed to by value -
 # that callee owns it then, and is checked through its own parameter.
-COPY_TYPES = /\b(?:RubyText|RubyData|RubyStr|HtmlSource|OwnedBuf)\b/
+COPY_TYPES = /\b(?:RubyText|RubyData|RubyStr|HtmlSource|OwnedBuf|HtmlRead|HtmlWrite|XmlRead|XmlWrite|HtmlView|XmlView)\b/
+# The guards among them. A guard is mostly read through as a temporary -
+# `xml_read(&doc)?.type_(id)` - which ends with its statement, so for these a
+# `let` binds one only when its right side IS the call (a `?` after it aside).
+GUARD_TYPES = /\b(?:HtmlRead|HtmlWrite|XmlRead|XmlWrite|HtmlView|XmlView)\b/
 MAGNUS_ALLOCATING = /\.(?:str_new|enc_str_new|str_from_slice|str_buf_new|str_with_capacity|
   ary_new|ary_new_capa|ary_new_from_values|ary_from_iter|ary_from_vec|hash_new|hash_new_capa|
   enumeratorize|obj_alloc|float_from_f64|integer_from_i64|integer_from_u64|sym_new)\s*\(/x
@@ -918,18 +948,28 @@ def copies_across_raises(rust)
   aliases.each { |from, to| raising << [to, false] if raising.include?([from, false]) }
   followed = raising.select { |k| defined[k].to_i <= 1 && !(k[1] && STD_METHOD_NAMES.include?(k[0])) }.to_set
   copy_fns = fns.select { |f| f[6][/->(.*)\z/m, 1]&.match?(COPY_TYPES) }.to_set { |f| f[1] }
+  guard_fns = fns.select { |f| f[6][/->(.*)\z/m, 1]&.match?(GUARD_TYPES) }.to_set { |f| f[1] }
+  # Whether `rhs` is a call to `f` and nothing after it but a `?`: a guard
+  # bound, rather than read through as a temporary.
+  binds_guard = lambda do |rhs, f|
+    m = rhs.match(/\b#{f}\s*\(/) or next false
+    close = matching_close(rhs, m.end(0) - 1) or next false
+    rhs[0...m.begin(0)].match?(/\A[\s\w:.&*]*\z/) && rhs[(close + 1)..].match?(/\A\s*\??\s*\z/)
+  end
 
   found = []
   fns.select { |f| f[0].start_with?("glue/", "bridge/") && f[0] != "bridge/raw.rs" }.each do |rel, name, _, body, base, code, sig|
     # `var`, a copy from `from`, live to `block_end` unless dropped or moved.
     check = lambda do |var, from, block_end|
       dropped = body.index(/\bdrop\(\s*(?:\([\w\s,]*)?\b#{var}\b[\w\s,]*\)?\s*\)/, from)
-      # Handed to a call by value (`f(x)`, `f(a, x)`): the callee owns it.
+      # Handed to a call by value (`f(x)`, `f(a, x)`, `f((a, x))`): the
+      # callee owns it.
       moved = body.index(/[(,]\s*#{var}\s*[,)]/, from)
       live_end = [block_end, dropped || block_end, moved || block_end].min
       seg = body[from...live_end]
-      # The call it is handed to by value owns it: not live across that one.
-      into = moved && (open = body.rindex("(", moved)) && (open - from)
+      # The call it is handed to by value owns it: not live across that one -
+      # the innermost enclosing paren that is a call's, past a tuple's.
+      into = moved && (open = call_paren_around(body, moved + 1)) && (open - from)
       raising_calls(seg, followed).each do |at, callee|
         next if into && at < into && seg.index("(", at) == into
         line = code[0...(base + from + at)].count("\n") + 1
@@ -953,7 +993,9 @@ def copies_across_raises(rust)
       rhs = body[m.end(0)...stmt_end]
       # A block's value is not the copy made inside it; its own lets are seen.
       next if rhs.lstrip.start_with?("{")
-      next unless local_copy_fns.any? { |f| rhs.match?(/\b#{f}\s*\(/) }
+      next unless local_copy_fns.any? do |f|
+        rhs.match?(/\b#{f}\s*\(/) && (!guard_fns.include?(f) || binds_guard.(rhs, f))
+      end
 
       names = m[1].scan(/\w+/) - %w[mut]
       if rhs.lstrip.match?(/\A(?:move\s*)?\|/)

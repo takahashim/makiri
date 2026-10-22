@@ -114,6 +114,25 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   by `bridge::string::utf8_str` in a frame that owns nothing, and by
   `utf8_str_protected` in one that does.
 
+  **A Document's content is reached only through a guard** (`bridge::dom`):
+  the `DocData` owns it in a `RefCell`, and a read (`HtmlRead` / `XmlRead`,
+  or the receiver views `HtmlSelf::read` / `XmlSelf::read`) or an edit
+  (`HtmlWrite` / `XmlWrite`, taken only inside `HtmlEdit::with_tree`,
+  `new_node`, `Editing::with_arena` and their kin) is a counted borrow. No
+  raw pointer to the content is kept or handed out, and none of its old
+  `unsafe` contract ("nothing edits it while you hold this") is left to a
+  call site: an edit that begins while any read is held - a Fiber suspended
+  in an XPath handler, a copy of the receiver - is refused as `Makiri::Error`
+  (after `ensure_document_mutable`, whose refusal comes first), and a read
+  during an edit is an `InternalError`. A guard is a `Drop`, and a raise past
+  one leaves the document borrowed for good, so the gate above holds guards
+  to the copies' rule (`COPY_TYPES`/`GUARD_TYPES`): read what is needed and
+  drop the guard before building the Ruby result. `str_after_read` lifts
+  short bytes onto the stack first, `node_set_after_read` a few node words,
+  `HtmlView::wrap` / `XmlView::wrap` the node; what must be built with the
+  guard held is built under `protect`, which costs a `setjmp` - so keep the
+  common paths on the lifting ones.
+
   **A Ruby method raises `Makiri::InternalError`, not `fatal`.**
   `bridge::ruby::entry` wraps the body of EVERY method the glue registers, and
   turns a panic there into that exception. It used to wrap only the methods
@@ -1181,11 +1200,12 @@ every argument is converted BETWEEN the two, because a conversion is the
 argument's `#to_s` - arbitrary Ruby - and a query there rebuilt the indexes
 from the tree about to change. The XML side is the same pair, `begin_edit`
 and `Editing::with_arena`. Both take the receiver `&mut` for the edit's
-life, so a read of its document (`HtmlSelf::doc`, `XmlSelf::doc_ref`) still
-held when the edit begins - one the edit's compaction or arena growth would
-invalidate - is a borrow error, not a use-after-free; a read the edit itself
-needs goes through it (`Editing::doc`). A copy of the receiver is not
-covered. `inner_html=`/`outer_html=` are all or nothing: `stage_fragment_in`
+life, so a read of its document through it (`HtmlSelf::read`,
+`XmlSelf::read`) still held when the edit begins - one the edit's compaction
+or arena growth would invalidate - is a compile-time borrow error; a read the
+edit itself needs goes through it (`Editing::read`). Any other read still held
+(a copy of the receiver, another node's, a suspended Fiber's) is the write
+guard's to refuse, at runtime (`bridge::dom`). `inner_html=`/`outer_html=` are all or nothing: `stage_fragment_in`
 imports into a DETACHED fragment first, and only then are the old nodes
 swapped out (`rake oom`'s `html_inner_html` scenario checks the document is
 unchanged after every injected failure).

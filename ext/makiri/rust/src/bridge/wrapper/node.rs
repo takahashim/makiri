@@ -52,6 +52,10 @@ impl From<RawNode> for NodeWord {
 }
 
 impl NodeWord {
+    /// The word of no node: a placeholder in a buffer not yet written, never
+    /// stored in a set.
+    pub const NULL: NodeWord = NodeWord(0);
+
     /// The word of an engine token. The token's kind is dropped: the word goes
     /// into a set or wrapper whose document already names it.
     #[inline]
@@ -223,14 +227,11 @@ pub fn node_token_in(rb_node: Value, document: Value) -> Result<Token, NotInDocu
 /// document node, an HTML one to the HTML arena's.
 pub fn node_raw(rb_node: Value) -> Result<NodeWord, Error> {
     if crate::bridge::ruby::is_kind_of(rb_node, &CLASS_DOCUMENT) {
-        if let Content::Xml(xdoc) = doc_content(rb_node)? {
-            // SAFETY: a Document's arena lives as long as the Document, and its
-            // document node is read, not written.
-            return Ok(unsafe { xdoc.as_ref() }.doc_node().into());
-        }
-        let doc = html_doc_unwrap(rb_node)?;
-        // SAFETY: the live document of `rb_node`, which the caller holds.
-        return Ok(unsafe { crate::bridge::dom::document_node(doc) }.into());
+        DOC_TYPE.get(&rb_node)?; /* TypeError for a non-Document */
+        return Ok(match DocKind::of(rb_node) {
+            DocKind::Xml => xml_read(&rb_node)?.doc_node().into(),
+            DocKind::Html => RawNode::from(html_read(&rb_node)?.doc().as_node()).into(),
+        });
     }
     /* TypeError for a non-node, as TypedData_Get_Struct raised. */
     let nd: &NodeData = NODE_DATA_TYPE.get(&rb_node)?;

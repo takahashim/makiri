@@ -20,8 +20,8 @@ use crate::init::{
     CLASS_HTML_PROCESSING_INSTRUCTION, CLASS_HTML_TEXT, CLASS_XML_DOCUMENT,
 };
 
-use crate::bridge::dom::DocPtr;
-use crate::bridge::string::{RubyData, RubyText};
+use crate::bridge::dom::HtmlRead;
+use crate::bridge::string::{utf8_str, Lifted, RubyData, RubyText};
 use crate::bridge::wrapper::*;
 use crate::child_index::{ChildList, Children, TokenTree};
 use crate::html_dom::html::{HtmlDoc, HtmlDocMut, HtmlNewNodes};
@@ -29,40 +29,16 @@ use crate::html_dom::AdapterOom;
 
 /* ---- the document's own bytes and text ---- */
 
-/// The indexed descendant text of `node` as one Ruby String.
+/// The descendant text of `node`, which `read` lends, as one Ruby String, by
+/// walking: one walk collects the text slices, and one pre-sized copy joins
+/// them. Out of memory for the list, the walk runs twice instead - once to
+/// size, once to copy. A walk of the document's tree is counted toward
+/// building the text index (`HtmlParsed::note_text_walk`); one outside it (a
+/// fragment, a detached subtree), which the index would not serve, is not.
 ///
-/// `Ok(None)` when the text index cannot serve this node (it is outside the
-/// indexed tree, e.g. a fragment, or its build failed closed) - the caller then
-/// walks. `Err` only when building the String fails.
-pub fn text_index_string(document: Value, node: RawNode) -> Result<Option<Value>, Error> {
-    let mut found: Option<Result<Value, Error>> = None;
-    with_html_parsed_known(document, |p| {
-        if p.ensure_text_index().is_err() {
-            return; /* build failed closed: walk instead */
-        }
-        /* Not built yet (not due, see `ensure_text_index`): walk. */
-        if let Some(run) = p.text_slices(node) {
-            // SAFETY: valid UTF-8 by the text-input contract (the slices are
-            // this document's text, borrowed from its index for the copy).
-            let built =
-                unsafe { crate::bridge::string::ruby_str_from_slices(run.iter(), run.total()) };
-            found = Some(built.map(|v| {
-                // SAFETY: the String `ruby_str_from_slices` just built, live and
-                // on this frame.
-                unsafe { value(v) }
-            }));
-        }
-    });
-    found.transpose()
-}
-
-/// The descendant text of `node` as one Ruby String, by walking: one walk
-/// collects the text slices, and one pre-sized copy joins them. Out of
-/// memory for the list, the walk runs twice instead - once to size, once
-/// to copy. A walk of the document's tree is counted toward building the
-/// text index (`HtmlParsed::note_text_walk`); one outside it (a fragment, a
-/// detached subtree), which the index would not serve, is not.
-pub fn subtree_text(document: Value, node: HtmlNode<'_>) -> Result<Value, Error> {
+/// Made under `protect`, with the read and the slice list held: a raise past
+/// this frame would leave the one counted and leak the other.
+fn subtree_text(read: &HtmlRead<'_>, node: HtmlNode<'_>) -> Result<Value, Error> {
     use crate::falloc::VecPush;
     let texts = || {
         core::iter::successors(node.first_child(), move |c| c.preorder_next(node))
@@ -79,25 +55,27 @@ pub fn subtree_text(document: Value, node: HtmlNode<'_>) -> Result<Value, Error>
         .is_ok();
     let in_tree = node.ancestors().last().unwrap_or(node).node_type() == NodeType::Document;
     if collected && in_tree {
-        with_html_parsed_known(document, |p| p.note_text_walk(walked));
+        read.parsed().note_text_walk(walked);
     }
-    // SAFETY: valid UTF-8 by the text-input contract (the document's own
-    // text, borrowed for the copy).
-    let built = unsafe {
-        if collected {
-            let total = slices.iter().map(|s| s.len()).sum();
-            crate::bridge::string::ruby_str_from_slices(slices.iter().copied(), total)
-        } else {
-            let total = texts().map(<[u8]>::len).sum();
-            crate::bridge::string::ruby_str_from_slices(texts(), total)
-        }
-    }?;
-    // SAFETY: the String just built, live and on this frame.
-    Ok(unsafe { value(built) })
+    crate::bridge::ruby::protected(|| {
+        // SAFETY: valid UTF-8 by the text-input contract (the document's own
+        // text, borrowed for the copy); under `protected`.
+        let built = unsafe {
+            if collected {
+                let total = slices.iter().map(|s| s.len()).sum();
+                crate::bridge::string::ruby_str_from_slices(slices.iter().copied(), total)
+            } else {
+                let total = texts().map(<[u8]>::len).sum();
+                crate::bridge::string::ruby_str_from_slices(texts(), total)
+            }
+        }?;
+        // SAFETY: the String just built, live and on this frame.
+        Ok(unsafe { value(built) })
+    })
 }
 
 /// The 1-based source line for `node`, or `None` when unknown.
-pub fn node_line(rb_doc: Value, node: RawNode) -> Option<usize> {
+pub fn node_line(rb_doc: Value, node: RawNode) -> Result<Option<usize>, Error> {
     with_html_parsed_known(rb_doc, |p| p.node_line(node))
 }
 
@@ -125,8 +103,17 @@ static HTML_NODE_CLASSES: NodeClasses = NodeClasses {
 /// the HTML parser does not produce) falls back to `Makiri::HTML::Node`.
 pub fn wrap_html_node(node: RawNode, document: Value) -> Result<Value, Error> {
     // The caller hands `node` with the Document it belongs to.
-    let handle = crate::bridge::wrapper::html_doc(&document).node(node);
-    let node_type = handle.node_type();
+    let node_type = html_read(&document)?.node(node).node_type();
+    wrap_html_node_of_type(node, node_type, document)
+}
+
+/// [`wrap_html_node`] for a caller that read the node's type already, in the
+/// read it found the node in - one read the fewer.
+fn wrap_html_node_of_type(
+    node: RawNode,
+    node_type: NodeType,
+    document: Value,
+) -> Result<Value, Error> {
     if node_type == NodeType::Document {
         return Ok(document);
     }
@@ -152,7 +139,11 @@ impl crate::bridge::wrapper::NodeHandleSource for RawNode {
     reason = "wrap_html_node's callers vouch the node belongs to the document"
 )]
 fn mint_html_key(node: RawNode, document: Value) -> HtmlNodeKey {
+    /* `wrap_html_node` read the document a moment ago, with nothing run
+     * between, so it can be read again. */
     with_html_parsed_known(document, |parsed| parsed.mint_key(node))
+        .ok()
+        .and_then(Result::ok)
         .expect("wrap_html_node: the node must belong to the document it is wrapped under")
 }
 
@@ -173,11 +164,11 @@ pub(in crate::bridge) fn html_node_key(rb_node: Value) -> Result<(HtmlNodeKey, V
                 "expected an HTML node, got a Makiri::XML::Document",
             ));
         }
-        let doc = html_doc_unwrap(rb_node)?;
-        // SAFETY: the live document of `rb_node`, which the caller holds.
-        let raw = unsafe { crate::bridge::dom::document_node(doc) };
-        let key = with_html_parsed_known(rb_node, |parsed| parsed.mint_key(raw))
-            .map_err(|ForeignNode| foreign_node_error())?;
+        html_doc_check(rb_node)?;
+        let key = with_html_parsed_known(rb_node, |parsed| {
+            parsed.mint_key(RawNode::from(parsed.doc().as_node()))
+        })?
+        .map_err(|ForeignNode| foreign_node_error())?;
         return Ok((key, rb_node));
     }
     let nd: &NodeData = HTML_NODE_TYPE.get(&rb_node)?;
@@ -215,25 +206,21 @@ impl magnus::TryConvert for HtmlSelf {
 }
 
 impl HtmlSelf {
-    /// The receiver's node, for the length of this method call.
+    /// The receiver's document, borrowed for reading: the guard the
+    /// receiver's node and document are read through ([`HtmlView`]).
     ///
     /// The receiver is a method argument, which Ruby keeps reachable for the
-    /// call and which keeps its document - and so the node `key` names -
-    /// alive; the borrow of `self` ends the handle with the call.
+    /// call and which keeps its document alive; the view borrows `self`, so
+    /// it ends with the call. It is a counted borrow, so it must not be held
+    /// across a call that can raise (`rake unsafe:boundaries`): read what is
+    /// needed, drop it, then build the Ruby result.
     #[inline]
-    pub fn node(&self) -> HtmlNode<'_> {
-        let doc = self.doc();
-        // The receiver keeps `key`'s owner document alive for this call, and
-        // `key` was minted from a live node of it.
-        doc.node(self.key.raw_node())
-    }
-
-    /// The receiver's document, for the length of this method call - made
-    /// afresh on each call and never stored, so no handle of it is held
-    /// across an edit of the same document.
-    #[inline]
-    pub fn doc(&self) -> HtmlDoc<'_> {
-        crate::bridge::wrapper::html_doc(&self.document)
+    pub fn read(&self) -> Result<HtmlView<'_>, Error> {
+        Ok(HtmlView {
+            read: html_read(&self.document)?,
+            raw: self.key.raw_node(),
+            document: self.document,
+        })
     }
 
     /// The receiver's node as the boundary handle, for the mutators.
@@ -241,17 +228,128 @@ impl HtmlSelf {
     pub fn raw(&self) -> RawNode {
         self.key.raw_node()
     }
+}
 
-    /// Run `f` over the receiver's node, resolving the stored key against the
-    /// receiver's document - the CHECKED boundary, where a key paired with the
-    /// wrong Document is refused rather than dereferenced. `node()` is the
-    /// unchecked fast path for a receiver whose key and Document are already
-    /// known to agree (they always do: the wrapper was minted that way).
-    pub fn with_node<R>(
-        &self,
-        f: impl FnOnce(HtmlNode<'_>) -> Result<R, Error>,
-    ) -> Result<R, Error> {
-        with_html_node(self.document, self.key, f)?
+/// A receiver's document borrowed for reading, with the receiver's node:
+/// [`HtmlSelf::read`].
+pub struct HtmlView<'a> {
+    read: HtmlRead<'a>,
+    raw: RawNode,
+    document: Value,
+}
+
+impl HtmlView<'_> {
+    /// The node `f` finds from the receiver's, wrapped - after the read is
+    /// over, since wrapping allocates.
+    pub fn wrap(
+        self,
+        f: impl FnOnce(HtmlNode<'_>) -> Option<HtmlNode<'_>>,
+    ) -> Result<Option<Value>, Error> {
+        let found = f(self.node()).map(|n| (RawNode::from(n), n.node_type()));
+        let document = self.document;
+        drop(self);
+        found
+            .map(|(n, t)| wrap_html_node_of_type(n, t, document))
+            .transpose()
+    }
+
+    /// The nodes `f` lists from the receiver's (the element ones alone when
+    /// `elements_only`), as a NodeSet: lifted out of the read when there are
+    /// few, built under `protect` with the read held when there are many
+    /// ([`node_set_after_read`](crate::bridge::node_set::node_set_after_read)).
+    /// `f` hands each node to the sink it is given.
+    pub fn set(
+        self,
+        elements_only: bool,
+        f: impl for<'n> Fn(HtmlNode<'n>, &mut dyn FnMut(HtmlNode<'n>)),
+    ) -> Result<Value, Error> {
+        let document = self.document;
+        crate::bridge::node_set::node_set_after_read(self, document, |view, out| {
+            f(view.node(), &mut |n| {
+                if !elements_only || n.element().is_some() {
+                    out(RawNode::from(n).into());
+                }
+            });
+        })
+    }
+
+    /// `#content`: the receiver's text, in one read - the root element's for
+    /// a Document (the DOM's null is not what callers want), its descendants'
+    /// for an element or fragment, its own data for the other kinds.
+    ///
+    /// An element's comes from the per-document text index when it is built
+    /// (`HtmlParsed::ensure_text_index`): the contiguous, document-order run of
+    /// its descendants' text slices, so no per-extraction tree walk - the walk
+    /// is otherwise the dominant, cache-bound cost. A node the index does not
+    /// serve (a fragment's, or before the index is due, or after a build OOM)
+    /// is walked ([`subtree_text`]). Short text is lifted out of the read and
+    /// the String made after it; long text is made under `protect`.
+    pub fn text(self) -> Result<Value, Error> {
+        let target = {
+            let n = self.node();
+            match n.node_type() {
+                NodeType::Document => n.document_root(),
+                _ => Some(n),
+            }
+            .map(RawNode::from)
+        };
+        let Some(raw) = target else {
+            drop(self);
+            return Ok(utf8_str(b""));
+        };
+        let node = self.read.node(raw);
+        if !matches!(
+            node.node_type(),
+            NodeType::Element | NodeType::DocumentFragment
+        ) {
+            /* Character data and attributes lend their own bytes; the other
+             * kinds (a doctype) have none. */
+            let text = crate::bridge::string::str_after_read(
+                self,
+                crate::bridge::string::StrKind::Utf8,
+                |v| v.read.node(raw).own_text(),
+            )?;
+            return Ok(text.unwrap_or_else(|| utf8_str(b"")));
+        }
+        let p = self.read.parsed();
+        /* A build that failed closed, or one not due yet: walk. */
+        let run = p.ensure_text_index().ok().and_then(|()| p.text_slices(raw));
+        let Some(run) = run else {
+            return subtree_text(&self.read, node);
+        };
+        if let Some(lifted) = Lifted::of_slices(run.iter(), run.total()) {
+            drop(self);
+            return Ok(utf8_str(lifted.as_slice()));
+        }
+        crate::bridge::ruby::protected(|| {
+            // SAFETY: valid UTF-8 by the text-input contract (the slices are
+            // this document's text, borrowed from its index for the copy);
+            // under `protected`, so the raise its allocation can make comes
+            // back as Err.
+            let built =
+                unsafe { crate::bridge::string::ruby_str_from_slices(run.iter(), run.total()) }?;
+            // SAFETY: the String just built, live and on this frame.
+            Ok(unsafe { value(built) })
+        })
+    }
+
+    /// The receiver's node. Unchecked: the receiver's key was minted from a
+    /// node of the document it keeps alive.
+    #[inline]
+    pub fn node(&self) -> HtmlNode<'_> {
+        self.read.node(self.raw)
+    }
+
+    /// The receiver's document.
+    #[inline]
+    pub fn doc(&self) -> HtmlDoc<'_> {
+        self.read.doc()
+    }
+
+    /// The parse handle, with its indexes.
+    #[inline]
+    pub fn parsed(&self) -> &crate::html_dom::post_parse::HtmlParsed {
+        self.read.parsed()
     }
 }
 
@@ -304,19 +402,20 @@ impl ChildListHost for HtmlSelf {
         &self,
         list: ChildList,
         f: impl for<'a> FnOnce(Children<'a, HtmlTree<'a>>) -> R,
-    ) -> R {
-        let tree = HtmlTree::of(self.doc());
-        f(Children {
+    ) -> Result<R, Error> {
+        let view = self.read()?;
+        let tree = HtmlTree::of(view.doc());
+        Ok(f(Children {
             tree: &tree,
-            parent: self.node(),
+            parent: view.node(),
             list,
-        })
+        }))
     }
-    fn wrap_child<'a>(&self, n: Option<HtmlNode<'a>>) -> Result<Option<Value>, Error>
-    where
-        Self: 'a,
-    {
-        wrap_node(n, self.document)
+    fn wrap_child(&self, token: Option<usize>) -> Result<Option<Value>, Error> {
+        token
+            .and_then(RawNode::from_word)
+            .map(|n| wrap_html_node(n, self.document))
+            .transpose()
     }
 }
 
@@ -351,7 +450,7 @@ pub(in crate::bridge) fn with_html_node<R>(
             .resolve(key)
             .map(f)
             .map_err(|ForeignNode| foreign_node_error())
-    })
+    })?
 }
 
 /// The node `key` names, as a reference into `rb_doc`'s document, after the
@@ -405,20 +504,25 @@ pub fn edit(this: &mut HtmlSelf) -> Result<HtmlEdit<'_>, Error> {
 /// owner refuses it as it refuses `delete` - checked with the receiver's own
 /// frozen flag, before and after the arguments are converted.
 fn check_attr_owner_frozen(this: &HtmlSelf) -> Result<(), Error> {
-    let node = this.node();
-    match (node.node_type(), node.parent()) {
-        (NodeType::Attribute, Some(owner)) => {
-            crate::bridge::wrapper::check_node_frozen(this.document, RawNode::from(owner))
+    let owner = {
+        let view = this.read()?;
+        let node = view.node();
+        match (node.node_type(), node.parent()) {
+            (NodeType::Attribute, Some(owner)) => Some(RawNode::from(owner)),
+            _ => None,
         }
-        _ => Ok(()),
+    };
+    match owner {
+        Some(owner) => crate::bridge::wrapper::check_node_frozen(this.document, owner),
+        None => Ok(()),
     }
 }
 
 impl<'a> HtmlEdit<'a> {
     /// The receiver's node, read-only, for a check that no argument can
     /// change (its node type).
-    pub fn node_type(&self) -> NodeType {
-        self.this.node().node_type()
+    pub fn node_type(&self) -> Result<NodeType, Error> {
+        Ok(self.this.read()?.node().node_type())
     }
 
     /// Lend the document for the change, with the receiver's node, and drop
@@ -472,11 +576,12 @@ impl<'a> HtmlEdit<'a> {
         check_attr_owner_frozen(self.this)?;
         ensure_document_mutable(self.this.document)?;
         record_edit(self.this.document, kind);
-        // SAFETY: the receiver is not frozen and no XPath evaluation is
-        // reading its document - both checked just now - and `f` runs no Ruby
-        // (this method's contract with its callers), so the document is this
-        // edit's alone while `f` holds it. `edit` drops the indexes.
-        let mut doc = unsafe { crate::bridge::wrapper::html_doc_known(self.this.document).edit() };
+        /* The receiver is not frozen and no XPath evaluation is reading its
+         * document - both checked just now - and the guard refuses any other
+         * read still held. `f` runs no Ruby (this method's contract with its
+         * callers), and the guard goes with it. `edit` drops the indexes. */
+        let mut write = html_write(&self.this.document)?;
+        let mut doc = write.edit();
         Ok(f(&mut doc, self.this.raw()))
     }
 }
@@ -485,7 +590,7 @@ impl<'a> HtmlEdit<'a> {
 /// evaluation with a handler is reading - before any argument is converted, so
 /// that refusal wins over a bad argument. [`new_node`] checks again.
 pub fn check_owning_doc(rb_doc: &Value) -> Result<(), Error> {
-    html_doc_unwrap(*rb_doc)?;
+    html_doc_check(*rb_doc)?;
     ensure_document_mutable(*rb_doc)
 }
 
@@ -495,32 +600,30 @@ pub fn check_owning_doc(rb_doc: &Value) -> Result<(), Error> {
 /// with a handler is reading, whose arena the walk borrows. `f` must run no
 /// Ruby, as [`HtmlEdit::with_tree`]'s must not.
 pub fn new_node<R>(rb_doc: &Value, f: impl FnOnce(&mut HtmlNewNodes<'_>) -> R) -> Result<R, Error> {
-    lend_document(rb_doc, |doc| {
-        // SAFETY: `lend_document`'s: a live HTML Document, kept alive by
-        // `rb_doc` for this call, not under evaluation, and `f` runs no Ruby.
-        // The loan ends with this closure, before the document is read again.
-        let mut d = unsafe { doc.edit_new_nodes() };
-        f(&mut d)
-    })
+    lend_document(rb_doc, |write| f(&mut write.new_nodes()))
 }
 
 /// Lend `rb_doc`'s document to `f` for a change to its tree, attributes or
 /// data: the parse handle's `edit`, which drops the indexes and runs a due
 /// compaction.
 fn edit_document<R>(rb_doc: &Value, f: impl FnOnce(&mut HtmlDocMut<'_>) -> R) -> Result<R, Error> {
-    lend_document(rb_doc, |doc| {
-        // SAFETY: as `new_node`'s.
-        let mut d = unsafe { doc.edit() };
-        f(&mut d)
-    })
+    lend_document(rb_doc, |write| f(&mut write.edit()))
 }
 
 /// Check `rb_doc` can be lent - an HTML Document no evaluation is reading -
 /// hand its document to `lend`, and report what the loan grew it by.
-fn lend_document<R>(rb_doc: &Value, lend: impl FnOnce(DocPtr) -> R) -> Result<R, Error> {
-    let doc = html_doc_unwrap(*rb_doc)?;
+fn lend_document<R>(
+    rb_doc: &Value,
+    lend: impl FnOnce(&mut crate::bridge::dom::HtmlWrite<'_>) -> R,
+) -> Result<R, Error> {
+    html_doc_check(*rb_doc)?;
     ensure_document_mutable(*rb_doc)?;
-    let r = lend(doc);
+    /* The loan ends with this block, before the report below can run Ruby;
+     * `lend` runs none. */
+    let r = {
+        let mut write = html_write(rb_doc)?;
+        lend(&mut write)
+    };
     /* A factory grows the document without an edit after it - a namespace
      * of a megabyte, a fragment imported - so it reports here, after the
      * loan: the arguments were converted to copies before, and what it made

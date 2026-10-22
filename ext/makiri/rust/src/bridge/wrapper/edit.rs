@@ -8,7 +8,6 @@ use magnus::{Error, Value};
 
 use super::*;
 use crate::child_index::{ChildList, ChildPositionMemo, Children, TokenTree};
-use crate::dom_rules::Tree;
 
 /* ---- the edit versions ---- */
 
@@ -104,34 +103,32 @@ pub trait ChildListHost: magnus::TryConvert {
     fn document(&self) -> Value;
     /// Run `f` over the receiver's `list`. The tree is made for the call and
     /// not kept: an HTML arena tree borrows its document, which an edit later
-    /// in the same method takes by `&mut`.
+    /// in the same method takes by `&mut`. `f` runs under the document's read,
+    /// so it must not run Ruby, and makes nothing Ruby could raise from.
     fn with_children<R>(
         &self,
         list: ChildList,
         f: impl for<'a> FnOnce(Children<'a, Self::Tree<'a>>) -> R,
-    ) -> R;
-    /// A child of the receiver as its Ruby wrapper; None is nil.
-    fn wrap_child<'a>(
-        &self,
-        n: Option<<Self::Tree<'a> as Tree>::Node>,
-    ) -> Result<Option<Value>, Error>
-    where
-        Self: 'a;
+    ) -> Result<R, Error>;
+    /// The child a token names, as its Ruby wrapper; None is nil. Called
+    /// once the read the token came from is over, since wrapping allocates.
+    fn wrap_child(&self, token: Option<usize>) -> Result<Option<Value>, Error>;
 
     /// How many children are in `list`.
     fn child_count(&self, list: ChildList) -> Result<usize, Error> {
         with_child_memo(self.document(), |memo, version| {
             self.with_children(list, |c| c.count(memo, version))
-        })
+        })?
     }
 
     /// The wrapped child at `index` in `list`, or nil past the end.
     fn child_at(&self, list: ChildList, index: usize) -> Result<Option<Value>, Error> {
-        self.with_children(list, |c| {
+        let found = self.with_children(list, |c| {
             let found =
                 with_child_memo(self.document(), |memo, version| c.at(memo, version, index))?;
-            self.wrap_child(found)
-        })
+            Ok::<_, Error>(found.map(|n| c.tree.token(n)))
+        })??;
+        self.wrap_child(found)
     }
 }
 

@@ -12,7 +12,6 @@
 
 use magnus::rb_sys::AsRawValue;
 
-use crate::bridge::ruby::makiri_error;
 use magnus::{prelude::*, Error, Value};
 
 use crate::bridge::html::{html_node_key, with_html_node};
@@ -20,15 +19,13 @@ use crate::bridge::node_set::{node_set_with_fill, PushError};
 use crate::bridge::node_wrap::wrap_doc_node;
 use crate::bridge::ruby::VALUE;
 use crate::bridge::string::{ruby_str_from_utf8, ruby_verified_text};
-use crate::bridge::wrapper::{doc_content, Content};
-use crate::bridge::wrapper::{DocKind, NodeWord};
+use crate::bridge::wrapper::{html_read, xml_read, DocKind, NodeWord, DOC_TYPE};
 use crate::bridge::xml::xml_node_unwrap;
 use crate::engine_error::{Error as XPathError, ErrorKind};
 use crate::html_dom::xpath::HtmlDom;
 use crate::init::EXC_ERROR;
 pub use crate::init::{CLASS_XPATH_CONTEXT, EXC_XPATH_LIMIT_EXCEEDED, EXC_XPATH_SYNTAX_ERROR};
 use crate::token::Token;
-use crate::xml::model::Document as XmlDoc;
 use crate::xpath::ast::Ast;
 use crate::xpath::ctx::{Resolver, Session, XPathValue};
 use crate::xpath::dom::Dom;
@@ -72,63 +69,50 @@ pub fn xpath_error(err: &XPathError) -> Error {
     )
 }
 
-/// The document a [`Cx`] evaluates, as the pointer the Document wrapper owns.
-///
-/// A pointer, not a reference, on purpose: a context outlives any one call - an
-/// `XPathContext` keeps its `Cx` for the Document's whole life - while the
-/// mutators between two evaluates write the same arena through `&mut`. A
-/// `&Document` kept across such a write is undefined behaviour even when no
-/// read overlaps it, so the reference is taken per evaluate and dropped with it
-/// (see [`Cx::run`]); what persists holds no borrow.
-#[derive(Clone, Copy)]
-enum DocPtr {
-    /// An HTML document's parse handle.
-    Html(crate::bridge::dom::DocPtr),
-    /// A Makiri XML arena.
-    Xml(crate::bridge::dom::XmlDocPtr),
-}
-
 /// A context bound to whichever backend the receiver's document is.
 ///
 /// The glue holds one of these. It is the engine's document-free [`Session`] -
 /// the context node, the registrations, the caps and the mode, which is all
-/// that persists between evaluates - plus a pointer to the document, which
-/// [`run`](Self::run) lends to one evaluate at a time. Everything but the
-/// evaluate is the same operation on either backend, so `Cx` derefs to the
+/// that persists between evaluates - and nothing of the document: an
+/// `XPathContext` keeps its `Cx` for the Document's whole life, while the
+/// mutators between two evaluates edit that document, so [`run`](Self::run)
+/// borrows it from the Document for one evaluate at a time. Everything but
+/// the evaluate is the same operation on either backend, so `Cx` derefs to the
 /// session and the backend is chosen in exactly one place.
 pub struct Cx {
     session: Session,
-    doc: DocPtr,
 }
 
 impl Cx {
-    /// Evaluate `ast` over the document, borrowed for this call alone.
-    ///
-    /// The caller holds the Document for the call, and the document does not
-    /// change while it runs: without a handler no Ruby runs, and with one
-    /// [`evaluate_query`]'s `Bridge` holds the document's mutation guard. That
-    /// is the whole span of the borrow taken here - it ends when the engine
-    /// returns an owned value.
+    /// Evaluate `ast` over `document`, borrowed for this call alone: a read
+    /// guard, held across the handler's Ruby (which may read the document,
+    /// and whose edits [`evaluate_query`]'s `Bridge` refuses first) and
+    /// released when the engine returns an owned value. The outer `Err` is a
+    /// read the document refused.
     #[allow(clippy::result_large_err)]
     fn run(
         &self,
+        document: Value,
         ast: &Ast,
         handler: Option<&dyn Resolver>,
         answer: Answer,
-    ) -> Result<XPathValue, XPathError> {
-        match self.doc {
-            DocPtr::Xml(p) => {
-                // SAFETY: the arena of the Document the caller holds, unchanged
-                // for this call (above); the borrow ends with it.
-                let doc: &XmlDoc = unsafe { p.as_ref() };
-                run_on(&self.session, doc, ast, handler, answer)
+    ) -> Result<Result<XPathValue, XPathError>, Error> {
+        Ok(match DocKind::of(document) {
+            DocKind::Xml => {
+                let doc = xml_read(&document)?;
+                run_on(&self.session, &*doc, ast, handler, answer)
             }
-            DocPtr::Html(p) => {
-                // SAFETY: as above, for the parse handle.
-                let dom = unsafe { crate::bridge::dom::xpath_dom(p) };
-                run_on(&self.session, dom, ast, handler, answer)
+            DocKind::Html => {
+                let doc = html_read(&document)?;
+                run_on(
+                    &self.session,
+                    crate::html_dom::xpath::dom(doc.parsed()),
+                    ast,
+                    handler,
+                    answer,
+                )
             }
-        }
+        })
     }
 }
 
@@ -166,27 +150,20 @@ impl core::ops::DerefMut for Cx {
 /// first `//tag` that asks it for a bucket (`HtmlDom::name_bucket`), and the
 /// XML branch's name index hangs off the document.
 ///
-/// The context keeps a pointer to the document, not a borrow: the caller holds
-/// `document` for as long as the context lives, and each evaluate reborrows it
+/// The context keeps nothing of the document: the caller holds `document`
+/// for as long as the context lives, and each evaluate borrows it
 /// ([`Cx::run`]).
 pub fn context_for(rb_node: Value, document: Value) -> Result<Cx, Error> {
-    let content = doc_content(document)?;
-
-    if let Content::Xml(xdoc) = content {
+    DOC_TYPE.get(&document)?; /* TypeError for a non-Document */
+    if DocKind::of(document) == DocKind::Xml {
         /* The context NODE: `xml_node_unwrap` resolves a Document receiver to
          * its arena's document node, and any other node to itself. */
         let node = xml_node_unwrap(rb_node)?;
         return Ok(Cx {
             session: Session::new(Some(Token::xml(node.to_token()))),
-            doc: DocPtr::Xml(crate::bridge::dom::XmlDocPtr::new(xdoc)),
         });
     }
 
-    /* XML was answered above, so anything else is a Document with no
-     * content yet - refused before the HTML accessors would assume one. */
-    let Content::Html(parsed) = content else {
-        return Err(makiri_error("XPath context with no document"));
-    };
     let (key, _) = html_node_key(rb_node)?;
     /* Resolved against `document` - checked, not assumed, to own the node -
      * and kept as the context's token, which `document` keeps alive for as
@@ -194,7 +171,6 @@ pub fn context_for(rb_node: Value, document: Value) -> Result<Cx, Error> {
     let node = with_html_node(document, key, |n| <HtmlDom<'_> as Dom<'_>>::token(n))?;
     Ok(Cx {
         session: Session::new(Some(node)),
-        doc: DocPtr::Html(crate::bridge::dom::DocPtr::new(parsed)),
     })
 }
 
@@ -356,7 +332,12 @@ pub fn evaluate_query(
         }),
     };
     let had_order = crate::bridge::wrapper::has_kept_order(document);
-    let result = ctx.run(ast, bridge.as_ref().map(|b| b as &dyn Resolver), answer);
+    let result = ctx.run(
+        document,
+        ast,
+        bridge.as_ref().map(|b| b as &dyn Resolver),
+        answer,
+    );
     /* The exception a handler-side call ended in, moved to this frame's stack
      * (where the GC's conservative scan keeps seeing it) before the bridge goes. */
     let raised = bridge.as_mut().and_then(|b| b.raised.take());
@@ -365,7 +346,7 @@ pub fn evaluate_query(
     drop(bridge);
     /* A document-order index the evaluate built is the document's now. */
     crate::bridge::wrapper::account_kept_order(document, had_order);
-    result.map_err(|error| match raised {
+    result?.map_err(|error| match raised {
         /* Not the handler's error but the caller's control flow - an interrupt,
          * `exit`, Timeout, a `throw` - so it is re-raised as it was. Nothing
          * runs Ruby between the handler's exit and here, so a `throw`'s pending

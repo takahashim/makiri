@@ -28,17 +28,20 @@ fn css(ruby: &Ruby, this: XmlSelf, selector: Value, ns: Value) -> Result<Value, 
         let selector = args.selector;
         let sv = ruby_verified_text(selector, "CSS selector")?;
         let gvl = held(ruby);
-        let root = XmlNode::new(this.doc_ref(), this.id);
-        let matched = args
-            .with_namespaces(|ns| {
-                css_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
-                    css_match::select_all(scratch, root, groups, ns)
-                })
-            })?
+        /* Read once the namespaces are converted (their Hash is Ruby), and
+         * held while the set is built - under `protect`, in `node_set_from`:
+         * the matched nodes borrow it. */
+        let found = args.with_namespaces(|ns| {
+            let d = this.read()?;
+            let matched = css_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
+                css_match::select_all(scratch, XmlNode::new(&d, this.id), groups, ns)
+            })
             .map_err(|e| parse_error(e, selector))?;
+            let nodes = matched.map_err(|e| query_error(e, selector))?;
+            node_set_from(this.document, nodes.into_iter().map(|n| n.id().into()))
+        })?;
         drop(sv);
-        let nodes = matched.map_err(|e| query_error(e, selector))?;
-        node_set_from(this.document, nodes.into_iter().map(|n| n.id().into()))
+        found
     })
 }
 
@@ -49,17 +52,20 @@ fn at_css(ruby: &Ruby, this: XmlSelf, selector: Value, ns: Value) -> Result<Opti
         let selector = args.selector;
         let sv = ruby_verified_text(selector, "CSS selector")?;
         let gvl = held(ruby);
-        let root = XmlNode::new(this.doc_ref(), this.id);
-        let matched = args
-            .with_namespaces(|ns| {
-                css_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
-                    css_match::select_first(scratch, root, groups, ns)
-                })
-            })?
+        let found = args.with_namespaces(|ns| {
+            let d = this.read()?;
+            let matched = css_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
+                css_match::select_first(scratch, XmlNode::new(&d, this.id), groups, ns)
+            })
             .map_err(|e| parse_error(e, selector))?;
+            Ok::<_, Error>(
+                matched
+                    .map_err(|e| match_error(e, selector))?
+                    .map(|n| n.id()),
+            )
+        })??;
         drop(sv);
-        let found = matched.map_err(|e| match_error(e, selector))?;
-        found.map(|n| wrap(n.id(), this.document)).transpose()
+        found.map(|n| wrap(n, this.document)).transpose()
     })
 }
 
@@ -71,16 +77,16 @@ fn css_matches(ruby: &Ruby, this: XmlSelf, selector: Value, ns: Value) -> Result
         let selector = args.selector;
         let sv = ruby_verified_text(selector, "CSS selector")?;
         let gvl = held(ruby);
-        let node = XmlNode::new(this.doc_ref(), this.id);
-        let matched = args
-            .with_namespaces(|ns| {
-                css_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
-                    css_match::matches_any(scratch, groups, ns, node)
-                })
-            })?
+        let matched = args.with_namespaces(|ns| {
+            let d = this.read()?;
+            let matched = css_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
+                css_match::matches_any(scratch, groups, ns, XmlNode::new(&d, this.id))
+            })
             .map_err(|e| parse_error(e, selector))?;
+            matched.map_err(|e| match_error(e, selector))
+        })?;
         drop(sv);
-        matched.map_err(|e| match_error(e, selector))
+        matched
     })
 }
 

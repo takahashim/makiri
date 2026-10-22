@@ -36,19 +36,23 @@ fn css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Value, Error> {
         let selector = args.selector;
         let sv = selector_text(selector)?;
         let gvl = held(ruby);
-        let matched = args
-            .with_namespaces(|ns| {
-                css_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
-                    css_match::select_all(scratch, this.node(), groups, ns)
-                })
-            })?
+        /* Read once the namespaces are converted (their Hash is Ruby), and
+         * held while the set is built - under `protect`, in `node_set_from`:
+         * the matched nodes borrow it. */
+        let found = args.with_namespaces(|ns| {
+            let view = this.read()?;
+            let matched = css_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
+                css_match::select_all(scratch, view.node(), groups, ns)
+            })
             .map_err(|e| parse_error(e, selector))?;
+            let nodes = matched.map_err(|e| query_error(e, selector))?;
+            node_set_from(
+                this.document,
+                nodes.into_iter().map(|n| RawNode::from(n).into()),
+            )
+        })?;
         drop(sv);
-        let nodes = matched.map_err(|e| query_error(e, selector))?;
-        node_set_from(
-            this.document,
-            nodes.into_iter().map(|n| RawNode::from(n).into()),
-        )
+        found
     })
 }
 
@@ -62,18 +66,20 @@ fn at_css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Option<Value>, 
         let selector = args.selector;
         let sv = selector_text(selector)?;
         let gvl = held(ruby);
-        let matched = args
-            .with_namespaces(|ns| {
-                css_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
-                    css_match::select_first(scratch, this.node(), groups, ns)
-                })
-            })?
+        let found = args.with_namespaces(|ns| {
+            let view = this.read()?;
+            let matched = css_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
+                css_match::select_first(scratch, view.node(), groups, ns)
+            })
             .map_err(|e| parse_error(e, selector))?;
+            Ok::<_, Error>(
+                matched
+                    .map_err(|e| match_error(e, selector))?
+                    .map(RawNode::from),
+            )
+        })??;
         drop(sv);
-        let found = matched.map_err(|e| match_error(e, selector))?;
-        found
-            .map(|n| wrap_html_node(RawNode::from(n), this.document))
-            .transpose()
+        found.map(|n| wrap_html_node(n, this.document)).transpose()
     })
 }
 
@@ -89,16 +95,16 @@ fn matches(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<bool, Error> {
         let selector = args.selector;
         let sv = selector_text(selector)?;
         let gvl = held(ruby);
-        let node = this.node();
-        let matched = args
-            .with_namespaces(|ns| {
-                css_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
-                    css_match::matches_any(scratch, groups, ns, node)
-                })
-            })?
+        let matched = args.with_namespaces(|ns| {
+            let view = this.read()?;
+            let matched = css_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
+                css_match::matches_any(scratch, groups, ns, view.node())
+            })
             .map_err(|e| parse_error(e, selector))?;
+            matched.map_err(|e| match_error(e, selector))
+        })?;
         drop(sv);
-        matched.map_err(|e| match_error(e, selector))
+        matched
     })
 }
 

@@ -74,7 +74,7 @@ fn encoding_arg(ruby: &Ruby, v: Value) -> Result<Option<GivenEncoding>, Error> {
 /// `Document#encoding`: the character encoding the document was read in, by
 /// its Encoding Standard name (`"UTF-8"`, `"Shift_JIS"`, `"windows-1252"`).
 fn doc_encoding(_ruby: &Ruby, this: Value) -> Result<&'static str, Error> {
-    crate::bridge::ruby::entry(|| Ok(crate::bridge::doc::document_encoding(this)))
+    crate::bridge::ruby::entry(|| crate::bridge::doc::document_encoding(this))
 }
 
 /* ---- read-only accessors ---- */
@@ -91,11 +91,10 @@ fn doc_title(_ruby: &Ruby, self_: Value) -> Result<magnus::RString, Error> {
 /// child of the document node (typically first), so a short scan finds it.
 fn doc_internal_subset(_ruby: &Ruby, this: HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        let doctype = this
-            .node()
-            .children()
-            .find(|c| c.node_type() == NodeType::DocumentType);
-        crate::glue::html_node::wrap_node(doctype, this.document)
+        this.read()?.wrap(|node| {
+            node.children()
+                .find(|c| c.node_type() == NodeType::DocumentType)
+        })
     })
 }
 
@@ -108,14 +107,14 @@ fn doc_s_new(_ruby: &Ruby, _klass: Value) -> Result<Value, Error> {
 /// mode, for `#dup` to copy the children into.
 fn doc_empty_copy(_ruby: &Ruby, this: HtmlSelf) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let mode = u32::try_from(this.node().owner_document().compat_mode()).unwrap_or(0);
-        let encoding = crate::bridge::doc::document_encoding(this.document);
+        let mode = u32::try_from(this.read()?.doc().compat_mode()).unwrap_or(0);
+        let encoding = crate::bridge::doc::document_encoding(this.document)?;
         crate::bridge::doc::new_empty_document(mode, encoding)
     })
 }
 
 fn doc_quirks_mode(ruby: &Ruby, self_: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| Ok(crate::bridge::doc::document_quirks_mode(ruby, self_)))
+    crate::bridge::ruby::entry(|| crate::bridge::doc::document_quirks_mode(ruby, self_))
 }
 
 /// Parse warnings. Reserved; currently always empty.
@@ -162,7 +161,7 @@ fn frag_s_parse(ruby: &Ruby, _klass: Value, args: &[Value]) -> Result<Value, Err
 /// (SVG/MathML) fragment context.
 fn node_parse(ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        if this.node().element().is_none() {
+        if this.read()?.node().element().is_none() {
             return Err(Error::new(
                 ruby.exception_arg_error(),
                 "Node#parse requires an element context",

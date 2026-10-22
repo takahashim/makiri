@@ -16,7 +16,7 @@
 //! point, and the copy must not straddle one while holding a borrowed pointer
 //! into a Ruby String's backing store.
 
-#![allow(unsafe_code)]
+#![forbid(unsafe_code)]
 
 use magnus::{prelude::*, Error, RString, Ruby, Value};
 
@@ -26,9 +26,9 @@ use crate::bridge::html::new_node;
 use crate::bridge::html::{html_node_key, with_html_node, wrap_html_node};
 use crate::bridge::string::DocumentSource;
 use crate::bridge::wrapper::{
-    ensure_document_mutable, html_doc, node_repr, DocKind, DocumentShell, NodeRepr, DOC_TYPE,
+    ensure_document_mutable, html_read, node_repr, xml_read, DocKind, DocumentShell, NodeRepr,
+    DOC_TYPE,
 };
-use crate::bridge::xml::doc_of;
 use crate::bridge::xml::xml_node_document;
 use crate::bridge::xml::{xml_mut_result, xml_node_unwrap};
 use crate::html_dom::html::RawNode;
@@ -118,10 +118,11 @@ pub fn new_empty_document(compat_mode: u32, encoding: &'static str) -> Result<Va
 /// the root is removed (the HTML parser inserts html/head/body even for empty
 /// input).
 pub fn document_root(rb_doc: Value) -> Result<Option<Value>, Error> {
-    let Some(root) = html_doc(&rb_doc).as_node().document_root() else {
-        return Ok(None);
+    let root = {
+        let read = html_read(&rb_doc)?;
+        read.doc().as_node().document_root().map(RawNode::from)
     };
-    wrap_html_node(RawNode::from(root), rb_doc).map(Some)
+    root.map(|root| wrap_html_node(root, rb_doc)).transpose()
 }
 
 /// `Document#title`: the document `<title>`, or `""`.
@@ -129,22 +130,23 @@ pub fn document_root(rb_doc: Value) -> Result<Option<Value>, Error> {
 /// Protected: a collapsed title is this frame's own copy, which the String's
 /// allocation raising past the frame would leak.
 pub fn document_title(rb_doc: Value) -> Result<RString, Error> {
-    let title = html_doc(&rb_doc).title();
+    let read = html_read(&rb_doc)?;
+    let title = read.doc().title();
     let bytes = title.as_deref().unwrap_or(&[]);
     crate::bridge::string::utf8_str_protected(bytes)
 }
 
 /// `Document#encoding`: the character encoding the document was read in, by
 /// its Encoding Standard name - `"UTF-8"` for one made rather than parsed.
-pub fn document_encoding(rb_doc: Value) -> &'static str {
+pub fn document_encoding(rb_doc: Value) -> Result<&'static str, Error> {
     crate::bridge::wrapper::with_html_parsed_known(rb_doc, |p| p.encoding())
 }
 
 /// `Document#quirks_mode`, as an Integer matching Lexbor (and Gumbo/Nokogiri):
 /// 0 no-quirks, 1 quirks, 2 limited-quirks. Set by the parser from the doctype.
-pub fn document_quirks_mode(ruby: &Ruby, rb_doc: Value) -> Value {
-    let mode = html_doc(&rb_doc).compat_mode();
-    ruby.integer_from_i64(mode).as_value()
+pub fn document_quirks_mode(ruby: &Ruby, rb_doc: Value) -> Result<Value, Error> {
+    let mode = html_read(&rb_doc)?.doc().compat_mode();
+    Ok(ruby.integer_from_i64(mode).as_value())
 }
 
 /// `Document#errors`: the (currently always empty) parse-warning Array.
@@ -170,11 +172,12 @@ pub fn import_node(rb_self: Value, node_v: Value, deep: bool) -> Result<Value, E
     /* An XML node is TRANSLATED across representations (mkr -> lxb) into a
      * detached lxb subtree owned by this document. */
     if node_repr(node_v) == NodeRepr::Xml {
-        let xdoc = doc_of(xml_node_document(node_v)?);
+        let xml_doc = xml_node_document(node_v)?;
         let src = xml_node_unwrap(node_v)?;
-        // SAFETY: a live arena of another document, read for the call.
-        let xdoc = unsafe { xdoc.as_ref() };
-        let imp = new_node(&rb_self, |d| d.import_xml(xdoc, src, deep))?;
+        let imp = {
+            let xdoc = xml_read(&xml_doc)?;
+            new_node(&rb_self, |d| d.import_xml(&xdoc, src, deep))?
+        };
         return wrap_html_node(xml_mut_result(imp)?, rb_self);
     }
 

@@ -1,137 +1,162 @@
-//! A Document's content as the bridge holds it - the parsed HTML document
-//! ([`DocPtr`]) or the XML arena ([`XmlDocPtr`]): the pointer a Ruby
-//! Document owns, and the borrows of it - shared, for an edit, for XPath -
-//! that the rest of the bridge takes. Each borrow is one named `unsafe`
-//! method, so its contract is stated once. An arena handle borrows its document
-//! and a node is an id resolved by a checked lookup, so what is the caller's
-//! promise here is only that the Document is live and the borrow is the one
-//! access the contract says.
+//! A Document's content as the bridge holds it - the parsed HTML document or
+//! the XML arena - and the only ways to reach it: a shared borrow
+//! ([`HtmlRead`], [`XmlRead`]) or an exclusive one ([`HtmlWrite`],
+//! [`XmlWrite`]), each a guard on the `RefCell` the Document owns its content
+//! through.
+//!
+//! The content used to be a raw pointer that every reader and editor
+//! dereferenced under an `unsafe` contract - "the Document is live, and nothing
+//! edits it while you hold this" - which each call site had to re-establish. A
+//! guard makes the second half a runtime check instead: an edit that begins
+//! while any read is held (a Fiber suspended mid-XPath, a reader that ran Ruby)
+//! is refused, and so is a read during an edit. The first half - the
+//! Document stays alive - is the caller's `&Value`, which the guard's lifetime
+//! is tied to; a guard is no GC root.
+//!
+//! A guard is a `Drop`, so a raise that `longjmp`s past one leaves its borrow
+//! counted for good. `rake unsafe:boundaries` therefore treats the guards as
+//! it treats an argument's copy: none may be live across a call that can
+//! raise, unless that call is made under `bridge::ruby::protected`.
 
-#![allow(unsafe_code)]
+#![forbid(unsafe_code)]
 
-use core::ptr::NonNull;
+use core::cell::{Ref, RefCell, RefMut};
+use core::ops::{Deref, DerefMut};
 
-use crate::html_dom::html::{HtmlDoc, HtmlDocMut, HtmlNewNodes, RawNode};
+use crate::html_dom::html::{HtmlDoc, HtmlDocMut, HtmlNewNodes, HtmlNode, RawNode};
 use crate::html_dom::post_parse::HtmlParsed;
 use crate::xml::model::Document as XmlDoc;
 
-/// The parsed document a Ruby HTML Document owns, as the bridge passes it:
-/// the pointer `DocumentShell::install_html` leaked, live for as long as the
-/// Document.
-#[derive(Clone, Copy)]
-pub struct DocPtr(NonNull<HtmlParsed>);
+/// What a Document owns: its parsed content, in one of the two
+/// representations, borrowed only through the guards below.
+pub(in crate::bridge) enum Body {
+    Html(RefCell<Box<HtmlParsed>>),
+    Xml(RefCell<Box<XmlDoc>>),
+}
 
-impl DocPtr {
-    /// The handle behind `p`.
-    #[inline]
-    pub fn new(p: NonNull<HtmlParsed>) -> Self {
-        DocPtr(p)
+impl Body {
+    /// The bytes the content holds outside Ruby's allocator, or `None` while
+    /// an edit holds it (a GC callback's question, answered without waiting).
+    pub(in crate::bridge) fn external_bytes(&self) -> Option<usize> {
+        match self {
+            Body::Html(c) => c.try_borrow().ok().map(|p| p.external_bytes()),
+            Body::Xml(c) => c.try_borrow().ok().map(|d| d.memsize()),
+        }
     }
 
-    /// The pointer.
-    #[inline]
-    pub fn as_ptr(self) -> NonNull<HtmlParsed> {
-        self.0
+    /// The HTML content's chunk count, 0 for XML; `None` while an edit holds
+    /// it.
+    pub(in crate::bridge) fn arena_chunks(&self) -> Option<usize> {
+        match self {
+            Body::Html(c) => c.try_borrow().ok().map(|p| p.arena_chunks()),
+            Body::Xml(_) => Some(0),
+        }
+    }
+}
+
+/// Why a guard could not be taken: the content is held the other way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::bridge) enum Conflict {
+    /// A read was asked for while an edit holds the content - an edit runs
+    /// no Ruby, so this is a broken invariant.
+    ByEdit,
+    /// An edit was asked for while a read holds it - a reader suspended in
+    /// Ruby (an XPath handler, a Fiber).
+    ByRead,
+}
+
+/// An HTML document, borrowed for reading.
+pub struct HtmlRead<'a>(Ref<'a, Box<HtmlParsed>>);
+
+impl<'a> HtmlRead<'a> {
+    pub(in crate::bridge) fn of(c: &'a RefCell<Box<HtmlParsed>>) -> Result<Self, Conflict> {
+        c.try_borrow().map(HtmlRead).map_err(|_| Conflict::ByEdit)
     }
 
-    /// The parsed handle, shared, for `'d`.
-    ///
-    /// # Safety
-    /// The Document is live for `'d`, and nothing edits it while `'d` lasts.
+    /// The parse handle, with its indexes.
     #[inline]
-    pub unsafe fn parsed<'d>(self) -> &'d HtmlParsed {
-        // SAFETY: the caller's contract.
-        unsafe { &*self.0.as_ptr() }
+    pub fn parsed(&self) -> &HtmlParsed {
+        &self.0
     }
 
-    /// The document, for reading during `'d`.
-    ///
-    /// # Safety
-    /// As [`parsed`](Self::parsed).
+    /// The document.
     #[inline]
-    pub unsafe fn as_doc<'d>(self) -> HtmlDoc<'d> {
-        // SAFETY: the caller's contract.
-        unsafe { self.parsed() }.doc()
+    pub fn doc(&self) -> HtmlDoc<'_> {
+        self.0.doc()
     }
 
-    /// The document, lent for an edit that only makes detached nodes - the
+    /// The node `raw` names, unchecked - for a reference the caller already
+    /// knows belongs to this document (a receiver's own).
+    #[inline]
+    pub fn node(&self, raw: RawNode) -> HtmlNode<'_> {
+        self.doc().node(raw)
+    }
+}
+
+/// An HTML document, borrowed for an edit.
+pub struct HtmlWrite<'a>(RefMut<'a, Box<HtmlParsed>>);
+
+impl<'a> HtmlWrite<'a> {
+    pub(in crate::bridge) fn of(c: &'a RefCell<Box<HtmlParsed>>) -> Result<Self, Conflict> {
+        c.try_borrow_mut()
+            .map(HtmlWrite)
+            .map_err(|_| Conflict::ByRead)
+    }
+
+    /// The document, for an edit of its tree, attributes or data, with its
+    /// indexes dropped (`HtmlParsed::edit`).
+    #[inline]
+    pub fn edit(&mut self) -> HtmlDocMut<'_> {
+        self.0.edit()
+    }
+
+    /// The document, for an edit that only makes detached nodes - the
     /// factories and copies - so the indexes stay.
-    ///
-    /// # Safety
-    /// The document is cleared for editing (no evaluation reads it), this is
-    /// the only access to it for `'d` - no handle of it is used while this
-    /// one lives - and no Ruby runs meanwhile.
     #[inline]
-    pub unsafe fn edit_new_nodes<'d>(self) -> HtmlNewNodes<'d> {
-        // SAFETY: the caller's contract: the one access for `'d`.
-        unsafe { (*self.0.as_ptr()).edit_keeping_indexes() }
-    }
-
-    /// The document, lent for an edit of its tree, attributes or data, with
-    /// its indexes dropped (`HtmlParsed::edit`).
-    ///
-    /// # Safety
-    /// As [`edit_new_nodes`](Self::edit_new_nodes).
-    #[inline]
-    pub unsafe fn edit<'d>(self) -> HtmlDocMut<'d> {
-        // SAFETY: as `edit_new_nodes`.
-        unsafe { (*self.0.as_ptr()).edit() }
+    pub fn new_nodes(&mut self) -> HtmlNewNodes<'_> {
+        self.0.edit_keeping_indexes()
     }
 }
 
-/// The XML arena a Ruby XML Document owns, as the bridge passes it: the
-/// pointer `DocumentShell::install_xml` leaked, live for as long as the
-/// Document. Equality is identity: two are equal when they are one arena.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct XmlDocPtr(NonNull<XmlDoc>);
+/// An XML arena, borrowed for reading.
+pub struct XmlRead<'a>(Ref<'a, Box<XmlDoc>>);
 
-impl XmlDocPtr {
-    /// The handle behind `p`.
-    #[inline]
-    pub fn new(p: NonNull<XmlDoc>) -> Self {
-        XmlDocPtr(p)
-    }
-
-    /// The arena, shared, for `'d`.
-    ///
-    /// # Safety
-    /// The Document is live for `'d`, and nothing edits it while `'d` lasts.
-    #[inline]
-    pub unsafe fn as_ref<'d>(self) -> &'d XmlDoc {
-        // SAFETY: the caller's contract.
-        unsafe { &*self.0.as_ptr() }
-    }
-
-    /// The arena, lent for an edit.
-    ///
-    /// # Safety
-    /// The document is cleared for editing (no evaluation reads it), this is
-    /// the only access to it for `'d` - no other borrow of it is used while
-    /// this one lives - and no Ruby runs meanwhile.
-    #[inline]
-    pub unsafe fn edit<'d>(self) -> &'d mut XmlDoc {
-        // SAFETY: the caller's contract: the one access for `'d`.
-        unsafe { &mut *self.0.as_ptr() }
+impl<'a> XmlRead<'a> {
+    pub(in crate::bridge) fn of(c: &'a RefCell<Box<XmlDoc>>) -> Result<Self, Conflict> {
+        c.try_borrow().map(XmlRead).map_err(|_| Conflict::ByEdit)
     }
 }
 
-/// XPath's view of the document behind `p`, for `'e`. The element index is
-/// built by the first `//tag` that wants it (`HtmlDom::name_bucket`).
-///
-/// # Safety
-/// The Document is live, and nothing edits it, for `'e`.
-#[inline]
-pub unsafe fn xpath_dom<'e>(p: DocPtr) -> crate::html_dom::xpath::HtmlDom<'e> {
-    // SAFETY: the caller's contract.
-    crate::html_dom::xpath::dom(unsafe { p.parsed() })
+impl Deref for XmlRead<'_> {
+    type Target = XmlDoc;
+    #[inline]
+    fn deref(&self) -> &XmlDoc {
+        &self.0
+    }
 }
 
-/// The document node of `p`'s document.
-///
-/// # Safety
-/// As [`DocPtr::parsed`].
-#[inline]
-pub unsafe fn document_node(p: DocPtr) -> RawNode {
-    // SAFETY: the caller's contract.
-    RawNode::from(unsafe { p.as_doc() }.as_node())
+/// An XML arena, borrowed for an edit.
+pub struct XmlWrite<'a>(RefMut<'a, Box<XmlDoc>>);
+
+impl<'a> XmlWrite<'a> {
+    pub(in crate::bridge) fn of(c: &'a RefCell<Box<XmlDoc>>) -> Result<Self, Conflict> {
+        c.try_borrow_mut()
+            .map(XmlWrite)
+            .map_err(|_| Conflict::ByRead)
+    }
+}
+
+impl Deref for XmlWrite<'_> {
+    type Target = XmlDoc;
+    #[inline]
+    fn deref(&self) -> &XmlDoc {
+        &self.0
+    }
+}
+
+impl DerefMut for XmlWrite<'_> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut XmlDoc {
+        &mut self.0
+    }
 }

@@ -28,7 +28,11 @@ pub(super) fn account_document(rb_doc: VALUE) {
     // live on the caller's frame.
     let rb_doc = unsafe { value(rb_doc) };
     let d = DOC_TYPE.get_known(&rb_doc);
-    let (now, chunks) = (d.external_bytes(), d.arena_chunks());
+    /* Content an edit holds is measured at the next report - which no
+     * caller reaches with an edit open, since none runs Ruby. */
+    let (Some(now), Some(chunks)) = (d.external_bytes(), d.arena_chunks()) else {
+        return;
+    };
     let mut report = d.report.get();
     let diff = report.update(now, chunks);
     d.report.set(report);
@@ -71,7 +75,10 @@ pub fn account_growth(rb_doc: Value) {
 /// Whether `rb_doc` is an HTML Document whose kept document-order index is
 /// built - read before an evaluate, for [`account_kept_order`] after it.
 pub fn has_kept_order(rb_doc: Value) -> bool {
-    with_html_parsed_if(rb_doc, |p| p.has_doc_order()).unwrap_or(false)
+    matches!(
+        with_html_parsed_if(rb_doc, |p| p.has_doc_order()),
+        Ok(Some(true))
+    )
 }
 
 /// Tell the GC about the document-order index an evaluate on `rb_doc` built,

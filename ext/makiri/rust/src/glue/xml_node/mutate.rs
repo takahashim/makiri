@@ -37,7 +37,7 @@ use crate::xml::qname::Split;
 pub fn remove(mut this: XmlSelf) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let rb_self = this.value;
-        let kind = this.doc_ref().type_(this.id);
+        let kind = this.read()?.type_(this.id);
         if !dom_rules::removable(kind.map_or(NodeType::Other, NodeType::from)) {
             return Err(makiri_error(DOCUMENT_NOT_REMOVABLE));
         }
@@ -57,7 +57,7 @@ pub fn remove(mut this: XmlSelf) -> Result<Value, Error> {
 /// The receiver cleared for an edit, which must be an element.
 fn element_for(this: &mut XmlSelf) -> Result<Editing<'_>, Error> {
     let edit = begin_edit(this)?;
-    if edit.doc().type_(edit.id()) != Some(ArenaKind::Element) {
+    if edit.read()?.type_(edit.id()) != Some(ArenaKind::Element) {
         return Err(makiri_error(
             "cannot set an attribute on a non-element node",
         ));
@@ -141,7 +141,7 @@ pub fn remove_attribute_ns(
     crate::bridge::ruby::entry(|| {
         let rb_self = this.value;
         let edit = begin_edit(&mut this)?;
-        if edit.doc().type_(edit.id()) != Some(ArenaKind::Element) {
+        if edit.read()?.type_(edit.id()) != Some(ArenaKind::Element) {
             return Ok(rb_self);
         }
         let lv = verified_text(local, "attribute local name")?;
@@ -158,7 +158,7 @@ pub fn delete(_ruby: &Ruby, mut this: XmlSelf, name: Value) -> Result<Value, Err
     crate::bridge::ruby::entry(|| {
         let rb_self = this.value;
         let edit = begin_edit(&mut this)?;
-        if edit.doc().type_(edit.id()) != Some(ArenaKind::Element) {
+        if edit.read()?.type_(edit.id()) != Some(ArenaKind::Element) {
             return Ok(rb_self);
         }
         let nv = verified_text(name, "attribute name")?;
@@ -174,7 +174,7 @@ pub fn set_content(_ruby: &Ruby, mut this: XmlSelf, text: Value) -> Result<Value
         /* A node's type never changes, so it is read before the argument's
          * conversion: a Text, Comment, CDATA or PI node's content is its data,
          * and an Attr's its value - neither changes a child list. */
-        let kind = this.doc_ref().type_(this.id);
+        let kind = this.read()?.type_(this.id);
         let edit = begin_edit(&mut this)?;
         let tv = verified_data(text, "node content")?;
         let bytes = tv.as_bytes();

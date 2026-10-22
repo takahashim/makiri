@@ -4,19 +4,17 @@
 
 #![allow(unsafe_code)]
 
-use core::cell::{Cell, RefCell};
-use core::ptr::NonNull;
+use core::cell::{Cell, OnceCell, RefCell};
 
-use crate::bridge::ruby::makiri_error;
+use crate::bridge::ruby::{internal_error, makiri_error};
 use magnus::{Error, Value};
 
 use super::*;
-use crate::bridge::dom::{DocPtr, XmlDocPtr};
+use crate::bridge::dom::{Body, Conflict, HtmlRead, HtmlWrite, XmlRead, XmlWrite};
 use crate::bridge::ruby::{value, VALUE};
 use crate::bridge::typed::{Held, Hooks, Tracer, TypedType};
 use crate::child_index::ChildPositionMemo;
 use crate::falloc::{MapInsert, Reserve};
-use crate::html_dom::html::HtmlDoc;
 use crate::html_dom::post_parse::HtmlParsed;
 use crate::init::RbConst;
 use crate::node_type::NodeType;
@@ -28,36 +26,6 @@ use std::collections::HashMap;
 /* ------------------------------------------------------------------ *
  * the document wrapper                                               *
  * ------------------------------------------------------------------ */
-
-/// What a Document owns: its parsed content, in one of the two
-/// representations.
-///
-/// Raw pointers, from `Box::leak`, freed by `DocData`'s `Drop`. Not `Box`,
-/// deliberately: readers copy the pointer out of a `&DocData` and hold what
-/// they derive from it well past that borrow - an XPath context keeps this
-/// pointer for the Document's whole life and reborrows the content per
-/// evaluate, while other calls read the node cache through the same
-/// `&DocData`. A `Box` field
-/// would assert unique ownership underneath those live aliases (a Stacked
-/// Borrows hazard); a `NonNull` asserts nothing. `Copy`, so a reader gets the
-/// pointer without borrowing the wrapper.
-#[derive(Clone, Copy)]
-pub(in crate::bridge) enum Content {
-    /// Not yet installed - only between `DocumentShell::new` and `install`.
-    Empty,
-    Html(NonNull<HtmlParsed>),
-    Xml(NonNull<XmlDoc>),
-}
-
-impl Content {
-    /// The HTML document, when this is one.
-    pub(in crate::bridge) fn html(self) -> Option<NonNull<HtmlParsed>> {
-        match self {
-            Content::Html(p) => Some(p),
-            _ => None,
-        }
-    }
-}
 
 /// One Ruby wrapper per node, so navigating to the same node twice gives the
 /// SAME object.
@@ -197,8 +165,10 @@ impl ExternalReport {
 /// for spans that run no Ruby and so no collection; the mark and compaction
 /// hooks rely on that (see [`Hooks for DocData`](#impl-Hooks-for-DocData)).
 pub struct DocData {
-    /// Set once, by `DocumentShell::install`; read through the accessors below.
-    content: Cell<Content>,
+    /// Set once, by `DocumentShell::install`; reached only through the
+    /// guards of `bridge::dom` ([`html_read`], [`html_write`], [`xml_read`],
+    /// [`xml_write`]).
+    content: OnceCell<Body>,
     /// The mutation gate and the edit versions ([`EditState`]).
     pub(super) edits: Cell<EditState>,
     errors: Held,
@@ -264,45 +234,35 @@ impl DocData {
     /// Whether the content has grown enough since the last report to measure
     /// and report it again ([`account_growth`]): by an eighth, and at least
     /// [`GROWTH_MIN_CHUNKS`] chunks (HTML) or [`GROWTH_MIN_BYTES`] (XML).
+    /// An edit holding the content answers no: its growth is measured when
+    /// the next edit begins.
     pub(super) fn grown_enough(&self) -> bool {
-        // SAFETY: the content is owned by this object and live for the call.
-        unsafe {
-            match self.content.get() {
-                Content::Empty => false,
-                Content::Html(p) => {
-                    let then = self.report.get().chunks;
-                    p.as_ref().arena_chunks()
-                        >= then.saturating_add((then / 8).max(GROWTH_MIN_CHUNKS))
-                }
-                Content::Xml(d) => {
-                    let then = self.report.get().bytes;
-                    d.as_ref().memsize() >= then.saturating_add((then / 8).max(GROWTH_MIN_BYTES))
-                }
+        match self.content.get() {
+            None => false,
+            Some(body @ Body::Html(_)) => {
+                let then = self.report.get().chunks;
+                body.arena_chunks().is_some_and(|now| {
+                    now >= then.saturating_add((then / 8).max(GROWTH_MIN_CHUNKS))
+                })
+            }
+            Some(body @ Body::Xml(_)) => {
+                let then = self.report.get().bytes;
+                body.external_bytes()
+                    .is_some_and(|now| now >= then.saturating_add((then / 8).max(GROWTH_MIN_BYTES)))
             }
         }
     }
 
-    /// The HTML content's chunk count, 0 for XML.
-    pub(super) fn arena_chunks(&self) -> usize {
-        // SAFETY: as `grown_enough`.
-        unsafe {
-            self.content
-                .get()
-                .html()
-                .map_or(0, |p| p.as_ref().arena_chunks())
-        }
+    /// The HTML content's chunk count, 0 for XML; `None` while an edit holds
+    /// it.
+    pub(super) fn arena_chunks(&self) -> Option<usize> {
+        self.content.get().map_or(Some(0), Body::arena_chunks)
     }
 
-    /// The bytes the content holds outside Ruby's allocator, or 0 with none.
-    pub(super) fn external_bytes(&self) -> usize {
-        // SAFETY: the content is owned by this object and live for the call.
-        unsafe {
-            match self.content.get() {
-                Content::Empty => 0,
-                Content::Html(p) => p.as_ref().external_bytes(),
-                Content::Xml(d) => d.as_ref().memsize(),
-            }
-        }
+    /// The bytes the content holds outside Ruby's allocator, 0 with none;
+    /// `None` while an edit holds it.
+    pub(super) fn external_bytes(&self) -> Option<usize> {
+        self.content.get().map_or(Some(0), Body::external_bytes)
     }
 }
 
@@ -332,8 +292,14 @@ impl Hooks for DocData {
             .try_borrow()
             .map_or(0, |n| n.as_ref().map_or(0, |c| c.memsize()));
         let memo = self.child_memo.try_borrow().map_or(0, |m| m.memsize());
+        /* The content - or, were an edit holding it, which a collection
+         * cannot find (an edit runs no Ruby) but a size need not insist on,
+         * what was last reported for it. */
+        let content = self
+            .external_bytes()
+            .unwrap_or_else(|| self.report.get().bytes);
         core::mem::size_of::<DocData>()
-            .saturating_add(self.external_bytes())
+            .saturating_add(content)
             .saturating_add(cache)
             .saturating_add(memo)
     }
@@ -342,21 +308,10 @@ impl Hooks for DocData {
 /// Run by the free callback, in Ruby's collector - so it must not panic (the
 /// callback aborts rather than unwind into C) and must touch no Ruby object.
 /// A `DocData` exists only in the memory `TypedType::wrap` gave it, so this
-/// is the one place a Document's content is freed; the node cache (a `Box`
-/// field) follows by drop glue.
+/// is the one place a Document's content is freed - by drop glue, after this
+/// body, with the node cache.
 impl Drop for DocData {
     fn drop(&mut self) {
-        // SAFETY: each pointer came from `Box::leak` in `DocumentShell` and only
-        // this wrapper owns it; readers' borrows are confined to calls on a
-        // live Document, and this one is being collected.
-        unsafe {
-            match self.content.get() {
-                Content::Empty => {}
-                Content::Html(p) => drop(Box::from_raw(p.as_ptr())),
-                Content::Xml(d) => drop(Box::from_raw(d.as_ptr())),
-            }
-        }
-        self.content.set(Content::Empty);
         /* Balance the report, or the GC keeps counting freed arenas as live
          * and collects ever more eagerly. A plain C call, as this hook has to
          * be: it only subtracts, and Ruby's own `xfree` does the same from
@@ -450,7 +405,7 @@ impl DocumentShell {
             ty.wrap(
                 klass,
                 || DocData {
-                    content: Cell::new(Content::Empty),
+                    content: OnceCell::new(),
                     edits: Cell::new(EditState::default()),
                     errors: Held::empty(),
                     report: Cell::new(ExternalReport::default()),
@@ -469,19 +424,25 @@ impl DocumentShell {
     /// Give the HTML Document its parsed document - the GC owns it from here -
     /// and report the arena's size.
     pub fn install_html(self, parsed: Box<HtmlParsed>) -> Value {
-        self.install(Content::Html(NonNull::from(Box::leak(parsed))))
+        self.install(Body::Html(RefCell::new(parsed)))
     }
 
     /// Give the XML Document its arena, as [`install_html`](Self::install_html).
     pub fn install_xml(self, arena: Box<XmlDoc>) -> Value {
-        self.install(Content::Xml(NonNull::from(Box::leak(arena))))
+        self.install(Body::Xml(RefCell::new(arena)))
     }
 
-    fn install(self, content: Content) -> Value {
+    #[allow(
+        clippy::panic,
+        reason = "`new` makes the wrapper without content, and only `install` - which takes the shell - gives it some"
+    )]
+    fn install(self, content: Body) -> Value {
         // SAFETY: `self.obj` is a live Document wrapper (the base type matches
         // either leaf) that has no content yet, so nothing is overwritten.
         let rb_doc = unsafe { value(self.obj) };
-        DOC_TYPE.get_known(&rb_doc).content.set(content);
+        if DOC_TYPE.get_known(&rb_doc).content.set(content).is_err() {
+            panic!("a Document installed twice");
+        }
         account_document(self.obj);
         /* Content in place: the Document can be seen now. */
         // SAFETY: the object `new` hid, given back the class it was made
@@ -496,81 +457,89 @@ impl DocumentShell {
  * document content <-> wrapper accessors                             *
  * ------------------------------------------------------------------ */
 
-/// The content of any Document. `Err(TypeError)` for a non-Document.
-pub(in crate::bridge) fn doc_content(rb_doc: Value) -> Result<Content, Error> {
-    Ok(DOC_TYPE.get(&rb_doc)?.content.get())
+/// The content of `rb_doc`, a VALUE known to be a Document (a node's
+/// keepalive Document, or a Document method's receiver). Every Document that
+/// Ruby can reach has one (`DocumentShell` reveals it only after `install`),
+/// so its absence is a broken invariant.
+fn body_known(rb_doc: &Value) -> Result<&Body, Error> {
+    DOC_TYPE
+        .get_known(rb_doc)
+        .content
+        .get()
+        .ok_or_else(|| internal_error("a Document without its content"))
 }
 
-/// [`doc_content`] for a VALUE already known to be a Document - a node's
-/// keepalive Document, or the receiver of a Document method.
-pub(in crate::bridge) fn doc_content_known(rb_doc: Value) -> Content {
-    DOC_TYPE.get_known(&rb_doc).content.get()
-}
-
-/// The XML arena of a Document, or `None` when it is not an XML one.
-pub(in crate::bridge) fn xml_arena_known(rb_doc: Value) -> Option<XmlDocPtr> {
-    match doc_content_known(rb_doc) {
-        Content::Xml(d) => Some(XmlDocPtr::new(d)),
-        _ => None,
+/// Why a guard could not be taken, as the exception it raises.
+fn held_error(held: Conflict) -> Error {
+    match held {
+        Conflict::ByEdit => internal_error("a Document was read while an edit held it"),
+        /* What `ensure_document_mutable` refuses first when the reader is an
+         * XPath evaluation with a handler; this is the same refusal for any
+         * other reader a Ruby call left suspended (a Fiber). */
+        Conflict::ByRead => makiri_error(
+            "cannot modify a document while a read of it is in progress (suspended in Ruby)",
+        ),
     }
 }
 
-/// The arena document behind an HTML Document. `Err(TypeError)` otherwise.
-pub fn html_doc_unwrap(rb_doc: Value) -> Result<DocPtr, Error> {
-    let d: &DocData = HTML_DOC_TYPE.get(&rb_doc)?;
-    Ok(html_doc_of(d))
+/// A Document of the wrong kind for the guard asked for: the caller vouched
+/// for the kind, so a broken invariant.
+fn wrong_kind() -> Error {
+    internal_error("a Document of the other kind")
 }
 
-/// The arena document of `rb_doc`, a VALUE already known to be an HTML
-/// Document (a Document method's receiver), borrowed for as long as the caller
-/// borrows it.
-pub fn html_doc(rb_doc: &Value) -> HtmlDoc<'_> {
-    // SAFETY: a live HTML Document, kept alive by `rb_doc`, which the caller
-    // holds for the borrow.
-    unsafe { html_doc_known(*rb_doc).as_doc() }
+/// `rb_doc`'s HTML document, borrowed for reading for as long as the caller
+/// borrows the VALUE - which it holds, and which keeps the Document alive.
+/// `rb_doc` is known to be an HTML Document.
+pub fn html_read(rb_doc: &Value) -> Result<HtmlRead<'_>, Error> {
+    match body_known(rb_doc)? {
+        Body::Html(c) => HtmlRead::of(c).map_err(held_error),
+        Body::Xml(_) => Err(wrong_kind()),
+    }
 }
 
-/// [`html_doc_unwrap`] for a VALUE already known to be an HTML Document.
-pub fn html_doc_known(rb_doc: Value) -> DocPtr {
-    html_doc_of(HTML_DOC_TYPE.get_known(&rb_doc))
+/// `rb_doc`'s HTML document, borrowed for an edit; refused while a read
+/// holds it. The caller has made the edit's checks (`ensure_document_mutable`
+/// first, so its refusal wins) and runs no Ruby while it holds this.
+pub(in crate::bridge) fn html_write(rb_doc: &Value) -> Result<HtmlWrite<'_>, Error> {
+    match body_known(rb_doc)? {
+        Body::Html(c) => HtmlWrite::of(c).map_err(held_error),
+        Body::Xml(_) => Err(wrong_kind()),
+    }
 }
 
-#[allow(
-    clippy::expect_used,
-    reason = "an HTML Document holds HTML content from `install` on, and none is reachable before"
-)]
-fn html_doc_of(d: &DocData) -> DocPtr {
-    /* The HTML type guarantees HTML content once installed, and nothing
-     * reaches a Document before `install`: a broken invariant. */
-    let p = d
-        .content
-        .get()
-        .html()
-        .expect("an HTML Document without its document");
-    DocPtr::new(p)
+/// `rb_doc`'s XML arena, borrowed for reading, as [`html_read`].
+pub fn xml_read(rb_doc: &Value) -> Result<XmlRead<'_>, Error> {
+    match body_known(rb_doc)? {
+        Body::Xml(c) => XmlRead::of(c).map_err(held_error),
+        Body::Html(_) => Err(wrong_kind()),
+    }
+}
+
+/// `rb_doc`'s XML arena, borrowed for an edit, as [`html_write`].
+pub(in crate::bridge) fn xml_write(rb_doc: &Value) -> Result<XmlWrite<'_>, Error> {
+    match body_known(rb_doc)? {
+        Body::Xml(c) => XmlWrite::of(c).map_err(held_error),
+        Body::Html(_) => Err(wrong_kind()),
+    }
+}
+
+/// `Err(TypeError)` unless `rb_doc` is an HTML Document.
+pub fn html_doc_check(rb_doc: Value) -> Result<(), Error> {
+    HTML_DOC_TYPE.get(&rb_doc).map(|_| ())
 }
 
 /// Run `f` over the parsed document of a VALUE known to be an HTML Document,
-/// for reading - an index a reader builds is a cell (`HtmlParsed`), so no
-/// reader takes the document `&mut`, and readers may overlap (an XPath walk
-/// that called a handler, and the handler's own reads).
-///
-/// The reference does not escape `f`, so the raw pointer stays in this layer.
-#[allow(
-    clippy::expect_used,
-    reason = "an HTML Document holds HTML content from `install` on, and none is reachable before"
-)]
+/// for a read confined to `f` - which must run no Ruby. An index a reader
+/// builds is a cell (`HtmlParsed`), so readers take the document shared and
+/// may overlap (an XPath walk that called a handler, and the handler's own
+/// reads).
 pub(in crate::bridge) fn with_html_parsed_known<R>(
     rb_doc: Value,
     f: impl FnOnce(&HtmlParsed) -> R,
-) -> R {
-    let p = doc_content_known(rb_doc)
-        .html()
-        .expect("an HTML Document without its document");
-    // SAFETY: under the GVL, the document owned by its live wrapper, and the
-    // borrow confined to `f`; the only `&mut` of it is an edit's, which the
-    // mutation gate keeps from overlapping a reader that runs Ruby.
-    unsafe { f(p.as_ref()) }
+) -> Result<R, Error> {
+    let read = html_read(&rb_doc)?;
+    Ok(f(read.parsed()))
 }
 
 /// [`with_html_parsed_known`] for a Document of either kind: `None` for an
@@ -578,10 +547,14 @@ pub(in crate::bridge) fn with_html_parsed_known<R>(
 pub(in crate::bridge) fn with_html_parsed_if<R>(
     rb_doc: Value,
     f: impl FnOnce(&HtmlParsed) -> R,
-) -> Option<R> {
-    let p = doc_content_known(rb_doc).html()?;
-    // SAFETY: as `with_html_parsed_known`.
-    Some(unsafe { f(p.as_ref()) })
+) -> Result<Option<R>, Error> {
+    match body_known(&rb_doc)? {
+        Body::Html(c) => {
+            let read = HtmlRead::of(c).map_err(held_error)?;
+            Ok(Some(f(read.parsed())))
+        }
+        Body::Xml(_) => Ok(None),
+    }
 }
 
 /// One representation's leaf classes, by node type: the mapping both

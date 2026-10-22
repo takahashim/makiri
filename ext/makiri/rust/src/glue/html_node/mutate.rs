@@ -108,13 +108,13 @@ pub fn replace(_ruby: &Ruby, mut this: HtmlSelf, rb_other: Value) -> Result<Valu
 /// `node.remove` / `node.unlink` -> node.
 pub fn remove(_ruby: &Ruby, mut this: HtmlSelf) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        if !dom_rules::removable(this.node().node_type()) {
+        if !dom_rules::removable(this.read()?.node().node_type()) {
             return Err(makiri_error(DOCUMENT_NOT_REMOVABLE));
         }
         let edit = edit(&mut this)?;
         /* An Attr leaves its element's attribute list: an attribute edit,
          * which changes no child list - as the XML side's `remove` is. */
-        if edit.node_type() == NodeType::Attribute {
+        if edit.node_type()? == NodeType::Attribute {
             edit.with_attributes(|d, attr| d.remove_from_owner(attr))?;
             return Ok(this.value);
         }
@@ -141,7 +141,7 @@ pub fn aset(
     crate::bridge::ruby::entry(|| {
         const REFUSAL: &str = "cannot set an attribute on a non-element node";
         let edit = edit(&mut this)?;
-        if edit.node_type() != NodeType::Element {
+        if edit.node_type()? != NodeType::Element {
             return Err(makiri_error(REFUSAL));
         }
         let nv = ruby_verified_name(rb_name, "attribute name")?;
@@ -166,7 +166,7 @@ pub fn set_attribute_ns(
     crate::bridge::ruby::entry(|| {
         const REFUSAL: &str = "cannot set an attribute on a non-element node";
         let edit = edit(&mut this)?;
-        if edit.node_type() != NodeType::Element {
+        if edit.node_type()? != NodeType::Element {
             return Err(makiri_error(REFUSAL));
         }
         let qv = ruby_verified_name(rb_qname, "attribute qualified name")?;
@@ -200,7 +200,7 @@ pub fn remove_attribute_ns(
 ) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let edit = edit(&mut this)?;
-        if edit.node_type() != NodeType::Element {
+        if edit.node_type()? != NodeType::Element {
             return Ok(ruby.qnil().as_value());
         }
         let lv = ruby_verified_text(rb_local, "attribute local name")?;
@@ -223,7 +223,7 @@ pub fn set_content(_ruby: &Ruby, mut this: HtmlSelf, rb_text: Value) -> Result<V
          * Document's or DocumentType's is nothing, so no edit is recorded. */
         let set =
             |d: &mut HtmlDocMut<'_>, n: RawNode| crate::bridge::html::set_text_content(d, n, &tv);
-        match dom_rules::text_content(edit.node_type()) {
+        match dom_rules::text_content(edit.node_type()?) {
             TextContent::AttrValue => edit.with_attributes(set)?,
             TextContent::Data => edit.with_data(set)?,
             TextContent::ReplaceChildren => edit.with_tree(set)?,
@@ -239,7 +239,7 @@ pub fn delete(_ruby: &Ruby, mut this: HtmlSelf, rb_name: Value) -> Result<Value,
     crate::bridge::ruby::entry(|| {
         let rb_self = this.value;
         let edit = edit(&mut this)?;
-        if edit.node_type() != NodeType::Element {
+        if edit.node_type()? != NodeType::Element {
             return Ok(rb_self);
         }
         let nv = ruby_verified_text(rb_name, "attribute name")?;
@@ -257,7 +257,7 @@ pub fn delete(_ruby: &Ruby, mut this: HtmlSelf, rb_name: Value) -> Result<Value,
 pub fn set_inner_html(_ruby: &Ruby, mut this: HtmlSelf, rb_html: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let edit = edit(&mut this)?;
-        if edit.node_type() != NodeType::Element {
+        if edit.node_type()? != NodeType::Element {
             return Err(makiri_error("inner_html= requires an element"));
         }
         /* `to_str`/`to_s` is Ruby code that may raise: converted under protect,
