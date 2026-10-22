@@ -629,7 +629,7 @@ document), and the Encoding Standard's decoders (`encoding_rs`, into a
 encoding the Standard has no label for (UTF-32, CP51932) is transcoded by
 Ruby as before (`DocumentSource`, over `html::encoding::transport_for`). Fragment parsing takes text, so
 it has no sniffing: there the input String's encoding is honoured
-(`ruby_to_utf8`, `bridge/string.rs`): UTF-8 / US-ASCII / ASCII-8BIT pass
+(`ruby_to_utf8`, `bridge/string/encoding.rs`): UTF-8 / US-ASCII / ASCII-8BIT pass
 through untouched (the UTF-8 common case is a single encoding compare - no
 transcode, no copy), any other encoding (Shift_JIS, EUC-JP, ISO-8859-1, ...) is
 `rb_str_encode`'d to UTF-8 (invalid/undef → U+FFFD) so its content survives
@@ -644,7 +644,7 @@ validate-only scan (Unicode well-formed table + word-at-a-time ASCII); it is
 skipped entirely when the String's cached coderange (read via `ENC_CODERANGE`,
 no forced scan) already proves it valid - `parse_html`'s `assume_valid` and
 `ruby_str_known_valid_utf8`. The **programmatic APIs are strict**:
-`ruby_verified_text` (`bridge/string.rs`) raises `Makiri::Error` for **invalid
+`ruby_verified_text` (`bridge/string/view.rs`) raises `Makiri::Error` for **invalid
 UTF-8 everywhere** at the XPath/CSS/mutation boundaries (expr, selector,
 attribute name/value, `content=`, `create_*`, variable/namespace) -
 never truncate/repair. **Embedded NUL (U+0000) is a two-tier contract**: rejected
