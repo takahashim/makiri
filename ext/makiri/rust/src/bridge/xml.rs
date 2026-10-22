@@ -716,7 +716,7 @@ pub fn find_attribute_ns(this: XmlSelf, ns: Value, local: Value) -> Result<Optio
 /* two arenas at once: adopting and importing                         */
 /* ------------------------------------------------------------------ */
 /* The node methods live in `glue::xml_node::mutate`. What stays here is what
- * holds two arenas - or an arena and a Lexbor document - at the same time,
+ * holds two arenas - an XML one and another, XML or HTML - at the same time,
  * which `with_arena_for_new_node`'s one-at-a-time lending cannot express. */
 
 /// A node copied in from another document, still to be taken out of it: the

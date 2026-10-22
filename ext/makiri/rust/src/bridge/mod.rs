@@ -29,7 +29,6 @@ pub mod gvl;
 /// engine's recursion checks can consult it without depending on Ruby.
 pub mod stack;
 
-/// The Ruby <-> Lexbor DOM seam.
 /// The node and Document wrappers, their TypedData types, and the
 /// representation-agnostic accessors.
 #[cfg(feature = "html-dom")]
@@ -38,7 +37,7 @@ pub mod wrapper;
 /// The bridge steps that differ between the two HTML DOMs.
 pub mod dom;
 
-/// The HTML front door: Lexbor nodes to Ruby and back, and the HTML edits.
+/// The HTML front door: arena nodes to Ruby and back, and the HTML edits.
 #[cfg(feature = "html-dom")]
 pub mod html;
 

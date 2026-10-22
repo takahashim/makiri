@@ -119,7 +119,7 @@ impl NodeWord {
 /// for HTML, the arena [`NodeId`] for XML.
 ///
 /// The HTML variant is what makes the stored handle opaque: it is a private
-/// mint (see `lexbor::adapter`), so a wrapper's node can only have come from
+/// mint (`html::dom`'s), so a wrapper's node can only have come from
 /// the document the wrapper marks. The XML variant carries its document stamp
 /// for the same reason. Which variant a wrapper holds is decided by its
 /// TypedData type, as before.
@@ -550,7 +550,7 @@ impl Drop for DocData {
 
 /// Tell the GC how much memory `rb_doc` holds outside Ruby's allocator.
 ///
-/// Neither the Lexbor arena nor the XML arena is an `xmalloc`, so the GC sees
+/// Neither the HTML arena nor the XML arena is an `xmalloc`, so the GC sees
 /// a parsed document as a few dozen bytes: a loop that parses and drops never
 /// triggers a collection from memory pressure, RSS climbs by a document per
 /// parse, and every parse pays for freshly faulted pages (measured: 2× the
@@ -578,7 +578,7 @@ fn account_document(rb_doc: VALUE) {
 }
 
 /// Chunks an HTML document's pools must gain before [`account_growth`]
-/// measures it again (Lexbor's node pool grows in chunks of tens of KiB).
+/// measures it again (the HTML arena's stores grow in chunks of tens of KiB).
 const GROWTH_MIN_CHUNKS: usize = 16;
 /// Bytes an XML document must gain before [`account_growth`] reports again.
 const GROWTH_MIN_BYTES: usize = 512 * 1024;
@@ -612,7 +612,7 @@ pub static DOC_TYPE: TypedType<DocData> = TypedType::base(c"Makiri::Document".as
 
 /// HTML and XML Documents share the layout and the GC functions but are wrapped
 /// under DISTINCT types deriving from the base, so `html_doc_unwrap` - which
-/// reinterprets the handle as a Lexbor document - raises TypeError on an XML
+/// reinterprets the handle as an HTML document - raises TypeError on an XML
 /// Document through Ruby's own type machinery rather than relying on an assert
 /// that NDEBUG erases.
 pub static HTML_DOC_TYPE: TypedType<DocData> =
@@ -714,7 +714,7 @@ impl DocumentShell {
 }
 
 /* ------------------------------------------------------------------ *
- * lexbor <-> wrapper accessors                                       *
+ * document content <-> wrapper accessors                             *
  * ------------------------------------------------------------------ */
 
 /// The content of any Document. `Err(TypeError)` for a non-Document.
@@ -736,13 +736,13 @@ pub(in crate::bridge) fn xml_arena_known(rb_doc: Value) -> *mut XmlDoc {
     }
 }
 
-/// The Lexbor document behind an HTML Document. `Err(TypeError)` otherwise.
+/// The arena document behind an HTML Document. `Err(TypeError)` otherwise.
 pub fn html_doc_unwrap(rb_doc: Value) -> Result<DocPtr, Error> {
     let d: &DocData = HTML_DOC_TYPE.get(&rb_doc)?;
     Ok(html_doc_of(d))
 }
 
-/// The Lexbor document of `rb_doc`, a VALUE already known to be an HTML
+/// The arena document of `rb_doc`, a VALUE already known to be an HTML
 /// Document (a Document method's receiver), borrowed for as long as the caller
 /// borrows it.
 pub fn html_doc(rb_doc: &Value) -> HtmlDoc<'_> {
@@ -958,7 +958,7 @@ pub fn node_token_in(rb_node: Value, document: Value) -> Result<Token, NotInDocu
 /// node, a NodeSet of the node's own document).
 ///
 /// The Document branch is kind-aware: an XML Document resolves to its arena's
-/// document node, an HTML one to Lexbor's.
+/// document node, an HTML one to the HTML arena's.
 pub fn node_raw(rb_node: Value) -> Result<NodeWord, Error> {
     if crate::bridge::ruby::is_kind_of(rb_node, &CLASS_DOCUMENT) {
         if let Content::Xml(xdoc) = doc_content(rb_node)? {

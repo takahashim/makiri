@@ -1,9 +1,9 @@
-//! The Ruby <-> Lexbor seam for HTML nodes: wrapping a Lexbor node for Ruby
+//! The Ruby <-> arena seam for HTML nodes: wrapping an arena node for Ruby
 //! and back, the checked receiver (`HtmlSelf`), and the tree and attribute
 //! edits the node methods make.
 //!
-//! A value read out of a Ruby wrapper becomes a live Lexbor handle here, and
-//! the conversion is unsafe; the lexbor side stays Ruby-free.
+//! A value read out of a Ruby wrapper becomes a live arena handle here, and
+//! the conversion is unsafe; the arena side (`html::dom`) stays Ruby-free.
 
 #![allow(unsafe_code)]
 
@@ -81,7 +81,7 @@ static HTML_NODE_CLASSES: NodeClasses = NodeClasses {
 ///
 /// A DOCUMENT node maps back onto the Ruby Document rather than getting a
 /// second wrapper; a node type with no specific leaf (entity/notation, which
-/// Lexbor's HTML parser does not produce) falls back to `Makiri::HTML::Node`.
+/// the HTML parser does not produce) falls back to `Makiri::HTML::Node`.
 pub fn wrap_html_node(node: RawNode, document: Value) -> Result<Value, Error> {
     // The caller hands `node` with the Document it belongs to.
     let handle = crate::bridge::wrapper::html_doc(&document).node(node);
@@ -123,7 +123,7 @@ fn uninitialized() -> Error {
 ///
 /// `Err(TypeError)` for an XML node or Document: the typed-data check is
 /// against [`HTML_NODE_TYPE`], which an XML node (wrapped under
-/// `XML_NODE_TYPE`) does not satisfy. The Document node is keyed too: Lexbor sets its `owner_document` to itself, so
+/// `XML_NODE_TYPE`) does not satisfy. The Document node is keyed too: it is its own `owner_document`, so
 /// `mint_key` accepts it.
 pub(in crate::bridge) fn html_node_key(rb_node: Value) -> Result<(HtmlNodeKey, Value), Error> {
     if crate::bridge::ruby::is_kind_of(rb_node, &CLASS_DOCUMENT) {
@@ -580,12 +580,12 @@ pub fn insert(this: &mut HtmlSelf, rb_incoming: Value, place: Place) -> Result<V
 }
 
 /* ------------------------------------------------------------------ *
- * verified strings into Lexbor                                        *
+ * verified strings into the arena                                    *
  * ------------------------------------------------------------------ *
  * The node methods live in `glue::html_node::mutate`. A checked view reads as
  * a plain `&str` (`RubyStr`'s `Deref`, over its own copy of the bytes), and each
- * primitive passes it straight to a Lexbor call that copies what it keeps. A
- * primitive answers what Lexbor answered; the method words the error. */
+ * primitive passes it straight to an arena edit that copies what it keeps. A
+ * primitive answers what the edit answered; the method words the error. */
 
 /// `el[name] = value` on the element `el`; `Err` when it could not be stored.
 pub fn set_attribute(

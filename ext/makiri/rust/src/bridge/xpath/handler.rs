@@ -128,7 +128,7 @@ impl HandlerFailure {
 ///
 /// The same-document check compares the node's keepalive Document VALUE against
 /// the context's, NOT the HTML-only owner_document field - so it is correct for
-/// an XML node too, whose pointer is an arena node rather than a Lexbor one. A
+/// an XML node too, whose word is an XML arena id rather than an HTML one. A
 /// node from another document fails closed.
 fn push_result_node(
     bridge: &Bridge,

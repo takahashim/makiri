@@ -3,9 +3,9 @@
 //! One pipeline for every entry - `Document#fragment`, `DocumentFragment.parse`,
 //! `Node#parse`, `inner_html=` and `outer_html=`. The input goes through
 //! [`HtmlSource`] (converted under protect, its encoding honoured), the parse
-//! into a [`TransientFragment`] that owns Lexbor's throwaway document, and
+//! into a [`TransientFragment`] that owns a throwaway arena document, and
 //! nothing in the target document changes until the parse has succeeded. The
-//! Lexbor parsers and the import primitives are [`crate::html_dom::fragment`]'s;
+//! fragment parser and the import primitives are [`crate::html_dom::fragment`]'s;
 //! reading the Ruby arguments is the glue's.
 
 #![allow(unsafe_code)]
@@ -91,7 +91,7 @@ pub fn resolve_fragment_context(
      * it follows the strict text-input contract (valid UTF-8, no NUL). */
     let cv = ruby_verified_text(context, "fragment context element")?;
     let name = cv.as_bytes();
-    /* Lexbor's name table also holds the special ids it gives non-elements
+    /* The name table also holds the special ids it gives non-elements
      * (`#text`, `#document`, `!--`, ...), which would make the context a
      * node of that kind: only a name an element can have is a context. */
     if !crate::xml::dom_name::valid_element_local_name(name) {

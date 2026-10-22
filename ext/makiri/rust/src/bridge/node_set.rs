@@ -7,7 +7,7 @@
 //! The stored words are representation-opaque. The set never dereferences
 //! one; it compares them for identity and, when vending a node, reads it back
 //! as the representation named by its `kind`. That keeps an XML set from ever reading
-//! an XML arena handle as a Lexbor node. The kind is decided once at
+//! an XML arena handle as an HTML one. The kind is decided once at
 //! construction rather than probed per node, which would regress the hot
 //! traversal path.
 //!
@@ -141,7 +141,7 @@ pub struct NodeSet {
     /// `mark` below is what the GC follows to reach it.
     document: Opaque<Value>,
     /// Decided once: whether the stored words are XML arena handles (wrapped as
-    /// `Makiri::XML::*`) or Lexbor nodes.
+    /// `Makiri::XML::*`) or HTML arena nodes.
     kind: DocKind,
     nodes: RefCell<NodeVec>,
 }
@@ -203,7 +203,7 @@ impl NodeSet {
 /// An empty NodeSet over `document`, whose nodes it will hold.
 ///
 /// The Document decides how a stored word is read back - an arena token for
-/// XML, a Lexbor node for HTML - so it is checked here rather than taken on
+/// XML, an HTML arena node for HTML - so it is checked here rather than taken on
 /// trust: one class test per set, never per node.
 pub fn node_set_new(document: Value) -> Value {
     assert!(
