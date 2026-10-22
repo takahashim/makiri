@@ -26,9 +26,11 @@
   `0x8160` is U+301C where Ruby's `Windows-31J` made U+FF5E.
 * `Makiri::XML` `#ancestors` returns a NodeSet, as HTML's does; it returned
   an Array.
-* `Makiri::XML` raises `Makiri::XML::SyntaxError` for an encoding
-  declaration naming an encoding Ruby does not know, as XML 1.0 has it; it
-  was ignored, or reported as conflicting with the String's encoding.
+* `Makiri::XML` reads an encoding declaration by its IANA charset name or
+  alias in any case (`latin1`, `csISOLatin1`), as XML 1.0 has it, and
+  raises `Makiri::XML::SyntaxError` for a name that is neither (`utf8`);
+  such a declaration was ignored, or reported as conflicting with the
+  String's encoding.
 
 ### Fixed
 
