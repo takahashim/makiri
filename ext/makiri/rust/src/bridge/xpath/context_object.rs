@@ -1,5 +1,5 @@
-//! `Makiri::XPathContext`: the TypedData that holds a context and the compiled
-//! ASTs it has parsed, and the operations on it. The Ruby methods - argument
+//! `Makiri::XPathContext`: the wrapped object that holds a context and the
+//! compiled ASTs it has parsed, and the operations on it. The Ruby methods - argument
 //! reading, registration - are `glue::xpath_context`'s.
 
 #![allow(unsafe_code)]
@@ -7,11 +7,9 @@
 use core::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
-use magnus::gc::Marker;
-
 use crate::bridge::ruby::makiri_error;
-use magnus::value::{Opaque, ReprValue};
-use magnus::{DataTypeFunctions, Error, Ruby, TypedData, Value};
+use crate::bridge::typed::{Held, Hooks, Tracer, TypedType};
+use magnus::{Error, Value};
 
 use crate::bridge::string::ruby_try_verified_text;
 use crate::bridge::string::{ruby_verified_text, RubyText};
@@ -53,43 +51,83 @@ struct AstCache(HashMap<Box<[u8]>, Box<Ast>>);
 
 /// `Makiri::XPathContext`.
 ///
-/// `document` never changes and so is a plain field. `node` DOES change (via
-/// `#node=`) and is also marked, which is why it is a `Cell` rather than living
-/// in the `RefCell`: `mark` must reach both on every GC, and a GC can land while
-/// a mutable borrow is outstanding - the mistake that had to be fixed in
-/// `glue::node_set`.
+/// The two Ruby values it keeps alive are [`Held`]s, stored only once the
+/// object is wrapped ([`XPathCtx::create`]) and traced by [`Hooks::trace`].
+/// `document` never changes; `node` does (`#node=`), which is why it - like
+/// every `Held` - is a cell rather than living in the `RefCell`: the GC
+/// reads both through `&self`, and a GC can land while a mutable borrow is
+/// outstanding - the mistake that had to be fixed in `glue::node_set`.
 ///
 /// The engine context sits outside the `RefCell` too: everything done with it
 /// takes `&Cx`, so a handler re-entering mid-walk can evaluate again on it,
 /// and the context itself refuses the changes that would disturb the walk.
-#[derive(TypedData)]
-#[magnus(class = "Makiri::XPathContext", mark, size, free_immediately)]
 pub struct XPathCtx {
     /// Keepalive: owns the DOM arena.
-    document: Opaque<Value>,
+    document: Held,
     /// Keepalive: the context node's wrapper.
-    node: Cell<Opaque<Value>>,
+    node: Held,
     cache: RefCell<AstCache>,
     /// The bytes the cached ASTs hold, as reported to the GC - kept outside
-    /// the `RefCell` because `size` reads it from the GC, which can land while
-    /// the cache is borrowed.
+    /// the `RefCell` because `memsize` reads it from the GC, which can land
+    /// while the cache is borrowed.
     cache_bytes: Cell<usize>,
     ctx: Cx,
 }
 
-/* SAFETY: every access holds the GVL, which serialises Ruby threads. magnus's
- * TypedData needs the bound because a wrapped value may be freed on whichever
- * thread runs the GC - still under the GVL. */
-unsafe impl Send for XPathCtx {}
-
-impl DataTypeFunctions for XPathCtx {
-    fn mark(&self, marker: &Marker) {
-        marker.mark(self.document);
-        marker.mark(self.node.get());
+impl Hooks for XPathCtx {
+    fn trace(&self, tracer: &Tracer) {
+        tracer.pinned(&self.document);
+        tracer.pinned(&self.node);
     }
 
-    fn size(&self) -> usize {
+    fn memsize(&self) -> usize {
         core::mem::size_of::<Self>().saturating_add(self.cache_bytes.get())
+    }
+}
+
+/// `Makiri::XPathContext`'s data type.
+pub static XPATH_CTX_TYPE: TypedType<XPathCtx> = TypedType::base(c"Makiri::XPathContext".as_ptr());
+
+/// An `XPathContext` method's receiver: the object, checked to be one, read
+/// as its [`XPathCtx`] for the call.
+pub struct XPathCtxSelf(Value);
+
+impl magnus::TryConvert for XPathCtxSelf {
+    fn try_convert(value: Value) -> Result<Self, Error> {
+        XPATH_CTX_TYPE.get(&value)?;
+        Ok(XPathCtxSelf(value))
+    }
+}
+
+impl core::ops::Deref for XPathCtxSelf {
+    type Target = XPathCtx;
+    fn deref(&self) -> &XPathCtx {
+        XPATH_CTX_TYPE.get_known(&self.0)
+    }
+}
+
+impl XPathCtxSelf {
+    /// Rebind the context node to `rb_node`, a Makiri node of the same
+    /// document. Namespace and variable registrations are preserved.
+    pub fn set_node(&self, rb_node: Value) -> Result<(), Error> {
+        const BUSY: &str =
+            "cannot change the context node while evaluating (re-entrant mutation from a handler)";
+        /* The engine refuses this too; asked first so a handler's re-entrant
+         * call reads as busy rather than as whatever the checks below say. */
+        if self.ctx.is_evaluating() {
+            return Err(refused(ContextError::Evaluating, BUSY, BUSY));
+        }
+        let token = node_token_in(rb_node, self.document()).map_err(|e| match e {
+            NotInDocument::Unusable(e) => e,
+            NotInDocument::Foreign => makiri_error("context node must belong to the same document"),
+        })?;
+        self.ctx
+            .set_context_node(token)
+            .map_err(|e| refused(e, BUSY, BUSY))?;
+        /* Kept alive once it is the context node: a refusal above leaves the
+         * old node and its keepalive as they were. */
+        XPATH_CTX_TYPE.with_store(self.0, |c, store| c.node.replace(store.hold(rb_node)));
+        Ok(())
     }
 }
 
@@ -147,57 +185,41 @@ fn refused(error: ContextError, busy: &'static str, failed: &'static str) -> Err
 
 impl XPathCtx {
     /// A new context rooted at `rb_node`, a node of its keepalive Document.
-    pub fn create(ruby: &Ruby, rb_node: Value, lax: bool) -> Result<Value, Error> {
+    pub fn create(rb_node: Value, lax: bool) -> Result<Value, Error> {
         let document = keepalive_document(rb_node)?;
         let mut ctx = context_for(rb_node, document)?;
         ctx.set_lax(lax);
-
-        let obj = ruby
-            .wrap(XPathCtx {
-                document: document.into(),
-                node: Cell::new(rb_node.into()),
-                cache: RefCell::new(AstCache(HashMap::new())),
-                cache_bytes: Cell::new(0),
-                ctx,
-            })
-            .as_value();
-        /* While `wrap` allocates the object - a GC point - both values are held
-         * only by the boxed struct, where no mark sees them. Using them afterwards
-         * keeps them on the machine stack across that call, pinned by the
-         * conservative scan, so compaction cannot move them out from under the
-         * stored copies. */
-        core::hint::black_box((document, rb_node));
-        Ok(obj)
+        // SAFETY: under the GVL; the struct is built holding no value, and the
+        // two are stored once it is wrapped.
+        let obj = unsafe {
+            XPATH_CTX_TYPE.wrap(
+                CLASS_XPATH_CONTEXT.raw(),
+                || XPathCtx {
+                    document: Held::empty(),
+                    node: Held::empty(),
+                    cache: RefCell::new(AstCache(HashMap::new())),
+                    cache_bytes: Cell::new(0),
+                    ctx,
+                },
+                |c, store| {
+                    c.document = store.hold(document);
+                    c.node = store.hold(rb_node);
+                },
+            )
+        };
+        // SAFETY: the object just wrapped, live on this frame.
+        Ok(unsafe { crate::bridge::ruby::value(obj) })
     }
 
-    /// Rebind the context node to `rb_node`, a Makiri node of the same
-    /// document. Namespace and variable registrations are preserved.
-    pub fn set_node(&self, ruby: &Ruby, rb_node: Value) -> Result<(), Error> {
-        const BUSY: &str =
-            "cannot change the context node while evaluating (re-entrant mutation from a handler)";
-        /* The engine refuses this too; asked first so a handler's re-entrant
-         * call reads as busy rather than as whatever the checks below say. */
-        if self.ctx.is_evaluating() {
-            return Err(refused(ContextError::Evaluating, BUSY, BUSY));
-        }
-        let token = node_token_in(rb_node, ruby.get_inner(self.document)).map_err(|e| match e {
-            NotInDocument::Unusable(e) => e,
-            NotInDocument::Foreign => makiri_error("context node must belong to the same document"),
-        })?;
-        self.node.set(rb_node.into()); /* keepalive; marked above */
-        self.ctx
-            .set_context_node(token)
-            .map_err(|e| refused(e, BUSY, BUSY))
+    /// The keepalive Document.
+    fn document(&self) -> Value {
+        // SAFETY: a field `trace` traces, of the receiver the caller holds.
+        unsafe { self.document.get() }
     }
 
     /// Evaluate `expr` - parsed once and cached - with `handler`, if any.
-    pub fn evaluate(
-        &self,
-        ruby: &Ruby,
-        expr: Value,
-        handler: Option<Value>,
-    ) -> Result<Value, Error> {
-        let document = ruby.get_inner(self.document);
+    pub fn evaluate(&self, expr: Value, handler: Option<Value>) -> Result<Value, Error> {
+        let document = self.document();
 
         /* The cache borrow is taken for the lookup ONLY, and released before the
          * evaluation. A handler called mid-walk re-enters this object - to

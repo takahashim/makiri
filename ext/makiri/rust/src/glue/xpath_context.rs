@@ -4,7 +4,7 @@
 //!   handler = nil)`, `#register_namespace(prefix, uri)` / `#register_ns`,
 //!   `#register_variable(name, value)`, `#node=`
 //!
-//! The context itself - its TypedData, its AST cache, and the refusals that
+//! The context itself - its wrapped data, its AST cache, and the refusals that
 //! protect a running evaluate - is [`crate::bridge::xpath::XPathCtx`]; this
 //! module reads the arguments and registers the methods.
 
@@ -13,7 +13,7 @@
 use magnus::{function, method, prelude::*, Error, RHash, Ruby, Value};
 
 use crate::bridge::ruby::is_kind_of;
-use crate::bridge::xpath::XPathCtx;
+use crate::bridge::xpath::{XPathCtx, XPathCtxSelf};
 use crate::glue::kwargs::Kwargs;
 use crate::glue::query::{register_bindings, Keywords};
 use crate::init::{CLASS_NODE, CLASS_XPATH_CONTEXT};
@@ -40,11 +40,12 @@ fn s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
         let kw = Keywords::scan(ruby, Kwargs::from_hash(a.keywords))?;
         expect_node(ruby, node)?;
 
-        let obj = XPathCtx::create(ruby, node, kw.lax)?;
+        let obj = XPathCtx::create(node, kw.lax)?;
         if let Some(bindings) = kw.bindings {
             /* A registration that fails leaves `obj` to the GC, never a context
              * with half its prefixes. */
-            register_bindings(<&XPathCtx>::try_convert(obj)?, bindings)?;
+            let ctx: XPathCtxSelf = XPathCtxSelf::try_convert(obj)?;
+            register_bindings(&ctx, bindings)?;
         }
         Ok(obj)
     })
@@ -52,26 +53,26 @@ fn s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
 
 /// `#node=` - rebind the context node, so one context can evaluate relative
 /// expressions against several nodes of its document.
-fn set_node(ruby: &Ruby, ctx: &XPathCtx, node: Value) -> Result<Value, Error> {
+fn set_node(ruby: &Ruby, ctx: XPathCtxSelf, node: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         expect_node(ruby, node)?;
-        ctx.set_node(ruby, node)?;
+        ctx.set_node(node)?;
         Ok(node)
     })
 }
 
 /// `#evaluate(expr, handler = nil)`.
-fn evaluate(ruby: &Ruby, ctx: &XPathCtx, args: &[Value]) -> Result<Value, Error> {
+fn evaluate(ctx: XPathCtxSelf, args: &[Value]) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), (), ()>(args)?;
         /* An explicit nil is no handler, as an omitted one is. */
         let handler = a.optional.0.filter(|h| !h.is_nil());
-        ctx.evaluate(ruby, a.required.0, handler)
+        ctx.evaluate(a.required.0, handler)
     })
 }
 
 /// `#register_namespace(prefix, uri)` -> self.
-fn register_namespace(ctx: &XPathCtx, prefix: Value, uri: Value) -> Result<Value, Error> {
+fn register_namespace(ctx: XPathCtxSelf, prefix: Value, uri: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         ctx.ensure_idle()?;
         let cap = ctx.limits().max_string_bytes;
@@ -81,7 +82,7 @@ fn register_namespace(ctx: &XPathCtx, prefix: Value, uri: Value) -> Result<Value
 }
 
 /// `#register_variable(name, value)` -> self.
-fn register_variable(ctx: &XPathCtx, name: Value, value: Value) -> Result<Value, Error> {
+fn register_variable(ctx: XPathCtxSelf, name: Value, value: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         ctx.register_variable(name, value)?;
         crate::bridge::ruby::current_receiver()

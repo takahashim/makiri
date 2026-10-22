@@ -40,7 +40,7 @@ mod context_object;
 mod handler;
 
 use crate::bridge::ruby::is_kind_of;
-pub use context_object::XPathCtx;
+pub use context_object::{XPathCtx, XPathCtxSelf};
 use handler::Bridge;
 
 /// An engine error as the Ruby exception it maps to.
