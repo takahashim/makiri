@@ -146,7 +146,7 @@ fn document(rng: &mut Rng, namespaced: bool) -> String {
     let mut open: Vec<String> = Vec::new();
     for _ in 0..rng.below(40) + 5 {
         match rng.below(10) {
-            0 => out.push_str("t"),
+            0 => out.push('t'),
             1 => out.push_str("<!--c-->"),
             2 => out.push_str("<?pi d?>"),
             3 => out.push_str("<![CDATA[]]>"),

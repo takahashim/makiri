@@ -255,6 +255,7 @@ pub fn decode(bytes: &[u8], encoding: &'static Encoding) -> Option<Vec<u8>> {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)] /* test inputs */
 mod tests {
     use super::*;
     use crate::html::tree::guard::DepthLimit;

@@ -249,7 +249,7 @@ fn c_groups(body: &str) -> Vec<String> {
 /// A C string literal's bytes, or empty for `NULL`.
 fn c_str(field: &str) -> Vec<u8> {
     match (field.find('"'), field.rfind('"')) {
-        (Some(a), Some(b)) if b > a => field[a + 1..b].as_bytes().to_vec(),
+        (Some(a), Some(b)) if b > a => field.as_bytes()[a + 1..b].to_vec(),
         _ => Vec::new(),
     }
 }
@@ -257,11 +257,15 @@ fn c_str(field: &str) -> Vec<u8> {
 /// Lexbor's tree builder tables, read from `tag_res.h` and `tree_res.h`:
 /// the categories per static tag and namespace, the SVG tag names, and the
 /// two attribute adjustment maps.
+/// One foreign attribute adjustment: the written name, prefix, local name and
+/// namespace id.
+type ForeignAttr = (Vec<u8>, Vec<u8>, Vec<u8>, usize);
+
 struct LexborTreeTables {
     cats: Vec<Vec<u8>>,
     svg_fixname: Vec<Vec<u8>>,
     svg_attrs: Vec<(Vec<u8>, Vec<u8>)>,
-    foreign: Vec<(Vec<u8>, Vec<u8>, Vec<u8>, usize)>,
+    foreign: Vec<ForeignAttr>,
 }
 
 fn lexbor_tree_tables() -> LexborTreeTables {

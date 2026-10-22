@@ -85,7 +85,10 @@ jobs:
       - name: Clippy
         if: matrix.os == 'ubuntu-latest' && matrix.ruby == '3.4'
         working-directory: ext/makiri/rust
-        run: cargo clippy --all-features -- -D warnings
+        run: |
+          cargo clippy --all-features --tests -- -D warnings
+          cargo clippy --no-default-features --features ruby -- -D warnings
+          cargo clippy --no-default-features --features html-dom --tests -- -D warnings
 
       - name: Rust formatting
         if: matrix.os == 'ubuntu-latest' && matrix.ruby == '3.4'

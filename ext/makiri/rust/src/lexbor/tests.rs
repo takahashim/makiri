@@ -5,6 +5,7 @@
 //! where both are allowed.
 
 #![allow(unsafe_code)]
+#![allow(clippy::disallowed_methods)] /* test fixtures */
 
 mod guard {
     use crate::lexbor::contains_guard::{neutralized, Oom};
@@ -1862,7 +1863,7 @@ mod css_match {
             let gvl = Gvl::exclusive();
             let d = doc.twin.doc();
             let root = RawNode::from(d.as_node());
-            old_engine::select_all(&gvl, &doc, root, selector.as_bytes())
+            old_engine::select_all(&gvl, doc, root, selector.as_bytes())
                 .unwrap_or_else(|_| panic!("old engine rejected {selector:?}"))
         }
 
@@ -1984,14 +1985,14 @@ mod css_match {
         // under test, so it does not need to prove anything about stack
         // safety; that is `deeply_nested_is_does_not_grow_the_native_stack`'s
         // job with a purpose-built input).
-        if depth < 3 && rng.next_u64().is_multiple_of(3) {
+        if depth < 3 && rng.next_u64() % 3 == 0 {
             // `of S` is left out: Lexbor's own `of S` counts differently from
             // the spec in many shapes (module doc), so it is checked against a
             // spec oracle instead (`nth_child_of_s_agrees_with_a_spec_oracle`).
             const LIST_PSEUDOS: &[&str] = &[":is(", ":where(", ":not(", ":has("];
             s.push_str(rng.pick(LIST_PSEUDOS));
             s.push_str(&random_chain(rng, depth + 1));
-            if rng.next_u64().is_multiple_of(4) {
+            if rng.next_u64() % 4 == 0 {
                 s.push_str(", ");
                 s.push_str(&random_chain(rng, depth + 1));
             }
@@ -2018,7 +2019,7 @@ mod css_match {
     /// `select_all`/`matches_any` actually take (`Lists`, not one chain).
     fn random_selector(rng: &mut Rng) -> String {
         let mut s = random_chain(rng, 0);
-        if rng.next_u64().is_multiple_of(3) {
+        if rng.next_u64() % 3 == 0 {
             s.push_str(", ");
             s.push_str(&random_chain(rng, 0));
         }
@@ -2316,11 +2317,11 @@ mod css_match {
             let len = 2 + rng.next_u64() % 7;
             loop {
                 let mut compound = String::from_utf8_lossy(at.node().qualified_name()).into_owned();
-                if rng.next_u64().is_multiple_of(4) {
+                if rng.next_u64() % 4 == 0 {
                     compound = "*".into();
                 }
                 if let Some(class) = at.get_attribute(b"class") {
-                    if rng.next_u64().is_multiple_of(2) {
+                    if rng.next_u64() % 2 == 0 {
                         let first = class.split(|b| *b == b' ').next().unwrap_or_default();
                         compound.push('.');
                         compound.push_str(&String::from_utf8_lossy(first));
@@ -2353,7 +2354,7 @@ mod css_match {
                 at = next;
             }
             parts.reverse();
-            if parts.len() > 1 && rng.next_u64().is_multiple_of(2) {
+            if parts.len() > 1 && rng.next_u64() % 2 == 0 {
                 let k = (rng.next_u64() as usize) % parts.len();
                 parts[k] = if k % 2 == 0 {
                     format!("{}{}", rng.pick(TYPES), rng.pick(CLASSES))
@@ -2470,7 +2471,7 @@ mod css_match {
                 continue;
             };
             let (anb, a, b) = *rng.pick(ANBS);
-            let from_end = rng.next_u64().is_multiple_of(2);
+            let from_end = rng.next_u64() % 2 == 0;
             let pseudo = if from_end {
                 "nth-last-child"
             } else {

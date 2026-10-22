@@ -340,6 +340,7 @@ fn put(out: &mut Vec<u8>, s: &[u8]) -> Result<(), Fail> {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)] /* test inputs */
 mod tests {
     //! The text written for a selector parses back to the same selector,
     //! whatever characters its names and values hold.

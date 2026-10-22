@@ -2,6 +2,7 @@
 //! syntax tokenizer token for token, then the parser's AST.
 
 #![allow(unsafe_code)]
+#![allow(clippy::disallowed_methods)] /* test fixtures */
 
 use crate::lexbor::abi::consts::STATUS_OK;
 use crate::lexbor::abi::{
@@ -300,7 +301,7 @@ fn the_tokenizer_reads_lexbors_tokens_on_random_inputs() {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(20_000);
-    let mut rng = Rng(0x5EED_C55);
+    let mut rng = Rng(0x05EE_DC55);
     for _ in 0..count {
         same_tokens(&random_input(&mut rng));
     }
@@ -780,7 +781,7 @@ fn selector_parse_speed() {
         let t = Instant::now();
         for _ in 0..rounds {
             let text = VerifiedText::from_bytes(s.as_bytes()).expect("text");
-            let p = css_parser::parse(&gvl, text).ok().expect("parses");
+            let p = css_parser::parse(&gvl, text).unwrap_or_else(|_| panic!("parses"));
             core::hint::black_box(&p);
         }
         let lexbor = t.elapsed();
@@ -993,7 +994,7 @@ fn random_sheet(rng: &mut Rng, depth: u32, out: &mut String) {
     let n = 1 + rng.below(4);
     for _ in 0..n {
         match rng.below(8) {
-            0 | 1 | 2 => {
+            0..=2 => {
                 out.push_str(&random_selector(rng, 0));
                 out.push_str(rng.pick(&["{", " { ", "{\n"]));
                 random_block(rng, depth, out, NAMES, VALUES);

@@ -94,10 +94,12 @@ end
 desc "Clippy and rustfmt exactly as CI runs them (--all-features, warnings are errors)"
 task lint: :lexbor do
   Dir.chdir("ext/makiri/rust") do
-    sh "cargo", "clippy", "--all-features", "--", "-D", "warnings"
+    sh "cargo", "clippy", "--all-features", "--tests", "--", "-D", "warnings"
     # The build that ships has no Lexbor: code only the reference layers use
-    # is dead there, which `--all-features` cannot see.
+    # is dead there, which `--all-features` cannot see - and so are test
+    # helpers only a Lexbor test calls, which the html-dom test build sees.
     sh "cargo", "clippy", "--no-default-features", "--features", "ruby", "--", "-D", "warnings"
+    sh "cargo", "clippy", "--no-default-features", "--features", "html-dom", "--tests", "--", "-D", "warnings"
     sh "cargo", "fmt", "--all", "--", "--check"
   end
 end
