@@ -87,7 +87,9 @@ FIXTURES = {
 
 out = []
 FIXTURES.each do |name, html|
-  doc = Makiri::HTML(html.dup.force_encoding("BINARY"))
+  # A UTF-8 String, the declared encoding: a binary one would be sniffed,
+  # and "invalid-utf8" decoded as a legacy encoding rather than sanitised.
+  doc = Makiri::HTML(html.dup.force_encoding("UTF-8"))
   i = 0
   stack = doc.children.to_a
   until stack.empty?
