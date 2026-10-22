@@ -28,7 +28,7 @@ use encoding_rs::{UTF_16BE, UTF_16LE, WINDOWS_1252, X_USER_DEFINED};
 /// through this module, the one that reads `encoding_rs`.
 pub use encoding_rs::{Encoding, UTF_8};
 
-use crate::falloc::try_vec_with_capacity;
+use crate::falloc::{try_vec_with_capacity, Reserve};
 use crate::html::tree::{MetaProbe, MetaVerdict};
 
 mod prescan;
@@ -239,20 +239,30 @@ impl MetaProbe for EncodingWatch {
     }
 }
 
+/// How much room [`decode`] gives the decoder at a time.
+const DECODE_CHUNK: usize = 16 * 1024;
+
 /// `bytes` decoded from `encoding` into UTF-8, errors replaced with U+FFFD
-/// as the Encoding Standard's decoder replaces them; `None` on OOM or an
-/// input too long to size the output for.
+/// as the Encoding Standard's decoder replaces them; `None` on OOM.
+///
+/// Decoded a chunk at a time into the output's own tail, which grows as
+/// the text does: sizing it for the worst case up front zeroed and held
+/// three times a single-byte document's length for the whole parse.
 pub fn decode(bytes: &[u8], encoding: &'static Encoding) -> Option<Vec<u8>> {
     let mut decoder = encoding.new_decoder_without_bom_handling();
-    let cap = decoder.max_utf8_buffer_length(bytes.len())?;
-    let mut out: Vec<u8> = try_vec_with_capacity(cap)?;
-    out.resize(cap, 0);
-    let (result, read, written, _) = decoder.decode_to_utf8(bytes, &mut out, true);
-    if result != encoding_rs::CoderResult::InputEmpty || read != bytes.len() {
-        return None;
+    let mut out: Vec<u8> = try_vec_with_capacity(bytes.len().checked_add(DECODE_CHUNK)?)?;
+    let mut rest = bytes;
+    loop {
+        let len = out.len();
+        out.falloc_reserve(DECODE_CHUNK).ok()?;
+        out.resize(len + DECODE_CHUNK, 0);
+        let (result, read, written, _) = decoder.decode_to_utf8(rest, out.get_mut(len..)?, true);
+        out.truncate(len + written);
+        rest = rest.get(read..)?;
+        if result == encoding_rs::CoderResult::InputEmpty {
+            return Some(out);
+        }
     }
-    out.truncate(written);
-    Some(out)
 }
 
 #[cfg(test)]
