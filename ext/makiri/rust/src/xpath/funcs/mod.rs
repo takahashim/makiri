@@ -568,40 +568,8 @@ fn fn_count<'e, 'd, D: Dom<'d>>(
     number(ns.len() as f64)
 }
 
-/// Walk the tree for an element whose `id_attr` attribute is `id`.
-///
-/// Every visited node is charged to the op budget: without it, id() over a large
-/// node-set - a token per node, a tree walk per token - drives quadratic work at
-/// no cost. Returns Err on an overrun, with the budget's slot set.
-fn find_by_id<'d, D: Dom<'d>>(
-    doc: D,
-    root: D::Node,
-    id_attr: &[u8],
-    id: &[u8],
-    budget: &Budget,
-) -> Result<Option<D::Node>, Reported> {
-    if id.is_empty() {
-        return Ok(None);
-    }
-    /* `root` is the document node, never an element, so its descendants are
-     * every element there is. */
-    let flow = walk_descendants::<D, _, _>(doc, root, &mut |n| {
-        if let Err(e) = budget.charge_op() {
-            return ControlFlow::Break(Err(e));
-        }
-        if doc.node_type(n) == NodeType::Element && doc.get_attribute(n, id_attr) == Some(id) {
-            return ControlFlow::Break(Ok(n));
-        }
-        ControlFlow::Continue(())
-    });
-    match flow {
-        ControlFlow::Continue(()) => Ok(None),
-        ControlFlow::Break(found) => found.map(Some),
-    }
-}
-
-/// How many of one `id()` call's tokens [`find_by_id`] walks for, each, before
-/// the rest are served from an index of the document's IDs.
+/// How many of one `id()` call's tokens are each found by a walk of their
+/// own before the rest are served from an index of the document's IDs.
 const ID_WALKS: usize = 4;
 
 /// One `id()` call's lookups. The first few tokens each walk from the top and
@@ -609,99 +577,112 @@ const ID_WALKS: usize = 4;
 /// [`ID_WALKS`] the document is indexed by one walk, so many tokens cost one
 /// walk rather than one each. A walk per token had `id()` of 8,000 IDREFS
 /// over 8,000 elements spend 64M ops and raise `LimitExceeded`.
-struct IdLookup<'d, N> {
+///
+/// Every visited node is charged to the op budget, by either strategy:
+/// without it, id() over a large node-set would drive quadratic work at no
+/// cost.
+struct IdLookup<'d, D: Dom<'d>> {
+    doc: D,
+    /// The document node, never an element, so its descendants are every
+    /// element there is.
+    root: D::Node,
+    id_attr: &'static [u8],
     walks: usize,
     /// Each ID value -> the first element in document order carrying it.
-    index: Option<HashMap<&'d [u8], N>>,
+    index: Option<HashMap<&'d [u8], D::Node>>,
 }
 
-impl<'d, N: Copy> IdLookup<'d, N> {
-    fn new() -> Self {
+impl<'d, D: Dom<'d>> IdLookup<'d, D> {
+    fn new(doc: D, id_attr: &'static [u8]) -> Self {
         IdLookup {
+            doc,
+            root: doc.document_node(),
+            id_attr,
             walks: 0,
             index: None,
         }
     }
-}
 
-/// Every element's ID under `root`, the first in document order for each, by
-/// one walk charged to the op budget as [`find_by_id`]'s is.
-fn index_ids<'d, D: Dom<'d>>(
-    doc: D,
-    root: D::Node,
-    id_attr: &[u8],
-    budget: &Budget,
-) -> Result<HashMap<&'d [u8], D::Node>, Reported> {
-    let mut index: HashMap<&'d [u8], D::Node> = HashMap::new();
-    let flow = walk_descendants::<D, _, _>(doc, root, &mut |n| {
-        if let Err(e) = budget.charge_op() {
-            return ControlFlow::Break(e);
+    /// The element `id` names: the first in document order with it as its
+    /// ID attribute. Err on an overrun, with the budget's slot set.
+    fn get(&mut self, id: &[u8], budget: &Budget) -> Result<Option<D::Node>, Reported> {
+        if id.is_empty() {
+            return Ok(None);
         }
-        if doc.node_type(n) == NodeType::Element {
-            if let Some(id) = doc.get_attribute(n, id_attr) {
-                if !id.is_empty() && !index.contains_key(id) && index.falloc_insert(id, n).is_err()
-                {
-                    return ControlFlow::Break(err_setf!(
-                        budget.sink(),
-                        ErrorKind::Oom,
-                        "out of memory in id()"
-                    ));
+        if self.index.is_none() {
+            if self.walks < ID_WALKS {
+                self.walks += 1;
+                return self.walk_for(id, budget);
+            }
+            self.index = Some(self.build_index(budget)?);
+        }
+        Ok(self.index.as_ref().and_then(|index| index.get(id).copied()))
+    }
+
+    /// A walk that stops at the first element whose ID is `id`.
+    fn walk_for(&self, id: &[u8], budget: &Budget) -> Result<Option<D::Node>, Reported> {
+        let (doc, id_attr) = (self.doc, self.id_attr);
+        let flow = walk_descendants::<D, _, _>(doc, self.root, &mut |n| {
+            if let Err(e) = budget.charge_op() {
+                return ControlFlow::Break(Err(e));
+            }
+            if doc.node_type(n) == NodeType::Element && doc.get_attribute(n, id_attr) == Some(id) {
+                return ControlFlow::Break(Ok(n));
+            }
+            ControlFlow::Continue(())
+        });
+        match flow {
+            ControlFlow::Continue(()) => Ok(None),
+            ControlFlow::Break(found) => found.map(Some),
+        }
+    }
+
+    /// Every element's ID, the first in document order for each, by one walk.
+    fn build_index(&self, budget: &Budget) -> Result<HashMap<&'d [u8], D::Node>, Reported> {
+        let (doc, id_attr) = (self.doc, self.id_attr);
+        let mut index: HashMap<&'d [u8], D::Node> = HashMap::new();
+        let flow = walk_descendants::<D, _, _>(doc, self.root, &mut |n| {
+            if let Err(e) = budget.charge_op() {
+                return ControlFlow::Break(e);
+            }
+            if doc.node_type(n) == NodeType::Element {
+                if let Some(id) = doc.get_attribute(n, id_attr) {
+                    if !id.is_empty()
+                        && !index.contains_key(id)
+                        && index.falloc_insert(id, n).is_err()
+                    {
+                        return ControlFlow::Break(err_setf!(
+                            budget.sink(),
+                            ErrorKind::Oom,
+                            "out of memory in id()"
+                        ));
+                    }
                 }
             }
+            ControlFlow::Continue(())
+        });
+        match flow {
+            ControlFlow::Continue(()) => Ok(index),
+            ControlFlow::Break(e) => Err(e),
         }
-        ControlFlow::Continue(())
-    });
-    match flow {
-        ControlFlow::Continue(()) => Ok(index),
-        ControlFlow::Break(e) => Err(e),
     }
-}
 
-/// The element `id` names, as [`find_by_id`] answers it.
-fn lookup_id<'d, D: Dom<'d>>(
-    ids: &mut IdLookup<'d, D::Node>,
-    doc: D,
-    root: D::Node,
-    id_attr: &[u8],
-    id: &[u8],
-    budget: &Budget,
-) -> Result<Option<D::Node>, Reported> {
-    if id.is_empty() {
-        return Ok(None);
-    }
-    if ids.index.is_none() {
-        if ids.walks < ID_WALKS {
-            ids.walks += 1;
-            return find_by_id::<D>(doc, root, id_attr, id, budget);
+    /// Look up every whitespace-separated token of `s` and push each hit.
+    ///
+    /// Duplicates go in unconditionally: the caller dedups the whole result
+    /// with one sort plus an adjacent pass, which beats a contains() check
+    /// per insert.
+    fn collect(&mut self, s: &[u8], out: &mut NodeSet<D::Node>, budget: &mut Budget) -> FnResult {
+        for tok in s
+            .split(|&b| crate::xpath::lex::is_ws(b))
+            .filter(|t| !t.is_empty())
+        {
+            if let Some(hit) = self.get(tok, budget)? {
+                out.push(hit, budget)?;
+            }
         }
-        ids.index = Some(index_ids::<D>(doc, root, id_attr, budget)?);
+        Ok(())
     }
-    Ok(ids.index.as_ref().and_then(|index| index.get(id).copied()))
-}
-
-/// Look up every whitespace-separated token of `s` and push each hit.
-///
-/// Duplicates go in unconditionally: the caller dedups the whole result with one
-/// sort plus an adjacent pass, which beats a contains() check per insert.
-fn id_collect<'e, 'd, D: Dom<'d>>(
-    id_attr: &[u8],
-    s: &[u8],
-    root: D::Node,
-    ids: &mut IdLookup<'d, D::Node>,
-    out: &mut NodeSet<D::Node>,
-    ev: &mut Evaluation<'e, 'd, D>,
-) -> FnResult {
-    let doc = ev.doc;
-    let budget = &mut ev.budget;
-    for tok in s
-        .split(|&b| crate::xpath::lex::is_ws(b))
-        .filter(|t| !t.is_empty())
-    {
-        if let Some(hit) = lookup_id::<D>(ids, doc, root, id_attr, tok, budget)? {
-            out.push(hit, budget)?;
-        }
-    }
-    Ok(())
 }
 
 fn fn_id<'e, 'd, D: Dom<'d>>(
@@ -715,21 +696,20 @@ fn fn_id<'e, 'd, D: Dom<'d>>(
         return Ok(Val::default());
     };
     let doc = ev.doc;
-    let root = doc.document_node();
     /* Collected in a guard, so a failure part-way frees what was found. */
     let mut found = NodeSet::new();
-    let mut ids = IdLookup::new();
+    let mut ids = IdLookup::new(doc, id_attr);
 
     /* §4.1: a node-set argument treats each node's string-value as IDREFS;
      * anything else is converted to a string and split the same way. */
     if let Some(set) = args[0].as_nodeset() {
         set.as_slice().iter().try_for_each(|&n| {
             let t = node_string_value::<D>(doc, n, &ev.budget)?;
-            id_collect::<D>(id_attr, t.as_slice(), root, &mut ids, &mut found, ev)
+            ids.collect(t.as_slice(), &mut found, &mut ev.budget)
         })?;
     } else {
         let t = to_text::<D>(&args[0], ev)?;
-        id_collect::<D>(id_attr, t.as_slice(), root, &mut ids, &mut found, ev)?;
+        ids.collect(t.as_slice(), &mut found, &mut ev.budget)?;
     }
     /* §4.1: the result is in document order with duplicates removed. */
     nodeset_unique_sorted::<D>(ev, &mut found);
