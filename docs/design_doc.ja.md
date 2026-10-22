@@ -62,8 +62,9 @@
 
 ### 意図的に避けていること
 
-* Lexbor の fork。Lexbor の不具合や欠落は自分たちの adapter 層で吸収し、
-  同時に上流に報告して直してもらう。移植版では、Lexbor の意味論と制御
+* Lexbor の fork。Lexbor の不具合や欠落は移植版の側で扱い（差は
+  `docs/parser_differences.ja.md` に記録する）、同時に上流に報告して直して
+  もらう。移植版では、Lexbor の意味論と制御
   フローを保って書き、仕様適合のための振る舞いの変更は所有権や安全性の
   ための変更と分けて、独立した変更として入れる
   (`docs/parser_differences.ja.md` が既知の差分とその分類を持つ)

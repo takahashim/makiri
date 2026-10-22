@@ -15,13 +15,15 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
 ## Hard constraints
 
 - **Vanilla Lexbor, no fork, no patches.** `vendor/lexbor` is a git submodule
-  pinned to a release **tag**. Never `git apply` to it. Lexbor gaps are absorbed
-  in `ext/makiri/rust/src/lexbor/adapter/`, never by editing Lexbor.
+  pinned to a release **tag**. Never `git apply` to it. It is the reference the
+  ports are tested against, and where a port departs from it - a Lexbor gap, or
+  the Standard read differently - the port says so
+  (`docs/parser_differences.ja.md`, `compat`), never an edit to Lexbor.
 - **No libxml2 / libxslt** anywhere - not linked, vendored, or derived. The
   XPath engine is original. See `NOTICE`.
 - **One language.** The extension is a single Rust crate
-  (`ext/makiri/rust`); the only C that ships is vendored Lexbor, which keeps its
-  `lxb_*` names. No SYMBOL of ours carries a C-style prefix any more: the crate
+  (`ext/makiri/rust`), and no C ships at all: the vendored Lexbor is built
+  only for the tests (`rake lexbor`) and keeps its `lxb_*` names. No SYMBOL of ours carries a C-style prefix any more: the crate
   exports only `Init_makiri` and `ruby_abi_version`, so every other item is
   named as Rust. (The `mkr_` prefix was the C ABI's symbol convention and went
   with it.) The ONE surviving prefix is `falloc`'s extension methods
@@ -476,7 +478,7 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            file that needs it carries an `allow` and the script
                            holds each one's count exactly - a new file fails even
                            where a parent module's `allow` kept rustc quiet - plus
-                           the 56 `forbid` files. `glue/**`, `xpath/**`,
+                           every `forbid` file, which it counts. `glue/**`, `xpath/**`,
                            `css/**` and `css_match/**` are fully safe
                            (their module roots carry
                            `#![forbid(unsafe_code)]`, which the gate pins), and
@@ -496,9 +498,9 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
     xpath/                 native XPath 1.0 engine, generic over a `Dom` trait;
                            `#![forbid(unsafe_code)]` and Lexbor/Ruby-free. The
                            two `Dom` instances live with their layers:
-                           `lexbor/xpath.rs` (HTML) and `xml/xpath.rs` (XML),
+                           `html/dom/xpath.rs` (HTML) and `xml/xpath.rs` (XML),
                            joined for the glue by `Cx` in
-                           `bridge/xpath.rs`
+                           `bridge/xpath/mod.rs`
     xml/                   native XML reader (Ruby/Lexbor-free; own arena), plus
                            its XPath `Dom` instance. One job per module:
                            `model`+`arena` (the index arena), `tree/` (the
@@ -1399,6 +1401,4 @@ Key decisions that got there, worth not regressing:
 
 Working on perf: capture a `rake bench` baseline, change one thing, re-bench,
 and **ship only a measurable win** that keeps `rake spec` + `rake fuzz:sanitize`
-green. (Note: a per-node Ruby wrapper cache was considered and rejected -
-`node->user` is taken, and a node→VALUE side table creates a GC-lifetime problem
-for no clear gain on already-winning paths.)
+green.
