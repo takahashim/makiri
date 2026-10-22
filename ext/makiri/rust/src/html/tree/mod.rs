@@ -31,6 +31,8 @@
 
 mod actions;
 use crate::compat::{self, Fix};
+#[cfg(feature = "html-dom")]
+mod document_bytes;
 mod error;
 mod fragment;
 pub mod guard;
@@ -41,13 +43,13 @@ mod stacks;
 pub(crate) use stacks::Found;
 mod stamp;
 
+#[cfg(feature = "html-dom")]
+pub use document_bytes::parse_document_bytes;
 pub use error::{TreeError, TreeErrorId};
 pub use fragment::{parse_fragment, ContextElement, ContextFacts, FragmentFailure, ParsedFragment};
-#[cfg(feature = "html-dom")]
-pub use parse::parse_document_bytes;
 pub use parse::{
-    empty_html_document, parse_document, parse_html, parse_html_probing, parse_with_panicking_hook,
-    HtmlParseError, ParseFailure, Parsed,
+    empty_html_document, parse_document, parse_html, parse_with_panicking_hook, HtmlParseError,
+    ParseFailure, Parsed,
 };
 
 use crate::falloc::VecPush;
@@ -343,7 +345,9 @@ pub struct TreeBuilder<'d> {
     stamping: stamp::Stamping,
     /// While a document's encoding is tentative, what is told of each
     /// `<meta>` the "in head" rules insert ([`MetaProbe`]); dropped once it
-    /// answers that the confidence is certain.
+    /// answers that the confidence is certain. `'static`: a probe borrows
+    /// nothing, so its borrow does not tie the document's lifetime `'d` to
+    /// its own (`&mut` is invariant in what it points to).
     meta_probe: Option<&'d mut (dyn MetaProbe + 'static)>,
 }
 

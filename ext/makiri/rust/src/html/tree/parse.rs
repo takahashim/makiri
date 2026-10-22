@@ -135,18 +135,30 @@ pub fn parse_html(
     assume_valid: bool,
     limit: DepthLimit,
 ) -> Result<Box<HtmlParsed>, HtmlParseError> {
-    parse_html_probing(src, assume_valid, limit, None)
+    let text = Utf8Text {
+        bytes: src,
+        known_valid: assume_valid,
+    };
+    parse_html_probing(text, limit, None)
+}
+
+/// Text for the document parse, as UTF-8, and whether it is already known to
+/// be valid UTF-8 - which skips the sanitiser's scan; it replaces invalid
+/// sequences otherwise.
+#[derive(Clone, Copy)]
+pub(super) struct Utf8Text<'a> {
+    pub(super) bytes: &'a [u8],
+    pub(super) known_valid: bool,
 }
 
 /// [`parse_html`], telling `probe` of each `<meta>` the "in head" rules
 /// insert while the document's encoding is tentative (`html::encoding`).
-pub fn parse_html_probing(
-    src: &[u8],
-    assume_valid: bool,
+pub(super) fn parse_html_probing(
+    text: Utf8Text<'_>,
     limit: DepthLimit,
     probe: Option<&mut (dyn MetaProbe + 'static)>,
 ) -> Result<Box<HtmlParsed>, HtmlParseError> {
-    let input = sanitize(src, assume_valid).ok_or(HtmlParseError::Failed)?;
+    let input = sanitize(text.bytes, text.known_valid).ok_or(HtmlParseError::Failed)?;
     let bytes = input.as_slice();
     let parsed = parse_with(
         bytes,
@@ -158,57 +170,6 @@ pub fn parse_html_probing(
     let lines = lines_build(bytes);
     drop(input);
     try_box(HtmlParsed::new(parsed.doc, lines)).map_err(|()| HtmlParseError::Failed)
-}
-
-/// Parse a document from its bytes (`input`): its encoding sniffed
-/// (`html::encoding::sniff`), the bytes decoded, and the whole re-read once
-/// if a `<meta>` met while the encoding is tentative changes it - the HTML
-/// Standard's "change the encoding", which re-reads from the bytes since the
-/// decoder cannot be switched on the fly. The document records the encoding
-/// it was read in.
-#[cfg(feature = "html-dom")]
-pub fn parse_document_bytes(
-    input: crate::html::encoding::DocumentInput<'_>,
-    limit: DepthLimit,
-) -> Result<Box<HtmlParsed>, HtmlParseError> {
-    use crate::html::encoding::{sniff, EncodingWatch};
-    let decision = sniff(input.bytes, input.transport);
-    let (body, known_valid) = decision.body(&input);
-    let mut watch = EncodingWatch::new(decision.encoding);
-    let probe = decision
-        .tentative
-        .then_some(&mut watch as &mut (dyn MetaProbe + 'static));
-    let mut parsed = parse_decoded(body, decision.encoding, known_valid, limit, probe)?;
-    let encoding = match watch.change() {
-        None => decision.encoding,
-        Some(encoding) => {
-            /* Now certain: the first parse is dropped, as a browser drops
-             * the page it re-reads. */
-            drop(parsed);
-            parsed = parse_decoded(input.bytes, encoding, false, limit, None)?;
-            encoding
-        }
-    };
-    parsed.set_encoding(encoding.name());
-    Ok(parsed)
-}
-
-/// Decode `bytes` from `encoding` (any BOM already taken off) and parse the
-/// result. UTF-8 goes to the parser as it is, whose sanitiser replaces
-/// invalid sequences as the UTF-8 decoder does.
-#[cfg(feature = "html-dom")]
-fn parse_decoded(
-    bytes: &[u8],
-    encoding: &'static encoding_rs::Encoding,
-    known_valid: bool,
-    limit: DepthLimit,
-    probe: Option<&mut (dyn MetaProbe + 'static)>,
-) -> Result<Box<HtmlParsed>, HtmlParseError> {
-    if encoding == encoding_rs::UTF_8 {
-        return parse_html_probing(bytes, known_valid, limit, probe);
-    }
-    let decoded = crate::html::encoding::decode(bytes, encoding).ok_or(HtmlParseError::Failed)?;
-    parse_html_probing(&decoded, true, limit, probe)
 }
 
 /// A new HTML document with no children, in `compat_mode` (0 no-quirks, 1
