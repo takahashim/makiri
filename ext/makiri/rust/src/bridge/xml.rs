@@ -786,7 +786,7 @@ pub fn insert(this: XmlSelf, arg: Value, at: crate::xml::mutate::Place) -> Resul
 fn incoming_node(target_doc: Value, arg: Value) -> Result<(NodeId, Option<Adoption>), Error> {
     if !is_kind_of(arg, &CLASS_NODE) || !is_kind_of(xml_node_document(arg)?, &CLASS_XML_DOCUMENT) {
         return Err(crate::bridge::ruby::type_error(
-            "expected a Makiri::XML node (NodeSet / String arguments are a later phase)",
+            "expected a Makiri::XML node",
         ));
     }
     /* Inserting `arg` relinks IT - its parent, prev and next all change, and an

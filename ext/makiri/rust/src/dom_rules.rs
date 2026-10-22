@@ -123,6 +123,52 @@ pub enum At<N> {
     Replacing(N),
 }
 
+/// Whether putting `node` beside, or in place of, `target` leaves the tree
+/// as it is - `node` IS `target`. The DOM's pre-insert step 3 ("if child is
+/// node, set child to node's next sibling") and replace's step 8 make such an
+/// insertion put the node back where it was, so it is no change, not an
+/// error. Both representations ask before any link changes: a sibling verb
+/// first, a replace once its target has a parent (replacing a detached node
+/// is refused, by itself too). Appending a node to itself is still the
+/// ancestor rule's error ([`check`]).
+pub fn places_itself<N: Eq>(target: N, node: N) -> bool {
+    target == node
+}
+
+/// What the DOM's `textContent` setter does to a node.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextContent {
+    /// An Element or a DocumentFragment: its children are replaced by one
+    /// Text node holding the string (none for the empty string).
+    ReplaceChildren,
+    /// A Text, CDATASection, Comment or ProcessingInstruction: its data.
+    Data,
+    /// An Attr: its value.
+    AttrValue,
+    /// A Document or a DocumentType: nothing ("do nothing", the setter's
+    /// own words), so setting it is not an error.
+    Nothing,
+}
+
+/// The [`TextContent`] case for a node of type `ty`.
+pub fn text_content(ty: NodeType) -> TextContent {
+    match ty {
+        NodeType::Element | NodeType::DocumentFragment => TextContent::ReplaceChildren,
+        NodeType::Text | NodeType::CDataSection | NodeType::Comment | NodeType::Pi => {
+            TextContent::Data
+        }
+        NodeType::Attribute => TextContent::AttrValue,
+        _ => TextContent::Nothing,
+    }
+}
+
+/// Whether `remove` / `unlink` may take a node of type `ty` out of its tree.
+/// A Document is in no tree to leave, and the DOM gives it no `remove()`:
+/// refused on both representations, rather than answered as a no-op on one.
+pub fn removable(ty: NodeType) -> bool {
+    ty != NodeType::Document
+}
+
 /// Would inserting `node` into `parent` at `at` keep the tree valid? The DOM's
 /// "ensure pre-insertion validity", or for [`At::Replacing`] the same checks
 /// as "replace a child" states them. Changes nothing, so a caller that checks

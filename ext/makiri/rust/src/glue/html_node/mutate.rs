@@ -28,7 +28,8 @@ use crate::bridge::string::{
     namespace_arg, ruby_verified_data, ruby_verified_name, ruby_verified_text,
     ruby_verified_text_opt, HtmlSource,
 };
-use crate::glue::node::dom_extract as extract;
+use crate::dom_rules;
+use crate::glue::node::{dom_extract as extract, DOCUMENT_NOT_REMOVABLE};
 use crate::html_dom::html::{HtmlDocMut, NodeType, Place, RawNode};
 use crate::xml::dom_name;
 
@@ -107,6 +108,9 @@ pub fn replace(_ruby: &Ruby, this: HtmlSelf, rb_other: Value) -> Result<Value, E
 /// `node.remove` / `node.unlink` -> node.
 pub fn remove(_ruby: &Ruby, this: HtmlSelf) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
+        if !dom_rules::removable(this.node().node_type()) {
+            return Err(makiri_error(DOCUMENT_NOT_REMOVABLE));
+        }
         let edit = edit(&this)?;
         /* An Attr leaves its element's attribute list: an attribute edit,
          * which changes no child list - as the XML side's `remove` is. */

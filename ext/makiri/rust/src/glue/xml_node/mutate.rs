@@ -20,8 +20,9 @@ use crate::bridge::xml::{
     verified_name_opt, verified_text, verified_text_opt, with_arena_for_new_node,
     wrap_xml_node as wrap, xml_mut_result, Editing, XmlSelf,
 };
-use crate::glue::node::dom_extract;
-use crate::init::CLASS_XML_DOCUMENT;
+use crate::dom_rules;
+use crate::glue::node::{dom_extract, DOCUMENT_NOT_REMOVABLE};
+use crate::node_type::NodeType;
 use crate::xml::arena::DoctypeId;
 use crate::xml::dom_name::{self, split_loose_dom_name};
 use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId};
@@ -36,12 +37,13 @@ use crate::xml::qname::Split;
 pub fn remove(this: XmlSelf) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let rb_self = this.value;
-        if crate::bridge::ruby::is_kind_of(rb_self, &CLASS_XML_DOCUMENT) {
-            return Err(makiri_error("cannot remove the document node"));
+        let kind = this.doc_ref().type_(this.id);
+        if !dom_rules::removable(kind.map_or(NodeType::Other, NodeType::from)) {
+            return Err(makiri_error(DOCUMENT_NOT_REMOVABLE));
         }
         /* An Attr leaves its element's attribute list: an attribute edit,
          * which changes no child list. */
-        let attr = this.doc_ref().type_(this.id) == Some(ArenaKind::Attribute);
+        let attr = kind == Some(ArenaKind::Attribute);
         let edit = begin_edit(this)?;
         if attr {
             edit.with_attributes(mutate::remove)?;

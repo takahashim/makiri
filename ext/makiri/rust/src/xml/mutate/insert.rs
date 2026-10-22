@@ -286,7 +286,7 @@ pub fn insert_child(doc: &mut Document, parent: NodeId, node: NodeId) -> Result<
 
 pub fn insert_before(doc: &mut Document, r: NodeId, node: NodeId) -> Result<(), MutError> {
     /* Beside itself is a no-op, not a self-loop. */
-    if node == r {
+    if dom_rules::places_itself(r, node) {
         return Ok(());
     }
     /* The TREE parent, here and in every sibling verb: an attribute's stored
@@ -300,7 +300,7 @@ pub fn insert_before(doc: &mut Document, r: NodeId, node: NodeId) -> Result<(), 
 }
 
 pub fn insert_after(doc: &mut Document, r: NodeId, node: NodeId) -> Result<(), MutError> {
-    if node == r {
+    if dom_rules::places_itself(r, node) {
         return Ok(());
     }
     match doc.tree_parent(r) {
@@ -315,7 +315,7 @@ pub fn replace_node(doc: &mut Document, r: NodeId, node: NodeId) -> Result<(), M
     let Some(container) = doc.tree_parent(r) else {
         return Err(no_parent(true));
     };
-    if node == r {
+    if dom_rules::places_itself(r, node) {
         return Ok(());
     }
     insert_at(doc, Site::replacing(container, r), node)?;

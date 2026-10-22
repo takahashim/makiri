@@ -25,6 +25,14 @@
 
 ### Fixed
 
+* HTML `add_previous_sibling`, `add_next_sibling` and `replace` given the
+  node itself leave it where it is, as the DOM does and `Makiri::XML`
+  already did; they raised "cannot insert a node into its own subtree".
+* `Makiri::XML`'s `content=` on a DocumentFragment replaces its children,
+  and on a Document or a DocumentType does nothing, as the DOM's
+  `textContent` does and HTML already did; both raised.
+* `remove` / `unlink` on an HTML Document raise "cannot remove the document
+  node", as on an XML one; it returned the document unchanged.
 * A UTF-8 byte order mark at the start of a document is no longer kept as a
   U+FEFF character in the text.
 * A refused `Makiri::XML` insert of a node from another document (onto a

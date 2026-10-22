@@ -579,14 +579,24 @@ fn edit_sequence(input: &[u8], other: &[u8], seed: u64, steps: usize) {
                 2 => (lex::Place::After, arena::Place::After),
                 _ => (lex::Place::Replace, arena::Place::Replace),
             };
+            /* A node put at itself: the arena answers by the DOM's order -
+             * no change beside or in place of itself
+             * (`dom_rules::places_itself`), and the first rule it breaks
+             * otherwise - where the Lexbor-side model refuses every such
+             * placement with its own check first. A deliberate difference:
+             * neither side changes the tree, so the verdicts are not
+             * compared. */
+            let unchanged = arena::RawNode::from(atg) == anew;
             let lc = lex::Insertion::new(lt, lp, lm.node(lnew)).and_then(|x| x.check());
             let ac2 = {
                 let r = am.read();
                 arena::Insertion::new(atg, ap, r.node(anew)).and_then(|x| x.check())
             };
             let (lt, atg) = (lex::RawNode::from(lt), arena::RawNode::from(atg));
-            assert_eq!(lc, ac2, "insertion check: {ctx}");
-            if lc.is_ok() {
+            if !unchanged {
+                assert_eq!(lc, ac2, "insertion check: {ctx}");
+            }
+            if lc.is_ok() && !unchanged {
                 PLACED.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 if lm.node(lnew).parent().is_some() {
                     lm.detach(lnew);

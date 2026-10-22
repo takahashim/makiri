@@ -4,6 +4,8 @@
 
 #![forbid(unsafe_code)]
 
+use crate::dom_rules::{self, TextContent};
+use crate::node_type::NodeType;
 use crate::xml::{ArenaKind, Document, MutError, NodeId};
 
 /// The DOM's refusal of `data` for a new node of kind `ty`, if it refuses it:
@@ -31,13 +33,15 @@ pub(super) fn dom_refuses_data(ty: ArenaKind, data: &[u8]) -> Option<&'static st
 /// PI) is refused by the serializers, not here: the mutators used to refuse
 /// it, which the DOM does not, and a browser's tree could not be built.
 pub fn set_content(doc: &mut Document, node: NodeId, text: &[u8]) -> Result<(), MutError> {
-    match doc.type_(node) {
-        Some(ArenaKind::Text | ArenaKind::CDataSection | ArenaKind::Comment | ArenaKind::Pi) => {
-            doc.set_value_bytes(node, text).map_err(MutError::from)
-        }
+    let Some(kind) = doc.type_(node) else {
+        return Err(MutError::Type);
+    };
+    match dom_rules::text_content(NodeType::from(kind)) {
+        TextContent::Data => doc.set_value_bytes(node, text).map_err(MutError::from),
         /* An Attr's content is its value, by `[]=`'s rule for one it finds. */
-        Some(ArenaKind::Attribute) => super::attr::set_existing_value(doc, node, text),
-        Some(ArenaKind::Element) => {
+        TextContent::AttrValue => super::attr::set_existing_value(doc, node, text),
+        TextContent::Nothing => Ok(()),
+        TextContent::ReplaceChildren => {
             /* build the replacement TEXT node FIRST, so an OOM leaves the
              * children intact */
             let mut t: Option<NodeId> = None;
@@ -50,6 +54,5 @@ pub fn set_content(doc: &mut Document, node: NodeId, text: &[u8]) -> Result<(), 
             doc.replace_children(node, t);
             Ok(())
         }
-        _ => Err(MutError::Type),
     }
 }

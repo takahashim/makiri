@@ -1177,7 +1177,9 @@ Fragments: `DocumentFragment.parse(html)` (own backing doc) and
 and `lxb_dom_document_import_node` (deep) each child into the target arena;
 inserting a fragment splices its **children**. The four structural verbs are one
 `bridge::html::insert(this, node, Place)`. The rules - the WHATWG DOM's
-"ensure pre-insertion validity" - are written ONCE, in `crate::dom_rules::check`,
+"ensure pre-insertion validity" - are written ONCE, in `crate::dom_rules::check`
+(with the DOM's other rules both sides must answer alike: `places_itself`,
+`text_content`, `removable`),
 generic over a small `Tree` trait (the XPath `Dom` pattern) that the adapter
 (`HtmlTree`: a template's contents reach it through `host`, an attribute has no
 tree parent) and the XML arena both implement; each side keeps only its linking

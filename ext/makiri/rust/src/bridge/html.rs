@@ -536,9 +536,14 @@ pub fn insert(this: &HtmlSelf, rb_incoming: Value, place: Place) -> Result<Value
     let same = crate::bridge::ruby::same_value(incoming_doc, this.document);
     let (placed, adopted) = edit.with_tree(|d, target| -> Result<(RawNode, bool), Error> {
         let node = if same {
-            Insertion::new(d.node(target), place, d.node(incoming))
-                .and_then(|i| i.check())
+            let insertion = Insertion::new(d.node(target), place, d.node(incoming))
                 .map_err(crate::bridge::dom_error::pre_insert_error)?;
+            insertion
+                .check()
+                .map_err(crate::bridge::dom_error::pre_insert_error)?;
+            if insertion.unchanged() {
+                return Ok((incoming, false));
+            }
             if d.node(incoming).parent().is_some() {
                 d.detach(incoming);
             }
