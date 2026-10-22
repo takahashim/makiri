@@ -27,15 +27,18 @@ pub fn parse_document_bytes(
     let probe = decision
         .tentative
         .then_some(&mut watch as &mut (dyn MetaProbe + 'static));
-    let mut parsed = parse_under(&input, &decision, limit, probe)?;
-    let mut encoding = decision.encoding;
-    if let Some(changed) = watch.change() {
-        /* Now certain: the first parse is dropped, as a browser drops the
-         * page it re-reads. */
-        drop(parsed);
-        parsed = parse_under(&input, &Decision::certain(changed, 0), limit, None)?;
-        encoding = changed;
-    }
+    let first = parse_under(&input, &decision, limit, probe);
+    let (mut parsed, encoding) = match watch.change() {
+        /* Now certain: the first parse - which the tree builder stopped at
+         * the `<meta>`, so its failure is that stop - is dropped, as a
+         * browser drops the page it re-reads. */
+        Some(changed) => {
+            drop(first);
+            let reread = parse_under(&input, &Decision::certain(changed, 0), limit, None)?;
+            (reread, changed)
+        }
+        None => (first?, decision.encoding),
+    };
     parsed.set_encoding(encoding.name());
     Ok(parsed)
 }

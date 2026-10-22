@@ -29,7 +29,7 @@ use encoding_rs::{UTF_16BE, UTF_16LE, WINDOWS_1252, X_USER_DEFINED};
 pub use encoding_rs::{Encoding, UTF_8};
 
 use crate::falloc::try_vec_with_capacity;
-use crate::html::tree::MetaProbe;
+use crate::html::tree::{MetaProbe, MetaVerdict};
 
 mod prescan;
 pub use prescan::{from_meta_content, prescan};
@@ -74,13 +74,13 @@ impl Decision {
 
     /// What the parse reads of `input` under this decision: the bytes after
     /// any byte order mark, and whether they are known to be valid UTF-8 -
-    /// found so by the sniffing, or by the caller for bytes with no BOM. Only
-    /// bytes read AS UTF-8 can be known so: any other encoding is decoded,
-    /// and its decoder's output is valid by construction.
+    /// found so by the sniffing, or by the caller. Only bytes read AS UTF-8
+    /// can be known so: any other encoding is decoded, and its decoder's
+    /// output is valid by construction. A UTF-8 BOM is a whole character, so
+    /// what follows one in valid input is valid too.
     pub fn body<'a>(&self, input: &DocumentInput<'a>) -> (&'a [u8], bool) {
         let body = input.bytes.get(self.bom_len..).unwrap_or_default();
-        let known_valid = self.encoding == UTF_8
-            && (self.valid_utf8 || (input.known_valid_utf8 && self.bom_len == 0));
+        let known_valid = self.encoding == UTF_8 && (self.valid_utf8 || input.known_valid_utf8);
         (body, known_valid)
     }
 }
@@ -215,7 +215,7 @@ impl MetaProbe for EncodingWatch {
         charset: Option<&[u8]>,
         http_equiv: Option<&[u8]>,
         content: Option<&[u8]>,
-    ) -> bool {
+    ) -> MetaVerdict {
         let found = charset.and_then(for_label).or_else(|| {
             http_equiv
                 .filter(|v| v.eq_ignore_ascii_case(b"content-type"))
@@ -223,17 +223,18 @@ impl MetaProbe for EncodingWatch {
                 .and_then(from_meta_content)
         });
         let Some(new) = found else {
-            return false;
+            return MetaVerdict::Tentative;
         };
         /* "Change the encoding": certain from here on, whatever it decides. */
         if self.current == UTF_16BE || self.current == UTF_16LE {
-            return true;
+            return MetaVerdict::Certain;
         }
         let new = declared(new);
-        if new != self.current {
-            self.change = Some(new);
+        if new == self.current {
+            return MetaVerdict::Certain;
         }
-        true
+        self.change = Some(new);
+        MetaVerdict::Reread
     }
 }
 

@@ -361,14 +361,25 @@ pub struct TreeBuilder<'d> {
 /// `content` attributes. The tree builder decides nothing about encodings;
 /// `html::encoding` does, so this module needs no decoder.
 pub trait MetaProbe {
-    /// One inserted `<meta>`. True once the confidence is certain, after
-    /// which no further `<meta>` is reported.
+    /// One inserted `<meta>`, and what the parse does next.
     fn meta(
         &mut self,
         charset: Option<&[u8]>,
         http_equiv: Option<&[u8]>,
         content: Option<&[u8]>,
-    ) -> bool;
+    ) -> MetaVerdict;
+}
+
+/// A [`MetaProbe`]'s answer to one `<meta>`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MetaVerdict {
+    /// Still tentative: report the next `<meta>` too.
+    Tentative,
+    /// Certain, in the encoding being read: no further `<meta>` is reported.
+    Certain,
+    /// The document must be re-read in another encoding: this parse is
+    /// aborted, since everything it would still build is thrown away.
+    Reread,
 }
 
 impl<'d> TreeBuilder<'d> {
@@ -455,8 +466,15 @@ impl<'d> TreeBuilder<'d> {
                 *slot = Some(tkz.attr_value(a).unwrap_or_default());
             }
         }
-        if probe.meta(charset, http_equiv, content) {
-            self.meta_probe = None;
+        match probe.meta(charset, http_equiv, content) {
+            MetaVerdict::Tentative => {}
+            MetaVerdict::Certain => self.meta_probe = None,
+            /* The rest of the parse would only be dropped for the re-read:
+             * stop here (the caller reads the probe, not this status). */
+            MetaVerdict::Reread => {
+                self.meta_probe = None;
+                self.process_abort();
+            }
         }
     }
 
