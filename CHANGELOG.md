@@ -20,8 +20,11 @@
 * A binary or US-ASCII String holding invalid UTF-8 is no longer read as
   UTF-8 with U+FFFD replacements: it is sniffed, and read in the encoding a
   detector guesses - which, for short text or text with little variety,
-  can be the wrong one. Pass `encoding:` when it is known, `"utf-8"` (or a
-  UTF-8 String) for the old reading.
+  can be the wrong one. A single invalid byte is enough: UTF-8 with one
+  stray byte, or cut off inside a character, is read whole as a legacy
+  encoding (windows-1252, say), as a browser reads such a local file. Pass
+  `encoding:` when it is known, `"utf-8"` (or a UTF-8 String) for the old
+  reading.
 * A String in a legacy encoding is decoded with the Encoding Standard's
   decoder for it rather than Ruby's transcoder, as browsers decode it:
   `ISO-8859-1` reads as windows-1252 (`\x80` is `€`), and Shift_JIS's
