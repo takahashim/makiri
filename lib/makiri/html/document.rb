@@ -16,7 +16,8 @@ module Makiri
       # algorithm decides, with the Encoding Standard's decoders: a byte
       # order mark first; then +encoding+, or else the String's own encoding
       # - both read alike: an encoding Ruby knows means what a String tagged
-      # with it means (US-ASCII is UTF-8, BINARY declares nothing, one the
+      # with it means (BINARY and US-ASCII - what File.read gives any bytes
+      # under LANG=C - declare nothing, one the
       # Encoding Standard has no decoder for such as UTF-32 is transcoded by
       # Ruby), and a name only the Encoding Standard knows ("latin1") is its
       # label; for binary input, a

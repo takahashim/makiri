@@ -89,11 +89,13 @@ impl Encoding {
     }
 
     /// How a document parse reads this encoding
-    /// (`html::encoding::transport_for`). Only an encoding of a kind other
+    /// (`html::encoding::transport_for`). US-ASCII is read as binary, as
+    /// XML's decode reads it (`xml_decode::claims_no_encoding`): it is what
+    /// `File.read` tags any bytes with under `LANG=C`, not a claim. Only an encoding of a kind other
     /// than binary, UTF-8 and US-ASCII is asked its name.
     pub(in crate::bridge) fn kind(self) -> crate::html::encoding::StringEncoding<'static> {
         use crate::html::encoding::StringEncoding;
-        if self.is_ascii8bit() {
+        if self.is_ascii8bit() || self.is_usascii() {
             StringEncoding::Binary
         } else if self.is_utf8_compatible() {
             StringEncoding::Utf8

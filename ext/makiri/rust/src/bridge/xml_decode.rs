@@ -44,7 +44,8 @@ fn compatible(a: Encoding, b: Encoding) -> bool {
 }
 
 /// Whether a String's own tag claims no encoding for the document it holds:
-/// ASCII-8BIT, and US-ASCII - an XML rule, not the HTML reader's. A String
+/// ASCII-8BIT, and US-ASCII - as the HTML document reader has it
+/// (`Encoding::kind`). A String
 /// tagged either is decoded by what its bytes declare (the BOM, then
 /// `encoding=`), and validated as UTF-8 when they declare nothing.
 ///

@@ -102,9 +102,10 @@ pub struct DocumentInput<'a> {
 /// "US-ASCII"` are the same input.
 #[derive(Clone, Copy)]
 pub enum StringEncoding<'a> {
-    /// ASCII-8BIT: bytes with no declared encoding.
+    /// ASCII-8BIT or US-ASCII: bytes with no claim about their encoding
+    /// (US-ASCII being what `File.read` gives any bytes under `LANG=C`).
     Binary,
-    /// UTF-8 or US-ASCII.
+    /// UTF-8.
     Utf8,
     /// Any other, by its name.
     Named(&'a [u8]),
@@ -123,9 +124,8 @@ pub enum Transport {
 }
 
 /// The transport layer's encoding a Ruby encoding stands for: nothing for
-/// binary, UTF-8 for UTF-8 and US-ASCII (Ruby's ASCII is a subset of UTF-8,
-/// not the Standard's windows-1252), and for any other the Encoding Standard
-/// encoding its name labels.
+/// binary (the bytes are sniffed), UTF-8 for UTF-8, and for any other the
+/// Encoding Standard encoding its name labels.
 pub fn transport_for(string: StringEncoding<'_>) -> Transport {
     match string {
         StringEncoding::Binary => Transport::Sniff,
