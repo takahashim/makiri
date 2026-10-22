@@ -3,7 +3,6 @@
 //! that nest a selector list deferred to a task (`query`). Names are
 //! resolved once per query ([`Name`]).
 
-use crate::html::dom::has_ascii_uppercase;
 use crate::selectors::ast::{AttrMatch, FunctionArg, PseudoClass, Simple};
 use core::ffi::c_long;
 
@@ -101,14 +100,14 @@ fn written_case_holds_slow<'d, N: CssNode<'d>>(node: N, el: N::Element, want: &[
          * fold, exactly when `want` has no upper case. Reading the name to
          * compare (`el.local_name() == want`) says the same and measured 8%
          * slower on an SVG scan - a Lexbor call per candidate. */
-        return !has_ascii_uppercase(want);
+        return !want.iter().any(u8::is_ascii_uppercase);
     }
     let local = el.dom_local_name();
     if node.folds_case() {
         /* `want` lower-cased against the localName. Given the fold, that
          * holds exactly when the localName has no upper case - and needs no
          * lower-cased copy of `want`. */
-        !has_ascii_uppercase(local)
+        !local.iter().any(u8::is_ascii_uppercase)
     } else {
         local == want
     }

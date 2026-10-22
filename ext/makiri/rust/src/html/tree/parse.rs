@@ -135,18 +135,30 @@ pub fn parse_html(
     assume_valid: bool,
     limit: DepthLimit,
 ) -> Result<Box<HtmlParsed>, HtmlParseError> {
-    parse_html_probing(src, assume_valid, limit, None)
+    let text = Utf8Text {
+        bytes: src,
+        known_valid: assume_valid,
+    };
+    parse_html_probing(text, limit, None)
+}
+
+/// Text for the document parse, as UTF-8, and whether it is already known to
+/// be valid UTF-8 - which skips the sanitiser's scan; it replaces invalid
+/// sequences otherwise.
+#[derive(Clone, Copy)]
+pub(super) struct Utf8Text<'a> {
+    pub(super) bytes: &'a [u8],
+    pub(super) known_valid: bool,
 }
 
 /// [`parse_html`], telling `probe` of each `<meta>` the "in head" rules
 /// insert while the document's encoding is tentative (`html::encoding`).
-pub fn parse_html_probing(
-    src: &[u8],
-    assume_valid: bool,
+pub(super) fn parse_html_probing(
+    text: Utf8Text<'_>,
     limit: DepthLimit,
     probe: Option<&mut (dyn MetaProbe + 'static)>,
 ) -> Result<Box<HtmlParsed>, HtmlParseError> {
-    let input = sanitize(src, assume_valid).ok_or(HtmlParseError::Failed)?;
+    let input = sanitize(text.bytes, text.known_valid).ok_or(HtmlParseError::Failed)?;
     let bytes = input.as_slice();
     let parsed = parse_with(
         bytes,

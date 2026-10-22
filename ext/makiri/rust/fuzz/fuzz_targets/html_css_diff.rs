@@ -39,7 +39,7 @@ use libfuzzer_sys::fuzz_target;
 
 mod common;
 use common::*;
-use makiri::css_match::cache;
+use makiri::css_cache;
 use makiri::css_match::{select_all, Namespaces, Scratch};
 use makiri::gvl::Gvl;
 use makiri::html::dom::css::HtmlHost;
@@ -92,7 +92,7 @@ fuzz_target!(|data: &[u8]| {
      * (C18-C22 in docs/parser_differences.ja.md) are `selector_diff`'s. The
      * cache only ever holds this mode's parses in this binary. */
     let new = makiri::compat::as_lexbor(|| {
-        cache::with_compiled(&gvl, text.as_bytes(), |groups, scratch| {
+        css_cache::with_compiled(&gvl, text.as_bytes(), |groups, scratch| {
             new_answer(root, groups, scratch, &doc)
         })
     });

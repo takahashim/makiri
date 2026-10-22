@@ -12,7 +12,7 @@
 use magnus::{prelude::*, Error, RHash, Ruby, Value};
 
 use crate::bridge::ruby::makiri_error;
-use crate::css_match::cache::ParseError;
+use crate::css_cache::ParseError;
 use crate::css_match::{MatchFailure, Namespaces, QueryFailure, MAX_COMPOUNDS};
 use crate::init::EXC_CSS_SYNTAX_ERROR;
 use crate::limits::NODE_SET_MAX;

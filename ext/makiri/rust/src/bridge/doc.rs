@@ -24,7 +24,7 @@ use crate::bridge::ruby::makiri_error;
 
 use crate::bridge::html::new_node;
 use crate::bridge::html::{html_node_key, with_html_node, wrap_html_node};
-use crate::bridge::string::HtmlSource;
+use crate::bridge::string::DocumentSource;
 use crate::bridge::wrapper::{
     ensure_document_mutable, html_doc, node_repr, DocKind, DocumentShell, NodeRepr, DOC_TYPE,
 };
@@ -68,7 +68,7 @@ pub fn tree_depth_error(limit: DepthLimit) -> Error {
 pub fn parse_document(
     source: Value,
     limit: DepthLimit,
-    given: Option<&'static encoding_rs::Encoding>,
+    given: Option<&'static crate::html::encoding::Encoding>,
 ) -> Result<Value, Error> {
     let s = source.to_r_string()?;
     /* Allocate the wrapper with a null handle, so a failed parse still
@@ -77,22 +77,17 @@ pub fn parse_document(
      * defined on Makiri::HTML::Document, so the result is always HTML. */
     let shell = DocumentShell::new(DocKind::Html);
     /* The bytes as they are, with the transport layer's encoding: `given`,
-     * else the String's own (none for binary, which is sniffed). */
-    let (src, transport) = HtmlSource::for_document(s, given)?;
-
-    /* The source is already a copy, so nothing here borrows from the Ruby
-     * String - which the parse reads with the GVL released. A source already
-     * known to be valid UTF-8 lets the parse skip its sanitisation. */
-    let assume_valid = src.known_valid();
-    let owned = src.into_bytes();
+     * else the String's own (none for binary, which is sniffed). The copy is
+     * what the parse reads with the GVL released, so nothing here borrows
+     * from the Ruby String. */
+    let src = DocumentSource::from_ruby(s, given)?;
 
     /* The body - sniffing, decoding and parsing - runs on this thread with
      * the GVL released, so the parsed handle comes back as it is. */
     let result = crate::bridge::gvl::without_gvl(|| {
-        crate::html::encoding::parse_document(owned.as_slice(), transport, assume_valid, limit)
-            .map(|(parsed, _)| parsed)
+        crate::html::tree::parse_document_bytes(src.input(), limit)
     })?;
-    drop(owned);
+    drop(src);
 
     let parsed = result.map_err(|e| match e {
         HtmlParseError::Guard(stop) => guard_error(stop, limit),
