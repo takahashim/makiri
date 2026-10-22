@@ -4,13 +4,13 @@
 //! The one part of the tree builder that reads a decoder, so the one built
 //! only with `html-dom` (which brings `encoding_rs`).
 
-use encoding_rs::{Encoding, UTF_8};
-
 use super::guard::DepthLimit;
 use super::parse::{parse_html_probing, Utf8Text};
 use super::{HtmlParseError, MetaProbe};
 use crate::html::dom::HtmlParsed;
-use crate::html::encoding::{decode, sniff, DocumentInput, EncodingWatch};
+use crate::html::encoding::{
+    decode, sniff, Decision, DocumentInput, Encoding, EncodingWatch, UTF_8,
+};
 
 /// Parse a document from its bytes (`input`): its encoding sniffed
 /// (`html::encoding::sniff`), the bytes decoded, and the whole re-read once
@@ -23,27 +23,34 @@ pub fn parse_document_bytes(
     limit: DepthLimit,
 ) -> Result<Box<HtmlParsed>, HtmlParseError> {
     let decision = sniff(input.bytes, input.transport);
-    let (body, known_valid) = decision.body(&input);
     let mut watch = EncodingWatch::new(decision.encoding);
     let probe = decision
         .tentative
         .then_some(&mut watch as &mut (dyn MetaProbe + 'static));
-    let text = Text::of(body, known_valid, decision.encoding)?;
-    let mut parsed = parse_html_probing(text.utf8(), limit, probe)?;
-    drop(text);
-    let encoding = match watch.change() {
-        None => decision.encoding,
-        Some(encoding) => {
-            /* Now certain: the first parse is dropped, as a browser drops
-             * the page it re-reads. */
-            drop(parsed);
-            let text = Text::of(input.bytes, false, encoding)?;
-            parsed = parse_html_probing(text.utf8(), limit, None)?;
-            encoding
-        }
-    };
+    let mut parsed = parse_under(&input, &decision, limit, probe)?;
+    let mut encoding = decision.encoding;
+    if let Some(changed) = watch.change() {
+        /* Now certain: the first parse is dropped, as a browser drops the
+         * page it re-reads. */
+        drop(parsed);
+        parsed = parse_under(&input, &Decision::certain(changed, 0), limit, None)?;
+        encoding = changed;
+    }
     parsed.set_encoding(encoding.name());
     Ok(parsed)
+}
+
+/// Read `input` as `decision` says - its body decoded into text - and parse
+/// it, telling `probe` of each `<meta>` while the decision is tentative.
+fn parse_under(
+    input: &DocumentInput<'_>,
+    decision: &Decision,
+    limit: DepthLimit,
+    probe: Option<&mut (dyn MetaProbe + 'static)>,
+) -> Result<Box<HtmlParsed>, HtmlParseError> {
+    let (body, known_valid) = decision.body(input);
+    let text = Text::of(body, known_valid, decision.encoding)?;
+    parse_html_probing(text.utf8(), limit, probe)
 }
 
 /// A document's text as the parser reads it: its own bytes when they are

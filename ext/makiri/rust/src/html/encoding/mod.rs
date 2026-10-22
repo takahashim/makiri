@@ -22,7 +22,11 @@
 
 #![forbid(unsafe_code)]
 
-use encoding_rs::{Encoding, UTF_16BE, UTF_16LE, UTF_8, WINDOWS_1252, X_USER_DEFINED};
+use encoding_rs::{UTF_16BE, UTF_16LE, WINDOWS_1252, X_USER_DEFINED};
+
+/// The Encoding Standard's encodings, as the rest of the crate names them:
+/// through this module, the one that reads `encoding_rs`.
+pub use encoding_rs::{Encoding, UTF_8};
 
 use crate::falloc::try_vec_with_capacity;
 use crate::html::tree::MetaProbe;
@@ -44,6 +48,30 @@ pub struct Decision {
 }
 
 impl Decision {
+    /// A decision the confidence in is certain: a byte order mark of
+    /// `bom_len` bytes, the transport layer, or a `<meta>` that changed the
+    /// encoding (the re-read, which skips the sniffing).
+    pub fn certain(encoding: &'static Encoding, bom_len: usize) -> Self {
+        Decision {
+            encoding,
+            bom_len,
+            tentative: false,
+            valid_utf8: false,
+        }
+    }
+
+    /// A tentative decision - the prescan's or the detector's - which a
+    /// `<meta>` may still change; `valid_utf8` when the sniffing found the
+    /// whole input valid UTF-8.
+    fn tentative(encoding: &'static Encoding, valid_utf8: bool) -> Self {
+        Decision {
+            encoding,
+            bom_len: 0,
+            tentative: true,
+            valid_utf8,
+        }
+    }
+
     /// What the parse reads of `input` under this decision: the bytes after
     /// any byte order mark, and whether they are known to be valid UTF-8 -
     /// found so by the sniffing, or by the caller for bytes with no BOM. Only
@@ -119,43 +147,23 @@ pub fn for_label(label: &[u8]) -> Option<&'static Encoding> {
 /// tentative.
 pub fn sniff(input: &[u8], transport: Option<&'static Encoding>) -> Decision {
     if let Some((encoding, bom_len)) = Encoding::for_bom(input) {
-        return Decision {
-            encoding,
-            bom_len,
-            tentative: false,
-            valid_utf8: false,
-        };
+        return Decision::certain(encoding, bom_len);
     }
     if let Some(encoding) = transport {
-        return Decision {
-            encoding,
-            bom_len: 0,
-            tentative: false,
-            valid_utf8: false,
-        };
+        return Decision::certain(encoding, 0);
     }
     if let Some(encoding) = prescan(input) {
-        return Decision {
-            encoding,
-            bom_len: 0,
-            tentative: true,
-            valid_utf8: false,
-        };
+        return Decision::tentative(encoding, false);
     }
     let (encoding, valid_utf8) = detect(input);
-    Decision {
-        encoding,
-        bom_len: 0,
-        tentative: true,
-        valid_utf8,
-    }
+    Decision::tentative(encoding, valid_utf8)
 }
 
 /// The autodetection step: UTF-8 when the input is valid UTF-8, else
-/// `chardetng`'s guess. An escape byte sends even valid UTF-8 to the
-/// detector: ISO-2022-JP is seven-bit, so it is valid UTF-8 too, and only its
-/// escape sequences tell it apart.
-/// The second value says the input was found valid UTF-8.
+/// `chardetng`'s guess, with whether the input was found valid UTF-8. An
+/// escape byte sends even valid UTF-8 to the detector: ISO-2022-JP is
+/// seven-bit, so it is valid UTF-8 too, and only its escape sequences tell
+/// it apart.
 fn detect(input: &[u8]) -> (&'static Encoding, bool) {
     if !input.contains(&0x1B) && crate::cutf8::valid(input) {
         return (UTF_8, true);
