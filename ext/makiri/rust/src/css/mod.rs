@@ -118,8 +118,7 @@ impl Build<'_> {
 
     /// The default-namespace prefix in scope, if any.
     pub(crate) fn default_prefix(&self) -> Option<&'static [u8]> {
-        self.default_namespace
-            .then_some(DEFAULT_NS_PREFIX)
+        self.default_namespace.then_some(DEFAULT_NS_PREFIX)
     }
 }
 

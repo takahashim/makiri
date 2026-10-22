@@ -177,6 +177,7 @@
 mod compile;
 pub mod dom;
 mod ns;
+mod nth_of;
 mod positions;
 mod query;
 mod scratch;

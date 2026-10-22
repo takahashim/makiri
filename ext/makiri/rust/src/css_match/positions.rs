@@ -5,6 +5,7 @@ use crate::falloc::{OomResult, VecPush};
 use crate::ptr_table::PtrMap;
 
 use super::dom::CssNode;
+use super::nth_of::NthOfMemo;
 use super::scratch::{recycle, SCRATCH_KEEP};
 use super::tree::{name_matches_type, next_position_sibling, prev_position_sibling};
 use super::{Budget, MatchFailure};
@@ -28,26 +29,14 @@ pub(super) struct Positions {
     memo: Vec<PtrMap<*const (), u64>>,
     /// A walk's counted siblings, nearest first.
     visited: Vec<*const ()>,
-    /// `of S` ranks, one map per `of S` simple selector (its index), made
-    /// on first use: a node's value is `rank << 1 | in_s`, `rank` being how
-    /// many of it and the siblings before it (in the counting direction)
-    /// are in `S`. Walking queries only, as `memo`.
-    of_memo: Vec<(u32, PtrMap<*const (), u64>)>,
-    /// The siblings `of S` counts have tested and not yet recorded, with
-    /// whether each is in `S`, nearest first; a count's own run starts at
-    /// its task's `seen_base`, as `Query::at` is shared by chains.
-    of_seen: Vec<(*const (), bool)>,
-    /// Candidates found NOT in `S`, one set per `of S` simple selector. Such
-    /// a candidate's test ends its count, so it gets no rank in `of_memo`,
-    /// and without this every `:has()` that reaches it again tests `S`
-    /// again - nested `of S` over nested `:has()` was 2.7x Lexbor's time.
-    /// Walking queries only, as `memo`.
-    of_out: Vec<(u32, PtrMap<*const (), ()>)>,
+    /// The `:nth-child(... of S)` ranks, which count by `S` rather than by
+    /// position and are kept apart.
+    pub(super) nth_of: NthOfMemo,
 }
 
 /// A memo past this many entries is dropped and refilled, bounding it: the
 /// positions are recounted on demand, so this costs time, never an answer.
-const POSITIONS_MAX: usize = 1 << 16;
+pub(super) const POSITIONS_MAX: usize = 1 << 16;
 
 /// A sibling position this close to the start of its list (in the counting
 /// direction) is counted, not looked up ([`sibling_position`]).
@@ -63,9 +52,7 @@ impl Positions {
             walking: false,
             memo: Vec::new(),
             visited: Vec::new(),
-            of_memo: Vec::new(),
-            of_seen: Vec::new(),
-            of_out: Vec::new(),
+            nth_of: NthOfMemo::new(),
         }
     }
 
@@ -75,14 +62,13 @@ impl Positions {
     pub(super) fn reuse(kept: &mut Positions, walking: bool) -> Self {
         let mut p = core::mem::replace(kept, Positions::new());
         p.walking = walking;
+        p.nth_of.walking = walking;
         p
     }
 
     /// Hand the allocations back to `kept`, EMPTIED: a position holds only
     /// in the tree it was counted in, and after the query a node's address
-    /// can belong to another node. Nothing counted outlives its query. The
-    /// `of S` memos are keyed by the query's own selector indexes, so they
-    /// go too.
+    /// can belong to another node. Nothing counted outlives its query.
     pub(super) fn give_back(mut self, kept: &mut Positions) {
         for m in &mut self.memo {
             if m.capacity() > KEEP_SLOTS {
@@ -95,115 +81,12 @@ impl Positions {
             walking: false,
             memo: self.memo,
             visited: recycle(self.visited, SCRATCH_KEEP),
-            of_memo: Vec::new(),
-            of_seen: recycle(self.of_seen, SCRATCH_KEEP),
-            of_out: Vec::new(),
+            nth_of: self.nth_of.emptied(),
         };
-    }
-
-    /// Where the next `of S` count's run in `of_seen` starts.
-    pub(super) fn of_seen_base(&self) -> u32 {
-        self.of_seen.len() as u32
-    }
-
-    /// Drop what a finished (or abandoned) count left in `of_seen`.
-    pub(super) fn of_seen_truncate(&mut self, base: u32) {
-        self.of_seen.truncate(base as usize);
-    }
-
-    /// Note that a count tested `node` and found it in `S` or not.
-    pub(super) fn of_seen_push<'d, N: CssNode<'d>>(
-        &mut self,
-        node: N,
-        in_s: bool,
-    ) -> Result<(), MatchFailure> {
-        self.of_seen.falloc_push((node_key(node), in_s)).or_oom()
-    }
-
-    /// `node`'s recorded `(rank, in_s)` for the `of S` selector `sel`.
-    pub(super) fn of_rank<'d, N: CssNode<'d>>(&self, sel: u32, node: N) -> Option<(u64, bool)> {
-        let (_, map) = self.of_memo.iter().find(|(k, _)| *k == sel)?;
-        map.get(node_key(node)).map(|v| (v >> 1, v & 1 == 1))
-    }
-
-    /// Is `node` known not to be in the `of S` selector `sel`'s `S`?
-    pub(super) fn of_known_out<'d, N: CssNode<'d>>(&self, sel: u32, node: N) -> bool {
-        self.of_out
-            .iter()
-            .find(|(k, _)| *k == sel)
-            .is_some_and(|(_, set)| set.get(node_key(node)).is_some())
-    }
-
-    /// Record that `node` is not in `sel`'s `S` (a walking query only).
-    pub(super) fn of_note_out<'d, N: CssNode<'d>>(
-        &mut self,
-        sel: u32,
-        node: N,
-    ) -> Result<(), MatchFailure> {
-        if !self.walking {
-            return Ok(());
-        }
-        let at = match self.of_out.iter().position(|(k, _)| *k == sel) {
-            Some(at) => at,
-            None => {
-                self.of_out.falloc_push((sel, PtrMap::new())).or_oom()?;
-                self.of_out.len() - 1
-            }
-        };
-        if let Some((_, set)) = self.of_out.get_mut(at) {
-            if set.len() + 1 > POSITIONS_MAX {
-                *set = PtrMap::new();
-            }
-            set.insert(node_key(node), ())
-                .map_err(|_| MatchFailure::Oom)?;
-        }
-        Ok(())
-    }
-
-    /// Finish a count for `candidate` (in `S`): the run of tested siblings
-    /// from `seen_base` on ends where the rank is `end_rank` (a known
-    /// sibling's, or 0 at the end of the list). Returns the candidate's
-    /// rank - its position among the siblings in `S` - and, in a walking
-    /// query, records every sibling passed and the candidate itself.
-    pub(super) fn of_finish<'d, N: CssNode<'d>>(
-        &mut self,
-        sel: u32,
-        seen_base: u32,
-        candidate: N,
-        end_rank: u64,
-    ) -> Result<u64, MatchFailure> {
-        let run = self.of_seen.get(seen_base as usize..).unwrap_or_default();
-        let members = run.iter().filter(|(_, in_s)| *in_s).count() as u64;
-        let pos = end_rank + members + 1;
-        if self.walking {
-            let at = match self.of_memo.iter().position(|(k, _)| *k == sel) {
-                Some(at) => at,
-                None => {
-                    self.of_memo.falloc_push((sel, PtrMap::new())).or_oom()?;
-                    self.of_memo.len() - 1
-                }
-            };
-            if let Some((_, map)) = self.of_memo.get_mut(at) {
-                if map.len() + run.len() + 1 > POSITIONS_MAX {
-                    *map = PtrMap::new();
-                }
-                // The farthest one passed sits next to `end_rank`.
-                let mut rank = end_rank;
-                for &(k, in_s) in run.iter().rev() {
-                    rank += u64::from(in_s);
-                    map.insert(k, rank << 1 | u64::from(in_s))
-                        .map_err(|_| MatchFailure::Oom)?;
-                }
-                map.insert(node_key(candidate), pos << 1 | 1)
-                    .map_err(|_| MatchFailure::Oom)?;
-            }
-        }
-        self.of_seen.truncate(seen_base as usize);
-        Ok(pos)
     }
 }
 
-fn node_key<'d, N: CssNode<'d>>(node: N) -> *const () {
+pub(super) fn node_key<'d, N: CssNode<'d>>(node: N) -> *const () {
     node.table_key()
 }
 
