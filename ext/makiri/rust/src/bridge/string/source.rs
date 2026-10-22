@@ -56,12 +56,35 @@ impl HtmlSource {
     }
 }
 
+/// The encoding `encoding:` names, read the way the String's own encoding
+/// is read: by Ruby's name for it first, so `"US-ASCII"`, `"BINARY"` and
+/// `Encoding::UTF_32LE` mean what a String tagged with them means, and an
+/// Encoding Standard label Ruby does not know (`"latin1"`, `"unicode"`)
+/// second.
+#[derive(Clone, Copy)]
+pub enum GivenEncoding {
+    /// An encoding Ruby knows.
+    Ruby(Encoding),
+    /// An Encoding Standard label Ruby does not know.
+    Label(&'static crate::html::encoding::Encoding),
+}
+
+impl GivenEncoding {
+    /// The encoding `name` names, or None for a name neither Ruby nor the
+    /// Encoding Standard knows. May autoload a Ruby encoding - see
+    /// [`Encoding::find`].
+    pub fn resolve(name: &[u8]) -> Option<GivenEncoding> {
+        Encoding::find(name)
+            .map(GivenEncoding::Ruby)
+            .or_else(|| crate::html::encoding::for_label(name).map(GivenEncoding::Label))
+    }
+}
+
 /// A Ruby String as a DOCUMENT parse's input (`html::encoding`): its bytes
-/// as they are, and the transport layer's encoding they come under, decided
-/// by `html::encoding::transport_for` from `given` (`encoding:`) and the
-/// String's own encoding. One the Encoding Standard has no label for
-/// (UTF-32, CP51932, ...) is transcoded by Ruby, as before, and declared
-/// UTF-8.
+/// as they are, and the transport layer's encoding they come under - the
+/// given encoding's (`encoding:`), else the String's own, both read by
+/// `html::encoding::transport_for`. One the Encoding Standard has no label
+/// for (UTF-32, CP51932, ...) is transcoded by Ruby and declared UTF-8.
 pub struct DocumentSource {
     source: HtmlSource,
     transport: Option<&'static crate::html::encoding::Encoding>,
@@ -69,40 +92,50 @@ pub struct DocumentSource {
 
 impl DocumentSource {
     /// `s` is a String by type: the caller has coerced it.
-    pub fn from_ruby(
-        s: RString,
-        given: Option<&'static crate::html::encoding::Encoding>,
-    ) -> Result<DocumentSource, Error> {
-        use crate::html::encoding::{transport_for, StringEncoding, Transport};
-        let enc = Encoding::of(s);
-        let transport = if enc.is_ascii8bit() {
-            transport_for(given, StringEncoding::Binary)
-        } else if enc.is_utf8_compatible() {
-            transport_for(given, StringEncoding::Utf8)
-        } else {
-            /* Only an encoding of any other kind is asked its name. */
-            let rb =
-                magnus::encoding::RbEncoding::from(magnus::encoding::EncodingCapable::enc_get(s));
-            transport_for(given, StringEncoding::Named(rb.name().as_bytes()))
+    pub fn from_ruby(s: RString, given: Option<GivenEncoding>) -> Result<DocumentSource, Error> {
+        use crate::html::encoding::{transport_for, Transport, UTF_8};
+        let own = Encoding::of(s);
+        let enc = match given {
+            Some(GivenEncoding::Label(e)) => return Self::declared(s, own, e),
+            Some(GivenEncoding::Ruby(e)) => e,
+            None => own,
         };
-        let transport = match transport {
+        match transport_for(enc.kind()) {
             Transport::Unlabelled => {
-                return Ok(DocumentSource {
+                /* The bytes are read as `enc`'s, whatever the String says. */
+                let s = if enc == own { s } else { enc.relabel(s)? };
+                Ok(DocumentSource {
                     source: HtmlSource::from_ruby(s)?,
-                    transport: Some(crate::html::encoding::UTF_8),
+                    transport: Some(UTF_8),
                 })
             }
-            Transport::Sniff => None,
-            Transport::Declared(e) => Some(e),
-        };
+            Transport::Sniff => Ok(DocumentSource {
+                source: HtmlSource {
+                    bytes: ruby_string_bytes(s)?,
+                    known_valid: false,
+                },
+                transport: None,
+            }),
+            Transport::Declared(e) => Self::declared(s, own, e),
+        }
+    }
+
+    /// `s`'s bytes, declared to be in `e`.
+    fn declared(
+        s: RString,
+        own: Encoding,
+        e: &'static crate::html::encoding::Encoding,
+    ) -> Result<DocumentSource, Error> {
         /* Ruby's own verdict counts only for bytes it holds as UTF-8. */
-        let known_valid = transport == Some(crate::html::encoding::UTF_8)
-            && enc.is_utf8_compatible()
+        let known_valid = e == crate::html::encoding::UTF_8
+            && own.is_utf8_compatible()
             && ruby_str_known_valid_utf8(s);
-        let bytes = ruby_string_bytes(s)?;
         Ok(DocumentSource {
-            source: HtmlSource { bytes, known_valid },
-            transport,
+            source: HtmlSource {
+                bytes: ruby_string_bytes(s)?,
+                known_valid,
+            },
+            transport: Some(e),
         })
     }
 

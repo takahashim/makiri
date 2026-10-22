@@ -10,8 +10,10 @@
   `<meta>` declares, or as UTF-8 when it is valid UTF-8, or else in a
   detected encoding (Shift_JIS, EUC-JP, ISO-2022-JP, ...); a `<meta>` past
   the first 1024 bytes re-reads the document in the encoding it names.
-  `Makiri::HTML(src, encoding: "shift_jis")` gives the encoding outright, and
-  `Document#encoding` returns the one used (it was always `"UTF-8"`).
+  `Makiri::HTML(src, encoding: "shift_jis")` gives the encoding outright -
+  read as a String tagged with it is read, so `encoding: "US-ASCII"` is
+  UTF-8 and `encoding: Encoding::UTF_32LE` works - and `Document#encoding`
+  returns the one used (it was always `"UTF-8"`).
 
 ### Changed
 

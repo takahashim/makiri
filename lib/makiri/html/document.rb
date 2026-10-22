@@ -14,9 +14,12 @@ module Makiri
       #
       # The bytes are decoded as the HTML Standard's encoding sniffing
       # algorithm decides, with the Encoding Standard's decoders: a byte
-      # order mark first; then +encoding+ (an Encoding Standard label such as
-      # "shift_jis", or a Ruby Encoding), or else the String's own encoding
-      # when it has a real one; for binary (ASCII-8BIT) input, a
+      # order mark first; then +encoding+, or else the String's own encoding
+      # - both read alike: an encoding Ruby knows means what a String tagged
+      # with it means (US-ASCII is UTF-8, BINARY declares nothing, one the
+      # Encoding Standard has no decoder for such as UTF-32 is transcoded by
+      # Ruby), and a name only the Encoding Standard knows ("latin1") is its
+      # label; for binary input, a
       # <meta charset> in the first 1024 bytes, else UTF-8 if the bytes are
       # valid UTF-8, else a detected encoding - and a <meta> found while
       # parsing that names another one re-reads the document in it. The
@@ -31,7 +34,8 @@ module Makiri
       # @param source [String, #read]
       # @param max_tree_depth [Integer, nil] nil for the default
       # @param encoding [String, Encoding, nil] the transport layer's
-      #   encoding; an unknown label raises ArgumentError
+      #   encoding; a name neither Ruby nor the Encoding Standard knows
+      #   raises ArgumentError
       # @return [Makiri::HTML::Document]
       def self.parse(source, max_tree_depth: nil, encoding: nil)
         source = source.read if source.respond_to?(:read)

@@ -88,6 +88,37 @@ impl Encoding {
         self.is_utf8_compatible() || self.is_ascii8bit()
     }
 
+    /// How a document parse reads this encoding
+    /// (`html::encoding::transport_for`). Only an encoding of a kind other
+    /// than binary, UTF-8 and US-ASCII is asked its name.
+    pub(in crate::bridge) fn kind(self) -> crate::html::encoding::StringEncoding<'static> {
+        use crate::html::encoding::StringEncoding;
+        if self.is_ascii8bit() {
+            StringEncoding::Binary
+        } else if self.is_utf8_compatible() {
+            StringEncoding::Utf8
+        } else {
+            // SAFETY: a live encoding's name is a NUL-terminated C string
+            // that lives as long as the encoding - the process.
+            StringEncoding::Named(unsafe { core::ffi::CStr::from_ptr((*self.0).name) }.to_bytes())
+        }
+    }
+
+    /// A copy of `str` tagged with this encoding instead of its own: its
+    /// bytes read as this encoding's. Allocating, so a raise
+    /// (`NoMemoryError`, or `ArgumentError` from the tag) is returned.
+    pub(in crate::bridge) fn relabel(self, str: RString) -> Result<RString, Error> {
+        // SAFETY: `str` is a live String and `self` a live encoding;
+        // `protect` turns a raise into `Err`.
+        let raw = protect(|| unsafe {
+            let copy = crate::bridge::raw::str_dup(str.as_raw());
+            crate::bridge::raw::enc_associate(copy, self.0)
+        })?;
+        // SAFETY: `rb_enc_associate` returns the live String it tagged.
+        RString::from_value(unsafe { crate::bridge::ruby::value(raw) })
+            .ok_or_else(|| crate::bridge::ruby::internal_error("relabelling returned a non-String"))
+    }
+
     /// `str` transcoded to this encoding, a character it cannot represent
     /// becoming a hex character reference. A transcoding failure is returned,
     /// not raised.

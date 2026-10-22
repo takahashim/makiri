@@ -68,7 +68,7 @@ pub fn tree_depth_error(limit: DepthLimit) -> Error {
 pub fn parse_document(
     source: Value,
     limit: DepthLimit,
-    given: Option<&'static crate::html::encoding::Encoding>,
+    given: Option<crate::bridge::string::GivenEncoding>,
 ) -> Result<Value, Error> {
     let s = source.to_r_string()?;
     /* Allocate the wrapper with a null handle, so a failed parse still

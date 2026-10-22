@@ -69,8 +69,29 @@ RSpec.describe "HTML document encoding" do
       expect(Makiri::HTML("<p>x</p>", encoding: :latin1).encoding).to eq("windows-1252")
     end
 
-    it "refuses a label the Encoding Standard does not know" do
-      expect { Makiri::HTML("<p>x</p>", encoding: "utf-7") }.to raise_error(ArgumentError, /unknown encoding/)
+    it "reads a name Ruby knows as a String tagged with it is read" do
+      bytes = "<p>caf\xC3\xA9</p>".b
+      [Encoding::US_ASCII, Encoding::BINARY, Encoding::UTF_32LE, Encoding::Windows_31J].each do |enc|
+        src = enc == Encoding::UTF_32LE ? "<p>é</p>".encode(enc).b : bytes
+        given = Makiri::HTML(src, encoding: enc)
+        tagged = Makiri::HTML(src.dup.force_encoding(enc))
+        expect([given.encoding, text_of(given)]).to eq([tagged.encoding, text_of(tagged)]), enc.name
+      end
+      # US-ASCII is Ruby's, a subset of UTF-8 - not the Standard's "ascii" (windows-1252).
+      expect(Makiri::HTML(bytes, encoding: "ascii").encoding).to eq("UTF-8")
+      # BINARY declares nothing, so the document is sniffed.
+      expect(Makiri::HTML(%(<meta charset="euc-jp"><p>x</p>), encoding: "BINARY").encoding).to eq("EUC-JP")
+    end
+
+    it "refuses a name neither Ruby nor the Encoding Standard knows" do
+      expect { Makiri::HTML("<p>x</p>", encoding: "no-such-encoding") }
+        .to raise_error(ArgumentError, /unknown encoding.*omit encoding:/)
+      expect { Makiri::HTML("<p>x</p>", encoding: "x" * 100) }.to raise_error(ArgumentError, /unknown encoding/)
+    end
+
+    it "raises Ruby's own error for an encoding Ruby cannot convert, as for a String tagged with it" do
+      expect { Makiri::HTML("<p>x</p>", encoding: "utf-7") }.to raise_error(Encoding::ConverterNotFoundError)
+      expect { Makiri::HTML("<p>x</p>".dup.force_encoding("UTF-7")) }.to raise_error(Encoding::ConverterNotFoundError)
     end
   end
 
