@@ -1,7 +1,8 @@
 //! The indexes a parsed document builds over its arena on demand
 //! ([`HtmlParsed`](super::HtmlParsed) keeps them): tag -> elements for the
-//! XPath `//tag` path, and each container's run of descendant text for
-//! `Node#text`.
+//! XPath `//tag` path, each container's run of descendant text for
+//! `Node#text`, and each node's position in document order for XPath's
+//! sorts.
 //!
 //! Both name nodes by id and text by its span in the byte store, so neither
 //! borrows the arena; what keeps them true is that an edit drops them before
@@ -95,6 +96,65 @@ impl DomIndex {
     /// written.
     pub fn has_case_kept(&self) -> bool {
         self.has_case_kept
+    }
+}
+
+/* ---------- the document-order index ---------- */
+
+/// Each node's position in XPath's document order (§5.1): a node, then its
+/// attributes in list order, then its children - the order the evaluator's
+/// own per-evaluate index numbers (`xpath::order`). Over the document's
+/// tree, `<template>` contents left out as the XPath walk leaves them. Every
+/// attribute is numbered, those the attribute axis skips (`xmlns:*`)
+/// included: only the relative order is read.
+///
+/// A dense array indexed by `NodeId`, sized to the arena when built: a node
+/// outside the tree (detached, in a fragment, in a template's contents), or
+/// appended since (`HtmlParsed::edit_keeping_indexes`), has no position.
+pub struct DocOrder {
+    pre: Vec<u32>,
+}
+
+impl DocOrder {
+    /// No position.
+    const NONE: u32 = u32::MAX;
+
+    /// `None` on OOM, or for an arena too large to number in a `u32`.
+    pub(super) fn build(doc: HtmlDoc<'_>, nodes: usize) -> Option<DocOrder> {
+        if nodes >= Self::NONE as usize {
+            return None;
+        }
+        let mut pre: Vec<u32> = try_vec_with_capacity(nodes)?;
+        pre.resize(nodes, Self::NONE);
+        let mut ord = 0u32;
+        let mut number = |n: NodeId| -> Option<()> {
+            *pre.get_mut(n.index())? = ord;
+            ord = ord.checked_add(1)?;
+            Some(())
+        };
+        for n in doc.as_node().subtree() {
+            number(n.id())?;
+            if let Some(el) = n.element() {
+                for a in el.attrs() {
+                    number(a.node().id())?;
+                }
+            }
+        }
+        Some(DocOrder { pre })
+    }
+
+    /// `node`'s position, or `None` for a node the index does not hold.
+    #[inline]
+    pub fn position(&self, node: NodeId) -> Option<u32> {
+        self.pre
+            .get(node.index())
+            .copied()
+            .filter(|p| *p != Self::NONE)
+    }
+
+    /// The bytes it holds, for the GC report.
+    pub fn bytes(&self) -> usize {
+        self.pre.capacity() * core::mem::size_of::<u32>()
     }
 }
 

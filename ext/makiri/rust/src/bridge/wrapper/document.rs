@@ -555,6 +555,17 @@ pub(in crate::bridge) fn with_html_parsed_known<R>(
     unsafe { f(p.as_ref()) }
 }
 
+/// [`with_html_parsed_known`] for a Document of either kind: `None` for an
+/// XML one.
+pub(in crate::bridge) fn with_html_parsed_if<R>(
+    rb_doc: Value,
+    f: impl FnOnce(&HtmlParsed) -> R,
+) -> Option<R> {
+    let p = doc_content_known(rb_doc).html()?;
+    // SAFETY: as `with_html_parsed_known`.
+    Some(unsafe { f(p.as_ref()) })
+}
+
 /// One representation's leaf classes, by node type: the mapping both
 /// `wrap_*_node` functions make, written once. The two tables differ only in
 /// which classes they name, so neither can grow a kind the other lacks.

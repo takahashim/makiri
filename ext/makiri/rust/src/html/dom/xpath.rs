@@ -206,6 +206,17 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
         Ok(())
     }
 
+    const KEEPS_ORDER: bool = true;
+
+    #[inline]
+    fn kept_position(self, n: HtmlNode<'d>) -> Option<u32> {
+        self.parsed.doc_order_position(n.id())
+    }
+
+    fn build_kept_order(self) -> bool {
+        self.parsed.ensure_doc_order()
+    }
+
     /// Served only for a document with no foreign element, where lax and
     /// strict admit the same elements, and no HTML element named with upper
     /// case as written, which no bucket holds but a folded name test finds.

@@ -12,7 +12,7 @@ use core::ptr::NonNull;
 
 use super::edit::{HtmlDocMut, HtmlNewNodes};
 use super::handle::{HtmlDoc, HtmlNode, RawNode, TagId};
-use super::index::{DomIndex, TextIndex, TextRun};
+use super::index::{DocOrder, DomIndex, TextIndex, TextRun};
 use super::{Document, DomOom, NodeId};
 use crate::source_lines::Lines;
 
@@ -55,6 +55,8 @@ pub struct HtmlParsed {
     lines: Option<Lines>,
     /// `None` inside: the document has no root element to index under.
     text_index: OnceCell<Option<TextIndex>>,
+    /// Each node's position in document order, for XPath's sorts.
+    doc_order: OnceCell<DocOrder>,
     /// The document's character encoding: the one its bytes were decoded
     /// from (`html::encoding`), by its Encoding Standard name; UTF-8 for a
     /// document made rather than parsed.
@@ -69,6 +71,7 @@ impl HtmlParsed {
             dom_index: OnceCell::new(),
             lines,
             text_index: OnceCell::new(),
+            doc_order: OnceCell::new(),
             encoding: "UTF-8",
         }
     }
@@ -161,15 +164,47 @@ impl HtmlParsed {
         self.text_index.get()?.as_ref()?.slices_of(&self.doc, node)
     }
 
+    /// Build the document-order index if it is not built: `true` when it is
+    /// there to read. A failed build (OOM) sets nothing, so a later call
+    /// retries.
+    pub fn ensure_doc_order(&self) -> bool {
+        if self.doc_order.get().is_none() {
+            let Some(order) = DocOrder::build(self.doc(), self.doc.node_count()) else {
+                return false;
+            };
+            /* As `ensure_dom_index`: unset just now, and the build runs no
+             * Ruby. */
+            let _ = self.doc_order.set(order);
+        }
+        true
+    }
+
+    /// `node`'s position in document order, once the index is built; `None`
+    /// before that, and for a node it does not hold. Never builds.
+    #[inline]
+    pub fn doc_order_position(&self, node: NodeId) -> Option<u32> {
+        self.doc_order.get()?.position(node)
+    }
+
+    /// Whether the document-order index is built.
+    pub fn has_doc_order(&self) -> bool {
+        self.doc_order.get().is_some()
+    }
+
     /// Drop the indexes so the next query rebuilds them.
     pub fn invalidate_indexes(&mut self) {
         self.dom_index.take();
         self.text_index.take();
+        self.doc_order.take();
     }
 
     /// The bytes this document holds outside Ruby's allocator.
+    ///
+    /// The document-order index is counted: it is kept across evaluates and
+    /// grows with the arena. The element and text indexes are not, as they
+    /// never were.
     pub fn external_bytes(&self) -> usize {
-        self.doc.owned_bytes()
+        self.doc.owned_bytes() + self.doc_order.get().map_or(0, DocOrder::bytes)
     }
 
     /// An O(1) measure that grows with the document, for deciding when to

@@ -363,6 +363,7 @@ pub fn evaluate_query(
             raised: core::cell::OnceCell::new(),
         }),
     };
+    let had_order = crate::bridge::wrapper::has_kept_order(document);
     let result = ctx.run(ast, bridge.as_ref().map(|b| b as &dyn Resolver), answer);
     /* The exception a handler-side call ended in, moved to this frame's stack
      * (where the GC's conservative scan keeps seeing it) before the bridge goes. */
@@ -372,6 +373,8 @@ pub fn evaluate_query(
      * skipping the guard's `Drop` - which would leave the document refusing
      * every edit for the rest of its life. */
     drop(bridge);
+    /* A document-order index the evaluate built is the document's now. */
+    crate::bridge::wrapper::account_kept_order(document, had_order);
     result.map_err(|error| match raised {
         /* Not the handler's error but the caller's control flow - an interrupt,
          * `exit`, Timeout, a `throw` - so it is re-raised as it was. Nothing

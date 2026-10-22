@@ -255,9 +255,13 @@ handler 例外の message 取得も fail-closed する
 * 索引や cache は「document に属し、mutation で捨てる」ようにする。
   破棄の hook は極力集約する。
   また索引は評価のたびに document から取り直す。
-* 1 回の評価の中だけで有効な cache (string-value cache、document-order
-  index) は評価自身が所有する。入れ子の評価 (custom function handler
-  経由) が外側の評価を乱さないようにするため。
+* 1 回の評価の中だけで有効な cache (string-value cache、XML の
+  document-order index) は評価自身が所有する。入れ子の評価 (custom
+  function handler 経由) が外側の評価を乱さないようにするため。
+  HTML の document-order index は document が所有し、評価をまたいで使う。
+  評価中は document を編集できないので、入れ子の評価とも共有できる。
+  XPath engine は `Dom` の項目 (`KEEPS_ORDER` / `kept_position` /
+  `build_kept_order`) を通して使い、ホストの種類では分岐しない。
 
 検証は GC.stress + compaction 下で行う。
 

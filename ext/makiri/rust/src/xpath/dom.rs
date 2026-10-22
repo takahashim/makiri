@@ -73,6 +73,25 @@ pub trait Dom<'d>: Copy {
         Ok(())
     }
 
+    /// Whether the document keeps a document-order index across evaluates
+    /// (HTML's: `HtmlParsed`'s, dropped by an edit). A host that does not
+    /// sorts with each evaluation's own index (`xpath::order::OrderIndex`).
+    const KEEPS_ORDER: bool = false;
+
+    /// `n`'s position in document order from the document's kept index -
+    /// a node, then its attributes, then its children, in the order
+    /// `xpath::order` numbers them - or None: not built yet, or a node the
+    /// index does not hold. Never builds.
+    fn kept_position(self, _n: Self::Node) -> Option<u32> {
+        None
+    }
+
+    /// Build the kept index if it is not built: `false` when it cannot be
+    /// (out of memory), and the sort walks parents instead.
+    fn build_kept_order(self) -> bool {
+        false
+    }
+
     fn node_type(self, n: Self::Node) -> NodeType;
 
     /* navigation */

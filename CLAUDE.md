@@ -728,6 +728,20 @@ byte store is compacted - moving every span - only right after
   the index afresh from the handle**: a reused `XPathContext` that kept the
   one it first saw answered from a dropped index - a use-after-free in the
   Lexbor era (`spec/xpath_context_mutation_spec.rb`).
+- **document-order index** (`DocOrder`): each node's position in XPath's
+  document order - a node, its attributes, its children; `<template>`
+  contents left out, as the XPath walk leaves them - as a dense
+  `NodeId -> u32` array sized to the arena. XPath's sorts read it through
+  `Dom::KEEPS_ORDER` / `kept_position` / `build_kept_order`
+  (`xpath/order.rs`, `sort_by_kept_order`); a node it does not hold
+  (detached, a fragment's, appended since) falls back to the parent-chain
+  compare. Built by the first sort large enough to want it
+  (`INDEX_BUILD_MIN`) and kept across evaluates until an edit drops it;
+  OOM falls back for the rest of that evaluate. Counted in
+  `HtmlParsed::external_bytes` and reported to the GC once the evaluate
+  that built it is over (`account_kept_order`). XML keeps the evaluate's own
+  `OrderIndex`. Verify with `spec/xpath_kept_order_spec.rb` and
+  `xpath::order::speed::order_speed` (ignored; a measurement).
 - **text index** (`TextIndex`): every text node's span in document order and
   each container's `[start, end)` run of them (`PtrTable`), so a `Node#text`
   is a lookup plus `ruby_str_from_slices` - one pre-sized memcpy run, no
@@ -1278,9 +1292,11 @@ Key decisions that got there, worth not regressing:
 - **String-value cache is hashed** (`xpath/str_cache.rs`): a token-keyed
   `PtrMap` index over an ordered store, so per-node predicate compares
   are O(1), not the old O(n²) linear scan. The cache belongs to one evaluate
-  (`xpath::eval::Evaluation`), as do the op budget and the document-order
-  index, so a nested (handler-triggered) evaluate gets its own and cannot
-  disturb the walk that called it.
+  (`xpath::eval::Evaluation`), as do the op budget and - for XML - the
+  document-order index, so a nested (handler-triggered) evaluate gets its
+  own and cannot disturb the walk that called it. HTML's document-order
+  index is the document's (`DocOrder`, above), which a nested evaluate
+  shares: no evaluate can edit the document it reads.
 - **Node string-values are borrowed when they are one slice** (`xpath/value.rs`
   `node_string_value` -> `Str`, `NodeText::Borrowed`): an attribute, a
   text/CDATA/comment/PI node, and a container whose descendants hold one

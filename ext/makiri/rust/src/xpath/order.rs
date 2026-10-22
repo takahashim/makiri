@@ -25,6 +25,9 @@ use core::ops::ControlFlow;
 pub struct OrderIndex {
     ords: PtrMap<Token, usize>,
     built: bool,
+    /// The document's kept index (`Dom::KEEPS_ORDER`) could not be built in
+    /// this evaluate, so it is not asked again until the next.
+    kept_failed: bool,
 }
 
 impl OrderIndex {
@@ -32,6 +35,7 @@ impl OrderIndex {
         OrderIndex {
             ords: PtrMap::new(),
             built: false,
+            kept_failed: false,
         }
     }
 
@@ -234,6 +238,11 @@ pub fn nodeset_sort_doc_order<'e, 'd, D: Dom<'d>>(
     }
     let items = ns.as_mut_slice();
 
+    if D::KEEPS_ORDER {
+        sort_by_kept_order(doc, &mut ev.order_index, items);
+        return;
+    }
+
     /* Already-sorted fast path. A relative step over a multi-node context
      * (//li/a) collects its forward-axis results context by context, so when the
      * contexts do not nest the concatenation is already in document order and
@@ -257,6 +266,39 @@ pub fn nodeset_sort_doc_order<'e, 'd, D: Dom<'d>>(
 
     let idx = &ev.order_index;
     merge_sort(items, |x, y| cmp(idx, *x, *y));
+}
+
+/// [`nodeset_sort_doc_order`] for a host whose document keeps its order
+/// index across evaluates: the same already-sorted scan and build threshold,
+/// but the index is the document's, built once and read by every later
+/// evaluate until an edit drops it.
+fn sort_by_kept_order<'d, D: Dom<'d>>(doc: D, idx: &mut OrderIndex, items: &mut [D::Node]) {
+    let cmp = |a: D::Node, b: D::Node| doc_order_cmp_kept::<D>(doc, a, b);
+    if items
+        .windows(2)
+        .all(|w| cmp(w[0], w[1]) != Ordering::Greater)
+    {
+        return;
+    }
+    if items.len() >= INDEX_BUILD_MIN && !idx.kept_failed && !doc.build_kept_order() {
+        /* Best-effort: on OOM the parent-chain comparator still serves. */
+        idx.kept_failed = true;
+    }
+    merge_sort(items, |x, y| cmp(*x, *y));
+}
+
+/// The comparator over the document's kept index, falling back to the
+/// parent-chain walk where it has no answer (unbuilt, or a node it does not
+/// hold).
+#[inline]
+fn doc_order_cmp_kept<'d, D: Dom<'d>>(doc: D, a: D::Node, b: D::Node) -> Ordering {
+    if a == b {
+        return Ordering::Equal;
+    }
+    match (doc.kept_position(a), doc.kept_position(b)) {
+        (Some(pa), Some(pb)) => pa.cmp(&pb),
+        _ => doc_order_cmp::<D>(doc, a, b),
+    }
 }
 
 /// A stable natural merge sort, its scratch space from falloc.
@@ -526,8 +568,42 @@ mod speed {
             .and_then(|v| v.parse().ok())
             .unwrap_or(20_000);
         let html = bench_html(items);
-        let parsed =
+        let mut parsed =
             crate::html::tree::parse_html(html.as_bytes(), false, DepthLimit::DEFAULT).unwrap();
+        let exprs = [
+            "//a",
+            "//span",
+            "//a | //span",
+            "//li/a/..",
+            "//span | //a",
+            "(//li)[last()] | //a",
+        ];
+        /* Each expression on a document with no index kept yet (the first
+         * evaluate after a parse or an edit), then warm. */
+        for expr in exprs {
+            parsed.invalidate_indexes();
+            let ctx = context(&parsed, HtmlDom::token(dom(&parsed).document_node()));
+            let mut budget = Budget::with_limits(ctx.limits());
+            let ast = parse_owned(
+                VerifiedText::from_bytes(expr.as_bytes()).unwrap(),
+                &mut budget,
+            )
+            .unwrap();
+            let mut len = 0;
+            let mut run = || match ctx.evaluate(&ast, None).ok().unwrap() {
+                XPathValue::NodeSet(s) => len = s.as_slice().len(),
+                _ => unreachable!(),
+            };
+            let cold = best(1, &mut run);
+            let warm = best(10, &mut run);
+            eprintln!(
+                "evaluate {expr:<22} first {cold:>8.0} us, then {warm:>8.0} us  ({len} nodes)"
+            );
+        }
+        let kept_build = best(10, || {
+            parsed.invalidate_indexes();
+            assert!(parsed.ensure_doc_order());
+        });
         let d = dom(&parsed);
         let nodes = 1 + d.document_node().subtree().count();
         let attrs: usize = d
@@ -539,29 +615,6 @@ mod speed {
             "{items} items, {} bytes, {nodes} tree nodes, {attrs} attributes",
             html.len()
         );
-
-        let ctx = context(&parsed, HtmlDom::token(d.document_node()));
-        for expr in [
-            "//a",
-            "//span",
-            "//a | //span",
-            "//li/a/..",
-            "//span | //a",
-            "(//li)[last()] | //a",
-        ] {
-            let mut budget = Budget::with_limits(ctx.limits());
-            let ast = parse_owned(
-                VerifiedText::from_bytes(expr.as_bytes()).unwrap(),
-                &mut budget,
-            )
-            .unwrap();
-            let mut len = 0;
-            let t = best(10, || match ctx.evaluate(&ast, None).ok().unwrap() {
-                XPathValue::NodeSet(s) => len = s.as_slice().len(),
-                _ => unreachable!(),
-            });
-            eprintln!("evaluate {expr:<22} {t:>9.0} us  ({len} nodes)");
-        }
 
         /* The pieces, on the union's input: every <a>, then every <span>. */
         let mut union = elements(d, b"a");
@@ -597,10 +650,72 @@ mod speed {
             merge_sort(&mut v, |a, b| doc_order_cmp(d, *a, *b));
             std::hint::black_box(v);
         });
+        let sort_kept = best(10, || {
+            let mut v = union.clone();
+            merge_sort(&mut v, |a, b| doc_order_cmp_kept(d, *a, *b));
+            std::hint::black_box(v);
+        });
+        eprintln!("kept index: build {kept_build:.0} us, sort with it {sort_kept:.0} us");
         eprintln!(
             "union of {} nodes: sorted scan {scan:.0} us (stops at pair {first_break}; that one compare {one_cmp:.0} us), \
              index build {build:.0} us, sort with index {sort_indexed:.0} us, sort walking parents {sort_walk:.0} us",
             union.len()
         );
+    }
+}
+
+/// The HTML document's kept index numbers every node as this module's own
+/// per-evaluate walk does, and holds nothing the walk does not reach.
+#[cfg(all(test, feature = "html-dom"))]
+mod kept {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+    use crate::html::dom::xpath::{dom, HtmlDom};
+    use crate::html::tree::guard::DepthLimit;
+
+    #[test]
+    fn the_kept_index_numbers_as_the_per_evaluate_walk() {
+        let html = "<!doctype html><html lang=en><head><title>t</title></head><body class=b>\
+            <p id=1 a=x b=y>one<!--c--><b>two</b></p><template id=t><i>in</i></template>\
+            <svg viewBox='0 0 1 1' xmlns:xlink='http://www.w3.org/1999/xlink'><a xlink:href=x>s</a></svg>\
+            <table><tr><td>cell</td></tr></table>tail</body></html>";
+        let parsed =
+            crate::html::tree::parse_html(html.as_bytes(), false, DepthLimit::DEFAULT).unwrap();
+        assert!(parsed.ensure_doc_order());
+        let d = dom(&parsed);
+        let mut idx = OrderIndex::new();
+        assert!(order_index_build(d, &mut idx, d.document_node()));
+        let root = d.document_node();
+        /* Every node the walk numbers, in the walk's order, must be numbered
+         * by the kept index in the same order; the kept index may number
+         * more - attributes the attribute axis skips (`xmlns:*`) - which no
+         * XPath node-set holds. */
+        let mut walked = Vec::new();
+        for n in root.subtree_with_contents() {
+            let attrs: Vec<_> = n
+                .element()
+                .map(|e| e.attrs().map(|a| a.node()).collect())
+                .unwrap_or_default();
+            for m in core::iter::once(n).chain(attrs) {
+                match idx.lookup(HtmlDom::token(m)) {
+                    Some(ord) => walked.push((ord, m)),
+                    None => assert!(
+                        d.kept_position(m).is_none() || m.attr().is_some(),
+                        "node {:?} is kept but not walked",
+                        m.id()
+                    ),
+                }
+            }
+        }
+        walked.sort_unstable_by_key(|(ord, _)| *ord);
+        let kept: Vec<u32> = walked
+            .iter()
+            .map(|(_, m)| d.kept_position(*m).unwrap())
+            .collect();
+        assert!(kept.windows(2).all(|w| w[0] < w[1]), "{kept:?}");
+        assert!(walked.len() > 20, "{} nodes numbered", walked.len());
+        /* A template's contents are outside the walk, so outside the index. */
+        let contents = root.subtree().find_map(|n| n.template_content()).unwrap();
+        assert_eq!(d.kept_position(contents), None);
     }
 }
