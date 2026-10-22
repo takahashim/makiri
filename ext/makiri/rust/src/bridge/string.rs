@@ -655,16 +655,17 @@ impl DocumentSource {
     ) -> Result<DocumentSource, Error> {
         use crate::html::encoding::{transport_for, StringEncoding, Transport};
         let enc = Encoding::of(s);
-        let name =
-            magnus::encoding::RbEncoding::from(magnus::encoding::EncodingCapable::enc_get(s));
-        let string = if enc.is_ascii8bit() {
-            StringEncoding::Binary
+        let transport = if enc.is_ascii8bit() {
+            transport_for(given, StringEncoding::Binary)
         } else if enc.is_utf8_compatible() {
-            StringEncoding::Utf8
+            transport_for(given, StringEncoding::Utf8)
         } else {
-            StringEncoding::Named(name.name().as_bytes())
+            /* Only an encoding of any other kind is asked its name. */
+            let rb =
+                magnus::encoding::RbEncoding::from(magnus::encoding::EncodingCapable::enc_get(s));
+            transport_for(given, StringEncoding::Named(rb.name().as_bytes()))
         };
-        let transport = match transport_for(given, string) {
+        let transport = match transport {
             Transport::Unlabelled => {
                 return Ok(DocumentSource {
                     source: HtmlSource::from_ruby(s)?,

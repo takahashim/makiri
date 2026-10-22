@@ -50,7 +50,10 @@ fn encoding_arg(ruby: &Ruby, v: Value) -> Result<Option<&'static encoding_rs::En
         Some(e) => Ok(Some(e)),
         None => Err(Error::new(
             ruby.exception_arg_error(),
-            format!("unknown encoding for HTML: {}", &*label),
+            format!(
+                "unknown encoding for HTML: {} (omit encoding: to have it sniffed)",
+                &*label
+            ),
         )),
     }
 }
