@@ -725,7 +725,17 @@ struct Adoption {
 }
 
 impl Adoption {
-    /// Empty the node out of its old document, whose name index goes with it.
+    /// The placement refused the copy: take it back out of `target`, the
+    /// arena it was imported into. A refused placement wrote nothing (`place`
+    /// validates and resolves before it links), so the copy is still
+    /// unlinked and unwrapped, and goes as a failed copy does
+    /// (`Document::rewind`); the original stays where it was.
+    fn undo_copy(&self, target: &mut XmlDoc) {
+        target.rewind(self.mark);
+    }
+
+    /// The placement took the copy: empty the original out of its old
+    /// document, whose name index goes with it.
     fn finish(self) {
         // SAFETY: `src_doc` is the live arena `incoming_node` found and cleared
         // for writing; `_keep` holds it, and the caller ran only engine code
@@ -757,14 +767,10 @@ impl Adoption {
 pub fn insert(this: XmlSelf, arg: Value, at: crate::xml::mutate::Place) -> Result<Value, Error> {
     let edit = begin_edit(this)?;
     let (node, adoption) = incoming_node(edit.document(), arg)?;
-    let undo = adoption.as_ref().map(|a| a.mark);
     xml_mut_result(edit.with_insertion(node, |d, target| {
         let placed = crate::xml::mutate::place(d, target, node, at);
-        /* A refused placement wrote nothing (`place` validates and resolves
-         * before it links), so the copy made for it is still unlinked and
-         * unwrapped: give it back, as a failed copy is (`Document::rewind`). */
-        if let (Err(_), Some(mark)) = (&placed, undo) {
-            d.rewind(mark);
+        if let (Err(_), Some(a)) = (&placed, &adoption) {
+            a.undo_copy(d);
         }
         placed
     })?)?;
