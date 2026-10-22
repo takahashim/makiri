@@ -340,12 +340,17 @@ pub(in crate::bridge) fn node_ref(rb_doc: Value, key: HtmlNodeKey) -> Result<Raw
 /// the tree the edit was about to change - after which `#text` read the text
 /// the edit had released, and `//p` found the nodes it had removed.
 pub struct HtmlEdit<'a> {
-    this: &'a HtmlSelf,
+    /// Borrowed mutably for the edit's life: a read of the receiver's
+    /// document (`HtmlSelf::doc`) cannot still be held when the edit begins,
+    /// nor be taken while it runs - the edit compacts the byte store those
+    /// reads borrow. A COPY of the receiver is not covered; reads go through
+    /// the receiver itself.
+    this: &'a mut HtmlSelf,
 }
 
 /// Clear the receiver for an edit. Convert every argument after this and
 /// before [`HtmlEdit::with_tree`].
-pub fn edit(this: &HtmlSelf) -> Result<HtmlEdit<'_>, Error> {
+pub fn edit(this: &mut HtmlSelf) -> Result<HtmlEdit<'_>, Error> {
     crate::bridge::ruby::check_frozen(this.value)?;
     check_attr_owner_frozen(this)?;
     ensure_document_mutable(this.document)?;
@@ -514,7 +519,8 @@ fn release_from_tree(d: &mut HtmlDocMut<'_>, node: RawNode) {
 /// Every rule is checked before anything changes (see
 /// [`Insertion::check`], the shared `crate::dom_rules`); after that only the
 /// adoption copy can fail, and it too runs before a link is touched.
-pub fn insert(this: &HtmlSelf, rb_incoming: Value, place: Place) -> Result<Value, Error> {
+pub fn insert(this: &mut HtmlSelf, rb_incoming: Value, place: Place) -> Result<Value, Error> {
+    let document = this.document;
     let edit = edit(this)?;
     let (key, incoming_doc) = html_node_key(rb_incoming)?;
     /* The argument is relinked too - `place` changes its parent and siblings, and
@@ -533,7 +539,7 @@ pub fn insert(this: &HtmlSelf, rb_incoming: Value, place: Place) -> Result<Value
      * and kept as a reference: in the receiver's document it is read through
      * the edit's own borrow, never through a second one. */
     let incoming = node_ref(incoming_doc, key)?;
-    let same = crate::bridge::ruby::same_value(incoming_doc, this.document);
+    let same = crate::bridge::ruby::same_value(incoming_doc, document);
     let (placed, adopted) = edit.with_tree(|d, target| -> Result<(RawNode, bool), Error> {
         let node = if same {
             let insertion = Insertion::new(d.node(target), place, d.node(incoming))
@@ -569,7 +575,7 @@ pub fn insert(this: &HtmlSelf, rb_incoming: Value, place: Place) -> Result<Value
      * reads as the move the DOM says appendChild performs - and drop that
      * document's indexes, which still list it. */
     edit_other_document(incoming_doc, |d| release_from_tree(d, incoming))?;
-    wrap_html_node(placed, this.document)
+    wrap_html_node(placed, document)
 }
 
 /* ------------------------------------------------------------------ *

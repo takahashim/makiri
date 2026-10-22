@@ -25,7 +25,7 @@ use crate::glue::node::{dom_extract, DOCUMENT_NOT_REMOVABLE};
 use crate::node_type::NodeType;
 use crate::xml::arena::DoctypeId;
 use crate::xml::dom_name::{self, split_loose_dom_name};
-use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId};
+use crate::xml::model::{ArenaKind, Document as XmlDoc};
 use crate::xml::mutate::{self, Place};
 use crate::xml::qname::Split;
 
@@ -34,7 +34,7 @@ use crate::xml::qname::Split;
 /* ------------------------------------------------------------------ */
 
 /// `#remove` / `#unlink` -> self.
-pub fn remove(this: XmlSelf) -> Result<Value, Error> {
+pub fn remove(mut this: XmlSelf) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let rb_self = this.value;
         let kind = this.doc_ref().type_(this.id);
@@ -44,7 +44,7 @@ pub fn remove(this: XmlSelf) -> Result<Value, Error> {
         /* An Attr leaves its element's attribute list: an attribute edit,
          * which changes no child list. */
         let attr = kind == Some(ArenaKind::Attribute);
-        let edit = begin_edit(this)?;
+        let edit = begin_edit(&mut this)?;
         if attr {
             edit.with_attributes(mutate::remove)?;
         } else {
@@ -54,15 +54,10 @@ pub fn remove(this: XmlSelf) -> Result<Value, Error> {
     })
 }
 
-/// Whether `n`, in the receiver's document, is an element.
-fn is_element(this: &XmlSelf, n: NodeId) -> bool {
-    this.doc_ref().type_(n) == Some(ArenaKind::Element)
-}
-
 /// The receiver cleared for an edit, which must be an element.
-fn element_for(this: XmlSelf) -> Result<Editing, Error> {
+fn element_for(this: &mut XmlSelf) -> Result<Editing<'_>, Error> {
     let edit = begin_edit(this)?;
-    if !is_element(&this, edit.id()) {
+    if edit.doc().type_(edit.id()) != Some(ArenaKind::Element) {
         return Err(makiri_error(
             "cannot set an attribute on a non-element node",
         ));
@@ -71,9 +66,9 @@ fn element_for(this: XmlSelf) -> Result<Editing, Error> {
 }
 
 /// `element[name] = value` -> value.
-pub fn aset(_ruby: &Ruby, this: XmlSelf, name: Value, val: Value) -> Result<Value, Error> {
+pub fn aset(_ruby: &Ruby, mut this: XmlSelf, name: Value, val: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let edit = element_for(this)?;
+        let edit = element_for(&mut this)?;
         let nv = verified_name(name, "attribute name")?;
         let vv = verified_data(val, "attribute value")?;
         let (name, value) = (nv.as_bytes(), vv.as_bytes());
@@ -87,13 +82,13 @@ pub fn aset(_ruby: &Ruby, this: XmlSelf, name: Value, val: Value) -> Result<Valu
 /// `element.set_attribute_ns(namespace_or_nil, qualified_name, value)` -> value.
 pub fn set_attribute_ns(
     _ruby: &Ruby,
-    this: XmlSelf,
+    mut this: XmlSelf,
     ns: Value,
     qname: Value,
     val: Value,
 ) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let edit = element_for(this)?;
+        let edit = element_for(&mut this)?;
         let qv = verified_name(qname, "attribute qualified name")?;
         let vv = verified_data(val, "attribute value")?;
         let nv = namespace_arg(ns, "namespace")?;
@@ -118,12 +113,12 @@ pub fn set_attribute_ns(
 /// attribute is in no namespace. `ArgumentError` for a name the DOM refuses.
 pub fn set_loose_dom_attribute(
     _ruby: &Ruby,
-    this: XmlSelf,
+    mut this: XmlSelf,
     name: Value,
     val: Value,
 ) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let edit = element_for(this)?;
+        let edit = element_for(&mut this)?;
         let nv = verified_name(name, "attribute name")?;
         let vv = verified_data(val, "attribute value")?;
         let (name, value) = (nv.as_bytes(), vv.as_bytes());
@@ -139,14 +134,14 @@ pub fn set_loose_dom_attribute(
 /// `element.remove_attribute_ns(namespace_or_nil, local_name)` -> self.
 pub fn remove_attribute_ns(
     _ruby: &Ruby,
-    this: XmlSelf,
+    mut this: XmlSelf,
     ns: Value,
     local: Value,
 ) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let rb_self = this.value;
-        let edit = begin_edit(this)?;
-        if !is_element(&this, edit.id()) {
+        let edit = begin_edit(&mut this)?;
+        if edit.doc().type_(edit.id()) != Some(ArenaKind::Element) {
             return Ok(rb_self);
         }
         let lv = verified_text(local, "attribute local name")?;
@@ -159,11 +154,11 @@ pub fn remove_attribute_ns(
 }
 
 /// `element.delete(name)` / `#remove_attribute` -> self.
-pub fn delete(_ruby: &Ruby, this: XmlSelf, name: Value) -> Result<Value, Error> {
+pub fn delete(_ruby: &Ruby, mut this: XmlSelf, name: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let rb_self = this.value;
-        let edit = begin_edit(this)?;
-        if !is_element(&this, edit.id()) {
+        let edit = begin_edit(&mut this)?;
+        if edit.doc().type_(edit.id()) != Some(ArenaKind::Element) {
             return Ok(rb_self);
         }
         let nv = verified_text(name, "attribute name")?;
@@ -174,13 +169,13 @@ pub fn delete(_ruby: &Ruby, this: XmlSelf, name: Value) -> Result<Value, Error> 
 }
 
 /// `node.content = text` -> text.
-pub fn set_content(_ruby: &Ruby, this: XmlSelf, text: Value) -> Result<Value, Error> {
+pub fn set_content(_ruby: &Ruby, mut this: XmlSelf, text: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         /* A node's type never changes, so it is read before the argument's
          * conversion: a Text, Comment, CDATA or PI node's content is its data,
          * and an Attr's its value - neither changes a child list. */
         let kind = this.doc_ref().type_(this.id);
-        let edit = begin_edit(this)?;
+        let edit = begin_edit(&mut this)?;
         let tv = verified_data(text, "node content")?;
         let bytes = tv.as_bytes();
         let set = |d: &mut XmlDoc, n| mutate::set_content(d, n, bytes);

@@ -340,17 +340,29 @@ pub fn with_arena_for_new_node<R>(
 /// HTML side has the same pair, `edit` and `HtmlEdit::node`; XML had the `&mut`
 /// gate and the invalidate gate as two separate calls, and whether a site needed
 /// the second was a judgement the reader had to make at each of seventeen.
-pub struct Editing {
+pub struct Editing<'a> {
     /// The receiver, frozen-checked again at the change.
     receiver: Value,
     document: Value,
     id: NodeId,
+    /// The receiver, borrowed mutably for the edit's life: a read of its
+    /// document (`XmlSelf::doc_ref`) cannot still be held when the edit
+    /// begins, nor be taken while it runs - the arena it borrows is the one
+    /// the edit may grow. A COPY of the receiver is not covered; reads go
+    /// through the receiver itself.
+    _this: core::marker::PhantomData<&'a mut XmlSelf>,
 }
 
-impl Editing {
+impl Editing<'_> {
     /// The node being edited.
     pub fn id(&self) -> NodeId {
         self.id
+    }
+
+    /// The arena, read while the edit is held and before it is spent: the
+    /// read borrows the permit, so it is over before the change can run.
+    pub fn doc(&self) -> &XmlDoc {
+        arena_ref(&self.document)
     }
 
     /// Its document, for the Ruby-side work an edit does around the arena call.
@@ -451,7 +463,7 @@ fn check_attr_owner_frozen(document: Value, id: NodeId) -> Result<(), Error> {
 
 /// The receiver cleared for an edit - not frozen, its document not under
 /// evaluation. The name index is dropped later, by [`Editing::with_arena`].
-pub fn begin_edit(this: XmlSelf) -> Result<Editing, Error> {
+pub fn begin_edit(this: &mut XmlSelf) -> Result<Editing<'_>, Error> {
     check_frozen(this.value)?;
     check_attr_owner_frozen(this.document, this.id)?;
     /* The evaluation guard, checked now so it is reported before a bad
@@ -463,6 +475,7 @@ pub fn begin_edit(this: XmlSelf) -> Result<Editing, Error> {
         receiver: this.value,
         document: this.document,
         id: this.id,
+        _this: core::marker::PhantomData,
     })
 }
 
@@ -764,8 +777,12 @@ impl Adoption {
 /// checked and the namespaces resolved by the placing, and - only once that
 /// has succeeded - the adopted original taken out of its own document
 /// ([`Adoption::finish`]), which nothing outside this module can call.
-pub fn insert(this: XmlSelf, arg: Value, at: crate::xml::mutate::Place) -> Result<Value, Error> {
-    let edit = begin_edit(this)?;
+pub fn insert(
+    mut this: XmlSelf,
+    arg: Value,
+    at: crate::xml::mutate::Place,
+) -> Result<Value, Error> {
+    let edit = begin_edit(&mut this)?;
     let (node, adoption) = incoming_node(edit.document(), arg)?;
     xml_mut_result(edit.with_insertion(node, |d, target| {
         let placed = crate::xml::mutate::place(d, target, node, at);

@@ -78,40 +78,40 @@ fn with_element<R>(
  * ------------------------------------------------------------------ */
 
 /// `node.add_child(child)` -> child.
-pub fn add_child(_ruby: &Ruby, this: HtmlSelf, rb_child: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| insert(&this, rb_child, Place::Child))
+pub fn add_child(_ruby: &Ruby, mut this: HtmlSelf, rb_child: Value) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| insert(&mut this, rb_child, Place::Child))
 }
 
 /// `node << child` -> node (chainable).
-pub fn lshift(_ruby: &Ruby, this: HtmlSelf, rb_child: Value) -> Result<Value, Error> {
+pub fn lshift(_ruby: &Ruby, mut this: HtmlSelf, rb_child: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        insert(&this, rb_child, Place::Child)?;
+        insert(&mut this, rb_child, Place::Child)?;
         Ok(this.value)
     })
 }
 
 /// `node.add_previous_sibling(node)` / `before` -> node.
-pub fn before(_ruby: &Ruby, this: HtmlSelf, rb_node: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| insert(&this, rb_node, Place::Before))
+pub fn before(_ruby: &Ruby, mut this: HtmlSelf, rb_node: Value) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| insert(&mut this, rb_node, Place::Before))
 }
 
 /// `node.add_next_sibling(node)` / `after` -> node.
-pub fn after(_ruby: &Ruby, this: HtmlSelf, rb_node: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| insert(&this, rb_node, Place::After))
+pub fn after(_ruby: &Ruby, mut this: HtmlSelf, rb_node: Value) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| insert(&mut this, rb_node, Place::After))
 }
 
 /// `node.replace(other)` -> other.
-pub fn replace(_ruby: &Ruby, this: HtmlSelf, rb_other: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| insert(&this, rb_other, Place::Replace))
+pub fn replace(_ruby: &Ruby, mut this: HtmlSelf, rb_other: Value) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| insert(&mut this, rb_other, Place::Replace))
 }
 
 /// `node.remove` / `node.unlink` -> node.
-pub fn remove(_ruby: &Ruby, this: HtmlSelf) -> Result<Value, Error> {
+pub fn remove(_ruby: &Ruby, mut this: HtmlSelf) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         if !dom_rules::removable(this.node().node_type()) {
             return Err(makiri_error(DOCUMENT_NOT_REMOVABLE));
         }
-        let edit = edit(&this)?;
+        let edit = edit(&mut this)?;
         /* An Attr leaves its element's attribute list: an attribute edit,
          * which changes no child list - as the XML side's `remove` is. */
         if edit.node_type() == NodeType::Attribute {
@@ -132,10 +132,15 @@ pub fn remove(_ruby: &Ruby, this: HtmlSelf) -> Result<Value, Error> {
  * ------------------------------------------------------------------ */
 
 /// `element[name] = value` -> value.
-pub fn aset(ruby: &Ruby, this: HtmlSelf, rb_name: Value, rb_value: Value) -> Result<Value, Error> {
+pub fn aset(
+    ruby: &Ruby,
+    mut this: HtmlSelf,
+    rb_name: Value,
+    rb_value: Value,
+) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         const REFUSAL: &str = "cannot set an attribute on a non-element node";
-        let edit = edit(&this)?;
+        let edit = edit(&mut this)?;
         if edit.node_type() != NodeType::Element {
             return Err(makiri_error(REFUSAL));
         }
@@ -153,14 +158,14 @@ pub fn aset(ruby: &Ruby, this: HtmlSelf, rb_name: Value, rb_value: Value) -> Res
 /// `element.set_attribute_ns(namespace_or_nil, qualified_name, value)` -> value.
 pub fn set_attribute_ns(
     ruby: &Ruby,
-    this: HtmlSelf,
+    mut this: HtmlSelf,
     rb_ns: Value,
     rb_qname: Value,
     rb_value: Value,
 ) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         const REFUSAL: &str = "cannot set an attribute on a non-element node";
-        let edit = edit(&this)?;
+        let edit = edit(&mut this)?;
         if edit.node_type() != NodeType::Element {
             return Err(makiri_error(REFUSAL));
         }
@@ -189,12 +194,12 @@ pub fn set_attribute_ns(
 /// `element.remove_attribute_ns(namespace_or_nil, local_name)` -> nil.
 pub fn remove_attribute_ns(
     ruby: &Ruby,
-    this: HtmlSelf,
+    mut this: HtmlSelf,
     rb_ns: Value,
     rb_local: Value,
 ) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let edit = edit(&this)?;
+        let edit = edit(&mut this)?;
         if edit.node_type() != NodeType::Element {
             return Ok(ruby.qnil().as_value());
         }
@@ -209,9 +214,9 @@ pub fn remove_attribute_ns(
 }
 
 /// `node.content = text` -> text.
-pub fn set_content(_ruby: &Ruby, this: HtmlSelf, rb_text: Value) -> Result<Value, Error> {
+pub fn set_content(_ruby: &Ruby, mut this: HtmlSelf, rb_text: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let edit = edit(&this)?;
+        let edit = edit(&mut this)?;
         let tv = ruby_verified_data(rb_text, "node content")?;
         /* An Attr's content is its value, an attribute edit; a Text, Comment,
          * CDATA or PI node's is its data. Neither changes a child list. */
@@ -230,10 +235,10 @@ pub fn set_content(_ruby: &Ruby, this: HtmlSelf, rb_text: Value) -> Result<Value
 }
 
 /// `element.delete(name)` -> self.
-pub fn delete(_ruby: &Ruby, this: HtmlSelf, rb_name: Value) -> Result<Value, Error> {
+pub fn delete(_ruby: &Ruby, mut this: HtmlSelf, rb_name: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let rb_self = this.value;
-        let edit = edit(&this)?;
+        let edit = edit(&mut this)?;
         if edit.node_type() != NodeType::Element {
             return Ok(rb_self);
         }
@@ -249,9 +254,9 @@ pub fn delete(_ruby: &Ruby, this: HtmlSelf, rb_name: Value) -> Result<Value, Err
 ///
 /// All or nothing: the new content is parsed and imported into a detached
 /// fragment first, and only then are the old children swapped for it.
-pub fn set_inner_html(_ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Value, Error> {
+pub fn set_inner_html(_ruby: &Ruby, mut this: HtmlSelf, rb_html: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let edit = edit(&this)?;
+        let edit = edit(&mut this)?;
         if edit.node_type() != NodeType::Element {
             return Err(makiri_error("inner_html= requires an element"));
         }
@@ -285,9 +290,9 @@ pub fn set_inner_html(_ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Va
 /// have moved or removed the receiver, and a parent read before it was a
 /// parent the receiver no longer had - the new content went nowhere and the
 /// call still reported success.
-pub fn set_outer_html(_ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Value, Error> {
+pub fn set_outer_html(_ruby: &Ruby, mut this: HtmlSelf, rb_html: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let edit = edit(&this)?;
+        let edit = edit(&mut this)?;
         /* `to_str`/`to_s` is Ruby code that may raise: converted under protect,
          * and transcoded, before the edit - nothing inside it may run Ruby. */
         let src = HtmlSource::from_ruby(string_of(rb_html)?)?;

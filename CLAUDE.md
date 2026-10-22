@@ -1200,7 +1200,12 @@ separate on purpose: `edit` checks (frozen, evaluating) so those errors come
 first, and every argument is converted BETWEEN the two, because a conversion is
 the argument's `#to_s` - arbitrary Ruby - and a query there rebuilt the indexes
 from the tree about to change (a read of released text storage). The XML side
-is the same pair, `begin_edit` and `Editing::with_arena`. `inner_html=`/`outer_html=` are all or
+is the same pair, `begin_edit` and `Editing::with_arena`. Both take the
+receiver `&mut` for the edit's life, so a read of its document
+(`HtmlSelf::doc`, `XmlSelf::doc_ref`) still held when the edit begins - one
+the edit's compaction or arena growth would invalidate - is a borrow error, not
+a use-after-free; a read the edit itself needs goes through it
+(`Editing::doc`). A copy of the receiver is not covered. `inner_html=`/`outer_html=` are all or
 nothing: `stage_fragment_in` imports into a DETACHED fragment first, and only
 then are the old nodes swapped out (`rake oom`'s `html_inner_html` scenario
 checks the document is unchanged after every injected failure).
