@@ -9,10 +9,9 @@
 //! anything changes (`HtmlParsed::edit`), and that the byte store is
 //! compacted - moving every span - only right after (`compact.rs`).
 
-use super::handle::{has_ascii_uppercase, HtmlDoc, HtmlNode, NsId, RawNode, TagId, TAG_LAST_ENTRY};
+use super::handle::{has_ascii_uppercase, HtmlDoc, HtmlNode, NsId, TagId, TAG_LAST_ENTRY};
 use super::{Document, DomOom, NodeId, NodeType, Span};
 use crate::falloc::{try_vec_with_capacity, VecPush};
-use crate::ptr_table::PtrTable;
 
 /* ---------- the element index ---------- */
 
@@ -166,12 +165,22 @@ struct Run {
     end: u32,
 }
 
-/// Each element's or fragment's run of descendant text, as the Lexbor
-/// adapter's `TextIndex` keeps it - here as spans of the byte store.
+impl Run {
+    /// A node the index holds no run for.
+    const NONE: Run = Run {
+        start: u32::MAX,
+        end: u32::MAX,
+    };
+}
+
+/// Each element's or fragment's run of descendant text: the text spans of
+/// the tree in document order, their running byte total, and per container
+/// the `[start, end)` of its run - a dense array indexed by `NodeId`, sized
+/// to the arena when built, as [`DocOrder`] is.
 pub(super) struct TextIndex {
     slices: Vec<Span>,
     prefix: Vec<usize>,
-    runs: PtrTable<Option<RawNode>, Run>,
+    runs: Vec<Run>,
 }
 
 /// The run of text slices one container's subtree owns.
@@ -207,81 +216,73 @@ fn text_span(n: HtmlNode<'_>) -> Option<Span> {
     n.owner_document().arena().text_span(n.id())
 }
 
-struct Frame<'d> {
-    child: Option<HtmlNode<'d>>,
-    slot: usize,
-}
-
 impl TextIndex {
-    /// `Ok(None)`: the index does not fit this document.
-    pub(super) fn build(root: HtmlNode<'_>) -> Result<Option<TextIndex>, DomOom> {
+    /// `Ok(None)`: the index does not fit this document. One walk: the
+    /// spans grow as they are met, and each container's run closes when the
+    /// walk leaves its subtree.
+    pub(super) fn build(root: HtmlNode<'_>, nodes: usize) -> Result<Option<TextIndex>, DomOom> {
         if !is_container(root) {
             return Ok(None);
         }
-        let (mut nslices, mut ncont) = (0usize, 0usize);
-        for n in root.subtree() {
-            if is_container(n) {
-                ncont += 1;
-            } else if text_span(n).is_some() {
-                nslices += 1;
-            }
-        }
-        if nslices > u32::MAX as usize {
-            return Ok(None);
-        }
-        let empty = Run { start: 0, end: 0 };
         let mut t = TextIndex {
-            slices: try_vec_with_capacity(nslices).ok_or(DomOom)?,
-            prefix: try_vec_with_capacity(nslices + 1).ok_or(DomOom)?,
-            runs: PtrTable::with_keys(ncont, empty).ok_or(DomOom)?,
+            slices: Vec::new(),
+            prefix: try_vec_with_capacity(1).ok_or(DomOom)?,
+            runs: try_vec_with_capacity(nodes).ok_or(DomOom)?,
         };
+        t.runs.resize(nodes, Run::NONE);
         t.prefix.push(0);
-        let mut stack: Vec<Frame<'_>> = try_vec_with_capacity(1).ok_or(DomOom)?;
-        let Some(slot) = t.runs.insert(Some(RawNode::from(root)), empty) else {
-            return Ok(None);
-        };
-        stack.push(Frame {
-            child: root.first_child(),
-            slot,
-        });
-        while let Some(top) = stack.last_mut() {
-            let Some(child) = top.child else {
-                let slot = top.slot;
-                t.runs.slot_mut(slot).end = t.slices.len() as u32;
-                stack.pop();
-                continue;
-            };
-            top.child = child.next();
-            if let Some(span) = text_span(child) {
-                if t.slices.len() == nslices {
-                    return Ok(None);
-                }
+        let mut n = root;
+        loop {
+            if let Some(span) = text_span(n) {
                 let Some(total) = t.prefix[t.slices.len()].checked_add(span.len()) else {
                     return Ok(None);
                 };
-                t.slices.push(span);
-                t.prefix.push(total);
-            } else if is_container(child) {
-                let start = t.slices.len() as u32;
-                let Some(slot) = t
-                    .runs
-                    .insert(Some(RawNode::from(child)), Run { start, end: start })
-                else {
+                t.slices.falloc_push(span).map_err(|()| DomOom)?;
+                t.prefix.falloc_push(total).map_err(|()| DomOom)?;
+            } else if is_container(n) {
+                let Ok(start) = u32::try_from(t.slices.len()) else {
                     return Ok(None);
                 };
-                stack
-                    .falloc_push(Frame {
-                        child: child.first_child(),
-                        slot,
-                    })
-                    .map_err(|()| DomOom)?;
+                let Some(run) = t.runs.get_mut(n.id().index()) else {
+                    return Ok(None);
+                };
+                *run = Run { start, end: start };
+                if let Some(c) = n.first_child() {
+                    n = c;
+                    continue;
+                }
+            }
+            /* Past `n`'s subtree: close every container the walk leaves. */
+            loop {
+                if n.id() != root.id() {
+                    if let Some(s) = n.next() {
+                        n = s;
+                        break;
+                    }
+                }
+                let Some(p) = (n.id() != root.id()).then(|| n.parent()).flatten() else {
+                    t.close(root);
+                    return Ok(Some(t));
+                };
+                n = p;
+                t.close(n);
             }
         }
-        Ok(Some(t))
     }
 
-    pub(super) fn slices_of<'i>(&'i self, doc: &'i Document, node: RawNode) -> Option<TextRun<'i>> {
-        let r = self.runs.get(Some(node))?;
+    /// End `n`'s run at the spans met so far.
+    fn close(&mut self, n: HtmlNode<'_>) {
+        let end = self.slices.len() as u32;
+        if let Some(run) = self.runs.get_mut(n.id().index()) {
+            run.end = end;
+        }
+    }
+
+    pub(super) fn slices_of<'i>(&'i self, doc: &'i Document, node: NodeId) -> Option<TextRun<'i>> {
+        let r = self
+            .runs
+            .get(node.index())
+            .filter(|r| r.start != Run::NONE.start)?;
         let (start, end) = (r.start as usize, r.end as usize);
         Some(TextRun {
             doc,

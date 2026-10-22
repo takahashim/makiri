@@ -197,7 +197,7 @@ pub fn content(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
             node.node_type(),
             NodeType::Element | NodeType::DocumentFragment
         ) {
-            return element_text(ruby, this.document, node);
+            return element_text(this.document, node);
         }
 
         /* Character data and attributes lend their own bytes; the other kinds
@@ -220,28 +220,14 @@ pub fn content(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
 /// memcpy run with no per-extraction tree walk - the walk is otherwise the
 /// dominant, cache-bound cost.
 ///
-/// Fallback, when the index cannot serve this node (outside the indexed tree -
-/// a fragment - or a build OOM): an iterative pre-order walk that appends each
-/// text/CDATA node's data, stack-safe and skipping Lexbor's intermediate arena
-/// buffer and copy.
-fn element_text(ruby: &Ruby, document: Value, node: HtmlNode<'_>) -> Result<Value, Error> {
+/// Otherwise - before the index is due (`HtmlParsed::ensure_text_index`), for
+/// a node outside the indexed tree (a fragment), or after a build OOM - a walk
+/// of the node's subtree (`bridge::html::subtree_text`).
+fn element_text(document: Value, node: HtmlNode<'_>) -> Result<Value, Error> {
     if let Some(text) = text_index_string(document, node.into())? {
         return Ok(text);
     }
-
-    let str = ruby.str_new("");
-    let mut cur = node.first_child();
-    while let Some(c) = cur {
-        if let Some(data) = c.char_data() {
-            if !data.is_empty() {
-                /* `str` is a live local root, so growing it here is fine; the
-                 * data is arena memory, not a Ruby buffer. */
-                str.cat(data);
-            }
-        }
-        cur = c.preorder_next(node);
-    }
-    Ok(str.as_value())
+    crate::bridge::html::subtree_text(document, node)
 }
 
 /* ------------------------------------------------------------------ *

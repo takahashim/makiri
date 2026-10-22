@@ -1,8 +1,9 @@
 # frozen_string_literal: true
 
-# Node#text / #content is served from a per-document, cache-dense text index
-# (lexbor_compat/text_index.c): a flat doc-order array of every text/CDATA slice
-# plus a node -> [start, end) map, built lazily and dropped on any mutation. The
+# Node#text / #content is served from a per-document text index
+# (html/dom/index.rs): a flat doc-order array of every text/CDATA slice plus a
+# node -> [start, end) map, built once the walks Node#text served cover half
+# the document, and dropped on any mutation. The
 # result must be byte-identical to a plain descendant walk, stay correct across
 # mutations (index rebuild), and fall back cleanly where the node is not indexed
 # (fragments). These cases also give the index ASan/fuzz coverage.
@@ -115,5 +116,26 @@ RSpec.describe "Node#text via the text index" do
       fr = doc.fragment("<p>one</p>two")
       expect(fr.text).to eq("onetwo")
     end
+  end
+
+  # The first doc.text walks (every node: past the half the index waits for),
+  # the second builds the index, so every call after is served from it.
+  it "serves every element from the index once built, and again after each edit" do
+    d = Makiri::HTML(html)
+    check_all = lambda do |round|
+      d.text
+      d.text
+      d.css("*").each { |el| expect(el.text).to eq(ref_text(el)), "#{round}: #{el.name}" }
+      expect(d.text).to eq(ref_text(d.root))
+    end
+    check_all.call("parsed")
+    d.at_css("#a span").add_child(d.create_text_node("new"))
+    check_all.call("added")
+    d.at_css("#b p").remove
+    check_all.call("removed")
+    d.at_css("#a").inner_html = "x<b>y</b>z"
+    check_all.call("inner_html=")
+    d.at_css("#a b").content = "Y"
+    check_all.call("content=")
   end
 end

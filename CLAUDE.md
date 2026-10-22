@@ -743,12 +743,17 @@ byte store is compacted - moving every span - only right after
   `OrderIndex`. Verify with `spec/xpath_kept_order_spec.rb` and
   `xpath::order::speed::order_speed` (ignored; a measurement).
 - **text index** (`TextIndex`): every text node's span in document order and
-  each container's `[start, end)` run of them (`PtrTable`), so a `Node#text`
-  is a lookup plus `ruby_str_from_slices` - one pre-sized memcpy run, no
-  element node touched (**~4x libxml2**). Reached via
-  `HtmlParsed::text_slices`; `None` (a fragment, a build OOM) means the
-  caller walks. Verify with `spec/text_index_spec.rb`, which holds it
-  byte-identical to a plain walk across subtrees and mutations.
+  each container's `[start, end)` run of them (a dense array by `NodeId`,
+  built in one walk), so a `Node#text` is a lookup plus
+  `ruby_str_from_slices` - one pre-sized memcpy run, no element node touched
+  (**~4x libxml2**). Built only once the walks `Node#text` has served since
+  the last edit cover half the document (`HtmlParsed::ensure_text_index` /
+  `note_text_walk`): the build costs about one walk of the document, so a
+  one-off `li.text` walks its own few nodes instead. Reached via
+  `HtmlParsed::text_slices`; `None` (not due, a fragment, a build OOM)
+  means the caller walks (`bridge::html::subtree_text`: one walk collecting
+  the slices, one copy). Verify with `spec/text_index_spec.rb`, which holds
+  it byte-identical to a plain walk across subtrees and mutations.
 
 **Child counting and indexing** (`src/child_index.rs`). `#child_count` /
 `#child_at` and their element twins walk `dom_rules::Tree`'s links - the
@@ -1284,9 +1289,12 @@ Key decisions that got there, worth not regressing:
   `css_cache::tests`.
 - **`Node#text` is served from the text index** (`html/dom/index.rs`,
   see the subsystem note): a per-document, lazily-built, edit-dropped map
-  from node → its document-order run of text spans, turning text extraction
-  into a lookup + one pre-sized memcpy instead of a walk (~4× libxml2). The walk fallback stays
-  for non-indexed nodes. Do not regress to walking on the indexed path; verify
+  from node → its document-order run of text spans, turning repeated text
+  extraction into a lookup + one pre-sized memcpy instead of a walk (~4×
+  libxml2). It is built once the walks it would replace add up to half the
+  document, so first and one-off calls walk (a first `doc.text` 2x faster,
+  a first small `li.text` from a whole-document build to nothing). Do not
+  regress to walking on the indexed path; verify
   with `bench`'s "full document text" row and `spec/text_index_spec.rb` (which
   asserts byte-identity with a plain walk across subtrees + mutations).
 - **String-value cache is hashed** (`xpath/str_cache.rs`): a token-keyed
