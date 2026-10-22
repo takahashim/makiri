@@ -625,9 +625,10 @@ document), and the Encoding Standard's decoders (`encoding_rs`, into a
 encoding the Standard has no label for (UTF-32, CP51932) is transcoded by
 Ruby as before (`DocumentSource`, over `html::encoding::transport_for`). Fragment parsing takes text, so
 it has no sniffing: there the input String's encoding is honoured
-(`ruby_to_utf8`, `bridge/string/encoding.rs`): UTF-8 / US-ASCII / ASCII-8BIT pass
-through untouched (the UTF-8 common case is a single encoding compare - no
-transcode, no copy), any other encoding (Shift_JIS, EUC-JP, ISO-8859-1, ...) is
+(`ruby_to_utf8_value`, `bridge/string/encoding.rs`): UTF-8 / US-ASCII /
+ASCII-8BIT pass through untouched (the UTF-8 common case is one read of the
+encoding index from the String's flags - no call, no transcode, no copy), any
+other encoding (Shift_JIS, EUC-JP, ISO-8859-1, ...) is
 `rb_str_encode`'d to UTF-8 (invalid/undef → U+FFFD) so its content survives
 instead of being read as raw UTF-8. After that the bytes are UTF-8 - and a
 document's UTF-8 skips the decoder, since the sanitiser below replaces as the
@@ -657,10 +658,17 @@ U+0000 like browsers. Those data-family sites go through `ruby_verified_data`
 contract, but its NUL refusal is `ArgumentError`, like every other name
 refusal there (the DOM's InvalidCharacterError), so a caller mapping
 `ArgumentError` to a DOMException misses none. Removers and readers keep
-`ruby_verified_text`. Both checked views (`RubyText`, `RubyData`) deref to
-`&str`, and each OWNS A COPY of the String's bytes, taken with no Ruby between
-the read and the copy (`string::copy_bytes`; up to 64 bytes inline, so a
-selector or an expression allocates nothing) and checked after. Nothing Ruby
+`ruby_verified_text`. **The strict inputs honour the String's encoding
+too** (`utf8_strict`): a String not in UTF-8 / US-ASCII / ASCII-8BIT is
+transcoded to UTF-8 first, with NO replacement - a character or byte it
+cannot convert is `Makiri::Error` ("could not be converted to UTF-8"), never
+repaired - and any other raise in the transcode (`NoMemoryError`, an
+interrupt) is passed through as it is. A length cap (`ruby_try_verified_text`)
+is on the UTF-8. Both checked views (`RubyText`, `RubyData`) deref to
+`&str`, and each OWNS A COPY of the (UTF-8) String's bytes, taken with no
+Ruby between the read and the copy (`string::copy_bytes`; up to 64 bytes
+inline, so a UTF-8 selector or expression allocates nothing; one in another
+encoding allocates its transcode) and checked after. Nothing Ruby
 does afterwards - a GC, a later argument's `#to_s` rewriting or growing the
 String - reaches the copy. The HTML source (`HtmlSource`) is a copy too, the
 one a document parse needs to read it with the GVL released. The only borrow
