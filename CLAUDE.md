@@ -882,7 +882,7 @@ whose every alternative is one compound with nothing nested in it
 caller rustc stopped inlining `check_simple`, and every plain scan got ~10%
 slower (`.item`, `main a`) - keep `check_simple` single-caller. **Every table
 and stack a query uses is borrowed from a `Scratch`** that the Ruby glue keeps
-in `selector_cache`'s process-global engine (under the GVL) and hands back
+in `css_cache`'s process-global engine (under the GVL) and hands back
 after the query, as Lexbor keeps its entry/nested pools in `lxb_selectors_t`:
 a warm `css`/`at_css`/`matches?` allocates nothing but its result. The
 vectors cross lifetimes empty, through `recycle` (std's in-place collect,
@@ -924,7 +924,7 @@ well, bar an `:is()`/`:where()`/`:not()` argument's subject), resolved at
 compile, undeclared = `CSS::SyntaxError` - except inside the forgiving
 `:is()`/`:where()`, which drop that alternative alone (`compile`'s `Nesting`);
 ancestors outside the context node take part. One `Scratch` per host,
-kept by `selector_cache` beside the one host-free AST cache.
+kept by `css_cache` beside the one host-free AST cache.
 
 **Tag and attribute names are resolved to Lexbor's ids once per query**, each
 the first time a candidate reaches it - Lexbor's own lazily set `entry->id`
@@ -936,7 +936,7 @@ the adapter confirms with exactly `attr_by_name`'s comparison - the answer
 never changes, only how many name reads it takes. Ids are the document's own
 (custom elements and new attribute names are interned per document), so they
 are resolved per query in the walked document, and nothing document-specific
-is kept in the process-global `selector_cache`. A tag id is compared without
+is kept in the process-global `css_cache`. A tag id is compared without
 asking each node for its document, as Lexbor's `entry->id` is: every node a
 walking query reaches is in the walked tree, and Makiri never moves a node
 between documents (an insert from another document inserts a copy). The
@@ -991,7 +991,7 @@ documented minimum (128 KiB), crashed the WHOLE PROCESS with an uncaught
 `SystemStackError` that escaped every `rescue` (exit code 1) - worse than an
 ordinary raise, since Ruby's stack-overflow handling `longjmp`s past every
 Rust frame between the overflow and the nearest `rb_protect`, skipping `Drop`
-(`crate::stack`'s module doc): for `selector_cache`'s borrow of its
+(`crate::stack`'s module doc): for `css_cache`'s borrow of its
 `GvlCell`, whose `Drop` releases the busy flag, a `longjmp`
 mid-match would have left it stuck `true` forever, wedging `Node#css`/
 `#at_css`/`#matches?` for the rest of the process - not just crashing the one
@@ -1066,7 +1066,7 @@ only approximates; `:any-link` / `:link` are an HTML `a`/`area` or an SVG
 instructions, as browsers have them (M2, M9, M10 in
 `docs/parser_differences.ja.md`; `compat::as_lexbor` runs Lexbor's).
 **The GVL is an argument, not a comment**: each process-global engine
-(`selector_cache`'s, and in the reference builds
+(`css_cache`'s, and in the reference builds
 `css_parser`'s and the OLD `selectors`'s) lives in its own `crate::gvl::GvlCell`, whose `borrow` takes a
 `&Gvl` - minted from a
 `magnus::Ruby` by `bridge::gvl::held`, and `!Send`, so `without_gvl` (which

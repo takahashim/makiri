@@ -22,6 +22,8 @@
   decoder for it rather than Ruby's transcoder, as browsers decode it:
   `ISO-8859-1` reads as windows-1252 (`\x80` is `€`), and Shift_JIS's
   `0x8160` is U+301C where Ruby's `Windows-31J` made U+FF5E.
+* `Makiri::XML` `#ancestors` returns a NodeSet, as HTML's does; it returned
+  an Array.
 
 ### Fixed
 

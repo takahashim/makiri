@@ -5,7 +5,6 @@
 #![forbid(unsafe_code)]
 
 use magnus::rb_sys::AsRawValue;
-/* Not magnus's: ours catches a panic before `rb_protect`'s C frame. */
 use magnus::{Error, RString};
 
 /// The shared owned buffer.

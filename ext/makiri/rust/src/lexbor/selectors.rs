@@ -3,13 +3,13 @@
 //! (`lexbor::tests::css_match`) and the `html_css_diff` fuzz harness, so it
 //! is compiled into tests and the `css-reference` feature alone
 //! (`lexbor/mod.rs`). `Node#css` / `#at_css` / `#matches?` run on
-//! `css_match`, with the compiled-selector cache in `selector_cache`.
+//! `css_match`, with the compiled-selector cache in `css_cache`.
 //!
 //! The selector parser, its arena and the traversal engine are process-global,
 //! each query borrowing them through a [`GvlCell`]; a query parses its
 //! selector, runs it, and cleans the parser and the arena. (It used to cache
 //! compiled selectors, adaptively; that policy now lives only in
-//! `selector_cache`, whose module doc keeps its reasons.)
+//! `css_cache`, whose module doc keeps its reasons.)
 //!
 //! Every Lexbor type here stays opaque: the parser's status and the setters
 //! this needs are `lxb_inline`, and Lexbor publishes a `_noi` twin of each for
