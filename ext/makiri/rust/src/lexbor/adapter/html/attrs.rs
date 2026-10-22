@@ -246,68 +246,6 @@ impl<'doc> HtmlElement<'doc> {
         }
     }
 
-    /// DOM `setAttribute(qname, value)`: change the attribute
-    /// [`attr_by_name`](Self::attr_by_name) finds, or append a new
-    /// no-namespace one named `qname` (lower-cased for an HTML element in an
-    /// HTML document). `Err` when Lexbor could not store it, in which case an
-    /// existing attribute keeps its value.
-    ///
-    /// # Safety
-    /// The element may be changed by the caller.
-    pub(super) unsafe fn set_attribute_value(
-        self,
-        qname: &[u8],
-        value: &[u8],
-    ) -> Result<HtmlAttr<'doc>, AdapterOom> {
-        if let Some(at) = self.attr_by_name(qname) {
-            // SAFETY: per the contract - the element, and so its attribute,
-            // may be changed.
-            return unsafe { at.set_value_unchecked(value) }.map(|()| at);
-        }
-        let at = self.create_attr(None, qname, value, self.is_html_in_html_doc())?;
-        // SAFETY: per the contract; `at` was just made and is unlinked, with
-        // no namespace.
-        unsafe { self.link_attr(at, Shortcut::named(at.dom_local_name())) };
-        Ok(at)
-    }
-
-    /// DOM `setAttributeNS(ns, qname, value)`: change the attribute
-    /// [`attr_by_ns`](Self::attr_by_ns) finds for (`ns`, local part of
-    /// `qname`) - its prefix is kept - or append a new one named `qname`.
-    /// `ns` is a namespace URI, `None` for none. `Err` when Lexbor could not
-    /// store it.
-    ///
-    /// # Safety
-    /// The element may be changed by the caller.
-    pub(super) unsafe fn set_attribute_value_ns(
-        self,
-        ns: Option<&[u8]>,
-        qname: &[u8],
-        value: &[u8],
-    ) -> Result<(), AdapterOom> {
-        let local = match qname.iter().position(|&b| b == b':') {
-            Some(i) => &qname[i + 1..],
-            None => qname,
-        };
-        /* Looked up, not interned: no attribute carries a namespace the
-         * document never interned, and the create below interns it. */
-        let existing = match ns {
-            Some(uri) => self
-                .node()
-                .owner_document()
-                .lookup_ns(uri)
-                .and_then(|id| self.attr_by_ns(Some(id), local)),
-            None => self.attr_by_ns(None, local),
-        };
-        if let Some(at) = existing {
-            // SAFETY: per the contract - the element, and so its attribute,
-            // may be changed.
-            return unsafe { at.set_value_unchecked(value) };
-        }
-        // SAFETY: per the contract - the element may be changed.
-        unsafe { self.append_attribute(ns, qname, value) }
-    }
-
     /// DOM "append an attribute" of a new one named `qname` in `ns` (`None` =
     /// none), case preserved, WITHOUT looking for an existing one: for a copy
     /// whose source already keeps (namespace, local name) unique. `Err` when

@@ -12,12 +12,9 @@
 pub mod arena_bytes;
 /// A Lexbor document copied into the parser port's arena.
 pub mod arena_copy;
-pub mod cross_import;
-pub mod dom_index;
 pub mod html;
 pub mod post_parse;
 pub mod source_loc;
-pub mod text_index;
 pub mod tree_guard;
 
 /// An allocation the adapter needed could not be satisfied.

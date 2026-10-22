@@ -60,23 +60,19 @@ UNSAFE_ISLANDS = {
   "gvl.rs" => 4,
   "lexbor/abi.rs" => 4,
   "lexbor/adapter/arena_bytes.rs" => 14,
-  "lexbor/adapter/cross_import.rs" => 2,
-  "lexbor/adapter/html/attrs.rs" => 25,
-  "lexbor/adapter/html/build.rs" => 26,
-  "lexbor/adapter/html/doc_mut.rs" => 6,
-  "lexbor/adapter/html/mod.rs" => 67,
-  "lexbor/adapter/html/mutate.rs" => 9,
+  "lexbor/adapter/html/attrs.rs" => 19,
+  "lexbor/adapter/html/build.rs" => 14,
+  "lexbor/adapter/html/mod.rs" => 66,
   "lexbor/adapter/html/serialize.rs" => 18,
-  "lexbor/adapter/post_parse.rs" => 9,
+  "lexbor/adapter/post_parse.rs" => 8,
   "lexbor/adapter/source_loc.rs" => 1,
-  "lexbor/adapter/text_index.rs" => 1,
   "lexbor/adapter/tree_guard.rs" => 7,
   "lexbor/chunks.rs" => 2,
   "lexbor/conformance_tests.rs" => 24,
   "lexbor/css_engine.rs" => 10,
   "lexbor/css_parser.rs" => 19,
   "lexbor/css_tokens.rs" => 10,
-  "lexbor/fragment.rs" => 10,
+  "lexbor/fragment.rs" => 7,
   "lexbor/res_tests.rs" => 3,
   "lexbor/selector_port_tests.rs" => 1,
   "lexbor/selectors.rs" => 9,
@@ -111,29 +107,29 @@ FORBID_FILES = %w[
   glue/xml_node/read.rs glue/xml_node/serialize.rs glue/xpath_context.rs
   html/dom/mod.rs html/encoding/mod.rs html/mod.rs
   html/tokenizer/mod.rs html/tree/mod.rs html_dom.rs
-  lexbor/adapter/dom_index.rs lexbor/contains_guard.rs limits.rs
-  node_type.rs ptr_table.rs rust_tests.rs
-  selectors/mod.rs selectors/stylesheet.rs selectors/text.rs
-  stack.rs text.rs utf8_input.rs
-  xml/arena.rs xml/attr_key.rs xml/chars/expand.rs
-  xml/chars/mod.rs xml/css.rs xml/css_tests.rs
-  xml/dom_name.rs xml/encoding_sniff.rs xml/index.rs
-  xml/mod.rs xml/model.rs xml/mutate/attr.rs
-  xml/mutate/copy.rs xml/mutate/edit.rs xml/mutate/factory.rs
-  xml/mutate/insert.rs xml/mutate/mod.rs xml/mutate/ns.rs
-  xml/ns_scope.rs xml/qname.rs xml/selftest.rs
-  xml/serialize/bindings.rs xml/serialize/c14n.rs xml/serialize/mod.rs
-  xml/serialize/out.rs xml/serialize/xml.rs xml/tree/cursor.rs
-  xml/tree/decl.rs xml/tree/dtd.rs xml/tree/mod.rs
-  xml/tree/scope.rs xml/verify.rs xml/xpath.rs
-  xpath/abi.rs xpath/ast.rs xpath/ast_ops.rs
-  xpath/attr_pred.rs xpath/axis.rs xpath/ctx.rs
-  xpath/dom.rs xpath/eval.rs xpath/funcs/css_hooks.rs
-  xpath/funcs/ext.rs xpath/funcs/mod.rs xpath/lex.rs
-  xpath/limits.rs xpath/mod.rs xpath/nodetest.rs
-  xpath/number.rs xpath/order.rs xpath/parse.rs
-  xpath/step_index.rs xpath/str_cache.rs xpath/tests.rs
-  xpath/value.rs xpath/verify.rs
+  lexbor/contains_guard.rs limits.rs node_type.rs
+  ptr_table.rs rust_tests.rs selectors/mod.rs
+  selectors/stylesheet.rs selectors/text.rs stack.rs
+  text.rs utf8_input.rs xml/arena.rs
+  xml/attr_key.rs xml/chars/expand.rs xml/chars/mod.rs
+  xml/css.rs xml/css_tests.rs xml/dom_name.rs
+  xml/encoding_sniff.rs xml/index.rs xml/mod.rs
+  xml/model.rs xml/mutate/attr.rs xml/mutate/copy.rs
+  xml/mutate/edit.rs xml/mutate/factory.rs xml/mutate/insert.rs
+  xml/mutate/mod.rs xml/mutate/ns.rs xml/ns_scope.rs
+  xml/qname.rs xml/selftest.rs xml/serialize/bindings.rs
+  xml/serialize/c14n.rs xml/serialize/mod.rs xml/serialize/out.rs
+  xml/serialize/xml.rs xml/tree/cursor.rs xml/tree/decl.rs
+  xml/tree/dtd.rs xml/tree/mod.rs xml/tree/scope.rs
+  xml/verify.rs xml/xpath.rs xpath/abi.rs
+  xpath/ast.rs xpath/ast_ops.rs xpath/attr_pred.rs
+  xpath/axis.rs xpath/ctx.rs xpath/dom.rs
+  xpath/eval.rs xpath/funcs/css_hooks.rs xpath/funcs/ext.rs
+  xpath/funcs/mod.rs xpath/lex.rs xpath/limits.rs
+  xpath/mod.rs xpath/nodetest.rs xpath/number.rs
+  xpath/order.rs xpath/parse.rs xpath/step_index.rs
+  xpath/str_cache.rs xpath/tests.rs xpath/value.rs
+  xpath/verify.rs
 ].freeze
 
 UNSAFE_USE = /\bunsafe\s*(?:\{|fn\b|impl\b|trait\b|extern\b)/
