@@ -152,6 +152,21 @@ impl<'d> Insertion<'d> {
     }
 }
 
+/// Why [`HtmlDocMut::create_pi`] made no ProcessingInstruction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CreatePiError {
+    /// The data holds `?>` ([`CreatePiError::MESSAGE`]).
+    ClosingInData,
+    /// No memory.
+    Oom,
+}
+
+impl CreatePiError {
+    /// What a caller tells a user for [`ClosingInData`](Self::ClosingInData):
+    /// the XML side's words for the same rule.
+    pub const MESSAGE: &'static str = "processing instruction data must not contain ?>";
+}
+
 /// A document lent for an edit.
 pub struct HtmlDocMut<'d> {
     d: &'d mut Document,
@@ -527,13 +542,17 @@ impl<'d> HtmlDocMut<'d> {
         Some(self.raw(c))
     }
 
-    /// A new ProcessingInstruction; `None` for data holding `?>`, which
-    /// Lexbor refuses.
-    pub fn create_pi(&mut self, target: &[u8], data: &[u8]) -> Option<RawNode> {
+    /// A new ProcessingInstruction, or why there is none: data holding `?>`,
+    /// which would end the instruction where it is written (Lexbor refuses
+    /// it too), or no memory. The one place that rule is kept.
+    pub fn create_pi(&mut self, target: &[u8], data: &[u8]) -> Result<RawNode, CreatePiError> {
         if data.windows(2).any(|w| w == b"?>") {
-            return None;
+            return Err(CreatePiError::ClosingInData);
         }
-        self.d.create_pi(target, data).ok().map(|id| self.raw(id))
+        self.d
+            .create_pi(target, data)
+            .map(|id| self.raw(id))
+            .map_err(|DomOom| CreatePiError::Oom)
     }
 
     /// A new DocumentType; an absent id is an empty one.
@@ -664,7 +683,7 @@ impl<'d> HtmlNewNodes<'d> {
     }
 
     /// [`HtmlDocMut::create_pi`].
-    pub fn create_pi(&mut self, target: &[u8], data: &[u8]) -> Option<RawNode> {
+    pub fn create_pi(&mut self, target: &[u8], data: &[u8]) -> Result<RawNode, CreatePiError> {
         self.edit().create_pi(target, data)
     }
 

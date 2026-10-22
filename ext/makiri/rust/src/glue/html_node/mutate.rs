@@ -30,7 +30,7 @@ use crate::bridge::string::{
 };
 use crate::dom_rules::{self, TextContent};
 use crate::glue::node::{dom_extract as extract, DOCUMENT_NOT_REMOVABLE};
-use crate::html_dom::html::{HtmlDocMut, NodeType, Place, RawNode};
+use crate::html_dom::html::{CreatePiError, HtmlDocMut, NodeType, Place, RawNode};
 use crate::xml::dom_name;
 
 /// `name` held to the WHATWG DOM rule `ok`, else `ArgumentError` - the DOM's
@@ -468,19 +468,15 @@ pub fn create_pi(
             crate::xml::chars::validate_name,
             "processing instruction target",
         )?;
-        /* ... and the data must not hold `?>`, which Lexbor refused only as a
-         * failed creation. The message is the XML side's. */
-        if dv.as_bytes().windows(2).any(|w| w == b"?>") {
-            return Err(Error::new(
+        /* ... and the data must not hold `?>` - the factory's rule. */
+        match new_node(&rb_self, |d| d.create_pi(tv.as_bytes(), dv.as_bytes()))? {
+            Ok(n) => created(Some(n), rb_self, "processing instruction"),
+            Err(CreatePiError::ClosingInData) => Err(Error::new(
                 ruby.exception_arg_error(),
-                "processing instruction data must not contain ?>",
-            ));
+                CreatePiError::MESSAGE,
+            )),
+            Err(CreatePiError::Oom) => created(None, rb_self, "processing instruction"),
         }
-        created(
-            new_node(&rb_self, |d| d.create_pi(tv.as_bytes(), dv.as_bytes()))?,
-            rb_self,
-            "processing instruction",
-        )
     })
 }
 
