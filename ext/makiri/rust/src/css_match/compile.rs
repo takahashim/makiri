@@ -74,6 +74,23 @@ pub(super) struct Step<'p> {
     pub(super) nest: Nest,
 }
 
+impl Step<'_> {
+    /// The `*` a compound with no type selector takes under a default
+    /// namespace (`ns`, `NsTest::implied`), as if it were written first.
+    fn implied_universal(ns: NsTest) -> Self {
+        Step {
+            simple: Simple::Universal,
+            name: b"",
+            ns,
+            alts: 0,
+            n_alts: 0,
+            value_ci: Some(false),
+            inline: false,
+            nest: Nest::None,
+        }
+    }
+}
+
 /// How a simple selector with a nested selector list is answered - the one
 /// classification of them ([`nest_of`]). A new list-bearing pseudo-class is
 /// added here and in `Query::deferred_task`, which builds its task.
@@ -127,20 +144,62 @@ fn nest_of<'p>(simple: Simple<'p>) -> Result<(Nest, Option<Lists<'p>>), MatchFai
     })
 }
 
-/// Where a nested list sits, for the two rules that depend on it; carried
-/// with the list on [`compile`]'s work list.
+/// Where a chain sits, for the two rules that depend on it.
+#[derive(Clone, Copy)]
+struct ChainPlace {
+    /// The chain is an alternative of `:is()` / `:where()` / `:not()`, whose
+    /// subject compound takes no default namespace (Selectors 4 §4.2-4.4)
+    /// unless it writes a type or universal selector.
+    list_arg: bool,
+    /// The alternative slot (`alts`) of the nearest forgiving alternative
+    /// around the chain (`:is()` / `:where()`, Selectors 4 §4.2), which an
+    /// invalid selector inside it empties; `None` where one fails the query.
+    within: Option<u32>,
+}
+
+impl ChainPlace {
+    /// A top-level comma alternative.
+    const TOP: ChainPlace = ChainPlace {
+        list_arg: false,
+        within: None,
+    };
+}
+
+/// A nested list on [`compile`]'s work list: what its alternatives' places
+/// are made from ([`Nesting::place_of`]).
 #[derive(Clone, Copy)]
 pub(super) struct Nesting {
-    /// The list is the argument of `:is()` / `:where()` / `:not()`, whose
-    /// alternatives' subject compounds take no default namespace (Selectors
-    /// 4 §4.2-4.4) unless they write a type or universal selector.
     list_arg: bool,
-    /// The list is forgiving (`:is()` / `:where()`): each alternative is
-    /// dropped on its own when it is invalid.
+    /// The list is forgiving: each alternative is its own `within`.
     forgiving: bool,
-    /// The alternative slot (`alts`) of the nearest forgiving alternative
-    /// around the list, which an invalid selector inside it empties.
+    /// The place of the chain the list is written in.
     within: Option<u32>,
+}
+
+impl Nesting {
+    /// The list of `simple` (whose nesting is `nest`), written in a chain
+    /// at `place`.
+    fn of(simple: Simple<'_>, nest: Nest, place: ChainPlace) -> Nesting {
+        Nesting {
+            list_arg: matches!(nest, Nest::List { .. }),
+            forgiving: matches!(
+                simple,
+                Simple::PseudoClassFunction(FunctionArg::Selectors {
+                    pseudo: ListPseudo::Is | ListPseudo::Where,
+                    ..
+                })
+            ),
+            within: place.within,
+        }
+    }
+
+    /// The place of the alternative in slot `k`.
+    fn place_of(self, k: u32) -> ChainPlace {
+        ChainPlace {
+            list_arg: self.list_arg,
+            within: if self.forgiving { Some(k) } else { self.within },
+        }
+    }
 }
 
 /// A selector, compiled for matching: every chain in it - the top-level
@@ -213,17 +272,13 @@ pub(super) fn compile<'p>(
     let mut pending: Table<(Lists<'p>, u32, Nesting)> = Table::reuse(&mut scratch.pending);
     let built = (|| {
         for list in groups {
-            let chain = c.add_chain(list, ns, false, None, &mut pending)?;
+            let chain = c.add_chain(list, ns, ChainPlace::TOP, &mut pending)?;
             c.top.push(chain)?;
         }
         while let Some((lists, at, nesting)) = pending.pop() {
             for (k, list) in (at..).zip(lists) {
-                let within = if nesting.forgiving {
-                    Some(k)
-                } else {
-                    nesting.within
-                };
-                match c.add_chain(list, ns, nesting.list_arg, within, &mut pending) {
+                let place = nesting.place_of(k);
+                match c.add_chain(list, ns, place, &mut pending) {
                     Ok(chain) => c.alts.set(k as usize, chain)?,
                     /* An undeclared prefix makes a selector invalid, and a
                      * forgiving list drops an invalid alternative alone
@@ -231,10 +286,10 @@ pub(super) fn compile<'p>(
                      * Its own nested lists are still compiled, and can only
                      * empty it again. Anything else - out of memory, too
                      * complex - fails the query. */
-                    Err(MatchFailure::UndeclaredPrefix) if within.is_some() => {
-                        let slot = within.ok_or(MatchFailure::Internal)?;
-                        c.alts.set(slot as usize, Chain::default())?;
-                    }
+                    Err(MatchFailure::UndeclaredPrefix) => match place.within {
+                        Some(slot) => c.alts.set(slot as usize, Chain::default())?,
+                        None => return Err(MatchFailure::UndeclaredPrefix),
+                    },
                     Err(e) => return Err(e),
                 }
             }
@@ -261,13 +316,12 @@ impl<'p> Compiled<'p> {
     /// Split `list`'s chain into compounds, left to right (the order
     /// the parser links them in), appending them to `compounds`; any list
     /// nested in its simple selectors is queued on `pending`, not walked
-    /// here. `list_arg` and `within` are where the chain sits ([`Nesting`]).
+    /// here. `place` is where the chain sits.
     fn add_chain(
         &mut self,
         list: List<'p>,
         ns: &Namespaces<'p>,
-        list_arg: bool,
-        within: Option<u32>,
+        place: ChainPlace,
         pending: &mut Table<(Lists<'p>, u32, Nesting)>,
     ) -> Result<Chain, MatchFailure> {
         let start = u32::try_from(self.compounds.len()).map_err(|_| MatchFailure::TooComplex)?;
@@ -283,20 +337,10 @@ impl<'p> Compiled<'p> {
                 return Err(MatchFailure::Unsupported);
             }
             let simple_start = self.simple_index()?;
-            if let Some(implied) = NsTest::implied(ns) {
-                let typed = matches!(first.simple(), Simple::Type | Simple::Universal);
-                if !typed && !(list_arg && is_subject(first)) {
-                    self.simples.push(Step {
-                        simple: Simple::Universal,
-                        name: b"",
-                        ns: implied,
-                        alts: 0,
-                        n_alts: 0,
-                        value_ci: Some(false),
-                        inline: false,
-                        nest: Nest::None,
-                    })?;
-                }
+            if let Some(implied) =
+                NsTest::implied(ns).filter(|_| takes_implied_namespace(first, place))
+            {
+                self.simples.push(Step::implied_universal(implied))?;
             }
             let mut sel = first;
             loop {
@@ -310,19 +354,7 @@ impl<'p> Compiled<'p> {
                         self.alts.push(Chain::default())?;
                         n_alts += 1;
                     }
-                    let forgiving = matches!(
-                        simple,
-                        Simple::PseudoClassFunction(FunctionArg::Selectors {
-                            pseudo: ListPseudo::Is | ListPseudo::Where,
-                            ..
-                        })
-                    );
-                    let nesting = Nesting {
-                        list_arg: matches!(nest, Nest::List { .. }),
-                        forgiving,
-                        within,
-                    };
-                    pending.push((lists, alts, nesting))?;
+                    pending.push((lists, alts, Nesting::of(simple, nest, place)))?;
                 }
                 let value_ci = match simple {
                     Simple::Attribute(at) if at.case == CaseModifier::Insensitive => Some(true),
@@ -420,9 +452,17 @@ impl<'p> Compiled<'p> {
     }
 }
 
+/// Whether the compound `first` begins, in a chain at `place`, is kept to
+/// the default namespace (Selectors 4 §5.3): it writes no type or universal
+/// selector - one only begins a compound (C28) - and is not the subject of
+/// an `:is()` / `:where()` / `:not()` alternative.
+fn takes_implied_namespace(first: crate::selectors::ast::Selector<'_>, place: ChainPlace) -> bool {
+    let typed = matches!(first.simple(), Simple::Type | Simple::Universal);
+    !typed && !(place.list_arg && is_subject(first))
+}
+
 /// Whether the compound `first` begins is its chain's last - the subject -
-/// by a walk over the compound's own links. (Whether it writes a type or
-/// universal selector needs no walk: one only begins a compound, C28.)
+/// by a walk over the compound's own links.
 fn is_subject(first: crate::selectors::ast::Selector<'_>) -> bool {
     let mut sel = first;
     loop {
