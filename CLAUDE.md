@@ -981,7 +981,7 @@ case-insensitively by default (the 46-name table of
 compile time (`Step::value_ci`), as Lexbor's per-id `switch` is - the per-node
 table scan it replaced cost `[type=text]` ~40%. A lone top-level chain whose
 rightmost compound has a type selector refuses other tags before the machine
-starts (`Query::tag_filter`).
+starts (`QueryPlan::refuses`, `css_match/plan.rs`).
 Measured on the Ruby-free probe against the previous commit: attribute scans
 -27 to -31%, type scans -12%, `matches?` -13 to -16%, `.class` and `*` within
 +/-6%. Name lookup matches Lexbor's except two documented departures, both the HTML

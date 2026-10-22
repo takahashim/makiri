@@ -178,6 +178,7 @@ mod compile;
 pub mod dom;
 mod ns;
 mod nth_of;
+mod plan;
 mod positions;
 mod query;
 mod scratch;
@@ -194,7 +195,7 @@ use crate::falloc::VecPush;
 use crate::limits::NODE_SET_MAX;
 use crate::selectors::ast::Lists;
 
-use compile::compile;
+use compile::{compile, Compiled};
 use core::ops::ControlFlow;
 use dom::CssNode;
 use query::Query;
@@ -467,12 +468,22 @@ fn each_match<'d, N: CssNode<'d>, B>(
     root: N,
     mut f: impl FnMut(N) -> ControlFlow<B>,
 ) -> Result<Option<B>, MatchFailure> {
-    let candidates = Candidates::of(query, root);
-    let every = candidates.all_match();
-    for n in candidates {
-        if every || query.matches_top(n)? {
+    let candidates = Candidates::of(query.compiled(), root);
+    /* Two loops, not one testing `every` per candidate: the index-answered
+     * one is a few instructions a node, and sharing a body with the
+     * machine's call cost it 16-20% (`css("li")` in XML). */
+    if candidates.all_match() {
+        for n in candidates {
             if let ControlFlow::Break(b) = f(n) {
                 return Ok(Some(b));
+            }
+        }
+    } else {
+        for n in candidates {
+            if query.matches_top(n)? {
+                if let ControlFlow::Break(b) = f(n) {
+                    return Ok(Some(b));
+                }
             }
         }
     }
@@ -481,7 +492,7 @@ fn each_match<'d, N: CssNode<'d>, B>(
 
 /// The elements a walking query tests, in document order: `root`'s element
 /// descendants, or - where the host has an index for the selector's
-/// rightmost type selector ([`Query::index_key`]) - that index's bucket,
+/// rightmost type selector ([`Compiled::index_key`](compile::Compiled::index_key)) - that index's bucket,
 /// which holds every element that can match and no other order.
 enum Candidates<'d, N: CssNode<'d>> {
     Walk {
@@ -494,8 +505,8 @@ enum Candidates<'d, N: CssNode<'d>> {
 }
 
 impl<'d, N: CssNode<'d>> Candidates<'d, N> {
-    fn of(query: &Query<'_, '_, 'd, N>, root: N) -> Self {
-        let Some((local, ns, whole)) = query.index_key() else {
+    fn of(compiled: &Compiled<'_>, root: N) -> Self {
+        let Some((local, ns, whole)) = compiled.index_key() else {
             return Candidates::Walk { root, at: root };
         };
         match root.candidates(local, ns) {
