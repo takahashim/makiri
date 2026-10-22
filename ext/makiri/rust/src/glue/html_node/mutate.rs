@@ -28,7 +28,7 @@ use crate::bridge::string::{
     namespace_arg, ruby_verified_data, ruby_verified_name, ruby_verified_text,
     ruby_verified_text_opt, HtmlSource,
 };
-use crate::dom_rules;
+use crate::dom_rules::{self, TextContent};
 use crate::glue::node::{dom_extract as extract, DOCUMENT_NOT_REMOVABLE};
 use crate::html_dom::html::{HtmlDocMut, NodeType, Place, RawNode};
 use crate::xml::dom_name;
@@ -219,15 +219,15 @@ pub fn set_content(_ruby: &Ruby, mut this: HtmlSelf, rb_text: Value) -> Result<V
         let edit = edit(&mut this)?;
         let tv = ruby_verified_data(rb_text, "node content")?;
         /* An Attr's content is its value, an attribute edit; a Text, Comment,
-         * CDATA or PI node's is its data. Neither changes a child list. */
+         * CDATA or PI node's is its data. Neither changes a child list. A
+         * Document's or DocumentType's is nothing, so no edit is recorded. */
         let set =
             |d: &mut HtmlDocMut<'_>, n: RawNode| crate::bridge::html::set_text_content(d, n, &tv);
-        match edit.node_type() {
-            NodeType::Attribute => edit.with_attributes(set)?,
-            NodeType::Text | NodeType::Comment | NodeType::CDataSection | NodeType::Pi => {
-                edit.with_data(set)?
-            }
-            _ => edit.with_tree(set)?,
+        match dom_rules::text_content(edit.node_type()) {
+            TextContent::AttrValue => edit.with_attributes(set)?,
+            TextContent::Data => edit.with_data(set)?,
+            TextContent::ReplaceChildren => edit.with_tree(set)?,
+            TextContent::Nothing => return Ok(rb_text),
         }
         .map_err(|_| makiri_error("failed to set node content"))?;
         Ok(rb_text)

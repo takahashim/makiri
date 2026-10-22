@@ -20,7 +20,7 @@ use crate::bridge::xml::{
     verified_name_opt, verified_text, verified_text_opt, with_arena_for_new_node,
     wrap_xml_node as wrap, xml_mut_result, Editing, XmlSelf,
 };
-use crate::dom_rules;
+use crate::dom_rules::{self, TextContent};
 use crate::glue::node::{dom_extract, DOCUMENT_NOT_REMOVABLE};
 use crate::node_type::NodeType;
 use crate::xml::arena::DoctypeId;
@@ -179,13 +179,16 @@ pub fn set_content(_ruby: &Ruby, mut this: XmlSelf, text: Value) -> Result<Value
         let tv = verified_data(text, "node content")?;
         let bytes = tv.as_bytes();
         let set = |d: &mut XmlDoc, n| mutate::set_content(d, n, bytes);
-        xml_mut_result(match kind {
-            Some(
-                ArenaKind::Text | ArenaKind::CDataSection | ArenaKind::Comment | ArenaKind::Pi,
-            ) => edit.with_data(set)?,
-            Some(ArenaKind::Attribute) => edit.with_attributes(set)?,
-            _ => edit.with_arena(set)?,
-        })?;
+        /* A Document's or DocumentType's content is nothing: no edit is
+         * recorded for it. */
+        xml_mut_result(
+            match kind.map(|k| dom_rules::text_content(NodeType::from(k))) {
+                Some(TextContent::Data) => edit.with_data(set)?,
+                Some(TextContent::AttrValue) => edit.with_attributes(set)?,
+                Some(TextContent::Nothing) => return Ok(text),
+                Some(TextContent::ReplaceChildren) | None => edit.with_arena(set)?,
+            },
+        )?;
         Ok(text)
     })
 }
