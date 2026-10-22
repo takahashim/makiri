@@ -26,21 +26,25 @@ pub struct DomIndex {
 }
 
 impl DomIndex {
+    /// One walk: each bucketed element's (tag, id) in document order, then
+    /// a counting sort of those pairs into the buckets - an array pass, not
+    /// a second walk of the tree.
     pub(super) fn build(doc: HtmlDoc<'_>) -> Option<DomIndex> {
-        let root = doc.as_node();
-        let elements = || root.subtree().filter_map(HtmlNode::element);
         let mut counts = [0usize; TAG_LAST_ENTRY];
-        let (mut n, mut tag_max) = (0usize, 0usize);
+        let mut tag_max = 0usize;
         let (mut has_foreign, mut has_case_kept) = (false, false);
-        for el in elements() {
+        let mut pairs: Vec<(u16, NodeId)> = Vec::new();
+        for el in doc.as_node().subtree().filter_map(HtmlNode::element) {
             let html = el.node().ns_id() == Some(NsId::HTML);
             if !html {
                 has_foreign = true;
             }
             if let Some(tag) = el.node().tag_id().and_then(TagId::static_index) {
                 counts[tag] += 1;
-                n += 1;
                 tag_max = tag_max.max(tag);
+                pairs
+                    .falloc_push((u16::try_from(tag).ok()?, el.node().id()))
+                    .ok()?;
             } else if html && el.has_written_name() && has_ascii_uppercase(el.dom_local_name()) {
                 has_case_kept = true;
             }
@@ -52,12 +56,12 @@ impl DomIndex {
             has_foreign,
             has_case_kept,
         };
-        if n == 0 {
+        if pairs.is_empty() {
             return Some(idx);
         }
         let noff = tag_max.checked_add(2)?;
         idx.tag_off = try_vec_with_capacity(noff)?;
-        idx.tag_nodes = try_vec_with_capacity(n)?;
+        idx.tag_nodes = try_vec_with_capacity(pairs.len())?;
         let mut cursor: Vec<usize> = try_vec_with_capacity(noff)?;
         idx.tag_off.push(0);
         let mut running = 0usize;
@@ -66,12 +70,11 @@ impl DomIndex {
             idx.tag_off.push(running);
         }
         cursor.extend_from_slice(&idx.tag_off);
-        idx.tag_nodes.resize(n, NodeId::DOCUMENT);
-        for el in elements() {
-            if let Some(tag) = el.node().tag_id().and_then(TagId::static_index) {
-                idx.tag_nodes[cursor[tag]] = el.node().id();
-                cursor[tag] += 1;
-            }
+        idx.tag_nodes.resize(pairs.len(), NodeId::DOCUMENT);
+        for (tag, id) in pairs {
+            let slot = cursor.get_mut(usize::from(tag))?;
+            *idx.tag_nodes.get_mut(*slot)? = id;
+            *slot += 1;
         }
         Some(idx)
     }

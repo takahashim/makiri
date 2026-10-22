@@ -723,8 +723,12 @@ byte store is compacted - moving every span - only right after
   over the static tag range, for the XPath `//tag` fast path
   (`xpath/step_index.rs`; `DomIndex::tag_bucket`). A custom tag, a foreign
   element (`has_foreign`) or an HTML element written in upper case
-  (`has_case_kept`) sends `//tag` back to the tree walk. Built by
-  `HtmlParsed::ensure_dom_index`; OOM fails closed. **Every evaluate reads
+  (`has_case_kept`) sends `//tag` back to the tree walk. Built in one walk
+  (each element's tag and id, then a counting sort) by the first `//tag`
+  that asks for a bucket (`HtmlDom::name_bucket` ->
+  `HtmlParsed::ensure_dom_index`) - never up front, so an XPath that names
+  no tag (`/html/body`) pays nothing for it; OOM answers no bucket and the
+  step walks. **Every evaluate reads
   the index afresh from the handle**: a reused `XPathContext` that kept the
   one it first saw answered from a dropped index - a use-after-free in the
   Lexbor era (`spec/xpath_context_mutation_spec.rb`).

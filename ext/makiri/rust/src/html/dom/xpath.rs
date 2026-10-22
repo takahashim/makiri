@@ -25,11 +25,8 @@ pub fn dom(parsed: &HtmlParsed) -> HtmlDom<'_> {
     }
 }
 
-/// A context over `parsed` with `node` as the focus, its element index built
-/// first.
+/// A context over `parsed` with `node` as the focus.
 pub fn context(parsed: &HtmlParsed, node: Token) -> Context<'_, HtmlDom<'_>> {
-    /* The walk serves a document the index cannot be built for. */
-    let _ = parsed.ensure_dom_index();
     Context::new(dom(parsed), Some(node))
 }
 
@@ -199,9 +196,8 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
         n.own_text().unwrap_or(&[])
     }
 
-    /// The element index is built by the evaluate's caller (the bridge's
-    /// `ensure_dom_index`), so there is nothing to prepare: a document it
-    /// could not be built for is walked.
+    /// Nothing to prepare: the element index is built by the first
+    /// [`name_bucket`](Dom::name_bucket) that wants it.
     fn prepare(&self) -> Result<(), ErrorKind> {
         Ok(())
     }
@@ -232,8 +228,12 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
             .expect("an indexed node of this document")
     }
 
+    /// Builds the index if it is not built: a `//tag` it serves would
+    /// otherwise walk the whole tree, which is what the build costs. A build
+    /// that cannot allocate answers None, and the step walks.
     fn name_bucket(self, local: &[u8], ns_uri: Option<&[u8]>) -> Option<Bucket<'d, NodeId>> {
         let parsed = self.parsed;
+        parsed.ensure_dom_index().ok()?;
         let index = parsed.dom_index()?;
         if ns_uri.is_some() || index.has_foreign() || index.has_case_kept() {
             return None;
