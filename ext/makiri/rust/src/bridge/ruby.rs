@@ -2,16 +2,15 @@
 //!
 //! `rb_raise` and every C function that can raise unwind with `longjmp`, which
 //! skips Rust destructors in every frame it crosses (see `glue/mod.rs`). The
-//! functions here are the places the extension still calls such a function,
-//! and each turns the raise into a [`magnus::Error`] instead: the caller hands
-//! it back as `Err`, and magnus raises only after the Rust frames have returned
-//! normally.
+//! functions here are built on `bridge::raw`'s wrappers, each of which turns
+//! the raise into a [`magnus::Error`]: the caller hands it back as `Err`, and
+//! magnus raises only after the Rust frames have returned normally.
 
 #![allow(unsafe_code)]
 
-use core::ffi::{c_int, c_long};
+use core::ffi::c_long;
 
-use magnus::rb_sys::{protect as magnus_protect, AsRawValue, FromRawValue};
+use magnus::rb_sys::{AsRawValue, FromRawValue};
 use magnus::{prelude::*, Error, RString, Ruby, Value};
 
 /// The raw handle types, re-exported so a higher layer can name a `VALUE` or a
@@ -107,12 +106,32 @@ pub fn name_arg(v: Value) -> Result<RString, Error> {
     if magnus::Symbol::from_value(v).is_none() {
         return Err(wrong_type(v, "String or Symbol"));
     }
-    // SAFETY: `v` is a live Symbol; `protect` turns the allocation's raise into
-    // `Err`.
-    let s = protect(|| unsafe { super::raw::sym2str(v.as_raw()) })?;
+    // SAFETY: `v` is a live Symbol.
+    let s = unsafe { super::raw::sym2str(v.as_raw()) }?;
     // SAFETY: `rb_sym2str` returned a live String.
     RString::from_value(unsafe { Value::from_raw(s) })
         .ok_or_else(|| type_error("a Symbol without a name"))
+}
+
+/// `v` for an error message, written without calling it: a Symbol as
+/// `:name`, a String quoted, anything else by its class (`#inspect` would be
+/// the caller's Ruby).
+pub fn describe(v: Value) -> String {
+    if magnus::Symbol::from_value(v).is_some() {
+        if let Ok(s) = name_arg(v) {
+            // SAFETY: copied out at once.
+            return format!(":{}", String::from_utf8_lossy(unsafe { s.as_slice() }));
+        }
+    }
+    if let Some(s) = RString::from_value(v) {
+        // SAFETY: copied out at once.
+        return format!("{:?}", String::from_utf8_lossy(unsafe { s.as_slice() }));
+    }
+    if v.is_nil() {
+        return "nil".to_owned();
+    }
+    // SAFETY: a live value; its class name is copied at once.
+    format!("an instance of {}", unsafe { v.classname() })
 }
 
 /// Ruby's `TypeError` for a value of the wrong class: "wrong argument type
@@ -127,33 +146,25 @@ fn wrong_type(v: Value, expected: &str) -> Error {
 /// `rb_check_frozen` returning its FrozenError rather than raising it.
 ///
 /// The error is Ruby's own - the message naming the receiver and `#receiver`
-/// set - because the check still runs, under `protect`. An unfrozen value, every
-/// mutator's normal case, never enters `protect`.
+/// set - because the check still runs, protected. An unfrozen value, every
+/// mutator's normal case, makes no call.
 pub fn check_frozen(v: Value) -> Result<(), Error> {
     if !magnus::value::ReprValue::is_frozen(v) {
         return Ok(());
     }
-    // SAFETY: `v` is a live value; `protect` turns the raise into `Err`.
-    protect(|| unsafe {
-        super::raw::check_frozen(v.as_raw());
-        rb_sys::Qnil as VALUE
-    })
-    .map(|_| ())
+    // SAFETY: `v` is a live value.
+    unsafe { super::raw::check_frozen(v.as_raw()) }
 }
 
 /// `rb_range_beg_len` over a collection of `count` elements, with the C's
 /// `err = 0`: a start outside the collection is `None` rather than a raise.
 ///
-/// A bound too large for a `long` still raises (`RangeError`), and that raise
-/// comes back as `Err` - the caller holds the collection's nodes in a `Vec` a
-/// longjmp would leak.
+/// A bound too large for a `long` is `Err` (`RangeError`).
 pub fn range_beg_len(range: Value, count: c_long) -> Result<Option<(c_long, c_long)>, Error> {
     let mut beg: c_long = 0;
     let mut len: c_long = 0;
-    // SAFETY: `range` is a live Range; `protect` turns the raise into `Err`.
-    let answer = protect(|| unsafe {
-        super::raw::range_beg_len(range.as_raw(), &mut beg, &mut len, count, 0)
-    })?;
+    // SAFETY: `range` is a live Range, and `beg`/`len` outlive the call.
+    let answer = unsafe { super::raw::range_beg_len(range.as_raw(), &mut beg, &mut len, count) }?;
     Ok((answer == rb_sys::Qtrue as VALUE).then_some((beg, len)))
 }
 
@@ -161,16 +172,9 @@ pub fn range_beg_len(range: Value, count: c_long) -> Result<Option<(c_long, c_lo
  * Value-level helpers                                                *
  * ------------------------------------------------------------------ */
 
-/* The singletons and constructors the glue would otherwise spell as rb_sys
- * constants and raw calls.
- *
- * `nil` and `boolean` are immortal singletons and cannot raise.
- *
- * The constructors DO allocate through Ruby - `float` and `array_new` - so an out-of-memory there RAISES
- * `NoMemoryError`, which unwinds with `longjmp` and not as an `Err`. This is
- * the same OOM the raw `rb_float_new`/`rb_ary_new` they replace could raise.
- * A caller that holds a live Rust destructor across one must run the whole
- * conversion under `protect`, as `bridge::xpath::value_to_ruby` does. */
+/* The singletons the glue would otherwise spell as rb_sys constants. `nil`
+ * and `boolean` are immortal and cannot raise; what allocates is
+ * `bridge::build`'s. */
 
 /// A `Value` from a raw handle the caller already holds - a stored field, or a
 /// producer that still returns `VALUE`. The bridge is the one place that turns
@@ -216,18 +220,6 @@ pub fn boolean(b: bool) -> Value {
     }
 }
 
-/// A fresh Float.
-#[inline]
-pub fn float(n: f64) -> Value {
-    gvl_ruby().float_from_f64(n).as_value()
-}
-
-/// A fresh empty Array.
-#[inline]
-pub fn array_new() -> Value {
-    gvl_ruby().ary_new().as_value()
-}
-
 /// The frame's current receiver.
 ///
 /// magnus hands a method a `&T`, not the object; the registrars that return
@@ -252,33 +244,6 @@ pub fn arg_error(msg: impl Into<std::borrow::Cow<'static, str>>) -> Error {
 #[inline]
 pub fn same_value(a: Value, b: Value) -> bool {
     a.as_raw() == b.as_raw()
-}
-
-/// [`intern`] from a frame that owns something: the `NoMemoryError` a
-/// symbol table that cannot grow raises comes back as `Err` instead of
-/// unwinding past the caller.
-pub fn intern_protected(name: &str) -> Result<ID, Error> {
-    protected(|| Ok(intern(name)))
-}
-
-/// A method `ID`, interned from a UTF-8 name.
-///
-/// UTF-8 explicitly, not `rb_intern`: that one tags the name US-ASCII, so a
-/// non-ASCII name (`é`) became a different symbol from the UTF-8 method Ruby
-/// defined under it, and the method was never found.
-#[inline]
-pub fn intern(name: &str) -> ID {
-    // SAFETY: `name` is `name.len()` valid UTF-8 bytes, read for the call;
-    // interning valid UTF-8 raises only on a symbol table that cannot grow,
-    // and every caller interns at init, from a frame owning nothing, or under
-    // `intern_protected`.
-    unsafe {
-        super::raw::intern3(
-            name.as_ptr() as *const core::ffi::c_char,
-            name.len() as core::ffi::c_long,
-            rb_sys::rb_utf8_encoding(),
-        )
-    }
 }
 
 /// `true`/`false` for Ruby's two boolean singletons, and `None` for anything
@@ -317,57 +282,6 @@ pub fn entry<T>(f: impl FnOnce() -> Result<T, Error>) -> Result<T, Error> {
     }
 }
 
-/// magnus's `protect`, with a Rust panic caught instead of sent into C.
-///
-/// magnus runs the closure inside an `extern "C"` trampoline that `rb_protect`
-/// calls, so a panic in it would hit that boundary and abort the process. This
-/// catches it, lets `rb_protect` return normally - Ruby sees an ordinary `nil`
-/// answer, and every `ensure` it owns runs - and re-raises from HERE, where
-/// only Rust frames are left. See [`crate::caught`].
-///
-/// Every `protect` in the crate goes through this one, which is the point: the
-/// hazard is a property of `rb_protect`, not of any particular closure.
-#[inline]
-pub fn protect<F>(f: F) -> Result<VALUE, Error>
-where
-    F: FnOnce() -> VALUE,
-{
-    let mut latch = crate::caught::PanicLatch::new();
-    let out = magnus_protect(|| latch.guard(rb_sys::Qnil as VALUE, f));
-    latch.resume();
-    out
-}
-
-/// Run `f` - Rust that makes Ruby objects through magnus, whose allocating
-/// calls raise rather than return - under `protect`, for a caller that owns
-/// what a raise would leak: the raise comes back as `Err`, `f`'s own frames
-/// are the only ones it skips, and the caller's owned values drop.
-pub fn protected<T>(f: impl FnOnce() -> Result<T, Error>) -> Result<T, Error> {
-    let mut out = None;
-    protect(|| {
-        out = Some(f());
-        rb_sys::Qnil as VALUE
-    })?;
-    out.unwrap_or_else(|| Err(internal_error("protected body did not finish")))
-}
-
-#[inline]
-/// Run `f` under `rb_protect`, so a raise inside it comes back as `Err`.
-///
-/// `f` is the raw-building body; the VALUE it returns on success is handed
-/// back as a `Value`. A raise is a `longjmp`, which skips the Rust destructors
-/// in every frame it crosses - so `f` must own nothing a raise could leak, or
-/// the caller must accept the leak (the CSS and XPath result builders snapshot
-/// their `Vec` first and free it on the `Err` path).
-pub fn protect_value<F>(f: F) -> Result<Value, Error>
-where
-    F: FnOnce() -> VALUE,
-{
-    // SAFETY: `protect` establishes the setjmp frame the raise unwinds to, and
-    // the VALUE it hands back on success is live.
-    protect(f).map(|raw| unsafe { Value::from_raw(raw) })
-}
-
 /// Tell the GC about `delta` bytes held outside its heap (negative: given
 /// back). Memory Ruby does not allocate is otherwise invisible to it, and never
 /// triggers a collection.
@@ -379,32 +293,25 @@ pub fn report_external_bytes(delta: isize) {
 
 /* ---- exception messages ---- */
 
-unsafe extern "C" fn exception_message_thunk(exc: VALUE) -> VALUE {
-    /* Only C calls (through `raw`'s thin wrappers): nothing here can panic
-     * into the `rb_protect` frame below. The message is the exception's
-     * `mesg`, read as an attribute: calling `#message` would run its class's
-     * Ruby. A message that is not a String is answered as "error". */
-    rb_sys::rb_attr_get(exc, super::raw::intern_cstr(c"mesg".as_ptr()))
-}
-
 /// The longest message kept: this runs on error paths to word another error,
 /// and an exception's message is untrusted input.
 const EXCEPTION_MESSAGE_MAX: usize = 255;
 
 /// `exc`'s message, for wording another error with it: up to the first NUL,
-/// at most [`EXCEPTION_MESSAGE_MAX`] bytes, invalid UTF-8 replaced. "error" if
-/// asking for the message raises or answers with a non-String - this runs on
-/// error paths, so it must not raise itself.
+/// at most [`EXCEPTION_MESSAGE_MAX`] bytes, invalid UTF-8 replaced. "error"
+/// for a message that is not a String - this runs on error paths, so it must
+/// not raise itself.
 pub fn exception_message(exc: VALUE) -> String {
-    let mut state: c_int = 0;
-    // SAFETY: the thunk is only C calls, run under rb_protect; a raise inside
-    // comes back as a nonzero state, which is cleared.
-    let msg = unsafe { rb_sys::rb_protect(Some(exception_message_thunk), exc, &mut state) };
-    if state != 0 {
-        // SAFETY: clearing the error the protected call left, under the GVL.
-        unsafe { rb_sys::rb_set_errinfo(rb_sys::Qnil as VALUE) };
+    /* The message is the exception's `mesg`, read as an attribute: calling
+     * `#message` would run its class's Ruby. A message that is not a String
+     * is answered as "error". */
+    // SAFETY: a NUL-terminated name.
+    let Ok(id) = (unsafe { super::raw::intern_cstr(c"mesg".as_ptr()) }) else {
         return "error".to_owned();
-    }
+    };
+    // SAFETY: `exc` is a live exception; reading an attribute runs no Ruby
+    // and raises nothing.
+    let msg = unsafe { rb_sys::rb_attr_get(exc, id) };
     // SAFETY: `msg` is the live VALUE the call returned.
     let Some(r) = magnus::RString::from_value(unsafe { Value::from_raw(msg) }) else {
         return "error".to_owned();
@@ -417,4 +324,13 @@ pub fn exception_message(exc: VALUE) -> String {
         .unwrap_or(bytes.len())
         .min(EXCEPTION_MESSAGE_MAX);
     String::from_utf8_lossy(&bytes[..n]).into_owned()
+}
+
+/// [`exception_message`] for a magnus error: the Ruby exception's message, or
+/// "error" for one that carries none.
+pub fn error_message(e: &Error) -> String {
+    match e.error_type() {
+        magnus::error::ErrorType::Exception(x) => exception_message(x.as_raw()),
+        _ => "error".to_owned(),
+    }
 }

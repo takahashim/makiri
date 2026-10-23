@@ -32,14 +32,14 @@ pub(crate) fn hash_foreach(
 /// caller's use of them - which allocates - is outside the iteration. The copy runs no Ruby code of the caller's; the
 /// Array holding it is a Ruby object on this frame, so the GC sees it.
 pub(crate) fn each_pair(
-    ruby: &Ruby,
+    _ruby: &Ruby,
     h: RHash,
     mut f: impl FnMut(Value, Value) -> Result<(), Error>,
 ) -> Result<(), Error> {
-    let pairs: RArray = ruby.ary_new_capa(h.len() * 2);
+    let pairs: RArray = crate::bridge::build::ary(h.len() * 2)?;
     hash_foreach(h, |k, v| {
-        pairs.push(k)?;
-        pairs.push(v)
+        crate::bridge::build::push(pairs, k)?;
+        crate::bridge::build::push(pairs, v)
     })?;
     for i in (0..pairs.len()).step_by(2) {
         f(pairs.entry(i as isize)?, pairs.entry(i as isize + 1)?)?;

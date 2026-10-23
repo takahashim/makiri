@@ -200,7 +200,7 @@ impl XPathCtx {
             )
         };
         // SAFETY: the object just wrapped, live on this frame.
-        Ok(unsafe { crate::bridge::ruby::value(obj) })
+        Ok(unsafe { crate::bridge::ruby::value(obj?) })
     }
 
     /// The keepalive Document.
@@ -219,8 +219,7 @@ impl XPathCtx {
             let ev = ruby_verified_text(expr, "XPath expression")?;
             let mut cache = self.cache()?;
             let parsed = cached_ast(&mut cache, self.ctx.limits(), ev);
-            /* Release the borrow before building the exception: that allocates,
-             * and a NoMemoryError there would longjmp past the RefMut. */
+            /* Release the borrow before building the exception. */
             drop(cache);
             let (ast, added) = parsed.map_err(|error| xpath_error(&error))?;
             self.account_cache(added);

@@ -64,14 +64,14 @@ pub fn node_equals(rb_self: Value, other: Value) -> Result<bool, magnus::Error> 
 /// freed-then-reallocated node may reuse an address (the same caveat as
 /// `Nokogiri::XML::Node#pointer_id`). `a.pointer_id == b.pointer_id` iff
 /// `a.eql?(b)`.
-pub fn node_pointer_id(ruby: &Ruby, rb_self: Value) -> Result<Integer, magnus::Error> {
-    crate::bridge::ruby::entry(|| Ok(ruby.integer_from_u64(node_identity(rb_self)? as u64)))
+pub fn node_pointer_id(_ruby: &Ruby, rb_self: Value) -> Result<Value, magnus::Error> {
+    crate::bridge::ruby::entry(|| crate::bridge::build::uint(node_identity(rb_self)? as u64))
 }
 
 /// A stable hash from the node word, so `a == b` implies `a.hash == b.hash`
 /// even across separately-created wrappers. Shares the value with
 /// `#pointer_id`; an HTML and an XML node may share it, which a hash allows.
-pub fn node_hash(ruby: &Ruby, rb_self: Value) -> Result<Integer, magnus::Error> {
+pub fn node_hash(ruby: &Ruby, rb_self: Value) -> Result<Value, magnus::Error> {
     crate::bridge::ruby::entry(|| node_pointer_id(ruby, rb_self))
 }
 

@@ -6,37 +6,29 @@
 use core::ffi::{c_char, c_long};
 
 use crate::bridge::ruby::makiri_error;
-/* Not magnus's: ours catches a panic before `rb_protect`'s C frame. */
-use magnus::{Error, RString, Value};
+use magnus::{value::ReprValue, Error, RString, Value};
 use rb_sys::{StableApiDefinition, VALUE};
 
 /* ---- assembling Ruby Strings ---- */
 
-/// A UTF-8 String holding a copy of `bytes`. Ruby's allocator raises
-/// `NoMemoryError`, a longjmp past every Rust frame up to the nearest
-/// `rb_protect`, so this is for a frame that owns nothing a skipped `Drop`
-/// would leak; a frame that does uses [`utf8_str_protected`].
-/// `rake unsafe:boundaries` holds the glue to that.
+/// A UTF-8 String holding a copy of `bytes`; a failed allocation is `Err`
+/// (`NoMemoryError`), as `raw`'s every call is.
 ///
 /// `bytes` must be valid UTF-8 (the String is tagged so without a check):
 /// everything a document lends is, by the text-input contract, and so is
 /// every checked view. Bytes that were not would make a wrong String, never
 /// a memory error.
-pub fn utf8_str(bytes: &[u8]) -> Value {
-    // SAFETY: valid UTF-8 by this function's contract; the String copies it.
-    unsafe { crate::bridge::ruby::value(ruby_str_from_utf8(bytes)) }
+pub fn utf8_str(bytes: &[u8]) -> Result<Value, Error> {
+    utf8_rstring(bytes).map(|s| s.as_value())
 }
 
-/// [`utf8_str`] for a frame that owns what a raise would leak (a serializer's
-/// output buffer, an argument's copy): the allocator's raise comes back as
-/// `Err`, and the caller's owned values drop.
-pub fn utf8_str_protected(bytes: &[u8]) -> Result<RString, Error> {
+/// [`utf8_str`] as an `RString`.
+pub fn utf8_rstring(bytes: &[u8]) -> Result<RString, Error> {
     if c_long::try_from(bytes.len()).is_err() {
         return Err(makiri_error("string too large"));
     }
-    // SAFETY: valid UTF-8 by `utf8_str`'s contract; `protect_value` turns the
-    // allocator's raise into `Err`.
-    let v = crate::bridge::ruby::protect_value(|| unsafe { ruby_str_from_utf8(bytes) })?;
+    // SAFETY: valid UTF-8 by `utf8_str`'s contract; the String copies it.
+    let v = unsafe { crate::bridge::ruby::value(ruby_str_from_utf8(bytes)?) };
     RString::from_value(v)
         .ok_or_else(|| crate::bridge::ruby::internal_error("the allocator made no String"))
 }
@@ -52,10 +44,7 @@ pub fn utf8_str_protected(bytes: &[u8]) -> Result<RString, Error> {
 /// that were not would make a wrong String, not a memory error.
 ///
 /// # Safety
-/// Allocating the String RAISES on failure (`raw::utf8_str_new`), a longjmp
-/// over every frame up to the nearest `rb_protect`: call it under
-/// `bridge::ruby::protect`, or from a frame that owns nothing a skipped
-/// `Drop` would leak. The returned VALUE is unrooted until stored or returned.
+/// The returned VALUE is unrooted until stored or returned.
 pub unsafe fn ruby_str_from_slices<'a>(
     slices: impl Iterator<Item = &'a [u8]>,
     total: usize,
@@ -63,7 +52,7 @@ pub unsafe fn ruby_str_from_slices<'a>(
     if total > c_long::MAX as usize {
         return Err(makiri_error("text too large to assemble"));
     }
-    let str = crate::bridge::raw::utf8_str_new(core::ptr::null(), total as c_long);
+    let str = crate::bridge::raw::utf8_str_new(core::ptr::null(), total as c_long)?;
     /* We just created it and hold the only reference, so writing through the
      * buffer is sound - this is what RSTRING_PTR gives the C. It has room for
      * exactly `total` bytes, and nothing else runs while `out` is held. */
@@ -89,6 +78,16 @@ pub unsafe fn ruby_str_from_slices<'a>(
     Ok(str)
 }
 
+/// [`ruby_str_from_slices`] as a `Value`: `slices` are valid UTF-8 (a
+/// document's own text, by the text-input contract), totalling `total` bytes.
+pub fn utf8_str_from_slices<'a>(
+    slices: impl Iterator<Item = &'a [u8]>,
+    total: usize,
+) -> Result<Value, Error> {
+    // SAFETY: the String is returned at once, rooted by the caller.
+    unsafe { ruby_str_from_slices(slices, total).map(|v| crate::bridge::ruby::value(v)) }
+}
+
 /// A UTF-8 String copied from `bytes`.
 ///
 /// The DOM readers hand over a slice the document lends them and want a String
@@ -99,10 +98,8 @@ pub unsafe fn ruby_str_from_slices<'a>(
 /// error.
 ///
 /// # Safety
-/// Allocating the String RAISES on failure (`raw::utf8_str_new`), as an
-/// over-long `bytes` does: call it under `bridge::ruby::protect`, or from a
-/// frame that owns nothing a skipped `Drop` would leak.
-pub unsafe fn ruby_str_from_utf8(bytes: &[u8]) -> VALUE {
+/// The returned VALUE is unrooted until stored or returned.
+pub unsafe fn ruby_str_from_utf8(bytes: &[u8]) -> Result<VALUE, Error> {
     /* A length `c_long` cannot hold (32 bits on Windows) is passed as -1,
      * which Ruby refuses with ArgumentError - a raise, as an allocation
      * failure already is - rather than truncated into a shorter String. */
@@ -123,7 +120,7 @@ pub unsafe fn ruby_str_from_utf8(bytes: &[u8]) -> VALUE {
 /// Safe to call with any bytes: `rb_enc_interned_str` copies them, and bytes
 /// that were not UTF-8 would make a wrong String, never a memory error. Every
 /// caller passes a document's name, which is UTF-8 by the text-input contract.
-pub fn dom_name_str(bytes: &[u8]) -> Value {
+pub fn dom_name_str(bytes: &[u8]) -> Result<Value, Error> {
     /* A length `c_long` cannot hold (32 bits on Windows) would be truncated,
      * or turn negative, which `rb_enc_interned_str` does not check: refused
      * as `utf8_str` refuses it, with ArgumentError. */
@@ -133,11 +130,12 @@ pub fn dom_name_str(bytes: &[u8]) -> Value {
     // SAFETY: a slice's pointer and length, read for the call; the encoding
     // is Ruby's static UTF-8 one. The result is a live String.
     unsafe {
-        crate::bridge::ruby::value(crate::bridge::raw::enc_interned_str(
+        crate::bridge::raw::enc_interned_str(
             bytes.as_ptr() as *const c_char,
             len,
             rb_sys::rb_utf8_encoding(),
-        ))
+        )
+        .map(|v| crate::bridge::ruby::value(v))
     }
 }
 
@@ -218,8 +216,8 @@ pub fn str_after_read<G>(
             Some(lifted) => lifted,
             None => {
                 let made = match kind {
-                    StrKind::Utf8 => utf8_str_protected(b).map(magnus::value::ReprValue::as_value),
-                    StrKind::DomName => crate::bridge::ruby::protected(|| Ok(dom_name_str(b))),
+                    StrKind::Utf8 => utf8_str(b),
+                    StrKind::DomName => dom_name_str(b),
                 };
                 return made.map(Some);
             }
@@ -227,7 +225,7 @@ pub fn str_after_read<G>(
     };
     drop(read);
     Ok(Some(match kind {
-        StrKind::Utf8 => utf8_str(lifted.as_slice()),
-        StrKind::DomName => dom_name_str(lifted.as_slice()),
+        StrKind::Utf8 => utf8_str(lifted.as_slice())?,
+        StrKind::DomName => dom_name_str(lifted.as_slice())?,
     }))
 }

@@ -364,10 +364,10 @@ impl From<DocKind> for Kind {
 /// A Document wrapper allocated before the content it will own, and the only
 /// way a Document gets that content.
 ///
-/// The order is the point. Allocating the Ruby wrapper can raise
-/// (`NoMemoryError`), and a raise `longjmp`s past Rust destructors, so a parse
-/// result held at that moment would leak. So the wrapper is made FIRST - while
-/// nothing needs freeing - and the parsed handle goes in afterwards through
+/// The order is the point. Allocating the Ruby wrapper can fail
+/// (`NoMemoryError`, as `Err`), and a parse result is expensive to have made
+/// for nothing. So the wrapper is made FIRST - before the parse - and the
+/// parsed handle goes in afterwards through
 /// [`install`](Self::install), which also reports the arena to the GC. That
 /// report is not optional (see `account_document`), and the parse entries used
 /// to make it by hand, each one a place to forget it.
@@ -384,7 +384,7 @@ pub struct DocumentShell {
 }
 
 impl DocumentShell {
-    pub fn new(kind: DocKind) -> DocumentShell {
+    pub fn new(kind: DocKind) -> Result<DocumentShell, Error> {
         let (klass, ty) = match kind {
             DocKind::Html => (crate::init::CLASS_HTML_DOCUMENT.raw(), &HTML_DOC_TYPE),
             DocKind::Xml => (crate::init::CLASS_XML_DOCUMENT.raw(), &XML_DOC_TYPE),
@@ -393,7 +393,7 @@ impl DocumentShell {
          * conservative stack scan pins it across the wrap's allocation and the
          * store closure does not allocate (an allocation there could raise
          * NoMemoryError while the caller holds a live resource). */
-        let errors = crate::bridge::ruby::array_new();
+        let errors = magnus::value::ReprValue::as_value(crate::bridge::build::ary(0)?);
         // SAFETY: a fresh wrapper; the store closure only moves a live VALUE in.
         let obj = unsafe {
             ty.wrap(
@@ -408,11 +408,11 @@ impl DocumentShell {
                 },
                 |d, store| d.errors = store.hold(errors),
             )
-        };
+        }?;
         // SAFETY: a live object of ours, not yet handed out; hiding clears its
         // class field and raises nothing.
         unsafe { rb_sys::rb_obj_hide(obj) };
-        DocumentShell { obj, klass }
+        Ok(DocumentShell { obj, klass })
     }
 
     /// Give the HTML Document its parsed document - the GC owns it from here -
@@ -639,7 +639,7 @@ pub(in crate::bridge) fn wrap_cached(
                 document: Held::empty(),
             },
             |nd, store| nd.document = store.hold(document),
-        ))
+        )?)
     };
     /* After the wrap, so the VALUE exists, into the room reserved above - no
      * allocation. Were it to fail anyway, `fresh` is dropped unseen rather

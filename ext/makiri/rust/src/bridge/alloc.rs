@@ -20,31 +20,35 @@ pub unsafe fn free<T>(p: *mut T) {
 }
 
 /// `ruby_xrealloc2`: resize a block to `n` elements of `T`, with the multiply
-/// checked by Ruby (`RangeError`/`NoMemoryError` on failure).
+/// checked by Ruby; a failure (`NoMemoryError`, `ArgumentError`) is `Err`, the
+/// block untouched.
 ///
 /// # Safety
 /// `p` must be null or a live block from Ruby's allocator, and `n * size_of::<T>()`
 /// must describe the new size.
 #[inline]
-pub unsafe fn realloc_array<T>(p: *mut T, n: usize) -> *mut T {
+pub unsafe fn realloc_array<T>(p: *mut T, n: usize) -> Result<*mut T, magnus::Error> {
     // SAFETY: the caller's contract; `ruby_xrealloc2` checks the multiply.
-    unsafe { super::raw::xrealloc2(p as *mut c_void, n, core::mem::size_of::<T>()) as *mut T }
+    unsafe { super::raw::xrealloc2(p as *mut c_void, n, core::mem::size_of::<T>()) }
+        .map(|p| p as *mut T)
 }
 
-/// Why a [`RubyVec`] push was refused: the next capacity does not fit the
-/// element size. Allocation failure itself raises `NoMemoryError` inside
-/// Ruby.
+/// Why a [`RubyVec`] could not grow.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CapacityOverflow;
+pub enum GrowError {
+    /// The next capacity does not fit the element size.
+    Overflow,
+    /// Ruby's allocator raised (`NoMemoryError`); the array is unchanged.
+    NoMemory,
+}
 
 /// A growable array of `Copy` elements held in Ruby's allocator.
 ///
 /// Ruby's rather than Rust's on purpose: `ruby_xrealloc2` keeps the buffer
 /// GC-accounted, so a large array contributes to the pressure that decides
 /// when a GC runs, and it raises `NoMemoryError` instead of returning NULL,
-/// so there is no allocation-failure branch to get wrong. That raise is a
-/// longjmp, so a push belongs under `protect` unless the caller owns nothing
-/// that a skipped `Drop` would leak.
+/// and that raise comes back as [`GrowError::NoMemory`] (`raw`'s calls are
+/// protected).
 ///
 /// The one place the bridge spells out a Ruby-allocated buffer: its users
 /// (`NodeSet`'s node array) are safe code over this.
@@ -104,30 +108,30 @@ impl<T: Copy> RubyVec<T> {
     }
 
     /// Make room for `n` elements in one allocation, so the pushes that
-    /// follow cannot reallocate - and so cannot raise. Raises `NoMemoryError`
-    /// inside Ruby when the memory is not there.
-    pub fn reserve(&mut self, n: usize) {
+    /// follow cannot reallocate.
+    pub fn reserve(&mut self, n: usize) -> Result<(), GrowError> {
         if n > self.cap {
-            self.grow_to(n);
+            self.grow_to(n)?;
         }
+        Ok(())
     }
 
     /// Reallocate to exactly `cap` elements.
-    fn grow_to(&mut self, cap: usize) {
+    fn grow_to(&mut self, cap: usize) -> Result<(), GrowError> {
         // SAFETY: `ptr` is null or a live Ruby-allocated block of `self.cap`
         // elements; `realloc_array` reallocates it and checks the multiply.
-        self.ptr = unsafe { realloc_array(self.ptr, cap) };
+        self.ptr = unsafe { realloc_array(self.ptr, cap) }.map_err(|_| GrowError::NoMemory)?;
         self.cap = cap;
+        Ok(())
     }
 
     /// Append one element, growing geometrically (`falloc::grow_capacity`).
-    /// `Err` only when the next capacity does not fit the element size.
-    pub fn push(&mut self, item: T) -> Result<(), CapacityOverflow> {
+    pub fn push(&mut self, item: T) -> Result<(), GrowError> {
         if self.len == self.cap {
             let new_cap =
                 crate::falloc::grow_capacity(self.cap, self.len + 1, core::mem::size_of::<T>())
-                    .ok_or(CapacityOverflow)?;
-            self.grow_to(new_cap);
+                    .ok_or(GrowError::Overflow)?;
+            self.grow_to(new_cap)?;
         }
         // SAFETY: `len < cap` after the growth above, so the slot is inside
         // the live block.

@@ -634,7 +634,7 @@ pub fn parse_xml_document(source: Value, limits: ParseLimits) -> Result<Value, E
     /* The wrapper first, while nothing needs freeing (see DocumentShell): its
      * allocation can raise, and the copy below is this frame's to free. The
      * decoded String is a local, so the stack scan keeps it across it. */
-    let shell = DocumentShell::new(DocKind::Xml);
+    let shell = DocumentShell::new(DocKind::Xml)?;
     let src = crate::bridge::string::ruby_string_bytes(decoded)?;
 
     /* Ruby-free from here: only the copied bytes and the limits cross. */
@@ -664,14 +664,14 @@ pub fn document_internal_subset(rb_self: Value) -> Result<Option<Value>, Error> 
 pub fn copy_xml_document(document: Value) -> Result<Value, Error> {
     /* The wrapper first, while nothing needs freeing - see DocumentShell. The
      * copy then reads `document` and runs no Ruby. */
-    let shell = DocumentShell::new(DocKind::Xml);
+    let shell = DocumentShell::new(DocKind::Xml)?;
     let arena = crate::xml::mutate::copy_document(&*xml_read(&document)?).map_err(xml_mut_error)?;
     Ok(shell.install_xml(arena))
 }
 
 /// A fresh, empty XML Document: an arena holding a DOCUMENT node and no root.
 pub fn new_empty_xml_document() -> Result<Value, Error> {
-    let shell = DocumentShell::new(DocKind::Xml);
+    let shell = DocumentShell::new(DocKind::Xml)?;
     let arena =
         XmlDoc::create(None).map_err(|_| makiri_error("out of memory allocating XML document"))?;
     Ok(shell.install_xml(arena))

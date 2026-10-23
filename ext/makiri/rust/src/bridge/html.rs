@@ -36,8 +36,8 @@ use crate::html_dom::AdapterOom;
 /// building the text index (`HtmlParsed::note_text_walk`); one outside it (a
 /// fragment, a detached subtree), which the index would not serve, is not.
 ///
-/// Made under `protect`, with the read and the slice list held: a raise past
-/// this frame would leave the one counted and leak the other.
+/// Made with the read and the slice list held; a failed allocation is `Err`,
+/// and both drop.
 fn subtree_text(read: &HtmlRead<'_>, node: HtmlNode<'_>) -> Result<Value, Error> {
     use crate::falloc::VecPush;
     let texts = || {
@@ -57,21 +57,13 @@ fn subtree_text(read: &HtmlRead<'_>, node: HtmlNode<'_>) -> Result<Value, Error>
     if collected && in_tree {
         read.parsed().note_text_walk(walked);
     }
-    crate::bridge::ruby::protected(|| {
-        // SAFETY: valid UTF-8 by the text-input contract (the document's own
-        // text, borrowed for the copy); under `protected`.
-        let built = unsafe {
-            if collected {
-                let total = slices.iter().map(|s| s.len()).sum();
-                crate::bridge::string::ruby_str_from_slices(slices.iter().copied(), total)
-            } else {
-                let total = texts().map(<[u8]>::len).sum();
-                crate::bridge::string::ruby_str_from_slices(texts(), total)
-            }
-        }?;
-        // SAFETY: the String just built, live and on this frame.
-        Ok(unsafe { value(built) })
-    })
+    if collected {
+        let total = slices.iter().map(|s| s.len()).sum();
+        crate::bridge::string::utf8_str_from_slices(slices.iter().copied(), total)
+    } else {
+        let total = texts().map(<[u8]>::len).sum();
+        crate::bridge::string::utf8_str_from_slices(texts(), total)
+    }
 }
 
 /// The 1-based source line for `node`, or `None` when unknown.
@@ -295,7 +287,7 @@ impl HtmlView<'_> {
         };
         let Some(raw) = target else {
             drop(self);
-            return Ok(utf8_str(b""));
+            return utf8_str(b"");
         };
         let node = self.read.node(raw);
         if !matches!(
@@ -309,7 +301,10 @@ impl HtmlView<'_> {
                 crate::bridge::string::StrKind::Utf8,
                 |v| v.read.node(raw).own_text(),
             )?;
-            return Ok(text.unwrap_or_else(|| utf8_str(b"")));
+            return match text {
+                Some(text) => Ok(text),
+                None => utf8_str(b""),
+            };
         }
         let p = self.read.parsed();
         /* A build that failed closed, or one not due yet: walk. */
@@ -319,18 +314,14 @@ impl HtmlView<'_> {
         };
         if let Some(lifted) = Lifted::of_slices(run.iter(), run.total()) {
             drop(self);
-            return Ok(utf8_str(lifted.as_slice()));
+            return utf8_str(lifted.as_slice());
         }
-        crate::bridge::ruby::protected(|| {
-            // SAFETY: valid UTF-8 by the text-input contract (the slices are
-            // this document's text, borrowed from its index for the copy);
-            // under `protected`, so the raise its allocation can make comes
-            // back as Err.
-            let built =
-                unsafe { crate::bridge::string::ruby_str_from_slices(run.iter(), run.total()) }?;
-            // SAFETY: the String just built, live and on this frame.
-            Ok(unsafe { value(built) })
-        })
+        // SAFETY: valid UTF-8 by the text-input contract (the slices are this
+        // document's text, borrowed from its index for the copy).
+        let built =
+            unsafe { crate::bridge::string::ruby_str_from_slices(run.iter(), run.total()) }?;
+        // SAFETY: the String just built, live and on this frame.
+        Ok(unsafe { value(built) })
     }
 
     /// The receiver's node. Unchecked: the receiver's key was minted from a

@@ -74,7 +74,7 @@ fn each(ruby: &Ruby, s: &NodeSet) -> Result<Value, Error> {
          * object both to return and to enumeratorize. */
         let this = crate::bridge::ruby::current_receiver()?;
         if !ruby.block_given() {
-            return Ok(this.enumeratorize("each", ()).as_value());
+            return crate::bridge::build::enumerator(this, "each");
         }
         /* By index, not over a copy: a set is never changed once filled, and
          * a copy would be owned by this frame - which an Enumerator over

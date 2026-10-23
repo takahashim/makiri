@@ -35,8 +35,8 @@ fn css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Value, Error> {
         let selector = args.selector;
         let sv = selector_text(selector)?;
         /* Read once the namespaces are converted (their Hash is Ruby), and
-         * held while the set is built - under `protect`, in `node_set_from`:
-         * the matched nodes borrow it. */
+         * held while the set is built (`node_set_from`): the matched nodes
+         * borrow it. */
         let found = args.with_namespaces(|ns| {
             let view = this.read()?;
             let matched = css_cache::with_compiled(sv.as_bytes(), |groups, scratch| {

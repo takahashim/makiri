@@ -33,16 +33,17 @@ fn parse_limits(ruby: &Ruby, h: RHash) -> Result<ParseLimits, Error> {
         return Ok(limits);
     }
 
-    let key = ruby.sym_new("max_bytes");
+    let key = crate::bridge::build::sym("max_bytes")?;
     /* The keys are read from the Hash itself (`hash::each_pair`), not
      * through a `keys` a subclass can redefine. */
     crate::glue::hash::each_pair(ruby, h, |k, _| {
-        if k.eql(key)? {
+        /* By identity: `eql?` would be the caller's key's method. */
+        if crate::bridge::ruby::same_value(k, key) {
             return Ok(());
         }
         Err(Error::new(
             ruby.exception_arg_error(),
-            format!("unknown keyword: {}", k.inspect()),
+            format!("unknown keyword: {}", crate::bridge::ruby::describe(k)),
         ))
     })?;
 

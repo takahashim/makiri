@@ -10,11 +10,11 @@
 //! `Document::name_parts` / `doctype_ids`: the arena stores a DOCTYPE's ids in
 //! the name fields, and only those two know it.
 //!
-//! The arena is reached through `XmlSelf::read`, a guard - a counted borrow a
-//! raise would leave counted - so none is held across an allocation: a node is
-//! wrapped after the read (`XmlView::wrap`), a String is made of bytes lifted
+//! The arena is reached through `XmlSelf::read`, a guard. A node is wrapped
+//! after the read (`XmlView::wrap`), a short String is made of bytes lifted
 //! out of it (`str_after_read`), and what must be built while it is held - a
-//! NodeSet, an Array, a joined text - is built under `protect`. The
+//! NodeSet, an Array, a joined text - is built with it held; every allocation
+//! returns `Err` on failure (`bridge::raw`), so the guard drops either way. The
 //! attribute-name lookups that need a Ruby string's bytes live in
 //! `bridge::xml::find_attribute`.
 
@@ -23,7 +23,6 @@
 use magnus::{prelude::*, Error, Ruby, Value};
 
 use super::{wrap, XmlSelf};
-use crate::bridge::ruby::protected;
 use crate::bridge::string::{str_after_read, utf8_str, StrKind};
 use crate::child_index;
 use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId};
@@ -39,7 +38,7 @@ fn is_element(d: &XmlDoc, id: NodeId) -> bool {
 
 /* ---- name ---- */
 
-pub fn name(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
+pub fn name(_ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let name = str_after_read(this.read()?, StrKind::Utf8, |d| {
             let id = d.id;
@@ -56,7 +55,10 @@ pub fn name(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
                 _ => b"document",
             })
         })?;
-        Ok(name.unwrap_or_else(|| ruby.str_new("").as_value()))
+        match name {
+            Some(name) => Ok(name),
+            None => utf8_str(b""),
+        }
     })
 }
 
@@ -140,9 +142,9 @@ pub fn dtd_system_id(_ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error
 /// the concatenated text of every Text/CDATA descendant.
 ///
 /// Measured first and built into one Ruby String of that size, so the copy is
-/// Ruby's allocation - a failure is `NoMemoryError`, not a Rust abort - made
-/// under `protect`, since the texts borrow the read.
-pub fn content(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
+/// Ruby's allocation - a failure is `NoMemoryError` (as `Err`), not a Rust
+/// abort.
+pub fn content(_ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let d = this.read()?;
         let id = this.id;
@@ -157,7 +159,10 @@ pub fn content(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
             )
         ) {
             let value = str_after_read(d, StrKind::Utf8, |d| Some(d.value(d.id)))?;
-            return Ok(value.unwrap_or_else(|| ruby.str_new("").as_value()));
+            return match value {
+                Some(value) => Ok(value),
+                None => utf8_str(b""),
+            };
         }
 
         let texts = || {
@@ -169,13 +174,7 @@ pub fn content(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
         let Some(total) = total else {
             return Err(crate::bridge::ruby::makiri_error("text content too large"));
         };
-        protected(|| {
-            let out = ruby.str_with_capacity(total);
-            for t in texts() {
-                out.cat(t);
-            }
-            Ok(out.as_value())
-        })
+        crate::bridge::string::utf8_str_from_slices(texts(), total)
     })
 }
 
@@ -324,32 +323,26 @@ pub fn attribute_nodes(this: XmlSelf) -> Result<Value, Error> {
 }
 
 /// `#keys` -> the attribute names, in document order.
-pub fn keys(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
+pub fn keys(_ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let d = this.read()?;
-        /* The names borrow the read, so the Array is built under `protect`. */
-        protected(|| {
-            let ary = ruby.ary_new();
-            for at in attrs_of(&d, this.id) {
-                ary.push(utf8_str(d.qname(at)))?;
-            }
-            Ok(ary.as_value())
-        })
+        let ary = crate::bridge::build::ary(0)?;
+        for at in attrs_of(&d, this.id) {
+            crate::bridge::build::push(ary, utf8_str(d.qname(at))?)?;
+        }
+        Ok(ary.as_value())
     })
 }
 
 /// `#values` -> the attribute values, in document order.
-pub fn values(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
+pub fn values(_ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let d = this.read()?;
-        /* The values borrow the read, so the Array is built under `protect`. */
-        protected(|| {
-            let ary = ruby.ary_new();
-            for at in attrs_of(&d, this.id) {
-                ary.push(utf8_str(d.value(at)))?;
-            }
-            Ok(ary.as_value())
-        })
+        let ary = crate::bridge::build::ary(0)?;
+        for at in attrs_of(&d, this.id) {
+            crate::bridge::build::push(ary, utf8_str(d.value(at))?)?;
+        }
+        Ok(ary.as_value())
     })
 }
 

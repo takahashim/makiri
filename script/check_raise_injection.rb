@@ -20,8 +20,10 @@
 #   - no document it touched is left borrowed (`Makiri.__borrowed?`);
 #   - every such document still reads and edits.
 #
-# What it cannot reach: magnus's own allocating calls (`ary_new`, `str_new`,
-# `Array#push`, ...), which do not go through `bridge::raw`.
+# Every raising call of `bridge::raw` is protected now, so each injected raise
+# comes back as `Err`; the sweep checks that each such `Err` is answered
+# cleanly. magnus's own allocating calls are banned in the glue (clippy.toml),
+# so the Arrays, Hashes and numbers a method builds go through `raw` too.
 #
 #   bundle exec rake oom                                     # rebuild + both sweeps
 #   bundle exec ruby -Ilib script/check_raise_injection.rb   # this sweep, current build

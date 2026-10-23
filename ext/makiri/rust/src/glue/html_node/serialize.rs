@@ -18,7 +18,7 @@ use crate::init::MOD_HTML_NODE_METHODS;
 
 /// The optional `pretty:` keyword.
 fn layout_opt(ruby: &Ruby, args: &[Value]) -> Result<Layout, Error> {
-    Ok(if Kwargs::scan(args)?.flag(ruby, "pretty") {
+    Ok(if Kwargs::scan(args)?.flag(ruby, "pretty")? {
         Layout::Pretty
     } else {
         Layout::Plain
@@ -33,14 +33,14 @@ fn layout_opt(ruby: &Ruby, args: &[Value]) -> Result<Layout, Error> {
 /// XML Attr does; the serializer itself has no markup for one, and refused.
 fn render(node: HtmlNode<'_>, scope: Scope, layout: Layout) -> Result<RString, Error> {
     if node.node_type() == NodeType::Attribute {
-        return crate::bridge::string::utf8_str_protected(b"");
+        return crate::bridge::string::utf8_rstring(b"");
     }
     let buf =
         serialize(node, scope, layout).ok_or_else(|| makiri_error("HTML serialization failed"))?;
     /* The serializer emits UTF-8, so the String is tagged UTF-8 rather than
      * built as binary and re-tagged; protected, so a failed allocation drops
      * `buf` rather than leaking it. */
-    crate::bridge::string::utf8_str_protected(buf.as_slice())
+    crate::bridge::string::utf8_rstring(buf.as_slice())
 }
 
 /// Outer HTML: the node itself plus its descendants. `pretty: true` indents.
@@ -57,7 +57,7 @@ fn to_html(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<RString, Error
         } else {
             Scope::Outer
         };
-        /* The String is made under `protect`, so the read may stay. */
+        /* A failed allocation of the String is `Err`, so the read may stay. */
         render(node, scope, layout)
     })
 }

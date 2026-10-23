@@ -13,6 +13,7 @@
 use magnus::{prelude::*, Error, RArray, RClass, RHash, Ruby, Value};
 
 use super::XmlSelf;
+use crate::bridge::build::{ary, aset, hash, push};
 use crate::bridge::string::utf8_str;
 use crate::init::MOD_XML;
 use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId};
@@ -22,17 +23,23 @@ fn ns_class() -> Result<RClass, Error> {
     MOD_XML.defined()?.const_get("Namespace")
 }
 
-/// `Makiri::XML::Namespace.new(prefix, href)`: Ruby code, which may edit the
-/// document - so no borrow of its arena may be held across the call.
+/// `Makiri::XML::Namespace.new(prefix, href)`: Makiri's own Data class, but
+/// Ruby code all the same, so no borrow of the arena is held across the call.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "Makiri's own Data class; one of the two calls USER_CODE_API allows"
+)]
 fn new_ns(class: RClass, prefix: Value, href: Value) -> Result<Value, Error> {
     class.funcall("new", (prefix, href))
 }
 
 /// A prefix as Ruby sees it: nil for none (the default namespace), else the
 /// String.
-fn prefix_value(ruby: &Ruby, p: Option<&[u8]>) -> Value {
-    p.filter(|p| !p.is_empty())
-        .map_or_else(|| ruby.qnil().as_value(), utf8_str)
+fn prefix_value(ruby: &Ruby, p: Option<&[u8]>) -> Result<Value, Error> {
+    match p.filter(|p| !p.is_empty()) {
+        Some(p) => utf8_str(p),
+        None => Ok(ruby.qnil().as_value()),
+    }
 }
 
 /// The xmlns declarations among `id`'s attributes, as (declaring attribute,
@@ -52,14 +59,16 @@ fn declarations(d: &XmlDoc, id: NodeId) -> impl Iterator<Item = (NodeId, &[u8], 
 pub fn namespace(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         /* Both copied out before the call, so the arena is not lent across
-         * it: made under `protect`, since the bytes borrow the read. */
+         * it. */
         let pair = {
             let d = this.read()?;
-            crate::bridge::ruby::protected(|| {
-                Ok(d.name_parts(this.id)
-                    .and_then(|n| Some((n.prefix, n.ns_uri?)))
-                    .map(|(p, u)| (prefix_value(ruby, p), utf8_str(u))))
-            })?
+            match d
+                .name_parts(this.id)
+                .and_then(|n| Some((n.prefix, n.ns_uri?)))
+            {
+                Some((p, u)) => Some((prefix_value(ruby, p)?, utf8_str(u)?)),
+                None => None,
+            }
         };
         let Some((prefix, uri)) = pair else {
             return Ok(ruby.qnil().as_value());
@@ -77,21 +86,19 @@ pub fn namespace_definitions(ruby: &Ruby, this: XmlSelf) -> Result<RArray, Error
          * a Vec, so the GC sees them. */
         let pairs = {
             let d = this.read()?;
-            crate::bridge::ruby::protected(|| {
-                let pairs = ruby.ary_new();
-                for (_, p, u) in declarations(&d, this.id) {
-                    pairs.push(prefix_value(ruby, Some(p)))?;
-                    pairs.push(utf8_str(u))?;
-                }
-                Ok(pairs)
-            })?
+            let pairs = ary(0)?;
+            for (_, p, u) in declarations(&d, this.id) {
+                push(pairs, prefix_value(ruby, Some(p))?)?;
+                push(pairs, utf8_str(u)?)?;
+            }
+            pairs
         };
         let class = ns_class()?;
-        let arr = ruby.ary_new_capa(pairs.len() / 2);
+        let arr = ary(pairs.len() / 2)?;
         for i in (0..pairs.len()).step_by(2) {
             let (prefix, uri): (Value, Value) =
                 (pairs.entry(i as isize)?, pairs.entry(i as isize + 1)?);
-            arr.push(new_ns(class, prefix, uri)?)?;
+            push(arr, new_ns(class, prefix, uri)?)?;
         }
         Ok(arr)
     })
@@ -99,43 +106,39 @@ pub fn namespace_definitions(ruby: &Ruby, this: XmlSelf) -> Result<RArray, Error
 
 /// `#namespaces` - every declaration in scope here, keyed by the declaring
 /// attribute's name. The inner scope wins because the first binding seen is kept.
-pub fn namespaces(ruby: &Ruby, this: XmlSelf) -> Result<RHash, Error> {
+pub fn namespaces(_ruby: &Ruby, this: XmlSelf) -> Result<RHash, Error> {
     crate::bridge::ruby::entry(|| {
         let d = this.read()?;
-        /* The names borrow the read, so the Hash is built under `protect`;
-         * its keys are Strings, so building it runs no Ruby of the caller's. */
-        crate::bridge::ruby::protected(|| {
-            let h = ruby.hash_new();
-            for id in core::iter::successors(Some(this.id), |&n| d.parent(n)) {
-                for (at, _, u) in declarations(&d, id) {
-                    let key = utf8_str(d.qname(at));
-                    if h.get(key).is_none() {
-                        h.aset(key, utf8_str(u))?;
-                    }
+        /* Built with the read held: its keys are Strings, so building it runs
+         * no Ruby of the caller's, and a failed allocation is `Err`. */
+        let h = hash()?;
+        for id in core::iter::successors(Some(this.id), |&n| d.parent(n)) {
+            for (at, _, u) in declarations(&d, id) {
+                let key = utf8_str(d.qname(at))?;
+                if h.get(key).is_none() {
+                    aset(h, key, utf8_str(u)?)?;
                 }
             }
-            Ok(h)
-        })
+        }
+        Ok(h)
     })
 }
 
 /// `#collect_namespaces` - every declaration anywhere in the document, in
 /// document order, so a later one with the same name wins.
-pub fn collect_namespaces(ruby: &Ruby, this: XmlSelf) -> Result<RHash, Error> {
+pub fn collect_namespaces(_ruby: &Ruby, this: XmlSelf) -> Result<RHash, Error> {
     crate::bridge::ruby::entry(|| {
         let d = this.read()?;
         let top = core::iter::successors(Some(this.id), |&n| d.parent(n))
             .last()
             .unwrap_or(this.id);
-        /* As `namespaces`: built under `protect`, the read held. */
-        crate::bridge::ruby::protected(|| {
-            let h = ruby.hash_new();
-            for id in core::iter::successors(Some(top), |&n| d.preorder_next(top, n)) {
-                for (at, _, u) in declarations(&d, id) {
-                    h.aset(utf8_str(d.qname(at)), utf8_str(u))?;
-                }
+        /* As `namespaces`: built with the read held. */
+        let h = hash()?;
+        for id in core::iter::successors(Some(top), |&n| d.preorder_next(top, n)) {
+            for (at, _, u) in declarations(&d, id) {
+                aset(h, utf8_str(d.qname(at))?, utf8_str(u)?)?;
             }
-            Ok(h)
-        })
+        }
+        Ok(h)
     })
 }

@@ -18,13 +18,15 @@ use crate::xml::serialize::{self as xml_serialize, Failure};
 fn to_xml_opts(ruby: &Ruby, args: &[Value]) -> Result<(i32, Value), Error> {
     let kw = Kwargs::scan(args)?;
     let mut width = 0i32;
-    if kw.flag(ruby, "pretty") {
+    if kw.flag(ruby, "pretty")? {
         width = 2;
     }
-    if let Some(iv) = kw.value(ruby, "indent") {
+    if let Some(iv) = kw.value(ruby, "indent")? {
         width = i32::try_convert(iv)?.max(0);
     }
-    let enc = kw.value(ruby, "encoding").unwrap_or(ruby.qnil().as_value());
+    let enc = kw
+        .value(ruby, "encoding")?
+        .unwrap_or(ruby.qnil().as_value());
     Ok((width, enc))
 }
 
@@ -114,7 +116,7 @@ fn to_xml(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Er
         let buf = out.map_err(|f| failure_error(f, "serialize"))?;
         /* Protected: a failed allocation drops `buf` (and `enc_name`) rather
          * than leaking them. */
-        let mut str = crate::bridge::string::utf8_str_protected(buf.as_slice())?.as_value();
+        let mut str = crate::bridge::string::utf8_rstring(buf.as_slice())?.as_value();
         drop(buf);
 
         if let Some(enc) = to_enc {
@@ -128,10 +130,10 @@ fn to_xml(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Er
 
 fn canonicalize(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let comments = Kwargs::scan(args)?.flag(ruby, "comments");
+        let comments = Kwargs::scan(args)?.flag(ruby, "comments")?;
         let buf = xml_serialize::canonicalize(&*this.read()?, this.id, comments)
             .map_err(|f| failure_error(f, "canonicalize"))?;
-        Ok(crate::bridge::string::utf8_str_protected(buf.as_slice())?.as_value())
+        Ok(crate::bridge::string::utf8_rstring(buf.as_slice())?.as_value())
     })
 }
 

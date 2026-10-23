@@ -15,10 +15,10 @@
 //! Document stays alive - is the caller's `&Value`, which the guard's lifetime
 //! is tied to; a guard is no GC root.
 //!
-//! A guard is a `Drop`, so a raise that `longjmp`s past one leaves its borrow
-//! counted for good. `rake unsafe:boundaries` therefore treats the guards as
-//! it treats an argument's copy: none may be live across a call that can
-//! raise, unless that call is made under `bridge::ruby::protected`.
+//! A guard is a `Drop`, so a raise that `longjmp`s past one would leave its
+//! borrow counted for good. None does: every raising call returns `Err`
+//! (`bridge::raw`), and `rake oom`'s raise sweep checks that no document is
+//! left borrowed.
 
 #![forbid(unsafe_code)]
 

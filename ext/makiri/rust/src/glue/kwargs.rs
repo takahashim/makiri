@@ -29,16 +29,18 @@ impl Kwargs {
     /// Keyword `name`, or `None` when it is absent or `nil`. A plain lookup
     /// rather than `get_kwargs`, which allocates a second hash for the keys it
     /// was not asked about - so unknown keywords are ignored.
-    pub(crate) fn value(self, ruby: &Ruby, name: &str) -> Option<Value> {
-        self.0
-            .and_then(|h| h.get(ruby.sym_new(name)))
-            .filter(|v: &Value| !v.is_nil())
+    pub(crate) fn value(self, _ruby: &Ruby, name: &str) -> Result<Option<Value>, Error> {
+        let Some(h) = self.0 else {
+            return Ok(None);
+        };
+        Ok(h.get(crate::bridge::build::sym(name)?)
+            .filter(|v: &Value| !v.is_nil()))
     }
 
     /// Keyword `name`, read for truthiness: absent and `nil` are false, any
     /// other value - `0` included, this being Ruby - true.
-    pub(crate) fn flag(self, ruby: &Ruby, name: &str) -> bool {
-        self.value(ruby, name).is_some_and(|v| v.to_bool())
+    pub(crate) fn flag(self, ruby: &Ruby, name: &str) -> Result<bool, Error> {
+        Ok(self.value(ruby, name)?.is_some_and(|v| v.to_bool()))
     }
 
     /// Keyword `name`, and the OTHER keywords as a fresh Hash (`None` when none
@@ -50,21 +52,25 @@ impl Kwargs {
     /// `dup`/`delete`, which a Hash subclass can redefine.
     pub(crate) fn split_off(
         self,
-        ruby: &Ruby,
+        _ruby: &Ruby,
         name: &str,
     ) -> Result<(Option<Value>, Option<RHash>), Error> {
         /* No keywords is the common call: answer it without a symbol or a Hash. */
         let Some(h) = self.0.filter(|h| !h.is_empty()) else {
             return Ok((None, None));
         };
-        let sym = ruby.sym_new(name);
+        let sym = crate::bridge::build::sym(name)?;
         let taken = h.get(sym).filter(|v: &Value| !v.is_nil());
         /* Made on the first key that stays, so a call passing only `name`
          * allocates no Hash either. */
         let mut rest: Option<RHash> = None;
         crate::glue::hash::hash_foreach(h, |k, v| {
-            if !crate::bridge::ruby::same_value(k, sym.as_value()) {
-                rest.get_or_insert_with(|| ruby.hash_new()).aset(k, v)?;
+            if !crate::bridge::ruby::same_value(k, sym) {
+                let into = match rest {
+                    Some(h) => h,
+                    None => *rest.insert(crate::bridge::build::hash()?),
+                };
+                crate::bridge::build::aset(into, k, v)?;
             }
             Ok(())
         })?;
@@ -96,7 +102,9 @@ pub(crate) fn max_tree_depth(
     })?;
     /* Compared before any conversion, so a negative Bignum disables the limit
      * as a negative Fixnum does, and a positive one cannot wrap. */
-    if n < ruby.integer_from_i64(0) {
+    let zero = magnus::Integer::from_value(crate::bridge::build::int(0)?)
+        .ok_or_else(|| crate::bridge::ruby::internal_error("0 is not an Integer"))?;
+    if n < zero {
         return Ok(DepthLimit::UNLIMITED);
     }
     Ok(n.to_usize()

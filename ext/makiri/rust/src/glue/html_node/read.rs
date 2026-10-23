@@ -9,11 +9,11 @@
 //!
 //! Building any String or NodeSet allocates, and Ruby's allocator raises
 //! `NoMemoryError` past every Rust frame. Every read of the document is a
-//! guard (`HtmlSelf::read`), a counted borrow a raise would leave counted, so
-//! none is held across an allocation: a node is wrapped after the read
-//! (`HtmlView::wrap`), a String is made of bytes lifted out of it
+//! guard (`HtmlSelf::read`). A node is wrapped after the read
+//! (`HtmlView::wrap`), a short String is made of bytes lifted out of it
 //! (`str_after_read`), and what must be built while the read is held - a
-//! NodeSet, an Array of names - is built under `protect`. The attribute
+//! NodeSet, an Array of names - is built with it held; every allocation
+//! returns `Err` on failure (`bridge::raw`). The attribute
 //! lookups take their name through `ruby_verified_text`, an owned copy, which
 //! goes with the read.
 
@@ -23,7 +23,7 @@ use magnus::{prelude::*, Error, Ruby, Value};
 
 use super::with_arg_node;
 use crate::bridge::html::{wrap_html_node, HtmlView};
-use crate::bridge::ruby::{is_kind_of, protected};
+use crate::bridge::ruby::is_kind_of;
 use crate::bridge::string::{ruby_verified_text, str_after_read, utf8_str, RubyText, StrKind};
 use crate::child_index;
 use crate::html_dom::html::{HtmlAttr, HtmlNode, HtmlTree, NodeType, RawNode};
@@ -66,7 +66,7 @@ fn is_element(this: &super::HtmlSelf) -> Result<bool, Error> {
 /// `#name`. Matches Nokogiri: the lowercase tag name for an HTML element
 /// (Lexbor lowercases during tokenization), and the un-prefixed DOM names
 /// `text` / `comment` / `#cdata-section` / `document` for the other kinds.
-pub fn name(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
+pub fn name(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let name = str_after_read(this.read()?, StrKind::Utf8, |v| {
             let node = v.node();
@@ -81,7 +81,10 @@ pub fn name(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
                 _ => node.node_name(),
             })
         })?;
-        Ok(name.unwrap_or_else(|| ruby.str_new("").as_value()))
+        match name {
+            Some(name) => Ok(name),
+            None => crate::bridge::string::utf8_str(b""),
+        }
     })
 }
 
@@ -345,36 +348,30 @@ pub fn has_key(_ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<bo
 }
 
 /// `node.keys` -> the attribute names, in document order.
-pub fn keys(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
+pub fn keys(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let view = this.read()?;
-        /* The names borrow the read, so the Array is built under `protect`. */
-        protected(|| {
-            let ary = ruby.ary_new();
-            if let Some(el) = view.node().element() {
-                for at in el.attrs() {
-                    ary.push(utf8_str(at.qualified_name()))?;
-                }
+        let ary = crate::bridge::build::ary(0)?;
+        if let Some(el) = view.node().element() {
+            for at in el.attrs() {
+                crate::bridge::build::push(ary, utf8_str(at.qualified_name())?)?;
             }
-            Ok(ary.as_value())
-        })
+        }
+        Ok(ary.as_value())
     })
 }
 
 /// `node.values` -> the attribute values, in document order.
-pub fn values(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
+pub fn values(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let view = this.read()?;
-        /* The values borrow the read, so the Array is built under `protect`. */
-        protected(|| {
-            let ary = ruby.ary_new();
-            if let Some(el) = view.node().element() {
-                for at in el.attrs() {
-                    ary.push(utf8_str(at.value()))?;
-                }
+        let ary = crate::bridge::build::ary(0)?;
+        if let Some(el) = view.node().element() {
+            for at in el.attrs() {
+                crate::bridge::build::push(ary, utf8_str(at.value())?)?;
             }
-            Ok(ary.as_value())
-        })
+        }
+        Ok(ary.as_value())
     })
 }
 

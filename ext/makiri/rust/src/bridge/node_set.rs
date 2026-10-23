@@ -28,7 +28,7 @@
 
 #![allow(unsafe_code)]
 
-use crate::bridge::alloc::RubyVec;
+use crate::bridge::alloc::{GrowError, RubyVec};
 use crate::falloc::Reserve;
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -36,7 +36,7 @@ use std::collections::HashSet;
 use magnus::rb_sys::AsRawValue;
 
 use crate::bridge::ruby::makiri_error;
-use magnus::value::{Opaque, ReprValue};
+use magnus::value::Opaque;
 use magnus::{gc::Marker, prelude::*, DataTypeFunctions, Error, Ruby, TypedData, Value};
 
 use crate::bridge::node_wrap::wrap_doc_node;
@@ -68,6 +68,8 @@ struct NodeVec(RubyVec<NodeWord>);
 pub enum PushError {
     SizeLimit,
     CapacityOverflow,
+    /// Ruby's allocator raised `NoMemoryError`, which this answers again.
+    NoMemory,
     /// The set is borrowed elsewhere - a push from inside its own iteration.
     Busy,
 }
@@ -79,6 +81,7 @@ impl PushError {
                 format!("node set size limit exceeded ({NODE_SET_MAX} nodes)")
             }
             PushError::CapacityOverflow => "node set capacity overflow".to_string(),
+            PushError::NoMemory => "failed to allocate memory".to_string(),
             PushError::Busy => "node set is already in use".to_string(),
         }
     }
@@ -86,7 +89,22 @@ impl PushError {
 
 impl From<PushError> for Error {
     fn from(e: PushError) -> Error {
-        makiri_error(e.message())
+        match e {
+            PushError::NoMemory => Error::new(
+                crate::bridge::ruby::gvl_ruby().exception_no_mem_error(),
+                e.message(),
+            ),
+            _ => makiri_error(e.message()),
+        }
+    }
+}
+
+impl From<GrowError> for PushError {
+    fn from(e: GrowError) -> PushError {
+        match e {
+            GrowError::Overflow => PushError::CapacityOverflow,
+            GrowError::NoMemory => PushError::NoMemory,
+        }
     }
 }
 
@@ -108,18 +126,18 @@ impl NodeVec {
     }
 
     /// Make room for `n` nodes (at most [`NODE_SET_MAX`]) in one allocation,
-    /// so the pushes that follow cannot reallocate - and so cannot raise.
-    fn reserve(&mut self, n: usize) {
-        self.0.reserve(n.min(NODE_SET_MAX));
+    /// so the pushes that follow cannot reallocate.
+    fn reserve(&mut self, n: usize) -> Result<(), PushError> {
+        Ok(self.0.reserve(n.min(NODE_SET_MAX))?)
     }
 
-    /// Append one node. `Err` only for the size cap or a capacity overflow -
-    /// allocation failure raises inside Ruby.
+    /// Append one node: `Err` for the size cap, a capacity overflow or a
+    /// failed allocation.
     fn push(&mut self, node: NodeWord) -> Result<(), PushError> {
         if self.0.len() >= NODE_SET_MAX {
             return Err(PushError::SizeLimit);
         }
-        self.0.push(node).map_err(|_| PushError::CapacityOverflow)
+        Ok(self.0.push(node)?)
     }
 }
 
@@ -131,8 +149,11 @@ impl NodeVec {
 /// inside the cell, `mark` would find it busy, fail to mark the Document, and
 /// the arena holding every node in this set could be collected underneath it.
 /// Fields that never change after construction belong outside the cell.
-#[derive(TypedData)]
-#[magnus(class = "Makiri::NodeSet", mark, size, free_immediately)]
+///
+/// `TypedData` is implemented by hand rather than derived: the derive looks
+/// the class up with a `funcall` of `const_get` (Ruby code, and a raise),
+/// where `init` has the class already (`CLASS_NODE_SET`, whose allocator
+/// `glue::node_set` undefines).
 pub struct NodeSet {
     /// The owning Document. `Opaque` is magnus's form for a Ruby value stored
     /// in a Rust struct: it cannot be read back without a `&Ruby` (so never off
@@ -143,6 +164,30 @@ pub struct NodeSet {
     /// `Makiri::XML::*`) or HTML arena nodes.
     kind: DocKind,
     nodes: RefCell<NodeVec>,
+}
+
+// SAFETY: `data_type` describes `NodeSet` - its mark, size and free are
+// `DataTypeFunctions`' below, as the derive would build them - and `class`
+// is the class `init` defined for it.
+unsafe impl TypedData for NodeSet {
+    fn class(_ruby: &Ruby) -> magnus::RClass {
+        #[allow(
+            clippy::expect_used,
+            reason = "every NodeSet is made after Init_makiri"
+        )]
+        CLASS_NODE_SET
+            .get()
+            .expect("Makiri::NodeSet is defined at init")
+    }
+
+    fn data_type() -> &'static magnus::DataType {
+        static DATA_TYPE: magnus::DataType = magnus::data_type_builder!(NodeSet, "Makiri::NodeSet")
+            .mark()
+            .size()
+            .free_immediately()
+            .build();
+        &DATA_TYPE
+    }
 }
 
 impl DataTypeFunctions for NodeSet {
@@ -193,6 +238,15 @@ impl NodeSet {
         };
         nodes.push(node)
     }
+
+    /// Room for `n` more nodes in one allocation.
+    fn try_reserve(&self, n: usize) -> Result<(), PushError> {
+        let Ok(mut nodes) = self.nodes.try_borrow_mut() else {
+            return Err(PushError::Busy);
+        };
+        let want = nodes.len().saturating_add(n);
+        nodes.reserve(want)
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -204,26 +258,23 @@ impl NodeSet {
 /// The Document decides how a stored word is read back - an arena token for
 /// XML, an HTML arena node for HTML - so it is checked here rather than taken on
 /// trust: one class test per set, never per node.
-pub fn node_set_new(document: Value) -> Value {
+pub fn node_set_new(document: Value) -> Result<Value, Error> {
     assert!(
         is_kind_of(document, &CLASS_DOCUMENT),
         "a NodeSet needs the Document its nodes belong to"
     );
-    let ruby = Ruby::get_with(document);
     let kind = DocKind::of(document);
-    let obj = ruby
-        .wrap(NodeSet {
-            document: document.into(),
-            kind,
-            nodes: RefCell::new(NodeVec::new()),
-        })
-        .as_value();
+    let obj = crate::bridge::typed::wrap_magnus(NodeSet {
+        document: document.into(),
+        kind,
+        nodes: RefCell::new(NodeVec::new()),
+    })?;
     /* While `wrap` allocates the object - a GC point - `document` is held only by
      * the boxed struct, where no mark sees it. Using it afterwards keeps it on
      * the machine stack across that call, pinned by the conservative scan, so
      * compaction cannot move it out from under the stored copy. */
     core::hint::black_box(document);
-    obj
+    Ok(obj)
 }
 
 /// A NodeSet built here, plus a fill handle whose pushes are safe.
@@ -245,56 +296,43 @@ impl Fill<'_> {
     }
 
     /// Append one node of this set's document. `Err` for the fail-closed
-    /// refusals only; growth raises inside Ruby.
+    /// refusals and a failed growth.
     #[inline]
     pub fn push(&self, node: NodeWord) -> Result<(), PushError> {
         self.set.try_push(node)
     }
+
+    /// Room for `n` more nodes, so the pushes that follow grow nothing.
+    pub fn reserve(&self, n: usize) -> Result<(), PushError> {
+        self.set.try_reserve(n)
+    }
 }
 
 /// Build a NodeSet over `document` and return it with a [`Fill`] handle.
-pub fn node_set_with_fill<'a>(document: Value) -> (Value, Fill<'a>) {
-    let value = node_set_new(document);
+pub fn node_set_with_fill<'a>(document: Value) -> Result<(Value, Fill<'a>), Error> {
+    let value = node_set_new(document)?;
     // SAFETY: built as a NodeSet by the line above, so the type is known and
     // the conversion cannot raise - which is what lets it skip the checked one
     // (a quarter of the throughput on the per-node path). `value` is returned
     // alongside, so the caller keeps it rooted for the reference's lifetime.
     let set: &NodeSet = unsafe { typed_data_unprotected(value.as_raw()) };
-    (value, Fill { value, set })
+    Ok((value, Fill { value, set }))
 }
 
 /// A NodeSet over `document` holding `nodes`, for a caller that owns them -
-/// or holds a document read they borrow.
-///
-/// Built under `protect`, the set's allocation included: making and growing
-/// the set can raise `NoMemoryError` from Ruby's allocator, and a longjmp
-/// would skip the drop of whatever collection the caller is iterating, and of
-/// a read guard the nodes borrow. Under `protect` it comes back as `Err`
-/// instead, those drop normally, and magnus raises afterwards - one setjmp
-/// per set, not per node.
+/// or holds a document read they borrow. Making and growing the set can fail
+/// (`NoMemoryError`), which comes back as `Err` like every allocation of
+/// `raw`'s, so the caller's collection and read drop normally.
 pub fn node_set_from(
     document: Value,
     nodes: impl Iterator<Item = NodeWord>,
 ) -> Result<Value, Error> {
-    let mut refused = None;
-    /* Borrowed into the protected closure, not moved: a raise unwinds the
-     * closure's frames only, and the collection the iterator owns (a
-     * matcher's result) is still this frame's to drop. */
-    let mut nodes = nodes;
-    let set = crate::bridge::ruby::protect_value(|| {
-        let (set, fill) = node_set_with_fill(document);
-        for n in nodes.by_ref() {
-            if let Err(e) = fill.push(n) {
-                refused = Some(e);
-                break;
-            }
-        }
-        set.as_raw()
-    })?;
-    match refused {
-        Some(e) => Err(e.into()),
-        None => Ok(set),
+    let (set, fill) = node_set_with_fill(document)?;
+    fill.reserve(nodes.size_hint().0)?;
+    for n in nodes {
+        fill.push(n)?;
     }
+    Ok(set)
 }
 
 /// The most nodes [`node_set_after_read`] lifts out of a read onto the stack,
@@ -327,17 +365,14 @@ pub fn node_set_after_read<G>(
     });
     if overflow {
         let mut refused = None;
-        let set = crate::bridge::ruby::protect_value(|| {
-            let (set, fill) = node_set_with_fill(document);
-            each(&read, &mut |w| {
-                if refused.is_none() {
-                    if let Err(e) = fill.push(w) {
-                        refused = Some(e);
-                    }
+        let (set, fill) = node_set_with_fill(document)?;
+        each(&read, &mut |w| {
+            if refused.is_none() {
+                if let Err(e) = fill.push(w) {
+                    refused = Some(e);
                 }
-            });
-            set.as_raw()
-        })?;
+            }
+        });
         drop(read);
         return match refused {
             Some(e) => Err(e.into()),
@@ -345,7 +380,8 @@ pub fn node_set_after_read<G>(
         };
     }
     drop(read);
-    let (set, fill) = node_set_with_fill(document);
+    let (set, fill) = node_set_with_fill(document)?;
+    fill.reserve(len)?;
     for &w in &lifted[..len] {
         fill.push(w)?;
     }
@@ -441,12 +477,8 @@ impl NodeSet {
      * earlier version snapshotted each operand into a Vec to sidestep all this
      * and measured about half the C's throughput.
      *
-     * What they must not do is hold those borrows across a push that grows the
-     * result: growing is `ruby_xrealloc2`, whose `NoMemoryError` longjmps past
-     * every drop, leaving an operand's borrow counted for good (the set refuses
-     * every later write) and leaking the membership index. So each sizes its
-     * result by the operands first, under short borrows, and only then takes
-     * the long ones; the pushes fit and cannot raise. */
+     * Each sizes its result by the operands first, under short borrows, and
+     * only then takes the long ones, so the pushes fit and allocate nothing. */
 
     /// `self | other`: the union, deduped, self first.
     pub fn union(&self, ruby: &Ruby, other: &NodeSet) -> Result<Value, Error> {
@@ -507,7 +539,7 @@ pub fn node_set_of_nodes(
     document: Value,
     nodes: impl Iterator<Item = Value>,
 ) -> Result<Value, Error> {
-    let (set, s) = new_result(document);
+    let (set, s) = new_result(document)?;
     let mut w = s.write()?;
     for item in nodes {
         if !is_kind_of(item, &CLASS_NODE)
@@ -529,10 +561,10 @@ pub fn node_set_of_nodes(
 /// The reference's lifetime is unconstrained, as magnus's own `try_convert` for
 /// a wrapped type gives: the data lives as long as the Ruby object, which the
 /// returned `Value` keeps rooted on the caller's stack.
-fn new_result<'a>(document: Value) -> (Value, &'a NodeSet) {
+fn new_result<'a>(document: Value) -> Result<(Value, &'a NodeSet), Error> {
     /* The one unchecked borrow of a fresh set is `node_set_with_fill`'s. */
-    let (set, fill) = node_set_with_fill(document);
-    (set, fill.set)
+    let (set, fill) = node_set_with_fill(document)?;
+    Ok((set, fill.set))
 }
 
 /// Which nodes of self [`NodeSet::filter`] keeps: those in the other set
@@ -545,15 +577,15 @@ pub enum Membership {
 
 /// [`new_result`] with room for `room` nodes, and its write borrow.
 ///
-/// The one allocation that can raise happens here, before the caller holds
-/// anything but this borrow of a set nothing else can reach yet.
+/// The set's allocations happen here, before the caller holds anything but
+/// this borrow of a set nothing else can reach yet.
 fn new_result_with_room<'a>(
     document: Value,
     room: usize,
 ) -> Result<(Value, std::cell::RefMut<'a, NodeVec>), Error> {
-    let (result, r) = new_result(document);
+    let (result, r) = new_result(document)?;
     let mut w = r.write()?;
-    w.reserve(room);
+    w.reserve(room)?;
     Ok((result, w))
 }
 

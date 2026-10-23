@@ -87,10 +87,10 @@ impl QueryArgs {
 /// through the Hash storage rather than a Ruby `merge` a Hash subclass could
 /// redefine. `rb_hash_foreach`/`rb_hash_aset` are the C operations, so no
 /// caller's method runs.
-fn merge_hashes(ruby: &Ruby, a: RHash, b: RHash) -> Result<RHash, Error> {
-    let out: RHash = ruby.hash_new();
-    crate::glue::hash::hash_foreach(a, |k, v| out.aset(k, v))?;
-    crate::glue::hash::hash_foreach(b, |k, v| out.aset(k, v))?;
+fn merge_hashes(_ruby: &Ruby, a: RHash, b: RHash) -> Result<RHash, Error> {
+    let out: RHash = crate::bridge::build::hash()?;
+    crate::glue::hash::hash_foreach(a, |k, v| crate::bridge::build::aset(out, k, v))?;
+    crate::glue::hash::hash_foreach(b, |k, v| crate::bridge::build::aset(out, k, v))?;
     Ok(out)
 }
 
@@ -124,17 +124,19 @@ impl Keywords {
 /// `:strict` (the default) resolves an unprefixed name test in the HTML
 /// namespace, which is what browsers do; `:lax` makes it namespace-agnostic.
 fn matching_lax(ruby: &Ruby, v: Value) -> Result<bool, Error> {
-    if v.is_nil() || v.eql(ruby.sym_new("strict"))? {
+    /* By identity: a Symbol is unique, and `eql?` would be the caller's
+     * value's method. */
+    if v.is_nil() || crate::bridge::ruby::same_value(v, crate::bridge::build::sym("strict")?) {
         return Ok(false);
     }
-    if v.eql(ruby.sym_new("lax"))? {
+    if crate::bridge::ruby::same_value(v, crate::bridge::build::sym("lax")?) {
         return Ok(true);
     }
     Err(Error::new(
         ruby.exception_arg_error(),
         format!(
             "namespace_matching: must be :strict or :lax, got {}",
-            v.inspect()
+            crate::bridge::ruby::describe(v)
         ),
     ))
 }

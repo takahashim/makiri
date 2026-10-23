@@ -20,6 +20,10 @@
 
 pub mod alloc;
 
+/// The Arrays, Hashes, numbers and Symbols the glue builds, allocation
+/// failures as `Err`.
+pub mod build;
+
 /// The Ruby C calls that can raise, each with its raise stated.
 pub mod raw;
 

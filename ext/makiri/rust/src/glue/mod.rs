@@ -16,11 +16,12 @@
 //! leaks it or leaves it held. So a failure travels back as
 //! `Result<_, magnus::Error>`, which magnus turns into a raise after the Rust
 //! frames have returned normally, and a Ruby C function that can raise is called
-//! through `bridge::ruby`, which catches the raise and hands it back the same
-//! way. `rake unsafe:boundaries` holds the count of raising C calls outside
-//! `bridge/` at zero. What can still unwind is Ruby itself - its allocator's
-//! `NoMemoryError`, or Ruby code a C call reaches - which is why the loops that
-//! push into a NodeSet while owning a collection run under `protect`.
+//! only through `bridge::raw`, whose every wrapper catches the raise and hands
+//! it back the same way - Ruby's allocator's `NoMemoryError` included, so
+//! the glue builds its Arrays, Hashes and Strings through `bridge::build` and
+//! `bridge::string` (magnus's raising constructors are banned in
+//! `clippy.toml`). `rake unsafe:boundaries` holds the raising C calls to
+//! `bridge/raw.rs`, each inside its protected `call`.
 //!
 //! **Nothing Ruby crosses into a GVL-released closure.** Not a `Value`, not a
 //! `Ruby` handle: `bridge::gvl::without_gvl` takes only a `Send` body, and a

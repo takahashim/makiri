@@ -10,15 +10,12 @@
 
 #![allow(unsafe_code)]
 
-use magnus::rb_sys::AsRawValue;
-
 use magnus::{Error, Value};
 
 use crate::bridge::html::{html_node_key, with_html_node};
-use crate::bridge::node_set::{node_set_with_fill, PushError};
+use crate::bridge::node_set::node_set_with_fill;
 use crate::bridge::node_wrap::wrap_doc_node;
-use crate::bridge::ruby::VALUE;
-use crate::bridge::string::{ruby_str_from_utf8, ruby_verified_text};
+use crate::bridge::string::ruby_verified_text;
 use crate::bridge::wrapper::{html_read, xml_read, DocKind, NodeWord, DOC_TYPE};
 use crate::bridge::xml::xml_node_unwrap;
 use crate::engine_error::{Error as XPathError, ErrorKind};
@@ -229,59 +226,36 @@ impl QueryAst {
 /* result + error mapping                                             */
 /* ------------------------------------------------------------------ */
 
-/// An engine value as a Ruby object, NOT protected: every branch allocates,
-/// and an allocation can raise, so each caller runs this under `protect`. A
-/// NodeSet push the set refuses (its cap) comes back as `Err`.
+/// An engine value as a Ruby object; `document` is the keepalive a node-set
+/// is wrapped under. Every allocation's failure, and a push the set refuses
+/// (its cap), comes back as `Err`.
 ///
 /// The one conversion for a whole value. `at_xpath` is the exception by design: its
 /// [`query_result`] fast path wraps only a node-set's first node, through the
 /// same wrap a set's read-back uses, and never builds the set.
-///
-/// # Safety
-/// Under `protect`; `document` is the keepalive a node-set is wrapped under.
-unsafe fn val_to_ruby(v: ValRef<'_>, document: Value) -> Result<VALUE, PushError> {
+fn val_to_ruby(v: ValRef<'_>, document: Value) -> Result<Value, Error> {
     Ok(match v {
         ValRef::NodeSet(set) => {
-            let (rb, fill) = node_set_with_fill(document);
+            let (rb, fill) = node_set_with_fill(document)?;
+            fill.reserve(set.as_slice().len())?;
             for &n in set.as_slice() {
                 fill.push(NodeWord::of_token(n))?;
             }
-            rb.as_raw()
+            rb
         }
         /* The bytes are the value's own, and valid UTF-8 - the engine builds
          * a Text only from input the text contract has passed. */
-        ValRef::String(t) => ruby_str_from_utf8(t.as_slice()),
-        ValRef::Number(d) => crate::bridge::ruby::float(d).as_raw(),
-        ValRef::Boolean(b) => crate::bridge::ruby::boolean(b).as_raw(),
+        ValRef::String(t) => crate::bridge::string::utf8_str(t.as_slice())?,
+        ValRef::Number(d) => crate::bridge::build::float(d)?,
+        ValRef::Boolean(b) => crate::bridge::ruby::boolean(b),
     })
 }
 
 /// An evaluation result as a Ruby object. Converting consumes the value, which
 /// frees its node-set array or string; `document` is the keepalive for a
 /// node-set.
-///
-/// Under one `protect` per result, not per node, reading `v` by reference: a
-/// raise comes back as `Err`, and `v` is still freed on the way out rather than
-/// skipped by the longjmp.
 fn value_to_ruby(v: XPathValue, document: Value) -> Result<Value, Error> {
-    /* A refused push cannot leave `protect` through `?`, so it is carried out. */
-    let mut refused = None;
-    let converted = crate::bridge::ruby::protect_value(|| {
-        // SAFETY: under `protect`, as `val_to_ruby` asks.
-        match unsafe { val_to_ruby(v.get(), document) } {
-            Ok(rb) => rb,
-            Err(e) => {
-                refused = Some(e);
-                crate::bridge::ruby::nil().as_raw()
-            }
-        }
-    });
-    drop(v);
-    let converted = converted?;
-    if let Some(e) = refused {
-        return Err(e.into());
-    }
-    Ok(converted)
+    val_to_ruby(v.get(), document)
 }
 
 /* ------------------------------------------------------------------ */

@@ -140,10 +140,12 @@ fn fragment_from_args(
     document: impl FnOnce() -> Result<Value, Error>,
 ) -> Result<Value, Error> {
     let a = magnus::scan_args::scan_args::<(Value,), (), (), (), magnus::RHash, ()>(args)?;
-    let context = a.keywords.get(ruby.sym_new("context"));
+    let context = a.keywords.get(crate::bridge::build::sym("context")?);
     /* Read before the backing document is made, so a bad value costs nothing. */
-    let limit =
-        crate::glue::kwargs::max_tree_depth(ruby, a.keywords.get(ruby.sym_new("max_tree_depth")))?;
+    let limit = crate::glue::kwargs::max_tree_depth(
+        ruby,
+        a.keywords.get(crate::bridge::build::sym("max_tree_depth")?),
+    )?;
     let document = document()?;
     let at = fragment::resolve_fragment_context(document, context)?;
     fragment::build_fragment(document, a.required.0, at, limit)

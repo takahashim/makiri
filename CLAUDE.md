@@ -67,21 +67,18 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   and returns the stop status, and the caller re-raises once C has unwound.
   `caught::PanicLatch` is that, and it is deliberately the same shape the
   callbacks already used for the node cap and OOM. The build that ships
-  installs it in three: `bridge::gvl`'s trampoline (which carries the whole
-  parser), `bridge::ruby::protect` - covering every `rb_protect` at once, since
-  magnus runs the closure inside its own `extern "C"` trampoline - and
-  `glue::hash::hash_foreach`. Do not call magnus's `protect` directly; ours is
-  the one with the latch. For the same reason a Hash is walked only through
+  installs it in two: `bridge::gvl`'s trampoline (which carries the whole
+  parser) and `glue::hash::hash_foreach`. For the same reason a Hash is walked only through
   `hash_foreach` (magnus's `RHash::foreach` protects without one;
   `rake unsafe:boundaries` fails on a direct `.foreach(`). The reference-only
   Lexbor callbacks carry it too (`lexbor::selectors`' traversal,
   `lexbor::chunks::chunk_cb`, `tree_guard::hook_token_cb`).
   Two `extern "C"` functions have no latch ON PURPOSE. The GC callbacks in
   `bridge/typed.rs` run where nothing can be raised and a half-freed object is
-  worse than a stop, so they keep aborting - keep their bodies trivial. The two
-  raw `rb_protect` thunks (`exception_message_thunk`, `strict_transcode_thunk`)
-  contain only C calls (through `bridge::raw`'s thin wrappers), so there is
-  no Rust there to panic; keep it that way.
+  worse than a stop, so they keep aborting - keep their bodies trivial. The
+  `rb_protect` thunk of `bridge::raw::call` holds one C call and the `Copy`
+  values it reads (`F: Copy`, `T: Copy`), so there is no Rust there to panic
+  and no `catch_unwind` for a raise to cross; keep it that way.
 
   **A VALUE inside a wrapped object is a `bridge::typed::Held`**, and a
   `Held` that holds anything can only be made with a `Store`, which exists
@@ -99,20 +96,24 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   changing fields are cells too, so the GC callbacks and every method read
   a wrapper's data through `&T`: no `&mut` of it is made at all.
 
-  **Every C call that can raise is a wrapper in `bridge/raw.rs`**, which says
-  what raises it. A raise is a `longjmp` over every Rust frame up to the
-  nearest `rb_protect`, so each such call is made under `bridge::ruby::protect`
-  or from a frame that owns nothing a skipped `Drop` would leak - and which
-  calls those are is answered by that one file. `rake unsafe:boundaries` pins
-  the raising names to it, so a new one is a new wrapper there with its raise
-  stated.
-  The same gate follows those wrappers, and magnus's allocating
-  constructors, up through every function that calls one unprotected, and
-  fails when a frame in `glue/` or `bridge/` still holds an argument's copy (`RubyText`,
-  `RubyData`, `HtmlSource`, `OwnedBuf`) across such a call: drop the copy
-  first, or make the call under `bridge::ruby::protected`. A String is made
-  by `bridge::string::utf8_str` in a frame that owns nothing, and by
-  `utf8_str_protected` in one that does.
+  **Every C call that can raise is a wrapper in `bridge/raw.rs`, and every
+  wrapper runs it under `rb_protect` and returns `Result`.** A raise is a
+  `longjmp` over every Rust frame up to the nearest `rb_protect`, and crossing
+  a frame with a `Drop` or a `catch_unwind` is undefined behaviour; so each
+  wrapper hands its one C call to `raw::call`, whose `extern "C"` thunk is the
+  only frame a raise crosses, and the raise comes back as `Err`. A caller may
+  then own copies, hold document guards and build Ruby objects in any order.
+  `rake unsafe:boundaries` pins the raising names to `raw.rs` and fails on one
+  outside a `call(|| ...)` there (`raw_unprotected`); a new raising call is a
+  new wrapper with its raise stated. magnus's allocating constructors raise
+  instead, so `clippy.toml` bans them (and the `funcall`/`respond_to`/`eql`
+  family, which runs the caller's Ruby): the glue builds Arrays, Hashes,
+  numbers and Symbols through `bridge::build`, Strings through
+  `bridge::string::utf8_str`, and NodeSets through `typed::wrap_magnus`. Only
+  `Init_makiri` (where a raise is `require`'s) carries an `#[allow]`. Each
+  protected call costs a `setjmp`, ~8 ns: a light reader that allocates one
+  String (`#name`, `#[]`, `#text`) measured ~15-20 ns slower than the
+  unprotected allocation it replaced (`notes/ruby_boundary_simplification_plan.ja.md`).
 
   **A Document's content is reached only through a guard** (`bridge::dom`,
   over `crate::doc_cell`, which is Ruby-free so its `compile_fail` doctests
@@ -128,16 +129,12 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   `InternalError`. An edit that changes two documents
   (an adoption: the copy placed, the original released) takes both writes
   before it changes either, so it is refused whole or done whole. A guard is a `Drop`, and a raise past
-  one leaves the document borrowed for good, so the gate above holds guards
-  to the copies' rule (`COPY_TYPES`/`GUARD_TYPES`): read what is needed and
-  drop the guard before building the Ruby result. `str_after_read` lifts
-  short bytes onto the stack first, `node_set_after_read` a few node words,
-  `HtmlView::wrap` / `XmlView::wrap` the node; what must be built with the
-  guard held is built under `protect`, which costs a `setjmp` - so keep the
-  common paths on the lifting ones. The gate reads the code, and misses what
-  it cannot see (a guard moved into a method by `self`, a closure); `rake oom`'s
-  raise sweep makes every allocating call raise in turn and checks no
-  document is left borrowed, which catches those.
+  one would leave the document borrowed for good; no raise crosses one,
+  since every raising call returns `Err` (above). `rake oom`'s raise sweep
+  makes every allocating call raise in turn and checks no document is left
+  borrowed. `str_after_read`, `node_set_after_read` and `HtmlView::wrap` /
+  `XmlView::wrap` still copy what they need out of the read before building
+  the result - no longer for safety, which no longer needs it.
 
   **A Ruby method raises `Makiri::InternalError`, not `fatal`.**
   `bridge::ruby::entry` wraps the body of EVERY method the glue registers, and
@@ -449,8 +446,8 @@ by the check that concluded "every undefined symbol is legitimate".
   Ruby-side storage - TypedData wrappers (`bridge::typed::wrap_built`, freed by
   running the struct's `Drop` in place before `ruby_xfree`) and
   `NodeSet`'s node array - uses Ruby's `ruby_xmalloc` family instead: its failure
-  is `NoMemoryError`, Ruby's own, and because that raise longjmps, it may happen
-  only in a frame that owns nothing or under `rb_protect` (`value_to_ruby`).
+  is `NoMemoryError`, Ruby's own, which `bridge::raw`'s protected calls hand
+  back as `Err` (a failed wrap drops the built struct and frees its memory).
   std's STABLE sorts (`sort`, `sort_by`, `sort_by_key`, `sort_by_cached_key`)
   are banned there too: they take a scratch buffer from the global allocator
   and abort on OOM, invisibly to `rake oom`. Sort in place (`sort_unstable_by`)

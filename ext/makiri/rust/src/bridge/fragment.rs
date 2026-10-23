@@ -2,7 +2,7 @@
 //!
 //! One pipeline for every entry - `Document#fragment`, `DocumentFragment.parse`,
 //! `Node#parse`, `inner_html=` and `outer_html=`. The input goes through
-//! [`HtmlSource`] (converted under protect, its encoding honoured), the parse
+//! [`HtmlSource`] (a String, its encoding honoured), the parse
 //! into a [`TransientFragment`] that owns a throwaway arena document, and
 //! nothing in the target document changes until the parse has succeeded. The
 //! fragment parser and the import primitives are [`crate::html_dom::fragment`]'s;
@@ -257,7 +257,7 @@ pub fn build_fragment(
 pub fn fragment_shell_document() -> Result<Value, Error> {
     const SHELL: &[u8] = b"<html><body></body></html>";
     /* The wrapper first, while nothing needs freeing - see DocumentShell. */
-    let shell = DocumentShell::new(DocKind::Html);
+    let shell = DocumentShell::new(DocKind::Html)?;
     let Ok(parsed) = parse_html(SHELL, true, DepthLimit::DEFAULT) else {
         return Err(makiri_error("failed to create fragment document"));
     };

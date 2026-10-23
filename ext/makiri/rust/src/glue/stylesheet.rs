@@ -4,12 +4,13 @@
 //!
 //! Phase one has dropped everything it built before this runs; what is left
 //! owned - the parsed rules and the input's copy - is the caller's frame's,
-//! and phase two runs under `protect`, so a raise from building Ruby objects
-//! comes back as `Err` and those drop. See `selectors::stylesheet`.
+//! and phase two builds through `bridge::build`, so a failed allocation comes
+//! back as `Err` and those drop. See `selectors::stylesheet`.
 
-use magnus::{function, prelude::*, Error, RArray, RHash, Ruby, StaticSymbol, Value};
+use magnus::{function, prelude::*, Error, RArray, RHash, Ruby, Value};
 
-use crate::bridge::ruby::error_class;
+use crate::bridge::build::{ary, aset, hash, int, push, sym};
+use crate::bridge::ruby::{boolean, error_class};
 use crate::bridge::string::{ruby_verified_text, utf8_str};
 use crate::init::MOD_LEXBOR;
 use crate::selectors::stylesheet::{parse, Decl, Fail, Rule, MAX_DEPTH};
@@ -25,86 +26,94 @@ use crate::selectors::stylesheet::{parse, Decl, Fail, Rule, MAX_DEPTH};
 /// for every declaration; a per-call struct does that without process-global
 /// mutable state, and a stylesheet is one call.
 struct Keys {
-    type_: StaticSymbol,
-    selectors: StaticSymbol,
-    declarations: StaticSymbol,
-    name: StaticSymbol,
-    value: StaticSymbol,
-    important: StaticSymbol,
-    text: StaticSymbol,
-    specificity: StaticSymbol,
-    selector_text: StaticSymbol,
-    prelude: StaticSymbol,
-    rules: StaticSymbol,
-    sym_style: StaticSymbol,
-    sym_bad_style: StaticSymbol,
-    sym_at_rule: StaticSymbol,
+    type_: Value,
+    selectors: Value,
+    declarations: Value,
+    name: Value,
+    value: Value,
+    important: Value,
+    text: Value,
+    specificity: Value,
+    selector_text: Value,
+    prelude: Value,
+    rules: Value,
+    sym_style: Value,
+    sym_bad_style: Value,
+    sym_at_rule: Value,
 }
 
 impl Keys {
-    fn new(ruby: &Ruby) -> Keys {
-        Keys {
-            type_: ruby.sym_new("type"),
-            selectors: ruby.sym_new("selectors"),
-            declarations: ruby.sym_new("declarations"),
-            name: ruby.sym_new("name"),
-            value: ruby.sym_new("value"),
-            important: ruby.sym_new("important"),
-            text: ruby.sym_new("text"),
-            specificity: ruby.sym_new("specificity"),
-            selector_text: ruby.sym_new("selector_text"),
-            prelude: ruby.sym_new("prelude"),
-            rules: ruby.sym_new("rules"),
-            sym_style: ruby.sym_new("style"),
-            sym_bad_style: ruby.sym_new("bad_style"),
-            sym_at_rule: ruby.sym_new("at_rule"),
-        }
+    fn new() -> Result<Keys, Error> {
+        Ok(Keys {
+            type_: sym("type")?,
+            selectors: sym("selectors")?,
+            declarations: sym("declarations")?,
+            name: sym("name")?,
+            value: sym("value")?,
+            important: sym("important")?,
+            text: sym("text")?,
+            specificity: sym("specificity")?,
+            selector_text: sym("selector_text")?,
+            prelude: sym("prelude")?,
+            rules: sym("rules")?,
+            sym_style: sym("style")?,
+            sym_bad_style: sym("bad_style")?,
+            sym_at_rule: sym("at_rule")?,
+        })
     }
 }
 
-fn decls_to_ruby(ruby: &Ruby, k: &Keys, ds: &[Decl]) -> Result<RArray, Error> {
-    let a = ruby.ary_new_capa(ds.len());
+fn decls_to_ruby(k: &Keys, ds: &[Decl]) -> Result<RArray, Error> {
+    let a = ary(ds.len())?;
     for d in ds {
-        let h = ruby.hash_new();
-        h.aset(k.name, utf8_str(&d.name))?;
-        h.aset(k.value, utf8_str(&d.value))?;
-        h.aset(k.important, d.important)?;
-        a.push(h)?;
+        let h = hash()?;
+        aset(h, k.name, utf8_str(&d.name)?)?;
+        aset(h, k.value, utf8_str(&d.value)?)?;
+        aset(h, k.important, boolean(d.important))?;
+        push(a, h.as_value())?;
     }
     Ok(a)
 }
 
-fn rules_to_ruby(ruby: &Ruby, k: &Keys, rs: &[Rule]) -> Result<RArray, Error> {
-    let a = ruby.ary_new_capa(rs.len());
+fn rules_to_ruby(k: &Keys, rs: &[Rule]) -> Result<RArray, Error> {
+    let a = ary(rs.len())?;
     for r in rs {
-        let h: RHash = ruby.hash_new();
+        let h: RHash = hash()?;
         match r {
             Rule::Style {
                 selectors,
                 declarations,
             } => {
-                h.aset(k.type_, k.sym_style)?;
-                let sa = ruby.ary_new_capa(selectors.len());
+                aset(h, k.type_, k.sym_style)?;
+                let sa = ary(selectors.len())?;
                 for s in selectors {
-                    let sh = ruby.hash_new();
-                    sh.aset(k.text, utf8_str(&s.text))?;
-                    let sp = ruby.ary_new_capa(3);
+                    let sh = hash()?;
+                    aset(sh, k.text, utf8_str(&s.text)?)?;
+                    let sp = ary(3)?;
                     for v in s.specificity {
-                        sp.push(v as i64)?;
+                        push(sp, int(v as i64)?)?;
                     }
-                    sh.aset(k.specificity, sp)?;
-                    sa.push(sh)?;
+                    aset(sh, k.specificity, sp.as_value())?;
+                    push(sa, sh.as_value())?;
                 }
-                h.aset(k.selectors, sa)?;
-                h.aset(k.declarations, decls_to_ruby(ruby, k, declarations)?)?;
+                aset(h, k.selectors, sa.as_value())?;
+                aset(
+                    h,
+                    k.declarations,
+                    decls_to_ruby(k, declarations)?.as_value(),
+                )?;
             }
             Rule::BadStyle {
                 selector_text,
                 declarations,
             } => {
-                h.aset(k.type_, k.sym_bad_style)?;
-                h.aset(k.selector_text, utf8_str(selector_text))?;
-                h.aset(k.declarations, decls_to_ruby(ruby, k, declarations)?)?;
+                aset(h, k.type_, k.sym_bad_style)?;
+                aset(h, k.selector_text, utf8_str(selector_text)?)?;
+                aset(
+                    h,
+                    k.declarations,
+                    decls_to_ruby(k, declarations)?.as_value(),
+                )?;
             }
             Rule::At {
                 name,
@@ -112,14 +121,18 @@ fn rules_to_ruby(ruby: &Ruby, k: &Keys, rs: &[Rule]) -> Result<RArray, Error> {
                 rules,
                 declarations,
             } => {
-                h.aset(k.type_, k.sym_at_rule)?;
-                h.aset(k.name, utf8_str(name))?;
-                h.aset(k.prelude, utf8_str(prelude))?;
-                h.aset(k.rules, rules_to_ruby(ruby, k, rules)?)?;
-                h.aset(k.declarations, decls_to_ruby(ruby, k, declarations)?)?;
+                aset(h, k.type_, k.sym_at_rule)?;
+                aset(h, k.name, utf8_str(name)?)?;
+                aset(h, k.prelude, utf8_str(prelude)?)?;
+                aset(h, k.rules, rules_to_ruby(k, rules)?.as_value())?;
+                aset(
+                    h,
+                    k.declarations,
+                    decls_to_ruby(k, declarations)?.as_value(),
+                )?;
             }
         }
-        a.push(h)?;
+        push(a, h.as_value())?;
     }
     Ok(a)
 }
@@ -130,7 +143,7 @@ fn parse_stylesheet(ruby: &Ruby, text: Value) -> Result<RArray, Error> {
     crate::bridge::ruby::entry(|| parse_stylesheet_inner(ruby, text))
 }
 
-fn parse_stylesheet_inner(ruby: &Ruby, text: Value) -> Result<RArray, Error> {
+fn parse_stylesheet_inner(_ruby: &Ruby, text: Value) -> Result<RArray, Error> {
     let tv = ruby_verified_text(text, "CSS stylesheet")?;
     /* `tv` is this frame's own copy of the String's bytes, so nothing Ruby
      * does can move or mutate them. */
@@ -152,10 +165,10 @@ fn parse_stylesheet_inner(ruby: &Ruby, text: Value) -> Result<RArray, Error> {
     };
 
     // ---- phase two ----
-    /* Under protect: building the result allocates Ruby objects, and a raise
-     * from the allocator would unwind past this frame, which owns the parsed
-     * rules and the input's copy. */
-    crate::bridge::ruby::protected(|| rules_to_ruby(ruby, &Keys::new(ruby), &parsed))
+    /* Building the result allocates Ruby objects; a failed allocation comes
+     * back as `Err` (`bridge::build`), and the parsed rules and the input's
+     * copy drop with this frame. */
+    rules_to_ruby(&Keys::new()?, &parsed)
 }
 
 /// `Makiri::Lexbor::CSS.parse_stylesheet`. From `Init_makiri`.

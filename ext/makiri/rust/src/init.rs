@@ -366,10 +366,16 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     // gem it was loaded by and the Ruby it was loaded into - a stale
     // `lib/makiri/makiri.bundle` in a checkout is read by whichever Ruby, and
     // whichever version of the Ruby code, requires it.
-    let native_version = ruby.str_new(env!("MAKIRI_GEM_VERSION"));
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "Init_makiri, where a raise is require's and nothing is owned"
+    )]
+    let (native_version, native_ruby) = (
+        ruby.str_new(env!("MAKIRI_GEM_VERSION")),
+        ruby.str_new(&crate::bridge::ruby::ruby_api_version()),
+    );
     native_version.freeze();
     makiri.const_set("NATIVE_VERSION", native_version)?;
-    let native_ruby = ruby.str_new(&crate::bridge::ruby::ruby_api_version());
     native_ruby.freeze();
     makiri.const_set("NATIVE_RUBY_API_VERSION", native_ruby)?;
 

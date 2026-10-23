@@ -30,24 +30,25 @@ RUST = File.join(ROOT, "ext/makiri/rust/src")
 # summary prints the `glue/` + `xpath/` subtotal that must reach 0.
 UNSAFE_ISLANDS = {
   "bridge/alloc.rs" => 9,
+  "bridge/build.rs" => 15,
   "bridge/gvl.rs" => 4,
-  "bridge/html.rs" => 5,
-  "bridge/node_set.rs" => 2,
+  "bridge/html.rs" => 3,
+  "bridge/node_set.rs" => 3,
   "bridge/node_wrap.rs" => 1,
-  "bridge/raw.rs" => 38,
+  "bridge/raw.rs" => 62,
   "bridge/ruby.rs" => 17,
   "bridge/stack.rs" => 1,
   "bridge/string/build.rs" => 5,
   "bridge/string/encoding.rs" => 17,
   "bridge/string/view.rs" => 6,
-  "bridge/typed.rs" => 23,
+  "bridge/typed.rs" => 28,
   "bridge/wrapper/accounting.rs" => 1,
   "bridge/wrapper/document.rs" => 8,
   "bridge/wrapper/node.rs" => 1,
   "bridge/xml.rs" => 1,
-  "bridge/xml_decode.rs" => 7,
+  "bridge/xml_decode.rs" => 6,
   "bridge/xpath/context_object.rs" => 5,
-  "bridge/xpath/mod.rs" => 5,
+  "bridge/xpath/mod.rs" => 3,
   "falloc/mod.rs" => 1,
   "lexbor/abi.rs" => 4,
   "lexbor/adapter/arena_bytes.rs" => 14,
@@ -152,8 +153,9 @@ RAISING_API = /\b(?:rb_raise|rb_exc_raise|rb_jump_tag|rb_check_typeddata|
   rb_range_beg_len|rb_thread_check_ints|rb_intern3|rb_intern|rb_utf8_str_new|
   rb_enc_interned_str|rb_str_dup|rb_str_subseq|rb_enc_associate|rb_str_encode|
   rb_to_encoding|rb_enc_find_index|rb_data_typed_object_wrap|ruby_xmalloc|ruby_xrealloc2|
-  rb_memerror)\b/x
-RAISING_COUNTS = { "bridge/raw.rs" => 19 }.freeze # the 19th: `rb_memerror`, the raise sweep's injected raise
+  rb_ary_new_capa|rb_ary_push|rb_hash_new|rb_hash_aset|rb_ll2inum|rb_ull2inum|rb_float_new|
+  rb_id2sym|rb_str_cat|rb_enumeratorize_with_size|rb_memerror)\b/x
+RAISING_COUNTS = { "bridge/raw.rs" => 31 }.freeze # with `rb_memerror` (the raise sweep's injected raise) and `rb_jump_tag` (`jump_error`)
 
 # Makiri runs none of its caller's Ruby code: no argument is converted with its
 # `to_s`/`to_str`, no method of a caller's object is called, and XPath has no
@@ -834,210 +836,40 @@ def unwrapped_entries(rust)
   missing.uniq
 end
 
-# A frame in `glue/` or `bridge/` that owns a copy of an argument (a checked
-# view, the HTML source, an owned buffer) must not reach a call that can raise
-# while the copy is live: a raise is a longjmp past the frame, its `Drop` never runs, and the
-# copy leaks - the shape fixed one site at a time in build_fragment, css, the
-# factories and `[]` before this check existed. Drop the copy first, or make
-# the call under `bridge::ruby::protected`, where a raise comes back as `Err`.
-#
-# A document guard (`bridge::dom`'s reads and writes, and the receiver views
-# over them) is held to the same rule, for a worse reason: its `Drop` is what
-# ends a counted borrow, so a raise past one leaves the document read - every
-# later edit refused - or written - every later read refused - for good.
-#
-# What raises is worked out, not listed: `bridge/raw.rs`'s wrappers of the
-# RAISING_API calls and magnus's allocating constructors are the seeds, and a
-# function in `bridge/` or `glue/` that calls one outside a protect raises
-# too, to a fixed point. A call is matched by name, a method call (`.f(`) to
-# methods and a plain or path call to free functions, and a name defined more
-# than once in the crate is not followed (it would make every `new` and `get` raise); the
-# wrappers below are followed by hand for that reason. A copy is a `let`
-# whose right side calls a function returning one of COPY_TYPES (or a closure
-# that does), or a parameter that takes one by value; it is live to the end
-# of its block, to its `drop(name)`, or to the call it is handed to by value -
-# that callee owns it then, and is checked through its own parameter.
-COPY_TYPES = /\b(?:RubyText|RubyData|RubyStr|HtmlSource|OwnedBuf|HtmlRead|HtmlWrite|XmlRead|XmlWrite|HtmlView|XmlView)\b/
-# The guards among them. A guard is mostly read through as a temporary -
-# `xml_read(&doc)?.type_(id)` - which ends with its statement, so for these a
-# `let` binds one only when its right side IS the call (a `?` after it aside).
-GUARD_TYPES = /\b(?:HtmlRead|HtmlWrite|XmlRead|XmlWrite|HtmlView|XmlView)\b/
-MAGNUS_ALLOCATING = /\.(?:str_new|enc_str_new|str_from_slice|str_buf_new|str_with_capacity|
-  ary_new|ary_new_capa|ary_new_from_values|ary_from_iter|ary_from_vec|hash_new|hash_new_capa|
-  enumeratorize|obj_alloc|float_from_f64|integer_from_i64|integer_from_u64|sym_new)\s*\(/x
-PROTECTING = /\b(?:protected|protect_value|protect)\s*\(/
-# Raise only when their contract is broken: `check_typeddata` on a VALUE the
-# caller built as that type.
-CANNOT_RAISE = %w[typed_data_known typed_data_unprotected].freeze
-# Raising, but defined under a name used more than once (`TypedType::wrap`).
-RAISING_BY_HAND = [["wrap_cached", false]].freeze
-# Methods of ours named like a std method (`NodeSet::filter`): a `.filter(`
-# is far more often an Option's or an iterator's, so these are not followed.
-STD_METHOD_NAMES = %w[at concat copy filter get push reserve slice split_off take union value].freeze
+# Every raising C call in `bridge/raw.rs` is made inside `call(|| ...)`, the
+# thunk-style `rb_protect` that hands the raise back as `Err` - so a caller can
+# own a copy or hold a document guard across any of them, and nothing needs
+# tracking above `raw.rs`. The two functions that sit outside a `call` on
+# purpose: `injected_raise` (it runs INSIDE every wrapper's closure, so its
+# raise is that call's) and `jump_error` (it resumes a state `rb_protect` just
+# caught, under magnus's protect, to build the error).
+RAW_OUTSIDE_CALL = %w[injected_raise jump_error].freeze
 
-# Every `fn` in `files`: [rel, name, method?, body code, body offset, file code].
-def fn_bodies(rust, files)
-  files.flat_map do |path|
-    rel = path.delete_prefix("#{rust}/")
-    code = code_only(File.binread(path))
-    code.to_enum(:scan, /\bfn\s+(\w+)/).filter_map do
-      m = Regexp.last_match
-      open = code.index(/[{;]/, m.end(0))
-      next if open.nil? || code[open] == ";"
-
-      close = matching_close(code, open) or next
-      sig = code[m.end(0)...open]
-      params = sig[/\((.*)/m, 1].to_s
-      [rel, m[1], params.match?(/\A\s*&?\s*(?:'\w+\s+)?(?:mut\s+)?self\b/), code[(open + 1)...close],
-       open + 1, code, sig]
-    end
-  end
-end
-
-def protected_spans(body)
-  body.to_enum(:scan, PROTECTING).filter_map do
-    open = Regexp.last_match.end(0) - 1
-    close = matching_close(body, open)
+def raw_unprotected(path)
+  code = comments_removed(File.binread(path))
+  skip = RAW_OUTSIDE_CALL.filter_map do |name|
+    m = code.match(/\bfn\s+#{name}\b[^{]*\{/) or next
+    open = m.end(0) - 1
+    close = matching_close(code, open)
     close && (open..close)
   end
+  spans = code.to_enum(:scan, /\bcall\s*\(/).filter_map do
+    open = Regexp.last_match.end(0) - 1
+    close = matching_close(code, open)
+    close && (open..close)
+  end
+  # The `call` helper itself, whose body names `rb_protect`, not a raiser.
+  code.to_enum(:scan, RAISING_API).filter_map do
+    at = Regexp.last_match.begin(0)
+    next if skip.any? { |r| r.cover?(at) } || spans.any? { |r| r.cover?(at) }
+
+    "#{code[0...at].count("\n") + 1}: #{Regexp.last_match[0]}"
+  end
 end
 
-# Every call site in `body` outside a protect, as [offset, key, label]: key is
-# the [name, method?] it calls, or nil for a magnus allocating constructor,
-# which raises whatever `raising` holds. Worked out once per body, so the
-# fixed point below only filters.
-def call_sites(body)
-  calls = body.to_enum(:scan, MAGNUS_ALLOCATING).map do
-    [Regexp.last_match.begin(0), nil, Regexp.last_match[0].strip]
-  end
-  body.to_enum(:scan, /(\.\s*)?(\b[A-Z]\w*\s*(?:<[^>]*>)?\s*::\s*)?\b(\w+)\s*(?:::<[^>]*>)?\s*\(/).each do
-    m = Regexp.last_match
-    # `Type::f(` names an associated function, not a free one of that name.
-    next if m[2]
-
-    calls << [m.begin(3), [m[3], !m[1].nil?], m[3]]
-  end
-  # A free function handed over as a value, `.map(utf8_str)`, is called too.
-  body.to_enum(:scan, /(?<![.\w])((?:\w+::)*)(\w+)(?=\s*[),])/).each do
-    m = Regexp.last_match
-    next if m[1].match?(/(?:\A|::)[A-Z]\w*::\z/) # `Val::string`, not `string`
-
-    calls << [m.begin(2), [m[2], false], m[2]]
-  end
-  spans = protected_spans(body)
-  calls.reject { |at, _, _| spans.any? { |s| s.cover?(at) } }
-end
-
-# The calls in `sites` (from `call_sites`) to a [name, method?] in `raising`,
-# as [offset, label].
-def raising_in(sites, raising)
-  sites.filter_map { |at, key, label| [at, label] if key.nil? || raising.include?(key) }
-end
-
-# The calls in `body` to a [name, method?] in `raising`, outside a protect.
-def raising_calls(body, raising)
-  raising_in(call_sites(body), raising)
-end
-
-def copies_across_raises(rust)
-  fns = fn_bodies(rust, Dir.glob(File.join(rust, "{bridge,glue}", "**", "*.rs")))
-  # Counted over the whole crate: a bridge method named like an engine one
-  # (`Bridge::resolve`, `HtmlParsed::resolve`) is not the one a call reaches.
-  defined = Dir.glob(File.join(rust, "**", "*.rs")).flat_map do |path|
-    File.binread(path).scan(/\bfn\s+(\w+)\s*(?:<[^>{]*>)?\s*\((\s*&?\s*(?:'\w+\s+)?(?:mut\s+)?self\b)?/)
-        .map { |n, recv| [n, !recv.nil?] }
-  end.tally
-  raising = fns.select { |rel, _, _, body| rel == "bridge/raw.rs" && body.match?(RAISING_API) }
-               .to_set { |f| [f[1], false] }
-  raising.merge(RAISING_BY_HAND)
-  # `use path::f as g`: a call to `g` is a call to `f`.
-  aliases = Dir.glob(File.join(rust, "{bridge,glue}", "**", "*.rs")).flat_map do |path|
-    code_only(File.binread(path)).scan(/\b(\w+)\s+as\s+(\w+)\b/)
-  end
-  sites = fns.map { |f| call_sites(f[3]) }
-  loop do
-    aliases.each { |from, to| raising << [to, false] if raising.include?([from, false]) }
-    followed = raising.select { |k| defined[k].to_i <= 1 && !(k[1] && STD_METHOD_NAMES.include?(k[0])) }.to_set
-    grown = fns.zip(sites).filter_map do |(rel, name, method), body_sites|
-      k = [name, method]
-      next if rel == "bridge/raw.rs" || raising.include?(k) || CANNOT_RAISE.include?(name)
-
-      k if raising_in(body_sites, followed).any?
-    end
-    break if grown.empty?
-
-    raising.merge(grown)
-  end
-  aliases.each { |from, to| raising << [to, false] if raising.include?([from, false]) }
-  followed = raising.select { |k| defined[k].to_i <= 1 && !(k[1] && STD_METHOD_NAMES.include?(k[0])) }.to_set
-  copy_fns = fns.select { |f| f[6][/->(.*)\z/m, 1]&.match?(COPY_TYPES) }.to_set { |f| f[1] }
-  guard_fns = fns.select { |f| f[6][/->(.*)\z/m, 1]&.match?(GUARD_TYPES) }.to_set { |f| f[1] }
-  # Whether `rhs` is a call to `f` and nothing after it but a `?`: a guard
-  # bound, rather than read through as a temporary.
-  binds_guard = lambda do |rhs, f|
-    m = rhs.match(/\b#{f}\s*\(/) or next false
-    close = matching_close(rhs, m.end(0) - 1) or next false
-    rhs[0...m.begin(0)].match?(/\A[\s\w:.&*]*\z/) && rhs[(close + 1)..].match?(/\A\s*\??\s*\z/)
-  end
-
-  found = []
-  fns.select { |f| f[0].start_with?("glue/", "bridge/") && f[0] != "bridge/raw.rs" }.each do |rel, name, _, body, base, code, sig|
-    # `var`, a copy from `from`, live to `block_end` unless dropped or moved.
-    check = lambda do |var, from, block_end|
-      dropped = body.index(/\bdrop\(\s*(?:\([\w\s,]*)?\b#{var}\b[\w\s,]*\)?\s*\)/, from)
-      # Handed to a call by value (`f(x)`, `f(a, x)`, `f((a, x))`): the
-      # callee owns it.
-      moved = body.index(/[(,]\s*#{var}\s*[,)]/, from)
-      live_end = [block_end, dropped || block_end, moved || block_end].min
-      seg = body[from...live_end]
-      # The call it is handed to by value owns it: not live across that one -
-      # the innermost enclosing paren that is a call's, past a tuple's.
-      into = moved && (open = call_paren_around(body, moved + 1)) && (open - from)
-      raising_calls(seg, followed).each do |at, callee|
-        next if into && at < into && seg.index("(", at) == into
-        line = code[0...(base + from + at)].count("\n") + 1
-        found << "#{rel}:#{line} #{name}: `#{var}` (a copy) is live across #{callee}"
-      end
-    end
-    # A copy taken by value is this frame's from the start: the caller that
-    # handed it over is not checked past that call.
-    sig[/\((.*)\)/m, 1].to_s.scan(/(?:\A|,)\s*(?:mut\s+)?(\w+)\s*:\s*(?:Option<\s*)?(?:\w+::)*(?:#{COPY_TYPES.source})/)
-                       .each { |(var)| check.(var, 0, body.length) }
-    local_copy_fns = copy_fns.dup
-    body.to_enum(:scan, /\blet\s+(?:mut\s+)?(?:Some\(\s*)?(?:mut\s+)?(\(?[\w\s,]+\)?)\s*(?::[^=;]*)?=(?!=)/).each do
-      m = Regexp.last_match
-      depth = 0
-      stmt_end = (m.end(0)...body.length).find do |i|
-        c = body[i]
-        depth += 1 if "([{".include?(c)
-        depth -= 1 if ")]}".include?(c)
-        c == ";" && depth.zero?
-      end or next
-      rhs = body[m.end(0)...stmt_end]
-      # A block's value is not the copy made inside it; its own lets are seen.
-      next if rhs.lstrip.start_with?("{")
-      next unless local_copy_fns.any? do |f|
-        rhs.match?(/\b#{f}\s*\(/) && (!guard_fns.include?(f) || binds_guard.(rhs, f))
-      end
-
-      names = m[1].scan(/\w+/) - %w[mut]
-      if rhs.lstrip.match?(/\A(?:move\s*)?\|/)
-        local_copy_fns.merge(names)
-        next
-      end
-      # The innermost block holding the `let`.
-      opens = (0...m.begin(0)).select { |i| body[i] == "{" }.reverse
-      block_end = opens.lazy.map { |o| matching_close(body, o) }.find { |c| c && c > m.begin(0) } || body.length
-      names.each { |var| check.(var, stmt_end, block_end) }
-    end
-  end
-  found.uniq
-end
-
-copy_leaks = copies_across_raises(RUST)
-unless copy_leaks.empty?
-  errors << "a frame holds a copy across a call that can raise (drop it first, or " \
-            "make the call under bridge::ruby::protected): #{copy_leaks.inspect}"
+unprotected = raw_unprotected(File.join(RUST, "bridge", "raw.rs"))
+unless unprotected.empty?
+  errors << "a raising C call in bridge/raw.rs outside `call(|| ...)`: #{unprotected.inspect}"
 end
 
 unentered = unwrapped_entries(RUST)
@@ -1073,4 +905,4 @@ puts "unsafe-boundaries: #{forbidding.length} forbid files; " \
      "#{ruby_layer.values.sum} Ruby-layer uses inside the engine; " \
      "#{ruby_surface.values.sum} Ruby methods in bridge/; " \
      "every registered method but #{ENTRY_EXEMPT.length} exempt runs under entry; " \
-     "no copy is live across a raise in glue/ or bridge/"
+     "every raising call in bridge/raw.rs is inside `call`"

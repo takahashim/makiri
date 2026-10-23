@@ -16,25 +16,27 @@
 #![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
-use core::ffi::{c_int, c_long};
+use core::ffi::c_long;
 
 use magnus::rb_sys::AsRawValue;
+use magnus::value::ReprValue;
 use magnus::{Error, RString};
 use rb_sys::VALUE;
 
-use super::ruby::exception_message;
+use super::ruby::error_message;
 use super::string::{text_check, with_bytes, Encoding};
 use crate::init::{EXC_XML_LIMIT_EXCEEDED, EXC_XML_SYNTAX_ERROR};
 use crate::xml::encoding_sniff::sniff;
 
-/// `rb_str_encode` with no replacement flags, so an undefined conversion or an
-/// invalid byte sequence RAISES rather than substituting U+FFFD. Run under
-/// `rb_protect` so the Ruby `Encoding::*Error` can be remapped to
-/// `Makiri::XML::SyntaxError`.
-unsafe extern "C" fn strict_transcode_thunk(str: VALUE) -> VALUE {
-    /* Only C calls (through `raw`'s thin wrapper): nothing here can panic
-     * into the `rb_protect` frame that runs it. */
-    super::raw::str_encode(str, rb_sys::rb_utf8_encoding(), 0)
+/// Whether `e` is an `EncodingError` (an undefined conversion, an invalid
+/// byte sequence, no converter).
+fn is_encoding_error(e: &Error) -> bool {
+    match e.error_type() {
+        magnus::error::ErrorType::Exception(x) => {
+            x.is_kind_of(crate::bridge::ruby::gvl_ruby().exception_encoding_error())
+        }
+        _ => false,
+    }
 }
 
 /// Two encodings agree, for conflict purposes, when identical or when either is
@@ -159,20 +161,23 @@ unsafe fn xml_decode_input(str: RString, max_bytes: Option<usize>) -> Result<RSt
     } else {
         let mut input = str.as_raw();
         if Encoding::of(str) != eff {
-            input = super::raw::str_dup(input);
-            super::raw::enc_associate(input, eff.as_raw());
+            input = super::raw::str_dup(input)?;
+            super::raw::enc_associate(input, eff.as_raw())?;
         }
-        let mut state: c_int = 0;
-        let out = rb_sys::rb_protect(Some(strict_transcode_thunk), input, &mut state);
-        if state != 0 {
-            let exc = rb_sys::rb_errinfo();
-            rb_sys::rb_set_errinfo(rb_sys::Qnil as VALUE);
-            let msg = exception_message(exc);
-            return Err(syntax_error(format!(
-                "XML input could not be decoded to UTF-8: {msg}"
-            )));
+        /* No replacement flags, so an undefined conversion or an invalid byte
+         * sequence is an `Encoding::*Error` rather than a U+FFFD - remapped to
+         * `Makiri::XML::SyntaxError`. Any other failure (`NoMemoryError`, an
+         * interrupt) is passed through as it is. */
+        match super::raw::str_encode(input, rb_sys::rb_utf8_encoding(), 0) {
+            Ok(out) => decoded_string(out)?,
+            Err(e) if is_encoding_error(&e) => {
+                let msg = error_message(&e);
+                return Err(syntax_error(format!(
+                    "XML input could not be decoded to UTF-8: {msg}"
+                )));
+            }
+            Err(e) => return Err(e),
         }
-        decoded_string(out)?
     };
 
     /* §4.3.3: a leading BOM is the encoding signature, not document content.
@@ -215,8 +220,8 @@ unsafe fn xml_decode_input(str: RString, max_bytes: Option<usize>) -> Result<RSt
 
     /* Built from the VALUE: the borrow above is over, and rb_str_subseq
      * allocates. */
-    let u = super::raw::str_subseq(s.as_raw(), off as c_long, len as c_long);
-    super::raw::enc_associate(u, rb_sys::rb_utf8_encoding());
+    let u = super::raw::str_subseq(s.as_raw(), off as c_long, len as c_long)?;
+    super::raw::enc_associate(u, rb_sys::rb_utf8_encoding())?;
     decoded_string(u)
 }
 

@@ -21,8 +21,6 @@ use magnus::rb_sys::AsRawValue;
 use magnus::{Error, Value};
 use rb_sys::{rb_data_type_t, VALUE};
 
-use super::ruby::protect;
-
 /* ---- a VALUE inside a wrapped object ---- */
 
 /// A Ruby value stored inside a wrapped object's data, which that object's
@@ -289,7 +287,7 @@ impl<T: Hooks> TypedType<T> {
         klass: VALUE,
         build: impl FnOnce() -> T,
         store: impl FnOnce(&mut T, &Store),
-    ) -> VALUE {
+    ) -> Result<VALUE, Error> {
         wrap_built::<T>(klass, self.raw.as_ptr(), build, store)
     }
 }
@@ -344,24 +342,34 @@ impl DataType {
 /// from it), or the `TypeError` Ruby's own check raises.
 ///
 /// The type is tested first, so a well-typed object - every call on the normal
-/// path - never enters `protect`. Only a mismatch runs `rb_check_typeddata`
-/// under it, which is what keeps the error message Ruby's own, word for word,
-/// on every supported Ruby.
+/// path - makes no protected call: its data pointer is read directly. Only a
+/// mismatch runs `rb_check_typeddata` (protected), which is what keeps the
+/// error message Ruby's own, word for word, on every supported Ruby.
 fn typed_data(v: Value, ty: &'static DataType) -> Result<*mut c_void, Error> {
     let (v, ty) = (v.as_raw(), ty.as_ptr());
-    // SAFETY: `v` is a live value and `ty` a registered data type. The check
-    // runs unprotected only once the type is known to match, so it cannot
-    // raise there; a mismatch runs it under `protect`.
+    // SAFETY: `v` is a live value and `ty` a registered data type; the data
+    // pointer is read only once the type is known to match.
     unsafe {
         if rb_sys::rb_typeddata_is_kind_of(v, ty) != 0 {
-            return Ok(super::raw::check_typeddata(v, ty));
+            return Ok(data_pointer(v));
         }
-        match protect(|| super::raw::check_typeddata(v, ty) as VALUE) {
+        match super::raw::check_typeddata(v, ty) {
             Err(e) => Err(e),
             /* rb_typeddata_is_kind_of said no, so the check should have raised. */
             Ok(_) => Err(crate::bridge::ruby::type_error("wrong argument type")),
         }
     }
+}
+
+/// The data pointer of a TypedData object, read without a check.
+///
+/// # Safety
+/// `v` is a live TypedData object.
+#[inline]
+unsafe fn data_pointer(v: VALUE) -> *mut c_void {
+    use rb_sys::stable_api::StableApiDefinition;
+    // SAFETY: the caller's contract.
+    unsafe { rb_sys::stable_api::get_default().rtypeddata_get_data(v) }
 }
 
 /// The data pointer of a TypedData object whose type the caller has already
@@ -373,14 +381,13 @@ fn typed_data(v: Value, ty: &'static DataType) -> Result<*mut c_void, Error> {
 /// magnus turns it into a fatal error, where a raise would longjmp past them.
 fn typed_data_known(v: Value, ty: &'static DataType) -> *mut c_void {
     let (v, ty) = (v.as_raw(), ty.as_ptr());
-    // SAFETY: as in `typed_data`; the assert makes the check that follows one
-    // that cannot raise.
+    // SAFETY: as in `typed_data`; the assert is the type check.
     unsafe {
         assert!(
             rb_sys::rb_typeddata_is_kind_of(v, ty) != 0,
             "a VALUE of an established type had a different one"
         );
-        super::raw::check_typeddata(v, ty)
+        data_pointer(v)
     }
 }
 
@@ -395,32 +402,36 @@ fn typed_data_known(v: Value, ty: &'static DataType) -> *mut c_void {
 /// `store` sets them; and the VALUEs `store` writes are still on the caller's
 /// stack across the wrap, where the conservative scan pins them.
 ///
-/// Built AFTER the allocation, by a closure, not passed in: `ruby_xmalloc`
-/// raises `NoMemoryError` on OOM, and a raise longjmps - which Rust permits
-/// only over frames with no destructor to run, so no `T` may be a live local
-/// across it. The wrap can raise too, once the value is in place; so what
-/// `build` returns must own nothing yet (a raise there leaks the struct, as it
-/// always did) - which is also the fallible-allocation line for glue-side
-/// buffers. Once wrapped, the free callback drops it in place.
+/// Built AFTER the allocation, by a closure, not passed in, so a failed
+/// allocation builds nothing. Both allocations come back as `Err` (`raw`'s
+/// calls are protected); a failed wrap drops the built `T` in place and frees
+/// its memory. Once wrapped, the free callback drops it in place.
 ///
 /// # Safety
-/// Under the GVL. `build` returns a `T` that owns nothing needing a drop and
-/// holds no VALUE but `Qfalse` (all a `Held` can hold before a `Store`); `ty` must be `T`'s type (its free callback
-/// drops a `T` and returns the memory to `ruby_xfree`).
+/// Under the GVL. `build` returns a `T` that holds no VALUE but `Qfalse` (all
+/// a `Held` can hold before a `Store`); `ty` must be `T`'s type (its free
+/// callback drops a `T` and returns the memory to `ruby_xfree`).
 unsafe fn wrap_built<T>(
     klass: VALUE,
     ty: *const rb_data_type_t,
     build: impl FnOnce() -> T,
     store: impl FnOnce(&mut T, &Store),
-) -> VALUE {
+) -> Result<VALUE, Error> {
     /* `ruby_xmalloc` is malloc-aligned; nothing wrapped asks for more. */
     const { assert!(core::mem::align_of::<T>() <= 16) };
-    let p = super::raw::xmalloc(core::mem::size_of::<T>()) as *mut T;
+    let p = super::raw::xmalloc(core::mem::size_of::<T>())? as *mut T;
     p.write(build());
-    let obj = super::raw::typed_object_wrap(klass, p as *mut c_void, ty);
+    let obj = match super::raw::typed_object_wrap(klass, p as *mut c_void, ty) {
+        Ok(obj) => obj,
+        Err(e) => {
+            core::ptr::drop_in_place(p);
+            super::alloc::free(p);
+            return Err(e);
+        }
+    };
     /* Wrapped: from here the mark sees what `store` puts in. */
     store(&mut *p, &Store(()));
-    obj
+    Ok(obj)
 }
 
 /* ---- magnus's TypedData, for NodeSet ----
@@ -439,14 +450,41 @@ unsafe fn wrap_built<T>(
 /// the C it replaced (`Node#css` over 2000 nodes, `notes/node_set_ab.rb`).
 ///
 /// # Safety
-/// Raises (longjmps) when `v` is not a `T`, so no Rust destructor may be live.
-/// Only for a VALUE the caller built as a `T` itself. The returned lifetime is
-/// unconstrained; the caller must keep `v` rooted.
+/// Only for a VALUE the caller built as a `T` itself (a mismatch panics). The
+/// returned lifetime is unconstrained; the caller must keep `v` rooted.
 pub(in crate::bridge) unsafe fn typed_data_unprotected<'a, T: magnus::TypedData>(
     v: VALUE,
 ) -> &'a T {
     /* magnus::DataType is #[repr(transparent)] over rb_data_type_t, so this
      * cast is what the repr promises; the accessor for it is crate-private. */
     let dt = T::data_type() as *const magnus::typed_data::DataType as *const rb_data_type_t;
-    &*(super::raw::check_typeddata(v, dt) as *const T)
+    assert!(
+        rb_sys::rb_typeddata_is_kind_of(v, dt) != 0,
+        "a VALUE built as a NodeSet had a different type"
+    );
+    &*(data_pointer(v) as *const T)
+}
+
+/// magnus's `Ruby::wrap` for a `#[derive(TypedData)]` value (NodeSet), with
+/// both allocations - the box and the object - answered as `Err` rather than
+/// raised (magnus's raises). magnus's free callback drops the box, so the
+/// object is made exactly as `wrap` makes it.
+pub(in crate::bridge) fn wrap_magnus<T: magnus::TypedData>(data: T) -> Result<Value, Error> {
+    let ruby = super::ruby::gvl_ruby();
+    let class = T::class_for(&ruby, &data);
+    let boxed = crate::falloc::try_box(data)
+        .map_err(|_| Error::new(ruby.exception_no_mem_error(), "failed to allocate memory"))?;
+    let dt = T::data_type() as *const magnus::typed_data::DataType as *const rb_data_type_t;
+    let p = Box::into_raw(boxed);
+    // SAFETY: `p` is the box magnus's free callback for `T` expects, and `dt`
+    // is `T`'s data type (magnus::DataType is #[repr(transparent)] over it).
+    match unsafe { super::raw::typed_object_wrap(class.as_raw(), p as *mut c_void, dt) } {
+        // SAFETY: the object just wrapped.
+        Ok(obj) => Ok(unsafe { super::ruby::value(obj) }),
+        Err(e) => {
+            // SAFETY: not wrapped, so the box is still ours alone.
+            drop(unsafe { Box::from_raw(p) });
+            Err(e)
+        }
+    }
 }

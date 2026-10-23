@@ -6,8 +6,6 @@
 use core::ffi::c_int;
 
 use magnus::rb_sys::AsRawValue;
-/* Not magnus's: ours catches a panic before `rb_protect`'s C frame. */
-use crate::bridge::ruby::protect;
 use magnus::{prelude::*, Error, RString, Value};
 use rb_sys::VALUE;
 
@@ -60,7 +58,9 @@ impl Encoding {
     ///
     /// `rb_enc_find` wants a C string and the name is bytes, so the NUL is
     /// added here. A name too long to fit, or holding a NUL, is not one Ruby
-    /// knows, so it reads as None rather than being truncated at the NUL.
+    /// knows, so it reads as None rather than being truncated at the NUL. So
+    /// does a lookup whose autoload failed (`LoadError`, `NoMemoryError`): the
+    /// caller then refuses the name as unknown, never reads with another.
     pub(in crate::bridge) fn find(name: &[u8]) -> Option<Encoding> {
         let mut buf = [0u8; 64];
         if name.is_empty() || name.len() >= buf.len() || name.contains(&0) {
@@ -68,8 +68,8 @@ impl Encoding {
         }
         buf[..name.len()].copy_from_slice(name);
         let c = core::ffi::CStr::from_bytes_with_nul(&buf[..name.len() + 1]).ok()?;
-        // SAFETY: a NUL-terminated name; the lookup raises nothing.
-        let enc = unsafe { crate::bridge::raw::enc_find(c.as_ptr()) };
+        // SAFETY: a NUL-terminated name.
+        let enc = unsafe { crate::bridge::raw::enc_find(c.as_ptr()) }.ok()?;
         (!enc.is_null()).then_some(Encoding(enc))
     }
 
@@ -131,12 +131,12 @@ impl Encoding {
     /// bytes read as this encoding's. Allocating, so a raise
     /// (`NoMemoryError`, or `ArgumentError` from the tag) is returned.
     pub(in crate::bridge) fn relabel(self, str: RString) -> Result<RString, Error> {
-        // SAFETY: `str` is a live String and `self` a live encoding;
-        // `protect` turns a raise into `Err`.
-        let raw = protect(|| unsafe {
-            let copy = crate::bridge::raw::str_dup(str.as_raw());
-            crate::bridge::raw::enc_associate(copy, self.0)
-        })?;
+        // SAFETY: `str` is a live String and `self` a live encoding; the copy
+        // is on this frame, where the conservative scan sees it.
+        let raw = unsafe {
+            let copy = crate::bridge::raw::str_dup(str.as_raw())?;
+            crate::bridge::raw::enc_associate(copy, self.0)?
+        };
         // SAFETY: `rb_enc_associate` returns the live String it tagged.
         RString::from_value(unsafe { crate::bridge::ruby::value(raw) })
             .ok_or_else(|| crate::bridge::ruby::internal_error("relabelling returned a non-String"))
@@ -148,11 +148,9 @@ impl Encoding {
     pub fn encode_charref(self, str: Value) -> Result<Value, Error> {
         const UNDEF_HEX_CHARREF: c_int =
             rb_sys::ruby_econv_flag_type::RUBY_ECONV_UNDEF_HEX_CHARREF as c_int;
-        // SAFETY: `str` is a live String and `self` a live encoding; `protect`
-        // turns a raise into `Err`.
-        let raw = protect(|| unsafe {
-            crate::bridge::raw::str_encode(str.as_raw(), self.0, UNDEF_HEX_CHARREF)
-        })?;
+        // SAFETY: `str` is a live String and `self` a live encoding.
+        let raw =
+            unsafe { crate::bridge::raw::str_encode(str.as_raw(), self.0, UNDEF_HEX_CHARREF) }?;
         // SAFETY: `rb_str_encode` returns a live String value.
         Ok(unsafe { crate::bridge::ruby::value(raw) })
     }
@@ -168,13 +166,10 @@ pub fn to_encoding(v: Value) -> Result<Encoding, Error> {
     } else {
         crate::bridge::ruby::name_arg(v)?.as_value()
     };
-    let mut enc: *mut rb_sys::rb_encoding = core::ptr::null_mut();
-    // SAFETY: `v` is a live value; `protect` turns the raise into `Err`.
-    protect(|| unsafe {
-        enc = crate::bridge::raw::to_encoding(v.as_raw());
-        rb_sys::Qnil as VALUE
-    })?;
-    Ok(Encoding(enc))
+    // SAFETY: `v` is a live `Encoding` or String.
+    Ok(Encoding(unsafe {
+        crate::bridge::raw::to_encoding(v.as_raw())
+    }?))
 }
 
 /// [`Encoding::reads_as_utf8_bytes`] for `s`'s encoding, by index and with
@@ -218,17 +213,13 @@ fn reads_as_utf8_bytes(s: RString) -> bool {
 ///
 /// `rb_str_encode` RAISES - when Ruby has no converter at all (UTF-7,
 /// ISO-2022-JP-2 to UTF-8), and with no replacement flag on any byte or
-/// character it cannot convert - so it is only ever called under [`protect`],
-/// and the raise is returned. Called bare, it would `longjmp` over the Rust
-/// frames above it.
+/// character it cannot convert - and the raise comes back as `Err`.
 fn ruby_to_utf8(s: RString, ecflags: c_int) -> Result<RString, Error> {
     if reads_as_utf8_bytes(s) {
         return Ok(s);
     }
-    // SAFETY: `s` is a live String, and `protect` turns the raise into `Err`.
-    let raw = protect(|| unsafe {
-        crate::bridge::raw::str_encode(s.as_raw(), Encoding::utf8().0, ecflags)
-    })?;
+    // SAFETY: `s` is a live String.
+    let raw = unsafe { crate::bridge::raw::str_encode(s.as_raw(), Encoding::utf8().0, ecflags) }?;
     // SAFETY: `rb_str_encode` returns a live value; checked to be a String.
     RString::from_value(unsafe { crate::bridge::ruby::value(raw) })
         .ok_or_else(|| crate::bridge::ruby::internal_error("transcoding returned a non-String"))

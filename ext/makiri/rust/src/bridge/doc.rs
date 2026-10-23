@@ -18,7 +18,7 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{prelude::*, Error, RString, Ruby, Value};
+use magnus::{Error, RString, Ruby, Value};
 
 use crate::bridge::ruby::makiri_error;
 
@@ -74,7 +74,7 @@ pub fn parse_document(
      * frees cleanly through GC - and first, before this frame owns the
      * source's copy: the wrapper's allocation can raise. This entry is
      * defined on Makiri::HTML::Document, so the result is always HTML. */
-    let shell = DocumentShell::new(DocKind::Html);
+    let shell = DocumentShell::new(DocKind::Html)?;
     /* The bytes as they are, with the transport layer's encoding: `given`,
      * else the String's own (none for binary, which is sniffed). The copy is
      * what the parse reads with the GVL released, so nothing here borrows
@@ -102,7 +102,7 @@ pub fn parse_document(
 /// UTF-8) and the copy `Document#dup` fills.
 pub fn new_empty_document(compat_mode: u32, encoding: &'static str) -> Result<Value, Error> {
     /* The wrapper first, while nothing needs freeing - see DocumentShell. */
-    let shell = DocumentShell::new(DocKind::Html);
+    let shell = DocumentShell::new(DocKind::Html)?;
     let mut parsed = empty_html_document(compat_mode)
         .map_err(|_| makiri_error("failed to create HTML document"))?;
     parsed.set_encoding(encoding);
@@ -132,7 +132,7 @@ pub fn document_title(rb_doc: Value) -> Result<RString, Error> {
     let read = html_read(&rb_doc)?;
     let title = read.doc().title();
     let bytes = title.as_deref().unwrap_or(&[]);
-    crate::bridge::string::utf8_str_protected(bytes)
+    crate::bridge::string::utf8_rstring(bytes)
 }
 
 /// `Document#encoding`: the character encoding the document was read in, by
@@ -143,9 +143,9 @@ pub fn document_encoding(rb_doc: Value) -> Result<&'static str, Error> {
 
 /// `Document#quirks_mode`, as an Integer matching Lexbor (and Gumbo/Nokogiri):
 /// 0 no-quirks, 1 quirks, 2 limited-quirks. Set by the parser from the doctype.
-pub fn document_quirks_mode(ruby: &Ruby, rb_doc: Value) -> Result<Value, Error> {
+pub fn document_quirks_mode(_ruby: &Ruby, rb_doc: Value) -> Result<Value, Error> {
     let mode = html_read(&rb_doc)?.doc().compat_mode();
-    Ok(ruby.integer_from_i64(mode).as_value())
+    crate::bridge::build::int(mode)
 }
 
 /// `Document#errors`: the (currently always empty) parse-warning Array.

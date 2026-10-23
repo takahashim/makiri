@@ -27,8 +27,8 @@ fn css(ruby: &Ruby, this: XmlSelf, selector: Value, ns: Value) -> Result<Value, 
         let selector = args.selector;
         let sv = ruby_verified_text(selector, "CSS selector")?;
         /* Read once the namespaces are converted (their Hash is Ruby), and
-         * held while the set is built - under `protect`, in `node_set_from`:
-         * the matched nodes borrow it. */
+         * held while the set is built (`node_set_from`): the matched nodes
+         * borrow it. */
         let found = args.with_namespaces(|ns| {
             let d = this.read()?;
             let matched = css_cache::with_compiled(sv.as_bytes(), |groups, scratch| {
