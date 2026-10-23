@@ -102,6 +102,12 @@ task lint: :lexbor do
     sh "cargo", "clippy", "--no-default-features", "--features", "html-dom", "--tests", "--", "-D", "warnings"
     sh "cargo", "fmt", "--all", "--", "--check"
   end
+  # The fuzz crate is a workspace of its own, which the crate's `--all` does
+  # not reach; CI's "Fuzz crate checks" runs these two.
+  Dir.chdir("ext/makiri/rust/fuzz") do
+    sh "cargo", "fmt", "--", "--check"
+    sh "cargo", "clippy", "--all-targets", "--", "-D", "warnings"
+  end
 end
 
 # `rake spec:valgrind` - run the spec suite under Valgrind memcheck via
