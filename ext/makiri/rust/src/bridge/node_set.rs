@@ -56,8 +56,22 @@ use crate::bridge::ruby::is_kind_of;
 /* storage                                                            */
 /* ------------------------------------------------------------------ */
 
-/// The set's node array: a [`RubyVec`] under the set's size cap.
-struct NodeVec(RubyVec<NodeWord>);
+/// How many nodes a set holds in itself before it takes an allocation: a
+/// node's children, its ancestors and most query results on a small page fit,
+/// so they cost no allocation (nor the protected call one takes) beyond the
+/// set's own object.
+const INLINE_NODES: usize = 8;
+
+/// The set's node array, under the set's size cap: up to [`INLINE_NODES`] in
+/// the set itself, and past that a [`RubyVec`] that holds them all.
+struct NodeVec {
+    inline: [NodeWord; INLINE_NODES],
+    /// The nodes in `inline`; 0 once the set has spilled to `heap`.
+    inline_len: usize,
+    /// Every node once the set has spilled (its capacity is then non-zero);
+    /// empty, holding no allocation, before.
+    heap: RubyVec<NodeWord>,
+}
 
 /// Why a push was refused.
 ///
@@ -110,34 +124,107 @@ impl From<GrowError> for PushError {
 
 impl NodeVec {
     const fn new() -> Self {
-        NodeVec(RubyVec::new())
+        NodeVec {
+            inline: [NodeWord::NULL; INLINE_NODES],
+            inline_len: 0,
+            heap: RubyVec::new(),
+        }
+    }
+
+    fn spilled(&self) -> bool {
+        self.heap.capacity() != 0
     }
 
     fn len(&self) -> usize {
-        self.0.len()
+        if self.spilled() {
+            self.heap.len()
+        } else {
+            self.inline_len
+        }
     }
 
+    /// The nodes held outside the set's own memory, for its size report.
     fn capacity(&self) -> usize {
-        self.0.capacity()
+        self.heap.capacity()
     }
 
     fn as_slice(&self) -> &[NodeWord] {
-        self.0.as_slice()
+        if self.spilled() {
+            self.heap.as_slice()
+        } else {
+            &self.inline[..self.inline_len]
+        }
+    }
+
+    /// Move to the heap with room for `n` nodes (at least the ones held), in
+    /// one allocation.
+    fn spill(&mut self, n: usize) -> Result<(), PushError> {
+        self.heap.reserve(n.max(self.inline_len))?;
+        for &w in &self.inline[..self.inline_len] {
+            /* Room was reserved above, so this grows nothing. */
+            self.heap.push(w)?;
+        }
+        self.inline_len = 0;
+        Ok(())
     }
 
     /// Make room for `n` nodes (at most [`NODE_SET_MAX`]) in one allocation,
-    /// so the pushes that follow cannot reallocate.
+    /// so the pushes that follow cannot reallocate. Room that fits inline
+    /// takes none.
     fn reserve(&mut self, n: usize) -> Result<(), PushError> {
-        Ok(self.0.reserve(n.min(NODE_SET_MAX))?)
+        let n = n.min(NODE_SET_MAX);
+        if self.spilled() {
+            Ok(self.heap.reserve(n)?)
+        } else if n > INLINE_NODES {
+            self.spill(n)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Append every node of `nodes`, as [`push`](Self::push) each: room for
+    /// the iterator's lower bound is taken first, and a set on the heap is
+    /// then filled in one loop, the size cap checked once for the whole run.
+    fn extend(&mut self, nodes: impl Iterator<Item = NodeWord>) -> Result<(), PushError> {
+        let mut nodes = nodes.peekable();
+        self.reserve(self.len().saturating_add(nodes.size_hint().0))?;
+        while nodes.peek().is_some() {
+            if self.spilled() {
+                let room = NODE_SET_MAX.saturating_sub(self.heap.len());
+                for w in nodes.by_ref().take(room) {
+                    self.heap.push(w)?;
+                }
+                if nodes.peek().is_some() {
+                    return Err(PushError::SizeLimit);
+                }
+                return Ok(());
+            }
+            if let Some(w) = nodes.next() {
+                self.push(w)?;
+            }
+        }
+        Ok(())
     }
 
     /// Append one node: `Err` for the size cap, a capacity overflow or a
     /// failed allocation.
+    #[inline]
     fn push(&mut self, node: NodeWord) -> Result<(), PushError> {
-        if self.0.len() >= NODE_SET_MAX {
-            return Err(PushError::SizeLimit);
+        if self.spilled() {
+            if self.heap.len() >= NODE_SET_MAX {
+                return Err(PushError::SizeLimit);
+            }
+            return Ok(self.heap.push(node)?);
         }
-        Ok(self.0.push(node)?)
+        if let Some(slot) = self.inline.get_mut(self.inline_len) {
+            *slot = node;
+            self.inline_len += 1;
+            return Ok(());
+        }
+        /* Full inline: spill, with room to grow (NODE_SET_MAX is far above
+         * INLINE_NODES, so the cap is not reached here). */
+        self.spill(INLINE_NODES * 4)?;
+        Ok(self.heap.push(node)?)
     }
 }
 
@@ -239,6 +326,14 @@ impl NodeSet {
         nodes.push(node)
     }
 
+    /// [`NodeVec::extend`] on a set this module built or checked.
+    fn try_extend(&self, nodes: impl Iterator<Item = NodeWord>) -> Result<(), PushError> {
+        let Ok(mut set) = self.nodes.try_borrow_mut() else {
+            return Err(PushError::Busy);
+        };
+        set.extend(nodes)
+    }
+
     /// Room for `n` more nodes in one allocation.
     fn try_reserve(&self, n: usize) -> Result<(), PushError> {
         let Ok(mut nodes) = self.nodes.try_borrow_mut() else {
@@ -302,6 +397,11 @@ impl Fill<'_> {
         self.set.try_push(node)
     }
 
+    /// Append every node of `nodes` (see [`push`](Self::push)).
+    pub fn extend(&self, nodes: impl Iterator<Item = NodeWord>) -> Result<(), PushError> {
+        self.set.try_extend(nodes)
+    }
+
     /// Room for `n` more nodes, so the pushes that follow grow nothing.
     pub fn reserve(&self, n: usize) -> Result<(), PushError> {
         self.set.try_reserve(n)
@@ -328,10 +428,7 @@ pub fn node_set_from(
     nodes: impl Iterator<Item = NodeWord>,
 ) -> Result<Value, Error> {
     let (set, fill) = node_set_with_fill(document)?;
-    fill.reserve(nodes.size_hint().0)?;
-    for n in nodes {
-        fill.push(n)?;
-    }
+    fill.extend(nodes)?;
     Ok(set)
 }
 

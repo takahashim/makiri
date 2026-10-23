@@ -237,10 +237,7 @@ fn val_to_ruby(v: ValRef<'_>, document: Value) -> Result<Value, Error> {
     Ok(match v {
         ValRef::NodeSet(set) => {
             let (rb, fill) = node_set_with_fill(document)?;
-            fill.reserve(set.as_slice().len())?;
-            for &n in set.as_slice() {
-                fill.push(NodeWord::of_token(n))?;
-            }
+            fill.extend(set.as_slice().iter().map(|&n| NodeWord::of_token(n)))?;
             rb
         }
         /* The bytes are the value's own, and valid UTF-8 - the engine builds
