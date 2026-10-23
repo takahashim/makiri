@@ -9,7 +9,7 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{Error, Integer, Ruby, Value};
+use magnus::{Error, Ruby, Value};
 
 use crate::bridge::ruby::makiri_error;
 use crate::xml::dom_name;
@@ -111,10 +111,11 @@ pub fn node_hash(ruby: &Ruby, rb_self: Value) -> Result<Value, magnus::Error> {
 }
 
 /// A `child_at` / `element_child_at` index argument: None (so nil) for a
-/// negative one, or one too large for any list. Not an Integer is the
-/// `TypeError` magnus raises converting it.
-fn child_index_arg(i: Integer) -> Option<usize> {
-    i.to_u64().ok().and_then(|n| usize::try_from(n).ok())
+/// negative one, or one too large for any list. Not an Integer is a
+/// `TypeError` (`bridge::ruby::integer_arg`): no `to_int` is called.
+fn child_index_arg(i: Value) -> Result<Option<usize>, magnus::Error> {
+    let i = crate::bridge::ruby::integer_arg(i)?;
+    Ok(i.to_u64().ok().and_then(|n| usize::try_from(n).ok()))
 }
 
 /// `#child_count` (DOM `childNodes.length`): every child node, counted
@@ -130,8 +131,8 @@ pub fn element_child_count<S: ChildListHost>(this: S) -> Result<usize, magnus::E
 
 /// `#child_at(i)` (DOM `childNodes[i]`): the child node at `i`, or nil when
 /// `i` is negative or past the end.
-pub fn child_at<S: ChildListHost>(this: S, i: Integer) -> Result<Option<Value>, magnus::Error> {
-    crate::bridge::ruby::entry(|| match child_index_arg(i) {
+pub fn child_at<S: ChildListHost>(this: S, i: Value) -> Result<Option<Value>, magnus::Error> {
+    crate::bridge::ruby::entry(|| match child_index_arg(i)? {
         Some(i) => this.child_at(ChildList::Nodes, i),
         None => Ok(None),
     })
@@ -141,9 +142,9 @@ pub fn child_at<S: ChildListHost>(this: S, i: Integer) -> Result<Option<Value>, 
 /// nil.
 pub fn element_child_at<S: ChildListHost>(
     this: S,
-    i: Integer,
+    i: Value,
 ) -> Result<Option<Value>, magnus::Error> {
-    crate::bridge::ruby::entry(|| match child_index_arg(i) {
+    crate::bridge::ruby::entry(|| match child_index_arg(i)? {
         Some(i) => this.child_at(ChildList::Elements, i),
         None => Ok(None),
     })

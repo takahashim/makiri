@@ -10,7 +10,7 @@
 
 use core::ffi::c_long;
 
-use magnus::{function, method, prelude::*, Error, RArray, Ruby, TryConvert, Value};
+use magnus::{function, method, prelude::*, Error, RArray, Ruby, Value};
 
 use crate::bridge::node_set::{node_set_of_nodes, Membership, NodeSet};
 use crate::bridge::ruby::{is_kind_of, range_beg_len};
@@ -38,22 +38,23 @@ fn aref(ruby: &Ruby, s: &NodeSet, args: &[Value]) -> Result<Option<Value>, Error
         match args {
             [range] if range.is_kind_of(ruby.class_range()) => {
                 /* A start outside the set is nil; a bound too large for a `long`
-                 * raises, as `Array#[]` does. */
-                match range_beg_len(*range, count)? {
+                 * raises, as `Array#[]` does. The ends are Integers or nil: one
+                 * that is not would be converted by its `to_int`. */
+                match range_beg_len(crate::bridge::ruby::integer_range_arg(*range)?, count)? {
                     Some((beg, len)) => s.slice(ruby, beg as usize, len as usize),
                     None => Ok(None),
                 }
             }
             [index] => {
-                let i = from_end(c_long::try_convert(*index)?);
+                let i = from_end(crate::bridge::ruby::long_arg(*index)?);
                 if i < 0 || i >= count {
                     return Ok(None);
                 }
                 s.at(ruby, i as usize)
             }
             [beg, len] => {
-                let beg = from_end(c_long::try_convert(*beg)?);
-                let len = c_long::try_convert(*len)?;
+                let beg = from_end(crate::bridge::ruby::long_arg(*beg)?);
+                let len = crate::bridge::ruby::long_arg(*len)?;
                 if beg < 0 || beg > count || len < 0 {
                     return Ok(None);
                 }

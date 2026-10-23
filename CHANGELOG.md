@@ -31,7 +31,8 @@
   a `Symbol`; anything else raises `TypeError` ("... call #to_s to convert
   it"), where `node["n"] = 1` used to store `"1"`. `Makiri.HTML` / `Makiri.XML` still read an IO and convert
   their source with `String()`, and `XML::Builder` still converts with
-  `to_s`.
+  `to_s`. An index or a count (`NodeSet#[]`, `#child_at`,
+  `to_xml(indent:)`) must likewise be an `Integer`; `to_int` is not called.
 * XPath custom-function handlers are removed. `Node#xpath(expr, handler)`,
   `#at_xpath(expr, handler)` and `XPathContext#evaluate(expr, handler)` raise
   `ArgumentError`, and a call to a function XPath 1.0 does not define is an

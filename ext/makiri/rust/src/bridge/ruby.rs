@@ -93,8 +93,41 @@ pub fn is_kind_of(v: Value, klass: &crate::init::RbConst<magnus::RClass>) -> boo
 /// Makiri runs none, so anything else is a `TypeError`, worded as Ruby's own
 /// type check words it.
 pub fn string_arg(v: Value) -> Result<RString, Error> {
-    RString::from_value(v).ok_or_else(|| wrong_type(v, "String"))
+    RString::from_value(v).ok_or_else(|| wrong_type(v, "String", TO_S_HINT))
 }
+
+/// `v`, which must be an Integer (a Fixnum or a Bignum). No conversion, as
+/// [`string_arg`]: a `to_int` is the caller's Ruby.
+pub fn integer_arg(v: Value) -> Result<magnus::Integer, Error> {
+    magnus::Integer::from_value(v).ok_or_else(|| wrong_type(v, "Integer", TO_I_HINT))
+}
+
+/// [`integer_arg`] as a `long`; one past a `long` is Ruby's `RangeError`.
+pub fn long_arg(v: Value) -> Result<c_long, Error> {
+    let n = integer_arg(v)?.to_i64()?;
+    c_long::try_from(n).map_err(|_| {
+        Error::new(
+            gvl_ruby().exception_range_error(),
+            format!("integer {n} too big for a long"),
+        )
+    })
+}
+
+/// A Range argument whose ends are Integers (or nil, for an endless or
+/// beginless one): `rb_range_beg_len` would otherwise convert an end with its
+/// `to_int`.
+pub fn integer_range_arg(v: Value) -> Result<Value, Error> {
+    let r = magnus::Range::from_value(v).ok_or_else(|| wrong_type(v, "Range", ""))?;
+    for end in [r.beg::<Value>()?, r.end::<Value>()?] {
+        if !end.is_nil() {
+            integer_arg(end)?;
+        }
+    }
+    Ok(v)
+}
+
+const TO_S_HINT: &str = "; call #to_s to convert it";
+const TO_I_HINT: &str = "; call #to_i to convert it";
 
 /// `v` as a String for a NAME (an attribute or element name, a prefix, a
 /// selector, an expression): a String, or a Symbol's name. Nothing else
@@ -104,7 +137,7 @@ pub fn name_arg(v: Value) -> Result<RString, Error> {
         return Ok(s);
     }
     if magnus::Symbol::from_value(v).is_none() {
-        return Err(wrong_type(v, "String or Symbol"));
+        return Err(wrong_type(v, "String or Symbol", TO_S_HINT));
     }
     // SAFETY: `v` is a live Symbol.
     let s = unsafe { super::raw::sym2str(v.as_raw()) }?;
@@ -135,16 +168,16 @@ pub fn describe(v: Value) -> String {
 }
 
 /// Ruby's `TypeError` for a value of the wrong class, worded as Ruby's own
-/// type check words it, with the way out: "wrong argument type Integer
-/// (expected String); call #to_s to convert it". Makiri converts nothing
-/// itself (a `to_s` is the caller's Ruby), so the caller does. The class name
-/// is read without a call.
-fn wrong_type(v: Value, expected: &str) -> Error {
+/// type check words it, with the way out (`hint`): "wrong argument type
+/// Integer (expected String); call #to_s to convert it". Makiri converts
+/// nothing itself (a `to_s` is the caller's Ruby), so the caller does. The
+/// class name is read without a call.
+fn wrong_type(v: Value, expected: &str, hint: &str) -> Error {
     // SAFETY: `v` is a live value, and its class name is copied before anything
     // else runs.
     let class = unsafe { v.classname() }.into_owned();
     type_error(format!(
-        "wrong argument type {class} (expected {expected}); call #to_s to convert it"
+        "wrong argument type {class} (expected {expected}){hint}"
     ))
 }
 

@@ -47,6 +47,8 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
     or a `Symbol` for a name; anything else is a `TypeError`. The parse
     entries still take an IO or anything `String()` converts, and
     `XML::Builder` converts with `to_s` as Nokogiri's does.
+  * An index is an `Integer`: `node_set[1.5]` and a Range with a Float end
+    are a `TypeError`, where Nokogiri (as `Array#[]`) truncates them.
 
 * There are no custom XPath functions
   * Nokogiri answers a function XPath does not define by calling a method of

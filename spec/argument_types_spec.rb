@@ -82,6 +82,33 @@ RSpec.describe "argument types" do
     end
   end
 
+  describe "Integer arguments" do
+    let(:to_int_only) { Class.new { def to_int = 0 }.new }
+    let(:doc) { Makiri.HTML("<ul><li>a</li><li>b</li></ul>") }
+
+    it "takes an Integer index and refuses anything else, calling no to_int" do
+      ul = doc.at_css("ul")
+      expect(ul.child_at(1).text).to eq("b")
+      expect(ul.element_child_at(-1)).to be_nil
+      expect { ul.child_at(to_int_only) }.to raise_error(TypeError, /expected Integer\); call #to_i/)
+      expect { ul.child_at(1.0) }.to raise_error(TypeError)
+      set = doc.css("li")
+      expect(set[1].text).to eq("b")
+      expect(set[0, 1].size).to eq(1)
+      expect(set[0..].size).to eq(2)
+      expect(set[..0].size).to eq(1)
+      expect { set[to_int_only] }.to raise_error(TypeError)
+      expect { set[0, to_int_only] }.to raise_error(TypeError)
+      expect { set[0.5..1] }.to raise_error(TypeError)
+    end
+
+    it "takes only an Integer indent for to_xml" do
+      xml = Makiri::XML("<r><a/></r>")
+      expect(xml.to_xml(indent: 2)).to include("\n  <a/>")
+      expect { xml.to_xml(indent: to_int_only) }.to raise_error(TypeError)
+    end
+  end
+
   it "takes the same String twice, and leaves it changeable afterwards" do
     html = Makiri.HTML("<p>t</p>")
     s = +"dup"
