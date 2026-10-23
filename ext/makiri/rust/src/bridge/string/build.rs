@@ -68,7 +68,9 @@ pub unsafe fn ruby_str_from_slices<'a>(
         else {
             return Err(makiri_error("text slice length inconsistency"));
         };
-        to.copy_from_slice(s);
+        /* Text slices are mostly a few bytes: fixed-size copies, not a
+         * `memcpy` call each (`cbuf::copy_small`). */
+        crate::cbuf::copy_small(to, s);
         off += s.len();
     }
     if off != total {

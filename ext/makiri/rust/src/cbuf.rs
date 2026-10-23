@@ -225,7 +225,7 @@ const FIRST_ROOM: usize = 64;
 /// overlap in the middle (`[0, k)` and `[n - k, n)` for the largest power of
 /// two `k <= n`), which covers every byte; each is a load and a store.
 #[inline(always)]
-fn copy_small(dst: &mut [u8], src: &[u8]) {
+pub(crate) fn copy_small(dst: &mut [u8], src: &[u8]) {
     #[inline(always)]
     fn two<const K: usize>(dst: &mut [u8], src: &[u8]) {
         let n = src.len();
