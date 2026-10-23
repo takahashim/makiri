@@ -287,6 +287,83 @@ mod tests {
         assert_eq!(owned.as_slice(), b"abc");
     }
 
+    /// One append, checked against the shadow model as the Kani proof this
+    /// replaced checked it: success advances the length by `src.len()`
+    /// within the ceiling and the clamped room, failure is the ceiling's and
+    /// changes nothing, and the content is the shadow's either way.
+    fn step_append(b: &mut Buf, shadow: &mut Vec<u8>, src: &[u8], max: usize) {
+        let (len0, cap0) = (b.len, b.data.len());
+        match b.append(src) {
+            Ok(()) => {
+                assert_eq!(b.len, len0 + src.len(), "append: len advances by n");
+                assert!(b.len <= max, "append: ceiling respected");
+                assert!(b.data.len() <= max, "append: growth clamped to the ceiling");
+                shadow.extend_from_slice(src);
+            }
+            Err(e) => {
+                assert_eq!(e, BufError::Limit, "append: the failure reachable here");
+                assert!(
+                    len0 + src.len() > max,
+                    "append: LIMIT only past the ceiling"
+                );
+                assert_eq!(
+                    (b.len, b.data.len()),
+                    (len0, cap0),
+                    "append: failure leaves the size"
+                );
+            }
+        }
+        assert_eq!(
+            b.as_slice(),
+            &shadow[..],
+            "append: content matches the shadow"
+        );
+    }
+
+    /// Every case of two appends with a reserve between them, over every
+    /// ceiling up to 6, append of up to 4 bytes and reserve of up to 8: the
+    /// bytes survive every growth, the ceiling and the growth clamp hold,
+    /// failures change nothing, and `steal` hands back exactly what went in.
+    ///
+    /// This was a Kani proof (`cbuf::verify`) until it ran CBMC out of memory
+    /// over the `Vec`. The domain is small enough to try whole, and the bytes
+    /// are distinct per position, so a copy that misplaced or dropped one
+    /// would show: the code under test never branches on a byte's value,
+    /// which is all the proof's symbolic bytes added.
+    #[test]
+    fn append_matches_a_shadow_model_over_the_whole_small_domain() {
+        const { assert!(super::BUF_HARD_MAX >= 6 && super::BUF_DEFAULT_LIMIT >= 6) };
+        let first: Vec<u8> = (1..=4).collect();
+        let second: Vec<u8> = (101..=104).collect();
+        let mut cases = 0usize;
+        for max in 1..=6 {
+            for n1 in 0..=4 {
+                for want in 0..=8 {
+                    for n2 in 0..=4 {
+                        let mut b = Buf::new(max);
+                        let mut shadow = Vec::new();
+                        step_append(&mut b, &mut shadow, &first[..n1], max);
+
+                        let (len0, cap0) = (b.len, b.data.len());
+                        assert_eq!(b.reserve(want), Ok(()), "reserve: no OOM outside rake oom");
+                        assert_eq!(b.len, len0, "reserve: len untouched");
+                        assert!(b.data.len() <= max, "reserve: clamped to the ceiling");
+                        assert!(b.data.len() >= cap0, "reserve: does not shrink the room");
+                        assert_eq!(b.as_slice(), &shadow[..], "reserve: content intact");
+
+                        step_append(&mut b, &mut shadow, &second[..n2], max);
+
+                        let owned = b.steal();
+                        assert_eq!(owned.as_slice(), &shadow[..], "steal: what was appended");
+                        assert!(b.len == 0 && b.data.is_empty(), "steal: buffer reset");
+                        cases += 1;
+                    }
+                }
+            }
+        }
+        assert_eq!(cases, 6 * 5 * 9 * 5);
+    }
+
     #[test]
     fn safe_api_appends_and_reserves_without_exposing_storage() {
         let mut buf = Buf::new(16);
