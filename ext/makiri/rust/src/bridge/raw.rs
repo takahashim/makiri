@@ -385,3 +385,17 @@ pub unsafe fn enumeratorize(obj: VALUE, meth: VALUE) -> Result<VALUE, Error> {
         rb_sys::rb_enumeratorize_with_size(obj, meth, 0, core::ptr::null(), None)
     })
 }
+
+/// `rb_data_typed_object_zalloc`: raises `NoMemoryError`. For an embeddable
+/// type small enough, the zeroed data is the object's own slot.
+#[inline]
+pub unsafe fn typed_object_zalloc(
+    klass: VALUE,
+    size: usize,
+    ty: *const rb_data_type_t,
+) -> Result<VALUE, Error> {
+    call(|| unsafe {
+        injected_raise();
+        rb_sys::rb_data_typed_object_zalloc(klass, size as rb_sys::size_t, ty)
+    })
+}

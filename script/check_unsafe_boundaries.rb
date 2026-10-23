@@ -35,13 +35,13 @@ UNSAFE_ISLANDS = {
   "bridge/html.rs" => 3,
   "bridge/node_set.rs" => 3,
   "bridge/node_wrap.rs" => 1,
-  "bridge/raw.rs" => 62,
+  "bridge/raw.rs" => 64,
   "bridge/ruby.rs" => 17,
   "bridge/stack.rs" => 1,
   "bridge/string/build.rs" => 5,
   "bridge/string/encoding.rs" => 17,
   "bridge/string/view.rs" => 6,
-  "bridge/typed.rs" => 28,
+  "bridge/typed.rs" => 31,
   "bridge/wrapper/accounting.rs" => 1,
   "bridge/wrapper/document.rs" => 8,
   "bridge/wrapper/node.rs" => 1,
@@ -152,10 +152,11 @@ RAISING_API = /\b(?:rb_raise|rb_exc_raise|rb_jump_tag|rb_check_typeddata|
   rb_sym2str|rb_check_frozen|
   rb_range_beg_len|rb_thread_check_ints|rb_intern3|rb_intern|rb_utf8_str_new|
   rb_enc_interned_str|rb_str_dup|rb_str_subseq|rb_enc_associate|rb_str_encode|
-  rb_to_encoding|rb_enc_find_index|rb_data_typed_object_wrap|ruby_xmalloc|ruby_xrealloc2|
+  rb_to_encoding|rb_enc_find_index|rb_data_typed_object_wrap|rb_data_typed_object_zalloc|
+  ruby_xmalloc|ruby_xrealloc2|
   rb_ary_new_capa|rb_ary_push|rb_hash_new|rb_hash_aset|rb_ll2inum|rb_ull2inum|rb_float_new|
   rb_id2sym|rb_str_cat|rb_enumeratorize_with_size|rb_memerror)\b/x
-RAISING_COUNTS = { "bridge/raw.rs" => 31 }.freeze # with `rb_memerror` (the raise sweep's injected raise) and `rb_jump_tag` (`jump_error`)
+RAISING_COUNTS = { "bridge/raw.rs" => 32 }.freeze # with `rb_memerror` (the raise sweep's injected raise) and `rb_jump_tag` (`jump_error`)
 
 # Makiri runs none of its caller's Ruby code: no argument is converted with its
 # `to_s`/`to_str`, no method of a caller's object is called, and XPath has no

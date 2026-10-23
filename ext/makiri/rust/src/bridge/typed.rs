@@ -181,6 +181,12 @@ unsafe extern "C" fn free_cb<T: Hooks>(ptr: *mut c_void) {
     }
 }
 
+unsafe extern "C" fn free_embedded_cb<T: Hooks>(ptr: *mut c_void) {
+    // SAFETY: as `free_cb`, for data embedded in the object's own slot: the
+    // `T` is dropped, and the memory is the slot, which Ruby reclaims.
+    unsafe { core::ptr::drop_in_place(ptr as *mut T) };
+}
+
 unsafe extern "C" fn memsize_cb<T: Hooks>(ptr: *const c_void) -> rb_sys::size_t {
     // SAFETY: as `mark_cb`.
     unsafe { (*(ptr as *const T)).memsize() as rb_sys::size_t }
@@ -207,15 +213,24 @@ pub struct TypedType<T: Hooks> {
 }
 
 impl<T: Hooks> TypedType<T> {
-    const fn with_parent(name: *const c_char, parent: *const rb_data_type_t) -> TypedType<T> {
+    const fn with_parent(
+        name: *const c_char,
+        parent: *const rb_data_type_t,
+        embedded: bool,
+    ) -> TypedType<T> {
         TypedType {
             raw: DataType::new(
                 name,
                 parent,
                 Some(mark_cb::<T>),
-                Some(free_cb::<T>),
+                Some(if embedded {
+                    free_embedded_cb::<T>
+                } else {
+                    free_cb::<T>
+                }),
                 Some(memsize_cb::<T>),
                 Some(compact_cb::<T>),
+                embedded,
             ),
             _t: PhantomData,
         }
@@ -223,13 +238,30 @@ impl<T: Hooks> TypedType<T> {
 
     /// A base type.
     pub const fn base(name: *const c_char) -> TypedType<T> {
-        Self::with_parent(name, core::ptr::null())
+        Self::with_parent(name, core::ptr::null(), false)
     }
 
     /// A type deriving from `parent`, which holds the same `T`: an object of
     /// this type is also one of `parent`'s.
     pub const fn derived(name: *const c_char, parent: &TypedType<T>) -> TypedType<T> {
-        Self::with_parent(name, parent.raw.as_ptr())
+        Self::with_parent(name, parent.raw.as_ptr(), false)
+    }
+
+    /// [`base`](Self::base) for a `T` kept IN the object's slot
+    /// (`RUBY_TYPED_EMBEDDABLE`): no allocation beside the object's own, and
+    /// none to free. Compaction then moves the data with the object, so a
+    /// `&T` must not be held across anything that can run the collector - an
+    /// allocation - and every reader copies out what it needs. Only for a
+    /// small `T` (see [`EMBED_MAX`]).
+    pub const fn embedded_base(name: *const c_char) -> TypedType<T> {
+        const { assert!(core::mem::size_of::<T>() <= EMBED_MAX) };
+        Self::with_parent(name, core::ptr::null(), true)
+    }
+
+    /// [`derived`](Self::derived) for an embedded `T`.
+    pub const fn embedded_derived(name: *const c_char, parent: &TypedType<T>) -> TypedType<T> {
+        const { assert!(core::mem::size_of::<T>() <= EMBED_MAX) };
+        Self::with_parent(name, parent.raw.as_ptr(), true)
     }
 
     /// Whether `v` is an object of this type or one deriving from it. Never
@@ -315,7 +347,11 @@ impl DataType {
         dfree: rb_sys::RUBY_DATA_FUNC,
         dsize: Option<unsafe extern "C" fn(*const core::ffi::c_void) -> rb_sys::size_t>,
         dcompact: rb_sys::RUBY_DATA_FUNC,
+        embedded: bool,
     ) -> DataType {
+        const FREE_IMMEDIATELY: VALUE =
+            rb_sys::rbimpl_typeddata_flags::RUBY_TYPED_FREE_IMMEDIATELY as VALUE;
+        const EMBEDDABLE: VALUE = rb_sys::rbimpl_typeddata_flags::RUBY_TYPED_EMBEDDABLE as VALUE;
         DataType(rb_sys::rb_data_type_t {
             wrap_struct_name: name,
             function: rb_sys::rb_data_type_struct__bindgen_ty_1 {
@@ -327,7 +363,11 @@ impl DataType {
             },
             parent,
             data: core::ptr::null_mut(),
-            flags: rb_sys::rbimpl_typeddata_flags::RUBY_TYPED_FREE_IMMEDIATELY as VALUE,
+            flags: if embedded {
+                FREE_IMMEDIATELY | EMBEDDABLE
+            } else {
+                FREE_IMMEDIATELY
+            },
         })
     }
 
@@ -417,6 +457,10 @@ unsafe fn wrap_built<T>(
     build: impl FnOnce() -> T,
     store: impl FnOnce(&mut T, &Store),
 ) -> Result<VALUE, Error> {
+    const EMBEDDABLE: VALUE = rb_sys::rbimpl_typeddata_flags::RUBY_TYPED_EMBEDDABLE as VALUE;
+    if (*ty).flags & EMBEDDABLE != 0 {
+        return wrap_embedded(klass, ty, build, store);
+    }
     /* `ruby_xmalloc` is malloc-aligned; nothing wrapped asks for more. */
     const { assert!(core::mem::align_of::<T>() <= 16) };
     let p = super::raw::xmalloc(core::mem::size_of::<T>())? as *mut T;
@@ -430,6 +474,39 @@ unsafe fn wrap_built<T>(
         }
     };
     /* Wrapped: from here the mark sees what `store` puts in. */
+    store(&mut *p, &Store(()));
+    Ok(obj)
+}
+
+/// The largest `T` an embedded type takes: with `RTypedData`'s header it fits
+/// the 80-byte slot, well inside Ruby's largest (640), so `rb_data_typed_object_zalloc`
+/// always embeds it - which `free_embedded_cb`, which frees no memory, relies on.
+pub const EMBED_MAX: usize = 40;
+
+/// [`wrap_built`] for an embedded type: the object is allocated with its data
+/// zeroed in its own slot, `build`'s value is written there, and `store`
+/// runs as before. Nothing runs between the allocation and the write - `build`
+/// is plain Rust - so no collection sees the zeroed data.
+unsafe fn wrap_embedded<T>(
+    klass: VALUE,
+    ty: *const rb_data_type_t,
+    build: impl FnOnce() -> T,
+    store: impl FnOnce(&mut T, &Store),
+) -> Result<VALUE, Error> {
+    let obj = super::raw::typed_object_zalloc(klass, core::mem::size_of::<T>(), ty)?;
+    /* `EMBED_MAX` keeps every embedded `T` small enough to be embedded; a
+     * Ruby that did not would have allocated the data apart, which the free
+     * callback would leak - refused rather than handed out. */
+    /* Embedded data starts right after `RTypedData`'s header - `RBasic`'s two
+     * words, `type` and `typed_flag` - where the `data` pointer would be
+     * (`RTYPEDDATA_GET_DATA`); data allocated apart is anywhere else. */
+    let p = data_pointer(obj) as *mut T;
+    if p as usize != obj as usize + 4 * core::mem::size_of::<usize>() {
+        return Err(crate::bridge::ruby::internal_error(
+            "an embeddable object was not embedded",
+        ));
+    }
+    p.write(build());
     store(&mut *p, &Store(()));
     Ok(obj)
 }

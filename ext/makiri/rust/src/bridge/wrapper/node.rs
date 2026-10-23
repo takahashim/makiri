@@ -170,13 +170,13 @@ impl Hooks for NodeData {
     }
 }
 
-pub static NODE_DATA_TYPE: TypedType<NodeData> = TypedType::base(c"Makiri::Node".as_ptr());
+pub static NODE_DATA_TYPE: TypedType<NodeData> = TypedType::embedded_base(c"Makiri::Node".as_ptr());
 
 pub static HTML_NODE_TYPE: TypedType<NodeData> =
-    TypedType::derived(c"Makiri::HTML::Node".as_ptr(), &NODE_DATA_TYPE);
+    TypedType::embedded_derived(c"Makiri::HTML::Node".as_ptr(), &NODE_DATA_TYPE);
 
 pub static XML_NODE_TYPE: TypedType<NodeData> =
-    TypedType::derived(c"Makiri::XML::Node".as_ptr(), &NODE_DATA_TYPE);
+    TypedType::embedded_derived(c"Makiri::XML::Node".as_ptr(), &NODE_DATA_TYPE);
 
 /// Which representation a wrapped Ruby node is, decided by its TypedData type
 /// rather than its Ruby class. A Document, a NodeSet or any non-node is

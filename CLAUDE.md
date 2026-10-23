@@ -95,6 +95,14 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   visible to `bridge/` alone. A `Held` is a `Cell`, and a `DocData`'s
   changing fields are cells too, so the GC callbacks and every method read
   a wrapper's data through `&T`: no `&mut` of it is made at all.
+  A node wrapper's `NodeData` is EMBEDDED in its object's slot
+  (`TypedType::embedded_base` / `embedded_derived`, `RUBY_TYPED_EMBEDDABLE`,
+  Ruby 3.3+): one allocation per wrapper, and the free callback drops the
+  data without freeing memory. Compaction moves that data with the object,
+  so a `&NodeData` must not be held across anything that can allocate -
+  every reader copies the handle and the Document out at once, and a new
+  embedded type must keep to that. (The NodeSet was not embedded for this
+  reason: its fill holds `&NodeSet` across its own growth.)
 
   **Every C call that can raise is a wrapper in `bridge/raw.rs`, and every
   wrapper runs it under `rb_protect` and returns `Result`.** A raise is a

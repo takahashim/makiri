@@ -17,6 +17,9 @@
 
 ### Changed
 
+* A node wrapper keeps its data in its own object (an embedded TypedData,
+  Ruby 3.3+): wrapping a node for the first time is ~25-45 ns cheaper, and
+  a fresh document's query or walk 10-30% faster.
 * `Node#traverse` lists the subtree once, natively, before the first node is
   yielded: about five times faster on a large tree, and a block that adds or
   removes nodes no longer changes which nodes are visited.
