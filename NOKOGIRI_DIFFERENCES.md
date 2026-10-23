@@ -188,6 +188,11 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
 
 ## HTML mutation
 
+* `Node#traverse` lists the subtree before the first node is yielded
+  * Nokogiri reads each node's children as it reaches it, so a block that
+    adds a node below or after the current one can have it visited. Makiri
+    visits the nodes there were when `traverse` was called, in the same
+    order (each node after its children).
 * There is no `Node#name=` / `#node_name=` (on HTML or XML nodes). Nokogiri
   renames a node in place and keeps its identity; the DOM has no rename, and
   an element's tag decides what it is (a `<template>` owns its contents), so a
