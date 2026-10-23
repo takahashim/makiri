@@ -34,11 +34,11 @@ UNSAFE_ISLANDS = {
   "bridge/html.rs" => 5,
   "bridge/node_set.rs" => 2,
   "bridge/node_wrap.rs" => 1,
-  "bridge/raw.rs" => 46,
-  "bridge/ruby.rs" => 19,
+  "bridge/raw.rs" => 38,
+  "bridge/ruby.rs" => 17,
   "bridge/stack.rs" => 1,
   "bridge/string/build.rs" => 5,
-  "bridge/string/encoding.rs" => 16,
+  "bridge/string/encoding.rs" => 17,
   "bridge/string/view.rs" => 6,
   "bridge/typed.rs" => 23,
   "bridge/wrapper/accounting.rs" => 1,
@@ -148,12 +148,25 @@ RB_SYS_COUNTS = {}.freeze
 # `protect` or from a frame that owns nothing. A new raising call is a new
 # wrapper there, and this count moves with it on purpose.
 RAISING_API = /\b(?:rb_raise|rb_exc_raise|rb_jump_tag|rb_check_typeddata|
-  rb_String|rb_funcallv|rb_funcall|rb_obj_as_string|rb_respond_to|rb_check_frozen|
+  rb_sym2str|rb_check_frozen|
   rb_range_beg_len|rb_thread_check_ints|rb_intern3|rb_intern|rb_utf8_str_new|
   rb_enc_interned_str|rb_str_dup|rb_str_subseq|rb_enc_associate|rb_str_encode|
   rb_to_encoding|rb_enc_find_index|rb_data_typed_object_wrap|ruby_xmalloc|ruby_xrealloc2|
   rb_memerror)\b/x
-RAISING_COUNTS = { "bridge/raw.rs" => 23 }.freeze # the 23rd: `rb_memerror`, the raise sweep's injected raise
+RAISING_COUNTS = { "bridge/raw.rs" => 19 }.freeze # the 19th: `rb_memerror`, the raise sweep's injected raise
+
+# Makiri runs none of its caller's Ruby code: no argument is converted with its
+# `to_s`/`to_str`, no method of a caller's object is called, and XPath has no
+# custom-function handler. The C and magnus calls that would run such code are
+# counted here, across the crate, and two are allowed: `NodeSet#each`'s
+# `yield` (the block is the point of the method, and no guard or copy is held
+# across it) and `XML::Namespace.new` (Makiri's own Data class, called with no
+# borrow of the arena held).
+USER_CODE_API = /\b(?:rb_String|rb_funcall\w*|rb_obj_as_string|rb_respond_to|rb_yield\w*|
+  rb_block_call|rb_call_super|rb_eval_string\w*|rb_str_to_str|rb_string_value\w*|
+  rb_check_string_type|rb_convert_type|rb_check_convert_type)\b|
+  \.(?:funcall\w*|respond_to|to_r_string|block_call|yield_\w+|yield_splat)\(/x
+USER_CODE_COUNTS = { "glue/node_set.rs" => 1, "glue/xml_node/ns.rs" => 1 }.freeze
 
 # `Value::from_raw` outside `bridge/` is the other half of the raw Ruby
 # boundary: a `VALUE` the glue already holds, turned back into a `Value`. The
@@ -422,6 +435,18 @@ if rb_sys != RB_SYS_COUNTS
 end
 if raising != RAISING_COUNTS
   errors << "raising C API outside bridge/raw.rs changed: #{table_diff(RAISING_COUNTS, raising)}"
+end
+
+user_code = Hash.new(0)
+Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
+  relative = path.delete_prefix("#{RUST}/")
+  next if relative.start_with?("lexbor/")
+
+  count = rust_code(path).scan(USER_CODE_API).length
+  user_code[relative] = count unless count.zero?
+end
+if user_code != USER_CODE_COUNTS
+  errors << "calls that run the caller's Ruby code changed: #{table_diff(USER_CODE_COUNTS, user_code)}"
 end
 
 value_from_raw = Hash.new(0)
@@ -1040,6 +1065,7 @@ puts "unsafe-boundaries: #{forbidding.length} forbid files; " \
      "(glue+xpath #{glue_xpath_unsafe}); " \
      "#{actual.values.sum} reviewed static mut declarations; " \
      "#{rb_sys.values.sum} rb_sys:: outside bridge/ and #{raising.values.sum} raising C calls in bridge/raw.rs; " \
+     "#{user_code.values.sum} calls into the caller's Ruby (both allowed); " \
      "#{value_from_raw.values.sum} Value::from_raw and " \
      "#{lexbor_abi.values.sum} Lexbor ABI names outside their layer and " \
      "#{lexbor_decls.values.sum} Lexbor declarations outside lexbor/abi.rs; " \

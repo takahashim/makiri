@@ -626,14 +626,15 @@ RSpec.describe "Makiri XPath" do
       expect { xml.xpath("/r", too_big) }.to raise_error(Makiri::Error, /65537 bindings \(max 65536\)/)
     end
 
-    it "reads a namespace Hash as a Hash and each side with String()" do
+    it "reads a namespace Hash as a Hash, and converts neither side" do
       xml = Makiri::XML(%(<r xmlns="urn:x"/>))
       odd = Class.new(Hash) { def to_a = [1] }.new
       odd["q"] = "urn:x"
       expect(xml.xpath("count(//q:r)", odd)).to eq(1.0)
       prefix = Object.new.tap { |o| o.define_singleton_method(:to_str) { "q" } }
       ctx = Makiri::XPathContext.new(xml)
-      ctx.register_namespace(prefix, "urn:x")
+      expect { ctx.register_namespace(prefix, "urn:x") }.to raise_error(TypeError)
+      ctx.register_namespace(:q, "urn:x")
       expect(ctx.evaluate("count(//q:r)")).to eq(1.0)
     end
 

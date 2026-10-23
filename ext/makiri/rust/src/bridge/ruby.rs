@@ -88,40 +88,40 @@ pub fn is_kind_of(v: Value, klass: &crate::init::RbConst<magnus::RClass>) -> boo
     klass.get().is_some_and(|c| v.is_kind_of(c))
 }
 
-/// `v` as a String, coerced the way `rb_String` does (`to_str`, else `to_s`).
+/// `v`, which must be a String (a subclass's instance included).
 ///
-/// A String passes straight through, so the common case is one type check.
-/// Anything else runs its conversion under `protect`: a `to_s` that raises
-/// comes back as `Err` rather than unwinding through the caller.
-pub fn string_of(v: Value) -> Result<RString, Error> {
+/// There is no conversion: a `to_str` or `to_s` is the caller's Ruby code, and
+/// Makiri runs none, so anything else is a `TypeError`, worded as Ruby's own
+/// type check words it.
+pub fn string_arg(v: Value) -> Result<RString, Error> {
+    RString::from_value(v).ok_or_else(|| wrong_type(v, "String"))
+}
+
+/// `v` as a String for a NAME (an attribute or element name, a prefix, a
+/// selector, an expression): a String, or a Symbol's name. Nothing else
+/// converts, as [`string_arg`].
+pub fn name_arg(v: Value) -> Result<RString, Error> {
     if let Some(s) = RString::from_value(v) {
         return Ok(s);
     }
-    // SAFETY: `v` is a live value; `protect` turns a raising `to_s` into `Err`.
-    let s = protect(|| unsafe { super::raw::string(v.as_raw()) })?;
-    // SAFETY: `rb_String` returned a live value.
+    if magnus::Symbol::from_value(v).is_none() {
+        return Err(wrong_type(v, "String or Symbol"));
+    }
+    // SAFETY: `v` is a live Symbol; `protect` turns the allocation's raise into
+    // `Err`.
+    let s = protect(|| unsafe { super::raw::sym2str(v.as_raw()) })?;
+    // SAFETY: `rb_sym2str` returned a live String.
     RString::from_value(unsafe { Value::from_raw(s) })
-        .ok_or_else(|| type_error("String() returned a non-String"))
+        .ok_or_else(|| type_error("a Symbol without a name"))
 }
 
-/// `v.to_s`, as a String: Ruby's own `to_s`, so a subclass's or other object's
-/// override is honoured, as Nokogiri's `to_s` coercions are. A `to_s` that
-/// returns anything but a String is a `TypeError`, not a value later read as
-/// one.
-///
-/// An instance whose class is exactly `String` is returned as it is, without a
-/// call: paying a method dispatch on every string is not worth it. That skips
-/// a `to_s` defined on the instance's own singleton class - `rb_obj_class` does
-/// not see singletons - which is why the fast path tests the class, not
-/// `respond_to?`.
-pub fn to_s(v: Value) -> Result<RString, Error> {
-    if let Some(s) = RString::from_value(v) {
-        if v.class().as_raw() == gvl_ruby().class_string().as_raw() {
-            return Ok(s);
-        }
-    }
-    let r: Value = v.funcall("to_s", ())?;
-    RString::from_value(r).ok_or_else(|| type_error("to_s returned a non-String"))
+/// Ruby's `TypeError` for a value of the wrong class: "wrong argument type
+/// Integer (expected String)". The class name is read without a call.
+fn wrong_type(v: Value, expected: &str) -> Error {
+    // SAFETY: `v` is a live value, and its class name is copied before anything
+    // else runs.
+    let class = unsafe { v.classname() }.into_owned();
+    type_error(format!("wrong argument type {class} (expected {expected})"))
 }
 
 /// `rb_check_frozen` returning its FrozenError rather than raising it.
@@ -139,21 +139,6 @@ pub fn check_frozen(v: Value) -> Result<(), Error> {
         rb_sys::Qnil as VALUE
     })
     .map(|_| ())
-}
-
-/// `rb_respond_to` returning a raise from the object's own `respond_to?` (or the
-/// `respond_to_missing?` behind it) as `Err`, rather than unwinding through the
-/// caller.
-pub fn respond_to(v: Value, method: rb_sys::ID) -> Result<bool, Error> {
-    // SAFETY: `v` is a live value; `protect` turns the raise into `Err`.
-    let answer = protect(|| unsafe {
-        if super::raw::respond_to(v.as_raw(), method) {
-            rb_sys::Qtrue as VALUE
-        } else {
-            rb_sys::Qfalse as VALUE
-        }
-    })?;
-    Ok(answer == rb_sys::Qtrue as VALUE)
 }
 
 /// `rb_range_beg_len` over a collection of `count` elements, with the C's
@@ -296,17 +281,6 @@ pub fn intern(name: &str) -> ID {
     }
 }
 
-/// `rb_funcallv`: call `method` on `recv`. Can raise, so the caller runs it
-/// under [`protect_value`].
-///
-/// # Safety
-/// Under the GVL, and no Rust destructor may be live when it raises.
-#[inline]
-pub unsafe fn funcallv(recv: VALUE, method: ID, args: &[VALUE]) -> VALUE {
-    // SAFETY: the caller's contract; `args` is a live slice.
-    unsafe { super::raw::funcallv(recv, method, args) }
-}
-
 /// `true`/`false` for Ruby's two boolean singletons, and `None` for anything
 /// else (which a caller treats as neither).
 #[inline]
@@ -407,11 +381,10 @@ pub fn report_external_bytes(delta: isize) {
 
 unsafe extern "C" fn exception_message_thunk(exc: VALUE) -> VALUE {
     /* Only C calls (through `raw`'s thin wrappers): nothing here can panic
-     * into the `rb_protect` frame below. */
-    super::raw::obj_as_string(super::raw::funcall0(
-        exc,
-        super::raw::intern_cstr(c"message".as_ptr()),
-    ))
+     * into the `rb_protect` frame below. The message is the exception's
+     * `mesg`, read as an attribute: calling `#message` would run its class's
+     * Ruby. A message that is not a String is answered as "error". */
+    rb_sys::rb_attr_get(exc, super::raw::intern_cstr(c"mesg".as_ptr()))
 }
 
 /// The longest message kept: this runs on error paths to word another error,
@@ -444,13 +417,4 @@ pub fn exception_message(exc: VALUE) -> String {
         .unwrap_or(bytes.len())
         .min(EXCEPTION_MESSAGE_MAX);
     String::from_utf8_lossy(&bytes[..n]).into_owned()
-}
-
-/// [`exception_message`] for a magnus error: the Ruby exception's message, or
-/// "error" for one that carries none.
-pub fn error_message(e: &Error) -> String {
-    match e.error_type() {
-        magnus::error::ErrorType::Exception(x) => exception_message(x.as_raw()),
-        _ => "error".to_owned(),
-    }
 }

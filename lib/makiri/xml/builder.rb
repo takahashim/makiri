@@ -165,6 +165,8 @@ module Makiri
 
       # Translate the Nokogiri-style trailing arguments (a Hash is attributes,
       # anything else is text content) into a {Document#create_element} call.
+      # The builder converts with +to_s+, as Nokogiri's does; the extension
+      # itself takes Strings only.
       def create_element(tag, args)
         text = nil
         attributes = nil
@@ -177,7 +179,7 @@ module Makiri
         end
         cargs = []
         cargs << text.to_s unless text.nil?
-        cargs << attributes unless attributes.nil?
+        cargs << attributes.transform_values(&:to_s) unless attributes.nil?
         @doc.create_element(tag, *cargs)
       end
 
@@ -234,9 +236,9 @@ module Makiri
           @node[key]
         end
 
-        # Write an attribute of the wrapped node.
+        # Write an attribute of the wrapped node (+value+ by its +to_s+).
         def []=(key, value)
-          @node[key] = value
+          @node[key] = value.to_s
         end
 
         def method_missing(method, *args, &block)
@@ -244,12 +246,12 @@ module Makiri
           case method.to_s
           when /\A(.*)!\z/
             @node["id"] = Regexp.last_match(1)
-            @node.content = args.first if args.first
+            @node.content = args.first.to_s if args.first
           when /\A(.*)=\z/
-            @node[Regexp.last_match(1)] = args.first
+            @node[Regexp.last_match(1)] = args.first.to_s
           else
             append_attr("class", method.to_s)
-            @node.content = args.first if args.first
+            @node.content = args.first.to_s if args.first
           end
 
           opts.each { |key, value| append_attr(key.to_s, value) }
@@ -272,7 +274,7 @@ module Makiri
         # class-append and the trailing-Hash attribute shortcut; tokens split
         # as {Node#classes} splits them, so a run of whitespace is one gap.
         def append_attr(key, value)
-          @node[key] = (@node[key].to_s.split(/\s+/).reject(&:empty?) << value).join(" ")
+          @node[key] = (@node[key].to_s.split(/\s+/).reject(&:empty?) << value.to_s).join(" ")
         end
       end
     end

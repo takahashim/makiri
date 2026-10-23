@@ -41,6 +41,13 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
     and in XPath's data model. An `xmlns` on an HTML element is an ordinary
     attribute and stays visible.
 
+* Arguments are not converted
+  * Nokogiri calls `to_s` on an attribute value, text content or a variable
+    value (`node["n"] = 1`). Makiri takes a `String` for those, and a `String`
+    or a `Symbol` for a name; anything else is a `TypeError`. The parse
+    entries still take an IO or anything `String()` converts, and
+    `XML::Builder` converts with `to_s` as Nokogiri's does.
+
 * There are no custom XPath functions
   * Nokogiri answers a function XPath does not define by calling a method of
     a handler object (`xpath("my-fn(.)", handler)`). Makiri runs no Ruby while

@@ -66,24 +66,14 @@ fn parse_limits(ruby: &Ruby, h: RHash) -> Result<ParseLimits, Error> {
     Ok(limits)
 }
 
-/// `Makiri::XML::Document.parse(source, max_bytes: nil)`.
-///
-/// `source` is a String or anything answering `#read` (an IO / File / StringIO).
-/// Read a non-UTF-8 file in binary mode so the encoding is autodetected from its
-/// BOM or declaration.
+/// `Makiri::XML::Document._parse(source, max_bytes: nil)`, behind `.parse`
+/// (`lib/makiri/xml/document.rb`), which reads an IO and converts the source
+/// to a String first, as the HTML entry does: `source` is a String here.
 fn s_parse(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let scanned = magnus::scan_args::scan_args::<(Value,), (), (), (), RHash, ()>(args)?;
         let (source,) = scanned.required;
         let limits = parse_limits(ruby, scanned.keywords)?;
-
-        /* An IO/File-like source is read first, as the HTML entry does; a String
-         * passes straight through. */
-        let source = if source.respond_to("read", true)? {
-            source.funcall::<_, _, Value>("read", ())?
-        } else {
-            source
-        };
         crate::bridge::xml::parse_xml_document(source, limits)
     })
 }
@@ -141,7 +131,7 @@ fn doc_fragment(rb_self: Value, source: Value) -> Result<Value, Error> {
 pub fn init_xml_doc() -> Result<(), Error> {
     let doc = CLASS_XML_DOCUMENT.defined()?;
 
-    doc.define_singleton_method("parse", function!(s_parse, -1))?;
+    doc.define_singleton_method("_parse", function!(s_parse, -1))?;
     doc.define_singleton_method("new", function!(document_s_new, -1))?;
     doc.define_method("root", method!(doc_root, 0))?;
     doc.define_method("internal_subset", method!(doc_internal_subset, 0))?;

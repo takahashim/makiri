@@ -406,13 +406,13 @@ impl Editing<'_> {
     /// Lend the arena for the change. `f` runs no Ruby (see [`with_arena_for_new_node`]),
     /// so every argument is converted BEFORE this. The frozen check is in
     /// `begin_edit`, ahead of that conversion, so a frozen receiver is reported
-    /// before a bad argument - and again here, because the conversion's `#to_s`
-    /// may have frozen the receiver since.
+    /// before a bad argument, and again here. (The second check dates from
+    /// when a conversion ran the argument's `#to_s`, which could freeze the
+    /// receiver; no conversion runs Ruby code now.)
     ///
     /// It is also where the name index is dropped, just before `f` changes what
-    /// it indexes. Not in `begin_edit`: the argument conversion between the two
-    /// runs `#to_s`, and a query there rebuilt the index from the tree about to
-    /// change - `//a` then kept finding an element renamed to `b`.
+    /// it indexes, so nothing between `begin_edit` and here - a conversion's
+    /// allocation included - can see the index gone before the tree changes.
     ///
     /// It counts as a change to a child list ([`record_edit`]); an
     /// attribute edit takes [`Editing::with_attributes`] instead, and a
@@ -629,7 +629,7 @@ impl Unit {
 /// wrapper exists, so no GC point can run between obtaining the decoded String
 /// and copying it.
 pub fn parse_xml_document(source: Value, limits: ParseLimits) -> Result<Value, Error> {
-    let source = crate::bridge::ruby::string_of(source)?;
+    let source = crate::bridge::ruby::string_arg(source)?;
     let decoded = xml_decode_input_value(source, Some(limits.budget()))?;
     /* The wrapper first, while nothing needs freeing (see DocumentShell): its
      * allocation can raise, and the copy below is this frame's to free. The
@@ -688,12 +688,9 @@ pub fn fragment_into(
     inherit_doc_ns: bool,
 ) -> Result<NodeId, Error> {
     let max_bytes = xml_read(&document)?.max_bytes();
-    let source = crate::bridge::ruby::string_of(source)?;
+    let source = crate::bridge::ruby::string_arg(source)?;
     let decoded = xml_decode_input_value(source, Some(max_bytes))?;
     let src = crate::bridge::string::ruby_string_bytes(decoded)?;
-    /* ...and checked again: the conversion is arbitrary Ruby, which can start
-     * an evaluation that suspends mid-walk (an Enumerator) still holding
-     * slices of the arena this parse grows. */
     let mut xdoc = arena_mut(&document)?;
     tree::parse_fragment(&mut xdoc, src.as_slice(), inherit_doc_ns)
         .map_err(|status| parse_status_error(status, Unit::Fragment))
@@ -708,8 +705,7 @@ pub fn fragment_into(
 ///
 /// `None` for a non-element (the name is then not even verified, matching the
 /// readers' nil-returning behaviour). The name is converted BEFORE the arena is
-/// borrowed, because its `to_str` is Ruby code and it may edit this same
-/// document.
+/// borrowed: a Symbol's name or a transcode is a Ruby allocation.
 pub fn find_attribute(this: XmlSelf, name: Value) -> Result<Option<NodeId>, Error> {
     let id = this.id;
     if this.read()?.type_(id) != Some(ArenaKind::Element) {

@@ -20,9 +20,9 @@ RSpec.describe "Makiri::XML mutation (Phase 1)" do
       expect(a.to_xml).to eq(%(<a id="2" class="lead"/>))
     end
 
-    it "coerces a non-String value via to_s" do
-      a["n"] = 42
-      expect(a["n"]).to eq("42")
+    it "refuses a non-String value rather than converting it" do
+      expect { a["n"] = 42 }.to raise_error(TypeError)
+      expect(a.key?("n")).to be(false)
     end
 
     it "escapes special characters on serialization (stored verbatim)" do

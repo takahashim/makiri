@@ -8,10 +8,31 @@ use core::ffi::c_int;
 use magnus::rb_sys::AsRawValue;
 /* Not magnus's: ours catches a panic before `rb_protect`'s C frame. */
 use crate::bridge::ruby::protect;
-use magnus::{Error, RString, Value};
+use magnus::{prelude::*, Error, RString, Value};
 use rb_sys::VALUE;
 
 /* ---- encoding ---- */
+
+/// `v` as an encoding argument: the encoding, and the name to write for it -
+/// the String or Symbol as the caller wrote it, or an `Encoding`'s own name.
+pub fn encoding_arg(v: Value) -> Result<(Encoding, crate::cbuf::OwnedBuf), Error> {
+    let e = to_encoding(v)?;
+    let name = match RString::from_value(v) {
+        Some(s) => s,
+        None if magnus::Symbol::from_value(v).is_some() => crate::bridge::ruby::name_arg(v)?,
+        None => {
+            // SAFETY: a live encoding's name is a NUL-terminated C string that
+            // lives as long as the encoding, which is the process.
+            let name = unsafe { core::ffi::CStr::from_ptr((*e.0).name) };
+            return crate::cbuf::OwnedBuf::copy_from(name.to_bytes())
+                .map(|b| (e, b))
+                .ok_or_else(|| {
+                    crate::bridge::ruby::makiri_error("out of memory reading an encoding name")
+                });
+        }
+    };
+    Ok((e, super::ruby_string_bytes(name)?))
+}
 
 /// A Ruby encoding - of a String, or resolved from a name or an `Encoding`.
 ///
@@ -138,9 +159,15 @@ impl Encoding {
 }
 
 /// The encoding `v` names, or the error Ruby's own lookup raises: `ArgumentError`
-/// for an unknown name, `TypeError` for something that is neither a String nor
-/// an Encoding.
+/// for an unknown name. `v` is an `Encoding`, a String or a Symbol, and
+/// anything else is a `TypeError` before the lookup, which would run its
+/// `to_str`.
 pub fn to_encoding(v: Value) -> Result<Encoding, Error> {
+    let v = if v.is_kind_of(crate::bridge::ruby::gvl_ruby().class_encoding()) {
+        v
+    } else {
+        crate::bridge::ruby::name_arg(v)?.as_value()
+    };
     let mut enc: *mut rb_sys::rb_encoding = core::ptr::null_mut();
     // SAFETY: `v` is a live value; `protect` turns the raise into `Err`.
     protect(|| unsafe {

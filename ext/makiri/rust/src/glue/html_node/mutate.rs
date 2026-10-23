@@ -7,9 +7,8 @@
 //! `HtmlEdit::with_tree` (or its attribute and data twins), which drops the
 //! document's indexes and lends the document by `&mut` - so no method here can
 //! forget to, or read the document while it is changed. Each
-//! method converts its arguments BETWEEN the two: a conversion is the
-//! argument's `#to_s`, and a query there must not rebuild the indexes from the
-//! tree the edit is about to change. What touches a
+//! method converts its arguments BETWEEN the two: a conversion can allocate,
+//! and so raise, and must do so before the indexes are dropped. What touches a
 //! raw handle or a String's bytes - the adopt copy, the fragment import, the
 //! handoff of a verified String to Lexbor - is a primitive in
 //! [`crate::bridge::html`], so this module holds no unsafe.
@@ -18,7 +17,7 @@
 
 use magnus::{prelude::*, Error, Ruby, Value};
 
-use crate::bridge::ruby::{makiri_error, string_of};
+use crate::bridge::ruby::{makiri_error, string_arg};
 
 use crate::bridge::fragment::{set_template_inner_html, stage_fragment_in};
 use crate::bridge::html::{
@@ -260,9 +259,9 @@ pub fn set_inner_html(_ruby: &Ruby, mut this: HtmlSelf, rb_html: Value) -> Resul
         if edit.node_type()? != NodeType::Element {
             return Err(makiri_error("inner_html= requires an element"));
         }
-        /* `to_str`/`to_s` is Ruby code that may raise: converted under protect,
-         * and transcoded, before the edit - nothing inside it may run Ruby. */
-        let src = HtmlSource::from_ruby(string_of(rb_html)?)?;
+        /* A String only, transcoded before the edit - nothing inside it may
+         * run Ruby. */
+        let src = HtmlSource::from_ruby(string_arg(rb_html)?)?;
         edit.with_tree(|d, node| {
             /* WHATWG: a `<template>`'s inner HTML is its contents fragment, not
              * the element's (empty) children - the same node
@@ -286,16 +285,16 @@ pub fn set_inner_html(_ruby: &Ruby, mut this: HtmlSelf, rb_html: Value) -> Resul
 
 /// `node.outer_html = html` -> html. All or nothing, as `inner_html=`.
 ///
-/// The parent is looked up AFTER the argument is converted: its `#to_s` may
-/// have moved or removed the receiver, and a parent read before it was a
-/// parent the receiver no longer had - the new content went nowhere and the
-/// call still reported success.
+/// The parent is looked up inside the edit, where the tree cannot change
+/// under it. (When an argument's `#to_s` ran first, one that removed the
+/// receiver left a parent read earlier stale, and the new content went
+/// nowhere.)
 pub fn set_outer_html(_ruby: &Ruby, mut this: HtmlSelf, rb_html: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let edit = edit(&mut this)?;
-        /* `to_str`/`to_s` is Ruby code that may raise: converted under protect,
-         * and transcoded, before the edit - nothing inside it may run Ruby. */
-        let src = HtmlSource::from_ruby(string_of(rb_html)?)?;
+        /* A String only, transcoded before the edit - nothing inside it may
+         * run Ruby. */
+        let src = HtmlSource::from_ruby(string_arg(rb_html)?)?;
         edit.with_tree(|d, node| {
             /* An attribute's `parent()` is its owner element, but it is no child
              * of it: the replace below would drop the new content and report

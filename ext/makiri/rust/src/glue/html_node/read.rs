@@ -314,8 +314,8 @@ pub fn aref(_ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Optio
         if !is_element(&this)? {
             return Ok(None);
         }
-        /* Converted before the document is borrowed: the conversion is the
-         * argument's `to_s`, arbitrary Ruby that can edit this document. */
+        /* Converted before the document is borrowed: a conversion can
+         * allocate (a Symbol's name, a transcode). */
         let nv = ruby_verified_text(rb_name, "attribute name")?;
         /* A present attribute with no value (`<input disabled>`) answers
          * `Some(b"")`, which is `""`; only an absent one is nil. The name goes
@@ -332,8 +332,8 @@ pub fn has_key(_ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<bo
         if !is_element(&this)? {
             return Ok(false);
         }
-        /* Converted before the document is borrowed: the conversion is the
-         * argument's `to_s`, arbitrary Ruby that can edit this document. */
+        /* Converted before the document is borrowed: a conversion can
+         * allocate (a Symbol's name, a transcode). */
         let nv = ruby_verified_text(rb_name, "attribute name")?;
         let view = this.read()?;
         let found = view
@@ -407,8 +407,8 @@ pub fn attribute_by_qualified_name(
         if !is_element(&this)? {
             return Ok(None);
         }
-        /* Converted before the document is borrowed: the conversion is the
-         * argument's `to_s`, arbitrary Ruby that can edit this document. */
+        /* Converted before the document is borrowed: a conversion can
+         * allocate (a Symbol's name, a transcode). */
         let nv = ruby_verified_text(rb_name, "attribute name")?;
         let found = {
             let view = this.read()?;
@@ -442,8 +442,8 @@ pub fn attribute_value_by_qualified_name(
         if !is_element(&this)? {
             return Ok(None);
         }
-        /* Converted before the document is borrowed: the conversion is the
-         * argument's `to_s`, arbitrary Ruby that can edit this document. */
+        /* Converted before the document is borrowed: a conversion can
+         * allocate (a Symbol's name, a transcode). */
         let nv = ruby_verified_text(rb_name, "attribute name")?;
         str_after_read((this.read()?, nv), StrKind::Utf8, |(v, nv)| {
             let name = nv.as_bytes();
@@ -462,7 +462,7 @@ pub fn attribute_value_by_qualified_name(
 ///
 /// The two arguments, converted - `None` for a non-element receiver, before
 /// either is read. Converted before the document is borrowed: a conversion
-/// is the argument's `to_s`, arbitrary Ruby that can edit this document.
+/// can allocate.
 type NsArgs = (RubyText, Option<RubyText>);
 
 fn ns_args(this: &super::HtmlSelf, rb_ns: Value, rb_local: Value) -> Result<Option<NsArgs>, Error> {

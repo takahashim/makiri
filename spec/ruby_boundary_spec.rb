@@ -7,29 +7,29 @@
 # Two bugs came from breaking that rule: a context left "already in use" after
 # a rejected expression, and a context leaked per call when a namespace key's
 # `to_s` raised. These pin the same paths for the text checks, the argument
-# coercion and the node unwraps.
+# type checks and the node unwraps.
 RSpec.describe "Ruby boundary failure paths" do
-  let(:raising) { Object.new.tap { |o| def o.to_s = raise("to_s failed") } }
+  let(:raising) { Object.new.tap { |o| def o.to_s = raise("to_s failed") } } # never called
   let(:html) { Makiri::HTML("<div><p id='a'>x</p></div>") }
   let(:xml) { Makiri::XML("<r><a k='v'/></r>") }
 
-  describe "an argument whose to_s raises" do
-    it "surfaces the error from an HTML attribute read and write" do
+  describe "an argument of the wrong type" do
+    it "raises a TypeError from an HTML attribute read and write" do
       p = html.at_css("p")
       3.times do
-        expect { p[raising] }.to raise_error(RuntimeError, "to_s failed")
-        expect { p[raising] = "v" }.to raise_error(RuntimeError, "to_s failed")
-        expect { p["k"] = raising }.to raise_error(RuntimeError, "to_s failed")
+        expect { p[raising] }.to raise_error(TypeError)
+        expect { p[raising] = "v" }.to raise_error(TypeError)
+        expect { p["k"] = raising }.to raise_error(TypeError)
       end
       p["k"] = "v"
       expect(p["id"]).to eq("a")
       expect(p.to_html).to eq(%(<p id="a" k="v">x</p>))
     end
 
-    it "surfaces the error from an XML attribute read and element creation" do
+    it "raises a TypeError from an XML attribute read and element creation" do
       3.times do
-        expect { xml.root.at_xpath("a")[raising] }.to raise_error(RuntimeError, "to_s failed")
-        expect { xml.create_element(raising) }.to raise_error(RuntimeError, "to_s failed")
+        expect { xml.root.at_xpath("a")[raising] }.to raise_error(TypeError)
+        expect { xml.create_element(raising) }.to raise_error(TypeError)
       end
       expect(xml.root.at_xpath("a")["k"]).to eq("v")
     end
@@ -37,15 +37,15 @@ RSpec.describe "Ruby boundary failure paths" do
     it "leaves an XPathContext usable" do
       ctx = Makiri::XPathContext.new(html)
       3.times do
-        expect { ctx.evaluate(raising) }.to raise_error(RuntimeError, "to_s failed")
-        expect { ctx.register_namespace(raising, "urn:x") }.to raise_error(RuntimeError, "to_s failed")
+        expect { ctx.evaluate(raising) }.to raise_error(TypeError)
+        expect { ctx.register_namespace(raising, "urn:x") }.to raise_error(TypeError)
         expect(ctx.evaluate("count(//p)")).to eq(1.0)
       end
     end
 
-    it "surfaces the error from a query and a fragment context" do
-      expect { html.xpath(raising) }.to raise_error(RuntimeError, "to_s failed")
-      expect { html.fragment("<b/>", context: raising) }.to raise_error(RuntimeError, "to_s failed")
+    it "raises a TypeError from a query and a fragment context" do
+      expect { html.xpath(raising) }.to raise_error(TypeError)
+      expect { html.fragment("<b/>", context: raising) }.to raise_error(TypeError)
       expect(html.xpath("//p").length).to eq(1)
     end
   end

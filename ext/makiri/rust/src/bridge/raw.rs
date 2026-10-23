@@ -42,39 +42,16 @@ unsafe fn injected_raise() {
     }
 }
 
-/* ---- conversions and calls into Ruby code ---- */
+/* ---- conversions ---- */
 
-/// `rb_String`: raises `TypeError`, or whatever the value's `to_str`/`to_s`
-/// raises.
+/// `rb_sym2str`: raises `NoMemoryError` when a static Symbol's name String is
+/// made for the first time. Runs no Ruby code.
 #[inline]
-pub unsafe fn string(v: VALUE) -> VALUE {
-    unsafe { rb_sys::rb_String(v) }
-}
-
-/// `rb_funcallv`: raises whatever the method raises (`NoMethodError`
-/// included).
-#[inline]
-pub unsafe fn funcallv(recv: VALUE, method: ID, args: &[VALUE]) -> VALUE {
-    unsafe { rb_sys::rb_funcallv(recv, method, args.len() as c_int, args.as_ptr()) }
-}
-
-/// `rb_funcall` with no arguments: as [`funcallv`].
-#[inline]
-pub unsafe fn funcall0(recv: VALUE, method: ID) -> VALUE {
-    unsafe { rb_sys::rb_funcall(recv, method, 0) }
-}
-
-/// `rb_obj_as_string`: raises whatever the value's `to_s` raises.
-#[inline]
-pub unsafe fn obj_as_string(v: VALUE) -> VALUE {
-    unsafe { rb_sys::rb_obj_as_string(v) }
-}
-
-/// `rb_respond_to`: raises whatever the object's `respond_to?` (or
-/// `respond_to_missing?`) raises.
-#[inline]
-pub unsafe fn respond_to(v: VALUE, method: ID) -> bool {
-    unsafe { rb_sys::rb_respond_to(v, method) != 0 }
+pub unsafe fn sym2str(v: VALUE) -> VALUE {
+    unsafe {
+        injected_raise();
+        rb_sys::rb_sym2str(v)
+    }
 }
 
 /// `rb_check_frozen`: raises `FrozenError` for a frozen value.

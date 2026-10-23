@@ -18,7 +18,7 @@ XML  = %(<r xmlns:p="urn:p" xmlns="urn:d"><a id="1">t</a><p:b/><!--c--><![CDATA[
 CSS  = "div.a, #b > span { color: red !important; --v: 1px }\n" \
        "@media (min-width: 600px) { .x { opacity: 0 } }\n@font-face { font-family: y }"
 
-RAISING_TO_S = Object.new.tap { |o| def o.to_s = raise("to_s failed") }
+NOT_A_STRING = Object.new.tap { |o| def o.to_s = raise("to_s is never called") }
 
 ITERATIONS.times do |i|
   # --- HTML: parse / query / serialize / mutate / fragments ---
@@ -46,7 +46,7 @@ ITERATIONS.times do |i|
   begin Makiri::XML(%(<?xml version="1.1"?><r/>)) rescue Makiri::XML::SyntaxError; end
   x.xpath("//d:a", "d" => "urn:d"); x.at_xpath("//p:b", "p" => "urn:p")
   begin x.xpath("//unbound:a") rescue Makiri::Error; end
-  begin x.xpath("//d:a", RAISING_TO_S => "urn:d") rescue RuntimeError; end # namespaces coercion raises (context freed)
+  begin x.xpath("//d:a", NOT_A_STRING => "urn:d") rescue TypeError; end    # a non-String prefix is refused (context freed)
   x.css("a"); x.at_css("p|b", "p" => "urn:p")
   begin x.css("a[") rescue Makiri::CSS::SyntaxError; end
   x.to_xml; x.to_xml(pretty: true); x.root.canonicalize
@@ -61,8 +61,8 @@ ITERATIONS.times do |i|
   ctx.evaluate("//d:a[@id=$v]"); ctx.evaluate("//d:a[@id=$v]")
   begin ctx.evaluate("//(") rescue Makiri::XPath::SyntaxError; end
   begin ctx.evaluate("//a\0") rescue Makiri::Error; end                 # text-contract raise
-  begin ctx.evaluate(RAISING_TO_S) rescue RuntimeError; end             # expression coercion raises
-  begin x.root[RAISING_TO_S] rescue RuntimeError; end                   # attribute-name coercion raises
+  begin ctx.evaluate(NOT_A_STRING) rescue TypeError; end               # a non-String expression is refused
+  begin x.root[NOT_A_STRING] rescue TypeError; end                     # a non-String attribute name is refused
   begin Makiri::HTML::NodeMethods.instance_method(:name).bind(x.root).call rescue TypeError; end # wrong-kind receiver
 
   # --- Lexbor CSS stylesheet parser (per-call parser+stylesheet lifetime,

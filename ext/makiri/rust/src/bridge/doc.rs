@@ -61,7 +61,7 @@ pub fn tree_depth_error(limit: DepthLimit) -> Error {
 /// `Document._parse(source, max_tree_depth)`: parse HTML, releasing the GVL,
 /// and wrap it.
 ///
-/// The Ruby-level `Document.parse` coerces `source` to a String (and reads IO)
+/// The Ruby-level `Document.parse` converts `source` to a String (and reads IO)
 /// before calling this. Source locations for `Node#line` are always tracked.
 /// A tree deeper than `limit` fails the parse (see `html_dom::tree_guard`).
 pub fn parse_document(
@@ -69,7 +69,7 @@ pub fn parse_document(
     limit: DepthLimit,
     given: Option<crate::bridge::string::GivenEncoding>,
 ) -> Result<Value, Error> {
-    let s = source.to_r_string()?;
+    let s = crate::bridge::ruby::string_arg(source)?;
     /* Allocate the wrapper with a null handle, so a failed parse still
      * frees cleanly through GC - and first, before this frame owns the
      * source's copy: the wrapper's allocation can raise. This entry is

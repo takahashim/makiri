@@ -243,13 +243,13 @@ impl XPathCtx {
             .map_err(|e| refused(e, NS_BUSY, NS_FAILED))
     }
 
-    /// Bind `$name` to `value.to_s` for every later evaluate.
+    /// Bind `$name` to the String `value` for every later evaluate.
     pub fn register_variable(&self, name: Value, value: Value) -> Result<(), Error> {
         const BUSY: &str = "cannot register a variable while the context is evaluating";
         const FAILED: &str = "failed to register variable";
         /* The value gets the stricter engine-string check, which adds the
          * byte cap on top of the no-NUL / valid-UTF-8 contract. */
-        let sv = crate::bridge::ruby::to_s(value)?;
+        let sv = crate::bridge::ruby::string_arg(value)?;
         let nv = ruby_verified_text(name, "variable name")?;
         let vv = ruby_try_verified_text(sv, self.ctx.limits().max_string_bytes)
             .map_err(|reason| makiri_error(format!("invalid variable value: {reason}")))?;

@@ -7,6 +7,18 @@ module Makiri
     # construction sugar that is pure composition over the public surface lives here, not on the
     # abstract Makiri::Document (which carries no construction).
     class Document
+      # Parse +source+ - a String, or anything answering +#read+ (an IO, File
+      # or StringIO) - as an XML document. Read a non-UTF-8 file in binary
+      # mode so the encoding is detected from its BOM or declaration.
+      #
+      # @param source [String, #read]
+      # @param max_bytes [Integer, nil] the document's byte budget
+      # @return [Makiri::XML::Document]
+      def self.parse(source, **opts)
+        source = source.read if source.respond_to?(:read)
+        _parse(String(source), **opts)
+      end
+
       # Set (or replace) the document's root element: with an existing root it
       # replaces that root, otherwise it appends one (subject to the single-root
       # rule). Pure composition over {Node#replace} / {Node#add_child};

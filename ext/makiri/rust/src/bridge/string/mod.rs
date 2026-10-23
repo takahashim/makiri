@@ -3,8 +3,8 @@
 //! # Every String crosses as a copy
 //!
 //! A pointer *into* a Ruby String is valid only until Ruby runs: a GC can move
-//! or free the backing buffer, and Ruby code can rewrite it - an argument's
-//! `#to_s` is arbitrary Ruby, and may change an earlier argument. The C held
+//! or free the backing buffer, and Ruby code can rewrite it (an argument's
+//! `#to_s` could, while arguments were converted with it). The C held
 //! such pointers and guarded them with a rule nobody could check; the first
 //! Rust port held them under `rb_str_locktmp`, with a copy for a String that
 //! was already locked, a frozen fast path and an interrupt to re-raise.

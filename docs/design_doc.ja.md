@@ -221,6 +221,11 @@ XPath の独自関数（Nokogiri の handler）は受け付けない。
 評価中に Ruby のコードは走らず、XPath 1.0 にない関数の呼び出しは
 `XPath::SyntaxError` になる。
 
+引数は変換しない。
+文字列の引数は `String`、名前の引数（属性名、要素名、接頭辞、セレクタ、式）は `String` か `Symbol` に限り、それ以外は `TypeError` にする。
+`to_s` / `to_str` は呼び出し側の Ruby のコードであり、拡張の中でそれを走らせないためである。
+`to_s` で変換するのは lib の側（parse の入口の `String()`、`XML::Builder`）だけで、拡張に入る前に済む。
+
 ## 4. メモリモデル
 
 * DOM node は document ごとの arena に確保し、arena 単位で一括解放する。

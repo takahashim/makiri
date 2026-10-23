@@ -20,7 +20,7 @@ use crate::cbuf::OwnedBuf;
 use crate::falloc::OomOption;
 
 use super::*;
-use crate::bridge::ruby::string_of;
+use crate::bridge::ruby::{name_arg, string_arg};
 
 /* ---- the checked-text types ----
  *
@@ -299,7 +299,7 @@ fn verified_text_raising(
     on_nul: fn(String) -> Error,
 ) -> Result<RubyText, Error> {
     use crate::cutf8::TextVerdict;
-    let s = string_of(in_)?;
+    let s = name_arg(in_)?;
     RubyText::acquire(s, |s, b| {
         let v = text_check(s, b);
         (v != TextVerdict::Ok).then_some(v)
@@ -321,7 +321,7 @@ fn verified_text_raising(
 /// The same acquisition as [`ruby_verified_text`], with the data check - which
 /// lets NUL through - in place of the text one.
 pub fn ruby_verified_data(in_: Value, what: &str) -> Result<RubyData, Error> {
-    let s = string_of(in_)?;
+    let s = string_arg(in_)?;
     RubyData::acquire(s, |s, b| text_check(s, b).data_problem()).map_err(|r| match r {
         Refusal::Check(problem) => text_error(what, problem),
         Refusal::Oom => oom_reading(),

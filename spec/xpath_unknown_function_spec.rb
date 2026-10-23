@@ -39,20 +39,3 @@ RSpec.describe "an XPath call to an unknown function" do
     expect(xml.xpath("//d:p", { "d" => "urn:x" }).size).to eq(0)
   end
 end
-
-# A `to_s` Makiri calls can be anyone's, and may return anything. Its result
-# must be checked to BE a String before its bytes are read as one: an Integer
-# read as a String's pointer and length is a crash, not an error.
-RSpec.describe "a to_s that returns a non-String" do
-  let(:not_a_string) { Class.new { def to_s = 42 }.new }
-
-  it "refuses it as a registered variable's value" do
-    ctx = Makiri::XPathContext.new(Makiri::HTML("<p>x</p>"))
-    expect { ctx.register_variable("v", not_a_string) }.to raise_error(TypeError, /non-String/)
-  end
-
-  it "refuses it as a created element's attribute value" do
-    doc = Makiri::XML::Document.parse("<r/>")
-    expect { doc.create_element("e", "k" => not_a_string) }.to raise_error(TypeError, /non-String/)
-  end
-end

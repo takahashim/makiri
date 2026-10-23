@@ -98,11 +98,10 @@ fn to_xml(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Er
             (None, None)
         } else {
             /* An unknown name raises, and this frame is about to own the
-             * serializer's buffer: the lookup returns the error instead. */
-            let e = crate::bridge::string::to_encoding(enc_opt)?;
-            let name = crate::bridge::ruby::to_s(enc_opt)?;
-            /* A copy, so the bytes stay valid across the serializer's call. */
-            let bytes = crate::bridge::string::ruby_string_bytes(name)?;
+             * serializer's buffer: the lookup returns the error instead. The
+             * name is a copy, so the bytes stay valid across the serializer's
+             * call. */
+            let (e, bytes) = crate::bridge::string::encoding_arg(enc_opt)?;
             (Some(e), Some(bytes))
         };
 

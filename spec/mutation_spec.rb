@@ -16,9 +16,9 @@ RSpec.describe "Makiri mutation" do
       expect(div.keys).to eq(%w[id class data-x])
     end
 
-    it "coerces non-string values" do
-      div["data-n"] = 42
-      expect(div["data-n"]).to eq("42")
+    it "refuses a non-String value rather than converting it" do
+      expect { div["data-n"] = 42 }.to raise_error(TypeError)
+      expect(div.key?("data-n")).to be(false)
     end
 
     it "deletes attributes" do

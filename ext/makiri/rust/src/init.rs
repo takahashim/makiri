@@ -310,8 +310,7 @@ fn panic_probe(ruby: &Ruby, kind: i64) -> Result<(), Error> {
 /// the tokenizer or the tree builder (`spec/xml_decode_spec.rb`).
 fn xml_decode(_ruby: &Ruby, str: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        /* `to_str`/`to_s` is Ruby code that may raise: converted under protect. */
-        let s = crate::bridge::ruby::string_of(str)?;
+        let s = crate::bridge::ruby::string_arg(str)?;
         /* decode-only: no arena, no budget */
         crate::bridge::xml_decode::xml_decode_input_value(s, None).map(|d| d.as_value())
     })

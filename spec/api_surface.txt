@@ -342,8 +342,9 @@ class Makiri::XML::Comment < Makiri::Comment
 
 class Makiri::XML::Document < Makiri::Document
   include Makiri::XML::NodeMethods
+  def self._parse(-1)
   def self.new(-1)
-  def self.parse(-1)
+  def self.parse(-2 req:source,keyrest:opts)
   def attribute_version(0)
   def compat_mode(0)
   def create_cdata(1)

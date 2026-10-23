@@ -15,7 +15,7 @@ use magnus::{prelude::*, Error, Value};
 use crate::bridge::ruby::makiri_error;
 
 use crate::bridge::html::{html_node_key, with_html_node, wrap_html_node};
-use crate::bridge::ruby::{is_kind_of, string_of};
+use crate::bridge::ruby::{is_kind_of, string_arg};
 use crate::bridge::string::{ruby_verified_text, HtmlSource};
 use crate::bridge::wrapper::{html_doc_check, html_read, DocKind, DocumentShell};
 pub use crate::html_dom::fragment::FragmentTag;
@@ -35,7 +35,7 @@ fn fragment_error(e: FragmentError, limit: DepthLimit) -> Error {
 
 /// What a fragment is parsed inside of, as the caller gave it. An element is
 /// read when the parse starts ([`build_fragment`]), after the HTML argument's
-/// conversion - arbitrary Ruby, which may change the element or its tree.
+/// conversion.
 pub enum ContextArg {
     /// A named context (nil is `<body>`).
     Tag(FragmentTag),
@@ -136,10 +136,9 @@ fn element_context(node: HtmlNode<'_>, target: HtmlDoc<'_>) -> Result<FragmentCo
 /// Parse `html` as a fragment in `context`. Nothing is changed yet: a String
 /// that fails to parse leaves every document as it was.
 ///
-/// `src` is converted already - the caller ran `string_of` and
-/// `HtmlSource::from_ruby` - because those are the argument's `#to_s`
-/// (arbitrary Ruby) and its transcode (a Ruby allocation), and for
-/// `inner_html=` both have to finish before the edit drops the document's
+/// `src` is converted already - the caller ran `HtmlSource::from_ruby` -
+/// because that is the argument's transcode (a Ruby allocation), and for
+/// `inner_html=` it has to finish before the edit drops the document's
 /// indexes: nothing inside an edit may run Ruby.
 fn parse(
     src: &HtmlSource,
@@ -222,8 +221,8 @@ pub fn build_fragment(
     at: ContextArg,
     limit: DepthLimit,
 ) -> Result<Value, Error> {
-    /* `to_str`/`to_s` is Ruby code that may raise: converted under protect. */
-    let src = HtmlSource::from_ruby(string_of(rb_html)?)?;
+    /* A String only, transcoded to UTF-8 (a Ruby allocation, which may raise). */
+    let src = HtmlSource::from_ruby(string_arg(rb_html)?)?;
     /* The element is read now, after the conversion, as `inner_html=` reads
      * it inside its edit. */
     let context = match at {

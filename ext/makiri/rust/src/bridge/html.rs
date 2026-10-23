@@ -476,10 +476,11 @@ pub(in crate::bridge) fn node_ref(rb_doc: Value, key: HtmlNodeKey) -> Result<Raw
 ///
 /// The checks and the index drop are two steps on purpose. The checks come
 /// first, so a frozen receiver is reported before a bad argument. The drop
-/// comes last, once every argument is converted: converting one runs its
-/// `#to_s`, which is arbitrary Ruby, and a query there rebuilt the indexes from
-/// the tree the edit was about to change - after which `#text` read the text
-/// the edit had released, and `//p` found the nodes it had removed.
+/// comes last, once every argument is converted. (A conversion used to run the
+/// argument's `#to_s`, and a query there rebuilt the indexes from the tree the
+/// edit was about to change. No conversion runs Ruby code now, but a
+/// conversion can still raise - a transcode, a Symbol's name - and it must not
+/// do so after the indexes are gone and before the tree has changed.)
 pub struct HtmlEdit<'a> {
     /// Borrowed mutably for the edit's life: a read of the receiver's
     /// document (`HtmlSelf::doc`) cannot still be held when the edit begins,
@@ -529,10 +530,9 @@ impl<'a> HtmlEdit<'a> {
     /// every argument is already converted - so nothing can rebuild them, and
     /// nothing can read the document while `f` holds it.
     ///
-    /// Both guards are checked again, since an argument's `#to_s` ran between
-    /// `edit` and here: one that froze the receiver had its edit go through.
-    /// `edit` checked first only so a frozen receiver is still reported ahead
-    /// of a bad argument. It takes the token, so a caller cannot reach for the
+    /// Both guards are checked again, as they were when an argument's `#to_s`
+    /// ran between `edit` and here and could freeze the receiver; `edit`
+    /// checks first so a frozen receiver is reported ahead of a bad argument. It takes the token, so a caller cannot reach for the
     /// document a second time after running Ruby.
     ///
     /// It counts as a change to a child list ([`record_edit`]); an

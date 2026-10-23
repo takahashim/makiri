@@ -28,10 +28,8 @@ pub(crate) fn hash_foreach(
 /// `h`'s key-value pairs, copied out before any of them is used.
 ///
 /// Read from the Hash itself, not through a `to_a` a subclass can redefine (a
-/// non-pair tripped an `expect`), and handed out only after the walk, because a
-/// caller converts them with Ruby code - `to_s` and the like: inside the walk a
-/// `to_s` that added a key to the same Hash raised "can't add a new key into
-/// hash during iteration". The copy runs no Ruby code of the caller's; the
+/// non-pair tripped an `expect`), and handed out only after the walk, so a
+/// caller's use of them - which allocates - is outside the iteration. The copy runs no Ruby code of the caller's; the
 /// Array holding it is a Ruby object on this frame, so the GC sees it.
 pub(crate) fn each_pair(
     ruby: &Ruby,

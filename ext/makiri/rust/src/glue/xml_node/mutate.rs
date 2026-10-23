@@ -280,19 +280,18 @@ pub fn create_element(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Val
             })?)?;
         }
         /* Both views are done with. Drop them before any Ruby runs again (the
-         * wrapper allocation, the attribute loop's `to_s`), so no borrow of a
+         * wrapper allocation, the attribute loop's), so no borrow of a
          * Ruby String is held across a GC point. */
         drop((nv, cv));
         let rb_el = wrap(el, rb_self)?;
         if let Some(h) = attrs {
-            /* Keys and values are stringified - Nokogiri accepts symbol keys and
-             * non-string values - then go through the normal validated setter,
-             * after the pairs are out of the Hash (`hash::each_pair`). */
+            /* Each pair goes through the normal validated setter (a key may be
+             * a Symbol, a value must be a String), after the pairs are out of
+             * the Hash (`hash::each_pair`). */
             /* `rb_el` was wrapped just above, so it converts. */
             let el_self = <XmlSelf as magnus::TryConvert>::try_convert(rb_el)?;
             crate::glue::hash::each_pair(ruby, h, |k, v| {
-                let (k, v) = (crate::bridge::ruby::to_s(k)?, crate::bridge::ruby::to_s(v)?);
-                aset(ruby, el_self, k.as_value(), v.as_value())?;
+                aset(ruby, el_self, k, v)?;
                 Ok(())
             })?;
         }

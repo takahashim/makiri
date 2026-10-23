@@ -63,10 +63,10 @@ RSpec.describe Makiri::Attr do
       expect(span.child.attribute_by_qualified_name("id")).to be_nil
     end
 
-    it "accepts a Symbol and ignores a non-string name, as #[] does" do
+    it "accepts a Symbol and refuses any other non-String name, as #[] does" do
       expect(div.attribute_by_qualified_name(:id).value).to eq("outer")
-      expect(div.attribute_by_qualified_name(nil)).to be_nil
-      expect(div.attribute_by_qualified_name(123)).to be_nil
+      expect { div.attribute_by_qualified_name(nil) }.to raise_error(TypeError)
+      expect { div.attribute_by_qualified_name(123) }.to raise_error(TypeError)
     end
 
     it "rejects a NUL byte in the name" do
@@ -165,12 +165,12 @@ RSpec.describe Makiri::Attr do
       end
     end
 
-    it "keeps a coerced non-String argument alive while its bytes are borrowed" do
-      # A Symbol goes through rb_String, which makes a fresh String only the
-      # borrowed view holds; the view's guard must keep it reachable.
+    it "reads a Symbol name under GC stress" do
+      # A Symbol's name is a String Ruby may make on the spot (rb_sym2str),
+      # which only the view's copy of its bytes then needs.
       GC.stress = true
       begin
-        div[:"data-sym"] = :value
+        div[:"data-sym"] = "value"
         expect(div[:"data-sym"]).to eq("value")
         expect(div.key?(:"data-sym")).to be(true)
       ensure

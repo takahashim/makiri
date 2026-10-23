@@ -150,8 +150,7 @@ fn bind_each(
     mut register: impl FnMut(&[u8], &[u8]) -> Result<(), Error>,
     cap: usize,
 ) -> Result<(), Error> {
-    /* The pairs are copied out first and bound after (`hash::each_pair`,
-     * which says why): binding converts with the caller's `to_s`. */
+    /* The pairs are copied out first and bound after (`hash::each_pair`). */
     /* More pairs than a context may hold is refused before any is converted
      * or copied, rather than after every one of them has been. */
     let max = crate::xpath::ctx::MAX_NAMESPACES;
@@ -172,18 +171,16 @@ fn bind_each(
 /// `#register_namespace` alike, so all three convert, check, cap and word a
 /// refusal the same way.
 ///
-/// Both are converted FIRST (`String()`: a String as it is, else `to_str`, else
-/// `to_s`), and only then checked: a conversion is Ruby code, and a view of the
-/// first held across the second's conversion is what let that code rewrite a
-/// checked prefix.
+/// The prefix is a String or a Symbol (a keyword binding's key), the URI a
+/// String; nothing else converts.
 pub fn bind_pair(
     prefix: Value,
     uri: Value,
     cap: usize,
     mut register: impl FnMut(&[u8], &[u8]) -> Result<(), Error>,
 ) -> Result<(), Error> {
-    let ks = crate::bridge::ruby::string_of(prefix)?;
-    let vs = crate::bridge::ruby::string_of(uri)?;
+    let ks = crate::bridge::ruby::name_arg(prefix)?;
+    let vs = crate::bridge::ruby::string_arg(uri)?;
     let (pv, uv) = ruby_try_verified_text_pair(ks, vs, cap)
         .map_err(|reason| makiri_error(format!("invalid namespace mapping: {reason}")))?;
     register(pv.as_bytes(), uv.as_bytes())

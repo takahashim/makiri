@@ -705,8 +705,8 @@ is on the UTF-8. Both checked views (`RubyText`, `RubyData`) deref to
 Ruby between the read and the copy (`string::copy_bytes`; up to 64 bytes
 inline, so a UTF-8 selector or expression allocates nothing; one in another
 encoding allocates its transcode) and checked after. Nothing Ruby
-does afterwards - a GC, a later argument's `#to_s` rewriting or growing the
-String - reaches the copy. The HTML source (`HtmlSource`) is a copy too, the
+does afterwards - a GC, the caller rewriting or growing the String - reaches
+the copy. The HTML source (`HtmlSource`) is a copy too, the
 one a document parse needs to read it with the GVL released. The only borrow
 of a String's bytes left is `string::with_bytes`, a scoped read for the XML
 encoding sniff, whose closure must run no Ruby. (The views used to hold the
@@ -720,7 +720,15 @@ the serializers refuse a tree XML cannot write, deciding from the data as it is
 written (`serialize::out`'s byte-class table), never from a flag a setter could
 leave stale. XML names stay NUL-strict, like HTML's. Don't drop the
 UTF-8 checks or route a name/engine string through the data path; see
-`docs/string_types.md`.
+`docs/string_types.md`. **No argument is converted**: a string argument is a
+`String` (`bridge::ruby::string_arg`), a name - attribute, element, prefix,
+selector, expression, encoding - a `String` or a `Symbol` (`name_arg`), and
+anything else is a `TypeError`, since a `to_s`/`to_str` is the caller's Ruby.
+What converts with `to_s` is `lib/`'s, outside the extension: the parse
+entries (`String(source)`, an IO's `read`) and `XML::Builder`. `rake
+unsafe:boundaries` counts every call that would run the caller's Ruby
+(`USER_CODE_API`); `NodeSet#each`'s `yield` and `XML::Namespace.new` are the
+two allowed.
 
 **Parsing & source location.** The tree builder stamps an element when it
 is CREATED FOR ITS OWN START TAG (`TreeBuilder::created_offset`,
@@ -1202,9 +1210,8 @@ the indexes: a detached node is in none). A `RawNode` is a reference INTO a
 document and becomes a handle only through `HtmlDoc::node` / `checked` (or
 `HtmlDocMut::node` inside an edit). `edit` and `with_tree` are separate on
 purpose: `edit` checks (frozen) so those errors come first, and
-every argument is converted BETWEEN the two, because a conversion is the
-argument's `#to_s` - arbitrary Ruby - and a query there rebuilt the indexes
-from the tree about to change. The XML side is the same pair, `begin_edit`
+every argument is converted BETWEEN the two, because a conversion can
+allocate, and so raise, and must not do so once the indexes are dropped. The XML side is the same pair, `begin_edit`
 and `Editing::with_arena`. Both take the receiver `&mut` for the edit's
 life, so a read of its document through it (`HtmlSelf::read`,
 `XmlSelf::read`) still held when the edit begins - one the edit's compaction
