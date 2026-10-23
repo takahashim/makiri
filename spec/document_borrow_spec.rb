@@ -25,6 +25,14 @@ RSpec.describe "a document read held across Ruby", :gc_compact do
         end
       end
 
+      it "is borrowed while the walk is suspended, and not once it has finished" do
+        expect(Makiri.__borrowed?(doc)).to be(false)
+        expect(walk.next).to eq(:suspended)
+        expect(Makiri.__borrowed?(doc)).to be(true)
+        2.times { walk.next }
+        expect(Makiri.__borrowed?(doc)).to be(false)
+      end
+
       it "reads while the walk is suspended, and refuses an edit" do
         expect(walk.next).to eq(:suspended)
         expect(first_p.call(doc).text).to eq("a")

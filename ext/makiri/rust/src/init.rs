@@ -186,6 +186,54 @@ fn alloc_inject_calls(ruby: &Ruby) -> Result<u64, Error> {
     }
 }
 
+/// `Makiri.__raise_inject(n)` - arm "the nth raising C call raises
+/// `NoMemoryError` in place of its allocation" (`bridge::raw`'s allocating
+/// wrappers; `script/check_raise_injection.rb`).
+fn raise_inject(ruby: &Ruby, nth: i64) -> Result<(), Error> {
+    crate::bridge::ruby::entry(|| {
+        #[cfg(feature = "alloc-inject")]
+        {
+            crate::falloc::raise_inject_arm(nth);
+            let _ = ruby;
+            Ok(())
+        }
+        #[cfg(not(feature = "alloc-inject"))]
+        {
+            let _ = nth;
+            Err(Error::new(
+                ruby.exception_not_imp_error(),
+                "rebuild with MAKIRI_ALLOC_INJECT=1 (rake oom does this)",
+            ))
+        }
+    })
+}
+
+/// `Makiri.__raise_inject_calls` - how many raising C calls a workload made,
+/// armed or not, so the sweep can size itself from a disarmed run.
+fn raise_inject_calls(ruby: &Ruby) -> Result<u64, Error> {
+    crate::bridge::ruby::entry(|| {
+        #[cfg(feature = "alloc-inject")]
+        {
+            let _ = ruby;
+            Ok(crate::falloc::raise_inject_call_count())
+        }
+        #[cfg(not(feature = "alloc-inject"))]
+        {
+            Err(Error::new(
+                ruby.exception_not_imp_error(),
+                "rebuild with MAKIRI_ALLOC_INJECT=1 (rake oom does this)",
+            ))
+        }
+    })
+}
+
+/// `Makiri.__borrowed?(doc)` - whether `doc`'s content is borrowed, which
+/// between Ruby calls it never is: what the raise sweep checks after each
+/// injected raise. Any build.
+fn borrowed_p(doc: Value) -> Result<bool, Error> {
+    crate::bridge::ruby::entry(|| crate::bridge::wrapper::document_borrowed(doc))
+}
+
 /// `Makiri.__panic(kind)` - panic on purpose, so the suite can prove a panic
 /// reaches Ruby as an exception instead of killing the process.
 ///
@@ -490,6 +538,9 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     makiri.define_singleton_method("__panic", function!(panic_probe, 1))?;
     makiri.define_singleton_method("__alloc_inject", function!(alloc_inject, 1))?;
     makiri.define_singleton_method("__alloc_inject_calls", function!(alloc_inject_calls, 0))?;
+    makiri.define_singleton_method("__raise_inject", function!(raise_inject, 1))?;
+    makiri.define_singleton_method("__raise_inject_calls", function!(raise_inject_calls, 0))?;
+    makiri.define_singleton_method("__borrowed?", function!(borrowed_p, 1))?;
     m_xml.define_singleton_method("__decode", function!(xml_decode, 1))?;
 
     Ok(())

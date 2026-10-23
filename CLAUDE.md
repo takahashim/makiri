@@ -135,7 +135,10 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   short bytes onto the stack first, `node_set_after_read` a few node words,
   `HtmlView::wrap` / `XmlView::wrap` the node; what must be built with the
   guard held is built under `protect`, which costs a `setjmp` - so keep the
-  common paths on the lifting ones.
+  common paths on the lifting ones. The gate reads the code, and misses what
+  it cannot see (a guard moved into a method by `self`, a closure); `rake oom`'s
+  raise sweep makes every allocating call raise in turn and checks no
+  document is left borrowed, which catches those.
 
   **A Ruby method raises `Makiri::InternalError`, not `fatal`.**
   `bridge::ruby::entry` wraps the body of EVERY method the glue registers, and
@@ -291,6 +294,11 @@ bundle exec rake oom               # OOM-injection sweep: rebuilds with
                                    # site in turn - every OOM branch must fail closed
                                    # (clean raise or baseline-identical result), then
                                    # reuses the same document/context after GC.compact.
+                                   # Then the raise sweep (script/check_raise_injection.rb):
+                                   # each allocating C call of bridge/raw.rs raises
+                                   # NoMemoryError in turn, and no document may be left
+                                   # borrowed (`Makiri.__borrowed?`) or unusable - the
+                                   # runtime check of the guards-across-raises rule.
                                    # Prefix with MAKIRI_SANITIZE=address to combine ASan.
 bundle exec rake kani              # Kani proofs over the Ruby-free core (needs cargo-kani).
                                    # The successor to the C-era CBMC harnesses: the

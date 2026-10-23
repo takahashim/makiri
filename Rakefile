@@ -599,7 +599,8 @@ end
 
 desc "OOM-injection gate: rebuild with MAKIRI_ALLOC_INJECT=1 and sweep every core " \
      "allocation site, verifying each failure fails closed (clean raise or " \
-     "baseline-identical result, never truncated output)"
+     "baseline-identical result, never truncated output), then make every " \
+     "allocating Ruby C call raise in turn, verifying no document is left borrowed"
 task :oom do
   # The hook is compiled in only under MAKIRI_ALLOC_INJECT=1 (zero overhead in
   # a normal build), so this needs its own rebuild; see
@@ -618,6 +619,9 @@ task :oom do
     }.merge(asan_preload_env(sanitize))
   end
   sh(run_env, "#{FileUtils::RUBY} -Ilib script/check_alloc_failures.rb")
+  # The same build carries the Ruby-raise hook: every allocating C call of
+  # `bridge::raw` raises in turn, and no document may be left borrowed.
+  sh(run_env, "#{FileUtils::RUBY} -Ilib script/check_raise_injection.rb")
   puts "(injection build left in place; run `rake clean compile` to restore a normal build)"
 end
 

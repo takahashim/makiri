@@ -28,6 +28,20 @@ use core::ffi::{c_char, c_int, c_long, c_void};
 
 use rb_sys::{rb_data_type_t, rb_encoding, ID, VALUE};
 
+/// The raise sweep's hook (`falloc::inject`, `script/check_raise_injection.rb`):
+/// in an `alloc-inject` build the armed allocating call below raises
+/// `NoMemoryError` in place of its allocation, as a real failure would - so
+/// the sweep can make every one of them raise in turn. Nothing in any other
+/// build.
+#[inline(always)]
+unsafe fn injected_raise() {
+    #[cfg(feature = "alloc-inject")]
+    if crate::falloc::raise_inject_should_raise() {
+        /* Raises without allocating: Ruby keeps the exception preallocated. */
+        unsafe { rb_sys::rb_memerror() }
+    }
+}
+
 /* ---- conversions and calls into Ruby code ---- */
 
 /// `rb_String`: raises `TypeError`, or whatever the value's `to_str`/`to_s`
@@ -96,13 +110,19 @@ pub unsafe fn thread_check_ints() {
 /// (interning valid UTF-8 raises nothing else).
 #[inline]
 pub unsafe fn intern3(name: *const c_char, len: c_long, enc: *mut rb_encoding) -> ID {
-    unsafe { rb_sys::rb_intern3(name, len, enc) }
+    unsafe {
+        injected_raise();
+        rb_sys::rb_intern3(name, len, enc)
+    }
 }
 
 /// `rb_intern` of a NUL-terminated name: as [`intern3`].
 #[inline]
 pub unsafe fn intern_cstr(name: *const c_char) -> ID {
-    unsafe { rb_sys::rb_intern(name) }
+    unsafe {
+        injected_raise();
+        rb_sys::rb_intern(name)
+    }
 }
 
 /* ---- Strings ---- */
@@ -110,25 +130,37 @@ pub unsafe fn intern_cstr(name: *const c_char) -> ID {
 /// `rb_utf8_str_new`: raises `NoMemoryError`.
 #[inline]
 pub unsafe fn utf8_str_new(ptr: *const c_char, len: c_long) -> VALUE {
-    unsafe { rb_sys::rb_utf8_str_new(ptr, len) }
+    unsafe {
+        injected_raise();
+        rb_sys::rb_utf8_str_new(ptr, len)
+    }
 }
 
 /// `rb_enc_interned_str`: raises `NoMemoryError`.
 #[inline]
 pub unsafe fn enc_interned_str(ptr: *const c_char, len: c_long, enc: *mut rb_encoding) -> VALUE {
-    unsafe { rb_sys::rb_enc_interned_str(ptr, len, enc) }
+    unsafe {
+        injected_raise();
+        rb_sys::rb_enc_interned_str(ptr, len, enc)
+    }
 }
 
 /// `rb_str_dup`: raises `NoMemoryError`.
 #[inline]
 pub unsafe fn str_dup(s: VALUE) -> VALUE {
-    unsafe { rb_sys::rb_str_dup(s) }
+    unsafe {
+        injected_raise();
+        rb_sys::rb_str_dup(s)
+    }
 }
 
 /// `rb_str_subseq`: raises `NoMemoryError`.
 #[inline]
 pub unsafe fn str_subseq(s: VALUE, beg: c_long, len: c_long) -> VALUE {
-    unsafe { rb_sys::rb_str_subseq(s, beg, len) }
+    unsafe {
+        injected_raise();
+        rb_sys::rb_str_subseq(s, beg, len)
+    }
 }
 
 /// `rb_enc_associate`: raises `FrozenError` for a frozen String, and
@@ -190,18 +222,27 @@ pub unsafe fn typed_object_wrap(
     data: *mut c_void,
     ty: *const rb_data_type_t,
 ) -> VALUE {
-    unsafe { rb_sys::rb_data_typed_object_wrap(klass, data, ty) }
+    unsafe {
+        injected_raise();
+        rb_sys::rb_data_typed_object_wrap(klass, data, ty)
+    }
 }
 
 /// `ruby_xmalloc`: raises `NoMemoryError`.
 #[inline]
 pub unsafe fn xmalloc(size: usize) -> *mut c_void {
-    unsafe { rb_sys::ruby_xmalloc(size as rb_sys::size_t) }
+    unsafe {
+        injected_raise();
+        rb_sys::ruby_xmalloc(size as rb_sys::size_t)
+    }
 }
 
 /// `ruby_xrealloc2`: raises `NoMemoryError`, and `ArgumentError` when
 /// `n * size` overflows.
 #[inline]
 pub unsafe fn xrealloc2(p: *mut c_void, n: usize, size: usize) -> *mut c_void {
-    unsafe { rb_sys::ruby_xrealloc2(p, n as rb_sys::size_t, size as rb_sys::size_t) }
+    unsafe {
+        injected_raise();
+        rb_sys::ruby_xrealloc2(p, n as rb_sys::size_t, size as rb_sys::size_t)
+    }
 }

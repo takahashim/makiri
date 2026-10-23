@@ -524,6 +524,17 @@ pub(in crate::bridge) fn xml_write(rb_doc: &Value) -> Result<XmlWrite<'_>, Error
     }
 }
 
+/// Whether `rb_doc`'s content is borrowed right now - by a read or an edit.
+/// Between Ruby calls it never is, unless a raise skipped a guard's release:
+/// what `Makiri.__borrowed?` answers the raise sweep.
+pub fn document_borrowed(rb_doc: Value) -> Result<bool, Error> {
+    Ok(match DOC_TYPE.get(&rb_doc)?.content.get() {
+        Some(Body::Html(c)) => c.is_borrowed(),
+        Some(Body::Xml(c)) => c.is_borrowed(),
+        None => false,
+    })
+}
+
 /// `Err(TypeError)` unless `rb_doc` is an HTML Document.
 pub fn html_doc_check(rb_doc: Value) -> Result<(), Error> {
     HTML_DOC_TYPE.get(&rb_doc).map(|_| ())

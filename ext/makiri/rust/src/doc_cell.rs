@@ -83,6 +83,13 @@ impl<T> DocCell<T> {
             .map_err(|_| Conflict::ByRead)
     }
 
+    /// Whether any guard is held - a read or an edit. For the raise sweep's
+    /// check that no raise left a borrow behind.
+    #[inline]
+    pub fn is_borrowed(&self) -> bool {
+        self.0.try_borrow_mut().is_err()
+    }
+
     /// `f` over the content when it can be read now, `None` while an edit
     /// holds it - for a question that must not wait or fail, as a GC
     /// callback's size is.

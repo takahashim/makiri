@@ -79,7 +79,10 @@ pub(crate) mod inject;
  * reason `inject` keeps `pub` items: it must stay lint-clean in the
  * `alloc-inject`-without-`ruby` build, where nothing in-crate consumes it. */
 #[cfg(feature = "alloc-inject")]
-pub use inject::{alloc_inject_arm, alloc_inject_call_count};
+pub use inject::{
+    alloc_inject_arm, alloc_inject_call_count, raise_inject_arm, raise_inject_call_count,
+    raise_inject_should_raise,
+};
 
 #[cfg(feature = "alloc-inject")]
 use inject::alloc_inject_should_fail;
