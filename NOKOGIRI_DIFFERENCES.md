@@ -41,11 +41,11 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
     and in XPath's data model. An `xmlns` on an HTML element is an ordinary
     attribute and stays visible.
 
-* A `StandardError` raised by a custom-function handler becomes `Makiri::Error`
-  ("handler raised: <message>"), with the handler's exception as its `#cause`
-  * Nokogiri re-raises the handler's exception itself. Anything that is not a
-    `StandardError` (`Interrupt`, `SystemExit`, Timeout's exception) and a
-    `throw` reach the caller unchanged in both.
+* There are no custom XPath functions
+  * Nokogiri answers a function XPath does not define by calling a method of
+    a handler object (`xpath("my-fn(.)", handler)`). Makiri runs no Ruby while
+    it evaluates: a call to a function XPath 1.0 does not define is an
+    `XPath::SyntaxError`, and a handler argument is an `ArgumentError`.
 
 * A number literal is read as the nearest double; libxml2's own reader is not
   correctly rounded for a literal with more digits than a double holds, so

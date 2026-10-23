@@ -17,9 +17,7 @@ use crate::bridge::ruby::makiri_error;
 use crate::bridge::html::{html_node_key, with_html_node, wrap_html_node};
 use crate::bridge::ruby::{is_kind_of, string_of};
 use crate::bridge::string::{ruby_verified_text, HtmlSource};
-use crate::bridge::wrapper::{
-    ensure_document_mutable, html_doc_check, html_read, DocKind, DocumentShell,
-};
+use crate::bridge::wrapper::{html_doc_check, html_read, DocKind, DocumentShell};
 pub use crate::html_dom::fragment::FragmentTag;
 use crate::html_dom::fragment::{FragmentContext, FragmentError, TransientFragment};
 use crate::html_dom::html::{HtmlDoc, HtmlDocMut, HtmlNode, HtmlNodeKey, Place, RawNode};
@@ -224,16 +222,8 @@ pub fn build_fragment(
     at: ContextArg,
     limit: DepthLimit,
 ) -> Result<Value, Error> {
-    /* A fragment's nodes are made in `document`: a change to it, refused while
-     * an XPath evaluation with a handler reads it. Checked first, so that
-     * refusal wins over a bad argument... */
-    ensure_document_mutable(document)?;
     /* `to_str`/`to_s` is Ruby code that may raise: converted under protect. */
     let src = HtmlSource::from_ruby(string_of(rb_html)?)?;
-    /* ...and again, because that conversion is arbitrary Ruby: it can start an
-     * evaluation that suspends mid-walk (an Enumerator), still reading this
-     * document when the import below writes it. */
-    ensure_document_mutable(document)?;
     /* The element is read now, after the conversion, as `inner_html=` reads
      * it inside its edit. */
     let context = match at {

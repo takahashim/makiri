@@ -40,8 +40,8 @@ pub fn parse<'d, D: Dom<'d>>(ctx: &Context<'d, D>, text: VerifiedText) -> Option
 /// compared - the fast path is allowed to finish a walk the full evaluator
 /// overruns.
 pub fn evaluate_both<'d, D: Dom<'d>>(ctx: &Context<'d, D>, ast: &Ast) {
-    let full = ctx.evaluate(ast, None);
-    let first = ctx.evaluate_first(ast, None);
+    let full = ctx.evaluate(ast);
+    let first = ctx.evaluate_first(ast);
     if let (Ok(XPathValue::NodeSet(all)), Ok(XPathValue::NodeSet(one))) = (&full, &first) {
         assert_eq!(
             all.as_slice().first(),

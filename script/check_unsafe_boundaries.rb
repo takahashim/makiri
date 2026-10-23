@@ -47,7 +47,6 @@ UNSAFE_ISLANDS = {
   "bridge/xml.rs" => 1,
   "bridge/xml_decode.rs" => 7,
   "bridge/xpath/context_object.rs" => 5,
-  "bridge/xpath/handler.rs" => 7,
   "bridge/xpath/mod.rs" => 5,
   "falloc/mod.rs" => 1,
   "lexbor/abi.rs" => 4,

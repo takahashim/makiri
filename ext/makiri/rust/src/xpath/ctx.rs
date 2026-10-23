@@ -19,39 +19,6 @@ use core::cell::{Cell, Ref, RefCell, RefMut};
 use core::marker::PhantomData;
 use std::collections::HashMap;
 
-/// One call the evaluator routes to the custom-function resolver.
-pub struct ResolverCall<'a> {
-    /// The focus: the context node's token (None when there is none), and its
-    /// position.
-    pub node: Option<Token>,
-    pub pos: usize,
-    pub size: usize,
-    /// The namespace URI of the call's prefix, when it had one.
-    pub ns_uri: Option<&'a [u8]>,
-    /// The function's local name.
-    pub local: &'a [u8],
-    pub args: &'a [Val],
-}
-
-/// What answers the function calls an evaluate has no built-in for: the glue's
-/// bridge to a Ruby handler, passed to one evaluate.
-///
-/// `Ok(Some(value))` answers the call; `Ok(None)` means there is no such
-/// function, which the evaluator reports; `Err` is the function's own failure,
-/// already written to the budget.
-///
-/// A resolver answers nodes of the document this evaluate walks; the Ruby
-/// bridge upholds that by checking a handler's node's document before it mints
-/// a token, so the evaluator can read an answer's tokens back without checking
-/// again.
-pub trait Resolver {
-    fn resolve(
-        &self,
-        budget: &mut Budget,
-        call: &ResolverCall<'_>,
-    ) -> Result<Option<Val>, Reported>;
-}
-
 /// Per-context registration caps. These bound an abusive Ruby loop that calls
 /// register_namespace / register_variable without limit; far above any real use.
 pub const MAX_NAMESPACES: usize = 65536;
@@ -71,8 +38,8 @@ struct VarEntry {
 ///
 /// An evaluate borrows them for the whole walk - a name test keeps the URI it
 /// resolved - so they sit in a `RefCell` on the context: a registration made
-/// while an evaluate runs (a handler re-entering) cannot take the borrow, and
-/// is refused rather than freeing a string the walk still reads.
+/// while an evaluate runs cannot take the borrow, and is refused rather than
+/// freeing a string the walk still reads.
 #[derive(Default)]
 pub struct Names {
     ns: Vec<NsEntry>,
@@ -190,7 +157,7 @@ impl Names {
 /// Why a context refused a change.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ContextError {
-    /// An evaluate on this context is running (a handler re-entered).
+    /// An evaluate on this context is running.
     Evaluating,
     /// Past the per-context registration cap.
     TooMany,
@@ -218,9 +185,10 @@ impl crate::falloc::Oom for ContextError {
 /// overlaps the write. [`Context`] pairs a session with a document for a caller
 /// that holds both for one scope.
 ///
-/// An evaluate needs only `&self`, so a handler may evaluate again on the same
-/// session. What may change while one runs is kept in cells; changes that would
-/// disturb the walk are refused with [`ContextError::Evaluating`].
+/// An evaluate needs only `&self`. What may change while one runs is kept in
+/// cells; changes that would disturb the walk are refused with
+/// [`ContextError::Evaluating`] (no Ruby runs during an evaluate, so none is
+/// expected).
 pub struct Session {
     node: Cell<Option<Token>>,
     names: RefCell<Names>,
@@ -306,38 +274,23 @@ impl Session {
         self.names_mut()?.bind_var(name, value)
     }
 
-    /// Evaluate `ast` over `doc` with the context node as the focus; `handler`
-    /// answers the function calls there is no built-in for.
+    /// Evaluate `ast` over `doc` with the context node as the focus.
     ///
     /// `doc` is borrowed for this call alone. Each call runs on an evaluation of
-    /// its own - its budget, its caches - and only reads the session, so a
-    /// handler that evaluates again on this same session cannot disturb the
-    /// walk it was called from.
+    /// its own - its budget, its caches - and only reads the session.
     #[allow(clippy::result_large_err)]
-    pub fn evaluate<'d, D: Dom<'d>>(
-        &self,
-        doc: D,
-        ast: &Ast,
-        handler: Option<&dyn Resolver>,
-    ) -> Result<XPathValue, Error> {
+    pub fn evaluate<'d, D: Dom<'d>>(&self, doc: D, ast: &Ast) -> Result<XPathValue, Error> {
         doc.prepare().map_err(index_error)?;
         let run = self.enter()?;
-        eval::eval_ast(self, &run.names, doc, self.focus_node(doc), ast, handler)
+        eval::eval_ast(self, &run.names, doc, self.focus_node(doc), ast)
     }
 
     /// [`evaluate`](Self::evaluate) through the `at_xpath` first-match fast
     /// path when the shape allows it, and the full evaluator otherwise.
     #[allow(clippy::result_large_err)]
-    pub fn evaluate_first<'d, D: Dom<'d>>(
-        &self,
-        doc: D,
-        ast: &Ast,
-        handler: Option<&dyn Resolver>,
-    ) -> Result<XPathValue, Error> {
+    pub fn evaluate_first<'d, D: Dom<'d>>(&self, doc: D, ast: &Ast) -> Result<XPathValue, Error> {
         /* The fast path charges every visited node to a budget of its own, so it
-         * is bounded fail-closed exactly like the full evaluator; it only runs
-         * for recognised shapes, which call no functions, so it needs no
-         * handler. */
+         * is bounded fail-closed exactly like the full evaluator. */
         doc.prepare().map_err(index_error)?;
         let matched = {
             let run = self.enter()?;
@@ -345,7 +298,7 @@ impl Session {
         }?;
         match matched {
             Some(value) => Ok(value),
-            None => self.evaluate(doc, ast, handler),
+            None => self.evaluate(doc, ast),
         }
     }
 
@@ -424,18 +377,14 @@ impl<'d, D: Dom<'d>> Context<'d, D> {
 
     /// [`Session::evaluate`] over this context's document.
     #[allow(clippy::result_large_err)]
-    pub fn evaluate(&self, ast: &Ast, handler: Option<&dyn Resolver>) -> Result<XPathValue, Error> {
-        self.session.evaluate(self.doc, ast, handler)
+    pub fn evaluate(&self, ast: &Ast) -> Result<XPathValue, Error> {
+        self.session.evaluate(self.doc, ast)
     }
 
     /// [`Session::evaluate_first`] over this context's document.
     #[allow(clippy::result_large_err)]
-    pub fn evaluate_first(
-        &self,
-        ast: &Ast,
-        handler: Option<&dyn Resolver>,
-    ) -> Result<XPathValue, Error> {
-        self.session.evaluate_first(self.doc, ast, handler)
+    pub fn evaluate_first(&self, ast: &Ast) -> Result<XPathValue, Error> {
+        self.session.evaluate_first(self.doc, ast)
     }
 }
 

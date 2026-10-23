@@ -1,12 +1,11 @@
 # frozen_string_literal: true
 
 # `#xpath` / `#at_xpath` read one argument list for HTML and XML alike:
-# `(expr, [namespaces Hash], [handler], namespace_matching:, **prefix_bindings)`.
+# `(expr, [namespaces Hash], namespace_matching:, **prefix_bindings)`.
 RSpec.describe "XPath query arguments" do
   let(:svg) { "http://www.w3.org/2000/svg" }
   let(:html) { Makiri::HTML("<svg><path/></svg>") }
   let(:xml) { Makiri::XML(%(<r xmlns:s="urn:s"><s:p/></r>)) }
-  let(:handler) { Class.new { def up(s) = s.upcase }.new }
 
   it "binds a per-query namespace Hash on HTML too" do
     expect(html.xpath("//s:path", { "s" => svg }).size).to eq(1)
@@ -16,12 +15,6 @@ RSpec.describe "XPath query arguments" do
   it "takes keywords other than namespace_matching: as prefix bindings" do
     expect(html.xpath("//s:path", s: svg).size).to eq(1)
     expect(xml.xpath("//s:p", s: "urn:s").size).to eq(1)
-  end
-
-  it "accepts a handler on XML, and both a Hash and a handler in either order" do
-    expect(xml.xpath("up('a')", handler)).to eq("A")
-    expect(xml.xpath("up(name(//s:p))", { "s" => "urn:s" }, handler)).to eq("S:P")
-    expect(html.xpath("up(name(//s:path))", handler, { "s" => svg })).to eq("PATH")
   end
 
   it "reads namespace_matching: as the mode, never as a prefix" do
@@ -55,9 +48,9 @@ RSpec.describe "XPath query arguments" do
     expect { html.css("path", 5) }.to raise_error(TypeError, /must be a Hash/)
   end
 
-  it "refuses two namespace Hashes or two handlers" do
+  it "refuses two namespace Hashes, or anything but a Hash" do
     expect { html.xpath("//a", {}, {}) }.to raise_error(ArgumentError)
-    expect { html.xpath("//a", handler, handler) }.to raise_error(ArgumentError)
+    expect { xml.xpath("//a", Object.new) }.to raise_error(ArgumentError, /handlers are not supported/)
   end
 
   it "reads a namespace Hash through its storage, not overridden Hash methods" do

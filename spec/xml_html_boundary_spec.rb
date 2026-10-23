@@ -82,44 +82,6 @@ RSpec.describe "Makiri HTML/XML representation boundary" do
     end
   end
 
-  describe "custom-function handler results respect the document boundary" do
-    ns = "urn:fns"
-    handler = Class.new do
-      def first_node(set) = set.first   # returns a Node -> push into the result set
-      def my_count(set) = set.length * 1.0
-    end.new
-
-    it "accepts a same-document node returned by an XML handler" do
-      xml = Makiri::XML("<r><a/><a/></r>")
-      ctx = Makiri::XPathContext.new(xml.root)
-      ctx.register_namespace("f", ns)
-      expect(ctx.evaluate("f:my-count(//a)", handler)).to eq(2.0)
-      result = ctx.evaluate("f:first-node(//a)", handler)
-      expect(result).to be_a(Makiri::NodeSet)
-      expect(result.first.name).to eq("a")
-    end
-
-    it "fails closed when an XML handler returns a node from another document" do
-      xml = Makiri::XML("<r><a/></r>")
-      other = Makiri::XML("<z><b/></z>")
-      foreign = Class.new do
-        define_method(:foreign) { |_set| other.at_xpath("//b") }
-      end.new
-      ctx = Makiri::XPathContext.new(xml.root)
-      ctx.register_namespace("f", ns)
-      expect { ctx.evaluate("f:foreign(//a)", foreign) }
-        .to raise_error(Makiri::Error, /different document/)
-    end
-
-    it "still accepts a same-document node from an HTML handler (regression)" do
-      html = Makiri::HTML("<div><p>hi</p><p>yo</p></div>")
-      ctx = Makiri::XPathContext.new(html)
-      ctx.register_namespace("f", ns)
-      result = ctx.evaluate("f:first-node(//p)", handler)
-      expect(result.first.text).to eq("hi")
-    end
-  end
-
   describe "NodeSet set operations require the same document" do
     it "raises rather than mixing HTML and XML node sets" do
       xml = Makiri::XML("<r><a/></r>").xpath("//a")

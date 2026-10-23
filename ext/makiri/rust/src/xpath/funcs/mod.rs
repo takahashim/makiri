@@ -3,9 +3,9 @@
 //!
 //! One function per builtin behind one signature, and [`BUILTINS`] is the only
 //! place that names them - with their purity beside each. Keeping "does it exist" and "what does it do" as one
-//! question matters here: the evaluator asks before deciding whether to route a
-//! call to a Ruby handler, so a second list of names maintained separately could
-//! disagree with this one and turn an unknown function into a bare failure.
+//! question matters here: the parser asks before accepting an unprefixed call,
+//! so a second list of names maintained separately could disagree with this
+//! one and reject a builtin (or accept an unknown name).
 //!
 //! Where HTML and XML differ (`id()`, `lang()`), the function asks the host's
 //! policy item on `Dom` rather than which host it is.
@@ -185,8 +185,8 @@ const fn e(
 }
 
 /// THE list of built-ins: each name once, with its library, its purity and how
-/// many arguments it takes (`min`, `max`). The evaluator asks it whether a call
-/// is a built-in before routing it to a Ruby handler, and checks the count
+/// many arguments it takes (`min`, `max`). The parser asks it whether an
+/// unprefixed call is a built-in, the evaluator checks the count
 /// against it before the call; the hoisting pass asks it whether a call is pure.
 /// So there is no second list of names, or of arities, to fall out of step
 /// with this one.
@@ -304,9 +304,15 @@ fn find(library: Library, local: &[u8]) -> Option<&'static Entry> {
         .find(|e| e.library == library && e.name == local)
 }
 
-/// The built-in named `(ns_uri, local)`, or None - in which case the evaluator
-/// routes the call to the registered resolver. The Nokogiri builtins live in
-/// one namespace; any other registered namespace means a user-defined function.
+/// Whether `local` names an unprefixed built-in - what the parser asks, so an
+/// unknown unprefixed function is a syntax error before anything is evaluated.
+pub fn is_core_function(local: &[u8]) -> bool {
+    find(Library::Core, local).is_some()
+}
+
+/// The built-in named `(ns_uri, local)`, or None, which the evaluator reports
+/// as an unknown function: Makiri runs no custom-function handler. The
+/// Nokogiri builtins live in one namespace; any other is unknown.
 pub fn lookup<'e, 'd, D: Dom<'d>>(ns_uri: Option<&[u8]>, local: &[u8]) -> Option<Found<'e, 'd, D>> {
     let library = match ns_uri {
         None => Library::Core,
@@ -391,7 +397,7 @@ impl<'e, 'd, D: Dom<'d>> Found<'e, 'd, D> {
 }
 
 /// The purity of the unprefixed call `local`; [`Purity::Impure`] for a name
-/// that is not a core built-in, which a handler answers.
+/// that is not a core built-in.
 pub fn purity(local: &[u8]) -> Purity {
     find(Library::Core, local).map_or(Purity::Impure, |e| e.purity)
 }
@@ -1296,7 +1302,7 @@ mod tests {
         ] {
             assert!(!purity(name).allows(1), "{}", String::from_utf8_lossy(name));
         }
-        /* An unknown name is a handler's, and a handler is never taken for pure. */
+        /* An unknown name is never taken for pure. */
         assert!(!purity(b"my-function").allows(1));
         /* A Nokogiri builtin is looked up under its namespace, not as core. */
         assert_eq!(purity(b"css-class"), Purity::Impure);

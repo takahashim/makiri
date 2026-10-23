@@ -494,7 +494,6 @@ pub struct HtmlEdit<'a> {
 pub fn edit(this: &mut HtmlSelf) -> Result<HtmlEdit<'_>, Error> {
     crate::bridge::ruby::check_frozen(this.value)?;
     check_attr_owner_frozen(this)?;
-    ensure_document_mutable(this.document)?;
     /* Before any argument is converted: see `account_growth`. */
     crate::bridge::wrapper::account_growth(this.document);
     Ok(HtmlEdit { this })
@@ -574,10 +573,8 @@ impl<'a> HtmlEdit<'a> {
     ) -> Result<R, Error> {
         crate::bridge::ruby::check_frozen(self.this.value)?;
         check_attr_owner_frozen(self.this)?;
-        ensure_document_mutable(self.this.document)?;
         record_edit(self.this.document, kind);
-        /* The receiver is not frozen and no XPath evaluation is reading its
-         * document - both checked just now - and the guard refuses any other
+        /* The receiver is not frozen - checked just now - and the guard refuses any other
          * read still held. `f` runs no Ruby (this method's contract with its
          * callers), and the guard goes with it. `edit` drops the indexes. */
         let mut write = html_write(&self.this.document)?;
@@ -586,31 +583,29 @@ impl<'a> HtmlEdit<'a> {
     }
 }
 
-/// Refuse a factory on `rb_doc` - not an HTML Document, or one an XPath
-/// evaluation with a handler is reading - before any argument is converted, so
-/// that refusal wins over a bad argument. [`new_node`] checks again.
+/// Refuse a factory on `rb_doc` - not an HTML Document - before any argument
+/// is converted, so that refusal wins over a bad argument. [`new_node`] checks
+/// again.
 pub fn check_owning_doc(rb_doc: &Value) -> Result<(), Error> {
-    html_doc_check(*rb_doc)?;
-    ensure_document_mutable(*rb_doc)
+    html_doc_check(*rb_doc)
 }
 
 /// Lend `rb_doc`'s document to `f` to make a DETACHED node - the factories'
 /// and the copies' gate. A new node is in no tree, so no index changes and no
-/// receiver can be frozen; what is refused is a document an XPath evaluation
-/// with a handler is reading, whose arena the walk borrows. `f` must run no
+/// receiver can be frozen; what is refused, by the guard, is a document a read
+/// still holds. `f` must run no
 /// Ruby, as [`HtmlEdit::with_tree`]'s must not.
 pub fn new_node<R>(rb_doc: &Value, f: impl FnOnce(&mut HtmlNewNodes<'_>) -> R) -> Result<R, Error> {
     lend_document(rb_doc, |write| f(&mut write.new_nodes()))
 }
 
-/// Check `rb_doc` can be lent - an HTML Document no evaluation is reading -
+/// Check `rb_doc` can be lent - an HTML Document -
 /// hand its document to `lend`, and report what the loan grew it by.
 fn lend_document<R>(
     rb_doc: &Value,
     lend: impl FnOnce(&mut crate::bridge::dom::HtmlWrite<'_>) -> R,
 ) -> Result<R, Error> {
     html_doc_check(*rb_doc)?;
-    ensure_document_mutable(*rb_doc)?;
     /* The loan ends with this block, before the report below can run Ruby;
      * `lend` runs none. */
     let r = {
@@ -657,10 +652,6 @@ pub fn insert(this: &mut HtmlSelf, rb_incoming: Value, place: Place) -> Result<V
      * checked, because frozenness lives on the Ruby object and there is no map
      * from a node back to its wrapper. */
     crate::bridge::ruby::check_frozen(rb_incoming)?;
-    /* An adoption changes the argument's own document too. Refused here, so
-     * every refusal about the argument comes before the edit is recorded, as
-     * the XML side's does. */
-    ensure_document_mutable(incoming_doc)?;
     /* The argument resolved against its own Document - the checked boundary -
      * and kept as a reference: in the receiver's document it is read through
      * the edit's own borrow, never through a second one. */

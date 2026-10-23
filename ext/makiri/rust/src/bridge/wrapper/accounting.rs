@@ -86,7 +86,7 @@ pub fn has_kept_order(rb_doc: Value) -> bool {
 /// evaluates, as the arena is, so it is reported as the arena is; an edit
 /// drops it, and the next report gives it back.
 ///
-/// Called once the evaluate is over - its walk, its handler guard - since
+/// Called once the evaluate's walk is over, since
 /// the report may run a collection: like [`account_document`], with `rb_doc`
 /// on the caller's stack and no borrowed Ruby String held.
 pub fn account_kept_order(rb_doc: Value, had: bool) {

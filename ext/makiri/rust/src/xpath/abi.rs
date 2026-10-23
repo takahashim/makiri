@@ -5,7 +5,7 @@
 #![forbid(unsafe_code)]
 
 pub use super::ast::*;
-pub use super::ctx::{Names, Resolver, ResolverCall};
+pub use super::ctx::Names;
 #[cfg(any(test, feature = "xml-css-reference"))]
 pub use super::funcs::{FN_CHILD_POS, FN_CHILD_POS_LAST, FN_OF_TYPE_POS, FN_OF_TYPE_POS_LAST};
 pub use super::limits::Limits;

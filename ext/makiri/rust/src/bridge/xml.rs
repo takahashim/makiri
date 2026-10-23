@@ -26,9 +26,7 @@ use crate::bridge::html::with_arg_node;
 use crate::bridge::ruby::{check_frozen, is_kind_of};
 use crate::bridge::string::{ruby_verified_text, RubyText};
 use crate::bridge::wrapper::*;
-use crate::bridge::wrapper::{
-    ensure_document_mutable, node_repr, DocKind, DocumentShell, NodeRepr,
-};
+use crate::bridge::wrapper::{node_repr, DocKind, DocumentShell, NodeRepr};
 use crate::bridge::xml_decode::xml_decode_input_value;
 use crate::child_index::{ChildList, Children, TokenTree};
 use crate::html_dom::cross_import::cross_html_to_xml;
@@ -260,17 +258,14 @@ impl XmlView<'_> {
     }
 }
 
-/// The XML arena behind `document`, for a WRITE: refused while an XPath
-/// evaluation with a handler is reading the document, and - by the guard -
-/// while any other read of it is held.
+/// The XML arena behind `document`, for a WRITE: refused, by the guard, while
+/// any read of it is held.
 ///
-/// The evaluator holds the arena as `&Document` for the whole walk, and a
-/// write - a new node, a new byte span - can grow the arena's vectors under the
-/// slices it borrowed. Every path that hands out a `&mut` goes through here, so
-/// the one mutation gate covers the factories and the imports as well as the
-/// tree edits.
+/// A write - a new node, a new byte span - can grow the arena's vectors under
+/// the slices a reader borrowed. Every path that hands out a `&mut` goes
+/// through here, so the one guard covers the factories and the imports as
+/// well as the tree edits.
 fn arena_mut(document: &Value) -> Result<XmlWrite<'_>, Error> {
-    ensure_document_mutable(*document)?;
     xml_write(document)
 }
 
@@ -348,8 +343,8 @@ xml and xmlns take only their own)"
 /// nine sites that correctly skip the index invalidation and eight that must
 /// not, with nothing but a reader's judgement telling them apart.
 ///
-/// Refused while an XPath evaluation with a handler reads the document (see
-/// [`arena_mut`]). The `&mut` lives for `f` alone, and `f` must not run Ruby:
+/// Refused while a read of the document is held (see [`arena_mut`]). The
+/// `&mut` lives for `f` alone, and `f` must not run Ruby:
 /// the arena is `Vec`s, so Ruby code that read or wrote this same document
 /// meanwhile would alias the borrow. That is why a method converts and checks
 /// its arguments FIRST and only then calls this, with nothing but engine calls
@@ -471,7 +466,6 @@ impl Editing<'_> {
         let id = self.id;
         check_frozen(self.receiver)?;
         check_attr_owner_frozen(self.document, id)?;
-        ensure_document_mutable(self.document)?;
         /* Recorded once both refusals are past and BEFORE the change, with no
          * Ruby run in between (`record_edit`): an edit that then fails, or a
          * panic in it, still invalidates what it may have changed. */
@@ -508,9 +502,6 @@ fn check_attr_owner_frozen(document: Value, id: NodeId) -> Result<(), Error> {
 pub fn begin_edit(this: &mut XmlSelf) -> Result<Editing<'_>, Error> {
     check_frozen(this.value)?;
     check_attr_owner_frozen(this.document, this.id)?;
-    /* The evaluation guard, checked now so it is reported before a bad
-     * argument; `with_arena` checks it again at the change. */
-    ensure_document_mutable(this.document)?;
     /* Before any argument is converted: see `account_growth`. */
     crate::bridge::wrapper::account_growth(this.document);
     Ok(Editing {
@@ -696,9 +687,6 @@ pub fn fragment_into(
     source: Value,
     inherit_doc_ns: bool,
 ) -> Result<NodeId, Error> {
-    /* Refused first, so a document an evaluation is reading answers that
-     * rather than whatever the argument is... */
-    ensure_document_mutable(document)?;
     let max_bytes = xml_read(&document)?.max_bytes();
     let source = crate::bridge::ruby::string_of(source)?;
     let decoded = xml_decode_input_value(source, Some(max_bytes))?;
@@ -869,8 +857,6 @@ fn incoming_node(target_doc: Value, arg: Value) -> Result<(NodeId, Option<Adopti
     if src_document.as_raw() == target_doc.as_raw() {
         return Ok((src, None)); /* same arena -> move */
     }
-    /* The source changes too - adopting takes the node out of it. */
-    ensure_document_mutable(src_document)?;
     let (mark, copied) = {
         /* Two distinct arenas (the documents differ): the target written,
          * the source only read here. */
@@ -894,7 +880,6 @@ fn incoming_node(target_doc: Value, arg: Value) -> Result<(NodeId, Option<Adopti
 /// copied, detached, into the XML Document `rb_self`. The source is untouched.
 pub fn import_copy(rb_self: Value, node_v: Value, deep: bool) -> Result<NodeId, Error> {
     xml_doc_check(rb_self)?; /* TypeError for anything but an XML Document */
-    ensure_document_mutable(rb_self)?;
     let copy = match node_repr(node_v) {
         NodeRepr::Xml => {
             /* Read, not written: the copy goes into the receiver's arena. */

@@ -394,6 +394,17 @@ impl<'a> Parser<'a> {
         self.advance()?;
         self.charge()?;
         let (prefix, name) = self.names(&name_tok)?;
+        /* An unprefixed function is one of the library's or nothing: Makiri runs
+         * no custom-function handler. A prefixed one waits for the evaluate,
+         * which knows what its prefix is bound to. */
+        if prefix.is_none() && !super::funcs::is_core_function(&name) {
+            return Err(err_setf!(
+                self.err,
+                ErrorKind::Syntax,
+                "unknown function {}",
+                Bytes(&name)
+            ));
+        }
 
         let mut args = Vec::new();
         if self.kind() != Tok::RParen {

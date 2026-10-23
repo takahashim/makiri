@@ -32,7 +32,6 @@ module Makiri
   end
 end
 
-require_relative "makiri/error"
 require_relative "makiri/clone_via_dup"
 require_relative "makiri/xpath_syntax"
 require_relative "makiri/node_path"

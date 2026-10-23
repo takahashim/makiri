@@ -590,7 +590,7 @@ mod speed {
             )
             .unwrap();
             let mut len = 0;
-            let mut run = || match ctx.evaluate(&ast, None).ok().unwrap() {
+            let mut run = || match ctx.evaluate(&ast).ok().unwrap() {
                 XPathValue::NodeSet(s) => len = s.as_slice().len(),
                 _ => unreachable!(),
             };

@@ -52,12 +52,6 @@ RSpec.describe "Makiri::XML namespaces & unsupported surface" do
       bad = "urn:" + 0.chr + "x"
       expect { atom.xpath("//a:entry", "a" => bad) }.to raise_error(Makiri::Error)
     end
-
-    it "takes a non-Hash second argument as the function handler, as HTML does" do
-      handler = Class.new { def twice(s) = s * 2 }.new
-      expect(atom.xpath("twice('a')", handler)).to eq("aa")
-      expect(atom.xpath("string(//a:title)", ns, handler)).to eq("Hi")
-    end
   end
 
   describe "Makiri::XPathContext over an XML node" do

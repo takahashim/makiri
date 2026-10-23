@@ -415,7 +415,7 @@ unsafe extern "C" fn exception_message_thunk(exc: VALUE) -> VALUE {
 }
 
 /// The longest message kept: this runs on error paths to word another error,
-/// and a handler's exception message is untrusted input.
+/// and an exception's message is untrusted input.
 const EXCEPTION_MESSAGE_MAX: usize = 255;
 
 /// `exc`'s message, for wording another error with it: up to the first NUL,

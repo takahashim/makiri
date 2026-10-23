@@ -78,8 +78,8 @@ fn prepare(e: &mut Expr, in_predicate: bool, slots: &mut u32) -> bool {
             for a in args.iter_mut() {
                 all &= prepare(a, in_predicate, slots);
             }
-            /* A prefix means handler-routed or a namespaced builtin, neither
-             * of which is hoistable. */
+            /* A prefixed call is a namespaced builtin or an unknown function,
+             * neither of which is hoisted. */
             let ci = prefix.is_none() && super::funcs::purity(name).allows(args.len()) && all;
             if !ci && in_predicate {
                 for a in args.iter_mut() {

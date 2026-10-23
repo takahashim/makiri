@@ -79,19 +79,6 @@ RSpec.describe "XPath document order kept by an HTML document" do
     expect(got).to eq(in_walk_order(contents, got))
   end
 
-  it "shares the index with an evaluate a handler starts" do
-    doc = Makiri::HTML(html)
-    inner = nil
-    handler = Object.new
-    handler.define_singleton_method(:probe) do |nodes|
-      inner = doc.xpath("//span | //a").to_a
-      nodes
-    end
-    got = doc.xpath("probe(//a | //span)", handler).to_a
-    expect(got).to eq(in_walk_order(doc, got))
-    expect(inner).to eq(got)
-  end
-
   it "reports the index to the GC while it is kept, and takes it back with an edit" do
     require "objspace"
     doc = Makiri::HTML(html)

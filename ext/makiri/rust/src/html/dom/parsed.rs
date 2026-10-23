@@ -45,10 +45,9 @@ impl HtmlNodeKey {
 /// A parsed HTML document, and the indexes built over it on demand.
 ///
 /// The indexes are cells a READER fills (`&self`): a query builds the one it
-/// needs while other readers - an XPath walk that called a handler, a node
-/// wrapper being made - hold the document shared, so building one must not
+/// needs while other readers - a node wrapper being made - hold the document shared, so building one must not
 /// take it `&mut`. Only an edit drops them, and an edit holds the document
-/// alone (`edit`, behind the mutation gate).
+/// alone (`edit`, behind the write guard).
 pub struct HtmlParsed {
     doc: Document,
     dom_index: OnceCell<DomIndex>,

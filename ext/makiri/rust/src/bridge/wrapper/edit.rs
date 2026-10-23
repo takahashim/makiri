@@ -1,9 +1,7 @@
-//! A Document's edit versions, its child-position memo, and the mutation
-//! gate an XPath evaluation with a handler holds.
+//! A Document's edit versions and its child-position memo.
 
 #![forbid(unsafe_code)]
 
-use crate::bridge::ruby::makiri_error;
 use magnus::{Error, Value};
 
 use super::*;
@@ -129,59 +127,5 @@ pub trait ChildListHost: magnus::TryConvert {
             Ok::<_, Error>(found.map(|n| c.tree.token(n)))
         })??;
         self.wrap_child(found)
-    }
-}
-
-/* ---- the document's mutation gate ---- */
-
-/// `Err(Makiri::Error)` while an evaluation with a handler is reading `rb_doc`.
-/// Every mutator checks this before it changes anything.
-pub fn ensure_document_mutable(rb_doc: Value) -> Result<(), Error> {
-    if doc_data_known(&rb_doc).edits.get().evaluating != 0 {
-        return Err(makiri_error(
-            "cannot modify a document while evaluating XPath over it (re-entrant mutation from a handler)",
-        ));
-    }
-    Ok(())
-}
-
-/* ------------------------------------------------------------------ *
- * the evaluation guard                                                *
- * ------------------------------------------------------------------ */
-
-/// Marks a document as read by an XPath evaluation that can run Ruby - one with
-/// a handler - for as long as it lives. Nested evaluations stack.
-///
-/// The engine borrows names, attribute values and index slices out of the
-/// document for the whole walk, and a handler runs arbitrary Ruby in the middle
-/// of it. An edit invalidates those borrows: an HTML edit drops the indexes
-/// and may compact the byte store the spans point into
-/// (`HtmlParsed::edit`), and an XML edit or factory can grow the arena's
-/// vectors. So a handler that edited the same document could leave the
-/// evaluator reading released memory. Every mutator checks
-/// [`ensure_document_mutable`] first, so that borrow is never invalidated
-/// under a suspended walk.
-pub struct DocumentEvaluation(
-    /// The Document the count belongs to. Holding it is what keeps the parsed
-    /// handle valid: a guard lives on the machine stack, which Ruby's collector
-    /// scans, so the Document cannot be collected while one is alive.
-    Value,
-);
-
-impl DocumentEvaluation {
-    pub fn enter(rb_doc: Value) -> Result<Self, Error> {
-        DOC_TYPE.get(&rb_doc)?; /* TypeError for a non-Document */
-        doc_data_known(&rb_doc).update_edits(|e| e.evaluating += 1);
-        Ok(DocumentEvaluation(rb_doc))
-    }
-}
-
-impl Drop for DocumentEvaluation {
-    fn drop(&mut self) {
-        doc_data_known(&self.0).update_edits(|e| e.evaluating -= 1);
-        /* Read the Document here, so the guard demonstrably holds it: the field
-         * is there to keep it reachable, and a field nothing reads is one the
-         * compiler is free to treat as absent. */
-        core::hint::black_box(self.0);
     }
 }

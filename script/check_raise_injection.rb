@@ -59,13 +59,6 @@ XML_SRC = <<~XML
   </r>
 XML
 
-# A handler for the XPath scenarios: answers strings and node-sets back, so a
-# raise can land in the conversion either way.
-HANDLER = Class.new do
-  def echo(nodes) = nodes
-  def label(nodes) = "n#{nodes.size}"
-end.new
-
 # Each scenario runs a workload and returns a String to compare with the
 # baseline; every Document it makes goes into `docs` as soon as it exists, so a
 # run that raised midway is still checked.
@@ -96,7 +89,7 @@ SCENARIOS = {
     out << doc.xpath("//li[@class='item i3']").map(&:text).join
     out << doc.xpath("string(//p[@id='p2'])") << doc.xpath("count(//li)").to_s
     ctx = Makiri::XPathContext.new(doc)
-    out << ctx.evaluate("echo(//li)", HANDLER).size.to_s << ctx.evaluate("label(//p)", HANDLER)
+    out << ctx.evaluate("//li").size.to_s << ctx.evaluate("name(//p)")
     out << (ul.children | doc.css("p")).size.to_s
     out.join("\n")
   end,
@@ -146,7 +139,7 @@ SCENARIOS = {
     out << doc.xpath("string(//p:x)", "p" => "urn:p")
     ctx = Makiri::XPathContext.new(doc)
     ctx.register_namespace("d", "urn:d")
-    out << ctx.evaluate("echo(//d:i)", HANDLER).size.to_s
+    out << ctx.evaluate("//d:i").size.to_s
     out << doc.to_xml << doc.canonicalize
     out.join("\n")
   end,

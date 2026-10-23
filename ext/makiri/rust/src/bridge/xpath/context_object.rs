@@ -42,10 +42,10 @@ const AST_CACHE_MAX: usize = 1024;
 /// [`AST_CACHE_MAX`] nothing more is cached and the caller frees the AST it was
 /// handed.
 ///
-/// Each AST is boxed, so a pointer to one survives the map growing: a handler
-/// can evaluate a new expression on this context mid-walk, inserting into the
-/// map while the outer evaluate still reads its AST. Nothing is ever removed
-/// before the context itself is freed.
+/// Each AST is boxed, so a pointer to one survives the map growing, and
+/// nothing is removed before the context itself is freed: an evaluate reads
+/// its AST through a pointer (`QueryAst::cached`) after the cache's borrow is
+/// released.
 struct AstCache(HashMap<Box<[u8]>, Box<Ast>>);
 
 /// `Makiri::XPathContext`.
@@ -58,8 +58,9 @@ struct AstCache(HashMap<Box<[u8]>, Box<Ast>>);
 /// outstanding - the mistake that had to be fixed in `glue::node_set`.
 ///
 /// The engine context sits outside the `RefCell` too: everything done with it
-/// takes `&Cx`, so a handler re-entering mid-walk can evaluate again on it,
-/// and the context itself refuses the changes that would disturb the walk.
+/// takes `&Cx`. No Ruby runs while it evaluates (Makiri runs no
+/// custom-function handler), and the context itself refuses a change that
+/// would disturb a walk all the same.
 pub struct XPathCtx {
     /// Keepalive: owns the DOM arena.
     document: Held,
@@ -109,13 +110,7 @@ impl XPathCtxSelf {
     /// Rebind the context node to `rb_node`, a Makiri node of the same
     /// document. Namespace and variable registrations are preserved.
     pub fn set_node(&self, rb_node: Value) -> Result<(), Error> {
-        const BUSY: &str =
-            "cannot change the context node while evaluating (re-entrant mutation from a handler)";
-        /* The engine refuses this too; asked first so a handler's re-entrant
-         * call reads as busy rather than as whatever the checks below say. */
-        if self.ctx.is_evaluating() {
-            return Err(refused(ContextError::Evaluating, BUSY, BUSY));
-        }
+        const BUSY: &str = "cannot change the context node while the context is evaluating";
         let token = node_token_in(rb_node, self.document()).map_err(|e| match e {
             NotInDocument::Unusable(e) => e,
             NotInDocument::Foreign => makiri_error("context node must belong to the same document"),
@@ -157,8 +152,7 @@ impl XPathCtx {
     }
 }
 
-const NS_BUSY: &str =
-    "cannot register a namespace while evaluating (re-entrant mutation from a handler)";
+const NS_BUSY: &str = "cannot register a namespace while the context is evaluating";
 const NS_FAILED: &str = "failed to register namespace";
 
 /// A context's refusal as the exception it raises: `busy` when an evaluate is
@@ -176,11 +170,7 @@ fn refused(error: ContextError, busy: &'static str, failed: &'static str) -> Err
 /* ------------------------------------------------------------------ */
 /* the context's operations                                           */
 /* ------------------------------------------------------------------ */
-/* What `glue::xpath_context`'s Ruby methods are built on. Each refusal that
- * protects a running evaluate is decided here, BEFORE any argument conversion:
- * converting runs `to_s` - arbitrary Ruby, possibly a handler re-entering this
- * very context - so a check made after it would read that re-entry as some
- * other error. */
+/* What `glue::xpath_context`'s Ruby methods are built on. */
 
 impl XPathCtx {
     /// A new context rooted at `rb_node`, a node of its keepalive Document.
@@ -219,22 +209,13 @@ impl XPathCtx {
         unsafe { self.document.get() }
     }
 
-    /// Evaluate `expr` - parsed once and cached - with `handler`, if any.
-    pub fn evaluate(&self, expr: Value, handler: Option<Value>) -> Result<Value, Error> {
+    /// Evaluate `expr`, parsed once and cached.
+    pub fn evaluate(&self, expr: Value) -> Result<Value, Error> {
         let document = self.document();
 
-        /* The cache borrow is taken for the lookup ONLY, and released before the
-         * evaluation. A handler called mid-walk re-enters this object - to
-         * register a namespace, to rebind the node, or to evaluate again on the
-         * same context - and re-entrancy is governed by the context itself,
-         * which reports the specific refusal (and permits a nested evaluate).
-         * Holding the borrow across the walk would turn all four into one
-         * generic "already in use", which is how the handler specs first caught
-         * this. */
+        /* The cache borrow is taken for the lookup only, and released before the
+         * evaluation. */
         let ast = {
-            /* Verify BEFORE borrowing: coercing the expression can run Ruby
-             * (`to_s`), which may re-enter this context, and a borrow held across
-             * that would turn the re-entry into "already in use". */
             let ev = ruby_verified_text(expr, "XPath expression")?;
             let mut cache = self.cache()?;
             let parsed = cached_ast(&mut cache, self.ctx.limits(), ev);
@@ -245,7 +226,7 @@ impl XPathCtx {
             self.account_cache(added);
             ast
         };
-        evaluate_to_ruby(&self.ctx, ast, handler, document, Answer::All)
+        evaluate_to_ruby(&self.ctx, ast, document, Answer::All)
     }
 
     /// The engine caps this context evaluates under, for a caller that must
@@ -254,21 +235,9 @@ impl XPathCtx {
         self.ctx.limits()
     }
 
-    /// Refused while an evaluate on this context runs - checked before a
-    /// binding's arguments are converted, as well as at the change.
-    pub fn ensure_idle(&self) -> Result<(), Error> {
-        if self.ctx.is_evaluating() {
-            return Err(refused(ContextError::Evaluating, NS_BUSY, NS_FAILED));
-        }
-        Ok(())
-    }
-
     /// Bind `prefix` to `uri` for every later evaluate, for bytes a caller has
     /// already put through the text contract (`glue::query::bind_pair`).
     pub fn bind_namespace(&self, prefix: &[u8], uri: &[u8]) -> Result<(), Error> {
-        if self.ctx.is_evaluating() {
-            return Err(refused(ContextError::Evaluating, NS_BUSY, NS_FAILED));
-        }
         self.ctx
             .register_ns(prefix, uri) /* copies both */
             .map_err(|e| refused(e, NS_BUSY, NS_FAILED))
@@ -276,12 +245,8 @@ impl XPathCtx {
 
     /// Bind `$name` to `value.to_s` for every later evaluate.
     pub fn register_variable(&self, name: Value, value: Value) -> Result<(), Error> {
-        const BUSY: &str =
-            "cannot register a variable while evaluating (re-entrant mutation from a handler)";
+        const BUSY: &str = "cannot register a variable while the context is evaluating";
         const FAILED: &str = "failed to register variable";
-        if self.ctx.is_evaluating() {
-            return Err(refused(ContextError::Evaluating, BUSY, FAILED));
-        }
         /* The value gets the stricter engine-string check, which adds the
          * byte cap on top of the no-NUL / valid-UTF-8 contract. */
         let sv = crate::bridge::ruby::to_s(value)?;

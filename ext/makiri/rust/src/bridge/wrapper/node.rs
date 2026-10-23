@@ -205,8 +205,8 @@ pub enum NotInDocument {
 /// The engine token of `rb_node`, which must be a node of `document` (the
 /// document node included).
 ///
-/// The check behind every token minted for one document's engine - a handler's
-/// result node, an `XPathContext`'s context node - made here once, so a token
+/// The check behind every token minted for one document's engine - an
+/// `XPathContext`'s context node - made here once, so a token
 /// never names a node of another document. The token's kind is `document`'s
 /// own, not one a caller passes alongside.
 pub fn node_token_in(rb_node: Value, document: Value) -> Result<Token, NotInDocument> {

@@ -39,7 +39,7 @@ fn lowered(doc: &Document, selector: &str) -> Option<Vec<NodeId>> {
         default_namespace: false,
     };
     let ast = compile_owned(source, &ns, Form::Select, &mut budget).ok()?;
-    match ctx.evaluate(&ast, None).ok()? {
+    match ctx.evaluate(&ast).ok()? {
         XPathValue::NodeSet(set) => Some(
             set.as_slice()
                 .iter()

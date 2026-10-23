@@ -12,7 +12,7 @@
 
 use magnus::rb_sys::AsRawValue;
 
-use magnus::{prelude::*, Error, Value};
+use magnus::{Error, Value};
 
 use crate::bridge::html::{html_node_key, with_html_node};
 use crate::bridge::node_set::{node_set_with_fill, PushError};
@@ -27,18 +27,15 @@ use crate::init::EXC_ERROR;
 pub use crate::init::{CLASS_XPATH_CONTEXT, EXC_XPATH_LIMIT_EXCEEDED, EXC_XPATH_SYNTAX_ERROR};
 use crate::token::Token;
 use crate::xpath::ast::Ast;
-use crate::xpath::ctx::{Resolver, Session, XPathValue};
+use crate::xpath::ctx::{Session, XPathValue};
 use crate::xpath::dom::Dom;
 use crate::xpath::limits::Budget;
 use crate::xpath::value::ValRef;
 use core::ptr::NonNull;
 
 mod context_object;
-mod handler;
 
-use crate::bridge::ruby::is_kind_of;
 pub use context_object::{XPathCtx, XPathCtxSelf};
-use handler::Bridge;
 
 /// An engine error as the Ruby exception it maps to.
 ///
@@ -85,22 +82,20 @@ pub struct Cx {
 
 impl Cx {
     /// Evaluate `ast` over `document`, borrowed for this call alone: a read
-    /// guard, held across the handler's Ruby (which may read the document,
-    /// and whose edits [`evaluate_query`]'s `Bridge` refuses first) and
-    /// released when the engine returns an owned value. The outer `Err` is a
-    /// read the document refused.
+    /// guard, released when the engine returns an owned value. No Ruby runs
+    /// while it is held - Makiri runs no custom-function handler. The outer
+    /// `Err` is a read the document refused.
     #[allow(clippy::result_large_err)]
     fn run(
         &self,
         document: Value,
         ast: &Ast,
-        handler: Option<&dyn Resolver>,
         answer: Answer,
     ) -> Result<Result<XPathValue, XPathError>, Error> {
         Ok(match DocKind::of(document) {
             DocKind::Xml => {
                 let doc = xml_read(&document)?;
-                run_on(&self.session, &*doc, ast, handler, answer)
+                run_on(&self.session, &*doc, ast, answer)
             }
             DocKind::Html => {
                 let doc = html_read(&document)?;
@@ -108,7 +103,6 @@ impl Cx {
                     &self.session,
                     crate::html_dom::xpath::dom(doc.parsed()),
                     ast,
-                    handler,
                     answer,
                 )
             }
@@ -122,12 +116,11 @@ fn run_on<'d, D: Dom<'d>>(
     session: &Session,
     doc: D,
     ast: &Ast,
-    handler: Option<&dyn Resolver>,
     answer: Answer,
 ) -> Result<XPathValue, XPathError> {
     match answer {
-        Answer::First => session.evaluate_first(doc, ast, handler),
-        Answer::All => session.evaluate(doc, ast, handler),
+        Answer::First => session.evaluate_first(doc, ast),
+        Answer::All => session.evaluate(doc, ast),
     }
 }
 
@@ -240,9 +233,7 @@ impl QueryAst {
 /// and an allocation can raise, so each caller runs this under `protect`. A
 /// NodeSet push the set refuses (its cap) comes back as `Err`.
 ///
-/// The one conversion for a whole value, for a query's result and for a
-/// handler's arguments alike, so the two cannot drift apart in how a string or
-/// a node-set reaches Ruby. `at_xpath` is the exception by design: its
+/// The one conversion for a whole value. `at_xpath` is the exception by design: its
 /// [`query_result`] fast path wraps only a node-set's first node, through the
 /// same wrap a set's read-back uses, and never builds the set.
 ///
@@ -301,9 +292,6 @@ fn value_to_ruby(v: XPathValue, document: Value) -> Result<Value, Error> {
  * differ only in how the context is built and who owns it. The XML `matches?`
  * reads a boolean from `evaluate_query` and converts nothing. */
 
-/// Evaluate `ast` under `ctx`, with `handler` (if any) answering unknown
-/// functions for this evaluation only. [`Answer::First`] takes the `at_xpath` fast
-/// path.
 /// What a query answers: every result, or - for `at_xpath` / `at_css` - the
 /// first node of a node-set, which also lets the engine stop at it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -312,49 +300,19 @@ pub enum Answer {
     First,
 }
 
+/// Evaluate `ast` under `ctx`. [`Answer::First`] takes the `at_xpath` fast
+/// path.
 pub fn evaluate_query(
     ctx: &Cx,
     ast: &Ast,
-    handler: Option<Value>,
     document: Value,
     answer: Answer,
 ) -> Result<XPathValue, Error> {
-    /* A handler runs Ruby mid-walk, so for as long as one can, the document
-     * refuses to be changed: the bridge holds that guard, and lives on this
-     * frame for this evaluate alone. */
-    let mut bridge = match handler {
-        None => None,
-        Some(handler) => Some(Bridge {
-            handler: handler.as_raw(),
-            document: document.as_raw(),
-            _reading: crate::bridge::wrapper::DocumentEvaluation::enter(document)?,
-            raised: core::cell::OnceCell::new(),
-        }),
-    };
     let had_order = crate::bridge::wrapper::has_kept_order(document);
-    let result = ctx.run(
-        document,
-        ast,
-        bridge.as_ref().map(|b| b as &dyn Resolver),
-        answer,
-    );
-    /* The exception a handler-side call ended in, moved to this frame's stack
-     * (where the GC's conservative scan keeps seeing it) before the bridge goes. */
-    let raised = bridge.as_mut().and_then(|b| b.raised.take());
-    /* Released BEFORE the error is built: `with_cause` runs Ruby, and nothing
-     * must find the document still refusing edits once the walk is over. */
-    drop(bridge);
+    let result = ctx.run(document, ast, answer);
     /* A document-order index the evaluate built is the document's now. */
     crate::bridge::wrapper::account_kept_order(document, had_order);
-    result?.map_err(|error| match raised {
-        /* Not the handler's error but the caller's control flow - an interrupt,
-         * `exit`, Timeout, a `throw` - so it is re-raised as it was. Nothing
-         * runs Ruby between the handler's exit and here, so a `throw`'s pending
-         * state is still the one Ruby resumes. */
-        Some(e) if handler::propagates(&e) => e,
-        Some(e) => with_cause(xpath_error(&error), &e),
-        None => xpath_error(&error),
-    })
+    result?.map_err(|error| xpath_error(&error))
 }
 
 /// Evaluate `ast` under `ctx` and convert the value for Ruby: every query that
@@ -368,44 +326,13 @@ pub fn evaluate_query(
 pub fn evaluate_to_ruby<C: core::borrow::Borrow<Cx>>(
     ctx: C,
     ast: QueryAst,
-    handler: Option<Value>,
     document: Value,
     answer: Answer,
 ) -> Result<Value, Error> {
-    let value = evaluate_query(ctx.borrow(), ast.get(), handler, document, answer);
+    let value = evaluate_query(ctx.borrow(), ast.get(), document, answer);
     drop(ast);
     drop(ctx);
     query_result(value?, document, answer)
-}
-
-/// `error` with `cause` - the handler's own StandardError - as its `#cause`.
-///
-/// Ruby sets a cause only by raising, and has no C API for it, so this goes
-/// through `Makiri::Error.__with_cause` (`lib/makiri/error.rb`), which raises
-/// with `cause:` and hands the exception back. `error` is [`xpath_error`]'s
-/// lazy one, made into its exception here, every allocation under `protect`.
-/// Left without a cause when `cause` is not an exception object, or a call
-/// fails.
-fn with_cause(error: Error, cause: &Error) -> Error {
-    use magnus::error::ErrorType;
-    let (ErrorType::Error(class, msg), ErrorType::Exception(cause)) =
-        (error.error_type(), cause.error_type())
-    else {
-        return error;
-    };
-    let Ok(msg) = crate::bridge::string::utf8_str_protected(msg.as_bytes()) else {
-        return error;
-    };
-    let Ok(exc) = class.new_instance((msg,)) else {
-        return error;
-    };
-    let with: Result<Value, Error> = crate::init::EXC_ERROR
-        .exception()
-        .funcall("__with_cause", (exc, *cause));
-    match with.ok().and_then(magnus::Exception::from_value) {
-        Some(e) => Error::from(e),
-        None => error,
-    }
 }
 
 /// A query's value as Ruby, and for `at_xpath` the first node of a node-set.

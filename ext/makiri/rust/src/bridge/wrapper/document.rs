@@ -88,16 +88,10 @@ impl NodeCache {
     }
 }
 
-/// A Document's edit bookkeeping: the mutation gate an XPath evaluation with
-/// a handler holds closed, and the versions readers key their caches by. Kept
-/// together because they answer one question - may this document change, and
-/// has it - and only [`record_edit`] and [`DocumentEvaluation`] write them.
+/// A Document's edit bookkeeping: the versions readers key their caches by.
+/// Only [`record_edit`] writes them.
 #[derive(Clone, Copy, Default)]
 pub(super) struct EditState {
-    /// How many XPath evaluations that can run Ruby (ones with a handler) are
-    /// reading this document right now. Every mutator refuses while it is
-    /// non-zero - see [`DocumentEvaluation`].
-    pub(super) evaluating: usize,
     /// `Document#tree_version`: the child-list edits ([`EditKind::ChildList`]).
     pub(super) tree_version: u64,
     /// `Document#attribute_version`: the attribute edits
@@ -473,9 +467,7 @@ fn body_known(rb_doc: &Value) -> Result<&Body, Error> {
 fn held_error(held: Conflict) -> Error {
     match held {
         Conflict::ByEdit => internal_error("a Document was read while an edit held it"),
-        /* What `ensure_document_mutable` refuses first when the reader is an
-         * XPath evaluation with a handler; this is the same refusal for any
-         * other reader a Ruby call left suspended (a Fiber). */
+        /* A reader a Ruby call left suspended (a Fiber). */
         Conflict::ByRead => makiri_error(
             "cannot modify a document while a read of it is in progress (suspended in Ruby)",
         ),
@@ -499,8 +491,7 @@ pub fn html_read(rb_doc: &Value) -> Result<HtmlRead<'_>, Error> {
 }
 
 /// `rb_doc`'s HTML document, borrowed for an edit; refused while a read
-/// holds it. The caller has made the edit's checks (`ensure_document_mutable`
-/// first, so its refusal wins) and runs no Ruby while it holds this.
+/// holds it. The caller has made the edit's checks and runs no Ruby while it holds this.
 pub(in crate::bridge) fn html_write(rb_doc: &Value) -> Result<HtmlWrite<'_>, Error> {
     match body_known(rb_doc)? {
         Body::Html(c) => HtmlWrite::of(c).map_err(held_error),
@@ -543,8 +534,7 @@ pub fn html_doc_check(rb_doc: Value) -> Result<(), Error> {
 /// Run `f` over the parsed document of a VALUE known to be an HTML Document,
 /// for a read confined to `f` - which must run no Ruby. An index a reader
 /// builds is a cell (`HtmlParsed`), so readers take the document shared and
-/// may overlap (an XPath walk that called a handler, and the handler's own
-/// reads).
+/// may overlap.
 pub(in crate::bridge) fn with_html_parsed_known<R>(
     rb_doc: Value,
     f: impl FnOnce(&HtmlParsed) -> R,

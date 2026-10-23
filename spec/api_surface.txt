@@ -50,7 +50,6 @@ class Makiri::Element < Makiri::Node
   private def path_step(0)
 
 class Makiri::Error < StandardError
-  private def self.__with_cause(2 req:exc,req:cause)
 
 module Makiri::HTML
   const CDATA = Makiri::HTML::CDATASection
@@ -500,7 +499,7 @@ class Makiri::XPath::SyntaxError < Makiri::Error
 
 class Makiri::XPathContext < Object
   def self.new(-1)
-  def evaluate(-1)
+  def evaluate(1)
   def node=(1)
   def register_namespace(2)
   def register_namespaces(1 req:bindings)

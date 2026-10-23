@@ -144,7 +144,6 @@ Test:
 * XPath
 * CSS
 * source locations
-* custom function handlers
 
 ### 6.2 Robustness Fuzz (`spec/fuzz/`)
 

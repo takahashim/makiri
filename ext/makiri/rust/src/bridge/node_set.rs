@@ -63,8 +63,7 @@ struct NodeVec(RubyVec<NodeWord>);
 ///
 /// Deliberately small rather than a `magnus::Error`: a push runs once per node
 /// of every result, and returning the large error type from each successful
-/// push measured about 2ns a node (a handler's node-set argument ran ~17%
-/// slower). Callers convert through `From` on the failure path only.
+/// push measured about 2ns a node. Callers convert through `From` on the failure path only.
 #[derive(Clone, Copy)]
 pub enum PushError {
     SizeLimit,

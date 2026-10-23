@@ -29,8 +29,8 @@ pub use crate::node_type::NodeType;
 /// null handle.
 ///
 /// The evaluator holds the document for one evaluate, and it does not change in
-/// that time: without a handler no Ruby runs, and with one the document refuses
-/// every mutation until the evaluate returns (`bridge::wrapper::DocumentEvaluation`).
+/// that time: no Ruby runs during an evaluate (Makiri runs no custom-function
+/// handler), and the walk holds a read guard on the document.
 ///
 /// The token boundary is safe on both sides: [`token`](Self::token) erases a
 /// node this backend just lent, and [`resolve_token`](Self::resolve_token) reads

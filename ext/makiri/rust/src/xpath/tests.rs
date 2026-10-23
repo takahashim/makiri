@@ -17,7 +17,7 @@ use crate::token::Token;
 use crate::xml::tree::parse as xml_parse;
 use crate::xml::{ArenaKind, NodeId};
 use crate::xpath::ast::Ast;
-use crate::xpath::ctx::{Context, Resolver, ResolverCall, XPathValue};
+use crate::xpath::ctx::XPathValue;
 use crate::xpath::parse::parse_owned;
 
 const DOC: &[u8] = br#"<r xmlns:d="urn:d"><a k="1">x</a><a k="2"> y  z </a><b><c/><c n="3"/><d:e>ne</d:e></b><!--cm--><?pi data?></r>"#;
@@ -111,11 +111,11 @@ fn run_on(
                 _ => String::from_utf8_lossy(doc.qname(id)).into_owned(),
             }
         };
-        match ctx.evaluate(&ast, None) {
+        match ctx.evaluate(&ast) {
             Err(e) => Answer::Err(e.status),
             Ok(XPathValue::NodeSet(set)) => {
                 let all: Vec<String> = set.as_slice().iter().map(describe).collect();
-                if let Ok(XPathValue::NodeSet(one)) = ctx.evaluate_first(&ast, None) {
+                if let Ok(XPathValue::NodeSet(one)) = ctx.evaluate_first(&ast) {
                     assert_eq!(
                         one.as_slice().first().map(describe),
                         all.first().cloned(),
@@ -199,7 +199,7 @@ fn numbers_and_booleans_follow_the_xpath_rules() {
 #[test]
 fn failures_come_back_with_their_status() {
     assert_eq!(xpath("//a["), Answer::Err(ErrorKind::Syntax));
-    assert_eq!(xpath("foo()"), Answer::Err(ErrorKind::Runtime));
+    assert_eq!(xpath("foo()"), Answer::Err(ErrorKind::Syntax));
     let capped = run(Query::XPath, "//c | //a", |l| l.max_nodeset_size = 2);
     assert_eq!(capped, Answer::Err(ErrorKind::Limit));
 }
@@ -238,68 +238,27 @@ fn nesting_depth_is_bounded_where_the_tree_is_built() {
     assert_eq!(parse_status(&chain(30_000)), Err(ErrorKind::Limit));
 }
 
-/// `f()` answers true, first running `inner` on the same context when `nest`
-/// is set - the shape of a Ruby handler that evaluates again mid-walk.
-struct Nesting<'a> {
-    ctx: &'a Context<'a, &'a crate::xml::model::Document>,
-    inner: Box<Ast>,
-    nest: bool,
-}
-
-impl Resolver for Nesting<'_> {
-    fn resolve(
-        &self,
-        _budget: &mut Budget,
-        call: &ResolverCall<'_>,
-    ) -> Result<Option<crate::xpath::value::Val>, crate::engine_error::Reported> {
-        if call.local != b"f" {
-            return Ok(None);
-        }
-        if self.nest {
-            let _ = self.ctx.evaluate(&self.inner, None);
-        }
-        Ok(Some(crate::xpath::value::Val::boolean(true)))
-    }
-}
-
-/// `//node()[f()]` against [`DOC`] under `max_eval_ops`, with or without the
-/// nested evaluate inside `f()`.
-fn walk_with_handler(nest: bool, max_eval_ops: usize) -> Answer {
-    let doc = xml_parse(DOC).expect("the fixture parses");
-    let mut ctx = crate::xml::xpath::context(&doc, doc.doc_node());
-    ctx.limits_mut().max_eval_ops = max_eval_ops;
-    let parse = |text: &str| {
-        let mut budget = Budget::new();
-        let source = VerifiedText::from_bytes(text.as_bytes()).unwrap();
-        /* `source` borrows `text`, which outlives the parse. */
-        match parse_owned(source, &mut budget) {
-            Ok(ast) => ast,
-            Err(_) => panic!("{text} parses"),
-        }
-    };
-    let outer = parse("//node()[f()]");
-    let nesting = Nesting {
-        ctx: &ctx,
-        inner: parse("true()"),
-        nest,
-    };
-    match ctx.evaluate(&outer, Some(&nesting)) {
-        Ok(XPathValue::NodeSet(set)) => Answer::Num(set.len() as f64),
-        Ok(_) => panic!("the outer evaluate answers a node-set"),
-        Err(e) => Answer::Err(e.status),
-    }
-}
-
+/// Makiri runs no custom-function handler, so a function the library lacks is
+/// refused: an unprefixed one when the expression is parsed - before anything
+/// is evaluated, even where it would never be reached - and one in a namespace
+/// when the evaluate resolves its prefix.
 #[test]
-fn a_nested_evaluate_does_not_refill_the_outer_budget() {
-    /* With room to spare, the handler's nested evaluate changes nothing. */
-    let all = walk_with_handler(false, 1000);
-    assert!(matches!(all, Answer::Num(n) if n > 0.0), "{all:?}");
-    assert_eq!(walk_with_handler(true, 1000), all);
-    /* A budget the walk overruns stays overrun when every predicate call
-     * evaluates again - the nested run must not reset the outer's count. */
-    assert_eq!(walk_with_handler(false, 30), Answer::Err(ErrorKind::Limit));
-    assert_eq!(walk_with_handler(true, 30), Answer::Err(ErrorKind::Limit));
+fn an_unknown_function_is_a_syntax_error() {
+    assert_eq!(parse_status("//p[f()]"), Err(ErrorKind::Syntax));
+    assert_eq!(parse_status("false() and f()"), Err(ErrorKind::Syntax));
+    assert_eq!(parse_status("count(//p)"), Ok(()));
+    let doc = xml_parse(DOC).expect("the fixture parses");
+    let ctx = crate::xml::xpath::context(&doc, doc.doc_node());
+    ctx.register_ns(b"p", b"urn:p").expect("a binding");
+    let mut budget = Budget::new();
+    let source = VerifiedText::from_bytes(b"p:f()").expect("a valid expression");
+    let Ok(ast) = parse_owned(source, &mut budget) else {
+        panic!("a prefixed call parses");
+    };
+    assert_eq!(
+        ctx.evaluate(&ast).err().map(|e| e.status),
+        Some(ErrorKind::Syntax)
+    );
 }
 
 #[cfg(feature = "html-dom")]
@@ -454,7 +413,7 @@ fn shapes(
     let Ok(ast) = parse_owned(source, &mut budget) else {
         panic!("{expr} parses");
     };
-    match ctx.evaluate(&ast, None) {
+    match ctx.evaluate(&ast) {
         Ok(XPathValue::NodeSet(set)) => Ok(Answer::Num(set.len() as f64)),
         Ok(XPathValue::String(t)) => Ok(text(&String::from_utf8_lossy(t.as_slice()))),
         Ok(XPathValue::Number(d)) => Ok(Answer::Num(d)),

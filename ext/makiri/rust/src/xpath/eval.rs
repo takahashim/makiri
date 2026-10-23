@@ -56,10 +56,7 @@ impl<N> Memo<N> {
 /// The context is only read here - its registrations, its caps, its document
 /// and node - so it is held shared. The state a walk writes (the budget it
 /// charges, the string-value cache, the document-order index, the memo table)
-/// and the handler answering unknown functions belong to this evaluate alone.
-/// A handler that evaluates again on the same context gets an `Evaluation` of
-/// its own, so it can neither refill this walk's budget nor take its handler
-/// away.
+/// belong to this evaluate alone.
 pub struct Evaluation<'e, 'd, D: Dom<'d>> {
     pub cx: &'e Session,
     pub names: &'e Names,
@@ -71,12 +68,11 @@ pub struct Evaluation<'e, 'd, D: Dom<'d>> {
     #[cfg(any(test, feature = "xml-css-reference"))]
     pub(crate) sibling_positions: super::funcs::SiblingPositions<D::Node>,
     memo: Memo<D::Node>,
-    handler: Option<&'e dyn Resolver>,
 }
 
 impl<'e, 'd, D: Dom<'d>> Evaluation<'e, 'd, D> {
     /// One evaluate of `doc` under `cx`, whose registrations are `names`.
-    fn new(cx: &'e Session, names: &'e Names, doc: D, handler: Option<&'e dyn Resolver>) -> Self {
+    fn new(cx: &'e Session, names: &'e Names, doc: D) -> Self {
         Evaluation {
             cx,
             names,
@@ -87,7 +83,6 @@ impl<'e, 'd, D: Dom<'d>> Evaluation<'e, 'd, D> {
             #[cfg(any(test, feature = "xml-css-reference"))]
             sibling_positions: super::funcs::SiblingPositions::new(),
             memo: Memo(Vec::new()),
-            handler,
         }
     }
 }
@@ -547,7 +542,7 @@ pub(crate) fn try_first_match<'e, 'd, D: Dom<'d>>(
     node: Option<D::Node>,
     ast: &Ast,
 ) -> Result<Option<Val>, Error> {
-    let mut ev = Evaluation::new(cx, names, doc, None);
+    let mut ev = Evaluation::new(cx, names, doc);
     let found = match first_match_walk::<D>(&mut ev, ast, node) {
         Ok(FirstMatch::Answered(found)) => found,
         Ok(FirstMatch::NotApplicable) => return Ok(None),
@@ -667,8 +662,8 @@ fn eval_filter<'e, 'd, D: Dom<'d>>(
     Ok(primary)
 }
 
-/// A function call: the prefix resolved, the arguments evaluated, and the
-/// call answered by the built-in library or, failing that, by the handler.
+/// A function call: the prefix resolved, the function found in the built-in
+/// library, and then its arguments evaluated and the call made.
 fn eval_fncall<'e, 'd, D: Dom<'d>>(
     ev: &mut Evaluation<'e, 'd, D>,
     prefix: Option<&[u8]>,
@@ -681,10 +676,22 @@ fn eval_fncall<'e, 'd, D: Dom<'d>>(
         None => None,
         Some(prefix) => Some(names.resolve_prefix(prefix, ev.budget.sink())?),
     };
+    /* An unprefixed name the library lacks is refused when the expression is
+     * parsed; one in a namespace is known only now, once its prefix is bound.
+     * There are no other functions: Makiri runs no custom-function handler. */
+    let Some(f) = funcs::lookup::<D>(ns_uri, name) else {
+        return Err(err_setf!(
+            ev.budget.sink(),
+            ErrorKind::Syntax,
+            "unknown function {}{}{}",
+            Bytes(prefix.unwrap_or(&[])),
+            if prefix.is_none() { "" } else { ":" },
+            Bytes(name)
+        ));
+    };
 
-    /* The arguments are evaluated once and reused by either path. They are owned
-     * here, so every way out - an argument failing part-way included - clears
-     * them when `vals` drops. */
+    /* Owned here, so every way out - an argument failing part-way included -
+     * clears them when `vals` drops. */
     let mut vals: Vec<Val<D::Node>> = match try_vec_with_capacity(args.len()) {
         Some(v) => v,
         None => {
@@ -698,81 +705,7 @@ fn eval_fncall<'e, 'd, D: Dom<'d>>(
     for a in args {
         vals.push(eval_node::<D>(ev, a, focus)?);
     }
-
-    if let Some(f) = funcs::lookup::<D>(ns_uri, name) {
-        return f.call(ev, focus, &vals);
-    }
-    match ev.call_handler(focus, ns_uri, name, &vals)? {
-        Some(v) => Ok(v),
-        None => Err(err_setf!(
-            ev.budget.sink(),
-            ErrorKind::Runtime,
-            "unknown function {}{}{}",
-            Bytes(prefix.unwrap_or(&[])),
-            if prefix.is_none() { "" } else { ":" },
-            Bytes(name)
-        )),
-    }
-}
-
-impl<'e, 'd, D: Dom<'d>> Evaluation<'e, 'd, D> {
-    /// Ask this evaluate's handler for a function with no built-in: `None`
-    /// when there is no handler, or it has no such function.
-    ///
-    /// The handler works in tokens: the arguments are copied out as tokens, and
-    /// its answer read back as this document's nodes - a resolver answers only
-    /// nodes of this document (the bridge checks a handler's node before
-    /// minting its token).
-    fn call_handler(
-        &mut self,
-        focus: &Focus<'d, D>,
-        ns_uri: Option<&[u8]>,
-        local: &[u8],
-        args: &[Val<D::Node>],
-    ) -> EvalResult<Option<Val<D::Node>>> {
-        let Some(handler) = self.handler else {
-            return Ok(None);
-        };
-        let mut token_args: Vec<Val> = match try_vec_with_capacity(args.len()) {
-            Some(v) => v,
-            None => return Err(handler_oom(&mut self.budget)),
-        };
-        for v in args {
-            let Some(t) = val_copy_to_tokens::<D>(v) else {
-                return Err(handler_oom(&mut self.budget));
-            };
-            token_args.push(t);
-        }
-        let call = ResolverCall {
-            node: focus.node.map(D::token),
-            pos: focus.pos,
-            size: focus.size,
-            ns_uri,
-            local,
-            args: &token_args,
-        };
-        match handler.resolve(&mut self.budget, &call)? {
-            None => Ok(None),
-            Some(v) => {
-                let Some(mut v) = val_from_tokens::<D>(self.doc, v) else {
-                    return Err(handler_oom(&mut self.budget));
-                };
-                if let Some(ns) = v.as_nodeset_mut() {
-                    nodeset_unique_sorted::<D>(self, ns);
-                }
-                Ok(Some(v))
-            }
-        }
-    }
-}
-
-#[cold]
-fn handler_oom(budget: &mut Budget) -> Reported {
-    err_setf!(
-        budget.sink(),
-        ErrorKind::Oom,
-        "out of memory passing a function call to the handler"
-    )
+    f.call(ev, focus, &vals)
 }
 
 fn eval_binop<'e, 'd, D: Dom<'d>>(
@@ -918,8 +851,7 @@ fn eval_node_inner<'e, 'd, D: Dom<'d>>(
     Ok(value)
 }
 
-/// Evaluate an AST over `doc` with `node` as the focus, on a fresh evaluation
-/// that `handler` answers unknown functions for.
+/// Evaluate an AST over `doc` with `node` as the focus, on a fresh evaluation.
 #[allow(clippy::result_large_err)]
 pub(crate) fn eval_ast<'e, 'd, D: Dom<'d>>(
     cx: &'e Session,
@@ -927,9 +859,8 @@ pub(crate) fn eval_ast<'e, 'd, D: Dom<'d>>(
     doc: D,
     node: Option<D::Node>,
     ast: &Ast,
-    handler: Option<&'e dyn Resolver>,
 ) -> Result<Val, Error> {
-    let mut ev = Evaluation::new(cx, names, doc, handler);
+    let mut ev = Evaluation::new(cx, names, doc);
     let result = match Memo::new(ast.memo_slots(), ev.budget.sink()) {
         Ok(memo) => {
             ev.memo = memo;

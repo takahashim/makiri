@@ -59,7 +59,7 @@ module Makiri
     # Run an XPath expression against every node and union the node-set results.
     # An expression that evaluates to a string, number or boolean has no union,
     # so it raises ArgumentError (as Nokogiri does) rather than picking one
-    # node's value. Further arguments (namespaces, a handler,
+    # node's value. Further arguments (namespaces,
     # +namespace_matching:+) reach each node's {Node#xpath}.
     # @return [Makiri::NodeSet]
     def xpath(expr, *args, **opts)

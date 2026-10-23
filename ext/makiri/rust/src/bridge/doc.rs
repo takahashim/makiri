@@ -26,8 +26,7 @@ use crate::bridge::html::new_node;
 use crate::bridge::html::{html_node_key, with_html_node, wrap_html_node};
 use crate::bridge::string::DocumentSource;
 use crate::bridge::wrapper::{
-    ensure_document_mutable, html_read, node_repr, xml_read, DocKind, DocumentShell, NodeRepr,
-    DOC_TYPE,
+    html_read, node_repr, xml_read, DocKind, DocumentShell, NodeRepr, DOC_TYPE,
 };
 use crate::bridge::xml::xml_node_document;
 use crate::bridge::xml::{xml_mut_result, xml_node_unwrap};
@@ -166,7 +165,6 @@ pub fn document_errors(rb_doc: Value) -> Value {
 /// to bring a node across documents (Makiri never moves one between arenas). The
 /// source is untouched and the copy is detached.
 pub fn import_node(rb_self: Value, node_v: Value, deep: bool) -> Result<Value, Error> {
-    /* The copy is made in this document: refused while a handler reads it. */
     crate::bridge::html::check_owning_doc(&rb_self)?;
 
     /* An XML node is TRANSLATED across representations (mkr -> lxb) into a
@@ -217,8 +215,6 @@ pub fn clone_node(rb_self: Value, deep: bool) -> Result<Value, Error> {
     if crate::bridge::ruby::same_value(rb_self, document) {
         return Err(makiri_error("clone_node cannot copy a document; use #dup"));
     }
-    /* The copy is made in this document: refused while a handler reads it. */
-    ensure_document_mutable(document)?;
     let raw = crate::bridge::html::node_ref(document, key)?;
     let clone = new_node(&document, |d| d.copy(raw, deep))?
         .map_err(|_| makiri_error("failed to clone node"))?;

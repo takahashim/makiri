@@ -17,6 +17,12 @@
 
 ### Changed
 
+* XPath custom-function handlers are removed. `Node#xpath(expr, handler)`,
+  `#at_xpath(expr, handler)` and `XPathContext#evaluate(expr, handler)` raise
+  `ArgumentError`, and a call to a function XPath 1.0 does not define is an
+  `XPath::SyntaxError` (it was a `Makiri::Error` when the expression was
+  evaluated). No Ruby code runs during an evaluation any more, so mutating a
+  document is never refused "while evaluating XPath over it".
 * A binary or US-ASCII String holding invalid UTF-8 is no longer read as
   UTF-8 with U+FFFD replacements: it is sniffed, and read in the encoding a
   detector guesses - which, for short text or text with little variety,

@@ -1,18 +1,18 @@
 //! `Node#xpath` / `#at_xpath` for both representations, and the path every
 //! query takes from its arguments to a Ruby value.
 //!
-//!   `node.xpath(expr, [namespaces], [handler], namespace_matching: :strict)`
+//!   `node.xpath(expr, [namespaces], namespace_matching: :strict)`
 //!
 //! One argument list for HTML and XML alike, read by [`QueryArgs::scan`]: a Hash
-//! among the optional arguments binds namespace prefixes for this query, any
-//! other non-nil one is the handler that answers unknown functions, and
-//! `namespace_matching:` picks the mode. Any other keyword is a prefix binding
-//! too, which is how Nokogiri's `xpath("//s:p", s: uri)` reads.
+//! binds namespace prefixes for this query, and `namespace_matching:` picks the
+//! mode. Any other keyword is a prefix binding too, which is how Nokogiri's
+//! `xpath("//s:p", s: uri)` reads. Nokogiri's custom-function handler - an
+//! object whose methods answer unknown functions - is refused: Makiri runs no
+//! Ruby while it evaluates, and an unknown function is an `XPath::SyntaxError`.
 //!
-//! `Makiri::XPathContext` - a TypedData holding a context and an AST cache - and
-//! the handler bridge (`rb_protect`, raw `VALUE`s, `extern "C"`) touch the raw
-//! Ruby ABI, so they live in [`crate::bridge::xpath`]; this module is the Ruby
-//! surface built on them.
+//! `Makiri::XPathContext` - a TypedData holding a context and an AST cache -
+//! touches the raw Ruby ABI, so it lives in [`crate::bridge::xpath`]; this
+//! module is the Ruby surface built on it.
 
 #![forbid(unsafe_code)]
 
@@ -33,14 +33,12 @@ pub struct QueryArgs {
     pub text: Value,
     /// Prefix bindings for this query alone, if any were given.
     pub namespaces: Option<RHash>,
-    /// Answers unknown functions, if one was given.
-    pub handler: Option<Value>,
     /// `namespace_matching: :lax`.
     pub lax: bool,
 }
 
 impl QueryArgs {
-    /// `(text, [namespaces], [handler], namespace_matching:, **prefix_bindings)`.
+    /// `(text, [namespaces], namespace_matching:, **prefix_bindings)`.
     ///
     /// The one-argument call - `node.xpath(expr)`, much the commonest - is
     /// answered before `scan_args` runs at all. That is not a
@@ -53,38 +51,24 @@ impl QueryArgs {
             return Ok(QueryArgs {
                 text: *text,
                 namespaces: None,
-                handler: None,
                 lax: false,
             });
         }
-        let a = magnus::scan_args::scan_args::<
-            (Value,),
-            (Option<Value>, Option<Value>),
-            (),
-            (),
-            RHash,
-            (),
-        >(args)?;
+        let a =
+            magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), RHash, ()>(args)?;
         let kw = Keywords::scan(ruby, Kwargs::from_hash(a.keywords))?;
         let mut q = QueryArgs {
             text: a.required.0,
             namespaces: None,
-            handler: None,
             lax: kw.lax,
         };
-        for v in [a.optional.0, a.optional.1].into_iter().flatten() {
-            if v.is_nil() {
-                continue;
-            }
+        if let Some(v) = a.optional.0.filter(|v| !v.is_nil()) {
             match RHash::from_value(v) {
-                Some(h) if q.namespaces.is_none() => q.namespaces = Some(h),
-                None if q.handler.is_none() => q.handler = Some(v),
-                _ => {
-                    return Err(Error::new(
-                        ruby.exception_arg_error(),
-                        "expected at most one namespace Hash and one handler",
-                    ))
-                }
+                Some(h) => q.namespaces = Some(h),
+                None => return Err(Error::new(
+                    ruby.exception_arg_error(),
+                    "expected a namespace Hash; custom XPath function handlers are not supported",
+                )),
             }
         }
         /* Keywords other than `namespace_matching:` are prefix bindings, and
@@ -272,7 +256,7 @@ fn xpath_run(rb_self: Value, q: QueryArgs, answer: Answer) -> Result<Value, Erro
     /* Parsed AFTER the namespaces are registered: that step runs Ruby and may
      * collect, and the borrowed expression bytes must not be live across it. */
     let ast = parse_query(&ctx, q.text)?;
-    evaluate_to_ruby(ctx, QueryAst::owned(ast), q.handler, document, answer)
+    evaluate_to_ruby(ctx, QueryAst::owned(ast), document, answer)
 }
 
 fn node_xpath(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {

@@ -123,10 +123,9 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   `new_node`, `Editing::with_arena` and their kin) is a counted borrow. No
   raw pointer to the content is kept or handed out, and none of its old
   `unsafe` contract ("nothing edits it while you hold this") is left to a
-  call site: an edit that begins while any read is held - a Fiber suspended
-  in an XPath handler, a copy of the receiver - is refused as `Makiri::Error`
-  (after `ensure_document_mutable`, whose refusal comes first), and a read
-  during an edit is an `InternalError`. An edit that changes two documents
+  call site: an edit that begins while any read is held - a copy of the
+  receiver - is refused as `Makiri::Error`, and a read during an edit is an
+  `InternalError`. An edit that changes two documents
   (an adoption: the copy placed, the original released) takes both writes
   before it changes either, so it is refused whole or done whole. A guard is a `Drop`, and a raise past
   one leaves the document borrowed for good, so the gate above holds guards
@@ -835,31 +834,18 @@ own recursion does not have - there the count refuses too late, and Ruby's
 `Build::enter_selector_nesting` checked the same way while XML's CSS ran on
 it; CSS matching, HTML and XML, keeps nesting on a heap stack and needs no
 check.) Ruby:
-`Node#{xpath,at_xpath}(expr, handler=nil)`, `Makiri::XPathContext`
+`Node#{xpath,at_xpath}(expr, [namespaces])`, `Makiri::XPathContext`
 (`.new`, `#evaluate`, `#register_namespace`/`#register_ns`, `#register_variable`).
 `#xpath` returns a NodeSet for node-sets, else String/Float/boolean. Errors map
 SYNTAX→`XPath::SyntaxError`, LIMIT→`XPath::LimitExceeded`, else `Makiri::Error`.
-Custom functions: unknown calls route through the engine resolver to
-`handler.<local_name with - → _>`, run under `rb_protect`, so a raise is never
-a long-jump through the evaluator: a `StandardError` becomes `Makiri::Error`
-(the original as its `#cause`), and anything else - `Interrupt`, `exit`,
-Timeout's exception, a `throw` - is kept in the per-evaluate `Bridge` (on
-`evaluate_query`'s stack, so the GC sees it) and re-raised UNCHANGED once the
-evaluation and its guard are gone (`handler::propagates`). A handler that
-switches Fibers (an Enumerator's yielder) leaves the evaluation suspended with
-the document's guard held, as an abandoned `Hash#each` Enumerator leaves its
-Hash locked; this is accepted. Running the handler in a Fiber of its own was
-tried and reverted: every call of user code (`respond_to?`, the result's
-`to_s`, an exception's `#message`) had to be routed into it, and each one
-missed was the same hang again. Node-set
-returns from a foreign document are rejected. A handler may not modify the document
-being evaluated: while an evaluation with a handler runs, every mutator on that
-document raises `Makiri::Error` - the factories (`create_*`, `clone_node`,
-`import_node`, `fragment`) included (`bridge::doc::DocumentEvaluation` /
-`ensure_document_mutable`; XML writes reach the arena only through
-`bridge::xml::arena_mut`, which checks it) - because the engine borrows names,
-values and index slices across the walk, Lexbor frees an attribute's old value
-on set, and an XML factory grows the very arena vectors the walk reads. The **namespace axis is not
+**There are no custom functions**: Makiri runs no Ruby while it evaluates.
+An unprefixed call the core library lacks is an `XPath::SyntaxError` when the
+expression is parsed (`parse_function_call`, over `funcs::is_core_function`),
+a prefixed one when it is evaluated (the prefix is bound then), and a
+Nokogiri-style handler argument is an `ArgumentError`. The handler bridge
+that used to answer them (`rb_protect` per call, a Fiber-suspended walk left
+holding the document's guard, a mutation gate on every edit while one ran)
+went with it (`notes/ruby_boundary_simplification_plan.ja.md`). The **namespace axis is not
 implemented** (raises "not implemented", never silently empty); Nokogiri/libxml2
 *does* implement it (e.g. `<svg>` in HTML yields the `xml`+`svg` namespace
 nodes), so this is a documented behaviour difference - see
@@ -1215,7 +1201,7 @@ the document through `bridge::html::new_node` (`HtmlNewNodes`, which keeps
 the indexes: a detached node is in none). A `RawNode` is a reference INTO a
 document and becomes a handle only through `HtmlDoc::node` / `checked` (or
 `HtmlDocMut::node` inside an edit). `edit` and `with_tree` are separate on
-purpose: `edit` checks (frozen, evaluating) so those errors come first, and
+purpose: `edit` checks (frozen) so those errors come first, and
 every argument is converted BETWEEN the two, because a conversion is the
 argument's `#to_s` - arbitrary Ruby - and a query there rebuilt the indexes
 from the tree about to change. The XML side is the same pair, `begin_edit`
@@ -1224,7 +1210,7 @@ life, so a read of its document through it (`HtmlSelf::read`,
 `XmlSelf::read`) still held when the edit begins - one the edit's compaction
 or arena growth would invalidate - is a compile-time borrow error; a read the
 edit itself needs goes through it (`Editing::read`). Any other read still held
-(a copy of the receiver, another node's, a suspended Fiber's) is the write
+(a copy of the receiver, another node's) is the write
 guard's to refuse, at runtime (`bridge::dom`). `inner_html=`/`outer_html=` are all or nothing: `stage_fragment_in`
 imports into a DETACHED fragment first, and only then are the old nodes
 swapped out (`rake oom`'s `html_inner_html` scenario checks the document is
@@ -1286,7 +1272,7 @@ Key decisions that got there, worth not regressing:
   with a tree mutation, with another `evaluate` on the same context, or with a
   `register_variable`/`register_namespace`/`node=` on the same context - no
   locking needed (and none is used). An earlier version released the GVL for
-  handler-free XPath (it scaled queries ~3.3× across threads), but the locking
+  XPath (it scaled queries ~3.3× across threads), but the locking
   required to make a GVL-released walk safe against shared-document mutation was
   judged not worth the verification burden; single-thread XPath speed is
   unaffected by holding the GVL. **Do not reintroduce a GVL-released XPath
@@ -1358,10 +1344,8 @@ Key decisions that got there, worth not regressing:
   `PtrMap` index over an ordered store, so per-node predicate compares
   are O(1), not the old O(n²) linear scan. The cache belongs to one evaluate
   (`xpath::eval::Evaluation`), as do the op budget and - for XML - the
-  document-order index, so a nested (handler-triggered) evaluate gets its
-  own and cannot disturb the walk that called it. HTML's document-order
-  index is the document's (`DocOrder`, above), which a nested evaluate
-  shares: no evaluate can edit the document it reads.
+  document-order index. HTML's document-order index is the document's
+  (`DocOrder`, above): no evaluate can edit the document it reads.
 - **Node string-values are borrowed when they are one slice** (`xpath/value.rs`
   `node_string_value` -> `Str`, `NodeText::Borrowed`): an attribute, a
   text/CDATA/comment/PI node, and a container whose descendants hold one

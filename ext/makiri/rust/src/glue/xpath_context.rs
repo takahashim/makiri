@@ -1,7 +1,7 @@
 //! `Makiri::XPathContext`'s Ruby methods.
 //!
-//!   `XPathContext.new(node, namespace_matching: :strict)`, `#evaluate(expr,
-//!   handler = nil)`, `#register_namespace(prefix, uri)` / `#register_ns`,
+//!   `XPathContext.new(node, namespace_matching: :strict)`, `#evaluate(expr)`,
+//!   `#register_namespace(prefix, uri)` / `#register_ns`,
 //!   `#register_variable(name, value)`, `#node=`
 //!
 //! The context itself - its wrapped data, its AST cache, and the refusals that
@@ -61,20 +61,14 @@ fn set_node(ruby: &Ruby, ctx: XPathCtxSelf, node: Value) -> Result<Value, Error>
     })
 }
 
-/// `#evaluate(expr, handler = nil)`.
-fn evaluate(ctx: XPathCtxSelf, args: &[Value]) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), (), ()>(args)?;
-        /* An explicit nil is no handler, as an omitted one is. */
-        let handler = a.optional.0.filter(|h| !h.is_nil());
-        ctx.evaluate(a.required.0, handler)
-    })
+/// `#evaluate(expr)`.
+fn evaluate(ctx: XPathCtxSelf, expr: Value) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| ctx.evaluate(expr))
 }
 
 /// `#register_namespace(prefix, uri)` -> self.
 fn register_namespace(ctx: XPathCtxSelf, prefix: Value, uri: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        ctx.ensure_idle()?;
         let cap = ctx.limits().max_string_bytes;
         crate::glue::query::bind_pair(prefix, uri, cap, |p, u| ctx.bind_namespace(p, u))?;
         crate::bridge::ruby::current_receiver()
@@ -93,7 +87,7 @@ fn register_variable(ctx: XPathCtxSelf, name: Value, value: Value) -> Result<Val
 pub fn init_xpath_context() -> Result<(), Error> {
     let klass = CLASS_XPATH_CONTEXT.defined()?;
     klass.define_singleton_method("new", function!(s_new, -1))?;
-    klass.define_method("evaluate", method!(evaluate, -1))?;
+    klass.define_method("evaluate", method!(evaluate, 1))?;
     klass.define_method("register_namespace", method!(register_namespace, 2))?;
     klass.define_method("register_variable", method!(register_variable, 2))?;
     klass.define_method("node=", method!(set_node, 1))?;

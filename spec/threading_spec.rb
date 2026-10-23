@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
-# Concurrency safety. Parsing and (handler-free) XPath evaluation release the
-# GVL so multiple threads run the pure-C engine at once. These specs hammer
+# Concurrency safety. Parsing releases the GVL so multiple threads run the
+# parser at once. These specs hammer
 # that path under GC.stress to flush use-after-move / unlocked-region bugs:
 # each thread owns its own Document (no shared mutable state), and we assert the
 # results are exactly what the single-threaded path produces.

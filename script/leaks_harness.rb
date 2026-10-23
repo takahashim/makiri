@@ -18,16 +18,7 @@ XML  = %(<r xmlns:p="urn:p" xmlns="urn:d"><a id="1">t</a><p:b/><!--c--><![CDATA[
 CSS  = "div.a, #b > span { color: red !important; --v: 1px }\n" \
        "@media (min-width: 600px) { .x { opacity: 0 } }\n@font-face { font-family: y }"
 
-handler = Class.new { def my_fn(nodes) = nodes.length.to_s }.new
 RAISING_TO_S = Object.new.tap { |o| def o.to_s = raise("to_s failed") }
-# A handler's exits: a StandardError (wrapped), a non-StandardError and a throw
-# (both carried across the evaluation and re-raised unchanged).
-EXITS = Class.new do
-  def std(*) = raise("boom")
-  def int(*) = raise(Interrupt)
-  def out(*) = throw(:out)
-  def str(*) = Object.new.tap { |o| def o.to_s = raise(Interrupt) }
-end.new
 
 ITERATIONS.times do |i|
   # --- HTML: parse / query / serialize / mutate / fragments ---
@@ -36,12 +27,7 @@ ITERATIONS.times do |i|
   begin d.css("li[") rescue Makiri::CSS::SyntaxError; end             # selector syntax error (engine reset path)
   d.xpath("//li"); d.at_xpath("//p"); d.xpath("count(//li)")
   begin d.xpath("//li[") rescue Makiri::XPath::SyntaxError; end       # parse failure (partial-AST/step cleanup)
-  begin d.xpath("//li", handler) rescue nil; end
-  begin d.xpath("//li[std()]", EXITS) rescue Makiri::Error; end
-  begin; d.xpath("//li[int()]", EXITS); rescue Interrupt; end
-  begin; d.xpath("//li[str()]", EXITS); rescue Interrupt; end
-  catch(:out) { d.xpath("//li[out()]", EXITS) }
-  begin; Makiri::XPathContext.new(d).evaluate("//li[int()]", EXITS); rescue Interrupt; end
+  begin d.xpath("//li[f()]") rescue Makiri::XPath::SyntaxError; end     # unknown function
   d.xpath("//*[local-name()='path']")
   d.to_html; d.at_css("ul").inner_html; d.to_html(pretty: true); d.text
   e = d.at_css("li"); e["k#{i}"] = "v"; e.content = "c"

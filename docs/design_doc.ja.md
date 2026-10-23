@@ -186,7 +186,7 @@ XPathContext:
 
 ```
 .new(node, namespace_matching: :strict)
-#evaluate(expr, handler=nil)       (handler = 未知関数を捌く Ruby object)
+#evaluate(expr)                    (未知の関数は XPath::SyntaxError)
 #register_namespace(prefix, uri)   (#register_ns は alias)
 #register_namespaces(hash) #register_variables(hash)
 #register_variable(name, value)
@@ -217,8 +217,9 @@ common case では変換も copy もしない)。そのうえで境界での挙�
   XML のシリアライザが書く時点で `Makiri::Error` で拒む。setter が flag を
   残す方式ではなく、書くときのデータから判定する。
 
-handler 例外の message 取得も fail-closed する
-(NUL を含んでも ArgumentError を leak しない)。
+XPath の独自関数（Nokogiri の handler）は受け付けない。
+評価中に Ruby のコードは走らず、XPath 1.0 にない関数の呼び出しは
+`XPath::SyntaxError` になる。
 
 ## 4. メモリモデル
 
@@ -256,10 +257,9 @@ handler 例外の message 取得も fail-closed する
   破棄の hook は極力集約する。
   また索引は評価のたびに document から取り直す。
 * 1 回の評価の中だけで有効な cache (string-value cache、XML の
-  document-order index) は評価自身が所有する。入れ子の評価 (custom
-  function handler 経由) が外側の評価を乱さないようにするため。
+  document-order index) は評価自身が所有する。
   HTML の document-order index は document が所有し、評価をまたいで使う。
-  評価中は document を編集できないので、入れ子の評価とも共有できる。
+  評価中は Ruby が走らず、document は編集されない。
   XPath engine は `Dom` の項目 (`KEEPS_ORDER` / `kept_position` /
   `build_kept_order`) を通して使い、ホストの種類では分岐しない。
 
@@ -323,8 +323,7 @@ CSS/serialize/読み取りアクセサも GVL を保持する。`spec/threading_
 ### 6.1 Unit / integration (rspec, `spec/`)
 
 class ごとの振る舞い — parse の corner case, node 読み取り, navigation,
-mutation, serialization, encoding, XPath, CSS, source location, custom
-function handler。
+mutation, serialization, encoding, XPath, CSS, source location。
 
 ### 6.2 Robustness fuzz (`spec/fuzz/`)
 
@@ -480,7 +479,7 @@ HTML名前テストとHTML属性ではASCII caseを畳み込み、SVG/MathMLの�
   同じ node を辿るたびに別の object が返ると、`equal?`・instance variable・
   singleton method・`freeze` といった object 側の状態が黙って失われる。
   NodeSet / Node の比較は引き続き node の identity で行う。
-* XPath 評価は GVL を解放しない。当初は handler なし評価で GVL を
+* XPath 評価は GVL を解放しない。当初は XPath 評価で GVL を
   解放しスレッド間で XPath をスケール (~3.3×) させていたが、GVL 解放中の
   walk は「共有 document の mutation」「同一 context への並行 evaluate /
   register」と競合し use-after-move / メモリ破壊を起こす。これを lock で

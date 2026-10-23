@@ -9,8 +9,7 @@
 //!
 //! The tree is read-only once built. A context-independent subtree's value is
 //! remembered per evaluate in a side table (see [`Expr::memo`]), not in the
-//! tree, so one compiled AST can be evaluated re-entrantly - a handler running
-//! the same cached expression again - through a shared reference.
+//! tree, so one compiled AST can be evaluated through a shared reference.
 
 #![forbid(unsafe_code)]
 
