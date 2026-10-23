@@ -134,13 +134,18 @@ pub fn describe(v: Value) -> String {
     format!("an instance of {}", unsafe { v.classname() })
 }
 
-/// Ruby's `TypeError` for a value of the wrong class: "wrong argument type
-/// Integer (expected String)". The class name is read without a call.
+/// Ruby's `TypeError` for a value of the wrong class, worded as Ruby's own
+/// type check words it, with the way out: "wrong argument type Integer
+/// (expected String); call #to_s to convert it". Makiri converts nothing
+/// itself (a `to_s` is the caller's Ruby), so the caller does. The class name
+/// is read without a call.
 fn wrong_type(v: Value, expected: &str) -> Error {
     // SAFETY: `v` is a live value, and its class name is copied before anything
     // else runs.
     let class = unsafe { v.classname() }.into_owned();
-    type_error(format!("wrong argument type {class} (expected {expected})"))
+    type_error(format!(
+        "wrong argument type {class} (expected {expected}); call #to_s to convert it"
+    ))
 }
 
 /// `rb_check_frozen` returning its FrozenError rather than raising it.

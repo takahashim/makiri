@@ -28,8 +28,8 @@
   argument (an attribute value, text content, markup, a variable value, a
   namespace URI) must be a `String`, and a name (an attribute or element
   name, a namespace prefix, a selector or an XPath expression) a `String` or
-  a `Symbol`; anything else raises `TypeError`, where `node["n"] = 1` used to
-  store `"1"`. `Makiri.HTML` / `Makiri.XML` still read an IO and convert
+  a `Symbol`; anything else raises `TypeError` ("... call #to_s to convert
+  it"), where `node["n"] = 1` used to store `"1"`. `Makiri.HTML` / `Makiri.XML` still read an IO and convert
   their source with `String()`, and `XML::Builder` still converts with
   `to_s`.
 * XPath custom-function handlers are removed. `Node#xpath(expr, handler)`,

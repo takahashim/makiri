@@ -15,7 +15,7 @@ RSpec.describe "argument types" do
 
     it "refuses a non-String attribute value, leaving the element as it was" do
       [to_s_only, to_str_only, 1, nil].each do |v|
-        expect { p_el["title"] = v }.to raise_error(TypeError, /expected String/)
+        expect { p_el["title"] = v }.to raise_error(TypeError, /expected String\); call #to_s to convert it/)
       end
       expect(p_el.key?("title")).to be(false)
     end
