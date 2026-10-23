@@ -17,6 +17,7 @@
 
 ### Changed
 
+* Ruby 3.3 or newer is required (3.2 reached its end of life in March 2026).
 * Arguments are no longer converted with `to_s` / `to_str`. A string
   argument (an attribute value, text content, markup, a variable value, a
   namespace URI) must be a `String`, and a name (an attribute or element

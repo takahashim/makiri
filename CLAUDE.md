@@ -307,7 +307,7 @@ bundle exec rake kani              # Kani proofs over the Ruby-free core (needs 
 bundle exec rake bench             # perf vs Nokogiri (bench-only gems; runs outside bundle)
 ```
 
-Requires CRuby >= 3.2 and a **Rust toolchain** (`cargo`); `cmake` only for the
+Requires CRuby >= 3.3 and a **Rust toolchain** (`cargo`); `cmake` only for the
 reference Lexbor (`rake lexbor`). The gem carries none of
 Lexbor's sources, only its LICENSE and NOTICE, which the ports owe it. A source
 install needs cargo too; that is why `rb_sys` is a RUNTIME gemspec dependency -

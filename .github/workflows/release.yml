@@ -29,7 +29,7 @@ permissions:
   contents: write   # create the GitHub Release and upload assets
 
 env:
-  RUBY_ABIS: "3.2 3.3 3.4 4.0"   # Ruby minor versions a native gem serves
+  RUBY_ABIS: "3.3 3.4 4.0"   # Ruby minor versions a native gem serves
 
 jobs:
   # --- source gem (always builds; compiles from source at install time) -------
@@ -70,7 +70,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest, ruby: "3.2", rust: msrv }
+          - { os: ubuntu-latest, ruby: "3.3", rust: msrv }
           - { os: ubuntu-latest, ruby: "4.0", rust: stable }
           - { os: macos-14,      ruby: "3.4", rust: stable }
     steps:
@@ -142,7 +142,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ruby: ["3.2", "3.3", "3.4", "4.0"]
+        ruby: ["3.3", "3.4", "4.0"]
         platform:
         - x86_64-linux
         - aarch64-linux

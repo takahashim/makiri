@@ -269,7 +269,7 @@ See also [`spec/conformance/README.md`](spec/conformance/README.md).
 
 ## Requirements
 
-* CRuby 3.2 or newer.
+* CRuby 3.3 or newer.
 * Rust 1.84 or newer with `cargo` - the extension is a Rust crate. (Binary
   gems are published for the common platforms, which need no toolchain.)
 * libclang (clang's development library): rb-sys runs bindgen at build time and
