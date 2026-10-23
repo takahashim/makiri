@@ -17,6 +17,9 @@
 
 ### Changed
 
+* `Node#traverse` lists the subtree once, natively, before the first node is
+  yielded: about five times faster on a large tree, and a block that adds or
+  removes nodes no longer changes which nodes are visited.
 * Ruby 3.3 or newer is required (3.2 reached its end of life in March 2026).
 * Arguments are no longer converted with `to_s` / `to_str`. A string
   argument (an attribute value, text content, markup, a variable value, a

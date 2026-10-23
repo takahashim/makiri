@@ -111,6 +111,7 @@ fn init_read() -> Result<(), Error> {
     m.define_method("first_element_child", method!(read::first_element_child, 0))?;
     m.define_method("last_element_child", method!(read::last_element_child, 0))?;
     m.define_method("ancestors", method!(read::ancestors, 0))?;
+    m.define_method("_traverse_order", method!(read::traverse_order, 0))?;
 
     m.define_method("[]", method!(read::aref, 1))?;
     m.define_method("key?", method!(read::has_key, 1))?;

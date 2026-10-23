@@ -235,6 +235,23 @@ pub fn children(this: XmlSelf) -> Result<Value, Error> {
     })
 }
 
+/// `#_traverse_order`: this node and its descendants in post-order, as
+/// HTML's.
+pub fn traverse_order(this: XmlSelf) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| {
+        this.read()?.set(|d, id, out| {
+            crate::glue::node::post_order(
+                id,
+                |n| n == id,
+                |n| d.first_child(n),
+                |n| d.next(n),
+                |n| d.parent(n),
+                out,
+            )
+        })
+    })
+}
+
 /// `#ancestors`: the element ancestors, nearest first, the node itself
 /// excluded - as HTML's.
 pub fn ancestors(this: XmlSelf) -> Result<Value, Error> {

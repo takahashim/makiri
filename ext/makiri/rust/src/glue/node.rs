@@ -23,6 +23,41 @@ pub const DOCUMENT_NOT_REMOVABLE: &str = "cannot remove the document node";
 use crate::bridge::wrapper::{node_identity, node_key, ChildListHost};
 use crate::child_index::ChildList;
 
+/// `root`'s subtree in post-order, `root` last - Nokogiri's `traverse` order:
+/// each node after its children, siblings in order. Iterative, over the
+/// tree's links, so a deep tree costs no native stack.
+pub fn post_order<N: Copy>(
+    root: N,
+    is_root: impl Fn(N) -> bool,
+    first_child: impl Fn(N) -> Option<N>,
+    next: impl Fn(N) -> Option<N>,
+    parent: impl Fn(N) -> Option<N>,
+    out: &mut dyn FnMut(N),
+) {
+    let deepest = |mut n: N| {
+        while let Some(c) = first_child(n) {
+            n = c;
+        }
+        n
+    };
+    let mut n = deepest(root);
+    loop {
+        out(n);
+        if is_root(n) {
+            return;
+        }
+        n = match next(n) {
+            Some(s) => deepest(s),
+            None => match parent(n) {
+                Some(p) => p,
+                /* Not under `root` after all: a broken link, not a shorter
+                 * walk - but nothing more to visit either way. */
+                None => return,
+            },
+        };
+    }
+}
+
 /// The refusal of a namespace that does not fit the qualified name it came with.
 const NS_MISFIT: &str =
     "the namespace does not fit the qualified name (a prefix needs a namespace; \

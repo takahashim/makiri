@@ -297,6 +297,25 @@ pub fn element_children(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Er
     crate::bridge::ruby::entry(|| this.read()?.set(true, |n, out| n.children().for_each(out)))
 }
 
+/// `#_traverse_order`: this node and its descendants in post-order, as
+/// `Node#traverse` visits them (`lib/makiri/node.rb`): one set, rather than
+/// one `children` set per level.
+pub fn traverse_order(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| {
+        this.read()?.set(false, |root, out| {
+            let root_word = crate::bridge::wrapper::NodeWord::from(RawNode::from(root));
+            crate::glue::node::post_order(
+                root,
+                |n| crate::bridge::wrapper::NodeWord::from(RawNode::from(n)) == root_word,
+                |n| n.first_child(),
+                |n| n.next(),
+                |n| n.parent(),
+                out,
+            )
+        })
+    })
+}
+
 /// `#ancestors`: the ancestor elements, nearest first.
 pub fn ancestors(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| this.read()?.set(true, |n, out| n.ancestors().for_each(out)))

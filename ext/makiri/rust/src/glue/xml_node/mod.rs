@@ -59,6 +59,7 @@ fn init_read() -> Result<(), Error> {
     m.define_method("document", method!(read::get_document, 0))?;
     m.define_method("parent", method!(read::parent, 0))?;
     m.define_method("ancestors", method!(read::ancestors, 0))?;
+    m.define_method("_traverse_order", method!(read::traverse_order, 0))?;
     m.define_method("<=>", method!(read::spaceship, 1))?;
     for name in ["next", "next_sibling"] {
         m.define_method(name, method!(read::next, 0))?;
