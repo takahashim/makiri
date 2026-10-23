@@ -13,7 +13,6 @@
 use magnus::{method, prelude::*, Error, Ruby, Value};
 
 use super::HtmlSelf;
-use crate::bridge::gvl::held;
 use crate::bridge::html::wrap_html_node;
 use crate::bridge::node_set::node_set_from;
 use crate::bridge::string::{ruby_verified_text, RubyText};
@@ -35,13 +34,12 @@ fn css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Value, Error> {
         let args = CssArgs::scan(ruby, args)?;
         let selector = args.selector;
         let sv = selector_text(selector)?;
-        let gvl = held(ruby);
         /* Read once the namespaces are converted (their Hash is Ruby), and
          * held while the set is built - under `protect`, in `node_set_from`:
          * the matched nodes borrow it. */
         let found = args.with_namespaces(|ns| {
             let view = this.read()?;
-            let matched = css_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
+            let matched = css_cache::with_compiled(sv.as_bytes(), |groups, scratch| {
                 css_match::select_all(scratch, view.node(), groups, ns)
             })
             .map_err(|e| parse_error(e, selector))?;
@@ -65,10 +63,9 @@ fn at_css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Option<Value>, 
         let args = CssArgs::scan(ruby, args)?;
         let selector = args.selector;
         let sv = selector_text(selector)?;
-        let gvl = held(ruby);
         let found = args.with_namespaces(|ns| {
             let view = this.read()?;
-            let matched = css_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
+            let matched = css_cache::with_compiled(sv.as_bytes(), |groups, scratch| {
                 css_match::select_first(scratch, view.node(), groups, ns)
             })
             .map_err(|e| parse_error(e, selector))?;
@@ -94,10 +91,9 @@ fn matches(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<bool, Error> {
         let args = CssArgs::scan(ruby, args)?;
         let selector = args.selector;
         let sv = selector_text(selector)?;
-        let gvl = held(ruby);
         let matched = args.with_namespaces(|ns| {
             let view = this.read()?;
-            let matched = css_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
+            let matched = css_cache::with_compiled(sv.as_bytes(), |groups, scratch| {
                 css_match::matches_any(scratch, groups, ns, view.node())
             })
             .map_err(|e| parse_error(e, selector))?;

@@ -480,7 +480,11 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
     falloc/                fallible allocation - every engine allocation goes
                            through here, so `rake oom` can fail it and OOM raises
                            rather than aborting the host process (the glue's
-                           Ruby-side storage is Ruby's xmalloc; see the gotchas)
+                           Ruby-side storage is Ruby's xmalloc; see the gotchas).
+                           Its `try_box` holds the ONE `unsafe` block left in
+                           the shipping crate outside `bridge/` (a fallible
+                           `Box<T>` has no stable safe spelling); everything
+                           else Ruby-free is `forbid(unsafe_code)`
     doc_cell.rs            `DocCell`: a Document's content behind counted
                            read/write guards (Ruby-free; `bridge::dom` wraps it)
     cbuf.rs                `Buf`: the owned, capped, growable byte buffer
@@ -939,7 +943,7 @@ whose every alternative is one compound with nothing nested in it
 caller rustc stopped inlining `check_simple`, and every plain scan got ~10%
 slower (`.item`, `main a`) - keep `check_simple` single-caller. **Every table
 and stack a query uses is borrowed from a `Scratch`** that the Ruby glue keeps
-in `css_cache`'s process-global engine (under the GVL) and hands back
+in `css_cache`'s per-thread engine and hands back
 after the query, as Lexbor keeps its entry/nested pools in `lxb_selectors_t`:
 a warm `css`/`at_css`/`matches?` allocates nothing but its result. The
 vectors cross lifetimes empty, through `recycle` (std's in-place collect,
@@ -993,7 +997,7 @@ the adapter confirms with exactly `attr_by_name`'s comparison - the answer
 never changes, only how many name reads it takes. Ids are the document's own
 (custom elements and new attribute names are interned per document), so they
 are resolved per query in the walked document, and nothing document-specific
-is kept in the process-global `css_cache`. A tag id is compared without
+is kept in `css_cache`. A tag id is compared without
 asking each node for its document, as Lexbor's `entry->id` is: every node a
 walking query reaches is in the walked tree, and Makiri never moves a node
 between documents (an insert from another document inserts a copy). The
@@ -1049,8 +1053,8 @@ documented minimum (128 KiB), crashed the WHOLE PROCESS with an uncaught
 ordinary raise, since Ruby's stack-overflow handling `longjmp`s past every
 Rust frame between the overflow and the nearest `rb_protect`, skipping `Drop`
 (`crate::stack`'s module doc): for `css_cache`'s borrow of its
-`GvlCell`, whose `Drop` releases the busy flag, a `longjmp`
-mid-match would have left it stuck `true` forever, wedging `Node#css`/
+engine cell, whose `Drop` releases it, a `longjmp`
+mid-match would have left it borrowed forever, wedging `Node#css`/
 `#at_css`/`#matches?` for the rest of the process - not just crashing the one
 call. Lexbor's own C engine never had this problem: `:has()`/`:is()` nesting
 is handled by `lxb_selectors_nested_t`, a heap structure, not C recursion
@@ -1122,15 +1126,17 @@ only approximates; `:any-link` / `:link` are an HTML `a`/`area` or an SVG
 `a` with an `href`, and `:empty` ignores comments and processing
 instructions, as browsers have them (M2, M9, M10 in
 `docs/parser_differences.ja.md`; `compat::as_lexbor` runs Lexbor's).
-**The GVL is an argument, not a comment**: each process-global engine
-(`css_cache`'s, and in the reference builds
-`css_parser`'s and the OLD `selectors`'s) lives in its own `crate::gvl::GvlCell`, whose `borrow` takes a
-`&Gvl` - minted from a
-`magnus::Ruby` by `bridge::gvl::held`, and `!Send`, so `without_gvl` (which
-requires a `Send` body) cannot carry one across a release. The cell's busy
-flag turns a re-entrant second borrow into `Busy` rather than a second
-`&mut`. Outside Ruby (cargo tests, fuzz) `Gvl::exclusive()` stands in with a
-process-wide mutex; it does not exist in the extension build.
+**The CSS engine is per thread** (`css_cache`'s `thread_local!`): Ruby runs
+one thread at a time under the GVL, so each Ruby thread's engine is reached
+by one query at a time, and being the thread's alone it needs to be neither
+`Send` nor `Sync` - its kept stacks hold DOM node handles, which are
+neither. A re-entrant second borrow on one thread is `ParseError::Busy`
+(`try_borrow_mut`), never a second `&mut`. The reference builds' engines
+(`css_parser`'s and the OLD `selectors`'s) stay process-global in a
+`crate::gvl::GvlCell`, a `Mutex` (`try_lock`, so a re-entrant borrow is
+`Busy`, not a deadlock), keyed by a `Gvl` token that `Gvl::exclusive()`
+makes outside Ruby; the shipping build has no such cell. (Both used to be
+`UnsafeCell`s that only the GVL made sound.)
 
 **Serialization** (`html/dom/serialize.rs`). `Node#{to_html,to_s,outer_html}`
 and `#inner_html` are one iterative walk over the arena (`write`), byte for

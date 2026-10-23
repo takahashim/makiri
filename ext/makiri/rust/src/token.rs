@@ -10,26 +10,21 @@
 //! # Why the kind lives in the type
 //!
 //! The engine erases a token to this one type so `Val`/`NodeSet` stay
-//! monomorphic at the Ruby boundary. The cost is that a *safe* constructor plus
-//! a dereferencing resolver would let safe code forge a token and read it back
-//! as a node - undefined behaviour without an `unsafe` in sight. The tag closes
-//! that: an HTML token can only be made by [`Token::html`], which is `unsafe`
-//! (the caller proves the pointer names a live node), while an XML token is
-//! [`Token::xml`], safe because the XML resolver checks every handle it reads.
-//! A resolver rejects a token of the wrong kind, so a forged XML token can never
-//! reach the pointer-dereferencing HTML resolver.
+//! monomorphic at the Ruby boundary. Both kinds a token can name are arena
+//! handles, which their resolvers read through a checked lookup, so any word
+//! is safe to make a token of: a forged or stale one resolves to no node,
+//! never to undefined behaviour. The kind keeps a token from the other
+//! backend's resolver. (It also tagged a Lexbor node pointer, made by an
+//! `unsafe` constructor and read back by a dereferencing resolver, until the
+//! Lexbor DOM build was retired.)
 
-#![allow(unsafe_code)]
-
-use core::ffi::c_void;
+#![forbid(unsafe_code)]
 
 /// Which backend a token belongs to.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Kind {
     /// No node: the empty-slot marker of token-keyed tables. Never resolved.
     Null,
-    /// A Lexbor node pointer.
-    Html,
     /// A Makiri XML arena handle.
     Xml,
     /// A node id of the HTML arena DOM (`crate::html::dom`).
@@ -78,7 +73,7 @@ impl Token {
     ///
     /// Safe for the reason [`Token::xml`] is: the arena's resolver reads an
     /// id through a bounds-checked lookup, so no value can cause undefined
-    /// behaviour - and the kind keeps it from the Lexbor resolver.
+    /// behaviour - and the kind keeps it from the XML resolver.
     #[inline]
     pub const fn arena(word: usize) -> Token {
         Token {
@@ -87,36 +82,17 @@ impl Token {
         }
     }
 
-    /// The XML handle back, for the XML backend.
+    /// The handle back, for the backend that made it.
     #[inline]
     pub const fn word(self) -> usize {
         self.word
     }
-
-    /// A token for an HTML node pointer.
-    ///
-    /// # Safety
-    /// `ptr` must name a live node of the document the token will be resolved
-    /// against.
-    #[inline]
-    pub unsafe fn html(ptr: *mut c_void) -> Token {
-        Token {
-            kind: Kind::Html,
-            word: ptr as usize,
-        }
-    }
-
-    /// The HTML node pointer back, for the HTML backend.
-    #[inline]
-    pub fn as_ptr(self) -> *mut c_void {
-        self.word as *mut c_void
-    }
 }
 
 /// A token keys the engine's per-evaluate tables (the string-value cache, the
-/// document-order index). A real token's word is never 0 - an HTML word is a
-/// non-null pointer, an XML word packs the arena index under a nonzero
-/// document stamp - but the table still needs a value no real token equals, so
+/// document-order index). A real token's word is never 0 - an arena word packs
+/// the node index under a nonzero document stamp - but the table still needs a
+/// value no real token equals, so
 /// the empty slot carries a kind (`Null`) that no real token has.
 impl crate::ptr_table::TableKey for Token {
     const EMPTY: Token = Token::null();

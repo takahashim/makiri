@@ -43,7 +43,7 @@ fn lowered(doc: &Document, selector: &str) -> Option<Vec<NodeId>> {
         XPathValue::NodeSet(set) => Some(
             set.as_slice()
                 .iter()
-                .filter_map(|t| NodeId::from_token(t.as_ptr() as usize))
+                .filter_map(|t| NodeId::from_token(t.word()))
                 .collect(),
         ),
         _ => None,

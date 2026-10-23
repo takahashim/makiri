@@ -30,7 +30,7 @@ RUST = File.join(ROOT, "ext/makiri/rust/src")
 # summary prints the `glue/` + `xpath/` subtotal that must reach 0.
 UNSAFE_ISLANDS = {
   "bridge/alloc.rs" => 9,
-  "bridge/gvl.rs" => 5,
+  "bridge/gvl.rs" => 4,
   "bridge/html.rs" => 5,
   "bridge/node_set.rs" => 2,
   "bridge/node_wrap.rs" => 1,
@@ -49,8 +49,7 @@ UNSAFE_ISLANDS = {
   "bridge/xpath/context_object.rs" => 5,
   "bridge/xpath/handler.rs" => 7,
   "bridge/xpath/mod.rs" => 5,
-  "falloc/mod.rs" => 3,
-  "gvl.rs" => 4,
+  "falloc/mod.rs" => 1,
   "lexbor/abi.rs" => 4,
   "lexbor/adapter/arena_bytes.rs" => 14,
   "lexbor/adapter/html/attrs.rs" => 19,
@@ -72,9 +71,6 @@ UNSAFE_ISLANDS = {
   "lexbor/serialize.rs" => 1,
   "lexbor/stylesheet_diff.rs" => 5,
   "lexbor/tests.rs" => 3,
-  "source_lines.rs" => 1,
-  "spare.rs" => 1,
-  "token.rs" => 1,
 }.freeze
 
 # Files whose safety is compiler-enforced. Checked by containment, so adding one
@@ -100,12 +96,13 @@ FORBID_FILES = %w[
   glue/node.rs glue/node_set.rs glue/query.rs
   glue/xml_doc.rs glue/xml_node/css.rs glue/xml_node/mod.rs
   glue/xml_node/mutate.rs glue/xml_node/ns.rs glue/xml_node/read.rs
-  glue/xml_node/serialize.rs glue/xpath_context.rs html/dom/mod.rs
-  html/encoding/mod.rs html/mod.rs html/tokenizer/mod.rs
-  html/tree/mod.rs html_dom.rs lexbor/contains_guard.rs
-  limits.rs node_type.rs ptr_table.rs
-  rust_tests.rs selectors/mod.rs selectors/stylesheet.rs
-  selectors/text.rs stack.rs text.rs
+  glue/xml_node/serialize.rs glue/xpath_context.rs gvl.rs
+  html/dom/mod.rs html/encoding/mod.rs html/mod.rs
+  html/tokenizer/mod.rs html/tree/mod.rs html_dom.rs
+  lexbor/contains_guard.rs limits.rs node_type.rs
+  ptr_table.rs rust_tests.rs selectors/mod.rs
+  selectors/stylesheet.rs selectors/text.rs source_lines.rs
+  stack.rs text.rs token.rs
   utf8_input.rs xml/arena.rs xml/attr_key.rs
   xml/chars/expand.rs xml/chars/mod.rs xml/css.rs
   xml/css_tests.rs xml/dom_name.rs xml/encoding_names.rs

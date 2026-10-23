@@ -103,7 +103,7 @@ fn run_on(
     };
     {
         let describe = |node: &Token| {
-            let id = NodeId::from_token(node.as_ptr() as usize).expect("a node token");
+            let id = NodeId::from_token(node.word()).expect("a node token");
             match doc.type_(id) {
                 Some(ArenaKind::Text) | Some(ArenaKind::CDataSection) => "text".to_string(),
                 Some(ArenaKind::Comment) => "comment".to_string(),

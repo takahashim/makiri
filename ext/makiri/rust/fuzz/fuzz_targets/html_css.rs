@@ -34,7 +34,6 @@ mod common;
 use common::*;
 use makiri::css_cache;
 use makiri::css_match::{matches_any, select_all, select_first, Namespaces, Scratch};
-use makiri::gvl::Gvl;
 use makiri::html::dom::css::HtmlHost;
 use makiri::html_dom::html::HtmlNode;
 use makiri::html_dom::post_parse::parse_html;
@@ -59,10 +58,9 @@ fuzz_target!(|data: &[u8]| {
     let Ok(p) = parse_html(html, false, DepthLimit::DEFAULT) else {
         return;
     };
-    let gvl = Gvl::exclusive();
     let root = p.doc().as_node();
     for _ in 0..2 {
-        let answered = css_cache::with_compiled(&gvl, text.as_bytes(), |groups, scratch| {
+        let answered = css_cache::with_compiled(text.as_bytes(), |groups, scratch| {
             check(root, groups, scratch)
         });
         // A refusal is the budget doing its job, and each refused query spends

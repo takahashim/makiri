@@ -92,7 +92,7 @@ fuzz_target!(|data: &[u8]| {
      * (C18-C22 in docs/parser_differences.ja.md) are `selector_diff`'s. The
      * cache only ever holds this mode's parses in this binary. */
     let new = makiri::compat::as_lexbor(|| {
-        css_cache::with_compiled(&gvl, text.as_bytes(), |groups, scratch| {
+        css_cache::with_compiled(text.as_bytes(), |groups, scratch| {
             new_answer(root, groups, scratch, &doc)
         })
     });

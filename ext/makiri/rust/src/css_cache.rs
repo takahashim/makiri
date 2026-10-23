@@ -18,17 +18,29 @@
 //! lists are owned, one allocation set per selector, so a cached entry costs
 //! only its memory. The same constants are kept.
 
+//!
+//! # One per thread
+//!
+//! The cache and the matcher's kept stacks are thread-local: Ruby runs one
+//! thread at a time under the GVL, so a per-thread engine is reached by one
+//! query at a time all the same, and being the thread's alone it needs to be
+//! neither `Send` nor `Sync` - the stacks hold DOM node handles, which are
+//! neither. (It was one process-global behind a GVL-keyed cell, which needed
+//! the stacks' node vectors to be `Send` and a type that made them so.) Each
+//! Ruby thread warms its own cache; a re-entrant query on one thread is
+//! refused as [`ParseError::Busy`], as it was.
+
 #![forbid(unsafe_code)]
 // Its one entry point (`with_compiled`) is the Ruby glue's
 // (`glue::html_node::css`, `glue::xml_node::css`) and the `html_css` fuzz
 // harness's.
 
+use core::cell::RefCell;
 use std::collections::HashMap;
 
 use crate::css_match::dom::Host;
 use crate::css_match::Scratch;
 use crate::falloc::{try_to_boxed_slice, Reserve};
-use crate::gvl::{Gvl, GvlCell};
 use crate::html::dom::css::HtmlHost;
 use crate::selectors::ast::Lists;
 use crate::selectors::{Parsed, Status};
@@ -185,15 +197,19 @@ impl Kept for XmlHost {
     }
 }
 
-/// The one process-global, borrowed once per query.
-static G: GvlCell<Globals> = GvlCell::new(Globals {
-    policy: CachePolicy::new(),
-    cache: Cache::new(),
-    scratches: Scratches {
-        html: Scratch::new(),
-        xml: Scratch::new(),
-    },
-});
+thread_local! {
+    /// This thread's engine, borrowed once per query.
+    static G: RefCell<Globals> = const {
+        RefCell::new(Globals {
+            policy: CachePolicy::new(),
+            cache: Cache::new(),
+            scratches: Scratches {
+                html: Scratch::new(),
+                xml: Scratch::new(),
+            },
+        })
+    };
+}
 
 /// Parse `selector` with the ported parser.
 fn parse(selector: &[u8]) -> Result<Parsed, ParseError> {
@@ -210,28 +226,31 @@ fn parse(selector: &[u8]) -> Result<Parsed, ParseError> {
 /// bypassing parses per call; otherwise the selector comes from the cache,
 /// parsed into it on a miss.
 pub fn with_compiled<H: Kept, R>(
-    gvl: &Gvl,
     selector: &[u8],
     f: impl FnOnce(Lists<'_>, &mut Scratch<H>) -> R,
 ) -> Result<R, ParseError> {
-    let mut guard = G.borrow(gvl).map_err(|_| ParseError::Busy)?;
-    let g = &mut *guard;
+    /* `try_with`: a query from a thread-local destructor, after this one is
+     * gone, is refused rather than a panic. */
+    G.try_with(|cell| {
+        let mut guard = cell.try_borrow_mut().map_err(|_| ParseError::Busy)?;
+        let g = &mut *guard;
 
-    if g.policy.tick() {
-        g.cache.flush();
-    }
+        if g.policy.tick() {
+            g.cache.flush();
+        }
 
-    if g.policy.bypassing() {
-        let parsed = parse(selector)?;
-        return Ok(f(parsed.groups(), H::kept(&mut g.scratches)));
-    }
+        if g.policy.bypassing() {
+            let parsed = parse(selector)?;
+            return Ok(f(parsed.groups(), H::kept(&mut g.scratches)));
+        }
 
-    let parsed = g.cache.get(&mut g.policy, selector)?;
-    Ok(f(parsed.groups(), H::kept(&mut g.scratches)))
+        let parsed = g.cache.get(&mut g.policy, selector)?;
+        Ok(f(parsed.groups(), H::kept(&mut g.scratches)))
+    })
+    .map_err(|_| ParseError::NotReady)?
 }
 
-/// The cache's own checks. `Gvl::exclusive()` stands in for the real GVL
-/// proof here.
+/// The cache's own checks, each on its test thread's cache.
 ///
 /// The adaptive bypass/retest window (40,000-iteration territory in
 /// `spec/css_selector_cache_spec.rb`) is NOT re-tested here - that spec
@@ -245,7 +264,6 @@ pub fn with_compiled<H: Kept, R>(
 mod tests {
     use crate::css_cache::with_compiled;
     use crate::css_match::select_all;
-    use crate::gvl::Gvl;
     use crate::html_dom::html::{HtmlNode, RawNode};
     use crate::html_dom::post_parse::{parse_html, HtmlParsed};
     use crate::html_dom::tree_guard::DepthLimit;
@@ -260,7 +278,7 @@ mod tests {
 
     /// Every matching descendant's node identity, through the cache.
     fn select_all_cached(doc: &HtmlParsed, selector: &str) -> Vec<RawNode> {
-        with_compiled(&Gvl::exclusive(), selector.as_bytes(), |groups, scratch| {
+        with_compiled(selector.as_bytes(), |groups, scratch| {
             select_all(
                 scratch,
                 root(doc),
@@ -317,7 +335,7 @@ mod tests {
         let doc = parsed(b"<html><body><p class=x>a</p><p class=x>b</p></body></html>");
         assert_eq!(select_all_cached(&doc, "p.x").len(), 2);
 
-        let rejected = with_compiled(&Gvl::exclusive(), b"p[", |groups, scratch| {
+        let rejected = with_compiled(b"p[", |groups, scratch| {
             select_all(
                 scratch,
                 root(&doc),
@@ -356,23 +374,20 @@ mod tests {
                 let doc = parsed(html);
                 for sel in SELECTORS {
                     let kept = select_all_cached(&doc, sel);
-                    let fresh: Vec<RawNode> = with_compiled(
-                        &Gvl::exclusive(),
-                        sel.as_bytes(),
-                        |groups, _: &mut Scratch<HtmlHost>| {
+                    let fresh: Vec<RawNode> =
+                        with_compiled(sel.as_bytes(), |groups, _: &mut Scratch<HtmlHost>| {
                             select_all(
                                 &mut Scratch::new(),
                                 root(&doc),
                                 groups,
                                 &crate::css_match::Namespaces::NONE,
                             )
-                        },
-                    )
-                    .expect("parses")
-                    .expect("matches")
-                    .into_iter()
-                    .map(RawNode::from)
-                    .collect();
+                        })
+                        .expect("parses")
+                        .expect("matches")
+                        .into_iter()
+                        .map(RawNode::from)
+                        .collect();
                     assert!(
                         kept == fresh,
                         "{sel:?} in round {round} differs from a fresh scratch"

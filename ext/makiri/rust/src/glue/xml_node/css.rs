@@ -12,7 +12,6 @@
 use magnus::{method, prelude::*, Error, Ruby, Value};
 
 use super::{wrap, XmlSelf};
-use crate::bridge::gvl::held;
 use crate::bridge::node_set::node_set_from;
 use crate::bridge::string::ruby_verified_text;
 use crate::css_cache;
@@ -27,13 +26,12 @@ fn css(ruby: &Ruby, this: XmlSelf, selector: Value, ns: Value) -> Result<Value, 
         let args = CssArgs::new(ruby, selector, ns)?;
         let selector = args.selector;
         let sv = ruby_verified_text(selector, "CSS selector")?;
-        let gvl = held(ruby);
         /* Read once the namespaces are converted (their Hash is Ruby), and
          * held while the set is built - under `protect`, in `node_set_from`:
          * the matched nodes borrow it. */
         let found = args.with_namespaces(|ns| {
             let d = this.read()?;
-            let matched = css_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
+            let matched = css_cache::with_compiled(sv.as_bytes(), |groups, scratch| {
                 css_match::select_all(scratch, XmlNode::new(&d, this.id), groups, ns)
             })
             .map_err(|e| parse_error(e, selector))?;
@@ -51,10 +49,9 @@ fn at_css(ruby: &Ruby, this: XmlSelf, selector: Value, ns: Value) -> Result<Opti
         let args = CssArgs::new(ruby, selector, ns)?;
         let selector = args.selector;
         let sv = ruby_verified_text(selector, "CSS selector")?;
-        let gvl = held(ruby);
         let found = args.with_namespaces(|ns| {
             let d = this.read()?;
-            let matched = css_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
+            let matched = css_cache::with_compiled(sv.as_bytes(), |groups, scratch| {
                 css_match::select_first(scratch, XmlNode::new(&d, this.id), groups, ns)
             })
             .map_err(|e| parse_error(e, selector))?;
@@ -76,10 +73,9 @@ fn css_matches(ruby: &Ruby, this: XmlSelf, selector: Value, ns: Value) -> Result
         let args = CssArgs::new(ruby, selector, ns)?;
         let selector = args.selector;
         let sv = ruby_verified_text(selector, "CSS selector")?;
-        let gvl = held(ruby);
         let matched = args.with_namespaces(|ns| {
             let d = this.read()?;
-            let matched = css_cache::with_compiled(&gvl, sv.as_bytes(), |groups, scratch| {
+            let matched = css_cache::with_compiled(sv.as_bytes(), |groups, scratch| {
                 css_match::matches_any(scratch, groups, ns, XmlNode::new(&d, this.id))
             })
             .map_err(|e| parse_error(e, selector))?;

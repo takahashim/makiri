@@ -103,7 +103,7 @@ fn lowered(doc: &Document, text: VerifiedText, default: bool) -> Option<Vec<usiz
     let ast = compile_owned(text, &ns, Form::Select, &mut budget).ok()?;
     match ctx.evaluate(&ast, None).ok()? {
         XPathValue::NodeSet(set) => {
-            Some(set.as_slice().iter().map(|t| t.as_ptr() as usize).collect())
+            Some(set.as_slice().iter().map(|t| t.word()).collect())
         }
         _ => None,
     }
