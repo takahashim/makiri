@@ -11,9 +11,8 @@
 //! the name fields, and only those two know it.
 //!
 //! The arena is reached through `XmlSelf::read`, a guard. A node is wrapped
-//! after the read (`XmlView::wrap`), a short String is made of bytes lifted
-//! out of it (`str_after_read`), and what must be built while it is held - a
-//! NodeSet, an Array, a joined text - is built with it held; every allocation
+//! after the read (`XmlView::wrap`), and a String (`str_from_read`), a NodeSet,
+//! an Array or a joined text is built with it held; every allocation
 //! returns `Err` on failure (`bridge::raw`), so the guard drops either way. The
 //! attribute-name lookups that need a Ruby string's bytes live in
 //! `bridge::xml::find_attribute`.
@@ -23,7 +22,7 @@
 use magnus::{prelude::*, Error, Ruby, Value};
 
 use super::{wrap, XmlSelf};
-use crate::bridge::string::{str_after_read, utf8_str, StrKind};
+use crate::bridge::string::{str_from_read, utf8_str, StrKind};
 use crate::child_index;
 use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId};
 
@@ -40,7 +39,7 @@ fn is_element(d: &XmlDoc, id: NodeId) -> bool {
 
 pub fn name(_ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let name = str_after_read(this.read()?, StrKind::Utf8, |d| {
+        let name = str_from_read(this.read()?, StrKind::Utf8, |d| {
             let id = d.id;
             if let Some(n) = d.name_parts(id) {
                 return Some(n.qname);
@@ -65,7 +64,7 @@ pub fn name(_ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
 /// `#local_name`: Element and Attribute only.
 pub fn local_name(_ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        str_after_read(this.read()?, StrKind::DomName, |d| {
+        str_from_read(this.read()?, StrKind::DomName, |d| {
             d.name_parts(d.id).map(|n| n.local)
         })
     })
@@ -75,7 +74,7 @@ pub fn local_name(_ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
 /// and for any kind but Element and Attribute.
 pub fn prefix(_ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        str_after_read(this.read()?, StrKind::DomName, |d| {
+        str_from_read(this.read()?, StrKind::DomName, |d| {
             d.name_parts(d.id).and_then(|n| n.prefix)
         })
     })
@@ -85,7 +84,7 @@ pub fn prefix(_ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
 /// Attribute.
 pub fn namespace_uri(_ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        str_after_read(this.read()?, StrKind::DomName, |d| {
+        str_from_read(this.read()?, StrKind::DomName, |d| {
             d.name_parts(d.id).and_then(|n| n.ns_uri)
         })
     })
@@ -95,7 +94,7 @@ pub fn namespace_uri(_ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error
 /// - or nil for a non-element.
 pub fn tag_name(_ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        str_after_read(this.read()?, StrKind::DomName, |d| {
+        str_from_read(this.read()?, StrKind::DomName, |d| {
             d.name_parts(d.id)
                 .filter(|_| is_element(d, d.id))
                 .map(|n| n.qname)
@@ -106,7 +105,7 @@ pub fn tag_name(_ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
 /// `ProcessingInstruction#target`, or nil for a non-PI.
 pub fn pi_target(_ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        str_after_read(this.read()?, StrKind::Utf8, |d| {
+        str_from_read(this.read()?, StrKind::Utf8, |d| {
             (d.type_(d.id) == Some(ArenaKind::Pi)).then(|| d.local(d.id))
         })
     })
@@ -122,7 +121,7 @@ pub fn node_type(_ruby: &Ruby, this: XmlSelf) -> Result<u32, Error> {
 
 pub fn dtd_external_id(_ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        str_after_read(this.read()?, StrKind::Utf8, |d| {
+        str_from_read(this.read()?, StrKind::Utf8, |d| {
             d.doctype_ids(d.id).and_then(|ids| ids.public)
         })
     })
@@ -130,7 +129,7 @@ pub fn dtd_external_id(_ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Err
 
 pub fn dtd_system_id(_ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        str_after_read(this.read()?, StrKind::Utf8, |d| {
+        str_from_read(this.read()?, StrKind::Utf8, |d| {
             d.doctype_ids(d.id).and_then(|ids| ids.system)
         })
     })
@@ -158,7 +157,7 @@ pub fn content(_ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
                     | ArenaKind::Pi
             )
         ) {
-            let value = str_after_read(d, StrKind::Utf8, |d| Some(d.value(d.id)))?;
+            let value = str_from_read(d, StrKind::Utf8, |d| Some(d.value(d.id)))?;
             return match value {
                 Some(value) => Ok(value),
                 None => utf8_str(b""),
@@ -289,7 +288,7 @@ fn attrs_of(d: &XmlDoc, id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
 pub fn aref(_ruby: &Ruby, this: XmlSelf, rb_name: Value) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
         let found = crate::bridge::xml::find_attribute(this, rb_name)?;
-        str_after_read(this.read()?, StrKind::Utf8, |d| found.map(|at| d.value(at)))
+        str_from_read(this.read()?, StrKind::Utf8, |d| found.map(|at| d.value(at)))
     })
 }
 
@@ -310,7 +309,7 @@ pub fn attribute_value_ns(
 ) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
         let found = crate::bridge::xml::find_attribute_ns(this, rb_ns, rb_local)?;
-        str_after_read(this.read()?, StrKind::Utf8, |d| found.map(|at| d.value(at)))
+        str_from_read(this.read()?, StrKind::Utf8, |d| found.map(|at| d.value(at)))
     })
 }
 

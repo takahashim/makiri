@@ -256,8 +256,9 @@ XPath の独自関数（Nokogiri の handler）は受け付けない。
 * engine 内の確保は失敗を値として返せる API に一本化し、OOM は abort
   ではなく例外にする (§5)。一方 Ruby 側の記憶域 (wrapper、NodeSet の
   配列) は Ruby のアロケータで確保し、OOM は Ruby 自身の
-  `NoMemoryError` に委ねる。ただしその raise は大域脱出するので、
-  何も所有していない場所か、保護された呼び出しの内側でのみ行う。
+  `NoMemoryError` に委ねる。その raise は大域脱出なので、raise しうる C の
+  呼び出しはすべて `bridge/raw.rs` の中で `rb_protect` の下に置き、`Err`
+  として戻す（Rust のフレームを飛び越えさせない）。
 * 索引や cache は「document に属し、mutation で捨てる」ようにする。
   破棄の hook は極力集約する。
   また索引は評価のたびに document から取り直す。

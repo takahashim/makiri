@@ -8,11 +8,10 @@
 //! # Where a GC may run
 //!
 //! Building any String or NodeSet allocates, and Ruby's allocator raises
-//! `NoMemoryError` past every Rust frame. Every read of the document is a
+//! `NoMemoryError` - which `bridge::raw` hands back as `Err`. Every read of the document is a
 //! guard (`HtmlSelf::read`). A node is wrapped after the read
-//! (`HtmlView::wrap`), a short String is made of bytes lifted out of it
-//! (`str_after_read`), and what must be built while the read is held - a
-//! NodeSet, an Array of names - is built with it held; every allocation
+//! (`HtmlView::wrap`), and a String (`str_from_read`), a NodeSet or an Array
+//! of names is built with the read held; every allocation
 //! returns `Err` on failure (`bridge::raw`). The attribute
 //! lookups take their name through `ruby_verified_text`, an owned copy, which
 //! goes with the read.
@@ -24,7 +23,7 @@ use magnus::{prelude::*, Error, Ruby, Value};
 use super::with_arg_node;
 use crate::bridge::html::{wrap_html_node, HtmlView};
 use crate::bridge::ruby::is_kind_of;
-use crate::bridge::string::{ruby_verified_text, str_after_read, utf8_str, RubyText, StrKind};
+use crate::bridge::string::{ruby_verified_text, str_from_read, utf8_str, RubyText, StrKind};
 use crate::child_index;
 use crate::html_dom::html::{HtmlAttr, HtmlNode, HtmlTree, NodeType, RawNode};
 use crate::init::{CLASS_NODE, CLASS_XML_DOCUMENT};
@@ -68,7 +67,7 @@ fn is_element(this: &super::HtmlSelf) -> Result<bool, Error> {
 /// `text` / `comment` / `#cdata-section` / `document` for the other kinds.
 pub fn name(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let name = str_after_read(this.read()?, StrKind::Utf8, |v| {
+        let name = str_from_read(this.read()?, StrKind::Utf8, |v| {
             let node = v.node();
             if let Some((q, _)) = qname(node) {
                 return Some(q);
@@ -95,7 +94,7 @@ pub fn local_name(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, 
     crate::bridge::ruby::entry(|| {
         /* The DOM's case-preserved name - `foreignObject`, `refX` - where Lexbor
          * stores a lower-cased one; the same answer XPath's `local-name()` gives. */
-        str_after_read(this.read()?, StrKind::DomName, |v| {
+        str_from_read(this.read()?, StrKind::DomName, |v| {
             let node = v.node();
             match (node.element(), node.attr()) {
                 (Some(el), _) => Some(el.dom_local_name()),
@@ -110,7 +109,7 @@ pub fn local_name(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, 
 /// typically nil for HTML5-parsed content. Element and Attribute only.
 pub fn prefix(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        str_after_read(this.read()?, StrKind::DomName, |v| {
+        str_from_read(this.read()?, StrKind::DomName, |v| {
             qname(v.node()).and_then(|(q, local)| qname_prefix(q, local.len()))
         })
     })
@@ -130,7 +129,7 @@ pub fn prefix(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Erro
 /// Other kinds: nil.
 pub fn namespace_uri(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        str_after_read(this.read()?, StrKind::DomName, |v| {
+        str_from_read(this.read()?, StrKind::DomName, |v| {
             let node = v.node();
             match (node.element(), node.attr()) {
                 (Some(_), _) => node.ns_uri(),
@@ -147,7 +146,7 @@ pub fn namespace_uri(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value
 /// their case. nil for a non-element.
 pub fn tag_name(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        str_after_read(this.read()?, StrKind::DomName, |v| {
+        str_from_read(this.read()?, StrKind::DomName, |v| {
             v.node().element().and_then(|el| el.tag_name())
         })
     })
@@ -158,7 +157,7 @@ pub fn tag_name(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Er
 /// character-data node.
 pub fn pi_target(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        str_after_read(this.read()?, StrKind::Utf8, |v| v.node().pi_target())
+        str_from_read(this.read()?, StrKind::Utf8, |v| v.node().pi_target())
     })
 }
 
@@ -175,7 +174,7 @@ pub fn node_type(_ruby: &Ruby, this: super::HtmlSelf) -> Result<i64, Error> {
 /// other receiver the handle answers None as well.
 pub fn doctype_public_id(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        str_after_read(this.read()?, StrKind::Utf8, |v| {
+        str_from_read(this.read()?, StrKind::Utf8, |v| {
             v.node().doctype_public_id()
         })
     })
@@ -183,7 +182,7 @@ pub fn doctype_public_id(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<V
 
 pub fn doctype_system_id(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
-        str_after_read(this.read()?, StrKind::Utf8, |v| {
+        str_from_read(this.read()?, StrKind::Utf8, |v| {
             v.node().doctype_system_id()
         })
     })
@@ -342,7 +341,7 @@ pub fn aref(_ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Optio
         /* A present attribute with no value (`<input disabled>`) answers
          * `Some(b"")`, which is `""`; only an absent one is nil. The name goes
          * with the read, before the String is made. */
-        str_after_read((this.read()?, nv), StrKind::Utf8, |(v, nv)| {
+        str_from_read((this.read()?, nv), StrKind::Utf8, |(v, nv)| {
             v.node().element()?.get_attribute(nv.as_bytes())
         })
     })
@@ -461,7 +460,7 @@ pub fn attribute_value_by_qualified_name(
         /* Converted before the document is borrowed: a conversion can
          * allocate (a Symbol's name, a transcode). */
         let nv = ruby_verified_text(rb_name, "attribute name")?;
-        str_after_read((this.read()?, nv), StrKind::Utf8, |(v, nv)| {
+        str_from_read((this.read()?, nv), StrKind::Utf8, |(v, nv)| {
             let name = nv.as_bytes();
             v.node()
                 .element()?
@@ -516,7 +515,7 @@ pub fn attribute_value_ns(
         let Some(args) = ns_args(&this, rb_ns, rb_local)? else {
             return Ok(None);
         };
-        str_after_read((this.read()?, args), StrKind::Utf8, |(v, args)| {
+        str_from_read((this.read()?, args), StrKind::Utf8, |(v, args)| {
             attr_by_ns(v, args).map(|at| at.value())
         })
     })
@@ -549,7 +548,7 @@ pub fn attribute_node_ns(
 /// matching the loose Nokogiri-ish meaning of `#value`.
 pub fn value(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let value = str_after_read(this.read()?, StrKind::Utf8, |v| {
+        let value = str_from_read(this.read()?, StrKind::Utf8, |v| {
             v.node().attr().map(|at| at.value())
         })?;
         match value {

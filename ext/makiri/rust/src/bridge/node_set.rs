@@ -432,57 +432,28 @@ pub fn node_set_from(
     Ok(set)
 }
 
-/// The most nodes [`node_set_after_read`] lifts out of a read onto the stack,
-/// as a node's children or ancestors usually are, rather than building the
-/// set while the read is held, under `protect`, which costs a `setjmp`.
-const LIFT_NODES: usize = 32;
-
 /// A NodeSet over `document` of the nodes `each` lists from `read`, a document
-/// read guard - built with the read ended before anything can raise past it.
-///
-/// A read guard is a counted borrow: a raise that `longjmp`s past it leaves
-/// the document counted as read for good, and every later edit refused. So up
-/// to [`LIFT_NODES`] node words are copied to the stack (no `Drop`), the guard
-/// is dropped, and the set is built after; more, and `each` runs again under
-/// `protect` with the guard held, filling the set directly.
-pub fn node_set_after_read<G>(
+/// read guard, built while the read is held. A failed allocation is `Err`
+/// (`bridge::raw`), so the guard drops either way.
+pub fn node_set_from_read<G>(
     read: G,
     document: Value,
     each: impl Fn(&G, &mut dyn FnMut(NodeWord)),
 ) -> Result<Value, Error> {
-    let mut lifted = [NodeWord::NULL; LIFT_NODES];
-    let mut len = 0usize;
-    let mut overflow = false;
-    each(&read, &mut |w| match lifted.get_mut(len) {
-        Some(slot) => {
-            *slot = w;
-            len += 1;
-        }
-        None => overflow = true,
-    });
-    if overflow {
-        let mut refused = None;
-        let (set, fill) = node_set_with_fill(document)?;
-        each(&read, &mut |w| {
-            if refused.is_none() {
-                if let Err(e) = fill.push(w) {
-                    refused = Some(e);
-                }
-            }
-        });
-        drop(read);
-        return match refused {
-            Some(e) => Err(e.into()),
-            None => Ok(set),
-        };
-    }
-    drop(read);
+    let mut refused = None;
     let (set, fill) = node_set_with_fill(document)?;
-    fill.reserve(len)?;
-    for &w in &lifted[..len] {
-        fill.push(w)?;
+    each(&read, &mut |w| {
+        if refused.is_none() {
+            if let Err(e) = fill.push(w) {
+                refused = Some(e);
+            }
+        }
+    });
+    drop(read);
+    match refused {
+        Some(e) => Err(e.into()),
+        None => Ok(set),
     }
-    Ok(set)
 }
 
 /* ------------------------------------------------------------------ */

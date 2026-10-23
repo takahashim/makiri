@@ -121,7 +121,8 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   `Init_makiri` (where a raise is `require`'s) carries an `#[allow]`. Each
   protected call costs a `setjmp`, ~8 ns: a light reader that allocates one
   String (`#name`, `#[]`, `#text`) measured ~15-20 ns slower than the
-  unprotected allocation it replaced (`notes/ruby_boundary_simplification_plan.ja.md`).
+  unprotected allocation it replaced, about half of which dropping the
+  lifting (below) took back (`notes/ruby_boundary_simplification_plan.ja.md`).
 
   **A Document's content is reached only through a guard** (`bridge::dom`,
   over `crate::doc_cell`, which is Ruby-free so its `compile_fail` doctests
@@ -140,9 +141,11 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   one would leave the document borrowed for good; no raise crosses one,
   since every raising call returns `Err` (above). `rake oom`'s raise sweep
   makes every allocating call raise in turn and checks no document is left
-  borrowed. `str_after_read`, `node_set_after_read` and `HtmlView::wrap` /
-  `XmlView::wrap` still copy what they need out of the read before building
-  the result - no longer for safety, which no longer needs it.
+  borrowed. So a reader builds its result with the read held
+  (`str_from_read`, `node_set_from_read`); the copy-out-then-build it used to
+  need ("lifting") went with stage 4 of
+  `notes/ruby_boundary_simplification_plan.ja.md`, and the light readers got
+  faster for it (`#text` ~124 -> ~112 ns).
 
   **A Ruby method raises `Makiri::InternalError`, not `fatal`.**
   `bridge::ruby::entry` wraps the body of EVERY method the glue registers, and

@@ -10,7 +10,6 @@
 use crate::bridge::ruby::makiri_error;
 use magnus::{Error, Value};
 
-use crate::bridge::ruby::value;
 use crate::html_dom::html::{
     ForeignNode, HtmlNode, HtmlNodeKey, HtmlTree, Insertion, NodeType, Place, RawNode,
 };
@@ -21,7 +20,7 @@ use crate::init::{
 };
 
 use crate::bridge::dom::HtmlRead;
-use crate::bridge::string::{utf8_str, Lifted, RubyData, RubyText};
+use crate::bridge::string::{utf8_str, RubyData, RubyText};
 use crate::bridge::wrapper::*;
 use crate::child_index::{ChildList, Children, TokenTree};
 use crate::html_dom::html::{HtmlDoc, HtmlDocMut, HtmlNewNodes};
@@ -246,9 +245,8 @@ impl HtmlView<'_> {
     }
 
     /// The nodes `f` lists from the receiver's (the element ones alone when
-    /// `elements_only`), as a NodeSet: lifted out of the read when there are
-    /// few, built under `protect` with the read held when there are many
-    /// ([`node_set_after_read`](crate::bridge::node_set::node_set_after_read)).
+    /// `elements_only`), as a NodeSet built with the read held
+    /// ([`node_set_from_read`](crate::bridge::node_set::node_set_from_read)).
     /// `f` hands each node to the sink it is given.
     pub fn set(
         self,
@@ -256,7 +254,7 @@ impl HtmlView<'_> {
         f: impl for<'n> Fn(HtmlNode<'n>, &mut dyn FnMut(HtmlNode<'n>)),
     ) -> Result<Value, Error> {
         let document = self.document;
-        crate::bridge::node_set::node_set_after_read(self, document, |view, out| {
+        crate::bridge::node_set::node_set_from_read(self, document, |view, out| {
             f(view.node(), &mut |n| {
                 if !elements_only || n.element().is_some() {
                     out(RawNode::from(n).into());
@@ -274,8 +272,7 @@ impl HtmlView<'_> {
     /// its descendants' text slices, so no per-extraction tree walk - the walk
     /// is otherwise the dominant, cache-bound cost. A node the index does not
     /// serve (a fragment's, or before the index is due, or after a build OOM)
-    /// is walked ([`subtree_text`]). Short text is lifted out of the read and
-    /// the String made after it; long text is made under `protect`.
+    /// is walked ([`subtree_text`]). The String is made with the read held.
     pub fn text(self) -> Result<Value, Error> {
         let target = {
             let n = self.node();
@@ -296,7 +293,7 @@ impl HtmlView<'_> {
         ) {
             /* Character data and attributes lend their own bytes; the other
              * kinds (a doctype) have none. */
-            let text = crate::bridge::string::str_after_read(
+            let text = crate::bridge::string::str_from_read(
                 self,
                 crate::bridge::string::StrKind::Utf8,
                 |v| v.read.node(raw).own_text(),
@@ -312,16 +309,9 @@ impl HtmlView<'_> {
         let Some(run) = run else {
             return subtree_text(&self.read, node);
         };
-        if let Some(lifted) = Lifted::of_slices(run.iter(), run.total()) {
-            drop(self);
-            return utf8_str(lifted.as_slice());
-        }
-        // SAFETY: valid UTF-8 by the text-input contract (the slices are this
-        // document's text, borrowed from its index for the copy).
-        let built =
-            unsafe { crate::bridge::string::ruby_str_from_slices(run.iter(), run.total()) }?;
-        // SAFETY: the String just built, live and on this frame.
-        Ok(unsafe { value(built) })
+        /* The slices are this document's text, valid UTF-8 by the text-input
+         * contract, borrowed from its index for the copy. */
+        crate::bridge::string::utf8_str_from_slices(run.iter(), run.total())
     }
 
     /// The receiver's node. Unchecked: the receiver's key was minted from a

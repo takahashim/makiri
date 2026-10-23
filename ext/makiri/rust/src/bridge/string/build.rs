@@ -143,7 +143,7 @@ pub fn dom_name_str(bytes: &[u8]) -> Result<Value, Error> {
 
 /* ---- a String of bytes a document read lends ---- */
 
-/// How [`str_after_read`] makes its String: a fresh UTF-8 one ([`utf8_str`]),
+/// How [`str_from_read`] makes its String: a fresh UTF-8 one ([`utf8_str`]),
 /// or an interned DOM name ([`dom_name_str`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StrKind {
@@ -151,83 +151,22 @@ pub enum StrKind {
     DomName,
 }
 
-/// What [`str_after_read`] lifts out of a read to make the String after it:
-/// short bytes on the stack, with no `Drop`, so a raise past it leaks
-/// nothing.
-#[derive(Clone, Copy)]
-pub struct Lifted {
-    buf: [u8; LIFT_MAX],
-    len: usize,
-}
-
-/// The longest bytes [`str_after_read`] copies out of a read rather than
-/// making the String while the read is held - under `protect`, which costs a
-/// `setjmp`. Names and most attribute values are shorter.
-const LIFT_MAX: usize = 64;
-
-impl Lifted {
-    #[inline]
-    fn of(bytes: &[u8]) -> Option<Lifted> {
-        Lifted::of_slices(core::iter::once(bytes), bytes.len())
-    }
-
-    /// `slices`, totalling `total` bytes, joined on the stack - or `None`
-    /// when they are longer than it holds (or do not total `total`).
-    #[inline]
-    pub fn of_slices<'s>(slices: impl Iterator<Item = &'s [u8]>, total: usize) -> Option<Lifted> {
-        if total > LIFT_MAX {
-            return None;
-        }
-        let mut buf = [0u8; LIFT_MAX];
-        let mut len = 0usize;
-        for s in slices {
-            let end = len.checked_add(s.len())?;
-            buf.get_mut(len..end)?.copy_from_slice(s);
-            len = end;
-        }
-        (len == total).then_some(Lifted { buf, len })
-    }
-
-    /// The bytes.
-    #[inline]
-    pub fn as_slice(&self) -> &[u8] {
-        &self.buf[..self.len]
-    }
-}
-
 /// The String `bytes` - borrowed from `read`, a document read guard - make,
-/// with the guard ended before anything can raise past it.
-///
-/// A read guard is a counted borrow: a raise that `longjmp`s past it leaves
-/// the document counted as read for good, and every later edit refused. So
-/// short bytes are copied to the stack, the guard is dropped, and the String
-/// is made after; longer ones are made under `protect` with the guard held,
-/// and the guard dropped after. `bytes` sees the guard and answers what to
-/// make the String of, or `None` for nil.
+/// made while the guard is held: a failed allocation is `Err`, so the guard
+/// drops either way. `bytes` sees the guard and answers what to make the
+/// String of, or `None` for nil.
 #[inline]
-pub fn str_after_read<G>(
+pub fn str_from_read<G>(
     read: G,
     kind: StrKind,
     bytes: impl FnOnce(&G) -> Option<&[u8]>,
 ) -> Result<Option<Value>, Error> {
-    let lifted = {
-        let Some(b) = bytes(&read) else {
-            return Ok(None);
-        };
-        match Lifted::of(b) {
-            Some(lifted) => lifted,
-            None => {
-                let made = match kind {
-                    StrKind::Utf8 => utf8_str(b),
-                    StrKind::DomName => dom_name_str(b),
-                };
-                return made.map(Some);
-            }
-        }
+    let Some(b) = bytes(&read) else {
+        return Ok(None);
     };
-    drop(read);
-    Ok(Some(match kind {
-        StrKind::Utf8 => utf8_str(lifted.as_slice())?,
-        StrKind::DomName => dom_name_str(lifted.as_slice())?,
-    }))
+    match kind {
+        StrKind::Utf8 => utf8_str(b),
+        StrKind::DomName => dom_name_str(b),
+    }
+    .map(Some)
 }
