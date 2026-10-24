@@ -137,6 +137,17 @@ fn rstring_len(s: RString) -> usize {
 
 /* ---- conversions and checks ---- */
 
+/// `rb_keyword_given_p`: whether the method running now was called with
+/// keywords - the one thing `rb_scan_args` asks Ruby when it separates them.
+/// Raises nothing and runs no Ruby code. It reads the current frame, so it
+/// answers for a method only from that method's own body, before the method
+/// calls into Ruby (`glue::args::scan` is called first thing).
+#[inline]
+pub fn keyword_given(_: &Ruby) -> bool {
+    // SAFETY: under the GVL (`&Ruby`); a read of the current control frame.
+    unsafe { rb_sys::rb_keyword_given_p() != 0 }
+}
+
 /// `rb_sym2str`: raises `NoMemoryError` when a static Symbol's name String is
 /// made for the first time. Runs no Ruby code.
 #[inline]

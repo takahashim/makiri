@@ -18,7 +18,7 @@ use crate::init::MOD_HTML_NODE_METHODS;
 
 /// The optional `pretty:` keyword.
 fn layout_opt(ruby: &Ruby, args: &[Value]) -> Result<Layout, Error> {
-    Ok(if Kwargs::scan(args)?.flag(ruby, "pretty")? {
+    Ok(if Kwargs::scan(ruby, args)?.flag(ruby, "pretty")? {
         Layout::Pretty
     } else {
         Layout::Plain

@@ -29,6 +29,10 @@
 
 #![forbid(unsafe_code)]
 
+/// A method's positional and keyword arguments, separated as `rb_scan_args`
+/// separates them.
+pub mod args;
+
 /// Keyword arguments, read one way for every method.
 pub mod kwargs;
 

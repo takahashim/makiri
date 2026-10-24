@@ -10,7 +10,7 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{prelude::*, Error, RArray, RHash, Ruby, Value};
+use magnus::{prelude::*, Error, RHash, Ruby, Value};
 
 use crate::bridge::ruby::makiri_error;
 use crate::bridge::string::namespace_arg;
@@ -234,10 +234,10 @@ pub fn lshift(_ruby: &Ruby, this: XmlSelf, arg: Value) -> Result<Value, Error> {
 /// same arena, which wraps back to the receiver - so the caller got the
 /// original under the name of a copy (and `#clone(freeze: true)` froze it),
 /// with a stray node left behind. `XML::Document#dup` is the document copy.
-pub fn clone_node(this: XmlSelf, args: &[Value]) -> Result<Value, Error> {
+pub fn clone_node(ruby: &Ruby, this: XmlSelf, args: &[Value]) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let a = magnus::scan_args::scan_args::<(), (Option<Value>,), (), (), (), ()>(args)?;
-        let deep = a.optional.0.is_some_and(|v| v.to_bool());
+        let a = crate::glue::args::scan(ruby, args, crate::glue::args::Shape::positional(0, 1))?;
+        let deep = a.optional(0).is_some_and(|v| v.to_bool());
         if crate::bridge::ruby::same_value(this.value, this.document) {
             return Err(makiri_error("clone_node cannot copy a document; use #dup"));
         }
@@ -255,11 +255,18 @@ pub fn clone_node(this: XmlSelf, args: &[Value]) -> Result<Value, Error> {
 /// `create_element(name, content = nil, attributes = {})` -> Element.
 pub fn create_element(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let a = magnus::scan_args::scan_args::<(Value,), (), RArray, (), (), ()>(args)?;
-        let (name,) = a.required;
+        let a = crate::glue::args::scan(
+            ruby,
+            args,
+            crate::glue::args::Shape {
+                rest: true,
+                ..crate::glue::args::Shape::positional(1, 0)
+            },
+        )?;
+        let name = a.required(0);
         let mut content = ruby.qnil().as_value();
         let mut attrs: Option<RHash> = None;
-        for v in a.splat.into_iter() {
+        for &v in a.rest() {
             if let Some(h) = RHash::from_value(v) {
                 attrs = Some(h);
             } else if !v.is_nil() {
@@ -377,19 +384,12 @@ pub fn create_loose_dom_element(
 /// `create_document_type(name, public_id = "", system_id = "")` -> DocumentType.
 pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let a = magnus::scan_args::scan_args::<
-            (Value,),
-            (Option<Value>, Option<Value>),
-            (),
-            (),
-            (),
-            (),
-        >(args)?;
-        let name = a.required.0;
+        let a = crate::glue::args::scan(ruby, args, crate::glue::args::Shape::positional(1, 2))?;
+        let name = a.required(0);
         let nil = ruby.qnil().as_value();
         let nv = verified_name(name, "doctype name")?;
-        let pv = verified_text_opt(a.optional.0.unwrap_or(nil), "doctype public id")?;
-        let sv = verified_text_opt(a.optional.1.unwrap_or(nil), "doctype system id")?;
+        let pv = verified_text_opt(a.optional(0).unwrap_or(nil), "doctype public id")?;
+        let sv = verified_text_opt(a.optional(1).unwrap_or(nil), "doctype system id")?;
         /* An empty id is absent, like nil, matching the HTML factory and
          * Nokogiri. Built as a `DoctypeId`, never an `Option<&[u8]>` (its doc
          * says why). */
@@ -455,10 +455,10 @@ pub fn create_pi(_ruby: &Ruby, rb_self: Value, target: Value, data: Value) -> Re
 }
 
 /// `Document#import_node(node, deep = false)` - the DOM's importNode.
-pub fn import_node(_ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
+pub fn import_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), (), ()>(args)?;
-        let deep = a.optional.0.is_some_and(|v| v.to_bool());
-        wrap(import_copy(rb_self, a.required.0, deep)?, rb_self)
+        let a = crate::glue::args::scan(ruby, args, crate::glue::args::Shape::positional(1, 1))?;
+        let deep = a.optional(0).is_some_and(|v| v.to_bool());
+        wrap(import_copy(rb_self, a.required(0), deep)?, rb_self)
     })
 }

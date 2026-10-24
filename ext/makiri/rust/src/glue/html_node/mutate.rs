@@ -482,16 +482,9 @@ pub fn create_pi(
 /// `Document#create_document_type(name, public_id = "", system_id = "")`.
 pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let args = magnus::scan_args::scan_args::<
-            (Value,),
-            (Option<Value>, Option<Value>),
-            (),
-            (),
-            (),
-            (),
-        >(args)?;
-        let (rb_name,) = args.required;
-        let (rb_pub, rb_sys_) = args.optional;
+        let args = crate::glue::args::scan(ruby, args, crate::glue::args::Shape::positional(1, 2))?;
+        let rb_name = args.required(0);
+        let (rb_pub, rb_sys_) = (args.optional(0), args.optional(1));
 
         check_owning_doc(&rb_self)?;
         let nv = ruby_verified_name(rb_name, "doctype name")?;

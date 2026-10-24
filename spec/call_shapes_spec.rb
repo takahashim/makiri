@@ -101,6 +101,42 @@ RSpec.describe "argument shapes and block exits" do
     end
   end
 
+  describe "arity across the shapes" do
+    let(:xdoc) { Makiri::XML("<r/>") }
+
+    it "counts a rest shape as 'n+', and passes a trailing Hash into it" do
+      expect { xdoc.create_element }.to arity_error(0, "1+")
+      expect(xdoc.create_element("e", "t", { "a" => "1" }, nil).to_xml).to eq(%(<e a="1">t</e>))
+      expect(xdoc.create_element("e", a: "1").to_xml).to eq(%(<e a="1"/>))
+    end
+
+    it "counts two optional arguments as 'n..n+2', taking nil for either" do
+      expect { xdoc.create_document_type }.to arity_error(0, "1..3")
+      expect { xdoc.create_document_type("a", "b", "c", "d") }.to arity_error(4, "1..3")
+      expect { doc.create_document_type("a", "b", "c", "d") }.to arity_error(4, "1..3")
+      expect(xdoc.create_document_type("a", nil, nil).to_xml).to eq("<!DOCTYPE a>")
+    end
+
+    it "answers the hand-counted arities with the same message" do
+      expect { xdoc.root.clone_node(true, 1) }.to arity_error(2, "0..1")
+      expect { doc.at_css("p").clone_node(1, 2) }.to arity_error(2, "0..1")
+      expect { doc.css("p")[0, 1, 2] }.to arity_error(3, "1..2")
+      expect { Makiri::NodeSet.new }.to arity_error(0, "1..2")
+      expect { Makiri::NodeSet.new(doc, [], 1) }.to arity_error(3, "1..2")
+      expect(Makiri::NodeSet.new(doc, nil).length).to eq(0)
+    end
+
+    it "counts only the positional arguments when keywords are given" do
+      expect { Makiri::XPathContext.new(doc, {}, x: "u") }.to arity_error(2, 1)
+      expect(doc.xpath("//p", nil, x: "u").length).to eq(1)
+    end
+
+    it "reads a nil keyword as absent" do
+      expect(doc.at_css("p").to_html(pretty: nil)).to eq("<p>a</p>")
+      expect(doc.fragment("<b>x</b>", context: nil).children.length).to eq(1)
+    end
+  end
+
   describe "NodeSet#each" do
     let(:set) { doc.css("p, circle") }
 

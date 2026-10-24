@@ -139,16 +139,14 @@ fn fragment_from_args(
     args: &[Value],
     document: impl FnOnce() -> Result<Value, Error>,
 ) -> Result<Value, Error> {
-    let a = magnus::scan_args::scan_args::<(Value,), (), (), (), magnus::RHash, ()>(args)?;
-    let context = a.keywords.get(crate::bridge::build::sym("context")?);
+    let a = crate::glue::args::scan(ruby, args, crate::glue::args::Shape::with_keywords(1, 0))?;
+    let kw = crate::glue::kwargs::Kwargs::from_scan(a.keywords());
+    let context = kw.value(ruby, "context")?;
     /* Read before the backing document is made, so a bad value costs nothing. */
-    let limit = crate::glue::kwargs::max_tree_depth(
-        ruby,
-        a.keywords.get(crate::bridge::build::sym("max_tree_depth")?),
-    )?;
+    let limit = crate::glue::kwargs::max_tree_depth(ruby, kw.value(ruby, "max_tree_depth")?)?;
     let document = document()?;
     let at = fragment::resolve_fragment_context(document, context)?;
-    fragment::build_fragment(document, a.required.0, at, limit)
+    fragment::build_fragment(document, a.required(0), at, limit)
 }
 
 /// `DocumentFragment.parse(html, context: ..., max_tree_depth: ...)` -> a
@@ -183,12 +181,12 @@ fn node_parse(ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Value, Erro
 
 /// `Document#import_node(node, deep = false)` -> a copy of `node` owned by THIS
 /// document - the DOM importNode, whose `deep` defaults to false.
-fn doc_import_node(_ruby: &Ruby, self_: Value, args: &[Value]) -> Result<Value, Error> {
+fn doc_import_node(ruby: &Ruby, self_: Value, args: &[Value]) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), (), ()>(args)?;
+        let a = crate::glue::args::scan(ruby, args, crate::glue::args::Shape::positional(1, 1))?;
         /* `deep` is truthiness, anything but nil and false - the DOM default off. */
-        let deep = a.optional.0.is_some_and(|v| v.to_bool());
-        crate::bridge::doc::import_node(self_, a.required.0, deep)
+        let deep = a.optional(0).is_some_and(|v| v.to_bool());
+        crate::bridge::doc::import_node(self_, a.required(0), deep)
     })
 }
 
@@ -196,21 +194,13 @@ fn doc_import_node(_ruby: &Ruby, self_: Value, args: &[Value]) -> Result<Value, 
 /// detached from any parent - the DOM cloneNode, whose `deep` defaults to false.
 pub fn node_clone_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        /* The 0..1 arity by hand: `scan_args` cost about a third of a shallow
-         * clone. The message is the one `rb_scan_args` gives. */
+        /* The 0..1 arity by hand, takes no keywords: a match is cheaper than
+         * `glue::args::scan` on a shallow clone, which costs little else. */
         let deep = match args {
             [] => false,
             /* Truthiness: anything but nil and false. */
             [v] => v.to_bool(),
-            _ => {
-                return Err(Error::new(
-                    ruby.exception_arg_error(),
-                    format!(
-                        "wrong number of arguments (given {}, expected 0..1)",
-                        args.len()
-                    ),
-                ))
-            }
+            _ => return Err(crate::glue::args::arity_error(ruby, args.len(), 0, Some(1))),
         };
         crate::bridge::doc::clone_node(rb_self, deep)
     })

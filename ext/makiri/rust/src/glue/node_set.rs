@@ -21,13 +21,6 @@ fn length(s: NodeSetSelf) -> Result<usize, Error> {
     crate::bridge::ruby::entry(|| s.count())
 }
 
-fn arity_error(ruby: &Ruby, given: usize) -> Error {
-    Error::new(
-        ruby.exception_arg_error(),
-        format!("wrong number of arguments (given {given}, expected 1..2)"),
-    )
-}
-
 /// `set[i]` -> Node or nil (negative counts from the end);
 /// `set[start, length]` and `set[range]` -> a new NodeSet, nil when the start is
 /// out of range. Mirrors `Array#[]`.
@@ -60,7 +53,7 @@ fn aref(ruby: &Ruby, s: NodeSetSelf, args: &[Value]) -> Result<Option<Value>, Er
                 }
                 s.slice(beg as usize, len as usize)
             }
-            _ => Err(arity_error(ruby, args.len())),
+            _ => Err(crate::glue::args::arity_error(ruby, args.len(), 1, Some(2))),
         }
     })
 }
@@ -118,9 +111,9 @@ fn op_minus(ruby: &Ruby, s: NodeSetSelf, other: Value) -> Result<Value, Error> {
 /// list seeds it, and every node in it must belong to that document.
 fn s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), (), ()>(args)?;
-        let (owner,) = a.required;
-        let (list,) = a.optional;
+        let a = crate::glue::args::scan(ruby, args, crate::glue::args::Shape::positional(1, 1))?;
+        let owner = a.required(0);
+        let list = a.optional(0);
 
         let document = if is_kind_of(owner, &CLASS_DOCUMENT) {
             owner

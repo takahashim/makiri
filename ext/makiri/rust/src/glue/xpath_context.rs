@@ -10,7 +10,7 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{function, method, prelude::*, Error, RHash, Ruby, Value};
+use magnus::{function, method, prelude::*, Error, Ruby, Value};
 
 use crate::bridge::ruby::is_kind_of;
 use crate::bridge::xpath::{XPathCtx, XPathCtxSelf};
@@ -35,9 +35,9 @@ fn expect_node(ruby: &Ruby, v: Value) -> Result<(), Error> {
 /// registered on the context, so they hold for every later evaluate.
 fn s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let a = magnus::scan_args::scan_args::<(Value,), (), (), (), RHash, ()>(args)?;
-        let node = a.required.0;
-        let kw = Keywords::scan(ruby, Kwargs::from_hash(a.keywords))?;
+        let a = crate::glue::args::scan(ruby, args, crate::glue::args::Shape::with_keywords(1, 0))?;
+        let node = a.required(0);
+        let kw = Keywords::scan(ruby, Kwargs::from_scan(a.keywords()))?;
         expect_node(ruby, node)?;
 
         let obj = XPathCtx::create(node, kw.lax)?;

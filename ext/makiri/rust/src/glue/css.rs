@@ -34,11 +34,11 @@ pub struct CssArgs {
 impl CssArgs {
     /// Read `(selector, namespaces = nil)` from `args`.
     pub fn scan(ruby: &Ruby, args: &[Value]) -> Result<CssArgs, Error> {
-        let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), (), ()>(args)?;
+        let a = crate::glue::args::scan(ruby, args, crate::glue::args::Shape::positional(1, 1))?;
         CssArgs::new(
             ruby,
-            a.required.0,
-            a.optional.0.unwrap_or_else(|| ruby.qnil().as_value()),
+            a.required(0),
+            a.optional(0).unwrap_or_else(|| ruby.qnil().as_value()),
         )
     }
 

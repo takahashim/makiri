@@ -27,11 +27,11 @@ use crate::xml::model::ParseLimits;
 /// It must be a positive Integer - the sign is checked BEFORE the unsigned
 /// conversion, because a negative would otherwise wrap into a huge `size_t` and
 /// bypass the budget entirely.
-fn parse_limits(ruby: &Ruby, h: RHash) -> Result<ParseLimits, Error> {
+fn parse_limits(ruby: &Ruby, h: Option<RHash>) -> Result<ParseLimits, Error> {
     let mut limits = ParseLimits { max_bytes: None };
-    if h.is_empty() {
+    let Some(h) = h.filter(|h| !h.is_empty()) else {
         return Ok(limits);
-    }
+    };
 
     let key = crate::bridge::build::sym("max_bytes")?;
     /* The keys are read from the Hash itself (`hash::each_pair`), not
@@ -72,9 +72,9 @@ fn parse_limits(ruby: &Ruby, h: RHash) -> Result<ParseLimits, Error> {
 /// to a String first, as the HTML entry does: `source` is a String here.
 fn s_parse(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let scanned = magnus::scan_args::scan_args::<(Value,), (), (), (), RHash, ()>(args)?;
-        let (source,) = scanned.required;
-        let limits = parse_limits(ruby, scanned.keywords)?;
+        let a = crate::glue::args::scan(ruby, args, crate::glue::args::Shape::with_keywords(1, 0))?;
+        let source = a.required(0);
+        let limits = parse_limits(ruby, a.keywords())?;
         crate::bridge::xml::parse_xml_document(source, limits)
     })
 }

@@ -5,25 +5,25 @@ use magnus::{prelude::*, Error, RHash, Ruby, Value};
 
 /// The keywords of a method that takes only keywords.
 ///
-/// The no-argument call is `Kwargs(None)`, reached before `scan_args`. It is
+/// The no-argument call is `Kwargs(None)`, answered before any scan. It is
 /// the overwhelmingly common one - `to_html` with a keyword is the exception -
-/// and routing it through `scan_args` cost about a quarter of the per-call
-/// throughput on a small element, which is all such a method does at that size.
+/// and a scan cost about a quarter of the per-call throughput on a small
+/// element, which is all such a method does at that size.
 #[derive(Clone, Copy)]
 pub(crate) struct Kwargs(Option<RHash>);
 
 impl Kwargs {
-    pub(crate) fn scan(args: &[Value]) -> Result<Kwargs, Error> {
+    pub(crate) fn scan(ruby: &Ruby, args: &[Value]) -> Result<Kwargs, Error> {
         if args.is_empty() {
             return Ok(Kwargs(None));
         }
-        let scanned = magnus::scan_args::scan_args::<(), (), (), (), RHash, ()>(args)?;
-        Ok(Kwargs(Some(scanned.keywords)))
+        let a = crate::glue::args::scan(ruby, args, crate::glue::args::Shape::with_keywords(0, 0))?;
+        Ok(Kwargs(a.keywords()))
     }
 
-    /// The keyword hash `scan_args` already separated out.
-    pub(crate) fn from_hash(h: RHash) -> Kwargs {
-        Kwargs(Some(h))
+    /// The keywords a scan already separated out (`None` for none).
+    pub(crate) fn from_scan(h: Option<RHash>) -> Kwargs {
+        Kwargs(h)
     }
 
     /// Keyword `name`, or `None` when it is absent or `nil`. A plain lookup

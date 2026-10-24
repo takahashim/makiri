@@ -54,15 +54,14 @@ impl QueryArgs {
                 lax: false,
             });
         }
-        let a =
-            magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), RHash, ()>(args)?;
-        let kw = Keywords::scan(ruby, Kwargs::from_hash(a.keywords))?;
+        let a = crate::glue::args::scan(ruby, args, crate::glue::args::Shape::with_keywords(1, 1))?;
+        let kw = Keywords::scan(ruby, Kwargs::from_scan(a.keywords()))?;
         let mut q = QueryArgs {
-            text: a.required.0,
+            text: a.required(0),
             namespaces: None,
             lax: kw.lax,
         };
-        if let Some(v) = a.optional.0.filter(|v| !v.is_nil()) {
+        if let Some(v) = a.optional(0) {
             match RHash::from_value(v) {
                 Some(h) => q.namespaces = Some(h),
                 None => return Err(Error::new(

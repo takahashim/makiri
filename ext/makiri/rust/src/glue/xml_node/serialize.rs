@@ -16,7 +16,7 @@ use crate::init::MOD_XML_NODE_METHODS;
 use crate::xml::serialize::{self as xml_serialize, Failure};
 
 fn to_xml_opts(ruby: &Ruby, args: &[Value]) -> Result<(i32, Value), Error> {
-    let kw = Kwargs::scan(args)?;
+    let kw = Kwargs::scan(ruby, args)?;
     let mut width = 0i32;
     if kw.flag(ruby, "pretty")? {
         width = 2;
@@ -129,7 +129,7 @@ fn to_xml(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Er
 
 fn canonicalize(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        let comments = Kwargs::scan(args)?.flag(ruby, "comments")?;
+        let comments = Kwargs::scan(ruby, args)?.flag(ruby, "comments")?;
         let buf = xml_serialize::canonicalize(&*this.read()?, this.id, comments)
             .map_err(|f| failure_error(f, "canonicalize"))?;
         Ok(crate::bridge::string::utf8_rstring(buf.as_slice())?.as_value())
