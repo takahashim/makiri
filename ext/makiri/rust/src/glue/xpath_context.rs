@@ -71,7 +71,7 @@ fn register_namespace(ctx: XPathCtxSelf, prefix: Value, uri: Value) -> Result<Va
     crate::bridge::ruby::entry(|| {
         let cap = ctx.limits().max_string_bytes;
         crate::glue::query::bind_pair(prefix, uri, cap, |p, u| ctx.bind_namespace(p, u))?;
-        crate::bridge::ruby::current_receiver()
+        Ok(ctx.value())
     })
 }
 
@@ -79,7 +79,7 @@ fn register_namespace(ctx: XPathCtxSelf, prefix: Value, uri: Value) -> Result<Va
 fn register_variable(ctx: XPathCtxSelf, name: Value, value: Value) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         ctx.register_variable(name, value)?;
-        crate::bridge::ruby::current_receiver()
+        Ok(ctx.value())
     })
 }
 

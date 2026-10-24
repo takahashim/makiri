@@ -470,15 +470,6 @@ pub unsafe fn typed_object_wrap(
     })
 }
 
-/// `ruby_xmalloc`: raises `NoMemoryError`.
-#[inline]
-pub unsafe fn xmalloc(size: usize) -> Result<*mut c_void, Error> {
-    call(|| unsafe {
-        injected_raise();
-        rb_sys::ruby_xmalloc(size as rb_sys::size_t)
-    })
-}
-
 /// `ruby_xrealloc2`: raises `NoMemoryError`, and `ArgumentError` when
 /// `n * size` overflows.
 #[inline]

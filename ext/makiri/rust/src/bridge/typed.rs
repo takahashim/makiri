@@ -7,10 +7,11 @@
 //! [`Hooks`], and the callbacks below are the one monomorphised bridge from
 //! Ruby's GC to it, so no glue module writes an `extern "C"` GC function.
 //!
-//! The wrapper struct lives in memory from `ruby_xmalloc` ([`wrap_built`]),
-//! and the free callback runs the struct's `Drop` in place before handing that
-//! memory back to `ruby_xfree` - `xfree` alone would skip the destructor, and
-//! with it everything the struct owns.
+//! The wrapper struct is the object's data, made with the object by
+//! `rb_data_typed_object_zalloc` ([`wrap_built`]) - in the object's own slot
+//! for an embedded type, from `xcalloc` otherwise - and the free callback runs
+//! the struct's `Drop` in place before the memory goes back: freeing alone
+//! would skip the destructor, and with it everything the struct owns.
 
 #![allow(unsafe_code)]
 
@@ -170,24 +171,38 @@ pub trait Hooks: Sized {
     }
 }
 
-/* The three GC callbacks below are the crate's only `extern "C"` functions
- * with no panic latch, and deliberately so. They run from Ruby's collector,
- * where there is no frame to raise into: `mark_cb` cannot report a failure
- * without risking premature collection of what it did not mark, and `free_cb`
- * cannot report one without leaking or freeing twice. So a panic here keeps
- * the old behaviour - Rust turns the unwind at the boundary into an abort -
- * which is the honest answer when the alternative is a corrupted heap.
- * Keep their bodies trivial; that is what makes the choice cheap. */
+/* The GC callbacks below are the crate's only `extern "C"` functions with no
+ * panic latch, and deliberately so. They run from Ruby's collector, where
+ * there is no frame to raise into: `mark_cb` cannot report a failure without
+ * risking premature collection of what it did not mark, and `free_cb` cannot
+ * report one without leaking or freeing twice. So a panic here keeps the old
+ * behaviour - Rust turns the unwind at the boundary into an abort - which is
+ * the honest answer when the alternative is a corrupted heap. Keep their
+ * bodies trivial; that is what makes the choice cheap.
+ *
+ * Each passes over a null data pointer. `rb_data_typed_object_zalloc` makes
+ * the object before it allocates a non-embedded type's data, so a failed
+ * allocation leaves an object with none; CRuby's collector does not call a
+ * callback for it today, but that is its implementation, not its documented
+ * contract, and one branch here means nothing rests on it. */
 
 unsafe extern "C" fn mark_cb<T: Hooks>(ptr: *mut c_void) {
-    // SAFETY: Ruby hands back the pointer `wrap_built` stored, a live `T`.
+    if ptr.is_null() {
+        return;
+    }
+    // SAFETY: Ruby hands back the data pointer of an object `wrap_built`
+    // made, which holds a live `T` (see `wrap_built`).
     unsafe { (*(ptr as *const T)).trace(&Tracer(Phase::Mark)) };
 }
 
 unsafe extern "C" fn free_cb<T: Hooks>(ptr: *mut c_void) {
+    if ptr.is_null() {
+        return;
+    }
     // SAFETY: as `mark_cb`; the object is being collected, so this is its last
     // access - the `T` is dropped exactly once, here, and never read again -
-    // and the struct came from `ruby_xmalloc`, so it goes back to `ruby_xfree`.
+    // and the data came from `rb_data_typed_object_zalloc`'s `xcalloc`, so it
+    // goes back to `ruby_xfree`, as `TypedData_Make_Struct`'s data does.
     unsafe {
         core::ptr::drop_in_place(ptr as *mut T);
         rb_sys::ruby_xfree(ptr);
@@ -195,17 +210,27 @@ unsafe extern "C" fn free_cb<T: Hooks>(ptr: *mut c_void) {
 }
 
 unsafe extern "C" fn free_embedded_cb<T: Hooks>(ptr: *mut c_void) {
-    // SAFETY: as `free_cb`, for data embedded in the object's own slot: the
-    // `T` is dropped, and the memory is the slot, which Ruby reclaims.
+    if ptr.is_null() {
+        return;
+    }
+    // SAFETY: as `free_cb`, for an embeddable type: the `T` is dropped and the
+    // memory is left to Ruby - the object's own slot when it was embedded,
+    // and data Ruby frees after this callback when it was not.
     unsafe { core::ptr::drop_in_place(ptr as *mut T) };
 }
 
 unsafe extern "C" fn memsize_cb<T: Hooks>(ptr: *const c_void) -> rb_sys::size_t {
+    if ptr.is_null() {
+        return 0;
+    }
     // SAFETY: as `mark_cb`.
     unsafe { (*(ptr as *const T)).memsize() as rb_sys::size_t }
 }
 
 unsafe extern "C" fn compact_cb<T: Hooks>(ptr: *mut c_void) {
+    if ptr.is_null() {
+        return;
+    }
     // SAFETY: as `mark_cb`; compaction has finished moving and is now fixing up
     // the references to what it moved.
     unsafe { (*(ptr as *const T)).trace(&Tracer(Phase::Relocate)) };
@@ -283,6 +308,19 @@ impl<T: Hooks> TypedType<T> {
     pub fn get_known<'v>(&'static self, v: &'v Value) -> &'v T {
         // SAFETY: as `get`; `known_ptr` asserts the type.
         unsafe { &*self.known_ptr(*v) }
+    }
+
+    /// [`get_known`](Self::get_known) with the lifetime left to the caller:
+    /// for a reference kept beside the object it reads, as a NodeSet's fill
+    /// handle is.
+    ///
+    /// # Safety
+    /// `v` must be an object of this type (a mismatch panics), and the
+    /// caller must keep it rooted - on its stack - for as long as it uses
+    /// the reference.
+    pub(in crate::bridge) unsafe fn get_unbound<'a>(&'static self, v: Value) -> &'a T {
+        // SAFETY: the caller's contract; `known_ptr` asserts the type.
+        unsafe { &*self.known_ptr(v) }
     }
 
     /// The `T` behind an object whose type the caller established. The
@@ -498,138 +536,56 @@ fn typed_data_known(v: Value, ty: &'static DataType) -> *mut c_void {
     }
 }
 
-/// Allocate `ruby_xmalloc` memory for a `T`, write the fully built value
-/// `build` returns into it, wrap it as a `klass` object of data type `ty`, and
-/// only then let `store` write the VALUEs it holds.
+/// Make a `klass` object of data type `ty` with room for a `T`, write the
+/// fully built value `build` returns into it, and only then let `store` write
+/// the VALUEs it holds: `TypedData_Make_Struct`, the C API's own way to make
+/// an object with its data, for every type - embedded or not, which only
+/// decides where Ruby puts the data (`rtypeddata_get_data` finds it either
+/// way).
 ///
-/// The order is the point. The wrap allocates, so it is a GC point, and a VALUE
-/// already sitting in this malloc'd struct is seen by no mark there: a GC can
-/// free it, or compaction move it out from under the stored copy. So the built
-/// value has its VALUE fields `Qfalse` (0), which the mark ignores, until
-/// `store` sets them; and the VALUEs `store` writes are still on the caller's
-/// stack across the wrap, where the conservative scan pins them.
+/// One C call, `rb_data_typed_object_zalloc`, makes the object and its data,
+/// so one protected call per object. A non-embedded type's data is its
+/// `xcalloc`, which also makes it a point where Ruby decides whether malloc
+/// pressure calls for a collection: `rb_gc_adjust_memory_usage`, which a
+/// Document reports its arena with, only adds to that pressure, so a loop of
+/// parses with no Ruby allocation of a Document's data ran no GC at all
+/// (`spec/gc_accounting_spec.rb`).
 ///
-/// Built AFTER the allocation, by a closure, not passed in, so a failed
-/// allocation builds nothing. Both allocations come back as `Err` (`raw`'s
-/// calls are protected); a failed wrap drops the built `T` in place and frees
-/// its memory. Once wrapped, the free callback drops it in place.
+/// The order is the point. The data is zeroed until `build`'s value is
+/// written, which is not a valid `T`; nothing runs between - `build` is plain
+/// Rust and runs no Ruby - so no collection sees it. And the value has its
+/// VALUE fields `Qfalse` until `store` sets them, once the object exists, so a
+/// VALUE is never held where no mark reaches it. Built AFTER the allocation,
+/// by a closure, so a failed allocation - `Err`, from `raw`'s protected call -
+/// builds nothing.
 ///
 /// # Safety
-/// Under the GVL. `build` returns a `T` that holds no VALUE but `Qfalse` (all
-/// a `Held` can hold before a `Store`); `ty` must be `T`'s type (its free
-/// callback drops a `T` and returns the memory to `ruby_xfree`).
+/// Under the GVL. `build` runs no Ruby and returns a `T` that holds no VALUE
+/// but `Qfalse` (all a `Held` can hold before a `Store`); `ty` must be `T`'s
+/// type.
 unsafe fn wrap_built<T>(
     klass: VALUE,
     ty: *const rb_data_type_t,
     build: impl FnOnce() -> T,
     store: impl FnOnce(&mut T, &Store),
 ) -> Result<VALUE, Error> {
-    const EMBEDDABLE: VALUE = rb_sys::rbimpl_typeddata_flags::RUBY_TYPED_EMBEDDABLE as VALUE;
-    if (*ty).flags & EMBEDDABLE != 0 {
-        return wrap_embedded(klass, ty, build, store);
+    const { assert!(core::mem::size_of::<T>() != 0) };
+    const { assert!(core::mem::align_of::<T>() <= 16) }; /* malloc's alignment */
+    let obj = super::raw::typed_object_zalloc(klass, core::mem::size_of::<T>(), ty)?;
+    let p = data_pointer(obj) as *mut T;
+    if p.is_null() {
+        return Err(crate::bridge::ruby::internal_error(
+            "a TypedData object was made without its data",
+        ));
     }
-    /* `ruby_xmalloc` is malloc-aligned; nothing wrapped asks for more. */
-    const { assert!(core::mem::align_of::<T>() <= 16) };
-    let p = super::raw::xmalloc(core::mem::size_of::<T>())? as *mut T;
     p.write(build());
-    let obj = match super::raw::typed_object_wrap(klass, p as *mut c_void, ty) {
-        Ok(obj) => obj,
-        Err(e) => {
-            core::ptr::drop_in_place(p);
-            super::alloc::free(p);
-            return Err(e);
-        }
-    };
-    /* Wrapped: from here the mark sees what `store` puts in. */
+    /* An object: from here the mark sees what `store` puts in. */
     store(&mut *p, &Store(()));
     Ok(obj)
 }
 
 /// The largest `T` an embedded type takes: with `RTypedData`'s header it fits
-/// the 80-byte slot, well inside Ruby's largest (640), so `rb_data_typed_object_zalloc`
-/// always embeds it - which `free_embedded_cb`, which frees no memory, relies on.
+/// the 80-byte slot, well inside Ruby's largest (640), so
+/// `rb_data_typed_object_zalloc` embeds it. Were it not embedded, the object
+/// would still be right - its data allocated apart, which Ruby frees.
 pub const EMBED_MAX: usize = 40;
-
-/// [`wrap_built`] for an embedded type: the object is allocated with its data
-/// zeroed in its own slot, `build`'s value is written there, and `store`
-/// runs as before. Nothing runs between the allocation and the write - `build`
-/// is plain Rust - so no collection sees the zeroed data.
-unsafe fn wrap_embedded<T>(
-    klass: VALUE,
-    ty: *const rb_data_type_t,
-    build: impl FnOnce() -> T,
-    store: impl FnOnce(&mut T, &Store),
-) -> Result<VALUE, Error> {
-    let obj = super::raw::typed_object_zalloc(klass, core::mem::size_of::<T>(), ty)?;
-    /* `EMBED_MAX` keeps every embedded `T` small enough to be embedded; a
-     * Ruby that did not would have allocated the data apart, which the free
-     * callback would leak - refused rather than handed out. */
-    /* Embedded data starts right after `RTypedData`'s header - `RBasic`'s two
-     * words, `type` and `typed_flag` - where the `data` pointer would be
-     * (`RTYPEDDATA_GET_DATA`); data allocated apart is anywhere else. */
-    let p = data_pointer(obj) as *mut T;
-    if p as usize != obj as usize + 4 * core::mem::size_of::<usize>() {
-        return Err(crate::bridge::ruby::internal_error(
-            "an embeddable object was not embedded",
-        ));
-    }
-    p.write(build());
-    store(&mut *p, &Store(()));
-    Ok(obj)
-}
-
-/* ---- magnus's TypedData, for NodeSet ----
- * NodeSet implements magnus's `TypedData` by hand (its GC hooks are magnus's;
- * no derive, which would look its class up with a `funcall`), not a
- * `TypedType`; this is its one unchecked accessor, and `wrap_magnus` below its
- * one constructor. magnus boxes the value and its free drops the `Box`, so
- * NodeSet gets its `Drop` the same way a `TypedType` object does. */
-
-/// The wrapped Rust value behind a TypedData object, without magnus's
-/// `rb_protect`.
-///
-/// `<&T>::try_convert` - and so every magnus method with a wrapped receiver -
-/// runs `rb_check_typeddata` inside `rb_protect`, which is a `setjmp` per call.
-/// That is the right default when a Rust caller wants a `Result`, but it is not
-/// free: on the per-node path it measured about a quarter of the throughput of
-/// the C it replaced (`Node#css` over 2000 nodes, `notes/node_set_ab.rb`).
-///
-/// # Safety
-/// Only for a VALUE the caller built as a `T` itself (a mismatch panics). The
-/// returned lifetime is unconstrained; the caller must keep `v` rooted.
-pub(in crate::bridge) unsafe fn typed_data_unprotected<'a, T: magnus::TypedData>(
-    v: VALUE,
-) -> &'a T {
-    /* magnus::DataType is #[repr(transparent)] over rb_data_type_t, so this
-     * cast is what the repr promises; the accessor for it is crate-private. */
-    let dt = T::data_type() as *const magnus::typed_data::DataType as *const rb_data_type_t;
-    assert!(
-        rb_sys::rb_typeddata_is_kind_of(v, dt) != 0,
-        "a VALUE built as a NodeSet had a different type"
-    );
-    &*(data_pointer(v) as *const T)
-}
-
-/// magnus's `Ruby::wrap` for a `#[derive(TypedData)]` value (NodeSet), with
-/// both allocations - the box and the object - answered as `Err` rather than
-/// raised (magnus's raises). magnus's free callback drops the box, so the
-/// object is made exactly as `wrap` makes it.
-pub(in crate::bridge) fn wrap_magnus<T: magnus::TypedData>(data: T) -> Result<Value, Error> {
-    let ruby = super::ruby::gvl_ruby();
-    let class = T::class_for(&ruby, &data);
-    let boxed = crate::falloc::try_box(data)
-        .map_err(|_| Error::new(ruby.exception_no_mem_error(), "failed to allocate memory"))?;
-    let dt = T::data_type() as *const magnus::typed_data::DataType as *const rb_data_type_t;
-    let p = Box::into_raw(boxed);
-    // SAFETY: `p` is the box magnus's free callback for `T` expects, and `dt`
-    // is `T`'s data type (magnus::DataType is #[repr(transparent)] over it).
-    match unsafe { super::raw::typed_object_wrap(class.as_raw(), p as *mut c_void, dt) } {
-        // SAFETY: the object just wrapped.
-        Ok(obj) => Ok(unsafe { value(obj) }),
-        Err(e) => {
-            // SAFETY: not wrapped, so the box is still ours alone.
-            drop(unsafe { Box::from_raw(p) });
-            Err(e)
-        }
-    }
-}

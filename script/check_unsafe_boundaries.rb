@@ -33,13 +33,13 @@ UNSAFE_ISLANDS = {
   "bridge/gvl.rs" => 3,
   "bridge/node_set.rs" => 3,
   "bridge/node_wrap.rs" => 1,
-  "bridge/raw.rs" => 45,
+  "bridge/raw.rs" => 43,
   "bridge/ruby.rs" => 12,
   "bridge/stack.rs" => 1,
   "bridge/string/build.rs" => 2,
   "bridge/string/encoding.rs" => 10,
   "bridge/string/view.rs" => 6,
-  "bridge/typed.rs" => 34,
+  "bridge/typed.rs" => 31,
   "bridge/wrapper/document.rs" => 2,
   "bridge/wrapper/node.rs" => 1,
   "bridge/xml_decode.rs" => 3,
@@ -152,7 +152,7 @@ RAISING_API = /\b(?:rb_raise|rb_exc_raise|rb_jump_tag|rb_check_typeddata|
   ruby_xmalloc|ruby_xrealloc2|
   rb_ary_new_capa|rb_ary_push|rb_hash_new|rb_hash_aset|rb_ll2inum|rb_ull2inum|rb_float_new|
   rb_id2sym|rb_str_cat|rb_enumeratorize_with_size|rb_memerror)\b/x
-RAISING_COUNTS = { "bridge/raw.rs" => 32 }.freeze # with `rb_memerror` (the raise sweep's injected raise) and `rb_jump_tag` (`jump_error`)
+RAISING_COUNTS = { "bridge/raw.rs" => 31 }.freeze # with `rb_memerror` (the raise sweep's injected raise) and `rb_jump_tag` (`jump_error`)
 
 # Makiri runs none of its caller's Ruby code: no argument is converted with its
 # `to_s`/`to_str`, no method of a caller's object is called, and XPath has no

@@ -12,12 +12,12 @@ use core::ffi::c_long;
 
 use magnus::{function, method, prelude::*, Error, RArray, Ruby, Value};
 
-use crate::bridge::node_set::{node_set_of_nodes, Membership, NodeSet};
+use crate::bridge::node_set::{node_set_of_nodes, Membership, NodeSetSelf};
 use crate::bridge::ruby::{is_kind_of, range_beg_len};
 use crate::bridge::wrapper::keepalive_document;
 use crate::init::{CLASS_DOCUMENT, CLASS_NODE, CLASS_NODE_SET};
 
-fn length(s: &NodeSet) -> Result<usize, Error> {
+fn length(s: NodeSetSelf) -> Result<usize, Error> {
     crate::bridge::ruby::entry(|| s.count())
 }
 
@@ -31,7 +31,7 @@ fn arity_error(ruby: &Ruby, given: usize) -> Error {
 /// `set[i]` -> Node or nil (negative counts from the end);
 /// `set[start, length]` and `set[range]` -> a new NodeSet, nil when the start is
 /// out of range. Mirrors `Array#[]`.
-fn aref(ruby: &Ruby, s: &NodeSet, args: &[Value]) -> Result<Option<Value>, Error> {
+fn aref(ruby: &Ruby, s: NodeSetSelf, args: &[Value]) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| {
         let count = s.count()? as c_long;
         let from_end = |i: c_long| if i < 0 { i + count } else { i };
@@ -41,7 +41,7 @@ fn aref(ruby: &Ruby, s: &NodeSet, args: &[Value]) -> Result<Option<Value>, Error
                  * raises, as `Array#[]` does. The ends are Integers or nil: one
                  * that is not would be converted by its `to_int`. */
                 match range_beg_len(crate::bridge::ruby::integer_range_arg(*range)?, count)? {
-                    Some((beg, len)) => s.slice(ruby, beg as usize, len as usize),
+                    Some((beg, len)) => s.slice(beg as usize, len as usize),
                     None => Ok(None),
                 }
             }
@@ -50,7 +50,7 @@ fn aref(ruby: &Ruby, s: &NodeSet, args: &[Value]) -> Result<Option<Value>, Error
                 if i < 0 || i >= count {
                     return Ok(None);
                 }
-                s.at(ruby, i as usize)
+                s.at(i as usize)
             }
             [beg, len] => {
                 let beg = from_end(crate::bridge::ruby::long_arg(*beg)?);
@@ -58,7 +58,7 @@ fn aref(ruby: &Ruby, s: &NodeSet, args: &[Value]) -> Result<Option<Value>, Error
                 if beg < 0 || beg > count || len < 0 {
                     return Ok(None);
                 }
-                s.slice(ruby, beg as usize, len as usize)
+                s.slice(beg as usize, len as usize)
             }
             _ => Err(arity_error(ruby, args.len())),
         }
@@ -69,11 +69,9 @@ fn aref(ruby: &Ruby, s: &NodeSet, args: &[Value]) -> Result<Option<Value>, Error
 ///
 /// Iterates by index, each node read under a short borrow released before the
 /// yield, so the block can call back into this set.
-fn each(ruby: &Ruby, s: &NodeSet) -> Result<Value, Error> {
+fn each(ruby: &Ruby, s: NodeSetSelf) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
-        /* magnus hands methods a `&NodeSet`, not the object, and `each` needs the
-         * object both to return and to enumeratorize. */
-        let this = crate::bridge::ruby::current_receiver()?;
+        let this = s.value();
         if !ruby.block_given() {
             return crate::bridge::build::enumerator(this, "each");
         }
@@ -84,7 +82,7 @@ fn each(ruby: &Ruby, s: &NodeSet) -> Result<Value, Error> {
         for i in 0..s.count()? {
             /* Never None while the set is unchanged; a shrunk set would be a
              * broken invariant, not a shorter answer. */
-            let node = s.at(ruby, i)?.ok_or_else(|| {
+            let node = s.at(i)?.ok_or_else(|| {
                 crate::bridge::ruby::internal_error("a node set changed while it was iterated")
             })?;
             let _: Value = ruby.yield_value(node)?;
@@ -93,24 +91,24 @@ fn each(ruby: &Ruby, s: &NodeSet) -> Result<Value, Error> {
     })
 }
 
-fn dup(ruby: &Ruby, s: &NodeSet, _args: &[Value]) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| s.copy(ruby))
+fn dup(s: NodeSetSelf, _args: &[Value]) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| s.copy())
 }
 
-fn op_or(ruby: &Ruby, s: &NodeSet, other: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| s.union(ruby, s.operand(ruby, other)?))
+fn op_or(ruby: &Ruby, s: NodeSetSelf, other: Value) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| s.union(&*s.operand(ruby, other)?))
 }
 
-fn op_plus(ruby: &Ruby, s: &NodeSet, other: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| s.concat(ruby, s.operand(ruby, other)?))
+fn op_plus(ruby: &Ruby, s: NodeSetSelf, other: Value) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| s.concat(&*s.operand(ruby, other)?))
 }
 
-fn op_and(ruby: &Ruby, s: &NodeSet, other: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| s.filter(ruby, s.operand(ruby, other)?, Membership::In))
+fn op_and(ruby: &Ruby, s: NodeSetSelf, other: Value) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| s.filter(&*s.operand(ruby, other)?, Membership::In))
 }
 
-fn op_minus(ruby: &Ruby, s: &NodeSet, other: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| s.filter(ruby, s.operand(ruby, other)?, Membership::NotIn))
+fn op_minus(ruby: &Ruby, s: NodeSetSelf, other: Value) -> Result<Value, Error> {
+    crate::bridge::ruby::entry(|| s.filter(&*s.operand(ruby, other)?, Membership::NotIn))
 }
 
 /// `NodeSet.new(document_or_node, list = [])`.

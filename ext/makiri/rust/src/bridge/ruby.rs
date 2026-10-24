@@ -236,16 +236,6 @@ pub fn boolean(b: bool) -> Value {
     }
 }
 
-/// The frame's current receiver.
-///
-/// magnus hands a method a `&T`, not the object; the registrars that return
-/// `self` recover it from the frame. `Err` only when Ruby has no current
-/// receiver, which a method invocation always has.
-#[inline]
-pub fn current_receiver() -> Result<Value, Error> {
-    gvl_ruby().current_receiver::<Value>()
-}
-
 /// A `TypeError` with `msg`.
 pub fn type_error(msg: impl Into<std::borrow::Cow<'static, str>>) -> Error {
     Error::new(gvl_ruby().exception_type_error(), msg)

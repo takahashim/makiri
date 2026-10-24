@@ -126,7 +126,8 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   instead, so `clippy.toml` bans them (and the `funcall`/`respond_to`/`eql`
   family, which runs the caller's Ruby): the glue builds Arrays, Hashes,
   numbers and Symbols through `bridge::build`, Strings through
-  `bridge::string::utf8_str`, and NodeSets through `typed::wrap_magnus`. Only
+  `bridge::string::utf8_str`, and every wrapped object - a NodeSet included -
+  through `typed::TypedType::wrap`. Only
   `Init_makiri` (where a raise is `require`'s) carries an `#[allow]`. Each
   protected call costs a `setjmp`, ~8 ns: a light reader that allocates one
   String (`#name`, `#[]`, `#text`) measured ~15-20 ns slower than the
@@ -501,11 +502,16 @@ by the check that concluded "every undefined symbol is legitimate".
   cannot ban `Clone::clone` per type; the tokenizer's `Token` derives `Clone`
   with a `Vec` inside, and nothing that ships clones one), and what a
   third-party crate allocates inside itself (`encoding_rs`, `chardetng`). The glue's
-  Ruby-side storage - TypedData wrappers (`bridge::typed::wrap_built`, freed by
-  running the struct's `Drop` in place before `ruby_xfree`) and
-  `NodeSet`'s node array - uses Ruby's `ruby_xmalloc` family instead: its failure
-  is `NoMemoryError`, Ruby's own, which `bridge::raw`'s protected calls hand
-  back as `Err` (a failed wrap drops the built struct and frees its memory).
+  Ruby-side storage is Ruby's own memory instead. A TypedData wrapper's struct
+  is its object's data, made with it in one call by
+  `rb_data_typed_object_zalloc` (`TypedData_Make_Struct`'s function;
+  `bridge::typed::wrap_built`) and freed by running the struct's `Drop` in
+  place - a non-embedded type's data is `xcalloc`'d, which is also where Ruby
+  decides whether malloc pressure calls for a GC, so a Document's arena
+  report (`rb_gc_adjust_memory_usage`, which only adds to that pressure) gets
+  its collection (`spec/gc_accounting_spec.rb`). `NodeSet`'s node array is
+  `ruby_xrealloc2`'s. Their failure is `NoMemoryError`, Ruby's own, which
+  `bridge::raw`'s protected calls hand back as `Err`.
   std's STABLE sorts (`sort`, `sort_by`, `sort_by_key`, `sort_by_cached_key`)
   are banned there too: they take a scratch buffer from the global allocator
   and abort on OOM, invisibly to `rake oom`. Sort in place (`sort_unstable_by`)

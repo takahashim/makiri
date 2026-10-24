@@ -107,6 +107,11 @@ impl core::ops::Deref for XPathCtxSelf {
 }
 
 impl XPathCtxSelf {
+    /// The context object itself.
+    pub fn value(&self) -> Value {
+        self.0
+    }
+
     /// Rebind the context node to `rb_node`, a Makiri node of the same
     /// document. Namespace and variable registrations are preserved.
     pub fn set_node(&self, rb_node: Value) -> Result<(), Error> {
