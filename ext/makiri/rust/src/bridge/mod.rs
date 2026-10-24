@@ -83,4 +83,8 @@ pub mod string;
 /// The TypedData objects and their GC callbacks.
 pub mod typed;
 
+/* `rake dylint`'s self-test: cases the lint must report. */
+#[cfg(makiri_lint_probe)]
+mod lint_probe;
+
 pub mod xml_decode;

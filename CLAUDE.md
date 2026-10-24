@@ -95,6 +95,12 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   visible to `bridge/` alone. A `Held` is a `Cell`, and a `DocData`'s
   changing fields are cells too, so the GC callbacks and every method read
   a wrapper's data through `&T`: no `&mut` of it is made at all.
+  The other half - no magnus value kept where the GC's stack scan cannot
+  see it (a `Vec`, a `Box`, a static or `thread_local!`, a `TypedData` /
+  `Hooks` type's own field) - is `rake dylint`'s `ruby_value_on_heap`,
+  which reads the types; it is why raw `VALUE`s stay in `bridge/raw.rs` and
+  `bridge/typed.rs`, since a lint sees a `VALUE` only as an integer. What it
+  cannot see is a temporary handed straight to a call (`f(vec![v])`).
   A node wrapper's `NodeData` is EMBEDDED in its object's slot
   (`TypedType::embedded_base` / `embedded_derived`, `RUBY_TYPED_EMBEDDABLE`,
   Ruby 3.3+): one allocation per wrapper, and the free callback drops the
@@ -284,6 +290,11 @@ bundle exec rake spec
 bundle exec rake rust:test         # Ruby-free core tests, Lexbor-feature tests, fuzz-crate check
 bundle exec rake lint              # cargo clippy --all-features -D warnings + cargo fmt --check
 bundle exec rake unsafe:boundaries # reviewed unsafe islands and safe-module boundaries
+bundle exec rake dylint            # the crate's own lint, ruby_value_on_heap (lints/): a
+                                   # magnus value in a heap container, a static/thread_local
+                                   # or a wrapped object's data; then its self-test
+                                   # (src/bridge/lint_probe.rs). Needs the nightly its
+                                   # rust-toolchain.toml pins + cargo-dylint/dylint-link
 bundle exec rake clean             # wipe the build dir (regenerates the Makefile next compile)
 bundle exec rake clean:lexbor      # wipe vendor/lexbor/{build,dist} (full Lexbor rebuild)
 bundle exec ruby -Ilib -r makiri -e 'p Makiri::VERSION'   # smoke load

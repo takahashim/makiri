@@ -156,6 +156,36 @@ jobs:
         shell: bash
         run: bundle exec ruby -Ilib -r makiri -e 'p Makiri::VERSION'
 
+  # The crate's own lint, `ruby_value_on_heap` (ext/makiri/rust/lints/): a
+  # Ruby value kept where the GC's stack scan does not see it. It is a rustc
+  # plugin, so it runs on the nightly its rust-toolchain.toml pins (with
+  # rustc-dev) rather than the stable the build uses; `rake dylint` runs it
+  # over the `ruby` build and then its self-test. No Lexbor: the `ruby`
+  # configuration's build.rs does not read it.
+  dylint:
+    name: ruby_value_on_heap lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+
+      - name: Install libclang (bindgen)
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
+
+      - name: Install the lint's nightly and cargo-dylint
+        run: |
+          rustup toolchain install nightly-2026-08-20 --profile minimal \
+            --component rustc-dev,llvm-tools-preview
+          cargo install --locked cargo-dylint@6.2.0 dylint-link@6.2.0
+
+      - name: ruby_value_on_heap
+        run: bundle exec rake dylint
+
   sanitize:
     # AddressSanitizer only. UBSan used to run beside it over the C sources;
     # rustc's -Zsanitizer has no `undefined`, so with the C retired there is
