@@ -144,7 +144,8 @@ fn alloc_inject_p() -> bool {
 }
 
 /// `Makiri.__alloc_inject(n)` - arm "the nth core allocation fails once".
-fn alloc_inject(ruby: &Ruby, nth: i64) -> Result<(), Error> {
+fn alloc_inject(ruby: &Ruby, nth: Value) -> Result<(), Error> {
+    let nth = crate::bridge::ruby::integer_arg(nth)?.to_i64()?;
     #[cfg(feature = "alloc-inject")]
     {
         crate::falloc::alloc_inject_arm(nth);
@@ -181,8 +182,9 @@ fn alloc_inject_calls(ruby: &Ruby) -> Result<u64, Error> {
 /// `Makiri.__raise_inject(n)` - arm "the nth raising C call raises
 /// `NoMemoryError` in place of its allocation" (`bridge::raw`'s allocating
 /// wrappers; `script/check_raise_injection.rb`).
-fn raise_inject(ruby: &Ruby, nth: i64) -> Result<(), Error> {
+fn raise_inject(ruby: &Ruby, nth: Value) -> Result<(), Error> {
     crate::bridge::ruby::entry(|| {
+        let nth = crate::bridge::ruby::integer_arg(nth)?.to_i64()?;
         #[cfg(feature = "alloc-inject")]
         {
             crate::falloc::raise_inject_arm(nth);
@@ -250,7 +252,8 @@ fn borrowed_p(doc: Value) -> Result<bool, Error> {
     clippy::unnecessary_literal_unwrap,
     reason = "this function's whole purpose is to panic in each of these ways"
 )]
-fn panic_probe(ruby: &Ruby, kind: i64) -> Result<(), Error> {
+fn panic_probe(ruby: &Ruby, kind: Value) -> Result<(), Error> {
+    let kind = crate::bridge::ruby::integer_arg(kind)?.to_i64()?;
     match kind {
         0 => panic!("Makiri.__panic(0): deliberate panic"),
         1 => {

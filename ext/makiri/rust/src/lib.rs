@@ -157,6 +157,10 @@ pub mod bridge;
 #[cfg(feature = "ruby")]
 pub mod glue;
 
+/// `rake dylint`'s self-test: what the crate's own lints must report.
+#[cfg(all(feature = "ruby", makiri_lint_probe))]
+mod lint_probe;
+
 /// The vendored Lexbor boundary. This owns every direct use of its C ABI;
 /// `adapter` supplies the compatibility facilities Lexbor does not provide.
 /// Only the reference the ports are tested against: no build that ships has it.

@@ -290,10 +290,13 @@ bundle exec rake spec
 bundle exec rake rust:test         # Ruby-free core tests, Lexbor-feature tests, fuzz-crate check
 bundle exec rake lint              # cargo clippy --all-features -D warnings + cargo fmt --check
 bundle exec rake unsafe:boundaries # reviewed unsafe islands and safe-module boundaries
-bundle exec rake dylint            # the crate's own lint, ruby_value_on_heap (lints/): a
-                                   # magnus value in a heap container, a static/thread_local
-                                   # or a wrapped object's data; then its self-test
-                                   # (src/bridge/lint_probe.rs). Needs the nightly its
+bundle exec rake dylint            # the crate's own lints (lints/makiri_lints):
+                                   # ruby_value_on_heap - a magnus value in a heap
+                                   # container, a static/thread_local or a wrapped
+                                   # object's data; converted_argument - a registered
+                                   # method taking a type magnus converts (RString,
+                                   # i64, ...); then their self-test
+                                   # (src/lint_probe.rs). Needs the nightly
                                    # rust-toolchain.toml pins + cargo-dylint/dylint-link
 bundle exec rake clean             # wipe the build dir (regenerates the Makefile next compile)
 bundle exec rake clean:lexbor      # wipe vendor/lexbor/{build,dist} (full Lexbor rebuild)
@@ -760,7 +763,11 @@ What converts with `to_s` is `lib/`'s, outside the extension: the parse
 entries (`String(source)`, an IO's `read`) and `XML::Builder`. `rake
 unsafe:boundaries` counts every call that would run the caller's Ruby
 (`USER_CODE_API`); `NodeSet#each`'s `yield` and `XML::Namespace.new` are the
-two allowed.
+two allowed. The registered methods' parameter types are held to
+it by `rake dylint`'s `converted_argument`: a `method!` / `function!` whose
+receiver or argument is a type magnus's own `TryConvert` converts (`RString`
+by `to_str`, `i64` by `to_int`, `RHash`, `Symbol`, ...) fails; `Value`, `bool`, a
+`TypedData` reference and the crate's own `TryConvert` types pass.
 
 **Parsing & source location.** The tree builder stamps an element when it
 is CREATED FOR ITS OWN START TAG (`TreeBuilder::created_offset`,

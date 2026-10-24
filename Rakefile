@@ -110,35 +110,37 @@ task lint: :lexbor do
   end
 end
 
-# `rake dylint` - the crate's own lint, `ruby_value_on_heap`
-# (ext/makiri/rust/lints/): a Ruby value kept where the GC's stack scan does
-# not see it - in a heap container, a static or thread-local, or a wrapped
-# object's data outside a traced field. magnus states the rule and leaves it to
-# its users; this checks it by type. The lint is a rustc plugin, so it builds on
-# the nightly its rust-toolchain.toml pins, with cargo-dylint and dylint-link
-# installed. The second run is its self-test: `bridge/lint_probe.rs`, compiled
-# only under `--cfg makiri_lint_probe`, ends with `//~` each line the lint
-# must report, and the task fails unless exactly those lines are reported - so
-# a lint that has stopped seeing a case cannot pass by reporting nothing.
-DYLINT = %w[cargo dylint --path lints/ruby_value_on_heap --no-deps --
+# `rake dylint` - the crate's own lints (ext/makiri/rust/lints/makiri_lints),
+# two rules magnus states or implies and leaves to its users, checked by type:
+# `ruby_value_on_heap`, a Ruby value kept where the GC's stack scan does not
+# see it (a heap container, a static or thread-local, a wrapped object's data
+# outside a traced field), and `converted_argument`, a registered method whose
+# argument magnus converts with the caller's Ruby (`RString`, `i64`, ...). The
+# lints are a rustc plugin, so they build on the nightly their
+# rust-toolchain.toml pins, with cargo-dylint and dylint-link installed. The
+# second run is the self-test: `lint_probe.rs`, compiled only under
+# `--cfg makiri_lint_probe`, ends with `//~` each line a lint must report, and
+# the task fails unless exactly those lines are reported - so a lint that has
+# stopped seeing a case cannot pass by reporting nothing.
+DYLINT = %w[cargo dylint --path lints/makiri_lints --no-deps --
             --no-default-features --features ruby].freeze
 
-desc "Run the crate's own lint (ruby_value_on_heap; needs cargo-dylint and its nightly)"
+desc "Run the crate's own lints (makiri_lints; needs cargo-dylint and its nightly)"
 task :dylint do
   require "open3"
   Dir.chdir("ext/makiri/rust") do
     sh(*DYLINT)
-    probe = "src/bridge/lint_probe.rs"
+    probe = "src/lint_probe.rs"
     expected = File.readlines(probe).each_with_index
                    .select { |line, _| line.match?(%r{//~\s*\z}) }.map { |_, i| i + 1 }
     out, = Open3.capture2e({ "RUSTFLAGS" => "--cfg makiri_lint_probe" }, *DYLINT)
     reported = out.scan(%r{--> #{Regexp.escape(probe)}:(\d+):}).flatten.map(&:to_i).uniq.sort
     unless reported == expected
       puts out
-      abort "ruby_value_on_heap's self-test: expected reports on lines #{expected.inspect} " \
+      abort "makiri_lints' self-test: expected reports on lines #{expected.inspect} " \
             "of #{probe}, got #{reported.inspect}"
     end
-    puts "ruby_value_on_heap: self-test reported all #{expected.size} cases"
+    puts "makiri_lints: self-test reported all #{expected.size} cases"
   end
 end
 

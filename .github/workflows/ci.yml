@@ -156,14 +156,15 @@ jobs:
         shell: bash
         run: bundle exec ruby -Ilib -r makiri -e 'p Makiri::VERSION'
 
-  # The crate's own lint, `ruby_value_on_heap` (ext/makiri/rust/lints/): a
-  # Ruby value kept where the GC's stack scan does not see it. It is a rustc
-  # plugin, so it runs on the nightly its rust-toolchain.toml pins (with
-  # rustc-dev) rather than the stable the build uses; `rake dylint` runs it
+  # The crate's own lints (ext/makiri/rust/lints/makiri_lints): a Ruby value
+  # kept where the GC's stack scan does not see it, and a registered method
+  # whose argument magnus converts with the caller's Ruby. They are a rustc
+  # plugin, so they run on the nightly its rust-toolchain.toml pins (with
+  # rustc-dev) rather than the stable the build uses; `rake dylint` runs them
   # over the `ruby` build and then its self-test. No Lexbor: the `ruby`
   # configuration's build.rs does not read it.
   dylint:
-    name: ruby_value_on_heap lint
+    name: makiri_lints
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -177,13 +178,13 @@ jobs:
       - name: Install libclang (bindgen)
         run: sudo apt-get update && sudo apt-get install -y libclang-dev
 
-      - name: Install the lint's nightly and cargo-dylint
+      - name: Install the lints' nightly and cargo-dylint
         run: |
           rustup toolchain install nightly-2026-08-20 --profile minimal \
             --component rustc-dev,llvm-tools-preview
           cargo install --locked cargo-dylint@6.2.0 dylint-link@6.2.0
 
-      - name: ruby_value_on_heap
+      - name: makiri_lints
         run: bundle exec rake dylint
 
   sanitize:
