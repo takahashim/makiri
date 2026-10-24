@@ -65,7 +65,7 @@ fn aref(ruby: &Ruby, s: NodeSetSelf, args: &[Value]) -> Result<Option<Value>, Er
 fn each(ruby: &Ruby, s: NodeSetSelf) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let this = s.value();
-        if !ruby.block_given() {
+        if !crate::bridge::raw::block_given(ruby) {
             return crate::bridge::build::enumerator(this, "each");
         }
         /* By index, not over a copy: a set is never changed once filled, and
@@ -78,7 +78,7 @@ fn each(ruby: &Ruby, s: NodeSetSelf) -> Result<Value, Error> {
             let node = s.at(i)?.ok_or_else(|| {
                 crate::bridge::ruby::internal_error("a node set changed while it was iterated")
             })?;
-            let _: Value = ruby.yield_value(node)?;
+            crate::bridge::raw::yield_value(ruby, node)?;
         }
         Ok(this)
     })

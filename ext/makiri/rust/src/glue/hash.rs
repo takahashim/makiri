@@ -2,27 +2,28 @@
 
 use magnus::{Error, RArray, RHash, Ruby, Value};
 
-use crate::caught::PanicLatch;
-
-/// `rb_hash_foreach` over `h`, with a panic in `f` caught.
+/// `h`'s pairs, each handed to `f` in turn; the first `Err` stops the walk
+/// and is returned.
 ///
-/// magnus runs the closure inside its own `protect`, below `rb_hash_foreach`'s
-/// C frames, so a panic there would unwind INTO C and abort the process. It is
-/// latched instead - the walk stops - and raised again once the C frames are
-/// gone, where `bridge::ruby::entry` makes it `Makiri::InternalError`. The one
-/// way the glue walks a Hash (`rake unsafe:boundaries` fails on another
+/// Over `bridge::raw::hash_foreach`, which latches a panic in `f` rather than
+/// let it unwind into `rb_hash_foreach`'s C frames, and resumes it once they
+/// are gone, where `bridge::ruby::entry` makes it `Makiri::InternalError`.
+/// `f`'s own error is kept here rather than raised from inside the walk. The
+/// one way the glue walks a Hash (`rake unsafe:boundaries` fails on another
 /// `.foreach(`).
 pub(crate) fn hash_foreach(
     h: RHash,
     mut f: impl FnMut(Value, Value) -> Result<(), Error>,
 ) -> Result<(), Error> {
-    use magnus::r_hash::ForEach;
-    let mut latch = PanicLatch::new();
-    let walked = h.foreach(|k: Value, v: Value| {
-        latch.guard(Ok(ForEach::Stop), || f(k, v).map(|()| ForEach::Continue))
-    });
-    latch.resume();
-    walked
+    let mut failed: Option<Error> = None;
+    crate::bridge::raw::hash_foreach(h, &mut |k, v| match f(k, v) {
+        Ok(()) => true,
+        Err(e) => {
+            failed = Some(e);
+            false
+        }
+    })?;
+    failed.map_or(Ok(()), Err)
 }
 
 /// `h`'s key-value pairs, copied out before any of them is used.

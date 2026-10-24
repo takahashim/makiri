@@ -68,9 +68,12 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   `caught::PanicLatch` is that, and it is deliberately the same shape the
   callbacks already used for the node cap and OOM. The build that ships
   installs it in two: `bridge::gvl`'s trampoline (which carries the whole
-  parser) and `glue::hash::hash_foreach`. For the same reason a Hash is walked only through
-  `hash_foreach` (magnus's `RHash::foreach` protects without one;
-  `rake unsafe:boundaries` fails on a direct `.foreach(`). The reference-only
+  parser) and `bridge::raw::hash_foreach`'s `rb_hash_foreach` callback, which
+  answers "stop" for a latched panic or an error and never raises from inside
+  the walk. For the same reason a Hash is walked only through
+  `glue::hash::hash_foreach` over it (magnus's `RHash::foreach` protects
+  without one, and raises from its callback; `rake unsafe:boundaries` fails
+  on a direct `.foreach(`). The reference-only
   Lexbor callbacks carry it too (`lexbor::selectors`' traversal,
   `lexbor::chunks::chunk_cb`, `tree_guard::hook_token_cb`).
   Two `extern "C"` functions have no latch ON PURPOSE. The GC callbacks in
@@ -78,7 +81,9 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   worse than a stop, so they keep aborting - keep their bodies trivial. The
   `rb_protect` thunk of `bridge::raw::call` holds one C call and the `Copy`
   values it reads (`F: Copy`, `T: Copy`), so there is no Rust there to panic
-  and no `catch_unwind` for a raise to cross; keep it that way.
+  and no `catch_unwind` for a raise to cross; keep it that way. The one C
+  call that calls back into Rust is `rb_hash_foreach`, and its callback is
+  latched (above) and raises nothing.
 
   **A VALUE inside a wrapped object is a `bridge::typed::Held`**, and a
   `Held` that holds anything can only be made with a `Store`, which exists
@@ -788,8 +793,9 @@ anything else is a `TypeError`, since a `to_s`/`to_str` is the caller's Ruby.
 What converts with `to_s` is `lib/`'s, outside the extension: the parse
 entries (`String(source)`, an IO's `read`) and `XML::Builder`. `rake
 unsafe:boundaries` counts every call that would run the caller's Ruby
-(`USER_CODE_API`); `NodeSet#each`'s `yield` and `XML::Namespace.new` are the
-two allowed. The registered methods' parameter types are held to
+(`USER_CODE_API`); `NodeSet#each`'s `yield` (through `bridge::raw::yield_value`,
+whose `rb_yield` is the third count) and `XML::Namespace.new` are the two
+allowed. The registered methods' parameter types are held to
 it by `rake dylint`'s `converted_argument`: a `method!` / `function!` whose
 receiver or argument is a type magnus's own `TryConvert` converts (`RString`
 by `to_str`, `i64` by `to_int`, `RHash`, `Symbol`, ...) fails; `Value`, `bool`, a

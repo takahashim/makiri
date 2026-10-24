@@ -33,7 +33,7 @@ UNSAFE_ISLANDS = {
   "bridge/gvl.rs" => 3,
   "bridge/node_set.rs" => 3,
   "bridge/node_wrap.rs" => 1,
-  "bridge/raw.rs" => 44,
+  "bridge/raw.rs" => 51,
   "bridge/ruby.rs" => 12,
   "bridge/stack.rs" => 1,
   "bridge/string/build.rs" => 2,
@@ -151,8 +151,8 @@ RAISING_API = /\b(?:rb_raise|rb_exc_raise|rb_jump_tag|rb_check_typeddata|
   rb_to_encoding|rb_enc_find_index|rb_data_typed_object_wrap|rb_data_typed_object_zalloc|
   ruby_xmalloc|ruby_xrealloc2|
   rb_ary_new_capa|rb_ary_push|rb_hash_new|rb_hash_aset|rb_ll2inum|rb_ull2inum|rb_float_new|
-  rb_id2sym|rb_str_cat|rb_enumeratorize_with_size|rb_memerror)\b/x
-RAISING_COUNTS = { "bridge/raw.rs" => 31 }.freeze # with `rb_memerror` (the raise sweep's injected raise) and `rb_jump_tag` (`jump_error`)
+  rb_id2sym|rb_str_cat|rb_enumeratorize_with_size|rb_memerror|rb_hash_foreach|rb_yield)\b/x
+RAISING_COUNTS = { "bridge/raw.rs" => 33 }.freeze # with `rb_memerror` (the raise sweep's injected raise) and `rb_jump_tag` (`jump_error`)
 
 # Makiri runs none of its caller's Ruby code: no argument is converted with its
 # `to_s`/`to_str`, no method of a caller's object is called, and XPath has no
@@ -164,8 +164,10 @@ RAISING_COUNTS = { "bridge/raw.rs" => 31 }.freeze # with `rb_memerror` (the rais
 USER_CODE_API = /\b(?:rb_String|rb_funcall\w*|rb_obj_as_string|rb_respond_to|rb_yield\w*|
   rb_block_call|rb_call_super|rb_eval_string\w*|rb_str_to_str|rb_string_value\w*|
   rb_check_string_type|rb_convert_type|rb_check_convert_type)\b|
-  \.(?:funcall\w*|respond_to|to_r_string|block_call|yield_\w+|yield_splat)\(/x
-USER_CODE_COUNTS = { "glue/node_set.rs" => 1, "glue/xml_node/ns.rs" => 1 }.freeze
+  \.(?:funcall\w*|respond_to|to_r_string|block_call|yield_\w+|yield_splat)\(|
+  raw::yield_value\(/x
+# `rb_yield` itself is `bridge/raw.rs`'s, and NodeSet#each its one caller.
+USER_CODE_COUNTS = { "bridge/raw.rs" => 1, "glue/node_set.rs" => 1, "glue/xml_node/ns.rs" => 1 }.freeze
 
 # A raw `VALUE` (`rb_sys::VALUE`, an integer to Rust) is a Ruby value no type
 # keeps honest: no lint can tell it from a `u64` in a `Vec` or a struct field,
@@ -964,7 +966,7 @@ puts "unsafe-boundaries: #{forbidding.length} forbid files; " \
      "(glue+xpath #{glue_xpath_unsafe}); " \
      "#{actual.values.sum} reviewed static mut declarations; " \
      "#{rb_sys.values.sum} rb_sys:: outside bridge/ and #{raising.values.sum} raising C calls in bridge/raw.rs; " \
-     "#{user_code.values.sum} calls into the caller's Ruby (both allowed); " \
+     "#{user_code.values.sum} calls into the caller's Ruby (each allowed); " \
      "#{raw_values.values.sum} raw VALUEs outside raw.rs and typed.rs; " \
      "#{value_from_raw.values.sum} Value::from_raw and " \
      "#{lexbor_abi.values.sum} Lexbor ABI names outside their layer and " \

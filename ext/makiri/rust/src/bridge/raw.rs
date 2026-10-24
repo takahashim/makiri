@@ -62,7 +62,9 @@ unsafe fn injected_raise() {
 /// captures is, so it owns nothing, and neither does its result. There is no
 /// `catch_unwind` here (a raise crossing one is undefined behaviour); a panic
 /// in the thunk would abort at its `extern "C"` boundary, and the closures
-/// below hold no Rust that panics.
+/// below hold no Rust that panics. The one C call that calls back into Rust,
+/// `rb_hash_foreach` ([`hash_foreach`]), latches its callback's panic inside
+/// the callback, and the callback raises nothing.
 #[inline]
 fn call<T: Copy, F: FnOnce() -> T + Copy>(f: F) -> Result<T, Error> {
     struct Slot<F, T> {
@@ -133,6 +135,69 @@ fn rstring_len(s: RString) -> usize {
     use rb_sys::stable_api::StableApiDefinition;
     // SAFETY: `s` is a live String, by type.
     unsafe { rb_sys::stable_api::get_default().rstring_len(s.as_raw()) as usize }
+}
+
+/* ---- blocks and Hash walks ---- */
+
+/// `rb_block_given_p`: whether the method running now was given a block.
+/// Raises nothing and runs no Ruby code; like [`keyword_given`], it reads
+/// the current frame.
+#[inline]
+pub fn block_given(_: &Ruby) -> bool {
+    // SAFETY: under the GVL (`&Ruby`); a read of the current control frame.
+    unsafe { rb_sys::rb_block_given_p() != 0 }
+}
+
+/// `rb_yield`: runs the caller's block - Ruby code, which can raise, `break`,
+/// `throw` or `return`. Every one of those comes back as `Err` (the
+/// non-exception exits as the jump `rb_protect` caught), and is raised again
+/// at the method's return, so it reaches the block's caller as it left.
+pub fn yield_value(_: &Ruby, v: Value) -> Result<Value, Error> {
+    let v = v.as_raw();
+    let out = call(|| unsafe { rb_sys::rb_yield(v) })?;
+    // SAFETY: what the block returned, live on this frame.
+    Ok(unsafe { Value::from_raw(out) })
+}
+
+/// `rb_hash_foreach` over `h`, `visit` answering after each pair whether to
+/// go on. Raises `RuntimeError` when the Hash is changed in a way the walk
+/// cannot survive (a key added or the table rehashed).
+///
+/// `visit` is Rust called from C, inside `rb_hash_foreach`'s frames, so a
+/// panic in it must not unwind into them: it is latched here - the walk
+/// stops - and resumed once the C frames are gone. It never raises either:
+/// it answers `false` and the caller keeps its own error.
+pub fn hash_foreach(h: RHash, visit: &mut dyn FnMut(Value, Value) -> bool) -> Result<(), Error> {
+    struct Walk<'a> {
+        visit: &'a mut dyn FnMut(Value, Value) -> bool,
+        latch: crate::caught::PanicLatch,
+    }
+    unsafe extern "C" fn each(k: VALUE, v: VALUE, arg: VALUE) -> c_int {
+        const CONTINUE: c_int = rb_sys::st_retval::ST_CONTINUE as c_int;
+        const STOP: c_int = rb_sys::st_retval::ST_STOP as c_int;
+        // SAFETY: `arg` is the `Walk` `hash_foreach` passed, live for the
+        // walk; `k` and `v` are the Hash's, live while it is walked.
+        let walk = unsafe { &mut *(arg as *mut Walk<'_>) };
+        let (k, v) = unsafe { (Value::from_raw(k), Value::from_raw(v)) };
+        let visit = &mut walk.visit;
+        if walk.latch.guard(false, || visit(k, v)) {
+            CONTINUE
+        } else {
+            STOP
+        }
+    }
+    let mut walk = Walk {
+        visit,
+        latch: crate::caught::PanicLatch::new(),
+    };
+    let (h, arg) = (h.as_raw(), &mut walk as *mut Walk<'_> as VALUE);
+    let walked = call(|| unsafe {
+        rb_sys::rb_hash_foreach(h, Some(each), arg);
+        rb_sys::Qnil as VALUE
+    });
+    /* Out of the C frames: safe to unwind from here. */
+    walk.latch.resume();
+    walked.map(|_| ())
 }
 
 /* ---- conversions and checks ---- */
