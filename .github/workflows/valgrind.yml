@@ -101,7 +101,7 @@ jobs:
   # pointer bugs in the extension or bridge layer.
   #
   # Scope: only the examples tagged `:gc_compact` (the `memory safety` blocks in
-  # css/xpath/serialize/mutation/source_location/xpath_handler/api_compat2 +
+  # css/xpath/serialize/mutation/source_location/api_compat2 +
   # attribute's lazy-index example).  Those are the examples written to exercise
   # the borrowed-pointer paths.  `GC_COMPACT_STRESS=1` makes spec_helper set
   # `GC.auto_compact = true` process-wide and wrap every example in `GC.stress`,
@@ -110,7 +110,7 @@ jobs:
   # (parse/drop cycles) scale their iteration count down under stress
   # (`gc_churn_iters` / `GC_COMPACT_ITERS`) because each stressed iteration is
   # orders of magnitude heavier; `GC_COMPACT_ITERS` below tunes the total runtime
-  # (~14.5 min on CI at 200 in one job, hence the three shards below).  An
+  # (~14.5 min on CI at 200 in one job, hence the shards below).  An
   # earlier version forced GC.stress onto the *entire* suite (~800 examples): it ran 1h40m+ and never finished, while
   # testing borrowed-pointer discipline on hundreds of examples that have none.
   # The rest of the suite still runs in ci.yml.
@@ -135,17 +135,17 @@ jobs:
       fail-fast: false
       matrix:
         ruby: ["3.4"]
-        # Split by spec file into three ~equal parts (measured per file: the
-        # handler spec alone is a third, attribute + source_location another).
-        # The last shard is everything ELSE, so a newly tagged file lands
-        # there rather than in no shard; rebalance if it grows past the others.
+        # Split by spec file. There were three shards while the XPath handler
+        # spec, a third of the runtime on its own, existed; it went with the
+        # handlers. The last shard is everything ELSE, so a newly tagged file
+        # lands there rather than in no shard. It is the long one (~22 min of
+        # the 30-minute timeout on 2026-10-24, against ~3 for `attribute`):
+        # split it before it reaches the timeout.
         shard:
-          - name: xpath_handler
-            args: spec/xpath_handler_spec.rb
           - name: attribute
             args: spec/attribute_spec.rb spec/source_location_spec.rb
           - name: rest
-            args: --exclude-pattern "spec/{xpath_handler,attribute,source_location}_spec.rb" spec
+            args: --exclude-pattern "spec/{attribute,source_location}_spec.rb" spec
 
     steps:
       - name: Checkout (with vendored Lexbor submodule)
