@@ -17,9 +17,22 @@
 use core::ffi::{c_char, c_void};
 use core::marker::PhantomData;
 
-use magnus::rb_sys::AsRawValue;
+use magnus::rb_sys::{AsRawValue, FromRawValue};
 use magnus::{Error, Value};
 use rb_sys::{rb_data_type_t, VALUE};
+
+/// A `Value` from a raw handle this module holds - a stored field, or what a
+/// wrap returned. With `raw.rs`, the only place a raw `VALUE` becomes a
+/// `Value` (`rake unsafe:boundaries`' `VALUE_COUNTS`).
+///
+/// # Safety
+/// `raw` is a live Ruby value of the current process, kept rooted by the
+/// caller.
+#[inline]
+unsafe fn value(raw: VALUE) -> Value {
+    // SAFETY: the caller's contract.
+    unsafe { Value::from_raw(raw) }
+}
 
 /* ---- a VALUE inside a wrapped object ---- */
 
@@ -74,7 +87,7 @@ impl Held {
     #[inline]
     pub(in crate::bridge) unsafe fn get(&self) -> Value {
         // SAFETY: the caller's contract - a marked value of a reachable object.
-        unsafe { super::ruby::value(self.0.get()) }
+        unsafe { value(self.0.get()) }
     }
 }
 
@@ -310,17 +323,26 @@ impl<T: Hooks> TypedType<T> {
 
     /// Allocate Ruby memory for a `T`, `build` it there, wrap it as a `klass`
     /// object of this type, and only then let `store` write the VALUEs it
-    /// holds - see [`wrap_built`] for why that order.
+    /// holds - see [`wrap_built`] for why that order. A failed allocation is
+    /// `Err`, the built `T` dropped.
     ///
-    /// # Safety
-    /// Under the GVL; see [`wrap_built`] for what `build` may return.
-    pub(in crate::bridge) unsafe fn wrap(
+    /// Safe because what [`wrap_built`] asks of `build` is the types':
+    /// `&Ruby` is the GVL, and a `T` keeps a Ruby value only in a [`Held`],
+    /// which holds nothing until a [`Store`] exists - and `store` runs after
+    /// the wrap. A raw `VALUE` in a field would get around that; none is
+    /// written outside `raw.rs` and this file (`rake unsafe:boundaries`'
+    /// `VALUE_COUNTS`).
+    pub(in crate::bridge) fn wrap(
         &'static self,
-        klass: VALUE,
+        _: &magnus::Ruby,
+        klass: magnus::RClass,
         build: impl FnOnce() -> T,
         store: impl FnOnce(&mut T, &Store),
-    ) -> Result<VALUE, Error> {
-        wrap_built::<T>(klass, self.raw.as_ptr(), build, store)
+    ) -> Result<Value, Error> {
+        // SAFETY: see above; `ty` is `T`'s own type, by construction.
+        let obj = unsafe { wrap_built::<T>(klass.as_raw(), self.raw.as_ptr(), build, store) }?;
+        // SAFETY: the object just wrapped, live on this frame.
+        Ok(unsafe { value(obj) })
     }
 }
 
@@ -512,10 +534,11 @@ unsafe fn wrap_embedded<T>(
 }
 
 /* ---- magnus's TypedData, for NodeSet ----
- * NodeSet is a magnus `#[derive(TypedData)]` (its GC hooks are magnus's), not
- * a `TypedType`; this is its one unchecked accessor, kept beside the others.
- * magnus boxes the value and its free drops the `Box`, so NodeSet gets its
- * `Drop` the same way a `TypedType` object does. */
+ * NodeSet implements magnus's `TypedData` by hand (its GC hooks are magnus's;
+ * no derive, which would look its class up with a `funcall`), not a
+ * `TypedType`; this is its one unchecked accessor, and `wrap_magnus` below its
+ * one constructor. magnus boxes the value and its free drops the `Box`, so
+ * NodeSet gets its `Drop` the same way a `TypedType` object does. */
 
 /// The wrapped Rust value behind a TypedData object, without magnus's
 /// `rb_protect`.
@@ -557,7 +580,7 @@ pub(in crate::bridge) fn wrap_magnus<T: magnus::TypedData>(data: T) -> Result<Va
     // is `T`'s data type (magnus::DataType is #[repr(transparent)] over it).
     match unsafe { super::raw::typed_object_wrap(class.as_raw(), p as *mut c_void, dt) } {
         // SAFETY: the object just wrapped.
-        Ok(obj) => Ok(unsafe { super::ruby::value(obj) }),
+        Ok(obj) => Ok(unsafe { value(obj) }),
         Err(e) => {
             // SAFETY: not wrapped, so the box is still ours alone.
             drop(unsafe { Box::from_raw(p) });

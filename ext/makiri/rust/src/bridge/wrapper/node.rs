@@ -8,8 +8,7 @@ use magnus::rb_sys::AsRawValue;
 use magnus::{Error, Value};
 
 use super::*;
-use crate::bridge::ruby::VALUE;
-use crate::bridge::typed::{Held, Hooks, Tracer, TypedType};
+use crate::bridge::typed::{Held, Hooks, Store, Tracer, TypedType};
 use crate::html_dom::html::{HtmlNodeKey, RawNode};
 use crate::init::CLASS_DOCUMENT;
 use crate::token::Token;
@@ -152,7 +151,37 @@ impl NodeHandle {
 pub struct NodeData {
     /// Representation-opaque; read it only through a kind-checked accessor.
     pub node: NodeHandle,
-    pub(in crate::bridge) document: Held,
+    /// Private to this module, beside the `trace` that marks it: the one
+    /// reader is [`NodeData::document`].
+    document: Held,
+}
+
+impl NodeData {
+    /// A node's data, its Document stored once it is wrapped
+    /// ([`NodeData::hold_document`]).
+    pub(in crate::bridge) fn new(node: NodeHandle) -> NodeData {
+        NodeData {
+            node,
+            document: Held::empty(),
+        }
+    }
+
+    /// Store the Document the node keeps alive - in the wrap's store step,
+    /// the only place a [`Store`] exists for a fresh wrapper.
+    pub(in crate::bridge) fn hold_document(&mut self, store: &Store, document: Value) {
+        self.document = store.hold(document);
+    }
+
+    /// The Document the node keeps alive.
+    ///
+    /// Safe: `document` is a private field that this module's `trace` marks
+    /// (pinned), and a `&NodeData` is reached only through its wrapper,
+    /// whose borrow keeps the wrapper - and so the field's mark - alive. (One
+    /// built but not yet wrapped holds `false`.)
+    pub(in crate::bridge) fn document(&self) -> Value {
+        // SAFETY: see above.
+        unsafe { self.document.get() }
+    }
 }
 
 /* Measured: `NodeHandle` fits two words (the `NonNull`/`NonZero` niches carry
@@ -265,9 +294,9 @@ pub fn node_identity(rb_node: Value) -> Result<usize, Error> {
 /// later can share a stamp; and an XML word can equal an HTML one. The
 /// Document is the same object for every node of one document, so comparing
 /// it settles both.
-pub fn node_key(rb_node: Value) -> Result<(VALUE, usize), Error> {
+pub fn node_key(rb_node: Value) -> Result<(usize, usize), Error> {
     Ok((
-        keepalive_document(rb_node)?.as_raw(),
+        keepalive_document(rb_node)?.as_raw() as usize,
         node_identity(rb_node)?,
     ))
 }
@@ -278,8 +307,5 @@ pub fn keepalive_document(rb_node: Value) -> Result<Value, Error> {
     if crate::bridge::ruby::is_kind_of(rb_node, &CLASS_DOCUMENT) {
         return Ok(rb_node);
     }
-    let nd: &NodeData = NODE_DATA_TYPE.get(&rb_node)?;
-    // SAFETY: the field of the wrapper `rb_node`, whose mark marks it; the
-    // argument keeps the wrapper reachable.
-    Ok(unsafe { nd.document.get() })
+    Ok(NODE_DATA_TYPE.get(&rb_node)?.document())
 }

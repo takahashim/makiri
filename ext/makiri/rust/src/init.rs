@@ -35,14 +35,13 @@
 
 use std::sync::OnceLock;
 
-use magnus::rb_sys::AsRawValue;
 use magnus::{
     function,
     value::{Opaque, ReprValue},
     Class, Error, ExceptionClass, Module, Object, RClass, RModule, Ruby, Value,
 };
 
-use crate::bridge::ruby::{gvl_ruby, VALUE};
+use crate::bridge::ruby::gvl_ruby;
 
 /* ------------------------------------------------------------------ *
  * the classes and modules other modules read                         *
@@ -94,13 +93,6 @@ impl<T: ReprValue> RbConst<T> {
                 "Makiri: a class handle was read before Init_makiri",
             )
         })
-    }
-
-    /// The object as Ruby's handle, for a C call. `0` before `Init_makiri` -
-    /// Ruby's `false`, which a TypedData wrap reads as "no class".
-    #[inline]
-    pub fn raw(&self) -> VALUE {
-        self.get().map_or(0, |v| v.as_raw())
     }
 }
 

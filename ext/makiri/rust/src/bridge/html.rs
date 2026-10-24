@@ -108,7 +108,7 @@ fn wrap_html_node_of_type(
     if node_type == NodeType::Document {
         return Ok(document);
     }
-    let klass = HTML_NODE_CLASSES.class_for(node_type);
+    let klass = HTML_NODE_CLASSES.class_for(node_type)?;
     crate::bridge::wrapper::wrap_cached(&HTML_NODE_TYPE, klass, node, document)
 }
 
@@ -164,10 +164,7 @@ pub(in crate::bridge) fn html_node_key(rb_node: Value) -> Result<(HtmlNodeKey, V
     }
     let nd: &NodeData = HTML_NODE_TYPE.get(&rb_node)?;
     let key = nd.node.html().ok_or_else(uninitialized)?;
-    // SAFETY: the field of the wrapper `rb_node`, whose mark marks it; the
-    // argument keeps the wrapper reachable.
-    let document = unsafe { nd.document.get() };
-    Ok((key, document))
+    Ok((key, nd.document()))
 }
 
 /// A method receiver already checked to be an HTML node or HTML Document.

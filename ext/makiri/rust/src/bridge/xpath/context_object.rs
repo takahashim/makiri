@@ -178,29 +178,23 @@ impl XPathCtx {
         let document = keepalive_document(rb_node)?;
         let mut ctx = context_for(rb_node, document)?;
         ctx.set_lax(lax);
-        // SAFETY: under the GVL. The struct is built holding no value - the
-        // two are stored once it is wrapped - and owning no allocation, as
-        // `wrap` asks: a fresh `Cx`'s registrations and the cache are empty
-        // collections, which allocate nothing until the first insert, so a
-        // `NoMemoryError` from the wrap leaks the struct's own memory alone.
-        let obj = unsafe {
-            XPATH_CTX_TYPE.wrap(
-                CLASS_XPATH_CONTEXT.raw(),
-                || XPathCtx {
-                    document: Held::empty(),
-                    node: Held::empty(),
-                    cache: RefCell::new(AstCache(HashMap::new())),
-                    cache_bytes: Cell::new(0),
-                    ctx,
-                },
-                |c, store| {
-                    c.document = store.hold(document);
-                    c.node = store.hold(rb_node);
-                },
-            )
-        };
-        // SAFETY: the object just wrapped, live on this frame.
-        Ok(unsafe { crate::bridge::ruby::value(obj?) })
+        /* The struct is built holding no value - the two are stored once it is
+         * wrapped. */
+        XPATH_CTX_TYPE.wrap(
+            &crate::bridge::ruby::gvl_ruby(),
+            CLASS_XPATH_CONTEXT.defined()?,
+            || XPathCtx {
+                document: Held::empty(),
+                node: Held::empty(),
+                cache: RefCell::new(AstCache(HashMap::new())),
+                cache_bytes: Cell::new(0),
+                ctx,
+            },
+            |c, store| {
+                c.document = store.hold(document);
+                c.node = store.hold(rb_node);
+            },
+        )
     }
 
     /// The keepalive Document.

@@ -123,6 +123,19 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   String (`#name`, `#[]`, `#text`) measured ~15-20 ns slower than the
   unprotected allocation it replaced, about half of which dropping the
   lifting (below) took back (`notes/ruby_boundary_simplification_plan.ja.md`).
+  The value-level wrappers are SAFE and typed: they take and return magnus's
+  values (`RString`, `RArray`, `RHash`, `Value`), slices and
+  `bridge::string::Encoding`, check what the C function would not (a Hash
+  key's kind, a substring's bounds, `to_encoding`'s argument), and one with
+  no Ruby value takes `&Ruby` as the GVL's proof. Only those over raw memory
+  stay `unsafe` (`typed_object_wrap` / `_zalloc`, `xmalloc`, `xrealloc2`,
+  `check_typeddata`, `utf8_str_unwritten`). A raw `VALUE` - an integer to
+  Rust, which no lint can tell from a `u64` in a `Vec` - is spelled only in
+  `raw.rs` and `typed.rs` (`unsafe:boundaries`' `VALUE_COUNTS`, empty), so
+  everything else holds typed values; `TypedType::wrap` is safe for that
+  reason (`&Ruby`, and a `T` can keep a Ruby value only in a `Held`). A
+  `Held` is a private field beside the `trace` that marks it, read through
+  that module's accessor (`NodeData::document`, `DocData::errors`).
 
   **A Document's content is reached only through a guard** (`bridge::dom`,
   over `crate::doc_cell`, which is Ruby-free so its `compile_fail` doctests

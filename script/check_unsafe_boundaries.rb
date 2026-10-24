@@ -31,7 +31,6 @@ RUST = File.join(ROOT, "ext/makiri/rust/src")
 UNSAFE_ISLANDS = {
   "bridge/alloc.rs" => 9,
   "bridge/gvl.rs" => 3,
-  "bridge/html.rs" => 1,
   "bridge/node_set.rs" => 3,
   "bridge/node_wrap.rs" => 1,
   "bridge/raw.rs" => 45,
@@ -40,13 +39,11 @@ UNSAFE_ISLANDS = {
   "bridge/string/build.rs" => 2,
   "bridge/string/encoding.rs" => 10,
   "bridge/string/view.rs" => 6,
-  "bridge/typed.rs" => 31,
-  "bridge/wrapper/accounting.rs" => 1,
-  "bridge/wrapper/document.rs" => 8,
+  "bridge/typed.rs" => 34,
+  "bridge/wrapper/document.rs" => 2,
   "bridge/wrapper/node.rs" => 1,
-  "bridge/xml.rs" => 1,
   "bridge/xml_decode.rs" => 3,
-  "bridge/xpath/context_object.rs" => 5,
+  "bridge/xpath/context_object.rs" => 3,
   "bridge/xpath/mod.rs" => 3,
   "falloc/mod.rs" => 1,
   "lexbor/abi.rs" => 4,
@@ -85,43 +82,43 @@ FORBID_ROOTS = %w[css/mod.rs glue/mod.rs css_match/mod.rs selectors/mod.rs xml/m
 FORBID_FILES = %w[
   bridge/build.rs bridge/doc.rs bridge/dom.rs
   bridge/dom_error.rs bridge/fragment.rs bridge/string/source.rs
-  bridge/wrapper/edit.rs cbuf.rs child_index.rs
-  conformance/mod.rs css/build.rs css/lower.rs
-  css/mod.rs css_cache.rs css_match/mod.rs
-  cutf8.rs cutf8/verify.rs doc_cell.rs
-  dom_rules.rs engine_error.rs falloc/verify.rs
-  glue/css.rs glue/html_doc.rs glue/html_node/css.rs
-  glue/html_node/mutate.rs glue/html_node/read.rs glue/html_node/serialize.rs
-  glue/mod.rs glue/node.rs glue/node_set.rs
-  glue/query.rs glue/xml_doc.rs glue/xml_node/css.rs
-  glue/xml_node/mod.rs glue/xml_node/mutate.rs glue/xml_node/ns.rs
-  glue/xml_node/read.rs glue/xml_node/serialize.rs glue/xpath_context.rs
-  gvl.rs html/dom/mod.rs html/encoding/mod.rs
-  html/mod.rs html/tokenizer/mod.rs html/tree/mod.rs
-  html_dom.rs lexbor/contains_guard.rs limits.rs
-  node_type.rs ptr_table.rs rust_tests.rs
-  selectors/mod.rs selectors/stylesheet.rs selectors/text.rs
-  source_lines.rs stack.rs text.rs
-  token.rs utf8_input.rs xml/arena.rs
-  xml/attr_key.rs xml/chars/expand.rs xml/chars/mod.rs
-  xml/css.rs xml/css_tests.rs xml/dom_name.rs
-  xml/encoding_names.rs xml/encoding_sniff.rs xml/index.rs
-  xml/mod.rs xml/model.rs xml/mutate/attr.rs
-  xml/mutate/copy.rs xml/mutate/edit.rs xml/mutate/factory.rs
-  xml/mutate/insert.rs xml/mutate/mod.rs xml/mutate/ns.rs
-  xml/ns_scope.rs xml/qname.rs xml/selftest.rs
-  xml/serialize/bindings.rs xml/serialize/c14n.rs xml/serialize/mod.rs
-  xml/serialize/out.rs xml/serialize/xml.rs xml/tree/cursor.rs
-  xml/tree/decl.rs xml/tree/dtd.rs xml/tree/mod.rs
-  xml/tree/scope.rs xml/verify.rs xml/xpath.rs
-  xpath/abi.rs xpath/ast.rs xpath/ast_ops.rs
-  xpath/attr_pred.rs xpath/axis.rs xpath/ctx.rs
-  xpath/dom.rs xpath/eval.rs xpath/funcs/css_hooks.rs
-  xpath/funcs/ext.rs xpath/funcs/mod.rs xpath/lex.rs
-  xpath/limits.rs xpath/mod.rs xpath/nodetest.rs
-  xpath/number.rs xpath/order.rs xpath/parse.rs
-  xpath/step_index.rs xpath/str_cache.rs xpath/tests.rs
-  xpath/value.rs xpath/verify.rs
+  bridge/wrapper/accounting.rs bridge/wrapper/edit.rs cbuf.rs
+  child_index.rs conformance/mod.rs css/build.rs
+  css/lower.rs css/mod.rs css_cache.rs
+  css_match/mod.rs cutf8.rs cutf8/verify.rs
+  doc_cell.rs dom_rules.rs engine_error.rs
+  falloc/verify.rs glue/css.rs glue/html_doc.rs
+  glue/html_node/css.rs glue/html_node/mutate.rs glue/html_node/read.rs
+  glue/html_node/serialize.rs glue/mod.rs glue/node.rs
+  glue/node_set.rs glue/query.rs glue/xml_doc.rs
+  glue/xml_node/css.rs glue/xml_node/mod.rs glue/xml_node/mutate.rs
+  glue/xml_node/ns.rs glue/xml_node/read.rs glue/xml_node/serialize.rs
+  glue/xpath_context.rs gvl.rs html/dom/mod.rs
+  html/encoding/mod.rs html/mod.rs html/tokenizer/mod.rs
+  html/tree/mod.rs html_dom.rs lexbor/contains_guard.rs
+  limits.rs node_type.rs ptr_table.rs
+  rust_tests.rs selectors/mod.rs selectors/stylesheet.rs
+  selectors/text.rs source_lines.rs stack.rs
+  text.rs token.rs utf8_input.rs
+  xml/arena.rs xml/attr_key.rs xml/chars/expand.rs
+  xml/chars/mod.rs xml/css.rs xml/css_tests.rs
+  xml/dom_name.rs xml/encoding_names.rs xml/encoding_sniff.rs
+  xml/index.rs xml/mod.rs xml/model.rs
+  xml/mutate/attr.rs xml/mutate/copy.rs xml/mutate/edit.rs
+  xml/mutate/factory.rs xml/mutate/insert.rs xml/mutate/mod.rs
+  xml/mutate/ns.rs xml/ns_scope.rs xml/qname.rs
+  xml/selftest.rs xml/serialize/bindings.rs xml/serialize/c14n.rs
+  xml/serialize/mod.rs xml/serialize/out.rs xml/serialize/xml.rs
+  xml/tree/cursor.rs xml/tree/decl.rs xml/tree/dtd.rs
+  xml/tree/mod.rs xml/tree/scope.rs xml/verify.rs
+  xml/xpath.rs xpath/abi.rs xpath/ast.rs
+  xpath/ast_ops.rs xpath/attr_pred.rs xpath/axis.rs
+  xpath/ctx.rs xpath/dom.rs xpath/eval.rs
+  xpath/funcs/css_hooks.rs xpath/funcs/ext.rs xpath/funcs/mod.rs
+  xpath/lex.rs xpath/limits.rs xpath/mod.rs
+  xpath/nodetest.rs xpath/number.rs xpath/order.rs
+  xpath/parse.rs xpath/step_index.rs xpath/str_cache.rs
+  xpath/tests.rs xpath/value.rs xpath/verify.rs
 ].freeze
 
 UNSAFE_USE = /\bunsafe\s*(?:\{|fn\b|impl\b|trait\b|extern\b)/
@@ -169,6 +166,16 @@ USER_CODE_API = /\b(?:rb_String|rb_funcall\w*|rb_obj_as_string|rb_respond_to|rb_
   rb_check_string_type|rb_convert_type|rb_check_convert_type)\b|
   \.(?:funcall\w*|respond_to|to_r_string|block_call|yield_\w+|yield_splat)\(/x
 USER_CODE_COUNTS = { "glue/node_set.rs" => 1, "glue/xml_node/ns.rs" => 1 }.freeze
+
+# A raw `VALUE` (`rb_sys::VALUE`, an integer to Rust) is a Ruby value no type
+# keeps honest: no lint can tell it from a `u64` in a `Vec` or a struct field,
+# where the GC would not see it. So it is spelled only where it must be:
+# `bridge/raw.rs` (the C calls) and `bridge/typed.rs` (TypedData, `Held`,
+# the GC callbacks). Everything else holds magnus's typed values, which
+# `clippy.toml` and the dylint lint can see. The reference-only `lexbor/` is
+# not counted. Pinned per file, empty: a new one is a decision.
+VALUE_ALLOWED = %w[bridge/raw.rs bridge/typed.rs].freeze
+VALUE_COUNTS = {}.freeze
 
 # `Value::from_raw` outside `bridge/` is the other half of the raw Ruby
 # boundary: a `VALUE` the glue already holds, turned back into a `Value`. The
@@ -449,6 +456,18 @@ Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
 end
 if user_code != USER_CODE_COUNTS
   errors << "calls that run the caller's Ruby code changed: #{table_diff(USER_CODE_COUNTS, user_code)}"
+end
+
+raw_values = Hash.new(0)
+Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
+  relative = path.delete_prefix("#{RUST}/")
+  next if relative.start_with?("lexbor/") || VALUE_ALLOWED.include?(relative)
+
+  count = comments_removed(File.binread(path)).scan(/\bVALUE\b/).length
+  raw_values[relative] = count unless count.zero?
+end
+if raw_values != VALUE_COUNTS
+  errors << "raw VALUE outside bridge/raw.rs and bridge/typed.rs changed: #{table_diff(VALUE_COUNTS, raw_values)}"
 end
 
 value_from_raw = Hash.new(0)
@@ -898,6 +917,7 @@ puts "unsafe-boundaries: #{forbidding.length} forbid files; " \
      "#{actual.values.sum} reviewed static mut declarations; " \
      "#{rb_sys.values.sum} rb_sys:: outside bridge/ and #{raising.values.sum} raising C calls in bridge/raw.rs; " \
      "#{user_code.values.sum} calls into the caller's Ruby (both allowed); " \
+     "#{raw_values.values.sum} raw VALUEs outside raw.rs and typed.rs; " \
      "#{value_from_raw.values.sum} Value::from_raw and " \
      "#{lexbor_abi.values.sum} Lexbor ABI names outside their layer and " \
      "#{lexbor_decls.values.sum} Lexbor declarations outside lexbor/abi.rs; " \

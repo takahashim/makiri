@@ -15,7 +15,7 @@ use magnus::{prelude::*, Error, RString, Ruby, Value};
 
 /// The raw handle types, re-exported so a higher layer can name a `VALUE` or a
 /// method `ID` without reaching into `rb_sys` itself.
-pub use rb_sys::{ID, VALUE};
+pub use rb_sys::ID;
 
 /* The two conveniences every bridge and glue module shares. */
 
@@ -205,19 +205,6 @@ pub fn range_beg_len(range: Value, count: c_long) -> Result<Option<(c_long, c_lo
  * and `boolean` are immortal and cannot raise; what allocates is
  * `bridge::build`'s. */
 
-/// A `Value` from a raw handle the caller already holds - a stored field, or a
-/// producer that still returns `VALUE`. The bridge is the one place that turns
-/// a raw handle back into a `Value`.
-///
-/// # Safety
-/// `raw` must be a live Ruby value of the current process (as every `VALUE` a
-/// wrapper stores is), and the caller must keep it rooted.
-#[inline]
-pub unsafe fn value(raw: VALUE) -> Value {
-    // SAFETY: the caller's contract.
-    unsafe { Value::from_raw(raw) }
-}
-
 /// The Ruby handle the helpers below build their values with, unchecked.
 ///
 /// Every caller of this module's value and error helpers is a Ruby method - or
@@ -275,18 +262,19 @@ pub fn same_value(a: Value, b: Value) -> bool {
     a.as_raw() == b.as_raw()
 }
 
-/// `true`/`false` for Ruby's two boolean singletons, and `None` for anything
-/// else (which a caller treats as neither).
-#[inline]
-pub fn bool_value(v: VALUE) -> Option<bool> {
-    let ruby = gvl_ruby();
-    if v == ruby.qtrue().as_raw() {
-        Some(true)
-    } else if v == ruby.qfalse().as_raw() {
-        Some(false)
-    } else {
-        None
-    }
+/// Hide `v` from `ObjectSpace` (`rb_obj_hide`: its class field cleared), as
+/// a Document is until it has content. Raises nothing.
+pub fn hide(v: Value) {
+    // SAFETY: a live object of ours, by `Value`'s rule; hiding writes only its
+    // class field.
+    unsafe { rb_sys::rb_obj_hide(v.as_raw()) };
+}
+
+/// Show `v` again with `klass`, the class it was made with (`rb_obj_reveal`).
+/// Raises nothing.
+pub fn reveal(v: Value, klass: magnus::RClass) {
+    // SAFETY: as `hide`; `klass` is a live class, by type.
+    unsafe { rb_sys::rb_obj_reveal(v.as_raw(), klass.as_raw()) };
 }
 
 /// A Ruby entry point that faces untrusted input: a panic inside becomes
@@ -330,7 +318,7 @@ const EXCEPTION_MESSAGE_MAX: usize = 255;
 /// at most [`EXCEPTION_MESSAGE_MAX`] bytes, invalid UTF-8 replaced. "error"
 /// for a message that is not a String - this runs on error paths, so it must
 /// not raise itself.
-pub fn exception_message(exc: VALUE) -> String {
+pub fn exception_message(exc: Value) -> String {
     /* The message is the exception's `mesg`, read as an attribute: calling
      * `#message` would run its class's Ruby. A message that is not a String
      * is answered as "error". */
@@ -339,7 +327,7 @@ pub fn exception_message(exc: VALUE) -> String {
     };
     // SAFETY: `exc` is a live exception; reading an attribute runs no Ruby
     // and raises nothing.
-    let msg = unsafe { rb_sys::rb_attr_get(exc, id) };
+    let msg = unsafe { rb_sys::rb_attr_get(exc.as_raw(), id) };
     // SAFETY: `msg` is the live VALUE the call returned.
     let Some(r) = magnus::RString::from_value(unsafe { Value::from_raw(msg) }) else {
         return "error".to_owned();
@@ -358,7 +346,7 @@ pub fn exception_message(exc: VALUE) -> String {
 /// "error" for one that carries none.
 pub fn error_message(e: &Error) -> String {
     match e.error_type() {
-        magnus::error::ErrorType::Exception(x) => exception_message(x.as_raw()),
+        magnus::error::ErrorType::Exception(x) => exception_message(x.as_value()),
         _ => "error".to_owned(),
     }
 }

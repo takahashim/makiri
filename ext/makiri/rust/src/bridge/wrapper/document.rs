@@ -11,7 +11,6 @@ use magnus::{Error, Value};
 
 use super::*;
 use crate::bridge::dom::{Body, Conflict, HtmlRead, HtmlWrite, XmlRead, XmlWrite};
-use crate::bridge::ruby::{value, VALUE};
 use crate::bridge::typed::{Held, Hooks, Tracer, TypedType};
 use crate::child_index::ChildPositionMemo;
 use crate::falloc::{MapInsert, Reserve};
@@ -379,39 +378,35 @@ impl From<DocKind> for Kind {
 /// find the wrapper and call a method on it; a parse that fails leaves it
 /// hidden for the GC to free.
 pub struct DocumentShell {
-    obj: VALUE,
-    klass: VALUE,
+    obj: Value,
+    klass: magnus::RClass,
 }
 
 impl DocumentShell {
     pub fn new(kind: DocKind) -> Result<DocumentShell, Error> {
         let (klass, ty) = match kind {
-            DocKind::Html => (crate::init::CLASS_HTML_DOCUMENT.raw(), &HTML_DOC_TYPE),
-            DocKind::Xml => (crate::init::CLASS_XML_DOCUMENT.raw(), &XML_DOC_TYPE),
+            DocKind::Html => (crate::init::CLASS_HTML_DOCUMENT.defined()?, &HTML_DOC_TYPE),
+            DocKind::Xml => (crate::init::CLASS_XML_DOCUMENT.defined()?, &XML_DOC_TYPE),
         };
         /* The errors array is built before the wrap and kept in a local, so the
          * conservative stack scan pins it across the wrap's allocation and the
          * store closure does not allocate (an allocation there could raise
          * NoMemoryError while the caller holds a live resource). */
         let errors = magnus::value::ReprValue::as_value(crate::bridge::build::ary(0)?);
-        // SAFETY: a fresh wrapper; the store closure only moves a live VALUE in.
-        let obj = unsafe {
-            ty.wrap(
-                klass,
-                || DocData {
-                    content: OnceCell::new(),
-                    edits: Cell::new(EditState::default()),
-                    errors: Held::empty(),
-                    report: Cell::new(ExternalReport::default()),
-                    nodes: RefCell::new(None),
-                    child_memo: RefCell::new(ChildPositionMemo::default()),
-                },
-                |d, store| d.errors = store.hold(errors),
-            )
-        }?;
-        // SAFETY: a live object of ours, not yet handed out; hiding clears its
-        // class field and raises nothing.
-        unsafe { rb_sys::rb_obj_hide(obj) };
+        let obj = ty.wrap(
+            &crate::bridge::ruby::gvl_ruby(),
+            klass,
+            || DocData {
+                content: OnceCell::new(),
+                edits: Cell::new(EditState::default()),
+                errors: Held::empty(),
+                report: Cell::new(ExternalReport::default()),
+                nodes: RefCell::new(None),
+                child_memo: RefCell::new(ChildPositionMemo::default()),
+            },
+            |d, store| d.errors = store.hold(errors),
+        )?;
+        crate::bridge::ruby::hide(obj);
         Ok(DocumentShell { obj, klass })
     }
 
@@ -431,19 +426,15 @@ impl DocumentShell {
         reason = "`new` makes the wrapper without content, and only `install` - which takes the shell - gives it some"
     )]
     fn install(self, content: Body) -> Value {
-        // SAFETY: `self.obj` is a live Document wrapper (the base type matches
-        // either leaf) that has no content yet, so nothing is overwritten.
-        let rb_doc = unsafe { value(self.obj) };
-        if DOC_TYPE.get_known(&rb_doc).content.set(content).is_err() {
+        /* `self.obj` is a Document wrapper with no content yet, so nothing is
+         * overwritten. */
+        if DOC_TYPE.get_known(&self.obj).content.set(content).is_err() {
             panic!("a Document installed twice");
         }
         account_document(self.obj);
         /* Content in place: the Document can be seen now. */
-        // SAFETY: the object `new` hid, given back the class it was made
-        // with; revealing raises nothing.
-        unsafe { rb_sys::rb_obj_reveal(self.obj, self.klass) };
-        // SAFETY: a live Document.
-        unsafe { value(self.obj) }
+        crate::bridge::ruby::reveal(self.obj, self.klass);
+        self.obj
     }
 }
 
@@ -579,7 +570,7 @@ impl NodeClasses {
     /// an unknown number). A DOCUMENT is the caller's to map back onto the
     /// Ruby Document before asking.
     #[inline]
-    pub fn class_for(&self, t: NodeType) -> VALUE {
+    pub fn class_for(&self, t: NodeType) -> Result<magnus::RClass, Error> {
         match t {
             NodeType::Element => self.element,
             NodeType::Attribute => self.attr,
@@ -591,7 +582,7 @@ impl NodeClasses {
             NodeType::DocumentFragment => self.fragment,
             _ => self.node,
         }
-        .raw()
+        .defined()
     }
 }
 
@@ -615,7 +606,7 @@ impl NodeClasses {
 /// `wrap_*_node` functions call this, each for its own kind.
 pub(in crate::bridge) fn wrap_cached(
     ty: &'static TypedType<NodeData>,
-    klass: VALUE,
+    klass: magnus::RClass,
     source: impl NodeHandleSource,
     document: Value,
 ) -> Result<Value, Error> {
@@ -630,17 +621,12 @@ pub(in crate::bridge) fn wrap_cached(
         .map_err(|_| wrap_oom())?;
     let node = source.into_handle(document);
     /* The Document is stored after the wrap: see `TypedType::wrap`. */
-    // SAFETY: a fresh wrapper; the store closure only moves a live VALUE in.
-    let fresh = unsafe {
-        value(ty.wrap(
-            klass,
-            || NodeData {
-                node,
-                document: Held::empty(),
-            },
-            |nd, store| nd.document = store.hold(document),
-        )?)
-    };
+    let fresh = ty.wrap(
+        &crate::bridge::ruby::gvl_ruby(),
+        klass,
+        || NodeData::new(node),
+        |nd, store| nd.hold_document(store, document),
+    )?;
     /* After the wrap, so the VALUE exists, into the room reserved above - no
      * allocation. Were it to fail anyway, `fresh` is dropped unseen rather
      * than handed out uncached. */

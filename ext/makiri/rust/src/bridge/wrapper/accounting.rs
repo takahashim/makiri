@@ -1,14 +1,11 @@
 //! What a Document reports to the GC of the memory it holds outside Ruby's
 //! allocator.
 
-#![allow(unsafe_code)]
-
-use magnus::rb_sys::AsRawValue;
+#![forbid(unsafe_code)]
 
 use magnus::Value;
 
 use super::*;
-use crate::bridge::ruby::{value, VALUE};
 
 /// Tell the GC how much memory `rb_doc` holds outside Ruby's allocator.
 ///
@@ -23,10 +20,7 @@ use crate::bridge::ruby::{value, VALUE};
 /// May run a collection right here, so `rb_doc` must be reachable from the
 /// caller's frame (a local VALUE is), and nothing borrowed from a Ruby String
 /// may be held across the call.
-pub(super) fn account_document(rb_doc: VALUE) {
-    // SAFETY: `rb_doc` is a Document (the base type matches either leaf),
-    // live on the caller's frame.
-    let rb_doc = unsafe { value(rb_doc) };
+pub(super) fn account_document(rb_doc: Value) {
     let d = DOC_TYPE.get_known(&rb_doc);
     /* Content an edit holds is measured at the next report - which no
      * caller reaches with an edit open, since none runs Ruby. */
@@ -68,7 +62,7 @@ pub(super) const GROWTH_MIN_BYTES: usize = 512 * 1024;
 /// of an edit, before any argument is converted.
 pub fn account_growth(rb_doc: Value) {
     if doc_data_known(&rb_doc).grown_enough() {
-        account_document(rb_doc.as_raw());
+        account_document(rb_doc);
     }
 }
 
@@ -91,6 +85,6 @@ pub fn has_kept_order(rb_doc: Value) -> bool {
 /// on the caller's stack and no borrowed Ruby String held.
 pub fn account_kept_order(rb_doc: Value, had: bool) {
     if !had && has_kept_order(rb_doc) {
-        account_document(rb_doc.as_raw());
+        account_document(rb_doc);
     }
 }

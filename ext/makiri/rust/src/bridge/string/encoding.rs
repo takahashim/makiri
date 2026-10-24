@@ -7,7 +7,6 @@ use core::ffi::c_int;
 
 use magnus::rb_sys::AsRawValue;
 use magnus::{prelude::*, Error, RString, Value};
-use rb_sys::VALUE;
 
 /* ---- encoding ---- */
 
@@ -182,7 +181,8 @@ fn reads_as_utf8_bytes(s: RString) -> bool {
     // SAFETY: `s` is a live String - a heap object, whose flags word is the
     // first field of its `RBasic` and readable; reading it runs no Ruby.
     let flags = unsafe { (*(s.as_raw() as *const rb_sys::RBasic)).flags };
-    let inline = ((flags & RUBY_ENCODING_MASK as VALUE) >> RUBY_ENCODING_SHIFT as u32) as c_int;
+    let inline =
+        ((flags as usize & RUBY_ENCODING_MASK as usize) >> RUBY_ENCODING_SHIFT as u32) as c_int;
     let index = if inline == RUBY_ENCODING_INLINE_MAX as c_int {
         // SAFETY: as above; the lookup reads an instance variable and raises
         // nothing.

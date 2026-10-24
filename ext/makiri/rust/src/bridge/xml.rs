@@ -81,7 +81,7 @@ fn wrap_xml_node_of_type(
     if ty == Some(ArenaKind::Document) {
         return Ok(document);
     }
-    let klass = XML_NODE_CLASSES.class_for(ty.map_or(CrateKind::Other, Into::into));
+    let klass = XML_NODE_CLASSES.class_for(ty.map_or(CrateKind::Other, Into::into))?;
 
     crate::bridge::wrapper::wrap_cached(&XML_NODE_TYPE, klass, id, document)
 }
@@ -166,10 +166,7 @@ pub fn xml_node_document(rb_self: Value) -> Result<Value, Error> {
     if crate::bridge::ruby::is_kind_of(rb_self, &CLASS_XML_DOCUMENT) {
         return Ok(rb_self);
     }
-    let nd: &NodeData = XML_NODE_TYPE.get(&rb_self)?;
-    // SAFETY: the field of the wrapper `rb_self`, whose mark marks it; the
-    // argument keeps the wrapper reachable.
-    Ok(unsafe { nd.document.get() })
+    Ok(XML_NODE_TYPE.get(&rb_self)?.document())
 }
 
 /* ------------------------------------------------------------------ *
