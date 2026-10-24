@@ -274,6 +274,19 @@ fn panic_probe(ruby: &Ruby, kind: Value) -> Result<(), Error> {
              * `bridge::gvl` latches it and re-raises once the GVL is back. */
             crate::bridge::gvl::without_gvl(|| panic!("Makiri.__panic(4): panic below the GVL"))?;
         }
+        7 => {
+            /* A Ruby handle made inside a GVL-released body: `gvl_ruby`
+             * refuses with a panic, which the body's latch re-raises. */
+            #[cfg(makiri_gvl_check)]
+            crate::bridge::gvl::without_gvl(|| {
+                let _ = crate::bridge::ruby::gvl_ruby();
+            })?;
+            #[cfg(not(makiri_gvl_check))]
+            return Err(Error::new(
+                ruby.exception_not_imp_error(),
+                "rebuild with MAKIRI_GVL_CHECK=1 (sanitize and OOM builds have it)",
+            ));
+        }
         5 => {
             /* Through `bridge::ruby::entry`, the wrapper the untrusted-input
              * entry points carry: the panic becomes `Makiri::InternalError`
@@ -294,7 +307,7 @@ fn panic_probe(ruby: &Ruby, kind: Value) -> Result<(), Error> {
         _ => {
             return Err(Error::new(
                 ruby.exception_arg_error(),
-                "__panic: kind must be 0..6",
+                "__panic: kind must be 0..7",
             ))
         }
     }

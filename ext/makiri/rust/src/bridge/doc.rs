@@ -83,9 +83,9 @@ pub fn parse_document(
 
     /* The body - sniffing, decoding and parsing - runs on this thread with
      * the GVL released, so the parsed handle comes back as it is. */
-    let result = crate::bridge::gvl::without_gvl(|| {
-        crate::html::tree::parse_document_bytes(src.input(), limit)
-    })?;
+    let input = src.input();
+    let result =
+        crate::bridge::gvl::without_gvl(|| crate::html::tree::parse_document_bytes(input, limit))?;
     drop(src);
 
     let parsed = result.map_err(|e| match e {

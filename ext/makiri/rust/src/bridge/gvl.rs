@@ -12,6 +12,49 @@
 
 use core::ffi::c_void;
 
+/* The GVL check: whether this thread is running a `without_gvl` body, which
+ * `bridge::ruby::gvl_ruby` asks before it makes a Ruby handle from nothing -
+ * `Send` keeps a handle from being carried into the body, but cannot keep
+ * one from being made there, by any helper the body reaches (a function
+ * pointer's included). Only in a checking build (`cfg(makiri_gvl_check)`,
+ * which extconf sets for sanitize and OOM-injection builds and on
+ * MAKIRI_GVL_CHECK=1): a thread-local read is a call on macOS, and
+ * `gvl_ruby` runs several times a method - always on, it cost the light
+ * readers 4-12 ns (5-10%). */
+#[cfg(makiri_gvl_check)]
+mod check {
+    use core::cell::Cell;
+
+    thread_local! {
+        static RELEASED: Cell<bool> = const { Cell::new(false) };
+    }
+
+    /// Whether the GVL is released on this thread by `without_gvl`.
+    #[inline]
+    pub(crate) fn released() -> bool {
+        RELEASED.with(Cell::get)
+    }
+
+    /// Marks this thread as running a GVL-released body until dropped - a
+    /// `Drop`, so a panic in the body clears it on the way to the latch.
+    pub(super) struct Released;
+
+    impl Released {
+        pub(super) fn enter() -> Released {
+            RELEASED.with(|r| r.set(true));
+            Released
+        }
+    }
+
+    impl Drop for Released {
+        fn drop(&mut self) {
+            RELEASED.with(|r| r.set(false));
+        }
+    }
+}
+#[cfg(makiri_gvl_check)]
+pub(crate) use check::released;
+
 /// Run `f` with the GVL released, and return its result - or the exception a
 /// pending interrupt raised instead.
 ///
@@ -62,7 +105,11 @@ pub fn without_gvl<F: FnOnce() -> R + Send, R>(f: F) -> Result<R, magnus::Error>
         /* Catch here rather than let the panic reach Ruby's C frame: `out`
          * simply stays None, and the caller re-raises once the GVL is back. */
         let out = &mut slot.out;
-        slot.panic.guard((), || *out = Some(f()));
+        slot.panic.guard((), || {
+            #[cfg(makiri_gvl_check)]
+            let _released = check::Released::enter();
+            *out = Some(f());
+        });
         core::ptr::null_mut()
     }
 

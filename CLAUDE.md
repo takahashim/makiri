@@ -1310,7 +1310,15 @@ Key decisions that got there, worth not regressing:
   (`Timeout`, `Thread#raise`) as it returns, a longjmp over the Rust frames
   holding the parsed document and the source copy, which leaked both on every
   interrupted parse. `bridge::gvl::without_gvl` delivers an interrupt only
-  when the body never started, under `protect`. **XPath holds
+  when the body never started, under `protect`. Its `Send` bound keeps a
+  Ruby handle from being carried into the body but not from being MADE
+  there (`bridge::ruby::gvl_ruby`), so `rake unsafe:boundaries` holds the
+  body's closure to engine functions by `crate::` path (no method call, bare
+  function or macro: hoist it), and a checking build -
+  `cfg(makiri_gvl_check)`, which extconf sets for sanitize and OOM builds
+  and on `MAKIRI_GVL_CHECK=1` - makes `gvl_ruby` panic inside a body
+  (`__panic(7)`). It is not in the gem: always on, the thread-local read
+  cost the light readers 5-10%. **XPath holds
   the GVL for the whole evaluation by design** (`xpath::ctx::Session::evaluate` is a plain
   GVL-held call). The engine and DOM are not thread-safe against concurrent
   mutation, and holding the GVL makes that safe *by construction*: the GVL

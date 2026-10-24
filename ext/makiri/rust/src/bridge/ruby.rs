@@ -213,10 +213,33 @@ pub fn range_beg_len(range: Value, count: c_long) -> Result<Option<(c_long, c_lo
 /// at each helper; a caller off a Ruby thread (the GVL-released parse) takes
 /// no Ruby value at all, which `bridge::gvl::without_gvl`'s `Send` bound keeps.
 /// `init::RbConst`'s readers are helpers of the same kind.
+///
+/// What `Send` cannot keep out is a handle MADE inside the body - this call,
+/// from any helper the body reaches, a function pointer's included. A
+/// checking build (`cfg(makiri_gvl_check)`, see `bridge::gvl`) asks first and
+/// panics if the GVL is released: the body's latch re-raises that once the
+/// GVL is back, where a handle used without it would have run Ruby's C
+/// unlocked. `__panic(7)` is the test.
 #[inline]
 pub(crate) fn gvl_ruby() -> Ruby {
-    // SAFETY: see above - on a Ruby thread, with the GVL.
+    #[cfg(makiri_gvl_check)]
+    if crate::bridge::gvl::released() {
+        made_without_gvl();
+    }
+    // SAFETY: see above - on a Ruby thread, with the GVL (just checked to be
+    // not released by `without_gvl`).
     unsafe { Ruby::get_unchecked() }
+}
+
+#[cfg(makiri_gvl_check)]
+#[cold]
+#[inline(never)]
+#[allow(
+    clippy::panic,
+    reason = "a broken invariant; the GVL-released body's latch re-raises it"
+)]
+fn made_without_gvl() -> ! {
+    panic!("a Ruby handle was made with the GVL released (bridge::ruby::gvl_ruby)")
 }
 
 /// `nil`, as a `Value`.

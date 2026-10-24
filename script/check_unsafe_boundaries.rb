@@ -891,6 +891,54 @@ unless unprotected.empty?
   errors << "a raising C call in bridge/raw.rs outside `call(|| ...)`: #{unprotected.inspect}"
 end
 
+# What a GVL-released body may call. `bridge::gvl::without_gvl`'s `Send`
+# bound keeps a Ruby handle or value from being carried into the body, but
+# not one from being MADE there - `bridge::ruby::gvl_ruby` makes one from
+# nothing, and every bridge helper reaches it. The engine reaches none of it
+# (`RUBY_LAYER` above), so the body may call only engine functions, by their
+# `crate::` path: a method call, a bare function or a macro could be
+# anything, and is hoisted out of the closure instead (`src.input()` is
+# evaluated before the call, not inside it). A checking build adds the
+# runtime half (`gvl_ruby` panics while a body runs, `cfg(makiri_gvl_check)`),
+# which also sees a function pointer this text cannot.
+ENGINE_MODULES = ENGINE_DIRS.map { |d| d.sub(%r{/\z}, "").sub(/\.rs\z/, "") }.uniq.freeze
+# A capitalised name is a constructor (`Some(..)`, `Ok(..)`), not a call.
+GVL_RELEASED_CALL = /(?<dot>\.\s*)?(?<name>\b[A-Za-z_]\w*(?:\s*::\s*[A-Za-z_]\w*)*)\s*(?<bang>!)?\s*\(/
+WITHOUT_GVL_EXEMPT = {
+  "init.rs" => "the __panic(4) / __panic(7) hooks: a panic, and a gvl_ruby call, below the GVL on purpose"
+}.freeze
+
+def gvl_released_violations(rust)
+  Dir.glob(File.join(rust, "**", "*.rs")).sort.flat_map do |path|
+    rel = path.delete_prefix("#{rust}/")
+    next [] if WITHOUT_GVL_EXEMPT.key?(rel)
+
+    code = code_only(File.binread(path))
+    code.to_enum(:scan, /\bwithout_gvl\s*\(/).map { Regexp.last_match.end(0) - 1 }.flat_map do |open|
+      close = matching_close(code, open) or next ["#{rel}: unbalanced without_gvl(...)"]
+      line = code[0...open].count("\n") + 1
+      found = []
+      code[(open + 1)...close].scan(GVL_RELEASED_CALL) do
+        m = Regexp.last_match
+        name = m[:name].gsub(/\s+/, "")
+        next if m[:dot].nil? && m[:bang].nil? && name.match?(/\A[A-Z]\w*\z/)
+        next if m[:dot].nil? && m[:bang].nil? &&
+                ENGINE_MODULES.any? { |mod| name.start_with?("crate::#{mod}::") }
+
+        kind = m[:dot] ? "method call .#{name}" : m[:bang] ? "macro #{name}!" : name
+        found << "#{rel}:#{line}: #{kind}"
+      end
+      found
+    end
+  end
+end
+
+gvl_released = gvl_released_violations(RUST)
+unless gvl_released.empty?
+  errors << "a GVL-released body (without_gvl) calls something other than an engine " \
+            "function by its crate:: path (hoist it out of the closure): #{gvl_released.inspect}"
+end
+
 unentered = unwrapped_entries(RUST)
 unless unentered.empty?
   errors << "Ruby methods whose body is not wrapped in bridge::ruby::entry " \
@@ -925,4 +973,5 @@ puts "unsafe-boundaries: #{forbidding.length} forbid files; " \
      "#{ruby_layer.values.sum} Ruby-layer uses inside the engine; " \
      "#{ruby_surface.values.sum} Ruby methods in bridge/; " \
      "every registered method but #{ENTRY_EXEMPT.length} exempt runs under entry; " \
-     "every raising call in bridge/raw.rs is inside `call`"
+     "every raising call in bridge/raw.rs is inside `call`; " \
+     "every GVL-released body calls only the engine"

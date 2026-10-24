@@ -633,7 +633,9 @@ pub fn parse_xml_document(source: Value, limits: ParseLimits) -> Result<Value, E
     let src = crate::bridge::string::ruby_string_bytes(decoded)?;
 
     /* Ruby-free from here: only the copied bytes and the limits cross. */
-    let result = crate::bridge::gvl::without_gvl(|| tree::parse_ex(src.as_slice(), Some(&limits)))?;
+    let bytes = src.as_slice();
+    let result =
+        crate::bridge::gvl::without_gvl(|| crate::xml::tree::parse_ex(bytes, Some(&limits)))?;
     drop(src);
 
     let arena = result.map_err(|status| parse_status_error(status, Unit::Document))?;
