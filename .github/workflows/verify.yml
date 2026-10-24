@@ -133,4 +133,5 @@ jobs:
         working-directory: ext/makiri/rust
         env:
           MIRIFLAGS: "-Zmiri-strict-provenance"
-        run: cargo +nightly miri test --no-default-features --lib -- raw_vec:: utf8_copy:: falloc:: cbuf::
+        # Quoted: an unquoted `name:: ` would be read as a YAML mapping.
+        run: "cargo +nightly miri test --no-default-features --lib -- raw_vec:: utf8_copy:: falloc:: cbuf::"
