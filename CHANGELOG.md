@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.17.0.rc2] - 2026-10-24
+
 ### Added
 
 * HTML documents are decoded as browsers decode them: the HTML Standard's
@@ -17,28 +19,17 @@
 
 ### Changed
 
-* A node wrapper keeps its data in its own object (an embedded TypedData,
-  Ruby 3.3+): wrapping a node for the first time is ~25-45 ns cheaper, and
-  a fresh document's query or walk 10-30% faster.
-* `Node#traverse` lists the subtree once, natively, before the first node is
-  yielded: about five times faster on a large tree, and a block that adds or
-  removes nodes no longer changes which nodes are visited.
 * Ruby 3.3 or newer is required (3.2 reached its end of life in March 2026).
 * Arguments are no longer converted with `to_s` / `to_str`. A string
   argument (an attribute value, text content, markup, a variable value, a
   namespace URI) must be a `String`, and a name (an attribute or element
   name, a namespace prefix, a selector or an XPath expression) a `String` or
   a `Symbol`; anything else raises `TypeError` ("... call #to_s to convert
-  it"), where `node["n"] = 1` used to store `"1"`. `Makiri.HTML` / `Makiri.XML` still read an IO and convert
-  their source with `String()`, and `XML::Builder` still converts with
-  `to_s`. An index or a count (`NodeSet#[]`, `#child_at`,
-  `to_xml(indent:)`) must likewise be an `Integer`; `to_int` is not called.
-* XPath custom-function handlers are removed. `Node#xpath(expr, handler)`,
-  `#at_xpath(expr, handler)` and `XPathContext#evaluate(expr, handler)` raise
-  `ArgumentError`, and a call to a function XPath 1.0 does not define is an
-  `XPath::SyntaxError` (it was a `Makiri::Error` when the expression was
-  evaluated). No Ruby code runs during an evaluation any more, so mutating a
-  document is never refused "while evaluating XPath over it".
+  it"), where `node["n"] = 1` used to store `"1"`. `Makiri.HTML` /
+  `Makiri.XML` still read an IO and convert their source with `String()`,
+  and `XML::Builder` still converts with `to_s`. An index or a count
+  (`NodeSet#[]`, `#child_at`, `to_xml(indent:)`) must likewise be an
+  `Integer`; `to_int` is not called.
 * A binary or US-ASCII String holding invalid UTF-8 is no longer read as
   UTF-8 with U+FFFD replacements: it is sniffed, and read in the encoding a
   detector guesses - which, for short text or text with little variety,
@@ -56,13 +47,42 @@
   US-ASCII or binary is converted to UTF-8 first, and refused with
   `Makiri::Error` when it cannot be. Its bytes were read as UTF-8, so a
   Windows-1252 `"\xC3\xA9"` was stored as `é` and a UTF-16 `"a"` as `"a\0"`.
-* `Makiri::XML` `#ancestors` returns a NodeSet, as HTML's does; it returned
-  an Array.
 * `Makiri::XML` reads an encoding declaration by its IANA charset name or
   alias in any case (`latin1`, `csISOLatin1`), as XML 1.0 has it, and
   raises `Makiri::XML::SyntaxError` for a name that is neither (`utf8`);
   such a declaration was ignored, or reported as conflicting with the
   String's encoding.
+* `Makiri::XML` `#ancestors` returns a NodeSet, as HTML's does; it returned
+  an Array.
+* `Node#traverse` lists the subtree once, natively, before the first node is
+  yielded: about five times faster on a large tree, and a block that adds or
+  removes nodes no longer changes which nodes are visited.
+
+### Removed
+
+* XPath custom-function handlers. `Node#xpath(expr, handler)`,
+  `#at_xpath(expr, handler)` and `XPathContext#evaluate(expr, handler)` raise
+  `ArgumentError`, and a call to a function XPath 1.0 does not define is an
+  `XPath::SyntaxError` (it was a `Makiri::Error` when the expression was
+  evaluated). No Ruby code runs during an evaluation any more, so mutating a
+  document is never refused "while evaluating XPath over it".
+
+### Performance
+
+* A node wrapper keeps its data in its own object (an embedded TypedData,
+  Ruby 3.3+): wrapping a node for the first time is ~25-45 ns cheaper, and
+  a fresh document's query or walk 10-30% faster.
+* A document's indexes are built when a query first needs them, each in
+  one walk. An XPath that names no tag (`/html/body`) no longer builds the
+  tag index; the text index waits until `#text` calls have walked half the
+  document, so a first `doc.text` is twice as fast and a first small
+  `li.text` builds nothing; and the order XPath sorts by is kept with the
+  document, so a union over 40,000 nodes sorts in 0.7 ms instead of 13 ms.
+* A NodeSet of up to eight nodes holds them in itself, with no allocation
+  of its own: `#children` went from ~185 to ~120 ns.
+* A reader that returns a String (`#text`, `#name`, `#[]`) builds it with
+  no intermediate copy (`#text` ~124 -> ~112 ns), and `Document#text` joins
+  its text with fixed-size copies (20 KB: 9.2 -> 6.7 us).
 
 ### Fixed
 
