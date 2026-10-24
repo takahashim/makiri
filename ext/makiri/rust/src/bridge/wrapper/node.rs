@@ -238,6 +238,10 @@ pub enum NodeRepr {
 }
 
 /// Why [`node_token_in`] refused a node.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "an Error holds its message inline (`crate::msg::Msg`), so it is never boxed"
+)]
 pub enum NotInDocument {
     /// Not a usable Makiri node - the `TypeError` or `Makiri::Error` its
     /// wrapper raised.

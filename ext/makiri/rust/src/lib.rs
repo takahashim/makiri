@@ -62,6 +62,10 @@ pub mod falloc;
 /// `Buf`, the capped byte buffer more than one subsystem writes into.
 pub mod cbuf;
 
+/// `Msg`: an exception message written into a fixed buffer on the stack,
+/// so an error path allocates nothing.
+pub mod msg;
+
 /// Catching a panic at a C boundary and re-raising it past one, so a panic in a
 /// Lexbor or Ruby callback becomes an exception rather than an abort.
 pub mod caught;

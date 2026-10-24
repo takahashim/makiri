@@ -92,6 +92,10 @@ pub type RubyText = RubyStr<TextContract>;
 pub type RubyData = RubyStr<DataContract>;
 
 /// Why [`RubyStr::acquire`] gave no view.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "an Error holds its message inline (`crate::msg::Msg`), so it is never boxed"
+)]
 enum Refusal<P> {
     /// The bytes failed the contract; `P` is the check's own answer.
     Check(P),
@@ -253,7 +257,7 @@ fn oom_reading() -> Error {
 
 /// `Makiri::Error` with "<what> <problem>", the wording the C raised with.
 fn text_error(what: &str, problem: &str) -> Error {
-    makiri_error(format!("{what} {problem}"))
+    makiri_error(format_args!("{what} {problem}"))
 }
 
 /// [`ruby_verified_text`] for an optional argument: `nil` is `None`.
@@ -274,7 +278,7 @@ pub fn namespace_arg(in_: Value, what: &str) -> Result<Option<RubyText>, Error> 
 /// Coerce to a String and enforce the strict contract (valid UTF-8, no NUL),
 /// naming `what` in the error. The names-and-engine-input path.
 pub fn ruby_verified_text(in_: Value, what: &str) -> Result<RubyText, Error> {
-    verified_text_raising(in_, what, makiri_error)
+    verified_text_raising(in_, what, |m| makiri_error(m))
 }
 
 /// [`ruby_verified_text`] for a NAME given to a factory or a setter: the same
@@ -285,7 +289,7 @@ pub fn ruby_verified_text(in_: Value, what: &str) -> Result<RubyText, Error> {
 /// one through. Invalid UTF-8 stays `Makiri::Error`: it breaks the String
 /// contract every input shares, not a naming rule.
 pub fn ruby_verified_name(in_: Value, what: &str) -> Result<RubyText, Error> {
-    verified_text_raising(in_, what, crate::bridge::ruby::arg_error)
+    verified_text_raising(in_, what, |m| crate::bridge::ruby::arg_error(m))
 }
 
 /// The one acquisition behind [`ruby_verified_text`] and
@@ -295,7 +299,7 @@ pub fn ruby_verified_name(in_: Value, what: &str) -> Result<RubyText, Error> {
 fn verified_text_raising(
     in_: Value,
     what: &str,
-    on_nul: fn(String) -> Error,
+    on_nul: fn(core::fmt::Arguments<'_>) -> Error,
 ) -> Result<RubyText, Error> {
     use crate::cutf8::TextVerdict;
     let s = name_arg(in_)?;
@@ -304,7 +308,7 @@ fn verified_text_raising(
         (v != TextVerdict::Ok).then_some(v)
     })
     .map_err(|r| match r {
-        Refusal::Check(TextVerdict::HasNul) => on_nul(format!(
+        Refusal::Check(TextVerdict::HasNul) => on_nul(format_args!(
             "{what} {}",
             TextVerdict::HasNul.problem().unwrap_or_default()
         )),

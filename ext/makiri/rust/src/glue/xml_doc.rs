@@ -44,7 +44,7 @@ fn parse_limits(ruby: &Ruby, h: Option<RHash>) -> Result<ParseLimits, Error> {
         }
         Err(Error::new(
             ruby.exception_arg_error(),
-            format!("unknown keyword: {}", crate::bridge::ruby::describe(k)),
+            format_args!("unknown keyword: {}", crate::bridge::ruby::Describe(k)),
         ))
     })?;
 

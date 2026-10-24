@@ -50,7 +50,7 @@ pub fn guard_error(stop: GuardStop, limit: DepthLimit) -> Error {
 /// the limit, for a document and a fragment alike.
 pub fn tree_depth_error(limit: DepthLimit) -> Error {
     match limit.max_depth() {
-        Some(n) => makiri_error(format!("document tree depth limit exceeded ({n})")),
+        Some(n) => makiri_error(format_args!("document tree depth limit exceeded ({n})")),
         /* An unlimited parse is never refused for depth. */
         None => crate::bridge::ruby::internal_error(
             "a parse with no tree-depth limit was refused for depth",

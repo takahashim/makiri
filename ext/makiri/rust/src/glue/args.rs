@@ -114,13 +114,19 @@ pub(crate) fn scan<'a>(ruby: &Ruby, args: &'a [Value], shape: Shape) -> Result<S
 /// Ruby's `ArgumentError` for `given` arguments where `min` to `max` (`None`:
 /// any number) are taken: `rb_error_arity`'s message.
 pub(crate) fn arity_error(ruby: &Ruby, given: usize, min: usize, max: Option<usize>) -> Error {
-    let expected = match max {
-        Some(max) if max == min => format!("{min}"),
-        Some(max) => format!("{min}..{max}"),
-        None => format!("{min}+"),
-    };
-    Error::new(
-        ruby.exception_arg_error(),
-        format!("wrong number of arguments (given {given}, expected {expected})"),
-    )
+    let class = ruby.exception_arg_error();
+    match max {
+        Some(max) if max == min => Error::new(
+            class,
+            format_args!("wrong number of arguments (given {given}, expected {min})"),
+        ),
+        Some(max) => Error::new(
+            class,
+            format_args!("wrong number of arguments (given {given}, expected {min}..{max})"),
+        ),
+        None => Error::new(
+            class,
+            format_args!("wrong number of arguments (given {given}, expected {min}+)"),
+        ),
+    }
 }

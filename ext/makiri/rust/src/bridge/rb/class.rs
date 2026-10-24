@@ -4,17 +4,40 @@
 //! something else, a frozen target), so each goes through `bridge::raw`'s
 //! protected wrappers and comes back as `Err`.
 
-use std::ffi::CString;
+use core::ffi::CStr;
 
 use super::error::Error;
 use super::method::Func;
 use super::ruby::Ruby;
 use super::value::{ExceptionClass, RClass, RModule, ReprValue, Value};
 
-/// `name` as the C string the definition functions take. Init-time only, so
-/// the allocation is std's; a name with a NUL is refused.
-fn c_name(name: &str) -> Result<CString, Error> {
-    CString::new(name).map_err(|_| crate::bridge::ruby::arg_error("a name with a NUL byte"))
+/// The longest name a definition takes, its NUL included. Every name Makiri
+/// defines is a short Ruby identifier.
+const NAME_MAX: usize = 64;
+
+/// A name as the C string the definition functions take, on the stack.
+struct CName([u8; NAME_MAX]);
+
+impl core::ops::Deref for CName {
+    type Target = CStr;
+    fn deref(&self) -> &CStr {
+        /* `c_name` wrote a NUL and checked there is no other. */
+        CStr::from_bytes_until_nul(&self.0).unwrap_or(c"")
+    }
+}
+
+/// `name` as a [`CName`]; a name with a NUL, or one too long, is refused.
+fn c_name(name: &str) -> Result<CName, Error> {
+    let mut buf = [0u8; NAME_MAX];
+    match buf.get_mut(..name.len()) {
+        Some(dst) if name.len() < NAME_MAX && !name.as_bytes().contains(&0) => {
+            dst.copy_from_slice(name.as_bytes());
+            Ok(CName(buf))
+        }
+        _ => Err(crate::bridge::ruby::arg_error(
+            "a name to define that is too long or holds a NUL byte",
+        )),
+    }
 }
 
 /// What a class and a module both are: a namespace that holds constants,

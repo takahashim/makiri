@@ -100,29 +100,30 @@ FORBID_FILES = %w[
   glue/xpath_context.rs gvl.rs html/dom/mod.rs
   html/encoding/mod.rs html/mod.rs html/tokenizer/mod.rs
   html/tree/mod.rs html_dom.rs lexbor/contains_guard.rs
-  limits.rs node_type.rs ptr_table.rs
-  rust_tests.rs selectors/mod.rs selectors/stylesheet.rs
-  selectors/text.rs source_lines.rs stack.rs
-  text.rs token.rs utf8_input.rs
-  xml/arena.rs xml/attr_key.rs xml/chars/expand.rs
-  xml/chars/mod.rs xml/css.rs xml/css_tests.rs
-  xml/dom_name.rs xml/encoding_names.rs xml/encoding_sniff.rs
-  xml/index.rs xml/mod.rs xml/model.rs
-  xml/mutate/attr.rs xml/mutate/copy.rs xml/mutate/edit.rs
-  xml/mutate/factory.rs xml/mutate/insert.rs xml/mutate/mod.rs
-  xml/mutate/ns.rs xml/ns_scope.rs xml/qname.rs
-  xml/selftest.rs xml/serialize/bindings.rs xml/serialize/c14n.rs
-  xml/serialize/mod.rs xml/serialize/out.rs xml/serialize/xml.rs
-  xml/tree/cursor.rs xml/tree/decl.rs xml/tree/dtd.rs
-  xml/tree/mod.rs xml/tree/scope.rs xml/verify.rs
-  xml/xpath.rs xpath/abi.rs xpath/ast.rs
-  xpath/ast_ops.rs xpath/attr_pred.rs xpath/axis.rs
-  xpath/ctx.rs xpath/dom.rs xpath/eval.rs
-  xpath/funcs/css_hooks.rs xpath/funcs/ext.rs xpath/funcs/mod.rs
-  xpath/lex.rs xpath/limits.rs xpath/mod.rs
-  xpath/nodetest.rs xpath/number.rs xpath/order.rs
-  xpath/parse.rs xpath/step_index.rs xpath/str_cache.rs
-  xpath/tests.rs xpath/value.rs xpath/verify.rs
+  limits.rs msg.rs node_type.rs
+  ptr_table.rs rust_tests.rs selectors/mod.rs
+  selectors/stylesheet.rs selectors/text.rs source_lines.rs
+  stack.rs text.rs token.rs
+  utf8_input.rs xml/arena.rs xml/attr_key.rs
+  xml/chars/expand.rs xml/chars/mod.rs xml/css.rs
+  xml/css_tests.rs xml/dom_name.rs xml/encoding_names.rs
+  xml/encoding_sniff.rs xml/index.rs xml/mod.rs
+  xml/model.rs xml/mutate/attr.rs xml/mutate/copy.rs
+  xml/mutate/edit.rs xml/mutate/factory.rs xml/mutate/insert.rs
+  xml/mutate/mod.rs xml/mutate/ns.rs xml/ns_scope.rs
+  xml/qname.rs xml/selftest.rs xml/serialize/bindings.rs
+  xml/serialize/c14n.rs xml/serialize/mod.rs xml/serialize/out.rs
+  xml/serialize/xml.rs xml/tree/cursor.rs xml/tree/decl.rs
+  xml/tree/dtd.rs xml/tree/mod.rs xml/tree/scope.rs
+  xml/verify.rs xml/xpath.rs xpath/abi.rs
+  xpath/ast.rs xpath/ast_ops.rs xpath/attr_pred.rs
+  xpath/axis.rs xpath/ctx.rs xpath/dom.rs
+  xpath/eval.rs xpath/funcs/css_hooks.rs xpath/funcs/ext.rs
+  xpath/funcs/mod.rs xpath/lex.rs xpath/limits.rs
+  xpath/mod.rs xpath/nodetest.rs xpath/number.rs
+  xpath/order.rs xpath/parse.rs xpath/step_index.rs
+  xpath/str_cache.rs xpath/tests.rs xpath/value.rs
+  xpath/verify.rs
 ].freeze
 
 UNSAFE_USE = /\bunsafe\s*(?:\{|fn\b|impl\b|trait\b|extern\b)/
@@ -266,14 +267,20 @@ RUBY_LAYER_COUNTS = {}.freeze
 # It is here because three `.to_owned()` calls reached `xml/serialize` unnoticed -
 # the engine's only infallible allocations - and the crate-wide lint that would
 # have caught them fired on five legitimate glue sites too.
-INFALLIBLE_ALLOC = /\.to_owned\(\)|\.to_vec\(\)|String::from\(|\bformat!\(/
 #
-# Empty: the `selectors`-crate exploration that once held an
-# accepted exception here was rejected in favour of porting Lexbor's own
-# `lxb_selectors_*` state machine instead - `css_match/`, which
-# allocates only through `falloc` like the rest of the engine (and `rake oom`
-# sweeps it).
-INFALLIBLE_ALLOC_COUNTS = {}.freeze
+# It holds for the Ruby layer too (bridge/, glue/, init.rs): an exception
+# message is written into a stack buffer (`crate::msg::Msg`, through
+# `format_args!`) and made into the exception at once, so an error path - the
+# one place a message used to be a `format!` - allocates nothing of Rust's,
+# and a real OOM there is Ruby's `NoMemoryError` rather than an abort.
+INFALLIBLE_ALLOC = /\.to_owned\(\)|\.to_vec\(\)|String::from\(|\bformat!\(|\.to_string\(\)|from_utf8_lossy|\.into_owned\(\)|\bvec!\[|CString::new/
+# Where the gate looks: the engine, and the Ruby layer over it.
+INFALLIBLE_ALLOC_DIRS = (ENGINE_DIRS + %w[bridge/ glue/ init.rs lib.rs msg.rs caught.rs css_cache.rs
+                                          compat.rs doc_cell.rs engine_error.rs gvl.rs source_lines.rs
+                                          stack.rs]).freeze
+#
+# The one site is a test hook's: `Makiri.__panic(1)`'s out-of-bounds index.
+INFALLIBLE_ALLOC_COUNTS = { "init.rs" => 1 }.freeze
 
 def rust_code(path)
   File.binread(path).lines.reject { |line| line.match?(%r{\A\s*//}) }.join
@@ -606,7 +613,7 @@ end
 infallible = Hash.new(0)
 Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
   relative = path.delete_prefix("#{RUST}/")
-  next unless relative.start_with?(*ENGINE_DIRS)
+  next unless relative.start_with?(*INFALLIBLE_ALLOC_DIRS)
   next if relative.end_with?("selftest.rs", "verify.rs", "tests.rs")
   # Built only for the tests and the `html_diff` / `html_xpath_diff` /
   # `selector_diff` / `stylesheet_diff` fuzz targets (`lexbor-reference`),
@@ -623,7 +630,7 @@ Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
   infallible[relative] = count unless count.zero?
 end
 if infallible != INFALLIBLE_ALLOC_COUNTS
-  errors << "infallible allocation inside an engine layer changed: " \
+  errors << "infallible allocation in the engine or the Ruby layer changed: " \
             "#{table_diff(INFALLIBLE_ALLOC_COUNTS, infallible)}"
 end
 

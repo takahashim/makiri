@@ -50,7 +50,7 @@ fn check_dom_name(
     }
     Err(Error::new(
         ruby.exception_arg_error(),
-        format!("invalid HTML {what} name"),
+        format_args!("invalid HTML {what} name"),
     ))
 }
 
@@ -310,7 +310,7 @@ pub fn set_outer_html(_ruby: &Ruby, mut this: HtmlSelf, rb_html: Value) -> Resul
 fn created(node: Option<RawNode>, rb_self: Value, what: &str) -> Result<Value, Error> {
     match node {
         Some(n) => wrap_html_node(n, rb_self),
-        None => Err(makiri_error(format!("failed to create {what}"))),
+        None => Err(makiri_error(format_args!("failed to create {what}"))),
     }
 }
 

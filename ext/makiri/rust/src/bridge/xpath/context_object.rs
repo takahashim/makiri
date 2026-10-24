@@ -250,7 +250,7 @@ impl XPathCtx {
         let sv = crate::bridge::ruby::string_arg(value)?;
         let nv = ruby_verified_text(name, "variable name")?;
         let vv = ruby_try_verified_text(sv, self.ctx.limits().max_string_bytes)
-            .map_err(|reason| makiri_error(format!("invalid variable value: {reason}")))?;
+            .map_err(|reason| makiri_error(format_args!("invalid variable value: {reason}")))?;
         self.ctx
             .register_variable(nv.as_bytes(), vv.as_bytes()) /* copies both */
             .map_err(|e| refused(e, BUSY, FAILED))

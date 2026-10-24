@@ -85,27 +85,18 @@ pub enum PushError {
     Busy,
 }
 
-impl PushError {
-    fn message(self) -> String {
-        match self {
-            PushError::SizeLimit => {
-                format!("node set size limit exceeded ({NODE_SET_MAX} nodes)")
-            }
-            PushError::CapacityOverflow => "node set capacity overflow".to_string(),
-            PushError::NoMemory => "failed to allocate memory".to_string(),
-            PushError::Busy => "node set is already in use".to_string(),
-        }
-    }
-}
-
 impl From<PushError> for Error {
     fn from(e: PushError) -> Error {
         match e {
+            PushError::SizeLimit => makiri_error(format_args!(
+                "node set size limit exceeded ({NODE_SET_MAX} nodes)"
+            )),
+            PushError::CapacityOverflow => makiri_error("node set capacity overflow"),
             PushError::NoMemory => Error::new(
                 crate::bridge::ruby::gvl_ruby().exception_no_mem_error(),
-                e.message(),
+                "failed to allocate memory",
             ),
-            _ => makiri_error(e.message()),
+            PushError::Busy => makiri_error("node set is already in use"),
         }
     }
 }

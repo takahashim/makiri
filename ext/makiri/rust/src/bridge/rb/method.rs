@@ -46,9 +46,12 @@ pub fn finish(f: impl FnOnce() -> Result<Value, Error>) -> Value {
         Ok(Ok(v)) => return v,
         Ok(Err(e)) => e,
         Err(payload) => {
-            let msg = crate::caught::message(payload.as_ref()).to_owned();
+            let e = crate::bridge::ruby::internal_error(format_args!(
+                "{}",
+                crate::caught::message(payload.as_ref())
+            ));
             drop(payload);
-            crate::bridge::ruby::internal_error(msg)
+            e
         }
     };
     e.raise()
@@ -338,14 +341,16 @@ pub fn run_init(init: fn(&Ruby) -> Result<(), Error>) {
         Ok(Ok(())) => return,
         Ok(Err(e)) => e,
         Err(payload) => {
-            let msg = crate::caught::message(payload.as_ref()).to_owned();
+            let msg = crate::msg::Msg::format(format_args!(
+                "{}",
+                crate::caught::message(payload.as_ref())
+            ));
             drop(payload);
-            match crate::bridge::raw::exception_new(ruby.exception_runtime_error(), msg.as_bytes())
-            {
-                Ok(exc) => {
-                    drop(msg);
-                    crate::bridge::raw::exc_fatal(exc)
-                }
+            match crate::bridge::raw::exception_new(
+                ruby.exception_runtime_error(),
+                msg.as_str().as_bytes(),
+            ) {
+                Ok(exc) => crate::bridge::raw::exc_fatal(exc),
                 Err(e) => e,
             }
         }

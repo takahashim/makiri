@@ -134,9 +134,9 @@ fn matching_lax(ruby: &Ruby, v: Value) -> Result<bool, Error> {
     }
     Err(Error::new(
         ruby.exception_arg_error(),
-        format!(
+        format_args!(
             "namespace_matching: must be :strict or :lax, got {}",
-            crate::bridge::ruby::describe(v)
+            crate::bridge::ruby::Describe(v)
         ),
     ))
 }
@@ -157,7 +157,7 @@ fn bind_each(
      * or copied, rather than after every one of them has been. */
     let max = crate::xpath::ctx::MAX_NAMESPACES;
     if h.len() > max {
-        return Err(makiri_error(format!(
+        return Err(makiri_error(format_args!(
             "invalid namespace mapping: {} bindings (max {max})",
             h.len()
         )));
@@ -184,7 +184,7 @@ pub fn bind_pair(
     let ks = crate::bridge::ruby::name_arg(prefix)?;
     let vs = crate::bridge::ruby::string_arg(uri)?;
     let (pv, uv) = ruby_try_verified_text_pair(ks, vs, cap)
-        .map_err(|reason| makiri_error(format!("invalid namespace mapping: {reason}")))?;
+        .map_err(|reason| makiri_error(format_args!("invalid namespace mapping: {reason}")))?;
     register(pv.as_bytes(), uv.as_bytes())
 }
 

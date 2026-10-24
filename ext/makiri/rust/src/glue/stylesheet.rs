@@ -150,7 +150,7 @@ fn parse_stylesheet_inner(_ruby: &Ruby, text: Value) -> Result<RArray, Error> {
     let css: &[u8] = tv.as_bytes();
 
     let eclass = error_class();
-    let err = |m: &str| Error::new(eclass, m.to_owned());
+    let err = |m: &'static str| Error::new(eclass, m);
 
     let parsed = match parse(css) {
         Ok(parsed) => parsed,
@@ -158,7 +158,7 @@ fn parse_stylesheet_inner(_ruby: &Ruby, text: Value) -> Result<RArray, Error> {
         Err(Fail::TooDeep) => {
             return Err(Error::new(
                 eclass,
-                format!("CSS at-rule nesting too deep (max {MAX_DEPTH})"),
+                format_args!("CSS at-rule nesting too deep (max {MAX_DEPTH})"),
             ))
         }
         Err(Fail::Parse) => return Err(err("failed to parse CSS stylesheet")),

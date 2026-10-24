@@ -359,8 +359,9 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     let native_version = crate::bridge::string::utf8_str(env!("MAKIRI_GEM_VERSION").as_bytes())?;
     crate::bridge::rb::freeze(native_version);
     makiri.const_set("NATIVE_VERSION", native_version)?;
-    let native_ruby =
-        crate::bridge::string::utf8_str(crate::bridge::ruby::ruby_api_version().as_bytes())?;
+    let native_ruby = crate::bridge::string::utf8_str(
+        crate::bridge::ruby::ruby_api_version().as_str().as_bytes(),
+    )?;
     crate::bridge::rb::freeze(native_ruby);
     makiri.const_set("NATIVE_RUBY_API_VERSION", native_ruby)?;
 

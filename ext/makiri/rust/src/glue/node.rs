@@ -75,9 +75,10 @@ pub fn dom_extract<'q>(
     what: &str,
 ) -> Result<(&'q [u8], &'q [u8]), Error> {
     dom_name::validate_and_extract(ns, qname, local_ok).map_err(|e| match e {
-        dom_name::ExtractError::Name => {
-            Error::new(ruby.exception_arg_error(), format!("invalid {what} name"))
-        }
+        dom_name::ExtractError::Name => Error::new(
+            ruby.exception_arg_error(),
+            format_args!("invalid {what} name"),
+        ),
         dom_name::ExtractError::Namespace => makiri_error(NS_MISFIT),
     })
 }

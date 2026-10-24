@@ -119,9 +119,9 @@ fn not_an_element() -> Error {
 }
 
 fn unknown_context(name: &[u8]) -> Error {
-    crate::bridge::ruby::arg_error(format!(
+    crate::bridge::ruby::arg_error(format_args!(
         "unknown fragment context element: {}",
-        String::from_utf8_lossy(name)
+        crate::msg::Lossy(name)
     ))
 }
 

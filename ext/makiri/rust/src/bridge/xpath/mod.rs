@@ -58,9 +58,7 @@ pub fn xpath_error(err: &XPathError) -> Error {
     };
     Error::new(
         class,
-        err.message()
-            .unwrap_or("XPath evaluation failed")
-            .to_owned(),
+        format_args!("{}", err.message().unwrap_or("XPath evaluation failed")),
     )
 }
 

@@ -1,3 +1,9 @@
+# `bridge::rb::Error` holds its formatted message inline (`crate::msg::Msg`,
+# 256 bytes), so making one allocates nothing and touches no Ruby - an edit's
+# closure may make one. That puts it past clippy's 128-byte default; a large
+# `Err` costs a copy on the error path only.
+large-error-threshold = 288
+
 # The allocation chokepoint, enforced (see src/falloc/mod.rs).
 #
 # Rust's own allocating APIs are either infallible - they abort the process on

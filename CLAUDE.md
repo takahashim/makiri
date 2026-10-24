@@ -509,7 +509,15 @@ by the check that concluded "every undefined symbol is legitimate".
   report (`rb_gc_adjust_memory_usage`, which only adds to that pressure) gets
   its collection (`spec/gc_accounting_spec.rb`). `NodeSet`'s node array is
   `ruby_xrealloc2`'s. Their failure is `NoMemoryError`, Ruby's own, which
-  `bridge::raw`'s protected calls hand back as `Err`.
+  `bridge::raw`'s protected calls hand back as `Err`. An exception message
+  allocates nothing at all: a `bridge::rb::Error` holds a `&'static str` or a
+  `format_args!` written into `crate::msg::Msg` (256 bytes, inline; longer is
+  cut with `...`), and the exception is made only when the trampoline raises
+  it - so an error can be made inside an edit's closure, which must run no
+  Ruby. What a message quotes is written in by `Display` types that read
+  without a call (`bridge::ruby::Describe` / `Display` / `ExceptionText`,
+  `msg::Lossy`). `rake unsafe:boundaries`' `INFALLIBLE_ALLOC` holds the Ruby
+  layer to no `format!` / `to_owned` / `to_string` / `vec!`, as the engine.
   std's STABLE sorts (`sort`, `sort_by`, `sort_by_key`, `sort_by_cached_key`)
   are banned there too: they take a scratch buffer from the global allocator
   and abort on OOM, invisibly to `rake oom`. Sort in place (`sort_unstable_by`)

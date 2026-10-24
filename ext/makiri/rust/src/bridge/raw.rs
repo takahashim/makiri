@@ -111,7 +111,7 @@ fn typed<T>(v: VALUE, of: fn(Value) -> Option<T>, what: &str) -> Result<T, Error
     // SAFETY: `v` is what a Ruby C call just returned: a live value, on this
     // frame's stack until it is converted.
     of(unsafe { Value::from_raw(v) })
-        .ok_or_else(|| crate::bridge::ruby::internal_error(format!("a C call made no {what}")))
+        .ok_or_else(|| crate::bridge::ruby::internal_error(format_args!("a C call made no {what}")))
 }
 
 /// A length for the C API's `long`; `ArgumentError` for one it cannot hold.

@@ -35,57 +35,61 @@ fn to_xml_opts(ruby: &Ruby, args: &[Value]) -> Result<(i32, Value), Error> {
 fn failure_error(f: Failure, verb: &str) -> Error {
     let msg = match f {
         Failure::DomLooseName => {
-            format!("cannot {verb} XML containing a DOM-loose element name")
+            format_args!("cannot {verb} XML containing a DOM-loose element name")
         }
         Failure::DomLooseDoctype => {
-            format!(
+            format_args!(
                 "cannot {verb} XML containing a DOM-loose doctype (a name or id XML cannot write)"
             )
         }
-        Failure::UnwritableData => format!(
+        Failure::UnwritableData => format_args!(
             "cannot {verb} XML containing character data XML cannot hold (a character \
 outside XML's, -- in a comment, or ?> in a processing instruction)"
         ),
-        Failure::ForbiddenDeclaration => format!(
+        Failure::ForbiddenDeclaration => format_args!(
             "cannot {verb} XML containing a namespace declaration XML forbids \
 (such as xmlns:p=\"\", held as set_attribute_ns made it)"
         ),
         Failure::DomLooseAttributeName => {
-            format!("cannot {verb} XML containing a DOM-loose attribute name")
+            format_args!("cannot {verb} XML containing a DOM-loose attribute name")
         }
         Failure::XmlnsElement => {
-            format!("cannot {verb} XML containing an element in the XMLNS namespace")
+            format_args!("cannot {verb} XML containing an element in the XMLNS namespace")
         }
         Failure::PiTargetColon => {
-            format!("cannot {verb} XML containing a processing-instruction target with a colon")
+            format_args!(
+                "cannot {verb} XML containing a processing-instruction target with a colon"
+            )
         }
         Failure::PiTargetReserved => {
-            format!("cannot {verb} XML containing a processing instruction whose target is xml")
+            format_args!(
+                "cannot {verb} XML containing a processing instruction whose target is xml"
+            )
         }
         Failure::OutputCap => {
-            format!("failed to {verb} XML: output exceeded the size limit")
+            format_args!("failed to {verb} XML: output exceeded the size limit")
         }
         Failure::Oom => {
-            format!("failed to {verb} XML: out of memory")
+            format_args!("failed to {verb} XML: out of memory")
         }
         Failure::ScopeOverflow => {
-            format!("failed to {verb} XML: too many namespace bindings in scope")
+            format_args!("failed to {verb} XML: too many namespace bindings in scope")
         }
-        Failure::TooDeep => format!(
+        Failure::TooDeep => format_args!(
             "failed to {verb} XML: the tree nests deeper than {} levels",
             crate::xml::model::MAX_DEPTH
         ),
         Failure::PrefixSpace => {
-            format!("failed to {verb} XML: ran out of namespace prefixes to declare")
+            format_args!("failed to {verb} XML: ran out of namespace prefixes to declare")
         }
         Failure::NamespaceBudget => {
-            format!("failed to {verb} XML: namespace planning exceeded its step budget")
+            format_args!("failed to {verb} XML: namespace planning exceeded its step budget")
         }
-        Failure::UnboundPrefix => format!(
+        Failure::UnboundPrefix => format_args!(
             "cannot {verb} XML with a namespace prefix bound to nothing (declare it, \
 or insert the node where it is declared)"
         ),
-        Failure::NamespaceMismatch => format!(
+        Failure::NamespaceMismatch => format_args!(
             "cannot {verb} XML where one prefix would have to mean two namespaces on an \
 element, or an unprefixed attribute has a namespace (canonical form invents no \
 prefix); to_xml writes such a tree"

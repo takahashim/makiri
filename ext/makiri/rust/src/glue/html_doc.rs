@@ -48,10 +48,13 @@ fn encoding_arg(ruby: &Ruby, v: Value) -> Result<Option<GivenEncoding>, Error> {
     }
     /* A name: a NUL in it is the ArgumentError any other unknown name is. */
     let label = crate::bridge::string::ruby_verified_name(v, "encoding")?;
-    let unknown = |label: &str| {
+    let unknown = |label: &[u8]| {
         Error::new(
             ruby.exception_arg_error(),
-            format!("unknown encoding for HTML: {label} (omit encoding: to have it sniffed)"),
+            format_args!(
+                "unknown encoding for HTML: {} (omit encoding: to have it sniffed)",
+                crate::msg::Lossy(label)
+            ),
         )
     };
     /* No encoding's name is this long, Ruby's or the Standard's; a shorter
@@ -59,7 +62,7 @@ fn encoding_arg(ruby: &Ruby, v: Value) -> Result<Option<GivenEncoding>, Error> {
      * (which can autoload an encoding). */
     let mut name = [0u8; 64];
     let Some(dst) = name.get_mut(..label.len()) else {
-        return Err(unknown(&label));
+        return Err(unknown(label.as_bytes()));
     };
     dst.copy_from_slice(label.as_bytes());
     let len = label.len();
@@ -67,7 +70,7 @@ fn encoding_arg(ruby: &Ruby, v: Value) -> Result<Option<GivenEncoding>, Error> {
     let name = &name[..len];
     GivenEncoding::resolve(name)
         .map(Some)
-        .ok_or_else(|| unknown(&String::from_utf8_lossy(name)))
+        .ok_or_else(|| unknown(name))
 }
 
 /// `Document#encoding`: the character encoding the document was read in, by
