@@ -115,17 +115,6 @@ fn typed<T>(v: VALUE, of: fn(Value) -> Option<T>, what: &'static str) -> Result<
     of(unsafe { Value::from_raw(v) }).ok_or_else(|| crate::bridge::ruby::internal_error(what))
 }
 
-/// End the process: `abort(3)`, declared `extern "C"` so that a call to it is
-/// known not to unwind - `std::process::abort` is not marked so, and a GC
-/// callback that calls it could not be shown unwind-free (`crate::no_unwind`).
-pub(in crate::bridge) fn abort() -> ! {
-    unsafe extern "C" {
-        fn abort() -> !;
-    }
-    // SAFETY: takes nothing and returns never.
-    unsafe { abort() }
-}
-
 /// A length for the C API's `long`; `ArgumentError` for one it cannot hold.
 #[inline]
 fn c_len(n: usize) -> Result<c_long, Error> {
@@ -725,6 +714,62 @@ pub fn ary_push(a: RArray, v: Value) -> Result<(), Error> {
     call(|| unsafe {
         injected_raise();
         rb_sys::rb_ary_push(a, v)
+    })
+    .map(|_| ())
+}
+
+/// `rb_ivar_set` for one of Makiri's hidden ivars (a name without `@`, so
+/// Ruby code cannot see it): raises `FrozenError` for a frozen object and
+/// `NoMemoryError`.
+#[inline]
+pub fn ivar_set(obj: Value, id: ID, v: Value) -> Result<(), Error> {
+    let (o, v) = (obj.as_raw(), v.as_raw());
+    call(|| unsafe {
+        injected_raise();
+        rb_sys::rb_ivar_set(o, id, v)
+    })
+    .map(|_| ())
+}
+
+/// `rb_attr_get`: a hidden ivar's value, or nil. Raises nothing and runs no
+/// Ruby code (an attribute read, not a method call).
+#[inline]
+pub fn ivar_get(obj: Value, id: ID) -> Value {
+    // SAFETY: a live object; the read raises nothing.
+    unsafe { Value::from_raw(rb_sys::rb_attr_get(obj.as_raw(), id)) }
+}
+
+/// A Fixnum for a table key: `None` past a Fixnum.
+#[inline]
+fn fixnum_key(n: usize) -> Option<VALUE> {
+    use rb_sys::stable_api::{get_default, StableApiDefinition};
+    let api = get_default();
+    let l = n as core::ffi::c_ulong;
+    (l as usize == n && api.posfixable(l)).then(|| api.long2fix(l as c_long))
+}
+
+/// `rb_hash_lookup2` at the Fixnum `n`: a Fixnum hashes and compares by
+/// value in C, so no Ruby code runs; protected all the same, as
+/// [`hash_lookup`] is.
+#[inline]
+pub fn table_get(h: RHash, n: usize) -> Option<Value> {
+    const UNDEF: VALUE = rb_sys::Qundef as VALUE;
+    let key = fixnum_key(n)?;
+    let h = h.as_raw();
+    let v = call(|| unsafe { rb_sys::rb_hash_lookup2(h, key, UNDEF) }).ok()?;
+    // SAFETY: a value of the Hash's, or `Qundef`, which is not handed out.
+    (v != UNDEF).then(|| unsafe { Value::from_raw(v) })
+}
+
+/// `rb_hash_aset` at the Fixnum `n`: raises `NoMemoryError`.
+#[inline]
+pub fn table_set(h: RHash, n: usize, v: Value) -> Result<(), Error> {
+    let key = fixnum_key(n)
+        .ok_or_else(|| crate::bridge::ruby::internal_error("a node token past a Fixnum"))?;
+    let (h, v) = (h.as_raw(), v.as_raw());
+    call(|| unsafe {
+        injected_raise();
+        rb_sys::rb_hash_aset(h, key, v)
     })
     .map(|_| ())
 }

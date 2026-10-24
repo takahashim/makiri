@@ -33,7 +33,7 @@ UNSAFE_ISLANDS = {
   "bridge/gvl.rs" => 3,
   "bridge/node_set.rs" => 3,
   "bridge/node_wrap.rs" => 1,
-  "bridge/raw.rs" => 89,
+  "bridge/raw.rs" => 92,
   "bridge/rb/class.rs" => 2,
   "bridge/rb/method.rs" => 11,
   "bridge/rb/ruby.rs" => 5,
@@ -43,11 +43,11 @@ UNSAFE_ISLANDS = {
   "bridge/string/build.rs" => 2,
   "bridge/string/encoding.rs" => 10,
   "bridge/string/view.rs" => 6,
-  "bridge/typed.rs" => 31,
-  "bridge/wrapper/document.rs" => 2,
+  "bridge/typed.rs" => 27,
+  "bridge/wrapper/document.rs" => 1,
   "bridge/wrapper/node.rs" => 1,
   "bridge/xml_decode.rs" => 3,
-  "bridge/xpath/context_object.rs" => 3,
+  "bridge/xpath/context_object.rs" => 2,
   "bridge/xpath/mod.rs" => 3,
   "falloc/mod.rs" => 1,
   "lexbor/abi.rs" => 4,
@@ -160,8 +160,8 @@ RAISING_API = /\b(?:rb_raise|rb_exc_raise|rb_jump_tag|rb_check_typeddata|
   rb_define_class_under|rb_define_module_under|rb_define_module|rb_const_set|rb_const_get|
   rb_include_module|rb_define_method|rb_define_private_method|rb_define_singleton_method|
   rb_define_module_function|rb_exc_new_str|rb_exc_fatal|rb_big2ll|rb_big2ull|rb_hash_lookup2|
-  rb_gc_register_mark_object|rb_module_new|rb_range_values|rb_funcallv)\b/x
-RAISING_COUNTS = { "bridge/raw.rs" => 52 }.freeze # with `rb_memerror` (the raise sweep's injected raise) and `rb_jump_tag` (`jump_error`)
+  rb_gc_register_mark_object|rb_module_new|rb_range_values|rb_funcallv|rb_ivar_set)\b/x
+RAISING_COUNTS = { "bridge/raw.rs" => 55 }.freeze # with `rb_memerror` (the raise sweep's injected raise) and `rb_jump_tag` (`jump_error`); 55 with the node table (`rb_hash_lookup2`, `rb_hash_aset`) and the hidden ivars (`rb_ivar_set`)
 
 # Makiri runs none of its caller's Ruby code: no argument is converted with its
 # `to_s`/`to_str`, no method of a caller's object is called, and XPath has no

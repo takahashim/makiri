@@ -45,8 +45,9 @@ unsafe fn value(raw: VALUE) -> Value {
 /// wrap's own allocation could free the value or compaction move it from
 /// under the stored copy (the `DocData.errors` bug). A `Held` holding a value
 /// can only be made with a [`Store`], and a `Store` exists only where the
-/// owner is already a Ruby object: in [`TypedType::wrap`]'s store step and
-/// in [`TypedType::with_store`]. A struct is built holding [`Held::empty`].
+/// owner is already a Ruby object: in [`TypedType::wrap`]'s store step. A
+/// struct is built holding [`Held::empty`], and a `Held` never changes after
+/// that step - nothing re-points it, so it is marked pinned and never moved.
 ///
 /// What the type enforces is the ORDER: the value goes in after the wrap. It
 /// cannot enforce what comes after - that the `Held` stays where its owner's
@@ -57,24 +58,18 @@ unsafe fn value(raw: VALUE) -> Value {
 /// type is visible to the bridge alone. Neither `Copy` nor `Clone`, so it is
 /// read through its owner rather than carried off.
 ///
-/// A cell, so compaction re-points it through a shared reference
-/// ([`Tracer::movable`]): the compaction callback then never makes a `&mut`
-/// of an object a method may be reading.
+/// Only three are left, each a single field set once: a node wrapper's
+/// Document, a Document's node table, a NodeSet's Document. Every other value
+/// a wrapper keeps alive is a hidden ivar of its object (an XPathContext's
+/// Document and node, a Document's errors), which the GC marks and moves
+/// itself - where reading it per call would cost more than it saves.
 #[repr(transparent)]
-pub(in crate::bridge) struct Held(core::cell::Cell<VALUE>);
+pub(in crate::bridge) struct Held(VALUE);
 
 impl Held {
     /// What a struct is built with: `Qfalse`, which a mark ignores.
     pub(in crate::bridge) const fn empty() -> Held {
-        Held(core::cell::Cell::new(rb_sys::Qfalse as VALUE))
-    }
-
-    /// Hold `new`'s value in place of this one: a field that changes after
-    /// the wrap (an `XPathContext`'s node). `new` comes from a [`Store`], so
-    /// the rule [`Held`] carries holds for it too.
-    #[inline]
-    pub(in crate::bridge) fn replace(&self, new: Held) {
-        self.0.set(new.0.get());
+        Held(rb_sys::Qfalse as VALUE)
     }
 
     /// The value.
@@ -82,13 +77,12 @@ impl Held {
     /// # Safety
     /// `self` is a field of a live wrapped object whose [`Hooks::trace`]
     /// traces it, and the caller keeps that object reachable for the call (a
-    /// method argument, a VALUE on the stack). Then the value is marked, so
-    /// live - pinned when traced [`Tracer::pinned`], and current after any
-    /// move when traced [`Tracer::movable`], which relocates it too.
+    /// method argument, a VALUE on the stack). Then the value is marked and
+    /// pinned, so live and where it was stored.
     #[inline]
     pub(in crate::bridge) unsafe fn get(&self) -> Value {
         // SAFETY: the caller's contract - a marked value of a reachable object.
-        unsafe { value(self.0.get()) }
+        unsafe { value(self.0) }
     }
 }
 
@@ -101,50 +95,24 @@ impl Store {
     /// object's data, where its mark finds it - see [`Held`].
     #[inline]
     pub(in crate::bridge) fn hold(&self, v: Value) -> Held {
-        Held(core::cell::Cell::new(v.as_raw()))
+        Held(v.as_raw())
     }
 }
 
-/// A GC phase, handed to [`Hooks::trace`]: the one walk over an object's
-/// stored values that both the mark and the compaction callback make.
+/// The mark phase, handed to [`Hooks::trace`].
 ///
-/// One walk, not two methods, so a value cannot be marked movable and then
-/// left out of the relocation that must follow it: the field says how it is
-/// held ([`Tracer::pinned`] or [`Tracer::movable`]) once, and each phase does
-/// its half of that.
-pub struct Tracer(Phase);
-
-#[derive(Clone, Copy)]
-enum Phase {
-    Mark,
-    Relocate,
-}
+/// There is no compaction phase: every [`Held`] is marked pinned, so nothing
+/// a Rust struct holds ever moves, and there is no relocation to get wrong. A
+/// table of many - the node table - is a Ruby Hash, which marks its entries
+/// movable and relocates them itself.
+pub struct Tracer(());
 
 impl Tracer {
-    /// A value the object holds once, PINNED where it is: marked, and never
-    /// moved, so never relocated.
-    ///
-    /// A table of many - a node cache - uses [`Tracer::movable`] instead, so
-    /// 50,000 pinned objects do not stop compaction from doing its job.
+    /// A value the object holds, PINNED where it is: marked, and never moved.
     #[inline]
     pub(in crate::bridge) fn pinned(&self, v: &Held) {
-        if let Phase::Mark = self.0 {
-            // SAFETY: called from Ruby's mark phase, with the GVL held.
-            unsafe { rb_sys::rb_gc_mark(v.0.get()) };
-        }
-    }
-
-    /// A value compaction MAY move: marked movable, then re-pointed at where
-    /// its object is now.
-    #[inline]
-    pub(in crate::bridge) fn movable(&self, v: &Held) {
-        match self.0 {
-            // SAFETY: called from Ruby's mark phase, with the GVL held.
-            Phase::Mark => unsafe { rb_sys::rb_gc_mark_movable(v.0.get()) },
-            // SAFETY: called from Ruby's compaction phase, with the GVL held,
-            // on a value the mark phase marked movable - the same walk did.
-            Phase::Relocate => v.0.set(unsafe { rb_sys::rb_gc_location(v.0.get()) }),
-        }
+        // SAFETY: called from Ruby's mark phase, with the GVL held.
+        unsafe { rb_sys::rb_gc_mark(v.0) };
     }
 }
 
@@ -157,12 +125,9 @@ impl Tracer {
 /// and must neither panic nor touch a Ruby object (see the note on the
 /// callbacks below).
 pub trait Hooks: Sized {
-    /// Hand every `VALUE` this object holds to `tracer`, each as it is held.
-    ///
-    /// Through `&self`: a [`Held`] relocates in place, so neither callback
-    /// makes a `&mut` of an object a method may be reading when the collector
-    /// runs. Ruby's `GC.auto_compact` (which `GC_COMPACT_STRESS=1` turns on)
-    /// and `GC.verify_compaction_references` are what exercise the relocation.
+    /// Hand every [`Held`] this object holds to `tracer`. Through `&self`:
+    /// the mark callback makes no `&mut` of an object a method may be
+    /// reading when the collector runs.
     fn trace(&self, tracer: &Tracer);
 
     /// The bytes this object owns, reported to Ruby's GC.
@@ -193,7 +158,7 @@ unsafe extern "C" fn mark_cb<T: Hooks>(ptr: *mut c_void) {
         }
         // SAFETY: Ruby hands back the data pointer of an object `wrap_built`
         // made, which holds a live `T` (see `wrap_built`).
-        unsafe { (*(ptr as *const T)).trace(&Tracer(Phase::Mark)) };
+        unsafe { (*(ptr as *const T)).trace(&Tracer(())) };
     })
 }
 
@@ -238,23 +203,11 @@ unsafe extern "C" fn memsize_cb<T: Hooks>(ptr: *const c_void) -> rb_sys::size_t 
         }
         /* `quietly`: the size is advisory, so a panic in it - an overflow
          * check in a sum, say - answers 0 rather than unwinding into the
-         * collector. (Not so for mark and compact: a value left unmarked is
-         * freed while still referenced, so those must be unwind-free
-         * themselves.) */
+         * collector. (Not so for mark: a value left unmarked is freed while
+         * still referenced, so it must be unwind-free itself.) */
         // SAFETY: as `mark_cb`.
         let data = unsafe { &*(ptr as *const T) };
         crate::caught::quietly(0, || data.memsize()) as rb_sys::size_t
-    })
-}
-
-unsafe extern "C" fn compact_cb<T: Hooks>(ptr: *mut c_void) {
-    crate::no_unwind::must_not_unwind::<crate::no_unwind::GcCompact, _>(|| {
-        if ptr.is_null() {
-            return;
-        }
-        // SAFETY: as `mark_cb`; compaction has finished moving and is now
-        // fixing up the references to what it moved.
-        unsafe { (*(ptr as *const T)).trace(&Tracer(Phase::Relocate)) };
     })
 }
 
@@ -289,7 +242,6 @@ impl<T: Hooks> TypedType<T> {
                     free_cb::<T>
                 }),
                 Some(memsize_cb::<T>),
-                Some(compact_cb::<T>),
                 embedded,
             ),
             _t: PhantomData,
@@ -349,19 +301,6 @@ impl<T: Hooks> TypedType<T> {
     /// pointer is valid while `v` is rooted.
     fn known_ptr(&'static self, v: Value) -> *mut T {
         typed_data_known(v, &self.raw) as *mut T
-    }
-
-    /// Run `f` over the data of `v`, an object whose type the caller
-    /// established, with a [`Store`]: `v` is wrapped, so a value stored into
-    /// its data is marked from the moment it is stored. Shared: a type that
-    /// stores into its data after the wrap keeps what it stores into in a
-    /// cell.
-    pub(in crate::bridge) fn with_store<R>(
-        &'static self,
-        v: Value,
-        f: impl FnOnce(&T, &Store) -> R,
-    ) -> R {
-        f(self.get_known(&v), &Store(()))
     }
 
     /// Allocate Ruby memory for a `T`, `build` it there, wrap it as a `klass`
@@ -473,7 +412,6 @@ impl DataType {
         dmark: rb_sys::RUBY_DATA_FUNC,
         dfree: rb_sys::RUBY_DATA_FUNC,
         dsize: Option<unsafe extern "C" fn(*const core::ffi::c_void) -> rb_sys::size_t>,
-        dcompact: rb_sys::RUBY_DATA_FUNC,
         embedded: bool,
     ) -> DataType {
         const FREE_IMMEDIATELY: VALUE =
@@ -485,7 +423,9 @@ impl DataType {
                 dmark,
                 dfree,
                 dsize,
-                dcompact,
+                /* No compaction callback: a struct holds only pinned
+                 * values ([`Tracer`]). */
+                dcompact: None,
                 reserved: [core::ptr::null_mut(); 1],
             },
             parent,

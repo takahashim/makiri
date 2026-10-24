@@ -25,9 +25,7 @@ use crate::bridge::ruby::makiri_error;
 use crate::bridge::html::new_node;
 use crate::bridge::html::{html_node_key, with_html_node, wrap_html_node};
 use crate::bridge::string::DocumentSource;
-use crate::bridge::wrapper::{
-    html_read, node_repr, xml_read, DocKind, DocumentShell, NodeRepr, DOC_TYPE,
-};
+use crate::bridge::wrapper::{html_read, node_repr, xml_read, DocKind, DocumentShell, NodeRepr};
 use crate::bridge::xml::xml_node_document;
 use crate::bridge::xml::{xml_mut_result, xml_node_unwrap};
 use crate::html_dom::html::RawNode;
@@ -151,7 +149,7 @@ pub fn document_quirks_mode(_ruby: &Ruby, rb_doc: Value) -> Result<Value, Error>
 /// `Document#errors`: the (currently always empty) parse-warning Array.
 pub fn document_errors(rb_doc: Value) -> Value {
     /* A Document method, so the receiver is a Document. */
-    DOC_TYPE.get_known(&rb_doc).errors()
+    crate::bridge::raw::ivar_get(rb_doc, crate::bridge::wrapper::ivar_errors())
 }
 
 /* ------------------------------------------------------------------ *

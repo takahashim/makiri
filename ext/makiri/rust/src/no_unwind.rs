@@ -73,8 +73,6 @@ sites! {
     GcFreeEmbedded => "makiri_unwinds_gc_free_embedded",
     /// `bridge::typed`'s memsize callback.
     GcMemsize => "makiri_unwinds_gc_memsize",
-    /// `bridge::typed`'s compaction callback.
-    GcCompact => "makiri_unwinds_gc_compact",
     /// `bridge::raw::call`'s `rb_protect` thunk.
     ProtectThunk => "makiri_unwinds_protect_thunk",
     /// `bridge::raw::hash_foreach`'s `rb_hash_foreach` callback.

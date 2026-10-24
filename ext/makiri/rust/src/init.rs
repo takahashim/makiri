@@ -353,6 +353,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     #[cfg(makiri_no_unwind)]
     crate::no_unwind::self_test();
     let makiri = ruby.define_module("Makiri")?;
+    crate::bridge::wrapper::init_ivars(ruby)?;
 
     // What this binary was built as, for `lib/makiri.rb` to check against the
     // gem it was loaded by and the Ruby it was loaded into - a stale

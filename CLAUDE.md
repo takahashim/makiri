@@ -108,18 +108,32 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   **A VALUE inside a wrapped object is a `bridge::typed::Held`**, and a
   `Held` that holds anything can only be made with a `Store`, which exists
   only where the owner is already a Ruby object (`TypedType::wrap`'s store
-  step, `TypedType::with_store`). So "store a VALUE into a struct only after
-  its wrapper exists" - the `DocData.errors` crash - is a type rule, not a
-  convention: a struct is built holding `Held::empty()`, and its
-  `Hooks::trace` hands each `Held` it keeps to the `Tracer`, as
-  `pinned` or `movable` - one walk for both the mark and the compaction
-  callback, so a value marked movable cannot be left out of the relocation.
-  The type enforces that ORDER only: that a `Held` stays where its owner's
-  trace finds it is beyond the type system, so reading one back
-  (`Held::get`) is `unsafe` with that as its contract, and both types are
-  visible to `bridge/` alone. A `Held` is a `Cell`, and a `DocData`'s
-  changing fields are cells too, so the GC callbacks and every method read
-  a wrapper's data through `&T`: no `&mut` of it is made at all.
+  step). So "store a VALUE into a struct only after its wrapper exists" -
+  the `DocData.errors` crash - is a type rule, not a convention: a struct is
+  built holding `Held::empty()`, and its `Hooks::trace` hands each `Held` it
+  keeps to the `Tracer`, which marks it PINNED. The type enforces that ORDER
+  only: that a `Held` stays where its owner's trace finds it is beyond the
+  type system, so reading one back (`Held::get`) is `unsafe` with that as
+  its contract, and both types are visible to `bridge/` alone.
+  **Only three `Held`s exist, each one field written once in the store
+  step**: a node wrapper's Document, a Document's node table, a NodeSet's
+  Document - the reads too hot for an ivar. Nothing re-points one and none
+  is movable, so there is no compaction callback and no relocation to get
+  wrong. Every other value a wrapper keeps alive is a hidden ivar of its
+  object (`raw::ivar_set` / `ivar_get`, names without `@`, so Ruby code
+  cannot see them): an XPathContext's Document and node (`#node=` is an
+  ivar write), a Document's errors. The node table - one wrapper per node,
+  so a node navigated to twice is the SAME object - is a Ruby Hash from the
+  node's token (a Fixnum) to its wrapper, which the GC marks and moves
+  itself, in place of the Rust map of movable values it replaced; its
+  entries are written only once the wrapper exists, and a wrapper is handed
+  out only once it is in the table. Measured against the Rust map
+  (`notes/magnus_replacement_plan.ja.md`): the light readers unchanged,
+  a cached traverse +4-8%, wrapping fresh nodes about +12%; moving the
+  node's and the NodeSet's Document to ivars too cost +15-65% and was not
+  taken. A `DocData`'s changing fields are cells, so the GC callbacks and
+  every method read a wrapper's data through `&T`: no `&mut` of it is made
+  at all.
   The other half - no Ruby value kept where the GC's stack scan cannot
   see it (a `Vec`, a `Box`, a static or `thread_local!`, a `Hooks` type's
   own field) - is `rake dylint`'s `ruby_value_on_heap`,
@@ -168,7 +182,8 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   everything else holds typed values; `TypedType::wrap` is safe for that
   reason (`&Ruby`, and a `T` can keep a Ruby value only in a `Held`). A
   `Held` is a private field beside the `trace` that marks it, read through
-  that module's accessor (`NodeData::document`, `DocData::errors`).
+  that module's accessor (`NodeData`'s snapshot, `node_table`,
+  `NodeSet::document`).
 
   **A Document's content is reached only through a guard** (`bridge::dom`,
   over `crate::doc_cell`, which is Ruby-free so its `compile_fail` doctests

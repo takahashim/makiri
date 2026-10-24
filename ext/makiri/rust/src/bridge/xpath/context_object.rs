@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use crate::bridge::rb::{Error, Value};
 use crate::bridge::ruby::makiri_error;
-use crate::bridge::typed::{Held, Hooks, Tracer, TypedType};
+use crate::bridge::typed::{Hooks, Tracer, TypedType};
 
 use crate::bridge::string::ruby_try_verified_text;
 use crate::bridge::string::{ruby_verified_text, RubyText};
@@ -50,22 +50,17 @@ struct AstCache(HashMap<Box<[u8]>, Box<Ast>>);
 
 /// `Makiri::XPathContext`.
 ///
-/// The two Ruby values it keeps alive are [`Held`]s, stored only once the
-/// object is wrapped ([`XPathCtx::create`]) and traced by [`Hooks::trace`].
-/// `document` never changes; `node` does (`#node=`), which is why it - like
-/// every `Held` - is a cell rather than living in the `RefCell`: the GC
-/// reads both through `&self`, and a GC can land while a mutable borrow is
-/// outstanding - the mistake that had to be fixed in `glue::node_set`.
+/// The two Ruby values it keeps alive - its Document and its context node -
+/// are hidden ivars of the context object (`bridge::wrapper::ivar_document`,
+/// `ivar_node`), so the struct holds none and its GC hooks have nothing to
+/// mark: `#node=` is an ivar write, and an `evaluate` reads the Document
+/// once, a few nanoseconds on work of microseconds.
 ///
 /// The engine context sits outside the `RefCell` too: everything done with it
 /// takes `&Cx`. No Ruby runs while it evaluates (Makiri runs no
 /// custom-function handler), and the context itself refuses a change that
 /// would disturb a walk all the same.
 pub struct XPathCtx {
-    /// Keepalive: owns the DOM arena.
-    document: Held,
-    /// Keepalive: the context node's wrapper.
-    node: Held,
     cache: RefCell<AstCache>,
     /// The bytes the cached ASTs hold, as reported to the GC - kept outside
     /// the `RefCell` because `memsize` reads it from the GC, which can land
@@ -75,10 +70,9 @@ pub struct XPathCtx {
 }
 
 impl Hooks for XPathCtx {
-    fn trace(&self, tracer: &Tracer) {
-        tracer.pinned(&self.document);
-        tracer.pinned(&self.node);
-    }
+    /// Nothing: the Document and the context node are hidden ivars of the
+    /// context object, which the GC marks and moves itself.
+    fn trace(&self, _: &Tracer) {}
 
     fn memsize(&self) -> usize {
         core::mem::size_of::<Self>().saturating_add(self.cache_bytes.get())
@@ -125,8 +119,18 @@ impl XPathCtxSelf {
             .map_err(|e| refused(e, BUSY, BUSY))?;
         /* Kept alive once it is the context node: a refusal above leaves the
          * old node and its keepalive as they were. */
-        XPATH_CTX_TYPE.with_store(self.0, |c, store| c.node.replace(store.hold(rb_node)));
-        Ok(())
+        crate::bridge::raw::ivar_set(self.0, crate::bridge::wrapper::ivar_node(), rb_node)
+    }
+
+    /// The keepalive Document.
+    fn document(&self) -> Value {
+        crate::bridge::raw::ivar_get(self.0, crate::bridge::wrapper::ivar_document())
+    }
+
+    /// Evaluate `expr`, parsed once and cached.
+    pub fn evaluate(&self, expr: Value) -> Result<Value, Error> {
+        let document = self.document();
+        self.evaluate_in(expr, document)
     }
 }
 
@@ -188,35 +192,25 @@ impl XPathCtx {
         let document = keepalive_document(rb_node)?;
         let mut ctx = context_for(rb_node, document)?;
         ctx.set_lax(lax);
-        /* The struct is built holding no value - the two are stored once it is
-         * wrapped. */
-        XPATH_CTX_TYPE.wrap(
+        let obj = XPATH_CTX_TYPE.wrap(
             &crate::bridge::ruby::gvl_ruby(),
             CLASS_XPATH_CONTEXT.defined()?,
             || XPathCtx {
-                document: Held::empty(),
-                node: Held::empty(),
                 cache: RefCell::new(AstCache(HashMap::new())),
                 cache_bytes: Cell::new(0),
                 ctx,
             },
-            |c, store| {
-                c.document = store.hold(document);
-                c.node = store.hold(rb_node);
-            },
-        )
+            |_, _| {},
+        )?;
+        /* The Document and the context node, as hidden ivars: ordinary Ruby
+         * references. */
+        crate::bridge::raw::ivar_set(obj, crate::bridge::wrapper::ivar_document(), document)?;
+        crate::bridge::raw::ivar_set(obj, crate::bridge::wrapper::ivar_node(), rb_node)?;
+        Ok(obj)
     }
 
-    /// The keepalive Document.
-    fn document(&self) -> Value {
-        // SAFETY: a field `trace` traces, of the receiver the caller holds.
-        unsafe { self.document.get() }
-    }
-
-    /// Evaluate `expr`, parsed once and cached.
-    pub fn evaluate(&self, expr: Value) -> Result<Value, Error> {
-        let document = self.document();
-
+    /// Evaluate `expr` in `document`, parsed once and cached.
+    fn evaluate_in(&self, expr: Value, document: Value) -> Result<Value, Error> {
         /* The cache borrow is taken for the lookup only, and released before the
          * evaluation. */
         let ast = {
