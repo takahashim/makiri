@@ -91,5 +91,6 @@ disallowed-methods = [
   # The bridge's own call into the caller's Ruby: `Module::call_method`
   # (`rb_funcallv`). `rake unsafe:boundaries` counts it (`USER_CODE_API`); the
   # one use, `XML::Namespace.new`, carries the allow.
-  { path = "makiri::bridge::rb::Module::call_method", reason = "runs the caller's Ruby; see USER_CODE_API" },
+  # `allow-invalid`: a build without the `ruby` feature has no such path.
+  { path = "makiri::bridge::rb::Module::call_method", reason = "runs the caller's Ruby; see USER_CODE_API", allow-invalid = true },
 ]
