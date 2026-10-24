@@ -111,7 +111,7 @@ task :no_unwind do
   end
   lib = Dir[File.join(target, "release", "libmakiri.{dylib,so}")].first or abort "no_unwind: no library built"
   left = `nm -u #{lib.shellescape}`.lines.map(&:strip)
-                                       .filter_map { |l| l[/\A_?makiri_unwinds_(\w+)\z/, 1] }.uniq.sort
+                                       .filter_map { |l| l[/(?:\A|\s)_?makiri_unwinds_(\w+)\z/, 1] }.uniq.sort
   abort "no_unwind: the control site was optimized away - the check is not live" unless left.include?("self_test")
   sites = left - ["self_test"]
   abort "no_unwind: these sites can unwind (see src/no_unwind.rs): #{sites.join(", ")}" unless sites.empty?

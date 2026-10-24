@@ -740,12 +740,17 @@ pub fn ivar_get(obj: Value, id: ID) -> Value {
 }
 
 /// A Fixnum for a table key: `None` past a Fixnum.
+///
+/// Built from its bits - `(n << 1) | FIXNUM_FLAG`, what `long2fix` does -
+/// rather than through a C `long`: a Fixnum is as wide as a VALUE, less one
+/// bit, while a `long` is 32 bits on Windows, where a node token past 2^32
+/// was refused as past a Fixnum.
 #[inline]
 fn fixnum_key(n: usize) -> Option<VALUE> {
-    use rb_sys::stable_api::{get_default, StableApiDefinition};
-    let api = get_default();
-    let l = n as core::ffi::c_ulong;
-    (l as usize == n && api.posfixable(l)).then(|| api.long2fix(l as c_long))
+    /* The largest positive Fixnum: a signed VALUE less its flag bit. */
+    const FIXNUM_MAX: VALUE = VALUE::MAX >> 2;
+    let v = VALUE::try_from(n).ok().filter(|&v| v <= FIXNUM_MAX)?;
+    Some((v << 1) | rb_sys::FIXNUM_FLAG as VALUE)
 }
 
 /// `rb_hash_lookup2` at the Fixnum `n`: a Fixnum hashes and compares by
