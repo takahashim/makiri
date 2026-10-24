@@ -100,22 +100,6 @@ RSpec.describe "a Rust panic" do
     expect(Makiri::XML("<r><c>b</c></r>").at_xpath("//c").text).to eq("b")
   end
 
-  describe "from a Ruby handle made with the GVL released" do
-    # `bridge::ruby::gvl_ruby` inside a `without_gvl` body: a checking build
-    # (sanitize, OOM injection, MAKIRI_GVL_CHECK=1) refuses with a panic,
-    # which the body's latch re-raises, rather than run Ruby's C unlocked. A
-    # plain build carries no check, and kind 7 says so with a
-    # NotImplementedError.
-    it "surfaces as a catchable exception and leaves parsing usable" do
-      e = panic_on_thread(7)
-      skip "a plain build carries no GVL check" if e.is_a?(NotImplementedError)
-
-      expect(e).not_to be_nil
-      expect(e.message).to include("made with the GVL released")
-      expect(Makiri::HTML("<p>a</p>").at_css("p").text).to eq("a")
-    end
-  end
-
   describe "inside an entry point exposed to untrusted input" do
     # `bridge::ruby::entry` wraps the methods a crafted document or expression
     # reaches - parse, fragment, xpath/at_xpath/evaluate, css/at_css/matches?,

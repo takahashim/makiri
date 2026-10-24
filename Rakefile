@@ -99,9 +99,6 @@ task lint: :lexbor do
     # is dead there, which `--all-features` cannot see - and so are test
     # helpers only a Lexbor test calls, which the html-dom test build sees.
     sh "cargo", "clippy", "--no-default-features", "--features", "ruby", "--", "-D", "warnings"
-    # The checking builds' cfg (extconf sets it for sanitize and OOM builds).
-    sh "cargo", "clippy", "--no-default-features", "--features", "ruby", "--",
-       "-D", "warnings", "--cfg", "makiri_gvl_check"
     sh "cargo", "clippy", "--no-default-features", "--features", "html-dom", "--tests", "--", "-D", "warnings"
     sh "cargo", "fmt", "--all", "--", "--check"
   end

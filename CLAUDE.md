@@ -1314,11 +1314,10 @@ Key decisions that got there, worth not regressing:
   Ruby handle from being carried into the body but not from being MADE
   there (`bridge::ruby::gvl_ruby`), so `rake unsafe:boundaries` holds the
   body's closure to engine functions by `crate::` path (no method call, bare
-  function or macro: hoist it), and a checking build -
-  `cfg(makiri_gvl_check)`, which extconf sets for sanitize and OOM builds
-  and on `MAKIRI_GVL_CHECK=1` - makes `gvl_ruby` panic inside a body
-  (`__panic(7)`). It is not in the gem: always on, the thread-local read
-  cost the light readers 5-10%. **XPath holds
+  function or macro: hoist it). A runtime check in `gvl_ruby` was tried and
+  dropped: always on it cost the light readers 5-10%, and it could not see
+  the one hole left, a function pointer the engine calls into Ruby's C.
+  **XPath holds
   the GVL for the whole evaluation by design** (`xpath::ctx::Session::evaluate` is a plain
   GVL-held call). The engine and DOM are not thread-safe against concurrent
   mutation, and holding the GVL makes that safe *by construction*: the GVL

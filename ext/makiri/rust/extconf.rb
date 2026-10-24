@@ -133,16 +133,6 @@ unless sanitize.empty?
   end
 end
 
-# GVL check: `bridge::ruby::gvl_ruby` refuses (panics) when called inside a
-# GVL-released body (`bridge::gvl::without_gvl`). It costs the light readers
-# 5-10%, so it is a cfg of the checking builds - every sanitize and
-# OOM-injection build, and any build with MAKIRI_GVL_CHECK=1 - not of the gem.
-if ENV["MAKIRI_GVL_CHECK"].to_s.strip == "1" || !sanitize.empty? ||
-   features.include?("alloc-inject")
-  rustc_args += ["--cfg", "makiri_gvl_check"]
-  warn "makiri: building with the GVL check (cfg makiri_gvl_check)"
-end
-
 # Coverage build (opt-in): MAKIRI_COVERAGE=1 instruments the crate with LLVM
 # source-based coverage. Run via `rake coverage`.
 unless ENV["MAKIRI_COVERAGE"].to_s.strip.empty?

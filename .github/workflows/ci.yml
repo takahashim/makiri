@@ -88,7 +88,6 @@ jobs:
         run: |
           cargo clippy --all-features --tests -- -D warnings
           cargo clippy --no-default-features --features ruby -- -D warnings
-          cargo clippy --no-default-features --features ruby -- -D warnings --cfg makiri_gvl_check
           cargo clippy --no-default-features --features html-dom --tests -- -D warnings
 
       - name: Rust formatting

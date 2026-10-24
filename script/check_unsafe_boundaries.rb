@@ -898,14 +898,14 @@ end
 # (`RUBY_LAYER` above), so the body may call only engine functions, by their
 # `crate::` path: a method call, a bare function or a macro could be
 # anything, and is hoisted out of the closure instead (`src.input()` is
-# evaluated before the call, not inside it). A checking build adds the
-# runtime half (`gvl_ruby` panics while a body runs, `cfg(makiri_gvl_check)`),
-# which also sees a function pointer this text cannot.
+# evaluated before the call, not inside it). What this text cannot see is a
+# function pointer the engine calls (`crate::stack`'s probe, which is Ruby's C);
+# no GVL-released body reaches one today.
 ENGINE_MODULES = ENGINE_DIRS.map { |d| d.sub(%r{/\z}, "").sub(/\.rs\z/, "") }.uniq.freeze
 # A capitalised name is a constructor (`Some(..)`, `Ok(..)`), not a call.
 GVL_RELEASED_CALL = /(?<dot>\.\s*)?(?<name>\b[A-Za-z_]\w*(?:\s*::\s*[A-Za-z_]\w*)*)\s*(?<bang>!)?\s*\(/
 WITHOUT_GVL_EXEMPT = {
-  "init.rs" => "the __panic(4) / __panic(7) hooks: a panic, and a gvl_ruby call, below the GVL on purpose"
+  "init.rs" => "the __panic(4) hook: a panic below the GVL, on purpose"
 }.freeze
 
 def gvl_released_violations(rust)
