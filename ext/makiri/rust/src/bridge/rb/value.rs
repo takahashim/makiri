@@ -101,10 +101,7 @@ impl ReprValue for Value {
 
 /// The raw `VALUE`, for `bridge`'s C calls and nothing else.
 pub(crate) trait AsRawValue {
-    #[allow(
-        clippy::wrong_self_convention,
-        reason = "a Copy value, as magnus's was"
-    )]
+    #[allow(clippy::wrong_self_convention, reason = "a Copy value, read by value")]
     fn as_raw(self) -> VALUE;
 }
 

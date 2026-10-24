@@ -156,11 +156,10 @@ jobs:
         shell: bash
         run: bundle exec ruby -Ilib -r makiri -e 'p Makiri::VERSION'
 
-  # The crate's own lints (ext/makiri/rust/lints/makiri_lints): a Ruby value
-  # kept where the GC's stack scan does not see it, and a registered method
-  # whose argument magnus converts with the caller's Ruby. They are a rustc
-  # plugin, so they run on the nightly its rust-toolchain.toml pins (with
-  # rustc-dev) rather than the stable the build uses; `rake dylint` runs them
+  # The crate's own lint (ext/makiri/rust/lints/makiri_lints): a Ruby value
+  # kept where the GC's stack scan does not see it. It is a rustc plugin, so
+  # it runs on the nightly its rust-toolchain.toml pins (with
+  # rustc-dev) rather than the stable the build uses; `rake dylint` runs it
   # over the `ruby` build and then its self-test. No Lexbor: the `ruby`
   # configuration's build.rs does not read it.
   dylint:

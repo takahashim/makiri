@@ -59,9 +59,8 @@ pub struct RubyVec<T: Copy> {
 }
 
 /* SAFETY: the buffer is only ever read or written while the GVL is held, which
- * serialises every Ruby thread. The Send bound comes from magnus's TypedData,
- * which has to assume a wrapped value may be freed on whichever thread runs the
- * GC - still under the GVL. Nothing here is shared without it. The elements
+ * serialises every Ruby thread. The Send bound is for a wrapped value, which may
+ * be freed on whichever thread runs the GC - still under the GVL. Nothing here is shared without it. The elements
  * must themselves permit transfer: Copy alone includes references to !Sync
  * data, which must not be made Send by placing them in this buffer. */
 unsafe impl<T: Copy + Send> Send for RubyVec<T> {}

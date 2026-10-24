@@ -1,10 +1,10 @@
 //! `Init_makiri` - the registration seam.
 //!
-//! Ruby loads the extension by calling `Init_makiri`, and this is it:
-//! `#[magnus::init]` generates a symbol with exactly that name and the C ABI.
-//! The contract "export only `Init_makiri`" (plus rb-sys's `ruby_abi_version`)
-//! is enforced at the source: the macro's output is the crate's only
-//! `#[no_mangle]` item, so rustc emits no other exported name. extconf's
+//! Ruby loads the extension by calling `Init_makiri`, and this is it: an
+//! `extern "C"` function of exactly that name. The contract "export only
+//! `Init_makiri`" (plus rb-sys's `ruby_abi_version`) is enforced at the
+//! source: it is the crate's only `#[no_mangle]` item, so rustc emits no
+//! other exported name. extconf's
 //! post-link trim is belt-and-braces on macOS, not the mechanism, and
 //! `rake symbols` checks the result.
 //!
@@ -230,9 +230,9 @@ fn borrowed_p(doc: Value) -> Result<bool, Error> {
 /// reaches Ruby as an exception instead of killing the process.
 ///
 /// It exists because that property has no other test. `panic = "unwind"` plus
-/// magnus's `catch_unwind` is what makes a panic a Ruby `fatal`; going back to
-/// `abort`, or losing the unwind somewhere, would turn every example green and
-/// the gem lethal. `spec/panic_spec.rb` calls this and expects to catch it.
+/// the trampoline's `catch_unwind` (`bridge::rb::method::finish`) is what makes
+/// a panic a Ruby exception; going back to `abort`, or losing the unwind
+/// somewhere, would turn every example green and the gem lethal. `spec/panic_spec.rb` calls this and expects to catch it.
 ///
 /// Kinds 0..3 are the four ways the crate could actually panic: an explicit
 /// `panic!`, an out-of-bounds index, an arithmetic overflow (release keeps
@@ -462,8 +462,8 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     ];
 
     /* `define_error`, not `define_class`: an exception class is an
-     * `ExceptionClass` in magnus, and raising through one is the only thing
-     * these are for. LimitExceeded descends from XPath::SyntaxError (so
+     * `ExceptionClass`, and raising through one is the only thing these are
+     * for. LimitExceeded descends from XPath::SyntaxError (so
      * rescuing the syntax error catches the budget too), while its XML
      * counterpart descends from Error - that asymmetry is deliberate and
      * predates the port. */

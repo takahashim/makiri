@@ -38,13 +38,14 @@ pub use context_object::{XPathCtx, XPathCtxSelf};
 ///
 /// Returned rather than raised: `rb_raise` longjmps past every Rust destructor
 /// on the way (see `glue/mod.rs`), so each caller hands this back as `Err` and
-/// magnus raises once its frames - and the context they own - are gone.
+/// the method's trampoline raises once its frames - and the context they own -
+/// are gone.
 ///
 /// Built lazily - a class and a Rust message, no Ruby object - so making one
 /// allocates nothing Ruby could raise `NoMemoryError` from: the callers build
 /// it while they still own the parse error, the context and the AST, which a
-/// raise here would leak. magnus makes the exception (a UTF-8 message) when
-/// it raises.
+/// raise here would leak. `Error::raise` makes the exception (a UTF-8
+/// message) when it raises.
 pub fn xpath_error(err: &XPathError) -> Error {
     let class = match err.status {
         ErrorKind::Syntax => EXC_XPATH_SYNTAX_ERROR.exception(),

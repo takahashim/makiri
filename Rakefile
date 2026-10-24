@@ -110,22 +110,20 @@ task lint: :lexbor do
   end
 end
 
-# `rake dylint` - the crate's own lints (ext/makiri/rust/lints/makiri_lints),
-# two rules magnus states or implies and leaves to its users, checked by type:
-# `ruby_value_on_heap`, a Ruby value kept where the GC's stack scan does not
+# `rake dylint` - the crate's own lint (ext/makiri/rust/lints/makiri_lints),
+# `ruby_value_on_heap`: a Ruby value kept where the GC's stack scan does not
 # see it (a heap container, a static or thread-local, a wrapped object's data
-# outside a traced field), and `converted_argument`, a registered method whose
-# argument magnus converts with the caller's Ruby (`RString`, `i64`, ...). The
-# lints are a rustc plugin, so they build on the nightly their
+# outside a traced field), the rule every Ruby extension keeps by hand, checked
+# by type. The lint is a rustc plugin, so it builds on the nightly its
 # rust-toolchain.toml pins, with cargo-dylint and dylint-link installed. The
 # second run is the self-test: `lint_probe.rs`, compiled only under
-# `--cfg makiri_lint_probe`, ends with `//~` each line a lint must report, and
-# the task fails unless exactly those lines are reported - so a lint that has
-# stopped seeing a case cannot pass by reporting nothing.
+# `--cfg makiri_lint_probe`, ends with `//~` each line the lint must report,
+# and the task fails unless exactly those lines are reported - so a lint that
+# has stopped seeing a case cannot pass by reporting nothing.
 DYLINT = %w[cargo dylint --path lints/makiri_lints --no-deps --
             --no-default-features --features ruby].freeze
 
-desc "Run the crate's own lints (makiri_lints; needs cargo-dylint and its nightly)"
+desc "Run the crate's own lint (makiri_lints; needs cargo-dylint and its nightly)"
 task :dylint do
   require "open3"
   Dir.chdir("ext/makiri/rust") do
@@ -678,8 +676,8 @@ end
 desc "Kani proofs over the Ruby-free core - the allocator, mkr_buf, UTF-8 " \
      "validate/decode (needs cargo-kani; successor to the C-era CBMC harnesses)"
 task :kani do
-  # Only the Ruby-free features: anything under glue needs magnus -> rb-sys ->
-  # a live Ruby, which Kani cannot build.
+  # Only the Ruby-free features: anything under glue needs rb-sys -> a live
+  # Ruby, which Kani cannot build.
   #
   #   rake kani                                   # all six
   #   rake kani HARNESS=accepted_is_utf8          # one

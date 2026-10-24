@@ -627,9 +627,9 @@ pub fn node_set_of_nodes(
 
 /// An empty NodeSet over `document`, plus the handle to fill it through.
 ///
-/// The reference's lifetime is unconstrained, as magnus's own `try_convert` for
-/// a wrapped type gives: the data lives as long as the Ruby object, which the
-/// returned `Value` keeps rooted on the caller's stack.
+/// The reference's lifetime is unconstrained (`TypedType::get_unbound`): the
+/// data lives as long as the Ruby object, which the returned `Value` keeps
+/// rooted on the caller's stack.
 fn new_result<'a>(document: Value) -> Result<(Value, &'a NodeSet), Error> {
     /* The one unchecked borrow of a fresh set is `node_set_with_fill`'s. */
     let (set, fill) = node_set_with_fill(document)?;

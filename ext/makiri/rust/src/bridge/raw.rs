@@ -11,11 +11,12 @@
 //! `rake unsafe:boundaries` pins that these C names appear nowhere else in the
 //! crate, so a new raising call is a new wrapper here, with its raise stated.
 //!
-//! The value-level wrappers are SAFE: they take and return magnus's typed
-//! values (`RString`, `RArray`, `RHash`, `Value`, ...), slices and the
+//! The value-level wrappers are SAFE: they take and return `bridge::rb`'s
+//! typed values (`RString`, `RArray`, `RHash`, `Value`, ...), slices and the
 //! bridge's `Encoding`, so a live value of the right kind is the type's
-//! promise, not the caller's - under magnus's own rule that a Ruby value stays
-//! on the stack (CLAUDE.md, "A VALUE inside a wrapped object"). One that
+//! promise, not the caller's - under the rule every Ruby extension keeps, that
+//! a Ruby value stays on the stack (CLAUDE.md, "A VALUE inside a wrapped
+//! object"). One that
 //! takes no Ruby value takes `&Ruby`, the proof it runs on a Ruby thread with
 //! the GVL (`Ruby` is `!Send`, so a GVL-released body cannot carry one). What
 //! still checks a value's kind or a bound is done here, before the C call,
@@ -23,10 +24,11 @@
 //! typed data and Ruby's allocator, and a String of unwritten bytes - stay
 //! `unsafe`, with their contracts stated.
 //!
-//! What is NOT here: calls that cannot raise (`rb_gc_mark`, the encoding
-//! singletons, `rb_typeddata_is_kind_of`, `rb_attr_get`, `ruby_xfree`), the GC
-//! callbacks, and the calls magnus makes on the bridge's behalf, which raise by
-//! magnus's own rules (`bridge::build` is the bridge's own spelling of those).
+//! What is NOT here: calls that cannot raise and touch no other value
+//! (`rb_gc_mark`, the encoding singletons, `rb_typeddata_is_kind_of`,
+//! `rb_attr_get`, `ruby_xfree`), the stable API's inline reads
+//! (`bridge::rb::value`), and the GC callbacks (`bridge::typed`). Together
+//! with those, this file is every C function of Ruby's that Makiri calls.
 
 #![allow(unsafe_code)]
 /* Every wrapper's contract is the module's, stated once above. */

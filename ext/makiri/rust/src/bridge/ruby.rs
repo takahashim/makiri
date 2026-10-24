@@ -3,8 +3,9 @@
 //! `rb_raise` and every C function that can raise unwind with `longjmp`, which
 //! skips Rust destructors in every frame it crosses (see `glue/mod.rs`). The
 //! functions here are built on `bridge::raw`'s wrappers, each of which turns
-//! the raise into a [`crate::bridge::rb::Error`]: the caller hands it back as `Err`, and
-//! magnus raises only after the Rust frames have returned normally.
+//! the raise into a [`crate::bridge::rb::Error`]: the caller hands it back as
+//! `Err`, and the method's trampoline raises it only after the Rust frames
+//! have returned normally (`bridge::rb::method::finish`).
 
 #![allow(unsafe_code)]
 

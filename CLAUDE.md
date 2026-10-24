@@ -48,9 +48,9 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   sanitized run is launched.
 
 - **A panic must not kill the host.** The crate builds with `panic = "unwind"`,
-  so magnus's `catch_unwind` turns a panic into Ruby's `fatal`: on the thread
-  that ran the query, which dies alone while the process keeps working, with
-  `ensure` and `at_exit` run and every `Drop` executed on the way out. `abort`
+  so every method's trampoline (`bridge::rb::method::finish`) catches a panic
+  and raises `Makiri::InternalError` in its place, with every `Drop` of the
+  method's frames executed on the way out. `abort`
   did none of that - no destructor, no cleanup, SIGABRT for the whole process -
   so **do not set it back**; `spec/panic_spec.rb` is what would catch that,
   through the `Makiri.__panic(kind)` hook that exists for no other purpose.
@@ -71,9 +71,8 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   parser) and `bridge::raw::hash_foreach`'s `rb_hash_foreach` callback, which
   answers "stop" for a latched panic or an error and never raises from inside
   the walk. For the same reason a Hash is walked only through
-  `glue::hash::hash_foreach` over it (magnus's `RHash::foreach` protects
-  without one, and raises from its callback; `rake unsafe:boundaries` fails
-  on a direct `.foreach(`). The reference-only
+  `glue::hash::hash_foreach` over it (`rake unsafe:boundaries` fails on a
+  direct `.foreach(`, which is how magnus's latch-less walk was spelled). The reference-only
   Lexbor callbacks carry it too (`lexbor::selectors`' traversal,
   `lexbor::chunks::chunk_cb`, `tree_guard::hook_token_cb`).
   Two `extern "C"` functions have no latch ON PURPOSE. The GC callbacks in
@@ -100,9 +99,9 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   visible to `bridge/` alone. A `Held` is a `Cell`, and a `DocData`'s
   changing fields are cells too, so the GC callbacks and every method read
   a wrapper's data through `&T`: no `&mut` of it is made at all.
-  The other half - no magnus value kept where the GC's stack scan cannot
-  see it (a `Vec`, a `Box`, a static or `thread_local!`, a `TypedData` /
-  `Hooks` type's own field) - is `rake dylint`'s `ruby_value_on_heap`,
+  The other half - no Ruby value kept where the GC's stack scan cannot
+  see it (a `Vec`, a `Box`, a static or `thread_local!`, a `Hooks` type's
+  own field) - is `rake dylint`'s `ruby_value_on_heap`,
   which reads the types; it is why raw `VALUE`s stay in `bridge/raw.rs` and
   `bridge/typed.rs`, since a lint sees a `VALUE` only as an integer. What it
   cannot see is a temporary handed straight to a call (`f(vec![v])`).
@@ -127,26 +126,24 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   then own copies, hold document guards and build Ruby objects in any order.
   `rake unsafe:boundaries` pins the raising names to `raw.rs` and fails on one
   outside a `call(|| ...)` there (`raw_unprotected`); a new raising call is a
-  new wrapper with its raise stated. magnus's allocating constructors raise
-  instead, so `clippy.toml` bans them (and the `funcall`/`respond_to`/`eql`
-  family, which runs the caller's Ruby): the glue builds Arrays, Hashes,
-  numbers and Symbols through `bridge::build`, Strings through
+  new wrapper with its raise stated. The glue builds Arrays, Hashes, numbers
+  and Symbols through `bridge::build`, Strings through
   `bridge::string::utf8_str`, and every wrapped object - a NodeSet included -
-  through `typed::TypedType::wrap`. Only
-  `Init_makiri` (where a raise is `require`'s) carries an `#[allow]`. Each
+  through `typed::TypedType::wrap`, each over those wrappers. Each
   protected call costs a `setjmp`, ~8 ns: a light reader that allocates one
   String (`#name`, `#[]`, `#text`) measured ~15-20 ns slower than the
   unprotected allocation it replaced, about half of which dropping the
   lifting (below) took back (`notes/ruby_boundary_simplification_plan.ja.md`).
-  The value-level wrappers are SAFE and typed: they take and return magnus's
-  values (`RString`, `RArray`, `RHash`, `Value`), slices and
+  The value-level wrappers are SAFE and typed: they take and return
+  `bridge::rb`'s values (`RString`, `RArray`, `RHash`, `Value`), slices and
   `bridge::string::Encoding`, check what the C function would not (a Hash
   key's kind, a substring's bounds, `to_encoding`'s argument), and one with
   no Ruby value takes `&Ruby` as the GVL's proof. Only those over raw memory
-  stay `unsafe` (`typed_object_wrap` / `_zalloc`, `xmalloc`, `xrealloc2`,
+  stay `unsafe` (`typed_object_wrap` / `_zalloc`, `xrealloc2`,
   `check_typeddata`, `utf8_str_unwritten`). A raw `VALUE` - an integer to
   Rust, which no lint can tell from a `u64` in a `Vec` - is spelled only in
-  `raw.rs` and `typed.rs` (`unsafe:boundaries`' `VALUE_COUNTS`, empty), so
+  `raw.rs`, `typed.rs` and the `bridge::rb` files that are the typed values
+  (`unsafe:boundaries`' `VALUE_ALLOWED`; `VALUE_COUNTS`, empty), so
   everything else holds typed values; `TypedType::wrap` is safe for that
   reason (`&Ruby`, and a `T` can keep a Ruby value only in a `Held`). A
   `Held` is a private field beside the `trace` that marks it, read through
@@ -175,22 +172,22 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   `notes/ruby_boundary_simplification_plan.ja.md`, and the light readers got
   faster for it (`#text` ~124 -> ~112 ns).
 
-  **A Ruby method raises `Makiri::InternalError`, not `fatal`.**
-  `bridge::ruby::entry` wraps the body of EVERY method the glue registers, and
-  turns a panic there into that exception. It used to wrap only the methods
-  judged to reach untrusted input, and the judgement left readers such as
-  `children`, `[]` and `NodeSet#each` out; so `rake unsafe:boundaries` finds
-  every `method!`/`function!` in the glue (a registration table included),
-  resolves it to its one definition, and fails unless the whole body is a
-  `crate::bridge::ruby::entry(...)` call. `ENTRY_EXEMPT` there names the few
-  that stay out - the `__panic` / `__alloc_inject*` test hooks - and a new
-  exemption needs a reason.
+  **A Ruby method raises `Makiri::InternalError`, not `fatal`.** Every
+  `method!`/`function!` expands to a trampoline whose body runs inside
+  `bridge::rb::method::finish`, which catches a panic and raises that
+  exception, the test hooks' included. (`bridge::ruby::entry`, which still
+  wraps each registered body and which `rake unsafe:boundaries` still
+  requires bar its `ENTRY_EXEMPT` hooks, did the same job while magnus's
+  trampolines made a panic `fatal`; it is now redundant and due to go.)
   `InternalError` descends from `Exception`, NOT `StandardError`, which is the
   point: a bare `rescue => e` keeps passing it through, because a broken
   invariant is not a bad selector, while a host that wants to turn one request
   into a 500 can catch it WITHOUT a thread boundary to re-raise at (a `fatal`
-  cannot be rescued in its own frame at all). Outside a registered method - the
-  exempt ones, GC callbacks, init - a panic stays `fatal`.
+  cannot be rescued in its own frame at all). Outside a registered method -
+  the GC callbacks, `Init_makiri` - a panic is not this: the GC callbacks
+  abort (above), and a panic in `Init_makiri` is `fatal`, since
+  `InternalError` may not exist yet and a half-defined extension must not be
+  used (`bridge::rb::method::run_init`).
 
   `clippy::unwrap_used`, `clippy::expect_used` and `clippy::panic` (in `Cargo.toml`) keep a new panic
   from arriving by accident; a site that wants one carries an `#[allow]` with a
@@ -299,12 +296,10 @@ bundle exec rake spec
 bundle exec rake rust:test         # Ruby-free core tests, Lexbor-feature tests, fuzz-crate check
 bundle exec rake lint              # cargo clippy --all-features -D warnings + cargo fmt --check
 bundle exec rake unsafe:boundaries # reviewed unsafe islands and safe-module boundaries
-bundle exec rake dylint            # the crate's own lints (lints/makiri_lints):
-                                   # ruby_value_on_heap - a magnus value in a heap
+bundle exec rake dylint            # the crate's own lint (lints/makiri_lints):
+                                   # ruby_value_on_heap - a Ruby value in a heap
                                    # container, a static/thread_local or a wrapped
-                                   # object's data; converted_argument - a registered
-                                   # method taking a type magnus converts (RString,
-                                   # i64, ...); then their self-test
+                                   # object's data; then its self-test
                                    # (src/lint_probe.rs). Needs the nightly
                                    # rust-toolchain.toml pins + cargo-dylint/dylint-link
 bundle exec rake clean             # wipe the build dir (regenerates the Makefile next compile)
@@ -565,7 +560,12 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
     utf8_input.rs          HTML input sanitiser: invalid UTF-8 -> U+FFFD, per
                            WHATWG; `cbuf`+`cutf8` only, so Ruby/Lexbor-free
     bridge/                the Ruby boundary - the ONLY layer allowed raw Ruby String
-                           access (RSTRING) and verified-string minting, and where
+                           access (RSTRING) and verified-string minting. `rb/` is
+                           its value and method layer over rb-sys (`Value` and the
+                           class-checked handles, `Error`, the `method!` /
+                           `function!` trampolines, class definitions), which
+                           replaced magnus under its names; `raw.rs` is every
+                           raising C call Makiri makes. It is also where
                            the C calls that can raise (`bridge/raw.rs`) and the
                            wrap-then-store constructor live; a raise becomes `Err`
                            there. `rake unsafe:boundaries` pins that boundary:
@@ -674,7 +674,8 @@ docs/design_doc.ja.md      authoritative design (read this)
 ```
 
 Seven features, and the default is the extension: **`ruby`** (the
-magnus boundary + `glue` + `init`), **`html-dom`** (the parser port's
+Ruby boundary over rb-sys - `bridge`, whose `bridge::rb` is the value and
+method layer - + `glue` + `init`), **`html-dom`** (the parser port's
 index-arena DOM, `html::dom`, behind the `html_dom` facade and parsed by the
 ported tree builder `html::tree`, with what sits over it - the HTML CSS
 matcher, XPath's HTML instance, the bridge's HTML half; `ruby` and `lexbor`
@@ -795,11 +796,13 @@ entries (`String(source)`, an IO's `read`) and `XML::Builder`. `rake
 unsafe:boundaries` counts every call that would run the caller's Ruby
 (`USER_CODE_API`); `NodeSet#each`'s `yield` (through `bridge::raw::yield_value`,
 whose `rb_yield` is the third count) and `XML::Namespace.new` are the two
-allowed. The registered methods' parameter types are held to
-it by `rake dylint`'s `converted_argument`: a `method!` / `function!` whose
-receiver or argument is a type magnus's own `TryConvert` converts (`RString`
-by `to_str`, `i64` by `to_int`, `RHash`, `Symbol`, ...) fails; `Value`, `bool`, a
-`TypedData` reference and the crate's own `TryConvert` types pass.
+allowed, with `Module::call_method` (`rb_funcallv`, `XML::Namespace.new`'s)
+counted beside them. A registered method's parameters are held to it by
+type: `bridge::rb::TryConvert` exists only for `Value`, `bool` and Makiri's
+receiver types (`HtmlSelf`, `XmlSelf`, `XPathCtxSelf`, `NodeSetSelf`), so a
+`method!` / `function!` taking an `RString` or an `i64` does not compile.
+(magnus converted those with `to_str` / `to_int`; `rake dylint`'s
+`converted_argument` lint held the line until the switch.)
 
 **Parsing & source location.** The tree builder stamps an element when it
 is CREATED FOR ITS OWN START TAG (`TreeBuilder::created_offset`,

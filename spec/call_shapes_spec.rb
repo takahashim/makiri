@@ -3,11 +3,11 @@
 # How the extension's methods read their arguments: positional versus keyword,
 # the arity errors, and how a block's exits travel out of NodeSet#each.
 #
-# These are what magnus's `scan_args` and `method!` answered when Makiri
-# replaced them with its own argument reading and method trampolines
-# (`notes/magnus_replacement_plan.ja.md`). The replacement must answer the
-# same, so they are pinned here first - messages included, since Ruby's own
-# arity message is what a caller sees.
+# These are what magnus's `scan_args` and `method!` answered before Makiri
+# replaced them with its own argument reading (`glue::args`) and method
+# trampolines (`bridge::rb::method`). They were pinned first, and the
+# replacement answers the same - messages included, since Ruby's own arity
+# message is what a caller sees.
 RSpec.describe "argument shapes and block exits" do
   svg = "http://www.w3.org/2000/svg"
   let(:doc) { Makiri::HTML("<p>a</p><svg><circle/></svg>") }

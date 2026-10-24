@@ -143,10 +143,9 @@ pub fn xml_node_unwrap(rb_self: Value) -> Result<NodeId, Error> {
         return Ok(xml_read(&rb_self)?.doc_node());
     }
     let nd = XML_NODE_TYPE.read(rb_self)?;
-    /* A wrapper's word is a real node; a null one is a broken invariant. It
-     * is answered as `InternalError` directly, not by panicking: this runs in
-     * magnus's argument conversion (`XmlSelf::try_convert`), outside
-     * `entry`, where a panic would be an unrescuable `fatal`. */
+    /* A wrapper's word is a real node; a null one is a broken invariant,
+     * answered as `InternalError` directly rather than by a panic (which the
+     * trampoline would also make one) - `XmlSelf::try_convert` reads it. */
     nd.node.xml().ok_or_else(|| {
         Error::new(
             crate::init::EXC_INTERNAL_ERROR.exception(),

@@ -8,11 +8,13 @@
 # and takes the whole process down with SIGABRT. `Makiri.__panic(kind)` exists
 # to be caught here (see `init.rs`).
 #
-# What a panic becomes is Ruby's `fatal`, via magnus's `catch_unwind`. Ruby does
-# not let a `rescue` in the SAME frame catch a `fatal`, so the examples below
-# test it the way a host actually meets it: on the thread that ran the query.
-# There the process survives, the error is catchable at the join, and `ensure`
-# has already run.
+# What a panic becomes is `Makiri::InternalError`: every method's trampoline
+# (`bridge::rb::method::finish`) catches it. (It was Ruby's `fatal`, via
+# magnus's `catch_unwind`, for the methods outside `bridge::ruby::entry`, this
+# hook's kinds 0..4 among them.) The examples below test it the way a host
+# that cannot rescue in the same frame meets it - on the thread that ran the
+# query - where the process survives, the error is catchable at the join, and
+# `ensure` has already run.
 RSpec.describe "a Rust panic" do
   KINDS = {
     0 => "deliberate panic",

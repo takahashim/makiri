@@ -518,12 +518,13 @@ unsafe fn data_pointer(v: VALUE) -> *mut c_void {
 }
 
 /// The data pointer of a TypedData object whose type the caller has already
-/// established - a receiver magnus converted, or the Document a checked node
-/// holds.
+/// established - a receiver its `TryConvert` checked, or the Document a
+/// checked node holds.
 ///
 /// A mismatch here is a bug in that reasoning, not a user error, so it panics:
 /// the panic unwinds through the Rust frames (running their destructors) and
-/// magnus turns it into a fatal error, where a raise would longjmp past them.
+/// the method's trampoline makes it `Makiri::InternalError`, where a raise
+/// would longjmp past them.
 fn typed_data_known(v: Value, ty: &'static DataType) -> *mut c_void {
     let (v, ty) = (v.as_raw(), ty.as_ptr());
     // SAFETY: as in `typed_data`; the assert is the type check.

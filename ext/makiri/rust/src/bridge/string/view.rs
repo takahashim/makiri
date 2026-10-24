@@ -9,10 +9,9 @@ use core::ops::Deref;
 use crate::bridge::rb::Coderange;
 
 use crate::bridge::rb::value::AsRawValue;
-use crate::bridge::ruby::makiri_error;
-/* Not magnus's: ours catches a panic before `rb_protect`'s C frame. */
 use crate::bridge::rb::ReprValue;
 use crate::bridge::rb::{Error, RString, Value};
+use crate::bridge::ruby::makiri_error;
 use rb_sys::StableApiDefinition;
 
 /// The shared owned buffer.

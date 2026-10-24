@@ -136,9 +136,8 @@ STATIC_MUT_COUNTS = {}.freeze
 # raw VALUEs, typed data and the C calls that raise (glue/mod.rs), so a raise
 # there becomes an `Err` before it can longjmp past a Rust destructor. This was
 # a pinned count while the glue still reached across; the port is done, so the
-# table is empty and any `rb_sys::` above the bridge fails. `magnus::rb_sys` is
-# magnus's own module (a safe wrapper) and is not counted, and neither are
-# comment lines.
+# table is empty and any `rb_sys::` above the bridge fails. Comment lines are
+# not counted.
 RB_SYS_COUNTS = {}.freeze
 
 # The Ruby C calls that can RAISE - start a `longjmp` that skips every Rust
@@ -164,7 +163,7 @@ RAISING_COUNTS = { "bridge/raw.rs" => 52 }.freeze # with `rb_memerror` (the rais
 
 # Makiri runs none of its caller's Ruby code: no argument is converted with its
 # `to_s`/`to_str`, no method of a caller's object is called, and XPath has no
-# custom-function handler. The C and magnus calls that would run such code are
+# custom-function handler. The C calls and methods that would run such code are
 # counted here, across the crate, and two are allowed: `NodeSet#each`'s
 # `yield` (the block is the point of the method, and no guard or copy is held
 # across it) and `XML::Namespace.new` (Makiri's own Data class, called with no
@@ -181,9 +180,10 @@ USER_CODE_COUNTS = { "bridge/raw.rs" => 2, "glue/node_set.rs" => 1, "glue/xml_no
 # A raw `VALUE` (`rb_sys::VALUE`, an integer to Rust) is a Ruby value no type
 # keeps honest: no lint can tell it from a `u64` in a `Vec` or a struct field,
 # where the GC would not see it. So it is spelled only where it must be:
-# `bridge/raw.rs` (the C calls) and `bridge/typed.rs` (TypedData, `Held`,
-# the GC callbacks). Everything else holds magnus's typed values, which
-# `clippy.toml` and the dylint lint can see. The reference-only `lexbor/` is
+# `bridge/raw.rs` (the C calls), `bridge/typed.rs` (TypedData, `Held`, the GC
+# callbacks) and the `bridge::rb` files that ARE the typed values (`value.rs`,
+# `ruby.rs`, `method.rs`'s trampoline pointer). Everything else holds those
+# typed values, which `clippy.toml` and the dylint lint can see. The reference-only `lexbor/` is
 # not counted. Pinned per file, empty: a new one is a decision.
 VALUE_ALLOWED = %w[bridge/raw.rs bridge/typed.rs bridge/rb/value.rs bridge/rb/ruby.rs bridge/rb/method.rs].freeze
 VALUE_COUNTS = {}.freeze
@@ -253,7 +253,7 @@ LEXBOR_ABI_COUNTS = {}.freeze
 # engine too: an edit lends `&mut HtmlDocMut` to a closure that must run no
 # Ruby, and this is what keeps what that closure calls Ruby-free.
 ENGINE_DIRS = %w[lexbor/ xml/ xpath/ css/ selectors/ html/ html_dom.rs child_index.rs child_index/ falloc/ cbuf.rs cutf8.rs dom_rules.rs dom_rules/ limits.rs node_type.rs ptr_table.rs text.rs token.rs utf8_input.rs].freeze
-RUBY_LAYER = /crate::(?:bridge|glue|init)|magnus::/
+RUBY_LAYER = /\bcrate::(?:bridge|glue|init)\b|\brb_sys::/
 RUBY_LAYER_COUNTS = {}.freeze
 
 # The engine allocates only through `falloc`, so `rake oom` can fail every site
@@ -446,7 +446,7 @@ Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
   raising[relative] = count unless count.zero?
   next if relative.start_with?("bridge/")
 
-  count = code.scan(/(?<!magnus::)\brb_sys::/).length
+  count = code.scan(/\brb_sys::/).length
   rb_sys[relative] = count unless count.zero?
 end
 
@@ -561,9 +561,11 @@ GUARDED_PARSES.each do |name, home|
             "#{guarded_calls[name].inspect}"
 end
 
-# magnus's `RHash::foreach` runs its closure under magnus's own `protect`, below
-# `rb_hash_foreach`'s C frames, so a panic in it aborts the process instead of
-# raising. `glue::hash::hash_foreach` latches it; every Hash walk goes there.
+# A Hash is walked by `rb_hash_foreach` calling back into Rust, below its C
+# frames, so a panic there would abort the process. `bridge::raw::hash_foreach`
+# latches it, and every Hash walk goes through `glue::hash::hash_foreach` over
+# it (magnus's `RHash::foreach`, which had no latch, was the reason for this
+# check).
 HASH_FOREACH = /\.foreach\(/
 hash_walks = Hash.new(0)
 Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
@@ -837,9 +839,9 @@ def unwrapped_entries(rust)
     rel = path.delete_prefix("#{rust}/")
     src = File.binread(path)
     code = code_only(src)
-    # A renamed macro (`use magnus::method as m`) would register unseen.
+    # A renamed macro (`use crate::method as m`) would register unseen.
     if code.match?(/\b(?:method|function)\s+as\s+\w+/)
-      missing << "#{rel}: magnus's method!/function! imported under another name"
+      missing << "#{rel}: method!/function! imported under another name"
     end
     code.to_enum(:scan, REGISTRATION).each do
       m = Regexp.last_match

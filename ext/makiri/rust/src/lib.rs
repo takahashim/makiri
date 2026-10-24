@@ -8,7 +8,7 @@
 //!            This is what Kani proves and what cargo-fuzz drives.
 //!   lexbor   `lexbor` (its `abi` and DOM facade), `css`, and the XPath HTML
 //!            instance - everything that reads the vendored Lexbor DOM.
-//!   ruby     `bridge`, `glue`, `init` - the magnus boundary and `Init_makiri`
+//!   ruby     `bridge`, `glue`, `init` - the Ruby boundary and `Init_makiri`
 //!            (`ruby`, on by default; it implies `lexbor`).
 //!
 //! No SYMBOL here carries the C ABI's `mkr_` prefix any more: the crate exports only
@@ -151,7 +151,7 @@ pub mod dom_rules;
 /// position memo a document keeps. Unconditional, like `dom_rules`.
 pub mod child_index;
 
-/// The Ruby boundary - the only part of the crate that depends on magnus.
+/// The Ruby boundary - the only part of the crate that depends on rb-sys.
 #[cfg(feature = "ruby")]
 pub mod bridge;
 #[cfg(feature = "ruby")]

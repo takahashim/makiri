@@ -12,7 +12,8 @@
 //!
 //! An arity error is `rb_error_arity`'s message, word for word, and counts
 //! the positional arguments only. `spec/call_shapes_spec.rb` holds both to
-//! what magnus's `scan_args` (over `rb_scan_args`) answered.
+//! what magnus's `scan_args` (over `rb_scan_args`) answered before this
+//! replaced it.
 
 use crate::bridge::rb::{prelude::*, Error, RHash, Ruby, Value};
 

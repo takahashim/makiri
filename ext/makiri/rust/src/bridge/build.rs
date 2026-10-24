@@ -1,10 +1,9 @@
 //! Ruby objects the glue builds - Arrays, Hashes, Integers, Floats, Symbols -
 //! each made through `raw`'s protected calls, so a failed allocation is `Err`.
 //!
-//! magnus's own constructors (`Ruby::ary_new`, `Ruby::hash_new`,
-//! `Ruby::integer_from_i64`, ...) raise instead, a `longjmp` over the caller's
-//! frames; `clippy.toml` bans them outside this module and init, so the glue
-//! spells every one of these here. Strings are `bridge::string`'s.
+//! The C constructors raise on a failed allocation, a `longjmp` over the
+//! caller's frames, and are `bridge::raw`'s alone; the glue spells every one
+//! of these here. Strings are `bridge::string`'s.
 
 #![forbid(unsafe_code)]
 
