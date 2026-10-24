@@ -67,7 +67,7 @@ module Makiri
   # Convenience constructor mirroring Nokogiri.
   #
   # @param source [String, #read] HTML source
-  # @param opts [Hash] +max_tree_depth:+, +encoding:+ - see
+  # @param opts [Hash] +max_tree_depth:+, +max_amplification:+, +encoding:+ - see
   #   {Makiri::HTML::Document.parse}
   # @return [Makiri::HTML::Document]
   def self.HTML(source, **opts) # rubocop:disable Naming/MethodName

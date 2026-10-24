@@ -21,7 +21,7 @@ use crate::compat::{as_lexbor, explains};
 use crate::html::dom::{Document, NodeId, NodeType};
 use crate::lexbor::adapter::arena_copy::{copy_children, copy_document};
 use crate::lexbor::adapter::post_parse::parse_html;
-use crate::lexbor::adapter::tree_guard::DepthLimit;
+use crate::lexbor::adapter::tree_guard::ParseLimits;
 
 fn text(b: Option<&[u8]>) -> String {
     match b {
@@ -133,14 +133,14 @@ fn walk(d: &Document, out: &mut String, mut stack: Vec<(NodeId, usize)>, offsets
 
 /// Lexbor's tree, copied into the arena.
 pub fn lexbor_dump(input: &[u8], offsets: bool) -> Option<String> {
-    let parsed = parse_html(input, false, DepthLimit::UNLIMITED).ok()?;
+    let parsed = parse_html(input, false, ParseLimits::UNLIMITED).ok()?;
     let doc = copy_document(parsed.doc()).expect("the copy");
     Some(dump(&doc, offsets))
 }
 
 /// The port's tree.
 pub fn port_dump(input: &[u8], offsets: bool) -> Option<String> {
-    let parsed = crate::html::tree::parse_html(input, false, DepthLimit::UNLIMITED).ok()?;
+    let parsed = crate::html::tree::parse_html(input, false, ParseLimits::UNLIMITED).ok()?;
     Some(dump(parsed.arena(), offsets))
 }
 
@@ -197,7 +197,7 @@ pub fn lexbor_fragment(
     input: &[u8],
     tag: usize,
     ns: usize,
-    limit: DepthLimit,
+    limit: ParseLimits,
 ) -> Result<String, String> {
     use crate::lexbor::adapter::html as lex;
     let at = crate::lexbor::fragment::FragmentTag {
@@ -218,7 +218,7 @@ pub fn port_fragment(
     input: &[u8],
     tag: usize,
     ns: usize,
-    limit: DepthLimit,
+    limit: ParseLimits,
 ) -> Result<String, String> {
     let f = crate::html::tree::parse_fragment(
         input,
@@ -232,9 +232,9 @@ pub fn port_fragment(
 
 pub fn check_fragment(input: &[u8], context: &str) -> Result<(), String> {
     let (tag, ns) = context_ids(context).expect("an html5lib fragment context");
-    let l = lexbor_fragment(input, tag, ns, DepthLimit::UNLIMITED);
-    let p = as_lexbor(|| port_fragment(input, tag, ns, DepthLimit::UNLIMITED));
-    if let (Ok(c), Ok(f)) = (&p, port_fragment(input, tag, ns, DepthLimit::UNLIMITED)) {
+    let l = lexbor_fragment(input, tag, ns, ParseLimits::UNLIMITED);
+    let p = as_lexbor(|| port_fragment(input, tag, ns, ParseLimits::UNLIMITED));
+    if let (Ok(c), Ok(f)) = (&p, port_fragment(input, tag, ns, ParseLimits::UNLIMITED)) {
         if *c != f && explains(input, Some(context)).is_empty() {
             return Err(format!(
                 "a fix changed the fragment where no entry explains it\n{}",
@@ -255,7 +255,7 @@ pub fn check_fragment(input: &[u8], context: &str) -> Result<(), String> {
 /// `img`.) Which elements are stamped is the rule's; this holds it to the
 /// one property `Node#line` promises.
 pub fn offsets_name_their_tags(input: &[u8]) -> Result<(), String> {
-    let Some(parsed) = crate::html::tree::parse_html(input, false, DepthLimit::UNLIMITED).ok()
+    let Some(parsed) = crate::html::tree::parse_html(input, false, ParseLimits::UNLIMITED).ok()
     else {
         return Ok(());
     };
@@ -361,11 +361,11 @@ fn compare_forms(what: &str, l: [String; 4], p: [String; 4]) -> Result<(), Strin
 /// Lexbor's over the same arbitrary trees.
 pub fn check_serialization(input: &[u8]) -> Result<(), String> {
     use crate::html::dom::HtmlDoc as ArenaDoc;
-    let Ok(lp) = parse_html(input, false, DepthLimit::UNLIMITED) else {
+    let Ok(lp) = parse_html(input, false, ParseLimits::UNLIMITED) else {
         return Ok(());
     };
     let Some(pp) =
-        as_lexbor(|| crate::html::tree::parse_html(input, false, DepthLimit::UNLIMITED).ok())
+        as_lexbor(|| crate::html::tree::parse_html(input, false, ParseLimits::UNLIMITED).ok())
     else {
         return Ok(());
     };
@@ -407,7 +407,7 @@ pub fn check_fragment_serialization(input: &[u8], context: &str) -> Result<(), S
         input,
         false,
         Some(at),
-        DepthLimit::UNLIMITED,
+        ParseLimits::UNLIMITED,
     ) else {
         return Ok(());
     };
@@ -416,7 +416,7 @@ pub fn check_fragment_serialization(input: &[u8], context: &str) -> Result<(), S
             input,
             false,
             &crate::html::tree::ContextElement::named(tag, ns),
-            DepthLimit::UNLIMITED,
+            ParseLimits::UNLIMITED,
         )
     }) else {
         return Ok(());
@@ -444,7 +444,7 @@ pub fn check_fragment_serialization(input: &[u8], context: &str) -> Result<(), S
 /// Whether both parsers accept `input` as a document under `limit`, or
 /// refuse it the same way. [`check`] runs unlimited, so a refusal on one
 /// side only is never a difference there; this is where it is one.
-pub fn check_verdict(input: &[u8], limit: DepthLimit) -> Result<(), String> {
+pub fn check_verdict(input: &[u8], limit: ParseLimits) -> Result<(), String> {
     let l = parse_html(input, false, limit).map(|_| ());
     let p = as_lexbor(|| crate::html::tree::parse_html(input, false, limit).map(|_| ()));
     if l == p {
@@ -459,7 +459,7 @@ pub fn check_verdict(input: &[u8], limit: DepthLimit) -> Result<(), String> {
 pub fn check_fragment_verdict(
     input: &[u8],
     context: &str,
-    limit: DepthLimit,
+    limit: ParseLimits,
 ) -> Result<(), String> {
     let (tag, ns) = context_ids(context).expect("an html5lib fragment context");
     let l = lexbor_fragment(input, tag, ns, limit);

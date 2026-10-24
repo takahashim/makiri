@@ -2,7 +2,7 @@
 //! `lxb_html_parse_chunk_begin` / `_process` / `_end` with the parse guard
 //! and the source stamps of `lexbor::adapter::post_parse`, as one Rust call.
 
-use super::guard::{DepthLimit, Guard, GuardStop};
+use super::guard::{Guard, GuardStop, ParseLimits};
 use super::stamp::Stamping;
 use super::{MetaProbe, TreeBuilder, TreeError, TreeStatus};
 use crate::compat::{self, Fix};
@@ -133,7 +133,7 @@ fn parse_with(
 pub fn parse_html(
     src: &[u8],
     assume_valid: bool,
-    limit: DepthLimit,
+    limit: ParseLimits,
 ) -> Result<Box<HtmlParsed>, HtmlParseError> {
     let text = Utf8Text {
         bytes: src,
@@ -155,14 +155,14 @@ pub(super) struct Utf8Text<'a> {
 /// insert while the document's encoding is tentative (`html::encoding`).
 pub(super) fn parse_html_probing(
     text: Utf8Text<'_>,
-    limit: DepthLimit,
+    limit: ParseLimits,
     probe: Option<&mut (dyn MetaProbe + 'static)>,
 ) -> Result<Box<HtmlParsed>, HtmlParseError> {
     let input = sanitize(text.bytes, text.known_valid).ok_or(HtmlParseError::Failed)?;
     let bytes = input.as_slice();
     let parsed = parse_with(
         bytes,
-        Guard::for_document(limit),
+        Guard::for_document(limit, bytes.len()),
         Stamping::document(bytes.len()),
         false,
         probe,

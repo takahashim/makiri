@@ -6,7 +6,7 @@
 use crate::conformance::dat::{self, Scripting};
 use crate::conformance::tree_construction_dir;
 use crate::html::tree::context_ids;
-use crate::html::tree::guard::DepthLimit;
+use crate::html::tree::guard::ParseLimits;
 
 /// One WPT test through the port, `None` for a scripting-on test.
 fn port_run(t: &dat::DatTest) -> Option<String> {
@@ -22,7 +22,7 @@ fn port_run(t: &dat::DatTest) -> Option<String> {
                 &t.data,
                 false,
                 &crate::html::tree::ContextElement::named(tag, ns),
-                DepthLimit::UNLIMITED,
+                ParseLimits::UNLIMITED,
             )
             .expect("the port parses a fragment");
             Tree {

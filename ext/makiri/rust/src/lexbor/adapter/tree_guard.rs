@@ -42,7 +42,7 @@ type Tree = lxb::lxb_html_tree_t;
 
 /* The limits and stop reasons are the ported tree builder's, so both
  * parsers answer with the same types. */
-pub use crate::html::tree::guard::{DepthLimit, GuardStop};
+pub use crate::html::tree::guard::{GuardStop, ParseLimits};
 
 /// The tokenizer's token-done hook: runs the depth guard after the tree
 /// builder, and stamps source positions for a document parse.
@@ -83,7 +83,7 @@ impl TokenHook {
     /// The hook a fragment parse installs: `limit` over the fragment's own
     /// elements (the parser keeps one synthetic `<html>` root below the
     /// first). No position stamper: a fragment's elements have no line.
-    pub fn for_fragment(limit: DepthLimit) -> TokenHook {
+    pub fn for_fragment(limit: ParseLimits) -> TokenHook {
         TokenHook::build(limit, 1, None)
     }
 }
@@ -91,14 +91,14 @@ impl TokenHook {
 impl<const PANIC_PROBE: bool> TokenHook<PANIC_PROBE> {
     /// The hook a document parse installs: `limit` from the root (nothing
     /// synthetic below it), and `stamper` recording each element's position.
-    pub fn for_document(limit: DepthLimit, stamper: Stamper) -> Self {
+    pub fn for_document(limit: ParseLimits, stamper: Stamper) -> Self {
         TokenHook::build(limit, 0, Some(stamper))
     }
 
     /// A hook enforcing `limit`, where the parser keeps `synthetic` entries on
     /// its stack below the first real element (0 for a document, 1 for a
     /// fragment's `<html>` root).
-    fn build(limit: DepthLimit, synthetic: usize, stamper: Option<Stamper>) -> Self {
+    fn build(limit: ParseLimits, synthetic: usize, stamper: Option<Stamper>) -> Self {
         TokenHook {
             state: HookState {
                 delegate: None,

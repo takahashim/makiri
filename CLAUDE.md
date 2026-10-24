@@ -886,9 +886,19 @@ parse, and parser-made elements stole later tags' lines.)
 **HTML parse guard** (`html/tree/guard.rs`). Every parse runs under a
 `Guard` the tree builder checks after each token - `Guard::for_document`
 from `parse_html`, `Guard::for_fragment` (below the synthetic `<html>`) from
-`parse_fragment` - bounding the tree depth (`max_tree_depth:`, `DepthLimit`,
-default 400, Nokogiri's). The check is per token, not per insertion, so a
-void element at the limit is not refused. There is no limit on a
+`parse_fragment` - bounding the tree depth (`max_tree_depth:`, default 400,
+Nokogiri's) and the document's size against its input
+(`max_amplification:`, default 256 times the input and never less than
+64 MiB; `ParseLimits` carries both, a negative keyword lifting either). The
+second exists because "reconstruct the active formatting elements" re-creates
+every unclosed formatting element before each character: ~390 `<b>`s with
+distinct attributes then `<div>x</div>` repeated built a 62 KB input into a
+344 MB document, where ordinary documents build 10-46 times their input
+(`spec/html_amplification_spec.rb`). It reads `Document::approx_bytes`, O(1)
+per token, and a refused parse fails closed (`Makiri::Error`, "document
+size limit exceeded"); the tree of an accepted one is the Standard's. The
+check is per token, not per insertion, so a void element at the limit is
+not refused. There is no limit on a
 `<select>`'s options: the selectedness setting algorithm is decided from
 each select's state (`html/tree/select.rs`, `SelectStates`), so a select
 builds in linear time - keep it so, or the 10,000 limit it replaced has to

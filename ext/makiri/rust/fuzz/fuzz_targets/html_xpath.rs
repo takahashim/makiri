@@ -16,7 +16,7 @@ mod common;
 use common::*;
 use makiri::html_dom::html::RawNode;
 use makiri::html_dom::post_parse::{parse_html, HtmlParsed};
-use makiri::html_dom::tree_guard::DepthLimit;
+use makiri::html_dom::tree_guard::ParseLimits;
 
 fuzz_target!(|data: &[u8]| {
     let Some(sep) = data.iter().position(|&b| b == 0) else {
@@ -33,7 +33,7 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
 
-    let Ok(mut p) = parse_html(html, false, DepthLimit::DEFAULT) else {
+    let Ok(mut p) = parse_html(html, false, ParseLimits::DEFAULT) else {
         return;
     };
     run(&mut p, text, mode & 1 != 0);

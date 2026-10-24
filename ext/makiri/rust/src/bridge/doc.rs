@@ -30,7 +30,7 @@ use crate::bridge::xml::xml_node_document;
 use crate::bridge::xml::{xml_mut_result, xml_node_unwrap};
 use crate::html_dom::html::RawNode;
 use crate::html_dom::post_parse::{empty_html_document, HtmlParseError};
-use crate::html_dom::tree_guard::{DepthLimit, GuardStop};
+use crate::html_dom::tree_guard::{GuardStop, ParseLimits};
 
 /* ------------------------------------------------------------------ *
  * parsing                                                            *
@@ -38,15 +38,24 @@ use crate::html_dom::tree_guard::{DepthLimit, GuardStop};
 
 /// The error for a parse the guard refused (`GuardStop`), for a document and
 /// a fragment alike: the one place that maps a stop to its exception.
-pub fn guard_error(stop: GuardStop, limit: DepthLimit) -> Error {
+pub fn guard_error(stop: GuardStop, limit: ParseLimits) -> Error {
     match stop {
         GuardStop::TooDeep => tree_depth_error(limit),
+        GuardStop::TooLarge => match limit.max_amplification() {
+            Some(r) => makiri_error(format_args!(
+                "document size limit exceeded ({r} times the input; see max_amplification:)"
+            )),
+            /* An unlimited parse is never refused for size. */
+            None => crate::bridge::ruby::internal_error(
+                "a parse with no amplification limit was refused for size",
+            ),
+        },
     }
 }
 
 /// The error for a parse the tree-depth limit refused: `Makiri::Error`, naming
 /// the limit, for a document and a fragment alike.
-pub fn tree_depth_error(limit: DepthLimit) -> Error {
+pub fn tree_depth_error(limit: ParseLimits) -> Error {
     match limit.max_depth() {
         Some(n) => makiri_error(format_args!("document tree depth limit exceeded ({n})")),
         /* An unlimited parse is never refused for depth. */
@@ -64,7 +73,7 @@ pub fn tree_depth_error(limit: DepthLimit) -> Error {
 /// A tree deeper than `limit` fails the parse (see `html_dom::tree_guard`).
 pub fn parse_document(
     source: Value,
-    limit: DepthLimit,
+    limit: ParseLimits,
     given: Option<crate::bridge::string::GivenEncoding>,
 ) -> Result<Value, Error> {
     let s = crate::bridge::ruby::string_arg(source)?;

@@ -18,7 +18,7 @@ use crate::html::dom::{
     DomOom, HtmlDoc, HtmlElement, HtmlNewNodes, HtmlNode, NsId, RawNode, TagId,
 };
 use crate::html::res::names as res;
-use crate::html::tree::guard::{DepthLimit, GuardStop};
+use crate::html::tree::guard::{GuardStop, ParseLimits};
 use crate::html::tree::{
     parse_fragment, ContextElement, ContextFacts, FragmentFailure, ParsedFragment,
 };
@@ -219,7 +219,7 @@ impl TransientFragment {
         input: &[u8],
         known_valid: bool,
         context: &FragmentContext,
-        limit: DepthLimit,
+        limit: ParseLimits,
     ) -> Result<TransientFragment, FragmentError> {
         let at = context.at();
         let (tag, ns) = at.map_or((res::TAG__UNDEF, 0), |a| (a.parse_tag(), a.parse_ns()));

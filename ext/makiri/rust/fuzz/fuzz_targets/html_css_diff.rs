@@ -47,7 +47,7 @@ use makiri::html::dom::css::HtmlHost;
 use makiri::html_dom::html::{HtmlNode, RawNode};
 use makiri::lexbor::adapter::html::RawNode as LexborNode;
 use makiri::lexbor::adapter::post_parse::parse_html;
-use makiri::lexbor::adapter::tree_guard::DepthLimit;
+use makiri::lexbor::adapter::tree_guard::ParseLimits;
 use makiri::lexbor::selectors as old_engine;
 use makiri::lexbor::twin::Twin;
 use makiri::selectors::ast::{
@@ -76,7 +76,7 @@ fuzz_target!(|data: &[u8]| {
     let Some(text) = expr.text() else {
         return;
     };
-    let Ok(p) = parse_html(html, false, DepthLimit::DEFAULT) else {
+    let Ok(p) = parse_html(html, false, ParseLimits::DEFAULT) else {
         return;
     };
     let gvl = Gvl::exclusive();

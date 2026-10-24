@@ -2,7 +2,7 @@
 //! / `_process` / `_end` with no owner document, under the parse guard, into
 //! an arena document of the fragment's own.
 
-use super::guard::{DepthLimit, Guard, GuardStop};
+use super::guard::{Guard, GuardStop, ParseLimits};
 use super::parse::drive;
 use super::{Mode, TreeBuilder, TreeStatus};
 use crate::compat::{self, Fix};
@@ -93,7 +93,7 @@ pub fn parse_fragment(
     input: &[u8],
     known_valid: bool,
     context: &ContextElement,
-    limit: DepthLimit,
+    limit: ParseLimits,
 ) -> Result<ParsedFragment, FragmentFailure> {
     let ContextElement { tag, ns, facts } = *context;
     let src = sanitize(input, known_valid).ok_or(FragmentFailure::Decode)?;
@@ -115,8 +115,13 @@ pub fn parse_fragment(
     doc.append_child(NodeId::DOCUMENT, root);
     let context = doc.create_element(tag, ns32, 0, None).map_err(oom)?;
 
-    let mut tree =
-        TreeBuilder::for_fragment(&mut doc, root, context, &facts, Guard::for_fragment(limit))?;
+    let mut tree = TreeBuilder::for_fragment(
+        &mut doc,
+        root,
+        context,
+        &facts,
+        Guard::for_fragment(limit, bytes.len()),
+    )?;
 
     let current_ns = tree.current_namespace();
     let foreign = facts.foreign_namespace && compat::fixed(Fix::P19);
