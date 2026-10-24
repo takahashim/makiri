@@ -95,7 +95,6 @@ pub fn without_gvl<F: FnOnce() -> R + Send, R>(f: F) -> Result<R, magnus::Error>
             ));
         }
         /* An interrupt was pending, so the body never started: deliver it. */
-        // SAFETY: under the GVL.
-        unsafe { crate::bridge::raw::thread_check_ints() }?;
+        crate::bridge::raw::thread_check_ints(&crate::bridge::ruby::gvl_ruby())?;
     }
 }

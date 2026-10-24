@@ -16,12 +16,8 @@
 #![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
-use core::ffi::c_long;
-
-use magnus::rb_sys::AsRawValue;
 use magnus::value::ReprValue;
 use magnus::{Error, RString};
-use rb_sys::VALUE;
 
 use super::ruby::error_message;
 use super::string::{text_check, with_bytes, Encoding};
@@ -135,22 +131,11 @@ fn syntax_error(msg: impl Into<std::borrow::Cow<'static, str>>) -> Error {
     Error::new(EXC_XML_SYNTAX_ERROR.exception(), msg)
 }
 
-/// A String the decode's own C calls returned, checked to be one before its
-/// bytes are read - the same rule as a caller's value.
-fn decoded_string(v: VALUE) -> Result<RString, Error> {
-    // SAFETY: a live value the call just returned.
-    RString::from_value(unsafe { crate::bridge::ruby::value(v) })
-        .ok_or_else(|| crate::bridge::ruby::internal_error("XML input decoded to a non-String"))
-}
-
 /// Decode `str` to a validated, UTF-8-tagged, BOM-stripped String, or the
 /// error that rejects it. A `max_bytes` of `None` skips the budget check (the
 /// `__decode` test hook).
 ///
-/// # Safety
-/// Called with the GVL, as every bridge function is; `str` is a String by
-/// type, and every String the decode makes is checked to be one.
-unsafe fn xml_decode_input(str: RString, max_bytes: Option<usize>) -> Result<RString, Error> {
+fn xml_decode_input(str: RString, max_bytes: Option<usize>) -> Result<RString, Error> {
     let eff = effective_encoding(str)?;
 
     /* Phase 2: decode to UTF-8, strictly. What is read as UTF-8 bytes is
@@ -159,17 +144,17 @@ unsafe fn xml_decode_input(str: RString, max_bytes: Option<usize>) -> Result<RSt
     let s = if eff.reads_as_utf8_bytes() {
         str
     } else {
-        let mut input = str.as_raw();
+        let mut input = str;
         if Encoding::of(str) != eff {
             input = super::raw::str_dup(input)?;
-            super::raw::enc_associate(input, eff.as_raw())?;
+            super::raw::enc_associate(input, eff)?;
         }
         /* No replacement flags, so an undefined conversion or an invalid byte
          * sequence is an `Encoding::*Error` rather than a U+FFFD - remapped to
          * `Makiri::XML::SyntaxError`. Any other failure (`NoMemoryError`, an
          * interrupt) is passed through as it is. */
-        match super::raw::str_encode(input, rb_sys::rb_utf8_encoding(), 0) {
-            Ok(out) => decoded_string(out)?,
+        match super::raw::str_encode(input, Encoding::utf8(), 0) {
+            Ok(out) => out,
             Err(e) if is_encoding_error(&e) => {
                 let msg = error_message(&e);
                 return Err(syntax_error(format!(
@@ -220,14 +205,12 @@ unsafe fn xml_decode_input(str: RString, max_bytes: Option<usize>) -> Result<RSt
 
     /* Built from the VALUE: the borrow above is over, and rb_str_subseq
      * allocates. */
-    let u = super::raw::str_subseq(s.as_raw(), off as c_long, len as c_long)?;
-    super::raw::enc_associate(u, rb_sys::rb_utf8_encoding())?;
-    decoded_string(u)
+    let u = super::raw::str_subseq(s, off, len)?;
+    super::raw::enc_associate(u, Encoding::utf8())
 }
 
 /// [`xml_decode_input`] as a safe call: `s` is a String by type, and so is
 /// the result.
 pub fn xml_decode_input_value(s: RString, max_bytes: Option<usize>) -> Result<RString, Error> {
-    // SAFETY: with the GVL, as every bridge function runs.
-    unsafe { xml_decode_input(s, max_bytes) }
+    xml_decode_input(s, max_bytes)
 }

@@ -114,9 +114,8 @@ fn to_xml(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Er
             enc_name.as_ref().map(|b| b.as_slice()),
         );
         let buf = out.map_err(|f| failure_error(f, "serialize"))?;
-        /* Protected: a failed allocation drops `buf` (and `enc_name`) rather
-         * than leaking them. */
-        let mut str = crate::bridge::string::utf8_rstring(buf.as_slice())?.as_value();
+        /* A failed allocation is `Err`, and `buf` (and `enc_name`) drop. */
+        let mut str = crate::bridge::string::utf8_rstring(buf.as_slice())?;
         drop(buf);
 
         if let Some(enc) = to_enc {
@@ -124,7 +123,7 @@ fn to_xml(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Er
                 str = enc.encode_charref(str)?;
             }
         }
-        Ok(str)
+        Ok(str.as_value())
     })
 }
 

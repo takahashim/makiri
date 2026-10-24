@@ -136,14 +136,10 @@ pub fn name_arg(v: Value) -> Result<RString, Error> {
     if let Some(s) = RString::from_value(v) {
         return Ok(s);
     }
-    if magnus::Symbol::from_value(v).is_none() {
-        return Err(wrong_type(v, "String or Symbol", TO_S_HINT));
+    match magnus::Symbol::from_value(v) {
+        Some(sym) => super::raw::sym2str(sym),
+        None => Err(wrong_type(v, "String or Symbol", TO_S_HINT)),
     }
-    // SAFETY: `v` is a live Symbol.
-    let s = unsafe { super::raw::sym2str(v.as_raw()) }?;
-    // SAFETY: `rb_sym2str` returned a live String.
-    RString::from_value(unsafe { Value::from_raw(s) })
-        .ok_or_else(|| type_error("a Symbol without a name"))
 }
 
 /// `v` for an error message, written without calling it: a Symbol as
@@ -190,8 +186,7 @@ pub fn check_frozen(v: Value) -> Result<(), Error> {
     if !magnus::value::ReprValue::is_frozen(v) {
         return Ok(());
     }
-    // SAFETY: `v` is a live value.
-    unsafe { super::raw::check_frozen(v.as_raw()) }
+    super::raw::check_frozen(v)
 }
 
 /// `rb_range_beg_len` over a collection of `count` elements, with the C's
@@ -199,11 +194,7 @@ pub fn check_frozen(v: Value) -> Result<(), Error> {
 ///
 /// A bound too large for a `long` is `Err` (`RangeError`).
 pub fn range_beg_len(range: Value, count: c_long) -> Result<Option<(c_long, c_long)>, Error> {
-    let mut beg: c_long = 0;
-    let mut len: c_long = 0;
-    // SAFETY: `range` is a live Range, and `beg`/`len` outlive the call.
-    let answer = unsafe { super::raw::range_beg_len(range.as_raw(), &mut beg, &mut len, count) }?;
-    Ok((answer == rb_sys::Qtrue as VALUE).then_some((beg, len)))
+    super::raw::range_beg_len(range, count)
 }
 
 /* ------------------------------------------------------------------ *
@@ -343,8 +334,7 @@ pub fn exception_message(exc: VALUE) -> String {
     /* The message is the exception's `mesg`, read as an attribute: calling
      * `#message` would run its class's Ruby. A message that is not a String
      * is answered as "error". */
-    // SAFETY: a NUL-terminated name.
-    let Ok(id) = (unsafe { super::raw::intern_cstr(c"mesg".as_ptr()) }) else {
+    let Ok(id) = super::raw::intern_cstr(&gvl_ruby(), c"mesg") else {
         return "error".to_owned();
     };
     // SAFETY: `exc` is a live exception; reading an attribute runs no Ruby

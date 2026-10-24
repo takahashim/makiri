@@ -68,9 +68,17 @@ impl Encoding {
         }
         buf[..name.len()].copy_from_slice(name);
         let c = core::ffi::CStr::from_bytes_with_nul(&buf[..name.len() + 1]).ok()?;
-        // SAFETY: a NUL-terminated name.
-        let enc = unsafe { crate::bridge::raw::enc_find(c.as_ptr()) }.ok()?;
-        (!enc.is_null()).then_some(Encoding(enc))
+        crate::bridge::raw::enc_find(&crate::bridge::ruby::gvl_ruby(), c)
+            .ok()
+            .flatten()
+    }
+
+    /// An encoding from Ruby's pointer to it.
+    ///
+    /// # Safety
+    /// `p` is one of Ruby's encodings (which live for the process).
+    pub(in crate::bridge) unsafe fn from_raw(p: *mut rb_sys::rb_encoding) -> Encoding {
+        Encoding(p)
     }
 
     /// The raw encoding, for a C call in the bridge that takes one.
@@ -131,28 +139,18 @@ impl Encoding {
     /// bytes read as this encoding's. Allocating, so a raise
     /// (`NoMemoryError`, or `ArgumentError` from the tag) is returned.
     pub(in crate::bridge) fn relabel(self, str: RString) -> Result<RString, Error> {
-        // SAFETY: `str` is a live String and `self` a live encoding; the copy
-        // is on this frame, where the conservative scan sees it.
-        let raw = unsafe {
-            let copy = crate::bridge::raw::str_dup(str.as_raw())?;
-            crate::bridge::raw::enc_associate(copy, self.0)?
-        };
-        // SAFETY: `rb_enc_associate` returns the live String it tagged.
-        RString::from_value(unsafe { crate::bridge::ruby::value(raw) })
-            .ok_or_else(|| crate::bridge::ruby::internal_error("relabelling returned a non-String"))
+        /* The copy is on this frame, where the conservative scan sees it. */
+        let copy = crate::bridge::raw::str_dup(str)?;
+        crate::bridge::raw::enc_associate(copy, self)
     }
 
     /// `str` transcoded to this encoding, a character it cannot represent
     /// becoming a hex character reference. A transcoding failure is returned,
     /// not raised.
-    pub fn encode_charref(self, str: Value) -> Result<Value, Error> {
+    pub fn encode_charref(self, str: RString) -> Result<RString, Error> {
         const UNDEF_HEX_CHARREF: c_int =
             rb_sys::ruby_econv_flag_type::RUBY_ECONV_UNDEF_HEX_CHARREF as c_int;
-        // SAFETY: `str` is a live String and `self` a live encoding.
-        let raw =
-            unsafe { crate::bridge::raw::str_encode(str.as_raw(), self.0, UNDEF_HEX_CHARREF) }?;
-        // SAFETY: `rb_str_encode` returns a live String value.
-        Ok(unsafe { crate::bridge::ruby::value(raw) })
+        crate::bridge::raw::str_encode(str, self, UNDEF_HEX_CHARREF)
     }
 }
 
@@ -166,10 +164,7 @@ pub fn to_encoding(v: Value) -> Result<Encoding, Error> {
     } else {
         crate::bridge::ruby::name_arg(v)?.as_value()
     };
-    // SAFETY: `v` is a live `Encoding` or String.
-    Ok(Encoding(unsafe {
-        crate::bridge::raw::to_encoding(v.as_raw())
-    }?))
+    crate::bridge::raw::to_encoding(v)
 }
 
 /// [`Encoding::reads_as_utf8_bytes`] for `s`'s encoding, by index and with
@@ -218,11 +213,7 @@ fn ruby_to_utf8(s: RString, ecflags: c_int) -> Result<RString, Error> {
     if reads_as_utf8_bytes(s) {
         return Ok(s);
     }
-    // SAFETY: `s` is a live String.
-    let raw = unsafe { crate::bridge::raw::str_encode(s.as_raw(), Encoding::utf8().0, ecflags) }?;
-    // SAFETY: `rb_str_encode` returns a live value; checked to be a String.
-    RString::from_value(unsafe { crate::bridge::ruby::value(raw) })
-        .ok_or_else(|| crate::bridge::ruby::internal_error("transcoding returned a non-String"))
+    crate::bridge::raw::str_encode(s, Encoding::utf8(), ecflags)
 }
 
 /// `s` as UTF-8 for a STRICT reader (`RubyText`, `RubyData`): transcoded with

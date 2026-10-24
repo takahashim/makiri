@@ -3,11 +3,10 @@
 #![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
-use core::ffi::{c_char, c_long};
-
-use crate::bridge::ruby::makiri_error;
+use crate::bridge::ruby::{gvl_ruby, makiri_error};
+use magnus::rb_sys::AsRawValue;
 use magnus::{value::ReprValue, Error, RString, Value};
-use rb_sys::{StableApiDefinition, VALUE};
+use rb_sys::StableApiDefinition;
 
 /* ---- assembling Ruby Strings ---- */
 
@@ -24,41 +23,34 @@ pub fn utf8_str(bytes: &[u8]) -> Result<Value, Error> {
 
 /// [`utf8_str`] as an `RString`.
 pub fn utf8_rstring(bytes: &[u8]) -> Result<RString, Error> {
-    if c_long::try_from(bytes.len()).is_err() {
-        return Err(makiri_error("string too large"));
-    }
-    // SAFETY: valid UTF-8 by `utf8_str`'s contract; the String copies it.
-    let v = unsafe { crate::bridge::ruby::value(ruby_str_from_utf8(bytes)?) };
-    RString::from_value(v)
-        .ok_or_else(|| crate::bridge::ruby::internal_error("the allocator made no String"))
+    crate::bridge::raw::utf8_str_new(&gvl_ruby(), bytes)
 }
 
 /// Join document-order slices totalling `total` bytes into one UTF-8 String.
 ///
 /// This is the text index's output path, so it writes straight into the fresh
-/// String's buffer: one pre-sized allocation and one memcpy run, with no
+/// String's buffer: one pre-sized allocation and one copy run, with no
 /// intermediate. The bounds checks are not redundant with the caller's
 /// bookkeeping - a wrong `total` would otherwise run past the allocation, so
 /// both a long slice and a short sum fail closed. The joined bytes are to be
 /// valid UTF-8, as text-index slices are by the text-input contract; bytes
 /// that were not would make a wrong String, not a memory error.
-///
-/// # Safety
-/// The returned VALUE is unrooted until stored or returned.
-pub unsafe fn ruby_str_from_slices<'a>(
+pub fn utf8_str_from_slices<'a>(
     slices: impl Iterator<Item = &'a [u8]>,
     total: usize,
-) -> Result<VALUE, Error> {
-    if total > c_long::MAX as usize {
-        return Err(makiri_error("text too large to assemble"));
-    }
-    let str = crate::bridge::raw::utf8_str_new(core::ptr::null(), total as c_long)?;
+) -> Result<Value, Error> {
+    // SAFETY: every one of the `total` bytes is written below before the
+    // String is returned - a short or long sum is refused - and nothing
+    // reads it before.
+    let str = unsafe { crate::bridge::raw::utf8_str_unwritten(&gvl_ruby(), total) }?;
     /* We just created it and hold the only reference, so writing through the
      * buffer is sound - this is what RSTRING_PTR gives the C. It has room for
      * exactly `total` bytes, and nothing else runs while `out` is held. */
-    let dst = rb_sys::stable_api::get_default().rstring_ptr(str) as *mut u8;
-    let out = core::slice::from_raw_parts_mut(dst, total);
-
+    // SAFETY: as above; `str` is a live String of `total` bytes.
+    let out = unsafe {
+        let dst = rb_sys::stable_api::get_default().rstring_ptr(str.as_raw()) as *mut u8;
+        core::slice::from_raw_parts_mut(dst, total)
+    };
     let mut off = 0usize;
     for s in slices {
         /* A slice past `total` is refused by the bounds check. */
@@ -77,37 +69,7 @@ pub unsafe fn ruby_str_from_slices<'a>(
         /* A short sum would leave the tail of the uninitialised String unwritten. */
         return Err(makiri_error("text slice length inconsistency"));
     }
-    Ok(str)
-}
-
-/// [`ruby_str_from_slices`] as a `Value`: `slices` are valid UTF-8 (a
-/// document's own text, by the text-input contract), totalling `total` bytes.
-pub fn utf8_str_from_slices<'a>(
-    slices: impl Iterator<Item = &'a [u8]>,
-    total: usize,
-) -> Result<Value, Error> {
-    // SAFETY: the String is returned at once, rooted by the caller.
-    unsafe { ruby_str_from_slices(slices, total).map(|v| crate::bridge::ruby::value(v)) }
-}
-
-/// A UTF-8 String copied from `bytes`.
-///
-/// The DOM readers hand over a slice the document lends them and want a String
-/// of it. Deciding that the bytes are valid UTF-8 is not this layer's job,
-/// because only the caller knows where they came from: everything in a
-/// parsed document is valid UTF-8 by the text-input contract, and bytes that
-/// were not would make a wrong String - wrong is still wrong - not a memory
-/// error.
-///
-/// # Safety
-/// The returned VALUE is unrooted until stored or returned.
-pub unsafe fn ruby_str_from_utf8(bytes: &[u8]) -> Result<VALUE, Error> {
-    /* A length `c_long` cannot hold (32 bits on Windows) is passed as -1,
-     * which Ruby refuses with ArgumentError - a raise, as an allocation
-     * failure already is - rather than truncated into a shorter String. */
-    let len = c_long::try_from(bytes.len()).unwrap_or(-1);
-    /* A slice's pointer is never null, even when it is empty. */
-    crate::bridge::raw::utf8_str_new(bytes.as_ptr() as *const c_char, len)
+    Ok(str.as_value())
 }
 
 /// A DOM name as a Ruby String: frozen and deduplicated, tagged UTF-8 -
@@ -123,22 +85,8 @@ pub unsafe fn ruby_str_from_utf8(bytes: &[u8]) -> Result<VALUE, Error> {
 /// that were not UTF-8 would make a wrong String, never a memory error. Every
 /// caller passes a document's name, which is UTF-8 by the text-input contract.
 pub fn dom_name_str(bytes: &[u8]) -> Result<Value, Error> {
-    /* A length `c_long` cannot hold (32 bits on Windows) would be truncated,
-     * or turn negative, which `rb_enc_interned_str` does not check: refused
-     * as `utf8_str` refuses it, with ArgumentError. */
-    let Ok(len) = c_long::try_from(bytes.len()) else {
-        return utf8_str(bytes);
-    };
-    // SAFETY: a slice's pointer and length, read for the call; the encoding
-    // is Ruby's static UTF-8 one. The result is a live String.
-    unsafe {
-        crate::bridge::raw::enc_interned_str(
-            bytes.as_ptr() as *const c_char,
-            len,
-            rb_sys::rb_utf8_encoding(),
-        )
-        .map(|v| crate::bridge::ruby::value(v))
-    }
+    crate::bridge::raw::enc_interned_str(&gvl_ruby(), bytes, super::Encoding::utf8())
+        .map(|s| s.as_value())
 }
 
 /* ---- a String of bytes a document read lends ---- */

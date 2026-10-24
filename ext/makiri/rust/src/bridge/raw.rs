@@ -11,8 +11,17 @@
 //! `rake unsafe:boundaries` pins that these C names appear nowhere else in the
 //! crate, so a new raising call is a new wrapper here, with its raise stated.
 //!
-//! Every wrapper is `unsafe` for its arguments alone: a `VALUE` must be live,
-//! a pointer valid for what the C function reads or writes.
+//! The value-level wrappers are SAFE: they take and return magnus's typed
+//! values (`RString`, `RArray`, `RHash`, `Value`, ...), slices and the
+//! bridge's `Encoding`, so a live value of the right kind is the type's
+//! promise, not the caller's - under magnus's own rule that a Ruby value stays
+//! on the stack (CLAUDE.md, "A VALUE inside a wrapped object"). One that
+//! takes no Ruby value takes `&Ruby`, the proof it runs on a Ruby thread with
+//! the GVL (`Ruby` is `!Send`, so a GVL-released body cannot carry one). What
+//! still checks a value's kind or a bound is done here, before the C call,
+//! where the C function would not check it. The wrappers over raw memory -
+//! typed data and Ruby's allocator, and a String of unwritten bytes - stay
+//! `unsafe`, with their contracts stated.
 //!
 //! What is NOT here: calls that cannot raise (`rb_gc_mark`, the encoding
 //! singletons, `rb_typeddata_is_kind_of`, `rb_attr_get`, `ruby_xfree`), the GC
@@ -25,8 +34,11 @@
 
 use core::ffi::{c_char, c_int, c_long, c_void};
 
-use magnus::Error;
-use rb_sys::{rb_data_type_t, rb_encoding, ID, VALUE};
+use magnus::rb_sys::{AsRawValue, FromRawValue};
+use magnus::{Error, Float, Integer, RArray, RHash, RString, Ruby, Symbol, Value};
+use rb_sys::{rb_data_type_t, ID, VALUE};
+
+use super::string::Encoding;
 
 /// The raise sweep's hook (`falloc::inject`, `script/check_raise_injection.rb`):
 /// in an `alloc-inject` build the armed allocating call below raises
@@ -96,155 +108,345 @@ fn jump_error(state: c_int) -> Error {
     }
 }
 
-/* ---- conversions ---- */
+/* ---- what the value-level wrappers share ---- */
+
+/// The live value a wrapped C call returned, as a `T` - checked to be one, so
+/// a C function that answered with another kind is an error, not a value read
+/// as the wrong type.
+#[inline]
+fn typed<T>(v: VALUE, of: fn(Value) -> Option<T>, what: &str) -> Result<T, Error> {
+    // SAFETY: `v` is what a Ruby C call just returned: a live value, on this
+    // frame's stack until it is converted.
+    of(unsafe { Value::from_raw(v) })
+        .ok_or_else(|| crate::bridge::ruby::internal_error(format!("a C call made no {what}")))
+}
+
+/// A length for the C API's `long`; `ArgumentError` for one it cannot hold.
+#[inline]
+fn c_len(n: usize) -> Result<c_long, Error> {
+    c_long::try_from(n).map_err(|_| crate::bridge::ruby::arg_error("string too large"))
+}
+
+/// A String's length, read without a call.
+#[inline]
+fn rstring_len(s: RString) -> usize {
+    use rb_sys::stable_api::StableApiDefinition;
+    // SAFETY: `s` is a live String, by type.
+    unsafe { rb_sys::stable_api::get_default().rstring_len(s.as_raw()) as usize }
+}
+
+/* ---- conversions and checks ---- */
 
 /// `rb_sym2str`: raises `NoMemoryError` when a static Symbol's name String is
 /// made for the first time. Runs no Ruby code.
 #[inline]
-pub unsafe fn sym2str(v: VALUE) -> Result<VALUE, Error> {
-    call(|| unsafe {
+pub fn sym2str(sym: Symbol) -> Result<RString, Error> {
+    let v = sym.as_raw();
+    let s = call(|| unsafe {
         injected_raise();
         rb_sys::rb_sym2str(v)
-    })
+    })?;
+    typed(s, RString::from_value, "String")
 }
 
 /// `rb_check_frozen`: raises `FrozenError` for a frozen value.
 #[inline]
-pub unsafe fn check_frozen(v: VALUE) -> Result<(), Error> {
+pub fn check_frozen(v: Value) -> Result<(), Error> {
+    let v = v.as_raw();
     call(|| unsafe { rb_sys::rb_check_frozen(v) })
 }
 
-/// `rb_range_beg_len` with `err = 0`: raises `RangeError` for a bound too
-/// large for a `long` (a start outside the collection is `Qnil`, not a
-/// raise). `beg` and `len` are written on success.
+/// `rb_range_beg_len` with `err = 0` over a collection of `count` elements:
+/// `None` for a start outside it, `RangeError` for a bound too large for a
+/// `long`. `range` must be a Range whose ends are Integers or nil (the
+/// caller's check - `bridge::ruby::integer_range_arg`): an end of any other
+/// kind would be converted with its `to_int`.
 #[inline]
-pub unsafe fn range_beg_len(
-    range: VALUE,
-    beg: *mut c_long,
-    len: *mut c_long,
-    count: c_long,
-) -> Result<VALUE, Error> {
-    call(|| unsafe { rb_sys::rb_range_beg_len(range, beg, len, count, 0) })
+pub fn range_beg_len(range: Value, count: c_long) -> Result<Option<(c_long, c_long)>, Error> {
+    if magnus::Range::from_value(range).is_none() {
+        return Err(crate::bridge::ruby::type_error("a Range was expected"));
+    }
+    let (mut beg, mut len): (c_long, c_long) = (0, 0);
+    let (b, l) = (&mut beg as *mut c_long, &mut len as *mut c_long);
+    let r = range.as_raw();
+    let answer = call(|| unsafe { rb_sys::rb_range_beg_len(r, b, l, count, 0) })?;
+    Ok((answer == rb_sys::Qtrue as VALUE).then_some((beg, len)))
 }
 
 /// `rb_thread_check_ints`: raises a pending interrupt (`Interrupt`,
 /// `Thread#raise`'s exception, a `Timeout`), or ends the thread.
 #[inline]
-pub unsafe fn thread_check_ints() -> Result<(), Error> {
+pub fn thread_check_ints(_: &Ruby) -> Result<(), Error> {
     call(|| unsafe { rb_sys::rb_thread_check_ints() })
 }
 
 /* ---- symbols ---- */
 
-/// `rb_intern3`: raises `NoMemoryError` when the symbol table cannot grow
-/// (interning valid UTF-8 raises nothing else).
+/// `rb_intern3` of a UTF-8 name: raises `NoMemoryError` when the symbol table
+/// cannot grow (interning valid UTF-8 raises nothing else).
 #[inline]
-pub unsafe fn intern3(
-    name: *const c_char,
-    len: c_long,
-    enc: *mut rb_encoding,
-) -> Result<ID, Error> {
+pub fn intern(_: &Ruby, name: &str) -> Result<ID, Error> {
+    let (p, n) = (name.as_ptr() as *const c_char, c_len(name.len())?);
     call(|| unsafe {
         injected_raise();
-        rb_sys::rb_intern3(name, len, enc)
+        rb_sys::rb_intern3(p, n, rb_sys::rb_utf8_encoding())
     })
 }
 
-/// `rb_intern` of a NUL-terminated name: as [`intern3`].
+/// `rb_intern` of a NUL-terminated name: as [`intern`].
 #[inline]
-pub unsafe fn intern_cstr(name: *const c_char) -> Result<ID, Error> {
+pub fn intern_cstr(_: &Ruby, name: &core::ffi::CStr) -> Result<ID, Error> {
+    let p = name.as_ptr();
     call(|| unsafe {
         injected_raise();
-        rb_sys::rb_intern(name)
+        rb_sys::rb_intern(p)
     })
+}
+
+/// The Symbol of the UTF-8 `name`: [`intern`] and `rb_id2sym`, which raises
+/// `NoMemoryError` when a dynamic Symbol is made.
+#[inline]
+pub fn sym(ruby: &Ruby, name: &str) -> Result<Symbol, Error> {
+    let id = intern(ruby, name)?;
+    let v = call(|| unsafe {
+        injected_raise();
+        rb_sys::rb_id2sym(id)
+    })?;
+    typed(v, Symbol::from_value, "Symbol")
 }
 
 /* ---- Strings ---- */
 
-/// `rb_utf8_str_new`: raises `NoMemoryError`.
+/// `rb_utf8_str_new` of `bytes`: raises `NoMemoryError`. The String is tagged
+/// UTF-8 without a check: `bytes` that were not would make a wrong String,
+/// never a memory error.
 #[inline]
-pub unsafe fn utf8_str_new(ptr: *const c_char, len: c_long) -> Result<VALUE, Error> {
-    call(|| unsafe {
+pub fn utf8_str_new(_: &Ruby, bytes: &[u8]) -> Result<RString, Error> {
+    let (p, n) = (bytes.as_ptr() as *const c_char, c_len(bytes.len())?);
+    let v = call(|| unsafe {
         injected_raise();
-        rb_sys::rb_utf8_str_new(ptr, len)
-    })
+        rb_sys::rb_utf8_str_new(p, n)
+    })?;
+    typed(v, RString::from_value, "String")
 }
 
-/// `rb_enc_interned_str`: raises `NoMemoryError`.
+/// A UTF-8 String of `len` bytes NOT YET WRITTEN, for a caller that fills it
+/// at once (`string::ruby_str_from_slices`): raises `NoMemoryError`.
+///
+/// # Safety
+/// Every one of the `len` bytes is written before the String is read or
+/// handed to Ruby.
 #[inline]
-pub unsafe fn enc_interned_str(
-    ptr: *const c_char,
-    len: c_long,
-    enc: *mut rb_encoding,
-) -> Result<VALUE, Error> {
-    call(|| unsafe {
+pub unsafe fn utf8_str_unwritten(_: &Ruby, len: usize) -> Result<RString, Error> {
+    let n = c_len(len)?;
+    let v = call(|| unsafe {
         injected_raise();
-        rb_sys::rb_enc_interned_str(ptr, len, enc)
-    })
+        rb_sys::rb_utf8_str_new(core::ptr::null(), n)
+    })?;
+    typed(v, RString::from_value, "String")
+}
+
+/// `rb_enc_interned_str` of `bytes` in `enc`: raises `NoMemoryError`.
+#[inline]
+pub fn enc_interned_str(_: &Ruby, bytes: &[u8], enc: Encoding) -> Result<RString, Error> {
+    let (p, n, e) = (
+        bytes.as_ptr() as *const c_char,
+        c_len(bytes.len())?,
+        enc.as_raw(),
+    );
+    let v = call(|| unsafe {
+        injected_raise();
+        rb_sys::rb_enc_interned_str(p, n, e)
+    })?;
+    typed(v, RString::from_value, "String")
 }
 
 /// `rb_str_dup`: raises `NoMemoryError`.
 #[inline]
-pub unsafe fn str_dup(s: VALUE) -> Result<VALUE, Error> {
-    call(|| unsafe {
+pub fn str_dup(s: RString) -> Result<RString, Error> {
+    let v = s.as_raw();
+    let d = call(|| unsafe {
         injected_raise();
-        rb_sys::rb_str_dup(s)
-    })
+        rb_sys::rb_str_dup(v)
+    })?;
+    typed(d, RString::from_value, "String")
 }
 
-/// `rb_str_subseq`: raises `NoMemoryError`.
+/// `rb_str_subseq`: the `len` bytes of `s` from `beg`, which must lie inside
+/// it - checked here, since the C function reads them unchecked. Raises
+/// `NoMemoryError`.
 #[inline]
-pub unsafe fn str_subseq(s: VALUE, beg: c_long, len: c_long) -> Result<VALUE, Error> {
-    call(|| unsafe {
+pub fn str_subseq(s: RString, beg: usize, len: usize) -> Result<RString, Error> {
+    if beg.checked_add(len).is_none_or(|end| end > rstring_len(s)) {
+        return Err(crate::bridge::ruby::internal_error(
+            "a substring past its String",
+        ));
+    }
+    let (v, b, n) = (s.as_raw(), c_len(beg)?, c_len(len)?);
+    let u = call(|| unsafe {
         injected_raise();
-        rb_sys::rb_str_subseq(s, beg, len)
-    })
+        rb_sys::rb_str_subseq(v, b, n)
+    })?;
+    typed(u, RString::from_value, "String")
 }
 
-/// `rb_enc_associate`: raises `FrozenError` for a frozen String, and
-/// `ArgumentError` for an encoding the String's bytes cannot carry.
+/// `rb_enc_associate`: `s` itself, tagged `enc`. Raises `FrozenError` for a
+/// frozen String, and `ArgumentError` for an encoding its bytes cannot carry.
 #[inline]
-pub unsafe fn enc_associate(s: VALUE, enc: *mut rb_encoding) -> Result<VALUE, Error> {
-    call(|| unsafe { rb_sys::rb_enc_associate(s, enc) })
+pub fn enc_associate(s: RString, enc: Encoding) -> Result<RString, Error> {
+    let (v, e) = (s.as_raw(), enc.as_raw());
+    let r = call(|| unsafe { rb_sys::rb_enc_associate(v, e) })?;
+    typed(r, RString::from_value, "String")
 }
 
 /// `rb_str_encode` to `enc` with `flags`: raises `Encoding::ConverterNotFoundError`
 /// when Ruby has no converter, and - without replacement flags -
 /// `Encoding::InvalidByteSequenceError` / `UndefinedConversionError`.
 #[inline]
-pub unsafe fn str_encode(s: VALUE, enc: *mut rb_encoding, flags: c_int) -> Result<VALUE, Error> {
-    call(|| unsafe {
+pub fn str_encode(s: RString, enc: Encoding, flags: c_int) -> Result<RString, Error> {
+    let (v, e) = (s.as_raw(), enc.as_raw());
+    let r = call(|| unsafe {
         rb_sys::rb_str_encode(
-            s,
-            rb_sys::rb_enc_from_encoding(enc),
+            v,
+            rb_sys::rb_enc_from_encoding(e),
             flags,
             rb_sys::Qnil as VALUE,
         )
-    })
+    })?;
+    typed(r, RString::from_value, "String")
 }
 
-/// `rb_to_encoding`: raises `ArgumentError` for an unknown name and
-/// `TypeError` for a value that is neither a String nor an `Encoding`. The
-/// caller passes only an `Encoding` or a String, for which it runs no Ruby
-/// code (`bridge::string::to_encoding`).
+/// `rb_to_encoding` of an `Encoding` or a String: raises `ArgumentError` for
+/// an unknown name. Any other value is a `TypeError` here, before the call,
+/// which would convert it with its `to_str`.
 #[inline]
-pub unsafe fn to_encoding(v: VALUE) -> Result<*mut rb_encoding, Error> {
-    call(|| unsafe { rb_sys::rb_to_encoding(v) })
+pub fn to_encoding(v: Value) -> Result<Encoding, Error> {
+    use magnus::value::ReprValue;
+    let ruby = crate::bridge::ruby::gvl_ruby();
+    if !v.is_kind_of(ruby.class_encoding()) && RString::from_value(v).is_none() {
+        return Err(crate::bridge::ruby::type_error(
+            "an Encoding or a String was expected",
+        ));
+    }
+    let r = v.as_raw();
+    let e = call(|| unsafe { rb_sys::rb_to_encoding(r) })?;
+    // SAFETY: Ruby's encodings live for the process.
+    Ok(unsafe { Encoding::from_raw(e) })
 }
 
 /// `rb_enc_find_index` + `rb_enc_from_index`: may autoload the encoding,
-/// which can raise (`LoadError`) and is a GC point; `null` for a name Ruby
+/// which can raise (`LoadError`) and is a GC point; `None` for a name Ruby
 /// does not know. Not `rb_enc_find`, which answers ASCII-8BIT for one.
 #[inline]
-pub unsafe fn enc_find(name: *const c_char) -> Result<*mut rb_encoding, Error> {
-    call(|| unsafe {
-        let index = rb_sys::rb_enc_find_index(name);
+pub fn enc_find(_: &Ruby, name: &core::ffi::CStr) -> Result<Option<Encoding>, Error> {
+    let p = name.as_ptr();
+    let e = call(|| unsafe {
+        let index = rb_sys::rb_enc_find_index(p);
         if index < 0 {
             core::ptr::null_mut()
         } else {
             rb_sys::rb_enc_from_index(index)
         }
+    })?;
+    // SAFETY: a non-null answer is one of Ruby's encodings, which live for
+    // the process.
+    Ok((!e.is_null()).then(|| unsafe { Encoding::from_raw(e) }))
+}
+
+/* ---- Arrays, Hashes, numbers (`bridge::build` spells these for the glue) ---- */
+
+/// `rb_ary_new_capa`: raises `NoMemoryError`.
+#[inline]
+pub fn ary_new_capa(_: &Ruby, capa: usize) -> Result<RArray, Error> {
+    let n = c_long::try_from(capa).unwrap_or(c_long::MAX);
+    let v = call(|| unsafe {
+        injected_raise();
+        rb_sys::rb_ary_new_capa(n)
+    })?;
+    typed(v, RArray::from_value, "Array")
+}
+
+/// `rb_ary_push`: raises `NoMemoryError`, and `FrozenError` for a frozen
+/// Array.
+#[inline]
+pub fn ary_push(a: RArray, v: Value) -> Result<(), Error> {
+    let (a, v) = (a.as_raw(), v.as_raw());
+    call(|| unsafe {
+        injected_raise();
+        rb_sys::rb_ary_push(a, v)
     })
+    .map(|_| ())
+}
+
+/// `rb_hash_new`: raises `NoMemoryError`.
+#[inline]
+pub fn hash_new(_: &Ruby) -> Result<RHash, Error> {
+    let v = call(|| unsafe {
+        injected_raise();
+        rb_sys::rb_hash_new()
+    })?;
+    typed(v, RHash::from_value, "Hash")
+}
+
+/// `rb_hash_aset` for a String or Symbol key, whose hash Ruby computes itself:
+/// any other key would have its `#hash` and `#eql?` called, so it is a
+/// `TypeError` here. Raises `NoMemoryError`, and `FrozenError` for a frozen
+/// Hash.
+#[inline]
+pub fn hash_aset(h: RHash, k: Value, v: Value) -> Result<(), Error> {
+    if RString::from_value(k).is_none() && Symbol::from_value(k).is_none() {
+        return Err(crate::bridge::ruby::type_error(
+            "a Hash key must be a String or a Symbol",
+        ));
+    }
+    let (h, k, v) = (h.as_raw(), k.as_raw(), v.as_raw());
+    call(|| unsafe {
+        injected_raise();
+        rb_sys::rb_hash_aset(h, k, v)
+    })
+    .map(|_| ())
+}
+
+/// `rb_ll2inum`: raises `NoMemoryError` for a value past a Fixnum (a Bignum).
+#[inline]
+pub fn int_from_i64(_: &Ruby, n: i64) -> Result<Integer, Error> {
+    let v = call(|| unsafe {
+        injected_raise();
+        rb_sys::rb_ll2inum(n)
+    })?;
+    typed(v, Integer::from_value, "Integer")
+}
+
+/// `rb_ull2inum`: as [`int_from_i64`].
+#[inline]
+pub fn int_from_u64(_: &Ruby, n: u64) -> Result<Integer, Error> {
+    let v = call(|| unsafe {
+        injected_raise();
+        rb_sys::rb_ull2inum(n)
+    })?;
+    typed(v, Integer::from_value, "Integer")
+}
+
+/// `rb_float_new`: raises `NoMemoryError` for a value that is not a flonum.
+#[inline]
+pub fn float_new(_: &Ruby, f: f64) -> Result<Float, Error> {
+    let v = call(|| unsafe {
+        injected_raise();
+        rb_sys::rb_float_new(f)
+    })?;
+    typed(v, Float::from_value, "Float")
+}
+
+/// `rb_enumeratorize_with_size` with no arguments and no size: raises
+/// `NoMemoryError`.
+#[inline]
+pub fn enumeratorize(obj: Value, meth: Symbol) -> Result<Value, Error> {
+    let (o, m) = (obj.as_raw(), meth.as_raw());
+    let v = call(|| unsafe {
+        injected_raise();
+        rb_sys::rb_enumeratorize_with_size(o, m, 0, core::ptr::null(), None)
+    })?;
+    typed(v, Some, "value")
 }
 
 /* ---- typed data and Ruby's allocator ---- */
@@ -284,105 +486,6 @@ pub unsafe fn xrealloc2(p: *mut c_void, n: usize, size: usize) -> Result<*mut c_
     call(|| unsafe {
         injected_raise();
         rb_sys::ruby_xrealloc2(p, n as rb_sys::size_t, size as rb_sys::size_t)
-    })
-}
-
-/* ---- Arrays, Hashes and numbers (`bridge::build` spells these for the glue) ---- */
-
-/// `rb_ary_new_capa`: raises `NoMemoryError`, and `ArgumentError` for a
-/// capacity too large.
-#[inline]
-pub unsafe fn ary_new_capa(capa: c_long) -> Result<VALUE, Error> {
-    call(|| unsafe {
-        injected_raise();
-        rb_sys::rb_ary_new_capa(capa)
-    })
-}
-
-/// `rb_ary_push`: raises `NoMemoryError`, and `FrozenError` for a frozen
-/// Array.
-#[inline]
-pub unsafe fn ary_push(a: VALUE, v: VALUE) -> Result<VALUE, Error> {
-    call(|| unsafe {
-        injected_raise();
-        rb_sys::rb_ary_push(a, v)
-    })
-}
-
-/// `rb_hash_new`: raises `NoMemoryError`.
-#[inline]
-pub unsafe fn hash_new() -> Result<VALUE, Error> {
-    call(|| unsafe {
-        injected_raise();
-        rb_sys::rb_hash_new()
-    })
-}
-
-/// `rb_hash_aset`: raises `NoMemoryError`, and `FrozenError` for a frozen
-/// Hash. The key is a String or a Symbol, whose hash Ruby computes itself:
-/// any other key would have its `#hash` and `#eql?` called.
-#[inline]
-pub unsafe fn hash_aset(h: VALUE, k: VALUE, v: VALUE) -> Result<VALUE, Error> {
-    call(|| unsafe {
-        injected_raise();
-        rb_sys::rb_hash_aset(h, k, v)
-    })
-}
-
-/// `rb_ll2inum`: raises `NoMemoryError` for a value past a Fixnum, which is
-/// a Bignum.
-#[inline]
-pub unsafe fn ll2inum(n: i64) -> Result<VALUE, Error> {
-    call(|| unsafe {
-        injected_raise();
-        rb_sys::rb_ll2inum(n)
-    })
-}
-
-/// `rb_ull2inum`: as [`ll2inum`].
-#[inline]
-pub unsafe fn ull2inum(n: u64) -> Result<VALUE, Error> {
-    call(|| unsafe {
-        injected_raise();
-        rb_sys::rb_ull2inum(n)
-    })
-}
-
-/// `rb_float_new`: raises `NoMemoryError` for a value that is not a flonum.
-#[inline]
-pub unsafe fn float_new(f: f64) -> Result<VALUE, Error> {
-    call(|| unsafe {
-        injected_raise();
-        rb_sys::rb_float_new(f)
-    })
-}
-
-/// `rb_id2sym`: raises `NoMemoryError` when a dynamic Symbol is made.
-#[inline]
-pub unsafe fn id2sym(id: ID) -> Result<VALUE, Error> {
-    call(|| unsafe {
-        injected_raise();
-        rb_sys::rb_id2sym(id)
-    })
-}
-
-/// `rb_str_cat`: raises `NoMemoryError`, and `FrozenError` for a frozen
-/// String.
-#[inline]
-pub unsafe fn str_cat(s: VALUE, ptr: *const c_char, len: c_long) -> Result<VALUE, Error> {
-    call(|| unsafe {
-        injected_raise();
-        rb_sys::rb_str_cat(s, ptr, len)
-    })
-}
-
-/// `rb_enumeratorize_with_size` with no arguments and no size: raises
-/// `NoMemoryError`.
-#[inline]
-pub unsafe fn enumeratorize(obj: VALUE, meth: VALUE) -> Result<VALUE, Error> {
-    call(|| unsafe {
-        injected_raise();
-        rb_sys::rb_enumeratorize_with_size(obj, meth, 0, core::ptr::null(), None)
     })
 }
 
