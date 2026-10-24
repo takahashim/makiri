@@ -84,6 +84,27 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   call that calls back into Rust is `rb_hash_foreach`, and its callback is
   latched (above) and raises nothing.
 
+  **Nothing that must not unwind can, and the compiler proves it**
+  (`src/no_unwind.rs`, `rake no_unwind`). An unwind out of an `extern "C"`
+  function aborts, so does a panic in a `Drop` the GC runs or that runs
+  while another panic unwinds. Each such body is a `Site` run through
+  `must_not_unwind`; a release build with `--cfg makiri_no_unwind` gives each
+  site's guard a `Drop` that calls `makiri_unwinds_<site>`, which nobody
+  defines and only an unwind reaches, so the optimizer removes the call
+  exactly where it proves the body unwind-free, and `nm -u` lists the sites
+  that can. The `self_test` control site can unwind by design and must be
+  the one left, or the check is not live. `rake unsafe:boundaries` fails on
+  an `extern "C"` fn or a `Drop` in the shipping crate whose body does not
+  run under it. What the proof needed: post-catch code free of `fmt`
+  (`Msg::copy`, `&'static str` errors in `raw::typed`/`c_len`), `abort(3)`
+  declared `extern "C"` instead of `std::process::abort`, and
+  `caught::quietly` (catch, leak the payload) around what the compiler cannot
+  see through - a payload's drop and `downcast`, a type's drop glue in the
+  free callback (the XPath AST's recursive glue), and the memsize callback,
+  whose answer is advisory (0 on a panic). mark and compact are NOT caught -
+  a value left unmarked is freed while referenced - so they are proven
+  unwind-free as they are. CI runs it in one cell.
+
   **A VALUE inside a wrapped object is a `bridge::typed::Held`**, and a
   `Held` that holds anything can only be made with a `Store`, which exists
   only where the owner is already a Ruby object (`TypedType::wrap`'s store
@@ -305,6 +326,8 @@ bundle exec rake clean:lexbor      # wipe vendor/lexbor/{build,dist} (full Lexbo
 bundle exec ruby -Ilib -r makiri -e 'p Makiri::VERSION'   # smoke load
 
 bundle exec rake symbols           # THE export gate - see Hard constraints
+bundle exec rake no_unwind         # release build proving no extern "C" fn / GC-run Drop
+                                   # can unwind (src/no_unwind.rs) - see Hard constraints
 bundle exec rake diff              # answers vs the recorded C-build baseline (see below)
 bundle exec rake sanitize          # rebuild w/ -Zsanitizer=address (nightly), run suite
 bundle exec rake fuzz              # robustness fuzzer (spec/fuzz/); FUZZ_ARGS to tune

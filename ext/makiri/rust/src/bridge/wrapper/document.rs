@@ -274,7 +274,7 @@ impl Hooks for DocData {
                     cache.trace(tracer);
                 }
             }
-            Err(_) => std::process::abort(),
+            Err(_) => crate::bridge::raw::abort(),
         }
     }
 
@@ -305,13 +305,15 @@ impl Hooks for DocData {
 /// body, with the node cache.
 impl Drop for DocData {
     fn drop(&mut self) {
-        /* Balance the report, or the GC keeps counting freed arenas as live
-         * and collects ever more eagerly. A plain C call, as this hook has to
-         * be: it only subtracts, and Ruby's own `xfree` does the same from
-         * here. */
-        if let Some(diff) = self.report.get().release() {
-            crate::bridge::ruby::report_external_bytes(diff);
-        }
+        crate::no_unwind::must_not_unwind::<crate::no_unwind::DropDocData, _>(|| {
+            /* Balance the report, or the GC keeps counting freed arenas as
+             * live and collects ever more eagerly. A plain C call, as this
+             * hook has to be: it only subtracts, and Ruby's own `xfree` does
+             * the same from here. */
+            if let Some(diff) = self.report.get().release() {
+                crate::bridge::ruby::report_external_bytes(diff);
+            }
+        })
     }
 }
 

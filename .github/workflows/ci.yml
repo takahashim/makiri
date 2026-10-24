@@ -134,6 +134,15 @@ jobs:
         if: matrix.os == 'ubuntu-latest' && matrix.ruby == '3.4'
         run: bundle exec rake symbols
 
+      # No extern "C" function of ours, and no Drop the GC runs, can unwind -
+      # an unwind there aborts the process. A release build with a guard per
+      # site whose call survives only where the optimizer cannot prove the
+      # body unwind-free (src/no_unwind.rs); one cell, as the release build
+      # does not vary by Ruby.
+      - name: No-unwind proof
+        if: matrix.os == 'ubuntu-latest' && matrix.ruby == '3.4'
+        run: bundle exec rake no_unwind
+
       # The :threading suite is heavy (GC.stress across threads) and checks a
       # structural property that does not vary by OS/Ruby, so run it on a single
       # representative job; the rest of the matrix skips it for a fast run.

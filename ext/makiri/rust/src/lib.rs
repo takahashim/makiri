@@ -66,6 +66,10 @@ pub mod cbuf;
 /// so an error path allocates nothing.
 pub mod msg;
 
+/// The bodies that must not unwind (an `extern "C"` function's, a `Drop`
+/// run from the GC), and the build that checks they cannot.
+pub mod no_unwind;
+
 /// Catching a panic at a C boundary and re-raising it past one, so a panic in a
 /// Lexbor or Ruby callback becomes an exception rather than an abort.
 pub mod caught;

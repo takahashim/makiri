@@ -74,6 +74,36 @@ namespace :unsafe do
   end
 end
 
+# The places that must not unwind (`src/no_unwind.rs`): every `extern "C"`
+# function of ours, and the `Drop`s the GC's free callback runs. An unwind out
+# of one aborts the process. Each body runs under a guard whose `Drop` - which
+# only an unwind runs - calls `makiri_unwinds_<site>`, a symbol nobody
+# defines; built with `--cfg makiri_no_unwind` in the release profile, the
+# optimizer removes that call exactly when it can prove the body never
+# unwinds. So the symbols left undefined are the sites that can. The control
+# site, `self_test`, can unwind by design: it must be the only one left, which
+# also shows the check is live.
+desc "Prove no extern \"C\" function or GC-run Drop can unwind (release build)"
+task :no_unwind do
+  macos = RbConfig::CONFIG["target_os"] =~ /darwin/
+  dir = File.expand_path("ext/makiri/rust", __dir__)
+  target = File.join(dir, "target", "no_unwind")
+  # The check build is the crate alone, linked as cargo would; macOS's linker
+  # refuses undefined symbols unless told otherwise, Linux's does not.
+  link = macos ? %w[-C link-arg=-undefined -C link-arg=dynamic_lookup] : []
+  env = { "RUSTFLAGS" => [ENV.fetch("RUSTFLAGS", nil), "--cfg makiri_no_unwind"].compact.join(" ") }
+  Dir.chdir(dir) do
+    sh env, "cargo", "rustc", "--release", "--lib", "--target-dir", target, "--", *link
+  end
+  lib = Dir[File.join(target, "release", "libmakiri.{dylib,so}")].first or abort "no_unwind: no library built"
+  left = `nm -u #{lib.shellescape}`.lines.map(&:strip)
+                                       .filter_map { |l| l[/\A_?makiri_unwinds_(\w+)\z/, 1] }.uniq.sort
+  abort "no_unwind: the control site was optimized away - the check is not live" unless left.include?("self_test")
+  sites = left - ["self_test"]
+  abort "no_unwind: these sites can unwind (see src/no_unwind.rs): #{sites.join(", ")}" unless sites.empty?
+  puts "no_unwind: every site is unwind-free; the control is live"
+end
+
 # The vendored Lexbor, built alone. The extension no longer needs it - the
 # arena DOM and the ported parsers are all Rust - so `rake compile` does not
 # build it; what still does is everything that compares against Lexbor or

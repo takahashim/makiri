@@ -26,32 +26,75 @@ pub struct Msg {
 }
 
 impl Msg {
+    const EMPTY: Msg = Msg {
+        buf: [0; MSG_MAX],
+        len: 0,
+        cut: false,
+    };
+
     /// `args`, written out.
     pub fn format(args: fmt::Arguments<'_>) -> Msg {
-        let mut m = Msg {
-            buf: [0; MSG_MAX],
-            len: 0,
-            cut: false,
-        };
+        let mut m = Msg::EMPTY;
         /* A `Display` that fails leaves what it wrote; the message is still
          * worth raising. */
         let _ = m.write_fmt(args);
-        if m.cut {
-            let len = floor_char_boundary(m.bytes(), MSG_MAX - ELLIPSIS.len());
-            m.buf[len..len + ELLIPSIS.len()].copy_from_slice(ELLIPSIS.as_bytes());
-            m.len = (len + ELLIPSIS.len()) as u16;
+        m.finish()
+    }
+
+    /// `s`, copied - with no formatting machinery, so where nothing may
+    /// unwind (a trampoline that has caught a panic, `crate::no_unwind`) it
+    /// is provably panic-free.
+    pub fn copy(s: &str) -> Msg {
+        let mut m = Msg::EMPTY;
+        m.push(s);
+        m.finish()
+    }
+
+    /// Mark a cut message as such.
+    fn finish(mut self) -> Msg {
+        if self.cut {
+            let len = floor_char_boundary(self.bytes(), MSG_MAX - ELLIPSIS.len());
+            self.len = len as u16;
+            self.cut = false;
+            self.push(ELLIPSIS);
         }
-        m
+        self
+    }
+
+    /// Append what fits of `s`, cut at a character boundary. No operation
+    /// here can panic: every index is a checked `get`, and the arithmetic is
+    /// on values below [`MSG_MAX`].
+    fn push(&mut self, s: &str) {
+        let len = usize::from(self.len).min(MSG_MAX);
+        let room = MSG_MAX.saturating_sub(len);
+        let n = if s.len() <= room {
+            s.len()
+        } else {
+            self.cut = true;
+            floor_char_boundary(s.as_bytes(), room)
+        };
+        if let (Some(dst), Some(src)) = (self.buf.get_mut(len..), s.as_bytes().get(..n)) {
+            for (d, b) in dst.iter_mut().zip(src) {
+                *d = *b;
+            }
+            /* `len + n <= MSG_MAX`, which a u16 holds. */
+            self.len = (len.saturating_add(n)).min(MSG_MAX) as u16;
+        }
+    }
+
+    /// The bytes: UTF-8, as only whole `&str`s and their prefixes at a char
+    /// boundary are ever copied in.
+    pub fn as_bytes(&self) -> &[u8] {
+        self.buf.get(..usize::from(self.len)).unwrap_or(&[])
     }
 
     fn bytes(&self) -> &[u8] {
-        &self.buf[..usize::from(self.len)]
+        self.as_bytes()
     }
 
     /// The text.
     pub fn as_str(&self) -> &str {
-        /* Only whole `&str`s and their prefixes at a char boundary are ever
-         * copied in, so the bytes are UTF-8; the fallback is unreachable. */
+        /* UTF-8 by construction (`as_bytes`); the fallback is unreachable. */
         core::str::from_utf8(self.bytes()).unwrap_or("error")
     }
 }
@@ -59,7 +102,7 @@ impl Msg {
 /// The largest index `<= max` of `s` that starts a character (or ends `s`).
 fn floor_char_boundary(s: &[u8], max: usize) -> usize {
     let mut i = max.min(s.len());
-    while i > 0 && i < s.len() && (s[i] & 0xC0) == 0x80 {
+    while i > 0 && s.get(i).is_some_and(|&b| (b & 0xC0) == 0x80) {
         i -= 1;
     }
     i
@@ -67,20 +110,9 @@ fn floor_char_boundary(s: &[u8], max: usize) -> usize {
 
 impl Write for Msg {
     fn write_str(&mut self, s: &str) -> fmt::Result {
-        if self.cut {
-            return Ok(());
+        if !self.cut {
+            self.push(s);
         }
-        let len = usize::from(self.len);
-        let room = MSG_MAX - len;
-        let n = if s.len() <= room {
-            s.len()
-        } else {
-            self.cut = true;
-            floor_char_boundary(s.as_bytes(), room)
-        };
-        self.buf[len..len + n].copy_from_slice(&s.as_bytes()[..n]);
-        /* `len + n <= MSG_MAX`, which a u16 holds. */
-        self.len = (len + n) as u16;
         Ok(())
     }
 }

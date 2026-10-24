@@ -142,11 +142,13 @@ impl<T: Copy> RubyVec<T> {
 
 impl<T: Copy> Drop for RubyVec<T> {
     fn drop(&mut self) {
-        if !self.ptr.is_null() {
-            // SAFETY: paired with `grow_to`'s allocation. Called from the GC's
-            // free, where touching Ruby objects would be wrong but freeing our
-            // own buffer is right.
-            unsafe { free(self.ptr) };
-        }
+        crate::no_unwind::must_not_unwind::<crate::no_unwind::DropRubyVec, _>(|| {
+            if !self.ptr.is_null() {
+                // SAFETY: paired with `grow_to`'s allocation. Called from the
+                // GC's free, where touching Ruby objects would be wrong but
+                // freeing our own buffer is right.
+                unsafe { free(self.ptr) };
+            }
+        })
     }
 }

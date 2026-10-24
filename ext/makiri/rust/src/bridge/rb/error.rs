@@ -50,6 +50,13 @@ impl Message for &'static str {
     }
 }
 
+impl Message for crate::msg::Msg {
+    #[inline]
+    fn into_error(self, class: ExceptionClass) -> Error {
+        Error(Kind::Formatted(class, self))
+    }
+}
+
 impl Message for fmt::Arguments<'_> {
     fn into_error(self, class: ExceptionClass) -> Error {
         match self.as_str() {
@@ -121,7 +128,7 @@ impl Error {
                     }
                 }
                 Kind::Formatted(class, msg) => {
-                    match crate::bridge::raw::exception_new(class, msg.as_str().as_bytes()) {
+                    match crate::bridge::raw::exception_new(class, msg.as_bytes()) {
                         Ok(v) => v,
                         Err(again) => {
                             e = again;

@@ -42,19 +42,20 @@ pub struct CArgv(*const Value);
 #[doc(hidden)]
 #[inline]
 pub fn finish(f: impl FnOnce() -> Result<Value, Error>) -> Value {
-    let e = match std::panic::catch_unwind(AssertUnwindSafe(f)) {
-        Ok(Ok(v)) => return v,
-        Ok(Err(e)) => e,
-        Err(payload) => {
-            let e = crate::bridge::ruby::internal_error(format_args!(
-                "{}",
-                crate::caught::message(payload.as_ref())
-            ));
-            drop(payload);
-            e
-        }
-    };
-    e.raise()
+    crate::no_unwind::must_not_unwind::<crate::no_unwind::Method, _>(|| {
+        let e = match std::panic::catch_unwind(AssertUnwindSafe(f)) {
+            Ok(Ok(v)) => return v,
+            Ok(Err(e)) => e,
+            Err(payload) => {
+                let msg = crate::caught::quietly(crate::msg::Msg::copy("a panic"), || {
+                    crate::msg::Msg::copy(crate::caught::message(payload.as_ref()))
+                });
+                crate::caught::quietly((), || drop(payload));
+                crate::bridge::ruby::internal_error(msg)
+            }
+        };
+        e.raise()
+    })
 }
 
 /// [`finish`] for an arity -1 method: `f` is handed the arguments as a slice
@@ -335,25 +336,26 @@ macro_rules! __trampoline {
 /// itself must not be used, which `fatal` sees to.
 #[doc(hidden)]
 pub fn run_init(init: fn(&Ruby) -> Result<(), Error>) {
-    // SAFETY: Ruby calls an extension's `Init_` on its thread, with the GVL.
-    let ruby = unsafe { Ruby::get_unchecked() };
-    let e = match std::panic::catch_unwind(AssertUnwindSafe(|| init(&ruby))) {
-        Ok(Ok(())) => return,
-        Ok(Err(e)) => e,
-        Err(payload) => {
-            let msg = crate::msg::Msg::format(format_args!(
-                "{}",
-                crate::caught::message(payload.as_ref())
-            ));
-            drop(payload);
-            match crate::bridge::raw::exception_new(
-                ruby.exception_runtime_error(),
-                msg.as_str().as_bytes(),
-            ) {
-                Ok(exc) => crate::bridge::raw::exc_fatal(exc),
-                Err(e) => e,
+    crate::no_unwind::must_not_unwind::<crate::no_unwind::Init, _>(|| {
+        // SAFETY: Ruby calls an extension's `Init_` on its thread, with the GVL.
+        let ruby = unsafe { Ruby::get_unchecked() };
+        let e = match std::panic::catch_unwind(AssertUnwindSafe(|| init(&ruby))) {
+            Ok(Ok(())) => return,
+            Ok(Err(e)) => e,
+            Err(payload) => {
+                let msg = crate::caught::quietly(crate::msg::Msg::copy("a panic"), || {
+                    crate::msg::Msg::copy(crate::caught::message(payload.as_ref()))
+                });
+                crate::caught::quietly((), || drop(payload));
+                match crate::bridge::raw::exception_new(
+                    ruby.exception_runtime_error(),
+                    msg.as_bytes(),
+                ) {
+                    Ok(exc) => crate::bridge::raw::exc_fatal(exc),
+                    Err(e) => e,
+                }
             }
-        }
-    };
-    e.raise()
+        };
+        e.raise()
+    })
 }

@@ -33,7 +33,7 @@ UNSAFE_ISLANDS = {
   "bridge/gvl.rs" => 3,
   "bridge/node_set.rs" => 3,
   "bridge/node_wrap.rs" => 1,
-  "bridge/raw.rs" => 87,
+  "bridge/raw.rs" => 89,
   "bridge/rb/class.rs" => 2,
   "bridge/rb/method.rs" => 11,
   "bridge/rb/ruby.rs" => 5,
@@ -71,6 +71,7 @@ UNSAFE_ISLANDS = {
   "lexbor/serialize.rs" => 1,
   "lexbor/stylesheet_diff.rs" => 5,
   "lexbor/tests.rs" => 3,
+  "no_unwind.rs" => 2,
 }.freeze
 
 # Files whose safety is compiler-enforced. Checked by containment, so adding one
@@ -808,6 +809,54 @@ unless gvl_released.empty?
             "function by its crate:: path (hoist it out of the closure): #{gvl_released.inspect}"
 end
 
+# The places that must not unwind (`src/no_unwind.rs`, proven by `rake
+# no_unwind`). An unwind out of an `extern "C"` function aborts the process,
+# and so does a panic in a `Drop` that runs while another unwinds or from the
+# GC's free callback. That task proves each LISTED site; this makes sure none
+# goes unlisted: every `extern "C"` function the shipping crate defines, and
+# every `Drop` it implements, runs its body through `must_not_unwind` (or a
+# helper that does: a method trampoline's `finish`, `Init_makiri`'s
+# `run_init`).
+NO_UNWIND_GUARD = /\bmust_not_unwind\b|\bfinish(?:_cary)?\s*\(|\brun_init\s*\(/
+NO_UNWIND_SKIP = %r{\A(?:lexbor/|lint_probe\.rs\z|rust_tests\.rs\z)|(?:tests|selftest|verify)\.rs\z}
+# `Drop`s no build that ships compiles (each module's own `cfg` says so).
+DROP_EXEMPT = {
+  "compat.rs" => "Reset: `as_lexbor`, under cfg(test) or the reference features",
+  "css/mod.rs" => "Nesting: the CSS-to-XPath lowering, a test reference only"
+}.freeze
+
+def unguarded_no_unwind(rust)
+  Dir.glob(File.join(rust, "**", "*.rs")).sort.flat_map do |path|
+    rel = path.delete_prefix("#{rust}/")
+    next [] if rel.match?(NO_UNWIND_SKIP)
+
+    code = code_only(File.binread(path))
+    code = code.split(/^#\[cfg\(test\)\]\s*\n\s*mod tests\b/).first.to_s
+    found = []
+    # `code_only` blanks a string's inside, so `extern "C"` reads `extern " "`.
+    { /\bextern\s+" *"\s+fn\s+(\w+)[^{;]*\{/ => "extern \"C\" fn",
+      /\bimpl\b[^{;]*?\bDrop\s+for\s+([\w:]+)[^{;]*\{/ => "Drop for" }.each do |re, kind|
+      code.to_enum(:scan, re).each do
+        m = Regexp.last_match
+        next if kind == "Drop for" && DROP_EXEMPT.key?(rel)
+
+        open = m.end(0) - 1
+        close = matching_close(code, open) or next found << "#{rel}: unbalanced #{kind} #{m[1]}"
+        next if code[open..close].match?(NO_UNWIND_GUARD)
+
+        found << "#{rel}:#{code[0...open].count("\n") + 1}: #{kind} #{m[1]}"
+      end
+    end
+    found
+  end
+end
+
+unguarded = unguarded_no_unwind(RUST)
+unless unguarded.empty?
+  errors << "an extern \"C\" fn or a Drop whose body does not run under must_not_unwind " \
+            "(add a site to src/no_unwind.rs): #{unguarded.inspect}"
+end
+
 unless ruby_surface.empty?
   errors << "Ruby methods defined or argument lists scanned in bridge/ (they are the glue's): " \
             "#{ruby_surface.inspect}"
@@ -836,4 +885,5 @@ puts "unsafe-boundaries: #{forbidding.length} forbid files; " \
      "#{ruby_layer.values.sum} Ruby-layer uses inside the engine; " \
      "#{ruby_surface.values.sum} Ruby methods in bridge/; " \
      "every raising call in bridge/raw.rs is inside `call`; " \
-     "every GVL-released body calls only the engine"
+     "every GVL-released body calls only the engine; " \
+     "every extern \"C\" fn and Drop runs under must_not_unwind"

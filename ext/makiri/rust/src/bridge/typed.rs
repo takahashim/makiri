@@ -187,53 +187,75 @@ pub trait Hooks: Sized {
  * contract, and one branch here means nothing rests on it. */
 
 unsafe extern "C" fn mark_cb<T: Hooks>(ptr: *mut c_void) {
-    if ptr.is_null() {
-        return;
-    }
-    // SAFETY: Ruby hands back the data pointer of an object `wrap_built`
-    // made, which holds a live `T` (see `wrap_built`).
-    unsafe { (*(ptr as *const T)).trace(&Tracer(Phase::Mark)) };
+    crate::no_unwind::must_not_unwind::<crate::no_unwind::GcMark, _>(|| {
+        if ptr.is_null() {
+            return;
+        }
+        // SAFETY: Ruby hands back the data pointer of an object `wrap_built`
+        // made, which holds a live `T` (see `wrap_built`).
+        unsafe { (*(ptr as *const T)).trace(&Tracer(Phase::Mark)) };
+    })
 }
 
 unsafe extern "C" fn free_cb<T: Hooks>(ptr: *mut c_void) {
-    if ptr.is_null() {
-        return;
-    }
-    // SAFETY: as `mark_cb`; the object is being collected, so this is its last
-    // access - the `T` is dropped exactly once, here, and never read again -
-    // and the data came from `rb_data_typed_object_zalloc`'s `xcalloc`, so it
-    // goes back to `ruby_xfree`, as `TypedData_Make_Struct`'s data does.
-    unsafe {
-        core::ptr::drop_in_place(ptr as *mut T);
-        rb_sys::ruby_xfree(ptr);
-    }
+    crate::no_unwind::must_not_unwind::<crate::no_unwind::GcFree, _>(|| {
+        if ptr.is_null() {
+            return;
+        }
+        // SAFETY: as `mark_cb`; the object is being collected, so this is its
+        // last access - the `T` is dropped exactly once, here, and never read
+        // again - and the data came from `rb_data_typed_object_zalloc`'s
+        // `xcalloc`, so it goes back to `ruby_xfree`, as
+        // `TypedData_Make_Struct`'s data does.
+        /* The drop is a read and `quietly`: a type whose drop the compiler
+         * cannot show unwind-free (a tree's recursive glue) is caught rather
+         * than unwound into the collector. */
+        unsafe {
+            let data = core::ptr::read(ptr as *mut T);
+            crate::caught::quietly((), || drop(data));
+            rb_sys::ruby_xfree(ptr);
+        }
+    })
 }
 
 unsafe extern "C" fn free_embedded_cb<T: Hooks>(ptr: *mut c_void) {
-    if ptr.is_null() {
-        return;
-    }
-    // SAFETY: as `free_cb`, for an embeddable type: the `T` is dropped and the
-    // memory is left to Ruby - the object's own slot when it was embedded,
-    // and data Ruby frees after this callback when it was not.
-    unsafe { core::ptr::drop_in_place(ptr as *mut T) };
+    crate::no_unwind::must_not_unwind::<crate::no_unwind::GcFreeEmbedded, _>(|| {
+        if ptr.is_null() {
+            return;
+        }
+        // SAFETY: as `free_cb`, for an embeddable type: the `T` is dropped and
+        // the memory is left to Ruby - the object's own slot when it was
+        // embedded, and data Ruby frees after this callback when it was not.
+        let data = unsafe { core::ptr::read(ptr as *mut T) };
+        crate::caught::quietly((), || drop(data));
+    })
 }
 
 unsafe extern "C" fn memsize_cb<T: Hooks>(ptr: *const c_void) -> rb_sys::size_t {
-    if ptr.is_null() {
-        return 0;
-    }
-    // SAFETY: as `mark_cb`.
-    unsafe { (*(ptr as *const T)).memsize() as rb_sys::size_t }
+    crate::no_unwind::must_not_unwind::<crate::no_unwind::GcMemsize, _>(|| {
+        if ptr.is_null() {
+            return 0;
+        }
+        /* `quietly`: the size is advisory, so a panic in it - an overflow
+         * check in a sum, say - answers 0 rather than unwinding into the
+         * collector. (Not so for mark and compact: a value left unmarked is
+         * freed while still referenced, so those must be unwind-free
+         * themselves.) */
+        // SAFETY: as `mark_cb`.
+        let data = unsafe { &*(ptr as *const T) };
+        crate::caught::quietly(0, || data.memsize()) as rb_sys::size_t
+    })
 }
 
 unsafe extern "C" fn compact_cb<T: Hooks>(ptr: *mut c_void) {
-    if ptr.is_null() {
-        return;
-    }
-    // SAFETY: as `mark_cb`; compaction has finished moving and is now fixing up
-    // the references to what it moved.
-    unsafe { (*(ptr as *const T)).trace(&Tracer(Phase::Relocate)) };
+    crate::no_unwind::must_not_unwind::<crate::no_unwind::GcCompact, _>(|| {
+        if ptr.is_null() {
+            return;
+        }
+        // SAFETY: as `mark_cb`; compaction has finished moving and is now
+        // fixing up the references to what it moved.
+        unsafe { (*(ptr as *const T)).trace(&Tracer(Phase::Relocate)) };
+    })
 }
 
 /// A `rb_data_type_t` for `T`: its GC callbacks drive [`Hooks`] for `T`, and

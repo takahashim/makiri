@@ -134,7 +134,12 @@ impl Drop for XPathCtx {
     /// Take the cache's report back, or the GC keeps counting freed ASTs as
     /// live - the same balance `DocData` keeps for its arena.
     fn drop(&mut self) {
-        crate::bridge::ruby::report_external_bytes(-(self.cache_bytes.get() as isize));
+        crate::no_unwind::must_not_unwind::<crate::no_unwind::DropXPathCtx, _>(|| {
+            /* Saturating: a negation that overflowed would panic in a free
+             * callback. */
+            let bytes = isize::try_from(self.cache_bytes.get()).unwrap_or(isize::MAX);
+            crate::bridge::ruby::report_external_bytes(0isize.saturating_sub(bytes));
+        })
     }
 }
 

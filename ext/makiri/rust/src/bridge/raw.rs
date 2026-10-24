@@ -77,10 +77,12 @@ fn call<T: Copy, F: FnOnce() -> T + Copy>(f: F) -> Result<T, Error> {
         out: Option<T>,
     }
     unsafe extern "C" fn thunk<T: Copy, F: FnOnce() -> T + Copy>(arg: VALUE) -> VALUE {
-        // SAFETY: `arg` is the `Slot` `call` passed, live for the call.
-        let slot = unsafe { &mut *(arg as *mut Slot<F, T>) };
-        slot.out = Some((slot.f)());
-        rb_sys::Qnil as VALUE
+        crate::no_unwind::must_not_unwind::<crate::no_unwind::ProtectThunk, _>(|| {
+            // SAFETY: `arg` is the `Slot` `call` passed, live for the call.
+            let slot = unsafe { &mut *(arg as *mut Slot<F, T>) };
+            slot.out = Some((slot.f)());
+            rb_sys::Qnil as VALUE
+        })
     }
     let mut slot = Slot { f, out: None };
     let mut state: c_int = 0;
@@ -107,11 +109,21 @@ fn call<T: Copy, F: FnOnce() -> T + Copy>(f: F) -> Result<T, Error> {
 /// a C function that answered with another kind is an error, not a value read
 /// as the wrong type.
 #[inline]
-fn typed<T>(v: VALUE, of: fn(Value) -> Option<T>, what: &str) -> Result<T, Error> {
+fn typed<T>(v: VALUE, of: fn(Value) -> Option<T>, what: &'static str) -> Result<T, Error> {
     // SAFETY: `v` is what a Ruby C call just returned: a live value, on this
     // frame's stack until it is converted.
-    of(unsafe { Value::from_raw(v) })
-        .ok_or_else(|| crate::bridge::ruby::internal_error(format_args!("a C call made no {what}")))
+    of(unsafe { Value::from_raw(v) }).ok_or_else(|| crate::bridge::ruby::internal_error(what))
+}
+
+/// End the process: `abort(3)`, declared `extern "C"` so that a call to it is
+/// known not to unwind - `std::process::abort` is not marked so, and a GC
+/// callback that calls it could not be shown unwind-free (`crate::no_unwind`).
+pub(in crate::bridge) fn abort() -> ! {
+    unsafe extern "C" {
+        fn abort() -> !;
+    }
+    // SAFETY: takes nothing and returns never.
+    unsafe { abort() }
 }
 
 /// A length for the C API's `long`; `ArgumentError` for one it cannot hold.
@@ -436,16 +448,18 @@ pub fn hash_foreach(h: RHash, visit: &mut dyn FnMut(Value, Value) -> bool) -> Re
     unsafe extern "C" fn each(k: VALUE, v: VALUE, arg: VALUE) -> c_int {
         const CONTINUE: c_int = rb_sys::st_retval::ST_CONTINUE as c_int;
         const STOP: c_int = rb_sys::st_retval::ST_STOP as c_int;
-        // SAFETY: `arg` is the `Walk` `hash_foreach` passed, live for the
-        // walk; `k` and `v` are the Hash's, live while it is walked.
-        let walk = unsafe { &mut *(arg as *mut Walk<'_>) };
-        let (k, v) = unsafe { (Value::from_raw(k), Value::from_raw(v)) };
-        let visit = &mut walk.visit;
-        if walk.latch.guard(false, || visit(k, v)) {
-            CONTINUE
-        } else {
-            STOP
-        }
+        crate::no_unwind::must_not_unwind::<crate::no_unwind::HashEach, _>(|| {
+            // SAFETY: `arg` is the `Walk` `hash_foreach` passed, live for the
+            // walk; `k` and `v` are the Hash's, live while it is walked.
+            let walk = unsafe { &mut *(arg as *mut Walk<'_>) };
+            let (k, v) = unsafe { (Value::from_raw(k), Value::from_raw(v)) };
+            let visit = &mut walk.visit;
+            if walk.latch.guard(false, || visit(k, v)) {
+                CONTINUE
+            } else {
+                STOP
+            }
+        })
     }
     let mut walk = Walk {
         visit,
@@ -805,7 +819,7 @@ pub fn enumeratorize(obj: Value, meth: Symbol) -> Result<Value, Error> {
         injected_raise();
         rb_sys::rb_enumeratorize_with_size(o, m, 0, core::ptr::null(), None)
     })?;
-    typed(v, Some, "value")
+    typed(v, Some, "a C call made no value")
 }
 
 /* ---- typed data and Ruby's allocator ---- */

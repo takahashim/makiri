@@ -350,6 +350,8 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     // Before anything touches the interpreter's structs: a binary built for
     // another Ruby misreads them (`check_running_ruby_api`).
     crate::bridge::ruby::check_running_ruby_api(ruby)?;
+    #[cfg(makiri_no_unwind)]
+    crate::no_unwind::self_test();
     let makiri = ruby.define_module("Makiri")?;
 
     // What this binary was built as, for `lib/makiri.rb` to check against the
