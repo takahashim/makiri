@@ -138,10 +138,9 @@ fn rules_to_ruby(k: &Keys, rs: &[Rule]) -> Result<RArray, Error> {
     Ok(a)
 }
 
-/// Parses untrusted input, so it runs under `bridge::ruby::entry`: a panic is
-/// `Makiri::InternalError`, not `fatal`.
+/// `Makiri.parse_stylesheet(text)`.
 fn parse_stylesheet(ruby: &Ruby, text: Value) -> Result<RArray, Error> {
-    crate::bridge::ruby::entry(|| parse_stylesheet_inner(ruby, text))
+    parse_stylesheet_inner(ruby, text)
 }
 
 fn parse_stylesheet_inner(_ruby: &Ruby, text: Value) -> Result<RArray, Error> {

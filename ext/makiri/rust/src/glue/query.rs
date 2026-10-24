@@ -259,12 +259,12 @@ fn xpath_run(rb_self: Value, q: QueryArgs, answer: Answer) -> Result<Value, Erro
 }
 
 fn node_xpath(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| xpath_run(rb_self, QueryArgs::scan(ruby, args)?, Answer::All))
+    xpath_run(rb_self, QueryArgs::scan(ruby, args)?, Answer::All)
 }
 
 /// The first matching node for a node-set result, or the scalar otherwise.
 fn node_at_xpath(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| xpath_run(rb_self, QueryArgs::scan(ruby, args)?, Answer::First))
+    xpath_run(rb_self, QueryArgs::scan(ruby, args)?, Answer::First)
 }
 
 /// `#xpath` / `#at_xpath` on both node-method modules. From `Init_makiri`,

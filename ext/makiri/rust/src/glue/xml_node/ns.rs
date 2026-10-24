@@ -4,9 +4,6 @@
 //! `xmlns:PREFIX` - so all four queries below are tree reads. What they hand
 //! back is `Makiri::XML::Namespace`, a `Data` value object defined in Ruby
 //! (`lib/makiri/xml/namespace.rb`); this module only makes them.
-//!
-//! Each query walks a tree built from input, so each runs under
-//! `bridge::ruby::entry`, which turns a panic into `Makiri::InternalError`.
 
 #![forbid(unsafe_code)]
 
@@ -60,88 +57,80 @@ fn declarations(d: &XmlDoc, id: NodeId) -> impl Iterator<Item = (NodeId, &[u8], 
 
 /// `#namespace` - the node's own resolved namespace, or nil.
 pub fn namespace(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        /* Both copied out before the call, so the arena is not lent across
-         * it. */
-        let pair = {
-            let d = this.read()?;
-            match d
-                .name_parts(this.id)
-                .and_then(|n| Some((n.prefix, n.ns_uri?)))
-            {
-                Some((p, u)) => Some((prefix_value(ruby, p)?, utf8_str(u)?)),
-                None => None,
-            }
-        };
-        let Some((prefix, uri)) = pair else {
-            return Ok(ruby.qnil().as_value());
-        };
-        new_ns(ns_class()?, prefix, uri)
-    })
+    /* Both copied out before the call, so the arena is not lent across
+     * it. */
+    let pair = {
+        let d = this.read()?;
+        match d
+            .name_parts(this.id)
+            .and_then(|n| Some((n.prefix, n.ns_uri?)))
+        {
+            Some((p, u)) => Some((prefix_value(ruby, p)?, utf8_str(u)?)),
+            None => None,
+        }
+    };
+    let Some((prefix, uri)) = pair else {
+        return Ok(ruby.qnil().as_value());
+    };
+    new_ns(ns_class()?, prefix, uri)
 }
 
 /// `#namespace_definitions` - the declarations made ON this element.
 pub fn namespace_definitions(ruby: &Ruby, this: XmlSelf) -> Result<RArray, Error> {
-    crate::bridge::ruby::entry(|| {
-        /* Every (prefix, uri) copied into Ruby Strings FIRST: `Namespace.new`
-         * is Ruby code that may edit this document, and the declarations are
-         * read straight out of its arena. The pairs live in a Ruby Array, not
-         * a Vec, so the GC sees them. */
-        let pairs = {
-            let d = this.read()?;
-            let pairs = ary(0)?;
-            for (_, p, u) in declarations(&d, this.id) {
-                push(pairs, prefix_value(ruby, Some(p))?)?;
-                push(pairs, utf8_str(u)?)?;
-            }
-            pairs
-        };
-        let class = ns_class()?;
-        let arr = ary(pairs.len() / 2)?;
-        for i in (0..pairs.len()).step_by(2) {
-            let (prefix, uri): (Value, Value) =
-                (pairs.entry(i as isize)?, pairs.entry(i as isize + 1)?);
-            push(arr, new_ns(class, prefix, uri)?)?;
+    /* Every (prefix, uri) copied into Ruby Strings FIRST: `Namespace.new`
+     * is Ruby code that may edit this document, and the declarations are
+     * read straight out of its arena. The pairs live in a Ruby Array, not
+     * a Vec, so the GC sees them. */
+    let pairs = {
+        let d = this.read()?;
+        let pairs = ary(0)?;
+        for (_, p, u) in declarations(&d, this.id) {
+            push(pairs, prefix_value(ruby, Some(p))?)?;
+            push(pairs, utf8_str(u)?)?;
         }
-        Ok(arr)
-    })
+        pairs
+    };
+    let class = ns_class()?;
+    let arr = ary(pairs.len() / 2)?;
+    for i in (0..pairs.len()).step_by(2) {
+        let (prefix, uri): (Value, Value) =
+            (pairs.entry(i as isize)?, pairs.entry(i as isize + 1)?);
+        push(arr, new_ns(class, prefix, uri)?)?;
+    }
+    Ok(arr)
 }
 
 /// `#namespaces` - every declaration in scope here, keyed by the declaring
 /// attribute's name. The inner scope wins because the first binding seen is kept.
 pub fn namespaces(_ruby: &Ruby, this: XmlSelf) -> Result<RHash, Error> {
-    crate::bridge::ruby::entry(|| {
-        let d = this.read()?;
-        /* Built with the read held: its keys are Strings, so building it runs
-         * no Ruby of the caller's, and a failed allocation is `Err`. */
-        let h = hash()?;
-        for id in core::iter::successors(Some(this.id), |&n| d.parent(n)) {
-            for (at, _, u) in declarations(&d, id) {
-                let key = crate::bridge::string::utf8_rstring(d.qname(at))?;
-                if h.get(key).is_none() {
-                    aset(h, key.as_value(), utf8_str(u)?)?;
-                }
+    let d = this.read()?;
+    /* Built with the read held: its keys are Strings, so building it runs
+     * no Ruby of the caller's, and a failed allocation is `Err`. */
+    let h = hash()?;
+    for id in core::iter::successors(Some(this.id), |&n| d.parent(n)) {
+        for (at, _, u) in declarations(&d, id) {
+            let key = crate::bridge::string::utf8_rstring(d.qname(at))?;
+            if h.get(key).is_none() {
+                aset(h, key.as_value(), utf8_str(u)?)?;
             }
         }
-        Ok(h)
-    })
+    }
+    Ok(h)
 }
 
 /// `#collect_namespaces` - every declaration anywhere in the document, in
 /// document order, so a later one with the same name wins.
 pub fn collect_namespaces(_ruby: &Ruby, this: XmlSelf) -> Result<RHash, Error> {
-    crate::bridge::ruby::entry(|| {
-        let d = this.read()?;
-        let top = core::iter::successors(Some(this.id), |&n| d.parent(n))
-            .last()
-            .unwrap_or(this.id);
-        /* As `namespaces`: built with the read held. */
-        let h = hash()?;
-        for id in core::iter::successors(Some(top), |&n| d.preorder_next(top, n)) {
-            for (at, _, u) in declarations(&d, id) {
-                aset(h, utf8_str(d.qname(at))?, utf8_str(u)?)?;
-            }
+    let d = this.read()?;
+    let top = core::iter::successors(Some(this.id), |&n| d.parent(n))
+        .last()
+        .unwrap_or(this.id);
+    /* As `namespaces`: built with the read held. */
+    let h = hash()?;
+    for id in core::iter::successors(Some(top), |&n| d.preorder_next(top, n)) {
+        for (at, _, u) in declarations(&d, id) {
+            aset(h, utf8_str(d.qname(at))?, utf8_str(u)?)?;
         }
-        Ok(h)
-    })
+    }
+    Ok(h)
 }

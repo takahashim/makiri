@@ -95,56 +95,50 @@ prefix); to_xml writes such a tree"
 }
 
 fn to_xml(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        let (width, enc_opt) = to_xml_opts(ruby, args)?;
-        let (to_enc, enc_name) = if enc_opt.is_nil() {
-            (None, None)
-        } else {
-            /* An unknown name raises, and this frame is about to own the
-             * serializer's buffer: the lookup returns the error instead. The
-             * name is a copy, so the bytes stay valid across the serializer's
-             * call. */
-            let (e, bytes) = crate::bridge::string::encoding_arg(enc_opt)?;
-            (Some(e), Some(bytes))
-        };
+    let (width, enc_opt) = to_xml_opts(ruby, args)?;
+    let (to_enc, enc_name) = if enc_opt.is_nil() {
+        (None, None)
+    } else {
+        /* An unknown name raises, and this frame is about to own the
+         * serializer's buffer: the lookup returns the error instead. The
+         * name is a copy, so the bytes stay valid across the serializer's
+         * call. */
+        let (e, bytes) = crate::bridge::string::encoding_arg(enc_opt)?;
+        (Some(e), Some(bytes))
+    };
 
-        let out = xml_serialize::to_xml(
-            &*this.read()?,
-            this.id,
-            width,
-            enc_name.as_ref().map(|b| b.as_slice()),
-        );
-        let buf = out.map_err(|f| failure_error(f, "serialize"))?;
-        /* A failed allocation is `Err`, and `buf` (and `enc_name`) drop. */
-        let mut str = crate::bridge::string::utf8_rstring(buf.as_slice())?;
-        drop(buf);
+    let out = xml_serialize::to_xml(
+        &*this.read()?,
+        this.id,
+        width,
+        enc_name.as_ref().map(|b| b.as_slice()),
+    );
+    let buf = out.map_err(|f| failure_error(f, "serialize"))?;
+    /* A failed allocation is `Err`, and `buf` (and `enc_name`) drop. */
+    let mut str = crate::bridge::string::utf8_rstring(buf.as_slice())?;
+    drop(buf);
 
-        if let Some(enc) = to_enc {
-            if enc.needs_transcode() {
-                str = enc.encode_charref(str)?;
-            }
+    if let Some(enc) = to_enc {
+        if enc.needs_transcode() {
+            str = enc.encode_charref(str)?;
         }
-        Ok(str.as_value())
-    })
+    }
+    Ok(str.as_value())
 }
 
 fn canonicalize(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        let comments = Kwargs::scan(ruby, args)?.flag(ruby, "comments")?;
-        let buf = xml_serialize::canonicalize(&*this.read()?, this.id, comments)
-            .map_err(|f| failure_error(f, "canonicalize"))?;
-        Ok(crate::bridge::string::utf8_rstring(buf.as_slice())?.as_value())
-    })
+    let comments = Kwargs::scan(ruby, args)?.flag(ruby, "comments")?;
+    let buf = xml_serialize::canonicalize(&*this.read()?, this.id, comments)
+        .map_err(|f| failure_error(f, "canonicalize"))?;
+    Ok(crate::bridge::string::utf8_rstring(buf.as_slice())?.as_value())
 }
 
 fn no_serialize(ruby: &Ruby, _rb_self: Value, _args: &[Value]) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        Err(Error::new(
-            ruby.exception_not_imp_error(),
-            "Makiri::XML does not HTML-serialize (to_html / inner_html / outer_html); \
+    Err(Error::new(
+        ruby.exception_not_imp_error(),
+        "Makiri::XML does not HTML-serialize (to_html / inner_html / outer_html); \
          use #to_xml for XML output.",
-        ))
-    })
+    ))
 }
 
 /// From `Init_makiri`.

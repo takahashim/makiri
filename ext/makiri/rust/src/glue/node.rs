@@ -86,12 +86,10 @@ pub fn dom_extract<'q>(
 /// Document, so an HTML node is never equal to an XML one, nor a node to one
 /// of another document that happens to share its word (see [`node_key`]).
 pub fn node_equals(rb_self: Value, other: Value) -> Result<bool, crate::bridge::rb::Error> {
-    crate::bridge::ruby::entry(|| {
-        if !crate::bridge::ruby::is_kind_of(other, &CLASS_NODE) {
-            return Ok(false);
-        }
-        Ok(node_key(rb_self)? == node_key(other)?)
-    })
+    if !crate::bridge::ruby::is_kind_of(other, &CLASS_NODE) {
+        return Ok(false);
+    }
+    Ok(node_key(rb_self)? == node_key(other)?)
 }
 
 /// Nokogiri-compatible identity: the underlying node pointer as an Integer.
@@ -100,14 +98,14 @@ pub fn node_equals(rb_self: Value, other: Value) -> Result<bool, crate::bridge::
 /// `Nokogiri::XML::Node#pointer_id`). `a.pointer_id == b.pointer_id` iff
 /// `a.eql?(b)`.
 pub fn node_pointer_id(_ruby: &Ruby, rb_self: Value) -> Result<Value, crate::bridge::rb::Error> {
-    crate::bridge::ruby::entry(|| crate::bridge::build::uint(node_identity(rb_self)? as u64))
+    crate::bridge::build::uint(node_identity(rb_self)? as u64)
 }
 
 /// A stable hash from the node word, so `a == b` implies `a.hash == b.hash`
 /// even across separately-created wrappers. Shares the value with
 /// `#pointer_id`; an HTML and an XML node may share it, which a hash allows.
 pub fn node_hash(ruby: &Ruby, rb_self: Value) -> Result<Value, crate::bridge::rb::Error> {
-    crate::bridge::ruby::entry(|| node_pointer_id(ruby, rb_self))
+    node_pointer_id(ruby, rb_self)
 }
 
 /// A `child_at` / `element_child_at` index argument: None (so nil) for a
@@ -121,12 +119,12 @@ fn child_index_arg(i: Value) -> Result<Option<usize>, crate::bridge::rb::Error> 
 /// `#child_count` (DOM `childNodes.length`): every child node, counted
 /// without building `#children`.
 pub fn child_count<S: ChildListHost>(this: S) -> Result<usize, crate::bridge::rb::Error> {
-    crate::bridge::ruby::entry(|| this.child_count(ChildList::Nodes))
+    this.child_count(ChildList::Nodes)
 }
 
 /// `#element_child_count` (DOM `childElementCount`).
 pub fn element_child_count<S: ChildListHost>(this: S) -> Result<usize, crate::bridge::rb::Error> {
-    crate::bridge::ruby::entry(|| this.child_count(ChildList::Elements))
+    this.child_count(ChildList::Elements)
 }
 
 /// `#child_at(i)` (DOM `childNodes[i]`): the child node at `i`, or nil when
@@ -135,10 +133,10 @@ pub fn child_at<S: ChildListHost>(
     this: S,
     i: Value,
 ) -> Result<Option<Value>, crate::bridge::rb::Error> {
-    crate::bridge::ruby::entry(|| match child_index_arg(i)? {
+    match child_index_arg(i)? {
         Some(i) => this.child_at(ChildList::Nodes, i),
         None => Ok(None),
-    })
+    }
 }
 
 /// `#element_child_at(i)` (DOM `children[i]`): the child element at `i`, or
@@ -147,10 +145,10 @@ pub fn element_child_at<S: ChildListHost>(
     this: S,
     i: Value,
 ) -> Result<Option<Value>, crate::bridge::rb::Error> {
-    crate::bridge::ruby::entry(|| match child_index_arg(i)? {
+    match child_index_arg(i)? {
         Some(i) => this.child_at(ChildList::Elements, i),
         None => Ok(None),
-    })
+    }
 }
 
 /// `Document#tree_version`: an Integer that grows with every edit that can
@@ -160,7 +158,7 @@ pub fn element_child_at<S: ChildListHost>(
 /// Attribute edits (`attribute_version`'s) and character-data edits (a Text,
 /// Comment, CDATA or PI node's `content=`) leave it alone. A reader caching a child list keys it by this.
 pub fn document_tree_version(rb_self: Value) -> Result<u64, crate::bridge::rb::Error> {
-    crate::bridge::ruby::entry(|| crate::bridge::wrapper::tree_version(rb_self))
+    crate::bridge::wrapper::tree_version(rb_self)
 }
 
 /// `Document#attribute_version`: an Integer that grows with every edit of an
@@ -169,5 +167,5 @@ pub fn document_tree_version(rb_self: Value) -> Result<u64, crate::bridge::rb::E
 /// (`tree_version`'s) and character-data edits leave it alone. A reader
 /// caching what depends on attributes keys it by this.
 pub fn document_attribute_version(rb_self: Value) -> Result<u64, crate::bridge::rb::Error> {
-    crate::bridge::ruby::entry(|| crate::bridge::wrapper::attribute_version(rb_self))
+    crate::bridge::wrapper::attribute_version(rb_self)
 }

@@ -16,9 +16,8 @@
 //! Lexbor's own names stay `lxb_*`.
 
 #![deny(unsafe_code)]
-// A panic unwinds into Ruby's `fatal` (or `Makiri::InternalError` at an
-// `entry`), which kills the calling thread - a broken invariant, never an
-// answer. `Cargo.toml`'s clippy lints therefore refuse a
+// A panic unwinds into `Makiri::InternalError` at a method's trampoline (or
+// `fatal` outside one) - a broken invariant, never an answer. `Cargo.toml`'s clippy lints therefore refuse a
 // new `unwrap()` or `panic!` in the shipped crate; a site that genuinely wants
 // one carries an `#[allow]` saying why. Test code is exempt: there a panic IS
 // the failure report.

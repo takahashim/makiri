@@ -175,10 +175,8 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   **A Ruby method raises `Makiri::InternalError`, not `fatal`.** Every
   `method!`/`function!` expands to a trampoline whose body runs inside
   `bridge::rb::method::finish`, which catches a panic and raises that
-  exception, the test hooks' included. (`bridge::ruby::entry`, which still
-  wraps each registered body and which `rake unsafe:boundaries` still
-  requires bar its `ENTRY_EXEMPT` hooks, did the same job while magnus's
-  trampolines made a panic `fatal`; it is now redundant and due to go.)
+  exception, the test hooks' included, so no method needs a wrapper of its
+  own (the per-method `bridge::ruby::entry` and its gate went with magnus).
   `InternalError` descends from `Exception`, NOT `StandardError`, which is the
   point: a bare `rescue => e` keeps passing it through, because a broken
   invariant is not a bad selector, while a host that wants to turn one request
@@ -193,7 +191,7 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   from arriving by accident; a site that wants one carries an `#[allow]` with a
   reason. `spec/panic_spec.rb` drives `Makiri.__panic(kind)`: kind 4 panics
   below the GVL-release frame, the case that proves the latch since without it
-  that one aborts, kind 5 goes through `entry`, and kind 6 panics in the
+  that one aborts, kind 5 panics in a method body, and kind 6 panics in the
   token-done path of a real document parse (`html::tree`'s
   `parse_with_panicking_hook`, its own sink, so no real parse carries it).
 

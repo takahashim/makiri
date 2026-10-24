@@ -184,7 +184,7 @@ pub fn empty_html_document(compat_mode: u32) -> Result<Box<HtmlParsed>, HtmlPars
 /// token-done path, right after the tree builder has taken the first token.
 /// It never returns; the panic unwinds through the tokenizer and the tree
 /// builder, which hold nothing a skipped statement would leak, to the
-/// caller's `entry`.
+/// method's trampoline.
 pub fn parse_with_panicking_hook() -> bool {
     struct Panicking<'t, 'd>(&'t mut TreeBuilder<'d>);
     impl TokenSink for Panicking<'_, '_> {

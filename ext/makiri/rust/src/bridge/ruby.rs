@@ -75,8 +75,7 @@ pub fn makiri_error(msg: impl Into<std::borrow::Cow<'static, str>>) -> Error {
 }
 
 /// A `Makiri::InternalError` carrying `msg`: a broken invariant of Makiri
-/// itself, which a bare `rescue` (StandardError) passes through - see
-/// [`entry`].
+/// itself, which a bare `rescue` (StandardError) passes through.
 pub fn internal_error(msg: impl Into<std::borrow::Cow<'static, str>>) -> Error {
     Error::new(crate::init::EXC_INTERNAL_ERROR.exception(), msg)
 }
@@ -278,28 +277,6 @@ pub fn hide(v: Value) {
 pub fn reveal(v: Value, klass: crate::bridge::rb::RClass) {
     // SAFETY: as `hide`; `klass` is a live class, by type.
     unsafe { rb_sys::rb_obj_reveal(v.as_raw(), klass.as_raw()) };
-}
-
-/// A Ruby entry point that faces untrusted input: a panic inside becomes
-/// `Makiri::InternalError` rather than Ruby's `fatal`.
-///
-/// Both are internal errors and neither is a `StandardError`, so a bare
-/// `rescue => e` keeps passing them through - a broken invariant is not a bad
-/// selector. The difference is that a `fatal` cannot be rescued AT ALL in the
-/// frame that raised it, so a host with no thread boundary around the call
-/// loses the process; `InternalError` it can catch and turn into a 500.
-///
-/// Every method the glue registers starts with this - `rake unsafe:boundaries`
-/// fails on one that does not, bar its short `ENTRY_EXEMPT` list - so a panic
-/// under any of them is this exception. Elsewhere it is still `fatal`.
-#[inline]
-pub fn entry<T>(f: impl FnOnce() -> Result<T, Error>) -> Result<T, Error> {
-    match std::panic::catch_unwind(core::panic::AssertUnwindSafe(f)) {
-        Ok(out) => out,
-        Err(payload) => Err(internal_error(
-            crate::caught::message(payload.as_ref()).to_owned(),
-        )),
-    }
 }
 
 /// Tell the GC about `delta` bytes held outside its heap (negative: given

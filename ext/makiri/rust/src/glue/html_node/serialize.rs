@@ -46,21 +46,19 @@ fn render(node: HtmlNode<'_>, scope: Scope, layout: Layout) -> Result<RString, E
 
 /// Outer HTML: the node itself plus its descendants. `pretty: true` indents.
 fn to_html(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<RString, Error> {
-    crate::bridge::ruby::entry(|| {
-        let layout = layout_opt(ruby, args)?;
-        /* A document fragment has no tag of its own, so its "outer" is its
-         * children: the inner scope is the right one (the outer one rejects
-         * a fragment node). */
-        let view = this.read()?;
-        let node = view.node();
-        let scope = if node.node_type() == NodeType::DocumentFragment {
-            Scope::Inner
-        } else {
-            Scope::Outer
-        };
-        /* A failed allocation of the String is `Err`, so the read may stay. */
-        render(node, scope, layout)
-    })
+    let layout = layout_opt(ruby, args)?;
+    /* A document fragment has no tag of its own, so its "outer" is its
+     * children: the inner scope is the right one (the outer one rejects
+     * a fragment node). */
+    let view = this.read()?;
+    let node = view.node();
+    let scope = if node.node_type() == NodeType::DocumentFragment {
+        Scope::Inner
+    } else {
+        Scope::Outer
+    };
+    /* A failed allocation of the String is `Err`, so the read may stay. */
+    render(node, scope, layout)
 }
 
 /// Inner HTML: the node's children, without the node's own tag.
@@ -70,13 +68,11 @@ fn to_html(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<RString, Error
 /// node `Element#content_fragment` exposes and `#to_html` serializes, so the
 /// three agree.
 fn inner_html(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<RString, Error> {
-    crate::bridge::ruby::entry(|| {
-        let layout = layout_opt(ruby, args)?;
-        let view = this.read()?;
-        let node = view.node();
-        let target = node.template_content().unwrap_or(node);
-        render(target, Scope::Inner, layout)
-    })
+    let layout = layout_opt(ruby, args)?;
+    let view = this.read()?;
+    let node = view.node();
+    let target = node.template_content().unwrap_or(node);
+    render(target, Scope::Inner, layout)
 }
 
 /// From `Init_makiri`.

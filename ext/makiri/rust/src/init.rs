@@ -181,49 +181,45 @@ fn alloc_inject_calls(ruby: &Ruby) -> Result<u64, Error> {
 /// `NoMemoryError` in place of its allocation" (`bridge::raw`'s allocating
 /// wrappers; `script/check_raise_injection.rb`).
 fn raise_inject(ruby: &Ruby, nth: Value) -> Result<(), Error> {
-    crate::bridge::ruby::entry(|| {
-        let nth = crate::bridge::ruby::integer_arg(nth)?.to_i64()?;
-        #[cfg(feature = "alloc-inject")]
-        {
-            crate::falloc::raise_inject_arm(nth);
-            let _ = ruby;
-            Ok(())
-        }
-        #[cfg(not(feature = "alloc-inject"))]
-        {
-            let _ = nth;
-            Err(Error::new(
-                ruby.exception_not_imp_error(),
-                "rebuild with MAKIRI_ALLOC_INJECT=1 (rake oom does this)",
-            ))
-        }
-    })
+    let nth = crate::bridge::ruby::integer_arg(nth)?.to_i64()?;
+    #[cfg(feature = "alloc-inject")]
+    {
+        crate::falloc::raise_inject_arm(nth);
+        let _ = ruby;
+        Ok(())
+    }
+    #[cfg(not(feature = "alloc-inject"))]
+    {
+        let _ = nth;
+        Err(Error::new(
+            ruby.exception_not_imp_error(),
+            "rebuild with MAKIRI_ALLOC_INJECT=1 (rake oom does this)",
+        ))
+    }
 }
 
 /// `Makiri.__raise_inject_calls` - how many raising C calls a workload made,
 /// armed or not, so the sweep can size itself from a disarmed run.
 fn raise_inject_calls(ruby: &Ruby) -> Result<u64, Error> {
-    crate::bridge::ruby::entry(|| {
-        #[cfg(feature = "alloc-inject")]
-        {
-            let _ = ruby;
-            Ok(crate::falloc::raise_inject_call_count())
-        }
-        #[cfg(not(feature = "alloc-inject"))]
-        {
-            Err(Error::new(
-                ruby.exception_not_imp_error(),
-                "rebuild with MAKIRI_ALLOC_INJECT=1 (rake oom does this)",
-            ))
-        }
-    })
+    #[cfg(feature = "alloc-inject")]
+    {
+        let _ = ruby;
+        Ok(crate::falloc::raise_inject_call_count())
+    }
+    #[cfg(not(feature = "alloc-inject"))]
+    {
+        Err(Error::new(
+            ruby.exception_not_imp_error(),
+            "rebuild with MAKIRI_ALLOC_INJECT=1 (rake oom does this)",
+        ))
+    }
 }
 
 /// `Makiri.__borrowed?(doc)` - whether `doc`'s content is borrowed, which
 /// between Ruby calls it never is: what the raise sweep checks after each
 /// injected raise. Any build.
 fn borrowed_p(doc: Value) -> Result<bool, Error> {
-    crate::bridge::ruby::entry(|| crate::bridge::wrapper::document_borrowed(doc))
+    crate::bridge::wrapper::document_borrowed(doc)
 }
 
 /// `Makiri.__panic(kind)` - panic on purpose, so the suite can prove a panic
@@ -237,11 +233,10 @@ fn borrowed_p(doc: Value) -> Result<bool, Error> {
 /// Kinds 0..3 are the four ways the crate could actually panic: an explicit
 /// `panic!`, an out-of-bounds index, an arithmetic overflow (release keeps
 /// `overflow-checks` on), and an `unwrap` on `None`. Kind 4 panics BELOW a C
-/// frame, where the unwind would abort if it were not latched. Kind 5 goes
-/// through `bridge::ruby::entry`, so it raises `Makiri::InternalError` - what
-/// the entry points exposed to untrusted input do. Kind 6 panics inside the
-/// HTML tokenizer's token-done hook (`lexbor::adapter::tree_guard`), a Rust
-/// callback called from C, under `entry` too.
+/// frame, where the unwind would abort if it were not latched. Kind 5 panics
+/// in the method body itself. Kind 6 panics in the token-done path of a real
+/// document parse (`html::tree::parse_with_panicking_hook`). Every kind raises
+/// `Makiri::InternalError`, from the trampoline (`bridge::rb::method::finish`).
 #[allow(
     clippy::panic,
     clippy::unwrap_used,
@@ -273,21 +268,17 @@ fn panic_probe(ruby: &Ruby, kind: Value) -> Result<(), Error> {
             crate::bridge::gvl::without_gvl(|| panic!("Makiri.__panic(4): panic below the GVL"))?;
         }
         5 => {
-            /* Through `bridge::ruby::entry`, the wrapper the untrusted-input
-             * entry points carry: the panic becomes `Makiri::InternalError`
-             * instead of Ruby's unrescuable `fatal`. */
-            return crate::bridge::ruby::entry(|| -> Result<(), Error> {
-                panic!("Makiri.__panic(5): panic inside a guarded entry")
-            });
+            /* In a method's body, as any method's: its trampoline
+             * (`bridge::rb::method::finish`) makes the panic
+             * `Makiri::InternalError` instead of Ruby's unrescuable `fatal`. */
+            panic!("Makiri.__panic(5): panic inside a method body")
         }
         6 => {
-            /* Inside Lexbor's tokenizer, in the token-done hook every HTML
-             * parse runs: the hook latches it and stops the parse, the parse
-             * re-raises it, and `entry` makes it `Makiri::InternalError`. */
-            return crate::bridge::ruby::entry(|| -> Result<(), Error> {
-                crate::html_dom::post_parse::parse_with_panicking_hook();
-                Ok(())
-            });
+            /* Inside the tokenizer, in the token-done hook every HTML parse
+             * runs: the hook latches it and stops the parse, the parse
+             * re-raises it, and the trampoline makes it
+             * `Makiri::InternalError`. */
+            crate::html_dom::post_parse::parse_with_panicking_hook();
         }
         _ => {
             return Err(Error::new(
@@ -302,11 +293,9 @@ fn panic_probe(ruby: &Ruby, kind: Value) -> Result<(), Error> {
 /// `Makiri::XML.__decode(str)` - the strict input decode in isolation, without
 /// the tokenizer or the tree builder (`spec/xml_decode_spec.rb`).
 fn xml_decode(_ruby: &Ruby, str: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        let s = crate::bridge::ruby::string_arg(str)?;
-        /* decode-only: no arena, no budget */
-        crate::bridge::xml_decode::xml_decode_input_value(s, None).map(|d| d.as_value())
-    })
+    let s = crate::bridge::ruby::string_arg(str)?;
+    /* decode-only: no arena, no budget */
+    crate::bridge::xml_decode::xml_decode_input_value(s, None).map(|d| d.as_value())
 }
 
 /* ------------------------------------------------------------------ *
@@ -475,7 +464,8 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
      * would a bad selector, while a host that wants to turn one request into a
      * 500 can still `rescue Makiri::InternalError`. That is what Ruby's own
      * `fatal` gives, minus the part where it cannot be rescued at all.
-     * `bridge::ruby::entry` is what raises it; see `crate::caught`. */
+     * Every method's trampoline (`bridge::rb::method::finish`) raises it;
+     * see `crate::caught`. */
     let internal = makiri.define_error("InternalError", ruby.exception_exception())?;
     let xpath_syntax = m_xpath.define_error("SyntaxError", err)?;
     let xpath_limit = m_xpath.define_error("LimitExceeded", xpath_syntax)?;

@@ -642,63 +642,10 @@ Dir.glob(File.join(RUST, "bridge", "**", "*.rs")).sort.each do |path|
   count = comments_removed(File.binread(path)).scan(RUBY_SURFACE).length
   ruby_surface[relative] = count unless count.zero?
 end
-# Every Ruby method the glue registers runs its body inside
-# `bridge::ruby::entry`, so a panic below it raises Makiri::InternalError rather
-# than `fatal`. Wrapping by hand, method by method, left readers like
-# `children`, `[]` and `NodeSet#each` out; so the gate finds EVERY `method!` /
-# `function!` in the glue - wherever it is written, a registration table
-# included - resolves it to its one definition, and fails unless that body is
-# nothing but a `crate::bridge::ruby::entry(...)` call. What it cannot read, it
-# refuses rather than skips. The exemptions are the hooks that exist to test the
-# panic and allocation paths themselves.
-ENTRY_EXEMPT = %w[
-  init.rs:panic_probe init.rs:alloc_inject_p init.rs:alloc_inject init.rs:alloc_inject_calls
-].freeze
-ENTRY_FN = "crate::bridge::ruby::entry"
-
-def module_dir(rel)
-  base = File.basename(rel, ".rs")
-  dir = File.dirname(rel)
-  %w[mod lib].include?(base) || rel == "init.rs" ? (dir == "." ? "" : dir) : File.join(dir, base).sub(%r{\A\./}, "")
-end
-
-def module_file(rust, modpath)
-  ["#{modpath}.rs", "#{modpath}/mod.rs"].find { |c| File.exist?(File.join(rust, c)) }
-end
-
-def fn_def_re(name) = /^\s*(?:pub(?:\([^)]*\))?\s+)?fn\s+#{Regexp.escape(name)}\b/
-
-# The file a registered path names: `read::name` from `glue/html_node/mod.rs`,
-# `crate::glue::node::f`, or a bare name defined here or brought in by `use`.
-def resolve_fn(rust, rel, path, src)
-  parts = path.split("::")
-  name = parts.pop
-  if parts.empty?
-    imported = src.match?(/^\s*(?:pub\s+)?use\s+[\w:]+::(?:\{[^}]*\b#{Regexp.escape(name)}\b[^}]*\}|#{Regexp.escape(name)}\s*;)/m)
-    local = src.match?(/\bfn\s+#{Regexp.escape(name)}\b/)
-    # Both: which one the macro reaches is Rust's to decide, not this script's.
-    return nil if imported && local
-    return [rel, name] if local
-
-    src.scan(/^\s*(?:pub\s+)?use\s+([\w:]+)::\{([^}]*)\}|^\s*(?:pub\s+)?use\s+([\w:]+)::(\w+)\s*;/m) do |p1, list, p2, single|
-      if p1 && list.split(",").map(&:strip).include?(name)
-        return resolve_fn(rust, rel, "#{p1}::#{name}", "")
-      elsif p2 && single == name
-        return resolve_fn(rust, rel, "#{p2}::#{name}", "")
-      end
-    end
-    return nil
-  end
-  modpath = if parts.first == "crate"
-              parts.drop(1).join("/")
-            elsif parts.first == "super"
-              File.join(File.dirname(module_dir(rel)), *parts.drop(1))
-            else
-              File.join(module_dir(rel), *parts).sub(%r{\A/}, "")
-            end
-  file = module_file(rust, modpath) or return nil
-  [file, name]
-end
+# Every Ruby method runs its body inside its trampoline's catch
+# (`bridge::rb::method::finish`, which `method!` / `function!` expand to), so a
+# panic below it raises Makiri::InternalError: a property of the macros, not of
+# each method, so there is nothing per method to check.
 
 # `src` with every comment, and the inside of every string and character
 # literal, turned to spaces - line breaks kept, so offsets and line numbers
@@ -755,27 +702,6 @@ end
 
 # The index of the bracket closing the one at `open` in CODE (see
 # `code_only`); nil when unbalanced.
-# The open paren of the innermost call enclosing `pos` in `code`: the nearest
-# unmatched `(` before it, passed over while it opens a tuple or a group (no
-# name or generic before it) for the one around that.
-def call_paren_around(code, pos)
-  depth = 0
-  (pos - 1).downto(0) do |i|
-    c = code[i]
-    if ")]}".include?(c)
-      depth += 1
-    elsif "([{".include?(c)
-      if depth.zero?
-        return nil unless c == "("
-        return i if code[0...i].match?(/[\w>]\s*\z/)
-      else
-        depth -= 1
-      end
-    end
-  end
-  nil
-end
-
 def matching_close(code, open)
   depth = 0
   (open...code.length).each do |i|
@@ -788,88 +714,6 @@ def matching_close(code, open)
     end
   end
   nil
-end
-
-# Why the definition of `name` in `src` is not a method body wrapped in entry,
-# or nil when it is: exactly one definition, whose whole body is one
-# `crate::bridge::ruby::entry(...)` call.
-def entry_violation(src, name)
-  code = code_only(src)
-  # Anywhere, not just at a line start, so a same-named fn tucked into a
-  # one-line `mod` still counts as a second definition.
-  defs = code.to_enum(:scan, /\bfn\s+#{Regexp.escape(name)}\b/).map { Regexp.last_match }
-  return "no definition" if defs.empty?
-  return "#{defs.length} definitions" if defs.length > 1
-
-  open = code.index("{", defs.first.end(0)) or return "no body"
-  close = matching_close(code, open) or return "unbalanced body"
-  body = code[(open + 1)...close].strip
-  # The call, with a closure or a bare function as its argument - both run
-  # inside the catch. `entry(make(x))` would build its value before it.
-  m = body.match(/\A#{Regexp.escape(ENTRY_FN)}\s*\(\s*(?:(?:move\s*)?\||[\w:]+\s*\))/)
-  return "body is not #{ENTRY_FN}(|| ...) or #{ENTRY_FN}(a_fn)" unless m
-
-  call_close = matching_close(body, body.index("(", ENTRY_FN.length))
-  return nil if call_close && body[(call_close + 1)..].strip.empty?
-
-  "code outside the #{ENTRY_FN}(...) call"
-end
-
-REGISTRATION = /\b(?:[\w:]*::)?(?:method|function)!\s*\(/
-
-# The first argument of the macro call whose `(` is at `open` in `code`: the
-# text up to its first top-level comma. nil when the call is not closed.
-def first_argument(code, open)
-  close = matching_close(code, open) or return nil
-  depth = 0
-  ((open + 1)...close).each do |i|
-    c = code[i]
-    depth += 1 if "([{".include?(c)
-    depth -= 1 if ")]}".include?(c)
-    return code[(open + 1)...i].strip if c == "," && depth.zero?
-  end
-  code[(open + 1)...close].strip
-end
-
-def unwrapped_entries(rust)
-  missing = []
-  seen = []
-  files = Dir.glob(File.join(rust, "glue", "**", "*.rs")) + [File.join(rust, "init.rs")]
-  files.sort.each do |path|
-    rel = path.delete_prefix("#{rust}/")
-    src = File.binread(path)
-    code = code_only(src)
-    # A renamed macro (`use crate::method as m`) would register unseen.
-    if code.match?(/\b(?:method|function)\s+as\s+\w+/)
-      missing << "#{rel}: method!/function! imported under another name"
-    end
-    code.to_enum(:scan, REGISTRATION).each do
-      m = Regexp.last_match
-      fpath = first_argument(code, m.end(0) - 1)
-      # A generic function registered per representation
-      # (`child_count::<HtmlSelf>`) is one definition: resolve it without its
-      # type arguments.
-      fpath = fpath&.sub(/::<[\w:, ]+>\z/, "")
-      unless fpath&.match?(/\A[\w:]+\z/)
-        missing << "#{rel}: registration of `#{fpath}` is not a function path"
-        next
-      end
-      file, name = resolve_fn(rust, rel, fpath, code)
-      if file.nil?
-        missing << "#{rel}: cannot resolve #{fpath}"
-        next
-      end
-      key = "#{file}:#{name}"
-      seen << key
-      next if ENTRY_EXEMPT.include?(key)
-
-      why = entry_violation(File.binread(File.join(rust, file)), name)
-      missing << "#{key} (#{why})" if why
-    end
-  end
-  stale = ENTRY_EXEMPT - seen
-  missing << "ENTRY_EXEMPT names what nothing registers: #{stale.inspect}" unless stale.empty?
-  missing.uniq
 end
 
 # Every raising C call in `bridge/raw.rs` is made inside `call(|| ...)`, the
@@ -957,12 +801,6 @@ unless gvl_released.empty?
             "function by its crate:: path (hoist it out of the closure): #{gvl_released.inspect}"
 end
 
-unentered = unwrapped_entries(RUST)
-unless unentered.empty?
-  errors << "Ruby methods whose body is not wrapped in bridge::ruby::entry " \
-            "(wrap it, or add it to ENTRY_EXEMPT with the reason): #{unentered.inspect}"
-end
-
 unless ruby_surface.empty?
   errors << "Ruby methods defined or argument lists scanned in bridge/ (they are the glue's): " \
             "#{ruby_surface.inspect}"
@@ -990,6 +828,5 @@ puts "unsafe-boundaries: #{forbidding.length} forbid files; " \
      "#{raw_node_crossing.values.sum} raw-node crossings in bridge/; " \
      "#{ruby_layer.values.sum} Ruby-layer uses inside the engine; " \
      "#{ruby_surface.values.sum} Ruby methods in bridge/; " \
-     "every registered method but #{ENTRY_EXEMPT.length} exempt runs under entry; " \
      "every raising call in bridge/raw.rs is inside `call`; " \
      "every GVL-released body calls only the engine"

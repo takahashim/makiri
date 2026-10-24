@@ -7,7 +7,7 @@ use crate::bridge::rb::{Error, RArray, RHash, Ruby, Value};
 ///
 /// Over `bridge::raw::hash_foreach`, which latches a panic in `f` rather than
 /// let it unwind into `rb_hash_foreach`'s C frames, and resumes it once they
-/// are gone, where `bridge::ruby::entry` makes it `Makiri::InternalError`.
+/// are gone, where the method's trampoline makes it `Makiri::InternalError`.
 /// `f`'s own error is kept here rather than raised from inside the walk. The
 /// one way the glue walks a Hash (`rake unsafe:boundaries` fails on another
 /// `.foreach(`).
