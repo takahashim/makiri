@@ -102,13 +102,16 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   `bridge/typed.rs`, since a lint sees a `VALUE` only as an integer. What it
   cannot see is a temporary handed straight to a call (`f(vec![v])`).
   A node wrapper's `NodeData` is EMBEDDED in its object's slot
-  (`TypedType::embedded_base` / `embedded_derived`, `RUBY_TYPED_EMBEDDABLE`,
-  Ruby 3.3+): one allocation per wrapper, and the free callback drops the
-  data without freeing memory. Compaction moves that data with the object,
-  so a `&NodeData` must not be held across anything that can allocate -
-  every reader copies the handle and the Document out at once, and a new
-  embedded type must keep to that. (The NodeSet was not embedded for this
-  reason: its fill holds `&NodeSet` across its own growth.)
+  (`bridge::typed::EmbeddedType`, `RUBY_TYPED_EMBEDDABLE`, Ruby 3.3+): one
+  allocation per wrapper, and the free callback drops the data without
+  freeing memory. Compaction moves that data with the object, so a
+  `&NodeData` held across anything that can allocate would point at where
+  it was - and `EmbeddedType` has no `get` to hand one out: a reader takes
+  `read`'s copy (`NodeRef`, the handle and the Document, from `NodeData`'s
+  `Snapshot`), and only the GC callbacks and that snapshot see the data in
+  place. A new embedded type goes through `EmbeddedType` too. (The NodeSet
+  was not embedded for this reason: its fill holds `&NodeSet` across its own
+  growth.)
 
   **Every C call that can raise is a wrapper in `bridge/raw.rs`, and every
   wrapper runs it under `rb_protect` and returns `Result`.** A raise is a

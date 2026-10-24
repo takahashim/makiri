@@ -260,23 +260,6 @@ impl<T: Hooks> TypedType<T> {
         Self::with_parent(name, parent.raw.as_ptr(), false)
     }
 
-    /// [`base`](Self::base) for a `T` kept IN the object's slot
-    /// (`RUBY_TYPED_EMBEDDABLE`): no allocation beside the object's own, and
-    /// none to free. Compaction then moves the data with the object, so a
-    /// `&T` must not be held across anything that can run the collector - an
-    /// allocation - and every reader copies out what it needs. Only for a
-    /// small `T` (see [`EMBED_MAX`]).
-    pub const fn embedded_base(name: *const c_char) -> TypedType<T> {
-        const { assert!(core::mem::size_of::<T>() <= EMBED_MAX) };
-        Self::with_parent(name, core::ptr::null(), true)
-    }
-
-    /// [`derived`](Self::derived) for an embedded `T`.
-    pub const fn embedded_derived(name: *const c_char, parent: &TypedType<T>) -> TypedType<T> {
-        const { assert!(core::mem::size_of::<T>() <= EMBED_MAX) };
-        Self::with_parent(name, parent.raw.as_ptr(), true)
-    }
-
     /// Whether `v` is an object of this type or one deriving from it. Never
     /// raises.
     #[inline]
@@ -343,6 +326,68 @@ impl<T: Hooks> TypedType<T> {
         let obj = unsafe { wrap_built::<T>(klass.as_raw(), self.raw.as_ptr(), build, store) }?;
         // SAFETY: the object just wrapped, live on this frame.
         Ok(unsafe { value(obj) })
+    }
+}
+
+/// What a reader of an embedded `T` gets: a copy of what it needs, never a
+/// reference into the object.
+///
+/// Implemented by the module that owns `T`, beside its `trace`. `snapshot`
+/// runs with a `&T` into the object's slot, so it must allocate nothing - a
+/// field copy, a [`Held`] read.
+pub trait Snapshot {
+    type Copy: Copy;
+    fn snapshot(&self) -> Self::Copy;
+}
+
+/// A [`TypedType`] whose `T` is kept IN the object's slot
+/// (`RUBY_TYPED_EMBEDDABLE`): no allocation beside the object's own, and
+/// none to free. Only for a small `T` (see [`EMBED_MAX`]).
+///
+/// Compaction moves embedded data with its object, so a `&T` held across
+/// anything that can run the collector - an allocation - would point at
+/// where the data was. This type is what keeps that from being written: it
+/// has no `get`. A reader takes [`read`](Self::read)'s copy (`T::Copy`), and
+/// the only `&T` it lends is to `T`'s own [`Snapshot`] and to the GC
+/// callbacks, neither of which allocates.
+pub struct EmbeddedType<T: Hooks + Snapshot>(TypedType<T>);
+
+impl<T: Hooks + Snapshot> EmbeddedType<T> {
+    /// A base type.
+    pub const fn base(name: *const c_char) -> EmbeddedType<T> {
+        const { assert!(core::mem::size_of::<T>() <= EMBED_MAX) };
+        EmbeddedType(TypedType::with_parent(name, core::ptr::null(), true))
+    }
+
+    /// A type deriving from `parent`, which holds the same `T`.
+    pub const fn derived(name: *const c_char, parent: &EmbeddedType<T>) -> EmbeddedType<T> {
+        const { assert!(core::mem::size_of::<T>() <= EMBED_MAX) };
+        EmbeddedType(TypedType::with_parent(name, parent.0.raw.as_ptr(), true))
+    }
+
+    /// Whether `v` is an object of this type or one deriving from it. Never
+    /// raises.
+    #[inline]
+    pub fn is(&self, v: Value) -> bool {
+        self.0.is(v)
+    }
+
+    /// A copy of what `v`'s data holds, or Ruby's own `TypeError`.
+    #[inline]
+    pub fn read(&'static self, v: Value) -> Result<T::Copy, Error> {
+        self.0.get(&v).map(T::snapshot)
+    }
+
+    /// [`TypedType::wrap`]. `store` is lent the data in place, so it must
+    /// allocate nothing either: it stores the values `T` holds, no more.
+    pub(in crate::bridge) fn wrap(
+        &'static self,
+        ruby: &magnus::Ruby,
+        klass: magnus::RClass,
+        build: impl FnOnce() -> T,
+        store: impl FnOnce(&mut T, &Store),
+    ) -> Result<Value, Error> {
+        self.0.wrap(ruby, klass, build, store)
     }
 }
 

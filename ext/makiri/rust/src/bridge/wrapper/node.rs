@@ -8,7 +8,7 @@ use magnus::rb_sys::AsRawValue;
 use magnus::{Error, Value};
 
 use super::*;
-use crate::bridge::typed::{Held, Hooks, Store, Tracer, TypedType};
+use crate::bridge::typed::{EmbeddedType, Held, Hooks, Snapshot, Store, Tracer};
 use crate::html_dom::html::{HtmlNodeKey, RawNode};
 use crate::init::CLASS_DOCUMENT;
 use crate::token::Token;
@@ -171,16 +171,31 @@ impl NodeData {
     pub(in crate::bridge) fn hold_document(&mut self, store: &Store, document: Value) {
         self.document = store.hold(document);
     }
+}
 
+/// What a node wrapper's data holds, copied out: the only way it is read
+/// (`EmbeddedType::read`), since the data is embedded and moves with its
+/// object.
+#[derive(Clone, Copy)]
+pub struct NodeRef {
+    pub node: NodeHandle,
     /// The Document the node keeps alive.
-    ///
+    pub document: Value,
+}
+
+impl Snapshot for NodeData {
+    type Copy = NodeRef;
+
     /// Safe: `document` is a private field that this module's `trace` marks
-    /// (pinned), and a `&NodeData` is reached only through its wrapper,
-    /// whose borrow keeps the wrapper - and so the field's mark - alive. (One
-    /// built but not yet wrapped holds `false`.)
-    pub(in crate::bridge) fn document(&self) -> Value {
-        // SAFETY: see above.
-        unsafe { self.document.get() }
+    /// (pinned), and the snapshot is taken through the wrapper, which the
+    /// caller holds - and so the field's mark is alive. (One built but not
+    /// yet wrapped holds `false`.)
+    fn snapshot(&self) -> NodeRef {
+        NodeRef {
+            node: self.node,
+            // SAFETY: see above.
+            document: unsafe { self.document.get() },
+        }
     }
 }
 
@@ -199,13 +214,13 @@ impl Hooks for NodeData {
     }
 }
 
-pub static NODE_DATA_TYPE: TypedType<NodeData> = TypedType::embedded_base(c"Makiri::Node".as_ptr());
+pub static NODE_DATA_TYPE: EmbeddedType<NodeData> = EmbeddedType::base(c"Makiri::Node".as_ptr());
 
-pub static HTML_NODE_TYPE: TypedType<NodeData> =
-    TypedType::embedded_derived(c"Makiri::HTML::Node".as_ptr(), &NODE_DATA_TYPE);
+pub static HTML_NODE_TYPE: EmbeddedType<NodeData> =
+    EmbeddedType::derived(c"Makiri::HTML::Node".as_ptr(), &NODE_DATA_TYPE);
 
-pub static XML_NODE_TYPE: TypedType<NodeData> =
-    TypedType::embedded_derived(c"Makiri::XML::Node".as_ptr(), &NODE_DATA_TYPE);
+pub static XML_NODE_TYPE: EmbeddedType<NodeData> =
+    EmbeddedType::derived(c"Makiri::XML::Node".as_ptr(), &NODE_DATA_TYPE);
 
 /// Which representation a wrapped Ruby node is, decided by its TypedData type
 /// rather than its Ruby class. A Document, a NodeSet or any non-node is
@@ -263,8 +278,7 @@ pub fn node_raw(rb_node: Value) -> Result<NodeWord, Error> {
         });
     }
     /* TypeError for a non-node, as TypedData_Get_Struct raised. */
-    let nd: &NodeData = NODE_DATA_TYPE.get(&rb_node)?;
-    Ok(match nd.node {
+    Ok(match NODE_DATA_TYPE.read(rb_node)?.node {
         NodeHandle::Html(key) => NodeWord::from(key.raw_node()),
         NodeHandle::Xml(id) => NodeWord::from(id),
     })
@@ -307,5 +321,5 @@ pub fn keepalive_document(rb_node: Value) -> Result<Value, Error> {
     if crate::bridge::ruby::is_kind_of(rb_node, &CLASS_DOCUMENT) {
         return Ok(rb_node);
     }
-    Ok(NODE_DATA_TYPE.get(&rb_node)?.document())
+    Ok(NODE_DATA_TYPE.read(rb_node)?.document)
 }

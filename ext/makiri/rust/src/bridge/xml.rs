@@ -142,7 +142,7 @@ pub fn xml_node_unwrap(rb_self: Value) -> Result<NodeId, Error> {
         XML_DOC_TYPE.get(&rb_self)?; /* TypeError for any other Document */
         return Ok(xml_read(&rb_self)?.doc_node());
     }
-    let nd: &NodeData = XML_NODE_TYPE.get(&rb_self)?;
+    let nd = XML_NODE_TYPE.read(rb_self)?;
     /* A wrapper's word is a real node; a null one is a broken invariant. It
      * is answered as `InternalError` directly, not by panicking: this runs in
      * magnus's argument conversion (`XmlSelf::try_convert`), outside
@@ -166,7 +166,7 @@ pub fn xml_node_document(rb_self: Value) -> Result<Value, Error> {
     if crate::bridge::ruby::is_kind_of(rb_self, &CLASS_XML_DOCUMENT) {
         return Ok(rb_self);
     }
-    Ok(XML_NODE_TYPE.get(&rb_self)?.document())
+    Ok(XML_NODE_TYPE.read(rb_self)?.document)
 }
 
 /* ------------------------------------------------------------------ *

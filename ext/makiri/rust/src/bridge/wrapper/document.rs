@@ -605,7 +605,7 @@ impl NodeClasses {
 /// representation `ty` wraps, and `klass` a class of it: only the two
 /// `wrap_*_node` functions call this, each for its own kind.
 pub(in crate::bridge) fn wrap_cached(
-    ty: &'static TypedType<NodeData>,
+    ty: &'static crate::bridge::typed::EmbeddedType<NodeData>,
     klass: magnus::RClass,
     source: impl NodeHandleSource,
     document: Value,

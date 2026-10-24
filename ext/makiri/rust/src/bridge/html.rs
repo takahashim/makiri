@@ -162,9 +162,9 @@ pub(in crate::bridge) fn html_node_key(rb_node: Value) -> Result<(HtmlNodeKey, V
         .map_err(|ForeignNode| foreign_node_error())?;
         return Ok((key, rb_node));
     }
-    let nd: &NodeData = HTML_NODE_TYPE.get(&rb_node)?;
+    let nd = HTML_NODE_TYPE.read(rb_node)?;
     let key = nd.node.html().ok_or_else(uninitialized)?;
-    Ok((key, nd.document()))
+    Ok((key, nd.document))
 }
 
 /// A method receiver already checked to be an HTML node or HTML Document.
