@@ -491,7 +491,11 @@ by the check that concluded "every undefined symbol is legitimate".
   only review checked, and a miscount grew outside the sweep. A plain call
   survives under `#[allow(clippy::disallowed_methods, reason = ...)]` only where
   the room is known and a failure part-way could not be undone (a compaction
-  sized to its total, a push back after a pop) - keep those few and say why. The glue's
+  sized to its total, a push back after a pop) - keep those few and say why.
+  Not covered: a `clone()` of a type that holds a heap container (clippy
+  cannot ban `Clone::clone` per type; the tokenizer's `Token` derives `Clone`
+  with a `Vec` inside, and nothing that ships clones one), and what a
+  third-party crate allocates inside itself (`encoding_rs`, `chardetng`). The glue's
   Ruby-side storage - TypedData wrappers (`bridge::typed::wrap_built`, freed by
   running the struct's `Drop` in place before `ruby_xfree`) and
   `NodeSet`'s node array - uses Ruby's `ruby_xmalloc` family instead: its failure
