@@ -4,7 +4,7 @@
 //! HTML builds through [`HtmlDocMut`], whose factories name each node as the
 //! adapter's do.
 
-use crate::falloc::{try_vec_with_capacity, OomOption, OomResult, VecPush};
+use crate::falloc::{try_vec_with_capacity, OomOption, OomResult, VecGrow};
 use crate::html::dom::{
     has_ascii_uppercase, CreatePiError, HtmlDocMut, HtmlElement, HtmlNode, NodeId as HtmlId, NsId,
     Place, RawNode,

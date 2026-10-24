@@ -187,6 +187,7 @@ impl Escape {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::disallowed_methods)] /* test inputs */
     use super::non_xml_char_at;
 
     /// On valid UTF-8 the byte test is the XML `Char` class the parser checks

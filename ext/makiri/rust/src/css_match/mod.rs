@@ -191,7 +191,7 @@ pub(crate) use compile::validate;
 pub use ns::Namespaces;
 pub use scratch::Scratch;
 
-use crate::falloc::VecPush;
+use crate::falloc::VecGrow;
 use crate::limits::NODE_SET_MAX;
 use crate::selectors::ast::Lists;
 

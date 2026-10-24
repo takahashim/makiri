@@ -1,6 +1,7 @@
 //! The WPT tree-construction data through the parser port, held to the
 //! pinned expectations: the port's own conformance, which needs no Lexbor
 //! (`rake conformance:parser` runs it, with the fetched data).
+#![allow(clippy::disallowed_methods)] /* test inputs */
 
 use crate::conformance::dat::{self, Scripting};
 use crate::conformance::tree_construction_dir;

@@ -34,6 +34,7 @@
 //! descendant and subsequent-sibling combinators; [`affordable`] skips the
 //! inputs where that would turn a run into a timeout rather than a finding.
 #![no_main]
+#![allow(clippy::disallowed_methods)] /* the harness, not the engine: see common.rs */
 
 use libfuzzer_sys::fuzz_target;
 

@@ -951,11 +951,10 @@ fn processing_instruction_questionable(
 /// `lxb_html_tokenizer_state_processing_instruction_to_comment`: prefix the
 /// buffer with `?`.
 fn processing_instruction_to_comment(t: &mut Tokenizer<'_, '_>) -> Result<(), Halted> {
-    use crate::falloc::Reserve;
-    if t.buf.falloc_reserve(1).is_err() {
+    use crate::falloc::VecGrow;
+    if t.buf.falloc_insert(0, b'?').is_err() {
         return Err(t.halt(super::Status::Oom));
     }
-    t.buf.insert(0, b'?');
     Ok(())
 }
 
@@ -1073,12 +1072,11 @@ fn char_ref_named(t: &mut Tokenizer<'_, '_>, mut data: usize, end: usize) -> usi
     let new_tail = t.char_ref.start + value.len();
     let new_len = new_tail + tail_len;
     if new_len > t.buf.len() {
-        use crate::falloc::Reserve;
-        if t.buf.falloc_reserve(new_len - t.buf.len()).is_err() {
+        use crate::falloc::VecGrow;
+        if t.buf.falloc_resize(new_len, 0).is_err() {
             t.halt(super::Status::Oom);
             return end;
         }
-        t.buf.resize(new_len, 0);
     }
     t.buf
         .copy_within(tail_start..tail_start + tail_len, new_tail);

@@ -6,7 +6,7 @@
 
 #![forbid(unsafe_code)]
 
-use crate::falloc::VecPush;
+use crate::falloc::VecGrow;
 
 /* ------------------------------------------------------------------ *
  * line table                                                         *
@@ -90,6 +90,7 @@ pub fn lines_build(bytes: &[u8]) -> Option<Lines> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::disallowed_methods)] /* test inputs */
     use super::lines_build;
 
     /// The table the scan builds is the one a byte loop builds, for every

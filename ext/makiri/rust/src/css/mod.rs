@@ -17,7 +17,7 @@
 //! The lowering builds ordinary `xpath::ast` values through `build`: a node under
 //! construction is a `build::Built`, and steps and lists are plain owned data, so
 //! a failure anywhere drops - frees - what was built.
-
+#![allow(clippy::disallowed_methods)] /* reference only: built for the tests and xml-css-reference */
 #![forbid(unsafe_code)]
 
 mod build;

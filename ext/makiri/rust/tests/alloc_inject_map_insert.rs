@@ -12,7 +12,7 @@
 //!
 //!     cargo test --no-default-features --features alloc-inject \
 //!         --test alloc_inject_map_insert
-
+#![allow(clippy::disallowed_methods)] /* test inputs */
 #![cfg(feature = "alloc-inject")]
 
 use std::collections::HashMap;

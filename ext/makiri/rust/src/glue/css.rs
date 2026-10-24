@@ -59,7 +59,7 @@ impl CssArgs {
 
     /// The bindings as the matcher reads them, for `f`.
     pub fn with_namespaces<R>(&self, f: impl FnOnce(&Namespaces<'_>) -> R) -> Result<R, Error> {
-        use crate::falloc::{try_vec_with_capacity, VecPush};
+        use crate::falloc::{try_vec_with_capacity, VecGrow};
         if self.bindings.is_empty() {
             return Ok(f(&Namespaces::NONE));
         }

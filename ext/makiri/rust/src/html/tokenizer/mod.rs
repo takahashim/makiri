@@ -40,7 +40,7 @@ pub use error::ErrorId;
 pub use state::{cdata_section_before, data_before, plaintext_before, State};
 pub use state_text::{rawtext_before, rcdata_before, script_data_before};
 
-use crate::falloc::{Reserve, VecPush};
+use crate::falloc::VecGrow;
 use crate::html::names::Names;
 use crate::html::res::names as res;
 use crate::ptr_table::{mix64, PtrMap, TableKey};
@@ -451,10 +451,9 @@ impl<'i, 's> Tokenizer<'i, 's> {
     /// `lxb_html_tokenizer_temp_append`.
     #[inline]
     pub(crate) fn append(&mut self, bytes: &[u8]) -> Result<(), Halted> {
-        if self.buf.falloc_reserve(bytes.len()).is_err() {
+        if self.buf.falloc_extend_from_slice(bytes).is_err() {
             return Err(self.halt(Status::Oom));
         }
-        self.buf.extend_from_slice(bytes);
         Ok(())
     }
 
@@ -552,10 +551,9 @@ impl<'i, 's> Tokenizer<'i, 's> {
     /// copy of the buffer.
     pub(crate) fn set_value(&mut self) -> Result<(), Halted> {
         let start = self.values.len();
-        if self.values.falloc_reserve(self.buf.len()).is_err() {
+        if self.values.falloc_extend_from_slice(&self.buf).is_err() {
             return Err(self.halt(Status::Oom));
         }
-        self.values.extend_from_slice(&self.buf);
         let end = self.values.len();
         if let Some(a) = self.token.attrs.last_mut() {
             a.value = Some((start, end));

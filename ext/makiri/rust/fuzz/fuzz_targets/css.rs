@@ -16,6 +16,7 @@
 //! selector with a bare type selector is compared only under a default
 //! namespace, and one with a bare `*` only without.
 #![no_main]
+#![allow(clippy::disallowed_methods)] /* the harness, not the engine: see common.rs */
 
 use libfuzzer_sys::fuzz_target;
 

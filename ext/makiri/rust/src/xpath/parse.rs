@@ -21,7 +21,7 @@ use super::lex::{LexErr, Lexer, Tok, Token};
 use super::limits::check_ast_depth;
 use crate::engine_error::Bytes;
 use crate::err_setf;
-use crate::falloc::{try_box, try_to_boxed_slice, VecPush};
+use crate::falloc::{try_box, try_to_boxed_slice, VecGrow};
 
 struct Parser<'a> {
     lx: Lexer<'a>,

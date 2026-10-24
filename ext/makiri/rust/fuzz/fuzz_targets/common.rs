@@ -70,6 +70,7 @@ impl Expr {
         // here, and saying so is the point of the allow.
         #[allow(clippy::disallowed_methods)]
         buf.try_reserve_exact(len).ok()?;
+        #[allow(clippy::disallowed_methods)]
         buf.extend_from_slice(&bytes[..len]);
         Some(Expr(buf))
     }

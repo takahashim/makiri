@@ -28,7 +28,7 @@ use super::order::nodeset_unique_sorted;
 use super::value::Focus;
 use super::value::*;
 use crate::err_setf;
-use crate::falloc::{try_vec_with_capacity, Reserve};
+use crate::falloc::{try_vec_with_capacity, Reserve, VecGrow};
 use core::ops::ControlFlow;
 use std::collections::HashMap;
 
@@ -663,6 +663,7 @@ impl<'d, D: Dom<'d>> IdLookup<'d, D> {
                             "out of memory in id()"
                         ));
                     }
+                    #[allow(clippy::disallowed_methods, reason = "reserved just above")]
                     index.entry(id).or_insert(n);
                 }
             }
@@ -865,7 +866,10 @@ fn fn_concat<'e, 'd, D: Dom<'d>>(
             None => return Err(err_setf!(err, ErrorKind::Oom, "concat() size overflow")),
         };
         ev.budget.check_string_bytes(total)?;
-        parts.push(t);
+        /* Sized for every argument above: this cannot grow. */
+        if parts.falloc_push(t).is_err() {
+            return Err(err_setf!(err, ErrorKind::Oom, "out of memory in concat()"));
+        }
     }
     let joined = Text::try_fill(total, |dst| {
         let mut off = 0usize;
@@ -1071,11 +1075,26 @@ fn fn_translate<'e, 'd, D: Dom<'d>>(
      * input character is a binary search rather than a scan of `from`: that
      * scan was O(string x from), both up to the byte cap. */
     let mut from_cp = try_vec::<(char, usize)>(fv.len(), err.clone(), "translate")?;
-    from_cp.extend(fv.chars().enumerate().map(|(k, c)| (c, k)));
+    if from_cp
+        .falloc_extend(fv.chars().enumerate().map(|(k, c)| (c, k)))
+        .is_err()
+    {
+        return Err(err_setf!(
+            err,
+            ErrorKind::Oom,
+            "out of memory in translate()"
+        ));
+    }
     from_cp.sort_unstable();
     from_cp.dedup_by_key(|&mut (c, _)| c); /* keeps the first, the smallest k */
     let mut to_cp = try_vec::<char>(tv.len(), err.clone(), "translate")?;
-    to_cp.extend(tv.chars());
+    if to_cp.falloc_extend(tv.chars()).is_err() {
+        return Err(err_setf!(
+            err,
+            ErrorKind::Oom,
+            "out of memory in translate()"
+        ));
+    }
 
     /* Capped: a multibyte replacement can push the result past the limit even
      * when the input is inside it ("a" -> an emoji), so the append fails closed

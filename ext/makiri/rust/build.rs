@@ -31,7 +31,8 @@
 //! to find - Lexbor's constants live in ANONYMOUS enums (`lxb_ns_id_enum_t`,
 //! `lxb_dom_node_type_t`), so allowlisting by constant name matches nothing.
 //! The enum TYPE has to be allowlisted instead.
-
+#![allow(clippy::disallowed_methods)]
+/* the build script, not the engine */
 // The crate's panic gate does not apply here: a build script reports failure BY
 // panicking - cargo prints the message and stops the build - so aborting is the
 // interface, not a missing error path. Nothing in this file ships.

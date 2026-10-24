@@ -9,7 +9,7 @@
 //! again in the arena's own tables, so a static id stays the same number and
 //! an appended one gets the arena's.
 
-use crate::falloc::VecPush;
+use crate::falloc::VecGrow;
 use crate::html::dom::{Document, DomOom, NodeId, NodeName, NodeType, Shortcut, ShortcutRule};
 use crate::lexbor::adapter::html::{HtmlAttr, HtmlDoc, HtmlNode};
 

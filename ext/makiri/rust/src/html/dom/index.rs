@@ -11,7 +11,7 @@
 
 use super::handle::{has_ascii_uppercase, HtmlDoc, HtmlNode, NsId, TagId, TAG_LAST_ENTRY};
 use super::{Document, DomOom, NodeId, NodeType, Span};
-use crate::falloc::{try_vec_with_capacity, VecPush};
+use crate::falloc::{try_vec_with_capacity, VecGrow};
 
 /* ---------- the element index ---------- */
 
@@ -61,16 +61,14 @@ impl DomIndex {
         }
         let noff = tag_max.checked_add(2)?;
         idx.tag_off = try_vec_with_capacity(noff)?;
-        idx.tag_nodes = try_vec_with_capacity(pairs.len())?;
-        let mut cursor: Vec<usize> = try_vec_with_capacity(noff)?;
-        idx.tag_off.push(0);
+        idx.tag_off.falloc_push(0).ok()?;
         let mut running = 0usize;
         for c in counts.iter().take(tag_max + 1) {
             running = running.checked_add(*c)?;
-            idx.tag_off.push(running);
+            idx.tag_off.falloc_push(running).ok()?;
         }
-        cursor.extend_from_slice(&idx.tag_off);
-        idx.tag_nodes.resize(pairs.len(), NodeId::DOCUMENT);
+        let mut cursor: Vec<usize> = crate::falloc::try_to_vec(&idx.tag_off)?;
+        idx.tag_nodes = crate::falloc::try_vec_filled(pairs.len(), NodeId::DOCUMENT)?;
         for (tag, id) in pairs {
             let slot = cursor.get_mut(usize::from(tag))?;
             *idx.tag_nodes.get_mut(*slot)? = id;
@@ -126,8 +124,7 @@ impl DocOrder {
         if nodes >= Self::NONE as usize {
             return None;
         }
-        let mut pre: Vec<u32> = try_vec_with_capacity(nodes)?;
-        pre.resize(nodes, Self::NONE);
+        let mut pre: Vec<u32> = crate::falloc::try_vec_filled(nodes, Self::NONE)?;
         let mut ord = 0u32;
         let mut number = |n: NodeId| -> Option<()> {
             *pre.get_mut(n.index())? = ord;
@@ -230,10 +227,9 @@ impl TextIndex {
         let mut t = TextIndex {
             slices: Vec::new(),
             prefix: try_vec_with_capacity(1).ok_or(DomOom)?,
-            runs: try_vec_with_capacity(nodes).ok_or(DomOom)?,
+            runs: crate::falloc::try_vec_filled(nodes, Run::NONE).ok_or(DomOom)?,
         };
-        t.runs.resize(nodes, Run::NONE);
-        t.prefix.push(0);
+        t.prefix.falloc_push(0).map_err(|()| DomOom)?;
         let mut n = root;
         loop {
             if let Some(span) = text_span(n) {

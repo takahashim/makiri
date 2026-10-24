@@ -46,7 +46,7 @@
 //!
 //! # Two shapes, and why
 //!
-//! Growth is on traits (`Reserve`, `VecPush`, `MapInsert`) because it has a
+//! Growth is on traits (`Reserve`, `VecGrow`, `MapInsert`) because it has a
 //! receiver: `v.falloc_push(x)` reads like the `v.push(x)` it replaces, which is
 //! what kept the conversion of the call sites reviewable. Construction is free
 //! functions (`try_box`, `try_vec_with_capacity`, `try_to_vec`, ...) because
@@ -162,20 +162,95 @@ pub trait Reserve {
     fn falloc_reserve_exact(&mut self, additional: usize) -> Result<(), ()>;
 }
 
-/// Growing a `Vec`, beyond the reserve itself.
-pub trait VecPush<T> {
+/// Growing a `Vec`, beyond the reserve itself: every std method that grows
+/// one, spelled so that the growth is a falloc reserve. `clippy.toml` bans the
+/// std spellings, so "reserve exactly what follows, then the plain call" - a
+/// count that review alone checked, and a miscount that grew outside the
+/// sweep - is no longer a shape a call site can take.
+///
+/// Each reserves first, and the injection hook is asked only when that
+/// reserve has to grow (see [`injectable`]), so a call into room already
+/// reserved costs one comparison. `Err(())` leaves the vector unchanged,
+/// [`falloc_extend`](Self::falloc_extend) included. The copying ones take
+/// `T: Copy` for [`try_to_vec`]'s reason: a `Clone` element's `clone` may
+/// allocate outside the sweep.
+pub trait VecGrow<T> {
     /// Push one element, growing geometrically (std's amortized growth) when
     /// full. The allocator - and so the injection hook - is asked only then,
     /// so a push per node of a walk is one injection point per growth.
-    /// `Err(())` leaves the vector unchanged.
     fn falloc_push(&mut self, item: T) -> Result<(), ()>;
+    /// `insert(index, item)`. Panics, as `insert` does, past the length.
+    fn falloc_insert(&mut self, index: usize, item: T) -> Result<(), ()>;
+    /// `extend_from_slice`.
+    fn falloc_extend_from_slice(&mut self, s: &[T]) -> Result<(), ()>
+    where
+        T: Copy;
+    /// `extend_from_within(range)`. Panics, as it does, on a range out of bounds.
+    fn falloc_extend_from_within(&mut self, range: core::ops::Range<usize>) -> Result<(), ()>
+    where
+        T: Copy;
+    /// `resize(new_len, value)`; a shrink allocates nothing.
+    fn falloc_resize(&mut self, new_len: usize, value: T) -> Result<(), ()>
+    where
+        T: Copy;
+    /// `extend(iter)`: one reserve for the iterator's lower bound, then a
+    /// push per element; on a failure the elements already pushed are
+    /// removed, so the vector is as it was.
+    fn falloc_extend<I: IntoIterator<Item = T>>(&mut self, iter: I) -> Result<(), ()>;
 }
 
-impl<T> VecPush<T> for Vec<T> {
+#[allow(clippy::disallowed_methods)]
+impl<T> VecGrow<T> for Vec<T> {
     #[inline]
     fn falloc_push(&mut self, item: T) -> Result<(), ()> {
         self.falloc_reserve(1)?;
         self.push(item);
+        Ok(())
+    }
+    #[inline]
+    fn falloc_insert(&mut self, index: usize, item: T) -> Result<(), ()> {
+        self.falloc_reserve(1)?;
+        self.insert(index, item);
+        Ok(())
+    }
+    #[inline]
+    fn falloc_extend_from_slice(&mut self, s: &[T]) -> Result<(), ()>
+    where
+        T: Copy,
+    {
+        self.falloc_reserve(s.len())?;
+        self.extend_from_slice(s);
+        Ok(())
+    }
+    #[inline]
+    fn falloc_extend_from_within(&mut self, range: core::ops::Range<usize>) -> Result<(), ()>
+    where
+        T: Copy,
+    {
+        self.falloc_reserve(range.end.saturating_sub(range.start))?;
+        self.extend_from_within(range);
+        Ok(())
+    }
+    #[inline]
+    fn falloc_resize(&mut self, new_len: usize, value: T) -> Result<(), ()>
+    where
+        T: Copy,
+    {
+        self.falloc_reserve(new_len.saturating_sub(self.len()))?;
+        self.resize(new_len, value);
+        Ok(())
+    }
+    #[inline]
+    fn falloc_extend<I: IntoIterator<Item = T>>(&mut self, iter: I) -> Result<(), ()> {
+        let iter = iter.into_iter();
+        let start = self.len();
+        self.falloc_reserve(iter.size_hint().0)?;
+        for item in iter {
+            if self.falloc_push(item).is_err() {
+                self.truncate(start);
+                return Err(());
+            }
+        }
         Ok(())
     }
 }
@@ -256,6 +331,28 @@ pub fn try_vec_with_capacity<T>(cap: usize) -> Option<Vec<T>> {
     Some(v)
 }
 
+/// `vec![value; len]`, or failure: the shape of an index sized to an arena.
+#[inline]
+pub fn try_vec_filled<T: Copy>(len: usize, value: T) -> Option<Vec<T>> {
+    let mut v = try_vec_with_capacity(len)?;
+    v.falloc_resize(len, value).ok()?;
+    Some(v)
+}
+
+/// The concatenation of `parts`, in one allocation of exactly their total
+/// length, or failure: a qualified name from its prefix, `:` and local name,
+/// an index key from its pieces.
+pub fn try_concat<T: Copy>(parts: &[&[T]]) -> Option<Vec<T>> {
+    let len = parts
+        .iter()
+        .try_fold(0usize, |n, p| n.checked_add(p.len()))?;
+    let mut v = try_vec_with_capacity(len)?;
+    for p in parts {
+        v.falloc_extend_from_slice(p).ok()?;
+    }
+    Some(v)
+}
+
 /// Copy a slice into a fresh `Vec`, or fail.
 ///
 /// `T: Copy`, not `Clone`: this is the elementwise copy path, and a non-`Copy`
@@ -265,7 +362,7 @@ pub fn try_vec_with_capacity<T>(cap: usize) -> Option<Vec<T>> {
 #[inline]
 pub fn try_to_vec<T: Copy>(s: &[T]) -> Option<Vec<T>> {
     let mut v = try_vec_with_capacity(s.len())?;
-    v.extend_from_slice(s);
+    v.falloc_extend_from_slice(s).ok()?;
     Some(v)
 }
 
@@ -285,7 +382,7 @@ pub fn try_to_vec<T: Copy>(s: &[T]) -> Option<Vec<T>> {
 pub fn try_to_boxed_slice<T: Copy>(s: &[T]) -> Option<Box<[T]>> {
     let mut v = Vec::new();
     v.falloc_reserve_exact(s.len()).ok()?;
-    v.extend_from_slice(s);
+    v.falloc_extend_from_slice(s).ok()?;
     if core::mem::size_of::<T>() != 0 && v.capacity() != v.len() {
         return None;
     }
@@ -317,6 +414,22 @@ impl<K: core::hash::Hash + Eq, V, S: core::hash::BuildHasher> MapInsert<K, V> fo
     }
 }
 
+/// Inserting into a set: [`MapInsert`]'s shape, with `true` when the value
+/// was new (std's `insert`).
+pub trait SetInsert<T> {
+    fn falloc_insert(&mut self, value: T) -> Result<bool, ()>;
+}
+
+impl<T: core::hash::Hash + Eq, S: core::hash::BuildHasher> SetInsert<T> for HashSet<T, S> {
+    #[inline]
+    #[allow(clippy::disallowed_methods)]
+    fn falloc_insert(&mut self, value: T) -> Result<bool, ()> {
+        /* Unconditional, as in `MapInsert`: std reserves before it looks. */
+        self.falloc_reserve(1)?;
+        Ok(self.insert(value))
+    }
+}
+
 /// A domain error with one variant meaning "an allocation failed" - the
 /// target of [`OomResult::or_oom`] / [`OomOption::or_oom`] below.
 ///
@@ -329,7 +442,7 @@ pub trait Oom {
     fn oom() -> Self;
 }
 
-/// `Result<T, ()>` from a growth op ([`Reserve`], [`VecPush`], [`MapInsert`])
+/// `Result<T, ()>` from a growth op ([`Reserve`], [`VecGrow`], [`MapInsert`])
 /// -> a domain `Result<T, E>`, naming only which error type - not which
 /// variant, since [`Oom::oom`] already knows that.
 ///

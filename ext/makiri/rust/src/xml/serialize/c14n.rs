@@ -13,7 +13,7 @@ use super::bindings::{Bindings, Prefix};
 use super::out::{put, put_comment, put_pi, C14N, W};
 use super::Failure;
 use crate::cbuf::Buf;
-use crate::falloc::{OomResult, VecPush};
+use crate::falloc::{OomResult, VecGrow};
 use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId, MAX_DEPTH};
 
 fn xmlns_decl(doc: &XmlDoc, a: NodeId) -> Option<(&[u8], &[u8])> {

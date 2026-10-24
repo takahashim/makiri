@@ -12,7 +12,7 @@
 //! elements are queried with prefixed type selectors only. What the
 //! lowering refuses (the form states, `i`, `of S`) it does not answer, and
 //! the comparison skips.
-
+#![allow(clippy::disallowed_methods)] /* test inputs */
 #![forbid(unsafe_code)]
 
 use crate::css::{compile_owned, CssNs, Form};

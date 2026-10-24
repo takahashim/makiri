@@ -1,6 +1,7 @@
 //! The child index against lists that implement [`Tree`] and [`TokenTree`]
 //! and nothing else: the answers against a direct read, the start choice, and the memo's
 //! invariant (versions, eviction).
+#![allow(clippy::disallowed_methods)] /* test inputs */
 
 use super::*;
 use crate::dom_rules::Tree;

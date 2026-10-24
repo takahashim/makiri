@@ -33,7 +33,7 @@ use super::token::{Span, Token, TokenType as T};
 use super::tokenizer::Tokenizer;
 use super::Status;
 use crate::compat::{self, Fix};
-use crate::falloc::{Reserve, VecPush};
+use crate::falloc::{Reserve, VecGrow};
 use core::ffi::{c_long, c_ulong};
 
 mod syntax;
@@ -732,7 +732,12 @@ impl<'a> Parser<'a> {
         self.rules[self.r].back_state = back;
         self.r += 1;
         if self.r == self.rules.len() {
-            self.rules.push(rule);
+            /* Reserved above: this cannot fail now. */
+            if self.rules.falloc_push(rule).is_err() {
+                self.r -= 1;
+                self.status = Status::ErrorMemoryAllocation;
+                return false;
+            }
         } else {
             self.rules[self.r] = rule;
         }
@@ -2444,7 +2449,6 @@ impl<'a> Parser<'a> {
 fn store(strings: &mut Vec<u8>, bytes: &[u8]) -> Option<Span> {
     let start = u32::try_from(strings.len()).ok()?;
     let len = u32::try_from(bytes.len()).ok()?;
-    strings.falloc_reserve(bytes.len()).ok()?;
-    strings.extend_from_slice(bytes);
+    strings.falloc_extend_from_slice(bytes).ok()?;
     Some(Span { start, len })
 }

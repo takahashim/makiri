@@ -19,7 +19,7 @@
 #![allow(clippy::missing_safety_doc)]
 
 use crate::caught::PanicLatch;
-use crate::falloc::VecPush;
+use crate::falloc::VecGrow;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 

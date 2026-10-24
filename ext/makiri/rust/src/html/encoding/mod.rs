@@ -29,7 +29,7 @@ use encoding_rs::{UTF_16BE, UTF_16LE, WINDOWS_1252, X_USER_DEFINED};
 /// through this module, the one that reads `encoding_rs`.
 pub use encoding_rs::{Encoding, UTF_8};
 
-use crate::falloc::{try_vec_with_capacity, Reserve};
+use crate::falloc::{try_vec_with_capacity, VecGrow};
 use crate::html::tree::{MetaProbe, MetaVerdict};
 
 mod prescan;
@@ -278,8 +278,7 @@ pub fn decode(bytes: &[u8], encoding: &'static Encoding) -> Option<Vec<u8>> {
     let mut rest = bytes;
     loop {
         let len = out.len();
-        out.falloc_reserve(DECODE_CHUNK).ok()?;
-        out.resize(len + DECODE_CHUNK, 0);
+        out.falloc_resize(len + DECODE_CHUNK, 0).ok()?;
         let (result, read, written, _) = decoder.decode_to_utf8(rest, out.get_mut(len..)?, true);
         out.truncate(len + written);
         rest = rest.get(read..)?;

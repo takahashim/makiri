@@ -30,7 +30,7 @@
 
 use core::ffi::c_long;
 
-use crate::falloc::{OomResult, Reserve, VecPush};
+use crate::falloc::{OomResult, VecGrow};
 use crate::selectors::ast::{
     AttrMatch, CaseModifier, Combinator, FunctionArg, List, Lists, Selector, Simple,
 };
@@ -334,9 +334,7 @@ fn hex(out: &mut Vec<u8>, c: u8) -> Result<(), Fail> {
 }
 
 fn put(out: &mut Vec<u8>, s: &[u8]) -> Result<(), Fail> {
-    out.falloc_reserve(s.len()).or_oom()?;
-    out.extend_from_slice(s);
-    Ok(())
+    out.falloc_extend_from_slice(s).or_oom()
 }
 
 #[cfg(test)]

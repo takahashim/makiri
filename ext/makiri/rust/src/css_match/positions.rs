@@ -1,7 +1,7 @@
 //! A node's position among its siblings for the `:nth-*` family, and the
 //! memo that makes a walking query count each sibling list once.
 
-use crate::falloc::{OomResult, VecPush};
+use crate::falloc::{OomResult, VecGrow};
 use crate::ptr_table::{NodeKey, PtrMap};
 
 use super::dom::CssNode;

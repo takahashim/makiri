@@ -15,7 +15,7 @@
 
 #![forbid(unsafe_code)]
 
-use crate::falloc::{OomResult, VecPush};
+use crate::falloc::{OomResult, VecGrow};
 use crate::xml::ns_scope::{resolve_in_scope, Placement};
 use crate::xml::qname::{name_ns, NameNs, NameRole, ReservedPrefix, Split};
 use crate::xml::{ArenaKind, AttrNs, Document, MutError, NodeFlags, NodeId, Span};

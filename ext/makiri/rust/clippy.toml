@@ -6,22 +6,17 @@
 # fail allocations that consult the injection counter. `falloc` fixes both, and
 # this list is what keeps a new call site from quietly going around it.
 #
-# Scope is deliberate. Banned here are the ways a NEW owning container comes
-# into existence or grows its capacity, because those are unambiguous, plus the
-# shrinking methods below, whose normal shape is "reserve exact and never
-# shrink". `push`, `insert`, `extend` and `resize`/`resize_with` are NOT banned:
-# after a successful reserve they cannot allocate, and that is the normal shape
-# of the code.
-#
-# So one residual risk is left uncovered on purpose, and it is stated here
-# rather than deferred to a document: a `push`, `insert`, `extend` or
-# `resize`/`resize_with` with no reserve in front of it allocates infallibly and
-# the sweep cannot fail it. Banning them would need an allow on every second
-# line, which buys nothing - `falloc`'s VecPush / MapInsert exist so the reserve
-# and the write are one call, and review is what catches a site that skipped
-# them. Every `resize`/`resize_with` in the tree today already sits behind a
-# falloc reserve (ptr_table, dom_index, arena, eval, serialize/bindings), so the
-# exposure is a future site, not a live one.
+# Scope: every way a container comes into existence, grows or shrinks its
+# capacity. That includes the growth calls - `push`, `insert`, `extend`,
+# `extend_from_slice`, `resize`, a map or set's `insert`, `collect` - which were
+# once left out on the reasoning that after a reserve they cannot allocate. They
+# cannot; but the reserve's count was the call site's to get right, review was
+# all that checked it, and a miscount grew infallibly where the sweep could not
+# fail it. `falloc::VecGrow` / `MapInsert` / `SetInsert` make the reserve and
+# the write one call, so there is no count to get wrong. A plain call stays only
+# under `#[allow(clippy::disallowed_methods, reason = ...)]`, where the room is
+# known and a failure part-way could not be undone; tests and the reference-only
+# modules allow it wholesale.
 disallowed-methods = [
   { path = "std::boxed::Box::new", reason = "aborts on OOM; use falloc::try_box" },
   # `to_vec` is the same allocation as `Vec::from` under a friendlier name, and
@@ -64,6 +59,29 @@ disallowed-methods = [
   { path = "slice::sort_by", reason = "allocates and aborts on OOM; use sort_unstable_by" },
   { path = "slice::sort_by_key", reason = "allocates and aborts on OOM; use sort_unstable_by_key" },
   { path = "slice::sort_by_cached_key", reason = "allocates and aborts on OOM; sort in place" },
+  # Growth. A `push` / `extend` / `insert` / `resize` grows its container
+  # through the global allocator when it is full, and aborts on failure,
+  # outside the sweep. The rule was "falloc_reserve exactly what follows, then
+  # the plain call", held by review alone: a miscount grew infallibly, and
+  # `rake oom` could not see it. Each now has a falloc spelling that reserves
+  # and grows in one step (`VecGrow`, `MapInsert`), so a count is no longer a
+  # thing to get right.
+  { path = "alloc::vec::Vec::push", reason = "grows and aborts on OOM; use VecGrow::falloc_push" },
+  { path = "alloc::vec::Vec::insert", reason = "grows and aborts on OOM; use VecGrow::falloc_insert" },
+  { path = "alloc::vec::Vec::extend_from_slice", reason = "grows and aborts on OOM; use VecGrow::falloc_extend_from_slice" },
+  { path = "alloc::vec::Vec::extend_from_within", reason = "grows and aborts on OOM; use VecGrow::falloc_extend_from_within" },
+  { path = "alloc::vec::Vec::resize", reason = "grows and aborts on OOM; use VecGrow::falloc_resize" },
+  { path = "alloc::vec::Vec::resize_with", reason = "grows and aborts on OOM; reserve with falloc_reserve, then fill" },
+  { path = "alloc::vec::Vec::append", reason = "grows and aborts on OOM; reserve with falloc_reserve and move the elements" },
+  { path = "core::iter::Extend::extend", reason = "grows and aborts on OOM; use VecGrow::falloc_extend" },
+  { path = "alloc::string::String::push", reason = "grows and aborts on OOM" },
+  { path = "alloc::string::String::push_str", reason = "grows and aborts on OOM" },
+  { path = "alloc::collections::VecDeque::push_back", reason = "grows and aborts on OOM" },
+  { path = "alloc::collections::VecDeque::push_front", reason = "grows and aborts on OOM" },
+  { path = "std::collections::HashMap::insert", reason = "grows and aborts on OOM; use MapInsert::falloc_insert" },
+  { path = "std::collections::HashSet::insert", reason = "grows and aborts on OOM; use MapInsert::falloc_insert" },
+  { path = "std::collections::HashMap::entry", reason = "an insert through it grows and aborts on OOM; falloc_reserve(1) first, under an allow" },
+  { path = "core::iter::Iterator::collect", reason = "a collection built by it grows and aborts on OOM; push with falloc" },
   # magnus's constructors and growers RAISE on a failed allocation - a
   # `longjmp` over the caller's frames - and its `funcall`/`respond_to?`/`eql?`
   # family runs the caller's Ruby. `bridge::build` and `bridge::string` spell

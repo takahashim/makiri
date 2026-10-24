@@ -20,7 +20,7 @@ use super::strtod::strtod_internal;
 use super::token::{Span, Token, TokenType};
 use super::Status;
 use crate::compat::{self, Fix};
-use crate::falloc::{Reserve, VecPush};
+use crate::falloc::VecGrow;
 
 /// `LXB_CSS_SYNTAX_ERROR_CODEPOINT`.
 const ERROR_CODEPOINT: u32 = 0x1F_FFFF;
@@ -479,20 +479,18 @@ impl<'a> Tokenizer<'a> {
     fn append(&mut self, from: usize, to: usize) -> Option<()> {
         if to > from {
             let bytes = &self.input[from..to];
-            if self.buf.falloc_reserve(bytes.len()).is_err() {
+            if self.buf.falloc_extend_from_slice(bytes).is_err() {
                 return self.oom();
             }
-            self.buf.extend_from_slice(bytes);
         }
         Some(())
     }
 
     /// `lxb_css_syntax_buffer_append_m` over other bytes.
     fn append_bytes(&mut self, bytes: &[u8]) -> Option<()> {
-        if self.buf.falloc_reserve(bytes.len()).is_err() {
+        if self.buf.falloc_extend_from_slice(bytes).is_err() {
             return self.oom();
         }
-        self.buf.extend_from_slice(bytes);
         Some(())
     }
 
@@ -554,10 +552,9 @@ impl<'a> Tokenizer<'a> {
         let Ok(len32) = u32::try_from(self.buf.len()) else {
             return self.oom();
         };
-        if self.strings.falloc_reserve(self.buf.len()).is_err() {
+        if self.strings.falloc_extend_from_slice(&self.buf).is_err() {
             return self.oom();
         }
-        self.strings.extend_from_slice(&self.buf);
         self.buf.clear();
         token.string = Span {
             start: start32,

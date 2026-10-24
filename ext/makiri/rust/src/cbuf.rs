@@ -15,7 +15,7 @@
 
 #![forbid(unsafe_code)]
 
-use crate::falloc::{OomOption, Reserve};
+use crate::falloc::{OomOption, Reserve, VecGrow};
 
 pub mod verify;
 
@@ -62,7 +62,7 @@ impl OwnedBuf {
     pub fn copy_from(bytes: &[u8]) -> Option<OwnedBuf> {
         let mut v = Vec::new();
         v.falloc_reserve_exact(bytes.len()).ok()?;
-        v.extend_from_slice(bytes);
+        v.falloc_extend_from_slice(bytes).ok()?;
         Some(OwnedBuf(v))
     }
 
@@ -72,7 +72,7 @@ impl OwnedBuf {
     pub fn fill(cap: usize, fill: impl FnOnce(&mut [u8]) -> usize) -> Option<OwnedBuf> {
         let mut v = Vec::new();
         v.falloc_reserve_exact(cap).ok()?;
-        v.resize(cap, 0);
+        v.falloc_resize(cap, 0).ok()?;
         let len = fill(&mut v);
         assert!(len <= cap, "OwnedBuf::fill: wrote past its reservation");
         v.truncate(len);
@@ -204,8 +204,7 @@ impl Buf {
         self.data
             .falloc_reserve_exact(room - self.data.len())
             .map_err(|()| BufError::Oom)?;
-        self.data.resize(room, 0);
-        Ok(())
+        self.data.falloc_resize(room, 0).map_err(|()| BufError::Oom)
     }
 }
 
@@ -268,6 +267,7 @@ pub(crate) use limits::{BUF_DEFAULT_LIMIT, BUF_HARD_MAX};
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::disallowed_methods)] /* test inputs */
     use super::{Buf, BufError, OwnedBuf};
 
     #[test]

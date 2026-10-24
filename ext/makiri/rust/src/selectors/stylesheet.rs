@@ -43,7 +43,7 @@
 #![forbid(unsafe_code)]
 
 use crate::compat::{self, Fix};
-use crate::falloc::{self, OomOption, OomResult, Reserve, VecPush};
+use crate::falloc::{self, OomOption, OomResult, Reserve, VecGrow};
 use crate::selectors::ast::ListId;
 use crate::selectors::rules::{AtKind, Item, ItemId};
 use crate::selectors::text;
@@ -168,15 +168,15 @@ pub fn normalize_value(css: &[u8], begin: usize, end: usize) -> Result<Vec<u8>, 
                     .unwrap_or(&[]);
                 out.falloc_reserve(text.len() + 2).or_oom()?;
                 if space {
-                    out.push(b' ');
+                    out.falloc_push(b' ').or_oom()?;
                     space = false;
                 }
-                out.extend_from_slice(text);
+                out.falloc_extend_from_slice(text).or_oom()?;
                 after_backslash = token.ty == TokenType::Delim
                     && token.delim == u32::from(b'\\')
                     && compat::fixed(Fix::C15);
                 if after_backslash {
-                    out.push(b'\n');
+                    out.falloc_push(b'\n').or_oom()?;
                 }
             }
         }
@@ -190,8 +190,7 @@ pub fn normalize_value(css: &[u8], begin: usize, end: usize) -> Result<Vec<u8>, 
         && matches!(css.get(end), Some(b'\n' | b'\r' | 0x0C))
         && compat::fixed(Fix::C15)
     {
-        out.falloc_reserve(1).or_oom()?;
-        out.push(b'\n');
+        out.falloc_push(b'\n').or_oom()?;
     }
     Ok(out)
 }

@@ -5,7 +5,7 @@
 use super::abi::*;
 use super::value::Str;
 use crate::err_setf;
-use crate::falloc::Reserve;
+use crate::falloc::{Reserve, VecGrow};
 use crate::ptr_table::PtrMap;
 use crate::token::Token;
 
@@ -118,7 +118,13 @@ impl<'d> StrCache<'d> {
             ));
         }
         self.total_bytes = new_total;
-        self.entries.push((node, text));
+        if self.entries.falloc_push((node, text)).is_err() {
+            return Err(err_setf!(
+                budget.sink(),
+                ErrorKind::Oom,
+                "out of memory growing node string cache"
+            ));
+        }
         Ok(NodeText::Cached(TextId(id)))
     }
 }

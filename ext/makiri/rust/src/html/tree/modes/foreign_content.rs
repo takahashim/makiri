@@ -2,7 +2,7 @@
 //! (`insertion_mode/foreign_content.c`).
 
 use crate::compat::{self, Fix};
-use crate::falloc::try_vec_with_capacity;
+use crate::falloc::{try_vec_with_capacity, VecGrow};
 use crate::html::res::names as res;
 use crate::html::tokenizer::{flags, Tokenizer};
 use crate::html::tree::error::TreeErrorId as E;
@@ -106,12 +106,15 @@ fn text(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> b
         let Some(mut v) = try_vec_with_capacity::<u8>(data.len() + tok.null_count * 2) else {
             return tree.abort_with(TreeStatus::Oom);
         };
-        for &c in data {
+        let copied = data.iter().try_for_each(|&c| {
             if c == 0 {
-                v.extend_from_slice(REPLACEMENT);
+                v.falloc_extend_from_slice(REPLACEMENT)
             } else {
-                v.push(c);
+                v.falloc_push(c)
             }
+        });
+        if copied.is_err() {
+            return tree.abort_with(TreeStatus::Oom);
         }
         replaced = v;
         &replaced

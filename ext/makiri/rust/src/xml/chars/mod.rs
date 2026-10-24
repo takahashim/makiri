@@ -11,7 +11,7 @@
 
 mod expand;
 
-use crate::falloc::{try_vec_with_capacity, OomOption};
+use crate::falloc::{try_vec_with_capacity, OomOption, OomResult, VecGrow};
 use crate::xml::ParseError;
 /* The engine is reached ONLY through these three names, so there is never a
  * second equally-correct way to spell one of them. */
@@ -174,10 +174,12 @@ pub fn normalize_newlines(src: &[u8]) -> Result<Option<Vec<u8>>, ParseError> {
      * Reserved exactly above, and the output only shrinks, so nothing here
      * reallocates. */
     let mut runs = src.split(|&b| b == b'\r');
-    out.extend_from_slice(runs.next().unwrap_or_default());
+    out.falloc_extend_from_slice(runs.next().unwrap_or_default())
+        .or_oom::<ParseError>()?;
     for run in runs {
-        out.push(b'\n');
-        out.extend_from_slice(run.strip_prefix(b"\n").unwrap_or(run));
+        out.falloc_push(b'\n').or_oom::<ParseError>()?;
+        out.falloc_extend_from_slice(run.strip_prefix(b"\n").unwrap_or(run))
+            .or_oom::<ParseError>()?;
     }
     Ok(Some(out))
 }

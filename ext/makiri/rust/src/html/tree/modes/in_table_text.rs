@@ -1,6 +1,6 @@
 //! The "in table text" insertion mode (`insertion_mode/in_table_text.c`).
 
-use crate::falloc::{Reserve, VecPush};
+use crate::falloc::{Reserve, VecGrow};
 use crate::html::res::names as res;
 use crate::html::tokenizer::Tokenizer;
 use crate::html::tree::error::TreeErrorId as E;
@@ -22,14 +22,17 @@ pub fn in_table_text(
         if p.bytes.falloc_reserve(data.len()).is_err() {
             return tree.abort_with(TreeStatus::Oom);
         }
-        if tok.null_count != 0 {
+        let copied = if tok.null_count != 0 {
             /* Lexbor reports it a second time here. */
             tree.parse_error(tok, E::Nuch);
             tree.pending
                 .bytes
-                .extend(data.iter().copied().filter(|&c| c != 0));
+                .falloc_extend(data.iter().copied().filter(|&c| c != 0))
         } else {
-            tree.pending.bytes.extend_from_slice(data);
+            tree.pending.bytes.falloc_extend_from_slice(data)
+        };
+        if copied.is_err() {
+            return tree.abort_with(TreeStatus::Oom);
         }
         let p = &mut tree.pending;
         let end = p.bytes.len();

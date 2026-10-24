@@ -3,7 +3,7 @@
 //! its `lxb_selectors_nested_t` contexts. Nesting depth is stack length,
 //! never native recursion (the parent module's doc says why).
 
-use crate::falloc::{OomResult, VecPush};
+use crate::falloc::{OomResult, VecGrow};
 use crate::selectors::ast::Combinator;
 use core::ffi::c_long;
 

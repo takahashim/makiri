@@ -3,7 +3,7 @@
 //! `<textarea>`.
 
 use crate::compat::{self, Fix};
-use crate::falloc::try_vec_with_capacity;
+use crate::falloc::{try_vec_with_capacity, VecGrow};
 use crate::html::dom::CompatMode;
 use crate::html::res::names as res;
 use crate::html::res::tree as rt;
@@ -50,7 +50,12 @@ fn text(tree: &mut TreeBuilder<'_>, tkz: &mut Tokenizer<'_, '_>, tok: &Tok) -> b
         let Some(mut dropped) = try_vec_with_capacity::<u8>(data.len()) else {
             return tree.abort_with(TreeStatus::Oom);
         };
-        dropped.extend(data.iter().copied().filter(|&c| c != 0));
+        if dropped
+            .falloc_extend(data.iter().copied().filter(|&c| c != 0))
+            .is_err()
+        {
+            return tree.abort_with(TreeStatus::Oom);
+        }
         /* Can be empty only when every byte was a NUL. */
         if dropped.is_empty() {
             return true;

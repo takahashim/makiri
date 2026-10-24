@@ -21,7 +21,7 @@
 use core::num::NonZeroU32;
 
 use crate::compat::{self, Fix};
-use crate::falloc::{try_vec_with_capacity, Reserve, VecPush};
+use crate::falloc::{try_vec_with_capacity, Reserve, VecGrow};
 use crate::html::names::Names;
 use crate::html::res::names as res;
 pub use crate::node_type::NodeType;
@@ -329,7 +329,7 @@ impl Document {
     /// An empty document in Lexbor's `compat_mode` number.
     pub fn new(compat_mode: u8) -> Result<Document, DomOom> {
         let mut nodes: Vec<Node> = try_vec_with_capacity(16).ok_or(DomOom)?;
-        nodes.push(Node {
+        oom!(nodes.falloc_push(Node {
             kind: NodeType::Document,
             local: res::TAG__DOCUMENT as u32,
             /* An HTML document node is in the HTML namespace
@@ -343,7 +343,7 @@ impl Document {
             prev: None,
             source: 0,
             payload: Payload::Document,
-        });
+        }));
         Ok(Document {
             nodes,
             elements: Vec::new(),
@@ -542,14 +542,15 @@ impl Document {
         oom!(self.elements.falloc_reserve(1));
         let id = self.push(NodeType::Element, Payload::Element(idx))?;
         self.set_names(id, tag, ns, prefix);
-        self.elements.push(ElementData {
+        /* Reserved above, before the node: this cannot fail now. */
+        oom!(self.elements.falloc_push(ElementData {
             written,
             first_attr: None,
             last_attr: None,
             id_attr: None,
             class_attr: None,
             template: None,
-        });
+        }));
         /* An HTML `<template>` is made with its contents fragment, as
          * Lexbor's template interface is: in the HTML namespace, hosted by
          * the template. */
@@ -589,13 +590,14 @@ impl Document {
         oom!(self.attrs.falloc_reserve(1));
         let id = self.push(NodeType::Attribute, Payload::Attr(idx))?;
         self.set_names(id, local, ns, prefix);
-        self.attrs.push(AttrData {
+        /* Reserved above, before the node: this cannot fail now. */
+        oom!(self.attrs.falloc_push(AttrData {
             written,
             own_ns: OwnNs::Derived,
             value,
             next: None,
             prev: None,
-        });
+        }));
         Ok(id)
     }
 
@@ -645,7 +647,8 @@ impl Document {
         oom!(self.doctypes.falloc_reserve(1));
         let id = self.push(NodeType::DocumentType, Payload::Doctype(idx))?;
         self.set_names(id, names.local, names.ns, names.prefix);
-        self.doctypes.push(d);
+        /* Reserved above, before the node: this cannot fail now. */
+        oom!(self.doctypes.falloc_push(d));
         Ok(id)
     }
 

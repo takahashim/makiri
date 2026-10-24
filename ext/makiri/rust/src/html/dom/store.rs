@@ -9,7 +9,7 @@
 //! the spans the arena hands it.
 
 use super::{DomOom, NodeId};
-use crate::falloc::{try_vec_with_capacity, Reserve};
+use crate::falloc::{try_vec_with_capacity, Reserve, VecGrow};
 
 /// `[start, start + len)` of the byte store.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -73,8 +73,9 @@ impl ByteStore {
         let start = u32::try_from(self.bytes.len()).map_err(|_| DomOom)?;
         let len = u32::try_from(b.len()).map_err(|_| DomOom)?;
         start.checked_add(len).ok_or(DomOom)?;
-        self.bytes.falloc_reserve(b.len()).map_err(|()| DomOom)?;
-        self.bytes.extend_from_slice(b);
+        self.bytes
+            .falloc_extend_from_slice(b)
+            .map_err(|()| DomOom)?;
         Ok(Span { start, len })
     }
 
@@ -88,9 +89,8 @@ impl ByteStore {
             return Err(DomOom);
         }
         self.bytes
-            .falloc_reserve(s.len as usize)
+            .falloc_extend_from_within(from..to)
             .map_err(|()| DomOom)?;
-        self.bytes.extend_from_within(from..to);
         Ok(Span { start, len: s.len })
     }
 
@@ -141,6 +141,10 @@ impl ByteStore {
         /* `out` holds every live byte without growing, so nothing below
          * allocates, and every span fits a u32 as it did before. */
         let bytes = &self.bytes;
+        /* The plain call, under an allow: `out` was sized to every live byte
+         * above, so it cannot grow - and a failure part-way could not be
+         * undone, with the spans already moved. */
+        #[allow(clippy::disallowed_methods, reason = "sized to the total above")]
         spans(&mut |s| {
             let start = s.start as usize;
             let from = bytes.get(start..start + s.len as usize).unwrap_or_default();
@@ -171,8 +175,9 @@ impl ByteStore {
         });
         let new = if end == self.bytes.len() {
             u32::try_from(self.bytes.len() + b.len()).map_err(|_| DomOom)?;
-            self.bytes.falloc_reserve(b.len()).map_err(|()| DomOom)?;
-            self.bytes.extend_from_slice(b);
+            self.bytes
+                .falloc_extend_from_slice(b)
+                .map_err(|()| DomOom)?;
             Span {
                 start: span.start,
                 len: total,
@@ -201,9 +206,16 @@ impl ByteStore {
             self.bytes
                 .falloc_reserve(total as usize + spare)
                 .map_err(|()| DomOom)?;
-            self.bytes.extend_from_within(span.start as usize..end);
-            self.bytes.extend_from_slice(b);
-            self.bytes.resize(cap as usize, 0);
+            /* All three in the room reserved above. */
+            self.bytes
+                .falloc_extend_from_within(span.start as usize..end)
+                .map_err(|()| DomOom)?;
+            self.bytes
+                .falloc_extend_from_slice(b)
+                .map_err(|()| DomOom)?;
+            self.bytes
+                .falloc_resize(cap as usize, 0)
+                .map_err(|()| DomOom)?;
             /* The old data is dead now; its room, if it had one, was counted
              * dead when it was reserved. */
             for s in &mut self.growing.slots {

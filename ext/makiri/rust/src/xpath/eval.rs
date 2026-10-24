@@ -22,7 +22,7 @@ use super::step_index::{try_descendant_index, try_descendant_index_nth};
 use super::value::*;
 use crate::engine_error::Bytes;
 use crate::err_setf;
-use crate::falloc::{try_vec_with_capacity, VecPush};
+use crate::falloc::{try_vec_with_capacity, VecGrow};
 use core::ops::ControlFlow;
 
 /// An evaluation step: the value, or proof its error was written to the
@@ -45,7 +45,16 @@ impl<N> Memo<N> {
                 "out of memory allocating the memo table"
             ));
         };
-        table.resize_with(slots, || None);
+        if table
+            .falloc_extend(core::iter::repeat_with(|| None).take(slots))
+            .is_err()
+        {
+            return Err(err_setf!(
+                err,
+                ErrorKind::Oom,
+                "out of memory allocating the memo table"
+            ));
+        }
         Ok(Memo(table))
     }
 }
@@ -703,7 +712,15 @@ fn eval_fncall<'e, 'd, D: Dom<'d>>(
         }
     };
     for a in args {
-        vals.push(eval_node::<D>(ev, a, focus)?);
+        let v = eval_node::<D>(ev, a, focus)?;
+        /* Sized for every argument above: this cannot grow. */
+        if vals.falloc_push(v).is_err() {
+            return Err(err_setf!(
+                ev.budget.sink(),
+                ErrorKind::Oom,
+                "out of memory allocating function arguments"
+            ));
+        }
     }
     f.call(ev, focus, &vals)
 }

@@ -184,6 +184,10 @@ pub(crate) fn fixed(fix: Fix) -> bool {
 /// Run `f` with every fix off: the port parses as Lexbor did. For the
 /// differential harnesses only.
 #[cfg(any(test, feature = "lexbor-reference"))]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "reference only: no build that ships has it"
+)]
 pub fn as_lexbor<R>(f: impl FnOnce() -> R) -> R {
     struct Reset(bool);
     impl Drop for Reset {
@@ -231,6 +235,10 @@ fn has_formatting_end_tag(input: &[u8]) -> bool {
 /// selector or a stylesheet (`lexbor::selector_diff`,
 /// `lexbor::stylesheet_diff`).
 #[cfg(any(test, feature = "lexbor-reference"))]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "reference only: no build that ships has it"
+)]
 pub fn css_explains(input: &[u8]) -> Vec<Fix> {
     let mut fixes = Vec::new();
     /* C23: a pseudo-class or pseudo-element, a namespace prefix, or enough
@@ -301,6 +309,10 @@ pub fn css_explains(input: &[u8]) -> Vec<Fix> {
 /// reaches: C10, a qualified rule with no block, which any input can end
 /// in; C11, a `--name:` prelude.
 #[cfg(any(test, feature = "lexbor-reference"))]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "reference only: no build that ships has it"
+)]
 pub fn stylesheet_explains(input: &[u8]) -> Vec<Fix> {
     let mut fixes = css_explains(input);
     fixes.push(Fix::C10);
@@ -314,6 +326,10 @@ pub fn stylesheet_explains(input: &[u8]) -> Vec<Fix> {
 /// as a fragment in an HTML `context` element named in lower case). An input
 /// no fix explains must build the same tree with the fixes on and off.
 #[cfg(any(test, feature = "lexbor-reference"))]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "reference only: no build that ships has it"
+)]
 pub fn explains(input: &[u8], context: Option<&str>) -> Vec<Fix> {
     let mut fixes = Vec::new();
     /* P1: frameset-ok decides only whether a `<frameset>` start tag is taken,

@@ -19,7 +19,7 @@
 
 #![forbid(unsafe_code)]
 
-use crate::falloc::{try_vec_with_capacity, OomOption};
+use crate::falloc::OomOption;
 
 /// The MurmurHash3 fmix64 finalizer over a pointer value.
 ///
@@ -160,8 +160,7 @@ impl<K: TableKey, V: Copy> PtrTable<K, V> {
         let mut slots = Vec::new();
         if keys > 0 {
             let cap = capacity_for(keys)?;
-            slots = try_vec_with_capacity(cap)?;
-            slots.resize(cap, (K::EMPTY, empty)); /* reserved above */
+            slots = crate::falloc::try_vec_filled(cap, (K::EMPTY, empty))?;
         }
         Some(PtrTable {
             slots,
@@ -314,8 +313,8 @@ impl<K: TableKey, V: Copy + Default> PtrMap<K, V> {
             0 => Self::MIN_SLOTS,
             n => n.checked_mul(2).ok_or(InsertRefused)?,
         };
-        let mut slots: Vec<(K, V)> = try_vec_with_capacity(cap).or_oom()?;
-        slots.resize(cap, (K::EMPTY, V::default())); /* reserved above */
+        let mut slots: Vec<(K, V)> =
+            crate::falloc::try_vec_filled(cap, (K::EMPTY, V::default())).or_oom()?;
         for &(k, v) in self.slots.iter().filter(|(k, _)| *k != K::EMPTY) {
             let i = probe(&slots, k);
             slots[i] = (k, v);

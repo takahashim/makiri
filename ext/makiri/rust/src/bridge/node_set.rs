@@ -29,7 +29,7 @@
 #![allow(unsafe_code)]
 
 use crate::bridge::alloc::{GrowError, RubyVec};
-use crate::falloc::Reserve;
+use crate::falloc::{Reserve, SetInsert};
 use std::cell::RefCell;
 use std::collections::HashSet;
 
@@ -681,7 +681,11 @@ impl Index {
         if set.falloc_reserve(nodes.len()).is_err() {
             return Index::Linear;
         }
-        set.extend(nodes.iter().copied());
+        for &n in nodes {
+            if set.falloc_insert(n).is_err() {
+                return Index::Linear;
+            }
+        }
         Index::Hashed(set)
     }
 
@@ -708,7 +712,13 @@ impl Index {
     /// scans - the result built so far.
     fn insert(&mut self, n: NodeWord, already: &[NodeWord]) -> bool {
         match self {
-            Index::Hashed(s) => s.insert(n),
+            /* Sized for every node it will see (`empty`), so this does not
+             * grow; should it fail, the scan takes over for good, since
+             * `already` is the whole answer so far. */
+            Index::Hashed(s) => s.falloc_insert(n).unwrap_or_else(|()| {
+                *self = Index::Linear;
+                !already.contains(&n)
+            }),
             Index::Linear => !already.contains(&n),
         }
     }

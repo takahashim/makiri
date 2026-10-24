@@ -10,7 +10,7 @@
 //! allows one. Where a run of checks genuinely depends on an earlier mutation of
 //! the same document, they stay together and a fixture function builds the
 //! shared starting point.
-
+#![allow(clippy::disallowed_methods)] /* test inputs */
 #![forbid(unsafe_code)]
 
 use crate::dom_rules::{Hierarchy, PreInsertError, Violation};

@@ -7,7 +7,7 @@
 #![forbid(unsafe_code)]
 
 use super::*;
-use crate::falloc::{try_vec_with_capacity, VecPush};
+use crate::falloc::{try_vec_with_capacity, VecGrow};
 
 /// One entry of [`SiblingPositions`]: an element child and its 1-based
 /// positions, counted from the first sibling and from the last.
@@ -104,7 +104,9 @@ fn fill_positions<'e, 'd, D: Dom<'d>>(
     let Some(mut order) = try_vec_with_capacity::<u32>(memo.entries.len()) else {
         return Err(oom(ev));
     };
-    order.extend(0..len);
+    if order.falloc_extend(0..len).is_err() {
+        return Err(oom(ev));
+    }
     let memo = &mut ev.sibling_positions;
     /* The key borrows the document, not the memo, so the numbering below may
      * write the entries while keys are held. */

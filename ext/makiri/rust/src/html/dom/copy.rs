@@ -18,7 +18,7 @@ use super::{
     Document, DomOom, ElementData, Node, NodeId, NodeName, NodeType, Payload, ShortcutRule, Span,
     HTML_NS,
 };
-use crate::falloc::VecPush;
+use crate::falloc::VecGrow;
 use crate::html::res::names as res;
 
 /// Where a copy reads from.

@@ -7,7 +7,7 @@
 #![forbid(unsafe_code)]
 
 use super::Failure;
-use crate::falloc::{try_vec_with_capacity, OomOption, OomResult, Reserve};
+use crate::falloc::{OomOption, OomResult, Reserve, VecGrow};
 
 /// The total prefix-resolution steps one serialization may take. Generous - an
 /// ordinary document uses a handful - but finite, so namespace planning cannot
@@ -140,8 +140,7 @@ impl<'d> Bindings<'d> {
             .checked_mul(4)
             .map(|n| n.next_power_of_two().max(16))
             .ok_or(Failure::ScopeOverflow)?;
-        let mut slots: Vec<u32> = try_vec_with_capacity(size).or_oom()?;
-        slots.resize(size, EMPTY);
+        let slots: Vec<u32> = crate::falloc::try_vec_filled(size, EMPTY).or_oom()?;
         let old = core::mem::replace(&mut self.slots, slots);
         self.filled = 0;
         /* Outermost first, so each prefix ends up at its innermost binding. */
@@ -186,12 +185,14 @@ impl<'d> Bindings<'d> {
                 EMPTY
             }
         };
-        self.stack.push(Entry {
-            prefix,
-            uri,
-            shadows,
-        });
-        Ok(())
+        /* Reserved at the top, before the slots changed: cannot fail now. */
+        self.stack
+            .falloc_push(Entry {
+                prefix,
+                uri,
+                shadows,
+            })
+            .or_oom()
     }
 
     /// Every prefix in scope with its innermost binding, in no order: what

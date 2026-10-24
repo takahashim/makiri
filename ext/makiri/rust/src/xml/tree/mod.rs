@@ -13,7 +13,7 @@ mod decl;
 mod dtd;
 mod scope;
 
-use crate::falloc::{OomResult, Reserve, VecPush};
+use crate::falloc::{OomResult, Reserve, VecGrow};
 use crate::xml::arena::{AppendError, DoctypeId};
 use crate::xml::chars::{
     expand_into, is_reserved_pi_target, normalize_newlines, ExpandErr, ExpandMode,
@@ -478,8 +478,9 @@ impl<'a> Parser<'a> {
             }
             self.stack.falloc_reserve(1).or_oom::<ParseError>()?;
             self.frames.falloc_reserve(1).or_oom::<ParseError>()?;
-            self.stack.push(el);
-            self.frames.push(frame);
+            /* Both reserved just above: these cannot fail now. */
+            self.stack.falloc_push(el).or_oom::<ParseError>()?;
+            self.frames.falloc_push(frame).or_oom::<ParseError>()?;
         } else {
             self.scope.leave(frame); /* self-closing: pop its scope now */
         }

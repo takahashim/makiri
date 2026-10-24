@@ -213,7 +213,7 @@ pub type NamespaceBindings = Vec<(Vec<u8>, Vec<u8>)>;
 /// A `{prefix => uri}` Hash's bindings, copied out and checked as `#xpath`'s
 /// are (`bind_pair`) - for HTML CSS, whose matcher takes them as bytes.
 pub fn namespace_bindings(h: RHash) -> Result<NamespaceBindings, Error> {
-    use crate::falloc::{try_to_vec, VecPush};
+    use crate::falloc::{try_to_vec, VecGrow};
     let oom = || makiri_error("out of memory reading namespace bindings");
     let mut out = Vec::new();
     bind_each(

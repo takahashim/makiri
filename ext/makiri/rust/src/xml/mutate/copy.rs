@@ -13,7 +13,7 @@
 use super::copy_span;
 use std::collections::HashMap;
 
-use crate::falloc::{MapInsert, OomResult, VecPush};
+use crate::falloc::{MapInsert, OomResult, VecGrow};
 use crate::xml::arena::DoctypeId;
 use crate::xml::qname::Split;
 use crate::xml::{ArenaKind, AttrNs, Document, MutError, NodeFlags, NodeId, Span};

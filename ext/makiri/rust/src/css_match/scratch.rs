@@ -3,7 +3,7 @@
 //! nested-state pools, kept across calls in `lxb_selectors_t`, as `falloc`
 //! vectors.
 
-use crate::falloc::{OomResult, VecPush};
+use crate::falloc::{OomResult, VecGrow};
 use crate::selectors::ast::Lists;
 
 use super::compile::{Chain, Compound, Nesting, Step};
@@ -143,6 +143,10 @@ pub(super) fn recycle<T, U>(mut v: Vec<T>, keep: usize) -> Vec<U> {
         return Vec::new();
     }
     v.clear();
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "in-place collect: reuses v, never allocates"
+    )]
     v.into_iter().filter_map(|_| None).collect()
 }
 

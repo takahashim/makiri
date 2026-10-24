@@ -24,7 +24,7 @@
 //!   namespace reads.
 
 use super::{TreeBuilder, TreeStatus};
-use crate::falloc::VecPush;
+use crate::falloc::VecGrow;
 use crate::html::dom::{NodeId, NodeType, ShortcutRule};
 use crate::html::res::names as res;
 use crate::ptr_table::{mix64, PtrMap, TableKey};

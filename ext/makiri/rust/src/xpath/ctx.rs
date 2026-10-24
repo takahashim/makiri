@@ -13,7 +13,7 @@
 use super::abi::*;
 use super::dom::Dom;
 use super::eval;
-use crate::falloc::{MapInsert, OomOption, OomResult, Reserve};
+use crate::falloc::{MapInsert, OomOption, OomResult, Reserve, VecGrow};
 use crate::token::Token;
 use core::cell::{Cell, Ref, RefCell, RefMut};
 use core::marker::PhantomData;
@@ -82,8 +82,7 @@ impl Names {
          * a pushed entry the lookup cannot reach but the cap counts. */
         let at = self.ns.len();
         self.ns_index.falloc_insert(key, at).or_oom()?;
-        self.ns.push(entry);
-        Ok(())
+        self.ns.falloc_push(entry).or_oom()
     }
 
     /// Bind the unprefixed variable `$name` to `value`, replacing an earlier
@@ -109,8 +108,7 @@ impl Names {
          * as `bind_ns`. */
         let at = self.vars.len();
         self.vars_index.falloc_insert(key, at).or_oom()?;
-        self.vars.push(entry);
-        Ok(())
+        self.vars.falloc_push(entry).or_oom()
     }
 
     /// The URI registered for `prefix`.

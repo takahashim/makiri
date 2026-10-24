@@ -285,6 +285,7 @@ fn cached_ast(
      * a pointer taken before it: moving the `Box` into the map asserts unique
      * ownership of the AST, which a pointer derived earlier does not survive
      * (the same Stacked Borrows hazard `wrapper::Content` avoids). */
+    #[allow(clippy::disallowed_methods, reason = "the slot was reserved above")]
     let ast = cache.0.entry(owned_key).or_insert(ast);
     // SAFETY: just cached, so alive and unchanged while the context is.
     Ok((unsafe { QueryAst::cached(ast) }, added))

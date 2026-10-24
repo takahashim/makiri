@@ -3,7 +3,7 @@
 //! counted once per `of S` selector - the `of S` half of what
 //! [`Positions`](super::positions::Positions) does for plain positions.
 
-use crate::falloc::{OomResult, VecPush};
+use crate::falloc::{OomResult, VecGrow};
 use crate::ptr_table::{NodeKey, PtrMap};
 
 use super::dom::CssNode;

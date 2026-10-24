@@ -12,7 +12,7 @@
 #![forbid(unsafe_code)]
 
 use crate::falloc;
-use crate::falloc::{MapInsert, Reserve, VecPush};
+use crate::falloc::{MapInsert, Reserve, VecGrow};
 use crate::xml::{ArenaKind, Document, NodeId};
 use core::cell::Cell;
 use core::hash::{BuildHasherDefault, Hasher};
@@ -53,7 +53,13 @@ fn key_len(local: &[u8], ns: &[u8]) -> usize {
 }
 
 /// Write the key into `buf`, which must already hold [`key_len`] bytes of
-/// capacity.
+/// capacity: both callers reserve it first. The plain calls stay, under an
+/// allow, because a failure has no right answer here - `with_key`'s `None`
+/// means "no such key", which an OOM is not.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the caller reserved key_len bytes"
+)]
 fn key_into(buf: &mut Vec<u8>, local: &[u8], ns: &[u8]) {
     buf.clear();
     buf.extend_from_slice(local);

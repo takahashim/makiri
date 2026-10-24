@@ -5,7 +5,7 @@
 //! run under `cargo test` (and under ASan in CI) with nothing between the test
 //! and the engine's front door. The expected values are what `Makiri::XML`
 //! answered for the same document and expressions when these were written.
-
+#![allow(clippy::disallowed_methods)] /* test inputs */
 #![forbid(unsafe_code)]
 
 use crate::engine_error::ErrorKind;

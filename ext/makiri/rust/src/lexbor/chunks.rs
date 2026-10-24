@@ -6,7 +6,7 @@
 //! The HTML serializer collects into a capped [`Buf`], the stylesheet reader
 //! into a reused `Vec`; the callback, its status mapping and its panic latch
 //! were two copies of the same `extern "C"` function until they were this one.
-
+#![allow(clippy::disallowed_methods)] /* reference only: no build that ships has it */
 #![allow(unsafe_code)]
 
 use core::ffi::c_void;
@@ -30,7 +30,7 @@ impl ChunkSink for Buf {
 
 impl ChunkSink for Vec<u8> {
     fn take(&mut self, bytes: &[u8]) -> bool {
-        // `VecPush::falloc_extend` inlined: it was `falloc` reserve-then-copy
+        // `VecGrow::falloc_extend` inlined: it was `falloc` reserve-then-copy
         // for one caller (the stylesheet reader's Vec sink), the only one
         // left once `Buf::append` above took over the HTML serializer's.
         if self.falloc_reserve(bytes.len()).is_err() {

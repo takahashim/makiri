@@ -20,7 +20,7 @@
 
 #![forbid(unsafe_code)]
 
-use crate::falloc::{OomResult, Reserve, VecPush};
+use crate::falloc::{OomResult, Reserve, VecGrow};
 use crate::xml::qname::Split;
 use crate::xml::{
     ArenaKind, BudgetError, Document, Link, Node, NodeFlags, NodeId, Span, MAX_BYTES, MAX_NODES,
@@ -385,9 +385,8 @@ impl Document {
             });
         }
         self.charge(src.len())?;
-        self.bytes.falloc_reserve(src.len()).or_oom()?;
         let off = self.bytes.len() as u32;
-        self.bytes.extend_from_slice(src);
+        self.bytes.falloc_extend_from_slice(src).or_oom()?;
         Ok(Span {
             off,
             len: src.len() as u32,
@@ -489,9 +488,10 @@ impl Document {
         fill: impl FnOnce(&mut [u8]) -> Result<usize, E>,
     ) -> Result<Span, AppendError<E>> {
         self.charge(cap)?;
-        self.bytes.falloc_reserve(cap).or_oom::<BudgetError>()?;
         let off = self.bytes.len();
-        self.bytes.resize(off + cap, 0);
+        self.bytes
+            .falloc_resize(off + cap, 0)
+            .or_oom::<BudgetError>()?;
         match fill(&mut self.bytes[off..]) {
             Ok(n) => {
                 self.bytes.truncate(off + n);
@@ -536,7 +536,9 @@ impl Document {
             let off = self.bytes.len() as u32;
             for s in [old, span] {
                 if !s.is_absent() {
-                    self.bytes.extend_from_within(s.off as usize..s.end());
+                    self.bytes
+                        .falloc_extend_from_within(s.off as usize..s.end())
+                        .or_oom()?;
                 }
             }
             self.node_at_mut(last).value = Span { off, len: total };

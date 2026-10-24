@@ -1,6 +1,6 @@
 //! The "in frameset" insertion mode (`insertion_mode/in_frameset.c`).
 
-use crate::falloc::try_vec_with_capacity;
+use crate::falloc::{try_vec_with_capacity, VecGrow};
 use crate::html::res::names as res;
 use crate::html::tokenizer::Tokenizer;
 use crate::html::tree::error::TreeErrorId as E;
@@ -19,7 +19,13 @@ pub(super) fn whitespace_only(
         tree.abort_with(TreeStatus::Oom);
         return None;
     };
-    ws.extend(data.iter().copied().filter(|&c| is_ws(c)));
+    if ws
+        .falloc_extend(data.iter().copied().filter(|&c| is_ws(c)))
+        .is_err()
+    {
+        tree.abort_with(TreeStatus::Oom);
+        return None;
+    }
     if !ws.is_empty() {
         tree.insert_character_for_data(&ws).or_abort(tree)?;
     }

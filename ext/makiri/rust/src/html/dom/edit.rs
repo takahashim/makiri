@@ -11,7 +11,7 @@
 use super::handle::{has_ascii_uppercase, HtmlDoc, HtmlNode, NsId, RawNode};
 use super::{Document, DomOom, NodeId, NodeName, NodeType, OwnNs, Shortcut, ShortcutRule, HTML_NS};
 use crate::dom_rules::{self, At, PreInsertError, TextContent, Tree};
-use crate::falloc::VecPush;
+use crate::falloc::VecGrow;
 use crate::html::res::names as res;
 
 /// Where an insertion puts its node, relative to the node it is made on.
@@ -511,14 +511,11 @@ impl<'d> HtmlDocMut<'d> {
         let written = if prefix.is_empty() && !upper {
             None
         } else {
-            let mut w: Vec<u8> =
-                crate::falloc::try_vec_with_capacity(prefix.len() + 1 + local.len())?;
-            if !prefix.is_empty() {
-                w.extend_from_slice(prefix);
-                w.push(b':');
-            }
-            w.extend_from_slice(local);
-            Some(w)
+            Some(if prefix.is_empty() {
+                crate::falloc::try_to_vec(local)?
+            } else {
+                crate::falloc::try_concat(&[prefix, b":", local])?
+            })
         };
         d.create_element(tag, ns_id, prefix_id, written.as_deref())
             .ok()

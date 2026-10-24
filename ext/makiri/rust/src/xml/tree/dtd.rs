@@ -17,7 +17,7 @@
 #![forbid(unsafe_code)]
 
 use super::cursor::{Cursor, InSlice, R};
-use crate::falloc::{OomResult, VecPush};
+use crate::falloc::{OomResult, VecGrow};
 use crate::xml::chars::is_reserved_pi_target;
 use crate::xml::chars::{only_unexpanded, scan_reference};
 use crate::xml::{ParseError, MAX_DEPTH};

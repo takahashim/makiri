@@ -1,4 +1,5 @@
 //! Each DOM rule against a tiny tree that implements [`Tree`] and nothing else.
+#![allow(clippy::disallowed_methods)] /* test inputs */
 
 use super::*;
 

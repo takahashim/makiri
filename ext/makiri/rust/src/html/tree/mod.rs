@@ -56,7 +56,7 @@ pub use parse::{
     ParseFailure, Parsed,
 };
 
-use crate::falloc::VecPush;
+use crate::falloc::VecGrow;
 use crate::html::dom::{Document, NodeId};
 use crate::html::names::Names;
 use crate::html::res::names as res;

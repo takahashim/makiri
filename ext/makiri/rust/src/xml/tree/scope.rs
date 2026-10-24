@@ -14,7 +14,7 @@
 
 #![forbid(unsafe_code)]
 
-use crate::falloc::{try_vec_with_capacity, OomOption, OomResult, VecPush};
+use crate::falloc::{OomOption, OomResult, VecGrow};
 use crate::xml::{BudgetError, Span, MAX_NS};
 
 /// One binding: prefix ("" = the default namespace) -> byte-store span.
@@ -68,8 +68,7 @@ impl Scope {
         if self.binds.len() + 1 > MAX_NS {
             return Err(BudgetError::Limit);
         }
-        let mut owned: Vec<u8> = try_vec_with_capacity(pfx.len()).or_oom()?;
-        owned.extend_from_slice(pfx);
+        let owned: Vec<u8> = crate::falloc::try_to_vec(pfx).or_oom()?;
         self.binds.falloc_push(Binding { pfx: owned, uri }).or_oom()
     }
 

@@ -14,7 +14,7 @@
 //! lower-cased input - so a lookup copies nothing. The static ids live in a
 //! table built at compile time from the generated names.
 
-use crate::falloc::{try_vec_with_capacity, Reserve};
+use crate::falloc::{try_vec_with_capacity, Reserve, VecGrow};
 use crate::html::res::names as res;
 
 /// An allocation the table needed failed; nothing was added.
@@ -213,8 +213,7 @@ impl Appended {
             return Ok(());
         }
         let size = (self.slots.len() * 2).max(16);
-        let mut slots: Vec<u32> = try_vec_with_capacity(size).ok_or(NamesOom)?;
-        slots.resize(size, 0);
+        let mut slots: Vec<u32> = crate::falloc::try_vec_filled(size, 0).ok_or(NamesOom)?;
         for (i, &h) in self.hashes.iter().enumerate() {
             Self::place(&mut slots, h, i);
         }
@@ -237,12 +236,14 @@ impl Appended {
         self.grow()?;
         let mut stored: Vec<u8> = try_vec_with_capacity(name.len()).ok_or(NamesOom)?;
         match how {
-            Match::Lower => stored.extend(name.iter().map(u8::to_ascii_lowercase)),
-            Match::Exact => stored.extend_from_slice(name),
+            Match::Lower => stored.falloc_extend(name.iter().map(u8::to_ascii_lowercase)),
+            Match::Exact => stored.falloc_extend_from_slice(name),
         }
+        .map_err(|()| NamesOom)?;
         let up = if self.keeps_upper {
             let mut u: Vec<u8> = try_vec_with_capacity(name.len()).ok_or(NamesOom)?;
-            u.extend(name.iter().map(u8::to_ascii_uppercase));
+            u.falloc_extend(name.iter().map(u8::to_ascii_uppercase))
+                .map_err(|()| NamesOom)?;
             self.uppers.falloc_reserve(1).map_err(|()| NamesOom)?;
             Some(u)
         } else {
@@ -253,12 +254,14 @@ impl Appended {
         let index = self.names.len();
         self.longest = self.longest.max(stored.len());
         self.stored += stored.len() * if up.is_some() { 2 } else { 1 };
-        self.names.push(stored);
-        self.hashes.push(h);
+        /* All three reserved above, before any changed: these cannot fail
+         * now, and the tables stay the same length. */
+        self.names.falloc_push(stored).map_err(|()| NamesOom)?;
+        self.hashes.falloc_push(h).map_err(|()| NamesOom)?;
         if let Some(u) = up {
             /* Every entry has one in this table (`keeps_upper`), so the
              * index is the same. */
-            self.uppers.push(u);
+            self.uppers.falloc_push(u).map_err(|()| NamesOom)?;
         }
         Self::place(&mut self.slots, h, index);
         Ok(first + index)
@@ -481,6 +484,7 @@ impl Names {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::disallowed_methods)] /* test inputs */
     use super::*;
 
     #[test]

@@ -129,6 +129,7 @@ impl<T> DerefMut for GvlRef<'_, T> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::disallowed_methods)] /* test inputs */
     use super::*;
 
     #[test]

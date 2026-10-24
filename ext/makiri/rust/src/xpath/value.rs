@@ -15,7 +15,7 @@ use super::dom::*;
 use super::number;
 use crate::cbuf::OwnedBuf;
 use crate::err_setf;
-use crate::falloc::{try_vec_with_capacity, Reserve};
+use crate::falloc::{try_vec_with_capacity, VecGrow};
 use crate::token::Token;
 use core::ops::ControlFlow;
 
@@ -106,14 +106,13 @@ impl<N> NodeSet<N> {
     /// Append `n` within `budget`'s node-set cap.
     pub fn push(&mut self, n: N, budget: &mut Budget) -> Result<(), Reported> {
         budget.check_nodeset_size(self.0.len() + 1)?;
-        if self.0.falloc_reserve(1).is_err() {
+        if self.0.falloc_push(n).is_err() {
             return Err(err_setf!(
                 budget.sink(),
                 ErrorKind::Oom,
                 "out of memory growing node-set"
             ));
         }
-        self.0.push(n);
         Ok(())
     }
 }
@@ -128,7 +127,7 @@ impl<N: Copy> NodeSet<N> {
     /// Each node passed through `f`, into a new set, or None on OOM.
     pub fn try_map<M>(&self, f: impl FnMut(N) -> M) -> Option<NodeSet<M>> {
         let mut nodes = try_vec_with_capacity(self.0.len())?;
-        nodes.extend(self.0.iter().copied().map(f));
+        nodes.falloc_extend(self.0.iter().copied().map(f)).ok()?;
         Some(NodeSet(nodes))
     }
 }

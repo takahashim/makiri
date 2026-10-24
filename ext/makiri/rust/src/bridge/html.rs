@@ -38,7 +38,7 @@ use crate::html_dom::AdapterOom;
 /// Made with the read and the slice list held; a failed allocation is `Err`,
 /// and both drop.
 fn subtree_text(read: &HtmlRead<'_>, node: HtmlNode<'_>) -> Result<Value, Error> {
-    use crate::falloc::VecPush;
+    use crate::falloc::VecGrow;
     let texts = || {
         core::iter::successors(node.first_child(), move |c| c.preorder_next(node))
             .filter_map(|c| c.char_data())

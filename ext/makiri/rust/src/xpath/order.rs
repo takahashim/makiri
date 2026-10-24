@@ -12,7 +12,7 @@ use super::abi::*;
 use super::axis::walk_descendants;
 use super::dom::*;
 use super::eval::Evaluation;
-use crate::falloc::try_vec_with_capacity;
+use crate::falloc::{try_vec_with_capacity, VecGrow};
 use crate::ptr_table::PtrMap;
 use crate::token::Token;
 use core::cmp::Ordering;
@@ -319,7 +319,10 @@ fn merge_sort<T: Copy>(items: &mut [T], cmp: impl FnMut(&T, &T) -> Ordering) {
         items.sort_unstable_by(cmp);
         return;
     };
-    scratch.extend_from_slice(items); /* reserved above; cannot allocate */
+    if scratch.falloc_extend_from_slice(items).is_err() {
+        items.sort_unstable_by(cmp);
+        return;
+    }
     merge_runs(items, &mut scratch, cmp);
 }
 
@@ -668,6 +671,7 @@ mod speed {
 /// per-evaluate walk does, and holds nothing the walk does not reach.
 #[cfg(all(test, feature = "html-dom"))]
 mod kept {
+    #![allow(clippy::disallowed_methods)] /* test inputs */
     #![allow(clippy::unwrap_used)]
     use super::*;
     use crate::html::dom::xpath::{dom, HtmlDom};

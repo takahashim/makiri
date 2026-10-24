@@ -11,7 +11,7 @@
 
 use super::Build;
 use crate::engine_error::{ErrorKind, Reported};
-use crate::falloc::{try_box, try_to_boxed_slice, VecPush};
+use crate::falloc::{try_box, try_to_boxed_slice, VecGrow};
 use crate::text::VerifiedText;
 use crate::xpath::ast::{Axis, Expr, ExprKind, NodeTest, Op, Path, Step};
 use crate::xpath::limits::check_ast_depth;

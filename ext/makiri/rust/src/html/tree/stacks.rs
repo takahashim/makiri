@@ -13,7 +13,7 @@
 
 use super::{Tok, TreeBuilder, TreeStatus};
 use crate::compat::{self, Fix};
-use crate::falloc::{try_vec_with_capacity, Reserve, VecPush};
+use crate::falloc::{try_vec_with_capacity, VecGrow};
 use crate::html::dom::NodeId;
 use crate::html::res::names as res;
 
@@ -143,7 +143,9 @@ impl TreeBuilder<'_> {
             if found(self, n) {
                 match which {
                     Found::Popped => self.pop_steps(n),
-                    /* Back where it was: a pop just freed the room. */
+                    /* Back where it was: a pop just freed the room, so the
+                     * plain push cannot grow. */
+                    #[allow(clippy::disallowed_methods, reason = "the pop just freed the room")]
                     Found::Kept => self.open.0.push(n),
                 }
                 return;
@@ -346,7 +348,8 @@ impl TreeBuilder<'_> {
                 let mut keys: Vec<AttrCompareKey<'_>> =
                     try_vec_with_capacity(self.doc.attrs_of(node).count())
                         .ok_or(TreeStatus::Oom)?;
-                keys.extend(self.doc.attrs_of(node).map(|a| self.attr_compare_key(a)));
+                keys.falloc_extend(self.doc.attrs_of(node).map(|a| self.attr_compare_key(a)))
+                    .map_err(|()| TreeStatus::Oom)?;
                 keys.sort_unstable();
                 Some(keys)
             } else {
@@ -448,9 +451,7 @@ fn array_insert<T: Copy>(v: &mut Vec<T>, idx: usize, value: T) -> Result<(), Tre
     if idx >= v.len() {
         return v.falloc_push(value).map_err(|()| TreeStatus::Oom);
     }
-    v.falloc_reserve(1).map_err(|()| TreeStatus::Oom)?;
-    v.insert(idx, value);
-    Ok(())
+    v.falloc_insert(idx, value).map_err(|()| TreeStatus::Oom)
 }
 
 #[inline]

@@ -479,8 +479,16 @@ by the check that concluded "every undefined symbol is legitimate".
   ASan red-zones both per allocation.
 - **The fallible-allocation line.** The engine (`html`, `xml`, `xpath`, `css`,
   `selectors`, `css_match`, `css_cache`, `cbuf`) allocates only through `falloc`: `clippy.toml` bans the
-  infallible `Box::new` / `Vec::with_capacity` / `reserve`, and `rake oom` fails
-  each site in turn, so an OOM there raises instead of aborting. The glue's
+  infallible `Box::new` / `Vec::with_capacity` / `reserve`, and every growth too
+  (`push`, `insert`, `extend`, `extend_from_slice`, `resize`, a map or set's
+  `insert`, `collect`), and `rake oom` fails each site in turn, so an OOM there
+  raises instead of aborting. Growth is `falloc::VecGrow` / `MapInsert` /
+  `SetInsert`, each a reserve and the op in one call: the old rule,
+  "`falloc_reserve` exactly what follows, then the plain call", was a count
+  only review checked, and a miscount grew outside the sweep. A plain call
+  survives under `#[allow(clippy::disallowed_methods, reason = ...)]` only where
+  the room is known and a failure part-way could not be undone (a compaction
+  sized to its total, a push back after a pop) - keep those few and say why. The glue's
   Ruby-side storage - TypedData wrappers (`bridge::typed::wrap_built`, freed by
   running the struct's `Drop` in place before `ruby_xfree`) and
   `NodeSet`'s node array - uses Ruby's `ruby_xmalloc` family instead: its failure

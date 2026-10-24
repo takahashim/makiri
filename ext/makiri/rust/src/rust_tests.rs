@@ -5,7 +5,7 @@
 //! they are fast enough for every CI run, use independent standard-library
 //! oracles where one exists, and preserve concrete regressions without
 //! requiring a Ruby VM or a Lexbor build.
-
+#![allow(clippy::disallowed_methods)] /* test inputs */
 #![forbid(unsafe_code)]
 
 use crate::cutf8::{decode1, valid};

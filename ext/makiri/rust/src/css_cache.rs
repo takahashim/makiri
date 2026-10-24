@@ -40,7 +40,7 @@ use std::collections::HashMap;
 
 use crate::css_match::dom::Host;
 use crate::css_match::Scratch;
-use crate::falloc::{try_to_boxed_slice, Reserve};
+use crate::falloc::{try_to_boxed_slice, MapInsert};
 use crate::html::dom::css::HtmlHost;
 use crate::selectors::ast::Lists;
 use crate::selectors::{Parsed, Status};
@@ -156,10 +156,9 @@ impl Cache {
              * be collected or mutated, while the entry outlives the call. */
             let key = try_to_boxed_slice(selector).ok_or(ParseError::Oom)?;
             let parsed = parse(selector)?;
-            if self.map().falloc_reserve(1).is_err() {
+            if self.map().falloc_insert(key, parsed).is_err() {
                 return Err(ParseError::Oom);
             }
-            self.map().insert(key, parsed);
         }
         self.map().get(selector).ok_or(ParseError::Oom)
     }
@@ -262,6 +261,7 @@ pub fn with_compiled<H: Kept, R>(
 /// cached.
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::disallowed_methods)] /* test inputs */
     use crate::css_cache::with_compiled;
     use crate::css_match::select_all;
     use crate::html_dom::html::{HtmlNode, RawNode};
