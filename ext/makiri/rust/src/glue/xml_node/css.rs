@@ -9,7 +9,8 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{method, prelude::*, Error, Ruby, Value};
+use crate::bridge::rb::{prelude::*, Error, Ruby, Value};
+use crate::method;
 
 use super::{wrap, XmlSelf};
 use crate::bridge::node_set::node_set_from;

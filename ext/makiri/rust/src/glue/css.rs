@@ -9,7 +9,7 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{prelude::*, Error, RHash, Ruby, Value};
+use crate::bridge::rb::{prelude::*, Error, RHash, Ruby, Value};
 
 use crate::bridge::ruby::makiri_error;
 use crate::css_cache::ParseError;
@@ -83,7 +83,7 @@ pub fn syntax_error(selector: Value, reason: Option<&str>) -> Error {
     let reason = reason.unwrap_or("invalid CSS selector");
     Error::new(
         EXC_CSS_SYNTAX_ERROR.exception(),
-        format!("{reason}: {selector}"),
+        format!("{reason}: {}", crate::bridge::ruby::display(selector)),
     )
 }
 

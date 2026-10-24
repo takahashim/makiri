@@ -6,8 +6,8 @@
 
 use core::cell::{Cell, OnceCell, RefCell};
 
+use crate::bridge::rb::{Error, Value};
 use crate::bridge::ruby::{internal_error, makiri_error};
-use magnus::{Error, Value};
 
 use super::*;
 use crate::bridge::dom::{Body, Conflict, HtmlRead, HtmlWrite, XmlRead, XmlWrite};
@@ -379,7 +379,7 @@ impl From<DocKind> for Kind {
 /// hidden for the GC to free.
 pub struct DocumentShell {
     obj: Value,
-    klass: magnus::RClass,
+    klass: crate::bridge::rb::RClass,
 }
 
 impl DocumentShell {
@@ -392,7 +392,7 @@ impl DocumentShell {
          * conservative stack scan pins it across the wrap's allocation and the
          * store closure does not allocate (an allocation there could raise
          * NoMemoryError while the caller holds a live resource). */
-        let errors = magnus::value::ReprValue::as_value(crate::bridge::build::ary(0)?);
+        let errors = crate::bridge::rb::ReprValue::as_value(crate::bridge::build::ary(0)?);
         let obj = ty.wrap(
             &crate::bridge::ruby::gvl_ruby(),
             klass,
@@ -553,15 +553,15 @@ pub(in crate::bridge) fn with_html_parsed_if<R>(
 /// `wrap_*_node` functions make, written once. The two tables differ only in
 /// which classes they name, so neither can grow a kind the other lacks.
 pub(in crate::bridge) struct NodeClasses {
-    pub node: &'static RbConst<magnus::RClass>,
-    pub element: &'static RbConst<magnus::RClass>,
-    pub attr: &'static RbConst<magnus::RClass>,
-    pub text: &'static RbConst<magnus::RClass>,
-    pub comment: &'static RbConst<magnus::RClass>,
-    pub cdata: &'static RbConst<magnus::RClass>,
-    pub pi: &'static RbConst<magnus::RClass>,
-    pub doctype: &'static RbConst<magnus::RClass>,
-    pub fragment: &'static RbConst<magnus::RClass>,
+    pub node: &'static RbConst<crate::bridge::rb::RClass>,
+    pub element: &'static RbConst<crate::bridge::rb::RClass>,
+    pub attr: &'static RbConst<crate::bridge::rb::RClass>,
+    pub text: &'static RbConst<crate::bridge::rb::RClass>,
+    pub comment: &'static RbConst<crate::bridge::rb::RClass>,
+    pub cdata: &'static RbConst<crate::bridge::rb::RClass>,
+    pub pi: &'static RbConst<crate::bridge::rb::RClass>,
+    pub doctype: &'static RbConst<crate::bridge::rb::RClass>,
+    pub fragment: &'static RbConst<crate::bridge::rb::RClass>,
 }
 
 impl NodeClasses {
@@ -570,7 +570,7 @@ impl NodeClasses {
     /// an unknown number). A DOCUMENT is the caller's to map back onto the
     /// Ruby Document before asking.
     #[inline]
-    pub fn class_for(&self, t: NodeType) -> Result<magnus::RClass, Error> {
+    pub fn class_for(&self, t: NodeType) -> Result<crate::bridge::rb::RClass, Error> {
         match t {
             NodeType::Element => self.element,
             NodeType::Attribute => self.attr,
@@ -606,7 +606,7 @@ impl NodeClasses {
 /// `wrap_*_node` functions call this, each for its own kind.
 pub(in crate::bridge) fn wrap_cached(
     ty: &'static crate::bridge::typed::EmbeddedType<NodeData>,
-    klass: magnus::RClass,
+    klass: crate::bridge::rb::RClass,
     source: impl NodeHandleSource,
     document: Value,
 ) -> Result<Value, Error> {

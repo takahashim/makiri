@@ -7,7 +7,8 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{method, prelude::*, Error, Ruby, Value};
+use crate::bridge::rb::{prelude::*, Error, Ruby, Value};
+use crate::method;
 
 use crate::bridge::ruby::makiri_error;
 use crate::glue::kwargs::Kwargs;

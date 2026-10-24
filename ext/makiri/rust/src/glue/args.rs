@@ -14,7 +14,7 @@
 //! the positional arguments only. `spec/call_shapes_spec.rb` holds both to
 //! what magnus's `scan_args` (over `rb_scan_args`) answered.
 
-use magnus::{prelude::*, Error, RHash, Ruby, Value};
+use crate::bridge::rb::{prelude::*, Error, RHash, Ruby, Value};
 
 /// What a method takes: `required` positional arguments, then up to
 /// `optional` more, then - with `rest` - any number, and keywords when

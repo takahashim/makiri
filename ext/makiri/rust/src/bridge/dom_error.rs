@@ -7,9 +7,9 @@
 
 #![forbid(unsafe_code)]
 
+use crate::bridge::rb::Error;
 use crate::bridge::ruby::makiri_error;
 use crate::dom_rules::{Hierarchy as H, PreInsertError, Violation};
-use magnus::Error;
 
 /// The `Makiri::Error` an insertion `e` refused raises.
 pub fn pre_insert_error(e: PreInsertError) -> Error {

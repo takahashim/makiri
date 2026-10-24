@@ -10,7 +10,7 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{prelude::*, Error, Value};
+use crate::bridge::rb::{prelude::*, Error, Value};
 
 use crate::bridge::ruby::makiri_error;
 

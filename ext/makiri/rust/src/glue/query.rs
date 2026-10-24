@@ -16,7 +16,8 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{method, prelude::*, Error, RHash, Ruby, Value};
+use crate::bridge::rb::{prelude::*, Error, RHash, Ruby, Value};
+use crate::method;
 
 use crate::bridge::ruby::makiri_error;
 use crate::bridge::string::ruby_try_verified_text_pair;
@@ -161,7 +162,7 @@ fn bind_each(
             h.len()
         )));
     }
-    let ruby = Ruby::get().map_err(|_| makiri_error("Ruby is not available here"))?;
+    let ruby = crate::bridge::ruby::gvl_ruby();
     crate::glue::hash::each_pair(&ruby, h, |prefix, uri| {
         bind_pair(prefix, uri, cap, &mut register)
     })

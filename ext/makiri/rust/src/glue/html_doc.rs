@@ -13,10 +13,11 @@
 #![forbid(unsafe_code)]
 
 use crate::bridge::fragment;
+use crate::bridge::rb::{prelude::*, Error, Ruby, Value};
 use crate::bridge::string::GivenEncoding;
 use crate::glue::html_node::HtmlSelf;
 use crate::html_dom::html::NodeType;
-use magnus::{method, prelude::*, Error, Ruby, Value};
+use crate::method;
 
 /* ---- Document.parse ---- */
 
@@ -83,7 +84,7 @@ fn doc_root(_ruby: &Ruby, self_: Value) -> Result<Option<Value>, Error> {
     crate::bridge::ruby::entry(|| crate::bridge::doc::document_root(self_))
 }
 
-fn doc_title(_ruby: &Ruby, self_: Value) -> Result<magnus::RString, Error> {
+fn doc_title(_ruby: &Ruby, self_: Value) -> Result<crate::bridge::rb::RString, Error> {
     crate::bridge::ruby::entry(|| crate::bridge::doc::document_title(self_))
 }
 
@@ -174,7 +175,8 @@ fn node_parse(ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Value, Erro
             fragment::build_fragment(this.document, rb_html, at, fragment::DepthLimit::DEFAULT)?;
         /* The native children reader, not a Ruby `children` dispatch: the
          * fragment is ours, and a subclass could redefine the method. */
-        let frag = <crate::bridge::html::HtmlSelf as magnus::TryConvert>::try_convert(frag)?;
+        let frag =
+            <crate::bridge::html::HtmlSelf as crate::bridge::rb::TryConvert>::try_convert(frag)?;
         crate::glue::html_node::read::children(ruby, frag)
     })
 }

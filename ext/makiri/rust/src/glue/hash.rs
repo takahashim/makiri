@@ -1,6 +1,6 @@
 //! Reading a Hash argument's pairs.
 
-use magnus::{Error, RArray, RHash, Ruby, Value};
+use crate::bridge::rb::{Error, RArray, RHash, Ruby, Value};
 
 /// `h`'s pairs, each handed to `f` in turn; the first `Err` stops the walk
 /// and is returned.

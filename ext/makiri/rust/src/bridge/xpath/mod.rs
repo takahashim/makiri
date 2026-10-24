@@ -10,7 +10,7 @@
 
 #![allow(unsafe_code)]
 
-use magnus::{Error, Value};
+use crate::bridge::rb::{Error, Value};
 
 use crate::bridge::html::{html_node_key, with_html_node};
 use crate::bridge::node_set::node_set_with_fill;

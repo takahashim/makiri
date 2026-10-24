@@ -1,7 +1,7 @@
 //! Reading a method's keyword arguments, kept here so each procedure is written
 //! once with its reasons beside it.
 
-use magnus::{prelude::*, Error, RHash, Ruby, Value};
+use crate::bridge::rb::{prelude::*, Error, RHash, Ruby, Value};
 
 /// The keywords of a method that takes only keywords.
 ///
@@ -33,7 +33,7 @@ impl Kwargs {
         let Some(h) = self.0 else {
             return Ok(None);
         };
-        Ok(h.get(crate::bridge::build::sym(name)?)
+        Ok(h.get(crate::bridge::build::symbol(name)?)
             .filter(|v: &Value| !v.is_nil()))
     }
 
@@ -59,8 +59,9 @@ impl Kwargs {
         let Some(h) = self.0.filter(|h| !h.is_empty()) else {
             return Ok((None, None));
         };
-        let sym = crate::bridge::build::sym(name)?;
+        let sym = crate::bridge::build::symbol(name)?;
         let taken = h.get(sym).filter(|v: &Value| !v.is_nil());
+        let sym = sym.as_value();
         /* Made on the first key that stays, so a call passing only `name`
          * allocates no Hash either. */
         let mut rest: Option<RHash> = None;
@@ -94,17 +95,15 @@ pub(crate) fn max_tree_depth(
     let Some(v) = v.filter(|v| !v.is_nil()) else {
         return Ok(DepthLimit::DEFAULT);
     };
-    let n = magnus::Integer::from_value(v).ok_or_else(|| {
+    let n = crate::bridge::rb::Integer::from_value(v).ok_or_else(|| {
         Error::new(
             ruby.exception_type_error(),
             "max_tree_depth must be an Integer",
         )
     })?;
-    /* Compared before any conversion, so a negative Bignum disables the limit
-     * as a negative Fixnum does, and a positive one cannot wrap. */
-    let zero = magnus::Integer::from_value(crate::bridge::build::int(0)?)
-        .ok_or_else(|| crate::bridge::ruby::internal_error("0 is not an Integer"))?;
-    if n < zero {
+    /* The sign is read before any conversion, so a negative Bignum disables
+     * the limit as a negative Fixnum does, and a positive one cannot wrap. */
+    if n.is_negative() {
         return Ok(DepthLimit::UNLIMITED);
     }
     Ok(n.to_usize()

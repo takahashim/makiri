@@ -6,13 +6,13 @@
 
 use core::ops::Deref;
 
-use magnus::encoding::Coderange;
+use crate::bridge::rb::Coderange;
 
+use crate::bridge::rb::value::AsRawValue;
 use crate::bridge::ruby::makiri_error;
-use magnus::rb_sys::AsRawValue;
 /* Not magnus's: ours catches a panic before `rb_protect`'s C frame. */
-use magnus::value::ReprValue;
-use magnus::{Error, RString, Value};
+use crate::bridge::rb::ReprValue;
+use crate::bridge::rb::{Error, RString, Value};
 use rb_sys::StableApiDefinition;
 
 /// The shared owned buffer.

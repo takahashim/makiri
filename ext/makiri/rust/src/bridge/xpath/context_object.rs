@@ -7,9 +7,9 @@
 use core::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
+use crate::bridge::rb::{Error, Value};
 use crate::bridge::ruby::makiri_error;
 use crate::bridge::typed::{Held, Hooks, Tracer, TypedType};
-use magnus::{Error, Value};
 
 use crate::bridge::string::ruby_try_verified_text;
 use crate::bridge::string::{ruby_verified_text, RubyText};
@@ -92,7 +92,7 @@ pub static XPATH_CTX_TYPE: TypedType<XPathCtx> = TypedType::base(c"Makiri::XPath
 /// as its [`XPathCtx`] for the call.
 pub struct XPathCtxSelf(Value);
 
-impl magnus::TryConvert for XPathCtxSelf {
+impl crate::bridge::rb::TryConvert for XPathCtxSelf {
     fn try_convert(value: Value) -> Result<Self, Error> {
         XPATH_CTX_TYPE.get(&value)?;
         Ok(XPathCtxSelf(value))

@@ -10,7 +10,8 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{function, method, prelude::*, Error, Ruby, Value};
+use crate::bridge::rb::{prelude::*, Error, Ruby, Value};
+use crate::{function, method};
 
 use crate::bridge::ruby::is_kind_of;
 use crate::bridge::xpath::{XPathCtx, XPathCtxSelf};

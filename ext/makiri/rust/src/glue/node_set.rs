@@ -10,7 +10,8 @@
 
 use core::ffi::c_long;
 
-use magnus::{function, method, prelude::*, Error, RArray, Ruby, Value};
+use crate::bridge::rb::{prelude::*, Error, RArray, Ruby, Value};
+use crate::{function, method};
 
 use crate::bridge::node_set::{node_set_of_nodes, Membership, NodeSetSelf};
 use crate::bridge::ruby::{is_kind_of, range_beg_len};
@@ -134,11 +135,7 @@ fn s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
                 )
             })?),
         };
-        node_set_of_nodes(
-            ruby,
-            document,
-            nodes.into_iter().flat_map(|a| a.into_iter()),
-        )
+        node_set_of_nodes(ruby, document, nodes.into_iter().flat_map(|a| a.each()))
     })
 }
 

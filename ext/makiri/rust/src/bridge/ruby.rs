@@ -3,15 +3,15 @@
 //! `rb_raise` and every C function that can raise unwind with `longjmp`, which
 //! skips Rust destructors in every frame it crosses (see `glue/mod.rs`). The
 //! functions here are built on `bridge::raw`'s wrappers, each of which turns
-//! the raise into a [`magnus::Error`]: the caller hands it back as `Err`, and
+//! the raise into a [`crate::bridge::rb::Error`]: the caller hands it back as `Err`, and
 //! magnus raises only after the Rust frames have returned normally.
 
 #![allow(unsafe_code)]
 
 use core::ffi::c_long;
 
-use magnus::rb_sys::{AsRawValue, FromRawValue};
-use magnus::{prelude::*, Error, RString, Ruby, Value};
+use crate::bridge::rb::value::AsRawValue;
+use crate::bridge::rb::{prelude::*, Error, RString, Ruby, Value};
 
 /// The raw handle types, re-exported so a higher layer can name a `VALUE` or a
 /// method `ID` without reaching into `rb_sys` itself.
@@ -62,7 +62,7 @@ pub fn check_running_ruby_api(ruby: &Ruby) -> Result<(), Error> {
 
 /// `Makiri::Error` - the one definition; the modules that each kept a private
 /// copy of this now import it.
-pub fn error_class() -> magnus::ExceptionClass {
+pub fn error_class() -> crate::bridge::rb::ExceptionClass {
     crate::init::EXC_ERROR.exception()
 }
 
@@ -83,7 +83,7 @@ pub fn internal_error(msg: impl Into<std::borrow::Cow<'static, str>>) -> Error {
 /// Is `v` an instance of the class in `klass`? `false` before `Init_makiri`,
 /// when no class of ours exists for it to be an instance of.
 #[inline]
-pub fn is_kind_of(v: Value, klass: &crate::init::RbConst<magnus::RClass>) -> bool {
+pub fn is_kind_of(v: Value, klass: &crate::init::RbConst<crate::bridge::rb::RClass>) -> bool {
     klass.get().is_some_and(|c| v.is_kind_of(c))
 }
 
@@ -98,8 +98,8 @@ pub fn string_arg(v: Value) -> Result<RString, Error> {
 
 /// `v`, which must be an Integer (a Fixnum or a Bignum). No conversion, as
 /// [`string_arg`]: a `to_int` is the caller's Ruby.
-pub fn integer_arg(v: Value) -> Result<magnus::Integer, Error> {
-    magnus::Integer::from_value(v).ok_or_else(|| wrong_type(v, "Integer", TO_I_HINT))
+pub fn integer_arg(v: Value) -> Result<crate::bridge::rb::Integer, Error> {
+    crate::bridge::rb::Integer::from_value(v).ok_or_else(|| wrong_type(v, "Integer", TO_I_HINT))
 }
 
 /// [`integer_arg`] as a `long`; one past a `long` is Ruby's `RangeError`.
@@ -117,8 +117,9 @@ pub fn long_arg(v: Value) -> Result<c_long, Error> {
 /// beginless one): `rb_range_beg_len` would otherwise convert an end with its
 /// `to_int`.
 pub fn integer_range_arg(v: Value) -> Result<Value, Error> {
-    let r = magnus::Range::from_value(v).ok_or_else(|| wrong_type(v, "Range", ""))?;
-    for end in [r.beg::<Value>()?, r.end::<Value>()?] {
+    let r = crate::bridge::rb::Range::from_value(v).ok_or_else(|| wrong_type(v, "Range", ""))?;
+    let (beg, end, _) = r.values()?;
+    for end in [beg, end] {
         if !end.is_nil() {
             integer_arg(end)?;
         }
@@ -136,7 +137,7 @@ pub fn name_arg(v: Value) -> Result<RString, Error> {
     if let Some(s) = RString::from_value(v) {
         return Ok(s);
     }
-    match magnus::Symbol::from_value(v) {
+    match crate::bridge::rb::Symbol::from_value(v) {
         Some(sym) => super::raw::sym2str(sym),
         None => Err(wrong_type(v, "String or Symbol", TO_S_HINT)),
     }
@@ -146,7 +147,7 @@ pub fn name_arg(v: Value) -> Result<RString, Error> {
 /// `:name`, a String quoted, anything else by its class (`#inspect` would be
 /// the caller's Ruby).
 pub fn describe(v: Value) -> String {
-    if magnus::Symbol::from_value(v).is_some() {
+    if crate::bridge::rb::Symbol::from_value(v).is_some() {
         if let Ok(s) = name_arg(v) {
             // SAFETY: copied out at once.
             return format!(":{}", String::from_utf8_lossy(unsafe { s.as_slice() }));
@@ -161,6 +162,17 @@ pub fn describe(v: Value) -> String {
     }
     // SAFETY: a live value; its class name is copied at once.
     format!("an instance of {}", unsafe { v.classname() })
+}
+
+/// `v` as text for a message, as Ruby's `to_s` would have it for the values a
+/// message holds - a String's text, a Symbol's name - but without calling it
+/// (`to_s` is the caller's Ruby); anything else as [`describe`] has it.
+pub fn display(v: Value) -> String {
+    if let Ok(s) = name_arg(v) {
+        // SAFETY: copied out at once.
+        return String::from_utf8_lossy(unsafe { s.as_slice() }).into_owned();
+    }
+    describe(v)
 }
 
 /// Ruby's `TypeError` for a value of the wrong class, worded as Ruby's own
@@ -183,7 +195,7 @@ fn wrong_type(v: Value, expected: &str, hint: &str) -> Error {
 /// set - because the check still runs, protected. An unfrozen value, every
 /// mutator's normal case, makes no call.
 pub fn check_frozen(v: Value) -> Result<(), Error> {
-    if !magnus::value::ReprValue::is_frozen(v) {
+    if !crate::bridge::rb::ReprValue::is_frozen(v) {
         return Ok(());
     }
     super::raw::check_frozen(v)
@@ -262,7 +274,7 @@ pub fn hide(v: Value) {
 
 /// Show `v` again with `klass`, the class it was made with (`rb_obj_reveal`).
 /// Raises nothing.
-pub fn reveal(v: Value, klass: magnus::RClass) {
+pub fn reveal(v: Value, klass: crate::bridge::rb::RClass) {
     // SAFETY: as `hide`; `klass` is a live class, by type.
     unsafe { rb_sys::rb_obj_reveal(v.as_raw(), klass.as_raw()) };
 }
@@ -319,7 +331,7 @@ pub fn exception_message(exc: Value) -> String {
     // and raises nothing.
     let msg = unsafe { rb_sys::rb_attr_get(exc.as_raw(), id) };
     // SAFETY: `msg` is the live VALUE the call returned.
-    let Some(r) = magnus::RString::from_value(unsafe { Value::from_raw(msg) }) else {
+    let Some(r) = crate::bridge::rb::RString::from_value(unsafe { Value::from_raw(msg) }) else {
         return "error".to_owned();
     };
     // SAFETY: copied out before anything below can run Ruby.
@@ -332,11 +344,8 @@ pub fn exception_message(exc: Value) -> String {
     String::from_utf8_lossy(&bytes[..n]).into_owned()
 }
 
-/// [`exception_message`] for a magnus error: the Ruby exception's message, or
-/// "error" for one that carries none.
+/// [`exception_message`] for an error: its message, or "error" for one that
+/// carries none (a `throw`, say).
 pub fn error_message(e: &Error) -> String {
-    match e.error_type() {
-        magnus::error::ErrorType::Exception(x) => exception_message(x.as_value()),
-        _ => "error".to_owned(),
-    }
+    e.message_for_wording()
 }

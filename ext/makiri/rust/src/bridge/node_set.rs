@@ -33,8 +33,8 @@ use crate::falloc::{Reserve, SetInsert};
 use std::cell::RefCell;
 use std::collections::HashSet;
 
+use crate::bridge::rb::{prelude::*, Error, Ruby, Value};
 use crate::bridge::ruby::makiri_error;
-use magnus::{prelude::*, Error, Ruby, Value};
 
 use crate::bridge::node_wrap::wrap_doc_node;
 use crate::bridge::typed::{Held, Hooks, Tracer, TypedType};
@@ -72,7 +72,7 @@ struct NodeVec {
 
 /// Why a push was refused.
 ///
-/// Deliberately small rather than a `magnus::Error`: a push runs once per node
+/// Deliberately small rather than a `crate::bridge::rb::Error`: a push runs once per node
 /// of every result, and returning the large error type from each successful
 /// push measured about 2ns a node. Callers convert through `From` on the failure path only.
 #[derive(Clone, Copy)]
@@ -277,7 +277,7 @@ pub static NODE_SET_TYPE: TypedType<NodeSet> = TypedType::base(c"Makiri::NodeSet
 #[derive(Clone, Copy)]
 pub struct NodeSetSelf(Value);
 
-impl magnus::TryConvert for NodeSetSelf {
+impl crate::bridge::rb::TryConvert for NodeSetSelf {
     fn try_convert(value: Value) -> Result<Self, Error> {
         NODE_SET_TYPE.get(&value)?;
         Ok(NodeSetSelf(value))

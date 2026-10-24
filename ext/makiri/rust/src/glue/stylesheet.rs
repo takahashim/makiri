@@ -7,7 +7,8 @@
 //! and phase two builds through `bridge::build`, so a failed allocation comes
 //! back as `Err` and those drop. See `selectors::stylesheet`.
 
-use magnus::{function, prelude::*, Error, RArray, RHash, Ruby, Value};
+use crate::bridge::rb::{prelude::*, Error, RArray, RHash, Ruby, Value};
+use crate::function;
 
 use crate::bridge::build::{ary, aset, hash, int, push, sym};
 use crate::bridge::ruby::{boolean, error_class};
@@ -174,7 +175,7 @@ fn parse_stylesheet_inner(_ruby: &Ruby, text: Value) -> Result<RArray, Error> {
 /// `Makiri::Lexbor::CSS.parse_stylesheet`. From `Init_makiri`.
 pub fn init_lexbor_css(ruby: &Ruby) -> Result<(), Error> {
     let lexbor = MOD_LEXBOR.defined()?;
-    let css = ruby.module_new();
+    let css = ruby.module_new()?;
     lexbor.const_set("CSS", css)?;
     css.define_module_function("parse_stylesheet", function!(parse_stylesheet, 1))?;
     Ok(())

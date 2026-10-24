@@ -18,7 +18,7 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{Error, RString, Ruby, Value};
+use crate::bridge::rb::{Error, RString, Ruby, Value};
 
 use crate::bridge::ruby::makiri_error;
 

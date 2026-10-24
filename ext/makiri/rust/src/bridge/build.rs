@@ -8,8 +8,8 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::value::ReprValue;
-use magnus::{Error, RArray, RHash, Value};
+use crate::bridge::rb::ReprValue;
+use crate::bridge::rb::{Error, RArray, RHash, Value};
 
 use super::raw;
 use super::ruby::gvl_ruby;
@@ -56,6 +56,11 @@ pub fn enumerator(obj: Value, meth: &str) -> Result<Value, Error> {
 }
 
 /// The Symbol named by the UTF-8 `name`.
+pub fn symbol(name: &str) -> Result<crate::bridge::rb::Symbol, Error> {
+    crate::bridge::raw::sym(&crate::bridge::ruby::gvl_ruby(), name)
+}
+
+/// [`symbol`] as a plain `Value`.
 pub fn sym(name: &str) -> Result<Value, Error> {
     raw::sym(&gvl_ruby(), name).map(|s| s.as_value())
 }

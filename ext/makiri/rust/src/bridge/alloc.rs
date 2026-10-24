@@ -27,7 +27,7 @@ pub unsafe fn free<T>(p: *mut T) {
 /// `p` must be null or a live block from Ruby's allocator, and `n * size_of::<T>()`
 /// must describe the new size.
 #[inline]
-pub unsafe fn realloc_array<T>(p: *mut T, n: usize) -> Result<*mut T, magnus::Error> {
+pub unsafe fn realloc_array<T>(p: *mut T, n: usize) -> Result<*mut T, crate::bridge::rb::Error> {
     // SAFETY: the caller's contract; `ruby_xrealloc2` checks the multiply.
     unsafe { super::raw::xrealloc2(p as *mut c_void, n, core::mem::size_of::<T>()) }
         .map(|p| p as *mut T)

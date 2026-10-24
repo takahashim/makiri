@@ -16,10 +16,10 @@
 
 #![allow(unsafe_code)]
 
-use magnus::rb_sys::AsRawValue;
+use crate::bridge::rb::value::AsRawValue;
 
+use crate::bridge::rb::{prelude::*, Error, Value};
 use crate::bridge::ruby::makiri_error;
-use magnus::{prelude::*, Error, Value};
 
 use crate::bridge::dom::{XmlRead, XmlWrite};
 use crate::bridge::html::with_arg_node;
@@ -183,7 +183,7 @@ pub struct XmlSelf {
     pub document: Value,
 }
 
-impl magnus::TryConvert for XmlSelf {
+impl crate::bridge::rb::TryConvert for XmlSelf {
     fn try_convert(value: Value) -> Result<Self, Error> {
         let id = xml_node_unwrap(value)?;
         let document = xml_node_document(value)?;

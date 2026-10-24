@@ -16,8 +16,7 @@
 #![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
-use magnus::value::ReprValue;
-use magnus::{Error, RString};
+use crate::bridge::rb::{Error, RString};
 
 use super::ruby::error_message;
 use super::string::{text_check, with_bytes, Encoding};
@@ -27,12 +26,7 @@ use crate::xml::encoding_sniff::sniff;
 /// Whether `e` is an `EncodingError` (an undefined conversion, an invalid
 /// byte sequence, no converter).
 fn is_encoding_error(e: &Error) -> bool {
-    match e.error_type() {
-        magnus::error::ErrorType::Exception(x) => {
-            x.is_kind_of(crate::bridge::ruby::gvl_ruby().exception_encoding_error())
-        }
-        _ => false,
-    }
+    e.is_kind_of(crate::bridge::ruby::gvl_ruby().exception_encoding_error())
 }
 
 /// Two encodings agree, for conflict purposes, when identical or when either is

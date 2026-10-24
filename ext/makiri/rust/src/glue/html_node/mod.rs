@@ -31,7 +31,8 @@ pub mod serialize;
 
 pub mod mutate;
 
-use magnus::{method, prelude::*, Error};
+use crate::bridge::rb::{prelude::*, Error};
+use crate::method;
 
 use crate::init::MOD_HTML_NODE_METHODS;
 /* Only the mutation half registers on the Document class. */

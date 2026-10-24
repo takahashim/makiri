@@ -10,7 +10,8 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{method, prelude::*, Error, Ruby, Value};
+use crate::bridge::rb::{prelude::*, Error, Ruby, Value};
+use crate::method;
 
 use super::HtmlSelf;
 use crate::bridge::html::wrap_html_node;

@@ -6,7 +6,7 @@
 
 #![allow(unsafe_code)]
 
-use magnus::{Error, Value};
+use crate::bridge::rb::{Error, Value};
 
 use crate::bridge::wrapper::{DocKind, NodeWord};
 

@@ -3,9 +3,9 @@
 
 #![allow(unsafe_code)]
 
-use magnus::rb_sys::AsRawValue;
+use crate::bridge::rb::value::AsRawValue;
 
-use magnus::{Error, Value};
+use crate::bridge::rb::{Error, Value};
 
 use super::*;
 use crate::bridge::typed::{EmbeddedType, Held, Hooks, Snapshot, Store, Tracer};

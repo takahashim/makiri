@@ -35,11 +35,10 @@
 
 use std::sync::OnceLock;
 
-use magnus::{
-    function,
-    value::{Opaque, ReprValue},
-    Class, Error, ExceptionClass, Module, Object, RClass, RModule, Ruby, Value,
+use crate::bridge::rb::{
+    Class, Error, ExceptionClass, Module, Object, Opaque, RClass, RModule, ReprValue, Ruby, Value,
 };
+use crate::function;
 
 use crate::bridge::ruby::gvl_ruby;
 
@@ -70,8 +69,7 @@ impl<T: ReprValue> RbConst<T> {
     /// Record `v`, rooted for the rest of the process. `init` is the only
     /// writer, and a second write is refused rather than replacing the first.
     fn set(&self, v: T) -> Result<(), Error> {
-        magnus::gc::register_mark_object(v);
-        self.0.set(Opaque::from(v)).map_err(|_| {
+        self.0.set(Opaque::register(v)?).map_err(|_| {
             Error::new(
                 gvl_ruby().exception_runtime_error(),
                 "Makiri: a class handle was set twice",
@@ -345,12 +343,20 @@ fn seal_leaves(methods: RModule, leaves: &[RClass]) -> Result<(), Error> {
     Ok(())
 }
 
-/// `name = "makiri"` is load-bearing: the attribute defaults to the CRATE name,
-/// which would export `Init_makiri_rs`. Ruby looks up `Init_<basename of the
-/// .bundle>`, so the default would leave the extension loadable-looking and
-/// unloadable - and the "export only `Init_makiri`" check would pass, having
-/// found the wrong symbol.
-#[magnus::init(name = "makiri")]
+/// What Ruby calls when it loads `makiri.bundle`: `Init_<basename>`, so the
+/// name is load-bearing - and the crate's one `#[no_mangle]` item, which is
+/// what keeps every other name out of the export table (`rake symbols`).
+///
+/// An error from [`init`] is raised, as a `LoadError` or whatever the failing
+/// definition raised, once `init` has returned. A panic is Ruby's `fatal`
+/// rather than `Makiri::InternalError`: that class may not exist yet, and an
+/// extension that stopped half-way through defining itself must not be used.
+#[allow(non_snake_case, unsafe_code)]
+#[no_mangle]
+pub extern "C" fn Init_makiri() {
+    crate::bridge::rb::method::run_init(init);
+}
+
 fn init(ruby: &Ruby) -> Result<(), Error> {
     // Before anything touches the interpreter's structs: a binary built for
     // another Ruby misreads them (`check_running_ruby_api`).
@@ -361,17 +367,12 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     // gem it was loaded by and the Ruby it was loaded into - a stale
     // `lib/makiri/makiri.bundle` in a checkout is read by whichever Ruby, and
     // whichever version of the Ruby code, requires it.
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "Init_makiri, where a raise is require's and nothing is owned"
-    )]
-    let (native_version, native_ruby) = (
-        ruby.str_new(env!("MAKIRI_GEM_VERSION")),
-        ruby.str_new(&crate::bridge::ruby::ruby_api_version()),
-    );
-    native_version.freeze();
+    let native_version = crate::bridge::string::utf8_str(env!("MAKIRI_GEM_VERSION").as_bytes())?;
+    crate::bridge::rb::freeze(native_version);
     makiri.const_set("NATIVE_VERSION", native_version)?;
-    native_ruby.freeze();
+    let native_ruby =
+        crate::bridge::string::utf8_str(crate::bridge::ruby::ruby_api_version().as_bytes())?;
+    crate::bridge::rb::freeze(native_ruby);
     makiri.const_set("NATIVE_RUBY_API_VERSION", native_ruby)?;
 
     /* The abstract bases. Concrete nodes are the HTML::* / XML::* leaves

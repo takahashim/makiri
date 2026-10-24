@@ -33,8 +33,12 @@ UNSAFE_ISLANDS = {
   "bridge/gvl.rs" => 3,
   "bridge/node_set.rs" => 3,
   "bridge/node_wrap.rs" => 1,
-  "bridge/raw.rs" => 51,
-  "bridge/ruby.rs" => 12,
+  "bridge/raw.rs" => 87,
+  "bridge/rb/class.rs" => 2,
+  "bridge/rb/method.rs" => 11,
+  "bridge/rb/ruby.rs" => 5,
+  "bridge/rb/value.rs" => 16,
+  "bridge/ruby.rs" => 13,
   "bridge/stack.rs" => 1,
   "bridge/string/build.rs" => 2,
   "bridge/string/encoding.rs" => 10,
@@ -151,8 +155,12 @@ RAISING_API = /\b(?:rb_raise|rb_exc_raise|rb_jump_tag|rb_check_typeddata|
   rb_to_encoding|rb_enc_find_index|rb_data_typed_object_wrap|rb_data_typed_object_zalloc|
   ruby_xmalloc|ruby_xrealloc2|
   rb_ary_new_capa|rb_ary_push|rb_hash_new|rb_hash_aset|rb_ll2inum|rb_ull2inum|rb_float_new|
-  rb_id2sym|rb_str_cat|rb_enumeratorize_with_size|rb_memerror|rb_hash_foreach|rb_yield)\b/x
-RAISING_COUNTS = { "bridge/raw.rs" => 33 }.freeze # with `rb_memerror` (the raise sweep's injected raise) and `rb_jump_tag` (`jump_error`)
+  rb_id2sym|rb_str_cat|rb_enumeratorize_with_size|rb_memerror|rb_hash_foreach|rb_yield|
+  rb_define_class_under|rb_define_module_under|rb_define_module|rb_const_set|rb_const_get|
+  rb_include_module|rb_define_method|rb_define_private_method|rb_define_singleton_method|
+  rb_define_module_function|rb_exc_new_str|rb_exc_fatal|rb_big2ll|rb_big2ull|rb_hash_lookup2|
+  rb_gc_register_mark_object|rb_module_new|rb_range_values|rb_funcallv)\b/x
+RAISING_COUNTS = { "bridge/raw.rs" => 52 }.freeze # with `rb_memerror` (the raise sweep's injected raise) and `rb_jump_tag` (`jump_error`)
 
 # Makiri runs none of its caller's Ruby code: no argument is converted with its
 # `to_s`/`to_str`, no method of a caller's object is called, and XPath has no
@@ -164,10 +172,11 @@ RAISING_COUNTS = { "bridge/raw.rs" => 33 }.freeze # with `rb_memerror` (the rais
 USER_CODE_API = /\b(?:rb_String|rb_funcall\w*|rb_obj_as_string|rb_respond_to|rb_yield\w*|
   rb_block_call|rb_call_super|rb_eval_string\w*|rb_str_to_str|rb_string_value\w*|
   rb_check_string_type|rb_convert_type|rb_check_convert_type)\b|
-  \.(?:funcall\w*|respond_to|to_r_string|block_call|yield_\w+|yield_splat)\(|
+  \.(?:funcall\w*|respond_to|to_r_string|block_call|yield_\w+|yield_splat|call_method)\(|
   raw::yield_value\(/x
-# `rb_yield` itself is `bridge/raw.rs`'s, and NodeSet#each its one caller.
-USER_CODE_COUNTS = { "bridge/raw.rs" => 1, "glue/node_set.rs" => 1, "glue/xml_node/ns.rs" => 1 }.freeze
+# `rb_yield` and `rb_funcallv` are `bridge/raw.rs`'s; NodeSet#each yields, and
+# `XML::Namespace.new` is `Module::call_method`'s one use.
+USER_CODE_COUNTS = { "bridge/raw.rs" => 2, "glue/node_set.rs" => 1, "glue/xml_node/ns.rs" => 1 }.freeze
 
 # A raw `VALUE` (`rb_sys::VALUE`, an integer to Rust) is a Ruby value no type
 # keeps honest: no lint can tell it from a `u64` in a `Vec` or a struct field,
@@ -176,7 +185,7 @@ USER_CODE_COUNTS = { "bridge/raw.rs" => 1, "glue/node_set.rs" => 1, "glue/xml_no
 # the GC callbacks). Everything else holds magnus's typed values, which
 # `clippy.toml` and the dylint lint can see. The reference-only `lexbor/` is
 # not counted. Pinned per file, empty: a new one is a decision.
-VALUE_ALLOWED = %w[bridge/raw.rs bridge/typed.rs].freeze
+VALUE_ALLOWED = %w[bridge/raw.rs bridge/typed.rs bridge/rb/value.rs bridge/rb/ruby.rs bridge/rb/method.rs].freeze
 VALUE_COUNTS = {}.freeze
 
 # `Value::from_raw` outside `bridge/` is the other half of the raw Ruby
@@ -621,9 +630,13 @@ end
 # how a feature's Ruby half ends up split across the two layers by where it
 # happened to need an `unsafe`, rather than by what it does.
 RUBY_SURFACE = /\b(?:define_(?:singleton_|private_|module_)?(?:method|function)|scan_args)\b/
+# The layer that defines methods at all: `bridge::rb::class` is the definition
+# functions, `bridge::raw` the C calls under them.
+RUBY_SURFACE_HOME = %w[bridge/rb/class.rs bridge/raw.rs].freeze
 ruby_surface = Hash.new(0)
 Dir.glob(File.join(RUST, "bridge", "**", "*.rs")).sort.each do |path|
   relative = path.delete_prefix("#{RUST}/")
+  next if RUBY_SURFACE_HOME.include?(relative)
   count = comments_removed(File.binread(path)).scan(RUBY_SURFACE).length
   ruby_surface[relative] = count unless count.zero?
 end
@@ -860,11 +873,12 @@ end
 # Every raising C call in `bridge/raw.rs` is made inside `call(|| ...)`, the
 # thunk-style `rb_protect` that hands the raise back as `Err` - so a caller can
 # own a copy or hold a document guard across any of them, and nothing needs
-# tracking above `raw.rs`. The two functions that sit outside a `call` on
+# tracking above `raw.rs`. The functions that sit outside a `call` on
 # purpose: `injected_raise` (it runs INSIDE every wrapper's closure, so its
-# raise is that call's) and `jump_error` (it resumes a state `rb_protect` just
-# caught, under magnus's protect, to build the error).
-RAW_OUTSIDE_CALL = %w[injected_raise jump_error].freeze
+# raise is that call's), and `jump_tag`, `exc_raise` and `exc_fatal`, which
+# ARE the raise - `Error::raise` and `run_init` call them last, from a
+# method's trampoline, with nothing owned on the way.
+RAW_OUTSIDE_CALL = %w[injected_raise jump_tag exc_raise exc_fatal].freeze
 
 def raw_unprotected(path)
   code = comments_removed(File.binread(path))

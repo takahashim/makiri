@@ -7,8 +7,8 @@
 
 #![allow(unsafe_code)]
 
+use crate::bridge::rb::{Error, Value};
 use crate::bridge::ruby::makiri_error;
-use magnus::{Error, Value};
 
 use crate::html_dom::html::{
     ForeignNode, HtmlNode, HtmlNodeKey, HtmlTree, Insertion, NodeType, Place, RawNode,
@@ -182,7 +182,7 @@ pub struct HtmlSelf {
     pub document: Value,
 }
 
-impl magnus::TryConvert for HtmlSelf {
+impl crate::bridge::rb::TryConvert for HtmlSelf {
     fn try_convert(value: Value) -> Result<Self, Error> {
         let (key, document) = html_node_key(value)?;
         Ok(HtmlSelf {

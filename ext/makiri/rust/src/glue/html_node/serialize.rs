@@ -7,7 +7,8 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{method, prelude::*, Error, RString, Ruby, Value};
+use crate::bridge::rb::{prelude::*, Error, RString, Ruby, Value};
+use crate::method;
 
 use super::HtmlSelf;
 use crate::bridge::ruby::makiri_error;

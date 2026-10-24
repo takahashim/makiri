@@ -14,7 +14,8 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{function, method, prelude::*, Error, RHash, Ruby, Value};
+use crate::bridge::rb::{prelude::*, Error, RHash, Ruby, Value};
+use crate::{function, method};
 
 use crate::bridge::xml::wrap_xml_node as wrap;
 use crate::init::{CLASS_XML_DOCUMENT, CLASS_XML_DOCUMENT_FRAGMENT};
@@ -33,12 +34,12 @@ fn parse_limits(ruby: &Ruby, h: Option<RHash>) -> Result<ParseLimits, Error> {
         return Ok(limits);
     };
 
-    let key = crate::bridge::build::sym("max_bytes")?;
+    let key = crate::bridge::build::symbol("max_bytes")?;
     /* The keys are read from the Hash itself (`hash::each_pair`), not
      * through a `keys` a subclass can redefine. */
     crate::glue::hash::each_pair(ruby, h, |k, _| {
         /* By identity: `eql?` would be the caller's key's method. */
-        if crate::bridge::ruby::same_value(k, key) {
+        if crate::bridge::ruby::same_value(k, key.as_value()) {
             return Ok(());
         }
         Err(Error::new(
@@ -54,7 +55,7 @@ fn parse_limits(ruby: &Ruby, h: Option<RHash>) -> Result<ParseLimits, Error> {
     };
     /* An actual Integer, not merely something convertible: a Float (1.5) is a
      * TypeError rather than a silent truncation. */
-    let n = magnus::Integer::from_value(v)
+    let n = crate::bridge::rb::Integer::from_value(v)
         .ok_or_else(|| Error::new(ruby.exception_type_error(), "max_bytes must be an Integer"))?
         .to_i64()?;
     if n <= 0 {

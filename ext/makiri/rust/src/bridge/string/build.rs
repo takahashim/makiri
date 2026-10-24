@@ -3,9 +3,9 @@
 #![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
+use crate::bridge::rb::value::AsRawValue;
+use crate::bridge::rb::{Error, RString, ReprValue, Value};
 use crate::bridge::ruby::{gvl_ruby, makiri_error};
-use magnus::rb_sys::AsRawValue;
-use magnus::{value::ReprValue, Error, RString, Value};
 use rb_sys::StableApiDefinition;
 
 /* ---- assembling Ruby Strings ---- */

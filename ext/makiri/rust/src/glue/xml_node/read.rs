@@ -19,7 +19,7 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{prelude::*, Error, Ruby, Value};
+use crate::bridge::rb::{prelude::*, Error, Ruby, Value};
 
 use super::{wrap, XmlSelf};
 use crate::bridge::string::{str_from_read, utf8_str, StrKind};

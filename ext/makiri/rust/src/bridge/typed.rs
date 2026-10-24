@@ -18,8 +18,8 @@
 use core::ffi::{c_char, c_void};
 use core::marker::PhantomData;
 
-use magnus::rb_sys::{AsRawValue, FromRawValue};
-use magnus::{Error, Value};
+use crate::bridge::rb::value::AsRawValue;
+use crate::bridge::rb::{Error, Value};
 use rb_sys::{rb_data_type_t, VALUE};
 
 /// A `Value` from a raw handle this module holds - a stored field, or what a
@@ -355,8 +355,8 @@ impl<T: Hooks> TypedType<T> {
     /// `VALUE_COUNTS`).
     pub(in crate::bridge) fn wrap(
         &'static self,
-        _: &magnus::Ruby,
-        klass: magnus::RClass,
+        _: &crate::bridge::rb::Ruby,
+        klass: crate::bridge::rb::RClass,
         build: impl FnOnce() -> T,
         store: impl FnOnce(&mut T, &Store),
     ) -> Result<Value, Error> {
@@ -420,8 +420,8 @@ impl<T: Hooks + Snapshot> EmbeddedType<T> {
     /// allocate nothing either: it stores the values `T` holds, no more.
     pub(in crate::bridge) fn wrap(
         &'static self,
-        ruby: &magnus::Ruby,
-        klass: magnus::RClass,
+        ruby: &crate::bridge::rb::Ruby,
+        klass: crate::bridge::rb::RClass,
         build: impl FnOnce() -> T,
         store: impl FnOnce(&mut T, &Store),
     ) -> Result<Value, Error> {

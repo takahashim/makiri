@@ -42,7 +42,7 @@ use core::ffi::c_void;
 /// - It did not run: the interrupt is delivered HERE, under `protect`, so it
 ///   comes back as `Err` through ordinary Rust returns. If delivering it raised
 ///   nothing (a trap handler that returned), the call is simply made again.
-pub fn without_gvl<F: FnOnce() -> R + Send, R>(f: F) -> Result<R, magnus::Error> {
+pub fn without_gvl<F: FnOnce() -> R + Send, R>(f: F) -> Result<R, crate::bridge::rb::Error> {
     struct Slot<F, R> {
         f: Option<F>,
         out: Option<R>,

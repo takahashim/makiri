@@ -10,7 +10,7 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{prelude::*, Error, RArray, RClass, RHash, Ruby, Value};
+use crate::bridge::rb::{prelude::*, Error, RArray, RClass, RHash, Ruby, Value};
 
 use super::XmlSelf;
 use crate::bridge::build::{ary, aset, hash, push};
@@ -20,17 +20,20 @@ use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId};
 
 /// `Makiri::XML::Namespace`, the Ruby `Data` class the queries make.
 fn ns_class() -> Result<RClass, Error> {
-    MOD_XML.defined()?.const_get("Namespace")
+    let v = MOD_XML.defined()?.const_get("Namespace")?;
+    RClass::from_value(v)
+        .ok_or_else(|| crate::bridge::ruby::internal_error("Makiri::XML::Namespace is not a class"))
 }
 
 /// `Makiri::XML::Namespace.new(prefix, href)`: Makiri's own Data class, but
 /// Ruby code all the same, so no borrow of the arena is held across the call.
+/// One of the two calls `USER_CODE_API` allows.
 #[allow(
     clippy::disallowed_methods,
     reason = "Makiri's own Data class; one of the two calls USER_CODE_API allows"
 )]
 fn new_ns(class: RClass, prefix: Value, href: Value) -> Result<Value, Error> {
-    class.funcall("new", (prefix, href))
+    class.call_method("new", &[prefix, href])
 }
 
 /// A prefix as Ruby sees it: nil for none (the default namespace), else the
@@ -114,9 +117,9 @@ pub fn namespaces(_ruby: &Ruby, this: XmlSelf) -> Result<RHash, Error> {
         let h = hash()?;
         for id in core::iter::successors(Some(this.id), |&n| d.parent(n)) {
             for (at, _, u) in declarations(&d, id) {
-                let key = utf8_str(d.qname(at))?;
+                let key = crate::bridge::string::utf8_rstring(d.qname(at))?;
                 if h.get(key).is_none() {
-                    aset(h, key, utf8_str(u)?)?;
+                    aset(h, key.as_value(), utf8_str(u)?)?;
                 }
             }
         }

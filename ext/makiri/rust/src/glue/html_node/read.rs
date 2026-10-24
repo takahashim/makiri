@@ -18,7 +18,7 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{prelude::*, Error, Ruby, Value};
+use crate::bridge::rb::{prelude::*, Error, Ruby, Value};
 
 use super::with_arg_node;
 use crate::bridge::html::{wrap_html_node, HtmlView};

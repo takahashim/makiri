@@ -10,7 +10,7 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{prelude::*, Error, RHash, Ruby, Value};
+use crate::bridge::rb::{prelude::*, Error, RHash, Ruby, Value};
 
 use crate::bridge::ruby::makiri_error;
 use crate::bridge::string::namespace_arg;
@@ -296,7 +296,7 @@ pub fn create_element(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Val
              * a Symbol, a value must be a String), after the pairs are out of
              * the Hash (`hash::each_pair`). */
             /* `rb_el` was wrapped just above, so it converts. */
-            let el_self = <XmlSelf as magnus::TryConvert>::try_convert(rb_el)?;
+            let el_self = <XmlSelf as crate::bridge::rb::TryConvert>::try_convert(rb_el)?;
             crate::glue::hash::each_pair(ruby, h, |k, v| {
                 aset(ruby, el_self, k, v)?;
                 Ok(())

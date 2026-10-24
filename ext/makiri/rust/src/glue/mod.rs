@@ -14,7 +14,7 @@
 //! `longjmp`, which skips Rust destructors: a raise crossing a frame that owns a
 //! `Vec`, a [`Buf`](crate::cbuf::Buf), a `RefCell` borrow or any other resource
 //! leaks it or leaves it held. So a failure travels back as
-//! `Result<_, magnus::Error>`, which magnus turns into a raise after the Rust
+//! `Result<_, crate::bridge::rb::Error>`, which magnus turns into a raise after the Rust
 //! frames have returned normally, and a Ruby C function that can raise is called
 //! only through `bridge::raw`, whose every wrapper catches the raise and hands
 //! it back the same way - Ruby's allocator's `NoMemoryError` included, so
