@@ -42,7 +42,7 @@ UNSAFE_ISLANDS = {
   "bridge/stack.rs" => 1,
   "bridge/string/build.rs" => 2,
   "bridge/string/encoding.rs" => 10,
-  "bridge/string/view.rs" => 6,
+  "bridge/string/view.rs" => 5,
   "bridge/typed.rs" => 27,
   "bridge/wrapper/document.rs" => 1,
   "bridge/wrapper/node.rs" => 1,
@@ -73,6 +73,7 @@ UNSAFE_ISLANDS = {
   "lexbor/tests.rs" => 3,
   "no_unwind.rs" => 2,
   "raw_vec.rs" => 17,
+  "utf8_copy.rs" => 1,
 }.freeze
 
 # Files whose safety is compiler-enforced. Checked by containment, so adding one
@@ -87,45 +88,46 @@ FORBID_ROOTS = %w[css/mod.rs glue/mod.rs css_match/mod.rs selectors/mod.rs xml/m
 
 FORBID_FILES = %w[
   bridge/build.rs bridge/doc.rs bridge/dom.rs
-  bridge/dom_error.rs bridge/fragment.rs bridge/string/source.rs
-  bridge/wrapper/accounting.rs bridge/wrapper/edit.rs cbuf.rs
-  child_index.rs conformance/mod.rs css/build.rs
-  css/lower.rs css/mod.rs css_cache.rs
-  css_match/mod.rs cutf8.rs cutf8/verify.rs
-  doc_cell.rs dom_rules.rs engine_error.rs
-  falloc/verify.rs glue/css.rs glue/html_doc.rs
-  glue/html_node/css.rs glue/html_node/mutate.rs glue/html_node/read.rs
-  glue/html_node/serialize.rs glue/mod.rs glue/node.rs
-  glue/node_set.rs glue/query.rs glue/xml_doc.rs
-  glue/xml_node/css.rs glue/xml_node/mod.rs glue/xml_node/mutate.rs
-  glue/xml_node/ns.rs glue/xml_node/read.rs glue/xml_node/serialize.rs
-  glue/xpath_context.rs gvl.rs html/dom/mod.rs
-  html/encoding/mod.rs html/mod.rs html/tokenizer/mod.rs
-  html/tree/mod.rs html_dom.rs lexbor/contains_guard.rs
-  limits.rs msg.rs node_type.rs
-  ptr_table.rs rust_tests.rs selectors/mod.rs
-  selectors/stylesheet.rs selectors/text.rs source_lines.rs
-  stack.rs text.rs token.rs
-  utf8_input.rs xml/arena.rs xml/attr_key.rs
-  xml/chars/expand.rs xml/chars/mod.rs xml/css.rs
-  xml/css_tests.rs xml/dom_name.rs xml/encoding_names.rs
-  xml/encoding_sniff.rs xml/index.rs xml/mod.rs
-  xml/model.rs xml/mutate/attr.rs xml/mutate/copy.rs
-  xml/mutate/edit.rs xml/mutate/factory.rs xml/mutate/insert.rs
-  xml/mutate/mod.rs xml/mutate/ns.rs xml/ns_scope.rs
-  xml/qname.rs xml/selftest.rs xml/serialize/bindings.rs
-  xml/serialize/c14n.rs xml/serialize/mod.rs xml/serialize/out.rs
-  xml/serialize/xml.rs xml/tree/cursor.rs xml/tree/decl.rs
-  xml/tree/dtd.rs xml/tree/mod.rs xml/tree/scope.rs
-  xml/verify.rs xml/xpath.rs xpath/abi.rs
-  xpath/ast.rs xpath/ast_ops.rs xpath/attr_pred.rs
-  xpath/axis.rs xpath/ctx.rs xpath/dom.rs
-  xpath/eval.rs xpath/funcs/css_hooks.rs xpath/funcs/ext.rs
-  xpath/funcs/mod.rs xpath/lex.rs xpath/limits.rs
-  xpath/mod.rs xpath/nodetest.rs xpath/number.rs
-  xpath/order.rs xpath/parse.rs xpath/step_index.rs
-  xpath/str_cache.rs xpath/tests.rs xpath/value.rs
-  xpath/verify.rs
+  bridge/dom_error.rs bridge/fragment.rs bridge/html.rs
+  bridge/rb/convert.rs bridge/rb/error.rs bridge/string/source.rs
+  bridge/wrapper/accounting.rs bridge/wrapper/edit.rs bridge/xml.rs
+  cbuf.rs child_index.rs conformance/mod.rs
+  css/build.rs css/lower.rs css/mod.rs
+  css_cache.rs css_match/mod.rs cutf8.rs
+  cutf8/verify.rs doc_cell.rs dom_rules.rs
+  engine_error.rs falloc/verify.rs glue/css.rs
+  glue/html_doc.rs glue/html_node/css.rs glue/html_node/mutate.rs
+  glue/html_node/read.rs glue/html_node/serialize.rs glue/mod.rs
+  glue/node.rs glue/node_set.rs glue/query.rs
+  glue/xml_doc.rs glue/xml_node/css.rs glue/xml_node/mod.rs
+  glue/xml_node/mutate.rs glue/xml_node/ns.rs glue/xml_node/read.rs
+  glue/xml_node/serialize.rs glue/xpath_context.rs gvl.rs
+  html/dom/mod.rs html/encoding/mod.rs html/mod.rs
+  html/tokenizer/mod.rs html/tree/mod.rs html_dom.rs
+  lexbor/contains_guard.rs limits.rs msg.rs
+  node_type.rs ptr_table.rs rust_tests.rs
+  selectors/mod.rs selectors/stylesheet.rs selectors/text.rs
+  source_lines.rs stack.rs text.rs
+  token.rs utf8_input.rs xml/arena.rs
+  xml/attr_key.rs xml/chars/expand.rs xml/chars/mod.rs
+  xml/css.rs xml/css_tests.rs xml/dom_name.rs
+  xml/encoding_names.rs xml/encoding_sniff.rs xml/index.rs
+  xml/mod.rs xml/model.rs xml/mutate/attr.rs
+  xml/mutate/copy.rs xml/mutate/edit.rs xml/mutate/factory.rs
+  xml/mutate/insert.rs xml/mutate/mod.rs xml/mutate/ns.rs
+  xml/ns_scope.rs xml/qname.rs xml/selftest.rs
+  xml/serialize/bindings.rs xml/serialize/c14n.rs xml/serialize/mod.rs
+  xml/serialize/out.rs xml/serialize/xml.rs xml/tree/cursor.rs
+  xml/tree/decl.rs xml/tree/dtd.rs xml/tree/mod.rs
+  xml/tree/scope.rs xml/verify.rs xml/xpath.rs
+  xpath/abi.rs xpath/ast.rs xpath/ast_ops.rs
+  xpath/attr_pred.rs xpath/axis.rs xpath/ctx.rs
+  xpath/dom.rs xpath/eval.rs xpath/funcs/css_hooks.rs
+  xpath/funcs/ext.rs xpath/funcs/mod.rs xpath/lex.rs
+  xpath/limits.rs xpath/mod.rs xpath/nodetest.rs
+  xpath/number.rs xpath/order.rs xpath/parse.rs
+  xpath/step_index.rs xpath/str_cache.rs xpath/tests.rs
+  xpath/value.rs xpath/verify.rs
 ].freeze
 
 UNSAFE_USE = /\bunsafe\s*(?:\{|fn\b|impl\b|trait\b|extern\b)/
@@ -277,7 +279,7 @@ RUBY_LAYER_COUNTS = {}.freeze
 # and a real OOM there is Ruby's `NoMemoryError` rather than an abort.
 INFALLIBLE_ALLOC = /\.to_owned\(\)|\.to_vec\(\)|String::from\(|\bformat!\(|\.to_string\(\)|from_utf8_lossy|\.into_owned\(\)|\bvec!\[|CString::new/
 # Where the gate looks: the engine, and the Ruby layer over it.
-INFALLIBLE_ALLOC_DIRS = (ENGINE_DIRS + %w[bridge/ glue/ init.rs lib.rs msg.rs caught.rs css_cache.rs raw_vec.rs
+INFALLIBLE_ALLOC_DIRS = (ENGINE_DIRS + %w[bridge/ glue/ init.rs lib.rs msg.rs caught.rs css_cache.rs raw_vec.rs utf8_copy.rs
                                           compat.rs doc_cell.rs engine_error.rs gvl.rs source_lines.rs
                                           stack.rs]).freeze
 #

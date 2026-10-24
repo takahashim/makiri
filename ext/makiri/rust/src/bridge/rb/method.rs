@@ -15,6 +15,8 @@
 //! as it is or a receiver type checking its class, never a conversion that
 //! runs Ruby - and returns anything [`ReturnValue`].
 
+#![allow(unsafe_code)]
+
 use core::ffi::c_int;
 use core::panic::AssertUnwindSafe;
 

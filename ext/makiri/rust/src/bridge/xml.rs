@@ -14,7 +14,7 @@
 //! Ruby wrapper for it stays valid; the arena owns the memory and outlives every
 //! wrapper through the Document.
 
-#![allow(unsafe_code)]
+#![forbid(unsafe_code)]
 
 use crate::bridge::rb::value::AsRawValue;
 

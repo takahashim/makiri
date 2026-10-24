@@ -4,6 +4,8 @@
 //! something else, a frozen target), so each goes through `bridge::raw`'s
 //! protected wrappers and comes back as `Err`.
 
+#![allow(unsafe_code)]
+
 use core::ffi::CStr;
 
 use super::error::Error;

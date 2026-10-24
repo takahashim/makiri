@@ -1,5 +1,7 @@
 //! [`Ruby`]: the proof that this thread holds the GVL.
 
+#![allow(unsafe_code)]
+
 use core::marker::PhantomData;
 
 use super::value::{ExceptionClass, RClass, ReprValue, Value};

@@ -12,6 +12,8 @@
 //! make it is Ruby's `NoMemoryError`, never an abort. An error can be made
 //! anywhere, an edit's closure that must run no Ruby included.
 
+#![forbid(unsafe_code)]
+
 use core::ffi::c_int;
 use core::fmt;
 

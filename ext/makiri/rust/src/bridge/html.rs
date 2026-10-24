@@ -5,7 +5,7 @@
 //! A value read out of a Ruby wrapper becomes a live arena handle here, and
 //! the conversion is unsafe; the arena side (`html::dom`) stays Ruby-free.
 
-#![allow(unsafe_code)]
+#![forbid(unsafe_code)]
 
 use crate::bridge::rb::{Error, Value};
 use crate::bridge::ruby::makiri_error;

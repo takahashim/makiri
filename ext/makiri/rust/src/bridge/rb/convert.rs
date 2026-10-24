@@ -7,6 +7,8 @@
 //! calls Ruby. A method's result becomes a `Value` through [`IntoValue`],
 //! which can allocate and so returns `Err` rather than raising.
 
+#![forbid(unsafe_code)]
+
 use super::error::Error;
 use super::value::{ReprValue, Value};
 

@@ -109,7 +109,8 @@ jobs:
           KANI_JOBS: "4"
         run: bundle exec rake kani
 
-  # Miri over the Ruby-free modules that hold `unsafe` (`raw_vec`, `falloc`)
+  # Miri over the Ruby-free modules that hold `unsafe` (`raw_vec`,
+  # `utf8_copy`, `falloc`)
   # and the buffer built on them (`cbuf`): their tests run on Miri's
   # interpreter, which reports undefined behaviour - an out-of-bounds or
   # dangling access, a misaligned or provenance-less pointer - that a test on
@@ -132,4 +133,4 @@ jobs:
         working-directory: ext/makiri/rust
         env:
           MIRIFLAGS: "-Zmiri-strict-provenance"
-        run: cargo +nightly miri test --no-default-features --lib -- raw_vec:: falloc:: cbuf::
+        run: cargo +nightly miri test --no-default-features --lib -- raw_vec:: utf8_copy:: falloc:: cbuf::

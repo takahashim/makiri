@@ -602,6 +602,10 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            else Ruby-free is `forbid(unsafe_code)`
     doc_cell.rs            `DocCell`: a Document's content behind counted
                            read/write guards (Ruby-free; `bridge::dom` wraps it)
+    utf8_copy.rs           `Utf8Copy`: owned bytes checked by std's `from_utf8` over
+                           the copy itself - what a checked view of a Ruby String
+                           (`RubyText` / `RubyData`) is, so a `&str` never rests on
+                           a String's cached coderange
     raw_vec.rs             `RawVec<T, A>`: a growable array over an allocator that is
                            only realloc + free - a NodeSet's node array, with Ruby's
                            allocator in `bridge::alloc` (`RubyVec`). Ruby-free, so
@@ -821,9 +825,13 @@ repaired - and any other raise in the transcode (`NoMemoryError`, an
 interrupt) is passed through as it is. A length cap (`ruby_try_verified_text`)
 is on the UTF-8. Both checked views (`RubyText`, `RubyData`) deref to
 `&str`, and each OWNS A COPY of the (UTF-8) String's bytes, taken with no
-Ruby between the read and the copy (`string::copy_bytes`; up to 64 bytes
-inline, so a UTF-8 selector or expression allocates nothing; one in another
-encoding allocates its transcode) and checked after. Nothing Ruby
+Ruby between the read and the copy (`crate::utf8_copy::Utf8Copy`; up to 64
+bytes inline, so a UTF-8 selector or expression allocates nothing; one in
+another encoding allocates its transcode) and checked after - its UTF-8 by
+std's `from_utf8` over the copy, ALWAYS: the cached coderange is not
+consulted there, since a wrong one (another C extension's, a Ruby bug) would
+make the `&str` undefined behaviour. The parse source and the XML input check
+still take the coderange as a hint, where a wrong one stays safe code. Nothing Ruby
 does afterwards - a GC, the caller rewriting or growing the String - reaches
 the copy. The HTML source (`HtmlSource`) is a copy too, the
 one a document parse needs to read it with the GVL released. The only borrow

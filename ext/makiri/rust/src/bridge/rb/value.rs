@@ -12,6 +12,8 @@
 //! (`bridge::typed::Held`). `rake dylint`'s `ruby_value_on_heap` reports one
 //! kept anywhere else, by the [`ReprValue`] these implement.
 
+#![allow(unsafe_code)]
+
 use core::ffi::{c_long, CStr};
 use core::marker::PhantomData;
 

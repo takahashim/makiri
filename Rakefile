@@ -78,7 +78,7 @@ end
 # them: their tests on Miri's interpreter, which reports undefined behaviour a
 # run on hardware passes over (CI: verify.yml). Needs the nightly toolchain
 # with the `miri` component. MIRI_FILTERS replaces the module list.
-MIRI_FILTERS = %w[raw_vec:: falloc:: cbuf::].freeze
+MIRI_FILTERS = %w[raw_vec:: utf8_copy:: falloc:: cbuf::].freeze
 desc "Run the Ruby-free unsafe modules' tests under Miri (nightly)"
 task :miri do
   filters = ENV["MIRI_FILTERS"] ? ENV["MIRI_FILTERS"].split(",") : MIRI_FILTERS

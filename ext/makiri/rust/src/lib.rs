@@ -66,6 +66,10 @@ pub mod cbuf;
 /// so an error path allocates nothing.
 pub mod msg;
 
+/// `Utf8Copy`: owned bytes checked to be UTF-8 - what the bridge's checked
+/// views of a Ruby String are, so a `&str` rests on no Ruby-side flag.
+pub mod utf8_copy;
+
 /// `RawVec`: the growable array behind a NodeSet's node array, over an
 /// allocator that is only `realloc` and `free` (Ruby's, in the bridge).
 pub mod raw_vec;

@@ -11,8 +11,6 @@
 //! (`method::finish`). So the C functions Makiri trusts are the ones
 //! `bridge/raw.rs` names, and no other code stands between them and the glue.
 
-#![allow(unsafe_code)]
-
 pub mod class;
 pub mod convert;
 pub mod error;
