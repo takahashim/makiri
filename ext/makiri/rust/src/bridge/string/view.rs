@@ -6,18 +6,17 @@
 
 use core::ops::Deref;
 
-use magnus::encoding::Coderange;
+use crate::bridge::rb::Coderange;
 
+use crate::bridge::rb::value::AsRawValue;
+use crate::bridge::rb::ReprValue;
+use crate::bridge::rb::{Error, RString, Value};
 use crate::bridge::ruby::makiri_error;
-use magnus::rb_sys::AsRawValue;
-/* Not magnus's: ours catches a panic before `rb_protect`'s C frame. */
-use magnus::value::ReprValue;
-use magnus::{Error, RString, Value};
 use rb_sys::StableApiDefinition;
 
 /// The shared owned buffer.
 use crate::cbuf::OwnedBuf;
-use crate::falloc::OomOption;
+use crate::utf8_copy::{CopyError, Utf8Copy};
 
 use super::*;
 use crate::bridge::ruby::{name_arg, string_arg};
@@ -44,48 +43,19 @@ mod sealed {
 }
 use sealed::Checked;
 
-/// Up to this many bytes a copy lives inside the view, on the stack.
-const INLINE: usize = 64;
-
-/// A copy of a String's bytes: inline when short, else a `falloc` allocation.
-enum Bytes {
-    Inline { len: u8, buf: [u8; INLINE] },
-    Heap(OwnedBuf),
-}
-
-impl Bytes {
-    /// A copy of `src`; `None` when the heap copy could not be allocated.
-    fn copy(src: &[u8]) -> Option<Bytes> {
-        if src.len() <= INLINE {
-            let mut buf = [0u8; INLINE];
-            buf[..src.len()].copy_from_slice(src);
-            return Some(Bytes::Inline {
-                len: src.len() as u8,
-                buf,
-            });
-        }
-        OwnedBuf::copy_from(src).map(Bytes::Heap)
-    }
-
-    fn as_slice(&self) -> &[u8] {
-        match self {
-            Bytes::Inline { len, buf } => &buf[..usize::from(*len)],
-            Bytes::Heap(b) => b.as_slice(),
-        }
-    }
-}
-
 /// Bytes copied out of a Ruby String and checked against `C`: [`RubyText`]
 /// is valid UTF-8 with no NUL, [`RubyData`] is valid UTF-8 with NUL permitted
 /// (the HTML data family). They are separate types because the contract is
 /// the only thing that stops a data-family value from reaching an engine
 /// input.
 ///
-/// The view owns its bytes, so nothing Ruby does after the copy - a GC, a
-/// mutation of the String, a reallocation - can reach them, and a checked
-/// view is a plain `&str` ([`Deref`]) for as long as it lives.
+/// The view owns its bytes - a [`Utf8Copy`], checked to be UTF-8 by std's
+/// validator over the copy itself, never by the String's cached coderange -
+/// so nothing Ruby does after the copy (a GC, a mutation of the String, a
+/// reallocation) can reach them, and a checked view is a plain `&str`
+/// ([`Deref`]) for as long as it lives.
 pub struct RubyStr<C> {
-    bytes: Bytes,
+    bytes: Utf8Copy,
     contract: core::marker::PhantomData<C>,
 }
 
@@ -93,6 +63,10 @@ pub type RubyText = RubyStr<TextContract>;
 pub type RubyData = RubyStr<DataContract>;
 
 /// Why [`RubyStr::acquire`] gave no view.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "an Error holds its message inline (`crate::msg::Msg`), so it is never boxed"
+)]
 enum Refusal<P> {
     /// The bytes failed the contract; `P` is the check's own answer.
     Check(P),
@@ -114,28 +88,33 @@ impl<P> crate::falloc::Oom for Refusal<P> {
 
 impl<C: Checked> RubyStr<C> {
     /// A checked view of `s`: read in its own encoding ([`utf8_strict`]), its
-    /// UTF-8 bytes copied, then checked by `check` (which gets the String, for
-    /// its cached coderange, and the copy).
-    ///
-    /// The coderange `check` consults is the String's current one, and the
-    /// copy was taken from the String as it is now, with no Ruby in between
-    /// ([`copy_bytes`]) - so the cached answer describes the copied bytes.
+    /// bytes put to `check` (the contract's own rules: a NUL, a length), then
+    /// copied and the copy checked to be UTF-8 - `not_utf8` when it is not.
+    /// The order is the error's: a NUL is reported before invalid UTF-8.
     fn acquire<P>(
         s: RString,
-        check: impl FnOnce(RString, &[u8]) -> Option<P>,
+        not_utf8: P,
+        check: impl FnOnce(&[u8]) -> Option<P>,
     ) -> Result<Self, Refusal<P>> {
         /* Read in its own encoding: a String in another one is transcoded
          * first, and the copy and the check are of the UTF-8 it became. The
          * transcode is a fresh String on this frame, so the GC keeps it. */
         let s = utf8_strict(s).map_err(Refusal::Encoding)?;
-        let bytes = copy_bytes(s).or_oom()?;
-        match check(s, bytes.as_slice()) {
-            Some(problem) => Err(Refusal::Check(problem)),
-            None => Ok(RubyStr {
-                bytes,
-                contract: core::marker::PhantomData,
-            }),
-        }
+        // SAFETY: the bytes are read, checked and copied in this call, which
+        // runs no Ruby: `Utf8Copy::new` allocates through libc at most.
+        let bytes = unsafe {
+            with_bytes(s, |b| match check(b) {
+                Some(problem) => Err(Refusal::Check(problem)),
+                None => Utf8Copy::new(b).map_err(|e| match e {
+                    CopyError::NotUtf8 => Refusal::Check(not_utf8),
+                    CopyError::Oom => Refusal::Oom,
+                }),
+            })
+        }?;
+        Ok(RubyStr {
+            bytes,
+            contract: core::marker::PhantomData,
+        })
     }
 }
 
@@ -143,10 +122,7 @@ impl<C: Checked> Deref for RubyStr<C> {
     type Target = str;
 
     fn deref(&self) -> &str {
-        // SAFETY: the view's own bytes, checked for valid UTF-8 (`Checked`:
-        // both contracts include it) when the view was built, and unchanged
-        // since - nothing but `Drop` touches them.
-        unsafe { core::str::from_utf8_unchecked(self.bytes.as_slice()) }
+        self.bytes.as_str()
     }
 }
 
@@ -191,14 +167,6 @@ unsafe fn borrow<'a>(s: RString) -> &'a [u8] {
 pub(in crate::bridge) unsafe fn with_bytes<R>(s: RString, f: impl FnOnce(&[u8]) -> R) -> R {
     // SAFETY: the caller's contract - nothing runs Ruby while the slice lives.
     f(unsafe { borrow(s) })
-}
-
-/// A copy of the live String `s`'s bytes, taken with no Ruby in between; `None`
-/// when a heap copy could not be allocated.
-fn copy_bytes(s: RString) -> Option<Bytes> {
-    // SAFETY: the bytes are read and copied in this call, which runs no Ruby:
-    // `Bytes::copy` allocates through libc at most, never through Ruby.
-    unsafe { with_bytes(s, Bytes::copy) }
 }
 
 /// A live Ruby String's raw bytes, copied into an owned buffer.
@@ -254,7 +222,7 @@ fn oom_reading() -> Error {
 
 /// `Makiri::Error` with "<what> <problem>", the wording the C raised with.
 fn text_error(what: &str, problem: &str) -> Error {
-    makiri_error(format!("{what} {problem}"))
+    makiri_error(format_args!("{what} {problem}"))
 }
 
 /// [`ruby_verified_text`] for an optional argument: `nil` is `None`.
@@ -275,7 +243,7 @@ pub fn namespace_arg(in_: Value, what: &str) -> Result<Option<RubyText>, Error> 
 /// Coerce to a String and enforce the strict contract (valid UTF-8, no NUL),
 /// naming `what` in the error. The names-and-engine-input path.
 pub fn ruby_verified_text(in_: Value, what: &str) -> Result<RubyText, Error> {
-    verified_text_raising(in_, what, makiri_error)
+    verified_text_raising(in_, what, |m| makiri_error(m))
 }
 
 /// [`ruby_verified_text`] for a NAME given to a factory or a setter: the same
@@ -286,7 +254,7 @@ pub fn ruby_verified_text(in_: Value, what: &str) -> Result<RubyText, Error> {
 /// one through. Invalid UTF-8 stays `Makiri::Error`: it breaks the String
 /// contract every input shares, not a naming rule.
 pub fn ruby_verified_name(in_: Value, what: &str) -> Result<RubyText, Error> {
-    verified_text_raising(in_, what, crate::bridge::ruby::arg_error)
+    verified_text_raising(in_, what, |m| crate::bridge::ruby::arg_error(m))
 }
 
 /// The one acquisition behind [`ruby_verified_text`] and
@@ -296,16 +264,15 @@ pub fn ruby_verified_name(in_: Value, what: &str) -> Result<RubyText, Error> {
 fn verified_text_raising(
     in_: Value,
     what: &str,
-    on_nul: fn(String) -> Error,
+    on_nul: fn(core::fmt::Arguments<'_>) -> Error,
 ) -> Result<RubyText, Error> {
     use crate::cutf8::TextVerdict;
     let s = name_arg(in_)?;
-    RubyText::acquire(s, |s, b| {
-        let v = text_check(s, b);
-        (v != TextVerdict::Ok).then_some(v)
+    RubyText::acquire(s, TextVerdict::InvalidUtf8, |b| {
+        b.contains(&0).then_some(TextVerdict::HasNul)
     })
     .map_err(|r| match r {
-        Refusal::Check(TextVerdict::HasNul) => on_nul(format!(
+        Refusal::Check(TextVerdict::HasNul) => on_nul(format_args!(
             "{what} {}",
             TextVerdict::HasNul.problem().unwrap_or_default()
         )),
@@ -322,7 +289,8 @@ fn verified_text_raising(
 /// lets NUL through - in place of the text one.
 pub fn ruby_verified_data(in_: Value, what: &str) -> Result<RubyData, Error> {
     let s = string_arg(in_)?;
-    RubyData::acquire(s, |s, b| text_check(s, b).data_problem()).map_err(|r| match r {
+    let not_utf8 = TextVerdict::InvalidUtf8.data_problem().unwrap_or_default();
+    RubyData::acquire(s, not_utf8, |_| None).map_err(|r| match r {
         Refusal::Check(problem) => text_error(what, problem),
         Refusal::Oom => oom_reading(),
         Refusal::Encoding(e) => encoding_refusal(what, e),
@@ -336,15 +304,11 @@ pub fn ruby_verified_data(in_: Value, what: &str) -> Result<RubyData, Error> {
 /// wins when Ruby has the answer already. UNKNOWN or BROKEN returns false and
 /// the caller validates or sanitises.
 ///
-/// Trusting `Coderange::Valid` is an accepted assumption: Ruby sets it only
-/// after a successful scan, and any C extension that rewrote the bytes must go
-/// through Ruby's string API to keep the object consistent - one that scribbles
-/// over a String without updating it has already broken Ruby's own invariants
-/// (String#=~, Encoding, Marshal all read the same cache). The consequence here
-/// is sharper than a wrong answer, because the view turns the bytes into a
-/// `&str` (see `RubyStr`'s `Deref`); the alternative - scanning every
-/// `Coderange::Valid` string ourselves - gives up the optimization on the hot
-/// path for a case that means the host is already unsound.
+/// Only a hint for what stays safe code whatever it says - the HTML parse
+/// (`HtmlSource`, which skips the sanitiser) and the XML input check. The
+/// checked views no longer read it: a `&str` rests on `Utf8Copy`'s own check
+/// of the copy, since a wrong coderange (another C extension's, or a Ruby bug
+/// an attacker can reach) would otherwise be undefined behaviour here.
 pub(in crate::bridge) fn ruby_str_known_valid_utf8(str: RString) -> bool {
     match str.enc_coderange() {
         /* Every byte < 0x80 in an ASCII-compatible encoding. */
@@ -381,11 +345,13 @@ pub fn ruby_try_verified_text(sv: RString, max_bytes: usize) -> Result<RubyText,
     if sv.len() > max_bytes {
         return Err(TOO_LONG);
     }
-    RubyText::acquire(sv, |s, b| {
+    let not_utf8 = TextVerdict::InvalidUtf8.reason().unwrap_or_default();
+    RubyText::acquire(sv, not_utf8, |b| {
         if b.len() > max_bytes {
             return Some(TOO_LONG);
         }
-        text_check(s, b).reason()
+        b.contains(&0)
+            .then(|| TextVerdict::HasNul.reason().unwrap_or_default())
     })
     .map_err(|r| match r {
         Refusal::Check(reason) => reason,

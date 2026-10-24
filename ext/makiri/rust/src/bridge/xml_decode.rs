@@ -16,10 +16,8 @@
 #![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
-use magnus::value::ReprValue;
-use magnus::{Error, RString};
+use crate::bridge::rb::{Error, RString};
 
-use super::ruby::error_message;
 use super::string::{text_check, with_bytes, Encoding};
 use crate::init::{EXC_XML_LIMIT_EXCEEDED, EXC_XML_SYNTAX_ERROR};
 use crate::xml::encoding_sniff::sniff;
@@ -27,12 +25,7 @@ use crate::xml::encoding_sniff::sniff;
 /// Whether `e` is an `EncodingError` (an undefined conversion, an invalid
 /// byte sequence, no converter).
 fn is_encoding_error(e: &Error) -> bool {
-    match e.error_type() {
-        magnus::error::ErrorType::Exception(x) => {
-            x.is_kind_of(crate::bridge::ruby::gvl_ruby().exception_encoding_error())
-        }
-        _ => false,
-    }
+    e.is_kind_of(crate::bridge::ruby::gvl_ruby().exception_encoding_error())
 }
 
 /// Two encodings agree, for conflict purposes, when identical or when either is
@@ -77,9 +70,9 @@ fn effective_encoding(str: RString) -> Result<Encoding, Error> {
     let decl = match decl {
         None => None,
         Some(d) => Some(declared_encoding(d.as_bytes()).ok_or_else(|| {
-            syntax_error(format!(
+            syntax_error(format_args!(
                 "XML encoding declaration names an unknown encoding: {}",
-                String::from_utf8_lossy(d.as_bytes())
+                crate::msg::Lossy(d.as_bytes())
             ))
         })?),
     };
@@ -127,7 +120,7 @@ fn declared_encoding(name: &[u8]) -> Option<Encoding> {
 }
 
 /// A `Makiri::XML::SyntaxError` carrying `msg`.
-fn syntax_error(msg: impl Into<std::borrow::Cow<'static, str>>) -> Error {
+fn syntax_error(msg: impl crate::bridge::rb::Message) -> Error {
     Error::new(EXC_XML_SYNTAX_ERROR.exception(), msg)
 }
 
@@ -156,8 +149,8 @@ fn xml_decode_input(str: RString, max_bytes: Option<usize>) -> Result<RString, E
         match super::raw::str_encode(input, Encoding::utf8(), 0) {
             Ok(out) => out,
             Err(e) if is_encoding_error(&e) => {
-                let msg = error_message(&e);
-                return Err(syntax_error(format!(
+                let msg = e.wording();
+                return Err(syntax_error(format_args!(
                     "XML input could not be decoded to UTF-8: {msg}"
                 )));
             }
@@ -200,7 +193,7 @@ fn xml_decode_input(str: RString, max_bytes: Option<usize>) -> Result<RString, E
     // no Ruby.
     let problem = unsafe { with_bytes(s, |bytes| text_check(s, &bytes[off..]).problem()) };
     if let Some(problem) = problem {
-        return Err(syntax_error(format!("XML input {problem}")));
+        return Err(syntax_error(format_args!("XML input {problem}")));
     }
 
     /* Built from the VALUE: the borrow above is over, and rb_str_subseq

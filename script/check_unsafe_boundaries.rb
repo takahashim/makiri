@@ -29,21 +29,25 @@ RUST = File.join(ROOT, "ext/makiri/rust/src")
 # (the unsafe did not disappear, it moved); what ratchets is the total, and the
 # summary prints the `glue/` + `xpath/` subtotal that must reach 0.
 UNSAFE_ISLANDS = {
-  "bridge/alloc.rs" => 9,
+  "bridge/alloc.rs" => 6,
   "bridge/gvl.rs" => 3,
   "bridge/node_set.rs" => 3,
   "bridge/node_wrap.rs" => 1,
-  "bridge/raw.rs" => 45,
-  "bridge/ruby.rs" => 12,
+  "bridge/raw.rs" => 92,
+  "bridge/rb/class.rs" => 2,
+  "bridge/rb/method.rs" => 11,
+  "bridge/rb/ruby.rs" => 5,
+  "bridge/rb/value.rs" => 16,
+  "bridge/ruby.rs" => 13,
   "bridge/stack.rs" => 1,
   "bridge/string/build.rs" => 2,
   "bridge/string/encoding.rs" => 10,
-  "bridge/string/view.rs" => 6,
-  "bridge/typed.rs" => 34,
-  "bridge/wrapper/document.rs" => 2,
+  "bridge/string/view.rs" => 5,
+  "bridge/typed.rs" => 27,
+  "bridge/wrapper/document.rs" => 1,
   "bridge/wrapper/node.rs" => 1,
   "bridge/xml_decode.rs" => 3,
-  "bridge/xpath/context_object.rs" => 3,
+  "bridge/xpath/context_object.rs" => 2,
   "bridge/xpath/mod.rs" => 3,
   "falloc/mod.rs" => 1,
   "lexbor/abi.rs" => 4,
@@ -67,6 +71,9 @@ UNSAFE_ISLANDS = {
   "lexbor/serialize.rs" => 1,
   "lexbor/stylesheet_diff.rs" => 5,
   "lexbor/tests.rs" => 3,
+  "no_unwind.rs" => 2,
+  "raw_vec.rs" => 17,
+  "utf8_copy.rs" => 1,
 }.freeze
 
 # Files whose safety is compiler-enforced. Checked by containment, so adding one
@@ -81,44 +88,46 @@ FORBID_ROOTS = %w[css/mod.rs glue/mod.rs css_match/mod.rs selectors/mod.rs xml/m
 
 FORBID_FILES = %w[
   bridge/build.rs bridge/doc.rs bridge/dom.rs
-  bridge/dom_error.rs bridge/fragment.rs bridge/string/source.rs
-  bridge/wrapper/accounting.rs bridge/wrapper/edit.rs cbuf.rs
-  child_index.rs conformance/mod.rs css/build.rs
-  css/lower.rs css/mod.rs css_cache.rs
-  css_match/mod.rs cutf8.rs cutf8/verify.rs
-  doc_cell.rs dom_rules.rs engine_error.rs
-  falloc/verify.rs glue/css.rs glue/html_doc.rs
-  glue/html_node/css.rs glue/html_node/mutate.rs glue/html_node/read.rs
-  glue/html_node/serialize.rs glue/mod.rs glue/node.rs
-  glue/node_set.rs glue/query.rs glue/xml_doc.rs
-  glue/xml_node/css.rs glue/xml_node/mod.rs glue/xml_node/mutate.rs
-  glue/xml_node/ns.rs glue/xml_node/read.rs glue/xml_node/serialize.rs
-  glue/xpath_context.rs gvl.rs html/dom/mod.rs
-  html/encoding/mod.rs html/mod.rs html/tokenizer/mod.rs
-  html/tree/mod.rs html_dom.rs lexbor/contains_guard.rs
-  limits.rs node_type.rs ptr_table.rs
-  rust_tests.rs selectors/mod.rs selectors/stylesheet.rs
-  selectors/text.rs source_lines.rs stack.rs
-  text.rs token.rs utf8_input.rs
-  xml/arena.rs xml/attr_key.rs xml/chars/expand.rs
-  xml/chars/mod.rs xml/css.rs xml/css_tests.rs
-  xml/dom_name.rs xml/encoding_names.rs xml/encoding_sniff.rs
-  xml/index.rs xml/mod.rs xml/model.rs
-  xml/mutate/attr.rs xml/mutate/copy.rs xml/mutate/edit.rs
-  xml/mutate/factory.rs xml/mutate/insert.rs xml/mutate/mod.rs
-  xml/mutate/ns.rs xml/ns_scope.rs xml/qname.rs
-  xml/selftest.rs xml/serialize/bindings.rs xml/serialize/c14n.rs
-  xml/serialize/mod.rs xml/serialize/out.rs xml/serialize/xml.rs
-  xml/tree/cursor.rs xml/tree/decl.rs xml/tree/dtd.rs
-  xml/tree/mod.rs xml/tree/scope.rs xml/verify.rs
-  xml/xpath.rs xpath/abi.rs xpath/ast.rs
-  xpath/ast_ops.rs xpath/attr_pred.rs xpath/axis.rs
-  xpath/ctx.rs xpath/dom.rs xpath/eval.rs
-  xpath/funcs/css_hooks.rs xpath/funcs/ext.rs xpath/funcs/mod.rs
-  xpath/lex.rs xpath/limits.rs xpath/mod.rs
-  xpath/nodetest.rs xpath/number.rs xpath/order.rs
-  xpath/parse.rs xpath/step_index.rs xpath/str_cache.rs
-  xpath/tests.rs xpath/value.rs xpath/verify.rs
+  bridge/dom_error.rs bridge/fragment.rs bridge/html.rs
+  bridge/rb/convert.rs bridge/rb/error.rs bridge/string/source.rs
+  bridge/wrapper/accounting.rs bridge/wrapper/edit.rs bridge/xml.rs
+  cbuf.rs child_index.rs conformance/mod.rs
+  css/build.rs css/lower.rs css/mod.rs
+  css_cache.rs css_match/mod.rs cutf8.rs
+  cutf8/verify.rs doc_cell.rs dom_rules.rs
+  engine_error.rs falloc/verify.rs glue/css.rs
+  glue/html_doc.rs glue/html_node/css.rs glue/html_node/mutate.rs
+  glue/html_node/read.rs glue/html_node/serialize.rs glue/mod.rs
+  glue/node.rs glue/node_set.rs glue/query.rs
+  glue/xml_doc.rs glue/xml_node/css.rs glue/xml_node/mod.rs
+  glue/xml_node/mutate.rs glue/xml_node/ns.rs glue/xml_node/read.rs
+  glue/xml_node/serialize.rs glue/xpath_context.rs gvl.rs
+  html/dom/mod.rs html/encoding/mod.rs html/mod.rs
+  html/tokenizer/mod.rs html/tree/mod.rs html_dom.rs
+  lexbor/contains_guard.rs limits.rs msg.rs
+  node_type.rs ptr_table.rs rust_tests.rs
+  selectors/mod.rs selectors/stylesheet.rs selectors/text.rs
+  source_lines.rs stack.rs text.rs
+  token.rs utf8_input.rs xml/arena.rs
+  xml/attr_key.rs xml/chars/expand.rs xml/chars/mod.rs
+  xml/css.rs xml/css_tests.rs xml/dom_name.rs
+  xml/encoding_names.rs xml/encoding_sniff.rs xml/index.rs
+  xml/mod.rs xml/model.rs xml/mutate/attr.rs
+  xml/mutate/copy.rs xml/mutate/edit.rs xml/mutate/factory.rs
+  xml/mutate/insert.rs xml/mutate/mod.rs xml/mutate/ns.rs
+  xml/ns_scope.rs xml/qname.rs xml/selftest.rs
+  xml/serialize/bindings.rs xml/serialize/c14n.rs xml/serialize/mod.rs
+  xml/serialize/out.rs xml/serialize/xml.rs xml/tree/cursor.rs
+  xml/tree/decl.rs xml/tree/dtd.rs xml/tree/mod.rs
+  xml/tree/scope.rs xml/verify.rs xml/xpath.rs
+  xpath/abi.rs xpath/ast.rs xpath/ast_ops.rs
+  xpath/attr_pred.rs xpath/axis.rs xpath/ctx.rs
+  xpath/dom.rs xpath/eval.rs xpath/funcs/css_hooks.rs
+  xpath/funcs/ext.rs xpath/funcs/mod.rs xpath/lex.rs
+  xpath/limits.rs xpath/mod.rs xpath/nodetest.rs
+  xpath/number.rs xpath/order.rs xpath/parse.rs
+  xpath/step_index.rs xpath/str_cache.rs xpath/tests.rs
+  xpath/value.rs xpath/verify.rs
 ].freeze
 
 UNSAFE_USE = /\bunsafe\s*(?:\{|fn\b|impl\b|trait\b|extern\b)/
@@ -132,9 +141,8 @@ STATIC_MUT_COUNTS = {}.freeze
 # raw VALUEs, typed data and the C calls that raise (glue/mod.rs), so a raise
 # there becomes an `Err` before it can longjmp past a Rust destructor. This was
 # a pinned count while the glue still reached across; the port is done, so the
-# table is empty and any `rb_sys::` above the bridge fails. `magnus::rb_sys` is
-# magnus's own module (a safe wrapper) and is not counted, and neither are
-# comment lines.
+# table is empty and any `rb_sys::` above the bridge fails. Comment lines are
+# not counted.
 RB_SYS_COUNTS = {}.freeze
 
 # The Ruby C calls that can RAISE - start a `longjmp` that skips every Rust
@@ -151,12 +159,16 @@ RAISING_API = /\b(?:rb_raise|rb_exc_raise|rb_jump_tag|rb_check_typeddata|
   rb_to_encoding|rb_enc_find_index|rb_data_typed_object_wrap|rb_data_typed_object_zalloc|
   ruby_xmalloc|ruby_xrealloc2|
   rb_ary_new_capa|rb_ary_push|rb_hash_new|rb_hash_aset|rb_ll2inum|rb_ull2inum|rb_float_new|
-  rb_id2sym|rb_str_cat|rb_enumeratorize_with_size|rb_memerror)\b/x
-RAISING_COUNTS = { "bridge/raw.rs" => 32 }.freeze # with `rb_memerror` (the raise sweep's injected raise) and `rb_jump_tag` (`jump_error`)
+  rb_id2sym|rb_str_cat|rb_enumeratorize_with_size|rb_memerror|rb_hash_foreach|rb_yield|
+  rb_define_class_under|rb_define_module_under|rb_define_module|rb_const_set|rb_const_get|
+  rb_include_module|rb_define_method|rb_define_private_method|rb_define_singleton_method|
+  rb_define_module_function|rb_exc_new_str|rb_exc_fatal|rb_big2ll|rb_big2ull|rb_hash_lookup2|
+  rb_gc_register_mark_object|rb_module_new|rb_range_values|rb_funcallv|rb_ivar_set)\b/x
+RAISING_COUNTS = { "bridge/raw.rs" => 55 }.freeze # with `rb_memerror` (the raise sweep's injected raise) and `rb_jump_tag` (`jump_error`); 55 with the node table (`rb_hash_lookup2`, `rb_hash_aset`) and the hidden ivars (`rb_ivar_set`)
 
 # Makiri runs none of its caller's Ruby code: no argument is converted with its
 # `to_s`/`to_str`, no method of a caller's object is called, and XPath has no
-# custom-function handler. The C and magnus calls that would run such code are
+# custom-function handler. The C calls and methods that would run such code are
 # counted here, across the crate, and two are allowed: `NodeSet#each`'s
 # `yield` (the block is the point of the method, and no guard or copy is held
 # across it) and `XML::Namespace.new` (Makiri's own Data class, called with no
@@ -164,17 +176,21 @@ RAISING_COUNTS = { "bridge/raw.rs" => 32 }.freeze # with `rb_memerror` (the rais
 USER_CODE_API = /\b(?:rb_String|rb_funcall\w*|rb_obj_as_string|rb_respond_to|rb_yield\w*|
   rb_block_call|rb_call_super|rb_eval_string\w*|rb_str_to_str|rb_string_value\w*|
   rb_check_string_type|rb_convert_type|rb_check_convert_type)\b|
-  \.(?:funcall\w*|respond_to|to_r_string|block_call|yield_\w+|yield_splat)\(/x
-USER_CODE_COUNTS = { "glue/node_set.rs" => 1, "glue/xml_node/ns.rs" => 1 }.freeze
+  \.(?:funcall\w*|respond_to|to_r_string|block_call|yield_\w+|yield_splat|call_method)\(|
+  raw::yield_value\(/x
+# `rb_yield` and `rb_funcallv` are `bridge/raw.rs`'s; NodeSet#each yields, and
+# `XML::Namespace.new` is `Module::call_method`'s one use.
+USER_CODE_COUNTS = { "bridge/raw.rs" => 2, "glue/node_set.rs" => 1, "glue/xml_node/ns.rs" => 1 }.freeze
 
 # A raw `VALUE` (`rb_sys::VALUE`, an integer to Rust) is a Ruby value no type
 # keeps honest: no lint can tell it from a `u64` in a `Vec` or a struct field,
 # where the GC would not see it. So it is spelled only where it must be:
-# `bridge/raw.rs` (the C calls) and `bridge/typed.rs` (TypedData, `Held`,
-# the GC callbacks). Everything else holds magnus's typed values, which
-# `clippy.toml` and the dylint lint can see. The reference-only `lexbor/` is
+# `bridge/raw.rs` (the C calls), `bridge/typed.rs` (TypedData, `Held`, the GC
+# callbacks) and the `bridge::rb` files that ARE the typed values (`value.rs`,
+# `ruby.rs`, `method.rs`'s trampoline pointer). Everything else holds those
+# typed values, which `clippy.toml` and the dylint lint can see. The reference-only `lexbor/` is
 # not counted. Pinned per file, empty: a new one is a decision.
-VALUE_ALLOWED = %w[bridge/raw.rs bridge/typed.rs].freeze
+VALUE_ALLOWED = %w[bridge/raw.rs bridge/typed.rs bridge/rb/value.rs bridge/rb/ruby.rs bridge/rb/method.rs].freeze
 VALUE_COUNTS = {}.freeze
 
 # `Value::from_raw` outside `bridge/` is the other half of the raw Ruby
@@ -242,7 +258,7 @@ LEXBOR_ABI_COUNTS = {}.freeze
 # engine too: an edit lends `&mut HtmlDocMut` to a closure that must run no
 # Ruby, and this is what keeps what that closure calls Ruby-free.
 ENGINE_DIRS = %w[lexbor/ xml/ xpath/ css/ selectors/ html/ html_dom.rs child_index.rs child_index/ falloc/ cbuf.rs cutf8.rs dom_rules.rs dom_rules/ limits.rs node_type.rs ptr_table.rs text.rs token.rs utf8_input.rs].freeze
-RUBY_LAYER = /crate::(?:bridge|glue|init)|magnus::/
+RUBY_LAYER = /\bcrate::(?:bridge|glue|init)\b|\brb_sys::/
 RUBY_LAYER_COUNTS = {}.freeze
 
 # The engine allocates only through `falloc`, so `rake oom` can fail every site
@@ -255,14 +271,20 @@ RUBY_LAYER_COUNTS = {}.freeze
 # It is here because three `.to_owned()` calls reached `xml/serialize` unnoticed -
 # the engine's only infallible allocations - and the crate-wide lint that would
 # have caught them fired on five legitimate glue sites too.
-INFALLIBLE_ALLOC = /\.to_owned\(\)|\.to_vec\(\)|String::from\(|\bformat!\(/
 #
-# Empty: the `selectors`-crate exploration that once held an
-# accepted exception here was rejected in favour of porting Lexbor's own
-# `lxb_selectors_*` state machine instead - `css_match/`, which
-# allocates only through `falloc` like the rest of the engine (and `rake oom`
-# sweeps it).
-INFALLIBLE_ALLOC_COUNTS = {}.freeze
+# It holds for the Ruby layer too (bridge/, glue/, init.rs): an exception
+# message is written into a stack buffer (`crate::msg::Msg`, through
+# `format_args!`) and made into the exception at once, so an error path - the
+# one place a message used to be a `format!` - allocates nothing of Rust's,
+# and a real OOM there is Ruby's `NoMemoryError` rather than an abort.
+INFALLIBLE_ALLOC = /\.to_owned\(\)|\.to_vec\(\)|String::from\(|\bformat!\(|\.to_string\(\)|from_utf8_lossy|\.into_owned\(\)|\bvec!\[|CString::new/
+# Where the gate looks: the engine, and the Ruby layer over it.
+INFALLIBLE_ALLOC_DIRS = (ENGINE_DIRS + %w[bridge/ glue/ init.rs lib.rs msg.rs caught.rs css_cache.rs raw_vec.rs utf8_copy.rs
+                                          compat.rs doc_cell.rs engine_error.rs gvl.rs source_lines.rs
+                                          stack.rs]).freeze
+#
+# The one site is a test hook's: `Makiri.__panic(1)`'s out-of-bounds index.
+INFALLIBLE_ALLOC_COUNTS = { "init.rs" => 1 }.freeze
 
 def rust_code(path)
   File.binread(path).lines.reject { |line| line.match?(%r{\A\s*//}) }.join
@@ -435,7 +457,7 @@ Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
   raising[relative] = count unless count.zero?
   next if relative.start_with?("bridge/")
 
-  count = code.scan(/(?<!magnus::)\brb_sys::/).length
+  count = code.scan(/\brb_sys::/).length
   rb_sys[relative] = count unless count.zero?
 end
 
@@ -550,9 +572,11 @@ GUARDED_PARSES.each do |name, home|
             "#{guarded_calls[name].inspect}"
 end
 
-# magnus's `RHash::foreach` runs its closure under magnus's own `protect`, below
-# `rb_hash_foreach`'s C frames, so a panic in it aborts the process instead of
-# raising. `glue::hash::hash_foreach` latches it; every Hash walk goes there.
+# A Hash is walked by `rb_hash_foreach` calling back into Rust, below its C
+# frames, so a panic there would abort the process. `bridge::raw::hash_foreach`
+# latches it, and every Hash walk goes through `glue::hash::hash_foreach` over
+# it (magnus's `RHash::foreach`, which had no latch, was the reason for this
+# check).
 HASH_FOREACH = /\.foreach\(/
 hash_walks = Hash.new(0)
 Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
@@ -593,7 +617,7 @@ end
 infallible = Hash.new(0)
 Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
   relative = path.delete_prefix("#{RUST}/")
-  next unless relative.start_with?(*ENGINE_DIRS)
+  next unless relative.start_with?(*INFALLIBLE_ALLOC_DIRS)
   next if relative.end_with?("selftest.rs", "verify.rs", "tests.rs")
   # Built only for the tests and the `html_diff` / `html_xpath_diff` /
   # `selector_diff` / `stylesheet_diff` fuzz targets (`lexbor-reference`),
@@ -610,7 +634,7 @@ Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
   infallible[relative] = count unless count.zero?
 end
 if infallible != INFALLIBLE_ALLOC_COUNTS
-  errors << "infallible allocation inside an engine layer changed: " \
+  errors << "infallible allocation in the engine or the Ruby layer changed: " \
             "#{table_diff(INFALLIBLE_ALLOC_COUNTS, infallible)}"
 end
 
@@ -619,69 +643,20 @@ end
 # how a feature's Ruby half ends up split across the two layers by where it
 # happened to need an `unsafe`, rather than by what it does.
 RUBY_SURFACE = /\b(?:define_(?:singleton_|private_|module_)?(?:method|function)|scan_args)\b/
+# The layer that defines methods at all: `bridge::rb::class` is the definition
+# functions, `bridge::raw` the C calls under them.
+RUBY_SURFACE_HOME = %w[bridge/rb/class.rs bridge/raw.rs].freeze
 ruby_surface = Hash.new(0)
 Dir.glob(File.join(RUST, "bridge", "**", "*.rs")).sort.each do |path|
   relative = path.delete_prefix("#{RUST}/")
+  next if RUBY_SURFACE_HOME.include?(relative)
   count = comments_removed(File.binread(path)).scan(RUBY_SURFACE).length
   ruby_surface[relative] = count unless count.zero?
 end
-# Every Ruby method the glue registers runs its body inside
-# `bridge::ruby::entry`, so a panic below it raises Makiri::InternalError rather
-# than `fatal`. Wrapping by hand, method by method, left readers like
-# `children`, `[]` and `NodeSet#each` out; so the gate finds EVERY `method!` /
-# `function!` in the glue - wherever it is written, a registration table
-# included - resolves it to its one definition, and fails unless that body is
-# nothing but a `crate::bridge::ruby::entry(...)` call. What it cannot read, it
-# refuses rather than skips. The exemptions are the hooks that exist to test the
-# panic and allocation paths themselves.
-ENTRY_EXEMPT = %w[
-  init.rs:panic_probe init.rs:alloc_inject_p init.rs:alloc_inject init.rs:alloc_inject_calls
-].freeze
-ENTRY_FN = "crate::bridge::ruby::entry"
-
-def module_dir(rel)
-  base = File.basename(rel, ".rs")
-  dir = File.dirname(rel)
-  %w[mod lib].include?(base) || rel == "init.rs" ? (dir == "." ? "" : dir) : File.join(dir, base).sub(%r{\A\./}, "")
-end
-
-def module_file(rust, modpath)
-  ["#{modpath}.rs", "#{modpath}/mod.rs"].find { |c| File.exist?(File.join(rust, c)) }
-end
-
-def fn_def_re(name) = /^\s*(?:pub(?:\([^)]*\))?\s+)?fn\s+#{Regexp.escape(name)}\b/
-
-# The file a registered path names: `read::name` from `glue/html_node/mod.rs`,
-# `crate::glue::node::f`, or a bare name defined here or brought in by `use`.
-def resolve_fn(rust, rel, path, src)
-  parts = path.split("::")
-  name = parts.pop
-  if parts.empty?
-    imported = src.match?(/^\s*(?:pub\s+)?use\s+[\w:]+::(?:\{[^}]*\b#{Regexp.escape(name)}\b[^}]*\}|#{Regexp.escape(name)}\s*;)/m)
-    local = src.match?(/\bfn\s+#{Regexp.escape(name)}\b/)
-    # Both: which one the macro reaches is Rust's to decide, not this script's.
-    return nil if imported && local
-    return [rel, name] if local
-
-    src.scan(/^\s*(?:pub\s+)?use\s+([\w:]+)::\{([^}]*)\}|^\s*(?:pub\s+)?use\s+([\w:]+)::(\w+)\s*;/m) do |p1, list, p2, single|
-      if p1 && list.split(",").map(&:strip).include?(name)
-        return resolve_fn(rust, rel, "#{p1}::#{name}", "")
-      elsif p2 && single == name
-        return resolve_fn(rust, rel, "#{p2}::#{name}", "")
-      end
-    end
-    return nil
-  end
-  modpath = if parts.first == "crate"
-              parts.drop(1).join("/")
-            elsif parts.first == "super"
-              File.join(File.dirname(module_dir(rel)), *parts.drop(1))
-            else
-              File.join(module_dir(rel), *parts).sub(%r{\A/}, "")
-            end
-  file = module_file(rust, modpath) or return nil
-  [file, name]
-end
+# Every Ruby method runs its body inside its trampoline's catch
+# (`bridge::rb::method::finish`, which `method!` / `function!` expand to), so a
+# panic below it raises Makiri::InternalError: a property of the macros, not of
+# each method, so there is nothing per method to check.
 
 # `src` with every comment, and the inside of every string and character
 # literal, turned to spaces - line breaks kept, so offsets and line numbers
@@ -738,27 +713,6 @@ end
 
 # The index of the bracket closing the one at `open` in CODE (see
 # `code_only`); nil when unbalanced.
-# The open paren of the innermost call enclosing `pos` in `code`: the nearest
-# unmatched `(` before it, passed over while it opens a tuple or a group (no
-# name or generic before it) for the one around that.
-def call_paren_around(code, pos)
-  depth = 0
-  (pos - 1).downto(0) do |i|
-    c = code[i]
-    if ")]}".include?(c)
-      depth += 1
-    elsif "([{".include?(c)
-      if depth.zero?
-        return nil unless c == "("
-        return i if code[0...i].match?(/[\w>]\s*\z/)
-      else
-        depth -= 1
-      end
-    end
-  end
-  nil
-end
-
 def matching_close(code, open)
   depth = 0
   (open...code.length).each do |i|
@@ -773,96 +727,15 @@ def matching_close(code, open)
   nil
 end
 
-# Why the definition of `name` in `src` is not a method body wrapped in entry,
-# or nil when it is: exactly one definition, whose whole body is one
-# `crate::bridge::ruby::entry(...)` call.
-def entry_violation(src, name)
-  code = code_only(src)
-  # Anywhere, not just at a line start, so a same-named fn tucked into a
-  # one-line `mod` still counts as a second definition.
-  defs = code.to_enum(:scan, /\bfn\s+#{Regexp.escape(name)}\b/).map { Regexp.last_match }
-  return "no definition" if defs.empty?
-  return "#{defs.length} definitions" if defs.length > 1
-
-  open = code.index("{", defs.first.end(0)) or return "no body"
-  close = matching_close(code, open) or return "unbalanced body"
-  body = code[(open + 1)...close].strip
-  # The call, with a closure or a bare function as its argument - both run
-  # inside the catch. `entry(make(x))` would build its value before it.
-  m = body.match(/\A#{Regexp.escape(ENTRY_FN)}\s*\(\s*(?:(?:move\s*)?\||[\w:]+\s*\))/)
-  return "body is not #{ENTRY_FN}(|| ...) or #{ENTRY_FN}(a_fn)" unless m
-
-  call_close = matching_close(body, body.index("(", ENTRY_FN.length))
-  return nil if call_close && body[(call_close + 1)..].strip.empty?
-
-  "code outside the #{ENTRY_FN}(...) call"
-end
-
-REGISTRATION = /\b(?:[\w:]*::)?(?:method|function)!\s*\(/
-
-# The first argument of the macro call whose `(` is at `open` in `code`: the
-# text up to its first top-level comma. nil when the call is not closed.
-def first_argument(code, open)
-  close = matching_close(code, open) or return nil
-  depth = 0
-  ((open + 1)...close).each do |i|
-    c = code[i]
-    depth += 1 if "([{".include?(c)
-    depth -= 1 if ")]}".include?(c)
-    return code[(open + 1)...i].strip if c == "," && depth.zero?
-  end
-  code[(open + 1)...close].strip
-end
-
-def unwrapped_entries(rust)
-  missing = []
-  seen = []
-  files = Dir.glob(File.join(rust, "glue", "**", "*.rs")) + [File.join(rust, "init.rs")]
-  files.sort.each do |path|
-    rel = path.delete_prefix("#{rust}/")
-    src = File.binread(path)
-    code = code_only(src)
-    # A renamed macro (`use magnus::method as m`) would register unseen.
-    if code.match?(/\b(?:method|function)\s+as\s+\w+/)
-      missing << "#{rel}: magnus's method!/function! imported under another name"
-    end
-    code.to_enum(:scan, REGISTRATION).each do
-      m = Regexp.last_match
-      fpath = first_argument(code, m.end(0) - 1)
-      # A generic function registered per representation
-      # (`child_count::<HtmlSelf>`) is one definition: resolve it without its
-      # type arguments.
-      fpath = fpath&.sub(/::<[\w:, ]+>\z/, "")
-      unless fpath&.match?(/\A[\w:]+\z/)
-        missing << "#{rel}: registration of `#{fpath}` is not a function path"
-        next
-      end
-      file, name = resolve_fn(rust, rel, fpath, code)
-      if file.nil?
-        missing << "#{rel}: cannot resolve #{fpath}"
-        next
-      end
-      key = "#{file}:#{name}"
-      seen << key
-      next if ENTRY_EXEMPT.include?(key)
-
-      why = entry_violation(File.binread(File.join(rust, file)), name)
-      missing << "#{key} (#{why})" if why
-    end
-  end
-  stale = ENTRY_EXEMPT - seen
-  missing << "ENTRY_EXEMPT names what nothing registers: #{stale.inspect}" unless stale.empty?
-  missing.uniq
-end
-
 # Every raising C call in `bridge/raw.rs` is made inside `call(|| ...)`, the
 # thunk-style `rb_protect` that hands the raise back as `Err` - so a caller can
 # own a copy or hold a document guard across any of them, and nothing needs
-# tracking above `raw.rs`. The two functions that sit outside a `call` on
+# tracking above `raw.rs`. The functions that sit outside a `call` on
 # purpose: `injected_raise` (it runs INSIDE every wrapper's closure, so its
-# raise is that call's) and `jump_error` (it resumes a state `rb_protect` just
-# caught, under magnus's protect, to build the error).
-RAW_OUTSIDE_CALL = %w[injected_raise jump_error].freeze
+# raise is that call's), and `jump_tag`, `exc_raise` and `exc_fatal`, which
+# ARE the raise - `Error::raise` and `run_init` call them last, from a
+# method's trampoline, with nothing owned on the way.
+RAW_OUTSIDE_CALL = %w[injected_raise jump_tag exc_raise exc_fatal].freeze
 
 def raw_unprotected(path)
   code = comments_removed(File.binread(path))
@@ -939,10 +812,52 @@ unless gvl_released.empty?
             "function by its crate:: path (hoist it out of the closure): #{gvl_released.inspect}"
 end
 
-unentered = unwrapped_entries(RUST)
-unless unentered.empty?
-  errors << "Ruby methods whose body is not wrapped in bridge::ruby::entry " \
-            "(wrap it, or add it to ENTRY_EXEMPT with the reason): #{unentered.inspect}"
+# The places that must not unwind (`src/no_unwind.rs`, proven by `rake
+# no_unwind`). An unwind out of an `extern "C"` function aborts the process,
+# and so does a panic in a `Drop` that runs while another unwinds or from the
+# GC's free callback. That task proves each LISTED site; this makes sure none
+# goes unlisted: every `extern "C"` function the shipping crate defines, and
+# every `Drop` it implements, runs its body through `must_not_unwind` (or a
+# helper that does: a method trampoline's `finish`, `Init_makiri`'s
+# `run_init`).
+NO_UNWIND_GUARD = /\bmust_not_unwind\b|\bfinish(?:_cary)?\s*\(|\brun_init\s*\(/
+NO_UNWIND_SKIP = %r{\A(?:lexbor/|lint_probe\.rs\z|rust_tests\.rs\z)|(?:tests|selftest|verify)\.rs\z}
+# `Drop`s no build that ships compiles (each module's own `cfg` says so).
+DROP_EXEMPT = {
+  "compat.rs" => "Reset: `as_lexbor`, under cfg(test) or the reference features",
+  "css/mod.rs" => "Nesting: the CSS-to-XPath lowering, a test reference only"
+}.freeze
+
+def unguarded_no_unwind(rust)
+  Dir.glob(File.join(rust, "**", "*.rs")).sort.flat_map do |path|
+    rel = path.delete_prefix("#{rust}/")
+    next [] if rel.match?(NO_UNWIND_SKIP)
+
+    code = code_only(File.binread(path))
+    code = code.split(/^#\[cfg\(test\)\]\s*\n\s*mod tests\b/).first.to_s
+    found = []
+    # `code_only` blanks a string's inside, so `extern "C"` reads `extern " "`.
+    { /\bextern\s+" *"\s+fn\s+(\w+)[^{;]*\{/ => "extern \"C\" fn",
+      /\bimpl\b[^{;]*?\bDrop\s+for\s+([\w:]+)[^{;]*\{/ => "Drop for" }.each do |re, kind|
+      code.to_enum(:scan, re).each do
+        m = Regexp.last_match
+        next if kind == "Drop for" && DROP_EXEMPT.key?(rel)
+
+        open = m.end(0) - 1
+        close = matching_close(code, open) or next found << "#{rel}: unbalanced #{kind} #{m[1]}"
+        next if code[open..close].match?(NO_UNWIND_GUARD)
+
+        found << "#{rel}:#{code[0...open].count("\n") + 1}: #{kind} #{m[1]}"
+      end
+    end
+    found
+  end
+end
+
+unguarded = unguarded_no_unwind(RUST)
+unless unguarded.empty?
+  errors << "an extern \"C\" fn or a Drop whose body does not run under must_not_unwind " \
+            "(add a site to src/no_unwind.rs): #{unguarded.inspect}"
 end
 
 unless ruby_surface.empty?
@@ -964,7 +879,7 @@ puts "unsafe-boundaries: #{forbidding.length} forbid files; " \
      "(glue+xpath #{glue_xpath_unsafe}); " \
      "#{actual.values.sum} reviewed static mut declarations; " \
      "#{rb_sys.values.sum} rb_sys:: outside bridge/ and #{raising.values.sum} raising C calls in bridge/raw.rs; " \
-     "#{user_code.values.sum} calls into the caller's Ruby (both allowed); " \
+     "#{user_code.values.sum} calls into the caller's Ruby (each allowed); " \
      "#{raw_values.values.sum} raw VALUEs outside raw.rs and typed.rs; " \
      "#{value_from_raw.values.sum} Value::from_raw and " \
      "#{lexbor_abi.values.sum} Lexbor ABI names outside their layer and " \
@@ -972,6 +887,6 @@ puts "unsafe-boundaries: #{forbidding.length} forbid files; " \
      "#{raw_node_crossing.values.sum} raw-node crossings in bridge/; " \
      "#{ruby_layer.values.sum} Ruby-layer uses inside the engine; " \
      "#{ruby_surface.values.sum} Ruby methods in bridge/; " \
-     "every registered method but #{ENTRY_EXEMPT.length} exempt runs under entry; " \
      "every raising call in bridge/raw.rs is inside `call`; " \
-     "every GVL-released body calls only the engine"
+     "every GVL-released body calls only the engine; " \
+     "every extern \"C\" fn and Drop runs under must_not_unwind"

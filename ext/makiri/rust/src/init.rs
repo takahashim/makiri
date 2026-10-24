@@ -1,10 +1,10 @@
 //! `Init_makiri` - the registration seam.
 //!
-//! Ruby loads the extension by calling `Init_makiri`, and this is it:
-//! `#[magnus::init]` generates a symbol with exactly that name and the C ABI.
-//! The contract "export only `Init_makiri`" (plus rb-sys's `ruby_abi_version`)
-//! is enforced at the source: the macro's output is the crate's only
-//! `#[no_mangle]` item, so rustc emits no other exported name. extconf's
+//! Ruby loads the extension by calling `Init_makiri`, and this is it: an
+//! `extern "C"` function of exactly that name. The contract "export only
+//! `Init_makiri`" (plus rb-sys's `ruby_abi_version`) is enforced at the
+//! source: it is the crate's only `#[no_mangle]` item, so rustc emits no
+//! other exported name. extconf's
 //! post-link trim is belt-and-braces on macOS, not the mechanism, and
 //! `rake symbols` checks the result.
 //!
@@ -35,11 +35,10 @@
 
 use std::sync::OnceLock;
 
-use magnus::{
-    function,
-    value::{Opaque, ReprValue},
-    Class, Error, ExceptionClass, Module, Object, RClass, RModule, Ruby, Value,
+use crate::bridge::rb::{
+    Class, Error, ExceptionClass, Module, Object, Opaque, RClass, RModule, ReprValue, Ruby, Value,
 };
+use crate::function;
 
 use crate::bridge::ruby::gvl_ruby;
 
@@ -70,8 +69,7 @@ impl<T: ReprValue> RbConst<T> {
     /// Record `v`, rooted for the rest of the process. `init` is the only
     /// writer, and a second write is refused rather than replacing the first.
     fn set(&self, v: T) -> Result<(), Error> {
-        magnus::gc::register_mark_object(v);
-        self.0.set(Opaque::from(v)).map_err(|_| {
+        self.0.set(Opaque::register(v)?).map_err(|_| {
             Error::new(
                 gvl_ruby().exception_runtime_error(),
                 "Makiri: a class handle was set twice",
@@ -183,67 +181,62 @@ fn alloc_inject_calls(ruby: &Ruby) -> Result<u64, Error> {
 /// `NoMemoryError` in place of its allocation" (`bridge::raw`'s allocating
 /// wrappers; `script/check_raise_injection.rb`).
 fn raise_inject(ruby: &Ruby, nth: Value) -> Result<(), Error> {
-    crate::bridge::ruby::entry(|| {
-        let nth = crate::bridge::ruby::integer_arg(nth)?.to_i64()?;
-        #[cfg(feature = "alloc-inject")]
-        {
-            crate::falloc::raise_inject_arm(nth);
-            let _ = ruby;
-            Ok(())
-        }
-        #[cfg(not(feature = "alloc-inject"))]
-        {
-            let _ = nth;
-            Err(Error::new(
-                ruby.exception_not_imp_error(),
-                "rebuild with MAKIRI_ALLOC_INJECT=1 (rake oom does this)",
-            ))
-        }
-    })
+    let nth = crate::bridge::ruby::integer_arg(nth)?.to_i64()?;
+    #[cfg(feature = "alloc-inject")]
+    {
+        crate::falloc::raise_inject_arm(nth);
+        let _ = ruby;
+        Ok(())
+    }
+    #[cfg(not(feature = "alloc-inject"))]
+    {
+        let _ = nth;
+        Err(Error::new(
+            ruby.exception_not_imp_error(),
+            "rebuild with MAKIRI_ALLOC_INJECT=1 (rake oom does this)",
+        ))
+    }
 }
 
 /// `Makiri.__raise_inject_calls` - how many raising C calls a workload made,
 /// armed or not, so the sweep can size itself from a disarmed run.
 fn raise_inject_calls(ruby: &Ruby) -> Result<u64, Error> {
-    crate::bridge::ruby::entry(|| {
-        #[cfg(feature = "alloc-inject")]
-        {
-            let _ = ruby;
-            Ok(crate::falloc::raise_inject_call_count())
-        }
-        #[cfg(not(feature = "alloc-inject"))]
-        {
-            Err(Error::new(
-                ruby.exception_not_imp_error(),
-                "rebuild with MAKIRI_ALLOC_INJECT=1 (rake oom does this)",
-            ))
-        }
-    })
+    #[cfg(feature = "alloc-inject")]
+    {
+        let _ = ruby;
+        Ok(crate::falloc::raise_inject_call_count())
+    }
+    #[cfg(not(feature = "alloc-inject"))]
+    {
+        Err(Error::new(
+            ruby.exception_not_imp_error(),
+            "rebuild with MAKIRI_ALLOC_INJECT=1 (rake oom does this)",
+        ))
+    }
 }
 
 /// `Makiri.__borrowed?(doc)` - whether `doc`'s content is borrowed, which
 /// between Ruby calls it never is: what the raise sweep checks after each
 /// injected raise. Any build.
 fn borrowed_p(doc: Value) -> Result<bool, Error> {
-    crate::bridge::ruby::entry(|| crate::bridge::wrapper::document_borrowed(doc))
+    crate::bridge::wrapper::document_borrowed(doc)
 }
 
 /// `Makiri.__panic(kind)` - panic on purpose, so the suite can prove a panic
 /// reaches Ruby as an exception instead of killing the process.
 ///
 /// It exists because that property has no other test. `panic = "unwind"` plus
-/// magnus's `catch_unwind` is what makes a panic a Ruby `fatal`; going back to
-/// `abort`, or losing the unwind somewhere, would turn every example green and
-/// the gem lethal. `spec/panic_spec.rb` calls this and expects to catch it.
+/// the trampoline's `catch_unwind` (`bridge::rb::method::finish`) is what makes
+/// a panic a Ruby exception; going back to `abort`, or losing the unwind
+/// somewhere, would turn every example green and the gem lethal. `spec/panic_spec.rb` calls this and expects to catch it.
 ///
 /// Kinds 0..3 are the four ways the crate could actually panic: an explicit
 /// `panic!`, an out-of-bounds index, an arithmetic overflow (release keeps
 /// `overflow-checks` on), and an `unwrap` on `None`. Kind 4 panics BELOW a C
-/// frame, where the unwind would abort if it were not latched. Kind 5 goes
-/// through `bridge::ruby::entry`, so it raises `Makiri::InternalError` - what
-/// the entry points exposed to untrusted input do. Kind 6 panics inside the
-/// HTML tokenizer's token-done hook (`lexbor::adapter::tree_guard`), a Rust
-/// callback called from C, under `entry` too.
+/// frame, where the unwind would abort if it were not latched. Kind 5 panics
+/// in the method body itself. Kind 6 panics in the token-done path of a real
+/// document parse (`html::tree::parse_with_panicking_hook`). Every kind raises
+/// `Makiri::InternalError`, from the trampoline (`bridge::rb::method::finish`).
 #[allow(
     clippy::panic,
     clippy::unwrap_used,
@@ -275,21 +268,17 @@ fn panic_probe(ruby: &Ruby, kind: Value) -> Result<(), Error> {
             crate::bridge::gvl::without_gvl(|| panic!("Makiri.__panic(4): panic below the GVL"))?;
         }
         5 => {
-            /* Through `bridge::ruby::entry`, the wrapper the untrusted-input
-             * entry points carry: the panic becomes `Makiri::InternalError`
-             * instead of Ruby's unrescuable `fatal`. */
-            return crate::bridge::ruby::entry(|| -> Result<(), Error> {
-                panic!("Makiri.__panic(5): panic inside a guarded entry")
-            });
+            /* In a method's body, as any method's: its trampoline
+             * (`bridge::rb::method::finish`) makes the panic
+             * `Makiri::InternalError` instead of Ruby's unrescuable `fatal`. */
+            panic!("Makiri.__panic(5): panic inside a method body")
         }
         6 => {
-            /* Inside Lexbor's tokenizer, in the token-done hook every HTML
-             * parse runs: the hook latches it and stops the parse, the parse
-             * re-raises it, and `entry` makes it `Makiri::InternalError`. */
-            return crate::bridge::ruby::entry(|| -> Result<(), Error> {
-                crate::html_dom::post_parse::parse_with_panicking_hook();
-                Ok(())
-            });
+            /* Inside the tokenizer, in the token-done hook every HTML parse
+             * runs: the hook latches it and stops the parse, the parse
+             * re-raises it, and the trampoline makes it
+             * `Makiri::InternalError`. */
+            crate::html_dom::post_parse::parse_with_panicking_hook();
         }
         _ => {
             return Err(Error::new(
@@ -304,11 +293,9 @@ fn panic_probe(ruby: &Ruby, kind: Value) -> Result<(), Error> {
 /// `Makiri::XML.__decode(str)` - the strict input decode in isolation, without
 /// the tokenizer or the tree builder (`spec/xml_decode_spec.rb`).
 fn xml_decode(_ruby: &Ruby, str: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        let s = crate::bridge::ruby::string_arg(str)?;
-        /* decode-only: no arena, no budget */
-        crate::bridge::xml_decode::xml_decode_input_value(s, None).map(|d| d.as_value())
-    })
+    let s = crate::bridge::ruby::string_arg(str)?;
+    /* decode-only: no arena, no budget */
+    crate::bridge::xml_decode::xml_decode_input_value(s, None).map(|d| d.as_value())
 }
 
 /* ------------------------------------------------------------------ *
@@ -345,33 +332,40 @@ fn seal_leaves(methods: RModule, leaves: &[RClass]) -> Result<(), Error> {
     Ok(())
 }
 
-/// `name = "makiri"` is load-bearing: the attribute defaults to the CRATE name,
-/// which would export `Init_makiri_rs`. Ruby looks up `Init_<basename of the
-/// .bundle>`, so the default would leave the extension loadable-looking and
-/// unloadable - and the "export only `Init_makiri`" check would pass, having
-/// found the wrong symbol.
-#[magnus::init(name = "makiri")]
+/// What Ruby calls when it loads `makiri.bundle`: `Init_<basename>`, so the
+/// name is load-bearing - and the crate's one `#[no_mangle]` item, which is
+/// what keeps every other name out of the export table (`rake symbols`).
+///
+/// An error from [`init`] is raised, as a `LoadError` or whatever the failing
+/// definition raised, once `init` has returned. A panic is Ruby's `fatal`
+/// rather than `Makiri::InternalError`: that class may not exist yet, and an
+/// extension that stopped half-way through defining itself must not be used.
+#[allow(non_snake_case, unsafe_code)]
+#[no_mangle]
+pub extern "C" fn Init_makiri() {
+    crate::bridge::rb::method::run_init(init);
+}
+
 fn init(ruby: &Ruby) -> Result<(), Error> {
     // Before anything touches the interpreter's structs: a binary built for
     // another Ruby misreads them (`check_running_ruby_api`).
     crate::bridge::ruby::check_running_ruby_api(ruby)?;
+    #[cfg(makiri_no_unwind)]
+    crate::no_unwind::self_test();
     let makiri = ruby.define_module("Makiri")?;
+    crate::bridge::wrapper::init_ivars(ruby)?;
 
     // What this binary was built as, for `lib/makiri.rb` to check against the
     // gem it was loaded by and the Ruby it was loaded into - a stale
     // `lib/makiri/makiri.bundle` in a checkout is read by whichever Ruby, and
     // whichever version of the Ruby code, requires it.
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "Init_makiri, where a raise is require's and nothing is owned"
-    )]
-    let (native_version, native_ruby) = (
-        ruby.str_new(env!("MAKIRI_GEM_VERSION")),
-        ruby.str_new(&crate::bridge::ruby::ruby_api_version()),
-    );
-    native_version.freeze();
+    let native_version = crate::bridge::string::utf8_str(env!("MAKIRI_GEM_VERSION").as_bytes())?;
+    crate::bridge::rb::freeze(native_version);
     makiri.const_set("NATIVE_VERSION", native_version)?;
-    native_ruby.freeze();
+    let native_ruby = crate::bridge::string::utf8_str(
+        crate::bridge::ruby::ruby_api_version().as_str().as_bytes(),
+    )?;
+    crate::bridge::rb::freeze(native_ruby);
     makiri.const_set("NATIVE_RUBY_API_VERSION", native_ruby)?;
 
     /* The abstract bases. Concrete nodes are the HTML::* / XML::* leaves
@@ -461,8 +455,8 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     ];
 
     /* `define_error`, not `define_class`: an exception class is an
-     * `ExceptionClass` in magnus, and raising through one is the only thing
-     * these are for. LimitExceeded descends from XPath::SyntaxError (so
+     * `ExceptionClass`, and raising through one is the only thing these are
+     * for. LimitExceeded descends from XPath::SyntaxError (so
      * rescuing the syntax error catches the budget too), while its XML
      * counterpart descends from Error - that asymmetry is deliberate and
      * predates the port. */
@@ -474,7 +468,8 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
      * would a bad selector, while a host that wants to turn one request into a
      * 500 can still `rescue Makiri::InternalError`. That is what Ruby's own
      * `fatal` gives, minus the part where it cannot be rescued at all.
-     * `bridge::ruby::entry` is what raises it; see `crate::caught`. */
+     * Every method's trampoline (`bridge::rb::method::finish`) raises it;
+     * see `crate::caught`. */
     let internal = makiri.define_error("InternalError", ruby.exception_exception())?;
     let xpath_syntax = m_xpath.define_error("SyntaxError", err)?;
     let xpath_limit = m_xpath.define_error("LimitExceeded", xpath_syntax)?;

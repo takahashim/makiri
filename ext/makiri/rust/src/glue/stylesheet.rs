@@ -7,7 +7,8 @@
 //! and phase two builds through `bridge::build`, so a failed allocation comes
 //! back as `Err` and those drop. See `selectors::stylesheet`.
 
-use magnus::{function, prelude::*, Error, RArray, RHash, Ruby, Value};
+use crate::bridge::rb::{prelude::*, Error, RArray, RHash, Ruby, Value};
+use crate::function;
 
 use crate::bridge::build::{ary, aset, hash, int, push, sym};
 use crate::bridge::ruby::{boolean, error_class};
@@ -137,10 +138,9 @@ fn rules_to_ruby(k: &Keys, rs: &[Rule]) -> Result<RArray, Error> {
     Ok(a)
 }
 
-/// Parses untrusted input, so it runs under `bridge::ruby::entry`: a panic is
-/// `Makiri::InternalError`, not `fatal`.
+/// `Makiri.parse_stylesheet(text)`.
 fn parse_stylesheet(ruby: &Ruby, text: Value) -> Result<RArray, Error> {
-    crate::bridge::ruby::entry(|| parse_stylesheet_inner(ruby, text))
+    parse_stylesheet_inner(ruby, text)
 }
 
 fn parse_stylesheet_inner(_ruby: &Ruby, text: Value) -> Result<RArray, Error> {
@@ -150,7 +150,7 @@ fn parse_stylesheet_inner(_ruby: &Ruby, text: Value) -> Result<RArray, Error> {
     let css: &[u8] = tv.as_bytes();
 
     let eclass = error_class();
-    let err = |m: &str| Error::new(eclass, m.to_owned());
+    let err = |m: &'static str| Error::new(eclass, m);
 
     let parsed = match parse(css) {
         Ok(parsed) => parsed,
@@ -158,7 +158,7 @@ fn parse_stylesheet_inner(_ruby: &Ruby, text: Value) -> Result<RArray, Error> {
         Err(Fail::TooDeep) => {
             return Err(Error::new(
                 eclass,
-                format!("CSS at-rule nesting too deep (max {MAX_DEPTH})"),
+                format_args!("CSS at-rule nesting too deep (max {MAX_DEPTH})"),
             ))
         }
         Err(Fail::Parse) => return Err(err("failed to parse CSS stylesheet")),
@@ -174,7 +174,7 @@ fn parse_stylesheet_inner(_ruby: &Ruby, text: Value) -> Result<RArray, Error> {
 /// `Makiri::Lexbor::CSS.parse_stylesheet`. From `Init_makiri`.
 pub fn init_lexbor_css(ruby: &Ruby) -> Result<(), Error> {
     let lexbor = MOD_LEXBOR.defined()?;
-    let css = ruby.module_new();
+    let css = ruby.module_new()?;
     lexbor.const_set("CSS", css)?;
     css.define_module_function("parse_stylesheet", function!(parse_stylesheet, 1))?;
     Ok(())

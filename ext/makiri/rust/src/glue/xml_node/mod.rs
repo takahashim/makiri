@@ -13,7 +13,8 @@ pub mod ns;
 pub mod read;
 pub mod serialize;
 
-use magnus::{method, prelude::*, Error, RModule};
+use crate::bridge::rb::{prelude::*, Error, RModule};
+use crate::method;
 
 use crate::glue::node::{
     child_at, child_count, element_child_at, element_child_count, node_equals, node_hash,

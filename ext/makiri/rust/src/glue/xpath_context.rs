@@ -10,7 +10,8 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{function, method, prelude::*, Error, RHash, Ruby, Value};
+use crate::bridge::rb::{prelude::*, Error, Ruby, Value};
+use crate::{function, method};
 
 use crate::bridge::ruby::is_kind_of;
 use crate::bridge::xpath::{XPathCtx, XPathCtxSelf};
@@ -34,53 +35,45 @@ fn expect_node(ruby: &Ruby, v: Value) -> Result<(), Error> {
 /// Keywords read exactly as `#xpath`'s do: the mode, and prefix bindings - here
 /// registered on the context, so they hold for every later evaluate.
 fn s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        let a = magnus::scan_args::scan_args::<(Value,), (), (), (), RHash, ()>(args)?;
-        let node = a.required.0;
-        let kw = Keywords::scan(ruby, Kwargs::from_hash(a.keywords))?;
-        expect_node(ruby, node)?;
+    let a = crate::glue::args::scan(ruby, args, crate::glue::args::Shape::with_keywords(1, 0))?;
+    let node = a.required(0);
+    let kw = Keywords::scan(ruby, Kwargs::from_scan(a.keywords()))?;
+    expect_node(ruby, node)?;
 
-        let obj = XPathCtx::create(node, kw.lax)?;
-        if let Some(bindings) = kw.bindings {
-            /* A registration that fails leaves `obj` to the GC, never a context
-             * with half its prefixes. */
-            let ctx: XPathCtxSelf = XPathCtxSelf::try_convert(obj)?;
-            register_bindings(&ctx, bindings)?;
-        }
-        Ok(obj)
-    })
+    let obj = XPathCtx::create(node, kw.lax)?;
+    if let Some(bindings) = kw.bindings {
+        /* A registration that fails leaves `obj` to the GC, never a context
+         * with half its prefixes. */
+        let ctx: XPathCtxSelf = XPathCtxSelf::try_convert(obj)?;
+        register_bindings(&ctx, bindings)?;
+    }
+    Ok(obj)
 }
 
 /// `#node=` - rebind the context node, so one context can evaluate relative
 /// expressions against several nodes of its document.
 fn set_node(ruby: &Ruby, ctx: XPathCtxSelf, node: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        expect_node(ruby, node)?;
-        ctx.set_node(node)?;
-        Ok(node)
-    })
+    expect_node(ruby, node)?;
+    ctx.set_node(node)?;
+    Ok(node)
 }
 
 /// `#evaluate(expr)`.
 fn evaluate(ctx: XPathCtxSelf, expr: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| ctx.evaluate(expr))
+    ctx.evaluate(expr)
 }
 
 /// `#register_namespace(prefix, uri)` -> self.
 fn register_namespace(ctx: XPathCtxSelf, prefix: Value, uri: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        let cap = ctx.limits().max_string_bytes;
-        crate::glue::query::bind_pair(prefix, uri, cap, |p, u| ctx.bind_namespace(p, u))?;
-        crate::bridge::ruby::current_receiver()
-    })
+    let cap = ctx.limits().max_string_bytes;
+    crate::glue::query::bind_pair(prefix, uri, cap, |p, u| ctx.bind_namespace(p, u))?;
+    Ok(ctx.value())
 }
 
 /// `#register_variable(name, value)` -> self.
 fn register_variable(ctx: XPathCtxSelf, name: Value, value: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        ctx.register_variable(name, value)?;
-        crate::bridge::ruby::current_receiver()
-    })
+    ctx.register_variable(name, value)?;
+    Ok(ctx.value())
 }
 
 /// From `Init_makiri`, after the classes exist.

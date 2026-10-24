@@ -16,7 +16,8 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{method, prelude::*, Error, RHash, Ruby, Value};
+use crate::bridge::rb::{prelude::*, Error, RHash, Ruby, Value};
+use crate::method;
 
 use crate::bridge::ruby::makiri_error;
 use crate::bridge::string::ruby_try_verified_text_pair;
@@ -54,15 +55,14 @@ impl QueryArgs {
                 lax: false,
             });
         }
-        let a =
-            magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), RHash, ()>(args)?;
-        let kw = Keywords::scan(ruby, Kwargs::from_hash(a.keywords))?;
+        let a = crate::glue::args::scan(ruby, args, crate::glue::args::Shape::with_keywords(1, 1))?;
+        let kw = Keywords::scan(ruby, Kwargs::from_scan(a.keywords()))?;
         let mut q = QueryArgs {
-            text: a.required.0,
+            text: a.required(0),
             namespaces: None,
             lax: kw.lax,
         };
-        if let Some(v) = a.optional.0.filter(|v| !v.is_nil()) {
+        if let Some(v) = a.optional(0) {
             match RHash::from_value(v) {
                 Some(h) => q.namespaces = Some(h),
                 None => return Err(Error::new(
@@ -134,9 +134,9 @@ fn matching_lax(ruby: &Ruby, v: Value) -> Result<bool, Error> {
     }
     Err(Error::new(
         ruby.exception_arg_error(),
-        format!(
+        format_args!(
             "namespace_matching: must be :strict or :lax, got {}",
-            crate::bridge::ruby::describe(v)
+            crate::bridge::ruby::Describe(v)
         ),
     ))
 }
@@ -157,12 +157,12 @@ fn bind_each(
      * or copied, rather than after every one of them has been. */
     let max = crate::xpath::ctx::MAX_NAMESPACES;
     if h.len() > max {
-        return Err(makiri_error(format!(
+        return Err(makiri_error(format_args!(
             "invalid namespace mapping: {} bindings (max {max})",
             h.len()
         )));
     }
-    let ruby = Ruby::get().map_err(|_| makiri_error("Ruby is not available here"))?;
+    let ruby = crate::bridge::ruby::gvl_ruby();
     crate::glue::hash::each_pair(&ruby, h, |prefix, uri| {
         bind_pair(prefix, uri, cap, &mut register)
     })
@@ -184,7 +184,7 @@ pub fn bind_pair(
     let ks = crate::bridge::ruby::name_arg(prefix)?;
     let vs = crate::bridge::ruby::string_arg(uri)?;
     let (pv, uv) = ruby_try_verified_text_pair(ks, vs, cap)
-        .map_err(|reason| makiri_error(format!("invalid namespace mapping: {reason}")))?;
+        .map_err(|reason| makiri_error(format_args!("invalid namespace mapping: {reason}")))?;
     register(pv.as_bytes(), uv.as_bytes())
 }
 
@@ -259,12 +259,12 @@ fn xpath_run(rb_self: Value, q: QueryArgs, answer: Answer) -> Result<Value, Erro
 }
 
 fn node_xpath(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| xpath_run(rb_self, QueryArgs::scan(ruby, args)?, Answer::All))
+    xpath_run(rb_self, QueryArgs::scan(ruby, args)?, Answer::All)
 }
 
 /// The first matching node for a node-set result, or the scalar otherwise.
 fn node_at_xpath(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| xpath_run(rb_self, QueryArgs::scan(ruby, args)?, Answer::First))
+    xpath_run(rb_self, QueryArgs::scan(ruby, args)?, Answer::First)
 }
 
 /// `#xpath` / `#at_xpath` on both node-method modules. From `Init_makiri`,

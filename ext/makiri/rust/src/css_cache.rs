@@ -266,10 +266,10 @@ mod tests {
     use crate::css_match::select_all;
     use crate::html_dom::html::{HtmlNode, RawNode};
     use crate::html_dom::post_parse::{parse_html, HtmlParsed};
-    use crate::html_dom::tree_guard::DepthLimit;
+    use crate::html_dom::tree_guard::ParseLimits;
 
     fn parsed(html: &[u8]) -> Box<HtmlParsed> {
-        parse_html(html, true, DepthLimit::DEFAULT).expect("a document parses")
+        parse_html(html, true, ParseLimits::DEFAULT).expect("a document parses")
     }
 
     fn root(doc: &HtmlParsed) -> HtmlNode<'_> {

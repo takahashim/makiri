@@ -3,7 +3,7 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::Value;
+use crate::bridge::rb::Value;
 
 use super::*;
 

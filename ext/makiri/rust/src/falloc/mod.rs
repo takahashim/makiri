@@ -24,8 +24,10 @@
 //! `clippy.toml` bans the `std` methods these wrap, so a new call site cannot
 //! quietly go around the sweep.
 //!
-//! The `bridge`'s Ruby-side storage is the deliberate exception: it is Ruby's
-//! `xmalloc` memory, freed by Ruby, and never reaches this counter.
+//! The `bridge`'s Ruby-side storage is the deliberate exception: a TypedData
+//! wrapper's data (`rb_data_typed_object_zalloc`) and a NodeSet's node array
+//! (`bridge::alloc::RubyVec`) are Ruby's memory, freed by Ruby; they never
+//! reach this counter, and `rake oom`'s raise sweep fails them instead.
 //!
 //! # The counter
 //!

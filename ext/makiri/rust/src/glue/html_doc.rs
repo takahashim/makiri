@@ -1,10 +1,10 @@
 //! `Makiri::HTML::Document` and the fragment entry points.
 //!
-//!   `Document._parse(source, max_tree_depth)`, `#root`, `#title`, `#errors`,
+//!   `Document._parse(source, max_tree_depth, max_amplification, encoding)`, `#root`, `#title`, `#errors`,
 //!   `#internal_subset`, `#quirks_mode`,
-//!   `#fragment(html, context:, max_tree_depth:)`,
+//!   `#fragment(html, context:, max_tree_depth:, max_amplification:)`,
 //!   `#import_node(node, deep = false)`
-//!   `DocumentFragment.parse(html, context:, max_tree_depth:)`, `Node#parse(html)`
+//!   `DocumentFragment.parse(html, context:, max_tree_depth:, max_amplification:)`, `Node#parse(html)`
 //!
 //! The Document wrapper and its parsed handle, and the fragment pipeline, are
 //! the bridge's ([`crate::bridge::wrapper`], [`crate::bridge::doc`],
@@ -13,28 +13,28 @@
 #![forbid(unsafe_code)]
 
 use crate::bridge::fragment;
+use crate::bridge::rb::{prelude::*, Error, Ruby, Value};
 use crate::bridge::string::GivenEncoding;
 use crate::glue::html_node::HtmlSelf;
 use crate::html_dom::html::NodeType;
-use magnus::{method, prelude::*, Error, Ruby, Value};
+use crate::method;
 
 /* ---- Document.parse ---- */
 
-/// `Document._parse(source, max_tree_depth, encoding)`. The Ruby
-/// `Document.parse` turns the keywords into the second and third arguments;
-/// `nil` is the default limit, and no encoding given.
+/// `Document._parse(source, max_tree_depth, max_amplification, encoding)`.
+/// The Ruby `Document.parse` turns the keywords into the arguments after
+/// `source`; `nil` is a default limit, and no encoding given.
 fn doc_s_parse(
     ruby: &Ruby,
     _klass: Value,
     source: Value,
     depth: Value,
+    amplification: Value,
     encoding: Value,
 ) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        let limit = crate::glue::kwargs::max_tree_depth(ruby, Some(depth))?;
-        let given = encoding_arg(ruby, encoding)?;
-        crate::bridge::doc::parse_document(source, limit, given)
-    })
+    let limit = crate::glue::kwargs::parse_limits(ruby, Some(depth), Some(amplification))?;
+    let given = encoding_arg(ruby, encoding)?;
+    crate::bridge::doc::parse_document(source, limit, given)
 }
 
 /// The `encoding:` keyword, which `Document.parse` hands over as nil or a
@@ -49,10 +49,13 @@ fn encoding_arg(ruby: &Ruby, v: Value) -> Result<Option<GivenEncoding>, Error> {
     }
     /* A name: a NUL in it is the ArgumentError any other unknown name is. */
     let label = crate::bridge::string::ruby_verified_name(v, "encoding")?;
-    let unknown = |label: &str| {
+    let unknown = |label: &[u8]| {
         Error::new(
             ruby.exception_arg_error(),
-            format!("unknown encoding for HTML: {label} (omit encoding: to have it sniffed)"),
+            format_args!(
+                "unknown encoding for HTML: {} (omit encoding: to have it sniffed)",
+                crate::msg::Lossy(label)
+            ),
         )
     };
     /* No encoding's name is this long, Ruby's or the Standard's; a shorter
@@ -60,7 +63,7 @@ fn encoding_arg(ruby: &Ruby, v: Value) -> Result<Option<GivenEncoding>, Error> {
      * (which can autoload an encoding). */
     let mut name = [0u8; 64];
     let Some(dst) = name.get_mut(..label.len()) else {
-        return Err(unknown(&label));
+        return Err(unknown(label.as_bytes()));
     };
     dst.copy_from_slice(label.as_bytes());
     let len = label.len();
@@ -68,58 +71,54 @@ fn encoding_arg(ruby: &Ruby, v: Value) -> Result<Option<GivenEncoding>, Error> {
     let name = &name[..len];
     GivenEncoding::resolve(name)
         .map(Some)
-        .ok_or_else(|| unknown(&String::from_utf8_lossy(name)))
+        .ok_or_else(|| unknown(name))
 }
 
 /// `Document#encoding`: the character encoding the document was read in, by
 /// its Encoding Standard name (`"UTF-8"`, `"Shift_JIS"`, `"windows-1252"`).
 fn doc_encoding(_ruby: &Ruby, this: Value) -> Result<&'static str, Error> {
-    crate::bridge::ruby::entry(|| crate::bridge::doc::document_encoding(this))
+    crate::bridge::doc::document_encoding(this)
 }
 
 /* ---- read-only accessors ---- */
 
 fn doc_root(_ruby: &Ruby, self_: Value) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| crate::bridge::doc::document_root(self_))
+    crate::bridge::doc::document_root(self_)
 }
 
-fn doc_title(_ruby: &Ruby, self_: Value) -> Result<magnus::RString, Error> {
-    crate::bridge::ruby::entry(|| crate::bridge::doc::document_title(self_))
+fn doc_title(_ruby: &Ruby, self_: Value) -> Result<crate::bridge::rb::RString, Error> {
+    crate::bridge::doc::document_title(self_)
 }
 
 /// The `<!DOCTYPE ...>` node, or nil - Nokogiri's `#internal_subset`. It is a
 /// child of the document node (typically first), so a short scan finds it.
 fn doc_internal_subset(_ruby: &Ruby, this: HtmlSelf) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| {
-        this.read()?.wrap(|node| {
-            node.children()
-                .find(|c| c.node_type() == NodeType::DocumentType)
-        })
+    this.read()?.wrap(|node| {
+        node.children()
+            .find(|c| c.node_type() == NodeType::DocumentType)
     })
 }
 
 /// `Makiri::HTML::Document.new`: an empty document - no children, no-quirks.
 fn doc_s_new(_ruby: &Ruby, _klass: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| crate::bridge::doc::new_empty_document(0, "UTF-8"))
+    crate::bridge::doc::new_empty_document(0, "UTF-8")
 }
 
 /// `Document#_empty_copy` (private): an empty document in this one's quirks
 /// mode, for `#dup` to copy the children into.
 fn doc_empty_copy(_ruby: &Ruby, this: HtmlSelf) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        let mode = u32::try_from(this.read()?.doc().compat_mode()).unwrap_or(0);
-        let encoding = crate::bridge::doc::document_encoding(this.document)?;
-        crate::bridge::doc::new_empty_document(mode, encoding)
-    })
+    let mode = u32::try_from(this.read()?.doc().compat_mode()).unwrap_or(0);
+    let encoding = crate::bridge::doc::document_encoding(this.document)?;
+    crate::bridge::doc::new_empty_document(mode, encoding)
 }
 
 fn doc_quirks_mode(ruby: &Ruby, self_: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| crate::bridge::doc::document_quirks_mode(ruby, self_))
+    crate::bridge::doc::document_quirks_mode(ruby, self_)
 }
 
 /// Parse warnings. Reserved; currently always empty.
 fn doc_errors(_ruby: &Ruby, self_: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| Ok(crate::bridge::doc::document_errors(self_)))
+    Ok(crate::bridge::doc::document_errors(self_))
 }
 
 /* ---- fragment entry points ---- */
@@ -128,7 +127,7 @@ fn doc_errors(_ruby: &Ruby, self_: Value) -> Result<Value, Error> {
 /// DocumentFragment bound to this document. `context` defaults to `<body>`,
 /// `max_tree_depth` to 400 (see `glue::kwargs::max_tree_depth`).
 fn doc_fragment(ruby: &Ruby, self_: Value, args: &[Value]) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| fragment_from_args(ruby, args, || Ok(self_)))
+    fragment_from_args(ruby, args, || Ok(self_))
 }
 
 /// `(html, context:, max_tree_depth:)` from the argument list, parsed as a
@@ -139,81 +138,69 @@ fn fragment_from_args(
     args: &[Value],
     document: impl FnOnce() -> Result<Value, Error>,
 ) -> Result<Value, Error> {
-    let a = magnus::scan_args::scan_args::<(Value,), (), (), (), magnus::RHash, ()>(args)?;
-    let context = a.keywords.get(crate::bridge::build::sym("context")?);
+    let a = crate::glue::args::scan(ruby, args, crate::glue::args::Shape::with_keywords(1, 0))?;
+    let kw = crate::glue::kwargs::Kwargs::from_scan(a.keywords());
+    let context = kw.value(ruby, "context")?;
     /* Read before the backing document is made, so a bad value costs nothing. */
-    let limit = crate::glue::kwargs::max_tree_depth(
+    let limit = crate::glue::kwargs::parse_limits(
         ruby,
-        a.keywords.get(crate::bridge::build::sym("max_tree_depth")?),
+        kw.value(ruby, "max_tree_depth")?,
+        kw.value(ruby, "max_amplification")?,
     )?;
     let document = document()?;
     let at = fragment::resolve_fragment_context(document, context)?;
-    fragment::build_fragment(document, a.required.0, at, limit)
+    fragment::build_fragment(document, a.required(0), at, limit)
 }
 
 /// `DocumentFragment.parse(html, context: ..., max_tree_depth: ...)` -> a
 /// standalone fragment with its own backing document, kept alive by the
 /// fragment's wrapper.
 fn frag_s_parse(ruby: &Ruby, _klass: Value, args: &[Value]) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| fragment_from_args(ruby, args, fragment::fragment_shell_document))
+    fragment_from_args(ruby, args, fragment::fragment_shell_document)
 }
 
 /// `node.parse(html)` -> a NodeSet of nodes parsed as a fragment in this
 /// element's context. Nokogiri-compatible, and the way to reach a foreign
 /// (SVG/MathML) fragment context.
 fn node_parse(ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        if this.read()?.node().element().is_none() {
-            return Err(Error::new(
-                ruby.exception_arg_error(),
-                "Node#parse requires an element context",
-            ));
-        }
-        /* The element itself is the context, read whole as `inner_html=`
-         * reads it. No keyword here, as in Nokogiri: the default limit. */
-        let at = fragment::ContextArg::element(this.value)?;
-        let frag =
-            fragment::build_fragment(this.document, rb_html, at, fragment::DepthLimit::DEFAULT)?;
-        /* The native children reader, not a Ruby `children` dispatch: the
-         * fragment is ours, and a subclass could redefine the method. */
-        let frag = <crate::bridge::html::HtmlSelf as magnus::TryConvert>::try_convert(frag)?;
-        crate::glue::html_node::read::children(ruby, frag)
-    })
+    if this.read()?.node().element().is_none() {
+        return Err(Error::new(
+            ruby.exception_arg_error(),
+            "Node#parse requires an element context",
+        ));
+    }
+    /* The element itself is the context, read whole as `inner_html=`
+     * reads it. No keyword here, as in Nokogiri: the default limit. */
+    let at = fragment::ContextArg::element(this.value)?;
+    let frag =
+        fragment::build_fragment(this.document, rb_html, at, fragment::ParseLimits::DEFAULT)?;
+    /* The native children reader, not a Ruby `children` dispatch: the
+     * fragment is ours, and a subclass could redefine the method. */
+    let frag = <crate::bridge::html::HtmlSelf as crate::bridge::rb::TryConvert>::try_convert(frag)?;
+    crate::glue::html_node::read::children(ruby, frag)
 }
 
 /// `Document#import_node(node, deep = false)` -> a copy of `node` owned by THIS
 /// document - the DOM importNode, whose `deep` defaults to false.
-fn doc_import_node(_ruby: &Ruby, self_: Value, args: &[Value]) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), (), ()>(args)?;
-        /* `deep` is truthiness, anything but nil and false - the DOM default off. */
-        let deep = a.optional.0.is_some_and(|v| v.to_bool());
-        crate::bridge::doc::import_node(self_, a.required.0, deep)
-    })
+fn doc_import_node(ruby: &Ruby, self_: Value, args: &[Value]) -> Result<Value, Error> {
+    let a = crate::glue::args::scan(ruby, args, crate::glue::args::Shape::positional(1, 1))?;
+    /* `deep` is truthiness, anything but nil and false - the DOM default off. */
+    let deep = a.optional(0).is_some_and(|v| v.to_bool());
+    crate::bridge::doc::import_node(self_, a.required(0), deep)
 }
 
 /// `Node#clone_node(deep = false)`: a copy owned by the same document and
 /// detached from any parent - the DOM cloneNode, whose `deep` defaults to false.
 pub fn node_clone_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        /* The 0..1 arity by hand: `scan_args` cost about a third of a shallow
-         * clone. The message is the one `rb_scan_args` gives. */
-        let deep = match args {
-            [] => false,
-            /* Truthiness: anything but nil and false. */
-            [v] => v.to_bool(),
-            _ => {
-                return Err(Error::new(
-                    ruby.exception_arg_error(),
-                    format!(
-                        "wrong number of arguments (given {}, expected 0..1)",
-                        args.len()
-                    ),
-                ))
-            }
-        };
-        crate::bridge::doc::clone_node(rb_self, deep)
-    })
+    /* The 0..1 arity by hand, takes no keywords: a match is cheaper than
+     * `glue::args::scan` on a shallow clone, which costs little else. */
+    let deep = match args {
+        [] => false,
+        /* Truthiness: anything but nil and false. */
+        [v] => v.to_bool(),
+        _ => return Err(crate::glue::args::arity_error(ruby, args.len(), 0, Some(1))),
+    };
+    crate::bridge::doc::clone_node(rb_self, deep)
 }
 
 /* ---- registration ---- */
@@ -222,7 +209,7 @@ pub fn node_clone_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Va
 pub fn init_html_doc() -> Result<(), Error> {
     let html_doc = crate::init::CLASS_HTML_DOCUMENT.defined()?;
 
-    html_doc.define_singleton_method("_parse", method!(doc_s_parse, 3))?;
+    html_doc.define_singleton_method("_parse", method!(doc_s_parse, 4))?;
     html_doc.define_method("encoding", method!(doc_encoding, 0))?;
     html_doc.define_singleton_method("new", method!(doc_s_new, 0))?;
     html_doc.define_private_method("_empty_copy", method!(doc_empty_copy, 0))?;

@@ -14,13 +14,13 @@
 //! `longjmp`, which skips Rust destructors: a raise crossing a frame that owns a
 //! `Vec`, a [`Buf`](crate::cbuf::Buf), a `RefCell` borrow or any other resource
 //! leaks it or leaves it held. So a failure travels back as
-//! `Result<_, magnus::Error>`, which magnus turns into a raise after the Rust
-//! frames have returned normally, and a Ruby C function that can raise is called
+//! `Result<_, crate::bridge::rb::Error>`, which the method's trampoline turns
+//! into a raise after the Rust frames have returned normally
+//! (`bridge::rb::method::finish`), and a Ruby C function that can raise is called
 //! only through `bridge::raw`, whose every wrapper catches the raise and hands
 //! it back the same way - Ruby's allocator's `NoMemoryError` included, so
 //! the glue builds its Arrays, Hashes and Strings through `bridge::build` and
-//! `bridge::string` (magnus's raising constructors are banned in
-//! `clippy.toml`). `rake unsafe:boundaries` holds the raising C calls to
+//! `bridge::string`. `rake unsafe:boundaries` holds the raising C calls to
 //! `bridge/raw.rs`, each inside its protected `call`.
 //!
 //! **Nothing Ruby crosses into a GVL-released closure.** Not a `Value`, not a
@@ -28,6 +28,10 @@
 //! parse copies its input out of Ruby before it releases the lock.
 
 #![forbid(unsafe_code)]
+
+/// A method's positional and keyword arguments, separated as `rb_scan_args`
+/// separates them.
+pub mod args;
 
 /// Keyword arguments, read one way for every method.
 pub mod kwargs;

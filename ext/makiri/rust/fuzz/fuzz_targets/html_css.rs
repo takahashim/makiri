@@ -37,7 +37,7 @@ use makiri::css_match::{matches_any, select_all, select_first, Namespaces, Scrat
 use makiri::html::dom::css::HtmlHost;
 use makiri::html_dom::html::HtmlNode;
 use makiri::html_dom::post_parse::parse_html;
-use makiri::html_dom::tree_guard::DepthLimit;
+use makiri::html_dom::tree_guard::ParseLimits;
 use makiri::selectors::ast::Lists;
 
 /// How many elements are asked `matches?` each: each is a full query, with
@@ -55,7 +55,7 @@ fuzz_target!(|data: &[u8]| {
     let Some(text) = expr.text() else {
         return;
     };
-    let Ok(p) = parse_html(html, false, DepthLimit::DEFAULT) else {
+    let Ok(p) = parse_html(html, false, ParseLimits::DEFAULT) else {
         return;
     };
     let root = p.doc().as_node();

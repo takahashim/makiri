@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Security
+
+* An HTML parse can no longer build a document thousands of times larger
+  than its input. The HTML Standard re-creates every unclosed formatting
+  element (`<b>`, `<i>`, ...) before each character, so a few hundred of
+  them with distinct attributes followed by short repeated markup made a
+  62 KB input build a 344 MB document. A parse now stops with
+  `Makiri::Error` ("document size limit exceeded") once the document passes
+  `max_amplification:` times its input (default 256, never less than
+  64 MiB); ordinary documents build 10-50 times theirs. The keyword is taken
+  by `Makiri::HTML`, `Document#fragment` and `DocumentFragment.parse`, and a
+  negative value lifts the limit. `inner_html=` and `outer_html=` use the
+  default.
+
 ## [0.17.0.rc2] - 2026-10-24
 
 ### Added

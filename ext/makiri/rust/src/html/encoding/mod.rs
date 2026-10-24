@@ -292,7 +292,7 @@ pub fn decode(bytes: &[u8], encoding: &'static Encoding) -> Option<Vec<u8>> {
 mod tests {
     #![allow(clippy::disallowed_methods)] /* test inputs */
     use super::*;
-    use crate::html::tree::guard::DepthLimit;
+    use crate::html::tree::guard::ParseLimits;
     use encoding_rs::{EUC_JP, ISO_2022_JP, SHIFT_JIS, WINDOWS_1251};
 
     fn tentative(input: &[u8]) -> &'static Encoding {
@@ -511,7 +511,7 @@ mod tests {
                 transport,
                 known_valid_utf8: false,
             };
-            crate::html::tree::parse_document_bytes(input, DepthLimit::at_most(400))
+            crate::html::tree::parse_document_bytes(input, ParseLimits::at_most(400))
                 .expect("parse")
                 .encoding()
         };

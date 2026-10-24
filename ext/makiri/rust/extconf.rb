@@ -72,7 +72,7 @@ if linux
   rustc_args += ["-C", "link-arg=-Wl,-z,relro", "-C", "link-arg=-Wl,-z,now"]
 end
 
-# Flags that must reach the crate AND its dependencies (magnus, rb-sys), which
+# Flags that must reach the crate AND its dependencies (rb-sys), which
 # rustc args cannot do - these are the ones that genuinely belong in RUSTFLAGS.
 rustflags = []
 cargo_env = {}

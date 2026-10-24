@@ -32,15 +32,25 @@ module Makiri
       # ("document tree depth limit exceeded (400)"). The default is 400; a
       # negative Integer disables the limit.
       #
+      # +max_amplification+ bounds how large a document may grow against its
+      # input: at most that many times the input's bytes, and never less than
+      # 64 MiB. A larger one raises Makiri::Error ("document size limit
+      # exceeded"). The HTML Standard re-creates every unclosed formatting
+      # element (+<b>+, +<i>+, ...) before each character, so a short input
+      # can otherwise build a document thousands of times its size; ordinary
+      # documents build 10-50 times theirs. The default is 256; a negative
+      # Integer disables the limit.
+      #
       # @param source [String, #read]
       # @param max_tree_depth [Integer, nil] nil for the default
+      # @param max_amplification [Integer, nil] nil for the default
       # @param encoding [String, Encoding, nil] the transport layer's
       #   encoding; a name neither Ruby nor the Encoding Standard knows
       #   raises ArgumentError
       # @return [Makiri::HTML::Document]
-      def self.parse(source, max_tree_depth: nil, encoding: nil)
+      def self.parse(source, max_tree_depth: nil, max_amplification: nil, encoding: nil)
         source = source.read if source.respond_to?(:read)
-        _parse(String(source), max_tree_depth, encoding&.to_s)
+        _parse(String(source), max_tree_depth, max_amplification, encoding&.to_s)
       end
 
       # An independent copy of the whole document (like Nokogiri's Document#dup):

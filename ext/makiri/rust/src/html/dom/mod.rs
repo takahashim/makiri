@@ -409,6 +409,33 @@ impl Document {
             + self.prefixes.owned_bytes()
     }
 
+    /// What the document holds, in O(1): its nodes, elements, attributes
+    /// and doctypes by their counts, and the byte store - the parse guard's
+    /// measure (`html::tree::guard`). An estimate below [`owned_bytes`]
+    /// (lengths, not capacities; the name tables left out, which grow with
+    /// the input's distinct names, not with what is built from them).
+    ///
+    /// [`owned_bytes`]: Self::owned_bytes
+    pub fn approx_bytes(&self) -> usize {
+        [
+            self.nodes
+                .len()
+                .saturating_mul(core::mem::size_of::<Node>()),
+            self.elements
+                .len()
+                .saturating_mul(core::mem::size_of::<ElementData>()),
+            self.attrs
+                .len()
+                .saturating_mul(core::mem::size_of::<AttrData>()),
+            self.doctypes
+                .len()
+                .saturating_mul(core::mem::size_of::<DoctypeData>()),
+            self.bytes.len(),
+        ]
+        .into_iter()
+        .fold(0, usize::saturating_add)
+    }
+
     /// The bytes the store holds, live and dead.
     pub fn stored_bytes(&self) -> usize {
         self.bytes.len()

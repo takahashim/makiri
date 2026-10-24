@@ -74,6 +74,50 @@ namespace :unsafe do
   end
 end
 
+# Miri over the Ruby-free modules that hold `unsafe`, and the buffer built on
+# them: their tests on Miri's interpreter, which reports undefined behaviour a
+# run on hardware passes over (CI: verify.yml). Needs the nightly toolchain
+# with the `miri` component. MIRI_FILTERS replaces the module list.
+MIRI_FILTERS = %w[raw_vec:: utf8_copy:: falloc:: cbuf::].freeze
+desc "Run the Ruby-free unsafe modules' tests under Miri (nightly)"
+task :miri do
+  filters = ENV["MIRI_FILTERS"] ? ENV["MIRI_FILTERS"].split(",") : MIRI_FILTERS
+  env = { "MIRIFLAGS" => ENV.fetch("MIRIFLAGS", "-Zmiri-strict-provenance") }
+  Dir.chdir("ext/makiri/rust") do
+    sh env, "cargo", "+nightly", "miri", "test", "--no-default-features", "--lib", "--", *filters
+  end
+end
+
+# The places that must not unwind (`src/no_unwind.rs`): every `extern "C"`
+# function of ours, and the `Drop`s the GC's free callback runs. An unwind out
+# of one aborts the process. Each body runs under a guard whose `Drop` - which
+# only an unwind runs - calls `makiri_unwinds_<site>`, a symbol nobody
+# defines; built with `--cfg makiri_no_unwind` in the release profile, the
+# optimizer removes that call exactly when it can prove the body never
+# unwinds. So the symbols left undefined are the sites that can. The control
+# site, `self_test`, can unwind by design: it must be the only one left, which
+# also shows the check is live.
+desc "Prove no extern \"C\" function or GC-run Drop can unwind (release build)"
+task :no_unwind do
+  macos = RbConfig::CONFIG["target_os"] =~ /darwin/
+  dir = File.expand_path("ext/makiri/rust", __dir__)
+  target = File.join(dir, "target", "no_unwind")
+  # The check build is the crate alone, linked as cargo would; macOS's linker
+  # refuses undefined symbols unless told otherwise, Linux's does not.
+  link = macos ? %w[-C link-arg=-undefined -C link-arg=dynamic_lookup] : []
+  env = { "RUSTFLAGS" => [ENV.fetch("RUSTFLAGS", nil), "--cfg makiri_no_unwind"].compact.join(" ") }
+  Dir.chdir(dir) do
+    sh env, "cargo", "rustc", "--release", "--lib", "--target-dir", target, "--", *link
+  end
+  lib = Dir[File.join(target, "release", "libmakiri.{dylib,so}")].first or abort "no_unwind: no library built"
+  left = `nm -u #{lib.shellescape}`.lines.map(&:strip)
+                                       .filter_map { |l| l[/(?:\A|\s)_?makiri_unwinds_(\w+)\z/, 1] }.uniq.sort
+  abort "no_unwind: the control site was optimized away - the check is not live" unless left.include?("self_test")
+  sites = left - ["self_test"]
+  abort "no_unwind: these sites can unwind (see src/no_unwind.rs): #{sites.join(", ")}" unless sites.empty?
+  puts "no_unwind: every site is unwind-free; the control is live"
+end
+
 # The vendored Lexbor, built alone. The extension no longer needs it - the
 # arena DOM and the ported parsers are all Rust - so `rake compile` does not
 # build it; what still does is everything that compares against Lexbor or
@@ -110,22 +154,20 @@ task lint: :lexbor do
   end
 end
 
-# `rake dylint` - the crate's own lints (ext/makiri/rust/lints/makiri_lints),
-# two rules magnus states or implies and leaves to its users, checked by type:
-# `ruby_value_on_heap`, a Ruby value kept where the GC's stack scan does not
+# `rake dylint` - the crate's own lint (ext/makiri/rust/lints/makiri_lints),
+# `ruby_value_on_heap`: a Ruby value kept where the GC's stack scan does not
 # see it (a heap container, a static or thread-local, a wrapped object's data
-# outside a traced field), and `converted_argument`, a registered method whose
-# argument magnus converts with the caller's Ruby (`RString`, `i64`, ...). The
-# lints are a rustc plugin, so they build on the nightly their
+# outside a traced field), the rule every Ruby extension keeps by hand, checked
+# by type. The lint is a rustc plugin, so it builds on the nightly its
 # rust-toolchain.toml pins, with cargo-dylint and dylint-link installed. The
 # second run is the self-test: `lint_probe.rs`, compiled only under
-# `--cfg makiri_lint_probe`, ends with `//~` each line a lint must report, and
-# the task fails unless exactly those lines are reported - so a lint that has
-# stopped seeing a case cannot pass by reporting nothing.
+# `--cfg makiri_lint_probe`, ends with `//~` each line the lint must report,
+# and the task fails unless exactly those lines are reported - so a lint that
+# has stopped seeing a case cannot pass by reporting nothing.
 DYLINT = %w[cargo dylint --path lints/makiri_lints --no-deps --
             --no-default-features --features ruby].freeze
 
-desc "Run the crate's own lints (makiri_lints; needs cargo-dylint and its nightly)"
+desc "Run the crate's own lint (makiri_lints; needs cargo-dylint and its nightly)"
 task :dylint do
   require "open3"
   Dir.chdir("ext/makiri/rust") do
@@ -678,8 +720,8 @@ end
 desc "Kani proofs over the Ruby-free core - the allocator, mkr_buf, UTF-8 " \
      "validate/decode (needs cargo-kani; successor to the C-era CBMC harnesses)"
 task :kani do
-  # Only the Ruby-free features: anything under glue needs magnus -> rb-sys ->
-  # a live Ruby, which Kani cannot build.
+  # Only the Ruby-free features: anything under glue needs rb-sys -> a live
+  # Ruby, which Kani cannot build.
   #
   #   rake kani                                   # all six
   #   rake kani HARNESS=accepted_is_utf8          # one
@@ -732,6 +774,11 @@ KANI_GROUPS = {
   "alloc" => {
     harnesses: %w[cbuf::verify:: falloc::verify::],
     paths: %W[#{RUST_SRC}/cbuf.rs #{RUST_SRC}/cbuf/ #{RUST_SRC}/falloc/]
+  },
+  # `RawVec`, a NodeSet's node array: its growth over `falloc::grow_capacity`.
+  "raw_vec" => {
+    harnesses: %w[raw_vec::verify::],
+    paths: %W[#{RUST_SRC}/raw_vec.rs #{RUST_SRC}/falloc/ #{RUST_SRC}/no_unwind.rs]
   },
   "utf8" => {
     harnesses: %w[cutf8::verify::],

@@ -1,91 +1,27 @@
 //! The Document wrapper: its data, its TypedData types and GC hooks, the
-//! node cache, [`DocumentShell`], and the accessors that reach a Document's
+//! node table, [`DocumentShell`], and the accessors that reach a Document's
 //! content.
 
 #![allow(unsafe_code)]
 
 use core::cell::{Cell, OnceCell, RefCell};
 
+use crate::bridge::rb::{Error, Value};
 use crate::bridge::ruby::{internal_error, makiri_error};
-use magnus::{Error, Value};
 
 use super::*;
 use crate::bridge::dom::{Body, Conflict, HtmlRead, HtmlWrite, XmlRead, XmlWrite};
 use crate::bridge::typed::{Held, Hooks, Tracer, TypedType};
 use crate::child_index::ChildPositionMemo;
-use crate::falloc::{MapInsert, Reserve};
 use crate::html_dom::post_parse::HtmlParsed;
 use crate::init::RbConst;
 use crate::node_type::NodeType;
 use crate::token::Kind;
 use crate::xml::model::Document as XmlDoc;
-use core::hash::BuildHasherDefault;
-use std::collections::HashMap;
 
 /* ------------------------------------------------------------------ *
  * the document wrapper                                               *
  * ------------------------------------------------------------------ */
-
-/// One Ruby wrapper per node, so navigating to the same node twice gives the
-/// SAME object.
-///
-/// Without it every navigation allocated a fresh wrapper, and everything that
-/// lives on a Ruby object was silently lost: `equal?` was false for one node,
-/// an instance variable set through one wrapper was gone through the next, a
-/// singleton method vanished, and `freeze` protected only the object you
-/// happened to be holding. `==`/`eql?`/`hash` were unaffected, because those
-/// are node identity, which is why it went unnoticed.
-///
-/// The cost is Nokogiri's, and it is the same cost for the same reason: a
-/// wrapper stays alive while its document does. Measured on a 50,000-node
-/// document, minor GC after wrapping N nodes and dropping every reference:
-/// N=1,000 costs nothing (0.30 ms, the same as N=0), N=50,000 costs +2.2 ms.
-/// Nokogiri's figures for the same experiment are 0.31 ms and +2.24 ms.
-///
-/// Keyed by the node TOKEN - a `NodeId` for XML, a node pointer for HTML - which
-/// is stable for the document's life in both: XML never recycles an arena slot,
-/// and HTML detaches without destroying, so a node is never freed.
-pub(super) struct NodeCache {
-    /// Empty until the first navigation, so a document nobody walks pays
-    /// nothing.
-    /// Tokens are a slot index or an aligned pointer - already well
-    /// distributed - so they are mixed ([`crate::ptr_table::MixHasher`]) rather
-    /// than hashed.
-    map: HashMap<usize, Held, BuildHasherDefault<crate::ptr_table::MixHasher>>,
-}
-
-impl NodeCache {
-    fn get(&self, token: usize) -> Option<Value> {
-        // SAFETY: an entry of this cache, which the Document's trace hands
-        // over movable (marked, then relocated by the same walk); the caller
-        // holds the Document.
-        self.map.get(&token).map(|v| unsafe { v.get() })
-    }
-
-    /// Room for one more wrapper, so the [`NodeCache::insert`] after it
-    /// cannot fail - see [`DocData::reserve_node`].
-    fn reserve(&mut self) -> Result<(), ()> {
-        self.map.falloc_reserve(1)
-    }
-
-    /// Remember `wrapper` as the one wrapper for `token`. After
-    /// [`NodeCache::reserve`] this allocates nothing, so it does not fail.
-    fn insert(&mut self, token: usize, wrapper: Held) -> Result<(), ()> {
-        self.map.falloc_insert(token, wrapper)
-    }
-
-    /// MOVABLE, not pinned: a document walked end to end holds one entry per
-    /// node, and pinning them all would stop compaction doing its job.
-    fn trace(&self, tracer: &Tracer) {
-        for v in self.map.values() {
-            tracer.movable(v);
-        }
-    }
-
-    fn memsize(&self) -> usize {
-        self.map.capacity() * (core::mem::size_of::<usize>() + core::mem::size_of::<Held>())
-    }
-}
 
 /// A Document's edit bookkeeping: the versions readers key their caches by.
 /// Only [`record_edit`] writes them.
@@ -149,14 +85,13 @@ impl ExternalReport {
 }
 
 /// A Document wrapper's data: the parsed content (owned - GC frees it), the
-/// mutation gate's count, and the reserved errors Array.
+/// mutation gate's count, and the node table. The parse-warning Array is a
+/// hidden ivar of the object (`Document#errors` is read rarely).
 ///
 /// Read and written through `&DocData` only - every field that changes is a
 /// cell - so a method may hold one while another reads it (a wrapper made
 /// while a child walk holds the memo, a GC run in the middle of either), and
-/// the GC callbacks read it shared too. The two `RefCell`s are borrowed only
-/// for spans that run no Ruby and so no collection; the mark and compaction
-/// hooks rely on that (see [`Hooks for DocData`](#impl-Hooks-for-DocData)).
+/// the GC callbacks read it shared too.
 pub struct DocData {
     /// Set once, by `DocumentShell::install`; reached only through the
     /// guards of `bridge::dom` ([`html_read`], [`html_write`], [`xml_read`],
@@ -164,64 +99,32 @@ pub struct DocData {
     content: OnceCell<Body>,
     /// The mutation gate and the edit versions ([`EditState`]).
     pub(super) edits: Cell<EditState>,
-    errors: Held,
+    /// The node table: one Ruby wrapper per node, so navigating to the same
+    /// node twice gives the SAME object. Without it every navigation made a
+    /// fresh wrapper, and everything that lives on a Ruby object was lost:
+    /// `equal?`, an instance variable, a singleton method, `freeze`.
+    ///
+    /// A Ruby Hash from the node's TOKEN (a `NodeId` for XML, an arena node
+    /// word for HTML, stable for the document's life: neither arena reuses a
+    /// node) to its wrapper. A Ruby Hash rather than a Rust map, so the GC
+    /// marks the wrappers and moves them itself, and a Rust struct holds no
+    /// table of values to mark and relocate; this one pinned field is all.
+    /// The cost is Nokogiri's: a wrapper lives as long as its document.
+    nodes: Held,
     /// What the GC has been told about the content ([`ExternalReport`]).
     pub(super) report: Cell<ExternalReport>,
-    /// One wrapper per node; see [`NodeCache`].
-    ///
-    /// Boxed and optional so a document nobody navigates never allocates a
-    /// cache, and its wrapper stays one pointer wide.
-    nodes: RefCell<Option<Box<NodeCache>>>,
     /// Where `child_count` / `child_at` last were ([`ChildPositionMemo`]).
     /// Allocates nothing until the first of them records.
     pub(super) child_memo: RefCell<ChildPositionMemo>,
 }
 
 impl DocData {
-    /// The one wrapper for `token`, or None until something navigates to it.
-    fn cached(&self, token: usize) -> Result<Option<Value>, Error> {
-        let nodes = self.nodes.try_borrow().map_err(|_| busy_cache())?;
-        Ok(nodes.as_ref().and_then(|c| c.get(token)))
-    }
-
-    /// Make room in the cache (allocating it on first use) for the wrapper
-    /// about to be built. This is the step that can fail, and it comes
-    /// BEFORE the wrapper exists: a wrapper made and then not cached would be
-    /// a second object for its node on the next navigation, without the
-    /// first one's `freeze`, instance variables or singleton methods.
-    fn reserve_node(&self) -> Result<(), ()> {
-        let mut nodes = self.nodes.try_borrow_mut().map_err(|_| ())?;
-        if nodes.is_none() {
-            *nodes = Some(
-                crate::falloc::try_box(NodeCache {
-                    map: HashMap::with_hasher(BuildHasherDefault::default()),
-                })
-                .map_err(|_| ())?,
-            );
-        }
-        nodes.as_mut().ok_or(())?.reserve()
-    }
-
-    /// Remember `wrapper` for `token`, in the room [`DocData::reserve_node`]
-    /// made.
-    fn cache(&self, token: usize, wrapper: Held) -> Result<(), ()> {
-        let mut nodes = self.nodes.try_borrow_mut().map_err(|_| ())?;
-        nodes.as_mut().ok_or(())?.insert(token, wrapper)
-    }
-
     /// Change the edit state in place - the one read-modify-write of the
     /// cell, which holds a `Copy` value.
     pub(super) fn update_edits(&self, f: impl FnOnce(&mut EditState)) {
         let mut edits = self.edits.get();
         f(&mut edits);
         self.edits.set(edits);
-    }
-
-    /// The Document's parse-warning Array.
-    pub fn errors(&self) -> Value {
-        // SAFETY: a field of this Document's data, which its mark marks; the
-        // caller reached it through the Document, which it holds.
-        unsafe { self.errors.get() }
     }
 
     /// Whether the content has grown enough since the last report to measure
@@ -259,31 +162,13 @@ impl DocData {
     }
 }
 
-/// The node cache's `RefCell` is borrowed mutably only by `reserve_node` and
-/// `cache`, whose spans allocate from the system allocator alone - no Ruby,
-/// so no collection - and a collection therefore never finds it borrowed. Were
-/// it to, marking the cache partly would let the GC free a wrapper it still
-/// hands out, so the hooks abort instead, as a broken invariant in a GC
-/// callback must (see the note on the callbacks in `typed.rs`).
 impl Hooks for DocData {
     fn trace(&self, tracer: &Tracer) {
-        tracer.pinned(&self.errors);
-        match self.nodes.try_borrow() {
-            Ok(nodes) => {
-                if let Some(cache) = nodes.as_ref() {
-                    cache.trace(tracer);
-                }
-            }
-            Err(_) => std::process::abort(),
-        }
+        tracer.pinned(&self.nodes);
     }
 
     fn memsize(&self) -> usize {
         /* A size only, so a cell found borrowed counts as empty. */
-        let cache = self
-            .nodes
-            .try_borrow()
-            .map_or(0, |n| n.as_ref().map_or(0, |c| c.memsize()));
         let memo = self.child_memo.try_borrow().map_or(0, |m| m.memsize());
         /* The content - or, were an edit holding it, which a collection
          * cannot find (an edit runs no Ruby) but a size need not insist on,
@@ -293,7 +178,6 @@ impl Hooks for DocData {
             .unwrap_or_else(|| self.report.get().bytes);
         core::mem::size_of::<DocData>()
             .saturating_add(content)
-            .saturating_add(cache)
             .saturating_add(memo)
     }
 }
@@ -302,16 +186,18 @@ impl Hooks for DocData {
 /// callback aborts rather than unwind into C) and must touch no Ruby object.
 /// A `DocData` exists only in the memory `TypedType::wrap` gave it, so this
 /// is the one place a Document's content is freed - by drop glue, after this
-/// body, with the node cache.
+/// body.
 impl Drop for DocData {
     fn drop(&mut self) {
-        /* Balance the report, or the GC keeps counting freed arenas as live
-         * and collects ever more eagerly. A plain C call, as this hook has to
-         * be: it only subtracts, and Ruby's own `xfree` does the same from
-         * here. */
-        if let Some(diff) = self.report.get().release() {
-            crate::bridge::ruby::report_external_bytes(diff);
-        }
+        crate::no_unwind::must_not_unwind::<crate::no_unwind::DropDocData, _>(|| {
+            /* Balance the report, or the GC keeps counting freed arenas as
+             * live and collects ever more eagerly. A plain C call, as this
+             * hook has to be: it only subtracts, and Ruby's own `xfree` does
+             * the same from here. */
+            if let Some(diff) = self.report.get().release() {
+                crate::bridge::ruby::report_external_bytes(diff);
+            }
+        })
     }
 }
 
@@ -379,7 +265,7 @@ impl From<DocKind> for Kind {
 /// hidden for the GC to free.
 pub struct DocumentShell {
     obj: Value,
-    klass: magnus::RClass,
+    klass: crate::bridge::rb::RClass,
 }
 
 impl DocumentShell {
@@ -392,20 +278,23 @@ impl DocumentShell {
          * conservative stack scan pins it across the wrap's allocation and the
          * store closure does not allocate (an allocation there could raise
          * NoMemoryError while the caller holds a live resource). */
-        let errors = magnus::value::ReprValue::as_value(crate::bridge::build::ary(0)?);
+        let errors = crate::bridge::rb::ReprValue::as_value(crate::bridge::build::ary(0)?);
+        let nodes = crate::bridge::rb::ReprValue::as_value(crate::bridge::raw::hash_new(
+            &crate::bridge::ruby::gvl_ruby(),
+        )?);
         let obj = ty.wrap(
             &crate::bridge::ruby::gvl_ruby(),
             klass,
             || DocData {
                 content: OnceCell::new(),
                 edits: Cell::new(EditState::default()),
-                errors: Held::empty(),
+                nodes: Held::empty(),
                 report: Cell::new(ExternalReport::default()),
-                nodes: RefCell::new(None),
                 child_memo: RefCell::new(ChildPositionMemo::default()),
             },
-            |d, store| d.errors = store.hold(errors),
+            |d, store| d.nodes = store.hold(nodes),
         )?;
+        crate::bridge::raw::ivar_set(obj, ivar_errors(), errors)?;
         crate::bridge::ruby::hide(obj);
         Ok(DocumentShell { obj, klass })
     }
@@ -553,15 +442,15 @@ pub(in crate::bridge) fn with_html_parsed_if<R>(
 /// `wrap_*_node` functions make, written once. The two tables differ only in
 /// which classes they name, so neither can grow a kind the other lacks.
 pub(in crate::bridge) struct NodeClasses {
-    pub node: &'static RbConst<magnus::RClass>,
-    pub element: &'static RbConst<magnus::RClass>,
-    pub attr: &'static RbConst<magnus::RClass>,
-    pub text: &'static RbConst<magnus::RClass>,
-    pub comment: &'static RbConst<magnus::RClass>,
-    pub cdata: &'static RbConst<magnus::RClass>,
-    pub pi: &'static RbConst<magnus::RClass>,
-    pub doctype: &'static RbConst<magnus::RClass>,
-    pub fragment: &'static RbConst<magnus::RClass>,
+    pub node: &'static RbConst<crate::bridge::rb::RClass>,
+    pub element: &'static RbConst<crate::bridge::rb::RClass>,
+    pub attr: &'static RbConst<crate::bridge::rb::RClass>,
+    pub text: &'static RbConst<crate::bridge::rb::RClass>,
+    pub comment: &'static RbConst<crate::bridge::rb::RClass>,
+    pub cdata: &'static RbConst<crate::bridge::rb::RClass>,
+    pub pi: &'static RbConst<crate::bridge::rb::RClass>,
+    pub doctype: &'static RbConst<crate::bridge::rb::RClass>,
+    pub fragment: &'static RbConst<crate::bridge::rb::RClass>,
 }
 
 impl NodeClasses {
@@ -570,7 +459,7 @@ impl NodeClasses {
     /// an unknown number). A DOCUMENT is the caller's to map back onto the
     /// Ruby Document before asking.
     #[inline]
-    pub fn class_for(&self, t: NodeType) -> Result<magnus::RClass, Error> {
+    pub fn class_for(&self, t: NodeType) -> Result<crate::bridge::rb::RClass, Error> {
         match t {
             NodeType::Element => self.element,
             NodeType::Attribute => self.attr,
@@ -598,52 +487,78 @@ impl NodeClasses {
 /// or everything that lives on a Ruby object is silently lost - `equal?`, an
 /// instance variable, a singleton method, `freeze`. A Document is already its
 /// own wrapper, which is why it needs no entry. So a wrapper is handed out
-/// only once it is cached: `Err` (out of memory) when the cache cannot make
-/// room, never an uncached object.
+/// only once it is in the table: `Err` (`NoMemoryError`) when the entry
+/// cannot be made, and the fresh wrapper, which nothing refers to, is left
+/// for the GC - never an object outside the table.
 ///
 /// The caller vouches that the node is a node of `document` of the
 /// representation `ty` wraps, and `klass` a class of it: only the two
 /// `wrap_*_node` functions call this, each for its own kind.
 pub(in crate::bridge) fn wrap_cached(
     ty: &'static crate::bridge::typed::EmbeddedType<NodeData>,
-    klass: magnus::RClass,
+    klass: crate::bridge::rb::RClass,
     source: impl NodeHandleSource,
     document: Value,
 ) -> Result<Value, Error> {
     let token = source.identity();
-    if let Some(cached) = cached_node(document, token)? {
+    let table = node_table(document)?;
+    if let Some(cached) = crate::bridge::raw::table_get(table, token) {
         return Ok(cached);
     }
-    /* Room for the entry first: a failure after the wrap would hand out a
-     * wrapper the cache does not know (DocData::reserve_node). */
-    doc_data_known(&document)
-        .reserve_node()
-        .map_err(|_| wrap_oom())?;
     let node = source.into_handle(document);
-    /* The Document is stored after the wrap: see `TypedType::wrap`. */
     let fresh = ty.wrap(
         &crate::bridge::ruby::gvl_ruby(),
         klass,
         || NodeData::new(node),
         |nd, store| nd.hold_document(store, document),
     )?;
-    /* After the wrap, so the VALUE exists, into the room reserved above - no
-     * allocation. Were it to fail anyway, `fresh` is dropped unseen rather
-     * than handed out uncached. */
-    cache_node(document, token, fresh).map_err(|_| wrap_oom())?;
+    /* The table entry: a Ruby reference, which the GC marks and moves
+     * itself. A failure leaves `fresh` unseen and unreferenced. */
+    crate::bridge::raw::table_set(table, token, fresh)?;
     Ok(fresh)
 }
 
-fn wrap_oom() -> Error {
-    makiri_error("out of memory wrapping a node")
+/// The Document's node table (see `DocumentShell::new`).
+fn node_table(document: Value) -> Result<crate::bridge::rb::RHash, Error> {
+    // SAFETY: a field of the Document's data, which its mark marks; the
+    // caller holds the Document.
+    crate::bridge::rb::RHash::from_value(unsafe { doc_data_known(&document).nodes.get() })
+        .ok_or_else(|| internal_error("a Document without its node table"))
 }
 
 /// The one wrapper for `token` under `rb_doc`, or None the first time.
-///
-/// `rb_doc` must be a live Document; [`wrap_cached`] is the only caller and
-/// already holds one.
 fn cached_node(rb_doc: Value, token: usize) -> Result<Option<Value>, Error> {
-    doc_data_known(&rb_doc).cached(token)
+    Ok(crate::bridge::raw::table_get(node_table(rb_doc)?, token))
+}
+
+static IVAR_DOCUMENT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+static IVAR_ERRORS: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+static IVAR_NODE: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+/// The hidden ivar a node wrapper keeps its Document in.
+pub(in crate::bridge) fn ivar_document() -> crate::bridge::ruby::ID {
+    IVAR_DOCUMENT.load(core::sync::atomic::Ordering::Relaxed) as crate::bridge::ruby::ID
+}
+
+/// The hidden ivar a Document keeps its parse-warning Array in.
+pub(in crate::bridge) fn ivar_errors() -> crate::bridge::ruby::ID {
+    IVAR_ERRORS.load(core::sync::atomic::Ordering::Relaxed) as crate::bridge::ruby::ID
+}
+
+/// The hidden ivar an XPathContext keeps its context node in.
+pub(in crate::bridge) fn ivar_node() -> crate::bridge::ruby::ID {
+    IVAR_NODE.load(core::sync::atomic::Ordering::Relaxed) as crate::bridge::ruby::ID
+}
+
+/// Intern the hidden ivars' names. From `Init_makiri`.
+pub fn init_ivars(ruby: &crate::bridge::rb::Ruby) -> Result<(), Error> {
+    let d = crate::bridge::raw::intern_cstr(ruby, c"makiri_document")?;
+    let e = crate::bridge::raw::intern_cstr(ruby, c"makiri_errors")?;
+    let n = crate::bridge::raw::intern_cstr(ruby, c"makiri_node")?;
+    IVAR_DOCUMENT.store(d as usize, core::sync::atomic::Ordering::Relaxed);
+    IVAR_ERRORS.store(e as usize, core::sync::atomic::Ordering::Relaxed);
+    IVAR_NODE.store(n as usize, core::sync::atomic::Ordering::Relaxed);
+    Ok(())
 }
 
 /// `FrozenError` when the node `source` names has a wrapper and that wrapper is
@@ -660,19 +575,8 @@ pub(in crate::bridge) fn check_node_frozen(
     }
 }
 
-/// Remember `wrapper` as the one wrapper for `token` under `rb_doc`.
-fn cache_node(rb_doc: Value, token: usize, wrapper: Value) -> Result<(), ()> {
-    DOC_TYPE.with_store(rb_doc, |d, store| d.cache(token, store.hold(wrapper)))
-}
-
 /// A Document's wrapper data, for the fields that are the wrapper's own
 /// rather than the content's - every one of them a cell, so this is shared.
 pub(super) fn doc_data_known(rb_doc: &Value) -> &DocData {
     DOC_TYPE.get_known(rb_doc)
-}
-
-/// The node cache was found borrowed: a broken invariant (no borrow of it
-/// spans Ruby), not a bad input.
-fn busy_cache() -> Error {
-    crate::bridge::ruby::internal_error("a Document's node cache was found in use")
 }

@@ -32,7 +32,7 @@ use crate::lexbor::abi::{
     lxb_html_parse_fragment_chunk_begin, lxb_html_parse_fragment_chunk_end,
     lxb_html_parse_fragment_chunk_process, TransientDoc,
 };
-use crate::lexbor::adapter::tree_guard::{fragment_document, DepthLimit, TokenHook};
+use crate::lexbor::adapter::tree_guard::{fragment_document, ParseLimits, TokenHook};
 
 /* The HTML parser's lifecycle, from the generated bindings. Declared here first
  * over an opaque parser, which was fine until the source-location port needed
@@ -129,7 +129,7 @@ impl TransientFragment {
         input: &[u8],
         known_valid: bool,
         context: &FragmentContext,
-        limit: DepthLimit,
+        limit: ParseLimits,
     ) -> Result<TransientFragment, FragmentError> {
         run_fragment_parser(input, known_valid, context, limit)
     }
@@ -152,7 +152,7 @@ impl TransientFragment {
         input: &[u8],
         known_valid: bool,
         at: Option<FragmentTag>,
-        limit: DepthLimit,
+        limit: ParseLimits,
     ) -> Result<TransientFragment, FragmentError> {
         let context = FragmentContext::Standalone { at };
         // SAFETY: a standalone context reads no node or document of the
@@ -361,7 +361,7 @@ unsafe fn run_fragment_parser(
     input: &[u8],
     known_valid: bool,
     context: &FragmentContext,
-    limit: DepthLimit,
+    limit: ParseLimits,
 ) -> Result<TransientFragment, FragmentError> {
     /* Declared first so it drops last, after the parser. */
     let mut owned: Option<TransientDoc> = None;

@@ -1,29 +1,29 @@
 //! Reading a method's keyword arguments, kept here so each procedure is written
 //! once with its reasons beside it.
 
-use magnus::{prelude::*, Error, RHash, Ruby, Value};
+use crate::bridge::rb::{prelude::*, Error, RHash, Ruby, Value};
 
 /// The keywords of a method that takes only keywords.
 ///
-/// The no-argument call is `Kwargs(None)`, reached before `scan_args`. It is
+/// The no-argument call is `Kwargs(None)`, answered before any scan. It is
 /// the overwhelmingly common one - `to_html` with a keyword is the exception -
-/// and routing it through `scan_args` cost about a quarter of the per-call
-/// throughput on a small element, which is all such a method does at that size.
+/// and a scan cost about a quarter of the per-call throughput on a small
+/// element, which is all such a method does at that size.
 #[derive(Clone, Copy)]
 pub(crate) struct Kwargs(Option<RHash>);
 
 impl Kwargs {
-    pub(crate) fn scan(args: &[Value]) -> Result<Kwargs, Error> {
+    pub(crate) fn scan(ruby: &Ruby, args: &[Value]) -> Result<Kwargs, Error> {
         if args.is_empty() {
             return Ok(Kwargs(None));
         }
-        let scanned = magnus::scan_args::scan_args::<(), (), (), (), RHash, ()>(args)?;
-        Ok(Kwargs(Some(scanned.keywords)))
+        let a = crate::glue::args::scan(ruby, args, crate::glue::args::Shape::with_keywords(0, 0))?;
+        Ok(Kwargs(a.keywords()))
     }
 
-    /// The keyword hash `scan_args` already separated out.
-    pub(crate) fn from_hash(h: RHash) -> Kwargs {
-        Kwargs(Some(h))
+    /// The keywords a scan already separated out (`None` for none).
+    pub(crate) fn from_scan(h: Option<RHash>) -> Kwargs {
+        Kwargs(h)
     }
 
     /// Keyword `name`, or `None` when it is absent or `nil`. A plain lookup
@@ -33,7 +33,7 @@ impl Kwargs {
         let Some(h) = self.0 else {
             return Ok(None);
         };
-        Ok(h.get(crate::bridge::build::sym(name)?)
+        Ok(h.get(crate::bridge::build::symbol(name)?)
             .filter(|v: &Value| !v.is_nil()))
     }
 
@@ -59,8 +59,9 @@ impl Kwargs {
         let Some(h) = self.0.filter(|h| !h.is_empty()) else {
             return Ok((None, None));
         };
-        let sym = crate::bridge::build::sym(name)?;
+        let sym = crate::bridge::build::symbol(name)?;
         let taken = h.get(sym).filter(|v: &Value| !v.is_nil());
+        let sym = sym.as_value();
         /* Made on the first key that stays, so a call passing only `name`
          * allocates no Hash either. */
         let mut rest: Option<RHash> = None;
@@ -78,6 +79,42 @@ impl Kwargs {
     }
 }
 
+/// The limits of an HTML parse from its `max_tree_depth:` and
+/// `max_amplification:` keywords ([`max_tree_depth`], [`max_amplification`]).
+pub(crate) fn parse_limits(
+    ruby: &Ruby,
+    depth: Option<Value>,
+    amplification: Option<Value>,
+) -> Result<crate::html_dom::tree_guard::ParseLimits, Error> {
+    use crate::html_dom::tree_guard::ParseLimits;
+    let depth = max_tree_depth(ruby, depth)?;
+    let ratio = max_amplification(ruby, amplification)?;
+    Ok(ParseLimits::DEFAULT
+        .with_depth(depth)
+        .with_amplification(ratio))
+}
+
+/// The `max_amplification:` of an HTML parse: how many times its input a
+/// document may build (`html::tree::guard`), never less than 64 MiB. Absent or
+/// `nil` is the default (256); a negative Integer means no limit; 0 leaves
+/// only the 64 MiB floor. An actual Integer, as [`max_tree_depth`].
+fn max_amplification(ruby: &Ruby, v: Option<Value>) -> Result<Option<usize>, Error> {
+    let Some(v) = v.filter(|v| !v.is_nil()) else {
+        return Ok(crate::html_dom::tree_guard::ParseLimits::DEFAULT.max_amplification());
+    };
+    let n = crate::bridge::rb::Integer::from_value(v).ok_or_else(|| {
+        Error::new(
+            ruby.exception_type_error(),
+            "max_amplification must be an Integer",
+        )
+    })?;
+    if n.is_negative() {
+        return Ok(None);
+    }
+    /* Past a usize is no limit in practice, as for the depth. */
+    Ok(n.to_usize().ok())
+}
+
 /// The `max_tree_depth:` of an HTML parse, as Nokogiri::HTML5 reads it: absent
 /// or `nil` is the default (400), a negative Integer means no limit, and any
 /// other Integer is the deepest element accepted - a Bignum included, which is
@@ -86,27 +123,20 @@ impl Kwargs {
 /// An actual Integer, not merely something convertible: a Float (1.5) or a
 /// String is a `TypeError` rather than a silent truncation or a limit nobody
 /// asked for.
-pub(crate) fn max_tree_depth(
-    ruby: &Ruby,
-    v: Option<Value>,
-) -> Result<crate::html_dom::tree_guard::DepthLimit, Error> {
-    use crate::html_dom::tree_guard::DepthLimit;
+fn max_tree_depth(ruby: &Ruby, v: Option<Value>) -> Result<Option<usize>, Error> {
     let Some(v) = v.filter(|v| !v.is_nil()) else {
-        return Ok(DepthLimit::DEFAULT);
+        return Ok(crate::html_dom::tree_guard::ParseLimits::DEFAULT.max_depth());
     };
-    let n = magnus::Integer::from_value(v).ok_or_else(|| {
+    let n = crate::bridge::rb::Integer::from_value(v).ok_or_else(|| {
         Error::new(
             ruby.exception_type_error(),
             "max_tree_depth must be an Integer",
         )
     })?;
-    /* Compared before any conversion, so a negative Bignum disables the limit
-     * as a negative Fixnum does, and a positive one cannot wrap. */
-    let zero = magnus::Integer::from_value(crate::bridge::build::int(0)?)
-        .ok_or_else(|| crate::bridge::ruby::internal_error("0 is not an Integer"))?;
-    if n < zero {
-        return Ok(DepthLimit::UNLIMITED);
+    /* The sign is read before any conversion, so a negative Bignum disables
+     * the limit as a negative Fixnum does, and a positive one cannot wrap. */
+    if n.is_negative() {
+        return Ok(None);
     }
-    Ok(n.to_usize()
-        .map_or(DepthLimit::UNLIMITED, DepthLimit::at_most))
+    Ok(n.to_usize().ok())
 }

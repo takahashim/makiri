@@ -18,13 +18,14 @@ use crate::conformance::tree::{self, Attr, Element, Node, Quirks, Tree, MATHML_N
 use crate::conformance::{known, tree_construction_dir};
 use crate::lexbor::adapter::html::{HtmlNode, NsId};
 use crate::lexbor::adapter::post_parse::{empty_html_document, parse_html};
-use crate::lexbor::adapter::tree_guard::DepthLimit;
+use crate::lexbor::adapter::tree_guard::ParseLimits;
 use crate::lexbor::fragment::{FragmentContext, FragmentTag, TransientFragment};
 use crate::node_type::NodeType;
 
 /// Parse `input` as a document and read it.
 pub fn parse_document(input: &[u8]) -> Tree {
-    let parsed = parse_html(input, false, DepthLimit::UNLIMITED).expect("Lexbor parses a document");
+    let parsed =
+        parse_html(input, false, ParseLimits::UNLIMITED).expect("Lexbor parses a document");
     // SAFETY: `parsed` owns the document and outlives every handle read here.
     let doc = unsafe { parsed.raw_doc().as_doc() };
     let quirks = match doc.compat_mode() {
@@ -62,7 +63,7 @@ pub fn parse_fragment(input: &[u8], context: &str) -> Tree {
         at: FragmentTag { tag, ns: Some(ns) },
     };
     // SAFETY: `host` is live for the call and the input is only read.
-    let frag = unsafe { TransientFragment::parse(input, false, &ctx, DepthLimit::UNLIMITED) }
+    let frag = unsafe { TransientFragment::parse(input, false, &ctx, ParseLimits::UNLIMITED) }
         .expect("Lexbor parses a fragment");
     // SAFETY: `frag` owns the parsed nodes and outlives the reads.
     let root = unsafe { frag.root().as_node() };
@@ -1019,7 +1020,8 @@ fn tokenizer_profile_target_lexbor() {
 
 /// Lexbor's tree and its copy in the arena, read the same way.
 fn lexbor_and_arena(input: &[u8]) -> (Tree, Tree) {
-    let parsed = parse_html(input, false, DepthLimit::UNLIMITED).expect("Lexbor parses a document");
+    let parsed =
+        parse_html(input, false, ParseLimits::UNLIMITED).expect("Lexbor parses a document");
     // SAFETY: `parsed` owns the document and outlives every handle read here.
     let doc = unsafe { parsed.raw_doc().as_doc() };
     let arena = crate::lexbor::adapter::arena_copy::copy_document(doc).expect("the copy");
@@ -1046,7 +1048,8 @@ fn the_arena_copy_is_the_same_tree() {
 fn assert_same_name_fields(input: &[u8]) {
     use crate::html::dom::{Document, NodeId};
     use crate::lexbor::adapter::html::HtmlNode;
-    let parsed = parse_html(input, false, DepthLimit::UNLIMITED).expect("Lexbor parses a document");
+    let parsed =
+        parse_html(input, false, ParseLimits::UNLIMITED).expect("Lexbor parses a document");
     // SAFETY: `parsed` owns the document and outlives every handle read here.
     let doc = unsafe { parsed.raw_doc().as_doc() };
     let arena = crate::lexbor::adapter::arena_copy::copy_document(doc).expect("the copy");
@@ -1179,7 +1182,7 @@ fn the_arena_copy_matches_lexbor_on_wpt_inputs() {
 #[ignore = "a measurement, not a check"]
 fn arena_footprint() {
     let input = bench_html(20_000);
-    let parsed = parse_html(&input, false, DepthLimit::UNLIMITED).expect("parses");
+    let parsed = parse_html(&input, false, ParseLimits::UNLIMITED).expect("parses");
     // SAFETY: `parsed` owns the document for the reads below.
     let doc = unsafe { parsed.raw_doc().as_doc() };
     let lexbor = crate::lexbor::adapter::arena_bytes::document_size(doc);

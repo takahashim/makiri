@@ -1,19 +1,18 @@
-//! `ruby_value_on_heap`: a Ruby value (a magnus `ReprValue` type) kept where
+//! `ruby_value_on_heap`: a Ruby value (a `bridge::rb::ReprValue` type) kept where
 //! Ruby's GC cannot see it.
 //!
 //! Ruby's GC finds a value by scanning the machine stack. One in a `Vec`, a
 //! `Box`, a `HashMap` or any other heap allocation, in a `static`, or in the
-//! data of a wrapped object (a `TypedData` / `Hooks` type, which lives in
-//! Ruby's or Rust's heap) is invisible to that scan: the object can be
-//! collected, or moved by compaction, while the Rust side still holds it.
-//! magnus documents the rule ("Ruby objects must be kept on the stack") and
-//! leaves it to its users; this lint checks it, by type.
+//! data of a wrapped object (a `Hooks` type, which lives in Ruby's heap) is
+//! invisible to that scan: the object can be collected, or moved by
+//! compaction, while the Rust side still holds it. It is the rule every Ruby
+//! extension lives by ("Ruby objects must be kept on the stack", as magnus put
+//! it), left to the extension; this lint checks it, by type.
 //!
 //! What is not reported: a value behind a reference or a raw pointer (the
-//! value itself is elsewhere), and one inside magnus's `Opaque`, `BoxValue` or
-//! `Lazy`, which exist to keep a value somewhere else and are marked or
-//! registered for it. Makiri's `Held` holds a raw `VALUE`, not a `ReprValue`
-//! type, and is traced by its owner.
+//! value itself is elsewhere), and one inside `bridge::rb::Opaque`, which is
+//! registered as a mark root. Makiri's `Held` holds a raw `VALUE`, not a
+//! `ReprValue` type, and is traced by its owner.
 
 use crate::{RUBY_VALUE_ON_HEAP, traits};
 use clippy_utils::diagnostics::span_lint_and_help;
@@ -26,13 +25,10 @@ use rustc_middle::ty::{self, Ty, TypeVisitableExt};
 use rustc_span::Span;
 use std::collections::HashSet;
 
-/// A magnus type that keeps a value where the GC sees it by other means.
+/// A type that keeps a value where the GC sees it by other means: the
+/// crate's `Opaque`, a value registered as a mark root.
 fn shields(cx: &LateContext<'_>, did: DefId) -> bool {
-    cx.tcx.crate_name(did.krate).as_str() == "magnus"
-        && matches!(
-            cx.tcx.item_name(did).as_str(),
-            "Opaque" | "BoxValue" | "Lazy"
-        )
+    did.is_local() && cx.tcx.item_name(did).as_str() == "Opaque"
 }
 
 /// A std type whose contents live in a heap allocation.
@@ -208,7 +204,7 @@ pub(crate) fn check_item<'tcx>(cx: &LateContext<'tcx>, item: &'tcx Item<'tcx>) {
                     span,
                     "a static holds a Ruby value, which the GC does not see".to_owned(),
                     None,
-                    "keep it in magnus's `Opaque` (marked) or register it",
+                    "keep it in `bridge::rb::Opaque` (a registered root)",
                 );
             } else {
                 check_ty(cx, ty, span, "this static");

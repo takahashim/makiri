@@ -14,7 +14,8 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{function, method, prelude::*, Error, RHash, Ruby, Value};
+use crate::bridge::rb::{prelude::*, Error, RHash, Ruby, Value};
+use crate::{function, method};
 
 use crate::bridge::xml::wrap_xml_node as wrap;
 use crate::init::{CLASS_XML_DOCUMENT, CLASS_XML_DOCUMENT_FRAGMENT};
@@ -27,23 +28,23 @@ use crate::xml::model::ParseLimits;
 /// It must be a positive Integer - the sign is checked BEFORE the unsigned
 /// conversion, because a negative would otherwise wrap into a huge `size_t` and
 /// bypass the budget entirely.
-fn parse_limits(ruby: &Ruby, h: RHash) -> Result<ParseLimits, Error> {
+fn parse_limits(ruby: &Ruby, h: Option<RHash>) -> Result<ParseLimits, Error> {
     let mut limits = ParseLimits { max_bytes: None };
-    if h.is_empty() {
+    let Some(h) = h.filter(|h| !h.is_empty()) else {
         return Ok(limits);
-    }
+    };
 
-    let key = crate::bridge::build::sym("max_bytes")?;
+    let key = crate::bridge::build::symbol("max_bytes")?;
     /* The keys are read from the Hash itself (`hash::each_pair`), not
      * through a `keys` a subclass can redefine. */
     crate::glue::hash::each_pair(ruby, h, |k, _| {
         /* By identity: `eql?` would be the caller's key's method. */
-        if crate::bridge::ruby::same_value(k, key) {
+        if crate::bridge::ruby::same_value(k, key.as_value()) {
             return Ok(());
         }
         Err(Error::new(
             ruby.exception_arg_error(),
-            format!("unknown keyword: {}", crate::bridge::ruby::describe(k)),
+            format_args!("unknown keyword: {}", crate::bridge::ruby::Describe(k)),
         ))
     })?;
 
@@ -54,7 +55,7 @@ fn parse_limits(ruby: &Ruby, h: RHash) -> Result<ParseLimits, Error> {
     };
     /* An actual Integer, not merely something convertible: a Float (1.5) is a
      * TypeError rather than a silent truncation. */
-    let n = magnus::Integer::from_value(v)
+    let n = crate::bridge::rb::Integer::from_value(v)
         .ok_or_else(|| Error::new(ruby.exception_type_error(), "max_bytes must be an Integer"))?
         .to_i64()?;
     if n <= 0 {
@@ -71,16 +72,14 @@ fn parse_limits(ruby: &Ruby, h: RHash) -> Result<ParseLimits, Error> {
 /// (`lib/makiri/xml/document.rb`), which reads an IO and converts the source
 /// to a String first, as the HTML entry does: `source` is a String here.
 fn s_parse(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        let scanned = magnus::scan_args::scan_args::<(Value,), (), (), (), RHash, ()>(args)?;
-        let (source,) = scanned.required;
-        let limits = parse_limits(ruby, scanned.keywords)?;
-        crate::bridge::xml::parse_xml_document(source, limits)
-    })
+    let a = crate::glue::args::scan(ruby, args, crate::glue::args::Shape::with_keywords(1, 0))?;
+    let source = a.required(0);
+    let limits = parse_limits(ruby, a.keywords())?;
+    crate::bridge::xml::parse_xml_document(source, limits)
 }
 
 fn doc_root(_ruby: &Ruby, rb_self: Value) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| crate::bridge::xml::document_root(rb_self))
+    crate::bridge::xml::document_root(rb_self)
 }
 
 /// The document's DOCTYPE, or nil.
@@ -90,14 +89,14 @@ fn doc_root(_ruby: &Ruby, rb_self: Value) -> Result<Option<Value>, Error> {
 /// undefined-entity error and no external subset is fetched. The node is kept
 /// off the tree, so XPath never sees it (XPath 1.0 has no doctype node type).
 fn doc_internal_subset(_ruby: &Ruby, rb_self: Value) -> Result<Option<Value>, Error> {
-    crate::bridge::ruby::entry(|| crate::bridge::xml::document_internal_subset(rb_self))
+    crate::bridge::xml::document_internal_subset(rb_self)
 }
 
 /// `Makiri::XML::Document.new` - an empty document to build up programmatically.
 /// Any arguments (Nokogiri accepts a version and encoding) are accepted and
 /// ignored.
 fn document_s_new(_args: &[Value]) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(crate::bridge::xml::new_empty_xml_document)
+    crate::bridge::xml::new_empty_xml_document()
 }
 
 /// `Makiri::XML::DocumentFragment.parse(source)` - a standalone fragment with
@@ -105,26 +104,22 @@ fn document_s_new(_args: &[Value]) -> Result<Value, Error> {
 /// its namespace within the fragment itself. Use `Document#fragment` to parse
 /// against an existing document's in-scope namespaces instead.
 fn fragment_s_parse(_klass: Value, source: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        let doc_obj = crate::bridge::xml::new_empty_xml_document()?;
-        let frag = crate::bridge::xml::fragment_into(doc_obj, source, false)?;
-        wrap(frag, doc_obj)
-    })
+    let doc_obj = crate::bridge::xml::new_empty_xml_document()?;
+    let frag = crate::bridge::xml::fragment_into(doc_obj, source, false)?;
+    wrap(frag, doc_obj)
 }
 
 /// `Document#_copy` (private): the whole document, copied node for node - what
 /// `#dup` returns.
 fn doc_copy(rb_self: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| crate::bridge::xml::copy_xml_document(rb_self))
+    crate::bridge::xml::copy_xml_document(rb_self)
 }
 
 /// `doc.fragment(source)` - a fragment bound to this document, resolving names
 /// against its in-scope (root) namespaces, so the nodes can be spliced in.
 fn doc_fragment(rb_self: Value, source: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        let frag = crate::bridge::xml::fragment_into(rb_self, source, true)?;
-        wrap(frag, rb_self)
-    })
+    let frag = crate::bridge::xml::fragment_into(rb_self, source, true)?;
+    wrap(frag, rb_self)
 }
 
 /// The XML Document surface. From `Init_makiri`; the class itself is defined

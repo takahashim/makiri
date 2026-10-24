@@ -1,7 +1,7 @@
 [package]
 name = "makiri_lints"
 version = "0.1.0"
-description = "Makiri's own lints over the magnus boundary"
+description = "Makiri's own lint over its Ruby boundary"
 edition = "2024"
 publish = false
 

@@ -5,8 +5,8 @@
 
 use core::ffi::c_int;
 
-use magnus::rb_sys::AsRawValue;
-use magnus::{prelude::*, Error, RString, Value};
+use crate::bridge::rb::value::AsRawValue;
+use crate::bridge::rb::{prelude::*, Error, RString, Value};
 
 /* ---- encoding ---- */
 
@@ -16,7 +16,9 @@ pub fn encoding_arg(v: Value) -> Result<(Encoding, crate::cbuf::OwnedBuf), Error
     let e = to_encoding(v)?;
     let name = match RString::from_value(v) {
         Some(s) => s,
-        None if magnus::Symbol::from_value(v).is_some() => crate::bridge::ruby::name_arg(v)?,
+        None if crate::bridge::rb::Symbol::from_value(v).is_some() => {
+            crate::bridge::ruby::name_arg(v)?
+        }
         None => {
             // SAFETY: a live encoding's name is a NUL-terminated C string that
             // lives as long as the encoding, which is the process.

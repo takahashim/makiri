@@ -852,7 +852,7 @@ impl Document {
 /// engine follows `next` without a bound, so the first traversal afterwards
 /// hangs the host process with no way out. Two `u32` compares against an
 /// unrecoverable hang is not a close call, and turning a broken invariant into a
-/// panic (which `bridge::ruby::entry` presents as `Makiri::InternalError`) is
+/// panic (which a method's trampoline presents as `Makiri::InternalError`) is
 /// what this codebase does with broken invariants everywhere else.
 ///
 /// It is also what makes the mutation fuzzer safe to run in CI: a ring cannot be

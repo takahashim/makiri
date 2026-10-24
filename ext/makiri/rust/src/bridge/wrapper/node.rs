@@ -3,9 +3,9 @@
 
 #![allow(unsafe_code)]
 
-use magnus::rb_sys::AsRawValue;
+use crate::bridge::rb::value::AsRawValue;
 
-use magnus::{Error, Value};
+use crate::bridge::rb::{Error, Value};
 
 use super::*;
 use crate::bridge::typed::{EmbeddedType, Held, Hooks, Snapshot, Store, Tracer};
@@ -238,6 +238,10 @@ pub enum NodeRepr {
 }
 
 /// Why [`node_token_in`] refused a node.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "an Error holds its message inline (`crate::msg::Msg`), so it is never boxed"
+)]
 pub enum NotInDocument {
     /// Not a usable Makiri node - the `TypeError` or `Makiri::Error` its
     /// wrapper raised.

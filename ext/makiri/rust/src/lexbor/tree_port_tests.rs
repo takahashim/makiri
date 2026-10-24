@@ -15,7 +15,7 @@ use crate::conformance::tree_construction_dir;
 use crate::html::tree::context_ids;
 use crate::lexbor::adapter::arena_copy::copy_document;
 use crate::lexbor::adapter::post_parse::parse_html;
-use crate::lexbor::adapter::tree_guard::DepthLimit;
+use crate::lexbor::adapter::tree_guard::ParseLimits;
 use crate::lexbor::tree_diff::*;
 
 #[track_caller]
@@ -335,7 +335,7 @@ fn the_port_builds_lexbors_tree_on_random_inputs() {
         let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
         let input = random_input(&mut rng);
         /* Drawn after the input, so a seed still names the same input. */
-        let limit = DepthLimit::at_most(rng.below(32) + 1);
+        let limit = ParseLimits::at_most(rng.below(32) + 1);
         let bytes = input.as_bytes();
         if let Err(e) = check(bytes, true)
             .and_then(|()| check_serialization(bytes))
@@ -530,7 +530,7 @@ fn selects_decided_from_their_state_build_lexbors_tree() {
 
 /// Whether both parsers accept `input` under `limit`, or refuse it the same
 /// way.
-fn same_verdict(input: &[u8], limit: DepthLimit) {
+fn same_verdict(input: &[u8], limit: ParseLimits) {
     let l = parse_html(input, false, limit).map(|_| ());
     let p = crate::html::tree::parse_html(input, false, limit).map(|_| ());
     assert_eq!(l, p, "{:?} under {limit:?}", String::from_utf8_lossy(input));
@@ -540,11 +540,11 @@ fn same_verdict(input: &[u8], limit: DepthLimit) {
 fn the_port_guards_as_lexbor_does() {
     for n in [397, 398, 399, 400, 401] {
         let deep = "<div>".repeat(n);
-        same_verdict(deep.as_bytes(), DepthLimit::DEFAULT);
-        same_verdict(format!("{deep}<br>").as_bytes(), DepthLimit::DEFAULT);
-        same_verdict(format!("{deep}<b><i>").as_bytes(), DepthLimit::DEFAULT);
-        same_verdict(format!("<table>{deep}").as_bytes(), DepthLimit::DEFAULT);
-        same_verdict(format!("<svg>{deep}").as_bytes(), DepthLimit::DEFAULT);
+        same_verdict(deep.as_bytes(), ParseLimits::DEFAULT);
+        same_verdict(format!("{deep}<br>").as_bytes(), ParseLimits::DEFAULT);
+        same_verdict(format!("{deep}<b><i>").as_bytes(), ParseLimits::DEFAULT);
+        same_verdict(format!("<table>{deep}").as_bytes(), ParseLimits::DEFAULT);
+        same_verdict(format!("<svg>{deep}").as_bytes(), ParseLimits::DEFAULT);
     }
     for d in [0, 1, 2, 3, 5] {
         for input in [
@@ -555,7 +555,7 @@ fn the_port_guards_as_lexbor_does() {
             "<template><div>",
             "<br><img>",
         ] {
-            same_verdict(input.as_bytes(), DepthLimit::at_most(d));
+            same_verdict(input.as_bytes(), ParseLimits::at_most(d));
         }
     }
 }
@@ -698,7 +698,7 @@ fn the_port_parses_random_fragments_as_lexbor_does() {
         let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
         let ctx = *rng.pick(CONTEXTS);
         let input = random_input(&mut rng);
-        let limit = DepthLimit::at_most(rng.below(32) + 1);
+        let limit = ParseLimits::at_most(rng.below(32) + 1);
         let bytes = input.as_bytes();
         if let Err(e) = check_fragment(bytes, ctx)
             .and_then(|()| check_fragment_serialization(bytes, ctx))
@@ -719,8 +719,8 @@ fn the_port_guards_fragments_as_lexbor_does() {
         let (tag, ns) = context_ids(ctx).expect("an html5lib fragment context");
         for n in [398, 399, 400, 401] {
             let input = "<div>".repeat(n);
-            let l = lexbor_fragment(input.as_bytes(), tag, ns, DepthLimit::DEFAULT).err();
-            let p = port_fragment(input.as_bytes(), tag, ns, DepthLimit::DEFAULT).err();
+            let l = lexbor_fragment(input.as_bytes(), tag, ns, ParseLimits::DEFAULT).err();
+            let p = port_fragment(input.as_bytes(), tag, ns, ParseLimits::DEFAULT).err();
             assert_eq!(l.is_some(), p.is_some(), "{n} in {ctx}");
         }
     }
@@ -755,15 +755,15 @@ fn tree_port_speed() {
         b
     };
     let lexbor_tree = best(&|| {
-        std::hint::black_box(parse_html(input, false, DepthLimit::DEFAULT).unwrap());
+        std::hint::black_box(parse_html(input, false, ParseLimits::DEFAULT).unwrap());
     });
     let lexbor_copy = best(&|| {
-        let p = parse_html(input, false, DepthLimit::DEFAULT).unwrap();
+        let p = parse_html(input, false, ParseLimits::DEFAULT).unwrap();
         std::hint::black_box(copy_document(p.doc()).unwrap());
     });
     let port = best(&|| {
         std::hint::black_box(
-            crate::html::tree::parse_html(input, false, DepthLimit::DEFAULT).unwrap(),
+            crate::html::tree::parse_html(input, false, ParseLimits::DEFAULT).unwrap(),
         );
     });
     let mb = input.len() as f64 / 1e6;
@@ -807,8 +807,8 @@ fn the_port_builds_lexbors_tree_on_web100k() {
             differ.push(format!("{name}\n{e}"));
             keep = true;
         }
-        let l = parse_html(&input, false, DepthLimit::DEFAULT).map(|_| ());
-        let r = crate::html::tree::parse_html(&input, false, DepthLimit::DEFAULT).map(|_| ());
+        let l = parse_html(&input, false, ParseLimits::DEFAULT).map(|_| ());
+        let r = crate::html::tree::parse_html(&input, false, ParseLimits::DEFAULT).map(|_| ());
         if l != r {
             verdicts.push(format!("{name}: lexbor {l:?}, port {r:?}"));
             keep = true;

@@ -8,11 +8,13 @@
 # and takes the whole process down with SIGABRT. `Makiri.__panic(kind)` exists
 # to be caught here (see `init.rs`).
 #
-# What a panic becomes is Ruby's `fatal`, via magnus's `catch_unwind`. Ruby does
-# not let a `rescue` in the SAME frame catch a `fatal`, so the examples below
-# test it the way a host actually meets it: on the thread that ran the query.
-# There the process survives, the error is catchable at the join, and `ensure`
-# has already run.
+# What a panic becomes is `Makiri::InternalError`: every method's trampoline
+# (`bridge::rb::method::finish`) catches it. (It was Ruby's `fatal`, via
+# magnus's `catch_unwind`, for the methods not wrapped in Makiri's own catch,
+# this hook's kinds 0..4 among them.) The examples below test it the way a host
+# that cannot rescue in the same frame meets it - on the thread that ran the
+# query - where the process survives, the error is catchable at the join, and
+# `ensure` has already run.
 RSpec.describe "a Rust panic" do
   KINDS = {
     0 => "deliberate panic",
@@ -100,15 +102,13 @@ RSpec.describe "a Rust panic" do
     expect(Makiri::XML("<r><c>b</c></r>").at_xpath("//c").text).to eq("b")
   end
 
-  describe "inside an entry point exposed to untrusted input" do
-    # `bridge::ruby::entry` wraps the methods a crafted document or expression
-    # reaches - parse, fragment, xpath/at_xpath/evaluate, css/at_css/matches?,
-    # the serializers and the text readers. There a panic is not a `fatal`: the
-    # host can catch it and turn one request into a 500 without a thread
-    # boundary to re-raise at.
+  describe "inside a method's body" do
+    # Every method's trampoline (`bridge::rb::method::finish`) catches a panic
+    # in the body. It is not a `fatal`: the host can catch it and turn one
+    # request into a 500 without a thread boundary to re-raise at.
     it "raises Makiri::InternalError, in the frame that called it" do
       expect { Makiri.__panic(5) }
-        .to raise_error(Makiri::InternalError, /panic inside a guarded entry/)
+        .to raise_error(Makiri::InternalError, /panic inside a method body/)
     end
 
     it "is not a StandardError, so a bare rescue still passes it through" do

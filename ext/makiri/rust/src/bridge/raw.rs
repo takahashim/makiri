@@ -11,11 +11,12 @@
 //! `rake unsafe:boundaries` pins that these C names appear nowhere else in the
 //! crate, so a new raising call is a new wrapper here, with its raise stated.
 //!
-//! The value-level wrappers are SAFE: they take and return magnus's typed
-//! values (`RString`, `RArray`, `RHash`, `Value`, ...), slices and the
+//! The value-level wrappers are SAFE: they take and return `bridge::rb`'s
+//! typed values (`RString`, `RArray`, `RHash`, `Value`, ...), slices and the
 //! bridge's `Encoding`, so a live value of the right kind is the type's
-//! promise, not the caller's - under magnus's own rule that a Ruby value stays
-//! on the stack (CLAUDE.md, "A VALUE inside a wrapped object"). One that
+//! promise, not the caller's - under the rule every Ruby extension keeps, that
+//! a Ruby value stays on the stack (CLAUDE.md, "A VALUE inside a wrapped
+//! object"). One that
 //! takes no Ruby value takes `&Ruby`, the proof it runs on a Ruby thread with
 //! the GVL (`Ruby` is `!Send`, so a GVL-released body cannot carry one). What
 //! still checks a value's kind or a bound is done here, before the C call,
@@ -23,10 +24,11 @@
 //! typed data and Ruby's allocator, and a String of unwritten bytes - stay
 //! `unsafe`, with their contracts stated.
 //!
-//! What is NOT here: calls that cannot raise (`rb_gc_mark`, the encoding
-//! singletons, `rb_typeddata_is_kind_of`, `rb_attr_get`, `ruby_xfree`), the GC
-//! callbacks, and the calls magnus makes on the bridge's behalf, which raise by
-//! magnus's own rules (`bridge::build` is the bridge's own spelling of those).
+//! What is NOT here: calls that cannot raise and touch no other value
+//! (`rb_gc_mark`, the encoding singletons, `rb_typeddata_is_kind_of`,
+//! `rb_attr_get`, `ruby_xfree`), the stable API's inline reads
+//! (`bridge::rb::value`), and the GC callbacks (`bridge::typed`). Together
+//! with those, this file is every C function of Ruby's that Makiri calls.
 
 #![allow(unsafe_code)]
 /* Every wrapper's contract is the module's, stated once above. */
@@ -34,8 +36,11 @@
 
 use core::ffi::{c_char, c_int, c_long, c_void};
 
-use magnus::rb_sys::{AsRawValue, FromRawValue};
-use magnus::{Error, Float, Integer, RArray, RHash, RString, Ruby, Symbol, Value};
+use crate::bridge::rb::value::AsRawValue;
+use crate::bridge::rb::{
+    Error, ExceptionClass, Float, Integer, RArray, RClass, RHash, RModule, RString, Range, Ruby,
+    Symbol, Value,
+};
 use rb_sys::{rb_data_type_t, ID, VALUE};
 
 use super::string::Encoding;
@@ -62,7 +67,9 @@ unsafe fn injected_raise() {
 /// captures is, so it owns nothing, and neither does its result. There is no
 /// `catch_unwind` here (a raise crossing one is undefined behaviour); a panic
 /// in the thunk would abort at its `extern "C"` boundary, and the closures
-/// below hold no Rust that panics.
+/// below hold no Rust that panics. The one C call that calls back into Rust,
+/// `rb_hash_foreach` ([`hash_foreach`]), latches its callback's panic inside
+/// the callback, and the callback raises nothing.
 #[inline]
 fn call<T: Copy, F: FnOnce() -> T + Copy>(f: F) -> Result<T, Error> {
     struct Slot<F, T> {
@@ -70,10 +77,12 @@ fn call<T: Copy, F: FnOnce() -> T + Copy>(f: F) -> Result<T, Error> {
         out: Option<T>,
     }
     unsafe extern "C" fn thunk<T: Copy, F: FnOnce() -> T + Copy>(arg: VALUE) -> VALUE {
-        // SAFETY: `arg` is the `Slot` `call` passed, live for the call.
-        let slot = unsafe { &mut *(arg as *mut Slot<F, T>) };
-        slot.out = Some((slot.f)());
-        rb_sys::Qnil as VALUE
+        crate::no_unwind::must_not_unwind::<crate::no_unwind::ProtectThunk, _>(|| {
+            // SAFETY: `arg` is the `Slot` `call` passed, live for the call.
+            let slot = unsafe { &mut *(arg as *mut Slot<F, T>) };
+            slot.out = Some((slot.f)());
+            rb_sys::Qnil as VALUE
+        })
     }
     let mut slot = Slot { f, out: None };
     let mut state: c_int = 0;
@@ -90,21 +99,7 @@ fn call<T: Copy, F: FnOnce() -> T + Copy>(f: F) -> Result<T, Error> {
         (0, None) => Err(crate::bridge::ruby::internal_error(
             "a protected call did not run",
         )),
-        (state, _) => Err(jump_error(state)),
-    }
-}
-
-/// The error a non-zero `rb_protect` state stands for, as magnus makes it:
-/// the state is resumed under magnus's own protect, which answers it - an
-/// exception for a raise, the tag for a `throw` or a thread kill. The closure
-/// holds only the C call.
-#[cold]
-fn jump_error(state: c_int) -> Error {
-    // SAFETY: `state` is the one `rb_protect` just reported, its error info
-    // still set; resuming it is what magnus's protect catches.
-    match magnus::rb_sys::protect(|| -> VALUE { unsafe { rb_sys::rb_jump_tag(state) } }) {
-        Err(e) => e,
-        Ok(_) => crate::bridge::ruby::internal_error("rb_jump_tag returned"),
+        (state, _) => Err(Error::from_state(state)),
     }
 }
 
@@ -114,11 +109,10 @@ fn jump_error(state: c_int) -> Error {
 /// a C function that answered with another kind is an error, not a value read
 /// as the wrong type.
 #[inline]
-fn typed<T>(v: VALUE, of: fn(Value) -> Option<T>, what: &str) -> Result<T, Error> {
+fn typed<T>(v: VALUE, of: fn(Value) -> Option<T>, what: &'static str) -> Result<T, Error> {
     // SAFETY: `v` is what a Ruby C call just returned: a live value, on this
     // frame's stack until it is converted.
-    of(unsafe { Value::from_raw(v) })
-        .ok_or_else(|| crate::bridge::ruby::internal_error(format!("a C call made no {what}")))
+    of(unsafe { Value::from_raw(v) }).ok_or_else(|| crate::bridge::ruby::internal_error(what))
 }
 
 /// A length for the C API's `long`; `ArgumentError` for one it cannot hold.
@@ -135,7 +129,353 @@ fn rstring_len(s: RString) -> usize {
     unsafe { rb_sys::stable_api::get_default().rstring_len(s.as_raw()) as usize }
 }
 
+/* ---- what bridge::rb's values and errors are made of ---- */
+
+/// The `rb_protect` state of a raise (`TAG_RAISE` in CRuby's `vm_core.h`).
+/// Not part of the documented API - the state is called opaque - but it is
+/// how a raise is told from a `throw` or a `break`, whose state must be
+/// resumed untouched; magnus reads the same value. Unchanged since 1.9.
+pub const TAG_RAISE: c_int = 6;
+
+/// `$!`, taken: the exception a raise left there, with `$!` set back to
+/// `nil` (`rb_errinfo`, `rb_set_errinfo`). Raises nothing.
+pub fn take_errinfo() -> Value {
+    // SAFETY: under the GVL (a protected call just returned); both read or
+    // write the current thread's error info.
+    unsafe {
+        let exc = rb_sys::rb_errinfo();
+        rb_sys::rb_set_errinfo(rb_sys::Qnil as VALUE);
+        Value::from_raw(exc)
+    }
+}
+
+/// `rb_jump_tag`: resume the non-local exit `state` stands for. Raises, by
+/// design - only `Error::raise` calls it, with nothing owned.
+pub fn jump_tag(state: c_int) -> ! {
+    // SAFETY: `state` is one `rb_protect` reported; resuming it is the point.
+    unsafe { rb_sys::rb_jump_tag(state) }
+}
+
+/// `rb_exc_raise`: raise `exc`. Raises, by design - only `Error::raise` calls
+/// it, with nothing owned.
+pub fn exc_raise(exc: Value) -> ! {
+    // SAFETY: `exc` is a live exception object.
+    unsafe { rb_sys::rb_exc_raise(exc.as_raw()) }
+}
+
+/// An exception of `class` with the UTF-8 message `msg`: `rb_exc_new_str`,
+/// which allocates and runs the class's `initialize`, and so raises.
+pub fn exception_new(class: ExceptionClass, msg: &[u8]) -> Result<Value, Error> {
+    let s = utf8_str_new(&Ruby::get_with(class), msg)?.as_raw();
+    let class = class.as_raw();
+    let exc = call(|| unsafe {
+        injected_raise();
+        rb_sys::rb_exc_new_str(class, s)
+    })?;
+    // SAFETY: the object just made.
+    Ok(unsafe { Value::from_raw(exc) })
+}
+
+/// Whether `v` is a class or a module - what `rb_obj_is_kind_of` and
+/// `rb_class_inherited_p` require, and raise `TypeError` without.
+#[inline]
+fn is_module(v: Value) -> bool {
+    RClass::from_value(v).is_some() || RModule::from_value(v).is_some()
+}
+
+/// `rb_obj_is_kind_of`: an instance of `class` or of one deriving from it?
+/// `false` when `class` is not a class or module, rather than the
+/// `TypeError` the C function raises. Runs no Ruby code.
+#[inline]
+pub fn obj_is_kind_of(v: Value, class: Value) -> bool {
+    if !is_module(class) {
+        return false;
+    }
+    // SAFETY: both live; `class` is a class or module, so this raises nothing.
+    unsafe { rb_sys::rb_obj_is_kind_of(v.as_raw(), class.as_raw()) == rb_sys::Qtrue as VALUE }
+}
+
+/// `rb_class_inherited_p`: is `sub` `sup` or a descendant of it? `false`
+/// when either is not a class or module. Runs no Ruby code.
+#[inline]
+pub fn class_inherits(sub: Value, sup: Value) -> bool {
+    if !is_module(sub) || !is_module(sup) {
+        return false;
+    }
+    // SAFETY: both live modules, so this raises nothing.
+    unsafe { rb_sys::rb_class_inherited_p(sub.as_raw(), sup.as_raw()) == rb_sys::Qtrue as VALUE }
+}
+
+/// `rb_ary_entry`: element `i` (negative counts from the end), `nil` past
+/// either end. Raises nothing.
+#[inline]
+pub fn ary_entry(a: RArray, i: c_long) -> Value {
+    // SAFETY: `a` is a live Array; the read is bounds-checked by Ruby.
+    unsafe { Value::from_raw(rb_sys::rb_ary_entry(a.as_raw(), i)) }
+}
+
+/// `rb_hash_lookup2` at `key`, `None` for no entry. A Symbol hashes and
+/// compares by identity and a String by its bytes, both in C, so no Ruby code
+/// runs; protected all the same, since the C function is a lookup Ruby may
+/// extend.
+pub fn hash_lookup(h: RHash, key: Value) -> Option<Value> {
+    const UNDEF: VALUE = rb_sys::Qundef as VALUE;
+    let (h, key) = (h.as_raw(), key.as_raw());
+    let v = call(|| unsafe { rb_sys::rb_hash_lookup2(h, key, UNDEF) }).ok()?;
+    // SAFETY: a value of the Hash's, or `Qundef`, which is not handed out.
+    (v != UNDEF).then(|| unsafe { Value::from_raw(v) })
+}
+
+/// `rb_range_values`: a Range's ends and whether it excludes its end. For a
+/// Range (or a subclass's instance) the fields are read, and no Ruby runs.
+pub fn range_values(r: Range) -> Result<(Value, Value, bool), Error> {
+    let r = r.as_raw();
+    let (mut beg, mut end, mut excl): (VALUE, VALUE, c_int) = (0, 0, 0);
+    let (pb, pe, px) = (
+        &mut beg as *mut VALUE,
+        &mut end as *mut VALUE,
+        &mut excl as *mut c_int,
+    );
+    call(|| unsafe { rb_sys::rb_range_values(r, pb, pe, px) })?;
+    // SAFETY: the Range's own ends, live while it is.
+    Ok(unsafe { (Value::from_raw(beg), Value::from_raw(end), excl != 0) })
+}
+
+/// The constant `name` of `outer` (`rb_const_get`): raises `NameError` for
+/// none, and an autoload runs Ruby code - used only for a class Makiri's own
+/// Ruby defines.
+pub fn const_get(outer: Value, name: &core::ffi::CStr) -> Result<Value, Error> {
+    let id = intern_cstr(&Ruby::get_with(outer), name)?;
+    let outer = outer.as_raw();
+    let v = call(|| unsafe { rb_sys::rb_const_get(outer, id) })?;
+    // SAFETY: the constant's value, live while it is bound.
+    Ok(unsafe { Value::from_raw(v) })
+}
+
+/// `recv.name(*args)` (`rb_funcallv`): the caller's Ruby, which is why it is
+/// counted (`rake unsafe:boundaries`' `USER_CODE_API`) - the one use is
+/// `XML::Namespace.new`, Makiri's own Data class, whose `new` takes the
+/// arguments as Data's does.
+pub fn call_method(recv: Value, name: &core::ffi::CStr, args: &[Value]) -> Result<Value, Error> {
+    let id = intern_cstr(&Ruby::get_with(recv), name)?;
+    let argc = c_int::try_from(args.len())
+        .map_err(|_| crate::bridge::ruby::arg_error("too many arguments"))?;
+    let recv = recv.as_raw();
+    /* `Value` is transparent over `VALUE`, so the slice is the C array. */
+    let argv = args.as_ptr() as *const VALUE;
+    let v = call(|| unsafe { rb_sys::rb_funcallv(recv, id, argc, argv) })?;
+    // SAFETY: what the method returned, live on this frame.
+    Ok(unsafe { Value::from_raw(v) })
+}
+
+/// `rb_module_new`: an anonymous module. Raises `NoMemoryError`.
+pub fn module_new(_: &Ruby) -> Result<RModule, Error> {
+    let v = call(|| unsafe {
+        injected_raise();
+        rb_sys::rb_module_new()
+    })?;
+    typed(v, RModule::from_value, "Module")
+}
+
+/// `rb_big2ll`: raises `RangeError` past an `i64`.
+#[allow(
+    clippy::unnecessary_cast,
+    reason = "c_longlong is i64 here, not everywhere"
+)]
+pub fn big2ll(n: Integer) -> Result<i64, Error> {
+    let n = n.as_raw();
+    Ok(call(|| unsafe { rb_sys::rb_big2ll(n) })? as i64)
+}
+
+/// `rb_big2ull`: raises `RangeError` past a `u64`.
+#[allow(
+    clippy::unnecessary_cast,
+    reason = "c_ulonglong is u64 here, not everywhere"
+)]
+pub fn big2ull(n: Integer) -> Result<u64, Error> {
+    let n = n.as_raw();
+    Ok(call(|| unsafe { rb_sys::rb_big2ull(n) })? as u64)
+}
+
+/* ---- definitions, at init ---- */
+
+/// `rb_define_class_under`: raises `TypeError` when `name` is bound to
+/// something else, or to a class with another superclass.
+pub fn define_class_under(
+    outer: Value,
+    name: &core::ffi::CStr,
+    sup: RClass,
+) -> Result<Value, Error> {
+    let (outer, name, sup) = (outer.as_raw(), name.as_ptr(), sup.as_raw());
+    let v = call(|| unsafe { rb_sys::rb_define_class_under(outer, name, sup) })?;
+    // SAFETY: the class just defined, live (it is a constant now).
+    Ok(unsafe { Value::from_raw(v) })
+}
+
+/// `rb_define_module_under`: raises `TypeError` when `name` is bound to
+/// something that is not a module.
+pub fn define_module_under(outer: Value, name: &core::ffi::CStr) -> Result<Value, Error> {
+    let (outer, name) = (outer.as_raw(), name.as_ptr());
+    let v = call(|| unsafe { rb_sys::rb_define_module_under(outer, name) })?;
+    // SAFETY: as `define_class_under`.
+    Ok(unsafe { Value::from_raw(v) })
+}
+
+/// `rb_define_module`: a top-level module; raises as `define_module_under`.
+pub fn define_module(name: &core::ffi::CStr) -> Result<Value, Error> {
+    let name = name.as_ptr();
+    let v = call(|| unsafe { rb_sys::rb_define_module(name) })?;
+    // SAFETY: as `define_class_under`.
+    Ok(unsafe { Value::from_raw(v) })
+}
+
+/// `rb_const_set`: raises `FrozenError` on a frozen namespace.
+pub fn const_set(outer: Value, name: &core::ffi::CStr, v: Value) -> Result<(), Error> {
+    let id = intern_cstr(&Ruby::get_with(outer), name)?;
+    let (outer, v) = (outer.as_raw(), v.as_raw());
+    call(|| unsafe { rb_sys::rb_const_set(outer, id, v) })
+}
+
+/// `rb_include_module`: raises `ArgumentError` for a cyclic include,
+/// `FrozenError` on a frozen class.
+pub fn include_module(klass: Value, module: Value) -> Result<(), Error> {
+    let (klass, module) = (klass.as_raw(), module.as_raw());
+    call(|| unsafe { rb_sys::rb_include_module(klass, module) })
+}
+
+/// `rb_undef_alloc_func`. Raises nothing.
+pub fn undef_alloc_func(klass: RClass) {
+    // SAFETY: `klass` is a live class.
+    unsafe { rb_sys::rb_undef_alloc_func(klass.as_raw()) }
+}
+
+/// `rb_define_method` / `_private_method` / `_singleton_method`: raise
+/// `FrozenError` on a frozen target.
+pub(in crate::bridge) fn define_method(
+    target: Value,
+    name: &core::ffi::CStr,
+    func: super::rb::method::Func,
+    visibility: super::rb::class::Visibility,
+) -> Result<(), Error> {
+    use super::rb::class::Visibility;
+    let (target, name, ptr, arity) = (target.as_raw(), name.as_ptr(), Some(func.ptr), func.arity);
+    match visibility {
+        Visibility::Public => {
+            call(|| unsafe { rb_sys::rb_define_method(target, name, ptr, arity) })
+        }
+        Visibility::Private => {
+            call(|| unsafe { rb_sys::rb_define_private_method(target, name, ptr, arity) })
+        }
+        Visibility::Singleton => {
+            call(|| unsafe { rb_sys::rb_define_singleton_method(target, name, ptr, arity) })
+        }
+        Visibility::ModuleFunction => {
+            call(|| unsafe { rb_sys::rb_define_module_function(target, name, ptr, arity) })
+        }
+    }
+}
+
+/// `rb_gc_register_mark_object`: raises `NoMemoryError` when the root table
+/// cannot grow.
+pub fn gc_register_mark_object(v: Value) -> Result<(), Error> {
+    let v = v.as_raw();
+    call(|| unsafe {
+        injected_raise();
+        rb_sys::rb_gc_register_mark_object(v)
+    })
+}
+
+/// `rb_obj_freeze`. Raises nothing.
+pub fn obj_freeze(v: Value) {
+    // SAFETY: `v` is a live object.
+    unsafe { rb_sys::rb_obj_freeze(v.as_raw()) };
+}
+
+/// `rb_exc_fatal`: raise `exc` as Ruby's `fatal` - for a panic in
+/// `Init_makiri`, where a half-defined extension must not be used. Raises,
+/// by design.
+pub fn exc_fatal(exc: Value) -> ! {
+    // SAFETY: `exc` is a live exception object.
+    unsafe { rb_sys::rb_exc_fatal(exc.as_raw()) }
+}
+
+/* ---- blocks and Hash walks ---- */
+
+/// `rb_block_given_p`: whether the method running now was given a block.
+/// Raises nothing and runs no Ruby code; like [`keyword_given`], it reads
+/// the current frame.
+#[inline]
+pub fn block_given(_: &Ruby) -> bool {
+    // SAFETY: under the GVL (`&Ruby`); a read of the current control frame.
+    unsafe { rb_sys::rb_block_given_p() != 0 }
+}
+
+/// `rb_yield`: runs the caller's block - Ruby code, which can raise, `break`,
+/// `throw` or `return`. Every one of those comes back as `Err` (the
+/// non-exception exits as the jump `rb_protect` caught), and is raised again
+/// at the method's return, so it reaches the block's caller as it left.
+pub fn yield_value(_: &Ruby, v: Value) -> Result<Value, Error> {
+    let v = v.as_raw();
+    let out = call(|| unsafe { rb_sys::rb_yield(v) })?;
+    // SAFETY: what the block returned, live on this frame.
+    Ok(unsafe { Value::from_raw(out) })
+}
+
+/// `rb_hash_foreach` over `h`, `visit` answering after each pair whether to
+/// go on. Raises `RuntimeError` when the Hash is changed in a way the walk
+/// cannot survive (a key added or the table rehashed).
+///
+/// `visit` is Rust called from C, inside `rb_hash_foreach`'s frames, so a
+/// panic in it must not unwind into them: it is latched here - the walk
+/// stops - and resumed once the C frames are gone. It never raises either:
+/// it answers `false` and the caller keeps its own error.
+pub fn hash_foreach(h: RHash, visit: &mut dyn FnMut(Value, Value) -> bool) -> Result<(), Error> {
+    struct Walk<'a> {
+        visit: &'a mut dyn FnMut(Value, Value) -> bool,
+        latch: crate::caught::PanicLatch,
+    }
+    unsafe extern "C" fn each(k: VALUE, v: VALUE, arg: VALUE) -> c_int {
+        const CONTINUE: c_int = rb_sys::st_retval::ST_CONTINUE as c_int;
+        const STOP: c_int = rb_sys::st_retval::ST_STOP as c_int;
+        crate::no_unwind::must_not_unwind::<crate::no_unwind::HashEach, _>(|| {
+            // SAFETY: `arg` is the `Walk` `hash_foreach` passed, live for the
+            // walk; `k` and `v` are the Hash's, live while it is walked.
+            let walk = unsafe { &mut *(arg as *mut Walk<'_>) };
+            let (k, v) = unsafe { (Value::from_raw(k), Value::from_raw(v)) };
+            let visit = &mut walk.visit;
+            if walk.latch.guard(false, || visit(k, v)) {
+                CONTINUE
+            } else {
+                STOP
+            }
+        })
+    }
+    let mut walk = Walk {
+        visit,
+        latch: crate::caught::PanicLatch::new(),
+    };
+    let (h, arg) = (h.as_raw(), &mut walk as *mut Walk<'_> as VALUE);
+    let walked = call(|| unsafe {
+        rb_sys::rb_hash_foreach(h, Some(each), arg);
+        rb_sys::Qnil as VALUE
+    });
+    /* Out of the C frames: safe to unwind from here. */
+    walk.latch.resume();
+    walked.map(|_| ())
+}
+
 /* ---- conversions and checks ---- */
+
+/// `rb_keyword_given_p`: whether the method running now was called with
+/// keywords - the one thing `rb_scan_args` asks Ruby when it separates them.
+/// Raises nothing and runs no Ruby code. It reads the current frame, so it
+/// answers for a method only from that method's own body, before the method
+/// calls into Ruby (`glue::args::scan` is called first thing).
+#[inline]
+pub fn keyword_given(_: &Ruby) -> bool {
+    // SAFETY: under the GVL (`&Ruby`); a read of the current control frame.
+    unsafe { rb_sys::rb_keyword_given_p() != 0 }
+}
 
 /// `rb_sym2str`: raises `NoMemoryError` when a static Symbol's name String is
 /// made for the first time. Runs no Ruby code.
@@ -163,7 +503,7 @@ pub fn check_frozen(v: Value) -> Result<(), Error> {
 /// kind would be converted with its `to_int`.
 #[inline]
 pub fn range_beg_len(range: Value, count: c_long) -> Result<Option<(c_long, c_long)>, Error> {
-    if magnus::Range::from_value(range).is_none() {
+    if crate::bridge::rb::Range::from_value(range).is_none() {
         return Err(crate::bridge::ruby::type_error("a Range was expected"));
     }
     let (mut beg, mut len): (c_long, c_long) = (0, 0);
@@ -321,7 +661,7 @@ pub fn str_encode(s: RString, enc: Encoding, flags: c_int) -> Result<RString, Er
 /// which would convert it with its `to_str`.
 #[inline]
 pub fn to_encoding(v: Value) -> Result<Encoding, Error> {
-    use magnus::value::ReprValue;
+    use crate::bridge::rb::ReprValue;
     let ruby = crate::bridge::ruby::gvl_ruby();
     if !v.is_kind_of(ruby.class_encoding()) && RString::from_value(v).is_none() {
         return Err(crate::bridge::ruby::type_error(
@@ -378,6 +718,67 @@ pub fn ary_push(a: RArray, v: Value) -> Result<(), Error> {
     .map(|_| ())
 }
 
+/// `rb_ivar_set` for one of Makiri's hidden ivars (a name without `@`, so
+/// Ruby code cannot see it): raises `FrozenError` for a frozen object and
+/// `NoMemoryError`.
+#[inline]
+pub fn ivar_set(obj: Value, id: ID, v: Value) -> Result<(), Error> {
+    let (o, v) = (obj.as_raw(), v.as_raw());
+    call(|| unsafe {
+        injected_raise();
+        rb_sys::rb_ivar_set(o, id, v)
+    })
+    .map(|_| ())
+}
+
+/// `rb_attr_get`: a hidden ivar's value, or nil. Raises nothing and runs no
+/// Ruby code (an attribute read, not a method call).
+#[inline]
+pub fn ivar_get(obj: Value, id: ID) -> Value {
+    // SAFETY: a live object; the read raises nothing.
+    unsafe { Value::from_raw(rb_sys::rb_attr_get(obj.as_raw(), id)) }
+}
+
+/// A Fixnum for a table key: `None` past a Fixnum.
+///
+/// Built from its bits - `(n << 1) | FIXNUM_FLAG`, what `long2fix` does -
+/// rather than through a C `long`: a Fixnum is as wide as a VALUE, less one
+/// bit, while a `long` is 32 bits on Windows, where a node token past 2^32
+/// was refused as past a Fixnum.
+#[inline]
+fn fixnum_key(n: usize) -> Option<VALUE> {
+    /* The largest positive Fixnum: a signed VALUE less its flag bit. */
+    const FIXNUM_MAX: VALUE = VALUE::MAX >> 2;
+    let v = VALUE::try_from(n).ok().filter(|&v| v <= FIXNUM_MAX)?;
+    Some((v << 1) | rb_sys::FIXNUM_FLAG as VALUE)
+}
+
+/// `rb_hash_lookup2` at the Fixnum `n`: a Fixnum hashes and compares by
+/// value in C, so no Ruby code runs; protected all the same, as
+/// [`hash_lookup`] is.
+#[inline]
+pub fn table_get(h: RHash, n: usize) -> Option<Value> {
+    const UNDEF: VALUE = rb_sys::Qundef as VALUE;
+    let key = fixnum_key(n)?;
+    let h = h.as_raw();
+    let v = call(|| unsafe { rb_sys::rb_hash_lookup2(h, key, UNDEF) }).ok()?;
+    // SAFETY: a value of the Hash's, or `Qundef`, which is not handed out.
+    (v != UNDEF).then(|| unsafe { Value::from_raw(v) })
+}
+
+/// `rb_hash_aset` at the Fixnum `n`: raises `NoMemoryError`.
+#[inline]
+pub fn table_set(h: RHash, n: usize, v: Value) -> Result<(), Error> {
+    let key = fixnum_key(n)
+        .ok_or_else(|| crate::bridge::ruby::internal_error("a node token past a Fixnum"))?;
+    let (h, v) = (h.as_raw(), v.as_raw());
+    call(|| unsafe {
+        injected_raise();
+        rb_sys::rb_hash_aset(h, key, v)
+    })
+    .map(|_| ())
+}
+
 /// `rb_hash_new`: raises `NoMemoryError`.
 #[inline]
 pub fn hash_new(_: &Ruby) -> Result<RHash, Error> {
@@ -410,6 +811,18 @@ pub fn hash_aset(h: RHash, k: Value, v: Value) -> Result<(), Error> {
 /// `rb_ll2inum`: raises `NoMemoryError` for a value past a Fixnum (a Bignum).
 #[inline]
 pub fn int_from_i64(_: &Ruby, n: i64) -> Result<Integer, Error> {
+    use rb_sys::stable_api::{get_default, StableApiDefinition};
+    /* A Fixnum is the value's own bits: no allocation, nothing to raise, no
+     * protected call - the common case (a length, an index, a count). */
+    /* A `long` is 32 bits on Windows, so the round trip is the range check. */
+    let api = get_default();
+    let l = n as c_long;
+    if l as i64 == n && api.fixable(l) {
+        // SAFETY: an immediate.
+        return Ok(Integer::from_known(unsafe {
+            Value::from_raw(api.long2fix(l))
+        }));
+    }
     let v = call(|| unsafe {
         injected_raise();
         rb_sys::rb_ll2inum(n)
@@ -420,6 +833,16 @@ pub fn int_from_i64(_: &Ruby, n: i64) -> Result<Integer, Error> {
 /// `rb_ull2inum`: as [`int_from_i64`].
 #[inline]
 pub fn int_from_u64(_: &Ruby, n: u64) -> Result<Integer, Error> {
+    use rb_sys::stable_api::{get_default, StableApiDefinition};
+    /* As `int_from_i64`. */
+    let api = get_default();
+    let l = n as core::ffi::c_ulong;
+    if l as u64 == n && api.posfixable(l) {
+        // SAFETY: an immediate; `posfixable` keeps it within a long.
+        return Ok(Integer::from_known(unsafe {
+            Value::from_raw(api.long2fix(l as c_long))
+        }));
+    }
     let v = call(|| unsafe {
         injected_raise();
         rb_sys::rb_ull2inum(n)
@@ -446,7 +869,7 @@ pub fn enumeratorize(obj: Value, meth: Symbol) -> Result<Value, Error> {
         injected_raise();
         rb_sys::rb_enumeratorize_with_size(o, m, 0, core::ptr::null(), None)
     })?;
-    typed(v, Some, "value")
+    typed(v, Some, "a C call made no value")
 }
 
 /* ---- typed data and Ruby's allocator ---- */
@@ -467,15 +890,6 @@ pub unsafe fn typed_object_wrap(
     call(|| unsafe {
         injected_raise();
         rb_sys::rb_data_typed_object_wrap(klass, data, ty)
-    })
-}
-
-/// `ruby_xmalloc`: raises `NoMemoryError`.
-#[inline]
-pub unsafe fn xmalloc(size: usize) -> Result<*mut c_void, Error> {
-    call(|| unsafe {
-        injected_raise();
-        rb_sys::ruby_xmalloc(size as rb_sys::size_t)
     })
 }
 
