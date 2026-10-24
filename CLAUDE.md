@@ -486,7 +486,12 @@ by the check that concluded "every undefined symbol is legitimate".
   (`push`, `insert`, `extend`, `extend_from_slice`, `resize`, a map or set's
   `insert`, `collect`), and `rake oom` fails each site in turn, so an OOM there
   raises instead of aborting. Growth is `falloc::VecGrow` / `MapInsert` /
-  `SetInsert`, each a reserve and the op in one call: the old rule,
+  `SetInsert`, each a reserve and the op in one call, and `falloc::Slot` for
+  an operation that must change several tables together or not at all: take
+  every slot first (each a fallible reserve), then fill them - `Slot::push`
+  cannot fail, and the slot borrows its vector until filled, so nothing can
+  take the room (DOM node + row, the name tables, XPath's namespace and
+  variable tables). The old rule,
   "`falloc_reserve` exactly what follows, then the plain call", was a count
   only review checked, and a miscount grew outside the sweep. A plain call
   survives under `#[allow(clippy::disallowed_methods, reason = ...)]` only where

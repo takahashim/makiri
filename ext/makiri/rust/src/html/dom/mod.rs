@@ -21,7 +21,7 @@
 use core::num::NonZeroU32;
 
 use crate::compat::{self, Fix};
-use crate::falloc::{try_vec_with_capacity, Reserve, VecGrow};
+use crate::falloc::{try_vec_with_capacity, VecGrow};
 use crate::html::names::Names;
 use crate::html::res::names as res;
 pub use crate::node_type::NodeType;
@@ -145,6 +145,25 @@ struct Node {
     /// The start tag's byte offset + 1; 0 when the node has none.
     source: u32,
     payload: Payload,
+}
+
+impl Node {
+    /// A new node of `kind`: no names, no links, no source.
+    fn blank(kind: NodeType, payload: Payload) -> Node {
+        Node {
+            kind,
+            local: 0,
+            ns: 0,
+            prefix: 0,
+            parent: None,
+            first_child: None,
+            last_child: None,
+            next: None,
+            prev: None,
+            source: 0,
+            payload,
+        }
+    }
 }
 
 /// An element's own fields.
@@ -427,20 +446,28 @@ impl Document {
     }
 
     fn push(&mut self, kind: NodeType, payload: Payload) -> Result<NodeId, DomOom> {
-        let id = NodeId::from_index(self.nodes.len()).ok_or(DomOom)?;
-        oom!(self.nodes.falloc_push(Node {
-            kind,
-            local: 0,
-            ns: 0,
-            prefix: 0,
-            parent: None,
-            first_child: None,
-            last_child: None,
-            next: None,
-            prev: None,
-            source: 0,
-            payload,
-        }));
+        let slot = oom!(self.nodes.falloc_slot());
+        let id = NodeId::from_index(slot.index()).ok_or(DomOom)?;
+        slot.push(Node::blank(kind, payload));
+        Ok(id)
+    }
+
+    /// [`push`](Self::push) for a node whose kind keeps a row in a table of
+    /// its own (`elements`, `attrs`, `doctypes`): both slots are taken first,
+    /// so the node and its row are added together or not at all.
+    fn push_with<D>(
+        nodes: &mut Vec<Node>,
+        table: &mut Vec<D>,
+        kind: NodeType,
+        payload: fn(u32) -> Payload,
+        row: D,
+    ) -> Result<NodeId, DomOom> {
+        let row_slot = oom!(table.falloc_slot());
+        let idx = u32::try_from(row_slot.index()).map_err(|_| DomOom)?;
+        let node_slot = oom!(nodes.falloc_slot());
+        let id = NodeId::from_index(node_slot.index()).ok_or(DomOom)?;
+        node_slot.push(Node::blank(kind, payload(idx)));
+        row_slot.push(row);
         Ok(id)
     }
 
@@ -538,19 +565,21 @@ impl Document {
         prefix: PrefixIndex,
         written: u32,
     ) -> Result<NodeId, DomOom> {
-        let idx = u32::try_from(self.elements.len()).map_err(|_| DomOom)?;
-        oom!(self.elements.falloc_reserve(1));
-        let id = self.push(NodeType::Element, Payload::Element(idx))?;
+        let id = Self::push_with(
+            &mut self.nodes,
+            &mut self.elements,
+            NodeType::Element,
+            Payload::Element,
+            ElementData {
+                written,
+                first_attr: None,
+                last_attr: None,
+                id_attr: None,
+                class_attr: None,
+                template: None,
+            },
+        )?;
         self.set_names(id, tag, ns, prefix);
-        /* Reserved above, before the node: this cannot fail now. */
-        oom!(self.elements.falloc_push(ElementData {
-            written,
-            first_attr: None,
-            last_attr: None,
-            id_attr: None,
-            class_attr: None,
-            template: None,
-        }));
         /* An HTML `<template>` is made with its contents fragment, as
          * Lexbor's template interface is: in the HTML namespace, hosted by
          * the template. */
@@ -586,18 +615,20 @@ impl Document {
         written: u32,
         value: Span,
     ) -> Result<NodeId, DomOom> {
-        let idx = u32::try_from(self.attrs.len()).map_err(|_| DomOom)?;
-        oom!(self.attrs.falloc_reserve(1));
-        let id = self.push(NodeType::Attribute, Payload::Attr(idx))?;
+        let id = Self::push_with(
+            &mut self.nodes,
+            &mut self.attrs,
+            NodeType::Attribute,
+            Payload::Attr,
+            AttrData {
+                written,
+                own_ns: OwnNs::Derived,
+                value,
+                next: None,
+                prev: None,
+            },
+        )?;
         self.set_names(id, local, ns, prefix);
-        /* Reserved above, before the node: this cannot fail now. */
-        oom!(self.attrs.falloc_push(AttrData {
-            written,
-            own_ns: OwnNs::Derived,
-            value,
-            next: None,
-            prev: None,
-        }));
         Ok(id)
     }
 
@@ -643,12 +674,14 @@ impl Document {
 
     /// The one maker of a DocumentType node, its strings in the store.
     fn push_doctype(&mut self, names: NodeName, d: DoctypeData) -> Result<NodeId, DomOom> {
-        let idx = u32::try_from(self.doctypes.len()).map_err(|_| DomOom)?;
-        oom!(self.doctypes.falloc_reserve(1));
-        let id = self.push(NodeType::DocumentType, Payload::Doctype(idx))?;
+        let id = Self::push_with(
+            &mut self.nodes,
+            &mut self.doctypes,
+            NodeType::DocumentType,
+            Payload::Doctype,
+            d,
+        )?;
         self.set_names(id, names.local, names.ns, names.prefix);
-        /* Reserved above, before the node: this cannot fail now. */
-        oom!(self.doctypes.falloc_push(d));
         Ok(id)
     }
 

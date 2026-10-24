@@ -13,7 +13,7 @@ mod decl;
 mod dtd;
 mod scope;
 
-use crate::falloc::{OomResult, Reserve, VecGrow};
+use crate::falloc::{OomResult, VecGrow};
 use crate::xml::arena::{AppendError, DoctypeId};
 use crate::xml::chars::{
     expand_into, is_reserved_pi_target, normalize_newlines, ExpandErr, ExpandMode,
@@ -476,11 +476,11 @@ impl<'a> Parser<'a> {
             if self.stack.len() + 1 > MAX_DEPTH {
                 return self.cur.limit();
             }
-            self.stack.falloc_reserve(1).or_oom::<ParseError>()?;
-            self.frames.falloc_reserve(1).or_oom::<ParseError>()?;
-            /* Both reserved just above: these cannot fail now. */
-            self.stack.falloc_push(el).or_oom::<ParseError>()?;
-            self.frames.falloc_push(frame).or_oom::<ParseError>()?;
+            /* Both slots first, so the two stacks stay the same height. */
+            let el_slot = self.stack.falloc_slot().or_oom::<ParseError>()?;
+            let frame_slot = self.frames.falloc_slot().or_oom::<ParseError>()?;
+            el_slot.push(el);
+            frame_slot.push(frame);
         } else {
             self.scope.leave(frame); /* self-closing: pop its scope now */
         }

@@ -5,7 +5,7 @@
 use super::abi::*;
 use super::value::Str;
 use crate::err_setf;
-use crate::falloc::{Reserve, VecGrow};
+use crate::falloc::VecGrow;
 use crate::ptr_table::PtrMap;
 use crate::token::Token;
 
@@ -99,17 +99,17 @@ impl<'d> StrCache<'d> {
                 Str::Owned(t) => NodeText::Uncached(t),
             });
         };
-        if self.entries.falloc_reserve(1).is_err() {
+        let Ok(slot) = self.entries.falloc_slot() else {
             return Err(err_setf!(
                 budget.sink(),
                 ErrorKind::Oom,
                 "out of memory in node string cache"
             ));
-        }
+        };
 
         /* Index before committing: a failed growth leaves the map as it was,
-         * and the entry push below cannot fail - it was reserved above. */
-        let id = self.entries.len();
+         * and the entry's slot is already reserved, so filling it cannot fail. */
+        let id = slot.index();
         if self.index.insert(node, id).is_err() {
             return Err(err_setf!(
                 budget.sink(),
@@ -118,13 +118,7 @@ impl<'d> StrCache<'d> {
             ));
         }
         self.total_bytes = new_total;
-        if self.entries.falloc_push((node, text)).is_err() {
-            return Err(err_setf!(
-                budget.sink(),
-                ErrorKind::Oom,
-                "out of memory growing node string cache"
-            ));
-        }
+        slot.push((node, text));
         Ok(NodeText::Cached(TextId(id)))
     }
 }

@@ -14,7 +14,7 @@
 //! lower-cased input - so a lookup copies nothing. The static ids live in a
 //! table built at compile time from the generated names.
 
-use crate::falloc::{try_vec_with_capacity, Reserve, VecGrow};
+use crate::falloc::{try_vec_with_capacity, VecGrow};
 use crate::html::res::names as res;
 
 /// An allocation the table needed failed; nothing was added.
@@ -244,24 +244,27 @@ impl Appended {
             let mut u: Vec<u8> = try_vec_with_capacity(name.len()).ok_or(NamesOom)?;
             u.falloc_extend(name.iter().map(u8::to_ascii_uppercase))
                 .map_err(|()| NamesOom)?;
-            self.uppers.falloc_reserve(1).map_err(|()| NamesOom)?;
             Some(u)
         } else {
             None
         };
-        self.names.falloc_reserve(1).map_err(|()| NamesOom)?;
-        self.hashes.falloc_reserve(1).map_err(|()| NamesOom)?;
-        let index = self.names.len();
+        /* Every slot first, before any table changes, so the tables stay the
+         * same length: each a fallible reserve, then fills that cannot fail. */
+        let upper_slot = match up {
+            Some(_) => Some(self.uppers.falloc_slot().map_err(|()| NamesOom)?),
+            None => None,
+        };
+        let name_slot = self.names.falloc_slot().map_err(|()| NamesOom)?;
+        let hash_slot = self.hashes.falloc_slot().map_err(|()| NamesOom)?;
+        let index = name_slot.index();
         self.longest = self.longest.max(stored.len());
         self.stored += stored.len() * if up.is_some() { 2 } else { 1 };
-        /* All three reserved above, before any changed: these cannot fail
-         * now, and the tables stay the same length. */
-        self.names.falloc_push(stored).map_err(|()| NamesOom)?;
-        self.hashes.falloc_push(h).map_err(|()| NamesOom)?;
-        if let Some(u) = up {
+        name_slot.push(stored);
+        hash_slot.push(h);
+        if let (Some(slot), Some(u)) = (upper_slot, up) {
             /* Every entry has one in this table (`keeps_upper`), so the
              * index is the same. */
-            self.uppers.falloc_push(u).map_err(|()| NamesOom)?;
+            slot.push(u);
         }
         Self::place(&mut self.slots, h, index);
         Ok(first + index)

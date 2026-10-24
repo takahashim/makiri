@@ -13,7 +13,7 @@
 use super::abi::*;
 use super::dom::Dom;
 use super::eval;
-use crate::falloc::{MapInsert, OomOption, OomResult, Reserve, VecGrow};
+use crate::falloc::{MapInsert, OomOption, OomResult, VecGrow};
 use crate::token::Token;
 use core::cell::{Cell, Ref, RefCell, RefMut};
 use core::marker::PhantomData;
@@ -73,16 +73,14 @@ impl Names {
         }
         /* The cap is one failure and memory another: a reserve that fails is
          * out of memory, not too many registrations. */
-        self.ns.falloc_reserve(1).or_oom()?;
-        self.ns_index.falloc_reserve(1).or_oom()?;
         let key = crate::falloc::try_to_boxed_slice(prefix).or_oom()?;
         let entry = NsEntry { uri: copy(uri)? };
-        /* Both are reserved above, so neither write below can fail. The index
-         * still goes first: if one ever could, a failed insert must not leave
-         * a pushed entry the lookup cannot reach but the cap counts. */
-        let at = self.ns.len();
-        self.ns_index.falloc_insert(key, at).or_oom()?;
-        self.ns.falloc_push(entry).or_oom()
+        /* The entry's slot, then the index - the one write that can fail -
+         * then the entry, which cannot: a failure leaves both as they were. */
+        let slot = self.ns.falloc_slot().or_oom()?;
+        self.ns_index.falloc_insert(key, slot.index()).or_oom()?;
+        slot.push(entry);
+        Ok(())
     }
 
     /// Bind the unprefixed variable `$name` to `value`, replacing an earlier
@@ -98,17 +96,15 @@ impl Names {
         }
         /* The cap is one failure and memory another: a reserve that fails is
          * out of memory, not too many registrations. */
-        self.vars.falloc_reserve(1).or_oom()?;
-        self.vars_index.falloc_reserve(1).or_oom()?;
         let key = crate::falloc::try_to_boxed_slice(name).or_oom()?;
         let entry = VarEntry {
             value: copy(value)?,
         };
-        /* Both are reserved above, and the index goes first for the same reason
-         * as `bind_ns`. */
-        let at = self.vars.len();
-        self.vars_index.falloc_insert(key, at).or_oom()?;
-        self.vars.falloc_push(entry).or_oom()
+        /* As `bind_ns`: the slot, the index, then the entry. */
+        let slot = self.vars.falloc_slot().or_oom()?;
+        self.vars_index.falloc_insert(key, slot.index()).or_oom()?;
+        slot.push(entry);
+        Ok(())
     }
 
     /// The URI registered for `prefix`.

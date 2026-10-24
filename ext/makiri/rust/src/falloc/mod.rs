@@ -197,6 +197,63 @@ pub trait VecGrow<T> {
     /// push per element; on a failure the elements already pushed are
     /// removed, so the vector is as it was.
     fn falloc_extend<I: IntoIterator<Item = T>>(&mut self, iter: I) -> Result<(), ()>;
+    /// Room for one element, reserved now and filled later by
+    /// [`Slot::push`], which cannot fail - see [`Slot`].
+    fn falloc_slot(&mut self) -> Result<Slot<'_, T>, ()>;
+}
+
+/// One element's room in a `Vec`, reserved: the guarantee that a later push
+/// will not grow it, in a type.
+///
+/// For an operation that changes several things and must change all or
+/// none: take every slot first - each a fallible reserve - and then fill
+/// them, which cannot fail, so a failure always comes before anything has
+/// changed. The slot borrows the vector until it is filled, so nothing can
+/// take the room in between, and [`push`](Slot::push) consumes it, so it
+/// fills one element and no more. (The shape of std's `VacantEntry`.) A slot
+/// dropped unfilled leaves the vector as it was, with the room to spare.
+///
+/// What the compiler holds it to. Nothing else can use the vector while a
+/// slot is out - so nothing can take its room:
+///
+/// ```compile_fail,E0499
+/// use makiri::falloc::VecGrow;
+/// let mut v: Vec<u8> = Vec::new();
+/// let slot = v.falloc_slot().unwrap();
+/// v.falloc_push(1).unwrap();
+/// slot.push(2);
+/// ```
+///
+/// and a slot fills one element, once:
+///
+/// ```compile_fail,E0382
+/// use makiri::falloc::VecGrow;
+/// let mut v: Vec<u8> = Vec::new();
+/// let slot = v.falloc_slot().unwrap();
+/// slot.push(1);
+/// slot.push(2);
+/// ```
+#[must_use = "a slot reserves room for one push; fill it with `push`"]
+pub struct Slot<'a, T>(&'a mut Vec<T>);
+
+impl<T> Slot<'_, T> {
+    /// The index the element will have.
+    #[inline]
+    pub fn index(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Fill the slot. Allocates nothing: the room was reserved when the slot
+    /// was made, and nothing could use it since.
+    #[inline]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the slot's room was reserved when it was made"
+    )]
+    pub fn push(self, item: T) {
+        debug_assert!(self.0.len() < self.0.capacity());
+        self.0.push(item);
+    }
 }
 
 #[allow(clippy::disallowed_methods)]
@@ -239,6 +296,11 @@ impl<T> VecGrow<T> for Vec<T> {
         self.falloc_reserve(new_len.saturating_sub(self.len()))?;
         self.resize(new_len, value);
         Ok(())
+    }
+    #[inline]
+    fn falloc_slot(&mut self) -> Result<Slot<'_, T>, ()> {
+        self.falloc_reserve(1)?;
+        Ok(Slot(self))
     }
     #[inline]
     fn falloc_extend<I: IntoIterator<Item = T>>(&mut self, iter: I) -> Result<(), ()> {
@@ -532,7 +594,32 @@ mod verify;
 
 #[cfg(test)]
 mod tests {
-    use super::try_to_boxed_slice;
+    #![allow(clippy::disallowed_methods)] /* test inputs */
+    use super::{try_to_boxed_slice, VecGrow};
+
+    /// A slot's push uses the room the slot reserved - the capacity does not
+    /// move - and a slot dropped unfilled changes nothing but the room.
+    #[test]
+    fn a_slot_fills_its_reserved_room() {
+        let mut v: Vec<u32> = Vec::new();
+        let slot = v.falloc_slot().expect("slot");
+        assert_eq!(slot.index(), 0);
+        drop(slot);
+        assert!(v.is_empty());
+        let cap = v.capacity();
+        assert!(cap >= 1);
+        for i in 0..cap {
+            let slot = v.falloc_slot().expect("slot");
+            assert_eq!(slot.index(), i);
+            slot.push(i as u32);
+            assert_eq!(
+                v.capacity(),
+                cap,
+                "a push into reserved room grew the vector"
+            );
+        }
+        assert_eq!(v, (0..cap as u32).collect::<Vec<_>>());
+    }
 
     /// The construction must preserve length and bytes for a
     /// normal element, an empty slice, and a zero-sized element of non-zero
