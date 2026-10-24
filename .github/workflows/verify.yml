@@ -108,3 +108,28 @@ jobs:
           KANI_GROUPS: ${{ steps.groups.outputs.groups }}
           KANI_JOBS: "4"
         run: bundle exec rake kani
+
+  # Miri over the Ruby-free modules that hold `unsafe` (`raw_vec`, `falloc`)
+  # and the buffer built on them (`cbuf`): their tests run on Miri's
+  # interpreter, which reports undefined behaviour - an out-of-bounds or
+  # dangling access, a misaligned or provenance-less pointer - that a test on
+  # hardware passes over. Kani proves the same code bounded; this runs it
+  # unbounded. `bridge/` needs Ruby and is not here.
+  miri:
+    name: Miri (Ruby-free unsafe)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install nightly with Miri
+        run: |
+          rustup toolchain install nightly --profile minimal --component miri
+          cargo +nightly miri setup
+
+      - name: Run the tests under Miri
+        working-directory: ext/makiri/rust
+        env:
+          MIRIFLAGS: "-Zmiri-strict-provenance"
+        run: cargo +nightly miri test --no-default-features --lib -- raw_vec:: falloc:: cbuf::

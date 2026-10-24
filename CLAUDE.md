@@ -374,6 +374,9 @@ bundle exec rake oom               # OOM-injection sweep: rebuilds with
                                    # borrowed (`Makiri.__borrowed?`) or unusable - the
                                    # runtime check of the guards-across-raises rule.
                                    # Prefix with MAKIRI_SANITIZE=address to combine ASan.
+bundle exec rake miri              # the Ruby-free unsafe modules' tests (raw_vec, falloc,
+                                   # cbuf) under Miri, strict provenance (nightly + miri;
+                                   # CI: verify.yml)
 bundle exec rake kani              # Kani proofs over the Ruby-free core (needs cargo-kani).
                                    # The successor to the C-era CBMC harnesses: the
                                    # allocator, cbuf, UTF-8 validate/decode.
@@ -599,6 +602,11 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            else Ruby-free is `forbid(unsafe_code)`
     doc_cell.rs            `DocCell`: a Document's content behind counted
                            read/write guards (Ruby-free; `bridge::dom` wraps it)
+    raw_vec.rs             `RawVec<T, A>`: a growable array over an allocator that is
+                           only realloc + free - a NodeSet's node array, with Ruby's
+                           allocator in `bridge::alloc` (`RubyVec`). Ruby-free, so
+                           Kani proves it (against an allocator that may fail at
+                           any call) and Miri runs it
     cbuf.rs                `Buf`: the owned, capped, growable byte buffer
     cutf8.rs               the one UTF-8 validator + strict 1-codepoint decoder
     utf8_input.rs          HTML input sanitiser: invalid UTF-8 -> U+FFFD, per

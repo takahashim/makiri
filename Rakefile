@@ -74,6 +74,20 @@ namespace :unsafe do
   end
 end
 
+# Miri over the Ruby-free modules that hold `unsafe`, and the buffer built on
+# them: their tests on Miri's interpreter, which reports undefined behaviour a
+# run on hardware passes over (CI: verify.yml). Needs the nightly toolchain
+# with the `miri` component. MIRI_FILTERS replaces the module list.
+MIRI_FILTERS = %w[raw_vec:: falloc:: cbuf::].freeze
+desc "Run the Ruby-free unsafe modules' tests under Miri (nightly)"
+task :miri do
+  filters = ENV["MIRI_FILTERS"] ? ENV["MIRI_FILTERS"].split(",") : MIRI_FILTERS
+  env = { "MIRIFLAGS" => ENV.fetch("MIRIFLAGS", "-Zmiri-strict-provenance") }
+  Dir.chdir("ext/makiri/rust") do
+    sh env, "cargo", "+nightly", "miri", "test", "--no-default-features", "--lib", "--", *filters
+  end
+end
+
 # The places that must not unwind (`src/no_unwind.rs`): every `extern "C"`
 # function of ours, and the `Drop`s the GC's free callback runs. An unwind out
 # of one aborts the process. Each body runs under a guard whose `Drop` - which
@@ -760,6 +774,11 @@ KANI_GROUPS = {
   "alloc" => {
     harnesses: %w[cbuf::verify:: falloc::verify::],
     paths: %W[#{RUST_SRC}/cbuf.rs #{RUST_SRC}/cbuf/ #{RUST_SRC}/falloc/]
+  },
+  # `RawVec`, a NodeSet's node array: its growth over `falloc::grow_capacity`.
+  "raw_vec" => {
+    harnesses: %w[raw_vec::verify::],
+    paths: %W[#{RUST_SRC}/raw_vec.rs #{RUST_SRC}/falloc/ #{RUST_SRC}/no_unwind.rs]
   },
   "utf8" => {
     harnesses: %w[cutf8::verify::],

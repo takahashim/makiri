@@ -29,7 +29,7 @@ RUST = File.join(ROOT, "ext/makiri/rust/src")
 # (the unsafe did not disappear, it moved); what ratchets is the total, and the
 # summary prints the `glue/` + `xpath/` subtotal that must reach 0.
 UNSAFE_ISLANDS = {
-  "bridge/alloc.rs" => 9,
+  "bridge/alloc.rs" => 6,
   "bridge/gvl.rs" => 3,
   "bridge/node_set.rs" => 3,
   "bridge/node_wrap.rs" => 1,
@@ -72,6 +72,7 @@ UNSAFE_ISLANDS = {
   "lexbor/stylesheet_diff.rs" => 5,
   "lexbor/tests.rs" => 3,
   "no_unwind.rs" => 2,
+  "raw_vec.rs" => 17,
 }.freeze
 
 # Files whose safety is compiler-enforced. Checked by containment, so adding one
@@ -276,7 +277,7 @@ RUBY_LAYER_COUNTS = {}.freeze
 # and a real OOM there is Ruby's `NoMemoryError` rather than an abort.
 INFALLIBLE_ALLOC = /\.to_owned\(\)|\.to_vec\(\)|String::from\(|\bformat!\(|\.to_string\(\)|from_utf8_lossy|\.into_owned\(\)|\bvec!\[|CString::new/
 # Where the gate looks: the engine, and the Ruby layer over it.
-INFALLIBLE_ALLOC_DIRS = (ENGINE_DIRS + %w[bridge/ glue/ init.rs lib.rs msg.rs caught.rs css_cache.rs
+INFALLIBLE_ALLOC_DIRS = (ENGINE_DIRS + %w[bridge/ glue/ init.rs lib.rs msg.rs caught.rs css_cache.rs raw_vec.rs
                                           compat.rs doc_cell.rs engine_error.rs gvl.rs source_lines.rs
                                           stack.rs]).freeze
 #
