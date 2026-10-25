@@ -72,7 +72,7 @@ UNSAFE_ISLANDS = {
   "lexbor/stylesheet_diff.rs" => 5,
   "lexbor/tests.rs" => 3,
   "no_unwind.rs" => 2,
-  "raw_vec.rs" => 17,
+  "raw_vec/block.rs" => 18,
   "utf8_copy.rs" => 1,
 }.freeze
 
@@ -279,7 +279,7 @@ RUBY_LAYER_COUNTS = {}.freeze
 # and a real OOM there is Ruby's `NoMemoryError` rather than an abort.
 INFALLIBLE_ALLOC = /\.to_owned\(\)|\.to_vec\(\)|String::from\(|\bformat!\(|\.to_string\(\)|from_utf8_lossy|\.into_owned\(\)|\bvec!\[|CString::new/
 # Where the gate looks: the engine, and the Ruby layer over it.
-INFALLIBLE_ALLOC_DIRS = (ENGINE_DIRS + %w[bridge/ glue/ init.rs lib.rs msg.rs caught.rs css_cache.rs raw_vec.rs utf8_copy.rs
+INFALLIBLE_ALLOC_DIRS = (ENGINE_DIRS + %w[bridge/ glue/ init.rs lib.rs msg.rs caught.rs css_cache.rs raw_vec/ utf8_copy.rs
                                           compat.rs doc_cell.rs engine_error.rs gvl.rs source_lines.rs
                                           stack.rs]).freeze
 #

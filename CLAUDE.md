@@ -378,8 +378,8 @@ bundle exec rake miri              # the Ruby-free unsafe modules' tests (raw_ve
                                    # cbuf) under Miri, strict provenance (nightly + miri;
                                    # CI: verify.yml)
 bundle exec rake verus             # Verus proofs (ext/makiri/rust/verus/): falloc's
-                                   # grow_capacity, copied and checked against the source
-                                   # (`verus:sync`), and a model of RawVec - unbounded.
+                                   # grow_capacity and RawVec, copied and checked against
+                                   # the source (`verus:sync`) - unbounded.
                                    # VERUS=path/to/verus (Rakefile's VERUS_VERSION); CI:
                                    # verify.yml. Heavy tools stay in CI, like Miri and Kani
 bundle exec rake kani              # Kani proofs over the Ruby-free core (needs cargo-kani).
@@ -611,11 +611,15 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            the copy itself - what a checked view of a Ruby String
                            (`RubyText` / `RubyData`) is, so a `&str` never rests on
                            a String's cached coderange
-    raw_vec.rs             `RawVec<T, A>`: a growable array over an allocator that is
+    raw_vec/               `RawVec<T, A>`: a growable array over an allocator that is
                            only realloc + free - a NodeSet's node array, with Ruby's
-                           allocator in `bridge::alloc` (`RubyVec`). Ruby-free, so
-                           Kani proves it (against an allocator that may fail at
-                           any call) and Miri runs it
+                           allocator in `bridge::alloc` (`RubyVec`). The pointer is
+                           `block.rs`'s alone (`Block`: `cap` elements, all
+                           initialised - growth fills with `T::default()` - seen as
+                           a slice); `mod.rs` is safe code over it, which Verus
+                           proves as written (`verus/`), Kani bounded against an
+                           allocator that may fail at any call (`verify.rs`), and
+                           Miri runs
     cbuf.rs                `Buf`: the owned, capped, growable byte buffer
     cutf8.rs               the one UTF-8 validator + strict 1-codepoint decoder
     utf8_input.rs          HTML input sanitiser: invalid UTF-8 -> U+FFFD, per
@@ -714,11 +718,12 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            (`text.rs`); Ruby- and Lexbor-free,
                            `#![forbid(unsafe_code)]` at its root
   verus/                   Verus proofs: `raw_vec.rs` holds falloc's `grow_capacity`
-                           (copied; lines only Verus needs end in `// [verus]`, and
-                           `rake verus:sync` holds the rest to the source) and a
-                           model of `RawVec` over a ghost memory - the write at `len`
-                           in bounds, the first `len` slots written, the contents
-                           what was pushed - with the allocator as its one axiom
+                           and `RawVec`'s `as_slice` / `reserve` / `grow_to` / `push`,
+                           copied (lines only Verus needs end in `// [verus]`, and
+                           `rake verus:sync` holds the rest to the source token for
+                           token), proved over `Block`'s contract as the one axiom:
+                           the contents are what was pushed, a failure changes
+                           nothing, every `set` and `prefix` within the block
   fuzz/                    cargo-fuzz harnesses (xml/html, xpath/xml_xpath/
                            html_xpath, css = the XML matcher held to the lowering, html_css = the
                            HTML matcher over an arbitrary document, asserting

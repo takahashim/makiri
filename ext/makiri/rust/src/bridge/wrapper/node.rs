@@ -32,7 +32,7 @@ use crate::xml::model::NodeId;
 /// `repr(transparent)` over `usize`: a NodeSet's buffer keeps the layout it had
 /// as `*mut c_void`. (A [`NodeData`] does not use it any more - it stores an
 /// opaque [`NodeHandle`], which is larger by design.)
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 #[repr(transparent)]
 pub struct NodeWord(usize);
 
