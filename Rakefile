@@ -700,6 +700,24 @@ task :sanitize do
   sh(env, "#{FileUtils::RUBY} -S rspec")
 end
 
+# `rake debug` - the spec suite over a dev-profile extension
+# (MAKIRI_CARGO_PROFILE=dev), whose `debug_assert!`s are compiled in. Every
+# other run uses the release profile, which drops them: an assertion that
+# was itself wrong - `ExceptionClass`'s, which recursed into itself - made a
+# debug build overflow its stack on `require`, and nothing noticed. The
+# extension is asked whether it has them (`Makiri.__debug_assertions?`), so a
+# stale release build cannot pass for one. Like `rake sanitize`, it leaves
+# the debug build in place: `rake clean compile` restores a release one.
+desc "Build a dev-profile extension (debug_assert! compiled in) and run the spec suite on it"
+task :debug do
+  sh({ "MAKIRI_CARGO_PROFILE" => "dev" }, "#{FileUtils::RUBY} -S rake clean compile")
+  probe = "#{FileUtils::RUBY} -Ilib -rmakiri -e 'exit(Makiri.__debug_assertions? ? 0 : 1)'"
+  unless system(probe)
+    abort "debug: #{ext_bundle_path} was built without debug assertions, so this run would check none"
+  end
+  sh({ "MAKIRI_DEBUG_BUILD" => "1" }, "#{FileUtils::RUBY} -S rspec")
+end
+
 # The randomised property checks in spec/invariants/. They are not *_spec.rb, so
 # `rake spec` skips them; they run here and nightly in CI. Each takes
 # [documents] [seed] [html|xml] and is deterministic, so a finding replays.

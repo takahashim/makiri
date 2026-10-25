@@ -195,6 +195,32 @@ jobs:
       - name: makiri_lints
         run: bundle exec rake dylint
 
+  # The suite over a dev-profile extension (`rake debug`), so the
+  # `debug_assert!`s run: every other job builds release, which compiles them
+  # out. One of them was itself wrong - `ExceptionClass`'s type test recursed
+  # into itself - and a debug build overflowed its stack on `require` with
+  # every job green. No Lexbor (the extension does not link it); the :timing
+  # and :slow examples are skipped, as on Valgrind.
+  debug:
+    name: debug_assert! build (Ruby 3.4)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install libclang (bindgen)
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
+
+      - name: Build a dev-profile extension and run the suite on it
+        run: bundle exec rake debug
+
   sanitize:
     # AddressSanitizer only. UBSan used to run beside it over the C sources;
     # rustc's -Zsanitizer has no `undefined`, so with the C retired there is
