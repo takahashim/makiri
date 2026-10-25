@@ -35,8 +35,7 @@ RUST_FILES = Dir.glob(File.join(RUST, "**", "*.rs")).sort
 # summary prints the `glue/` + `xpath/` subtotal that must reach 0.
 UNSAFE_ISLANDS = {
   "bridge/gvl.rs" => 3,
-  "bridge/node_set.rs" => 3,
-  "bridge/node_wrap.rs" => 1,
+  "bridge/node_set.rs" => 2,
   "bridge/raw.rs" => 92,
   "bridge/rb/class.rs" => 2,
   "bridge/rb/method.rs" => 11,
@@ -51,8 +50,6 @@ UNSAFE_ISLANDS = {
   "bridge/wrapper/document.rs" => 1,
   "bridge/wrapper/node.rs" => 1,
   "bridge/xml_decode.rs" => 3,
-  "bridge/xpath/context_object.rs" => 2,
-  "bridge/xpath/mod.rs" => 3,
   "falloc/mod.rs" => 1,
   "lexbor/abi.rs" => 4,
   "lexbor/adapter/arena_bytes.rs" => 14,
@@ -92,8 +89,9 @@ FORBID_ROOTS = %w[css/mod.rs glue/mod.rs css_match/mod.rs selectors/mod.rs xml/m
 FORBID_FILES = %w[
   bridge/build.rs bridge/doc.rs bridge/dom.rs
   bridge/dom_error.rs bridge/fragment.rs bridge/html.rs
-  bridge/rb/convert.rs bridge/rb/error.rs bridge/string/source.rs
-  bridge/wrapper/accounting.rs bridge/wrapper/edit.rs bridge/xml.rs
+  bridge/node_wrap.rs bridge/rb/convert.rs bridge/rb/error.rs
+  bridge/string/source.rs bridge/wrapper/accounting.rs bridge/wrapper/edit.rs
+  bridge/xml.rs bridge/xpath/context_object.rs bridge/xpath/mod.rs
   cbuf.rs child_index.rs conformance/mod.rs
   css/build.rs css/lower.rs css/mod.rs
   css_cache.rs css_match/mod.rs cutf8.rs
