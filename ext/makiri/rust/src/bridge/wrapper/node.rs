@@ -119,7 +119,9 @@ pub enum NodeHandle {
 /// handle. Its cache identity and stored handle are derived from the same
 /// value, so callers cannot accidentally pair an unrelated token and handle.
 pub(in crate::bridge) trait NodeHandleSource {
-    fn identity(&self) -> usize;
+    /// The node's index in its document - its key in the document's node
+    /// table, a Fixnum on every target - and the document's stamp.
+    fn index_and_stamp(&self) -> (u32, u32);
     fn into_handle(self, document: Value) -> NodeHandle;
 }
 

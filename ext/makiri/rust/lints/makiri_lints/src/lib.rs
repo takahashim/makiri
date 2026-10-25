@@ -12,6 +12,8 @@
 //!   `ruby_surface_in_bridge`, `discarded_ruby_error`.
 //! - `ffi_without_gvl_proof` ([`gvl_proof`]): a call into Ruby's C API from a
 //!   binding-layer function with no proof of the GVL in its signature.
+//! - `c_integer_outside_int` ([`c_integer`]): an integer `as` cast, or a C
+//!   `long` named, at the Ruby boundary outside `nupur::int`.
 //!
 //! (A second lint, `converted_argument`, checked that no registered method
 //! took a type magnus would convert with the caller's Ruby. Since
@@ -28,6 +30,7 @@ extern crate rustc_session;
 extern crate rustc_span;
 
 mod boundaries;
+mod c_integer;
 mod gvl_proof;
 mod value_on_heap;
 
@@ -58,6 +61,7 @@ pub fn register_lints(sess: &Session, lint_store: &mut LintStore) {
         RUBY_SURFACE_IN_BRIDGE,
         DISCARDED_RUBY_ERROR,
         FFI_WITHOUT_GVL_PROOF,
+        C_INTEGER_OUTSIDE_INT,
     ]);
     lint_store.register_late_lint_pass(Box::new(|_| Box::new(MakiriLints)));
 }
@@ -194,6 +198,21 @@ declare_lint! {
 }
 
 declare_lint! {
+    /// ### What it does
+    /// Reports, in the binding layer and the extension's Ruby boundary
+    /// (`bridge`, `glue`, `init`) outside `nupur::int`, an `as` cast between
+    /// integer types and any naming of `c_long` / `c_ulong`.
+    ///
+    /// ### Why is this bad?
+    /// A C `long` is 32 bits on Windows and 64 where the code is linted, where
+    /// `c_long` is `i64` itself - so a truncation there is invisible to rustc
+    /// and clippy alike. The conversions are written once, in `nupur::int`.
+    pub C_INTEGER_OUTSIDE_INT,
+    Deny,
+    "an integer cast or a C long at the Ruby boundary outside nupur::int"
+}
+
+declare_lint! {
     pub DISCARDED_RUBY_ERROR,
     Deny,
     "a Result of a Ruby error whose Err is thrown away"
@@ -212,6 +231,7 @@ declare_lint_pass!(MakiriLints => [
     RUBY_SURFACE_IN_BRIDGE,
     DISCARDED_RUBY_ERROR,
     FFI_WITHOUT_GVL_PROOF,
+    C_INTEGER_OUTSIDE_INT,
 ]);
 
 impl<'tcx> LateLintPass<'tcx> for MakiriLints {
@@ -239,11 +259,13 @@ impl<'tcx> LateLintPass<'tcx> for MakiriLints {
 
     fn check_path(&mut self, cx: &LateContext<'tcx>, path: &Path<'tcx>, hir_id: HirId) {
         boundaries::check_path(cx, path, hir_id);
+        c_integer::check_path(cx, path, hir_id);
     }
 
     fn check_expr(&mut self, cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
         boundaries::check_expr(cx, expr);
         gvl_proof::check_expr(cx, expr);
+        c_integer::check_expr(cx, expr);
     }
 }
 

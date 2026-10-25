@@ -96,8 +96,7 @@ pub fn namespace_definitions(ruby: &Ruby, this: XmlSelf) -> Result<RArray, Error
     let class = ns_class(ruby)?;
     let arr = ary(ruby, pairs.len() / 2)?;
     for i in (0..pairs.len()).step_by(2) {
-        let (prefix, uri): (Value, Value) =
-            (pairs.entry(i as isize)?, pairs.entry(i as isize + 1)?);
+        let (prefix, uri): (Value, Value) = (pairs.entry(i), pairs.entry(i + 1));
         push(arr, new_ns(ruby, class, prefix, uri)?)?;
     }
     Ok(arr)

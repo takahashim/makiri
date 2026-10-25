@@ -34,7 +34,7 @@
 /* Every wrapper's contract is the module's, stated once above. */
 #![allow(clippy::missing_safety_doc)]
 
-use core::ffi::{c_char, c_int, c_long, c_void};
+use core::ffi::{c_char, c_int, c_void};
 
 use crate::rb::value::AsRawValue;
 use crate::rb::{
@@ -71,8 +71,28 @@ pub fn set_raise_injector(armed: fn() -> bool) {
     let _ = RAISE_INJECTOR.set(armed);
 }
 
+/// A non-local exit that is not an exception (a `break` or `throw` out of a
+/// block, a thread kill) a protected call came back with, not yet resumed by
+/// the trampoline: its `rb_protect` state, 0 for none.
+///
+/// Ruby resumes such an exit (`rb_jump_tag`) from what it left in the
+/// thread's error info - the throw data - and every raise overwrites that.
+/// So once one is pending, no protected call runs C at all: each answers
+/// the same exit, until the trampoline resumes it ([`Error::raise`]) or the
+/// next method starts. A global, not a thread's: nothing between the exit
+/// and its resumption can release the GVL (only a C call can, and none
+/// runs), so no other Ruby thread reads it meanwhile.
+static PENDING_JUMP: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(0);
+
+/// Forget a pending exit: it is being resumed, or a new method starts.
+#[inline]
+pub(crate) fn clear_pending_jump() {
+    PENDING_JUMP.store(0, core::sync::atomic::Ordering::Relaxed);
+}
+
 /// Run `f` - one C call, and the `Copy` values it reads - under a bare
-/// `rb_protect`; a raise comes back as `Err`.
+/// `rb_protect`; a raise comes back as `Err`, and `$!` is cleared (an error
+/// the caller handles rather than raises is run under [`keeping_errinfo`]).
 ///
 /// `F: Copy` and `T: Copy` are what keep the thunk's frame free of anything a
 /// skipped destructor would leak: a closure is `Copy` only when everything it
@@ -103,6 +123,10 @@ fn call<T: Copy, F: FnOnce() -> T + Copy>(f: F) -> Result<T, Error> {
             rb_sys::Qnil as VALUE
         })
     }
+    let pending = PENDING_JUMP.load(core::sync::atomic::Ordering::Relaxed);
+    if pending != 0 {
+        return Err(Error::jump(pending));
+    }
     let mut slot = Slot { f, out: None };
     let mut state: c_int = 0;
     // SAFETY: the thunk reads only `slot`, which outlives the call.
@@ -118,7 +142,67 @@ fn call<T: Copy, F: FnOnce() -> T + Copy>(f: F) -> Result<T, Error> {
         (0, None) => Err(crate::rb::error::internal_error(
             "a protected call did not run",
         )),
-        (state, _) => Err(Error::from_state(state)),
+        (state, _) => {
+            let e = Error::from_state(state);
+            if let Some(state) = e.jump_state() {
+                PENDING_JUMP.store(state, core::sync::atomic::Ordering::Relaxed);
+            }
+            Err(e)
+        }
+    }
+}
+
+/// Run `f`, protected calls whose error the caller handles rather than
+/// raises - a lookup that may fail, a name that may not be made - with `$!`
+/// put back as it was after, as Ruby's own C does around one
+/// (`load_encoding` saves `rb_errinfo()` and restores it): a caught raise
+/// clears it ([`take_errinfo`]), and a handled one must not clear the
+/// caller's. Not every call does this: the read costs a call into libruby,
+/// and an error that is raised replaces `$!` anyway.
+#[inline]
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        ffi_without_gvl_proof,
+        reason = "crate-private: called only from functions holding a proof, around their protected calls"
+    )
+)]
+pub(crate) fn keeping_errinfo<T>(f: impl FnOnce() -> T) -> T {
+    // SAFETY: under the GVL, as every caller's proof says; a read.
+    let before = unsafe { rb_sys::rb_errinfo() };
+    let out = f();
+    restore_errinfo(before);
+    out
+}
+
+/// Put `$!` back to `before`. Only nil or an exception goes back, which is
+/// all `rb_set_errinfo` takes without raising.
+#[inline]
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        ffi_without_gvl_proof,
+        reason = "private: `keeping_errinfo`'s, under its caller's proof"
+    )
+)]
+fn restore_errinfo(before: VALUE) {
+    use rb_sys::stable_api::{get_default, StableApiDefinition};
+    if before == rb_sys::Qnil as VALUE {
+        // SAFETY: nil, which it always takes.
+        unsafe { rb_sys::rb_set_errinfo(before) };
+        return;
+    }
+    // SAFETY: `before` was the thread's error info a moment ago, kept on
+    // this frame's stack since: a live value; `rb_type` reads its header.
+    let is_object =
+        unsafe { get_default().rb_type(before) } == rb_sys::ruby_value_type::RUBY_T_OBJECT;
+    // SAFETY: a live object, and `rb_eException` a C global Ruby set at boot.
+    if is_object
+        && unsafe { rb_sys::rb_obj_is_kind_of(before, rb_sys::rb_eException) }
+            == rb_sys::Qtrue as VALUE
+    {
+        // SAFETY: an exception, which `rb_set_errinfo` takes without raising.
+        unsafe { rb_sys::rb_set_errinfo(before) };
     }
 }
 
@@ -136,10 +220,11 @@ fn typed<T>(v: VALUE, of: fn(Value) -> Option<T>, what: &'static str) -> Result<
     of(unsafe { Value::from_raw(v) }).ok_or_else(|| crate::rb::error::internal_error(what))
 }
 
-/// A length for the C API's `long`; `ArgumentError` for one it cannot hold.
+/// A length for the C API's `long` (whichever width the call's parameter
+/// has); `ArgumentError` for one it cannot hold - past 2^31 on Windows.
 #[inline]
-fn c_len(n: usize) -> Result<c_long, Error> {
-    c_long::try_from(n).map_err(|_| crate::rb::error::arg_error("string too large"))
+fn c_len<L: TryFrom<usize>>(n: usize) -> Result<L, Error> {
+    L::try_from(n).map_err(|_| crate::rb::error::arg_error("string too large"))
 }
 
 /* ---- what rb's values and errors are made of ---- */
@@ -230,15 +315,18 @@ pub fn with_classname<R>(v: Value, f: impl FnOnce(&[u8]) -> R) -> Result<R, Erro
     // SAFETY: a NUL-terminated C string owned by the class or by that
     // temporary String, read and copied here with nothing run between.
     let name = unsafe { core::ffi::CStr::from_ptr(p) }.to_bytes();
-    let n = name.len().min(CLASSNAME_MAX);
+    /* At a character boundary, so a cut name ends in a whole character. */
+    let n = crate::msg::floor_char_boundary(name, CLASSNAME_MAX);
     if let (Some(d), Some(s)) = (buf.get_mut(..n), name.get(..n)) {
         d.copy_from_slice(s);
     }
     Ok(f(buf.get(..n).unwrap_or_default()))
 }
 
-/// `rb_hash_lookup2` at `key`, `Ok(None)` for no entry. The key is a Symbol
-/// or a String, hashed and compared in C - but a key already IN the Hash may
+/// `rb_hash_lookup2` at `key`, `Ok(None)` for no entry. The key must be a
+/// Symbol or a plain String, hashed and compared in C - any other is a
+/// `TypeError` here, as [`hash_aset`]'s, since its own `#hash` would run - but
+/// a key already IN the Hash may
 /// be any object, and one whose hash collides is compared with its `eql?`,
 /// the caller's Ruby, which can raise or `throw`. That comes back as `Err`,
 /// to be passed on: read as "no entry", the exception would be lost and the
@@ -246,6 +334,7 @@ pub fn with_classname<R>(v: Value, f: impl FnOnce(&[u8]) -> R) -> Result<R, Erro
 /// that path is run.
 pub fn hash_lookup(h: RHash, key: Value) -> Result<Option<Value>, Error> {
     const UNDEF: VALUE = rb_sys::Qundef as VALUE;
+    plain_key_or_refuse(key)?;
     let (h, key) = (h.as_raw(), key.as_raw());
     let v = call(|| unsafe {
         injected_raise();
@@ -322,26 +411,28 @@ pub fn module_new(_: &Ruby) -> Result<RModule, Error> {
 /// `rb_big2ll`: raises `RangeError` past an `i64`. For a Bignum only - the C
 /// reads a Bignum's header unchecked - so crate-private: the one caller is
 /// `Integer::to_i64`, which answers a Fixnum itself.
-#[allow(
-    clippy::unnecessary_cast,
-    reason = "c_longlong is i64 here, not everywhere"
-)]
 pub(crate) fn big2ll(n: Integer) -> Result<i64, Error> {
     let n = n.as_raw();
-    Ok(call(|| unsafe { rb_sys::rb_big2ll(n) })? as i64)
+    Ok(i64::from(call(|| unsafe { rb_sys::rb_big2ll(n) })?))
 }
 
 /// `rb_big2ull`: raises `RangeError` past a `u64`. For a non-negative Bignum
 /// only (a negative one would wrap), so crate-private: the one caller is
 /// `Integer::to_u64`, which refuses a negative value and answers a Fixnum
 /// itself.
-#[allow(
-    clippy::unnecessary_cast,
-    reason = "c_ulonglong is u64 here, not everywhere"
-)]
 pub(crate) fn big2ull(n: Integer) -> Result<u64, Error> {
     let n = n.as_raw();
-    Ok(call(|| unsafe { rb_sys::rb_big2ull(n) })? as u64)
+    Ok(u64::from(call(|| unsafe { rb_sys::rb_big2ull(n) })?))
+}
+
+/// Whether the Bignum `n`'s magnitude fits a `u64`: `rb_absint_size`,
+/// which reads its digits and raises nothing - so "too large" is answered
+/// without making the `RangeError` [`big2ull`] would raise.
+#[inline]
+pub(crate) fn big_fits_u64(n: Integer) -> bool {
+    // SAFETY: `n` is a live Integer (a Bignum here); the C reads its digits.
+    let bytes = unsafe { rb_sys::rb_absint_size(n.as_raw(), core::ptr::null_mut()) };
+    u64::try_from(bytes).is_ok_and(|b| b <= 8)
 }
 
 /* ---- definitions, at `Init_` ---- */
@@ -565,13 +656,16 @@ pub fn check_frozen(v: Value) -> Result<(), Error> {
 }
 
 /// `rb_range_beg_len` with `err = 0` over a collection of `count` elements:
-/// `None` for a start outside it, `RangeError` for a bound too large for a
-/// `long`. A Range whose ends are not Integers or nil is a `TypeError`,
-/// checked here: the C would convert such an end with its `to_int`.
+/// the start and the length it selects, `None` for a start outside it, and
+/// `RangeError` for a bound too large for a `long`. A Range whose ends are
+/// not Integers or nil is a `TypeError`, checked here: the C would convert
+/// such an end with its `to_int`.
 #[inline]
-pub fn range_beg_len(range: Value, count: c_long) -> Result<Option<(c_long, c_long)>, Error> {
+pub fn range_beg_len(range: Value, count: usize) -> Result<Option<(usize, usize)>, Error> {
     let Some(r) = crate::rb::Range::from_value(range) else {
-        return Err(crate::rb::error::type_error("a Range was expected"));
+        return Err(crate::rb::error::type_error(
+            "a Range whose ends are Integers (or nil) was expected",
+        ));
     };
     /* Checked here, not left to the caller: an end of any other kind would
      * have its `to_int` run by the C, the caller's Ruby. */
@@ -584,11 +678,23 @@ pub fn range_beg_len(range: Value, count: c_long) -> Result<Option<(c_long, c_lo
             "a Range whose ends are Integers (or nil) was expected",
         ));
     }
-    let (mut beg, mut len): (c_long, c_long) = (0, 0);
-    let (b, l) = (&mut beg as *mut c_long, &mut len as *mut c_long);
+    let count = count
+        .try_into()
+        .map_err(|_| crate::rb::error::arg_error("a collection too large for a long"))?;
+    let (mut beg, mut len) = (0, 0);
+    let (b, l) = (core::ptr::addr_of_mut!(beg), core::ptr::addr_of_mut!(len));
     let r = range.as_raw();
     let answer = call(|| unsafe { rb_sys::rb_range_beg_len(r, b, l, count, 0) })?;
-    Ok((answer == rb_sys::Qtrue as VALUE).then_some((beg, len)))
+    if answer != rb_sys::Qtrue as VALUE {
+        return Ok(None);
+    }
+    /* Within `0..=count` both, when the C answers true. */
+    match (usize::try_from(beg), usize::try_from(len)) {
+        (Ok(beg), Ok(len)) => Ok(Some((beg, len))),
+        _ => Err(crate::rb::error::internal_error(
+            "rb_range_beg_len answered a negative bound",
+        )),
+    }
 }
 
 /// `rb_thread_check_ints`: raises a pending interrupt (`Interrupt`,
@@ -761,7 +867,7 @@ pub fn enc_find(_: &Ruby, name: &core::ffi::CStr) -> Result<Option<Encoding>, Er
 /// `rb_ary_new_capa`: raises `NoMemoryError`.
 #[inline]
 pub(crate) fn ary_new_capa(_: &Ruby, capa: usize) -> Result<RArray, Error> {
-    let n = c_long::try_from(capa).unwrap_or(c_long::MAX);
+    let n = crate::int::capacity(capa);
     let v = call(|| unsafe {
         injected_raise();
         rb_sys::rb_ary_new_capa(n)
@@ -802,27 +908,28 @@ pub fn ivar_get(obj: Value, id: Id) -> Value {
     unsafe { Value::from_raw(rb_sys::rb_attr_get(obj.as_raw(), id.as_raw())) }
 }
 
-/// A Fixnum for a table key: `None` past a Fixnum.
-///
-/// Built from its bits - `(n << 1) | FIXNUM_FLAG`, what `long2fix` does -
-/// rather than through a C `long`: a Fixnum is as wide as a VALUE, less one
-/// bit, while a `long` is 32 bits on Windows, where a node token past 2^32
-/// was refused as past a Fixnum.
+/// The Fixnum `n` is, for a table key: `None` past one - past 2^30 - 1 on
+/// Windows, whose `long` is 32 bits ([`crate::int`]).
 #[inline]
-fn fixnum_key(n: usize) -> Option<VALUE> {
-    /* The largest positive Fixnum: a signed VALUE less its flag bit. */
-    const FIXNUM_MAX: VALUE = VALUE::MAX >> 2;
-    let v = VALUE::try_from(n).ok().filter(|&v| v <= FIXNUM_MAX)?;
-    Some((v << 1) | rb_sys::FIXNUM_FLAG as VALUE)
+fn fixnum_key(_: RHash, n: u32) -> Option<VALUE> {
+    use rb_sys::stable_api::{get_default, StableApiDefinition};
+    let l = crate::int::fixable(i64::from(n))?;
+    let api = get_default();
+    let key = api.long2fix(l);
+    /* The round trip a Fixnum past its range would fail - what the key
+     * built from its bits did on Windows, unseen, since a Hash compares a
+     * Fixnum key by its bits. */
+    debug_assert_eq!(api.fix2long(key), l);
+    Some(key)
 }
 
 /// `rb_hash_lookup2` at the Fixnum `n`: a Fixnum hashes and compares by
 /// value in C, so no Ruby code runs; protected all the same, and a raise
 /// passed on, as [`hash_lookup`]'s is.
 #[inline]
-pub(crate) fn table_get(h: RHash, n: usize) -> Result<Option<Value>, Error> {
+pub(crate) fn table_get(h: RHash, n: u32) -> Result<Option<Value>, Error> {
     const UNDEF: VALUE = rb_sys::Qundef as VALUE;
-    let Some(key) = fixnum_key(n) else {
+    let Some(key) = fixnum_key(h, n) else {
         return Ok(None);
     };
     let h = h.as_raw();
@@ -833,15 +940,32 @@ pub(crate) fn table_get(h: RHash, n: usize) -> Result<Option<Value>, Error> {
 
 /// `rb_hash_aset` at the Fixnum `n`: raises `NoMemoryError`.
 #[inline]
-pub(crate) fn table_set(h: RHash, n: usize, v: Value) -> Result<(), Error> {
-    let key = fixnum_key(n)
-        .ok_or_else(|| crate::rb::error::internal_error("a node token past a Fixnum"))?;
+pub(crate) fn table_set(h: RHash, n: u32, v: Value) -> Result<(), Error> {
+    /* No entry for a key past a Fixnum: refused, never wrapped round. */
+    let key = fixnum_key(h, n).ok_or_else(|| {
+        Error::new(
+            crate::rb::Builtin::RangeError,
+            "a table key past a Fixnum (more than 2^30 nodes on Windows)",
+        )
+    })?;
     let (h, v) = (h.as_raw(), v.as_raw());
     call(|| unsafe {
         injected_raise();
         rb_sys::rb_hash_aset(h, key, v)
     })
     .map(|_| ())
+}
+
+/// A key whose hash Ruby computes itself ([`crate::rb::value::plain_key`]),
+/// or the `TypeError` for one whose `#hash` and `#eql?` would be called.
+#[inline]
+fn plain_key_or_refuse(k: Value) -> Result<(), Error> {
+    if crate::rb::value::plain_key(k) {
+        return Ok(());
+    }
+    Err(crate::rb::error::type_error(
+        "a Hash key must be a Symbol or a String (not a subclass's)",
+    ))
 }
 
 /// `rb_hash_new`: raises `NoMemoryError`.
@@ -873,11 +997,7 @@ pub(crate) fn hidden_hash_new(ruby: &Ruby) -> Result<RHash, Error> {
 /// frozen Hash.
 #[inline]
 pub(crate) fn hash_aset(h: RHash, k: Value, v: Value) -> Result<(), Error> {
-    if !crate::rb::value::plain_key(k) {
-        return Err(crate::rb::error::type_error(
-            "a Hash key must be a Symbol or a String (not a subclass's)",
-        ));
-    }
+    plain_key_or_refuse(k)?;
     let (h, k, v) = (h.as_raw(), k.as_raw(), v.as_raw());
     call(|| unsafe {
         injected_raise();
@@ -892,13 +1012,10 @@ pub(crate) fn int_from_i64(_: &Ruby, n: i64) -> Result<Integer, Error> {
     use rb_sys::stable_api::{get_default, StableApiDefinition};
     /* A Fixnum is the value's own bits: no allocation, nothing to raise, no
      * protected call - the common case (a length, an index, a count). */
-    /* A `long` is 32 bits on Windows, so the round trip is the range check. */
-    let api = get_default();
-    let l = n as c_long;
-    if l as i64 == n && api.fixable(l) {
+    if let Some(l) = crate::int::fixable(n) {
         // SAFETY: an immediate.
         return Ok(Integer::from_known(unsafe {
-            Value::from_raw(api.long2fix(l))
+            Value::from_raw(get_default().long2fix(l))
         }));
     }
     let v = call(|| unsafe {
@@ -913,12 +1030,10 @@ pub(crate) fn int_from_i64(_: &Ruby, n: i64) -> Result<Integer, Error> {
 pub(crate) fn int_from_u64(_: &Ruby, n: u64) -> Result<Integer, Error> {
     use rb_sys::stable_api::{get_default, StableApiDefinition};
     /* As `int_from_i64`. */
-    let api = get_default();
-    let l = n as core::ffi::c_ulong;
-    if l as u64 == n && api.posfixable(l) {
-        // SAFETY: an immediate; `posfixable` keeps it within a long.
+    if let Some(l) = crate::int::posfixable(n) {
+        // SAFETY: an immediate.
         return Ok(Integer::from_known(unsafe {
-            Value::from_raw(api.long2fix(l as c_long))
+            Value::from_raw(get_default().long2fix(l))
         }));
     }
     let v = call(|| unsafe {
@@ -969,8 +1084,10 @@ pub(crate) unsafe fn typed_object_zalloc(
     size: usize,
     ty: *const rb_data_type_t,
 ) -> Result<VALUE, Error> {
+    let size = rb_sys::size_t::try_from(size)
+        .map_err(|_| crate::rb::error::internal_error("a wrapped object too large"))?;
     call(|| unsafe {
         injected_raise();
-        rb_sys::rb_data_typed_object_zalloc(klass, size as rb_sys::size_t, ty)
+        rb_sys::rb_data_typed_object_zalloc(klass, size, ty)
     })
 }

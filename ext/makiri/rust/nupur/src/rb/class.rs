@@ -28,18 +28,26 @@ impl core::ops::Deref for CName {
     }
 }
 
+impl CName {
+    /// `name` NUL-terminated on the stack, or `None` for one with a NUL of
+    /// its own or too long to leave room for the terminator.
+    pub(crate) fn new(name: &[u8]) -> Option<CName> {
+        let mut buf = [0u8; NAME_MAX];
+        match buf.get_mut(..name.len()) {
+            Some(dst) if name.len() < NAME_MAX && !name.contains(&0) => {
+                dst.copy_from_slice(name);
+                Some(CName(buf))
+            }
+            _ => None,
+        }
+    }
+}
+
 /// `name` as a [`CName`]; a name with a NUL, or one too long, is refused.
 pub(crate) fn c_name(name: &str) -> Result<CName, Error> {
-    let mut buf = [0u8; NAME_MAX];
-    match buf.get_mut(..name.len()) {
-        Some(dst) if name.len() < NAME_MAX && !name.as_bytes().contains(&0) => {
-            dst.copy_from_slice(name.as_bytes());
-            Ok(CName(buf))
-        }
-        _ => Err(crate::rb::error::arg_error(
-            "a name to define that is too long or holds a NUL byte",
-        )),
-    }
+    CName::new(name.as_bytes()).ok_or_else(|| {
+        crate::rb::error::arg_error("a name to define that is too long or holds a NUL byte")
+    })
 }
 
 /// What a class and a module both are: a namespace that holds constants,

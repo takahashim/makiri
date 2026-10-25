@@ -131,7 +131,7 @@ impl NodeVec {
             .capacity()
             .saturating_mul(core::mem::size_of::<NodeWord>());
         if bytes != self.reported {
-            let delta = (bytes as isize).saturating_sub(self.reported as isize);
+            let delta = crate::nupur::int::change(self.reported, bytes);
             crate::bridge::typed::report_external(ruby, delta);
             self.reported = bytes;
         }

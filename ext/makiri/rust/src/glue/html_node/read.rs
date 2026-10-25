@@ -151,7 +151,7 @@ pub fn pi_target(ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Er
 
 /// `#node_type`: the numeric DOM node type (`LXB_DOM_NODE_TYPE_*`).
 pub fn node_type(_ruby: &Ruby, this: super::HtmlSelf) -> Result<i64, Error> {
-    Ok(this.read()?.node().node_type() as u32 as i64)
+    Ok(i64::from(this.read()?.node().node_type() as u32))
 }
 
 /// `DocumentType#public_id` / `#system_id` (WHATWG DOM).

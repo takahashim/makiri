@@ -79,7 +79,7 @@ pub(in crate::bridge) fn wrap_xml_node_checked(
     document: Value,
 ) -> Result<Value, Error> {
     /* A hit was checked when it was made, as `wrap_html_node_checked`'s. */
-    if let Some(cached) = crate::bridge::wrapper::cached_node(document, id.to_token())? {
+    if let Some(cached) = crate::bridge::wrapper::cached_node(document, &id)? {
         return Ok(cached);
     }
     let ty = xml_read(&document)?.type_(id);
@@ -108,8 +108,8 @@ fn wrap_xml_node_of_type(
 }
 
 impl crate::bridge::wrapper::NodeHandleSource for NodeId {
-    fn identity(&self) -> usize {
-        self.to_token()
+    fn index_and_stamp(&self) -> (u32, u32) {
+        (self.index(), self.stamp())
     }
 
     fn into_handle(self, _document: Value) -> NodeHandle {

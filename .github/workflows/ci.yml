@@ -91,6 +91,19 @@ jobs:
           cargo clippy --no-default-features --features ruby -- -D warnings
           cargo clippy --no-default-features --features html-dom --tests -- -D warnings
 
+      # The same lints where a C `long` is 32 bits. On every other runner
+      # `c_long` is `i64` itself, so a cast that truncates on Windows is a
+      # no-op there and clippy's cast lints (nupur's lib.rs) see nothing;
+      # here they see the real types. Without `--all-features` on the
+      # extension: this cell builds no Lexbor.
+      - name: Clippy at a 32-bit long
+        if: runner.os == 'Windows' && matrix.ruby == '3.4'
+        working-directory: ext/makiri/rust
+        shell: bash
+        run: |
+          cargo clippy -p nupur --all-features --tests --target x86_64-pc-windows-gnu -- -D warnings
+          cargo clippy --no-default-features --features ruby --target x86_64-pc-windows-gnu -- -D warnings
+
       - name: Rust formatting
         if: matrix.os == 'ubuntu-latest' && matrix.ruby == '3.4'
         working-directory: ext/makiri/rust

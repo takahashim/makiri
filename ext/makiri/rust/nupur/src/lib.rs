@@ -31,6 +31,14 @@
 //!   defined without an allocator, so Ruby cannot make one with no payload.
 //! - **A String is read by copying** ([`string`]): no slice of one is handed
 //!   out.
+//! - **A C integer is converted in one place** ([`int`]): a `long` is 32
+//!   bits on Windows, and the conversions are written once over either
+//!   width and tested at both; everything else converts with `From` /
+//!   `TryFrom` and names no `long`.
+//! - **A non-local exit is resumed as it was.** While a `break` or `throw`
+//!   a protected call caught is on its way to the trampoline, no protected
+//!   call runs C, so the thread's error info Ruby resumes it from is left
+//!   alone.
 //!
 //! # What the extension must uphold
 //!
@@ -53,6 +61,22 @@
 //!   it is defined.
 
 #![deny(unsafe_code)]
+/* The casts that lose a value. Where the code is built a C `long` is `i64`
+ * itself, so these see nothing there that `c_integer_outside_int` does not;
+ * on Windows, whose `long` is 32 bits, clippy sees the real types - CI runs
+ * it on that cell too. `int` is the one module that casts. */
+#![warn(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_lossless
+)]
+/* `i64::from(a_c_long)` is a no-op here and a widening on Windows: the
+ * conversions are written for every target, which this lint cannot see. */
+#![allow(
+    clippy::useless_conversion,
+    reason = "C's integer types are aliases whose width is the target's"
+)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 /* `rake dylint` sets `dylint_lib` for the whole build, the extension's run
  * compiling this crate as a plain dependency: there the extension's lints,
@@ -69,6 +93,9 @@ pub mod rb;
 
 /// Every Ruby C call that can raise, each under `rb_protect`.
 pub mod raw;
+
+/// Every conversion between Rust's integer widths and C's `long`.
+pub mod int;
 
 /// TypedData: wrapping a Rust value as a Ruby object, and its GC hooks.
 pub mod typed;

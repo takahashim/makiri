@@ -8,8 +8,6 @@
 
 #![forbid(unsafe_code)]
 
-use core::ffi::c_long;
-
 use crate::bridge::rb::{prelude::*, Error, RArray, Ruby, Value};
 use crate::{function, method};
 
@@ -26,32 +24,40 @@ fn length(s: NodeSetSelf) -> Result<usize, Error> {
 /// `set[start, length]` and `set[range]` -> a new NodeSet, nil when the start is
 /// out of range. Mirrors `Array#[]`.
 fn aref(ruby: &Ruby, s: NodeSetSelf, args: &[Value]) -> Result<Option<Value>, Error> {
-    let count = s.count()? as c_long;
-    let from_end = |i: c_long| if i < 0 { i + count } else { i };
+    let count = s.count()?;
+    /* An index counted from the end resolved to one from the start, `None`
+     * when it is before the start; the arithmetic is `i64`'s, which every
+     * index Ruby hands over fits, and no set's count passes. */
+    let from_start = |i: i64| -> Option<usize> {
+        if i >= 0 {
+            usize::try_from(i).ok()
+        } else {
+            let back = usize::try_from(i.unsigned_abs()).ok()?;
+            count.checked_sub(back)
+        }
+    };
     match args {
         [range] if range.is_kind_of(ruby.class_range()) => {
             /* A start outside the set is nil; a bound too large for a `long`
-             * raises, as `Array#[]` does. The ends are Integers or nil: one
-             * that is not would be converted by its `to_int`. */
-            match range_beg_len(crate::bridge::ruby::integer_range_arg(*range)?, count)? {
-                Some((beg, len)) => s.slice(ruby, beg as usize, len as usize),
+             * raises, as `Array#[]` does. The ends must be Integers or nil,
+             * which `range_beg_len` checks: one that is not would be
+             * converted by its `to_int`. */
+            match range_beg_len(*range, count)? {
+                Some((beg, len)) => s.slice(ruby, beg, len),
                 None => Ok(None),
             }
         }
-        [index] => {
-            let i = from_end(crate::bridge::ruby::long_arg(*index)?);
-            if i < 0 || i >= count {
-                return Ok(None);
-            }
-            s.at(ruby, i as usize)
-        }
+        [index] => match from_start(crate::bridge::ruby::index_arg(*index)?) {
+            Some(i) if i < count => s.at(ruby, i),
+            _ => Ok(None),
+        },
         [beg, len] => {
-            let beg = from_end(crate::bridge::ruby::long_arg(*beg)?);
-            let len = crate::bridge::ruby::long_arg(*len)?;
-            if beg < 0 || beg > count || len < 0 {
-                return Ok(None);
+            let beg = from_start(crate::bridge::ruby::index_arg(*beg)?);
+            let len = usize::try_from(crate::bridge::ruby::index_arg(*len)?).ok();
+            match (beg, len) {
+                (Some(beg), Some(len)) if beg <= count => s.slice(ruby, beg, len),
+                _ => Ok(None),
             }
-            s.slice(ruby, beg as usize, len as usize)
         }
         _ => Err(crate::glue::args::arity_error(args.len(), 1, Some(2))),
     }

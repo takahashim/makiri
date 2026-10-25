@@ -1,6 +1,7 @@
 //! [`IntTable`]: a Ruby Hash from small non-negative integers to values, kept
-//! by one object as its private table - a wrapper cache, say, from a token to
-//! the one wrapper made for it.
+//! by one object as its private table - a wrapper cache, say, from a node's
+//! index to the one wrapper made for it. A key is a `u32` that must be a
+//! Fixnum: up to 2^30 - 1 on Windows, whose `long` is 32 bits.
 //!
 //! A Ruby Hash rather than a Rust map, so the GC marks its values and moves
 //! them itself, and the owner keeps one value (the table) where its mark
@@ -40,14 +41,14 @@ impl IntTable {
     /// The value at `n`, or `None` - also for an `n` past a Fixnum, which
     /// no entry can have.
     #[inline]
-    pub fn get(self, n: usize) -> Result<Option<Value>, Error> {
+    pub fn get(self, n: u32) -> Result<Option<Value>, Error> {
         crate::raw::table_get(self.0, n)
     }
 
     /// Set the value at `n`: raises `NoMemoryError`, and an `n` past a
-    /// Fixnum is an internal error.
+    /// Fixnum is a `RangeError` - refused, never wrapped round.
     #[inline]
-    pub fn set(self, n: usize, v: Value) -> Result<(), Error> {
+    pub fn set(self, n: u32, v: Value) -> Result<(), Error> {
         crate::raw::table_set(self.0, n, v)
     }
 }

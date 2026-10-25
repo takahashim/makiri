@@ -304,11 +304,15 @@ pub fn create_element_ns(
     let qname = qv.as_bytes();
     let (prefix, local) =
         dom_extract(ns, qname, dom_name::valid_element_local_name, "DOM element")?;
-    /* `verified_name` held the name to `u32`, and both halves are in it. */
+    /* `verified_name` held the name to `u32`, and both halves are in it:
+     * a refusal here is that broken. */
+    let len = |n: usize| {
+        u32::try_from(n).map_err(|_| crate::bridge::ruby::internal_error("a name past u32"))
+    };
     let sp = if prefix.is_empty() {
-        Split::unprefixed(qname.len() as u32)
+        Split::unprefixed(len(qname.len())?)
     } else {
-        Split::prefixed(prefix.len() as u32, local.len() as u32)
+        Split::prefixed(len(prefix.len())?, len(local.len())?)
     };
     let el = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
         mutate::new_dom_element_ns(d, qname, sp, ns)

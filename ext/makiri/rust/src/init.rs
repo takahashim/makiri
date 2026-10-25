@@ -197,16 +197,18 @@ fn borrowed_p(doc: Value) -> Result<bool, Error> {
 )]
 fn panic_probe(ruby: &Ruby, kind: Value) -> Result<(), Error> {
     let kind = crate::bridge::ruby::integer_arg(kind)?.to_i64()?;
+    /* 1 and 2, where it is read as a `usize` below. */
+    let as_index = usize::try_from(kind).unwrap_or(0);
     match kind {
         0 => panic!("Makiri.__panic(0): deliberate panic"),
         1 => {
             /* The test hook's own allocation: a panic is what it is for. */
             #[cfg_attr(dylint_lib = "makiri_lints", allow(infallible_allocation))]
             let v: Vec<u8> = vec![1, 2, 3];
-            let _ = v[kind as usize * 100];
+            let _ = v[as_index * 100];
         }
         2 => {
-            let x = kind as usize - 2;
+            let x = as_index - 2;
             let _ = x - 1;
         }
         3 => {
@@ -306,13 +308,18 @@ fn seal_leaves(methods: RModule, leaves: &[DataClass]) -> Result<(), Error> {
 pub extern "C" fn Init_makiri() {
     // SAFETY: this is the `Init_` function Ruby calls, on its thread with the
     // GVL held.
-    unsafe { crate::bridge::rb::method::run_init(init) };
+    unsafe { crate::bridge::rb::method::run_init(check, init) };
+}
+
+/// Before anything touches the interpreter's structs: a binary built for
+/// another Ruby misreads them (`check_running_ruby_api`). Its refusal is a
+/// `LoadError`, with nothing defined yet; anything that stops `init` after
+/// it is `fatal` (`run_init`).
+fn check(_: &Ruby) -> Result<(), Error> {
+    crate::bridge::ruby::check_running_ruby_api()
 }
 
 fn init(ruby: &Ruby) -> Result<(), Error> {
-    // Before anything touches the interpreter's structs: a binary built for
-    // another Ruby misreads them (`check_running_ruby_api`).
-    crate::bridge::ruby::check_running_ruby_api()?;
     #[cfg(makiri_no_unwind)]
     crate::no_unwind::self_test();
     #[cfg(nupur_no_unwind)]

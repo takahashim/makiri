@@ -163,6 +163,21 @@ impl Error {
         Error(Kind::Exception(exc))
     }
 
+    /// The non-local exit `state` stands for.
+    #[inline]
+    pub(crate) fn jump(state: c_int) -> Error {
+        Error(Kind::Jump(state))
+    }
+
+    /// The `rb_protect` state of a non-local exit that is not an exception.
+    #[inline]
+    pub(crate) fn jump_state(&self) -> Option<c_int> {
+        match self.0 {
+            Kind::Jump(state) => Some(state),
+            _ => None,
+        }
+    }
+
     /// An instance of `class`, or one that will be? `false` for an exit that
     /// is not an exception.
     pub fn is_kind_of(&self, ruby: &Ruby, class: impl Into<ErrorClass>) -> bool {
@@ -191,7 +206,10 @@ impl Error {
         let mut e = self;
         loop {
             let exc = match e.0 {
-                Kind::Jump(state) => crate::raw::jump_tag(state),
+                Kind::Jump(state) => {
+                    crate::raw::clear_pending_jump();
+                    crate::raw::jump_tag(state)
+                }
                 Kind::Exception(v) => v,
                 /* Made under `rb_protect`: the String and the object are
                  * allocations, and an exception class's `initialize` is

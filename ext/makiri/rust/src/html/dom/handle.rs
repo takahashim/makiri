@@ -230,6 +230,12 @@ impl RawNode {
         NodeId(NonZeroU32::new(self.0.get() as u32).unwrap_or(NonZeroU32::MIN))
     }
 
+    /// The node id's index in its document (the low half).
+    #[inline]
+    pub fn index(self) -> u32 {
+        self.0.get() as u32
+    }
+
     /// The stamp of the document the node belongs to.
     #[inline]
     pub fn stamp(self) -> u32 {

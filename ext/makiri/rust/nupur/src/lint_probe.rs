@@ -37,3 +37,22 @@ mod gvl_proof {
         (|| unsafe { rb_sys::ruby_stack_check() != 0 })() //~
     }
 }
+
+/// A C integer at the Ruby boundary outside `nupur::int`
+/// (`c_integer_outside_int`): an integer `as` cast - which the lint sees
+/// even where `c_long` is `i64` itself - and `c_long` named; a `TryFrom`
+/// passes.
+#[rustfmt::skip] // keeps each marker on the line reported
+mod c_integer {
+    fn cast(n: usize) -> i64 {
+        n as i64 //~
+    }
+
+    fn named(n: i64) -> Option<core::ffi::c_long> { //~
+        n.try_into().ok()
+    }
+
+    fn converted(n: usize) -> Option<i64> {
+        i64::try_from(n).ok()
+    }
+}

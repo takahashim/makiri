@@ -59,13 +59,13 @@ impl Encoding {
         )
     )]
     pub fn find(ruby: &crate::rb::Ruby, name: &[u8]) -> Option<Encoding> {
-        let mut buf = [0u8; 64];
-        if name.is_empty() || name.len() >= buf.len() || name.contains(&0) {
+        if name.is_empty() {
             return None;
         }
-        buf[..name.len()].copy_from_slice(name);
-        let c = core::ffi::CStr::from_bytes_with_nul(&buf[..name.len() + 1]).ok()?;
-        crate::raw::enc_find(ruby, c).ok().flatten()
+        let c = crate::rb::class::CName::new(name)?;
+        crate::raw::keeping_errinfo(|| crate::raw::enc_find(ruby, &c))
+            .ok()
+            .flatten()
     }
 
     /// An encoding from Ruby's pointer to it.
@@ -127,8 +127,10 @@ impl Encoding {
         // SAFETY: `s` is a live String - a heap object, whose flags word is
         // the first field of its `RBasic` and readable; reading it runs no Ruby.
         let flags = unsafe { (*(s.as_raw() as *const rb_sys::RBasic)).flags };
-        let inline =
-            ((flags as usize & RUBY_ENCODING_MASK as usize) >> RUBY_ENCODING_SHIFT as u32) as c_int;
+        /* Seven bits, which a `c_int` holds. */
+        let bits =
+            (crate::int::word(flags) & RUBY_ENCODING_MASK as usize) >> RUBY_ENCODING_SHIFT as u32;
+        let inline = c_int::try_from(bits).unwrap_or(c_int::MAX);
         let index = if inline == RUBY_ENCODING_INLINE_MAX as c_int {
             // SAFETY: as above; the lookup reads an instance variable and
             // raises nothing.

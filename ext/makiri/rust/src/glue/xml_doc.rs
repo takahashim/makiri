@@ -69,7 +69,9 @@ fn parse_limits(ruby: &Ruby, h: Option<RHash>) -> Result<ParseLimits, Error> {
             "max_bytes must be positive",
         ));
     }
-    limits.max_bytes = Some(n as usize);
+    /* Positive, and past a `usize` only where one is narrower than 64 bits:
+     * no limit there is one a document could reach. */
+    limits.max_bytes = Some(usize::try_from(n).unwrap_or(usize::MAX));
     Ok(limits)
 }
 
