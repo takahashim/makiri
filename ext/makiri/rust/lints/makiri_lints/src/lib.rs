@@ -5,13 +5,16 @@
 //!
 //! - `ruby_value_on_heap` ([`value_on_heap`]): a Ruby value kept where Ruby's
 //!   GC cannot see it.
+//! - The layer boundaries ([`boundaries`]): `ruby_layer_in_engine`,
+//!   `unguarded_no_unwind_site`, `ruby_in_gvl_released_body`,
+//!   `infallible_allocation`, `raising_call_outside_protect`.
 //!
 //! (A second lint, `converted_argument`, checked that no registered method
 //! took a type magnus would convert with the caller's Ruby. Since
 //! `bridge::rb` replaced magnus, its `TryConvert` exists only for `Value`,
 //! `bool` and Makiri's receiver types, so such a method does not compile.)
 //!
-//! `rake dylint` runs both, then their self-test (`src/lint_probe.rs`
+//! `rake dylint` runs them all, then their self-test (`src/lint_probe.rs`
 //! in the extension crate).
 
 extern crate rustc_hir;
@@ -20,11 +23,12 @@ extern crate rustc_middle;
 extern crate rustc_session;
 extern crate rustc_span;
 
+mod boundaries;
 mod value_on_heap;
 
 use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_hir::intravisit::FnKind;
-use rustc_hir::{Body, FnDecl, Item, LetStmt};
+use rustc_hir::{Body, Expr, FnDecl, HirId, Item, LetStmt, Path};
 use rustc_lint::{LateContext, LateLintPass, LintStore};
 use rustc_session::{Session, declare_lint, declare_lint_pass};
 use rustc_span::Span;
@@ -36,7 +40,14 @@ dylint_linting::dylint_library!();
 #[unsafe(no_mangle)]
 pub fn register_lints(sess: &Session, lint_store: &mut LintStore) {
     dylint_linting::init_config(sess);
-    lint_store.register_lints(&[RUBY_VALUE_ON_HEAP]);
+    lint_store.register_lints(&[
+        RUBY_VALUE_ON_HEAP,
+        RUBY_LAYER_IN_ENGINE,
+        UNGUARDED_NO_UNWIND_SITE,
+        RUBY_IN_GVL_RELEASED_BODY,
+        INFALLIBLE_ALLOCATION,
+        RAISING_CALL_OUTSIDE_PROTECT,
+    ]);
     lint_store.register_late_lint_pass(Box::new(|_| Box::new(MakiriLints)));
 }
 
@@ -64,7 +75,83 @@ declare_lint! {
     "a Ruby value kept where Ruby's GC cannot see it"
 }
 
-declare_lint_pass!(MakiriLints => [RUBY_VALUE_ON_HEAP]);
+declare_lint! {
+    /// ### What it does
+    /// Reports the engine (`html`, `xml`, `xpath`, ... - Ruby-free modules)
+    /// naming anything of the Ruby layer: `bridge`, `glue`, `init`, `rb_sys`.
+    ///
+    /// ### Why is this bad?
+    /// An edit's closure and a GVL-released body run engine code, and neither
+    /// may reach Ruby: the one leaves the document's indexes dropped, the
+    /// other has no GVL.
+    pub RUBY_LAYER_IN_ENGINE,
+    Deny,
+    "the engine names something of the Ruby layer"
+}
+
+declare_lint! {
+    /// ### What it does
+    /// Reports an `extern "C"` function or a `Drop` whose body does not run
+    /// under `no_unwind::must_not_unwind` (or a helper that does).
+    ///
+    /// ### Why is this bad?
+    /// An unwind out of an `extern "C"` function aborts the process, as does
+    /// a panic in a `Drop` the GC runs; `rake no_unwind` proves only the
+    /// bodies that are sites.
+    pub UNGUARDED_NO_UNWIND_SITE,
+    Deny,
+    "an extern \"C\" function or Drop not under must_not_unwind"
+}
+
+declare_lint! {
+    /// ### What it does
+    /// Reports a call, inside the closure given to `bridge::gvl::without_gvl`,
+    /// to anything but the engine or a library.
+    ///
+    /// ### Why is this bad?
+    /// With the GVL released no Ruby may run, and only the engine is known
+    /// Ruby-free.
+    pub RUBY_IN_GVL_RELEASED_BODY,
+    Deny,
+    "a GVL-released body calls what may reach Ruby"
+}
+
+declare_lint! {
+    /// ### What it does
+    /// Reports an allocation that aborts on OOM: `to_owned`, `to_vec`,
+    /// `to_string`, `format!`, `from_utf8_lossy`, `into_owned`, `vec!`,
+    /// `CString::new`.
+    ///
+    /// ### Why is this bad?
+    /// An allocation failure must fail closed - an error, not the host
+    /// process gone - so every allocation goes through `falloc`, and an
+    /// exception message through `crate::msg::Msg`.
+    pub INFALLIBLE_ALLOCATION,
+    Deny,
+    "an allocation that aborts on OOM"
+}
+
+declare_lint! {
+    /// ### What it does
+    /// Reports a call to a C function that can raise outside the closure
+    /// given to `bridge::raw::call`.
+    ///
+    /// ### Why is this bad?
+    /// A raise is a longjmp over every Rust frame up to the nearest
+    /// `rb_protect`, which is undefined behaviour across a `Drop`.
+    pub RAISING_CALL_OUTSIDE_PROTECT,
+    Deny,
+    "a raising C call outside bridge::raw::call"
+}
+
+declare_lint_pass!(MakiriLints => [
+    RUBY_VALUE_ON_HEAP,
+    RUBY_LAYER_IN_ENGINE,
+    UNGUARDED_NO_UNWIND_SITE,
+    RUBY_IN_GVL_RELEASED_BODY,
+    INFALLIBLE_ALLOCATION,
+    RAISING_CALL_OUTSIDE_PROTECT,
+]);
 
 impl<'tcx> LateLintPass<'tcx> for MakiriLints {
     fn check_item(&mut self, cx: &LateContext<'tcx>, item: &'tcx Item<'tcx>) {
@@ -85,6 +172,15 @@ impl<'tcx> LateLintPass<'tcx> for MakiriLints {
         did: LocalDefId,
     ) {
         value_on_heap::check_fn(cx, kind, decl, body, span, did);
+        boundaries::check_fn(cx, kind, body, span, did);
+    }
+
+    fn check_path(&mut self, cx: &LateContext<'tcx>, path: &Path<'tcx>, hir_id: HirId) {
+        boundaries::check_path(cx, path, hir_id);
+    }
+
+    fn check_expr(&mut self, cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
+        boundaries::check_expr(cx, expr);
     }
 }
 

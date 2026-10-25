@@ -16,6 +16,11 @@
 
 ROOT = File.expand_path("..", __dir__)
 RUST = File.join(ROOT, "ext/makiri/rust/src")
+# Every source file the gates read. `lint_probe.rs` is left out: it is
+# compiled only under `--cfg makiri_lint_probe`, by `rake dylint`, and holds
+# on purpose the very uses the lints there must report.
+RUST_FILES = Dir.glob(File.join(RUST, "**", "*.rs")).sort
+                .reject { |p| p.end_with?("/lint_probe.rs") }.freeze
 
 # Every file's unsafe count, exact. A new file with unsafe fails here even when
 # a parent module's `allow` kept the compiler quiet; a file that loses its last
@@ -260,6 +265,12 @@ LEXBOR_ABI_COUNTS = {}.freeze
 ENGINE_DIRS = %w[lexbor/ xml/ xpath/ css/ selectors/ html/ html_dom.rs child_index.rs child_index/ falloc/ cbuf.rs cutf8.rs dom_rules.rs dom_rules/ limits.rs node_type.rs ptr_table.rs text.rs token.rs utf8_input.rs].freeze
 RUBY_LAYER = /\bcrate::(?:bridge|glue|init)\b|\brb_sys::/
 RUBY_LAYER_COUNTS = {}.freeze
+# The rule for the rest of the engine, and INFALLIBLE_ALLOC's below, are
+# `rake dylint`'s now (`ruby_layer_in_engine`, `infallible_allocation`):
+# checked on the compiled code, by resolved path, where this read text. What
+# stays here is `lexbor/` - the reference, which the lint's build (`ruby`)
+# does not compile.
+TEXT_CHECKED = %w[lexbor/].freeze
 
 # The engine allocates only through `falloc`, so `rake oom` can fail every site
 # and an OOM raises instead of aborting the host. `clippy.toml` bans the
@@ -282,9 +293,7 @@ INFALLIBLE_ALLOC = /\.to_owned\(\)|\.to_vec\(\)|String::from\(|\bformat!\(|\.to_
 INFALLIBLE_ALLOC_DIRS = (ENGINE_DIRS + %w[bridge/ glue/ init.rs lib.rs msg.rs caught.rs css_cache.rs raw_vec/ utf8_copy.rs
                                           compat.rs doc_cell.rs engine_error.rs gvl.rs source_lines.rs
                                           stack.rs]).freeze
-#
-# The one site is a test hook's: `Makiri.__panic(1)`'s out-of-bounds index.
-INFALLIBLE_ALLOC_COUNTS = { "init.rs" => 1 }.freeze
+INFALLIBLE_ALLOC_COUNTS = {}.freeze
 
 def rust_code(path)
   File.binread(path).lines.reject { |line| line.match?(%r{\A\s*//}) }.join
@@ -380,7 +389,7 @@ end
 
 unsafe_actual = Hash.new(0)
 forbidding = []
-Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
+RUST_FILES.each do |path|
   relative = path.delete_prefix("#{RUST}/")
   source = File.binread(path)
   forbidding << relative if source.include?("#![forbid(unsafe_code)]")
@@ -436,7 +445,7 @@ else
 end
 
 actual = Hash.new(0)
-Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
+RUST_FILES.each do |path|
   count = File.binread(path).scan(/^\s*(?:pub\s+)?static\s+mut\b/).length
   next if count.zero?
 
@@ -449,7 +458,7 @@ end
 
 rb_sys = Hash.new(0)
 raising = Hash.new(0)
-Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
+RUST_FILES.each do |path|
   relative = path.delete_prefix("#{RUST}/")
   code = rust_code(path)
   # A name in a block comment is documentation, as for the Lexbor names.
@@ -469,7 +478,7 @@ if raising != RAISING_COUNTS
 end
 
 user_code = Hash.new(0)
-Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
+RUST_FILES.each do |path|
   relative = path.delete_prefix("#{RUST}/")
   next if relative.start_with?("lexbor/")
 
@@ -481,7 +490,7 @@ if user_code != USER_CODE_COUNTS
 end
 
 raw_values = Hash.new(0)
-Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
+RUST_FILES.each do |path|
   relative = path.delete_prefix("#{RUST}/")
   next if relative.start_with?("lexbor/") || VALUE_ALLOWED.include?(relative)
 
@@ -493,7 +502,7 @@ if raw_values != VALUE_COUNTS
 end
 
 value_from_raw = Hash.new(0)
-Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
+RUST_FILES.each do |path|
   relative = path.delete_prefix("#{RUST}/")
   next if relative.start_with?("bridge/")
 
@@ -517,7 +526,7 @@ if raw_node_crossing != RAW_NODE_CROSSING_COUNTS
 end
 
 lexbor_abi = Hash.new(0)
-Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
+RUST_FILES.each do |path|
   relative = path.delete_prefix("#{RUST}/")
   next if relative.start_with?("lexbor/")
 
@@ -535,7 +544,7 @@ end
 # error. `post_parse.rs` re-declared four generated functions that way.
 LEXBOR_DECL = /\bfn\s+(?:lxb|lexbor)_[A-Za-z0-9_]*\s*\([^)]*\)[^;{]*;/m
 lexbor_decls = Hash.new(0)
-Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
+RUST_FILES.each do |path|
   relative = path.delete_prefix("#{RUST}/")
   next if relative == "lexbor/abi.rs"
 
@@ -557,7 +566,7 @@ GUARDED_PARSES = {
   "lxb_css_stylesheet_parse" => "lexbor/stylesheet_diff.rs",  # lexbor_dump
 }.freeze
 guarded_calls = Hash.new { |h, k| h[k] = Hash.new(0) }
-Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
+RUST_FILES.each do |path|
   relative = path.delete_prefix("#{RUST}/")
   code = comments_removed(File.binread(path))
   GUARDED_PARSES.each_key do |name|
@@ -579,7 +588,7 @@ end
 # check).
 HASH_FOREACH = /\.foreach\(/
 hash_walks = Hash.new(0)
-Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
+RUST_FILES.each do |path|
   relative = path.delete_prefix("#{RUST}/")
   next if relative == "glue/hash.rs"
 
@@ -603,9 +612,9 @@ if abi_decls != LEXBOR_HAND_DECLS
 end
 
 ruby_layer = Hash.new(0)
-Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
+RUST_FILES.each do |path|
   relative = path.delete_prefix("#{RUST}/")
-  next unless relative.start_with?(*ENGINE_DIRS)
+  next unless relative.start_with?(*TEXT_CHECKED)
 
   count = comments_removed(File.binread(path)).scan(RUBY_LAYER).length
   ruby_layer[relative] = count unless count.zero?
@@ -615,9 +624,9 @@ if ruby_layer != RUBY_LAYER_COUNTS
 end
 
 infallible = Hash.new(0)
-Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
+RUST_FILES.each do |path|
   relative = path.delete_prefix("#{RUST}/")
-  next unless relative.start_with?(*INFALLIBLE_ALLOC_DIRS)
+  next unless relative.start_with?(*TEXT_CHECKED)
   next if relative.end_with?("selftest.rs", "verify.rs", "tests.rs")
   # Built only for the tests and the `html_diff` / `html_xpath_diff` /
   # `selector_diff` / `stylesheet_diff` fuzz targets (`lexbor-reference`),
@@ -658,207 +667,15 @@ end
 # panic below it raises Makiri::InternalError: a property of the macros, not of
 # each method, so there is nothing per method to check.
 
-# `src` with every comment, and the inside of every string and character
-# literal, turned to spaces - line breaks kept, so offsets and line numbers
-# still match. What is left is code only: a `method!(` written in a string or a
-# comment is not seen, and a `"/*"` or `'('` in the code cannot throw a scan
-# off. Handles nested block comments, raw strings (`r#"..."#`, `br"..."`) and
-# tells a char literal from a lifetime.
-def code_only(src)
-  out = src.dup
-  blank = ->(from, to) { (from...to).each { |k| out[k] = " " unless out[k] == "\n" } }
-  i = 0
-  n = src.length
-  while i < n
-    if src[i, 2] == "//"
-      j = src.index("\n", i) || n
-      blank.(i, j)
-      i = j
-    elsif src[i, 2] == "/*"
-      depth = 0
-      j = i
-      while j < n
-        if src[j, 2] == "/*"
-          depth += 1
-          j += 2
-        elsif src[j, 2] == "*/"
-          depth -= 1
-          j += 2
-          break if depth.zero?
-        else
-          j += 1
-        end
-      end
-      blank.(i, j)
-      i = j
-    elsif (m = src[i..].match(/\A(?<![\w])b?r(#*)"/)) && (i.zero? || src[i - 1] !~ /\w/)
-      close = "\"" + m[1]
-      j = src.index(close, i + m[0].length) || n
-      blank.(i + m[0].length, j)
-      i = j + close.length
-    elsif src[i] == '"'
-      j = i + 1
-      j += (src[j] == "\\" ? 2 : 1) while j < n && src[j] != '"'
-      blank.(i + 1, j)
-      i = j + 1
-    elsif src[i] == "'" && (m = src[i..].match(/\A'(?:\\u\{[0-9a-fA-F]+\}|\\.|[^\\'\n])'/))
-      blank.(i + 1, i + m[0].length - 1)
-      i += m[0].length
-    else
-      i += 1
-    end
-  end
-  out
-end
-
-# The index of the bracket closing the one at `open` in CODE (see
-# `code_only`); nil when unbalanced.
-def matching_close(code, open)
-  depth = 0
-  (open...code.length).each do |i|
-    c = code[i]
-    if "([{".include?(c)
-      depth += 1
-    elsif ")]}".include?(c)
-      depth -= 1
-      return i if depth.zero?
-    end
-  end
-  nil
-end
-
-# Every raising C call in `bridge/raw.rs` is made inside `call(|| ...)`, the
-# thunk-style `rb_protect` that hands the raise back as `Err` - so a caller can
-# own a copy or hold a document guard across any of them, and nothing needs
-# tracking above `raw.rs`. The functions that sit outside a `call` on
-# purpose: `injected_raise` (it runs INSIDE every wrapper's closure, so its
-# raise is that call's), and `jump_tag`, `exc_raise` and `exc_fatal`, which
-# ARE the raise - `Error::raise` and `run_init` call them last, from a
-# method's trampoline, with nothing owned on the way.
-RAW_OUTSIDE_CALL = %w[injected_raise jump_tag exc_raise exc_fatal].freeze
-
-def raw_unprotected(path)
-  code = comments_removed(File.binread(path))
-  skip = RAW_OUTSIDE_CALL.filter_map do |name|
-    m = code.match(/\bfn\s+#{name}\b[^{]*\{/) or next
-    open = m.end(0) - 1
-    close = matching_close(code, open)
-    close && (open..close)
-  end
-  spans = code.to_enum(:scan, /\bcall\s*\(/).filter_map do
-    open = Regexp.last_match.end(0) - 1
-    close = matching_close(code, open)
-    close && (open..close)
-  end
-  # The `call` helper itself, whose body names `rb_protect`, not a raiser.
-  code.to_enum(:scan, RAISING_API).filter_map do
-    at = Regexp.last_match.begin(0)
-    next if skip.any? { |r| r.cover?(at) } || spans.any? { |r| r.cover?(at) }
-
-    "#{code[0...at].count("\n") + 1}: #{Regexp.last_match[0]}"
-  end
-end
-
-unprotected = raw_unprotected(File.join(RUST, "bridge", "raw.rs"))
-unless unprotected.empty?
-  errors << "a raising C call in bridge/raw.rs outside `call(|| ...)`: #{unprotected.inspect}"
-end
-
-# What a GVL-released body may call. `bridge::gvl::without_gvl`'s `Send`
-# bound keeps a Ruby handle or value from being carried into the body, but
-# not one from being MADE there - `bridge::ruby::gvl_ruby` makes one from
-# nothing, and every bridge helper reaches it. The engine reaches none of it
-# (`RUBY_LAYER` above), so the body may call only engine functions, by their
-# `crate::` path: a method call, a bare function or a macro could be
-# anything, and is hoisted out of the closure instead (`src.input()` is
-# evaluated before the call, not inside it). What this text cannot see is a
-# function pointer the engine calls (`crate::stack`'s probe, which is Ruby's C);
-# no GVL-released body reaches one today.
-ENGINE_MODULES = ENGINE_DIRS.map { |d| d.sub(%r{/\z}, "").sub(/\.rs\z/, "") }.uniq.freeze
-# A capitalised name is a constructor (`Some(..)`, `Ok(..)`), not a call.
-GVL_RELEASED_CALL = /(?<dot>\.\s*)?(?<name>\b[A-Za-z_]\w*(?:\s*::\s*[A-Za-z_]\w*)*)\s*(?<bang>!)?\s*\(/
-WITHOUT_GVL_EXEMPT = {
-  "init.rs" => "the __panic(4) hook: a panic below the GVL, on purpose"
-}.freeze
-
-def gvl_released_violations(rust)
-  Dir.glob(File.join(rust, "**", "*.rs")).sort.flat_map do |path|
-    rel = path.delete_prefix("#{rust}/")
-    next [] if WITHOUT_GVL_EXEMPT.key?(rel)
-
-    code = code_only(File.binread(path))
-    code.to_enum(:scan, /\bwithout_gvl\s*\(/).map { Regexp.last_match.end(0) - 1 }.flat_map do |open|
-      close = matching_close(code, open) or next ["#{rel}: unbalanced without_gvl(...)"]
-      line = code[0...open].count("\n") + 1
-      found = []
-      code[(open + 1)...close].scan(GVL_RELEASED_CALL) do
-        m = Regexp.last_match
-        name = m[:name].gsub(/\s+/, "")
-        next if m[:dot].nil? && m[:bang].nil? && name.match?(/\A[A-Z]\w*\z/)
-        next if m[:dot].nil? && m[:bang].nil? &&
-                ENGINE_MODULES.any? { |mod| name.start_with?("crate::#{mod}::") }
-
-        kind = m[:dot] ? "method call .#{name}" : m[:bang] ? "macro #{name}!" : name
-        found << "#{rel}:#{line}: #{kind}"
-      end
-      found
-    end
-  end
-end
-
-gvl_released = gvl_released_violations(RUST)
-unless gvl_released.empty?
-  errors << "a GVL-released body (without_gvl) calls something other than an engine " \
-            "function by its crate:: path (hoist it out of the closure): #{gvl_released.inspect}"
-end
-
-# The places that must not unwind (`src/no_unwind.rs`, proven by `rake
-# no_unwind`). An unwind out of an `extern "C"` function aborts the process,
-# and so does a panic in a `Drop` that runs while another unwinds or from the
-# GC's free callback. That task proves each LISTED site; this makes sure none
-# goes unlisted: every `extern "C"` function the shipping crate defines, and
-# every `Drop` it implements, runs its body through `must_not_unwind` (or a
-# helper that does: a method trampoline's `finish`, `Init_makiri`'s
-# `run_init`).
-NO_UNWIND_GUARD = /\bmust_not_unwind\b|\bfinish(?:_cary)?\s*\(|\brun_init\s*\(/
-NO_UNWIND_SKIP = %r{\A(?:lexbor/|lint_probe\.rs\z|rust_tests\.rs\z)|(?:tests|selftest|verify)\.rs\z}
-# `Drop`s no build that ships compiles (each module's own `cfg` says so).
-DROP_EXEMPT = {
-  "compat.rs" => "Reset: `as_lexbor`, under cfg(test) or the reference features",
-  "css/mod.rs" => "Nesting: the CSS-to-XPath lowering, a test reference only"
-}.freeze
-
-def unguarded_no_unwind(rust)
-  Dir.glob(File.join(rust, "**", "*.rs")).sort.flat_map do |path|
-    rel = path.delete_prefix("#{rust}/")
-    next [] if rel.match?(NO_UNWIND_SKIP)
-
-    code = code_only(File.binread(path))
-    code = code.split(/^#\[cfg\(test\)\]\s*\n\s*mod tests\b/).first.to_s
-    found = []
-    # `code_only` blanks a string's inside, so `extern "C"` reads `extern " "`.
-    { /\bextern\s+" *"\s+fn\s+(\w+)[^{;]*\{/ => "extern \"C\" fn",
-      /\bimpl\b[^{;]*?\bDrop\s+for\s+([\w:]+)[^{;]*\{/ => "Drop for" }.each do |re, kind|
-      code.to_enum(:scan, re).each do
-        m = Regexp.last_match
-        next if kind == "Drop for" && DROP_EXEMPT.key?(rel)
-
-        open = m.end(0) - 1
-        close = matching_close(code, open) or next found << "#{rel}: unbalanced #{kind} #{m[1]}"
-        next if code[open..close].match?(NO_UNWIND_GUARD)
-
-        found << "#{rel}:#{code[0...open].count("\n") + 1}: #{kind} #{m[1]}"
-      end
-    end
-    found
-  end
-end
-
-unguarded = unguarded_no_unwind(RUST)
-unless unguarded.empty?
-  errors << "an extern \"C\" fn or a Drop whose body does not run under must_not_unwind " \
-            "(add a site to src/no_unwind.rs): #{unguarded.inspect}"
-end
+# Three gates that stood here are `rake dylint`'s now, on the compiled code
+# (lints/makiri_lints/src/boundaries.rs): a raising C call only inside
+# `bridge::raw::call`'s closure (`raising_call_outside_protect`), a
+# GVL-released body calling only the engine or a library
+# (`ruby_in_gvl_released_body`), and every `extern "C"` function and `Drop`
+# under `must_not_unwind` (`unguarded_no_unwind_site`). Read as text they
+# matched brackets by hand and named callees by their `crate::` spelling;
+# the lints see resolved paths and macro expansions. RAISING_COUNTS above
+# still pins where the raising calls are.
 
 unless ruby_surface.empty?
   errors << "Ruby methods defined or argument lists scanned in bridge/ (they are the glue's): " \
@@ -885,8 +702,6 @@ puts "unsafe-boundaries: #{forbidding.length} forbid files; " \
      "#{lexbor_abi.values.sum} Lexbor ABI names outside their layer and " \
      "#{lexbor_decls.values.sum} Lexbor declarations outside lexbor/abi.rs; " \
      "#{raw_node_crossing.values.sum} raw-node crossings in bridge/; " \
-     "#{ruby_layer.values.sum} Ruby-layer uses inside the engine; " \
+     "#{ruby_layer.values.sum} Ruby-layer uses inside lexbor/; " \
      "#{ruby_surface.values.sum} Ruby methods in bridge/; " \
-     "every raising call in bridge/raw.rs is inside `call`; " \
-     "every GVL-released body calls only the engine; " \
-     "every extern \"C\" fn and Drop runs under must_not_unwind"
+     "(the engine's layer rules, raises, GVL-released bodies and no-unwind sites: rake dylint)"

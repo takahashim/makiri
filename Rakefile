@@ -244,6 +244,10 @@ desc "Run the crate's own lint (makiri_lints; needs cargo-dylint and its nightly
 task :dylint do
   require "open3"
   Dir.chdir("ext/makiri/rust") do
+    # cargo keeps the crate's last check when only the lint library changed,
+    # and dylint then answers from it - the old lints' verdict. A touch makes
+    # every run check afresh.
+    FileUtils.touch("src/lib.rs")
     sh(*DYLINT)
     probe = "src/lint_probe.rs"
     expected = File.readlines(probe).each_with_index

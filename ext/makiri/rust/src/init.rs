@@ -250,6 +250,8 @@ fn panic_probe(ruby: &Ruby, kind: Value) -> Result<(), Error> {
     match kind {
         0 => panic!("Makiri.__panic(0): deliberate panic"),
         1 => {
+            /* The test hook's own allocation: a panic is what it is for. */
+            #[cfg_attr(dylint_lib = "makiri_lints", allow(infallible_allocation))]
             let v: Vec<u8> = vec![1, 2, 3];
             let _ = v[kind as usize * 100];
         }

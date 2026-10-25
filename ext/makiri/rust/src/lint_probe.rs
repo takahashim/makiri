@@ -48,3 +48,54 @@ thread_local! {
     static ONE: Cell<Option<RString>> = const { Cell::new(None) }; //~
     static COUNT: Cell<u32> = const { Cell::new(0) };
 }
+
+/* ---- the boundary lints (`lints/makiri_lints/src/boundaries.rs`) ---- */
+
+/// Stands in for an engine module: `ruby_layer_in_engine` treats
+/// `lint_probe::engine` as one.
+#[rustfmt::skip] // keeps each marker on the line reported
+mod engine {
+    pub fn names_the_ruby_layer() -> crate::bridge::rb::Value { //~
+        crate::bridge::ruby::nil() //~
+    }
+
+    pub fn names_only_the_engine(b: &[u8]) -> bool {
+        crate::cutf8::valid(b)
+    }
+}
+
+extern "C" fn unguarded() {} //~
+
+extern "C" fn guarded() {
+    crate::no_unwind::must_not_unwind::<crate::no_unwind::SelfTest, _>(|| ())
+}
+
+struct Dropped;
+
+impl Drop for Dropped {
+    fn drop(&mut self) {} //~
+}
+
+struct GuardedDrop;
+
+impl Drop for GuardedDrop {
+    fn drop(&mut self) {
+        crate::no_unwind::must_not_unwind::<crate::no_unwind::SelfTest, _>(|| ())
+    }
+}
+
+fn gvl_released() {
+    let _ = crate::bridge::gvl::without_gvl(|| crate::bridge::ruby::boolean(true)); //~
+    let _ = crate::bridge::gvl::without_gvl(|| engine::names_only_the_engine(b"x"));
+}
+
+fn allocations() {
+    let _ = "x".to_owned(); //~
+    let _ = format!("{}", 1); //~
+    let _ = core::format_args!("{}", 1);
+}
+
+#[allow(unsafe_code)]
+fn raising() {
+    let _ = unsafe { rb_sys::rb_ary_new_capa(0) }; //~
+}

@@ -93,9 +93,10 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   defines and only an unwind reaches, so the optimizer removes the call
   exactly where it proves the body unwind-free, and `nm -u` lists the sites
   that can. The `self_test` control site can unwind by design and must be
-  the one left, or the check is not live. `rake unsafe:boundaries` fails on
-  an `extern "C"` fn or a `Drop` in the shipping crate whose body does not
-  run under it. What the proof needed: post-catch code free of `fmt`
+  the one left, or the check is not live. `rake dylint`'s
+  `unguarded_no_unwind_site` fails on an `extern "C"` fn or a `Drop` in the
+  compiled crate (macro-generated ones included) whose body does not run
+  under it. What the proof needed: post-catch code free of `fmt`
   (`Msg::copy`, `&'static str` errors in `raw::typed`/`c_len`), `abort(3)`
   declared `extern "C"` instead of `std::process::abort`, and
   `caught::quietly` (catch, leak the payload) around what the compiler cannot
@@ -159,9 +160,10 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   wrapper hands its one C call to `raw::call`, whose `extern "C"` thunk is the
   only frame a raise crosses, and the raise comes back as `Err`. A caller may
   then own copies, hold document guards and build Ruby objects in any order.
-  `rake unsafe:boundaries` pins the raising names to `raw.rs` and fails on one
-  outside a `call(|| ...)` there (`raw_unprotected`); a new raising call is a
-  new wrapper with its raise stated. The glue builds Arrays, Hashes, numbers
+  `rake unsafe:boundaries` pins the raising names to `raw.rs`, and `rake
+  dylint`'s `raising_call_outside_protect` fails on one called outside the
+  closure handed to `bridge::raw::call`, by resolved path; a new raising call
+  is a new wrapper with its raise stated. The glue builds Arrays, Hashes, numbers
   and Symbols through `bridge::build`, Strings through
   `bridge::string::utf8_str`, and every wrapped object - a NodeSet included -
   through `typed::TypedType::wrap`, each over those wrappers. Each
@@ -330,10 +332,13 @@ bundle exec rake spec
 bundle exec rake rust:test         # Ruby-free core tests, Lexbor-feature tests, fuzz-crate check
 bundle exec rake lint              # cargo clippy --all-features -D warnings + cargo fmt --check
 bundle exec rake unsafe:boundaries # reviewed unsafe islands and safe-module boundaries
-bundle exec rake dylint            # the crate's own lint (lints/makiri_lints):
-                                   # ruby_value_on_heap - a Ruby value in a heap
-                                   # container, a static/thread_local or a wrapped
-                                   # object's data; then its self-test
+bundle exec rake dylint            # the crate's own lints (lints/makiri_lints), on the
+                                   # compiled code by resolved path: ruby_value_on_heap
+                                   # (a Ruby value in a heap container, a static or a
+                                   # wrapped object's data), ruby_layer_in_engine,
+                                   # unguarded_no_unwind_site, ruby_in_gvl_released_body,
+                                   # infallible_allocation, raising_call_outside_protect;
+                                   # then their self-test
                                    # (src/lint_probe.rs). Needs the nightly
                                    # rust-toolchain.toml pins + cargo-dylint/dylint-link
 bundle exec rake clean             # wipe the build dir (regenerates the Makefile next compile)
@@ -568,8 +573,12 @@ by the check that concluded "every undefined symbol is legitimate".
   it - so an error can be made inside an edit's closure, which must run no
   Ruby. What a message quotes is written in by `Display` types that read
   without a call (`bridge::ruby::Describe` / `Display` / `ExceptionText`,
-  `msg::Lossy`). `rake unsafe:boundaries`' `INFALLIBLE_ALLOC` holds the Ruby
-  layer to no `format!` / `to_owned` / `to_string` / `vec!`, as the engine.
+  `msg::Lossy`). `rake dylint`'s `infallible_allocation` holds the whole
+  shipped crate to no `format!` / `to_owned` / `to_string` / `vec!` /
+  `from_utf8_lossy` / `into_owned` / `CString::new`, by the path each resolves
+  to (`lexbor/`, which that build leaves out, stays `unsafe:boundaries`'
+  text check); a site that must is `#[cfg_attr(dylint_lib = "makiri_lints",
+  allow(infallible_allocation))]` with its reason - one, the `__panic(1)` hook.
   std's STABLE sorts (`sort`, `sort_by`, `sort_by_key`, `sort_by_cached_key`)
   are banned there too: they take a scratch buffer from the global allocator
   and abort on OOM, invisibly to `rake oom`. Sort in place (`sort_unstable_by`)
@@ -1445,9 +1454,10 @@ Key decisions that got there, worth not regressing:
   interrupted parse. `bridge::gvl::without_gvl` delivers an interrupt only
   when the body never started, under `protect`. Its `Send` bound keeps a
   Ruby handle from being carried into the body but not from being MADE
-  there (`bridge::ruby::gvl_ruby`), so `rake unsafe:boundaries` holds the
-  body's closure to engine functions by `crate::` path (no method call, bare
-  function or macro: hoist it). A runtime check in `gvl_ruby` was tried and
+  there (`bridge::ruby::gvl_ruby`), so `rake dylint`'s
+  `ruby_in_gvl_released_body` holds the body's closure to calls into the
+  engine or a library, by resolved path - a call through a function value,
+  whose target no one can see, is refused too (hoist it). A runtime check in `gvl_ruby` was tried and
   dropped: always on it cost the light readers 5-10%, and it could not see
   the one hole left, a function pointer the engine calls into Ruby's C.
   **XPath holds
